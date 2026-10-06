@@ -1,4 +1,4 @@
-Grid-OS 0.2.2 - boot floppy
+Grid-OS 0.2.3 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -24,6 +24,11 @@ directory, every file in one piece, free space at the end.  When the
 disk is in order, the screen goes dark with just the time and date,
 moving every 20 seconds, so the plasma never holds one picture.  Any key
 or the mouse brings the Executive back (the key does nothing else).
+
+0.2.3: when a read of several sectors keeps failing, the kernel reads
+them one at a time before reporting a Data error.  A worn or dirty
+drive head often can't get a whole track through, yet reads each
+sector of it on its own.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose a file
