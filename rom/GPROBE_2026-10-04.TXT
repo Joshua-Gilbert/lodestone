@@ -1,0 +1,110 @@
+GRIDPROBE 1.0 - Grid-OS hardware probe for the GRiDCase 1520
+
+[1] SYSTEM
+  BIOS date 10/25/89   IBM model FC  GRiD model 34  drive backplane 09
+  Memory mode: EMS   EMS 1408 KB   EXT 0 KB
+  COM ports (BDA): 03F8 02F8 0000 0000 
+  LPT ports (BDA): 0378 0000 0000 
+  Equipment word: 4463
+
+[2] DISPLAY
+  Port 7F8h = FD  -> internal plasma/EL 640x400
+  Port 6F8h = 90   V6366 control/ID (3DFh) = 01   colour map = 06
+  INT 10h mode 40h -> BIOS mode byte 40 : 640x400 hi-res mode WORKS
+  VRAM fill  (rep stosw) 250 KB:   245.9 ms  = 1020 KB/s
+  RAM->VRAM  (rep movsw) 250 KB:   368.9 ms  = 679 KB/s
+  VRAM read  (rep lodsw) 250 KB:   346.9 ms  = 722 KB/s
+  RAM->RAM   (rep movsw) 250 KB:    81.2 ms  = 3086 KB/s
+
+[3] APPLICATION ROMS (INT 15h E400-E404)
+  max images 08  data seg paras 5  sockets 2
+  logical ROM images found: 1
+  -- image 0: id 2000  sel 0404  system type 01  window A000
+     flag BB66 sysType 01 bootable 80 bootSeg 0000 romAddr 00 sizeKB 128 wait 03
+     dirSel 0040 dirLen 0020 files 9 page0Sel 0060 pages 252 romId 2000
+     copyright "Copyright (c) 1989 GRiD Systems Corporation  "
+     time      "......%...."
+     part      "300909-00 <- Part Number"
+     boot msg  "2 - MS-DOS                    "
+     id text   "GRiD MS-DOS 3.30                                  "
+     roms/pkg 01 sum0 0000 word250 0000 checksum 7F
+     66 BB 01 80 00 00 00 80 03 40 00 20 00 09 00 60 
+     00 FC 00 00 20 43 6F 70 79 72 69 67 68 74 20 28 
+     63 29 20 31 39 38 39 20 47 52 69 44 20 53 79 73 
+     74 65 6D 73 20 43 6F 72 70 6F 72 61 74 69 6F 6E 
+     20 20 C5 07 06 02 0E 10 25 12 00 00 00 33 30 30 
+     39 30 39 2D 30 30 20 3C 2D 20 50 61 72 74 20 4E 
+     75 6D 62 65 72 0A 32 20 2D 20 4D 53 2D 44 4F 53 
+     20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 
+     20 20 20 20 02 01 00 00 00 00 00 00 00 00 47 52 
+     69 44 20 4D 53 2D 44 4F 53 20 33 2E 33 30 20 20 
+     20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 
+     20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 
+     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+     00 00 00 00 00 00 00 00 00 00 00 00 01 01 00 7F 
+     image saved to A:\ROM0.BIN
+
+[4] SERIAL
+  COM1 at 03F8h: UART present  MSR B0
+  mouse ID bytes after DTR/RTS: none (no serial mouse here)
+  COM2 at 02F8h: UART present  MSR 00
+  mouse ID bytes after DTR/RTS: 4D  -> Microsoft-protocol serial mouse
+
+[5] KEYBOARD - press keys to log their codes (Fn, Alt, Ctrl combos too).
+    ESC finishes.
+  key AX=3920  shift flags 00
+  key AX=2B5C  shift flags 00
+  key AX=2C7A  shift flags 00
+  key AX=2D78  shift flags 00
+  key AX=2E63  shift flags 00
+  key AX=2F76  shift flags 00
+  key AX=3062  shift flags 00
+  key AX=316E  shift flags 00
+  key AX=326D  shift flags 00
+  key AX=332C  shift flags 00
+  key AX=342E  shift flags 00
+  key AX=352F  shift flags 00
+  key AX=5000  shift flags 00
+  key AX=1C0D  shift flags 00
+  key AX=273B  shift flags 00
+  key AX=266C  shift flags 00
+  key AX=256B  shift flags 00
+  key AX=246A  shift flags 00
+  key AX=2368  shift flags 00
+  key AX=2267  shift flags 00
+  key AX=2166  shift flags 00
+  key AX=2064  shift flags 00
+  key AX=1F73  shift flags 00
+  key AX=1E61  shift flags 00
+  key AX=0F09  shift flags 40
+  key AX=1051  shift flags 40
+  key AX=1157  shift flags 40
+  key AX=1245  shift flags 40
+  key AX=1352  shift flags 40
+  key AX=1454  shift flags 40
+  key AX=1559  shift flags 40
+  key AX=1655  shift flags 40
+  key AX=1749  shift flags 40
+  key AX=184F  shift flags 40
+  key AX=1950  shift flags 40
+  key AX=2827  shift flags 40
+  key AX=4B00  shift flags 40
+  key AX=4D00  shift flags 40
+  key AX=4800  shift flags 40
+  key AX=0D3D  shift flags 40
+  key AX=0C2D  shift flags 40
+  key AX=0B30  shift flags 40
+  key AX=0A39  shift flags 40
+  key AX=0938  shift flags 40
+  key AX=0837  shift flags 40
+  key AX=0736  shift flags 40
+  key AX=0635  shift flags 40
+  key AX=0534  shift flags 40
+  key AX=0433  shift flags 40
+  key AX=0332  shift flags 40
+  key AX=0231  shift flags 40
+  key AX=011B  shift flags 40
+
+Done. Report in A:\GPROBE.TXT. Reboot before using the EPROM drive.

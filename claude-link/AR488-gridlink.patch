@@ -1,0 +1,75 @@
+diff -u AR488/src/AR488/AR488.ino AR488-grid/AR488.ino
+--- a/src/AR488/AR488.ino	2026-10-04 20:02:47.917274780 -0700
++++ b/src/AR488/AR488.ino	2026-10-04 20:20:13.878611276 -0700
+@@ -132,7 +132,12 @@
+  * Note: Ardiono serial input buffer is 64 
+  */
+ // Serial input parsing buffer
++#ifdef GRIDLINK_PATCH
++static const uint8_t PBSIZE = 255;   // Grid-OS patch: one 254-byte GLP frame per line
++bool gridSrqDone = false;           // Grid-OS patch: SRQ already raised for this line
++#else
+ static const uint8_t PBSIZE = 128;
++#endif
+ char pBuf[PBSIZE];
+ uint8_t pbPtr = 0;
+ 
+@@ -614,6 +619,19 @@
+   // If charaters waiting in the serial input buffer then call handler
+   if (dataPort.available()) lnRdy = serialIn_h();
+ 
++#ifdef GRIDLINK_PATCH
++  // Grid-OS patch: in device mode a complete data line requests service
++  // by itself (status 60h = RQS + READY), once per line, so the controller
++  // never has to guess when the line has fully arrived.
++  if (!gpibBus.isController()) {
++    if (lnRdy == 2) {
++      if (!gridSrqDone) { gpibBus.setStatus(0x60); gridSrqDone = true; }
++    } else {
++      gridSrqDone = false;
++    }
++  }
++#endif
++
+   delayMicroseconds(5);
+ }
+ /***** END MAIN LOOP *****/
+@@ -3127,10 +3145,21 @@
+ void device_talk_h(){
+   DB_PRINT("LnRdy: ", lnRdy);
+   DB_PRINT("Buffer: ", pBuf);
++#ifdef GRIDLINK_PATCH
++  // Grid-OS patch: send only a complete line, and keep a line that is still
++  // arriving instead of throwing it away.
++  if (lnRdy == 2) {
++    gpibBus.sendData(pBuf, pbPtr);
++    flushPbuf();
++    lnRdy = 0;
++    gpibBus.setStatus(0);
++  }
++#else
+   if (lnRdy == 2) gpibBus.sendData(pBuf, pbPtr);
+   // Flush the parse buffer and clear line ready flag
+   flushPbuf();
+   lnRdy = 0;
++#endif
+ }
+ 
+ 
+diff -u AR488/src/AR488/AR488_Config.h AR488-grid/AR488_Config.h
+--- a/src/AR488/AR488_Config.h	2026-10-04 20:02:47.917878725 -0700
++++ b/src/AR488/AR488_Config.h	2026-10-04 20:20:13.878897773 -0700
+@@ -7,7 +7,13 @@
+ 
+ 
+ /***** Firmware version *****/
++/***** Grid-OS patch (gridlink): device-mode auto-SRQ, 255-byte line buffer *****/
++#define GRIDLINK_PATCH
++#ifdef GRIDLINK_PATCH
++#define FWVER "AR488 GPIB controller, ver. 0.53.46, 22/05/2026 +GRiD1"
++#else
+ #define FWVER "AR488 GPIB controller, ver. 0.53.46, 22/05/2026"
++#endif
+ 
+ 
+ /***** BOARD CONFIGURATION *****/

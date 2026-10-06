@@ -1,0 +1,80 @@
+Grid-OS 0.2.2 - boot floppy
+
+First time only: boot GRiD MS-DOS from the EPROM as usual, then run
+A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
+and keeps all files.
+
+To start Grid-OS: restart and tap F while the memory count finishes,
+so the BIOS boots this floppy instead of the EPROM.
+
+Grid-OS 0.2 is its own DOS 3.30-compatible kernel: files, directories,
+programs (.COM and .EXE), memory, and the GPIB driver built in on
+INT 60h (GRIDGPIB is not needed under Grid-OS).
+
+0.2.1 adds a disk cache.  When a program reads a file in order, the
+kernel reads the rest of that cylinder (both sides, up to 18 KB) in one
+pass, so small reads no longer cost a turn of the disk each.  Writes
+still go straight to the disk.  The cache takes 18 KB at the top of
+memory: programs get about 570 KB.
+
+0.2.2 adds a screen saver.  After 5 minutes without a key or the mouse
+the Executive runs DEFRAG (if it is on this disk): it shows every
+cluster of the disk and tidies it - deleted entries out of the root
+directory, every file in one piece, free space at the end.  When the
+disk is in order, the screen goes dark with just the time and date,
+moving every 20 seconds, so the plasma never holds one picture.  Any key
+or the mouse brings the Executive back (the key does nothing else).
+
+The Executive (the file list):
+  Up/Down, PgUp/PgDn, Home/End   choose a file
+  Return                         run it / open a subject (directory)
+  CODE-A                         Claude (CLAUDE.COM)
+  CODE-C                         command prompt (GRIDCMD.COM, EXIT returns)
+  F5                             read the disk again after a swap
+  CODE-? (Alt+/) or F1           help
+  CODE-D                         boot GRiD MS-DOS from the EPROM
+  CODE-R                         restart
+  5 minutes idle                 screen saver (DEFRAG, then the time)
+  Serial mouse on COM2 (or COM1).
+
+Programs:
+  GRIDCMD   the command prompt: DIR TYPE COPY DEL REN MD RD CD CLS ECHO
+            VER VOL SET PATH PROMPT DATE TIME PAUSE REM EXIT, A:, programs,
+            .BAT files, redirection < > >> and pipes |
+  CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
+            (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
+  TM5000G   TM5000 3.7
+  TESTDOS   checks the kernel's DOS functions (writes and deletes its
+            own test files on this disk; "24 passed, 0 failed" is right)
+  CACHETST  checks the disk cache: random reads and writes on two
+            files, every byte checked ("0 errors" is right; about 400 KB
+            free needed, a few minutes).  Results go to CACHETST.TXT too
+  BENCH     file system benchmark: run it here, then under GRiD MS-DOS
+            from this drive (B: there), and compare (about 400 KB free
+            needed; some 5 minutes under MS-DOS).  Each run is added to
+            BENCH.TXT on this disk; both wait for a key at the end
+  GGTEST    GPIB driver test on the bus
+  TESTKEY   echoes keys until Esc (for checking Claude's key scripts)
+  GRIDGPIB  the GPIB driver for GRiD MS-DOS (load it first there)
+  DEFRAG    tidies this disk (also the screen saver; DEFRAG /S as one).
+            A file only ever moves whole: copied, read back and
+            compared, then its directory entry is switched over, so a
+            power cut or a pulled disk can't damage it.  It stops if the
+            disk is changed; it only shows the map on a write-protected
+            disk, under GRiD MS-DOS, or when files are open (run from a
+            .BAT file).  Any key stops it.  Old disks wear: a bad spot
+            in the free space gets its clusters marked bad (as FORMAT
+            does) and it carries on; a weak sector in a file is read
+            again and again, and the file moved to good ground.  Only a
+            drive that can't write at all stops it.  Each run that
+            changes the disk adds a line to DEFRAG.TXT on it
+            DEFRAG /T tests all the free space and marks the bad spots
+            DEFRAG B: (or B: /T) works on the floppy in drive B:
+
+To update Grid-OS, replace GRIDOS.SYS (and GRIDCMD.COM) on this disk.
+No need to rerun GOSBOOT.
+
+Keep COMMAND.COM, CONFIG.SYS and AUTOEXEC.BAT off this disk unless they
+are meant for GRiD MS-DOS: booted from the EPROM with this floppy in the
+drive, GRiD MS-DOS uses A:\COMMAND.COM (and A:\CONFIG.SYS) in place of
+its own.
