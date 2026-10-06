@@ -662,7 +662,8 @@ terminate:
         call    mem_resize
         pop     bx
         jmp     .mem
-.free:  mov     ax, bx
+.free:  call    ui_progend              ; (INT 33h forgets its handler)
+        mov     ax, bx
         call    mem_free_owner
 .mem:   call    fat_flush
         mov     es, bx
@@ -696,7 +697,22 @@ terminate:
 section .bss
 t_ip        resw 1
 t_cs        resw 1
+ui_far      resw 2
 section .text
+
+; tell the UI core that the program at BX ends (MOUSE33.INC's m33_gone)
+ui_progend:
+        mov     ax, [ui_seg]
+        or      ax, ax
+        jz      .x
+        mov     [ui_far + 2], ax
+        mov     word [ui_far], m33_gone
+        push    bx
+        push    ds
+        call    far [ui_far]
+        pop     ds
+        pop     bx
+.x:     ret
 
 ; INT 22h of the root, or the Executive asked to end: run it again
 root_term:
