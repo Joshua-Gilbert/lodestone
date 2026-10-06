@@ -70,6 +70,10 @@ Programs:
             changes the disk adds a line to DEFRAG.TXT on it
             DEFRAG /T tests all the free space and marks the bad spots
             DEFRAG B: (or B: /T) works on the floppy in drive B:
+  HEADCLN   head cleaning with a wet cleaning disk: spins the drive and
+            sweeps the heads for 30 s (HEADCLN B: 20 for drive B:, 20 s).
+            It only reads; it asks for the cleaning disk and for your
+            disk back, with a minute for the alcohol to dry
 
 To update Grid-OS, replace GRIDOS.SYS (and GRIDCMD.COM) on this disk.
 No need to rerun GOSBOOT.

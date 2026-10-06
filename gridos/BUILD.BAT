@@ -9,6 +9,7 @@ nasm -f bin -o GRIDOS.SYS _m.asm -l GRIDOS.LST
 del _m.asm
 nasm -f bin -o GRIDCMD.COM GRIDCMD.ASM
 nasm -f bin -o DEFRAG.COM DEFRAG.ASM
+nasm -f bin -o HEADCLN.COM HEADCLN.ASM
 cd ..\tests
 nasm -f bin -o TESTDOS.COM TESTDOS.ASM
 nasm -f bin -o UPPER.COM UPPER.ASM
