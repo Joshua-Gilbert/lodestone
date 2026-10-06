@@ -124,6 +124,7 @@ class PC:
         mu.mem_write(0x463, struct.pack('<H', 0x3D4)); mu.mem_write(0x484, bytes([24]))
         secs = start.hour * 3600 + start.minute * 60 + start.second
         mu.mem_write(0x46C, struct.pack('<I', int(secs * 1193182 / 65536)))
+        mu.mem_write(0xFFFF0, b'\xEA\x5B\xE0\x00\xF0')        # the reset jump, as in the ROM (FFFF:1 isn't 0)
         mu.mem_write(0xFFFF5, b'10/25/89'); mu.mem_write(0xFFFFE, b'\xFC')
         s.wr(0xB800, 0, b'\x20\x07' * 2000)
         mu.hook_add(UC_HOOK_INTR, s.intr)

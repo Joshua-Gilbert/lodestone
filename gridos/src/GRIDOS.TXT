@@ -1,4 +1,4 @@
-Grid-OS 0.3 - boot floppy
+Grid-OS 0.3.1 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -48,13 +48,19 @@ written for it are .RUN files that load next to it:
               by serial poll, then sets them back to local), display
               (Return switches the screen font), about.
 Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
-subject you work in).  A DOS program gets about 572 KB: while it runs
+subject you work in).  A DOS program gets about 569 KB: while it runs
 the Executive lends it the memory of its file list.  The screen font is
 GRiD's own: the InteGRiD system font (TC8X16), as GRID.EXE drew it.
 TERMINUS.FNT is the font Grid-OS had before; in System, Display, Return
 switches between them (and any other .FNT in the root of the disk).  The
 choice is kept in GRIDOS.INI as FONT=TERMINUS.FNT; without that line, or
 without the file, it is GRiD's.  CODE-? opens the help everywhere (F1 too).
+
+0.3.1: DOS programs have the mouse too: Grid-OS answers the Microsoft mouse
+calls (INT 33h) with its own serial-mouse driver, so no MOUSE.COM is
+needed.  TM5000G says "Mouse support enabled." and menus take clicks.
+The pointer shows in text modes and in CGA and GRiD graphics modes.
+A program that never asks for the mouse leaves COM1/COM2 alone.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose a file
