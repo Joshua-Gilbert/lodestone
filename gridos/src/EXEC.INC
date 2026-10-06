@@ -7,11 +7,17 @@
 LIST_Y  equ 24          ; first list row (pixels)
 LIST_N  equ 13          ; visible list rows
 RULE2   equ 237
-FORM_Y  equ 244
+FORM_Y  equ 244         ; the File form: Device, Subject, Title, Kind,
+ITEM_H  equ 20          ;  this far apart (room for the outline; text rows
+                        ;  stay on multiples of 4, as the blitter wants)
 INFO_Y  equ 336
 TCOL    equ 3           ; title column
 KEND    equ 77          ; kind column end (exclusive)
 MAXENT  equ 240
+FOC_TIT equ 0           ; the outlined item: Title (the list holds titles),
+FOC_DEV equ 1           ;  Device (the drives),
+FOC_SUB equ 2           ;  Subject (the subjects of this drive)
+SUBJ    equ 14          ; a subject in the list: depth, NAME    EXT, date
 
 section uibss
 exec_dta    resb 44
@@ -22,6 +28,11 @@ argpath     resb 84                 ; X:\ + a 66-char subject + \ + NAME.EXT
 dir_note    resw 1              ; load_dir: 0, a DOS error, or FFFFh (too many)
 last_sel    resw 1              ; relist: the selection before an empty list
 last_top    resw 1
+focus       resb 1              ; FOC_*: the outlined item
+dirty       resb 1              ; the drive or subject changed since Title
+t_sel       resw 1              ; Title's place, while another item is out-
+t_top       resw 1              ;  lined (subjects are read into entries)
+nsubj       resw 1
 subject     resb 70
 ex_code     resw 1
 rowmask     resb 1
@@ -41,7 +52,7 @@ ex_list:    dw LIST_Y, LIST_N
 nent        dw 0
 sel         dw 0
 top         dw 0
-            dw ex_row, draw_form, 1, 78, ex_lvname
+            dw ex_row, ex_chg, 1, 78, ex_lvname
 msgshown    db 0
 
 ex_start:
@@ -89,6 +100,8 @@ ex_loop:
         je      ex_loop
 .k:     cmp     ax, EV_CLICK
         je      .click
+        call    focus_key               ; Tab, Shift-Tab; Return and ESC
+        jnc     ex_loop                 ;  in Device and Subject
         mov     bx, ex_list
         call    lv_key
         jnc     ex_loop
@@ -96,29 +109,137 @@ ex_loop:
         call    ui_dispatch
         jmp     ex_loop
 .click: cmp     cx, BAND_Y              ; the prompt band: help
-        jb      .list
+        jb      .form
         call    ex_help
+        jmp     ex_loop
+.form:  cmp     cx, FORM_Y - 2          ; an item of the form: outline it
+        jb      .list
+        mov     ax, cx
+        sub     ax, FORM_Y - 2
+        mov     cl, ITEM_H
+        div     cl                      ; AL = item: Device, Subject, Title
+        cmp     al, 2
+        ja      ex_loop
+        inc     al                      ; (item -> FOC_*)
+        cmp     al, 3
+        jb      .fi
+        xor     al, al
+.fi:    call    set_focus
         jmp     ex_loop
 .list:  mov     bx, ex_list
         call    lv_click
         jc      ex_loop
-        cmp     al, 1                   ; the selected file again: confirm
+        cmp     al, 1                   ; the selected row again: confirm
         jne     ex_loop
+        cmp     byte [focus], FOC_TIT
+        jne     .nx
         call    confirm
         jmp     ex_loop
+.nx:    mov     ax, K_ENTER             ; (Device, Subject: the next item)
+        call    focus_key
+        jmp     ex_loop
+
+; Tab / Shift-Tab: the next / previous item of the form (Title, Device,
+; Subject, round).  In Device and Subject also Return (the next item) and
+; ESC (back to Title); Left and Right there are Up and Down.  CF set (AX
+; maybe changed) for a key that isn't one of these.
+focus_key:
+        mov     dl, 1
+        cmp     ax, K_TAB
+        je      .move
+        mov     dl, 2
+        cmp     ax, K_BTAB
+        je      .move
+        cmp     byte [focus], FOC_TIT
+        je      .no
+        mov     dl, 1
+        cmp     ax, K_ENTER
+        je      .move
+        cmp     ax, K_ESC
+        je      .tit
+        cmp     ah, K_LEFT >> 8
+        jne     .r
+        mov     ax, K_UP
+.r:     cmp     ah, K_RIGHT >> 8
+        jne     .no
+        mov     ax, K_DOWN
+.no:    stc
+        ret
+.tit:   mov     al, FOC_TIT
+        jmp     short .set
+.move:  mov     al, [focus]
+        add     al, dl
+        cmp     al, 3
+        jb      .set
+        sub     al, 3
+.set:   call    set_focus
+        clc
+        ret
+
+; outline item AL (FOC_*): its choices in the list, then the screen again
+set_focus:
+        cmp     byte [focus], FOC_TIT   ; leaving Title: its place, to come
+        jne     .f                      ;  back to if nothing changes
+        mov     bx, [sel]
+        mov     [t_sel], bx
+        mov     bx, [top]
+        mov     [t_top], bx
+        mov     byte [dirty], 0
+.f:     mov     [focus], al
+        cmp     al, FOC_DEV
+        je      .dev
+        cmp     al, FOC_SUB
+        je      .sub
+        call    load_dir                ; Title: the titles again
+        cmp     byte [dirty], 0
+        jne     .draw
+        mov     ax, [t_sel]
+        cmp     ax, [nent]
+        jae     .draw
+        mov     [sel], ax
+        mov     ax, [t_top]
+        mov     [top], ax
+        jmp     short .draw
+.dev:   call    ndrives                 ; Device: the drives, this one chosen
+        cbw
+        mov     [nent], ax
+        mov     ah, 19h
+        int     21h
+        cbw
+        mov     [sel], ax
+        mov     word [top], 0
+        mov     word [dir_note], 0
+        jmp     short .draw
+.sub:   call    sub_build
+.draw:  jmp     draw_all
+
+; the list's selection moved: in Device and Subject it takes effect at once
+ex_chg: cmp     byte [focus], FOC_DEV
+        je      .dev
+        cmp     byte [focus], FOC_SUB
+        jne     .form
+        mov     bx, [sel]               ; Subject: CHDIR there
+        call    sub_path
+        mov     dx, runpath
+        mov     ah, 3Bh
+        int     21h
+        jc      .bad
+        jmp     short .chg
+.dev:   mov     dl, [sel]               ; Device: that drive
+        mov     ah, 0Eh
+        int     21h
+.chg:   mov     byte [dirty], 1
+        call    get_subject
+.form:  jmp     draw_form
+.bad:   mov     [ex_code], ax
+        mov     si, runpath
+        mov     bx, s_cantopen
+        jmp     cant_msg
 
 ex_help:
         mov     si, ex_keys
         mov     di, s_hlptitle
         jmp     ui_help
-
-boot_rom:
-        call    mouse_off
-        mov     ax, 0003h
-        int     10h
-        mov     si, s_bootrom
-        call    bios_print
-        int     19h                     ; BIOS boot loop: EPROM first
 
 reboot: call    mouse_off
         push    0
@@ -146,16 +267,14 @@ load_dir:
         mov     word [top], 0
         mov     word [dir_note], 0
         mov     dx, s_all
-        mov     cx, 10h                 ; subdirectories too
-        mov     ah, 4Eh
+        xor     cx, cx                  ; files (the subjects are an item
+        mov     ah, 4Eh                 ;  of the form of their own)
         int     21h
         jc      .first
         mov     di, entries
 .e:     mov     ax, [nent]
         cmp     ax, [ent_max]           ; (fewer if the UI block couldn't
         jae     .full                   ;  have all its memory back)
-        cmp     word [exec_dta+30], '.'  ; "." (but keep "..")
-        je      .next
         push    di
         call    dta2ent
         pop     di
@@ -164,7 +283,7 @@ load_dir:
         mov     [entlist+bx], di
         inc     word [nent]
         add     di, 32
-.next:  mov     ah, 4Fh
+        mov     ah, 4Fh
         int     21h
         jnc     .e
         cmp     ax, 18                  ; no more files: the end
@@ -178,7 +297,8 @@ load_dir:
         jmp     .done
 .full:  mov     word [dir_note], 0FFFFh ; more than fit: said in the band
 .done:  call    sort_dir
-        ; the subject: the current directory
+; the subject: the current directory, "\PATH"
+get_subject:
         mov     byte [subject], '\'
         mov     si, subject + 1
         xor     dl, dl
@@ -190,7 +310,12 @@ load_dir:
 
 ; the list again, keeping the place in it (the core's redraw routine:
 ; after the screen saver, DEFRAG or a program the disk may differ)
-relist: mov     ax, [sel]
+relist: mov     al, [focus]
+        cmp     al, FOC_TIT
+        je      .tit
+        mov     byte [focus], 0FFh      ; (Device, Subject: their list again)
+        jmp     set_focus
+.tit:   mov     ax, [sel]
         mov     bx, [top]
         cmp     word [nent], 0          ; (an empty list, e.g. while the
         jne     .keep                   ;  directory's memory was lent: the
@@ -220,12 +345,7 @@ dta2ent:
         pop     di
         mov     si, exec_dta + 30
         mov     bx, di
-        cmp     byte [si], '.'
-        jne     .n
-        movsb                           ; ".."
-        movsb
-        jmp     .rest
-.n:     mov     cx, 8
+        mov     cx, 8
 .nl:    lodsb
         or      al, al
         jz      .rest
@@ -257,7 +377,7 @@ dta2ent:
         mov     [bx+30], ax
         ret
 
-; insertion sort of entlist: "..", then subjects, then files, by name
+; insertion sort of entlist by name
 sort_dir:
         mov     cx, [nent]
         cmp     cx, 2
@@ -283,32 +403,17 @@ sort_dir:
         jb      .i
 .x:     ret
 
-; compare entries SI and DI: flags as for SI - DI
+; compare the 11-byte names at SI and DI: flags as for SI - DI
 ent_cmp:
         push    cx
         push    si
         push    di
-        call    .rank
-        mov     ah, al
-        xchg    si, di
-        call    .rank
-        xchg    si, di
-        cmp     ah, al
-        jne     .x
         mov     cx, 11
         repe    cmpsb
-.x:     pop     di
+        pop     di
         pop     si
         pop     cx
         ret
-.rank:  mov     al, 0
-        cmp     word [si], '..'
-        je      .r
-        mov     al, 1
-        test    byte [si+11], 10h
-        jnz     .r
-        mov     al, 2
-.r:     ret
 
 ent_ptr:                                ; BX = index -> SI = entry
         push    bx
@@ -319,7 +424,18 @@ ent_ptr:                                ; BX = index -> SI = entry
 
 ex_lvname:                                ; (type-to-find) AX = item -> SI
         mov     bx, ax
-        jmp     ent_ptr
+        cmp     byte [focus], FOC_DEV
+        je      .dev
+        cmp     byte [focus], FOC_SUB
+        jne     ent_ptr
+        mov     si, s_root
+        or      bx, bx
+        jz      .x
+        call    sub_ptr
+        inc     si
+.x:     ret
+.dev:   lea     si, [s_drvlet + bx]
+        ret
 
 ; append the entry's title (name without trailing spaces) at DI
 sb_title:
@@ -336,12 +452,7 @@ sb_title:
 ; SI = entry -> SI = kind string, AL = what opens it (0 nothing, 1 it's a
 ; DOS program, 2 a .RUN, 3 Write).  (Entry pointer lost; callers re-fetch.)
 kind_of:
-        test    byte [si+11], 10h
-        jz      .file
-        mov     si, k_subject
-        xor     al, al
-        ret
-.file:  push    dx
+        push    dx
         push    bx
         mov     ax, [si+8]
         mov     dl, [si+10]
@@ -383,8 +494,6 @@ confirm:
         je      .x
         mov     bx, [sel]
         call    ent_ptr
-        test    byte [si+11], 10h
-        jnz     .subject
         call    kind_of
         cmp     al, 1
         je      .dos
@@ -406,22 +515,6 @@ confirm:
         call    sb_str
         mov     byte [di], 0
         jmp     show_msg
-.subject:
-        call    sel_name                ; CHDIR into it (by NAME.EXT: a
-        mov     dx, runpath             ;  subject can have an extension)
-        mov     ah, 3Bh
-        int     21h
-        jc      .nosub
-        call    load_dir
-        mov     bx, ex_list
-        call    lv_draw
-        call    draw_empty
-        call    draw_form
-        jmp     dir_band
-.nosub: mov     [ex_code], ax
-        mov     si, runpath
-        mov     bx, s_cantopen
-        jmp     cant_msg
 .dos:   call    sel_name                ; NAME.EXT in the current directory
         jmp     run_prog
 .run:   call    sel_name
@@ -439,20 +532,25 @@ sel_name:
         mov     bx, [sel]
         call    ent_ptr
         mov     di, runpath
+        call    sb_fcb
+        mov     byte [di], 0
+        ret
+
+; the 11-byte name at SI as NAME.EXT at DI (SI kept)
+sb_fcb: push    si
         call    sb_title
+        add     si, 8
+        cmp     byte [si], ' '
+        je      .x
         mov     al, '.'
         stosb
-        add     si, 8
         mov     cx, 3
 .e:     lodsb
         cmp     al, ' '
         je      .x
         stosb
         loop    .e
-.x:     cmp     byte [di-1], '.'
-        jne     .z
-        dec     di
-.z:     mov     byte [di], 0
+.x:     pop     si
         ret
 
 ; the selected entry with its whole path in argpath
@@ -582,6 +680,187 @@ refresh:
         int     21h
         jmp     relist
 
+; AL = floppy drives (1 or 2: the kernel's A: and B:)
+ndrives:
+        int     11h
+        test    al, 1
+        jz      .one
+        shr     al, 6
+        and     al, 1                   ; (2 or more: 2)
+        inc     al
+        ret
+.one:   mov     al, 1
+        ret
+
+;  Subjects: Root, then every directory of the drive, depth first, by
+;  name, read into the directory buffer (entries) while Subject is out-
+;  lined.  Entry: depth (0 Root), NAME    EXT, date.
+sub_build:
+        mov     di, entries
+        mov     byte [di], 0
+        mov     word [di + 12], 0
+        mov     word [nsubj], 1
+        mov     word [dir_note], 0
+        xor     bx, bx                  ; BX = the subject being read
+.s:     cmp     bx, [nsubj]
+        jae     .sel
+        push    bx
+        call    sub_scan
+        pop     bx
+        inc     bx
+        jmp     .s
+.sel:   mov     ax, [nsubj]             ; the list: this subject chosen
+        mov     [nent], ax
+        xor     bx, bx
+.f:     push    bx
+        call    sub_path
+        mov     si, runpath
+        mov     di, subject
+        call    strlen
+        inc     cx
+        repe    cmpsb
+        pop     bx
+        je      .hit
+        inc     bx
+        cmp     bx, [nsubj]
+        jb      .f
+        xor     bx, bx
+.hit:   mov     [sel], bx
+        sub     bx, LIST_N - 1
+        jae     .t
+        xor     bx, bx
+.t:     mov     [top], bx
+        ret
+
+; the subjects in subject BX, by name, into the list right after it
+sub_scan:
+        call    sub_ptr
+        mov     al, [si]
+        cmp     al, 5                   ; (deeper: a path DOS can't take)
+        jae     .x
+        inc     al
+        mov     [tmp + 40], al          ; their depth
+        mov     [tmp + 41], bx          ; the first goes after BX
+        call    sub_path                ; "\PATH\*.*"
+        cmp     di, runpath + 1
+        je      .r
+        mov     al, '\'
+        stosb
+.r:     mov     si, s_all
+        call    sb_str
+        mov     byte [di], 0
+        mov     dx, runpath
+        mov     cx, 10h
+        mov     ah, 4Eh
+        int     21h
+        jc      .err
+.e:     test    byte [exec_dta + 21], 10h
+        jz      .n
+        cmp     byte [exec_dta + 30], '.'
+        je      .n
+        mov     ax, [ent_max]           ; (room: 2 for each list entry)
+        shl     ax, 1
+        cmp     [nsubj], ax
+        jae     .x
+        mov     di, tmp
+        call    dta2ent                 ; the name, FAT-style, at tmp
+        mov     bx, [tmp + 41]          ; after the ones before it by name
+.p:     inc     bx
+        cmp     bx, [nsubj]
+        jae     .ins
+        call    sub_ptr
+        mov     al, [si]
+        cmp     al, [tmp + 40]
+        jb      .ins                    ; (past this subject's ones)
+        inc     si
+        mov     di, tmp
+        call    ent_cmp
+        jb      .p
+.ins:   call    sub_ptr                 ; make room at BX
+        push    si
+        mov     ax, [nsubj]
+        push    bx
+        mov     bx, ax
+        call    sub_ptr
+        pop     bx
+        mov     cx, si
+        pop     si
+        push    si
+        sub     cx, si                  ; (bytes after it)
+        mov     di, si
+        add     si, cx
+        dec     si
+        add     di, cx
+        add     di, SUBJ - 1
+        std
+        rep     movsb
+        cld
+        pop     di
+        mov     al, [tmp + 40]
+        stosb
+        mov     si, tmp
+        mov     cx, 11
+        rep     movsb
+        mov     ax, [tmp + 24]
+        stosw
+        inc     word [nsubj]
+.n:     mov     ah, 4Fh
+        int     21h
+        jnc     .e
+        cmp     ax, 18
+        je      .x
+.err:   cmp     ax, 18                  ; (none there)
+        je      .x
+        cmp     ax, 2
+        je      .x
+        mov     [dir_note], ax
+.x:     ret
+
+; BX = subject -> SI = its entry
+sub_ptr:
+        push    ax
+        push    dx
+        mov     ax, SUBJ
+        mul     bx
+        add     ax, entries
+        mov     si, ax
+        pop     dx
+        pop     ax
+        ret
+
+; BX = subject -> runpath = "\NAME\NAME" ("\" for Root); DI at its end
+sub_path:
+        mov     di, runpath
+        mov     al, '\'
+        stosb
+        call    .emit
+        cmp     di, runpath + 1
+        je      .z
+        dec     di                      ; (no '\' at the end)
+.z:     mov     byte [di], 0
+        ret
+.emit:  push    bx                      ; BX's path's names, each with a '\'
+        call    sub_ptr
+        mov     al, [si]
+        or      al, al
+        jz      .r
+        dec     al                      ; the parent: the nearest one before
+.p:     dec     bx                      ;  it a level up
+        push    si
+        call    sub_ptr
+        cmp     [si], al
+        pop     si
+        jne     .p
+        push    si
+        call    .emit
+        pop     si
+        inc     si
+        call    sb_fcb
+        mov     al, '\'
+        stosb
+.r:     pop     bx
+        ret
+
 ; run the DOS program at runpath; afterwards a fresh list and a message
 run_prog:
         mov     si, runpath
@@ -658,23 +937,14 @@ draw_all:
         xor     bx, bx
         mov     cx, 80
         call    hline
-        mov     si, s_lbl_dev
+        mov     si, s_lbl_dev           ; Device, Subject, Title, Kind
         mov     bx, TCOL
         mov     dx, FORM_Y
         xor     ah, ah
-        call    puts
-        mov     si, s_lbl_sub
-        mov     dx, FORM_Y + 16
-        call    puts
-        mov     si, s_lbl_tit
-        mov     dx, FORM_Y + 36
-        call    puts
-        mov     si, s_lbl_kind
-        mov     dx, FORM_Y + 56
-        call    puts
-        mov     si, s_lbl_size
-        mov     dx, FORM_Y + 72
-        call    puts
+.lbl:   call    puts
+        add     dx, ITEM_H
+        cmp     dx, FORM_Y + 4 * ITEM_H
+        jb      .lbl
         call    draw_form
         mov     si, infobuf
         mov     dx, INFO_Y
@@ -708,11 +978,16 @@ dir_band:
 
 draw_prompt_default:
         mov     byte [msgshown], 0
-        mov     si, s_prompt1
+        mov     bl, [focus]
+        xor     bh, bh
+        add     bx, bx
+        mov     si, [prompts + bx]
         mov     di, s_prompt2
         jmp     ui_band
 
 draw_empty:
+        cmp     byte [focus], FOC_TIT
+        jne     .x
         cmp     word [nent], 0
         jne     .x
         mov     si, s_nofiles
@@ -723,7 +998,51 @@ draw_empty:
 ; list row (the core's LV_DRAW): AX = entry, DX = y, CL = mask
 ex_row: mov     [rowmask], cl
         mov     bx, ax
-        call    ent_ptr                 ; SI -> directory entry
+        cmp     byte [focus], FOC_DEV
+        je      .dev
+        cmp     byte [focus], FOC_SUB
+        jne     .tit
+        call    sub_ptr                 ; a subject: indented by its depth
+        mov     di, tmp
+        mov     cl, [si]
+        mov     ch, 0
+        jcxz    .root
+        add     cx, cx
+        mov     al, ' '
+        rep     stosb
+        inc     si
+        call    sb_fcb
+        dec     si
+        jmp     short .sp
+.root:  push    si
+        mov     si, s_root
+        call    sb_str
+        pop     si
+.sp:    mov     byte [di], 0
+        push    si
+        mov     si, tmp
+        mov     bx, TCOL
+        mov     ah, [rowmask]
+        call    puts
+        pop     si
+        mov     ax, [si + 12]           ; its date (Root has none)
+        or      ax, ax
+        jz      .x
+        mov     di, tmp
+        call    sb_date
+        mov     byte [di], 0
+        mov     si, tmp
+        mov     bx, 40
+        mov     ah, [rowmask]
+        jmp     puts
+.dev:   mov     si, s_dev_a             ; a drive
+        add     al, 'A'
+        mov     [s_dev_a + 7], al
+        mov     bx, TCOL
+        mov     ah, [rowmask]
+        jmp     puts
+.x:     ret
+.tit:   call    ent_ptr                 ; SI -> directory entry
         mov     di, tmp
         call    sb_title
         mov     byte [di], 0
@@ -744,9 +1063,7 @@ ex_row: mov     [rowmask], cl
         mov     ah, [rowmask]
         call    puts
         pop     si
-        ; size (files only)
-        test    byte [si+11], 10h
-        jnz     .nosz
+        ; size
         mov     di, tmp
         mov     ax, [si+28]
         mov     cx, [si+30]
@@ -760,23 +1077,23 @@ ex_row: mov     [rowmask], cl
         mov     ah, [rowmask]
         call    puts
         pop     si
-.nosz:  call    kind_of
+        call    kind_of
         call    strlen
         mov     bx, KEND
         sub     bx, cx
         mov     ah, [rowmask]
         jmp     puts
 
-; form under the list for the selected entry
+; the File form under the list: Device, Subject, Title, Kind (with the
+; size and date), the outlined item in a box
 draw_form:
-        ; clear value area (cols 12..79 of the five form rows)
-        mov     dx, FORM_Y
-        mov     cx, 88
+        mov     dx, FORM_Y - 2          ; clear the values (cols 12..79)
+        mov     cx, 4 * ITEM_H - 4
         mov     bx, 12
-        mov     bp, 67
+        mov     bp, 68
         xor     al, al
         call    fill_band
-        mov     ah, 19h
+        mov     ah, 19h                 ; Device
         int     21h
         mov     si, s_dev_a
         add     al, 'A'
@@ -785,26 +1102,36 @@ draw_form:
         mov     dx, FORM_Y
         xor     ah, ah
         call    puts
-        mov     si, subject
-        cmp     word [si], '\'
+        mov     si, subject + 1         ; Subject ("DOS.330\DEEP", or Root)
+        cmp     byte [si], 0
         jne     .sub
         mov     si, s_root
-.sub:   mov     dx, FORM_Y + 16
+.sub:   add     dx, ITEM_H
         call    puts
-        ; title box
-        mov     dx, FORM_Y + 33
+        mov     al, [focus]             ; the outline: FOC_* -> item 0..2
+        add     al, 2
+        cmp     al, 3
+        jb      .o
+        sub     al, 3
+.o:     mov     ah, ITEM_H
+        mul     ah
+        add     ax, FORM_Y - 2
+        mov     dx, ax
         mov     bx, 13
-        mov     cx, 28
+        mov     cx, 67
         call    hline
-        mov     dx, FORM_Y + 54
+        push    dx
+        add     dx, ITEM_H - 2
         call    hline
+        pop     dx
         mov     ax, 13 * 8
-        mov     dx, FORM_Y + 33
-        mov     cx, 22
+        mov     cx, ITEM_H - 1
         call    vline
-        mov     ax, 41 * 8 - 1
+        mov     ax, 80 * 8 - 1
         call    vline
-        cmp     word [nent], 0
+        cmp     byte [focus], FOC_TIT   ; Title and Kind: the chosen title's
+        jne     .x                      ;  (none while another item is
+        cmp     word [nent], 0          ;  outlined)
         je      .x
         mov     bx, [sel]
         call    ent_ptr
@@ -814,40 +1141,31 @@ draw_form:
         push    si
         mov     si, tmp
         mov     bx, 14
-        mov     dx, FORM_Y + 36
+        mov     dx, FORM_Y + 2 * ITEM_H
         xor     ah, ah
         call    puts
         pop     si
+        push    si
         call    kind_of
-        mov     bx, 14
-        mov     dx, FORM_Y + 56
+        mov     dx, FORM_Y + 3 * ITEM_H
         xor     ah, ah
         call    puts
-        mov     bx, [sel]
-        call    ent_ptr
-        mov     di, tmp
-        test    byte [si+11], 10h
-        jnz     .dir
+        pop     si
+        mov     di, tmp                 ; 1234 bytes   dated 4-Oct-26
         mov     ax, [si+28]
         mov     cx, [si+30]
         call    sb_u32
         push    si
         mov     si, s_bytes
         call    sb_str
-        pop     si
-        push    si
         mov     si, s_dated
-        jmp     .dt
-.dir:   push    si
-        mov     si, s_dated + 3
-.dt:    call    sb_str
+        call    sb_str
         pop     si
         mov     ax, [si+24]
         call    sb_date
         mov     byte [di], 0
         mov     si, tmp
-        mov     bx, 14
-        mov     dx, FORM_Y + 72
+        mov     bx, 30
         xor     ah, ah
         call    puts
 .x:     ret
@@ -952,6 +1270,7 @@ build_info:
 ex_keys:
         KEY(K_NONE,      0,          h_choose)
         KEY(K_NONE,      0,          h_home)
+        KEY(K_NONE,      0,          h_tab)
         KEY(K_NONE,      0,          h_letter)
         KEY(K_NONE,      0,          h_mouse)
         KEY(K_ENTER,     confirm,    h_confirm)
@@ -962,25 +1281,22 @@ ex_keys:
         KEY(K_CODE_A,    run_claude, h_claude)
         KEY(K_CODE_C,    run_shell,  h_shell)
         KEY(K_F5,        refresh,    h_f5)
-        KEY(K_CODE_D,    boot_rom,   h_dos)
-        KEY(K_CODE_R,    reboot,     h_restart)
         KEY(K_NONE,      0,          h_saver)
         KEY(K_NONE,      0,          h_code)
         dw 0
 
-h_choose    db 'Up / Down, PgUp / PgDn   choose a file',0
+h_choose    db 'Up / Down, PgUp / PgDn   choose',0
 h_home      db 'Home / End               first / last',0
+h_tab       db 'Tab / Shift-Tab          Device, Subject, Title',0
 h_letter    db 'A letter                 the next name with it',0
 h_mouse     db 'Mouse                    point and click',0
-h_confirm   db 'Return or click again    run it / open it',0
+h_confirm   db 'Return or click again    open it / next item',0
 h_help      db 'CODE-?  or  F1           this help',0
 h_usage     db 'CODE-U                   Usage: the System program',0
 h_write     db 'CODE-W                   Write: a new text file',0
 h_claude    db 'CODE-A                   Claude',0
 h_shell     db 'CODE-C                   command prompt',0
 h_f5        db 'F5                       after a disk swap',0
-h_dos       db 'CODE-D                   boot GRiD MS-DOS',0
-h_restart   db 'CODE-R                   restart',0
 h_saver     db '5 minutes idle           screen saver',0
 h_code      db 'CODE is the Alt key.  Any key closes.',0
 
@@ -989,7 +1305,10 @@ h_code      db 'CODE is the Alt key.  Any key closes.',0
 ; ---------------------------------------------------------------------
 s_brand     db 'Grid-OS 0.3',0
 s_hlptitle  db 'Grid-OS 0.3 Help',0
+prompts     dw s_prompt1, s_prdev, s_prsub
 s_prompt1   db 'Select a file and confirm',0
+s_prdev     db 'Device: Select item and confirm',0
+s_prsub     db 'Subject: Select item and confirm',0
 s_prompt2   db 'Or press CODE-? for help',0
 s_sp2       db '  ',0
 s_empty     db 0
@@ -998,14 +1317,13 @@ s_lbl_dev   db 'Device',0
 s_lbl_sub   db 'Subject',0
 s_lbl_tit   db 'Title',0
 s_lbl_kind  db 'Kind',0
-s_lbl_size  db 'Size',0
 s_dev_a     db 'Floppy A:',0
+s_drvlet    db 'AB'                 ; (type-to-find in Device)
 s_root      db 'Root',0
 s_bytes     db ' bytes',0
 s_dated     db '   dated ',0
 s_nohires   db 'Grid-OS needs the GRiD 640x400 panel (BIOS mode 40h).',13,10
             db 'Press a key to restart.',13,10,0
-s_bootrom   db 'Grid-OS: booting from the EPROM...',13,10,0
 s_cpu       db '80286',0
 s_fpu       db '+80287',0
 s_gap       db '   ',0
@@ -1036,7 +1354,6 @@ s_cantdir   db "Can't read the disk: ", 0
 s_first     db 'Only the first ', 0
 s_listed    db ' are listed', 0
 s_colon     db ': ', 0
-k_subject   db 'Subject',0
 k_file      db 'File',0
 k_run       db 'Run',0
 k_program   db 'Program',0
