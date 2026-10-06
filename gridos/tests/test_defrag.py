@@ -256,8 +256,8 @@ def t_saver():
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     def idle(k, secs_left=1):
         t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
-        k.pc.wr(0x60, k.Y['lastact'], struct.pack('<H', (t - 5462 + int(secs_left * 18.2)) & 0xFFFF))
-    k.key(ktest.DOWN); sel = k.pc.u16(0x60, k.Y['sel'])
+        k.wr('lastact', struct.pack('<H', (t - 5462 + int(secs_left * 18.2)) & 0xFFFF))
+    k.key(ktest.DOWN); sel = k.u16('sel')
     k.pc.run_for(250)
     check('no screen saver before 5 minutes', any('Select a file' in l for l in k.band()), k.band())
     idle(k)
@@ -274,8 +274,8 @@ def t_saver():
     d2 = dark(k)
     check('... which moves every 20 s', d1 and d2 and d1 != d2, (d1, d2))
     k.key(ktest.DOWN)
-    check('a key wakes it, and does nothing else', any('Select a file' in l for l in k.band()) and k.pc.u16(0x60, k.Y['sel']) == sel,
-          (k.band(), sel, k.pc.u16(0x60, k.Y['sel'])))
+    check('a key wakes it, and does nothing else', any('Select a file' in l for l in k.band()) and k.u16('sel') == sel,
+          (k.band(), sel, k.u16('sel')))
     # again: the disk is in order now, so DEFRAG says so and leaves; the
     # mouse wakes the dark screen
     idle(k)

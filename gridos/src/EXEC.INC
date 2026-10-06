@@ -1,152 +1,116 @@
 ; =====================================================================
-;  EXEC.INC - the Executive (Grid-OS 0.1's screen, now running programs)
+;  EXEC.INC - the Executive: the root process, on the UI core.  It uses
+;  the kernel through INT 21h like any program: find first/next for the
+;  list, CHDIR for subjects, EXEC for DOS programs; .RUN programs go
+;  through the core's loader.
 ; =====================================================================
-%include "EXECRUN.INC"
+LIST_Y  equ 24          ; first list row (pixels)
+LIST_N  equ 13          ; visible list rows
+RULE2   equ 237
+FORM_Y  equ 244
+INFO_Y  equ 336
+TCOL    equ 3           ; title column
+KEND    equ 77          ; kind column end (exclusive)
+MAXENT  equ 240
 
-; ---------------------------------------------------------------------
-main:   cmp     byte [mflag], 0
-        je      .nomouse
-        call    act_now
-        call    mouse_event
-.nomouse:
-        mov     ah, 1
-        int     16h
-        jz      .nokey
-        call    act_now
+section uibss
+exec_dta    resb 44
+entlist     resw MAXENT         ; -> entries (FAT layout), at the end of the
+                                ;  UI segment's BSS (GRIDOS.ASM)
+runpath     resb 80
+argpath     resb 84                 ; X:\ + a 66-char subject + \ + NAME.EXT
+dir_note    resw 1              ; load_dir: 0, a DOS error, or FFFFh (too many)
+last_sel    resw 1              ; relist: the selection before an empty list
+last_top    resw 1
+subject     resb 70
+ex_code     resw 1
+rowmask     resb 1
+panel       resb 1
+convkb      resw 1
+emskb       resw 1
+extkb       resw 1
+equip       resw 1
+biosdate    resb 8
+kindbuf     resb 4
+msgbuf      resb 128
+infobuf     resb 128
+section ui
+
+; the file list (UI_LV* layout); nent, sel and top are read by the tests
+ex_list:    dw LIST_Y, LIST_N
+nent        dw 0
+sel         dw 0
+top         dw 0
+            dw ex_row, draw_form, 1, 78, ex_lvname
+msgshown    db 0
+
+ex_start:
+        mov     dx, exec_dta
+        mov     ah, 1Ah
+        int     21h
+        call    sysinfo
+        call    build_info
+        call    hires
+        jnc     .hi
+        mov     si, s_nohires
+        call    bios_print
         xor     ah, ah
         int     16h
-        call    key
-        jmp     main
-.nokey: push    ds
-        xor     ax, ax
-        mov     ds, ax
-        mov     ax, [46Ch]
-        pop     ds
-        mov     bx, ax                  ; idle 5 minutes: the screen saver
-        sub     bx, [lastact]
-        cmp     bx, 8000h               ; (the clock went back at midnight)
-        jb      .sv
-        mov     [lastact], ax
-        jmp     .ck
-.sv:    cmp     bx, SAVER_T
-        jb      .ck
-        call    saver
-        jmp     main
-.ck:    mov     bx, ax
-        sub     bx, [lasttick]
-        cmp     bx, 9                   ; ~0.5 s
-        jb      .idle
-        mov     [lasttick], ax
-        call    clock_tick
-.idle:  sti
-        hlt                             ; sleep until the next interrupt
-        jmp     main
+        jmp     reboot
+.hi:    mov     word [redraw_fn], relist
+        mov     byte [msgshown], 0
+        call    load_dir
+        call    draw_all
 
-; =====================================================================
-; keyboard
-; =====================================================================
-key:    cmp     byte [helpopen], 0
-        je      .nohelp
-        jmp     close_help
-.nohelp:
-        cmp     byte [msgshown], 0
-        je      .nomsg
+; ---------------------------------------------------------------------
+ex_loop:
+        push    word [ent_max]
+        call    ui_room                 ; (after programs: room for .RUNs)
+        pop     ax
+        cmp     ax, [ent_max]
+        je      .ev
+        mov     al, [msgshown]
+        push    ax
+        call    relist                  ; (it moved: the whole list again)
+        pop     ax
+        or      al, al                  ; ("TSR.COM ended" was in the band:
+        jz      .ev                     ;  relist drew the usual prompt)
+        call    show_msg
+.ev:    call    ui_event
+        cmp     byte [msgshown], 0      ; a message waits for the next key
+        je      .k
         mov     byte [msgshown], 0
         push    ax
-        call    hide_cursor
         call    draw_prompt_default
-        call    show_cursor
         pop     ax
-        cmp     al, 0Dh
-        jne     .nomsg
-        ret
-.nomsg: cmp     ah, 48h
-        je      .up
-        cmp     ah, 50h
-        je      .down
-        cmp     ah, 49h
-        je      .pgup
-        cmp     ah, 51h
-        je      .pgdn
-        cmp     ah, 47h
-        je      .home
-        cmp     ah, 4Fh
-        je      .end
-        cmp     al, 0Dh
-        je      confirm
-        cmp     ah, 3Bh                 ; F1
-        je      open_help
-        or      al, al
-        jnz     .x
-        cmp     ah, 35h                 ; CODE-/ or CODE-?
-        je      open_help
-        cmp     ah, 20h                 ; CODE-D
-        je      boot_rom
-        cmp     ah, 13h                 ; CODE-R
-        je      reboot
-        cmp     ah, 2Eh                 ; CODE-C
-        je      run_shell
-        cmp     ah, 1Eh                 ; CODE-A
-        je      run_claude
-        cmp     ah, 3Fh                 ; F5
-        je      refresh
-.x:     ret
-.up:    mov     ax, -1
-        jmp     sel_move
-.down:  mov     ax, 1
-        jmp     sel_move
-.pgup:  mov     ax, -LIST_N
-        jmp     sel_move
-.pgdn:  mov     ax, LIST_N
-        jmp     sel_move
-.home:  mov     ax, -30000
-        jmp     sel_move
-.end:   mov     ax, 30000
-        jmp     sel_move
+        cmp     ax, K_ENTER             ; (Return or a click only clears it)
+        je      ex_loop
+        cmp     ax, EV_CLICK
+        je      ex_loop
+.k:     cmp     ax, EV_CLICK
+        je      .click
+        mov     bx, ex_list
+        call    lv_key
+        jnc     ex_loop
+        mov     si, ex_keys
+        call    ui_dispatch
+        jmp     ex_loop
+.click: cmp     cx, BAND_Y              ; the prompt band: help
+        jb      .list
+        call    ex_help
+        jmp     ex_loop
+.list:  mov     bx, ex_list
+        call    lv_click
+        jc      ex_loop
+        cmp     al, 1                   ; the selected file again: confirm
+        jne     ex_loop
+        call    confirm
+        jmp     ex_loop
 
-; AX = signed delta
-sel_move:
-        mov     cx, [nent]
-        jcxz    .x
-        mov     bx, [sel]
-        add     ax, bx
-        jns     .p
-        xor     ax, ax
-.p:     cmp     ax, cx
-        jb      .in
-        mov     ax, cx
-        dec     ax
-.in:    cmp     ax, bx
-        je      .x
-        jmp     select_ax
-.x:     ret
-
-; select entry AX (redraws what changed)
-select_ax:
-        mov     bx, [sel]
-        mov     [sel], ax
-        mov     cx, [top]
-        cmp     ax, cx
-        jb      .scroll_up
-        add     cx, LIST_N
-        cmp     ax, cx
-        jae     .scroll_dn
-        call    hide_cursor
-        mov     ax, bx
-        call    draw_row
-        mov     ax, [sel]
-        call    draw_row
-        jmp     .form
-.scroll_up:
-        mov     [top], ax
-        jmp     .full
-.scroll_dn:
-        sub     ax, LIST_N - 1
-        mov     [top], ax
-.full:  call    hide_cursor
-        call    draw_list
-.form:  call    draw_form
-        jmp     show_cursor
+ex_help:
+        mov     si, ex_keys
+        mov     di, s_hlptitle
+        jmp     ui_help
 
 boot_rom:
         call    mouse_off
@@ -162,697 +126,534 @@ reboot: call    mouse_off
         mov     word [472h], 1234h      ; warm boot
         jmp     0F000h:0FFF0h
 
-; =====================================================================
-; mouse (Microsoft serial protocol, 1200 7N1) - COM2 first, then COM1
-; =====================================================================
-mouse_init:
-        mov     word [mbase], 2F8h
-        mov     byte [mirq], 3
-        call    mouse_probe
-        jnc     .found
-        mov     word [mbase], 3F8h
-        mov     byte [mirq], 4
-        call    mouse_probe
-        jnc     .found
-        mov     word [mbase], 0
-        ret
-.found: mov     ax, [mbase]
-        mov     [mfound], ax
-mouse_hook:
-        cli
-        xor     ax, ax
-        mov     es, ax
-        mov     bl, [mirq]
-        xor     bh, bh
-        add     bx, 8
-        shl     bx, 2                   ; IVT slot of IRQ3/4 (INT 0Bh/0Ch)
-        mov     ax, [es:bx]
-        mov     [oldvec], ax
-        mov     ax, [es:bx+2]
-        mov     [oldvec+2], ax
-        mov     word [es:bx], mouse_isr
-        mov     [es:bx+2], cs
-        mov     [vecslot], bx
-        mov     dx, [mbase]
-        inc     dx
-        mov     al, 1                   ; IER: received-data interrupt
-        out     dx, al
-        add     dx, 3
-        mov     al, 0Bh                 ; MCR: DTR + RTS + OUT2 (IRQ gate)
-        out     dx, al
-        mov     cl, [mirq]
-        mov     ah, 1
-        shl     ah, cl
-        not     ah
-        in      al, 21h
-        and     al, ah
-        out     21h, al
-        mov     dx, [mbase]
-        in      al, dx                  ; clear any pending byte
-        sti
-        push    cs
-        pop     es
-        ret
-
-; CF clear if a Microsoft mouse answers 'M' at [mbase]
-mouse_probe:
-        mov     dx, [mbase]
-        add     dx, 7
-        mov     al, 5Ah
-        out     dx, al
-        jmp     short $+2
-        in      al, dx
-        cmp     al, 5Ah
-        jne     .no
-        mov     dx, [mbase]
-        inc     dx
-        xor     al, al
-        out     dx, al                  ; IER off
-        add     dx, 2
-        mov     al, 80h
-        out     dx, al                  ; DLAB
-        mov     dx, [mbase]
-        mov     al, 96                  ; 1200 baud
-        out     dx, al
-        inc     dx
-        xor     al, al
-        out     dx, al
-        add     dx, 2
-        mov     al, 02h                 ; 7N1
-        out     dx, al
-        inc     dx
-        xor     al, al
-        out     dx, al                  ; DTR/RTS off: mouse powers down
-        mov     cx, 3
-        call    wait_ticks
-        call    uart_drain
-        mov     dx, [mbase]
-        add     dx, 4
-        mov     al, 03h
-        out     dx, al                  ; DTR/RTS on: mouse sends 'M'
-        call    tick
-        mov     si, ax
-.poll:  mov     dx, [mbase]
-        add     dx, 5
-        in      al, dx
-        test    al, 1
-        jz      .t
-        mov     dx, [mbase]
-        in      al, dx
-        cmp     al, 'M'
-        je      .yes
-.t:     call    tick
-        sub     ax, si
-        cmp     ax, 6
-        jb      .poll
-.no:    stc
-        ret
-.yes:   clc
-        ret
-
-uart_drain:
-        mov     cx, 16
-.d:     mov     dx, [mbase]
-        add     dx, 5
-        in      al, dx
-        test    al, 1
+bios_print:
+        lodsb
+        or      al, al
         jz      .x
-        mov     dx, [mbase]
-        in      al, dx
-        loop    .d
+        mov     ah, 0Eh
+        mov     bx, 7
+        int     10h
+        jmp     bios_print
 .x:     ret
 
-mouse_off:
-        cmp     word [mbase], 0
-        je      .x
-        cli
-        mov     dx, [mbase]
-        inc     dx
-        xor     al, al
-        out     dx, al
-        add     dx, 3
-        out     dx, al
-        mov     cl, [mirq]
-        mov     ah, 1
-        shl     ah, cl
-        in      al, 21h
-        or      al, ah
-        out     21h, al
-        xor     ax, ax
-        mov     es, ax
-        mov     bx, [vecslot]
-        mov     ax, [oldvec]
-        mov     [es:bx], ax
-        mov     ax, [oldvec+2]
-        mov     [es:bx+2], ax
-        mov     word [mbase], 0
-        sti
+; ---------------------------------------------------------------------
+;  the directory
+; ---------------------------------------------------------------------
+; the current directory into entries/entlist, sorted
+load_dir:
+        mov     word [nent], 0
+        mov     word [sel], 0
+        mov     word [top], 0
+        mov     word [dir_note], 0
+        mov     dx, s_all
+        mov     cx, 10h                 ; subdirectories too
+        mov     ah, 4Eh
+        int     21h
+        jc      .first
+        mov     di, entries
+.e:     mov     ax, [nent]
+        cmp     ax, [ent_max]           ; (fewer if the UI block couldn't
+        jae     .full                   ;  have all its memory back)
+        cmp     word [exec_dta+30], '.'  ; "." (but keep "..")
+        je      .next
+        push    di
+        call    dta2ent
+        pop     di
+        mov     bx, [nent]
+        shl     bx, 1
+        mov     [entlist+bx], di
+        inc     word [nent]
+        add     di, 32
+.next:  mov     ah, 4Fh
+        int     21h
+        jnc     .e
+        cmp     ax, 18                  ; no more files: the end
+        je      .done
+        jmp     .err
+.first: cmp     ax, 18                  ; nothing there
+        je      .done
+        cmp     ax, 2
+        je      .done
+.err:   mov     [dir_note], ax          ; a disk error: said in the band
+        jmp     .done
+.full:  mov     word [dir_note], 0FFFFh ; more than fit: said in the band
+.done:  call    sort_dir
+        ; the subject: the current directory
+        mov     byte [subject], '\'
+        mov     si, subject + 1
+        xor     dl, dl
+        mov     ah, 47h
+        int     21h
+        jnc     .x
+        mov     byte [subject + 1], 0
 .x:     ret
 
-mouse_isr:
+; the list again, keeping the place in it (the core's redraw routine:
+; after the screen saver, DEFRAG or a program the disk may differ)
+relist: mov     ax, [sel]
+        mov     bx, [top]
+        cmp     word [nent], 0          ; (an empty list, e.g. while the
+        jne     .keep                   ;  directory's memory was lent: the
+        mov     ax, [last_sel]          ;  selection from before it)
+        mov     bx, [last_top]
+.keep:  mov     [last_sel], ax
+        mov     [last_top], bx
         push    ax
         push    bx
-        push    dx
-.rd:    mov     dx, [cs:mbase]
-        add     dx, 5
-        in      al, dx
-        test    al, 1
-        jz      .done
-        mov     dx, [cs:mbase]
-        in      al, dx
-        test    al, 40h                 ; first byte of a packet
-        jz      .nf
-        mov     byte [cs:midx], 0
-.nf:    mov     bl, [cs:midx]
-        cmp     bl, 3
-        jae     .rd
-        xor     bh, bh
-        mov     [cs:mpkt+bx], al
-        inc     bl
-        mov     [cs:midx], bl
-        cmp     bl, 3
-        jne     .rd
-        cmp     byte [cs:mpkt], 40h     ; packet must start with a sync byte
-        jb      .rd
-        mov     al, [cs:mpkt]           ; dx = (b0 & 3) << 6 | b1
-        mov     ah, al
-        and     al, 3
-        shl     al, 6
-        or      al, [cs:mpkt+1]
-        cbw
-        add     ax, [cs:mx]
-        jns     .x1
-        xor     ax, ax
-.x1:    cmp     ax, 639
-        jbe     .x2
-        mov     ax, 639
-.x2:    mov     [cs:mx], ax
-        mov     al, [cs:mpkt]           ; dy = (b0 & 0Ch) << 4 | b2
-        and     al, 0Ch
-        shl     al, 4
-        or      al, [cs:mpkt+2]
-        cbw
-        add     ax, [cs:my]
-        jns     .y1
-        xor     ax, ax
-.y1:    cmp     ax, 399
-        jbe     .y2
-        mov     ax, 399
-.y2:    mov     [cs:my], ax
-        mov     al, [cs:mpkt]           ; buttons: 20h left, 10h right
-        xor     bl, bl
-        test    al, 20h
-        jz      .b1
-        or      bl, 1
-.b1:    test    al, 10h
-        jz      .b2
-        or      bl, 2
-.b2:    mov     [cs:mb], bl
-        mov     byte [cs:mflag], 1
-        jmp     .rd
-.done:  mov     al, 20h
-        out     20h, al
-        pop     dx
-        pop     bx
+        call    load_dir
         pop     ax
-        iret
+        pop     bx
+        cmp     bx, [nent]
+        jae     .r
+        mov     [sel], bx
+        cmp     ax, bx
+        ja      .r
+        mov     [top], ax
+.r:     jmp     draw_all
 
-; main-loop side of the mouse: move the cursor, handle clicks
-mouse_event:
-        cli
-        mov     byte [mflag], 0
-        mov     ax, [mx]
-        mov     bx, [my]
-        mov     cl, [mb]
-        sti
-        cmp     ax, [cur_x]
-        jne     .mv
-        cmp     bx, [cur_y]
-        je      .btn
-.mv:    push    cx
-        cli
-        mov     ax, [mx]                ; freshest position
-        mov     bx, [my]
-        sti
-        call    move_cursor             ; flicker-free: never erased first
-        pop     cx
-.btn:   mov     ch, [oldmb]
-        mov     [oldmb], cl
-        test    cl, 1
-        jz      .x
-        test    ch, 1
-        jnz     .x                      ; only on press
-        ; click
-        cmp     byte [helpopen], 0
-        je      .nh
-        jmp     close_help
-.nh:    cmp     byte [msgshown], 0
-        je      .nm
-        mov     byte [msgshown], 0
-        call    hide_cursor
-        call    draw_prompt_default
-        call    show_cursor
+; exec_dta -> FAT-style entry at DI (name, attribute, time, date, size)
+dta2ent:
+        push    di
+        mov     cx, 11
+        mov     al, ' '
+        rep     stosb
+        pop     di
+        mov     si, exec_dta + 30
+        mov     bx, di
+        cmp     byte [si], '.'
+        jne     .n
+        movsb                           ; ".."
+        movsb
+        jmp     .rest
+.n:     mov     cx, 8
+.nl:    lodsb
+        or      al, al
+        jz      .rest
+        cmp     al, '.'
+        je      .ext
+        stosb
+        loop    .nl
+.sk:    lodsb                           ; (longer than 8: skip to '.')
+        or      al, al
+        jz      .rest
+        cmp     al, '.'
+        jne     .sk
+.ext:   lea     di, [bx+8]
+        mov     cx, 3
+.el:    lodsb
+        or      al, al
+        jz      .rest
+        stosb
+        loop    .el
+.rest:  mov     al, [exec_dta+21]
+        mov     [bx+11], al
+        mov     ax, [exec_dta+22]
+        mov     [bx+22], ax
+        mov     ax, [exec_dta+24]
+        mov     [bx+24], ax
+        mov     ax, [exec_dta+26]
+        mov     [bx+28], ax
+        mov     ax, [exec_dta+28]
+        mov     [bx+30], ax
         ret
-.nm:    mov     ax, [my]
-        cmp     ax, BAND_Y
-        jb      .notband
-        jmp     open_help               ; click the prompt band = help
-.notband:
-        sub     ax, LIST_Y
-        jb      .x
-        shr     ax, 4
-        cmp     ax, LIST_N
-        jae     .x
-        add     ax, [top]
-        cmp     ax, [nent]
-        jae     .x
-        cmp     ax, [sel]
-        je      confirm                 ; click the selected file = confirm
-        jmp     select_ax
-.x:     ret
 
-; arrow cursor: 13 rows of (shape, spare); drawn by inverting the shape
-cur_shape:
-        db 10000000b, 00000000b
-        db 11000000b, 00000000b
-        db 11100000b, 01000000b
-        db 11110000b, 01100000b
-        db 11111000b, 01110000b
-        db 11111100b, 01111000b
-        db 11111110b, 01111100b
-        db 11111111b, 01111110b
-        db 11111111b, 01110000b
-        db 11111000b, 01010000b
-        db 11011100b, 00001000b
-        db 10011100b, 00001000b
-        db 00001100b, 00000000b
-
-show_cursor:
-        cmp     word [mbase], 0
-        je      .x
-        cmp     byte [curvis], 0
-        jne     .x
-        pusha
-        push    es
-        push    cs
-        pop     es
-        mov     ax, [mx]
-        mov     bx, [my]
-        mov     [cnew_x], ax
-        mov     [cnew_y], bx
-        shr     ax, 3
-        mov     [cnew_xb], ax
-        call    move_cursor.rect
-        mov     byte [cflags], 2
-        call    compose
-        mov     si, new_save
-        mov     di, cur_save
-        mov     cx, 26
-        rep     movsb
-        mov     ax, [cnew_x]
-        mov     [cur_x], ax
-        mov     ax, [cnew_y]
-        mov     [cur_y], ax
-        mov     ax, [cnew_xb]
-        mov     [cur_xb], ax
-        mov     byte [curvis], 1
-        pop     es
-        popa
-.x:     ret
-
-; move_cursor: AX = new x, BX = new y.  The old and new cursor areas are
-; composed in RAM and every screen byte is written once, so there is no
-; moment without a cursor (the old erase-then-draw flickered on the plasma).
-move_cursor:
-        cmp     byte [curvis], 0
-        jne     .vis
-        jmp     show_cursor
-.vis:   pusha
-        push    es
-        push    cs
-        pop     es
-        mov     [cnew_x], ax
-        mov     [cnew_y], bx
-        shr     ax, 3
-        mov     [cnew_xb], ax
-        sub     ax, [cur_xb]            ; overlapping areas?
-        jns     .a1
-        neg     ax
-.a1:    cmp     ax, 2
-        jae     .disj
-        mov     ax, bx
-        sub     ax, [cur_y]
-        jns     .a2
-        neg     ax
-.a2:    cmp     ax, 13
-        jae     .disj
-        mov     ax, [cnew_xb]           ; union of both areas
-        mov     dx, [cur_xb]
-        cmp     ax, dx
-        jbe     .u1
-        xchg    ax, dx
-.u1:    mov     [ux0], ax
-        sub     dx, ax
-        add     dx, 2
-        mov     cx, 80
-        sub     cx, ax
-        cmp     dx, cx
-        jbe     .u2
-        mov     dx, cx
-.u2:    mov     [uw], dx
-        mov     ax, [cnew_y]
-        mov     dx, [cur_y]
-        cmp     ax, dx
-        jbe     .u3
-        xchg    ax, dx
-.u3:    mov     [uy0], ax
-        sub     dx, ax
-        add     dx, 13
-        mov     cx, 400
-        sub     cx, ax
-        cmp     dx, cx
-        jbe     .u4
-        mov     dx, cx
-.u4:    mov     [uh], dx
-        mov     byte [cflags], 3
-        call    compose
-        jmp     .done
-.disj:  mov     ax, [cnew_xb]           ; far apart: draw new, then erase old
-        mov     bx, [cnew_y]
-        call    .rect
-        mov     byte [cflags], 2
-        call    compose
-        mov     ax, [cur_xb]
-        mov     bx, [cur_y]
-        call    .rect
-        mov     byte [cflags], 1
-        call    compose
-.done:  mov     si, new_save
-        mov     di, cur_save
-        mov     cx, 26
-        rep     movsb
-        mov     ax, [cnew_x]
-        mov     [cur_x], ax
-        mov     ax, [cnew_y]
-        mov     [cur_y], ax
-        mov     ax, [cnew_xb]
-        mov     [cur_xb], ax
-        pop     es
-        popa
-        ret
-.rect:  mov     [ux0], ax               ; AX = byte col, BX = y
-        mov     cx, 80
-        sub     cx, ax
+; insertion sort of entlist: "..", then subjects, then files, by name
+sort_dir:
+        mov     cx, [nent]
         cmp     cx, 2
-        jbe     .w
-        mov     cx, 2
-.w:     mov     [uw], cx
-        mov     [uy0], bx
-        mov     cx, 400
-        sub     cx, bx
-        cmp     cx, 13
-        jbe     .h
-        mov     cx, 13
-.h:     mov     [uh], cx
+        jb      .x
+        mov     bx, 2                   ; byte index i
+.i:     mov     dx, [entlist+bx]        ; key
+        mov     bp, bx
+.j:     or      bp, bp
+        jz      .put
+        mov     si, [entlist+bp-2]
+        mov     di, dx
+        call    ent_cmp
+        jbe     .put                    ; prev <= key
+        mov     ax, [entlist+bp-2]
+        mov     [entlist+bp], ax
+        sub     bp, 2
+        jmp     .j
+.put:   mov     [entlist+bp], dx
+        add     bx, 2
+        mov     ax, [nent]
+        shl     ax, 1
+        cmp     bx, ax
+        jb      .i
+.x:     ret
+
+; compare entries SI and DI: flags as for SI - DI
+ent_cmp:
+        push    cx
+        push    si
+        push    di
+        call    .rank
+        mov     ah, al
+        xchg    si, di
+        call    .rank
+        xchg    si, di
+        cmp     ah, al
+        jne     .x
+        mov     cx, 11
+        repe    cmpsb
+.x:     pop     di
+        pop     si
+        pop     cx
+        ret
+.rank:  mov     al, 0
+        cmp     word [si], '..'
+        je      .r
+        mov     al, 1
+        test    byte [si+11], 10h
+        jnz     .r
+        mov     al, 2
+.r:     ret
+
+ent_ptr:                                ; BX = index -> SI = entry
+        push    bx
+        shl     bx, 1
+        mov     si, [entlist+bx]
+        pop     bx
         ret
 
-; compose the area (ux0, uy0, uw, uh) in ubuf:  cflags bit 0 = restore the
-; old cursor's background, bit 1 = save under and draw the new cursor
-compose:
-        pusha
+ex_lvname:                                ; (type-to-find) AX = item -> SI
+        mov     bx, ax
+        jmp     ent_ptr
+
+; append the entry's title (name without trailing spaces) at DI
+sb_title:
+        push    si
+        mov     cx, 8
+.c:     lodsb
+        cmp     al, ' '
+        je      .x
+        stosb
+        loop    .c
+.x:     pop     si
+        ret
+
+; SI = entry -> SI = kind string, AL = what opens it (0 nothing, 1 it's a
+; DOS program, 2 a .RUN, 3 Write).  (Entry pointer lost; callers re-fetch.)
+kind_of:
+        test    byte [si+11], 10h
+        jz      .file
+        mov     si, k_subject
+        xor     al, al
+        ret
+.file:  push    dx
+        push    bx
+        mov     ax, [si+8]
+        mov     dl, [si+10]
+        mov     bx, kinds
+.k:     cmp     byte [bx], 0
+        je      .raw
+        cmp     ax, [bx]
+        jne     .n
+        cmp     dl, [bx+2]
+        jne     .n
+        mov     si, [bx+3]
+        mov     al, [bx+5]
+        jmp     .x
+.n:     add     bx, 6
+        jmp     .k
+.raw:   mov     si, kindbuf             ; unknown extension: show it
+        mov     [si], ax
+        mov     [si+2], dl
+        mov     byte [si+3], 0
+        cmp     byte [si+2], ' '        ; (a shorter one: no trailing spaces)
+        jne     .r1
+        mov     byte [si+2], 0
+        cmp     byte [si+1], ' '
+        jne     .r1
+        mov     byte [si+1], 0
+.r1:    xor     al, al
+        cmp     byte [si], ' '
+        jne     .x
+        mov     si, k_file
+.x:     pop     bx
+        pop     dx
+        ret
+
+; ---------------------------------------------------------------------
+;  confirming: Return or a second click on the selected entry
+; ---------------------------------------------------------------------
+confirm:
+        cmp     word [nent], 0
+        je      .x
+        mov     bx, [sel]
+        call    ent_ptr
+        test    byte [si+11], 10h
+        jnz     .subject
+        call    kind_of
+        cmp     al, 1
+        je      .dos
+        cmp     al, 2
+        je      .run
+        cmp     al, 3
+        je      .write
+        mov     di, msgbuf              ; nothing opens it: say so
+        mov     bx, [sel]
+        call    ent_ptr
+        call    sb_title
+        mov     si, s_sp2
+        call    sb_str
+        mov     bx, [sel]
+        call    ent_ptr
+        call    kind_of
+        call    sb_str
+        mov     si, s_noopen
+        call    sb_str
+        mov     byte [di], 0
+        jmp     show_msg
+.subject:
+        call    sel_name                ; CHDIR into it (by NAME.EXT: a
+        mov     dx, runpath             ;  subject can have an extension)
+        mov     ah, 3Bh
+        int     21h
+        jc      .nosub
+        call    load_dir
+        mov     bx, ex_list
+        call    lv_draw
+        call    draw_empty
+        call    draw_form
+        jmp     dir_band
+.nosub: mov     [ex_code], ax
+        mov     si, runpath
+        mov     bx, s_cantopen
+        jmp     cant_msg
+.dos:   call    sel_name                ; NAME.EXT in the current directory
+        jmp     run_prog
+.run:   call    sel_name
+        mov     si, runpath
+        mov     di, s_empty
+        jmp     run_run
+.write: call    sel_path                ; X:\SUBJECT\NAME.EXT for Write
+        mov     di, argpath
+        mov     si, s_write
+        jmp     run_named
+.x:     ret
+
+; the selected entry as NAME.EXT in runpath
+sel_name:
+        mov     bx, [sel]
+        call    ent_ptr
+        mov     di, runpath
+        call    sb_title
+        mov     al, '.'
+        stosb
+        add     si, 8
+        mov     cx, 3
+.e:     lodsb
+        cmp     al, ' '
+        je      .x
+        stosb
+        loop    .e
+.x:     cmp     byte [di-1], '.'
+        jne     .z
+        dec     di
+.z:     mov     byte [di], 0
+        ret
+
+; the selected entry with its whole path in argpath
+sel_path:
+        call    sel_name
+        mov     di, argpath
+        mov     ah, 19h
+        int     21h
+        add     al, 'A'
+        stosb
+        mov     ax, ':\'
+        stosw
+        mov     si, subject + 1
+        cmp     byte [si], 0
+        je      .n
+        call    sb_str
+        mov     al, '\'
+        stosb
+.n:     mov     si, runpath
+        call    sb_str
+        mov     byte [di], 0
+        ret
+
+; CODE-C: the command shell from COMSPEC
+run_shell:
         push    es
-        push    VSEG
-        pop     es
-        xor     bp, bp                  ; 1. screen -> ubuf
-.r1:    cmp     bp, [uh]
-        jae     .r1d
-        mov     bx, [uy0]
-        add     bx, bp
-        shl     bx, 1
-        mov     si, [rowtab+bx]
-        add     si, [ux0]
-        mov     di, bp
-        shl     di, 2
-        add     di, ubuf
-        mov     cx, [uw]
-.c1:    mov     al, [es:si]
+        mov     ah, 62h                 ; our PSP (the root's)
+        int     21h
+        mov     es, bx
+        mov     es, [es:2Ch]
+        xor     di, di
+.v:     cmp     byte [es:di], 0
+        je      .def
+        mov     si, s_comspec
+        push    di
+        mov     cx, 8
+        repe    cmpsb
+        je      .hit
+        pop     di
+        xor     al, al
+        mov     cx, 0FFFFh
+        repne   scasb
+        jmp     .v
+.hit:   add     sp, 2
+        mov     si, di                  ; value -> runpath
+        mov     di, runpath
+.c:     mov     al, [es:si]
         mov     [di], al
         inc     si
         inc     di
-        loop    .c1
-        inc     bp
-        jmp     .r1
-.r1d:   test    byte [cflags], 1        ; 2. old background back into ubuf
-        jz      .noold
-        xor     bp, bp
-.r2:    mov     ax, [cur_y]
-        add     ax, bp
-        cmp     ax, 400
-        jae     .noold
-        sub     ax, [uy0]
-        shl     ax, 2
-        add     ax, ubuf
-        mov     di, ax
-        mov     bx, bp
-        shl     bx, 1
-        mov     dx, [cur_xb]
-        call    .old1
-        inc     dx
-        inc     bx
-        call    .old1
-        inc     bp
-        cmp     bp, 13
-        jb      .r2
-.noold: test    byte [cflags], 2        ; 3. save under + draw new cursor
-        jz      .nonew
-        mov     cx, [cnew_x]
-        and     cl, 7
-        xor     bp, bp
-.r3:    mov     ax, [cnew_y]
-        add     ax, bp
-        cmp     ax, 400
-        jae     .nonew
-        sub     ax, [uy0]
-        shl     ax, 2
-        add     ax, ubuf
-        mov     si, [cnew_xb]
-        sub     si, [ux0]
-        add     si, ax
-        mov     bx, bp
-        shl     bx, 1
-        mov     dh, [cur_shape+bx]
-        xor     dl, dl
-        shr     dx, cl                  ; arrow shape
-        mov     al, [si]                ; invert what is underneath
-        mov     [new_save+bx], al
-        xor     al, dh
-        mov     [si], al
-        cmp     word [cnew_xb], 79
-        jae     .n2
-        mov     al, [si+1]
-        mov     [new_save+bx+1], al
-        xor     al, dl
-        mov     [si+1], al
-.n2:    inc     bp
-        cmp     bp, 13
-        jb      .r3
-.nonew: xor     bp, bp                  ; 4. ubuf -> screen, once
-.r4:    cmp     bp, [uh]
-        jae     .r4d
-        mov     bx, [uy0]
-        add     bx, bp
-        shl     bx, 1
-        mov     di, [rowtab+bx]
-        add     di, [ux0]
-        mov     si, bp
-        shl     si, 2
-        add     si, ubuf
-        mov     cx, [uw]
-.c4:    mov     al, [si]
-        mov     [es:di], al
-        inc     si
-        inc     di
-        loop    .c4
-        inc     bp
-        jmp     .r4
-.r4d:   pop     es
-        popa
-        ret
-.old1:  cmp     dx, 80                  ; DX = byte col, DI = ubuf row, BX = save index
-        jae     .ox
-        mov     si, dx
-        sub     si, [ux0]
-        cmp     si, [uw]
-        jae     .ox
-        add     si, di
-        mov     al, [cur_save+bx]
-        mov     [si], al
-.ox:    ret
+        or      al, al
+        jz      .go
+        cmp     di, runpath + 78
+        jb      .c
+        mov     byte [di], 0
+.go:    pop     es
+        jmp     run_prog
+.def:   pop     es
+        mov     si, s_defshell
+        mov     di, runpath
+.d:     lodsb
+        stosb
+        or      al, al
+        jnz     .d
+        jmp     run_prog
 
-hide_cursor:
-        cmp     byte [curvis], 0
-        je      .x
-        pusha
-        push    es
-        push    VSEG
-        pop     es
-        xor     si, si
-.row:   mov     bx, [cur_y]
-        add     bx, si
-        cmp     bx, 400
-        jae     .done
-        shl     bx, 1
-        mov     di, [rowtab+bx]
-        add     di, [cur_xb]
-        mov     bx, si
-        shl     bx, 1
-        mov     al, [cur_save+bx]
-        mov     [es:di], al
-        cmp     word [cur_xb], 79
-        jae     .nx
-        mov     al, [cur_save+bx+1]
-        mov     [es:di+1], al
-.nx:    inc     si
-        cmp     si, 13
-        jb      .row
-.done:  mov     byte [curvis], 0
-        pop     es
-        popa
-.x:     ret
+; CODE-A: Claude (CLAUDE.COM here, else in the root)
+run_claude:
+        mov     si, s_claude
+        call    ui_findapp
+        jc      .no
+        mov     di, runpath
+        call    sb_str
+        mov     byte [di], 0
+        jmp     run_prog
+.no:    mov     di, msgbuf
+        mov     si, s_claude
+        call    sb_str
+        mov     si, s_notondisk
+        call    sb_str
+        mov     byte [di], 0
+        jmp     show_msg
 
-; =====================================================================
-; help window (minimal: 1-px frame, inverse title strip, save-under)
-; =====================================================================
-HW_X    equ 16                  ; byte column
-HW_W    equ 48                  ; bytes
-HW_Y    equ 64
-HW_H    equ 232
+; CODE-U: Usage, the System program; CODE-W: Write with a new file
+run_usage:
+        mov     si, s_system
+        mov     di, s_empty
+        jmp     run_named
+run_write:
+        mov     si, s_write
+        mov     di, s_empty
+        ; (falls through)
 
-open_help:
-        cmp     byte [helpopen], 0
-        jne     .x
-        call    hide_cursor
-        push    ds                      ; save what is underneath
-        push    es
-%ifndef NOTC
-        mov     byte [tc_drv], 0FFh     ; in the disk cache's memory, which
-        mov     byte [tc_lock], 1       ; the disk does without meanwhile
-        mov     es, [tc_seg]
-        xor     di, di
-%else
-        push    ds
-        pop     es
-        mov     di, savebuf
-%endif
-        mov     dx, HW_Y
-        mov     cx, HW_H
-.sv:    mov     bx, dx
-        shl     bx, 1
-        mov     si, [rowtab+bx]
-        add     si, HW_X
-        push    cx
-        push    ds
-        push    VSEG
-        pop     ds
-        mov     cx, HW_W
-        rep     movsb
-        pop     ds
-        pop     cx
-        inc     dx
-        loop    .sv
-        pop     es
-        pop     ds
-        ; body
-        mov     dx, HW_Y
-        mov     cx, HW_H
-        mov     bx, HW_X
-        mov     bp, HW_W
-        xor     al, al
-        call    fill_band
-        mov     dx, HW_Y                ; title strip
-        mov     cx, 20
-        mov     al, 0FFh
-        call    fill_band
-        mov     si, s_hlptitle
-        mov     bx, HW_X + 2
-        mov     dx, HW_Y + 4
-        mov     ah, 0FFh
-        call    puts
-        ; frame
-        mov     dx, HW_Y + HW_H - 1
-        mov     bx, HW_X
-        mov     cx, HW_W
-        call    hline
-        mov     ax, HW_X * 8
-        mov     dx, HW_Y
-        mov     cx, HW_H
-        call    vline
-        mov     ax, (HW_X + HW_W) * 8 - 1
-        call    vline
-        ; text
-        mov     si, help_text
-        mov     dx, HW_Y + 28
-.ln:    cmp     byte [si], 0FFh
-        je      .done
-        mov     bx, HW_X + 3
+; the .RUN named SI (here, else in the root) with argument DI
+run_named:
+        push    si
+        call    ui_findapp
+        jc      .no
+        add     sp, 2
+        jmp     run_run
+.no:    pop     si
+        mov     di, msgbuf
+        call    sb_str
+        mov     si, s_notondisk
+        call    sb_str
+        mov     byte [di], 0
+        jmp     show_msg
+
+; run the .RUN at SI with argument DI, then the list again
+run_run:
+        push    si
+        call    run_app
+        mov     word [redraw_fn], relist
+        jc      .fail
+        add     sp, 2
+        jmp     relist
+.fail:  pop     si
+        mov     [ex_code], ax
+        push    si
+        call    relist
+        pop     si
+        jmp     cant_run
+
+; F5: the disk again (after changing floppies)
+refresh:
+        mov     ah, 0Dh
+        int     21h
+        jmp     relist
+
+; run the DOS program at runpath; afterwards a fresh list and a message
+run_prog:
+        mov     si, runpath
+        mov     di, s_empty
+        call    ui_run                  ; (redraws the list itself)
+        jc      .failed
+        mov     [ex_code], ax
+        mov     di, msgbuf              ; "TM5000G.EXE ended"
+        mov     si, runpath
+        call    sb_base
+        mov     si, s_ended
+        call    sb_str
+        cmp     byte [ex_code], 0
+        je      .m
+        mov     si, s_code
+        call    sb_str
+        mov     al, [ex_code]
         xor     ah, ah
-        call    puts
-        add     dx, 16
-        jmp     .ln
-.done:  mov     byte [helpopen], 1
-        call    show_cursor
-.x:     ret
+        call    sb_u16
+.m:     mov     byte [di], 0
+        jmp     show_msg
+.failed:
+        mov     [ex_code], ax
+        mov     si, runpath
+cant_run:                               ; "Can't run X: why"
+        mov     bx, s_cant
+cant_msg:                               ; (BX = "Can't run " / "Can't open ")
+        mov     di, msgbuf
+        push    si
+        mov     si, bx
+        call    sb_str
+        pop     si
+        call    sb_base
+        mov     si, s_colon
+        call    sb_str
+        mov     ax, [ex_code]
+        call    api_sberr
+        mov     byte [di], 0
+        jmp     show_msg
 
-close_help:
-        call    hide_cursor
-        push    es
-        push    VSEG
-        pop     es
-%ifndef NOTC
-        xor     si, si
-%else
-        mov     si, savebuf
-%endif
-        mov     dx, HW_Y
-        mov     cx, HW_H
-.rs:    mov     bx, dx
-        shl     bx, 1
-        mov     di, [rowtab+bx]
-        add     di, HW_X
-        push    cx
-        mov     cx, HW_W
-%ifndef NOTC
-        push    ds
-        mov     ds, [tc_seg]
-        rep     movsb
-        pop     ds
-%else
-        rep     movsb
-%endif
-        pop     cx
-        inc     dx
-        loop    .rs
-        pop     es
-%ifndef NOTC
-        mov     byte [tc_lock], 0       ; the disk cache has it back
-%endif
-        mov     byte [helpopen], 0
-        jmp     show_cursor
+; the file name part of the path at SI, appended at DI
+sb_base:
+        mov     bx, si
+.f:     lodsb
+        or      al, al
+        jz      .c
+        cmp     al, '\'
+        je      .s
+        cmp     al, ':'
+        jne     .f
+.s:     mov     bx, si
+        jmp     .f
+.c:     mov     si, bx
+        jmp     sb_str
 
-; =====================================================================
-; screen layout
-; =====================================================================
+; msgbuf in the prompt band until the next key or click
+show_msg:
+        mov     si, msgbuf
+        mov     di, s_anykey
+        call    ui_band
+        mov     byte [msgshown], 1
+        ret
+
+; ---------------------------------------------------------------------
+;  the screen
+; ---------------------------------------------------------------------
 draw_all:
-        call    clear_screen
-        call    draw_clock
         mov     si, s_brand
-        mov     dx, 0
-        call    center
-        mov     dx, RULE1
-        xor     bx, bx
-        mov     cx, 80
-        call    hline
-        call    draw_list
+        call    ui_screen
+        mov     bx, ex_list
+        call    lv_draw
+        call    draw_empty
         mov     dx, RULE2
         xor     bx, bx
         mov     cx, 80
@@ -882,84 +683,46 @@ draw_all:
         mov     bx, 1
         mov     cx, 78
         call    hline_dots
-        jmp     draw_prompt_default
+        jmp     dir_band
+
+; the band after reading a directory: what went wrong, or the usual prompt
+dir_band:
+        mov     ax, [dir_note]
+        or      ax, ax
+        jz      draw_prompt_default
+        mov     di, msgbuf
+        cmp     ax, 0FFFFh
+        je      .more
+        mov     si, s_cantdir           ; "Can't read the disk: why"
+        call    sb_str
+        call    api_sberr
+        jmp     .m
+.more:  mov     si, s_first             ; "Only the first 240 are listed"
+        call    sb_str
+        mov     ax, [nent]
+        call    sb_u16
+        mov     si, s_listed
+        call    sb_str
+.m:     mov     byte [di], 0
+        jmp     show_msg
 
 draw_prompt_default:
-        call    band_clear
+        mov     byte [msgshown], 0
         mov     si, s_prompt1
-        mov     dx, BAND_Y + 4
-        call    band_center
-        mov     si, s_prompt2
-        mov     dx, BAND_Y + 20
-        jmp     band_center
+        mov     di, s_prompt2
+        jmp     ui_band
 
-band_clear:
-        mov     dx, BAND_Y
-        mov     cx, 400 - BAND_Y
-        xor     bx, bx
-        mov     bp, 80
-        mov     al, 0FFh
-        jmp     fill_band
-
-band_center:                            ; SI = text, DX = y (inverse)
-        call    strlen
-        mov     bx, 80
-        sub     bx, cx
-        shr     bx, 1
-        mov     ah, 0FFh
-        jmp     puts
-
-center: call    strlen                  ; SI = text, DX = y
-        mov     bx, 80
-        sub     bx, cx
-        shr     bx, 1
-        xor     ah, ah
-        jmp     puts
-
-draw_list:
-        mov     cx, LIST_N
-        mov     ax, [top]
-.l:     push    ax
-        push    cx
-        call    draw_row
-        pop     cx
-        pop     ax
-        inc     ax
-        loop    .l
+draw_empty:
         cmp     word [nent], 0
         jne     .x
-        mov     si, s_empty
+        mov     si, s_nofiles
         mov     dx, LIST_Y + 16
         call    center
 .x:     ret
 
-; draw list row for entry AX (if visible)
-draw_row:
+; list row (the core's LV_DRAW): AX = entry, DX = y, CL = mask
+ex_row: mov     [rowmask], cl
         mov     bx, ax
-        sub     ax, [top]
-        jb      .x
-        cmp     ax, LIST_N
-        jae     .x
-        shl     ax, 4
-        add     ax, LIST_Y
-        mov     dx, ax                  ; DX = y
-        push    bx
-        xor     al, al
-        cmp     bx, [sel]
-        jne     .f
-        cmp     word [nent], 0
-        je      .f
-        mov     al, 0FFh
-.f:     mov     [rowmask], al
-        push    dx
-        mov     cx, 16
-        mov     bx, 1
-        mov     bp, 78
-        call    fill_band
-        pop     dx
-        pop     bx
-        cmp     bx, [nent]
-        jae     .x
         call    ent_ptr                 ; SI -> directory entry
         mov     di, tmp
         call    sb_title
@@ -1002,8 +765,7 @@ draw_row:
         mov     bx, KEND
         sub     bx, cx
         mov     ah, [rowmask]
-        call    puts
-.x:     ret
+        jmp     puts
 
 ; form under the list for the selected entry
 draw_form:
@@ -1090,220 +852,9 @@ draw_form:
         call    puts
 .x:     ret
 
-; =====================================================================
-; clock (RTC through INT 1Ah)
-; =====================================================================
-read_clock:
-        mov     ah, 2
-        int     1Ah
-        mov     [rtc_h], ch
-        mov     [rtc_m], cl
-        mov     ah, 4
-        int     1Ah
-        mov     [rtc_y], cl
-        mov     [rtc_mo], dh
-        mov     [rtc_d], dl
-        ret
-
-clock_tick:
-        mov     al, [rtc_m]
-        push    ax
-        call    read_clock
-        pop     ax
-        cmp     al, [rtc_m]
-        je      .x
-        call    hide_cursor
-        call    draw_clock
-        call    show_cursor
-.x:     ret
-
-draw_clock:
-        mov     dx, 0
-        mov     cx, 16
-        mov     bx, 1
-        mov     bp, 11
-        xor     al, al
-        call    fill_band
-        mov     bx, 67
-        call    fill_band
-        mov     di, tmp
-        call    sb_dmy
-        mov     si, tmp
-        mov     bx, 1
-        xor     dx, dx
-        xor     ah, ah
-        call    puts
-        mov     di, tmp
-        call    sb_hm
-        mov     si, tmp
-        call    strlen
-        mov     bx, 79
-        sub     bx, cx
-        xor     dx, dx
-        xor     ah, ah
-        jmp     puts
-
-; "4-Oct-26" at DI (NUL-terminated)
-sb_dmy: mov     al, [rtc_d]
-        call    bcd
-        call    sb_u16
-        mov     al, '-'
-        stosb
-        mov     al, [rtc_mo]
-        call    bcd
-        dec     ax
-        cmp     ax, 11
-        jbe     .mo
-        xor     ax, ax
-.mo:    imul    si, ax, 3
-        add     si, months
-        movsw
-        movsb
-        mov     al, '-'
-        stosb
-        mov     al, [rtc_y]
-        call    bcd
-        call    sb_2d
-        mov     byte [di], 0
-        ret
-
-; "5:31 pm" at DI (NUL-terminated)
-sb_hm:  mov     al, [rtc_h]
-        call    bcd
-        mov     si, s_am
-        cmp     ax, 12
-        jb      .am
-        mov     si, s_pm
-        sub     ax, 12
-.am:    or      ax, ax
-        jnz     .h
-        mov     ax, 12
-.h:     push    si
-        call    sb_u16
-        mov     al, ':'
-        stosb
-        mov     al, [rtc_m]
-        call    bcd
-        call    sb_2d
-        pop     si
-        call    sb_str
-        mov     byte [di], 0
-        ret
-
-bcd:    mov     ah, al                  ; AL = BCD -> AX = binary
-        shr     ah, 4
-        and     al, 0Fh
-        aad
-        xor     ah, ah
-        ret
-
-; insertion sort of entlist: "..", then subjects, then files, by name
-sort_dir:
-        mov     cx, [nent]
-        cmp     cx, 2
-        jb      .x
-        mov     bx, 2                   ; byte index i
-.i:     mov     dx, [entlist+bx]        ; key
-        mov     bp, bx
-.j:     or      bp, bp
-        jz      .put
-        mov     si, [entlist+bp-2]
-        mov     di, dx
-        call    ent_cmp
-        jbe     .put                    ; prev <= key
-        mov     ax, [entlist+bp-2]
-        mov     [entlist+bp], ax
-        sub     bp, 2
-        jmp     .j
-.put:   mov     [entlist+bp], dx
-        add     bx, 2
-        mov     ax, [nent]
-        shl     ax, 1
-        cmp     bx, ax
-        jb      .i
-.x:     ret
-
-; compare entries SI and DI: flags as for SI - DI
-ent_cmp:
-        push    cx
-        push    si
-        push    di
-        call    .rank
-        mov     ah, al
-        xchg    si, di
-        call    .rank
-        xchg    si, di
-        cmp     ah, al
-        jne     .x
-        mov     cx, 11
-        repe    cmpsb
-.x:     pop     di
-        pop     si
-        pop     cx
-        ret
-.rank:  mov     al, 0
-        cmp     word [si], '..'
-        je      .r
-        mov     al, 1
-        test    byte [si+11], 10h
-        jnz     .r
-        mov     al, 2
-.r:     ret
-
-ent_ptr:                                ; BX = index -> SI = entry
-        push    bx
-        shl     bx, 1
-        mov     si, [entlist+bx]
-        pop     bx
-        ret
-
-; append the entry's title (name without trailing spaces) at DI
-sb_title:
-        push    si
-        mov     cx, 8
-.c:     lodsb
-        cmp     al, ' '
-        je      .x
-        stosb
-        loop    .c
-.x:     pop     si
-        ret
-
-; SI = entry -> SI = kind string (entry pointer lost; callers re-fetch)
-kind_of:
-        test    byte [si+11], 10h
-        jz      .file
-        mov     si, k_subject
-        ret
-.file:  push    dx
-        call    .look
-        pop     dx
-        ret
-.look:  mov     ax, [si+8]
-        mov     dl, [si+10]
-        mov     bx, kinds
-.k:     cmp     byte [bx], 0
-        je      .raw
-        cmp     ax, [bx]
-        jne     .n
-        cmp     dl, [bx+2]
-        jne     .n
-        mov     si, [bx+3]
-        ret
-.n:     add     bx, 5
-        jmp     .k
-.raw:   mov     si, kindbuf             ; unknown extension: show it
-        mov     [si], ax
-        mov     [si+2], dl
-        mov     byte [si+3], 0
-        cmp     byte [si], ' '
-        jne     .r
-        mov     si, k_file
-.r:     ret
-
-; =====================================================================
-; system information line
-; =====================================================================
+; ---------------------------------------------------------------------
+;  the system information line
+; ---------------------------------------------------------------------
 sysinfo:
         int     12h
         mov     [convkb], ax
@@ -1395,262 +946,54 @@ build_info:
         mov     byte [di], 0
         ret
 
-; =====================================================================
-; drawing primitives
-; =====================================================================
-mkrows: xor     bx, bx
-        mov     di, rowtab
-.l:     mov     ax, bx
-        and     ax, 3
-        shl     ax, 13
-        mov     dx, bx
-        shr     dx, 2
-        imul    dx, dx, 80
-        add     ax, dx
-        mov     [di], ax
-        add     di, 2
-        inc     bx
-        cmp     bx, 400
-        jb      .l
-        ret
+; ---------------------------------------------------------------------
+;  keys (and the help window, which is made from this table)
+; ---------------------------------------------------------------------
+ex_keys:
+        KEY(K_NONE,      0,          h_choose)
+        KEY(K_NONE,      0,          h_home)
+        KEY(K_NONE,      0,          h_letter)
+        KEY(K_NONE,      0,          h_mouse)
+        KEY(K_ENTER,     confirm,    h_confirm)
+        KEY(K_F1,        ex_help,    h_help)
+        KEY(K_CODE_HELP, ex_help,    0)
+        KEY(K_CODE_U,    run_usage,  h_usage)
+        KEY(K_CODE_W,    run_write,  h_write)
+        KEY(K_CODE_A,    run_claude, h_claude)
+        KEY(K_CODE_C,    run_shell,  h_shell)
+        KEY(K_F5,        refresh,    h_f5)
+        KEY(K_CODE_D,    boot_rom,   h_dos)
+        KEY(K_CODE_R,    reboot,     h_restart)
+        KEY(K_NONE,      0,          h_saver)
+        KEY(K_NONE,      0,          h_code)
+        dw 0
 
-clear_screen:
-        push    es
-        push    VSEG
-        pop     es
-        xor     di, di
-        mov     cx, 16384
-        xor     ax, ax
-        rep     stosw
-        pop     es
-        ret
+h_choose    db 'Up / Down, PgUp / PgDn   choose a file',0
+h_home      db 'Home / End               first / last',0
+h_letter    db 'A letter                 the next name with it',0
+h_mouse     db 'Mouse                    point and click',0
+h_confirm   db 'Return or click again    run it / open it',0
+h_help      db 'CODE-?  or  F1           this help',0
+h_usage     db 'CODE-U                   Usage: the System program',0
+h_write     db 'CODE-W                   Write: a new text file',0
+h_claude    db 'CODE-A                   Claude',0
+h_shell     db 'CODE-C                   command prompt',0
+h_f5        db 'F5                       after a disk swap',0
+h_dos       db 'CODE-D                   boot GRiD MS-DOS',0
+h_restart   db 'CODE-R                   restart',0
+h_saver     db '5 minutes idle           screen saver',0
+h_code      db 'CODE is the Alt key.  Any key closes.',0
 
-; DX = y, CX = rows, BX = byte column, BP = width in bytes, AL = value
-fill_band:
-        pusha
-        push    es
-        push    VSEG
-        pop     es
-.r:     mov     si, dx
-        shl     si, 1
-        mov     di, [rowtab+si]
-        add     di, bx
-        push    cx
-        mov     cx, bp
-        rep     stosb
-        pop     cx
-        inc     dx
-        loop    .r
-        pop     es
-        popa
-        ret
-
-; DX = y, BX = byte column, CX = width in bytes
-hline:  pusha
-        mov     bp, cx
-        mov     cx, 1
-        mov     al, 0FFh
-        call    fill_band
-        popa
-        ret
-
-; dotted rule: DX = y, BX = column, CX = width
-hline_dots:
-        pusha
-        mov     bp, cx
-        mov     cx, 1
-        mov     al, 0AAh
-        call    fill_band
-        popa
-        ret
-
-; AX = pixel x, DX = y0, CX = height
-vline:  pusha
-        push    es
-        push    VSEG
-        pop     es
-        mov     bx, ax
-        shr     bx, 3
-        and     al, 7
-        mov     ah, 80h
-        push    cx
-        mov     cl, al
-        shr     ah, cl
-        pop     cx
-.r:     mov     si, dx
-        shl     si, 1
-        mov     di, [rowtab+si]
-        or      [es:di+bx], ah
-        inc     dx
-        loop    .r
-        pop     es
-        popa
-        ret
-
-; AL = char, BX = column, DX = y (multiple of 4), AH = 00 normal / FF inverse
-putc:   pusha
-        push    es
-        push    VSEG
-        pop     es
-        cmp     al, 32
-        jb      .bad
-        cmp     al, 127
-        jbe     .ok
-.bad:   mov     al, '?'
-.ok:    mov     cl, ah
-        xor     ah, ah
-        sub     al, 32
-        shl     ax, 4
-        add     ax, font
-        mov     si, ax
-        mov     di, dx
-        shl     di, 1
-        mov     di, [rowtab+di]
-        add     di, bx
-        mov     ah, cl
-%assign r 0
-%rep 16
-        lodsb
-        xor     al, ah
-        mov     [es:di + (r & 3) * 2000h + (r >> 2) * 80], al
-%assign r r + 1
-%endrep
-        pop     es
-        popa
-        ret
-
-; SI = ASCIIZ, BX = column, DX = y, AH = mask.  Returns SI past the NUL.
-puts:   push    bx
-.l:     lodsb
-        or      al, al
-        jz      .x
-        cmp     bx, 80
-        jae     .l
-        call    putc
-        inc     bx
-        jmp     .l
-.x:     pop     bx
-        ret
-
-strlen: push    si                      ; SI -> CX = length
-        xor     cx, cx
-.l:     lodsb
-        or      al, al
-        jz      .x
-        inc     cx
-        jmp     .l
-.x:     pop     si
-        ret
-
-; text builders: append at DI
-sb_str: lodsb
-        or      al, al
-        jz      .x
-        stosb
-        jmp     sb_str
-.x:     ret
-
-sb_u16: xor     cx, cx                  ; AX unsigned
-sb_u32: push    bx                      ; CX:AX unsigned
-        push    dx
-        push    si
-        mov     si, sp
-        mov     bx, 10
-.d:     push    ax
-        mov     ax, cx
-        xor     dx, dx
-        div     bx
-        mov     cx, ax
-        pop     ax
-        div     bx
-        push    dx
-        mov     dx, cx
-        or      dx, ax
-        jnz     .d
-.p:     cmp     sp, si
-        je      .x
-        pop     ax
-        add     al, '0'
-        stosb
-        jmp     .p
-.x:     pop     si
-        pop     dx
-        pop     bx
-        ret
-
-sb_2d:  aam                             ; AL (0..99) as two digits
-        xchg    al, ah
-        add     ax, '00'
-        stosw
-        ret
-
-; AX = DOS date -> "4-Oct-26"
-sb_date:
-        push    ax
-        and     ax, 1Fh
-        call    sb_u16
-        mov     al, '-'
-        stosb
-        pop     ax
-        push    ax
-        shr     ax, 5
-        and     ax, 0Fh
-        dec     ax
-        cmp     ax, 11
-        jbe     .m
-        xor     ax, ax
-.m:     push    si
-        imul    si, ax, 3
-        add     si, months
-        movsw
-        movsb
-        pop     si
-        mov     al, '-'
-        stosb
-        pop     ax
-        shr     ax, 9
-        add     ax, 80
-        cmp     ax, 100
-        jb      .y
-        sub     ax, 100
-.y:     jmp     sb_2d
-
-bios_print:
-        lodsb
-        or      al, al
-        jz      .x
-        mov     ah, 0Eh
-        mov     bx, 7
-        int     10h
-        jmp     bios_print
-.x:     ret
-
-tick:   push    ds
-        xor     ax, ax
-        mov     ds, ax
-        mov     ax, [46Ch]
-        pop     ds
-        ret
-
-wait_ticks:
-        call    tick
-        mov     bx, ax
-.w:     call    tick
-        sub     ax, bx
-        cmp     ax, cx
-        jb      .w
-        ret
-
-; =====================================================================
-; data
-; =====================================================================
-s_brand     db 'Grid-OS 0.2.3',0
+; ---------------------------------------------------------------------
+;  data
+; ---------------------------------------------------------------------
+s_brand     db 'Grid-OS 0.3',0
+s_hlptitle  db 'Grid-OS 0.3 Help',0
 s_prompt1   db 'Select a file and confirm',0
 s_prompt2   db 'Or press CODE-? for help',0
-s_anykey    db 'Press any key',0
-s_notyet    db ' - running programs arrives in Grid-OS 0.2',0
 s_sp2       db '  ',0
-s_empty     db '(no files)',0
+s_empty     db 0
+s_nofiles   db '(no files)',0
 s_lbl_dev   db 'Device',0
 s_lbl_sub   db 'Subject',0
 s_lbl_tit   db 'Title',0
@@ -1660,20 +1003,6 @@ s_dev_a     db 'Floppy A:',0
 s_root      db 'Root',0
 s_bytes     db ' bytes',0
 s_dated     db '   dated ',0
-s_hlptitle  db 'Grid-OS 0.2.3 Help',0
-help_text   db 'Up / Down, PgUp / PgDn   choose a file',0
-            db 'Home / End               first / last',0
-            db 'Mouse                    point and click',0
-            db 'Return or click again    run it / open it',0
-            db 'CODE-?  or  F1           this help',0
-            db 'CODE-D                   boot GRiD MS-DOS',0
-            db 'CODE-A                   Claude',0
-            db 'CODE-C                   command prompt',0
-            db 'F5                       after a disk swap',0
-            db 'CODE-R                   restart',0
-            db '5 minutes idle           screen saver',0
-            db 'CODE is the Alt key.  Any key closes.',0
-            db 0FFh
 s_nohires   db 'Grid-OS needs the GRiD 640x400 panel (BIOS mode 40h).',13,10
             db 'Press a key to restart.',13,10,0
 s_bootrom   db 'Grid-OS: booting from the EPROM...',13,10,0
@@ -1691,12 +1020,26 @@ s_mouse1    db 'Mouse COM1',0
 s_mouse2    db 'Mouse COM2',0
 s_nomouse   db 'No mouse',0
 s_bios      db 'BIOS ',0
-s_am        db ' am',0
-s_pm        db ' pm',0
-months      db 'JanFebMarAprMayJunJulAugSepOctNovDec'
+s_all       db '*.*', 0
+s_claude    db 'CLAUDE.COM', 0
+s_system    db 'SYSTEM.RUN', 0
+s_write     db 'WRITE.RUN', 0
+s_notondisk db ' is not on this disk', 0
+s_comspec   db 'COMSPEC='
+s_defshell  db 'A:\GRIDCMD.COM', 0
+s_noopen    db ' - nothing opens this kind yet', 0
+s_ended     db ' ended', 0
+s_code      db ', exit code ', 0
+s_cant      db "Can't run ", 0
+s_cantopen  db "Can't open ", 0
+s_cantdir   db "Can't read the disk: ", 0
+s_first     db 'Only the first ', 0
+s_listed    db ' are listed', 0
+s_colon     db ': ', 0
 k_subject   db 'Subject',0
 k_file      db 'File',0
 k_run       db 'Run',0
+k_program   db 'Program',0
 k_system    db 'System',0
 k_text      db 'Text',0
 k_data      db 'Data',0
@@ -1705,101 +1048,59 @@ k_settings  db 'Settings',0
 k_font      db 'Font',0
 k_profile   db 'Profile',0
 k_source    db 'Source',0
+; extension, kind, what opens it (1 DOS, 2 .RUN, 3 Write)
 kinds       db 'COM'
             dw k_run
+            db 1
             db 'EXE'
             dw k_run
+            db 1
             db 'RUN'
-            dw k_run
+            dw k_program
+            db 2
             db 'SYS'
             dw k_system
+            db 0
             db 'TXT'
             dw k_text
+            db 3
             db 'DOC'
             dw k_text
+            db 3
             db 'BIN'
             dw k_data
+            db 0
             db 'DAT'
             dw k_data
+            db 0
             db 'BAT'
             dw k_batch
+            db 3
             db 'CFG'
             dw k_settings
+            db 3
             db 'INI'
             dw k_settings
+            db 3
             db 'EMS'
             dw k_settings
+            db 0
             db 'TYP'
             dw k_font
+            db 0
             db 'PRO'
             dw k_profile
+            db 3
             db 'ASM'
             dw k_source
+            db 3
             db 'INC'
             dw k_source
+            db 3
             db 'C  '
             dw k_source
+            db 3
             db 'H  '
             dw k_source
+            db 3
             db 0
-
-
-lasttick    dw 0
-mx          dw 320
-my          dw 200
-mb          db 0
-oldmb       db 0
-mflag       db 0
-midx        db 3
-mpkt        db 0, 0, 0
-mbase       dw 0
-mirq        db 0
-vecslot     dw 0
-oldvec      dw 0, 0
-curvis      db 0
-helpopen    db 0
-msgshown    db 0
-sel         dw 0
-top         dw 0
-nent        dw 0
-
-
-section .bss
-rowmask     resb 1
-rtc_h       resb 1
-rtc_m       resb 1
-rtc_y       resb 1
-rtc_mo      resb 1
-rtc_d       resb 1
-panel       resb 1
-convkb      resw 1
-emskb       resw 1
-extkb       resw 1
-equip       resw 1
-cur_x       resw 1
-cur_y       resw 1
-cur_xb      resw 1
-cur_save    resb 26
-new_save    resb 26
-ubuf        resb 4 * 26
-cnew_x      resw 1
-cnew_y      resw 1
-cnew_xb     resw 1
-ux0         resw 1
-uy0         resw 1
-uw          resw 1
-uh          resw 1
-cflags      resb 1
-biosdate    resb 8
-kindbuf     resb 4
-tmp         resb 96
-msgbuf      resb 128
-infobuf     resb 128
-rowtab      resw 400
-entlist     resw MAXENT
-%ifdef NOTC
-savebuf     resb HW_W * HW_H
-%elif HW_W * HW_H > TC_SECS * 512
-%error the help window does not fit in the disk cache
-%endif
-section .text

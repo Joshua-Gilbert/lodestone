@@ -3479,7 +3479,7 @@ blankline:
             db ' ', 0
 %endrep
 
-%include "FONT.INC"
+%include "TERMINUS.INC"
 %include "GLYPHS.INC"
 
             align 16

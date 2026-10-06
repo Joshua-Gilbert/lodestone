@@ -23,9 +23,10 @@ def test_quit_to_dos():
     assert any('CLAUDE.COM ended' in l for l in h.k.band()), h.k.band()
     off, seg = struct.unpack('<HH', h.m.rd(0, 0x16 * 4, 4))
     assert (seg, off) == (0xF000, 0x16 * 8), (hex(seg), hex(off))
-    for n in (0x23, 0x24):
-        off, seg = struct.unpack('<HH', h.m.rd(0, n * 4, 4))
-        assert seg == 0x60, (hex(n), hex(seg), hex(off))
+    off, seg = struct.unpack('<HH', h.m.rd(0, 0x23 * 4, 4))
+    assert seg == 0x60, (hex(seg), hex(off))
+    off, seg = struct.unpack('<HH', h.m.rd(0, 0x24 * 4, 4))     # (0.3: the UI's own)
+    assert (seg, off) == (h.k.useg, h.k.Y['ui_int24']), (hex(seg), hex(off))
     assert 'Claude for GRiD ended.' in ''.join(h.m.tty)
 
 
