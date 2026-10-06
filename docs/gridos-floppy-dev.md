@@ -59,23 +59,23 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
    - Formatting replaces the boot sector, so GOSBOOT has to run again after every format.
 2. Boot Grid-OS: restart and **tap F as the memory count finishes**. The BIOS (GridWaitKey) takes a buffered keypress and boots the floppy instead of the EPROM.
 3. Iterate: Claude rebuilds GRIDOS.SYS (and the shell, the `.RUN`s, DEFRAG.COM) and copies it straight onto A:. The floppy drive is a connected folder, reachable only while the disk is in the PC. No need to rerun GOSBOOT.
-   - **Copy each file to A: on its own** (not in a batch with other files), **then read it back and compare**. A copy has reported success while the floppy kept the old file three times now (most recently DEFRAG.COM on 2026-10-05). A second, solo copy fixed it each time.
+   - **Copy each file to A: on its own** (not in a batch with other files), **from a staging path not used before**, **then read it back and compare**. On 2026-10-06 a copy from a reused staging path (`outputs/floppy/GRIDOS.SYS`) wrote the file staged there at noon (30,048 bytes) instead of the new one; the read-back caught it. A copy has reported success while the floppy kept the old file three times now (most recently DEFRAG.COM on 2026-10-05). A second, solo copy fixed it each time.
    - Claude's bridge to the PC can write and read files but currently can't delete or rename them, because the device shell is blocked by a Windows update (still the case 2026-10-06). Deletions have to be done by Joshua.
    - **Results come back on the floppy:** BENCH and CACHETST add each run to `BENCH.TXT` / `CACHETST.TXT` on the disk they ran from, and DEFRAG to `DEFRAG.TXT`. Each run is headed with the date (and, for BENCH, the system). Claude reads these files once the disk is back in the PC.
    - **Each copy through the bridge leaves 4 dead root entries.** The bridge writes a hidden long-name temp file (`.NAME.EXT.pid.random.tmp`), then renames it. Windows never reuses the dead slots; it appends.
      - Once the root passes 63 entries, directory searches cost a whole-root read.
      - **DEFRAG removes them** (on its own after 5 minutes idle in the Executive). No more format-and-refill needed for that.
    - **Each kernel copy can also leave a hole** where the old GRIDOS.SYS was. The next big file (BENCH.DAT) fills it and is split, so BENCH reads look 0.3–0.8 s slower. DEFRAG puts files back in one piece. Compare BENCH read times only between runs on the same layout.
-4. Back to DOS: CODE-D, or a plain restart without F. Under GRiD MS-DOS booted from the EPROM, A: is the EPROM and the floppy is B:.
+4. Back to DOS: a plain restart (CTRL-ALT-DEL) without F. Under GRiD MS-DOS booted from the EPROM, A: is the EPROM and the floppy is B:.
 
-## What's on the floppy (A:) — reformatted 2026-10-05 evening; 0.3 copied 2026-10-06, updated at noon and in the afternoon (fonts)
+## What's on the floppy (A:) — reformatted 2026-10-05 evening; 0.3 copied 2026-10-06, updated at noon, in the afternoon (fonts), at 14:48 (0.3.1, TM5000G) at 15:19 (0.3.2) and at 16:07 (0.3.2 with the File form)
 | File | Size | What |
 |---|---|---|
-| GRIDOS.SYS | 30,292 | **Grid-OS 0.3** kernel + UI core + Executive + disk cache + screen saver, in GRiD's font, with the CODE-? fix, the review panel's fixes and switchable fonts (COMSPEC = A:\GRIDCMD.COM) |
+| GRIDOS.SYS | 32,842 | **Grid-OS 0.3.2** kernel + UI core + Executive + disk cache + screen saver, in GRiD's font, with the CODE-? fix, the review panel's fixes, switchable fonts, the INT 33h mouse for DOS programs and the File form (Device, Subject, Title; Tab) (COMSPEC = A:\GRIDCMD.COM) |
 | GRIDCMD.COM | 7,596 | Grid-OS command prompt (CODE-C; CLAUDE's DOS commands); says 0.3 |
-| SYSTEM.RUN | 7,570 | System (CODE-U): memory, disks, clock, devices, GPIB scan, display (fonts), about |
+| SYSTEM.RUN | 7,608 | System (CODE-U): memory, disks, clock, devices, GPIB scan, display (fonts), about |
 | WRITE.RUN | 8,215 | Write (CODE-W, or open a text file from the list) |
-| GRIDOS.TXT | 6,927 | readme for 0.3 (with the 0.2.x notes; GRiD's font, CODE-?, fonts and GRIDOS.INI) |
+| GRIDOS.TXT | 7,880 | readme for 0.3 (with the 0.2.x notes; GRiD's font, CODE-?, fonts and GRIDOS.INI) |
 | TERMINUS.FNT | 1,536 | the Terminus font as a file for System → Display |
 | DEFRAG.COM | 9,212 | disk tidier / screen saver, in the chosen font (`DEFRAG [B:]`, `DEFRAG [B:] /T` to test the free space, `DEFRAG /S` as the saver runs it) |
 | DEFRAG.TXT | 1,511 | DEFRAG's log: the /T runs after the reformat (also in `gridos\bench\DEFRAG_1520_2026-10-05_reformatted.TXT`) |
@@ -88,7 +88,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 | GOSBOOT.COM | 3,047 | installs the Grid-OS boot sector (once per disk, and after every format) |
 | GRIDGPIB.COM | 2,688 | GPIB driver 1.1 for GRiD MS-DOS (built into Grid-OS) |
 | CLAUDE.COM | 11,152 | Claude for GRiD (Pi bridge at address 7); CODE-A in the Executive; still in Terminus |
-| TM5000G.EXE | 296,650 | TM5000 3.7 (release build, TM5000 repo `src/tm5000g.exe`) |
+| TM5000G.EXE | 296,634 | TM5000 3.7 (TM5000 repo `src/tm5000g.exe`, with PR #3's fix: the mouse pointer comes back after a menu is left by a key) |
 | GGTEST.COM | 7,554 | GPIB driver test on the bus |
 | TESTKEY.COM | 74 | echoes keys until Esc; for checking Claude's key scripts |
 
@@ -127,7 +127,10 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 - **2026-10-06 noon: 0.3 updated on A:** GRIDOS.SYS 30,048, SYSTEM.RUN 5,029, WRITE.RUN 8,215, DEFRAG.COM 9,158 and GRIDOS.TXT 6,615. Each was copied on its own and read back identical.
 - **2026-10-06 afternoon: switchable fonts (UI API 2) on A:** GRIDOS.SYS 30,292, SYSTEM.RUN 7,570, WRITE.RUN 8,215 (rebuilt for API 2), DEFRAG.COM 9,212, GRIDOS.TXT 6,927 and the new TERMINUS.FNT 1,536, each copied on its own and read back identical. The PC's `grid-OS\gridos` folder matches. Committed as PR #1 (`app-suite-0.3`).
 - **2026-10-06 13:20, on the 1520:** the font switch (System → Display → Return, Terminus kept after a restart, back to GRiD's), CODE-? help everywhere and CODE-ESC in Write all work. PR #1 merged into main.
-- **2026-10-06 afternoon: 0.3.1, the mouse for DOS programs (INT 33h)** built and tested in emulation (160 app checks; TM5000G finds the mouse and takes clicks; a Fable review's 6 findings fixed). The PC's folder has it, in `releases\0.3.1`. **To copy to A:** GRIDOS.SYS 32,162 and GRIDOS.TXT 7,283 (nothing else changed). A DOS program now gets 569.4 KB.
+- **2026-10-06 afternoon: 0.3.1, the mouse for DOS programs (INT 33h)** built and tested in emulation (160 app checks; TM5000G finds the mouse and takes clicks; a Fable review's 6 findings fixed). The PC's folder has it, in `releases\0.3.1`. A DOS program now gets 569.4 KB.
+- **2026-10-06 14:48: 0.3.1 on A:** GRIDOS.SYS 32,162, GRIDOS.TXT 7,283 and TM5000G.EXE 296,634 (TM5000 PR #3: the pointer comes back after a menu left by a key), each copied on its own and read back identical (GRIDOS.SYS needed a second copy, see the rule above).
+- **2026-10-06 afternoon: 0.3.2 (first build), devices in the Executive:** copied to A: at 15:19 and read back; replaced by the File form build below.
+- **2026-10-06 later: 0.3.2, the File form** (GRiDManager-style: Tab / Shift-Tab, or Return, move the outline over Device, Subject, Title; the list shows that item's choices; CODE-R and CODE-D removed). Tested in emulation (186 app checks). **On A: at 16:07:** GRIDOS.SYS 32,842 and GRIDOS.TXT 7,880, each copied on its own from a fresh staging path and read back identical (SYSTEM.RUN 7,608 already there). **Next on the 1520:** Tab / Shift-Tab over Device, Subject, Title; B: by Device; a subject from the tree; Return on a title; clicks on the items.
 - **Next, on the 1520 (the checklist in `gridos-0.3-apps.md`):**
   - CODE-? everywhere;
   - CODE-ESC to cancel in Write;

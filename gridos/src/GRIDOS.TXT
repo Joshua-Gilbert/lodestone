@@ -1,4 +1,4 @@
-Grid-OS 0.3.1 - boot floppy
+Grid-OS 0.3.2 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -48,7 +48,7 @@ written for it are .RUN files that load next to it:
               by serial poll, then sets them back to local), display
               (Return switches the screen font), about.
 Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
-subject you work in).  A DOS program gets about 569 KB: while it runs
+subject you work in).  A DOS program gets about 568 KB: while it runs
 the Executive lends it the memory of its file list.  The screen font is
 GRiD's own: the InteGRiD system font (TC8X16), as GRID.EXE drew it.
 TERMINUS.FNT is the font Grid-OS had before; in System, Display, Return
@@ -62,18 +62,28 @@ needed.  TM5000G says "Mouse support enabled." and menus take clicks.
 The pointer shows in text modes and in CGA and GRiD graphics modes.
 A program that never asks for the mouse leaves COM1/COM2 alone.
 
+0.3.2: the Executive's File form, as in GRiDManager: Device, Subject,
+Title and Kind under the list, the outlined item's choices in the list.
+Tab (Shift-Tab back) moves the outline; in Device and Subject, Return
+moves on and ESC goes back to Title.  Device lists A: and B:, Subject
+the subjects (directories) of the drive as a tree, Title the files.
+The choice takes effect at once.  A click on an item outlines it.
+Programs (SYSTEM, WRITE, CLAUDE, the command prompt), the fonts and
+GRIDOS.INI stay on the disk Grid-OS started from.  CTRL-ALT-DEL
+restarts, so CODE-R is gone, and CODE-D too: for GRiD MS-DOS, restart
+without pressing F.
+
 The Executive (the file list):
-  Up/Down, PgUp/PgDn, Home/End   choose a file
+  Up/Down, PgUp/PgDn, Home/End   choose
+  Tab, Shift-Tab                 Device, Subject, Title
   A letter                       the next name starting with it
-  Return                         run it / open it / open a subject
+  Return                         run it / open it (Device, Subject: on)
   CODE-U                         Usage (SYSTEM.RUN)
   CODE-W                         Write a new text file (WRITE.RUN)
   CODE-A                         Claude (CLAUDE.COM)
   CODE-C                         command prompt (GRIDCMD.COM, EXIT returns)
   F5                             read the disk again after a swap
   CODE-? (Alt+/) or F1           help
-  CODE-D                         boot GRiD MS-DOS from the EPROM
-  CODE-R                         restart
   5 minutes idle                 screen saver (DEFRAG, then the time)
   Serial mouse on COM2 (or COM1).
 
