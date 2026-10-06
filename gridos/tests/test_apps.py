@@ -22,6 +22,10 @@ WRITE = os.path.join(GOS, 'apps', 'WRITE.RUN')
 UITEST = os.path.join(HERE, 'UITEST.RUN')
 MEMSZ = os.path.join(HERE, 'MEMSZ.COM')
 TSR = os.path.join(HERE, 'TSR.COM')
+M33TEST = os.path.join(HERE, 'M33TEST.COM')
+M33 = {n: os.path.join(HERE, n + '.COM') for n in ('M33GFX', 'M33QUIT', 'M33HSET', 'M33HVIC')}
+GRIDCMD = os.path.join(GOS, 'src', 'GRIDCMD.COM')
+TM5000G = os.environ.get('TM5000G') or os.path.join(GOS, '..', 'tools', 'TM5000G.EXE')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERMINUS.FNT')
 DEFRAG = os.path.join(GOS, 'src', 'DEFRAG.COM')
 
@@ -38,6 +42,8 @@ def build():
         mkrun.build(os.path.join(GOS, src), dst)
     subprocess.run(['nasm', '-f', 'bin', '-o', MEMSZ, os.path.join(HERE, 'MEMSZ.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
+    for c in [M33TEST] + list(M33.values()):
+        subprocess.run(['nasm', '-f', 'bin', '-o', c, c[:-4] + '.ASM'], check=True)
 
 SYMS = {}
 def run_syms(src):
@@ -426,7 +432,7 @@ def t_memory():
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     kb = float(m.group(1)) if m else 0
-    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB): the directory buffer is lent while it runs' % kb, kb >= 571.5, out[-200:])
+    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; the INT 33h mouse costs 2 KB): the directory buffer is lent while it runs' % kb, kb >= 569.4, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     img = image('tsr.img', TSR, SYSTEM, MEMSZ)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
@@ -439,8 +445,9 @@ def t_memory():
           k.exec_list() == ['GRIDOS.SYS', 'MEMSZ.COM', 'SYSTEM.RUN', 'TSR.COM'], (hex(u0), hex(k.useg), k.u16('ent_max'), k.exec_list()))
     off, seg = struct.unpack('<HH', k.pc.rd(0, 0x24 * 4, 4))
     moff, mseg = struct.unpack('<HH', k.pc.rd(0, 0x0B * 4, 4))
-    check('... the kernel, INT 24h and the mouse know where it went', k.pc.u16(0x60, k.Y['ui_seg']) == k.useg and seg == k.useg and mseg == k.useg,
-          (hex(seg), hex(mseg)))
+    m33seg = k.pc.u16(0, 0x33 * 4 + 2)
+    check('... the kernel, INT 24h, the mouse and INT 33h know where it went', k.pc.u16(0x60, k.Y['ui_seg']) == k.useg and seg == k.useg and
+          mseg == k.useg and m33seg == k.useg, (hex(seg), hex(mseg), hex(m33seg)))
     k.key(CODE['U'])
     check('... and .RUN programs load again (System)', has(k, 'Free for programs'), screen(k))
     k.key(ktest.ESC)
@@ -558,11 +565,185 @@ def t_saver():
     check('... and goes on working', has(k, 'Line 2 of 5'), screen(k))
 
 
+# ---------------------------------------------------------------------
+def start_dos(k, name):
+    """Start a DOS program from the Executive; run until it waits for a key."""
+    k.select(name)
+    k.pc.tty.clear()
+    k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: k.pc.mode() != 0x40, 5)
+    k.settle()
+
+def tty_lines(k): return ''.join(k.pc.tty).replace('\r', '').split('\n')
+def tty_line(k, name):
+    for l in tty_lines(k):
+        if l.startswith(name + ':'): return l.split(':', 1)[1].split()
+    return None
+def tcell(k, col, row): return k.pc.rd(0xB800, (row * 80 + col) * 2, 2)
+
+ARROW_C = (0x0000, 0x4000, 0x6000, 0x7000, 0x7800, 0x7C00, 0x7E00, 0x7F00, 0x7F80, 0x7C00, 0x6C00, 0x4600, 0x0600, 0x0300, 0x0300, 0x0000)
+def arrow_bits(x, y, hx, hy, H, two):
+    """(bit, row) set by the arrow's cursor mask on a blank screen: masks
+    apply bit for bit (in modes 4/5 two bits are a pixel; x and the hot
+    spot are virtual pixels, one bit each)"""
+    b0 = x - hx
+    if two: b0 &= ~1
+    out = set()
+    for r in range(16):
+        yy = y - hy + r
+        if not 0 <= yy < H: continue
+        for c in range(16):
+            if 0 <= b0 + c < 640 and ARROW_C[r] >> (15 - c) & 1: out.add((b0 + c, yy))
+    return out
+
+def screen_bits(k, H, banks):
+    v, out = k.pc.rd(0xB800, 0, 0x8000), set()
+    sh = {2: 1, 4: 2}[banks]
+    for y in range(H):
+        base = (y & (banks - 1)) * 0x2000 + (y >> sh) * 80
+        for xb in range(80):
+            b = v[base + xb]
+            for i in range(8):
+                if b & 0x80 >> i: out.add((xb * 8 + i, y))
+    return out
+
+def t_mouse():
+    print('== INT 33h for DOS programs')
+    img = image('m33.img', M33TEST, MEMSZ)
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    seen = set()                        # the port's IER while the program runs
+    k.hooks.append(lambda pc: seen.add(pc.uart['ier']) if pc.mode() != 0x40 else None)
+    out = k.run_file('MEMSZ.COM', 20)
+    k.hooks.clear()
+    ier = max(seen) if seen else None
+    check('a program that doesn\'t ask for the mouse: its port is left alone (%s)' % out.strip().split('\n')[-1][:30],
+          'KB for programs' in out and ier == 0 and k.pc.uart['ier'] & 1, (ier, out[-80:]))
+    v = struct.unpack('<HH', k.pc.rd(0, 0x33 * 4, 4))
+    check('INT 33h is the core\'s', v == (k.Y['int33_ui'], k.useg), (v, hex(k.useg)))
+    start_dos(k, 'M33TEST.COM')
+    check('reset: AX = FFFFh, 2 buttons', tty_line(k, 'reset')[:2] == ['FFFF', '0002'], tty_line(k, 'reset'))
+    check('version 6.26, serial, IRQ 3', tty_line(k, 'version')[1:3] == ['0626', '0203'], tty_line(k, 'version'))
+    c = tcell(k, 40, 12)
+    check('the pointer shows in the middle as an inverse cell', c[1] == 0x70, c)
+    k.pc.mouse_move(40, 20); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05)
+    check('it follows the mouse (and the old cell is back)', tcell(k, 45, 13)[1] == 0x70 and tcell(k, 40, 12)[1] == 0x07, (tcell(k, 45, 13), tcell(k, 40, 12)))
+    k.key(ktest.ENTER)
+    check('position: 8 mickeys a pixel across, 16 down (360, 110)', tty_line(k, 'pos')[1:] == ['0000', '0168', '006E'], tty_line(k, 'pos'))
+    check('one press and one release of the left button, where', tty_line(k, 'press')[1:] == ['0001', '0168', '006E'] and
+          tty_line(k, 'release')[1:] == ['0001', '0168', '006E'], (tty_line(k, 'press'), tty_line(k, 'release')))
+    check('mickeys counted (40, 20)', tty_line(k, 'mickeys')[2:] == ['0028', '0014'], tty_line(k, 'mickeys'))
+    check('ranges (one given backwards) hold the position', tty_line(k, 'range')[2:] == ['0064', '0032'], tty_line(k, 'range'))
+    k.pc.mouse_move(8, 0); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05)
+    k.key(ktest.ENTER)
+    ev = tty_line(k, 'events')
+    check('the event handler is called: move, press, release, with the position', ev and int(ev[0], 16) >= 3 and ev[1:] == ['0007', '006C', '0032'], ev)
+    check('hidden: the cell is as it was', tcell(k, 13, 6)[1] == 0x07, tcell(k, 13, 6))
+    k.key(ktest.ENTER)
+    check('shown again', tcell(k, 13, 6)[1] == 0x70, tcell(k, 13, 6))
+    k.pc.wr(0xB800, (6 * 80 + 13) * 2, b'Z\x1e')
+    k.key(ktest.ENTER)
+    check('a cell the program wrote over stays as written', tcell(k, 13, 6) == b'Z\x1e', tcell(k, 13, 6))
+    k.key(ktest.ENTER)
+    check('mode 4: reset knows 640 x 200', tty_line(k, 'max')[2:] == ['027F', '00C7'], tty_line(k, 'max'))
+    gfx = lambda: b''.join(k.pc.rd(0xB800, 0x2000 * (y & 1) + (y >> 1) * 80 + 40, 2) for y in range(100, 116))
+    g = gfx()
+    check('mode 4: the arrow is drawn at (160, 100)', g[2] == 0x40 and any(g), g.hex())
+    k.key(ktest.ENTER)
+    check('... and taken away', not any(gfx()), gfx().hex())
+    k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
+    check('the program ends with the pointer on and a handler set: the Executive is back', k.band()[0] == 'M33TEST.COM ended' and not k.crashed, k.band())
+    check('... the pointer is off and the handler forgotten', k.u16('m33_cnt') == 0xFFFF and k.u16('m33_hmask') == 0)
+    k.key(ktest.ENTER)
+    click(k, 40, 24 + 16 * 1 + 8)
+    check('... and the Executive\'s mouse works (a click selects)', k.u16('sel') == 1, k.u16('sel'))
+    shot(k, 'mouse_back')
+    # no mouse: reset says so
+    k = ktest.KPC(image('m33n.img', M33TEST)); k.start()
+    start_dos(k, 'M33TEST.COM')
+    check('without a mouse, reset returns AX = 0', tty_line(k, 'reset')[:2] == ['0000', '0000'], tty_line(k, 'reset'))
+    check('... and the other calls do nothing (no version, no pointer)', tty_line(k, 'version')[1] != '0626' and tcell(k, 40, 12)[1] == 0x07,
+          (tty_line(k, 'version'), tcell(k, 40, 12)))
+    for i in range(7): k.key(ktest.ENTER)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
+    check('... and the program runs to its end', k.band()[0] == 'M33TEST.COM ended', k.band())
+    # the graphics pointer, bit for bit; the reset and shape asked with DF set
+    k = ktest.KPC(image('m33g.img', M33['M33GFX'])); k.pc.mouse = True; k.start()
+    rows0 = k.rd('rowtab', 800)
+    start_dos(k, 'M33GFX.COM')
+    for x, y, hx, hy, H, banks, two, what in ((0, 0, 5, 7, 400, 4, 0, 'mode 40h, top left, hot spot (5, 7)'),
+                                              (639, 399, 5, 7, 400, 4, 0, 'mode 40h, bottom right'),
+                                              (333, 201, 5, 7, 400, 4, 0, 'mode 40h, an odd column'),
+                                              (630, 190, 0, 0, 200, 2, 0, 'mode 6, clipped right and below'),
+                                              (101, 50, 5, 7, 200, 2, 1, 'mode 4, hot spot in virtual pixels')):
+        e, a = arrow_bits(x, y, hx, hy, H, two), screen_bits(k, H, banks)
+        check('pointer: ' + what, e == a and e, (len(e), len(a), sorted(e - a)[:4], sorted(a - e)[:4]))
+        k.key(ktest.ENTER, settle=False); k.pc.run_for(0.05)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
+    check('DF set by the program: the reset and the shape still land where they should', k.rd('rowtab', 800) == rows0 and
+          k.band()[0] == 'M33GFX.COM ended', k.band())
+    # a program that ends inside its event handler; then the next one's handler
+    k = ktest.KPC(image('m33q.img', M33['M33QUIT'], M33TEST)); k.pc.mouse = True; k.start()
+    start_dos(k, 'M33QUIT.COM')
+    k.pc.mouse_move(3, 0); k.pc.run_for(0.1)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
+    check('a program can end from its event handler', k.band()[0] == 'M33QUIT.COM ended, exit code 1' and k.rd('m33_busy', 1) == b'\0', k.band())
+    start_dos(k, 'M33TEST.COM'); k.key(ktest.ENTER)
+    k.pc.mouse_move(8, 0); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05)
+    k.key(ktest.ENTER)
+    ev = tty_line(k, 'events')
+    check('... and the next program\'s handler is called', ev and int(ev[0], 16) >= 3, ev)
+    # under the shell: a handler left by a program that ended must not reach
+    # the next program loaded at the same place
+    k = ktest.KPC(image('m33s.img', GRIDCMD, M33['M33HSET'], M33['M33HVIC'])); k.pc.mouse = True; k.start()
+    start_dos(k, 'GRIDCMD.COM')
+    k.key('M33HSET\r')
+    check('a program that ends without a reset: its handler is forgotten', k.u16('m33_hmask') == 0 and k.u16('m33_hseg') == 0,
+          (hex(k.u16('m33_hmask')), hex(k.u16('m33_hseg'))))
+    k.key('M33HVIC\r', settle=False); k.pc.run_for(0.5)
+    k.pc.mouse_move(5, 0); k.pc.run_for(0.1); k.pc.mouse_move(5, 0); k.pc.run_for(0.1)
+    k.key(' ')
+    check('... and never reaches the next program at the same segment', any(l.startswith('hits: 0000') for l in tty_lines(k)) and not k.crashed,
+          [l for l in tty_lines(k) if 'hits' in l])
+    # a packet arriving while fn 0Ch asks the kernel for the PSP (STI there)
+    k = ktest.KPC(image('m33r.img', M33TEST)); k.pc.mouse = True; k.start()
+    start_dos(k, 'M33TEST.COM')
+    st = {'armed': True}
+    def h(pc):
+        if st['armed'] and pc.r('cs') == 0x60 and pc.r('ip') == k.Y['int21'] + 1 and pc.r('ax') >> 8 == 0x62:
+            pc.mouse_move(1, 0); pc.mu.emu_stop(); st['armed'] = False
+    k.hooks.append(h)
+    k.key(ktest.ENTER)
+    k.hooks.clear()
+    k.pc.mouse_move(8, 0); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05)
+    k.key(ktest.ENTER)
+    ev = tty_line(k, 'events')
+    check('a mouse packet while the handler is being set doesn\'t lose it', not st['armed'] and ev and int(ev[0], 16) >= 3, (st, ev))
+    # TM5000G, which found no mouse on 0.3
+    if not os.path.exists(TM5000G):
+        print('(no TM5000G.EXE: skipped)'); return
+    chip = sim7210.NEC7210(sim7210.bus())
+    k = ktest.KPC(image('m33tm.img', 'TM5000G.EXE=' + TM5000G), chip=chip); k.pc.mouse = True; k.start()
+    k.select('TM5000G.EXE'); k.pc.tty.clear(); k.key(ktest.ENTER, settle=False); k.settle(40)
+    check('TM5000G: "Mouse support enabled."', 'Mouse support enabled.' in ''.join(k.pc.tty), ''.join(k.pc.tty)[-300:])
+    k.key(ktest.ENTER)
+    check('TM5000G: "Mouse: ON" in the main menu', 'Mouse: ON' in k.pc.text_screen(), k.pc.text_screen())
+    for i in range(4): k.pc.mouse_move(0, -28 & 0xFF); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.settle(5)
+    check('TM5000G: a click on "Configure Modules" opens it', 'Module Configuration' in k.pc.text_screen(), k.pc.text_screen()[:300])
+    k.key(ktest.ESC); k.key('0', settle=False)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
+    check('TM5000G: back in the Executive', any('TM5000G.EXE ended' in l for l in k.band()), k.band())
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

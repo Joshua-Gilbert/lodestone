@@ -14,7 +14,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
   - Reads sector 0 and checks it is a 720 KB / 1.44 MB FAT12 floppy.
   - Keeps the disk's own BPB (bytes 0Bh–3Dh), drops in the Grid-OS boot code, writes it back and verifies it.
   - Asks Y/N first, writes sector 0 only, and leaves files untouched. `GOSBOOT B` targets drive B:.
-- **GRIDOS.SYS 0.3** — the kernel (with 0.2.2's disk cache and 0.2.3's one-sector-at-a-time retry) plus the UI segment (UI core, Executive, GRiD's TC8X16 font, screen saver): **30,292 bytes** with the font switch (A: still has the 30,048-byte noon build until the disk is back in the PC). See `gridos-0.3-apps.md`.
+- **GRIDOS.SYS 0.3** — the kernel (with 0.2.2's disk cache and 0.2.3's one-sector-at-a-time retry) plus the UI segment (UI core, Executive, GRiD's TC8X16 font, screen saver): **30,292 bytes** with the font switch. See `gridos-0.3-apps.md`.
   - Earlier builds are kept in `gridos\releases\`:
     - `0.3` — GRIDOS.SYS, GRIDCMD.COM, GRIDOS.TXT, SYSTEM.RUN, WRITE.RUN, DEFRAG.COM (GRiD's font), TERMINUS.FNT;
     - `0.2.3` — GRIDOS.SYS 24,518, DEFRAG.COM, GRIDOS.TXT, HEADCLN.COM (**the rollback for 0.3**);
@@ -68,15 +68,16 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
    - **Each kernel copy can also leave a hole** where the old GRIDOS.SYS was. The next big file (BENCH.DAT) fills it and is split, so BENCH reads look 0.3–0.8 s slower. DEFRAG puts files back in one piece. Compare BENCH read times only between runs on the same layout.
 4. Back to DOS: CODE-D, or a plain restart without F. Under GRiD MS-DOS booted from the EPROM, A: is the EPROM and the floppy is B:.
 
-## What's on the floppy (A:) — reformatted 2026-10-05 evening; 0.3 copied 2026-10-06, updated at noon
+## What's on the floppy (A:) — reformatted 2026-10-05 evening; 0.3 copied 2026-10-06, updated at noon and in the afternoon (fonts)
 | File | Size | What |
 |---|---|---|
-| GRIDOS.SYS | 30,048 | **Grid-OS 0.3** kernel + UI core + Executive + disk cache + screen saver, in GRiD's font, with the CODE-? fix and the review panel's fixes (COMSPEC = A:\GRIDCMD.COM) |
+| GRIDOS.SYS | 30,292 | **Grid-OS 0.3** kernel + UI core + Executive + disk cache + screen saver, in GRiD's font, with the CODE-? fix, the review panel's fixes and switchable fonts (COMSPEC = A:\GRIDCMD.COM) |
 | GRIDCMD.COM | 7,596 | Grid-OS command prompt (CODE-C; CLAUDE's DOS commands); says 0.3 |
-| SYSTEM.RUN | 5,029 | System (CODE-U): memory, disks, clock, devices, GPIB scan, about |
+| SYSTEM.RUN | 7,570 | System (CODE-U): memory, disks, clock, devices, GPIB scan, display (fonts), about |
 | WRITE.RUN | 8,215 | Write (CODE-W, or open a text file from the list) |
-| GRIDOS.TXT | 6,615 | readme for 0.3 (with the 0.2.x notes; GRiD's font, CODE-?) |
-| DEFRAG.COM | 9,158 | disk tidier / screen saver, in GRiD's font (`DEFRAG [B:]`, `DEFRAG [B:] /T` to test the free space, `DEFRAG /S` as the saver runs it) |
+| GRIDOS.TXT | 6,927 | readme for 0.3 (with the 0.2.x notes; GRiD's font, CODE-?, fonts and GRIDOS.INI) |
+| TERMINUS.FNT | 1,536 | the Terminus font as a file for System → Display |
+| DEFRAG.COM | 9,212 | disk tidier / screen saver, in the chosen font (`DEFRAG [B:]`, `DEFRAG [B:] /T` to test the free space, `DEFRAG /S` as the saver runs it) |
 | DEFRAG.TXT | 1,511 | DEFRAG's log: the /T runs after the reformat (also in `gridos\bench\DEFRAG_1520_2026-10-05_reformatted.TXT`) |
 | HEADCLN.COM | 1,488 | floppy head cleaning with a wet cleaning disk |
 | TESTDOS.COM | 5,253 | kernel self-test (expect "24 passed, 0 failed") |
@@ -124,7 +125,9 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 - **2026-10-06: Grid-OS 0.3 on A:** GRIDOS.SYS 29,588, GRIDCMD.COM, SYSTEM.RUN, WRITE.RUN and GRIDOS.TXT, each copied on its own and read back identical. The PC's `grid-OS\gridos` folder has the matching sources, tests and `releases\0.3`; `src\EXECRUN.INC` there is obsolete and can be deleted.
 - **2026-10-06 morning, 0.3 on the 1520:** everything Joshua tried worked except CODE-? (help). The 1520's BIOS gives CODE with punctuation, Return and ESC only through INT 16h AH=10h; fixed the same morning. Joshua also asked for GRiD's own font (now TC8X16 from InteGRiD), and a review panel of six reviewers found ~40 issues: all fixed except three kernel ones noted for later (see `gridos-0.3-apps.md`).
 - **2026-10-06 noon: 0.3 updated on A:** GRIDOS.SYS 30,048, SYSTEM.RUN 5,029, WRITE.RUN 8,215, DEFRAG.COM 9,158 and GRIDOS.TXT 6,615. Each was copied on its own and read back identical.
-- **2026-10-06 afternoon: switchable fonts (UI API 2)** built and tested (122 app checks); the PC's `grid-OS\gridos` folder is synced and read back. A: wasn't in the PC, so **still to copy to A:**, each on its own with a read-back: GRIDOS.SYS 30,292, SYSTEM.RUN 7,570, WRITE.RUN 8,215 (rebuilt for API 2, same size), DEFRAG.COM 9,212, GRIDOS.TXT 6,927 and the new TERMINUS.FNT 1,536. All are in `releases\0.3`. GRIDOS.SYS and the `.RUN`s go together (API 2).
+- **2026-10-06 afternoon: switchable fonts (UI API 2) on A:** GRIDOS.SYS 30,292, SYSTEM.RUN 7,570, WRITE.RUN 8,215 (rebuilt for API 2), DEFRAG.COM 9,212, GRIDOS.TXT 6,927 and the new TERMINUS.FNT 1,536, each copied on its own and read back identical. The PC's `grid-OS\gridos` folder matches. Committed as PR #1 (`app-suite-0.3`).
+- **2026-10-06 13:20, on the 1520:** the font switch (System → Display → Return, Terminus kept after a restart, back to GRiD's), CODE-? help everywhere and CODE-ESC in Write all work. PR #1 merged into main.
+- **2026-10-06 afternoon: 0.3.1, the mouse for DOS programs (INT 33h)** built and tested in emulation (160 app checks; TM5000G finds the mouse and takes clicks; a Fable review's 6 findings fixed). The PC's folder has it, in `releases\0.3.1`. **To copy to A:** GRIDOS.SYS 32,162 and GRIDOS.TXT 7,283 (nothing else changed). A DOS program now gets 569.4 KB.
 - **Next, on the 1520 (the checklist in `gridos-0.3-apps.md`):**
   - CODE-? everywhere;
   - CODE-ESC to cancel in Write;
