@@ -1,0 +1,72 @@
+"""Settings for gridlink: a TOML file plus command-line overrides."""
+import os
+try:
+    import tomllib
+except ImportError:                     # Python < 3.11
+    tomllib = None
+
+PATHS = ['~/.config/gridlink/config.toml', '/etc/gridlink/config.toml']
+
+# Joshua's bus (see the GPIB driver notes); edit [bus] in the config file.
+DEFAULT_BUS = {
+    2: 'Tek 11403 digitizing scope', 6: 'Tek FG5010 function generator',
+    11: 'Tek SI5020 switch', 13: 'Tek PS5004 power supply', 16: 'Tek DM5120 DMM',
+    18: 'HP 8753D network analyzer', 28: 'Tek DM5010 DMM', 29: 'Tek DC5009 counter',
+    30: 'Tek PS5010 power supply',
+}
+
+MODELS = {'opus': 'claude-opus-5-5', 'sonnet': 'claude-sonnet-5-5', 'haiku': 'claude-haiku-4-5',
+          'fable': 'claude-fable-5-1'}
+# $ per million tokens: input, output (cache reads/writes are derived)
+PRICES = {'claude-fable-5-1': (10, 50), 'claude-opus-5-5': (4, 20), 'claude-sonnet-5-5': (2, 10),
+          'claude-haiku-4-5': (1, 5)}
+CACHE_READ = {'claude-fable-5-1': 0.025, 'claude-opus-5-5': 0.05}
+
+
+class Config:
+    def __init__(s):
+        s.port = '/dev/ttyUSB0'; s.baud = 115200; s.address = 7
+        s.model = 'claude-opus-5-5'; s.max_tokens = 32000; s.web = True
+        s.compact_at = 300000
+        s.set_clock = True; s.mode = 'ask'
+        s.workdir = os.path.expanduser('~/gridlink/work')
+        s.memory_dir = os.path.expanduser('~/gridlink/memories')
+        s.sessions_dir = os.path.expanduser('~/gridlink/sessions')
+        s.bash_timeout = 180
+        s.bus = dict(DEFAULT_BUS)
+        s.api_key = None; s.user = 'Joshua'
+        s.extra_prompt = ''
+        s.source = None
+
+    def load(s, path=None):
+        cands = [path] if path else PATHS
+        for p in cands:
+            p = os.path.expanduser(p)
+            if p and os.path.exists(p):
+                if tomllib is None: raise SystemExit('Python 3.11+ is needed to read %s' % p)
+                with open(p, 'rb') as f: d = tomllib.load(f)
+                s.apply(d); s.source = p
+                break
+        return s
+
+    def apply(s, d):
+        b = d.get('bridge', {}); c = d.get('claude', {}); g = d.get('grid', {}); pm = d.get('permissions', {})
+        s.port = b.get('port', s.port); s.baud = int(b.get('baud', s.baud)); s.address = int(b.get('address', s.address))
+        s.model = MODELS.get(c.get('model', ''), c.get('model', s.model))
+        s.max_tokens = int(c.get('max_tokens', s.max_tokens)); s.web = bool(c.get('web', s.web))
+        s.compact_at = int(c.get('compact_at', s.compact_at))
+        s.extra_prompt = c.get('extra_prompt', s.extra_prompt)
+        key = c.get('api_key'); keyfile = c.get('api_key_file')
+        if key: s.api_key = key
+        elif keyfile and os.path.exists(os.path.expanduser(keyfile)):
+            s.api_key = open(os.path.expanduser(keyfile)).read().strip()
+        s.set_clock = bool(g.get('set_clock', s.set_clock)); s.user = g.get('user', s.user)
+        for k in ('workdir', 'memory_dir', 'sessions_dir'):
+            if k in g: setattr(s, k, os.path.expanduser(g[k]))
+        s.bash_timeout = int(g.get('bash_timeout', s.bash_timeout))
+        s.mode = pm.get('mode', s.mode)
+        if 'bus' in d:
+            s.bus = {int(k): str(v) for k, v in d['bus'].items()}
+
+    def price(s, model=None):
+        return PRICES.get(model or s.model, (4, 20))

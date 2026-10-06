@@ -1,0 +1,44 @@
+Grid-OS 0.2 - boot floppy
+
+First time only: boot GRiD MS-DOS from the EPROM as usual, then run
+A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
+and keeps all files.
+
+To start Grid-OS: restart and tap F while the memory count finishes,
+so the BIOS boots this floppy instead of the EPROM.
+
+Grid-OS 0.2 is its own DOS 3.30-compatible kernel: files, directories,
+programs (.COM and .EXE), memory, and the GPIB driver built in on
+INT 60h (GRIDGPIB is not needed under Grid-OS).
+
+The Executive (the file list):
+  Up/Down, PgUp/PgDn, Home/End   choose a file
+  Return                         run it / open a subject (directory)
+  CODE-A                         Claude (CLAUDE.COM)
+  CODE-C                         command prompt (GRIDCMD.COM, EXIT returns)
+  F5                             read the disk again after a swap
+  CODE-? (Alt+/) or F1           help
+  CODE-D                         boot GRiD MS-DOS from the EPROM
+  CODE-R                         restart
+  Serial mouse on COM2 (or COM1).
+
+Programs:
+  GRIDCMD   the command prompt: DIR TYPE COPY DEL REN MD RD CD CLS ECHO
+            VER VOL SET PATH PROMPT DATE TIME PAUSE REM EXIT, A:, programs,
+            .BAT files, redirection < > >> and pipes |
+  CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
+            (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
+  TM5000G   TM5000 3.7
+  TESTDOS   checks the kernel's DOS functions (writes and deletes its
+            own test files on this disk; "24 passed, 0 failed" is right)
+  GGTEST    GPIB driver test on the bus
+  TESTKEY   echoes keys until Esc (for checking Claude's key scripts)
+  GRIDGPIB  the GPIB driver for GRiD MS-DOS (load it first there)
+
+To update Grid-OS, replace GRIDOS.SYS (and GRIDCMD.COM) on this disk.
+No need to rerun GOSBOOT.
+
+Keep COMMAND.COM, CONFIG.SYS and AUTOEXEC.BAT off this disk unless they
+are meant for GRiD MS-DOS: booted from the EPROM with this floppy in the
+drive, GRiD MS-DOS uses A:\COMMAND.COM (and A:\CONFIG.SYS) in place of
+its own.

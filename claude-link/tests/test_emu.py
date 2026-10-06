@@ -1,0 +1,328 @@
+"""The real CLAUDE.COM + GRIDGPIB.COM in emulation, against the real gridlink.
+
+    python3 tests/test_emu.py [outdir]     (screens go to outdir as PNG + TXT)
+"""
+import os, struct, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from grid_emu import EmuHarness
+from fake_anthropic import reply
+from gridlink import tools
+
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('EMU_OUT', '')
+CFG_C = b'#include <stdio.h>\r\nint rate = 1;\r\nint main(void) { return rate; }\r\n'
+
+
+def shot(h, name):
+    if OUT:
+        os.makedirs(OUT, exist_ok=True)
+        h.shot(os.path.join(OUT, name + '.png'))
+
+
+def results(h, i):
+    return [b for b in h.client.requests[i]['messages'][-1]['content']
+            if isinstance(b, dict) and b.get('type') == 'tool_result']
+
+
+def check(h):
+    assert not h.m.crash, h.m.crash
+    assert not h.nano.violations, h.nano.violations
+    errs = [l for l in h.log if 'Traceback' in str(l) or 'error' in str(l).lower()]
+    assert not errs, errs
+    assert h.var('n_fail', 2) == 0, ('link failures', h.var('n_fail', 2))
+
+
+def start(script, **kw):
+    h = EmuHarness(script, **kw)
+    h.boot()
+    assert h.connect(), ('no connection', h.m.crash, h.screen())
+    return h
+
+
+def test_connect_and_chat(patched=True, name='chat'):
+    h = start([reply(('text', 'Hello from the Pi. The GRiD is **connected** and the link runs at '
+                      'GPIB speed.\n\n- one\n- two'))], patched=patched)
+    shot(h, name + '_0_welcome')
+    assert h.turn('hi'), h.screen()
+    t = h.screen()
+    assert 'Welcome to Claude for GRiD' in t and 'Hello from the Pi.' in t, t
+    assert '> hi' in t, t
+    assert h.m.clock_set is not None and h.m.rtc_set, 'clock not set'
+    shot(h, name + '_1_reply')
+    check(h)
+    return h
+
+
+def test_stock_bridge():
+    test_connect_and_chat(patched=False, name='stock')
+
+
+def test_read_file():
+    h = start([reply(('text', "I'll read it."), ('tool', 'str_replace_based_edit_tool',
+                                                 {'command': 'view', 'path': 'A:\\CFG.C'})),
+               reply(('text', 'It sets `rate` to 1 and returns it.'))], files={'A:\\CFG.C': CFG_C})
+    assert h.turn('what does cfg.c do?')
+    res = results(h, 1)[0]
+    assert '2\tint rate = 1;' in res['content'], res
+    t = h.screen()
+    assert 'Read(A:\\CFG.C)' in t and 'Read 3 lines' in t, t
+    shot(h, 'read')
+    check(h)
+
+
+def test_edit_with_permission():
+    seen = {}
+    def on_ask(h):
+        if 'shot' not in seen:
+            seen['shot'] = h.screen(); shot(h, 'edit_0_ask')
+        h.key(ord('y'))
+    h = start([reply(('tool', 'str_replace_based_edit_tool',
+                      {'command': 'str_replace', 'path': 'A:\\CFG.C',
+                       'old_str': 'int rate = 1;', 'new_str': 'int rate = 5;'})),
+               reply(('text', 'Done - rate is now 5.'))], files={'A:\\CFG.C': CFG_C})
+    assert h.turn('set rate to 5', on_ask=on_ask)
+    assert 'shot' in seen and '[Y] Yes' in seen['shot'], seen
+    assert bytes(h.m.fs['A:\\CFG.C']) == CFG_C.replace(b'rate = 1', b'rate = 5'), h.m.fs['A:\\CFG.C']
+    assert 'A:\\CFG.$$$' not in h.m.fs
+    t = h.screen()
+    assert 'Updated A:\\CFG.C with 1 addition and 1 removal' in t, t
+    shot(h, 'edit_1_done')
+    check(h)
+
+
+def test_edit_rejected():
+    h = start([reply(('tool', 'str_replace_based_edit_tool',
+                      {'command': 'str_replace', 'path': 'A:\\CFG.C',
+                       'old_str': 'int rate = 1;', 'new_str': 'int rate = 5;'})),
+               reply(('text', 'OK, I will wait.'))], files={'A:\\CFG.C': CFG_C}, answer='n')
+    assert h.turn('set rate to 5')
+    assert bytes(h.m.fs['A:\\CFG.C']) == CFG_C
+    res = results(h, 1)[0]
+    assert res.get('is_error') and res['content'] == tools.REJECTED, res
+    check(h)
+
+
+def test_run_program_with_keys():
+    h = start([reply(('tool', 'grid_command', {'command': 'TESTKEY', 'capture': False,
+                                               'keys': 'hello{WAIT 0.2}{SNAP}{ESC}'})),
+               reply(('text', 'TESTKEY read five keys.'))], mode='auto')
+    assert h.turn('run testkey', sim_s=30)
+    res = results(h, 1)[0]
+    text = str(res['content'])
+    assert 'Exit code: 5' in text, text
+    assert 'TESTKEY ready: hello' in text, text
+    assert any('[EXEC A:\\TESTKEY.COM' in l for l in h.m.log), h.m.log
+    assert h.m.mode() == 0x40
+    shot(h, 'run')
+    check(h)
+
+
+def test_dos_command_capture():
+    h = start([reply(('tool', 'grid_command', {'command': 'DIR'})),
+               reply(('text', 'There are a few files.'))], mode='auto', files={'A:\\CFG.C': CFG_C})
+    assert h.turn('what is on the disk?')
+    res = results(h, 1)[0]
+    text = str(res['content'])
+    assert 'CFG' in text and 'CLAUDE' in text, text
+    assert 'A:\\CLAUDE.OUT' not in h.m.fs            # read, then deleted
+    check(h)
+
+
+def test_gpib_query():
+    h = start([reply(('tool', 'gpib', {'action': 'query', 'address': 29, 'command': 'ID?'})),
+               reply(('tool', 'gpib', {'action': 'write', 'address': 6, 'command': 'FREQ 1E6'})),
+               reply(('text', 'The DC5009 counter is at 29; the FG5010 is set.'))])
+    assert h.turn('what is at 29, then set the FG5010 to 1 MHz', sim_s=30)
+    q = results(h, 1)[0]
+    assert q['content'] == 'ID TEK/DC5009,V79.1,F2.1', q
+    w = results(h, 2)[0]
+    assert not w.get('is_error'), w
+    shot(h, 'gpib')
+    check(h)
+
+
+def test_big_file_both_ways():
+    big = ''.join('line %05d: the quick brown fox jumps over the lazy dog\n' % i for i in range(400))
+    h = start([reply(('tool', 'str_replace_based_edit_tool',
+                      {'command': 'create', 'path': 'A:\\BIG.TXT', 'file_text': big})),
+               reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\BIG.TXT',
+                                                               'view_range': [395, 400]})),
+               reply(('text', 'Written and checked.'))], mode='edits')
+    t0 = h.m.us
+    assert h.turn('write a big file', sim_s=120)
+    assert bytes(h.m.fs['A:\\BIG.TXT']) == big.replace('\n', '\r\n').encode()
+    res = results(h, 2)[0]
+    assert 'line 00399' in res['content'], res['content'][-200:]
+    h.big_s = (h.m.us - t0) / 1e6
+    check(h)
+    return h
+
+
+def test_damaged_frames():
+    h = start([reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\CFG.C'})),
+               reply(('text', 'Read it despite the noise. ' * 20))], files={'A:\\CFG.C': CFG_C})
+    h.transport.corrupt_every = 5
+    assert h.turn('read cfg.c', sim_s=60)
+    assert 'noise.' in h.screen()
+    assert h.var('n_bad', 2) > 0
+    h.transport.corrupt_every = 0
+    assert h.m.crash is None
+
+
+def test_help_and_slash():
+    h = start([])
+    h.key(0x3B00)                          # F1
+    h.run_until(lambda: h.var('help_open'), 2)
+    shot(h, 'help')
+    assert 'keys' in h.screen() and 'CODE-Q' in h.screen(), h.screen()
+    h.key(0x011B)
+    h.run_until(lambda: not h.var('help_open'), 2)
+    assert h.turn('/model sonnet') and h.turn('/cost')
+    t = h.screen()
+    assert 'Model: claude-sonnet-5-5' in t, t
+    assert 'sonnet-5-5' in t.split('\n')[0], t.split('\n')[0]
+    check(h)
+
+
+
+def test_interrupt_and_continue():
+    long = ' '.join('word%03d' % i for i in range(400))
+    h = start([reply(('text', long), delay=0.01), reply(('text', 'Carrying on.'))])
+    h.type('write a lot')
+    assert h.run_until(lambda: h.var('c_count', 2) > 8, 20), h.screen()
+    h.key(0x011B)                                   # Esc
+    assert h.run_until(h.idle, 20), h.screen()
+    t = h.screen()
+    assert 'Interrupted by user' in t, t
+    shot(h, 'interrupt')
+    assert h.turn('go on')
+    msgs = h.client.requests[-1]['messages']
+    assert any('interrupted' in str(m['content']).lower() for m in msgs), msgs
+    assert 'Carrying on.' in h.screen()
+    check(h)
+
+
+def test_queued_prompt():
+    h = start([reply(('text', 'First answer, slowly streamed. ' * 6), delay=0.01),
+               reply(('text', 'Second answer.'))])
+    h.type('first')
+    assert h.run_until(lambda: h.var('busy') and h.var('c_count', 2) > 6, 20)
+    h.type('second')
+    assert h.run_until(lambda: h.var('queued'), 5), h.screen()
+    assert 'queued' in h.screen().split('\n')[21], h.screen()
+    assert h.run_until(lambda: not h.var('queued') and h.idle(), 30), h.screen()
+    t = h.screen()
+    assert '> second' in t and 'Second answer.' in t, t
+    check(h)
+
+
+def test_long_answer_scrollback():
+    text = '\n'.join('Line %03d of a long answer.' % i for i in range(1, 201))
+    h = start([reply(('text', text))])
+    assert h.turn('count to 200', sim_s=60)
+    assert h.var('c_count', 2) == 160                # the ring is full and wrapped
+    t = h.screen().split('\n')
+    assert 'Line 200' in '\n'.join(t[1:21]), t
+    h.key(0x4900); h.key(0x4900)                   # PgUp twice
+    h.settle()
+    t = h.screen().split('\n')
+    nums = [int(l.split()[1]) for l in t[1:21] if l.strip().startswith('Line')]
+    assert nums and nums == list(range(nums[0], nums[0] + len(nums))) and nums[-1] < 200, nums
+    assert 'PgDn' in t[21], t[21]
+    shot(h, 'scrollback')
+    h.key(0x7500)                                  # Ctrl-End
+    h.settle()
+    assert 'Line 200' in h.screen()
+    check(h)
+
+
+def test_long_prompt_and_history():
+    p = 'please look at ' + ' '.join('file%02d.c' % i for i in range(20))
+    h = start([reply(('text', 'Looked.')), reply(('text', 'Again.'))])
+    h.type(p, enter=False)
+    h.settle()
+    shot(h, 'long_prompt')
+    assert h.var('inlen', 2) == len(p)
+    h.key(0x1C0D)
+    assert h.run_until(lambda: h.var('busy'), 5)
+    assert h.run_until(h.idle, 20)
+    assert h.client.requests[0]['messages'][-1]['content'][-1]['text'] == p
+    h.key(0x4800)                                  # Up: the last prompt again
+    h.settle()
+    assert h.var('inlen', 2) == len(p)
+    check(h)
+
+
+def test_link_loss_and_reconnect():
+    h = start([reply(('text', 'Back again.'))])
+    real = h.transport.answer
+    h.transport.answer = lambda f: None            # the Pi goes quiet
+    assert h.run_until(lambda: not h.var('connected'), 10), 'no link loss noticed'
+    h.settle()
+    assert 'lost' in h.screen().split('\n')[21], h.screen()
+    shot(h, 'link_lost')
+    h.transport.answer = real
+    assert h.run_until(h.idle, 15), h.screen()
+    assert h.var('n_fail', 2) >= 1
+    assert h.turn('are you there?')
+    assert 'Back again.' in h.screen()
+    assert not h.m.crash and not h.nano.violations
+
+
+def test_quit_to_dos():
+    h = start([])
+    h.key(0x1000)                                  # CODE-Q (Alt-Q)
+    h.run_until(lambda: h.m.stopped, 5)
+    assert h.m.stopped and h.m.exit_code == 0, (h.m.stopped, h.m.exit_code, h.m.crash)
+    assert h.m.mode() == 3
+    for n in (0x23, 0x24, 0x16):                   # DOS vectors back as they were
+        off, seg = struct.unpack('<HH', h.m.rd(0, n * 4, 4))
+        assert (seg, off) == (0xF000, n * 8), (hex(n), hex(seg), hex(off))
+    assert 'Claude for GRiD ended.' in ''.join(h.m.tty)
+
+
+def test_claude_md_and_info():
+    md = b'# This GRiD\r\nTM5000G lives in A:\\TM5000.\r\n'
+    h = start([reply(('text', 'Noted.'))], files={'A:\\CLAUDE.MD': md})
+    assert h.turn('hi')
+    system = str(h.client.requests[0].get('system'))
+    assert 'TM5000G lives in' in system, system[:500]
+    assert 'gpib=GRIDGPIB 1.10 on INT 60h' in system or 'GRIDGPIB' in system, system[:800]
+    check(h)
+
+
+def test_gpib_scan():
+    h = start([reply(('tool', 'gpib', {'action': 'scan'})), reply(('text', 'Found them.'))])
+    assert h.turn('what is on the bus?', sim_s=60)
+    r = results(h, 1)[0]
+    text = str(r['content'])
+    for a in ('6', '14', '29'):
+        assert a in text, text
+    check(h)
+
+
+def test_missing_program():
+    h = start([reply(('tool', 'grid_command', {'command': 'NOSUCH /X'})),
+               reply(('text', 'It does not exist.'))], mode='auto')
+    assert h.turn('run nosuch')
+    r = results(h, 1)[0]
+    assert 'Bad command' in str(r['content']), r
+    check(h)
+
+
+if __name__ == '__main__':
+    import traceback
+    names = [n for n in sorted(globals()) if n.startswith('test_')]
+    if len(sys.argv) > 2: names = [n for n in names if any(a in n for a in sys.argv[2:])]
+    bad = 0
+    for n in names:
+        t0 = time.time()
+        try:
+            r = globals()[n]()
+            extra = ''
+            if r is not None and hasattr(r, 'big_s'): extra = '  (22.8 KB each way in %.2f s simulated)' % r.big_s
+            print('ok   %-30s %5.1fs%s' % (n, time.time() - t0, extra))
+        except Exception:
+            bad += 1
+            print('FAIL %s' % n); traceback.print_exc()
+    print('%d of %d passed' % (len(names) - bad, len(names)))
+    sys.exit(1 if bad else 0)

@@ -1,0 +1,16 @@
+# build listings and Python caches
+*.LST
+*.lst
+__pycache__/
+*.pyc
+
+# ROM and disk images are not ours to publish: keep them out
+# (the tests read the GRiD MS-DOS EPROM image from GRID_ROM or rom/)
+rom/*.BIN
+rom/*.bin
+*.img
+*.IMG
+
+# the bridge's local settings and key
+claude-link/config.toml
+claude-link/api_key

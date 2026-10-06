@@ -1,0 +1,187 @@
+BENCH 1.1 in pcemu, 1.44 MB floppy, real-drive timing model (seconds)
+2026-10-05.  python3 bench/run_bench.py <GRiD MS-DOS EPROM image>
+
+test                                 GOS 0.2 GOS 0.2.1    MS-DOS 0.2.1/DOS
+Write 256 KB, 16 KB writes              9.34      9.31     13.10    0.71x
+Read 256 KB, 16 KB reads               11.53      8.55     11.14    0.77x
+Read 256 KB, 512-byte reads             8.59      8.61    105.19    0.08x
+Read 256 KB, 128-byte reads           105.19      8.64    105.19    0.08x
+64 random 512-byte reads                9.74      9.67      9.93    0.97x
+Directory listing x 10                  0.02      0.02      0.06    0.41x
+Open + close x 100                      0.22      0.22      0.41    0.53x
+20 small files, create + delete        27.87     20.96     25.82    0.81x
+Load + run 120 KB .EXE x 3             17.25     12.47     14.02    0.89x
+INT 21h calls x 1000                    0.09      0.09      0.12    0.79x
+Total                                 189.85     78.55    284.97    0.28x
+
+Memory for programs: 0.2 about 582 KB, 0.2.1 572 KB, GRiD MS-DOS 580 KB.
+
+Model: 300 rpm, 3 ms step, 15 ms settle, 1.44 MB sector spacing (gap 108);
+CPU 4 us per basic block, REP string ops at the RAMSPEED-measured 1520 rates.
+The 0.2 column is the 0.2 kernel under the same model (corrected REP timing).
+What 0.2.1 changed: cylinder read-ahead cache (18 KB), whole-run writes
+with clusters linked after the write, FAT writes only of changed sectors,
+FAT before directory entry at close.  Confirm on the GRiD with BENCH.COM.
+
+On the GRiDCase 1520, 2026-10-05 (BENCH 1.2, Joshua's floppy; seconds):
+
+test                                GOS 0.2.1  MS-DOS   note
+Write 256 KB, 16 KB writes             14.66    13.89   lost a turn per request
+Read 256 KB, 16 KB reads                8.95    11.97   = emulator
+Read 256 KB, 512-byte reads             8.78   104.86   = emulator
+Read 256 KB, 128-byte reads             8.78   104.86   = emulator
+64 random 512-byte reads                9.88    10.49
+Directory listing x 10                 19.88     0.21   well-used root, 3 buffers
+Open + close x 100                      0.21     0.21
+20 small files, create + delete        62.73    28.45   same cause
+Load + run 120 KB .EXE x 3             12.85    14.06
+INT 21h calls x 1000                    0.05     0.10
+Total                                 146.82   289.15
+CACHETST on the 1520: 240 ops, 0 errors.
+
+The floppy's root directory has many old entries before its end marker
+(Windows copies), so a search reads ~10+ sectors; 0.2.1 re-read each one
+with a lost turn.  Fixed the same day: a search reaching the root's second
+sector reads the whole root into the cache in one pass, and writes update
+the cache instead of dropping it.  In the emulator, a root littered with
+150 old entries: listing x10 8.97 s -> 0.39 s, small files 39.7 -> 20.8 s.
+Writes: free clusters found with a tight loop, and linked before the write
+when a run starts a track (time to spare) - request-start CPU 1.3 -> 0.9 ms.
+
+Rerun on the 1520 with the fixed 0.2.1 kernel (23,492 bytes), 2026-10-05 11:57:
+Write 12.68  Read16 9.39  Read512 9.55  Read128 9.77  Random 10.27
+Dir x10 0.54 (was 19.88)  Open/close 0.10  Small files 21.58 (was 62.73)
+EXE x3 12.90  INT 21h 0.10  Total 86.95 s (GRiD MS-DOS 289.15 s)
+Grid-OS is now ahead of GRiD MS-DOS on every test on the real machine.
+Writes are still ~3 s above the emulator, and reads ~0.6 s above the first
+run: BENCH.DAT probably landed in fragmented free space this time (the
+floppy has had many files come and go), and/or the write gap is still a
+little too long for this drive.
+
+Third run on the 1520, kernel 23,688 bytes (directory search steps through a
+sector's entries in the buffer), 2026-10-05 12:13:
+Write 12.90  Read16 9.00  Read512 9.39  Read128 9.55  Random 10.05
+Dir x10 0.43 (was 0.54; MS-DOS 0.21)  Small files 21.14  EXE x3 13.51
+Total 86.18 s.  What's left of the directory gap is the one re-read of the
+whole root after file reads have replaced it in the cache; MS-DOS keeps it
+in its buffers.  A permanent 7 KB root cache would remove it.
+
+Fourth run on the 1520, same kernel, on the floppy freshly formatted and
+refilled (root directory: ~15 entries), 2026-10-05 12:25:
+Write 12.68  Read16 8.84  Read512 8.78  Read128 8.78  Random 9.88
+Dir x10 0.43  Open/close 0.10  Small files 21.58  EXE x3 12.96
+INT 21h 0.05  Total 84.15 s (GRiD MS-DOS 289.15 s).
+Reads are back to the first run's values: their slowdown in runs 2-3 was
+fragmentation.  Writes are unchanged at 12.68: that gap is the drive timing,
+not fragmentation.  The directory listing is still 0.43: the root prefetch
+re-reads the whole root once even when its second sector is already in a
+buffer (fixable: skip the prefetch then).
+
+Kernel 23,728 bytes: the root prefetch is skipped when the sector needed is
+already in a buffer.  Emulator, a copy of the fresh floppy's files plus
+System Volume Information: dir x10 0.063 s, 0 disk reads (Read 8.80 s,
+Write 9.86 s).  Cluttered root (150 old entries): dir x10 0.33 s, one pass.
+
+Fifth run on the 1520, 2026-10-05 12:38, on the fresh floppy after the
+23,728-byte kernel was copied on:
+Write 12.90  Read16 9.17  Read512 9.33  Read128 9.55  Random 10.32
+Dir x10 0.43  Open/close 0.10  Small files 21.58  EXE x3 12.90
+INT 21h 0.10  Total 86.45 s.
+Reproduced in the emulator by running BENCH twice on a copy of the fresh
+floppy, with the kernel replaced in between the way Windows does it (new
+copy into free space after TM5000G, old one deleted):
+- Directory 0.438 s, 1 call, 14 sectors.  The first run's 20 deleted temp
+  files make the root three sectors long.  Part-sector file reads (the
+  128-byte test, random reads) pushed the third root sector out of the 3
+  sector buffers, so the search reached a sector not in a buffer and
+  re-read the whole root.
+- Reads 9.20 / 9.20 / 9.60 (real 9.17 / 9.33 / 9.55): BENCH.DAT starts in
+  the 47-cluster hole the old GRIDOS.SYS left at the front of the disk and
+  then jumps past TM5000G.  Every kernel copy from Windows leaves such a
+  hole; that also explains runs 2-3.  Layout, not kernel speed.
+
+Kernel 23,744 bytes: a fourth sector buffer, for file data only.  Part-
+sector reads and writes of files use it; directory and system sectors
+keep the other three (LRU).  Memory for programs 571 KB in the emulator
+(was 572).  Emulator, second run on the fresh-floppy copy: directory x10
+0.072 s, 0 calls (was 0.438); random 9.33 (was 10.13); EXE x3 12.13
+(was 13.33).  Standard disk: EXE x3 12.10 (was 12.50), the rest
+unchanged.  Cluttered root (150 old entries): directory x10 0.33 s, one
+pass, as before.  test_kernel 59 checks (new: BENCH twice, second
+directory test makes no disk calls; fails on a kernel without the data
+buffer), Claude 21/21, GGTEST OK.
+
+Sixth run on the 1520, kernel 23,744 bytes (data buffer), 2026-10-05 13:04:
+Write 12.52  Read16 8.78  Read512 8.78  Read128 8.78  Random 9.28
+Dir x10 0.43  Open/close 0.10  Small files 21.53  EXE x3 12.08
+INT 21h 0.05  Total 82.39 s (best yet; GRiD MS-DOS 289.15 s).  Memory
+for programs 571 KB.  Random reads and EXE loading improved as the
+emulator predicted (9.33 / 12.13); reads were back to 8.78 (this kernel
+copy left no hole in BENCH.DAT's way).  The directory listing is still
+0.43 s, against 0.07 s for the emulator's copy of the floppy.  Suspect: the
+real root is longer than the copy's, because each file written from
+Windows leaves deleted entries.  DISKMAP.COM (bench\) dumps the real
+boot sector, FATs and root to DISKMAP.BIN to check.
+
+DISKMAP on the 1520 (13:12): the root has 78 entries before its end
+marker - 5 sectors - of which only 17 are live.  Each file Claude copies
+through the desktop bridge is written as a hidden long-named temp file
+(".CACHETST.COM.21336.m11ot0.tmp"), then renamed: that leaves 4 deleted
+entries (3 long-name parts + 1 short name) per copy, and Windows never
+reuses them, it appends.  16 copies since the format = 61 dead entries.
+A search walks 5 sectors; the kernel keeps 3 directory sectors, so each
+directory test re-reads the whole root once.  (The same was true in run
+4.)  Also: the 23,728 kernel had gone to cluster 722 (after TM5000G),
+leaving the hole at 3-49 that fragmented BENCH.DAT in run 5; the 23,744
+kernel went back into that hole (cluster 4), so run 6 read at full speed.
+Emulator, an exact copy of the real floppy (system area from DISKMAP.BIN):
+  as is, 3 directory buffers      dir x10 0.450 s, 1 call  (real 0.43)
+  6 directory buffers (+1.5 KB)   dir x10 0.087 s, 0 calls
+  root packed to its 17 entries   dir x10 0.071 s, 0 calls
+
+Directory buffers vs root length (emulator, exact copy of the real floppy,
+root lengthened or shortened with deleted entries; dir x10 in seconds):
+  root entries (sectors read)   3 dir bufs   4      5      6      7
+  17 (1)                        0.07         0.07   0.07   0.07   0.07
+  32 (3)                        0.07         0.07   0.07   0.07   0.07
+  48 (4)                        0.43         0.08   0.08   0.08   0.08
+  64 (5)                        0.45         0.45   0.08   0.08   0.08
+  78 (5)  the real floppy now   0.45         0.45   0.09   0.09   0.09
+  80 (6)                        0.46         0.46   0.46   0.09   0.09
+  96 (7)                        0.47         0.47   0.47   0.48   0.10
+  112 (8)                       0.48         0.48   0.48   0.49   0.49
+  memory for programs (KB)      571          571    570    570    569
+N directory buffers keep a root of up to 16N-1 entries; past that, one
+whole-root read per listing run, ~0.4 s.  A cliff, not a curve.  Every
+other test unchanged (random 9.32, EXE 12.22).  Each copy through the
+bridge adds 4 entries, so one buffer lasts 4 copies.
+
+Seventh run on the 1520, Grid-OS 0.2.2 (kernel 24,400 bytes, 4 directory
+buffers + 1 data), 2026-10-05 16:21, after DEFRAG had packed the root
+(78 -> ~21 entries) and every file into one piece:
+Write 12.41  Read16 8.67  Read512 8.56  Read128 8.62  Random 9.66
+Dir x10 0.05 (was 0.43; MS-DOS 0.21)  Open/close 0.16  Small files 22.74
+EXE x3 12.02  INT 21h 0.05  Total 82.99 s (GRiD MS-DOS 289.15 s).
+Grid-OS is now ahead of GRiD MS-DOS on all ten tests.  Memory for
+programs 554 KB: BENCH was started from the command prompt (GRIDCMD stays
+underneath); from the Executive it is 570 KB.
+Small files (+1.2 s) and random reads (+0.4 s) are a little slower than
+run 6.  Not the kernel: 0.2.2 in the emulator, standard disk, gives
+small files 21.54, random 9.33, dir x10 0.023 (0 disk calls), total 78.98
+- as before.  So the layout after packing (where free space now starts),
+or retries on the drive's side 0 (see DEFRAG.TXT below).  A DISKMAP of the
+floppy as it is now would let the emulator reproduce it exactly.
+
+DEFRAG.TXT on the same floppy (the 1520's drive, 2026-10-05):
+  15:46  old build: "Too many bad sectors - stopped" (16-cluster limit,
+         since removed)
+  16:10  DEFRAG /T: 1022 KB free space tested, 4 clusters marked
+         (cylinders 66 x2, 77, 78); errors logged at cylinders 64-71
+  16:20  DEFRAG: "Disk in order: 18 files, 988 KB free in 26 pieces,
+         67 bad clusters marked"; errors logged at cylinders 61-76
+Every error is on side 0 (head 0), cylinders 61-78; side 1 of the same
+cylinders: none.  Mostly CRC (10h) errors reading back a run of sectors
+just written, each sector passing alone.  Points at the drive's lower
+head (dirty, or writing weakly at the dense inner tracks) more than the
+disk.  To tell: clean the heads, then DEFRAG /T on another floppy.
+71 clusters (~35 KB) are marked; a full format gets them back.

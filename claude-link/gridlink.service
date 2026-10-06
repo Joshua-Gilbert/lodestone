@@ -1,0 +1,16 @@
+[Unit]
+Description=Claude for GRiD (gridlink)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/gridlink
+ExecStart=/home/pi/gridlink/venv/bin/python -m gridlink
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

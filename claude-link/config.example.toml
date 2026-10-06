@@ -1,0 +1,36 @@
+# gridlink settings.  Copy to ~/.config/gridlink/config.toml and edit.
+
+[bridge]
+port = "/dev/ttyUSB0"        # the Nano (CH340) on the Pi's USB
+baud = 115200                # must match AR_SERIAL_SPEED in the AR488 firmware
+address = 7                  # GPIB address of the bridge; CLAUDE /A:7 on the GRiD
+
+[claude]
+model = "opus"               # opus, sonnet, haiku, fable, or a full model id
+max_tokens = 32000
+web = true                   # web search and fetch
+compact_at = 300000          # summarise the conversation past this many tokens
+api_key_file = "~/.config/gridlink/api_key"   # one line: your Console API key
+# extra_prompt = "Anything Claude should always know about your bench."
+
+[grid]
+user = "Joshua"
+set_clock = true             # set the GRiD's clock from the Pi when it connects
+workdir = "~/gridlink/work"  # Claude's scratch space on the Pi
+memory_dir = "~/gridlink/memories"
+sessions_dir = "~/gridlink/sessions"
+bash_timeout = 180
+
+[permissions]
+mode = "ask"                 # ask, edits (accept file edits), auto (ask nothing)
+
+[bus]                        # GPIB address = what is there (Claude sees this list)
+2 = "Tek 11403 digitizing scope"
+6 = "Tek FG5010 function generator"
+11 = "Tek SI5020 switch"
+13 = "Tek PS5004 power supply"
+16 = "Tek DM5120 DMM"
+18 = "HP 8753D network analyzer"
+28 = "Tek DM5010 DMM"
+29 = "Tek DC5009 counter"
+30 = "Tek PS5010 power supply"

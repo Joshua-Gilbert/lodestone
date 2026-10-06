@@ -1,0 +1,68 @@
+BENCH 1.2 - DOS file system benchmark on Grid-OS (DOS 3.30)
+Run 2026-10-05 12:25
+Memory for programs: 572 KB
+
+Write 256 KB, 16 KB at a time        12.68 s   20 KB/s
+Read 256 KB, 16 KB at a time          8.84 s   28 KB/s
+Read 256 KB, 512 bytes at a time      8.78 s   29 KB/s
+Read 256 KB, 128 bytes at a time      8.78 s   29 KB/s
+64 random 512-byte reads              9.88 s
+Directory listing x 10                0.43 s
+Open + close x 100                    0.10 s
+20 x create 1 KB file, then delete   21.58 s
+Load + run a 120 KB .EXE x 3         12.96 s
+INT 21h calls x 1000                  0.05 s
+
+Total                                84.15 s
+
+BENCH 1.2 - DOS file system benchmark on Grid-OS (DOS 3.30)
+Run 2026-10-05 12:38
+Memory for programs: 572 KB
+
+Write 256 KB, 16 KB at a time        12.90 s   19 KB/s
+Read 256 KB, 16 KB at a time          9.17 s   27 KB/s
+Read 256 KB, 512 bytes at a time      9.33 s   27 KB/s
+Read 256 KB, 128 bytes at a time      9.55 s   26 KB/s
+64 random 512-byte reads             10.32 s
+Directory listing x 10                0.43 s
+Open + close x 100                    0.10 s
+20 x create 1 KB file, then delete   21.58 s
+Load + run a 120 KB .EXE x 3         12.90 s
+INT 21h calls x 1000                  0.10 s
+
+Total                                86.45 s
+
+BENCH 1.2 - DOS file system benchmark on Grid-OS (DOS 3.30)
+Run 2026-10-05 13:04
+Memory for programs: 571 KB
+
+Write 256 KB, 16 KB at a time        12.52 s   20 KB/s
+Read 256 KB, 16 KB at a time          8.78 s   29 KB/s
+Read 256 KB, 512 bytes at a time      8.78 s   29 KB/s
+Read 256 KB, 128 bytes at a time      8.78 s   29 KB/s
+64 random 512-byte reads              9.28 s
+Directory listing x 10                0.43 s
+Open + close x 100                    0.10 s
+20 x create 1 KB file, then delete   21.53 s
+Load + run a 120 KB .EXE x 3         12.08 s
+INT 21h calls x 1000                  0.05 s
+
+Total                                82.39 s
+
+BENCH 1.2 - DOS file system benchmark on Grid-OS (DOS 3.30)
+Run 2026-10-05 16:21
+Memory for programs: 554 KB
+
+Write 256 KB, 16 KB at a time        12.41 s   20 KB/s
+Read 256 KB, 16 KB at a time          8.67 s   29 KB/s
+Read 256 KB, 512 bytes at a time      8.56 s   29 KB/s
+Read 256 KB, 128 bytes at a time      8.62 s   29 KB/s
+64 random 512-byte reads              9.66 s
+Directory listing x 10                0.05 s
+Open + close x 100                    0.16 s
+20 x create 1 KB file, then delete   22.74 s
+Load + run a 120 KB .EXE x 3         12.02 s
+INT 21h calls x 1000                  0.05 s
+
+Total                                82.99 s
+
