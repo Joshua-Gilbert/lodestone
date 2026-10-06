@@ -185,3 +185,24 @@ just written, each sector passing alone.  Points at the drive's lower
 head (dirty, or writing weakly at the dense inner tracks) more than the
 disk.  To tell: clean the heads, then DEFRAG /T on another floppy.
 71 clusters (~35 KB) are marked; a full format gets them back.
+
+The 1520's drive A:, 2026-10-05 evening (DEFRAG /T logs in
+DEFRAG_1520_2026-10-05_reformatted.TXT):
+  same floppy in the external drive B:   0 disk errors over 986 KB free
+  A:, after HEADCLN, full format (PC)    14 errors: side 0, cylinders 66-79,
+                                         one per track; 1 cluster marked (68)
+  A:, after several more HEADCLN runs    14 errors: side 0, cylinders 62 and
+                                         67-79; 1 cluster marked (72)
+Each error is a whole-track read-back that fails 3 times while every
+sector of the track reads alone.  Before cleaning the trouble began at
+cylinder 61; cleaning moved it to ~66, then no further: not dirt, not the
+disk - head 0 of drive A: is marginal on the innermost ~14 tracks (the
+densest), worn or out of alignment.  Kernel 0.2.3 reads such tracks one
+sector at a time before giving up.
+
+Eighth run on the 1520 (freshly formatted floppy, kernel 0.2.2, from the
+command prompt), 2026-10-05 22:00:
+Write 12.35  Read16 8.73  Read512 8.56  Read128 8.78  Random 9.61
+Dir x10 0.05  Open/close 0.16  Small files 22.30  EXE x3 12.02
+INT 21h 0.05  Total 82.66 s.  Files sit at the front of the disk, away
+from the weak tracks: unaffected.

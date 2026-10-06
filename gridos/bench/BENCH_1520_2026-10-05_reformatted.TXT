@@ -1,0 +1,17 @@
+BENCH 1.2 - DOS file system benchmark on Grid-OS (DOS 3.30)
+Run 2026-10-05 22:00
+Memory for programs: 554 KB
+
+Write 256 KB, 16 KB at a time        12.35 s   20 KB/s
+Read 256 KB, 16 KB at a time          8.73 s   29 KB/s
+Read 256 KB, 512 bytes at a time      8.56 s   29 KB/s
+Read 256 KB, 128 bytes at a time      8.78 s   29 KB/s
+64 random 512-byte reads              9.61 s
+Directory listing x 10                0.05 s
+Open + close x 100                    0.16 s
+20 x create 1 KB file, then delete   22.30 s
+Load + run a 120 KB .EXE x 3         12.02 s
+INT 21h calls x 1000                  0.05 s
+
+Total                                82.66 s
+
