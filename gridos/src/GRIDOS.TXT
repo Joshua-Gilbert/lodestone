@@ -1,4 +1,4 @@
-Grid-OS 0.2.3 - boot floppy
+Grid-OS 0.3 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -30,9 +30,38 @@ them one at a time before reporting a Data error.  A worn or dirty
 drive head often can't get a whole track through, yet reads each
 sector of it on its own.
 
+0.3 starts the application suite.  The Executive now sits on a shared
+UI core (lists, forms, windows, help, the line editor), and programs
+written for it are .RUN files that load next to it:
+  WRITE.RUN   Write, the text editor, after GRiDWrite.  Text, Source,
+              Batch, Settings and Profile files open in it from the list;
+              CODE-W starts a new file.  GRiDWrite's commands, verb first:
+              press the command, select with the cursor keys or the mouse,
+              then Return.  CODE-B Begin, CODE-D Duplicate, CODE-E Erase,
+              CODE-F Find, CODE-J Jump, CODE-M Move, CODE-O Options,
+              CODE-Q Quit (saves), CODE-S Substitute, CODE-T Transfer
+              (save, write to another file, include a file), CODE-U Usage,
+              ESC (or CODE-ESC) Cancel.  Files up to 64 KB; it saves to
+              NAME.$$$ first, so a failed save leaves the old file alone.
+  SYSTEM.RUN  Usage (CODE-U in the Executive): memory, disks, the clock
+              (Return sets it), devices, GPIB (Return finds instruments
+              by serial poll, then sets them back to local), display
+              (Return switches the screen font), about.
+Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
+subject you work in).  A DOS program gets about 572 KB: while it runs
+the Executive lends it the memory of its file list.  The screen font is
+GRiD's own: the InteGRiD system font (TC8X16), as GRID.EXE drew it.
+TERMINUS.FNT is the font Grid-OS had before; in System, Display, Return
+switches between them (and any other .FNT in the root of the disk).  The
+choice is kept in GRIDOS.INI as FONT=TERMINUS.FNT; without that line, or
+without the file, it is GRiD's.  CODE-? opens the help everywhere (F1 too).
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose a file
-  Return                         run it / open a subject (directory)
+  A letter                       the next name starting with it
+  Return                         run it / open it / open a subject
+  CODE-U                         Usage (SYSTEM.RUN)
+  CODE-W                         Write a new text file (WRITE.RUN)
   CODE-A                         Claude (CLAUDE.COM)
   CODE-C                         command prompt (GRIDCMD.COM, EXIT returns)
   F5                             read the disk again after a swap
@@ -80,7 +109,8 @@ Programs:
             It only reads; it asks for the cleaning disk and for your
             disk back, with a minute for the alcohol to dry
 
-To update Grid-OS, replace GRIDOS.SYS (and GRIDCMD.COM) on this disk.
+To update Grid-OS, replace GRIDOS.SYS (and GRIDCMD.COM, the .RUN files)
+on this disk.
 No need to rerun GOSBOOT.
 
 Keep COMMAND.COM, CONFIG.SYS and AUTOEXEC.BAT off this disk unless they

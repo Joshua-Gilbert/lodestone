@@ -188,16 +188,26 @@ class PC:
         s.us = max(s.us, s.next_tick); s.on_time()
 
     def deliver_irqs(s):
+        """Every unmasked pending IRQ, highest priority first, as a PIC would:
+        the next one is serviced as soon as the one before IRETs.  The frames
+        are stacked lowest priority first, so the IRQ 0 handler's IRET goes
+        straight into the next handler (with IF clear, as its INT would
+        leave it), and the last one returns to the program.  Delivering only
+        IRQ 0 per run() starved the mouse while long INT 13h calls (which
+        the emulator does in one step) kept a timer tick pending."""
         if not (s.r('flags') & 0x200) or not s.irq_pending: return
-        for irq in sorted(s.irq_pending):
-            if s.pic_mask & (1 << irq): continue
+        due = [i for i in sorted(s.irq_pending) if not (s.pic_mask & (1 << i))]
+        if not due: return
+        first = True
+        for irq in reversed(due):
             s.irq_pending.discard(irq)
-            vec = 8 + irq
-            off, seg = struct.unpack('<HH', s.rd(0, vec * 4, 4))
-            s.push(s.r('flags')); s.push(s.r('cs')); s.push(s.r('ip'))
-            s.w('flags', s.r('flags') & ~0x300)
+            off, seg = struct.unpack('<HH', s.rd(0, (8 + irq) * 4, 4))
+            fl = s.r('flags')
+            s.push(fl if first else fl & ~0x300); s.push(s.r('cs')); s.push(s.r('ip'))
+            s.w('flags', fl & ~0x300)
             s.w('cs', seg); s.w('ip', off)
-            return                              # one at a time; IF is now clear
+            first = False
+        return                                  # IF is now clear
 
     def intr(s, uc, n, ud):
         cs, ip = s.r('cs'), s.r('ip')
@@ -458,14 +468,48 @@ class PC:
         if ah in (0x90, 0x91): s.w('ax', ax & 0xFF); s.cf(0); return
         s.w('ax', (ax & 0xFF) | 0x8600); s.cf(1)
 
+    # The 1520's BIOS (GRiD's Phoenix 286 BIOS, 10/25/89; its INT 9 and
+    # INT 16h as in github.com/philip-searle/gridcase-bios) stores Alt with
+    # these keys as scan code + F0h: "enhanced keyboard only".  INT 16h
+    # AH=00h/01h skip them (AH=01h drops them from the buffer); AH=10h/11h
+    # return them with AL = 0.  Tests queue keys as AH=10h returns them
+    # (CODE-? = 3500h), so they are stored here the way the BIOS would.
+    ALT_F0 = {0x01, 0x0E, 0x1A, 0x1B, 0x1C, 0x27, 0x28, 0x29, 0x2B, 0x33, 0x34, 0x35, 0x37, 0x4A, 0x4E}
+
+    @staticmethod
+    def bios_word(k):
+        return k | 0xF0 if k & 0xFF == 0 and k >> 8 in PC.ALT_F0 else k
+
+    @staticmethod
+    def old_read(w):
+        """What INT 16h AH=00h/01h make of a buffer word (None: skipped)."""
+        ah, al = w >> 8, w & 0xFF
+        if ah == 0xE0:
+            return {0xE02F: 0x352F, 0xE00D: 0x1C0D, 0xE00A: 0x1C0A}.get(w, w)
+        if ah >= 0x85: return None
+        if al == 0xE0 and ah: al = 0
+        if al == 0xF0 and ah: return None
+        return ah << 8 | al
+
+    @staticmethod
+    def ext_read(w):
+        return w & 0xFF00 if w & 0xFF == 0xF0 and w >> 8 else w
+
     def int16(s):
         ah = s.r('ah')
+        if ah in (0x00, 0x01):
+            while s.keys and PC.old_read(PC.bios_word(s.keys[0])) is None:
+                s.keys.popleft()                # the BIOS skips (and drops) these
         if ah in (0x00, 0x10):
-            if s.keys: s.w('ax', s.keys.popleft())
+            if s.keys:
+                w = PC.bios_word(s.keys.popleft())
+                s.w('ax', PC.old_read(w) if ah == 0 else PC.ext_read(w))
             else:
                 s.w('ip', s.r('ip') - 2); s.blocked = True; s.mu.emu_stop()
         elif ah in (0x01, 0x11):
-            if s.keys: s.w('ax', s.keys[0]); s.zf(0)
+            if s.keys:
+                w = PC.bios_word(s.keys[0])
+                s.w('ax', PC.old_read(w) if ah == 1 else PC.ext_read(w)); s.zf(0)
             else: s.zf(1)
         elif ah in (0x02, 0x12): s.w('ax', s.r('ax') & 0xFF00)
         elif ah == 0x05: s.keys.append(s.r('cx')); s.w('ax', 0)
@@ -489,6 +533,16 @@ class PC:
             s.w('cx', (bcd(n.year // 100) << 8) | bcd(n.year % 100)); s.w('dx', (bcd(n.month) << 8) | bcd(n.day)); s.cf(0)
         elif ah in (0x03, 0x05):
             s.log.append('[RTC set %02X %04X %04X]' % (ah, s.r('cx'), s.r('dx'))); s.cf(0)
+            unb = lambda v: (v >> 4) * 10 + (v & 15)
+            cx, dx, n = s.r('cx'), s.r('dx'), s.now()
+            try:
+                if ah == 0x03:
+                    new = n.replace(hour=unb(cx >> 8), minute=unb(cx & 255), second=unb(dx >> 8), microsecond=0)
+                else:
+                    new = n.replace(year=unb(cx >> 8) * 100 + unb(cx & 255), month=unb(dx >> 8), day=unb(dx & 255))
+                s.clock0 += new - n             # the RTC runs on from there
+            except ValueError:
+                pass
 
     # ---- running --------------------------------------------------------------
     def lin(s): return (s.r('cs') * 16 + s.r('ip')) & 0xFFFFF

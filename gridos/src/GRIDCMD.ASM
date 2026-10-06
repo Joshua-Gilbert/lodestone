@@ -2798,9 +2798,9 @@ x_com       db 'COM', 0
 x_exe       db 'EXE', 0
 x_bat       db 'BAT', 0
 
-s_banner    db 13, 10, 'Grid-OS 0.2 command shell (DOS 3.30 compatible)', 13, 10
+s_banner    db 13, 10, 'Grid-OS 0.3 command shell (DOS 3.30 compatible)', 13, 10
             db 'Type EXIT to return to the Executive.', 13, 10, 0
-s_ver       db 13, 10, 'Grid-OS version 0.2 (DOS 3.30 compatible)', 13, 10, 0
+s_ver       db 13, 10, 'Grid-OS version 0.3 (DOS 3.30 compatible)', 13, 10, 0
 s_crlf      db 13, 10, 0
 s_defprompt db '$P$G', 0
 s_promptv   db 'PROMPT=', 0

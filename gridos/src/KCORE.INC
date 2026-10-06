@@ -40,8 +40,7 @@ cur_day     resb 1
 kstack_top:                     ; INT 21h stack
             resb 512
 astack_top:                     ; nested INT 21h (from INT 24h handlers)
-            resb 2048
-xstack_top:                     ; the Executive (root process)
+ui_seg      resw 1              ; the UI segment (core + Executive), see GRIDOS.ASM
 section .text
 
 ; ---------------------------------------------------------------------
@@ -982,9 +981,38 @@ f_F0:   mov     al, [bp+F_AX]
         mov     word [bp+F_BX], 0201h
         mov     ax, 4F47h
         jmp     ok_ax
-.1:     cmp     al, 1
+.1:     cmp     al, 2
+        je      .lend
+        cmp     al, 3
+        je      .back
+        cmp     al, 4
+        je      .useg
+        cmp     al, 1
         jne     f_bad
-        mov     dl, [bp+F_DX]
+        jmp     .open
+; AL=2: lend the disk cache's memory to the caller (windows' save-under):
+; ES = its segment, CX = bytes.  CF if there is no cache or it is lent.
+.lend:  mov     ax, [tc_seg]
+        or      ax, ax
+        jz      .nolend
+        cmp     byte [tc_lock], 0
+        jne     .nolend
+        mov     byte [tc_drv], 0FFh     ; nothing cached any more
+        mov     byte [tc_lock], 1       ; and nothing goes in meanwhile
+        mov     [bp+F_ES], ax
+        mov     word [bp+F_CX], TC_SECS * 512
+        jmp     ok
+.nolend:
+        mov     ax, 8
+        jmp     fail
+; AL=3: the cache has its memory back
+.back:  mov     byte [tc_lock], 0
+        jmp     ok
+; AL=4: the UI segment has moved to BX (where the root process restarts)
+.useg:  mov     ax, [bp+F_BX]
+        mov     [ui_seg], ax
+        jmp     ok
+.open:  mov     dl, [bp+F_DX]
         xor     cx, cx
         mov     si, sft
         mov     bx, NSFT

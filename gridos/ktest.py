@@ -16,31 +16,44 @@ TAB, BKSP, F1, CODE_C = 0x0F09, 0x0E08, 0x3B00, 0x2E00
 
 
 class Syms:
+    """GRIDOS.MAP: kernel symbols (sections .text/.bss, segment 0060h) and
+    UI symbols (sections ui/uibss, offsets in the UI segment)."""
+    UI = ('ui', 'uibss')
     def __init__(s, path=os.path.join(HERE, 'src', 'GRIDOS.MAP')):
-        s.by_name, s.by_addr, sec = {}, {}, None
+        s.by_name, s.sec = {}, {}
+        by_addr = {False: {}, True: {}}
+        sec = None
         for line in open(path):
-            if line.startswith('---- Section'): sec = line
+            if line.startswith('---- Section'): sec = line.split()[2]
             m = re.match(r"\s*([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$", line)
             if m and sec:
-                a = int(m.group(2), 16); s.by_name[m.group(3)] = a
-                if '.' not in m.group(3) or a not in s.by_addr: s.by_addr.setdefault(a, m.group(3))
-        s.addrs = sorted(s.by_addr)
+                a = int(m.group(2), 16); n = m.group(3)
+                s.by_name[n] = a; s.sec[n] = sec
+                d = by_addr[sec in s.UI]
+                if '.' not in n or a not in d: d.setdefault(a, n)
+        s.by_addr = by_addr[False]; s.addrs = sorted(s.by_addr)
+        s.ui_by_addr = by_addr[True]; s.ui_addrs = sorted(s.ui_by_addr)
     def __getitem__(s, n): return s.by_name[n]
-    def name(s, off):
-        i = bisect.bisect_right(s.addrs, off) - 1
-        return hex(off) if i < 0 else '%s+%x' % (s.by_addr[s.addrs[i]], off - s.addrs[i])
+    def is_ui(s, n): return s.sec.get(n) in s.UI
+    def name(s, off, ui=False):
+        addrs, d = (s.ui_addrs, s.ui_by_addr) if ui else (s.addrs, s.by_addr)
+        i = bisect.bisect_right(addrs, off) - 1
+        return hex(off) if i < 0 else '%s+%x' % (d[addrs[i]], off - addrs[i])
 
 
 _font = None
 def font():
     global _font
     if _font is None:
-        f = pcemu.load_font(os.path.join(HERE, 'src', 'FONT.INC'))
         _font = {}
-        for c, g in f.items():
-            if not 33 <= c <= 126 or not any(g): continue
-            _font.setdefault(bytes(g), chr(c))
-            _font.setdefault(bytes(b ^ 0xFF for b in g), chr(c))
+        # FONT.INC is GRiD's font (the OS, DEFRAG); CLAUDE.COM still draws
+        # with Terminus, so the screen reader knows both
+        for name in ('FONT.INC', 'TERMINUS.INC'):
+            f = pcemu.load_font(os.path.join(HERE, 'src', name))
+            for c, g in f.items():
+                if not 33 <= c <= 126 or not any(g): continue
+                _font.setdefault(bytes(g), chr(c))
+                _font.setdefault(bytes(b ^ 0xFF for b in g), chr(c))
     return _font
 
 
@@ -116,9 +129,19 @@ class KPC:
     @property
     def crashed(s): return s.pc.crash or s.pc.stopped
 
+    # ---- memory by symbol (kernel at 0060h, UI symbols in the UI segment)
+    @property
+    def useg(s): return s.pc.u16(0x60, s.Y['ui_seg'])
+    def seg(s, name): return s.useg if s.Y.is_ui(name) else 0x60
+    def u16(s, name, off=0): return s.pc.u16(s.seg(name), s.Y[name] + off)
+    def rd(s, name, n, off=0): return s.pc.rd(s.seg(name), s.Y[name] + off, n)
+    def wr(s, name, data, off=0): s.pc.wr(s.seg(name), s.Y[name] + off, data)
+
     def where(s):
         cs, ip = s.pc.r('cs'), s.pc.r('ip')
-        return '%04X:%04X %s' % (cs, ip, s.Y.name(ip) if cs == 0x60 else '')
+        if cs == 0x60: return '%04X:%04X %s' % (cs, ip, s.Y.name(ip))
+        if cs == s.useg: return '%04X:%04X %s' % (cs, ip, s.Y.name(ip, ui=True))
+        return '%04X:%04X' % (cs, ip)
 
     # ---- screen -----------------------------------------------------------
     def ocr(s):
@@ -169,12 +192,12 @@ class KPC:
     # ---- the Executive ----------------------------------------------------
     def exec_list(s):
         """Names in the Executive's list, in display order."""
-        pc, Y = s.pc, s.Y
-        n = pc.u16(0x60, Y['nent'])
+        pc, u = s.pc, s.useg
+        n = s.u16('nent')
         out = []
         for i in range(n):
-            p = pc.u16(0x60, Y['entlist'] + 2 * i)
-            e = pc.rd(0x60, p, 11).decode('latin-1')
+            p = s.u16('entlist', 2 * i)
+            e = pc.rd(u, p, 11).decode('latin-1')
             nm, ext = e[:8].rstrip(), e[8:].rstrip()
             out.append(nm + ('.' + ext if ext else ''))
         return out
@@ -182,7 +205,7 @@ class KPC:
     def select(s, name):
         lst = s.exec_list()
         i = lst.index(name.upper())
-        sel = s.pc.u16(0x60, s.Y['sel'])
+        sel = s.u16('sel')
         while sel < i: s.key(DOWN, settle=False); sel += 1
         while sel > i: s.key(UP, settle=False); sel -= 1
         s.settle()
