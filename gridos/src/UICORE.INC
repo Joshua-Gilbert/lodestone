@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 SAVER_T     equ 5462                    ; 5 minutes of 55 ms ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-GOS_VER     equ 0030h                   ; Grid-OS 0.3 (BH.BL: major, minor<<4 | patch)
+GOS_VER     equ 0031h                   ; Grid-OS 0.3.1 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -189,7 +189,8 @@ exec_main:
         call    mouse_init
         call    font_boot               ; GRIDOS.INI's font, if it names one
         jmp     .go
-.again: call    mouse_on
+.again: call    m33_end
+        call    mouse_on
 .go:    call    set24
         call    act_now
         jmp     ex_start                ; the Executive
@@ -496,6 +497,8 @@ redraw_all:
 ;  mouse (Microsoft serial protocol, 1200 7N1) - COM2 first, then COM1
 ; =====================================================================
 mouse_init:
+        call    m33_hook                ; INT 33h for DOS programs
+        call    m33_soft
         mov     word [mbase], 2F8h
         mov     byte [mirq], 3
         call    mouse_probe
@@ -696,6 +699,7 @@ mouse_isr:
         shl     al, 6
         or      al, [cs:mpkt+1]
         cbw
+        mov     [cs:m33_dx], ax
         add     ax, [cs:mx]
         jns     .x1
         xor     ax, ax
@@ -708,6 +712,7 @@ mouse_isr:
         shl     al, 4
         or      al, [cs:mpkt+2]
         cbw
+        mov     [cs:m33_dy], ax
         add     ax, [cs:my]
         jns     .y1
         xor     ax, ax
@@ -725,9 +730,11 @@ mouse_isr:
         or      bl, 2
 .b2:    mov     [cs:mb], bl
         mov     byte [cs:mflag], 1
+        call    m33_pkt                 ; (INT 33h's side)
         jmp     .rd
 .done:  mov     al, 20h
         out     20h, al
+        call    m33_call                ; a DOS program's event handler
         pop     dx
         pop     bx
         pop     ax
@@ -773,6 +780,8 @@ mouse_event:
 .no:    pop     dx
         clc
         ret
+
+%include "MOUSE33.INC"
 
 ; arrow pointer: 13 rows of (shape, spare); drawn by inverting the shape
 cur_shape:
@@ -3036,6 +3045,8 @@ ui_run: push    bx
         call    exec_raw
         pushf
         push    ax
+        call    m33_end                 ; (the program may have used INT 33h:
+        call    mouse_off               ;  the mouse is ours again)
         call    hires
         call    mouse_on
         call    act_now
@@ -3263,6 +3274,7 @@ ui_room:
         mov     ax, 0F004h
         int     21h
         call    set24
+        call    m33_hook
         call    mouse_on
 .here:  mov     bx, ui_bss_end + 15     ; whole again (and the room left free)
         shr     bx, 4

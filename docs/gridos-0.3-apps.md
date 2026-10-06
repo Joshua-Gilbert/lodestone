@@ -19,7 +19,7 @@
   | UI block: core + Executive + font + stack | (in the kernel's 50 KB) | 18.0 KB |
   | UI block: the Executive's directory | (in the kernel) | 7.5 KB |
   | Free while the Executive waits | — | 564.4 KB |
-  | **A DOS program gets (MEMSZ.COM)** | **570.7 KB** | **571.5 KB** |
+  | **A DOS program gets (MEMSZ.COM)** | **570.7 KB** | **571.5 KB** (569.4 KB with 0.3.1's INT 33h mouse) |
 
   - While a DOS program runs, the UI block shrinks to `ui_keep_end`, so the Executive's 7.5 KB directory buffer goes to the program. The Executive reads the directory again afterwards anyway.
   - The core added about 4.5 KB of code, but the lent directory more than pays for it.
@@ -176,6 +176,39 @@
   - a missing file, and a wrong-sized .FNT passed over.
 - CLAUDE.COM keeps Terminus built in for now.
 
+## The mouse for DOS programs (0.3.1, 2026-10-06)
+- **Joshua found that TM5000G said "No mouse detected"**, though the mouse works in the Executive. The core had a working serial-mouse driver: it finds the mouse on COM2/COM1 and decodes its packets. But DOS programs had only the kernel's INT 33h stub, which returned AX = 0, and the core switched the mouse off before every DOS program.
+- **Now the core answers INT 33h itself** (`src/MOUSE33.INC`), on the same driver. Its vector is set at start-up and again when the UI block moves past a TSR.
+  - **The mouse stays off while a DOS program runs until the program asks for it** (function 0 or 21h). A program that drives COM1/COM2 itself is left alone. After the program ends, the core takes the mouse back, hides the pointer and forgets any event handler.
+  - **Functions:** 00–0Ch, 0Fh, 10h, 13h–17h, 1Ah, 1Bh, 1Dh–21h, 24h, 26h. The others return with the registers unchanged.
+    - Coordinates are virtual, as in Microsoft's driver: x 0–639 in every mode; y 0–199, 0–399 in mode 40h, and rows × 8 in text modes.
+    - The defaults are Microsoft's too: 8 mickeys per 8 pixels across and 16 down.
+    - Version 6.26, a serial mouse on IRQ 3 or 4.
+  - **The pointer** is drawn the Microsoft way, (screen AND screen mask) XOR cursor mask:
+    - text modes 0–3 and 7 show one inverse cell (77FFh / 7700h);
+    - modes 4/5, 6 and 40h show the arrow, with function 09h shapes and hot spots;
+    - when the pointer goes, any byte the program has written over since is left as it is.
+  - **The event handler** (0Ch / 14h) runs after the interrupt is acknowledged, with interrupts on, and never re-entered. It is dropped if its program is no longer in memory: the owner word of that program's memory block no longer names it.
+- **Cost:** GRIDOS.SYS 32,162 bytes (+1,870 with the review's fixes). A DOS program gets 569.4 KB, 2.1 KB less, because the driver stays resident while programs run. The version is now 0.3.1; System's About shows it.
+- **Tests (`t_mouse`, 38 checks; `tests/M33TEST.COM` steps through the calls, `M33GFX`, `M33QUIT`, `M33HSET` and `M33HVIC` cover the review's cases):**
+  - the port is left alone for MEMSZ; reset, version, show, follow, position, presses and releases, mickeys, ranges, the event handler, hide;
+  - a cell the program wrote over stays as written; mode 4's arrow drawn and taken away;
+  - the program ends with the pointer on and a handler set, and the Executive and its mouse are fine;
+  - with no mouse, reset returns 0;
+  - **TM5000G:** "Mouse support enabled.", "Mouse: ON", and a click on Configure Modules opens it.
+  - The TSR test also checks that INT 33h follows the UI block.
+  - the graphics pointer bit for bit against the masks (mode 40h at three places with a hot spot, mode 6 clipped, mode 4 with a hot spot);
+  - a program that ends inside its handler, a handler left behind under the shell, a packet while a handler is being set.
+- **Review (a Fable agent, 2026-10-06):** 6 findings, all confirmed and fixed, each with a test that fails on the code before:
+  - **DF:** `int33_ui` didn't clear the direction flag, so a program calling with DF set made the reset write 138 bytes backwards over the Executive's row table (fn 09h, 16h and 17h too). Now `cld` on entry.
+  - **A program ending inside its event handler** left `m33_busy` set, which silenced every later program's handler. It's cleared when a program ends and at a reset.
+  - **A handler left behind under the shell** (GRIDCMD → a program that sets one and ends without a reset → the next program loaded at the same segment) was called inside the new program: the owner check can't tell two programs at one segment apart. Now the kernel tells the core when a program ends (`ui_progend` → `m33_gone`), and that program's handler goes. A TSR's stays.
+  - **Setting a handler raced the mouse:** INT 21h AH=62h turns interrupts on, and a packet then found the new handler with the old owner (0) and dropped it. The owner is asked first, and owner 0 means none. pcemu now has the 1520's reset jump at FFFF:0, which made this visible.
+  - **The hot spot in modes 4/5** was taken in physical pixels; Microsoft's masks and hot spot are in virtual pixels (one bit each).
+  - **With no mouse**, calls other than the resets drew a pointer or reported a driver; now they return unchanged.
+  - Not changed: modes 48h/74h (the 1520's other 640 × 400 modes) get no pointer and a 200-line range. TM5000G's own menus call hide twice when left by a key and show once, so its pointer stays hidden after the first key choice (Microsoft's driver counts the same way: TM5000G's bug, `ui.c`).
+- **On the 1520, still to see:** the pointer on the plasma in TM5000G's text menus and in its CGA graph screen.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
@@ -217,7 +250,7 @@
     - `f_3B` cuts the current-directory string at 66 characters;
     - a failed mount returns an error without INT 24h.
   - **Not changed:** System takes the 80287 from INT 11h (SETUP's CMOS bit) rather than probing it, and Write's "Write to a file" overwrites without asking.
-- **`tests/test_apps.py` — 122 checks:**
+- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, below)**:**
   - **UITEST.RUN** exercises the API: lists, forms, ask, help, errors, BSS zeroing, exit code, cleanup to the paragraph, and a file that isn't a `.RUN`.
   - **System:** every topic, setting the clock, a bad date, the GPIB scan.
   - **CODE-?, CODE-Return, CODE-ESC** in the Executive, a form, System and Write, as the 1520's BIOS delivers them (below).
