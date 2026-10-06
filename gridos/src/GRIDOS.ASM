@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GRIDOS.SYS  -  Grid-OS 0.2 kernel for the GRiDCase 1520
+;  GRIDOS.SYS  -  Grid-OS 0.3 kernel for the GRiDCase 1520
 ;  nasm -f bin -o GRIDOS.SYS GRIDOS.ASM
 ;
 ;  A small DOS 3.30-compatible kernel plus the GRiD-style Executive.
@@ -16,7 +16,14 @@
 ;           AUX, PRN, COM1/2, LPT1, GPIBnn), find first/next, dir calls
 ;    KPROC  PSP, environment, EXEC (.COM/.EXE), terminate, TSR, ^C
 ;    KGPIB  the GRIDGPIB driver on INT 60h (same API and signature)
+;
+;  The UI segment (section ui, our COMMON.SHR) follows the kernel in this
+;  file.  At start-up it is copied into a block of its own (owner 8, "UI")
+;  just above the root PSP, and the root process runs there:
+;    UICORE the UI core: jump table (UIAPI.INC), events, drawing, windows,
+;           lists, forms, the screen saver, the .RUN loader
 ;    EXEC   the Executive: GRiD-style file list that runs programs
+;  It talks to the kernel only through INT 21h, like any program.
 ;
 ;  Register convention inside the kernel: DS = ES = KSEG unless a routine
 ;  says otherwise; BP = the INT 21h frame while a call is in progress;
@@ -26,7 +33,7 @@ cpu 286
 org 0
 
 KSEG    equ 0060h               ; where the kernel lives
-VERSION equ 0002h               ; Grid-OS 0.2
+VERSION equ 0003h               ; Grid-OS 0.3
 
 start:  cli                     ; at 1000:0000 from the boot sector
         mov     ax, 2000h       ; temporary stack clear of the image
@@ -68,12 +75,69 @@ init:   cli
         call    clock_init
         call    gpib_init
         call    proc_init               ; master environment + root PSP
-        cli
-        mov     sp, xstack_top          ; the Executive has its own stack
-        sti
-        jmp     exec_main
+        call    ui_load
+        jmp     run_ui
 
-section .bss align=16
+; The UI section from the loaded file (still at 1000:section.ui.start)
+; into a block of its own; then its BSS cleared.  Allocated at its image
+; size first, so the block's new MCB can't land on the image being copied.
+ui_load:
+        mov     bx, ui_image_end + 15
+        shr     bx, 4
+        mov     dx, 8
+        call    mem_alloc
+        jc      .fail
+        mov     [ui_seg], ax
+        mov     es, ax
+        push    ds
+        mov     ax, 1000h
+        mov     ds, ax
+        mov     si, section.ui.start
+        xor     di, di
+        mov     cx, ui_image_end + 1
+        shr     cx, 1
+        rep     movsw
+        pop     ds
+        mov     bx, ui_bss_end + 15     ; + BSS and stack
+        shr     bx, 4
+        call    mem_resize
+        jc      .fail
+        mov     di, ui_bss_start
+        mov     cx, ui_bss_end
+        sub     cx, di
+        xor     al, al
+        rep     stosb
+        mov     ax, es
+        dec     ax
+        mov     es, ax
+        mov     word [es:8], 'UI'
+        push    cs
+        pop     es
+        ret
+.fail:  mov     si, s_nouimem
+.p:     lodsb
+        or      al, al
+        jz      .h
+        mov     ah, 0Eh
+        mov     bx, 7
+        int     10h
+        jmp     .p
+.h:     hlt
+        jmp     .h
+
+; enter (or re-enter) the root process: the Executive, on its own stack
+run_ui: cli
+        mov     ax, [cs:ui_seg]
+        mov     ss, ax
+        mov     sp, ui_stack_top
+        sti
+        push    ax
+        push    word exec_main
+        retf
+
+s_nouimem   db 'Grid-OS: not enough memory for the Executive', 13, 10, 0
+
+section .bss nobits align=16 follows=.text
 bss_start:
 section .text
 
@@ -84,14 +148,37 @@ section .text
 %include "KFILE.INC"
 %include "KPROC.INC"
 %include "KGPIB.INC"
-%include "EXEC.INC"
-%include "FONT.INC"
 
 bootbpb     times 64 db 0
 bootdrv     db 0
             align 2
 image_end:                              ; everything above is copied low
 
-section .bss align=16
+section .bss
             alignb 16
 bss_end:
+
+; =====================================================================
+;  The UI segment: offsets from 0 in a segment of its own
+; =====================================================================
+section ui progbits align=16 follows=.text vstart=0
+section uibss nobits valign=16 vfollows=ui
+; alignb would clash with vfollows in NASM's bin output (it sets a "real"
+; section alignment); uibss starts on a paragraph, so this is the same thing
+%define ualignb(n) resb ((n) - (($ - $$) % (n))) % (n)
+ui_bss_start:
+section ui
+%include "UICORE.INC"                   ; (the jump table is at offset 0)
+%include "EXEC.INC"
+%include "FONT.INC"
+            align 2
+ui_image_end:
+
+section uibss
+            ualignb(2)
+            resb 2560
+ui_stack_top:                           ; the Executive's (and .RUNs') stack
+ui_keep_end:                            ; while a DOS program runs, the UI
+entries     resb 32 * MAXENT            ;  block lets go of the Executive's
+ui_bss_end:                             ;  directory (it reads it again after)                             ; (no alignb 16 here: in a vfollows
+                                        ;  section it would clash in NASM)

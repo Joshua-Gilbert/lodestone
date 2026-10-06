@@ -705,11 +705,8 @@ root_restart:
         mov     ax, cs
         mov     ds, ax
         mov     es, ax
-        mov     ss, ax
-        mov     sp, xstack_top
         mov     byte [indos], 0
-        sti
-        jmp     exec_main
+        jmp     run_ui
 
 ; ---------------------------------------------------------------------
 ;  the built-in GPIB driver: install on INT 60h if there is a uPD7210

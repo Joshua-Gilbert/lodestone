@@ -3,6 +3,7 @@
 Design notes, kept in step with the claude.ai Project "Grid-OS":
 
 - `gridos-0.2-kernel.md`: the kernel, the disk cache, the benchmark results on the 1520, and the tests.
+- `gridos-0.3-apps.md`: the UI core and its API, `.RUN` programs and their loader, System, Write, and their tests.
 - `gridos-defrag.md`: DEFRAG and the screen saver, worn-disk handling, and the power-cut tests.
 - `gridos-floppy-dev.md`: the floppy development loop, and what's on the floppy.
 

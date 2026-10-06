@@ -87,7 +87,7 @@ def t_shell():
     check('CODE-C starts the shell', 'command shell' in k.pc.text_screen() and k.pc.mode() == 3, k.pc.text_screen())
     o = sh.run('dir')
     check('DIR lists the disk', all(x in o for x in ('Volume in drive A is GRIDOS', 'Directory of  A:\\', 'GRIDCMD  COM', 'GAMES           <DIR>', '4 File(s)', 'bytes free')), o)
-    check('VER', 'Grid-OS version 0.2' in sh.run('ver'))
+    check('VER', 'Grid-OS version 0.3' in sh.run('ver'))
     check('bad command', 'Bad command or file name' in sh.run('nosuch'))
     check('bad drive', 'Invalid drive specification' in sh.run('b:'))
     sh.run('echo hello > a.txt')
@@ -124,7 +124,7 @@ def t_shell():
     check('SET removes', 'FOO' not in sh.run('set'))
     sh.run('copy con x.bat', 'echo off', 'echo batch says %1', 'ver', '\x1a')
     o = sh.run('x hi')
-    check('batch file, %1, ECHO OFF', 'batch says hi' in o and 'Grid-OS version 0.2' in o and 'echo batch' not in o, o)
+    check('batch file, %1, ECHO OFF', 'batch says hi' in o and 'Grid-OS version 0.3' in o and 'echo batch' not in o, o)
     check('ECHO back on after the batch', 'A:\\>' in sh.run('rem'))
     sh.run('date 1-2-27')
     check('DATE', 'Sat 01-02-2027' in sh.run('date', ''))
@@ -202,7 +202,7 @@ def t_cache():
     log = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\CACHETST.TXT', b'').decode('latin-1')
     check('CACHETST leaves its results in CACHETST.TXT', 'on Grid-OS' in log and ' 0 errors' in log, log[-300:])
     # the help window lends the cache's memory and gives it back
-    rows = [k.pc.u16(0x60, k.Y['rowtab'] + 2 * y) for y in range(64, 64 + 232)]
+    rows = [k.u16('rowtab', 2 * y) for y in range(64, 64 + 232)]
     under = lambda: b''.join(k.pc.rd(0xB800, r + 16, 48) for r in rows)
     before = under()
     k.key(ktest.F1)

@@ -3,10 +3,12 @@
 ;   DEFRAG [A:|B:]         tidy the floppy in drive A: or B: (BIOS unit 0
 ;                          or 1; the current drive if none is given)
 ;   DEFRAG [A:|B:] /T      test the free space; mark bad clusters
-;   DEFRAG /S [M=ssss:oooo]
+;   DEFRAG /S [M=ssss:oooo] [F=ssss:oooo]
 ;                          screen-saver mode, started by the Executive after
 ;                          5 minutes idle.  Any key, or the Executive's mouse
 ;                          flag at ssss:oooo turning non-zero, stops it.
+;                          F=: the screen font in use (1,536 bytes, codes
+;                          32-127), so the map has the Executive's font.
 ;
 ; Every cluster of the disk is a cell on the 640x400 screen.  It then
 ;  1. squeezes the deleted entries out of the root directory.  Sectors are
@@ -179,7 +181,7 @@ txtfail:
         mov     ax, 4C02h
         int     21h
 
-; command tail: /S, M=ssss:oooo
+; command tail: /S, M=ssss:oooo, F=ssss:oooo
 args:   mov     si, 81h
         mov     bl, [80h]
         xor     bh, bh
@@ -212,7 +214,9 @@ args:   mov     si, 81h
         mov     byte [unitset], 1
         inc     si
         jmp     .l
-.m2:    cmp     al, 'M'
+.m2:    cmp     al, 'F'
+        je      .f
+        cmp     al, 'M'
         jne     .l
         cmp     byte [si], '='
         jne     .l
@@ -225,6 +229,31 @@ args:   mov     si, 81h
         call    hex
         mov     [mptr], dx
         mov     byte [mouse], 1
+        jmp     .l
+.f:     cmp     byte [si], '='          ; F=ssss:oooo: that font, for ours
+        jne     .l
+        inc     si
+        call    hex
+        cmp     byte [si], ':'
+        jne     .x
+        inc     si
+        push    dx                      ; (the segment: hex uses AL)
+        call    hex
+        pop     ax
+        push    ds
+        push    es
+        push    si
+        push    cs
+        pop     es
+        mov     ds, ax
+        mov     si, dx
+        mov     di, font
+        mov     cx, 96 * 16 / 2
+        cld
+        rep     movsw
+        pop     si
+        pop     es
+        pop     ds
         jmp     .l
 .x:     ret
 hex:    xor     dx, dx                          ; SI -> DX, SI past the digits
