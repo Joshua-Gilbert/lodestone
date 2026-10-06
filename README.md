@@ -10,8 +10,8 @@ It boots from a floppy, shows a GRiD-style Executive, runs ordinary DOS programs
 
 | Folder | What |
 |---|---|
-| `gridos/src` | The OS, in NASM: boot sector (`BOOT.ASM`), `GOSBOOT.COM` (installs the boot sector), the kernel and Executive (`GRIDOS.ASM` + `K*.INC`, `EXEC*.INC`), the shell `GRIDCMD.COM`, `DEFRAG.COM` |
-| `gridos/tests` | `pcemu`-based tests: kernel (59 checks), DEFRAG (33) and a power cut at every DEFRAG write, the Claude-link scenarios, GGTEST; also TESTDOS / CACHETST / UPPER (DOS programs) |
+| `gridos/src` | The OS, in NASM: boot sector (`BOOT.ASM`), `GOSBOOT.COM` (installs the boot sector), the kernel and Executive (`GRIDOS.ASM` + `K*.INC`, `EXEC*.INC`), the shell `GRIDCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk) |
+| `gridos/tests` | `pcemu`-based tests: kernel (59 checks), DEFRAG (33) and a power cut at every DEFRAG write, HEADCLN (9), the Claude-link scenarios, GGTEST; also TESTDOS / CACHETST / UPPER (DOS programs) |
 | `gridos/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (Lodestone against GRiD MS-DOS in the emulator), profiling tools, `RESULTS.TXT` and the 1520 logs |
 | `gridos/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link) |
 | `gridos/releases` | Builds that went onto the floppy: 0.1, 0.2, 0.2.1, 0.2.2 |
