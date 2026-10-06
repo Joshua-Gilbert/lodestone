@@ -272,8 +272,42 @@ def t_cache():
     o = sh.run('type big.txt', 'f')
     good = all('line %04d of the bad-sector file' % i in o for i in range(440, 451))
     check('bad sector: the file reads up to it, then Data error, read-ahead gave up once',
-          good and 'Data error reading drive A' in o and 'line 0460' not in o and k.pc.calls_bad <= 6,
+          good and 'Data error reading drive A' in o and 'line 0460' not in o and k.pc.calls_bad <= 9,
           '%d failed reads; %s' % (k.pc.calls_bad, o[-400:]))
+    # a weak drive head (the 1520's side 0, inner tracks): a read of several
+    # sectors on these tracks always fails with a CRC error, each sector on
+    # its own reads fine.  The kernel falls back to sector-by-sector: the
+    # file copies whole, no Data error
+    img4 = image('c4.img', os.path.join(GOS, 'src', 'GRIDCMD.COM'), big)
+    raw = open(img4, 'rb').read()
+    cl = [struct.unpack_from('<H', raw, 19 * 512 + 32 * i + 26)[0] for i in range(16)
+          if raw[19 * 512 + 32 * i:19 * 512 + 32 * i + 11] == b'BIG     TXT'][0]
+    first = 33 + cl - 2
+    weak = {(first + 10) // 18, (first + 10) // 18 + 1}     # two tracks inside the file
+    seen = {'multi': 0, 'single': 0}
+    o13 = pcemu.PC.int13
+    def weak13(s):
+        if s.r('ah') == 2 and (s.r('dx') & 0xFF) == 0:
+            cx, dx = s.r('cx'), s.r('dx')
+            trk = (cx >> 8) * 2 + (dx >> 8)
+            if trk in weak:
+                if s.r('al') > 1:
+                    seen['multi'] += 1
+                    s.w('ax', 0x1000); s.cf(1); return
+                seen['single'] += 1
+        return o13(s)
+    pcemu.PC.int13 = weak13
+    try:
+        k = ktest.KPC(img4); k.start()
+        sh = Shell(k)
+        o = sh.run('copy big.txt b2.txt')
+        k.pc.drives[0].save()
+    finally:
+        pcemu.PC.int13 = o13
+    files = fatcheck.read_files(open(img4, 'rb').read())
+    check('weak tracks (runs fail, single sectors read): the kernel reads them sector by sector, the file copies whole',
+          files.get('A:\\B2.TXT') == open(big, 'rb').read() and 'error' not in o.lower()
+          and seen['multi'] > 0 and seen['single'] >= 18, (seen, o[-300:]))
 
 TESTS = [t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_cache]
 if __name__ == '__main__':

@@ -1644,7 +1644,7 @@ wait_ticks:
 ; =====================================================================
 ; data
 ; =====================================================================
-s_brand     db 'Grid-OS 0.2.2',0
+s_brand     db 'Grid-OS 0.2.3',0
 s_prompt1   db 'Select a file and confirm',0
 s_prompt2   db 'Or press CODE-? for help',0
 s_anykey    db 'Press any key',0
@@ -1660,7 +1660,7 @@ s_dev_a     db 'Floppy A:',0
 s_root      db 'Root',0
 s_bytes     db ' bytes',0
 s_dated     db '   dated ',0
-s_hlptitle  db 'Grid-OS 0.2.2 Help',0
+s_hlptitle  db 'Grid-OS 0.2.3 Help',0
 help_text   db 'Up / Down, PgUp / PgDn   choose a file',0
             db 'Home / End               first / last',0
             db 'Mouse                    point and click',0

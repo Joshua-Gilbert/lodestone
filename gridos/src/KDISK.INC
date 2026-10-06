@@ -1049,7 +1049,20 @@ dio:    push    bx
         int     13h                     ; reset, then try again
         dec     byte [io_try]
         jnz     .again
-        cmp     byte [io_crit], 0
+        ; A read of several sectors that keeps failing: one sector at a
+        ; time before giving up.  A weak drive head often can't get a whole
+        ; track through without a CRC error, yet reads every sector of it
+        ; on its own (the 1520's side 0, inner tracks).  Not for
+        ; read-ahead, which is only a guess.
+        cmp     byte [io_op], 2
+        jne     .bcrit
+        cmp     word [io_n], 1
+        jbe     .bcrit
+        cmp     byte [io_spec], 0
+        jne     .bcrit
+        call    .bysec
+        jnc     .bok
+.bcrit: cmp     byte [io_crit], 0
         je      .bfail
         call    crit_disk               ; AL = action
         cmp     al, 1
@@ -1064,6 +1077,44 @@ dio:    push    bx
 .bign:  mov     byte [io_ign], 1
         call    .wfail
 .bok:   clc
+        ret
+; the [io_n] sectors at ES:BX read one by one, 3 tries each.  CF if one
+; can't be read ([io_bios] = its error).  Keeps BX, ES
+.bysec: push    es
+        mov     byte [io_bi], 0
+.bs:    mov     byte [io_try], 3
+.bs1:   mov     ax, [io_cyl]
+        mov     ch, al
+        mov     cl, ah
+        shl     cl, 6
+        mov     al, [io_sec]
+        add     al, [io_bi]
+        or      cl, al
+        mov     dh, [io_head]
+        mov     dl, [io_unit]
+        mov     ax, 0201h
+        push    bx
+        int     13h
+        pop     bx
+        jnc     .bsok
+        mov     [io_bios], ah
+        xor     ah, ah
+        mov     dl, [io_unit]
+        int     13h
+        dec     byte [io_try]
+        jnz     .bs1
+        pop     es
+        stc
+        ret
+.bsok:  mov     ax, es                  ; the next sector's place (the
+        add     ax, 20h                 ;  piece never crosses 64 KB)
+        mov     es, ax
+        inc     byte [io_bi]
+        mov     al, [io_bi]
+        cmp     al, [io_n]
+        jb      .bs
+        pop     es
+        clc
         ret
 ; a write that didn't happen: what the cache was given for it is wrong
 .wfail: cmp     byte [io_op], 3
@@ -1390,6 +1441,7 @@ io_pc       resw 1              ; sectors of this piece
 io_m2       resw 1              ; read-ahead on head 1
 io_geo_cyl  resw 1              ; sectors per cylinder
 io_try      resb 1
+io_bi       resb 1              ; sector being read on its own (dio.bysec)
 io_bios     resb 1
 io_sec      resb 1
 io_head     resb 1
