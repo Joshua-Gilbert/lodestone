@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 SAVER_T     equ 5462                    ; 5 minutes of 55 ms ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-GOS_VER     equ 0031h                   ; Grid-OS 0.3.1 (BH.BL: major, minor<<4 | patch)
+GOS_VER     equ 0032h                   ; Grid-OS 0.3.2 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -2983,7 +2983,8 @@ run_cleanup:
 .x:     popa
         ret
 
-; UI_FINDAPP: SI = name -> SI = path (this subject, then the root)
+; UI_FINDAPP: SI = name -> SI = path (this subject, then the root of the
+; disk Grid-OS started from: the programs stay there when B: is shown)
 ui_findapp:
         push    ax
         push    cx
@@ -2997,10 +2998,11 @@ ui_findapp:
         int     21h
         jnc     .yes
         push    si
-        mov     ah, 19h
+        mov     ax, 3305h               ; DL = the boot drive (1 = A:)
         int     21h
+        mov     al, dl
         mov     di, app_path
-        add     al, 'A'
+        add     al, 'A' - 1
         stosb
         mov     ax, ':\'
         stosw

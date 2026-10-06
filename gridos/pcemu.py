@@ -68,6 +68,7 @@ class Floppy:
         s.wp = False                    # write-protect tab
         s.no_changeline = False         # a drive that always says "changed"
         s.bad = set()                   # LBAs that fail to read (CRC error)
+        s.empty = False                 # no disk in the drive: time-out
     def save(s, path=None):
         open(path or s.path, 'wb').write(s.img)
 
@@ -408,6 +409,8 @@ class PC:
             else: s.w('ax', 0); s.cf(0)
             return
         if ah in (0x17, 0x18): s.w('ax', 0); s.cf(0); return
+        if ah in (2, 3, 4) and d.empty:
+            s.w('ax', 0x8000); s.cf(1); return          # time-out: no disk
         if ah in (2, 3, 4):
             cx, dx = s.r('cx'), s.r('dx')
             c, sct, h = (cx >> 8) | ((cx & 0xC0) << 2), cx & 63, dx >> 8

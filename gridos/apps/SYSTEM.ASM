@@ -23,6 +23,11 @@ start:  mov     si, redraw
                                         ;  Executive's back)
         mov     ah, 1Ah
         int     21h
+        mov     ax, 3305h               ; fonts and GRIDOS.INI: on the disk
+        int     21h                     ;  Grid-OS started from (DL = 1: A:)
+        add     dl, 'A' - 1
+        mov     [s_fntall], dl
+        mov     [s_ini], dl
         call    find_gpib
         call    redraw
 .loop:  cmp     byte [quit], 0
@@ -1155,6 +1160,8 @@ next_font:
 ; the file named at dta+30 into fbuf -> CF if it isn't exactly a font
 load_fnt:
         mov     di, fpath
+        mov     ax, [s_fntall]          ; "X:"
+        stosw
         mov     al, '\'
         stosb
         mov     si, dta + 30
@@ -1462,10 +1469,10 @@ months3     db 'JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'
 quit        db 0
 gp_scanned  db 0
 l_font      db 'Font',0
-l_fonts     db 'Fonts on this disk:',0
+l_fonts     db 'Fonts on the start-up disk:',0
 s_gridfont  db 'GRiD (built in)',0
-s_fntall    db '\*.FNT',0
-s_ini       db '\GRIDOS.INI',0
+s_fntall    db '@:\*.FNT',0              ; (@: the disk Grid-OS started from,
+s_ini       db '@:\GRIDOS.INI',0          ;  which reads them: set at the start)
 s_fonteq    db 'FONT=',0
 s_empty     db 0
 s_cantsave  db "The font is set, but can't be saved: ",0
@@ -1512,7 +1519,7 @@ gp_nfound   resb 1
 gp_found    resb 32
 cur_font    resb 13
 past        resb 1
-fpath       resb 16
+fpath       resb 18
 fbuf        resb FONT_BYTES + 1
 ini_old     resb INI_MAX + 1
 ini_new     resb INI_MAX + 40

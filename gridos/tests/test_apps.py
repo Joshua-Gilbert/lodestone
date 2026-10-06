@@ -432,7 +432,7 @@ def t_memory():
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     kb = float(m.group(1)) if m else 0
-    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; the INT 33h mouse costs 2 KB): the directory buffer is lent while it runs' % kb, kb >= 569.4, out[-200:])
+    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB): the directory buffer is lent while it runs' % kb, kb >= 568.7, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     img = image('tsr.img', TSR, SYSTEM, MEMSZ)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
@@ -464,10 +464,12 @@ def t_exec():
     odd = os.path.join(OUT, 'ODD.TX'); open(odd, 'wb').write(b'x')
     img = image('exec.img', 'DOS.330\\', 'DOS.330\\INNER.TXT=' + inner, odd)
     k = ktest.KPC(img); k.start()
-    check('a subject with an extension is listed', 'DOS.330' in k.exec_list(), k.exec_list())
-    k.select('DOS.330'); k.key(ktest.ENTER)
+    k.key(K_BTAB)
+    check('a subject with an extension is listed', '  DOS.330' in subjects(k), subjects(k))
+    k.key(ktest.ESC)
+    to_subject(k, 'DOS.330')
     check('... and opens (CHDIR was given only its first 8 characters)', 'INNER.TXT' in k.exec_list(), (k.exec_list(), k.band()))
-    k.select('..'); k.key(ktest.ENTER)
+    to_subject(k, 'Root')
     k.select('ODD.TX'); k.key(ktest.ENTER)
     check('an unknown short kind: "ODD  TX - nothing opens this kind yet" (no stray spaces)',
           any('ODD  TX - nothing opens' in l for l in k.band()), k.band())
@@ -476,7 +478,7 @@ def t_exec():
     empty = os.path.join(OUT, 'EMPTY.DAT'); open(empty, 'wb').write(b'')
     img = image('many.img', 'MANY\\', *['MANY\\F%03d.DAT=%s' % (i, empty) for i in range(245)])
     k = ktest.KPC(img); k.start()
-    k.select('MANY'); k.key(ktest.ENTER)
+    to_subject(k, 'MANY')
     check('more entries than fit (246 > 240): the band says only the first 240 are listed',
           any('Only the first 240 are listed' in l for l in k.band()) and k.u16('nent') == 240, (k.band(), k.u16('nent')))
 
@@ -508,7 +510,7 @@ def t_font():
     to_display(k)
     shot(k, 'system_display')
     check('Display: the font in use and the fonts on the disk', has(k, 'GRiD (built in)') and has(k, 'TERMINUS.FNT')
-          and has(k, 'Fonts on this disk:') and 'RETURN: the next font' in ' '.join(k.band()), (screen(k), k.band()))
+          and has(k, 'Fonts on the start-up disk:') and 'RETURN: the next font' in ' '.join(k.band()), (screen(k), k.band()))
     k.key(ktest.ENTER)
     shot(k, 'system_display_terminus')
     tF = term[(ord('F') - 32) * 16:(ord('F') - 31) * 16]
@@ -739,11 +741,121 @@ def t_mouse():
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
     check('TM5000G: back in the Executive', any('TM5000G.EXE ended' in l for l in k.band()), k.band())
 
+# ---------------------------------------------------------------------
+FORM_Y, ITEM_H = 244, 20                # the File form (EXEC.INC)
+K_BTAB = 0x0F00
+
+def focus(k): return k.rd('focus', 1)[0]           # 0 Title, 1 Device, 2 Subject
+def subjects(k):
+    """The Subject list: '' for Root, else NAME.EXT indented two per level."""
+    out = []
+    for i in range(k.u16('nsubj')):
+        e = k.rd('entries', 14, i * 14)
+        nm, ext = e[1:9].decode('latin-1').rstrip(), e[9:12].decode('latin-1').rstrip()
+        out.append('  ' * e[0] + (nm + ('.' + ext if ext else '') if e[0] else 'Root'))
+    return out
+def form(k):
+    """Device, Subject, Title, Kind values as shown."""
+    rows = dict(k.ocr())
+    return [rows.get(FORM_Y + i * ITEM_H, '')[14:].strip() for i in range(4)]
+def outlined(k, item):
+    """The outline's top line is drawn above form item 0..2 (Device, Subject, Title)."""
+    y = FORM_Y - 2 + item * ITEM_H
+    v = k.pc.rd(0xB800, (y & 3) * 0x2000 + (y >> 2) * 80 + 20, 40)
+    return all(b == 0xFF for b in v)
+def to_subject(k, name):
+    """Outline Subject (Shift-Tab from Title), choose the subject, Return: its titles."""
+    k.key(K_BTAB)
+    want = [x.strip() for x in subjects(k)].index(name)
+    for _ in range(40):
+        if k.u16('sel') == want: break
+        k.key(ktest.DOWN if k.u16('sel') < want else ktest.UP)
+    k.key(ktest.ENTER)
+
+def t_form():
+    print('== the File form: Device, Subject, Title (GRiDManager-style; Tab too)')
+    notes = os.path.join(OUT, 'BNOTES.TXT'); open(notes, 'wb').write(b'on drive B\r\n')
+    a = image('forma.img', SYSTEM, WRITE, TERMFNT, 'DOS.330\\', 'DOS.330\\INNER.TXT=' + notes, 'DOS.330\\DEEP\\',
+              'DOS.330\\DEEP\\X.TXT=' + notes, 'WORK\\')
+    b = mkimg.build(os.path.join(OUT, 'formb.img'), ['NOTES.TXT=' + notes, 'DATA\\'])
+    k = ktest.KPC(a, b=b); k.pc.mouse = True; k.start()
+    check('the titles only (subjects are their own item); Title outlined', k.exec_list() == ['GRIDOS.SYS', 'SYSTEM.RUN', 'TERMINUS.FNT', 'WRITE.RUN']
+          and focus(k) == 0 and outlined(k, 2) and not outlined(k, 0), k.exec_list())
+    check('the form: Device Floppy A:, Subject Root, the title and its kind', form(k)[:3] == ['Floppy A:', 'Root', 'GRIDOS'] and form(k)[3].startswith('System'), form(k))
+    k.key(CODE['W']); k.key(ktest.ESC); k.key(ktest.ENTER)    # (a .RUN and back: the place is kept)
+    k.key(ktest.DOWN)
+    k.key(ktest.TAB)
+    check('Tab: Device outlined, the drives in the list, its prompt', focus(k) == 1 and outlined(k, 0) and k.u16('nent') == 2 and
+          has(k, 'Floppy B:') and k.band()[0] == 'Device: Select item and confirm', (focus(k), k.band()))
+    k.key(ktest.TAB)
+    check('Tab: Subject outlined, Root and the subjects as a tree', focus(k) == 2 and outlined(k, 1) and
+          subjects(k) == ['Root', '  DOS.330', '    DEEP', '  WORK'] and has(k, '    DEEP'), subjects(k))
+    k.key(ktest.TAB)
+    check('Tab: Title again, the same title chosen (nothing changed)', focus(k) == 0 and k.u16('sel') == 1 and form(k)[2] == 'SYSTEM', form(k))
+    k.key(K_BTAB)
+    check('Shift-Tab: back to Subject', focus(k) == 2, focus(k))
+    k.key(ktest.ESC)
+    check('ESC: Title', focus(k) == 0 and k.u16('sel') == 1, focus(k))
+    to_subject(k, 'DEEP')
+    check('a subject two down: its titles, the form says DOS.330\\DEEP', k.exec_list() == ['X.TXT'] and form(k)[1] == 'DOS.330\\DEEP', (k.exec_list(), form(k)))
+    to_subject(k, 'DOS.330')
+    check('a subject with an extension (CHDIR gets NAME.EXT)', k.exec_list() == ['INNER.TXT'], k.exec_list())
+    # B:, by the Device item
+    k.key(ktest.TAB); k.key(ktest.DOWN)
+    check('Device: Down chooses B: at once', form(k)[0] == 'Floppy B:', form(k))
+    k.key(ktest.ENTER)
+    check('Return: Subject, on B:', focus(k) == 2 and subjects(k) == ['Root', '  DATA'], subjects(k))
+    k.key(ktest.ENTER)
+    check('Return: Title, B:\'s titles', focus(k) == 0 and k.exec_list() == ['NOTES.TXT'], k.exec_list())
+    k.key(ktest.ENTER)
+    check('a text file on B: opens in Write (from A:)', has(k, 'Write: NOTES.TXT') and has(k, 'n drive B'), screen(k))
+    k.key(ktest.ESC); k.key(ktest.ENTER)
+    k.key(CODE['U'])
+    check('CODE-U from B:: System, from the start-up disk', has(k, 'Free for programs'), screen(k))
+    for _ in range(5): k.key(ktest.DOWN, settle=False)
+    k.settle()
+    check('Display lists the fonts on the start-up disk (A:)', has(k, 'TERMINUS.FNT') and has(k, 'Fonts on the start-up disk:'), screen(k))
+    k.key(ktest.ENTER)
+    check('... and GRIDOS.INI goes to A:, not B:', disk_file(k, 'GRIDOS.INI') == b'FONT=TERMINUS.FNT\r\n' and
+          fatcheck.read_files(bytes(k.pc.drives[1].img)).get('A:\\GRIDOS.INI') is None, disk_file(k, 'GRIDOS.INI'))
+    k.key(ktest.ENTER); k.key(ktest.ESC)
+    check('back in the Executive, still on B:', k.exec_list() == ['NOTES.TXT'] and form(k)[0] == 'Floppy B:', (k.exec_list(), form(k)))
+    # the mouse: a click on an item outlines it; a second click on a choice goes on
+    click(k, 3 * 8, FORM_Y + 4)
+    check('a click on Device outlines it', focus(k) == 1, focus(k))
+    click(k, 40, 24 + 8); click(k, 40, 24 + 8)
+    check('a click on Floppy A:, and again: A:, Subject outlined', form(k)[0] == 'Floppy A:' and focus(k) == 2, (form(k), focus(k)))
+    click(k, 3 * 8, FORM_Y + 2 * ITEM_H + 4)
+    check('a click on Title: Title outlined, A:\'s titles (A: is still in DOS.330: each drive keeps its subject)',
+          focus(k) == 0 and k.exec_list() == ['INNER.TXT'] and form(k)[1] == 'DOS.330', (focus(k), k.exec_list(), form(k)))
+    k.key(ktest.TAB); k.key(ktest.RIGHT)
+    check('Left / Right work as Up / Down in Device', form(k)[0] == 'Floppy B:', form(k))
+    k.key(ktest.LEFT); k.key(ktest.ESC)
+    # help; CODE-R and CODE-D are gone
+    k.key(ktest.F1)
+    hl = screen(k)
+    check('help: Tab for the items, no CODE-R or CODE-D', 'Device, Subject, Title' in hl and 'CODE-R' not in hl and 'CODE-D' not in hl, hl)
+    k.key(ktest.ENTER)
+    k.key(CODE['R']); k.key(CODE['D'])
+    check('CODE-R and CODE-D do nothing now (CTRL-ALT-DEL restarts)', not k.crashed and k.exec_list() == ['INNER.TXT'] and k.pc.mode() == 0x40, k.where())
+    # B: with no disk
+    k.pc.drives[1].empty = True
+    k.key(ktest.TAB); k.key(ktest.DOWN); k.key(ktest.ENTER, settle=False); k.settle(20)
+    check('B: with no disk: Subject has Root only and the band says why', subjects(k) == ['Root'] and "Can't read the disk" in ' '.join(k.band())
+          and not k.crashed, (subjects(k), k.band()))
+    k.key(ktest.ENTER)
+    k.key(K_BTAB); k.key(ktest.UP); k.key(ktest.ESC)
+    check('... Shift-Tab, Up, ESC: back to A:', k.exec_list() == ['INNER.TXT'] and form(k)[0] == 'Floppy A:', (k.exec_list(), form(k), k.band()))
+    # one drive
+    k = ktest.KPC(a); k.start()
+    k.key(ktest.TAB)
+    check('one drive: Device lists Floppy A: alone', k.u16('nent') == 1 and form(k)[0] == 'Floppy A:', k.u16('nent'))
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

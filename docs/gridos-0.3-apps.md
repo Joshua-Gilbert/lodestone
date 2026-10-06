@@ -19,7 +19,7 @@
   | UI block: core + Executive + font + stack | (in the kernel's 50 KB) | 18.0 KB |
   | UI block: the Executive's directory | (in the kernel) | 7.5 KB |
   | Free while the Executive waits | — | 564.4 KB |
-  | **A DOS program gets (MEMSZ.COM)** | **570.7 KB** | **571.5 KB** (569.4 KB with 0.3.1's INT 33h mouse) |
+  | **A DOS program gets (MEMSZ.COM)** | **570.7 KB** | **571.5 KB** (569.4 KB with 0.3.1's INT 33h mouse, 568.7 KB with 0.3.2's File form) |
 
   - While a DOS program runs, the UI block shrinks to `ui_keep_end`, so the Executive's 7.5 KB directory buffer goes to the program. The Executive reads the directory again afterwards anyway.
   - The core added about 4.5 KB of code, but the lent directory more than pays for it.
@@ -209,6 +209,39 @@
   - Not changed: modes 48h/74h (the 1520's other 640 × 400 modes) get no pointer and a 200-line range. TM5000G's own menus call hide twice when left by a key and show once, so its pointer stays hidden after the first key choice (Microsoft's driver counts the same way: TM5000G's bug, `ui.c`).
 - **On the 1520, still to see:** the pointer on the plasma in TM5000G's text menus and in its CGA graph screen.
 
+## The File form (0.3.2, 2026-10-06)
+- **Joshua's requests:**
+  - change devices in the Executive (his 1520 has an external B: drive);
+  - Tab between Device, Subject and Title, "kind of GMANAGER style … but for sure allow tab";
+  - drop CODE-R (restart) and CODE-D (restart into the EPROM): CTRL-ALT-DEL restarts, and the code costs memory.
+- **GRiD's File form, from GEXEC's own help:** "Press the Arrow keys to select an item. Press RETURN to move the outline to the next item in the form." The items are Device, Subject, Title and Kind. GRiDManager lists titles or subjects in columns.
+- **Now:**
+  - The form under the list has Device, Subject, Title and Kind (with size and date). A box outlines the current item.
+  - The list holds the outlined item's choices:
+    - Device: the floppy drives the BIOS reports (A:, B:);
+    - Subject: Root and every directory of the drive, depth first, by name, indented by level, with dates;
+    - Title: the files of the subject. Subjects no longer appear in the file list, and ".." is gone.
+  - Arrow keys (Left and Right too, in Device and Subject) choose. The choice takes effect at once: INT 21h 0Eh, or CHDIR, and the form follows.
+  - Tab and Shift-Tab move the outline: Title, Device, Subject, round. In Device and Subject, Return moves to the next item and ESC goes back to Title. On Title, Return opens, as before.
+  - A click on an item outlines it. A second click on a choice moves on.
+  - If nothing changed, Title comes back with the same file chosen.
+  - The band says "Device: Select item and confirm" or "Subject: Select item and confirm", in GRiD's wording.
+- **Subjects are read when Subject is outlined,** into the directory buffer (`entries`, 14 bytes each). It is lent to DOS programs, so the list costs no resident memory. At most 2 per list entry (480), 5 levels deep. A disk that can't be read leaves Root alone, with "Can't read the disk: …" in the band.
+- **Things that stay on the start-up disk** (INT 21h 3305h):
+  - `UI_FINDAPP` looks in the subject, then in the root of the disk Grid-OS started from. So SYSTEM, WRITE and CLAUDE are found while B: is shown.
+  - System's Display lists the fonts, and writes GRIDOS.INI, on the start-up disk ("Fonts on the start-up disk:").
+  - The saver runs DEFRAG only from the current drive's root, so a data disk on B: isn't tidied unless it has DEFRAG.
+- **Cost:** GRIDOS.SYS 32,842 bytes (+680 since 0.3.1; CODE-R and CODE-D saved about 150). A DOS program gets 568.7 KB (0.7 KB less than 0.3.1): the Executive's code (now 4.2 KB) stays resident while DOS programs run.
+- **Tests (`t_form`, 26 checks; `t_exec` reaches subjects through the form):**
+  - titles only, Title outlined; the form's values;
+  - Tab to Device (the drives, the prompt), to Subject (the tree), back to Title with the same file; Shift-Tab; ESC;
+  - a subject two levels down; a subject with an extension;
+  - B: through Device, Return to its subjects and titles, a text file on B: in Write;
+  - CODE-U from B:; fonts and GRIDOS.INI on A:;
+  - clicks on items and choices; Left and Right in Device;
+  - help (Tab, no CODE-R or CODE-D); CODE-R and CODE-D do nothing;
+  - B: with no disk (pcemu's `Floppy.empty`); one drive.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
@@ -250,7 +283,7 @@
     - `f_3B` cuts the current-directory string at 66 characters;
     - a failed mount returns an error without INT 24h.
   - **Not changed:** System takes the 80287 from INT 11h (SETUP's CMOS bit) rather than probing it, and Write's "Write to a file" overwrites without asking.
-- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, below)**:**
+- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, below)**:**
   - **UITEST.RUN** exercises the API: lists, forms, ask, help, errors, BSS zeroing, exit code, cleanup to the paragraph, and a file that isn't a `.RUN`.
   - **System:** every topic, setting the clock, a bad date, the GPIB scan.
   - **CODE-?, CODE-Return, CODE-ESC** in the Executive, a form, System and Write, as the 1520's BIOS delivers them (below).
