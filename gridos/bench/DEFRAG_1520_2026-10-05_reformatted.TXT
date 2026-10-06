@@ -1,0 +1,21 @@
+2026-10-05 21:44  Free space tested: 1049 KB, 14 disk errors, 1 bad cluster marked
+2026-10-05 21:44    Disk error 10h reading cylinder 66 side 0 sector 1
+2026-10-05 21:44    Disk error 10h reading cylinder 67 side 0 sector 1
+2026-10-05 21:44    Disk error 02h reading cylinder 68 side 0 sector 1
+2026-10-05 21:44    Disk error 10h reading cylinder 69 side 0 sector 1
+2026-10-05 21:44    Disk error 10h reading cylinder 70 side 0 sector 1
+2026-10-05 21:44    Disk error 10h reading cylinder 71 side 0 sector 1
+2026-10-05 21:44    Disk error 10h reading cylinder 72 side 0 sector 1
+2026-10-05 21:44    Disk error 10h reading cylinder 73 side 0 sector 1
+2026-10-05 21:44    bad sectors on cylinder (count): 68(1) 
+2026-10-05 21:45  Disk in order: 17 files, 1048 KB free in 2 pieces
+2026-10-05 22:08  Free space tested: 1046 KB, 14 disk errors, 1 bad cluster marked
+2026-10-05 22:08    Disk error 10h reading cylinder 62 side 0 sector 1
+2026-10-05 22:08    Disk error 10h reading cylinder 67 side 0 sector 1
+2026-10-05 22:08    Disk error 10h reading cylinder 68 side 0 sector 1
+2026-10-05 22:08    Disk error 10h reading cylinder 69 side 0 sector 1
+2026-10-05 22:08    Disk error 10h reading cylinder 70 side 0 sector 1
+2026-10-05 22:08    Disk error 10h reading cylinder 71 side 0 sector 1
+2026-10-05 22:08    Disk error 10h reading cylinder 72 side 0 sector 1
+2026-10-05 22:08    Disk error 10h reading cylinder 73 side 0 sector 1
+2026-10-05 22:08    bad sectors on cylinder (count): 72(1) 
