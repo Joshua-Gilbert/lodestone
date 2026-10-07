@@ -1,4 +1,4 @@
-Grid-OS 0.3.7 - boot floppy
+Grid-OS 0.3.8 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -124,6 +124,18 @@ nothing.  EMS a program leaves allocated comes back when it ends (a TSR
 keeps its own).  System's Memory topic shows the EMS and how much of it
 is free.  Not there: handle names are not kept, and 55h/56h (map and
 jump or call), 5Bh (alternate map sets) and 5Dh.  EMSTEST checks it.
+
+0.3.8: with EMS, the disk cache moves out of conventional memory into
+two EMS pages, so a DOS program gets 18 KB more: about 580 KB (the EMS
+manager now takes 1.9 KB).  Programs see 1376 KB of EMS: the other 32 KB
+are the cache's, and System's Memory topic says so.  The cache's pages
+are in the page frame only while the kernel reads or writes through the
+cache, and the frame is put back as the program left it; floppy DMA goes
+straight into the frame.  The windows' save-under no longer borrows the
+cache, so the cache keeps working while a window is open.  Without EMS,
+or with the memory set to extended, nothing changes.  CACHETST, with
+EMS, keeps four EMS pages of its own in the frame all along and checks
+them; it also reads into a buffer across a 64 KB boundary now.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

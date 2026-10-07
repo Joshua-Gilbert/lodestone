@@ -435,6 +435,20 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB): '
           'the directory buffer is lent while it runs' % kb, kb >= 564.2, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
+    # with EMS the disk cache is two EMS pages: programs get its 18 KB
+    # (less the EMS manager's 2), and System says where it went
+    k = ktest.KPC(image('mem_ems.img', MEMSZ, SYSTEM), ems_pages=88); k.start()
+    out = k.run_file('MEMSZ.COM', 20)
+    m = re.search(r'([\d.]+) KB for programs', out)
+    kbe = float(m.group(1)) if m else 0
+    check('with EMS a DOS program gets %.1f KB: the disk cache is in EMS (%.1f KB more)' % (kbe, kbe - kb),
+          kbe >= kb + 16.0, out[-200:])
+    k.key(ktest.ENTER)
+    k.key(CODE['U'])
+    m = re.search(r'Free for programs\s+([\d.]+) KB', screen(k))
+    check('... System: "Disk cache  32 KB of EMS", and "Free for programs" is what MEMSZ got',
+          has(k, '32 KB of EMS') and m and abs(float(m.group(1)) - kbe) < 1.0, screen(k))
+    k.key(ktest.ESC)
     img = image('tsr.img', TSR, SYSTEM, MEMSZ)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     u0 = k.useg
