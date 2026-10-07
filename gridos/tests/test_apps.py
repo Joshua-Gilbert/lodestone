@@ -432,8 +432,8 @@ def t_memory():
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     kb = float(m.group(1)) if m else 0
-    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB): '
-          'the directory buffer is lent while it runs' % kb, kb >= 565.9, out[-200:])
+    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB): '
+          'the directory buffer is lent while it runs' % kb, kb >= 565.7, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     img = image('tsr.img', TSR, SYSTEM, MEMSZ)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
@@ -566,6 +566,64 @@ def t_saver():
           k.band()[0].startswith('Type'), (screen(k), k.band()))
     k.key(ktest.DOWN)
     check('... and goes on working', has(k, 'Line 2 of 5'), screen(k))
+
+
+def idle(k, ticks):
+    """Make the Executive think it has been idle this many ticks; run a bit."""
+    t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
+    k.wr('lastact', struct.pack('<H', (t - ticks) & 0xFFFF))
+    for _ in range(40):
+        k.pc.run_for(0.1)
+        if has(k, 'Drive A:'): break
+    return has(k, 'Drive A:')
+
+def t_saver_delay():
+    print('== the screen saver\'s delay (System, Screen saver; GRIDOS.INI SAVER=)')
+    img = image('svd.img', SYSTEM, DEFRAG, TERMFNT)
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    check('5 minutes to start with', k.rd('saver_min', 1) == b'\x05' and k.u16('saver_t') == 5460, (k.rd('saver_min', 1), k.u16('saver_t')))
+    k.key(CODE['U'])
+    for _ in range(6): k.key(ktest.DOWN, settle=False)
+    k.settle()
+    check('System: the Screen saver topic says 5 minutes', has(k, 'Screen saver') and has(k, 'Starts after') and has(k, '5 minutes')
+          and 'RETURN: the next choice' in ' '.join(k.band()), (screen(k), k.band()))
+    k.key(ktest.ENTER)
+    check('Return: 10 minutes, at once, and GRIDOS.INI says SAVER=10', has(k, '10 minutes') and k.u16('saver_t') == 10920
+          and disk_file(k, 'GRIDOS.INI') == b'SAVER=10\r\n', (screen(k), disk_file(k, 'GRIDOS.INI')))
+    k.key(ktest.ENTER); k.key(ktest.ENTER)
+    check('... 15, then 30 minutes', has(k, '30 minutes') and k.rd('saver_min', 1) == b'\x1e', screen(k))
+    k.key(ktest.ENTER)
+    check('... then never (SAVER=0)', has(k, 'never') and k.u16('saver_t') == 0xFFFF and disk_file(k, 'GRIDOS.INI') == b'SAVER=0\r\n',
+          (screen(k), disk_file(k, 'GRIDOS.INI')))
+    k.key(ktest.ESC)
+    check('never: idle 30 minutes in the Executive, no saver', not idle(k, 30000) and not k.crashed, lines(k)[:2])
+    k.key(CODE['U'])
+    for _ in range(6): k.key(ktest.DOWN, settle=False)
+    k.settle()
+    k.key(ktest.ENTER)
+    check('... then 1 minute', has(k, '1 minute') and disk_file(k, 'GRIDOS.INI') == b'SAVER=1\r\n', screen(k))
+    k.key(ktest.ESC)
+    check('1 minute: not after 50 s', not idle(k, 910), lines(k)[:2])
+    check('... but after a minute (DEFRAG\'s map)', idle(k, 1092 + 18), lines(k)[:2])
+    k.key(ktest.ESC); k.settle(8)
+    # the font and the saver together in GRIDOS.INI, other lines kept
+    k = reboot(k, 'svd2.img')
+    check('after a restart: 1 minute from GRIDOS.INI', k.rd('saver_min', 1) == b'\x01', k.rd('saver_min', 1))
+    to_display(k); k.key(ktest.ENTER); k.key(ktest.ESC)
+    check('a font too: FONT= and SAVER= both in GRIDOS.INI', disk_file(k, 'GRIDOS.INI') == b'FONT=TERMINUS.FNT\r\nSAVER=1\r\n', disk_file(k, 'GRIDOS.INI'))
+    ini = os.path.join(OUT, 'GRIDOS.INI'); open(ini, 'wb').write(b'KEYS=1\r\nsaver=2\r\nFONT=TERMINUS.FNT\r\n')
+    k = ktest.KPC(image('svd3.img', SYSTEM, TERMFNT, ini)); k.start()
+    check('"saver=2" (any case) before FONT=: both taken at start-up', k.rd('saver_min', 1) == b'\x02' and core_font(k) == open(TERMFNT, 'rb').read(),
+          k.rd('saver_min', 1))
+    k.key(CODE['U'])
+    for _ in range(6): k.key(ktest.DOWN, settle=False)
+    k.settle()
+    k.key(ktest.ENTER)
+    check('Return: 5 minutes again, its SAVER= line gone, the others kept', disk_file(k, 'GRIDOS.INI') == b'KEYS=1\r\nFONT=TERMINUS.FNT\r\n',
+          disk_file(k, 'GRIDOS.INI'))
+    ini2 = os.path.join(OUT, 'GRIDOS2.INI'); open(ini2, 'wb').write(b'SAVER=99\r\n')
+    k = ktest.KPC(image('svd4.img', 'GRIDOS.INI=' + ini2)); k.start()
+    check('SAVER=99: 30 minutes at most', k.rd('saver_min', 1) == b'\x1e' and k.u16('saver_t') == 32760, k.rd('saver_min', 1))
 
 
 # ---------------------------------------------------------------------
@@ -1076,7 +1134,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_saver_delay):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

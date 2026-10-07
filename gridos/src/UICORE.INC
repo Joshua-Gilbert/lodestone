@@ -11,10 +11,10 @@
 
 VSEG        equ 0B800h
 BAND_Y      equ SCR_BAND_Y
-SAVER_T     equ 5462                    ; 5 minutes of 55 ms ticks
+MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-GOS_VER     equ 0033h                   ; Grid-OS 0.3.3 (BH.BL: major, minor<<4 | patch)
+GOS_VER     equ 0034h                   ; Grid-OS 0.3.4 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -69,6 +69,7 @@ ui_base:
         API     UI_BEEP,      ui_beep
         API     UI_KEYSHIFT,  api_keyshift
         API     UI_FONT,      api_font
+        API     UI_SAVER,     api_saver
 
 section uibss
 ; mouse and pointer
@@ -104,6 +105,8 @@ held2       resw 1              ;  still waiting (0: none): put back by
                                 ;  redraw_all (the screen saver's redraw
                                 ;  draws the program's usual band)
 lastact     resw 1
+saver_t     resw 1              ; idle ticks before the saver (FFFFh: never)
+saver_min   resb 1              ;  the same in minutes (0: never)
 lastpoll    resw 1
 redraw_fn   resw 1
 ; windows: the save-under is in the disk cache's memory while any is open
@@ -191,7 +194,9 @@ exec_main:
         mov     word [ent_max], MAXENT
         call    mkrows
         call    mouse_init
-        call    font_boot               ; GRIDOS.INI's font, if it names one
+        mov     bl, 5                   ; the saver after 5 minutes, unless
+        call    saver_set               ;  GRIDOS.INI says otherwise
+        call    font_boot               ; GRIDOS.INI's font and saver delay
         jmp     .go
 .again: call    m33_end
         call    mouse_on
@@ -225,7 +230,8 @@ api_font:
 
 ; at start-up: "FONT=NAME.FNT" in \GRIDOS.INI (a line of its own, any case)
 ; makes that file the font.  No file, no line, or a file that isn't exactly
-; FONT_BYTES long: GRiD's font stays.  (The directory buffer is free yet.)
+; FONT_BYTES long: GRiD's font stays.  "SAVER=n": the saver after n minutes
+; (0: never).  (The directory buffer is free yet.)
 font_boot:
         mov     byte [font_path], '\'
         mov     dx, s_ini
@@ -248,7 +254,32 @@ font_boot:
         mov     di, si
         add     di, cx
         mov     byte [di], 0
-.line:  mov     ax, [si]                ; "FONT=" at the start of a line?
+.line:  mov     ax, [si]                ; "SAVER=n"?
+        and     ax, 0DFDFh
+        cmp     ax, 'SA'
+        jne     .font
+        mov     ax, [si+2]
+        and     ax, 0DFDFh
+        cmp     ax, 'VE'
+        jne     .next
+        mov     ax, [si+4]
+        and     al, 0DFh
+        cmp     ax, 'R='
+        jne     .next
+        add     si, 6
+        xor     bx, bx
+.d:     lodsb                           ; the number
+        sub     al, '0'
+        cmp     al, 9
+        ja      .dn
+        imul    bx, bx, 10
+        add     bl, al
+        cmp     bx, 100
+        jb      .d
+.dn:    dec     si
+        call    saver_set
+        jmp     .next
+.font:  mov     ax, [si]                ; "FONT=" at the start of a line?
         and     ax, 0DFDFh
         cmp     ax, 'FO'                ; (memory "FO": AL = 'F', as NASM's)
         jne     .next
@@ -268,8 +299,10 @@ font_boot:
         loop    .c
 .e:     mov     byte [di], 0
         cmp     di, font_path + 1
-        je      .x                      ; ("FONT=": GRiD's)
-        jmp     font_file
+        je      .next                   ; ("FONT=": GRiD's)
+        push    si
+        call    font_file
+        pop     si
 .next:  lodsb
         or      al, al
         jz      .x
@@ -303,6 +336,33 @@ font_file:
         mov     al, 1
         jmp     api_font
 .x:     ret
+
+; UI_SAVER: AL = 0 -> AL = the saver's delay in minutes (0 never); AL = 1:
+; BL = minutes
+api_saver:
+        or      al, al
+        jnz     saver_set
+        mov     al, [saver_min]
+        ret
+; BL = minutes (more than 30: 30; 0: never)
+saver_set:
+        push    ax
+        push    dx
+        cmp     bl, 30                  ; (the idle count stays under 8000h)
+        jbe     .m
+        mov     bl, 30
+.m:     mov     [saver_min], bl
+        mov     ax, 0FFFFh
+        or      bl, bl
+        jz      .t
+        mov     al, bl
+        xor     ah, ah
+        mov     dx, MIN_T
+        mul     dx
+.t:     mov     [saver_t], ax
+        pop     dx
+        pop     ax
+        ret
 
 ; INT 24h while the UI runs: fail the call, remember why (UI_CRITERR)
 ui_int24:
@@ -437,13 +497,13 @@ poll_once:
         cmp     bx, 36
         jbe     .idle
         mov     [lastact], ax
-.idle:  mov     bx, ax                  ; idle 5 minutes: the screen saver
+.idle:  mov     bx, ax                  ; idle [saver_t] ticks: the screen saver
         sub     bx, [lastact]
         cmp     bx, 8000h               ; (the clock went back at midnight)
         jb      .sv
         mov     [lastact], ax
         jmp     .ck
-.sv:    cmp     bx, SAVER_T
+.sv:    cmp     bx, [saver_t]
         jb      .ck
         call    saver
         jmp     .none
@@ -3483,7 +3543,8 @@ run_app:
         ret
 
 ; =====================================================================
-;  the screen saver, after 5 minutes without a key or the mouse.  In the
+;  the screen saver, after the delay set in System (SAVER= in GRIDOS.INI;
+;  5 minutes without it) with no key or mouse; never if set so.  In the
 ;  Executive (no .RUN, no window, no question): first DEFRAG.COM, if it is on the
 ;  disk: it tidies the floppy while showing its map, and stops at a key or
 ;  the mouse (exit code 1) or when the disk is in order.  Then a dark

@@ -4,8 +4,8 @@
 ;                          or 1; the current drive if none is given)
 ;   DEFRAG [A:|B:] /T      test the free space; mark bad clusters
 ;   DEFRAG /S [M=ssss:oooo] [F=ssss:oooo]
-;                          screen-saver mode, started by the Executive after
-;                          5 minutes idle.  Any key, or the Executive's mouse
+;                          screen-saver mode, started by the Executive when
+;                          the screen saver starts (the delay set in System).  Any key, or the Executive's mouse
 ;                          flag at ssss:oooo turning non-zero, stops it.
 ;                          F=: the screen font in use (1,536 bytes, codes
 ;                          32-127), so the map has the Executive's font.
