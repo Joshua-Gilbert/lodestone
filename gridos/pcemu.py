@@ -9,7 +9,7 @@ DOS itself.
     handler that counts 40:6C and calls INT 1Ch; HLT sleeps to the next IRQ.
   * Floppies A: and B: as image files behind INT 13h with the real
     controller's limits: no track crossing, no 64 KB DMA crossing, ROM
-    can't be a DMA buffer.  Change line per drive.
+    can't be a DMA buffer (the EMS frame can).  Change line per drive.
   * Video: text modes (B800 cells), GRiD mode 40h (640x400 1 bpp),
     CGA modes 4/6 memory; PNG rendering.
   * uPD7210 at 02E1h + n*400h (any object with read/write), COM2 serial
@@ -291,6 +291,34 @@ class PC:
         a = page * EMS_PAGE + off
         return bytes(s.ems_store[a:a + n])
 
+    # Floppy DMA reaches the frame as the CPU does, through each window's
+    # page (the 1520 does this: EMSTEST "floppy DMA into the frame: works").
+    # A window that is off reads FFh and keeps nothing.
+    def in_frame(s, lin, n):
+        return bool(s.ems_pages) and EMS_FRAME <= lin and lin + n <= EMS_FRAME + 4 * EMS_PAGE
+
+    def frame_runs(s, lin, n):
+        """(offset in the run, board page or None, offset in the page, bytes)
+        for each window [lin, lin + n) passes through."""
+        o = 0
+        while o < n:
+            f = lin + o - EMS_FRAME
+            k = min(EMS_PAGE - f % EMS_PAGE, n - o)
+            yield o, s.ems_page(s.ems_reg[f // EMS_PAGE]), f % EMS_PAGE, k
+            o += k
+
+    def dma_write(s, lin, data):
+        if not s.in_frame(lin, len(data)): s.mu.mem_write(lin, data); return
+        for o, p, f, k in s.frame_runs(lin, len(data)):
+            if p is not None: s.ems_store[p * EMS_PAGE + f:p * EMS_PAGE + f + k] = data[o:o + k]
+
+    def dma_read(s, lin, n):
+        if not s.in_frame(lin, n): return s.mu.mem_read(lin, n)
+        out = bytearray()
+        for o, p, f, k in s.frame_runs(lin, n):
+            out += b'\xFF' * k if p is None else s.ems_store[p * EMS_PAGE + f:p * EMS_PAGE + f + k]
+        return out
+
     def cmos_read(s, i):
         bcd = lambda v: ((v // 10) << 4) | (v % 10)
         n = s.now()
@@ -466,16 +494,16 @@ class PC:
                 s.w('ax', 0x0300); s.cf(1); return
             if ah != 4 and (lin & 0xFFFF) + al * 512 > 0x10000:
                 s.w('ax', 0x0900); s.cf(1); return
-            if ah != 4 and lin >= 0xA0000:
-                s.w('ax', 0x0900); s.cf(1); return        # DMA can't reach video/ROM
+            if ah != 4 and lin >= 0xA0000 and not s.in_frame(lin, al * 512):
+                s.w('ax', 0x0900); s.cf(1); return        # DMA can't reach video/ROM (the EMS frame it can)
             lba = (c * d.heads + h) * d.spt + sct - 1
             if ah == 2 and d.bad.intersection(range(lba, lba + al)):
                 good = min(d.bad.intersection(range(lba, lba + al))) - lba
-                s.mu.mem_write(lin, bytes(d.img[lba * 512:(lba + good) * 512]) + b'\xEE' * 512)   # (bad data DMA'd anyway)
+                s.dma_write(lin, bytes(d.img[lba * 512:(lba + good) * 512]) + b'\xEE' * 512)   # (bad data DMA'd anyway)
                 s.calls_bad = getattr(s, 'calls_bad', 0) + 1
                 s.w('ax', 0x1000 | good); s.cf(1); return
-            if ah == 2: s.mu.mem_write(lin, bytes(d.img[lba * 512:(lba + al) * 512]))
-            elif ah == 3: d.img[lba * 512:(lba + al) * 512] = s.mu.mem_read(lin, al * 512)
+            if ah == 2: s.dma_write(lin, bytes(d.img[lba * 512:(lba + al) * 512]))
+            elif ah == 3: d.img[lba * 512:(lba + al) * 512] = s.dma_read(lin, al * 512)
             if s.disk_model == 'real':
                 t0 = s.us; s.disk_time(d, c, sct, al); s.t13.append((t0, s.us, ah, c, h, sct, al))
             else: s.us += 2000 * al

@@ -5,6 +5,14 @@
 ; each byte is a function of its file, position and the "version" of its
 ; 128-byte granule, which every write bumps.  Closes and reopens now and
 ; then, checks both files whole at the end and deletes them.
+; Reads go to a buffer across a 64 KB boundary (DMA can't cross one: the
+; disk cache reads such a piece itself), so that way is tested too.
+; With EMS it holds 4 pages of its own in the 4 windows of the frame,
+; filled with a pattern, all along: every other random read and write
+; goes through the frame (at a random place), and every 16 ops the frame
+; must still show our pages and the pattern - the cache may use the frame
+; too (Grid-OS keeps it in EMS), but must give it back as it was.  Its
+; INT 24h handler retries a disk error 3 times, and checks the frame too.
 ; Output: "CACHETST: n ops, e errors"; exit code = errors (max 255).
 ; What it prints is also added to CACHETST.TXT, then it waits for a key.
 cpu 286
@@ -16,6 +24,7 @@ MAXG    equ 2048                ; granules per file (256 KB)
 RBUF    equ 16384
 WBUF    equ 8192
 LOGMAX  equ 2048
+FRAME   equ 0E000h
 
 start:  mov     sp, stack_top
         cld
@@ -26,6 +35,20 @@ start:  mov     sp, stack_top
         mov     bx, 1000h
         mov     ah, 4Ah
         int     21h
+        mov     [rseg], ds
+        mov     word [roff], rbuf
+        mov     bx, 1400h               ; 80 KB: the read buffer 8 KB before
+        mov     ah, 48h                 ;  the 64 KB boundary in it
+        int     21h
+        jc      .nob
+        add     ax, 200h + 0FFFh
+        and     ax, 0F000h
+        sub     ax, 200h
+        mov     [rseg], ax
+        mov     word [roff], 0
+.nob:   mov     dx, crit24
+        mov     ax, 2524h
+        int     21h
         mov     word [seed], 4321
         mov     si, s_hello
         call    pr
@@ -35,6 +58,7 @@ start:  mov     sp, stack_top
         mov     si, s_gridos
 .os:    call    pr
         call    pdate
+        call    ems_open
         ; --- build: A 4 KB and B 2 KB at a time, 40 times
         mov     bl, 0
         call    fcreate
@@ -58,10 +82,12 @@ start:  mov     sp, stack_top
         call    pr
         mov     word [opno], 0
 .op:    inc     word [opno]
+        mov     byte [r24], 0
         test    byte [opno], 15
         jnz     .nd
         mov     al, '.'
         call    pch
+        call    fcheck
 .nd:
         mov     cx, 2
         call    rand
@@ -107,6 +133,7 @@ start:  mov     sp, stack_top
         mov     dx, f_b
         mov     ah, 41h
         int     21h
+        call    ems_close
         mov     si, s_res
         call    pr
         mov     ax, [opno]
@@ -245,7 +272,173 @@ savelog:
         jmp     pr
 
 ; ---------------------------------------------------------------------
-; read a random piece
+;  EMS: 4 pages of ours in the frame's 4 windows all along.  Frame byte f
+;  (0-FFFFh) holds f + 7 * (f >> 8) + 3Ch, so each window's page is told
+;  apart from the others (and from anything else) by what it holds.
+; ---------------------------------------------------------------------
+ems_open:
+        push    es
+        mov     ax, 3567h               ; an EMS manager?  ('EMMXXXX0' at
+        int     21h                     ;  its segment:000Ah)
+        mov     di, 0Ah
+        mov     si, s_emm
+        mov     cx, 8
+        repe    cmpsb
+        pop     es
+        jne     .x
+        mov     ah, 43h
+        mov     bx, 4
+        int     67h
+        or      ah, ah
+        jnz     .x
+        mov     [ems_h], dx
+        xor     bx, bx
+.m:     mov     ax, bx                  ; page n into window n
+        mov     ah, 44h
+        int     67h
+        inc     bx
+        cmp     bx, 4
+        jb      .m
+        call    fall                    ; the pattern in all of it
+        mov     si, s_ems
+        call    pr
+.x:     ret
+
+; the frame as it was, the pages given back; what went through it
+ems_close:
+        mov     dx, [ems_h]
+        or      dx, dx
+        jz      .x
+        call    fcheck
+        mov     ah, 45h
+        int     67h
+        mov     si, s_emsr
+        call    pr
+        mov     ax, [fr_r]
+        call    pdec
+        mov     si, s_emsw
+        call    pr
+        mov     ax, [fr_w]
+        call    pdec
+        mov     si, s_emsx
+        call    pr
+.x:     cmp     word [n24], 0           ; disk errors (INT 24h)
+        je      .y
+        mov     si, s_24
+        call    pr
+        mov     ax, [n24]
+        call    pdec
+        mov     si, s_crlf
+        call    pr
+.y:     cmp     byte [bad24], 0
+        je      .z
+        mov     bl, 'F' - 'A'
+        mov     ax, 0FB00h              ; INT 24h found the frame changed
+        jmp     error
+.z:     ret
+
+; every byte of the frame as we left it?  Else an error (and the pattern
+; put back, so it is reported once)
+fcheck: cmp     word [ems_h], 0
+        je      .x
+        push    es
+        mov     ax, FRAME
+        mov     es, ax
+        xor     di, di
+        mov     cx, 8000h
+        call    pchk
+        jne     .bad
+        mov     cx, 8000h
+        call    pchk
+        jne     .bad
+        pop     es
+.x:     ret
+.bad:   dec     di
+        mov     ah, [es:di]
+        mov     [pos], di
+        mov     word [pos+2], FRAME
+        pop     es
+        mov     bl, 'F' - 'A'           ; ("file F at E000xxxx": the frame)
+        call    error
+fall:   push    es
+        mov     ax, FRAME
+        mov     es, ax
+        xor     di, di
+        mov     cx, 8000h
+        call    pfill
+        mov     cx, 8000h
+        call    pfill
+        pop     es
+        ret
+
+; AL = the pattern's byte at frame offset DI (AH changed)
+pbyte:  mov     ax, di
+        mov     al, ah
+        mov     ah, 7
+        mul     ah
+        add     ax, di
+        add     al, 3Ch
+        ret
+; ES:DI on, CX bytes (not 0): the pattern there / is it there (ZF)?
+pfill:  call    pbyte
+.l:     stosb
+        inc     al
+        test    di, 0FFh
+        jnz     .n
+        add     al, 7
+.n:     loop    .l
+        ret
+pchk:   call    pbyte
+.l:     scasb
+        jne     .x
+        inc     al
+        test    di, 0FFh
+        jnz     .n
+        add     al, 7
+.n:     loop    .l
+        cmp     al, al
+.x:     ret
+
+; INT 24h: retry a disk error up to 3 times in a row, then fail.  With
+; EMS the frame must show our pages while it runs (first and last byte
+; of each window).
+crit24: push    ds
+        push    es
+        push    cx
+        push    di
+        push    cs
+        pop     ds
+        inc     word [n24]
+        cmp     word [ems_h], 0
+        je      .r
+        mov     ax, FRAME
+        mov     es, ax
+        xor     di, di
+        mov     cx, 4
+.w:     call    pbyte
+        cmp     [es:di], al
+        jne     .bad
+        add     di, 3FFFh
+        call    pbyte
+        cmp     [es:di], al
+        jne     .bad
+        inc     di
+        loop    .w
+        jmp     short .r
+.bad:   mov     byte [bad24], 1
+.r:     inc     byte [r24]
+        mov     al, 1                   ; retry
+        cmp     byte [r24], 3
+        jbe     .x
+        mov     al, 3                   ; fail
+.x:     pop     di
+        pop     cx
+        pop     es
+        pop     ds
+        iret
+
+; ---------------------------------------------------------------------
+; read a random piece (with EMS, every other one into the frame)
 op_read:
         call    rpos
         jc      .x
@@ -254,7 +447,34 @@ op_read:
         inc     ax
         call    clamp                   ; CX = length
         call    fseek
+        jcxz    .c
+        test    byte [opno], 1
+        jz      .c
+        cmp     word [ems_h], 0
+        je      .c
+        push    cx                      ; somewhere in the frame
+        neg     cx
+        call    rand
+        pop     cx
+        push    word [rseg]
+        push    word [roff]
+        mov     word [rseg], FRAME
+        mov     [roff], ax
+        push    ax
+        push    cx
         call    rdchk
+        pop     cx
+        pop     di
+        push    es                      ; our pattern back there
+        mov     ax, FRAME
+        mov     es, ax
+        call    pfill
+        pop     es
+        pop     word [roff]
+        pop     word [rseg]
+        inc     word [fr_r]
+        ret
+.c:     call    rdchk
 .x:     ret
 
 ; a run of reads in order from a random place
@@ -342,7 +562,18 @@ op_write:
         inc     byte [nver]
         jnz     .v
         inc     byte [nver]             ; (0 is never a version)
-.v:     call    wgran
+.v:     test    byte [opno], 1          ; with EMS, every other one from
+        jz      .w                      ;  somewhere in the frame
+        cmp     word [ems_h], 0
+        je      .w
+        push    cx
+        shl     cx, 7
+        neg     cx
+        call    rand
+        mov     [wfo], ax
+        mov     byte [wfr], 1
+        pop     cx
+.w:     call    wgran
 .x:     ret
 
 ; whole file in reads of [rsz] bytes
@@ -364,19 +595,28 @@ whole:  mov     bl, 0
 .x:     ret
 
 ; ---------------------------------------------------------------------
-; read CX bytes of file BL at [pos] (the file is there) and check them
+; read CX bytes of file BL at [pos] (the file is there) to [rseg]:[roff]
+; and check them
 rdchk:  mov     [rlen], cx
         push    bx
         call    hnd
-        mov     dx, rbuf
+        push    ds
+        mov     dx, [roff]
+        mov     ds, [rseg]
         mov     ah, 3Fh
         int     21h
+        pop     ds
         pop     bx
         jc      .derr
         cmp     ax, [rlen]
         jne     .short
-        mov     si, rbuf
+        push    es
+        mov     es, [rseg]
+        mov     si, [roff]
         mov     cx, [rlen]
+        call    .g
+        pop     es
+        ret
 .g:     jcxz    .x
         mov     ax, [pos]
         mov     dx, [pos+2]
@@ -387,7 +627,7 @@ rdchk:  mov     [rlen], cx
 .c:     sub     cx, di
         add     [pos], di
         adc     word [pos+2], 0
-.b:     cmp     [si], al
+.b:     cmp     [es:si], al
         jne     .bad
         inc     si
         inc     al
@@ -395,7 +635,7 @@ rdchk:  mov     [rlen], cx
         jnz     .b
         jmp     .g
 .x:     ret
-.bad:   mov     ah, [si]
+.bad:   mov     ah, [es:si]
         sub     [pos], di               ; (the failing byte's position)
         sbb     word [pos+2], 0
         jmp     error
@@ -527,9 +767,40 @@ wgran:  push    cx
         call    hnd
         mov     dx, wbuf
         mov     cx, [wlen]
-        mov     ah, 40h
+        push    ds
+        cmp     byte [wfr], 0
+        je      .wr
+        push    es                      ; from the frame: there first
+        push    di
+        mov     ax, FRAME
+        mov     es, ax
+        mov     di, [wfo]
+        mov     si, dx
+        rep     movsb
+        pop     di
+        pop     es
+        mov     cx, [wlen]
+        mov     dx, [wfo]
+        mov     ds, ax
+.wr:    mov     ah, 40h
         int     21h
+        pop     ds
         pop     bx
+        pushf
+        push    ax
+        cmp     byte [wfr], 0           ; our pattern back there
+        je      .np
+        mov     byte [wfr], 0
+        inc     word [fr_w]
+        push    es
+        mov     ax, FRAME
+        mov     es, ax
+        mov     di, [wfo]
+        mov     cx, [wlen]
+        call    pfill
+        pop     es
+.np:    pop     ax
+        popf
         jc      .e
         cmp     ax, [wlen]
         jne     .e
@@ -772,9 +1043,25 @@ s_nosave db 'Could not write CACHETST.TXT', 13, 10, 0
 s_key   db 'Press any key', 0
 f_a     db 'CACHE_A.TST', 0
 f_b     db 'CACHE_B.TST', 0
+s_emm   db 'EMMXXXX0'
+s_ems   db 'EMS: 4 pages of ours in the frame all along', 13, 10, 0
+s_emsr  db 'EMS: the frame as we left it; ', 0
+s_emsw  db ' reads and ', 0
+s_emsx  db ' writes through it', 13, 10, 0
+s_24    db 'Disk errors retried (INT 24h): ', 0
 
 section .bss
 bss_start:
+rseg    resw 1                  ; where reads go: the buffer across 64 KB,
+roff    resw 1                  ;  or the frame
+ems_h   resw 1                  ; our EMS handle (0: no EMS)
+fr_r    resw 1                  ; reads and writes through the frame
+fr_w    resw 1
+wfo     resw 1                  ; this write from the frame at wfo
+wfr     resb 1
+r24     resb 1                  ; INT 24h retries in a row
+n24     resw 1                  ; INT 24h calls
+bad24   resb 1                  ; one found the frame changed
 seed    resw 1
 opno    resw 1
 nerr    resw 1

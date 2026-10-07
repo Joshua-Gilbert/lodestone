@@ -295,8 +295,15 @@ t_memory:
         call    pline_r
         call    vstart
         mov     ax, [m_cache]
-        call    sb_kb
-        mov     si, l_cache
+        or      ax, ax                  ; no "SC" block, Grid-OS's EMS: the
+        jnz     .ckb                    ;  cache is in two of its pages
+        cmp     byte [m_noems], 0
+        jne     .ckb
+        mov     si, s_cems
+        call    UI_SBSTR
+        jmp     short .cl
+.ckb:   call    sb_kb
+.cl:    mov     si, l_cache
         call    pline_r
         cmp     word [m_other], 0
         je      .noother
@@ -1523,6 +1530,7 @@ s_emm       db 'EMMXXXX0'
 l_exec      db 'Executive and UI core',0
 l_this      db 'System (this program)',0
 l_cache     db 'Disk cache',0
+s_cems      db '32 KB of EMS',0
 l_other     db 'Resident programs',0
 l_free      db 'Free for programs',0
 l_ems       db 'Expanded memory (EMS)',0

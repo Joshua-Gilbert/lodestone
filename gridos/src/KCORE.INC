@@ -992,6 +992,7 @@ f_F0:   mov     al, [bp+F_AX]
         jmp     .open
 ; AL=2: lend the disk cache's memory to the caller (windows' save-under):
 ; ES = its segment, CX = bytes.  CF if there is no cache or it is lent.
+; (KEMS.INC: with the cache in EMS, ems_lend and ems_back instead)
 .lend:  mov     ax, [tc_seg]
         or      ax, ax
         jz      .nolend
