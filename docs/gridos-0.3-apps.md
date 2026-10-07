@@ -315,6 +315,17 @@
 - **Review:** an independent review found three bugs, all fixed with tests: an emptied Titles checked leftover bytes after the chosen title (a stray `\` or `*` from an earlier path); a wildcard Move that couldn't erase an original was reported as a full success; and the name block could take all free memory, starving Copy's buffer. Left as designed: ESC at a Replace question leaves just that title.
 - **Tests (`t_wild`, 31 checks; the last 8 for making subjects and the kernel fixes):** the form; `*.TXT` to B: with None, with All and Only newer (older replaced, newer and as-new left), with Ask (Return, then ESC each); Move `*.DAT` on the same drive and `*.*` to B:; no match; a path in Titles; Title changed with a pattern; a pattern into its own subject; another title typed in Titles; Titles emptied; one title with None; a write-protected B: and A:; Delete `*.TXT` (ESC, then Return, the read-only one kept). The existing Copy/Move/Delete tests now step over the Titles field.
 
+## Delete on a subject (0.3.6, 2026-10-06)
+- **Joshua's request:** Delete wouldn't remove a folder. His choice: a subject goes empty or not, after a question.
+- **How:** outline Subject, choose the subject (it is the current one), CODE-D: "Erase: Confirm to erase \OLD and all in it". Return erases every title under it (read-only, hidden and system ones too: their attributes are cleared first), every subject below it once empty, then the subject. Subject then lists the subjects again with the one above chosen. Root can't be erased (a beep). An error stops it and says what and why ("Can't erase K.TXT: Disk is write-protected").
+- **The walk (`tree_del`):** after the CHDIR to `..` (checked), one DTA (the Executive's own): files are erased as find-next goes; on reaching a subject it goes down into it, and once a subject is empty and removed the level above is searched again from its start (everything before it is gone). The path is `dstpath` (no new buffer).
+- **Size:** the first build counted the titles for the question, which needed a DTA a level and a second pass (+552 bytes). Joshua found that too much, so the count went: 186 bytes less.
+- **Guards for damaged disks:** a subject whose first entry isn't "." (a corrupt one pointing at the root or elsewhere) is left alone; a path longer than DOS allows stops the walk.
+- **Kernel fix (RMDIR, also the prompt's RD):** a subject Windows or Linux wrote long names into kept the long-name entries after its files were erased, and RMDIR took those as titles ("Access denied"). They no longer count.
+- **Review:** an independent review (of the first build) found no way for the walk to leave the subject on a sound disk. Its findings that still apply (long names, an unchecked CHDIR) and the damaged-disk guards are in.
+- **Cost:** GRIDOS.SYS 37,002 bytes (+366). A DOS program gets 564.2 KB (−0.4 KB).
+- **Tests (`t_subdel`, 10 checks):** Root refused; the question; ESC; Return erasing a tree with a read-only title, a long-named one and empty subjects; the list after; an empty subject; a write-protected disk. Checked to fail without the RMDIR fix.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
@@ -356,7 +367,7 @@
     - `f_3B` cuts the current-directory string at 66 characters;
     - a failed mount returns an error without INT 24h.
   - **Not changed:** System takes the 80287 from INT 11h (SETUP's CMOS bit) rather than probing it, and Write's "Write to a file" overwrites without asking.
-- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, 237 with 0.3.3's `t_files` and `t_file_safety`, 251 with 0.3.4's `t_saver_delay`, 282 with 0.3.5's `t_wild`, below)**:**
+- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, 237 with 0.3.3's `t_files` and `t_file_safety`, 251 with 0.3.4's `t_saver_delay`, 282 with 0.3.5's `t_wild`, 292 with 0.3.6's `t_subdel`, below)**:**
   - **UITEST.RUN** exercises the API: lists, forms, ask, help, errors, BSS zeroing, exit code, cleanup to the paragraph, and a file that isn't a `.RUN`.
   - **System:** every topic, setting the clock, a bad date, the GPIB scan.
   - **CODE-?, CODE-Return, CODE-ESC** in the Executive, a form, System and Write, as the 1520's BIOS delivers them (below).

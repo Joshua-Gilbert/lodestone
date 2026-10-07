@@ -432,8 +432,8 @@ def t_memory():
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     kb = float(m.group(1)) if m else 0
-    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB): '
-          'the directory buffer is lent while it runs' % kb, kb >= 564.6, out[-200:])
+    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB): '
+          'the directory buffer is lent while it runs' % kb, kb >= 564.2, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     img = image('tsr.img', TSR, SYSTEM, MEMSZ)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
@@ -1302,11 +1302,62 @@ def t_wild():
           k.band()[0].startswith('Copied to B:\\FULL\\') and len([n for n in G() if n.startswith('A:\\FULL\\')]) == 15
           and not fatcheck.check(bytes(k.pc.drives[1].img))[0], (k.band(), sorted(G())))
 
+# ---------------------------------------------------------------------
+def pick_subject(k, name):
+    """Outline Subject and choose NAME in it (Subject stays outlined)."""
+    if focus(k) != 2: k.key(K_BTAB)
+    want = [x.strip() for x in subjects(k)].index(name)
+    for _ in range(40):
+        if k.u16('sel') == want: break
+        k.key(ktest.DOWN if k.u16('sel') < want else ktest.UP)
+
+def t_subdel():
+    print('== Delete on a subject: it and all in it, after a question')
+    t = os.path.join(OUT, 'T.TXT'); open(t, 'wb').write(b'text\r\n')
+    a = image('subdel.img', t, 'OLD\\', 'OLD\\A.TXT=' + t, 'OLD\\RO.TXT=' + t, 'OLD\\SUB\\', 'OLD\\SUB\\B.TXT=' + t,
+              'OLD\\SUB\\A long name.txt=' + t, 'OLD\\SUB\\DEEP\\', 'OLD\\EMPTY\\', 'KEEP\\', 'KEEP\\K.TXT=' + t, 'NOTHING\\')
+    raw = bytearray(open(a, 'rb').read())
+    for o in dir_entries(raw, 'RO.TXT'): raw[o + 11] |= 1           # read-only inside
+    open(a, 'wb').write(raw)
+    k = ktest.KPC(a); k.start()
+    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    sound = lambda: fatcheck.check(bytes(k.pc.drives[0].img))[0]
+    band = lambda: k.band()[0]
+    pick_subject(k, 'Root'); k.key(CODE['D'])
+    check('Root: CODE-D does nothing (a beep)', focus(k) == 2 and not k.crashed and 'A:\\T.TXT' in A() and band() != '', k.band())
+    pick_subject(k, 'OLD'); k.key(CODE['D'])
+    check('OLD: "Erase: Confirm to erase \\OLD and all in it"', band() == 'Erase: Confirm to erase \\OLD and all in it', k.band())
+    k.key(ktest.ESC)
+    check('... ESC: all there, OLD still chosen in Subject', len([n for n in A() if n.startswith('A:\\OLD\\')]) == 4 and focus(k) == 2
+          and subjects(k)[k.u16('sel')].strip() == 'OLD', (sorted(A()), subjects(k), k.u16('sel')))
+    k.key(CODE['D']); k.key(ktest.ENTER)
+    check('... Return: "Erased \\OLD", the read-only one, a long-named one (Windows) and the subjects in it too', band() == 'Erased \\OLD'
+          and not [n for n in A() if 'OLD' in n] and A().get('A:\\KEEP\\K.TXT') == b'text\r\n' and not sound(), (k.band(), sorted(A()), sound()))
+    check('... the Subject list without OLD, Root chosen', [x.strip() for x in subjects(k)] == ['Root', 'KEEP', 'NOTHING']
+          and subjects(k)[k.u16('sel')].strip() == 'Root', (subjects(k), k.u16('sel')))
+    root = bytes(k.pc.drives[0].img)
+    b = fatcheck.bpb(root)
+    check('... and no OLD entry left in the root directory', not [o for o in range(0, len(root), 32) if root[o:o + 11] == b'OLD        ' and root[o + 11] & 0x10], '')
+    pick_subject(k, 'NOTHING'); k.key(CODE['D'])
+    check('an empty subject: "Erase: Confirm to erase \\NOTHING and all in it"', band() == 'Erase: Confirm to erase \\NOTHING and all in it', k.band())
+    k.key(ktest.ENTER)
+    check('... Return: "Erased \\NOTHING", gone', band() == 'Erased \\NOTHING' and [x.strip() for x in subjects(k)] == ['Root', 'KEEP'] and not sound(),
+          (k.band(), subjects(k)))
+    k.key(ktest.ENTER)
+    # a write-protected disk: said so, nothing lost
+    k.pc.drives[0].wp = True
+    pick_subject(k, 'KEEP'); k.key(CODE['D']); k.key(ktest.ENTER, settle=False); k.settle(30)
+    check('KEEP on a write-protected disk: "Can\'t erase K.TXT: Disk is write-protected"',
+          band() == "Can't erase K.TXT: Disk is write-protected" and A().get('A:\\KEEP\\K.TXT') == b'text\r\n' and not k.crashed, k.band())
+    k.pc.drives[0].wp = False
+    k.key(ktest.ENTER)
+    check('... and Title lists the titles of where it is now', not k.crashed, '')
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_saver_delay):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_saver_delay):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
