@@ -10,7 +10,7 @@
         org     RUN_ORG
 
 TOP_Y   equ 32                          ; first topic / detail line
-NTOPIC  equ 7
+NTOPIC  equ 8
 INI_MAX equ 1024                        ; GRIDOS.INI: the most we rewrite
 PCOL    equ 18                          ; the details panel: from this column
 LCOL    equ 20                          ; labels
@@ -1157,6 +1157,64 @@ next_font:
         call    save_ini
         jmp     redraw
 
+;  Screen saver: how long the Executive waits, idle, before the saver
+;  (DEFRAG, then the dark clock).  Return: the next choice, saved in
+;  GRIDOS.INI as SAVER= (none for the usual 5 minutes).
+; ---------------------------------------------------------------------
+t_saver:
+        call    vstart
+        call    saver_text
+        mov     si, l_saver
+        call    pline
+        call    pgap
+        mov     si, s_svchoices
+        call    ptext
+        call    pgap
+        mov     si, s_svwhat1
+        call    ptext
+        mov     si, s_svwhat2
+        jmp     ptext
+
+; "5 minutes" / "1 minute" / "never" at DI
+saver_text:
+        xor     al, al
+        call    UI_SAVER
+        mov     si, s_never
+        or      al, al
+        jz      .s
+        xor     ah, ah
+        push    ax
+        call    UI_SBU16
+        pop     ax
+        mov     si, s_minutes
+        cmp     al, 1
+        jne     .s
+        mov     si, s_minute
+.s:     jmp     UI_SBSTR
+
+next_saver:
+        xor     al, al
+        call    UI_SAVER                ; AL = the delay now
+        mov     si, sv_steps
+        mov     cx, NSTEPS
+.f:     cmp     al, [si]
+        je      .hit
+        inc     si
+        loop    .f
+        mov     si, sv_steps - 1        ; (not one of them: the first)
+.hit:   inc     si                      ; the next one, round
+        cmp     si, sv_steps + NSTEPS
+        jb      .n
+        mov     si, sv_steps
+.n:     mov     bl, [si]
+        mov     al, 1
+        call    UI_SAVER
+        call    save_ini
+        jmp     redraw
+
+sv_steps    db 1, 2, 5, 10, 15, 30, 0   ; minutes (0: never)
+NSTEPS      equ $ - sv_steps
+
 ; the file named at dta+30 into fbuf -> CF if it isn't exactly a font
 load_fnt:
         mov     di, fpath
@@ -1204,8 +1262,9 @@ same_name:
         pop     si
         ret
 
-; FONT= in \GRIDOS.INI for the font in use: its other lines are kept, an
-; old FONT= line goes, and GRiD's font needs none (no lines left: no file)
+; FONT= and SAVER= in \GRIDOS.INI for the font and saver delay in use: its
+; other lines are kept, old FONT= and SAVER= lines go, and GRiD's font and
+; the usual 5 minutes need none (no lines left: no file)
 save_ini:
         xor     cx, cx                  ; the old file (none: nothing)
         mov     dx, s_ini
@@ -1232,21 +1291,16 @@ save_ini:
         mov     di, ini_new
 .line:  cmp     si, bx
         jae     .end
-        mov     ax, bx
-        sub     ax, si
-        cmp     ax, 5
-        jb      .keep
-        mov     ax, [si]                ; "FONT=" (any case)?
-        and     ax, 0DFDFh
-        cmp     ax, 'FO'
-        jne     .keep
-        mov     ax, [si+2]
-        and     ax, 0DFDFh
-        cmp     ax, 'NT'
-        jne     .keep
-        cmp     byte [si+4], '='
-        jne     .keep
-.skip:  cmp     si, bx                  ; the old FONT= line goes
+        push    di                      ; (DI: where the new text goes)
+        mov     di, s_fonteq            ; "FONT=" or "SAVER=" (any case)?
+        call    ini_is
+        je      .ours
+        mov     di, s_savereq
+        call    ini_is
+.ours:  pop     di
+        je      .skip
+        jmp     short .keep
+.skip:  cmp     si, bx                  ; the old line goes
         jae     .end
         lodsb
         cmp     al, 10
@@ -1272,7 +1326,19 @@ save_ini:
         call    UI_SBSTR
         mov     ax, 0A0Dh
         stosw
-.wr:    mov     bp, di                  ; BP = the end of the new text
+.wr:    xor     al, al                  ; the saver's delay, unless 5 minutes
+        call    UI_SAVER
+        cmp     al, 5
+        je      .wr2
+        push    ax
+        mov     si, s_savereq
+        call    UI_SBSTR
+        pop     ax
+        xor     ah, ah
+        call    UI_SBU16
+        mov     ax, 0A0Dh
+        stosw
+.wr2:   mov     bp, di                  ; BP = the end of the new text
         cmp     di, ini_new
         je      .del
         mov     dx, s_ini
@@ -1311,6 +1377,33 @@ save_ini:
         mov     si, vbuf
         jmp     UI_MSG
 
+; does the line at SI (its text ends at BX) start with DI ("FONT=", any
+; case)? -> ZF.  SI, DI kept
+ini_is: push    si
+        push    di
+        push    ax
+.l:     mov     al, [di]
+        or      al, al
+        jz      .x                      ; (all of it: ZF set)
+        cmp     si, bx
+        jae     .no
+        mov     ah, [si]
+        cmp     ah, 'a'
+        jb      .c
+        cmp     ah, 'z'
+        ja      .c
+        sub     ah, 20h
+.c:     cmp     al, ah
+        jne     .x
+        inc     si
+        inc     di
+        jmp     .l
+.no:    or      si, si                  ; (ZF clear: SI isn't 0)
+.x:     pop     ax
+        pop     di
+        pop     si
+        ret
+
 ; ---------------------------------------------------------------------
 ;  keys
 ; ---------------------------------------------------------------------
@@ -1322,6 +1415,8 @@ k_enter:
         je      scan_gpib
         cmp     bx, 5
         je      next_font
+        cmp     bx, 6
+        je      next_saver
         ret
 k_help: mov     si, keys
         mov     di, s_helptitle
@@ -1346,15 +1441,16 @@ keys:   KEY(K_NONE,      0,       h_topic)
 ;  data
 ; ---------------------------------------------------------------------
 topics:     dw TOP_Y, NTOPIC, NTOPIC, 0, 0, topic_row, show_topic, 1, PCOL - 3, topic_name
-topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_about
-topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_about
-topic_band  dw s_band2, s_band2, s_band_clk, s_band2, s_band_gp, s_band_font, s_band2
+topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_saver, n_about
+topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_saver, t_about
+topic_band  dw s_band2, s_band2, s_band_clk, s_band2, s_band_gp, s_band_font, s_band_sv, s_band2
 n_memory    db 'Memory',0
 n_disks     db 'Disks',0
 n_clock     db 'Clock',0
 n_devices   db 'Devices',0
 n_gpib      db 'GPIB',0
 n_display   db 'Display',0
+n_saver     db 'Screen saver',0
 n_about     db 'About',0
 
 clock_form: dw s_clocktitle, s_clockprompt, 46, 10, 2
@@ -1368,6 +1464,7 @@ s_band2     db 'CODE-? for help    ESC: back to the Executive',0
 s_band_clk  db 'RETURN: set the date and time    ESC: back',0
 s_band_gp   db 'RETURN: scan the bus    ESC: back',0
 s_band_font db 'RETURN: the next font    ESC: back',0
+s_band_sv   db 'RETURN: the next choice    ESC: back',0
 h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
 h_enter     db 'Return on Clock              set the date and time',0
 h_enter2    db 'Return on GPIB               scan the bus',0
@@ -1474,6 +1571,14 @@ s_gridfont  db 'GRiD (built in)',0
 s_fntall    db '@:\*.FNT',0              ; (@: the disk Grid-OS started from,
 s_ini       db '@:\GRIDOS.INI',0          ;  which reads them: set at the start)
 s_fonteq    db 'FONT=',0
+s_savereq   db 'SAVER=',0
+l_saver     db 'Starts after',0
+s_never     db 'never',0
+s_minutes   db ' minutes',0
+s_minute    db ' minute',0
+s_svchoices db 'RETURN: 1, 2, 5, 10, 15 or 30 minutes, or never',0
+s_svwhat1   db 'Idle in the Executive that long, it tidies the disk',0
+s_svwhat2   db '(DEFRAG), then shows the time on a dark screen.',0
 s_empty     db 0
 s_cantsave  db "The font is set, but can't be saved: ",0
 s_inilong   db 'The font is set; GRIDOS.INI is too long to change here',0
