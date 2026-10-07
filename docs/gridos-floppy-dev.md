@@ -68,14 +68,14 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
    - **Each kernel copy can also leave a hole** where the old GRIDOS.SYS was. The next big file (BENCH.DAT) fills it and is split, so BENCH reads look 0.3–0.8 s slower. DEFRAG puts files back in one piece. Compare BENCH read times only between runs on the same layout.
 4. Back to DOS: a plain restart (CTRL-ALT-DEL) without F. Under GRiD MS-DOS booted from the EPROM, A: is the EPROM and the floppy is B:.
 
-## What's on the floppy (A:) — reformatted 2026-10-05 evening; 0.3 copied 2026-10-06, updated at noon, in the afternoon (fonts), at 14:48 (0.3.1, TM5000G) at 15:19 (0.3.2) and at 16:07 (0.3.2 with the File form), 18:04 (0.3.3), 18:48 (0.3.4) 21:36 and 22:10 (0.3.5)
+## What's on the floppy (A:) — reformatted 2026-10-05 evening; 0.3 copied 2026-10-06, updated at noon, in the afternoon (fonts), at 14:48 (0.3.1, TM5000G) at 15:19 (0.3.2) and at 16:07 (0.3.2 with the File form), 18:04 (0.3.3), 18:48 (0.3.4) 21:36 and 22:10 (0.3.5), 22:45 (0.3.6)
 | File | Size | What |
 |---|---|---|
-| GRIDOS.SYS | 36,636 | **Grid-OS 0.3.5** kernel + UI core + Executive + disk cache + screen saver, in GRiD's font, with the CODE-? fix, the review panel's fixes, switchable fonts, the INT 33h mouse for DOS programs the File form (Device, Subject, Title; Tab) the file commands (Copy, Move, Rename, Delete) the screen saver's delay and wildcards (COMSPEC = A:\GRIDCMD.COM) |
+| GRIDOS.SYS | 37,002 | **Grid-OS 0.3.6** kernel + UI core + Executive + disk cache + screen saver, in GRiD's font, with the CODE-? fix, the review panel's fixes, switchable fonts, the INT 33h mouse for DOS programs the File form (Device, Subject, Title; Tab) the file commands (Copy, Move, Rename, Delete) the screen saver's delay, wildcards and Delete on a subject (COMSPEC = A:\GRIDCMD.COM) |
 | GRIDCMD.COM | 7,596 | Grid-OS command prompt (CODE-P; CLAUDE's DOS commands); says 0.3 |
 | SYSTEM.RUN | 8,084 | System (CODE-U): memory, disks, clock, devices, GPIB scan, display (fonts), screen saver (delay), about |
 | WRITE.RUN | 8,215 | Write (CODE-W, or open a text file from the list) |
-| GRIDOS.TXT | 10,000 | readme for 0.3 (with the 0.2.x notes; GRiD's font, CODE-?, fonts and GRIDOS.INI) |
+| GRIDOS.TXT | 10,434 | readme for 0.3 (with the 0.2.x notes; GRiD's font, CODE-?, fonts and GRIDOS.INI) |
 | TERMINUS.FNT | 1,536 | the Terminus font as a file for System → Display |
 | DEFRAG.COM | 9,212 | disk tidier / screen saver, in the chosen font (`DEFRAG [B:]`, `DEFRAG [B:] /T` to test the free space, `DEFRAG /S` as the saver runs it) |
 | DEFRAG.TXT | 1,511 | DEFRAG's log: the /T runs after the reformat (also in `gridos\bench\DEFRAG_1520_2026-10-05_reformatted.TXT`) |
@@ -135,6 +135,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 - **2026-10-06 night: 0.3.4, the screen saver's delay** (System → Screen saver; Return cycles 1, 2, 5, 10, 15, 30 minutes, never; `SAVER=n` in GRIDOS.INI; UI API 3, so SYSTEM.RUN 8,084 needs this GRIDOS.SYS). Tested in emulation (251 app checks). In `releases\0.3.4`: GRIDOS.SYS 35,272 (with the Executive's help trimmed), GRIDOS.TXT 9,245, SYSTEM.RUN 8,084; the PC folder has the sources. **On A: at 18:48**, each copied on its own from a fresh staging path and read back identical. **Next on the 1520:** System → Screen saver at 1 minute, then never; a restart keeps it. WRITE.RUN changed only its API byte (2→3); the old one still runs.
 - **2026-10-06 night: 0.3.5, wildcards** in Copy, Move and Delete (Titles field), Replace Ask/All/None, Only newer. Tested in emulation (274 app checks; an independent review's 3 bugs fixed). In `releases\0.3.5`: GRIDOS.SYS 36,636, GRIDOS.TXT 10,000 (first build on A: at 21:36; this one, with missing subjects made after a question and two kernel fixes for a failed MKDIR or subject growth, at 22:10).
   - **On the 1520 (2026-10-06 21:44):** Move A:\TEST.TXT to B:\NEWFOLDER (not there) said "Sector not found": B: (a 1.44 MB disk) couldn't be read for a little while; from the prompt B: then read fine and a Copy to B:\ worked. The kernel tries 3 times with a reset between; if it recurs, note whether it is right after a disk goes into B:. **Next on the 1520:** Copy `*.*` to B: with Replace All and Only newer Yes, twice (the second run copies nothing); Delete `*.BAK`.
+- **2026-10-06 late: 0.3.6, Delete on a subject** (Subject outlined, CODE-D: the subject and all in it, after a question; RMDIR ignores Windows' long-name entries). 292 app checks. In `releases\0.3.6`: GRIDOS.SYS 37,002, GRIDOS.TXT 10,434. **On A: at 22:45** (a first build with a count in the question at 22:35), each copied on its own from a fresh staging path and read back identical. **Next on the 1520:** make a subject with a few files (Copy to a new subject), then Delete it from Subject.
 - **Next, on the 1520 (the checklist in `gridos-0.3-apps.md`):**
   - CODE-? everywhere;
   - CODE-ESC to cancel in Write;

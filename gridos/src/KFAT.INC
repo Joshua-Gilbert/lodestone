@@ -862,8 +862,10 @@ f_3A:   call    get_path                ; RMDIR
         cmp     byte [si], 0
         je      .empty
         cmp     byte [si], 0E5h
-        jne     .full
-        inc     bx
+        je      .nx
+        cmp     byte [si+11], 0Fh       ; (a long name left by another
+        jne     .full                   ;  system: not a title)
+.nx:    inc     bx
         jmp     .chk
 .full:  add     sp, 4
         mov     ax, 5
