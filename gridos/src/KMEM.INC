@@ -10,8 +10,9 @@ first_mcb   resw 1
 mem_top     resw 1
 section .text
 
+kern_top    equ mem_init + 1            ; this immediate: KEMS.INC moves it up
 mem_init:
-        mov     ax, bss_end + 15
+        mov     ax, bss_end + 15        ; (the arena starts above the kernel)
         shr     ax, 4
         add     ax, KSEG
         mov     [first_mcb], ax

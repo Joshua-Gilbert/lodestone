@@ -97,7 +97,7 @@ vec_table:
         db 33h
         dw int33
         db 67h
-        dw int67
+.v67:   dw int67                        ; (KEMS.INC: its handler, if EMS)
         db 0FFh
 
 iret_op:
@@ -123,7 +123,7 @@ int33:  or      ax, ax                  ; no mouse for DOS programs yet
         xor     bx, bx
 .x:     iret
 
-int67:  mov     ah, 84h                 ; no EMS manager yet
+int67:  mov     ah, 84h                 ; no EMS here (with EMS, KEMS.INC's)
         iret
 
 int20:  mov     ax, 4C00h               ; terminate (CS = the PSP)

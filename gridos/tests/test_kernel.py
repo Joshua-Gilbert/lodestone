@@ -21,7 +21,8 @@ TM5000G = _find('TM5000G', os.path.join(GOS, '..', 'tools', 'TM5000G.EXE'), '/ho
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
-    for d, n in ((HERE, 'TESTDOS'), (HERE, 'UPPER'), (HERE, 'CACHETST'), (os.path.join(GOS, 'src'), 'GRIDCMD')):
+    for d, n in ((HERE, 'TESTDOS'), (HERE, 'UPPER'), (HERE, 'CACHETST'), (HERE, 'EMSTEST'), (HERE, 'MEMSZ'),
+                 (os.path.join(GOS, 'src'), 'GRIDCMD')):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
 
 def image(name, *files):
@@ -309,7 +310,113 @@ def t_cache():
           files.get('A:\\B2.TXT') == open(big, 'rb').read() and 'error' not in o.lower()
           and seen['multi'] > 0 and seen['single'] >= 18, (seen, o[-300:]))
 
-TESTS = [t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_cache]
+EMS_BOARD = '''cpu 286
+org 7C00h
+        mov     ax, 0E000h
+        mov     es, ax
+        mov     dx, 0258h               ; window 0 and window 1: raw page 5
+        mov     al, 85h
+        out     dx, al
+        mov     dx, 4258h
+        out     dx, al
+        mov     word [es:0], 1234h      ; written through window 0 ...
+        mov     si, [es:4000h]          ; ... read through window 1 (same block)
+        mov     al, 0DDh                ; window 3: raw 93 (88 + 5: absent, or
+        mov     dx, 0C258h              ;  page 5 again on an aliasing board)
+        out     dx, al
+        mov     bp, [es:0C000h]
+        xor     al, al                  ; window 1 off: reads FFh, keeps nothing
+        mov     dx, 4258h
+        out     dx, al
+        mov     bx, [es:4000h]
+        mov     word [es:4000h], 5555h
+        mov     cx, [es:4000h]
+        mov     dx, 0258h               ; the register reads back
+        in      al, dx
+        mov     di, ax
+        hlt
+'''
+
+def t_emsboard():
+    """pcemu's EMS board (for the kernel's EMS tests): windows, aliasing, off."""
+    src = os.path.join(OUT, 'emsboard.asm'); bin_ = os.path.join(OUT, 'emsboard.bin')
+    open(src, 'w').write(EMS_BOARD)
+    subprocess.run(['nasm', '-f', 'bin', '-o', bin_, src], check=True)
+    for alias in (False, True):
+        pc = ktest.pcemu.PC(ems_pages=88, ems_alias=alias)
+        pc.wr(0, 0x7C00, open(bin_, 'rb').read())
+        pc.w('cs', 0); pc.w('ip', 0x7C00); pc.w('ss', 0); pc.w('sp', 0x7C00); pc.w('flags', 2)
+        pc.run(1000)
+        tag = ' (aliasing board)' if alias else ''
+        check('EMS board: written through one window, read through another' + tag,
+              pc.r('si') == 0x1234 and pc.ems_read(5, 0, 2) == b'\x34\x12', hex(pc.r('si')))
+        check('EMS board: raw page 93 is ' + ('page 5 again' if alias else 'absent (FFh)') + tag,
+              pc.r('bp') == (0x1234 if alias else 0xFFFF), hex(pc.r('bp')))
+        check('EMS board: a window that is off reads FFh and keeps nothing' + tag,
+              pc.r('bx') == 0xFFFF and pc.r('cx') == 0xFFFF, (hex(pc.r('bx')), hex(pc.r('cx'))))
+        check('EMS board: page registers read back' + tag, pc.r('di') & 0xFF == 0x85, hex(pc.r('di')))
+    pc = ktest.pcemu.PC()
+    pc.w('ax', 0xE442); pc.w('dx', 0xFF); pc.int15()
+    check('no EMS board: INT 15h E442h unanswered', pc.r('flags') & 1, hex(pc.r('ax')))
+
+EMS_BUDGET = 1808       # bytes the EMS manager may keep (with 88 pages): 113 paragraphs
+def ems_npg(k): return k.rd('ems42', 1, 1)[0]     # (patched into 42h's MOV AL)
+def ems_used(k): return k.rd('ems_h', 1, 2)[0]    # (handle 0's owner byte)
+
+def first_mcb(k): return k.u16('first_mcb')
+
+def t_noems():
+    """No EMS: not a byte of the EMS manager stays, INT 67h says 84h."""
+    img = image('noems.img', os.path.join(HERE, 'EMSTEST.COM'))
+    k = ktest.KPC(img); k.start()
+    Y = k.Y
+    check('no EMS: the arena starts right after the BSS (as before the EMS manager)',
+          first_mcb(k) == 0x60 + (Y['bss_end'] + 15) // 16, hex(first_mcb(k)))
+    check('no EMS: INT 67h is the kernel\'s stub, no EMMXXXX0 at its segment:000Ah',
+          k.pc.u16(0, 0x67 * 4) == Y['int67'] and k.pc.rd(0x60, 0x0A, 8) != b'EMMXXXX0',
+          (hex(k.pc.u16(0, 0x67 * 4)), k.pc.rd(0x60, 0x0A, 8)))
+    out = k.run_file('EMSTEST.COM', 30)
+    print(out)
+    check('no EMS: EMSTEST finds none, no EMMXXXX0 device', 'no EMS manager' in out and ' 0 failed' in out
+          and 'FAIL' not in out, out[-300:])
+
+def t_ems():
+    """The kernel's EMS manager on an 88-page board (the 1520's 1408 KB)."""
+    img = image('ems.img', os.path.join(HERE, 'EMSTEST.COM'), os.path.join(HERE, 'TESTDOS.COM'),
+                os.path.join(HERE, 'MEMSZ.COM'))
+    k = ktest.KPC(img, ems_pages=88); k.start()
+    Y = k.Y
+    npg = ems_npg(k)
+    check('EMS: 88 pages found', npg == 88, npg)
+    keep = Y['ems_ltab'] + npg - Y['bss_end']
+    print('   EMS manager resident: %d bytes (code and tables %d, pages %d)' % (keep, keep - npg, npg))
+    check('EMS: the arena starts after the pages it keeps', first_mcb(k) == 0x60 + (Y['ems_ltab'] + npg + 15) // 16,
+          hex(first_mcb(k)))
+    check('EMS: resident within %d bytes' % EMS_BUDGET, keep <= EMS_BUDGET, keep)
+    check('EMS: INT 67h -> the manager, EMMXXXX0 at its segment:000Ah',
+          k.pc.u16(0, 0x67 * 4) == Y['ems_int67'] and k.pc.u16(0, 0x67 * 4 + 2) == 0x60
+          and k.pc.rd(0x60, 0x0A, 8) == b'EMMXXXX0', hex(k.pc.u16(0, 0x67 * 4)))
+    check('EMS: all four windows off after start-up', k.pc.ems_reg == [0, 0, 0, 0], k.pc.ems_reg)
+    out = k.run_file('EMSTEST.COM', 300)
+    print(out)
+    check('EMSTEST: no failures', 'FAIL' not in out and ' 0 failed' in out, out[-400:])
+    check('EMSTEST: back in the Executive', k.pc.mode() == 0x40 and not k.crashed, k.where())
+    out = k.run_file('TESTDOS.COM', 120)
+    check('TESTDOS with EMS: no failures', 'FAIL' not in out and ' 0 failed' in out, out[-200:])
+    out = k.run_file('MEMSZ.COM', 30)
+    print('   ' + out.strip())
+    check('EMS: no EMS handles left open afterwards', ems_used(k) == 0, ems_used(k))
+    # the same with a board that aliases (raw page 88 = page 0, ...): the scan
+    # must still find 88
+    k = ktest.KPC(image('ems2.img'), ems_pages=88, ems_alias=True); k.start()
+    check('EMS (aliasing board): still 88 pages', ems_npg(k) == 88, ems_npg(k))
+    k = ktest.KPC(image('ems3.img', os.path.join(HERE, 'EMSTEST.COM')), ems_pages=128); k.start()
+    check('EMS (2 MB board): 128 pages', ems_npg(k) == 128, ems_npg(k))
+    out = k.run_file('EMSTEST.COM', 300)
+    check('EMSTEST on a 2 MB board (all 128 pages in one handle too): no failures',
+          'FAIL' not in out and ' 0 failed' in out, out[-400:])
+
+TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_cache]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
