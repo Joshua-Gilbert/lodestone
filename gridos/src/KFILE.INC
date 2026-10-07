@@ -34,6 +34,7 @@ DEV_AUX equ 2
 DEV_PRN equ 3
 DEV_COM2 equ 4
 DEV_GPIB equ 5
+DEV_EMM equ 6                   ; EMMXXXX0 (with EMS): reads and writes as NUL
 
 section .bss
 sft         resb SFT_SZ * NSFT
@@ -237,8 +238,6 @@ dev_lookup:
         je      .gpib
         mov     di, bx
 .c:     mov     al, [si]
-        cmp     al, ' '
-        je      .end
         or      al, al
         je      .end
         cmp     al, [di]
@@ -251,7 +250,10 @@ dev_lookup:
         jz      .hit
         cmp     al, '.'
         je      .hit
-.skip:  add     dx, 6
+.skip:  lodsb                           ; on past this name's 0
+        or      al, al
+        jnz     .skip
+        mov     dx, si
         inc     cx
         jmp     .t
 .hit:   mov     si, cx
@@ -296,9 +298,11 @@ dev_lookup:
         pop     cx
         pop     bx
         ret
-dev_names   db 'CON  ', 0, 'NUL  ', 0, 'AUX  ', 0, 'COM1 ', 0, 'COM2 ', 0
-            db 'PRN  ', 0, 'LPT1 ', 0, 'CLOCK', 0, 0
+dev_names   db 'CON', 0, 'NUL', 0, 'AUX', 0, 'COM1', 0, 'COM2', 0
+            db 'PRN', 0, 'LPT1', 0, 'CLOCK', 0
+.emm        db 0, 'MMXXXX0', 0, 0       ; (KEMS.INC: 'E' here, with EMS)
 dev_nums    db DEV_CON, DEV_NUL, DEV_AUX, DEV_AUX, DEV_COM2, DEV_PRN, DEV_PRN, DEV_NUL
+            db DEV_EMM
 
 ; device AL (AH = GPIB address) into a new SFT entry -> SI, AL = number
 dev_open:

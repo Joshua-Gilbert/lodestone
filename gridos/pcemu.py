@@ -14,11 +14,17 @@ DOS itself.
     CGA modes 4/6 memory; PNG rendering.
   * uPD7210 at 02E1h + n*400h (any object with read/write), COM2 serial
     mouse with IRQ3, PIT channel 0, port 61h refresh toggle, panel 7F8h.
+  * EMS (ems_pages > 0): the 1520's expanded memory as GRiD's EMM.SYS
+    drives it - a 64 KB frame at E000h in 4 windows of 16 KB, window w's
+    page register at port 0258h + w*4000h (readable; 80h + raw page maps
+    it, 0 unmaps and the window reads FFh), INT 15h E442h says "EMS mode".
+    Raw pages past the board's are absent, or with ems_alias the same
+    memory again (a partly decoded board), as the kernel's scan must see.
 
 Time: 4 us per executed basic block (about a 10 MHz 286).
 """
-import collections, datetime, os, struct
-from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INTR, UC_HOOK_INSN, UC_HOOK_BLOCK
+import collections, ctypes, datetime, os, struct
+from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INTR, UC_HOOK_INSN, UC_HOOK_BLOCK, UC_PROT_ALL
 from unicorn import x86_const as X
 
 TICK_US = 1e6 * 65536 / 1193182
@@ -28,6 +34,8 @@ BLOCK_US = 4.0
 REP_US = {0xA4: 0.45, 0xA5: 0.65, 0xAA: 0.25, 0xAB: 0.33, 0xAC: 0.4, 0xAD: 0.53,
           0xA6: 1.0, 0xA7: 1.1, 0xAE: 0.9, 0xAF: 1.0, 0x6C: 0.6, 0x6D: 0.7, 0x6E: 0.6, 0x6F: 0.7}
 STUB = 0xF000
+EMS_FRAME = 0xE0000
+EMS_PAGE = 0x4000
 R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
      'ax bx cx dx si di bp sp cs ds es ss ip flags al ah bl bh cl ch dl dh'.split()}
 
@@ -75,9 +83,18 @@ class Floppy:
 
 class PC:
     def __init__(s, a=None, b=None, chip=None, start=datetime.datetime(2026, 10, 4, 21, 30, 0), mem_kb=640,
-                 disk_model='flat'):
+                 disk_model='flat', ems_pages=0, ems_alias=False):
         s.mu = mu = Uc(UC_ARCH_X86, UC_MODE_16)
         mu.mem_map(0, 0x110000)
+        s.ems_pages = ems_pages; s.ems_alias = ems_alias
+        if ems_pages:
+            # the board's memory, and what each window shows: a page of it
+            # (mem_map_ptr, so two windows on one page are the same bytes) or,
+            # when it is off, nothing (MMIO: reads FFh, writes go nowhere)
+            s.ems_store = ctypes.create_string_buffer(ems_pages * EMS_PAGE)
+            s.ems_reg = [0, 0, 0, 0]
+            mu.mem_unmap(EMS_FRAME, 4 * EMS_PAGE)
+            for w in range(4): s.ems_map(w, first=True)
         s.drives = [Floppy(a) if a is not None else None, Floppy(b) if b is not None else None]
         s.disk_model = disk_model       # 'flat' = 2 ms a sector; 'real' = seeks, rotation, motor
         s.marks = []                    # (BX, us) for INT 1Ah AH=0 calls with BX = BExxh
@@ -245,9 +262,34 @@ class PC:
         if port == 0x3DA:
             return 0x08 if int(s.us / 1000) % 16 == 0 else 0x00
         if 0x2F8 <= port <= 0x2FF: return s.uart_in(port - 0x2F8)
+        if s.ems_pages and (port & 0x3FFF) == 0x258: return s.ems_reg[port >> 14]
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             return s.chip.read(port >> 10)
         return 0xFF
+
+    # ---- EMS board ------------------------------------------------------------
+    def ems_page(s, v):
+        """The board page a page-register value shows, or None (window off,
+        or a raw page this board doesn't have)."""
+        if not v & 0x80: return None
+        r = v & 0x7F
+        if r < s.ems_pages: return r
+        return r % s.ems_pages if s.ems_alias else None
+
+    def ems_map(s, w, first=False):
+        base = EMS_FRAME + w * EMS_PAGE
+        p = s.ems_page(s.ems_reg[w])
+        if not first: s.mu.mem_unmap(base, EMS_PAGE)
+        if p is None:
+            s.mu.mmio_map(base, EMS_PAGE, lambda uc, off, size, ud: (1 << 8 * size) - 1, None,
+                          lambda uc, off, size, val, ud: None, None)
+        else:
+            s.mu.mem_map_ptr(base, EMS_PAGE, UC_PROT_ALL, ctypes.addressof(s.ems_store) + p * EMS_PAGE)
+
+    def ems_read(s, page, off, n):
+        """Bytes of a board page, mapped or not."""
+        a = page * EMS_PAGE + off
+        return bytes(s.ems_store[a:a + n])
 
     def cmos_read(s, i):
         bcd = lambda v: ((v // 10) << 4) | (v % 10)
@@ -273,6 +315,8 @@ class PC:
             return
         if port == 0x21: s.pic_mask = val; return
         if 0x2F8 <= port <= 0x2FF: return s.uart_out(port - 0x2F8, val)
+        if s.ems_pages and (port & 0x3FFF) == 0x258:
+            s.ems_reg[port >> 14] = val; s.ems_map(port >> 14); return
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             s.chip.write(port >> 10, val)
 
@@ -463,8 +507,10 @@ class PC:
 
     def int15(s):
         ax, ah = s.r('ax'), s.r('ah')
-        if ax == 0xE440: s.w('cx', 1408); s.w('ax', 0); s.cf(0); return
+        if ax == 0xE440: s.w('cx', s.ems_pages * 16 if s.ems_pages else 1408); s.w('ax', 0); s.cf(0); return
         if ax == 0xE441: s.w('cx', 0); s.w('ax', 0); s.cf(0); return
+        if ax == 0xE442 and s.ems_pages and s.r('dl') == 0xFF:     # memory mode: EMS
+            s.w('dx', (s.r('dx') & 0xFF00) | 1); s.w('ax', 0); s.cf(0); return
         if ah == 0x4F: s.cf(1); return
         if ah == 0x88: s.w('ax', 0); s.cf(0); return
         if ah == 0x86:

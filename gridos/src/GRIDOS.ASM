@@ -16,6 +16,9 @@
 ;           AUX, PRN, COM1/2, LPT1, GPIBnn), find first/next, dir calls
 ;    KPROC  PSP, environment, EXEC (.COM/.EXE), terminate, TSR, ^C
 ;    KGPIB  the GRIDGPIB driver on INT 60h (same API and signature)
+;    KEMS   the EMS manager (LIM 4.0, INT 67h) - only resident when the
+;           machine has EMS: it follows the kernel image in this file,
+;           and its start-up puts it above the BSS and keeps it, or not
 ;
 ;  The UI segment (section ui, our COMMON.SHR) follows the kernel in this
 ;  file.  At start-up it is copied into a block of its own (owner 8, "UI")
@@ -55,7 +58,8 @@ start:  cli                     ; at 1000:0000 from the boot sector
         xor     di, di
         mov     cx, (image_end - start + 1) / 2
         rep     movsw
-        jmp     KSEG:init
+        jmp     image_end + (ems_init - ems_start)   ; KEMS.INC's, in this
+                                        ; image (then KSEG:init, EMS or not)
 
 init:   cli
         mov     ax, cs
@@ -139,6 +143,9 @@ s_nouimem   db 'Grid-OS: not enough memory for the Executive', 13, 10, 0
 
 section .bss nobits align=16 follows=.text
 bss_start:
+; KEMS.INC: in the file right after the kernel image (at image_end), in
+; memory right after the BSS (where ems_init copies it)
+section ems progbits align=16 follows=.text vfollows=.bss valign=16
 section .text
 
 %include "KCORE.INC"
@@ -151,17 +158,21 @@ section .text
 
 bootbpb     times 64 db 0
 bootdrv     db 0
-            align 2
-image_end:                              ; everything above is copied low
-
+            align 16                    ; (free: the BSS starts on a paragraph)
+image_end:                              ; everything above is copied low;
+                                        ; the EMS section starts right here
 section .bss
             alignb 16
 bss_end:
 
+section ems
+ems_start:
+%include "KEMS.INC"
+
 ; =====================================================================
 ;  The UI segment: offsets from 0 in a segment of its own
 ; =====================================================================
-section ui progbits align=16 follows=.text vstart=0
+section ui progbits align=16 follows=ems vstart=0
 section uibss nobits valign=16 vfollows=ui
 ; alignb would clash with vfollows in NASM's bin output (it sets a "real"
 ; section alignment); uibss starts on a paragraph, so this is the same thing
