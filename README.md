@@ -45,6 +45,33 @@ BENCH 1.3 on all three in the emulator, from the same kind of 1.44 MB floppy, wi
 
 ![BENCH on Grid-OS](gridos/screens/readme/bench.png)
 
+### On the real 1520
+
+BENCH on Joshua's GRiDCase 1520, from its own 1.44 MB floppy (seconds). The 2026-10-07 runs use the 0.3.8 kernel, which keeps the disk cache in EMS.
+
+| Test | GRiD MS-DOS 3.30 | Grid-OS 0.2.3, 2026-10-05 | Grid-OS 0.3.8, 2026-10-07 | the same, after DEFRAG |
+|---|---:|---:|---:|---:|
+| Write 256 KB, 16 KB writes | 13.89 | 12.35 | 12.90 | 12.63 |
+| Read 256 KB, 16 KB reads | 11.97 | 8.73 | 9.55 | 9.17 |
+| Read 256 KB, 512-byte reads | 104.86 | 8.56 | 9.55 | 8.95 |
+| Read 256 KB, 128-byte reads | 104.86 | 8.78 | 9.77 | 8.95 |
+| 64 random 512-byte reads | 10.49 | 9.61 | 10.05 | 9.72 |
+| Directory listing ×10 | 0.21 | 0.05 | 0.54 | 0.05 |
+| Open + close ×100 | 0.21 | 0.16 | 0.10 | 0.16 |
+| 20 small files, create + delete | 28.45 | 22.30 | 22.13 | 24.88 |
+| Load + run a 120 KB .EXE ×3 | 14.06 | 12.02 | 12.08 | 16.47 |
+| INT 21h calls ×1000 | 0.10 | 0.05 | 0.05 | 0.05 |
+| **Total** | **289.15** | **82.66** | **86.78** | **91.07** |
+| Memory for programs (BENCH) | 571 KB | 554 KB | **580 KB** (with EMS) | 580 KB |
+| EMS: map a page ×10,000 | | | 0.27 | 0.21 |
+| EMS: move 1 MB to / from EMS | | | 0.38 / 0.32 | 0.38 / 0.32 |
+
+- **Memory:** with the disk cache in EMS, a DOS program gets 580 KB on the real machine, 9 KB more than under GRiD MS-DOS (571 KB), while Grid-OS also runs its own EMS manager, the cache and the Executive.
+- **EMS on the real 1520:** a page map takes about 21–27 µs, and 57h moves run at 2.7–3.1 MB/s.
+- **Run to run:** totals move by a few seconds with where BENCH's files land on a well-used floppy. After DEFRAG the free space starts further in, which is slower here: drive A:'s head 0 is marginal on the innermost tracks, so some tracks are read a sector at a time.
+
+Logs: `gridos/bench/BENCH_1520_2026-10-05*.TXT` and `BENCH_1520_2026-10-07.TXT`.
+
 Run it with `python3 gridos/bench/compare3.py <GRiD MS-DOS EPROM image> <EMM.SYS>` (about 4 minutes); details and notes in `gridos/bench/RESULTS3.TXT`. The earlier two-way runs, and the runs on the real 1520, are in `gridos/bench/RESULTS.TXT`.
 
 ## What's here
