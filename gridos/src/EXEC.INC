@@ -1323,6 +1323,8 @@ xfer:   call    file_ok
         call    xfer_cant
         call    pat_check
         jc      .x
+        call    xfer_mkdir              ; a subject not there: made, if asked
+        jc      .nomk
         call    xfer_all
         push    ax
         call    nm_free
@@ -1352,6 +1354,13 @@ xfer:   call    file_ok
         jmp     cant_msg
 .bad:   call    xfer_cant
         jmp     cant_why
+.nomk:  push    ax
+        call    nm_free                 ; (ESC: AX = 0, nothing said)
+        pop     ax
+        or      ax, ax
+        jz      .x
+        mov     [ex_code], ax
+        jmp     short .fail
 .x:     ret
 .same:  mov     di, msgbuf
         mov     si, runpath
@@ -1373,6 +1382,57 @@ xfer:   call    file_ok
         call    api_sberr
         mov     byte [di], 0
         jmp     show_msg
+
+; the subject it goes to: there, or made after a question ("B:\NEW isn't
+; there: Confirm to make it"; each level made in turn).  CF: AX = DOS error,
+; or 0 if the answer was no
+xfer_mkdir:
+        mov     al, [c_tit]             ; (xfer_dest fills an empty Title)
+        push    ax
+        call    xfer_dest
+        pop     ax
+        or      al, al
+        jnz     .t
+        mov     [c_tit], al
+.t:     cmp     byte [tmppath + 3], 0   ; (the root is always there)
+        je      .ok
+        mov     dx, tmppath
+        mov     cx, 10h
+        mov     ah, 4Eh
+        int     21h
+        jnc     .ok                     ; (there, or a file: said later)
+        cmp     ax, 3
+        je      .ask
+        cmp     ax, 2
+        jne     .ok                     ; (a disk error: said later)
+.ask:   mov     di, msgbuf
+        mov     si, tmppath
+        call    sb_str
+        mov     si, s_mkq
+        call    sb_str
+        mov     byte [di], 0
+        mov     si, msgbuf
+        call    ui_ask
+        mov     ax, 0
+        jc      .x
+        mov     si, tmppath + 3         ; each level: "X:\A", "X:\A\B" ...
+.l:     lodsb
+        or      al, al
+        jz      .last
+        cmp     al, '\'
+        jne     .l
+        mov     byte [si-1], 0
+        mov     dx, tmppath
+        mov     ah, 39h
+        int     21h                     ; (there already: Access denied)
+        mov     byte [si-1], '\'
+        jmp     .l
+.last:  mov     dx, tmppath
+        mov     ah, 39h
+        int     21h
+        jc      .x
+.ok:    clc
+.x:     ret
 
 ; each title found, copied or moved -> AL = 0 all done (or left), 4 a Move
 ; copied but not erased (x_part); 1 the file itself (runpath), 2 a DOS
@@ -2571,6 +2631,7 @@ s_to        db ' to ', 0
 s_comma     db ', ', 0
 s_left      db ' is there already: left as it was', 0
 s_leftn     db ' left as they were', 0
+s_mkq       db " isn't there: Confirm to make it", 0
 s_copy      db 'Copy ', 0
 s_move      db 'Move ', 0
 s_rename    db 'Rename ', 0

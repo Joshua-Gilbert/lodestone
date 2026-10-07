@@ -307,9 +307,13 @@
 - **The band after several:** "Copied 3 titles to B:\DATA, 2 left as they were" / "Moved 2 titles to A:\WORK". One title left by Replace None or Only newer: "NOTES.TXT is there already: left as it was".
 - **Errors stop the run** at that title and say why ("Can't copy A.TXT: Disk is write-protected"); a Move that copied but couldn't erase says so and goes no further. The list is read again if anything changed.
 - **How:** `pat_find` collects the matching names (find first/next, attribute 0: files and read-only ones, not hidden or system), with their date and time, into a block of their own (17 bytes a title), cut down to what it holds so Copy's 32 KB buffer still fits. The directory can then change under the run (Move renames, Copy makes its temporary file) without upsetting it. `xfer_do` uses find first on the destination (time, date, subject or not) where it used 4300h.
-- **Cost:** GRIDOS.SYS 36,422 bytes (+1,150). A DOS program gets 564.8 KB (−0.9 KB).
+- **A Subject that isn't there is made** (Joshua, after a Move to `B:\NEWFOLDER` on the 1520): "B:\NEW\DEEP isn't there: Confirm to make it", then each level in turn. ESC leaves everything as it was.
+- **Two kernel fixes found on the way** (a failed MKDIR on a write-protected disk):
+  - `clu_zero` returned the cluster number instead of the error (so "error 17"), and its CF was lost to an `add sp`. It now returns CF with AX = the error.
+  - A cluster taken for a new subject (MKDIR) or for a subject that grows was kept when it couldn't be written: a lost cluster, or, when a subject had to grow, its chain led into a cluster of old data that showed as stray entries. Both now give the cluster back.
+- **Cost:** GRIDOS.SYS 36,636 bytes (+1,364). A DOS program gets 564.6 KB (−1.1 KB).
 - **Review:** an independent review found three bugs, all fixed with tests: an emptied Titles checked leftover bytes after the chosen title (a stray `\` or `*` from an earlier path); a wildcard Move that couldn't erase an original was reported as a full success; and the name block could take all free memory, starving Copy's buffer. Left as designed: ESC at a Replace question leaves just that title.
-- **Tests (`t_wild`, 23 checks):** the form; `*.TXT` to B: with None, with All and Only newer (older replaced, newer and as-new left), with Ask (Return, then ESC each); Move `*.DAT` on the same drive and `*.*` to B:; no match; a path in Titles; Title changed with a pattern; a pattern into its own subject; another title typed in Titles; Titles emptied; one title with None; a write-protected B: and A:; Delete `*.TXT` (ESC, then Return, the read-only one kept). The existing Copy/Move/Delete tests now step over the Titles field.
+- **Tests (`t_wild`, 31 checks; the last 8 for making subjects and the kernel fixes):** the form; `*.TXT` to B: with None, with All and Only newer (older replaced, newer and as-new left), with Ask (Return, then ESC each); Move `*.DAT` on the same drive and `*.*` to B:; no match; a path in Titles; Title changed with a pattern; a pattern into its own subject; another title typed in Titles; Titles emptied; one title with None; a write-protected B: and A:; Delete `*.TXT` (ESC, then Return, the read-only one kept). The existing Copy/Move/Delete tests now step over the Titles field.
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
@@ -352,7 +356,7 @@
     - `f_3B` cuts the current-directory string at 66 characters;
     - a failed mount returns an error without INT 24h.
   - **Not changed:** System takes the 80287 from INT 11h (SETUP's CMOS bit) rather than probing it, and Write's "Write to a file" overwrites without asking.
-- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, 237 with 0.3.3's `t_files` and `t_file_safety`, 251 with 0.3.4's `t_saver_delay`, 274 with 0.3.5's `t_wild`, below)**:**
+- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, 237 with 0.3.3's `t_files` and `t_file_safety`, 251 with 0.3.4's `t_saver_delay`, 282 with 0.3.5's `t_wild`, below)**:**
   - **UITEST.RUN** exercises the API: lists, forms, ask, help, errors, BSS zeroing, exit code, cleanup to the paragraph, and a file that isn't a `.RUN`.
   - **System:** every topic, setting the clock, a bad date, the GPIB scan.
   - **CODE-?, CODE-Return, CODE-ESC** in the Executive, a form, System and Write, as the 1520's BIOS delivers them (below).

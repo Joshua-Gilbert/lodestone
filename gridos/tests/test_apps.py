@@ -432,8 +432,8 @@ def t_memory():
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     kb = float(m.group(1)) if m else 0
-    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards 0.9 KB): '
-          'the directory buffer is lent while it runs' % kb, kb >= 564.8, out[-200:])
+    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB): '
+          'the directory buffer is lent while it runs' % kb, kb >= 564.6, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     img = image('tsr.img', TSR, SYSTEM, MEMSZ)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
@@ -1155,7 +1155,13 @@ def t_wild():
     raw = bytearray(open(a, 'rb').read()); raw[root_entry(raw, 'RO.TXT') + 11] |= 1; open(a, 'wb').write(raw)
     for n in files: set_date(a, n, 2026, 6)
     old = os.path.join(OUT, 'BOLD.TXT'); open(old, 'wb').write(b'was on B\r\n')
-    b = mkimg.build(os.path.join(OUT, 'wildb.img'), ['DATA\\', 'DATA\\B.TXT=' + old, 'DATA\\OLD.TXT=' + old, 'DATA\\NEW.TXT=' + old])
+    b = mkimg.build(os.path.join(OUT, 'wildb.img'), ['DATA\\', 'DATA\\B.TXT=' + old, 'DATA\\OLD.TXT=' + old, 'DATA\\NEW.TXT=' + old,
+                    'FULL\\'] + ['FULL\\F%02d.TXT=%s' % (i, old) for i in range(14)])  # FULL: its one cluster full
+    raw = bytearray(open(b, 'rb').read()); bp = fatcheck.bpb(raw)  # free space not zeros, as on a used disk
+    d0 = (bp['res'] + bp['nfat'] * bp['spf']) * bp['bps'] + bp['nroot'] * 32
+    for o in range(d0, len(raw), 512):
+        if not any(raw[o:o + 512]): raw[o:o + 512] = b'A' * 512
+    open(b, 'wb').write(raw)
     set_date(b, 'OLD.TXT', 2020)                        # older on B: Only newer replaces it
     set_date(b, 'NEW.TXT', 2026, 9)                     # newer on B: Only newer leaves it
     set_date(b, 'B.TXT', 2020)
@@ -1237,6 +1243,31 @@ def t_wild():
           and 'A:\\OLD.TXT' not in B() and not k.crashed, (k.band(), sorted(B())))
     k.pc.drives[0].wp = False
     k.key(ktest.ENTER)
+    # a subject that isn't there: made after a question, each level
+    k.select('A.TXT'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\new\\deep', K_CODE_ENTER)
+    check('Copy to B:\\NEW\\DEEP (not there): "B:\\NEW\\DEEP isn\'t there: Confirm to make it"', band() == "B:\\NEW\\DEEP isn't there: Confirm to make it", k.band())
+    k.key(ktest.ESC)
+    check('... ESC: nothing made, nothing said', not [n for n in B() if 'NEW\\' in n] and band() == 'Select a file and confirm' and not sound(1), (k.band(), sorted(B())))
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\new\\deep', K_CODE_ENTER, ktest.ENTER)
+    check('... Return: both levels made, the copy in it', band() == 'Copied to B:\\NEW\\DEEP\\A.TXT' and B().get('A:\\NEW\\DEEP\\A.TXT') == files['A.TXT']
+          and not sound(1), (k.band(), sorted(B())))
+    k.key(ktest.ENTER)
+    k.pc.drives[1].wp = True
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\other', K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(30)
+    check('... on a write-protected disk: "Can\'t copy A.TXT: Disk is write-protected"', band() == "Can't copy A.TXT: Disk is write-protected" and not k.crashed, k.band())
+    k.pc.drives[1].wp = False
+    k.key(ktest.ENTER)
+    check('... and B: still sound (the failed MKDIR left no lost cluster)', not sound(1), sound(1))
+    k.pc.drives[1].wp = True
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER, settle=False); k.settle(30)
+    check('Copy into a full subject on a write-protected B:: refused', band() == "Can't copy A.TXT: Disk is write-protected" and not k.crashed, k.band())
+    k.pc.drives[1].wp = False
+    k.key(ktest.ENTER)
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER)
+    check('... then with B: writable: the subject grows, B: sound (no cluster lost by the failed growth)',
+          band() == 'Copied to B:\\FULL\\A.TXT' and B().get('A:\\FULL\\A.TXT') == files['A.TXT'] and not sound(1)
+          and len([n for n in B() if n.startswith('A:\\FULL\\')]) == 15, (k.band(), sound(1), sorted(B())))
+    k.key(ktest.ENTER)
     # Delete *.TXT: the question, ESC, then Return: the read-only one kept
     k.key(CODE['D']); k.key('*.txt', ktest.ENTER)
     check('Delete *.TXT: "Erase: Confirm to erase 5 titles *.TXT"', band() == 'Erase: Confirm to erase 5 titles *.TXT', k.band())
@@ -1250,9 +1281,26 @@ def t_wild():
     to_subject(k, 'WORK')
     k.key(CODE['M']); k.key('*.*', ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\data', K_CODE_ENTER)
     check('Move *.* from \\WORK to B:\\DATA: "Moved 2 titles to B:\\DATA", \\WORK empty', band() == 'Moved 2 titles to B:\\DATA'
-          and B().get('A:\\DATA\\C.DAT') == files['C.DAT'] and k.exec_list() == [] and not sound(0) and not sound(1), (k.band(), k.exec_list()))
+          and B().get('A:\\DATA\\C.DAT') == files['C.DAT'] and k.exec_list() == [] and not sound(0) and not sound(1), (k.band(), k.exec_list(), sound(0), sound(1)))
     k.key(ktest.ENTER)
     check('... and the Executive\'s memory as it was (the block for the titles freed)', not k.crashed, '')
+    # a subject that must grow, on a write-protected disk whose free space isn't zeros (as on a used disk)
+    g = mkimg.build(os.path.join(OUT, 'growb.img'), ['FULL\\'] + ['FULL\\F%02d.TXT=%s' % (i, old) for i in range(14)])
+    raw = bytearray(open(g, 'rb').read()); bp = fatcheck.bpb(raw)
+    d0 = (bp['res'] + bp['nfat'] * bp['spf']) * bp['bps'] + bp['nroot'] * 32
+    for o in range(d0, len(raw), 512):
+        if not any(raw[o:o + 512]): raw[o:o + 512] = b'A' * 512
+    open(g, 'wb').write(raw)
+    k = ktest.KPC(a, b=g); k.start()
+    G = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    k.pc.drives[1].wp = True
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER, settle=False); k.settle(30)
+    k.pc.drives[1].wp = False
+    k.key(ktest.ENTER)
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER)
+    check('a subject that couldn\'t grow (write-protected) grows cleanly later: no stray entries, the disk sound',
+          k.band()[0].startswith('Copied to B:\\FULL\\') and len([n for n in G() if n.startswith('A:\\FULL\\')]) == 15
+          and not fatcheck.check(bytes(k.pc.drives[1].img))[0], (k.band(), sorted(G())))
 
 if __name__ == '__main__':
     t0 = time.time()
