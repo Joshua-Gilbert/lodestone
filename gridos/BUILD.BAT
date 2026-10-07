@@ -22,6 +22,7 @@ nasm -f bin -o TESTDOS.COM TESTDOS.ASM
 nasm -f bin -o UPPER.COM UPPER.ASM
 nasm -f bin -o CACHETST.COM CACHETST.ASM
 nasm -f bin -o EMSTEST.COM EMSTEST.ASM
+nasm -f bin -o CAPTEST.COM CAPTEST.ASM
 cd ..\bench
 nasm -f bin -o BENCH.COM BENCH.ASM
 nasm -f bin -o DISKMAP.COM DISKMAP.ASM

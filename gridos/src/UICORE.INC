@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-GOS_VER     equ 0038h                   ; Grid-OS 0.3.8 (BH.BL: major, minor<<4 | patch)
+GOS_VER     equ 0039h                   ; Grid-OS 0.3.9 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -490,7 +490,9 @@ poll_once:
         add     sp, 2
         clc
         ret
-.nokey: call    tick
+.nokey: mov     ah, 19h                 ; (the kernel takes a screen capture
+        int     21h                     ;  asked for with Shift-PrtSc)
+        call    tick
         mov     bx, ax                  ; more than ~2 s since the last look:
         sub     bx, [lastpoll]          ;  the clock was set (System), or a
         mov     [lastpoll], ax          ;  long job ran; neither is idle time
