@@ -3,7 +3,7 @@ disk afterwards, TM5000G run and return with the built-in GPIB.
 
     python3 tests/test_kernel.py [name ...]
 """
-import os, struct, subprocess, sys, time
+import os, re, struct, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
 sys.path.insert(0, GOS); sys.path.insert(0, HERE)
@@ -184,43 +184,71 @@ def t_permanent():
     o = sh.run('gridcmd /c echo one shot')
     check('/C inside', 'one shot' in o and k.pc.u16(0x60, k.Y['cur_psp']) == psp1, o)
 
-def t_cache():
+def mcbs(k):
+    """The arena: (segment, type, owner, size, name) of each block."""
+    seg, out = first_mcb(k), []
+    while True:
+        t, own, sz, nm = k.pc.rd(seg, 0, 1)[0], k.pc.u16(seg, 1), k.pc.u16(seg, 3), k.pc.rd(seg, 8, 2)
+        out.append((seg, chr(t), own, sz, nm))
+        if t != ord('M'): return out
+        seg += sz + 1
+
+def t_cache(ems=0):
     """The cylinder cache: CACHETST (random and in-order reads, writes into
-    what is cached, reopening) checks every byte; a file read again after
-    the floppy is changed for one laid out the same (with and without a
-    change line); the help window, which borrows the cache's memory."""
+    what is cached, reopening, reads across 64 KB) checks every byte; a
+    file read again after the floppy is changed for one laid out the same
+    (with and without a change line); the help window's save-under, in the
+    cache's memory (with the cache in EMS, a block of its own)."""
     import pcemu
+    tag = ' (EMS)' if ems else ''
     data = os.path.join(OUT, 'DATA.TXT')
     def disk(name, word):
         open(data, 'wb').write(((word + ' ') * 700)[:2700].encode())
         return image(name, os.path.join(GOS, 'src', 'GRIDCMD.COM'), os.path.join(HERE, 'CACHETST.COM'), data)
     img1, img2 = disk('c1.img', 'ONE'), disk('c2.img', 'TWO')
-    k = ktest.KPC(img1); k.start()
+    k = ktest.KPC(img1, ems_pages=ems); k.start()
     out = k.run_file('CACHETST.COM', 900)
-    check('CACHETST: every byte reads back as written', ' 0 errors' in out, out[-300:])
+    frame = list(k.pc.ems_reg) if ems else None     # (as CACHETST left the windows)
+    check('CACHETST: every byte reads back as written' + tag, ' 0 errors' in out, out[-300:])
+    if ems:
+        m = re.search(r'the frame as we left it; (\d+) reads and (\d+) writes', out)
+        check('CACHETST: its 4 EMS pages stay in the 4 windows, as it left them, while the cache uses the frame '
+              '(%s reads and %s writes through the frame)' % (m.groups() if m else ('?', '?')),
+              'EMS: 4 pages of ours' in out and m and int(m.group(1)) > 10 and int(m.group(2)) > 10, out[-400:])
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
-    check('disk consistent after CACHETST', not probs and '\\CACHE_A.TST' not in files, '; '.join(probs) or sorted(files))
+    check('disk consistent after CACHETST' + tag, not probs and '\\CACHE_A.TST' not in files, '; '.join(probs) or sorted(files))
     log = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\CACHETST.TXT', b'').decode('latin-1')
-    check('CACHETST leaves its results in CACHETST.TXT', 'on Grid-OS' in log and ' 0 errors' in log, log[-300:])
-    # the help window lends the cache's memory and gives it back
+    check('CACHETST leaves its results in CACHETST.TXT' + tag, 'on Grid-OS' in log and ' 0 errors' in log, log[-300:])
+    # the help window's save-under: the cache's memory, lent and given back;
+    # with the cache in EMS, a block of its own while it is open (the cache
+    # stays as it is)
     rows = [k.u16('rowtab', 2 * y) for y in range(64, 64 + 232)]
     under = lambda: b''.join(k.pc.rd(0xB800, r + 16, 48) for r in rows)
-    before = under()
+    sublocks = lambda: [b for b in mcbs(k) if b[2] == 8 and b[3] == TC_PARAS]
+    before, drv0, n0 = under(), k.pc.rd(0x60, k.Y['tc_drv'], 1), len(sublocks())
     k.key(ktest.F1)
-    lent = k.pc.rd(0x60, k.Y['tc_lock'], 1) == b'\x01' and k.pc.rd(0x60, k.Y['tc_drv'], 1) == b'\xff'
+    if ems:
+        lent = k.pc.rd(0x60, k.Y['tc_lock'], 1) == b'\x00' and k.pc.rd(0x60, k.Y['tc_drv'], 1) == drv0 \
+            and len(sublocks()) == n0 + 1
+    else:
+        lent = k.pc.rd(0x60, k.Y['tc_lock'], 1) == b'\x01' and k.pc.rd(0x60, k.Y['tc_drv'], 1) == b'\xff'
     k.key(ktest.ENTER)
-    check('help window: borrows the cache, gives it back, screen restored',
-          lent and k.pc.rd(0x60, k.Y['tc_lock'], 1) == b'\x00' and under() == before and 'CACHETST.COM' in k.exec_list())
+    check('help window: ' + ('its save-under in a block of its own, the cache kept; the block freed after'
+                             if ems else 'borrows the cache, gives it back') + ', screen restored',
+          lent and k.pc.rd(0x60, k.Y['tc_lock'], 1) == b'\x00' and under() == before and len(sublocks()) == n0
+          and 'CACHETST.COM' in k.exec_list(), (lent, len(sublocks()), n0))
     sh = Shell(k)
     o = sh.run('type data.txt')
-    check('TYPE reads through the cache', 'ONE ONE' in o and k.pc.rd(0x60, k.Y['tc_drv'], 1) == b'\x00', o)
+    check('TYPE reads through the cache' + tag, 'ONE ONE' in o and k.pc.rd(0x60, k.Y['tc_drv'], 1) == b'\x00', o)
+    if ems:
+        check('the frame as CACHETST left it, after the help window and TYPE', k.pc.ems_reg == frame, (frame, k.pc.ems_reg))
     first = k.pc.drives[0]
     k.pc.drives[0] = pcemu.Floppy(img2); k.pc.drives[0].changed = True
     o = sh.run('type data.txt')
-    check('another floppy (change line): its file, not the cached one', 'TWO TWO' in o and 'ONE' not in o, o)
+    check('another floppy (change line): its file, not the cached one' + tag, 'TWO TWO' in o and 'ONE' not in o, o)
     k.pc.drives[0] = first; first.no_changeline = True
     o = sh.run('type data.txt')
-    check('and back (no change line): the first one again', 'ONE ONE' in o and 'TWO' not in o, o)
+    check('and back (no change line): the first one again' + tag, 'ONE ONE' in o and 'TWO' not in o, o)
     # a root directory with many old (deleted) entries before its end
     # marker, as on a floppy Windows has copied to a lot: a search reads it
     # in one pass, and the cached copy follows files coming and going
@@ -229,7 +257,7 @@ def t_cache():
     names = ['F%03d.TXT' % i for i in range(120)]
     for n in names: subprocess.run(['mcopy', '-i', img4, one, '::' + n], check=True)
     subprocess.run(['mdel', '-i', img4] + ['::' + n for n in names[:-1]], check=True)
-    k = ktest.KPC(img4); k.start()
+    k = ktest.KPC(img4, ems_pages=ems); k.start()
     sh = Shell(k)
     sh.run('dir')
     n0 = len(k.pc.calls13)
@@ -240,7 +268,7 @@ def t_cache():
     sh.run('del f119.txt')
     o3 = sh.run('dir')
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
-    check('well-used root: DIR from the cache; new and deleted files show right',
+    check('well-used root: DIR from the cache; new and deleted files show right' + tag,
           'F119     TXT' in o and reads == 0 and 'NEW      TXT' in o2 and 'F119' not in o3 and 'NEW' in o3 and not probs,
           '%d reads; %s' % (reads, '; '.join(probs) or o3[-300:]))
     # BENCH twice on a short root: the first run leaves its 20 deleted temp
@@ -251,12 +279,12 @@ def t_cache():
     for i in range(13): subprocess.run(['mcopy', '-i', img5, one, '::F%02d.TXT' % i], check=True)
     calls = []
     for run in (1, 2):                  # (restarting in between)
-        k = ktest.KPC(img5); k.start()
+        k = ktest.KPC(img5, ems_pages=ems); k.start()
         k.run_file('BENCH.COM', 900)
         k.pc.drives[0].save()
         m = {b: n for b, us, n, secs in k.pc.marks}
         calls.append(m[13] - m[12] if 12 in m and 13 in m else -1)
-    check('BENCH twice: the second directory test reads no sectors (root stays buffered)',
+    check('BENCH twice: the second directory test reads no sectors (root stays buffered)' + tag,
           calls == [0, 0], 'BIOS calls in the directory test: %s' % calls)
     # an unreadable sector part way through a file: the read-ahead that
     # runs into it gives up quietly (once), the file reads right up to it,
@@ -267,12 +295,12 @@ def t_cache():
     raw = open(img3, 'rb').read()
     cl = [struct.unpack_from('<H', raw, 19 * 512 + 32 * i + 26)[0] for i in range(16)
           if raw[19 * 512 + 32 * i:19 * 512 + 32 * i + 11] == b'BIG     TXT'][0]
-    k = ktest.KPC(img3); k.start()
+    k = ktest.KPC(img3, ems_pages=ems); k.start()
     k.pc.drives[0].bad = {33 + cl - 2 + 30}         # the file's 31st sector
     sh = Shell(k)
     o = sh.run('type big.txt', 'f')
     good = all('line %04d of the bad-sector file' % i in o for i in range(440, 451))
-    check('bad sector: the file reads up to it, then Data error, read-ahead gave up once',
+    check('bad sector: the file reads up to it, then Data error, read-ahead gave up once' + tag,
           good and 'Data error reading drive A' in o and 'line 0460' not in o and k.pc.calls_bad <= 9,
           '%d failed reads; %s' % (k.pc.calls_bad, o[-400:]))
     # a weak drive head (the 1520's side 0, inner tracks): a read of several
@@ -299,16 +327,60 @@ def t_cache():
         return o13(s)
     pcemu.PC.int13 = weak13
     try:
-        k = ktest.KPC(img4); k.start()
+        k = ktest.KPC(img4, ems_pages=ems); k.start()
         sh = Shell(k)
         o = sh.run('copy big.txt b2.txt')
         k.pc.drives[0].save()
     finally:
         pcemu.PC.int13 = o13
     files = fatcheck.read_files(open(img4, 'rb').read())
-    check('weak tracks (runs fail, single sectors read): the kernel reads them sector by sector, the file copies whole',
+    check('weak tracks (runs fail, single sectors read): the kernel reads them sector by sector, the file copies whole' + tag,
           files.get('A:\\B2.TXT') == open(big, 'rb').read() and 'error' not in o.lower()
           and seen['multi'] > 0 and seen['single'] >= 18, (seen, o[-300:]))
+    if not ems: return
+    # A bad sector where the cache reads a piece across 64 KB itself
+    # (CACHETST's read buffer is across one), with the cache's pages in the
+    # frame: that read fails quietly (no INT 24h with the pages in), then
+    # dio reads the piece itself, fails too, and INT 24h comes with the
+    # program's own pages back in the frame - CACHETST's handler looks at
+    # them, and so does this test at crit_disk.  Retry reads it right.
+    seen = {'bad': set(), 'fill': 0, 'direct': 0, 'crit': []}
+    spec, crit, tcpg = k.Y['io_spec'], k.Y['crit_disk'], k.Y['ems_tcpg']
+    def fail13(s):
+        if s.r('ah') == 2 and (s.r('dx') & 0xFF) == 0 and not seen['crit']:
+            cx, d = s.r('cx'), s.drives[0]
+            c, sct, h = (cx >> 8) | ((cx & 0xC0) << 2), cx & 63, s.r('dh')
+            lba = (c * d.heads + h) * d.spt + sct - 1
+            run = set(range(lba, lba + s.r('al')))
+            if not seen['bad'] and 0xE0000 <= s.r('es') * 16 + s.r('bx') < 0xF0000 \
+                    and set(s.ems_reg) & set(s.rd(0x60, tcpg, 2)) and s.rd(0x60, spec, 1) == b'\0':
+                seen['bad'] = run           # the cache's own read of a piece
+            if run & seen['bad']:
+                seen['fill' if set(s.ems_reg) & set(s.rd(0x60, tcpg, 2)) else 'direct'] += 1
+                s.w('ax', 0x1000); s.cf(1); return
+        return o13(s)
+    def at_crit(pc):
+        if pc.r('cs') == 0x60 and pc.r('ip') == crit:
+            seen['crit'].append(list(pc.ems_reg))
+    pcemu.PC.int13 = fail13
+    try:
+        k = ktest.KPC(disk('c6.img', 'SIX'), ems_pages=ems); k.start()
+        k.hooks.append(at_crit)
+        out = k.run_file('CACHETST.COM', 900)
+    finally:
+        pcemu.PC.int13 = o13
+    cache = set(k.rd('ems_tcpg', 2))
+    regs = seen['crit'][0] if seen['crit'] else []
+    check('a bad sector in a cache fill: that read fails quietly, dio\'s own fails too, INT 24h comes with the '
+          'program\'s 4 pages in the frame; Retry reads it, 0 errors',
+          seen['fill'] > 0 and seen['direct'] > 0 and len(seen['crit']) == 1 and len(regs) == 4
+          and all(r & 0x80 and r not in cache for r in regs) and 'Disk errors retried (INT 24h): 1' in out
+          and ' 0 errors' in out, (seen, sorted(cache), out[-400:]))
+
+def t_cache_ems():
+    """The same with EMS: the cache's memory is two EMS pages, in the frame
+    only while it is used."""
+    t_cache(88)
 
 EMS_BOARD = '''cpu 286
 org 7C00h
@@ -359,7 +431,9 @@ def t_emsboard():
     pc.w('ax', 0xE442); pc.w('dx', 0xFF); pc.int15()
     check('no EMS board: INT 15h E442h unanswered', pc.r('flags') & 1, hex(pc.r('ax')))
 
-EMS_BUDGET = 1808       # bytes the EMS manager may keep (with 88 pages): 113 paragraphs
+EMS_BUDGET = 1968       # bytes the EMS manager may keep (with 88 pages): 123 paragraphs
+                        # (1808 before the disk cache moved into EMS: 159 bytes for that)
+TC_PARAS = 36 * 32      # the disk cache's memory, paragraphs (KDISK.INC)
 def ems_npg(k): return k.rd('ems42', 1, 1)[0]     # (patched into 42h's MOV AL)
 def ems_used(k): return k.rd('ems_h', 1, 2)[0]    # (handle 0's owner byte)
 
@@ -375,19 +449,37 @@ def t_noems():
     check('no EMS: INT 67h is the kernel\'s stub, no EMMXXXX0 at its segment:000Ah',
           k.pc.u16(0, 0x67 * 4) == Y['int67'] and k.pc.rd(0x60, 0x0A, 8) != b'EMMXXXX0',
           (hex(k.pc.u16(0, 0x67 * 4)), k.pc.rd(0x60, 0x0A, 8)))
+    sc = [b for b in mcbs(k) if b[4] == b'SC']
+    check('no EMS: the disk cache is the "SC" block at the top of memory, as before',
+          len(sc) == 1 and sc[0][1:4] == ('Z', 8, TC_PARAS) and k.u16('tc_seg') == sc[0][0] + 1, sc)
     out = k.run_file('EMSTEST.COM', 30)
     print(out)
     check('no EMS: EMSTEST finds none, no EMMXXXX0 device', 'no EMS manager' in out and ' 0 failed' in out
           and 'FAIL' not in out, out[-300:])
 
+def memsz(k):
+    m = re.search(r'([\d.]+) KB for programs', k.run_file('MEMSZ.COM', 30))
+    return float(m.group(1)) if m else 0
+
 def t_ems():
-    """The kernel's EMS manager on an 88-page board (the 1520's 1408 KB)."""
+    """The kernel's EMS manager on an 88-page board (the 1520's 1408 KB),
+    with the disk cache in two of its pages."""
     img = image('ems.img', os.path.join(HERE, 'EMSTEST.COM'), os.path.join(HERE, 'TESTDOS.COM'),
                 os.path.join(HERE, 'MEMSZ.COM'))
+    k = ktest.KPC(img); k.start()
+    kb0 = memsz(k)                      # (the same disk without EMS)
     k = ktest.KPC(img, ems_pages=88); k.start()
     Y = k.Y
     npg = ems_npg(k)
-    check('EMS: 88 pages found', npg == 88, npg)
+    ltab = k.rd('ems_ltab', 88)
+    check('EMS: 88 pages found: the last two are the disk cache\'s, 86 for programs',
+          npg == 86 and k.rd('ems_tcpg', 2) == ltab[86:88] and len(set(ltab)) == 88, (npg, k.rd('ems_tcpg', 2), ltab[84:]))
+    blocks = mcbs(k)
+    check('EMS: no "SC" block, the arena runs to the top of memory', not [b for b in blocks if b[4] == b'SC']
+          and blocks[-1][1] == 'Z' and blocks[-1][0] + blocks[-1][3] + 1 == 0xA000, blocks[-3:])
+    kb = memsz(k)
+    check('EMS: a DOS program gets the cache\'s 18 KB, less the EMS manager\'s 2 KB (%.1f KB, %.1f KB without EMS)' % (kb, kb0),
+          kb >= kb0 + 16.0, (kb, kb0))
     keep = Y['ems_ltab'] + npg - Y['bss_end']
     print('   EMS manager resident: %d bytes (code and tables %d, pages %d)' % (keep, keep - npg, npg))
     check('EMS: the arena starts after the pages it keeps', first_mcb(k) == 0x60 + (Y['ems_ltab'] + npg + 15) // 16,
@@ -409,14 +501,18 @@ def t_ems():
     # the same with a board that aliases (raw page 88 = page 0, ...): the scan
     # must still find 88
     k = ktest.KPC(image('ems2.img'), ems_pages=88, ems_alias=True); k.start()
-    check('EMS (aliasing board): still 88 pages', ems_npg(k) == 88, ems_npg(k))
+    check('EMS (aliasing board): still 88 pages (86 + the cache\'s 2)', ems_npg(k) == 86, ems_npg(k))
     k = ktest.KPC(image('ems3.img', os.path.join(HERE, 'EMSTEST.COM')), ems_pages=128); k.start()
-    check('EMS (2 MB board): 128 pages', ems_npg(k) == 128, ems_npg(k))
+    check('EMS (2 MB board): 128 pages (126 + the cache\'s 2)', ems_npg(k) == 126, ems_npg(k))
     out = k.run_file('EMSTEST.COM', 300)
-    check('EMSTEST on a 2 MB board (all 128 pages in one handle too): no failures',
+    check('EMSTEST on a 2 MB board (all 126 pages in one handle too): no failures',
           'FAIL' not in out and ' 0 failed' in out, out[-400:])
+    # a board of 2 pages: too few to give two of them to the cache
+    k = ktest.KPC(image('ems4.img'), ems_pages=2); k.start()
+    sc = [b for b in mcbs(k) if b[4] == b'SC']
+    check('EMS (2 pages): both for programs, the cache stays the "SC" block', ems_npg(k) == 2 and len(sc) == 1, (ems_npg(k), sc))
 
-TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_cache]
+TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_cache, t_cache_ems]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

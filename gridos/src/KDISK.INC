@@ -46,7 +46,8 @@ fat_dmask   resw 1              ; which FAT sectors changed (bit n = sector n)
 ; LBA tc_cyl on drive tc_drv (place = head * sectors per track + sector,
 ; from 0), each at place * 512 in the block at tc_seg:0 (KMEM puts it in
 ; one 64 KB page).  Filled by reads that straddle a DMA boundary and by
-; read-ahead; any write to that cylinder empties it.
+; read-ahead; writes update what it holds.  With EMS it is two pages of
+; EMS instead, in the frame only while tc_piece runs (KEMS.INC: ems_tc).
 tc_seg      resw 1              ; 0: no cache
 tc_cyl      resw 1
 tc_drv      resb 1              ; FFh: empty
@@ -945,7 +946,8 @@ dio:    push    bx
         jbe     .pc
         mov     ax, cx
 .pc:    mov     [io_pc], ax
-        call    tc_piece                ; through the track cache?
+.tcp:   call    tc_piece                ; through the track cache?  (KEMS.INC:
+                                        ;  ems_tc, the cache's pages in first)
         jc      .err
         or      al, al
         jnz     .adv
