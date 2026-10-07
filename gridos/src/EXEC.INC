@@ -72,6 +72,20 @@ buf_seg     resw 1
 buf_len     resw 1
 f_time      resw 1
 f_date      resw 1
+c_pat       resb 13                 ; the forms' Titles: a title or a pattern
+c_repl      resb 1                  ; Replace: 0 Ask, 1 All, 2 None
+c_newer     resb 1                  ; Only newer: 0 No, 1 Yes
+wild        resb 1                  ; 1: Titles has * or ?
+x_skip      resb 1                  ; xfer_do left it: 1 (Replace None, not
+                                    ;  newer), 2 (ESC at the question)
+nm_seg      resw 1                  ; the titles matched (pat_find): 17 bytes
+nm_max      resw 1                  ;  each, NAME.EXT + 0 in 13, time, date
+nm_n        resw 1
+nm_i        resw 1
+n_done      resw 1
+n_skip      resw 1
+s_time      resw 1                  ; the one in hand: its time and date
+s_date      resw 1
 section ui
 
 ; the file list (UI_LV* layout); nent, sel and top are read by the tests
@@ -970,45 +984,278 @@ file_ok:
         stc
         ret
 
-; CODE-D: Delete (erase), after a question
+; CODE-D: Delete (erase).  A form: Titles, the chosen one to start with;
+; with * or ? in it a question first, then each title that matches
 ex_erase:
         call    file_ok
         jc      .x
-        call    sel_name                ; runpath = NAME.EXT
-        mov     di, msgbuf              ; "Erase: Confirm to erase NAME.EXT"
+        call    sel_name
+        mov     si, s_delete
+        call    form_title
+        call    pat_init
+        mov     si, del_form
+        call    ui_form
+        jc      .x
+        mov     bx, s_canterase
+        call    pat_check
+        jc      .x
+        cmp     byte [wild], 0
+        je      .go
+        mov     di, msgbuf              ; "Erase: Confirm to erase 5 titles *.BAK"
         mov     si, s_eraseq
         call    sb_str
-        mov     si, runpath
+        mov     ax, [nm_n]
+        call    sb_n_tit
+        mov     al, ' '
+        stosb
+        mov     si, c_pat
         call    sb_str
         mov     byte [di], 0
         mov     si, msgbuf
         call    ui_ask
-        jc      .x
+        jc      nm_free
+.go:    call    nm_next
+        jc      .end
         call    api_criterr             ; (an old disk error forgotten)
-        mov     dx, runpath
+        mov     dx, argpath
         mov     ah, 41h
         int     21h
         jc      .err
-        mov     ax, [sel]
-        jmp     relist_at
+        inc     word [n_done]
+        jmp     .go
 .x:     ret
-.err:   cmp     ax, 5                   ; Access denied: read-only?  Say so
+.err:   cmp     ax, 5                   ; Access denied: read-only?
         jne     .e
         push    ax
-        mov     dx, runpath
+        mov     dx, argpath
         mov     ax, 4300h
         int     21h
         pop     ax
         jc      .e
         test    cl, 1
         jz      .e
+        inc     word [n_skip]           ; (several: counted, the rest go on)
+        cmp     byte [wild], 0
+        jne     .go
+        call    nm_free
         mov     bx, s_canterase
         mov     si, s_readonly
         jmp     cant_why
 .e:     mov     [ex_code], ax
+        call    nm_relist
         mov     si, runpath
         mov     bx, s_canterase
         jmp     cant_msg
+.end:   call    nm_relist
+        cmp     byte [wild], 0
+        je      .x
+        mov     di, msgbuf              ; "Erased 5 titles, 1 read-only kept"
+        mov     si, s_erased
+        call    sb_str
+        mov     ax, [n_done]
+        call    sb_n_tit
+        cmp     word [n_skip], 0
+        je      .m
+        mov     si, s_comma
+        call    sb_str
+        mov     ax, [n_skip]
+        call    sb_u16
+        mov     si, s_rokept
+        call    sb_str
+.m:     mov     byte [di], 0
+        jmp     show_msg
+
+; ---------------------------------------------------------------------
+;  Titles: one title or a pattern (* and ?) in the listed subject
+; ---------------------------------------------------------------------
+; the form's Titles: the chosen title (in runpath); Replace Ask, not newer
+pat_init:
+        mov     word [c_repl], 0        ; (c_repl, c_newer)
+pat_name:
+        mov     di, c_pat
+        mov     si, runpath
+        call    sb_str
+        mov     byte [di], 0
+        ret
+
+; Titles checked (no \ or :; empty: the chosen one), wild set, and the
+; titles that match found (pat_find).  CF: said why in the band ("Can't
+; erase " etc. at BX)
+pat_check:
+        mov     si, c_pat
+        call    upcase_trim
+        cmp     byte [si], 0
+        jne     .c
+        call    pat_name
+        mov     si, c_pat
+.c:     mov     di, s_pathch
+        call    has_any
+        jnc     .w
+        mov     si, s_badpat
+        call    cant_why
+        stc
+        ret
+.w:     mov     byte [wild], 0
+        mov     di, s_wildch
+        call    has_any
+        adc     byte [wild], 0
+        push    bx
+        call    pat_find
+        pop     bx
+        jnc     .x
+        mov     [ex_code], ax
+        mov     si, c_pat
+        call    cant_msg
+        stc
+.x:     ret
+
+; the titles in the listed subject that match c_pat, with their time and
+; date, into a block of their own (nm_seg) -> nm_n; nm_i, n_done, n_skip
+; 0.  CF: AX = DOS error (2: none match), no block
+pat_find:
+        call    cur_dir
+        xor     ax, ax
+        mov     [nm_n], ax
+        mov     [nm_i], ax
+        mov     [n_done], ax
+        mov     [n_skip], ax
+        mov     bx, 0FFFh               ; 64 KB: more titles than a disk holds
+        mov     ah, 48h
+        int     21h
+        jnc     .m
+        cmp     bx, 2
+        jb      .x
+        mov     ah, 48h
+        int     21h
+        jc      .x
+.m:     mov     [nm_seg], ax
+        mov     ax, bx
+        shl     ax, 4
+        xor     dx, dx
+        mov     cx, 17
+        div     cx
+        mov     [nm_max], ax
+        mov     dx, exec_dta
+        mov     ah, 1Ah
+        int     21h
+        mov     di, argpath             ; X:\SUBJECT\PATTERN
+        mov     si, c_pat
+        call    sb_dirname
+        mov     dx, argpath
+        xor     cx, cx                  ; (files, read-only too)
+        mov     ah, 4Eh
+.f:     int     21h
+        jc      .end
+        mov     ax, [nm_n]
+        cmp     ax, [nm_max]
+        jae     .end
+        inc     word [nm_n]
+        imul    di, ax, 17
+        push    es
+        mov     es, [nm_seg]
+        mov     si, exec_dta + 30
+        mov     cx, 13
+        rep     movsb
+        mov     ax, [exec_dta + 22]
+        stosw
+        mov     ax, [exec_dta + 24]
+        stosw
+        pop     es
+        mov     ah, 4Fh
+        jmp     .f
+.end:   mov     dx, ax                  ; (the find's error)
+        mov     ax, [nm_n]              ; the block cut to what it holds,
+        imul    bx, ax, 17              ;  for Copy's buffer
+        add     bx, 15
+        shr     bx, 4
+        jz      .none
+        push    es
+        mov     es, [nm_seg]
+        mov     ah, 4Ah
+        int     21h
+        pop     es
+        clc
+        ret
+.none:  xchg    ax, dx
+        cmp     ax, 18
+        jne     .e
+        mov     al, 2
+.e:     push    ax                      ; (none: AX = the find's error)
+        call    nm_free
+        pop     ax
+        stc
+.x:     ret
+
+; DI = curdir, '\' (unless the root) and the name at SI
+sb_dirname:
+        push    si
+        mov     si, curdir
+        call    sb_str
+        pop     si
+        cmp     byte [di-1], '\'
+        je      .n
+        mov     al, '\'
+        stosb
+.n:     call    sb_str
+        mov     byte [di], 0
+        ret
+
+; the next title found: runpath = NAME.EXT, argpath = its whole path,
+; s_time and s_date.  CF: no more
+nm_next:
+        mov     ax, [nm_i]
+        cmp     ax, [nm_n]
+        cmc
+        jc      .x
+        inc     word [nm_i]
+        imul    si, ax, 17
+        push    ds
+        mov     di, runpath
+        mov     ds, [nm_seg]
+        mov     cx, 13
+        rep     movsb
+        lodsw
+        mov     [es:s_time], ax
+        lodsw
+        mov     [es:s_date], ax
+        pop     ds
+        mov     di, argpath
+        mov     si, runpath
+        call    sb_dirname
+        clc
+.x:     ret
+
+; the block freed, and after a change the list read again
+nm_relist:
+        call    nm_free
+        cmp     word [n_done], 0
+        je      nm_free.x
+        mov     ax, [sel]
+        jmp     relist_at
+nm_free:
+        mov     ax, [nm_seg]
+        or      ax, ax
+        jz      .x
+        push    es
+        mov     es, ax
+        mov     ah, 49h
+        int     21h
+        pop     es
+        mov     word [nm_seg], 0
+.x:     ret
+
+; AX as "5 titles" ("1 title") at DI
+sb_n_tit:
+        push    ax
+        call    sb_u16
+        mov     si, s_title
+        call    sb_str
+        pop     ax
+        cmp     ax, 1
+        je      .x
+        mov     al, 's'
+        stosb
+.x:     ret
 
 ; CODE-R: Rename, in its subject (a form: the new title)
 ex_rename:
@@ -1058,9 +1305,10 @@ ex_rename:
         mov     bx, s_cantren
         jmp     cant_msg
 
-; CODE-C: Copy, CODE-M: Move.  A form: Device, Subject (and for Copy a
-; Title), this drive, subject and title to start with.  (In pieces: the
-; 286 has only short conditional jumps.)
+; CODE-C: Copy, CODE-M: Move.  A form: Titles (the chosen one, or a
+; pattern), Device, Subject (and for Copy a Title, as the copy is called),
+; Replace, and for Copy Only newer.  (In pieces: the 286 has only short
+; conditional jumps.)
 ex_copy:
         mov     byte [xmode], 0
         jmp     short xfer
@@ -1070,39 +1318,59 @@ xfer:   call    file_ok
         jc      .x
         call    xfer_form
         jc      .x
-        call    xfer_dest
-        call    xfer_check              ; no wildcards; no path in a title
-        jc      .bad
-        mov     si, argpath             ; the file itself (however spelled):
-        mov     di, dstpath             ;  nothing to do
-        call    str_eq
+        call    xfer_check              ; no path in Titles or a title, no
+        jc      .bad                    ;  wildcard in a subject
+        call    xfer_cant
+        call    pat_check
+        jc      .x
+        call    xfer_mkdir              ; a subject not there: made, if asked
+        jc      .nomk
+        call    xfer_all
+        push    ax
+        call    nm_free
+        pop     ax
+        cmp     al, 1
         je      .same
-        call    same_file
-        je      .same
-        call    xfer_do
-        jc      .fail
-        jmp     xfer_done
-.fail:  or      ax, ax                  ; (AX = 0: not replaced after all)
-        jz      .x
-        cmp     byte [tmp_kept], 0
-        jne     .kept
-        mov     [ex_code], ax
+        cmp     al, 2
+        je      .fail
+        cmp     al, 3
+        je      .kept
+        cmp     al, 4                   ; (a Move copied, not erased: said so,
+        je      xfer_done               ;  and the rest not tried)
+        cmp     byte [wild], 0
+        jne     xfer_sum
+        cmp     word [n_skip], 0        ; one title, left as it was
+        je      xfer_done
+        cmp     byte [x_skip], 2        ; (ESC at the question: nothing said)
+        je      .x
+        mov     di, msgbuf              ; "NOTES.TXT is there already: left
+        mov     si, c_tit               ;  as it was"
+        call    sb_str
+        mov     si, s_left
+        jmp     short .m
+.fail:  call    xfer_rel
         call    xfer_cant
         mov     si, runpath
         jmp     cant_msg
 .bad:   call    xfer_cant
         jmp     cant_why
+.nomk:  push    ax
+        call    nm_free                 ; (ESC: AX = 0, nothing said)
+        pop     ax
+        or      ax, ax
+        jz      .x
+        mov     [ex_code], ax
+        jmp     short .fail
 .x:     ret
 .same:  mov     di, msgbuf
         mov     si, runpath
         call    sb_str
         mov     si, s_same
-        call    sb_str
+.m:     call    sb_str
         mov     byte [di], 0
         jmp     show_msg
-.kept:  mov     [ex_code], ax           ; the old destination went, the copy
-        mov     ax, [sel]               ;  couldn't take its name: where it is
-        call    relist_at
+.kept:  mov     ax, [sel]               ; the old destination went, the copy
+        call    relist_at               ;  couldn't take its name: where it is
         mov     di, msgbuf              ; "Copy kept as B:\WORK\ABCDTMP: why"
         mov     si, s_kept
         call    sb_str
@@ -1115,6 +1383,134 @@ xfer:   call    file_ok
         mov     byte [di], 0
         jmp     show_msg
 
+; the subject it goes to: there, or made after a question ("B:\NEW isn't
+; there: Confirm to make it"; each level made in turn).  CF: AX = DOS error,
+; or 0 if the answer was no
+xfer_mkdir:
+        mov     al, [c_tit]             ; (xfer_dest fills an empty Title)
+        push    ax
+        call    xfer_dest
+        pop     ax
+        or      al, al
+        jnz     .t
+        mov     [c_tit], al
+.t:     cmp     byte [tmppath + 3], 0   ; (the root is always there)
+        je      .ok
+        mov     dx, tmppath
+        mov     cx, 10h
+        mov     ah, 4Eh
+        int     21h
+        jnc     .ok                     ; (there, or a file: said later)
+        cmp     ax, 3
+        je      .ask
+        cmp     ax, 2
+        jne     .ok                     ; (a disk error: said later)
+.ask:   mov     di, msgbuf
+        mov     si, tmppath
+        call    sb_str
+        mov     si, s_mkq
+        call    sb_str
+        mov     byte [di], 0
+        mov     si, msgbuf
+        call    ui_ask
+        mov     ax, 0
+        jc      .x
+        mov     si, tmppath + 3         ; each level: "X:\A", "X:\A\B" ...
+.l:     lodsb
+        or      al, al
+        jz      .last
+        cmp     al, '\'
+        jne     .l
+        mov     byte [si-1], 0
+        mov     dx, tmppath
+        mov     ah, 39h
+        int     21h                     ; (there already: Access denied)
+        mov     byte [si-1], '\'
+        jmp     .l
+.last:  mov     dx, tmppath
+        mov     ah, 39h
+        int     21h
+        jc      .x
+.ok:    clc
+.x:     ret
+
+; each title found, copied or moved -> AL = 0 all done (or left), 4 a Move
+; copied but not erased (x_part); 1 the file itself (runpath), 2 a DOS
+; error (ex_code, runpath), 3 the copy kept under its made-up name
+xfer_all:
+        call    nm_next
+        mov     al, 0
+        jc      .r
+        cmp     byte [wild], 0          ; several: each keeps its title
+        je      .t
+        mov     byte [c_tit], 0
+.t:     call    xfer_dest
+        mov     si, argpath             ; the file itself (however spelled):
+        mov     di, dstpath             ;  nothing to do
+        call    str_eq
+        je      .same
+        call    same_file
+        je      .same
+        call    xfer_do
+        jc      .err
+        cmp     byte [x_skip], 0
+        je      .d
+        inc     word [n_skip]
+        jmp     xfer_all
+.d:     inc     word [n_done]
+        cmp     byte [x_part], 0
+        je      xfer_all
+        mov     al, 4
+.r:     ret
+.same:  mov     al, 1
+        ret
+.err:   mov     [ex_code], ax
+        mov     al, 2
+        cmp     byte [tmp_kept], 0
+        je      .r
+        inc     ax
+        ret
+
+; after several: the list again, and "Copied 5 titles to B:\WORK, 2 left
+; as they were"
+xfer_sum:
+        call    xfer_rel
+        mov     di, msgbuf
+        mov     si, s_copied
+        cmp     byte [xmode], 0
+        je      .m
+        mov     si, s_moved
+.m:     call    sb_str
+        sub     di, 3                   ; ("Copied to " less "to ")
+        mov     ax, [n_done]
+        call    sb_n_tit
+        mov     si, s_to
+        call    sb_str
+        mov     byte [c_tit], 0         ; (tmppath: the subject it went to)
+        push    di
+        call    xfer_dest
+        pop     di
+        mov     si, tmppath
+        call    sb_str
+        cmp     word [n_skip], 0
+        je      .x
+        mov     si, s_comma
+        call    sb_str
+        mov     ax, [n_skip]
+        call    sb_u16
+        mov     si, s_leftn
+        call    sb_str
+.x:     mov     byte [di], 0
+        jmp     show_msg
+
+; the list again if anything was done (the place kept)
+xfer_rel:
+        cmp     word [n_done], 0
+        je      .x
+        mov     ax, [sel]
+        jmp     relist_at
+.x:     ret
+
 ; BX = "Can't copy " or "Can't move "
 xfer_cant:
         mov     bx, s_cantcopy
@@ -1123,9 +1519,24 @@ xfer_cant:
         mov     bx, s_cantmove
 .x:     ret
 
-; CF (SI = why) if the form has a wildcard, or a path in the title
+; CF (SI = why) if Title is not a plain title (as filled in, or empty: the
+; same title; with * or ? in Titles it must be), or Subject has a wildcard
 xfer_check:
         mov     si, c_tit
+        call    upcase_trim
+        mov     di, runpath             ; (as filled in: as empty)
+        call    str_eq
+        jne     .t
+        mov     byte [si], 0
+.t:     mov     si, c_pat
+        mov     di, s_wildch
+        call    has_any
+        jnc     .one
+        cmp     byte [c_tit], 0
+        mov     si, s_badwtit
+        stc
+        jne     .x
+.one:   mov     si, c_tit
         mov     di, s_titch
         call    has_any
         mov     si, s_badtit
@@ -1190,6 +1601,7 @@ xfer_form:
         mov     si, runpath
         call    sb_str
         mov     byte [di], 0
+        call    pat_init
         call    ndrives                 ; B: only if there is one
         mov     ah, 'B'
         cmp     al, 2
@@ -1251,23 +1663,38 @@ xfer_dest:
 .x:     ret
 
 ; do it: replace what is there (if the answer is yes), then Copy, or Move
-; (RENAME on the same drive, else copy and erase) -> CF: AX = DOS error,
-; or AX = 0 if the answer was no.  (x_part: moved to the other drive but
+; (RENAME on the same drive, else copy and erase) -> CF: AX = DOS error.
+; x_skip if left as it was (Replace None, not older, or the answer no).  (x_part: moved to the other drive but
 ; the original stays, error in ex_code; tmp_kept: copy_file's new file
 ; kept under its made-up name)
 xfer_do:
         call    api_criterr             ; (an old disk error forgotten)
-        mov     byte [d_exists], 0
-        mov     byte [x_part], 0
-        mov     byte [tmp_kept], 0
-        mov     dx, dstpath             ; there already?
-        mov     ax, 4300h
+        xor     ax, ax
+        mov     [d_exists], al
+        mov     [x_part], al
+        mov     [tmp_kept], al
+        mov     [x_skip], al
+        mov     dx, dstpath             ; there already?  (search state, time
+        mov     cx, 16h                 ;  and date in exec_dta: same_file
+        mov     ah, 4Eh                 ;  made it the DTA)
         int     21h
         jc      .new
-        test    cl, 18h                 ; (a subject or the label: no)
+        test    byte [exec_dta + 21], 10h       ; (a subject: no)
         mov     ax, 5
         stc
         jnz     .r
+        cmp     byte [c_newer], 0       ; Only newer: left unless older
+        je      .ask
+        mov     ax, [exec_dta + 24]
+        cmp     ax, [s_date]
+        jne     .cmp
+        mov     ax, [exec_dta + 22]
+        cmp     ax, [s_time]
+.cmp:   jae     .left
+.ask:   mov     al, [c_repl]            ; Replace: Ask, All, None
+        cmp     al, 1
+        je      .yes
+        ja      .left
         mov     di, msgbuf              ; "NAME.EXT is there already: ..."
         mov     si, c_tit
         call    sb_str
@@ -1276,9 +1703,12 @@ xfer_do:
         mov     byte [di], 0
         mov     si, msgbuf
         call    ui_ask
-        mov     ax, 0
-        jc      .r
-        mov     byte [d_exists], 1
+        jnc     .yes
+        inc     byte [x_skip]           ; (2: ESC)
+.left:  inc     byte [x_skip]
+        clc
+        ret
+.yes:   mov     byte [d_exists], 1
         jmp     short .go
 .new:   cmp     ax, 2                   ; (only "not found" is good news)
         stc
@@ -2170,16 +2600,38 @@ s_first     db 'Only the first ', 0
 s_listed    db ' are listed', 0
 s_colon     db ': ', 0
 ; the file commands
-copy_form:  dw ftitle, s_copyp, 60, 8, 3
+copy_form:  dw ftitle, s_copyp, 60, 11, 6
+            dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
             dw s_lbl_dev, FT_CHOICE, c_dev, o_drives
             dw s_lbl_sub, FT_TEXT + (40 << 8), c_sub, SUBMAX
             dw s_lbl_tit, FT_TEXT + (12 << 8), c_tit, 12
-move_form:  dw ftitle, s_movep, 60, 8, 2
+            dw s_lbl_repl, FT_CHOICE, c_repl, o_repl
+            dw s_lbl_newer, FT_CHOICE, c_newer, o_yesno
+move_form:  dw ftitle, s_movep, 60, 11, 4
+            dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
             dw s_lbl_dev, FT_CHOICE, c_dev, o_drives
             dw s_lbl_sub, FT_TEXT + (40 << 8), c_sub, SUBMAX
+            dw s_lbl_repl, FT_CHOICE, c_repl, o_repl
+del_form:   dw ftitle, s_delp, 44, 10, 1
+            dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
 ren_form:   dw ftitle, s_renp, 44, 10, 1
             dw s_lbl_new, FT_TEXT + (12 << 8), c_tit, 12
 o_drives    db 'A:', 0, 'B:', 0, 0      ; (the 'B' is 0 with one drive)
+o_repl      db 'Ask', 0, 'All', 0, 'None', 0, 0
+o_yesno     db 'No', 0, 'Yes', 0, 0
+s_lbl_tits  db 'Titles', 0
+s_lbl_repl  db 'Replace', 0
+s_lbl_newer db 'Only newer', 0
+s_delete    db 'Delete ', 0
+s_delp      db 'Delete: Confirm to erase (* or ? for several)', 0
+s_erased    db 'Erased ', 0
+s_rokept    db ' read-only kept', 0
+s_title     db ' title', 0
+s_to        db ' to ', 0
+s_comma     db ', ', 0
+s_left      db ' is there already: left as it was', 0
+s_leftn     db ' left as they were', 0
+s_mkq       db " isn't there: Confirm to make it", 0
 s_copy      db 'Copy ', 0
 s_move      db 'Move ', 0
 s_rename    db 'Rename ', 0
@@ -2199,7 +2651,11 @@ s_cantmove  db "Can't move ", 0
 s_canterase db "Can't erase ", 0
 s_cantren   db "Can't rename ", 0
 s_readonly  db ': it is read-only', 0
-s_titch     db '\:*?', 0                ; not in a title (a path, wildcards)
+s_titch     db '\:'                     ; not in a title (a path,
+s_wildch    db '*?', 0                  ;  wildcards)
+s_pathch    db '\:', 0                  ; not in Titles
+s_badpat    db ": titles can't have \ or :", 0
+s_badwtit   db ": with * or ? in Titles, leave Title as it was", 0
 s_subch     db ':*?', 0                 ; not in a subject
 s_badtit    db ": a title can't have \ : * or ?", 0
 s_badsub    db ": a subject can't have : * or ?", 0

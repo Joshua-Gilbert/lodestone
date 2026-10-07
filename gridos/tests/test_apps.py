@@ -432,8 +432,8 @@ def t_memory():
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     kb = float(m.group(1)) if m else 0
-    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB): '
-          'the directory buffer is lent while it runs' % kb, kb >= 565.7, out[-200:])
+    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB): '
+          'the directory buffer is lent while it runs' % kb, kb >= 564.6, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     img = image('tsr.img', TSR, SYSTEM, MEMSZ)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
@@ -943,7 +943,7 @@ def t_files():
     shot(k, 'exec_copy')
     check('CODE-C: the Copy form, filled in with where the file is', has(k, 'Copy BIG.DAT') and has(k, 'Subject') and
           k.band()[0] == 'Copy: Fill in form and confirm', (screen(k), k.band()))
-    k.key(ktest.RIGHT, ktest.ENTER, '\\data', ktest.ENTER, ktest.ENTER)
+    k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\data', K_CODE_ENTER)
     check('Copy to B:\\DATA: every byte there, the band says where', B().get('A:\\DATA\\BIG.DAT') == BIG and
           k.band()[0] == 'Copied to B:\\DATA\\BIG.DAT', (k.band(), sorted(B())))
     check('... no temporary file left, both disks sound', not [n for n in B() if n.endswith('TMP')] and not sound(0) and not sound(1),
@@ -951,7 +951,7 @@ def t_files():
     k.key(ktest.ENTER)
     # Copy here, as another title: chosen in the list, the same date and time
     k.select('NOTES.TXT'); k.key(CODE['C'])
-    k.key(ktest.ENTER, ktest.ENTER, 'copy.txt', ktest.ENTER)
+    k.key(ktest.ENTER, ktest.ENTER, ktest.ENTER, 'copy.txt', K_CODE_ENTER)
     img = k.pc.drives[0].img
     check('Copy as COPY.TXT here: listed and chosen, its date and time from NOTES.TXT', A().get('A:\\COPY.TXT') == TEXT and chosen() == 'COPY.TXT'
           and img[root_entry(img, 'COPY.TXT') + 22:][:4] == img[root_entry(img, 'NOTES.TXT') + 22:][:4], (k.exec_list(), k.band()))
@@ -960,17 +960,17 @@ def t_files():
     k.select('NOTES.TXT'); k.key(CODE['C']); k.key(K_CODE_ENTER)
     check('Copy onto itself: "NOTES.TXT is there now"', k.band()[0] == 'NOTES.TXT is there now: choose another place', k.band())
     k.key(ktest.ENTER)
-    k.select('BIG.DAT'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.ENTER, 'COPY.TXT', ktest.ENTER)
+    k.select('BIG.DAT'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.ENTER, ktest.ENTER, 'COPY.TXT', K_CODE_ENTER)
     check('Copy onto COPY.TXT: asks first', k.band()[0] == 'COPY.TXT is there already: Confirm to replace it', k.band())
     k.key(ktest.ESC)
     check('... ESC: COPY.TXT as it was', A().get('A:\\COPY.TXT') == TEXT and not has(k, 'Copied'), k.band())
-    k.key(CODE['C']); k.key(ktest.ENTER, ktest.ENTER, 'COPY.TXT', ktest.ENTER, ktest.ENTER)
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.ENTER, ktest.ENTER, 'COPY.TXT', K_CODE_ENTER, ktest.ENTER)
     check('... Return: replaced', A().get('A:\\COPY.TXT') == BIG and not sound(0), (k.band(), sound(0)))
     k.key(ktest.ENTER)
     # a write-protected disk: nothing changes, the band says why
     k.pc.drives[1].wp = True
     before = bytes(k.pc.drives[1].img)
-    k.select('NOTES.TXT'); k.key(CODE['C']); k.key(ktest.RIGHT, K_CODE_ENTER, settle=False); k.settle(20)
+    k.select('NOTES.TXT'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, K_CODE_ENTER, settle=False); k.settle(20)
     check('Copy to a write-protected disk: "Can\'t copy NOTES.TXT: Disk is write-protected", B: untouched',
           k.band()[0] == "Can't copy NOTES.TXT: Disk is write-protected" and bytes(k.pc.drives[1].img) == before and not k.crashed, k.band())
     k.pc.drives[1].wp = False
@@ -978,15 +978,15 @@ def t_files():
     # Move: on the same drive (RENAME), to the other drive (copy, then erase)
     k.select('NOTES.TXT'); k.key(CODE['M'])
     check('CODE-M: the Move form, Device and Subject', has(k, 'Move NOTES.TXT') and k.band()[0] == 'Move: Fill in form and confirm', screen(k))
-    k.key(ktest.ENTER, '\\work', ktest.ENTER)
+    k.key(ktest.ENTER, ktest.ENTER, '\\work', K_CODE_ENTER)
     check('Move to \\WORK: there, not here, the band says where', 'A:\\WORK\\NOTES.TXT' in A() and 'A:\\NOTES.TXT' not in A()
           and 'NOTES.TXT' not in k.exec_list() and k.band()[0] == 'Moved to A:\\WORK\\NOTES.TXT' and not sound(0), (k.band(), sound(0)))
     k.key(ktest.ENTER)
-    k.select('COPY.TXT'); k.key(CODE['M']); k.key(ktest.RIGHT, K_CODE_ENTER)
+    k.select('COPY.TXT'); k.key(CODE['M']); k.key(ktest.ENTER, ktest.RIGHT, K_CODE_ENTER)
     check('Move COPY.TXT to B:: on B:, gone from A:', B().get('A:\\COPY.TXT') == BIG and 'A:\\COPY.TXT' not in A()
           and not sound(0) and not sound(1), (k.band(), sorted(A()), sorted(B())))
     k.key(ktest.ENTER)
-    k.select('KEEP.TXT'); k.key(CODE['M']); k.key(ktest.RIGHT, K_CODE_ENTER)
+    k.select('KEEP.TXT'); k.key(CODE['M']); k.key(ktest.ENTER, ktest.RIGHT, K_CODE_ENTER)
     check('Move a read-only file to B:: "Access denied", not copied', k.band()[0] == "Can't move KEEP.TXT: Access denied"
           and 'A:\\KEEP.TXT' not in B(), k.band())
     k.key(ktest.ENTER)
@@ -1001,7 +1001,8 @@ def t_files():
     k.key(ktest.ENTER)
     # Erase
     k.select('HUGE.DAT'); k.key(CODE['D'])
-    check('CODE-D: asks', k.band()[0] == 'Erase: Confirm to erase HUGE.DAT', k.band())
+    check('CODE-D: the Delete form, Titles filled in', k.band()[0] == 'Delete: Confirm to erase (* or ? for several)' and has(k, 'Delete HUGE.DAT')
+          and has(k, 'Titles'), (k.band(), screen(k)))
     k.key(ktest.ESC)
     check('... ESC: still there', 'A:\\HUGE.DAT' in A() and 'HUGE.DAT' in k.exec_list(), k.exec_list())
     k.key(CODE['D']); k.key(ktest.ENTER)
@@ -1041,11 +1042,11 @@ def t_file_safety():
     to_subject(k, 'LONGNAME')
     for sub in ('\\LONGNAME.', '\\LONGNAMEX', '\\LONGNAME\\.', '\\WORK\\..\\LONGNAME'):
         for cmd in 'MC':
-            k.select('NOTES.TXT'); k.key(CODE[cmd]); k.key(ktest.ENTER, sub, K_CODE_ENTER)
+            k.select('NOTES.TXT'); k.key(CODE[cmd]); k.key(ktest.ENTER, ktest.ENTER, sub, K_CODE_ENTER)
             check('%s to "%s" (the same subject): "is there now", the file intact' % ('Move' if cmd == 'M' else 'Copy', sub),
                   k.band()[0] == 'NOTES.TXT is there now: choose another place' and A().get(LN) == TEXT, (k.band(), sorted(A())))
             k.key(ktest.ENTER)
-    k.key(CODE['C']); k.key(ktest.ENTER, ktest.ENTER, 'notes.txtx', ktest.ENTER)
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.ENTER, ktest.ENTER, 'notes.txtx', K_CODE_ENTER)
     check('Copy as "NOTES.TXTX" (the kernel cuts it to NOTES.TXT): "is there now"',
           k.band()[0] == 'NOTES.TXT is there now: choose another place' and A().get(LN) == TEXT, k.band())
     k.key(ktest.ENTER)
@@ -1055,20 +1056,20 @@ def t_file_safety():
     A0 = lambda: fatcheck.read_files(bytes(k0.pc.drives[0].img))
     k0.wr('same_file', b'\x0b\xe4\xc3')             # or sp, sp / ret: "not the same file"
     to_subject(k0, 'LONGNAME')
-    k0.key(CODE['M']); k0.key(ktest.ENTER, '\\LONGNAME.', K_CODE_ENTER, ktest.ENTER)
+    k0.key(CODE['M']); k0.key(ktest.ENTER, ktest.ENTER, '\\LONGNAME.', K_CODE_ENTER, ktest.ENTER)
     check('... (check off) Move onto itself, confirmed: "Access denied", the file intact',
           k0.band()[0] == "Can't move NOTES.TXT: Access denied" and A0().get(LN) == TEXT, (k0.band(), sorted(A0())))
     k0.key(ktest.ENTER)
-    k0.key(CODE['C']); k0.key(ktest.ENTER, '\\LONGNAME.', K_CODE_ENTER, ktest.ENTER)
+    k0.key(CODE['C']); k0.key(ktest.ENTER, ktest.ENTER, '\\LONGNAME.', K_CODE_ENTER, ktest.ENTER)
     check('... (check off) Copy onto itself, confirmed: "Access denied", the file intact, no temporary file',
           k0.band()[0] == "Can't copy NOTES.TXT: Access denied" and A0().get(LN) == TEXT and not [n for n in A0() if n.endswith('TMP')]
           and not fatcheck.check(bytes(k0.pc.drives[0].img))[0], (k0.band(), sorted(A0())))
     # 2. the screen saver while a question waits: no DEFRAG, and the question is still the band after
     k.key(CODE['D'])
     idle_saver(k)
-    check('saver during "Erase: Confirm": the dark clock, not DEFRAG', not has(k, 'Erase') and not has(k, 'Defrag') and not has(k, 'NOTES'), screen(k))
+    check('saver during the Delete form: the dark clock, not DEFRAG', not has(k, 'Delete') and not has(k, 'Defrag') and not has(k, 'NOTES'), screen(k))
     k.key(ktest.DOWN)
-    check('... woken: the question is in the band again', k.band() == ['Erase: Confirm to erase NOTES.TXT', 'Press RETURN to confirm or ESC to cancel'], k.band())
+    check('... woken: the form and its band again', k.band()[0] == 'Delete: Confirm to erase (* or ? for several)' and has(k, 'Delete NOTES.TXT'), k.band())
     k.key(ktest.ESC)
     check('... ESC: not erased, the usual band', A().get(LN) == TEXT and k.band()[0] == 'Select a file and confirm', k.band())
     k.key(CODE['C'])
@@ -1080,9 +1081,9 @@ def t_file_safety():
     # 5. no path or wildcard in a title, no wildcard in a subject
     for cmd, keys, want in (('R', ('\\work\\x.txt', ktest.ENTER), "Can't rename NOTES.TXT: a title can't have \\ : * or ?"),
                             ('R', ('a:b', ktest.ENTER), "Can't rename NOTES.TXT: a title can't have \\ : * or ?"),
-                            ('C', (ktest.ENTER, ktest.ENTER, '*.txt', ktest.ENTER), "Can't copy NOTES.TXT: a title can't have \\ : * or ?"),
-                            ('C', (ktest.ENTER, '\\w*', K_CODE_ENTER), "Can't copy NOTES.TXT: a subject can't have : * or ?"),
-                            ('M', (ktest.ENTER, '\\wor?', K_CODE_ENTER), "Can't move NOTES.TXT: a subject can't have : * or ?")):
+                            ('C', (ktest.ENTER, ktest.ENTER, ktest.ENTER, '*.txt', K_CODE_ENTER), "Can't copy NOTES.TXT: a title can't have \\ : * or ?"),
+                            ('C', (ktest.ENTER, ktest.ENTER, '\\w*', K_CODE_ENTER), "Can't copy NOTES.TXT: a subject can't have : * or ?"),
+                            ('M', (ktest.ENTER, ktest.ENTER, '\\wor?', K_CODE_ENTER), "Can't move NOTES.TXT: a subject can't have : * or ?")):
         k.key(CODE[cmd]); k.key(*keys)
         check('%s with %r: refused' % ({'R': 'Rename', 'C': 'Copy', 'M': 'Move'}[cmd], ''.join(x for x in keys if isinstance(x, str))),
               k.band()[0] == want and A().get(LN) == TEXT and k.exec_list() == ['NOTES.TXT'], (k.band(), sorted(A())))
@@ -1094,25 +1095,25 @@ def t_file_safety():
     k.key(CODE['C'])
     check('... the Copy form holds all of it, and the title field is intact', bytes(k.rd('c_sub', 67)).split(b'\0')[0].decode() == D[2:]
           and bytes(k.rd('c_tit', 13)).split(b'\0')[0] == b'NAMENAME.EXT', (k.rd('c_sub', 67), k.rd('c_tit', 13)))
-    k.key(ktest.ENTER, ktest.ENTER, 'copy.ext', ktest.ENTER)
+    k.key(ktest.ENTER, ktest.ENTER, ktest.ENTER, 'copy.ext', K_CODE_ENTER)
     check('... Copy there as COPY.EXT works', A().get(D + '\\COPY.EXT') == TEXT and k.exec_list() == ['COPY.EXT', 'NAMENAME.EXT']
           and k.band()[0].startswith('Copied to ' + D[:60]), (k.band(), [n for n in A() if 'EEE' in n]))
     k.key(ktest.ENTER)
-    k.select('NAMENAME.EXT'); k.key(CODE['M']); k.key(ktest.RIGHT, ktest.ENTER, '\\', ktest.ENTER)
+    k.select('NAMENAME.EXT'); k.key(CODE['M']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\', K_CODE_ENTER)
     check('... Move from there to B:\\ works', B().get('A:\\NAMENAME.EXT') == TEXT and D + '\\NAMENAME.EXT' not in A() and not sound(0) and not sound(1),
           (k.band(), sorted(B())))
     k.key(ktest.ENTER)
     to_subject(k, 'Root')
     # 4. Move to the other drive when the original can't be erased: said as it is
     k.pc.drives[0].wp = True
-    k.select('BIG.DAT'); k.key(CODE['M']); k.key(ktest.RIGHT, ktest.ENTER, '\\', ktest.ENTER, settle=False); k.settle(20)
+    k.select('BIG.DAT'); k.key(CODE['M']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\', K_CODE_ENTER, settle=False); k.settle(20)
     check('Move from a write-protected disk: "Copied, but can\'t erase BIG.DAT here: Disk is write-protected"',
           k.band()[0] == "Copied, but can't erase BIG.DAT here: Disk is write-protected" and B().get('A:\\BIG.DAT') == BIG
           and A().get('A:\\BIG.DAT') == BIG and not k.crashed, (k.band(), sorted(B())))
     k.pc.drives[0].wp = False
     k.key(ktest.ENTER)
     check('... and still listed (the kernel forgot the directory sector it couldn\'t write)', 'BIG.DAT' in k.exec_list(), k.exec_list())
-    k.select('BIG.DAT'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.ENTER, 'big2.dat', ktest.ENTER)
+    k.select('BIG.DAT'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.ENTER, ktest.ENTER, 'big2.dat', K_CODE_ENTER)
     check('... a later write to that directory sector (Copy as BIG2.DAT) leaves BIG.DAT there, the disk sound',
           A().get('A:\\BIG.DAT') == BIG and A().get('A:\\BIG2.DAT') == BIG and not sound(0), (sorted(A()), sound(0)))
     k.key(ktest.ENTER)
@@ -1120,7 +1121,7 @@ def t_file_safety():
     def wp_at_rename(pc):
         if pc.r('cs') == 0x60 and pc.r('ip') == k.Y['f_56']: k.pc.drives[1].wp = True
     k.hooks.append(wp_at_rename)
-    k.select('BIG.DAT'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, ktest.ENTER, 'copy.txt', ktest.ENTER, ktest.ENTER, settle=False); k.settle(20)
+    k.select('BIG.DAT'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, ktest.ENTER, 'copy.txt', K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(20)
     k.hooks.remove(wp_at_rename)
     kept = [n for n in B() if n.endswith('TMP')]
     check('the rename after replacing fails: "Copy kept as B:\\....TMP", the copy all there',
@@ -1130,11 +1131,182 @@ def t_file_safety():
     k.key(ktest.ENTER)
     check('... and both disks sound', not sound(0) and not sound(1), (sound(0), sound(1)))
 
+# ---------------------------------------------------------------------
+def dir_entries(img, name):
+    """Offsets of every directory entry called NAME.EXT on a disk image."""
+    nm, _, ext = name.partition('.')
+    want = (nm.ljust(8) + ext.ljust(3)).encode()
+    return [o for o in range(0, len(img), 32) if bytes(img[o:o + 11]) == want and img[o + 11] & 0x18 == 0]
+
+def set_date(path, name, y, m=1, d=1):
+    raw = bytearray(open(path, 'rb').read())
+    for o in dir_entries(raw, name):
+        raw[o + 24:o + 26] = struct.pack('<H', ((y - 1980) << 9) | (m << 5) | d)
+    open(path, 'wb').write(raw)
+
+def t_wild():
+    print('== wildcards: Titles in Copy, Move and Delete; Replace; Only newer')
+    files = {}
+    for n, data in (('A.TXT', b'aaa\r\n'), ('B.TXT', b'bbb\r\n'), ('OLD.TXT', b'old new\r\n'), ('NEW.TXT', b'new old\r\n'),
+                    ('C.DAT', b'ccc' * 1000), ('D.DAT', b'ddd' * 1000), ('RO.TXT', b'read only\r\n')):
+        files[n] = data
+        open(os.path.join(OUT, n), 'wb').write(data)
+    a = image('wilda.img', *[os.path.join(OUT, n) for n in files], 'WORK\\')
+    raw = bytearray(open(a, 'rb').read()); raw[root_entry(raw, 'RO.TXT') + 11] |= 1; open(a, 'wb').write(raw)
+    for n in files: set_date(a, n, 2026, 6)
+    old = os.path.join(OUT, 'BOLD.TXT'); open(old, 'wb').write(b'was on B\r\n')
+    b = mkimg.build(os.path.join(OUT, 'wildb.img'), ['DATA\\', 'DATA\\B.TXT=' + old, 'DATA\\OLD.TXT=' + old, 'DATA\\NEW.TXT=' + old,
+                    'FULL\\'] + ['FULL\\F%02d.TXT=%s' % (i, old) for i in range(14)])  # FULL: its one cluster full
+    raw = bytearray(open(b, 'rb').read()); bp = fatcheck.bpb(raw)  # free space not zeros, as on a used disk
+    d0 = (bp['res'] + bp['nfat'] * bp['spf']) * bp['bps'] + bp['nroot'] * 32
+    for o in range(d0, len(raw), 512):
+        if not any(raw[o:o + 512]): raw[o:o + 512] = b'A' * 512
+    open(b, 'wb').write(raw)
+    set_date(b, 'OLD.TXT', 2020)                        # older on B: Only newer replaces it
+    set_date(b, 'NEW.TXT', 2026, 9)                     # newer on B: Only newer leaves it
+    set_date(b, 'B.TXT', 2020)
+    k = ktest.KPC(a, b=b); k.start()
+    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
+    band = lambda: k.band()[0]
+    # the form
+    k.select('A.TXT'); k.key(CODE['C'])
+    shot(k, 'exec_copy_wild')
+    check('the Copy form: Titles, Device, Subject, Title, Replace, Only newer', all(has(k, t) for t in ('Titles', 'Replace', 'Ask', 'None', 'Only newer'))
+          and has(k, 'Copy A.TXT'), screen(k))
+    # *.TXT to B:\DATA, Replace None: B.TXT, OLD.TXT, NEW.TXT left
+    k.key('*.txt', ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\data', ktest.ENTER, ktest.ENTER, ktest.RIGHT, ktest.RIGHT, K_CODE_ENTER)
+    check('Copy *.TXT to B:\\DATA, Replace None: "Copied 2 titles to B:\\DATA, 3 left as they were"',
+          band() == 'Copied 2 titles to B:\\DATA, 3 left as they were' and B().get('A:\\DATA\\A.TXT') == files['A.TXT']
+          and B().get('A:\\DATA\\RO.TXT') == files['RO.TXT'] and B().get('A:\\DATA\\B.TXT') == b'was on B\r\n', (k.band(), sorted(B())))
+    check('... the list as it was, A.TXT still chosen, both disks sound', k.exec_list()[k.u16('sel')] == 'A.TXT' and not sound(0) and not sound(1), k.exec_list())
+    k.key(ktest.ENTER)
+    # Only newer, Replace All: OLD.TXT replaced (older on B), NEW.TXT left (newer on B), the others replaced
+    k.key(CODE['C']); k.key('*.txt', ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\data', ktest.ENTER, ktest.ENTER, ktest.RIGHT, ktest.ENTER, ktest.RIGHT, K_CODE_ENTER)
+    check('Only newer, Replace All: OLD.TXT replaced, NEW.TXT (newer on B:) left, A.TXT and RO.TXT (as new) left',
+          band() == 'Copied 2 titles to B:\\DATA, 3 left as they were' and B().get('A:\\DATA\\OLD.TXT') == files['OLD.TXT']
+          and B().get('A:\\DATA\\NEW.TXT') == b'was on B\r\n' and B().get('A:\\DATA\\B.TXT') == files['B.TXT'], (k.band(), B()))
+    k.key(ktest.ENTER)
+    # Replace Ask: Return for one, ESC for the next, on to the rest
+    k.key(CODE['C']); k.key('*.txt', ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\data', K_CODE_ENTER)
+    check('Replace Ask: the question for the first one there', band() == 'A.TXT is there already: Confirm to replace it', k.band())
+    k.key(ktest.ENTER)
+    check('... Return: the next question', band().endswith('is there already: Confirm to replace it') and not band().startswith('A.TXT'), k.band())
+    for _ in range(3): k.key(ktest.ESC)
+    k.key(ktest.ESC)
+    check('... ESC leaves each one, the rest go on: "Copied 1 title ..., 4 left"', band() == 'Copied 1 title to B:\\DATA, 4 left as they were', k.band())
+    k.key(ktest.ENTER)
+    # Move *.DAT to \WORK (same drive)
+    k.key(CODE['M']); k.key('*.dat', ktest.ENTER, ktest.ENTER, '\\work', K_CODE_ENTER)
+    check('Move *.DAT to \\WORK: "Moved 2 titles to A:\\WORK", gone from the list', band() == 'Moved 2 titles to A:\\WORK'
+          and A().get('A:\\WORK\\C.DAT') == files['C.DAT'] and A().get('A:\\WORK\\D.DAT') == files['D.DAT']
+          and not [n for n in k.exec_list() if n.endswith('.DAT')] and not sound(0), (k.band(), k.exec_list()))
+    k.key(ktest.ENTER)
+    # a pattern that matches nothing; a path in Titles; Title changed with a pattern; into its own subject
+    for cmd, keys, want in (('C', ('*.xyz', K_CODE_ENTER), "Can't copy *.XYZ: File not found"),
+                            ('C', ('work\\*.dat', K_CODE_ENTER), "Can't copy A.TXT: titles can't have \\ or :"),
+                            ('C', ('*.txt', ktest.ENTER, ktest.ENTER, ktest.ENTER, 'x.txt', K_CODE_ENTER), "Can't copy A.TXT: with * or ? in Titles, leave Title as it was"),
+                            ('C', ('*.txt', K_CODE_ENTER), 'A.TXT is there now: choose another place'),
+                            ('D', ('*.xyz', ktest.ENTER), "Can't erase *.XYZ: File not found")):
+        before = A()
+        k.key(CODE[cmd]); k.key(*keys)
+        check('%s %r: %s' % (cmd, keys[0], want), band() == want and A() == before, k.band())
+        k.key(ktest.ENTER)
+    # one title typed over the chosen one: that one, under its own title
+    k.select('A.TXT'); k.key(CODE['C']); k.key('b.txt', ktest.ENTER, ktest.RIGHT, K_CODE_ENTER)
+    check('Copy with Titles B.TXT (A.TXT chosen): B.TXT, as B.TXT, to B:\\', band() == 'Copied to B:\\B.TXT' and B().get('A:\\B.TXT') == files['B.TXT'], k.band())
+    k.key(ktest.ENTER)
+    # Replace None for one title: said so
+    k.key(CODE['C']); k.key('b.txt', ktest.ENTER, ktest.RIGHT, ktest.ENTER, ktest.ENTER, ktest.ENTER, ktest.RIGHT, ktest.RIGHT, K_CODE_ENTER)
+    check('one title, Replace None: "B.TXT is there already: left as it was"', band() == 'B.TXT is there already: left as it was', k.band())
+    k.key(ktest.ENTER)
+    # a write-protected B:: stops at the first, says why
+    k.pc.drives[1].wp = True
+    before = bytes(k.pc.drives[1].img)
+    k.key(CODE['C']); k.key('*.txt', ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\', ktest.ENTER, ktest.ENTER, ktest.RIGHT, K_CODE_ENTER, settle=False); k.settle(30)
+    check('*.TXT to a write-protected B:: "Can\'t copy A.TXT: Disk is write-protected", B: untouched',
+          band() == "Can't copy A.TXT: Disk is write-protected" and bytes(k.pc.drives[1].img) == before and not k.crashed, k.band())
+    k.pc.drives[1].wp = False
+    k.key(ktest.ENTER)
+    # Titles left empty: the chosen title (not what runpath held before it)
+    k.select('A.TXT'); k.wr('runpath', b'XXXXXXXXXXXX\\W*\0'); k.key(CODE['C'])
+    k.key(*([ktest.BKSP] * 5)); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\', ktest.ENTER, 'a2.txt', K_CODE_ENTER)
+    check('Copy with Titles empty: the chosen title, under the Title typed', band() == 'Copied to B:\\A2.TXT' and B().get('A:\\A2.TXT') == files['A.TXT'], k.band())
+    k.key(ktest.ENTER)
+    # a wildcard Move that copies but can't erase: said so, and it stops there
+    k.pc.drives[0].wp = True
+    before = A()
+    k.key(CODE['M']); k.key('*.txt', ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\', K_CODE_ENTER, settle=False); k.settle(30)
+    check('Move *.TXT from a write-protected A:: "Copied, but can\'t erase A.TXT here", the rest not tried',
+          band() == "Copied, but can't erase A.TXT here: Disk is write-protected" and A() == before and 'A:\\B2.TXT' not in B()
+          and 'A:\\OLD.TXT' not in B() and not k.crashed, (k.band(), sorted(B())))
+    k.pc.drives[0].wp = False
+    k.key(ktest.ENTER)
+    # a subject that isn't there: made after a question, each level
+    k.select('A.TXT'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\new\\deep', K_CODE_ENTER)
+    check('Copy to B:\\NEW\\DEEP (not there): "B:\\NEW\\DEEP isn\'t there: Confirm to make it"', band() == "B:\\NEW\\DEEP isn't there: Confirm to make it", k.band())
+    k.key(ktest.ESC)
+    check('... ESC: nothing made, nothing said', not [n for n in B() if 'NEW\\' in n] and band() == 'Select a file and confirm' and not sound(1), (k.band(), sorted(B())))
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\new\\deep', K_CODE_ENTER, ktest.ENTER)
+    check('... Return: both levels made, the copy in it', band() == 'Copied to B:\\NEW\\DEEP\\A.TXT' and B().get('A:\\NEW\\DEEP\\A.TXT') == files['A.TXT']
+          and not sound(1), (k.band(), sorted(B())))
+    k.key(ktest.ENTER)
+    k.pc.drives[1].wp = True
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\other', K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(30)
+    check('... on a write-protected disk: "Can\'t copy A.TXT: Disk is write-protected"', band() == "Can't copy A.TXT: Disk is write-protected" and not k.crashed, k.band())
+    k.pc.drives[1].wp = False
+    k.key(ktest.ENTER)
+    check('... and B: still sound (the failed MKDIR left no lost cluster)', not sound(1), sound(1))
+    k.pc.drives[1].wp = True
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER, settle=False); k.settle(30)
+    check('Copy into a full subject on a write-protected B:: refused', band() == "Can't copy A.TXT: Disk is write-protected" and not k.crashed, k.band())
+    k.pc.drives[1].wp = False
+    k.key(ktest.ENTER)
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER)
+    check('... then with B: writable: the subject grows, B: sound (no cluster lost by the failed growth)',
+          band() == 'Copied to B:\\FULL\\A.TXT' and B().get('A:\\FULL\\A.TXT') == files['A.TXT'] and not sound(1)
+          and len([n for n in B() if n.startswith('A:\\FULL\\')]) == 15, (k.band(), sound(1), sorted(B())))
+    k.key(ktest.ENTER)
+    # Delete *.TXT: the question, ESC, then Return: the read-only one kept
+    k.key(CODE['D']); k.key('*.txt', ktest.ENTER)
+    check('Delete *.TXT: "Erase: Confirm to erase 5 titles *.TXT"', band() == 'Erase: Confirm to erase 5 titles *.TXT', k.band())
+    k.key(ktest.ESC)
+    check('... ESC: all there', len([n for n in A() if n.endswith('.TXT')]) == 5, sorted(A()))
+    k.key(CODE['D']); k.key('*.txt', ktest.ENTER, ktest.ENTER)
+    check('... Return: "Erased 4 titles, 1 read-only kept"', band() == 'Erased 4 titles, 1 read-only kept'
+          and [n for n in A() if n.endswith('.TXT')] == ['A:\\RO.TXT'] and k.exec_list() == ['GRIDOS.SYS', 'RO.TXT'] and not sound(0), (k.band(), sorted(A())))
+    k.key(ktest.ENTER)
+    # Move *.* from \WORK to B: (copy, then erase)
+    to_subject(k, 'WORK')
+    k.key(CODE['M']); k.key('*.*', ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\data', K_CODE_ENTER)
+    check('Move *.* from \\WORK to B:\\DATA: "Moved 2 titles to B:\\DATA", \\WORK empty', band() == 'Moved 2 titles to B:\\DATA'
+          and B().get('A:\\DATA\\C.DAT') == files['C.DAT'] and k.exec_list() == [] and not sound(0) and not sound(1), (k.band(), k.exec_list(), sound(0), sound(1)))
+    k.key(ktest.ENTER)
+    check('... and the Executive\'s memory as it was (the block for the titles freed)', not k.crashed, '')
+    # a subject that must grow, on a write-protected disk whose free space isn't zeros (as on a used disk)
+    g = mkimg.build(os.path.join(OUT, 'growb.img'), ['FULL\\'] + ['FULL\\F%02d.TXT=%s' % (i, old) for i in range(14)])
+    raw = bytearray(open(g, 'rb').read()); bp = fatcheck.bpb(raw)
+    d0 = (bp['res'] + bp['nfat'] * bp['spf']) * bp['bps'] + bp['nroot'] * 32
+    for o in range(d0, len(raw), 512):
+        if not any(raw[o:o + 512]): raw[o:o + 512] = b'A' * 512
+    open(g, 'wb').write(raw)
+    k = ktest.KPC(a, b=g); k.start()
+    G = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    k.pc.drives[1].wp = True
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER, settle=False); k.settle(30)
+    k.pc.drives[1].wp = False
+    k.key(ktest.ENTER)
+    k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER)
+    check('a subject that couldn\'t grow (write-protected) grows cleanly later: no stray entries, the disk sound',
+          k.band()[0].startswith('Copied to B:\\FULL\\') and len([n for n in G() if n.startswith('A:\\FULL\\')]) == 15
+          and not fatcheck.check(bytes(k.pc.drives[1].img))[0], (k.band(), sorted(G())))
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_saver_delay):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_saver_delay):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

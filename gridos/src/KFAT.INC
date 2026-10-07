@@ -495,8 +495,10 @@ dir_slot:
         jb      .last
         call    clu_alloc               ; linked after DX
         jc      .err
+        push    ax
         call    clu_zero
-        jc      .err
+        pop     cx                      ; (CX = the new cluster)
+        jc      .unl
         mov     word [it_dir], 0
         pop     ax
         push    ax
@@ -505,12 +507,21 @@ dir_slot:
         pop     ax
         clc
         ret
+.unl:   push    ax                      ; it can't be written: unlinked (DX
+        mov     ax, dx                  ;  the end again) and given back
+        mov     dx, 0FFFh
+        call    fat_set
+        mov     ax, cx
+        xor     dx, dx
+        call    fat_set
+        pop     ax
+        jmp     short .err
 .full:  mov     ax, 5
 .err:   add     sp, 2
         stc
         ret
 
-; write zeros over cluster AX (keeps AX)
+; write zeros over cluster AX (keeps AX).  CF: AX = error
 clu_zero:
         push    si
         push    ax
@@ -550,7 +561,11 @@ clu_zero:
         pop     dx
         pop     cx
         pop     bx
-        pop     ax
+        jnc     .ok                     ; (an error: AX = it, not the cluster;
+        pop     si                      ;  pops keep CF)
+        pop     si
+        ret
+.ok:    pop     ax
         pop     si
         ret
 
@@ -717,11 +732,12 @@ f_39:   call    get_path                ; MKDIR
         push    word [d_lba]
         push    word [d_off]
         xor     dx, dx
+        mov     [new_dir], dx
         call    clu_alloc
         jc      .e3
+        mov     [new_dir], ax
         call    clu_zero
         jc      .e3
-        mov     [new_dir], ax
         call    fat_flush               ; its cluster is taken before it is named
         jc      .e3
         pop     word [d_off]
@@ -764,6 +780,13 @@ f_39:   call    get_path                ; MKDIR
         jc      .e
         jmp     ok
 .e3:    add     sp, 6
+        push    ax                      ; the cluster given back (a failed
+        mov     ax, [new_dir]           ;  write: else a lost cluster once
+        or      ax, ax                  ;  the FAT goes out)
+        jz      .e4
+        xor     dx, dx
+        call    fat_set
+.e4:    pop     ax
         jmp     .e
 .np:    mov     ax, 3
         jmp     .e
