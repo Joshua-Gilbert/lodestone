@@ -102,6 +102,8 @@ class PC:
         s.us = 0.0; s.next_tick = TICK_US; s.next_event = TICK_US
         s.due_at = float('inf'); s.on_due = None
         s.irq_pending = set(); s.pic_mask = 0xB8
+        s.isr = 0; s.pic_rr = 2         # in service (EOI ends it); OCW3: what port 20h reads
+        s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
         s.keys = collections.deque(); s.tty = []; s.log = []; s.lpt = []
         s.calls13 = []; s.ints = collections.Counter(); s.t13 = []
         s.stopped = None; s.crash = None; s.halted = False; s.blocked = False
@@ -214,12 +216,20 @@ class PC:
         leave it), and the last one returns to the program.  Delivering only
         IRQ 0 per run() starved the mouse while long INT 13h calls (which
         the emulator does in one step) kept a timer tick pending."""
+        if s.soft and s.r('flags') & 0x200:     # as INT 9 does after its EOI
+            n = s.soft.pop(0)
+            off, seg = struct.unpack('<HH', s.rd(0, n * 4, 4))
+            s.push(s.r('flags')); s.push(s.r('cs')); s.push(s.r('ip'))
+            s.w('flags', s.r('flags') & ~0x300)
+            s.w('cs', seg); s.w('ip', off)
+            return
         if not (s.r('flags') & 0x200) or not s.irq_pending: return
         due = [i for i in sorted(s.irq_pending) if not (s.pic_mask & (1 << i))]
         if not due: return
         first = True
         for irq in reversed(due):
             s.irq_pending.discard(irq)
+            s.isr |= 1 << irq
             off, seg = struct.unpack('<HH', s.rd(0, (8 + irq) * 4, 4))
             fl = s.r('flags')
             s.push(fl if first else fl & ~0x300); s.push(s.r('cs')); s.push(s.r('ip'))
@@ -257,7 +267,7 @@ class PC:
         if port == 0x61: return (int(s.us / 15.085) & 1) << 4
         if port == 0x71: return s.cmos_read(s.cidx)
         if port == 0x21: return s.pic_mask
-        if port == 0x20: return 0
+        if port == 0x20: return s.isr if s.pic_rr == 3 else 0
         if port == 0x7F8: return 0xFD
         if port == 0x3DA:
             return 0x08 if int(s.us / 1000) % 16 == 0 else 0x00
@@ -342,6 +352,11 @@ class PC:
                 s.pit_latch = (65536 - 2 * n) & 0xFFFF; s.pit_hi = False
             return
         if port == 0x21: s.pic_mask = val; return
+        if port == 0x20:
+            if val == 0x20: s.isr &= s.isr - 1          # the highest priority's EOI
+            elif val & 0xF8 == 0x60: s.isr &= ~(1 << (val & 7))
+            elif val & 0x9A == 0x0A: s.pic_rr = val & 3  # OCW3: read IRR / ISR
+            return
         if 0x2F8 <= port <= 0x2FF: return s.uart_out(port - 0x2F8, val)
         if s.ems_pages and (port & 0x3FFF) == 0x258:
             s.ems_reg[port >> 14] = val; s.ems_map(port >> 14); return
@@ -592,6 +607,10 @@ class PC:
         elif ah in (0x02, 0x12): s.w('ax', s.r('ax') & 0xFF00)
         elif ah == 0x05: s.keys.append(s.r('cx')); s.w('ax', 0)
 
+    def prtsc(s):
+        """Shift-PrtSc: the BIOS's INT 9 calls INT 5."""
+        s.soft.append(5)
+
     def int18(s): s.stopped = 'INT 18h (ROM BASIC)'; s.mu.emu_stop()
     def int19(s): s.stopped = 'INT 19h (reboot)'; s.mu.emu_stop()
 
@@ -647,7 +666,7 @@ class PC:
         return not (s.stopped or s.crash)       #  as a real PIC would after IRET)
 
     def deliverable(s):
-        return bool(s.r('flags') & 0x200) and any(not (s.pic_mask & (1 << i)) for i in s.irq_pending)
+        return bool(s.r('flags') & 0x200) and (bool(s.soft) or any(not (s.pic_mask & (1 << i)) for i in s.irq_pending))
 
     def run_until(s, cond, sim_s=10.0):
         end = s.us + sim_s * 1e6
