@@ -286,7 +286,8 @@
   - `saver_t` (ticks; FFFFh means never) replaces the constant;
   - a new call, `UI_SAVER` (entry 46, so UI API 3): AL = 0 gives the minutes, AL = 1 sets them from BL.
   - SYSTEM.RUN needs this core (API 3).
-- **Cost:** GRIDOS.SYS 35,480 bytes (+120). SYSTEM.RUN 8,084. A DOS program gets 565.7 KB.
+- **Cost:** GRIDOS.SYS 35,272 bytes (−88; the setting costs 120 bytes, and trimming the Executive's help saved 208).
+- **The Executive's help, trimmed:** 13 lines instead of 18. Gone: Home / End, Mouse, the F1 line and "5 minutes idle — screen saver" (no longer true). "A letter — the next name with it" became "Type its first letter — find a name"; CODE-U reads "System"; CODE-D "Delete the file". SYSTEM.RUN 8,084. A DOS program gets 565.7 KB.
 - **Tests (`t_saver_delay`, 14 checks):**
   - 5 minutes to start with; the topic; each step and its GRIDOS.INI;
   - "never" over 30 idle minutes; 1 minute: no saver at 50 s, the saver after a minute;
