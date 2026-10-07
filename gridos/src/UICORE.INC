@@ -11,7 +11,6 @@
 
 VSEG        equ 0B800h
 BAND_Y      equ SCR_BAND_Y
-SAVER_T     equ 5462                    ; 5 minutes of 55 ms ticks (the default)
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
@@ -498,7 +497,7 @@ poll_once:
         cmp     bx, 36
         jbe     .idle
         mov     [lastact], ax
-.idle:  mov     bx, ax                  ; idle 5 minutes: the screen saver
+.idle:  mov     bx, ax                  ; idle [saver_t] ticks: the screen saver
         sub     bx, [lastact]
         cmp     bx, 8000h               ; (the clock went back at midnight)
         jb      .sv
@@ -3544,7 +3543,8 @@ run_app:
         ret
 
 ; =====================================================================
-;  the screen saver, after 5 minutes without a key or the mouse.  In the
+;  the screen saver, after the delay set in System (SAVER= in GRIDOS.INI;
+;  5 minutes without it) with no key or mouse; never if set so.  In the
 ;  Executive (no .RUN, no window, no question): first DEFRAG.COM, if it is on the
 ;  disk: it tidies the floppy while showing its map, and stops at a key or
 ;  the mouse (exit code 1) or when the disk is in order.  Then a dark
