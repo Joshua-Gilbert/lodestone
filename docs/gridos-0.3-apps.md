@@ -326,6 +326,48 @@
 - **Cost:** GRIDOS.SYS 37,002 bytes (+366). A DOS program gets 564.2 KB (−0.4 KB).
 - **Tests (`t_subdel`, 10 checks):** Root refused; the question; ESC; Return erasing a tree with a read-only title, a long-named one and empty subjects; the list after; an empty subject; a write-protected disk. Checked to fail without the RMDIR fix.
 
+## Screen capture (0.3.9, 2026-10-07)
+- **Joshua's choices:** the BIOS's own print-screen key (Shift-PrtSc) saves the screen to a file instead of printing it; the file goes in the root of the boot disk; graphics become a BMP and text a TXT.
+- **Asking:** on Shift-PrtSc the 1520's BIOS (INT 9, after its EOI) calls INT 5. The kernel owns INT 5 now, and its handler only sets `cap_req`, because the key can come in the middle of anything (the BIOS, a disk transfer, the kernel).
+- **Taking it, at the next safe moment.** `capture` goes ahead only when `cap_req` is 1 and `indos` is 1 (one word compare), and the PIC has no interrupt in service:
+  - at the INT 21h entry, for an outermost call, before the dispatch;
+  - in the console's key wait (`kbd_get`, before its INT 28h), so GRIDCMD's prompt and programs waiting on INT 21h take it at once;
+  - in the UI's idle poll, which now asks for the current drive (INT 21h 19h, 4 bytes), so the Executive and `.RUN` programs take it at once too.
+  - A DOS program that reads the keyboard straight from the BIOS gets the picture at its next DOS call.
+  - It runs on the kernel stack. Its own create, write, close and erase calls nest on the critical-error stack (about 90 of its 512 bytes in pcemu).
+- **The files:** `SCREEN01.BMP` … `SCREEN99.BMP`, or `SCREEN01.TXT` …, in the root of the boot drive. Each extension is numbered on its own, and create-new (5Bh) finds the first number free.
+  - **Graphics:** a 640 × 400, 1-bit BMP with the Windows 3 header, 32,062 bytes, in brown (28, 12, 0) and amber (255, 170, 50), the colours of the README's emulator shots. Modes 40h, 48h and 74h read four banks. The 200-line modes (4 to 6) read two banks and write each line twice; modes 4 and 5 come out as their bit patterns.
+  - **Text** (modes 0–3): the shown page (40:4Eh) as 25 lines of 40 or 80 columns (40:4Ah), without trailing blanks, NUL as a blank, ending CR LF.
+  - The mouse pointer is in the picture if it's on the screen.
+- **Written in big pieces.** The kernel writes straight to the disk, so a first build that wrote each 80-byte line on its own cost a disk turn per line: 94 s for one picture on pcemu's real-floppy timing. The capture now writes through a buffer:
+  - in the Executive and `.RUN` programs, the disk cache's memory, lent the way the windows' save-under borrows it (INT 21h F0h AL=2/3, 18 KB);
+  - in a DOS program, or when the cache's memory is out already (a help window), 1 KB at the bottom of the kernel stack. With EMS the lend is a block of free memory, which a DOS program might still be using past its own block.
+  - On the real-floppy model: a BMP takes 2.9 s in the Executive and 8.1 s in a DOS program; a TXT takes 1.4 s.
+- **Errors:**
+  - Nothing reaches INT 24h meanwhile: `crit_disk` fails at once, so neither the UI's handler (which would keep the error for its next message) nor a program's runs.
+  - A write-protected or full disk, or no number free, gives a long beep. A part-written file is erased, and after a write fails no more are tried.
+  - Success gives one beep (BEL through INT 10h).
+  - The program's INT 21h 59h error is kept.
+  - A press while a picture is being saved is dropped (the screen is the same).
+- **Review (an independent agent):** confirmed in pcemu, all fixed with tests:
+  - **Data loss:** a disk swapped in that a program had already read through the BIOS (change line clear, no 0Dh yet, as HEADCLN does) got the boot disk's cached FAT and root written over it: 30 files gone. The capture now starts with `disk_reset` (as INT 21h 0Dh), so the kernel checks the disk first and writes the picture to the disk that is there.
+  - **Inside a hardware interrupt:** a TSR's INT 1Ch hook that calls DOS while InDOS is 0 (as clock TSRs do) made the capture run before the timer's EOI, with the floppy's IRQ blocked. The capture now waits while the PIC's in-service register is non-zero. pcemu now models that register.
+  - **A disk pulled mid-picture** would have tried every remaining piece (minutes with the BIOS's time-outs). It stops after the first failure.
+  - **With EMS, inside a DOS program,** the lend wrote 18 KB into free memory. It isn't used there any more.
+  - Left: a DOS program's mouse event handler that calls DOS runs after the EOI, so it isn't caught; a BOUND fault (also INT 5) now loops silently instead of printing for ever; and the Executive's list shows the new file only after F5.
+- **On the 1520 (2026-10-07):** Shift-PrtSc in the Executive gave `SCREEN01.BMP` (the list, the band and the mouse pointer, as on the plasma), and at GRIDCMD's prompt `SCREEN01.TXT` (the banner and the prompt, trimmed).
+- **Cost:** GRIDOS.SYS 39,790 bytes (+500): the capture and its writer 396 bytes, the BMP header 62, the name 16, the INT 5 handler 7, the hooks 16 (vector, two calls, `crit_disk`), and 4 in the UI. A DOS program gets 563.7 KB without EMS and 579.8 KB with it (−0.5 KB).
+- **pcemu:** `pc.prtsc()` raises INT 5 the way the BIOS's INT 9 does. The PIC's in-service register is modelled: delivery sets the bit, EOI clears it, and OCW3 selects what port 20h reads.
+- **Tests (`t_capture` in `test_kernel.py`, 18 checks; `tests/CAPTEST.COM`):**
+  - In the Executive: the BMP matches video memory bit for bit; one beep; the screen is untouched; the cache's memory is given back.
+  - With the cache's memory already lent: the 1 KB buffer, a correct picture, and the cache still lent.
+  - In a DOS program: mode 6 (each line twice, through the 1 KB buffer, no lend); 80-column text with trailing blanks and a NUL; 40 columns; a BIOS key wait with a timer hook calling DOS (not taken inside the interrupt; taken at the program's next call).
+  - At GRIDCMD's prompt.
+  - On a write-protected disk: a long beep, the disk untouched, the UI's error not set.
+  - A disk changed behind the kernel's back: its files kept, the picture on it.
+  - On a full disk: a long beep, no file left, the disk consistent, and one write only.
+  - The changed-disk and timer-hook checks fail without their fixes.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.

@@ -21,7 +21,7 @@ TM5000G = _find('TM5000G', os.path.join(GOS, '..', 'tools', 'TM5000G.EXE'), '/ho
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
-    for d, n in ((HERE, 'TESTDOS'), (HERE, 'UPPER'), (HERE, 'CACHETST'), (HERE, 'EMSTEST'), (HERE, 'MEMSZ'),
+    for d, n in ((HERE, 'TESTDOS'), (HERE, 'UPPER'), (HERE, 'CACHETST'), (HERE, 'EMSTEST'), (HERE, 'MEMSZ'), (HERE, 'CAPTEST'),
                  (os.path.join(GOS, 'src'), 'GRIDCMD')):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
 
@@ -183,6 +183,115 @@ def t_permanent():
     check('/P: EXIT does nothing', k.pc.u16(0x60, k.Y['cur_psp']) == psp1 != psp0 and 'Grid-OS version' in sh.run('ver'))
     o = sh.run('gridcmd /c echo one shot')
     check('/C inside', 'one shot' in o and k.pc.u16(0x60, k.Y['cur_psp']) == psp1, o)
+
+def t_capture():
+    """Shift-PrtSc (the BIOS's INT 5): SCREENnn.BMP / .TXT in the root of
+    the boot disk, at the next DOS call or wait for a key."""
+    import io
+    from PIL import Image
+    pad = os.path.join(OUT, 'PAD.DAT')
+    k = ktest.KPC(image('cap.img', os.path.join(HERE, 'CAPTEST.COM'), os.path.join(GOS, 'src', 'GRIDCMD.COM'))); k.start()
+    files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    beeps = lambda: ''.join(k.pc.tty).count('\x07')
+    calls21 = []                                # (AX) of the capture's 40h and F0h calls
+    def rec(pc):
+        if pc.r('cs') == 0x60 and pc.r('ip') == k.Y['int21'] and pc.r('ah') in (0x40, 0xF0): calls21.append(pc.r('ax'))
+    def shot(sim_s=6.0):
+        calls21.clear(); k.hooks.append(rec)
+        k.pc.tty.clear(); k.pc.prtsc(); k.settle(sim_s)
+        k.hooks.remove(rec)
+    def bmp_ok(data, line):
+        """640 x 400, 1 bit, amber on brown, line y of the screen = line(y)."""
+        im = Image.open(io.BytesIO(data))
+        if im.size != (640, 400) or im.getpalette()[:6] != [28, 12, 0, 255, 170, 50]: return False
+        raw = im.tobytes()                      # (mode P: a byte a pixel)
+        return all(bytes(sum((raw[y * 640 + x * 8 + b] != 0) << (7 - b) for b in range(8)) for x in range(80)) == line(y)
+                   for y in range(400))
+    check('INT 5 is the kernel\'s', k.pc.u16(0, 5 * 4 + 2) == 0x60)
+    vram = k.pc.rd(0xB800, 0, 0x8000)
+    shot()
+    f = files()
+    check('Executive: SCREEN01.BMP, 32062 bytes, one beep', len(f.get('A:\\SCREEN01.BMP', b'')) == 32062 and beeps() == 1,
+          (sorted(f), beeps()))
+    check('Executive: the picture is the screen (mode 40h, 4 banks)',
+          bmp_ok(f['A:\\SCREEN01.BMP'], lambda y: vram[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]))
+    check('the screen is left as it was', k.pc.rd(0xB800, 0, 0x8000) == vram)
+    check('the disk cache\'s memory (the buffer) given back', k.rd('tc_lock', 1) == b'\0')
+    # the cache's memory lent already (the help window has it): 1 KB at the
+    # bottom of the kernel stack instead, and the cache stays lent
+    k.wr('tc_lock', b'\1'); vram = k.pc.rd(0xB800, 0, 0x8000); shot(); lock = k.rd('tc_lock', 1); k.wr('tc_lock', b'\0')
+    f = files()
+    check('the next one: SCREEN02.BMP, through the 1 KB buffer; the cache still lent', 'A:\\SCREEN02.BMP' in f and
+          bmp_ok(f['A:\\SCREEN02.BMP'], lambda y: vram[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]) and lock == b'\1' and beeps() == 1,
+          (sorted(f), lock, beeps()))
+    # a DOS program: mode 6, text in 80 and 40 columns, then a BIOS wait
+    k.select('CAPTEST.COM'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: k.pc.mode() == 6, 5); k.settle()
+    shot()
+    f = files()
+    check('mode 6: SCREEN03.BMP, each line twice', 'A:\\SCREEN03.BMP' in f and
+          bmp_ok(f['A:\\SCREEN03.BMP'], lambda y: bytes([y >> 1]) * 80) and beeps() == 1, (sorted(f), beeps()))
+    check('... in a DOS program, through the 1 KB buffer (no lend: with EMS it would be free memory)',
+          0xF002 not in calls21 and sum(1 for a in calls21 if a >> 8 == 0x40) == 32, [hex(a) for a in calls21][:6])
+    k.key(ktest.ENTER); shot()
+    want = 'Line one\r\nSecond line\r\n\r\nABCDE GHIJ\r\n' + '\r\n' * 21
+    got = files().get('A:\\SCREEN01.TXT', b'').decode('latin-1')
+    check('text: SCREEN01.TXT, trailing blanks off, the NUL a blank', got == want, repr(got))
+    k.key(ktest.ENTER); shot()
+    got = files().get('A:\\SCREEN02.TXT', b'').decode('latin-1')
+    check('40 columns: SCREEN02.TXT', got == 'Forty\r\n' + '\r\n' * 24, repr(got))
+    calls = []
+    k.hooks.append(lambda pc: calls.append(1) if pc.r('cs') == 0x60 and pc.r('ip') == k.Y['int21'] and pc.r('ah') == 0x2A else None)
+    k.key(ktest.ENTER); shot(); k.run_for(3.0)
+    check('a BIOS wait, a timer hook calling DOS: not inside the interrupt', 'A:\\SCREEN03.TXT' not in files() and
+          beeps() == 0 and len(calls) > 40, (sorted(files()), len(calls)))
+    k.hooks.pop()
+    k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    got = files().get('A:\\SCREEN03.TXT', b'').decode('latin-1')
+    check('... taken at the next DOS call outside it', got.startswith('BIOS wait\r\n\r\n') and beeps() == 1, repr(got[:40]))
+    check('the program ended as usual', any('CAPTEST.COM ended' in l for l in k.band()), k.band())
+    sh = Shell(k); sh.run('ver'); shot()
+    got = files().get('A:\\SCREEN04.TXT', b'').decode('latin-1')
+    check('at the DOS prompt (GRIDCMD): SCREEN04.TXT', 'Grid-OS version 0.3' in got and beeps() == 1, repr(got[:200]))
+    sh.run('exit'); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('disk consistent', not probs, '; '.join(probs))
+    # write-protected: a long beep, nothing written, no INT 24h (the UI's
+    # handler would have kept the error for its next message)
+    before = bytes(k.pc.drives[0].img)
+    k.pc.drives[0].wp = True; shot(); k.pc.drives[0].wp = False
+    check('write-protected: a long beep, the disk untouched, no INT 24h',
+          beeps() == 4 and bytes(k.pc.drives[0].img) == before and k.u16('crit_err') == 0, (beeps(), k.u16('crit_err')))
+    # another disk put in, which a program already read through the BIOS
+    # (the change line is clear) and no INT 21h 0Dh yet: the capture must
+    # not write the first disk's FAT and directory over it
+    import pcemu
+    data = []
+    for i in range(30):
+        open(os.path.join(OUT, 'D%02d.TXT' % i), 'wb').write(b'data %d\r\n' % i * 200)
+        data.append(os.path.join(OUT, 'D%02d.TXT' % i))
+    other = mkimg.build(os.path.join(OUT, 'capother.img'), data)
+    before = fatcheck.read_files(open(other, 'rb').read())
+    k = ktest.KPC(image('cap2.img', os.path.join(HERE, 'CAPTEST.COM'))); k.start()
+    k.select('CAPTEST.COM'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: k.pc.mode() == 6, 5); k.settle()
+    k.pc.drives[0] = pcemu.Floppy(other); k.pc.drives[0].changed = False
+    shot()
+    after = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('a disk changed behind the kernel\'s back: its files kept, the picture on it',
+          all(after.get(n) == d for n, d in before.items()) and 'A:\\SCREEN01.BMP' in after and not probs and beeps() == 1,
+          (sorted(set(before) - set(after)), probs[:3], beeps()))
+    # no room for all of it: none of it is left
+    open(pad, 'wb').write(bytes(1400000))
+    k = ktest.KPC(image('capfull.img', pad)); k.start()
+    before = sorted(files())
+    shot()
+    probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('disk full: a long beep, no SCREEN01.BMP, disk consistent, no write after the one that failed',
+          beeps() == 4 and sorted(files()) == before and not probs and sum(1 for a in calls21 if a >> 8 == 0x40) == 1,
+          (beeps(), sorted(files()), probs, [hex(a) for a in calls21]))
 
 def mcbs(k):
     """The arena: (segment, type, owner, size, name) of each block."""
@@ -512,7 +621,7 @@ def t_ems():
     sc = [b for b in mcbs(k) if b[4] == b'SC']
     check('EMS (2 pages): both for programs, the cache stays the "SC" block', ems_npg(k) == 2 and len(sc) == 1, (ems_npg(k), sc))
 
-TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_cache, t_cache_ems]
+TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_cache, t_cache_ems]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

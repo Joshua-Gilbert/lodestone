@@ -432,8 +432,8 @@ def t_memory():
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     kb = float(m.group(1)) if m else 0
-    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB): '
-          'the directory buffer is lent while it runs' % kb, kb >= 564.2, out[-200:])
+    check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
+          'screen capture 0.5 KB): the directory buffer is lent while it runs' % kb, kb >= 563.7, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went

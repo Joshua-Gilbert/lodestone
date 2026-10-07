@@ -1533,6 +1533,8 @@ bios2dos:
 ; INT 24h for the failed transfer -> AL = 0 ignore, 1 retry, 3 fail
 ; (abort ends the program here and doesn't come back)
 crit_disk:
+        test    byte [cap_req], 2       ; a screen capture: just fail
+        jnz     .fail
         push    bx
         push    cx
         push    dx
