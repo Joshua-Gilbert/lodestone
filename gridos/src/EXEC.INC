@@ -72,6 +72,8 @@ buf_seg     resw 1
 buf_len     resw 1
 f_time      resw 1
 f_date      resw 1
+tpath       equ dstpath             ; Delete on a subject: the path walked
+t_lvl       resw 1                  ;  (X:\ + at most 66 + \NAME.EXT)
 c_pat       resb 13                 ; the forms' Titles: a title or a pattern
 c_repl      resb 1                  ; Replace: 0 Ask, 1 All, 2 None
 c_newer     resb 1                  ; Only newer: 0 No, 1 Yes
@@ -987,6 +989,8 @@ file_ok:
 ; CODE-D: Delete (erase).  A form: Titles, the chosen one to start with;
 ; with * or ? in it a question first, then each title that matches
 ex_erase:
+        cmp     byte [focus], FOC_SUB   ; a subject: sub_erase
+        je      sub_erase
         call    file_ok
         jc      .x
         call    sel_name
@@ -1064,6 +1068,138 @@ ex_erase:
         call    sb_str
 .m:     mov     byte [di], 0
         jmp     show_msg
+
+; CODE-D with Subject outlined: the chosen subject (the current one) and
+; all in it, after a question ("Erase: Confirm to erase \OLD and all in
+; it").  Not Root.  The list then shows the subject above it
+sub_erase:
+        cmp     byte [subject + 1], 0
+        jne     .go
+        jmp     ui_beep
+.go:    mov     di, tpath               ; "X:\OLD"
+        mov     ah, 19h
+        int     21h
+        add     al, 'A'
+        mov     ah, ':'
+        stosw
+        mov     si, subject
+        call    sb_str
+        mov     byte [di], 0
+        mov     di, msgbuf
+        mov     si, s_eraseq
+        call    sb_str
+        mov     si, subject
+        call    sb_str
+        mov     si, s_allin
+        call    sb_str
+        mov     byte [di], 0
+        mov     si, msgbuf
+        call    ui_ask
+        jc      .x
+        mov     dx, s_dotdot            ; out of it, to the one above
+        mov     ah, 3Bh
+        int     21h
+        jc      .bad
+        mov     byte [dirty], 1
+        call    tree_del
+        jc      .bad
+        call    .re
+        mov     di, msgbuf              ; "Erased \OLD"
+        mov     si, s_erased
+        call    sb_str
+        jmp     short .p
+.bad:   mov     [ex_code], ax
+        call    .re
+        mov     si, tpath + 2           ; "Can't erase X.TXT: why"
+        mov     bx, s_canterase
+        jmp     cant_msg
+.p:     mov     si, tpath + 2
+        call    sb_str
+        mov     byte [di], 0
+        jmp     show_msg
+.re:    call    get_subject             ; the subjects again
+        mov     al, FOC_SUB
+        jmp     set_focus
+.x:     ret
+
+; every title and subject under tpath ("X:\OLD") erased (read-only ones
+; too), each subject once empty, then tpath itself.  A level is searched
+; again from its start after a subject in it goes.  CF: AX = DOS error,
+; tpath = what it was about
+tree_del:
+        mov     word [t_lvl], 0
+.open:  call    tw_end                  ; X:\OLD\*.*
+        mov     si, s_star
+        call    sb_str
+        mov     byte [di], 0
+        mov     dx, tpath
+        mov     cx, 16h                 ; (hidden, system, subjects too)
+        mov     ah, 4Eh
+        int     21h
+        jc      .err
+        cmp     byte [exec_dta + 30], '.'       ; a subject starts with ".":
+        mov     ax, 3                   ;  else a damaged disk (the root, or
+        jne     .err                    ;  another subject): leave it
+.nx:    mov     ah, 4Fh
+        int     21h
+        jc      .end
+        cmp     byte [exec_dta + 30], '.'       ; ("..")
+        je      .nx
+        call    tw_name                 ; X:\OLD\NAME
+        test    byte [exec_dta + 21], 10h
+        jnz     .dir
+        mov     dx, tpath
+        xor     cx, cx
+        mov     ax, 4301h               ; (read-only too)
+        int     21h
+        mov     ah, 41h
+        int     21h
+        jnc     .nx
+        ret
+.dir:   call    tw_end                  ; (a path longer than DOS takes:
+        cmp     di, tpath + 2 + 66      ;  only from a damaged disk)
+        mov     ax, 3
+        ja      .bad
+        inc     word [t_lvl]
+        jmp     .open
+.end:   cmp     ax, 18
+        jne     .err
+        call    tw_cut                  ; this subject, now empty
+        mov     dx, tpath
+        mov     ah, 3Ah
+        int     21h
+        jc      .x
+        dec     word [t_lvl]
+        js      .x                      ; (CF clear: done)
+        call    tw_cut                  ; the one above, from its start
+        jmp     .open
+.err:   push    ax                      ; (tpath: the subject)
+        call    tw_cut
+        pop     ax
+.bad:   stc
+.x:     ret
+
+; tpath: the last name replaced by the name found; the last name cut off
+tw_name:
+        call    tw_cut
+        mov     byte [di], '\'
+        inc     di
+        mov     si, exec_dta + 30
+        call    sb_str
+        mov     byte [di], 0
+        ret
+tw_cut: call    tw_end
+.b:     dec     di
+        cmp     byte [di], '\'
+        jne     .b
+        mov     byte [di], 0
+        ret
+tw_end: mov     di, tpath
+        xor     al, al
+        mov     cx, 0FFFFh
+        repne   scasb
+        dec     di
+        ret
 
 ; ---------------------------------------------------------------------
 ;  Titles: one title or a pattern (* and ?) in the listed subject
@@ -2539,7 +2675,7 @@ h_write     db 'CODE-W                   Write: a new text file',0
 h_claude    db 'CODE-A                   Claude',0
 h_shell     db 'CODE-P                   command prompt',0
 h_copy      db 'CODE-C                   Copy the file',0
-h_erase     db 'CODE-D                   Delete the file',0
+h_erase     db 'CODE-D                   Delete the file / subject',0
 h_move      db 'CODE-M                   Move the file',0
 h_rename    db 'CODE-R                   Rename the file',0
 h_f5        db 'F5                       after a disk swap',0
@@ -2631,6 +2767,9 @@ s_to        db ' to ', 0
 s_comma     db ', ', 0
 s_left      db ' is there already: left as it was', 0
 s_leftn     db ' left as they were', 0
+s_allin     db ' and all in it', 0
+s_dotdot    db '..', 0
+s_star      db '\*.*', 0
 s_mkq       db " isn't there: Confirm to make it", 0
 s_copy      db 'Copy ', 0
 s_move      db 'Move ', 0
