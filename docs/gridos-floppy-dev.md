@@ -82,7 +82,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 | HEADCLN.COM | 1,488 | floppy head cleaning with a wet cleaning disk |
 | TESTDOS.COM | 5,253 | kernel self-test (expect "24 passed, 0 failed") |
 | CACHETST.COM | 1,901 | disk-cache stress test (expect "0 errors"); logs to CACHETST.TXT, waits for a key |
-| BENCH.COM | 2,179 | BENCH 1.2 file system benchmark; runs under Grid-OS and GRiD MS-DOS; logs to BENCH.TXT, waits for a key |
+| BENCH.COM | 2,662 | BENCH 1.3 file system benchmark, plus 3 EMS tests (map, 57h moves) when there is EMS; runs under Grid-OS, GRiD MS-DOS and FreeDOS; logs to BENCH.TXT, waits for a key |
 | BENCH.TXT | 664 | BENCH log: run 8 (also in `gridos\bench\BENCH_1520_2026-10-05_reformatted.TXT`) |
 | DISKMAP.COM | 952 | saves the floppy's boot sector, FATs and root to DISKMAP.BIN; shows root entries in use |
 | GOSBOOT.COM | 3,047 | installs the Grid-OS boot sector (once per disk, and after every format) |
