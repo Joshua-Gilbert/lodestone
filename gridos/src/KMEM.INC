@@ -1,7 +1,7 @@
 ; =====================================================================
 ;  KMEM.INC - the memory arena: DOS-style MCBs from the end of the
 ;  kernel to the top of conventional memory.  The last block (owner 8,
-;  "SC") is the floppy track cache (KDISK).
+;  "SC") is the floppy track cache (KDISK), unless it is in EMS (KEMS).
 ;  MCB (one paragraph before each block): [0] 'M' or 'Z' (last),
 ;  [1] owner PSP (0 = free), [3] size in paragraphs, [8] name.
 ; =====================================================================
@@ -23,8 +23,9 @@ mem_init:
 %ifndef NOTC
         ; The track cache: the last block (owner 8, "SC") at the top of
         ; memory, inside one 64 KB page so floppy DMA reaches all of it
-        ; (below the page boundary if it would cross one).
-        mov     cx, ax
+        ; (below the page boundary if it would cross one).  (KEMS.INC:
+        ; when the cache is in EMS, a jump to .zm, which makes a 'Z')
+.tc:    mov     cx, ax
         sub     cx, TC_PARAS            ; its data
         dec     ax                      ; its last paragraph
         mov     dx, ax
@@ -45,7 +46,7 @@ mem_init:
         mov     word [es:8], 'SC'
         pop     es
         mov     ax, bx                  ; free memory ends below it
-        mov     dl, 'M'
+.zm:    mov     dl, 'M'
 %else
         mov     dl, 'Z'
 %endif

@@ -1,10 +1,10 @@
-Grid-OS vs GRiD MS-DOS vs FreeDOS, BENCH 1.3 in pcemu (2026-10-07)
+Grid-OS vs GRiD MS-DOS vs FreeDOS, BENCH 1.3 in pcemu (2026-10-07, rerun with 0.3.8)
 python3 bench/compare3.py <GRiD MS-DOS EPROM image> <EMM.SYS>
 
 Same emulator model as RESULTS.TXT (1.44 MB floppy, real-drive timing:
 300 rpm, seeks, rotation, motor; CPU 4 us a basic block, REP at the 1520's
 measured rates), and the 1520's 1408 KB of EMS (88 pages):
-  Grid-OS 0.3.7         its own EMS manager (KEMS.INC)
+  Grid-OS 0.3.8         its own EMS manager (KEMS.INC), the disk cache in EMS
   GRiD MS-DOS 3.30      from the EPROM, DEVICE=EMM.SYS (GRiD's, LIM 4.0)
   FreeDOS               kernel build 2046 (8086) + FreeCOM 0.87, built from
                         github.com/FDOS (bench/freedos), DEVICE=EMM.SYS
@@ -13,9 +13,9 @@ Each with its default configuration (no FILES/BUFFERS lines).
 emulator timing (s)                      Grid-OS          GRiD       FreeDOS
 Write 256 KB (16 KB writes)                9.139        12.659        12.576
 Read 256 KB (16 KB reads)                  8.713        11.410        11.227
-Read 256 KB (512-byte reads)               8.614       104.987       105.171
+Read 256 KB (512-byte reads)               8.615       104.987       105.171
 Read 256 KB (128-byte reads)               8.641       104.989       107.974
-64 random 512-byte reads                   9.469         9.927        12.913
+64 random 512-byte reads                   9.468         9.927        12.913
 Directory listing x 10                     0.023         0.070         0.137
 Open + close x 100                         0.218         0.422         0.905
 20 small files: create, delete            21.585        26.122        16.708
@@ -27,7 +27,7 @@ EMS: move 1 MB to EMS (57h)                0.364         0.505         0.505
 EMS: move 1 MB from EMS (57h)              0.364         0.505         0.505
 
 memory for programs:
-  Grid-OS 0.3.7        no EMS: 564.2 KB for programs  with EMS: 562.5 KB for programs
+  Grid-OS 0.3.8        no EMS: 564.2 KB for programs  with EMS: 580.3 KB for programs
   GRiD MS-DOS 3.30     no EMS: 580.4 KB for programs  with EMS: 573.1 KB for programs
   FreeDOS 2046+FreeCOM no EMS: 501.5 KB for programs  with EMS: 494.2 KB for programs
 
@@ -52,8 +52,10 @@ Notes
 - EMS: Grid-OS maps a page 6.8x faster than EMM.SYS (42 us against 286 us
   in this CPU model) and moves 1.4x faster (2.9 MB/s against 2.1 MB/s).
   FreeDOS and MS-DOS both use EMM.SYS, so their EMS numbers are the same.
-- Memory: FreeDOS leaves the least, about 63 KB less than Grid-OS: on a
+- Memory: with EMS, Grid-OS leaves the most (580.3 KB): 0.3.8 keeps its
+  18 KB cylinder cache in two EMS pages.  Without EMS the cache is in
+  conventional memory and GRiD MS-DOS leaves 16 KB more.  EMM.SYS takes
+  7.3 KB; Grid-OS's EMS manager 1.9 KB.  FreeDOS leaves the least: on a
   286 there is no HMA or UMBs to load it high, and FreeCOM is large.
-  GRiD MS-DOS leaves the most; Grid-OS is 16 KB behind, mostly for its 18 KB
-  cylinder cache (moving into EMS next) and the UI core.  EMM.SYS takes
-  7.3 KB; Grid-OS's EMS manager 1.7 KB.
+- The first run (0.3.7, cache in conventional memory) gave the same times
+  to within 0.001 s; with EMS it left 562.5 KB.

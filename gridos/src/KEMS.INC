@@ -15,7 +15,11 @@
 ;  program's EMS back before its memory (a TSR keeps its own), the device
 ;  EMMXXXX0 opens, and 'EMMXXXX0' is at offset 0Ah of the kernel's
 ;  segment, where programs look for it.  None of that costs a byte
-;  without EMS.
+;  without EMS.  And the disk cache moves in (with 3 pages or more): the
+;  last two pages the scan finds are its memory, and no program sees
+;  them; dio's call to tc_piece, mem_init (no "SC" block: DOS programs
+;  get its 18 KB) and INT 21h F0h's lend and back are hooked to the code
+;  under "the disk cache's memory" below.
 ;
 ;  Pages: ems_ltab holds every page the scan found, as its register
 ;  value.  Each handle owns one run of it, [start, start + count); the
@@ -872,9 +876,106 @@ ems_free_owner:
         pop     ax
         jmp     mem_free_owner
 
+%ifndef NOTC
+; ---------------------------------------------------------------------
+;  the disk cache's memory: two pages (ems_tcpg) in two windows side by
+;  side, only while tc_piece runs, then the windows as they were.  dio
+;  calls ems_tc in place of tc_piece (a piece: at most TC_PARAS paragraphs
+;  at ES:BX).  Windows 2 and 3 (E800h): the ones least used (57h and most
+;  programs start at 0); 0 and 1 (E000h) when the piece's memory may be in
+;  2 or 3; when it may be in both halves, no cache this time (emptied: a
+;  write may pass it).  Interrupts are off from the first register read
+;  to the last write, so nothing sees the frame half switched.
+;  While the pages are in, an interrupt handler that maps a page into
+;  window 2 or 3 and back (as LIM asks) is safe from the copies, but a
+;  fill's DMA in that moment would go to its page; and one that reads the
+;  frame without mapping sees the cache.  (An EMS disk cache's lot.)
+;  No INT 24h with the pages in: the cache's own reads run without it,
+;  and when one fails dio reads the piece itself (with retries and INT 24h
+;  as always), the program's windows back.
+; ---------------------------------------------------------------------
+ems_tc: mov     ax, bx
+        shr     ax, 4
+        mov     dx, es
+        add     ax, dx                  ; its first paragraph P
+        mov     dx, EMS_PORT + 8000h
+        mov     di, EMS_FRAME + 800h
+        sub     ax, EMS_FRAME + 800h - TC_PARAS
+        cmp     ax, 800h + TC_PARAS     ; P below E800h - TC_PARAS, or from
+        jae     .in                     ;  F000h on: windows 2 and 3
+        mov     dh, EMS_PORT >> 8
+        mov     di, EMS_FRAME
+        cmp     ax, TC_PARAS            ; from E800h on: 0 and 1
+        jae     .in
+        mov     byte [tc_drv], 0FFh
+        xor     al, al                  ; (CF clear)
+        ret
+.in:    mov     [tc_seg], di
+        mov     di, [ems_tcpg]
+        mov     ah, 0
+        xchg    ah, [io_crit]
+        cli
+        in      al, dx                  ; AH = io_crit as it was, AL = what
+        xchg    ax, di                  ;  the first window showed
+        out     dx, al
+        add     dh, 40h
+        in      al, dx
+        xchg    al, ah
+        out     dx, al                  ; (AH = what the second one showed)
+        sti
+        push    di
+        push    dx
+        push    ax
+        call    tc_piece
+        jnc     .ok
+        xor     al, al                  ; (a read failed: dio's turn)
+.ok:    xchg    ax, di
+        pop     ax
+        pop     dx
+        cli
+        mov     al, ah
+        out     dx, al
+        sub     dh, 40h                 ; (CF clear)
+        pop     ax
+        out     dx, al
+        sti
+        mov     [io_crit], ah
+        xchg    ax, di
+        ret
+
+; INT 21h F0h AL=2 and 3 (lend, back): the windows' save-under is a
+; block of the cache's size of its own while it is lent; the cache goes on
+; meanwhile.  CF (AX = 8) if it is lent already or there is no room.
+ems_lend:
+        cmp     word [ems_su], 0
+        jne     .no
+        mov     bx, TC_PARAS
+        mov     dx, 8
+        call    mem_alloc
+        jc      .no
+        mov     [ems_su], ax
+        mov     [bp+F_ES], ax
+        dec     ax
+        mov     es, ax
+        mov     word [es:8], 'SC'
+        mov     word [bp+F_CX], TC_SECS * 512
+        jmp     ok
+.no:    jmp     f_F0.nolend
+ems_back:
+        xor     ax, ax
+        xchg    ax, [ems_su]
+        mov     es, ax
+        call    mem_free                ; (none lent: no block at 0, nothing)
+        jmp     ok
+%endif
+
 ; ---------------------------------------------------------------------
 ;  data
 ; ---------------------------------------------------------------------
+%ifndef NOTC
+ems_tcpg:   dw 0                        ; the cache's two pages (register values)
+ems_su:     dw 0                        ; the save-under block (F0h AL=2)
+%endif
 ems_h:      db 0, 0                     ; handles: start (FFh: closed), pages,
             dw 0                        ;  owner PSP; 0 is the system's (its
             times EMS_NH - 1 dd 0FFh    ;  owner's low byte: ems_used)
@@ -950,6 +1051,31 @@ ems_init:
         mov     ax, di
         sub     ax, ems_ltab
         jz      .no
+%ifndef NOTC
+        cmp     ax, 3                   ; the disk cache: the last two pages
+        jb      .ntc
+        dec     di
+        dec     di
+        mov     ax, [di]
+        mov     [ems_tcpg], ax
+        mov     ax, ems_tc              ; dio's tc_piece
+        sub     ax, dio.tcp + 3
+        mov     [dio.tcp + 1], ax
+        mov     al, 0E9h                ; F0h's lend and back: JMP NEAR
+        mov     [f_F0.lend], al
+        mov     [f_F0.back], al
+        mov     ax, ems_lend
+        sub     ax, f_F0.lend + 3
+        mov     [f_F0.lend + 1], ax
+        mov     ax, ems_back
+        sub     ax, f_F0.back + 3
+        mov     [f_F0.back + 1], ax
+        mov     word [mem_init.tc], 0EBh | (mem_init.zm - mem_init.tc - 2) << 8
+        mov     byte [mem_init.zm + 1], 'Z'     ; (no "SC" block)
+        mov     ax, di
+        sub     ax, ems_ltab
+.ntc:
+%endif
         mov     [ems42 + 1], al         ; the page count, where it is used
         mov     [ems_resize.np1], ax
         mov     [ems_resize.np2], ax
