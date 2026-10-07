@@ -2083,12 +2083,10 @@ build_info:
 ; ---------------------------------------------------------------------
 ex_keys:
         KEY(K_NONE,      0,          h_choose)
-        KEY(K_NONE,      0,          h_home)
         KEY(K_NONE,      0,          h_tab)
         KEY(K_NONE,      0,          h_letter)
-        KEY(K_NONE,      0,          h_mouse)
         KEY(K_ENTER,     confirm,    h_confirm)
-        KEY(K_F1,        ex_help,    h_help)
+        KEY(K_F1,        ex_help,    0)
         KEY(K_CODE_HELP, ex_help,    0)
         KEY(K_CODE_U,    run_usage,  h_usage)
         KEY(K_CODE_W,    run_write,  h_write)
@@ -2099,27 +2097,22 @@ ex_keys:
         KEY(K_CODE_M,    ex_move,    h_move)
         KEY(K_CODE_R,    ex_rename,  h_rename)
         KEY(K_F5,        refresh,    h_f5)
-        KEY(K_NONE,      0,          h_saver)
         KEY(K_NONE,      0,          h_code)
-        dw 0                            ; (18 help lines: the most there is room for)
+        dw 0                            ; (13 help lines; there is room for 18)
 
 h_choose    db 'Up / Down, PgUp / PgDn   choose',0
-h_home      db 'Home / End               first / last',0
 h_tab       db 'Tab / Shift-Tab          Device, Subject, Title',0
-h_letter    db 'A letter                 the next name with it',0
-h_mouse     db 'Mouse                    point and click',0
+h_letter    db 'Type its first letter    find a name',0
 h_confirm   db 'Return or click again    open it / next item',0
-h_help      db 'CODE-?  or  F1           this help',0
-h_usage     db 'CODE-U                   Usage: the System program',0
+h_usage     db 'CODE-U                   System',0
 h_write     db 'CODE-W                   Write: a new text file',0
 h_claude    db 'CODE-A                   Claude',0
 h_shell     db 'CODE-P                   command prompt',0
 h_copy      db 'CODE-C                   Copy the file',0
-h_erase     db 'CODE-D                   Delete (erase) the file',0
+h_erase     db 'CODE-D                   Delete the file',0
 h_move      db 'CODE-M                   Move the file',0
 h_rename    db 'CODE-R                   Rename the file',0
 h_f5        db 'F5                       after a disk swap',0
-h_saver     db '5 minutes idle           screen saver',0
 h_code      db 'CODE is the Alt key.  Any key closes.',0
 
 ; ---------------------------------------------------------------------
