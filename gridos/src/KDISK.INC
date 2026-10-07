@@ -820,6 +820,9 @@ buf_has:
         ret
 
 ; write the buffer holding address SI back to its sector.  CF: AX = error
+; (and the buffer forgotten: it holds what the disk doesn't, and a later
+; write of the sector would carry it there, e.g. a DELETE refused by a
+; write-protected disk done after all once the tab is off)
 buf_put:
         push    bx
         push    cx
@@ -833,6 +836,7 @@ buf_put:
         shl     bx, 1
         mov     dx, [buf_lba+bx]
         pop     bx
+        push    bx                      ; (the buffer's number)
         shl     bx, 9
         add     bx, bufs                ; the buffer's start
         push    cs
@@ -840,7 +844,10 @@ buf_put:
         mov     cx, 1
         mov     ah, 3
         call    disk_io
-        pop     es
+        pop     bx
+        jnc     .ok
+        mov     byte [buf_drv+bx], 0FFh ; (CF stays set)
+.ok:    pop     es
         pop     dx
         pop     cx
         pop     bx
