@@ -1,4 +1,4 @@
-Grid-OS 0.3.4 - boot floppy
+Grid-OS 0.3.5 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -94,17 +94,27 @@ no \ : * or ?, a subject no : * or ?.
 10, 15 and 30 minutes, then never.  The choice goes in GRIDOS.INI as
 SAVER=10 (no line for the usual 5 minutes) and is read at start-up.
 
+0.3.5: wildcards.  Copy, Move and Delete have a Titles field, filled in
+with the chosen title: type *.TXT, NOTES.* or ?.DAT for every title in
+the subject that matches (or another title, for that one).  Copy and
+Move have Replace for a title already there: Ask (the question for
+each; ESC leaves that one), All, or None.  Copy has Only newer: a title
+there already is replaced only by a newer one - for a backup to B:,
+*.* with Replace All and Only newer Yes.  Delete with * or ? asks
+first, saying how many; read-only titles stay and are counted.  Return
+moves through a form; CODE-Return confirms from anywhere in it.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
-  A letter                       the next name starting with it
+  Type its first letter          find a name
   Return                         run it / open it (Device, Subject: on)
   CODE-U                         Usage (SYSTEM.RUN)
   CODE-W                         Write a new text file (WRITE.RUN)
   CODE-A                         Claude (CLAUDE.COM)
   CODE-P                         command prompt (GRIDCMD.COM, EXIT returns)
-  CODE-C, CODE-M                 Copy, Move the file
-  CODE-R, CODE-D                 Rename, Delete the file
+  CODE-C, CODE-M                 Copy, Move (Titles: * and ? too)
+  CODE-R, CODE-D                 Rename, Delete (Titles: * and ? too)
   F5                             read the disk again after a swap
   CODE-? (Alt+/) or F1           help
   5 minutes idle                 screen saver (DEFRAG, then the time;
