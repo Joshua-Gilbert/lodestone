@@ -27,7 +27,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 - **TERMINUS.FNT** (1,536 bytes) — the font 0.3 started with, as a file for System's Display topic. Built from `fonts\TERMINUS.ASM`; `typfont.py X.TYP --fnt X.FNT` makes one from any 8×16 GRiD .TYP font.
 - **DEFRAG.COM** — the disk tidier, and the screen saver's first act. It keeps going on worn disks (marks bad clusters, logs to DEFRAG.TXT), and `DEFRAG /T` tests the free space. See `gridos-defrag.md`.
 - **HEADCLN.COM** — floppy head cleaning with a wet cleaning disk (0.2.3).
-- **GRIDCMD.COM** — the command prompt (CODE-C) and CLAUDE's `COMSPEC /C`.
+- **GRIDCMD.COM** — the command prompt (CODE-P) and CLAUDE's `COMSPEC /C`.
   - Deliberately **not** named COMMAND.COM; see the rule below.
 - **Emulator and tests:**
   - **pcemu.py** — a BIOS-only PC that boots the real floppy image (built by `mkimg.py` with mtools + BOOT.BIN). It has an optional real-drive timing model and can simulate unreadable sectors. Its INT 16h behaves like the 1520's BIOS for CODE + punctuation/Return/ESC.
@@ -72,7 +72,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 | File | Size | What |
 |---|---|---|
 | GRIDOS.SYS | 32,842 | **Grid-OS 0.3.2** kernel + UI core + Executive + disk cache + screen saver, in GRiD's font, with the CODE-? fix, the review panel's fixes, switchable fonts, the INT 33h mouse for DOS programs and the File form (Device, Subject, Title; Tab) (COMSPEC = A:\GRIDCMD.COM) |
-| GRIDCMD.COM | 7,596 | Grid-OS command prompt (CODE-C; CLAUDE's DOS commands); says 0.3 |
+| GRIDCMD.COM | 7,596 | Grid-OS command prompt (CODE-P; CLAUDE's DOS commands); says 0.3 |
 | SYSTEM.RUN | 7,608 | System (CODE-U): memory, disks, clock, devices, GPIB scan, display (fonts), about |
 | WRITE.RUN | 8,215 | Write (CODE-W, or open a text file from the list) |
 | GRIDOS.TXT | 7,880 | readme for 0.3 (with the 0.2.x notes; GRiD's font, CODE-?, fonts and GRIDOS.INI) |
@@ -131,7 +131,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 - **2026-10-06 14:48: 0.3.1 on A:** GRIDOS.SYS 32,162, GRIDOS.TXT 7,283 and TM5000G.EXE 296,634 (TM5000 PR #3: the pointer comes back after a menu left by a key), each copied on its own and read back identical (GRIDOS.SYS needed a second copy, see the rule above).
 - **2026-10-06 afternoon: 0.3.2 (first build), devices in the Executive:** copied to A: at 15:19 and read back; replaced by the File form build below.
 - **2026-10-06 later: 0.3.2, the File form** (GRiDManager-style: Tab / Shift-Tab, or Return, move the outline over Device, Subject, Title; the list shows that item's choices; CODE-R and CODE-D removed). Tested in emulation (186 app checks). **On A: at 16:07:** GRIDOS.SYS 32,842 and GRIDOS.TXT 7,880, each copied on its own from a fresh staging path and read back identical (SYSTEM.RUN 7,608 already there). **Next on the 1520 (0.3.2):** Tab / Shift-Tab over Device, Subject, Title; B: by Device; a subject from the tree; Return on a title; clicks on the items.
-- **2026-10-06 evening: 0.3.3, file commands** (CODE-D Copy, CODE-M Move, CODE-R Rename, CODE-E Erase; questions survive the screen saver; the kernel's `buf_put` fix for failed writes). Built in another session in the PC folder, then verified here: the same GRIDOS.SYS, 237 app checks. In `releases\0.3.3`: GRIDOS.SYS 35,364, GRIDOS.TXT 8,903.
+- **2026-10-06 evening: 0.3.3, file commands** (CODE-C Copy, CODE-M Move, CODE-R Rename, CODE-D Delete; CODE-P the command prompt; questions survive the screen saver; the kernel's `buf_put` fix for failed writes). Built in another session in the PC folder, then verified here: the same GRIDOS.SYS, 237 app checks. In `releases\0.3.3`: GRIDOS.SYS 35,360, GRIDOS.TXT 8,913.
 - **Next, on the 1520 (the checklist in `gridos-0.3-apps.md`):**
   - CODE-? everywhere;
   - CODE-ESC to cancel in Write;

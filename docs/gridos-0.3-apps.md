@@ -247,12 +247,12 @@
 
   | Key | Command | Form |
   |---|---|---|
-  | CODE-D | Copy | Device, Subject and Title of the copy (this drive, subject and title to start with) |
+  | CODE-C | Copy | Device, Subject and Title of the copy (this drive, subject and title to start with) |
   | CODE-M | Move | Device and Subject |
   | CODE-R | Rename | the new title, in the same subject |
-  | CODE-E | Erase | a question first |
+  | CODE-D | Delete (erase) | a question first |
 
-  CODE-D and CODE-R are GRiDManager's Duplicate and its rename; the old restart keys were gone in 0.3.2.
+  Joshua's keys: C for Copy, D for Delete, M for Move, R for Rename. The command prompt moved from CODE-C to **CODE-P**.
 - **Copy** writes the copy under a temporary name first, and renames it only once it is complete. So a full or write-protected disk leaves what was there alone, and the date and time go with the copy.
 - **Move** on the same drive only moves the directory entry. To the other drive it copies, then erases; a read-only file is refused.
 - **A title that is already there** is replaced only after confirming.
@@ -262,7 +262,7 @@
 - **Erase** asks first, and read-only files stay.
 - **Core, through the screen saver:** questions, forms and messages keep their band. The core remembers the waiting band (`held1`/`held2`, `hold_band`) and `redraw_all` puts it back. DEFRAG doesn't start while a question waits; the saver shows only the dark clock.
 - **Kernel, `buf_put`:** a sector write that fails no longer leaves the change in the buffer. Before, a later write to the same sector carried it to the disk: for example, a delete refused by a write-protected disk happened after all once the tab was off.
-- **Cost:** GRIDOS.SYS 35,364 bytes. A DOS program gets 565.9 KB, 2.8 KB less than 0.3.2.
+- **Cost:** GRIDOS.SYS 35,360 bytes. A DOS program gets 565.9 KB, 2.8 KB less than 0.3.2.
 - **Tests:**
   - **`t_files`:** each command and its form, replace-or-not, read-only files, a write-protected disk, and copies between A: and B: checked byte for byte.
   - **`t_file_safety`:** the review's cases:

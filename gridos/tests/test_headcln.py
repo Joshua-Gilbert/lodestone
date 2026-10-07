@@ -43,7 +43,7 @@ def boot(b=None):
 def start_prog(k, args=''):
     k.pc.tty.clear()
     if args:
-        k.key(ktest.CODE_C)
+        k.key(ktest.CODE_P)
         k.key('headcln' + args)
         k.key(ktest.ENTER, settle=False)
     else:

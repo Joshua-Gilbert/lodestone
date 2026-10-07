@@ -601,7 +601,7 @@ sel_path:
         mov     byte [di], 0
         ret
 
-; CODE-C: the command shell from COMSPEC
+; CODE-P: the command prompt (COMSPEC)
 run_shell:
         push    es
         mov     ah, 62h                 ; our PSP (the root's)
@@ -953,8 +953,8 @@ show_msg:
 
 ; ---------------------------------------------------------------------
 ;  file commands on the chosen title, verb first as in GRiD's Executive:
-;  the command, then a form or a question, then confirm.  CODE-D Copy,
-;  CODE-E Erase, CODE-M Move, CODE-R Rename
+;  the command, then a form or a question, then confirm.  CODE-C Copy,
+;  CODE-D Delete (erase), CODE-M Move, CODE-R Rename
 ; ---------------------------------------------------------------------
 COPYBUF equ 800h                        ; Copy's buffer: 32 KB (paragraphs)
 
@@ -970,7 +970,7 @@ file_ok:
         stc
         ret
 
-; CODE-E: Erase, after a question
+; CODE-D: Delete (erase), after a question
 ex_erase:
         call    file_ok
         jc      .x
@@ -1058,7 +1058,7 @@ ex_rename:
         mov     bx, s_cantren
         jmp     cant_msg
 
-; CODE-D: Copy, CODE-M: Move.  A form: Device, Subject (and for Copy a
+; CODE-C: Copy, CODE-M: Move.  A form: Device, Subject (and for Copy a
 ; Title), this drive, subject and title to start with.  (In pieces: the
 ; 286 has only short conditional jumps.)
 ex_copy:
@@ -2093,9 +2093,9 @@ ex_keys:
         KEY(K_CODE_U,    run_usage,  h_usage)
         KEY(K_CODE_W,    run_write,  h_write)
         KEY(K_CODE_A,    run_claude, h_claude)
-        KEY(K_CODE_C,    run_shell,  h_shell)
-        KEY(K_CODE_D,    ex_copy,    h_copy)
-        KEY(K_CODE_E,    ex_erase,   h_erase)
+        KEY(K_CODE_P,    run_shell,  h_shell)
+        KEY(K_CODE_C,    ex_copy,    h_copy)
+        KEY(K_CODE_D,    ex_erase,   h_erase)
         KEY(K_CODE_M,    ex_move,    h_move)
         KEY(K_CODE_R,    ex_rename,  h_rename)
         KEY(K_F5,        refresh,    h_f5)
@@ -2113,9 +2113,9 @@ h_help      db 'CODE-?  or  F1           this help',0
 h_usage     db 'CODE-U                   Usage: the System program',0
 h_write     db 'CODE-W                   Write: a new text file',0
 h_claude    db 'CODE-A                   Claude',0
-h_shell     db 'CODE-C                   command prompt',0
-h_copy      db 'CODE-D                   Copy the file (duplicate)',0
-h_erase     db 'CODE-E                   Erase the file',0
+h_shell     db 'CODE-P                   command prompt',0
+h_copy      db 'CODE-C                   Copy the file',0
+h_erase     db 'CODE-D                   Delete (erase) the file',0
 h_move      db 'CODE-M                   Move the file',0
 h_rename    db 'CODE-R                   Rename the file',0
 h_f5        db 'F5                       after a disk swap',0
