@@ -103,6 +103,8 @@ there already is replaced only by a newer one - for a backup to B:,
 *.* with Replace All and Only newer Yes.  Delete with * or ? asks
 first, saying how many; read-only titles stay and are counted.  Return
 moves through a form; CODE-Return confirms from anywhere in it.
+A Subject that isn't there is made, after a question ("B:\NEW isn't
+there: Confirm to make it"), each level of it.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
