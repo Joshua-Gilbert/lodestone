@@ -139,6 +139,21 @@ ptext:  mov     dx, [py]                ; SI = a line of its own
 pgap:   add     word [py], 8
         ret
 
+; an EMS manager on INT 67h ('EMMXXXX0' at its segment:000Ah; Grid-OS's
+; own when there is EMS)?  CF if not
+ems_mgr:
+        push    es
+        mov     ax, 3567h
+        int     21h
+        mov     di, 0Ah
+        mov     si, s_emm
+        mov     cx, 8
+        repe    cmpsb
+        pop     es
+        je      .x
+        stc
+.x:     ret
+
 ; AX = paragraphs -> "570.6 KB" at DI
 sb_kb:  push    ax
         push    bx
@@ -247,6 +262,9 @@ t_memory:
         jmp     .walk
 .done:  call    .close
         ; the lines
+        call    ems_mgr
+        sbb     al, al
+        mov     [m_noems], al
         call    vstart
         int     12h
         mov     cx, 6
@@ -258,7 +276,10 @@ t_memory:
         mov     ax, [m_kernel]
         call    sb_kb
         mov     si, l_kernel
-        call    pline_r
+        cmp     byte [m_noems], 0
+        jne     .kd
+        mov     si, l_kernel_e          ; (Grid-OS's EMS manager is in it)
+.kd:    call    pline_r
         call    vstart
         mov     ax, [ui_base]
         add     ax, [m_exec]
@@ -291,8 +312,30 @@ t_memory:
         mov     si, l_free
         call    pline_r
         call    pgap
-        call    vstart                  ; expanded / extended (GRiD BIOS)
-        mov     ax, 0E440h
+        cmp     byte [m_noems], 0       ; expanded memory: the EMS manager's
+        jne     .bios                   ;  pages, and how many are free
+        mov     ah, 42h
+        int     67h
+        or      ah, ah
+        jnz     .bios
+        push    bx
+        xchg    ax, dx
+        mov     si, l_ems
+        call    .pages
+        pop     ax
+        mov     si, l_dfree
+        call    .pages
+        jmp     short .noems
+.pages: shl     ax, 4                   ; AX pages, on a line labelled SI
+        push    si
+        call    vstart
+        call    UI_SBU16
+        mov     si, s_kb
+        call    UI_SBSTR
+        pop     si
+        jmp     pline_r
+.bios:  call    vstart                  ; else expanded / extended as the GRiD
+        mov     ax, 0E440h              ;  BIOS has them
         int     15h
         jc      .noems
         or      cx, cx
@@ -1475,6 +1518,8 @@ h_quit      db 'ESC  or  CODE-Q              back to the Executive',0
 s_kb        db ' KB',0
 l_conv      db 'Conventional memory',0
 l_kernel    db 'Kernel (DOS + GPIB)',0
+l_kernel_e  db 'Kernel (DOS + GPIB + EMS)',0
+s_emm       db 'EMMXXXX0'
 l_exec      db 'Executive and UI core',0
 l_this      db 'System (this program)',0
 l_cache     db 'Disk cache',0
@@ -1604,6 +1649,7 @@ m_best      resw 1
 m_run       resw 1
 m_inrun     resb 1
 m_prevui    resb 1
+m_noems     resb 1                  ; FFh: no EMS manager on INT 67h
 m_runadj    resb 1
 drv         resb 1
 cmos10      resb 1

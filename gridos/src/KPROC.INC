@@ -664,7 +664,7 @@ terminate:
         jmp     .mem
 .free:  call    ui_progend              ; (INT 33h forgets its handler)
         mov     ax, bx
-        call    mem_free_owner
+.fcall: call    mem_free_owner          ; (KEMS.INC: ems_free_owner, if EMS)
 .mem:   call    fat_flush
         mov     es, bx
         mov     dx, [es:16h]            ; parent

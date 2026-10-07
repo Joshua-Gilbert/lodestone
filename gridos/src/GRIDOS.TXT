@@ -1,4 +1,4 @@
-Grid-OS 0.3.6 - boot floppy
+Grid-OS 0.3.7 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -113,6 +113,18 @@ subject below it, then the subject; Subject then shows the one above.
 Root can't be erased.  A subject Windows wrote long names into can be
 erased too (RD as well).
 
+0.3.7: expanded memory (EMS) for DOS programs, when the 1520's memory
+above 640 KB is set to EMS (as GRIDMEM EMS sets it, then restart).
+Grid-OS is the EMS manager itself, LIM 4.0 on INT 67h, the way GRiD's
+EMM.SYS drives the hardware: a 64 KB page frame at E000h, the 1408 KB
+in 16 KB pages.  Programs find it as they find any EMM (the name
+EMMXXXX0, the device EMMXXXX0).  It takes 1.8 KB of the memory
+programs get; with the memory set to extended, or no EMS, it takes
+nothing.  EMS a program leaves allocated comes back when it ends (a TSR
+keeps its own).  System's Memory topic shows the EMS and how much of it
+is free.  Not there: handle names are not kept, and 55h/56h (map and
+jump or call), 5Bh (alternate map sets) and 5Dh.  EMSTEST checks it.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -143,6 +155,10 @@ Programs:
   CACHETST  checks the disk cache: random reads and writes on two
             files, every byte checked ("0 errors" is right; about 400 KB
             free needed, a few minutes).  Results go to CACHETST.TXT too
+  EMSTEST   checks the EMS (INT 67h): "0 failed" is right; the results are added
+            to EMSTEST.TXT and it waits for a key.  Run it under
+            GRiD MS-DOS with EMM.SYS too, to compare: what only Grid-OS
+            does is skipped there
   BENCH     file system benchmark: run it here, then under GRiD MS-DOS
             from this drive (B: there), and compare (about 400 KB free
             needed; some 5 minutes under MS-DOS).  Each run is added to
