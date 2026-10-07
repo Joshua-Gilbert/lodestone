@@ -75,7 +75,7 @@ without pressing F.
 
 0.3.3: file commands in the Executive, verb first as in GRiDManager:
 choose a title, press the command, fill in the form, confirm.
-  CODE-D  Copy: Device, Subject and Title of the copy (this drive,
+  CODE-C  Copy: Device, Subject and Title of the copy (this drive,
           subject and title to start with).  The copy is written as a
           new file first and only then takes its name, so a full or
           write-protected disk leaves what was there alone.  The date
@@ -84,7 +84,7 @@ choose a title, press the command, fill in the form, confirm.
           moves; to the other drive it is copied, then erased (not a
           read-only file).
   CODE-R  Rename: the new title, in the same subject.
-  CODE-E  Erase, after a question.  Read-only files stay.
+  CODE-D  Delete (erase), after a question.  Read-only files stay.
 A title already there is replaced only if you confirm.  The Subject is
 typed as a path from the root (\ for Root, \DOS.330\DEEP); a title has
 no \ : * or ?, a subject no : * or ?.
@@ -97,9 +97,9 @@ The Executive (the file list):
   CODE-U                         Usage (SYSTEM.RUN)
   CODE-W                         Write a new text file (WRITE.RUN)
   CODE-A                         Claude (CLAUDE.COM)
-  CODE-C                         command prompt (GRIDCMD.COM, EXIT returns)
-  CODE-D, CODE-M                 Copy, Move the file
-  CODE-R, CODE-E                 Rename, Erase the file
+  CODE-P                         command prompt (GRIDCMD.COM, EXIT returns)
+  CODE-C, CODE-M                 Copy, Move the file
+  CODE-R, CODE-D                 Rename, Delete the file
   F5                             read the disk again after a swap
   CODE-? (Alt+/) or F1           help
   5 minutes idle                 screen saver (DEFRAG, then the time)

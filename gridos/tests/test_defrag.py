@@ -73,7 +73,7 @@ def t_refuse():
     def wp(k): k.pc.drives[0].wp = True
     k = ktest.KPC(img); k.start()
     k.pc.drives[0].wp = True
-    k.key(ktest.CODE_C); k.key('defrag /s')
+    k.key(ktest.CODE_P); k.key('defrag /s')
     f4c = 0x600 + k.Y['f_4C']; seen = []
     k.pc.watch = lambda a: seen.append(1) if a == f4c else None
     k.key(ktest.ENTER, settle=False)
@@ -85,7 +85,7 @@ def t_refuse():
     # a drive without a change line
     k = ktest.KPC(img); k.start()
     k.pc.drives[0].no_changeline = True
-    k.key(ktest.CODE_C); k.key('defrag /s'); seen.clear()
+    k.key(ktest.CODE_P); k.key('defrag /s'); seen.clear()
     k.pc.watch = lambda a: seen.append(1) if a == f4c else None
     k.key(ktest.ENTER, settle=False)
     k.pc.run_until(lambda: seen, 600)
@@ -124,7 +124,7 @@ def t_open_file():
     D.mcopy(img, b'DEFRAG /S\r\nECHO OK > DONE.TXT\r\n', 'RUN.BAT', OUT)
     raw0 = open(img, 'rb').read()
     k = ktest.KPC(img); k.start()
-    k.key(ktest.CODE_C); k.key('run')
+    k.key(ktest.CODE_P); k.key('run')
     f4c = 0x600 + k.Y['f_4C']; seen = []
     k.pc.watch = lambda a: seen.append(1) if a == f4c else None
     k.key(ktest.ENTER, settle=False)
