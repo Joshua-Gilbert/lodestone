@@ -2,7 +2,8 @@
 ;  EXEC.INC - the Executive: the root process, on the UI core.  It uses
 ;  the kernel through INT 21h like any program: find first/next for the
 ;  list, CHDIR for subjects, EXEC for DOS programs; .RUN programs go
-;  through the core's loader.
+;  through the core's loader.  Copy, Erase, Move and Rename work on the
+;  chosen title.
 ; =====================================================================
 LIST_Y  equ 24          ; first list row (pixels)
 LIST_N  equ 13          ; visible list rows
@@ -18,6 +19,7 @@ FOC_TIT equ 0           ; the outlined item: Title (the list holds titles),
 FOC_DEV equ 1           ;  Device (the drives),
 FOC_SUB equ 2           ;  Subject (the subjects of this drive)
 SUBJ    equ 14          ; a subject in the list: depth, NAME    EXT, date
+SUBMAX  equ 66          ; a subject's path, "\" and all (the kernel's CWDLEN - 2)
 
 section uibss
 exec_dta    resb 44
@@ -45,6 +47,31 @@ biosdate    resb 8
 kindbuf     resb 4
 msgbuf      resb 128
 infobuf     resb 128
+dstpath     resb 84                 ; Copy, Move: X: + \ + a 66-char subject + \ +
+tmppath     resb 84                 ;  NAME.EXT (83); the subject it goes to, then
+                                    ;  the new file in it (X:\SUBJECT\ABCDTMP, 78)
+curdir      resb 72                 ; X:\SUBJECT, where the list is
+c_sub       resb SUBMAX + 1         ; the forms' fields: Subject, Title, Device
+c_tit       resb 13
+c_dev       resb 1
+fcbbuf      resb 11
+xmode       resb 1                  ; 0 Copy, 1 Move
+x_here      resb 1                  ; 1: it goes to the subject listed
+d_exists    resb 1                  ; the destination is there already
+tmp_made    resb 1                  ; copy_file made the new file (delete it on failure)
+tmp_kept    resb 1                  ; ... and kept it: the old destination was gone
+x_part      resb 1                  ; Move: copied, but the original stays
+id_src      resb 5                  ; same_file: drive, directory, entry
+id_dst      resb 5
+ftitle      resb 24                 ; the form's window title: "Copy NAME.EXT"
+o_sel       resw 1                  ; the list's place before a command
+o_top       resw 1
+h_src       resw 1
+h_tmp       resw 1
+buf_seg     resw 1
+buf_len     resw 1
+f_time      resw 1
+f_date      resw 1
 section ui
 
 ; the file list (UI_LV* layout); nent, sel and top are read by the tests
@@ -574,7 +601,7 @@ sel_path:
         mov     byte [di], 0
         ret
 
-; CODE-C: the command shell from COMSPEC
+; CODE-P: the command prompt (COMSPEC)
 run_shell:
         push    es
         mov     ah, 62h                 ; our PSP (the root's)
@@ -922,6 +949,793 @@ show_msg:
         mov     di, s_anykey
         call    ui_band
         mov     byte [msgshown], 1
+        ret
+
+; ---------------------------------------------------------------------
+;  file commands on the chosen title, verb first as in GRiD's Executive:
+;  the command, then a form or a question, then confirm.  CODE-C Copy,
+;  CODE-D Delete (erase), CODE-M Move, CODE-R Rename
+; ---------------------------------------------------------------------
+COPYBUF equ 800h                        ; Copy's buffer: 32 KB (paragraphs)
+
+; CF (and a beep) unless a title is chosen: Title outlined, a file listed
+file_ok:
+        cmp     byte [focus], FOC_TIT
+        jne     .no
+        cmp     word [nent], 0
+        je      .no
+        clc
+        ret
+.no:    call    ui_beep
+        stc
+        ret
+
+; CODE-D: Delete (erase), after a question
+ex_erase:
+        call    file_ok
+        jc      .x
+        call    sel_name                ; runpath = NAME.EXT
+        mov     di, msgbuf              ; "Erase: Confirm to erase NAME.EXT"
+        mov     si, s_eraseq
+        call    sb_str
+        mov     si, runpath
+        call    sb_str
+        mov     byte [di], 0
+        mov     si, msgbuf
+        call    ui_ask
+        jc      .x
+        call    api_criterr             ; (an old disk error forgotten)
+        mov     dx, runpath
+        mov     ah, 41h
+        int     21h
+        jc      .err
+        mov     ax, [sel]
+        jmp     relist_at
+.x:     ret
+.err:   cmp     ax, 5                   ; Access denied: read-only?  Say so
+        jne     .e
+        push    ax
+        mov     dx, runpath
+        mov     ax, 4300h
+        int     21h
+        pop     ax
+        jc      .e
+        test    cl, 1
+        jz      .e
+        mov     bx, s_canterase
+        mov     si, s_readonly
+        jmp     cant_why
+.e:     mov     [ex_code], ax
+        mov     si, runpath
+        mov     bx, s_canterase
+        jmp     cant_msg
+
+; CODE-R: Rename, in its subject (a form: the new title)
+ex_rename:
+        call    file_ok
+        jc      .x
+        call    sel_name
+        mov     si, s_rename
+        call    form_title
+        mov     di, c_tit
+        mov     si, runpath
+        call    sb_str
+        mov     byte [di], 0
+        mov     si, ren_form
+        call    ui_form
+        jc      .x
+        mov     si, c_tit
+        call    upcase_trim
+        cmp     byte [c_tit], 0
+        je      .x
+        mov     si, runpath             ; the same title: nothing to do
+        mov     di, c_tit
+        call    str_eq
+        je      .x
+        mov     si, c_tit               ; a title only (RENAME would take a
+        mov     di, s_titch             ;  path and move the file)
+        call    has_any
+        jnc     .ok
+        mov     bx, s_cantren
+        mov     si, s_badtit
+        jmp     cant_why
+.ok:    call    api_criterr
+        mov     dx, c_tit               ; that title taken: say so (RENAME
+        mov     ax, 4300h               ;  itself would say Access denied)
+        int     21h
+        mov     ax, 80
+        jnc     .err
+        mov     dx, runpath
+        mov     di, c_tit
+        mov     ah, 56h
+        int     21h
+        jc      .err
+        mov     si, c_tit
+        jmp     relist_name
+.x:     ret
+.err:   mov     [ex_code], ax
+        mov     si, runpath
+        mov     bx, s_cantren
+        jmp     cant_msg
+
+; CODE-C: Copy, CODE-M: Move.  A form: Device, Subject (and for Copy a
+; Title), this drive, subject and title to start with.  (In pieces: the
+; 286 has only short conditional jumps.)
+ex_copy:
+        mov     byte [xmode], 0
+        jmp     short xfer
+ex_move:
+        mov     byte [xmode], 1
+xfer:   call    file_ok
+        jc      .x
+        call    xfer_form
+        jc      .x
+        call    xfer_dest
+        call    xfer_check              ; no wildcards; no path in a title
+        jc      .bad
+        mov     si, argpath             ; the file itself (however spelled):
+        mov     di, dstpath             ;  nothing to do
+        call    str_eq
+        je      .same
+        call    same_file
+        je      .same
+        call    xfer_do
+        jc      .fail
+        jmp     xfer_done
+.fail:  or      ax, ax                  ; (AX = 0: not replaced after all)
+        jz      .x
+        cmp     byte [tmp_kept], 0
+        jne     .kept
+        mov     [ex_code], ax
+        call    xfer_cant
+        mov     si, runpath
+        jmp     cant_msg
+.bad:   call    xfer_cant
+        jmp     cant_why
+.x:     ret
+.same:  mov     di, msgbuf
+        mov     si, runpath
+        call    sb_str
+        mov     si, s_same
+        call    sb_str
+        mov     byte [di], 0
+        jmp     show_msg
+.kept:  mov     [ex_code], ax           ; the old destination went, the copy
+        mov     ax, [sel]               ;  couldn't take its name: where it is
+        call    relist_at
+        mov     di, msgbuf              ; "Copy kept as B:\WORK\ABCDTMP: why"
+        mov     si, s_kept
+        call    sb_str
+        mov     si, tmppath
+        call    sb_str
+        mov     si, s_colon
+        call    sb_str
+        mov     ax, [ex_code]
+        call    api_sberr
+        mov     byte [di], 0
+        jmp     show_msg
+
+; BX = "Can't copy " or "Can't move "
+xfer_cant:
+        mov     bx, s_cantcopy
+        cmp     byte [xmode], 0
+        je      .x
+        mov     bx, s_cantmove
+.x:     ret
+
+; CF (SI = why) if the form has a wildcard, or a path in the title
+xfer_check:
+        mov     si, c_tit
+        mov     di, s_titch
+        call    has_any
+        mov     si, s_badtit
+        jc      .x
+        mov     si, c_sub
+        mov     di, s_subch
+        call    has_any
+        mov     si, s_badsub
+.x:     ret
+
+; after Copy or Move: the list again (a copy here chosen in it), and in the
+; band what happened
+xfer_done:
+        cmp     byte [xmode], 0
+        jne     .keep
+        cmp     byte [x_here], 0
+        je      .keep
+        mov     si, c_tit
+        call    relist_name
+        jmp     short .msg
+.keep:  mov     ax, [sel]
+        call    relist_at
+.msg:   mov     di, msgbuf
+        cmp     byte [x_part], 0
+        jne     .part
+        mov     si, s_copied            ; "Copied to B:\WORK\NOTES.TXT"
+        cmp     byte [xmode], 0
+        je      .m1
+        mov     si, s_moved
+.m1:    call    sb_str
+        mov     si, dstpath
+        call    sb_str
+        jmp     short .end
+.part:  mov     si, s_partial           ; "Copied, but can't erase NOTES.TXT
+        call    sb_str                  ;  here: Disk is write-protected"
+        mov     si, runpath
+        call    sb_str
+        mov     si, s_here
+        call    sb_str
+        mov     ax, [ex_code]
+        call    api_sberr
+.end:   mov     byte [di], 0
+        jmp     show_msg
+
+; the Copy or Move form, filled in with where the file is -> CF: cancelled
+xfer_form:
+        call    sel_path                ; argpath = the file, runpath = NAME.EXT
+        mov     si, s_copy
+        cmp     byte [xmode], 0
+        je      .t
+        mov     si, s_move
+.t:     call    form_title
+        call    cur_dir
+        mov     al, [curdir]
+        sub     al, 'A'
+        mov     [c_dev], al
+        mov     di, c_sub               ; "\" or "\DOS.330"
+        mov     si, curdir + 2
+        call    sb_str
+        mov     byte [di], 0
+        mov     di, c_tit
+        mov     si, runpath
+        call    sb_str
+        mov     byte [di], 0
+        call    ndrives                 ; B: only if there is one
+        mov     ah, 'B'
+        cmp     al, 2
+        je      .b
+        xor     ah, ah
+.b:     mov     [o_drives + 3], ah
+        mov     si, copy_form
+        cmp     byte [xmode], 0
+        je      .f
+        mov     si, move_form
+.f:     jmp     ui_form
+
+; from the form: tmppath = "X:\SUBJECT" ("X:\" for Root), dstpath =
+; "X:\SUBJECT\TITLE", x_here = 1 if that is the subject listed
+xfer_dest:
+        mov     si, c_tit               ; (no title: the same one)
+        call    upcase_trim
+        cmp     byte [c_tit], 0
+        jne     .sub
+        mov     di, c_tit
+        mov     si, runpath
+        call    sb_str
+        mov     byte [di], 0
+.sub:   mov     si, c_sub
+        call    upcase_trim
+        mov     di, tmppath
+        mov     al, [c_dev]
+        add     al, 'A'
+        mov     ah, ':'
+        stosw
+        cmp     byte [c_sub], '\'
+        je      .s1
+        mov     al, '\'
+        stosb
+.s1:    mov     si, c_sub
+        call    sb_str
+        cmp     di, tmppath + 3         ; no '\' at the end (but "X:\")
+        je      .s2
+        cmp     byte [di-1], '\'
+        jne     .s2
+        dec     di
+.s2:    mov     byte [di], 0
+        mov     si, tmppath
+        mov     di, dstpath
+        call    sb_str
+        cmp     byte [di-1], '\'
+        je      .s3
+        mov     al, '\'
+        stosb
+.s3:    mov     si, c_tit
+        call    sb_str
+        mov     byte [di], 0
+        mov     byte [x_here], 0        ; (asked now: copy_file adds to
+        mov     si, tmppath             ;  tmppath)
+        mov     di, curdir
+        call    str_eq
+        jne     .x
+        inc     byte [x_here]
+.x:     ret
+
+; do it: replace what is there (if the answer is yes), then Copy, or Move
+; (RENAME on the same drive, else copy and erase) -> CF: AX = DOS error,
+; or AX = 0 if the answer was no.  (x_part: moved to the other drive but
+; the original stays, error in ex_code; tmp_kept: copy_file's new file
+; kept under its made-up name)
+xfer_do:
+        call    api_criterr             ; (an old disk error forgotten)
+        mov     byte [d_exists], 0
+        mov     byte [x_part], 0
+        mov     byte [tmp_kept], 0
+        mov     dx, dstpath             ; there already?
+        mov     ax, 4300h
+        int     21h
+        jc      .new
+        test    cl, 18h                 ; (a subject or the label: no)
+        mov     ax, 5
+        stc
+        jnz     .r
+        mov     di, msgbuf              ; "NAME.EXT is there already: ..."
+        mov     si, c_tit
+        call    sb_str
+        mov     si, s_replace
+        call    sb_str
+        mov     byte [di], 0
+        mov     si, msgbuf
+        call    ui_ask
+        mov     ax, 0
+        jc      .r
+        mov     byte [d_exists], 1
+        jmp     short .go
+.new:   cmp     ax, 2                   ; (only "not found" is good news)
+        stc
+        jne     .r
+.go:    cmp     byte [xmode], 0
+        je      .copy
+        mov     al, [c_dev]             ; Move on the same drive: RENAME
+        add     al, 'A'
+        cmp     al, [argpath]
+        jne     .other
+        jmp     move_here
+.r:     ret
+.other: mov     dx, argpath             ; Move to the other drive: copy, then
+        mov     ax, 4300h               ;  erase.  A read-only file couldn't
+        int     21h                     ;  be erased, so it isn't copied
+        jc      .r2
+        test    cl, 1
+        mov     ax, 5
+        stc
+        jnz     .r2
+.copy:  mov     di, msgbuf              ; "Copying NAME.EXT" in the band
+        mov     si, s_copying
+        cmp     byte [xmode], 0
+        je      .c1
+        mov     si, s_moving
+.c1:    call    sb_str
+        mov     si, runpath
+        call    sb_str
+        mov     byte [di], 0
+        mov     si, msgbuf
+        xor     di, di
+        call    ui_band
+        call    copy_file
+        jc      .r2
+        cmp     byte [xmode], 0         ; (Copy: done, CF clear)
+        je      .r2
+        mov     dx, argpath             ; Move: the original goes
+        mov     ah, 41h
+        int     21h
+        jnc     .r2
+        mov     [ex_code], ax           ; (it can't: copied, not moved; the
+        mov     byte [x_part], 1        ;  band says so)
+        clc
+.r2:    ret
+
+; Move on the same drive: RENAME.  An old destination is erased first, with
+; the source held open: were they one file after all, DOS refuses (Access
+; denied) and nothing is lost
+move_here:
+        cmp     byte [d_exists], 0
+        je      .ren
+        mov     dx, argpath
+        mov     ax, 3D00h
+        int     21h
+        jc      .x
+        mov     bx, ax
+        mov     dx, dstpath
+        mov     ah, 41h
+        int     21h
+        pushf
+        push    ax
+        mov     ah, 3Eh
+        int     21h
+        pop     ax
+        popf
+        jc      .x
+.ren:   mov     dx, argpath
+        mov     di, dstpath
+        mov     ah, 56h
+        int     21h
+.x:     ret
+
+; ZF set if argpath and dstpath are one file, however dstpath is spelled:
+; the kernel takes "\WORK\..", "\WORK." and names cut at 8.3 too.  Find
+; first leaves the drive, the directory and the entry it found in the
+; DTA's search state (KFILE.INC f_4E).  ZF clear if either isn't there
+same_file:
+        mov     dx, exec_dta
+        mov     ah, 1Ah
+        int     21h
+        mov     dx, argpath
+        mov     di, id_src
+        call    file_id
+        jc      .no
+        mov     dx, dstpath
+        mov     di, id_dst
+        call    file_id
+        jc      .no
+        mov     si, id_src
+        mov     di, id_dst
+        mov     cx, 5
+        repe    cmpsb
+        ret
+.no:    or      sp, sp                  ; (ZF clear)
+        ret
+
+; DX = path -> 5 bytes at DI: its drive, directory and entry (the search
+; state); CF if it isn't there
+file_id:
+        mov     cx, 06h                 ; (hidden and system files too)
+        mov     ah, 4Eh
+        int     21h
+        jc      .x
+        mov     al, [exec_dta]
+        stosb
+        mov     ax, [exec_dta + 13]
+        stosw
+        mov     ax, [exec_dta + 15]
+        stosw
+.x:     ret
+
+; copy argpath to dstpath, the date and time with it.  The copy is made as
+; a new file in the destination subject (tmppath, the name made up by
+; DOS); only when all of it is there does the old destination go
+; (d_exists) and the copy take its name.  So a full disk or a bad sector
+; leaves the destination as it was.  CF: AX = DOS error
+copy_file:
+        mov     word [h_src], 0FFFFh
+        mov     word [h_tmp], 0FFFFh
+        mov     word [buf_seg], 0
+        mov     byte [tmp_made], 0
+        call    cf_open
+        jc      .fail
+        call    cf_data
+        jc      .fail
+        call    cf_end
+        jc      .fail
+        ret
+.fail:  push    ax                      ; undo: handles, buffer, the new file
+        call    cf_free
+        mov     bx, [h_tmp]
+        cmp     bx, 0FFFFh
+        je      .f1
+        mov     ah, 3Eh
+        int     21h
+.f1:    cmp     byte [tmp_made], 0
+        je      .f2
+        mov     dx, tmppath
+        mov     ah, 41h
+        int     21h
+.f2:    pop     ax
+        stc
+        ret
+
+; the source open, its date and time, the new file, the buffer
+cf_open:
+        mov     dx, argpath
+        mov     ax, 3D00h
+        int     21h
+        jc      .x
+        mov     [h_src], ax
+        mov     bx, ax
+        mov     ax, 5700h
+        int     21h
+        jc      .x
+        mov     [f_time], cx
+        mov     [f_date], dx
+        mov     di, tmppath             ; "X:\SUBJECT\" for CREATE TEMPORARY
+        xor     al, al
+        mov     cx, 0FFFFh
+        repne   scasb
+        dec     di
+        cmp     byte [di-1], '\'
+        je      .t
+        mov     word [di], '\'          ; ('\', 0)
+.t:     mov     dx, tmppath
+        xor     cx, cx
+        mov     ah, 5Ah
+        int     21h
+        jc      .x
+        mov     [h_tmp], ax
+        mov     byte [tmp_made], 1
+        mov     bx, COPYBUF             ; the buffer: 32 KB, or what there is
+        mov     ah, 48h
+        int     21h
+        jnc     .buf
+        cmp     bx, 32                  ; (under 512 bytes: no)
+        mov     ax, 8
+        jb      .x
+        mov     ah, 48h
+        int     21h
+        jc      .x
+.buf:   mov     [buf_seg], ax
+        shl     bx, 4
+        mov     [buf_len], bx
+        clc
+.x:     ret
+
+; the source into the new file, a buffer at a time
+cf_data:
+        mov     bx, [h_src]
+        mov     cx, [buf_len]
+        push    ds
+        mov     ds, [buf_seg]
+        xor     dx, dx
+        mov     ah, 3Fh
+        int     21h
+        pop     ds
+        jc      .x
+        or      ax, ax                  ; (the end: CF clear)
+        jz      .x
+        mov     cx, ax
+        mov     bx, [h_tmp]
+        push    ds
+        mov     ds, [buf_seg]
+        xor     dx, dx
+        mov     ah, 40h
+        int     21h
+        pop     ds
+        jc      .x
+        cmp     ax, cx                  ; less written: the disk is full
+        mov     ax, 39
+        jb      .x
+        jmp     cf_data
+.x:     ret
+
+; the new file dated and closed, the old destination erased (the source
+; still open: were they one file, DOS refuses), the name given.  Once the
+; old destination is gone the new file is all there is: kept if it can't
+; take the name (tmp_kept)
+cf_end: mov     bx, [h_tmp]
+        mov     cx, [f_time]
+        mov     dx, [f_date]
+        mov     ax, 5701h
+        int     21h
+        jc      .x
+        mov     ah, 3Eh                 ; (closing writes the rest out)
+        int     21h
+        jc      .x
+        mov     word [h_tmp], 0FFFFh
+        cmp     byte [d_exists], 0
+        je      .name
+        mov     dx, dstpath
+        mov     ah, 41h
+        int     21h
+        jc      .x
+        mov     byte [tmp_made], 0
+        mov     byte [tmp_kept], 1
+.name:  call    cf_free
+        mov     dx, tmppath
+        mov     di, dstpath
+        mov     ah, 56h
+        int     21h
+        jc      .x
+        mov     byte [tmp_kept], 0      ; (CF stays clear)
+.x:     ret
+
+; the source closed and the buffer freed, if they are
+cf_free:
+        mov     bx, [h_src]
+        cmp     bx, 0FFFFh
+        je      .fr
+        mov     ah, 3Eh
+        int     21h
+        mov     word [h_src], 0FFFFh
+.fr:    mov     ax, [buf_seg]
+        or      ax, ax
+        jz      .x
+        push    es
+        mov     es, ax
+        mov     ah, 49h
+        int     21h
+        pop     es
+        mov     word [buf_seg], 0
+.x:     ret
+
+; "Verb NAME.EXT" (verb SI, the name in runpath) as the form's title
+form_title:
+        mov     di, ftitle
+        call    sb_str
+        mov     si, runpath
+        call    sb_str
+        mov     byte [di], 0
+        ret
+
+; curdir = "X:\SUBJECT" ("X:\" for Root): where the list is
+cur_dir:
+        mov     di, curdir
+        mov     ah, 19h
+        int     21h
+        add     al, 'A'
+        mov     ah, ':'
+        stosw
+        mov     si, subject
+        call    sb_str
+        mov     byte [di], 0
+        ret
+
+; the ASCIIZ text at SI as typed into a form: in capitals, '/' as '\',
+; no spaces before or after
+upcase_trim:
+        pusha
+        mov     bx, si
+        mov     di, si
+.sp:    lodsb
+        cmp     al, ' '
+        je      .sp
+        dec     si
+.c:     lodsb
+        cmp     al, 'a'
+        jb      .s
+        cmp     al, 'z'
+        ja      .s
+        sub     al, 'a' - 'A'
+.s:     cmp     al, '/'
+        jne     .st
+        mov     al, '\'
+.st:    stosb
+        or      al, al
+        jnz     .c
+        dec     di
+.t:     cmp     di, bx
+        je      .z
+        cmp     byte [di-1], ' '
+        jne     .z
+        dec     di
+        jmp     .t
+.z:     mov     byte [di], 0
+        popa
+        ret
+
+; CF if the ASCIIZ text at SI has any of the characters in the ASCIIZ set DI
+has_any:
+        push    si
+.l:     lodsb
+        or      al, al                  ; (the end: CF clear)
+        jz      .x
+        push    di
+.c:     cmp     byte [di], 0
+        je      .n
+        cmp     al, [di]
+        je      .y
+        inc     di
+        jmp     .c
+.n:     pop     di
+        jmp     .l
+.y:     pop     di
+        stc
+.x:     pop     si
+        ret
+
+; "Can't copy NAME.EXT" (BX = the first part; the name in runpath) and the
+; reason SI, in the band
+cant_why:
+        push    si
+        mov     di, msgbuf
+        mov     si, bx
+        call    sb_str
+        mov     si, runpath
+        call    sb_str
+        pop     si
+        call    sb_str
+        mov     byte [di], 0
+        jmp     show_msg
+
+; ZF set if the ASCIIZ texts at SI and DI are the same
+str_eq: push    si
+        push    di
+.l:     lodsb
+        cmp     al, [di]
+        jne     .x
+        inc     di
+        or      al, al
+        jnz     .l
+.x:     pop     di
+        pop     si
+        ret
+
+; "NAME.EXT" at SI as an 11-byte FAT name at DI
+to_fcb: push    di
+        mov     cx, 11
+        mov     al, ' '
+        rep     stosb
+        pop     di
+        mov     bx, di
+        mov     cx, 8
+.n:     lodsb
+        or      al, al
+        jz      .x
+        cmp     al, '.'
+        je      .e
+        jcxz    .n                      ; (past 8: left out)
+        stosb
+        dec     cx
+        jmp     .n
+.e:     lea     di, [bx+8]
+        mov     cx, 3
+.el:    lodsb
+        or      al, al
+        jz      .x
+        stosb
+        loop    .el
+.x:     ret
+
+; after a command: the directory again, with item AX chosen (the last one
+; if the list is shorter now) ...
+relist_at:
+        push    ax
+        call    save_place
+        call    load_dir
+        pop     ax
+        jmp     short place_at
+
+; ... or with title SI ("NAME.EXT") chosen, if it is listed
+relist_name:
+        mov     di, fcbbuf
+        call    to_fcb
+        call    save_place
+        call    load_dir
+        xor     bx, bx
+.f:     cmp     bx, [nent]
+        jae     .no
+        call    ent_ptr
+        mov     di, fcbbuf
+        call    ent_cmp
+        je      .hit
+        inc     bx
+        jmp     .f
+.no:    mov     bx, [o_sel]
+.hit:   mov     ax, bx
+        ; (falls through)
+
+; choose item AX and scroll the list as little as will show it, from
+; where it was (o_top); then the screen
+place_at:
+        mov     cx, [nent]
+        jcxz    .d
+        cmp     ax, cx
+        jb      .s
+        mov     ax, cx
+        dec     ax
+.s:     mov     [sel], ax
+        mov     bx, [o_top]
+        cmp     ax, bx                  ; above the rows shown: at the top
+        jae     .lo
+        mov     bx, ax
+.lo:    mov     dx, bx                  ; below them: at the bottom
+        add     dx, LIST_N
+        cmp     ax, dx
+        jb      .hi
+        mov     bx, ax
+        sub     bx, LIST_N - 1
+.hi:    mov     dx, cx                  ; and no empty rows under the last
+        sub     dx, LIST_N
+        jae     .h2
+        xor     dx, dx
+.h2:    cmp     bx, dx
+        jbe     .t
+        mov     bx, dx
+.t:     mov     [top], bx
+.d:     jmp     draw_all
+
+save_place:
+        mov     ax, [sel]
+        mov     [o_sel], ax
+        mov     ax, [top]
+        mov     [o_top], ax
         ret
 
 ; ---------------------------------------------------------------------
@@ -1279,11 +2093,15 @@ ex_keys:
         KEY(K_CODE_U,    run_usage,  h_usage)
         KEY(K_CODE_W,    run_write,  h_write)
         KEY(K_CODE_A,    run_claude, h_claude)
-        KEY(K_CODE_C,    run_shell,  h_shell)
+        KEY(K_CODE_P,    run_shell,  h_shell)
+        KEY(K_CODE_C,    ex_copy,    h_copy)
+        KEY(K_CODE_D,    ex_erase,   h_erase)
+        KEY(K_CODE_M,    ex_move,    h_move)
+        KEY(K_CODE_R,    ex_rename,  h_rename)
         KEY(K_F5,        refresh,    h_f5)
         KEY(K_NONE,      0,          h_saver)
         KEY(K_NONE,      0,          h_code)
-        dw 0
+        dw 0                            ; (18 help lines: the most there is room for)
 
 h_choose    db 'Up / Down, PgUp / PgDn   choose',0
 h_home      db 'Home / End               first / last',0
@@ -1295,7 +2113,11 @@ h_help      db 'CODE-?  or  F1           this help',0
 h_usage     db 'CODE-U                   Usage: the System program',0
 h_write     db 'CODE-W                   Write: a new text file',0
 h_claude    db 'CODE-A                   Claude',0
-h_shell     db 'CODE-C                   command prompt',0
+h_shell     db 'CODE-P                   command prompt',0
+h_copy      db 'CODE-C                   Copy the file',0
+h_erase     db 'CODE-D                   Delete (erase) the file',0
+h_move      db 'CODE-M                   Move the file',0
+h_rename    db 'CODE-R                   Rename the file',0
 h_f5        db 'F5                       after a disk swap',0
 h_saver     db '5 minutes idle           screen saver',0
 h_code      db 'CODE is the Alt key.  Any key closes.',0
@@ -1354,6 +2176,43 @@ s_cantdir   db "Can't read the disk: ", 0
 s_first     db 'Only the first ', 0
 s_listed    db ' are listed', 0
 s_colon     db ': ', 0
+; the file commands
+copy_form:  dw ftitle, s_copyp, 60, 8, 3
+            dw s_lbl_dev, FT_CHOICE, c_dev, o_drives
+            dw s_lbl_sub, FT_TEXT + (40 << 8), c_sub, SUBMAX
+            dw s_lbl_tit, FT_TEXT + (12 << 8), c_tit, 12
+move_form:  dw ftitle, s_movep, 60, 8, 2
+            dw s_lbl_dev, FT_CHOICE, c_dev, o_drives
+            dw s_lbl_sub, FT_TEXT + (40 << 8), c_sub, SUBMAX
+ren_form:   dw ftitle, s_renp, 44, 10, 1
+            dw s_lbl_new, FT_TEXT + (12 << 8), c_tit, 12
+o_drives    db 'A:', 0, 'B:', 0, 0      ; (the 'B' is 0 with one drive)
+s_copy      db 'Copy ', 0
+s_move      db 'Move ', 0
+s_rename    db 'Rename ', 0
+s_copyp     db 'Copy: Fill in form and confirm', 0
+s_movep     db 'Move: Fill in form and confirm', 0
+s_renp      db 'Rename: Fill in form and confirm', 0
+s_lbl_new   db 'New title', 0
+s_eraseq    db 'Erase: Confirm to erase ', 0
+s_replace   db ' is there already: Confirm to replace it', 0
+s_same      db ' is there now: choose another place', 0
+s_copying   db 'Copying ', 0
+s_moving    db 'Moving ', 0
+s_copied    db 'Copied to ', 0
+s_moved     db 'Moved to ', 0
+s_cantcopy  db "Can't copy ", 0
+s_cantmove  db "Can't move ", 0
+s_canterase db "Can't erase ", 0
+s_cantren   db "Can't rename ", 0
+s_readonly  db ': it is read-only', 0
+s_titch     db '\:*?', 0                ; not in a title (a path, wildcards)
+s_subch     db ':*?', 0                 ; not in a subject
+s_badtit    db ": a title can't have \ : * or ?", 0
+s_badsub    db ": a subject can't have : * or ?", 0
+s_partial   db "Copied, but can't erase ", 0
+s_here      db ' here: ', 0
+s_kept      db 'Copy kept as ', 0
 k_file      db 'File',0
 k_run       db 'Run',0
 k_program   db 'Program',0

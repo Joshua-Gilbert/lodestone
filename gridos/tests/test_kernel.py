@@ -68,10 +68,10 @@ def t_tm5000g():
     k.shot(os.path.join(OUT, 'tm.png'))
 
 class Shell:
-    """GRIDCMD.COM (the command prompt) started from the Executive with CODE-C."""
+    """GRIDCMD.COM (the command prompt) started from the Executive with CODE-P."""
     def __init__(s, k):
         s.k = k
-        k.key(ktest.CODE_C)
+        k.key(ktest.CODE_P)
     def run(s, cmd, *answers):
         k = s.k
         k.key('cls'); k.key(ktest.ENTER)
@@ -84,7 +84,7 @@ def t_shell():
     img = image('sh.img', os.path.join(GOS, 'src', 'GRIDCMD.COM'), os.path.join(HERE, 'UPPER.COM'), 'GAMES\\')
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    check('CODE-C starts the shell', 'command shell' in k.pc.text_screen() and k.pc.mode() == 3, k.pc.text_screen())
+    check('CODE-P starts the shell', 'command shell' in k.pc.text_screen() and k.pc.mode() == 3, k.pc.text_screen())
     o = sh.run('dir')
     check('DIR lists the disk', all(x in o for x in ('Volume in drive A is GRIDOS', 'Directory of  A:\\', 'GRIDCMD  COM', 'GAMES           <DIR>', '4 File(s)', 'bytes free')), o)
     check('VER', 'Grid-OS version 0.3' in sh.run('ver'))

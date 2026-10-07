@@ -12,7 +12,7 @@ sys.path.insert(0, HERE)
 import pcemu
 
 ENTER, ESC, UP, DOWN, LEFT, RIGHT = 0x1C0D, 0x011B, 0x4800, 0x5000, 0x4B00, 0x4D00
-TAB, BKSP, F1, CODE_C = 0x0F09, 0x0E08, 0x3B00, 0x2E00
+TAB, BKSP, F1, CODE_P = 0x0F09, 0x0E08, 0x3B00, 0x1900   # CODE-P: the command prompt
 
 
 class Syms:

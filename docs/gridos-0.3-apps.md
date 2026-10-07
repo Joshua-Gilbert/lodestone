@@ -19,7 +19,7 @@
   | UI block: core + Executive + font + stack | (in the kernel's 50 KB) | 18.0 KB |
   | UI block: the Executive's directory | (in the kernel) | 7.5 KB |
   | Free while the Executive waits | — | 564.4 KB |
-  | **A DOS program gets (MEMSZ.COM)** | **570.7 KB** | **571.5 KB** (569.4 KB with 0.3.1's INT 33h mouse, 568.7 KB with 0.3.2's File form) |
+  | **A DOS program gets (MEMSZ.COM)** | **570.7 KB** | **571.5 KB** (569.4 KB with 0.3.1's INT 33h mouse, 568.7 KB with 0.3.2's File form, 565.9 KB with 0.3.3's file commands) |
 
   - While a DOS program runs, the UI block shrinks to `ui_keep_end`, so the Executive's 7.5 KB directory buffer goes to the program. The Executive reads the directory again afterwards anyway.
   - The core added about 4.5 KB of code, but the lent directory more than pays for it.
@@ -242,6 +242,39 @@
   - help (Tab, no CODE-R or CODE-D); CODE-R and CODE-D do nothing;
   - B: with no disk (pcemu's `Floppy.empty`); one drive.
 
+## File commands (0.3.3, 2026-10-06)
+- **Verb first, as in GRiDManager:** choose a title, press the command, fill in the form, and confirm.
+
+  | Key | Command | Form |
+  |---|---|---|
+  | CODE-C | Copy | Device, Subject and Title of the copy (this drive, subject and title to start with) |
+  | CODE-M | Move | Device and Subject |
+  | CODE-R | Rename | the new title, in the same subject |
+  | CODE-D | Delete (erase) | a question first |
+
+  Joshua's keys: C for Copy, D for Delete, M for Move, R for Rename. The command prompt moved from CODE-C to **CODE-P**.
+- **Copy** writes the copy under a temporary name first, and renames it only once it is complete. So a full or write-protected disk leaves what was there alone, and the date and time go with the copy.
+- **Move** on the same drive only moves the directory entry. To the other drive it copies, then erases; a read-only file is refused.
+- **A title that is already there** is replaced only after confirming.
+  - The Subject is typed as a path from the root (`\` for Root, `\DOS.330\DEEP`).
+  - A title can't contain `\ : * ?`; a subject can't contain `: * ?`.
+  - Copy or Move onto the file itself is refused however it is spelled; the kernel cuts names to 8.3, so "NOTES.TXTX" is NOTES.TXT.
+- **Erase** asks first, and read-only files stay.
+- **Core, through the screen saver:** questions, forms and messages keep their band. The core remembers the waiting band (`held1`/`held2`, `hold_band`) and `redraw_all` puts it back. DEFRAG doesn't start while a question waits; the saver shows only the dark clock.
+- **Kernel, `buf_put`:** a sector write that fails no longer leaves the change in the buffer. Before, a later write to the same sector carried it to the disk: for example, a delete refused by a write-protected disk happened after all once the tab was off.
+- **Cost:** GRIDOS.SYS 35,360 bytes. A DOS program gets 565.9 KB, 2.8 KB less than 0.3.2.
+- **Tests:**
+  - **`t_files`:** each command and its form, replace-or-not, read-only files, a write-protected disk, and copies between A: and B: checked byte for byte.
+  - **`t_file_safety`:** the review's cases:
+    - one file however spelled;
+    - the saver during a question and during a form;
+    - forbidden characters;
+    - the deepest subject (65 characters);
+    - Move from a write-protected disk;
+    - a failed directory write not carried to the disk later;
+    - a failed rename after replacing ("Copy kept as …TMP").
+  - With all of them, apps has 237 checks; kernel 60, DEFRAG 33, Claude link 21 and HEADCLN 9 still pass.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
@@ -283,7 +316,7 @@
     - `f_3B` cuts the current-directory string at 66 characters;
     - a failed mount returns an error without INT 24h.
   - **Not changed:** System takes the 80287 from INT 11h (SETUP's CMOS bit) rather than probing it, and Write's "Write to a file" overwrites without asking.
-- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, below)**:**
+- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, 237 with 0.3.3's `t_files` and `t_file_safety`, below)**:**
   - **UITEST.RUN** exercises the API: lists, forms, ask, help, errors, BSS zeroing, exit code, cleanup to the paragraph, and a file that isn't a `.RUN`.
   - **System:** every topic, setting the clock, a bad date, the GPIB scan.
   - **CODE-?, CODE-Return, CODE-ESC** in the Executive, a form, System and Write, as the 1520's BIOS delivers them (below).
