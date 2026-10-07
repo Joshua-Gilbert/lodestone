@@ -1,0 +1,30 @@
+EMSTEST - EMS (INT 67h) checks
+info    pages: 88
+info    free: 88
+info    context bytes (4E03h): 4
+info    handles (5402h): 32
+ok    detection: EMMXXXX0, status, version, frame, pages
+ok    allocate, map, free (43h 44h 45h 4Ch)
+ok    one page in two windows; a window off
+ok    error codes
+ok    save and restore (47h 48h)
+ok    contexts (4Eh 4Fh)
+ok    map multiple (50h)
+ok    reallocate (51h)
+ok    resizing keeps the other handles
+ok    an empty handle where a middle one starts
+ok    every free page in one handle
+ok    handles: 4Bh 4Dh 52h 53h 54h
+ok    handle 0
+ok    mappable windows (58h 59h)
+ok    move: conventional <-> EMS (57h)
+ok    move inside a handle, overlapping; exchange
+ok    move: error codes
+ok    move from a page in the frame
+ok    300 random allocations, resizes, frees
+ok    EMS a program leaves comes back
+ok    a TSR keeps its EMS
+info    floppy DMA into the frame: works
+ok    floppy DMA into the frame (information)
+
+EMSTEST: 22 passed, 0 failed
