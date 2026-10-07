@@ -23,6 +23,9 @@ F_SIZE  equ 30
 
 section .bss
 indos       resb 1              ; INT 21h nesting depth
+cap_req     resb 1              ; screen capture: 1 asked for (INT 5), 2 under
+                                ;  way, 4 a write failed (word with indos)
+cap_lim     resw 1              ; its buffer's size
 brkflag     resb 1              ; INT 21h 33h
 verify      resb 1              ; INT 21h 2Eh/54h
 kbd_scan    resb 1              ; second half of an extended key
@@ -36,8 +39,8 @@ cur_year    resw 1
 cur_mon     resb 1
 cur_day     resb 1
             alignb 2
-            resb 1536
-kstack_top:                     ; INT 21h stack
+kstack_end  resb 1536           ; INT 21h stack (a screen capture may use
+kstack_top:                     ;  its bottom 1 KB as a buffer)
             resb 512
 astack_top:                     ; nested INT 21h (from INT 24h handlers)
 ui_seg      resw 1              ; the UI segment (core + Executive), see GRIDOS.ASM
@@ -68,6 +71,8 @@ ivt_init:
         ret
 
 vec_table:
+        db 05h
+        dw int05
         db 20h
         dw int20
         db 21h
@@ -135,6 +140,219 @@ int27:  add     dx, 15                  ; TSR: DX = bytes from the PSP
         jmp     int21
 
 ; ---------------------------------------------------------------------
+;  Screen capture.  Shift-PrtSc makes the BIOS call INT 5; instead of
+;  printing, that asks for a picture, taken at the next safe moment: an
+;  INT 21h call from outside the kernel, or a wait for a key (the UI asks
+;  for the current drive while it idles).  It goes to the root of the
+;  boot disk as SCREEN01 to SCREEN99: the graphics modes as a 640 x 400
+;  1-bit .BMP (the 200-line modes each line twice), the text modes as
+;  .TXT.  One beep when it's there, a long one when it couldn't be.
+;  Written in big pieces (writes go straight to the disk, a turn each):
+;  through the disk cache's memory if the Executive or a .RUN is running
+;  and it can be lent, else 1 KB at the bottom of the kernel stack (the
+;  stack never gets near it).
+; ---------------------------------------------------------------------
+int05:  or      byte [cs:cap_req], 1
+        iret
+
+capture:
+        cmp     word [cs:indos], 0101h  ; asked for, not under way, and in
+        jne     .ret                    ;  no other INT 21h call
+        pusha
+        cli                             ; nor inside a hardware interrupt
+        mov     al, 0Bh                 ;  (a TSR's timer hook calling DOS:
+        out     20h, al                 ;  the floppy's IRQ couldn't come):
+        in      al, 20h                 ;  the PIC's in-service register,
+        mov     ah, al                  ;  then back to the request one
+        mov     al, 0Ah
+        out     20h, al
+        sti
+        or      ah, ah
+        jz      .go
+        popa
+.ret:   ret
+.go:    push    ds
+        push    es
+        push    cs
+        pop     ds
+        mov     byte [cap_req], 2       ; (no INT 24h meanwhile: crit_disk)
+        call    disk_reset              ; a program may have changed the
+                                        ;  disk behind our back, reading it
+                                        ;  through the BIOS: check it first
+        push    word [last_err]
+        mov     al, [bootdrv]
+        add     al, 'A'
+        mov     [cap_name], al
+        push    0
+        pop     es
+        mov     al, [es:449h]           ; the video mode
+        cbw
+        xchg    bp, ax
+        mov     ax, 'TX'
+        mov     dl, 'T'
+        cmp     bp, 3
+        jbe     .ext
+        mov     ax, 'BM'
+        mov     dl, 'P'
+.ext:   mov     [cap_ext], ax
+        mov     [cap_ext+2], dl
+        xor     di, di
+.next:  inc     di                      ; the first number not taken
+        cmp     di, 99
+        ja      .fail
+        mov     ax, di
+        aam
+        add     ax, '00'
+        xchg    al, ah
+        mov     [cap_num], ax
+        mov     ah, 5Bh
+        xor     cx, cx
+        mov     dx, cap_name
+        int     21h
+        jnc     .made
+        cmp     al, 50h
+        je      .next
+.fail:  jmp     .f4
+.made:  xchg    bx, ax                  ; BX = the file
+        mov     ax, [cur_psp]           ; the buffer, at ES:0: not lent in
+        cmp     ax, [root_psp]          ;  a DOS program (with EMS it would
+        stc                             ;  be free memory the program may
+        jne     .nol                    ;  still use)
+        mov     ax, 0F002h
+        int     21h
+.nol:   sbb     ax, ax
+        push    ax                      ; (FFFFh: not lent)
+        jnc     .buf
+        mov     ax, kstack_end + 15
+        shr     ax, 4
+        add     ax, KSEG
+        mov     es, ax
+        mov     cx, 1024
+.buf:   mov     [cap_lim], cx
+        xor     di, di
+        cmp     bp, 3
+        ja      .bmp
+        push    0                       ; text: the page's characters, line
+        pop     ds                      ;  by line, without trailing blanks
+        mov     si, [44Eh]
+        mov     bp, [44Ah]              ; (columns)
+        push    0B800h
+        pop     ds
+        mov     dx, 25
+.line:  mov     cx, bp
+        push    si
+        add     si, bp
+        add     si, bp
+.len:   dec     si
+        dec     si
+        test    byte [si], 0DFh         ; (ZF: a blank or a NUL)
+        jnz     .go2
+        loop    .len
+.go2:   pop     si
+        push    si
+        jcxz    .eol
+.ch:    lodsw
+        test    al, 0DFh
+        jnz     .c
+        mov     al, ' '
+.c:     call    cap_b
+        loop    .ch
+.eol:   mov     al, 13
+        call    cap_b
+        mov     al, 10
+        call    cap_b
+        pop     si
+        add     si, bp
+        add     si, bp
+        dec     dx
+        jnz     .line
+        jmp     .end
+.bmp:   mov     si, bmp_hdr
+        mov     cx, 62
+        rep     movsb                   ; (the buffer is empty)
+        mov     dx, 399
+        push    0B800h
+        pop     ds
+.row:   mov     si, dx                  ; bottom up: line DX's bank
+        and     si, 3
+        cmp     bp, 6
+        ja      .r4
+        shr     si, 1                   ; (200 lines: 2 banks, each line twice)
+.r4:    ror     si, 3
+        mov     ax, dx
+        shr     ax, 2
+        imul    ax, ax, 80
+        add     si, ax
+        mov     cx, 80
+.px:    lodsb
+        call    cap_b
+        loop    .px
+        dec     dx
+        jns     .row
+.end:   call    cap_fl                  ; the rest
+        push    cs
+        pop     ds
+        mov     ah, 3Eh
+        int     21h
+        sbb     cx, cx                  ; (FFFFh: it didn't close)
+        pop     ax
+        inc     ax
+        jz      .nl
+        mov     ax, 0F003h              ; the cache's memory back
+        int     21h
+.nl:    test    byte [cap_req], 4       ; a write failed?
+        jnz     .del
+        inc     cx
+        jnz     .beep                   ; (CX = 1)
+.del:   mov     ah, 41h                 ; not all of it: none of it
+        mov     dx, cap_name
+        int     21h
+.f4:    mov     cx, 4                   ; a long beep
+.beep:  mov     al, 7
+.b:     call    tty_out
+        loop    .b
+        pop     word [last_err]
+        mov     byte [cap_req], 0       ; (pressed again meanwhile: dropped)
+        pop     es
+        pop     ds
+        popa
+        ret
+
+; AL to the file (BX) through the buffer at ES:DI; full, it is written
+; (cap_fl).  A write that fails sets cap_req bit 2.
+cap_b:  stosb
+        cmp     di, [cs:cap_lim]
+        jb      cap_fl.x
+cap_fl: test    byte [cs:cap_req], 4    ; one failed: no more tries
+        jnz     .z
+        push    ds
+        pusha
+        push    es
+        pop     ds
+        xor     dx, dx
+        mov     cx, di
+        mov     ah, 40h
+        int     21h
+        jc      .bad
+        cmp     ax, cx
+        je      .ok
+.bad:   or      byte [cs:cap_req], 4
+.ok:    popa
+        pop     ds
+.z:     xor     di, di
+.x:     ret
+
+bmp_hdr db 'BM'
+        dd 62 + 32000, 0, 62            ; size, -, where the pixels start
+        dd 40, 640, 400                 ; BITMAPINFOHEADER
+        dw 1, 1                         ; 1 plane, 1 bit
+        dd 0, 32000, 0, 0, 2, 0
+        db 0, 12, 28, 0, 50, 170, 255, 0 ; brown, amber (B, G, R)
+cap_name db 'A:\SCREEN'
+cap_num db '00.'
+cap_ext db 'BMP', 0
+
+; ---------------------------------------------------------------------
 ;  INT 21h: entry, dispatch, exits
 ; ---------------------------------------------------------------------
 int21:  sti
@@ -166,6 +384,7 @@ int21:  sti
         mov     cx, 13
         rep     movsw
         pop     ds
+        call    capture                 ; (Shift-PrtSc pressed: now)
         mov     bl, [bp+F_AX+1]
         cmp     bl, 0F0h
         je      f_F0
@@ -410,6 +629,7 @@ kbd_get:
 .k:     mov     ah, 1
         int     16h
         jnz     .have
+        call    capture
         int     28h
         sti
         hlt

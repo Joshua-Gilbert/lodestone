@@ -80,10 +80,10 @@ Run it with `python3 gridos/bench/compare3.py <GRiD MS-DOS EPROM image> <EMM.SYS
 |---|---|
 | `gridos/src` | The OS, in NASM: boot sector (`BOOT.ASM`), `GOSBOOT.COM` (installs the boot sector), the kernel (`GRIDOS.ASM` + `K*.INC`), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `GRIDCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk) |
 | `gridos/apps` | Programs on the UI core (`.RUN`, built with `gridos/mkrun.py`): `SYSTEM.RUN` (Usage: memory, disks, clock, devices, GPIB) and `WRITE.RUN` (a GRiDWrite-style editor) |
-| `gridos/tests` | `pcemu`-based tests: kernel (102 checks), the UI core, programs and INT 33h (294), DEFRAG (33) and a power cut at every DEFRAG write, HEADCLN (9), the Claude-link scenarios, GGTEST; also TESTDOS / CACHETST / UPPER / MEMSZ / TSR / M33TEST and the other M33 programs (DOS programs) and UITEST.RUN |
+| `gridos/tests` | `pcemu`-based tests: kernel (120 checks), the UI core, programs and INT 33h (294), DEFRAG (33) and a power cut at every DEFRAG write, HEADCLN (9), the Claude-link scenarios, GGTEST; also TESTDOS / CACHETST / CAPTEST / UPPER / MEMSZ / TSR / M33TEST and the other M33 programs (DOS programs) and UITEST.RUN |
 | `gridos/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (Lodestone against GRiD MS-DOS in the emulator), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT` and the 1520 logs |
 | `gridos/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link) |
-| `gridos/releases` | Builds that went onto the floppy, 0.1 to 0.3.8 |
+| `gridos/releases` | Builds that went onto the floppy, 0.1 to 0.3.9 |
 | `gridos/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `gridos/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, 7210 GPIB model), `ktest.py`, `mkimg.py`, `psf.py`, `sim7210.py`; `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude API, the AR488 patch, and its tests |
@@ -109,7 +109,7 @@ Needs Python 3, `unicorn` 2.x and mtools.
 
 ```sh
 cd gridos
-python3 tests/test_kernel.py          # 102 checks
+python3 tests/test_kernel.py          # 120 checks
 python3 tests/test_apps.py            # 294 checks (add "shots" for screens/0.3)
 python3 tests/test_defrag.py          # 33 checks
 python3 tests/defrag_cut.py 2         # power cut at every DEFRAG write (~20 min)
@@ -135,6 +135,6 @@ These aren't ours to publish, even privately: the 1520 BIOS and GRiD MS-DOS ROM 
 
 ## Status
 
-Grid-OS 0.3.8 runs on the 1520. It boots, runs TESTDOS, TM5000G and CLAUDE.COM, and the screen saver defragments the floppy.
+Grid-OS 0.3.9 runs on the 1520. It boots, runs TESTDOS, TM5000G and CLAUDE.COM, and the screen saver defragments the floppy.
 
-0.3 put the Executive on a shared UI core and added System and Write, GRiD's font, the File form, file commands with wildcards (Copy, Move, Rename, Delete, subjects too), an INT 33h mouse for DOS programs, a settable screen saver, and Grid-OS's own LIM 4.0 EMS manager (EMSTEST: 22 passed on the 1520). 0.3.8 keeps the disk cache in EMS when there is EMS: DOS programs get about 580 KB with EMS, 564 KB without. See `docs/gridos-0.3-apps.md`. Next: screen capture, an EMS RAM disk, then Term and Command. The roadmap and the hardware notes are in the claude.ai Project.
+0.3 put the Executive on a shared UI core and added System and Write, GRiD's font, the File form, file commands with wildcards (Copy, Move, Rename, Delete, subjects too), an INT 33h mouse for DOS programs, a settable screen saver, and Grid-OS's own LIM 4.0 EMS manager (EMSTEST: 22 passed on the 1520). 0.3.8 keeps the disk cache in EMS when there is EMS: DOS programs get about 580 KB with EMS, 564 KB without. 0.3.9 adds screen capture: Shift-PrtSc saves the screen to `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text) on the boot disk. See `docs/gridos-0.3-apps.md`. Next: an EMS RAM disk, then Term and Command. The roadmap and the hardware notes are in the claude.ai Project.
