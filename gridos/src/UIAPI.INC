@@ -31,7 +31,7 @@
 ; =====================================================================
 
         cpu     286
-UI_API      equ 2                       ; this file's API version (2: UI_FONT)
+UI_API      equ 3                       ; this file's API version (2: UI_FONT, 3: UI_SAVER)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Grid-OS version (BH major, BL minor
@@ -125,7 +125,11 @@ UI_FONT     equ 45 * 3  ; the screen font (API 2).  AL = 0 -> SI = its file name
                         ;  that is the font from now on.  Nothing is redrawn;
                         ;  the caller redraws its screen.  At start-up the core
                         ;  takes the font named by FONT= in \GRIDOS.INI.
-UI_LAST     equ 45 * 3
+UI_SAVER    equ 46 * 3  ; the screen saver's delay (API 3).  AL = 0 -> AL =
+                        ;  minutes (0 = never); AL = 1: BL = minutes (at most
+                        ;  30; 0 = never).  At start-up the core takes SAVER=
+                        ;  in \GRIDOS.INI (5 without it).
+UI_LAST     equ 46 * 3
 FONT_BYTES  equ 96 * 16                 ; a font file (.FNT): exactly this long
 
 EV_CLICK    equ 0FF01h                  ; a left-button press (BX = x, CX = y)

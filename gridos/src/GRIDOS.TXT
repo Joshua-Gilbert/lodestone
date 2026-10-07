@@ -1,4 +1,4 @@
-Grid-OS 0.3.3 - boot floppy
+Grid-OS 0.3.4 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -46,7 +46,8 @@ written for it are .RUN files that load next to it:
   SYSTEM.RUN  Usage (CODE-U in the Executive): memory, disks, the clock
               (Return sets it), devices, GPIB (Return finds instruments
               by serial poll, then sets them back to local), display
-              (Return switches the screen font), about.
+              (Return switches the screen font), screen saver (Return:
+              when it starts), about.
 Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
 subject you work in).  A DOS program gets about 566 KB: while it runs
 the Executive lends it the memory of its file list.  The screen font is
@@ -89,6 +90,10 @@ A title already there is replaced only if you confirm.  The Subject is
 typed as a path from the root (\ for Root, \DOS.330\DEEP); a title has
 no \ : * or ?, a subject no : * or ?.
 
+0.3.4: System has a Screen saver topic: Return steps through 1, 2, 5,
+10, 15 and 30 minutes, then never.  The choice goes in GRIDOS.INI as
+SAVER=10 (no line for the usual 5 minutes) and is read at start-up.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -102,7 +107,8 @@ The Executive (the file list):
   CODE-R, CODE-D                 Rename, Delete the file
   F5                             read the disk again after a swap
   CODE-? (Alt+/) or F1           help
-  5 minutes idle                 screen saver (DEFRAG, then the time)
+  5 minutes idle                 screen saver (DEFRAG, then the time;
+                                 System, Screen saver sets when)
   Serial mouse on COM2 (or COM1).
 
 Programs:

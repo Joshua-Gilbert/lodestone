@@ -19,7 +19,7 @@
   | UI block: core + Executive + font + stack | (in the kernel's 50 KB) | 18.0 KB |
   | UI block: the Executive's directory | (in the kernel) | 7.5 KB |
   | Free while the Executive waits | — | 564.4 KB |
-  | **A DOS program gets (MEMSZ.COM)** | **570.7 KB** | **571.5 KB** (569.4 KB with 0.3.1's INT 33h mouse, 568.7 KB with 0.3.2's File form, 565.9 KB with 0.3.3's file commands) |
+  | **A DOS program gets (MEMSZ.COM)** | **570.7 KB** | **571.5 KB** (569.4 KB with 0.3.1's INT 33h mouse, 568.7 KB with 0.3.2's File form, 565.9 KB with 0.3.3's file commands, 565.7 KB with 0.3.4) |
 
   - While a DOS program runs, the UI block shrinks to `ui_keep_end`, so the Executive's 7.5 KB directory buffer goes to the program. The Executive reads the directory again afterwards anyway.
   - The core added about 4.5 KB of code, but the lent directory more than pays for it.
@@ -275,6 +275,23 @@
     - a failed rename after replacing ("Copy kept as …TMP").
   - With all of them, apps has 237 checks; kernel 60, DEFRAG 33, Claude link 21 and HEADCLN 9 still pass.
 
+## The screen saver's delay (0.3.4, 2026-10-06)
+- **Joshua's request:** set in System when the screen saver starts.
+- **System has a "Screen saver" topic,** between Display and About. It shows "Starts after: 5 minutes". Return steps through 1, 2, 5, 10, 15 and 30 minutes, then never, and the choice takes effect at once.
+- **GRIDOS.INI** keeps the choice as `SAVER=n` (any case). There is no line for the usual 5 minutes, and `SAVER=0` means never. Its other lines, `FONT=` included, are kept; with nothing left the file goes.
+  - System writes both settings through one routine (`save_ini`, with `ini_is` matching a key in any case).
+  - At start-up the core reads `SAVER=` as well as `FONT=`, in either order.
+- **The most is 30 minutes:** the core counts idle ticks under 8000h, which is how it copes with the clock going back at midnight. A larger value in GRIDOS.INI is taken as 30.
+- **The core:**
+  - `saver_t` (ticks; FFFFh means never) replaces the constant;
+  - a new call, `UI_SAVER` (entry 46, so UI API 3): AL = 0 gives the minutes, AL = 1 sets them from BL.
+  - SYSTEM.RUN needs this core (API 3).
+- **Cost:** GRIDOS.SYS 35,480 bytes (+120). SYSTEM.RUN 8,084. A DOS program gets 565.7 KB.
+- **Tests (`t_saver_delay`, 14 checks):**
+  - 5 minutes to start with; the topic; each step and its GRIDOS.INI;
+  - "never" over 30 idle minutes; 1 minute: no saver at 50 s, the saver after a minute;
+  - after a restart; `FONT=` and `SAVER=` together; `saver=2` before `FONT=` with another line kept; back to 5 removing the line; `SAVER=99` taken as 30.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
@@ -316,7 +333,7 @@
     - `f_3B` cuts the current-directory string at 66 characters;
     - a failed mount returns an error without INT 24h.
   - **Not changed:** System takes the 80287 from INT 11h (SETUP's CMOS bit) rather than probing it, and Write's "Write to a file" overwrites without asking.
-- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, 237 with 0.3.3's `t_files` and `t_file_safety`, below)**:**
+- **`tests/test_apps.py` — 122 checks** (160 with 0.3.1's `t_mouse`, 186 with 0.3.2's `t_form`, 237 with 0.3.3's `t_files` and `t_file_safety`, 251 with 0.3.4's `t_saver_delay`, below)**:**
   - **UITEST.RUN** exercises the API: lists, forms, ask, help, errors, BSS zeroing, exit code, cleanup to the paragraph, and a file that isn't a `.RUN`.
   - **System:** every topic, setting the clock, a bad date, the GPIB scan.
   - **CODE-?, CODE-Return, CODE-ESC** in the Executive, a form, System and Write, as the 1520's BIOS delivers them (below).
