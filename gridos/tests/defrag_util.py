@@ -71,14 +71,14 @@ def layout(raw):
 
 
 def run(img, tail=' /S', sim_s=3600, disk_model='flat', before_start=None, during=None, syms=None, **kw):
-    """Boot, CODE-C, 'DEFRAG<tail>'; run until it exits.  -> (k, exit code)
+    """Boot, CODE-P, 'DEFRAG<tail>'; run until it exits.  -> (k, exit code)
     (exit code None if it didn't finish).  during(k) is called every few
     simulated seconds while it runs."""
     k = ktest.KPC(img, disk_model=disk_model, **kw)
     if syms: k.Y = ktest.Syms(syms)
     if before_start: before_start(k)
     k.start()
-    k.key(ktest.CODE_C)
+    k.key(ktest.CODE_P)
     k.key('defrag' + tail)
     f4c = 0x600 + k.Y['f_4C']
     seen = []

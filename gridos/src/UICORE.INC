@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 SAVER_T     equ 5462                    ; 5 minutes of 55 ms ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-GOS_VER     equ 0032h                   ; Grid-OS 0.3.2 (BH.BL: major, minor<<4 | patch)
+GOS_VER     equ 0033h                   ; Grid-OS 0.3.3 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -99,6 +99,10 @@ title_on    resb 1
 title_ptr   resw 1
 band1       resw 1
 band2       resw 1
+held1       resw 1              ; the band of a question, form or message
+held2       resw 1              ;  still waiting (0: none): put back by
+                                ;  redraw_all (the screen saver's redraw
+                                ;  draws the program's usual band)
 lastact     resw 1
 lastpoll    resw 1
 redraw_fn   resw 1
@@ -479,7 +483,13 @@ redraw_all:
         or      si, si
         jz      .nofn
         call    si
-.nofn:  call    band_redraw
+.nofn:  mov     ax, [held1]             ; a question still waiting: its band,
+        or      ax, ax                  ;  not the one the routine drew
+        jz      .band
+        mov     [band1], ax
+        mov     ax, [held2]
+        mov     [band2], ax
+.band:  call    band_redraw
         xor     bx, bx
 .w:     cmp     bx, [wdepth]
         jae     .x
@@ -1754,14 +1764,31 @@ band_redraw:
 ; UI_MSG: SI = message until a key or click -> AX = it
 ui_msg: push    word [band1]
         push    word [band2]
+        push    word [held1]
+        push    word [held2]
         push    di
         mov     di, s_anykey
         call    ui_band
+        call    hold_band
         call    ui_event
         pop     di
+        pop     word [held2]
+        pop     word [held1]
         pop     word [band2]
         pop     word [band1]
         jmp     band_redraw
+
+; the band on screen now is a question's (or a form's, a message's): the
+; screen saver's redraw puts it back.  The caller saves held1/2 before
+; and restores them after
+hold_band:
+        push    ax
+        mov     ax, [band1]
+        mov     [held1], ax
+        mov     ax, [band2]
+        mov     [held2], ax
+        pop     ax
+        ret
 
 ; UI_ASK: SI = line 1.  CF clear: Return (or a click on the band); CF: ESC
 ui_ask: push    ax
@@ -1770,8 +1797,11 @@ ui_ask: push    ax
         push    di
         push    word [band1]
         push    word [band2]
+        push    word [held1]
+        push    word [held2]
         mov     di, s_confirm
         call    ui_band
+        call    hold_band
 .l:     call    ui_event
         cmp     ax, K_ENTER
         je      .yes
@@ -1787,7 +1817,9 @@ ui_ask: push    ax
 .yes:   clc
         jmp     .x
 .no:    stc
-.x:     pop     word [band2]
+.x:     pop     word [held2]
+        pop     word [held1]
+        pop     word [band2]
         pop     word [band1]
         pushf
         call    band_redraw
@@ -2558,6 +2590,8 @@ ui_form:
         stc
         ret
 .go:    pusha
+        push    word [held1]
+        push    word [held2]
         mov     [fm_ptr], si
         mov     ax, [band1]
         mov     [fm_b1], ax
@@ -2585,6 +2619,7 @@ ui_form:
         mov     di, s_formhelp
         mov     si, [si+F_PROMPT]
         call    ui_band
+        call    hold_band
 .l:     call    fm_field                ; SI -> field, BX = col, DX = y
         call    fm_line_on
         mov     al, [si+FL_TYPE]
@@ -2690,20 +2725,19 @@ ui_form:
         je      .cnext                  ; clicking a choice again: the next one
 .same:  mov     byte [ed_keep], 1       ; back to the same field, as it was
         jmp     .l
-.ok:    call    ui_wclose
-        mov     si, [fm_b1]
-        mov     di, [fm_b2]
-        call    ui_band
-        popa
-        clc
-        ret
+.ok:    clc
+        jmp     short .end
 .cancel:
+        stc
+.end:   pop     word [held2]            ; (POP and POPA keep the flags)
+        pop     word [held1]
+        pushf
         call    ui_wclose
         mov     si, [fm_b1]
         mov     di, [fm_b2]
         call    ui_band
+        popf
         popa
-        stc
         ret
 
 ; field [fm_cur] -> SI = it, BX = value column, DX = its y
@@ -3450,7 +3484,7 @@ run_app:
 
 ; =====================================================================
 ;  the screen saver, after 5 minutes without a key or the mouse.  In the
-;  Executive (no .RUN, no window): first DEFRAG.COM, if it is on the
+;  Executive (no .RUN, no window, no question): first DEFRAG.COM, if it is on the
 ;  disk: it tidies the floppy while showing its map, and stops at a key or
 ;  the mouse (exit code 1) or when the disk is in order.  Then a dark
 ;  screen with the time and date moving to a new place every 20 seconds,
@@ -3465,6 +3499,8 @@ saver:  pusha
         jne     .own
         cmp     word [wdepth], 0
         jne     .own
+        cmp     word [held1], 0         ; (nor while a question waits: a
+        jne     .own                    ;  file it names stays as it is)
         call    sv_defrag
         jc      .own
         cmp     al, 1

@@ -1,4 +1,4 @@
-Grid-OS 0.3.2 - boot floppy
+Grid-OS 0.3.3 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -48,7 +48,7 @@ written for it are .RUN files that load next to it:
               by serial poll, then sets them back to local), display
               (Return switches the screen font), about.
 Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
-subject you work in).  A DOS program gets about 568 KB: while it runs
+subject you work in).  A DOS program gets about 566 KB: while it runs
 the Executive lends it the memory of its file list.  The screen font is
 GRiD's own: the InteGRiD system font (TC8X16), as GRID.EXE drew it.
 TERMINUS.FNT is the font Grid-OS had before; in System, Display, Return
@@ -73,6 +73,22 @@ GRIDOS.INI stay on the disk Grid-OS started from.  CTRL-ALT-DEL
 restarts, so CODE-R is gone, and CODE-D too: for GRiD MS-DOS, restart
 without pressing F.
 
+0.3.3: file commands in the Executive, verb first as in GRiDManager:
+choose a title, press the command, fill in the form, confirm.
+  CODE-C  Copy: Device, Subject and Title of the copy (this drive,
+          subject and title to start with).  The copy is written as a
+          new file first and only then takes its name, so a full or
+          write-protected disk leaves what was there alone.  The date
+          and time go with it.
+  CODE-M  Move: Device and Subject.  On the same drive the entry just
+          moves; to the other drive it is copied, then erased (not a
+          read-only file).
+  CODE-R  Rename: the new title, in the same subject.
+  CODE-D  Delete (erase), after a question.  Read-only files stay.
+A title already there is replaced only if you confirm.  The Subject is
+typed as a path from the root (\ for Root, \DOS.330\DEEP); a title has
+no \ : * or ?, a subject no : * or ?.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -81,7 +97,9 @@ The Executive (the file list):
   CODE-U                         Usage (SYSTEM.RUN)
   CODE-W                         Write a new text file (WRITE.RUN)
   CODE-A                         Claude (CLAUDE.COM)
-  CODE-C                         command prompt (GRIDCMD.COM, EXIT returns)
+  CODE-P                         command prompt (GRIDCMD.COM, EXIT returns)
+  CODE-C, CODE-M                 Copy, Move the file
+  CODE-R, CODE-D                 Rename, Delete the file
   F5                             read the disk again after a swap
   CODE-? (Alt+/) or F1           help
   5 minutes idle                 screen saver (DEFRAG, then the time)
