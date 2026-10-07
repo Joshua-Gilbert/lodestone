@@ -7,11 +7,13 @@
 ; end, so the log doesn't disturb the timing), then it waits for a key.
 ; Every timing point also passes BX = BE00h + 2n (start) / 2n+1 (end), which
 ; the emulator records to the microsecond; real BIOSes ignore BX.
+; 1.3: with an EMS manager (INT 67h), three EMS tests after the total
+; (not in it): page mapping, and 57h moves to and from EMS.
 cpu 286
 org 100h
 
 CHUNK   equ 16384
-LOGMAX  equ 3000
+LOGMAX  equ 3600
 BIGKB   equ 256
 EXEKB   equ 120
 
@@ -29,12 +31,18 @@ start:  mov     sp, stack_top
         shr     bx, 4
         mov     ah, 4Ah
         int     21h
+        mov     word [kbn], BIGKB
         mov     dx, s_title
         call    print
         call    is_gridos
-        mov     dx, s_msdos
-        jne     .os
         mov     dx, s_gridos
+        je      .os
+        mov     ax, 3000h               ; FreeDOS: OEM FDh
+        int     21h
+        mov     dx, s_freedos
+        cmp     bh, 0FDh
+        je      .os
+        mov     dx, s_msdos
 .os:    call    print
         mov     ah, 30h
         int     21h
@@ -133,6 +141,7 @@ start:  mov     sp, stack_top
         call    psecs
         mov     dx, s_crlf
         call    print
+        call    ems_bench
         mov     dx, s_crlf              ; (a blank line between runs)
         call    print
         call    savelog
@@ -305,7 +314,7 @@ finish_kb:
         mov     dx, s_sp4
         call    print
         ; KB/s = KB * 18207 / ticks / 1000 (32-bit long division)
-        mov     ax, BIGKB
+        mov     ax, [kbn]
         mov     cx, 18207
         mul     cx
         mov     bx, [ticks]
@@ -551,6 +560,119 @@ t_calls:
         jnz     .l
         ret
 
+; ---------------------------------------------------------------------
+; EMS (INT 67h), if a manager is there: 16 pages of a handle of our own
+ems_bench:
+        mov     ax, 3567h               ; 'EMMXXXX0' at the vector's segment:0Ah?
+        int     21h
+        mov     di, 0Ah
+        mov     si, s_emm
+        mov     cx, 8
+        repe    cmpsb
+        push    cs
+        pop     es
+        je      .yes
+        mov     dx, s_noems
+        jmp     print
+.yes:   mov     ah, 41h                 ; the page frame
+        int     67h
+        or      ah, ah
+        jnz     .bad
+        mov     [frame], bx
+        mov     ah, 43h                 ; 16 pages
+        mov     bx, 16
+        int     67h
+        or      ah, ah
+        jnz     .bad
+        mov     [eh], dx
+        mov     dx, s_emshead
+        call    print
+        mov     dx, n_map
+        call    begin
+        mov     si, 5000                ; map pages 0 and 1 in turn: 10000 maps
+.m:     mov     ax, 4400h
+        xor     bx, bx
+        mov     dx, [eh]
+        int     67h
+        mov     ax, 4400h
+        mov     bx, 1
+        int     67h
+        dec     si
+        jnz     .m
+        call    finish
+        mov     word [kbn], 1024
+        mov     byte [mv_dst], 1        ; to EMS: conventional -> handle
+        mov     dx, n_mvto
+        call    begin
+        call    .moves
+        call    finish_kb
+        mov     byte [mv_dst], 0        ; from EMS
+        mov     dx, n_mvfrom
+        call    begin
+        call    .moves
+        call    finish_kb
+        mov     dx, [eh]
+        mov     ah, 45h
+        int     67h
+        ret
+.bad:   mov     al, ah                  ; "EMS error nn"
+        xor     ah, ah
+        push    ax
+        mov     dx, s_emserr
+        call    print
+        pop     ax
+        call    pnum
+        mov     dx, s_crlf
+        jmp     print
+; 64 moves of 16 KB (1 MB) between buf and the handle's pages 0..15
+.moves: xor     si, si
+.mv:    mov     di, mvs
+        mov     ax, CHUNK               ; length
+        stosw
+        xor     ax, ax
+        stosw
+        mov     bx, si
+        and     bx, 15
+        cmp     byte [mv_dst], 0
+        jne     .to
+        call    .ems                    ; from EMS ...
+        call    .conv                   ; ... to buf
+        jmp     short .go
+.to:    call    .conv
+        call    .ems
+.go:    push    si
+        mov     si, mvs
+        mov     ax, 5700h
+        int     67h
+        pop     si
+        or      ah, ah
+        jnz     .e
+        inc     si
+        cmp     si, 64
+        jb      .mv
+        ret
+.e:     mov     al, ah
+        xor     ah, ah
+        jmp     err
+.conv:  xor     al, al                  ; conventional: buf
+        stosb
+        xor     ax, ax
+        stosw
+        mov     ax, buf
+        stosw
+        mov     ax, cs
+        stosw
+        ret
+.ems:   mov     al, 1                   ; EMS: the handle, offset 0, page BX
+        stosb
+        mov     ax, [eh]
+        stosw
+        xor     ax, ax
+        stosw
+        mov     ax, bx
+        stosw
+        ret
+
 err:    inc     byte [errors]
         push    ax
         mov     dx, s_err
@@ -646,7 +768,15 @@ psecs:  mov     cx, 5493                ; hundredths = ticks * 5.4925
         mov     dx, s_secs
         jmp     print
 
-s_title     db 'BENCH 1.2 - DOS file system benchmark on $'
+s_title     db 'BENCH 1.3 - DOS file system benchmark on $'
+s_freedos   db 'FreeDOS (DOS $'
+s_emm       db 'EMMXXXX0'
+s_noems     db 'No EMS (INT 67h)', 13, 10, '$'
+s_emshead   db 13, 10, 'EMS (INT 67h), not in the total:', 13, 10, '$'
+s_emserr    db 'EMS error $'
+n_map       db 'Map a page x 10000                  $'
+n_mvto      db 'Move 1 MB to EMS (57h), 16 KB each  $'
+n_mvfrom    db 'Move 1 MB from EMS (57h)            $'
 s_gridos    db 'Grid-OS (DOS $'
 s_msdos     db 'MS-DOS (DOS $'
 s_close     db ')', 13, 10, '$'
@@ -697,6 +827,11 @@ save_ss     resw 1
 save_sp     resw 1
 epb         resw 7
 logpos      resw 1
+kbn         resw 1
+frame       resw 1
+eh          resw 1
+mv_dst      resb 1
+mvs         resb 18
 logbuf      resb LOGMAX
 buf         resb CHUNK
             resb 512
