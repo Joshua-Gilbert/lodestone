@@ -1,4 +1,4 @@
-Grid-OS 0.3.11 - boot floppy
+Grid-OS 0.3.12 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -43,11 +43,12 @@ written for it are .RUN files that load next to it:
               (save, write to another file, include a file), CODE-U Usage,
               ESC (or CODE-ESC) Cancel.  Files up to 64 KB; it saves to
               NAME.$$$ first, so a failed save leaves the old file alone.
-  SYSTEM.RUN  Usage (CODE-U in the Executive): memory, disks, the clock
-              (Return sets it), devices, GPIB (Return finds instruments
-              by serial poll, then sets them back to local), display
-              (Return switches the screen font), screen saver (Return:
-              when it starts), about.
+  SYSTEM.RUN  Usage (CODE-U in the Executive): memory, disks (C: too),
+              the clock (Return sets it), devices (the hard disk's own
+              name too), GPIB (Return finds instruments by serial poll,
+              then sets them back to local), display (Return switches
+              the screen font), screen saver (Return: when it starts;
+              Space: whether it tidies the disks first), about.
 Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
 subject you work in).  A DOS program gets about 566 KB: while it runs
 the Executive lends it the memory of its file list.  The screen font is
@@ -168,10 +169,20 @@ marked bad and the work goes on; DEFRAG C: /T tests all the free space
 and marks the bad ones.  On the hard disk each square of the map stands
 for several clusters.  While it runs on C: DEFRAG needs about 200 KB
 more memory, all given back when it ends; on a floppy it needs a little
-less than before.  The screen saver still tidies only floppies.  At
+less than before.  At
 most 240 files and 64 directories on a disk (more: the map only).  With
 a hard disk Grid-OS keeps 0.1 KB more than 0.3.10 (for DEFRAG's disk
 calls): 2.9 KB in all (3.3 KB without EMS).
+
+0.3.12: the screen saver tidies every disk in turn: A:, then B: (if
+the GRiD has a second floppy drive), then C: (if there is a hard disk),
+each with its map, then the dark screen with the time.  DEFRAG.COM must
+be on the disk Grid-OS started from.  A drive with no disk in it is
+passed over (after the few seconds the drive takes to say so), and a
+key or the mouse during any disk's turn ends the round.  In System,
+Screen saver, Space switches the tidying off (straight to the dark
+screen; GRIDOS.INI then says TIDY=0) and on again.  System's Disks
+shows C: too, and Devices the hard disk's own name.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
@@ -188,8 +199,9 @@ The Executive (the file list):
   F5                             read the disk again after a swap
   Shift-PrtSc                    the screen to SCREENnn.BMP (or .TXT)
   CODE-? (Alt+/) or F1           help
-  5 minutes idle                 screen saver (DEFRAG, then the time;
-                                 System, Screen saver sets when)
+  5 minutes idle                 screen saver (DEFRAG on A:, B:, C:,
+                                 then the time; System, Screen saver
+                                 sets when)
   Serial mouse on COM2 (or COM1).
 
 Programs:

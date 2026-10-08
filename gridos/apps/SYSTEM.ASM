@@ -385,7 +385,8 @@ t_memory:
 .cx:    ret
 
 ; ---------------------------------------------------------------------
-;  Disks: A: (and B: when there is a second drive)
+;  Disks: A: (and B: when there is a second drive, C: when there is the
+;  hard disk)
 ; ---------------------------------------------------------------------
 t_disks:
         mov     byte [drv], 0
@@ -395,10 +396,24 @@ t_disks:
         rol     al, 2
         and     al, 3                   ; drives - 1
         cmp     [drv], al
-        ja      .x
+        ja      .c
         call    pgap
         jmp     .d
+.c:     call    has_c
+        jc      .x
+        mov     byte [drv], 2
+        call    pgap
+        jmp     disk_lines
 .x:     ret
+
+; is there a C: (Grid-OS's hard disk: INT 21h 0Eh says 3 drives)?  CF if not
+has_c:  mov     ah, 19h
+        int     21h
+        mov     dl, al
+        mov     ah, 0Eh
+        int     21h
+        cmp     al, 3
+        ret
 
 disk_lines:
         mov     al, [drv]
@@ -474,7 +489,8 @@ clus_kb:
         jmp     .m
 .h:     shr     dx, 1                   ; two of them make a KB
         rcr     ax, 1
-        call    UI_SBU16
+        mov     cx, dx
+        call    UI_SBU32
         mov     si, s_kb
         jmp     UI_SBSTR
 
@@ -892,7 +908,67 @@ t_devices:
         mov     byte [s_b+0], 'B'
         call    drive_kind
 .one:   mov     si, l_floppy
-        jmp     pline
+        call    pline
+        call    vstart                  ; the hard disk: the name it gives
+        call    has_c                   ;  itself
+        jc      .nh
+        call    hd_name
+        jnc     .hn
+.nh:    mov     si, s_none
+        call    UI_SBSTR
+.hn:    mov     si, l_hdisk
+        mov     bx, 80                  ; (a long name: to the right edge)
+        sub     bx, di
+        add     bx, vbuf
+        cmp     bx, VCOL
+        jbe     .hr
+        mov     bx, VCOL
+.hr:    jmp     pline_at
+
+; the hard disk's own name (IDENTIFY, words 27-46) at DI.  CF if it doesn't
+; answer within a second
+hd_name:
+        mov     dx, 1F6h
+        mov     al, 0A0h                ; drive 0
+        out     dx, al
+        inc     dx
+        mov     al, 0ECh                ; IDENTIFY
+        out     dx, al
+        call    UI_TICK
+        mov     bx, ax
+.w:     in      al, dx
+        test    al, 80h
+        jnz     .b
+        test    al, 09h                 ; DRQ, or ERR
+        jnz     .r
+.b:     call    UI_TICK
+        sub     ax, bx
+        cmp     ax, 18
+        jb      .w
+.no:    stc
+        ret
+.r:     test    al, 01h
+        jnz     .no
+        push    di
+        mov     di, fbuf
+        mov     cx, 256
+        mov     dx, 1F0h
+        rep     insw
+        pop     di
+        mov     si, fbuf + 27 * 2       ; 40 characters, each pair swapped
+        mov     cx, 20
+.n:     lodsw
+        xchg    al, ah
+        stosw
+        loop    .n
+.t:     cmp     di, vbuf                ; trailing blanks off
+        jbe     .x
+        cmp     byte [di-1], ' '
+        ja      .x
+        dec     di
+        jmp     .t
+.x:     clc
+        ret
 
 ; AL = CMOS drive type -> "A: 1.44 MB" at DI (first A:, then B:)
 drive_kind:
@@ -1208,16 +1284,29 @@ next_font:
         jmp     redraw
 
 ;  Screen saver: how long the Executive waits, idle, before the saver
-;  (DEFRAG, then the dark clock).  Return: the next choice, saved in
-;  GRIDOS.INI as SAVER= (none for the usual 5 minutes).
+;  (DEFRAG on each disk, then the dark clock).  Return: the next choice,
+;  saved in GRIDOS.INI as SAVER= (none for the usual 5 minutes).  Space:
+;  whether it tidies the disks first (TIDY=0 when not).
 ; ---------------------------------------------------------------------
 t_saver:
         call    vstart
         call    saver_text
         mov     si, l_saver
         call    pline
+        call    vstart                  ; tidies the disks first?
+        xor     al, al
+        call    UI_SAVER
+        mov     si, s_yes
+        or      ah, ah
+        jz      .t
+        mov     si, s_no
+.t:     call    UI_SBSTR
+        mov     si, l_tidy
+        call    pline
         call    pgap
         mov     si, s_svchoices
+        call    ptext
+        mov     si, s_svspace
         call    ptext
         call    pgap
         mov     si, s_svwhat1
@@ -1263,7 +1352,22 @@ next_saver:
         jmp     redraw
 
 sv_steps    db 1, 2, 5, 10, 15, 30, 0   ; minutes (0: never)
+
 NSTEPS      equ $ - sv_steps
+
+; Space on Screen saver: tidy the disks first, or not
+k_space:
+        cmp     word [topics+LV_SEL], 6
+        jne     .x
+        xor     al, al
+        call    UI_SAVER
+        mov     bl, ah
+        xor     bl, 1
+        mov     al, 2
+        call    UI_SAVER
+        call    save_ini
+        jmp     redraw
+.x:     ret
 
 ; the file named at dta+30 into fbuf -> CF if it isn't exactly a font
 load_fnt:
@@ -1312,9 +1416,9 @@ same_name:
         pop     si
         ret
 
-; FONT= and SAVER= in \GRIDOS.INI for the font and saver delay in use: its
-; other lines are kept, old FONT= and SAVER= lines go, and GRiD's font and
-; the usual 5 minutes need none (no lines left: no file)
+; FONT=, SAVER= and TIDY= in \GRIDOS.INI for the font and saver in use: its
+; other lines are kept, old FONT=, SAVER= and TIDY= lines go, and GRiD's
+; font, the usual 5 minutes and tidying need none (no lines left: no file)
 save_ini:
         xor     cx, cx                  ; the old file (none: nothing)
         mov     dx, s_ini
@@ -1342,10 +1446,13 @@ save_ini:
 .line:  cmp     si, bx
         jae     .end
         push    di                      ; (DI: where the new text goes)
-        mov     di, s_fonteq            ; "FONT=" or "SAVER=" (any case)?
-        call    ini_is
+        mov     di, s_fonteq            ; "FONT=", "SAVER=" or "TIDY="
+        call    ini_is                  ;  (any case)?
         je      .ours
         mov     di, s_savereq
+        call    ini_is
+        je      .ours
+        mov     di, s_tidyeq
         call    ini_is
 .ours:  pop     di
         je      .skip
@@ -1388,7 +1495,13 @@ save_ini:
         call    UI_SBU16
         mov     ax, 0A0Dh
         stosw
-.wr2:   mov     bp, di                  ; BP = the end of the new text
+.wr2:   xor     al, al                  ; not tidying: TIDY=0
+        call    UI_SAVER
+        or      ah, ah
+        jz      .wr3
+        mov     si, s_tidy0
+        call    UI_SBSTR
+.wr3:   mov     bp, di                  ; BP = the end of the new text
         cmp     di, ini_new
         je      .del
         mov     dx, s_ini
@@ -1479,6 +1592,7 @@ keys:   KEY(K_NONE,      0,       h_topic)
         KEY(K_ENTER,     k_enter, h_enter)
         KEY(K_NONE,      0,       h_enter2)
         KEY(K_NONE,      0,       h_enter3)
+        KEY(K_SPACE,     k_space, h_space)
         KEY(K_F5,        k_f5,    h_f5)
         KEY(K_F1,        k_help,  h_help)
         KEY(K_CODE_HELP, k_help,  0)
@@ -1514,11 +1628,12 @@ s_band2     db 'CODE-? for help    ESC: back to the Executive',0
 s_band_clk  db 'RETURN: set the date and time    ESC: back',0
 s_band_gp   db 'RETURN: scan the bus    ESC: back',0
 s_band_font db 'RETURN: the next font    ESC: back',0
-s_band_sv   db 'RETURN: the next choice    ESC: back',0
+s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
 h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
 h_enter     db 'Return on Clock              set the date and time',0
 h_enter2    db 'Return on GPIB               scan the bus',0
 h_enter3    db 'Return on Display            the next font',0
+h_space     db 'Space on Screen saver        tidy the disks or not',0
 h_f5        db 'F5                           look again',0
 h_help      db 'CODE-?  or  F1               this help',0
 h_quit      db 'ESC  or  CODE-Q              back to the Executive',0
@@ -1558,6 +1673,7 @@ l_mouse     db 'Mouse',0
 l_serial    db 'Serial ports',0
 l_printer   db 'Printer port',0
 l_floppy    db 'Floppy drives',0
+l_hdisk     db 'Hard disk',0
 s_286       db '80286',0
 s_287       db '80287',0
 s_none      db 'none',0
@@ -1625,12 +1741,18 @@ s_fntall    db '@:\*.FNT',0              ; (@: the disk Grid-OS started from,
 s_ini       db '@:\GRIDOS.INI',0          ;  which reads them: set at the start)
 s_fonteq    db 'FONT=',0
 s_savereq   db 'SAVER=',0
+s_tidyeq    db 'TIDY=',0
+s_tidy0     db 'TIDY=0', 13, 10, 0
 l_saver     db 'Starts after',0
 s_never     db 'never',0
 s_minutes   db ' minutes',0
 s_minute    db ' minute',0
+l_tidy      db 'Tidies the disks first',0
+s_yes       db 'yes',0
+s_no        db 'no',0
 s_svchoices db 'RETURN: 1, 2, 5, 10, 15 or 30 minutes, or never',0
-s_svwhat1   db 'Idle in the Executive that long, it tidies the disk',0
+s_svspace   db 'SPACE: tidy the disks first, or not',0
+s_svwhat1   db 'Idle that long in the Executive, it tidies each disk',0
 s_svwhat2   db '(DEFRAG), then shows the time on a dark screen.',0
 s_empty     db 0
 s_cantsave  db "The font is set, but can't be saved: ",0

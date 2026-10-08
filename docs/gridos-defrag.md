@@ -9,11 +9,11 @@ Decisions (Joshua, 2026-10-05):
 - **on a worn disk, keep going — don't just stop.** "These disks do degrade over the years." Added after the first real run stopped at a disk error.
 
 ## How it behaves
-- **After 5 minutes without a key or the mouse**, the Executive runs `A:\DEFRAG.COM /S M=seg:off` from the root of the current drive, if the file is there. M= is the address of the Executive's mouse flag, so moving the mouse stops DEFRAG too.
+- **After 5 minutes without a key or the mouse** (the delay is set in System), the Executive runs DEFRAG.COM `/S M=seg:off F=seg:off` from the root of the start-up disk, if the file is there. M= is the address of the Executive's mouse flag, so moving the mouse stops DEFRAG too. Since 0.3.12 it does this for each disk in turn: `A:`, then `B:` (if there is a second floppy drive), then `C:` (if there is a hard disk). Before 0.3.12 it ran DEFRAG from the current drive's root, for the current floppy only.
 - DEFRAG shows every cluster as a cell on the 640x400 screen, tidies the disk, shows "Disk in order: …" for ~4 s and exits.
 - The Executive then shows a **dark screen with just the time and date, moving to a new place every 20 s**, so the plasma never holds one picture.
 - **Any key or the mouse** brings the Executive back with the same selection. The waking key does nothing else, and a held mouse button isn't taken as a click.
-- The next idle period: DEFRAG takes a quick look ("Disk in order", a few seconds), then the dark screen. With no DEFRAG.COM on the disk it goes straight to the dark screen.
+- The next idle period: DEFRAG takes a quick look at each disk ("Disk in order", a few seconds each), then the dark screen. With no DEFRAG.COM on the start-up disk it goes straight to the dark screen.
 - DEFRAG can also be run by hand, from the Executive list or `DEFRAG` at the prompt. It does the same, but waits for a key at the end and restores the text mode.
 - **`DEFRAG /T`** tests the free space instead of tidying (below).
 - **`DEFRAG B:`** (or `B: /T`) works on the floppy in drive B: (BIOS unit 1). Without a drive letter it works on the current drive. The log then goes to DEFRAG.TXT on that disk, and drive A: isn't touched. On a GRiD without a second drive it says "there is no floppy drive B:".
@@ -156,6 +156,23 @@ Floppies degrade, and the first real run stopped at a disk error, so a bad spot 
   - kernel 0Dh issues (fixed);
   - a swallowed write-protect error code (fixed);
   - several smaller issues, all fixed.
+
+## The saver goes round every disk (Grid-OS 0.3.12, 2026-10-07)
+Joshua: "have the screen saver now cycle through all the disks".
+- **`sv_defrag` in UICORE.INC** finds DEFRAG.COM in the root of the start-up disk (INT 21h 3305h). For each of A:, B: and C: it runs it as `X: /S M=… F=…`:
+  - B: only if the BIOS reports a second floppy drive (INT 11h);
+  - C: only if Grid-OS has the hard disk (INT 21h 0Eh reports 3 drives).
+- **After each disk**, INT 21h 36h on that drive, as before, so the kernel takes the FAT in while the disk is surely the same one.
+- **Exit 1** (a key or the mouse) ends the round, and the Executive comes back. Otherwise the dark screen follows the last disk.
+- **DEFRAG's new exit code 3, with /S only:** the disk couldn't be read at all, for example an empty drive or a disk that isn't FAT. DEFRAG then exits at once with no message, and the saver goes on to the next disk.
+  - On the 1520, an empty B: still costs the time the BIOS takes to give up (three tries).
+- **On or off (Joshua):** in System, Screen saver, Space switches tidying off and on. Off, the saver goes straight to the dark screen. The setting is a `TIDY=0` line in GRIDOS.INI, read at start-up; on needs no line. The core keeps it in `sv_notidy`; UI_SAVER (UI API 4) returns it in AH and sets it with AL = 2.
+- **Cost:** GRIDOS.SYS +106 bytes (42,348) for the round and the switch; DEFRAG.COM +14 (10,138).
+- **Tests (`t_saver_all`, 3 checks; the switch in `test_apps.py t_saver_tidy`, 7):**
+  - A:, B: and C: all in pieces: tidied in that order, then the dark screen;
+  - the next time, each is in order, 17 s for all three;
+  - an empty B: passed over, and a key during C:'s turn back to the list with C: consistent.
+  - The 8 floppy saver checks still pass.
 
 ## The hard disk, C: (Grid-OS 0.3.11, 2026-10-07)
 Joshua: "the same operation just using the internal drive", with as much code reused as possible, and extra memory only while it runs. `DEFRAG C:` (or `DEFRAG` with C: current) does everything it does on a floppy, `/T` included.

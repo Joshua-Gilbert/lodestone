@@ -433,7 +433,8 @@ def t_memory():
     m = re.search(r'([\d.]+) KB for programs', out)
     kb = float(m.group(1)) if m else 0
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
-          'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB): the directory buffer is lent while it runs' % kb, kb >= 563.5, out[-200:])
+          'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB): '
+          'the directory buffer is lent while it runs' % kb, kb >= 563.4, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -600,7 +601,7 @@ def t_saver_delay():
     for _ in range(6): k.key(ktest.DOWN, settle=False)
     k.settle()
     check('System: the Screen saver topic says 5 minutes', has(k, 'Screen saver') and has(k, 'Starts after') and has(k, '5 minutes')
-          and 'RETURN: the next choice' in ' '.join(k.band()), (screen(k), k.band()))
+          and 'RETURN: the next delay' in ' '.join(k.band()), (screen(k), k.band()))
     k.key(ktest.ENTER)
     check('Return: 10 minutes, at once, and GRIDOS.INI says SAVER=10', has(k, '10 minutes') and k.u16('saver_t') == 10920
           and disk_file(k, 'GRIDOS.INI') == b'SAVER=10\r\n', (screen(k), disk_file(k, 'GRIDOS.INI')))
@@ -638,6 +639,42 @@ def t_saver_delay():
     ini2 = os.path.join(OUT, 'GRIDOS2.INI'); open(ini2, 'wb').write(b'SAVER=99\r\n')
     k = ktest.KPC(image('svd4.img', 'GRIDOS.INI=' + ini2)); k.start()
     check('SAVER=99: 30 minutes at most', k.rd('saver_min', 1) == b'\x1e' and k.u16('saver_t') == 32760, k.rd('saver_min', 1))
+
+
+def t_saver_tidy():
+    print('== the saver tidies the disks, or not (System, Screen saver, Space; GRIDOS.INI TIDY=0)')
+    SPACE = 0x3920
+    img = image('svt.img', SYSTEM, DEFRAG)
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    def topic(k):
+        k.key(CODE['U'])
+        for _ in range(6): k.key(ktest.DOWN, settle=False)
+        k.settle()
+    topic(k)
+    tidy = lambda: next((l for l in lines(k) if 'Tidies the disks first' in l), '')
+    check('Screen saver: "Tidies the disks first: yes", SPACE in the band and the text',
+          tidy().rstrip().endswith('yes') and 'SPACE: tidy or not' in ' '.join(k.band()) and has(k, 'SPACE: tidy the disks first'),
+          (screen(k), k.band()))
+    k.key(SPACE)
+    check('Space: "no" at once, GRIDOS.INI says TIDY=0', tidy().rstrip().endswith('no') and k.rd('sv_notidy', 1) == b'\x01'
+          and disk_file(k, 'GRIDOS.INI') == b'TIDY=0\r\n', (tidy(), disk_file(k, 'GRIDOS.INI')))
+    k.key(ktest.ENTER)
+    check('... with a delay too: SAVER=10 and TIDY=0', disk_file(k, 'GRIDOS.INI') == b'SAVER=10\r\nTIDY=0\r\n', disk_file(k, 'GRIDOS.INI'))
+    k.key(ktest.ESC)
+    shown = idle(k, 10 * 1092 + 18)
+    k.pc.run_for(2)
+    dark = [l.strip() for l in lines(k) if len(l.strip()) > 2]
+    check('idle 10 minutes: the dark clock at once, no DEFRAG', not shown and len(dark) == 2 and dark[0].endswith('m')
+          and dark[1].count('-') == 2, dark)
+    k.key(ktest.ESC); k.settle()
+    k = reboot(k, 'svt2.img')
+    check('after a restart: still not tidying (TIDY=0 taken)', k.rd('sv_notidy', 1) == b'\x01', k.rd('sv_notidy', 1))
+    topic(k)
+    k.key(SPACE)
+    check('Space again: "yes", the TIDY= line gone', tidy().rstrip().endswith('yes') and k.rd('sv_notidy', 1) == b'\x00'
+          and disk_file(k, 'GRIDOS.INI') == b'SAVER=10\r\n', (tidy(), disk_file(k, 'GRIDOS.INI')))
+    k.key(ktest.ESC)
+    check('... and the saver runs DEFRAG again', idle(k, 10 * 1092 + 18), lines(k)[:2])
 
 
 # ---------------------------------------------------------------------
@@ -1371,7 +1408,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_saver_delay):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_saver_delay, t_saver_tidy):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
