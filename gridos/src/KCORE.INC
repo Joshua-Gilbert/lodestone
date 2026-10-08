@@ -1250,12 +1250,13 @@ f_F0:   mov     al, [bp+F_AX]
         mov     [bp+F_CX], cx
         jmp     ok
 f_0E:   mov     al, [bp+F_DX]           ; select drive
-        cmp     al, 2
+        cmp     al, NDRV
         jae     .x
         call    drv_present
         jc      .x
         mov     [cur_drv], al
-.x:     mov     al, 2                   ; drives A: and B:
+.x:     mov     al, 2                   ; drives A: and B: (and C:)
+        add     al, [drvtab + 2 * DRVSZ + D_PRES]
         jmp     ret_al
 f_19:   mov     al, [cur_drv]
         jmp     ret_al

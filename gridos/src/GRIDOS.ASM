@@ -19,6 +19,8 @@
 ;    KEMS   the EMS manager (LIM 4.0, INT 67h) - only resident when the
 ;           machine has EMS: it follows the kernel image in this file,
 ;           and its start-up puts it above the BSS and keeps it, or not
+;    KHD    the internal hard disk as C: (AT bus, FAT16) - the same way,
+;           only resident when there is one: after EMS
 ;
 ;  The UI segment (section ui, our COMMON.SHR) follows the kernel in this
 ;  file.  At start-up it is copied into a block of its own (owner 8, "UI")
@@ -58,8 +60,9 @@ start:  cli                     ; at 1000:0000 from the boot sector
         xor     di, di
         mov     cx, (image_end - start + 1) / 2
         rep     movsw
-        jmp     image_end + (ems_init - ems_start)   ; KEMS.INC's, in this
-                                        ; image (then KSEG:init, EMS or not)
+        jmp     section.boot.start + (ems_init - section.boot.vstart)   ; KEMS.INC's, in this
+                                        ; image (then KHD.INC's hd_init,
+                                        ; then KSEG:init)
 
 init:   cli
         mov     ax, cs
@@ -75,7 +78,7 @@ init:   cli
         call    ivt_init
         call    sft_init
         call    mem_init
-        call    drv_init
+.cdrv:  call    drv_init                ; (KHD.INC: hd_drv_init, with C:)
         call    clock_init
         call    gpib_init
         call    proc_init               ; master environment + root PSP
@@ -144,8 +147,13 @@ s_nouimem   db 'Grid-OS: not enough memory for the Executive', 13, 10, 0
 section .bss nobits align=16 follows=.text
 bss_start:
 ; KEMS.INC: in the file right after the kernel image (at image_end), in
-; memory right after the BSS (where ems_init copies it)
+; memory right after the BSS (where ems_init copies it); KHD.INC's module
+; after it; then both start-ups (in the load image only).  All three are
+; laid out alike in the file and in memory, so each is image_end - bss_end
+; from where it runs in the load image.
 section ems progbits align=16 follows=.text vfollows=.bss valign=16
+section hd progbits align=16 follows=ems vfollows=ems valign=16
+section boot progbits align=16 follows=hd vfollows=hd valign=16
 section .text
 
 %include "KCORE.INC"
@@ -168,11 +176,14 @@ bss_end:
 section ems
 ems_start:
 %include "KEMS.INC"
+section hd
+hd_start:
+%include "KHD.INC"
 
 ; =====================================================================
 ;  The UI segment: offsets from 0 in a segment of its own
 ; =====================================================================
-section ui progbits align=16 follows=ems vstart=0
+section ui progbits align=16 follows=boot vstart=0
 section uibss nobits valign=16 vfollows=ui
 ; alignb would clash with vfollows in NASM's bin output (it sets a "real"
 ; section alignment); uibss starts on a paragraph, so this is the same thing

@@ -723,8 +723,26 @@ refresh:
         int     21h
         jmp     relist
 
-; AL = floppy drives (1 or 2: the kernel's A: and B:)
+; AL = drive -> SI = its name: "Floppy A:", "Hard disk C:"
+dev_str:
+        mov     si, s_dev_c
+        cmp     al, 2
+        jae     .x
+        mov     si, s_dev_a
+        add     al, 'A'
+        mov     [s_dev_a + 7], al
+.x:     ret
+
+; AL = drives to list: the floppies (1 or 2: the kernel's A: and B:), or
+; 3 with the hard disk's C: (B: then too, if only to say it isn't there)
 ndrives:
+        mov     ah, 19h
+        int     21h
+        mov     dl, al
+        mov     ah, 0Eh                 ; (the drive it is: AL = 3 with C:)
+        int     21h
+        cmp     al, 3
+        jae     .x
         int     11h
         test    al, 1
         jz      .one
@@ -733,7 +751,7 @@ ndrives:
         inc     al
         ret
 .one:   mov     al, 1
-        ret
+.x:     ret
 
 ;  Subjects: Root, then every directory of the drive, depth first, by
 ;  name, read into the directory buffer (entries) while Subject is out-
@@ -1738,12 +1756,17 @@ xfer_form:
         call    sb_str
         mov     byte [di], 0
         call    pat_init
-        call    ndrives                 ; B: only if there is one
+        call    ndrives                 ; B: only if there is one, C: too
         mov     ah, 'B'
         cmp     al, 2
-        je      .b
+        jae     .b
         xor     ah, ah
 .b:     mov     [o_drives + 3], ah
+        mov     ah, 'C'
+        cmp     al, 3
+        je      .c
+        xor     ah, ah
+.c:     mov     [o_drives + 6], ah
         mov     si, copy_form
         cmp     byte [xmode], 0
         je      .f
@@ -2415,9 +2438,7 @@ ex_row: mov     [rowmask], cl
         mov     bx, 40
         mov     ah, [rowmask]
         jmp     puts
-.dev:   mov     si, s_dev_a             ; a drive
-        add     al, 'A'
-        mov     [s_dev_a + 7], al
+.dev:   call    dev_str                 ; a drive
         mov     bx, TCOL
         mov     ah, [rowmask]
         jmp     puts
@@ -2475,9 +2496,7 @@ draw_form:
         call    fill_band
         mov     ah, 19h                 ; Device
         int     21h
-        mov     si, s_dev_a
-        add     al, 'A'
-        mov     [s_dev_a + 7], al
+        call    dev_str
         mov     bx, 14
         mov     dx, FORM_Y
         xor     ah, ah
@@ -2699,7 +2718,8 @@ s_lbl_sub   db 'Subject',0
 s_lbl_tit   db 'Title',0
 s_lbl_kind  db 'Kind',0
 s_dev_a     db 'Floppy A:',0
-s_drvlet    db 'AB'                 ; (type-to-find in Device)
+s_dev_c     db 'Hard disk C:',0
+s_drvlet    db 'ABC'                ; (type-to-find in Device)
 s_root      db 'Root',0
 s_bytes     db ' bytes',0
 s_dated     db '   dated ',0
@@ -2752,7 +2772,7 @@ del_form:   dw ftitle, s_delp, 44, 10, 1
             dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
 ren_form:   dw ftitle, s_renp, 44, 10, 1
             dw s_lbl_new, FT_TEXT + (12 << 8), c_tit, 12
-o_drives    db 'A:', 0, 'B:', 0, 0      ; (the 'B' is 0 with one drive)
+o_drives    db 'A:', 0, 'B:', 0, 'C:', 0, 0  ; (a 0 for 'B' or 'C' ends it there)
 o_repl      db 'Ask', 0, 'All', 0, 'None', 0, 0
 o_yesno     db 'No', 0, 'Yes', 0, 0
 s_lbl_tits  db 'Titles', 0

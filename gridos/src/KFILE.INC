@@ -1,6 +1,6 @@
 ; =====================================================================
 ;  KFILE.INC - handles: the system file table (SFT) shared by everyone,
-;  each process's 20-entry handle table (JFT, in its PSP), files on FAT12
+;  each process's 20-entry handle table (JFT, in its PSP), files on FAT
 ;  and the devices CON, NUL, AUX/COM1, COM2, PRN/LPT1 and GPIBnn.  All
 ;  of them read and write through the same calls.
 ; =====================================================================
@@ -564,18 +564,16 @@ sft_commit:
         push    di
         mov     al, [si+S_DRV]
         call    use_drive_si
-        cmp     al, [fat_drv]           ; the chain first, then the entry
-        jne     .ent                    ; (another drive's FAT in the cache:
-        call    fat_flush               ;  this one's went out when it left)
-        jc      .e
-.ent:
+        call    fat_flush_drv           ; the chain first, then the entry
+        jc      .e                      ; (another drive's FAT in the cache:
+                                        ;  this one's went out when it left)
         mov     dx, [si+S_DLBA]
+        mov     ax, [si+S_DOFF]
         push    si
-        call    buf_get
+        call    dent_buf
         mov     di, si
         pop     si
         jc      .e
-        add     di, [si+S_DOFF]
         mov     ax, [si+S_CLU]
         mov     [di+26], ax
         mov     ax, [si+S_SIZE]
@@ -709,7 +707,7 @@ sft_cluster:
         call    fat_get
         cmp     ax, 2
         jb      .no
-        cmp     ax, 0FF0h
+        cmp     ax, 0FFF0h
         jae     .no
         inc     cx
         jmp     .w
@@ -747,7 +745,7 @@ sft_cluster_alloc:
         mov     cx, [si+S_CIX]
 .l:     mov     dx, ax
         call    fat_get
-        cmp     ax, 0FF0h
+        cmp     ax, 0FFF0h
         jae     .add
         inc     cx
         jmp     .l
@@ -848,6 +846,7 @@ file_read:
         call    clu2lba
         pop     cx
         add     ax, cx
+        adc     byte [lba_hi], 0        ; (taken by disk_io or buf_getd below)
         mov     [rw_lba], ax
         or      dx, dx
         jnz     .part
@@ -1008,6 +1007,7 @@ file_write:
         call    clu2lba
         pop     cx
         add     ax, cx
+        adc     byte [lba_hi], 0        ; (taken by disk_io or buf_getd below)
         mov     [rw_lba], ax
         or      dx, dx
         jnz     .part
@@ -1027,7 +1027,7 @@ file_write:
         sub     ax, cx                  ; sectors left in this cluster
         mov     [rw_run], ax
         mov     ax, [rw_lba]
-        xor     dx, dx
+        mov     dx, [lba_hi]
         div     word [di+D_SPT]
         mov     [rw_t0], dl             ; 0: the run starts a track
         mov     cx, [di+D_SPT]
@@ -1043,7 +1043,7 @@ file_write:
         jae     .wgo
         mov     ax, [rw_cl]
         call    fat_get
-        cmp     ax, 0FF0h
+        cmp     ax, 0FFF0h
         jae     .wend
         mov     dx, [rw_cl]
         inc     dx
@@ -1114,7 +1114,7 @@ file_write:
         call    fat_set
         inc     ax
         loop    .lk
-        mov     dx, 0FFFh
+        mov     dx, 0FFFFh
         call    fat_set
         inc     ax
         mov     [di+D_HINT], ax
@@ -1186,10 +1186,10 @@ file_write:
         call    fat_get
         mov     dx, ax
         pop     ax
-        cmp     dx, 0FF0h
+        cmp     dx, 0FFF0h
         jae     .sz
         push    dx
-        mov     dx, 0FFFh
+        mov     dx, 0FFFFh
         call    fat_set                 ; end the chain here
         pop     ax
         call    free_chain              ; and drop the rest
@@ -1517,7 +1517,7 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
         jmp     .iy
 .ost:   mov     ax, 00FFh
         jmp     ok_ax
-.rem:   mov     al, [bp+F_BX]           ; removable?  (A: and B: are)
+.rem:   mov     al, [bp+F_BX]           ; removable?  (A: and B: are, C: not)
         or      al, al
         jnz     .rd
         mov     al, [cur_drv]
@@ -1525,7 +1525,8 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
 .rd:    dec     al
         call    drv_present
         jc      .bdrv
-        xor     ax, ax
+        xor     ah, ah
+        shr     al, 1
         jmp     ok_ax
 .bdrv:  mov     ax, 15
         jmp     fail

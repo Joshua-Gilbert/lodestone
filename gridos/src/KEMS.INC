@@ -981,18 +981,22 @@ ems_h:      db 0, 0                     ; handles: start (FFh: closed), pages,
             times EMS_NH - 1 dd 0FFh    ;  owner's low byte: ems_used)
 ems_sv:     times EMS_NS * 5 db 0FFh    ; 47h: handle (FFh: free), 4 registers
 ems_ltab:   times 128 db 0              ; the pages (only those found stay)
+            align 16
+ems_end:                                ; (KHD.INC's module follows)
 
 ; ---------------------------------------------------------------------
 ;  start-up: `start' jumps here in the load image (1000h:image_end + ...,
 ;  DS = 1000h, ES = KSEG, the boot stack), so only relative jumps and
 ;  the kernel's data through DS = KSEG.  All the above goes above the
 ;  BSS; with EMS it stays and is hooked in, else the arena takes it.
+;  Then on to KHD.INC's start-up, which does the same for the hard disk.
+;  (Section boot: in the file after the modules, never kept in memory.)
 ; ---------------------------------------------------------------------
-            align 2
+section boot
 ems_init:
         mov     si, image_end           ; (where this section is in the file)
         mov     di, bss_end
-        mov     cx, (ems_init - ems_start) / 2
+        mov     cx, (ems_end - ems_start) / 2
         rep     movsw
         push    es
         pop     ds
@@ -1090,4 +1094,4 @@ ems_init:
         mov     word [0Ch], 'MX'        ;  (`start' was there: done with)
         mov     word [0Eh], 'XX'
         mov     word [10h], 'X0'
-.no:    jmp     KSEG:init
+.no:    jmp     hd_init                 ; (in the load image too)

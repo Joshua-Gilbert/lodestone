@@ -1,4 +1,4 @@
-Grid-OS 0.3.9 - boot floppy
+Grid-OS 0.3.10 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -147,6 +147,19 @@ nothing is left behind).  It is taken at once in the Executive, .RUN
 programs and at the DOS prompt; a DOS program that reads the keyboard
 through the BIOS gets it at its next DOS call.
 
+0.3.10: the internal hard disk is drive C:.  The 1520's BIOS turns on
+only the few Conner drives it knows, so Grid-OS drives the hard disk
+itself.  At start-up it looks for one (that takes no time when there is
+none); a drive with a FAT16 partition (as the FDISK and FORMAT of DOS 4
+and later make them, up to 2 GB) becomes C: for the Executive (Device:
+Hard disk C:), the command prompt and DOS programs alike.  A FAT12
+partition, or a drive still busy after 5 seconds, is left off.  It takes
+2.8 KB of the memory programs get (3.2 KB without EMS), and nothing
+without a drive.  Reads and writes go up to 127 sectors at a time; a
+sector that won't read gives the usual "Data error reading drive C" and
+Abort, Retry, Fail.  DEFRAG and the screen saver's tidying stay with the
+floppies.  HDPROBE and HDSCAN look a hard disk over, read-only.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -186,6 +199,11 @@ Programs:
             from this drive (B: there), and compare (about 400 KB free
             needed; some 5 minutes under MS-DOS).  Each run is added to
             BENCH.TXT on this disk; both wait for a key at the end
+  HDPROBE   the internal hard disk close up: its registers, self-test,
+            IDENTIFY, heads and sectors (read-only; report HDPROBE.TXT).
+            HDPROBE /X exercises a sticky arm (HDPROBEX.TXT)
+  HDSCAN    what is on the hard disk, every directory, and a read of
+            every sector (read-only; report HDSCAN.TXT)
   GGTEST    GPIB driver test on the bus
   TESTKEY   echoes keys until Esc (for checking Claude's key scripts)
   GRIDGPIB  the GPIB driver for GRiD MS-DOS (load it first there)
