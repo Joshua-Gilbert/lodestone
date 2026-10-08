@@ -55,3 +55,31 @@ Total                                     24.99           8.55       2.87
   loaded and run 3 times in 0.16 s.
 - The 1520 decides which C: column is right: BENCH on C: (C:, then A:BENCH)
   writes C:\BENCH.TXT.
+
+On the 1520 (2026-10-08, 0.3.14, BENCH 1.4; logs BENCH_1520_2026-10-08_*.TXT):
+
+                                      A:         C:         M: (1 MB)
+Write 256 KB (16 KB writes)        12.52       0.87       0.16
+Read 256 KB (16 KB reads)           9.44       0.43       0.10
+Read 256 KB (512-byte reads)        9.61       0.71       0.27
+Read 256 KB (128-byte reads)        9.83       1.42       0.93
+64 random 512-byte reads           10.27       1.09       0.16
+Directory listing x 10              0.38       0.10       0.00
+Open + close x 100                  0.10       0.16       0.10
+20 small files: create, delete     22.63       3.57       0.10
+Load + run 120 KB .EXE x 3         12.74       0.65       0.16
+INT 21h calls x 1000                0.05       0.05       0.05
+Total                              87.61       9.11       2.08
+
+- The CP30104H reads ahead: 512-byte reads take 0.71 s (the look-ahead
+  model: 0.96 s; without look-ahead it would be 9.4 s).  Grid-OS's
+  read-ahead doesn't need to cover C:.
+- The look-ahead column is close: 8.55 s modelled, 9.11 s real.  The
+  drive's writes and small files run a little slower than modelled
+  (0.87 / 3.57 s against 0.74 / 2.71 s), its reads faster.
+- The emulator charges the kernel's own work about twice what the 1520
+  takes (INT 21h x 1000: 0.108 s against 0.05 s; the same on the floppy),
+  so M:, which is nearly all kernel work, is 2.87 s there and 2.08 s for
+  real.
+- BENCH times with the BIOS clock: under about 0.2 s, a figure is only
+  good to a tick (55 ms).
