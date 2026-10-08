@@ -25,8 +25,9 @@ nasm -f bin -o CACHETST.COM CACHETST.ASM
 nasm -f bin -o EMSTEST.COM EMSTEST.ASM
 nasm -f bin -o CAPTEST.COM CAPTEST.ASM
 nasm -f bin -o HDFLUSH.COM HDFLUSH.ASM
+nasm -f bin -o HDABS.COM HDABS.ASM
 cd ../bench
 nasm -f bin -o BENCH.COM BENCH.ASM
 nasm -f bin -o DISKMAP.COM DISKMAP.ASM
 cd ..
-ls -l apps/*.RUN fonts/*.FNT src/BOOT.BIN src/GOSBOOT.COM src/GRIDOS.SYS src/GRIDCMD.COM src/DEFRAG.COM src/HEADCLN.COM tests/TESTDOS.COM tests/UPPER.COM tests/CACHETST.COM tests/EMSTEST.COM tests/CAPTEST.COM tests/HDFLUSH.COM bench/BENCH.COM bench/DISKMAP.COM
+ls -l apps/*.RUN fonts/*.FNT src/BOOT.BIN src/GOSBOOT.COM src/GRIDOS.SYS src/GRIDCMD.COM src/DEFRAG.COM src/HEADCLN.COM tests/TESTDOS.COM tests/UPPER.COM tests/CACHETST.COM tests/EMSTEST.COM tests/CAPTEST.COM tests/HDFLUSH.COM tests/HDABS.COM bench/BENCH.COM bench/DISKMAP.COM

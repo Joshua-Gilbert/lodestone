@@ -343,6 +343,37 @@ def t_fatwrite():
           n >= 2 and 'X close failed' in o and not fl and ffiles.get('\\F.DAT') == 12288 and
           all('X.DAT' in p or 'lost' in p for p in probs) and files.get('\\README.TXT') == README, (o, fl, probs))
 
+def t_abs():
+    """INT 25h/26h on C: (DOS 4's form): a read; A: and the old form
+    refused; a bad sector's error; a write the kernel then sees (its cached
+    sector and its count of free clusters forgotten)."""
+    d, f = std()
+    v = F.Volume(d, PLBA)
+    cl = next(c for n, a, c, s in v.entries(0) if n == 'README.TXT')
+    sec = v.data + (cl - 2) * 4                         # README's sector, in the partition
+    far = next(c for n, a, c, s in v.entries(0) if n == 'FAR')
+    note = v.data + (next(c for n, a, c, s in v.entries(far) if n == 'NOTE.TXT') - 2) * 4
+    bad = note + 1                                      # past the 16-bit boundary
+    ata = drive(d, bad=[PLBA + bad])
+    k, t = boot('abs', ata, files=(GRIDCMD, os.path.join(HERE, 'HDABS.COM')))
+    sh = Shell(k)
+    o = sh.run('hdabs')
+    check('INT 25h: C:\'s sector 0 read, interrupts on after it; A: and the old form refused (0207h)',
+          'OEM=MSDOS5.0 IF=1' in o and o.count('error 0207') == 2, o)
+    o = sh.run('hdabs r %08x' % note) + sh.run('hdabs r %08x' % bad)
+    check('INT 25h past sector 65,535 (%d): read, and a bad sector\'s error (AH = 10h)' % note,
+          note > 65535 and 'A note i' in o and 'error 10' in o, o)
+    o1 = sh.run('type c:\\readme.txt')
+    free0 = sh.run('dir c:\\far')
+    fatsec = 1 + 16640 // 256                           # a FAT sector of free clusters
+    o2 = sh.run('hdabs w %08x' % sec) + sh.run('hdabs w %08x' % fatsec)
+    o3 = sh.run('type c:\\readme.txt')
+    free1 = sh.run('dir c:\\far')
+    m0 = re.search(r'(\d+) bytes free', free0); m1 = re.search(r'(\d+) bytes free', free1)
+    check('INT 26h: written; the kernel then reads the new data (README.TXT all Z) and counts free space again',
+          'Hello' in o1 and o2.count('written') == 2 and 'Z' * 21 in o3 and m0 and m1 and
+          int(m0.group(1)) - int(m1.group(1)) == 256 * 2048, (o1, o2, o3, free0[-80:], free1[-80:]))
+
 def t_testdos():
     """TESTDOS (24 DOS calls) and CACHETST (random and in-order reads,
     writes over cached parts, two interleaved files) on C:."""
@@ -425,10 +456,11 @@ def t_mem():
           (', the kernel without it under 0.3 KB' if base else ''),
           e - g < 3.0 and a - b < 3.5 and (not base or (z - a < 0.3 and y - e < 0.3)), out)
 
-TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_testdos, t_exec, t_mem]
+TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_testdos, t_exec, t_mem]
 if __name__ == '__main__':
     want = sys.argv[1:]
-    subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(HERE, 'HDFLUSH.COM'), os.path.join(HERE, 'HDFLUSH.ASM')], check=True)
+    for n in ('HDFLUSH', 'HDABS'):
+        subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(HERE, n + '.COM'), os.path.join(HERE, n + '.ASM')], check=True)
     for t in TESTS:
         if want and t.__name__[2:] not in want: continue
         print('==', t.__name__[2:])

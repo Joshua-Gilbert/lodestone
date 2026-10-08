@@ -106,13 +106,15 @@ class Ata:
       stick_at: busy for good from this read command on (stuck again)
       badw: LBAs that don't take a write (IDNF once the data is in; the
         command ends there); s.wfails counts them.  A test may change it
+      cut: the power goes during this WRITE SECTORS command (1 = the
+        first): half its sectors land (none of one), then the PC stops
     While busy, every register reads the status and writes go nowhere."""
     BSY, DRDY, DSC, DRQ, ERR, IDX = 0x80, 0x40, 0x10, 0x08, 0x01, 0x02
 
     def __init__(s, model='Conner Peripherals 40MB - CP3044', cyls=977, heads=5, spt=17, rpm=3486,
                  formatted=True, stuck=False, tk0=False, diag=0x01, identify=True, data=None,
                  serial='CP3044-123456', firmware='1.03', irq=True, mech_fail=False, unready=0,
-                 fail_ms=0, frees=0, disk=None, bad=(), stick_at=None, badw=()):
+                 fail_ms=0, frees=0, disk=None, bad=(), stick_at=None, badw=(), cut=None):
         s.model, s.cyls, s.heads, s.spt, s.rpm = model, cyls, heads, spt, rpm
         s.formatted, s.stuck, s.tk0, s.diag, s.identify = formatted, stuck, tk0, diag, identify
         s.serial, s.firmware = serial, firmware
@@ -129,6 +131,11 @@ class Ata:
         s.wq = []                                       # sectors still to come in (LBA)
         s.wbuf = bytearray(); s.writes = []             # (LBA, sectors) per command
         s.badw, s.wfails = set(badw), 0
+        s.cut, s.wcmds, s.cutting = cut, 0, False
+
+    def power_cut(s):
+        s.stuck = True
+        if s.pc: s.pc.stopped = 'power cut'; s.pc.mu.emu_stop()
 
     def intr(s):
         if s.irq and s.pc: s.pc.irq_pending.add(14)
@@ -193,6 +200,7 @@ class Ata:
                     s.intr(); return
                 if s.disk is not None and (lba + 1) * 512 <= len(s.disk): s.disk[lba * 512:(lba + 1) * 512] = sec
                 s.data.pop(lba, None)
+                if not s.wq and s.cutting: return s.power_cut()
                 if not s.wq: s.st = s.DRDY | s.DSC
                 s.intr()
             return
@@ -232,6 +240,10 @@ class Ata:
                 if h >= s.heads: h = 0; c += 1
             if not s.wq: return fail(0x10)
             s.writes.append((s.wq[0], len(s.wq)))
+            s.wcmds += 1
+            if s.cut == s.wcmds:
+                s.wq = s.wq[:len(s.wq) // 2]; s.cutting = True
+                if not s.wq: return s.power_cut()
             s.st = ok | s.DRQ
         elif val in (0x20, 0x21):
             s.reads += 1

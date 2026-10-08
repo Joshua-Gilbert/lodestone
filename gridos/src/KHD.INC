@@ -653,6 +653,68 @@ hd_f36: mov     al, [bp+F_DX]           ; INT 21h 36h: C:'s free clusters,
         mov     [bp+F_DX], ax
         jmp     done
 
+; INT 25h/26h (absolute disk read / write) for C: (AL = 2), in DOS 4's
+; form: CX = FFFFh, DS:BX = a packet (dd first sector of the partition, dw
+; sectors, dd buffer).  No INT 24h for the transfer (the FAT window, which
+; goes to the disk first, may ask as usual).  After a write, even one that
+; failed part way, the kernel forgets what it held of those sectors, the
+; window and the free count (DEFRAG writes the FAT itself).  Interrupts on,
+; as INT 21h.  CF: AH = BIOS status, AL = critical-error code.  RETF, the
+; flags left on the stack.
+; Other drives, or the old form: not supported, as before.
+hd_i25: mov     ah, 2                   ; (INT 25h leaves AH to us)
+        db      0A9h                    ; (TEST AX, imm16: skips the next)
+hd_i26: mov     ah, 3
+        cmp     al, 2
+        jne     .no
+        cmp     cx, 0FFFFh
+        je      .c
+.no:    jmp     int25
+.c:     sti
+        pusha
+        push    ds
+        push    es
+        mov     bp, sp                  ; [bp+19]: AH, the operation
+        les     si, [bx+6]              ; the buffer
+        mov     dx, [bx]                ; DI:DX = the first sector
+        mov     di, [bx+2]
+        mov     cx, [bx+4]
+        mov     bx, si
+        push    cs
+        pop     ds
+        call    hd_flush                ; (the kernel's FAT changes first)
+        jc      .x
+        mov     ah, [bp+19]
+        mov     byte [io_crit], 0
+        call    hd_io
+        pushf
+        test    byte [bp+19], 1
+        jz      .r
+        push    ax                      ; a write: forget those sectors
+        mov     [lba_hi], di
+        mov     al, 2
+        call    buf_inval_range
+        xor     ax, ax
+        mov     [lba_hi], ax
+        dec     ax
+        mov     [hd_free], ax
+%assign i 0
+%rep HD_NWIN
+        mov     [hd_wsec+i], ax
+%assign i i+2
+%endrep
+        pop     ax
+.r:     popf
+.x:     jnc     .ok
+        sub     al, 19                  ; AH = the BIOS's status, AL = the
+        mov     ah, [io_bios]           ;  critical-error code
+        mov     [bp+18], ax
+        stc
+.ok:    pop     es
+        pop     ds
+        popa
+        retf
+
 ; init's drv_init: and then C: (its entry was made at start-up, and waits
 ; in the window)
 hd_drv_init:
@@ -740,7 +802,9 @@ hd_init:
         in      al, 0A1h
         or      al, 40h
         out     0A1h, al
-.ir:    mov     ax, hd_drv_init         ; and init's call to drv_init
+.ir:    mov     word [vec_table.v25], hd_i25    ; INT 25h/26h for C:
+        mov     word [vec_table.v26], hd_i26
+        mov     ax, hd_drv_init         ; and init's call to drv_init
         sub     ax, init.cdrv + 3
         mov     [init.cdrv + 1], ax
         mov     ax, [hd_win]            ; the arena from above it all

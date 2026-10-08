@@ -84,9 +84,9 @@ vec_table:
         db 24h
         dw int24
         db 25h
-        dw int25
+.v25:   dw int25                        ; (KHD.INC: C:'s, if there is a drive)
         db 26h
-        dw int25
+.v26:   dw int25
         db 27h
         dw int27
         db 28h
