@@ -1,4 +1,4 @@
-Grid-OS 0.3.12 - boot floppy
+Grid-OS 0.3.13 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -184,6 +184,20 @@ Screen saver, Space switches the tidying off (straight to the dark
 screen; GRIDOS.INI then says TIDY=0) and on again.  System's Disks
 shows C: too, and Devices the hard disk's own name.
 
+0.3.13: Copy on a subject.  Outline Subject, choose the subject, CODE-C:
+the form has Device, Subject (where the copy goes: this subject to
+start with, so for a copy on another disk only Device changes), Replace
+and Only newer.  Every title in it and every subject below it is copied,
+empty subjects too; the subjects are made as needed, titles that are
+there already are replaced or left as Replace and Only newer say (for
+a backup to B: of a whole subject: Replace All, Only newer Yes).  Root
+copies the whole disk.  A subject can't be copied into itself or into a
+subject in it (nor Root into its own drive).  Hidden and system titles
+and subjects stay behind, as in a Copy of titles.  An error stops it
+and says why; what was copied stays.  Also: a subject that can't be
+made (or grow) on a write-protected B: no longer stops A: from being
+read.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -193,7 +207,8 @@ The Executive (the file list):
   CODE-W                         Write a new text file (WRITE.RUN)
   CODE-A                         Claude (CLAUDE.COM)
   CODE-P                         command prompt (GRIDCMD.COM, EXIT returns)
-  CODE-C, CODE-M                 Copy, Move (Titles: * and ? too)
+  CODE-C, CODE-M                 Copy, Move (Titles: * and ? too;
+                                 in Subject: Copy the subject)
   CODE-R, CODE-D                 Rename, Delete (Titles: * and ? too;
                                  in Subject: Delete the subject)
   F5                             read the disk again after a swap

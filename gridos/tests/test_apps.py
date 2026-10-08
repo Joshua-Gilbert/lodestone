@@ -1346,8 +1346,11 @@ def t_wild():
     G = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
     k.pc.drives[1].wp = True
     k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER, settle=False); k.settle(30)
+    k.key(ktest.ENTER); k.key(K_BTAB)
+    check('... and with B: still write-protected, A:\'s subjects list (B:\'s FAT not left "changed": 0.3.13)',
+          subjects(k) == ['Root', '  WORK'] and k.band()[0] == 'Subject: Select item and confirm', (subjects(k), k.band()))
+    k.key(ktest.ESC)
     k.pc.drives[1].wp = False
-    k.key(ktest.ENTER)
     k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER)
     check('a subject that couldn\'t grow (write-protected) grows cleanly later: no stray entries, the disk sound',
           k.band()[0].startswith('Copied to B:\\FULL\\') and len([n for n in G() if n.startswith('A:\\FULL\\')]) == 15
@@ -1404,11 +1407,158 @@ def t_subdel():
     k.key(ktest.ENTER)
     check('... and Title lists the titles of where it is now', not k.crashed, '')
 
+def date_of(img, path):
+    """The FAT date of the entry at path ('WORK\\SUB\\B.TXT') as (y, m, d)."""
+    raw = bytes(img)
+    offs = [o for o in dir_entries(raw, path.split('\\')[-1])]
+    want = fatcheck.read_files(raw).get('A:\\' + path)
+    for o in offs:                                  # (the one whose bytes match, if several)
+        d = struct.unpack_from('<H', raw, o + 24)[0]
+        return ((d >> 9) + 1980, (d >> 5) & 15, d & 31)
+
+def t_subcopy():
+    print('== Copy on a subject: it and all in it, titles and subjects')
+    BIG = bytes(range(256)) * 300                   # 76800 bytes: more than the 32 KB buffer twice over
+    big = os.path.join(OUT, 'BIG.DAT'); open(big, 'wb').write(BIG)
+    t = os.path.join(OUT, 'T.TXT'); open(t, 'wb').write(b'text\r\n')
+    u = os.path.join(OUT, 'U.TXT'); open(u, 'wb').write(b'other text\r\n')
+    a = image('subcopy.img', t, 'WORK\\', 'WORK\\A.TXT=' + t, 'WORK\\RO.TXT=' + u, 'WORK\\SUB\\', 'WORK\\SUB\\B.TXT=' + u,
+              'WORK\\SUB\\DEEP\\', 'WORK\\SUB\\DEEP\\C.DAT=' + big, 'WORK\\EMPTY\\', 'KEEP\\', 'KEEP\\K.TXT=' + t)
+    raw = bytearray(open(a, 'rb').read())
+    for o in dir_entries(raw, 'RO.TXT'): raw[o + 11] |= 1           # read-only inside
+    open(a, 'wb').write(raw)
+    for n in ('A.TXT', 'RO.TXT', 'B.TXT', 'C.DAT'): set_date(a, n, 2026, 6, 15)
+    old = os.path.join(OUT, 'OLDB.TXT'); open(old, 'wb').write(b'was on B\r\n')
+    b = mkimg.build(os.path.join(OUT, 'subcopyb.img'), ['DATA\\', 'OLDBAK\\', 'OLDBAK\\A.TXT=' + old, 'OLDBAK\\SUB\\', 'OLDBAK\\SUB\\B.TXT=' + old])
+    set_date(b, 'A.TXT', 2026, 9)                       # newer on B: Only newer leaves it
+    set_date(b, 'B.TXT', 2020)                          # older on B: Only newer replaces it
+    k = ktest.KPC(a, b=b); k.start()
+    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    def D(d):
+        out = []; fatcheck.read_files(bytes(k.pc.drives[d].img), dirs=out); return out
+    sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
+    band = lambda: k.band()[0]
+    WORK = {n[len('A:\\WORK'):]: v for n, v in A().items() if n.startswith('A:\\WORK\\')}
+    under = lambda files, base: {n[len(base):]: v for n, v in files.items() if n.startswith(base + '\\')}
+    free0 = free_paras(k)[0]
+    # the form
+    pick_subject(k, 'WORK'); k.key(CODE['C'])
+    shot(k, 'exec_copy_subject')
+    check('WORK, CODE-C: the form "Copy WORK": Device, Subject (\\WORK), Replace, Only newer; no Titles or Title',
+          has(k, 'Copy WORK') and all(has(k, x) for x in ('Device', 'Subject', 'Replace', 'Only newer', '\\WORK'))
+          and not has(k, 'Titles') and band() == 'Copy: Fill in form and confirm', (screen(k), k.band()))
+    k.key(K_CODE_ENTER)
+    check('... confirmed as it is: "Can\'t copy WORK into itself: choose another place", nothing made',
+          band() == "Can't copy WORK into itself: choose another place" and len(D(0)) == 5, (k.band(), D(0)))
+    k.key(ktest.ENTER)
+    # to B:, a new subject there
+    k.key(CODE['C']); k.key(ktest.RIGHT, K_CODE_ENTER)
+    check('Device B:: "B:\\WORK isn\'t there: Confirm to make it"', band() == "B:\\WORK isn't there: Confirm to make it", k.band())
+    k.key(ktest.ENTER, settle=False); k.settle(30)
+    check('... Return: "Copied 4 titles to B:\\WORK"; every title and subject there, every byte (a read-only one, 75 KB three levels down)',
+          band() == 'Copied 4 titles to B:\\WORK' and under(B(), 'A:\\WORK') == WORK
+          and sorted(D(1)) == sorted(['A:\\DATA', 'A:\\OLDBAK', 'A:\\OLDBAK\\SUB', 'A:\\WORK', 'A:\\WORK\\SUB', 'A:\\WORK\\SUB\\DEEP', 'A:\\WORK\\EMPTY']),
+          (k.band(), sorted(B()), D(1)))
+    check('... the dates kept, no temporary file, both disks sound', date_of(k.pc.drives[1].img, 'WORK\\SUB\\DEEP\\C.DAT') == (2026, 6, 15)
+          and not [n for n in B() if n.endswith('TMP')] and not sound(0) and not sound(1), (date_of(k.pc.drives[1].img, 'WORK\\SUB\\DEEP\\C.DAT'), sound(0), sound(1)))
+    check('... Subject still outlined, WORK still chosen, the memory as it was', focus(k) == 2 and subjects(k)[k.u16('sel')].strip() == 'WORK'
+          and free_paras(k)[0] == free0, (focus(k), subjects(k), k.u16('sel'), free_paras(k)[0], free0))
+    k.key(ktest.ENTER)
+    # again, Replace Ask: a question for each title there
+    k.key(CODE['C']); k.key(ktest.RIGHT, K_CODE_ENTER)
+    check('again (Replace Ask): "A.TXT is there already: Confirm to replace it"', band() == 'A.TXT is there already: Confirm to replace it', k.band())
+    idle_saver(k); k.key(ktest.DOWN)                    # (the saver reads the subjects again under it)
+    check('... the screen saver meanwhile: the question again after', band() == 'A.TXT is there already: Confirm to replace it', k.band())
+    k.key(ktest.ENTER)
+    asked = []
+    while band().endswith('is there already: Confirm to replace it') and len(asked) < 6:
+        asked.append(band().split()[0]); k.key(ktest.ESC)
+    check('... Return for A.TXT, ESC for the rest (asked each, subjects below too): "Copied 1 title to B:\\WORK, 3 left as they were"',
+          band() == 'Copied 1 title to B:\\WORK, 3 left as they were' and sorted(asked) == ['B.TXT', 'C.DAT', 'RO.TXT']
+          and under(B(), 'A:\\WORK') == WORK and not sound(1), (k.band(), asked))
+    k.key(ktest.ENTER)
+    # Only newer, Replace All, into a backup there already
+    k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\oldbak', ktest.ENTER, ktest.RIGHT, ktest.ENTER, ktest.RIGHT, K_CODE_ENTER)
+    check('to B:\\OLDBAK, Only newer, Replace All: B.TXT (older there) replaced, A.TXT (newer there) left, the rest new',
+          band() == 'Copied 3 titles to B:\\OLDBAK, 1 left as they were' and B().get('A:\\OLDBAK\\A.TXT') == b'was on B\r\n'
+          and B().get('A:\\OLDBAK\\SUB\\B.TXT') == b'other text\r\n' and B().get('A:\\OLDBAK\\SUB\\DEEP\\C.DAT') == BIG
+          and 'A:\\OLDBAK\\EMPTY' in D(1) and not sound(1), (k.band(), sorted(B())))
+    k.key(ktest.ENTER)
+    # into itself, however near
+    for sub, why in (('\\work\\backup', 'a subject in it'), ('\\work\\', 'itself, with a \\ after')):
+        k.key(CODE['C']); k.key(ktest.ENTER, sub, K_CODE_ENTER)
+        check('to %s (%s): "into itself", nothing made' % (sub.upper(), why), band() == "Can't copy WORK into itself: choose another place"
+              and len(D(0)) == 5, (k.band(), D(0)))
+        k.key(ktest.ENTER)
+    k.key(CODE['C']); k.key(ktest.ENTER, '\\works', K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(30)
+    check('... but \\WORKS (only the name starts the same) is somewhere else: copied', band() == 'Copied 4 titles to A:\\WORKS'
+          and under(A(), 'A:\\WORKS') == WORK and not sound(0), (k.band(), sorted(A())))
+    k.key(ktest.ENTER)
+    pick_subject(k, 'Root'); k.key(CODE['C'])
+    check('Root: the form "Copy Root", Subject \\', has(k, 'Copy Root'), screen(k))
+    k.key(ktest.ENTER, '\\all', K_CODE_ENTER)
+    check('... to \\ALL on its own drive: "Can\'t copy Root into itself"', band() == "Can't copy Root into itself: choose another place", k.band())
+    k.key(ktest.ENTER)
+    # Root to another drive: every title and subject (the root's "\" and the paths meet once)
+    k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\all', K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(60)
+    allA = A()
+    check('Root to B:\\ALL: all of A: there', band() == 'Copied %d titles to B:\\ALL' % len(allA)
+          and under(B(), 'A:\\ALL') == {n[2:]: v for n, v in allA.items()} and not sound(1), (k.band(), len(allA), sorted(B())))
+    k.key(ktest.ENTER)
+    # a subject two down to Root of B: (where it goes is the root)
+    pick_subject(k, 'SUB'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\', K_CODE_ENTER, settle=False); k.settle(30)
+    check('\\WORK\\SUB to B:\\ (the root): "Copied 2 titles to B:\\", DEEP under B:\\ too', band() == 'Copied 2 titles to B:\\'
+          and B().get('A:\\B.TXT') == b'other text\r\n' and B().get('A:\\DEEP\\C.DAT') == BIG and not sound(1), (k.band(), sorted(B())))
+    k.key(ktest.ENTER)
+    # on the same drive: the Subject list shows the copy
+    k.key(CODE['C']); k.key(ktest.ENTER, '\\subcopy', K_CODE_ENTER)
+    check('SUB to \\SUBCOPY on A:: the question', band() == "A:\\SUBCOPY isn't there: Confirm to make it", k.band())
+    k.key(ktest.ENTER, settle=False); k.settle(30)
+    check('... Return: copied; the Subject list has SUBCOPY and DEEP in it, SUB still chosen', band() == 'Copied 2 titles to A:\\SUBCOPY'
+          and A().get('A:\\SUBCOPY\\DEEP\\C.DAT') == BIG and '  SUBCOPY' in subjects(k) and '    DEEP' in subjects(k)
+          and subjects(k)[k.u16('sel')].strip() == 'SUB' and not sound(0), (k.band(), subjects(k)))
+    k.key(ktest.ENTER)
+    k.key(CODE['C']); k.key(ktest.ENTER, '\\nope', K_CODE_ENTER, ktest.ESC)
+    check('ESC at "isn\'t there": nothing made, nothing said', 'A:\\NOPE' not in D(0) and band() == 'Subject: Select item and confirm', (k.band(), D(0)))
+    # an empty subject
+    pick_subject(k, 'EMPTY'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\empty2', K_CODE_ENTER, ktest.ENTER)
+    check('an empty subject: "Copied 0 titles to B:\\EMPTY2", made', band() == 'Copied 0 titles to B:\\EMPTY2' and 'A:\\EMPTY2' in D(1), (k.band(), D(1)))
+    k.key(ktest.ENTER)
+    # a path DOS can't take where it goes: said before anything is made
+    longsub = '\\' + '\\'.join(['ABCDEFGH'] * 6) + '\\ABCDEF'       # 61 characters: \WORK\EMPTY under it would be 67
+    pick_subject(k, 'WORK'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, longsub, K_CODE_ENTER)
+    check('to a subject 61 characters long (\\EMPTY under it too long for DOS): "Can\'t copy WORK: Path not found", nothing made',
+          band() == "Can't copy WORK: Path not found" and not [x for x in D(1) if 'ABCDEFGH' in x], (k.band(), D(1)))
+    k.key(ktest.ENTER)
+    # a write-protected disk
+    k.pc.drives[1].wp = True
+    pick_subject(k, 'KEEP'); k.key(CODE['C']); k.key(ktest.RIGHT, K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(30)
+    check('KEEP to a write-protected B:: "Can\'t copy KEEP: Disk is write-protected", B: as it was',
+          band() == "Can't copy KEEP: Disk is write-protected" and 'A:\\KEEP' not in D(1) and not k.crashed, (k.band(), D(1)))
+    check('... and the Subject list as it was, KEEP chosen (the failed MKDIR leaves B:\'s FAT unchanged: 0.3.13)',
+          [x.strip() for x in subjects(k)] == ['Root', 'KEEP', 'SUBCOPY', 'DEEP', 'WORK', 'EMPTY', 'SUB', 'DEEP', 'WORKS', 'EMPTY', 'SUB', 'DEEP']
+          and subjects(k)[k.u16('sel')].strip() == 'KEEP', [x.strip() for x in subjects(k)])
+    k.key(ktest.ENTER)
+    pick_subject(k, 'WORK'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, ktest.ENTER, ktest.RIGHT, K_CODE_ENTER, settle=False); k.settle(30)
+    check('WORK onto itself on the write-protected B: (Replace All): "Can\'t copy A.TXT: Disk is write-protected"',
+          band() == "Can't copy A.TXT: Disk is write-protected" and under(B(), 'A:\\WORK') == WORK and not k.crashed, k.band())
+    k.pc.drives[1].wp = False
+    k.key(ktest.ENTER)
+    check('... and the Executive\'s memory as it was (the blocks freed)', free_paras(k)[0] == free0 and not sound(0) and not sound(1),
+          (free_paras(k)[0], free0))
+    # help, and Move on a subject (not offered: a beep)
+    k.key(ktest.F1)
+    check('help: "CODE-C  Copy the file / subject"', has(k, 'CODE-C                   Copy the file / subject'), screen(k))
+    k.key(ktest.ENTER)
+    k.key(CODE['M'])
+    check('CODE-M on a subject: nothing (a beep)', focus(k) == 2 and band() == 'Subject: Select item and confirm' and not k.crashed, k.band())
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_saver_delay, t_saver_tidy):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
