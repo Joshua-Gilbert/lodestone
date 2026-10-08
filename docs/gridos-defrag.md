@@ -220,8 +220,8 @@ Joshua: "the same operation just using the internal drive", with as much code re
   - **`test_hd.py t_abs`:** INT 25h/26h itself. A read past sector 65,535, A: and the old form refused, a bad sector's error, interrupts on afterwards, and the kernel reading new data after a write (it fails with the cache-dropping removed).
 
 ## Files
-- **Source:** `src\DEFRAG.ASM` (its header describes all of the above). The saver is in `src\EXECRUN.INC` (`saver`, `sv_move`, `sv_defrag`) and the `main` loop of EXEC.INC.
-- **Size:** DEFRAG.COM is **10,124 bytes** (0.3.11; 9,158 in 0.2.2), including the 1.5 KB font. While it runs it needs memory sized to the disk (above) plus a 36 KB DMA buffer block; nothing stays behind.
+- **Source:** `src\DEFRAG.ASM` (its header describes all of the above). The saver is in `src\UICORE.INC` (`saver`, `sv_move`, `sv_defrag`).
+- **Size:** DEFRAG.COM is **10,220 bytes** (0.3.14: it passes over M:; 9,158 in 0.2.2), including the 1.5 KB font. While it runs it needs memory sized to the disk (above) plus a 36 KB DMA buffer block; nothing stays behind.
 - **Version:** Grid-OS 0.2.2, kernel 24,400 bytes, 570 KB for programs.
 
 ## Possible later

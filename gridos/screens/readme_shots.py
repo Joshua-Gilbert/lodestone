@@ -38,4 +38,18 @@ k.select('BENCH.COM'); k.pc.tty.clear(); k.key(ktest.ENTER, settle=False)
 k.pc.run_until(lambda: k.pc.mode() != 0x40, 10)
 k.pc.run_until(lambda: 'Press any key' in ''.join(k.pc.tty), 900)
 shot('bench')
+
+# System's Disks with the internal hard disk as C:: the CP30104H's own
+# partition table and boot sector, a few files on it
+import struct, pcemu, fat16img as F
+rom = os.path.join(GOS, '..', 'rom', 'hd_cp30104h')
+sect0 = open(os.path.join(rom, 'HDSECT0.BIN'), 'rb').read()
+plba, n = struct.unpack_from('<II', sect0, 446 + 8)
+f = F.Fat(n, 4, plba, True)
+f.finish(f.tree([('COMMAND.COM', 0x20, b'C' * 47845), ('TM5000', 0, [('TM5000G.EXE', 0x20, b'T' * 296634)])]))
+f.img[0:512] = open(os.path.join(rom, 'HDBOOT.BIN'), 'rb').read()
+d = bytearray(762 * 8 * 39 * 512); d[0:512] = sect0; d[plba * 512:(plba + n) * 512] = f.img
+ata = pcemu.Ata(model='Conner Peripherals 120MB - CP30104H', cyls=762, heads=8, spt=39, disk=d)
+k = ktest.KPC(img, ems_pages=88, ata=ata); k.start(20)
+k.key(CODE['U']); k.key(ktest.DOWN); shot('system_disks'); k.key(ktest.ESC)
 print('\n'.join(sorted(os.listdir(OUT))))
