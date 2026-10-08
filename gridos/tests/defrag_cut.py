@@ -12,6 +12,9 @@ left after the root's end marker.
 
     python3 defrag_cut.py [jobs]          (all write points)
     python3 defrag_cut.py [jobs] worn     (the same on a worn drive, below)
+    python3 defrag_cut.py [jobs] hd       (DEFRAG C: on the hard disk:
+                                           half the sectors of its Nth
+                                           write command land)
 
 "worn": the pattern the GRiD's drive showed on 2026-10-05 (side 0 of
 cylinders 61-78), moved to where this test disk's moves go: on side 0 of
@@ -111,8 +114,78 @@ def one(args):
     return n, None
 
 
+def hd_allowed(probs, during_pack):
+    bad = []
+    for p in probs:
+        if 'lost clusters' in p or p == 'the two FATs differ': continue
+        m = re.match(r'(.*): cluster \d+ also in (.*)$', p)
+        if m and m.group(1) == m.group(2) and during_pack: continue
+        bad.append(p)
+    return bad
+
+
+def hd_files(ata):
+    v, files, probs, frag, runs = D.hd_layout(ata, allow=())
+    return {n: b for n, b in files.items() if n != 'DEFRAG.TXT'}, probs, frag, v
+
+
+def hd_after_end(v):
+    raw = v.sec(v.root, v.data - v.root)
+    for i in range(0, len(raw), 32):
+        if raw[i] == 0: return any(raw[i:])
+    return False
+
+
+def hd_one(args):
+    n, base, files0, npack, img, ref = args
+    ata = D.hd_drive(base, cut=n)
+    k, code = D.run(img, tail=' c: /s', ata=ata)
+    if code is not None: return n, 'finished before write %d' % n
+    files, probs, frag, v = hd_files(ata)
+    bad = hd_allowed(probs, n <= npack)
+    if bad: return n, 'after the cut: %s' % bad
+    if files != files0: return n, 'after the cut: files differ'
+    D.hd_add(ata, 'NEW.DAT', NEW)
+    files0 = dict(files0); files0['NEW.DAT'] = NEW
+    ata2 = D.hd_drive(bytes(ata.disk))
+    k, code = D.run(img, tail=' c: /s', ata=ata2)
+    files, probs, frag, v = hd_files(ata2)
+    if code != 0 and not (code == 2 and ref[0] == 2): return n, 'second run exit %s' % code
+    bad = hd_allowed(probs, False)
+    if bad: return n, 'after the second run: %s' % bad
+    if frag and not ref[1]: return n, 'after the second run, in pieces: %s' % frag
+    if files != files0: return n, 'after the second run: files differ'
+    if hd_after_end(v): return n, 'after the second run: old entries after the root end marker'
+    return n, None
+
+
+def main_hd(jobs):
+    tmp = tempfile.mkdtemp()
+    d, f, _ = D.hd_fragmented(big=40)
+    base = bytes(d)
+    img = D.hd_boot(os.path.join(tmp, 'boot.img'))
+    files0 = hd_files(D.hd_drive(base))[0]
+    ata = D.hd_drive(base)
+    k, code = D.run(img, tail=' c: /s', ata=ata)
+    files1, probs, frag, v = hd_files(ata)
+    ref = (code, frag)
+    lo, hi = D.HD_PLBA + v.root, D.HD_PLBA + v.data
+    total = ata.wcmds
+    npack = next((i for i, (l, c) in enumerate(ata.writes) if not lo <= l < hi), total)
+    print('%d write commands (the first %d pack the root); first run exit %s, %s' %
+          (total, npack, code, 'files intact' if files1 == files0 and not frag else 'PROBLEM'))
+    with multiprocessing.Pool(jobs) as pool:
+        res = pool.map(hd_one, [(n, base, files0, npack, img, ref) for n in range(1, total + 1)])
+    fails = [(n, r) for n, r in res if r]
+    for n, r in fails: print('write %d: %s' % (n, r))
+    print('%d cut points, %d failed' % (total, len(fails)))
+    shutil.rmtree(tmp)
+    sys.exit(1 if fails else 0)
+
+
 if __name__ == '__main__':
     jobs = int(sys.argv[1]) if len(sys.argv) > 1 else 2
+    if 'hd' in sys.argv[2:]: main_hd(jobs)
     WORN[0] = 'worn' in sys.argv[2:]
     tmp = tempfile.mkdtemp()
     img = D.fragmented(os.path.join(tmp, 'base.img'), tmp)

@@ -157,9 +157,54 @@ Floppies degrade, and the first real run stopped at a disk error, so a bad spot 
   - a swallowed write-protect error code (fixed);
   - several smaller issues, all fixed.
 
+## The hard disk, C: (Grid-OS 0.3.11, 2026-10-07)
+Joshua: "the same operation just using the internal drive", with as much code reused as possible, and extra memory only while it runs. `DEFRAG C:` (or `DEFRAG` with C: current) does everything it does on a floppy, `/T` included.
+- **The kernel:** INT 25h/26h (absolute disk read and write, DOS 4's packet form with 32-bit sector numbers) for C:, in the hard-disk module (`KHD.INC`), so it is resident only when there is a drive.
+  - It goes through the same `hd_io` as file I/O, so it uses the same driver and the same two tries. It doesn't ask INT 24h; DEFRAG handles errors itself.
+  - It writes the kernel's FAT window out first.
+  - After a write, even one that failed part way, the kernel forgets its cached sectors in that range, its FAT window and its free-cluster count. DEFRAG writes the FAT and directories itself, so nothing stale can be written back over them.
+  - Interrupts are on, as in INT 21h; the drive's 5 s time-out runs on the BIOS tick.
+  - Cost: 105 bytes in the module, 112 with its alignment.
+- **DEFRAG:**
+  - **Sector numbers are 32 bits** (BP holds the high word) through the I/O path, the moves, the directory walk and `/T`. C: has 237,000 sectors.
+  - **One routine does all the disk I/O** (`bios`). For C: it calls INT 25h/26h, 18 sectors at a time, with no change line and no CHS.
+  - **FAT12 and FAT16 go through `fat_at`/`fat_get`/`fat_set`.** FAT12's ends and bad marks come back as FFF0h and up, so the rest of the program compares against FAT16's values only. Bad clusters are marked FFF7h. A 32-byte bitmap records which FAT sectors changed (up to 256 sectors).
+  - **Memory sized to the disk:**
+    - The FAT and the per-cluster owner map are blocks of their own (INT 21h 48h).
+    - The root directory's two copies come after the stack, and DEFRAG gives back the part they don't need (INT 21h 4Ah) once the boot sector says how big the root is.
+    - A floppy run needs about 42 KB, against 47 KB before. On the CP30104H, a run needs about 227 KB: FAT 116 KB, owner map 58 KB, root 32 KB. Both runs also need the 36 KB DMA block. Nothing stays behind.
+  - **The map:** still at most 80 × 36 cells of 8 pixels. On a disk of more than 2,880 clusters, each cell stands for several (6 on the 34 MB test disk, 21 on the CP30104H) and shows the most important state among them: in pieces, then bad, file, directory, lost, free.
+  - **Counts** are in 32 bits: the CP30104H's free space is "118,334 KB". On C:, error lines read "Disk error 04h writing sector 207" (the sector where the failing request started). Status lines longer than the screen show their start; the log keeps the whole line.
+  - **Limits:** FAT16 up to 65,524 clusters and 512 root entries. As on a floppy, at most 240 files and 64 directories (more: map only).
+  - **Not under DOS 3:** GRiD MS-DOS's INT 25h has no 32-bit form, so DEFRAG C: only runs under Grid-OS.
+- **Size:** DEFRAG.COM is 10,124 bytes (+912).
+- **On the 1520 (2026-10-07):** `DEFRAG C:` on the CP30104H finished in about 15 s with "Disk in order: 49 files, 117588 KB free in 7 pieces" (`bench/DEFRAG_1520_2026-10-07_C.TXT`). It counts the 51 files minus IO.SYS and MSDOS.SYS, which are system files and stay put. The free space is exactly what HDSCAN counted before the run, so no cluster was lost or gained. The 7 free pieces are the gaps around the directories, which never move.
+- **`DEFRAG C: /T` on the 1520 (2026-10-07, 19:44–19:59, about 15 minutes, roughly 130 KB/s with each piece written and read back):** "Free space tested: 117577 KB, 15 disk errors, 14 bad clusters marked".
+  - Every logged error is on translated cylinders 272–273: partition sectors 85032–85320, clusters 21135–21212. Mostly 10h (data), plus one 04h (sector not found) and one 80h (the drive busy for over 5 s).
+  - That's the same spot as HDSCAN's 4 unreadable sectors (clusters 21161–21183), a little wider: sectors that read before don't read back after a write. It's one weak patch of the platter, not errors spread over the disk.
+  - It is now fenced off with FFF7h, which MS-DOS honours too. It lies in free space far from the files, which use the first 430 clusters.
+- **Review (an independent agent):** no way found to lose or corrupt data, on C: or on a floppy. Fixed:
+  - INT 25h/26h left interrupts off for the rest of the run, so on the 1520 a drive stuck busy would have hung instead of timing out;
+  - DEFRAG C: under DOS 3 would have used the 32-bit form;
+  - a failed INT 26h didn't make the kernel forget the sectors written before the failure;
+  - 16-bit overflows at the FAT16 limit in the owner map's size and the map's cell count;
+  - after `/T` the map wasn't redrawn.
+  - Found by the tests: FATs bigger than 256 sectors, which the kernel mounts, are now accepted.
+- **Tests:**
+  - **`test_defrag.py`, 13 checks on C:**, on FAT16 disks from `tests/fat16img.py` and `defrag_util.hd_fragmented`:
+    - a 34 MB disk in pieces, files and a subdirectory past sector 65,535, with a system file, a lost and a bad cluster and deleted root entries; afterwards the kernel shows DIR and the free space at once;
+    - a second run writes nothing;
+    - the CP30104H's own layout (121 MB) with its 4 bad sectors, a file whose last piece is at cluster 59,000;
+    - 65,518 clusters, the kernel's limit;
+    - a sector that won't take a write where a move goes, and an unreadable sector in a file;
+    - `/T` marking exactly the bad sectors;
+    - no C:, and a key part way.
+  - **`defrag_cut.py N hd`:** pcemu's drive loses power half way through each of DEFRAG C:'s write commands. After every cut no file is damaged; another system then adds a file, and a second run must leave everything whole and in one piece. **137 cut points, 0 failures.** The floppy cut test still passes, 204 of 204.
+  - **`test_hd.py t_abs`:** INT 25h/26h itself. A read past sector 65,535, A: and the old form refused, a bad sector's error, interrupts on afterwards, and the kernel reading new data after a write (it fails with the cache-dropping removed).
+
 ## Files
 - **Source:** `src\DEFRAG.ASM` (its header describes all of the above). The saver is in `src\EXECRUN.INC` (`saver`, `sv_move`, `sv_defrag`) and the `main` loop of EXEC.INC.
-- **Size:** DEFRAG.COM is **9,158 bytes**, including the 1.5 KB font. While it runs it needs about 46 KB plus a 36 KB DMA buffer block; nothing stays behind.
+- **Size:** DEFRAG.COM is **10,124 bytes** (0.3.11; 9,158 in 0.2.2), including the 1.5 KB font. While it runs it needs memory sized to the disk (above) plus a 36 KB DMA buffer block; nothing stays behind.
 - **Version:** Grid-OS 0.2.2, kernel 24,400 bytes, 570 KB for programs.
 
 ## Possible later
