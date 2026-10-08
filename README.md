@@ -76,6 +76,30 @@ What a DOS program gets when started from the Executive (MEMSZ; System's "Free f
 
 The rows add up to more than 640 KB because 7.5 KB of the Executive's share is its directory buffer, lent to a DOS program while it runs, so it counts in both rows. From the command prompt (`GRIDCMD.COM` resident) a program gets 16.1 KB less. The Executive otherwise stays resident: Grid-OS is meant to become multitasking.
 
+### On the hard disk (C:)
+
+BENCH 1.3 on drive C: in the emulator, on the layout of Joshua's 121 MB CP30104H, with the drive's seeks and rotation timed: 3,360 rpm, 39 sectors a track. The model is checked against the 1520's own sweep of the disk; it is about 15% fast on big sequential reads. Whether the real drive reads ahead into its own buffer isn't known, so there are two columns. Seconds.
+
+| Test | Floppy A: | C:, drive without look-ahead | C:, drive with look-ahead |
+|---|---:|---:|---:|
+| Write 256 KB, 16 KB writes | 9.25 | 0.77 | 0.75 |
+| Read 256 KB, 16 KB reads | 8.80 | 0.56 | 0.35 |
+| Read 256 KB, 512-byte reads | 8.80 | 9.39 | 0.96 |
+| Read 256 KB, 128-byte reads | 8.80 | 9.37 | 1.89 |
+| 64 random 512-byte reads | 9.33 | 1.02 | 1.03 |
+| Directory listing ×10 | 0.02 | 0.02 | 0.02 |
+| Open + close ×100 | 0.22 | 0.21 | 0.21 |
+| 20 small files, create + delete | 21.69 | 2.71 | 2.71 |
+| Load + run a 120 KB .EXE ×3 | 12.13 | 0.85 | 0.53 |
+| INT 21h calls ×1000 | 0.11 | 0.11 | 0.11 |
+| **Total** | **79.2** | **25.0** | **8.6** |
+
+- **C: is 3 to 9 times faster than the floppy overall.** Big writes are 12× faster, small files 8×, and loading programs 14–23×.
+- **Small reads depend on the drive.** On the floppy, Grid-OS's own cylinder read-ahead makes 512- and 128-byte reads cheap. That read-ahead doesn't cover C:, so a drive without look-ahead takes a turn of the disk for each sector (9.4 s). If the real CP30104H turns out to be like that, extending Grid-OS's read-ahead to C: would fix it.
+- **The real 1520 decides:** run BENCH with C: current (`C:`, then `A:BENCH`). Its log goes to `C:\BENCH.TXT`.
+
+Run it with `python3 gridos/bench/run_bench_hd.py`; the model and notes are in `gridos/bench/RESULTS_HD.TXT`.
+
 ### On the real 1520
 
 BENCH on Joshua's GRiDCase 1520, from its own 1.44 MB floppy (seconds). These are the latest runs on the machine. In the emulator, 0.3.13's floppy times are the same as 0.3.8's, so these still stand. The real machine runs a few seconds slower than the emulator; totals also move with where BENCH's files land on a well-used floppy (below).
@@ -117,11 +141,11 @@ Run the comparison with `python3 gridos/bench/compare3.py <GRiD MS-DOS EPROM ima
 | `gridos/apps` | Programs on the UI core (`.RUN`, built with `gridos/mkrun.py`): `SYSTEM.RUN` and `WRITE.RUN` |
 | `gridos/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `gridos/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN |
-| `gridos/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT` and the 1520 logs |
+| `gridos/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
 | `gridos/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link) |
 | `gridos/releases` | Builds for the floppy, 0.1 to 0.3.13 |
 | `gridos/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
-| `gridos/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
+| `gridos/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude API, the AR488 patch, and its tests |
 | `tools` | 1520 tools: GRIDGPIB (GPIB driver for GRiD MS-DOS), GPIBSCAN, GPIBTEST, GGTEST, GRIDMEM (EMS or extended memory), MEMPROBE, GRIDPROBE, RAMSPEED, ROMDUMP, HDPROBE and HDSCAN (the internal hard disk, read-only: diagnosis, and a read of every sector), the C GPIB library, and TM5000G.EXE (a test fixture; its source lives in the TM5000 repo) |
 | `rom` | Our notes on the 1520 BIOS (a symbol map), probe and scan logs, and the hard disk's partition and boot sectors; no ROM images (see below) |
@@ -155,6 +179,7 @@ python3 tests/test_hdscan.py          # 20 checks: HDSCAN
 python3 tests/test_headcln.py         # 9 checks: HEADCLN
 python3 tests/defrag_cut.py 2         # a power cut at every DEFRAG write (~20 min; "2 hd" for C:, "2 worn" for a worn drive)
 python3 bench/run_bench.py <GRiD MS-DOS EPROM image>
+python3 bench/run_bench_hd.py         # BENCH on C:
 ```
 
 Some tests need files that aren't in this repo: the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS330_ROM_300909-00.BIN`). Without it, those checks are skipped.
