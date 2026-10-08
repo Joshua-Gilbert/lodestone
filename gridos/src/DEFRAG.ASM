@@ -57,7 +57,9 @@
 ; side h sector s" (C:: "... sector n") - where the failing request started.
 ;
 ; Exit code: 0 the disk is in order, 1 stopped by a key or the mouse,
-; 2 couldn't (write-protected, disk changed, disk error, needs CHKDSK, ...).
+; 2 couldn't (write-protected, disk changed, disk error, needs CHKDSK, ...),
+; 3 (/S only) the disk couldn't be read at all (an empty drive): nothing
+; shown.
 cpu 286
 org 100h
 
@@ -353,7 +355,11 @@ main:   call    clear_screen
         call    draw_map
 .ro:    mov     byte [result], 2
         jmp     finish_msg
-.rerr:  mov     si, [ww]
+.rerr:  cmp     byte [saver], 0                 ; the screen saver going round
+        je      .rem                            ;  the disks: none to read
+        mov     byte [result], 3                ;  here (an empty drive):
+        jmp     out                             ;  on to the next, at once
+.rem:   mov     si, [ww]
         mov     byte [result], 2
         jmp     finish_msg
 

@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-GOS_VER     equ 003Bh                   ; Grid-OS 0.3.11 (BH.BL: major, minor<<4 | patch)
+GOS_VER     equ 003Ch                   ; Grid-OS 0.3.12 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -107,6 +107,7 @@ held2       resw 1              ;  still waiting (0: none): put back by
 lastact     resw 1
 saver_t     resw 1              ; idle ticks before the saver (FFFFh: never)
 saver_min   resb 1              ;  the same in minutes (0: never)
+sv_notidy   resb 1              ; 1: the saver doesn't run DEFRAG (TIDY=0)
 lastpoll    resw 1
 redraw_fn   resw 1
 ; windows: the save-under is in the disk cache's memory while any is open
@@ -231,7 +232,8 @@ api_font:
 ; at start-up: "FONT=NAME.FNT" in \GRIDOS.INI (a line of its own, any case)
 ; makes that file the font.  No file, no line, or a file that isn't exactly
 ; FONT_BYTES long: GRiD's font stays.  "SAVER=n": the saver after n minutes
-; (0: never).  (The directory buffer is free yet.)
+; (0: never).  "TIDY=0": the saver doesn't run DEFRAG.  (The directory
+; buffer is free yet.)
 font_boot:
         mov     byte [font_path], '\'
         mov     dx, s_ini
@@ -254,9 +256,19 @@ font_boot:
         mov     di, si
         add     di, cx
         mov     byte [di], 0
-.line:  mov     ax, [si]                ; "SAVER=n"?
+.line:  mov     ax, [si]                ; "TIDY=0"?
         and     ax, 0DFDFh
-        cmp     ax, 'SA'
+        cmp     ax, 'TI'
+        jne     .sv
+        mov     ax, [si+2]
+        and     ax, 0DFDFh
+        cmp     ax, 'DY'
+        jne     .next
+        cmp     word [si+4], '=0'
+        jne     .next
+        mov     byte [sv_notidy], 1
+        jmp     .next
+.sv:    cmp     ax, 'SA'                ; "SAVER=n"?
         jne     .font
         mov     ax, [si+2]
         and     ax, 0DFDFh
@@ -337,12 +349,15 @@ font_file:
         jmp     api_font
 .x:     ret
 
-; UI_SAVER: AL = 0 -> AL = the saver's delay in minutes (0 never); AL = 1:
-; BL = minutes
+; UI_SAVER: AL = 0 -> AL = the saver's delay in minutes (0 never), AH = 1
+; if it doesn't tidy; AL = 1: BL = minutes; AL = 2: BL = 1 not to tidy
 api_saver:
-        or      al, al
-        jnz     saver_set
-        mov     al, [saver_min]
+        cmp     al, 1
+        je      saver_set
+        ja      .t
+        mov     ax, [saver_min]         ; (and sv_notidy, after it)
+        ret
+.t:     mov     [sv_notidy], bl
         ret
 ; BL = minutes (more than 30: 30; 0: never)
 saver_set:
@@ -3547,9 +3562,11 @@ run_app:
 ; =====================================================================
 ;  the screen saver, after the delay set in System (SAVER= in GRIDOS.INI;
 ;  5 minutes without it) with no key or mouse; never if set so.  In the
-;  Executive (no .RUN, no window, no question): first DEFRAG.COM, if it is on the
-;  disk: it tidies the floppy while showing its map, and stops at a key or
-;  the mouse (exit code 1) or when the disk is in order.  Then a dark
+;  Executive (no .RUN, no window, no question), unless System says not to
+;  (TIDY=0): first DEFRAG.COM, if it is on
+;  the start-up disk, for each disk in turn (A:, B:, C:): it tidies the disk
+;  while showing its map, and stops at a key or the mouse (exit code 1, and
+;  no more disks) or when the disk is in order.  Then a dark
 ;  screen with the time and date moving to a new place every 20 seconds,
 ;  so the plasma never holds one picture.  Then the screen as it was.
 ; =====================================================================
@@ -3564,6 +3581,8 @@ saver:  pusha
         jne     .own
         cmp     word [held1], 0         ; (nor while a question waits: a
         jne     .own                    ;  file it names stays as it is)
+        cmp     byte [sv_notidy], 0     ; (nor when System says not to)
+        jne     .own
         call    sv_defrag
         jc      .own
         cmp     al, 1
@@ -3647,21 +3666,21 @@ sv_move:
         xor     ah, ah
         jmp     puts
 
-; DEFRAG.COM /S from the root of the current drive (a floppy: not C:).
-; CF if it isn't there or can't run; else AL = its exit code.  The mouse
-; stays on: DEFRAG watches our mouse flag (passed as M=segment:offset).
+; DEFRAG.COM /S from the root of the start-up disk, for each disk in turn:
+; A:, B: (if the BIOS has a second floppy) and C: (if Grid-OS has the hard
+; disk).  CF if it isn't there or can't run; else AL = 1 if a key or the
+; mouse stopped it.  The mouse stays on: DEFRAG watches our mouse flag
+; (passed as M=segment:offset).
 sv_defrag:
-        mov     ah, 19h
+        mov     ax, 3305h               ; the start-up disk
         int     21h
-        cmp     al, 2
-        jae     .no
-        add     al, 'A'
-        mov     [s_defrag], al
+        add     dl, 'A' - 1
+        mov     [s_defrag], dl
         mov     dx, s_defrag
         mov     ax, 4300h
         int     21h
         jc      .no
-        mov     di, sv_tail
+        mov     di, sv_tail             ; "A: /S M=ssss:oooo F=ssss:oooo"
         mov     si, s_svarg
         call    sb_str
         mov     ax, cs
@@ -3679,17 +3698,45 @@ sv_defrag:
         mov     ax, font
         call    sb_hex4
         mov     byte [di], 0
+        mov     bx, 'A'                 ; BL: the disk
+.d:     cmp     bl, 'B'
+        jne     .c
+        int     11h                     ; B:: a second floppy?
+        test    al, 0C0h
+        jz      .n
+.c:     cmp     bl, 'C'
+        jne     .go
+        push    bx                      ; C:: with it, Grid-OS has 3
+        mov     ah, 19h                 ;  drives (INT 21h 0Eh)
+        int     21h
+        mov     dl, al
+        mov     ah, 0Eh
+        int     21h
+        pop     bx
+        cmp     al, 3
+        jb      .n
+.go:    mov     [sv_tail], bl
+        push    bx
         mov     si, s_defrag
         mov     di, sv_tail
         call    exec_raw
+        pop     bx
         jc      .no
-        push    ax
-        mov     ah, 36h                 ; the kernel takes the FAT in again
-        xor     dl, dl                  ; now, while it is surely the same
-        int     21h                     ; disk (so it can tell a swap later)
-        pop     ax
-        clc
-        ret
+        cmp     al, 1                   ; stopped: no more
+        je      .x
+        cmp     al, 3                   ; (no disk to read there)
+        je      .n
+        push    bx
+        mov     dl, bl                  ; the kernel takes the FAT in again
+        sub     dl, 'A' - 1             ;  now, while it is surely the same
+        mov     ah, 36h                 ;  disk (so it can tell a swap later)
+        int     21h
+        pop     bx
+.n:     inc     bx
+        cmp     bl, 'C'
+        jbe     .d
+        xor     al, al                  ; (CF clear)
+.x:     ret
 .no:    stc
         ret
 
@@ -3723,7 +3770,7 @@ s_am        db ' am',0
 s_pm        db ' pm',0
 months      db 'JanFebMarAprMayJunJulAugSepOctNovDec'
 s_defrag    db 'A:\DEFRAG.COM', 0
-s_svarg     db '/S M=', 0
+s_svarg     db 'A: /S M=', 0
 s_svfont    db ' F=', 0
 s_ini       db '\GRIDOS.INI', 0
 exec_fcb    db 0, '           ', 0, 0, 0, 0
@@ -3784,5 +3831,5 @@ sv_due      resw 1
 sv_col      resw 1
 sv_y        resw 1
 sv_seed     resw 1
-sv_tail     resb 40                 ; "/S M=ssss:oooo F=ssss:oooo"
+sv_tail     resb 40                 ; "A: /S M=ssss:oooo F=ssss:oooo"
 section ui
