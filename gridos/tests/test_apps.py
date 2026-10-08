@@ -1407,6 +1407,12 @@ def t_subdel():
     k.key(ktest.ENTER)
     check('... and Title lists the titles of where it is now', not k.crashed, '')
 
+def attr_at(img, name):
+    """Offsets of every directory entry called NAME.EXT, subjects too."""
+    nm, _, ext = name.partition('.')
+    want = (nm.ljust(8) + ext.ljust(3)).encode()
+    return [o for o in range(0, len(img), 32) if bytes(img[o:o + 11]) == want and not img[o + 11] & 8 and img[o + 11] != 0x0F]
+
 def date_of(img, path):
     """The FAT date of the entry at path ('WORK\\SUB\\B.TXT') as (y, m, d)."""
     raw = bytes(img)
@@ -1423,13 +1429,18 @@ def t_subcopy():
     t = os.path.join(OUT, 'T.TXT'); open(t, 'wb').write(b'text\r\n')
     u = os.path.join(OUT, 'U.TXT'); open(u, 'wb').write(b'other text\r\n')
     a = image('subcopy.img', t, 'WORK\\', 'WORK\\A.TXT=' + t, 'WORK\\RO.TXT=' + u, 'WORK\\SUB\\', 'WORK\\SUB\\B.TXT=' + u,
-              'WORK\\SUB\\DEEP\\', 'WORK\\SUB\\DEEP\\C.DAT=' + big, 'WORK\\EMPTY\\', 'KEEP\\', 'KEEP\\K.TXT=' + t)
+              'WORK\\SUB\\DEEP\\', 'WORK\\SUB\\DEEP\\C.DAT=' + big, 'WORK\\EMPTY\\', 'KEEP\\', 'KEEP\\K.TXT=' + t,
+              'HID\\', 'HID\\H.TXT=' + t, 'HID\\S.SYS=' + u, 'HID\\HSUB\\', 'HID\\HSUB\\X.TXT=' + t)
     raw = bytearray(open(a, 'rb').read())
     for o in dir_entries(raw, 'RO.TXT'): raw[o + 11] |= 1           # read-only inside
+    for o in dir_entries(raw, 'H.TXT'): raw[o + 11] |= 2            # hidden
+    for o in dir_entries(raw, 'S.SYS'): raw[o + 11] |= 4            # system
+    for o in attr_at(raw, 'HSUB'): raw[o + 11] |= 2                 # a hidden subject
     open(a, 'wb').write(raw)
     for n in ('A.TXT', 'RO.TXT', 'B.TXT', 'C.DAT'): set_date(a, n, 2026, 6, 15)
     old = os.path.join(OUT, 'OLDB.TXT'); open(old, 'wb').write(b'was on B\r\n')
-    b = mkimg.build(os.path.join(OUT, 'subcopyb.img'), ['DATA\\', 'OLDBAK\\', 'OLDBAK\\A.TXT=' + old, 'OLDBAK\\SUB\\', 'OLDBAK\\SUB\\B.TXT=' + old])
+    b = mkimg.build(os.path.join(OUT, 'subcopyb.img'), ['DATA\\', 'OLDBAK\\', 'OLDBAK\\A.TXT=' + old, 'OLDBAK\\SUB\\', 'OLDBAK\\SUB\\B.TXT=' + old,
+                    'EFILE=' + old])
     set_date(b, 'A.TXT', 2026, 9)                       # newer on B: Only newer leaves it
     set_date(b, 'B.TXT', 2020)                          # older on B: Only newer replaces it
     k = ktest.KPC(a, b=b); k.start()
@@ -1450,7 +1461,11 @@ def t_subcopy():
           and not has(k, 'Titles') and band() == 'Copy: Fill in form and confirm', (screen(k), k.band()))
     k.key(K_CODE_ENTER)
     check('... confirmed as it is: "Can\'t copy WORK into itself: choose another place", nothing made',
-          band() == "Can't copy WORK into itself: choose another place" and len(D(0)) == 5, (k.band(), D(0)))
+          band() == "Can't copy WORK into itself: choose another place" and len(D(0)) == 7, (k.band(), D(0)))
+    k.key(ktest.ENTER)
+    k.key(CODE['C']); idle_saver(k); k.key(ktest.DOWN); k.key(K_CODE_ENTER)
+    check('... the screen saver while the form is open, then confirmed: the name still WORK (the redraw reads the subjects)',
+          band() == "Can't copy WORK into itself: choose another place", k.band())
     k.key(ktest.ENTER)
     # to B:, a new subject there
     k.key(CODE['C']); k.key(ktest.RIGHT, K_CODE_ENTER)
@@ -1485,11 +1500,21 @@ def t_subcopy():
           and B().get('A:\\OLDBAK\\SUB\\B.TXT') == b'other text\r\n' and B().get('A:\\OLDBAK\\SUB\\DEEP\\C.DAT') == BIG
           and 'A:\\OLDBAK\\EMPTY' in D(1) and not sound(1), (k.band(), sorted(B())))
     k.key(ktest.ENTER)
+    # hidden and system titles, a hidden subject: copied, and hidden or system as they were
+    pick_subject(k, 'HID'); k.key(CODE['C']); k.key(ktest.RIGHT, K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(30)
+    bimg = bytes(k.pc.drives[1].img)
+    check('HID (a hidden title, a system title, a hidden subject with a title in it) to B:: all copied, still hidden or system',
+          band() == 'Copied 3 titles to B:\\HID' and under(B(), 'A:\\HID') == under(A(), 'A:\\HID')
+          and [bimg[o + 11] for o in dir_entries(bimg, 'H.TXT')] == [2] and [bimg[o + 11] for o in dir_entries(bimg, 'S.SYS')] == [4]
+          and [bimg[o + 11] for o in attr_at(bimg, 'HSUB')] == [0x12] and not sound(1),
+          (k.band(), sorted(B()), [bimg[o + 11] for o in attr_at(bimg, 'HSUB')]))
+    k.key(ktest.ENTER)
+    pick_subject(k, 'WORK')
     # into itself, however near
     for sub, why in (('\\work\\backup', 'a subject in it'), ('\\work\\', 'itself, with a \\ after')):
         k.key(CODE['C']); k.key(ktest.ENTER, sub, K_CODE_ENTER)
         check('to %s (%s): "into itself", nothing made' % (sub.upper(), why), band() == "Can't copy WORK into itself: choose another place"
-              and len(D(0)) == 5, (k.band(), D(0)))
+              and len(D(0)) == 7, (k.band(), D(0)))
         k.key(ktest.ENTER)
     k.key(CODE['C']); k.key(ktest.ENTER, '\\works', K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(30)
     check('... but \\WORKS (only the name starts the same) is somewhere else: copied', band() == 'Copied 4 titles to A:\\WORKS'
@@ -1525,11 +1550,25 @@ def t_subcopy():
     pick_subject(k, 'EMPTY'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\empty2', K_CODE_ENTER, ktest.ENTER)
     check('an empty subject: "Copied 0 titles to B:\\EMPTY2", made', band() == 'Copied 0 titles to B:\\EMPTY2' and 'A:\\EMPTY2' in D(1), (k.band(), D(1)))
     k.key(ktest.ENTER)
+    # where it goes is a file; no disk in B:
+    pick_subject(k, 'EMPTY'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\efile', K_CODE_ENTER)
+    check('an empty subject to B:\\EFILE, a file there: "Can\'t copy EFILE: Access denied", the file as it was',
+          band() == "Can't copy EFILE: Access denied" and B().get('A:\\EFILE') == b'was on B\r\n', (k.band(), B().get('A:\\EFILE')))
+    k.key(ktest.ENTER)
+    k.pc.drives[1].empty = True
+    k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\x2', K_CODE_ENTER, settle=False); k.settle(60)
+    check('... to B: with no disk in it: "Can\'t copy X2: ..." (not "Copied 0 titles")', band().startswith("Can't copy X2: ") and not k.crashed, k.band())
+    k.pc.drives[1].empty = False
+    k.key(ktest.ENTER)
     # a path DOS can't take where it goes: said before anything is made
     longsub = '\\' + '\\'.join(['ABCDEFGH'] * 6) + '\\ABCDEF'       # 61 characters: \WORK\EMPTY under it would be 67
     pick_subject(k, 'WORK'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, longsub, K_CODE_ENTER)
     check('to a subject 61 characters long (\\EMPTY under it too long for DOS): "Can\'t copy WORK: Path not found", nothing made',
           band() == "Can't copy WORK: Path not found" and not [x for x in D(1) if 'ABCDEFGH' in x], (k.band(), D(1)))
+    k.key(ktest.ENTER)
+    pick_subject(k, 'KEEP'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, ('ABCDEFGH\\' * 7) + 'ABC', K_CODE_ENTER)
+    check('KEEP (a title, no subjects) to one of 67 characters (66 typed without the first \\): "Can\'t copy KEEP: Path not found", nothing made',
+          band() == "Can't copy KEEP: Path not found" and not [x for x in D(1) if 'ABCDEFGH' in x], (k.band(), D(1)))
     k.key(ktest.ENTER)
     # a write-protected disk
     k.pc.drives[1].wp = True
@@ -1537,7 +1576,7 @@ def t_subcopy():
     check('KEEP to a write-protected B:: "Can\'t copy KEEP: Disk is write-protected", B: as it was',
           band() == "Can't copy KEEP: Disk is write-protected" and 'A:\\KEEP' not in D(1) and not k.crashed, (k.band(), D(1)))
     check('... and the Subject list as it was, KEEP chosen (the failed MKDIR leaves B:\'s FAT unchanged: 0.3.13)',
-          [x.strip() for x in subjects(k)] == ['Root', 'KEEP', 'SUBCOPY', 'DEEP', 'WORK', 'EMPTY', 'SUB', 'DEEP', 'WORKS', 'EMPTY', 'SUB', 'DEEP']
+          [x.strip() for x in subjects(k)] == ['Root', 'HID', 'KEEP', 'SUBCOPY', 'DEEP', 'WORK', 'EMPTY', 'SUB', 'DEEP', 'WORKS', 'EMPTY', 'SUB', 'DEEP']
           and subjects(k)[k.u16('sel')].strip() == 'KEEP', [x.strip() for x in subjects(k)])
     k.key(ktest.ENTER)
     pick_subject(k, 'WORK'); k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, ktest.ENTER, ktest.RIGHT, K_CODE_ENTER, settle=False); k.settle(30)

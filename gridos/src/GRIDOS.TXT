@@ -193,10 +193,10 @@ there already are replaced or left as Replace and Only newer say (for
 a backup to B: of a whole subject: Replace All, Only newer Yes).  Root
 copies the whole disk.  A subject can't be copied into itself or into a
 subject in it (nor Root into its own drive).  Hidden and system titles
-and subjects stay behind, as in a Copy of titles.  An error stops it
-and says why; what was copied stays.  Also: a subject that can't be
-made (or grow) on a write-protected B: no longer stops A: from being
-read.
+and subjects are copied too and stay hidden or system; a copy of a
+read-only title isn't read-only.  An error stops it and says why; what
+was copied stays.  Also: a subject that can't be made (or grow) on a
+write-protected B: no longer stops A: from being read.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

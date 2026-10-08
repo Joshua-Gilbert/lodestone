@@ -1245,6 +1245,7 @@ sub_copy:
         mov     si, sub_form
         call    ui_form
         jc      .x
+        call    .name                   ; (a redraw meanwhile used runpath)
         mov     bx, s_cantcopy
         mov     si, c_sub
         mov     di, s_subch
@@ -1323,11 +1324,13 @@ sub_copy:
 .kept:  jmp     xfer.kmsg
 .sum:   mov     si, s_copied            ; "Copied 5 titles to B:\WORK"
         jmp     sum_to
-.same:  mov     si, ftitle + 5          ; (it went where it is: its name,
-        mov     di, runpath             ;  from the form's title)
+.same:  call    .name                   ; (it went where it is)
+        jmp     .self
+.name:  mov     si, ftitle + 5          ; runpath: its name again, from the
+        mov     di, runpath             ;  form's title ("Copy WORK")
         call    sb_str
         mov     byte [di], 0
-        jmp     .self
+        ret
 
 SC_REL  equ 68                          ; sc_seg: where it goes (tmppath's
                                         ;  subject), then from here the list
@@ -1337,6 +1340,20 @@ SC_REL  equ 68                          ; sc_seg: where it goes (tmppath's
 ; "\SUB\DEEP"), a level at a time, so each comes after the one it is in.
 ; CF: AX = DOS error (3: a path too long for DOS at either end), no block
 sc_list:
+        mov     si, subject             ; the longest path below it: what DOS
+        call    .len                    ;  takes less the longer of the
+        mov     bx, cx                  ;  subject and where it goes (where
+        mov     si, tmppath + 2         ;  it goes too long already: 3)
+        call    .len
+        cmp     cx, bx
+        jae     .l
+        mov     cx, bx
+.l:     mov     bx, SUBMAX
+        sub     bx, cx
+        mov     [sc_lim], bx
+        mov     ax, 3
+        stc
+        js      .r
         mov     bx, 0FFFh
         mov     ah, 48h
         int     21h
@@ -1349,21 +1366,10 @@ sc_list:
 .m:     mov     [sc_seg], ax
         shl     bx, 4
         mov     [sc_max], bx
-        mov     si, subject             ; the longest path below it: what DOS
-        call    strlen                  ;  takes less the longer of the
-        mov     bx, cx                  ;  subject and where it goes
-        mov     si, tmppath + 2
-        call    strlen
-        cmp     cx, bx
-        jae     .l
-        mov     cx, bx
-.l:     mov     bx, SUBMAX
-        sub     bx, cx
-        mov     [sc_lim], bx
         push    es
         mov     es, ax
-        xor     di, di                  ; where it goes, then ""
-        call    sb_str
+        xor     di, di                  ; where it goes (SI: tmppath + 2
+        call    sb_str                  ;  still), then ""
         stosb
         mov     di, SC_REL
         stosb
@@ -1380,7 +1386,7 @@ sc_list:
         call    sb_join
         mov     byte [di], 0
         mov     dx, argpath
-        mov     cx, 10h
+        mov     cx, 16h                 ; (hidden and system ones too)
         mov     ah, 4Eh
         int     21h
 .f:     jc      .nf
@@ -1416,13 +1422,18 @@ sc_list:
         pop     ax
         stc
         ret
+.len:   call    strlen                  ; SI -> CX: its length, 0 for "\"
+        cmp     cx, 1                   ;  (the root adds nothing when a
+        jne     .lx                     ;  path is put after it)
+        dec     cx
+.lx:    ret
 
 ; the subject found (exec_dta) in the one at [sc_rd], added to the list.
 ; CF: AX = 3 (its path too long), 8 (no room)
 sc_add:
         mov     ax, [sc_max]
         sub     ax, [sc_wr]
-        cmp     ax, 80                  ; (the longest: 65 + \ + NAME.EXT + 0)
+        cmp     ax, 80                  ; (the longest: 66 + \ + NAME.EXT + 0)
         mov     ax, 8
         jb      .no
         mov     si, [sc_rd]
@@ -1472,17 +1483,19 @@ sc_copy:
         pop     ds
         mov     si, [sc_rd]
         call    sc_cat
-        pop     si
-        xchg    si, [sc_rd]
-        cmp     si, SC_REL
-        je      .t
+        pop     word [sc_rd]
         call    xfer_dest
-        mov     dx, tmppath             ; made, unless it is there already
-        mov     ah, 39h                 ;  as a subject
-        int     21h
-        jnc     .t
-        push    ax
-        mov     cx, 10h
+        cmp     byte [tmppath + 3], 0   ; (a root is there)
+        je      .t
+        mov     dx, tmppath             ; made (hidden or system as it is),
+        mov     ah, 39h                 ;  unless it is there already as a
+        int     21h                     ;  subject (the first one: made by
+        jc      .m                      ;  xfer_mkdir, or a file, or no disk)
+        mov     si, curdir
+        call    hs_copy
+        jmp     short .t
+.m:     push    ax
+        mov     cx, 16h
         mov     ah, 4Eh
         int     21h
         pop     ax
@@ -1490,7 +1503,8 @@ sc_copy:
         jc      .e
         test    byte [exec_dta + 21], 10h
         jz      .e
-.t:     call    pat_here                ; its titles
+.t:     mov     bp, 6                   ; its titles, hidden and system too
+        call    pat_here
         jnc     .c
         cmp     ax, 2                   ; (none)
         je      .l
@@ -1587,7 +1601,9 @@ pat_find:
         xor     ax, ax
         mov     [n_done], ax
         mov     [n_skip], ax
-pat_here:                               ; (sub_copy: in curdir, the counts go on)
+        xor     bp, bp                  ; (files and read-only ones)
+pat_here:                               ; (sub_copy: in curdir, the counts go on;
+                                        ;  BP = the search's attributes)
         xor     ax, ax
         mov     [nm_n], ax
         mov     [nm_i], ax
@@ -1614,7 +1630,7 @@ pat_here:                               ; (sub_copy: in curdir, the counts go on
         mov     si, c_pat
         call    sb_dirname
         mov     dx, argpath
-        xor     cx, cx                  ; (files, read-only too)
+        mov     cx, bp
         mov     ah, 4Eh
 .f:     int     21h
         jc      .end
@@ -2230,6 +2246,9 @@ xfer_do:
         call    ui_band
         call    copy_file
         jc      .r2
+        mov     si, argpath             ; (hidden or system: only Copy on a
+        mov     dx, dstpath             ;  subject takes such titles)
+        call    hs_copy
         cmp     byte [xmode], 0         ; (Copy: done, CF clear)
         je      .r2
         mov     dx, argpath             ; Move: the original goes
@@ -2305,6 +2324,21 @@ file_id:
         stosw
         mov     ax, [exec_dta + 15]
         stosw
+.x:     ret
+
+; the hidden and system bits of the title or subject at SI given to the
+; one at DX, if it has any (errors ignored: CF as it comes)
+hs_copy:
+        push    dx
+        mov     dx, si
+        mov     ax, 4300h
+        int     21h
+        pop     dx
+        jc      .x
+        and     cx, 6
+        jz      .x
+        mov     ax, 4301h
+        int     21h
 .x:     ret
 
 ; copy argpath to dstpath, the date and time with it.  The copy is made as
