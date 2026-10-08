@@ -8,7 +8,7 @@ import os, sys, struct, subprocess, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
 sys.path.insert(0, GOS); sys.path.insert(0, HERE)
-import defrag_util as D, fatcheck, ktest, mkimg, pcemu
+import defrag_util as D, fatcheck, ktest, mkimg, pcemu, fat16img as F
 
 OUT = tempfile.mkdtemp()
 results = []
@@ -210,7 +210,7 @@ def t_drive_b():
           code == 0 and good and not D.layout(rb)[0] and bytes(k.pc.drives[0].img) == rawa, (code, status(k), probs))
     k, code = D.run(a, tail=' B: /S')
     check('DEFRAG B: on a GRiD with no drive B: says so, writes nothing',
-          code == 2 and 'no floppy drive B:' in ''.join(k.pc.tty) and bytes(k.pc.drives[0].img) == rawa, (code, ''.join(k.pc.tty)[-200:]))
+          code == 2 and 'no drive B:' in ''.join(k.pc.tty) and bytes(k.pc.drives[0].img) == rawa, (code, ''.join(k.pc.tty)[-200:]))
 
 def t_720():
     img = D.fragmented(os.path.join(OUT, 'd.img'), OUT, size=720)
@@ -432,10 +432,178 @@ def t_bad():
     check('a drive whose writes don\'t take: stops, says so, files intact',
           code == 2 and 'fail everywhere' in st and files1 == files0, (code, st))
 
+# ---------------------------------------------------------------------
+#  drive C: (the internal hard disk through the kernel's INT 25h/26h)
+# ---------------------------------------------------------------------
+def hd_root_packed(v):
+    raw = v.sec(v.root, v.data - v.root)
+    ents = [raw[i:i + 32] for i in range(0, len(raw), 32)]
+    used = next((i for i, e in enumerate(ents) if e[0] == 0), len(ents))
+    return all(e[0] != 0xE5 for e in ents[:used]) and not any(raw[used * 32:])
+
+def hd_log(v):
+    return next((b for n, b in v.files()[0].items() if n == '\\DEFRAG.TXT'), b'').decode('latin-1')
+
+def t_hd():
+    """DEFRAG C:: a FAT16 disk whose data runs past sector 65,535."""
+    d, f, files = D.hd_fragmented()
+    ata = D.hd_drive(d)
+    img = D.hd_boot(os.path.join(OUT, 'hd.img'))
+    rawa = open(img, 'rb').read()
+    def done(k):                                        # (no /S: a key at the end)
+        if 'Disk in order' in status(k) and not k.pc.keys: k.pc.keys.append(13)
+    k, code = D.run(img, tail=' c:', ata=ata, during=done)
+    v, got, probs, frag, runs = D.hd_layout(ata)
+    st = ' '.join(l.strip() for y, l in k.ocr() if 330 <= y < 356) if k.pc.mode() == 0x40 else ''
+    ents = {n: c for n, a, c, s in v.entries(0)}
+    check('C: (FAT16, 17,108 clusters, files past sector 65,535): exit 0, every file in one piece, byte for byte',
+          code == 0 and not probs and not frag and all(got.get(n) == b for n, b in files.items()), (code, probs, frag))
+    check('... the system file and the directory stay, the lost and the bad cluster are left alone, the root is packed',
+          ents.get('IO.SYS') == 2 and ents.get('SUB') == 16400 and v.fat(17050) == 0xFFFF and v.fat(500) == 0xFFF7
+          and hd_root_packed(v) and 'OLD1.TXT' not in ents, (ents, v.fat(17050), v.fat(500)))
+    log = hd_log(v)
+    check('... says so, logged in C:\\DEFRAG.TXT, A: untouched',          # (the log took a cluster after)
+          'Disk in order: 6 files, %d KB free in 4 pieces, 1 lost cluster' % ((v.free() + 1) * 2) in log and
+          bytes(k.pc.drives[0].img) == rawa, log)
+    k.key('cls'); k.key(ktest.ENTER); k.key('dir c:\\sub'); k.key(ktest.ENTER)
+    o = k.pc.text_screen()
+    check('... and the kernel sees it at once: DIR C:\\SUB, its bytes free',
+          'S1       DAT' in o and '%d bytes free' % (v.free() * 2048) in o, o[-300:])
+    del ata.writes[:]
+    k, code = D.run(img, tail=' c: /s', ata=ata)
+    check('second run on C:: in order, nothing written', code == 0 and not ata.writes, (code, ata.writes[:5]))
+
+def t_hd_big():
+    """The CP30104H's own layout (121 MB, 59,224 clusters, 232-sector FATs)
+    with its 4 bad sectors in the free space: a file in pieces whose last
+    piece is at cluster 59,000 (sector 236,000 on), another file there."""
+    rom = os.path.join(GOS, '..', 'rom', 'hd_cp30104h')
+    sect0 = open(os.path.join(rom, 'HDSECT0.BIN'), 'rb').read()
+    boots = open(os.path.join(rom, 'HDBOOT.BIN'), 'rb').read()
+    plba, n = struct.unpack_from('<II', sect0, 446 + 8)
+    f = F.Fat(n, 4, plba, True)
+    files = {'COMMAND.COM': bytes(range(256)) * 187, 'PIECES.DAT': bytes((i * 13) & 255 for i in range(30 * 2048)),
+             'END.TXT': b'at the far end\r\n' * 300}
+    ents = f.tree([('COMMAND.COM', 0x20, files['COMMAND.COM'])])
+    gap = f.free; f.skip_to(gap + 40)
+    p = files['PIECES.DAT']
+    ents += f.ent('PIECES.DAT', 0x20, D.hd_put(f, list(range(gap + 40, gap + 50)) + list(range(59000, 59020)), p), len(p))
+    f.fat[59000 - 1] = f.fat[59000 - 1]
+    f.free = 59100
+    ents += f.tree([('END.TXT', 0x20, files['END.TXT'])])
+    f.finish(ents)
+    f.img[0:512] = boots
+    d = bytearray(762 * 8 * 39 * 512); d[0:512] = sect0; d[plba * 512:(plba + n) * 512] = f.img
+    ata = pcemu.Ata(model='Conner Peripherals 120MB - CP30104H', cyls=762, heads=8, spt=39, disk=d,
+                    bad=[85174, 85203, 85232, 85261])
+    img = D.hd_boot(os.path.join(OUT, 'hdb.img'))
+    k, code = D.run(img, tail=' c: /s', ata=ata)
+    v = F.Volume(ata.disk, plba)
+    got, probs = v.files()
+    st = status(k)
+    chains = {nm: v.chain(c)[0] for nm, a, c, s2 in v.entries(0) if c}
+    pieces = [nm for nm, ch in chains.items() if any(b != a + 1 for a, b in zip(ch, ch[1:]))]
+    check('121 MB C: (Joshua\'s layout): exit 0, the file in pieces joined, the far ones brought forward, byte for byte',
+          code == 0 and not probs and not pieces and max(ch[-1] for ch in chains.values()) < 200 and
+          all(got.get('\\' + nm) == b for nm, b in files.items()), (code, probs, pieces, {k2: (c[0], c[-1]) for k2, c in chains.items()}))
+    check('... "%d KB free in one piece" (past 65,535 KB)' % ((v.free() + 1) * 2),
+          'KB free in one piece' in st and '%d KB' % ((v.free() + 1) * 2) in st, st)
+
+def t_hd_max():
+    """C: at the kernel's limit: 65,518 clusters of 512 bytes (the map's
+    cells and the owner map at their largest)."""
+    f = F.Fat(66067, 1, 17, True)                       # (its FAT: 258 sectors)
+    assert (f.clusters, f.spf) == (65518, 258), (f.clusters, f.spf)
+    files = {'A.DAT': bytes((i * 7) & 255 for i in range(30000)), 'Z.DAT': b'the far end' * 100}
+    ents = f.ent('A.DAT', 0x20, D.hd_put(f, list(range(2, 30)) + list(range(65000, 65031)), files['A.DAT']), 30000)
+    f.skip_to(65400)
+    ents += f.tree([('Z.DAT', 0x20, files['Z.DAT'])])
+    f.finish(ents)
+    cyl = -(-(f.n + 17) // (16 * 63))
+    d = bytearray(cyl * 16 * 63 * 512)
+    d[0:512] = F.mbr([(0x80, 0x06, 17, f.n)], cyl, 16, 63); d[17 * 512:(17 + f.n) * 512] = f.img
+    ata = pcemu.Ata(cyls=cyl, heads=16, spt=63, disk=d)
+    img = D.hd_boot(os.path.join(OUT, 'hdmax.img'))
+    k, code = D.run(img, tail=' c: /s', ata=ata)
+    v = F.Volume(ata.disk, 17)
+    got, probs = v.files()
+    chains = {nm: v.chain(c)[0] for nm, a, c, s2 in v.entries(0) if c}
+    check('C: with 65,518 clusters: exit 0, both files whole and in one piece near the start, the map on the screen',
+          code == 0 and not probs and all(got.get('\\' + n) == b for n, b in files.items()) and
+          all(ch == list(range(ch[0], ch[0] + len(ch))) and ch[-1] < 200 for ch in chains.values())
+          and 'Disk in order' in status(k), (code, probs, status(k), {n: (c[0], c[-1]) for n, c in chains.items()}))
+
+def t_hd_worn():
+    """C: with sectors that won't write where the moves go, and one that
+    won't read in a file."""
+    d, f, files = D.hd_fragmented()
+    v = F.Volume(d, D.HD_PLBA)
+    weak = [D.HD_PLBA + v.data + (12 - 2) * 4 + 1]            # cluster 12: where S2.DAT would go
+    ata = D.hd_drive(d, badw=weak)
+    img = D.hd_boot(os.path.join(OUT, 'hdw.img'))
+    k, code = D.run(img, tail=' c: /s', ata=ata)
+    v, got, probs, frag, runs = D.hd_layout(ata)
+    log = hd_log(v)
+    check('C: with a sector that won\'t take a write: its cluster marked bad, the rest tidied, files intact, logged',
+          code == 0 and v.fat(12) == 0xFFF7 and not probs and not frag and all(got.get(n) == b for n, b in files.items())
+          and any(0 <= weak[0] - D.HD_PLBA - int(m) < 18 for m in __import__('re').findall(r'04h writing sector (\d+)', log))
+          and '1 lost cluster, 1 bad cluster marked' in log,
+          (code, v.fat(12), probs, frag, log, status(k)))
+    d, f, files = D.hd_fragmented()
+    v = F.Volume(d, D.HD_PLBA)
+    big = next(c for n, a, c, s in v.entries(0) if n == 'BIG.DAT')
+    ata = D.hd_drive(d, bad=[D.HD_PLBA + v.data + (big + 100 - 2) * 4 + 2])
+    k, code = D.run(img, tail=' c: /s', ata=ata)
+    v, got, probs, frag, runs = D.hd_layout(ata)
+    st = status(k)
+    check('C: with a sector of BIG.DAT that can\'t be read: it stays, the rest tidied, exit 2, says so',
+          code == 2 and "1 file couldn't be read" in st and next(c for n, a, c, s in v.entries(0) if n == 'BIG.DAT') == big
+          and not probs and frag == [] and all(got.get(n) == b for n, b in files.items()), (code, st, probs, frag))
+
+def t_hd_test():
+    """DEFRAG C: /T on a small FAT16 partition with a few bad sectors."""
+    f = F.Fat(4300, 1, 17, True, rootents=64)                  # 4,261 clusters of 512 bytes
+    files = {'A.DAT': bytes(range(256)) * 40}
+    ents = f.tree([('A.DAT', 0x20, files['A.DAT'])])
+    f.finish(ents)
+    d = bytearray(70 * 4 * 17 * 512)
+    d[0:512] = F.mbr([(0x80, 0x04, 17, 4300)], 70, 4, 17); d[17 * 512:(17 + 4300) * 512] = f.img
+    bad = [f.lba(c) + 17 for c in (300, 301, 2000, 4250)]       # (sectors of the drive)
+    ata = pcemu.Ata(cyls=70, heads=4, spt=17, disk=d, bad=bad)
+    img = D.hd_boot(os.path.join(OUT, 'hdt.img'))
+    k, code = D.run(img, tail=' c: /t /s', ata=ata)
+    v = F.Volume(ata.disk, 17)
+    marked = [c for c in range(2, v.ncl) if v.fat(c) == 0xFFF7]
+    got, probs = v.files()
+    st = status(k)
+    log = hd_log(v)
+    check('C: /T: every free sector tested, exactly the bad ones marked, the file intact, logged by sector',
+          code == 0 and marked == [300, 301, 2000, 4250] and got.get('\\A.DAT') == files['A.DAT'] and not probs
+          and 'Free space tested' in st and '4 bad clusters marked' in st and 'reading sector' in log,
+          (code, marked, st, log, probs))
+
+def t_hd_misc():
+    """No C:; a key part way through a move on C:."""
+    img = D.hd_boot(os.path.join(OUT, 'hdm.img'))
+    rawa = open(img, 'rb').read()
+    k, code = D.run(img, tail=' c: /s')
+    check('DEFRAG C: with no hard disk: says so, writes nothing',
+          code == 2 and 'no drive C:' in ''.join(k.pc.tty) and bytes(k.pc.drives[0].img) == rawa, (code, ''.join(k.pc.tty)[-200:]))
+    d, f, files = D.hd_fragmented()
+    ata = D.hd_drive(d)
+    def key(k):
+        if len(ata.writes) > 40 and not k.pc.keys: k.pc.keys.append(ord(' '))
+    k, code = D.run(img, tail=' c: /s', ata=ata, during=key)
+    v, got, probs, frag, runs = D.hd_layout(ata)
+    check('C:: a key part way: exit 1, the disk consistent, every file intact',
+          code == 1 and not [p for p in probs if 'lost' not in p] and all(got.get(n) == b for n, b in files.items()),
+          (code, probs, status(k)))
+
 if __name__ == '__main__':
     t0 = time.time()
     only = sys.argv[1:]
-    for t in (t_basic, t_refuse, t_stop, t_open_file, t_root, t_drive_b, t_720, t_msdos, t_saver, t_bad):
+    for t in (t_basic, t_refuse, t_stop, t_open_file, t_root, t_drive_b, t_720, t_msdos, t_saver, t_bad,
+              t_hd, t_hd_big, t_hd_max, t_hd_worn, t_hd_test, t_hd_misc):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
