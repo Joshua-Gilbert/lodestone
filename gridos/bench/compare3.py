@@ -73,7 +73,7 @@ def freedos(prog, ems, limit=900):
 
 if __name__ == '__main__':
     t = time.time()
-    systems = (('Grid-OS 0.3.8', gridos), ('GRiD MS-DOS 3.30', msdos), ('FreeDOS 2046+FreeCOM', freedos))
+    systems = (('Grid-OS', gridos), ('GRiD MS-DOS 3.30', msdos), ('FreeDOS 2046+FreeCOM', freedos))
     mem = {}
     for name, run in systems:
         for ems in (0, EMS):
