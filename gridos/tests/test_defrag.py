@@ -307,6 +307,61 @@ def t_saver():
     idle(k); k.pc.run_for(3)
     check('without DEFRAG.COM: the dark screen with the time', dark(k), k.ocr())
 
+def t_saver_all():
+    """The saver goes round every disk: A:, B: and C:, each tidied, then
+    the dark screen; an empty B: is passed over; a key during C:'s turn
+    ends the round."""
+    def idle(k):
+        t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
+        k.wr('lastact', struct.pack('<H', (t - 5462 + 18) & 0xFFFF))
+    def watch(k, until, limit=900):
+        seen = []
+        end = k.pc.us + limit * 1e6
+        while k.pc.us < end and not k.crashed:
+            k.pc.run_for(1)
+            for y, l in k.ocr():
+                if 'tidying drive' in l:
+                    c = l.split('tidying drive')[1].strip()[:1]
+                    if not seen or seen[-1] != c: seen.append(c)
+            if until(k): break
+        return seen
+    a = D.fragmented(os.path.join(OUT, 'sva.img'), OUT)
+    b = D.fragmented(os.path.join(OUT, 'svb.img'), OUT, seed=2)
+    filesa = files_of(open(a, 'rb').read()); filesb = files_of(open(b, 'rb').read())
+    d, f, files = D.hd_fragmented(big=40)
+    ata = D.hd_drive(d)
+    k = ktest.KPC(a, b=b, ata=ata); k.pc.mouse = True; k.start()
+    idle(k)
+    seen = watch(k, lambda k: dark(k))
+    ra, rb = bytes(k.pc.drives[0].img), bytes(k.pc.drives[1].img)
+    v, got, probs, frag, runs = D.hd_layout(ata)
+    ga, pa = ok_disk(ra, filesa); gb, pb = ok_disk(rb, filesb)
+    check('the saver goes round A:, B:, C: in turn, tidies each, then the dark screen',
+          seen == ['A', 'B', 'C'] and dark(k) and ga and gb and not D.layout(ra)[0] and not D.layout(rb)[0]
+          and not probs and not frag and all(got.get(n) == x for n, x in files.items()), (seen, pa, pb, probs, frag))
+    k.key(ktest.DOWN)
+    idle(k)                                             # next time: all in order, quickly
+    t0 = k.pc.us
+    seen = watch(k, lambda k: dark(k), 120)
+    check('... next time each says "in order" and the dark screen follows (%.0f s)' % ((k.pc.us - t0) / 1e6),
+          seen == ['A', 'B', 'C'] and dark(k) and bytes(k.pc.drives[0].img) == ra, (seen, k.ocr()))
+    # B: empty: passed over quietly; a key during C:'s turn ends the round
+    d, f, files = D.hd_fragmented(big=40)
+    ata = D.hd_drive(d)
+    k = ktest.KPC(a, b=b, ata=ata); k.pc.mouse = True; k.start()
+    k.pc.drives[1].empty = True
+    idle(k)
+    def c_moving(k):
+        return any('tidying drive C:' in l for y, l in k.ocr()) and 'Moving' in status(k)
+    seen = watch(k, c_moving, 300)
+    k.key(' ', settle=False)
+    k.pc.run_until(lambda: any('Select a file' in l for l in k.band()), 30)
+    v, got, probs, frag, runs = D.hd_layout(ata)
+    check('an empty B: passed over; a key during C:\'s turn: back to the list, C: consistent',
+          seen == ['A', 'C'] and any('Select a file' in l for l in k.band()) and
+          not [p for p in probs if 'lost' not in p] and all(got.get(n) == x for n, x in files.items()),
+          (seen, k.band(), probs))
+
 def t_bad():
     # a bad spot in the free space near the end of the disk (never written
     # since the format): its clusters are marked bad, the tidying goes on
@@ -603,7 +658,7 @@ if __name__ == '__main__':
     t0 = time.time()
     only = sys.argv[1:]
     for t in (t_basic, t_refuse, t_stop, t_open_file, t_root, t_drive_b, t_720, t_msdos, t_saver, t_bad,
-              t_hd, t_hd_big, t_hd_max, t_hd_worn, t_hd_test, t_hd_misc):
+              t_hd, t_hd_big, t_hd_max, t_hd_worn, t_hd_test, t_hd_misc, t_saver_all):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

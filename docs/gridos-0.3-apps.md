@@ -230,7 +230,7 @@
 - **Things that stay on the start-up disk** (INT 21h 3305h):
   - `UI_FINDAPP` looks in the subject, then in the root of the disk Grid-OS started from. So SYSTEM, WRITE and CLAUDE are found while B: is shown.
   - System's Display lists the fonts, and writes GRIDOS.INI, on the start-up disk ("Fonts on the start-up disk:").
-  - The saver runs DEFRAG only from the current drive's root, so a data disk on B: isn't tidied unless it has DEFRAG.
+  - The saver runs DEFRAG only from the current drive's root, so a data disk on B: isn't tidied unless it has DEFRAG. (Since 0.3.12 it runs the start-up disk's DEFRAG on A:, B: and C: in turn; see `gridos-defrag.md`.)
 - **Cost:** GRIDOS.SYS 32,842 bytes (+680 since 0.3.1; CODE-R and CODE-D saved about 150). A DOS program gets 568.7 KB (0.7 KB less than 0.3.1): the Executive's code (now 4.2 KB) stays resident while DOS programs run.
 - **Tests (`t_form`, 26 checks; `t_exec` reaches subjects through the form):**
   - titles only, Title outlined; the form's values;
@@ -385,6 +385,21 @@
 - **Tests (`tests/test_hd.py`, 42 checks; disks from `tests/fat16img.py`, which also checks one as CHKDSK would):** no drive, floating bus, stuck drive, no / FAT12 / oversized partitions; the shell on C: (DIR, TYPE, COPY both ways, MD/CD/REN/DEL/RD) with a directory and a file past sector 65,535 and one across it; TM5000G copied and run from C:; a 121 MB disk behind Joshua's real sector 0 and boot sector; a bad sector; a full disk; FAT sectors that can't be read (DEL with Fail, Abort mid-read) or written (DEL through five FAT sectors, a passing fault, C:'s FAT failing while A:'s has changes, with `HDFLUSH.COM`); TESTDOS and CACHETST on C:; the Executive; memory. pcemu's `Ata` takes writes (30h) and refuses listed ones (`badw`).
 - **On the 1520 (2026-10-07):** works (Joshua).
 - **0.3.11:** INT 25h/26h (absolute sectors, DOS 4's 32-bit form) for C:, and DEFRAG on C:; see `gridos-defrag.md`.
+
+## System and the hard disk; the saver's tidying (0.3.12, 2026-10-07)
+- **Joshua's requests:** C: in Disks, the hard disk's own name in Devices, and a switch for whether the screen saver tidies the disks.
+- **Disks:** after A: (and B:), C: when INT 21h 0Eh says 3 drives. Its label, size, free space and space in use. Sizes now print in 32 bits (UI_SBU32): the CP30104H shows "118448 KB".
+- **Devices:** a "Hard disk" line with the name the drive gives itself, e.g. "Conner Peripherals 120MB - CP30104H", or "none".
+  - System sends IDENTIFY (ECh) itself and reads words 27–46, with a 1 s time-out. It does this only when Grid-OS has C:, so the kernel keeps no copy of the name (no resident bytes).
+  - A name longer than the value column runs to the right edge.
+- **Screen saver:** a second line, "Tidies the disks first: yes/no". Space switches it (band: "RETURN: the next delay    SPACE: tidy or not    ESC: back"; the help has a line for it).
+  - Saved as `TIDY=0` in GRIDOS.INI when off; FONT=, SAVER= and other lines are kept.
+  - The core reads TIDY=0 at start-up (`sv_notidy`). UI_SAVER (UI API 4): AL = 0 also returns AH = 1 when not tidying; AL = 2 sets it from BL.
+- **Cost:** SYSTEM.RUN 8,731 bytes (+459). The core +44 bytes (GRIDOS.SYS 42,348). WRITE.RUN and UITEST.RUN are rebuilt for API 4, same size.
+- **Tests:**
+  - `test_apps.py t_saver_tidy`, 7 checks: the line and band; Space to no and GRIDOS.INI; with a delay too; the saver straight to the dark screen; after a restart; Space back; DEFRAG again.
+  - `test_hd.py t_system`, 3 checks: A:, B: and C: in Disks with 32-bit sizes; the drive's name in Devices; without a drive, no C: and "none".
+  - The delay tests now expect the new band text.
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
