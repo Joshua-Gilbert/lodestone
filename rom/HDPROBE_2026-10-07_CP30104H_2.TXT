@@ -1,0 +1,59 @@
+HDPROBE 1.2 - the GRiDCase 1520's internal hard disk, close up (read-only)
+
+[1] WHAT THE BIOS MADE OF IT
+  Drive backplane 09: internal 1.44 MB floppy + AT-compatible hard disk
+  CMOS 12h (hard disk type) = 00   19h = 00   0Eh (POST status) = 20
+  BDA: hard disks 0, last status 00
+  INT 13h 08h, drive 80h: error 01 (the BIOS has no hard disk)
+
+[2] THE DRIVE'S REGISTERS (drive 0 selected)
+  01F1 10  01F2 01  01F3 27  01F4 F9  01F5 02  01F6 A0  01F7 51 (DRDY DSC ERR)  
+  alt status 03F6 57 (DRDY DSC CORR IDX ERR)
+  Echo, sector count and number: 55 AA -> 55 AA  AA 55 -> AA 55  
+  -> the drive's registers answer
+
+[3] THE STATUS FOR 2 SECONDS (alt status, read as fast as we can)
+  121 thousand reads: busy 56380, ready 0, seek complete 0, error 0
+  Index pulses seen: 0
+  (none: the disk may not be turning, or this drive doesn't show them)
+
+[4] RESET AND SELF-TEST
+  Soft reset (SRST), up to 31 s: 22.9 ms, ready, status 51 (DRDY DSC ERR), code 10: not a code the standard knows
+  Self-test (90h): 781.1 ms, code 01: passed
+  Interrupt (IRQ 14) after another 90h: it arrives
+
+[5] IDENTIFY (ECh)
+  30.7 ms, status 58 (DRDY DSC DRQ)
+  Model    "Conner Peripherals 120MB - CP30104H"
+  Firmware "2.77"   Serial "NCDP1R"
+  Geometry 762 cylinders, 8 heads, 39 sectors a track = 121 MB
+  Words: 0 = 0C5A   20-22 (buffer type, size, ECC) = 0003 0040 0007   47 = 8040   49 = 0001
+  The BIOS doesn't know this model (only Conner CP3022, CP3024, CP344, CP3044,
+  CP3042, CP3104): it leaves the drive off.  (saved: A:\HDIDENT.BIN)
+
+[6] HEADS AND SECTORS (geometry from IDENTIFY)
+  Set the geometry (91h): 1.1 ms, status 50 (DRDY DSC)
+  Recalibrate, heads to track 0 (10h): 7735.2 ms, status 41 (DRDY ERR), error 04 (ABRT)
+  Seek (70h) to cylinder 381: 0.7 ms, status 40 (DRDY)
+  Seek (70h) to cylinder 761: 8068.2 ms, status 50 (DRDY DSC)
+  Seek (70h) to cylinder 0: 0.8 ms, status 40 (DRDY)
+  Read cylinder 0 head 0 sector 1: 9835.2 ms busy: no answer in time
+  Read cylinder 381 head 4 sector 20:  busy: no answer in time
+  Read cylinder 761 head 7 sector 39: 7620.4 ms, status 59 (DRDY DSC DRQ ERR), error 10 (IDNF)
+
+[7] WHAT IT MEANS
+  In [3], asked nothing, it was busy or not ready most of the time: still
+  spinning up, or retrying its own start-up (servo) calibration.
+  The 1520's hard-disk interface works: registers, data transfers and the
+  interrupt all answer.
+  It identifies itself, but not as a Conner the BIOS knows: this alone
+  keeps INT 13h, and so every DOS tool, from seeing it.  A BIOS that takes
+  any drive, or a driver that talks to it directly, would.
+  Recalibrate failed (the error above).
+  It can't find its way on the disk: recalibrate or seeks fail, and reads
+  end in sector not found, each after seconds of retrying.  That points at
+  the heads or the mechanics (the servo it steers by can't be read), not at
+  a lost low-level format.  On Conners of this age: the rubber crash stop
+  gone soft and gluing the arm, or heads stuck to the platter (stiction).
+
+Done.  Press any key.

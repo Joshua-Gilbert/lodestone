@@ -1,0 +1,98 @@
+HDSCAN 1.0 - the GRiDCase 1520's internal hard disk: what's on it, and every
+sector read (read-only)
+
+[1] THE DRIVE
+  "Conner Peripherals 120MB - CP30104H", 762 x 8 x 39 = 121 MB
+  Geometry set, heads to track 0: ok
+
+[2] PARTITIONS (sector 0)
+  1: type 06  boot 80  from sector 39, 237393 sectors = 121 MB  FAT
+
+[3] PARTITION 1: WHAT'S ON IT
+  Formatted by "MSDOS5.0"   label "NO NAME    "   serial 3533-15F9
+  FAT16, 4 sector(s) (2 KB) a cluster, 59224 clusters; 2 FAT(s) of 232 sectors; 512 root entries
+
+  C:\
+    IO       SYS      33430  1991-11-11 05:00 r h s
+    MSDOS    SYS      37394  1991-11-11 05:00 r h s
+    COMMAND  COM      47845  1991-11-11 05:00
+    CHKDSK   EXE      16200  1991-04-09 05:00
+    DC       EXE      21600  1993-01-29 16:38
+    FORMAT   COM      32911  1991-04-09 05:00
+    PARK     EXE       7806  1987-10-13 15:44
+    PALETPOP COM      36349  1988-09-22 15:02
+    AUTOEXEC BAT        106  1998-09-26 10:04
+    BROWSE   COM       1010  1988-06-01 12:00
+    BURNDEV  SYS       2595  1989-04-13 12:16
+    CONFIG   SYS         48  1998-09-26 10:04
+    CED      COM       7156  1985-12-06 13:18
+    CED      MEM        127  1995-02-12 15:27
+    SETUP    COM       6474  1986-06-11 16:08
+    EDIT     COM        413  1991-11-11 05:00
+    EDIT     HLP      17898  1991-11-11 05:00
+    FDISK    EXE      57224  1991-04-09 05:00
+    SYS      COM      13440  1991-07-16 12:00
+    LABEL    EXE       9390  1991-11-11 05:00
+    BURNOUT  DOC      32559  1989-04-13 12:51
+    DIRMATCH COM       4346  1990-01-13 14:05
+    PKUNZIP  EXE      29378  1993-02-01 02:04
+    MOUSE1            <DIR>  1998-07-02 14:48
+    SAMSUNG           <DIR>  1998-09-26 10:02
+    23 file(s), 415699 bytes
+
+  C:\MOUSE1
+    MOUSE    COM      14668  1988-08-01 00:00
+    CPANEL   COM      19858  1988-08-01 00:00
+    COMSP    EXE       2318  1988-08-01 00:00
+    DEMO     BAT        782  1988-08-01 00:00
+    DEMOM    COM      27888  1988-08-01 00:00
+    DISKS    COM         45  1988-08-01 00:00
+    MENU     COM       2540  1988-08-01 00:00
+    MENUREAD ME       40010  1988-08-01 00:00
+    MOUSE    DRV       3358  1988-08-01 00:00
+    MOUSE    SYS      14511  1988-08-01 00:00
+    MREADME  DOC       4302  1988-08-01 00:00
+    MS       PGM      23936  1988-08-01 00:00
+    MS123    COM      16640  1988-08-01 00:00
+    MSETUP   COM      36899  1988-08-01 00:00
+    MSMM2    COM      11575  1988-08-01 00:00
+    MSPF     COM      11478  1988-08-01 00:00
+    MSPLAN   COM      15184  1988-08-01 00:00
+    MSPW2    COM      13342  1988-08-01 00:00
+    MSSC4    COM      20580  1988-08-01 00:00
+    MSWS     COM      19200  1988-08-01 00:00
+    MSWS5    COM      12360  1988-08-01 00:00
+    PIANO    EXE      26707  1988-08-01 00:00
+    STARTLES CTX       3368  1988-08-01 00:00
+    STARTLES SOB        978  1988-08-01 00:00
+    STARTLES SCN       1157  1988-08-01 00:00
+    25 file(s), 343684 bytes
+
+  C:\SAMSUNG
+    MSCDEX   EXE      25361  1998-09-26 10:03
+    SSCDROM  SYS      25424  1998-09-26 10:03
+    README   DOC       2171  1998-09-26 10:04
+    3 file(s), 52956 bytes
+
+  Altogether: 3 directories, 51 files, 812339 bytes.
+  Free: 117588 KB (58794 clusters).  Marked bad by its format: 0 clusters.
+
+[4] EVERY SECTOR (a track a read; any key stops)
+  cylinders   0- 99: ok  (27.0 s)
+  cylinders 100-199: ok  (27.0 s)
+  bad: cylinder 272 head 7 sector 38 (sector 85174), error 40 (UNC)
+  bad: cylinder 273 head 0 sector 28 (sector 85203), error 40 (UNC)
+  bad: cylinder 273 head 1 sector 18 (sector 85232), error 40 (UNC)
+  bad: cylinder 273 head 2 sector 8 (sector 85261), error 40 (UNC)
+  cylinders 200-299: 4 bad sector(s)  (64.9 s)
+  cylinders 300-399: ok  (27.8 s)
+  cylinders 400-499: ok  (27.0 s)
+  cylinders 500-599: ok  (27.1 s)
+  cylinders 600-699: ok  (27.0 s)
+  cylinders 700-761: ok  (16.7 s)
+
+  All read in 256.3 s (463 KB/s): 4 bad sector(s).
+  Some sectors don't read (above): their clusters should be marked bad
+  before the disk holds anything.
+
+Done.  Press any key.

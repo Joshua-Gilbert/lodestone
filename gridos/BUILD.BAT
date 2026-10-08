@@ -23,6 +23,7 @@ nasm -f bin -o UPPER.COM UPPER.ASM
 nasm -f bin -o CACHETST.COM CACHETST.ASM
 nasm -f bin -o EMSTEST.COM EMSTEST.ASM
 nasm -f bin -o CAPTEST.COM CAPTEST.ASM
+nasm -f bin -o HDFLUSH.COM HDFLUSH.ASM
 cd ..\bench
 nasm -f bin -o BENCH.COM BENCH.ASM
 nasm -f bin -o DISKMAP.COM DISKMAP.ASM

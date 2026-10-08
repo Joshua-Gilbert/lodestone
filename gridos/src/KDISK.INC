@@ -2,6 +2,16 @@
 ;  KDISK.INC - floppies A: and B: through BIOS INT 13h: mounting (BPB),
 ;  media changes, the FAT12 cache, sector buffers, transfers split at
 ;  track ends and 64 KB DMA boundaries, and critical errors (INT 24h).
+;  Drive C: is the internal hard disk when KHD.INC finds one: it hooks
+;  the places marked "KHD.INC" (their first instructions up to the .hk
+;  label are copied out and replaced by a jump, so they must not jump).
+;  Sector numbers are 16 bits but for the hard disk's: there a 32-bit
+;  number's high part rides in [lba_hi] from clu2lba (and dent_buf) into
+;  buf_get/buf_getd/disk_io, which use it and set it back to 0, and
+;  buf_inval_range, which leaves it; and in a sector buffer's "drive"
+;  byte, as the drive + 4 * the high part.  All of that is KHD.INC's:
+;  for the floppies it stays 0.  FAT entries come out as FAT16's: ends
+;  from 0FFF0h.
 ; =====================================================================
 ; drive table entry
 D_UNIT  equ 0                   ; BIOS unit
@@ -25,7 +35,8 @@ D_HINT  equ 28                  ; where to look for a free cluster
 D_MEDIA equ 30
 D_CHK   equ 31                  ; check it is the same disk at the next access
 DRVSZ   equ 32
-NDRV    equ 2
+NDRV    equ 3                   ; A:, B: and C: (only with KHD.INC's hard disk)
+NFLOP   equ 2
 CWDLEN  equ 68
 MAXSPF  equ 12                  ; FAT sectors we can cache (all 12-bit values fit)
 NBUF    equ 5                   ; 4 for directories and system, 1 for data
@@ -68,10 +79,11 @@ buf_drv     resb NBUF
 buf_lba     resw NBUF
 buf_age     resw NBUF
 buf_clock   resw 1
+lba_hi      resw 1              ; the next sector number's high part (above)
             alignb 16
 bounce      resb 512
 BPBLEN      equ 51                      ; boot sector 0Bh-3Dh
-bootcopy    resb BPBLEN * NDRV
+bootcopy    resb BPBLEN * NFLOP
 bufs        resb 512 * NBUF
 fatbuf      resb 512 * MAXSPF
 section .text
@@ -83,6 +95,7 @@ drv_init:
         jz      .n
         mov     cl, al
         shr     cl, 6
+        and     cl, 1                   ; (no more than NFLOP: C: isn't one)
         inc     cl                      ; floppy drives
 .n:     mov     di, drvtab
         xor     bx, bx
@@ -329,6 +342,8 @@ drv_ready:
         je      .inv
         push    ax
         push    dx
+        test    byte [si+D_UNIT], 80h   ; (the hard disk: never changes)
+        jnz     .same
         cmp     byte [si+D_CHK], 0      ; (after INT 21h 0Dh: a program may
         mov     byte [si+D_CHK], 0      ;  have used the disk, and its change
         jne     .chg                    ;  line, behind our back)
@@ -433,6 +448,7 @@ disk_reset:
 ; ---------------------------------------------------------------------
 fat_load:
         mov     al, [act]
+.hk:                                    ; (KHD.INC: C:'s is always there)
         cmp     [fat_drv], al
         je      .ok
         call    fat_flush
@@ -464,8 +480,10 @@ fat_load:
 .x:     ret
 
 ; write the FAT sectors that changed (runs of them) to every FAT copy
+; (KHD.INC: C:'s changed ones first)
 fat_flush:
         cmp     byte [fat_dirty], 0
+.hk:
         je      .ok
         cmp     byte [fat_drv], 0FFh
         je      .ok
@@ -543,10 +561,19 @@ fat_flush:
         pop     ax
         ret
 
-; AX = cluster -> AX = its FAT entry
+; drive AL's FAT to disk, if it is the one cached (KHD.INC: and C:'s)
+fat_flush_drv:
+        cmp     al, [fat_drv]
+.hk:
+        je      fat_flush
+        clc
+        ret
+
+; AX = cluster -> AX = its FAT entry, as FAT16's (FF0h-FFFh: FFF0h-FFFFh)
 fat_get:
         push    bx
         mov     bx, ax
+.hk:                                    ; (KHD.INC: C:'s FAT16)
         shr     bx, 1
         add     bx, ax
         test    al, 1
@@ -554,7 +581,10 @@ fat_get:
         jz      .e
         shr     ax, 4
 .e:     and     ax, 0FFFh
-        pop     bx
+        cmp     ax, 0FF0h
+        jb      .x
+        or      ah, 0F0h
+.x:     pop     bx
         ret
 
 ; FAT entry AX := DX
@@ -562,6 +592,7 @@ fat_set:
         push    ax
         push    bx
         push    dx
+.hk:                                    ; (KHD.INC: C:'s FAT16)
         mov     bx, ax
         shr     bx, 1
         add     bx, ax
@@ -592,16 +623,19 @@ fat_set:
         pop     ax
         ret
 
-; cluster AX -> LBA AX of its first sector
+; cluster AX -> LBA AX of its first sector (KHD.INC: [lba_hi] the high
+; part of C:'s)
 clu2lba:
         push    cx
         push    si
         mov     si, [actp]
+.hk:
         sub     ax, 2
         mov     cl, [si+D_SHIFT]
         shl     ax, cl
         add     ax, [si+D_DATA]
-        pop     si
+        mov     word [lba_hi], 0        ; (a floppy's: none, whatever an
+        pop     si                      ;  abort on C: may have left)
         pop     cx
         ret
 
@@ -629,7 +663,7 @@ clu_alloc:
         jmp     .x
 .got:   mov     ax, bx
         push    dx
-        mov     dx, 0FFFh
+        mov     dx, 0FFFFh
         call    fat_set
         pop     dx
         or      dx, dx
@@ -651,6 +685,7 @@ free_run:
         push    ax
         push    bx
         push    dx
+.hk:                                    ; (KHD.INC: C:'s FAT16)
         push    si
         mov     si, [actp]
         mov     dx, [si+D_NCL]
@@ -694,7 +729,7 @@ free_chain:
         push    dx
 .l:     cmp     ax, 2
         jb      .x
-        cmp     ax, 0FF0h
+        cmp     ax, 0FFF0h
         jae     .x
         mov     bx, ax
         call    fat_get
@@ -712,6 +747,7 @@ free_chain:
 ;  sector buffers (write-through)
 ; ---------------------------------------------------------------------
 ; AL = drive, DX = LBA -> SI = buffer with that sector.  CF: AX = error
+; (KHD.INC: for C:, AL becomes the drive + 4 * [lba_hi] first)
 ; buf_get is for directory and system sectors: a miss takes the oldest of
 ; the first NBUF-1 buffers.  buf_getd is for file data: a miss takes the
 ; last buffer, so reading or writing part-sectors of a file never pushes
@@ -721,11 +757,13 @@ buf_getd:
         push    bx
         push    cx
         mov     cx, 1
+.hk:
         jmp     short buf_get.s
 buf_get:
         push    bx
         push    cx
         xor     cx, cx
+.hk:
 .s:     xor     bx, bx
 .f:     cmp     [buf_drv+bx], al
         jne     .n
@@ -870,11 +908,13 @@ buf_inval:
         pop     bx
         ret
 
-; forget drive AL's buffers for LBAs DX .. DX+CX-1
+; forget drive AL's buffers for LBAs DX .. DX+CX-1 (KHD.INC: C:'s with
+; [lba_hi])
 buf_inval_range:
         push    bx
         push    si
         xor     bx, bx
+.hk:
 .l:     cmp     [buf_drv+bx], al
         jne     .n
         mov     si, bx
@@ -905,6 +945,7 @@ disk_io_raw:                            ; the same without INT 24h (mounting)
 dio:    push    bx
         push    cx
         push    dx
+.hk:                                    ; (KHD.INC: C:'s transfers)
         push    si
         push    di
         push    es
@@ -1586,6 +1627,7 @@ crit_dev:                               ; a block device header for INT 24h
 
 ; INT 21h 36h: free space.  DL = drive (0 = current)
 f_36:   mov     al, [bp+F_DX]
+.hk:                                    ; (KHD.INC: C:'s, counted once)
         or      al, al
         jnz     .d
         mov     al, [cur_drv]

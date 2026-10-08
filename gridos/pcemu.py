@@ -81,12 +81,186 @@ class Floppy:
         open(path or s.path, 'wb').write(s.img)
 
 
+class Ata:
+    """The 1520's internal hard disk: an AT-bus drive at 1F0h-1F7h, as a
+    1989 Conner answers (for HDPROBE).  (Not 3F6h: on the 1520 that port
+    doesn't reach the drive.)  Commands finish at once unless they fail
+    mechanically.
+      model, cyls, heads, spt: what IDENTIFY says (identify=False: ABRT)
+      rpm: the index pulse in the status (0: not turning)
+      formatted: True, False, or the set of cylinders that have sector IDs
+      stuck: busy for ever (status 80h, writes ignored)
+      tk0: recalibrate fails with track 0 not found
+      diag: the code after 90h (01h: passed)
+      data: {LBA: 512 bytes}; the rest reads as zeros
+      irq: the drive raises IRQ 14 when a command ends (False: a dead line)
+      mech_fail: it can't find its way on the disk (as Joshua's CP30104H,
+        2026-10-07): recalibrate aborts, a seek never completes (BSY drops,
+        DSC doesn't come), reads end IDNF; each failure after fail_ms
+      frees: mech_fail ends after this many recalibrates (exercise worked)
+      unready: busy for this many seconds from the first look (spin-up)
+      disk: the whole disk, LBA order (data overrides it); written by
+        WRITE SECTORS (30h) as a bytearray (s.disk)
+      bad: LBAs that don't read (UNC); a read of several sectors stops
+        there, with the ones before it transferred
+      stick_at: busy for good from this read command on (stuck again)
+      badw: LBAs that don't take a write (IDNF once the data is in; the
+        command ends there); s.wfails counts them.  A test may change it
+    While busy, every register reads the status and writes go nowhere."""
+    BSY, DRDY, DSC, DRQ, ERR, IDX = 0x80, 0x40, 0x10, 0x08, 0x01, 0x02
+
+    def __init__(s, model='Conner Peripherals 40MB - CP3044', cyls=977, heads=5, spt=17, rpm=3486,
+                 formatted=True, stuck=False, tk0=False, diag=0x01, identify=True, data=None,
+                 serial='CP3044-123456', firmware='1.03', irq=True, mech_fail=False, unready=0,
+                 fail_ms=0, frees=0, disk=None, bad=(), stick_at=None, badw=()):
+        s.model, s.cyls, s.heads, s.spt, s.rpm = model, cyls, heads, spt, rpm
+        s.formatted, s.stuck, s.tk0, s.diag, s.identify = formatted, stuck, tk0, diag, identify
+        s.serial, s.firmware = serial, firmware
+        s.data = dict(data or {})
+        s.reg = {1: diag, 2: 1, 3: 1, 4: 0, 5: 0, 6: 0xA0}
+        s.st = s.DRDY | s.DSC
+        s.buf = b''; s.pos = 0
+        s.cmds = []                                     # (command, C, H, S) as sent
+        s.irq = irq; s.pc = None
+        s.mech_fail, s.unready, s.fail_ms, s.frees = mech_fail, unready, fail_ms, frees
+        s.first = None; s.busy_until = 0; s.recals = 0
+        s.disk = bytearray(disk) if disk is not None else None
+        s.bad, s.stick_at, s.pend, s.reads = set(bad), stick_at, None, 0
+        s.wq = []                                       # sectors still to come in (LBA)
+        s.wbuf = bytearray(); s.writes = []             # (LBA, sectors) per command
+        s.badw, s.wfails = set(badw), 0
+
+    def intr(s):
+        if s.irq and s.pc: s.pc.irq_pending.add(14)
+
+    @staticmethod
+    def text(t, n):                                     # an ATA string: n words, bytes swapped
+        b = t.encode().ljust(2 * n)[:2 * n]
+        return bytes(b[i ^ 1] for i in range(2 * n))
+
+    def ident_block(s):
+        w = [0] * 256
+        w[0] = 0x0A5A; w[1] = s.cyls; w[3] = s.heads; w[4] = 20160; w[5] = 594; w[6] = s.spt
+        w[20] = 1; w[21] = 0x20; w[22] = 4
+        b = bytearray(struct.pack('<256H', *w))
+        b[20:40] = s.text(s.serial, 10); b[46:54] = s.text(s.firmware, 4); b[54:94] = s.text(s.model, 20)
+        return bytes(b)
+
+    def busy(s, us):
+        if s.stuck: return True
+        if s.first is None: s.first = us
+        return us - s.first < s.unready * 1e6 or us < s.busy_until
+
+    def status(s, us):
+        if s.busy(us): return s.BSY
+        st = s.st
+        if s.rpm:
+            per = 60e6 / s.rpm
+            if us % per < per * 0.03: st |= s.IDX
+        return st
+
+    def sector(s, lba):
+        if lba in s.data: return s.data[lba]
+        if s.disk is not None and (lba + 1) * 512 <= len(s.disk): return bytes(s.disk[lba * 512:(lba + 1) * 512])
+        return bytes(512)
+
+    def has_sector(s, c, h, n):
+        if not (c < s.cyls and h < s.heads and 1 <= n <= s.spt): return False
+        return s.formatted if isinstance(s.formatted, bool) else c in s.formatted
+
+    def read(s, port, size, us):
+        if port == 0x1F0:
+            if not s.st & s.DRQ or s.busy(us): return 0xFFFF if size == 2 else 0xFF
+            v = s.buf[s.pos] | (s.buf[s.pos + 1] << 8 if size == 2 else 0)
+            s.pos += size
+            if s.pos >= len(s.buf):
+                s.st &= ~s.DRQ
+                if s.pend: s.reg[1] = s.pend; s.st |= s.ERR; s.pend = None
+            return v
+        if port == 0x1F7 and s.pc: s.pc.irq_pending.discard(14)     # (reading it ends INTRQ)
+        if port == 0x1F7 or s.busy(us): return s.status(us)
+        return s.reg.get(port - 0x1F0, 0)
+
+    def write(s, port, val, us, size=1):
+        if s.busy(us): return
+        if port == 0x1F0 and s.wq and s.st & s.DRQ:      # a sector's data coming in
+            s.wbuf += bytes([val & 0xFF, val >> 8]) if size == 2 else bytes([val & 0xFF])
+            if len(s.wbuf) >= 512:
+                lba = s.wq.pop(0); sec = bytes(s.wbuf[:512])
+                s.wbuf = bytearray()
+                if lba in s.badw:
+                    s.wq = []; s.wfails += 1; s.reg[1] = 0x10; s.st = s.DRDY | s.DSC | s.ERR
+                    s.intr(); return
+                if s.disk is not None and (lba + 1) * 512 <= len(s.disk): s.disk[lba * 512:(lba + 1) * 512] = sec
+                s.data.pop(lba, None)
+                if not s.wq: s.st = s.DRDY | s.DSC
+                s.intr()
+            return
+        if port != 0x1F7:
+            if port != 0x1F0: s.reg[port - 0x1F0] = val
+            return
+        c = s.reg[4] | s.reg[5] << 8; h = s.reg[6] & 15; n = s.reg[3]
+        s.cmds.append((val, c, h, n))
+        ok = s.DRDY | s.DSC
+        s.intr()
+        def fail(err, slow=False):
+            s.reg[1] = err; s.st = ok | s.ERR
+            if slow: s.busy_until = us + s.fail_ms * 1000
+        if val == 0xEC:
+            if not s.identify: return fail(0x04)
+            s.buf = s.ident_block(); s.pos = 0; s.st = ok | s.DRQ
+        elif val == 0x90:
+            s.reg[1] = s.diag; s.st = ok
+        elif val == 0x91:
+            s.st = ok
+        elif (val & 0xF0) == 0x70:
+            s.st = s.DRDY if s.mech_fail else ok        # (DSC never comes)
+        elif (val & 0xF0) == 0x10:
+            s.recals += 1
+            if s.tk0: return fail(0x02)
+            if s.mech_fail:
+                if s.recals == s.frees: s.mech_fail = False
+                return fail(0x04, True)
+            s.st = ok
+        elif val in (0x30, 0x31):
+            s.wq = []; s.wbuf = bytearray()
+            for i in range(s.reg[2] or 256):
+                if not s.has_sector(c, h, n): break
+                s.wq.append((c * s.heads + h) * s.spt + n - 1)
+                n += 1
+                if n > s.spt: n = 1; h += 1
+                if h >= s.heads: h = 0; c += 1
+            if not s.wq: return fail(0x10)
+            s.writes.append((s.wq[0], len(s.wq)))
+            s.st = ok | s.DRQ
+        elif val in (0x20, 0x21):
+            s.reads += 1
+            if s.stick_at and s.reads >= s.stick_at: s.stuck = True; return
+            if s.mech_fail: return fail(0x10, True)
+            buf = []; s.pend = None
+            for i in range(s.reg[2] or 256):           # (on through heads and cylinders)
+                if not s.has_sector(c, h, n): s.pend = 0x10; break
+                lba = (c * s.heads + h) * s.spt + n - 1
+                if lba in s.bad: s.pend = 0x40; break
+                buf.append(s.sector(lba))
+                n += 1
+                if n > s.spt: n = 1; h += 1
+                if h >= s.heads: h = 0; c += 1
+            if not buf: e = s.pend; s.pend = None; return fail(e)
+            s.buf = b''.join(buf); s.pos = 0; s.st = ok | s.DRQ
+        else:
+            fail(0x04)
+
+
 class PC:
     def __init__(s, a=None, b=None, chip=None, start=datetime.datetime(2026, 10, 4, 21, 30, 0), mem_kb=640,
-                 disk_model='flat', ems_pages=0, ems_alias=False):
+                 disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False):
         s.mu = mu = Uc(UC_ARCH_X86, UC_MODE_16)
         mu.mem_map(0, 0x110000)
         s.ems_pages = ems_pages; s.ems_alias = ems_alias
+        s.ata = ata                     # the internal hard disk (Ata), or none: FFh
+        s.float_bus = float_bus         # no drive, and its ports read what's left on the bus
+        if ata: ata.pc = s
         if ems_pages:
             # the board's memory, and what each window shows: a page of it
             # (mem_map_ptr, so two windows on one page are the same bytes) or,
@@ -103,11 +277,12 @@ class PC:
         s.due_at = float('inf'); s.on_due = None
         s.irq_pending = set(); s.pic_mask = 0xB8
         s.isr = 0; s.pic_rr = 2         # in service (EOI ends it); OCW3: what port 20h reads
+        s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
         s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
         s.keys = collections.deque(); s.tty = []; s.log = []; s.lpt = []
         s.calls13 = []; s.ints = collections.Counter(); s.t13 = []
         s.stopped = None; s.crash = None; s.halted = False; s.blocked = False
-        s.last_blk = (0, 0); s.pit_latch = None; s.pit_hi = False
+        s.last_blk = (0, 0); s.pit_latch = None; s.pit_hi = False; s.pit_mode = 3
         s.clock0 = start
         s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
         s.moves = []
@@ -205,6 +380,18 @@ class PC:
             if s.on_due: s.on_due()
         s.next_event = min(s.next_tick, s.due_at)
 
+    def pit_read(s):
+        """Latch channel 0.  Mode 3 (the BIOS's) counts down by 2, twice a
+        tick; mode 2 (pit_init in tools/timing.inc) once, by 1, from the
+        tick."""
+        if s.pit_mode == 2:
+            n = int((s.us - (s.next_tick - TICK_US)) * 1.193182) % 65536
+            s.pit_latch = (65536 - n) & 0xFFFF
+        else:
+            n = int(s.us * 1.193182) % 32768
+            s.pit_latch = (65536 - 2 * n) & 0xFFFF
+        s.pit_hi = False
+
     def sleep_to_tick(s):
         s.us = max(s.us, s.next_tick); s.on_time()
 
@@ -224,13 +411,13 @@ class PC:
             s.w('cs', seg); s.w('ip', off)
             return
         if not (s.r('flags') & 0x200) or not s.irq_pending: return
-        due = [i for i in sorted(s.irq_pending) if not (s.pic_mask & (1 << i))]
+        due = [i for i in sorted(s.irq_pending) if s.unmasked(i)]
         if not due: return
         first = True
         for irq in reversed(due):
             s.irq_pending.discard(irq)
-            s.isr |= 1 << irq
-            off, seg = struct.unpack('<HH', s.rd(0, (8 + irq) * 4, 4))
+            s.isr |= 1 << (irq if irq < 8 else 2)
+            off, seg = struct.unpack('<HH', s.rd(0, (8 + irq if irq < 8 else 0x68 + irq) * 4, 4))
             fl = s.r('flags')
             s.push(fl if first else fl & ~0x300); s.push(s.r('cs')); s.push(s.r('ip'))
             s.w('flags', fl & ~0x300)
@@ -258,17 +445,21 @@ class PC:
     # ---- ports --------------------------------------------------------------
     def hin(s, uc, port, size, ud):
         if port == 0x40:
-            if s.pit_latch is None:
-                n = int(s.us * 1.193182) % 32768
-                s.pit_latch = (65536 - 2 * n) & 0xFFFF; s.pit_hi = False
+            if s.pit_latch is None: s.pit_read()
             v = s.pit_latch
             if not s.pit_hi: s.pit_hi = True; return v & 0xFF
             s.pit_latch = None; return v >> 8
         if port == 0x61: return (int(s.us / 15.085) & 1) << 4
         if port == 0x71: return s.cmos_read(s.cidx)
         if port == 0x21: return s.pic_mask
+        if port == 0xA1: return s.pic2_mask
         if port == 0x20: return s.isr if s.pic_rr == 3 else 0
         if port == 0x7F8: return 0xFD
+        if port == 0x6F8: return 0x90                   # drive backplane 9 (the 1520's, GRIDPROBE)
+        if s.ata and 0x1F0 <= port <= 0x1F7: return s.ata.read(port, size, s.us)
+        if s.float_bus and (0x1F0 <= port <= 0x1F7 or port == 0x3F6):   # as Joshua's 1520 reads
+            b = s.rd(s.r('cs'), s.r('ip') + 2, 2)                       #  (2026-10-07): code bytes
+            return b[0] | b[1] << 8 if size == 2 else b[0]              #  just prefetched
         if port == 0x3DA:
             return 0x08 if int(s.us / 1000) % 16 == 0 else 0x00
         if 0x2F8 <= port <= 0x2FF: return s.uart_in(port - 0x2F8)
@@ -341,17 +532,19 @@ class PC:
         return s.cmos[i & 0x7F]
 
     def hout(s, uc, port, size, val, ud):
+        if s.ata and port == 0x1F0: return s.ata.write(port, val & 0xFFFF, s.us, size)   # (a word: OUTSW)
         val &= 0xFF
         if port == 0x70: s.cidx = val & 0x7F; return
         if port == 0x71:
             if s.cidx >= 0x0E: s.cmos[s.cidx] = val
             return
         if port == 0x43:
-            if (val & 0xF0) == 0:
-                n = int(s.us * 1.193182) % 32768
-                s.pit_latch = (65536 - 2 * n) & 0xFFFF; s.pit_hi = False
+            if (val & 0xF0) == 0: s.pit_read()
+            elif (val & 0xF0) == 0x30: s.pit_mode = (val >> 1) & 3     # (channel 0: 2 or 3)
             return
         if port == 0x21: s.pic_mask = val; return
+        if port == 0xA1: s.pic2_mask = val; return
+        if s.ata and 0x1F0 <= port <= 0x1F7: return s.ata.write(port, val, s.us, size)
         if port == 0x20:
             if val == 0x20: s.isr &= s.isr - 1          # the highest priority's EOI
             elif val & 0xF8 == 0x60: s.isr &= ~(1 << (val & 7))
@@ -665,8 +858,12 @@ class PC:
             s.sleep_to_tick()                   # (an IRQ still waiting goes first,
         return not (s.stopped or s.crash)       #  as a real PIC would after IRET)
 
+    def unmasked(s, i):
+        if i < 8: return not s.pic_mask & (1 << i)
+        return not s.pic_mask & 4 and not s.pic2_mask & (1 << (i - 8))
+
     def deliverable(s):
-        return bool(s.r('flags') & 0x200) and (bool(s.soft) or any(not (s.pic_mask & (1 << i)) for i in s.irq_pending))
+        return bool(s.r('flags') & 0x200) and (bool(s.soft) or any(s.unmasked(i) for i in s.irq_pending))
 
     def run_until(s, cond, sim_s=10.0):
         end = s.us + sim_s * 1e6
