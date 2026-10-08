@@ -914,6 +914,24 @@ def t_mdreview():
     check('M: turned off (not through System), then a warm restart: M: made new, empty (not its old files back)',
           n == 16 and not fatcheck.read_files(mi, 'M') and not fatcheck.check(mi)[0], (n, sorted(fatcheck.read_files(mi, 'M')) if n else None))
 
+    # a start-up with MDISK=0 leaves M: off; at a later start-up with M: on
+    # again (its pages the same), the old disk must not come back: the
+    # start-up without M: cleared its boot sector (md_wipe)
+    k = ktest.KPC(img, ems_pages=88); k.start()
+    sh = Shell(k)
+    sh.run('copy a:gridcmd.com m:\\a.com'); sh.run('echo MDISK=0> a:\\gridos.ini')
+    k.key('exit'); k.key(ktest.ENTER); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    k.pc.warm_boot('keep'); k.settle(10)
+    h, n0, mi = md_info(k)
+    sh = Shell(k)
+    sh.run('del a:\\gridos.ini')
+    k.key('exit'); k.key(ktest.ENTER); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    k.pc.warm_boot('keep'); k.settle(10)
+    h, n, mi = md_info(k)
+    check('a start-up with MDISK=0, then one with M: on again: M: made new, empty (not the old disk back)',
+          not n0 and n == 16 and not fatcheck.read_files(mi, 'M') and not fatcheck.check(mi)[0],
+          (n0, n, sorted(fatcheck.read_files(mi, 'M')) if n else None))
+
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_cache, t_cache_ems, t_mdisk,
          t_mdreview]
 if __name__ == '__main__':

@@ -17,9 +17,9 @@ It boots from a floppy, shows the Executive, runs ordinary DOS programs (TM5000G
 
 *Emulator screenshots (`gridos/screens/readme_shots.py`), drawn as the 1520's amber plasma shows them.*
 
-## What it does (0.3.14)
+## What it does (0.3.15)
 
-- **A DOS 3.30 kernel** (`GRIDOS.SYS`, 45,358 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
+- **A DOS 3.30 kernel** (`GRIDOS.SYS`, 45,438 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
 - **Disks:**
   - **A:** and **B:** (the external floppy drive), with a cylinder read-ahead cache;
   - **C:**, any IDE drive with a FAT16 partition up to 2 GB, driven through its own registers. The 1520's BIOS only knows a few Conner models, so Grid-OS doesn't use it for this. With a drive, C: costs about 3 KB of memory; without one, nothing is loaded.
@@ -80,7 +80,27 @@ M:'s 0.3 KB comes out of the environment's block (counted with the Executive oth
 
 ### On the hard disk (C:) and the RAM disk (M:)
 
-BENCH 1.4 on drive C: and on M: in the emulator. C: uses the layout of Joshua's 121 MB CP30104H, with the drive's seeks and rotation timed: 3,360 rpm, 39 sectors a track. That model is checked against the 1520's own sweep of the disk and is about 15% fast on big sequential reads. Whether the real drive reads ahead into its own buffer isn't known, so C: has two columns. M: is made at 1 MB for this, because 256 KB holds too little for BENCH's files. Seconds.
+**On the real 1520** (2026-10-08, Grid-OS 0.3.14): BENCH 1.4 from the 1.44 MB floppy, from the 121 MB Conner CP30104H as C:, and from M: at 1 MB. Seconds. BENCH times with the BIOS clock, so anything under about 0.2 s is only good to a tick (55 ms).
+
+| Test | Floppy A: | Hard disk C: | RAM disk M: |
+|---|---:|---:|---:|
+| Write 256 KB, 16 KB writes | 12.52 | 0.87 | **0.16** |
+| Read 256 KB, 16 KB reads | 9.44 | 0.43 | **0.10** |
+| Read 256 KB, 512-byte reads | 9.61 | 0.71 | **0.27** |
+| Read 256 KB, 128-byte reads | 9.83 | 1.42 | **0.93** |
+| 64 random 512-byte reads | 10.27 | 1.09 | **0.16** |
+| Directory listing ×10 | 0.38 | 0.10 | **0.00** |
+| Open + close ×100 | 0.10 | 0.16 | **0.10** |
+| 20 small files, create + delete | 22.63 | 3.57 | **0.10** |
+| Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
+| INT 21h calls ×1000 | 0.05 | 0.05 | 0.05 |
+| **Total** | **87.6** | **9.1** | **2.1** |
+
+- **C: is about 10× faster than the floppy, and M: about 42×.** Writing 256 KB takes 12.5 s on the floppy, 0.87 s on C: and 0.16 s on M:. Twenty small files take 22.6 s, 3.6 s and 0.1 s.
+- **The CP30104H reads ahead on its own.** 512-byte reads on C: take 0.71 s, not the 9.4 s a drive without look-ahead would take, so Grid-OS's read-ahead doesn't need to cover C:.
+- Logs: `gridos/bench/BENCH_1520_2026-10-08_A.TXT`, `_C.TXT` and `_M.TXT`.
+
+**In the emulator** (`python3 gridos/bench/run_bench_hd.py`): C: is modelled on the same drive (3,360 rpm, 39 sectors a track, seeks), with and without the drive's own look-ahead. Seconds.
 
 | Test | Floppy A: | C:, drive without look-ahead | C:, drive with look-ahead | M: |
 |---|---:|---:|---:|---:|
@@ -96,12 +116,9 @@ BENCH 1.4 on drive C: and on M: in the emulator. C: uses the layout of Joshua's 
 | INT 21h calls ×1000 | 0.11 | 0.11 | 0.11 | 0.11 |
 | **Total** | **79.0** | **25.0** | **8.6** | **2.9** |
 
-- **C: is 3 to 9 times faster than the floppy overall.** Big writes are 12× faster, small files 8×, and loading programs 14–22×.
-- **M: is another 3 to 9 times faster than C:**: no seeks and no turning disk at all. Writing 256 KB takes 0.18 s, reading it 0.11 s, and 20 small files take 0.18 s against 21 s on the floppy.
-- **Small reads on C: depend on the drive.** On the floppy, Grid-OS's own cylinder read-ahead makes 512- and 128-byte reads cheap. That read-ahead doesn't cover C:, so a drive without look-ahead takes a turn of the disk for each sector (9.4 s). If the real CP30104H turns out to be like that, extending Grid-OS's read-ahead to C: would fix it.
-- **The real 1520 decides:** run BENCH with C: current (`C:`, then `A:BENCH`; its log goes to `C:\BENCH.TXT`), and the same on M:.
-
-Run it with `python3 gridos/bench/run_bench_hd.py`; the model and notes are in `gridos/bench/RESULTS_HD.TXT`.
+- **The look-ahead column matches the real drive:** 8.6 s modelled against 9.1 s measured.
+- **The emulator overstates the kernel's own work about twice.** The 1,000 INT 21h calls take 0.11 s there and 0.05 s on the 1520, which is why M: is 2.9 s in the emulator and 2.1 s for real. Disk-bound tests are close.
+- The model and notes are in `gridos/bench/RESULTS_HD.TXT`.
 
 ### On the real 1520
 
@@ -146,7 +163,7 @@ Run the comparison with `python3 gridos/bench/compare3.py <GRiD MS-DOS EPROM ima
 | `gridos/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN |
 | `gridos/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
 | `gridos/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link) |
-| `gridos/releases` | Builds for the floppy, 0.1 to 0.3.14 |
+| `gridos/releases` | Builds for the floppy, 0.1 to 0.3.15 |
 | `gridos/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `gridos/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude API, the AR488 patch, and its tests |
@@ -168,11 +185,11 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 732 checks pass on 0.3.14 (2026-10-08).
+Needs Python 3, `unicorn` 2.x and mtools. All 733 checks pass on 0.3.15 (2026-10-08).
 
 ```sh
 cd gridos
-python3 tests/test_kernel.py          # 177 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:
+python3 tests/test_kernel.py          # 178 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:
 python3 tests/test_apps.py            # 367 checks: UI core, Executive, System, Write, mouse, files (add "shots" for screens/0.3)
 python3 tests/test_hd.py              # 56 checks: drive C:, and C: with M:
 python3 tests/test_defrag.py          # 49 checks: DEFRAG on floppies and C:, the saver's round
