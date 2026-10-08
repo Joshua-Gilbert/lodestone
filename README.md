@@ -80,10 +80,10 @@ Run it with `python3 gridos/bench/compare3.py <GRiD MS-DOS EPROM image> <EMM.SYS
 |---|---|
 | `gridos/src` | The OS, in NASM: boot sector (`BOOT.ASM`), `GOSBOOT.COM` (installs the boot sector), the kernel (`GRIDOS.ASM` + `K*.INC`), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `GRIDCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk) |
 | `gridos/apps` | Programs on the UI core (`.RUN`, built with `gridos/mkrun.py`): `SYSTEM.RUN` (Usage: memory, disks, clock, devices, GPIB) and `WRITE.RUN` (a GRiDWrite-style editor) |
-| `gridos/tests` | `pcemu`-based tests: kernel (120 checks), the UI core, programs and INT 33h (294), DEFRAG (33) and a power cut at every DEFRAG write, HEADCLN (9), the Claude-link scenarios, GGTEST; also TESTDOS / CACHETST / CAPTEST / UPPER / MEMSZ / TSR / M33TEST and the other M33 programs (DOS programs) and UITEST.RUN |
+| `gridos/tests` | `pcemu`-based tests: kernel (120 checks), the UI core, programs, INT 33h and the file commands (335), DEFRAG (49) and a power cut at every DEFRAG write, HEADCLN (9), the Claude-link scenarios, GGTEST; also TESTDOS / CACHETST / CAPTEST / UPPER / MEMSZ / TSR / M33TEST and the other M33 programs (DOS programs) and UITEST.RUN |
 | `gridos/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (Lodestone against GRiD MS-DOS in the emulator), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT` and the 1520 logs |
 | `gridos/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link) |
-| `gridos/releases` | Builds that went onto the floppy, 0.1 to 0.3.9 |
+| `gridos/releases` | Builds for the floppy, 0.1 to 0.3.13 |
 | `gridos/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `gridos/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, 7210 GPIB model), `ktest.py`, `mkimg.py`, `psf.py`, `sim7210.py`; `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude API, the AR488 patch, and its tests |
@@ -110,8 +110,8 @@ Needs Python 3, `unicorn` 2.x and mtools.
 ```sh
 cd gridos
 python3 tests/test_kernel.py          # 120 checks
-python3 tests/test_apps.py            # 294 checks (add "shots" for screens/0.3)
-python3 tests/test_defrag.py          # 33 checks
+python3 tests/test_apps.py            # 335 checks (add "shots" for screens/0.3)
+python3 tests/test_defrag.py          # 49 checks
 python3 tests/defrag_cut.py 2         # power cut at every DEFRAG write (~20 min)
 python3 tests/defrag_cut.py 2 worn    # the same on a simulated worn drive
 python3 tests/test_claude_kernel.py   # Claude-link scenarios on the kernel
