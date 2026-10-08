@@ -543,6 +543,13 @@
   - **EMSKEEP first.** Run `EMSKEEP`: it stamps 8 EMS pages and writes EMSKEEP.DAT. Press Ctrl-Alt-Del into Grid-OS, then run `EMSKEEP /C`. It says "EMS kept what it held through the restart", "was cleared or rewritten", or "kept part", and adds the result to EMSKEEP.TXT. Run it once under GRiD MS-DOS with EMM.SYS too.
   - **BENCH on M::** in System, Temporary disk, press Return until 1 MB. Then at the command prompt (CODE-P) run `M:` and `A:BENCH /N 10`. BENCH.TXT goes on M:, so `COPY M:BENCH.TXT A:` before switching off.
 
+## A stale M: after MDISK=0 (0.3.15, 2026-10-08)
+- **Found in the review of 0.3.14** (an independent agent): a start-up with M: off (`MDISK=0`, typed into GRIDOS.INI) left the old disk's boot sector in what would be M:'s first page. Programs could then use those pages, and a later start-up with M: on (the same pages again) found the boot sector, a FAT that passed the check, and mounted the old disk with whatever the programs had left in its data. Turning M: off from System was already safe (`md_down` clears the boot sector).
+- **Fix (`md_wipe`, KMDISK.INC):** at start-up, when M: isn't made (off, or no room), the first free EMS page, where M: would start, loses an old M:'s boot sector (its first word, only when it starts as M:'s does). It runs in the installer, in the disk cache's EMS page: GRIDOS.SYS +80 bytes, no memory for DOS programs (562.5 / 578.6 / 559.2 / 575.7 KB, as before).
+- **Test:** `t_mdreview` gains the case (M: with a file, a warm restart with MDISK=0, then one with no line): it failed before the fix (the old A.COM came back) and passes now. All suites pass: kernel 178, apps 367, hard disk 56, DEFRAG 49, Claude link 21, HDPROBE 33, HDSCAN 20, HEADCLN 9.
+- **Version:** GOS_VER 003Fh. 0.3.15 is the last patch number the BH.BL scheme has for 0.3 (minor << 4 | patch): the next release is 0.4.0, or the scheme changes.
+- **Copy to the floppy** (`releases/0.3.15`): GRIDOS.SYS and GRIDOS.TXT.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.

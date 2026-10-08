@@ -266,7 +266,12 @@ md_entry:
         mov     cx, [bp+F_CX]
         call    md_make
 .s:     push    ax
-        cmp     byte [cs:md_pg], 0      ; M: off now, and it was the current
+        cmp     byte [cs:md_mode], 2    ; at start-up with no M: (off, or no
+        jne     .w                      ;  room for it): no old M: may come
+        cmp     byte [cs:md_pg], 0      ;  back at a later one
+        jne     .w
+        call    md_wipe
+.w:     cmp     byte [cs:md_pg], 0      ; M: off now, and it was the current
         jne     .c                      ;  drive: the one Grid-OS started from
         cmp     byte [cur_drv], MD_DRV
         jne     .c
@@ -333,6 +338,42 @@ md_make:
         call    md_disk
         call    md_hook
         xor     ah, ah
+        ret
+
+; At start-up without M:: the first free page, where M: would start, loses
+; an old M:'s boot sector.  Otherwise a disk left there (by a start-up with
+; MDISK=0, say) could be taken for M: at a later start-up, after programs
+; had used its pages.  (A disk turned off while running is cleared by
+; md_down.)  All registers kept
+md_wipe:
+        pusha
+        push    es
+        push    ds
+        mov     al, [ems42 + 1]
+        sub     al, [ems_used]
+        jbe     .r                      ; (no page free)
+        xor     bx, bx
+        mov     bl, [ems_used]
+        mov     dx, MD_P1               ; it in window 1 meanwhile
+        in      al, dx
+        mov     ah, al
+        mov     al, [ems_ltab + bx]
+        out     dx, al
+        mov     bx, MD_W1
+        mov     es, bx
+        push    cs
+        pop     ds
+        mov     si, md_bs0              ; an M:'s boot sector starts so
+        xor     di, di
+        mov     cx, 11
+        repe    cmpsb
+        jne     .o
+        mov     word [es:0], 0
+.o:     mov     al, ah
+        out     dx, al
+.r:     pop     ds
+        pop     es
+        popa
         ret
 
 ; SI = M:'s handle's record

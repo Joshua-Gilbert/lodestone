@@ -1,4 +1,4 @@
-Grid-OS 0.3.14 - boot floppy
+Grid-OS 0.3.15 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -217,6 +217,10 @@ Off, it takes nothing at all.  Without EMS (the memory set to extended)
 the topic says "needs EMS" and there is no M:.  DEFRAG and the screen
 saver leave M: alone (nothing to tidy).  The Device list shows B: only
 when the GRiD has a second floppy drive.
+
+0.3.15: a start-up with M: off (MDISK=0) clears what is left of an old
+M:, so a later start-up with M: on can't bring back a disk whose memory
+programs have used since.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
