@@ -1,0 +1,10 @@
+2026-10-07 19:42  Disk in order: 49 files, 117588 KB free in 7 pieces
+2026-10-07 19:59  Free space tested: 117577 KB, 15 disk errors, 14 bad clusters marked
+2026-10-07 19:59    Disk error 80h reading sector 85032
+2026-10-07 19:59    Disk error 10h reading sector 85050
+2026-10-07 19:59    Disk error 04h reading sector 85122
+2026-10-07 19:59    Disk error 10h reading sector 85158
+2026-10-07 19:59    Disk error 10h reading sector 85176
+2026-10-07 19:59    Disk error 10h reading sector 85212
+2026-10-07 19:59    Disk error 10h reading sector 85284
+2026-10-07 19:59    Disk error 10h reading sector 85320

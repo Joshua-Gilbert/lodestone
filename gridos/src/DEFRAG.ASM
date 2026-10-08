@@ -1,8 +1,9 @@
 ; DEFRAG.COM - Grid-OS disk defragmenter, and the Executive's screen saver
 ;
-;   DEFRAG [A:|B:]         tidy the floppy in drive A: or B: (BIOS unit 0
-;                          or 1; the current drive if none is given)
-;   DEFRAG [A:|B:] /T      test the free space; mark bad clusters
+;   DEFRAG [A:|B:|C:]      tidy the floppy in drive A: or B: (BIOS unit 0
+;                          or 1), or the hard disk C: (the current drive
+;                          if none is given)
+;   DEFRAG [A:|B:|C:] /T   test the free space; mark bad clusters
 ;   DEFRAG /S [M=ssss:oooo] [F=ssss:oooo]
 ;                          screen-saver mode, started by the Executive when
 ;                          the screen saver starts (the delay set in System).  Any key, or the Executive's mouse
@@ -10,7 +11,16 @@
 ;                          F=: the screen font in use (1,536 bytes, codes
 ;                          32-127), so the map has the Executive's font.
 ;
-; Every cluster of the disk is a cell on the 640x400 screen.  It then
+; Floppies (FAT12) go through INT 13h, a track at a time.  C: (FAT16, up
+; to 2 GB: sector numbers are 32 bits, BP the high word) goes through the
+; kernel's INT 25h/26h, 18 sectors at a time; it has no change line.  The
+; FAT, the map of the clusters' owners and the root's two copies are
+; memory sized to the disk (C:: about 200 KB more while it runs; nothing
+; stays behind).
+;
+; Every cluster of the disk is on the 640x400 screen, a cell each, or (on
+; a disk of more than 2,880) a cell for several, showing the most
+; important state among them.  It then
 ;  1. squeezes the deleted entries out of the root directory.  Sectors are
 ;     written lowest first, so an entry is in its new place before its old
 ;     place is overwritten: a power cut can at worst leave an entry twice,
@@ -23,8 +33,9 @@
 ;     directory entry: point it at the new chain (one sector - the switch);
 ;     FAT: free the old chain.
 ; A power cut or a pulled disk therefore leaves the old file or the new one,
-; never a damaged one - at worst some lost clusters.  The change line is
-; checked before every disk access, and it stops if the disk has changed.
+; never a damaged one - at worst some lost clusters.  On a floppy the change
+; line is checked before every disk access, and it stops if the disk has
+; changed.
 ; It writes only under Grid-OS (GRiD MS-DOS keeps its own copies of the FAT
 ; and directories).  Elsewhere, or on a write-protected disk, or if the disk
 ; needs CHKDSK, it only shows the map.
@@ -32,7 +43,7 @@
 ; Old disks wear, so a disk error doesn't stop it:
 ;   - a copy that won't write or read back right: the copy is abandoned
 ;     (nothing switched), its clusters are tested one sector at a time, and
-;     the failing ones are marked bad (FF7) in the FAT.  A spot that fails
+;     the failing ones are marked bad (FF7h, FAT16 FFF7h) in the FAT.  A spot that fails
 ;     as part of a run but passes alone is marked the second time;
 ;   - a file sector that can't be read (after 4 tries each): the file stays
 ;     where it is, the rest goes on;
@@ -43,7 +54,7 @@
 ; track by track) and marks the bad clusters.  Each run that marked or
 ; moved anything, or failed, adds a line to DEFRAG.TXT on that disk (through the
 ; kernel), with up to 8 disk errors: "Disk error 10h reading cylinder c
-; side h sector s" - s is where the failing request started.
+; side h sector s" (C:: "... sector n") - where the failing request started.
 ;
 ; Exit code: 0 the disk is in order, 1 stopped by a key or the mouse,
 ; 2 couldn't (write-protected, disk changed, disk error, needs CHKDSK, ...).
@@ -51,11 +62,11 @@ cpu 286
 org 100h
 
 VSEG    equ 0B800h
-MAXCL   equ 4096                ; owner map (FAT12 has at most 4085 clusters)
 MAXF    equ 240                 ; files we can move
 FSZ     equ 32                  ; file record
-MAXSPF  equ 12                  ; FAT sectors
-MAXRS   equ 16                  ; root directory sectors
+MAXSPF  equ 256                 ; FAT sectors that can hold entries (FAT16:
+                                ;  65,536); a bigger FAT's rest is unused
+MAXRS   equ 32                  ; root directory sectors (512 entries)
 MAXDQ   equ 64                  ; subdirectories
 BUFA    equ 0                   ; in the DMA buffer segment: 18 sectors each
 BUFB    equ 2400h
@@ -82,6 +93,7 @@ F_NAME  equ 0                   ; 11 bytes
 F_ATTR  equ 11
 F_DLBA  equ 12                  ; sector holding its directory entry
 F_DOFF  equ 14                  ; and the entry's offset in it
+F_DLBAH equ 22                  ; (the sector's high word)
 F_START equ 16
 F_NCL   equ 18
 F_FLAGS equ 20
@@ -91,7 +103,9 @@ FL_STUCK equ 4                  ; can't be read: stays where it is
 
 ; =====================================================================
 start:  cld
-        mov     bx, stack_top + 15              ; what we use (and no more)
+        mov     bx, rootbuf + MAXRS * 1024 + 15 ; what we use (the root's
+                                                ;  two copies: the most, until
+                                                ;  the disk says)
         shr     bx, 4
         mov     ah, 4Ah
         int     21h
@@ -103,10 +117,10 @@ start:  cld
         rep     stosb
         call    args
         cmp     byte [unitset], 0               ; no drive given: the current
-        jne     .u                              ; one, if it is a floppy
+        jne     .u                              ; one
         mov     ah, 19h
         int     21h
-        cmp     al, 1
+        cmp     al, 2
         ja      .u
         mov     [unit], al
 .u:     int     11h                             ; is there such a drive?
@@ -116,7 +130,15 @@ start:  cld
         mov     cl, al
         shr     cl, 6
         inc     cl
-.un:    mov     al, [unit]
+.un:    cmp     byte [unit], 2                  ; C:: with it, Grid-OS has
+        jne     .ul                             ;  3 drives (INT 21h 0Eh)
+        mov     ah, 19h
+        int     21h
+        mov     dl, al
+        mov     ah, 0Eh
+        int     21h
+        mov     cl, al
+.ul:    mov     al, [unit]
         add     al, 'A'
         mov     [lt_drive], al
         mov     [lt_band1], al
@@ -205,10 +227,10 @@ args:   mov     si, 81h
 .t:     mov     byte [testmode], 1
         jmp     .l
 .m:     and     al, 0DFh
-        cmp     byte [si], ':'                  ; A: or B:
+        cmp     byte [si], ':'                  ; A:, B: or C:
         jne     .m2
         sub     al, 'A'
-        cmp     al, 1
+        cmp     al, 2
         ja      .l
         mov     [unit], al
         mov     byte [unitset], 1
@@ -311,7 +333,8 @@ main:   call    clear_screen
         jcxz    .rd
         mov     word [ronly_why], s_open
         mov     byte [ronly], 1
-.rd:    call    read_disk
+.rd:    mov     word [ww], s_rderr
+        call    read_disk
         jc      .rerr
         call    draw_frame
         call    pack_root
@@ -330,7 +353,7 @@ main:   call    clear_screen
         call    draw_map
 .ro:    mov     byte [result], 2
         jmp     finish_msg
-.rerr:  mov     si, s_rderr
+.rerr:  mov     si, [ww]
         mov     byte [result], 2
         jmp     finish_msg
 
@@ -343,10 +366,11 @@ main:   call    clear_screen
         mov     di, msgbuf                      ; "Free space tested: 1033 KB,
         mov     si, s_tested                    ;  17 bad clusters marked"
         call    sb_str
-        mov     ax, [ntest]
-        mul     word [spc]
-        shr     ax, 1
-        call    sb_u16
+        mov     ax, [ntsec]
+        mov     dx, [ntsec+2]
+        shr     dx, 1
+        rcr     ax, 1
+        call    sb_u32
         mov     si, s_kbc
         call    sb_str
         mov     ax, [nerrs]
@@ -365,7 +389,7 @@ main:   call    clear_screen
         mov     byte [logit], 1
         jmp     finish_msg
 .tidy:
-        cmp     word [fdirty], 0
+        cmp     byte [fdany], 0
         je      .wr
         mov     si, s_fatsync
         call    status
@@ -501,6 +525,7 @@ stop2:  mov     sp, [sp0]
         mov     al, [er_op]
         mov     ah, [er_code]
         mov     dx, [er_lba]
+        mov     bp, [er_lba+2]
         call    sb_where
         mov     si, s_derr2
         call    sb_str
@@ -511,7 +536,8 @@ stop2:  mov     sp, [sp0]
         jmp     finish_msg
 
 ; AL = op (2 read, 3 write, FFh read back different), AH = BIOS code,
-; DX = LBA: "Disk error 10h writing cylinder 72 side 1 sector 5" at DI
+; BP:DX = sector: "Disk error 10h writing cylinder 72 side 1 sector 5" (a
+; floppy) or "... sector 85174" (C:) at DI
 sb_where:
         push    dx
         mov     si, s_rbdiff
@@ -530,6 +556,15 @@ sb_where:
         je      .w
         mov     si, s_writing
 .w:     call    sb_str
+        cmp     byte [unit], 2
+        jne     .f
+        mov     si, s_sector + 1
+        call    sb_str
+        pop     ax
+        mov     dx, bp
+        jmp     sb_u32
+.f:     mov     si, s_cyl
+        call    sb_str
         mov     ax, [spt]
         mul     word [heads]
         mov     cx, ax
@@ -560,13 +595,15 @@ note_err:
         cmp     bx, 8
         jae     .x
         inc     word [nev]
-        shl     bx, 2
+        shl     bx, 3
         mov     al, [er_op]
         mov     [evs+bx], al
         mov     al, [er_code]
         mov     [evs+bx+1], al
         mov     ax, [er_lba]
         mov     [evs+bx+2], ax
+        mov     ax, [er_lba+2]
+        mov     [evs+bx+4], ax
 .x:     pop     bx
         pop     ax
         ret
@@ -628,6 +665,11 @@ tick:   push    ds
 ;  reading the disk
 ; =====================================================================
 read_disk:
+        cmp     byte [unit], 2                  ; C: only through Grid-OS's
+        jne     .rd0                            ;  INT 25h (DOS 3's has no
+        cmp     byte [gridos], 0                ;  32-bit form)
+        je      .bad
+.rd0:   xor     bp, bp                          ; (all in the first 64K sectors)
         mov     word [spt], 18                  ; (for sector 0 itself)
         mov     word [heads], 2
         xor     dx, dx
@@ -635,19 +677,31 @@ read_disk:
         mov     di, bootsec
         call    rd_near
         jc      .x
-        ; geometry: floppies only, FAT12, buffers big enough
+        ; the layout: 512-byte sectors, clusters of 1, 2, 4 .. 64 of them
         cmp     word [bootsec+0Bh], 512
         jne     .bad
         mov     al, [bootsec+0Dh]
-        cmp     al, 1
-        je      .spc
-        cmp     al, 2
-        jne     .bad
-.spc:   xor     ah, ah
+        or      al, al
+        jz      .bad
+        cmp     al, 64
+        ja      .bad
+        mov     ah, al
+        dec     ah
+        test    al, ah
+        jnz     .bad
+        xor     ah, ah
         mov     [spc], ax
         shl     ax, 9
         mov     [cbytes], ax
-        mov     ax, [bootsec+18h]
+        mov     ax, 0FFFFh
+        xor     dx, dx
+        div     word [spc]
+        mov     [rcap], ax
+        cmp     byte [unit], 2                  ; C:: the kernel goes by CHS;
+        jne     .fg                             ;  our "track" is 18 sectors
+        mov     word [heads], 1
+        jmp     short .lay
+.fg:    mov     ax, [bootsec+18h]               ; a floppy: its geometry
         or      ax, ax
         jz      .bad
         cmp     ax, 18
@@ -659,7 +713,7 @@ read_disk:
         cmp     ax, 2
         ja      .bad
         mov     [heads], ax
-        mov     ax, [bootsec+0Eh]
+.lay:   mov     ax, [bootsec+0Eh]
         or      ax, ax
         jz      .bad
         mov     [rsv], ax
@@ -673,11 +727,16 @@ read_disk:
         mov     ax, [bootsec+16h]
         or      ax, ax
         jz      .bad
-        cmp     ax, MAXSPF
-        ja      .bad
         mov     [spf], ax
+        cmp     ax, MAXSPF
+        jbe     .fs
+        mov     ax, MAXSPF
+.fs:    mov     [fsec], ax
+        mov     ax, [spf]
         mul     word [nfat]
+        jc      .bad
         add     ax, [rsv]
+        jc      .bad
         mov     [rootlba], ax
         mov     ax, [bootsec+11h]
         or      ax, ax
@@ -688,34 +747,101 @@ read_disk:
         add     ax, 15
         shr     ax, 4
         mov     [rsec], ax
+        shl     ax, 9                           ; the root's two copies, from
+        add     ax, rootbuf                     ;  rootbuf: memory for that
+        mov     [rnew], ax                      ;  much (and no more)
+        mov     bx, [rsec]
+        shl     bx, 9
+        add     bx, ax
+        add     bx, 15
+        shr     bx, 4
+        mov     ah, 4Ah
+        int     21h
+        mov     ax, [rsec]
         add     ax, [rootlba]
+        jc      .bad
         mov     [datalba], ax
-        mov     ax, [spt]                       ; at most 84 cylinders
+        mov     ax, [bootsec+13h]               ; the size: 16 bits, or 32
+        xor     dx, dx                          ;  (DOS 4)
+        or      ax, ax
+        jnz     .t16
+        mov     ax, [bootsec+20h]
+        mov     dx, [bootsec+22h]
+.t16:   cmp     byte [unit], 2
+        je      .tot
+        or      dx, dx                          ; a floppy: at most 84
+        jnz     .bad                            ;  cylinders
+        push    ax
+        mov     ax, [spt]
         mul     word [heads]
         mov     cx, 84
         mul     cx
+        pop     cx
         or      dx, dx
-        jnz     .tot
-        cmp     [bootsec+13h], ax
+        jnz     .t84
+        cmp     cx, ax
         ja      .bad
-.tot:   mov     ax, [bootsec+13h]
-        sub     ax, [datalba]
-        jbe     .bad
+.t84:   mov     ax, cx
         xor     dx, dx
+.tot:   sub     ax, [datalba]                   ; -> clusters
+        sbb     dx, 0
+        jb      .bad
+        mov     cx, ax
+        or      cx, dx
+        jz      .bad
+        cmp     dx, [spc]
+        jae     .bad
         div     word [spc]
+        cmp     ax, 65524
+        ja      .bad
         add     ax, 2
         mov     [ncl], ax
-        cmp     ax, 2 + 80 * 36                 ; fits the screen (and FAT12)
-        ja      .bad
-        mov     ax, [spf]                       ; and the FAT holds them all
-        shl     ax, 9
-        mov     bx, [ncl]
-        mov     cx, bx
-        shr     cx, 1
-        add     bx, cx
-        inc     bx
+        cmp     ax, 4085 + 2                    ; FAT12 or FAT16, by the count
+        jb      .f12                            ;  (as DOS), and the FAT holds
+        mov     byte [fat16], 1                 ;  them all
+        mov     bx, [spf]
+        cmp     bx, 256
+        jae     .map
+        xchg    bl, bh                          ; (256 entries a sector)
         cmp     bx, ax
+        jb      .bad
+        jmp     short .map
+.f12:   mov     bx, [spf]
+        cmp     bx, 13
+        jae     .map
+        shl     bx, 9
+        mov     cx, ax
+        shr     cx, 1
+        add     cx, ax
+        inc     cx
+        cmp     cx, bx
         ja      .bad
+.map:   mov     ax, [ncl]                       ; the map: 80 x 36 cells at
+        sub     ax, 2                           ;  most, [cpc] clusters each,
+        push    ax                              ;  8 or 16 pixels high
+        xor     dx, dx
+        add     ax, 80 * 36 - 1
+        adc     dx, 0
+        mov     cx, 80 * 36
+        div     cx
+        mov     [cpc], ax
+        pop     ax
+        xor     dx, dx
+        add     ax, [cpc]
+        adc     dx, 0
+        sub     ax, 1
+        sbb     dx, 0
+        div     word [cpc]                      ; cells
+        add     ax, 79
+        xor     dx, dx
+        mov     bx, 80
+        div     bx
+        mov     word [ch_h], 16
+        cmp     ax, 18
+        jbe     .chl
+        mov     word [ch_h], 8
+.chl:   cmp     byte [unit], 2                  ; C:: a fixed disk
+        je      .fat
         ; does the drive have a change line?  (Without one the BIOS says
         ; "changed" every time, and we could not notice a swap.)
         mov     ah, 16h
@@ -729,6 +855,7 @@ read_disk:
         mov     di, dirsec
         call    rd_near
         jc      .x
+        xor     bp, bp
         mov     ah, 16h
         mov     dl, [unit]
         int     13h
@@ -741,53 +868,77 @@ read_disk:
         jne     .rd
         mov     word [ronly_why], s_notgos
         mov     byte [ronly], 1
-.rd:    mov     dx, [rsv]                       ; the first FAT
-        mov     cx, [spf]
-        mov     di, fatbuf
+.rd:    mov     bx, [fsec]                      ; the FAT and the map of
+        shl     bx, 5                           ; the clusters: memory of
+        mov     ah, 48h                         ; their own, as big as this
+        int     21h                             ; disk needs
+        jc      .mem
+        mov     [fseg], ax
+        mov     bx, [ncl]
+        add     bx, 15
+        rcr     bx, 1                           ; (17 bits)
+        shr     bx, 3
+        mov     ah, 48h
+        int     21h
+        jc      .mem
+        mov     [oseg], ax
+        mov     dx, [rsv]                       ; the first FAT
+        mov     cx, [fsec]
+        mov     es, [fseg]
+        xor     di, di
         call    rd_near
         jc      .x
-        cmp     word [nfat], 2                  ; the second FAT: where it
-        jb      .root                           ; differs from the first,
-        mov     dx, [rsv]                       ; the first is written over
-        add     dx, [spf]                       ; it (an earlier power cut)
-        mov     cx, [spf]
-        mov     di, rootnew
+        xor     bp, bp
+        cmp     word [nfat], 2                  ; the second FAT, a piece at
+        jb      .root                           ; a time: where it differs
+        xor     bx, bx                          ; from the first, the first
+.f2:    mov     cx, [fsec]                      ; is written over it (an
+        sub     cx, bx                          ; earlier power cut)
+        jbe     .root
+        cmp     cx, [rsec]
+        jbe     .f2r
+        mov     cx, [rsec]
+.f2r:   push    cx
+        push    bx
+        mov     dx, [rsv]
+        add     dx, [spf]
+        add     dx, bx
+        mov     di, [rnew]
         call    rd_near
+        pop     bx
+        pop     cx
         jc      .x
-        xor     bx, bx
-.f2:    cmp     bx, [spf]
-        jae     .root
-        mov     si, bx
-        shl     si, 9
-        lea     di, [rootnew+si]
-        add     si, fatbuf
+        xor     bp, bp
+        mov     si, [rnew]
+.f2c:   push    cx
+        push    si
+        mov     ax, bx
+        shl     ax, 5
+        add     ax, [fseg]
+        mov     es, ax
+        xor     di, di
         mov     cx, 256
         repe    cmpsw
+        pop     si
+        pop     cx
         je      .f2n
-        mov     cl, bl
-        mov     ax, 1
-        shl     ax, cl
-        or      [fdirty], ax
-.f2n:   inc     bx
+        mov     ax, bx
+        call    fd_mark
+.f2n:   add     si, 512
+        inc     bx
+        loop    .f2c
+        push    cs
+        pop     es
         jmp     .f2
+.mem:   mov     word [ww], s_mem
+        stc
+        ret
 .root:  mov     dx, [rootlba]                   ; the root directory
         mov     cx, [rsec]
         mov     di, rootbuf
         call    rd_near
         jc      .x
-        ; the map: rows of 80 cells, 8 or 16 pixels high
-        mov     ax, [ncl]
-        sub     ax, 2
-        add     ax, 79
-        xor     dx, dx
-        mov     bx, 80
-        div     bx
-        mov     [nrows], ax
-        mov     word [ch_h], 16
-        cmp     ax, 18
-        jbe     .ok
-        mov     word [ch_h], 8
-.ok:    clc
+        clc
 .x:     ret
 .bad:   mov     ah, 0FEh                        ; (not a disk we know)
         stc
@@ -800,7 +951,7 @@ read_disk:
 ; =====================================================================
 pack_root:
         mov     si, rootbuf
-        mov     di, rootnew
+        mov     di, [rnew]
         xor     bx, bx                          ; entry index
         mov     byte [lfn_open], 0
 .l:     cmp     bx, [nroot]
@@ -860,7 +1011,9 @@ pack_root:
 .sn:    add     si, 32
         inc     bx
         jmp     .st
-.z:     mov     cx, rootnew + MAXRS * 512       ; the rest: zeros
+.z:     mov     cx, [rsec]                      ; the rest: zeros
+        shl     cx, 9
+        add     cx, [rnew]
         sub     cx, di
         xor     al, al
         rep     stosb
@@ -901,11 +1054,11 @@ lfn_ok: push    bx
         pop     bx
         ret
 
-; SI = short-name entry: is there one already in rootnew with the same
+; SI = short-name entry: is there one already in [rnew] with the same
 ; name and first cluster?  ZF if so
 is_dup: push    bx
         push    cx
-        mov     bx, rootnew
+        mov     bx, [rnew]
 .l:     cmp     bx, di
         jae     .no
         cmp     byte [bx+11], 0Fh
@@ -957,7 +1110,7 @@ write_root:
         mov     si, bx
         shl     si, 9
         lea     di, [rootbuf+si]
-        add     si, rootnew
+        add     si, [rnew]
         mov     cx, 256
         repe    cmpsw
         je      .same
@@ -975,14 +1128,16 @@ write_root:
         inc     cx
         mov     si, dx
         shl     si, 9
-        add     si, rootnew
+        add     si, [rnew]
         add     dx, [rootlba]
+        xor     bp, bp
         call    wv_near
         jc      stop2
         mov     byte [logit], 1
-.done:  mov     si, rootnew                     ; it is the root now
+.done:  mov     si, [rnew]                      ; it is the root now
         mov     di, rootbuf
-        mov     cx, MAXRS * 256
+        mov     cx, [rsec]
+        shl     cx, 8
         rep     movsw
 .x:     ret
 
@@ -991,22 +1146,26 @@ write_root:
 ;  an owner.  CF if the disk needs CHKDSK (a broken or cross-linked
 ;  chain, a wrong length) or has more than we can hold.
 ; =====================================================================
-walk:   mov     di, owner
-        mov     cx, MAXCL
+walk:   mov     es, [oseg]
+        xor     di, di
+        mov     cx, [ncl]
         xor     al, al
         rep     stosb
+        push    cs
+        pop     es
         xor     bx, bx
 .r:     cmp     bx, [nroot]
         jae     .subs
         mov     si, bx
         shl     si, 5
-        add     si, rootnew
+        add     si, [rnew]
         cmp     byte [si], 0
         je      .subs
         mov     ax, bx
         shr     ax, 4
         add     ax, [rootlba]
         mov     [e_lba], ax
+        mov     word [e_lba+2], 0
         mov     ax, bx
         and     ax, 15
         shl     ax, 5
@@ -1028,11 +1187,12 @@ walk:   mov     di, owner
         jc      .err
         inc     bx
         jmp     .q
-.lost:  mov     ax, 2                           ; used but nobody's: lost
-.l:     cmp     ax, [ncl]                       ; (or bad)
+.lost:  mov     es, [oseg]                      ; used but nobody's: lost
+        mov     ax, 2                           ; (or bad)
+.l:     cmp     ax, [ncl]
         jae     .ok
         mov     bx, ax
-        cmp     byte [owner+bx], 0
+        cmp     byte [es:bx], 0
         jne     .n
         push    ax
         call    fat_get
@@ -1040,13 +1200,15 @@ walk:   mov     di, owner
         pop     ax
         or      dx, dx
         jz      .n
-        mov     byte [owner+bx], O_LOST
-        cmp     dx, 0FF7h
+        mov     byte [es:bx], O_LOST
+        cmp     dx, 0FFF7h
         jne     .n
-        mov     byte [owner+bx], O_BAD
+        mov     byte [es:bx], O_BAD
 .n:     inc     ax
         jmp     .l
-.ok:    clc
+.ok:    push    cs
+        pop     es
+        clc
         ret
 .err:   stc
         ret
@@ -1057,10 +1219,11 @@ walk_dir:
         xor     cx, cx
 .s:     mov     ax, [wd_cl]
         call    clu_lba
-        add     ax, cx
-        mov     [e_lba], ax
+        add     dx, cx
+        adc     bp, 0
+        mov     [e_lba], dx
+        mov     [e_lba+2], bp
         push    cx
-        mov     dx, ax
         mov     cx, 1
         mov     di, dirsec
         call    rd_near
@@ -1089,7 +1252,7 @@ walk_dir:
         jb      .s
         mov     ax, [wd_cl]
         call    fat_get
-        cmp     ax, 0FF8h
+        cmp     ax, 0FFF8h
         jb      .c
 .end:   clc
         ret
@@ -1113,7 +1276,9 @@ take:   mov     al, [si]
         ; a file: how many clusters its size needs
         mov     ax, [si+28]
         mov     dx, [si+30]
-        cmp     dx, 100h                        ; (keeps DIV in range)
+        mov     bx, [cbytes]                    ; (keeps DIV in range)
+        dec     bx
+        cmp     dx, bx
         jae     .bad
         add     ax, [cbytes]
         adc     dx, 0
@@ -1153,6 +1318,8 @@ take:   mov     al, [si]
         mov     [di+F_ATTR], al
         mov     ax, [e_lba]
         mov     [di+F_DLBA], ax
+        mov     ax, [e_lba+2]
+        mov     [di+F_DLBAH], ax
         mov     ax, [e_off]
         mov     [di+F_DOFF], ax
         mov     ax, [si+26]
@@ -1186,6 +1353,8 @@ take:   mov     al, [si]
 ; follow the chain from AX, giving its clusters owner DL -> CX clusters,
 ; [cm_frag] = 1 if not in one piece.  CF if broken, cross-linked, looped
 chain_mark:
+        push    es
+        mov     es, [oseg]
         xor     cx, cx
         mov     byte [cm_frag], 0
 .l:     cmp     ax, 2
@@ -1193,25 +1362,25 @@ chain_mark:
         cmp     ax, [ncl]
         jae     .bad
         mov     bx, ax
-        cmp     byte [owner+bx], 0
+        cmp     byte [es:bx], 0
         jne     .bad
-        mov     [owner+bx], dl
+        mov     [es:bx], dl
         inc     cx
-        push    bx
         call    fat_get
-        pop     bx
-        cmp     ax, 0FF8h
+        cmp     ax, 0FFF8h
         jae     .end
-        cmp     ax, 0FF0h
+        cmp     ax, 0FFF0h
         jae     .bad
         inc     bx
         cmp     ax, bx
         je      .l
         mov     byte [cm_frag], 1
         jmp     .l
-.end:   clc
+.end:   pop     es
+        clc
         ret
-.bad:   stc
+.bad:   pop     es
+        stc
         ret
 
 ; =====================================================================
@@ -1233,84 +1402,82 @@ surface:
         sub     ax, 2
         mul     word [spc]
         add     ax, [datalba]
+        adc     dx, 0
         mov     [dend], ax                      ; end of the data area
+        mov     [dend+2], dx
         mov     ax, [datalba]
         mov     [sl], ax
-.trk:   mov     ax, [sl]
-        cmp     ax, [dend]
-        jae     .done
-        call    disturbed                       ; (only free space written)
+.trk:   mov     dx, [sl]                        ; a track from [sl]: its
+        mov     bp, [sl+2]                      ;  first [tn] sectors (to
+        mov     cx, [dend]                      ;  its end, or the data's)
+        mov     ax, [dend+2]
+        sub     cx, dx
+        sbb     ax, bp
+        jb      .done
+        jnz     .far
+        or      cx, cx
+        jnz     .tn
+        jmp     .done
+.far:   mov     cx, 0FFFFh
+.tn:    call    disturbed                       ; (only free space written)
         jc      stop1
-        xor     dx, dx                          ; this track's end
-        div     word [spt]
-        inc     ax
-        mul     word [spt]
-        cmp     ax, [dend]
-        jbe     .te
-        mov     ax, [dend]
-.te:    mov     [tend], ax
+        call    trk_n
+        mov     [tn], ax
         mov     word [tbad], 0
         mov     word [tfree], 0
-.s:     mov     ax, [sl]
-        cmp     ax, [tend]
+        xor     si, si                          ; (sectors into it)
+.s:     cmp     si, [tn]
         jae     .tdone
+        call    .at
         call    sec_free
         je      .run
-        inc     word [sl]
+        inc     si
         jmp     .s
-.run:   mov     dx, ax                          ; a run of free sectors
-.r:     inc     ax
-        cmp     ax, [tend]
+.run:   mov     di, si                          ; a run of free sectors
+.r:     inc     si
+        cmp     si, [tn]
         jae     .rr
-        push    ax
+        call    .at
         call    sec_free
-        pop     ax
         je      .r
-.rr:    mov     [sl], ax
-        mov     cx, ax
-        sub     cx, dx                          ; DX = first, CX = count
+.rr:    mov     cx, si
+        sub     cx, di                          ; CX of them, from DI
         add     [tfree], cx
-        push    cx
-        push    dx
-        mov     ax, dx
+        push    si
+        mov     si, di
+        call    .at
         mov     bl, P_READ
         call    draw_lbas
-        pop     dx
-        pop     cx
-        push    cx
-        push    dx
         mov     al, cl
         call    wv_buf
-        pop     dx
-        pop     cx
         jnc     .ok
         cmp     ah, 3
         je      stop2
         cmp     ah, 6
         je      stop2
         call    note_err
-.one:   push    cx                              ; sector by sector
-        push    dx
-        mov     al, 1
+.one:   mov     al, 1                           ; sector by sector
         call    wv_buf
         jnc     .on
         cmp     ah, 3
         je      stop2
         cmp     ah, 6
         je      stop2
-        call    mark_bad                        ; (DX = its LBA)
+        call    mark_bad                        ; (BP:DX = its sector)
         inc     word [tbad]
         jmp     short .on1
-.on:    inc     word [ntsec]
-.on1:   pop     dx
-        pop     cx
-        inc     dx
+.on:    add     word [ntsec], 1
+        adc     word [ntsec+2], 0
+.on1:   add     dx, 1
+        adc     bp, 0
         loop    .one
+        pop     si
         jmp     .s
 .ok:    add     [ntsec], cx                     ; tested; back to free
-        mov     ax, dx
+        adc     word [ntsec+2], 0
         mov     bl, P_FREE
         call    draw_lbas
+        pop     si
         jmp     .s
 .tdone: cmp     word [tbad], 0
         je      .tok
@@ -1319,21 +1486,27 @@ surface:
         mov     ax, [tbad]                      ; a whole first few tracks
         cmp     ax, [tfree]                     ; bad: more likely the drive
         jb      .tok1                           ; than the disk - stop
-        cmp     word [ntsec], 0
-        jne     .tok1
+        mov     ax, [ntsec]
+        or      ax, [ntsec+2]
+        jnz     .tok1
         inc     byte [allbad]
         cmp     byte [allbad], 3
-        jb      .trk
+        jb      .next
         mov     ah, 0FDh
         jmp     stop2
 .tok:   cmp     word [tfree], 0
-        je      .trk
+        je      .next
 .tok1:  mov     byte [allbad], 0
+.next:  mov     ax, [tn]
+        add     [sl], ax
+        adc     word [sl+2], 0
         jmp     .trk
-.done:  mov     ax, [ntsec]
-        xor     dx, dx
-        div     word [spc]
-        mov     [ntest], ax
+.done:  jmp     draw_map                        ; (cells of several clusters
+                                                ;  were shown as free)
+.at:    mov     dx, [sl]                        ; BP:DX = [sl] + SI
+        mov     bp, [sl+2]
+        add     dx, si
+        adc     bp, 0
         ret
 
 ; Eight writes failed in a row.  Try a free cluster near the start of
@@ -1353,13 +1526,12 @@ probe:  push    bx
         jc      .no
         mov     [pr_cl], ax
         call    clu_lba
-        mov     dx, ax
         mov     al, 1
         call    wv_buf
         jnc     .yes
         cmp     ah, 6
         je      .no
-        call    mark_bad                        ; (DX = its LBA)
+        call    mark_bad                        ; (BP:DX = its sector)
         mov     ax, [pr_cl]
         add     ax, 200
         dec     bx
@@ -1374,63 +1546,62 @@ probe:  push    bx
         pop     bx
         ret
 
-; is sector AX in a free cluster?  ZF if so
+; is sector BP:DX in a free cluster?  ZF if so
 sec_free:
         push    ax
         push    bx
         push    dx
-        sub     ax, [datalba]
-        xor     dx, dx
-        div     word [spc]
-        add     ax, 2
-        mov     bx, ax
-        cmp     byte [owner+bx], 0
+        call    sec_clu
+        call    own_z
         pop     dx
         pop     bx
         pop     ax
         ret
-
-; sector DX failed: its cluster is marked bad (in memory; fat_flush
-; writes it), and counted for its cylinder
-mark_bad:
-        push    ax
-        push    bx
-        push    cx
-        push    dx
-        push    dx                              ; the cylinder's count
-        mov     ax, [spt]
-        mul     word [heads]
-        mov     cx, ax
-        pop     ax
-        xor     dx, dx
-        div     cx
-        cmp     ax, 84
-        jae     .c
-        mov     bx, ax
-        cmp     byte [badcyl+bx], 255
-        je      .c
-        inc     byte [badcyl+bx]
-.c:     pop     dx
-        push    dx
+; sector BP:DX -> its cluster BX (AX, DX lost)
+sec_clu:
         mov     ax, dx
+        mov     dx, bp
         sub     ax, [datalba]
-        xor     dx, dx
+        sbb     dx, 0
         div     word [spc]
         add     ax, 2
         mov     bx, ax
-        cmp     byte [owner+bx], O_BAD
+        ret
+
+; sector BP:DX failed: its cluster is marked bad (in memory; fat_flush
+; writes it), and (a floppy) counted for its cylinder
+mark_bad:
+        pusha
+        cmp     byte [unit], 2
+        je      .c
+        mov     cx, dx                          ; (its sector)
+        mov     ax, [spt]
+        mul     word [heads]
+        xchg    ax, cx
+        xor     dx, dx
+        div     cx
+        cmp     ax, 84
+        jae     .c0
+        mov     bx, ax
+        cmp     byte [badcyl+bx], 255
+        je      .c0
+        inc     byte [badcyl+bx]
+.c0:    popa
+        pusha
+.c:     call    sec_clu
+        call    own
+        cmp     al, O_BAD
         je      .x
-        mov     byte [owner+bx], O_BAD
-        mov     dx, 0FF7h
+        mov     al, O_BAD
+        call    own_set
+        mov     ax, bx
+        mov     dx, 0FFF7h
         call    fat_set
         call    draw_cell
         inc     word [nbadm]
         inc     word [mv_mark]
         mov     byte [logit], 1
-.x:     pop     dx
-        pop     cx
-        pop     bx
-        pop     ax
+.x:     popa
         ret
 
 ; =====================================================================
@@ -1467,7 +1638,7 @@ tidy:   xor     bx, bx
 .g1:    cmp     ax, [ncl]
         jae     .x
         mov     bx, ax
-        cmp     byte [owner+bx], 0
+        call    own_z
         je      .g2
         inc     ax
         jmp     .g1
@@ -1476,7 +1647,7 @@ tidy:   xor     bx, bx
         cmp     ax, [ncl]
         jae     .x                              ; (free to the end: done)
         mov     bx, ax
-        cmp     byte [owner+bx], 0
+        call    own_z
         je      .g3
         mov     [ge], ax
         sub     ax, [gs_]
@@ -1519,7 +1690,7 @@ tidy:   xor     bx, bx
         jmp     .g                              ; ([gp] stays: the same gap)
 .none:  ; nothing fits: the file right after the gap, out of the way
         mov     bx, [ge]
-        mov     al, [owner+bx]
+        call    own
         or      al, al
         jz      .skip
         cmp     al, MAXF
@@ -1569,11 +1740,12 @@ find_low:
         mov     ax, 2
 ; (the same, from cluster AX on)
 find_from:
+        push    bx
         xor     dx, dx
 .l:     cmp     ax, [ncl]
         jae     .none
-        mov     si, ax
-        cmp     byte [owner+si], 0
+        mov     bx, ax
+        call    own_z
         jne     .br
         inc     dx
         cmp     dx, cx
@@ -1585,20 +1757,23 @@ find_from:
         jmp     .l
 .got:   sub     ax, cx
         inc     ax
+        pop     bx
         clc
         ret
-.none:  stc
+.none:  pop     bx
+        stc
         ret
 
 ; the same, as far towards the end of the disk as possible
 find_high:
+        push    bx
         mov     ax, [ncl]
         dec     ax
         xor     dx, dx
 .l:     cmp     ax, 2
         jb      .none
-        mov     si, ax
-        cmp     byte [owner+si], 0
+        mov     bx, ax
+        call    own_z
         jne     .br
         inc     dx
         cmp     dx, cx
@@ -1608,9 +1783,11 @@ find_high:
 .br:    xor     dx, dx
         dec     ax
         jmp     .l
-.got:   clc
+.got:   pop     bx
+        clc
         ret
-.none:  stc
+.none:  pop     bx
+        stc
         ret
 
 ; =====================================================================
@@ -1636,11 +1813,14 @@ move:   mov     [mv_rec], si
         mov     [mv_left], ax
         mov     ax, [mv_d]
         call    clu_lba
-        mov     [mv_dl], ax
+        mov     [mv_dl], dx
+        mov     [mv_dl+2], bp
 .run:   mov     ax, [mv_s]                      ; a run of touching clusters
         mov     [mv_rs], ax
         mov     cx, 1
 .rc:    cmp     cx, [mv_left]
+        jae     .rce
+        cmp     cx, [rcap]                      ; (its sectors in 16 bits)
         jae     .rce
         mov     ax, [mv_rs]
         add     ax, cx
@@ -1660,25 +1840,28 @@ move:   mov     [mv_rec], si
         mov     [mv_sl], ax
         mov     ax, [mv_rs]
         call    clu_lba
-        mov     [mv_sa], ax
+        mov     [mv_sa], dx
+        mov     [mv_sa+2], bp
 .ch:    cmp     word [mv_sl], 0
         je      .nrun
         call    disturbed                       ; nothing changed yet
         jc      stop1
         mov     cx, [mv_sl]
         mov     dx, [mv_sa]
+        mov     bp, [mv_sa+2]
         call    trk_n
         mov     cx, ax
         mov     dx, [mv_dl]
+        mov     bp, [mv_dl+2]
         call    trk_n
         mov     [mv_n], ax
-        mov     ax, [mv_sa]
-        mov     cx, [mv_n]
+        mov     dx, [mv_sa]
+        mov     bp, [mv_sa+2]
+        mov     cx, ax
         mov     bl, P_READ
         call    draw_lbas
         mov     es, [bseg]
         mov     bx, BUFA
-        mov     dx, [mv_sa]
         mov     al, [mv_n]
         mov     ah, 2
         call    bios
@@ -1686,17 +1869,19 @@ move:   mov     [mv_rec], si
         pop     es
         jc      .rdbad
 .wrc:   mov     dx, [mv_dl]
+        mov     bp, [mv_dl+2]
         mov     al, [mv_n]
         call    wv_buf
         jc      .wrbad
         mov     word [failrun], 0
-        mov     ax, [mv_dl]
         mov     cx, [mv_n]
         mov     bl, P_WRITE
         call    draw_lbas
         mov     ax, [mv_n]
         add     [mv_sa], ax
+        adc     word [mv_sa+2], 0
         add     [mv_dl], ax
+        adc     word [mv_dl+2], 0
         sub     [mv_sl], ax
         jmp     .ch
 
@@ -1716,7 +1901,9 @@ move:   mov     [mv_rec], si
         shl     bx, 9
         add     bx, BUFA
         mov     dx, [mv_sa]
+        mov     bp, [mv_sa+2]
         add     dx, cx
+        adc     bp, 0
         mov     ax, 0201h
         push    cx
         call    bios
@@ -1757,7 +1944,9 @@ move:   mov     [mv_rec], si
         jae     .tsd
         push    cx
         mov     dx, [mv_dl]
+        mov     bp, [mv_dl+2]
         add     dx, cx
+        adc     bp, 0
         mov     al, 1
         call    wv_buf
         jnc     .tn
@@ -1765,19 +1954,24 @@ move:   mov     [mv_rec], si
         je      stop2
         cmp     ah, 6
         je      stop2
-        call    mark_bad                        ; (DX = its LBA)
+        call    mark_bad                        ; (BP:DX = its sector)
 .tn:    pop     cx
         inc     cx
         jmp     .ts
 .tsd:   cmp     word [mv_mark], 0
         jne     .mk
         mov     dx, [mv_dl]                     ; every sector went through on
-        cmp     dx, [weak_lba]                  ; its own: the second time at
-        mov     [weak_lba], dx                  ; this place, it is weak -
-        jne     .abandon                        ; mark them all
+        mov     bp, [mv_dl+2]                   ; its own: the second time at
+        cmp     dx, [weak_lba]                  ; this place, it is weak -
+        jne     .wk                             ; mark them all
+        cmp     bp, [weak_lba+2]
+.wk:    mov     [weak_lba], dx
+        mov     [weak_lba+2], bp
+        jne     .abandon
         mov     cx, [mv_n]
 .ma:    call    mark_bad
-        inc     dx
+        add     dx, 1
+        adc     bp, 0
         loop    .ma
 .mk:    call    fat_flush
         jc      stop2
@@ -1800,6 +1994,7 @@ move:   mov     [mv_rec], si
 .copied:
         mov     si, [mv_rec]
         mov     dx, [si+F_DLBA]
+        mov     bp, [si+F_DLBAH]
         mov     cx, 1
         mov     di, dirsec
         call    rd_near
@@ -1821,7 +2016,7 @@ move:   mov     [mv_rec], si
         inc     dx
         cmp     cx, 1
         jne     .nc1
-        mov     dx, 0FFFh
+        mov     dx, 0FFFFh
 .nc1:   call    fat_set
         inc     ax
         loop    .nc
@@ -1833,6 +2028,7 @@ move:   mov     [mv_rec], si
         mov     ax, [mv_d]
         mov     [dirsec+bx+26], ax
         mov     dx, [si+F_DLBA]
+        mov     bp, [si+F_DLBAH]
         mov     cx, 1
         mov     si, dirsec
         call    wv_near
@@ -1847,11 +2043,14 @@ move:   mov     [mv_rec], si
         xor     dx, dx
         call    fat_set
         mov     bx, ax
-        mov     byte [owner+bx], 0
+        push    ax
+        xor     al, al
+        call    own_set
+        pop     ax
         push    cx
         call    draw_cell
         pop     ax
-        cmp     ax, 0FF8h
+        cmp     ax, 0FFF8h
         jb      .fr
         call    fat_flush
         jc      stop2
@@ -1866,7 +2065,10 @@ move:   mov     [mv_rec], si
         inc     dx                              ; owner code
         mov     cx, [si+F_NCL]
 .ow:    mov     bx, ax
-        mov     [owner+bx], dl
+        push    ax
+        mov     al, dl
+        call    own_set
+        pop     ax
         push    ax
         push    cx
         push    dx
@@ -1885,61 +2087,105 @@ move:   mov     [mv_rec], si
 ; =====================================================================
 ;  the FAT in memory
 ; =====================================================================
-fat_get:                                        ; cluster AX -> AX
-        push    bx
+; cluster AX -> ES:BX = its entry in [fseg].  FAT12: ZF if it is in the
+; low 12 bits of the word.  Keeps AX
+fat_at: mov     bx, ax
+        cmp     byte [fat16], 0
+        je      .12
+        shr     bx, 3                           ; FAT16: AX * 2 bytes on
+        add     bx, [fseg]
+        mov     es, bx
         mov     bx, ax
+        and     bx, 7
+        shl     bx, 1
+        ret
+.12:    mov     es, [fseg]                      ; FAT12: AX * 1.5
         shr     bx, 1
         add     bx, ax
         test    al, 1
-        mov     ax, [fatbuf+bx]
+        ret
+
+; cluster AX -> AX, as FAT16's: FAT12's FF0h-FFFh come back as FFF0h-FFFFh
+fat_get:
+        push    bx
+        push    es
+        push    ax
+        call    fat_at
+        pop     ax
+        cmp     byte [fat16], 0
+        jne     .16
+        test    al, 1
+        mov     ax, [es:bx]
         jz      .e
         shr     ax, 4
-        pop     bx
-        ret
 .e:     and     ah, 0Fh
+        cmp     ax, 0FF0h
+        jb      .x
+        or      ah, 0F0h
+        jmp     short .x
+.16:    mov     ax, [es:bx]
+.x:     pop     es
         pop     bx
         ret
 
-fat_set:                                        ; cluster AX := DX
+; cluster AX := DX (FAT12: its low 12 bits), its FAT sector marked to write
+fat_set:
         pusha
-        mov     bx, ax
-        shr     bx, 1
-        add     bx, ax
+        push    es
+        call    fat_at
+        cmp     byte [fat16], 0
+        jne     .16
         and     dx, 0FFFh
         test    al, 1
         jz      .e
         shl     dx, 4
-        and     word [fatbuf+bx], 000Fh
+        and     word [es:bx], 000Fh
         jmp     short .s
-.e:     and     word [fatbuf+bx], 0F000h
-.s:     or      [fatbuf+bx], dx
-        mov     cx, bx                          ; its sector(s) to write
-        shr     cx, 9
-        mov     ax, 1
-        shl     ax, cl
-        or      [fdirty], ax
-        inc     bx
-        mov     cx, bx
-        shr     cx, 9
-        mov     ax, 1
-        shl     ax, cl
-        or      [fdirty], ax
+.e:     and     word [es:bx], 0F000h
+.s:     or      [es:bx], dx
+        mov     ax, bx                          ; its sector(s)
+        shr     ax, 9
+        call    fd_mark
+        lea     ax, [bx+1]
+        shr     ax, 9
+        jmp     short .m
+.16:    mov     [es:bx], dx
+        mov     al, ah                          ; (256 entries a sector)
+        xor     ah, ah
+.m:     call    fd_mark
+        pop     es
         popa
+        ret
+
+; FAT sector AX changed (AX lost)
+fd_mark:
+        push    bx
+        push    cx
+        mov     bx, ax
+        mov     cl, al
+        and     cl, 7
+        shr     bx, 3
+        mov     al, 1
+        shl     al, cl
+        or      [fdirty+bx], al
+        mov     byte [fdany], 1
+        pop     cx
+        pop     bx
         ret
 
 ; the changed FAT sectors to every copy (runs; read back).  CF: AH = error
 fat_flush:
-        cmp     word [fdirty], 0
+        cmp     byte [fdany], 0
         je      .ok
         mov     word [fk], 0
 .copy:  xor     bx, bx
-.s:     cmp     bx, [spf]
+.s:     cmp     bx, [fsec]
         jae     .next
         call    .dirty
         jz      .sk
         mov     [fs_], bx
 .e:     inc     bx
-        cmp     bx, [spf]
+        cmp     bx, [fsec]
         jae     .run
         call    .dirty
         jnz     .e
@@ -1951,9 +2197,12 @@ fat_flush:
         add     ax, [rsv]
         add     ax, [fs_]
         mov     dx, ax
-        mov     si, [fs_]
-        shl     si, 9
-        add     si, fatbuf
+        xor     bp, bp
+        mov     ax, [fs_]                       ; from [fseg] + its offset
+        shl     ax, 5
+        add     ax, [fseg]
+        mov     es, ax
+        xor     si, si
         call    wv_near
         pop     bx
         jc      .x
@@ -1964,33 +2213,66 @@ fat_flush:
         mov     ax, [fk]
         cmp     ax, [nfat]
         jb      .copy
-        mov     word [fdirty], 0
+        mov     di, fdirty                      ; all written
+        mov     cx, 16
+        xor     ax, ax
+        rep     stosw
+        mov     [fdany], al
 .ok:    clc
 .x:     ret
-.dirty: push    cx                              ; sector BX dirty?  NZ
+.dirty: push    ax                              ; sector BX changed?  NZ
+        push    bx
+        push    cx
         mov     cl, bl
-        mov     ax, 1
-        shl     ax, cl
-        test    [fdirty], ax
+        and     cl, 7
+        shr     bx, 3
+        mov     al, 1
+        shl     al, cl
+        test    [fdirty+bx], al
         pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; the owner of cluster BX -> AL; := AL; ZF if it has none (free).  Keep
+; all else
+own:    push    ds
+        mov     ds, [oseg]
+        mov     al, [bx]
+        pop     ds
+        ret
+own_set:
+        push    ds
+        mov     ds, [oseg]
+        mov     [bx], al
+        pop     ds
+        ret
+own_z:  push    ds
+        mov     ds, [oseg]
+        cmp     byte [bx], 0
+        pop     ds
         ret
 
 ; =====================================================================
 ;  disk access.  Everything goes through the DMA-safe buffers in [bseg].
 ; =====================================================================
-; LBA of cluster AX -> AX
+; cluster AX -> its first sector BP:DX (AX lost)
 clu_lba:
-        push    dx
         sub     ax, 2
         mul     word [spc]
         add     ax, [datalba]
-        pop     dx
+        adc     dx, 0
+        mov     bp, dx
+        mov     dx, ax
         ret
 
-; AX = min(CX, sectors left in DX's track)
+; AX = min(CX, sectors left in BP:DX's track)
 trk_n:  push    dx
-        mov     ax, dx
+        push    dx
+        mov     ax, bp
         xor     dx, dx
+        div     word [spt]
+        pop     ax
         div     word [spt]
         mov     ax, [spt]
         sub     ax, dx
@@ -2000,13 +2282,35 @@ trk_n:  push    dx
 .x:     pop     dx
         ret
 
-; AH = 2/3, AL = count, DX = LBA, ES:BX = buffer.  The change line first
-; (a changed disk: AH = 6, nothing done); 3 tries.  CF: AH = BIOS error
+; AH = 2/3, AL = count, BP:DX = sector, ES:BX = buffer.  A floppy: the
+; change line first (a changed disk: AH = 6, nothing done), 3 tries.  C::
+; the kernel's INT 25h/26h (it tries twice).  CF: AH = BIOS error
 bios:   push    cx
         push    dx
         mov     [b_op], ax
         mov     [b_lba], dx
-        mov     byte [b_try], 3
+        mov     [b_lba+2], bp
+        cmp     byte [unit], 2
+        jne     .fl
+        mov     [pk_lba], dx                    ; the packet: sector, count,
+        mov     [pk_lba+2], bp                  ;  buffer
+        xor     ah, ah
+        mov     [pk_n], ax
+        mov     [pk_buf], bx
+        mov     [pk_buf+2], es
+        mov     al, 2
+        mov     cx, 0FFFFh
+        mov     bx, pk_lba
+        cmp     byte [b_op+1], 3
+        je      .w
+        int     25h
+        jmp     short .hx
+.w:     int     26h
+.hx:    pop     cx                              ; (the flags left behind)
+        mov     bx, [pk_buf]
+        jnc     .x
+        jmp     short .e
+.fl:    mov     byte [b_try], 3
 .t:     cmp     byte [cl_ok], 0
         je      .go
         mov     ah, 16h
@@ -2050,14 +2354,18 @@ bios:   push    cx
         push    ax
         mov     ax, [b_lba]
         mov     [er_lba], ax
+        mov     ax, [b_lba+2]
+        mov     [er_lba+2], ax
         pop     ax
         stc
 .x:     pop     dx
         pop     cx
         ret
 
-; read CX sectors from LBA DX to DS:DI (split at tracks).  CF: AH = error
+; read CX sectors from BP:DX to ES:DI (split at tracks).  CF: AH = error.
+; ES = CS after
 rd_near:
+        mov     [xseg], es
 .l:     jcxz    .ok
         call    trk_n
         push    cx
@@ -2071,22 +2379,21 @@ rd_near:
         jc      .err
         push    ds
         push    di
-        mov     ax, cs
-        mov     es, ax
+        mov     es, [xseg]
         mov     ds, [bseg]
         mov     si, BUFA
         shl     cx, 8
         rep     movsw
         pop     di
         pop     ds
-        mov     ax, cx                          ; (0)
         pop     dx
         pop     cx
         call    trk_n                           ; n again
         add     dx, ax
+        adc     bp, 0
         sub     cx, ax
-        shl     ax, 9
-        add     di, ax
+        shl     ax, 5
+        add     [xseg], ax
         jmp     .l
 .ok:    push    cs
         pop     es
@@ -2099,21 +2406,25 @@ rd_near:
         stc
         ret
 
-; write CX sectors from DS:SI to LBA DX (split at tracks), each read back
-; and compared.  CF: AH = error (0FFh: read back different)
+; write CX sectors from ES:SI to BP:DX (split at tracks), each read back
+; and compared.  CF: AH = error (0FFh: read back different).  ES = CS after
 wv_near:
+        mov     [xseg], es
 .l:     jcxz    .ok
         call    trk_n
         push    cx
         push    dx
         push    ax
-        mov     es, [bseg]                      ; into buffer A
-        mov     di, BUFA
         mov     cx, ax
         shl     cx, 8
+        mov     es, [bseg]                      ; into buffer A
+        mov     di, BUFA
+        push    ds
         push    si
+        mov     ds, [xseg]
         rep     movsw
         pop     si
+        pop     ds
         pop     ax
         mov     [wv_cnt], ax
         call    wv_buf                          ; (AH: the error, if any)
@@ -2122,9 +2433,10 @@ wv_near:
         jc      .err
         mov     ax, [wv_cnt]
         add     dx, ax
+        adc     bp, 0
         sub     cx, ax
-        shl     ax, 9
-        add     si, ax
+        shl     ax, 5
+        add     [xseg], ax
         jmp     .l
 .ok:    push    cs
         pop     es
@@ -2135,7 +2447,7 @@ wv_near:
         stc
         ret
 
-; write AL sectors from buffer A to LBA DX, read them back into buffer B
+; write AL sectors from buffer A to BP:DX, read them back into buffer B
 ; and compare.  CF: AH = error
 wv_buf: push    cx
         push    si
@@ -2163,6 +2475,7 @@ wv_buf: push    cx
         je      .x
         mov     byte [er_op], 0FFh              ; read back different
         mov     [er_lba], dx
+        mov     [er_lba+2], bp
         mov     ah, 0FFh
         stc
 .x:     push    cs
@@ -2208,17 +2521,34 @@ draw_map:
         mov     ax, 2
 .l:     cmp     ax, [ncl]
         jae     .x
-        push    ax
         call    draw_cell
-        pop     ax
-        inc     ax
+        add     ax, [cpc]
         jmp     .l
 .x:     ret
 
-; cluster AX as its owner says
+; the cell of cluster AX: the most important state among its clusters (a
+; cell is [cpc] clusters).  Keeps all but BX
 draw_cell:
-        mov     bx, ax
-        mov     bl, [owner+bx]
+        push    ax
+        push    cx
+        push    dx
+        push    si
+        push    ds
+        sub     ax, 2
+        xor     dx, dx
+        div     word [cpc]
+        push    ax                              ; the cell
+        mul     word [cpc]
+        add     ax, 2
+        mov     si, ax                          ; its first cluster
+        mov     cx, [cpc]
+        xor     dx, dx                          ; DL: the rank so far, DH:
+.c:     cmp     si, [ncl]                       ;  its pattern
+        jae     .d
+        mov     ds, [oseg]
+        mov     bl, [si]
+        push    cs
+        pop     ds
         mov     bh, P_FREE
         or      bl, bl
         jz      .p
@@ -2233,23 +2563,49 @@ draw_cell:
         jae     .p
         dec     bl                              ; a file
         xor     bh, bh
-        push    di
-        mov     di, bx
-        shl     di, 5
-        test    byte [files+di+F_FLAGS], FL_FRAG
-        pop     di
+        shl     bx, 5
+        test    byte [files+bx+F_FLAGS], FL_FRAG
         mov     bh, P_FILE
         jz      .p
         mov     bh, P_FRAG
 .p:     mov     bl, bh
-        ; fall into draw_pat
-; cluster AX in pattern BL
+        xor     bh, bh
+        mov     al, [rank+bx]
+        cmp     al, dl
+        jb      .n
+        mov     dl, al
+        mov     dh, bl
+.n:     inc     si
+        loop    .c
+.d:     pop     ax
+        mov     bl, dh
+        call    draw_pat_c
+        pop     ds
+        pop     si
+        pop     dx
+        pop     cx
+        pop     ax
+        ret
+rank:   db 0, 3, 5, 2, 4, 1                     ; free, file, in pieces, dir,
+                                                ;  bad, lost
+
+; cluster AX in pattern BL (its cell)
 draw_pat:
+        push    ax
+        push    dx
+        sub     ax, 2
+        xor     dx, dx
+        div     word [cpc]
+        call    draw_pat_c
+        pop     dx
+        pop     ax
+        ret
+; cell AX in pattern BL
+draw_pat_c:
         push    ax
         push    cx
         push    dx
         push    di
-        sub     ax, 2
         xor     dx, dx
         mov     cx, 80
         div     cx                              ; AX = row, DX = column
@@ -2297,19 +2653,23 @@ draw_pat_at:
         popa
         ret
 
-; LBAs AX.. (CX sectors): their clusters in pattern BL
+; sectors BP:DX.. (CX of them): their clusters in pattern BL
 draw_lbas:
         pusha
+        mov     ax, dx
+        mov     dx, bp
         sub     ax, [datalba]
-        mov     dx, ax
-        add     dx, cx
-        dec     dx
+        sbb     dx, 0
+        push    ax
         push    dx
-        xor     dx, dx
         div     word [spc]
         mov     si, ax                          ; first cluster - 2
+        pop     dx
         pop     ax
-        xor     dx, dx
+        add     ax, cx
+        adc     dx, 0
+        sub     ax, 1
+        sbb     dx, 0
         div     word [spc]
         mov     cx, ax                          ; last cluster - 2
 .l:     mov     ax, si
@@ -2367,10 +2727,11 @@ sb_done:
         xor     dx, dx
         mov     ax, 2
         mov     bl, 1                           ; (previous was used)
+        mov     es, [oseg]
 .l:     cmp     ax, [ncl]
         jae     .t
         mov     si, ax
-        cmp     byte [owner+si], 0
+        cmp     byte [es:si], 0
         jne     .u
         inc     cx
         or      bl, bl
@@ -2381,11 +2742,14 @@ sb_done:
 .u:     mov     bl, 1
 .n:     inc     ax
         jmp     .l
-.t:     push    dx
+.t:     push    cs
+        pop     es
+        push    dx
         mov     ax, cx
         mul     word [spc]
-        shr     ax, 1
-        call    sb_u16
+        shr     dx, 1
+        rcr     ax, 1
+        call    sb_u32
         pop     ax
         mov     si, s_done3                     ; " KB free in one piece"
         cmp     ax, 1
@@ -2400,14 +2764,17 @@ sb_done:
 .p:     call    sb_str
 .lost:  xor     ax, ax                          ; lost clusters (CHKDSK)
         mov     si, 2
+        mov     es, [oseg]
 .lc:    cmp     si, [ncl]
         jae     .lx
-        cmp     byte [owner+si], O_LOST
+        cmp     byte [es:si], O_LOST
         jne     .ln
         inc     ax
 .ln:    inc     si
         jmp     .lc
-.lx:    or      ax, ax
+.lx:    push    cs
+        pop     es
+        or      ax, ax
         jz      .bm
         push    ax
         mov     si, s_comma
@@ -2495,13 +2862,14 @@ log_all:
 .e:     cmp     bx, [nev]
         jae     .t
         push    bx
-        shl     bx, 2
+        shl     bx, 3
         mov     di, msgbuf
         mov     ax, 2020h
         stosw
         mov     al, [evs+bx]
         mov     ah, [evs+bx+1]
         mov     dx, [evs+bx+2]
+        mov     bp, [evs+bx+4]
         call    sb_where
         mov     byte [di], 0
         mov     si, msgbuf
@@ -2589,11 +2957,11 @@ log_line:
         mov     ax, 2020h
         stosw
         pop     si
-.c:     lodsb                                   ; (at most 80 characters)
+.c:     lodsb                                   ; (msgbuf's 95 fit)
         or      al, al
         jz      .e
         stosb
-        cmp     di, logbuf + 100
+        cmp     di, logbuf + 126
         jb      .c
 .e:     mov     ax, 0A0Dh
         stosw
@@ -2619,13 +2987,20 @@ log_line:
         mov     ah, 3Eh
         int     21h
 .x:     ret
-sb_u16: xor     cx, cx                          ; AX, decimal
+sb_u16: xor     dx, dx                          ; AX, decimal
+sb_u32: xor     cx, cx                          ; DX:AX, decimal
         mov     bx, 10
-.d:     xor     dx, dx
+.d:     push    ax
+        mov     ax, dx
+        xor     dx, dx
+        div     bx
+        mov     si, ax                          ; (the high part / 10)
+        pop     ax
         div     bx
         push    dx
         inc     cx
-        or      ax, ax
+        mov     dx, si
+        or      si, ax
         jnz     .d
 .p:     pop     ax
         add     al, '0'
@@ -2757,7 +3132,9 @@ center: push    ax                              ; SI, DX = y, AH = mask
         call    strlen
         mov     bx, 80
         sub     bx, cx
-        shr     bx, 1
+        jnc     .c
+        xor     bx, bx                          ; (longer than the line)
+.c:     shr     bx, 1
         pop     ax
         jmp     puts
 
@@ -2810,6 +3187,7 @@ s_done4   db ' KB free in ', 0
 s_fatsync db 'Making the two FAT copies match', 0
 s_stopped db 'Stopped - the disk is fine as it is', 0
 s_rderr   db 'Cannot read this disk', 0
+s_mem     db 'Not enough memory for this disk', 0
 s_nosave  db 'Grid-OS could not save its changes - map only', 0
 s_open    db 'Files are open on drive '
 lt_open   db 'A: - map only', 0
@@ -2822,9 +3200,10 @@ s_notgos  db 'Defragmenting needs Grid-OS - map only', 0
 s_wprot   db 'The disk is write-protected - map only', 0
 s_changed db 'The disk was changed - stopped', 0
 s_derr    db 'Disk error ', 0
-s_reading2 db 'h reading cylinder ', 0
-s_writing db 'h writing cylinder ', 0
-s_rbdiff  db 'Read back different at cylinder ', 0
+s_reading2 db 'h reading ', 0
+s_writing db 'h writing ', 0
+s_rbdiff  db 'Read back different at ', 0
+s_cyl     db 'cylinder ', 0
 s_side    db ' side ', 0
 s_sector  db ' sector ', 0
 s_derr2   db ' - stopped, files fine', 0
@@ -2841,7 +3220,7 @@ s_err     db ' disk error', 0
 s_marked  db ' marked', 0
 s_logf    db 'A:\DEFRAG.TXT', 0
 s_nomem   db 'DEFRAG: not enough memory', 13, 10, '$'
-s_nodrv   db 'DEFRAG: there is no floppy drive '
+s_nodrv   db 'DEFRAG: there is no drive '
 lt_nodrv  db 'A:', 13, 10, '$'
 s_nogfx   db 'DEFRAG needs the GRiD 640x400 screen', 13, 10, '$'
 
@@ -2876,7 +3255,7 @@ er_op   resb 1
 wv_cnt  resw 1
 nev     resw 1
 nerrs   resw 1
-evs     resb 4 * 8
+evs     resb 8 * 8
 testmode resb 1
 nearmode resb 1
         alignb 2
@@ -2884,16 +3263,15 @@ pr_cl   resw 1
 allbad  resb 1
         alignb 2
 badcyl  resb 84
-dend    resw 1
-sl      resw 1
-tend    resw 1
+dend    resw 2
+sl      resw 2
+tn      resw 1
 tbad    resw 1
 tfree   resw 1
-ntsec   resw 1
-ntest   resw 1
+ntsec   resw 2
 failrun resw 1
-weak_lba resw 1
-er_lba  resw 1
+weak_lba resw 2
+er_lba  resw 2
 mv_err  resw 1
 mv_mark resw 1
 nbadm   resw 1
@@ -2904,7 +3282,11 @@ ww      resw 1
 oldmode resb 1
         alignb 2
 b_op    resw 1
-b_lba   resw 1
+b_lba   resw 2
+pk_lba  resw 2                          ; INT 25h/26h's packet
+pk_n    resw 1
+pk_buf  resw 2
+rcap    resw 1                          ; clusters a copy run (sectors < 64K)
 spt     resw 1
 heads   resw 1
 spc     resw 1
@@ -2912,14 +3294,21 @@ cbytes  resw 1
 rsv     resw 1
 nfat    resw 1
 spf     resw 1
+fsec    resw 1                          ; of them: those we hold (<= 256)
 nroot   resw 1
 rsec    resw 1
 rootlba resw 1
 datalba resw 1
 ncl     resw 1
-nrows   resw 1
+rnew    resw 1                          ; the root as it will be
 ch_h    resw 1
-fdirty  resw 1
+fdirty  resb 32                         ; FAT sectors to write (bits)
+fdany   resb 1
+fat16   resb 1
+fseg    resw 1                          ; the FAT
+oseg    resw 1                          ; each cluster's owner
+xseg    resw 1
+cpc     resw 1                          ; clusters a map cell
 fk      resw 1
 fs_     resw 1
 removed resw 1
@@ -2931,7 +3320,7 @@ rp_hi   resw 1
 nfiles  resw 1
 nfrag   resw 1
 ndq     resw 1
-e_lba   resw 1
+e_lba   resw 2
 e_off   resw 1
 wd_cl   resw 1
 need    resw 1
@@ -2946,22 +3335,20 @@ mv_rec  resw 1
 mv_d    resw 1
 mv_s    resw 1
 mv_left resw 1
-mv_dl   resw 1
+mv_dl   resw 2
 mv_rs   resw 1
 mv_rl   resw 1
 mv_sl   resw 1
-mv_sa   resw 1
+mv_sa   resw 2
 mv_n    resw 1
 dirq    resw MAXDQ
 rowtab  resw 400
 msgbuf  resb 96
 bootsec resb 512
 dirsec  resb 512
-fatbuf  resb 512 * MAXSPF
-rootbuf resb 512 * MAXRS
-rootnew resb 512 * MAXRS
-owner   resb MAXCL
 files   resb FSZ * MAXF
 bss_end:
         resb 1024
 stack_top:
+rootbuf:                                ; the root, and then [rnew]: [rsec]
+                                        ;  sectors each

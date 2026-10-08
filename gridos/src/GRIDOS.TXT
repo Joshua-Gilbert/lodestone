@@ -1,4 +1,4 @@
-Grid-OS 0.3.10 - boot floppy
+Grid-OS 0.3.11 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -159,6 +159,19 @@ without a drive.  Reads and writes go up to 127 sectors at a time; a
 sector that won't read gives the usual "Data error reading drive C" and
 Abort, Retry, Fail.  DEFRAG and the screen saver's tidying stay with the
 floppies.  HDPROBE and HDSCAN look a hard disk over, read-only.
+
+0.3.11: DEFRAG tidies the hard disk too: DEFRAG C: (or DEFRAG with C:
+current).  It works as on a floppy: each file moves whole and is read
+back before its directory entry changes, so a power cut leaves the old
+copy or the new one.  A sector that won't take a write gets its cluster
+marked bad and the work goes on; DEFRAG C: /T tests all the free space
+and marks the bad ones.  On the hard disk each square of the map stands
+for several clusters.  While it runs on C: DEFRAG needs about 200 KB
+more memory, all given back when it ends; on a floppy it needs a little
+less than before.  The screen saver still tidies only floppies.  At
+most 240 files and 64 directories on a disk (more: the map only).  With
+a hard disk Grid-OS keeps 0.1 KB more than 0.3.10 (for DEFRAG's disk
+calls): 2.9 KB in all (3.3 KB without EMS).
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
