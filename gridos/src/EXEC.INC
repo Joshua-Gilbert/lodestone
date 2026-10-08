@@ -249,12 +249,8 @@ set_focus:
         mov     [top], ax
         jmp     short .draw
 .dev:   call    ndrives                 ; Device: the drives, this one chosen
-        cbw
         mov     [nent], ax
-        mov     ah, 19h
-        int     21h
-        cbw
-        mov     [sel], ax
+        mov     [sel], dx
         mov     word [top], 0
         mov     word [dir_note], 0
         jmp     short .draw
@@ -273,7 +269,10 @@ ex_chg: cmp     byte [focus], FOC_DEV
         int     21h
         jc      .bad
         jmp     short .chg
-.dev:   mov     dl, [sel]               ; Device: that drive
+.dev:   mov     al, [sel]               ; Device: that drive
+        call    drv_let
+        sub     al, 'A'
+        xchg    dx, ax
         mov     ah, 0Eh
         int     21h
 .chg:   mov     byte [dirty], 1
@@ -482,7 +481,8 @@ ex_lvname:                                ; (type-to-find) AX = item -> SI
         call    sub_ptr
         inc     si
 .x:     ret
-.dev:   lea     si, [s_drvlet + bx]
+.dev:   imul    si, bx, 3               ; ("A:", ...)
+        add     si, o_drives
         ret
 
 ; append the entry's title (name without trailing spaces) at DI
@@ -729,43 +729,69 @@ refresh:
         jmp     relist
 
 ; AL = drive -> SI = its name: "Floppy A:", "Hard disk C:"
-dev_str:
+dev_str:                                ; AL = the drive's letter -> SI
+        mov     si, s_dev_m
+        cmp     al, 'M'
+        je      .x
         mov     si, s_dev_c
-        cmp     al, 2
-        jae     .x
+        cmp     al, 'C'
+        je      .x
         mov     si, s_dev_a
-        add     al, 'A'
         mov     [s_dev_a + 7], al
 .x:     ret
 
-; AL = drives to list: the floppies (1 or 2: the kernel's A: and B:), or
-; 3 with the hard disk's C: (B: then too, if only to say it isn't there)
+; AX = drives to list, their letters in o_drives (the forms' choices: "A:",
+; and "B:", "C:", "M:" when the kernel has them - a second floppy, the
+; hard disk, the temporary disk -, a 0 after the last); DX = the current
+; drive's place among them (0 if it isn't there).  BX changed
 ndrives:
         mov     ah, 19h
         int     21h
-        mov     dl, al
-        mov     ah, 0Eh                 ; (the drive it is: AL = 3 with C:)
-        int     21h
-        cmp     al, 3
-        jae     .x
-        int     11h
-        test    al, 1
-        jz      .one
-        shr     al, 6
-        and     al, 1                   ; (2 or more: 2)
-        inc     al
+        inc     ax
+        mov     dh, al                  ; DH = the current drive (1 = A:)
+        xor     cx, cx                  ; CX = drives so far
+        mov     dl, ch                  ; DL = its place
+        mov     di, o_drives
+        mov     bl, 1                   ; BL: A: to M: (D: to L: never there)
+.l:     call    has_drv
+        jc      .n
+        cmp     bl, dh
+        jne     .s
+        mov     dl, cl
+.s:     lea     ax, [bx + 'A' - 1]
+        stosb
+        inc     di
+        inc     di
+        inc     cx
+.n:     inc     bx
+        cmp     bl, 13
+        jbe     .l
+        mov     [di], ch
+        mov     dh, ch
+        xchg    ax, cx
         ret
-.one:   mov     al, 1
-.x:     ret
+; drive BL there (1 = A:)?  CF if not (IOCTL 4408h answers 15: no such drive)
+has_drv:
+        mov     ax, 4408h
+        int     21h
+        ret
 
 ;  Subjects: Root, then every directory of the drive, depth first, by
 ;  name, read into the directory buffer (entries) while Subject is out-
-;  lined.  Entry: depth (0 Root), NAME    EXT, date.
+;  lined.  Entry: depth (0 Root), NAME    EXT, date.  No room for the
+;  buffer (a program just left something resident right after the UI
+;  block, which the main loop's ui_room moves past it next): an empty list
+;  for now, nothing written there.
 sub_build:
+        xor     ax, ax
+        mov     [nsubj], ax
+        mov     [nent], ax
+        cmp     [ent_max], ax
+        je      .none
         mov     di, entries
-        mov     byte [di], 0
-        mov     word [di + 12], 0
-        mov     word [nsubj], 1
+        mov     [di], al
+        mov     [di + 12], ax
+        inc     word [nsubj]
         mov     word [dir_note], 0
         xor     bx, bx                  ; BX = the subject being read
 .s:     cmp     bx, [nsubj]
@@ -796,7 +822,7 @@ sub_build:
         jae     .t
         xor     bx, bx
 .t:     mov     [top], bx
-        ret
+.none:  ret
 
 ; the subjects in subject BX, by name, into the list right after it
 sub_scan:
@@ -2092,9 +2118,6 @@ xfer_form:
 ; runpath; Replace Ask, not Only newer; the drives there are (sub_copy too)
 form_fill:
         call    cur_dir
-        mov     al, [curdir]
-        sub     al, 'A'
-        mov     [c_dev], al
         mov     di, c_sub               ; "\" or "\DOS.330"
         mov     si, curdir + 2
         call    sb_str
@@ -2104,17 +2127,21 @@ form_fill:
         call    sb_str
         mov     byte [di], 0
         call    pat_init
-        call    ndrives                 ; B: only if there is one, C: too
-        mov     ah, 'B'
-        cmp     al, 2
-        jae     .b
-        xor     ah, ah
-.b:     mov     [o_drives + 3], ah
-        mov     ah, 'C'
-        cmp     al, 3
-        je      .c
-        xor     ah, ah
-.c:     mov     [o_drives + 6], ah
+        call    ndrives                 ; the drives there are, as choices,
+        mov     [c_dev], dl             ;  this one chosen
+        ret
+
+; the Device chosen in a form -> AL = its letter (BX kept)
+c_letter:
+        mov     al, [c_dev]
+; AL = a place in the drive list (ndrives) -> AL = its letter (BX kept)
+drv_let:
+        push    bx
+        mov     ah, 3
+        mul     ah
+        xchg    ax, bx
+        mov     al, [o_drives + bx]
+        pop     bx
         ret
 
 ; from the form: tmppath = "X:\SUBJECT" ("X:\" for Root), dstpath =
@@ -2131,8 +2158,7 @@ xfer_dest:
 .sub:   mov     si, c_sub
         call    upcase_trim
         mov     di, tmppath
-        mov     al, [c_dev]
-        add     al, 'A'
+        call    c_letter
         mov     ah, ':'
         stosw
         cmp     byte [c_sub], '\'
@@ -2218,8 +2244,7 @@ xfer_do:
         jne     .r
 .go:    cmp     byte [xmode], 0
         je      .copy
-        mov     al, [c_dev]             ; Move on the same drive: RENAME
-        add     al, 'A'
+        call    c_letter                ; Move on the same drive: RENAME
         cmp     al, [argpath]
         jne     .other
         jmp     move_here
@@ -2792,7 +2817,9 @@ ex_row: mov     [rowmask], cl
         mov     bx, 40
         mov     ah, [rowmask]
         jmp     puts
-.dev:   call    dev_str                 ; a drive
+.dev:   xchg    ax, bx                  ; a drive
+        call    drv_let
+        call    dev_str
         mov     bx, TCOL
         mov     ah, [rowmask]
         jmp     puts
@@ -2850,6 +2877,7 @@ draw_form:
         call    fill_band
         mov     ah, 19h                 ; Device
         int     21h
+        add     al, 'A'
         call    dev_str
         mov     bx, 14
         mov     dx, FORM_Y
@@ -3073,7 +3101,7 @@ s_lbl_tit   db 'Title',0
 s_lbl_kind  db 'Kind',0
 s_dev_a     db 'Floppy A:',0
 s_dev_c     db 'Hard disk C:',0
-s_drvlet    db 'ABC'                ; (type-to-find in Device)
+s_dev_m     db 'Temporary disk M:',0
 s_root      db 'Root',0
 s_bytes     db ' bytes',0
 s_dated     db '   dated ',0
@@ -3131,7 +3159,7 @@ del_form:   dw ftitle, s_delp, 44, 10, 1
             dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
 ren_form:   dw ftitle, s_renp, 44, 10, 1
             dw s_lbl_new, FT_TEXT + (12 << 8), c_tit, 12
-o_drives    db 'A:', 0, 'B:', 0, 'C:', 0, 0  ; (a 0 for 'B' or 'C' ends it there)
+o_drives    db 'A:', 0, 'B:', 0, 'C:', 0, 'M:', 0, 0    ; (ndrives: the drives there are)
 o_repl      db 'Ask', 0, 'All', 0, 'None', 0, 0
 o_yesno     db 'No', 0, 'Yes', 0, 0
 s_lbl_tits  db 'Titles', 0

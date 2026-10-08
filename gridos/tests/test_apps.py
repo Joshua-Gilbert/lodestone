@@ -28,6 +28,7 @@ GRIDCMD = os.path.join(GOS, 'src', 'GRIDCMD.COM')
 TM5000G = os.environ.get('TM5000G') or os.path.join(GOS, '..', 'tools', 'TM5000G.EXE')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERMINUS.FNT')
 DEFRAG = os.path.join(GOS, 'src', 'DEFRAG.COM')
+MDTEST = os.path.join(HERE, 'MDTEST.COM')
 
 K_HOME, K_END, K_PGDN, K_PGUP, K_DEL, K_INS = 0x4700, 0x4F00, 0x5100, 0x4900, 0x5300, 0x5200
 K_CHOME, K_CEND, K_CLEFT, K_CRIGHT = 0x7700, 0x7500, 0x7300, 0x7400
@@ -42,6 +43,7 @@ def build():
         mkrun.build(os.path.join(GOS, src), dst)
     subprocess.run(['nasm', '-f', 'bin', '-o', MEMSZ, os.path.join(HERE, 'MEMSZ.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
+    subprocess.run(['nasm', '-f', 'bin', '-o', MDTEST, os.path.join(HERE, 'MDTEST.ASM')], check=True)
     for c in [M33TEST] + list(M33.values()):
         subprocess.run(['nasm', '-f', 'bin', '-o', c, c[:-4] + '.ASM'], check=True)
 
@@ -1593,11 +1595,146 @@ def t_subcopy():
     k.key(CODE['M'])
     check('CODE-M on a subject: nothing (a beep)', focus(k) == 2 and band() == 'Subject: Select item and confirm' and not k.crashed, k.band())
 
+# ---------------------------------------------------------------------
+def md_pages(k):
+    """M:'s pages (0: off), from the installer's own data in the disk cache's EMS page."""
+    tp = k.rd('ems_tcpg', 2)[1] & 0x7F
+    return k.pc.ems_read(tp, k.Y['md_pg'], 1)[0]
+
+def md_files(k):
+    """M:'s files from its EMS pages: {'M:\\NAME': bytes}."""
+    tp = k.rd('ems_tcpg', 2)[1] & 0x7F
+    h = struct.unpack('<H', k.pc.ems_read(tp, k.Y['md_h'], 2))[0]
+    st, n = k.rd('ems_h', 2, 4 * h)
+    ltab = k.rd('ems_ltab', 128)
+    img = b''.join(k.pc.ems_read(ltab[st + i] & 0x7F, 0, 0x4000) for i in range(n))
+    return fatcheck.read_files(img, 'M') if n else {}
+
+def t_mdisk():
+    print('== M:, the temporary disk (System, Temporary disk; GRIDOS.INI MDISK=; the Executive)')
+    # without EMS: the topic says so, nothing to choose
+    img = image('mdu0.img', SYSTEM, MEMSZ)
+    k = ktest.KPC(img); k.start()
+    k.key(CODE['U']); k.key('T')
+    shot(k, 'system_mdisk_noems')
+    check('no EMS: Temporary disk says "needs EMS"; Return does nothing', has(k, 'needs EMS') and has(k, 'no expanded memory'),
+          screen(k))
+    k.key(ktest.ENTER)
+    check('... (GRIDOS.INI not written)', disk_file(k, 'GRIDOS.INI') is None and not k.crashed, disk_file(k, 'GRIDOS.INI'))
+    k.key(ktest.DOWN, ktest.UP); k.key('D')
+    check('... Disks: A: only', has(k, 'Drive A:') and not has(k, 'Drive M:') and not has(k, 'Drive C:'), screen(k))
+    k.key(ktest.ESC)
+    k.key(ktest.TAB)
+    check('... the Executive\'s Device list: A: only', k.u16('nent') == 1 and focus(k) == 1, k.u16('nent'))
+    k.key(ktest.TAB); k.key(ktest.TAB)
+    # with EMS: 256 KB
+    notes = os.path.join(OUT, 'NOTES.TXT'); open(notes, 'wb').write(TEXT)
+    img = image('mdu.img', SYSTEM, MEMSZ, MDTEST, GRIDCMD, DEFRAG, notes, 'WORK\\')
+    k = ktest.KPC(img, ems_pages=88); k.pc.mouse = True; k.start()
+    k.key(CODE['U'])
+    m = re.search(r'Temporary disk M:\s+([\d.]+) KB', screen(k))
+    check('System, Memory: "Temporary disk M:  0.3 KB" (its block: from the environment\'s spare bytes)', m and m.group(1) == '0.3',
+          screen(k))
+    k.key(ktest.DOWN)
+    check('Disks: A: and M: (256 KB)', has(k, 'Drive A:') and has(k, 'Drive M:') and has(k, '251 KB'), screen(k))
+    k.key('T')
+    shot(k, 'system_mdisk')
+    check('Temporary disk: "Size 256 KB", free, all EMS free would give 1376 KB; the choices', re.search(r'Size\s+256 KB', screen(k))
+          and re.search(r'Free\s+251 KB', screen(k)) and re.search(r'All free EMS would give\s+1376 KB', screen(k))
+          and has(k, 'RETURN: off, 64, 128, 256, 512 KB, 1 MB, all free') and 'RETURN: the next size' in ' '.join(k.band()),
+          (screen(k), k.band()))
+    steps = [('512 KB', 32, b'MDISK=512\r\n'), ('1 MB', 64, b'MDISK=1024\r\n'), ('1376 KB', 86, b'MDISK=ALL\r\n'),
+             ('off', 0, b'MDISK=0\r\n'), ('64 KB', 4, b'MDISK=64\r\n'), ('128 KB', 8, b'MDISK=128\r\n'), ('256 KB', 16, None)]
+    for txt, pg, ini in steps:
+        k.key(ktest.ENTER)
+        check('Return: %s at once (%d pages), GRIDOS.INI %s' % (txt, pg, ini if ini else 'gone (256 KB: no line)'),
+              re.search(r'Size\s+' + txt, screen(k)) and md_pages(k) == pg and disk_file(k, 'GRIDOS.INI') == ini and not k.crashed,
+              (screen(k), md_pages(k), disk_file(k, 'GRIDOS.INI')))
+    k.key(ktest.ESC)
+    # the Executive: M: in Device, the file commands, a program run from it
+    k.key(ktest.TAB)
+    check('the Executive\'s Device list: A: and M:', k.u16('nent') == 2 and has(k, 'Temporary disk M:') and has(k, 'Floppy A:'),
+          k.u16('nent'))
+    k.key(ktest.TAB); k.key(ktest.TAB)
+    k.select('NOTES.TXT'); k.key(CODE['C'])
+    k.key(ktest.ENTER, ktest.RIGHT, K_CODE_ENTER)
+    check('CODE-C: Device Right is M:: NOTES.TXT copied to M:\\', md_files(k).get('M:\\NOTES.TXT') == TEXT
+          and k.band()[0] == 'Copied to M:\\NOTES.TXT', (k.band(), sorted(md_files(k))))
+    k.key(ktest.ENTER)
+    k.select('MEMSZ.COM'); k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, K_CODE_ENTER); k.key(ktest.ENTER)
+    k.key(ktest.TAB); k.key(ktest.DOWN); k.key(ktest.ENTER); k.key(ktest.TAB)
+    check('Device: M: chosen: its titles listed', form(k)[0] == 'Temporary disk M:' and k.exec_list() == ['MEMSZ.COM', 'NOTES.TXT'],
+          (form(k), k.exec_list()))
+    out = k.run_file('MEMSZ.COM', 20)
+    check('a program run from M: (MEMSZ.COM): it runs, back in the Executive on M:', 'KB for programs' in out
+          and k.band()[0] == 'MEMSZ.COM ended' and form(k)[0] == 'Temporary disk M:', (out[-100:], k.band()))
+    k.key(ktest.ENTER)
+    k.select('NOTES.TXT'); k.key(CODE['R']); k.key('n2.txt', ktest.ENTER)
+    check('CODE-R on M:: renamed', 'M:\\N2.TXT' in md_files(k) and 'M:\\NOTES.TXT' not in md_files(k), (k.band(), sorted(md_files(k))))
+    k.select('N2.TXT'); k.key(CODE['M']); k.key(ktest.ENTER, ktest.LEFT, ktest.ENTER, '\\work', K_CODE_ENTER)
+    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    check('CODE-M from M: to A:\\WORK: there, gone from M:', A().get('A:\\WORK\\N2.TXT') == TEXT and 'M:\\N2.TXT' not in md_files(k),
+          (k.band(), sorted(md_files(k))))
+    k.key(ktest.ENTER)
+    k.select('MEMSZ.COM'); k.key(CODE['D']); k.key(ktest.ENTER)
+    check('CODE-D on M:: erased (M: empty)', not md_files(k), sorted(md_files(k)))
+    # Copy on a subject to M: (0.3.13), from A:
+    k.key(ktest.TAB); k.key(ktest.UP); k.key(ktest.ENTER); k.key(ktest.TAB)
+    pick_subject(k, 'WORK'); k.key(CODE['C']); k.key(ktest.RIGHT, K_CODE_ENTER, ktest.ENTER, settle=False); k.settle(20)
+    check('Copy on a subject: A:\\WORK to M:\\WORK', md_files(k).get('M:\\WORK\\N2.TXT') == TEXT and 'Copied' in k.band()[0],
+          (k.band(), sorted(md_files(k))))
+    k.key(ktest.ENTER)
+    # M: holds files: the question; ESC keeps them, Return erases
+    k.key(CODE['U']); k.key('T')
+    k.key(ktest.ENTER)
+    check('Return with files on M:: "M: holds files: Confirm to erase them"', k.band()[0] == 'M: holds files: Confirm to erase them',
+          k.band())
+    k.key(ktest.ESC)
+    check('... ESC: M: as it was (256 KB, its files)', md_pages(k) == 16 and 'M:\\WORK\\N2.TXT' in md_files(k)
+          and disk_file(k, 'GRIDOS.INI') is None, (md_pages(k), sorted(md_files(k))))
+    # a file open on M: (a resident program's): refused
+    k.key(ktest.ESC)
+    sh_cmd = lambda c: (k.key(ktest.CODE_P), k.key(c), k.key(ktest.ENTER), k.key('exit'), k.key(ktest.ENTER),
+                        k.pc.run_until(lambda: k.pc.mode() == 0x40, 5), k.settle())
+    sh_cmd('mdtest /k')
+    k.key(ktest.ENTER)                                  # ("GRIDCMD.COM ended")
+    k.key(CODE['U']); k.key('T'); k.key(ktest.ENTER)
+    check('a file on M: open (a resident program\'s): "A file on M: is open: M: can\'t change now"',
+          k.band()[0] == "A file on M: is open: M: can't change now" and md_pages(k) == 16, k.band())
+    k.key(ktest.ENTER); k.key(ktest.ESC)
+    # off while the Executive is on M:
+    k = ktest.KPC(img, ems_pages=88); k.pc.mouse = True; k.start()
+    k.key(ktest.TAB); k.key(ktest.DOWN); k.key(ktest.ENTER); k.key(ktest.TAB)
+    check('the Executive on M: (empty)', form(k)[0] == 'Temporary disk M:', form(k))
+    k.key(CODE['U']); k.key('T')
+    for _ in range(4): k.key(ktest.ENTER)               # 512, 1 MB, all, off
+    check('M: off from System while the Executive was on it', md_pages(k) == 0 and disk_file(k, 'GRIDOS.INI') == b'MDISK=0\r\n',
+          md_pages(k))
+    k.key(ktest.ESC)
+    check('... back in the Executive: A: listed, no error', form(k)[0] == 'Floppy A:' and 'NOTES.TXT' in k.exec_list()
+          and not k.crashed, (form(k), k.band(), k.exec_list()))
+    k.key(ktest.TAB)
+    check('... Device: A: only', k.u16('nent') == 1, k.u16('nent'))
+    k.key(ktest.TAB); k.key(ktest.TAB)
+    k = reboot(k, 'mdu2.img')
+    check('after a restart: MDISK=0 taken (M: off)', md_pages(k) == 0 if k.pc.ems_pages else True, None)
+    # the saver: with M: on and no C:, DEFRAG on A: only
+    k = ktest.KPC(img, ems_pages=88); k.pc.mouse = True; k.start()
+    seen = []
+    a = k.Y['exec_raw']
+    k.hooks.append(lambda pc: seen.append(k.rd('sv_tail', 1)) if pc.r('cs') == k.useg and pc.r('ip') == a else None)
+    idle(k, 5 * 1092 + 18); k.pc.run_for(30)
+    check('the screen saver with M: on (and no C:): DEFRAG on A: only', set(seen) == {b'A'}, seen)
+    k.key(ktest.ESC); k.settle(8)
+    sh = None
+    k.key(ktest.CODE_P); k.key('defrag m:'); k.key(ktest.ENTER)
+    check('DEFRAG M:: "M: is the temporary disk, in memory: nothing to tidy"', 'nothing to tidy' in k.pc.text_screen(), k.pc.text_screen())
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_mdisk):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
