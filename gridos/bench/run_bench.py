@@ -74,7 +74,7 @@ if __name__ == '__main__':
     if not ROM: sys.exit('needs the GRiD MS-DOS EPROM image (GRID_MSDOS330_ROM_300909-00.BIN)')
     t = time.time()
     g, gout = run_gridos()
-    print('==== Grid-OS 0.2.1 ====\n' + gout.strip() + '\n')
+    print('==== Grid-OS ====\n' + gout.strip() + '\n')
     d, dout = run_msdos()
     print('==== GRiD MS-DOS 3.30 ====\n' + dout.strip() + '\n')
     rg, rd = results(g), results(d)

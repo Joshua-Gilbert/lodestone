@@ -120,7 +120,8 @@ class Ata:
     def __init__(s, model='Conner Peripherals 40MB - CP3044', cyls=977, heads=5, spt=17, rpm=3486,
                  formatted=True, stuck=False, tk0=False, diag=0x01, identify=True, data=None,
                  serial='CP3044-123456', firmware='1.03', irq=True, mech_fail=False, unready=0,
-                 fail_ms=0, frees=0, disk=None, bad=(), stick_at=None, badw=(), cut=None):
+                 fail_ms=0, frees=0, disk=None, bad=(), stick_at=None, badw=(), cut=None, timed=False,
+                 seek_ms=(4.0, 0.02), cmd_ms=0.5, pio_us=1.0, lookahead=False):
         s.model, s.cyls, s.heads, s.spt, s.rpm = model, cyls, heads, spt, rpm
         s.formatted, s.stuck, s.tk0, s.diag, s.identify = formatted, stuck, tk0, diag, identify
         s.serial, s.firmware = serial, firmware
@@ -138,6 +139,20 @@ class Ata:
         s.wbuf = bytearray(); s.writes = []             # (LBA, sectors) per command
         s.badw, s.wfails = set(badw), 0
         s.cut, s.wcmds, s.cutting = cut, 0, False
+        # timed: seeks and rotation cost time (for benchmarks; off in the
+        # functional tests).  A seek of d cylinders takes seek_ms[0] +
+        # seek_ms[1] * d ms; a command cmd_ms; sector n of a track passes
+        # under the head at (n - 1) / spt of a turn.  Reads stream into the
+        # drive's buffer at the disk's pace (each sector ready as it has
+        # passed); writes are taken into the buffer at once and the command
+        # ends when the last sector has been written.  pio_us: each data word
+        # moved by the CPU.  lookahead: the drive keeps the sectors it read
+        # and goes on reading to the end of that track into its buffer; a
+        # read of those is answered from there, a new command ends the
+        # look-ahead, and a write empties the buffer.
+        s.timed, s.seek_ms, s.cmd_ms, s.pio_us = timed, seek_ms, cmd_ms, pio_us
+        s.lookahead, s.la = lookahead, {}
+        s.cyl = 0; s.ready = []; s.wsec = []; s.wt = 0
 
     def power_cut(s):
         s.stuck = True
@@ -159,8 +174,24 @@ class Ata:
         b[20:40] = s.text(s.serial, 10); b[46:54] = s.text(s.firmware, 4); b[54:94] = s.text(s.model, 20)
         return bytes(b)
 
+    def _seek(s, us, c):
+        d = abs(c - s.cyl); s.cyl = c
+        return us + (s.seek_ms[0] + s.seek_ms[1] * d) * 1000 if d else us
+
+    def _slot(s, t, n):                                 # when sector n next starts under the head
+        rev = 60e6 / s.rpm; st = rev / s.spt
+        ph = (n - 1) * st
+        k = -(-(t - ph - 0.01) // rev)                 # (0.01 us: rounding, not a lost turn)
+        return ph + k * rev, st
+
+    def _chs(s, lba):
+        return lba // (s.heads * s.spt), lba // s.spt % s.heads, lba % s.spt + 1
+
     def busy(s, us):
         if s.stuck: return True
+        if s.timed and s.st & s.DRQ and s.ready and not s.wq:
+            i = s.pos // 512
+            if i < len(s.ready) and us < s.ready[i]: return True
         if s.first is None: s.first = us
         return us - s.first < s.unready * 1e6 or us < s.busy_until
 
@@ -206,6 +237,11 @@ class Ata:
                     s.intr(); return
                 if s.disk is not None and (lba + 1) * 512 <= len(s.disk): s.disk[lba * 512:(lba + 1) * 512] = sec
                 s.data.pop(lba, None)
+                if s.timed:                             # on the disk when it next passes the head
+                    c, h, n = s._chs(lba)
+                    t = s._seek(max(s.wt, us), c)
+                    t0, st = s._slot(t, n); s.wt = t0 + st
+                    if not s.wq: s.busy_until = s.wt
                 if not s.wq and s.cutting: return s.power_cut()
                 if not s.wq: s.st = s.DRDY | s.DSC
                 s.intr()
@@ -215,6 +251,7 @@ class Ata:
             return
         c = s.reg[4] | s.reg[5] << 8; h = s.reg[6] & 15; n = s.reg[3]
         s.cmds.append((val, c, h, n))
+        s.ready = []
         ok = s.DRDY | s.DSC
         s.intr()
         def fail(err, slow=False):
@@ -246,6 +283,7 @@ class Ata:
                 if h >= s.heads: h = 0; c += 1
             if not s.wq: return fail(0x10)
             s.writes.append((s.wq[0], len(s.wq)))
+            if s.timed: s.wt = s._seek(us + s.cmd_ms * 1000, c); s.la = {}
             s.wcmds += 1
             if s.cut == s.wcmds:
                 s.wq = s.wq[:len(s.wq) // 2]; s.cutting = True
@@ -266,6 +304,25 @@ class Ata:
                 if h >= s.heads: h = 0; c += 1
             if not buf: e = s.pend; s.pend = None; return fail(e)
             s.buf = b''.join(buf); s.pos = 0; s.st = ok | s.DRQ
+            s.ready = []
+            if s.timed:
+                t = us + s.cmd_ms * 1000
+                lba = (c * s.heads + h) * s.spt + n - 1 - len(buf)
+                la, s.la = s.la, {}
+                for i in range(len(buf)):
+                    if lba + i in la:                   # in the buffer already
+                        t = max(t, la[lba + i]); s.ready.append(t); continue
+                    la = {}                             # (a new command ends the look-ahead)
+                    cc, hh, nn = s._chs(lba + i)
+                    t = s._seek(t, cc)
+                    t0, st = s._slot(t, nn); t = t0 + st
+                    s.ready.append(t)
+                if s.lookahead:
+                    s.la = {lba + i: r for i, r in enumerate(s.ready)}     # (kept in the buffer)
+                    cc, hh, nn = s._chs(lba + len(buf) - 1)
+                    st = 60e6 / s.rpm / s.spt
+                    for k in range(1, s.spt - nn + 1):
+                        s.la[lba + len(buf) - 1 + k] = t + k * st
         else:
             fail(0x04)
 
@@ -504,7 +561,9 @@ class PC:
         if port == 0x20: return s.isr if s.pic_rr == 3 else 0
         if port == 0x7F8: return 0xFD
         if port == 0x6F8: return 0x90                   # drive backplane 9 (the 1520's, GRIDPROBE)
-        if s.ata and 0x1F0 <= port <= 0x1F7: return s.ata.read(port, size, s.us)
+        if s.ata and 0x1F0 <= port <= 0x1F7:
+            if port == 0x1F0 and s.ata.timed: s.us += s.ata.pio_us         # (REP INSW: one hook a word)
+            return s.ata.read(port, size, s.us)
         if s.float_bus and (0x1F0 <= port <= 0x1F7 or port == 0x3F6):   # as Joshua's 1520 reads
             b = s.rd(s.r('cs'), s.r('ip') + 2, 2)                       #  (2026-10-07): code bytes
             return b[0] | b[1] << 8 if size == 2 else b[0]              #  just prefetched
@@ -580,7 +639,9 @@ class PC:
         return s.cmos[i & 0x7F]
 
     def hout(s, uc, port, size, val, ud):
-        if s.ata and port == 0x1F0: return s.ata.write(port, val & 0xFFFF, s.us, size)   # (a word: OUTSW)
+        if s.ata and port == 0x1F0:
+            if s.ata.timed: s.us += s.ata.pio_us
+            return s.ata.write(port, val & 0xFFFF, s.us, size)   # (a word: OUTSW)
         val &= 0xFF
         if port == 0x70: s.cidx = val & 0x7F; return
         if port == 0x71:
