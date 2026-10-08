@@ -1,5 +1,5 @@
 ; =====================================================================
-;  KFAT.INC - names, paths and directories on FAT12, and the INT 21h
+;  KFAT.INC - names, paths and directories on FAT12/16, and the INT 21h
 ;  calls that work on paths: 39h MKDIR, 3Ah RMDIR, 3Bh CHDIR, 41h
 ;  DELETE, 43h attributes, 47h current directory, 56h RENAME.
 ; =====================================================================
@@ -20,7 +20,8 @@ r_dir       resw 1              ;   directory cluster (0 = root),
 r_name      resb 11             ;   last component (0 = none)
 r_wild      resb 1              ;   it has wildcards
 d_lba       resw 1              ; the directory entry found: sector,
-d_off       resw 1              ;   offset in it,
+d_off       resw 1              ;   offset in it (bits 9+: the sector
+                                ;   number's high part: dent_buf),
 d_index     resw 1              ;   index in its directory
 de          resb 32             ; a copy of it
 de_idx      resw 1              ; dir_entry's last root sector: an entry
@@ -239,6 +240,7 @@ dir_entry:
         push    di
         mov     [d_index], bx
         mov     di, [actp]
+        xor     ch, ch                  ; (the sector number's high part)
         or      ax, ax
         jnz     .sub
         cmp     bx, [di+D_NROOT]
@@ -299,7 +301,7 @@ dir_entry:
 .walk:  cmp     cx, dx
         je      .there
         call    fat_get
-        cmp     ax, 0FF0h
+        cmp     ax, 0FFF0h
         jae     .end0
         cmp     ax, 2
         jb      .end0
@@ -315,7 +317,10 @@ dir_entry:
         and     dl, cl
         xor     dh, dh
         add     dx, ax
+        adc     byte [lba_hi], 0
+        mov     ch, [lba_hi]
 .rd:    mov     [d_lba], dx
+        mov     [lba_hi], ch
         mov     al, [act]
         call    buf_get
         mov     word [io_ra], 0         ; (a buffer hit leaves it set)
@@ -332,8 +337,10 @@ dir_entry:
         mov     [de_drv], al
 .got:   and     bx, 15
         shl     bx, 5
-        mov     [d_off], bx
         add     si, bx
+        shl     ch, 1
+        or      bh, ch
+        mov     [d_off], bx
         clc
         jmp     .x
 .end0:  mov     word [it_dir], 0
@@ -359,6 +366,21 @@ dir_lim:
         pop     di
 .x:     ret
 
+; the directory entry at sector DX, place AX (as d_off: the offset, and
+; from bit 9 the sector number's high part) on drive [act] -> SI.  CF: AX
+dent_buf:
+        push    bx
+        mov     bx, ax
+        and     bx, 511
+        shr     ah, 1
+        mov     [lba_hi], ah
+        mov     al, [act]
+        call    buf_get
+        jc      .x
+        add     si, bx
+.x:     pop     bx
+        ret
+
 ; drive [act]'s whole root directory into the disk cache, one pass (if
 ; it isn't there already; errors are left to the reads that follow).
 ; DI = drive table entry
@@ -366,6 +388,7 @@ root_pre:
         push    ax
         push    bx
         push    cx
+.hk:                                    ; (KHD.INC: not for C:)
         push    dx
         push    es
         push    cs
@@ -413,7 +436,8 @@ dir_find:
         mov     dx, bx
         and     dx, 15
         shl     dx, 5
-        mov     [d_off], dx
+        and     word [d_off], 0FE00h
+        or      [d_off], dx
         push    si
         push    di
         push    cx
@@ -491,7 +515,7 @@ dir_slot:
         ; append a cluster to the subdirectory: find its last cluster
 .last:  mov     dx, ax
         call    fat_get
-        cmp     ax, 0FF0h
+        cmp     ax, 0FFF0h
         jb      .last
         call    clu_alloc               ; linked after DX
         jc      .err
@@ -509,7 +533,7 @@ dir_slot:
         ret
 .unl:   push    ax                      ; it can't be written: unlinked (DX
         mov     ax, dx                  ;  the end again) and given back
-        mov     dx, 0FFFh
+        mov     dx, 0FFFFh
         call    fat_set
         mov     ax, cx
         xor     dx, dx
@@ -537,15 +561,17 @@ clu_zero:
         push    cs
         pop     es
         rep     stosw
-        pop     ax
-        call    clu2lba
-        mov     dx, ax
         mov     si, [actp]
         mov     cl, [si+D_SPC]
         xor     ch, ch
+        pop     ax
+        call    clu2lba
+        mov     dx, ax
+        mov     si, [lba_hi]            ; (for each sector: disk_io uses it up)
         mov     al, [act]
         call    buf_inval_range
 .w:     push    cx
+        mov     [lba_hi], si
         mov     al, [act]
         mov     ah, 3
         mov     cx, 1
@@ -554,7 +580,9 @@ clu_zero:
         pop     cx
         jc      .x
         inc     dx
-        loop    .w
+        jnz     .nw
+        inc     si
+.nw:    loop    .w
         clc
 .x:     pop     es
         pop     di
@@ -743,11 +771,10 @@ f_39:   call    get_path                ; MKDIR
         pop     word [d_off]
         pop     word [d_lba]
         pop     bx
-        mov     al, [act]
         mov     dx, [d_lba]
-        call    buf_get                 ; the parent's slot again
+        mov     ax, [d_off]
+        call    dent_buf                ; the parent's slot again
         jc      .e
-        add     si, [d_off]
         mov     ax, [new_dir]
         mov     cl, A_DIR
         call    new_entry
@@ -872,11 +899,10 @@ f_3A:   call    get_path                ; RMDIR
         jmp     .e
 .empty: pop     word [d_off]
         pop     word [d_lba]
-        mov     al, [act]
         mov     dx, [d_lba]
-        call    buf_get
+        mov     ax, [d_off]
+        call    dent_buf
         jc      .e
-        add     si, [d_off]
         mov     byte [si], 0E5h
         call    buf_put
         jc      .e
@@ -1074,11 +1100,10 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         pop     si
         call    buf_put
         jc      .e
-        mov     al, [act]               ; and the old one deleted
-        mov     dx, [ren_lba]
-        call    buf_get
+        mov     dx, [ren_lba]           ; and the old one deleted
+        mov     ax, [ren_off]
+        call    dent_buf
         jc      .e
-        add     si, [ren_off]
         mov     byte [si], 0E5h
         call    buf_put
         jc      .e

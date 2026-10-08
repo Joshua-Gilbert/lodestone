@@ -1083,8 +1083,8 @@ t_about:
         mov     al, '.'
         stosb
         mov     al, bl
-        add     al, '0'
-        stosb
+        xor     ah, ah
+        call    UI_SBU16
 .np:    mov     byte [di], 0
         mov     si, vbuf
         call    ptext
