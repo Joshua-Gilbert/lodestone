@@ -93,8 +93,9 @@ if __name__ == '__main__':
     print('\n'.join(p) if p else 'no problems')
 
 
-def read_files(img, drive='A'):
-    """Every file's bytes: {'A:\\DIR\\NAME.EXT': bytes}."""
+def read_files(img, drive='A', dirs=None):
+    """Every file's bytes: {'A:\\DIR\\NAME.EXT': bytes}.  The subjects go in
+    the list dirs, if one is given ('A:\\DIR')."""
     b = bpb(img)
     bps, spc = b['bps'], b['spc']
     fat_off = b['res'] * bps
@@ -121,7 +122,9 @@ def read_files(img, drive='A'):
             if name in ('.', '..'): continue
             full = path + '\\' + name + ('.' + ext if ext else '')
             cl, size = struct.unpack_from('<H', e, 26)[0], struct.unpack_from('<I', e, 28)[0]
-            if e[11] & 0x10: walk(chain_data(cl), full)
+            if e[11] & 0x10:
+                if dirs is not None: dirs.append(full)
+                walk(chain_data(cl), full)
             else: files[full] = chain_data(cl)[:size] if size else b''
     walk(img[root_off:root_off + b['nroot'] * 32], drive + ':')
     return files
