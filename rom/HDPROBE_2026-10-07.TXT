@@ -1,0 +1,48 @@
+HDPROBE 1.0 - the GRiDCase 1520's internal hard disk, close up (read-only)
+
+[1] WHAT THE BIOS MADE OF IT
+  Drive backplane 09: internal 1.44 MB floppy + AT-compatible hard disk
+  CMOS 12h (hard disk type) = 00   19h = 00   0Eh (POST status) = 00
+  BDA: hard disks 0, last status 00
+  INT 13h 08h, drive 80h: error 01 (the BIOS has no hard disk)
+
+[2] THE DRIVE'S REGISTERS (drive 0 selected)
+  01F1 75  01F2 75  01F3 75  01F4 75  01F5 75  01F6 75  01F7 75 (DRDY DWF DSC CORR ERR)  
+  alt status 03F6 A6 (BSY DWF CORR IDX)
+  Echo, sector count and number: 55 AA -> 4A 4A  AA 55 -> 4A 4A  
+  -> the registers don't hold what is written (a bad connection, or a fault)
+
+[3] THE STATUS FOR 2 SECONDS (alt status, read as fast as we can)
+  120 thousand reads: busy 55039, ready 0, seek complete 0, error 0
+  Index pulses seen: 0
+  (none: the disk may not be turning, or this drive doesn't show them)
+
+[4] RESET AND SELF-TEST
+  Soft reset (SRST), up to 31 s: 49.7 ms, ready, status 4E (DRDY DRQ CORR IDX), code FF: drive 1 failed (drive 0 bits below)
+  Self-test (90h): 0.5 ms, code F6: drive 1 failed (drive 0 bits below)
+  Interrupt (IRQ 14) after another 90h: none in 2 s
+
+[5] IDENTIFY (ECh)
+  0.5 ms, status 4E (DRDY DRQ CORR IDX)
+  Model    "........................................"
+  Firmware "........"   Serial "...................."
+  Geometry 64764 cylinders, 64764 heads, 64764 sectors a track = 56859 MB
+  Words: 0 = 5959   20-22 (buffer type, size, ECC) = FFFF FCFC FCFC   47 = FCFC   49 = FCFC
+  The BIOS doesn't know this model (only Conner CP3022, CP3024, CP344, CP3044,
+  CP3042, CP3104): it leaves the drive off.  (saved: A:\HDIDENT.BIN)
+
+[6] HEADS AND SECTORS (geometry from IDENTIFY)
+  skipped: IDENTIFY's geometry doesn't make sense
+
+[7] WHAT IT MEANS
+  The drive's registers don't hold what is written: a bad connection or a
+  failing drive board.
+  Its self-test reports a fault (the code above).
+  Its interrupt (IRQ 14) never arrives.  The BIOS waits for it after every
+  command, IDENTIFY included, so it gives up: this alone leaves CMOS 12h
+  at 00.  Look at the drive's interrupt line (cable, connector).
+  It identifies itself, but not as a Conner the BIOS knows: this alone
+  keeps INT 13h, and so every DOS tool, from seeing it.  A BIOS that takes
+  any drive, or a driver that talks to it directly, would.
+
+Done.  Press any key.

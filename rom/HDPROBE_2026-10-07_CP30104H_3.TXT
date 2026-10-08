@@ -1,0 +1,52 @@
+HDPROBE 1.3 - the GRiDCase 1520's internal hard disk, close up (read-only)
+
+[1] WHAT THE BIOS MADE OF IT
+  Drive backplane 09: internal 1.44 MB floppy + AT-compatible hard disk
+  CMOS 12h (hard disk type) = 00   19h = 00   0Eh (POST status) = 20
+  BDA: hard disks 0, last status 00
+  INT 13h 08h, drive 80h: error 01 (the BIOS has no hard disk)
+
+[2] THE DRIVE'S REGISTERS (drive 0 selected)
+  01F1 00  01F2 00  01F3 01  01F4 00  01F5 00  01F6 A0  01F7 50 (DRDY DSC)  
+  Echo, sector count and number: 55 AA -> 55 AA  AA 55 -> AA 55  
+  -> the drive's registers answer
+
+[3] THE STATUS FOR 2 SECONDS (read as fast as we can)
+  50 thousand reads: busy 0%, ready 100%, seek complete 100%, error 0%
+  Index pulses seen: 112 -> about 3360 rpm: the disk is turning
+
+[4] READY, SELF-TEST, INTERRUPT
+  Ready? (up to 31 s): 0.0 ms, status 50 (DRDY DSC)
+  Self-test (90h): 655.2 ms, code 01: passed
+  Interrupt (IRQ 14) after another 90h: it arrives
+
+[5] IDENTIFY (ECh)
+  25.9 ms, status 58 (DRDY DSC DRQ)
+  Model    "Conner Peripherals 120MB - CP30104H"
+  Firmware "2.77"   Serial "NCDP1R"
+  Geometry 762 cylinders, 8 heads, 39 sectors a track = 121 MB
+  Words: 0 = 0C5A   20-22 (buffer type, size, ECC) = 0003 0040 0007   47 = 8040   49 = 0001
+  The BIOS doesn't know this model (only Conner CP3022, CP3024, CP344, CP3044,
+  CP3042, CP3104): it leaves the drive off.  (saved: A:\HDIDENT.BIN)
+
+[6] HEADS AND SECTORS (geometry from IDENTIFY)
+  Set the geometry (91h): 0.8 ms, status 50 (DRDY DSC)
+  Recalibrate, heads to track 0 (10h): 2.5 ms, status 50 (DRDY DSC)
+  Seek (70h) to cylinder 381: 2.1 ms, status 50 (DRDY DSC)
+  Seek (70h) to cylinder 761: 0.5 ms, status 50 (DRDY DSC)
+  Seek (70h) to cylinder 0: 2.0 ms, status 52 (DRDY DSC IDX)
+  Read cylinder 0 head 0 sector 1: 11.2 ms, ok, ends 55 AA: a partition table (saved: A:\HDSECT0.BIN)
+    1: type 06  boot 80  65535 KB
+  Read cylinder 381 head 4 sector 20: 10.4 ms, ok
+  Read cylinder 761 head 7 sector 39: 46.1 ms, ok
+
+[7] WHAT IT MEANS
+  The disk turns (about 3360 rpm).
+  The 1520's hard-disk interface works: registers, data transfers and the
+  interrupt all answer.
+  It identifies itself, but not as a Conner the BIOS knows: this alone
+  keeps INT 13h, and so every DOS tool, from seeing it.  A BIOS that takes
+  any drive, or a driver that talks to it directly, would.
+  All three test reads worked: the drive reads its own format.
+
+Done.  Press any key.
