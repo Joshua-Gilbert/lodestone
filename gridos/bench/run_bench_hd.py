@@ -1,4 +1,4 @@
-"""BENCH.COM on drive C: under Grid-OS, in pcemu with the hard disk timed
+"""BENCH.COM on drive C: (and on M:, the RAM disk in EMS) under Grid-OS, in pcemu with the hard disk timed
 (seeks and rotation; see pcemu.Ata's `timed`), on the layout of Joshua's
 CP30104H (its own partition table and boot sector: 762 x 8 x 39, one
 121 MB FAT16 partition, 2 KB clusters) with about 800 KB of files at the
@@ -33,13 +33,15 @@ def drive(lookahead=False):
                      timed=True, rpm=3360, lookahead=lookahead)
 
 
-def run(ems, lookahead=False):
+def run(ems, lookahead=False, drv='c'):
+    ini = os.path.join(run_bench.TMP, 'GRIDOS.INI')         # M: at 1 MB (256 KB is too small for BENCH's files)
+    open(ini, 'w').write('MDISK=1024\r\n')
     img = mkimg.build(os.path.join(run_bench.TMP, 'hd.img'), [os.path.join(GOS, 'src', 'GRIDOS.SYS'),
-                                                             os.path.join(GOS, 'src', 'GRIDCMD.COM'), BENCH])
+                                                             os.path.join(GOS, 'src', 'GRIDCMD.COM'), BENCH, ini])
     k = ktest.KPC(img, ata=drive(lookahead), disk_model='real', ems_pages=88 if ems else 0)
     k.start(20)
     k.key(ktest.CODE_P)                                 # the prompt, C: current, BENCH from A:
-    k.key('c:'); k.key(ktest.ENTER)
+    k.key(drv + ':'); k.key(ktest.ENTER)
     k.pc.tty.clear()
     k.key('a:bench'); k.key(ktest.ENTER, settle=False)
     tty = lambda: ''.join(k.pc.tty)
@@ -50,12 +52,13 @@ def run(ems, lookahead=False):
 if __name__ == '__main__':
     t = time.time()
     res = []
-    for la in (False, True):
-        pc, out = run(True, la)
-        print('==== Grid-OS on C: with EMS, the drive %s look-ahead ====\n%s\n' % ('with' if la else 'without', out.strip()))
+    for la, drv in ((False, 'c'), (True, 'c'), (False, 'm')):
+        pc, out = run(True, la, drv)
+        print('==== Grid-OS on %s: with EMS%s ====\n%s\n' % (drv.upper(), '' if drv == 'm' else
+              ', the drive %s look-ahead' % ('with' if la else 'without'), out.strip()))
         res.append(run_bench.results(pc))
-    print('%-32s %10s %10s' % ('emulator timing (s)', 'no look-ahead', 'look-ahead'))
-    for n, a, b in zip(run_bench.NAMES, *res):
-        print('%-32s %10s %10s' % (n, a and '%.3f' % a[0], b and '%.3f' % b[0]))
-    print('%-32s %10.2f %10.2f' % ('Total', *(sum(x[0] for x in r if x) for r in res)))
+    print('%-32s %14s %14s %10s' % ('emulator timing (s)', 'C: no look-ah.', 'C: look-ahead', 'M: 1 MB'))
+    for n, *v in zip(run_bench.NAMES, *res):
+        print('%-32s %14s %14s %10s' % (n, *(x and '%.3f' % x[0] for x in v)))
+    print('%-32s %14.2f %14.2f %10.2f' % ('Total', *(sum(x[0] for x in r if x) for r in res)))
     print('(wall %.0f s)' % (time.time() - t))
