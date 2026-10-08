@@ -938,9 +938,7 @@ f_3B:   call    get_path                ; CHDIR
         mov     [si+D_CWD], ax
         ; the new path string
         mov     al, [act]
-        xor     ah, ah
-        imul    di, ax, CWDLEN
-        add     di, cwdstr
+        call    cwd_of
         mov     si, path_buf
         cmp     byte [si+1], ':'
         jne     .nd
@@ -1033,10 +1031,8 @@ f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
 .d:     dec     al
         call    drv_present
         jc      .bad
-        xor     ah, ah
-        imul    si, ax, CWDLEN
-        add     si, cwdstr
-        inc     si                      ; skip the leading '\'
+        call    cwd_of
+        lea     si, [di+1]              ; (without the leading '\')
         mov     es, [bp+F_DS]
         mov     di, [bp+F_SI]
 .c:     lodsb

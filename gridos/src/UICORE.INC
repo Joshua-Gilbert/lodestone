@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-GOS_VER     equ 003Dh                   ; Grid-OS 0.3.13 (BH.BL: major, minor<<4 | patch)
+GOS_VER     equ 003Eh                   ; Grid-OS 0.3.14 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -3668,7 +3668,7 @@ sv_move:
 
 ; DEFRAG.COM /S from the root of the start-up disk, for each disk in turn:
 ; A:, B: (if the BIOS has a second floppy) and C: (if Grid-OS has the hard
-; disk).  CF if it isn't there or can't run; else AL = 1 if a key or the
+; disk), as the kernel has them.  CF if it isn't there or can't run; else AL = 1 if a key or the
 ; mouse stopped it.  The mouse stays on: DEFRAG watches our mouse flag
 ; (passed as M=segment:offset).
 sv_defrag:
@@ -3699,23 +3699,12 @@ sv_defrag:
         call    sb_hex4
         mov     byte [di], 0
         mov     bx, 'A'                 ; BL: the disk
-.d:     cmp     bl, 'B'
-        jne     .c
-        int     11h                     ; B:: a second floppy?
-        test    al, 0C0h
-        jz      .n
-.c:     cmp     bl, 'C'
-        jne     .go
-        push    bx                      ; C:: with it, Grid-OS has 3
-        mov     ah, 19h                 ;  drives (INT 21h 0Eh)
-        int     21h
-        mov     dl, al
-        mov     ah, 0Eh
-        int     21h
-        pop     bx
-        cmp     al, 3
-        jb      .n
-.go:    mov     [sv_tail], bl
+.d:     push    bx                      ; there?  (IOCTL "removable?" says no
+        sub     bl, 'A' - 1             ;  such drive: CF.  B: is only with a
+        call    has_drv                 ;  second floppy, C: with the hard
+        pop     bx                      ;  disk.  M:, in memory, isn't tidied)
+        jc      .n
+        mov     [sv_tail], bl
         push    bx
         mov     si, s_defrag
         mov     di, sv_tail

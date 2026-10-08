@@ -1030,6 +1030,7 @@ ems_init:
         mov     es, ax                  ;  (top down), then the ones that
         mov     al, 0FFh                ;  kept theirs (aliases don't)
 .tw:    out     dx, al
+        push    word [es:0]             ; (what it held: back afterwards)
         mov     ah, al
         not     ah
         mov     [es:0], ax
@@ -1045,6 +1046,11 @@ ems_init:
         inc     di
 .tn:    inc     al
         jnz     .tr
+        mov     al, 80h                 ; every page's first word as it was
+.tb:    out     dx, al                  ;  (in the order opposite to the tags',
+        pop     word [es:0]             ;  so an alias ends up right too): M:
+        inc     al                      ;  may have kept its files through a
+        jnz     .tb                     ;  warm restart
 .off:   xor     al, al                  ; all four windows off
         mov     dx, EMS_PORT
 .o:     out     dx, al
@@ -1076,6 +1082,44 @@ ems_init:
         mov     [f_F0.back + 1], ax
         mov     word [mem_init.tc], 0EBh | (mem_init.zm - mem_init.tc - 2) << 8
         mov     byte [mem_init.zm + 1], 'Z'     ; (no "SC" block)
+        ; KMDISK.INC: M:'s installer and resident part into the cache's
+        ; second page, past its 2 KB; INT 67h 5Bh to the stub at KSEG:0012h
+        ; (where `start' was); init's last jump to md_boot, through a far
+        ; jump at KSEG:0000 (md_boot puts `start's bytes back)
+        mov     dx, EMS_PORT
+        mov     al, [ems_tcpg + 1]
+        out     dx, al
+        mov     ax, EMS_FRAME
+        mov     es, ax
+        push    di
+        push    ds
+        push    cs
+        pop     ds
+        mov     si, section.mdt.start
+        mov     di, MD_TPG
+        mov     cx, MD_TLEN
+        rep     movsb
+        pop     es                      ; (KSEG)
+        mov     si, MDB(md_stub)
+        mov     di, MD_STUB
+        mov     cl, md_stub_end - md_stub
+        rep     movsb
+        push    es
+        pop     ds
+        xor     al, al                  ; window 0 off again
+        out     dx, al
+        mov     word [ems_tab + 2 * (5Bh - 40h)], MD_STUB
+        mov     ax, [0]                 ; (md_boot puts these back)
+        mov     [cs:MDB(md_s0)], ax
+        mov     ax, [2]
+        mov     [cs:MDB(md_s0) + 2], ax
+        mov     al, [4]
+        mov     [cs:MDB(md_s0) + 4], al
+        mov     byte [0], 0EAh          ; JMP FAR md_boot
+        mov     word [1], MDB(md_boot)
+        mov     word [3], 1000h
+        mov     byte [init.go + 1], (start - (init.go + 2)) & 0FFh     ; (JMP SHORT 0000h)
+        pop     di
         mov     ax, di
         sub     ax, ems_ltab
 .ntc:

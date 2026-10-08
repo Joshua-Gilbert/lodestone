@@ -2,7 +2,8 @@
 ;
 ;   DEFRAG [A:|B:|C:]      tidy the floppy in drive A: or B: (BIOS unit 0
 ;                          or 1), or the hard disk C: (the current drive
-;                          if none is given)
+;                          if none is given; M:, the temporary disk in
+;                          memory, has nothing to tidy)
 ;   DEFRAG [A:|B:|C:] /T   test the free space; mark bad clusters
 ;   DEFRAG /S [M=ssss:oooo] [F=ssss:oooo]
 ;                          screen-saver mode, started by the Executive when
@@ -122,24 +123,24 @@ start:  cld
         jne     .u                              ; one
         mov     ah, 19h
         int     21h
-        cmp     al, 2
-        ja      .u
         mov     [unit], al
-.u:     int     11h                             ; is there such a drive?
+.u:     cmp     byte [unit], 12                 ; M:: in memory, nothing to
+        je      memdrv                          ;  tidy
+        int     11h                             ; is there such a drive?
         xor     cl, cl
         test    al, 1
         jz      .un
         mov     cl, al
         shr     cl, 6
         inc     cl
-.un:    cmp     byte [unit], 2                  ; C:: with it, Grid-OS has
-        jne     .ul                             ;  3 drives (INT 21h 0Eh)
-        mov     ah, 19h
+.un:    cmp     byte [unit], 2                  ; C:: is it there?  (IOCTL
+        jne     .ul                             ;  "removable?": CF if not)
+        mov     ax, 4408h
+        mov     bl, 3
         int     21h
-        mov     dl, al
-        mov     ah, 0Eh
-        int     21h
-        mov     cl, al
+        mov     cl, 3
+        jnc     .ul
+        xor     cl, cl
 .ul:    mov     al, [unit]
         add     al, 'A'
         mov     [lt_drive], al
@@ -196,6 +197,11 @@ nomem:  mov     dx, s_nomem
         jmp     short txtfail
 nodrv:  mov     dx, s_nodrv
         jmp     short txtfail
+memdrv: mov     dx, s_memdrv                    ; (in order: exit code 0)
+        mov     ah, 9
+        int     21h
+        mov     ax, 4C00h
+        int     21h
 nogfx:  mov     ax, 0003h
         int     10h
         mov     dx, s_nogfx
@@ -229,10 +235,10 @@ args:   mov     si, 81h
 .t:     mov     byte [testmode], 1
         jmp     .l
 .m:     and     al, 0DFh
-        cmp     byte [si], ':'                  ; A:, B: or C:
-        jne     .m2
+        cmp     byte [si], ':'                  ; A:, B: or C: (any letter:
+        jne     .m2                             ;  the others are refused)
         sub     al, 'A'
-        cmp     al, 2
+        cmp     al, 25
         ja      .l
         mov     [unit], al
         mov     byte [unitset], 1
@@ -3226,6 +3232,7 @@ s_err     db ' disk error', 0
 s_marked  db ' marked', 0
 s_logf    db 'A:\DEFRAG.TXT', 0
 s_nomem   db 'DEFRAG: not enough memory', 13, 10, '$'
+s_memdrv  db 'DEFRAG: M: is the temporary disk, in memory: nothing to tidy', 13, 10, '$'
 s_nodrv   db 'DEFRAG: there is no drive '
 lt_nodrv  db 'A:', 13, 10, '$'
 s_nogfx   db 'DEFRAG needs the GRiD 640x400 screen', 13, 10, '$'
