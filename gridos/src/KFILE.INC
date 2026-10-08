@@ -1517,16 +1517,17 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
         jmp     .iy
 .ost:   mov     ax, 00FFh
         jmp     ok_ax
-.rem:   mov     al, [bp+F_BX]           ; removable?  (A: and B: are, C: not)
-        or      al, al
+.rem:   mov     al, [bp+F_BX]           ; removable?  (A: and B: are; C: and M:
+        or      al, al                  ;  not)
         jnz     .rd
         mov     al, [cur_drv]
         inc     al
 .rd:    dec     al
         call    drv_present
         jc      .bdrv
-        xor     ah, ah
-        shr     al, 1
+        cmp     al, 2
+        sbb     ax, ax                  ; (A:, B: -1, then 0; others 0, then 1)
+        inc     ax
         jmp     ok_ax
 .bdrv:  mov     ax, 15
         jmp     fail
@@ -1670,9 +1671,8 @@ find_next:
         les     di, [dta]
         mov     al, [es:di]
         dec     al
-        cmp     al, NDRV
-        jae     .nomore
-        call    use_drive
+        call    drv_present
+        jc      .nomore
         cmp     byte [si+D_MNT], 0
         je      .nomore
         call    fat_load

@@ -1250,14 +1250,12 @@ f_F0:   mov     al, [bp+F_AX]
         mov     [bp+F_CX], cx
         jmp     ok
 f_0E:   mov     al, [bp+F_DX]           ; select drive
-        cmp     al, NDRV
-        jae     .x
         call    drv_present
         jc      .x
         mov     [cur_drv], al
-.x:     mov     al, 2                   ; drives A: and B: (and C:)
-        add     al, [drvtab + 2 * DRVSZ + D_PRES]
-        jmp     ret_al
+.x:     mov     al, 2                   ; drives A: and B: (and C:; KMDISK.INC:
+        add     al, [drvtab + 2 * DRVSZ + D_PRES]       ;  13, to M:)
+.xe:    jmp     ret_al
 f_19:   mov     al, [cur_drv]
         jmp     ret_al
 f_1A:   mov     ax, [bp+F_DS]
@@ -1423,10 +1421,17 @@ f_29:   mov     ds, [bp+F_DS]
         jne     .nod
         mov     al, [si]
         and     al, 0DFh
-        sub     al, 'A' - 1
-        jbe     .bdrv
-        cmp     al, 2
-        ja      .bdrv
+        sub     al, 'A'
+        jb      .bdrv
+        push    si                      ; (a drive that is there)
+        push    ds
+        push    cs
+        pop     ds
+        call    drv_present
+        pop     ds
+        pop     si
+        jc      .bdrv
+        inc     ax
         mov     [es:di], al
         add     si, 2
         jmp     .nm

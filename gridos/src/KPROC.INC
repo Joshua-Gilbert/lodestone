@@ -578,12 +578,13 @@ full_name:
         pop     ax
         cmp     byte [si], '\'
         je      .rest
-        cmp     al, NDRV
-        jae     .rest
-        push    si
-        xor     ah, ah
-        imul    si, ax, CWDLEN
-        add     si, cwdstr
+        push    si                      ; (a drive the kernel has?  get_path
+        call    drv_present             ;  doesn't check: else no directory,
+        jc      .cwe                    ;  and resolve refuses it)
+        push    di
+        call    cwd_of
+        mov     si, di
+        pop     di
 .cw:    lodsb
         or      al, al
         jz      .cwe

@@ -9,6 +9,9 @@
 ; the emulator records to the microsecond; real BIOSes ignore BX.
 ; 1.3: with an EMS manager (INT 67h), three EMS tests after the total
 ; (not in it): page mapping, and 57h moves to and from EMS.
+; 1.4: BENCH /N n runs each test n times between its two timing points
+; (1-99), for a disk so fast that one run is a tick or two (M:, the
+; temporary disk in EMS); the times are for all n, the KB/s for one.
 cpu 286
 org 100h
 
@@ -31,7 +34,38 @@ start:  mov     sp, stack_top
         shr     bx, 4
         mov     ah, 4Ah
         int     21h
-        mov     word [kbn], BIGKB
+        mov     word [reps], 1          ; /N n: each test n times
+        mov     si, 81h
+.arg:   lodsb
+        cmp     al, 13
+        je      .args
+        cmp     al, '/'
+        jne     .arg
+        lodsb
+        and     al, 0DFh
+        cmp     al, 'N'
+        jne     .arg
+.sp:    lodsb
+        cmp     al, ' '
+        je      .sp
+        dec     si
+        xor     bx, bx
+.dg:    lodsb
+        sub     al, '0'
+        cmp     al, 9
+        ja      .dn
+        cbw
+        imul    bx, bx, 10
+        add     bx, ax
+        cmp     bx, 99
+        jbe     .dg
+        mov     bx, 99
+.dn:    or      bx, bx
+        jz      .args
+        mov     [reps], bx
+.args:  mov     ax, BIGKB
+        mul     word [reps]
+        mov     [kbn], ax
         mov     dx, s_title
         call    print
         call    is_gridos
@@ -71,62 +105,80 @@ start:  mov     sp, stack_top
         call    pnum
         mov     dx, s_memkb
         call    print
-        mov     dx, s_head
+        cmp     word [reps], 1          ; ("; each test 20 times")
+        je      .one
+        mov     dx, s_reps
+        call    print
+        mov     ax, [reps]
+        call    pnum
+        mov     dx, s_times
+        call    print
+.one:   mov     dx, s_head
         call    print
 
         mov     byte [tno], 1
         mov     dx, n_write
         call    begin
-        call    t_write
+        mov     bx, t_write
+        call    reps_of
         call    finish_kb
 
         mov     dx, n_read16
         call    begin
         mov     word [rsize], CHUNK
-        call    t_read
+        mov     bx, t_read
+        call    reps_of
         call    finish_kb
 
         mov     dx, n_read512
         call    begin
         mov     word [rsize], 512
-        call    t_read
+        mov     bx, t_read
+        call    reps_of
         call    finish_kb
 
         mov     dx, n_read128
         call    begin
         mov     word [rsize], 128
-        call    t_read
+        mov     bx, t_read
+        call    reps_of
         call    finish_kb
 
         mov     dx, n_random
         call    begin
-        call    t_random
+        mov     bx, t_random
+        call    reps_of
         call    finish
 
         mov     dx, n_dir
         call    begin
-        call    t_dir
+        mov     bx, t_dir
+        call    reps_of
         call    finish
 
         mov     dx, n_open
         call    begin
-        call    t_open
+        mov     bx, t_open
+        call    reps_of
         call    finish
 
         mov     dx, n_small
         call    begin
-        call    t_small
+        mov     bx, t_small
+        call    reps_of
         call    finish
 
         call    make_exe                ; (not timed)
         mov     dx, n_exec
         call    begin
-        call    t_exec
+        mov     bx, t_exec
+        call    reps_of
         call    finish
 
         mov     dx, n_calls
         call    begin
-        call    t_calls
+        mov     bx, t_calls
+        call    reps_of
         call    finish
 
         mov     dx, s_dat               ; clean up
@@ -270,6 +322,17 @@ savelog:
 
 ; ---------------------------------------------------------------------
 ; timing: begin (DX = name), finish / finish_kb (KB in [kb])
+; the test at BX, [reps] times
+reps_of:
+        mov     cx, [reps]
+.l:     push    cx
+        push    bx
+        call    bx
+        pop     bx
+        pop     cx
+        loop    .l
+        ret
+
 begin:  push    dx
         call    print
         pop     dx
@@ -768,7 +831,7 @@ psecs:  mov     cx, 5493                ; hundredths = ticks * 5.4925
         mov     dx, s_secs
         jmp     print
 
-s_title     db 'BENCH 1.3 - DOS file system benchmark on $'
+s_title     db 'BENCH 1.4 - DOS file system benchmark on $'
 s_freedos   db 'FreeDOS (DOS $'
 s_emm       db 'EMMXXXX0'
 s_noems     db 'No EMS (INT 67h)', 13, 10, '$'
@@ -783,6 +846,8 @@ s_close     db ')', 13, 10, '$'
 s_date      db 'Run $'
 s_mem       db 'Memory for programs: $'
 s_memkb     db ' KB$'
+s_reps      db '; each test $'
+s_times     db ' times (the times for all of them, KB/s for one)$'
 s_head      db 13, 10, 13, 10, '$'
 n_write     db 'Write 256 KB, 16 KB at a time       $'
 n_read16    db 'Read 256 KB, 16 KB at a time        $'
@@ -828,6 +893,7 @@ save_sp     resw 1
 epb         resw 7
 logpos      resw 1
 kbn         resw 1
+reps        resw 1
 frame       resw 1
 eh          resw 1
 mv_dst      resb 1

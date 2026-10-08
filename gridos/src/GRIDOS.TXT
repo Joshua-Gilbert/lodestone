@@ -1,4 +1,4 @@
-Grid-OS 0.3.13 - boot floppy
+Grid-OS 0.3.14 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -43,12 +43,13 @@ written for it are .RUN files that load next to it:
               (save, write to another file, include a file), CODE-U Usage,
               ESC (or CODE-ESC) Cancel.  Files up to 64 KB; it saves to
               NAME.$$$ first, so a failed save leaves the old file alone.
-  SYSTEM.RUN  Usage (CODE-U in the Executive): memory, disks (C: too),
-              the clock (Return sets it), devices (the hard disk's own
-              name too), GPIB (Return finds instruments by serial poll,
-              then sets them back to local), display (Return switches
-              the screen font), screen saver (Return: when it starts;
-              Space: whether it tidies the disks first), about.
+  SYSTEM.RUN  Usage (CODE-U in the Executive): memory, disks (C: and M:
+              too), the clock (Return sets it), devices (the hard disk's
+              own name too), GPIB (Return finds instruments by serial
+              poll, then sets them back to local), display (Return
+              switches the screen font), screen saver (Return: when it
+              starts; Space: whether it tidies the disks first), the
+              temporary disk M: (Return: its size), about.
 Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
 subject you work in).  A DOS program gets about 566 KB: while it runs
 the Executive lends it the memory of its file list.  The screen font is
@@ -198,6 +199,25 @@ read-only title isn't read-only.  An error stops it and says why; what
 was copied stays.  Also: a subject that can't be made (or grow) on a
 write-protected B: no longer stops A: from being read.
 
+0.3.14: M:, the temporary disk.  With EMS, Grid-OS keeps a disk in it:
+drive M:, 256 KB to start with, for files wanted fast and only for a
+while.  It works as A: and C: do (DIR, COPY, MD, programs run from it;
+the Executive's Device list and Copy form offer "Temporary disk M:"),
+but big reads and writes go some 80 to 100 times as fast as on a
+floppy, and small ones don't wait for a disk at all.  What is on it goes when the GRiD is switched
+off, and at CTRL-ALT-DEL unless the EMS kept it (Grid-OS checks; EMSKEEP
+tells whether this 1520's EMS does).  System, Temporary disk: Return
+steps through Off, 64, 128, 256, 512 KB, 1 MB and All free, and the
+line shows the size M: has.  A new size starts M: empty: System asks
+first when there are files on it, and refuses while one is open.  The
+choice goes in GRIDOS.INI as MDISK=512 (MDISK=0 off, MDISK=ALL all the
+free EMS; no line for 256 KB).  M: takes EMS pages that programs then
+don't get (256 KB of the 1376), and none of the memory programs get.
+Off, it takes nothing at all.  Without EMS (the memory set to extended)
+the topic says "needs EMS" and there is no M:.  DEFRAG and the screen
+saver leave M: alone (nothing to tidy).  The Device list shows B: only
+when the GRiD has a second floppy drive.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -217,6 +237,8 @@ The Executive (the file list):
   5 minutes idle                 screen saver (DEFRAG on A:, B:, C:,
                                  then the time; System, Screen saver
                                  sets when)
+  M:                             the temporary disk (with EMS; System,
+                                 Temporary disk sets its size)
   Serial mouse on COM2 (or COM1).
 
 Programs:
@@ -238,12 +260,17 @@ Programs:
   BENCH     file system benchmark: run it here, then under GRiD MS-DOS
             from this drive (B: there), and compare (about 400 KB free
             needed; some 5 minutes under MS-DOS).  Each run is added to
-            BENCH.TXT on this disk; both wait for a key at the end
+            BENCH.TXT on this disk; both wait for a key at the end.
+            BENCH /N 10 does each test 10 times over (for M:, too fast
+            for one)
   HDPROBE   the internal hard disk close up: its registers, self-test,
             IDENTIFY, heads and sectors (read-only; report HDPROBE.TXT).
             HDPROBE /X exercises a sticky arm (HDPROBEX.TXT)
   HDSCAN    what is on the hard disk, every directory, and a read of
             every sector (read-only; report HDSCAN.TXT)
+  EMSKEEP   does the EMS keep what it holds through CTRL-ALT-DEL?
+            EMSKEEP fills 8 EMS pages with a pattern; press CTRL-ALT-DEL,
+            then run EMSKEEP /C: it says so, page by page (EMSKEEP.TXT)
   GGTEST    GPIB driver test on the bus
   TESTKEY   echoes keys until Esc (for checking Claude's key scripts)
   GRIDGPIB  the GPIB driver for GRiD MS-DOS (load it first there)

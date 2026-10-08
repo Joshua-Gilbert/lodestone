@@ -21,7 +21,7 @@ TM5000G = _find('TM5000G', os.path.join(GOS, '..', 'tools', 'TM5000G.EXE'), '/ho
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
-    for d, n in ((HERE, 'TESTDOS'), (HERE, 'UPPER'), (HERE, 'CACHETST'), (HERE, 'EMSTEST'), (HERE, 'MEMSZ'), (HERE, 'CAPTEST'),
+    for d, n in ((HERE, 'TESTDOS'), (HERE, 'UPPER'), (HERE, 'CACHETST'), (HERE, 'EMSTEST'), (HERE, 'MEMSZ'), (HERE, 'CAPTEST'), (HERE, 'MDTEST'),
                  (os.path.join(GOS, 'src'), 'GRIDCMD')):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
 
@@ -324,6 +324,8 @@ def t_cache(ems=0):
         check('CACHETST: its 4 EMS pages stay in the 4 windows, as it left them, while the cache uses the frame '
               '(%s reads and %s writes through the frame)' % (m.groups() if m else ('?', '?')),
               'EMS: 4 pages of ours' in out and m and int(m.group(1)) > 10 and int(m.group(2)) > 10, out[-400:])
+        check('... and M: on all along (256 KB, no MDISK= line), as it was', md_info(k)[1] == 16 and all(hooks_in(k)),
+              md_info(k)[:2])
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
     check('disk consistent after CACHETST' + tag, not probs and '\\CACHE_A.TST' not in files, '; '.join(probs) or sorted(files))
     log = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\CACHETST.TXT', b'').decode('latin-1')
@@ -606,7 +608,7 @@ def t_ems():
     check('TESTDOS with EMS: no failures', 'FAIL' not in out and ' 0 failed' in out, out[-200:])
     out = k.run_file('MEMSZ.COM', 30)
     print('   ' + out.strip())
-    check('EMS: no EMS handles left open afterwards', ems_used(k) == 0, ems_used(k))
+    check('EMS: no EMS left in use afterwards but M:\'s 16 pages', ems_used(k) == 16 and md_info(k)[1] == 16, ems_used(k))
     # the same with a board that aliases (raw page 88 = page 0, ...): the scan
     # must still find 88
     k = ktest.KPC(image('ems2.img'), ems_pages=88, ems_alias=True); k.start()
@@ -621,7 +623,299 @@ def t_ems():
     sc = [b for b in mcbs(k) if b[4] == b'SC']
     check('EMS (2 pages): both for programs, the cache stays the "SC" block', ems_npg(k) == 2 and len(sc) == 1, (ems_npg(k), sc))
 
-TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_cache, t_cache_ems]
+# ---------------------------------------------------------------------
+#  M:, the temporary disk in EMS (KMDISK.INC)
+# ---------------------------------------------------------------------
+MDTEST = os.path.join(HERE, 'MDTEST.COM')
+SYSF = os.path.join(GOS, 'src', 'GRIDOS.SYS')
+
+def md_info(k):
+    """M: as the kernel has it: (handle, pages, its whole disk from EMS),
+    from the installer's own data (in the disk cache's EMS page) and the
+    EMS manager's tables."""
+    Y = k.Y
+    tp = k.rd('ems_tcpg', 2)[1] & 0x7F
+    h = struct.unpack('<H', k.pc.ems_read(tp, Y['md_h'], 2))[0]
+    if not k.pc.ems_read(tp, Y['md_pg'], 1)[0]: return 0, 0, b''
+    st, n = k.rd('ems_h', 2, 4 * h)
+    ltab = k.rd('ems_ltab', 128)
+    return h, n, b''.join(k.pc.ems_read(ltab[st + i] & 0x7F, 0, 0x4000) for i in range(n))
+
+def md_owner(k, h): return k.pc.u16(0x60, k.Y['ems_h'] + 4 * h + 2)
+
+def env_split(k):
+    """(the master environment's paragraphs, the MD block's (owner, paragraphs) or None)"""
+    b = mcbs(k)
+    md = b[1] if b[1][4] == b'MD' else None
+    return b[0][3], ((md[2], md[3]) if md else None)
+
+HOOKED = ('use_drive', 'drv_present', 'cwd_of', 'dio', 'f_0E.x')
+def hooks_in(k): return [k.pc.rd(0x60, k.Y[n], 1)[0] == 0xE9 for n in HOOKED]
+
+def md_size(out):
+    m = re.search(r'result (\w\w) size (\d+)', out)
+    return (m.group(1), int(m.group(2))) if m else (None, None)
+
+def md_query(out):
+    m = re.search(r'M: setting (\d+) size (\d+) max (\d+) handle (\d+)', out)
+    return tuple(map(int, m.groups())) if m else None
+
+def shell_memsz(sh):
+    m = re.search(r'([\d.]+) KB for programs', sh.run('memsz'))
+    return float(m.group(1)) if m else 0
+
+def ini_image(name, text, *files):
+    ini = os.path.join(OUT, 'GRIDOS.INI')
+    open(ini, 'wb').write(text)
+    return image(name, *(list(files) + [ini]))
+
+def t_mdisk():
+    """M:, the temporary disk in EMS: nothing without EMS or while it is
+    off; 256 KB by default, MDISK= in GRIDOS.INI; its block split off the
+    environment's 512 bytes (DOS programs get as much); every size, the
+    file calls, COPY with A: and C:, a program run from M:, M: full,
+    refused while a file is open, EMS held by a program, a program's own
+    pages in all four windows and a buffer in the frame while it works
+    (MDTEST), a warm restart (kept, or made new)."""
+    files = [os.path.join(GOS, 'src', 'GRIDCMD.COM'), MDTEST, os.path.join(HERE, 'MEMSZ.COM'), os.path.join(HERE, 'UPPER.COM')]
+    sysb = open(SYSF, 'rb').read()
+    img = image('md.img', *files)
+    # --- no EMS
+    k = ktest.KPC(img); k.start()
+    env, md = env_split(k)
+    check('M: without EMS: the environment keeps its 512 bytes, no MD block, no hook, KSEG:0000 as `start\' left it',
+          env == 32 and md is None and not any(hooks_in(k)) and k.pc.rd(0x60, 0, 0x2D)[:10] == sysb[:10]
+          and k.pc.rd(0x60, 0x12, 0x1B) == sysb[0x12:0x2D], (env, md, hooks_in(k)))
+    sh = Shell(k)
+    kb_noems = shell_memsz(sh)
+    o = sh.run('mdtest /q')
+    check('... INT 67h 5Bh answers 84h (no EMS) and there is no drive M:', 'says 84' in o and 'Invalid drive' in sh.run('m:'), o)
+    # --- EMS, M: off (MDISK=0)
+    k = ktest.KPC(ini_image('md0.img', b'MDISK=0\r\n', *files), ems_pages=88); k.start()
+    env, md = env_split(k)
+    h, n, mi = md_info(k)
+    check('MDISK=0: M: off: no MD block (the environment has its 512 bytes), no hook, no EMS pages',
+          env == 32 and md is None and not any(hooks_in(k)) and n == 0 and ems_used(k) == 0, (env, md, hooks_in(k), n, ems_used(k)))
+    check('... the stub at KSEG:0012h (where `start\' was) and INT 67h 5Bh to it; init\'s last jump back as it was',
+          k.pc.u16(0x60, k.Y['ems_tab'] + 2 * 0x1B) == 0x12 and k.pc.rd(0x60, 0, 5) == sysb[:5], k.pc.rd(0x60, 0, 0x2D).hex())
+    sh = Shell(k)
+    kb_off = shell_memsz(sh)
+    check('... "M:": invalid drive; MDTEST /Q: off', 'Invalid drive' in sh.run('m:') and md_query(sh.run('mdtest /q'))[:2] == (0, 0))
+    # --- EMS, no GRIDOS.INI: 256 KB
+    k = ktest.KPC(img, ems_pages=88); k.start()
+    h, n, mi = md_info(k)
+    env, md = env_split(k)
+    check('no MDISK= line: M: is 256 KB, 16 pages in a handle of its own (%d, owner 0: no exit frees it)' % h,
+          n == 16 and h and md_owner(k, h) == 0 and ems_used(k) == 16, (h, n, ems_used(k)))
+    check('... its resident part: a block of its own (owner 8, "MD", %d bytes) split off the end of the environment\'s 512 bytes '
+          '(the environment keeps %d)' % ((md or (0, 0))[1] * 16, env * 16),
+          md and md[0] == 8 and env + 1 + md[1] == 32 and env * 16 >= 128, (env, md))
+    check('... the kernel hooked (use_drive, drv_present, cwd_of, dio, INT 21h 0Eh)', all(hooks_in(k)), hooks_in(k))
+    probs, fs = fatcheck.check(mi)
+    b = fatcheck.bpb(mi)
+    check('... M: is an empty FAT12 disk: 512 sectors of 512 bytes, 2 a cluster, 1 FAT, 128 root entries',
+          not probs and not fs and b == dict(bps=512, spc=2, res=1, nfat=1, nroot=128, tot=512, spf=1) and mi[3:11] == b'GRIDOS M',
+          (probs, fs, b))
+    sh = Shell(k)
+    kb_on = shell_memsz(sh)
+    check('DOS programs get as much with M: on as with it off (%.1f KB, %.1f KB off; %.1f KB without EMS)' % (kb_on, kb_off, kb_noems),
+          kb_on == kb_off and kb_on > 0, (kb_on, kb_off))
+    q = md_query(sh.run('mdtest /q'))
+    check('MDTEST /Q: setting 256, size 256, all free would give 1376 KB (86 pages)', q and q[:3] == (256, 256, 1376), q)
+    # the shell on M:
+    o = sh.run('m:')
+    check('"M:" makes M: the current drive', 'M:\\>' in o, o)
+    sh.run('copy a:gridcmd.com'); sh.run('copy a:upper.com'); sh.run('md sub'); sh.run('cd sub')
+    o = sh.run('copy ..\\gridcmd.com x.com')
+    check('COPY A: -> M:, MD, CD and COPY within M:', '1 File(s) copied' in o and 'M:\\SUB>' in o, o)
+    o = sh.run('dir')
+    check('DIR of M:\\SUB', 'Directory of  M:\\SUB' in o and 'X        COM' in o and '.               <DIR>' in o, o)
+    sh.run('cd \\')
+    o = sh.run('echo hello there | upper')
+    check('a program run from M: (UPPER.COM)', 'HELLO THERE' in o, o)
+    o = sh.run('copy m:\\sub\\x.com a:\\back.com')
+    check('COPY M: -> A:', '1 File(s) copied' in o, o)
+    fa = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    h, n, mi = md_info(k)
+    fm = fatcheck.read_files(mi, 'M')
+    gc = open(os.path.join(GOS, 'src', 'GRIDCMD.COM'), 'rb').read()
+    check('... every copy byte for byte (on M: and back on A:)', fm.get('M:\\GRIDCMD.COM') == gc and fm.get('M:\\SUB\\X.COM') == gc
+          and fa.get('A:\\BACK.COM') == gc, sorted(fm))
+    probs, _ = fatcheck.check(mi)
+    check('... M: consistent (CHKDSK\'s checks)', not probs, probs)
+    sh.run('del sub\\x.com')
+    o = sh.run('rd sub')
+    check('DEL, RD on M:', 'SUB' not in sh.run('dir'), o)
+    # page boundaries, the frame, all four windows; full
+    o = sh.run('mdtest /w')
+    check('MDTEST /W: our pages in all four windows and buffers in the frame while M: works: as they were, the data right',
+          o.count('ok ') == 8 and 'FAIL' not in o, o)
+    o = sh.run('mdtest /f')
+    check('MDTEST /F: M: filled to the last cluster, read back, emptied', o.count('ok ') == 4 and 'FAIL' not in o, o)
+    # a file open: refused
+    o = sh.run('mdtest /o 64')
+    check('a new size while a file on M: is open: refused (80h), M: as it was', md_size(o) == ('80', 256)
+          and 'GRIDCMD  COM' in sh.run('dir m:'), o)
+    # every size
+    sizes = [(64, 64), (128, 128), (512, 512), (1024, 1024), ('all', 1376), (0, 0), (256, 256)]
+    for want, got in sizes:
+        o = sh.run('mdtest /s %s' % want)
+        h, n, mi = md_info(k)
+        env, md = env_split(k)
+        if got:
+            probs, fs = fatcheck.check(mi)
+            ok = md_size(o) == ('00', got) and n * 16 == got and not probs and not fs and md and env + 1 + md[1] == 32 and all(hooks_in(k))
+        else:
+            ok = md_size(o) == ('00', 0) and n == 0 and env == 32 and md is None and not any(hooks_in(k)) and ems_used(k) == 0
+        check('M: set to %s: %d KB, %s' % (want, got, 'empty, consistent, its block split off the environment' if got else
+                                         'off: no block, the environment whole, no hook, no EMS'), ok, (o, n, env, md, hooks_in(k)))
+    check('... and DOS programs still get %.1f KB' % kb_on, shell_memsz(sh) == kb_on)
+    o = sh.run('mdtest /w')
+    check('MDTEST /W again at 256 KB after all that', o.count('ok ') == 8 and 'FAIL' not in o, o)
+    # EMS held by a program
+    o = sh.run('mdtest /h 60')
+    o = sh.run('mdtest /s 512')
+    check('60 pages held by a resident program: M: at 512 KB gets what is free (26 pages, 416 KB)', md_size(o) == ('00', 416), o)
+    q = md_query(sh.run('mdtest /q'))
+    check('... MDTEST /Q: setting 512, size 416', q and q[:2] == (512, 416), q)
+    sh.run('mdtest /s 0'); sh.run('mdtest /h 26')
+    o = sh.run('mdtest /s 64')
+    check('no EMS free at all: M: off (82h), the setting kept', md_size(o) == ('82', 0) and md_query(sh.run('mdtest /q'))[:2] == (64, 0)
+          and env_split(k)[1] is None, o)
+    k.key('exit'); k.key(ktest.ENTER); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    # GRIDOS.INI
+    for text, want in ((b'MDISK=ALL\r\n', 1376), (b'mdisk=all\r\n', 1376), (b'FONT=X.FNT\r\nMDISK=128\r\nSAVER=10\r\n', 128),
+                       (b'MDISK=100\r\n', 96), (b'MDISK=junk\r\n', 256), (b'MDISK=\r\n', 256), (b'MDISK=99999\r\n', 1376),
+                       (b'MDISK=5', 16)):
+        k = ktest.KPC(ini_image('mdi.img', text, *files), ems_pages=88); k.start()
+        h, n, mi = md_info(k)
+        check('GRIDOS.INI %r: M: is %d KB' % (text, want), n * 16 == want and not k.crashed, (n, k.crashed))
+    k = ktest.KPC(img, ems_pages=8); k.start()
+    h, n, mi = md_info(k)
+    check('a board of 8 pages (6 for programs): M: is as big as fits, 96 KB', n == 6 and not fatcheck.check(mi)[0], n)
+    k = ktest.KPC(img, ems_pages=2); k.start()
+    env, md = env_split(k)
+    check('a board of 2 pages (no disk cache in EMS): no M:, nothing kept for it', md is None and env == 32
+          and k.pc.u16(0x60, k.Y['ems_tab'] + 2 * 0x1B) != 0x12 and k.pc.rd(0x60, 0, 10) == sysb[:10]
+          and k.pc.rd(0x60, 0x12, 0x1B) == sysb[0x12:0x2D], (env, md))
+    # warm restart
+    for ems, kept in (('keep', True), ('lose', False), ({0}, False)):
+        k = ktest.KPC(img, ems_pages=88); k.start()
+        sh = Shell(k)
+        sh.run('copy a:gridcmd.com m:a.com'); sh.run('md m:\\d'); sh.run('copy a:upper.com m:\\d\\u.com')
+        k.key('exit'); k.key(ktest.ENTER); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+        h0, n0, mi0 = md_info(k)
+        k.pc.warm_boot(ems); k.settle(10)
+        h, n, mi = md_info(k)
+        fs = fatcheck.read_files(mi, 'M') if n else {}
+        what = 'EMS kept' if ems == 'keep' else 'EMS lost' if ems == 'lose' else "M:'s first page lost"
+        if kept:
+            ok = fs.get('M:\\A.COM') == gc and 'M:\\D\\U.COM' in fs and not fatcheck.check(mi)[0]
+        else:
+            ok = n == 16 and not fs and not fatcheck.check(mi)[0]
+        check('a warm restart (%s): M: %s' % (what, 'keeps its files' if kept else 'made new, empty'), ok and not k.crashed, (sorted(fs), k.crashed))
+    k = ktest.KPC(img, ems_pages=88); k.start()
+    sh = Shell(k)
+    sh.run('copy a:gridcmd.com m:a.com'); sh.run('echo MDISK=128> a:\\gridos.ini')
+    k.key('exit'); k.key(ktest.ENTER); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    k.pc.warm_boot('keep'); k.settle(10)
+    h, n, mi = md_info(k)
+    check('a warm restart after MDISK= changed (128 KB): M: made new at that size', n == 8 and not fatcheck.read_files(mi, 'M'), n)
+
+EMS_PAGE = 0x4000
+
+def ems_rec(k, i):
+    """EMS handle i's record: (start in ems_ltab (FFh: closed), pages, owner)"""
+    b = k.rd('ems_h', 4, 4 * i)
+    return b[0], b[1], b[2] | b[3] << 8
+
+def t_mdreview():
+    """The review's cases (0.3.14), each of which failed before its fix: a
+    closed file's slot on M: isn't an open file; EXEC with a drive the
+    kernel doesn't have ("F:X.EXE") overran ex_name; M:'s EMS handle
+    closed by a program by mistake and given to another: M: neither writes
+    into its pages nor closes it; M: turned off doesn't come back at a warm
+    restart; no EMS handle free; called from inside INT 21h; the current
+    drive M: kept through a new size."""
+    gc = open(os.path.join(GOS, 'src', 'GRIDCMD.COM'), 'rb').read()
+    img = image('mdr.img', os.path.join(GOS, 'src', 'GRIDCMD.COM'), MDTEST)
+    k = ktest.KPC(img, ems_pages=88); k.start()
+    sh = Shell(k)
+    sh.run('copy a:gridcmd.com m:\\')
+    o = sh.run('mdtest /s 64')
+    check('COPY to M:, then a new size at once: done, not "a file is open" (the copy\'s closed slot keeps its drive and mode)',
+          md_size(o) == ('00', 64), o)
+    # EXEC "F:X.EXE": full_name took F:'s "current directory" from past
+    # cwdstr (bounce, here as a floppy read across 64 KB leaves it), with no
+    # end, over ex_name and on into KEMS
+    sh.run('copy a:mdtest.com m:\\'); sh.run('m:')
+    past = k.pc.rd(0x60, k.Y['bss_end'], 64)
+    k.wr('bounce', b'A' * 450, 0x3E)
+    o1, o2 = sh.run('mdtest /x f:x.exe'), sh.run('mdtest /x 1:x.exe')
+    c = [re.search(r'exec (\w\w)', o) for o in (o1, o2)]
+    check('EXEC "F:X.EXE" and "1:X.EXE": refused (%s), the kernel\'s memory past its BSS (KEMS) as it was, INT 67h still right' %
+          ', '.join(m.group(1) if m else '?' for m in c),
+          all(m and m.group(1) != '00' for m in c) and k.pc.rd(0x60, k.Y['bss_end'], 64) == past and
+          md_query(sh.run('mdtest /q'))[:2] == (64, 64) and not k.crashed, (o1, o2))
+    # the current drive M: through a new size
+    o = sh.run('a:mdtest /s 128')
+    check('a new size with M: the current drive: M: still current (empty, at 128 KB)', md_size(o) == ('00', 128) and
+          'M:\\>' in sh.run('ver'), o)
+    sh.run('a:')
+    # M:'s handle closed by mistake, and a resident program given it
+    h, n, _ = md_info(k)
+    o = sh.run('mdtest /c %d' % h)
+    sh.run('mdtest /h 4')
+    tsr = [i for i in range(1, 32) if ems_rec(k, i)[0] != 0xFF and ems_rec(k, i)[1] == 4 and ems_rec(k, i)[2] not in (0,)]
+    st, pg, own = ems_rec(k, tsr[0]) if tsr else (0, 0, 0)
+    ltab = k.rd('ems_ltab', 128)
+    raw = [ltab[st + i] & 0x7F for i in range(pg)]
+    snap = [k.pc.ems_read(p, 0, EMS_PAGE) for p in raw]   # (M:'s old disk, likely: the same raw pages)
+    o = sh.run('copy a:gridcmd.com m:\\z.com')
+    for i in range(10):
+        if 'Fail?' not in o.rstrip().split('\n')[-1]: break
+        k.key('f'); o = '\n'.join(k.pc.text_screen().rstrip().split('\n')[1:])
+    kept = lambda: [k.pc.ems_read(p, 0, EMS_PAGE) for p in raw] == snap
+    check('M:\'s handle (%d) closed by a program by mistake, then a resident program\'s (%s): COPY to M: refused, '
+          'the program\'s pages untouched' % (h, tsr), tsr == [h] and '1 File(s) copied' not in o and kept() and not k.crashed, o)
+    o = sh.run('mdtest /s 0')
+    check('... M: off then: the program\'s handle not closed, its pages as they were; M: gone',
+          ems_rec(k, h) == (st, pg, own) and kept() and md_size(o) == ('00', 0) and md_info(k)[1] == 0, (ems_rec(k, h), o))
+    # no handle free: 82h, as no pages
+    busy = [i for i in range(1, 32) if ems_rec(k, i)[0] == 0xFF]
+    for i in busy: k.wr('ems_h', bytes((0, 0, 0xFE, 0xFF)), 4 * i)
+    o = sh.run('mdtest /s 128')
+    for i in busy: k.wr('ems_h', bytes((0xFF, 0, 0, 0)), 4 * i)
+    check('every EMS handle in use: 82h (as no EMS free), M: off', md_size(o) == ('82', 0), o)
+    # from inside INT 21h (as from a handler or a hot key): 80h, nothing changed
+    sh.run('mdtest /s 256')
+    state = [0]
+    def inside(pc):
+        a = (pc.r('cs') * 16 + pc.r('ip')) & 0xFFFFF
+        if state[0] == 0 and a == 0x600 + 0x12:
+            k.wr('indos', b'\x01'); state[0] = 1
+        elif state[0] == 1 and 0x11000 <= a < 0xA0000:
+            k.wr('indos', b'\x00'); state[0] = 2
+    k.hooks.append(inside)
+    o = sh.run('mdtest /s 64')
+    k.hooks.remove(inside)
+    check('called from inside INT 21h: 80h, M: as it was (256 KB)', md_size(o) == ('80', 256) and md_info(k)[1] == 16
+          and state[0] == 2, (o, state))
+    # M: off by a program (GRIDOS.INI as it was: no line, 256 KB), then a
+    # warm restart (M:'s pages the same again): its first page was
+    # cleared, so M: is made new
+    k = ktest.KPC(img, ems_pages=88); k.start()
+    sh = Shell(k)
+    sh.run('copy a:gridcmd.com m:\\a.com')
+    sh.run('mdtest /s 0')
+    k.key('exit'); k.key(ktest.ENTER); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    k.pc.warm_boot('keep'); k.settle(10)
+    h, n, mi = md_info(k)
+    check('M: turned off (not through System), then a warm restart: M: made new, empty (not its old files back)',
+          n == 16 and not fatcheck.read_files(mi, 'M') and not fatcheck.check(mi)[0], (n, sorted(fatcheck.read_files(mi, 'M')) if n else None))
+
+TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_cache, t_cache_ems, t_mdisk,
+         t_mdreview]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
