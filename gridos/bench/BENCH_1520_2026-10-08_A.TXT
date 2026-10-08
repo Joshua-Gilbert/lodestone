@@ -1,0 +1,44 @@
+BENCH 1.4 - DOS file system benchmark on Grid-OS (DOS 3.30)
+Run 2026-10-08 14:26
+Memory for programs: 575 KB
+
+Write 256 KB, 16 KB at a time        12.52 s   20 KB/s
+Read 256 KB, 16 KB at a time          9.44 s   27 KB/s
+Read 256 KB, 512 bytes at a time      9.61 s   26 KB/s
+Read 256 KB, 128 bytes at a time      9.83 s   26 KB/s
+64 random 512-byte reads             10.27 s
+Directory listing x 10                0.38 s
+Open + close x 100                    0.10 s
+20 x create 1 KB file, then delete   22.63 s
+Load + run a 120 KB .EXE x 3         12.74 s
+INT 21h calls x 1000                  0.05 s
+
+Total                                87.61 s
+
+EMS (INT 67h), not in the total:
+Map a page x 10000                    0.27 s
+Move 1 MB to EMS (57h), 16 KB each    0.32 s   3107 KB/s
+Move 1 MB from EMS (57h)              0.32 s   3107 KB/s
+
+BENCH 1.4 - DOS file system benchmark on Grid-OS (DOS 3.30)
+Run 2026-10-08 14:31
+Memory for programs: 575 KB
+
+Write 256 KB, 16 KB at a time        12.35 s   20 KB/s
+Read 256 KB, 16 KB at a time         12.79 s   20 KB/s
+Read 256 KB, 512 bytes at a time     20.15 s   12 KB/s
+Read 256 KB, 128 bytes at a time     33.50 s   7 KB/s
+64 random 512-byte reads              9.77 s
+Directory listing x 10                0.05 s
+Open + close x 100                    0.21 s
+20 x create 1 KB file, then delete   25.65 s
+Load + run a 120 KB .EXE x 3         36.25 s
+INT 21h calls x 1000                  0.10 s
+
+Total                               150.89 s
+
+EMS (INT 67h), not in the total:
+Map a page x 10000                    0.21 s
+Move 1 MB to EMS (57h), 16 KB each    0.32 s   3107 KB/s
+Move 1 MB from EMS (57h)              0.38 s   2663 KB/s
+

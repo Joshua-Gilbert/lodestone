@@ -80,7 +80,27 @@ M:'s 0.3 KB comes out of the environment's block (counted with the Executive oth
 
 ### On the hard disk (C:) and the RAM disk (M:)
 
-BENCH 1.4 on drive C: and on M: in the emulator. C: uses the layout of Joshua's 121 MB CP30104H, with the drive's seeks and rotation timed: 3,360 rpm, 39 sectors a track. That model is checked against the 1520's own sweep of the disk and is about 15% fast on big sequential reads. Whether the real drive reads ahead into its own buffer isn't known, so C: has two columns. M: is made at 1 MB for this, because 256 KB holds too little for BENCH's files. Seconds.
+**On the real 1520** (2026-10-08, Grid-OS 0.3.14): BENCH 1.4 from the 1.44 MB floppy, from the 121 MB Conner CP30104H as C:, and from M: at 1 MB. Seconds. BENCH times with the BIOS clock, so anything under about 0.2 s is only good to a tick (55 ms).
+
+| Test | Floppy A: | Hard disk C: | RAM disk M: |
+|---|---:|---:|---:|
+| Write 256 KB, 16 KB writes | 12.52 | 0.87 | **0.16** |
+| Read 256 KB, 16 KB reads | 9.44 | 0.43 | **0.10** |
+| Read 256 KB, 512-byte reads | 9.61 | 0.71 | **0.27** |
+| Read 256 KB, 128-byte reads | 9.83 | 1.42 | **0.93** |
+| 64 random 512-byte reads | 10.27 | 1.09 | **0.16** |
+| Directory listing ×10 | 0.38 | 0.10 | **0.00** |
+| Open + close ×100 | 0.10 | 0.16 | **0.10** |
+| 20 small files, create + delete | 22.63 | 3.57 | **0.10** |
+| Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
+| INT 21h calls ×1000 | 0.05 | 0.05 | 0.05 |
+| **Total** | **87.6** | **9.1** | **2.1** |
+
+- **C: is about 10× faster than the floppy, and M: about 42×.** Writing 256 KB takes 12.5 s on the floppy, 0.87 s on C: and 0.16 s on M:. Twenty small files take 22.6 s, 3.6 s and 0.1 s.
+- **The CP30104H reads ahead on its own.** 512-byte reads on C: take 0.71 s, not the 9.4 s a drive without look-ahead would take, so Grid-OS's read-ahead doesn't need to cover C:.
+- Logs: `gridos/bench/BENCH_1520_2026-10-08_A.TXT`, `_C.TXT` and `_M.TXT`.
+
+**In the emulator** (`python3 gridos/bench/run_bench_hd.py`): C: is modelled on the same drive (3,360 rpm, 39 sectors a track, seeks), with and without the drive's own look-ahead. Seconds.
 
 | Test | Floppy A: | C:, drive without look-ahead | C:, drive with look-ahead | M: |
 |---|---:|---:|---:|---:|
@@ -96,12 +116,9 @@ BENCH 1.4 on drive C: and on M: in the emulator. C: uses the layout of Joshua's 
 | INT 21h calls ×1000 | 0.11 | 0.11 | 0.11 | 0.11 |
 | **Total** | **79.0** | **25.0** | **8.6** | **2.9** |
 
-- **C: is 3 to 9 times faster than the floppy overall.** Big writes are 12× faster, small files 8×, and loading programs 14–22×.
-- **M: is another 3 to 9 times faster than C:**: no seeks and no turning disk at all. Writing 256 KB takes 0.18 s, reading it 0.11 s, and 20 small files take 0.18 s against 21 s on the floppy.
-- **Small reads on C: depend on the drive.** On the floppy, Grid-OS's own cylinder read-ahead makes 512- and 128-byte reads cheap. That read-ahead doesn't cover C:, so a drive without look-ahead takes a turn of the disk for each sector (9.4 s). If the real CP30104H turns out to be like that, extending Grid-OS's read-ahead to C: would fix it.
-- **The real 1520 decides:** run BENCH with C: current (`C:`, then `A:BENCH`; its log goes to `C:\BENCH.TXT`), and the same on M:.
-
-Run it with `python3 gridos/bench/run_bench_hd.py`; the model and notes are in `gridos/bench/RESULTS_HD.TXT`.
+- **The look-ahead column matches the real drive:** 8.6 s modelled against 9.1 s measured.
+- **The emulator overstates the kernel's own work about twice.** The 1,000 INT 21h calls take 0.11 s there and 0.05 s on the 1520, which is why M: is 2.9 s in the emulator and 2.1 s for real. Disk-bound tests are close.
+- The model and notes are in `gridos/bench/RESULTS_HD.TXT`.
 
 ### On the real 1520
 
