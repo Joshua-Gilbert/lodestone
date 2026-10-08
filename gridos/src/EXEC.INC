@@ -3,7 +3,7 @@
 ;  the kernel through INT 21h like any program: find first/next for the
 ;  list, CHDIR for subjects, EXEC for DOS programs; .RUN programs go
 ;  through the core's loader.  Copy, Erase, Move and Rename work on the
-;  chosen title.
+;  chosen title; Copy and Erase on the chosen subject too.
 ; =====================================================================
 LIST_Y  equ 24          ; first list row (pixels)
 LIST_N  equ 13          ; visible list rows
@@ -88,6 +88,11 @@ n_done      resw 1
 n_skip      resw 1
 s_time      resw 1                  ; the one in hand: its time and date
 s_date      resw 1
+sc_seg      resw 1                  ; Copy on a subject: the subjects to copy (sc_list)
+sc_rd       resw 1                  ;  the one in hand
+sc_wr       resw 1                  ;  the end of the list
+sc_max      resw 1                  ;  the block's size
+sc_lim      resw 1                  ;  the longest path below it DOS takes, both ends
 section ui
 
 ; the file list (UI_LV* layout); nent, sel and top are read by the tests
@@ -1219,6 +1224,331 @@ tw_end: mov     di, tpath
         dec     di
         ret
 
+; CODE-C with Subject outlined: the chosen subject (the current one) and
+; all in it, titles and subjects, to the subject filled in: the same one
+; to start with, so for another disk only Device changes.  Replace and
+; Only newer as for titles.  The subjects are listed before anything is
+; made, so the copy can't take itself in; the Subject list then shows
+; them again
+sub_copy:
+        mov     di, runpath             ; its name: "Copy WORK" ("Copy Root")
+        mov     si, subject
+        call    sb_base
+        cmp     di, runpath
+        jne     .n
+        mov     si, s_root
+        call    sb_str
+.n:     mov     byte [di], 0
+        mov     si, s_copy
+        call    form_title
+        call    form_fill               ; Device, Subject: this one
+        mov     si, sub_form
+        call    ui_form
+        jc      .x
+        call    .name                   ; (a redraw meanwhile used runpath)
+        mov     bx, s_cantcopy
+        mov     si, c_sub
+        mov     di, s_subch
+        call    has_any
+        mov     si, s_badsub
+        jc      .why
+        call    xfer_dest               ; tmppath: where it goes ("B:\WORK")
+        mov     si, curdir              ; not into itself (nor Root into a
+        mov     di, tmppath             ;  subject of its own drive)
+.c:     lodsb
+        or      al, al
+        jz      .in
+        scasb
+        je      .c
+        jmp     short .go
+.in:    mov     al, [di]
+        or      al, al
+        jz      .self
+        cmp     al, '\'
+        je      .self
+        cmp     byte [si-2], '\'
+        jne     .go
+.self:  mov     si, s_inself            ; "Can't copy WORK into itself: ..."
+.why:   jmp     cant_why
+.x:     ret
+.go:    xor     ax, ax
+        mov     [n_done], ax
+        mov     [n_skip], ax
+        inc     ax
+        mov     [wild], al              ; (each title keeps its name)
+        mov     si, s_all
+        mov     di, c_pat
+        call    sb_str
+        stosb
+        call    sc_list
+        jnc     .mk
+        mov     [ex_code], ax           ; (nothing made: the list as it is)
+        mov     si, runpath
+        mov     bx, s_cantcopy
+        jmp     cant_msg
+.mk:    call    xfer_mkdir              ; where it goes: there, or made
+        jnc     .cp
+        mov     si, tmppath
+        mov     [ex_code], ax
+        or      ax, ax
+        mov     al, 2
+        jnz     .end
+        mov     bx, sc_seg              ; (ESC: nothing made)
+        jmp     seg_free
+.cp:    call    sc_copy                 ; -> AL as xfer_all, SI
+.end:   push    si
+        push    ax
+        or      al, al
+        jnz     .f
+        push    ds                      ; (tmppath: where it went)
+        mov     ds, [sc_seg]
+        xor     si, si
+        mov     di, c_sub
+        call    sb_str
+        stosb
+        pop     ds
+        call    xfer_dest
+.f:     call    nm_free
+        mov     bx, sc_seg
+        call    seg_free
+        call    sub_erase.re            ; the subjects again
+        pop     ax
+        pop     si
+        mov     bx, s_cantcopy
+        cmp     al, 1
+        jb      .sum
+        je      .same
+        cmp     al, 3
+        je      .kept
+        jmp     cant_msg                ; "Can't copy NAME.TXT: why"
+.kept:  jmp     xfer.kmsg
+.sum:   mov     si, s_copied            ; "Copied 5 titles to B:\WORK"
+        jmp     sum_to
+.same:  call    .name                   ; (it went where it is)
+        jmp     .self
+.name:  mov     si, ftitle + 5          ; runpath: its name again, from the
+        mov     di, runpath             ;  form's title ("Copy WORK")
+        call    sb_str
+        mov     byte [di], 0
+        ret
+
+SC_REL  equ 68                          ; sc_seg: where it goes (tmppath's
+                                        ;  subject), then from here the list
+
+; the subjects to copy, into a block of their own (sc_seg): "" for the
+; subject itself, then each subject in it as a path from it ("\SUB",
+; "\SUB\DEEP"), a level at a time, so each comes after the one it is in.
+; CF: AX = DOS error (3: a path too long for DOS at either end), no block
+sc_list:
+        mov     si, subject             ; the longest path below it: what DOS
+        call    .len                    ;  takes less the longer of the
+        mov     bx, cx                  ;  subject and where it goes (where
+        mov     si, tmppath + 2         ;  it goes too long already: 3)
+        call    .len
+        cmp     cx, bx
+        jae     .l
+        mov     cx, bx
+.l:     mov     bx, SUBMAX
+        sub     bx, cx
+        mov     [sc_lim], bx
+        mov     ax, 3
+        stc
+        js      .r
+        mov     bx, 0FFFh
+        mov     ah, 48h
+        int     21h
+        jnc     .m
+        cmp     bx, 16
+        jb      .r
+        mov     ah, 48h
+        int     21h
+        jc      .r
+.m:     mov     [sc_seg], ax
+        shl     bx, 4
+        mov     [sc_max], bx
+        push    es
+        mov     es, ax
+        xor     di, di                  ; where it goes (SI: tmppath + 2
+        call    sb_str                  ;  still), then ""
+        stosb
+        mov     di, SC_REL
+        stosb
+        pop     es
+        mov     [sc_wr], di
+        mov     word [sc_rd], SC_REL
+.s:     mov     si, [sc_rd]             ; each one listed: the subjects in it
+        cmp     si, [sc_wr]
+        jae     .end
+        mov     di, argpath
+        call    sc_src
+        push    si
+        mov     si, s_star
+        call    sb_join
+        mov     byte [di], 0
+        mov     dx, argpath
+        mov     cx, 16h                 ; (hidden and system ones too)
+        mov     ah, 4Eh
+        int     21h
+.f:     jc      .nf
+        test    byte [exec_dta + 21], 10h
+        jz      .n
+        cmp     byte [exec_dta + 30], '.'
+        je      .n
+        call    sc_add
+        jc      .err
+.n:     mov     ah, 4Fh
+        int     21h
+        jmp     .f
+.nf:    cmp     ax, 18                  ; (no more, or none)
+        je      .nx
+        cmp     ax, 2
+        jne     .err
+.nx:    pop     word [sc_rd]
+        jmp     .s
+.end:   mov     bx, [sc_wr]             ; the block cut to the list
+        add     bx, 15
+        shr     bx, 4
+        push    es
+        mov     es, [sc_seg]
+        mov     ah, 4Ah
+        int     21h
+        pop     es
+        clc
+.r:     ret
+.err:   pop     si
+        push    ax
+        mov     bx, sc_seg
+        call    seg_free
+        pop     ax
+        stc
+        ret
+.len:   call    strlen                  ; SI -> CX: its length, 0 for "\"
+        cmp     cx, 1                   ;  (the root adds nothing when a
+        jne     .lx                     ;  path is put after it)
+        dec     cx
+.lx:    ret
+
+; the subject found (exec_dta) in the one at [sc_rd], added to the list.
+; CF: AX = 3 (its path too long), 8 (no room)
+sc_add:
+        mov     ax, [sc_max]
+        sub     ax, [sc_wr]
+        cmp     ax, 80                  ; (the longest: 66 + \ + NAME.EXT + 0)
+        mov     ax, 8
+        jb      .no
+        mov     si, [sc_rd]
+        mov     di, [sc_wr]
+        push    es
+        push    ds
+        mov     es, [sc_seg]
+        mov     ds, [sc_seg]
+        call    sb_str
+        pop     ds
+        mov     al, '\'
+        stosb
+        mov     si, exec_dta + 30
+        call    sb_str
+        stosb
+        pop     es
+        mov     ax, di
+        sub     ax, [sc_wr]
+        dec     ax
+        cmp     ax, [sc_lim]            ; (below 0 when one end is
+        mov     ax, 3                   ;  already as long as DOS takes)
+        jg      .no
+        mov     [sc_wr], di
+        clc
+        ret
+.no:    stc
+        ret
+
+; each subject listed: made where it goes (the first, the subject itself,
+; by xfer_mkdir already), then its titles copied -> AL as xfer_all (0: all
+; done; 2 also for a subject that can't be made or read, ex_code), SI =
+; the path it was about
+sc_copy:
+        mov     word [sc_rd], SC_REL
+.l:     mov     si, [sc_rd]
+        cmp     si, [sc_wr]
+        mov     al, 0
+        jae     .r
+        mov     di, curdir              ; where its titles are
+        call    sc_src
+        push    si
+        push    ds                      ; where they go
+        mov     ds, [sc_seg]
+        xor     si, si
+        mov     di, c_sub
+        call    sb_str
+        pop     ds
+        mov     si, [sc_rd]
+        call    sc_cat
+        pop     word [sc_rd]
+        call    xfer_dest
+        cmp     byte [tmppath + 3], 0   ; (a root is there)
+        je      .t
+        mov     dx, tmppath             ; made (hidden or system as it is),
+        mov     ah, 39h                 ;  unless it is there already as a
+        int     21h                     ;  subject (the first one: made by
+        jc      .m                      ;  xfer_mkdir, or a file, or no disk)
+        mov     si, curdir
+        call    hs_copy
+        jmp     short .t
+.m:     push    ax
+        mov     cx, 16h
+        mov     ah, 4Eh
+        int     21h
+        pop     ax
+        mov     si, tmppath
+        jc      .e
+        test    byte [exec_dta + 21], 10h
+        jz      .e
+.t:     mov     bp, 6                   ; its titles, hidden and system too
+        call    pat_here
+        jnc     .c
+        cmp     ax, 2                   ; (none)
+        je      .l
+        mov     si, curdir
+.e:     mov     [ex_code], ax
+        mov     al, 2
+        ret
+.c:     call    xfer_all
+        push    ax
+        call    nm_free
+        pop     ax
+        mov     si, argpath
+        or      al, al
+        jz      .l
+.r:     ret
+
+; DI = a buffer: "X:\SUBJECT" and the path at SI in sc_seg ("X:\SUBJECT\SUB",
+; one '\' where they meet), a 0 at its end (DI); SI past the path
+sc_src:
+        mov     ah, 19h
+        int     21h
+        add     al, 'A'
+        mov     ah, ':'
+        stosw
+        push    si
+        mov     si, subject
+        call    sb_str
+        pop     si
+sc_cat: push    ds                      ; (the path at SI in sc_seg added at DI)
+        mov     ds, [sc_seg]
+        call    sb_join
+        pop     ds
+        mov     byte [di], 0
+        ret
+
+; the ASCIIZ text at SI added at DI (no 0), without its '\' when DI follows one
+sb_join:
+        cmp     byte [es:di-1], '\'
+        jne     .s
+        cmp     byte [si], '\'
+        jne     .s
+        inc     si
+.s:     jmp     sb_str
+
 ; ---------------------------------------------------------------------
 ;  Titles: one title or a pattern (* and ?) in the listed subject
 ; ---------------------------------------------------------------------
@@ -1269,10 +1599,14 @@ pat_check:
 pat_find:
         call    cur_dir
         xor     ax, ax
-        mov     [nm_n], ax
-        mov     [nm_i], ax
         mov     [n_done], ax
         mov     [n_skip], ax
+        xor     bp, bp                  ; (files and read-only ones)
+pat_here:                               ; (sub_copy: in curdir, the counts go on;
+                                        ;  BP = the search's attributes)
+        xor     ax, ax
+        mov     [nm_n], ax
+        mov     [nm_i], ax
         mov     bx, 0FFFh               ; 64 KB: more titles than a disk holds
         mov     ah, 48h
         int     21h
@@ -1296,7 +1630,7 @@ pat_find:
         mov     si, c_pat
         call    sb_dirname
         mov     dx, argpath
-        xor     cx, cx                  ; (files, read-only too)
+        mov     cx, bp
         mov     ah, 4Eh
 .f:     int     21h
         jc      .end
@@ -1383,11 +1717,14 @@ nm_next:
 nm_relist:
         call    nm_free
         cmp     word [n_done], 0
-        je      nm_free.x
+        je      seg_free.x
         mov     ax, [sel]
         jmp     relist_at
 nm_free:
-        mov     ax, [nm_seg]
+        mov     bx, nm_seg
+; the block whose segment is in the word at BX freed, if there is one
+seg_free:
+        mov     ax, [bx]
         or      ax, ax
         jz      .x
         push    es
@@ -1395,7 +1732,7 @@ nm_free:
         mov     ah, 49h
         int     21h
         pop     es
-        mov     word [nm_seg], 0
+        mov     word [bx], 0
 .x:     ret
 
 ; AX as "5 titles" ("1 title") at DI
@@ -1465,7 +1802,9 @@ ex_rename:
 ; conditional jumps.)
 ex_copy:
         mov     byte [xmode], 0
-        jmp     short xfer
+        cmp     byte [focus], FOC_SUB   ; a subject: sub_copy
+        jne     xfer
+        jmp     sub_copy
 ex_move:
         mov     byte [xmode], 1
 xfer:   call    file_ok
@@ -1525,7 +1864,7 @@ xfer:   call    file_ok
         jmp     show_msg
 .kept:  mov     ax, [sel]               ; the old destination went, the copy
         call    relist_at               ;  couldn't take its name: where it is
-        mov     di, msgbuf              ; "Copy kept as B:\WORK\ABCDTMP: why"
+.kmsg:  mov     di, msgbuf              ; "Copy kept as B:\WORK\ABCDTMP: why"
         mov     si, s_kept
         call    sb_str
         mov     si, tmppath
@@ -1629,21 +1968,20 @@ xfer_all:
 ; as they were"
 xfer_sum:
         call    xfer_rel
-        mov     di, msgbuf
+        mov     byte [c_tit], 0         ; (tmppath: the subject it went to)
+        call    xfer_dest
         mov     si, s_copied
         cmp     byte [xmode], 0
-        je      .m
+        je      sum_to
         mov     si, s_moved
-.m:     call    sb_str
+; SI = "Copied to " or "Moved to ", tmppath = where (sub_copy too)
+sum_to: mov     di, msgbuf
+        call    sb_str
         sub     di, 3                   ; ("Copied to " less "to ")
         mov     ax, [n_done]
         call    sb_n_tit
         mov     si, s_to
         call    sb_str
-        mov     byte [c_tit], 0         ; (tmppath: the subject it went to)
-        push    di
-        call    xfer_dest
-        pop     di
         mov     si, tmppath
         call    sb_str
         cmp     word [n_skip], 0
@@ -1743,6 +2081,16 @@ xfer_form:
         je      .t
         mov     si, s_move
 .t:     call    form_title
+        call    form_fill
+        mov     si, copy_form
+        cmp     byte [xmode], 0
+        je      .f
+        mov     si, move_form
+.f:     jmp     ui_form
+
+; the forms' Device, Subject and Title: where the list is, the title in
+; runpath; Replace Ask, not Only newer; the drives there are (sub_copy too)
+form_fill:
         call    cur_dir
         mov     al, [curdir]
         sub     al, 'A'
@@ -1767,11 +2115,7 @@ xfer_form:
         je      .c
         xor     ah, ah
 .c:     mov     [o_drives + 6], ah
-        mov     si, copy_form
-        cmp     byte [xmode], 0
-        je      .f
-        mov     si, move_form
-.f:     jmp     ui_form
+        ret
 
 ; from the form: tmppath = "X:\SUBJECT" ("X:\" for Root), dstpath =
 ; "X:\SUBJECT\TITLE", x_here = 1 if that is the subject listed
@@ -1902,6 +2246,9 @@ xfer_do:
         call    ui_band
         call    copy_file
         jc      .r2
+        mov     si, argpath             ; (hidden or system: only Copy on a
+        mov     dx, dstpath             ;  subject takes such titles)
+        call    hs_copy
         cmp     byte [xmode], 0         ; (Copy: done, CF clear)
         je      .r2
         mov     dx, argpath             ; Move: the original goes
@@ -1977,6 +2324,21 @@ file_id:
         stosw
         mov     ax, [exec_dta + 15]
         stosw
+.x:     ret
+
+; the hidden and system bits of the title or subject at SI given to the
+; one at DX, if it has any (errors ignored: CF as it comes)
+hs_copy:
+        push    dx
+        mov     dx, si
+        mov     ax, 4300h
+        int     21h
+        pop     dx
+        jc      .x
+        and     cx, 6
+        jz      .x
+        mov     ax, 4301h
+        int     21h
 .x:     ret
 
 ; copy argpath to dstpath, the date and time with it.  The copy is made as
@@ -2123,16 +2485,8 @@ cf_free:
         mov     ah, 3Eh
         int     21h
         mov     word [h_src], 0FFFFh
-.fr:    mov     ax, [buf_seg]
-        or      ax, ax
-        jz      .x
-        push    es
-        mov     es, ax
-        mov     ah, 49h
-        int     21h
-        pop     es
-        mov     word [buf_seg], 0
-.x:     ret
+.fr:    mov     bx, buf_seg
+        jmp     seg_free
 
 ; "Verb NAME.EXT" (verb SI, the name in runpath) as the form's title
 form_title:
@@ -2693,7 +3047,7 @@ h_usage     db 'CODE-U                   System',0
 h_write     db 'CODE-W                   Write: a new text file',0
 h_claude    db 'CODE-A                   Claude',0
 h_shell     db 'CODE-P                   command prompt',0
-h_copy      db 'CODE-C                   Copy the file',0
+h_copy      db 'CODE-C                   Copy the file / subject',0
 h_erase     db 'CODE-D                   Delete the file / subject',0
 h_move      db 'CODE-M                   Move the file',0
 h_rename    db 'CODE-R                   Rename the file',0
@@ -2768,6 +3122,11 @@ move_form:  dw ftitle, s_movep, 60, 11, 4
             dw s_lbl_dev, FT_CHOICE, c_dev, o_drives
             dw s_lbl_sub, FT_TEXT + (40 << 8), c_sub, SUBMAX
             dw s_lbl_repl, FT_CHOICE, c_repl, o_repl
+sub_form:   dw ftitle, s_copyp, 60, 11, 4
+            dw s_lbl_dev, FT_CHOICE, c_dev, o_drives
+            dw s_lbl_sub, FT_TEXT + (40 << 8), c_sub, SUBMAX
+            dw s_lbl_repl, FT_CHOICE, c_repl, o_repl
+            dw s_lbl_newer, FT_CHOICE, c_newer, o_yesno
 del_form:   dw ftitle, s_delp, 44, 10, 1
             dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
 ren_form:   dw ftitle, s_renp, 44, 10, 1
@@ -2801,6 +3160,7 @@ s_lbl_new   db 'New title', 0
 s_eraseq    db 'Erase: Confirm to erase ', 0
 s_replace   db ' is there already: Confirm to replace it', 0
 s_same      db ' is there now: choose another place', 0
+s_inself    db ' into itself: choose another place', 0
 s_copying   db 'Copying ', 0
 s_moving    db 'Moving ', 0
 s_copied    db 'Copied to ', 0

@@ -51,8 +51,10 @@ act         resb 1              ; drive being worked on
 actp        resw 1              ; -> its drvtab entry
 fat_drv     resb 1              ; whose FAT is in fatbuf (FFh: none)
 fat_dirty   resb 1
+fk_dirty    resb 1              ; fat_keep: the two as they were
             alignb 2
 fat_dmask   resw 1              ; which FAT sectors changed (bit n = sector n)
+fk_dmask    resw 1
 ; the cylinder cache: places [tc_lo, tc_hi) of the cylinder starting at
 ; LBA tc_cyl on drive tc_drv (place = head * sectors per track + sector,
 ; from 0), each at place * 512 in the block at tc_seg:0 (KMEM puts it in
@@ -558,6 +560,27 @@ fat_flush:
         shl     ax, cl
         test    [fat_dmask], ax
         pop     cx
+        pop     ax
+        ret
+
+; which FAT sectors changed, kept (fat_keep) and put back (fat_back): for a
+; cluster taken and given back after a failed write, which leaves the FAT
+; as it was.  Else a write-protected disk's FAT stayed "changed" and every
+; other drive's FAT load (it flushes first) failed with error 19
+fat_keep:
+        push    ax
+        mov     al, [fat_dirty]
+        mov     [fk_dirty], al
+        mov     ax, [fat_dmask]
+        mov     [fk_dmask], ax
+        pop     ax
+        ret
+fat_back:
+        push    ax
+        mov     al, [fk_dirty]
+        mov     [fat_dirty], al
+        mov     ax, [fk_dmask]
+        mov     [fat_dmask], ax
         pop     ax
         ret
 
