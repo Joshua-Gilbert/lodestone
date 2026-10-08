@@ -446,9 +446,10 @@ def t_exec():
     ata = drive(d)
     k, t = boot('exec', ata, files=(GRIDCMD, os.path.join(HERE, 'MEMSZ.COM')))
     k.key(ktest.TAB)
-    check('Device: A:, B:, C: in the list', k.u16('nent') == 3 and any('Hard disk C:' in l for y, l in k.ocr()), k.u16('nent'))
-    k.key(ktest.DOWN); k.key(ktest.DOWN)
-    check('Down twice: Hard disk C: chosen at once', form(k)[0] == 'Hard disk C:', form(k))
+    check('Device: A:, C: in the list (no B: on this machine: not listed)', k.u16('nent') == 2 and
+          any('Hard disk C:' in l for y, l in k.ocr()) and not any('Floppy B:' in l for y, l in k.ocr()), k.u16('nent'))
+    k.key(ktest.DOWN)
+    check('Down: Hard disk C: chosen at once', form(k)[0] == 'Hard disk C:', form(k))
     k.key(ktest.ENTER); k.key(ktest.TAB)
     lst = k.exec_list()
     check('C:\\ listed: its titles', 'README.TXT' in lst and 'FILLER.DAT' in lst, lst)
@@ -459,10 +460,10 @@ def t_exec():
     ktest.run_answering(k.pc, lambda: k.pc.mode() == 0x40, 30); k.settle()
     check('a program run from C: (MEMSZ.COM ended)', any('MEMSZ.COM ended' in l for l in k.band()) and
           'KB for programs' in ''.join(k.pc.tty), (k.band(), ''.join(k.pc.tty)[-200:]))
-    # CODE-C from A:: Device Right, Right is C:
-    k.key(ktest.TAB); k.key(ktest.UP); k.key(ktest.UP); k.key(ktest.ENTER); k.key(ktest.TAB)
+    # CODE-C from A:: Device Right is C:
+    k.key(ktest.TAB); k.key(ktest.UP); k.key(ktest.ENTER); k.key(ktest.TAB)
     k.select('GRIDCMD.COM'); k.key(0x2E00)              # CODE-C
-    k.key(ktest.ENTER, ktest.RIGHT, ktest.RIGHT, ktest.ENTER, '\\far', ktest.ENTER, 'cmd2.com', ktest.ENTER, 0x1C00)
+    k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\far', ktest.ENTER, 'cmd2.com', ktest.ENTER, 0x1C00)
     v = vol(ata); files, probs = v.files(f.gaps)
     check('the Copy form: A:\\GRIDCMD.COM to C:\\FAR\\CMD2.COM', files.get('\\FAR\\CMD2.COM') == open(GRIDCMD, 'rb').read() and
           not probs and 'Copied' in k.band()[0], (k.band(), probs))
@@ -493,7 +494,51 @@ def t_mem():
           (', the kernel without it under 0.3 KB' if base else ''),
           e - g < 3.0 and a - b < 3.5 and (not base or (z - a < 0.3 and y - e < 0.3)), out)
 
-TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_system, t_testdos, t_exec, t_mem]
+def t_mdisk():
+    """C: and M: (the temporary disk in EMS) together: COPY both ways, the
+    Executive's Device list and Copy form with both, DOS programs' memory
+    with M: on and off."""
+    d, f = std()
+    ata = drive(d)
+    k, t = boot('mdisk', ata, files=(GRIDCMD, os.path.join(HERE, 'UPPER.COM')), ems_pages=88)
+    sh = Shell(k)
+    g = open(GRIDCMD, 'rb').read()
+    o = sh.run('copy c:\\readme.txt m:\\')
+    o2 = sh.run('copy c:\\far\\note.txt m:\\')
+    check('COPY C: -> M: (from the root, and from FAR past 64K sectors)', '1 File(s) copied' in o and '1 File(s) copied' in o2,
+          (o, o2))
+    sh.run('copy a:\\gridcmd.com m:\\')
+    o = sh.run('copy m:\\gridcmd.com c:\\far\\g3.com')
+    v = vol(ata); files, probs = v.files(f.gaps)
+    check('COPY M: -> C:: the same bytes, C: consistent', files.get('\\FAR\\G3.COM') == g and not probs, probs)
+    o = sh.run('type m:\\note.txt')
+    check('TYPE M:\\NOTE.TXT (copied from C:)', o.count('A note in a directory past') == 3, o)
+    sh.run('exit'); k.settle()
+    k.key(ktest.TAB)
+    check('Device: A:, C:, M: in the list', k.u16('nent') == 3 and any('Temporary disk M:' in l for y, l in k.ocr())
+          and any('Hard disk C:' in l for y, l in k.ocr()), k.u16('nent'))
+    k.key(ktest.DOWN); k.key(ktest.DOWN)
+    check('Down twice: Temporary disk M: chosen at once', form(k)[0] == 'Temporary disk M:', form(k))
+    k.key(ktest.ENTER); k.key(ktest.TAB)
+    lst = k.exec_list()
+    check('M:\\ listed: its titles', lst == ['GRIDCMD.COM', 'NOTE.TXT', 'README.TXT'], lst)
+    k.select('README.TXT'); k.key(0x2E00)              # CODE-C: M: -> C:
+    k.key(ktest.ENTER, ktest.LEFT, ktest.ENTER, '\\', ktest.ENTER, 'r2.txt', ktest.ENTER, 0x1C00)
+    v = vol(ata); files, probs = v.files(f.gaps)
+    check('the Copy form: M:\\README.TXT to C:\\R2.TXT (Device Left from M: is C:)', files.get('\\R2.TXT') == README and not probs
+          and 'Copied' in k.band()[0], (k.band(), probs))
+    # memory: M: on (256 KB) and off, with C: and EMS
+    memsz = os.path.join(HERE, 'MEMSZ.COM')
+    ini = os.path.join(OUT, 'GRIDOS.INI'); open(ini, 'wb').write(b'MDISK=0\r\n')
+    def kb(name, files):
+        img = mkimg.build(os.path.join(OUT, name + '.img'), [os.path.join(SRC, 'GRIDOS.SYS'), memsz, GRIDCMD] + files)
+        k = ktest.KPC(img, ata=drive(std()[0]), ems_pages=88); k.start()
+        m = re.search(r'([\d.]+) KB for programs', Shell(k).run('memsz'))
+        return float(m.group(1)) if m else None
+    on, off = kb('md_on', []), kb('md_off', [ini])
+    check('C: and EMS: DOS programs get as much with M: on as off (%.1f KB, %.1f KB)' % (on, off), on == off and on, (on, off))
+
+TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_system, t_testdos, t_exec, t_mem, t_mdisk]
 if __name__ == '__main__':
     want = sys.argv[1:]
     for n in ('HDFLUSH', 'HDABS'):

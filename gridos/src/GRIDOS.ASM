@@ -21,6 +21,9 @@
 ;           and its start-up puts it above the BSS and keeps it, or not
 ;    KHD    the internal hard disk as C: (AT bus, FAT16) - the same way,
 ;           only resident when there is one: after EMS
+;    KMDISK M:, the temporary disk, in EMS: its installer in the disk
+;           cache's EMS, its resident part only while M: is on, split off
+;           the master environment's block
 ;
 ;  The UI segment (section ui, our COMMON.SHR) follows the kernel in this
 ;  file.  At start-up it is copied into a block of its own (owner 8, "UI")
@@ -83,7 +86,7 @@ init:   cli
         call    gpib_init
         call    proc_init               ; master environment + root PSP
         call    ui_load
-        jmp     run_ui
+.go:    jmp     short run_ui            ; (KMDISK.INC: to M:'s start-up first)
 
 ; The UI section from the loaded file (still at 1000:section.ui.start)
 ; into a block of its own; then its BSS cleared.  Allocated at its image
@@ -154,6 +157,12 @@ bss_start:
 section ems progbits align=16 follows=.text vfollows=.bss valign=16
 section hd progbits align=16 follows=ems vfollows=ems valign=16
 section boot progbits align=16 follows=hd vfollows=hd valign=16
+; KMDISK.INC: M:'s installer, its resident part's image and that image's
+; relocations, after the start-ups in the file; ems_init copies them into
+; the disk cache's EMS (the installer runs there, at E000:MD_TPG)
+%define MDB(x) (section.boot.start + ((x) - section.boot.vstart))   ; (in the load image)
+MD_TPG  equ 1000h                       ; (its place in the cache's second page)
+section mdt progbits align=16 follows=boot vstart=MD_TPG
 section .text
 
 %include "KCORE.INC"
@@ -179,11 +188,12 @@ ems_start:
 section hd
 hd_start:
 %include "KHD.INC"
+%include "KMDISK.INC"
 
 ; =====================================================================
 ;  The UI segment: offsets from 0 in a segment of its own
 ; =====================================================================
-section ui progbits align=16 follows=boot vstart=0
+section ui progbits align=16 follows=mdt vstart=0
 section uibss nobits valign=16 vfollows=ui
 ; alignb would clash with vfollows in NASM's bin output (it sets a "real"
 ; section alignment); uibss starts on a paragraph, so this is the same thing

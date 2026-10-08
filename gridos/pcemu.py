@@ -33,6 +33,12 @@ BLOCK_US = 4.0
 # rep stosw 6133 KB/s, rep lodsw 3738 KB/s, rep movsw 3074 KB/s
 REP_US = {0xA4: 0.45, 0xA5: 0.65, 0xAA: 0.25, 0xAB: 0.33, 0xAC: 0.4, 0xAD: 0.53,
           0xA6: 1.0, 0xA7: 1.1, 0xAE: 0.9, 0xAF: 1.0, 0x6C: 0.6, 0x6D: 0.7, 0x6E: 0.6, 0x6F: 0.7}
+# an EMS page register read or written (IN/OUT DX on the 1520's I/O bus):
+# a 286's IN/OUT (5 / 3 clocks at ~10 MHz) plus an 8-bit bus cycle with its
+# wait states, about 1 us; the rest of the block is counted as usual.  (Not
+# measured on the 1520 yet: BENCH on M: there checks it; RAMSPEED's 0.15 ms
+# for a page switch is GRiD's EMM.SYS through INT 67h, mostly software.)
+EMS_IO_US = 1.0
 STUB = 0xF000
 EMS_FRAME = 0xE0000
 EMS_PAGE = 0x4000
@@ -304,40 +310,70 @@ class PC:
         s.cmos = bytearray(open(cm, 'rb').read()) if os.path.exists(cm) else bytearray(128)
         if not os.path.exists(cm): s.cmos[0x10] = 0x40; s.cmos[0x15:0x17] = b'\x80\x02'
         s.cidx = 0
-        # IVT: BIOS services via stubs, IRQs via real code, 60h-67h null
-        for n in range(256):
-            mu.mem_write(n * 4, struct.pack('<HH', n * 8, STUB))
-            mu.mem_write(STUB * 16 + n * 8, bytes([0xCD, n, 0xCA, 0x02, 0x00]))
-        mu.mem_write(STUB * 16 + 0x1000, INT08)
-        mu.mem_write(STUB * 16 + 0x1100, IRQEOI)
-        mu.mem_write(STUB * 16 + 0x1200, IRET)
-        mu.mem_write(8 * 4, struct.pack('<HH', 0x1000, STUB))
-        for n in list(range(9, 0x10)) + list(range(0x70, 0x78)):
-            mu.mem_write(n * 4, struct.pack('<HH', 0x1100, STUB))
-        for n in (0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x0, 0x1, 0x3, 0x4, 0x5):
-            mu.mem_write(n * 4, struct.pack('<HH', 0x1200, STUB))
-        for n in range(0x20, 0x100):
-            if n not in (0x40, 0x41, 0x46, 0x4A):
-                mu.mem_write(n * 4, struct.pack('<HH', 0x1200, STUB))
-        for n in range(0x60, 0x68):
-            mu.mem_write(n * 4, b'\0\0\0\0')
-        # BDA
-        equip = 0x4423 | (0x40 if s.drives[1] else 0)
-        mu.mem_write(0x410, struct.pack('<H', equip))
-        mu.mem_write(0x413, struct.pack('<H', mem_kb))
-        mu.mem_write(0x41A, struct.pack('<HH', 0x1E, 0x1E))
-        mu.mem_write(0x449, bytes([3])); mu.mem_write(0x44A, struct.pack('<HH', 80, 4096))
-        mu.mem_write(0x44E, b'\0\0'); mu.mem_write(0x450, bytes(16)); mu.mem_write(0x460, b'\x07\x06\x00')
-        mu.mem_write(0x463, struct.pack('<H', 0x3D4)); mu.mem_write(0x484, bytes([24]))
-        secs = start.hour * 3600 + start.minute * 60 + start.second
-        mu.mem_write(0x46C, struct.pack('<I', int(secs * 1193182 / 65536)))
-        mu.mem_write(0xFFFF0, b'\xEA\x5B\xE0\x00\xF0')        # the reset jump, as in the ROM (FFFF:1 isn't 0)
-        mu.mem_write(0xFFFF5, b'10/25/89'); mu.mem_write(0xFFFFE, b'\xFC')
-        s.wr(0xB800, 0, b'\x20\x07' * 2000)
+        s.mem_kb = mem_kb
+        s.bios_init()
         mu.hook_add(UC_HOOK_INTR, s.intr)
         mu.hook_add(UC_HOOK_INSN, s.hin, None, 1, 0, X.UC_X86_INS_IN)
         mu.hook_add(UC_HOOK_INSN, s.hout, None, 1, 0, X.UC_X86_INS_OUT)
         mu.hook_add(UC_HOOK_BLOCK, s.blk)
+
+    def bios_init(s):
+        """What the BIOS's POST leaves: the IVT, the BIOS data area, the
+        screen, the reset jump (also after Ctrl-Alt-Del, see warm_boot)."""
+        # IVT: BIOS services via stubs, IRQs via real code, 60h-67h null
+        for n in range(256):
+            s.mu.mem_write(n * 4, struct.pack('<HH', n * 8, STUB))
+            s.mu.mem_write(STUB * 16 + n * 8, bytes([0xCD, n, 0xCA, 0x02, 0x00]))
+        s.mu.mem_write(STUB * 16 + 0x1000, INT08)
+        s.mu.mem_write(STUB * 16 + 0x1100, IRQEOI)
+        s.mu.mem_write(STUB * 16 + 0x1200, IRET)
+        s.mu.mem_write(8 * 4, struct.pack('<HH', 0x1000, STUB))
+        for n in list(range(9, 0x10)) + list(range(0x70, 0x78)):
+            s.mu.mem_write(n * 4, struct.pack('<HH', 0x1100, STUB))
+        for n in (0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x0, 0x1, 0x3, 0x4, 0x5):
+            s.mu.mem_write(n * 4, struct.pack('<HH', 0x1200, STUB))
+        for n in range(0x20, 0x100):
+            if n not in (0x40, 0x41, 0x46, 0x4A):
+                s.mu.mem_write(n * 4, struct.pack('<HH', 0x1200, STUB))
+        for n in range(0x60, 0x68):
+            s.mu.mem_write(n * 4, b'\0\0\0\0')
+        # BDA
+        equip = 0x4423 | (0x40 if s.drives[1] else 0)
+        s.mu.mem_write(0x410, struct.pack('<H', equip))
+        s.mu.mem_write(0x413, struct.pack('<H', s.mem_kb))
+        s.mu.mem_write(0x41A, struct.pack('<HH', 0x1E, 0x1E))
+        s.mu.mem_write(0x449, bytes([3])); s.mu.mem_write(0x44A, struct.pack('<HH', 80, 4096))
+        s.mu.mem_write(0x44E, b'\0\0'); s.mu.mem_write(0x450, bytes(16)); s.mu.mem_write(0x460, b'\x07\x06\x00')
+        s.mu.mem_write(0x463, struct.pack('<H', 0x3D4)); s.mu.mem_write(0x484, bytes([24]))
+        secs = s.clock0.hour * 3600 + s.clock0.minute * 60 + s.clock0.second
+        s.mu.mem_write(0x46C, struct.pack('<I', int(secs * 1193182 / 65536)))
+        s.mu.mem_write(0xFFFF0, b'\xEA\x5B\xE0\x00\xF0')        # the reset jump, as in the ROM (FFFF:1 isn't 0)
+        s.mu.mem_write(0xFFFF5, b'10/25/89'); s.mu.mem_write(0xFFFFE, b'\xFC')
+        s.mu.mem_write(0xF0000 + 0xE05B, b'\xCD\x19')         # the POST: warm_boot
+        s.wr(0xB800, 0, b'\x20\x07' * 2000)
+
+    def warm_boot(s, ems='keep'):
+        """Ctrl-Alt-Del (or a jump to FFFF:0 with 0:472 = 1234h): the warm
+        POST - the BIOS's vectors and data area again, the PICs, the screen,
+        EMS's page registers off - then INT 19h.  Memory is not tested, so it
+        keeps what it held.  EMS: 'keep' (what EMSKEEP checks on the 1520),
+        'lose' (every page different afterwards), or a set of board pages
+        that lose their contents."""
+        if s.ems_pages:
+            import random
+            r = random.Random(1234)
+            lose = range(s.ems_pages) if ems == 'lose' else (() if ems == 'keep' else ems)
+            for p in lose:
+                s.ems_store[p * EMS_PAGE:(p + 1) * EMS_PAGE] = bytes(r.getrandbits(8) for _ in range(EMS_PAGE))
+            s.ems_reg = [0, 0, 0, 0]
+            for w in range(4): s.ems_map(w)
+        s.bios_init()
+        s.irq_pending = set(); s.soft = []; s.isr = 0; s.pic_rr = 2
+        s.pic_mask = 0xB8; s.pic2_mask = 0xFF
+        s.keys.clear(); s.blocked = False; s.halted = False
+        s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
+        s.warm_boots = getattr(s, 'warm_boots', 0) + 1
+        s.boot(0)
 
     # ---- registers and memory ---------------------------------------------
     def r(s, n): return s.mu.reg_read(R[n])
@@ -475,7 +511,7 @@ class PC:
         if port == 0x3DA:
             return 0x08 if int(s.us / 1000) % 16 == 0 else 0x00
         if 0x2F8 <= port <= 0x2FF: return s.uart_in(port - 0x2F8)
-        if s.ems_pages and (port & 0x3FFF) == 0x258: return s.ems_reg[port >> 14]
+        if s.ems_pages and (port & 0x3FFF) == 0x258: s.us += EMS_IO_US; return s.ems_reg[port >> 14]
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             return s.chip.read(port >> 10)
         return 0xFF
@@ -564,7 +600,7 @@ class PC:
             return
         if 0x2F8 <= port <= 0x2FF: return s.uart_out(port - 0x2F8, val)
         if s.ems_pages and (port & 0x3FFF) == 0x258:
-            s.ems_reg[port >> 14] = val; s.ems_map(port >> 14); return
+            s.us += EMS_IO_US; s.ems_reg[port >> 14] = val; s.ems_map(port >> 14); return
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             s.chip.write(port >> 10, val)
 
@@ -817,7 +853,10 @@ class PC:
         s.soft.append(5)
 
     def int18(s): s.stopped = 'INT 18h (ROM BASIC)'; s.mu.emu_stop()
-    def int19(s): s.stopped = 'INT 19h (reboot)'; s.mu.emu_stop()
+    def int19(s):
+        if s.r('cs') == 0xF000 and s.r('ip') == 0xE05D:      # the reset jump's POST
+            s.warm_boot(getattr(s, 'ems_on_reset', 'keep')); s.mu.emu_stop(); return
+        s.stopped = 'INT 19h (reboot)'; s.mu.emu_stop()
 
     def int1a(s):
         ah = s.r('ah'); bcd = lambda v: ((v // 10) << 4) | (v % 10)

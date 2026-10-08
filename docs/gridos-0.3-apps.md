@@ -434,6 +434,115 @@
 - **Tests (`t_subcopy`, 33 checks; 2 more in `t_wild`):** the form; confirmed unchanged ("into itself"); to B: (the question, every title and subject there byte for byte, a read-only one, 75 KB three levels down, an empty subject, the dates, no temporary file, both disks sound, Subject still chosen, the memory back); again with Replace Ask through the screen saver; Only newer and Replace All into a backup there already; into a subject in it, into itself with a `\` after; `\WORKS`; Root into its own drive; Root to `B:\ALL` (all of A:); a subject to B:'s root; on the same drive (the Subject list shows the copy); ESC at the question; an empty subject; a 61-character destination; a write-protected B: (making the subject, copying a title), A:'s Subject list after it; help; CODE-M on a subject; and the review's cases (hidden and system titles and a hidden subject, still hidden on B:; the saver while the form is open; a file where it goes; no disk in B:; 67 characters). The two write-protected list checks fail without the kernel fix, the review's six checks without its fixes.
 - **`test_headcln.py`:** its first key went in while HEADCLN was still printing its prompt, and HEADCLN drops keys typed before it waits. Whether that happened depended on where the emulator's run slice ended, and it did once the Executive grew (HEADCLN loads 864 bytes higher): 7 of 9 checks failed. It now waits for the whole prompt.
 
+## M:, the temporary disk (0.3.14, 2026-10-08)
+- **What it is for:** Claude's scratchpad once Claude stays resident (0.5), and anything else that wants files fast and only for a while. It is a RAM disk in EMS, like GRiD's Temporary Disk and Microsoft's RAMDrive, built on the kernel's own FAT12.
+- **What the user sees:**
+  - **Drive M:**, 256 KB unless set otherwise, whenever the machine has EMS. DIR, COPY, MD/CD/RD, programs run from it, the Executive's file commands: all as on A: and C:.
+  - **The Executive's Device list and Copy form** offer "Temporary disk M:". They now list B: only when the kernel has it (a second floppy drive); 0.3.10–0.3.13 listed B: with C: "if only to say it isn't there".
+  - **System, Temporary disk** (a new topic, before About): Return steps through Off, 64, 128, 256, 512 KB, 1 MB and All free. The topic shows M:'s actual size, its free space and what All free would give. Without EMS it says "needs EMS".
+  - **A change takes effect at once.** A new size empties M:. System asks first when there are files on it ("M: holds files: Confirm to erase them"), and refuses while a file on M: is open ("A file on M: is open: M: can't change now"). When EMS is short, M: is as big as fits and the topic says so ("less EMS was free"); with none free, "No EMS is free for M:: it is off".
+  - **GRIDOS.INI:** `MDISK=n` (KB), `MDISK=0` (off), `MDISK=ALL`; no line means 256 KB. M: is whole 16 KB pages (MDISK=100 gives 96 KB, at least one page). A line without a number counts as no line; more than any machine has counts as ALL. System writes the line (none for 256) and keeps the other lines.
+  - **Other programs:** `DEFRAG M:` says "M: is the temporary disk, in memory: nothing to tidy", and the screen saver's tidying passes M: over. System's Disks shows M: with C:, and Memory shows M:'s block ("Temporary disk M:  0.3 KB").
+- **The volume:** FAT12, 512-byte sectors, 1 KB clusters (2 sectors), one FAT, 64 root entries (128 from 256 KB up). 256 KB gives 251 KB for files; 1 MB, 1,017 KB; All free on the 1520 (86 pages), 1,365 KB.
+  - 2 KB and 4 KB clusters were tried. Sequential transfers barely change; 64 random reads go from 0.24 s to 0.14 s and 0.10 s; small files waste more. 1 KB stays.
+- **Where it lives.** Nothing is in memory without EMS, and nothing while M: is off:
+  - **The installer and the resident part's image** sit in the disk cache's second EMS page, in the 14 KB the cache never uses (its 36 sectors are 18 KB in two pages). `ems_init` copies them there at start-up. The installer runs there, in window 0, called through INT 67h AH=5Bh AL='M'. 5Bh is an operating-system function in LIM 4.0; any other AL still gets A4h.
+  - **A 26-byte stub at KSEG:0012h** maps the cache page in, calls the installer and puts window 0 back.
+    - Those bytes were `start`'s. `start` runs only at 1000:0000 in the load image: BOOT.ASM has its own `KSEG equ 1000h`, nothing jumps to `start`, and a warm restart loads the file again.
+    - After boot only 000Ah–0011h ('EMMXXXX0') are read.
+  - **The resident part (`md_res`, 336 bytes: 21 paragraphs)** exists only while M: is on. It is a block of its own (owner 8, "MD") split off the master environment's block.
+    - The environment's MCB shrinks from 32 paragraphs to 10 (160 bytes; its strings take 45), and the MD block follows it.
+    - DOS tools that edit the master environment see a 160-byte block and stay inside it.
+    - The environment's 512 bytes were never memory DOS programs got, so they get exactly as much with M: on as off. Off, the MD block goes and the environment has its 512 bytes again.
+    - The suggested 256 bytes for the environment doesn't leave room: 512 − 16 (the MCB) − 336 = 160.
+  - **What the resident part holds:** M:'s drive table entry and current directory, five hooks and the sector routine. The hooks are C:'s places (`use_drive`, `dio`) plus INT 21h 0Eh's drive count, `cwd_of` and `drv_present`.
+    - The kernel now calls `cwd_of` and `drv_present` in every place that tested NDRV or indexed `cwdstr` itself: `f_0E`, `f_29` (it took any letter), `f_3B`, `f_47`, find next, IOCTL 4408h, `full_name`, `unmount`.
+    - That saved 16 bytes, one paragraph of the kernel, which pays for the Executive's 22.
+  - **Pages:** an EMS handle of its own, owner 0, from Grid-OS's EMS manager (INT 67h 43h). No program's exit frees it, and programs see those pages as used.
+    - Not handle 0: LIM lets any program empty handle 0, and EMSTEST does.
+    - 256 KB is 16 of the 1520's 88 pages; programs keep 70.
+- **The sector routine (`md_dio`):** the kernel's FAT engine does everything else. M:'s only code of its own is this routine, as `hd_dio` is C:'s.
+  - It normalises ES:BX (BX < 16), splits a transfer where a 16 KB page ends, and checks each page against the handle's record: still owner 0 (M:'s), and within its pages.
+  - It writes the page register itself (port 0258h + w × 4000h, value 80h | page from `ems_ltab`), never INT 67h. It reads the window's register, writes M:'s page, copies with `rep movsw`, then writes the old value back. The read and write of the register happen with interrupts off.
+  - **The window:** window 3 (EC00h), or window 0 (E000h) when the caller's buffer is at E800h–EFFFh. A piece is at most 16 KB, so it never reaches the window being borrowed. A program's own pages in any window are as they were after every call, and a buffer in the frame (a program's EMS page) works.
+  - **M: never reaches the cylinder cache:** the hook comes before `dio`'s call to it. M:'s directory and FAT sectors pass through the kernel's five sector buffers like any drive's, which is how the kernel edits them. They are keyed 0Ch, which no floppy key (no high part) or C: key (bit 1 set) can equal.
+- **Warm restart:** M:'s first page holds a boot sector with the page list and a checksum.
+  - **At start-up**, `md_boot` reads `MDISK=` and M: is made. If the handle got the same raw pages, the boot sector is exactly what M: would write, and the FAT is sane, M: keeps its files. Otherwise it starts empty.
+  - **Turning M: off** clears that sector's first word, so a later restart doesn't bring back what was there.
+  - **Not yet known:** whether the 1520's EMS keeps its contents through Ctrl-Alt-Del. `tools/EMSKEEP.COM` finds out (below). If it doesn't, the check costs nothing: M: starts empty as it would anyway.
+  - `ems_init`'s page scan used to leave a tag in each page's first word; it now puts the words back.
+- **The letter M::** no trouble found. INT 21h 0Eh returns 13 with M: (3 without, as before); D: to L: are invalid drives, as on DOS with a gap. GRIDCMD, TM5000G, BENCH and the test programs work on M:.
+- **Speed.** pcemu is calibrated to the 1520: frame copy 3,074 KB/s, and now 1 µs for each EMS port IN or OUT, which it didn't charge before. Table: BENCH 1.4 on M: (1 MB) in pcemu, BENCH 1.3 on A: on the 1520, HDSCAN on C: on the 1520.
+
+  | Test | A: (1520, BENCH 1.3) | C: (1520) | M: (pcemu, 1 MB) |
+  |---|---|---|---|
+  | Write 256 KB, 16 KB at a time | 19 KB/s | | 0.175 s: 1,463 KB/s |
+  | Read 256 KB, 16 KB at a time | 26 KB/s | 463 KB/s (HDSCAN, whole tracks) | 0.104 s: 2,461 KB/s |
+  | Read 256 KB, 512 bytes at a time | | | 0.335 s |
+  | Read 256 KB, 128 bytes at a time | | | 1.181 s |
+  | 64 random 512-byte reads | 10 s | | 0.238 s |
+  | Directory listing × 10 | | | 0.011 s |
+  | Open + close × 100 | | | 0.196 s |
+  | 20 × create a 1 KB file, then delete | 22 s | | 0.170 s |
+  | Load + run a 120 KB .EXE × 3 | | | 0.158 s |
+  | INT 21h calls × 1000 | | | 0.108 s |
+
+  `BENCH /N 10` gives the same per-run rates (2,466 KB/s read, 1,382 KB/s write).
+
+  - **Big reads** run at 2,461 KB/s. `md_dio` itself copies at about 2,950 KB/s (96 % of the frame's copy rate); the rest is the kernel's per-call work.
+  - **Big writes:** the M: path runs at about 2,340 KB/s. The BENCH figure also counts BENCH's own fill of its 16 KB buffer (`stosb`, 66 ms in pcemu).
+  - **Small writes, create and delete:** no waiting at all. 20 create/delete pairs take 0.17 s against 22 s on A:.
+  - **64 random reads:** 0.24 s against 10 s. What is left is the kernel walking the FAT chain (`sft_cluster`, `fat_get`).
+  - **BENCH 1.4:** `/N n` does each test n times over (`BENCH /N 10`), for drives too fast for one pass to time well.
+- **Cost:**
+  - **GRIDOS.SYS 45,358 bytes (+2,102):**
+    - M:'s installer and resident image, 1,745 bytes (load image only, copied into EMS);
+    - the start-up, +336 (`ems_init`'s copying and the page scan's restore, the stub, `md_boot`);
+    - the Executive, +22 (the drive list, "Temporary disk M:", the `sub_build` guard);
+    - the kernel, −16.
+  - **Memory for a DOS program run from the Executive**, in paragraphs (KB). Identical in every case:
+
+    | | 0.3.13 | 0.3.14, M: off | 0.3.14, M: 256 KB |
+    |---|---|---|---|
+    | Floppies | 36,003 (562.5) | 36,003 | 36,003 |
+    | EMS | 37,033 (578.6) | 37,033 | 37,033 |
+    | C: | 35,792 (559.2) | 35,792 | 35,792 |
+    | C: and EMS | 36,849 (575.7) | 36,849 | 36,849 |
+
+  - **The arena's start, with EMS:** 0.3.13 has the environment (32 paragraphs), the root PSP (16) and the UI block (2,171). 0.3.14 with M: off has the environment (32), the root PSP (16) and the UI block (2,172), one paragraph lower. With M: on: the environment (10), MD (21), the root PSP (16), the UI block (2,172).
+  - **Resident cost by case:** without EMS, nothing. With EMS and M: off, nothing (the installer is in the cache's spare EMS; the stub uses dead start-up bytes). With M: on, 352 bytes (the MD block and its MCB), all out of the environment's unused room. The EMS pages are M:'s size.
+  - SYSTEM.RUN 10,003 bytes (+1,272), DEFRAG.COM 10,220 (+82), BENCH.COM 2,858 (+196).
+- **Found on the way:**
+  - **`sub_build` overwrote a TSR.** It wrote the Subject list's first entry into `entries` even when the UI block had no room for it, i.e. when a TSR had just been left right after the UI block. Now the list is empty until `ui_room` moves the block.
+  - **System's GRIDOS.INI save dropped unknown lines** when there was no M: (a flag test). Fixed.
+- **Review (an independent agent): two real bugs and five smaller ones, all fixed, each with a check that fails before its fix (`test_kernel.py t_mdreview`):**
+  - **EXEC of "F:X.EXE" overran `ex_name`.** This came from this change's refactor: `full_name` lost its NDRV check, so for a drive the kernel doesn't have, `cwd_of` pointed past `cwdstr` (into `bounce`, or 16 KB further for "1:"). The copy, which has no limit, ran over `ex_name` and on into KEMS's code. Now `drv_present` first; the path is then refused (0Fh).
+  - **"A file on M: is open" when none was.** `md_open` tested `S_REF` as a word, which takes in `S_MODE`, and a closed slot keeps its mode and drive. After `COPY A:X M:`, a new size was refused until some other open reused the slot.
+  - **M:'s handle closed by a program by mistake and given to another.** M: wrote into the other program's pages, and turning M: off closed that program's handle. `md_dio` now checks the owner (still 0) at no cost in paragraphs, by reading the page count as a word; `md_down` frees only its own.
+  - **A disk turned off by a program came back at a warm restart.** Now turning M: off clears its boot sector's first word.
+  - **INT 67h 43h failing for want of a free handle** returned 85h, which System didn't expect. It now returns 82h, as for no pages.
+  - **Called from inside INT 21h** (a handler, a hot key): the installer re-entered INT 21h, possibly under an M: directory operation. It now refuses with 80h when `indos` isn't 0.
+  - **The current drive** was reset to the boot drive on a new size, not only when M: went off. Now only when it goes off.
+  - **Left as it is:** a caller with its stack inside the page frame's first two windows (the installer maps them). The only callers are System, the start-up and MDTEST; a real fix needs about 10 bytes in a stub that has one to spare. The API comment says so.
+- **Tests:**
+  - **`test_kernel.py t_mdisk`, 48 checks:** nothing without EMS, with MDISK=0, or on a 2-page board; the stub and hooks; 256 KB by default (its own handle, owner 0); the MD block split off the environment; an empty FAT12 disk of the right shape; DOS programs' memory the same on and off; 64, 128, 512, 1024 KB, All free, off and 256 KB again, each consistent and split (off: no block, no hook, no EMS); COPY with A:, MD/CD/DIR/DEL/RD, a program run from M:, M: full (MDTEST /F); refused while a file is open (80h); EMS held by a resident program (M: as big as fits: 416 KB); no EMS free (82h); GRIDOS.INI lines (ALL in either case; 128 among other lines; 100: 96 KB; 5: 16 KB; no number or junk: 256 KB; 99999: all); an 8-page board (96 KB); warm restarts (EMS kept, lost, M:'s first page lost; MDISK= changed).
+  - **MDTEST /W:** the program's own pages in all four windows, a file of 72 KB in odd pieces across M:'s pages, buffers in the frame (window 1, windows 2–3 across, window 0); every window and page as it was.
+  - **`t_mdreview`, 8 checks:** the review's cases above (with the fixes taken out, all 8 fail).
+  - **`t_cache_ems`:** CACHETST with M: on all along (one more check says so).
+  - **`test_apps.py t_mdisk`, 32 checks:** System's topic with no EMS (needs EMS; nothing written), Disks and Memory, every Return step and its GRIDOS.INI line; the Device list and Copy form with M: (copy, rename, move to A:, delete, copy a subject); a program run from M:; the erase question (ESC keeps everything); refused with a file open; M: off while the Executive is on it; MDISK=0 after a restart; the saver and DEFRAG M:.
+  - **`test_hd.py t_mdisk`, 8 checks:** C: and M: together (COPY both ways, past 64K sectors), the Device list and Copy form with both, memory with M: on and off. `t_exec`'s Device list now has no B: on its one-floppy machine.
+  - **`tests/MDTEST.COM`:**
+    - `/Q` query, `/S n` set, `/O n` with a file open;
+    - `/W` windows, `/F` fill;
+    - `/H n` hold EMS pages (resident), `/K` keep `M:\KEEP.TMP` open (resident);
+    - `/C h` close an EMS handle, `/X name` EXEC a name directly.
+  - **pcemu:** `warm_boot(ems='keep'|'lose'|pages)`, and Ctrl-Alt-Del through INT 19h at F000:E05B.
+  - **All suites pass:** apps 367, kernel 177, hard disk 56, DEFRAG 49, Claude link 21, HEADCLN 9, HDSCAN 20, HDPROBE 33.
+- **On the 1520:**
+  - **Copy to the floppy** (`releases/0.3.14`): GRIDOS.SYS, SYSTEM.RUN, DEFRAG.COM, GRIDOS.TXT, BENCH.COM and EMSKEEP.COM. GRIDCMD.COM and WRITE.RUN are unchanged.
+  - **EMSKEEP first.** Run `EMSKEEP`: it stamps 8 EMS pages and writes EMSKEEP.DAT. Press Ctrl-Alt-Del into Grid-OS, then run `EMSKEEP /C`. It says "EMS kept what it held through the restart", "was cleared or rewritten", or "kept part", and adds the result to EMSKEEP.TXT. Run it once under GRiD MS-DOS with EMM.SYS too.
+  - **BENCH on M::** in System, Temporary disk, press Return until 1 MB. Then at the command prompt (CODE-P) run `M:` and `A:BENCH /N 10`. BENCH.TXT goes on M:, so `COPY M:BENCH.TXT A:` before switching off.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
@@ -540,5 +649,5 @@
   - Command, on the text view;
   - the GPIB console;
   - CLAUDE as a `.RUN`.
-- **Executive work (0.3 proper):** Subjects, file operations (Copy on a subject: 0.3.13), R: and M:, settings.
+- **Executive work (0.3 proper):** Subjects, file operations (Copy on a subject: 0.3.13), R: (M:: 0.3.14), settings.
 - **Later:** the EMS swap of the UI block while DOS programs run, which would give programs about 17 KB more.

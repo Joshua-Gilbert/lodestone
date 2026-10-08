@@ -4,13 +4,14 @@
 ;
 ;  CODE-U in the Executive, as GRiD's "Usage CODE-U  Show memory and
 ;  device usage".  Topics on the left, details on the right.  Return sets
-;  the clock (Clock) or scans the GPIB bus (GPIB).
+;  the clock (Clock), scans the GPIB bus (GPIB), or takes the next font,
+;  saver delay or size of the temporary disk M:.
 ; =====================================================================
 %include "UIAPI.INC"
         org     RUN_ORG
 
 TOP_Y   equ 32                          ; first topic / detail line
-NTOPIC  equ 8
+NTOPIC  equ 9
 INI_MAX equ 1024                        ; GRIDOS.INI: the most we rewrite
 PCOL    equ 18                          ; the details panel: from this column
 LCOL    equ 20                          ; labels
@@ -204,6 +205,7 @@ t_memory:
         xor     ax, ax
         mov     [m_ui], ax
         mov     [m_cache], ax
+        mov     [m_md], ax
         mov     [m_exec], ax
         mov     [m_other], ax
         mov     [m_best], ax
@@ -244,8 +246,14 @@ t_memory:
         mov     byte [m_prevui], 1
         jmp     .next
 .notui: cmp     si, 'SC'
-        jne     .other
+        jne     .notsc
         mov     [m_cache], bx
+        jmp     .next
+.notsc: cmp     si, 'MD'                ; M:'s resident part (and its MCB)
+        jne     .other
+        inc     bx
+        mov     [m_md], bx
+        dec     bx
         jmp     .next
 .notsys:
         cmp     cx, [psp]
@@ -280,7 +288,14 @@ t_memory:
         jne     .kd
         mov     si, l_kernel_e          ; (Grid-OS's EMS manager is in it)
 .kd:    call    pline_r
+        mov     ax, [m_md]              ; M:'s resident part: split off the
+        or      ax, ax                  ;  environment's spare bytes
+        jz      .nomd
         call    vstart
+        call    sb_kb
+        mov     si, l_mdres
+        call    pline_r
+.nomd:  call    vstart
         mov     ax, [ui_base]
         add     ax, [m_exec]
         inc     ax                      ; (its MCB)
@@ -386,7 +401,7 @@ t_memory:
 
 ; ---------------------------------------------------------------------
 ;  Disks: A: (and B: when there is a second drive, C: when there is the
-;  hard disk)
+;  hard disk, M: when there is the temporary disk)
 ; ---------------------------------------------------------------------
 t_disks:
         mov     byte [drv], 0
@@ -399,20 +414,23 @@ t_disks:
         ja      .c
         call    pgap
         jmp     .d
-.c:     call    has_c
+.c:     mov     bl, 3                   ; C:, then M:, if they are there
+        call    .one
+        mov     bl, MD_DRV + 1
+.one:   call    has_drv
         jc      .x
-        mov     byte [drv], 2
+        dec     bx
+        mov     [drv], bl
         call    pgap
         jmp     disk_lines
 .x:     ret
 
-; is there a C: (Grid-OS's hard disk: INT 21h 0Eh says 3 drives)?  CF if not
-has_c:  mov     ah, 19h
+; is there a C: (Grid-OS's hard disk)?  CF if not.  has_drv: drive BL (1 =
+; A:) there?  (IOCTL "removable?" says no such drive: CF.)  BX kept
+has_c:  mov     bl, 3
+has_drv:
+        mov     ax, 4408h
         int     21h
-        mov     dl, al
-        mov     ah, 0Eh
-        int     21h
-        cmp     al, 3
         ret
 
 disk_lines:
@@ -1369,6 +1387,162 @@ k_space:
         jmp     redraw
 .x:     ret
 
+;  Temporary disk M:: a RAM disk in EMS (the kernel's, through INT 67h
+;  5Bh 'M').  Return: the next size, Off, 64, 128, 256, 512 KB, 1 MB or
+;  all the EMS free, at once (M: is made again, empty: if it holds files,
+;  Confirm first; not while a file on it is open), and saved in GRIDOS.INI
+;  as MDISK= (none for the usual 256 KB).  Without EMS: "needs EMS".
+; ---------------------------------------------------------------------
+MD_DRV  equ 12
+t_mdisk:
+        call    md_query                ; (before vstart: ems_mgr moves DI)
+        call    vstart
+        jnc     .here
+        mov     si, s_needems
+        call    UI_SBSTR
+        mov     si, l_mdsize
+        call    pline
+        call    pgap
+        mov     si, s_mdwhat1
+        call    ptext
+        mov     si, s_mdneeds
+        jmp     ptext
+.here:  mov     ax, [md_size]
+        or      ax, ax
+        jz      .off
+        call    md_kbs                  ; "256 KB" ("1 MB", ...)
+        mov     ax, [md_set]
+        cmp     ax, 0FFFFh
+        mov     si, s_mdall             ; " (all the EMS that was free)"
+        je      .s
+        cmp     ax, [md_size]
+        jbe     .l
+        mov     si, s_mdshort           ; " (less EMS was free)"
+.s:     call    UI_SBSTR
+.l:     mov     si, l_mdsize
+        call    pline
+        call    vstart                  ; and free on it
+        mov     dl, MD_DRV + 1
+        mov     ah, 36h
+        int     21h
+        cmp     ax, 0FFFFh
+        je      .tail
+        mov     [d_spc], ax
+        mov     [d_bps], cx
+        xchg    ax, bx
+        call    clus_kb
+        mov     si, l_mdfree
+        call    pline
+        jmp     short .tail
+.off:   mov     si, s_mdoff
+        call    UI_SBSTR
+        cmp     word [md_set], 0
+        je      .o
+        mov     si, s_mdnone            ; (asked for, but no EMS was free)
+        call    UI_SBSTR
+.o:     mov     si, l_mdsize
+        call    pline
+.tail:  call    vstart                  ; what all the EMS free would give
+        mov     ax, [md_max]
+        call    md_kbs
+        mov     si, l_mdmax
+        call    pline
+        call    pgap
+        mov     si, s_mdchoices
+        call    ptext
+        mov     si, s_mderase
+        call    ptext
+        call    pgap
+        mov     si, s_mdwhat1
+        call    ptext
+        mov     si, s_mdwhat2
+        jmp     ptext
+
+; AX KB as "256 KB" or "1 MB" at DI
+md_kbs: test    ax, 3FFh
+        jnz     .k
+        or      ax, ax
+        jz      .k
+        shr     ax, 10
+        call    UI_SBU16
+        mov     si, s_mb
+        jmp     UI_SBSTR
+.k:     call    UI_SBU16
+        mov     si, s_kb
+        jmp     UI_SBSTR
+
+; M:'s setting, size and the most it can have -> md_set, md_size, md_max.
+; CF if there is no M: here (no EMS, or EMS without the disk cache in it)
+md_query:
+        call    ems_mgr
+        jc      .x
+        mov     ax, 5B4Dh
+        xor     bl, bl
+        int     67h
+        or      ah, ah
+        jnz     .no
+        mov     [md_set], bx
+        mov     [md_size], cx
+        mov     [md_max], dx
+        clc
+        ret
+.no:    stc
+.x:     ret
+
+; Return on Temporary disk M:: the next size
+next_mdisk:
+        call    md_query
+        jnc     .q
+        jmp     UI_BEEP
+.q:     mov     bx, [md_set]            ; the first step past the setting
+        mov     si, md_steps            ;  (past all of them: off)
+.f:     lodsw
+        cmp     ax, bx
+        ja      .got
+        cmp     si, md_steps_end
+        jb      .f
+        xor     ax, ax
+.got:   mov     [md_new], ax
+        cmp     word [md_size], 0
+        je      .set
+        mov     ax, 0F001h              ; M: there: not while a file on it is
+        mov     dl, MD_DRV              ;  open; Confirm if it holds any
+        int     21h
+        jcxz    .shut
+        mov     si, s_mdopen
+        jmp     UI_MSG
+.shut:  mov     dx, s_mdall_files
+        mov     cx, 16h
+        mov     ah, 4Eh
+        int     21h
+        jc      .set
+        mov     si, s_mdask
+        call    UI_ASK
+        jnc     .set
+        ret
+.set:   mov     ax, 5B4Dh
+        mov     bl, 1
+        mov     cx, [md_new]
+        int     67h
+        mov     si, s_mdopen
+        cmp     ah, 80h
+        je      .msg
+        push    ax
+        call    save_ini
+        call    redraw
+        pop     ax
+        mov     si, s_mdroom
+        cmp     ah, 81h
+        je      .msg
+        mov     si, s_mdnoems
+        cmp     ah, 82h
+        jne     .x
+.msg:   jmp     UI_MSG
+.x:     ret
+
+md_steps    dw 0, 64, 128, 256, 512, 1024, 0FFFFh
+md_steps_end:
+
 ; the file named at dta+30 into fbuf -> CF if it isn't exactly a font
 load_fnt:
         mov     di, fpath
@@ -1416,10 +1590,16 @@ same_name:
         pop     si
         ret
 
-; FONT=, SAVER= and TIDY= in \GRIDOS.INI for the font and saver in use: its
-; other lines are kept, old FONT=, SAVER= and TIDY= lines go, and GRiD's
-; font, the usual 5 minutes and tidying need none (no lines left: no file)
+; FONT=, SAVER=, TIDY= and MDISK= in \GRIDOS.INI for the font, saver and
+; temporary disk in use: its other lines are kept, old FONT=, SAVER=, TIDY=
+; and MDISK= lines go, and GRiD's font, the usual 5 minutes, tidying and
+; 256 KB need none (no lines left: no file).  Without M: (no EMS) an
+; MDISK= line stays as it is.
 save_ini:
+        call    md_query                ; (md_ok: M: is ours to write)
+        sbb     al, al
+        not     al
+        mov     [md_ok], al
         xor     cx, cx                  ; the old file (none: nothing)
         mov     dx, s_ini
         mov     ax, 3D00h
@@ -1454,6 +1634,11 @@ save_ini:
         je      .ours
         mov     di, s_tidyeq
         call    ini_is
+        je      .ours
+        mov     di, s_mdeq              ; MDISK=: ours only with M: here
+        call    ini_is
+        jne     .ours
+        cmp     byte [md_ok], 0FFh
 .ours:  pop     di
         je      .skip
         jmp     short .keep
@@ -1501,7 +1686,22 @@ save_ini:
         jz      .wr3
         mov     si, s_tidy0
         call    UI_SBSTR
-.wr3:   mov     bp, di                  ; BP = the end of the new text
+.wr3:   cmp     byte [md_ok], 0         ; M:'s size, unless 256 KB
+        je      .wr4
+        mov     ax, [md_set]
+        cmp     ax, 256
+        je      .wr4
+        mov     si, s_mdeq
+        call    UI_SBSTR
+        mov     si, s_mdalleq
+        cmp     ax, 0FFFFh
+        je      .all
+        call    UI_SBU16
+        jmp     short .crlf
+.all:   call    UI_SBSTR
+.crlf:  mov     ax, 0A0Dh
+        stosw
+.wr4:   mov     bp, di                  ; BP = the end of the new text
         cmp     di, ini_new
         je      .del
         mov     dx, s_ini
@@ -1580,6 +1780,8 @@ k_enter:
         je      next_font
         cmp     bx, 6
         je      next_saver
+        cmp     bx, 7
+        je      next_mdisk
         ret
 k_help: mov     si, keys
         mov     di, s_helptitle
@@ -1592,6 +1794,7 @@ keys:   KEY(K_NONE,      0,       h_topic)
         KEY(K_ENTER,     k_enter, h_enter)
         KEY(K_NONE,      0,       h_enter2)
         KEY(K_NONE,      0,       h_enter3)
+        KEY(K_NONE,      0,       h_enter4)
         KEY(K_SPACE,     k_space, h_space)
         KEY(K_F5,        k_f5,    h_f5)
         KEY(K_F1,        k_help,  h_help)
@@ -1605,9 +1808,9 @@ keys:   KEY(K_NONE,      0,       h_topic)
 ;  data
 ; ---------------------------------------------------------------------
 topics:     dw TOP_Y, NTOPIC, NTOPIC, 0, 0, topic_row, show_topic, 1, PCOL - 3, topic_name
-topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_saver, n_about
-topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_saver, t_about
-topic_band  dw s_band2, s_band2, s_band_clk, s_band2, s_band_gp, s_band_font, s_band_sv, s_band2
+topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_saver, n_mdisk, n_about
+topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_saver, t_mdisk, t_about
+topic_band  dw s_band2, s_band2, s_band_clk, s_band2, s_band_gp, s_band_font, s_band_sv, s_band_md, s_band2
 n_memory    db 'Memory',0
 n_disks     db 'Disks',0
 n_clock     db 'Clock',0
@@ -1615,6 +1818,7 @@ n_devices   db 'Devices',0
 n_gpib      db 'GPIB',0
 n_display   db 'Display',0
 n_saver     db 'Screen saver',0
+n_mdisk     db 'Temporary disk',0
 n_about     db 'About',0
 
 clock_form: dw s_clocktitle, s_clockprompt, 46, 10, 2
@@ -1629,10 +1833,12 @@ s_band_clk  db 'RETURN: set the date and time    ESC: back',0
 s_band_gp   db 'RETURN: scan the bus    ESC: back',0
 s_band_font db 'RETURN: the next font    ESC: back',0
 s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
+s_band_md   db 'RETURN: the next size    ESC: back',0
 h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
 h_enter     db 'Return on Clock              set the date and time',0
 h_enter2    db 'Return on GPIB               scan the bus',0
 h_enter3    db 'Return on Display            the next font',0
+h_enter4    db 'Return on Temporary disk M:  the next size',0
 h_space     db 'Space on Screen saver        tidy the disks or not',0
 h_f5        db 'F5                           look again',0
 h_help      db 'CODE-?  or  F1               this help',0
@@ -1645,6 +1851,7 @@ s_emm       db 'EMMXXXX0'
 l_exec      db 'Executive and UI core',0
 l_this      db 'System (this program)',0
 l_cache     db 'Disk cache',0
+l_mdres     db 'Temporary disk M:',0
 s_cems      db '32 KB of EMS',0
 l_other     db 'Resident programs',0
 l_free      db 'Free for programs',0
@@ -1743,6 +1950,27 @@ s_fonteq    db 'FONT=',0
 s_savereq   db 'SAVER=',0
 s_tidyeq    db 'TIDY=',0
 s_tidy0     db 'TIDY=0', 13, 10, 0
+s_mdeq      db 'MDISK=',0
+s_mdalleq   db 'ALL',0
+l_mdsize    db 'Size',0
+l_mdfree    db 'Free',0
+l_mdmax     db 'All free EMS would give',0
+s_mb        db ' MB',0
+s_mdoff     db 'off',0
+s_mdnone    db ' (no EMS was free)',0
+s_mdshort   db ' (less EMS was free)',0
+s_mdall     db ' (all the EMS free)',0
+s_needems   db 'needs EMS',0
+s_mdneeds   db 'This 1520 has no expanded memory (EMS) set up.',0
+s_mdchoices db 'RETURN: off, 64, 128, 256, 512 KB, 1 MB, all free',0
+s_mderase   db 'A new size empties M: (it asks first)',0
+s_mdwhat1   db 'M: is a disk in expanded memory: no waiting.',0
+s_mdwhat2   db 'Kept in GRIDOS.INI as MDISK= (256 KB: no line).',0
+s_mdall_files db 'M:\*.*',0
+s_mdask     db 'M: holds files: Confirm to erase them',0
+s_mdopen    db "A file on M: is open: M: can't change now",0
+s_mdroom    db "No room in memory for M:'s part there: M: is off",0
+s_mdnoems   db 'No EMS is free for M:: it is off',0
 l_saver     db 'Starts after',0
 s_never     db 'never',0
 s_minutes   db ' minutes',0
@@ -1773,6 +2001,7 @@ psp         resw 1
 m_kernel    resw 1
 m_ui        resw 1
 m_cache     resw 1
+m_md        resw 1
 m_exec      resw 1
 m_other     resw 1
 m_best      resw 1
@@ -1799,6 +2028,11 @@ gp_my       resb 1
 gp_nfound   resb 1
 gp_found    resb 32
 cur_font    resb 13
+md_set      resw 1                  ; M:: its setting (KB, 0 off, FFFFh all),
+md_size     resw 1                  ;  its size (KB), the most it can have,
+md_max      resw 1
+md_new      resw 1                  ;  the next setting
+md_ok       resb 1                  ;  and FFh: there is M: here
 past        resb 1
 fpath       resb 18
 fbuf        resb FONT_BYTES + 1

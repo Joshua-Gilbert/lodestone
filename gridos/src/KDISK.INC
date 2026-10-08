@@ -136,6 +136,7 @@ drv_init:
 use_drive:
         push    ax
         mov     [act], al
+.hk:                                    ; (KMDISK.INC: M:'s entry)
         mov     ah, DRVSZ
         mul     ah
         add     ax, drvtab
@@ -144,17 +145,21 @@ use_drive:
         pop     ax
         ret
 
-drv_present:                            ; AL = drive: CF if no such drive
+; AL = drive -> SI = its entry ([act], [actp]).  CF if there is no such drive
+; (KMDISK.INC: M: is one)
+drv_present:
         cmp     al, NDRV
-        jae     .no
-        push    si
+        cmc
+.hk:    jc      .no
         call    use_drive
-        cmp     byte [si+D_PRES], 0
-        pop     si
-        je      .no
-        clc
-        ret
-.no:    stc
+        cmp     byte [si+D_PRES], 1     ; (CF if 0)
+.no:    ret
+
+; AL = drive -> DI = its current directory ("\DIR\SUB").  AH changed
+; (KMDISK.INC: M:'s)
+cwd_of: xor     ah, ah
+        imul    di, ax, CWDLEN
+.hk:    add     di, cwdstr
         ret
 
 ; boot sector at SI (BPB at +0Bh) -> drive [actp] mounted.  CF: AX = 26
@@ -337,11 +342,8 @@ same_disk:
 ; get drive AL ready: present, media change noticed, mounted.  Sets
 ; [act]/[actp], SI = entry.  CF: AX = error.
 drv_ready:
-        cmp     al, NDRV
-        jae     .inv
-        call    use_drive
-        cmp     byte [si+D_PRES], 0
-        je      .inv
+        call    drv_present
+        jc      .inv
         push    ax
         push    dx
         test    byte [si+D_UNIT], 80h   ; (the hard disk: never changes)
@@ -398,23 +400,21 @@ drv_ready:
 ; drive AL: forget everything about the disk in it
 unmount:
         push    ax
-        push    bx
         push    si
+        push    di
         call    use_drive
         mov     byte [si+D_MNT], 0
         mov     word [si+D_CWD], 0
-        mov     bl, al
-        xor     bh, bh
-        imul    bx, bx, CWDLEN
-        mov     word [cwdstr+bx], '\'
+        call    cwd_of
+        mov     word [di], '\'
         cmp     [fat_drv], al
         jne     .b
         mov     byte [fat_drv], 0FFh
         mov     byte [fat_dirty], 0
         mov     word [fat_dmask], 0
 .b:     call    buf_inval
+        pop     di
         pop     si
-        pop     bx
         pop     ax
         ret
 
