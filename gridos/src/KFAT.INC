@@ -517,6 +517,7 @@ dir_slot:
         call    fat_get
         cmp     ax, 0FFF0h
         jb      .last
+        call    fat_keep
         call    clu_alloc               ; linked after DX
         jc      .err
         push    ax
@@ -538,6 +539,7 @@ dir_slot:
         mov     ax, cx
         xor     dx, dx
         call    fat_set
+        call    fat_back                ; (the FAT as it was: unchanged)
         pop     ax
         jmp     short .err
 .full:  mov     ax, 5
@@ -761,12 +763,21 @@ f_39:   call    get_path                ; MKDIR
         push    word [d_off]
         xor     dx, dx
         mov     [new_dir], dx
+        call    fat_keep
         call    clu_alloc
         jc      .e3
         mov     [new_dir], ax
         call    clu_zero
-        jc      .e3
-        call    fat_flush               ; its cluster is taken before it is named
+        jnc     .z
+        push    ax                      ; it can't be written: given back, the
+        mov     ax, [new_dir]           ;  FAT as it was (nothing went out)
+        xor     dx, dx
+        call    fat_set
+        call    fat_back
+        pop     ax
+        add     sp, 6
+        jmp     .e
+.z:     call    fat_flush               ; its cluster is taken before it is named
         jc      .e3
         pop     word [d_off]
         pop     word [d_lba]

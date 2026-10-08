@@ -48,7 +48,8 @@ def start_prog(k, args=''):
         k.key(ktest.ENTER, settle=False)
     else:
         k.select('HEADCLN.COM'); k.key(ktest.ENTER, settle=False)
-    k.pc.run_until(lambda: 'press a key to start' in tty(k), 20)
+    k.pc.run_until(lambda: '(Esc: quit).' in tty(k), 20)
+    k.pc.run_for(0.5)                   # (it drops keys typed before it waits for one)
 
 def wait_for(k, text, sim_s):
     k.pc.run_until(lambda: text in tty(k), sim_s)

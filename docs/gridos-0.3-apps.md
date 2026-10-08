@@ -401,6 +401,39 @@
   - `test_hd.py t_system`, 3 checks: A:, B: and C: in Disks with 32-bit sizes; the drive's name in Devices; without a drive, no C: and "none".
   - The delay tests now expect the new band text.
 
+## Copy on a subject (0.3.13, 2026-10-08)
+- **Joshua's choice** of what comes first in building out the suite: folder copy. It works the way Delete on a subject (0.3.6) does: outline Subject, choose the subject (it is the current one), CODE-C.
+- **The form** ("Copy WORK", "Copy Root"): Device, Subject, Replace, Only newer.
+  - **Subject is where the copy goes**, the subject itself to start with, so a copy on another disk changes only Device: WORK on A: to B: is `B:\WORK`. Typed as a path from the root, as in the title Copy.
+  - Replace (Ask, All, None) and Only newer work title by title, as in the title Copy. A backup of a whole subject to B: is Device B:, Replace All, Only newer Yes; run again, it copies only what changed.
+  - The destination subject, if it isn't there, is made after the question the title Copy asks ("B:\WORK isn't there: Confirm to make it"; ESC makes nothing). The subjects below it are made without asking.
+  - Root copies the whole disk.
+- **Refused before anything is done:** a copy into the subject itself or into a subject in it, or Root into its own drive: "Can't copy WORK into itself: choose another place". The form starts out as exactly that, so confirming it unchanged says so. `\WORKS` is somewhere else, and is copied to.
+  - The check compares the path as typed (in capitals, `/` as `\`). Spellings the kernel takes for the same subject (`\.\WORK\SUB`, `\WORK.\BAK`, `\LONGNAMEX` for `\LONGNAME`) get past it. Then the copy still ends (the list was made first) and nothing is lost, but titles can be copied twice, one level down. Left as it is: catching every spelling would cost more code than it saves.
+- **How (`sub_copy`):**
+  - **First the list** (`sc_list`): a block of its own (`sc_seg`) holds where the copy goes, then the subjects to copy as paths from the subject (`""`, `\SUB`, `\SUB\DEEP`), a level at a time (find first/next, attribute 16h, on each one listed), so each comes after the one it is in. It is made before anything is written, so the copy can't take itself in, even when the destination is spelled some way the check above misses (`\LONGNAMEX` for `\LONGNAME`): then the first title is "the file itself" and it stops there.
+  - It is a block and not the Subject list's buffer (`entries`) because the core's redraw after the screen saver rebuilds the Subject list there, and a Replace question can wait through the saver.
+  - The Subject list stops at 5 levels; this list doesn't, so a deeper subject (on C:) is copied too.
+  - **Path lengths:** DOS takes 66 characters for a subject. `sc_lim` is that, less the longer of the subject and where it goes (Root counts 0: a path put after it brings its own `\`); a subject below it whose path from it is longer, or a destination already longer itself (66 characters typed without the first `\`), is refused before anything is made (Path not found).
+  - **Then each subject** (`sc_copy`): `curdir` is where its titles are and `c_sub` where they go (one `\` where the two paths meet, `sb_join`, for Root at either end); it is made (MKDIR, or there already as a subject; the destination itself is checked the same way, so a file of that name or an empty drive says so instead of "Copied 0 titles"); then the title machinery of 0.3.5 does the rest: `pat_here` (a second entry into `pat_find` that keeps `curdir` and the counts) collects the titles into their block, and `xfer_all` copies each one (written under a made-up name, then renamed; the date and time kept; `same_file`).
+  - **Afterwards** the Subject list is read again (copies on the same drive show at once) with the subject still chosen, and the band says "Copied 23 titles to B:\WORK" (", 2 left as they were").
+  - **Errors stop it** and say why, as with titles: "Can't copy A.TXT: Disk is write-protected", "Can't copy KEEP: Disk is write-protected" (the subject couldn't be made). What was copied stays.
+- **Hidden and system titles and subjects are copied too** (the list searches with attribute 16h, the titles with 06h, which `pat_here` takes in BP), and the copies keep those two bits (`hs_copy`: 4300h on the original, 4301h on the copy; the kernel sets them on a subject too). The first build left them behind as the title Copy does, but Delete on a subject erases them, so a copy then a delete lost them without a word. A copy of a read-only title isn't read-only, as with titles (a later Replace couldn't erase it). Move on a subject isn't offered (CODE-M still beeps there).
+- **Shared with the title commands now** (no change in what they do): `form_fill` (Device, Subject, Title, Replace, the drives) out of `xfer_form`; `sum_to` ("Copied 5 titles to …") out of `xfer_sum`; `seg_free` frees the titles' block, Copy's buffer and the subjects' block.
+- **A kernel fix found on the way:** after a subject couldn't be made (or grow) on a write-protected B:, A:'s directories couldn't be read ("Can't read the disk: Disk is write-protected") until F5 or the tab came off.
+  - The kernel caches one FAT, A:'s or B:'s. MKDIR took a cluster on B:, couldn't write it, and gave it back (0.3.5), which left B:'s FAT marked as changed though it was as on the disk. That can never be written to a write-protected disk, and loading A:'s FAT writes the cached one out first, so every read of A: failed with error 19.
+  - The title Copy into a new subject on a write-protected B: did this since 0.3.5; the subject copy's own Subject list, read again right after, showed it at once.
+  - Now `fat_keep` and `fat_back` keep the FAT's changed-sectors mask around the cluster taken, and put it back when the cluster is given back because it couldn't be written (MKDIR: only when the zeroing fails, before any FAT write; a subject's growth likewise). Nothing reached the disk, so the FAT is as before in every sense.
+- **Review (an independent agent):** nothing serious: no crash, stack imbalance or lost FAT change; the kernel fix checked sound (the drive's own FAT is always the one cached when it saves the mask; C:'s FAT16 is untouched by it). Fixed, each with a check that fails before:
+  - hidden and system titles and subjects left behind without a word (above);
+  - "Copied 0 titles to B:\X" with no disk in B:, or with a file called X there: the destination wasn't checked like the subjects below it;
+  - the screen saver (any redraw) while the form was open wrote the subject's path into `runpath`, so the band said "Can't copy \WORK into itself" or, for Root, "Can't copy : …". The name is put back from the form's title;
+  - a 67-character destination was made and then failed; and for Root to Root the length limit was one too strict.
+  - Left: the spelling aliases above.
+- **Cost:** GRIDOS.SYS 43,256 bytes (+908: the subject copy 844, the kernel fix 64). A DOS program gets 562.5 KB without EMS and 578.6 KB with it (−0.9 KB): the Executive's code stays in memory while a program runs.
+- **Tests (`t_subcopy`, 33 checks; 2 more in `t_wild`):** the form; confirmed unchanged ("into itself"); to B: (the question, every title and subject there byte for byte, a read-only one, 75 KB three levels down, an empty subject, the dates, no temporary file, both disks sound, Subject still chosen, the memory back); again with Replace Ask through the screen saver; Only newer and Replace All into a backup there already; into a subject in it, into itself with a `\` after; `\WORKS`; Root into its own drive; Root to `B:\ALL` (all of A:); a subject to B:'s root; on the same drive (the Subject list shows the copy); ESC at the question; an empty subject; a 61-character destination; a write-protected B: (making the subject, copying a title), A:'s Subject list after it; help; CODE-M on a subject; and the review's cases (hidden and system titles and a hidden subject, still hidden on B:; the saver while the form is open; a file where it goes; no disk in B:; 67 characters). The two write-protected list checks fail without the kernel fix, the review's six checks without its fixes.
+- **`test_headcln.py`:** its first key went in while HEADCLN was still printing its prompt, and HEADCLN drops keys typed before it waits. Whether that happened depended on where the emulator's run slice ended, and it did once the Executive grew (HEADCLN loads 864 bytes higher): 7 of 9 checks failed. It now waits for the whole prompt.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
@@ -507,5 +540,5 @@
   - Command, on the text view;
   - the GPIB console;
   - CLAUDE as a `.RUN`.
-- **Executive work (0.3 proper):** Subjects, file operations, R: and M:, settings.
+- **Executive work (0.3 proper):** Subjects, file operations (Copy on a subject: 0.3.13), R: and M:, settings.
 - **Later:** the EMS swap of the UI block while DOS programs run, which would give programs about 17 KB more.
