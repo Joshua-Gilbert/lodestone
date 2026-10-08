@@ -31,7 +31,8 @@
 ; =====================================================================
 
         cpu     286
-UI_API      equ 3                       ; this file's API version (2: UI_FONT, 3: UI_SAVER)
+UI_API      equ 4                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
+                                        ;  4: UI_SAVER's tidying)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Grid-OS version (BH major, BL minor
@@ -126,9 +127,11 @@ UI_FONT     equ 45 * 3  ; the screen font (API 2).  AL = 0 -> SI = its file name
                         ;  the caller redraws its screen.  At start-up the core
                         ;  takes the font named by FONT= in \GRIDOS.INI.
 UI_SAVER    equ 46 * 3  ; the screen saver's delay (API 3).  AL = 0 -> AL =
-                        ;  minutes (0 = never); AL = 1: BL = minutes (at most
-                        ;  30; 0 = never).  At start-up the core takes SAVER=
-                        ;  in \GRIDOS.INI (5 without it).
+                        ;  minutes (0 = never), AH = 1 if it doesn't tidy the
+                        ;  disks (API 4); AL = 1: BL = minutes (at most 30;
+                        ;  0 = never); AL = 2: BL = 1 not to tidy, 0 to tidy
+                        ;  (API 4).  At start-up the core takes SAVER= in
+                        ;  \GRIDOS.INI (5 without it), and TIDY=0.
 UI_LAST     equ 46 * 3
 FONT_BYTES  equ 96 * 16                 ; a font file (.FNT): exactly this long
 
@@ -145,6 +148,7 @@ K_NONE      equ 0FFFFh                  ; a help line with no key
 K_ENTER     equ 1C0Dh
 K_ESC       equ 011Bh
 K_TAB       equ 0F09h
+K_SPACE     equ 3920h
 K_BTAB      equ 0F00h                   ; Shift-Tab
 K_BKSP      equ 0E08h
 K_UP        equ 4800h

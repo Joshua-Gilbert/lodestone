@@ -374,6 +374,43 @@ def t_abs():
           'Hello' in o1 and o2.count('written') == 2 and 'Z' * 21 in o3 and m0 and m1 and
           int(m0.group(1)) - int(m1.group(1)) == 256 * 2048, (o1, o2, o3, free0[-80:], free1[-80:]))
 
+def t_system():
+    """System: C: in Disks (its sizes past 65,535 KB), the drive's own name
+    in Devices (IDENTIFY); without a drive, neither."""
+    system = os.path.join(GOS, 'apps', 'SYSTEM.RUN')
+    rom = os.path.join(GOS, '..', 'rom', 'hd_cp30104h')
+    sect0 = open(os.path.join(rom, 'HDSECT0.BIN'), 'rb').read()
+    boots = open(os.path.join(rom, 'HDBOOT.BIN'), 'rb').read()
+    plba, n = struct.unpack_from('<II', sect0, 446 + 8)
+    f = F.Fat(n, 4, plba, True)
+    f.finish(f.tree([('COMMAND.COM', 0x20, b'C' * 47845)]))
+    f.img[0:512] = boots
+    d = bytearray(762 * 8 * 39 * 512); d[0:512] = sect0; d[plba * 512:(plba + n) * 512] = f.img
+    ata = pcemu.Ata(model='Conner Peripherals 120MB - CP30104H', cyls=762, heads=8, spt=39, disk=d)
+    bimg = image('sysb.img', GRIDCMD)
+    img = image('sys.img', GRIDCMD, system)
+    k = ktest.KPC(img, b=bimg, ata=ata); k.start()
+    v = vol(ata, plba)
+    k.key(0x1600)                                       # CODE-U: System
+    k.key(ktest.DOWN)
+    txt = [l for y, l in k.ocr()]
+    row = lambda name, after=None: next((l for l in txt[txt.index(after) if after in txt else 0:] if name in l), '')
+    ci = next((i for i, l in enumerate(txt) if 'Drive C:' in l), None)
+    check('System, Disks: A:, B: and C:, C:\'s size and free space in KB past 65,535',
+          any('Drive A:' in l for l in txt) and any('Drive B:' in l for l in txt) and ci is not None and
+          '118448 KB' in txt[ci + 1] and '%d KB' % (v.free() * 2) in txt[ci + 2], txt)
+    k.key(ktest.DOWN); k.key(ktest.DOWN)
+    txt = [l for y, l in k.ocr()]
+    check('System, Devices: "Hard disk  Conner Peripherals 120MB - CP30104H" (its own name, to the right edge)',
+          any('Hard disk' in l and l.rstrip().endswith('Conner Peripherals 120MB - CP30104H') for l in txt), txt)
+    k = ktest.KPC(image('sys0.img', GRIDCMD, system)); k.start()
+    k.key(0x1600); k.key(ktest.DOWN)
+    t1 = [l for y, l in k.ocr()]
+    k.key(ktest.DOWN); k.key(ktest.DOWN)
+    t2 = [l for y, l in k.ocr()]
+    check('without a hard disk: no C: in Disks, "Hard disk  none" in Devices',
+          not any('Drive C:' in l for l in t1) and any('Hard disk' in l and l.rstrip().endswith('none') for l in t2), (t1, t2))
+
 def t_testdos():
     """TESTDOS (24 DOS calls) and CACHETST (random and in-order reads,
     writes over cached parts, two interleaved files) on C:."""
@@ -456,7 +493,7 @@ def t_mem():
           (', the kernel without it under 0.3 KB' if base else ''),
           e - g < 3.0 and a - b < 3.5 and (not base or (z - a < 0.3 and y - e < 0.3)), out)
 
-TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_testdos, t_exec, t_mem]
+TESTS = [t_none, t_shell, t_big, t_real, t_bad, t_full, t_fatread, t_fatwrite, t_abs, t_system, t_testdos, t_exec, t_mem]
 if __name__ == '__main__':
     want = sys.argv[1:]
     for n in ('HDFLUSH', 'HDABS'):
