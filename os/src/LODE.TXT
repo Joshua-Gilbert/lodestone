@@ -1,4 +1,4 @@
-Lodestone 0.4.1 - boot floppy
+Lodestone 0.4.2 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\LODEBOOT and answer Y. It adds the Lodestone loader to this disk
@@ -244,6 +244,28 @@ Grid-OS as usual, run LODEBOOT at the command prompt (CODE-P) and answer
 Y; restart.  The disk now starts LODE.SYS, and GRIDOS.SYS, GRIDCMD.COM
 and GOSBOOT.COM can go.
 
+0.4.2: the command prompt (LCMD, CODE-P) grows up.
+  The line: Left, Right, Home, End, Backspace and Del edit it; ESC
+  clears it; Up and Down bring back the lines before (a few dozen);
+  F3 the rest of the last one; Tab finishes a file or subject name
+  (Tab again: the next one that fits).
+  The screen saver comes on at the prompt too (and at PAUSE and CHOICE),
+  as in the Executive: DEFRAG on each disk, then the dark screen.  A key
+  brings the prompt back as it was; the key does nothing else.
+  Batch files:  IF [NOT] EXIST name / ERRORLEVEL n / a==b  command
+                GOTO label (a line :label)
+                FOR %%F IN (*.TXT A.DAT) DO command %%F
+                CALL OTHER args (it runs, then this one goes on)
+                SHIFT, %NAME% (from SET), ECHO OFF, @, PAUSE, REM
+                CHOICE /C:YNC /N /T:N,10 text (ERRORLEVEL = the key's place)
+  Between commands: A && B runs B if A worked, A || B if it didn't.
+  ERRORLEVEL: a program's exit code; DIR, COPY, DEL and the other
+  commands that can fail set 0 or 1 (ECHO, REM, CLS, PAUSE, GOTO and
+  SHIFT leave it as it was).  An error in a batch file says where:
+  "BUILD line 7: File not found".
+  COPY takes up to 64 KB at a time from free memory, so big copies go
+  faster, and LCMD stays as small as before while a program runs from it.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -268,9 +290,10 @@ The Executive (the file list):
   Serial mouse on COM2 (or COM1).
 
 Programs:
-  LCMD   the command prompt: DIR TYPE COPY DEL REN MD RD CD CLS ECHO
+  LCMD      the command prompt: DIR TYPE COPY DEL REN MD RD CD CLS ECHO
             VER VOL SET PATH PROMPT DATE TIME PAUSE REM EXIT, A:, programs,
-            .BAT files, redirection < > >> and pipes |
+            .BAT files (IF GOTO FOR CALL SHIFT CHOICE %NAME%), && and ||,
+            redirection < > >> and pipes |; line editing, history, Tab
   CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
             (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
             CLAUDE /T: Claude Code itself (Term); CODE-R redraws.
@@ -299,6 +322,8 @@ Programs:
             EMSKEEP fills 8 EMS pages with a pattern; press CTRL-ALT-DEL,
             then run EMSKEEP /C: it says so, page by page (EMSKEEP.TXT)
   GGTEST    GPIB driver test on the bus
+  CMDTEST   tries the batch language step by step ("All 11 tests
+            passed" is right; it waits 3 s at CHOICE: press no key)
   TESTKEY   echoes keys until Esc (for checking Claude's key scripts)
   GRIDGPIB  the GPIB driver for GRiD MS-DOS (load it first there)
   DEFRAG    tidies this disk (also the screen saver; DEFRAG /S as one).
