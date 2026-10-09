@@ -1,0 +1,10 @@
+EMSKEEP /C: the pages stamped before the restart
+  raw page 64: 16305 bytes differ
+  raw page 65: 16304 bytes differ
+  raw page 66: 16304 bytes differ
+  raw page 67: 16304 bytes differ
+  raw page 68: 16304 bytes differ
+  raw page 69: 16304 bytes differ
+  raw page 70: 16304 bytes differ
+  raw page 71: 16304 bytes differ
+EMS was cleared or rewritten by the restart
