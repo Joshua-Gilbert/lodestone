@@ -5,7 +5,8 @@
 ;  CODE-U in the Executive, as GRiD's "Usage CODE-U  Show memory and
 ;  device usage".  Topics on the left, details on the right.  Return sets
 ;  the clock (Clock), scans the GPIB bus (GPIB), or takes the next font,
-;  saver delay or size of the temporary disk M:.
+;  saver delay or size of the temporary disk M:.  Space turns the start-up
+;  picture (Display) or the saver's tidying on or off.
 ; =====================================================================
 %include "UIAPI.INC"
         org     RUN_ORG
@@ -1216,9 +1217,12 @@ t_about:
 ;  Display: the screen font.  GRiD's is built into the core (and copied
 ;  here, to switch back to); others are .FNT files in the disk's root:
 ;  FONT_BYTES of 8x16 glyphs.  The choice goes in \LODE.INI as FONT=,
-;  which the core reads at start-up.
+;  which the core reads at start-up.  And the start-up picture (the
+;  kernel's, KSPLASH.INC): Space turns it off or on, SPLASH=0 in LODE.INI
+;  when off.
 ; ---------------------------------------------------------------------
 t_display:
+        call    splash_get              ; (LODE.INI read the first time)
         call    vstart
         xor     al, al
         call    UI_FONT                 ; SI = its name ("" = built in)
@@ -1227,6 +1231,14 @@ t_display:
         mov     si, s_gridfont
 .n:     call    UI_SBSTR
         mov     si, l_font
+        call    pline
+        call    vstart                  ; the start-up picture
+        mov     si, s_yes
+        cmp     byte [splash_off], 0
+        je      .p
+        mov     si, s_no
+.p:     call    UI_SBSTR
+        mov     si, l_splash
         call    pline
         call    pgap
         mov     si, l_fonts
@@ -1373,9 +1385,18 @@ sv_steps    db 1, 2, 5, 10, 15, 30, 0   ; minutes (0: never)
 
 NSTEPS      equ $ - sv_steps
 
-; Space on Screen saver: tidy the disks first, or not
+; Space on Display: the start-up picture or not; on Screen saver: tidy
+; the disks first, or not
 k_space:
-        cmp     word [topics+LV_SEL], 6
+        cmp     word [topics+LV_SEL], 5
+        jne     .sv
+        call    splash_get
+        xor     byte [splash_off], 1
+        call    save_ini
+        jnc     .rd
+        xor     byte [splash_off], 1    ; not saved: as it was (it only
+.rd:    jmp     redraw                  ;  counts at the next start-up)
+.sv:    cmp     word [topics+LV_SEL], 6
         jne     .x
         xor     al, al
         call    UI_SAVER
@@ -1590,21 +1611,14 @@ same_name:
         pop     si
         ret
 
-; FONT=, SAVER=, TIDY= and MDISK= in \LODE.INI for the font, saver and
-; temporary disk in use: its other lines are kept, old FONT=, SAVER=, TIDY=
-; and MDISK= lines go, and GRiD's font, the usual 5 minutes, tidying and
-; 256 KB need none (no lines left: no file).  Without M: (no EMS) an
-; MDISK= line stays as it is.
-save_ini:
-        call    md_query                ; (md_ok: M: is ours to write)
-        sbb     al, al
-        not     al
-        mov     [md_ok], al
-        xor     cx, cx                  ; the old file (none: nothing)
+; \LODE.INI into ini_old -> CX = its length (0: no file; INI_MAX + 1:
+; longer than we keep)
+ini_read:
+        xor     cx, cx                  ; (none: nothing)
         mov     dx, s_ini
         mov     ax, 3D00h
         int     21h
-        jc      .new
+        jc      .x
         mov     bx, ax
         mov     dx, ini_old
         mov     cx, INI_MAX + 1
@@ -1617,7 +1631,65 @@ save_ini:
         mov     ah, 3Eh
         int     21h
         pop     cx
-        cmp     cx, INI_MAX             ; (longer than we keep: leave it be)
+.x:     ret
+
+; is the start-up picture off?  SPLASH=0 (or No, or Off) in \LODE.INI, as
+; the kernel reads it -> splash_off.  Read once, when Display is first
+; shown or saved (not at System's start: it costs a disk read).
+splash_get:
+        cmp     byte [splash_known], 0
+        jne     splash_scan.x
+        call    ini_read
+; ... from the file in ini_old (CX bytes); all registers kept
+splash_scan:
+        pusha
+        mov     byte [splash_known], 1
+        mov     byte [splash_off], 0
+        mov     si, ini_old
+        mov     bx, si
+        add     bx, cx                  ; BX = its end
+.line:  cmp     si, bx
+        jae     .done
+        mov     di, s_splasheq
+        call    ini_is
+        jne     .next
+        add     si, 7                   ; (past "SPLASH=")
+        cmp     si, bx
+        jae     .done
+        mov     ax, [si]
+        cmp     al, '0'
+        je      .off
+        and     ax, 0DFDFh
+        cmp     al, 'N'
+        je      .off
+        cmp     ax, 'OF'
+        jne     .done
+.off:   mov     byte [splash_off], 1
+.done:  popa
+.x:     ret
+.next:  cmp     si, bx                  ; on to the next line
+        jae     .done
+        lodsb
+        cmp     al, 10
+        jne     .next
+        jmp     .line
+
+; FONT=, SAVER=, TIDY=, MDISK= and SPLASH= in \LODE.INI for the font,
+; saver, temporary disk and start-up picture in use: its other lines are
+; kept, old FONT=, SAVER=, TIDY=, MDISK= and SPLASH= lines go, and GRiD's
+; font, the usual 5 minutes, tidying, 256 KB and the picture need none (no
+; lines left: no file).  Without M: (no EMS) an MDISK= line stays as it
+; is.  CF if it couldn't be saved (said in the band).
+save_ini:
+        call    md_query                ; (md_ok: M: is ours to write)
+        sbb     al, al
+        not     al
+        mov     [md_ok], al
+        call    ini_read                ; the old file
+        cmp     byte [splash_known], 0  ; (its SPLASH= line, if not read
+        jne     .kn                     ;  yet: it is kept as it says)
+        call    splash_scan
+.kn:    cmp     cx, INI_MAX             ; (longer than we keep: leave it be)
         ja      .long
 .new:   mov     si, ini_old
         mov     bx, si
@@ -1633,6 +1705,9 @@ save_ini:
         call    ini_is
         je      .ours
         mov     di, s_tidyeq
+        call    ini_is
+        je      .ours
+        mov     di, s_splasheq
         call    ini_is
         je      .ours
         mov     di, s_mdeq              ; MDISK=: ours only with M: here
@@ -1686,7 +1761,11 @@ save_ini:
         jz      .wr3
         mov     si, s_tidy0
         call    UI_SBSTR
-.wr3:   cmp     byte [md_ok], 0         ; M:'s size, unless 256 KB
+.wr3:   cmp     byte [splash_off], 0    ; no start-up picture: SPLASH=0
+        je      .wr3m
+        mov     si, s_splash0
+        call    UI_SBSTR
+.wr3m:  cmp     byte [md_ok], 0         ; M:'s size, unless 256 KB
         je      .wr4
         mov     ax, [md_set]
         cmp     ax, 256
@@ -1721,24 +1800,30 @@ save_ini:
         jne     .errc
         mov     ah, 3Eh
         int     21h
+        clc
         ret
 .del:   mov     dx, s_ini               ; nothing to keep: no file
         mov     ah, 41h
         int     21h
+        clc
         ret
 .long:  mov     si, s_inilong
-        jmp     UI_MSG
+        call    UI_MSG
+        stc
+        ret
 .errc:  push    ax
         mov     ah, 3Eh
         int     21h
         pop     ax
-.err:   mov     di, vbuf                ; the font is set for now anyway
-        mov     si, s_cantsave
+.err:   mov     di, vbuf                ; (a font, delay or size stays set
+        mov     si, s_cantsave          ;  for now anyway)
         call    UI_SBSTR
         call    UI_SBERR
         mov     byte [di], 0
         mov     si, vbuf
-        jmp     UI_MSG
+        call    UI_MSG
+        stc
+        ret
 
 ; does the line at SI (its text ends at BX) start with DI ("FONT=", any
 ; case)? -> ZF.  SI, DI kept
@@ -1796,6 +1881,7 @@ keys:   KEY(K_NONE,      0,       h_topic)
         KEY(K_NONE,      0,       h_enter3)
         KEY(K_NONE,      0,       h_enter4)
         KEY(K_SPACE,     k_space, h_space)
+        KEY(K_NONE,      0,       h_space2)
         KEY(K_F5,        k_f5,    h_f5)
         KEY(K_F1,        k_help,  h_help)
         KEY(K_CODE_HELP, k_help,  0)
@@ -1831,7 +1917,7 @@ s_band1     db 'System: Select a topic',0
 s_band2     db 'CODE-? for help    ESC: back to the Executive',0
 s_band_clk  db 'RETURN: set the date and time    ESC: back',0
 s_band_gp   db 'RETURN: scan the bus    ESC: back',0
-s_band_font db 'RETURN: the next font    ESC: back',0
+s_band_font db 'RETURN: the next font    SPACE: picture or not    ESC: back',0
 s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
 s_band_md   db 'RETURN: the next size    ESC: back',0
 h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
@@ -1839,7 +1925,8 @@ h_enter     db 'Return on Clock              set the date and time',0
 h_enter2    db 'Return on GPIB               scan the bus',0
 h_enter3    db 'Return on Display            the next font',0
 h_enter4    db 'Return on Temporary disk M:  the next size',0
-h_space     db 'Space on Screen saver        tidy the disks or not',0
+h_space     db 'Space on Display             the start-up picture or not',0
+h_space2    db 'Space on Screen saver        tidy the disks or not',0
 h_f5        db 'F5                           look again',0
 h_help      db 'CODE-?  or  F1               this help',0
 h_quit      db 'ESC  or  CODE-Q              back to the Executive',0
@@ -1940,6 +2027,8 @@ m11         db 'November',0
 m12         db 'December',0
 months3     db 'JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'
 quit        db 0
+splash_off  db 0                        ; SPLASH=0: no start-up picture
+splash_known db 0                       ;  (1: LODE.INI read for it)
 gp_scanned  db 0
 l_font      db 'Font',0
 l_fonts     db 'Fonts on the start-up disk:',0
@@ -1950,6 +2039,8 @@ s_fonteq    db 'FONT=',0
 s_savereq   db 'SAVER=',0
 s_tidyeq    db 'TIDY=',0
 s_tidy0     db 'TIDY=0', 13, 10, 0
+s_splasheq  db 'SPLASH=',0
+s_splash0   db 'SPLASH=0', 13, 10, 0
 s_mdeq      db 'MDISK=',0
 s_mdalleq   db 'ALL',0
 l_mdsize    db 'Size',0
@@ -1976,6 +2067,7 @@ s_never     db 'never',0
 s_minutes   db ' minutes',0
 s_minute    db ' minute',0
 l_tidy      db 'Tidies the disks first',0
+l_splash    db 'Start-up picture',0
 s_yes       db 'yes',0
 s_no        db 'no',0
 s_svchoices db 'RETURN: 1, 2, 5, 10, 15 or 30 minutes, or never',0
@@ -1983,8 +2075,8 @@ s_svspace   db 'SPACE: tidy the disks first, or not',0
 s_svwhat1   db 'Idle that long in the Executive, it tidies each disk',0
 s_svwhat2   db '(DEFRAG), then shows the time on a dark screen.',0
 s_empty     db 0
-s_cantsave  db "The font is set, but can't be saved: ",0
-s_inilong   db 'The font is set; LODE.INI is too long to change here',0
+s_cantsave  db "LODE.INI can't be saved: ",0
+s_inilong   db 'LODE.INI is too long to change here',0
 s_sample1   db 'The quick brown fox jumps over the lazy dog',0
 s_sample2   db '0123456789  ([{<>}])  .,;:!?  @#$%&*+-=/',0
 grid_font:                              ; GRiD's font, to switch back to

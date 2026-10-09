@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build Lodestone: boot sector, installer, kernel (with listing and symbol
-# map), LCMD.COM (the shell), DEFRAG.COM, HEADCLN.COM, the .RUN programs
+# map), the start-up picture LODE.PIC, LCMD.COM (the shell), DEFRAG.COM, HEADCLN.COM, the .RUN programs
 # (apps/, with mkrun.py), the font files (fonts/), the test programs and BENCH.  Then:
 # python3 tests/test_kernel.py, tests/test_apps.py, and bench/run_bench.py ROM-image
 set -e
@@ -10,6 +10,7 @@ nasm -f bin -o LODEBOOT.COM LODEBOOT.ASM
 printf '[map symbols LODE.MAP]\n%%include "LODE.ASM"\n' > _m.asm
 nasm -f bin -o LODE.SYS _m.asm -l LODE.LST
 rm -f _m.asm
+nasm -f bin -o LODE.PIC SPLASH.ASM
 nasm -f bin -o LCMD.COM LCMD.ASM
 nasm -f bin -o DEFRAG.COM DEFRAG.ASM
 nasm -f bin -o HEADCLN.COM HEADCLN.ASM
@@ -30,4 +31,4 @@ cd ../bench
 nasm -f bin -o BENCH.COM BENCH.ASM
 nasm -f bin -o DISKMAP.COM DISKMAP.ASM
 cd ..
-ls -l apps/*.RUN fonts/*.FNT src/BOOT.BIN src/LODEBOOT.COM src/LODE.SYS src/LCMD.COM src/DEFRAG.COM src/HEADCLN.COM tests/TESTDOS.COM tests/UPPER.COM tests/CACHETST.COM tests/EMSTEST.COM tests/CAPTEST.COM tests/HDFLUSH.COM tests/HDABS.COM bench/BENCH.COM bench/DISKMAP.COM
+ls -l apps/*.RUN fonts/*.FNT src/BOOT.BIN src/LODEBOOT.COM src/LODE.SYS src/LODE.PIC src/LCMD.COM src/DEFRAG.COM src/HEADCLN.COM tests/TESTDOS.COM tests/UPPER.COM tests/CACHETST.COM tests/EMSTEST.COM tests/CAPTEST.COM tests/HDFLUSH.COM tests/HDABS.COM bench/BENCH.COM bench/DISKMAP.COM
