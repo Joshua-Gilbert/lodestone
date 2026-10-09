@@ -219,6 +219,19 @@ fixes, which added the last four items):
 Left as it is: the check between resolving a path and opening it can be
 raced only by a program running as you, which could read the files itself.
 
+**Follow-ups after the merge** (from the second review):
+- A device name with a colon got past the check: `A:\AUX:` and `A:\X\COM1:`
+  (the colon was taken for a drive's, leaving an empty name), and Grid-OS's
+  own `EMMXXXX0` wasn't on the list. Both are refused now.
+- `gpib_read` said it was idempotent. It is read-only, but a read empties the
+  instrument's output and a poll clears its status, so it now says
+  `idempotentHint: false`.
+- `initialize` answered with whatever protocol version the client asked
+  for; it now answers with that version only when it is one it knows
+  (2025-06-18, 2025-03-26, 2024-11-05), else with its own.
+- `terminator: []` (or any value that isn't crlf, lf or none) was taken as
+  crlf; it is an error now.
+
 ## Tests
 
 - `claude-link/tests/test_term.py` (17): the pre-filter, the alternate
