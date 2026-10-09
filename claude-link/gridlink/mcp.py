@@ -14,6 +14,7 @@ from . import glp, keys as K, screen
 from .grid import READ_CHUNK, GridError, is_device, is_grid_path, norm
 
 PROTOCOL = '2025-06-18'
+PROTOCOLS = ('2025-06-18', '2025-03-26', '2024-11-05')    # what the tools here fit; the newest otherwise
 NAME = 'grid'
 
 
@@ -80,7 +81,8 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'properties': dict(
          {'action': {'type': 'string', 'enum': ['scan', 'poll', 'read']}}, **GPIB_PROPS),
          'required': ['action']},
-     'annotations': dict(LOOK, title='GPIB: read')},
+     'annotations': dict(LOOK, idempotentHint=False, title='GPIB: read')},   # (a read empties the instrument's
+                                                                              #  output, a poll clears its status)
     {'name': 'grid_command', 'title': 'GRiD: run a DOS program',
      'description': (
          "Run a DOS command line or program on the GRiD 1520 (through COMMAND.COM /C, in the GRiD's "
@@ -423,7 +425,9 @@ class GridTools:
         if act in ops:
             G.gpib(ops[act], addr, timeout_ms=tmo)
             return [text('%s sent to %d' % (act, addr))], False
-        term = {'crlf': b'\r\n', 'lf': b'\n', 'none': b''}.get(a.get('terminator') or 'crlf')
+        t = a.get('terminator', 'crlf')
+        term = {'crlf': b'\r\n', 'lf': b'\n', 'none': b''}.get(t) if isinstance(t, str) or t is None else None
+        if t is None: term = b'\r\n'
         if term is None: raise ValueError('terminator must be crlf, lf or none')
         cmd = arg_str(a, 'command', need=True, most=MAX_GPIB)
         try: data = cmd.encode('latin1') + term
@@ -573,7 +577,7 @@ def handle(msg, sock):
     if not isinstance(p, dict): return rpc_error(mid, -32602, 'params must be an object')
     if method == 'initialize':
         v = p.get('protocolVersion')
-        if not isinstance(v, str) or not v: v = PROTOCOL
+        if v not in PROTOCOLS: v = PROTOCOL                      # (the client decides whether it can go on)
         res = {'protocolVersion': v, 'capabilities': {'tools': {}},
                'serverInfo': {'name': 'gridlink', 'version': '1.1'},
                'instructions': ('Tools for the GRiD 1520 this terminal runs on: its files, DOS programs '

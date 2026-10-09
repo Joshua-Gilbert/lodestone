@@ -241,6 +241,7 @@ def test_bad_arguments_never_reach_the_grid():
         ('gpib_send', dict(q, address=None)), ('gpib_send', dict(q, timeout_ms=-5)), ('gpib_send', dict(q, timeout_ms=70000)),
         ('gpib_send', dict(q, max_bytes=0)), ('gpib_send', dict(q, command='')), ('gpib_send', dict(q, command='x' * 5000)),
         ('gpib_send', dict(q, command='\u2603?')), ('gpib_send', dict(q, terminator='cr')),
+        ('gpib_send', dict(q, terminator=[])), ('gpib_send', dict(q, terminator='')), ('gpib_send', dict(q, terminator=['crlf'])),
         ('gpib_send', dict(q, action='scan')), ('gpib_read', dict(q)), ('gpib_read', dict(action='write', address=9)),
         ('gpib_read', dict(action='poll')), ('gpib_read', dict(action='read', address=40)),
         ('grid_command', {}), ('grid_command', dict(command='   ')), ('grid_command', dict(command=5)),
@@ -270,7 +271,7 @@ def test_bad_arguments_never_reach_the_grid():
         assert err, (name, a, res)
     # DOS devices are refused below the tools too (chat mode reads through Grid as well)
     from gridlink.grid import Grid, GridError
-    for dev in ('A:\\AUX', 'C:\\TM\\com2.dat', 'A:NUL'):
+    for dev in ('A:\\AUX', 'C:\\TM\\com2.dat', 'A:NUL', 'A:\\AUX:', 'A:\\X\\COM1:', 'A:\\EMMXXXX0', 'A:\\PRN :'):
         try: Grid(NoGrid()).read(dev); assert False, dev
         except GridError: pass
         try: Grid(NoGrid()).write(dev, b'x'); assert False, dev
@@ -343,6 +344,13 @@ def test_stdio_server_survives_anything():
     by = {r.get('id'): r for r in rs}
     assert by[1]['error']['code'] == -32602 and by[2]['error']['code'] == -32602 and by[3]['error']['code'] == -32602
     assert by[4]['result']['isError'] and by[5]['result']['protocolVersion'] == mcp.PROTOCOL
+    # a version it doesn't know: it answers with its own; one it knows: that one
+    for asked, want in (('1900-01-01', mcp.PROTOCOL), ('2024-11-05', '2024-11-05'), (None, mcp.PROTOCOL)):
+        r = mcp.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': asked}}, '/nonexistent')
+        assert r['result']['protocolVersion'] == want, (asked, r)
+    # gpib_read is read-only but not idempotent (a read empties the instrument's output)
+    gr = next(t for t in mcp.TOOLS if t['name'] == 'gpib_read')['annotations']
+    assert gr['readOnlyHint'] and not gr['destructiveHint'] and gr['idempotentHint'] is False, gr
     assert sum(1 for r in rs if r.get('error', {}).get('code') == -32700) == 3, rs
 
 
