@@ -469,7 +469,7 @@
 - **Warm restart:** M:'s first page holds a boot sector with the page list and a checksum.
   - **At start-up**, `md_boot` reads `MDISK=` and M: is made. If the handle got the same raw pages, the boot sector is exactly what M: would write, and the FAT is sane, M: keeps its files. Otherwise it starts empty.
   - **Turning M: off** clears that sector's first word, so a later restart doesn't bring back what was there.
-  - **Not yet known:** whether the 1520's EMS keeps its contents through Ctrl-Alt-Del. `tools/EMSKEEP.COM` finds out (below). If it doesn't, the check costs nothing: M: starts empty as it would anyway.
+  - **On the 1520 it doesn't (EMSKEEP, 2026-10-08, `bench/EMSKEEP_1520_2026-10-08.TXT`):** all 8 stamped pages came back with about 16,300 of their 16,384 bytes changed (what chance leaves alike), so the BIOS's warm restart rewrites EMS, most likely in its memory test. M: starts empty after every restart on this machine; the check costs nothing (it lives in the installer's EMS page, not in memory programs get) and stays for boards that do keep EMS.
   - `ems_init`'s page scan used to leave a tag in each page's first word; it now puts the words back.
 - **The letter M::** no trouble found. INT 21h 0Eh returns 13 with M: (3 without, as before); D: to L: are invalid drives, as on DOS with a gap. GRIDCMD, TM5000G, BENCH and the test programs work on M:.
 - **Speed.** pcemu is calibrated to the 1520: frame copy 3,074 KB/s, and now 1 µs for each EMS port IN or OUT, which it didn't charge before. Table: BENCH 1.4 on M: (1 MB) in pcemu, BENCH 1.3 on A: on the 1520, HDSCAN on C: on the 1520.

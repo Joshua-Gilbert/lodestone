@@ -171,7 +171,7 @@ Run the comparison with `python3 gridos/bench/compare3.py <GRiD MS-DOS EPROM ima
 | `gridos/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `gridos/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude (Term: the real Claude Code in a pty, with an MCP server for the GRiD's tools; chat: the Claude API), the AR488 patch, and its tests |
-| `tools` | 1520 tools: GRIDGPIB (GPIB driver for GRiD MS-DOS), GPIBSCAN, GPIBTEST, GGTEST, GRIDMEM (EMS or extended memory), EMSKEEP (does EMS keep its contents through Ctrl-Alt-Del?), MEMPROBE, GRIDPROBE, RAMSPEED, ROMDUMP, HDPROBE and HDSCAN (the internal hard disk, read-only: diagnosis, and a read of every sector), the C GPIB library, and TM5000G.EXE (a test fixture; its source lives in the TM5000 repo) |
+| `tools` | 1520 tools: GRIDGPIB (GPIB driver for GRiD MS-DOS), GPIBSCAN, GPIBTEST, GGTEST, GRIDMEM (EMS or extended memory), EMSKEEP (does EMS keep its contents through Ctrl-Alt-Del? On the 1520: no), MEMPROBE, GRIDPROBE, RAMSPEED, ROMDUMP, HDPROBE and HDSCAN (the internal hard disk, read-only: diagnosis, and a read of every sector), the C GPIB library, and TM5000G.EXE (a test fixture; its source lives in the TM5000 repo) |
 | `rom` | Our notes on the 1520 BIOS (a symbol map), probe and scan logs, and the hard disk's partition and boot sectors; no ROM images (see below) |
 | `docs` | Design notes: the 0.2 kernel, the UI core and programs (0.3, with EMS, screen capture, the hard disk and M:), DEFRAG and the saver, the floppy development loop |
 
@@ -223,7 +223,7 @@ These aren't ours to publish, even privately: the 1520 BIOS and GRiD MS-DOS ROM 
 
 ## Status
 
-Grid-OS 0.3.13 runs on the 1520: it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 adds M:, the RAM disk: Claude's future scratchpad, and fast scratch space now. It is tested in the emulator and waits for the 1520, along with `EMSKEEP.COM`, which finds out whether EMS keeps M:'s files through Ctrl-Alt-Del. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/gridos-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
+Grid-OS 0.4.0 is the current release; 0.3.15 is the last tested on the 1520, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/gridos-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
 
 **Next:**
 1. Claude (Term and chat) on the real GPIB bridge, with the Pi 5.
