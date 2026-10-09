@@ -52,4 +52,15 @@ d = bytearray(762 * 8 * 39 * 512); d[0:512] = sect0; d[plba * 512:(plba + n) * 5
 ata = pcemu.Ata(model='Conner Peripherals 120MB - CP30104H', cyls=762, heads=8, spt=39, disk=d)
 k = ktest.KPC(img, ems_pages=88, ata=ata); k.start(20)
 k.key(CODE['U']); k.key(ktest.DOWN); shot('system_disks'); k.key(ktest.ESC)
+# The start-up picture (LODE.PIC), once drawn; then System's Display,
+# where Space turns it off
+img = mkimg.build(os.path.join(TMP, 'splash.img'), files + [os.path.join(GOS, 'src', 'LODE.PIC')])
+k = ktest.KPC(img, ems_pages=88); k.pc.mouse = True
+k.pc.boot(0)
+k.pc.run_until(lambda: any(m[0] == 0xF2 for m in k.pc.marks), 20)     # (its "drawn" mark)
+shot('splash')
+k.settle(10)
+k.key(CODE['U'])
+for _ in range(5): k.key(ktest.DOWN, settle=False)
+k.settle(); shot('system_display'); k.key(ktest.ESC)
 print('\n'.join(sorted(os.listdir(OUT))))
