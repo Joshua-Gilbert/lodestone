@@ -4,6 +4,11 @@ The GRiD runs `CLAUDE` (user interface + GRiD-side tools). A Raspberry Pi runs
 `gridlink` (agent loop on the Claude API + Pi-side tools). They talk over
 GPIB through an Arduino Nano running AR488 firmware in **device mode**.
 
+Two ways to use it share the link: **chat** (`CLAUDE`, gridlink's own agent
+on an API key) and **Term** (`CLAUDE /T`: the GRiD is the screen and keyboard
+of the real Claude Code running on the Pi, on your Claude subscription;
+section 6).
+
 ```
 GRiD 1520 (controller, addr 21) ==GPIB== AR488 Nano (device, addr 7) --USB serial-- Pi --internet-- Claude API
 ```
@@ -104,18 +109,19 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date` |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C` |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
-| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`) |
+| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again) |
 | 05h | REPLY | id (1), status (1: 0 = OK, else DOS error code or 0FFh), data |
 | 06h | NAK | — |
+| 07h | KEYS | Term: key words as INT 16h AH=10h returns them (AL, AH; 2 bytes each) |
 
 ### Pi → GRiD
 
 | Type | Name | Body |
 |---|---|---|
-| 41h | HELLO | ver (1), flags (1), then text: model name |
+| 41h | HELLO | ver (1), flags (1: bit 0 = Term), then text: model name (or `Claude Code`) |
 | 42h | NOP | — |
 | 43h | TEXT | text to append to the conversation; control codes below |
 | 44h | STATUS | status-line text (empty = clear) |
@@ -125,6 +131,7 @@ the MORE bit set on all but the last.
 | 48h | NAK | — |
 | 49h | TITLE | title-band text |
 | 4Ah | CLEAR | — clear the conversation view |
+| 4Bh | CELLS | Term: changed screen cells (section 6); always one frame, never MORE |
 
 TEXT control codes: 0Ah newline; 0Eh inverse on; 0Fh inverse off;
 10h underline on; 11h underline off. The Pi wraps lines at the GRiD's
@@ -206,3 +213,82 @@ GRiD: POLL                            Pi: READY
 
 While a turn is running the GRiD polls continuously (the Pi holds each
 answer until it has output, up to 250 ms); when idle it polls once a second.
+
+Both sides ignore message types they don't know, so a newer peer works
+with an older one: an older CLAUDE (no flag bit 0) always gets chat; a
+newer CLAUDE that asked for Term from an older gridlink gets chat too (the
+Pi's HELLO has no Term flag).
+
+## 6. Term
+
+`CLAUDE /T`: the Pi runs the unmodified `claude` program in an 80x24 pty
+(TERM=xterm-256color). gridlink keeps the screen with pyte, and keeps what
+the GRiD shows; the difference goes to the GRiD as CELLS. Rows 0-23 of the
+GRiD's screen are the terminal, row 24 is CLAUDE's own status band (the
+title from TITLE, the link, the keys).
+
+* **Mode.** The GRiD's HELLO sets flags bit 0 and `app=term`; the Pi answers
+  HELLO with flags bit 0. Without `app=`, gridlink's `[grid] app` setting
+  decides (`auto`: chat when the Pi has an API key, else Term). The Pi's
+  HELLO is followed by a CELLS frame that clears the screen and draws it all.
+  In Term, CLAUDE ignores the chat's messages (TEXT, STATUS, ASK, READY,
+  CLEAR). Any answer to HELLO that is not a HELLO makes the GRiD start the
+  link again.
+* **Keys.** The GRiD reads keys with INT 16h AH=11h/10h (AH=01h/00h never
+  return CODE with punctuation, Return, Esc or Backspace on the 1520) and
+  sends every key except CODE-Q (quit) and CODE-R (repaint here, and EVENT
+  03h) as KEYS, as many as have been typed in one message, one KEYS message
+  at a time. The Pi turns each word into an xterm's bytes: arrows, Home,
+  End, PgUp, PgDn, Ins, Del, F1-F10, Shift-Tab `ESC [ Z`, CODE-letter
+  `ESC` + letter (Meta), CODE-Return and Ctrl-Return `ESC CR` (a new line in
+  Claude Code's prompt), Backspace DEL.
+* **Polling.** The GRiD polls back to back for 2 s after a key or a CELLS
+  frame, then once a second. The Pi holds a POLL up to 60 ms (not 250) and
+  a KEYS frame up to 30 ms, so the echo of a key comes back in the answer
+  to the frame that carried it.
+* **Latest state, never a backlog.** The Pi builds a CELLS frame only when
+  the GRiD asks and the screen has settled (no output for 12 ms, or 80 ms
+  at most; a synchronised-output block `?2026h`..`l` is waited for). What
+  the program drew meanwhile is merged: a slow link means fewer frames, not
+  a queue. The Pi counts a frame as shown when the GRiD's next new frame
+  arrives (not a NAK or a repeat; those get the same frame again); a HELLO
+  starts over from a clear screen.
+
+CELLS payload:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | flags: bit 0 clear rows 0-23 first; bit 1 cursor hidden |
+| 1 | 1 | cursor row |
+| 2 | 1 | cursor column |
+| 3 | ... | operations to the end of the payload |
+
+| Operation | Bytes | Meaning |
+|---|---|---|
+| run | row, col, len, [attr], len glyphs | cells (row, col) .. (row, col+len-1) |
+| fill | row \| 80h, col, len, [attr], glyph | the same glyph len times |
+| scroll | FEh, top, bottom, n | rows top..bottom up by n; n blank rows come in at the bottom |
+
+`len` bit 7 means an attribute byte follows (bit 0 inverse, bit 1
+underline); without it the cells are plain. Glyphs are the GRiD's codes
+(20h-7Eh and 80h-A0h, as in TEXT). An operation that does not fit the
+screen or the payload ends the frame. The cursor is drawn as an inverted
+underline (glyph rows 14-15).
+
+What the Pi does with Claude Code's output: Unicode is folded to one GRiD
+glyph per cell (box drawing, ● ⎿ ✻ ❯ and the spinner have glyphs; a full
+block is an inverse blank; wide characters are `?` and a blank); a
+non-default background or reverse video is inverse; underline stays;
+colours, bold and dim are plain. The alternate screen (`?1049`) and
+synchronised output (`?2026`) are handled before pyte; DA and cursor
+position queries are answered by pyte, DECRQM and the colour queries
+(OSC 10/11: amber on black) by gridlink; modifyOtherKeys and kitty
+keyboard sequences are dropped.
+
+**The GRiD's tools in Term.** Claude Code reaches the GRiD through an MCP
+server (`gridlink.mcp`, registered in the project's `.mcp.json`) that
+passes each call over a Unix socket to gridlink, which sends it as a
+REQUEST (section 4) — one at a time, as CLAUDE runs one at a time; a call
+that arrives during another waits for it. A RUN
+switches the GRiD to the program's screen; when it ends, CLAUDE redraws the
+terminal from its own copy and the Pi sends whatever changed meanwhile.

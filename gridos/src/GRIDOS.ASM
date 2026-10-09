@@ -41,7 +41,7 @@ cpu 286
 org 0
 
 KSEG    equ 0060h               ; where the kernel lives
-VERSION equ 0003h               ; Grid-OS 0.3
+VERSION equ 0004h               ; Grid-OS 0.4
 
 start:  cli                     ; at 1000:0000 from the boot sector
         mov     ax, 2000h       ; temporary stack clear of the image

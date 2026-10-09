@@ -11,10 +11,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
-from gridlink import glp
+from gridlink import glp, keys as K
+from gridlink import termscreen as TS
 from gridlink.link import Link, answer_bytes
 from gridlink.agent import Session
 from gridlink.config import Config
+from gridlink.router import Router
 from ar488_model import AR488Model
 from fake_anthropic import FakeAnthropic
 
@@ -62,6 +64,10 @@ class GridSim:
         s.snapshot = None; s.time_set = None
         s.stats = collections.Counter()
         s.corrupt_rx_every = 0
+        # Term (CLAUDE /T)
+        s.app = None; s.term = False; s.keybuf = bytearray(); s.t_active = -10e6
+        s.cells, s.attrs = TS._blank_rows(); s.cursor = (0, 0, True)
+        s.on_cells = None
 
     # ---- outgoing ----------------------------------------------------------
     def queue(s, t, body):
@@ -77,7 +83,21 @@ class GridSim:
     def hello_body(s):
         kv = 'os=MS-DOS 3.30\ncwd=A:\\\ndrives=A: B: C: \nmem=480\nems=none\n' \
              'gpib=GRIDGPIB 1.10 on INT 60h\naddr=7\ndate=2026-10-04 20:30\ngrid=gridsim\n'
-        return bytes([1, 0]) + struct.pack('<H', 1024) + bytes([80, 20]) + kv.encode()
+        if s.app: kv += 'app=%s\n' % s.app
+        return bytes([1, s.hello_flags]) + struct.pack('<H', 1024) + bytes([80, 20]) + kv.encode()
+
+    hello_flags = glp.GF_TERM
+
+    # ---- Term ------------------------------------------------------------
+    def press(s, al, ah):
+        s.keybuf += bytes([al, ah]); s.t_active = s.clock()
+
+    def type(s, text):
+        for ch in text:
+            al, ah = K.char_key(ch); s.press(al, ah)
+
+    def screen_text(s):
+        return [bytes(r).decode('latin1') for r in s.cells]
 
     def _frame(s, kind, payload=b'', seq=None):
         if seq is None:
@@ -108,6 +128,9 @@ class GridSim:
                 s._write(glp.encode(glp.G_NAK, s.g_seq, s.p_ack)); s.stats['nak'] += 1
             elif s.resend:
                 s.resend = False; s._write(s.lastframe); s.stats['resend'] += 1
+            elif s.term and s.keybuf and not s.txq:
+                body = bytes(s.keybuf[:1024]); del s.keybuf[:len(body)]
+                s.txq.append([glp.G_KEYS, body, 0]); s.stats['keys_frames'] += 1
             elif s.txq:
                 t, body, pos = s.txq[0]
                 chunk = body[pos:pos + 1024]
@@ -117,7 +140,8 @@ class GridSim:
                 s.pend = len(chunk)
                 s.lastframe = glp.encode(kind, seq, s.p_ack, chunk)
                 s._write(s.lastframe)
-            elif s.connected and (s.busy or s.pi_active or s.clock() - s.t_last > 1e6):
+            elif s.connected and (s.busy or s.pi_active or s.clock() - s.t_last > 1e6
+                                  or (s.term and s.clock() - s.t_active < 2e6)):
                 s.pend = None
                 s.lastframe = s._frame(glp.G_POLL); s._write(s.lastframe)
             else:
@@ -172,7 +196,15 @@ class GridSim:
     def pi_frame(s, f):
         t = f.type; p = f.payload
         s.pi_active = t != glp.P_NOP
-        if t == glp.P_HELLO: s.connected = True; s.busy = True     # until the Pi's READY
+        if t == glp.P_HELLO:
+            s.connected = True
+            s.term = bool(p[1] & glp.HF_TERM) if len(p) >= 2 else False
+            s.busy = not s.term                                     # chat: until the Pi's READY
+        elif t == glp.P_CELLS:
+            if p[0] & TS.F_CLEAR: s.stats['clears'] += 1
+            s.cursor = TS.apply(p, s.cells, s.attrs); s.t_active = s.clock()
+            s.stats['cells_frames'] += 1; s.stats['cells_bytes'] += len(p)
+            if s.on_cells: s.on_cells()
         elif t == glp.P_TEXT: s.screen += p
         elif t == glp.P_STATUS: s.status = p
         elif t == glp.P_TITLE: s.title = p
@@ -280,6 +312,90 @@ class GridSim:
             if gop == glp.GP_SPOLL: return s.reply(rid, 0, b'\x00')
             return s.reply(rid, 0)
         return s.reply(rid, 0xFF)
+
+
+class TermHarness:
+    """GridSim in Term mode <-> AR488 model <-> gridlink (Router + TermSession)
+    <-> a program in a real pty (tests/fake_claude.py).  Real time runs here:
+    the Pi's holds and the program's output are real; the clock also counts
+    the time the Pi takes."""
+    def __init__(s, command=None, patched=True, app='term', files=None, cfg_app='auto', key=False):
+        s.clock = Clock()
+        s.pending = []
+        s.nano = AR488Model(s.clock, addr=7, patched=patched, to_pi=s._to_pi)
+        s.transport = ModelTransport(s.nano, patched)
+        s.tmp = tempfile.mkdtemp(prefix='gridlink-term-')
+        cfg = Config()
+        cfg.workdir = os.path.join(s.tmp, 'work'); cfg.memory_dir = os.path.join(s.tmp, 'mem')
+        cfg.sessions_dir = os.path.join(s.tmp, 'sessions'); cfg.web = False
+        cfg.term_dir = os.path.join(s.tmp, 'grid'); cfg.app = cfg_app
+        cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
+        cfg.term_command = command or '%s %s' % (sys.executable, os.path.join(HERE, 'fake_claude.py'))
+        cfg.api_key = 'sk-test' if key else None
+        cfg.env_key = lambda: False
+        s.cfg = cfg
+        s.log = []
+        s.router = Router(cfg, log=s.log.append)
+        s.link = Link(s.transport, s.router.on_message, log=s.log.append)
+        s.router.attach(s.link)
+        s.grid = GridSim(s, 'y'); s.grid.app = app
+        if files:
+            for k, v in files.items(): s.grid.fs[k.upper()] = v
+
+    _to_pi = lambda s, data, t: s.pending.append((t, data))
+
+    def pump_pi(s):
+        now = s.clock()
+        ready = [p for p in s.pending if p[0] <= now]
+        if not ready: return
+        s.pending = [p for p in s.pending if p[0] > now]
+        for t, data in sorted(ready, key=lambda p: p[0]):
+            t0 = time.time()
+            s.link.feed(data)
+            s.clock.advance((time.time() - t0) * 1e6)
+
+    def run_until(s, cond, wall=10.0):
+        end = time.time() + wall
+        while time.time() < end:
+            s.grid.step()
+            if cond(): return True
+        return False
+
+    def run_for(s, secs):
+        s.run_until(lambda: False, wall=secs)
+
+    @property
+    def term(s): return s.router.term
+
+    def pi_screen(s):
+        return s.term.text() if s.term else []
+
+    def synced(s):
+        """The GRiD shows what pyte has (and nothing is still on its way)."""
+        t = s.term
+        if t is None or t.dirty: return False
+        with t.lock:
+            tc, ta = t.screen.cells()
+        return [bytes(r) for r in tc] == [bytes(r) for r in s.grid.cells] and \
+               [bytes(r) for r in ta] == [bytes(r) for r in s.grid.attrs]
+
+    def settle(s, wall=10.0, quiet=0.3):
+        """Run until the GRiD matches the Pi's screen and stays so for `quiet` s."""
+        end = time.time() + wall; since = None
+        while time.time() < end:
+            s.grid.step()
+            if s.synced():
+                if since is None: since = time.time()
+                elif time.time() - since >= quiet: return True
+            else:
+                since = None
+        return False
+
+    def wait_text(s, text, wall=10.0):
+        return s.run_until(lambda: any(text in l for l in s.grid.screen_text()), wall=wall)
+
+    def close(s):
+        if s.router.term: s.router.term.stop()
 
 
 class Harness:

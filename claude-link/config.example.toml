@@ -14,12 +14,18 @@ api_key_file = "~/.config/gridlink/api_key"   # one line: your Console API key
 # extra_prompt = "Anything Claude should always know about your bench."
 
 [grid]
+app = "auto"                 # what CLAUDE gets without /T or /C: chat, term, or auto
+                             # (chat when there is an API key, else Term)
 user = "Joshua"
 set_clock = true             # set the GRiD's clock from the Pi when it connects
 workdir = "~/gridlink/work"  # Claude's scratch space on the Pi
 memory_dir = "~/gridlink/memories"
 sessions_dir = "~/gridlink/sessions"
 bash_timeout = 180
+
+[term]                       # CLAUDE /T: the real Claude Code on this Pi, on your subscription
+command = "claude"           # sign in once with `claude` at the Pi's own terminal
+dir = "~/grid"               # where it starts: put CLAUDE.md here; .mcp.json is kept up to date
 
 [permissions]
 mode = "ask"                 # ask, edits (accept file edits), auto (ask nothing)

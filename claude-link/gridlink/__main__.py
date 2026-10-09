@@ -3,12 +3,15 @@
     python3 -m gridlink                      serve the GRiD through the AR488 bridge
     python3 -m gridlink --console            talk to Claude in this terminal (no GRiD)
     python3 -m gridlink --save-bridge        also store the bridge settings in its EEPROM
+
+The GRiD picks chat (CLAUDE, gridlink's own agent on an API key) or Term
+(CLAUDE /T: the real Claude Code on this Pi, on your Claude subscription).
 """
 import argparse, collections, logging, os, signal, sys, threading, time
 from . import glp
 from .config import Config, MODELS
-from .agent import Session
 from .link import AR488Serial, Link, serve
+from .router import Router
 
 GLYPHS = {0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x83: '\u2192', 0x84: '\u2713', 0x85: '\u2717',
           0x86: '\u00b7', 0x87: '\u00b7', 0x88: '\u2722', 0x89: '\u2733', 0x8A: '\u2736', 0x8B: '\u273b',
@@ -66,6 +69,7 @@ class ConsoleLink:
 
 
 def console(cfg, client, log):
+    from .agent import Session
     link = ConsoleLink()
     S = Session(cfg, client, log=log); S.attach(link); link.S = S
     from .grid import DOS_ERRORS
@@ -96,6 +100,8 @@ def main(argv=None):
     ap.add_argument('--model', help='opus, sonnet, haiku, fable or a model id')
     ap.add_argument('--mode', choices=['ask', 'edits', 'auto'])
     ap.add_argument('--console', action='store_true', help='chat in this terminal, no GRiD')
+    ap.add_argument('--app', choices=['auto', 'chat', 'term'], help='what a GRiD gets when CLAUDE has no /T or /C')
+    ap.add_argument('--term-command', help='Term: the program to run (default: claude)')
     ap.add_argument('--save-bridge', action='store_true', help='store bridge settings in its EEPROM')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args(argv)
@@ -106,20 +112,24 @@ def main(argv=None):
     if a.address: cfg.address = a.address
     if a.model: cfg.model = MODELS.get(a.model, a.model)
     if a.mode: cfg.mode = a.mode
+    if a.app: cfg.app = a.app
+    if a.term_command: cfg.term_command = a.term_command
 
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format='%(asctime)s %(message)s', datefmt='%H:%M:%S')
     log = logging.getLogger('gridlink').info
 
-    import anthropic
     key = cfg.api_key or os.environ.get('ANTHROPIC_API_KEY')
-    if not key:
-        sys.exit('No API key: set ANTHROPIC_API_KEY or api_key_file in the config (%s).'
-                 % (cfg.source or '~/.config/gridlink/config.toml'))
-    client = anthropic.Anthropic(api_key=key, max_retries=3)
+
+    def make_client():
+        import anthropic
+        return anthropic.Anthropic(api_key=key, max_retries=3)
 
     if a.console:
-        return console(cfg, client, log)
+        if not key:
+            sys.exit('No API key: set ANTHROPIC_API_KEY or api_key_file in the config (%s).'
+                     % (cfg.source or '~/.config/gridlink/config.toml'))
+        return console(cfg, make_client(), log)
 
     t = AR488Serial(cfg.port, cfg.baud, cfg.address, log=log)
     log('opening %s at %d baud' % (cfg.port, cfg.baud))
@@ -127,17 +137,29 @@ def main(argv=None):
     t.configure()
     if a.save_bridge:
         t.save(); log('bridge settings saved in its EEPROM')
-    S = Session(cfg, client, log=log)
-    link = Link(t, S.on_message, log=log)
-    S.attach(link)
-    threading.Thread(target=S.run, daemon=True, name='agent').start()
+    R = Router(cfg, log=log)
+    link = Link(t, R.on_message, log=log)
+    R.attach(link)
+
+    def make_agent(port):
+        if not key: return None
+        from .agent import Session
+        S = Session(cfg, make_client(), log=log)
+        S.attach(port)
+        threading.Thread(target=S.run, daemon=True, name='agent').start()
+        return S
+    R.make_agent = make_agent
+    if key:             # import it now: in the link thread it could outlast the GRiD's wait
+        threading.Thread(target=lambda: __import__('anthropic'), daemon=True).start()
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *x: stop.set())
-    log('waiting for the GRiD (run CLAUDE on it)')
+    log('waiting for the GRiD (run CLAUDE, or CLAUDE /T for Claude Code, on it)%s'
+        % ('' if key else '; no API key, so chat is off'))
     try:
         serve(t, link, stop)
     except KeyboardInterrupt:
         pass
+    if R.term is not None: R.term.stop()
     log('stopped')
 
 
