@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-LODE_VER    equ 0041h                   ; Lodestone 0.4.1 (BH.BL: major, minor<<4 | patch)
+LODE_VER    equ 0042h                   ; Lodestone 0.4.2 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -145,7 +145,8 @@ fm_b2       resw 1
 crit_err    resw 1
 old24       resw 2
 run_active  resb 1
-lent        resb 1              ; the directory's memory is out (ui_lend)
+lent        resb 1              ; the directory's memory is out (ui_lend):
+                                ;  how many times over (2: a program's saver)
 need_room   resb 1              ; ui_room has a look at the next chance
 run_base    resw 1              ; where a .RUN loads (offset)
 ui_paras    resw 1              ; the UI block's own size
@@ -522,7 +523,12 @@ poll_once:
         jmp     .ck
 .sv:    cmp     bx, [saver_t]
         jb      .ck
-        call    saver
+        call    saver                   ; then the screen as it was
+        call    hires
+        call    read_clock
+        call    redraw_all
+        call    ptr_restore
+        call    act_now
         jmp     .none
 .ck:    mov     bx, ax
         sub     bx, [lasttick]
@@ -3281,12 +3287,14 @@ exec_raw:
 ui_lend:
         cmp     byte [run_active], 0
         jne     .x
+        inc     byte [lent]             ; (lent already: the saver's DEFRAG
+        cmp     byte [lent], 1          ;  run by a program, ui_saver_far)
+        jne     .x
         pusha
         mov     bx, ui_keep_end + 15
         shr     bx, 4
         mov     ah, 4Ah                 ; (ES = CS)
         int     21h
-        mov     byte [lent], 1
         popa
 .x:     ret
 
@@ -3296,7 +3304,8 @@ ui_reclaim:
         pushf
         cmp     byte [lent], 0
         je      .x
-        mov     byte [lent], 0
+        dec     byte [lent]             ; (the inner of two: still lent)
+        jnz     .x
         mov     byte [need_room], 1     ; (something resident may be in the way)
         pusha
         mov     bx, ui_bss_end + 15
@@ -3568,7 +3577,8 @@ run_app:
 ;  while showing its map, and stops at a key or the mouse (exit code 1, and
 ;  no more disks) or when the disk is in order.  Then a dark
 ;  screen with the time and date moving to a new place every 20 seconds,
-;  so the plasma never holds one picture.  Then the screen as it was.
+;  so the plasma never holds one picture, until a key (taken) or the
+;  mouse.  The caller puts the screen back.
 ; =====================================================================
 saver:  pusha
         call    hide_cursor
@@ -3612,13 +3622,18 @@ saver:  pusha
         mov     al, [mb]                ; (a button held while waking it
         mov     [oldmb], al             ;  is not a click)
         sti
-        call    hires
-        call    read_clock
-        call    redraw_all
-        call    ptr_restore
-        call    act_now
         popa
         ret
+
+; The saver for a DOS program waiting at its prompt (LCMD.COM), far-called
+; through the address INT 21h F0h AL=5 gives, with DS = ES = this segment:
+; as in the Executive (DEFRAG on each disk unless TIDY=0, then the dark
+; screen), back at a key, which it takes.  Nothing is redrawn: the caller
+; sets its video mode and screen again, and its own INT 24h (the kernel's
+; is in place).
+ui_saver_far:
+        call    saver
+        retf
 
 ; the time and date somewhere else on the dark screen
 sv_move:

@@ -561,6 +561,59 @@
 - **Tests:** all suites pass: kernel 178, apps 367, hard disk 56, DEFRAG 49, Claude link on the kernel 21, HDPROBE 33, HDSCAN 20, HEADCLN 9; claude-link: chat 10 + 20 (emulator), Term 17 + 8 (emulator), MCP 13.
 - **Copy to the floppy** (`releases/0.4.0`): LODE.SYS, LCMD.COM, LODE.TXT, CLAUDE.COM.
 
+## The rename (0.4.1, 2026-10-09)
+- Grid-OS is now Lodestone: LODE.SYS, LODE.INI, LODE.TXT, LCMD.COM and LODEBOOT.COM (they were GRIDOS.SYS, GRIDOS.INI, GRIDOS.TXT, GRIDCMD.COM and GOSBOOT.COM); the repo's `gridos/` folder is `os/`. The boot sector looks for LODE.SYS, so a Grid-OS floppy needs LODEBOOT once; it runs at the prompt (`t_lodeboot`). Done on the 1520's floppy, and it boots.
+
+## Command (0.4.2, 2026-10-09)
+Joshua's aim: a command prompt resident Claude can script against, as Claude Code drives PowerShell or Git Bash.
+- **The line editor** (LCMD's own; DOS's INT 21h 0Ah when standard input isn't the keyboard):
+  - Left, Right, Home, End, Backspace and Del edit the line; ESC clears it; Ctrl-C drops it.
+  - Up and Down step through a 512-byte history (the same line twice in a row is kept once); F3 adds the rest of the last line.
+  - Tab completes the word before the cursor as a file or subject name (`*` or `*.*` added); Tab again gives the next name, then the first again. A subject gets its `\`.
+  - A line wraps over rows; when the screen scrolls the line's start goes up with it.
+- **The screen saver at the prompt.** LCMD waits for keys in its own loop (INT 21h 0Bh, then `hlt`). After the Executive's delay it calls the Executive's own saver: DEFRAG on each disk unless TIDY=0, then the dark screen with the time. It keeps the 80×25 text screen in 4,000 bytes taken for the purpose, and puts the screen back afterwards, cursor included. The key that ends the saver is taken.
+  - The kernel's INT 21h F0h AL=5 gives the delay and the far entry, `ui_saver_far` (`call saver` + `retf`).
+  - The Executive's `saver` no longer redraws on its own; its event loop does that.
+  - `ui_lend`/`ui_reclaim` count, so the saver's DEFRAG, run while LCMD (itself a child of the Executive) is the program, doesn't give the directory buffer back early.
+  - At PAUSE and CHOICE too, but not while a FOR, DIR /P or a run of Tabs has a directory search going: DEFRAG could reorder the directory under it.
+  - Ctrl-C during the saver does nothing.
+- **Batch files:**
+  - `IF [NOT] EXIST name | ERRORLEVEL n | a==b command`. EXIST counts subjects too, and `dir\NUL` tests for a subject.
+  - `GOTO label`, which also leaves a FOR.
+  - `FOR %V IN (set) DO command`. Wildcards give each matching name with its subject; the redirection on the FOR line covers all of it.
+  - `CALL name args`, up to 8 deep. The calling file's place, its line and FOR's state wait in a block of their own, so `CALL X && Y`, a FOR in a CALLed file and `CALL X | Y` all work.
+  - `SHIFT`, `%NAME%` from the environment, and `CHOICE [/C:keys] [/N] [/S] [/T:c,nn]` (nn at most 99; ERRORLEVEL is the key's place).
+- **For scripts:**
+  - `a && b` runs b if a worked, `a || b` if it didn't, left to right as in cmd.
+  - A program sets ERRORLEVEL to its exit code. A built-in that can fail sets 0 or 1. ECHO, REM, CLS, VER, PAUSE, GOTO, SHIFT, IF, FOR and CALL leave it to the commands they run, so `PROG` / `ECHO` / `IF ERRORLEVEL` still sees PROG's code.
+  - **Unlike DOS 3.30:** a DEL or a CD that works after a program resets ERRORLEVEL to 0.
+  - An error in a batch file says where: `BUILD line 7: File not found`.
+  - A shell reading commands from a file (`LCMD < S.TXT`) ends at the file's end.
+- **Redirection and pipes nest:** a FOR's or a CALLed file's own redirection is a level of its own (12 at most), undone level by level, and after Ctrl-C too. Each level's pipe files have their own names (`\PIPEx1.$$$`).
+- **COPY** reads and writes up to 64 KB at a time, in a block taken from free memory while it runs; it was 4 KB, kept in LCMD all the time.
+  - A 300 KB copy on the floppy, in the emulator's disk model: 35.8 s before, 22.8 s now.
+  - TYPE reads 512 bytes at a time as before, so a bad sector costs no more of the text.
+- **Cost:**
+  - LODE.SYS 45,466 bytes (+26 over 0.4.1). Resident, 32 bytes more (kernel 16, Executive 16), which leaves memory for DOS programs unchanged at 562.5 / 578.6 KB.
+  - LCMD.COM is 10,909 bytes (+3,312). It still takes the same memory while a program runs from it (a program gets 16.1 KB less than from the Executive): the copy buffer it no longer keeps pays for the new code and the history. Its BSS is 40 bytes smaller.
+- **Review (an independent agent):** it found 12 issues, 10 of them reproduced in pcemu.
+  - `CALL` overwrote the line it was on (`&&`, `||` and `|` after it ran garbage).
+  - Ctrl-C in COPY or TYPE leaked the buffer and the files; unwind now frees them.
+  - Ctrl-C in a CALLed file could leave ECHO off at the prompt.
+  - PAUSE and CHOICE hung on a file at its end.
+  - `CHOICE /T` over an hour hung the CPU on a divide.
+  - Abort during the saver could end LCMD inside the Executive's code; the saver now ignores Ctrl-C and leaves INT 24h's Abort-to-Fail alone.
+  - A FOR in a CALLed file was refused.
+  - Nested pipes shared their files.
+  - `IF EXIST dir\NUL` didn't work.
+  - Errors named %1 after SHIFT.
+  - CHOICE /S was ignored.
+  - DEFRAG could run under a directory search.
+  - All are fixed, with tests.
+- **Tests:** `t_command` (34 checks: the batch language, exit codes, every review case, and CMDTEST.BAT), `t_cmdedit` (18: the editor, history, Tab, Ctrl-C, input from a file), `t_cmdsaver` (8: the saver at the prompt and in PAUSE, the Executive's memory and INT 24h afterwards).
+- **Version:** LODE_VER 0042h.
+- **Copy to the floppy** (`releases/0.4.2`): LODE.SYS, LCMD.COM, LODE.TXT, and CMDTEST.BAT, a self-test of the batch language for the 1520 ("All 11 tests passed"). CLEANOLD.BAT deletes the Grid-OS files 0.4.1 replaced. On the 1520 the prompt, history, Tab and the saver all work, and CMDTEST passes all 11 (Joshua).
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.

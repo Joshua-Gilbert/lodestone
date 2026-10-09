@@ -959,8 +959,245 @@ def t_lodeboot():
     k = ktest.KPC(os.path.join(OUT, 'lb2.img')); k.start()
     check('then it boots LODE.SYS', k.pc.mode() == 0x40 and 'LODE.SYS' in k.exec_list(), k.where())
 
+def t_command():
+    """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
+    errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
+    def bat(name, *lines):
+        p = os.path.join(OUT, name)
+        open(p, 'wb').write(('\r\n'.join(lines) + '\r\n').encode())
+        return name + '=' + p
+    open(os.path.join(OUT, 'EMPTY.TXT'), 'wb').close()
+    img = image('cmd.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(HERE, 'UPPER.COM'), os.path.join(HERE, 'MEMSZ.COM'),
+                'EMPTY.TXT=' + os.path.join(OUT, 'EMPTY.TXT'), os.path.join(HERE, 'CMDTEST.BAT'), 'SUB\\',
+                bat('EL.BAT', '@echo off', 'type nosuch.txt', 'if errorlevel 1 echo E1', 'echo hi > a.txt', 'type a.txt',
+                    'if not errorlevel 1 echo E0', 'del a.txt'),
+                bat('ARGS.BAT', '@echo off', ':loop', 'if "%1"=="" goto end', 'echo arg %1', 'shift', 'goto loop', ':end', 'echo done'),
+                bat('NOLAB.BAT', '@echo off', 'goto nowhere', 'echo not here'),
+                bat('EX.BAT', '@echo off', 'if exist ex.bat echo yes1', 'if not exist nosuch.x echo yes2', 'if exist sub echo yes3',
+                    'if exist nosuch.x echo no1', 'if %1==a echo yes4', 'if NOT %1==a echo no2'),
+                bat('FORS.BAT', '@echo off', 'for %%f in (one two,three) do echo item %%f', 'for %%f in (sub\\*.txt) do type %%f'),
+                bat('OUTER.BAT', '@echo off', 'echo outer start', 'call inner x y', 'if errorlevel 3 echo el3', 'echo outer back %1'),
+                bat('INNER.BAT', 'echo inner %1 %2', 'choice /c:abc /n /t:c,0'),
+                bat('VAR.BAT', '@echo off', 'set greet=hello', 'echo %greet% there %nosuch%end', 'echo 50% done', 'set greet='),
+                bat('CH.BAT', '@echo off', 'choice /c:abc Pick', 'if errorlevel 2 echo atleast2', 'if errorlevel 3 echo three'),
+                bat('FORCALL.BAT', '@echo off', 'for %%f in (p q) do call sub1 %%f', 'echo fc done'),
+                bat('SUB1.BAT', '@echo off', 'goto lab', 'echo skipped', ':lab', 'echo sub %1'),
+                bat('FORGO.BAT', '@echo off', 'for %%f in (1 2 3) do if %%f==2 goto out', 'echo not reached', ':out', 'echo out ok'),
+                bat('O1.BAT', '@echo off', 'call i1 && echo AFTER1', 'if exist o1.bat call i1 && echo AFTER2', 'call i1 | upper'),
+                bat('I1.BAT', 'echo hello world from the inner batch file, a long line'),
+                bat('O2.BAT', '@echo off', 'call i2'),
+                bat('I2.BAT', 'pause'),
+                bat('O3.BAT', '@echo off', 'for %%d in (1 2) do call i3 %%d'),
+                bat('I3.BAT', '@echo off', 'for %%e in (a b) do echo in %1 %%e'),
+                bat('I7.BAT', '@echo off', 'echo abc | upper'),
+                bat('SH.BAT', '@echo off', 'shift', 'type nosuch.x'),
+                bat('CS.BAT', '@echo off', 'choice /c:yn /s Case'))
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    o = sh.run('echo a && echo b')
+    check('&&: both', 'a\n' in o + '\n' and '\nb' in o, o)
+    o = sh.run('type nosuch.x && echo NOPE')
+    check('&& after a failure: not run', 'File not found' in o and 'NOPE' not in o, o)
+    o = sh.run('type nosuch.x || echo YES1')
+    check('|| after a failure: run', 'YES1' in o, o)
+    o = sh.run('ver && type nosuch.x || echo YES2')
+    check('a && b || c: c when b fails', 'Lodestone version' in o and 'YES2' in o, o)
+    o = sh.run('nosuchcmd || echo YES3')
+    check('a bad command fails too', 'Bad command' in o and 'YES3' in o, o)
+    o = sh.run('echo xyz > m.txt && type m.txt && del m.txt')
+    check('redirection belongs to its own part', 'xyz' in o and 'M        TXT' not in sh.run('dir'), o)
+    o = sh.run('echo a | upper || echo CODE1')
+    o2 = sh.run('rem | upper && echo CODE0')
+    check('a pipe: && and || go by its last program (UPPER: exit code = lines)', 'A' in o.split('\n') and 'CODE1' in o and 'CODE0' in o2, (o, o2))
+    o = sh.run('el')
+    check('ERRORLEVEL from built-ins: 1 after a failure, 0 after success',
+          'E1' in o and 'E0' in o and 'hi' in o, o)
+    check('an error in a batch file says where', 'EL line 2: File not found' in o, o)
+    o = sh.run('args a b c')
+    check('IF "%1"=="", GOTO, SHIFT', [l for l in o.split('\n') if l.startswith('arg ')] == ['arg a', 'arg b', 'arg c'] and 'done' in o, o)
+    o = sh.run('nolab')
+    check('GOTO to no label: says so, the batch file stops', 'NOLAB line 2: Label not found' in o and 'not here' not in o, o)
+    o = sh.run('ex a')
+    check('IF EXIST (a directory too), IF NOT EXIST, IF a==b, IF NOT',
+          all(x in o for x in ('yes1', 'yes2', 'yes3', 'yes4')) and 'no1' not in o and 'no2' not in o, o)
+    sh.run('echo in sub > sub\\s.txt')
+    o = sh.run('fors')
+    check('FOR in a batch file: a list, then names with a directory', all(('item ' + x) in o for x in ('one', 'two', 'three')) and 'in sub' in o, o)
+    o = sh.run('for %f in (*.bat) do echo B %f')
+    check('FOR at the prompt: the names that match', 'B ARGS.BAT' in o and 'B VAR.BAT' in o, o)
+    o = sh.run('outer z')
+    check('CALL: the other batch file runs, gets its arguments, this one goes on',
+          'outer start' in o and 'inner x y' in o and 'outer back z' in o and 'echo inner' not in o, o)
+    check('... with the ERRORLEVEL it left (CHOICE /T: the default)', 'el3' in o, o)
+    o = sh.run('forcall')
+    check('FOR ... DO CALL: each runs to its end; a GOTO in it stays in it', 'sub p' in o and 'sub q' in o and 'fc done' in o
+          and 'skipped' not in o, o)
+    o = sh.run('forgo')
+    check('GOTO out of a FOR', 'out ok' in o and 'not reached' not in o, o)
+    o = sh.run('o1')
+    check('&&, IF and | after a CALL: the line goes on where it was', o.count('hello world from the inner') == 2
+          and 'AFTER1' in o and 'AFTER2' in o and 'HELLO WORLD FROM THE INNER' in o and 'Bad command' not in o, o)
+    o = sh.run('call i1 && echo AFTER3')
+    check('... at the prompt too', 'AFTER3' in o, o)
+    o = sh.run('o3')
+    check('a FOR in a batch file CALLed from a FOR', all(('in %s %s' % (d, e)) in o for d in '12' for e in 'ab') and 'Syntax' not in o, o)
+    o = sh.run('echo zzz | call i7')
+    check('a pipe in a batch file CALLed in a pipe: its own pipe files', 'ABC' in o and 'creation' not in o
+          and 'PIPE' not in sh.run('dir'), o)
+    o = sh.run('if exist sub\\nul echo DIRNUL')
+    o2 = sh.run('if exist ex.bat\\nul echo FILENUL')
+    check('IF EXIST dir\\NUL: a directory (not a file)', 'DIRNUL' in o and 'FILENUL' not in o2, (o, o2))
+    o = sh.run('sh a b')
+    check('after SHIFT an error still names the batch file', 'SH line 3: File not found' in o, o)
+    o = sh.run('cs', 'y')
+    check('CHOICE /S: the keys as typed', 'Case[y,n]?y' in o, o)
+    o = sh.run('pause < empty.txt')
+    check('PAUSE with standard input from an empty file: goes on', 'Strike a key' in o and o.rstrip().endswith('>'), o)
+    k.key('choice /t:y,4000 Long'); k.key(ktest.ENTER)
+    k.key('n')
+    check('CHOICE /T:y,4000 (more than 99 s): waits, takes a key', 'Long[Y,N]?N' in k.pc.text_screen() and not k.crashed,
+          k.pc.text_screen())
+    o = sh.run('o2')
+    k.key(0x2E03)
+    o = k.pc.text_screen()
+    sh.run('echo visible')
+    check('Ctrl-C in a CALLed batch file: the prompt shows again', k.pc.text_screen().split('\n')[0].startswith('A:\\>echo visible'),
+          k.pc.text_screen())
+    o = sh.run('var')
+    check('%NAME% from the environment (none: nothing), a lone % kept', 'hello there end' in o and '50% done' in o, o)
+    o = sh.run('ch', 'b')
+    check('CHOICE: [A,B,C]?, the key shown, ERRORLEVEL its place', 'Pick[A,B,C]?B' in o and 'atleast2' in o and 'three' not in o, o)
+    k.key('choice /c:yn /t:n,2 Wait'); k.key(ktest.ENTER)
+    k.pc.run_for(1.0)
+    early = 'Wait[Y,N]?N' in k.pc.text_screen()
+    k.pc.run_for(2.0); k.settle()
+    k.key('if errorlevel 2 echo TIMED'); k.key(ktest.ENTER)
+    check('CHOICE /T: the default after the time', not early and 'Wait[Y,N]?N' in k.pc.text_screen() and 'TIMED' in k.pc.text_screen(),
+          k.pc.text_screen())
+    k.key('cmdtest'); k.key(ktest.ENTER); k.pc.run_for(4); k.settle()
+    o = k.pc.text_screen()
+    check('CMDTEST.BAT (the self-test for the 1520): all 11 pass, the error line named', 'All 11 tests passed.' in o
+          and 'CMDTEST line 37: File not found' in o and 'FAIL' not in o, o)
+    def largest():
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key('memsz'); k.key(ktest.ENTER)
+        m = re.search(r'([\d.]+) KB for programs', k.pc.text_screen())
+        return m.group(1) if m else None
+    m0 = largest()
+    for _ in range(3):
+        k.key('type con'); k.key(ktest.ENTER); k.key('abc'); k.key(0x2E03)
+    m1 = largest()
+    check('Ctrl-C in TYPE CON three times: no memory lost', m0 and m0 == m1, (m0, m1))
+    k.key('exit'); k.key(ktest.ENTER)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('back in the Executive, disk consistent', k.pc.mode() == 0x40 and not probs, probs)
+
+def t_cmdedit():
+    """The prompt's line editor: cursor keys, Del, ESC, history, F3, Tab;
+    Ctrl-C; a long line; standard input from a file (DOS's line input)."""
+    HOME, END, DEL, F3, CTLC = 0x4700, 0x4F00, 0x5300, 0x3D00, 0x2E03
+    p = os.path.join(OUT, 'S.TXT'); open(p, 'wb').write(b'echo from a file\r\nexit\r\n')
+    p2 = os.path.join(OUT, 'S2.TXT'); open(p2, 'wb').write(b'echo no exit\r\n')
+    img = image('ed.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'SUBDIR\\', 'S.TXT=' + p, 'S2.TXT=' + p2)
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    def run(*keys):
+        k.key('cls'); k.key(ktest.ENTER)
+        for x in keys: k.key(x)
+        k.key(ktest.ENTER)
+        return '\n'.join(k.pc.text_screen().rstrip().split('\n')[1:])
+    o = run('echo helo', ktest.LEFT, 'l')
+    check('Left, then a character goes in', 'hello' in o.split('\n'), o)
+    o = run('cho hi', HOME, 'e')
+    check('Home', 'hi' in o.split('\n'), o)
+    o = run('echo xhi', HOME, *([ktest.RIGHT] * 5), DEL)
+    check('Del', 'hi' in o.split('\n'), o)
+    o = run('echo ab', ktest.BKSP, 'c', END)
+    check('Backspace, End', 'ac' in o.split('\n'), o)
+    o = run('garbage', ktest.ESC, 'echo clean')
+    check('ESC clears the line', 'clean' in o.split('\n') and 'Bad command' not in o, o)
+    def last(*keys):
+        """Keys, Enter: the line printed just before the new prompt."""
+        for x in keys: k.key(x)
+        k.key(ktest.ENTER)
+        l = [x for x in k.pc.text_screen().rstrip().split('\n') if x.strip()]
+        return l[-2] if len(l) > 1 else ''
+    last('echo first'); last('echo second')
+    o = last(ktest.UP, ktest.UP)
+    check('Up, Up: the line before last', o == 'first', o)
+    o = last(ktest.UP, ktest.UP, ktest.DOWN)
+    check('... Down: the next one', o == 'first', o)
+    o = last(ktest.UP, ktest.UP, ktest.UP, ktest.DOWN)       # first, second, first, second
+    check('... Up three times, Down', o == 'second', o)
+    o = last(F3)
+    check('F3: the last line again', o == 'second', o)
+    o = last('echo sec', F3)
+    check('F3 after some of it: the rest', o == 'second', o)
+    run('echo one > longname.txt'); run('echo two > ab1.txt'); run('echo three > ab2.txt')
+    o = run('type longn', ktest.TAB)
+    check('Tab completes a name', 'one' in o.split('\n'), o)
+    o = run('type ab', ktest.TAB, ktest.TAB)
+    check('Tab again: the next name', 'three' in o.split('\n'), o)
+    o = run('cd subd', ktest.TAB)
+    check('Tab on a directory: with its \\', 'A:\\SUBDIR>' in o, o)
+    run('cd ..')
+    long = 'x' * 100
+    o = run('echo ' + long, HOME, *([ktest.RIGHT] * 5), 'Y')
+    check('a line over two rows: edited in the middle', ('Y' + long) in o.replace('\n', ''), o)
+    run('echo nope', CTLC)
+    o = k.pc.text_screen()
+    check('Ctrl-C drops the line', 'echo nope^C' in o and 'nope' not in o.replace('echo nope', ''), o)
+    o = sh.run('lcmd < s.txt')
+    check('standard input from a file: DOS line input, EXIT at its end', 'from a file' in o, o)
+    o = sh.run('lcmd < s2.txt')
+    check('... a file without EXIT: the shell ends at its end', 'no exit' in o and o.rstrip().endswith('A:\\>'), o)
+    for f in ('longname.txt', 'ab1.txt', 'ab2.txt'): sh.run('del ' + f)
+    k.key('exit'); k.key(ktest.ENTER)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    check('EXIT: the Executive', k.pc.mode() == 0x40, k.where())
+
+def t_cmdsaver():
+    """The Executive's screen saver at the prompt (and in PAUSE): DEFRAG,
+    the dark screen, then the prompt as it was; the Executive's memory
+    as before afterwards."""
+    img = image('csv.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(GOS, 'src', 'DEFRAG.COM'))
+    k = ktest.KPC(img); k.start()
+    k.wr('saver_t', struct.pack('<H', 36))          # 2 s instead of 5 minutes
+    sh = Shell(k)
+    psp = k.pc.u16(0x60, k.Y['cur_psp'])
+    k.key('echo kept')
+    seen = set()
+    for _ in range(60):
+        k.pc.run_for(0.25)
+        seen.add(k.pc.mode())
+        if k.pc.mode() == 0x40 and any(':' in l and l.strip().endswith('m') for y, l in k.ocr()): break
+    dark = [l.strip() for y, l in k.ocr() if len(l.strip()) > 2]
+    check('2 s idle at the prompt: the saver (DEFRAG ran, then the dark screen)', k.pc.mode() == 0x40 and len(dark) == 2, (seen, dark))
+    check('... the Executive lent its memory once more, no more', k.rd('lent', 1) == b'\x02' or k.rd('lent', 1) == b'\x01', k.rd('lent', 1))
+    k.key(ktest.DOWN)
+    scr = k.pc.text_screen()
+    check('a key: the prompt back as it was, the key taken', k.pc.mode() == 3 and 'A:\\>echo kept' in scr and 'command shell' in scr, scr)
+    check('... the Executive lends its memory once, as before', k.rd('lent', 1) == b'\x01', k.rd('lent', 1))
+    v24 = k.pc.u16(0, 0x92)
+    check('... LCMD\'s INT 24h again', v24 == psp, (hex(v24), hex(psp)))
+    k.key(ktest.ENTER)
+    check('... and the line still runs', 'kept' in k.pc.text_screen().split('\n'), k.pc.text_screen())
+    k.key('pause'); k.key(ktest.ENTER)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 8)
+    in_pause = k.pc.mode() == 0x40
+    k.key(ktest.DOWN)
+    k.pc.run_for(0.5)
+    check('PAUSE: the saver too; its key wakes it, PAUSE goes on waiting', in_pause and k.pc.mode() == 3 and
+          'Strike a key' in k.pc.text_screen() and k.pc.halted, k.pc.text_screen())
+    k.key(ktest.ENTER)
+    k.key('exit'); k.key(ktest.ENTER)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    check('EXIT: the Executive with its directory back', k.pc.mode() == 0x40 and k.rd('lent', 1) == b'\x00'
+          and 'LCMD.COM' in k.exec_list() and 'DEFRAG.COM' in k.exec_list(), (k.rd('lent', 1), k.exec_list()))
+
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot]
+         t_mdreview, t_lodeboot, t_command, t_cmdedit, t_cmdsaver]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
