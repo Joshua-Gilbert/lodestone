@@ -78,16 +78,29 @@ class AR488Serial:
         s.ser.write(answer_bytes(frame, s.patched, s.baud))
 
     def read(s):
-        return s.ser.read(4096)
+        # One byte with the timeout, then whatever has arrived: read(4096)
+        # would wait out the whole timeout for every frame.
+        d = s.ser.read(1)
+        if d:
+            n = s.ser.in_waiting
+            if n: d += s.ser.read(n)
+        return d
 
 
 class Link:
     """Frame-level state machine.  `on_message(type, body)` is called for every
-    complete inbound message (from the reader thread; keep it quick)."""
+    complete inbound message (from the reader thread; keep it quick).
+
+    `source` (Term) is pulled for one frame whenever the queue gives way:
+    source.ready() says it has something to send now, source.take(maxpay)
+    gives a CELLS payload (or None), source.delivered() says the GRiD has the
+    last one (its next frame is a new one)."""
     HOLD = 0.25
+    KEYS_HOLD = 0.03
 
     def __init__(s, transport, on_message, log=print, hold=HOLD):
         s.t, s.on_message, s.log, s.hold = transport, on_message, log, hold
+        s.source = None; s.keys_hold = s.KEYS_HOLD; s.last_q = False
         s.parser = glp.StreamParser(max_len=4096)
         s.lock = threading.Condition()
         s.outq = collections.deque()          # (type, body) messages
@@ -113,8 +126,26 @@ class Link:
     def busy(s):
         with s.lock: return bool(s.outq or s.cur)
 
+    def wake(s):
+        """The source has something new."""
+        with s.lock: s.lock.notify_all()
+
+    def _has_output(s):
+        return bool(s.outq or s.cur) or (s.source is not None and s.source.ready())
+
     def _next_payload(s):
         maxpay = s.t.frame_limit - glp.OVERHEAD
+        src = s.source
+        # The queue and the source take turns when both have something;
+        # the answer to HELLO is always first.
+        queued = bool(s.outq or s.cur)
+        hello = s.cur is None and s.outq and s.outq[0][0] == glp.P_HELLO
+        if src is not None and (not queued or (s.last_q and not hello)) and src.ready():
+            p = src.take(maxpay)
+            if p is not None:
+                s.last_q = False
+                return glp.P_CELLS, p
+        s.last_q = queued
         if s.cur is None:
             if not s.outq: return glp.P_NOP, b''
             t, body = s.outq.popleft()
@@ -175,6 +206,8 @@ class Link:
             s.stats['rx_dup'] += 1
             if s.last_answer: s.t.answer(s.last_answer)
             return
+        elif s.source is not None:
+            s.source.delivered()            # a new frame: our last answer arrived
         s.last_g = f.seq
         msg = s.reasm.add(f)
         if msg:
@@ -184,10 +217,18 @@ class Link:
             if mt != glp.G_POLL:
                 try: s.on_message(mt, body)
                 except Exception as e: s.log('link: handler error: %r' % e)
-        # Answer.  A POLL may wait for output; anything else is answered now.
+        # Answer.  A POLL may wait for output, and in Term so may KEYS (for
+        # the echo); anything else is answered now.
         with s.lock:
-            if t == glp.G_POLL and not f.more and not (s.outq or s.cur) and s.hold:
-                s.lock.wait(s.hold)
+            hold = s.hold if t == glp.G_POLL and not f.more else 0
+            if t == glp.G_KEYS and s.source is not None: hold = s.keys_hold
+            if hold and not s._has_output():
+                end = time.time() + hold
+                while not s._has_output():
+                    left = end - time.time()
+                    if left <= 0: break
+                    # the source may become ready by time alone (output settling)
+                    s.lock.wait(min(left, 0.005) if s.source is not None else left)
             kind, payload = s._next_payload()
         s._answer(kind, payload)
 

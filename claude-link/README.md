@@ -1,10 +1,110 @@
 # Claude for GRiD
 
-Work with Claude from a GRiDCase 1520, Claude Code style: a conversation on
-the GRiD's amber screen, Claude reading and editing files on the GRiD,
-running DOS programs (and typing into them), taking screenshots, and talking
-to the instruments on the GPIB bus, with a Yes / Always / No question before
-anything that changes something.
+Work with Claude from a GRiDCase 1520: Claude reading and editing files on
+the GRiD, running DOS programs (and typing into them), taking screenshots,
+and talking to the instruments on the GPIB bus. Two ways, one link:
+
+- **Term (`CLAUDE /T`): the real Claude Code, on your Claude subscription.**
+  The Pi (a Pi 5; Claude Code needs 4 GB) runs the unmodified `claude`
+  program; the GRiD is its screen and keyboard. Only the screen cells that
+  change cross the link. The GRiD's files, DOS programs, screen and GPIB bus
+  are Claude Code tools through an MCP server. No API key.
+- **Chat (`CLAUDE`): gridlink's own agent, on an API key.** A conversation
+  in Claude Code's style, run by `gridlink` on the Pi (it fits a Pi 3), with
+  a Yes / Always / No question before anything that changes something.
+
+## Term: Claude Code on the GRiD
+
+```
+GRiD 1520 ── GPIB ── AR488 Nano ── USB ── Raspberry Pi 5 ── internet ── Claude (your plan)
+ CLAUDE /T            (device, addr 7)      gridlink + the real `claude` in a pty
+ screen, keys,                              pyte screen -> changed cells -> the GRiD
+ GRiD tools                                 GRiD tools -> MCP server -> REQUESTs
+```
+
+Your subscription may only be used through the real Claude Code program,
+not through something built on it; so in Term nothing sits between you and
+`claude` but a terminal. Claude Code looks and works as it does anywhere
+else: its prompt box, slash commands, permission dialogs, Shift-Tab modes.
+
+On the GRiD: every key goes to Claude Code. CODE is Alt (Meta);
+CODE-Return or Ctrl-Return starts a new line in the prompt; Esc, Ctrl-C,
+Shift-Tab, the arrows and PgUp/PgDn do what they do in a terminal. Two keys
+stay on the GRiD: **CODE-Q** quits, **CODE-R** redraws the screen. Row 25
+shows the session's title and the link.
+
+What crosses the link: about 15-20 bytes for a typed key or a spinner step,
+100 for a line of a streamed answer, 500 for a whole first screen. The
+real `claude`'s theme picker redraws 1.2 KB a keypress; 55 bytes of it reach
+the GRiD. The emulator measures 48 ms of GRiD time from a key to its echo on
+the screen, plus the Pi's own (about 20-25 ms on the simulated link, and
+Claude Code's rendering).
+
+The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`). Four only look,
+and you can allow them for good ("Yes, and don't ask again"). Three change
+something, and Claude Code asks before every call: they carry
+`anthropic/requiresUserInteraction`, so it offers no "don't ask again" for
+them, no allow rule skips the question, and not even bypassPermissions does.
+
+| Tool | Asks | What |
+|---|---|---|
+| `grid_info` | until allowed | DOS version, drives, memory, EMS, GPIB driver, clock |
+| `grid_files` | until allowed | list, info, read (up to 48 KB), free |
+| `grid_screen` | until allowed | the last screenshot (text, or an image of a graphics screen) |
+| `gpib_read` | until allowed | scan, serial poll, read (sends nothing; a poll clears the instrument's service request) |
+| `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
+| `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
+| `gpib_send` | every time | query, write, clear, trigger, local/remote |
+
+GPIB queries ask too: a query is a command, and some (`MEAS?` and `READ?`
+on a Keithley source-meter) switch a source's output on.
+
+Limits the tools keep, whatever Claude asks for:
+
+- **Pi files** (the copies) only inside `~/grid`, symlinks followed first;
+  never a name starting with a dot (`.claude/settings.json`, `.mcp.json`)
+  or `CLAUDE.md`. Only regular files with one link are sent to the GRiD; a
+  copy from the GRiD replaces the name, never writes through a link there.
+- **Sizes:** a copy or write is at most 1 MB (five minutes on the stock
+  link); a read into the conversation 48 KB (Claude Code puts longer results
+  in a file). Bigger is an error naming the size, never a file cut short.
+  A program's output past 48 KB comes back as its start and its end, with
+  how many bytes are left out between them.
+- **Arguments** are checked before anything reaches the GRiD: GPIB
+  addresses 0-30 (not 21 or the bridge), a command line of 100 characters,
+  a `{WAIT}` of at most 600 s and a key script of about 2,000 keys, all
+  waits together shorter than the timeout (at most 3,600 s), no DOS device
+  names (`AUX`, `COM1`... would hang the GRiD), CP437 text without control
+  characters. A malformed message gets an error, and the server goes on.
+- `.mcp.json` starts Python isolated (`-I`), so nothing in `~/grid` is
+  imported in place of gridlink's own code.
+
+A Claude Code older than `requiresUserInteraction` asks for the three until
+you allow them; to make it always ask, add to `~/grid/.claude/settings.json`:
+
+```json
+{"permissions": {"ask": ["mcp__grid__grid_command", "mcp__grid__grid_change_files", "mcp__grid__gpib_send"]}}
+```
+
+### Setting up Term (Pi 5, 4 GB)
+
+1. Raspberry Pi OS 64-bit (Bookworm), headless; turn on zram (`sudo apt
+   install zram-tools`): 4 GB is Claude Code's minimum.
+2. Claude Code, then sign in once with your plan, at the Pi's own terminal:
+   ```
+   curl -fsSL https://claude.ai/install.sh | bash
+   claude                                  # sign in, pick the theme, /exit
+   ```
+3. gridlink as below (`install.sh` adds `pyte`). No API key is needed:
+   without one, `CLAUDE` alone gives Term too.
+4. Put a `CLAUDE.md` for the GRiD in `~/grid` (where Claude Code starts).
+   gridlink writes `~/grid/.mcp.json` itself; the first time, Claude Code
+   asks whether to use the `grid` server.
+
+On the GRiD: `CLAUDE /T`. Settings: `[term]` in the config (`command`,
+`dir`), and `[grid] app` for what `CLAUDE` without /T or /C gets.
+
+## Chat: gridlink's own agent
 
 ```
 GRiD 1520 ── GPIB ── AR488 Nano (device, addr 7) ── USB ── Raspberry Pi ── internet ── Claude API
@@ -68,21 +168,22 @@ EEPROM. Pick a free GPIB address; 7 is free on your bus.
 ```
 bash install.sh
 nano ~/.config/gridlink/config.toml        # port, address, model, your bus
-echo 'sk-ant-...' > ~/.config/gridlink/api_key; chmod 600 ~/.config/gridlink/api_key
+echo 'sk-ant-...' > ~/.config/gridlink/api_key; chmod 600 ~/.config/gridlink/api_key   # chat only
 venv/bin/python -m gridlink --console      # chat in the terminal, no GRiD needed
 sudo systemctl enable --now gridlink        # then leave it running
 ```
 
-The API key comes from the Claude Console (console.anthropic.com); usage is
-billed per token. `/cost` shows the session's running total.
+The API key (chat only) comes from the Claude Console
+(console.anthropic.com); usage is billed per token. `/cost` shows the
+session's running total. Term needs no key (see above).
 
 ### 3. The GRiD
 
 Copy `CLAUDE.COM` to the floppy, then:
 
 ```
-GRIDGPIB
-CLAUDE          (or CLAUDE /A:nn if the bridge is not at address 7)
+GRIDGPIB        (not on Grid-OS: GPIB is built in; CODE-A in the Executive runs CLAUDE)
+CLAUDE          chat (CLAUDE /T: Term; CLAUDE /A:nn if the bridge is not at address 7)
 ```
 
 It connects, sets the GRiD's clock from the Pi, and shows the welcome.
@@ -108,21 +209,36 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
 
 ## Files
 
-- `gridlink/` - the Pi service (Python 3.9+, `anthropic`, `pyserial`, `pillow`)
+- `gridlink/` - the Pi service (Python 3.9+, `pyserial`, `pyte`, `pillow`; `anthropic` for chat).
+  Term: `term.py` (the pty), `termscreen.py` (pyte, the cell diff), `router.py`
+  (chat or Term), `mcp.py` (the MCP server and its socket)
 - `PROTOCOL.md` - GLP 1, the link protocol, including why it works the way it does
 - `AR488-gridlink.patch` - the optional AR488 patch
 - `CLAUDE.ASM` / `GLYPHS.INC` (Grid-OS source tree, `gridos/claude/`) - the
-  GRiD program, NASM; `build.sh` / `BUILD.BAT` there make CLAUDE.COM,
-  CLAUDE.MAP (symbols for the emulator) and TESTKEY.COM
+  GRiD program, NASM; `TERMLINK.INC` (the link), `TERMCELL.INC` (cells,
+  Term's screen), `TERMKEYS.INC` (Term's keys) are shared with what comes
+  next (Claude resident over DOS programs). `build.sh` / `BUILD.BAT` there
+  make CLAUDE.COM, CLAUDE.MAP (symbols for the emulator) and TESTKEY.COM
 - `tests/` - `test_e2e.py` (Python model of the GRiD side, fast) and
   `test_emu.py` (the real CLAUDE.COM and GRIDGPIB.COM in an x86 emulator:
   `grid_emu.py`, with `sim7210.py`, `ar488_model.py`, `fake_anthropic.py`).
+  Term: `test_term.py` (screen, encoder, keys, end to end with the GRiD
+  model), `test_emu_term.py` (the real CLAUDE.COM /T), `test_mcp.py` (the
+  MCP server); `fake_claude.py` stands in for Claude Code in a pty (no
+  login, no model).
   `python3 tests/test_emu.py shots/` also saves every screen as PNG + text.
   Needs `unicorn` and `pillow`; `bin/GRIDGPIB.COM` is the driver it loads.
 
 ## Status
 
-Version 0.1, tested in emulation, not yet on hardware. The real CLAUDE.COM
+Version 1.1: Term. Tested in emulation (and the MCP server against the real
+Claude Code's `claude mcp list`), not yet on the Pi 5: 17 Term checks with
+the GRiD model, 8 with the real CLAUDE.COM, 13 for the MCP bridge (its
+limits included). On the
+Pi 5: a real Claude Code session from the GRiD, the echo, a permission
+dialog answered on the GRiD, an MCP call that runs a DOS program.
+
+Version 1.0 (chat), tested in emulation, not yet on hardware. The real CLAUDE.COM
 (11 KB) runs under an emulated DOS 3.30 with the real GRIDGPIB driver,
 talking through the 7210 and AR488 models to the real gridlink with a
 scripted Claude: 20 scenarios pass (connect, chat, read, edit with Yes and

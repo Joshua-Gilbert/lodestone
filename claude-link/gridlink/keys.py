@@ -25,6 +25,8 @@ for i in range(10):
     NAMED['ALT+F%d' % (i + 1)] = (0, 0x68 + i)
 
 TICK = 0.0549254
+MAX_WAIT = 600                          # seconds in one {WAIT}
+MAX_SCRIPT = 4096                       # bytes: CLAUDE.COM collects a whole request in 4,700
 
 
 class KeyError_(ValueError):
@@ -71,7 +73,11 @@ def compile_script(text):
             tok = text[i + 1:j].strip(); i = j + 1
             up = tok.upper()
             if up.startswith('WAIT'):
-                secs = float(tok[4:].strip() or '1')
+                arg = tok[4:].strip() or '1'
+                try: secs = float(arg)
+                except ValueError: raise KeyError_('{%s}: not a number of seconds' % tok)
+                if not 0 <= secs <= MAX_WAIT:            # (NaN fails too)
+                    raise KeyError_('{%s}: a wait is 0 to %d seconds' % (tok, MAX_WAIT))
                 ticks = max(1, int(round(secs / TICK)))
                 while ticks > 0:
                     n = min(ticks, 255); out += bytes([0xFF, 0xFF, n]); ticks -= n
@@ -81,9 +87,65 @@ def compile_script(text):
                 a, sc = token_key(tok); out += bytes([a, sc])
         else:
             a, sc = char_key(ch); out += bytes([a, sc]); i += 1
+        if len(out) > MAX_SCRIPT:
+            raise KeyError_('key script too long for the GRiD (%d bytes at most, about %d keys)'
+                            % (MAX_SCRIPT, MAX_SCRIPT // 2))
     return bytes(out)
+
+
+def script_seconds(script):
+    """How long a compiled key script waits in all."""
+    n = i = 0
+    while i + 1 < len(script):
+        if script[i] == 0xFF and script[i + 1] == 0xFF:
+            n += script[i + 2] if i + 2 < len(script) else 0; i += 3
+        elif script[i] == 0xFF and script[i + 1] == 0xFE: i += 3
+        else: i += 2
+    return n * TICK
 
 
 def describe(text, limit=40):
     t = text.replace('\n', '{ENTER}')
     return t if len(t) <= limit else t[:limit - 1] + '\u2026'
+
+
+# ---- Term: GRiD key words -> what an xterm sends ------------------------
+# KEYS carries the AX words INT 16h AH=10h returns (AL, AH).  CODE is Alt
+# (Meta): CODE-letter is ESC + letter, CODE-Return ESC CR (a new line in
+# Claude Code's prompt, as Ctrl-Return is).
+LETTER_OF = {sc: ch for ch, sc in SCAN.items()}
+CSI_KEYS = {0x47: 'H', 0x4F: 'F', 0x48: 'A', 0x50: 'B', 0x4D: 'C', 0x4B: 'D'}
+TILDE_KEYS = {0x49: 5, 0x51: 6, 0x52: 2, 0x53: 3, 0x3F: 15, 0x40: 17, 0x41: 18, 0x42: 19,
+              0x43: 20, 0x44: 21, 0x85: 23, 0x86: 24}
+SS3_F = {0x3B: 'P', 0x3C: 'Q', 0x3D: 'R', 0x3E: 'S'}
+CTRL_KEYS = {0x73: 'D', 0x74: 'C', 0x8D: 'A', 0x91: 'B', 0x77: 'H', 0x75: 'F'}   # Ctrl-arrows, -Home, -End
+
+
+def term_bytes(al, ah, app_cursor=False):
+    """One BIOS key -> the bytes for the pty."""
+    if al in (0, 0xE0) and ah:
+        if ah in CSI_KEYS:
+            return ('\x1bO' if app_cursor else '\x1b[').encode() + CSI_KEYS[ah].encode()
+        if ah in TILDE_KEYS: return b'\x1b[%d~' % TILDE_KEYS[ah]
+        if ah in SS3_F: return b'\x1bO' + SS3_F[ah].encode()
+        if ah in CTRL_KEYS: return b'\x1b[1;5' + CTRL_KEYS[ah].encode()
+        if ah == 0x0F: return b'\x1b[Z'                        # Shift-Tab
+        if ah == 0x1C: return b'\x1b\r'                        # CODE-Return
+        if ah == 0x0E: return b'\x1b\x7f'                      # CODE-Backspace
+        if ah == 0x01: return b'\x1b\x1b'                      # CODE-Esc
+        if 0x78 <= ah <= 0x81: return b'\x1b' + b'1234567890'[ah - 0x78:ah - 0x77]
+        if ah in LETTER_OF: return b'\x1b' + LETTER_OF[ah].encode()   # CODE-letter, CODE-punctuation
+        return b''
+    if al == 0x0D: return b'\r'
+    if al == 0x0A: return b'\x1b\r'                            # Ctrl-Return
+    if al == 0x08: return b'\x7f' if ah == 0x0E else b'\x08'   # Backspace (DEL), Ctrl-H
+    if al == 0x7F: return b'\x08'                              # Ctrl-Backspace
+    if al < 0x80: return bytes([al])
+    return bytes([al]).decode('cp437').encode('utf-8')        # Alt-keypad characters
+
+
+def term_keys(body, app_cursor=False):
+    out = bytearray()
+    for i in range(0, len(body) - 1, 2):
+        out += term_bytes(body[i], body[i + 1], app_cursor)
+    return bytes(out)

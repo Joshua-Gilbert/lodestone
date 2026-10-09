@@ -101,7 +101,7 @@ def t_core():
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
     # INT 16h AH=10h; pcemu now models that
     k.key(K_CODE_HELP)
-    check('CODE-? opens the Executive\'s help', has(k, 'Grid-OS 0.3 Help'), screen(k))
+    check('CODE-? opens the Executive\'s help', has(k, 'Grid-OS 0.4 Help'), screen(k))
     k.key(ktest.ESC)
     check('the Executive lists .RUN files as Program', 'UITEST.RUN' in k.exec_list() and has(k, 'Program'), screen(k))
     k.select('UITEST.RUN'); k.key(ktest.ENTER)
@@ -231,7 +231,7 @@ def t_system():
     shot(k, 'system_gpib')
     check('GPIB scan finds the instruments on the simulated bus (6, 14, 29)', re.search(r'Instruments at\s+6, 14, 29', screen(k)), screen(k))
     k.key('A')
-    check('About', has(k, 'Grid-OS 0.3') and has(k, '3.30 compatible'), screen(k))
+    check('About', has(k, 'Grid-OS 0.4') and has(k, '3.30 compatible'), screen(k))
     k.key(ktest.F1)
     check('help', has(k, 'System Help') and has(k, 'back to the Executive'), screen(k))
     k.key('x'); k.key(K_CODE_HELP)

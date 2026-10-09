@@ -17,7 +17,7 @@ It boots from a floppy, shows the Executive, runs ordinary DOS programs (TM5000G
 
 *Emulator screenshots (`gridos/screens/readme_shots.py`), drawn as the 1520's amber plasma shows them.*
 
-## What it does (0.3.15)
+## What it does (0.4.0)
 
 - **A DOS 3.30 kernel** (`GRIDOS.SYS`, 45,438 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
 - **Disks:**
@@ -33,7 +33,11 @@ It boots from a floppy, shows the Executive, runs ordinary DOS programs (TM5000G
 - **DEFRAG.COM:** defragments a floppy or C:, with a map of the disk. `/T` tests the free space instead: it writes a pattern into every free sector, reads it back, and marks the clusters that fail. A power cut during any of its writes leaves the old file or the new one, never a damaged one (tested at every write, on a floppy and on C:).
 - **Screen capture:** Shift-PrtSc saves the screen to `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text) on the boot disk.
 - **An INT 33h mouse** for DOS programs: a serial mouse on COM1 or COM2.
-- **Claude for GRiD** (`gridos/claude`, `claude-link`): Claude on the GRiD through a Raspberry Pi on the GPIB bus. It can read and edit files, run DOS programs and talk to instruments, each step confirmed on the GRiD. It is tested in emulation and waits for the bridge hardware.
+- **Claude for GRiD** (`gridos/claude`, `claude-link`): Claude on the GRiD through a Raspberry Pi on the GPIB bus. It can read and edit files, run DOS programs and talk to instruments, each step confirmed on the GRiD. Two ways:
+  - **Term** (`CLAUDE /T`, 0.4.0): the GRiD is the screen and keyboard of the real Claude Code, running on a Pi 5 on your own Claude plan. Only the screen cells that change cross the link. The GRiD's files, programs, screen and GPIB bus are Claude Code tools through an MCP server on the Pi.
+  - **Chat** (`CLAUDE`): gridlink's own agent on an API key, in Claude Code's style.
+
+  Both are tested in emulation and wait for the bridge hardware.
 
 ## Benchmarks: Grid-OS, GRiD MS-DOS 3.30 and FreeDOS
 
@@ -162,11 +166,11 @@ Run the comparison with `python3 gridos/bench/compare3.py <GRiD MS-DOS EPROM ima
 | `gridos/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `gridos/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN |
 | `gridos/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
-| `gridos/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link) |
-| `gridos/releases` | Builds for the floppy, 0.1 to 0.3.15 |
+| `gridos/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys) |
+| `gridos/releases` | Builds for the floppy, 0.1 to 0.4.0 |
 | `gridos/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `gridos/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
-| `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude API, the AR488 patch, and its tests |
+| `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude (Term: the real Claude Code in a pty, with an MCP server for the GRiD's tools; chat: the Claude API), the AR488 patch, and its tests |
 | `tools` | 1520 tools: GRIDGPIB (GPIB driver for GRiD MS-DOS), GPIBSCAN, GPIBTEST, GGTEST, GRIDMEM (EMS or extended memory), EMSKEEP (does EMS keep its contents through Ctrl-Alt-Del?), MEMPROBE, GRIDPROBE, RAMSPEED, ROMDUMP, HDPROBE and HDSCAN (the internal hard disk, read-only: diagnosis, and a read of every sector), the C GPIB library, and TM5000G.EXE (a test fixture; its source lives in the TM5000 repo) |
 | `rom` | Our notes on the 1520 BIOS (a symbol map), probe and scan logs, and the hard disk's partition and boot sectors; no ROM images (see below) |
 | `docs` | Design notes: the 0.2 kernel, the UI core and programs (0.3, with EMS, screen capture, the hard disk and M:), DEFRAG and the saver, the floppy development loop |
@@ -185,7 +189,7 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 733 checks pass on 0.3.15 (2026-10-08).
+Needs Python 3, `unicorn` 2.x and mtools. All 733 checks pass on 0.4.0 (2026-10-09); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
 
 ```sh
 cd gridos
@@ -219,11 +223,11 @@ These aren't ours to publish, even privately: the 1520 BIOS and GRiD MS-DOS ROM 
 
 ## Status
 
-Grid-OS 0.3.13 runs on the 1520: it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 adds M:, the RAM disk: Claude's future scratchpad, and fast scratch space now. It is tested in the emulator and waits for the 1520, along with `EMSKEEP.COM`, which finds out whether EMS keeps M:'s files through Ctrl-Alt-Del. See `docs/gridos-0.3-apps.md` for 0.3 release by release.
+Grid-OS 0.3.13 runs on the 1520: it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 adds M:, the RAM disk: Claude's future scratchpad, and fast scratch space now. It is tested in the emulator and waits for the 1520, along with `EMSKEEP.COM`, which finds out whether EMS keeps M:'s files through Ctrl-Alt-Del. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/gridos-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
 
 **Next:**
-1. Claude on the real GPIB bridge.
-2. Claude staying resident, working alongside DOS programs, with M: as its scratchpad.
-3. Term and Command.
+1. Claude (Term and chat) on the real GPIB bridge, with the Pi 5.
+2. Claude staying resident, working alongside DOS programs, with M: as its scratchpad: a hot key over a running program, Term's screen and link code in EMS (`docs/term.md`, Phase 2).
+3. Command.
 
 Later come a plot view and instrument programs for the GPIB bench (scopes, the VNA), and a calculator on the 80287. The roadmap and the hardware notes are in the claude.ai Project.
