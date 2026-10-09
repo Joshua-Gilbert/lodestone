@@ -186,15 +186,17 @@ def temp_name(path):
     return head + sep + base[:8] + '.$$$'
 
 
-DEVICES = {'CON', 'AUX', 'PRN', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'LPT1', 'LPT2', 'LPT3', 'CLOCK$'}
+DEVICES = {'CON', 'AUX', 'PRN', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'LPT1', 'LPT2', 'LPT3', 'CLOCK$',
+           'EMMXXXX0'}                             # (Grid-OS's EMS manager's device)
 
 
 def is_device(path):
     """DOS opens a device for these names in any directory, with any
     extension: A:\\X\\AUX.TXT is the serial port, and reading it waits
     forever."""
-    base = path.replace('/', '\\').rpartition('\\')[2].rpartition(':')[2]
-    return base.split('.')[0].strip().upper() in DEVICES
+    base = path.replace('/', '\\').rpartition('\\')[2]
+    if len(base) >= 2 and base[1] == ':': base = base[2:]          # (A:NUL)
+    return base.split('.')[0].strip().rstrip(':').strip().upper() in DEVICES    # (AUX: and COM1.TXT too)
 
 
 def no_device(path):
