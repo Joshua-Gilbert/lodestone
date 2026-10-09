@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBSCAN.COM - direct uPD7210 GPIB probe & bus scan        (Grid-OS)
+;  GPIBSCAN.COM - direct uPD7210 GPIB probe & bus scan        (Lodestone)
 ;  Build: nasm -f bin -o GPIBSCAN.COM GPIBSCAN.ASM
 ;
 ;  GPIBSCAN         detect the 7210, take control of the bus, serial-poll
@@ -1036,7 +1036,7 @@ q_id    db 'ID?',10,0
 q_idn   db '*IDN?',10,0
 n_ieeeout db 'IEEEOUT',0
 n_log   db 'A:\GPIBSCAN.TXT',0
-s_title db 'GPIBSCAN 1.5 - direct uPD7210 GPIB scan (Grid-OS)',13,10
+s_title db 'GPIBSCAN 1.5 - direct uPD7210 GPIB scan (Lodestone)',13,10
         db '==================================================',13,10,'$'
 s_drv488 db '** Driver488 (DRVR488) is loaded - it owns the GPIB chip.',13,10
         db '** Boot without it, or use GPIBSCAN /F to override.',13,10,'$'

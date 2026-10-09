@@ -1,5 +1,5 @@
 """Behavioural model of an AR488 (0.53.46) in GPIB device mode, stock or with
-the Grid-OS patch, for tests.  It follows the firmware's own logic:
+the Lodestone patch, for tests.  It follows the firmware's own logic:
 parseInput() / lnRdy / device_talk_h() / sendStatus(), the 64-byte Arduino
 serial receive buffer, and serial timing at the configured baud rate.
 

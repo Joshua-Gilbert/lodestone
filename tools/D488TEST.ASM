@@ -1,6 +1,6 @@
 ; =====================================================================
 ;  D488TEST.COM - the GPIBTEST read-only test set, through Driver488
-;  Build: nasm -f bin -o D488TEST.COM D488TEST.ASM            (Grid-OS)
+;  Build: nasm -f bin -o D488TEST.COM D488TEST.ASM            (Lodestone)
 ;
 ;  Run with IOtech DRVR488 loaded (type DRVR488 first).  Uses the driver
 ;  exactly the way TM5000 does: text commands to \DEV\IEEEOUT ("OUTPUT
@@ -479,7 +479,7 @@ l_idn   db '*IDN?     $'
 l_set   db 'SET?      $'
 l_read  db 'reading   $'
 l_spoll db 'ser.poll  $'
-s_title db 'D488TEST 1.0 - GPIBTEST read-only set through Driver488 (Grid-OS)',13,10
+s_title db 'D488TEST 1.0 - GPIBTEST read-only set through Driver488 (Lodestone)',13,10
         db '=================================================================',13,10,'$'
 s_nodrv db '** Cannot open \DEV\IEEEOUT / \DEV\IEEEIN - load DRVR488 first.',13,10,'$'
 s_drv   db 'Driver: $'

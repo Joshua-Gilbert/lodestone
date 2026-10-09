@@ -21,7 +21,7 @@ instrument access Claude makes goes through the GRiD.
 From the AR488 source (`AR488.ino`, ver 0.53.46):
 
 * Data the Pi writes is parsed into one 128-byte line buffer (`pBuf`,
-  `PBSIZE`; 255 with the Grid-OS patch). A line ends at an unescaped CR or
+  `PBSIZE`; 255 with the Lodestone patch). A line ends at an unescaped CR or
   LF, or when the buffer fills.
   CR, LF, ESC and `+` inside data must be escaped with ESC.
 * The line is sent only when the controller addresses the Nano to talk and
