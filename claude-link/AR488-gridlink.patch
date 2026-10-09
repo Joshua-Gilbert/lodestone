@@ -6,8 +6,8 @@ diff -u AR488/src/AR488/AR488.ino AR488-grid/AR488.ino
   */
  // Serial input parsing buffer
 +#ifdef GRIDLINK_PATCH
-+static const uint8_t PBSIZE = 255;   // Grid-OS patch: one 254-byte GLP frame per line
-+bool gridSrqDone = false;           // Grid-OS patch: SRQ already raised for this line
++static const uint8_t PBSIZE = 255;   // Lodestone patch: one 254-byte GLP frame per line
++bool gridSrqDone = false;           // Lodestone patch: SRQ already raised for this line
 +#else
  static const uint8_t PBSIZE = 128;
 +#endif
@@ -19,7 +19,7 @@ diff -u AR488/src/AR488/AR488.ino AR488-grid/AR488.ino
    if (dataPort.available()) lnRdy = serialIn_h();
  
 +#ifdef GRIDLINK_PATCH
-+  // Grid-OS patch: in device mode a complete data line requests service
++  // Lodestone patch: in device mode a complete data line requests service
 +  // by itself (status 60h = RQS + READY), once per line, so the controller
 +  // never has to guess when the line has fully arrived.
 +  if (!gpibBus.isController()) {
@@ -39,7 +39,7 @@ diff -u AR488/src/AR488/AR488.ino AR488-grid/AR488.ino
    DB_PRINT("LnRdy: ", lnRdy);
    DB_PRINT("Buffer: ", pBuf);
 +#ifdef GRIDLINK_PATCH
-+  // Grid-OS patch: send only a complete line, and keep a line that is still
++  // Lodestone patch: send only a complete line, and keep a line that is still
 +  // arriving instead of throwing it away.
 +  if (lnRdy == 2) {
 +    gpibBus.sendData(pBuf, pbPtr);
@@ -63,7 +63,7 @@ diff -u AR488/src/AR488/AR488_Config.h AR488-grid/AR488_Config.h
  
  
  /***** Firmware version *****/
-+/***** Grid-OS patch (gridlink): device-mode auto-SRQ, 255-byte line buffer *****/
++/***** Lodestone patch (gridlink): device-mode auto-SRQ, 255-byte line buffer *****/
 +#define GRIDLINK_PATCH
 +#ifdef GRIDLINK_PATCH
 +#define FWVER "AR488 GPIB controller, ver. 0.53.46, 22/05/2026 +GRiD1"

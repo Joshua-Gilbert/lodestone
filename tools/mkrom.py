@@ -1,7 +1,7 @@
 # Build a 128 KB GRiD application-ROM image with the [GridEprom D-3] trailer.
 import struct
-def trailer(sys_type=1, bootable=0x80, boot_seg=0, size_kb=128, rom_id=0x4F53, text=b'Grid-OS',
-            part=b'GRIDOS01', copyright=b'(C) Grid-OS project'):
+def trailer(sys_type=1, bootable=0x80, boot_seg=0, size_kb=128, rom_id=0x4F53, text=b'Lodestone',
+            part=b'LODE01', copyright=b'(C) Lodestone project'):
     h = bytearray(256)
     struct.pack_into('<HBBH', h, 0, 0xBB66, sys_type, bootable, boot_seg)
     h[6] = 0; h[7] = size_kb; h[8] = 0                     # romAddr, romSize (KB), waitStates

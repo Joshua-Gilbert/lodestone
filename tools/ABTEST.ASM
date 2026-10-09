@@ -1,6 +1,6 @@
 ; =====================================================================
 ;  ABTEST.COM - A/B bulk-read test: direct chip access vs GRIDGPIB
-;  Build: nasm -f bin -o ABTEST.COM ABTEST.ASM                   (Grid-OS)
+;  Build: nasm -f bin -o ABTEST.COM ABTEST.ASM                   (Lodestone)
 ;
 ;  Needs GRIDGPIB loaded.  Alternates the same read-only transaction
 ;  through the two paths, 5 rounds, so the instrument is in the same state

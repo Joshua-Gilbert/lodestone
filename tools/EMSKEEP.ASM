@@ -1,10 +1,10 @@
 ; =====================================================================
 ;  EMSKEEP.COM - does the 1520's EMS keep what it holds through a warm
-;  restart (Ctrl-Alt-Del)?                                    (Grid-OS)
+;  restart (Ctrl-Alt-Del)?                                    (Lodestone)
 ;  Build:  nasm -f bin -o EMSKEEP.COM EMSKEEP.ASM
 ;
 ;    EMSKEEP        stamp: 8 pages of EMS (from the EMS manager, INT 67h:
-;                   Grid-OS's or GRiD's EMM.SYS) filled with a pattern
+;                   Lodestone's or GRiD's EMM.SYS) filled with a pattern
 ;                   that depends on the page and on the time; which raw
 ;                   pages they are (their page registers) and the time go
 ;                   in EMSKEEP.DAT.  Then press Ctrl-Alt-Del.
@@ -14,11 +14,11 @@
 ;                   One line a page, then the answer; added to EMSKEEP.TXT.
 ;
 ;  The first 16 bytes of each page aren't compared: an EMS manager's
-;  start-up may tag them (Grid-OS 0.3.13's did; 0.3.14's puts them back).
+;  start-up may tag them (Lodestone 0.3.13's did; 0.3.14's puts them back).
 ;  The pages may belong to someone else by the time of the check (M:, the
 ;  disk cache, ...): EMSKEEP only reads them.  Run /C right after the
 ;  restart, before anything has had time to use much EMS.
-;  For Grid-OS's M: (0.3.14): if the pages keep their contents, M: keeps
+;  For Lodestone's M: (0.3.14): if the pages keep their contents, M: keeps
 ;  its files through a warm restart; if not, it is made new each time.
 ; =====================================================================
 cpu 286
@@ -375,7 +375,7 @@ s_nodat db "EMSKEEP: can't write EMSKEEP.DAT here", 13, 10, 0
 s_nodat2 db 'EMSKEEP /C: no EMSKEEP.DAT here (run EMSKEEP first, then Ctrl-Alt-Del)', 13, 10, 0
 s_stamped db 'EMSKEEP: these raw EMS pages hold a pattern now: ', 0
 s_sp    db ' ', 0
-s_now   db 13, 10, 'Press Ctrl-Alt-Del now; when Grid-OS is back, run EMSKEEP /C', 13, 10, 0
+s_now   db 13, 10, 'Press Ctrl-Alt-Del now; when Lodestone is back, run EMSKEEP /C', 13, 10, 0
 s_check db 'EMSKEEP /C: the pages stamped before the restart', 13, 10, 0
 s_page  db '  raw page ', 0
 s_colon db ': ', 0

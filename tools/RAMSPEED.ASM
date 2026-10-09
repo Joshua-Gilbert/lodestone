@@ -1,5 +1,5 @@
 ; =====================================================================
-;  RAMSPEED.COM - GRiDCase 1520 memory speed test               (Grid-OS)
+;  RAMSPEED.COM - GRiDCase 1520 memory speed test               (Lodestone)
 ;  Build:  nasm -f bin -o RAMSPEED.COM RAMSPEED.ASM
 ;  Run  :  RAMSPEED [label]      e.g.  RAMSPEED NEW-SIPPS   RAMSPEED FACTORY
 ;
@@ -689,7 +689,7 @@ pdec:   pusha
 ; =====================================================================
 ;  Data
 ; =====================================================================
-s_title db 13,10,'RAMSPEED 1.1 - GRiDCase memory speed test (Grid-OS)',13,10,'$'
+s_title db 13,10,'RAMSPEED 1.1 - GRiDCase memory speed test (Lodestone)',13,10,'$'
 s_run   db 'Run      : $'
 s_date  db '   $'
 s_ext   db 'Ext mem  : $'

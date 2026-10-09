@@ -34,7 +34,7 @@ class NoAgent:
     MSG = ('This Pi has no API key, so Claude for GRiD\'s own chat can\'t run here. '
            'For Claude Code with your Claude subscription, start CLAUDE /T.')
     OLD = ('This Pi has no API key, so Claude for GRiD\'s own chat can\'t run here. '
-           'CLAUDE 1.1 (Grid-OS 0.4) can use Claude Code on your Claude plan instead: CLAUDE /T.')
+           'CLAUDE 1.1 (Lodestone 0.4) can use Claude Code on your Claude plan instead: CLAUDE /T.')
 
     def __init__(s, log=print, why=None): s.log = log; s.link = None; s.why = why; s.can_term = True
 

@@ -36,9 +36,9 @@ def _find(env, *cands):
     return cands[-1]
 
 ROOT = os.path.dirname(HERE)
-CLAUDE_COM = _find('CLAUDE_COM', os.path.join(ROOT, '..', 'gridos', 'claude', 'CLAUDE.COM'),
+CLAUDE_COM = _find('CLAUDE_COM', os.path.join(ROOT, '..', 'os', 'claude', 'CLAUDE.COM'),
                    '/home/claude/gos/claude/CLAUDE.COM')
-TESTKEY_COM = _find('TESTKEY_COM', os.path.join(ROOT, '..', 'gridos', 'claude', 'TESTKEY.COM'),
+TESTKEY_COM = _find('TESTKEY_COM', os.path.join(ROOT, '..', 'os', 'claude', 'TESTKEY.COM'),
                     '/home/claude/gos/claude/TESTKEY.COM')
 GRIDGPIB_COM = _find('GRIDGPIB_COM', os.path.join(HERE, 'bin', 'GRIDGPIB.COM'),
                      '/home/claude/TM5000/driver/gridgpib/GRIDGPIB.COM')
