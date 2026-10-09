@@ -12,7 +12,7 @@ DOS_ERRORS = {
     80: 'file exists', 82: 'cannot make directory entry',
     83: 'disk error (drive not ready, write-protected or bad disk)',
     0xF0: 'request too large for the GRiD', 0xF1: 'not enough memory on the GRiD',
-    0xF2: 'GPIB driver not found', 0xF3: 'bad request', 0xF4: 'disk full',
+    0xF2: 'GPIB driver not found', 0xF3: 'command line too long for DOS', 0xF4: 'disk full',
     0xF5: 'no snapshot taken', 0xFF: 'unknown request',
 }
 GPIB_ERRORS = {1: 'timeout', 2: 'no listener at that address', 3: 'GRiD is not the controller',
@@ -91,6 +91,7 @@ class Grid:
         return out
 
     def read(s, path, offset=0, length=READ_CHUNK):
+        no_device(path)
         return s.ok(glp.OP_READ, struct.pack('<IH', offset, length) + glp.asciiz(path))
 
     def read_file(s, path, limit=256 * 1024, progress=None):
@@ -103,6 +104,7 @@ class Grid:
         return bytes(data)
 
     def write(s, path, data, mode=0, offset=0):
+        no_device(path)
         r = s.ok(glp.OP_WRITE, struct.pack('<BI', mode, offset) + glp.asciiz(path) + bytes(data),
                  timeout=60.0)
         n = struct.unpack('<H', r[:2])[0] if len(r) >= 2 else len(data)
@@ -182,6 +184,21 @@ def temp_name(path):
     head, sep, tail = path.rpartition('\\')
     base = tail.split('.')[0] or 'CLAUDE'
     return head + sep + base[:8] + '.$$$'
+
+
+DEVICES = {'CON', 'AUX', 'PRN', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'LPT1', 'LPT2', 'LPT3', 'CLOCK$'}
+
+
+def is_device(path):
+    """DOS opens a device for these names in any directory, with any
+    extension: A:\\X\\AUX.TXT is the serial port, and reading it waits
+    forever."""
+    base = path.replace('/', '\\').rpartition('\\')[2].rpartition(':')[2]
+    return base.split('.')[0].strip().upper() in DEVICES
+
+
+def no_device(path):
+    if is_device(path): raise GridError('%s is a DOS device, not a file' % path, 5)
 
 
 def is_grid_path(p):

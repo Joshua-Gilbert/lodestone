@@ -40,16 +40,51 @@ the GRiD. The emulator measures 48 ms of GRiD time from a key to its echo on
 the screen, plus the Pi's own (about 20-25 ms on the simulated link, and
 Claude Code's rendering).
 
-The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`; Claude Code
-asks before each until you allow it):
+The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`). Four only look,
+and you can allow them for good ("Yes, and don't ask again"). Three change
+something, and Claude Code asks before every call: they carry
+`anthropic/requiresUserInteraction`, so it offers no "don't ask again" for
+them, no allow rule skips the question, and not even bypassPermissions does.
 
-| Tool | What |
-|---|---|
-| `grid_command` | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
-| `grid_files` | list, info, read, write, delete, rename, mkdir, rmdir, free; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
-| `grid_screen` | the last screenshot (text, or an image of a graphics screen) |
-| `grid_info` | DOS version, drives, memory, EMS, GPIB driver, clock |
-| `gpib` | query, write, read, serial poll, clear, trigger, local/remote, scan |
+| Tool | Asks | What |
+|---|---|---|
+| `grid_info` | until allowed | DOS version, drives, memory, EMS, GPIB driver, clock |
+| `grid_files` | until allowed | list, info, read (up to 48 KB), free |
+| `grid_screen` | until allowed | the last screenshot (text, or an image of a graphics screen) |
+| `gpib_read` | until allowed | scan, serial poll, read (sends nothing; a poll clears the instrument's service request) |
+| `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
+| `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
+| `gpib_send` | every time | query, write, clear, trigger, local/remote |
+
+GPIB queries ask too: a query is a command, and some (`MEAS?` and `READ?`
+on a Keithley source-meter) switch a source's output on.
+
+Limits the tools keep, whatever Claude asks for:
+
+- **Pi files** (the copies) only inside `~/grid`, symlinks followed first;
+  never a name starting with a dot (`.claude/settings.json`, `.mcp.json`)
+  or `CLAUDE.md`. Only regular files with one link are sent to the GRiD; a
+  copy from the GRiD replaces the name, never writes through a link there.
+- **Sizes:** a copy or write is at most 1 MB (five minutes on the stock
+  link); a read into the conversation 48 KB (Claude Code puts longer results
+  in a file). Bigger is an error naming the size, never a file cut short.
+  A program's output past 48 KB comes back as its start and its end, with
+  how many bytes are left out between them.
+- **Arguments** are checked before anything reaches the GRiD: GPIB
+  addresses 0-30 (not 21 or the bridge), a command line of 100 characters,
+  a `{WAIT}` of at most 600 s and a key script of about 2,000 keys, all
+  waits together shorter than the timeout (at most 3,600 s), no DOS device
+  names (`AUX`, `COM1`... would hang the GRiD), CP437 text without control
+  characters. A malformed message gets an error, and the server goes on.
+- `.mcp.json` starts Python isolated (`-I`), so nothing in `~/grid` is
+  imported in place of gridlink's own code.
+
+A Claude Code older than `requiresUserInteraction` asks for the three until
+you allow them; to make it always ask, add to `~/grid/.claude/settings.json`:
+
+```json
+{"permissions": {"ask": ["mcp__grid__grid_command", "mcp__grid__grid_change_files", "mcp__grid__gpib_send"]}}
+```
 
 ### Setting up Term (Pi 5, 4 GB)
 
@@ -198,7 +233,8 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
 
 Version 1.1: Term. Tested in emulation (and the MCP server against the real
 Claude Code's `claude mcp list`), not yet on the Pi 5: 17 Term checks with
-the GRiD model, 8 with the real CLAUDE.COM, 6 for the MCP bridge. On the
+the GRiD model, 8 with the real CLAUDE.COM, 13 for the MCP bridge (its
+limits included). On the
 Pi 5: a real Claude Code session from the GRiD, the echo, a permission
 dialog answered on the GRiD, an MCP call that runs a DOS program.
 

@@ -286,8 +286,9 @@ position queries are answered by pyte, DECRQM and the colour queries
 keyboard sequences are dropped.
 
 **The GRiD's tools in Term.** Claude Code reaches the GRiD through an MCP
-server (`python -m gridlink.mcp`, registered in the project's `.mcp.json`)
-that passes each call over a Unix socket to gridlink, which sends it as a
-REQUEST (section 4) — one at a time, as CLAUDE runs one at a time. A RUN
+server (`gridlink.mcp`, registered in the project's `.mcp.json`) that
+passes each call over a Unix socket to gridlink, which sends it as a
+REQUEST (section 4) — one at a time, as CLAUDE runs one at a time; a call
+that arrives during another waits for it. A RUN
 switches the GRiD to the program's screen; when it ends, CLAUDE redraws the
 terminal from its own copy and the Pi sends whatever changed meanwhile.

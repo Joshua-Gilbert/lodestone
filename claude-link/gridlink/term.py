@@ -65,7 +65,7 @@ class TermSession:
         if s.tools is None:
             # the GRiD's abilities for Claude Code (mcp.py), one request at a time
             try:
-                s.tools = mcp.ToolServer(s.sock, mcp.GridTools(s.grid, s.cfg, getattr(s.cfg, 'address', 7)),
+                s.tools = mcp.ToolServer(s.sock, mcp.GridTools(s.grid, s.cfg, getattr(s.cfg, 'address', 7), root=s.cwd),
                                          available=s.why_not, log=s.log).start()
             except OSError as e:
                 s.log('term: no MCP socket at %s: %s' % (s.sock, e))

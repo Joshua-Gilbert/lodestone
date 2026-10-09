@@ -556,8 +556,9 @@
 - **What the user sees:** Claude Code's own screen on rows 0-23 (its prompt box, answers, diffs in inverse, permission dialogs), the session's title and the link on row 24. A DOS program Claude runs takes the screen while it runs; then Claude Code's screen comes back from CLAUDE's copy.
 - **Cost:** GRIDOS.SYS unchanged but for the version (45,438 bytes); memory for DOS programs unchanged (562.5 / 578.6 / 559.2 / 575.7 KB). CLAUDE.COM takes 1.4 KB more while it runs (about 68.9 KB), so a DOS program it runs gets 1.4 KB less. Nothing stays resident.
 - **Review (an independent agent):** nothing unsafe in the GRiD's CELLS path; 8 issues and some smaller ones, all fixed and tested (`docs/term.md`, Review). The ones on the GRiD: in Term, CLAUDE ignores the chat's messages (a turn still running when the GRiD switched); an answer to HELLO that isn't a HELLO restarts the link; CODE-R held down could cost a REPLY (now one repaint request at a time, and a request runs only when its REPLY has room).
+- **The GRiD's tools for Claude Code** (Pi side only): four only look and can be allowed for good; three change something (DOS programs, file changes and copies, anything sent over GPIB) and Claude Code asks before every call. Pi files only inside `~/grid`; copies at most 1 MB and reads 48 KB, bigger is an error, never a cut; every argument checked; DOS device names refused (`AUX` would hang the GRiD) (`docs/term.md`, Tool server limits).
 - **Version:** GOS_VER 0040h; the Executive's band and help, GRIDCMD's banner and VER say 0.4.
-- **Tests:** all suites pass: kernel 178, apps 367, hard disk 56, DEFRAG 49, Claude link on the kernel 21, HDPROBE 33, HDSCAN 20, HEADCLN 9; claude-link: chat 10 + 20 (emulator), Term 17 + 8 (emulator), MCP 6.
+- **Tests:** all suites pass: kernel 178, apps 367, hard disk 56, DEFRAG 49, Claude link on the kernel 21, HDPROBE 33, HDSCAN 20, HEADCLN 9; claude-link: chat 10 + 20 (emulator), Term 17 + 8 (emulator), MCP 13.
 - **Copy to the floppy** (`releases/0.4.0`): GRIDOS.SYS, GRIDCMD.COM, GRIDOS.TXT, CLAUDE.COM.
 
 ## Review and tests

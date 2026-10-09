@@ -59,8 +59,18 @@ def test_protocol():
     assert r['result']['protocolVersion'] == '2025-06-18' and 'tools' in r['result']['capabilities']
     assert mcp.handle({'jsonrpc': '2.0', 'method': 'notifications/initialized'}, '') is None
     r = mcp.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'}, '')
-    names = [t['name'] for t in r['result']['tools']]
-    assert names == ['grid_command', 'grid_files', 'grid_screen', 'grid_info', 'gpib'], names
+    tools = {t['name']: t for t in r['result']['tools']}
+    look = ['grid_info', 'grid_files', 'grid_screen', 'gpib_read']
+    ask = ['grid_command', 'grid_change_files', 'gpib_send']
+    assert sorted(tools) == sorted(look + ask), list(tools)
+    for n in look:                       # can be allowed for good: they only look
+        assert tools[n]['annotations']['readOnlyHint'] is True and '_meta' not in tools[n], n
+    for n in ask:                        # Claude Code asks every time
+        assert tools[n]['annotations']['destructiveHint'] is True, n
+        assert tools[n]['_meta'] == {'anthropic/requiresUserInteraction': True}, n
+    acts = lambda n: set(tools[n]['inputSchema']['properties']['action']['enum'])
+    assert acts('grid_files') == {'list', 'info', 'read', 'free'}
+    assert acts('gpib_read') == {'scan', 'poll', 'read'}
     r = mcp.handle({'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
                     'params': {'name': 'grid_info', 'arguments': {}}}, '/nonexistent/sock')
     assert r['result']['isError'] and 'not running' in body(r['result'])
@@ -81,10 +91,11 @@ def test_mcp_json_merge():
 def test_paths_and_robustness():
     import tempfile
     here = os.getcwd()
-    a = mcp.local_paths('grid_files', {'action': 'copy_to_grid', 'path': 'foo.txt', 'to': 'A:\\FOO.TXT'})
+    a = mcp.local_paths('grid_change_files', {'action': 'copy_to_grid', 'path': 'foo.txt', 'to': 'A:\\FOO.TXT'})
     assert a['path'] == os.path.join(here, 'foo.txt'), a
-    a = mcp.local_paths('grid_files', {'action': 'copy_from_grid', 'path': 'A:\\TM5000\\CFG.C'})
+    a = mcp.local_paths('grid_change_files', {'action': 'copy_from_grid', 'path': 'A:\\TM5000\\CFG.C'})
     assert a['to'] == os.path.join(here, 'CFG.C'), a
+    assert mcp.local_paths('grid_change_files', {'action': 'copy_from_grid', 'path': 5}) == {'action': 'copy_from_grid', 'path': 5}
     assert mcp.local_paths('gpib', {'action': 'scan'}) == {'action': 'scan'}
     d = tempfile.mkdtemp(); p = os.path.join(d, '.mcp.json')
     open(p, 'w').write('{"mcpServers": {"mine": {"command": "x"},}}')     # a trailing comma
@@ -101,21 +112,25 @@ def test_files():
         r = c.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 't'}})
         assert r['result']['serverInfo']['name'] == 'gridlink'
         c.rpc('notifications/initialized', notify=True)
-        assert len(c.rpc('tools/list')['result']['tools']) == 5
+        assert len(c.rpc('tools/list')['result']['tools']) == 7
         r = c.call('grid_files', action='list', path='A:\\')
         assert 'CFG.C' in body(r) and not r['isError'], r
         r = c.call('grid_files', action='read', path='a:\\cfg.c')
         assert body(r) == CFG_C.decode().replace('\r\n', '\n'), r
-        r = c.call('grid_files', action='write', path='A:\\NEW.TXT', content='caf\u00e9\nline 2\n')
+        r = c.call('grid_files', action='write', path='A:\\NEW.TXT', content='x')
+        assert r['isError'] and 'grid_change_files' in body(r), r      # grid_files only looks
+        r = c.call('grid_change_files', action='write', path='A:\\NEW.TXT', content='caf\u00e9\nline 2\n')
         assert not r['isError'] and h.grid.fs['A:\\NEW.TXT'] == b'caf\x82\r\nline 2\r\n', h.grid.fs
         assert 'A:\\NEW.$$$' not in h.grid.fs
-        pi = os.path.join(h.tmp, 'cfg.c')
-        r = c.call('grid_files', action='copy_from_grid', path='A:\\CFG.C', to=pi)
+        pi = os.path.join(h.cfg.term_dir, 'cfg.c')
+        r = c.call('grid_change_files', action='copy_from_grid', path='A:\\CFG.C', to=pi)
         assert open(pi, 'rb').read() == CFG_C, r
         open(pi, 'wb').write(CFG_C.replace(b'rate = 1', b'rate = 5'))
-        r = c.call('grid_files', action='copy_to_grid', path=pi, to='A:\\CFG.C')
+        r = c.call('grid_change_files', action='copy_to_grid', path=pi, to='A:\\CFG.C')
         assert h.grid.fs['A:\\CFG.C'] == CFG_C.replace(b'rate = 1', b'rate = 5'), r
-        r = c.call('grid_files', action='delete', path='A:\\NOPE.TXT')
+        r = c.call('grid_change_files', action='copy_from_grid', path='A:\\CFG.C')   # default: ~/grid/CFG.C
+        assert open(os.path.join(h.cfg.term_dir, 'CFG.C'), 'rb').read() == h.grid.fs['A:\\CFG.C'], r
+        r = c.call('grid_change_files', action='delete', path='A:\\NOPE.TXT')
         assert r['isError'] and 'file not found' in body(r), r
         r = c.call('grid_info')
         assert 'os: MS-DOS 3.30' in body(r), r
@@ -135,11 +150,11 @@ def test_command_screen_gpib():
         assert keys.startswith(b'1\x02\r\x1c') and b'\xff\xfe\x00' in keys, keys
         r = c.call('grid_screen')
         assert 'TM5000G v3.7' in body(r), r
-        r = c.call('gpib', action='query', address=29, command='ID?')
+        r = c.call('gpib_send', action='query', address=29, command='ID?')
         assert body(r) == 'ID TEK/DC5009,V79.1,F1.2', r
-        r = c.call('gpib', action='scan')
+        r = c.call('gpib_read', action='scan')
         assert '6, 16, 29' in body(r), r
-        r = c.call('gpib', action='write', address=7, command='X')
+        r = c.call('gpib_send', action='write', address=7, command='X')
         assert r['isError'], r
         # two calls at once (Claude Code may run tools in parallel): one at a time to the GRiD
         out = []
@@ -162,6 +177,214 @@ def test_not_connected():
         assert r['isError'] and 'not connected' in body(r), r
     finally:
         c.close(); h.close()
+
+
+class NoGrid:
+    """A GRiD that must not be reached: every check fails before it."""
+    def __getattr__(s, name):
+        raise AssertionError('reached the GRiD (%s) with bad arguments' % name)
+
+
+def test_pi_files_only_in_grid_dir():
+    import tempfile
+    home = tempfile.mkdtemp(); root = os.path.join(home, 'grid'); os.makedirs(root)
+    os.makedirs(os.path.join(home, '.claude')); secret = os.path.join(home, '.claude', '.credentials.json')
+    open(secret, 'w').write('{"token": "s3cret"}')
+    ok = lambda p: mcp.pi_path(root, p)
+    assert ok('X.TXT') == os.path.join(os.path.realpath(root), 'X.TXT')
+    assert ok(os.path.join(root, 'sub', 'Y.C')).endswith(os.path.join('grid', 'sub', 'Y.C'))
+    os.symlink(secret, os.path.join(root, 'creds'))                      # a link out of ~/grid
+    os.symlink(os.path.join(home, '.claude'), os.path.join(root, 'cc'))
+    for bad in ('../.bashrc', secret, '/etc/passwd', '~/.bashrc', 'creds', 'cc/settings.json', root, '',
+                '.claude/settings.json', '.claude/settings.local.json', '.mcp.json', 'sub/.hidden',
+                'CLAUDE.md', 'claude.local.md', 'x\0y', 5, None):
+        try: ok(bad); assert False, 'accepted %r' % (bad,)
+        except ValueError: pass
+    # reading: regular files with one link, at most the cap; a FIFO doesn't hang
+    f = os.path.join(root, 'A.TXT'); open(f, 'wb').write(b'abc')
+    assert mcp.read_pi(f, 10) == b'abc'
+    try: mcp.read_pi(f, 2); assert False
+    except ValueError as e: assert '3 bytes' in str(e)
+    os.mkfifo(os.path.join(root, 'PIPE'))
+    t0 = time.time()
+    try: mcp.read_pi(os.path.join(root, 'PIPE'), 10); assert False
+    except ValueError as e: assert 'regular' in str(e)
+    assert time.time() - t0 < 2
+    os.link(secret, os.path.join(root, 'HARD'))                           # a hard link into ~/grid
+    try: mcp.read_pi(mcp.pi_path(root, 'HARD'), 1000); assert False
+    except ValueError as e: assert 'hard links' in str(e)
+    # writing: a link already at that name is replaced, never written through
+    os.symlink(secret, os.path.join(root, 'OUT.TXT'))
+    mcp.write_pi(os.path.join(root, 'OUT.TXT'), b'new')
+    assert open(secret).read() == '{"token": "s3cret"}' and not os.path.islink(os.path.join(root, 'OUT.TXT'))
+    assert open(os.path.join(root, 'OUT.TXT'), 'rb').read() == b'new'
+    mcp.write_pi(os.path.join(root, 'HARD'), b'new')
+    assert open(secret).read() == '{"token": "s3cret"}'
+    assert not [n for n in os.listdir(root) if n.startswith('.grid-')]   # no temporary files left
+    # and through the tool: nothing outside ~/grid, before the GRiD is asked
+    gt = mcp.GridTools(NoGrid(), root=root)
+    for a in ({'action': 'copy_to_grid', 'path': secret, 'to': 'A:\\X'},
+              {'action': 'copy_to_grid', 'path': os.path.join(root, 'creds'), 'to': 'A:\\X'},
+              {'action': 'copy_from_grid', 'path': 'A:\\X.TXT', 'to': os.path.join(home, '.bashrc')},
+              {'action': 'copy_from_grid', 'path': 'A:\\X.TXT', 'to': os.path.join(root, '.claude', 'settings.json')},
+              {'action': 'copy_from_grid', 'path': 'A:\\X.TXT', 'to': os.path.join(root, 'CLAUDE.md')}):
+        res, err = gt.call('grid_change_files', a)
+        assert err and 'Error' in res[0]['text'], (a, res)
+
+
+def test_bad_arguments_never_reach_the_grid():
+    gt = mcp.GridTools(NoGrid(), bridge=7, root='/nonexistent/grid')
+    q = dict(action='query', address=9, command='ID?')
+    cases = [
+        ('gpib_send', dict(q, address=31)), ('gpib_send', dict(q, address=-1)), ('gpib_send', dict(q, address='9')),
+        ('gpib_send', dict(q, address=True)), ('gpib_send', dict(q, address=21)), ('gpib_send', dict(q, address=7)),
+        ('gpib_send', dict(q, address=None)), ('gpib_send', dict(q, timeout_ms=-5)), ('gpib_send', dict(q, timeout_ms=70000)),
+        ('gpib_send', dict(q, max_bytes=0)), ('gpib_send', dict(q, command='')), ('gpib_send', dict(q, command='x' * 5000)),
+        ('gpib_send', dict(q, command='\u2603?')), ('gpib_send', dict(q, terminator='cr')),
+        ('gpib_send', dict(q, action='scan')), ('gpib_read', dict(q)), ('gpib_read', dict(action='write', address=9)),
+        ('gpib_read', dict(action='poll')), ('gpib_read', dict(action='read', address=40)),
+        ('grid_command', {}), ('grid_command', dict(command='   ')), ('grid_command', dict(command=5)),
+        ('grid_command', dict(command='X' * 101)), ('grid_command', dict(command='DIR\rDEL *.*')),
+        ('grid_command', dict(command='TM5000G', keys='{WAIT 600}{WAIT 600}')),     # waits past the 900 s timeout
+        ('grid_command', dict(command='TM5000G', keys='{WAIT 31}', timeout=30)), ('grid_command', dict(command='X', timeout=3601)),
+        ('grid_command', dict(command='DIR', keys='{WAIT 1e9}')), ('grid_command', dict(command='DIR', keys='{WAIT nan}')),
+        ('grid_command', dict(command='DIR', keys='{WAIT inf}')), ('grid_command', dict(command='DIR', keys='{WAIT -1}')),
+        ('grid_command', dict(command='DIR', keys='{WAIT soon}')), ('grid_command', dict(command='DIR', keys='x' * 2100)),
+        ('grid_command', dict(command='DIR', timeout=0)), ('grid_command', dict(command='DIR', timeout=10 ** 9)),
+        ('grid_command', dict(command='DIR', capture='yes')), ('grid_command', dict(command='DIR', keys=['x'])),
+        ('grid_files', dict(action='delete', path='A:\\X')), ('grid_files', dict(action='rmdir', path='A:\\D')),
+        ('grid_files', dict(action='read', path='X.TXT')), ('grid_files', dict(action='read', path='A:\\X\0.TXT')),
+        ('grid_files', dict(action='read', path='A:\\' + 'D\\' * 50)), ('grid_files', dict(action='read', path='A:\\*.*')),
+        ('grid_files', dict(action='read', path='A:\\\u2192.TXT')), ('grid_files', dict(action='read', path=['A:\\X'])),
+        ('grid_change_files', dict(action='delete', path='A:\\*.*')), ('grid_change_files', dict(action='rename', path='A:\\X')),
+        ('grid_change_files', dict(action='rename', path='A:\\X', to='Y?')), ('grid_change_files', dict(action='write', path='A:\\X', content=5)),
+        ('grid_change_files', dict(action='write', path='A:\\X', content='x' * (mcp.MAX_COPY + 1))),
+        ('grid_change_files', dict(action='format', path='A:\\')),
+        ('grid_files', dict(action='free', path='\u00e9:')), ('grid_files', dict(action='read', path='A:\\AUX')), ('grid_files', dict(action='read', path='A:\\TM\\COM1.TXT')),
+        ('grid_files', dict(action='read', path='a:con')), ('grid_files', dict(action='info', path='A:\\CLOCK$')),
+        ('grid_change_files', dict(action='write', path='A:\\PRN.TXT', content='x')),
+        ('grid_change_files', dict(action='copy_from_grid', path='A:\\LPT1', to='/nonexistent/grid/X')), ('grid', {}), ('t_grid_info', {}), ('__init__', {}),
+    ]
+    for name, a in cases:
+        res, err = gt.call(name, a)
+        assert err, (name, a, res)
+    # DOS devices are refused below the tools too (chat mode reads through Grid as well)
+    from gridlink.grid import Grid, GridError
+    for dev in ('A:\\AUX', 'C:\\TM\\com2.dat', 'A:NUL'):
+        try: Grid(NoGrid()).read(dev); assert False, dev
+        except GridError: pass
+        try: Grid(NoGrid()).write(dev, b'x'); assert False, dev
+        except GridError: pass
+    # the key script compiler (chat mode uses it too)
+    from gridlink import keys as K
+    k = K.compile_script('1{WAIT 600}{ENTER}{SNAP}{WAIT 2.5}')
+    assert len(k) == 2 + 3 * -(-round(600 / K.TICK) // 255) + 2 + 3 + 3          # 43 waits of 255 ticks or less
+    assert abs(K.script_seconds(k) - 602.5) < 0.1, K.script_seconds(k)
+    for bad in ('{WAIT 601}', '{WAIT -0.1}', '{WAIT nan}', '{WAIT 1e400}', 'a' * 2049):
+        try: K.compile_script(bad); assert False, bad
+        except K.KeyError_: pass
+
+
+class Outfile:
+    """A GRiD with one big output file (the Grid calls output() uses)."""
+    def __init__(s, data): s.data = data
+    def read_file(s, path, limit): return s.data[:limit]
+    def stat(s, path): return {'size': len(s.data), 'dir': False}
+    def read(s, path, off, n): return s.data[off:off + n]
+
+
+def test_sizes_are_errors_not_cuts():
+    # a program's output: all of it, or its start and end and what's between them
+    gt = mcp.GridTools(Outfile(b'x' * 100 + b'\r\n'), root='/nonexistent')
+    assert gt.output('A:\\O') == 'x' * 100
+    big = b''.join(b'line %06d\r\n' % i for i in range(20000))          # 260,000 bytes
+    out = mcp.GridTools(Outfile(big), root='/nonexistent').output('A:\\O')
+    assert out.startswith('line 000000\n') and out.endswith('line 019999')
+    n = int(out.split('[... ')[1].split()[0])
+    assert 'bytes of output not shown' in out and n == len(big) - mcp.MAX_READ, n   # 40 KB head, 8 KB tail
+    h, c = start(files={'A:\\BIG.TXT': b'a' * (mcp.MAX_READ + 1), 'A:\\OK.TXT': b'b' * mcp.MAX_READ,
+                        'A:\\HUGE.DAT': b'\0' * (mcp.MAX_COPY + 1)})
+    try:
+        r = c.call('grid_files', action='read', path='A:\\BIG.TXT')
+        assert r['isError'] and '%d bytes' % (mcp.MAX_READ + 1) in body(r) and 'aaaa' not in body(r), r
+        r = c.call('grid_files', action='read', path='A:\\OK.TXT')
+        assert not r['isError'] and len(body(r)) == mcp.MAX_READ, len(body(r))
+        r = c.call('grid_change_files', action='copy_from_grid', path='A:\\HUGE.DAT')
+        assert r['isError'] and 'too big' in body(r), r
+        assert not os.path.exists(os.path.join(h.cfg.term_dir, 'HUGE.DAT'))
+        f = os.path.join(h.cfg.term_dir, 'BIG.BIN'); open(f, 'wb').write(b'\0' * (mcp.MAX_COPY + 1))
+        r = c.call('grid_change_files', action='copy_to_grid', path=f, to='A:\\BIG.BIN')
+        assert r['isError'] and 'the most is' in body(r) and 'A:\\BIG.BIN' not in h.grid.fs, r
+        os.mkfifo(os.path.join(h.cfg.term_dir, 'FIFO'))
+        r = c.call('grid_change_files', action='copy_to_grid', path='FIFO', to='A:\\F')
+        assert r['isError'] and 'regular' in body(r), r
+        r = c.call('grid_change_files', action='copy_from_grid', path='A:\\OK.TXT', to='/tmp/OK.TXT')
+        assert r['isError'] and 'inside' in body(r) and not os.path.exists('/tmp/OK.TXT'), r
+    finally:
+        c.close(); h.close()
+
+
+def test_stdio_server_survives_anything():
+    env = dict(os.environ, GRIDLINK_SOCKET='/nonexistent/gridlink.sock',
+               PYTHONPATH=os.path.dirname(HERE))
+    p = subprocess.Popen([sys.executable, '-m', 'gridlink.mcp'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    lines = [b'\xff\xfe not utf-8\n', b'[' * 100000 + b'\n', b'{not json\n', b'5\n', b'[1, "x"]\n',
+             b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":[1]}\n',
+             b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":5}}\n',
+             b'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"grid_info","arguments":"x"}}\n',
+             b'{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"grid_change_files",'
+             b'"arguments":{"action":"copy_from_grid","path":["A:\\\\X"],"to":7}}}\n',
+             b'{"jsonrpc":"2.0","id":5,"method":"initialize","params":{"protocolVersion":7}}\n',
+             b'{"jsonrpc":"2.0","method":"notifications/initialized","params":"x"}\n',
+             b'{"jsonrpc":"2.0","id":6,"method":"ping"}\n']
+    out, _ = p.communicate(b''.join(lines), timeout=30)
+    rs = [json.loads(l) for l in out.splitlines()]
+    assert p.returncode == 0 and rs[-1] == {'jsonrpc': '2.0', 'id': 6, 'result': {}}, rs
+    by = {r.get('id'): r for r in rs}
+    assert by[1]['error']['code'] == -32602 and by[2]['error']['code'] == -32602 and by[3]['error']['code'] == -32602
+    assert by[4]['result']['isError'] and by[5]['result']['protocolVersion'] == mcp.PROTOCOL
+    assert sum(1 for r in rs if r.get('error', {}).get('code') == -32700) == 3, rs
+
+
+def test_second_call_waits_its_turn():
+    """While a RUN keeps the GRiD from polling, a second call waits for it
+    instead of hearing "not connected"."""
+    busy = threading.Event(); go = threading.Event()
+    class Slow:
+        def call(s, name, a):
+            busy.set(); go.wait(5); busy.clear()
+            return [mcp.text('done %s' % name)], False
+    srv = mcp.ToolServer('/nonexistent', Slow(), available=lambda: 'not connected' if busy.is_set() else None,
+                         log=lambda m: None)
+    out = {}
+    t1 = threading.Thread(target=lambda: out.update(a=srv.request(b'{"tool": "grid_command", "arguments": {}}\n')))
+    t1.start(); assert busy.wait(5)
+    t2 = threading.Thread(target=lambda: out.update(b=srv.request(b'{"tool": "grid_info", "arguments": {}}\n')))
+    t2.start(); time.sleep(0.2); go.set(); t1.join(5); t2.join(5)
+    assert out['a'] == ([mcp.text('done grid_command')], False) and out['b'] == ([mcp.text('done grid_info')], False), out
+
+
+def test_launch_ignores_the_working_directory():
+    """.mcp.json's command imports nothing from ~/grid (Claude Code may write
+    files there): a json.py there must not run."""
+    import tempfile
+    d = tempfile.mkdtemp()
+    open(os.path.join(d, 'json.py'), 'w').write('raise SystemExit("imported from ~/grid")\n')
+    os.makedirs(os.path.join(d, 'gridlink')); open(os.path.join(d, 'gridlink', '__init__.py'), 'w').write('raise SystemExit(9)\n')
+    mcp.write_mcp_json(d, '/nonexistent/gridlink.sock')
+    entry = json.load(open(os.path.join(d, '.mcp.json')))['mcpServers']['grid']
+    p = subprocess.Popen([entry['command']] + entry['args'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, cwd=d, env=dict(os.environ, **entry['env']))
+    out, err = p.communicate(b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n', timeout=20)
+    assert p.returncode == 0 and json.loads(out) == {'jsonrpc': '2.0', 'id': 1, 'result': {}}, (out, err)
+
+
+def test_socket_requests_checked():
+    srv = mcp.ToolServer('/nonexistent', mcp.GridTools(NoGrid(), root='/nonexistent'), log=lambda m: None)
+    for line in (b'{"tool": "grid_info"', b'[]\n', b'{"tool": 5}\n', b'{"tool": "grid_info", "arguments": []}\n',
+                 b'x' * (mcp.MAX_LINE + 1), b'\xff\n'):
+        res, err = srv.request(line)
+        assert err, line[:40]
 
 
 if __name__ == '__main__':

@@ -25,6 +25,8 @@ for i in range(10):
     NAMED['ALT+F%d' % (i + 1)] = (0, 0x68 + i)
 
 TICK = 0.0549254
+MAX_WAIT = 600                          # seconds in one {WAIT}
+MAX_SCRIPT = 4096                       # bytes: CLAUDE.COM collects a whole request in 4,700
 
 
 class KeyError_(ValueError):
@@ -71,7 +73,11 @@ def compile_script(text):
             tok = text[i + 1:j].strip(); i = j + 1
             up = tok.upper()
             if up.startswith('WAIT'):
-                secs = float(tok[4:].strip() or '1')
+                arg = tok[4:].strip() or '1'
+                try: secs = float(arg)
+                except ValueError: raise KeyError_('{%s}: not a number of seconds' % tok)
+                if not 0 <= secs <= MAX_WAIT:            # (NaN fails too)
+                    raise KeyError_('{%s}: a wait is 0 to %d seconds' % (tok, MAX_WAIT))
                 ticks = max(1, int(round(secs / TICK)))
                 while ticks > 0:
                     n = min(ticks, 255); out += bytes([0xFF, 0xFF, n]); ticks -= n
@@ -81,7 +87,21 @@ def compile_script(text):
                 a, sc = token_key(tok); out += bytes([a, sc])
         else:
             a, sc = char_key(ch); out += bytes([a, sc]); i += 1
+        if len(out) > MAX_SCRIPT:
+            raise KeyError_('key script too long for the GRiD (%d bytes at most, about %d keys)'
+                            % (MAX_SCRIPT, MAX_SCRIPT // 2))
     return bytes(out)
+
+
+def script_seconds(script):
+    """How long a compiled key script waits in all."""
+    n = i = 0
+    while i + 1 < len(script):
+        if script[i] == 0xFF and script[i + 1] == 0xFF:
+            n += script[i + 2] if i + 2 < len(script) else 0; i += 3
+        elif script[i] == 0xFF and script[i + 1] == 0xFE: i += 3
+        else: i += 2
+    return n * TICK
 
 
 def describe(text, limit=40):

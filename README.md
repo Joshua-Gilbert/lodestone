@@ -189,7 +189,7 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 733 checks pass on 0.4.0 (2026-10-09); claude-link's own 61 (chat and Term) are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 733 checks pass on 0.4.0 (2026-10-09); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
 
 ```sh
 cd gridos
