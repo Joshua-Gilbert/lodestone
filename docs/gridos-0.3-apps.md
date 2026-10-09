@@ -550,6 +550,16 @@
 - **Version:** GOS_VER 003Fh. 0.3.15 is the last patch number the BH.BL scheme has for 0.3 (minor << 4 | patch): the next release is 0.4.0, or the scheme changes.
 - **Copy to the floppy** (`releases/0.3.15`): GRIDOS.SYS and GRIDOS.TXT.
 
+## Term: Claude Code on the GRiD (0.4.0, 2026-10-09)
+- **What it is:** `CLAUDE /T` makes the GRiD the screen and keyboard of the real Claude Code, running on a Pi 5 on the GPIB bus on the user's own Claude plan (a subscription may only be used through the unmodified program, so nothing but a terminal sits in between). Only the screen cells that change cross the link; the GRiD's files, DOS programs, screen and GPIB bus are Claude Code tools through an MCP server on the Pi. The design, the measurements and Phase 2 (Claude resident over DOS programs) are in `docs/term.md`; the frame format in `claude-link/PROTOCOL.md`, section 6.
+- **On the GRiD:** CLAUDE.COM 1.1 (12,320 bytes, +1,168). Its link moved to `claude/TERMLINK.INC`, its cell drawing to `TERMCELL.INC` with the CELLS decoder, the shadow, scroll, cursor and status band; `TERMKEYS.INC` reads keys with AH=11h/10h and batches them. CODE-Q quits, CODE-R redraws. `CLAUDE` without `/T` is the chat as before.
+- **What the user sees:** Claude Code's own screen on rows 0-23 (its prompt box, answers, diffs in inverse, permission dialogs), the session's title and the link on row 24. A DOS program Claude runs takes the screen while it runs; then Claude Code's screen comes back from CLAUDE's copy.
+- **Cost:** GRIDOS.SYS unchanged but for the version (45,438 bytes); memory for DOS programs unchanged (562.5 / 578.6 / 559.2 / 575.7 KB). CLAUDE.COM takes 1.4 KB more while it runs (about 68.9 KB), so a DOS program it runs gets 1.4 KB less. Nothing stays resident.
+- **Review (an independent agent):** nothing unsafe in the GRiD's CELLS path; 8 issues and some smaller ones, all fixed and tested (`docs/term.md`, Review). The ones on the GRiD: in Term, CLAUDE ignores the chat's messages (a turn still running when the GRiD switched); an answer to HELLO that isn't a HELLO restarts the link; CODE-R held down could cost a REPLY (now one repaint request at a time, and a request runs only when its REPLY has room).
+- **Version:** GOS_VER 0040h; the Executive's band and help, GRIDCMD's banner and VER say 0.4.
+- **Tests:** all suites pass: kernel 178, apps 367, hard disk 56, DEFRAG 49, Claude link on the kernel 21, HDPROBE 33, HDSCAN 20, HEADCLN 9; claude-link: chat 10 + 20 (emulator), Term 17 + 8 (emulator), MCP 6.
+- **Copy to the floppy** (`releases/0.4.0`): GRIDOS.SYS, GRIDCMD.COM, GRIDOS.TXT, CLAUDE.COM.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
@@ -652,7 +662,7 @@
 
 ## Next
 - **Programs:**
-  - Term, with profiles (including the Claude Code terminal);
+  - Term, with profiles (the Claude Code terminal: 0.4.0, in CLAUDE.COM);
   - Command, on the text view;
   - the GPIB console;
   - CLAUDE as a `.RUN`.

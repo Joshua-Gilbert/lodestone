@@ -2,12 +2,18 @@
 ;  CLAUDE.COM - Claude for GRiD: the GRiD side of the Claude link
 ;  Build:  nasm -f bin -i ../src/ -o CLAUDE.COM CLAUDE.ASM
 ;
-;  CLAUDE [/A:nn]     nn = GPIB address of the AR488 bridge (default 7)
+;  CLAUDE [/A:nn] [/T | /C]
+;    /A:nn  GPIB address of the AR488 bridge (default 7)
+;    /T     Term: the GRiD is the screen and keyboard of the real Claude
+;           Code on the Pi (your Claude subscription; no API key)
+;    /C     chat: gridlink's own agent (an API key on the Pi)
+;    neither: the Pi decides (gridlink's [grid] app setting)
 ;
 ;  Runs under MS-DOS 3.x with GRIDGPIB loaded (and later on Grid-OS).
 ;  Screen: 640x400 mode 40h, Terminus Bold 8x16, 80 x 25 cells:
-;    row 0 title band, rows 1-20 conversation, row 21 status line,
-;    row 22 rule, rows 23-24 the prompt.
+;    chat: row 0 title band, rows 1-20 conversation, row 21 status line,
+;    row 22 rule, rows 23-24 the prompt;
+;    Term: rows 0-23 Claude Code's terminal, row 24 the status band.
 ;  Link: GLP 1 over GPIB (gridlink/PROTOCOL.md).  Strict alternation:
 ;  the GRiD writes one frame, then reads exactly one answer.
 ;  The GRiD also runs the requests Claude makes: files, DOS programs
@@ -46,6 +52,7 @@ G_PROMPT  equ 03h
 G_EVENT   equ 04h
 G_REPLY   equ 05h
 G_NAK     equ 06h
+G_KEYS    equ 07h
 P_HELLO   equ 41h
 P_NOP     equ 42h
 P_TEXT    equ 43h
@@ -56,6 +63,8 @@ P_READY   equ 47h
 P_NAK     equ 48h
 P_TITLE   equ 49h
 P_CLEAR   equ 4Ah
+P_CELLS   equ 4Bh
+HF_TERM   equ 01h                ; the Pi's HELLO: Term
 
 ; =====================================================================
 ;  start-up
@@ -90,7 +99,12 @@ start:  mov     sp, stack_top
         mov     di, title_text
         call    copyz
         mov     word [c_dirty_col], 0FFFFh
-        call    vec_save
+        mov     ax, [convseg]           ; Term's shadow: the conversation's memory
+        mov     [shadseg], ax
+        cmp     byte [app_want], 'T'
+        jne     .nt
+        mov     byte [term], 1
+.nt:    call    vec_save
         call    vec_ours
         call    get_ticks
         mov     [now], ax
@@ -141,6 +155,10 @@ parse_args:
         jne     .scan
         lodsb
         and     al, 0DFh
+        cmp     al, 'T'
+        je      .app
+        cmp     al, 'C'
+        je      .app
         cmp     al, 'A'
         jne     .scan
         lodsb
@@ -165,6 +183,8 @@ parse_args:
         cmp     dx, 30
         ja      .scan
         mov     [nano], dl
+        jmp     .scan
+.app:   mov     [app_want], al
         jmp     .scan
 .done:  ret
 
@@ -365,7 +385,10 @@ clear_screen:
         ret
 
 redraw_all:
-        call    clear_screen
+        cmp     byte [term], 0
+        je      .chat
+        jmp     term_redraw
+.chat:  call    clear_screen
         call    draw_title
         call    draw_rule
         call    draw_prompt
@@ -373,7 +396,10 @@ redraw_all:
         ret
 
 redraw_body:
-        call    draw_conv
+        cmp     byte [term], 0
+        je      .chat
+        ret
+.chat:  call    draw_conv
         call    draw_status
         cmp     byte [ask_open], 0
         je      .h
@@ -383,41 +409,7 @@ redraw_body:
         call    draw_help
 .x:     ret
 
-; One character cell.  AL = char, AH = attribute (1 inverse, 2 underline),
-; DI = row * 320 + column, ES = VSEG.  Destroys AX only.
-cell:   push    bx
-        push    cx
-        xor     cl, cl
-        test    ah, 1
-        jz      .a
-        mov     cl, 0FFh
-.a:     mov     ch, ah
-        cmp     al, 20h
-        jae     .b
-        mov     al, 20h
-.b:     cmp     al, 0A1h
-        jb      .c
-        mov     al, '?'
-.c:     sub     al, 20h
-        xor     ah, ah
-        shl     ax, 4
-        add     ax, font
-        mov     bx, ax
-%assign r 0
-%rep 16
-        mov     al, [cs:bx + r]
-        xor     al, cl
-        mov     [es:di + (r & 3) * 2000h + (r >> 2) * 80], al
-%assign r r + 1
-%endrep
-        test    ch, 2
-        jz      .d
-        mov     al, 0FFh
-        xor     al, cl
-        mov     [es:di + 4000h + 240], al       ; glyph row 14
-.d:     pop     cx
-        pop     bx
-        ret
+%include "TERMCELL.INC"
 
 ; DS:SI -> 80 (char, attribute) pairs, DX = screen row, ES = VSEG
 draw_line:
@@ -479,7 +471,10 @@ strlen: push    si                      ; DS:SI -> CX
 
 ; title band: " <title>              GPIB link  5:31 pm"
 draw_title:
-        pusha
+        cmp     byte [term], 0
+        je      .chat
+        jmp     term_status
+.chat:  pusha
         mov     di, rbuf
         mov     si, s_nolink
         cmp     byte [connected], 0
@@ -528,7 +523,10 @@ draw_rule:
 
 ; status line: "<spin> Thinking... (12s . esc to interrupt)        F1 help"
 draw_status:
-        pusha
+        cmp     byte [term], 0
+        je      .chat
+        jmp     term_status
+.chat:  pusha
         mov     di, sline
         cmp     byte [busy], 0
         je      .idle
@@ -619,7 +617,10 @@ set_status_quiet:
 
 ; prompt: rows 23-24, "> " then 2 x 78 cells of the input
 draw_prompt:
-        pusha
+        cmp     byte [term], 0
+        je      .chat
+        ret
+.chat:  pusha
         mov     ax, [incur]
         xor     bx, bx
         cmp     ax, 156
@@ -1174,7 +1175,10 @@ draw_help:
 ;  keyboard
 ; =====================================================================
 kbd_service:
-        mov     ah, 1
+        cmp     byte [term], 0
+        je      .chat
+        jmp     term_kbd
+.chat:  mov     ah, 1
         int     16h
         jz      .x
         xor     ah, ah
@@ -1506,6 +1510,8 @@ send_text:
         call    draw_status
         ret
 
+%include "TERMKEYS.INC"
+
 tick_service:
         mov     ax, [now]
         cmp     ax, [last_tick]
@@ -1552,323 +1558,36 @@ maybe_idle:                             ; HLT when nothing is due
         cmp     byte [pi_active], 0
         jne     .x
         mov     ah, 1                   ; typed ahead: keep going
-        int     16h
+        cmp     byte [term], 0
+        je      .pk
+        cmp     byte [keyn], 0          ; Term: keys waiting, or a key or a
+        jne     .x                      ; screen change in the last 2 s
+        mov     ax, [now]
+        sub     ax, [t_active]
+        cmp     ax, 36
+        jb      .x
+        mov     ah, 11h                 ; (01h would drop CODE-punctuation)
+.pk:    int     16h
         jnz     .x
         sti                             ; (STI's shadow covers the HLT)
         hlt
 .x:     ret
 
 ; =====================================================================
-;  the link (GLP 1)
+;  the link (GLP 1): TERMLINK.INC, and what CLAUDE does with it
 ; =====================================================================
-link_service:
-        mov     bl, [lstate]
-        xor     bh, bh
-        shl     bx, 1
-        jmp     [ls_tab + bx]
-ls_tab: dw link_reset, link_idle, link_wait
-
-link_reset:
-        mov     ax, [now]
-        sub     ax, [t_reset]
-        cmp     ax, 18                  ; once a second
-        jb      .x
-        mov     bl, [nano]              ; clear a half-read line in the bridge
-        mov     ah, 06h
-        call    gg_call
-        mov     byte [have_pi], 0
-        mov     byte [p_ack], 0
-        mov     byte [g_seq], 0
-        mov     byte [nak_pending], 0
-        mov     byte [resend], 0
-        mov     byte [pend_msg], 0
-        mov     byte [rq_type], 0
-        mov     word [rq_len], 0
-        mov     byte [req_ready], 0
-        mov     byte [reply_busy], 0
-        mov     byte [snap_reply], 0
-        mov     byte [txq_n], 0
-        mov     byte [txq_head], 0
-        call    build_hello
-        mov     al, G_HELLO
-        mov     dx, cs
-        mov     si, hellobuf
-        call    txq_put
-        mov     byte [lstate], LS_IDLE
-.x:     ret
-
-link_idle:
-        cmp     byte [nak_pending], 0
-        jne     .nak
-        cmp     byte [resend], 0
-        jne     .again
-        cmp     byte [txq_n], 0
-        jne     .msg
-        cmp     byte [connected], 0
-        je      .x
-        cmp     byte [busy], 0
-        jne     .poll
-        cmp     byte [pi_active], 0
-        jne     .poll
-        mov     ax, [now]
-        sub     ax, [t_last]
-        cmp     ax, 18
-        jb      .x
-.poll:  call    frame_poll
-        jmp     link_write
-.nak:   mov     byte [nak_pending], 0
-        jmp     link_write_nak
-.again: mov     byte [resend], 0
-        jmp     link_write
-.msg:   call    frame_next
-        jmp     link_write
-.x:     ret
-
-; POLL frame (no payload) with a new sequence number
-frame_poll:
-        mov     byte [pend_msg], 0
-        mov     al, [g_seq]
-        inc     al
-        mov     [g_seq], al
-        mov     di, txframe
-        mov     byte [di], 47h
-        mov     byte [di+1], G_POLL
-        mov     [di+2], al
-        mov     al, [p_ack]
-        mov     [di+3], al
-        mov     word [di+4], 0
-        mov     si, txframe+1
-        mov     cx, 5
-        mov     ax, 0FFFFh
-        call    crc16
-        mov     [txframe+6], ax
-        mov     word [txlen], 8
-        ret
-
-; next fragment of the message at the head of the queue
-frame_next:
-        mov     bl, [txq_head]
-        xor     bh, bh
-        imul    bx, bx, 10
-        add     bx, txq
-        mov     cx, [bx+6]
-        sub     cx, [bx+8]              ; bytes left
-        mov     ah, [bx]                ; type
-        cmp     cx, TXMAX
-        jbe     .last
-        mov     cx, TXMAX
-        or      ah, 80h                 ; MORE
-.last:  mov     [pend_chunk], cx
-        mov     byte [pend_msg], 1
-        mov     al, [g_seq]
-        inc     al
-        cmp     byte [bx], G_HELLO
-        jne     .s
-        xor     al, al                  ; HELLO is always frame 0
-.s:     mov     [g_seq], al
-        mov     di, txframe
-        mov     byte [di], 47h
-        mov     [di+1], ah
-        mov     [di+2], al
-        mov     al, [p_ack]
-        mov     [di+3], al
-        mov     [di+4], cx
-        add     di, 6
-        push    ds
-        mov     si, [bx+4]
-        add     si, [bx+8]
-        mov     ds, [bx+2]
-        push    cx
-        rep     movsb
-        pop     cx
-        pop     ds
-        push    cx
-        mov     si, txframe+1
-        add     cx, 5
-        mov     ax, 0FFFFh
-        call    crc16
-        pop     cx
-        mov     di, txframe+6
-        add     di, cx
-        mov     [di], ax
-        add     cx, 8
-        mov     [txlen], cx
-        ret
-
-link_write:
-        mov     si, txframe
-        mov     cx, [txlen]
-lw_go:  mov     bl, [nano]
-        mov     al, 1                   ; EOI with the last byte
-        mov     ah, 02h
-        call    gg_call
-        jnc     .ok
-        jmp     link_fail
-.ok:    mov     ax, [now]
-        mov     [t_sent], ax
-        mov     byte [lstate], LS_WAIT
-        mov     byte [spoll_errs], 0
-        call    pit_mark
-        ret
-
-; NAK the Pi's last answer (it was damaged); our pending fragment stays
-link_write_nak:
-        mov     di, nakframe
-        mov     byte [di], 47h
-        mov     byte [di+1], G_NAK
-        mov     al, [g_seq]
-        mov     [di+2], al
-        mov     al, [p_ack]
-        mov     [di+3], al
-        mov     word [di+4], 0
-        mov     si, nakframe+1
-        mov     cx, 5
-        mov     ax, 0FFFFh
-        call    crc16
-        mov     [nakframe+6], ax
-        mov     si, nakframe
-        mov     cx, 8
-        jmp     lw_go
-
-link_wait:
-        mov     ax, [now]
-        sub     ax, [t_sent]
-        cmp     ax, 40                  ; ~2 s without an answer
-        jbe     .t
-        jmp     link_fail
-.t:     mov     ah, 0Bh                 ; SRQ since the last call?
-        call    gg_call
-        jc      .chk
-        or      ax, ax
-        jnz     .poll
-.chk:   call    pit_due                 ; else poll every few ms
-        jnc     .x
-.poll:  call    pit_mark
-        mov     bl, [nano]
-        mov     ah, 05h
-        call    gg_call                 ; AL = status byte
-        jc      .perr
-        mov     byte [spoll_errs], 0
-        test    al, 40h
-        jz      .x
-        test    al, 20h                 ; patched bridge: the line is complete
-        jnz     .read
-        and     ax, 1Fh                 ; stock bridge: wait as the Pi asked
-        mov     cx, ax
-        call    delay_ms
-.read:  call    link_read
-.x:     ret
-.perr:  inc     byte [spoll_errs]
-        cmp     byte [spoll_errs], 8
-        jb      .x
-        jmp     link_fail
-
-link_read:
-        mov     di, rxbuf
-        mov     cx, RXMAX
-        mov     bl, [nano]
-        xor     al, al                  ; binary: stop at EOI only
-        mov     ah, 03h
-        call    gg_call
-        jc      .bad
-        mov     [rxn], cx
-        call    find_frame
-        jc      .bad
-        call    took_answer
-        ret
-.bad:   mov     byte [nak_pending], 1
-        mov     byte [lstate], LS_IDLE
-        inc     word [n_bad]
-        ret
-
-; rxbuf[0..rxn) -> BX = offset of the first good frame, CF if none
-find_frame:
-        xor     bx, bx
-.s:     mov     ax, [rxn]
-        sub     ax, bx
-        cmp     ax, 8
-        jb      .no
-        cmp     byte [rxbuf+bx], 47h
-        jne     .nx
-        mov     cx, [rxbuf+bx+4]
-        cmp     cx, 246
-        ja      .nx
-        mov     dx, cx
-        add     dx, 8
-        cmp     dx, ax
-        ja      .nx
-        push    bx
-        push    cx
-        lea     si, [rxbuf+bx+1]
-        add     cx, 5
-        mov     ax, 0FFFFh
-        call    crc16
-        pop     cx
-        pop     bx
-        mov     si, bx
-        add     si, cx
-        cmp     ax, [rxbuf+si+6]
-        je      .ok
-.nx:    inc     bx
-        jmp     .s
-.no:    stc
-        ret
-.ok:    clc
-        ret
-
-; a good answer at rxbuf+BX
-took_answer:
-        mov     byte [lstate], LS_IDLE
-        mov     ax, [now]
-        mov     [t_last], ax
-        mov     byte [n_failrun], 0
-        mov     al, [rxbuf+bx+1]
-        and     al, 7Fh
-        cmp     al, P_NAK
-        jne     .ok
-        mov     byte [resend], 1        ; the Pi lost our frame: send it again
-        ret
-.ok:    call    commit_fragment         ; our frame got through
-        mov     al, [rxbuf+bx+2]
-        cmp     byte [have_pi], 0
-        je      .new
-        cmp     al, [p_ack]
-        jne     .new
-        ret                             ; an answer we already handled
-.new:   mov     [p_ack], al
-        mov     byte [have_pi], 1
-        call    pi_frame
-        ret
-
-commit_fragment:
-        cmp     byte [pend_msg], 0
-        je      .x
-        mov     byte [pend_msg], 0
-        push    bx
-        mov     bl, [txq_head]
-        xor     bh, bh
-        imul    bx, bx, 10
-        add     bx, txq
-        mov     ax, [pend_chunk]
-        add     [bx+8], ax
-        mov     ax, [bx+8]
-        cmp     ax, [bx+6]
-        jb      .y
-        mov     al, [bx]                ; message done
-        mov     [done_type], al
-        mov     al, [txq_head]
-        inc     al
-        cmp     al, TXQN
-        jb      .h
-        xor     al, al
-.h:     mov     [txq_head], al
-        dec     byte [txq_n]
-        call    msg_sent
-.y:     pop     bx
-.x:     ret
+%include "TERMLINK.INC"
 
 msg_sent:
-        cmp     byte [done_type], G_REPLY
+        cmp     byte [done_type], G_KEYS
+        jne     .e
+        mov     byte [keys_q], 0        ; the next keys can go
+        ret
+.e:     cmp     byte [done_type], G_EVENT
+        jne     .r
+        mov     byte [rep_q], 0         ; (Term's only EVENT: repaint)
+        ret
+.r:     cmp     byte [done_type], G_REPLY
         jne     .x
         mov     byte [reply_busy], 0
         cmp     byte [snap_reply], 0
@@ -1877,12 +1596,8 @@ msg_sent:
         call    snap_free
 .x:     ret
 
-link_fail:
-        mov     byte [lstate], LS_RESET
-        mov     ax, [now]
-        mov     [t_reset], ax
-        inc     word [n_fail]
-        inc     byte [n_failrun]
+; the link went down (TERMLINK.INC link_fail): tell the user
+link_lost:
         cmp     byte [connected], 0
         je      .nc
         mov     byte [connected], 0
@@ -1909,30 +1624,6 @@ link_fail:
         call    set_status
 .x:     ret
 
-; queue a message: AL = type, DX:SI = body, CX = length
-txq_put:
-        push    bx
-        push    di
-        mov     bl, [txq_n]
-        cmp     bl, TXQN
-        jae     .x
-        add     bl, [txq_head]
-        cmp     bl, TXQN
-        jb      .a
-        sub     bl, TXQN
-.a:     xor     bh, bh
-        imul    di, bx, 10
-        add     di, txq
-        mov     [di], al
-        mov     [di+2], dx
-        mov     [di+4], si
-        mov     [di+6], cx
-        mov     word [di+8], 0
-        inc     byte [txq_n]
-.x:     pop     di
-        pop     bx
-        ret
-
 ; ---- frames from the Pi ------------------------------------------
 pi_frame:                               ; BX = frame offset in rxbuf
         mov     al, [rxbuf+bx+1]
@@ -1940,35 +1631,75 @@ pi_frame:                               ; BX = frame offset in rxbuf
         mov     cx, [rxbuf+bx+4]
         lea     si, [rxbuf+bx+6]
         and     al, 7Fh
-        mov     byte [pi_active], 1
+        cmp     byte [connected], 0     ; the answer to our HELLO must be a HELLO:
+        jne     .c                      ; anything else, start the link again
+        cmp     al, P_HELLO
+        je      .c
+        jmp     link_fail
+.c:     mov     byte [pi_active], 1
         cmp     al, P_NOP
         jne     .a
         mov     byte [pi_active], 0
         ret
 .a:     sub     al, P_HELLO
-        cmp     al, 0Ah
+        cmp     al, 0Bh
         jae     .x
         xor     ah, ah
         mov     di, ax
         shl     di, 1
+        cmp     byte [term], 0
+        jne     .t
         jmp     [pf_tab + di]
+.t:     jmp     [pf_ttab + di]
 .x:     ret
 pf_tab: dw pf_hello, pf_nop, pf_text, pf_status, pf_reasm, pf_reasm
-        dw pf_ready, pf_nop, pf_title, pf_clear
+        dw pf_ready, pf_nop, pf_title, pf_clear, pf_cells
+pf_ttab: dw pf_hello, pf_nop, pf_nop, pf_nop, pf_reasm, pf_nop  ; Term: the chat's
+        dw pf_nop, pf_nop, pf_title, pf_nop, pf_cells           ; TEXT, ASK... ignored
 
 pf_nop: ret
 
 pf_hello:
-        mov     byte [connected], 1
+        xor     bl, bl                          ; BL = Term (the Pi's flags)
+        cmp     cx, 2
+        jb      .f
+        mov     bl, [si+1]
+        and     bl, HF_TERM
+.f:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
         mov     ax, [now]
         mov     [turn_t0], ax
+        mov     [t_active], ax
         mov     byte [n_failrun], 0
         mov     si, st_connected
-        call    set_status
+        call    set_status_quiet
+        cmp     bl, [term]
+        je      .same
+        mov     [term], bl                      ; the Pi chose the other way
+        mov     byte [cur_on], 0
+        or      bl, bl
+        jz      .toch
+        call    shadow_clear                    ; (the conversation's memory)
+        jmp     .same
+.toch:  call    conv_clear                      ; (it held Term's screen)
+        call    redraw_all
+.same:  cmp     byte [term], 0
+        je      .chat
+        mov     byte [busy], 0                  ; Term: no turns, no READY
+        call    redraw_all
+        ret
+.chat:  call    draw_status
         call    draw_title
         call    draw_prompt
         ret
+
+pf_cells:
+        cmp     byte [term], 0
+        je      .x
+        mov     ax, [now]
+        mov     [t_active], ax
+        call    term_cells
+.x:     ret
 
 pf_text:
         call    conv_text
@@ -2044,110 +1775,6 @@ pf_reasm:
 .ask:   call    open_ask
 .x:     ret
 
-; ---- timing ---------------------------------------------------------
-get_ticks:
-        push    ds
-        push    40h
-        pop     ds
-        mov     ax, [6Ch]
-        pop     ds
-        ret
-
-pit_read:                               ; AX = PIT channel 0 count
-        pushf
-        cli
-        xor     al, al
-        out     43h, al
-        in      al, 40h
-        mov     ah, al
-        in      al, 40h
-        popf
-        xchg    al, ah
-        ret
-
-pit_mark:
-        push    ax
-        call    pit_read
-        mov     [pit_last], ax
-        mov     ax, [now]
-        mov     [pit_tick], ax
-        pop     ax
-        ret
-
-pit_due:                                ; CF = 1 once ~2-4 ms have passed
-        push    ax
-        push    dx
-        mov     ax, [now]
-        cmp     ax, [pit_tick]
-        jne     .yes
-        call    pit_read
-        mov     dx, [pit_last]
-        sub     dx, ax
-        cmp     dx, 5000
-        jae     .yes
-        clc
-        jmp     .x
-.yes:   stc
-.x:     pop     dx
-        pop     ax
-        ret
-
-; CX = milliseconds, timed by the refresh toggle (port 61h bit 4, 15 us)
-delay_ms:
-        jcxz    .x
-        push    ax
-        push    bx
-        push    dx
-.ms:    mov     bx, 66
-        in      al, 61h
-        and     al, 10h
-        mov     ah, al
-.w:     mov     dx, 2000                ; give up on a toggle that never comes
-.t:     in      al, 61h
-        and     al, 10h
-        cmp     al, ah
-        jne     .tg
-        dec     dx
-        jnz     .t
-.tg:    mov     ah, al
-        dec     bx
-        jnz     .w
-        loop    .ms
-        pop     dx
-        pop     bx
-        pop     ax
-.x:     ret
-
-; CRC-16/CCITT-FALSE.  AX = crc, DS:SI -> data, CX = count.  Destroys BX SI CX.
-crc16:  jcxz    .x
-.l:     mov     bl, ah
-        xor     bl, [si]
-        inc     si
-        xor     bh, bh
-        shl     bx, 1
-        mov     ah, al
-        xor     al, al
-        xor     ax, [crctab + bx]
-        loop    .l
-.x:     ret
-
-crc_init:
-        xor     bx, bx
-.i:     mov     ah, bl
-        xor     al, al
-        mov     cx, 8
-.b:     shl     ax, 1
-        jnc     .n
-        xor     ax, 1021h
-.n:     loop    .b
-        mov     di, bx
-        shl     di, 1
-        mov     [crctab + di], ax
-        inc     bx
-        cmp     bx, 256
-        jb      .i
-        ret
-
 ; =====================================================================
 ;  requests from Claude
 ; =====================================================================
@@ -2156,6 +1783,8 @@ req_service:
         je      .x
         cmp     byte [reply_busy], 0
         jne     .x
+        cmp     byte [txq_n], TXQN      ; room for the REPLY (txq_put would drop it)
+        jae     .x
         mov     byte [req_ready], 0
         call    exec_request
 .x:     ret
@@ -3203,7 +2832,7 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
         mov     al, 1                   ; GLP version
         stosb
-        xor     al, al
+        mov     al, 1                   ; flags: bit 0, Term understood
         stosb
         mov     ax, TXMAX
         stosw
@@ -3212,7 +2841,14 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     al, CROWS
         stosb
         call    build_kv
-        mov     cx, di
+        mov     si, kv_appterm          ; CLAUDE /T or /C
+        cmp     byte [app_want], 'T'
+        je      .a
+        mov     si, kv_appchat
+        cmp     byte [app_want], 'C'
+        jne     .n
+.a:     call    put_str
+.n:     mov     cx, di
         sub     cx, hellobuf
         ret
 
@@ -3454,7 +3090,11 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.0', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.1', 10, 0
+kv_appterm  db 'app=term', 10, 0
+kv_appchat  db 'app=chat', 10, 0
+s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
+evrepaint   db 03h
 s_onint     db ' on INT ', 0
 s_none2     db 'none', 0
 s_pages     db ' pages free', 0
@@ -3579,6 +3219,20 @@ reqbuf      resb REQMAX + 4
 hellobuf    resb 512
 evans       resb 4
 crctab      resw 256
+; Term
+term        resb 1                      ; 1: the GRiD is Claude Code's terminal
+app_want    resb 1                      ; 'T' or 'C' from the command line
+t_active    resw 1                      ; tick of the last key or screen change
+keyn        resb 1
+keys_q      resb 1                      ; a KEYS message is in the queue
+rep_q       resb 1                      ; a repaint EVENT is in the queue
+keybuf      resw KEYMAX
+keysend     resw KEYMAX
+shadseg     resw 1                      ; TROWS x 80 (glyph, attribute)
+cur_on      resb 1
+cur_di      resw 1
+t_flags     resb 1
+t_cur       resw 1
 ; dialogs
 ask_open    resb 1
 help_open   resb 1

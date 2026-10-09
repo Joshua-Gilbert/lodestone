@@ -1,4 +1,4 @@
-Grid-OS 0.3.15 - boot floppy
+Grid-OS 0.4.0 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\GOSBOOT and answer Y. It adds the Grid-OS loader to this disk
@@ -222,6 +222,19 @@ when the GRiD has a second floppy drive.
 M:, so a later start-up with M: on can't bring back a disk whose memory
 programs have used since.
 
+0.4.0: Term.  CLAUDE /T makes the GRiD the screen and keyboard of the
+real Claude Code, running on the Pi (a Pi 5) on your own Claude plan:
+its prompt, its answers, its questions before it changes anything, all
+on the GRiD's screen; only the parts of the screen that change cross the
+GPIB link.  Every key goes to Claude Code (CODE is Alt; CODE-Return or
+Ctrl-Return starts a new line), except CODE-Q, which quits, and CODE-R,
+which draws the screen again.  The bottom line shows the session and the
+link.  Claude Code reaches the GRiD's files, DOS programs (typing into
+them and taking screenshots) and the GPIB bus through the Pi, as Claude
+for GRiD always has; while a program runs the GRiD shows the program, and
+then Claude Code's screen again.  CLAUDE without /T is the chat as
+before (or Term, if the Pi has no API key for chat).
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -251,6 +264,7 @@ Programs:
             .BAT files, redirection < > >> and pipes |
   CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
             (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
+            CLAUDE /T: Claude Code itself (Term); CODE-R redraws.
   TM5000G   TM5000 3.7
   TESTDOS   checks the kernel's DOS functions (writes and deletes its
             own test files on this disk; "24 passed, 0 failed" is right)
