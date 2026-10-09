@@ -1,5 +1,5 @@
 /*
- * gridgpib.c - C interface to the GRIDGPIB resident GPIB driver (Grid-OS)
+ * gridgpib.c - C interface to the GRIDGPIB resident GPIB driver (Lodestone)
  * OpenWatcom C, 16-bit DOS, any memory model.
  */
 #include <dos.h>

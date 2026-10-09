@@ -1,4 +1,4 @@
-# Minimal multi-program DOS + GRiD 1520 GPIB emulator for Grid-OS tests.
+# Minimal multi-program DOS + GRiD 1520 GPIB emulator for Lodestone tests.
 # Runs several .COM programs one after another in the same memory, so a
 # TSR (GRIDGPIB) installed by the first stays resident for the next; real
 # IVT vectoring for INT 60h-66h; uPD7210 + bus model from sim7210.py; PIT

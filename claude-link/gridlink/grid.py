@@ -187,7 +187,7 @@ def temp_name(path):
 
 
 DEVICES = {'CON', 'AUX', 'PRN', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'LPT1', 'LPT2', 'LPT3', 'CLOCK$',
-           'EMMXXXX0'}                             # (Grid-OS's EMS manager's device)
+           'EMMXXXX0'}                             # (Lodestone's EMS manager's device)
 
 
 def is_device(path):

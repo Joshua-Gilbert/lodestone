@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GRIDMEM.COM - GRiDCase 1520 memory mode utility            (Grid-OS)
+;  GRIDMEM.COM - GRiDCase 1520 memory mode utility            (Lodestone)
 ;  Build: nasm -f bin -o GRIDMEM.COM GRIDMEM.ASM
 ;
 ;  GRIDMEM        show current mode and sizes
@@ -245,7 +245,7 @@ pdec:   pusha
         popa
         ret
 
-s_title db 'GRIDMEM 1.1 - GRiDCase memory mode (Grid-OS)',13,10,'$'
+s_title db 'GRIDMEM 1.1 - GRiDCase memory mode (Lodestone)',13,10,'$'
 s_usage db 'Usage: GRIDMEM [EXT | EMS]',13,10
         db '  EXT  memory above 640K becomes extended (HIMEM/XMS)',13,10
         db '  EMS  memory above 640K becomes bank-switched EMS',13,10,'$'

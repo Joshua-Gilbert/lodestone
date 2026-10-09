@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GRIDPROBE.COM 1.0  -  Grid-OS hardware probe for the GRiDCase 1520
+;  GRIDPROBE.COM 1.0  -  Lodestone hardware probe for the GRiDCase 1520
 ;  Build:  nasm -f bin -o GRIDPROBE.COM GRIDPROBE.ASM   (needs io.inc,
 ;          timing.inc from the same folder)
 ;  Run  :  GRIDPROBE        full probe, report to A:\GPROBE.TXT and
@@ -1013,7 +1013,7 @@ pasciz: push    si
 %include "timing.inc"
 
 ; ---------------------------------------------------------------------
-s_title db 'GRIDPROBE 1.0 - Grid-OS hardware probe for the GRiDCase 1520',13,10,'$'
+s_title db 'GRIDPROBE 1.0 - Lodestone hardware probe for the GRiDCase 1520',13,10,'$'
 s_nofile db '** Cannot create A:\GPROBE.TXT - screen output only',13,10,'$'
 s_sys   db 13,10,'[1] SYSTEM',13,10,'  BIOS date $'
 s_ibm   db '   IBM model $'
@@ -1047,7 +1047,7 @@ s_tread db '  VRAM read  (rep lodsw) 250 KB: $'
 s_tram  db '  RAM->RAM   (rep movsw) 250 KB: $'
 s_ms    db ' ms  = $'
 s_kbs   db ' KB/s$'
-s_pat   db 'GRID-OS 640x400 TEST - frame, diagonal, 8x16 text. Press a key.',0
+s_pat   db 'LODESTONE 640x400 TEST - frame, diagonal, 8x16 text. Press a key.',0
 s_rom   db 13,10,'[3] APPLICATION ROMS (INT 15h E400-E404)',13,10,'  max images $'
 s_rdseg db '  data seg paras $'
 s_rsock db '  sockets $'

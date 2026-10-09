@@ -1,5 +1,5 @@
 ; =====================================================================
-;  MEMPROBE.COM  -  GRiDCase 1520 memory diagnostic         (Grid-OS)
+;  MEMPROBE.COM  -  GRiDCase 1520 memory diagnostic         (Lodestone)
 ;  Build:  nasm -f bin -o MEMPROBE.COM MEMPROBE.ASM
 ;  Run  :  MEMPROBE                    (clean boot, no HIMEM/EMM)
 ;          Report goes to screen AND A:\PROBE.TXT (committed to disk
@@ -843,7 +843,7 @@ pdec:   pusha
 ; =====================================================================
 ;  Data
 ; =====================================================================
-s_title db 'MEMPROBE 1.1 - GRiDCase memory diagnostic (Grid-OS)',13,10
+s_title db 'MEMPROBE 1.1 - GRiDCase memory diagnostic (Lodestone)',13,10
         db '==================================================',13,10,'$'
 s_bdate db 'BIOS date      : $'
 s_model db '   model byte: $'

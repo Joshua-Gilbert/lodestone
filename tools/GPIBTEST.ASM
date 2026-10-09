@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBTEST.COM - automated read-only GPIB test & timing       (Grid-OS)
+;  GPIBTEST.COM - automated read-only GPIB test & timing       (Lodestone)
 ;  Build: nasm -f bin -o GPIBTEST.COM GPIBTEST.ASM
 ;
 ;  GPIBTEST       scan the bus, identify every instrument, then run a
@@ -1332,7 +1332,7 @@ q_id    db 'ID?',10,0
 q_idn   db '*IDN?',10,0
 n_ieeeout db 'IEEEOUT',0
 n_log   db 'A:\GPIBTEST.TXT',0
-s_title db 'GPIBTEST 1.0 - automated read-only GPIB test (Grid-OS)',13,10
+s_title db 'GPIBTEST 1.0 - automated read-only GPIB test (Lodestone)',13,10
         db '======================================================',13,10,'$'
 s_drv488 db '** Driver488 (DRVR488) is loaded - it owns the GPIB chip.',13,10
         db '** Boot without it, or use GPIBTEST /F to override.',13,10,'$'
