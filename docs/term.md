@@ -56,12 +56,14 @@ through the bridge the chat already uses. GPIB only.
 - `router.py`: chat or Term, per HELLO. An older CLAUDE (no Term flag)
   always gets chat; without an API key the chat answers with how to start
   Term.
-- `mcp.py`: the GRiD's tools for Claude Code (`grid_command`, `grid_files`,
-  `grid_screen`, `grid_info`, `gpib`), a stdio MCP server that gridlink
-  registers in `~/grid/.mcp.json`. Each call goes over a Unix socket to
-  gridlink and to the GRiD as a REQUEST, one at a time (CLAUDE drops a
-  second REQUEST that arrives while one waits to run). Claude Code asks
-  before each tool until allowed.
+- `mcp.py`: the GRiD's tools for Claude Code, a stdio MCP server that
+  gridlink registers in `~/grid/.mcp.json`. Each call goes over a Unix
+  socket to gridlink and to the GRiD as a REQUEST, one at a time (CLAUDE
+  drops a second REQUEST that arrives while one waits to run). Four tools
+  only look (`grid_info`, `grid_files`, `grid_screen`, `gpib_read`) and can
+  be allowed for good; three change something (`grid_command`,
+  `grid_change_files`, `gpib_send`) and Claude Code asks before every call
+  (Tool server limits, below).
 
 **On the GRiD** (`gridos/claude`):
 - `TERMLINK.INC`: the GLP link, moved out of CLAUDE.ASM unchanged except
@@ -156,6 +158,67 @@ fixed and tested:
   starts with a fresh parser, and the old Grid-OS 0.3 strings (the
   Executive's band and help, GRIDCMD's banner) say 0.4.
 
+## Tool server limits
+
+A second review, of the MCP tools alone, found four ways around Claude
+Code's own permission checks, all fixed (with an advisor's review of the
+fixes, which added the last four items):
+
+- **Pi files without a prompt.** The copies could read or write any file on
+  the Pi: a GRiD file over `~/.claude/settings.json` or `.bashrc`, or
+  `~/.claude/.credentials.json` out to the GRiD. Now only inside `~/grid`
+  (the real path, symlinks followed), never a dot-name (`.claude/`,
+  `.mcp.json`) or `CLAUDE.md`; only regular files with one link go to the
+  GRiD (so no FIFO hangs gridlink, no hard link carries a file out); a copy
+  from the GRiD is written to a temporary file and renamed over the name, so
+  a link there is replaced, not written through.
+- **"Don't ask again" covered too much:** allowing a read allowed delete,
+  allowing `DIR` allowed `DEL *.*`, allowing a GPIB query allowed writes to a
+  power supply. Claude Code remembers permission per tool and its rules
+  can't look at arguments, so the tools are split: four that only look
+  (`readOnlyHint`), three that change something. Those three carry
+  `_meta: {"anthropic/requiresUserInteraction": true}`: Claude Code asks on
+  every call, in every mode, offers no "don't ask again" and lets no allow
+  rule skip it (its docs, and its code: the flag turns into an "ask" with no
+  rule to add). GPIB queries are among them: a query is a command, and some
+  (`MEAS?`, `READ?` on a Keithley source-meter) turn a source's output on.
+  Nothing is written into Claude Code's settings.
+- **No size limits.** A huge or special Pi file could exhaust gridlink's
+  memory or hang it; reads stopped quietly at 256 KB or 4 MB, so reading,
+  editing and writing back could cut a GRiD file short. Now a copy or write
+  is at most 1 MB and a read into the conversation 48 KB (below Claude
+  Code's 50,000 characters, past which it puts a result in a file); the
+  GRiD file's size is asked first, and bigger is an error naming it. A
+  program's output past 48 KB comes back as its first 40 KB and last 8 KB,
+  with the bytes between counted.
+- **No input checks.** Every argument is checked before anything reaches
+  the GRiD (types, GPIB address 0-30 and not 21 or the bridge, timeouts,
+  reply sizes, CP437 without control characters: a NUL would cut a path, a
+  CR end a command line). A `{WAIT}` was unbounded (`{WAIT 1e9}` built a
+  210 MB script); now at most 600 s, a script at most 4,096 bytes (CLAUDE
+  takes 4,700 per request), and all its waits shorter than the timeout. The
+  stdio server exited on params that weren't an object, on bytes that
+  weren't UTF-8, and on deeply nested JSON; now each gets a JSON-RPC error.
+- **DOS device names** (the advisor): `read A:\AUX` opened the serial port
+  on the GRiD and waited for good. `CON`, `AUX`, `PRN`, `NUL`, `COM1-4`,
+  `LPT1-3`, `CLOCK$` are refused in any directory with any extension, in
+  the tools and in `Grid.read`/`write` (so for the chat too).
+- **`python -m` imported from `~/grid`** (the advisor): `-m` puts the
+  working directory first on `sys.path`, and Claude Code may write files
+  there, so a `json.py` in `~/grid` would have run as you before any
+  prompt. `.mcp.json` now starts Python isolated (`-I`).
+- **"Not connected" while busy** (the advisor): a RUN keeps the GRiD from
+  polling, so a second call was told to start CLAUDE /T. It now waits its
+  turn and asks after.
+- **Command line and timeout** (the advisor): CLAUDE builds ` /C `,
+  the command, ` >` and the output file into DOS's 125 characters, so a
+  command is at most 100 (status F3h now reads "command line too long"). The
+  GRiD never stops a program; the timeout is only how long the Pi waits, at
+  most 3,600 s.
+
+Left as it is: the check between resolving a path and opening it can be
+raced only by a program running as you, which could read the files itself.
+
 ## Tests
 
 - `claude-link/tests/test_term.py` (17): the pre-filter, the alternate
@@ -172,11 +235,17 @@ fixed and tested:
   inverse, the keys, CODE-R, a DOS program run in the middle, CODE-Q; chat
   messages ignored in Term, CODE-R held down and then a request, a HELLO
   answered with NOP (the link starts again).
-- `test_mcp.py` (6): the MCP server over stdio to the GRiD model: files
+- `test_mcp.py` (13): the MCP server over stdio to the GRiD model: files
   (read, write through NAME.$$$, copies both ways), a captured command, a
   key script with a screenshot, GPIB, two calls at once, the GRiD away.
-  Relative paths, a `.mcp.json` it can't read. The real Claude Code's
-  `claude mcp list` connects to it.
+  Relative paths, a `.mcp.json` it can't read. The limits: the tool list
+  (which look, which always ask); Pi paths (outside `~/grid`, symlinks out,
+  dot-names, `CLAUDE.md`, a FIFO, a hard link, writing over a link); about
+  60 bad arguments, none of which reaches the GRiD; sizes as errors, a long
+  output's start and end; the stdio server fed broken bytes, deep JSON and
+  wrong shapes; a second call during a long one; a `json.py` in `~/grid`
+  that must not load. The real Claude Code's `claude mcp list` connects to
+  it.
 - `fake_claude.py`: a stand-in for Claude Code in a pty (no login, no
   model), drawing as Claude Code does: a static part that scrolls, a live
   part redrawn with cursor-up and erase inside `?2026`, DA query, title,
