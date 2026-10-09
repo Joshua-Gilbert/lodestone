@@ -17,16 +17,17 @@ It boots from a floppy, shows the Executive, runs ordinary DOS programs (TM5000G
 
 *Emulator screenshots (`os/screens/readme_shots.py`), drawn as the 1520's amber plasma shows them.*
 
-## What it does (0.4.1)
+## What it does (0.4.2)
 
-- **A DOS 3.30 kernel** (`LODE.SYS`, 45,440 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
+- **A DOS 3.30 kernel** (`LODE.SYS`, 45,466 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
 - **Disks:**
   - **A:** and **B:** (the external floppy drive), with a cylinder read-ahead cache;
   - **C:**, any IDE drive with a FAT16 partition up to 2 GB, driven through its own registers. The 1520's BIOS only knows a few Conner models, so Lodestone doesn't use it for this. With a drive, C: costs about 3 KB of memory; without one, nothing is loaded.
   - **M:**, the temporary disk: a RAM disk in EMS, 256 KB unless System's Temporary disk topic or `MDISK=` in `LODE.INI` says otherwise (Off up to all the free EMS). It costs DOS programs no memory: its 0.3 KB comes out of the environment's block, which programs never got. Its files are lost at power-off.
 - **EMS:** Lodestone is its own LIM 4.0 EMS manager when the 1520's memory is set to EMS. The disk cache moves into two EMS pages, so DOS programs get 16 KB more.
 - **GPIB:** the GRIDGPIB API on INT 60h is built in, with a faster block transfer. TM5000G and CLAUDE.COM run unchanged.
-- **The Executive:** GRiD's File form, with CODE-C Copy, CODE-M Move, CODE-R Rename and CODE-D Delete. They take wildcards, Replace and Only newer, and work on whole subjects (directories) too. CODE-P opens the command prompt (`LCMD.COM`), CODE-U opens System, CODE-A starts Claude.
+- **The Executive:** GRiD's File form, with CODE-C Copy, CODE-M Move, CODE-R Rename and CODE-D Delete. They take wildcards, Replace and Only newer, and work on whole subjects (directories) too. CODE-P opens the command prompt, CODE-U opens System, CODE-A starts Claude.
+- **The command prompt** (`LCMD.COM`): DOS 3.30's commands, redirection and pipes, plus `&&` and `||` between commands. The line can be edited, with a history (Up, Down, F3) and Tab completion of file names, and the screen saver runs there too. Batch files have IF (EXIST, ERRORLEVEL, ==, NOT), GOTO, FOR, CALL, SHIFT, CHOICE and `%NAME%` variables; an error in one names the file and line. Built-in commands that can fail set ERRORLEVEL, so scripts (Claude's too) can check every step.
 - **System:** memory, disks, clock, devices (the hard disk's own name), GPIB, display (fonts), screen saver, temporary disk. Settings are kept in `LODE.INI`.
 - **Write:** a GRiDWrite-style text editor.
 - **The screen saver** runs `DEFRAG` on A:, B: and C: in turn, then darkens the screen. A key stops it. Its delay and the tidying are settings.
@@ -167,7 +168,7 @@ Run the comparison with `python3 os/bench/compare3.py <GRiD MS-DOS EPROM image> 
 | `os/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN |
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
 | `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys) |
-| `os/releases` | Builds for the floppy, 0.1 to 0.4.1 |
+| `os/releases` | Builds for the floppy, 0.1 to 0.4.2 |
 | `os/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `os/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude (Term: the real Claude Code in a pty, with an MCP server for the GRiD's tools; chat: the Claude API), the AR488 patch, and its tests |
@@ -189,11 +190,11 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 736 checks pass on 0.4.1 (2026-10-09); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 796 checks pass on 0.4.2 (2026-10-09); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
 
 ```sh
 cd os
-python3 tests/test_kernel.py          # 181 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS
+python3 tests/test_kernel.py          # 241 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt
 python3 tests/test_apps.py            # 367 checks: UI core, Executive, System, Write, mouse, files (add "shots" for screens/0.3)
 python3 tests/test_hd.py              # 56 checks: drive C:, and C: with M:
 python3 tests/test_defrag.py          # 49 checks: DEFRAG on floppies and C:, the saver's round
@@ -223,7 +224,7 @@ These aren't ours to publish, even privately: the 1520 BIOS and GRiD MS-DOS ROM 
 
 ## Status
 
-Lodestone 0.4.1 (0.4.0 under its new name) is the current release; 0.3.15 is the last tested on the 1520, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/lodestone-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
+Lodestone 0.4.2 is the current release: 0.4.1 was the rename, and 0.4.2 brings the command prompt's batch language, line editing and screen saver. 0.4.1 boots on the 1520; 0.3.15 is the last release fully tested there, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/lodestone-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
 
 **Next:**
 1. Claude (Term and chat) on the real GPIB bridge, with the Pi 5.

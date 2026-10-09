@@ -1195,6 +1195,8 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ; INT 21h F0h: Lodestone's own calls (MS-DOS doesn't have it).
 ;   AL = 0: AX = 4F47h ('GO'), BX = version (0201h)
 ;   AL = 1: DL = drive (0 = A:) -> CX = files open on it
+;   AL = 5: the Executive's screen saver, for a program at its prompt:
+;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
 f_F0:   mov     al, [bp+F_AX]
         or      al, al
         jnz     .1
@@ -1207,6 +1209,8 @@ f_F0:   mov     al, [bp+F_AX]
         je      .back
         cmp     al, 4
         je      .useg
+        cmp     al, 5
+        je      .saver
         cmp     al, 1
         jne     f_bad
         jmp     .open
@@ -1229,6 +1233,12 @@ f_F0:   mov     al, [bp+F_AX]
 ; AL=3: the cache has its memory back
 .back:  mov     byte [tc_lock], 0
         jmp     ok
+; AL=5: the saver's delay and ui_saver_far (UICORE.INC), which runs it
+.saver: mov     es, [ui_seg]
+        mov     [bp+F_ES], es
+        mov     word [bp+F_BX], ui_saver_far
+        mov     ax, [es:saver_t]
+        jmp     ok_ax
 ; AL=4: the UI segment has moved to BX (where the root process restarts)
 .useg:  mov     ax, [bp+F_BX]
         mov     [ui_seg], ax
