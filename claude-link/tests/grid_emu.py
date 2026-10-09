@@ -26,6 +26,7 @@ from fake_anthropic import FakeAnthropic
 from gridlink.link import Link
 from gridlink.agent import Session
 from gridlink.config import Config
+from gridlink.router import Router
 
 
 def _find(env, *cands):
@@ -808,7 +809,7 @@ class EmuHarness:
     """Real CLAUDE.COM <-> real GRIDGPIB <-> 7210 + bus <-> AR488 model <->
     real gridlink (Link + Session) <-> scripted Claude."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y', args='/A:7',
-                 claude_com=CLAUDE_COM, mapfile=None, baud=115200):
+                 claude_com=CLAUDE_COM, mapfile=None, baud=115200, term=None):
         s.m = m = Machine()
         s.pending = []
         s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
@@ -822,10 +823,21 @@ class EmuHarness:
         s.cfg = cfg
         s.client = FakeAnthropic(script or [])
         s.log = []
-        s.session = Session(cfg, s.client, log=s.log.append)
-        s.link = Link(s.transport, s.session.on_message, log=s.log.append, hold=0.0)
-        s.session.attach(s.link)
-        threading.Thread(target=s.session.run, daemon=True).start()
+        if term:
+            # Term: gridlink's router and a program in a pty (no API key)
+            cfg.term_dir = os.path.join(s.tmp, 'grid'); cfg.term_command = term
+            cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
+            cfg.api_key = None; cfg.env_key = lambda: False; cfg.app = 'auto'
+            s.router = Router(cfg, log=s.log.append)
+            s.link = Link(s.transport, s.router.on_message, log=s.log.append, hold=0.0)
+            s.router.attach(s.link)
+            s.session = None
+        else:
+            s.router = None
+            s.session = Session(cfg, s.client, log=s.log.append)
+            s.link = Link(s.transport, s.session.on_message, log=s.log.append, hold=0.0)
+            s.session.attach(s.link)
+            threading.Thread(target=s.session.run, daemon=True).start()
         img = open(claude_com, 'rb').read()
         m.fs['A:\\CLAUDE.COM'] = bytearray(img)
         m.fs['A:\\GRIDGPIB.COM'] = bytearray(open(GRIDGPIB_COM, 'rb').read())
@@ -834,6 +846,7 @@ class EmuHarness:
         for k, v in (files or {}).items(): m.fs[m.norm(k)] = bytearray(v)
         s.sym = symbols(mapfile or os.path.splitext(claude_com)[0] + '.MAP')
         s.font = Font(img, s.sym['font'] - 0x100)
+        s.font_img = img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + 0x81 * 16]
         s.answer = answer
         s.args = args
         s.shots = []
@@ -911,6 +924,42 @@ class EmuHarness:
             s.run_until(lambda: s.m.us > t + busy_ms * 1000, 1.0)
         else:
             s.run_until(lambda: s.m.halted, 5.0)
+
+    # ---- Term -----------------------------------------------------------
+    def term_cells(s):
+        """The GRiD's shadow of the Term screen: 24 rows of (glyphs, attributes)."""
+        seg = s.var('shadseg', 2)
+        raw = s.m.mu.mem_read(seg * 16, 24 * 160)
+        return ([bytes(raw[r * 160:(r + 1) * 160:2]) for r in range(24)],
+                [bytes(raw[r * 160 + 1:(r + 1) * 160:2]) for r in range(24)])
+
+    def term_vram_ok(s, chs, ats, cursor=None):
+        """Video memory rows 0-23 are exactly these cells drawn with CLAUDE's
+        font (and the cursor, if shown).  Returns a list of bad cells."""
+        v = s.m.rd(0xB800, 0, 0x8000)
+        bad = []
+        for r in range(24):
+            for c in range(80):
+                g = chs[r][c]; a = ats[r][c]
+                g = 0x20 if g < 0x20 else ('?' if g > 0xA0 else g)
+                g = ord(g) if isinstance(g, str) else g
+                want = bytearray(s.font_img[(g - 0x20) * 16:(g - 0x1F) * 16])
+                if a & 1: want = bytearray(b ^ 0xFF for b in want)
+                if a & 2: want[14] = 0x00 if a & 1 else 0xFF
+                if cursor and cursor == (r, c):
+                    want[14] ^= 0xFF; want[15] ^= 0xFF
+                got = bytes(v[(i & 3) * 0x2000 + (r * 4 + (i >> 2)) * 80 + c] for i in range(16))
+                if got != bytes(want): bad.append((r, c))
+        return bad
+
+    def press(s, ax):
+        s.m.keys.append(ax); s.m.halted = False
+
+    def term_type(s, text):
+        for ch in text: s.press(SCAN.get(ch, 0) << 8 | ord(ch))
+
+    def close(s):
+        if s.router is not None and s.router.term is not None: s.router.term.stop()
 
     def shot(s, path):
         s.settle()

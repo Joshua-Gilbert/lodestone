@@ -87,7 +87,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 | DISKMAP.COM | 952 | saves the floppy's boot sector, FATs and root to DISKMAP.BIN; shows root entries in use |
 | GOSBOOT.COM | 3,047 | installs the Grid-OS boot sector (once per disk, and after every format) |
 | GRIDGPIB.COM | 2,688 | GPIB driver 1.1 for GRiD MS-DOS (built into Grid-OS) |
-| CLAUDE.COM | 11,152 | Claude for GRiD (Pi bridge at address 7); CODE-A in the Executive; still in Terminus |
+| CLAUDE.COM | 12,320 | Claude for GRiD (Pi bridge at address 7); CODE-A in the Executive; `/T` Term (Claude Code on the Pi); still in Terminus |
 | TM5000G.EXE | 296,634 | TM5000 3.7 (TM5000 repo `src/tm5000g.exe`, with PR #3's fix: the mouse pointer comes back after a menu is left by a key) |
 | GGTEST.COM | 7,554 | GPIB driver test on the bus |
 | EMSTEST.COM | 7,945 | EMS (INT 67h) test: "0 failed" is right; waits for a key, adds to EMSTEST.TXT; also under GRiD MS-DOS + EMM.SYS |

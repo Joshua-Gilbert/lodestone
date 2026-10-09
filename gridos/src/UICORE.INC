@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-GOS_VER     equ 003Fh                   ; Grid-OS 0.3.15 (BH.BL: major, minor<<4 | patch: 0.3.15 is the last 0.3)
+GOS_VER     equ 0040h                   ; Grid-OS 0.4.0 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2

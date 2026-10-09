@@ -36,6 +36,11 @@ class Config:
         s.bus = dict(DEFAULT_BUS)
         s.api_key = None; s.user = 'Joshua'
         s.extra_prompt = ''
+        s.app = 'auto'                          # chat, term, or auto (chat when there is a key)
+        s.term_command = 'claude'               # Term: the program in the pty
+        s.term_dir = os.path.expanduser('~/grid')
+        s.term_socket = None                    # MCP bridge socket (default $XDG_RUNTIME_DIR/gridlink.sock)
+        s.term_api_key = False                  # pass ANTHROPIC_API_KEY on to Claude Code (normally not)
         s.source = None
 
     def load(s, path=None):
@@ -61,12 +66,21 @@ class Config:
         elif keyfile and os.path.exists(os.path.expanduser(keyfile)):
             s.api_key = open(os.path.expanduser(keyfile)).read().strip()
         s.set_clock = bool(g.get('set_clock', s.set_clock)); s.user = g.get('user', s.user)
+        s.app = str(g.get('app', s.app)).lower()
+        t = d.get('term', {})
+        s.term_command = t.get('command', s.term_command)
+        if 'dir' in t: s.term_dir = os.path.expanduser(t['dir'])
+        if 'socket' in t: s.term_socket = t['socket']
+        s.term_api_key = bool(t.get('keep_api_key', s.term_api_key))
         for k in ('workdir', 'memory_dir', 'sessions_dir'):
             if k in g: setattr(s, k, os.path.expanduser(g[k]))
         s.bash_timeout = int(g.get('bash_timeout', s.bash_timeout))
         s.mode = pm.get('mode', s.mode)
         if 'bus' in d:
             s.bus = {int(k): str(v) for k, v in d['bus'].items()}
+
+    def env_key(s):
+        return bool(os.environ.get('ANTHROPIC_API_KEY'))
 
     def price(s, model=None):
         return PRICES.get(model or s.model, (4, 20))
