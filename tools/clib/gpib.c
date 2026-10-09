@@ -1,6 +1,6 @@
 /*
  * TM5000 GPIB Control System - GPIB Communication Module
- * Version 4.1 - GRIDGPIB back end (Grid-OS)
+ * Version 4.1 - GRIDGPIB back end (Lodestone)
  *
  * Same functions as v3.x (gpib.h is unchanged), but talks to the GRIDGPIB
  * resident driver instead of IOtech Driver488:
@@ -121,7 +121,7 @@ static int d488_command(const char *line)
         sprintf(buf, "CS21 GRIDGPIB %s\r\n", last_err[0] ? last_err : "OK");
         pend_set(buf, strlen(buf));
     } else if ((q = kw(p, "HELLO")) != NULL) {
-        static const char h[] = "GRIDGPIB 1.0 (Driver488 command subset) Grid-OS\r\n";
+        static const char h[] = "GRIDGPIB 1.0 (Driver488 command subset) Lodestone\r\n";
         pend_set(h, sizeof(h) - 1);
     } else if (kw(p, "ABORT") || kw(p, "RESET")) {
         last_err[0] = '\0';

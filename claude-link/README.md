@@ -182,7 +182,7 @@ session's running total. Term needs no key (see above).
 Copy `CLAUDE.COM` to the floppy, then:
 
 ```
-GRIDGPIB        (not on Grid-OS: GPIB is built in; CODE-A in the Executive runs CLAUDE)
+GRIDGPIB        (not on Lodestone: GPIB is built in; CODE-A in the Executive runs CLAUDE)
 CLAUDE          chat (CLAUDE /T: Term; CLAUDE /A:nn if the bridge is not at address 7)
 ```
 
@@ -214,7 +214,7 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
   (chat or Term), `mcp.py` (the MCP server and its socket)
 - `PROTOCOL.md` - GLP 1, the link protocol, including why it works the way it does
 - `AR488-gridlink.patch` - the optional AR488 patch
-- `CLAUDE.ASM` / `GLYPHS.INC` (Grid-OS source tree, `gridos/claude/`) - the
+- `CLAUDE.ASM` / `GLYPHS.INC` (Lodestone source tree, `os/claude/`) - the
   GRiD program, NASM; `TERMLINK.INC` (the link), `TERMCELL.INC` (cells,
   Term's screen), `TERMKEYS.INC` (Term's keys) are shared with what comes
   next (Claude resident over DOS programs). `build.sh` / `BUILD.BAT` there

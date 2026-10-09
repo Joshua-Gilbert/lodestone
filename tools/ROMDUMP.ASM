@@ -129,7 +129,7 @@ puts:   mov     ah, 09h
         int     21h
         ret
 
-s_title db 'ROMDUMP 1.2 - GRiDCase ROM/CMOS dump (Grid-OS)',13,10,'$'
+s_title db 'ROMDUMP 1.2 - GRiDCase ROM/CMOS dump (Lodestone)',13,10,'$'
 s_ok    db 'Done. 4 files written to A:\',13,10,'$'
 s_fail  db '** Write failed - disk full or write-protected?',13,10,'$'
 s_crlf  db 13,10,'$'

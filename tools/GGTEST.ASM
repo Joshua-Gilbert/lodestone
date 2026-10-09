@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GGTEST.COM - the GPIBTEST read-only test set through GRIDGPIB  (Grid-OS)
+;  GGTEST.COM - the GPIBTEST read-only test set through GRIDGPIB  (Lodestone)
 ;  Build: nasm -f bin -o GGTEST.COM GGTEST.ASM
 ;
 ;  Needs GRIDGPIB loaded.  Same scan, same instruments, same read-only
@@ -250,7 +250,7 @@ sig     db 'GRIDGPIB'
 q_id    db 'ID?',10,0
 q_idn   db '*IDN?',10,0
 n_log   db 'A:\GGTEST.TXT',0
-s_title db 'GGTEST 1.1 - GPIBTEST read-only set through GRIDGPIB (Grid-OS)',13,10
+s_title db 'GGTEST 1.1 - GPIBTEST read-only set through GRIDGPIB (Lodestone)',13,10
         db '===============================================================',13,10,'$'
 s_nodrv db '** GRIDGPIB is not loaded (no INT 60h-66h with its signature).',13,10,'$'
 s_drvbad db '** GRIDGPIB did not answer / could not initialise the bus.',13,10,'$'

@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GRIDGPIB.COM - resident GPIB driver for the GRiDCase 1520     (Grid-OS)
+;  GRIDGPIB.COM - resident GPIB driver for the GRiDCase 1520     (Lodestone)
 ;  Build: nasm -f bin -o GRIDGPIB.COM GRIDGPIB.ASM
 ;
 ;  GRIDGPIB          install (first free vector 60h-66h), IFC, REN on
@@ -1087,7 +1087,7 @@ o_u     db 0
 o_f     db 0
 o_int   db 0
 n_ieee  db 'IEEEOUT',0
-s_title db 'GRIDGPIB 1.1 - resident GPIB driver for the GRiDCase 1520 (Grid-OS)',13,10,'$'
+s_title db 'GRIDGPIB 1.1 - resident GPIB driver for the GRiDCase 1520 (Lodestone)',13,10,'$'
 s_already db 'Already installed.  GRIDGPIB /U unloads it.',13,10,'$'
 s_notres db 'Not installed - nothing to unload.',13,10,'$'
 s_d488  db '** Driver488 (DRVR488) is loaded and owns the GPIB chip.',13,10

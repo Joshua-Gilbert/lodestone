@@ -1,0 +1,3252 @@
+
+- NASM Map file ---------------------------------------------------------------
+
+Source file:  _m.asm
+Output file:  LODE.SYS
+
+-- Symbols --------------------------------------------------------------------
+
+---- No Section ---------------------------------------------------------------
+
+Value     Name
+00000060  KSEG
+00000004  VERSION
+00001000  MD_TPG
+00000000  F_DI
+00000002  F_SI
+00000004  F_BP
+00000006  F_SP
+00000008  F_BX
+0000000A  F_DX
+0000000C  F_CX
+0000000E  F_AX
+00000010  F_DS
+00000012  F_ES
+00000014  F_IP
+00000016  F_CS
+00000018  F_FL
+0000001A  F_USP
+0000001C  F_USS
+0000001E  F_SIZE
+0000006D  NFUNC
+0000000E  NSEP
+00000000  D_UNIT
+00000001  D_MNT
+00000002  D_SPC
+00000003  D_NFAT
+00000004  D_RSV
+00000006  D_NROOT
+00000008  D_TOT
+0000000A  D_SPF
+0000000C  D_SPT
+0000000E  D_HEADS
+00000010  D_ROOT
+00000012  D_RSEC
+00000014  D_DATA
+00000016  D_NCL
+00000018  D_CWD
+0000001A  D_SHIFT
+0000001B  D_PRES
+0000001C  D_HINT
+0000001E  D_MEDIA
+0000001F  D_CHK
+00000020  DRVSZ
+00000003  NDRV
+00000002  NFLOP
+00000044  CWDLEN
+0000000C  MAXSPF
+00000005  NBUF
+00000024  TC_SECS
+00000480  TC_PARAS
+00000033  BPBLEN
+00000001  A_RO
+00000002  A_HID
+00000004  A_SYS
+00000008  A_VOL
+00000010  A_DIR
+00000020  A_ARC
+0000000C  NBADC
+00000000  S_REF
+00000001  S_MODE
+00000002  S_FLAGS
+00000003  S_DEV
+00000004  S_DRV
+00000005  S_ATTR
+00000006  S_CLU
+00000008  S_SIZE
+0000000C  S_POS
+00000010  S_CCL
+00000012  S_CIX
+00000014  S_DLBA
+00000016  S_DOFF
+00000018  S_GADR
+0000001A  S_TIME
+0000001C  S_DATE
+0000001E  S_NAME
+0000002A  S_RAE
+0000002C  SFT_SZ
+00000018  NSFT
+00000080  SF_DEV
+00000040  SF_DIRTY
+00000020  SF_RAW
+00000010  SF_STAMP
+00000000  DEV_CON
+00000001  DEV_NUL
+00000002  DEV_AUX
+00000003  DEV_PRN
+00000004  DEV_COM2
+00000005  DEV_GPIB
+00000006  DEV_EMM
+000002E1  gp_BASE
+000002E1  gp_R_DIR
+000006E1  gp_R_ISR1
+00000AE1  gp_R_ISR2
+00000EE1  gp_R_SPSR
+000012E1  gp_R_ADSR
+000016E1  gp_R_AUXMR
+00001AE1  gp_R_ADR0
+00001EE1  gp_R_ADR1
+000002E1  gp_R_CDOR
+000006E1  gp_R_IMR1
+00000AE1  gp_R_IMR2
+00000EE1  gp_R_SPMR
+000012E1  gp_R_ADMR
+00001AE1  gp_R_ADR
+00000001  gp_ISR1_DI
+00000002  gp_ISR1_DO
+00000004  gp_ISR1_ERR
+00000010  gp_ISR1_END
+00000008  gp_ISR2_CO
+00000040  gp_ISR2_SRQ
+00000080  gp_ADSR_CIC
+00000000  gp_AUX_PON
+00000002  gp_AUX_CR
+00000003  gp_AUX_FH
+00000006  gp_AUX_SEOI
+00000010  gp_AUX_GTS
+00000011  gp_AUX_TCA
+00000016  gp_AUX_CIFC
+00000017  gp_AUX_CREN
+0000001E  gp_AUX_SIFC
+0000001F  gp_AUX_SREN
+00000015  gp_MYADDR
+0000003F  gp_UNL
+0000005F  gp_UNT
+00000018  gp_SPE
+00000019  gp_SPD
+00000001  gp_GTL
+00000004  gp_SDC
+00000008  gp_GET
+00000014  gp_DCL
+00000009  gp_T_CMD
+00000003  gp_T_SPOLL
+00000024  gp_T_DEF
+00000001  gp_E_TMO
+00000002  gp_E_NOL
+00000003  gp_E_CIC
+00000004  gp_E_FUNC
+00000005  gp_E_NODATA
+00000006  gp_E_BUSY
+0000000E  gp_NFUNC
+0000E000  EMS_FRAME
+00000258  EMS_PORT
+00000020  EMS_NH
+00000008  EMS_NS
+0000001E  EMS_NF
+FFFFFFFFFFFFFFFA  M_LEN
+FFFFFFFFFFFFFFF0  M_S
+FFFFFFFFFFFFFFE6  M_D
+FFFFFFFFFFFFFFE2  M_MAP
+FFFFFFFFFFFFFFE1  M_ST
+FFFFFFFFFFFFFFDF  M_FN
+FFFFFFFFFFFFFFE0  M_BACK
+00000020  M_SIZE
+000001F0  HD_PORT
+00000003  HD_NWIN
+000000FF  HD_SPT
+0000000C  MD_DRV
+00003800  MD_SCR
+0000E400  MD_W1
+00004258  MD_P1
+00000012  MD_STUB
+00000001  MD_SHIFT
+0000F000  MD_IBUF
+00000015  MD_PARAS
+00000722  MD_TLEN
+00000004  UI_API
+00000000  UI_VERSION
+00000003  UI_CLS
+00000006  UI_FILL
+00000009  UI_HLINE
+0000000C  UI_VLINE
+0000000F  UI_DOTS
+00000012  UI_INVERT
+00000015  UI_PUTC
+00000018  UI_PUTS
+0000001B  UI_PUTSN
+0000001E  UI_CENTER
+00000021  UI_BOX
+00000024  UI_STRLEN
+00000027  UI_SBSTR
+0000002A  UI_SBU16
+0000002D  UI_SBU32
+00000030  UI_SBDATE
+00000033  UI_SBTIME
+00000036  UI_SBHEX4
+00000039  UI_SBERR
+0000003C  UI_EVENT
+0000003F  UI_POLL
+00000042  UI_TICK
+00000045  UI_SETREDRAW
+00000048  UI_SCREEN
+0000004B  UI_BAND
+0000004E  UI_MSG
+00000051  UI_ASK
+00000054  UI_WOPEN
+00000057  UI_WCLOSE
+0000005A  UI_HELP
+0000005D  UI_DISPATCH
+00000060  UI_LVDRAW
+00000063  UI_LVKEY
+00000066  UI_LVCLICK
+00000069  UI_LVSET
+0000006C  UI_EDIT
+0000006F  UI_FORM
+00000072  UI_ALLOC
+00000075  UI_FREE
+00000078  UI_RUN
+0000007B  UI_FINDAPP
+0000007E  UI_CRITERR
+00000081  UI_BEEP
+00000084  UI_KEYSHIFT
+00000087  UI_FONT
+0000008A  UI_SAVER
+0000008A  UI_LAST
+00000600  FONT_BYTES
+0000FF01  EV_CLICK
+0000FFFF  K_NONE
+00001C0D  K_ENTER
+0000011B  K_ESC
+00000F09  K_TAB
+00003920  K_SPACE
+00000F00  K_BTAB
+00000E08  K_BKSP
+00004800  K_UP
+00005000  K_DOWN
+00004B00  K_LEFT
+00004D00  K_RIGHT
+00004700  K_HOME
+00004F00  K_END
+00004900  K_PGUP
+00005100  K_PGDN
+00005200  K_INS
+00005300  K_DEL
+00007300  K_CLEFT
+00007400  K_CRIGHT
+00007700  K_CHOME
+00007500  K_CEND
+00008400  K_CPGUP
+00007600  K_CPGDN
+00003B00  K_F1
+00003F00  K_F5
+00001C00  K_CODE_ENTER
+00000100  K_CODE_ESC
+00001E00  K_CODE_A
+00003000  K_CODE_B
+00002E00  K_CODE_C
+00002000  K_CODE_D
+00001200  K_CODE_E
+00002100  K_CODE_F
+00002200  K_CODE_G
+00002300  K_CODE_H
+00001700  K_CODE_I
+00002400  K_CODE_J
+00002500  K_CODE_K
+00002600  K_CODE_L
+00003200  K_CODE_M
+00003100  K_CODE_N
+00001800  K_CODE_O
+00001900  K_CODE_P
+00001000  K_CODE_Q
+00001300  K_CODE_R
+00001F00  K_CODE_S
+00001400  K_CODE_T
+00001600  K_CODE_U
+00002F00  K_CODE_V
+00001100  K_CODE_W
+00002D00  K_CODE_X
+00001500  K_CODE_Y
+00002C00  K_CODE_Z
+00003500  K_CODE_HELP
+00000000  W_COL
+00000002  W_Y
+00000004  W_W
+00000006  W_H
+00000008  W_TITLE
+0000000A  W_DRAW
+0000000C  W_SIZE
+00000018  W_TOP
+00000000  LV_Y
+00000002  LV_ROWS
+00000004  LV_N
+00000006  LV_SEL
+00000008  LV_TOP
+0000000A  LV_DRAW
+0000000C  LV_CHG
+0000000E  LV_COL
+00000010  LV_W
+00000012  LV_NAME
+00000014  LV_SIZE
+00000000  F_TITLE
+00000002  F_PROMPT
+00000004  F_W
+00000006  F_LW
+00000008  F_N
+0000000A  F_FIELDS
+00000000  FL_LABEL
+00000002  FL_TYPE
+00000004  FL_DATA
+00000006  FL_EXTRA
+00000008  FL_SIZE
+00000001  FT_TEXT
+00000002  FT_CHOICE
+00000000  SCR_TITLE_Y
+00000018  SCR_TOP
+00000168  SCR_BAND_Y
+0000B800  VSEG
+00000168  BAND_Y
+00000444  MIN_T
+00000010  NALLOC
+00000004  NWIN
+00000041  LODE_VER
+0000008A  M33_ST
+00000000  M3_DI
+00000002  M3_SI
+00000008  M3_BX
+0000000A  M3_DX
+0000000C  M3_CX
+0000000E  M3_AX
+00000010  M3_ES
+00000027  M33_N
+00000400  RUN_ROOM
+00000018  LIST_Y
+0000000D  LIST_N
+000000ED  RULE2
+000000F4  FORM_Y
+00000014  ITEM_H
+00000150  INFO_Y
+00000003  TCOL
+0000004D  KEND
+000000F0  MAXENT
+00000000  FOC_TIT
+00000001  FOC_DEV
+00000002  FOC_SUB
+0000000E  SUBJ
+00000042  SUBMAX
+00000800  COPYBUF
+00000044  SC_REL
+
+
+---- Section .text ------------------------------------------------------------
+
+Real              Virtual           Name
+               0                 0  start
+              2D                2D  init
+              4D                4D  init.cdrv
+              5C                5C  init.go
+              5E                5E  ui_load
+              AA                AA  ui_load.fail
+              AD                AD  ui_load.p
+              BB                BB  ui_load.h
+              BE                BE  run_ui
+              CE                CE  s_nouimem
+              FF                FF  ivt_init
+             108               108  ivt_init.l
+             11B               11B  ivt_init.x
+             11E               11E  vec_table
+             131               131  vec_table.v25
+             134               134  vec_table.v26
+             14C               14C  vec_table.v67
+             14F               14F  iret_op
+             150               150  int29
+             156               156  int23
+             158               158  int24
+             15B               15B  int25
+             160               160  int33
+             166               166  int33.x
+             167               167  int67
+             16A               16A  int20
+             170               170  int27
+             17C               17C  int05
+             183               183  capture
+             1A0               1A0  capture.ret
+             1A1               1A1  capture.go
+             1D1               1D1  capture.ext
+             1DA               1DA  capture.next
+             1FB               1FB  capture.fail
+             1FE               1FE  capture.made
+             20E               20E  capture.nol
+             221               221  capture.buf
+             23E               23E  capture.line
+             245               245  capture.len
+             24E               24E  capture.go2
+             252               252  capture.ch
+             259               259  capture.c
+             25E               25E  capture.eol
+             272               272  capture.bmp
+             281               281  capture.row
+             28D               28D  capture.r4
+             29D               29D  capture.px
+             2A6               2A6  capture.end
+             2BA               2BA  capture.nl
+             2C4               2C4  capture.del
+             2CB               2CB  capture.f4
+             2CE               2CE  capture.beep
+             2D0               2D0  capture.b
+             2E2               2E2  cap_b
+             2EA               2EA  cap_fl
+             304               304  cap_fl.bad
+             30A               30A  cap_fl.ok
+             30C               30C  cap_fl.z
+             30E               30E  cap_fl.x
+             30F               30F  bmp_hdr
+             34D               34D  cap_name
+             356               356  cap_num
+             359               359  cap_ext
+             35D               35D  int21
+             37D               37D  int21.stk
+             3B4               3B4  ok
+             3B8               3B8  done
+             3DA               3DA  fail
+             3E8               3E8  ok_ax
+             3ED               3ED  ret_al
+             3F2               3F2  f_bad
+             3F7               3F7  f_fcb
+             3FB               3FB  f_nul0
+             3FF               3FF  ftab
+             4D9               4D9  ctrlc
+             518               518  ctrlc.nc
+             532               532  ctrlc.again
+             535               535  s_ctrlc
+             53A               53A  tty_out
+             540               540  tty_out.tab
+             54F               54F  tty_out.one
+             552               552  tty_out.x
+             555               555  tty_out.put
+             573               573  tty_out.r
+             574               574  tty_out.cr
+             57B               57B  tty_out.bs
+             589               589  con_out
+             5A9               5A9  con_out.file
+             5B7               5B7  con_out.x
+             5BB               5BB  con_puts
+             5C5               5C5  con_puts.x
+             5C6               5C6  stdin_con
+             5DD               5DD  stdin_con.no
+             5DF               5DF  stdin_con.x
+             5E3               5E3  con_in
+             60C               60C  con_in.eof
+             60E               60E  con_in.x
+             614               614  kbd_get
+             623               623  kbd_get.k
+             632               632  kbd_get.have
+             63C               63C  kbd_get.n
+             645               645  kbd_get.x
+             646               646  con_ready
+             658               658  con_ready.file
+             67B               67B  con_ready.no
+             67F               67F  con_ready.yes
+             681               681  con_ready.r
+             684               684  con_ready.x
+             685               685  f_01
+             695               695  f_02
+             69E               69E  f_03
+             6A7               6A7  f_04
+             6B3               6B3  f_05
+             6BF               6BF  f_06
+             6CC               6CC  f_06.in
+             6DB               6DB  f_06.none
+             6E4               6E4  f_07
+             6EA               6EA  f_08
+             6F7               6F7  f_09
+             6FD               6FD  f_09.l
+             70A               70A  f_09.x
+             70D               70D  f_0B
+             716               716  f_0B.x
+             719               719  f_0C
+             723               723  f_0C.fl
+             72F               72F  f_0C.go
+             754               754  f_0A
+             766               766  f_0A.l
+             775               775  f_0A.n3
+             77E               77E  f_0A.n0
+             78F               78F  f_0A.nz
+             7AE               7AE  f_0A.beep
+             7B5               7B5  f_0A.bs
+             7C0               7C0  f_0A.esc
+             7CB               7CB  f_0A.rub
+             7DA               7DA  f_0A.end
+             7EC               7EC  f_0A.x
+             7EF               7EF  clock_init
+             833               833  clock_init.x
+             834               834  bcd2bin
+             848               848  bin2bcd
+             850               850  clock_ticks
+             85E               85E  clock_ticks.d
+             865               865  clock_ticks.x
+             866               866  next_day
+             88F               88F  next_day.x
+             893               893  month_days
+             89B               89B  mdays
+             8AD               8AD  mdays.x
+             8AE               8AE  mdays_tab
+             8BA               8BA  f_2A
+             8D5               8D5  f_2A.y
+             8E4               8E4  f_2A.ny
+             8E7               8E7  f_2A.m
+             8E9               8E9  f_2A.ml
+             904               904  f_2A.dd
+             919               919  f_2B
+             987               987  f_2B.bad
+             98C               98C  f_2C
+             9E1               9E1  f_2D
+             A61               A61  f_2D.bad
+             A66               A66  dos_stamp
+             AE9               AE9  f_0D
+             AF6               AF6  f_0D.x
+             AF9               AF9  f_F0
+             B0B               B0B  f_F0.1
+             B20               B20  f_F0.lend
+             B43               B43  f_F0.nolend
+             B49               B49  f_F0.back
+             B51               B51  f_F0.useg
+             B5A               B5A  f_F0.open
+             B65               B65  f_F0.l
+             B76               B76  f_F0.n
+             B82               B82  f_0E
+             B8D               B8D  f_0E.x
+             B93               B93  f_0E.xe
+             B96               B96  f_19
+             B9C               B9C  f_1A
+             BAB               BAB  f_2F
+             BBA               BBA  f_25
+             BD6               BD6  f_35
+             BF0               BF0  f_2E
+             BFB               BFB  f_54
+             C01               C01  f_30
+             C13               C13  f_33
+             C27               C27  f_33.get
+             C30               C30  f_33.set
+             C3B               C3B  f_33.boot
+             C48               C48  f_34
+             C55               C55  f_37
+             C63               C63  f_37.x
+             C66               C66  f_38
+             C72               C72  f_38.get
+             C95               C95  f_38.bad
+             C9B               C9B  country
+             CBD               CBD  casemap
+             CBE               CBE  f_50
+             CC7               CC7  f_51
+             CD0               CD0  f_52
+             CDD               CDD  f_58
+             CE8               CE8  f_58.set
+             CEB               CEB  f_59
+             CFD               CFD  f_5C
+             D00               D00  f_66
+             D12               D12  f_66.set
+             D15               D15  f_67
+             D1E               D1E  f_67.no
+             D24               D24  f_29
+             D3A               D3A  f_29.sk
+             D5E               D5E  f_29.sk2
+             D60               D60  f_29.ns
+             D82               D82  f_29.bdrv
+             D89               D89  f_29.nod
+             D92               D92  f_29.nm
+             DB4               DB4  f_29.noext
+             DC5               DC5  f_29.done
+             DCF               DCF  f_29.field
+             DD2               DD2  f_29.fl
+             DE8               DE8  f_29.up
+             DEF               DEF  f_29.put
+             DFA               DFA  f_29.star
+             DFF               DFF  f_29.st
+             E0A               E0A  f_29.fe
+             E13               E13  f_29.keep
+             E17               E17  f_29.pad
+             E19               E19  f_29.p
+             E20               E20  f_29.fx
+             E21               E21  f_29.term
+             E28               E28  f_29.t1
+             E39               E39  sepchars
+             E49               E49  lol
+             E6E               E6E  kern_top
+             E6D               E6D  mem_init
+             E84               E84  mem_init.tc
+             E9D               E9D  mem_init.tcat
+             EC5               EC5  mem_init.zm
+             EE3               EE3  mem_merge
+             EE5               EE5  mem_merge.l
+             F17               F17  mem_merge.nf
+             F18               F18  mem_merge.x
+             F1B               F1B  mem_alloc
+             F23               F23  mem_alloc.scan
+             F34               F34  mem_alloc.ok
+             F4E               F4E  mem_alloc.next
+             F5E               F5E  mem_alloc.take
+             F6C               F6C  mem_alloc.full
+             F74               F74  mem_alloc.bad
+             F78               F78  mem_alloc.x
+             F7C               F7C  mem_split
+             FB2               FB2  mem_split.x
+             FB5               FB5  mem_free
+             FC3               FC3  mem_free.x
+             FC5               FC5  mem_mcb
+             FE1               FE1  mem_mcb.ok
+             FE4               FE4  mem_resize
+            1014              1014  mem_resize.grow
+            1017              1017  mem_resize.cut
+            101B              101B  mem_resize.x
+            101D              101D  mem_free_owner
+            1023              1023  mem_free_owner.l
+            1035              1035  mem_free_owner.ok
+            1043              1043  mem_free_owner.n
+            1053              1053  mem_free_owner.x
+            1056              1056  mem_largest
+            1063              1063  f_48
+            1072              1072  f_48.e
+            1078              1078  f_49
+            1083              1083  f_49.e
+            1086              1086  f_4A
+            1094              1094  f_4A.e
+            109A              109A  drv_init
+            10AC              10AC  drv_init.n
+            10B1              10B1  drv_init.d
+            10BB              10BB  drv_init.np
+            10F5              10F5  drv_init.b
+            1108              1108  drv_init.x
+            1109              1109  use_drive
+            110D              110D  use_drive.hk
+            111B              111B  drv_present
+            111E              111E  drv_present.hk
+            1127              1127  drv_present.no
+            1128              1128  cwd_of
+            112D              112D  cwd_of.hk
+            1132              1132  mount_bpb
+            1150              1150  mount_bpb.p
+            1158              1158  mount_bpb.pe
+            121C              121C  mount_bpb.nc
+            1250              1250  mount_bpb.bad
+            1254              1254  mount_bpb.x
+            1259              1259  same_disk
+            12BB              12BB  same_disk.same
+            12D3              12D3  same_disk.sm
+            12D6              12D6  same_disk.diff
+            12D7              12D7  same_disk.x
+            12DF              12DF  drv_ready
+            1302              1302  drv_ready.chg
+            1319              1319  drv_ready.same
+            1347              1347  drv_ready.ok
+            1348              1348  drv_ready.x
+            1349              1349  drv_ready.inv
+            134E              134E  unmount
+            137A              137A  unmount.b
+            1381              1381  disk_reset
+            1396              1396  disk_reset.w
+            1399              1399  disk_reset.f
+            13C0              13C0  fat_load
+            13C3              13C3  fat_load.hk
+            13FB              13FB  fat_load.ok
+            13FC              13FC  fat_load.x
+            13FD              13FD  fat_flush
+            1402              1402  fat_flush.hk
+            1421              1421  fat_flush.c
+            1424              1424  fat_flush.k
+            1431              1431  fat_flush.run
+            1433              1433  fat_flush.r
+            1442              1442  fat_flush.w
+            1461              1461  fat_flush.cd
+            1478              1478  fat_flush.ok
+            147A              147A  fat_flush.e
+            148B              148B  fat_flush.dirty
+            149B              149B  fat_keep
+            14AA              14AA  fat_back
+            14B9              14B9  fat_flush_drv
+            14BD              14BD  fat_flush_drv.hk
+            14C4              14C4  fat_get
+            14C7              14C7  fat_get.hk
+            14D6              14D6  fat_get.e
+            14E1              14E1  fat_get.x
+            14E3              14E3  fat_set
+            14E6              14E6  fat_set.hk
+            14FE              14FE  fat_set.e
+            1504              1504  fat_set.s
+            152E              152E  clu2lba
+            1534              1534  clu2lba.hk
+            1548              1548  clu_alloc
+            1558              1558  clu_alloc.l
+            1560              1560  clu_alloc.t
+            1572              1572  clu_alloc.got
+            1585              1585  clu_alloc.nl
+            158A              158A  clu_alloc.x
+            158E              158E  free_run
+            1591              1591  free_run.hk
+            15A3              15A3  free_run.c
+            15B5              15B5  free_run.even
+            15BF              15BF  free_run.odd
+            15CB              15CB  free_run.stop
+            15D1              15D1  free_run.none
+            15D3              15D3  free_run.x
+            15D8              15D8  free_chain
+            15DB              15DB  free_chain.l
+            15F4              15F4  free_chain.x
+            15F8              15F8  buf_getd
+            15FD              15FD  buf_getd.hk
+            15FF              15FF  buf_get
+            1603              1603  buf_get.hk
+            1603              1603  buf_get.s
+            1605              1605  buf_get.f
+            1615              1615  buf_get.n
+            1622              1622  buf_get.lru
+            1627              1627  buf_get.o
+            1642              1642  buf_get.on
+            1645              1645  buf_get.take
+            1675              1675  buf_get.hit
+            1692              1692  buf_get.err
+            1699              1699  buf_has
+            169D              169D  buf_has.l
+            16AD              16AD  buf_has.n
+            16B5              16B5  buf_has.x
+            16B8              16B8  buf_put
+            16EB              16EB  buf_put.ok
+            16F0              16F0  buf_inval
+            16FB              16FB  buf_inval.tc
+            16FE              16FE  buf_inval.l
+            1709              1709  buf_inval.n
+            1711              1711  buf_inval_range
+            1715              1715  buf_inval_range.hk
+            1715              1715  buf_inval_range.l
+            172E              172E  buf_inval_range.n
+            1737              1737  disk_io
+            173E              173E  disk_io_raw
+            1743              1743  dio
+            1746              1746  dio.hk
+            1755              1755  dio.loop
+            175C              175C  dio.more
+            17AA              17AA  dio.pc
+            17AD              17AD  dio.tcp
+            17C9              17C9  dio.r128
+            17CC              17CC  dio.room
+            17D2              17D2  dio.s1
+            17D8              17D8  dio.s2
+            1801              1801  dio.bread
+            1824              1824  dio.direct
+            1829              1829  dio.adv
+            1844              1844  dio.ok
+            1845              1845  dio.x
+            1852              1852  dio.err
+            1857              1857  dio.bios
+            185C              185C  dio.bios1
+            186D              186D  dio.again
+            18BC              18BC  dio.bcrit
+            18CE              18CE  dio.bfail
+            18D9              18D9  dio.bign
+            18E1              18E1  dio.bok
+            18E3              18E3  dio.bysec
+            18E9              18E9  dio.bs
+            18EE              18EE  dio.bs1
+            1927              1927  dio.bsok
+            193E              193E  dio.wfail
+            194A              194A  dio.wx
+            194B              194B  tc_piece
+            1997              1997  tc_piece.h1
+            19A0              19A0  tc_piece.miss
+            19C6              19C6  tc_piece.rok
+            19DA              19DA  tc_piece.two
+            19F4              19F4  tc_piece.t2
+            19F8              19F8  tc_piece.ra
+            1A05              1A05  tc_piece.nora
+            1A1E              1A1E  tc_piece.spec
+            1A48              1A48  tc_piece.out
+            1A53              1A53  tc_piece.wr
+            1A6A              1A6A  tc_piece.w1
+            1A74              1A74  tc_piece.w2
+            1A7D              1A7D  tc_piece.done
+            1A82              1A82  tc_piece.not
+            1A83              1A83  tc_piece.no
+            1A87              1A87  tc_piece.err
+            1A8A              1A8A  tc_fill
+            1AD5              1AD5  tc_fill.h1
+            1AE8              1AE8  tc_fill.h0
+            1AFD              1AFD  tc_fill.ok
+            1AFE              1AFE  tc_fill.x
+            1B00              1B00  tc_upd
+            1B32              1B32  tc_mine
+            1B43              1B43  tc_mine.x
+            1B45              1B45  tc_room
+            1B54              1B54  tc_room.all
+            1B58              1B58  tc_bios
+            1B70              1B70  tc_keep
+            1B9F              1B9F  tc_keep.l
+            1BA9              1BA9  tc_keep.new
+            1BC0              1BC0  tc_out
+            1BE2              1BE2  use_drive_keep
+            1C14              1C14  use_drive_keep.g
+            1C1E              1C1E  bios_crit
+            1C3D              1C3D  bios_crit.wp
+            1C40              1C40  bios_crit.nr
+            1C43              1C43  bios_crit.snf
+            1C46              1C46  bios_crit.crc
+            1C49              1C49  bios_crit.seek
+            1C4C              1C4C  bios_crit.med
+            1C4F              1C4F  bios2dos
+            1C58              1C58  crit_disk
+            1C7D              1C7D  crit_disk.r
+            1C99              1C99  crit_disk.x
+            1C9A              1C9A  crit_disk.abort
+            1CAD              1CAD  crit_disk.fail
+            1CB0              1CB0  crit_dev
+            1CC2              1CC2  f_36
+            1CC5              1CC5  f_36.hk
+            1CCE              1CCE  f_36.d
+            1CE3              1CE3  f_36.l
+            1CF2              1CF2  f_36.n
+            1CF5              1CF5  f_36.done
+            1D11              1D11  f_36.bad
+            1D19              1D19  get_path
+            1D1F              1D1F  gpath
+            1D26              1D26  gpath.l
+            1D31              1D31  gpath.n
+            1D37              1D37  gpath.s
+            1D44              1D44  gpath.end
+            1D4E              1D4E  gpath.bad
+            1D53              1D53  parse_comp
+            1D76              1D76  parse_comp.dots
+            1D82              1D82  parse_comp.name
+            1D95              1D95  parse_comp.ext0
+            1DA6              1DA6  parse_comp.ok
+            1DAB              1DAB  parse_comp.bad
+            1DAC              1DAC  parse_comp.x
+            1DAF              1DAF  parse_comp.field
+            1DB1              1DB1  parse_comp.fl
+            1DCC              1DCC  parse_comp.chk
+            1DE0              1DE0  parse_comp.put
+            1DE8              1DE8  parse_comp.star
+            1DEA              1DEA  parse_comp.st
+            1DF4              1DF4  parse_comp.fe
+            1DF6              1DF6  parse_comp.err
+            1DF8              1DF8  badchars
+            1E04              1E04  resolve
+            1E07              1E07  resolve_si
+            1E1D              1E1D  resolve_si.d
+            1E40              1E40  resolve_si.c
+            1E4D              1E4D  resolve_si.comp
+            1E84              1E84  resolve_si.npe
+            1E8B              1E8B  resolve_si.last
+            1E9B              1E9B  resolve_si.ok
+            1E9D              1E9D  resolve_si.np
+            1EA1              1EA1  resolve_si.x
+            1EA2              1EA2  dir_entry
+            1EFB              1EFB  dir_entry.rx
+            1EFC              1EFC  dir_entry.r
+            1F1D              1F1D  dir_entry.r0
+            1F22              1F22  dir_entry.sub
+            1F46              1F46  dir_entry.walk0
+            1F4B              1F4B  dir_entry.walk
+            1F5F              1F5F  dir_entry.there
+            1F82              1F82  dir_entry.rd
+            1FB8              1FB8  dir_entry.got
+            1FCB              1FCB  dir_entry.end0
+            1FD1              1FD1  dir_entry.end
+            1FD5              1FD5  dir_entry.x
+            1FDA              1FDA  dir_lim
+            1FF2              1FF2  dir_lim.x
+            1FF3              1FF3  dent_buf
+            200A              200A  dent_buf.x
+            200C              200C  root_pre
+            200F              200F  root_pre.hk
+            2031              2031  dir_find
+            2037              2037  dir_find.l
+            203E              203E  dir_find.e
+            2082              2082  dir_find.n
+            2093              2093  dir_find.end
+            209D              209D  dir_find.no
+            20A3              20A3  name_match
+            20AC              20AC  name_match.l
+            20B6              20B6  name_match.n
+            20BC              20BC  name_match.x
+            20C0              20C0  dir_slot
+            20C3              20C3  dir_slot.l
+            20D7              20D7  dir_slot.got
+            20DA              20DA  dir_slot.end
+            20E5              20E5  dir_slot.last
+            210E              210E  dir_slot.unl
+            2124              2124  dir_slot.full
+            2127              2127  dir_slot.err
+            212C              212C  clu_zero
+            2159              2159  clu_zero.w
+            2173              2173  clu_zero.nw
+            2176              2176  clu_zero.x
+            2180              2180  clu_zero.ok
+            2183              2183  new_entry
+            21C5              21C5  name_out
+            21CA              21CA  name_out.n
+            21D4              21D4  name_out.ne
+            21D7              21D7  name_out.e
+            21E2              21E2  name_out.x
+            21EA              21EA  name_out.z
+            21F0              21F0  find_file
+            2216              2216  find_file.x
+            2217              2217  find_file.nf
+            221C              221C  f_41
+            2248              2248  f_41.acc
+            224B              224B  f_41.e
+            224E              224E  f_43
+            2269              2269  f_43.set
+            2289              2289  f_43.bad
+            228E              228E  f_43.acc
+            2291              2291  f_43.e
+            2294              2294  f_39
+            2322              2322  f_39.z
+            238B              238B  f_39.e3
+            239B              239B  f_39.e4
+            239E              239E  f_39.np
+            23A3              23A3  f_39.acc
+            23A6              23A6  f_39.e
+            23A9              23A9  find_dir
+            23E6              23E6  find_dir.ok
+            23E7              23E7  find_dir.x
+            23E8              23E8  find_dir.np
+            23ED              23ED  f_3A
+            244A              244A  f_3A.chk
+            245C              245C  f_3A.ck
+            246C              246C  f_3A.nx
+            246F              246F  f_3A.full
+            2477              2477  f_3A.empty
+            24A7              24A7  f_3A.cur
+            24AC              24AC  f_3A.np
+            24B1              24B1  f_3A.acc
+            24B4              24B4  f_3A.e
+            24B7              24B7  f_3B
+            24E0              24E0  f_3B.nd
+            24EA              24EA  f_3B.rel
+            24EE              24EE  f_3B.comp
+            24F8              24F8  f_3B.f
+            2501              2501  f_3B.ce
+            250C              250C  f_3B.ap
+            2518              2518  f_3B.dd
+            2532              2532  f_3B.bk
+            2546              2546  f_3B.root
+            254F              254F  f_3B.add
+            2566              2566  f_3B.cp
+            256F              256F  f_3B.cpl
+            2576              2576  f_3B.cpx
+            257D              257D  f_3B.end
+            2580              2580  f_3B.e
+            2583              2583  f_47
+            258F              258F  f_47.d
+            25A2              25A2  f_47.c
+            25AE              25AE  f_47.bad
+            25B4              25B4  f_56
+            2687              2687  f_56.dev
+            268C              268C  f_56.acc
+            268F              268F  f_56.e
+            2692              2692  sft_init
+            26C9              26C9  h2sft
+            26EE              26EE  h2sft.bad
+            26F3              26F3  sft_alloc
+            26FA              26FA  sft_alloc.l
+            270E              270E  sft_alloc.got
+            271A              271A  sft_alloc.x
+            271D              271D  jft_alloc
+            2724              2724  jft_alloc.l
+            2737              2737  jft_alloc.got
+            273A              273A  give_handle
+            2749              2749  sft_busy
+            2752              2752  sft_busy.l
+            2778              2778  sft_busy.n
+            277E              277E  sft_busy.x
+            2782              2782  sft_fill
+            27D2              27D2  dev_lookup
+            27DB              27DB  dev_lookup.f
+            27E8              27E8  dev_lookup.cut
+            27EC              27EC  dev_lookup.fe
+            27F1              27F1  dev_lookup.t
+            27FA              27FA  dev_lookup.c
+            2808              2808  dev_lookup.end
+            2812              2812  dev_lookup.skip
+            281C              281C  dev_lookup.hit
+            2827              2827  dev_lookup.gpib
+            283E              283E  dev_lookup.g
+            2853              2853  dev_lookup.gx
+            2863              2863  dev_lookup.gok
+            286E              286E  dev_lookup.no
+            286F              286F  dev_lookup.x
+            2874              2874  dev_names
+            2899              2899  dev_names.emm
+            28A3              28A3  dev_nums
+            28AC              28AC  dev_open
+            28C5              28C5  dev_open.x
+            28C6              28C6  f_3D
+            28F0              28F0  f_3D.rd
+            2901              2901  f_3D.dev
+            290A              290A  f_3D.acc
+            290D              290D  f_3D.e1
+            290E              290E  f_3D.e
+            2911              2911  f_5B
+            2918              2918  f_3C
+            291D              291D  create
+            2936              2936  create.dev
+            293F              293F  create.e1
+            2940              2940  create.e
+            2943              2943  do_create
+            29D2              29D2  do_create.new
+            29F6              29F6  do_create.open
+            2A08              2A08  do_create.x
+            2A09              2A09  do_create.exists
+            2A0E              2A0E  do_create.np
+            2A13              2A13  do_create.acc
+            2A16              2A16  do_create.err
+            2A18              2A18  f_5A
+            2A4B              2A4B  f_5A.cat
+            2A56              2A56  f_5A.try
+            2A60              2A60  f_5A.h
+            2A90              2A90  f_5A.ok
+            2AB7              2AB7  f_5A.e
+            2ABA              2ABA  f_3E
+            2AD5              2AD5  f_3E.e
+            2AD8              2AD8  sft_release
+            2AE9              2AE9  sft_release.x
+            2AEB              2AEB  sft_commit
+            2B31              2B31  sft_commit.st
+            2B51              2B51  sft_commit.ok
+            2B53              2B53  sft_commit.e
+            2B58              2B58  use_drive_si
+            2B5E              2B5E  sft_read
+            2B6A              2B6A  sft_write
+            2B76              2B76  f_3F
+            2B98              2B98  f_3F.acc
+            2B9B              2B9B  f_3F.e
+            2B9E              2B9E  f_40
+            2BBE              2BBE  f_40.acc
+            2BC1              2BC1  f_40.e
+            2BC4              2BC4  rw_start
+            2BE7              2BE7  rw_step
+            2C0B              2C0B  sft_cluster
+            2C27              2C27  sft_cluster.w
+            2C3B              2C3B  sft_cluster.got
+            2C44              2C44  sft_cluster.no
+            2C47              2C47  sft_cluster_alloc
+            2C67              2C67  sft_cluster_alloc.ext
+            2C7D              2C7D  sft_cluster_alloc.l
+            2C8A              2C8A  sft_cluster_alloc.add
+            2C97              2C97  sft_cluster_alloc.ok
+            2C9A              2C9A  sft_cluster_alloc.x
+            2C9B              2C9B  sft_cluster_alloc.e
+            2C9F              2C9F  rw_where
+            2CCC              2CCC  rw_where.sh
+            2CD2              2CD2  rw_where.one
+            2CE7              2CE7  file_read
+            2D16              2D16  file_read.seq
+            2D2F              2D2F  file_read.sq
+            2D43              2D43  file_read.loop
+            2D97              2D97  file_read.ext
+            2DC6              2DC6  file_read.go
+            2DE0              2DE0  file_read.n1
+            2DE8              2DE8  file_read.n2
+            2E14              2E14  file_read.part
+            2E41              2E41  file_read.c
+            2E59              2E59  file_read.none
+            2E5F              2E5F  file_read.done
+            2E6A              2E6A  file_read.err
+            2E6C              2E6C  sec_of
+            2E75              2E75  pos_sec
+            2E81              2E81  rw_setra
+            2E97              2E97  rw_setra.s
+            2E9D              2E9D  rw_setra.z
+            2EA5              2EA5  file_write
+            2EC1              2EC1  file_write.loop
+            2F31              2F31  file_write.wa
+            2F34              2F34  file_write.wext
+            2F63              2F63  file_write.wend
+            2F9C              2F9C  file_write.wgo
+            2FA6              2FA6  file_write.wn
+            2FB4              2FB4  file_write.n1
+            2FEF              2FEF  file_write.link
+            2FFF              2FFF  file_write.lk
+            3012              3012  file_write.lx
+            3014              3014  file_write.part
+            3035              3035  file_write.c
+            305D              305D  file_write.done
+            3062              3062  file_write.err
+            3064              3064  file_write.grow
+            3076              3076  file_write.gs
+            307C              307C  file_write.gx
+            307D              307D  file_write.setsz
+            30B6              30B6  file_write.zero
+            30C1              30C1  file_write.sz
+            30D4              30D4  dev_read
+            30EA              30EA  dev_read.aux
+            30EE              30EE  dev_read.al
+            3100              3100  dev_read.ax
+            3106              3106  dev_read.gpib
+            311C              311C  dev_read.ge
+            3121              3121  dev_read.nog
+            3126              3126  dev_write
+            3141              3141  dev_write.con
+            3142              3142  dev_write.cl
+            314E              314E  dev_write.cx
+            3151              3151  dev_write.aux
+            315D              315D  dev_write.a1
+            316A              316A  dev_write.a2
+            316E              316E  dev_write.prn
+            3170              3170  dev_write.p1
+            317F              317F  dev_write.p2
+            3183              3183  dev_write.gpib
+            31A0              31A0  con_read
+            31B2              31B2  con_read.give
+            31BF              31BF  con_read.n
+            31D2              31D2  con_read.raw
+            31D3              31D3  con_read.r
+            31DC              31DC  con_read.rx
+            31DF              31DF  con_readline
+            31E4              31E4  con_readline.l
+            31F7              31F7  con_readline.n0
+            3214              3214  con_readline.bs
+            321C              321C  con_readline.esc
+            3224              3224  con_readline.rub
+            3233              3233  con_readline.end
+            3256              3256  f_42
+            327E              327E  f_42.cur
+            3284              3284  f_42.set
+            3290              3290  f_42.bad
+            3293              3293  f_42.e
+            3296              3296  f_44
+            32DE              32DE  f_44.e
+            32E1              32E1  f_44.get
+            32F4              32F4  f_44.gn
+            32FB              32FB  f_44.gr
+            3304              3304  f_44.gd
+            330C              330C  f_44.gf
+            331C              331C  f_44.set
+            3330              3330  f_44.okk
+            3333              3333  f_44.ist
+            334D              334D  f_44.in
+            334F              334F  f_44.iy
+            3354              3354  f_44.idev
+            3365              3365  f_44.ost
+            336B              336B  f_44.rem
+            3377              3377  f_44.rd
+            3386              3386  f_44.bdrv
+            338C              338C  f_44.remote
+            3394              3394  f_44.map
+            3399              3399  f_45
+            33AF              33AF  f_45.e
+            33B2              33B2  f_46
+            33CC              33CC  f_46.free
+            33E0              33E0  f_46.e2
+            33E6              33E6  f_46.e
+            33E9              33E9  f_57
+            3406              3406  f_57.set
+            341C              341C  f_57.x
+            341F              341F  f_57.e
+            3422              3422  f_68
+            3435              3435  f_68.x
+            3438              3438  f_68.e
+            343B              343B  close_all
+            343F              343F  close_all.l
+            345A              345A  close_all.n
+            3463              3463  f_4E
+            3482              3482  f_4E.p
+            34A1              34A1  f_4E.e
+            34A4              34A4  f_4E.ok
+            34A7              34A7  all11
+            34B2              34B2  f_4F
+            34BA              34BA  f_4F.e
+            34BD              34BD  find_next
+            350B              350B  find_next.l
+            351A              351A  find_next.e
+            353A              353A  find_next.nv
+            3546              3546  find_next.m
+            357D              357D  find_next.n
+            358E              358E  find_next.derr
+            3597              3597  find_next.nomore
+            359D              359D  find_next.x
+            359E              359E  proc_init
+            35B1              35B1  proc_init.c
+            35BB              35BB  proc_init.s
+            3648              3648  env0
+            3672              3672  env0_end
+            3672              3672  make_psp
+            3710              3710  make_psp.h
+            3730              3730  make_psp.n
+            3737              3737  make_psp.x
+            373C              373C  make_psp.fcb
+            3749              3749  f_4B
+            3755              3755  f_4B.go
+            37EA              37EA  f_4B.com
+            381D              381D  f_4B.exe
+            382E              382E  f_4B.p
+            3879              3879  f_4B.mx
+            3882              3882  f_4B.mx2
+            3885              3885  f_4B.env
+            3896              3896  f_4B.ge
+            389E              389E  f_4B.el
+            38AE              38AE  f_4B.ee
+            38F4              38F4  f_4B.nm
+            3912              3912  f_4B.sz
+            39CD              39CD  f_4B.csp
+            39E0              39E0  f_4B.lexe
+            39FF              39FF  f_4B.ld
+            3A1C              3A1C  f_4B.c1
+            3A46              3A46  f_4B.rel
+            3A5A              3A5A  f_4B.rl
+            3A68              3A68  f_4B.r1
+            3A85              3A85  f_4B.rp
+            3A9C              3A9C  f_4B.regs
+            3ABC              3ABC  f_4B.close
+            3B26              3B26  f_4B.nomem
+            3B34              3B34  f_4B.e2s
+            3B37              3B37  f_4B.e2
+            3B3F              3B3F  f_4B.uh
+            3B57              3B57  f_4B.un
+            3B67              3B67  f_4B.bad
+            3B6C              3B6C  f_4B.big
+            3B6F              3B6F  f_4B.e1
+            3B78              3B78  f_4B.acc
+            3B7B              3B7B  f_4B.e0
+            3B7E              3B7E  full_name
+            3B94              3B94  full_name.d
+            3BAD              3BAD  full_name.cw
+            3BB5              3BB5  full_name.cwe
+            3BBF              3BBF  full_name.rest
+            3BCD              3BCD  full_name.long
+            3BD7              3BD7  f_00
+            3BDB              3BDB  f_4C
+            3BE0              3BE0  f_31
+            3BEB              3BEB  f_31.k
+            3BF8              3BF8  f_4D
+            3BFE              3BFE  terminate
+            3C27              3C27  terminate.kf
+            3C50              3C50  terminate.free
+            3C55              3C55  terminate.fcall
+            3C58              3C58  terminate.mem
+            3CAE              3CAE  ui_progend
+            3CC6              3CC6  ui_progend.x
+            3CC7              3CC7  root_term
+            3CC7              3CC7  root_restart
+            3CD6              3CD6  gpib_init
+            3D04              3D04  gpib_init.no
+            3D05              3D05  gp_entry
+            3D07              3D07  gp_sig
+            3D0F              3D0F  gp_handler
+            3D1E              3D1E  gp_handler.go
+            3D64              3D64  gp_handler.ok
+            3D7A              3D7A  gp_handler.out
+            3D7A              3D7A  gp_done
+            3D90              3D90  gp_functab
+            3DAC              3DAC  gp_f_present
+            3DBA              3DBA  gp_f_init
+            3DC0              3DC0  gp_f_write
+            3DD4              3DD4  gp_f_read
+            3DE8              3DE8  gp_f_query
+            3E17              3E17  gp_f_spoll
+            3E26              3E26  gp_f_spoll.ok
+            3E2B              3E2B  gp_f_clear
+            3E36              3E36  gp_f_trigger
+            3E3A              3E3A  gp_f_remote
+            3E46              3E46  gp_f_local
+            3E56              3E56  gp_ok0
+            3E5B              3E5B  gp_local_one
+            3E5D              3E5D  gp_addressed
+            3E84              3E84  gp_addressed.n
+            3E8F              3E8F  gp_addressed.f
+            3E92              3E92  gp_uni
+            3EA2              3EA2  gp_f_timeout
+            3EB5              3EB5  gp_f_timeout.c
+            3EBD              3EBD  gp_f_timeout.d
+            3ECC              3ECC  gp_f_timeout.s
+            3ED3              3ED3  gp_f_srq
+            3EEA              3EEA  gp_f_srq.n
+            3EED              3EED  gp_f_stats
+            3EFA              3EFA  gp_f_unload
+            3EFF              3EFF  gp_cmdfail
+            3F05              3F05  gp_fin_ax
+            3F0B              3F0B  gp_fin_ax_cx
+            3F11              3F11  gp_fin_read
+            3F17              3F17  gp_bus_init
+            3F34              3F34  gp_bus_init.ok
+            3F37              3F37  gp_ifc_ren
+            3F43              3F43  gp_ren_on
+            3F53              3F53  gp_do_write
+            3F67              3F67  gp_do_write.r
+            3F9D              3F9D  gp_do_write.wb
+            3FAE              3FAE  gp_do_write.wdo
+            3FBB              3FBB  gp_do_write.nodo
+            3FC2              3FC2  gp_do_write.put
+            3FD9              3FD9  gp_do_write.noeoi
+            3FE7              3FE7  gp_do_write.sent
+            3FEE              3FEE  gp_do_write.wl
+            3FFC              3FFC  gp_do_write.fin
+            4003              4003  gp_do_write.nol
+            400B              400B  gp_do_write.tmo
+            4017              4017  gp_do_write.cf
+            401D              401D  gp_do_write.x
+            4022              4022  gp_fast_write
+            4039              4039  gp_fast_write.n
+            403C              403C  gp_fast_write.w
+            4049              4049  gp_fast_write.g
+            405E              405E  gp_fast_write.out
+            4064              4064  gp_fast_write.x
+            4065              4065  gp_fast_read
+            406E              406E  gp_fast_read.n
+            407D              407D  gp_fast_read.w
+            408A              408A  gp_fast_read.g
+            40AB              40AB  gp_fast_read.ne
+            40B5              40B5  gp_fast_read.stop
+            40BD              40BD  gp_fast_read.slow
+            40C5              40C5  gp_do_read
+            4112              4112  gp_do_read.nz
+            411D              411D  gp_do_read.a
+            4124              4124  gp_do_read.a2
+            4136              4136  gp_do_read.rb
+            413D              413D  gp_do_read.wdi
+            4161              4161  gp_do_read.byte
+            4188              4188  gp_do_read.rd
+            41A3              41A3  gp_do_read.ne
+            41AF              41AF  gp_do_read.ne2
+            41BC              41BC  gp_do_read.full
+            41C1              41C1  gp_do_read.stop
+            41C8              41C8  gp_do_read.cf
+            41CE              41CE  gp_do_read.x
+            41D7              41D7  gp_rd_stop
+            41E3              41E3  gp_unaddr
+            41F4              41F4  gp_unaddr.r
+            41F7              41F7  gp_unaddr.x
+            41F8              41F8  gp_spoll
+            4232              4232  gp_spoll.w
+            4247              4247  gp_spoll.got
+            4252              4252  gp_spoll.fail
+            4257              4257  gp_spoll_end
+            426B              426B  gp_spoll_end.ok
+            4276              4276  gp_chip_init
+            42AF              42AF  gp_wait_tick
+            42B6              42B6  gp_wait_tick.w
+            42C0              42C0  gp_tick
+            42CA              42CA  gp_tmo_start
+            42D7              42D7  gp_tmo_check
+            42E6              42E6  gp_cmd_begin
+            42FB              42FB  gp_cmd_begin.x
+            42FE              42FE  gp_do_gts
+            430E              430E  gp_send_cmd
+            431F              431F  gp_send_cmd.x
+            4320              4320  gp_ensure_ctrl
+            4330              4330  gp_ensure_ctrl.ok
+            4333              4333  gp_clear_in
+            4346              4346  gp_recover
+            4367              4367  gp_isr1_test
+            4379              4379  gp_isr1_test.one
+            4390              4390  gp_isr1_test.none
+            4397              4397  gp_wait_co
+            43A3              43A3  gp_wait_co.w
+            43B7              43B7  gp_wait_co.ok
+            43B8              43B8  gp_wait_co.x
+            43BC              43BC  gp_busy
+            43BD              43BD  gp_err
+            43BE              43BE  gp_shadow1
+            43BF              43BF  gp_shadow2
+            43C0              43C0  gp_eoiflag
+            43C1              43C1  gp_lfstop
+            43C2              43C2  gp_endr
+            43C3              43C3  gp_auxra
+            43C4              43C4  gp_renon
+            43C5              43C5  gp_intno
+            43C6              43C6  gp_c_al
+            43C7              43C7  gp_recov
+            43C9              43C9  gp_ntmo
+            43CB              43CB  gp_tdata
+            43CD              43CD  gp_t_start
+            43CF              43CF  gp_t_len
+            43D1              43D1  gp_count
+            43D3              43D3  gp_done_n
+            43D5              43D5  gp_c_ds
+            43D7              43D7  gp_c_es
+            43D9              43D9  gp_c_si
+            43DB              43DB  gp_c_di
+            43DD              43DD  gp_c_cx
+            43DF              43DF  gp_c_dx
+            43E1              43E1  gp_c_bx
+            43E3              43E3  gp_oldvec
+            43E7              43E7  gp_res_end
+            43E7              43E7  bootbpb
+            4427              4427  bootdrv
+            4430              4430  image_end
+
+---- Section ems --------------------------------------------------------------
+
+Real              Virtual           Name
+            4430              7A70  ems_start
+            4AE1              8121  ems_used
+            4430              7A70  ems_int67
+            443D              7A7D  ems_map
+            4466              7AA6  ems_map.out
+            4478              7AB8  ems_map.e8a
+            447B              7ABB  ems_map.off
+            448A              7ACA  ems_map.e83
+            448D              7ACD  ems_e8b
+            4490              7AD0  ems_gen
+            44AB              7AEB  ems_gen.x
+            44B2              7AF2  ems_gen.bad
+            44B6              7AF6  ems_tab
+            44F2              7B32  ems_e84
+            44F5              7B35  ems41
+            44FA              7B3A  ems_ret
+            44FB              7B3B  ems46
+            4500              7B40  ems59
+            4506              7B46  ems42
+            4513              7B53  ems_ea4
+            4516              7B56  ems_e8f
+            4519              7B59  ems4E
+            4527              7B67  ems4E.s
+            4532              7B72  ems4E.r
+            4533              7B73  ems_size
+            4538              7B78  ems4F
+            4551              7B91  ems4F.l
+            4567              7BA7  ems4F.ok
+            456A              7BAA  ems4F.set
+            456D              7BAD  ems4F.e8b
+            4570              7BB0  ems50
+            4579              7BB9  ems50.l
+            4587              7BC7  ems50.w
+            4597              7BD7  ems50.x
+            4598              7BD8  ems52
+            45B3              7BF3  ems52.x
+            45B4              7BF4  ems52.vol
+            45B8              7BF8  ems53
+            45CB              7C0B  ems53.x
+            45CC              7C0C  ems_e8f2
+            45CF              7C0F  ems58
+            45DF              7C1F  ems58.l
+            45EB              7C2B  ems58.x
+            45EC              7C2C  ems43
+            45F5              7C35  ems5A
+            45F9              7C39  ems_alloc
+            45FF              7C3F  ems_alloc.f
+            4610              7C50  ems_alloc.got
+            462A              7C6A  ems_alloc.nobody
+            462C              7C6C  ems_alloc.own
+            463D              7C7D  ems_alloc.no
+            4641              7C81  ems57
+            469D              7CDD  ems57.up
+            46A0              7CE0  ems57.apart
+            46AE              7CEE  ems57.lap
+            46CB              7D0B  ems57.done
+            46CE              7D0E  ems57.e
+            46DC              7D1C  ems57.next
+            46EF              7D2F  ems57.big
+            472D              7D6D  ems57.back
+            4739              7D79  ems57.xch
+            4742              7D82  ems57.moved
+            4759              7D99  ems57.fw
+            475F              7D9F  ems57.adv
+            476C              7DAC  ems_side
+            4796              7DD6  ems_side.ems
+            47C6              7E06  ems_side.end
+            47DE              7E1E  ems_side.past
+            47E6              7E26  ems_side.e1
+            47E8              7E28  ems_side.e
+            47EA              7E2A  ems_side.ok
+            47EE              7E2E  ems_room
+            4801              7E41  ems_room.x
+            4802              7E42  ems_room.ems
+            480C              7E4C  ems_room.b
+            4818              7E58  ems_piece
+            4828              7E68  ems_piece.f
+            4842              7E82  ems_piece.ems
+            486B              7EAB  ems_rec
+            487F              7EBF  ems_rec.bad
+            4882              7EC2  ems_rec.x
+            4883              7EC3  ems45
+            48A5              7EE5  ems45.none
+            48C1              7F01  ems45.x
+            48C2              7F02  ems_free
+            48D7              7F17  ems_free.s
+            48E0              7F20  ems_free.x
+            48E1              7F21  ems4C
+            48F1              7F31  ems4C.n
+            48F9              7F39  ems4C.x
+            48FA              7F3A  ems54
+            490F              7F4F  ems54.x
+            4910              7F50  ems_lst
+            4919              7F59  ems_lst.l
+            4934              7F74  ems_lst.w
+            4935              7F75  ems_lst.n
+            4949              7F89  ems_lst.r
+            494A              7F8A  ems_resize
+            494E              7F8E  ems_resize.np1
+            4964              7FA4  ems_resize.np2
+            4982              7FC2  ems_resize.less
+            4988              7FC8  ems_resize.turn
+            498F              7FCF  ems_resize.adj
+            499A              7FDA  ems_resize.an
+            49D4              8014  ems_resize.x
+            49D5              8015  ems_rev
+            49D5              8015  ems_rev.l
+            49E3              8023  ems_rev.x
+            49E4              8024  ems_slot
+            49EA              802A  ems_slot.l
+            49F3              8033  ems_slot.x
+            49F4              8034  ems_getmap
+            49F7              8037  ems_getmap.l
+            49FF              803F  ems_setmap
+            4A02              8042  ems_setmap.l
+            4A08              8048  ems_setmap.n
+            4A0E              804E  ems_win
+            4A1A              805A  ems_win.no
+            4A1C              805C  ems_free_owner
+            4A22              8062  ems_free_owner.l
+            4A31              8071  ems_free_owner.n
+            4A40              8080  ems_tc
+            4A69              80A9  ems_tc.in
+            4A8D              80CD  ems_tc.ok
+            4AA0              80E0  ems_lend
+            4ACA              810A  ems_lend.no
+            4ACD              810D  ems_back
+            4ADB              811B  ems_tcpg
+            4ADD              811D  ems_su
+            4ADF              811F  ems_h
+            4B5F              819F  ems_sv
+            4B87              81C7  ems_ltab
+            4C10              8250  ems_end
+
+---- Section hd ---------------------------------------------------------------
+
+Real              Virtual           Name
+            4C10              8250  hd_start
+            4C10              8250  hd_dio
+            4C14              8254  hd_dio.t
+            4C1A              825A  hd_dio.hd
+            4C43              8283  hd_io
+            4C51              8291  hd_io.again
+            4C76              82B6  hd_io.ok
+            4C78              82B8  hd_io.f
+            4C80              82C0  hd_rw
+            4C9A              82DA  hd_rw.cmd
+            4CA5              82E5  hd_rw.n
+            4CAA              82EA  hd_rw.try
+            4CBF              82FF  hd_rw.done
+            4CD3              8313  hd_rw.ok
+            4CD7              8317  hd_cmd
+            4D16              8356  hd_cmd.c
+            4D19              8359  hd_cmd.s
+            4D38              8378  hd_cmd.w
+            4D40              8380  hd_cmd.nx
+            4D59              8399  hd_cmd.ok
+            4D5C              839C  hd_cmd.e
+            4D7A              83BA  hd_cmd.m
+            4D7C              83BC  hd_cmd.x
+            4D85              83C5  hd_wait
+            4D93              83D3  hd_wait.l
+            4DA0              83E0  hd_wait.w
+            4DAF              83EF  hd_wait.x
+            4DB3              83F3  hd_wget
+            4DB7              83F7  hd_wget.f
+            4DC9              8409  hd_wget.o
+            4DD5              8415  hd_wget.on
+            4DFB              843B  hd_wget.hit
+            4E0D              844D  hd_wget.none
+            4E2C              846C  hd_slot
+            4E42              8482  hd_wio
+            4E63              84A3  hd_wio.c
+            4E7F              84BF  hd_wio.e
+            4E82              84C2  hd_wio.x
+            4E89              84C9  hd_wout
+            4EAB              84EB  hd_wout.e
+            4EAD              84ED  hd_wout.x
+            4EB0              84F0  hd_flush
+            4EB3              84F3  hd_flush.l
+            4EBF              84FF  hd_flush.x
+            4EC1              8501  hd_fload
+            4ECA              850A  hd_fload.t
+            4ED0              8510  hd_fflush
+            4EE3              8523  hd_fflush.t
+            4EEB              852B  hd_fdrv
+            4EEF              852F  hd_fdrv.t
+            4EF6              8536  hd_fget
+            4F19              8559  hd_fget.end
+            4F1D              855D  hd_fget.t
+            4F23              8563  hd_fset
+            4F5C              859C  hd_fset.a
+            4F64              85A4  hd_fset.nc
+            4F6A              85AA  hd_fset.x
+            4F6B              85AB  hd_fset.t
+            4F71              85B1  hd_frun
+            4F7E              85BE  hd_frun.l
+            4F8F              85CF  hd_frun.x
+            4F92              85D2  hd_frun.t
+            4F98              85D8  hd_c2l
+            4FBA              85FA  hd_c2l.t
+            4FC3              8603  hd_bget
+            4FCA              860A  hd_bget.t
+            4FD1              8611  hd_bgetd
+            4FD8              8618  hd_bgetd.t
+            4FE0              8620  hd_key
+            4FEE              862E  hd_binv
+            4FF9              8639  hd_binv.l
+            5024              8664  hd_binv.n
+            502D              866D  hd_binv.t
+            5034              8674  hd_rpre
+            503C              867C  hd_rpre.t
+            5042              8682  hd_f36
+            504E              868E  hd_f36.d
+            5052              8692  hd_f36.t
+            5058              8698  hd_f36.c
+            5072              86B2  hd_f36.s
+            507E              86BE  hd_f36.z
+            5080              86C0  hd_f36.zl
+            5086              86C6  hd_f36.zn
+            509A              86DA  hd_f36.k0
+            509C              86DC  hd_f36.k
+            50B8              86F8  hd_i25
+            50BB              86FB  hd_i26
+            50C6              8706  hd_i26.no
+            50C9              8709  hd_i26.c
+            5112              8752  hd_i26.r
+            5113              8753  hd_i26.x
+            511F              875F  hd_i26.ok
+            5123              8763  hd_drv_init
+            5137              8777  hd_plba
+            513B              877B  hd_spt
+            513D              877D  hd_hs
+            513F              877F  hd_fat
+            5141              8781  hd_spf
+            5143              8783  hd_win
+            5145              8785  hd_wsec
+            514B              878B  hd_wage
+            5151              8791  hd_clock
+            5153              8793  hd_free
+            5155              8795  hd_nfat
+            5156              8796  hd_wdirty
+            5157              8797  hd_try
+            5158              8798  hd_err
+            5159              8799  hd_bad
+            5160              87A0  hd_end
+
+---- Section boot -------------------------------------------------------------
+
+Real              Virtual           Name
+            5160              87A0  ems_init
+            5193              87D3  ems_init.pat
+            5195              87D5  ems_init.pw
+            519F              87DF  ems_init.pr
+            51B7              87F7  ems_init.tw
+            51CB              880B  ems_init.tr
+            51DA              881A  ems_init.tn
+            51E0              8820  ems_init.tb
+            51EA              882A  ems_init.off
+            51EF              882F  ems_init.o
+            52A0              88E0  ems_init.ntc
+            52DC              891C  ems_init.no
+            52DE              891E  hd_init
+            52FC              893C  hd_init.w
+            5307              8947  hd_init.h
+            5318              8958  hd_init.cp
+            5337              8977  hd_init.hd
+            5349              8989  hd_init.ir
+            536C              89AC  hd_init.k
+            5372              89B2  hd_init.no
+            5377              89B7  hd_find
+            53BA              89FA  hd_find.here
+            5461              8AA1  hd_find.p
+            5479              8AB9  hd_find.fp
+            54C3              8B03  hd_find.sh
+            54CB              8B0B  hd_find.she
+            5560              8BA0  hd_find.t16
+            557C              8BBC  hd_find.in
+            5596              8BD6  hd_find.ok
+            55A4              8BE4  hd_find.cs
+            55B0              8BF0  hd_find.cn
+            55D3              8C13  hd_find.fok
+            55FD              8C3D  hd_find.no
+            55FF              8C3F  hd_find.rd0
+            560E              8C4E  hd_echo
+            5619              8C59  hd_echo.one
+            562D              8C6D  hd_echo.x
+            562E              8C6E  hd_hooks
+            5698              8CD8  md_stub
+            56AF              8CEF  md_stub.no
+            56B2              8CF2  md_stub_end
+            56B2              8CF2  md_boot
+            56EA              8D2A  md_boot.rd
+            56F9              8D39  md_boot.line
+            56FC              8D3C  md_boot.c
+            570F              8D4F  md_boot.hit
+            5727              8D67  md_boot.num
+            572B              8D6B  md_boot.d
+            5742              8D82  md_boot.dn
+            574A              8D8A  md_boot.next
+            5755              8D95  md_boot.go
+            5761              8DA1  md_s0
+            5766              8DA6  s_mdini
+            5770              8DB0  s_mdeq
+
+---- Section mdt --------------------------------------------------------------
+
+Real              Virtual           Name
+            5780              1000  md_tstart
+            5780              1000  md_res
+            5780              1000  md_dt
+            57A0              1020  md_cwd
+            57E4              1064  md_use
+            57EE              106E  ..@md_rp0
+            57F3              1073  md_use.t
+            57FA              107A  ..@md_rm0
+            57FA              107A  md_pres
+            5801              1081  ..@md_rm1
+            5801              1081  md_pres.t
+            5807              1087  ..@md_rm2
+            5807              1087  md_cwdh
+            580E              108E  ..@md_rp1
+            580F              108F  md_cwdh.t
+            5817              1097  ..@md_rm3
+            5817              1097  md_f0e
+            581C              109C  ..@md_rm4
+            581C              109C  md_dio
+            5820              10A0  md_dio.t
+            5826              10A6  ..@md_rm5
+            5826              10A6  md_dio.m
+            583B              10BB  md_dio.l
+            584B              10CB  md_dio.n
+            5860              10E0  ..@md_rh0
+            586A              10EA  ..@md_rh1
+            5871              10F1  ..@md_rh2
+            5893              1113  md_dio.w
+            58AC              112C  md_dio.cp
+            58B7              1137  md_dio.chk
+            58BB              113B  md_dio.bad
+            58C0              1140  md_dio.ok
+            58CF              114F  md_dio.x
+            58D0              1150  md_res_end
+            58D0              1150  md_entry
+            5909              1189  md_entry.q
+            5910              1190  md_entry.set
+            5924              11A4  md_entry.s
+            5938              11B8  md_entry.w
+            5950              11D0  md_entry.cd
+            5953              11D3  md_entry.c
+            595E              11DE  md_entry.x
+            5960              11E0  md_kbof
+            5966              11E6  md_make
+            5978              11F8  md_make.off
+            5994              1214  md_make.c
+            599A              121A  md_make.p
+            59BD              123D  md_make.r
+            59BE              123E  md_make.in
+            59D4              1254  md_wipe
+            5A0B              128B  md_wipe.o
+            5A0E              128E  md_wipe.r
+            5A12              1292  md_rec
+            5A1F              129F  md_open
+            5A25              12A5  md_open.l
+            5A39              12B9  md_open.n
+            5A40              12C0  md_split
+            5A6A              12EA  md_split.s
+            5AA8              1328  md_split.back
+            5AB1              1331  md_split.no
+            5AB5              1335  md_split.ok
+            5AC8              1348  md_load
+            5AF0              1370  md_load.p
+            5AFC              137C  md_load.m
+            5B08              1388  md_load.h
+            5B0F              138F  md_load.hl
+            5B1B              139B  md_load.g
+            5B2F              13AF  md_geom
+            5B6D              13ED  md_geom.r
+            5C14              1494  md_geom.pl
+            5C28              14A8  md_geom.ck
+            5C32              14B2  md_bs0
+            5C4E              14CE  md_bs0e
+            5C4E              14CE  md_disk
+            5C75              14F5  md_disk.new
+            5C9D              151D  md_disk.x
+            5CA3              1523  md_w1
+            5CB6              1536  md_fatok
+            5CCE              154E  md_fatok.l
+            5CE5              1565  md_fatok.e
+            5CF8              1578  md_fatok.n
+            5CFB              157B  md_fatok.no
+            5CFC              157C  md_fatok.ok
+            5CFD              157D  md_hook
+            5D00              1580  md_hook.l
+            5D1C              159C  md_hook.c
+            5D34              15B4  md_hook.keep
+            5D41              15C1  md_hook.j
+            5D5A              15DA  md_hook.x
+            5D5B              15DB  md_unhook
+            5D5E              15DE  md_unhook.l
+            5D7A              15FA  md_unhook.c
+            5D92              1612  md_unhook.keep
+            5D9F              161F  md_unhook.n
+            5DA4              1624  md_unhook.x
+            5DA5              1625  md_down
+            5DC8              1648  md_down.b
+            5DCF              164F  md_down.bn
+            5DE8              1668  md_down.f
+            5DF3              1673  md_down.d
+            5E23              16A3  md_down.g
+            5E2B              16AB  md_hooks
+            5E55              16D5  md_kb
+            5E57              16D7  md_pg
+            5E58              16D8  md_h
+            5E5A              16DA  md_mode
+            5E5B              16DB  md_mseg
+            5E5D              16DD  md_delta
+            5E5F              16DF  md_env
+            5E61              16E1  md_envp
+            5E63              16E3  md_keep
+            5E66              16E6  md_dte
+            5E86              1706  md_relp
+            5E8C              170C  md_relm
+            5E9A              171A  md_relh
+            5EA2              1722  md_tend
+
+---- Section ui ---------------------------------------------------------------
+
+Real              Virtual           Name
+            5EB0                 0  ui_base
+            5F3D                8D  exec_main
+            5F8D                DD  exec_main.again
+            5F93                E3  exec_main.go
+            5F9C                EC  api_font
+            5FA4                F4  api_font.set
+            5FAE                FE  api_font.n
+            5FB9               109  api_font.g
+            5FC4               114  font_boot
+            5FF9               149  font_boot.line
+            601C               16C  font_boot.sv
+            603B               18B  font_boot.d
+            604C               19C  font_boot.dn
+            6052               1A2  font_boot.font
+            6076               1C6  font_boot.c
+            607E               1CE  font_boot.e
+            608C               1DC  font_boot.next
+            6098               1E8  font_boot.x
+            6099               1E9  font_file
+            60C9               219  font_file.x
+            60CA               21A  api_saver
+            60D4               224  api_saver.t
+            60D9               229  saver_set
+            60E2               232  saver_set.m
+            60F6               246  saver_set.t
+            60FC               24C  ui_int24
+            610A               25A  set24
+            6117               267  unset24
+            6127               277  api_version
+            613C               28C  api_criterr
+            6146               296  api_keyshift
+            6151               2A1  api_setredraw
+            6156               2A6  ui_event
+            615E               2AE  ui_event.l
+            6167               2B7  ui_event.got
+            616F               2BF  ui_poll
+            6171               2C1  read_key
+            6183               2D3  read_key.grey
+            618D               2DD  read_key.x
+            618E               2DE  poll_once
+            61A5               2F5  poll_once.nomouse
+            61B8               308  poll_once.nokey
+            61D0               320  poll_once.idle
+            61E1               331  poll_once.sv
+            61EC               33C  poll_once.ck
+            61FD               34D  poll_once.none
+            6202               352  act_now
+            620B               35B  ptr_restore
+            6215               365  ptr_restore.x
+            6216               366  redraw_all
+            6224               374  redraw_all.nofn
+            6234               384  redraw_all.band
+            6239               389  redraw_all.w
+            624E               39E  redraw_all.x
+            6250               3A0  mouse_init
+            627D               3CD  mouse_init.found
+            6283               3D3  mouse_hook
+            62D8               428  mouse_on
+            62F8               448  mouse_on.h
+            62FB               44B  mouse_on.x
+            62FC               44C  uart_line
+            6318               468  mouse_probe
+            6350               4A0  mouse_probe.poll
+            6365               4B5  mouse_probe.t
+            636F               4BF  mouse_probe.no
+            6371               4C1  mouse_probe.yes
+            6373               4C3  uart_drain
+            6376               4C6  uart_drain.d
+            6389               4D9  uart_drain.x
+            638A               4DA  mouse_off
+            63CC               51C  mouse_off.x
+            63CD               51D  mouse_isr
+            63D0               520  mouse_isr.rd
+            63F0               540  mouse_isr.nf
+            6433               583  mouse_isr.x1
+            643B               58B  mouse_isr.x2
+            645B               5AB  mouse_isr.y1
+            6463               5B3  mouse_isr.y2
+            6474               5C4  mouse_isr.b1
+            647B               5CB  mouse_isr.b2
+            648C               5DC  mouse_isr.done
+            6497               5E7  mouse_event
+            64BD               60D  mouse_event.mv
+            64CB               61B  mouse_event.btn
+            64ED               63D  mouse_event.no
+            64F0               640  int33_ui
+            6509               659  int33_ui.go
+            6516               666  int33_ui.x
+            651A               66A  m33_tab
+            6568               6B8  m33_hook
+            657D               6CD  m33_end
+            659A               6EA  m33_gone
+            65B6               706  m33_gone.x
+            65B9               709  f33_00
+            65C8               718  f33_00.yes
+            65D2               722  f33_00.on
+            65DF               72F  f33_nop
+            65E0               730  m33_soft
+            663D               78D  m33_maxy
+            6652               7A2  m33_maxy.t
+            6665               7B5  m33_maxy.g4
+            666A               7BA  m33_maxy.cga
+            666F               7BF  f33_01
+            667F               7CF  f33_01.x
+            6680               7D0  f33_02
+            668A               7DA  f33_02.d
+            6696               7E6  f33_02.x
+            6697               7E7  f33_03
+            66AA               7FA  f33_04
+            66BC               80C  f33_05
+            66C1               811  f33_06
+            66C4               814  f33_pr
+            66E4               834  f33_pr.out
+            66EE               83E  f33_07
+            66F3               843  f33_08
+            66F6               846  f33_rng
+            6701               851  f33_rng.o
+            670C               85C  f33_09
+            6732               882  f33_0A
+            6747               897  f33_0A.s
+            6751               8A1  f33_0B
+            6764               8B4  f33_0C
+            6783               8D3  m33_psp
+            6789               8D9  f33_14
+            67B4               904  f33_0F
+            67BE               90E  f33_0F.y
+            67C8               918  f33_0F.x
+            67C9               919  f33_15
+            67CF               91F  f33_16
+            67E0               930  f33_17
+            67FF               94F  f33_1A
+            6812               962  f33_1B
+            6825               975  f33_1E
+            682B               97B  f33_1F
+            6831               981  f33_24
+            683F               98F  f33_26
+            6851               9A1  m33_clamp
+            6874               9C4  m33_clamp.one
+            687A               9CA  m33_clamp.lo
+            6880               9D0  m33_clamp.hi
+            6881               9D1  m33_pkt
+            68D6               A26  m33_pkt.b
+            68E7               A37  m33_pkt.p
+            68FB               A4B  m33_pkt.nb
+            6915               A65  m33_pkt.mv
+            6927               A77  m33_pkt.x
+            692B               A7B  m33_step
+            693F               A8F  m33_step.lo
+            6945               A95  m33_step.hi
+            6948               A98  m33_call
+            69AF               AFF  m33_call.gone
+            69B5               B05  m33_call.x
+            69B8               B08  m33_call.r
+            69B9               B09  m33_none
+            69BA               B0A  m33_redraw
+            69C4               B14  m33_draw
+            69E3               B33  m33_draw.mono
+            69E6               B36  m33_draw.text
+            6A06               B56  m33_draw.c
+            6A32               B82  m33_draw.x
+            6A35               B85  m33_draw.gfx
+            6A42               B92  m33_draw.b
+            6A61               BB1  m33_undraw
+            6A9C               BEC  m33_undraw.x
+            6A9F               BEF  m33_undraw.gfx
+            6AA6               BF6  m33_gparm
+            6AC3               C13  m33_gparm.y
+            6AC4               C14  m33_gparm.n
+            6AC5               C15  m33_gfx
+            6AE8               C38  m33_gfx.row
+            6B3A               C8A  m33_gfx.sh
+            6B46               C96  m33_gfx.sd
+            6B61               CB1  m33_gfx.put
+            6B69               CB9  m33_gfx.byte
+            6B9B               CEB  m33_gfx.rest
+            6BA8               CF8  m33_gfx.bd
+            6BA9               CF9  m33_gfx.nb
+            6BB0               D00  m33_gfx.next
+            6BBA               D0A  m33_arrow
+            6BFE               D4E  cur_shape
+            6C18               D68  show_cursor
+            6C70               DC0  show_cursor.x
+            6C71               DC1  move_cursor
+            6C7A               DCA  move_cursor.vis
+            6C93               DE3  move_cursor.a1
+            6CA2               DF2  move_cursor.a2
+            6CB3               E03  move_cursor.u1
+            6CC6               E16  move_cursor.u2
+            6CD6               E26  move_cursor.u3
+            6CE9               E39  move_cursor.u4
+            6CF7               E47  move_cursor.disj
+            6D1B               E6B  move_cursor.done
+            6D3B               E8B  move_cursor.rect
+            6D4B               E9B  move_cursor.w
+            6D60               EB0  move_cursor.h
+            6D65               EB5  compose
+            6D6D               EBD  compose.r1
+            6D90               EE0  compose.c1
+            6D9C               EEC  compose.r1d
+            6DA5               EF5  compose.r2
+            6DD1               F21  compose.noold
+            6DE1               F31  compose.r3
+            6E28               F78  compose.n2
+            6E2E               F7E  compose.nonew
+            6E30               F80  compose.r4
+            6E53               FA3  compose.c4
+            6E5F               FAF  compose.r4d
+            6E62               FB2  compose.old1
+            6E7B               FCB  compose.ox
+            6E7C               FCC  hide_cursor
+            6E8B               FDB  hide_cursor.row
+            6EBB              100B  hide_cursor.nx
+            6EC1              1011  hide_cursor.done
+            6EC8              1018  hide_cursor.x
+            6EC9              1019  mkrows
+            6ECE              101E  mkrows.l
+            6EED              103D  hires
+            6F08              1058  hires.ok
+            6F0B              105B  api_cls
+            6F10              1060  clear_screen
+            6F26              1076  fill_band
+            6F31              1081  fill_band.r
+            6F45              1095  fill_band.none
+            6F47              1097  clip_rows
+            6F59              10A9  clip_rows.ok
+            6F5D              10AD  clip_rows.none
+            6F60              10B0  invert_band
+            6F6F              10BF  invert_band.r
+            6F7C              10CC  invert_band.c
+            6F87              10D7  invert_band.none
+            6F89              10D9  hline
+            6F96              10E6  hline_dots
+            6FA3              10F3  vline
+            6FBD              110D  vline.r
+            6FCC              111C  vline.none
+            6FCE              111E  box
+            6FF1              1141  putc
+            6FFF              114F  putc.bad
+            7001              1151  putc.ok
+            709B              11EB  puts
+            709B              11EB  api_puts
+            709D              11ED  api_puts.l
+            70AD              11FD  api_puts.x
+            70B0              1200  putsn
+            70BF              120F  putsn.n
+            70D3              1223  putsn.x
+            70D6              1226  putsn.l
+            70DF              122F  putsn.bad
+            70E1              1231  putsn.ok
+            7178              12C8  strlen
+            717C              12CC  strlen.l
+            7184              12D4  strlen.x
+            7187              12D7  api_center
+            7198              12E8  api_center.p
+            719F              12EF  center
+            71A3              12F3  sb_str
+            71AB              12FB  sb_str.x
+            71AC              12FC  api_sbstr
+            71B4              1304  api_sbu16
+            71BE              130E  api_sbu32
+            71C6              1316  sb_u16
+            71C8              1318  sb_u32
+            71D0              1320  sb_u32.d
+            71E3              1333  sb_u32.p
+            71ED              133D  sb_u32.x
+            71F1              1341  sb_2d
+            71FA              134A  sb_date
+            7214              1364  sb_date.m
+            7231              1381  sb_date.y
+            7233              1383  api_sbdate
+            723B              138B  api_sbtime
+            7252              13A2  api_sbtime.am
+            7259              13A9  api_sbtime.h
+            7272              13C2  sb_hex4
+            7276              13C6  sb_hex4.l
+            7284              13D4  sb_hex4.d
+            728A              13DA  api_sbhex4
+            728C              13DC  api_sberr
+            72A5              13F5  api_sberr.chk
+            72A9              13F9  api_sberr.find
+            72B4              1404  api_sberr.skip
+            72BB              140B  api_sberr.hit
+            72C0              1410  api_sberr.other
+            72CD              141D  api_sberr.x
+            72D1              1421  read_clock
+            72F0              1440  clock_tick
+            730E              145E  clock_tick.x
+            730F              145F  draw_clock
+            7354              14A4  sb_dmy
+            736E              14BE  sb_dmy.mo
+            7387              14D7  sb_hm
+            739B              14EB  sb_hm.am
+            73A2              14F2  sb_hm.h
+            73BA              150A  bcd
+            73C6              1516  ui_screen
+            73F2              1542  ui_band
+            73FA              154A  band_redraw
+            741E              156E  band_redraw.l2
+            742C              157C  band_redraw.x
+            742E              157E  ui_msg
+            745E              15AE  hold_band
+            746D              15BD  ui_ask
+            748A              15DA  ui_ask.l
+            74A9              15F9  ui_ask.yes
+            74AC              15FC  ui_ask.no
+            74AD              15FD  ui_ask.x
+            74C7              1617  ui_beep
+            74E9              1639  ui_wopen
+            74FC              164C  ui_wopen.ok
+            751C              166C  ui_wopen.nolend
+            751D              166D  ui_wopen.have
+            7546              1696  ui_wopen.push
+            755C              16AC  ui_wopen.x
+            755E              16AE  win_save
+            7570              16C0  win_save.r
+            758D              16DD  win_paint
+            75BE              170E  win_paint.notitle
+            75C3              1713  win_paint.frame
+            75F7              1747  win_paint.x
+            75F9              1749  ui_wclose
+            760A              175A  ui_wclose.real
+            7642              1792  ui_wclose.r
+            765A              17AA  ui_wclose.redraw
+            765D              17AD  ui_wclose.done
+            7667              17B7  ui_wclose.x
+            7669              17B9  win_giveback
+            767D              17CD  win_giveback.x
+            767E              17CE  ui_help
+            768B              17DB  ui_help.c
+            76A5              17F5  ui_help.n
+            76AA              17FA  ui_help.sized
+            76B7              1807  ui_help.t
+            76C2              1812  ui_help.w
+            76D8              1828  ui_help.h
+            7706              1856  help_draw
+            771E              186E  help_draw.l
+            773F              188F  help_draw.x
+            7740              1890  ui_dispatch
+            7742              1892  ui_dispatch.l
+            7759              18A9  ui_dispatch.scan
+            775F              18AF  ui_dispatch.ascii
+            7763              18B3  ui_dispatch.n
+            7768              18B8  ui_dispatch.no
+            776C              18BC  ui_dispatch.hit
+            777B              18CB  lv_draw
+            7786              18D6  lv_draw.l
+            7792              18E2  lv_row
+            77B6              1906  lv_row.f
+            77DC              192C  lv_row.x
+            77DD              192D  lv_key
+            7828              1978  lv_key.mv
+            782B              197B  lv_key.yes
+            782E              197E  lv_key.no
+            7831              1981  lv_move
+            7841              1991  lv_move.p
+            7848              1998  lv_move.in
+            784A              199A  lv_move.x
+            784B              199B  lv_find
+            785C              19AC  lv_find.l
+            7864              19B4  lv_find.t
+            7880              19D0  lv_find.x
+            7881              19D1  lv_set
+            788B              19DB  lv_setsel
+            78B8              1A08  lv_setsel.up
+            78BD              1A0D  lv_setsel.dn
+            78C4              1A14  lv_setsel.full
+            78C7              1A17  lv_setsel.chg
+            78DA              1A2A  lv_setsel.x
+            78DB              1A2B  lv_click
+            7908              1A58  lv_click.again
+            790B              1A5B  lv_click.in
+            7916              1A66  lv_click.out
+            791F              1A6F  ui_edit
+            7924              1A74  ed_enter
+            7957              1AA7  ed_enter.kept
+            795C              1AAC  ed_enter.l
+            79A1              1AF1  ed_enter.ins
+            79AB              1AFB  ed_enter.key
+            79D1              1B21  ed_enter.ctl
+            79DB              1B2B  ed_enter.bksp
+            79E9              1B39  ed_enter.del
+            79EF              1B3F  ed_enter.left
+            7A00              1B50  ed_enter.right
+            7A17              1B67  ed_enter.home
+            7A20              1B70  ed_enter.end
+            7A2E              1B7E  ed_enter.clear
+            7A3E              1B8E  ed_enter.out
+            7A5F              1BAF  ed_enter.click
+            7A63              1BB3  ed_ins
+            7A7C              1BCC  ed_ins.mv
+            7A88              1BD8  ed_ins.put
+            7A8E              1BDE  ed_ins.x
+            7A8F              1BDF  ed_del
+            7A9C              1BEC  ed_del.l
+            7AA6              1BF6  ed_del.x
+            7AA7              1BF7  ed_draw
+            7AB4              1C04  ed_draw.a
+            7AC8              1C18  ed_draw.b
+            7AF3              1C43  ed_draw.c
+            7AFC              1C4C  ed_draw.x
+            7AFE              1C4E  ed_cursor
+            7B1D              1C6D  ed_cursor.x
+            7B1F              1C6F  ui_form
+            7B2B              1C7B  ui_form.go
+            7B8C              1CDC  ui_form.l
+            7BAB              1CFB  ui_form.choice
+            7BAE              1CFE  ui_form.key
+            7C05              1D55  ui_form.next
+            7C1B              1D6B  ui_form.down
+            7C2A              1D7A  ui_form.set
+            7C30              1D80  ui_form.up
+            7C3E              1D8E  ui_form.u1
+            7C41              1D91  ui_form.cnext
+            7C51              1DA1  ui_form.cset
+            7C5C              1DAC  ui_form.cprev
+            7C6A              1DBA  ui_form.cp1
+            7C6E              1DBE  ui_form.click
+            7C9C              1DEC  ui_form.same
+            7CA4              1DF4  ui_form.ok
+            7CA7              1DF7  ui_form.cancel
+            7CA8              1DF8  ui_form.end
+            7CC2              1E12  fm_field
+            7CC9              1E19  fm_field_ax
+            7CEA              1E3A  fm_line_on
+            7CF8              1E48  fm_line_on.x
+            7CF9              1E49  fm_line_off
+            7D07              1E57  fm_line_off.x
+            7D08              1E58  fm_outline
+            7D25              1E75  fm_outline.w
+            7D53              1EA3  fm_outline.h
+            7D54              1EA4  fm_outline.hl
+            7D5E              1EAE  fm_outline.v
+            7D64              1EB4  fm_outline.vl
+            7D6D              1EBD  fm_outline.px
+            7D93              1EE3  fm_value
+            7DC5              1F15  fm_value.t
+            7DCC              1F1C  fm_value.ch
+            7DDC              1F2C  fm_value.o
+            7DEE              1F3E  fm_value.p
+            7E0A              1F5A  fm_value.x
+            7E0C              1F5C  fm_choice_count
+            7E12              1F62  fm_choice_count.l
+            7E18              1F68  fm_choice_count.s
+            7E1F              1F6F  fm_choice_count.x
+            7E21              1F71  fm_paint
+            7E28              1F78  fm_paint.l
+            7E4F              1F9F  fm_paint.x
+            7E50              1FA0  ui_alloc
+            7E5A              1FAA  ui_alloc.l
+            7E76              1FC6  ui_alloc.put
+            7E78              1FC8  ui_alloc.ok
+            7E79              1FC9  ui_alloc.x
+            7E7B              1FCB  ui_free
+            7E82              1FD2  ui_free.l
+            7E8A              1FDA  ui_free.n
+            7E9A              1FEA  run_cleanup
+            7E9F              1FEF  run_cleanup.l
+            7EAF              1FFF  run_cleanup.n
+            7EE5              2035  run_cleanup.x
+            7EE7              2037  ui_findapp
+            7F21              2071  ui_findapp.yes
+            7F24              2074  ui_findapp.x
+            7F29              2079  ui_run
+            7F41              2091  ui_run.dos
+            7F6D              20BD  is_run
+            7F97              20E7  is_run.no
+            7F9C              20EC  exec_raw
+            7FB2              2102  exec_raw.t
+            7FC2              2112  exec_raw.te
+            7FD7              2127  exec_raw.len
+            801F              216F  exec_raw.fail
+            8037              2187  ui_lend
+            804F              219F  ui_lend.x
+            8050              21A0  ui_reclaim
+            807F              21CF  ui_reclaim.some
+            808C              21DC  ui_reclaim.all
+            8097              21E7  ui_reclaim.x
+            8099              21E9  ui_room
+            80E9              2239  ui_room.moved
+            8110              2260  ui_room.dta
+            8128              2278  ui_room.here
+            813C              228C  ui_room.stay
+            813D              228D  ui_room.x
+            813E              228E  run_app
+            814A              229A  run_app.free
+            81B6              2306  run_app.room
+            8237              2387  run_app.abs
+            8244              2394  run_app.rel
+            8250              23A0  run_app.r
+            825D              23AD  run_app.bss
+            8276              23C6  run_app.z
+            82B5              2405  run_app.badf
+            82C0              2410  run_app.badr
+            82C3              2413  run_app.errr
+            82D5              2425  run_app.big
+            82DA              242A  run_app.mem
+            82DF              242F  run_app.bad
+            82E2              2432  run_app.errc
+            82EC              243C  run_app.err
+            82EF              243F  run_app.fail
+            82F5              2445  saver
+            8325              2475  saver.own
+            8337              2487  saver.l
+            8353              24A3  saver.z
+            8357              24A7  saver.key
+            835A              24AA  saver.wake
+            8378              24C8  sv_move
+            839B              24EB  sv_move.new
+            83F9              2549  sv_defrag
+            8440              2590  sv_defrag.d
+            846E              25BE  sv_defrag.n
+            8476              25C6  sv_defrag.x
+            8477              25C7  sv_defrag.no
+            8479              25C9  tick
+            8483              25D3  wait_ticks
+            848A              25DA  wait_ticks.w
+            8496              25E6  s_anykey
+            84A4              25F4  s_confirm
+            84CD              261D  s_formhelp
+            8514              2664  s_am
+            8518              2668  s_pm
+            851C              266C  months
+            8540              2690  s_defrag
+            854E              269E  s_svarg
+            8557              26A7  s_svfont
+            855B              26AB  s_ini
+            8565              26B5  exec_fcb
+            8575              26C5  s_err
+            857C              26CC  dos_msgs
+            86ED              283D  crit_msgs
+            8808              2958  lasttick
+            880A              295A  mx
+            880C              295C  my
+            880E              295E  mb
+            880F              295F  oldmb
+            8810              2960  mflag
+            8811              2961  midx
+            8812              2962  mpkt
+            8815              2965  mbase
+            8817              2967  mirq
+            8818              2968  vecslot
+            881A              296A  oldvec
+            881E              296E  curvis
+            881F              296F  ex_list
+            8823              2973  nent
+            8825              2975  sel
+            8827              2977  top
+            8833              2983  msgshown
+            8834              2984  ex_start
+            8853              29A3  ex_start.hi
+            8864              29B4  ex_loop
+            8881              29D1  ex_loop.ev
+            889F              29EF  ex_loop.k
+            88B9              2A09  ex_loop.click
+            88C4              2A14  ex_loop.form
+            88DF              2A2F  ex_loop.fi
+            88E4              2A34  ex_loop.list
+            8903              2A53  ex_loop.nx
+            890C              2A5C  focus_key
+            8935              2A85  focus_key.r
+            893D              2A8D  focus_key.no
+            893F              2A8F  focus_key.tit
+            8943              2A93  focus_key.move
+            894E              2A9E  focus_key.set
+            8953              2AA3  set_focus
+            896F              2ABF  set_focus.f
+            8998              2AE8  set_focus.dev
+            89B0              2B00  set_focus.sub
+            89B3              2B03  set_focus.draw
+            89B6              2B06  ex_chg
+            89D6              2B26  ex_chg.dev
+            89E3              2B33  ex_chg.chg
+            89EB              2B3B  ex_chg.form
+            89EE              2B3E  ex_chg.bad
+            89FA              2B4A  ex_help
+            8A03              2B53  reboot
+            8A14              2B64  bios_print
+            8A22              2B72  bios_print.x
+            8A23              2B73  load_dir
+            8A49              2B99  load_dir.e
+            8A75              2BC5  load_dir.first
+            8A7F              2BCF  load_dir.err
+            8A84              2BD4  load_dir.full
+            8A8A              2BDA  load_dir.done
+            8A8D              2BDD  get_subject
+            8AA2              2BF2  get_subject.x
+            8AA3              2BF3  relist
+            8AB2              2C02  relist.tit
+            8AC7              2C17  relist.keep
+            8AE6              2C36  relist.r
+            8AE9              2C39  dta2ent
+            8AFA              2C4A  dta2ent.nl
+            8B06              2C56  dta2ent.sk
+            8B0F              2C5F  dta2ent.ext
+            8B15              2C65  dta2ent.el
+            8B1D              2C6D  dta2ent.rest
+            8B3C              2C8C  sort_dir
+            8B48              2C98  sort_dir.i
+            8B4E              2C9E  sort_dir.j
+            8B6A              2CBA  sort_dir.put
+            8B7A              2CCA  sort_dir.x
+            8B7B              2CCB  ent_cmp
+            8B87              2CD7  ent_ptr
+            8B90              2CE0  ex_lvname
+            8BAB              2CFB  ex_lvname.x
+            8BAC              2CFC  ex_lvname.dev
+            8BB4              2D04  sb_title
+            8BB8              2D08  sb_title.c
+            8BC0              2D10  sb_title.x
+            8BC2              2D12  kind_of
+            8BCD              2D1D  kind_of.k
+            8BE3              2D33  kind_of.n
+            8BE8              2D38  kind_of.raw
+            8C08              2D58  kind_of.r1
+            8C12              2D62  kind_of.x
+            8C15              2D65  confirm
+            8C5E              2DAE  confirm.dos
+            8C64              2DB4  confirm.run
+            8C70              2DC0  confirm.write
+            8C7C              2DCC  confirm.x
+            8C7D              2DCD  sel_name
+            8C8E              2DDE  sb_fcb
+            8CA0              2DF0  sb_fcb.e
+            8CA8              2DF8  sb_fcb.x
+            8CAA              2DFA  sel_path
+            8CC9              2E19  sel_path.n
+            8CD3              2E23  run_shell
+            8CE1              2E31  run_shell.v
+            8CFC              2E4C  run_shell.hit
+            8D04              2E54  run_shell.c
+            8D18              2E68  run_shell.go
+            8D1C              2E6C  run_shell.def
+            8D23              2E73  run_shell.d
+            8D2C              2E7C  run_claude
+            8D40              2E90  run_claude.no
+            8D55              2EA5  run_usage
+            8D5D              2EAD  run_write
+            8D63              2EB3  run_named
+            8D6E              2EBE  run_named.no
+            8D81              2ED1  run_run
+            8D93              2EE3  run_run.fail
+            8D9F              2EEF  refresh
+            8DA6              2EF6  dev_str
+            8DBA              2F0A  dev_str.x
+            8DBB              2F0B  ndrives
+            8DCB              2F1B  ndrives.l
+            8DD6              2F26  ndrives.s
+            8DDD              2F2D  ndrives.n
+            8DE9              2F39  has_drv
+            8DEF              2F3F  sub_build
+            8E11              2F61  sub_build.s
+            8E1F              2F6F  sub_build.sel
+            8E27              2F77  sub_build.f
+            8E43              2F93  sub_build.hit
+            8E4E              2F9E  sub_build.t
+            8E52              2FA2  sub_build.none
+            8E53              2FA3  sub_scan
+            8E74              2FC4  sub_scan.r
+            8E8C              2FDC  sub_scan.e
+            8EAF              2FFF  sub_scan.p
+            8ECA              301A  sub_scan.ins
+            8F01              3051  sub_scan.n
+            8F0C              305C  sub_scan.err
+            8F19              3069  sub_scan.x
+            8F1A              306A  sub_ptr
+            8F29              3079  sub_path
+            8F39              3089  sub_path.z
+            8F3D              308D  sub_path.emit
+            8F49              3099  sub_path.p
+            8F5F              30AF  sub_path.r
+            8F61              30B1  run_prog
+            8F93              30E3  run_prog.m
+            8F98              30E8  run_prog.failed
+            8F9E              30EE  cant_run
+            8FA1              30F1  cant_msg
+            8FBF              310F  sb_base
+            8FC1              3111  sb_base.f
+            8FCE              311E  sb_base.s
+            8FD2              3122  sb_base.c
+            8FD7              3127  show_msg
+            8FE6              3136  file_ok
+            8FF6              3146  file_ok.no
+            8FFB              314B  ex_erase
+            9053              31A3  ex_erase.go
+            906A              31BA  ex_erase.x
+            906B              31BB  ex_erase.err
+            9098              31E8  ex_erase.e
+            90A7              31F7  ex_erase.end
+            90D9              3229  ex_erase.m
+            90DF              322F  sub_erase
+            90E9              3239  sub_erase.go
+            913F              328F  sub_erase.bad
+            914E              329E  sub_erase.p
+            915A              32AA  sub_erase.re
+            9162              32B2  sub_erase.x
+            9163              32B3  tree_del
+            9169              32B9  tree_del.open
+            918B              32DB  tree_del.nx
+            91B3              3303  tree_del.dir
+            91C5              3315  tree_del.end
+            91E1              3331  tree_del.err
+            91E6              3336  tree_del.bad
+            91E7              3337  tree_del.x
+            91E8              3338  tw_name
+            91F9              3349  tw_cut
+            91FC              334C  tw_cut.b
+            9206              3356  tw_end
+            9212              3362  sub_copy
+            9227              3377  sub_copy.n
+            9258              33A8  sub_copy.c
+            9262              33B2  sub_copy.in
+            9272              33C2  sub_copy.self
+            9275              33C5  sub_copy.why
+            9278              33C8  sub_copy.x
+            9279              33C9  sub_copy.go
+            92A0              33F0  sub_copy.mk
+            92B7              3407  sub_copy.cp
+            92BA              340A  sub_copy.end
+            92D2              3422  sub_copy.f
+            92F0              3440  sub_copy.kept
+            92F3              3443  sub_copy.sum
+            92F9              3449  sub_copy.same
+            92FF              344F  sub_copy.name
+            930C              345C  sc_list
+            9320              3470  sc_list.l
+            934C              349C  sc_list.m
+            936E              34BE  sc_list.s
+            9392              34E2  sc_list.f
+            93A7              34F7  sc_list.n
+            93AD              34FD  sc_list.nf
+            93B7              3507  sc_list.nx
+            93BD              350D  sc_list.end
+            93D2              3522  sc_list.r
+            93D3              3523  sc_list.err
+            93DE              352E  sc_list.len
+            93E7              3537  sc_list.lx
+            93E8              3538  sc_add
+            942E              357E  sc_add.no
+            9430              3580  sc_copy
+            9436              3586  sc_copy.l
+            947D              35CD  sc_copy.m
+            9492              35E2  sc_copy.t
+            94A2              35F2  sc_copy.e
+            94A8              35F8  sc_copy.c
+            94BA              360A  sc_copy.r
+            94BB              360B  sc_src
+            94CC              361C  sc_cat
+            94D9              3629  sb_join
+            94E6              3636  sb_join.s
+            94E9              3639  pat_init
+            94EF              363F  pat_name
+            94FC              364C  pat_check
+            950D              365D  pat_check.c
+            951D              366D  pat_check.w
+            953E              368E  pat_check.x
+            953F              368F  pat_find
+            954C              369C  pat_here
+            956E              36BE  pat_here.m
+            9597              36E7  pat_here.f
+            95C5              3715  pat_here.end
+            95E1              3731  pat_here.none
+            95E9              3739  pat_here.e
+            95EF              373F  pat_here.x
+            95F0              3740  sb_dirname
+            9601              3751  sb_dirname.n
+            9608              3758  nm_next
+            963B              378B  nm_next.x
+            963C              378C  nm_relist
+            964C              379C  nm_free
+            964F              379F  seg_free
+            9661              37B1  seg_free.x
+            9662              37B2  sb_n_tit
+            9675              37C5  sb_n_tit.x
+            9676              37C6  ex_rename
+            96C4              3814  ex_rename.ok
+            96E6              3836  ex_rename.x
+            96E7              3837  ex_rename.err
+            96F3              3843  ex_copy
+            9702              3852  ex_move
+            9707              3857  xfer
+            9767              38B7  xfer.fail
+            9773              38C3  xfer.bad
+            9779              38C9  xfer.nomk
+            9787              38D7  xfer.x
+            9788              38D8  xfer.same
+            9794              38E4  xfer.m
+            979D              38ED  xfer.kept
+            97A3              38F3  xfer.kmsg
+            97C4              3914  xfer_mkdir
+            97D3              3923  xfer_mkdir.t
+            97F0              3940  xfer_mkdir.ask
+            9810              3960  xfer_mkdir.l
+            982A              397A  xfer_mkdir.last
+            9833              3983  xfer_mkdir.ok
+            9834              3984  xfer_mkdir.x
+            9835              3985  xfer_all
+            9848              3998  xfer_all.t
+            986D              39BD  xfer_all.d
+            987A              39CA  xfer_all.r
+            987B              39CB  xfer_all.same
+            987E              39CE  xfer_all.err
+            988C              39DC  xfer_sum
+            98A4              39F4  sum_to
+            98D8              3A28  sum_to.x
+            98DE              3A2E  xfer_rel
+            98EB              3A3B  xfer_rel.x
+            98EC              3A3C  xfer_cant
+            98F9              3A49  xfer_cant.x
+            98FA              3A4A  xfer_check
+            990B              3A5B  xfer_check.t
+            9921              3A71  xfer_check.one
+            993B              3A8B  xfer_check.x
+            993C              3A8C  xfer_done
+            9952              3AA2  xfer_done.keep
+            9958              3AA8  xfer_done.msg
+            996F              3ABF  xfer_done.m1
+            997A              3ACA  xfer_done.part
+            9992              3AE2  xfer_done.end
+            9998              3AE8  xfer_form
+            99A8              3AF8  xfer_form.t
+            99BB              3B0B  xfer_form.f
+            99BE              3B0E  form_fill
+            99E4              3B34  c_letter
+            99E7              3B37  drv_let
+            99F3              3B43  xfer_dest
+            9A0C              3B5C  xfer_dest.sub
+            9A25              3B75  xfer_dest.s1
+            9A38              3B88  xfer_dest.s2
+            9A4D              3B9D  xfer_dest.s3
+            9A6A              3BBA  xfer_dest.x
+            9A6B              3BBB  xfer_do
+            9AAA              3BFA  xfer_do.cmp
+            9AAC              3BFC  xfer_do.ask
+            9AD3              3C23  xfer_do.left
+            9AD9              3C29  xfer_do.yes
+            9AE0              3C30  xfer_do.new
+            9AE6              3C36  xfer_do.go
+            9AF8              3C48  xfer_do.r
+            9AF9              3C49  xfer_do.other
+            9B0C              3C5C  xfer_do.copy
+            9B1C              3C6C  xfer_do.c1
+            9B57              3CA7  xfer_do.r2
+            9B58              3CA8  move_here
+            9B7C              3CCC  move_here.ren
+            9B86              3CD6  move_here.x
+            9B87              3CD7  same_file
+            9BB0              3D00  same_file.no
+            9BB3              3D03  file_id
+            9BC8              3D18  file_id.x
+            9BC9              3D19  hs_copy
+            9BDE              3D2E  hs_copy.x
+            9BDF              3D2F  copy_file
+            9C06              3D56  copy_file.fail
+            9C17              3D67  copy_file.f1
+            9C25              3D75  copy_file.f2
+            9C28              3D78  cf_open
+            9C5B              3DAB  cf_open.t
+            9C85              3DD5  cf_open.buf
+            9C90              3DE0  cf_open.x
+            9C91              3DE1  cf_data
+            9CC8              3E18  cf_data.x
+            9CC9              3E19  cf_end
+            9D02              3E52  cf_end.name
+            9D16              3E66  cf_end.x
+            9D17              3E67  cf_free
+            9D2A              3E7A  cf_free.fr
+            9D30              3E80  form_title
+            9D40              3E90  cur_dir
+            9D56              3EA6  upcase_trim
+            9D5B              3EAB  upcase_trim.sp
+            9D61              3EB1  upcase_trim.c
+            9D6C              3EBC  upcase_trim.s
+            9D72              3EC2  upcase_trim.st
+            9D78              3EC8  upcase_trim.t
+            9D85              3ED5  upcase_trim.z
+            9D8A              3EDA  has_any
+            9D8B              3EDB  has_any.l
+            9D91              3EE1  has_any.c
+            9D9D              3EED  has_any.n
+            9DA0              3EF0  has_any.y
+            9DA2              3EF2  has_any.x
+            9DA4              3EF4  cant_why
+            9DBD              3F0D  str_eq
+            9DBF              3F0F  str_eq.l
+            9DC9              3F19  str_eq.x
+            9DCC              3F1C  to_fcb
+            9DDA              3F2A  to_fcb.n
+            9DE9              3F39  to_fcb.e
+            9DEF              3F3F  to_fcb.el
+            9DF7              3F47  to_fcb.x
+            9DF8              3F48  relist_at
+            9E02              3F52  relist_name
+            9E10              3F60  relist_name.f
+            9E24              3F74  relist_name.no
+            9E28              3F78  relist_name.hit
+            9E2A              3F7A  place_at
+            9E37              3F87  place_at.s
+            9E44              3F94  place_at.lo
+            9E52              3FA2  place_at.hi
+            9E5B              3FAB  place_at.h2
+            9E61              3FB1  place_at.t
+            9E65              3FB5  place_at.d
+            9E67              3FB7  save_place
+            9E74              3FC4  draw_all
+            9E99              3FE9  draw_all.lbl
+            9EBF              400F  dir_band
+            9ED9              4029  dir_band.more
+            9EEB              403B  dir_band.m
+            9EF1              4041  draw_prompt_default
+            9F08              4058  draw_empty
+            9F1F              406F  draw_empty.x
+            9F20              4070  ex_row
+            9F4D              409D  ex_row.root
+            9F55              40A5  ex_row.sp
+            9F84              40D4  ex_row.dev
+            9F95              40E5  ex_row.x
+            9F96              40E6  ex_row.tit
+            A001              4151  draw_form
+            A031              4181  draw_form.sub
+            A042              4192  draw_form.o
+            A0D4              4224  draw_form.x
+            A0D5              4225  sysinfo
+            A0E3              4233  sysinfo.e1
+            A0F0              4240  sysinfo.e2
+            A115              4265  build_info
+            A12B              427B  build_info.nf
+            A14D              429D  build_info.m
+            A179              42C9  build_info.p
+            A197              42E7  build_info.mo
+            A1B2              4302  ex_keys
+            A214              4364  h_choose
+            A234              4384  h_tab
+            A264              43B4  h_letter
+            A289              43D9  h_confirm
+            A2B6              4406  h_usage
+            A2D6              4426  h_write
+            A306              4456  h_claude
+            A326              4476  h_shell
+            A34E              449E  h_copy
+            A37F              44CF  h_erase
+            A3B2              4502  h_move
+            A3D9              4529  h_rename
+            A402              4552  h_f5
+            A42D              457D  h_code
+            A453              45A3  s_brand
+            A461              45B1  s_hlptitle
+            A474              45C4  prompts
+            A47A              45CA  s_prompt1
+            A494              45E4  s_prdev
+            A4B4              4604  s_prsub
+            A4D5              4625  s_prompt2
+            A4EE              463E  s_sp2
+            A4F1              4641  s_empty
+            A4F2              4642  s_nofiles
+            A4FD              464D  s_lbl_dev
+            A504              4654  s_lbl_sub
+            A50C              465C  s_lbl_tit
+            A512              4662  s_lbl_kind
+            A517              4667  s_dev_a
+            A521              4671  s_dev_c
+            A52E              467E  s_dev_m
+            A540              4690  s_root
+            A545              4695  s_bytes
+            A54C              469C  s_dated
+            A556              46A6  s_nohires
+            A5A9              46F9  s_cpu
+            A5AF              46FF  s_fpu
+            A5B6              4706  s_gap
+            A5BA              470A  s_k
+            A5BC              470C  s_plus
+            A5C0              4710  s_ems
+            A5C6              4716  s_ext
+            A5CC              471C  s_plasma
+            A5DB              472B  s_lcd
+            A5E7              4737  s_panel
+            A5ED              473D  s_mouse1
+            A5F8              4748  s_mouse2
+            A603              4753  s_nomouse
+            A60C              475C  s_bios
+            A612              4762  s_all
+            A616              4766  s_claude
+            A621              4771  s_system
+            A62C              477C  s_write
+            A636              4786  s_notondisk
+            A64B              479B  s_comspec
+            A653              47A3  s_defshell
+            A65F              47AF  s_noopen
+            A67E              47CE  s_ended
+            A685              47D5  s_code
+            A692              47E2  s_cant
+            A69D              47ED  s_cantopen
+            A6A9              47F9  s_cantdir
+            A6BF              480F  s_first
+            A6CF              481F  s_listed
+            A6DB              482B  s_colon
+            A6DE              482E  copy_form
+            A718              4868  move_form
+            A742              4892  sub_form
+            A76C              48BC  del_form
+            A77E              48CE  ren_form
+            A790              48E0  o_drives
+            A79D              48ED  o_repl
+            A7AB              48FB  o_yesno
+            A7B3              4903  s_lbl_tits
+            A7BA              490A  s_lbl_repl
+            A7C2              4912  s_lbl_newer
+            A7CD              491D  s_delete
+            A7D5              4925  s_delp
+            A803              4953  s_erased
+            A80B              495B  s_rokept
+            A81B              496B  s_title
+            A822              4972  s_to
+            A827              4977  s_comma
+            A82A              497A  s_left
+            A84C              499C  s_leftn
+            A85F              49AF  s_allin
+            A86E              49BE  s_dotdot
+            A871              49C1  s_star
+            A876              49C6  s_mkq
+            A897              49E7  s_copy
+            A89D              49ED  s_move
+            A8A3              49F3  s_rename
+            A8AB              49FB  s_copyp
+            A8CA              4A1A  s_movep
+            A8E9              4A39  s_renp
+            A90A              4A5A  s_lbl_new
+            A914              4A64  s_eraseq
+            A92D              4A7D  s_replace
+            A956              4AA6  s_same
+            A97A              4ACA  s_inself
+            A99D              4AED  s_copying
+            A9A6              4AF6  s_moving
+            A9AE              4AFE  s_copied
+            A9B9              4B09  s_moved
+            A9C3              4B13  s_cantcopy
+            A9CF              4B1F  s_cantmove
+            A9DB              4B2B  s_canterase
+            A9E8              4B38  s_cantren
+            A9F6              4B46  s_readonly
+            AA08              4B58  s_titch
+            AA0A              4B5A  s_wildch
+            AA0D              4B5D  s_pathch
+            AA10              4B60  s_badpat
+            AA2B              4B7B  s_badwtit
+            AA5A              4BAA  s_subch
+            AA5E              4BAE  s_badtit
+            AA7E              4BCE  s_badsub
+            AA9E              4BEE  s_partial
+            AAB7              4C07  s_here
+            AABF              4C0F  s_kept
+            AACD              4C1D  k_file
+            AAD2              4C22  k_run
+            AAD6              4C26  k_program
+            AADE              4C2E  k_system
+            AAE5              4C35  k_text
+            AAEA              4C3A  k_data
+            AAEF              4C3F  k_batch
+            AAF5              4C45  k_settings
+            AAFE              4C4E  k_font
+            AB03              4C53  k_profile
+            AB0B              4C5B  k_source
+            AB12              4C62  kinds
+            AB7F              4CCF  font
+            B180              52D0  ui_image_end
+
+---- Section .bss -------------------------------------------------------------
+
+Real              Virtual           Name
+            4430              4430  bss_start
+            4430              4430  indos
+            4431              4431  cap_req
+            4432              4432  cap_lim
+            4434              4434  brkflag
+            4435              4435  verify
+            4436              4436  kbd_scan
+            4437              4437  con_col
+            4438              4438  last_err
+            443A              443A  cc_sp
+            443C              443C  cc_cf
+            443D              443D  term_type
+            443E              443E  onebyte
+            443F              443F  cur_year
+            4441              4441  cur_mon
+            4442              4442  cur_day
+            4444              4444  kstack_end
+            4A44              4A44  kstack_top
+            4C44              4C44  astack_top
+            4C44              4C44  ui_seg
+            4C46              4C46  first_mcb
+            4C48              4C48  mem_top
+            4C4A              4C4A  drvtab
+            4CAA              4CAA  cwdstr
+            4D76              4D76  cur_drv
+            4D77              4D77  act
+            4D78              4D78  actp
+            4D7A              4D7A  fat_drv
+            4D7B              4D7B  fat_dirty
+            4D7C              4D7C  fk_dirty
+            4D7E              4D7E  fat_dmask
+            4D80              4D80  fk_dmask
+            4D82              4D82  tc_seg
+            4D84              4D84  tc_cyl
+            4D86              4D86  tc_drv
+            4D87              4D87  tc_lo
+            4D88              4D88  tc_hi
+            4D89              4D89  tc_lock
+            4D8A              4D8A  tc_bad_drv
+            4D8C              4D8C  tc_bad_cyl
+            4D8E              4D8E  io_spec
+            4D90              4D90  io_ra
+            4D92              4D92  io_drv
+            4D93              4D93  io_op
+            4D94              4D94  io_err
+            4D95              4D95  buf_drv
+            4D9A              4D9A  buf_lba
+            4DA4              4DA4  buf_age
+            4DAE              4DAE  buf_clock
+            4DB0              4DB0  lba_hi
+            4DC0              4DC0  bounce
+            4FC0              4FC0  bootcopy
+            5026              5026  bufs
+            5A26              5A26  fatbuf
+            7226              7226  io_crit
+            7227              7227  io_ign
+            7228              7228  io_s0
+            7229              7229  io_ci
+            722A              722A  io_cl
+            722C              722C  io_pc
+            722E              722E  io_m2
+            7230              7230  io_geo_cyl
+            7232              7232  io_try
+            7233              7233  io_bi
+            7234              7234  io_bios
+            7235              7235  io_sec
+            7236              7236  io_head
+            7237              7237  io_unit
+            7238              7238  io_cyl
+            723A              723A  io_lba
+            723C              723C  io_left
+            723E              723E  io_n
+            7240              7240  io_geo_spt
+            7242              7242  io_geo_heads
+            7244              7244  path_buf
+            72C6              72C6  path2_buf
+            7348              7348  nm11
+            7353              7353  r_drv
+            7354              7354  r_dir
+            7356              7356  r_name
+            7361              7361  r_wild
+            7362              7362  d_lba
+            7364              7364  d_off
+            7366              7366  d_index
+            7368              7368  de
+            7388              7388  de_idx
+            738A              738A  de_lba
+            738C              738C  de_bix
+            738E              738E  de_drv
+            738F              738F  de_root
+            7390              7390  dl_lim
+            7392              7392  it_dir
+            7394              7394  it_cl
+            7396              7396  it_ci
+            7398              7398  new_dir
+            739A              739A  cwd_p
+            739C              739C  ren_drv
+            739E              739E  ren_lba
+            73A0              73A0  ren_off
+            73A2              73A2  ren_de
+            73C2              73C2  sft
+            77E2              77E2  dta
+            77E6              77E6  rw_left
+            77E8              77E8  rw_done
+            77EA              77EA  rw_seg
+            77EC              77EC  rw_off
+            77EE              77EE  rw_sft
+            77F0              77F0  con_line
+            7872              7872  con_lpos
+            7874              7874  con_llen
+            7876              7876  cr_new
+            7877              7877  tmp_at
+            7879              7879  tmp_ins
+            787B              787B  tmp_n
+            787D              787D  rw_cl
+            787F              787F  rw_cix
+            7881              7881  rw_lba
+            7883              7883  rw_run
+            7885              7885  rw_want
+            7887              7887  rw_flast
+            7889              7889  rw_new
+            788B              788B  rw_link
+            788D              788D  rw_t0
+            788E              788E  cur_psp
+            7890              7890  root_psp
+            7892              7892  last_exit
+            7894              7894  term_keep
+            7896              7896  gp_ok
+            7898              7898  ex_hdr
+            78B4              78B4  ex_env
+            78B6              78B6  ex_psp
+            78B8              78B8  ex_size
+            78BA              78BA  ex_load
+            78BC              78BC  ex_ip
+            78BE              78BE  ex_cs
+            78C0              78C0  ex_sp
+            78C2              78C2  ex_ss
+            78C4              78C4  ex_sft
+            78C6              78C6  ex_left
+            78CA              78CA  ex_min
+            78CC              78CC  ex_max
+            78CE              78CE  ex_isexe
+            78D0              78D0  ex_tail
+            78D4              78D4  ex_fcb1
+            78D8              78D8  ex_fcb2
+            78DC              78DC  ex_name
+            7960              7960  ex_rel
+            7A60              7A60  ex_srcenv
+            7A62              7A62  ex_envlen
+            7A64              7A64  ex_seg
+            7A66              7A66  t_ip
+            7A68              7A68  t_cs
+            7A6A              7A6A  ui_far
+            7A70              7A70  bss_end
+            4C8A              4C8A  C_DT
+
+---- Section uibss ------------------------------------------------------------
+
+Real              Virtual           Name
+            52D0              52D0  ui_bss_start
+            52D0              52D0  mfound
+            52D2              52D2  mstarted
+            52D3              52D3  cur_x
+            52D5              52D5  cur_y
+            52D7              52D7  cur_xb
+            52D9              52D9  cur_save
+            52F3              52F3  new_save
+            530D              530D  ubuf
+            5375              5375  cnew_x
+            5377              5377  cnew_y
+            5379              5379  cnew_xb
+            537B              537B  ux0
+            537D              537D  uy0
+            537F              537F  uw
+            5381              5381  uh
+            5383              5383  cflags
+            5384              5384  ptr_on
+            5385              5385  rtc_h
+            5386              5386  rtc_m
+            5387              5387  rtc_y
+            5388              5388  rtc_mo
+            5389              5389  rtc_d
+            538A              538A  title_on
+            538B              538B  title_ptr
+            538D              538D  band1
+            538F              538F  band2
+            5391              5391  held1
+            5393              5393  held2
+            5395              5395  lastact
+            5397              5397  saver_t
+            5399              5399  saver_min
+            539A              539A  sv_notidy
+            539B              539B  lastpoll
+            539D              539D  redraw_fn
+            539F              539F  wdepth
+            53A1              53A1  wover
+            53A3              53A3  wseg
+            53A5              53A5  wcap
+            53A7              53A7  wtop
+            53A9              53A9  wstack
+            53B9              53B9  help_w
+            53C5              53C5  help_tab
+            53C7              53C7  form_w
+            53D3              53D3  lv_cur
+            53D5              53D5  disp_fn
+            53D7              53D7  fm_opt
+            53D8              53D8  fm_lined
+            53D9              53D9  fm_sel
+            53DA              53DA  ed_buf
+            53DC              53DC  ed_max
+            53DE              53DE  ed_col
+            53E0              53E0  ed_y
+            53E2              53E2  ed_w
+            53E4              53E4  ed_pos
+            53E6              53E6  ed_off
+            53E8              53E8  ed_fresh
+            53E9              53E9  ed_keep
+            53EA              53EA  font_name
+            53F7              53F7  font_path
+            5405              5405  fm_ptr
+            5407              5407  fm_cur
+            5409              5409  fm_b1
+            540B              540B  fm_b2
+            540D              540D  crit_err
+            540F              540F  old24
+            5413              5413  run_active
+            5414              5414  lent
+            5415              5415  need_room
+            5416              5416  run_base
+            5418              5418  ui_paras
+            541A              541A  ent_max
+            541C              541C  alloc_tab
+            543C              543C  run_hdr
+            544C              544C  run_hnd
+            544E              544E  run_dta
+            5452              5452  run_ret
+            5454              5454  run_tail
+            54D6              54D6  run_epb
+            54E4              54E4  app_path
+            5534              5534  rowtab
+            5854              5854  tmp
+            58B4              58B4  m33_st
+            58B4              58B4  m33_x
+            58B6              58B6  m33_y
+            58B8              58B8  m33_xmin
+            58BA              58BA  m33_xmax
+            58BC              58BC  m33_ymin
+            58BE              58BE  m33_ymax
+            58C0              58C0  m33_rx
+            58C2              58C2  m33_ry
+            58C4              58C4  m33_remx
+            58C6              58C6  m33_remy
+            58C8              58C8  m33_mx
+            58CA              58CA  m33_my
+            58CC              58CC  m33_btn
+            58CE              58CE  m33_cnt
+            58D0              58D0  m33_np
+            58D4              58D4  m33_px
+            58D8              58D8  m33_py
+            58DC              58DC  m33_nr
+            58E0              58E0  m33_rlx
+            58E4              58E4  m33_rly
+            58E8              58E8  m33_hx
+            58EA              58EA  m33_hy
+            58EC              58EC  m33_gm
+            592C              592C  m33_ts
+            592E              592E  m33_tc
+            5930              5930  m33_hmask
+            5932              5932  m33_hoff
+            5934              5934  m33_hseg
+            5936              5936  m33_hpsp
+            5938              5938  m33_sens
+            593E              593E  m33_st_end
+            593E              593E  m33_dx
+            5940              5940  m33_dy
+            5942              5942  m33_ev
+            5943              5943  m33_busy
+            5944              5944  m33_dn
+            5945              5945  m33_dmode
+            5946              5946  m33_dseg
+            5948              5948  m33_dpos
+            594A              594A  m33_drow
+            594C              594C  m33_save
+            597C              597C  m33_drawn
+            59AC              59AC  m33_tmp
+            59B2              59B2  m33_lb
+            59B4              59B4  m33_rows
+            59B6              59B6  m33_sh
+            59B7              59B7  m33_bk
+            59B8              59B8  m33_und
+            59B9              59B9  sv_due
+            59BB              59BB  sv_col
+            59BD              59BD  sv_y
+            59BF              59BF  sv_seed
+            59C1              59C1  sv_tail
+            59E9              59E9  exec_dta
+            5A15              5A15  entlist
+            5BF5              5BF5  runpath
+            5C45              5C45  argpath
+            5C99              5C99  dir_note
+            5C9B              5C9B  last_sel
+            5C9D              5C9D  last_top
+            5C9F              5C9F  focus
+            5CA0              5CA0  dirty
+            5CA1              5CA1  t_sel
+            5CA3              5CA3  t_top
+            5CA5              5CA5  nsubj
+            5CA7              5CA7  subject
+            5CED              5CED  ex_code
+            5CEF              5CEF  rowmask
+            5CF0              5CF0  panel
+            5CF1              5CF1  convkb
+            5CF3              5CF3  emskb
+            5CF5              5CF5  extkb
+            5CF7              5CF7  equip
+            5CF9              5CF9  biosdate
+            5D01              5D01  kindbuf
+            5D05              5D05  msgbuf
+            5D85              5D85  infobuf
+            5E05              5E05  dstpath
+            5E59              5E59  tmppath
+            5EAD              5EAD  curdir
+            5EF5              5EF5  c_sub
+            5F38              5F38  c_tit
+            5F45              5F45  c_dev
+            5F46              5F46  fcbbuf
+            5F51              5F51  xmode
+            5F52              5F52  x_here
+            5F53              5F53  d_exists
+            5F54              5F54  tmp_made
+            5F55              5F55  tmp_kept
+            5F56              5F56  x_part
+            5F57              5F57  id_src
+            5F5C              5F5C  id_dst
+            5F61              5F61  ftitle
+            5F79              5F79  o_sel
+            5F7B              5F7B  o_top
+            5F7D              5F7D  h_src
+            5F7F              5F7F  h_tmp
+            5F81              5F81  buf_seg
+            5F83              5F83  buf_len
+            5F85              5F85  f_time
+            5F87              5F87  f_date
+            5E05              5E05  tpath
+            5F89              5F89  t_lvl
+            5F8B              5F8B  c_pat
+            5F98              5F98  c_repl
+            5F99              5F99  c_newer
+            5F9A              5F9A  wild
+            5F9B              5F9B  x_skip
+            5F9C              5F9C  nm_seg
+            5F9E              5F9E  nm_max
+            5FA0              5FA0  nm_n
+            5FA2              5FA2  nm_i
+            5FA4              5FA4  n_done
+            5FA6              5FA6  n_skip
+            5FA8              5FA8  s_time
+            5FAA              5FAA  s_date
+            5FAC              5FAC  sc_seg
+            5FAE              5FAE  sc_rd
+            5FB0              5FB0  sc_wr
+            5FB2              5FB2  sc_max
+            5FB4              5FB4  sc_lim
+            69B6              69B6  ui_stack_top
+            69B6              69B6  ui_keep_end
+            69B6              69B6  entries
+            87B6              87B6  ui_bss_end
+

@@ -65,7 +65,7 @@ through the bridge the chat already uses. GPIB only.
   `grid_change_files`, `gpib_send`) and Claude Code asks before every call
   (Tool server limits, below).
 
-**On the GRiD** (`gridos/claude`):
+**On the GRiD** (`os/claude`):
 - `TERMLINK.INC`: the GLP link, moved out of CLAUDE.ASM unchanged except
   for the Term poll (back to back for 2 s after a key or a screen change,
   then once a second) and `link_lost`, the program's part of a failure.
@@ -108,7 +108,7 @@ second; the patched bridge doubles that.
   and stack (+1,440; the keys buffers are 256 of it), plus its buffers as
   before: about 68.9 KB while it runs. A DOS program it runs gets 1.4 KB
   less than with 1.0.
-- GRIDOS.SYS 45,438 bytes, unchanged but for the version (0.4.0); memory for
+- LODE.SYS 45,438 bytes, unchanged but for the version (0.4.0); memory for
   DOS programs unchanged: floppies 562.5 KB, EMS 578.6, C: 559.2, C: and EMS
   575.7.
 - Nothing on the GRiD stays resident.
@@ -155,8 +155,8 @@ fixed and tested:
   is written on its own (not read as Meta-key), colon SGR (`4:3`, colon
   colours) is rewritten for pyte, the socket is created owner-only, the
   title and the keys no longer overlap on row 24, a restarted `claude`
-  starts with a fresh parser, and the old Grid-OS 0.3 strings (the
-  Executive's band and help, GRIDCMD's banner) say 0.4.
+  starts with a fresh parser, and the old Lodestone 0.3 strings (the
+  Executive's band and help, LCMD's banner) say 0.4.
 
 ## Tool server limits
 
@@ -221,7 +221,7 @@ raced only by a program running as you, which could read the files itself.
 
 **Follow-ups after the merge** (from the second review):
 - A device name with a colon got past the check: `A:\AUX:` and `A:\X\COM1:`
-  (the colon was taken for a drive's, leaving an empty name), and Grid-OS's
+  (the colon was taken for a drive's, leaving an empty name), and Lodestone's
   own `EMMXXXX0` wasn't on the list. Both are refused now.
 - `gpib_read` said it was idempotent. It is read-only, but a read empties the
   instrument's output and a poll clears its status, so it now says
