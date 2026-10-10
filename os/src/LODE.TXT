@@ -1,4 +1,4 @@
-Lodestone 0.4.2 - boot floppy
+Lodestone 0.4.3 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\LODEBOOT and answer Y. It adds the Lodestone loader to this disk
@@ -47,7 +47,8 @@ written for it are .RUN files that load next to it:
               too), the clock (Return sets it), devices (the hard disk's
               own name too), GPIB (Return finds instruments by serial
               poll, then sets them back to local), display (Return
-              switches the screen font), screen saver (Return: when it
+              switches the screen font; Space: the start-up picture or
+              not), screen saver (Return: when it
               starts; Space: whether it tidies the disks first), the
               temporary disk M: (Return: its size), about.
 Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
@@ -265,6 +266,16 @@ and GOSBOOT.COM can go.
   "BUILD line 7: File not found".
   COPY takes up to 64 KB at a time from free memory, so big copies go
   faster, and LCMD stays as small as before while a program runs from it.
+
+0.4.3: a start-up picture.  When the kernel has started, LODE.PIC shows
+Fig. 1 of F. A. Annett's Electrical Machinery (1921), "Lodestone
+attracting some iron nails", drawn from lines - the stone and 235 nails,
+each with its head and point - with LODESTONE beside it, for 2 seconds
+or until a key (the key does nothing else).  Copy LODE.PIC to the root of
+this disk to have it; without it Lodestone starts as before.  In System,
+Display, Space turns it off (LODE.INI then says SPLASH=0) and on again.
+It costs DOS programs nothing: the kernel reads it into free memory,
+shows it, and lets the memory go.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

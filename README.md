@@ -8,6 +8,8 @@ It boots from a floppy, shows the Executive, runs ordinary DOS programs (TM5000G
 
 | | |
 |---|---|
+| ![The start-up picture](os/screens/readme/splash.png) | ![System, Display](os/screens/readme/system_display.png) |
+| The start-up picture: Fig. 1 of Annett's *Electrical Machinery* (1921), the stone and 235 nails drawn from vectors (`LODE.PIC`) | System, Display: the font, and the start-up picture (Space turns it off) |
 | ![The Executive](os/screens/readme/executive.png) | ![Copy with a wildcard](os/screens/readme/copy_wildcards.png) |
 | The Executive: GRiD's File form (Device, Subject, Title), the 1520's EMS and serial mouse in the status line | Copy, Move and Delete take wildcards, with Replace and Only newer |
 | ![System, Memory](os/screens/readme/system_memory.png) | ![System, Disks](os/screens/readme/system_disks.png) |
@@ -17,9 +19,9 @@ It boots from a floppy, shows the Executive, runs ordinary DOS programs (TM5000G
 
 *Emulator screenshots (`os/screens/readme_shots.py`), drawn as the 1520's amber plasma shows them.*
 
-## What it does (0.4.2)
+## What it does (0.4.3)
 
-- **A DOS 3.30 kernel** (`LODE.SYS`, 45,466 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
+- **A DOS 3.30 kernel** (`LODE.SYS`, 45,802 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
 - **Disks:**
   - **A:** and **B:** (the external floppy drive), with a cylinder read-ahead cache;
   - **C:**, any IDE drive with a FAT16 partition up to 2 GB, driven through its own registers. The 1520's BIOS only knows a few Conner models, so Lodestone doesn't use it for this. With a drive, C: costs about 3 KB of memory; without one, nothing is loaded.
@@ -32,6 +34,7 @@ It boots from a floppy, shows the Executive, runs ordinary DOS programs (TM5000G
 - **Write:** a GRiDWrite-style text editor.
 - **The screen saver** runs `DEFRAG` on A:, B: and C: in turn, then darkens the screen. A key stops it. Its delay and the tidying are settings.
 - **DEFRAG.COM:** defragments a floppy or C:, with a map of the disk. `/T` tests the free space instead: it writes a pattern into every free sector, reads it back, and marks the clusters that fail. A power cut during any of its writes leaves the old file or the new one, never a damaged one (tested at every write, on a floppy and on C:).
+- **A start-up picture:** `LODE.PIC` (2.5 KB) draws Fig. 1 of F. A. Annett's *Electrical Machinery* (1921), "Lodestone attracting some iron nails" (public domain), from vectors (in 0.25 s in the emulator): the stone as an outline filled row by row, 235 nails at 4 bytes each, LODESTONE beside it. It stays 2 seconds or until a key. A bootstrap in the kernel's start-up code (never resident) reads it into free memory, calls it and lets the memory go, so DOS programs get the same as without it. `SPLASH=0` in `LODE.INI` (System, Display, Space) or no `LODE.PIC` on the disk: no picture.
 - **Screen capture:** Shift-PrtSc saves the screen to `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text) on the boot disk.
 - **An INT 33h mouse** for DOS programs: a serial mouse on COM1 or COM2.
 - **Claude for GRiD** (`os/claude`, `claude-link`): Claude on the GRiD through a Raspberry Pi on the GPIB bus. It can read and edit files, run DOS programs and talk to instruments, each step confirmed on the GRiD. Two ways:
@@ -162,13 +165,14 @@ Run the comparison with `python3 os/bench/compare3.py <GRiD MS-DOS EPROM image> 
 
 | Folder | What |
 |---|---|
-| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk) |
+| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk) |
+| `os/splash` | The start-up picture's source: the 1921 plate, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN` and `WRITE.RUN` |
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `os/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN |
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
 | `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys) |
-| `os/releases` | Builds for the floppy, 0.1 to 0.4.2 |
+| `os/releases` | Builds for the floppy, 0.1 to 0.4.3 |
 | `os/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `os/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB (AR488 Nano) ↔ Pi ↔ Claude (Term: the real Claude Code in a pty, with an MCP server for the GRiD's tools; chat: the Claude API), the AR488 patch, and its tests |
@@ -190,12 +194,13 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 796 checks pass on 0.4.2 (2026-10-09); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 858 checks pass on 0.4.3 (2026-10-09); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
 
 ```sh
 cd os
 python3 tests/test_kernel.py          # 241 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt
 python3 tests/test_apps.py            # 367 checks: UI core, Executive, System, Write, mouse, files (add "shots" for screens/0.3)
+python3 tests/test_splash.py          # 62 checks: the start-up picture, bit for bit on every start-up path; SPLASH=, LODE.PIC, System's switch, memory
 python3 tests/test_hd.py              # 56 checks: drive C:, and C: with M:
 python3 tests/test_defrag.py          # 49 checks: DEFRAG on floppies and C:, the saver's round
 python3 tests/test_claude_kernel.py   # 21 Claude-link scenarios on the kernel
@@ -211,7 +216,7 @@ Some tests need files that aren't in this repo: the GRiD MS-DOS EPROM image (`GR
 
 ## On the GRiD (the floppy loop)
 
-1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN` and whatever programs you want.
+1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODE.PIC` (the start-up picture; leave it off for none), `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN` and whatever programs you want.
 2. Under GRiD MS-DOS (EPROM boot, where the floppy is B:), run `B:LODEBOOT B` once per format.
 3. Restart and tap **F** as the memory count finishes: the 1520 boots the floppy.
 4. A new `LODE.SYS` can simply be copied over; the boot sector follows the FAT chain.
@@ -224,7 +229,7 @@ These aren't ours to publish, even privately: the 1520 BIOS and GRiD MS-DOS ROM 
 
 ## Status
 
-Lodestone 0.4.2 is the current release: 0.4.1 was the rename, and 0.4.2 brings the command prompt's batch language, line editing and screen saver. 0.4.1 boots on the 1520; 0.3.15 is the last release fully tested there, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/lodestone-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
+Lodestone 0.4.3 is the current release: 0.4.1 was the rename, 0.4.2 brings the command prompt's batch language, line editing and screen saver, and 0.4.3 the start-up picture. 0.4.1 boots on the 1520; 0.3.15 is the last release fully tested there, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/lodestone-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
 
 **Next:**
 1. Claude (Term and chat) on the real GPIB bridge, with the Pi 5.

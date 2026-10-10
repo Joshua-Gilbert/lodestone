@@ -814,7 +814,7 @@ hd_init:
         mov     ax, hd_end
 .k:     add     ax, 15
         mov     [kern_top], ax
-.no:    jmp     KSEG:init
+.no:    jmp     sp_hook                 ; (KSPLASH.INC: then KSEG:init)
 
 ; is there a drive, with a FAT16 partition we can use?  CF if not.  Else
 ; the module's data set, and C:'s drive table entry made at [hd_win] + 512

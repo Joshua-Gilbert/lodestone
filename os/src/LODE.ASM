@@ -24,6 +24,8 @@
 ;    KMDISK M:, the temporary disk, in EMS: its installer in the disk
 ;           cache's EMS, its resident part only while M: is on, split off
 ;           the master environment's block
+;    KSPLASH the start-up picture's bootstrap: loads, runs and drops
+;           \LODE.PIC (SPLASH.ASM); load image only, never resident
 ;
 ;  The UI segment (section ui, our COMMON.SHR) follows the kernel in this
 ;  file.  At start-up it is copied into a block of its own (owner 8, "UI")
@@ -86,7 +88,8 @@ init:   cli
         call    gpib_init
         call    proc_init               ; master environment + root PSP
         call    ui_load
-.go:    jmp     short run_ui            ; (KMDISK.INC: to M:'s start-up first)
+.go:    jmp     short run_ui            ; (KSPLASH.INC: to LODE.PIC's bootstrap,
+                                        ;  then KMDISK.INC: to M:'s start-up)
 
 ; The UI section from the loaded file (still at 1000:section.ui.start)
 ; into a block of its own; then its BSS cleared.  Allocated at its image
@@ -189,6 +192,7 @@ section hd
 hd_start:
 %include "KHD.INC"
 %include "KMDISK.INC"
+%include "KSPLASH.INC"                 ; (section boot: LODE.PIC's bootstrap)
 
 ; =====================================================================
 ;  The UI segment: offsets from 0 in a segment of its own

@@ -932,8 +932,8 @@ md_boot:
         jc      .go
         mov     bx, ax
         mov     dx, MD_IBUF
-        mov     cx, 1024
-        mov     ah, 3Fh
+        mov     cx, 4095                ; (SYSTEM may write a little more
+        mov     ah, 3Fh                 ;  than its 1 KB)
         int     21h
         jnc     .rd
         xor     ax, ax

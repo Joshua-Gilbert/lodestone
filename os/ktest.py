@@ -98,9 +98,19 @@ class KPC:
         s.pc.boot(0)
         return s.settle(sim_s)
 
+    def in_splash(s):
+        """The start-up picture is up: KSPLASH.INC marks its start and end
+        with INT 1Ah, BX = BEF0h / BEF1h.  It halts while it waits, but
+        that isn't the machine waiting for input."""
+        on = False
+        for b, *_ in s.pc.marks:
+            if b == 0xF0: on = True
+            elif b == 0xF1: on = False
+        return on
+
     def waiting(s):
         """Waiting for a key (INT 16h blocked) or halted in an idle loop."""
-        return s.pc.blocked or s.pc.halted
+        return (s.pc.blocked or s.pc.halted) and not s.in_splash()
 
     def settle(s, sim_s=6.0):
         """Run until the machine waits for input and the key queue is empty."""
