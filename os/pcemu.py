@@ -616,7 +616,14 @@ class PC:
             o += k
 
     def dma_write(s, lin, data):
-        if not s.in_frame(lin, len(data)): s.mu.mem_write(lin, data); return
+        if not s.in_frame(lin, len(data)):
+            s.mu.mem_write(lin, data)
+            # Unicorn keeps code it has translated from these bytes: a
+            # program loaded where another one ran would run the old one's
+            # code (a real DMA transfer has nothing to keep).  The frame
+            # below is EMS: its bytes reach memory through mapping.
+            s.mu.ctl_remove_cache(lin, lin + len(data))
+            return
         for o, p, f, k in s.frame_runs(lin, len(data)):
             if p is not None: s.ems_store[p * EMS_PAGE + f:p * EMS_PAGE + f + k] = data[o:o + k]
 
