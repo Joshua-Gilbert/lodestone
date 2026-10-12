@@ -614,6 +614,149 @@ Joshua's aim: a command prompt resident Claude can script against, as Claude Cod
 - **Version:** LODE_VER 0042h.
 - **Copy to the floppy** (`releases/0.4.2`): LODE.SYS, LCMD.COM, LODE.TXT, and CMDTEST.BAT, a self-test of the batch language for the 1520 ("All 11 tests passed"). CLEANOLD.BAT deletes the Grid-OS files 0.4.1 replaced. On the 1520 the prompt, history, Tab and the saver all work, and CMDTEST passes all 11 (Joshua).
 
+## Calculator (0.4.4, 2026-10-12)
+Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`CALC 4*4`) and a small window over the Executive like MS-Windows' Calculator. It should use an 80287 or a 287XL when one is fitted. Memory should grow as little as possible, and existing code should be reused.
+- **One engine, two hosts.**
+  - `src/CALC.INC` holds the engine: the parser, the 80287's and the 287XL's code, whole numbers when there is no coprocessor, and the answer as text.
+  - `CALC.COM` (the prompt) and `CALC.RUN` (the window) both `%include` it, so neither stays in memory.
+  - `src/FPU.INC` (`fpu_detect`, 42 bytes) is shared by the engine, the Executive and System.
+- **Which coprocessor.**
+  - Nothing runs on it unless INT 11h says there is one. With no chip, the 286's EM bit may be set, and a coprocessor instruction would trap to INT 7. On the 1520 that bit is POST's own probe, not SETUP's CMOS bit: its `reset.asm` sets it only after the chip answered FNINIT, FNSTCW and FNSTSW, so the Executive's check at start-up never waits on an empty socket.
+  - Then FNINIT, and FNSTSW AX must read 0 (with no chip the 286 reads the idle bus).
+  - After FNINIT an 80287 compares +∞ and −∞ equal (projective infinity); a 287XL or any 387-class chip doesn't.
+- **The grammar** is recursive descent:
+  - `+ - * / ^ ( )`; `\` is the whole part of a division and `%` the remainder (C's: towards 0, the sign of the left);
+  - `-2^2` = −4, `2^3^2` = 2^9, and `2^-1` works;
+  - functions `sqrt sin cos tan atan ln log exp abs`, constants `pi ans`; any other name is the host's (an environment variable in CALC.COM);
+  - a sum that starts with `+ * / \ % ^` goes on from the answer.
+  - Brackets go 24 deep and 20 operators can wait at once ("Too deep"), so the `.RUN` stays well inside the Executive's stack.
+- **With a coprocessor:**
+  - the number being worked on is ST0, and the left side of each operator waits in a 10-byte slot, so the coprocessor's stack never holds more than four;
+  - all exceptions stay masked (there is no IRQ 13 handler);
+  - at the end, FSTSW (invalid, zero divide, overflow) and FXAM (a NaN or ∞ that slipped by without a flag) give "Not a number", "Divide by zero" or "Too big".
+- **The 80287's ranges.** On an 80287, FYL2X, F2XM1, FPTAN, FPATAN and FSCALE outside their ranges give garbage with no flag. So:
+  - ln and log check x > 0 first;
+  - sin, cos and tan reduce with FPREM by π/4, which also gives the octant, then FPTAN (never at 0, never at π/4: an odd octant uses (X−Y)/(X+Y)); sin and cos are Y and X over their hypotenuse, swapped and signed for the octant;
+  - in degrees they reduce by 45 instead (exact), and only the remainder becomes radians, on both chips: multiples of 45 land on r = 0, so `cos(90)` and `sin(180)` are 0 and `tan(90)` is "Divide by zero";
+  - atan keeps 0 < Y < X (π/2 − atan(1/v) above 1; 0 and ±1 exactly);
+  - `^` multiplies out a whole exponent up to 32767 (exact, and a negative base works), else 2^(y·log₂x) with F2XM1 on 0…½ and FSCALE under 2^14.
+- **What the 287XL adds:** FSIN, FCOS and full-range FPTAN and FPATAN. In radians they are used directly, faster and exact for big angles, with the 80287's way kept for |x| ≥ 2^63.
+- **The answer:** 15 digits, written out from 0.00001 to 10^15, else `1.5E+20`.
+  - The decimal exponent comes from FXTRACT's binary one × log₁₀2, corrected by the scaled value. It was FYL2X, but QEMU computes that through host doubles, which overflowed past 1e308 in the emulator; FXTRACT is exact on both.
+  - Then the value is scaled to 15 digits, FRNDINT, FBSTP.
+  - 999999999999999.9 gives `1E+15`, and 0.1+0.2 gives `0.3`.
+- **Without a coprocessor:**
+  - whole numbers, 32 bits signed, with `+ - * \ % ^`, checked for overflow ("Too big");
+  - `/` when it comes out whole (6/2 = 3; 7/2 says "Needs an 80287"), as do a decimal point, `E` and the functions (ABS works);
+  - so `CALC N=N+1` gives the same in a batch file with or without a chip.
+- **CALC.COM:** `CALC [/D] [name=]expression`.
+  - The answer goes to standard output, so `> FILE` works. An error goes to standard error as `CALC: Divide by zero` and the like, with ERRORLEVEL 1, for `&&`, `||` and `IF ERRORLEVEL`.
+  - Names are read from its copy of the environment.
+  - `name=` writes the answer into LCMD's environment through PSP:16h, as LCMD's SET does it (the old one out, the new one at the end, "Out of environment space"). The kernel gives a child a copy, so its own would be lost.
+  - It writes only when the parent's environment block is owned by the parent and is exactly LCMD's 40h paragraphs (`ENVPARA`, from `LCMDENV.INC`, which LCMD.ASM includes too). The Executive's is the master environment, which M:'s 0.3 KB shares, and it is never written; under any other parent `name=` prints the answer, then "CALC: name= works only at the command prompt" with ERRORLEVEL 1.
+  - Names are up to 15 letters and values up to 31 characters; longer is "Name too long" or "Value too long", never cut short into another name or number. The name errors say which name.
+  - An answer it couldn't write (a full disk under `> FILE`) is "Can't write the answer", ERRORLEVEL 1.
+  - `CALC /?` says how to use it, and which coprocessor it found, on standard output. `CALC` alone or a wrong switch says the same on standard error with ERRORLEVEL 1.
+  - It leaves the coprocessor as FNINIT leaves it, so no sticky flag waits for the next program (on the 1520, POST unmasks IRQ 13 when there is a chip).
+- **CALC.RUN** (CODE-K) is a 38-byte by 228-pixel window, with 8.5 KB of save-under in the lent cache memory:
+  - the core's line editor for the sum;
+  - the answer under it, right-aligned;
+  - a 6×6 keypad drawn, hit-tested and acted on from one table.
+  - A click ends `UI_EDIT`, so the window adds the key's text itself. After an answer it starts afresh, as typing does. It then pushes one End key with INT 16h AH=05h, so `UI_EDIT` doesn't replace the line at the next key typed. Keys typed meanwhile are taken out first (AH=11h/10h, as the core reads them) and put back after the End, in order, so End always has room and comes first.
+  - F2 or the Deg key switches to degrees, and the key is lit while on. F1 is its help. ESC or CODE-K closes it.
+- **API 5:** the window never sets a redraw routine. So:
+  - `run_app` no longer clears the caller's. The Executive's `relist` stays underneath, and after the saver (or a save-under that couldn't be lent) the Executive and then the window are redrawn.
+  - Exit code 0FFFFh means the screen is as the program found it, and `run_run` skips the directory read and redraw.
+  - System, Write and UITEST set their own routine before their first `UI_EVENT`, so nothing changes for them.
+  - Each `.RUN` now says which API it needs: `RUN_API equ n` after the include, which `mkrun.py` writes into the header (else `UI_API`, and never more than it). System, Write and UITEST declare 4 and CALC.RUN 5, so 0.4.4's SYSTEM.RUN still runs on an older LODE.SYS; WRITE.RUN and UITEST.RUN are byte for byte 0.4.3's.
+- **The coprocessor lamp:**
+  - the Executive's info line shows ` 80287 ` or ` 80287XL ` lit (inverse) after `80286`, and nothing when there is none;
+  - it is probed (`fpu_detect`, after INT 11h), not taken from the CMOS bit;
+  - the Executive keeps one byte, the lamp's width (0, 7 or 9), for both the text and the inverse;
+  - System's Devices names it the same way (`80287XL`, `80287`, `none`).
+- **The 287 elsewhere: nothing to gain.** Every `mul`/`div` on the busy paths is a single 16-bit instruction of 13 to 25 cycles:
+  - sector maths (`KDISK.INC`);
+  - EMS pages (`KEMS.INC`);
+  - one per edge row in the start-up picture;
+  - cluster maths in DEFRAG;
+  - decimal printing.
+
+  The ESC handshake and the operand transfer alone cost more, and `rep movsw` moves memory faster than FILD/FISTP. Using the 287 inside the kernel would also need FSAVE/FRSTOR around a DOS program's own work. Its wins are floating point: this, and the plot view and instrument programs to come.
+- **The emulator:** pcemu's CPU is QEMU's, 387-class, so it reads as a 287XL. The 80287's code paths are tested with a build that uses them anyway (`-DCALC_287`). QEMU's own shortcuts:
+  - FSQRT of a negative without the invalid flag;
+  - an overflow to ∞ without the overflow flag;
+  - FPREM and the transcendentals through host doubles: the 80287 path is right to 1e−12 up to |x| = 10^4, and only to 1e−11 at 10^6, where the real FPREM is exact.
+
+  The FXAM check covers the first two; the 1520 checks the rest.
+- **Cost:**
+  - LODE.SYS 45,930 bytes (+128): the lamp's detection and drawing, CODE-K, and the `relist` skip. Resident +128 bytes (8 paragraphs), so a DOS program gets 562.3 / 578.4 KB (was 562.5 / 578.6).
+  - CALC.COM 3,627 bytes and CALC.RUN 4,160 bytes (3,708 + 607 BSS) cost nothing until they run.
+  - LCMD.COM is unchanged, byte for byte.
+  - SYSTEM.RUN is 10,376 bytes (+60).
+- **Review (an independent agent):** 9 findings, 5 of them reproduced in pcemu. All are fixed except (8), with tests:
+  1. **The window's line was wiped by any key that ends the line editor** (F2, F1, Tab, the arrows, a click off the keys): the next character replaced the whole sum. Now the window goes back to the editor with End first, unless the line is the answer's.
+  2. **A leading `+` didn't go on from the answer:** it was taken as a plus sign. Fixed.
+  3. **FPREM on an infinity could loop forever on a real 80287**, which leaves C2 undefined there (`sin(1e5000)`, `(1/0)%3`). FPREM now runs only on a number, by the same check as at the end.
+  4. **`name=` could write into another program's environment** when the copy EXEC made for it happened to be 1 KB. Now nothing may follow the block's end: EXEC's copies carry 0001h and the program's name there.
+  5. **`0^-0.5` gave 0.** It is now "Divide by zero".
+  6. **A full environment lost the old variable:** it was taken out before the room was checked. The room is now checked first.
+     - The first version of that fix summed in AX across a `strlen` that changes AL. That let a 1016-byte environment overflow into the next MCB. The new test caught it, and it is fixed.
+     - LCMD's own SET still behaves as before here.
+  7. **INT 16h AH=05h on the 1520:** confirmed in GRiD's BIOS source (`KbPlaceChar`, which puts the key at the buffer's tail).
+  8. **API 5's two changes apply to older `.RUN`s too.** Left as is: every `.RUN` there is sets its redraw routine first and none returns 0FFFFh, and checking the header's API would cost resident bytes.
+  9. **A stale strip after the Executive was redrawn under the window** (the saver, then a changed listing). The window counts its paints, and when it was repainted it exits with 0, so the Executive reads the disk and redraws.
+- **A persona review (2026-10-12):** three reviewers, each with one engineering culture's lens (SpaceX: delete what isn't needed; Jane Street: invariants; Amazon: how it fails in use), 17 findings after merging. Ten were fixed, and the nine bugs among them each have a test. Eight of those tests were run against the code before and failed; the ninth, the API stamp, fails by construction (the old `mkrun.py` wrote 05 into every header):
+  1. **`name=` under a parent that isn't LCMD printed, set nothing and gave ERRORLEVEL 0,** so `:loop / calc i=i+1 / if not %i%==3 goto loop` would never end. Now "name= works only at the command prompt", ERRORLEVEL 1, and `ENVPARA` comes from one file (`LCMDENV.INC`) for LCMD and CALC. (All three reviewers.)
+  2. **`mkrun.py` stamped every `.RUN` with the current API,** so 0.4.4's SYSTEM.RUN would be "Not a program" on a floppy with an older LODE.SYS. Now `RUN_API` (above).
+  3. **Misuse looked like success:** `CALC /X`, `CALC %UNSET%` and a bare `CALC` printed the usage to standard output with ERRORLEVEL 0. Now standard error and 1; `CALC /?` for the usage on purpose.
+  4. **Sticky flags left on the coprocessor** after a good answer (only an error ran FNINIT). `calc_fmt` now ends with FNINIT. Mattered more than it looked: POST unmasks IRQ 13 on the 1520.
+  5. **Write errors ignored:** `CALC 6*7 > FILE` on a full disk left an empty file and ERRORLEVEL 0.
+  6. **The window's paint count was a byte:** the 257th repaint made it 1 again, and the window would close with 0FFFFh over a stale save-under. Now a sticky shift (1, 3, 7 … FF).
+  7. **Long names and values were cut short silently:** a 33-digit value became a number 100 times smaller. Now "Name too long" / "Value too long", and the name errors say which name.
+  8. **The window's End key queued behind type-ahead,** so a key typed while a click was handled wiped the clicked sum (and a full BIOS buffer dropped it). Keys typed meanwhile now come out and go back after the End.
+  9. **Degrees gave chip-dependent answers:** π/180 was applied before reducing, so `/D cos(90)` printed 6.12323399573677E-17 in pcemu (a smaller but still non-zero number on a real 287XL) while the 80287's path could print 0. Now reduced by 45 in degrees on both.
+  10. **Resident bytes:** `run_usage` jumps to `run_write.e`, and the lamp's width is worked out once, at start-up. 8 bytes of code, but the resident block was 6 bytes into its last paragraph, so DOS programs get 16 bytes back.
+
+  Settled without a change: **the start-up probe can't hang on an empty socket** (POST's own probe sets INT 11h's bit, above). Left as they are, by choice: delete the 287XL's code or the whole-number engine (both were asked for; the 80287's path is tested by `-DCALC_287`), gate API 5's changes on the header (resident bytes), compare the memory check with 0.4.3's LODE.SYS rather than fixed figures, `ans` and the leading operator in the one-shot CALC.COM, and a guard in `draw_ans` that can't fire.
+- **Tests:**
+  - `test_kernel.py` `t_calc` (114 checks):
+    - sums, formatting and errors with ERRORLEVEL;
+    - redirection;
+    - `name=`, counting in a batch file, and `%%`;
+    - the review's environment cases (a 1 KB copy, a full block);
+    - the 80287's code paths against Python;
+    - FPREM never on an infinity;
+    - a parent that isn't LCMD (`RUNCALC.COM`, which prints CALC's exit code);
+    - whole numbers with INT 11h saying none;
+    - the persona review's: degrees on both paths, long names and values, `/?` and misuse, the coprocessor's status word after a sum, and a full disk.
+  - `test_apps.py` `t_calc` (33):
+    - the lamp lit and absent, and System's Devices;
+    - the window: keys, `+1` and `*10` after an answer, Up and F2 inside a sum, the keypad, Deg lit, help, errors;
+    - the screen byte for byte after ESC, with the UI block back to its size;
+    - the saver with the window open, then exit code 0, and again after 257 repaints;
+    - keys typed while a click is handled (put in the BIOS buffer as `keep_line` starts, through pcemu's block watch);
+    - the `.RUN` headers: CALC 5; System, Write and UITEST 4;
+    - no CALC.RUN, and the Executive's help.
+  - The re-baselines:
+    - `test_splash.py`'s memory check can't run 0.4.2's LODE.SYS any more (the Executive's layout moved and ktest reads it by the new map), so it now compares with and without the picture against 562.3 / 578.4 KB;
+    - `test_apps.py`'s floor is 562.3 KB;
+    - System's Devices expects 80287XL.
+  - All 1005 checks pass: kernel 355, apps 400, splash 62, C: 56, DEFRAG 49, Claude link 21, HDPROBE 33, HDSCAN 20, HEADCLN 9.
+- **Version:** LODE_VER 0044h, UI API 5.
+- **Copy to the floppy** (`releases/0.4.4`): LODE.SYS, LODE.TXT, CALC.COM, CALC.RUN and SYSTEM.RUN. WRITE.RUN is 0.4.3's.
+- **On the 1520:**
+  - **The 80287's own code paths:**
+    - `CALC 2^0.5`, `CALC EXP(-0.7)` (F2XM1);
+    - `CALC SIN(1E6)` against −0.3499935021712929 (FPREM, about 1e−13 expected);
+    - `CALC /D TAN(45)` (1), `CALC /D COS(90)` (0);
+    - `CALC LN(0)` and `CALC LOG(-1)` (Not a number);
+    - `CALC SIN(0)`, `TAN(0)`, `ATAN(0)` and `ATAN(1)` (exact);
+    - `CALC SIN(1E5000)` (Too big, not a hang).
+  - **The lamp:** lit `80287`.
+  - **The window:** with the mouse and the keys.
+  - **No coprocessor:** whole numbers and no lamp. SETUP's bit won't do it (POST sets INT 11h's from its own probe): take the chip out, or clear bit 1 of the word at 0:410 with DEBUG.
+  - **Later:** the same with a 287XL.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.

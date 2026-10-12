@@ -22,8 +22,8 @@ TM5000G = _find('TM5000G', os.path.join(GOS, '..', 'tools', 'TM5000G.EXE'), '/ho
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
     for d, n in ((HERE, 'TESTDOS'), (HERE, 'UPPER'), (HERE, 'CACHETST'), (HERE, 'EMSTEST'), (HERE, 'MEMSZ'), (HERE, 'CAPTEST'), (HERE, 'MDTEST'),
-                 (os.path.join(GOS, 'src'), 'LCMD')):
-        subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
+                 (HERE, 'RUNCALC'), (os.path.join(GOS, 'src'), 'LCMD'), (os.path.join(GOS, 'src'), 'CALC')):
+        subprocess.run(['nasm', '-f', 'bin', '-i', d + '/', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
 
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [os.path.join(GOS, 'src', 'LODE.SYS')] + list(files))
@@ -1196,8 +1196,174 @@ def t_cmdsaver():
     check('EXIT: the Executive with its directory back', k.pc.mode() == 0x40 and k.rd('lent', 1) == b'\x00'
           and 'LCMD.COM' in k.exec_list() and 'DEFRAG.COM' in k.exec_list(), (k.rd('lent', 1), k.exec_list()))
 
+def t_calc():
+    """CALC.COM (0.4.4): sums at the prompt, errors with ERRORLEVEL, name=
+    for batch files (only into LCMD's environment), the 80287's own code
+    paths (a build that treats the emulator's 287XL as an 80287), and
+    whole numbers when there is no coprocessor."""
+    import math
+    def bat(name, *lines):
+        p = os.path.join(OUT, name)
+        open(p, 'wb').write(('\r\n'.join(lines) + '\r\n').encode())
+        return name + '=' + p
+    c287 = os.path.join(OUT, 'CALC287.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-DCALC_287', '-i', os.path.join(GOS, 'src') + '/', '-o', c287,
+                    os.path.join(GOS, 'src', 'CALC.ASM')], check=True)
+    img = image('calc.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(GOS, 'src', 'CALC.COM'),
+                'CALC287.COM=' + c287, os.path.join(HERE, 'RUNCALC.COM'),
+                bat('COUNT.BAT', '@echo off', 'set i=0', ':loop', 'calc i=i+1', 'if not %i%==3 goto loop', 'echo counted %i%'),
+                bat('PCT.BAT', '@echo off', 'calc 7%%2'))
+    def res(o):     # the lines it printed, without the prompt after them
+        return [l.strip() for l in o.split('\n') if l.strip() and not re.match(r'[A-Z]:\\.*>$', l.strip())]
+    def one(o):
+        r = res(o)
+        return r[0] if len(r) == 1 else r
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    for e, want in (('4*4', '16'), ('2+3*4', '14'), ('-2^2', '-4'), ('2^10', '1024'), ('2^-1', '0.5'), ('1/3', '0.333333333333333'),
+                    ('7\\2', '3'), ('7%2', '1'), ('-7\\2', '-3'), ('/d sin(30)', '0.5'), ('sqrt(2)', '1.4142135623731'),
+                    ('1000', '1000'), ('0.001', '0.001'), ('1E15', '1E+15'), ('999999999999999.9', '1E+15'),
+                    ('0.1+0.2', '0.3'), ('1E-6', '1E-06'), ('(1+2)*(3+4)', '21'), ('1e400/1e399', '10'),
+                    ('+5', '5'), ('0^0.5', '0'), ('abcdefghijklmno=7', '7')):
+        o = sh.run('calc ' + e)
+        check('CALC %s = %s' % (e, want), one(o) == want, o)
+    # degrees: reduced by 45 before radians, so the zeros are exact, on either chip (the persona review)
+    DEG = (('/d cos(90)', '0'), ('/d sin(180)', '0'), ('/d tan(180)', '0'), ('/d sin(-360)', '0'), ('/d cos(-270)', '0'),
+           ('/d tan(45)', '1'), ('/d sin(-270)', '1'), ('/d cos(360)', '1'), ('/d cos(60)', '0.5'), ('/d sin(150)', '0.5'),
+           ('/d tan(-45)', '-1'), ('/d sin(45)^2', '0.5'))
+    for e, want in DEG:
+        o = sh.run('calc ' + e)
+        check('CALC %s = %s' % (e, want), one(o) == want, o)
+    for e, want in (('/d sin(1E6)', math.sin(math.radians(280))), ('/d cos(1234.5)', math.cos(math.radians(1234.5))),
+                    ('/d tan(-100)', math.tan(math.radians(-100)))):
+        o = sh.run('calc ' + e)
+        try: got = float(one(o))
+        except (ValueError, TypeError): got = None
+        check('CALC %s = %.12g' % (e, want), got is not None and abs(got - want) <= 1e-12 * max(1, abs(want)), o)
+    for e, msg in (('1/0', 'Divide by zero'), ('(', 'Syntax error'), ('sqrt(-1)', 'Not a number'), ('ln(0)', 'Not a number'),
+                   ('log(-1)', 'Not a number'), ('nosuch+1', 'Unknown name: NOSUCH'), ('1e5000', 'Too big'),
+                   ('0^-0.5', 'Divide by zero'), ('sin(1e5000)', 'Too big'), ('(1/0)%3', 'Divide by zero'),
+                   ('/d tan(90)', 'Divide by zero'), ('abcdefghijklmnop=1', 'Name too long: ABCDEFGHIJKLMNO'),
+                   ('1+abcdefghijklmnop', 'Name too long: ABCDEFGHIJKLMNO')):
+        o = sh.run('calc %s || echo EL' % e)
+        check('CALC %s: "%s", ERRORLEVEL 1' % (e, msg), 'CALC: ' + msg in o and 'EL' in res(o), o)
+    o = sh.run('set')
+    check('... a name cut short is never set (ABCDEFGHIJKLMNO=7 is the 15-letter one)',
+          'ABCDEFGHIJKLMNO=7' in res(o) and not any(l.startswith('ABCDEFGHIJKLMNO=1') for l in res(o)), o)
+    sh.run('set abcdefghijklmno=')
+    sh.run('set v=' + '1' * 32)
+    o = sh.run('calc v+1 || echo EL')
+    check('a variable longer than 31 characters: "Value too long: V", not a smaller number', 'CALC: Value too long: V' in o
+          and 'EL' in res(o), o)
+    sh.run('set v=' + '0' * 29 + '42')
+    o = sh.run('calc v+1')
+    check('... 31 characters: read whole', one(o) == '43', o)
+    sh.run('set v=')
+    o = sh.run('calc 6*7 && echo EL0')
+    check('a sum: ERRORLEVEL 0', res(o) == ['42', 'EL0'], o)
+    from unicorn.x86_const import UC_X86_REG_FPSW
+    sh.run('calc 1/3')
+    fpsw = k.pc.mu.reg_read(UC_X86_REG_FPSW)
+    check('... and the coprocessor left as FNINIT leaves it, status word 0 (pcemu sets no precision flag, but CALC\'s'
+          ' last compare leaves C0; on the 1520 1/3 also leaves PE, sticky for the next program)', fpsw == 0, hex(fpsw))
+    o = sh.run('calc || echo EL')
+    check('CALC alone: how to use it, and the coprocessor (pcemu\'s is 387-class: a 287XL); ERRORLEVEL 1',
+          'CALC [/D] [name=]expression' in o and 'Coprocessor: 80287XL' in o and 'EL' in res(o), o)
+    o = sh.run('calc /x > bad.txt || echo EL')
+    check('a wrong switch: the same on standard error (not into > file), ERRORLEVEL 1',
+          'CALC [/D] [name=]expression' in o and 'EL' in res(o) and res(sh.run('type bad.txt')) == [], o)
+    o = sh.run('calc /? > help.txt && echo EL0')
+    check('CALC /?: on standard output, ERRORLEVEL 0', res(o) == ['EL0'] and 'CALC [/D] [name=]expression' in sh.run('type help.txt'),
+          o)
+    sh.run('calc 6*7 > six.txt')
+    o = sh.run('type six.txt')
+    check('redirected to a file', one(o) == '42', o)
+    sh.run('set n=41')
+    o = sh.run('calc n=n+1')
+    check('CALC n=n+1: names are variables, name= sets one', one(o) == '42' and 'N=42' in res(sh.run('set')), sh.run('set'))
+    o = sh.run('calc n=n*2')
+    check('... again, replacing it', one(o) == '84' and 'N=84' in res(sh.run('set')) and 'N=42' not in res(sh.run('set')), sh.run('set'))
+    o = sh.run('count')
+    check('a batch file counts with CALC i=i+1', res(o) == ['1', '2', '3', 'counted 3'], o)
+    o = sh.run('pct')
+    check('in a batch file %% is %', one(o) == '1', o)
+    # LCMD's environment nearly full (the review's cases)
+    def env():
+        psp = k.pc.u16(0x60, k.Y['cur_psp'])
+        b = k.pc.rd(k.pc.u16(psp, 0x2C), 0, 1024)
+        i = 0
+        while b[i]: i = b.index(0, i) + 1
+        return b[:i]
+    pads = []
+    def pad_to(n):
+        d = n - len(env())
+        while d > 0:
+            m = min(100, d - 4)
+            if 0 < d - (m + 4) < 5: m -= 5
+            sh.run('set q%s=%s' % (chr(97 + len(pads)), 'x' * m)); pads.append(chr(97 + len(pads)))
+            d -= m + 4
+    sh.run('set n=1')
+    pad_to(1000)
+    o = sh.run('runcalc')
+    check("a parent whose copy of the environment is LCMD's size (1 KB): not written (its copy ends in 0001h and its name)",
+          len(env()) == 1000 and '5' in res(o) and '[N=1]' in o and '[N=5]' not in o, (len(env()), o))
+    check("... and CALC says so after the answer, ERRORLEVEL 1 (a batch file's count can't stall silently)",
+          'CALC: name= works only at the command prompt' in o and '(EL1)' in o, o)
+    pad_to(1016)
+    o = sh.run('calc n=n+1')
+    check('... nearly full, CALC n=n+1 still fits', one(o) == '2' and b'N=2' + bytes(1) in env() and len(env()) == 1016, (o, len(env())))
+    o = sh.run('calc n=123456789 || echo EL')
+    check('... full: "Out of environment space", ERRORLEVEL 1, and N as it was',
+          'CALC: Out of environment space' in o and 'EL' in res(o) and b'N=2' + bytes(1) in env() and len(env()) == 1016, (o, env()[-40:]))
+    for c in pads: sh.run('set q%s=' % c)
+    # the 80287's paths: FPREM, FPTAN, FPATAN, F2XM1, FYL2X, kept in range
+    for e, want in (('sin(1)', math.sin(1)), ('cos(2)', math.cos(2)), ('tan(1.5)', math.tan(1.5)), ('sin(-100)', math.sin(-100)),
+                    ('cos(1234.5)', math.cos(1234.5)), ('tan(-3)', math.tan(-3)), ('atan(3)', math.atan(3)),
+                    ('atan(-0.25)', math.atan(-0.25)), ('exp(-0.7)', math.exp(-0.7)), ('ln(10)', math.log(10)),
+                    ('log(2)', math.log10(2)), ('2^0.5', 2 ** 0.5), ('1.5^-3.7', 1.5 ** -3.7), ('/d tan(45)', 1.0),
+                    ('/d atan(1)', 45.0), ('sin(0)', 0.0), ('atan(1)*4', math.pi), ('-7.5%2', -1.5), ('7.5\\2', 3.0)):
+        o = sh.run('calc287 ' + e)
+        try: got = float(one(o))
+        except (ValueError, TypeError): got = None
+        check('80287 path: %s = %.12g' % (e, want), got is not None and abs(got - want) <= 1e-12 * max(1, abs(want)), o)
+    for e, msg in (('sin(1/0)', 'Divide by zero'), ('(1/0)%3', 'Divide by zero'), ('sin(1e5000)', 'Too big')):
+        o = sh.run('calc287 ' + e)
+        check('80287 path: %s: "%s" (no FPREM on an infinity)' % (e, msg), 'CALC: ' + msg in o, o)
+    for e, want in DEG:
+        o = sh.run('calc287 ' + e)
+        check('80287 path: %s = %s, as on the 287XL' % (e, want), one(o) == want, o)
+    k.key('exit'); k.key(ktest.ENTER)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    out = k.run_file('RUNCALC.COM', 20)
+    check('name= with a parent that isn\'t LCMD: the answer, its environment untouched, ERRORLEVEL 1 and why',
+          '5' in out.split('\r\n') and '[N=' not in out and '[PATH=' in out and '(EL1)' in out
+          and 'CALC: name= works only at the command prompt' in out, out)
+    # no coprocessor (INT 11h says none): whole numbers
+    k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))
+    sh = Shell(k)
+    sh.run('set n=42')
+    for e, want in (('6/2', '3'), ('7\\2', '3'), ('2^30', '1073741824'), ('-2147483647-1', '-2147483648'), ('n+1', '43')):
+        o = sh.run('calc ' + e)
+        check('no coprocessor: CALC %s = %s' % (e, want), one(o) == want, o)
+    for e, msg in (('7/2', 'Needs an 80287'), ('1.5', 'Needs an 80287'), ('sqrt(4)', 'Needs an 80287'), ('2^31', 'Too big'),
+                   ('46341*46341', 'Too big')):
+        o = sh.run('calc ' + e)
+        check('no coprocessor: CALC %s: "%s"' % (e, msg), 'CALC: ' + msg in o, o)
+    o = sh.run('calc')
+    check('no coprocessor: CALC alone says so', 'Coprocessor: none: whole numbers only' in o, o)
+    # a full disk: the answer can't be written, so ERRORLEVEL 1 and why, not an empty file and 0 (the persona review)
+    fimg = image('calcfull.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(GOS, 'src', 'CALC.COM'))
+    d = subprocess.run(['mdir', '-i', fimg, '::'], capture_output=True, text=True, check=True).stdout
+    free = int(re.sub(r'\D', '', re.search(r'([\d ]+) bytes free', d).group(1)))
+    filler = os.path.join(OUT, 'FILLER.BIN'); open(filler, 'wb').write(bytes(free))
+    subprocess.run(['mcopy', '-i', fimg, filler, '::FILLER.BIN'], check=True)
+    k = ktest.KPC(fimg); k.start()
+    sh = Shell(k)
+    o = sh.run('calc 6*7 > full.txt || echo EL')
+    check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
+
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_command, t_cmdedit, t_cmdsaver]
+         t_mdreview, t_lodeboot, t_command, t_cmdedit, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

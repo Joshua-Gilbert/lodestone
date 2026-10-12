@@ -16,8 +16,8 @@ os.makedirs(OUT, exist_ok=True); os.makedirs(TMP, exist_ok=True)
 def dummy(name, size):
     p = os.path.join(TMP, name); open(p, 'wb').write(bytes((i * 7) & 255 for i in range(size))); return p
 
-files = [os.path.join(GOS, 'src', f) for f in ('LODE.SYS', 'LCMD.COM', 'DEFRAG.COM', 'HEADCLN.COM', 'LODE.TXT')]
-files += [os.path.join(GOS, 'apps', f) for f in ('SYSTEM.RUN', 'WRITE.RUN')]
+files = [os.path.join(GOS, 'src', f) for f in ('LODE.SYS', 'LCMD.COM', 'DEFRAG.COM', 'HEADCLN.COM', 'LODE.TXT', 'CALC.COM')]
+files += [os.path.join(GOS, 'apps', f) for f in ('SYSTEM.RUN', 'WRITE.RUN', 'CALC.RUN')]
 files += [os.path.join(GOS, 'fonts', 'TERMINUS.FNT'), os.path.join(GOS, 'claude', 'CLAUDE.COM'),
           os.path.join(GOS, 'bench', 'BENCH.COM'), os.path.join(GOS, 'tests', 'EMSTEST.COM'),
           os.path.join(GOS, 'tests', 'TESTDOS.COM'), dummy('TM5000G.EXE', 296634),
@@ -31,6 +31,12 @@ while dx or dy:
 k.settle()
 shot = lambda n: k.shot(os.path.join(OUT, n + '.png'))
 k.select('LODE.TXT'); shot('executive')
+# the calculator over the Executive (CODE-K), and CALC at the prompt
+k.key(CODE['K']); k.key('9.81*2.5^2/2', ktest.ENTER); shot('calculator'); k.key(ktest.ESC)
+k.key(CODE['P'])
+for c in ('cls', 'calc 4*4', 'calc /d sin(30)', 'calc 2^0.5', 'calc 1/0', 'set n=41', 'calc n=n+1', 'set', 'calc /?'):
+    k.key(c, ktest.ENTER)
+shot('calc_prompt'); k.key('exit', ktest.ENTER); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
 k.key(CODE['C']); k.key('*.txt', ktest.ENTER, ktest.RIGHT); shot('copy_wildcards'); k.key(ktest.ESC)
 k.key(CODE['U']); shot('system_memory'); k.key(ktest.ESC); k.settle()
 k.select('LODE.TXT'); k.key(ktest.ENTER); k.settle(); k.key(ktest.DOWN, ktest.DOWN); shot('write'); k.key(ktest.ESC, ktest.ENTER); k.settle()

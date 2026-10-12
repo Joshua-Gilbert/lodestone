@@ -26,6 +26,7 @@
 ;  changed.
 ; =====================================================================
 %include "UIAPI.INC"
+RUN_API equ 4                           ; (as 0.4.3 shipped it)
         org     RUN_ORG
 
 NROWS   equ 19                          ; text rows

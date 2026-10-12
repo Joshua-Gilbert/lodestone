@@ -29,7 +29,7 @@ cpu 286
 org 100h
 
 LBUF    equ 128
-ENVPARA equ 40h                         ; our environment: 1 KB
+%include "LCMDENV.INC"                  ; ENVPARA: our environment, 1 KB
 HIST    equ 512                         ; the prompt's history
 RMAX    equ 12                          ; lines run inside lines (FOR, CALL)
 CMAX    equ 8                           ; CALLs inside CALLs
