@@ -1,4 +1,4 @@
-Lodestone 0.4.3 - boot floppy
+Lodestone 0.4.4 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\LODEBOOT and answer Y. It adds the Lodestone loader to this disk
@@ -277,6 +277,37 @@ Display, Space turns it off (LODE.INI then says SPLASH=0) and on again.
 It costs DOS programs nothing: the kernel reads it into free memory,
 shows it, and lets the memory go.
 
+0.4.4: a calculator, and the coprocessor lamp.
+  In the Executive, CODE-K opens the calculator (CALC.RUN) in a window
+  over the file list.  Type a sum and press Return: the answer shows
+  under it.  Typing after an answer starts a new sum; + * / \ % ^ first
+  go on from the answer.  The keys in the window are the same typing with
+  the mouse.  F2 (or the Deg key, lit while on) switches sin, cos, tan and
+  atan to degrees; F1 is its help; ESC or CODE-K closes it, and the
+  Executive is as it was.
+  At the command prompt:  CALC [/D] [name=]expression
+    CALC 4*4             16
+    CALC N=N+1           sets N for a batch file: %N% (the prompt's own
+                         variables; names in a sum are variables)
+    CALC /D sin(30)      0.5 (degrees)
+  It prints the answer (so > FILE works), or CALC: Divide by zero and the
+  like with ERRORLEVEL 1; so too with no sum, a wrong switch, or a disk
+  too full for the answer.  CALC /? says how to use it.  name= sets the
+  variable only at the command prompt; anywhere else CALC says so, with
+  ERRORLEVEL 1.  Names up to 15 letters, values up to 31 characters
+  (longer: Name too long, Value too long, never cut short).
+  + - * / ^ ( ), \ the whole part of a division,
+  % the remainder (write %% in a batch file); sqrt sin cos tan atan ln
+  log exp abs pi ans.  15 digits; 1.5E+20 beyond.
+  With an 80287 it works in its 80-bit numbers; a 287XL does sin, cos and
+  tan itself, faster and exact for big angles.  In degrees both chips give
+  the same answers, 0 and 1 exactly (cos 90 is 0).  Without a coprocessor:
+  whole numbers to 2147483647 (6/2 is 3; 7/2 needs an 80287).
+  The info line under the list lights up 80287 or 80287XL when one is
+  fitted (Lodestone checks the chip itself), and shows nothing otherwise;
+  System, Devices names it too.  The lamp and CODE-K cost DOS programs
+  0.2 KB; CALC.COM and CALC.RUN cost nothing until they run.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -285,6 +316,7 @@ The Executive (the file list):
   CODE-U                         Usage (SYSTEM.RUN)
   CODE-W                         Write a new text file (WRITE.RUN)
   CODE-A                         Claude (CLAUDE.COM)
+  CODE-K                         the calculator (CALC.RUN)
   CODE-P                         command prompt (LCMD.COM, EXIT returns)
   CODE-C, CODE-M                 Copy, Move (Titles: * and ? too;
                                  in Subject: Copy the subject)
@@ -305,6 +337,7 @@ Programs:
             VER VOL SET PATH PROMPT DATE TIME PAUSE REM EXIT, A:, programs,
             .BAT files (IF GOTO FOR CALL SHIFT CHOICE %NAME%), && and ||,
             redirection < > >> and pipes |; line editing, history, Tab
+  CALC      the calculator: CALC 4*4, CALC N=N+1 (CALC /?: how)
   CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
             (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
             CLAUDE /T: Claude Code itself (Term); CODE-R redraws.
@@ -356,7 +389,7 @@ Programs:
             It only reads; it asks for the cleaning disk and for your
             disk back, with a minute for the alcohol to dry
 
-To update Lodestone, replace LODE.SYS (and LCMD.COM, the .RUN files)
+To update Lodestone, replace LODE.SYS (and LCMD.COM, CALC.COM, the .RUN files)
 on this disk.
 No need to rerun LODEBOOT (except once, coming from Grid-OS: see 0.4.1).
 

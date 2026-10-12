@@ -9,6 +9,7 @@
 ;  picture (Display) or the saver's tidying on or off.
 ; =====================================================================
 %include "UIAPI.INC"
+RUN_API equ 4                           ; (UI_SAVER's tidying)
         org     RUN_ORG
 
 TOP_Y   equ 32                          ; first topic / detail line
@@ -806,12 +807,17 @@ t_devices:
         mov     si, l_cpu
         call    pline
         call    vstart
-        int     11h
-        mov     si, s_287
-        test    al, 2
-        jnz     .fpu
+        call    fpu_detect              ; 0 none, 1 80287, 2 287XL
         mov     si, s_none
+        dec     al
+        js      .fpu
+        mov     si, s_287
 .fpu:   call    UI_SBSTR
+        dec     al
+        jnz     .nxl
+        mov     si, s_xl
+        call    UI_SBSTR
+.nxl:
         mov     si, l_fpu
         call    pline
         call    vstart                  ; BIOS date at F000:FFF5
@@ -1970,6 +1976,7 @@ l_floppy    db 'Floppy drives',0
 l_hdisk     db 'Hard disk',0
 s_286       db '80286',0
 s_287       db '80287',0
+s_xl        db 'XL',0
 s_none      db 'none',0
 s_grid      db 'GRiD, ',0
 s_plasma    db 'Plasma 640x400',0
@@ -2079,6 +2086,7 @@ s_cantsave  db "LODE.INI can't be saved: ",0
 s_inilong   db 'LODE.INI is too long to change here',0
 s_sample1   db 'The quick brown fox jumps over the lazy dog',0
 s_sample2   db '0123456789  ([{<>}])  .,;:!?  @#$%&*+-=/',0
+%include "FPU.INC"                      ; (Devices: which coprocessor)
 grid_font:                              ; GRiD's font, to switch back to
 %include "FONT.INC"
 

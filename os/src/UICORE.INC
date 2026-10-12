@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-LODE_VER    equ 0043h                   ; Lodestone 0.4.3 (BH.BL: major, minor<<4 | patch)
+LODE_VER    equ 0044h                   ; Lodestone 0.4.4 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -3521,8 +3521,8 @@ run_app:
         mov     [run_dta], bx
         mov     [run_dta+2], es
         pop     es
-        mov     word [redraw_fn], 0     ; (until it sets its own)
-        mov     si, [run_ret]           ; the argument
+        mov     si, [run_ret]           ; the argument (the caller's redraw
+                                        ;  routine stays until it sets its own)
         call    bp
         cld
         push    cs

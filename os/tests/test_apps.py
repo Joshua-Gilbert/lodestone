@@ -20,6 +20,7 @@ SYS = os.path.join(GOS, 'src', 'LODE.SYS')
 SYSTEM = os.path.join(GOS, 'apps', 'SYSTEM.RUN')
 WRITE = os.path.join(GOS, 'apps', 'WRITE.RUN')
 UITEST = os.path.join(HERE, 'UITEST.RUN')
+CALCRUN = os.path.join(GOS, 'apps', 'CALC.RUN')
 MEMSZ = os.path.join(HERE, 'MEMSZ.COM')
 TSR = os.path.join(HERE, 'TSR.COM')
 M33TEST = os.path.join(HERE, 'M33TEST.COM')
@@ -39,7 +40,7 @@ CODE = {c: v for c, v in zip('ABCDEFGHIJKLMNOPQRSTUVWXYZ',
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
-    for src, dst in (('apps/SYSTEM.ASM', SYSTEM), ('apps/WRITE.ASM', WRITE), ('tests/UITEST.ASM', UITEST)):
+    for src, dst in (('apps/SYSTEM.ASM', SYSTEM), ('apps/WRITE.ASM', WRITE), ('tests/UITEST.ASM', UITEST), ('apps/CALC.ASM', CALCRUN)):
         mkrun.build(os.path.join(GOS, src), dst)
     subprocess.run(['nasm', '-f', 'bin', '-o', MEMSZ, os.path.join(HERE, 'MEMSZ.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
@@ -224,7 +225,7 @@ def t_system():
         check('"%s" is not a time' % bad, any('Not a time' in l for l in k.band()), k.band())
         k.key(ktest.ENTER); k.key(ktest.ESC)
     k.key('D')
-    check('Devices: 80287, BIOS, panel, mouse', has(k, '80287') and has(k, '10/25/89') and has(k, 'Plasma 640x400') and has(k, 'COM2'), screen(k))
+    check('Devices: 80287XL (pcemu\'s is 387-class), BIOS, panel, mouse', has(k, '80287XL') and has(k, '10/25/89') and has(k, 'Plasma 640x400') and has(k, 'COM2'), screen(k))
     k.key('G')
     check('GPIB: the built-in driver', has(k, 'built in, version 1.20, INT 60h') and has(k, '21'), screen(k))
     k.key(ktest.ENTER); k.key(ktest.ENTER, settle=False); k.settle(30)
@@ -436,7 +437,8 @@ def t_memory():
     kb = float(m.group(1)) if m else 0
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
-          'copying subjects 0.9 KB): the directory buffer is lent while it runs' % kb, kb >= 562.5, out[-200:])
+          'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB): the directory buffer is lent while it runs' % kb,
+          kb >= 562.3, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -1595,6 +1597,152 @@ def t_subcopy():
     k.key(CODE['M'])
     check('CODE-M on a subject: nothing (a beep)', focus(k) == 2 and band() == 'Subject: Select item and confirm' and not k.crashed, k.band())
 
+INFO_Y = 336
+def vram(k): return k.pc.rd(0xB800, 0, 0x8000)
+def vrow(buf, y): b = (y & 3) * 0x2000 + (y >> 2) * 80; return buf[b:b + 80]
+def lit_cells(k, y, cols=range(80)):
+    """Columns whose 16 rows from y are all set: a lit (inverse) space."""
+    buf = vram(k)
+    return [c for c in cols if all(vrow(buf, y + r)[c] == 0xFF for r in range(16))]
+def below_title(k):
+    buf = vram(k)
+    return b''.join(vrow(buf, y) for y in range(20, 400))
+
+def t_calc():
+    """The calculator (0.4.4): the coprocessor lamp in the info line, System's
+    Devices, and CALC.RUN, the window over the Executive (CODE-K)."""
+    print('== the calculator, and the coprocessor lamp')
+    hdr = open(CALCRUN, 'rb').read(6)
+    check('CALC.RUN needs API 5 (the caller\'s redraw stays, exit code 0FFFFh)', hdr == b'GRUN\x05\x00', hdr)
+    hdrs = [open(f, 'rb').read(6) for f in (SYSTEM, WRITE, UITEST)]
+    check('SYSTEM, WRITE and UITEST declare RUN_API 4 (a floppy with an older LODE.SYS still runs them)',
+          hdrs == [b'GRUN\x04\x00'] * 3, hdrs)
+    # the lamp: pcemu's coprocessor is 387-class, so a 287XL
+    k = ktest.KPC(image('lamp.img', SYSTEM)); k.start()
+    info = k.rd('infobuf', 128).split(b'\0')[0].decode()
+    c0 = (90 - len(info)) // 2
+    check('the info line: "80286 80287XL ..." (probed, not taken from the CMOS bit)', info.startswith('80286 80287XL   640K'), info)
+    check('... " 80287XL " lit (inverse), nothing else', lit_cells(k, INFO_Y) == [c0, c0 + 8], (c0, lit_cells(k, INFO_Y)))
+    k.key(CODE['U']); k.key('D'); k.key('D')
+    check('System, Devices: Coprocessor 80287XL', re.search(r'Coprocessor\s+80287XL', screen(k)), screen(k))
+    k.key(ktest.ESC)
+    check('... and the lamp is lit again after System', lit_cells(k, INFO_Y) == [c0, c0 + 8], lit_cells(k, INFO_Y))
+    k = ktest.KPC(image('nolamp.img', SYSTEM))
+    k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))     # INT 11h: none
+    k.start()
+    info = k.rd('infobuf', 128).split(b'\0')[0].decode()
+    check('no coprocessor: "80286   640K ...", nothing lit', info.startswith('80286   640K') and not lit_cells(k, INFO_Y), (info, lit_cells(k, INFO_Y)))
+    k.key(CODE['U']); k.key('D'); k.key('D')
+    check('... System, Devices: Coprocessor none', re.search(r'Coprocessor\s+none', screen(k)), screen(k))
+    k.key(ktest.ESC)
+    # the window: keys, then the screen exactly as it was (no mouse: no pointer)
+    img = image('calc.img', CALCRUN, os.path.join(GOS, 'src', 'LCMD.COM'))
+    k = ktest.KPC(img); k.start()
+    free0, ui0 = free_paras(k)
+    scr0 = below_title(k)
+    k.key(CODE['K'])
+    check('CODE-K opens the calculator over the Executive', has(k, 'Calculator') and has(k, 'LCMD'), screen(k))
+    def ans(): return [l.strip() for l in lines(k) if l.strip().startswith('=') or 'Divide' in l]
+    k.key('2+2'); k.key(ktest.ENTER)
+    check('2+2, Return: = 4', ans() == ['= 4'], ans())
+    k.key('*10'); k.key(ktest.ENTER)
+    check('*10: goes on from the answer, = 40', ans() == ['= 40'], ans())
+    k.key('+1'); k.key(ktest.ENTER)
+    check('+1: goes on from the answer too, = 41', ans() == ['= 41'], ans())
+    k.key('3'); k.key(ktest.ENTER)
+    check('typing after an answer starts afresh: = 3', ans() == ['= 3'], ans())
+    k.key('12*3', ktest.UP, '4', ktest.ENTER)
+    check("a key that ends the line editor (Up) doesn't wipe the line: 12*34 = 408", ans() == ['= 408'], ans())
+    k.key('sin(30', 0x3C00, ')', ktest.ENTER)
+    check('... nor F2 in the middle of a sum: sin(30) in degrees = 0.5', ans() == ['= 0.5'], ans())
+    k.key(0x3C00)
+    k.key(ktest.ESC)
+    check('ESC: exit code 0FFFFh, the .RUN gone, the UI block as before', run_ret(k) == 0xFFFF and k.rd('run_active', 1) == b'\x00'
+          and free_paras(k) == (free0, ui0), (hex(run_ret(k)), free_paras(k), (free0, ui0)))
+    check('... and the screen is exactly as it was (the save-under; no re-read, no redraw)', below_title(k) == scr0)
+    # the keys with the mouse
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    k.key(CODE['K'])
+    def key_xy(r, c): return (42 + 6 * c + 3) * 8, 108 + 24 * r + 12
+    for r, c in ((0, 0), (1, 3), (1, 2), (4, 3)):
+        click(k, *key_xy(r, c))
+    check('clicks on 7 * 6 =: = 42', ans() == ['= 42'] and has(k, '7*6'), screen(k))
+    click(k, *key_xy(0, 1))
+    k.key('+1')
+    check('a key clicked after an answer starts afresh, typing after a click goes on: 8+1', has(k, '8+1') and not has(k, '7*68'), screen(k))
+    k.key(ktest.ENTER)
+    check('... = 9', ans() == ['= 9'], ans())
+    # keys typed while a click is handled (put in the BIOS's buffer as keep_line starts): after the End
+    # that keeps the line, in order -- 7 then *3, = 21, not *3 from the answer (27)
+    sy = run_syms('apps/CALC.ASM')
+    fired, watch = [], k.pc.watch
+    at = k.useg * 16 + k.u16('run_base') + sy['keep_line']
+    def ahead(addr):
+        if addr == at and not fired: fired.append(1); k.pc.keys.extend(ord(c) for c in '*3')
+        if watch: watch(addr)
+    k.pc.watch = ahead
+    click(k, *key_xy(0, 0))
+    k.pc.watch = watch
+    k.key(ktest.ENTER)
+    check('keys typed while a click is handled go after it, in order: 7, *3 typed meanwhile, = 21',
+          fired and ans() == ['= 21'] and has(k, '7*3'), (fired, ans(), screen(k)))
+    for r, c in ((2, 4), (0, 0), (0, 5)):
+        click(k, *key_xy(r, c))
+    check('sin puts "sin(" in the line', has(k, 'sin(7)'), screen(k))
+    click(k, *key_xy(4, 0))
+    check('C clears it', not has(k, 'sin(7)'), screen(k))
+    deg = 42 + 6 * 5 + 1
+    k.key(0x3C00)
+    check('F2: degrees, the Deg key lit', lit_cells(k, 108 + 24 * 5 + 4, range(deg, deg + 5)) == [deg, deg + 4], screen(k))   # (the spaces around "Deg")
+    k.key('sin(90)'); k.key(ktest.ENTER)
+    check('... sin(90) = 1', ans() == ['= 1'], ans())
+    click(k, *key_xy(5, 5))
+    k.key('sin(pi/2)'); k.key(ktest.ENTER)
+    check('the Deg key: radians again, sin(pi/2) = 1, the key not lit',
+          ans() == ['= 1'] and not lit_cells(k, 108 + 24 * 5 + 4, range(deg, deg + 5)), ans())
+    k.key(ktest.F1)
+    check('F1: its help', has(k, 'Calculator Help') and has(k, 'degrees / radians'), screen(k))
+    k.key(ktest.ESC)
+    k.key('1/0'); k.key(ktest.ENTER)
+    check('1/0: Divide by zero', ans() == ['Divide by zero'], ans())
+    # the saver while it is open: the Executive and the window come back
+    k.wr('saver_t', struct.pack('<H', 36))
+    for _ in range(40):
+        k.pc.run_for(0.25)
+        if not has(k, 'Calculator'): break
+    dark = not has(k, 'Calculator')
+    k.wr('saver_t', struct.pack('<H', 5460))
+    k.key(ktest.DOWN)
+    check('the saver with the window open, then a key: the Executive and the window back',
+          dark and has(k, 'Calculator') and has(k, 'LCMD') and has(k, '1/0') and has(k, 'Select a file and confirm'), screen(k))
+    k.key(CODE['K'])
+    check('CODE-K again closes it; after the saver, exit code 0: the Executive reads its directory again and redraws',
+          not has(k, 'Calculator') and run_ret(k) == 0 and has(k, 'LCMD'), (run_ret(k), screen(k)))
+    # 255 repaints so far (paints poked), then the saver twice: a byte count would wrap to 1 and say
+    # "as it was" over an old save-under; it stays "repainted", exit code 0 (the persona review)
+    def saver_once():
+        k.wr('saver_t', struct.pack('<H', 36))
+        for _ in range(40):
+            k.pc.run_for(0.25)
+            if not has(k, 'Calculator'): break
+        dark = not has(k, 'Calculator')
+        k.wr('saver_t', struct.pack('<H', 5460))
+        k.key(ktest.DOWN)
+        return dark and has(k, 'Calculator')
+    k.key(CODE['K'])
+    k.pc.wr(k.useg, k.u16('run_base') + sy['paints'], b'\xff')
+    twice = saver_once() and saver_once()
+    k.key(CODE['K'])
+    check('... after 257 repaints too: exit code 0, the Executive redraws', twice and run_ret(k) == 0 and not has(k, 'Calculator'),
+          (twice, hex(run_ret(k))))
+    k = ktest.KPC(image('nocalc.img', SYSTEM)); k.start()
+    k.key(CODE['K'])
+    check('no CALC.RUN: the band says so', any('CALC.RUN is not on this disk' in l for l in k.band()), k.band())
+    k.key(ktest.ENTER)
+    k.key(ktest.F1)
+    check('the Executive\'s help lists CODE-K', has(k, 'CODE-K') and has(k, 'Calculator'), screen(k))
+    k.key(ktest.ESC)
+
 # ---------------------------------------------------------------------
 def md_pages(k):
     """M:'s pages (0: off), from the installer's own data in the disk cache's EMS page."""
@@ -1734,7 +1882,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_mdisk):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_mdisk, t_calc):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

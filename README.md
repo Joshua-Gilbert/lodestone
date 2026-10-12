@@ -1,6 +1,6 @@
 # Lodestone
 
-A fast DOS 3.30-compatible OS for the GRiDCase 1520 (80C286, 640×400 gas-plasma display, 1.44 MB floppy; Joshua's also has an 80287 and 1408 KB of EMS). It has a GRiD-style Executive, a disk cache, a built-in GPIB driver, its own EMS manager, the internal hard disk as drive C:, a RAM disk in EMS as M:, and a screen saver that defragments every disk. Programs of its own (System and Write) run on a shared UI core.
+A fast DOS 3.30-compatible OS for the GRiDCase 1520 (80C286, 640×400 gas-plasma display, 1.44 MB floppy; Joshua's also has an 80287 and 1408 KB of EMS). It has a GRiD-style Executive, a disk cache, a built-in GPIB driver, its own EMS manager, the internal hard disk as drive C:, a RAM disk in EMS as M:, and a screen saver that defragments every disk. Programs of its own (System, Write and the calculator) run on a shared UI core.
 
 > **Name:** Lodestone was called Grid-OS up to 0.4.0. Since 0.4.1 the kernel is `LODE.SYS` (settings in `LODE.INI`), the shell `LCMD.COM` and the boot installer `LODEBOOT.COM`; they were `GRIDOS.SYS`, `GRIDOS.INI`, `GRIDCMD.COM` and `GOSBOOT.COM`. The release notes in `os/releases/` up to 0.4.0 keep the old names.
 
@@ -16,22 +16,30 @@ It boots from a floppy, shows the Executive, runs ordinary DOS programs (TM5000G
 | System: where the 640 KB goes, and the EMS | System: the floppy, the internal hard disk as C: (the 1520's own 121 MB Conner layout) and M:, the RAM disk |
 | ![Write](os/screens/readme/write.png) | ![BENCH](os/screens/readme/bench.png) |
 | Write, a GRiDWrite-style editor | BENCH 1.4 on Lodestone with EMS |
+| ![The calculator](os/screens/readme/calculator.png) | ![CALC at the prompt](os/screens/readme/calc_prompt.png) |
+| The calculator over the Executive (CODE-K); the coprocessor lit in the info line (the emulator's is 387-class, so it reads as a 287XL) | `CALC` at the command prompt: sums, errors with ERRORLEVEL, `name=` for batch files |
 
 *Emulator screenshots (`os/screens/readme_shots.py`), drawn as the 1520's amber plasma shows them.*
 
-## What it does (0.4.3)
+## What it does (0.4.4)
 
-- **A DOS 3.30 kernel** (`LODE.SYS`, 45,802 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
+- **A DOS 3.30 kernel** (`LODE.SYS`, 45,930 bytes): INT 21h for the programs of its day, COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
 - **Disks:**
   - **A:** and **B:** (the external floppy drive), with a cylinder read-ahead cache;
   - **C:**, any IDE drive with a FAT16 partition up to 2 GB, driven through its own registers. The 1520's BIOS only knows a few Conner models, so Lodestone doesn't use it for this. With a drive, C: costs about 3 KB of memory; without one, nothing is loaded.
   - **M:**, the temporary disk: a RAM disk in EMS, 256 KB unless System's Temporary disk topic or `MDISK=` in `LODE.INI` says otherwise (Off up to all the free EMS). It costs DOS programs no memory: its 0.3 KB comes out of the environment's block, which programs never got. Its files are lost at power-off.
 - **EMS:** Lodestone is its own LIM 4.0 EMS manager when the 1520's memory is set to EMS. The disk cache moves into two EMS pages, so DOS programs get 16 KB more.
 - **GPIB:** the GRIDGPIB API on INT 60h is built in, with a faster block transfer. TM5000G and CLAUDE.COM run unchanged.
-- **The Executive:** GRiD's File form, with CODE-C Copy, CODE-M Move, CODE-R Rename and CODE-D Delete. They take wildcards, Replace and Only newer, and work on whole subjects (directories) too. CODE-P opens the command prompt, CODE-U opens System, CODE-A starts Claude.
+- **The Executive:** GRiD's File form, with CODE-C Copy, CODE-M Move, CODE-R Rename and CODE-D Delete. They take wildcards, Replace and Only newer, and work on whole subjects (directories) too. CODE-P opens the command prompt, CODE-U opens System, CODE-K the calculator, CODE-A starts Claude. The info line lights up the coprocessor, 80287 or 80287XL, when one is fitted.
 - **The command prompt** (`LCMD.COM`): DOS 3.30's commands, redirection and pipes, plus `&&` and `||` between commands. The line can be edited, with a history (Up, Down, F3) and Tab completion of file names, and the screen saver runs there too. Batch files have IF (EXIST, ERRORLEVEL, ==, NOT), GOTO, FOR, CALL, SHIFT, CHOICE and `%NAME%` variables; an error in one names the file and line. Built-in commands that can fail set ERRORLEVEL, so scripts (Claude's too) can check every step.
 - **System:** memory, disks, clock, devices (the hard disk's own name), GPIB, display (fonts), screen saver, temporary disk. Settings are kept in `LODE.INI`.
 - **Write:** a GRiDWrite-style text editor.
+- **The calculator,** on the 80287:
+  - **In the Executive** (CODE-K, `CALC.RUN`): a window over the file list. Type a sum and press Return, or click its keys; F2 switches to degrees.
+  - **At the prompt** (`CALC.COM`): `CALC 4*4`, `CALC /D sin(30)`. `CALC N=N+1` also sets `%N%` for a batch file. Errors set ERRORLEVEL; `CALC /?` says how to use it.
+  - **Functions:** `+ - * / ^ \ %`, sqrt, sin, cos, tan, atan, ln, log, exp, abs, pi, the last answer; 15 digits.
+  - **Coprocessors:** an 80287 does it in its 80-bit numbers. A 287XL also does sin, cos and tan itself, faster and exact for big angles. Without one, whole numbers.
+  - **Cost:** the two programs cost nothing until they run; CODE-K and the lamp cost DOS programs 0.2 KB.
 - **The screen saver** runs `DEFRAG` on A:, B: and C: in turn, then darkens the screen. A key stops it. Its delay and the tidying are settings.
 - **DEFRAG.COM:** defragments a floppy or C:, with a map of the disk. `/T` tests the free space instead: it writes a pattern into every free sector, reads it back, and marks the clusters that fail. A power cut during any of its writes leaves the old file or the new one, never a damaged one (tested at every write, on a floppy and on C:).
 - **A start-up picture:** `LODE.PIC` (2.5 KB) draws Fig. 1 of F. A. Annett's *Electrical Machinery* (1921), "Lodestone attracting some iron nails" (public domain), from vectors (in 0.25 s in the emulator): the stone as an outline filled row by row, 235 nails at 4 bytes each, LODESTONE beside it. It stays 2 seconds or until a key. A bootstrap in the kernel's start-up code (never resident) reads it into free memory, calls it and lets the memory go, so DOS programs get the same as without it. `SPLASH=0` in `LODE.INI` (System, Display, Space) or no `LODE.PIC` on the disk: no picture.
@@ -74,15 +82,15 @@ BENCH 1.4 on all three in the emulator (rerun 2026-10-08 with 0.3.14), from the 
 
 ### Memory, by configuration
 
-What a DOS program gets when started from the Executive (MEMSZ; System's "Free for programs" shows 0.1 KB more), 0.3.14 in the emulator, with M: at its default 256 KB wherever there is EMS:
+What a DOS program gets when started from the Executive (MEMSZ; System's "Free for programs" shows 0.1 KB more), 0.4.4 in the emulator (the kernel's row as measured in 0.3.14), with M: at its default 256 KB wherever there is EMS:
 
 | | Floppies only | With EMS | With C: | With C: and EMS |
 |---|---:|---:|---:|---:|
 | Kernel (DOS, GPIB, and EMS / C: when there) | 30.6 KB | 32.5 KB | 33.9 KB | 35.4 KB |
-| Executive and UI core | 34.7 KB | 34.4 KB | 34.7 KB | 34.4 KB |
+| Executive and UI core | 34.8 KB | 34.5 KB | 34.8 KB | 34.5 KB |
 | Temporary disk M: | | 0.3 KB + 256 KB of EMS | | 0.3 KB + 256 KB of EMS |
 | Disk cache | 18.0 KB | 32 KB of EMS | 18.0 KB | 32 KB of EMS |
-| **Free for programs** | **562.5 KB** | **578.6 KB** | **559.2 KB** | **575.7 KB** |
+| **Free for programs** | **562.3 KB** | **578.4 KB** | **559.1 KB** | **575.6 KB** |
 
 M:'s 0.3 KB comes out of the environment's block (counted with the Executive otherwise), which programs never got. The rows add up to more than 640 KB because 7.5 KB of the Executive's share is its directory buffer, lent to a DOS program while it runs, so it counts in both rows. From the command prompt (`LCMD.COM` resident) a program gets 16.1 KB less. The Executive otherwise stays resident: Lodestone is meant to become multitasking.
 
@@ -165,9 +173,9 @@ Run the comparison with `python3 os/bench/compare3.py <GRiD MS-DOS EPROM image> 
 
 | Folder | What |
 |---|---|
-| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk) |
+| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
 | `os/splash` | The start-up picture's source: the 1921 plate, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
-| `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN` and `WRITE.RUN` |
+| `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN` and `CALC.RUN` (the calculator's window) |
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `os/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN |
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
@@ -194,12 +202,12 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 858 checks pass on 0.4.3 (2026-10-09); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 1005 checks pass on 0.4.4 (2026-10-12); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
 
 ```sh
 cd os
-python3 tests/test_kernel.py          # 241 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt
-python3 tests/test_apps.py            # 367 checks: UI core, Executive, System, Write, mouse, files (add "shots" for screens/0.3)
+python3 tests/test_kernel.py          # 355 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt, CALC
+python3 tests/test_apps.py            # 400 checks: UI core, Executive, System, Write, mouse, files, the calculator and the coprocessor lamp (add "shots" for screens/0.3)
 python3 tests/test_splash.py          # 62 checks: the start-up picture, bit for bit on every start-up path; SPLASH=, LODE.PIC, System's switch, memory
 python3 tests/test_hd.py              # 56 checks: drive C:, and C: with M:
 python3 tests/test_defrag.py          # 49 checks: DEFRAG on floppies and C:, the saver's round
@@ -216,7 +224,7 @@ Some tests need files that aren't in this repo: the GRiD MS-DOS EPROM image (`GR
 
 ## On the GRiD (the floppy loop)
 
-1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODE.PIC` (the start-up picture; leave it off for none), `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN` and whatever programs you want.
+1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODE.PIC` (the start-up picture; leave it off for none), `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `CALC.COM` and whatever programs you want.
 2. Under GRiD MS-DOS (EPROM boot, where the floppy is B:), run `B:LODEBOOT B` once per format.
 3. Restart and tap **F** as the memory count finishes: the 1520 boots the floppy.
 4. A new `LODE.SYS` can simply be copied over; the boot sector follows the FAT chain.
@@ -229,11 +237,11 @@ These aren't ours to publish, even privately: the 1520 BIOS and GRiD MS-DOS ROM 
 
 ## Status
 
-Lodestone 0.4.3 is the current release: 0.4.1 was the rename, 0.4.2 brings the command prompt's batch language, line editing and screen saver, and 0.4.3 the start-up picture. 0.4.1 boots on the 1520; 0.3.15 is the last release fully tested there, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/lodestone-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
+Lodestone 0.4.4 is the current release: 0.4.1 was the rename, 0.4.2 brings the command prompt's batch language, line editing and screen saver, 0.4.3 the start-up picture, and 0.4.4 the calculator and the coprocessor lamp (tested in the emulator; the 80287's own code paths wait for the 1520). 0.4.1 boots on the 1520; 0.3.15 is the last release fully tested there, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/lodestone-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
 
 **Next:**
 1. Claude (Term and chat) on the real GPIB bridge, with the Pi 5.
 2. Claude staying resident, working alongside DOS programs, with M: as its scratchpad: a hot key over a running program, Term's screen and link code in EMS (`docs/term.md`, Phase 2).
 3. Command.
 
-Later come a plot view and instrument programs for the GPIB bench (scopes, the VNA), and a calculator on the 80287. The roadmap and the hardware notes are in the claude.ai Project.
+Later come a plot view and instrument programs for the GPIB bench (scopes, the VNA), which can use the coprocessor detection and the calculator's 80287 code. The roadmap and the hardware notes are in the claude.ai Project.

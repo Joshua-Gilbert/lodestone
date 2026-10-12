@@ -42,7 +42,7 @@ panel       resb 1
 convkb      resw 1
 emskb       resw 1
 extkb       resw 1
-equip       resw 1
+lampw       resb 1                  ; the coprocessor lamp: 0 none, 7 80287, 9 287XL
 biosdate    resb 8
 kindbuf     resb 4
 msgbuf      resb 128
@@ -682,14 +682,18 @@ run_claude:
         mov     byte [di], 0
         jmp     show_msg
 
+; CODE-K: the calculator, a window over the list
+run_calc:
+        mov     si, s_calc
+        jmp     run_write.e
+
 ; CODE-U: Usage, the System program; CODE-W: Write with a new file
 run_usage:
         mov     si, s_system
-        mov     di, s_empty
-        jmp     run_named
+        jmp     short run_write.e
 run_write:
         mov     si, s_write
-        mov     di, s_empty
+.e:     mov     di, s_empty
         ; (falls through)
 
 ; the .RUN named SI (here, else in the root) with argument DI
@@ -707,14 +711,18 @@ run_named:
         mov     byte [di], 0
         jmp     show_msg
 
-; run the .RUN at SI with argument DI, then the list again
+; run the .RUN at SI with argument DI, then the list again (not after
+; exit code 0FFFFh: it left the screen as it found it, as the calculator)
 run_run:
         push    si
         call    run_app
         mov     word [redraw_fn], relist
         jc      .fail
         add     sp, 2
+        inc     ax
+        jz      .kept
         jmp     relist
+.kept:  ret
 .fail:  pop     si
         mov     [ex_code], ax
         push    si
@@ -2731,6 +2739,18 @@ draw_all:
         mov     si, infobuf
         mov     dx, INFO_Y
         call    center
+        mov     al, [lampw]             ; light the coprocessor: from the
+        or      al, al                  ;  space after 80286, 7 or 9 wide
+        jz      .nolamp
+        cbw
+        xchg    bp, ax
+        call    strlen
+        mov     bx, 80 + 10
+        sub     bx, cx
+        shr     bx, 1
+        mov     cx, 16
+        call    invert_band
+.nolamp:
         mov     dx, INFO_Y - 4
         mov     bx, 1
         mov     cx, 78
@@ -2967,8 +2987,12 @@ sysinfo:
         jnc     .e2
         xor     cx, cx
 .e2:    mov     [extkb], cx
-        int     11h
-        mov     [equip], ax
+        call    fpu_detect              ; 0 none, 1 80287, 2 287XL:
+        or      al, al                  ;  the lamp " 80287 " or " 80287XL "
+        jz      .f
+        shl     al, 1
+        add     al, 5
+.f:     mov     [lampw], al
         mov     dx, 7F8h
         in      al, dx
         mov     [panel], al
@@ -2984,14 +3008,21 @@ sysinfo:
         pop     ds
         ret
 
+%include "FPU.INC"
+
+; "80286 80287XL   640K + ...": the coprocessor, when there is one, is lit
+; (draw_all inverts " 80287 " or " 80287XL " after drawing the line)
 build_info:
         mov     di, infobuf
         mov     si, s_cpu
         call    sb_str
-        test    byte [equip], 2
-        jz      .nf
+        mov     al, [lampw]
+        cbw
+        dec     ax                      ; " 80287" or " 80287XL"
+        js      .nf
+        xchg    cx, ax
         mov     si, s_fpu
-        call    sb_str
+        rep     movsb
 .nf:    mov     si, s_gap
         call    sb_str
         mov     ax, [convkb]
@@ -3058,6 +3089,7 @@ ex_keys:
         KEY(K_CODE_U,    run_usage,  h_usage)
         KEY(K_CODE_W,    run_write,  h_write)
         KEY(K_CODE_A,    run_claude, h_claude)
+        KEY(K_CODE_K,    run_calc,   h_calc)
         KEY(K_CODE_P,    run_shell,  h_shell)
         KEY(K_CODE_C,    ex_copy,    h_copy)
         KEY(K_CODE_D,    ex_erase,   h_erase)
@@ -3065,7 +3097,7 @@ ex_keys:
         KEY(K_CODE_R,    ex_rename,  h_rename)
         KEY(K_F5,        refresh,    h_f5)
         KEY(K_NONE,      0,          h_code)
-        dw 0                            ; (13 help lines; there is room for 18)
+        dw 0                            ; (14 help lines; there is room for 18)
 
 h_choose    db 'Up / Down, PgUp / PgDn   choose',0
 h_tab       db 'Tab / Shift-Tab          Device, Subject, Title',0
@@ -3074,6 +3106,7 @@ h_confirm   db 'Return or click again    open it / next item',0
 h_usage     db 'CODE-U                   System',0
 h_write     db 'CODE-W                   Write: a new text file',0
 h_claude    db 'CODE-A                   Claude',0
+h_calc      db 'CODE-K                   Calculator',0
 h_shell     db 'CODE-P                   command prompt',0
 h_copy      db 'CODE-C                   Copy the file / subject',0
 h_erase     db 'CODE-D                   Delete the file / subject',0
@@ -3108,7 +3141,7 @@ s_dated     db '   dated ',0
 s_nohires   db 'Lodestone needs the GRiD 640x400 panel (BIOS mode 40h).',13,10
             db 'Press a key to restart.',13,10,0
 s_cpu       db '80286',0
-s_fpu       db '+80287',0
+s_fpu       db ' 80287XL'
 s_gap       db '   ',0
 s_k         db 'K',0
 s_plus      db ' + ',0
@@ -3125,6 +3158,7 @@ s_all       db '*.*', 0
 s_claude    db 'CLAUDE.COM', 0
 s_system    db 'SYSTEM.RUN', 0
 s_write     db 'WRITE.RUN', 0
+s_calc      db 'CALC.RUN', 0
 s_notondisk db ' is not on this disk', 0
 s_comspec   db 'COMSPEC='
 s_defshell  db 'A:\LCMD.COM', 0
