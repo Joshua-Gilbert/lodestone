@@ -16,7 +16,9 @@ Anything else that differs is an error (a byte-sized address, say).
 
 File layout (all words little-endian):
   0  'GRUN'
-  4  API version the program needs (UI_API when it was built)
+  4  API version the program needs: its RUN_API (RUN_API equ n after the
+     include; the core refuses a program that needs more than it has), else
+     UI_API when it was built
   6  image bytes          8  BSS bytes (zeroed by the loader)
   10 absolute fixups      12 relative fixups      14 0
   16 the image, then the absolute fixups, then the relative ones (offsets
@@ -56,7 +58,9 @@ def build(src, dst, incs=()):
         raise SystemExit('%s: the two builds differ in length (%d, %d)' % (src, len(a), len(b)))
     if 'run_bss_end' not in sa:
         raise SystemExit('%s: no run_bss_end label at the end of .bss' % src)
-    api = sa.get('UI_API', 1)
+    api = sa.get('RUN_API', sa.get('UI_API', 1))
+    if api > sa.get('UI_API', 1):
+        raise SystemExit('%s: RUN_API %d is newer than UIAPI.INC (%d)' % (src, api, sa.get('UI_API', 1)))
     bss = sa['run_bss_end'] - len(a)
     if bss < 0: raise SystemExit('%s: run_bss_end is inside the image' % src)
     absf, relf = [], []

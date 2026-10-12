@@ -1,6 +1,7 @@
 ; UITEST.RUN - exercises the UI core API from a .RUN (tests/test_apps.py)
 ;   python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
 %include "UIAPI.INC"
+RUN_API equ 4
         org     RUN_ORG
 
 start:  mov     [arg], si               ; (an absolute fixup)
