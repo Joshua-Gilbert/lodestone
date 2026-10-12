@@ -248,22 +248,26 @@ def t_system():
     check('CODE-? lists Space on Display', has(k, 'Space on Display') and has(k, 'Space on Screen saver'), screen(k))
 
 
+# What a DOS program gets in 0.4.4 (MEMSZ, from the Executive): 0.2 KB less
+# than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
+# (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
+# Executive's layout moved, and ktest drives it by the new LODE.MAP.
+MEM_044 = {0: '562.3', 88: '578.4'}
+
 def t_memory():
-    print('== what DOS programs get: the same as under 0.4.2 (no picture)')
-    old = os.path.join(GOS, 'releases', '0.4.2', 'LODE.SYS')
+    print('== what DOS programs get: the same with the picture as without it')
     got = {}
-    for tag, sysf, more in (('0.4.2', old, []), ('now', os.path.join(GOS, 'src', 'LODE.SYS'), [PIC]),
-                            ('now, no LODE.PIC', os.path.join(GOS, 'src', 'LODE.SYS'), [])):
+    for tag, more in (('now', [PIC]), ('now, no LODE.PIC', [])):
         for ems in (0, 88):
-            img = mkimg.build(os.path.join(OUT, 'sp_mem.img'), [sysf, A.MEMSZ, A.LCMD] + more)
+            img = mkimg.build(os.path.join(OUT, 'sp_mem.img'), [os.path.join(GOS, 'src', 'LODE.SYS'), A.MEMSZ, A.LCMD] + more)
             k = ktest.KPC(img, ems_pages=ems); k.start(10)
             out = k.run_file('MEMSZ.COM', 20)
             m = re.search(r'([\d.]+) KB for programs', out)
             got[tag, ems] = m and m.group(1)
     for ems in (0, 88):
-        check('%s: a DOS program gets %s KB after the picture, %s KB without LODE.PIC, as under 0.4.2 (%s KB)'
-              % ('EMS' if ems else 'no EMS', got['now', ems], got['now, no LODE.PIC', ems], got['0.4.2', ems]),
-              got['now', ems] and got['now', ems] == got['0.4.2', ems] == got['now, no LODE.PIC', ems], got)
+        check('%s: a DOS program gets %s KB after the picture, %s KB without LODE.PIC (0.4.4: %s KB)'
+              % ('EMS' if ems else 'no EMS', got['now', ems], got['now, no LODE.PIC', ems], MEM_044[ems]),
+              got['now', ems] and got['now', ems] == got['now, no LODE.PIC', ems] == MEM_044[ems], got)
 
 
 if __name__ == '__main__':

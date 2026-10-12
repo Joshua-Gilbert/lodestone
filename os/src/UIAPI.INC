@@ -1,5 +1,5 @@
 ; =====================================================================
-;  UIAPI.INC - the Lodestone UI core as programs see it (API version 2)
+;  UIAPI.INC - the Lodestone UI core as programs see it (API version 5)
 ;
 ;  The UI core lives in the UI segment with the Executive.  A .RUN
 ;  program is loaded into the same segment, above the core, and calls it
@@ -11,13 +11,20 @@
 ;  1110h) and records every word that differs: words that grow with the
 ;  origin are addresses inside the program (the loader adds the load
 ;  offset), words that shrink are calls into the jump table (the loader
-;  subtracts it).  So a .RUN loads wherever the core ends.
+;  subtracts it).  So a .RUN loads wherever the core ends.  RUN_API equ n
+;  after the include is the API version it needs, in its header (a core
+;  older than that refuses it); without one, mkrun.py writes UI_API.
 ;
 ;  Entry: the first byte of the program, called near with DS = ES = SS =
 ;  CS = the UI segment, DF clear, SI -> the argument (ASCIIZ, "" if none:
 ;  for Write, the file to open).  Return with RET, AX = exit code.  The
 ;  stack is the core's (about 3 KB is free); keep big buffers in BSS or
 ;  in blocks from UI_ALLOC.
+;  Until it calls UI_SETREDRAW, the caller's redraw routine stays (API 5):
+;  a program that only opens a window over the Executive (the calculator)
+;  never sets one, and the Executive is redrawn under it after the saver.
+;  Exit code 0FFFFh says the screen is as the program found it (API 5):
+;  the Executive doesn't read the directory and redraw.
 ;
 ;  Conventions for every call below:
 ;   * all registers and DS/ES are preserved except the outputs listed;
@@ -31,8 +38,9 @@
 ; =====================================================================
 
         cpu     286
-UI_API      equ 4                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
-                                        ;  4: UI_SAVER's tidying)
+UI_API      equ 5                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
+                                        ;  4: UI_SAVER's tidying, 5: the caller's redraw
+                                        ;  routine stays, exit code 0FFFFh)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Lodestone version (BH major, BL minor
@@ -168,6 +176,7 @@ K_CEND      equ 7500h
 K_CPGUP     equ 8400h
 K_CPGDN     equ 7600h
 K_F1        equ 3B00h
+K_F2        equ 3C00h
 K_F5        equ 3F00h
 K_CODE_ENTER equ 1C00h
 K_CODE_ESC  equ 0100h
