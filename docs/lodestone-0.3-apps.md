@@ -613,6 +613,10 @@ Joshua's aim: a command prompt resident Claude can script against, as Claude Cod
 - **Tests:** `t_command` (34 checks: the batch language, exit codes, every review case, and CMDTEST.BAT), `t_cmdedit` (18: the editor, history, Tab, Ctrl-C, input from a file), `t_cmdsaver` (8: the saver at the prompt and in PAUSE, the Executive's memory and INT 24h afterwards).
 - **Version:** LODE_VER 0042h.
 - **Copy to the floppy** (`releases/0.4.2`): LODE.SYS, LCMD.COM, LODE.TXT, and CMDTEST.BAT, a self-test of the batch language for the 1520 ("All 11 tests passed"). CLEANOLD.BAT deletes the Grid-OS files 0.4.1 replaced. On the 1520 the prompt, history, Tab and the saver all work, and CMDTEST passes all 11 (Joshua).
+- **Fixed after 0.4.2 (found by SPIKES.BAT on the 1520, 2026-10-09):** `ECHO.` (a blank line), `ECHO.text`, `CD..` and `CD\` didn't work.
+  - **Cause:** splitting a command word from its arguments when no space comes between them relied on AL after `strlen`, which leaves AL at 0.
+  - **Effect:** `ECHO. >> FILE` wrote its arguments ("spikes.txt") instead of a blank line.
+  - **Now:** `ECHO.` writes a blank line and `ECHO.text` writes the text. LCMD.COM is 10,903 bytes. `t_command` checks all four forms, into a file too.
 
 ## Calculator (0.4.4, 2026-10-12)
 Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`CALC 4*4`) and a small window over the Executive like MS-Windows' Calculator. It should use an 80287 or a 287XL when one is fitted. Memory should grow as little as possible, and existing code should be reused.
