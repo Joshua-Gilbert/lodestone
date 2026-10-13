@@ -748,18 +748,31 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
   - All 1005 checks pass: kernel 355, apps 400, splash 62, C: 56, DEFRAG 49, Claude link 21, HDPROBE 33, HDSCAN 20, HEADCLN 9.
 - **Version:** LODE_VER 0044h, UI API 5.
 - **Copy to the floppy** (`releases/0.4.4`): LODE.SYS, LODE.TXT, CALC.COM, CALC.RUN and SYSTEM.RUN. WRITE.RUN is 0.4.3's.
-- **On the 1520:**
-  - **The 80287's own code paths:**
-    - `CALC 2^0.5`, `CALC EXP(-0.7)` (F2XM1);
-    - `CALC SIN(1E6)` against −0.3499935021712929 (FPREM, about 1e−13 expected);
-    - `CALC /D TAN(45)` (1), `CALC /D COS(90)` (0);
-    - `CALC LN(0)` and `CALC LOG(-1)` (Not a number);
-    - `CALC SIN(0)`, `TAN(0)`, `ATAN(0)` and `ATAN(1)` (exact);
-    - `CALC SIN(1E5000)` (Too big, not a hang).
-  - **The lamp:** lit `80287`.
-  - **The window:** with the mouse and the keys.
-  - **No coprocessor:** whole numbers and no lamp. SETUP's bit won't do it (POST sets INT 11h's from its own probe): take the chip out, or clear bit 1 of the word at 0:410 with DEBUG.
-  - **Later:** the same with a 287XL.
+- **On the 1520 (2026-10-13), first run: no coprocessor found** (`bench/CALCTEST_1520_2026-10-13_044.TXT`). The lamp stayed dark, and CALC said `Coprocessor: none: whole numbers only`. The whole-number engine itself was right: `6*7`, `-2^2`, `2^3^2`, `7\2`, `7%2` and the batch loop all passed, and the rest said "Needs an 80287". Fixed in 0.4.5 (below).
+- **0.4.5 on the 1520 (2026-10-13): all passed** (`bench/CALCTEST_1520_2026-10-13.TXT`, run by `tests/CALCTEST.BAT`):
+  - `Coprocessor: 80287`.
+  - **Exact answers, 18 of 18:** `0.1+0.2` 0.3, `2^-1` 0.5, `sqrt(16)` 4, `pi`, `999999999999999.9` 1E+15, `sin(0)`, `tan(0)`, `atan(0)`, `atan(1)` π/4, `/D tan(45)` 1, `/D cos(90)` 0, `/D cos(180)` −1, the whole-number sums, and `CALC N=N+1` counting in a batch file.
+  - **Against 15-digit references, 15 of 16 to the last digit:** `2^0.5`, `sqrt(2)`, `1.5^2.5`, `exp(-0.7)` (0.49658530379141: pcemu's QEMU gives …409), `exp(1)`, `ln(10)`, `log(2)`, `sin(1)`, `cos(1)`, `tan(1)`, `atan(0.5)`, `atan(3)`, `1e300*1e300` (1E+600), `/D sin(30)`, `/D tan(60)`.
+  - **`sin(1e6)`:** −0.349993502171308 against −0.349993502171293, 1.5e−14 out, inside the 1e−13 expected from reducing by the 80287's 64-bit π/4. pcemu's 80287 path is 5e−11 out (QEMU's FPREM through doubles).
+  - **Errors:** `ln(0)` and `log(-1)` Not a number, `1/0` and `0^-0.5` Divide by zero, `sin(1e5000)` Too big (no hang), each with ERRORLEVEL 1.
+  - **The Executive (Joshua):** the lamp lit `80287`; System's Devices says 80287; the window's typed sums, `+1` after an answer, keypad clicks, F2 degrees, F1 help, and ESC back to the Executive as it was.
+  - Still to see: no coprocessor (the chip out, or bit 1 of 0:410 cleared with DEBUG), and a 287XL.
+
+## The 80287 found (0.4.5, 2026-10-13)
+- **The bug:** `fpu_detect` (FPU.INC) wanted the whole status word to be 0 after FNINIT. A real 80287's FNINIT leaves the condition codes C0-C3 as they were. On the 1520 the status read 4000h: C3 was still set from the last compare. So the lamp, System's Devices and CALC all said there was no coprocessor.
+  - The 1520's POST masks C0-C3 in its own probe (`reset.asm`: "they are undefined after FINIT"), so INT 11h's bit was set all along.
+  - TM5000G checks the control word (037Fh) instead, so it found the chip.
+  - A 387-class chip clears C0-C3 at FNINIT. pcemu's CPU is QEMU's, 387-class, so no test could see it.
+- **The fix:** the check is `test ax, 0B8BFh`: every bit but C0-C3 and bit 6 (reserved on the 80287), the mask POST means to use. +1 byte.
+  - LODE.SYS is 45,932 bytes, CALC.COM 3,628, CALC.RUN 4,161 and SYSTEM.RUN 10,377.
+  - A DOS program still gets 562.3 / 578.4 KB.
+- **Test:** the `-DCALC_287` build now also sets C0-C3 after FNINIT, as the 80287 may. `t_calc` checks that it still says `Coprocessor: 80287` (115 checks). On the old check, 33 of them fail.
+- **For the 1520:**
+  - `tests/FPUPROBE.COM` prints what the coprocessor answers after FNINIT: INT 11h, the MSW, the control and status words, C0-C3, and which kind the infinities say. Measured: `INT 11h 4463  MSW FFF0  after FNINIT: control 037F  status 4000  C0-C3 0001  infinities equal (80287)`.
+  - `tests/CALCTEST.BAT` tests the calculator step by step and logs `CALCTEST.TXT`:
+    - step 1: the sums at the prompt, exact ones checked, the rest logged for comparison;
+    - `CALCTEST W`: the Executive side.
+- **Version:** LODE_VER 0045h. `releases/0.4.5`: LODE.SYS, LODE.TXT, CALC.COM, CALC.RUN, SYSTEM.RUN, CALCTEST.BAT, FPUPROBE.COM.
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:

@@ -1327,6 +1327,12 @@ def t_calc():
     check('... full: "Out of environment space", ERRORLEVEL 1, and N as it was',
           'CALC: Out of environment space' in o and 'EL' in res(o) and b'N=2' + bytes(1) in env() and len(env()) == 1016, (o, env()[-40:]))
     for c in pads: sh.run('set q%s=' % c)
+    # found on the 1520: a real 80287's FNINIT leaves C0-C3 as they were,
+    # and fpu_detect wanted the whole status word 0 (the -DCALC_287 build
+    # sets them after FNINIT, as the 80287 may)
+    o = sh.run('calc287 /?')
+    check('an 80287 that leaves C0-C3 set after FNINIT is still found ("Coprocessor: 80287")',
+          'Coprocessor: 80287' in o and 'Coprocessor: 80287XL' not in o, o)
     # the 80287's paths: FPREM, FPTAN, FPATAN, F2XM1, FYL2X, kept in range
     for e, want in (('sin(1)', math.sin(1)), ('cos(2)', math.cos(2)), ('tan(1.5)', math.tan(1.5)), ('sin(-100)', math.sin(-100)),
                     ('cos(1234.5)', math.cos(1234.5)), ('tan(-3)', math.tan(-3)), ('atan(3)', math.atan(3)),
