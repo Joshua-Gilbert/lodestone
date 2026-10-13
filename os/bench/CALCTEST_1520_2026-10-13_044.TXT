@@ -1,0 +1,50 @@
+Calculator test (0.4.4) 
+
+Lodestone version 0.4 (DOS 3.30 compatible)
+CALC [/D] [name=]expression
+  + - * / ^ ( )   \ whole part of a division   % remainder
+  sqrt sin cos tan atan ln log exp abs pi ans   /D: degrees
+  name= sets %name% too (in a batch file write %% for %)
+Coprocessor: none: whole numbers only
+Exact answers: 
+ok    6*7 = 42 
+BAD   0.1+0.2 =   (want 0.3) 
+ok    -2^2 = -4 
+ok    2^3^2 = 512 
+BAD   2^-1 =   (want 0.5) 
+ok    7\2 = 3 
+BAD   sqrt(16) =   (want 4) 
+BAD   pi =   (want 3.14159265358979) 
+BAD   999999999999999.9 =   (want 1E+15) 
+BAD   sin(0) =   (want 0) 
+BAD   tan(0) =   (want 0) 
+BAD   atan(0) =   (want 0) 
+BAD   atan(1) =   (want 0.785398163397448) 
+BAD  /d tan(45) =   (want 1) 
+BAD  /d cos(90) =   (want 0) 
+BAD  /d cos(180) =   (want -1) 
+ok   7%2 = 1 
+ok   a batch loop counted to 5 with CALC N=N+1 
+Answers to compare: 
+2^0.5 =  
+sqrt(2) =  
+1.5^2.5 =  
+exp(-0.7) =  
+exp(1) =  
+ln(10) =  
+log(2) =  
+sin(1) =  
+cos(1) =  
+tan(1) =  
+atan(0.5) =  
+atan(3) =  
+sin(1e6) =  
+1e300*1e300 =  
+/d sin(30) =  
+/d tan(60) =  
+Errors: 
+running sin(1e5000) 
+sin(1e5000) came back 
+BAD  the error messages did not all match 
+ok   the five error messages 
+Step 1: 13 wrong 
