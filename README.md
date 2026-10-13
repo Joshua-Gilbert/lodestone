@@ -179,7 +179,7 @@ Run the comparison with `python3 os/bench/compare3.py <GRiD MS-DOS EPROM image> 
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `os/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN |
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
-| `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys) |
+| `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys); resident Claude's spikes: `RSPIKE.COM` (a pop-up TSR on CODE-\\, its code in EMS), `EMSUSE`, `GFXUSE`, `KEYCODE` and `SPIKES.BAT`, which runs them on the 1520 |
 | `os/releases` | Builds for the floppy, 0.1 to 0.4.3 |
 | `os/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `os/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
@@ -202,16 +202,17 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 1005 checks pass on 0.4.4 (2026-10-12); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 1028 checks pass on 0.4.4 (2026-10-13); claude-link's own 68 (chat and Term) are in `claude-link/tests`.
 
 ```sh
 cd os
-python3 tests/test_kernel.py          # 355 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt, CALC
+python3 tests/test_kernel.py          # 357 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt, CALC
 python3 tests/test_apps.py            # 400 checks: UI core, Executive, System, Write, mouse, files, the calculator and the coprocessor lamp (add "shots" for screens/0.3)
 python3 tests/test_splash.py          # 62 checks: the start-up picture, bit for bit on every start-up path; SPLASH=, LODE.PIC, System's switch, memory
 python3 tests/test_hd.py              # 56 checks: drive C:, and C: with M:
 python3 tests/test_defrag.py          # 49 checks: DEFRAG on floppies and C:, the saver's round
 python3 tests/test_claude_kernel.py   # 21 Claude-link scenarios on the kernel
+python3 tests/test_resident.py        # 21 checks: resident Claude's spikes (RSPIKE over EMS users, graphics modes, the Executive, TM5000G)
 python3 tests/test_hdprobe.py         # 33 checks: HDPROBE
 python3 tests/test_hdscan.py          # 20 checks: HDSCAN
 python3 tests/test_headcln.py         # 9 checks: HEADCLN
@@ -241,7 +242,7 @@ Lodestone 0.4.4 is the current release: 0.4.1 was the rename, 0.4.2 brings the c
 
 **Next:**
 1. Claude (Term and chat) on the real GPIB bridge, with the Pi 5.
-2. Claude staying resident, working alongside DOS programs, with M: as its scratchpad: a hot key over a running program, Term's screen and link code in EMS (`docs/term.md`, Phase 2).
+2. Claude staying resident, working alongside DOS programs, with M: as its scratchpad: a hot key over a running program, Term's screen and link code in EMS (`docs/lodestone-resident-claude.md`). The spikes are done: on the 1520, CODE-\\ flips at once between a program and a pop-up whose code runs from EMS, with the program's EMS pages, its screen in modes 4, 6 and 40h, and TM5000G's GPIB work all left as they were. Next is `CLAUDE /R`.
 3. Command.
 
 Later come a plot view and instrument programs for the GPIB bench (scopes, the VNA), which can use the coprocessor detection and the calculator's 80287 code. The roadmap and the hardware notes are in the claude.ai Project.

@@ -635,12 +635,12 @@ run_cmd:
 .b3:    mov     byte [di], 0
         mov     si, cword               ; args start where cword2 ends
         call    strlen
-        mov     ax, cx
+        mov     dx, cx                  ; (strlen leaves AL 0)
         mov     si, cword2
         call    strlen
-        sub     ax, cx
+        sub     dx, cx
         mov     si, [argp]
-        sub     si, ax
+        sub     si, dx
         mov     [argp2], si
 .look:  mov     bx, builtins
 .bl:    mov     si, [bx]
@@ -3364,11 +3364,10 @@ do_echo:
         mov     si, s_off
 .p:     call    puts
         jmp     crlf
-.a:     cmp     byte [si], '.'          ; "ECHO." = a blank line
-        jne     .w
-        cmp     byte [si+1], 0
-        jne     .w
-        jmp     crlf
+.a:     cmp     byte [si], '.'          ; "ECHO." a blank line, "ECHO.text"
+        jne     .w                      ;  the text
+        inc     si
+        jmp     .t
 .w:     mov     di, s_on
         call    streqi
         jne     .o
