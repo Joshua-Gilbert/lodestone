@@ -8,6 +8,12 @@
 ;           Code on the Pi (your Claude subscription; no API key)
 ;    /C     chat: gridlink's own agent (an API key on the Pi)
 ;    neither: the Pi decides (gridlink's [grid] app setting)
+;  CLAUDE /R   resident: CODE-\ brings Claude up over a program waiting for
+;              a key, CODE-\ again goes back (0.5 M1: the console is empty;
+;              docs/lodestone-resident-claude.md).  Exit code 0 resident,
+;              1 no EMS or not enough, 2 resident already
+;  CLAUDE /U   takes it out.  Exit code 0 done, 1 not resident, 2 a
+;              program loaded after it has INT 16h (take that out first)
 ;
 ;  Runs under MS-DOS 3.x with GRIDGPIB loaded (and later on Lodestone).
 ;  Screen: 640x400 mode 40h, Terminus Bold 8x16, 80 x 25 cells:
@@ -67,9 +73,183 @@ P_CELLS   equ 4Bh
 HF_TERM   equ 01h                ; the Pi's HELLO: Term
 
 ; =====================================================================
+;  resident Claude (CLAUDE /R): this stub is copied into a block of its
+;  own at the top of conventional memory (the system's, called CLAUDE; no
+;  PSP), at the same offsets, and CLAUDE.COM ends as any program does.
+;  At the top, nothing is ever in the way of the Executive's block
+;  growing back, wherever it was loaded from (from the prompt, a stub left
+;  after LCMD would make the Executive's block move past it, and a
+;  program would lose about 43 KB).  Its console (RCON.ASM) sits in the
+;  first of its three EMS pages.
+;  It is an INT 16h hook.  Every call first looks for CODE-\ in the BIOS's
+;  keyboard buffer, anywhere in it (the raw word 2BF0h, or 2B00h), takes
+;  it out and brings the console up over the program, which is waiting
+;  for a key or looking for one.  So there is no extra BIOS call per key
+;  check, and CODE-\ is seen behind another CODE-key too, which an AH=01h
+;  peek would drop with it.  A read waits here (HLT), peeking with the
+;  caller's own kind (AH=01h for 00h, 11h for 10h): the BIOS's skipping
+;  of enhanced-only keys happens while the hook still sees CODE-\.
+;  The console runs on our stack (conventional memory: an interrupt
+;  meanwhile runs on it too), with the program's four EMS windows read
+;  and put back as M: does; the program's screen goes to our pages 2-3.
+; =====================================================================
+R_PAGES  equ 3                  ; the console, then the program's screen (2)
+R_HOT    equ 2B00h              ; CODE-\ as AH=10h gives it
+R_HOTRAW equ 2BF0h              ;  and as the 1520's BIOS keeps it
+R_FRAME  equ 0E000h
+R_EPORT  equ 0258h              ; window 0's page register (+4000h a window)
+R_STACK  equ 384
+
+        jmp     start
+r_old16  dd     0
+r_entry  dd     R_FRAME << 16   ; the console: E000:0000
+r_hw     db     0, 0, 0         ; our pages' register values
+r_saved  db     0, 0, 0, 0      ; the program's windows meanwhile
+r_inpop  db     0
+r_handle dw     0               ; our EMS pages (CLAUDE /U frees them)
+r_params:                       ; the console's, ES:BX (RCON.ASM P_*)
+r_pold16 dd     0               ;  the BIOS's INT 16h
+r_indos  dd     0               ;  DOS's busy flag (INT 21h AH=34h)
+r_ss     dw     0
+r_sp     dw     0
+         db     'CLRS'          ; (resident: the 4 bytes before the hook)
+r_int16: cmp    ah, 0
+        je      .rd
+        cmp     ah, 10h
+        je      .rd
+        cmp     ah, 1
+        je      .pk
+        cmp     ah, 11h
+        je      .pk
+.ch:    jmp     far [cs:r_old16]
+.pk:    call    r_hot
+        jmp     .ch
+.rd:    sti                             ; a read: wait here, CODE-\ seen
+.w:     call    r_hot                   ;  meanwhile, then the BIOS's
+        push    ax
+        inc     ah                      ; (a peek of the caller's kind)
+        pushf
+        call    far [cs:r_old16]
+        pop     ax
+        jnz     .ch
+        hlt
+        jmp     .w
+
+; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
+; move back one) and the console runs.  Registers kept.
+r_hot:  cmp     byte [cs:r_inpop], 0
+        jne     .x
+        push    ax
+        push    bx
+        push    si
+        push    ds
+        push    40h
+        pop     ds
+        cli
+        mov     bx, [1Ah]               ; from the head
+.s:     cmp     bx, [1Ch]
+        je      .no
+        mov     ax, [bx]
+        cmp     ax, R_HOTRAW
+        je      .m
+        cmp     ax, R_HOT
+        je      .m
+        call    .nx
+        jmp     .s
+.m:     mov     si, bx
+        call    .nx
+        cmp     bx, [1Ch]
+        je      .e
+        mov     ax, [bx]
+        mov     [si], ax
+        jmp     .m
+.e:     mov     [1Ch], si               ; the tail one back
+        sti
+        pop     ds
+        pop     si
+        pop     bx
+        pop     ax
+        jmp     short r_popup
+.no:    sti
+        pop     ds
+        pop     si
+        pop     bx
+        pop     ax
+.x:     ret
+.nx:    inc     bx                      ; the next word, round the buffer
+        inc     bx
+        cmp     bx, [82h]
+        jb      .n
+        mov     bx, [80h]
+.n:     ret
+
+r_popup:
+        mov     byte [cs:r_inpop], 1
+        pusha
+        push    ds
+        push    es
+        mov     [cs:r_ss], ss           ; our stack
+        mov     [cs:r_sp], sp
+        cli
+        push    cs
+        pop     ss
+        mov     sp, r_stack_top
+        sti
+        cld
+        mov     dx, R_EPORT             ; the program's windows, then ours
+        mov     si, r_saved
+        mov     cx, 4
+.s:     in      al, dx
+        mov     [cs:si], al
+        inc     si
+        add     dx, 4000h
+        loop    .s
+        mov     dx, R_EPORT
+        mov     si, r_hw
+        mov     cx, R_PAGES
+.m:     mov     al, [cs:si]
+        out     dx, al
+        inc     si
+        add     dx, 4000h
+        loop    .m
+        push    cs
+        pop     es
+        mov     bx, r_params
+        call    far [cs:r_entry]
+        mov     dx, R_EPORT             ; the program's windows back
+        mov     si, r_saved
+        mov     cx, 4
+.r:     mov     al, [cs:si]
+        out     dx, al
+        inc     si
+        add     dx, 4000h
+        loop    .r
+        cli
+        mov     ss, [cs:r_ss]
+        mov     sp, [cs:r_sp]
+        sti
+        pop     es
+        pop     ds
+        popa
+        mov     byte [cs:r_inpop], 0
+        ret
+
+; CLAUDE /R allocates the EMS pages through here, far: the kernel gives
+; pages asked for from outside a program's memory to no program (KEMS.INC),
+; so they aren't taken back when CLAUDE.COM ends
+r_int67: int    67h
+        retf
+        align   2
+r_code_end:                             ; (the stack follows the code in the
+r_stack_top equ r_code_end + R_STACK    ;  stub's block, not in CLAUDE.COM)
+r_end   equ     r_stack_top
+R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
+
+; =====================================================================
 ;  start-up
 ; =====================================================================
-start:  mov     sp, stack_top
+start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
+        mov     sp, stack_top
         cld
         push    cs
         pop     es
@@ -141,6 +321,244 @@ fatal:  mov     ah, 9
         int     21h
         mov     ax, 4C01h
         int     21h
+
+; CLAUDE /R or /U?  Then it never comes back.  This runs before BSS is
+; touched: CLAUDE /R copies the console from where BSS will be (rcon_img).
+res_args:
+        mov     si, 81h
+        mov     cl, [80h]
+        xor     ch, ch
+.l:     jcxz    .x
+        lodsb
+        dec     cx
+        cmp     al, '/'
+        jne     .l
+        mov     al, [si]
+        and     al, 0DFh
+        cmp     al, 'R'
+        je      res_load
+        cmp     al, 'U'
+        je      res_unload
+        jmp     .l
+.x:     ret
+
+; CLAUDE /R: three EMS pages (the frame at E000h), the console into the
+; first, INT 16h hooked; the PSP and the stub stay
+res_load:
+        call    res_find
+        jc      .new
+        mov     dx, s_r_again
+        mov     al, 2
+        jmp     res_quit
+.new:   mov     ax, 3567h               ; an EMS manager, its frame at E000h
+        int     21h
+        mov     di, 0Ah
+        mov     si, s_emm
+        mov     cx, 8
+        repe    cmpsb
+        push    cs
+        pop     es
+        jne     .noems
+        mov     ah, 41h
+        int     67h
+        or      ah, ah
+        jnz     .noems
+        cmp     bx, R_FRAME
+        jne     .noems
+        mov     ah, 34h                 ; DOS's busy flag
+        int     21h
+        mov     [r_indos], bx
+        mov     [r_indos + 2], es
+        mov     ax, 3516h               ; the INT 16h we go on to
+        int     21h
+        mov     [r_old16], bx
+        mov     [r_old16 + 2], es
+        mov     [r_pold16], bx
+        mov     [r_pold16 + 2], es
+        mov     sp, stack_top           ; (inside us, clear of rcon_img)
+        push    cs
+        pop     es
+        mov     bx, bss_end + 15        ; us: no more than a run needs, so the
+        shr     bx, 4                   ;  rest is free
+        mov     ah, 4Ah
+        int     21h
+        mov     bx, 0FFFFh              ; the stub's block at the top: all the
+        mov     ah, 48h                 ;  free memory, less R_PARAS + its MCB
+        int     21h                     ;  at its top, then those (first fit:
+        cmp     bx, R_PARAS * 2         ;  the top unless a hole lower down
+        jb      .nomem                  ;  fits, which is as good)
+        mov     bp, bx
+        mov     ah, 48h
+        int     21h
+        jc      .nomem
+        mov     es, ax
+        mov     bx, bp
+        sub     bx, R_PARAS + 1
+        mov     ah, 4Ah
+        int     21h
+        mov     bx, R_PARAS
+        mov     ah, 48h
+        int     21h
+        mov     bp, ax                  ; BP = the stub's block
+        pushf
+        mov     ah, 49h                 ; (ES: the rest, freed again)
+        int     21h
+        popf
+        jc      .nomem
+        lea     ax, [bp - 1]            ; its MCB: the system's, called CLAUDE
+        mov     es, ax
+        mov     word [es:1], 8
+        mov     si, s_mcbname
+        mov     di, 8
+        movsw
+        movsw
+        movsw
+        movsw
+        lea     ax, [bp - 10h]          ; the stub, at the same offsets (its CS
+        mov     es, ax                  ;  is 10h paragraphs below the block)
+        mov     si, 100h
+        mov     di, si
+        mov     cx, r_code_end - $$
+        rep     movsb
+        mov     [r_far + 2], es         ; ES = the stub from here on
+        mov     ah, 43h                 ; its EMS pages, asked for from the
+        mov     bx, R_PAGES             ;  stub: kept when we end
+        call    far [r_far]
+        or      ah, ah
+        jnz     .nopages
+        mov     [es:r_handle], dx
+        mov     dx, R_EPORT             ; each page's register value: map it
+        in      al, dx                  ;  in window 0 and read the register
+        push    ax
+        xor     bx, bx
+.pg:    mov     ax, 4400h
+        mov     dx, [es:r_handle]
+        push    bx
+        int     67h
+        pop     bx
+        mov     dx, R_EPORT
+        in      al, dx
+        mov     [es:r_hw + bx], al
+        inc     bx
+        cmp     bx, R_PAGES
+        jb      .pg
+        mov     al, [es:r_hw]           ; the console into the first
+        out     dx, al
+        push    es
+        push    R_FRAME
+        pop     es
+        mov     si, rcon_img
+        xor     di, di
+        mov     cx, rcon_end - rcon_img
+        rep     movsb
+        pop     es
+        pop     ax                      ; window 0 as it was
+        out     dx, al
+        mov     dx, s_r_ok
+        mov     ah, 9
+        int     21h
+        push    ds                      ; INT 16h last
+        push    es
+        pop     ds
+        mov     dx, r_int16
+        mov     ax, 2516h
+        int     21h
+        pop     ds
+        mov     ax, 4C00h               ; (our own memory freed as for any
+        int     21h                     ;  program; the stub's block stays)
+.nopages:
+        mov     es, bp                  ; (the stub's block back)
+        mov     ah, 49h
+        int     21h
+        mov     dx, s_r_nopages
+        mov     al, 1
+        jmp     res_quit
+.nomem: mov     dx, s_r_nomem
+        mov     al, 1
+        jmp     res_quit
+.noems: mov     dx, s_r_noems
+        mov     al, 1
+        jmp     res_quit
+r_far   dw      r_int67, 0              ; (the stub's thunk, far)
+
+; DX = message ($), AL = exit code
+res_quit:
+        push    ax
+        mov     ah, 9
+        int     21h
+        pop     ax
+        mov     ah, 4Ch
+        int     21h
+
+; CLAUDE /U: INT 16h back, the EMS pages and the memory freed, if INT 16h
+; still comes to us
+res_unload:
+        call    res_find
+        jnc     .f
+        mov     dx, s_u_none
+        mov     al, 1
+        jmp     res_quit
+.f:     mov     bp, ax                  ; its CS
+        mov     ax, 3516h
+        int     21h
+        mov     ax, es
+        cmp     ax, bp
+        jne     .over
+        cmp     bx, r_int16
+        jne     .over
+        push    ds
+        lds     dx, [es:r_old16]
+        mov     ax, 2516h
+        int     21h
+        pop     ds
+        mov     dx, [es:r_handle]
+        mov     ah, 45h
+        int     67h
+        lea     ax, [bp + 10h]          ; its block
+        mov     es, ax
+        mov     ah, 49h
+        int     21h
+        mov     dx, s_u_done
+        xor     al, al
+        jmp     res_quit
+.over:  mov     dx, s_u_over
+        mov     al, 2
+        jmp     res_quit
+
+; the resident copy, from the memory blocks: AX = its CS, CF if none.  A
+; block of the system's (owner 8) with 'CLRS' before r_int16, counting
+; from 10h paragraphs below it.  (Its CS is 10h paragraphs below the block
+; so its offsets are CLAUDE.COM's: everything it has, r_old16 to the
+; stack's top, lies from offset 100h on, inside the block)
+res_find:
+        mov     ah, 52h
+        int     21h
+        mov     ax, [es:bx - 2]         ; the first MCB
+.l:     mov     es, ax
+        cmp     word [es:1], 8
+        jne     .n
+        cmp     word [es:3], R_PARAS
+        jb      .n
+        push    es
+        mov     dx, ax
+        sub     dx, 0Fh                 ; (MCB + 1 - 10h)
+        mov     es, dx
+        cmp     word [es:r_int16 - 4], 'CL'
+        jne     .p
+        cmp     word [es:r_int16 - 2], 'RS'
+        jne     .p
+        pop     es
+        mov     ax, dx
+        clc
+        ret
+.p:     pop     es
+.n:     cmp     byte [es:0], 'Z'
+        je      .none
+        add     ax, [es:3]
+        inc     ax
+        jmp     .l
+.none:  stc
+        ret
 
 ; CLAUDE /A:nn
 parse_args:
@@ -3047,6 +3465,17 @@ fmt_clock:                              ; ES:DI <- "h:mm pm"
 ; =====================================================================
 sig_gg      db 'GRIDGPIB'
 s_emm       db 'EMMXXXX0'
+s_r_ok      db 'Claude is resident: CODE-\ brings it up over a program waiting for a key.', 13, 10
+            db 'CLAUDE /U takes it out.', 13, 10, '$'
+s_r_again   db 'Claude is resident already (CODE-\).', 13, 10, '$'
+s_r_noems   db 'CLAUDE /R needs EMS, with its page frame at E000h.', 13, 10, '$'
+s_r_nopages db 'CLAUDE /R needs 3 free EMS pages (48 KB).', 13, 10, '$'
+s_r_nomem   db 'CLAUDE /R: not enough memory.', 13, 10, '$'
+s_mcbname   db 'CLAUDE', 0, 0
+s_u_done    db 'Claude is no longer resident.', 13, 10, '$'
+s_u_none    db 'Claude isn', 27h, 't resident.', 13, 10, '$'
+s_u_over    db 'Claude can', 27h, 't be taken out: a program loaded after it has INT 16h.', 13, 10
+            db 'Take that program out first.', 13, 10, '$'
 msg_nogg    db 'CLAUDE needs GRIDGPIB loaded first (run GRIDGPIB, then CLAUDE).', 13, 10, '$'
 msg_nomem   db 'Not enough memory for CLAUDE.', 13, 10, '$'
 msg_bye     db 'Claude for GRiD ended.', 13, 10, '$'
@@ -3123,7 +3552,9 @@ blankline:
 %include "GLYPHS.INC"
 
             align 16
-bss:
+bss:                                    ; CLAUDE /R's console (RCON.ASM) is here
+rcon_img:   incbin "RCON.BIN"           ;  in the file only: BSS overlays it,
+rcon_end:                               ;  so a run without /R carries nothing
 absolute bss
 nano        resb 1
 ggint       resb 1
