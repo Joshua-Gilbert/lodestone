@@ -1,4 +1,4 @@
-Lodestone 0.4.4 - boot floppy
+Lodestone 0.4.5 - boot floppy
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\LODEBOOT and answer Y. It adds the Lodestone loader to this disk
@@ -307,6 +307,13 @@ shows it, and lets the memory go.
   fitted (Lodestone checks the chip itself), and shows nothing otherwise;
   System, Devices names it too.  The lamp and CODE-K cost DOS programs
   0.2 KB; CALC.COM and CALC.RUN cost nothing until they run.
+
+0.4.5: the 80287 is found.  On a real 80287 the lamp stayed dark and the
+calculator worked in whole numbers: after its reset (FNINIT) the chip
+keeps four flags as they were, and Lodestone wanted them clear.  The
+BIOS's own check ignores them, and now so does Lodestone.  New on this
+disk: CALCTEST.BAT tries the calculator step by step (its answers go to
+CALCTEST.TXT), and FPUPROBE shows what the coprocessor answers.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

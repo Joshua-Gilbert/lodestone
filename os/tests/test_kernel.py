@@ -994,6 +994,17 @@ def t_command():
                 bat('CS.BAT', '@echo off', 'choice /c:yn /s Case'))
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
+    o = sh.run('echo.hello')
+    o2 = sh.run('echo. >> e.txt')
+    o3 = sh.run('type e.txt')
+    check('ECHO.text: the text; ECHO. into a file: a blank line (the name parse kept AL from strlen)', 'hello' in o.split('\n')
+          and 'ECHO is' not in o + o2 + o3 and o3.split('\n')[0].strip() == '', (o, o2, o3))
+    sh.run('del e.txt')
+    sh.run('cd sub')
+    o = sh.run('cd..')
+    sh.run('cd sub')
+    o2 = sh.run('cd\\')
+    check('CD.. and CD\\ (no space)', o.split('\n')[-1].startswith('A:\\>') and 'A:\\>' == o2.split('\n')[-1] and 'SUB' not in o + o2, (o, o2))
     o = sh.run('echo a && echo b')
     check('&&: both', 'a\n' in o + '\n' and '\nb' in o, o)
     o = sh.run('type nosuch.x && echo NOPE')
@@ -1316,6 +1327,12 @@ def t_calc():
     check('... full: "Out of environment space", ERRORLEVEL 1, and N as it was',
           'CALC: Out of environment space' in o and 'EL' in res(o) and b'N=2' + bytes(1) in env() and len(env()) == 1016, (o, env()[-40:]))
     for c in pads: sh.run('set q%s=' % c)
+    # found on the 1520: a real 80287's FNINIT leaves C0-C3 as they were,
+    # and fpu_detect wanted the whole status word 0 (the -DCALC_287 build
+    # sets them after FNINIT, as the 80287 may)
+    o = sh.run('calc287 /?')
+    check('an 80287 that leaves C0-C3 set after FNINIT is still found ("Coprocessor: 80287")',
+          'Coprocessor: 80287' in o and 'Coprocessor: 80287XL' not in o, o)
     # the 80287's paths: FPREM, FPTAN, FPATAN, F2XM1, FYL2X, kept in range
     for e, want in (('sin(1)', math.sin(1)), ('cos(2)', math.cos(2)), ('tan(1.5)', math.tan(1.5)), ('sin(-100)', math.sin(-100)),
                     ('cos(1234.5)', math.cos(1234.5)), ('tan(-3)', math.tan(-3)), ('atan(3)', math.atan(3)),

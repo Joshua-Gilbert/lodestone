@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-LODE_VER    equ 0044h                   ; Lodestone 0.4.4 (BH.BL: major, minor<<4 | patch)
+LODE_VER    equ 0045h                   ; Lodestone 0.4.5 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2

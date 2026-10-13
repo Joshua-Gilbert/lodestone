@@ -1,0 +1,15 @@
+Resident Claude spikes (GPIB address ) 
+Keys as AH=10h gives them (CODE-\ should be 2B00); Esc twice ends
+2B00 011B spikes.txt
+1 hot key: NOT 2B00 
+2 RSPIKE resident 
+3 EMSUSE: 0 bad 
+3 pop-up: yes 
+4 mode 4: 0 bad 
+4 mode 4 looked: same 
+4 mode 6: 0 bad 
+4 mode 6 looked: DIFFERENT 
+4 mode 40: 0 bad 
+4 mode 40 looked: same 
+5 TM5000G: ok 
+5 TM5000G graphics: not tried 
