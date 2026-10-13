@@ -141,3 +141,83 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
 - **Loading from LCMD.** The stub lands after LCMD, so when LCMD exits the Executive's block moves past it (`ui_room`, as for any TSR). A `RESIDENT=` line in LODE.INI could load it at start-up instead, right after the UI block.
 - **Programs that hook INT 16h themselves**, and programs that read the keyboard through INT 09h only (not covered: Phase 2 left INT 09h hooks out).
 - **The mouse during a pop-up.** It is probably ignored.
+
+## M1: `CLAUDE /R` and `CLAUDE /U` (2026-10-13)
+`CLAUDE /R` makes Claude resident. CODE-\ over a program waiting for a key brings up its console, and CODE-\ again goes back to the program as it was. `CLAUDE /U` takes it out again. M1's console is empty: Term's 24 rows blank and its status band. The link comes in M2.
+
+- **Exit codes:**
+  - `/R`: 0 resident, 1 no EMS (or not enough), 2 resident already.
+  - `/U`: 0 taken out, 1 not resident, 2 a program loaded after it has INT 16h (take that out first).
+- **Where it lives:** in CLAUDE.COM.
+  - `/R` and `/U` are handled before the GPIB driver is looked for, so they work without the bridge.
+  - The console is its own assembly, `RCON.ASM` (org 0, 2,853 bytes). CLAUDE.COM carries it where its BSS goes, so a normal run (chat, Term) doesn't carry it in memory. `/R` copies it into the first of three EMS pages.
+  - It draws with `cell` from `CELL.INC`, split out of `TERMCELL.INC` (CLAUDE.COM is byte for byte the same after the split), and the Terminus font. This is the shape M2 needs: the console code CS-relative in EMS.
+- **The stub: in a block of its own at the top of memory, with no PSP.** This changed from the plan (and from RSPIKE, which keeps its PSP with INT 21h AH=31h).
+  - **Why:** measured with the stub kept that way and loaded at the prompt, a program the Executive started afterwards got 534.8 KB instead of 578.4: 43.6 KB less. When LCMD ended, the Executive's block couldn't grow back past the stub (`ui_room`), so it moved above it, leaving everything below unused. Any TSR loaded at the prompt does this today.
+  - **How:**
+    1. `/R` takes all the free memory and gives back its top 44 paragraphs.
+    2. It takes those for the stub, as the system's block (owner 8), called CLAUDE.
+    3. It copies the stub in at the same offsets: the stub's CS is 10h paragraphs below its block.
+    4. CLAUDE.COM then ends like any program.
+  - The Executive's block never has anything in its way, wherever `/R` ran. It also saves the 256-byte PSP. This settles the open point "Loading from LCMD" below, with no `RESIDENT=` needed.
+  - **The EMS pages** are asked for through a 3-byte thunk in the stub (`int 67h`, `retf`). Lodestone's EMS manager gives pages asked for from outside a program's memory to no program, so they aren't taken back when CLAUDE.COM ends. The first try asked from CLAUDE.COM: its pages went back at its end, the next program got the same ones, and the console's code was overwritten (EMSUSE caught it).
+- **The hot key, from the BIOS's buffer:** every INT 16h call first scans the keyboard buffer for CODE-\, and takes that word out.
+  - The buffer runs from 40:1Ah to 40:1Ch and wraps at 40:80h/82h, as the 1520's BIOS does (`KbBufStart`/`KbBufEnd`).
+  - The raw word is 2BF0h (2B00h is taken too), and it is found anywhere in the buffer.
+  - So there is no extra BIOS call per key check. CODE-\ is also caught behind another CODE-key, which an AH=01h peek would drop with it (the BIOS skips enhanced-only keys there).
+  - A read waits in the hook with HLT, peeking with the caller's own kind (AH=01h for 00h, 11h for 10h). So the BIOS's skipping happens while the hook still sees CODE-\.
+  - pcemu now models the buffer:
+    - the first 15 of its queued keys sit in 40:1Eh-3Dh as the BIOS would hold them, going in at the tail;
+    - the head moves on as INT 16h takes them;
+    - what guest code changes there goes back into the queue.
+
+    All 1050 existing checks passed on that change alone, before any resident code.
+- **The program's type-ahead:** keys in the buffer when CODE-\ is taken are kept aside by the console and put back in front at pop-down, so they reach the program and not the console.
+- **Everything the program had comes back byte for byte:**
+  - its video mode;
+  - the 32 KB of video memory (to EMS pages 2-3);
+  - the BIOS's video data (40:49h-66h);
+  - the text cursor, or the CGA colour register;
+  - its four EMS windows, read and written directly as M: does.
+- **The mouse:**
+  - The Executive's pointer is drawn when it polls, so a move during the pop-up draws nothing.
+  - A DOS program's INT 33h pointer is drawn from the mouse's IRQ. Moving TM5000G's mouse during a pop-up drew on the console, and after a move it left a wrong cell on TM5000G's screen. The console now hides the INT 33h pointer (AX=2) before keeping the screen and shows it again (AX=1) after putting it back.
+- **The stack:** 384 bytes in the stub's block (conventional memory: an interrupt during the pop-up runs on it, and an ISR remapping window 0 would break a stack in EMS).
+- **`indos`:** its address comes from INT 21h AH=34h at load.
+  - The stub passes it to the console, which says "DOS busy" in its band when the program was inside DOS (COPY CON at the prompt).
+  - The console calls nothing but INT 10h, the BIOS's INT 16h and INT 33h.
+  - Acting on it is M3's (file requests while a program is paused).
+- **`/U`** finds the stub among the memory blocks (owner 8, `CLRS` before its hook), so `/R` also knows when it is there already, even under another hook. `/U` is refused when INT 16h no longer points at the stub; otherwise it puts INT 16h back and frees the EMS pages and the block.
+- **Cost:**
+  - **Resident:** 704 bytes of conventional memory: 298 of code and data, the 384-byte stack, and the block's MCB. DOS programs get 0.7 KB less, at the prompt and from the Executive alike (the plan's target was 1.2 KB). `/U` gives all of it back.
+  - **EMS:** 3 pages (48 KB).
+  - **CLAUDE.COM:** 16,421 bytes on disk (+4,101). It takes 1,248 bytes more in memory when it runs as chat or Term (the stub and the loader, not the console).
+- **Tests** (`test_resident.py`, 32 new checks; the spike's 21 stay as they were; all 1061 Lodestone checks and claude-link's 68 pass):
+  - `/R`, `/R` again, `/U`, `/U` again, `/U` under RSPIKE, no EMS: messages and exit codes;
+  - memory at the prompt, from the Executive, and after `/U`; the EMS handle kept after CLAUDE.COM ends, and freed by `/U`;
+  - the console over EMSUSE (AH=00h and AH=10h readers, all four EMS windows), over GFXUSE in modes 4, 6, 40h and 3 (video memory and 40:49h-66h byte for byte), over COPY CON ("DOS busy"), over the Executive (the mouse meanwhile), and over TM5000G (its keyboard, mouse and bus polling with no key pressed, auto-detect, and the mouse meanwhile);
+  - type-ahead kept;
+  - CODE-\ behind CODE-;.
+- **Controls:** each design choice was run against the alternative, which failed:
+  - RSPIKE's AH=11h hot-key check misses CODE-\ behind CODE-;;
+  - a console that leaves the keys in the buffer gives EMSUSE 1 key of 3;
+  - without hiding INT 33h's pointer, TM5000G's screen gets a wrong cell;
+  - the PSP-kept stub cost a program from the Executive 43.6 KB.
+- **On the 1520 (to do):** `os/claude/M1TEST.BAT` runs these step by step and logs the answers to `M1TEST.TXT`. Copy it with CLAUDE.COM, EMSUSE.COM and GFXUSE.COM (`os/claude`), MEMSZ.COM (`os/tests`) and TM5000G.EXE. It was run through in pcemu, answering as its instructions say. It checks:
+  - MEMSZ, `CLAUDE /R`, MEMSZ again, and `CLAUDE /R` once more (refused).
+  - CODE-\ and back:
+    - over EMSUSE (its four EMS pages kept);
+    - over GFXUSE in modes 4, 6 (the spike's "looked DIFFERENT" answer, to look at again) and 40h;
+    - over COPY CON (the band says DOS busy, and COPY CON goes on);
+    - over TM5000G, with its mouse moved while the console is up.
+  - Keys typed straight after the console goes away reach the program.
+  - `CLAUDE /U`, then MEMSZ as at the start.
+  - By hand at the end: CODE-\ over the Executive.
+
+  CODE-\ behind another CODE-key and keys typed just before CODE-\ need timing no one can type; the emulator's tests cover them.
+
+## Open points, after M1
+- **Loading from LCMD:** settled by the stub's block at the top of memory (M1).
+- **Programs that hook INT 16h themselves**, and programs that read the keyboard through INT 09h only (not covered: Phase 2 left INT 09h hooks out). `/U` refuses while one sits above the stub.
+- **The mouse during a pop-up:** the INT 33h pointer is hidden meanwhile (M1). The console itself ignores the mouse.
+- **The program's name in the band** needs a DOS call or a kernel hook while DOS may be busy: M3, with HELLO's.
