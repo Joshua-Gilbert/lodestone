@@ -9,7 +9,9 @@
 ;  bit only after the chip answered FNINIT, FNSTCW and FNSTSW (its
 ;  reset.asm), so this never waits on an empty socket.  Then FNINIT must
 ;  answer with a clear status word (with no chip the 286 reads the idle
-;  bus: not 0), and the two kinds are told apart by infinity: after
+;  bus: not 0), but for C0-C3: a real 80287's FNINIT leaves them as they
+;  were (POST masks them too; a 387-class chip clears them, so the
+;  emulator never showed it).  The two kinds are told apart by infinity: after
 ;  FNINIT an 80287 compares +inf and -inf equal (projective), a 287XL
 ;  doesn't.  It ends with FNINIT: nothing is left on the coprocessor.
 ; =====================================================================
@@ -19,8 +21,11 @@ fpu_detect:
         jz      .x
         fninit
         fnstsw  ax
-        test    ax, ax
-        mov     al, 0
+%ifdef CALC_287
+        or      ah, 47h                 ; (tests: C0-C3 left set, as an 80287 may)
+%endif
+        test    ax, 0B8BFh              ; all but C0-C3 (and bit 6, reserved
+        mov     al, 0                   ;  on an 80287)
         jnz     .x
         fld1
         fldz

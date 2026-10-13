@@ -1,0 +1,51 @@
+Calculator test (0.4.4) 
+
+Lodestone version 0.4 (DOS 3.30 compatible)
+CALC [/D] [name=]expression
+  + - * / ^ ( )   \ whole part of a division   % remainder
+  sqrt sin cos tan atan ln log exp abs pi ans   /D: degrees
+  name= sets %name% too (in a batch file write %% for %)
+Coprocessor: 80287
+INT 11h 4463  MSW FFF0  after FNINIT: control 037F  status 4000
+  C0-C3 0001  infinities equal (80287)
+Exact answers: 
+ok    6*7 = 42 
+ok    0.1+0.2 = 0.3 
+ok    -2^2 = -4 
+ok    2^3^2 = 512 
+ok    2^-1 = 0.5 
+ok    7\2 = 3 
+ok    sqrt(16) = 4 
+ok    pi = 3.14159265358979 
+ok    999999999999999.9 = 1E+15 
+ok    sin(0) = 0 
+ok    tan(0) = 0 
+ok    atan(0) = 0 
+ok    atan(1) = 0.785398163397448 
+ok   /d tan(45) = 1 
+ok   /d cos(90) = 0 
+ok   /d cos(180) = -1 
+ok   7%2 = 1 
+ok   a batch loop counted to 5 with CALC N=N+1 
+Answers to compare: 
+2^0.5 = 1.4142135623731 
+sqrt(2) = 1.4142135623731 
+1.5^2.5 = 2.75567596063108 
+exp(-0.7) = 0.49658530379141 
+exp(1) = 2.71828182845905 
+ln(10) = 2.30258509299405 
+log(2) = 0.301029995663981 
+sin(1) = 0.841470984807897 
+cos(1) = 0.54030230586814 
+tan(1) = 1.5574077246549 
+atan(0.5) = 0.463647609000806 
+atan(3) = 1.24904577239825 
+sin(1e6) = -0.349993502171308 
+1e300*1e300 = 1E+600 
+/d sin(30) = 0.5 
+/d tan(60) = 1.73205080756888 
+Errors: 
+running sin(1e5000) 
+sin(1e5000) came back 
+ok   the five error messages 
+Step 1: 0 wrong 
