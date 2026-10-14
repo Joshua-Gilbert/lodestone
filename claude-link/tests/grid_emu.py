@@ -542,6 +542,20 @@ class Machine:
     def d50(s, ah, al, ds, dx, bx, cx): s.psp = bx
     def d51(s, *a): s.w('bx', s.psp)
     d62 = d51
+    def d52(s, *a):
+        """The "list of lists", for its first MCB (at BX-2): the chain is
+        written from the blocks (each has a paragraph before it kept for its
+        MCB) and the free gaps between them; the pointer just below them."""
+        chain, pos = [], s.MEMBASE
+        for seg, n, owner in sorted(s.blocks):
+            if seg - 1 > pos: chain.append((pos, 0, seg - 2 - pos))
+            chain.append((seg - 1, owner, n))
+            pos = max(pos, seg + n)
+        if s.MEMTOP > pos: chain.append((pos, 0, s.MEMTOP - pos - 1))
+        for i, (m, owner, n) in enumerate(chain):
+            s.wr(m, 0, (b'Z' if i == len(chain) - 1 else b'M') + struct.pack('<HH', owner, n))
+        s.wr(s.MEMBASE - 1, 0, struct.pack('<H', s.MEMBASE))
+        s.w('es', s.MEMBASE - 1); s.w('bx', 2)
     def d59(s, *a): s.w('ax', getattr(s, 'last_err', 0)); s.w('bx', 0x0101)
     def d29(s, *a): s.w('al', 0)
 
