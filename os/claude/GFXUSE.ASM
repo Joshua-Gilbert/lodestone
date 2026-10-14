@@ -1,8 +1,16 @@
 ; GFXUSE.COM [mode] - a program in a video mode of its own (hex, 4 if not
 ; given; 3, 6, 40 ...) with a pattern in all 32 KB of video memory and, in
-; CGA modes, a colour register set through the BIOS.  After every key it
+; CGA graphics, a colour register set through the BIOS.  After every key it
 ; checks the video memory and the BIOS's video data (40:49h-66h) are as it
-; left them (for RSPIKE's pop-up).  Esc: text mode, "GFXUSE: n keys, k bad".
+; left them (for resident Claude's console).  Esc: text mode, "GFXUSE: n
+; keys, k bad".
+;
+; The colour register is 2Ch: colour 0Ch for the background in mode 4 and
+; the pattern in mode 6, palette 1.  On the 1520's panel 0Ch is a grey in
+; all six of its colour maps, neither black nor 0Fh's white, so a register
+; not put back shows (mode 6 white, mode 4 a black background).  It was
+; colour 1 until 2026-10-14: black in four of the six, the default among
+; them, so mode 6's pattern couldn't be seen.
 cpu 286
 org 100h
         mov     si, 81h
@@ -29,12 +37,12 @@ org 100h
         mov     al, bl
         xor     ah, ah
         int     10h
-        cmp     byte [mode], 6          ; CGA graphics: background 1, palette 1
+        cmp     byte [mode], 6          ; CGA graphics: colour 0Ch, palette 1
         ja      .pat
         cmp     byte [mode], 4
         jb      .pat
         mov     ax, 0B00h
-        mov     bx, 0001h
+        mov     bx, 000Ch
         int     10h
         mov     ax, 0B00h
         mov     bx, 0101h

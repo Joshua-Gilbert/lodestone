@@ -19,8 +19,10 @@
 ;  for the console don't reach the program (on our stack), unless DOS is
 ;  busy: AX=14h makes a DOS call (AH=62h).
 ;
-;  Everything the program had comes back byte for byte: its video mode,
-;  the 32 KB of video memory, the BIOS's video data (40:49h-66h), and the
+;  Everything the program had comes back byte for byte: its video mode and
+;  CGA colour register (as 40:66h has it; set before its screen comes back,
+;  so that never shows in the mode set's colours), the 32 KB of video
+;  memory, the BIOS's video data (40:49h-66h), and the
 ;  keys it had typed ahead (kept aside meanwhile, so the console can't
 ;  read them).
 ;
@@ -146,7 +148,12 @@ rc_main:
         mov     al, [bios]              ; the program's mode, screen and data
         xor     ah, ah
         int     10h
-        push    ds
+        cmp     byte [bios], 6          ; CGA: its colour register before its
+        ja      .sc                     ;  screen, which would show first in
+        mov     dx, 3D9h                ;  the mode set's (3Fh: white in mode 6)
+        mov     al, [bios + 66h - 49h]
+        out     dx, al
+.sc:    push    ds
         push    SAVESEG
         pop     ds
         push    VSEG
@@ -163,7 +170,7 @@ rc_main:
         mov     cx, 66h - 49h + 1
         rep     movsb
         cmp     byte [bios], 3          ; text: the cursor as it was
-        ja      .g
+        ja      .t
         mov     cx, [bios + 60h - 49h]
         mov     ah, 1
         int     10h
@@ -174,12 +181,6 @@ rc_main:
         mov     bh, [bios + 62h - 49h]
         mov     ah, 2
         int     10h
-        jmp     short .t
-.g:     cmp     byte [bios], 6          ; CGA graphics: its colour register
-        ja      .t
-        mov     dx, 3D9h
-        mov     al, [bios + 66h - 49h]
-        out     dx, al
 .t:     call    keys_back
         cmp     byte [mswap], 0         ; the program's event handler back
         je      .ms
