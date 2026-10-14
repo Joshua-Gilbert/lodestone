@@ -85,6 +85,7 @@ RC_NANO  equ 2                  ; the console's `nano` (RCON.ASM): /A:nn
 ;  start-up
 ; =====================================================================
 start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
+        mov     bp, ax                  ; (else resident Claude's stub, or 0)
         mov     sp, stack_top
         cld
         push    cs
@@ -99,17 +100,10 @@ start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
         shr     bx, 4
         mov     ah, 4Ah
         int     21h
-        mov     ax, 3516h               ; resident Claude, INT 16h its stub's
-        int     21h                     ;  (version 2 on): its hot key off
-        cmp     word [es:r_sig], 'CL'   ;  while we run (we have the link)
-        jne     .nr
-        cmp     word [es:r_sig + 2], 'RS'
-        jne     .nr
-        cmp     bx, [es:r_hook]
-        jne     .nr
-        cmp     byte [es:r_ver], 2
-        jb      .nr
-        mov     [res_cs], es
+        or      bp, bp                  ; resident Claude (version 2 on): its
+        jz      .nr                     ;  hot key off while we run (we have
+        mov     [res_cs], bp            ;  the link)
+        mov     es, bp
         mov     byte [es:r_off], 1
 .nr:    push    cs
         pop     es
@@ -185,6 +179,7 @@ res_hot_on:                             ; resident Claude's hot key on again
 
 ; CLAUDE /R or /U?  Then it never comes back.  This runs before BSS is
 ; touched: CLAUDE /R copies the console from where BSS will be (rcon_img).
+; Else AX = resident Claude's stub (res_peek), or 0.
 res_args:
         mov     si, 81h
         mov     cl, [80h]
@@ -201,7 +196,7 @@ res_args:
         cmp     al, 'U'
         je      res_unload
         jmp     .l
-.x:     ret
+.x:     jmp     res_peek
 
 ; CLAUDE /A:nn
 parse_args:
@@ -3362,8 +3357,20 @@ res_unload:
         mov     al, 2
         jmp     res_quit
 
+; resident Claude's stub, version 2 on (it has r_off), for CLAUDE.COM's
+; start: AX = its CS, or 0.  Found among the memory blocks, as /U finds
+; it, so also under a program that hooked INT 16h after it.
+res_peek:
+        call    res_find
+        jc      .no
+        mov     es, ax
+        cmp     byte [es:r_ver], 2
+        jae     .x
+.no:    xor     ax, ax
+.x:     ret
+
 ; the resident copy, from the memory blocks: AX = its CS, CF if none.  A
-; block of the system's (owner 8) with the stub's header ('CLRS' at 103h),
+; block of the system's (owner 8) with the stub's header ('CLRS' at 100h),
 ; counting from 10h paragraphs below it.  (Its CS is 10h paragraphs below
 ; the block so its offsets are CLAUDE.COM's: everything it has, the header
 ; to the stack's top, lies from offset 100h on, inside the block)

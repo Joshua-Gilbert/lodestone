@@ -19,7 +19,7 @@ TM5000G = next((p for p in (os.environ.get('TM5000G', ''), os.path.join(GOS, '..
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
-    for n in ('RSPIKE', 'EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE'):
+    for n in ('RSPIKE', 'EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE', 'HOOK16'):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(CL, n + '.COM'), os.path.join(CL, n + '.ASM')], check=True)
     subprocess.run(['sh', os.path.join(CL, 'build.sh')], check=True, stdout=subprocess.DEVNULL)  # RCON.BIN in CLAUDE.COM, its map
     # another version's CLAUDE.COM, as far as the stub goes: laid out otherwise after its header
@@ -489,7 +489,7 @@ def t_rversion():
     """CLAUDE /R and /U from a CLAUDE.COM whose stub is laid out otherwise
     (another version): they find the stub by its header."""
     k = ktest.KPC(image('rver.img', 'CLAUDEP.COM=' + os.path.join(OUT, 'CLAUDEP.COM'),
-                        'CLAUDEV1.COM=' + os.path.join(OUT, 'CLAUDEV1.COM')),
+                        'CLAUDEV1.COM=' + os.path.join(OUT, 'CLAUDEV1.COM'), 'HOOK16.COM=' + os.path.join(CL, 'HOOK16.COM')),
                   chip=sim7210.NEC7210(sim7210.bus()), ems_pages=88); k.start()     # (the GPIB, so CLAUDE runs)
     k.key(ktest.CODE_P)
     before = memsz(k)
@@ -519,6 +519,21 @@ def t_rversion():
     during, after = claude_run('claude')
     check('... over its own (version 2): r_off (10Eh) set while CLAUDE runs, cleared when it ends',
           during == (0x40, b'\0\x01') and after == (3, b'\0\0'), (during, after))
+    # under a TSR that hooked INT 16h after CLAUDE /R (HOOK16), CLAUDE.COM finds the stub among the memory
+    # blocks all the same (through INT 16h it wouldn't, and CODE-\ in CLAUDE would bring the console up)
+    prompt(k, 'claude /r')
+    stub = stub_seg(k)
+    o = prompt(k, 'hook16')
+    k.key('cls'); k.key(ktest.ENTER); k.key('claude'); k.key(ktest.ENTER, settle=False); k.settle(5)
+    during = (k.pc.mode(), k.pc.rd(stub, 0x10D, 2))
+    k.key(HOT); k.settle(2)
+    hot = k.pc.rd(stub, 0x10D, 2)
+    k.key(0x1000); k.key(0x1000); k.settle(5)
+    after = (k.pc.mode(), k.pc.rd(stub, 0x10D, 2))
+    check('under a TSR that hooked INT 16h after it (HOOK16): CLAUDE finds the stub all the same, r_off set while '
+          'it runs (CODE-\\ there brings no console) and cleared when it ends',
+          'HOOK16 resident' in o and stub_seg(k) != stub and during == (0x40, b'\0\x01') and hot == b'\0\x01'
+          and after == (3, b'\0\0'), (o, during, hot, after))
 
 def t_rhole():
     """A free hole lower down that the stub would fit in: the stub still
