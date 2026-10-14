@@ -216,9 +216,11 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
 - `AR488-gridlink.patch` - the optional AR488 patch
 - `CLAUDE.ASM` / `GLYPHS.INC` (Lodestone source tree, `os/claude/`) - the
   GRiD program, NASM; `TERMLINK.INC` (the link), `TERMCELL.INC` (cells,
-  Term's screen), `TERMKEYS.INC` (Term's keys) are shared with what comes
-  next (Claude resident over DOS programs). `build.sh` / `BUILD.BAT` there
-  make CLAUDE.COM, CLAUDE.MAP (symbols for the emulator) and TESTKEY.COM
+  Term's screen), `TERMKEYS.INC` (Term's keys) are shared with resident
+  Claude's console (`RCON.ASM`, CLAUDE /R: Claude Code popped up over a
+  DOS program, `app=resident`). `build.sh` / `BUILD.BAT` there make
+  CLAUDE.COM (with RCON.BIN inside), CLAUDE.MAP and RCON.MAP (symbols for
+  the emulator) and TESTKEY.COM
 - `tests/` - `test_e2e.py` (Python model of the GRiD side, fast) and
   `test_emu.py` (the real CLAUDE.COM and GRIDGPIB.COM in an x86 emulator:
   `grid_emu.py`, with `sim7210.py`, `ar488_model.py`, `fake_anthropic.py`).
@@ -232,7 +234,7 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
 ## Status
 
 Version 1.1: Term. Tested in emulation (and the MCP server against the real
-Claude Code's `claude mcp list`), not yet on the Pi 5: 17 Term checks with
+Claude Code's `claude mcp list`), not yet on the Pi 5: 18 Term checks with
 the GRiD model, 8 with the real CLAUDE.COM, 13 for the MCP bridge (its
 limits included). On the
 Pi 5: a real Claude Code session from the GRiD, the echo, a permission

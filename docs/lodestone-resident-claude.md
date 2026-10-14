@@ -125,8 +125,8 @@ On the 1520 (SPIKES.TXT; run without a GPIB address):
 - **Writing the window registers directly is safe with Lodestone's EMM.** It keeps no copy of the mappings: 44h writes straight to the port, and 47h reads the registers back. A third-party EMM loaded instead would need `CLAUDE /R` to go through INT 67h 47h/48h; Lodestone has its own, so that is moot for now.
 
 ## Milestones
-1. **M1:** `CLAUDE /R` loads (EMS pages, stub) and unloads (`CLAUDE /U`). CODE-\\ flips to an empty console and back over TM5000G and over the Executive, with no link yet. Memory is measured.
-2. **M2:** the Term session in the pop-up; the same `claude` session as `CLAUDE /T`.
+1. **M1:** `CLAUDE /R` loads (EMS pages, stub) and unloads (`CLAUDE /U`). CODE-\\ flips to an empty console and back over TM5000G and over the Executive, with no link yet. Memory is measured. Done in the emulator (below); `M1TEST.BAT` for the 1520.
+2. **M2:** the Term session in the pop-up; the same `claude` session as `CLAUDE /T`. Done in the emulator (below).
 3. **M3:** the paused program's SCREEN and TYPE, with silent snapshot returns. Claude can drive TM5000G.
 4. **M4 (0.5b):** background requests at key waits.
 
@@ -222,8 +222,53 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
 
   CODE-\ behind another CODE-key and keys typed just before CODE-\ need timing no one can type; the emulator's tests cover them. Nothing on that floppy looks at the keyboard from an interrupt, so the 1520 can't show the in-service check either (pcemu can't show the hang itself: it lets a nested IRQ 0 in).
 
-## Open points, after M1
-- **Loading from LCMD:** settled by the stub's block at the top of memory (M1).
-- **Programs that hook INT 16h themselves**, and programs that read the keyboard through INT 09h only (not covered: Phase 2 left INT 09h hooks out). `/U` refuses while one sits above the stub.
+## M2: Claude Code in the pop-up (2026-10-13)
+CODE-\ over a program now brings up Claude Code itself: Term, the same `claude` on the Pi that `CLAUDE /T` shows, so what is typed in one is on the other's screen. CODE-\ (or CODE-Q) goes back to the program as it was. This runs in the emulator. On the 1520 only the no-Pi case can be tried until the Pi 5 and the bridge are set up.
+
+- **The console is CLAUDE.COM's own Term code**, assembled into `RCON.ASM`: `TERMLINK.INC` (the link), `TERMCELL.INC` (the screen and its shadow) and `TERMKEYS.INC` (the keys). `GLP.INC` (the message types) and `CELLTEXT.INC` (the band's text) were split out of CLAUDE.ASM; CLAUDE.COM assembled byte for byte the same after the split. Where the console differs, a define says so:
+  - **no INT 60h AH=0Bh** (`NO_SRQ`): the driver's SRQ check clears the flag the program would see, so the console finds the Pi's answer by serial-polling the bridge every few ms instead;
+  - **the keys through the BIOS's INT 16h**, past the stub; CODE-\ and CODE-Q go back (`K_QUIT`, `K_QUIT2`).
+- **No DOS calls.** The GPIB driver is found from the vectors at every pop-up (60h-66h, 'GRIDGPIB' at entry+2, AH=0 answering 4747h). The HELLO says `app=resident`, the bridge's address and `grid=`; gridlink gives `app=resident` Term, the same session as `app=term`.
+- **Its data stays in its EMS page between pop-ups:** Term's 24-row shadow, the link's state, the title. `CLAUDE /R` clears the page after the code: 5.6 KB of code and font, 11.1 KB of the 16 KB with the data and the shadow (checked when it is assembled). `CLAUDE /R /A:nn` sets the bridge's address (7 if not given).
+- **Each pop-up:**
+  1. Term's screen is drawn from the shadow at once, then the console says HELLO.
+  2. The HELLO carries a CRC-16 of the shadow and the cursor (`screen=`). If that is the screen of the Pi's last frame, or of the one before, gridlink goes on from it and sends only what changed while the program ran (0 bytes in the test, where nothing had; the first paint and an echo had taken 409). Otherwise, when CLAUDE /T had the link meanwhile, the Pi draws the screen again from a clear one.
+  3. Keys go to Claude Code and frames come back, as in CLAUDE /T.
+- **Going back:** the keys typed before CODE-\ go to Claude Code first, then the last frame gets its answer, so the bridge never holds an answer (and SRQ) while the program has the bus; 3 s at most. If the link failed meanwhile, the bridge gets SDC. The program's screen, BIOS data, keys and mouse pointer come back as in M1.
+- **Its own GPIB timeout:** the driver's timeout is global, so the console would run under the paused program's. That is 2 s by default, but TM5000G sets it for each call, and its TIME OUT n can leave up to 60 s, which each byte to a stuck bridge would wait (the console sluggish, the 3 s of going back stretched). The console sets 2 s with AH=0Ah at each pop-up, and puts the program's back when it goes (PR #28's review).
+- **The GRiD's tools wait for M3.** While the console is up, gridlink's MCP tools (files, programs, GPIB) answer that Claude Code is popped up over a DOS program and that CLAUDE /T has them. A request that reaches the GRiD anyway is answered at once with status F6h, a DOS program is paused. gridlink doesn't set the clock from the console.
+- **CLAUDE.COM turns the hot key off while it runs** (chat, /T, and the programs it runs), because it has the link. It finds the stub among the memory blocks, as `/U` does (`res_peek`, before BSS is touched), so also under a program that hooked INT 16h after it (PR #28's review; M2 first looked only at INT 16h's head), and sets the header's `r_off` (10Eh), and clears it when it ends. `CLAUDE /R` again clears it too, should CLAUDE.COM ever end without. `r_off` is new in M2, so the header's version is now 2, and a stub of version 1 is left alone. (Not `r_inpop`, which since the review also makes the stub answer others' peeks with no key: CLAUDE.COM's own keys would never come.)
+- **The driver's SRQ flag:** the console never clears it. The bridge's own requests while the console talks to the Pi can set it, so after a pop-up AH=0Bh may say yes once with no instrument asking; a program that then polls its instruments finds none. Nothing an instrument asked for is lost.
+- **Cost:**
+  - conventional memory: unchanged from M1, 768 bytes (0.8 KB);
+  - EMS: 3 pages as in M1 (4.9 KB of the console's page spare);
+  - CLAUDE.COM: 19,560 bytes on disk (+2,914, the console's code and font), and 48 bytes more in memory when it runs as chat or Term (80 more than before M1);
+  - the stub's stack: at most 92 of its 384 bytes in the tests (Claude Code, typing, the mouse, GPIB, over TM5000G). pcemu's BIOS is Python, so the 1520 BIOS's own use isn't counted; M1's pop-ups on the 1520 already ran the BIOS on this stack.
+- **Tests** (`test_resident_term.py`, 49 checks, on the kernel harness, which now has Term too: gridlink's router and the stand-in Claude Code in a pty):
+  - over EMSUSE: Claude Code, its screen in step with pyte's on the Pi, typing ("You said: hello"), back with the screen and BIOS data byte for byte and the bridge quiet; the second pop-up drawn from the shadow before the Pi answers, then resumed (0 bytes), a 60-line answer, the same `claude`;
+  - Claude Code at work while the program runs: `big` and Enter typed right before CODE-\ still reach it, and the next pop-up goes on from the kept screen with the 60 lines that came meanwhile (scrolled); CODE-\ in the middle of a streamed answer, the bridge quiet, and the rest there at the next pop-up;
+  - with CLAUDE /T: what was typed in the console is on CLAUDE /T's screen and the other way round; the hot key off while CLAUDE runs and on after; the console drawn again from a clear screen afterwards (its CRC isn't the Pi's last);
+  - the tools: an MCP call refused with the reason, a REQUEST sent anyway answered F6h at once;
+  - no bridge, with `CLAUDE /R /A:9`: the band says "No answer from the bridge at GPIB address 9", and CODE-\ goes back in 37 ms;
+  - the program's GPIB timeout at 60 s: the console's own 2 s while it is up, and the program's back after; then a stuck bridge (on the bus, taking no byte): CODE-\ still goes back in 1.8 s;
+  - over TM5000G: Claude Code and typing, the mouse moved meanwhile; afterwards its screen as it was, REN as it was, no chip reset or IFC, its SRQ flag still set, no AH=0Bh from the console, the bridge quiet, and auto-detect still finds the three instruments;
+  - the stub's stack, painted before and read after;
+  - claude-link's `test_term.py`: the encoder's resume (the last frame's screen, the one before, a wrong CRC, none).
+
+  `test_resident.py`: CLAUDE.COM over a stub of version 1 (built `-DSTUB_VER=1`) leaves its byte 10Eh alone while it runs (in PR #27's stub that is `r_pend`, and writing it would bring the console up over CLAUDE), and over its own sets and clears `r_off`; without the version check, 10Eh is written. Under HOOK16, a TSR that hooks INT 16h after `CLAUDE /R` and passes every call on, CLAUDE.COM still finds the stub and sets `r_off`, and CODE-\ in CLAUDE brings no console. claude-link's `grid_emu` now answers INT 21h AH=52h (its blocks as an MCB chain), as CLAUDE.COM walks the memory blocks at its start. M1's other 64 checks pass with the new console: they have no bridge on the bus, and the band says so. The console keeps the review's fixes to M1's (the program's event handler swapped out, `keys_back`'s room), and its tests (MHAND, T1C and BUSY) run with it.
+- **Controls**, each run against the change it guards and failing a check:
+  - going back at once: the keys typed before CODE-\ are lost, and over TM5000G the bridge still holds the answer and SRQ;
+  - waiting for the answer but not sending the keys typed before CODE-\: they never reach Claude Code;
+  - CLAUDE.COM's AH=0Bh in the link: 627 calls while the console was up;
+  - no REPLY to a REQUEST: the call waits instead of getting F6h;
+  - no screen from the shadow at the pop-up: blank, and as the Pi goes on from the kept screen it sends nothing, so it stays blank;
+  - the program's GPIB timeout kept: 60 s while the console is up, and with the stuck bridge CODE-\ not back after 10 s;
+  - the stub looked for only at INT 16h's head: under HOOK16, `r_off` stays 0 while CLAUDE runs, and CODE-\ there brings the console up over it.
+- **On the 1520 now:** with no Pi, the console says "No answer from the bridge at GPIB address 7", and CODE-\ should still come back at once; `M1TEST.BAT` goes through that. The rest waits for the Pi 5 and the bridge.
+
+## Open points, after M2
+- **Programs that hook INT 16h themselves**, and programs that read the keyboard through INT 09h only (not covered: Phase 2 left INT 09h hooks out). `/U` refuses while one sits above the stub. (CLAUDE.COM finds the stub under such a program too, and turns its hot key off.)
+- **An empty bus** (no instrument, no bridge): what the 1520's 7210 and the driver do with the console's commands to the bridge, and how long CODE-\ then takes, is to be seen on the 1520.
+- **A CRC that matches by chance** (1 in 65,536) would leave a wrong Term screen until those cells change; CODE-R draws it all again.
+- **The program's name** in HELLO and the band, files while a program is paused, its SCREEN and TYPE: M3.
 - **The mouse during a pop-up:** the INT 33h pointer is hidden meanwhile, and its event handler swapped out unless DOS is busy (M1). The console itself ignores the mouse. If the kernel's INT 33h noted a handler's owner without a DOS call (reading the current PSP itself), AX=0Ch and 14h would be safe from anywhere, and the swap could happen while DOS is busy too.
-- **The program's name in the band** needs a DOS call or a kernel hook while DOS may be busy: M3, with HELLO's.

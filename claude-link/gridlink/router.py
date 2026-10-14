@@ -5,7 +5,8 @@
           (your Claude subscription; no API key)
 
 The GRiD's HELLO picks: `app=term` (CLAUDE /T) or `app=chat` (CLAUDE /C);
-without either, the config's [grid] app decides ("auto": chat when the Pi
+`app=resident` (CLAUDE /R's pop-up over a DOS program) is Term too, the same
+`claude`; without any, the config's [grid] app decides ("auto": chat when the Pi
 has an API key, Term when it hasn't).  Term only goes to a CLAUDE that says
 it can show it (HELLO flags bit 0).  The Pi's HELLO answer says which it
 chose (flag HF_TERM).
@@ -71,6 +72,7 @@ class Router:
         info = glp.kv_lines(body[6:]) if len(body) >= 6 else {}
         can_term = len(body) >= 2 and bool(body[1] & glp.GF_TERM)   # an older CLAUDE can't
         app = info.get('app', '').lower()
+        if app == 'resident': app = 'term'          # CLAUDE /R's console: Term, the same session
         if app in ('term', 'chat'): want = app
         else:
             want = getattr(s.cfg, 'app', 'auto')

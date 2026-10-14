@@ -5,23 +5,37 @@
 ;  BIOS gives CODE with punctuation, Return, Esc and Backspace only to
 ;  those.  Keys typed while a KEYS message is on its way wait in keybuf
 ;  and go together in the next one.
+;  Resident Claude's console (RCON.ASM) defines its own K_QUIT and K_QUIT2
+;  (the keys back to the program) and `kbd` (the BIOS's INT 16h, past the
+;  stub's hook).
 ; =====================================================================
 KEYMAX  equ 64                          ; keys in one KEYS message
+%ifndef K_QUIT
 K_QUIT  equ 1000h                       ; CODE-Q
+%endif
 K_PAINT equ 1300h                       ; CODE-R
 K_CTRLL equ 260Ch                       ; Ctrl-L: repaint here, and the Pi's too
+%ifndef KBD_OWN
+%macro kbd 0
+        int     16h
+%endmacro
+%endif
 
 term_kbd:
 .l:     mov     ah, 11h
-        int     16h
-        jz      .q
+        kbd
+        jz      term_send
         cmp     byte [keyn], KEYMAX
-        jae     .q                      ; full: they wait in the BIOS
+        jae     term_send               ; full: they wait in the BIOS
         mov     ah, 10h
-        int     16h
+        kbd
         cmp     ax, K_QUIT
+%ifdef K_QUIT2
+        je      .qt
+        cmp     ax, K_QUIT2
+%endif
         jne     .p
-        mov     byte [quit], 1
+.qt:    mov     byte [quit], 1
         ret
 .p:     cmp     ax, K_PAINT
         jne     .c
@@ -41,7 +55,8 @@ term_kbd:
         mov     ax, [now]
         mov     [t_active], ax
         jmp     .l
-.q:     cmp     byte [keyn], 0          ; send what we have, one KEYS at a time
+term_send:                              ; the keys typed so far: one KEYS at a time
+        cmp     byte [keyn], 0
         je      .x
         cmp     byte [keys_q], 0
         jne     .x
