@@ -3480,7 +3480,8 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         je      .nk
         cmp     ah, 11h
         jne     .ch
-.nk:    cmp     ax, ax                  ; (ZF: no key)
+.nk:    cmp     ax, ax                  ; (ZF: no key; interrupts on, as
+        sti                             ;  the BIOS's AH=01h returns)
         retf    2
 .pk:    call    r_hot
         jmp     .ch
