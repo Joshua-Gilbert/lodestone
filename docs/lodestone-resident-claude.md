@@ -193,9 +193,9 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - Acting on it is M3's (file requests while a program is paused).
 - **The stub's header**, at the same offsets in every CLAUDE.COM from now on: `CLRS` (100h), its version, where its hook is, the INT 16h it goes on to, its EMS handle, and the byte that stops pop-ups (10Dh). `/U` finds the stub among the memory blocks (owner 8, `CLRS` at 100h), so `/R` also knows when it is there already, even under another hook, and both work on a stub that another version of CLAUDE.COM left (copied to the floppy without a restart). M1 at first found it by its hook's offset, which another version's wouldn't share (PR #27's review). `/U` is refused when INT 16h no longer points at the stub's hook; otherwise it puts INT 16h back and frees the EMS pages and the block.
 - **Cost:**
-  - **Resident:** 768 bytes of conventional memory: 362 of code and data, the 384-byte stack, and the block's MCB (704 before the review's fixes: the header, the in-service check, the no-key answer). DOS programs get 0.8 KB less, at the prompt and from the Executive alike (the plan's target was 1.2 KB). `/U` gives all of it back.
+  - **Resident:** 768 bytes of conventional memory: 360 of code and data, the 384-byte stack, and the block's MCB (704 before the review's fixes: the header, the in-service check, the no-key answer). DOS programs get 0.8 KB less, at the prompt and from the Executive alike (the plan's target was 1.2 KB). `/U` gives all of it back.
   - **EMS:** 3 pages (48 KB).
-  - **CLAUDE.COM:** 16,644 bytes on disk (+4,324). It takes 32 bytes more in memory when it runs as chat or Term (`res_args`).
+  - **CLAUDE.COM:** 16,646 bytes on disk (+4,326). It takes 32 bytes more in memory when it runs as chat or Term (`res_args`).
 - **Tests** (`test_resident.py`, 43 new checks; the spike's 21 stay as they were):
   - `/R`, `/R` again, `/U`, `/U` again, `/U` under RSPIKE, no EMS: messages and exit codes;
   - memory at the prompt, from the Executive, and after `/U`; the EMS handle kept after CLAUDE.COM ends, and freed by `/U`;

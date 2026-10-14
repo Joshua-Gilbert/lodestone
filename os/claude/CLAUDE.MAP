@@ -853,25 +853,25 @@ Real              Virtual           Name
             40E0               142  r_int16.ch
             40E5               147  r_int16.up
             40EF               151  r_int16.nk
-            40F4               156  r_int16.pk
-            40F9               15B  r_int16.rd
-            40FA               15C  r_int16.w
-            410C               16E  r_hot
-            4120               182  r_hot.s
-            4137               199  r_hot.m
-            413D               19F  r_hot.mv
-            414E               1B0  r_hot.e
-            4152               1B4  r_hot.p
-            4177               1D9  r_hot.no
-            417C               1DE  r_hot.x
-            417D               1DF  r_hot.nx
-            4189               1EB  r_hot.n
-            418A               1EC  r_popup
-            41AE               210  r_popup.s
-            41C2               224  r_popup.m
-            41E0               242  r_popup.r
-            4201               263  r_int67
-            4204               266  r_code_end
-            4384               3E6  r_stack_top
-            4384               3E6  r_end
+            40F5               157  r_int16.pk
+            40FA               15C  r_int16.rd
+            40FB               15D  r_int16.w
+            410D               16F  r_hot
+            4121               183  r_hot.s
+            4138               19A  r_hot.m
+            413E               1A0  r_hot.mv
+            414F               1B1  r_hot.e
+            4153               1B5  r_hot.p
+            4178               1DA  r_hot.no
+            417D               1DF  r_hot.x
+            417E               1E0  r_hot.nx
+            418A               1EC  r_hot.n
+            418B               1ED  r_popup
+            41AF               211  r_popup.s
+            41C3               225  r_popup.m
+            41E1               243  r_popup.r
+            4202               264  r_int67
+            4206               268  r_code_end
+            4386               3E8  r_stack_top
+            4386               3E8  r_end
 
