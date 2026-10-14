@@ -8,10 +8,11 @@
 ;           Code on the Pi (your Claude subscription; no API key)
 ;    /C     chat: gridlink's own agent (an API key on the Pi)
 ;    neither: the Pi decides (gridlink's [grid] app setting)
-;  CLAUDE /R   resident: CODE-\ brings Claude up over a program waiting for
-;              a key, CODE-\ again goes back (0.5 M1: the console is empty;
-;              docs/lodestone-resident-claude.md).  Exit code 0 resident,
-;              1 no EMS or not enough, 2 resident already
+;  CLAUDE /R [/A:nn]  resident: CODE-\ brings Claude Code up over a program
+;              waiting for a key (Term, the same session as /T), CODE-\
+;              again goes back (docs/lodestone-resident-claude.md).  Exit
+;              code 0 resident, 1 no EMS or not enough, 2 resident already.
+;              While CLAUDE itself runs, its hot key is off
 ;  CLAUDE /U   takes it out.  Exit code 0 done, 1 not resident, 2 a
 ;              program loaded after it has INT 16h (take that out first)
 ;
@@ -48,29 +49,7 @@ ASKMAX   equ 900
 BOXL     equ 5                  ; dialog boxes: left column, width
 BOXW     equ 70
 
-LS_RESET equ 0
-LS_IDLE  equ 1
-LS_WAIT  equ 2
-
-G_HELLO   equ 01h
-G_POLL    equ 02h
-G_PROMPT  equ 03h
-G_EVENT   equ 04h
-G_REPLY   equ 05h
-G_NAK     equ 06h
-G_KEYS    equ 07h
-P_HELLO   equ 41h
-P_NOP     equ 42h
-P_TEXT    equ 43h
-P_STATUS  equ 44h
-P_REQUEST equ 45h
-P_ASK     equ 46h
-P_READY   equ 47h
-P_NAK     equ 48h
-P_TITLE   equ 49h
-P_CLEAR   equ 4Ah
-P_CELLS   equ 4Bh
-HF_TERM   equ 01h                ; the Pi's HELLO: Term
+%include "GLP.INC"               ; the link's message types and states
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -99,12 +78,14 @@ R_HOTRAW equ 2BF0h              ;  and as the 1520's BIOS keeps it
 R_FRAME  equ 0E000h
 R_EPORT  equ 0258h              ; window 0's page register (+4000h a window)
 R_STACK  equ 384
+RC_NANO  equ 2                  ; the console's `nano` (RCON.ASM): /A:nn
 
 
 ; =====================================================================
 ;  start-up
 ; =====================================================================
 start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
+        mov     bp, ax                  ; (else resident Claude's stub, or 0)
         mov     sp, stack_top
         cld
         push    cs
@@ -119,7 +100,13 @@ start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
         shr     bx, 4
         mov     ah, 4Ah
         int     21h
-        mov     byte [nano], 7
+        or      bp, bp                  ; resident Claude (version 2 on): its
+        jz      .nr                     ;  hot key off while we run (we have
+        mov     [res_cs], bp            ;  the link)
+        mov     es, bp
+        mov     byte [es:r_off], 1
+.nr:    push    cs
+        pop     es
         call    parse_args
         call    find_gpib
         jnc     .gg
@@ -167,19 +154,32 @@ leave:  mov     al, [oldmode]
 .m:     xor     ah, ah
         int     10h
         call    vec_dos
+        call    res_hot_on
         mov     dx, msg_bye
         mov     ah, 9
         int     21h
         mov     ax, 4C00h
         int     21h
 
-fatal:  mov     ah, 9
+fatal:  call    res_hot_on
+        mov     ah, 9
         int     21h
         mov     ax, 4C01h
         int     21h
 
+res_hot_on:                             ; resident Claude's hot key on again
+        mov     ax, [res_cs]
+        or      ax, ax
+        jz      .x
+        push    es
+        mov     es, ax
+        mov     byte [es:r_off], 0
+        pop     es
+.x:     ret
+
 ; CLAUDE /R or /U?  Then it never comes back.  This runs before BSS is
 ; touched: CLAUDE /R copies the console from where BSS will be (rcon_img).
+; Else AX = resident Claude's stub (res_peek), or 0.
 res_args:
         mov     si, 81h
         mov     cl, [80h]
@@ -196,7 +196,7 @@ res_args:
         cmp     al, 'U'
         je      res_unload
         jmp     .l
-.x:     ret
+.x:     jmp     res_peek
 
 ; CLAUDE /A:nn
 parse_args:
@@ -479,51 +479,7 @@ draw_line:
         popa
         ret
 
-; DS:SI -> ASCIIZ, ES:DI = cell, AH = attribute, CX = most cells.
-; Returns DI after the text.
-draw_strn:
-        push    ax
-        push    cx
-        jcxz    .x
-.l:     lodsb
-        or      al, al
-        jz      .x
-        push    ax
-        call    cell
-        pop     ax
-        inc     di
-        loop    .l
-.x:     pop     cx
-        pop     ax
-        ret
-
-; DX = row, AH = attribute: 80 blank cells
-blank_row:
-        push    ax
-        push    cx
-        push    di
-        imul    di, dx, 320
-        mov     cx, 80
-        mov     al, ' '
-.l:     push    ax
-        call    cell
-        pop     ax
-        inc     di
-        loop    .l
-        pop     di
-        pop     cx
-        pop     ax
-        ret
-
-strlen: push    si                      ; DS:SI -> CX
-        xor     cx, cx
-.l:     lodsb
-        or      al, al
-        jz      .x
-        inc     cx
-        jmp     .l
-.x:     pop     si
-        ret
+%include "CELLTEXT.INC"                 ; draw_strn, blank_row, strlen
 
 ; title band: " <title>              GPIB link  5:31 pm"
 draw_title:
@@ -3101,6 +3057,9 @@ fmt_clock:                              ; ES:DI <- "h:mm pm"
 ; =====================================================================
 ;  data
 ; =====================================================================
+nano        db 7                        ; the bridge's GPIB address (/A:nn), and
+app_want    db 0                        ;  'T' or 'C': data, not BSS, as CLAUDE
+                                        ;  /R reads them where BSS goes
 sig_gg      db 'GRIDGPIB'
 s_emm       db 'EMMXXXX0'
 msg_nogg    db 'CLAUDE needs GRIDGPIB loaded first (run GRIDGPIB, then CLAUDE).', 13, 10, '$'
@@ -3190,7 +3149,11 @@ bss:                                    ; from here, in the file only, what
 res_load:
         call    res_find
         jc      .new
-        mov     dx, s_r_again
+        mov     es, ax                  ; (its hot key on again, should a
+        cmp     byte [es:r_ver], 2      ;  CLAUDE.COM have ended without that)
+        jb      .ag
+        mov     byte [es:r_off], 0
+.ag:    mov     dx, s_r_again
         mov     al, 2
         jmp     res_quit
 .new:   mov     ax, 3567h               ; an EMS manager, its frame at E000h
@@ -3305,6 +3268,15 @@ res_load:
         xor     di, di
         mov     cx, rcon_end - rcon_img
         rep     movsb
+        mov     cx, 4000h               ; the rest of the page cleared (its
+        sub     cx, di                  ;  data)
+        xor     al, al
+        rep     stosb
+        push    dx                      ; the bridge's address, /A:nn
+        call    parse_args
+        pop     dx
+        mov     al, [nano]
+        mov     [es:RC_NANO], al
         pop     es
         pop     ax                      ; window 0 as it was
         out     dx, al
@@ -3385,8 +3357,20 @@ res_unload:
         mov     al, 2
         jmp     res_quit
 
+; resident Claude's stub, version 2 on (it has r_off), for CLAUDE.COM's
+; start: AX = its CS, or 0.  Found among the memory blocks, as /U finds
+; it, so also under a program that hooked INT 16h after it.
+res_peek:
+        call    res_find
+        jc      .no
+        mov     es, ax
+        cmp     byte [es:r_ver], 2
+        jae     .x
+.no:    xor     ax, ax
+.x:     ret
+
 ; the resident copy, from the memory blocks: AX = its CS, CF if none.  A
-; block of the system's (owner 8) with the stub's header ('CLRS' at 103h),
+; block of the system's (owner 8) with the stub's header ('CLRS' at 100h),
 ; counting from 10h paragraphs below it.  (Its CS is 10h paragraphs below
 ; the block so its offsets are CLAUDE.COM's: everything it has, the header
 ; to the stack's top, lies from offset 100h on, inside the block)
@@ -3445,13 +3429,19 @@ section rstub follows=.text vstart=100h
 ; the stub's header: at these offsets in every CLAUDE.COM from now on, so
 ; CLAUDE /R and /U find and take out a stub that another version left
 r_sig    db     'CLRS'          ; 100h
-r_ver    db     1               ; 104h: the stub's version
+%ifdef STUB_VER                 ; (the tests: an older version's stub)
+r_ver    db     STUB_VER
+%else
+r_ver    db     2               ; 104h: the stub's version (2: r_off)
+%endif
 r_hook   dw     r_int16         ; 105h: INT 16h points at CS:this
 r_old16  dd     0               ; 107h: and went on to this
 r_handle dw     0               ; 10Bh: its EMS pages (CLAUDE /U frees them)
-r_inpop  db     0               ; 10Dh: not 0, no pop-up (the console is up)
+r_inpop  db     0               ; 10Dh: not 0, the console is up
+r_off    db     0               ; 10Eh: not 0, no pop-up (CLAUDE.COM runs)
         r_at    r_sig, 100h
         r_at    r_inpop, 10Dh
+        r_at    r_off, 10Eh
 ; (this version's own from here)
 %ifdef STUB_PAD                 ; (the tests: a CLAUDE.COM whose stub is laid
         times   STUB_PAD db 0   ;  out otherwise, as another version's)
@@ -3503,6 +3493,8 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
 ; waiting and the console hung.  Then it runs at the next INT 16h call
 ; made with none in service.  Registers kept.
 r_hot:  cmp     byte [cs:r_inpop], 0
+        jne     .x
+        cmp     byte [cs:r_off], 0
         jne     .x
         push    ax
         push    bx
@@ -3624,7 +3616,7 @@ R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
 
 section .text
 absolute bss
-nano        resb 1
+res_cs      resw 1                      ; resident Claude's stub, if loaded
 ggint       resb 1
 ggver       resw 1
 convseg     resw 1
@@ -3720,7 +3712,6 @@ evans       resb 4
 crctab      resw 256
 ; Term
 term        resb 1                      ; 1: the GRiD is Claude Code's terminal
-app_want    resb 1                      ; 'T' or 'C' from the command line
 t_active    resw 1                      ; tick of the last key or screen change
 keyn        resb 1
 keys_q      resb 1                      ; a KEYS message is in the queue

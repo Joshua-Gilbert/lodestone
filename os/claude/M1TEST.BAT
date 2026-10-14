@@ -23,8 +23,9 @@ pause
 cls
 echo Step 2 of 7: EMS under the console.
 echo When it asks for keys: press any key, then CODE-\ (Claude's console
-echo comes: an empty screen, a band at the bottom), CODE-\ again (back
-echo here), then another key, then Esc.
+echo comes: an empty screen, a band at the bottom: connecting, then after
+echo a few seconds no answer from the bridge, as there is no Pi yet),
+echo CODE-\ again (back here), then another key, then Esc.
 pause
 emsuse
 if errorlevel 1 echo 2 EMSUSE: EMS NOT KEPT >> m1test.txt

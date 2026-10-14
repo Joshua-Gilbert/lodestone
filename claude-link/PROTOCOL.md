@@ -109,7 +109,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C` |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no DOS calls), and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again) |
@@ -189,7 +189,8 @@ throughout, and takes over once the script is used up.
 DOS errors come back as the DOS error code (83 = a disk error the critical
 error handler failed, e.g. drive not ready). Other statuses: F0h request
 too large, F1h no memory, F3h command line too long, F5h no snapshot,
-FFh unknown request.
+F6h a DOS program is paused (resident Claude's console answers every
+request so for now), FFh unknown request.
 
 ## 5. Session flow
 
@@ -228,7 +229,18 @@ GRiD's screen are the terminal, row 24 is CLAUDE's own status band (the
 title from TITLE, the link, the keys).
 
 * **Mode.** The GRiD's HELLO sets flags bit 0 and `app=term`; the Pi answers
-  HELLO with flags bit 0. Without `app=`, gridlink's `[grid] app` setting
+  HELLO with flags bit 0. `app=resident` (CLAUDE /R's console, popped up
+  over a DOS program) is Term too, the same `claude`: what was typed in
+  CLAUDE /T is on its screen, and the other way round. While the GRiD is
+  resident the GRiD's tools answer that they can't run (the program holds
+  the GRiD), and anything sent anyway gets status F6h. The console keeps
+  its screen between pop-ups and draws it at once; its HELLO's `screen=`
+  is the CRC-16 (as the frames') of its 24 rows (glyph, attribute for each
+  cell, row by row), then the cursor's row, column and hidden flag (0 or
+  1). If that is the screen of the Pi's last CELLS frame, or of the one
+  before, the Pi goes on from it and sends only what changed; else it
+  starts from a clear screen as for any HELLO. Without `app=`,
+  gridlink's `[grid] app` setting
   decides (`auto`: chat when the Pi has an API key, else Term). The Pi's
   HELLO is followed by a CELLS frame that clears the screen and draws it all.
   In Term, CLAUDE ignores the chat's messages (TEXT, STATUS, ASK, READY,

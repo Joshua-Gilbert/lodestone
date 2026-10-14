@@ -70,12 +70,21 @@ class TermSession:
             except OSError as e:
                 s.log('term: no MCP socket at %s: %s' % (s.sock, e))
 
+    RESIDENT = ('Claude Code is popped up over a DOS program on the GRiD (resident Claude, CLAUDE /R): '
+                'the GRiD\'s files, programs and instruments can\'t be used from here yet. '
+                'Leave that program and start CLAUDE /T on the GRiD for them.')
+
+    def resident(s):
+        """The GRiD is CLAUDE /R's console, over a DOS program it paused."""
+        return s.hello.get('app', '').lower() == 'resident'
+
     def why_not(s):
         """Why a GRiD tool can't run now (None: it can)."""
         if s.link is None or s.link.source is not s:
             return 'The GRiD is not in Term mode (CLAUDE /T on the GRiD).'
         if not s.hello or time.time() - s.link.last_rx > 10:
             return 'The GRiD is not connected (start CLAUDE /T on it).'
+        if s.resident(): return s.RESIDENT
         return None
 
     def detach(s):
@@ -88,12 +97,14 @@ class TermSession:
             s.hello = info
             s.grid.on_restart()
             with s.lock:
-                s.enc.reset(); s._mark()
+                # CLAUDE /R's console kept its screen: go on from it if we sent it
+                if not s.enc.resume(info.get('screen')): s.enc.reset()
+                s._mark()
             s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, glp.HF_TERM]) + b'Claude Code')
             s.title_sent = None
             if s.child is None and s.exited is None: s.start()
             s._send_title(force=True)
-            if getattr(s.cfg, 'set_clock', False):
+            if getattr(s.cfg, 'set_clock', False) and not s.resident():    # (no DOS calls there)
                 threading.Thread(target=s._settime, daemon=True).start()
         elif t == glp.G_KEYS:
             s.keys(body)

@@ -1,7 +1,8 @@
 ; =====================================================================
 ;  TERMLINK.INC - GLP 1, the GRiD side of the link (gridlink/PROTOCOL.md)
 ;
-;  Shared by CLAUDE.COM's chat and Term modes.  The program provides:
+;  Shared by CLAUDE.COM's chat and Term modes, and by resident Claude's
+;  console (RCON.ASM, NO_SRQ defined).  The program provides:
 ;    build_hello  -> CX = length of hellobuf
 ;    pi_frame     a new frame from the Pi at rxbuf+BX
 ;    msg_sent     a queued message has gone (done_type)
@@ -195,12 +196,16 @@ link_wait:
         cmp     ax, 40                  ; ~2 s without an answer
         jbe     .t
         jmp     link_fail
+%ifndef NO_SRQ
 .t:     mov     ah, 0Bh                 ; SRQ since the last call?
         call    gg_call
         jc      .chk
         or      ax, ax
         jnz     .poll
 .chk:   call    pit_due                 ; else poll every few ms
+%else                                   ; (resident: never AH=0Bh, which clears
+.t:     call    pit_due                 ;  the program's SRQ latch; poll the
+%endif                                  ;  bridge every few ms)
         jnc     .x
 .poll:  call    pit_mark
         mov     bl, [nano]
