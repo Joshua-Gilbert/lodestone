@@ -796,11 +796,14 @@ class Font:
 
 
 def symbols(mapfile):
+    """A NASM map's symbols: Real, Virtual, Name lines -> {name: virtual}
+    (the same but for a section with vstart, like CLAUDE.COM's resident
+    stub, whose labels count from 100h in its own block)."""
     syms = {}
     for line in open(mapfile):
         p = line.split()
         if len(p) == 3:
-            try: syms[p[2]] = int(p[0], 16)
+            try: syms[p[2]] = int(p[1], 16)
             except ValueError: pass
     return syms
 

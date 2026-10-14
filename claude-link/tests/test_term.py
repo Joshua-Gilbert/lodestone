@@ -135,6 +135,40 @@ def test_encoder_scroll_and_fill():
     assert len(p) == 3 + 4, p                                   # one fill
 
 
+def test_encoder_resume():
+    """CLAUDE /R's console keeps its screen between pop-ups and says HELLO
+    with its CRC: the encoder goes on from it when it is the screen of the
+    last frame or the one before; anything else starts from a clear screen."""
+    enc = Encoder(); gc, ga = TS._blank_rows()
+    scr = TermScreen(); st = pyte.ByteStream(scr)
+    grid = {}
+    def send(apply_it=True, deliver=True):
+        tc, ta = scr.cells(); cur = (scr.cursor.y, scr.cursor.x, bool(scr.cursor.hidden))
+        p, more = enc.make(tc, ta, cur, 246)
+        if p is not None and apply_it:
+            apply(p, gc, ga); grid['cur'] = (p[1], p[2], bool(p[0] & 2))
+        if deliver: enc.delivered()
+        return p, more
+    def crc(): return '%04X' % TS.screen_crc((gc, ga), grid['cur'])
+    st.feed(b'\r\n'.join(b'row %02d ' % i + b'x' * 60 for i in range(20)))
+    while send()[1]: pass
+    assert enc.resume(crc()) and send()[0] is None              # all delivered: nothing to send
+    st.feed(b'\x1b[3;1Hchanged')
+    send(deliver=False)                                         # the GRiD has it, the Pi doesn't know
+    assert enc.resume(crc()) and send()[0] is None
+    st.feed(b'\x1b[5;1Hagain')
+    send(apply_it=False, deliver=False)                         # lost on the way: the screen before it
+    assert enc.resume(crc())
+    p, _ = send()
+    assert p is not None and not p[0] & TS.F_CLEAR              # the change again, no clear
+    tc, ta = scr.cells()
+    assert [bytes(x) for x in gc] == [bytes(x) for x in tc] and [bytes(x) for x in ga] == [bytes(x) for x in ta]
+    for bad in (None, '', 'zz', '%04X' % ((int(crc(), 16) + 1) & 0xFFFF)):
+        assert not enc.resume(bad), bad
+    enc.reset()
+    assert not enc.resume(crc())                                # nothing sent since: unknown
+
+
 def test_keymap():
     T = lambda ax, app=False: K.term_bytes(ax & 0xFF, ax >> 8, app)
     assert T(0x011B) == b'\x1b' and T(0x2E03) == b'\x03' and T(0x0F00) == b'\x1b[Z'
