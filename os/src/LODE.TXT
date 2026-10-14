@@ -348,6 +348,10 @@ Programs:
   CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
             (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
             CLAUDE /T: Claude Code itself (Term); CODE-R redraws.
+            CLAUDE /R: resident (needs EMS; 0.8 KB): CODE-\ over a
+            program waiting for a key brings Claude up, CODE-\ again
+            goes back.  So far its screen is empty: the link comes
+            next.  CLAUDE /U takes it out.
   TM5000G   TM5000 3.7
   TESTDOS   checks the kernel's DOS functions (writes and deletes its
             own test files on this disk; "24 passed, 0 failed" is right)

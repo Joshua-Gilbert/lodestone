@@ -274,7 +274,9 @@ raced only by a program running as you, which could read the files itself.
    returns its screen. If the echo feels slow, raise the bridge to 500,000
    baud (claude-link/README.md, Speed).
 
-## Phase 2: resident Claude (not built yet)
+## Phase 2: resident Claude (the original sketch)
+
+Being built: the plan, its spikes and M1 (`CLAUDE /R` and `/U`, 0.8 KB resident) are in `lodestone-resident-claude.md`.
 
 A hot key, CODE-\\ (in the BIOS's set that AH=00h programs never see), pops
 Claude Code up over a running DOS program; Claude sees that program's

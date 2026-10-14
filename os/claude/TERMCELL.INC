@@ -4,41 +4,7 @@
 ;  cells starts at r * 320 in every bank).  The font is CS-relative.
 ; =====================================================================
 
-; One character cell.  AL = char, AH = attribute (1 inverse, 2 underline),
-; DI = row * 320 + column, ES = VSEG.  Destroys AX only.
-cell:   push    bx
-        push    cx
-        xor     cl, cl
-        test    ah, 1
-        jz      .a
-        mov     cl, 0FFh
-.a:     mov     ch, ah
-        cmp     al, 20h
-        jae     .b
-        mov     al, 20h
-.b:     cmp     al, 0A1h
-        jb      .c
-        mov     al, '?'
-.c:     sub     al, 20h
-        xor     ah, ah
-        shl     ax, 4
-        add     ax, font
-        mov     bx, ax
-%assign r 0
-%rep 16
-        mov     al, [cs:bx + r]
-        xor     al, cl
-        mov     [es:di + (r & 3) * 2000h + (r >> 2) * 80], al
-%assign r r + 1
-%endrep
-        test    ch, 2
-        jz      .d
-        mov     al, 0FFh
-        xor     al, cl
-        mov     [es:di + 4000h + 240], al       ; glyph row 14
-.d:     pop     cx
-        pop     bx
-        ret
+%include "CELL.INC"                     ; cell: one character cell
 
 ; =====================================================================
 ;  Term: the screen Claude Code draws on the Pi, rows 0-23, kept in a

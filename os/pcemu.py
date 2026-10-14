@@ -29,6 +29,7 @@ from unicorn import x86_const as X
 
 TICK_US = 1e6 * 65536 / 1193182
 BLOCK_US = 4.0
+KB_START, KB_END = 0x1E, 0x3E   # the BIOS's keyboard buffer in 40:0 (40:80h, 40:82h)
 # per-iteration cost of REP string ops, from RAMSPEED on the 1520 (~10 MHz):
 # rep stosw 6133 KB/s, rep lodsw 3738 KB/s, rep movsw 3074 KB/s
 REP_US = {0xA4: 0.45, 0xA5: 0.65, 0xAA: 0.25, 0xAB: 0.33, 0xAC: 0.4, 0xAD: 0.53,
@@ -398,7 +399,8 @@ class PC:
         equip = 0x4423 | (0x40 if s.drives[1] else 0)
         s.mu.mem_write(0x410, struct.pack('<H', equip))
         s.mu.mem_write(0x413, struct.pack('<H', s.mem_kb))
-        s.mu.mem_write(0x41A, struct.pack('<HH', 0x1E, 0x1E))
+        s.mu.mem_write(0x41A, struct.pack('<HH', 0x1E, 0x1E)); s.kbd_mirror = []
+        s.mu.mem_write(0x480, struct.pack('<HH', KB_START, KB_END))
         s.mu.mem_write(0x449, bytes([3])); s.mu.mem_write(0x44A, struct.pack('<HH', 80, 4096))
         s.mu.mem_write(0x44E, b'\0\0'); s.mu.mem_write(0x450, bytes(16)); s.mu.mem_write(0x460, b'\x07\x06\x00')
         s.mu.mem_write(0x463, struct.pack('<H', 0x3D4)); s.mu.mem_write(0x484, bytes([24]))
@@ -897,7 +899,50 @@ class PC:
     def ext_read(w):
         return w & 0xFF00 if w & 0xFF == 0xF0 and w >> 8 else w
 
+    # The BIOS's keyboard buffer (40:1Eh-3Dh, head 40:1Ah, tail 40:1Ch) holds
+    # the first 15 of s.keys as the BIOS would, so code that reads it directly
+    # (resident Claude's hot key) sees what it would on the 1520.  Keys go in
+    # at the tail as the keyboard's IRQ would put them, and the head moves on
+    # as INT 16h takes them, so nothing in it moves under code reading it.
+    # What guest code changes there (a word taken out, head moved, keys put
+    # back) is taken into s.keys at the next sync: each run slice and INT 16h.
+    def kbd_ring(s):
+        head, tail = struct.unpack('<HH', s.rd(0x40, 0x1A, 4))
+        out = []
+        while head != tail and KB_START <= head < KB_END and len(out) < 16:
+            out.append(struct.unpack('<H', s.rd(0x40, head, 2))[0])
+            head = head + 2 if head + 2 < KB_END else KB_START
+        return out
+
+    def kbd_sync(s):
+        ring = s.kbd_ring()
+        if ring != s.kbd_mirror:
+            rest = list(s.keys)[len(s.kbd_mirror):]
+            s.keys.clear(); s.keys.extend(ring + rest)
+            s.kbd_mirror = ring
+        n = len(s.kbd_mirror)
+        if n < 15 and len(s.keys) > n:
+            head, tail = struct.unpack('<HH', s.rd(0x40, 0x1A, 4))
+            if not (KB_START <= head < KB_END and KB_START <= tail < KB_END) or not n:
+                head = tail = KB_START
+            for k in list(s.keys)[n:15]:
+                w = PC.bios_word(k)
+                s.mu.mem_write(0x400 + tail, struct.pack('<H', w)); s.kbd_mirror.append(w)
+                tail = tail + 2 if tail + 2 < KB_END else KB_START
+            s.mu.mem_write(0x41A, struct.pack('<HH', head, tail))
+
     def int16(s):
+        s.kbd_sync()
+        n0, ah = len(s.keys), s.r('ah')
+        s.int16_hle()
+        n = min(n0 - len(s.keys), len(s.kbd_mirror)) if ah != 5 else 0
+        if n > 0:                               # taken from the front: the head moves on
+            head = struct.unpack('<H', s.rd(0x40, 0x1A, 2))[0]
+            for _ in range(n): head = head + 2 if head + 2 < KB_END else KB_START
+            s.mu.mem_write(0x41A, struct.pack('<H', head)); s.kbd_mirror = s.kbd_mirror[n:]
+        s.kbd_sync()
+
+    def int16_hle(s):
         ah = s.r('ah')
         if ah in (0x00, 0x01):
             while s.keys and PC.old_read(PC.bios_word(s.keys[0])) is None:
@@ -914,7 +959,9 @@ class PC:
                 s.w('ax', PC.old_read(w) if ah == 1 else PC.ext_read(w)); s.zf(0)
             else: s.zf(1)
         elif ah in (0x02, 0x12): s.w('ax', s.r('ax') & 0xFF00)
-        elif ah == 0x05: s.keys.append(s.r('cx')); s.w('ax', 0)
+        elif ah == 0x05:                        # (full at 15, as the BIOS's buffer)
+            if len(s.keys) >= 15: s.w('ax', (s.r('ax') & 0xFF00) | 1)
+            else: s.keys.append(s.r('cx')); s.w('ax', 0)
 
     def prtsc(s):
         """Shift-PrtSc: the BIOS's INT 9 calls INT 5."""
@@ -964,6 +1011,7 @@ class PC:
 
     def run(s, n=20000):
         if s.stopped or s.crash: return False
+        s.kbd_sync()
         s.deliver_irqs()
         s.blocked = False
         try:
