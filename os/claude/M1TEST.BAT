@@ -8,8 +8,13 @@ cls
 echo Step 1 of 7: memory, then CLAUDE /R.
 memsz >> m1test.txt
 claude /r
+if errorlevel 2 goto already
 if errorlevel 1 goto noload
 echo 1 CLAUDE /R: resident >> m1test.txt
+goto loaded
+:already
+echo 1 CLAUDE /R: resident already, from before (restart for step 1's memory) >> m1test.txt
+:loaded
 memsz >> m1test.txt
 claude /r
 if errorlevel 2 echo 1 CLAUDE /R again: resident already, as it should >> m1test.txt

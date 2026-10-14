@@ -19,10 +19,32 @@ TM5000G = next((p for p in (os.environ.get('TM5000G', ''), os.path.join(GOS, '..
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
-    for n in ('RSPIKE', 'EMSUSE', 'GFXUSE'):
+    for n in ('RSPIKE', 'EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE'):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(CL, n + '.COM'), os.path.join(CL, n + '.ASM')], check=True)
-    for n, out in (('RCON', 'RCON.BIN'), ('CLAUDE', 'CLAUDE.COM')):      # resident Claude's console, inside CLAUDE.COM
-        subprocess.run(['nasm', '-f', 'bin', '-i', '../src/', '-o', out, n + '.ASM'], check=True, cwd=CL)
+    subprocess.run(['sh', os.path.join(CL, 'build.sh')], check=True, stdout=subprocess.DEVNULL)  # RCON.BIN in CLAUDE.COM, its map
+    # another version's CLAUDE.COM, as far as the stub goes: laid out otherwise after its header
+    subprocess.run(['nasm', '-f', 'bin', '-i', '../src/', '-DSTUB_PAD=5', '-o', os.path.join(OUT, 'CLAUDEP.COM'), 'CLAUDE.ASM'],
+                   check=True, cwd=CL)
+
+def csym(name):
+    """A symbol of CLAUDE.COM's (CLAUDE.MAP), the stub's included."""
+    for line in open(os.path.join(CL, 'CLAUDE.MAP')):
+        p = line.split()
+        if len(p) == 3 and p[2] == name: return int(p[1], 16)
+    raise KeyError(name)
+
+def stub_seg(k):
+    """Resident Claude's stub, as INT 16h points at it."""
+    return k.pc.u16(0, 0x16 * 4 + 2)
+
+def mcbs(k):
+    """The memory blocks: (MCB segment, owner, paragraphs, name)."""
+    out, seg = [], k.u16('first_mcb')
+    while True:
+        t = k.pc.rd(seg, 0, 1)[0]
+        out.append((seg, k.pc.u16(seg, 1), k.pc.u16(seg, 3), k.pc.rd(seg, 8, 8).split(b'\0')[0].decode('latin1')))
+        if t != ord('M'): return out
+        seg += k.pc.u16(seg, 3) + 1
     for d, n in ((os.path.join(GOS, 'src'), 'LCMD'), (HERE, 'MEMSZ')):
         subprocess.run(['nasm', '-f', 'bin', '-o', n + '.COM', n + '.ASM'], check=True, cwd=d)   # (its includes)
 
@@ -393,7 +415,97 @@ def t_rtm5000g():
     check('TM5000G talks to the bus as before: auto-detect finds FG5010, 8753D, DC5009 again (no key pressed)',
           all(x in scr for x in ('FG5010', '8753D', 'DC5009')) and scr.count('already set up') == 2, scr)
 
-TESTS = [t_ems, t_video, t_exec, t_tm5000g, t_rload, t_rems, t_rvideo, t_rdos, t_rexec, t_rtm5000g]
+def t_rirq():
+    """CODE-\\ while a TSR looks at the keyboard from INT 1Ch (inside the
+    timer's interrupt: the BIOS's INT 08h calls it before its EOI) and the
+    program is busy: the console waits for a key call made with no
+    interrupt in service, where the keyboard can still come."""
+    k = ktest.KPC(image('rirq.img', 'T1C.COM=' + os.path.join(CL, 'T1C.COM'), 'BUSY.COM=' + os.path.join(CL, 'BUSY.COM')),
+                  ems_pages=88); k.start()
+    k.key(ktest.CODE_P)
+    prompt(k, 'claude /r')
+    o = prompt(k, 't1c')
+    check('T1C loads (INT 1Ch looks at the keyboard)', 'T1C resident' in o, o)
+    isr_up = []
+    k.hooks.append(lambda pc: pc.r('cs') == 0xE000 and pc.r('ip') == 0 and isr_up.append(pc.isr))
+    k.key('cls'); k.key(ktest.ENTER); k.key('busy'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_for(0.5)
+    k.key(HOT, settle=False)
+    k.pc.run_for(1.0)
+    stub = stub_seg(k)
+    pend, ring = k.pc.rd(stub, csym('r_pend'), 1)[0], k.pc.kbd_ring()
+    check('CODE-\\ during BUSY, seen from INT 1Ch: no console inside the timer\'s interrupt; CODE-\\ taken, the console to come',
+          not isr_up and k.pc.mode() == 3 and pend == 1 and not {0x2BF0, 0x2B00} & set(ring),
+          (isr_up, k.pc.mode(), pend, [hex(w) for w in ring]))
+    k.settle(10)
+    up = console(k)
+    check('... when BUSY is done, the prompt\'s next key call brings it up, with no interrupt in service',
+          up and isr_up == [0] and 'BUSY: done' in ''.join(k.pc.tty) + k.pc.text_screen(), (up, isr_up))
+    k.key(HOT)
+    check('... and CODE-\\ goes back', k.pc.mode() == 3 and not console(k), k.pc.mode())
+
+def t_rmouse():
+    """A program's INT 33h event handler is swapped out while the console
+    is up (clicks then are the console's, and nothing runs on the stub's
+    stack), and back afterwards."""
+    k = ktest.KPC(image('rmouse.img', 'MHAND.COM=' + os.path.join(CL, 'MHAND.COM')), ems_pages=88)
+    k.pc.mouse = True; k.start()
+    k.key(ktest.CODE_P)
+    prompt(k, 'claude /r')
+    def click():
+        k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05)
+    def calls(o):
+        m = re.search(r'MHAND: (\d+) calls', o)
+        return int(m.group(1)) if m else None
+    prompt(k, 'mhand')
+    click(); k.settle()
+    k.key(ktest.ESC)
+    one = calls(k.pc.text_screen())
+    prompt(k, 'mhand')
+    k.key(HOT)
+    up = console(k)
+    for _ in range(3): click()
+    k.settle()
+    k.key(HOT)
+    click(); k.settle()
+    k.key(ktest.ESC)
+    got = calls(k.pc.text_screen())
+    check('MHAND\'s handler: %s calls for a click; over the console, 3 clicks there and 1 after: %s calls, the one after\'s'
+          % (one, got), up and one and got == one, (up, one, got, k.pc.text_screen()))
+
+def t_rversion():
+    """CLAUDE /R and /U from a CLAUDE.COM whose stub is laid out otherwise
+    (another version): they find the stub by its header."""
+    k = ktest.KPC(image('rver.img', 'CLAUDEP.COM=' + os.path.join(OUT, 'CLAUDEP.COM')), ems_pages=88); k.start()
+    k.key(ktest.CODE_P)
+    before = memsz(k)
+    prompt(k, 'claude /r')
+    o, el = run_el(k, 'claudep /r')
+    check('another version\'s CLAUDE /R: resident already (exit code 2), no second copy', el == 2 and 'already' in o, (el, o))
+    o, el = run_el(k, 'claudep /u')
+    check('another version\'s CLAUDE /U: taken out (0), all its memory back',
+          el == 0 and 'no longer resident' in o and memsz(k) == before, (el, o, before, memsz(k)))
+    prompt(k, 'claudep /r')
+    o, el = run_el(k, 'claude /u')
+    check('... and the other way round', el == 0 and memsz(k) == before, (el, o, memsz(k)))
+
+def t_rhole():
+    """A free hole lower down that the stub would fit in: the stub still
+    goes to the top of memory."""
+    k = ktest.KPC(image('rhole.img', 'HOLE.COM=' + os.path.join(CL, 'HOLE.COM')), ems_pages=88); k.start()
+    k.key(ktest.CODE_P)
+    o = prompt(k, 'hole')
+    check('HOLE leaves 160 paragraphs free below a block it keeps', 'HOLE: 160 paragraphs free' in o, o)
+    prompt(k, 'claude /r')
+    blocks = mcbs(k)
+    i = next((n for n, b in enumerate(blocks) if b[1] == 8 and b[3] == 'CLAUDE'), None)
+    holes = [b for b in blocks[:i or 0] if b[1] == 0 and b[2] >= (csym('r_stack_top') - 0x100 + 15) // 16]
+    check('CLAUDE /R with that hole: the stub\'s block is the top one (free memory only above it)',
+          i is not None and all(b[1] == 0 for b in blocks[i + 1:]) and holes,
+          [(hex(s), o_, n, nm) for s, o_, n, nm in blocks])
+
+TESTS = [t_ems, t_video, t_exec, t_tm5000g, t_rload, t_rems, t_rvideo, t_rdos, t_rexec, t_rtm5000g,
+         t_rirq, t_rmouse, t_rversion, t_rhole]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

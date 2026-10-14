@@ -100,21 +100,38 @@ R_FRAME  equ 0E000h
 R_EPORT  equ 0258h              ; window 0's page register (+4000h a window)
 R_STACK  equ 384
 
+%macro r_at 2                     ; label %1 must be at offset %2 (or no build)
+        times   -((%1 - $$) != %2 - 100h) db 0
+%endmacro
+
         jmp     start
-r_old16  dd     0
+; the stub's header: at these offsets in every CLAUDE.COM from now on, so
+; CLAUDE /R and /U find and take out a stub that another version left
+r_sig    db     'CLRS'          ; 103h
+r_ver    db     1               ; 107h: the stub's version
+r_hook   dw     r_int16         ; 108h: INT 16h points at CS:this
+r_old16  dd     0               ; 10Ah: and went on to this
+r_handle dw     0               ; 10Eh: its EMS pages (CLAUDE /U frees them)
+r_inpop  db     0               ; 110h: not 0, no pop-up (the console is up)
+        r_at    r_sig, 103h
+        r_at    r_inpop, 110h
+; (this version's own from here)
+%ifdef STUB_PAD                 ; (the tests: a CLAUDE.COM whose stub is laid
+        times   STUB_PAD db 0   ;  out otherwise, as another version's)
+%endif
+r_pend   db     0               ; CODE-\ taken, the console to come
 r_entry  dd     R_FRAME << 16   ; the console: E000:0000
 r_hw     db     0, 0, 0         ; our pages' register values
 r_saved  db     0, 0, 0, 0      ; the program's windows meanwhile
-r_inpop  db     0
-r_handle dw     0               ; our EMS pages (CLAUDE /U frees them)
 r_params:                       ; the console's, ES:BX (RCON.ASM P_*)
 r_pold16 dd     0               ;  the BIOS's INT 16h
 r_indos  dd     0               ;  DOS's busy flag (INT 21h AH=34h)
 r_ss     dw     0
 r_sp     dw     0
-         db     'CLRS'          ; (resident: the 4 bytes before the hook)
-r_int16: cmp    ah, 0
-        je      .rd
+r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
+        jne     .up                     ;  else (a TSR, from an interrupt)
+        cmp     ah, 0                   ;  sees no key, as the BIOS's AH=01h
+        je      .rd                     ;  would drop CODE-\, the console's
         cmp     ah, 10h
         je      .rd
         cmp     ah, 1
@@ -122,6 +139,12 @@ r_int16: cmp    ah, 0
         cmp     ah, 11h
         je      .pk
 .ch:    jmp     far [cs:r_old16]
+.up:    cmp     ah, 1
+        je      .nk
+        cmp     ah, 11h
+        jne     .ch
+.nk:    cmp     ax, ax                  ; (ZF: no key)
+        retf    2
 .pk:    call    r_hot
         jmp     .ch
 .rd:    sti                             ; a read: wait here, CODE-\ seen
@@ -136,7 +159,11 @@ r_int16: cmp    ah, 0
         jmp     .w
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
-; move back one) and the console runs.  Registers kept.
+; move back one), and the console runs, unless a hardware interrupt is in
+; service: INT 16h called from one (a TSR peeking from INT 1Ch, which the
+; BIOS's INT 08h calls before its EOI) would leave the keyboard's IRQ
+; waiting and the console hung.  Then it runs at the next INT 16h call
+; made with none in service.  Registers kept.
 r_hot:  cmp     byte [cs:r_inpop], 0
         jne     .x
         push    ax
@@ -148,7 +175,7 @@ r_hot:  cmp     byte [cs:r_inpop], 0
         cli
         mov     bx, [1Ah]               ; from the head
 .s:     cmp     bx, [1Ch]
-        je      .no
+        je      .p
         mov     ax, [bx]
         cmp     ax, R_HOTRAW
         je      .m
@@ -156,14 +183,26 @@ r_hot:  cmp     byte [cs:r_inpop], 0
         je      .m
         call    .nx
         jmp     .s
-.m:     mov     si, bx
+.m:     mov     byte [cs:r_pend], 1
+.mv:    mov     si, bx
         call    .nx
         cmp     bx, [1Ch]
         je      .e
         mov     ax, [bx]
         mov     [si], ax
-        jmp     .m
+        jmp     .mv
 .e:     mov     [1Ch], si               ; the tail one back
+.p:     cmp     byte [cs:r_pend], 0
+        je      .no
+        mov     al, 0Bh                 ; the PIC's in-service register,
+        out     20h, al                 ;  then back to the request one (as
+        in      al, 20h                 ;  the kernel's screen capture does)
+        mov     ah, al
+        mov     al, 0Ah
+        out     20h, al
+        or      ah, ah
+        jnz     .no
+        mov     byte [cs:r_pend], 0
         sti
         pop     ds
         pop     si
@@ -343,7 +382,8 @@ res_args:
 .x:     ret
 
 ; CLAUDE /R: three EMS pages (the frame at E000h), the console into the
-; first, INT 16h hooked; the PSP and the stub stay
+; first, the stub into a block of the system's at the top of memory, INT
+; 16h hooked; CLAUDE.COM then ends as any program does
 res_load:
         call    res_find
         jc      .new
@@ -382,13 +422,13 @@ res_load:
         shr     bx, 4                   ;  rest is free
         mov     ah, 4Ah
         int     21h
-        mov     bx, 0FFFFh              ; the stub's block at the top: all the
-        mov     ah, 48h                 ;  free memory, less R_PARAS + its MCB
-        int     21h                     ;  at its top, then those (first fit:
-        cmp     bx, R_PARAS * 2         ;  the top unless a hole lower down
-        jb      .nomem                  ;  fits, which is as good)
-        mov     bp, bx
-        mov     ah, 48h
+        mov     bx, 0FFFFh              ; the stub's block at the top of the
+        mov     ah, 48h                 ;  largest free block: that block, cut
+        int     21h                     ;  to its size less R_PARAS and an MCB,
+        cmp     bx, R_PARAS * 2         ;  leaves a free block of R_PARAS at
+        jb      .nomem                  ;  its top, which is the stub's (a
+        mov     bp, bx                  ;  second 48h would take the first
+        mov     ah, 48h                 ;  hole that fits, lower down maybe)
         int     21h
         jc      .nomem
         mov     es, ax
@@ -396,24 +436,27 @@ res_load:
         sub     bx, R_PARAS + 1
         mov     ah, 4Ah
         int     21h
-        mov     bx, R_PARAS
-        mov     ah, 48h
-        int     21h
-        mov     bp, ax                  ; BP = the stub's block
-        pushf
-        mov     ah, 49h                 ; (ES: the rest, freed again)
-        int     21h
-        popf
-        jc      .nomem
-        lea     ax, [bp - 1]            ; its MCB: the system's, called CLAUDE
+        jc      .back
+        mov     ax, es
+        add     ax, bx                  ; the rest's MCB
+        mov     bp, ax
+        inc     bp                      ; BP = the stub's block
+        push    es
         mov     es, ax
-        mov     word [es:1], 8
+        cmp     word [es:1], 0          ; (free, and R_PARAS, as the kernel
+        jne     .notr                   ;  leaves the rest of a block it cuts)
+        cmp     word [es:3], R_PARAS
+        jne     .notr
+        mov     word [es:1], 8          ; the system's, called CLAUDE
         mov     si, s_mcbname
         mov     di, 8
         movsw
         movsw
         movsw
         movsw
+        pop     es
+        mov     ah, 49h                 ; the rest of the largest block back
+        int     21h
         lea     ax, [bp - 10h]          ; the stub, at the same offsets (its CS
         mov     es, ax                  ;  is 10h paragraphs below the block)
         mov     si, 100h
@@ -473,6 +516,9 @@ res_load:
         mov     dx, s_r_nopages
         mov     al, 1
         jmp     res_quit
+.notr:  pop     es
+.back:  mov     ah, 49h                 ; (ES: the largest block, back)
+        int     21h
 .nomem: mov     dx, s_r_nomem
         mov     al, 1
         jmp     res_quit
@@ -491,7 +537,8 @@ res_quit:
         int     21h
 
 ; CLAUDE /U: INT 16h back, the EMS pages and the memory freed, if INT 16h
-; still comes to us
+; still comes to us.  All from the stub's header, so it takes out a stub
+; that another version of CLAUDE.COM left.
 res_unload:
         call    res_find
         jnc     .f
@@ -504,7 +551,7 @@ res_unload:
         mov     ax, es
         cmp     ax, bp
         jne     .over
-        cmp     bx, r_int16
+        cmp     bx, [es:r_hook]
         jne     .over
         push    ds
         lds     dx, [es:r_old16]
@@ -526,10 +573,10 @@ res_unload:
         jmp     res_quit
 
 ; the resident copy, from the memory blocks: AX = its CS, CF if none.  A
-; block of the system's (owner 8) with 'CLRS' before r_int16, counting
-; from 10h paragraphs below it.  (Its CS is 10h paragraphs below the block
-; so its offsets are CLAUDE.COM's: everything it has, r_old16 to the
-; stack's top, lies from offset 100h on, inside the block)
+; block of the system's (owner 8) with the stub's header ('CLRS' at 103h),
+; counting from 10h paragraphs below it.  (Its CS is 10h paragraphs below
+; the block so its offsets are CLAUDE.COM's: everything it has, the header
+; to the stack's top, lies from offset 100h on, inside the block)
 res_find:
         mov     ah, 52h
         int     21h
@@ -537,15 +584,15 @@ res_find:
 .l:     mov     es, ax
         cmp     word [es:1], 8
         jne     .n
-        cmp     word [es:3], R_PARAS
+        cmp     word [es:3], 2          ; (the header in it)
         jb      .n
         push    es
         mov     dx, ax
         sub     dx, 0Fh                 ; (MCB + 1 - 10h)
         mov     es, dx
-        cmp     word [es:r_int16 - 4], 'CL'
+        cmp     word [es:r_sig], 'CL'
         jne     .p
-        cmp     word [es:r_int16 - 2], 'RS'
+        cmp     word [es:r_sig + 2], 'RS'
         jne     .p
         pop     es
         mov     ax, dx
