@@ -363,6 +363,7 @@ class PC:
         s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
         s.moves = []
         s.watch = None
+        s.ccr = 0x30; s.on_ccr = None   # CGA colour select (3D9h), as written; on_ccr(value) at each write
         # CMOS: Joshua's 1520 (CMOS128.BIN) if it's here, else a 1.44 MB A:
         cm = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'CMOS128.BIN')
         s.cmos = bytearray(open(cm, 'rb').read()) if os.path.exists(cm) else bytearray(128)
@@ -673,6 +674,11 @@ class PC:
             s.us += EMS_IO_US; s.ems_reg[port >> 14] = val; s.ems_map(port >> 14); return
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             s.chip.write(port >> 10, val)
+        if port == 0x3D9: s.set_ccr(val)
+
+    def set_ccr(s, v):
+        s.ccr = v
+        if s.on_ccr: s.on_ccr(v)
 
     def uart_in(s, o):
         u = s.uart
@@ -726,6 +732,12 @@ class PC:
             if not al & 0x80:
                 if m in (0, 1, 2, 3, 7): s.wr(0xB800, 0, b'\x20\x07' * 2000)
                 else: s.wr(0xB800, 0, bytes(0x8000))
+            # the colour select, as the 1520's BIOS sets it (int10.asm): 30h,
+            # 3Fh in mode 6 (white on black); kept in 40:66h, and not written
+            # to the port above the CGA modes
+            v = 0x3F if m == 6 else 0x30
+            s.wr(0, 0x466, [v])
+            if m <= 6: s.set_ccr(v)
             s.log.append('[mode %02Xh]' % m)
         elif ah == 0x01: s.wr(0, 0x460, [s.r('cl'), s.r('ch')])
         elif ah == 0x02: s.set_cursor(s.r('dh'), s.r('dl'))
@@ -768,7 +780,12 @@ class PC:
                 o = base + (x >> 2); sh = (3 - (x & 3)) * 2
                 v = s.rd(0xB800, o, 1)[0]; v = (v & ~(3 << sh)) | ((al & 3) << sh)
                 s.wr(0xB800, o, [v & 0xFF])
-        elif ah in (0x0B, 0x10, 0x11, 0x12, 0x1A, 0x1B, 0x1C, 0x13): pass
+        elif ah == 0x0B:                # (the 1520's VidSetPalette): BH=0 the
+            v = s.rd(0, 0x466, 1)[0]    #  border, background or 640x200 colour,
+            bl = s.r('bl')              #  BH=1 the 320x200 palette
+            v = (v & 0xE0) | (bl & 0x1F) if s.r('bh') == 0 else (v & 0xDF) | (0x20 if bl & 1 else 0)
+            s.wr(0, 0x466, [v]); s.set_ccr(v)
+        elif ah in (0x10, 0x11, 0x12, 0x1A, 0x1B, 0x1C, 0x13): pass
 
     def tty_put(s, ch):
         s.tty.append(chr(ch))

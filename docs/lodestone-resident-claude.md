@@ -98,7 +98,7 @@ On the 1520 (SPIKES.TXT; run without a GPIB address):
 | Video, modes 4, 6 and 40h | video memory and 40:49–66h come back byte for byte (0 bad) |
 | Flip speed | Joshua: "nothing went weird between switching screens and it was almost instantaneous" |
 
-- **Mode 6:** one prompt was answered "looked DIFFERENT". Joshua's later note says nothing went weird, so it was most likely a misread; to look at again in M1.
+- **Mode 6:** one prompt was answered "looked DIFFERENT". It was answered so again in M1, and that time Joshua said what he saw: the screen was black, and then the pattern flashed briefly. Both were real, and neither was the video memory, which came back byte for byte; see "Mode 6 on the 1520" under M1.
 - **Toward multitasking:** the flip is an EMS register swap plus a 32 KB copy. Joshua noted it is useful later for switching between programs. It is the same mechanism a program switcher would use.
 
 ### Bug found on the 1520: the hook's first instruction was missing
@@ -125,7 +125,7 @@ On the 1520 (SPIKES.TXT; run without a GPIB address):
 - **Writing the window registers directly is safe with Lodestone's EMM.** It keeps no copy of the mappings: 44h writes straight to the port, and 47h reads the registers back. A third-party EMM loaded instead would need `CLAUDE /R` to go through INT 67h 47h/48h; Lodestone has its own, so that is moot for now.
 
 ## Milestones
-1. **M1:** `CLAUDE /R` loads (EMS pages, stub) and unloads (`CLAUDE /U`). CODE-\\ flips to an empty console and back over TM5000G and over the Executive, with no link yet. Memory is measured. Done in the emulator (below); `M1TEST.BAT` for the 1520.
+1. **M1:** `CLAUDE /R` loads (EMS pages, stub) and unloads (`CLAUDE /U`). CODE-\\ flips to an empty console and back over TM5000G and over the Executive, with no link yet. Memory is measured. Done in the emulator and on the 1520 (below).
 2. **M2:** the Term session in the pop-up; the same `claude` session as `CLAUDE /T`. Done in the emulator (below).
 3. **M3:** the paused program's SCREEN and TYPE, with silent snapshot returns. Claude can drive TM5000G.
 4. **M4 (0.5b):** background requests at key waits.
@@ -209,11 +209,11 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - without hiding INT 33h's pointer, TM5000G's screen gets a wrong cell;
   - the PSP-kept stub cost a program from the Executive 43.6 KB;
   - from the review: without the in-service check, the console comes up inside the timer's interrupt (in service 01h); without the no-key answer, T1C's peeks eat the CODE-\ that should close the console; without the swap, MHAND counts 8 calls instead of 2; finding the stub by its hook's offset, the other version loads a second copy and can't take it out; a second AH=48h puts the stub in HOLE's hole.
-- **On the 1520 (to do):** `os/claude/M1TEST.BAT` runs these step by step and logs the answers to `M1TEST.TXT`. Copy it with CLAUDE.COM, EMSUSE.COM and GFXUSE.COM (`os/claude`), MEMSZ.COM (`os/tests`) and TM5000G.EXE. It was run through in pcemu, answering as its instructions say. It checks:
+- **On the 1520:** `os/claude/M1TEST.BAT` runs these step by step and logs the answers to `M1TEST.TXT`. Copy it with CLAUDE.COM, EMSUSE.COM and GFXUSE.COM (`os/claude`), MEMSZ.COM (`os/tests`) and TM5000G.EXE. It was run through in pcemu, answering as its instructions say. It checks:
   - MEMSZ, `CLAUDE /R`, MEMSZ again, and `CLAUDE /R` once more (refused).
   - CODE-\ and back:
     - over EMSUSE (its four EMS pages kept);
-    - over GFXUSE in modes 4, 6 (the spike's "looked DIFFERENT" answer, to look at again) and 40h;
+    - over GFXUSE in modes 4, 6 and 40h (`M1TEST GFX 6` runs one mode on its own, with `CLAUDE /R` loaded);
     - over COPY CON (the band says DOS busy, and COPY CON goes on);
     - over TM5000G, with its mouse moved while the console is up.
   - Keys typed straight after the console goes away reach the program.
@@ -221,6 +221,27 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - By hand at the end: CODE-\ over the Executive.
 
   CODE-\ behind another CODE-key and keys typed just before CODE-\ need timing no one can type; the emulator's tests cover them. Nothing on that floppy looks at the keyboard from an interrupt, so the 1520 can't show the in-service check either (pcemu can't show the hang itself: it lets a nested IRQ 0 in).
+
+### M1 on the 1520 (2026-10-14)
+`M1TEST.BAT` with M2's CLAUDE.COM, no Pi on the bus (`os/bench/M1TEST_1520_2026-10-14.TXT`):
+
+| Step | Result |
+|---|---|
+| 1. `CLAUDE /R` | 559.5 KB for programs before, 558.7 KB after: 0.8 KB, as in the emulator. `/R` again refused |
+| 2. EMSUSE | its four EMS pages kept (0 bad); the console came up and went away |
+| 3. GFXUSE | modes 4, 6 and 40h: video memory and 40:49h-66h kept (0 bad). Modes 4 and 40h looked the same; mode 6 "DIFFERENT" (below), and the same after the fix |
+| 4. COPY CON | the band said DOS busy, and the file held the line typed |
+| 5. Keys after | typed straight after CODE-\, they reached EMSUSE (2 keys, 0 bad) |
+| 6. TM5000G | came back right and worked |
+| 7. `CLAUDE /U` | taken out: 559.5 KB again |
+
+### Mode 6 on the 1520
+Joshua: before the pattern flashed briefly, the screen was black. Two causes, both found and fixed, and the fix seen on the 1520 (2026-10-14):
+
+- **GFXUSE's colour.** It set colour 1 with INT 10h AH=0Bh BH=0. In mode 4 that is the background; in mode 6 it is the colour of every set pixel. The 1520 shows CGA colours as greys through the V6366's colour maps (`grid_vid2.asm`, `VidExpRegTable`), and colour 1 is black in four of its six, the default among them. So mode 6's pattern was drawn black on black. GFXUSE now sets colour 0Ch, which is a grey in all six maps, neither black nor the BIOS's default white. A colour register not put back would now show: mode 6 in white, or mode 4 with a black background. (Mode 4 couldn't show it before: on the 1520 its old register and the BIOS's default give the same greys.)
+- **The console's order going back.** It set the program's mode, copied its 32 KB of screen back, and only then wrote the program's colour register (port 3D9h, from 40:66h). The BIOS's mode set writes its own register: 3Fh, white, in mode 6. So for as long as the copy took, the pattern showed in white: the flash. The console now writes the program's register straight after the mode set, before the screen. It does so in the text modes too, where it is the border colour and wasn't put back before. RCON is 2 bytes smaller and CLAUDE.COM 19,558 bytes; the resident part doesn't change.
+- **Test:** pcemu now has the colour register as the 1520's BIOS keeps it: the mode set (30h, 3Fh in mode 6, kept in 40:66h, and not written to the port above the CGA modes), AH=0Bh, and port 3D9h. A new check in modes 4, 6 and 3 watches each write to 3D9h while the console goes back: the register must end as the program's, and none may be written with the program's screen already back. The old console fails it in modes 4 and 6 (the register written last, with the screen back); the new one passes. `test_resident.py` now has 70 checks.
+- **On the 1520, again:** with the fixed CLAUDE.COM and GFXUSE.COM, `CLAUDE /R` and `M1TEST GFX 6` (the last two lines of the log): 0 bad, and it looked the same. Joshua: it worked.
 
 ## M2: Claude Code in the pop-up (2026-10-13)
 CODE-\ over a program now brings up Claude Code itself: Term, the same `claude` on the Pi that `CLAUDE /T` shows, so what is typed in one is on the other's screen. CODE-\ (or CODE-Q) goes back to the program as it was. This runs in the emulator. On the 1520 only the no-Pi case can be tried until the Pi 5 and the bridge are set up.
@@ -264,7 +285,7 @@ CODE-\ over a program now brings up Claude Code itself: Term, the same `claude` 
   - no screen from the shadow at the pop-up: blank, and as the Pi goes on from the kept screen it sends nothing, so it stays blank;
   - the program's GPIB timeout kept: 60 s while the console is up, and with the stuck bridge CODE-\ not back after 10 s;
   - the stub looked for only at INT 16h's head: under HOOK16, `r_off` stays 0 while CLAUDE runs, and CODE-\ there brings the console up over it.
-- **On the 1520 now:** with no Pi, the console says "No answer from the bridge at GPIB address 7", and CODE-\ should still come back at once; `M1TEST.BAT` goes through that. The rest waits for the Pi 5 and the bridge.
+- **On the 1520 now:** with no Pi, the console says "No answer from the bridge at GPIB address 7", and CODE-\ should still come back at once. `M1TEST.BAT` went through that with M2's console on 2026-10-14 (above): it came up and went back over every program. The rest waits for the Pi 5 and the bridge.
 
 ## Open points, after M2
 - **Programs that hook INT 16h themselves**, and programs that read the keyboard through INT 09h only (not covered: Phase 2 left INT 09h hooks out). `/U` refuses while one sits above the stub. (CLAUDE.COM finds the stub under such a program too, and turns its hot key off.)
