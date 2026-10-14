@@ -150,7 +150,8 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - `/U`: 0 taken out, 1 not resident, 2 a program loaded after it has INT 16h (take that out first).
 - **Where it lives:** in CLAUDE.COM.
   - `/R` and `/U` are handled before the GPIB driver is looked for, so they work without the bridge.
-  - The console is its own assembly, `RCON.ASM` (org 0, 2,853 bytes). CLAUDE.COM carries it where its BSS goes, so a normal run (chat, Term) doesn't carry it in memory. `/R` copies it into the first of three EMS pages.
+  - The console is its own assembly, `RCON.ASM` (org 0, 2,946 bytes). `/R` copies it into the first of three EMS pages.
+  - Everything only `/R` and `/U` use (their code and messages, the stub as it will run, assembled for offset 100h with `vstart`, and the console) is where CLAUDE.COM's BSS goes, so chat and Term runs don't carry it in memory; only `res_args` (32 bytes), which looks for `/R` and `/U`, stays. (PR #27's review: before, a chat or Term run carried 1,248 bytes of it.)
   - It draws with `cell` from `CELL.INC`, split out of `TERMCELL.INC` (CLAUDE.COM is byte for byte the same after the split), and the Terminus font. This is the shape M2 needs: the console code CS-relative in EMS.
 - **The stub: in a block of its own at the top of memory, with no PSP.** This changed from the plan (and from RSPIKE, which keeps its PSP with INT 21h AH=31h).
   - **Why:** measured with the stub kept that way and loaded at the prompt, a program the Executive started afterwards got 534.8 KB instead of 578.4: 43.6 KB less. When LCMD ended, the Executive's block couldn't grow back past the stub (`ui_room`), so it moved above it, leaving everything below unused. Any TSR loaded at the prompt does this today.
@@ -190,18 +191,18 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - The stub passes it to the console, which says "DOS busy" in its band when the program was inside DOS (COPY CON at the prompt).
   - The console calls nothing but INT 10h, the BIOS's INT 16h and INT 33h (whose AX=14h makes a DOS call: only when DOS isn't busy).
   - Acting on it is M3's (file requests while a program is paused).
-- **The stub's header**, at the same offsets in every CLAUDE.COM from now on: `CLRS` (103h), its version, where its hook is, the INT 16h it goes on to, its EMS handle, and the byte that stops pop-ups (110h). `/U` finds the stub among the memory blocks (owner 8, `CLRS` at 103h), so `/R` also knows when it is there already, even under another hook, and both work on a stub that another version of CLAUDE.COM left (copied to the floppy without a restart). M1 at first found it by its hook's offset, which another version's wouldn't share (PR #27's review). `/U` is refused when INT 16h no longer points at the stub's hook; otherwise it puts INT 16h back and frees the EMS pages and the block.
+- **The stub's header**, at the same offsets in every CLAUDE.COM from now on: `CLRS` (100h), its version, where its hook is, the INT 16h it goes on to, its EMS handle, and the byte that stops pop-ups (10Dh). `/U` finds the stub among the memory blocks (owner 8, `CLRS` at 100h), so `/R` also knows when it is there already, even under another hook, and both work on a stub that another version of CLAUDE.COM left (copied to the floppy without a restart). M1 at first found it by its hook's offset, which another version's wouldn't share (PR #27's review). `/U` is refused when INT 16h no longer points at the stub's hook; otherwise it puts INT 16h back and frees the EMS pages and the block.
 - **Cost:**
   - **Resident:** 768 bytes of conventional memory: 362 of code and data, the 384-byte stack, and the block's MCB (704 before the review's fixes: the header, the in-service check, the no-key answer). DOS programs get 0.8 KB less, at the prompt and from the Executive alike (the plan's target was 1.2 KB). `/U` gives all of it back.
   - **EMS:** 3 pages (48 KB).
-  - **CLAUDE.COM:** 16,610 bytes on disk (+4,290). It takes 1,344 bytes more in memory when it runs as chat or Term (the stub and the loader, not the console).
-- **Tests** (`test_resident.py`, 42 new checks; the spike's 21 stay as they were):
+  - **CLAUDE.COM:** 16,644 bytes on disk (+4,324). It takes 32 bytes more in memory when it runs as chat or Term (`res_args`).
+- **Tests** (`test_resident.py`, 43 new checks; the spike's 21 stay as they were):
   - `/R`, `/R` again, `/U`, `/U` again, `/U` under RSPIKE, no EMS: messages and exit codes;
   - memory at the prompt, from the Executive, and after `/U`; the EMS handle kept after CLAUDE.COM ends, and freed by `/U`;
   - the console over EMSUSE (AH=00h and AH=10h readers, all four EMS windows), over GFXUSE in modes 4, 6, 40h and 3 (video memory and 40:49h-66h byte for byte), over COPY CON ("DOS busy"), over the Executive (the mouse meanwhile), and over TM5000G (its keyboard, mouse and bus polling with no key pressed, auto-detect, and the mouse meanwhile);
   - type-ahead kept;
   - CODE-\ behind CODE-;;
-  - from the review: CODE-\ while T1C peeks from INT 1Ch and BUSY runs (no console inside the timer's interrupt, the console at the prompt's next key call, with nothing in service, and back again); MHAND's event handler (no calls from the console's clicks, and back afterwards); `/R` and `/U` from a CLAUDE.COM whose stub is laid out otherwise (`-DSTUB_PAD`), both ways; the stub at the top with HOLE.COM's hole lower down.
+  - from the review: CODE-\ while T1C peeks from INT 1Ch and BUSY runs (no console inside the timer's interrupt, the console at the prompt's next key call, with nothing in service, and back again); MHAND's event handler (no calls from the console's clicks, and back afterwards); `/R` and `/U` from a CLAUDE.COM whose stub is laid out otherwise (`-DSTUB_PAD`), both ways; the stub at the top with HOLE.COM's hole lower down; what only `/R` and `/U` use lies where BSS goes, below the stack `/R` runs on (from CLAUDE.MAP).
 - **Controls:** each design choice was run against the alternative, which failed:
   - RSPIKE's AH=11h hot-key check misses CODE-\ behind CODE-;;
   - a console that leaves the keys in the buffer gives EMSUSE 1 key of 3;

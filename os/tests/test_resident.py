@@ -222,6 +222,15 @@ def t_rload():
     def handles():                              # EMS handles in use (the kernel's table; 0 is its own)
         t = k.rd('ems_h', 4 * 32)
         return sum(1 for i in range(1, 32) if t[4 * i] != 0xFF)
+    real = {}                                   # (CLAUDE.MAP's first column: where it is in CLAUDE.COM)
+    for line in open(os.path.join(CL, 'CLAUDE.MAP')):
+        p = line.split()
+        if len(p) != 3: continue
+        try: real[p[2]] = int(p[0], 16)
+        except ValueError: pass
+    check('CLAUDE.COM: what only /R and /U use (the loader, the console, the stub) is where BSS goes, below '
+          'the stack /R runs on', real['bss'] <= real['res_load'] < real['rcon_img'] < real['r_code_end'] < csym('stack_top') - 2048,
+          [(n, hex(real[n])) for n in ('bss', 'res_load', 'rcon_img', 'r_code_end', 'stack_top')])
     k = ktest.KPC(image('rl.img'), ems_pages=88); k.start()
     k.key(ktest.CODE_P)
     m0, h0 = memsz(k), handles()
