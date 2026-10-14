@@ -348,7 +348,7 @@ Programs:
   CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
             (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
             CLAUDE /T: Claude Code itself (Term); CODE-R redraws.
-            CLAUDE /R: resident (needs EMS; 0.7 KB): CODE-\ over a
+            CLAUDE /R: resident (needs EMS; 0.8 KB): CODE-\ over a
             program waiting for a key brings Claude up, CODE-\ again
             goes back.  So far its screen is empty: the link comes
             next.  CLAUDE /U takes it out.

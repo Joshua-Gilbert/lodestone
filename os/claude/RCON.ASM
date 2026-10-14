@@ -11,7 +11,10 @@
 ;  stub's old16) and INT 33h: DOS may be busy under the program (indos).
 ;  A DOS program's mouse pointer (INT 33h, drawn from the mouse's IRQ) is
 ;  hidden while the console is up, so a move then draws nothing on the
-;  console and leaves no wrong cell on the program's screen.
+;  console and leaves no wrong cell on the program's screen.  Its event
+;  handler (INT 33h AX=0Ch/14h) is swapped out meanwhile, so clicks meant
+;  for the console don't reach the program (on our stack), unless DOS is
+;  busy: AX=14h makes a DOS call (AH=62h).
 ;
 ;  M1: the console is empty, Term's 24 rows blank and its status band;
 ;  CODE-\ goes back.  Everything the program had comes back byte for
@@ -47,12 +50,24 @@ rc_main:
         xor     ax, ax                  ; INT 33h there?  The program's
         mov     es, ax                  ;  pointer off (its own cell back
         mov     [mouse], al             ;  first, before the screen is kept)
+        mov     [mswap], al
         mov     ax, [es:33h * 4]
         or      ax, [es:33h * 4 + 2]
         jz      .nm
         inc     byte [mouse]
         mov     ax, 2
         int     33h
+        cmp     byte [indos], 0         ; and its event handler off (AX=14h,
+        jne     .nm                     ;  no events), else clicks meant for
+        mov     ax, 14h                 ;  the console reach the program, on
+        xor     cx, cx                  ;  our stack.  (14h makes a DOS call,
+        xor     dx, dx                  ;  AH=62h: not while DOS is busy)
+        mov     es, dx
+        int     33h
+        mov     [mh_mask], cx
+        mov     [mh_off], dx
+        mov     [mh_seg], es
+        inc     byte [mswap]
 .nm:    push    cs
         pop     es
         push    ds                      ; the BIOS's video data, and the keys
@@ -94,7 +109,14 @@ rc_main:
         mov     ax, 0040h               ; the console
         int     10h
         call    draw
-.key:   mov     ah, 10h                 ; (the BIOS's own: past the stub)
+.key:   mov     ah, 11h                 ; a key?  (the BIOS's own: past the
+        pushf                           ;  stub.  Else HLT till an interrupt:
+        call    far [old16]             ;  the battery)
+        jnz     .rd
+        sti
+        hlt
+        jmp     .key
+.rd:    mov     ah, 10h
         pushf
         call    far [old16]
         cmp     ax, HOTKEY
@@ -137,8 +159,15 @@ rc_main:
         mov     al, [bios + 66h - 49h]
         out     dx, al
 .t:     call    keys_back
-        cmp     byte [mouse], 0         ; the program's pointer back, where
-        je      .x                      ;  the mouse is now
+        cmp     byte [mswap], 0         ; the program's event handler back
+        je      .ms
+        mov     ax, 14h
+        mov     cx, [mh_mask]
+        mov     dx, [mh_off]
+        mov     es, [mh_seg]
+        int     33h
+.ms:    cmp     byte [mouse], 0         ; and its pointer, where the mouse
+        je      .x                      ;  is now
         mov     ax, 1
         int     33h
 .x:     pop     ds
@@ -153,17 +182,22 @@ keys_back:
         push    40h
         pop     ds
         cli
-        mov     ax, [1Ch]               ; room: 15 less those there now
-        sub     ax, [1Ah]
-        jae     .n
+        mov     ax, [1Ch]               ; room: the buffer's keys (a word
+        sub     ax, [1Ah]               ;  less than its size: head = tail
+        jae     .n                      ;  is empty) less those there now
         add     ax, [82h]
         sub     ax, [80h]
 .n:     shr     ax, 1
-        neg     ax
-        add     ax, 15
-        cmp     cx, ax
+        mov     dx, [82h]
+        sub     dx, [80h]
+        shr     dx, 1
+        dec     dx
+        sub     dx, ax
+        jae     .c
+        xor     dx, dx
+.c:     cmp     cx, dx
         jbe     .r
-        mov     cx, ax
+        mov     cx, dx
 .r:     jcxz    .d
         mov     si, cx                  ; the last of ours first
         shl     si, 1
@@ -231,6 +265,10 @@ s_keys_end:
 old16   dd      0
 indos   db      0
 mouse   db      0                       ; not 0: INT 33h is there
+mswap   db      0                       ; not 0: its event handler swapped out
+mh_mask dw      0                       ;  (which was this)
+mh_off  dw      0
+mh_seg  dw      0
 nkeys   dw      0
 bios    times 66h - 49h + 1 db 0
 keys    times NKEYS dw 0
