@@ -327,6 +327,40 @@ def t_nopi():
         h.close()
 
 
+def t_timeout():
+    """The console's own GPIB timeout: the driver's is global, and the program's
+    may be long (TM5000G's TIME OUT n leaves up to 60 s), which each byte to a
+    stuck bridge would wait."""
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        def tmo(v=None):                        # the driver's timeout, in ticks
+            if v is not None: h.m.wr(0x60, h.m.Y['gp_tdata'], v.to_bytes(2, 'little'))
+            return h.m.u16(0x60, h.m.Y['gp_tdata'])
+        tmo(1091)                               # 60 s, as TIME OUT 60 leaves it
+        h.press(HOT)
+        ok = h.has('Welcome to Claude Code', 30)
+        during = tmo()
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        check('the console\'s own GPIB timeout while it is up, 2 s (37 ticks), and the program\'s 60 s (1091) back '
+              'after: %s, %s' % (during, tmo()), ok and back and during == 37 and tmo() == 1091, (ok, back, during, tmo()))
+        h.nano.rx_byte = lambda v, eoi: float('inf')        # the bridge stuck: on the bus, taking no byte (to the end)
+        tmo(1091)
+        h.press(HOT)
+        up = h.wait(lambda: h.up(), 5)
+        h.run_until(lambda: False, 0.5)         # (its HELLO under way)
+        t0 = h.m.us
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 10)
+        s_ = (h.m.us - t0) / 1e6
+        check('... a stuck bridge, under the program\'s 60 s: CODE-\\ still goes back within 5 s (%.1f s), '
+              'the program\'s timeout as it was' % s_, up and back and s_ < 5 and tmo() == 1091, (up, back, s_, tmo()))
+    finally:
+        h.close()
+
+
 def t_tm5000g():
     """Over TM5000G: the console talks to the Pi on the bus TM5000G uses;
     TM5000G's bus state afterwards."""
@@ -377,7 +411,7 @@ def t_tm5000g():
         h.close()
 
 
-TESTS = [t_popup, t_midstream, t_session, t_requests, t_nopi, t_tm5000g]
+TESTS = [t_popup, t_midstream, t_session, t_requests, t_nopi, t_timeout, t_tm5000g]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

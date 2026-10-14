@@ -268,6 +268,10 @@ session:
         mov     [gp_ok], al
         mov     si, st_nogpib
         jz      .st
+        mov     bx, 2000                ; our own timeout, 2 s: the driver's
+        mov     ah, 0Ah                 ;  is the program's too (TM5000G's
+        call    gg_call                 ;  TIME OUT n: up to 60 s a byte, with
+        mov     [old_tmo], ax           ;  a stuck bridge); its own back after
         mov     byte [lstate], LS_RESET ; HELLO at once
         mov     ax, [now]
         sub     ax, 18
@@ -310,9 +314,12 @@ session:
         call    link_service            ; (the next frame)
         jmp     .d
 .f:     cmp     byte [sdc_due], 0       ; the link failed meanwhile: the
-        je      .x                      ;  bridge's line (and SRQ) cleared
+        je      .t                      ;  bridge's line (and SRQ) cleared
         mov     bl, [nano]
         mov     ah, 06h
+        call    gg_call
+.t:     mov     bx, [old_tmo]           ; the program's timeout back
+        mov     ah, 0Ah
         call    gg_call
 .x:     ret
 
@@ -647,6 +654,7 @@ quit        resb 1
 t_quit      resw 1                      ; when CODE-\ came
 gp_ok       resb 1                      ; the GPIB driver found
 gpib        resd 1                      ;  at
+old_tmo     resw 1                      ;  the program's timeout (ms) meanwhile
 sdc_due     resb 1                      ; the link failed: SDC to the bridge
 now         resw 1
 ; the link (TERMLINK.INC)

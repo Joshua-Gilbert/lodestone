@@ -202,7 +202,7 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 1121 checks pass on 0.4.5 with resident Claude's M2 (2026-10-13); claude-link's own 69 (chat and Term) are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 1123 checks pass on 0.4.5 with resident Claude's M2 (2026-10-13); claude-link's own 69 (chat and Term) are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -213,7 +213,7 @@ python3 tests/test_hd.py              # 56 checks: drive C:, and C: with M:
 python3 tests/test_defrag.py          # 49 checks: DEFRAG on floppies and C:, the saver's round
 python3 tests/test_claude_kernel.py   # 21 Claude-link scenarios on the kernel
 python3 tests/test_resident.py        # 66 checks: resident Claude, CLAUDE /R and /U (M1), and its spikes (over EMS users, graphics modes, COPY CON, the Executive, TM5000G, a TSR peeking from INT 1Ch, a mouse event handler)
-python3 tests/test_resident_term.py   # 47 checks: resident Claude's console is Claude Code (M2), with gridlink and a stand-in Claude Code, over EMSUSE and TM5000G
+python3 tests/test_resident_term.py   # 49 checks: resident Claude's console is Claude Code (M2), with gridlink and a stand-in Claude Code, over EMSUSE and TM5000G, a stuck bridge
 python3 tests/test_hdprobe.py         # 33 checks: HDPROBE
 python3 tests/test_hdscan.py          # 20 checks: HDSCAN
 python3 tests/test_headcln.py         # 9 checks: HEADCLN
