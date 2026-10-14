@@ -1,0 +1,20 @@
+Resident Claude M1 
+559.5 KB for programs
+1 CLAUDE /R: resident 
+558.7 KB for programs
+1 CLAUDE /R again: resident already, as it should 
+2 EMSUSE: 0 bad 
+2 console: yes 
+3 mode 4: 0 bad 
+3 mode 4 looked: same 
+3 mode 6: 0 bad 
+3 mode 6 looked: DIFFERENT 
+3 mode 40: 0 bad 
+3 mode 40 looked: same 
+4 DOS busy: yes 
+5 keys after: yes 
+6 TM5000G: ok 
+7 CLAUDE /U: taken out 
+559.5 KB for programs
+3 mode 6: 0 bad 
+3 mode 6 looked: same 
