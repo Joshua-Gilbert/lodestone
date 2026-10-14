@@ -30,8 +30,8 @@ FONT = pcemu.load_font(os.path.join(GOS, 'src', 'FONT.INC'))
 class KMachine(pcemu.PC):
     """pcemu with what the CLAUDE harness looks at: the disk's files as a
     dict, EXECs and RTC settings in the log, exit of the program."""
-    def __init__(s, img, chip):
-        super().__init__(img, chip=chip)
+    def __init__(s, img, chip, **kw):
+        super().__init__(img, chip=chip, **kw)
         s.Y = ktest.Syms()
         s.watch = s._watch
         s.exit_code = None
@@ -58,8 +58,11 @@ class KMachine(pcemu.PC):
 
 
 class KernelHarness(G.EmuHarness):
+    """term: a command for Claude Code (a stand-in, in a pty): gridlink's
+    router then, Term or chat as the GRiD's HELLO asks.  ems_pages: the
+    1520's expanded memory (resident Claude needs it)."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y',
-                 claude_com=G.CLAUDE_COM, baud=115200):
+                 claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0):
         s.tmp = tempfile.mkdtemp(prefix='gridk-')
         disk = [LODE_SYS, LCMD_COM, 'CLAUDE.COM=' + claude_com, 'TESTKEY.COM=' + G.TESTKEY_COM]
         for k, v in (files or {}).items():
@@ -69,7 +72,7 @@ class KernelHarness(G.EmuHarness):
             disk.append(name + '=' + p)
         img = mkimg.build(os.path.join(s.tmp, 'a.img'), disk)
         chip = G.Chip(S.bus())
-        s.m = m = KMachine(img, chip)
+        s.m = m = KMachine(img, chip, ems_pages=ems_pages)
         chip.clock = m.clock
         s.pending = []
         s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
@@ -82,10 +85,20 @@ class KernelHarness(G.EmuHarness):
         s.cfg = cfg
         s.client = FakeAnthropic(script or [])
         s.log = []
-        s.session = Session(cfg, s.client, log=s.log.append)
-        s.link = Link(s.transport, s.session.on_message, log=s.log.append, hold=0.0)
-        s.session.attach(s.link)
-        threading.Thread(target=s.session.run, daemon=True).start()
+        if term:
+            cfg.term_dir = os.path.join(s.tmp, 'grid'); cfg.term_command = term
+            cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
+            cfg.api_key = None; cfg.env_key = lambda: False; cfg.app = 'auto'
+            s.router = G.Router(cfg, log=s.log.append)
+            s.link = Link(s.transport, s.router.on_message, log=s.log.append, hold=0.0)
+            s.router.attach(s.link)
+            s.session = None
+        else:
+            s.router = None
+            s.session = Session(cfg, s.client, log=s.log.append)
+            s.link = Link(s.transport, s.session.on_message, log=s.log.append, hold=0.0)
+            s.session.attach(s.link)
+            threading.Thread(target=s.session.run, daemon=True).start()
         s.sym = G.symbols(os.path.splitext(claude_com)[0] + '.MAP')
         s.font = G.Font(open(claude_com, 'rb').read(), s.sym['font'] - 0x100)
         s.answer = answer

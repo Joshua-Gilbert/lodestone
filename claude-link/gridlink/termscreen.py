@@ -291,6 +291,20 @@ def _sgr_colons(params):
 
 
 # ---- the diff encoder -------------------------------------------------------
+def screen_crc(cells, cursor):
+    """CRC-16 (GLP's) of a GRiD screen as resident Claude's console keeps it
+    (RCON.ASM screen_crc): glyph and attribute of each cell, row by row,
+    then the cursor's row, column and hidden flag."""
+    bc, ba = cells
+    data = bytearray()
+    for r in range(ROWS):
+        row = bytearray(2 * COLS); row[0::2] = bc[r]; row[1::2] = ba[r]
+        data += row
+    crow, ccol, hidden = cursor
+    data += bytes([crow & 0xFF, ccol & 0xFF, 1 if hidden else 0])
+    return glp.crc16(data)
+
+
 def _blank_rows():
     return [bytearray(b' ' * COLS) for _ in range(ROWS)], [bytearray(COLS) for _ in range(ROWS)]
 
@@ -324,6 +338,20 @@ class Encoder:
         if s.pending is not None:
             s.shown, s.cursor = s.pending[0], s.pending[1]
             s.pending = None
+
+    def resume(s, crc):
+        """A GRiD that kept its screen says HELLO with its CRC (CLAUDE /R's
+        console, from one pop-up to the next): if it is one we sent, the
+        last frame or the one before it, go on from it.  False: unknown
+        (reset() then)."""
+        try: want = int(crc, 16)
+        except (TypeError, ValueError): return False
+        for state, cursor in (s.pending or (None, None), (s.shown, s.cursor)):
+            if state is not None and screen_crc(state, cursor) == want:
+                s.shown, s.cursor, s.pending = state, cursor, None
+                s.stats['resumes'] = s.stats.get('resumes', 0) + 1
+                return True
+        return False
 
     def dirty(s, tc, ta, cursor):
         if s.shown is None: return True

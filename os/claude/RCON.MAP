@@ -1,0 +1,323 @@
+
+- NASM Map file ---------------------------------------------------------------
+
+Source file:  _map.asm
+Output file:  _map.bin
+
+-- Symbols --------------------------------------------------------------------
+
+---- No Section ---------------------------------------------------------------
+
+Value     Name
+0000B800  VSEG
+0000E400  SAVESEG
+00000000  P_OLD16
+00000004  P_INDOS
+00000010  NKEYS
+00000100  TXMAX
+000000FF  RXMAX
+00000006  TXQN
+00000024  TITLEN
+00000000  LS_RESET
+00000001  LS_IDLE
+00000002  LS_WAIT
+00000001  G_HELLO
+00000002  G_POLL
+00000003  G_PROMPT
+00000004  G_EVENT
+00000005  G_REPLY
+00000006  G_NAK
+00000007  G_KEYS
+00000041  P_HELLO
+00000042  P_NOP
+00000043  P_TEXT
+00000044  P_STATUS
+00000045  P_REQUEST
+00000046  P_ASK
+00000047  P_READY
+00000048  P_NAK
+00000049  P_TITLE
+0000004A  P_CLEAR
+0000004B  P_CELLS
+00000001  HF_TERM
+00000018  TROWS
+00000040  KEYMAX
+00001300  K_PAINT
+0000260C  K_CTRLL
+
+
+---- Section .text ------------------------------------------------------------
+
+Real              Virtual           Name
+               2                 2  nano
+               3                 3  term
+               4                 4  busy
+               5                 5  rc_main
+              60                60  rc_main.nm
+              7B                7B  rc_main.k
+              94                94  rc_main.kd
+             10A               10A  rc_main.g
+             118               118  rc_main.t
+             133               133  rc_main.ms
+             13F               13F  rc_main.x
+             141               141  keys_back
+             15D               15D  keys_back.n
+             170               170  keys_back.c
+             176               176  keys_back.r
+             184               184  keys_back.l
+             18E               18E  keys_back.b
+             19D               19D  keys_back.d
+             19F               19F  keys_back.x
+             1A0               1A0  session
+             1BE               1BE  session.i
+             201               201  session.st
+             207               207  session.loop
+             217               217  session.k
+             226               226  session.out
+             233               233  session.d
+             249               249  session.w
+             255               255  session.s
+             272               272  session.f
+             282               282  session.x
+             283               283  shadow_seg
+             28C               28C  idle
+             2BF               2BF  idle.x
+             2C0               2C0  find_gpib
+             2C3               2C3  find_gpib.v
+             2DE               2DE  find_gpib.n
+             2EA               2EA  find_gpib.f
+             308               308  find_gpib.ok
+             30A               30A  gg_call
+             310               310  link_service
+             31C               31C  ls_tab
+             322               322  link_reset
+             39A               39A  link_reset.x
+             39B               39B  link_idle
+             3D8               3D8  link_idle.t
+             3E4               3E4  link_idle.poll
+             3EA               3EA  link_idle.nak
+             3F2               3F2  link_idle.again
+             3FA               3FA  link_idle.msg
+             400               400  link_idle.x
+             401               401  frame_poll
+             43C               43C  frame_next
+             45D               45D  frame_next.last
+             472               472  frame_next.s
+             4B9               4B9  link_write
+             4C0               4C0  lw_go
+             4D0               4D0  lw_go.ok
+             4E4               4E4  link_write_nak
+             516               516  link_wait
+             525               525  link_wait.t
+             52A               52A  link_wait.poll
+             54D               54D  link_wait.read
+             550               550  link_wait.x
+             551               551  link_wait.perr
+             55F               55F  link_read
+             57F               57F  link_read.bad
+             58E               58E  find_frame
+             590               590  find_frame.s
+             5CF               5CF  find_frame.nx
+             5D2               5D2  find_frame.no
+             5D4               5D4  find_frame.ok
+             5D6               5D6  took_answer
+             5F6               5F6  took_answer.ok
+             60B               60B  took_answer.new
+             617               617  commit_fragment
+             64F               64F  commit_fragment.h
+             659               659  commit_fragment.y
+             65A               65A  commit_fragment.x
+             65B               65B  link_fail
+             671               671  txq_put
+             688               688  txq_put.a
+             6A5               6A5  txq_put.x
+             6A8               6A8  get_ticks
+             6B1               6B1  pit_read
+             6C1               6C1  pit_mark
+             6D0               6D0  pit_due
+             6ED               6ED  pit_due.yes
+             6EE               6EE  pit_due.x
+             6F1               6F1  delay_ms
+             6F6               6F6  delay_ms.ms
+             6FF               6FF  delay_ms.w
+             702               702  delay_ms.t
+             70D               70D  delay_ms.tg
+             717               717  delay_ms.x
+             718               718  crc16
+             71A               71A  crc16.l
+             72D               72D  crc16.x
+             72E               72E  crc_init
+             730               730  crc_init.i
+             737               737  crc_init.b
+             73E               73E  crc_init.n
+             750               750  build_hello
+             784               784  build_hello.n
+             790               790  screen_crc
+             7BB               7BB  put_hex16
+             7BE               7BE  put_hex16.d
+             7CC               7CC  put_hex16.s
+             7D1               7D1  msg_sent
+             7DE               7DE  msg_sent.e
+             7E8               7E8  msg_sent.r
+             7F1               7F1  msg_sent.x
+             7F2               7F2  link_lost
+             80C               80C  link_lost.na
+             824               824  pi_frame
+             843               843  pi_frame.c
+             852               852  pi_frame.h
+             863               863  rf_hello
+             87B               87B  rf_cells
+             889               889  rf_title
+             891               891  rf_title.c
+             89F               89F  rf_request
+             8AD               8AD  rf_request.c
+             8DF               8DF  rf_request.x
+             8E0               8E0  make_title
+             8F6               8F6  make_title.z
+             8FA               8FA  set_status
+             903               903  copyz
+             90A               90A  put_str
+             90A               90A  put_str.l
+             912               912  put_str.x
+             913               913  put_num
+             920               920  put_num.u
+             924               924  cell
+             92F               92F  cell.a
+             937               937  cell.b
+             93D               93D  cell.c
+             A03               A03  cell.d
+             A06               A06  term_cells
+             A2D               A2D  term_cells.op
+             A58               A58  term_cells.na
+             A77               A77  term_cells.run
+             A81               A81  term_cells.fill
+             A89               A89  term_cells.fl
+             A92               A92  term_cells.scroll
+             AA2               AA2  term_cells.done
+             ACD               ACD  term_cells.nc
+             ACE               ACE  term_cells.r
+             ACF               ACF  put_cell
+             AFC               AFC  term_scroll
+             B2A               B2A  term_scroll.bank
+             B7E               B7E  term_scroll.x
+             B7F               B7F  term_clear
+             B82               B82  term_clear.b
+             B9A               B9A  shadow_clear
+             BB1               BB1  cur_xor
+             BC2               BC2  cur_off
+             BD1               BD1  cur_off.x
+             BD2               BD2  term_redraw
+             BE9               BE9  term_redraw.row
+             BEC               BEC  term_redraw.c
+             BFC               BFC  term_redraw.s
+             C10               C10  term_redraw.st
+             C16               C16  term_status
+             C3E               C3E  term_status.r
+             C49               C49  term_status.w
+             C54               C54  draw_strn
+             C58               C58  draw_strn.l
+             C65               C65  draw_strn.x
+             C68               C68  blank_row
+             C74               C74  blank_row.l
+             C80               C80  strlen
+             C83               C83  strlen.l
+             C8B               C8B  strlen.x
+             C8D               C8D  term_kbd
+             C8D               C8D  term_kbd.l
+             CAE               CAE  term_kbd.qt
+             CB4               CB4  term_kbd.p
+             CBE               CBE  term_kbd.c
+             CD0               CD0  term_kbd.k
+             CE8               CE8  term_send
+             D23               D23  term_send.x
+             D24               D24  term_repaint
+             D4E               D4E  term_repaint.x
+             D4F               D4F  sig_gg
+             D57               D57  kv_hello
+             D7A               D7A  kv_screen
+             D82               D82  s_title0
+             D94               D94  s_dos
+             DA2               DA2  s_tkeys
+             DBF               DBF  s_back
+             DD0               DD0  st_connecting
+             DE6               DE6  st_lost
+             E09               E09  st_noans
+             E34               E34  st_nogpib
+             E4E               E4E  evrepaint
+             E4F               E4F  font
+            1660              1660  rc_image_end
+            1660              1660  inited
+            1661              1661  old16
+            1665              1665  indos
+            1666              1666  mouse
+            1667              1667  mswap
+            1668              1668  mh_mask
+            166A              166A  mh_off
+            166C              166C  mh_seg
+            166E              166E  nkeys
+            1670              1670  bios
+            168E              168E  keys
+            16AE              16AE  quit
+            16AF              16AF  t_quit
+            16B1              16B1  gp_ok
+            16B2              16B2  gpib
+            16B6              16B6  sdc_due
+            16B7              16B7  now
+            16B9              16B9  connected
+            16BA              16BA  pi_active
+            16BB              16BB  lstate
+            16BC              16BC  g_seq
+            16BD              16BD  p_ack
+            16BE              16BE  have_pi
+            16BF              16BF  nak_pending
+            16C0              16C0  resend
+            16C1              16C1  pend_msg
+            16C2              16C2  pend_chunk
+            16C4              16C4  done_type
+            16C5              16C5  t_sent
+            16C7              16C7  t_last
+            16C9              16C9  t_reset
+            16CB              16CB  n_fail
+            16CD              16CD  n_failrun
+            16CE              16CE  n_bad
+            16D0              16D0  spoll_errs
+            16D1              16D1  pit_last
+            16D3              16D3  pit_tick
+            16D5              16D5  txq_head
+            16D6              16D6  txq_n
+            16D7              16D7  txq
+            1713              1713  txlen
+            1715              1715  txframe
+            181D              181D  nakframe
+            1825              1825  rxn
+            1827              1827  rxbuf
+            1927              1927  pf_kind
+            1928              1928  rq_type
+            1929              1929  rq_len
+            192B              192B  req_ready
+            192C              192C  snap_reply
+            192D              192D  rq_more
+            192E              192E  rq_id
+            192F              192F  reply_busy
+            1930              1930  replybuf
+            1932              1932  hellobuf
+            1982              1982  crctab
+            1B82              1B82  t_active
+            1B84              1B84  keyn
+            1B85              1B85  keys_q
+            1B86              1B86  rep_q
+            1B87              1B87  keybuf
+            1C07              1C07  keysend
+            1C87              1C87  shadseg
+            1C89              1C89  cur_on
+            1C8A              1C8A  cur_di
+            1C8C              1C8C  t_flags
+            1C8D              1C8D  t_cur
+            1C8F              1C8F  have_screen
+            1C90              1C90  crc_hid
+            1C91              1C91  ptitle
+            1CB6              1CB6  title_text
+            1CEA              1CEA  status_text
+            1D40              1D40  shadow
+            2C40              2C40  rc_top
+

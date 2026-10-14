@@ -13,7 +13,8 @@ DOS_ERRORS = {
     83: 'disk error (drive not ready, write-protected or bad disk)',
     0xF0: 'request too large for the GRiD', 0xF1: 'not enough memory on the GRiD',
     0xF2: 'GPIB driver not found', 0xF3: 'command line too long for DOS', 0xF4: 'disk full',
-    0xF5: 'no snapshot taken', 0xFF: 'unknown request',
+    0xF5: 'no snapshot taken', 0xF6: 'a DOS program is paused on the GRiD (resident Claude)',
+    0xFF: 'unknown request',
 }
 GPIB_ERRORS = {1: 'timeout', 2: 'no listener at that address', 3: 'GRiD is not the controller',
                4: 'bad function', 5: 'no data (read timeout)', 6: 'GPIB driver busy'}
