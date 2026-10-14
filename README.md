@@ -202,7 +202,7 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 1124 checks pass on 0.4.5 with resident Claude's M2 (2026-10-13); claude-link's own 69 (chat and Term) are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 1127 checks pass on 0.4.5 with resident Claude's M2 and its colour fix (2026-10-14); claude-link's own 69 (chat and Term) are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -212,7 +212,7 @@ python3 tests/test_splash.py          # 62 checks: the start-up picture, bit for
 python3 tests/test_hd.py              # 56 checks: drive C:, and C: with M:
 python3 tests/test_defrag.py          # 49 checks: DEFRAG on floppies and C:, the saver's round
 python3 tests/test_claude_kernel.py   # 21 Claude-link scenarios on the kernel
-python3 tests/test_resident.py        # 67 checks: resident Claude, CLAUDE /R and /U (M1), and its spikes (over EMS users, graphics modes, COPY CON, the Executive, TM5000G, a TSR peeking from INT 1Ch, a mouse event handler, a later INT 16h hook)
+python3 tests/test_resident.py        # 70 checks: resident Claude, CLAUDE /R and /U (M1), and its spikes (over EMS users, graphics modes, COPY CON, the Executive, TM5000G, a TSR peeking from INT 1Ch, a mouse event handler, a later INT 16h hook)
 python3 tests/test_resident_term.py   # 49 checks: resident Claude's console is Claude Code (M2), with gridlink and a stand-in Claude Code, over EMSUSE and TM5000G, a stuck bridge
 python3 tests/test_hdprobe.py         # 33 checks: HDPROBE
 python3 tests/test_hdscan.py          # 20 checks: HDSCAN
@@ -243,7 +243,7 @@ Lodestone 0.4.5 is the current release: 0.4.1 was the rename, 0.4.2 brings the c
 
 **Next:**
 1. Claude (Term and chat) on the real GPIB bridge, with the Pi 5.
-2. Claude staying resident, working alongside DOS programs, with M: as its scratchpad: a hot key over a running program, Term's screen and link code in EMS (`docs/lodestone-resident-claude.md`). The spikes are done: on the 1520, CODE-\\ flips at once between a program and a pop-up whose code runs from EMS, with the program's EMS pages, its screen in modes 4, 6 and 40h, and TM5000G's GPIB work all left as they were. M1 and M2 are done in the emulator: `CLAUDE /R` makes Claude resident for 0.8 KB of conventional memory (a stub at the top of memory, so the Executive's block is never in its way) and 3 EMS pages, CODE-\\ brings up Claude Code over a program (the same session as `CLAUDE /T`) and back, and `CLAUDE /U` takes it out. Next are M1's checks on the 1520, then M3: Claude sees the paused program's screen and types into it.
+2. Claude staying resident, working alongside DOS programs, with M: as its scratchpad: a hot key over a running program, Term's screen and link code in EMS (`docs/lodestone-resident-claude.md`). The spikes are done: on the 1520, CODE-\\ flips at once between a program and a pop-up whose code runs from EMS, with the program's EMS pages, its screen in modes 4, 6 and 40h, and TM5000G's GPIB work all left as they were. M1 and M2 are done in the emulator: `CLAUDE /R` makes Claude resident for 0.8 KB of conventional memory (a stub at the top of memory, so the Executive's block is never in its way) and 3 EMS pages, CODE-\\ brings up Claude Code over a program (the same session as `CLAUDE /T`) and back, and `CLAUDE /U` takes it out. M1's checks passed on the 1520 (2026-10-14); the one odd answer, mode 6, was the test program's colour (black on the 1520's panel) and a flash of white as the console went back, both now fixed, and mode 6 checked again on the 1520. Next is M3: Claude sees the paused program's screen and types into it.
 3. Command.
 
 Later come a plot view and instrument programs for the GPIB bench (scopes, the VNA), which can use the coprocessor detection and the calculator's 80287 code. The roadmap and the hardware notes are in the claude.ai Project.

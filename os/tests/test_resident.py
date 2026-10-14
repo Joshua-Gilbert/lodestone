@@ -313,14 +313,22 @@ def t_rvideo():
     for mode in ('4', '6', '40', '3'):
         k.key('cls'); k.key(ktest.ENTER); k.key('gfxuse ' + mode); k.key(ktest.ENTER)
         vram0, bios0 = k.pc.rd(0xB800, 0, 0x8000), k.pc.rd(0x40, 0x49, 30)
+        ccr0 = k.pc.ccr
         k.key(HOT)
         up = console(k)
+        writes = []                     # the colour register going back: (value, the screen back yet?)
+        k.pc.on_ccr = lambda v: writes.append((v, k.pc.rd(0xB800, 0, 0x8000) == vram0))
         k.key(HOT)
+        k.pc.on_ccr = None; ccr1 = k.pc.ccr
         same = k.pc.rd(0xB800, 0, 0x8000) == vram0 and k.pc.rd(0x40, 0x49, 30) == bios0
         k.key('x'); k.key(ktest.ESC)
         o = k.pc.text_screen()
         check('mode %s: the console and back, video memory and 40:49h-66h byte for byte' % mode,
               up and same and 'GFXUSE: 1 keys, 0 bad' in o, (up, same, o))
+        if mode != '40':                # (CGA: 3D9h; GFXUSE sets 2Ch in 4 and 6, the mode set 30h in 3)
+            check('mode %s: the colour register back (%02Xh) before the screen (mode 6 came back white for a '
+                  'moment on the 1520)' % (mode, ccr0),
+                  ccr1 == ccr0 and writes and not any(back for v, back in writes), (hex(ccr1), writes))
 
 def t_rdos():
     """The console while DOS is busy under the program (the prompt's COPY
