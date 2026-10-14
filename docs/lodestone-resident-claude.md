@@ -235,20 +235,22 @@ CODE-\ over a program now brings up Claude Code itself: Term, the same `claude` 
   2. The HELLO carries a CRC-16 of the shadow and the cursor (`screen=`). If that is the screen of the Pi's last frame, or of the one before, gridlink goes on from it and sends only what changed while the program ran (0 bytes in the test, where nothing had; the first paint and an echo had taken 409). Otherwise, when CLAUDE /T had the link meanwhile, the Pi draws the screen again from a clear one.
   3. Keys go to Claude Code and frames come back, as in CLAUDE /T.
 - **Going back:** the keys typed before CODE-\ go to Claude Code first, then the last frame gets its answer, so the bridge never holds an answer (and SRQ) while the program has the bus; 3 s at most. If the link failed meanwhile, the bridge gets SDC. The program's screen, BIOS data, keys and mouse pointer come back as in M1.
+- **Its own GPIB timeout:** the driver's timeout is global, so the console would run under the paused program's. That is 2 s by default, but TM5000G sets it for each call, and its TIME OUT n can leave up to 60 s, which each byte to a stuck bridge would wait (the console sluggish, the 3 s of going back stretched). The console sets 2 s with AH=0Ah at each pop-up, and puts the program's back when it goes (PR #28's review).
 - **The GRiD's tools wait for M3.** While the console is up, gridlink's MCP tools (files, programs, GPIB) answer that Claude Code is popped up over a DOS program and that CLAUDE /T has them. A request that reaches the GRiD anyway is answered at once with status F6h, a DOS program is paused. gridlink doesn't set the clock from the console.
 - **CLAUDE.COM turns the hot key off while it runs** (chat, /T, and the programs it runs), because it has the link. It finds the stub through INT 16h (the header's `CLRS` at 100h, and INT 16h at the header's hook) and sets the header's `r_off` (10Eh), and clears it when it ends. `CLAUDE /R` again clears it too, should CLAUDE.COM ever end without. `r_off` is new in M2, so the header's version is now 2, and a stub of version 1 is left alone. (Not `r_inpop`, which since the review also makes the stub answer others' peeks with no key: CLAUDE.COM's own keys would never come.)
 - **The driver's SRQ flag:** the console never clears it. The bridge's own requests while the console talks to the Pi can set it, so after a pop-up AH=0Bh may say yes once with no instrument asking; a program that then polls its instruments finds none. Nothing an instrument asked for is lost.
 - **Cost:**
   - conventional memory: unchanged from M1, 768 bytes (0.8 KB);
   - EMS: 3 pages as in M1 (4.9 KB of the console's page spare);
-  - CLAUDE.COM: 19,554 bytes on disk (+2,908, the console's code and font), and 80 bytes more in memory when it runs as chat or Term (112 more than before M1);
+  - CLAUDE.COM: 19,574 bytes on disk (+2,928, the console's code and font), and 80 bytes more in memory when it runs as chat or Term (112 more than before M1);
   - the stub's stack: at most 92 of its 384 bytes in the tests (Claude Code, typing, the mouse, GPIB, over TM5000G). pcemu's BIOS is Python, so the 1520 BIOS's own use isn't counted; M1's pop-ups on the 1520 already ran the BIOS on this stack.
-- **Tests** (`test_resident_term.py`, 47 checks, on the kernel harness, which now has Term too: gridlink's router and the stand-in Claude Code in a pty):
+- **Tests** (`test_resident_term.py`, 49 checks, on the kernel harness, which now has Term too: gridlink's router and the stand-in Claude Code in a pty):
   - over EMSUSE: Claude Code, its screen in step with pyte's on the Pi, typing ("You said: hello"), back with the screen and BIOS data byte for byte and the bridge quiet; the second pop-up drawn from the shadow before the Pi answers, then resumed (0 bytes), a 60-line answer, the same `claude`;
   - Claude Code at work while the program runs: `big` and Enter typed right before CODE-\ still reach it, and the next pop-up goes on from the kept screen with the 60 lines that came meanwhile (scrolled); CODE-\ in the middle of a streamed answer, the bridge quiet, and the rest there at the next pop-up;
   - with CLAUDE /T: what was typed in the console is on CLAUDE /T's screen and the other way round; the hot key off while CLAUDE runs and on after; the console drawn again from a clear screen afterwards (its CRC isn't the Pi's last);
   - the tools: an MCP call refused with the reason, a REQUEST sent anyway answered F6h at once;
   - no bridge, with `CLAUDE /R /A:9`: the band says "No answer from the bridge at GPIB address 9", and CODE-\ goes back in 37 ms;
+  - the program's GPIB timeout at 60 s: the console's own 2 s while it is up, and the program's back after; then a stuck bridge (on the bus, taking no byte): CODE-\ still goes back in 1.8 s;
   - over TM5000G: Claude Code and typing, the mouse moved meanwhile; afterwards its screen as it was, REN as it was, no chip reset or IFC, its SRQ flag still set, no AH=0Bh from the console, the bridge quiet, and auto-detect still finds the three instruments;
   - the stub's stack, painted before and read after;
   - claude-link's `test_term.py`: the encoder's resume (the last frame's screen, the one before, a wrong CRC, none).
@@ -259,7 +261,8 @@ CODE-\ over a program now brings up Claude Code itself: Term, the same `claude` 
   - waiting for the answer but not sending the keys typed before CODE-\: they never reach Claude Code;
   - CLAUDE.COM's AH=0Bh in the link: 627 calls while the console was up;
   - no REPLY to a REQUEST: the call waits instead of getting F6h;
-  - no screen from the shadow at the pop-up: blank, and as the Pi goes on from the kept screen it sends nothing, so it stays blank.
+  - no screen from the shadow at the pop-up: blank, and as the Pi goes on from the kept screen it sends nothing, so it stays blank;
+  - the program's GPIB timeout kept: 60 s while the console is up, and with the stuck bridge CODE-\ not back after 10 s.
 - **On the 1520 now:** with no Pi, the console says "No answer from the bridge at GPIB address 7", and CODE-\ should still come back at once; `M1TEST.BAT` goes through that. The rest waits for the Pi 5 and the bridge.
 
 ## Open points, after M2
