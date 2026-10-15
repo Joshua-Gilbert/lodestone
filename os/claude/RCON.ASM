@@ -224,13 +224,20 @@ rc_main:
 
 ; prog: the name the program was started by, from its PSP (BX): after its
 ; environment's strings come a count and the path (the kernel's EXEC, as
-; DOS's); the name after its last \ or :, at most NAMEMAX characters
+; DOS's); the name after its last \ or :, at most NAMEMAX characters, up
+; to a control character.  Only from an environment the program owns
+; still (EXEC gives it the block): one it freed may hold anything now.
 prog_name:
         mov     es, bx
-        mov     es, [es:2Ch]
-        mov     ax, es
+        mov     ax, [es:2Ch]
         or      ax, ax
         jz      .x
+        dec     ax                      ; (its MCB)
+        mov     es, ax
+        cmp     [es:1], bx
+        jne     .x
+        inc     ax
+        mov     es, ax
         xor     di, di
         xor     al, al
         mov     cx, 8000h
@@ -264,8 +271,8 @@ prog_name:
         mov     di, prog
         mov     cx, NAMEMAX
 .k:     lodsb
-        or      al, al
-        jz      .z
+        cmp     al, 21h                 ; (the NUL; and no space or control
+        jb      .z                      ;  character in HELLO's line)
         stosb
         loop    .k
 .z:     mov     byte [es:di], 0
@@ -424,6 +431,7 @@ session:
         cmp     byte [lstate], LS_IDLE
         jne     .h
         call    type_reply
+        mov     si, st_connecting       ; (type_reply leaves SI on the reply)
         jmp     short .st
 .h:     mov     byte [lstate], LS_RESET ; HELLO at once
         mov     ax, [now]
@@ -444,10 +452,17 @@ session:
         jmp     .loop
 .out:   cmp     byte [gp_ok], 0         ; before going back: the keys typed so
         je      .x                      ;  far and what is queued go, and the
-        mov     ax, [now]               ;  last frame gets its answer (else
-        mov     [t_quit], ax            ;  the bridge would hold it, and SRQ,
-.d:     call    get_ticks               ;  while the program has the bus); 3 s
-        mov     [now], ax               ;  at most
+        cmp     byte [type_due], 0      ;  last frame gets its answer (else
+        jne     .dt                     ;  the bridge would hold it, and SRQ,
+        mov     al, G_EVENT             ;  while the program has the bus); 3 s
+        mov     dx, cs                  ;  at most.  The user's CODE-\ (not
+        mov     si, evaway              ;  TYPE's keys): an EVENT says so, and
+        mov     cx, 1                   ;  the Pi answers Claude Code's calls
+        call    txq_put                 ;  at once until the next HELLO
+.dt:    mov     ax, [now]
+        mov     [t_quit], ax
+.d:     call    get_ticks
+        mov     [now], ax
         sub     ax, [t_quit]
         cmp     ax, 54
         jbe     .w
@@ -628,7 +643,7 @@ msg_sent:
         ret
 .e:     cmp     al, G_EVENT
         jne     .r
-        mov     byte [rep_q], 0         ; (the only EVENT: repaint)
+        mov     byte [rep_q], 0         ; (repaint's; away's is the last)
         ret
 .r:     cmp     al, G_REPLY
         jne     .x
@@ -729,6 +744,8 @@ rf_request:
         jnz     .x
         cmp     word [rq_len], 2        ; (an id and an op)
         jb      .x
+        cmp     byte [quit], 0          ; (going back: the Pi has the EVENT)
+        jne     .x
         cmp     byte [reply_busy], 0    ; (one at a time, as CLAUDE.COM)
         jne     .x
         cmp     byte [txq_n], TXQN
@@ -977,6 +994,7 @@ st_lost     db 'Link to the Pi lost, reconnecting', 82h, 0
 st_noans    db 'No answer from the bridge at GPIB address ', 0
 st_nogpib   db 'No GPIB driver (GRIDGPIB)', 0
 evrepaint   db 03h
+evaway      db 04h                      ; (the user went back to the program)
 
 %include "TERMINUS.INC"
 %include "GLYPHS.INC"

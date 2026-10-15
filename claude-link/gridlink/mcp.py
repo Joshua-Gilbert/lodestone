@@ -342,7 +342,7 @@ class GridTools:
     def t_grid_program(s, a):
         name = (s.hello() or {}).get('prog')
         head = ('%s is paused under resident Claude\'s console.' % name if name else
-                'A DOS program is paused under resident Claude\'s console (DOS was busy, so not its name).')
+                'A DOS program is paused under resident Claude\'s console (its name isn\'t known).')
         return [text(head)] + s.snapshot(), False
 
     def t_grid_type(s, a):
