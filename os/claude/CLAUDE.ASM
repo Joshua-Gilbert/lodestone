@@ -71,6 +71,10 @@ BOXW     equ 70
 ;  The console runs on our stack (conventional memory: an interrupt
 ;  meanwhile runs on it too), with the program's four EMS windows read
 ;  and put back as M: does; the program's screen goes to our pages 2-3.
+;  M3: when Claude types into the program (TYPE), the console keeps the
+;  keys and sets r_ks; then every key call first asks the console for one
+;  (r_feed: its page in window 0 for that moment), and when they are done
+;  the console comes back up, as at CODE-\, with the program's screen.
 ; =====================================================================
 R_PAGES  equ 3                  ; the console, then the program's screen (2)
 R_HOT    equ 2B00h              ; CODE-\ as AH=10h gives it
@@ -79,6 +83,7 @@ R_FRAME  equ 0E000h
 R_EPORT  equ 0258h              ; window 0's page register (+4000h a window)
 R_STACK  equ 384
 RC_NANO  equ 2                  ; the console's `nano` (RCON.ASM): /A:nn
+RC_FEED  equ 5                  ;  and its feeder of Claude's keys (TYPE)
 
 
 ; =====================================================================
@@ -3446,7 +3451,6 @@ r_off    db     0               ; 10Eh: not 0, no pop-up (CLAUDE.COM runs)
 %ifdef STUB_PAD                 ; (the tests: a CLAUDE.COM whose stub is laid
         times   STUB_PAD db 0   ;  out otherwise, as another version's)
 %endif
-r_pend   db     0               ; CODE-\ taken, the console to come
 r_entry  dd     R_FRAME << 16   ; the console: E000:0000
 r_hw     db     0, 0, 0         ; our pages' register values
 r_saved  db     0, 0, 0, 0      ; the program's windows meanwhile
@@ -3455,6 +3459,8 @@ r_pold16 dd     0               ;  the BIOS's INT 16h
 r_indos  dd     0               ;  DOS's busy flag (INT 21h AH=34h)
 r_ss     dw     0
 r_sp     dw     0
+r_ks     db     0               ;  not 0: the console has keys for the program
+r_pend   db     0               ;  CODE-\ taken (or the keys done): the console
 r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         jne     .up                     ;  else (a TSR, from an interrupt)
         cmp     ah, 0                   ;  sees no key, as the BIOS's AH=01h
@@ -3474,9 +3480,15 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         sti                             ;  the BIOS's AH=01h returns)
         retf    2
 .pk:    call    r_hot
-        jmp     .ch
+        call    r_feed                  ; (Claude's keys first)
+        jc      .ch
+        or      sp, sp                  ; (not ZF: a key)
+        sti
+        retf    2
 .rd:    sti                             ; a read: wait here, CODE-\ seen
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
+        call    r_feed
+        jnc     .ky
         push    ax
         inc     ah                      ; (a peek of the caller's kind)
         pushf
@@ -3485,6 +3497,33 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         jnz     .ch
         hlt
         jmp     .w
+.ky:    iret
+
+; Claude's keys for the program (TYPE, M3), from the console's page: CF if
+; none now (AX kept), else AX = the key, taken if AH is a read.  The
+; console's feeder runs with its page in window 0 and the program's back
+; after; when the keys are done it sets r_pend, and the console comes.
+r_feed: cmp     byte [cs:r_ks], 0
+        je      .no
+        push    dx
+        push    bx
+        mov     bx, ax
+        mov     dx, R_EPORT
+        in      al, dx
+        push    ax
+        mov     al, [cs:r_hw]
+        out     dx, al
+        mov     ax, bx
+        call    R_FRAME:RC_FEED
+        pop     bx                      ; (BL: the program's window 0; the
+        xchg    ax, bx                  ;  flags kept)
+        out     dx, al
+        xchg    ax, bx
+        pop     bx
+        pop     dx
+        ret
+.no:    stc
+        ret
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
 ; move back one), and the console runs, unless a hardware interrupt is in

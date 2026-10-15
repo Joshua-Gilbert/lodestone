@@ -3,7 +3,7 @@ gridlink -> GLP REQUEST -> the GRiD (GridSim), and back.
 
     python3 tests/test_mcp.py
 """
-import json, os, subprocess, sys, threading, time
+import json, os, struct, subprocess, sys, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from gridsim import TermHarness
@@ -60,8 +60,8 @@ def test_protocol():
     assert mcp.handle({'jsonrpc': '2.0', 'method': 'notifications/initialized'}, '') is None
     r = mcp.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'}, '')
     tools = {t['name']: t for t in r['result']['tools']}
-    look = ['grid_info', 'grid_files', 'grid_screen', 'gpib_read']
-    ask = ['grid_command', 'grid_change_files', 'gpib_send']
+    look = ['grid_info', 'grid_files', 'grid_screen', 'gpib_read', 'grid_program']
+    ask = ['grid_command', 'grid_change_files', 'gpib_send', 'grid_type']
     assert sorted(tools) == sorted(look + ask), list(tools)
     for n in look:                       # can be allowed for good: they only look
         assert tools[n]['annotations']['readOnlyHint'] is True and '_meta' not in tools[n], n
@@ -112,7 +112,7 @@ def test_files():
         r = c.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 't'}})
         assert r['result']['serverInfo']['name'] == 'gridlink'
         c.rpc('notifications/initialized', notify=True)
-        assert len(c.rpc('tools/list')['result']['tools']) == 7
+        assert len(c.rpc('tools/list')['result']['tools']) == 9
         r = c.call('grid_files', action='list', path='A:\\')
         assert 'CFG.C' in body(r) and not r['isError'], r
         r = c.call('grid_files', action='read', path='a:\\cfg.c')
@@ -265,6 +265,9 @@ def test_bad_arguments_never_reach_the_grid():
         ('grid_files', dict(action='read', path='a:con')), ('grid_files', dict(action='info', path='A:\\CLOCK$')),
         ('grid_change_files', dict(action='write', path='A:\\PRN.TXT', content='x')),
         ('grid_change_files', dict(action='copy_from_grid', path='A:\\LPT1', to='/nonexistent/grid/X')), ('grid', {}), ('t_grid_info', {}), ('__init__', {}),
+        ('grid_type', {}), ('grid_type', dict(keys='')), ('grid_type', dict(keys=5)), ('grid_type', dict(keys='a{SNAP}b')),
+        ('grid_type', dict(keys='x' * 1025)), ('grid_type', dict(keys='{WAIT 61}')), ('grid_type', dict(keys='x', timeout=601)),
+        ('grid_type', dict(keys='x', timeout=0)), ('grid_type', dict(keys='{WAIT 3}', timeout=2)), ('grid_type', dict(keys='{NOPE}')),
     ]
     for name, a in cases:
         res, err = gt.call(name, a)
@@ -284,6 +287,47 @@ def test_bad_arguments_never_reach_the_grid():
     for bad in ('{WAIT 601}', '{WAIT -0.1}', '{WAIT nan}', '{WAIT 1e400}', 'a' * 2049):
         try: K.compile_script(bad); assert False, bad
         except K.KeyError_: pass
+
+
+class Paused:
+    """Resident Claude's console over a program: its screen, and TYPE's
+    answers (the keys it got kept)."""
+    def __init__(s, played=True, mode=3):
+        s.played, s.mode, s.typed = played, mode, []
+    def raw(s):
+        if s.mode == 3:
+            cells = b''.join(bytes([c, 7]) for c in b'TM5000 CONTROL SYSTEM'.ljust(80 * 25))
+            return struct.pack('<BBBHHH', 3, 1, 0, 80, 25, 160) + cells
+        return struct.pack('<BBBHHH', 6, 2, 1, 640, 200, 80) + bytes(16384)
+    def screen(s, which=0): return s.raw()
+    def type_keys(s, keys, timeout=60):
+        s.typed.append((bytes(keys), timeout))
+        return s.played, (s.raw() if s.mode != 7 else None)
+
+
+def test_grid_program_and_type():
+    from gridlink import keys as K
+    hello = {'app': 'resident', 'prog': 'TM5000G.EXE'}
+    p = Paused(); gt = mcp.GridTools(p, root='/nonexistent', hello=lambda: hello)
+    res, err = gt.call('grid_program', {})
+    assert not err and 'TM5000G.EXE is paused' in res[0]['text'] and 'TM5000 CONTROL SYSTEM' in res[1]['text'], res
+    # the screen comes at the end: a {SNAP} there is dropped, the Pi waits the keys' time and more
+    res, err = gt.call('grid_type', {'keys': '1{ENTER}{WAIT 0.5}{SNAP}', 'timeout': 30})
+    assert not err and res[0]['text'] == 'Typed into TM5000G.EXE.' and 'TM5000 CONTROL SYSTEM' in res[1]['text'], res
+    assert p.typed == [(K.compile_script('1{ENTER}{WAIT 0.5}'), 40)], p.typed
+    assert mcp.snap_marks(K.compile_script('{WAIT 13.95}a{SNAP}')) == [5]      # (a wait of FE ticks is no mark)
+    p.played = False
+    res, err = gt.call('grid_type', {'keys': '{ESC}'})
+    assert not err and 'stopped the keys (CODE-\\)' in res[0]['text'], res
+    p.played, p.mode = True, 6
+    res, err = gt.call('grid_type', {'keys': 'x'})
+    assert not err and res[-1]['type'] == 'image', res
+    p.mode = 7
+    res, err = gt.call('grid_type', {'keys': 'x'})
+    assert not err and 'No screenshot' in res[0]['text'], res
+    hello.pop('prog')                                   # (DOS was busy: no name)
+    res, err = gt.call('grid_program', {})
+    assert not err and 'not its name' in res[0]['text'], res
 
 
 class Outfile:
@@ -362,7 +406,7 @@ def test_second_call_waits_its_turn():
         def call(s, name, a):
             busy.set(); go.wait(5); busy.clear()
             return [mcp.text('done %s' % name)], False
-    srv = mcp.ToolServer('/nonexistent', Slow(), available=lambda: 'not connected' if busy.is_set() else None,
+    srv = mcp.ToolServer('/nonexistent', Slow(), available=lambda tool: 'not connected' if busy.is_set() else None,
                          log=lambda m: None)
     out = {}
     t1 = threading.Thread(target=lambda: out.update(a=srv.request(b'{"tool": "grid_command", "arguments": {}}\n')))
