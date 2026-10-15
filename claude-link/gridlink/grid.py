@@ -38,6 +38,7 @@ class Grid:
         s.cv = threading.Condition()
         s.replies = {}; s.waiting = set(); s.next_id = 1
         s.generation = 0                       # bumps when the GRiD restarts
+        s.ended = 0; s.why = ''                # bumps when the calls waiting end, and why
         s.info = {}
 
     # ---- plumbing ------------------------------------------------------
@@ -49,21 +50,27 @@ class Grid:
                 s.cv.notify_all()
 
     def on_restart(s):
+        s.end_calls('the GRiD restarted the link', restart=True)
+
+    def end_calls(s, why, restart=False):
+        """The calls waiting now fail with this: the GRiD restarted the link,
+        or the user went back from resident Claude's console to the program."""
         with s.cv:
-            s.generation += 1
+            if restart: s.generation += 1
+            s.ended += 1; s.why = why
             s.cv.notify_all()
 
     def call(s, op, args=b'', timeout=60.0):
         with s.cv:
             rid = s.next_id; s.next_id = s.next_id % 250 + 1
-            s.waiting.add(rid); s.replies.pop(rid, None); gen = s.generation
+            s.waiting.add(rid); s.replies.pop(rid, None); gen = s.ended
         s.link.send(glp.P_REQUEST, bytes([rid, op]) + bytes(args))
         deadline = time.time() + timeout
         with s.cv:
             try:
                 while rid not in s.replies:
                     left = deadline - time.time()
-                    if s.generation != gen: raise GridError('the GRiD restarted the link')
+                    if s.ended != gen: raise GridError(s.why)
                     if left <= 0: raise GridError('the GRiD did not answer in %d s' % timeout)
                     s.cv.wait(min(left, 0.5))
                 return s.replies.pop(rid)

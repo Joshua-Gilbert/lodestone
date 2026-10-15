@@ -325,9 +325,9 @@ def test_grid_program_and_type():
     p.mode = 7
     res, err = gt.call('grid_type', {'keys': 'x'})
     assert not err and 'No screenshot' in res[0]['text'], res
-    hello.pop('prog')                                   # (DOS was busy: no name)
+    hello.pop('prog')                                   # (DOS two deep, or its environment freed: no name)
     res, err = gt.call('grid_program', {})
-    assert not err and 'not its name' in res[0]['text'], res
+    assert not err and 'name isn\'t known' in res[0]['text'], res
 
 
 class Outfile:

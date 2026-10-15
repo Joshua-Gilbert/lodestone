@@ -3530,10 +3530,10 @@ r_feed: cmp     byte [cs:r_ks], 0
 ; service: INT 16h called from one (a TSR peeking from INT 1Ch, which the
 ; BIOS's INT 08h calls before its EOI) would leave the keyboard's IRQ
 ; waiting and the console hung.  Then it runs at the next INT 16h call
-; made with none in service.  Registers kept.
-r_hot:  cmp     byte [cs:r_inpop], 0
-        jne     .x
-        cmp     byte [cs:r_off], 0
+; made with none in service.  Registers kept.  (Never called with the
+; console up: r_int16 answers itself then, and r_popup clears r_inpop
+; before it returns here.)
+r_hot:  cmp     byte [cs:r_off], 0
         jne     .x
         push    ax
         push    bx

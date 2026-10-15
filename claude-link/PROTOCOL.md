@@ -112,7 +112,7 @@ the MORE bit set on all but the last.
 | 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
-| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again) |
+| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
 | 05h | REPLY | id (1), status (1: 0 = OK, else DOS error code or 0FFh), data |
 | 06h | NAK | — |
 | 07h | KEYS | Term: key words as INT 16h AH=10h returns them (AL, AH; 2 bytes each) |
@@ -204,6 +204,13 @@ goes on; the frames' sequence numbers go on from where they were. A mode
 the console doesn't keep (7, at B000h) answers status F5h (TYPE: with its
 flags byte).
 
+When the user goes back to the program (CODE-\ in the console; not when
+it goes for TYPE's keys), the console sends EVENT 04h (away), before the
+keys typed so far. The Pi ends the calls waiting for the GRiD and refuses new
+ones until the next HELLO, instead of waiting for an answer that can't
+come while the program runs. A REQUEST that reaches the console on its
+way out gets no answer: the EVENT has ended it on the Pi.
+
 ## 5. Session flow
 
 ```
@@ -245,7 +252,8 @@ title from TITLE, the link, the keys).
   over a DOS program) is Term too, the same `claude`: what was typed in
   CLAUDE /T is on its screen, and the other way round. Its HELLO's `prog=`
   names the paused program (its file name, when the console could ask DOS:
-  not when DOS is more than one call deep). While the GRiD is resident only
+  not when DOS is more than one call deep, nor from an environment the
+  program no longer owns). While the GRiD is resident only
   grid_program (SCREEN) and grid_type (TYPE) run; the GRiD's other tools
   answer that they can't (the program holds the GRiD), and anything sent
   anyway gets status F6h. The console keeps

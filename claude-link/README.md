@@ -60,7 +60,9 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 
 While Claude Code is in resident Claude's console (CLAUDE /R, CODE-\ over a
 program), only `grid_program` and `grid_type` run: the program holds the
-GRiD. Outside it, those two say no program is paused.
+GRiD. Outside it, those two say no program is paused. Once the user has
+gone back to the program (CODE-\ again), every GRiD tool says so at once
+until the console is up again.
 
 GPIB queries ask too: a query is a command, and some (`MEAS?` and `READ?`
 on a Keithley source-meter) switch a source's output on.

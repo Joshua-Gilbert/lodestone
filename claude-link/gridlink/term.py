@@ -54,6 +54,7 @@ class TermSession:
         s.dirty = True; s.last_byte = 0.0; s.first_dirty = 0.0
         s.title = ''; s.title_sent = None; s.title_t = 0.0
         s.hello = {}; s.exited = None
+        s.away = False                  # resident Claude: the user went back to the program
         s.stats = dict(keys=0, pty_in=0, pty_out=0)
         s.tools = None; s.sock = mcp.socket_path(cfg)
 
@@ -78,6 +79,9 @@ class TermSession:
     NOT_PAUSED = ('No DOS program is paused under resident Claude: grid_program and grid_type work in its '
                   'console (CLAUDE /R on the GRiD, then CODE-\\ over a program).')
     PAUSED_TOOLS = ('grid_program', 'grid_type')    # the ones the console answers
+    AWAY = ('The user has gone back from resident Claude\'s console to the DOS program on the GRiD (%s), which '
+            'is running again: no GRiD tool works until they bring the console up over it again (CODE-\\).')
+    AWAY_CALL = 'the user went back to the program (CODE-\\) before it answered'
 
     def resident(s):
         """The GRiD is CLAUDE /R's console, over a DOS program it paused."""
@@ -87,11 +91,13 @@ class TermSession:
         """Why a GRiD tool can't run now (None: it can)."""
         if s.link is None or s.link.source is not s:
             return 'The GRiD is not in Term mode (CLAUDE /T on the GRiD).'
+        prog = s.hello.get('prog') or 'its name unknown'
+        if s.away and s.resident(): return s.AWAY % prog
         if not s.hello or time.time() - s.link.last_rx > 10:
             return 'The GRiD is not connected (start CLAUDE /T on it).'
         if s.resident():
             if tool in s.PAUSED_TOOLS: return None
-            return s.RESIDENT % (s.hello.get('prog') or 'its name unknown: DOS was busy')
+            return s.RESIDENT % prog
         return s.NOT_PAUSED if tool in s.PAUSED_TOOLS else None
 
     def detach(s):
@@ -101,7 +107,7 @@ class TermSession:
         if t == glp.G_HELLO:
             info = {}
             if len(body) >= 6: info.update(glp.kv_lines(body[6:]))
-            s.hello = info
+            s.hello = info; s.away = False
             s.grid.on_restart()
             with s.lock:
                 # CLAUDE /R's console kept its screen: go on from it if we sent it
@@ -119,6 +125,9 @@ class TermSession:
             if body[0] == glp.EV_REPAINT:
                 with s.lock:
                     s.enc.reset(); s._mark()
+            elif body[0] == glp.EV_AWAY:        # (resident Claude's console, going: never for TYPE's keys)
+                s.away = True
+                s.grid.end_calls(s.AWAY_CALL)
         elif t == glp.G_REPLY:
             s.grid.on_reply(body)
 
