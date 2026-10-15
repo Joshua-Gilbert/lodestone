@@ -164,6 +164,15 @@ class Grid:
     def screen(s, which=0):
         return s.ok(glp.OP_SCREEN, bytes([which]), timeout=120)
 
+    def type_keys(s, keys, timeout=60):
+        """Keys (a compiled key script) into the DOS program paused under
+        resident Claude's console.  The answer comes once they have played,
+        or CODE-\\ stopped them: (all played?, the screen then as SCREEN
+        gives it, or None if its mode isn't one the console keeps)."""
+        st, r = s.call(glp.OP_TYPE, bytes(keys), timeout=timeout)
+        if st not in (0, 0xF5) or not r: raise GridError(errtext(st), st)
+        return bool(r[0] & 1), (r[1:] if st == 0 else None)
+
     def gpib(s, op, addr, data=b'', flags=0, timeout_ms=2000, maxlen=4096):
         """op/addr/flags (1 byte each), per-byte timeout ms (2), largest
         reply (2), then data to send."""

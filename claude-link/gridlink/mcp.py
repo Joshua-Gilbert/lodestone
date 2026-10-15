@@ -40,6 +40,8 @@ MAX_PATH = 79                   # characters in a GRiD path
 MAX_CMD = 100                   # a DOS command line: 125 with ' /C ' and ' >A:\\CLAUDE.OUT' in it
 MAX_RUN = 3600                  # seconds the Pi waits for a program (the GRiD itself never stops it)
 MAX_GPIB = 4000                 # bytes sent to an instrument (CLAUDE.COM takes 4,700 per request)
+MAX_TYPE = 2048                 # a key script for the paused program (resident Claude's console takes 2 KB)
+MAX_TYPE_WAIT = 600             # seconds the Pi waits for those keys to play
 
 GPIB_PROPS = {
     'address': {'type': 'integer', 'minimum': 0, 'maximum': 30},
@@ -138,10 +140,52 @@ TOOLS = [
          'required': ['action', 'address']},
      'annotations': {'readOnlyHint': False, 'destructiveHint': True, 'title': 'GPIB: send to an instrument'},
      '_meta': ASK},
+    # resident Claude (CLAUDE /R): Claude Code popped up over a DOS program
+    {'name': 'grid_program', 'title': 'GRiD: the paused program',
+     'description': (
+         "The DOS program that resident Claude's console (CLAUDE /R, CODE-\\) is popped up over, e.g. "
+         "TM5000G: its name and its screen as the user left it (text for text modes, an image for "
+         "graphics). Only while Claude Code is in that console; the other GRiD tools wait until the "
+         "user leaves the program."),
+     'inputSchema': {'type': 'object', 'properties': {}},
+     'annotations': dict(LOOK, title='GRiD: the paused program')},
+    {'name': 'grid_type', 'title': 'GRiD: type into the paused program',
+     'description': (
+         "Type keys into the DOS program that resident Claude's console is popped up over. The user "
+         "approves every call. The console goes away while the keys play, so the user sees the program "
+         "take them; then it comes back, and you get the program's screen. The user can stop the keys "
+         "with CODE-\\. End with a {WAIT} long enough for the program to finish what the keys started "
+         "(drawing a menu, a measurement). If the keys quit the program, the rest go to whatever runs "
+         "next (the DOS prompt or the Executive)."),
+     'inputSchema': {'type': 'object', 'properties': {
+         'keys': {'type': 'string', 'description': (
+             'Plain characters type themselves; named keys in braces: {ENTER} {ESC} {TAB} {BKSP} {UP} {DOWN} '
+             '{LEFT} {RIGHT} {HOME} {END} {PGUP} {PGDN} {INS} {DEL} {F1}..{F10} {ALT+X} {CTRL+X} {SHIFT+F1}; '
+             '{WAIT 1.5} pauses (seconds). At most about 1,000 keys.')},
+         'timeout': {'type': 'integer', 'minimum': 1, 'maximum': MAX_TYPE_WAIT,
+                     'description': ('Seconds to wait for the keys to play and the program to wait for a '
+                                     'key again (default 60).')},
+     }, 'required': ['keys']},
+     'annotations': {'readOnlyHint': False, 'destructiveHint': True,
+                     'title': 'GRiD: type into the paused program'},
+     '_meta': ASK},
 ]
 
 
 def text(t): return {'type': 'text', 'text': t}
+
+
+def snap_marks(kb):
+    """Where a compiled key script has {SNAP} marks (FF FE xx), walking its
+    items: keys (2 bytes), waits (FF FF n) and marks (3 bytes)."""
+    i, out = 0, []
+    while i < len(kb):
+        if kb[i] == 0xFF and i + 1 < len(kb) and kb[i + 1] in (0xFF, 0xFE):
+            if kb[i + 1] == 0xFE: out.append(i)
+            i += 3
+        else:
+            i += 2
+    return out
 
 
 # ---- Pi files: only in the Term directory (~/grid) ----------------------
@@ -260,9 +304,10 @@ def grid_path(a, k='path', wild=False):
 class GridTools:
     """The tools, on gridlink's side of the socket (a Grid to call).  Pi
     paths are kept inside root, the Term directory."""
-    def __init__(s, grid, cfg=None, bridge=7, root=None):
+    def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}):
         s.G = grid; s.cfg = cfg; s.bridge = bridge
         s.root = root or getattr(cfg, 'term_dir', None) or '~/grid'
+        s.hello = hello                     # the GRiD's last HELLO (the paused program's name)
 
     def call(s, name, a):
         try:
@@ -279,8 +324,8 @@ class GridTools:
         info = s.G.get_info()
         return [text('\n'.join('%s: %s' % kv for kv in info.items()))], False
 
-    def snapshot(s):
-        snap = screen.parse(s.G.screen(0))
+    def snapshot(s, raw=None):
+        snap = screen.parse(s.G.screen(0) if raw is None else raw)
         if screen.is_text(snap):
             return [text('Screen (%s):\n%s' % (screen.describe(snap), screen.text(snap)))]
         png = screen.png_block(snap)['source']['data']
@@ -289,6 +334,38 @@ class GridTools:
 
     def t_grid_screen(s, a):
         return s.snapshot(), False
+
+    # ---- resident Claude: the program its console is popped up over --------
+    def program(s):
+        return (s.hello() or {}).get('prog') or 'the program'
+
+    def t_grid_program(s, a):
+        name = (s.hello() or {}).get('prog')
+        head = ('%s is paused under resident Claude\'s console.' % name if name else
+                'A DOS program is paused under resident Claude\'s console (DOS was busy, so not its name).')
+        return [text(head)] + s.snapshot(), False
+
+    def t_grid_type(s, a):
+        timeout = arg_int(a, 'timeout', 60, 1, MAX_TYPE_WAIT)
+        kbytes = K.compile_script(arg_str(a, 'keys', need=True))
+        marks = snap_marks(kbytes)
+        if marks and marks[-1] == len(kbytes) - 3:          # (the screen comes at the end anyway)
+            kbytes = kbytes[:-3]; marks.pop()
+        if marks: raise ValueError('{SNAP} can only end the keys: grid_type takes the screen when they are done')
+        if not kbytes: raise ValueError('no keys')
+        if len(kbytes) > MAX_TYPE:
+            raise ValueError('the keys come to %d bytes; the console takes %d (about %d keys)'
+                             % (len(kbytes), MAX_TYPE, MAX_TYPE // 2))
+        if K.script_seconds(kbytes) >= timeout:
+            raise ValueError('the keys wait %.0f s in all, not less than timeout (%d s)'
+                             % (K.script_seconds(kbytes), timeout))
+        played, raw = s.G.type_keys(kbytes, timeout=timeout + 10)
+        name = s.program()
+        head = ('Typed into %s.' % name if played else
+                'The user stopped the keys (CODE-\\) before all of them were typed into %s.' % name)
+        if raw is None:
+            return [text(head + ' No screenshot: its video mode isn\'t one the console keeps.')], False
+        return [text(head)] + s.snapshot(raw), False
 
     def t_grid_files(s, a):
         G = s.G; act = a.get('action')
@@ -446,7 +523,7 @@ class ToolServer:
     """gridlink's end: a Unix socket; one JSON request per connection
     ({"tool", "arguments"} -> {"content", "isError"}), one GRiD request at a
     time (CLAUDE.COM runs one REQUEST at a time)."""
-    def __init__(s, path, tools, available=lambda: None, log=print):
+    def __init__(s, path, tools, available=lambda tool: None, log=print):
         s.path, s.tools, s.available, s.log = path, tools, available, log
         s.lock = threading.Lock(); s.sock = None
 
@@ -491,7 +568,7 @@ class ToolServer:
             if not isinstance(tool, str) or not isinstance(args, dict):
                 return [text('gridlink: a request needs a tool name and an arguments object')], True
             with s.lock:                          # (a RUN going on keeps the GRiD from polling:
-                why = s.available()               # wait for it, don't call that "not connected")
+                why = s.available(tool)           # wait for it, don't call that "not connected")
                 if why: return [text(why)], True
                 return s.tools.call(tool, args)
         except Exception as e:

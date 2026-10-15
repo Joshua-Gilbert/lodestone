@@ -22,6 +22,7 @@ HF_TERM = 0x01             # Pi: Term: the GRiD is Claude Code's screen and keyb
 # REQUEST ops
 OP_INFO, OP_DIR, OP_READ, OP_WRITE, OP_DELETE, OP_RENAME, OP_MKDIR, OP_RMDIR, OP_STAT, OP_FREE = range(1, 11)
 OP_RUN, OP_SCREEN = 0x10, 0x11
+OP_TYPE = 0x12                  # resident Claude's console: keys into the paused program
 OP_GPIB = 0x20
 OP_SETTIME = 0x30
 

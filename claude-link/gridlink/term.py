@@ -65,27 +65,34 @@ class TermSession:
         if s.tools is None:
             # the GRiD's abilities for Claude Code (mcp.py), one request at a time
             try:
-                s.tools = mcp.ToolServer(s.sock, mcp.GridTools(s.grid, s.cfg, getattr(s.cfg, 'address', 7), root=s.cwd),
+                s.tools = mcp.ToolServer(s.sock, mcp.GridTools(s.grid, s.cfg, getattr(s.cfg, 'address', 7), root=s.cwd,
+                                                               hello=lambda: s.hello),
                                          available=s.why_not, log=s.log).start()
             except OSError as e:
                 s.log('term: no MCP socket at %s: %s' % (s.sock, e))
 
-    RESIDENT = ('Claude Code is popped up over a DOS program on the GRiD (resident Claude, CLAUDE /R): '
-                'the GRiD\'s files, programs and instruments can\'t be used from here yet. '
-                'Leave that program and start CLAUDE /T on the GRiD for them.')
+    RESIDENT = ('Claude Code is popped up over a DOS program on the GRiD (%s; resident Claude, CLAUDE /R): '
+                'grid_program and grid_type work on that program, but the GRiD\'s files, other programs and '
+                'instruments can\'t be used while it is paused. Leave that program and start CLAUDE /T on '
+                'the GRiD for them.')
+    NOT_PAUSED = ('No DOS program is paused under resident Claude: grid_program and grid_type work in its '
+                  'console (CLAUDE /R on the GRiD, then CODE-\\ over a program).')
+    PAUSED_TOOLS = ('grid_program', 'grid_type')    # the ones the console answers
 
     def resident(s):
         """The GRiD is CLAUDE /R's console, over a DOS program it paused."""
         return s.hello.get('app', '').lower() == 'resident'
 
-    def why_not(s):
+    def why_not(s, tool=None):
         """Why a GRiD tool can't run now (None: it can)."""
         if s.link is None or s.link.source is not s:
             return 'The GRiD is not in Term mode (CLAUDE /T on the GRiD).'
         if not s.hello or time.time() - s.link.last_rx > 10:
             return 'The GRiD is not connected (start CLAUDE /T on it).'
-        if s.resident(): return s.RESIDENT
-        return None
+        if s.resident():
+            if tool in s.PAUSED_TOOLS: return None
+            return s.RESIDENT % (s.hello.get('prog') or 'its name unknown: DOS was busy')
+        return s.NOT_PAUSED if tool in s.PAUSED_TOOLS else None
 
     def detach(s):
         if s.link is not None and s.link.source is s: s.link.source = None
