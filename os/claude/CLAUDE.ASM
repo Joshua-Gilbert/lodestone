@@ -52,6 +52,7 @@ BOXL     equ 5                  ; dialog boxes: left column, width
 BOXW     equ 70
 
 %include "GLP.INC"               ; the link's message types and states
+%define WEB_CHECK                ; (TERMCELL.INC: /W against an older gridlink; not in RCON)
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -1688,7 +1689,22 @@ pf_hello:
         jb      .f
         mov     bl, [si+1]
         and     bl, HF_TERM
-.f:     mov     byte [connected], 1
+.f:     mov     byte [web_old], 0               ; /W: did the Pi start gridfox?
+        cmp     byte [app_want], 'W'            ; (its HELLO names it; a gridlink
+        jne     .w                              ;  without /W answers Claude Code)
+        mov     byte [web_old], 1
+        cmp     cx, 9
+        jb      .w
+        cmp     word [si+2], 'gr'
+        jne     .w
+        cmp     word [si+4], 'id'
+        jne     .w
+        cmp     word [si+6], 'fo'
+        jne     .w
+        cmp     byte [si+8], 'x'
+        jne     .w
+        mov     byte [web_old], 0
+.w:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
         mov     ax, [now]
         mov     [turn_t0], ax
@@ -3124,6 +3140,7 @@ kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
+s_webold    db 'Pi has no /W: update gridlink', 0
 evrepaint   db 03h
 s_onint     db ' on INT ', 0
 s_none2     db 'none', 0
@@ -3761,6 +3778,7 @@ evans       resb 4
 crctab      resw 256
 ; Term
 term        resb 1                      ; 1: the GRiD is Claude Code's terminal
+web_old     resb 1                      ; 1: /W asked for, but the Pi's gridlink has no gridfox
 t_active    resw 1                      ; tick of the last key or screen change
 keyn        resb 1
 keys_q      resb 1                      ; a KEYS message is in the queue
