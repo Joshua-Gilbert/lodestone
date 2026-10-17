@@ -5,7 +5,10 @@ on a local TCP port (2828).  A message is its length in decimal, a colon and
 JSON:  [0, id, "WebDriver:Navigate", {...}]  ->  [1, id, error, result].
 No geckodriver and no Python packages are needed.
 """
-import json, os, shutil, socket, subprocess, threading, time
+import ctypes, json, os, shutil, signal, socket, subprocess, tempfile, threading, time
+
+SANDBOX = 'gridfox'
+ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'      # WebDriver's web element key
 
 PREFS = {
     # quiet, fast start: no first-run pages, updates, telemetry or default-browser check
@@ -25,7 +28,20 @@ PREFS = {
     'dom.disable_open_during_load': True,              # no pop-ups
     'browser.link.open_newwindow': 1,                  # target=_blank opens here, in the one tab
     'browser.link.open_newwindow.restriction': 0,
+    # downloads go to a temporary folder, without asking (not the SD card's ~/Downloads)
+    'browser.download.folderList': 2,
+    'browser.download.useDownloadDir': True,
+    'browser.download.always_ask_before_handling_new_types': False,
+    'browser.download.manager.showWhenStarting': False,
 }
+
+
+def _die_with_parent():
+    """Firefox goes when gridfox does, even if gridfox is killed outright."""
+    try:
+        ctypes.CDLL('libc.so.6', use_errno=True).prctl(1, signal.SIGTERM)    # PR_SET_PDEATHSIG
+    except Exception:
+        pass
 
 
 class MarionetteError(Exception):
@@ -40,35 +56,47 @@ class Marionette:
         s.sock = socket.create_connection((host, port), timeout=timeout)
         s.sock.settimeout(timeout)
         s.buf = b''; s.id = 0; s.lock = threading.Lock()
-        s.hello = s._recv()
+        s.dead = False                  # the connection is gone or out of step: start again
         s.session = None
+        try:
+            s.hello = s._recv()
+        except Exception:
+            s.sock.close(); raise
 
     def _recv(s):
-        while b':' not in s.buf:
+        # everything read stays in s.buf until a whole message is there, so a
+        # message is never half-consumed
+        while True:
+            i = s.buf.find(b':')
+            if i >= 0:
+                n = int(s.buf[:i])
+                if len(s.buf) >= i + 1 + n:
+                    body = s.buf[i + 1:i + 1 + n]; s.buf = s.buf[i + 1 + n:]
+                    return json.loads(body.decode('utf-8'))
+            elif len(s.buf) > 20:
+                raise ValueError('not Marionette')
             d = s.sock.recv(65536)
             if not d: raise ConnectionError('Firefox closed the Marionette connection')
             s.buf += d
-        n, rest = s.buf.split(b':', 1)
-        n = int(n)
-        while len(rest) < n:
-            d = s.sock.recv(max(65536, n - len(rest)))
-            if not d: raise ConnectionError('Firefox closed the Marionette connection')
-            rest += d
-        s.buf = rest[n:]
-        return json.loads(rest[:n].decode('utf-8'))
 
     def call(s, name, params=None, timeout=None):
         with s.lock:
+            if s.dead: raise ConnectionError('the connection to Firefox was lost')
             s.id += 1
             msg = json.dumps([0, s.id, name, params or {}], separators=(',', ':')).encode('utf-8')
-            if timeout is not None: s.sock.settimeout(timeout)
             try:
+                s.sock.settimeout(timeout if timeout is not None else 30.0)
                 s.sock.sendall(b'%d:' % len(msg) + msg)
                 while True:
                     r = s._recv()
                     if isinstance(r, list) and len(r) == 4 and r[0] == 1 and r[1] == s.id: break
-            finally:
-                if timeout is not None: s.sock.settimeout(30.0)
+            except (OSError, ValueError) as e:
+                # a timeout or a broken stream: the next answer could be this
+                # one's, so this connection can't be trusted again
+                s.dead = True
+                try: s.sock.close()
+                except OSError: pass
+                raise ConnectionError('Firefox did not answer (%s): %s' % (name, e or type(e).__name__))
         if r[2]: raise MarionetteError(r[2])
         return r[3]
 
@@ -78,9 +106,11 @@ class Marionette:
 
     # ---- WebDriver -------------------------------------------------------
     def new_session(s, page_load='eager', load_ms=20000, script_ms=10000):
-        caps = {'pageLoadStrategy': page_load,
+        # Marionette takes the capabilities as the parameters themselves (not
+        # geckodriver's {capabilities: {alwaysMatch}}, whose keys it would ignore)
+        caps = {'pageLoadStrategy': page_load, 'unhandledPromptBehavior': 'dismiss',
                 'timeouts': {'pageLoad': load_ms, 'script': script_ms, 'implicit': 0}}
-        r = s.call('WebDriver:NewSession', {'capabilities': {'alwaysMatch': caps}})
+        r = s.call('WebDriver:NewSession', caps)
         s.session = r.get('sessionId') if isinstance(r, dict) else None
         return r
 
@@ -98,7 +128,17 @@ class Marionette:
     def title(s): return s.value('WebDriver:GetTitle')
 
     def script(s, body, args=(), timeout=15):
-        return s.value('WebDriver:ExecuteScript', {'script': body, 'args': list(args)}, timeout=timeout)
+        # a named sandbox: gridfox's globals and the DOM built-ins it calls are
+        # out of the page's reach (the page sees its own window, not ours)
+        return s.value('WebDriver:ExecuteScript', {'script': body, 'args': list(args), 'sandbox': SANDBOX},
+                       timeout=timeout)
+
+    def click(s, el, timeout=25):
+        """A real click (trusted events, user activation) on a web element
+        reference from script()."""
+        eid = el.get(ELEMENT) if isinstance(el, dict) else None
+        if not eid: raise MarionetteError({'error': 'no such element', 'message': 'not an element'})
+        s.call('WebDriver:ElementClick', {'id': eid}, timeout=timeout)
 
     def screenshot(s):
         """The viewport as base64 PNG (for the picture view, later)."""
@@ -109,7 +149,7 @@ class Marionette:
 
     def close(s):
         try:
-            if s.session: s.call('WebDriver:DeleteSession', timeout=5)
+            if s.session and not s.dead: s.call('WebDriver:DeleteSession', timeout=1)
         except Exception: pass
         try: s.sock.close()
         except OSError: pass
@@ -145,6 +185,7 @@ class Firefox:
         prefs['marionette.port'] = s.port
         # the text view needs no pictures: not fetching them is most of a page's weight
         prefs['permissions.default.image'] = 1 if s.images else 2
+        prefs['browser.download.dir'] = os.path.join(tempfile.gettempdir(), 'gridfox-downloads')
         with open(os.path.join(s.profile, 'user.js'), 'w') as f:
             for k, v in prefs.items(): f.write('user_pref(%s, %s);\n' % (json.dumps(k), json.dumps(v)))
 
@@ -160,7 +201,8 @@ class Firefox:
                     '--width', str(s.size[0]), '--height', str(s.size[1]), 'about:blank']
             s.log('starting %s' % ' '.join(args))
             s.proc = subprocess.Popen(args, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                      stderr=subprocess.DEVNULL, start_new_session=True)
+                                      stderr=subprocess.DEVNULL, start_new_session=True,
+                                      preexec_fn=_die_with_parent)
             t0 = time.time()
             while not port_open(s.port):
                 if s.proc.poll() is not None:
@@ -181,5 +223,5 @@ class Firefox:
     def stop(s):
         if s.proc is not None and s.proc.poll() is None:
             s.proc.terminate()
-            try: s.proc.wait(5)
+            try: s.proc.wait(1.5)
             except subprocess.TimeoutExpired: s.proc.kill()

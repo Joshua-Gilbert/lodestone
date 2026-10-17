@@ -334,6 +334,7 @@ class TermHarness:
         cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
         cfg.term_command = command or '%s %s' % (sys.executable, os.path.join(HERE, 'fake_claude.py'))
         cfg.web_command = web_command or '%s -m gridfox' % sys.executable
+        cfg.web_dir = os.path.join(s.tmp, 'web')
         cfg.api_key = 'sk-test' if key else None
         cfg.env_key = lambda: False
         s.cfg = cfg

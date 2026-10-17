@@ -1,13 +1,25 @@
 // gridfox: act on element number arguments[1] of the last read (extract.js):
-//   arguments[0] = 'click' | 'set' | 'submit' | 'select' | 'stamp' | 'stamped'
+//   arguments[0] = 'el' | 'click' | 'set' | 'submit' | 'select' | 'stamp' | 'stamped'
 //   arguments[2] = the value for set (text) or select (option index)
 // 'stamp' marks this document; 'stamped' says whether it is still the same
-// one (so gridfox can tell whether an action loaded a new page).
+// one, and whether it has begun to unload (a slow page on its way), so
+// gridfox can tell whether an action is loading a new page.
+// 'el' returns the element itself (for a real click, WebDriver:ElementClick).
 // Returns {ok: true} or {ok: false, why: '...'}.
 return (function (op, i, val) {
-  if (op === 'stamp') { window.__gridfoxStamp = val; return {ok: true}; }
+  if (op === 'stamp') {
+    window.__gridfoxStamp = val; window.__gridfoxLeaving = false;
+    if (!window.__gridfoxHooked) {
+      window.__gridfoxHooked = true;
+      var leave = function () { window.__gridfoxLeaving = true; };
+      window.addEventListener('beforeunload', leave, true);
+      window.addEventListener('pagehide', leave, true);
+    }
+    return {ok: true};
+  }
   if (op === 'stamped') {
-    return {ok: true, same: window.__gridfoxStamp === val, ready: document.readyState};
+    return {ok: true, same: window.__gridfoxStamp === val, leaving: !!window.__gridfoxLeaving,
+            ready: document.readyState};
   }
   var els = window.__gridfox || [], el = els[i];
   if (!el) return {ok: false, why: 'the page has changed: read it again'};
@@ -16,6 +28,7 @@ return (function (op, i, val) {
     el.dispatchEvent(new Event(type, {bubbles: true}));
   }
   try { el.scrollIntoView({block: 'center'}); } catch (e) {}
+  if (op === 'el') return {ok: true, el: el};
   if (op === 'click') {
     if (el.focus) el.focus();
     el.click();

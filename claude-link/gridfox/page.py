@@ -5,6 +5,7 @@ the act (link, button or field) the cell belongs to, -1 for none.  Nothing
 here talks to Firefox, so it is tested on its own.
 """
 import unicodedata
+from wcwidth import wcwidth             # (pyte's own: what it gives a cell is what counts)
 
 W = 80
 A_LINK, A_INV, A_BOLD, A_FIELD, A_DIM = 1, 2, 4, 8, 16
@@ -34,12 +35,12 @@ def clean_char(ch):
     o = ord(ch)
     if o < 32 or 0x7F <= o < 0xA0: return ''
     cat = unicodedata.category(ch)
-    if cat in ('Mn', 'Me', 'Cf', 'Cs', 'Co', 'Cn'): return ''          # combining marks, format, unassigned
-    if unicodedata.east_asian_width(ch) in ('W', 'F'):                 # two cells wide: not on an 80x24 grid
-        if cat == 'So': return ''                                       # (emoji: dropped)
-        return '?'
-    if 0x1F000 <= o: return ''
-    return ch
+    if cat in ('Mn', 'Me', 'Cf', 'Cs', 'Co', 'Cn', 'Zl', 'Zp'): return ''   # marks, format, separators
+    if 0x1F000 <= o: return ''                                          # emoji and the like
+    w = wcwidth(ch)
+    if w == 1: return ch
+    if w == 2: return '' if cat == 'So' else '?'                        # two cells wide: not on an 80x24 grid
+    return ''                                                           # no width (it would shift the row)
 
 
 def clean(text):
@@ -96,6 +97,7 @@ def cells(runs, link_attr=A_LINK):
 
 def wrap(cs, width):
     """Word-wrap cells to lines of at most width; spaces at a break go."""
+    width = max(1, width)
     lines, line, word = [], [], []
 
     def put_word():
@@ -135,7 +137,7 @@ def layout(model, width=W):
     doc = Doc()
     prev = None
     for b in model.get('blocks', []):
-        k = b.get('k', 'p'); d = max(0, int(b.get('d', 0)) - 1); q = int(b.get('q', 0))
+        k = b.get('k', 'p'); d = max(0, _int(b.get('d')) - 1); q = max(0, _int(b.get('q')))
         if k in SPACED or (k in ('li', 'tr') and prev != k) or (prev in ('li', 'tr') and prev != k):
             doc.blank()
         prev = k
@@ -147,7 +149,7 @@ def layout(model, width=W):
             first, rest = '  ' + qp, '  ' + qp
             lines = []
             for part in _split_nl(cs):
-                lines.extend(_hard(part, width - len(first)) or [[]])
+                lines.extend(_hard(part, max(20, width - len(first))) or [[]])
             while lines and not lines[-1]: lines.pop()
         else:
             # strip edge spaces
@@ -156,8 +158,8 @@ def layout(model, width=W):
             if not cs: continue
             if k == 'li':
                 ind = '  ' * min(d, 8) + qp
-                m = int(b.get('m', 0))
-                mark = ('%d. ' % m) if m > 0 else (BULLET + ' ' if m < 0 else '  ')
+                m = _int(b.get('m'))
+                mark = ('%d. ' % m)[:7] if m > 0 else (BULLET + ' ' if m < 0 else '  ')
                 first, rest = ind + mark, ind + ' ' * len(mark)
             elif k in ('h1', 'h2'):
                 first = rest = qp
@@ -167,7 +169,7 @@ def layout(model, width=W):
                 cs = [(c, a | A_BOLD, x) for c, a, x in cs]
             else:
                 first = rest = qp
-            lines = wrap(cs, width - max(len(first), len(rest)))
+            lines = wrap(cs, max(20, width - max(len(first), len(rest))))
         for i, ln in enumerate(lines):
             pre = first if i == 0 else rest
             text = pre + ''.join(c for c, _, _ in ln)
@@ -182,6 +184,12 @@ def layout(model, width=W):
     if not doc.text:
         doc.add('(This page shows no text.)', [A_DIM] * 26, [-1] * 26)
     return doc
+
+
+def _int(v):
+    """A number from the page (which may send null, 1e80 or text): 0 if not one."""
+    try: return max(-99999, min(99999, int(v)))
+    except (TypeError, ValueError, OverflowError): return 0
 
 
 def _split_nl(cs):

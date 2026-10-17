@@ -236,16 +236,161 @@ def test_app_late_content_and_help():
         r.close()
 
 
+# ---- what the review found (2026-10-17) ------------------------------------
+def test_session_shape_and_real_clicks():
+    r = Run(U + 'index')
+    try:
+        assert r.f.caps['pageLoadStrategy'] == 'eager' and r.f.caps['unhandledPromptBehavior'] == 'dismiss'
+        r.keys('tab', 'tab', 'enter')
+        assert r.app.url == U + 'long' and r.f.clicks, (r.app.url, r.f.clicks)     # WebDriver:ElementClick
+        assert 'WebDriver:ElementClick' in r.f.calls
+    finally:
+        r.close()
+
+
+def test_hostile_page():
+    r = Run(U + 'hostile')
+    try:
+        t = '\n'.join(r.text())
+        d = r.app.doc.text
+        # a list starting at 1e80 or Infinity: laid out, numbers in bounds
+        assert '99999. huge start' in d and '1. exponent start' in d, d
+        assert '1. infinite start' in d and '1. negative start' in d, d
+        assert 'zero widthhere and a tab in it' in d, d                             # (U+2028 is space to JS)
+        assert 'in 1 \u2502 in 2' in d and '\u2502 outer C' in d, d                  # the outer row goes on
+        assert any('Shadow before Slotted title shadow after' in l for l in d), d     # the slot, in place
+        assert not any('unslotted' in l for l in d)
+        assert all(len(l) <= 80 for l in d)
+        # nothing from the page reaches the terminal as a control sequence
+        r.out.seek(0); r.out.truncate()
+        evil = [i for i, a in enumerate(r.app.acts()) if a.get('name') == 'user'][0]
+        r.app.select(evil); r.app.key('enter')
+        raw = r.out.getvalue(); r.pump()
+        for bad in (b'\x1bc', b'\x1b[2J', b'\x07', b'\x1b]0;pwned'):
+            assert bad not in raw, (bad, raw)
+        assert r.text()[23].startswith('Name[2J: x[2Jcboom'), r.text()[23]
+        assert r.text()[0].strip() == U + 'hostile' and r.scr.buffer[0][1].reverse     # the screen intact
+        r.keys('esc')
+        ta = [i for i, a in enumerate(r.app.acts()) if a.get('type') == 'textarea'][0]
+        r.app.select(ta); r.keys('enter')
+        assert 'line one\u23celine two' in r.text()[23] and r.text()[0].strip() == U + 'hostile', r.text()
+        r.keys('esc')
+    finally:
+        r.close()
+
+
+def test_form_not_sent_early():
+    r = Run(U + 'form2')
+    try:
+        r.keys('tab', 'enter', 'joshua', 'enter')               # a check box follows: not sent yet
+        assert r.app.url == U + 'form2' and r.app.acts()[r.app.sel]['t'] == 'check', r.app.url
+        r.keys('enter')                                         # tick it
+        assert r.has('[x] Terms')
+        r.keys('tab', 'enter')                                  # the Order button
+        assert r.has('Welcome, joshua (5 letter password)'), r.text()     # (pw=terms)
+    finally:
+        r.close()
+
+
+def test_slow_page_after_click():
+    f = FakeFirefox(slow={'long': 1.0})
+    m = Marionette(port=f.port); m.new_session()
+    out = io.BytesIO(); app = App(Browser(m), out=out)
+    try:
+        app.go(U + 'index')
+        app.select(1); t0 = time.time(); app.key('enter')         # Long page, which takes a second
+        assert app.url == U + 'long' and time.time() - t0 >= 0.9, app.url
+        assert any('Paragraph 1 of the long page.' in l for l in app.doc.text)
+    finally:
+        m.close(); f.close()
+
+
+def test_covered_link_falls_back():
+    r = Run(U + 'hostile')
+    try:
+        cov = [i for i, a in enumerate(r.app.acts()) if a['t'] == 'link'][0]
+        r.app.select(cov); r.keys('enter')
+        assert r.app.url == U + 'long' and not r.f.clicks, r.app.url          # refused, then a script click
+    finally:
+        r.close()
+
+
+def test_help_back_and_errors():
+    r = Run(U + 'index')
+    try:
+        r.keys('pgdn'); top = r.app.top
+        hist = (list(r.f.hist), r.f.pos)
+        r.keys('h', 'left')
+        assert r.app.url == U + 'index' and r.app.top == top and (list(r.f.hist), r.f.pos) == hist
+        r.keys('g'); r.app.key('ctrl-u'); r.keys('error.test', 'enter')    # (Go starts with the address)
+        assert 'Could not open it' in r.text()[23] and 'error page' in r.text()[23], r.text()[23]
+    finally:
+        r.close()
+
+
+def test_keys_timing():
+    k = Keys()
+    assert k.feed(b'\x1b', 0.0) == [] and k.take(0.02) == ['esc']           # Term's lone Esc
+    assert k.feed(b'g', 0.05) == ['g']
+    assert k.feed(b'\x1bO', 1.0) == [] and k.take(1.05) == [] and k.take(1.2) == ['esc', 'O']
+    assert P.clean('a\u2028b\u1161c') == 'abc'
+
+
+def _loop(r, fd):
+    import threading
+    th = threading.Thread(target=r.app.run, args=(fd,), daemon=True); th.start()
+    return th
+
+
+def test_no_spin_while_typing():
+    import gridfox.app as A
+    r = Run(U + 'late'); rd, wr = os.pipe()
+    calls = [0]; real = A.select.select
+
+    def counting(*a):
+        calls[0] += 1; return real(*a)
+    A.select.select = counting
+    try:
+        th = _loop(r, rd)
+        time.sleep(0.2); os.write(wr, b'g'); time.sleep(0.2)
+        r.app.rereads = [time.time() - 1]                        # a look due while the editor is open
+        calls[0] = 0; time.sleep(1.0)
+        assert calls[0] < 20, calls[0]
+        os.write(wr, b'\x11'); th.join(3)                         # Ctrl-Q
+        assert not th.is_alive()
+    finally:
+        A.select.select = real; os.close(wr); os.close(rd); r.close()
+
+
+def test_lost_firefox_ends_gridfox():
+    r = Run(U + 'index'); rd, wr = os.pipe()
+    try:
+        th = _loop(r, rd)
+        time.sleep(0.2)
+        r.m.sock.close()                                         # Firefox gone
+        os.write(wr, b'.')                                       # read again: the call fails
+        th.join(5)
+        assert not th.is_alive() and r.app.lost, r.app.lost
+    finally:
+        os.close(wr); os.close(rd); r.f.close()
+
+
 # ---- end to end: gridlink + the GRiD's link (GridSim) -----------------------
 def test_end_to_end_gridsim():
     from gridsim import TermHarness
     f = FakeFirefox()
     try:
         cmd = '%s -m gridfox --port %d %sindex' % (sys.executable, f.port, U)
+        os.environ['ANTHROPIC_API_KEY'] = 'sk-must-not-reach-gridfox'
         h = TermHarness(app='web', web_command=cmd)
+        h.cfg.term_api_key = True                                              # even so
         try:
             assert h.wait_text('Tektronix 7854 notes', wall=20), (h.log, h.grid.screen_text())
             assert h.router.app == 'web' and h.router.term is None             # no Claude Code started
+            assert h.router.web.cwd == h.cfg.web_dir != h.cfg.term_dir         # not in ~/grid
+            env = open('/proc/%d/environ' % h.router.web.child.pid, 'rb').read().split(b'\0')
+            assert not any(e.startswith(b'ANTHROPIC_API_KEY=') for e in env)
+            os.environ.pop('ANTHROPIC_API_KEY', None)
             assert h.run_until(lambda: h.grid.title == b'Test Bench Home', 5), h.grid.title   # (at most once a second)
             assert h.settle()
             h.grid.press(0x09, 0x0F); h.grid.press(0x09, 0x0F)
@@ -271,6 +416,7 @@ def test_end_to_end_gridsim():
         finally:
             h.close()
     finally:
+        os.environ.pop('ANTHROPIC_API_KEY', None)
         f.close()
 
 

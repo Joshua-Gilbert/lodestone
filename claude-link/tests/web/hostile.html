@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><title>Evil&#x1b;]0;pwned&#7; title</title></head>
+<body>
+<h1>Odd page</h1>
+<ol start="999999999999999999999"><li>huge start</li></ol>
+<ol start="1e80"><li>exponent start</li></ol>
+<ol start="Infinity"><li>infinite start</li></ol>
+<ol start="-3"><li>negative start</li></ol>
+<p>zero&#x2028;width&#x1161;here and a tab&#9;in it</p>
+<form action="/welcome">
+<p><input type="text" name="user" id="evil" placeholder="Name&#x1b;[2J"></p>
+<p><textarea name="notes">line one
+line two</textarea></p>
+<p><label><input type="checkbox" name="agree" value="yes"> I agree</label></p>
+<p><input type="submit" value="Send"></p>
+</form>
+<table><tr><td>outer A</td><td><table><tr><td>in 1</td><td>in 2</td></tr></table></td><td>outer C</td></tr></table>
+<p><a href="/long" data-covered="1">covered link</a></p>
+<ul style="list-style:none"><li>menu one</li></ul>
+<div id="host"><span slot="title">Slotted title</span><span>unslotted, not shown</span></div>
+<script>
+document.getElementById('evil').value = 'x\u001b[2J\u001bcboom\u0007';
+var root = document.getElementById('host').attachShadow({mode: 'open'});
+root.innerHTML = '<p>Shadow before <slot name="title">fallback</slot> shadow after</p>';
+</script>
+</body></html>
