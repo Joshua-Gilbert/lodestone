@@ -64,8 +64,9 @@ CLAUDE /W  ── KEYS ──────────────▶ (device, 7)
     own, kept apart from Claude Code's.
   - That session gets no MCP tools and no `.mcp.json`. The Pi's HELLO
     answer says `gridfox`.
-  - `[web] command` in the config sets the program (default
-    `python3 -m gridfox`).
+  - `[web] command` in the config sets the program. The default is
+    gridlink's own Python (its venv, which has `wcwidth`) with
+    `-m gridfox`.
 
 ### On the GRiD (`os/claude/CLAUDE.ASM`)
 `/W` is `/T` with `app=web` in the HELLO. If the Pi's HELLO answer doesn't
@@ -268,8 +269,8 @@ walk). Now only its summary shows, and Return opens it.
   - Untried in particular: the named sandbox with React-style value
     setting, ElementClick, `Marionette:Quit`, and downloads.
 - **The first check on the Pi** should drive the page, not only show it:
-  1. `python3 -m gridfox --console https://example.com` in an 80x24
-     terminal;
+  1. `~/gridlink/venv/bin/python -m gridfox --console https://example.com`
+     in an 80x24 terminal, run from `~/gridlink`;
   2. Tab to a link and Return;
   3. Back;
   4. a form field (fill it in, send it).
@@ -293,11 +294,23 @@ walk). Now only its summary shows, and Return opens it.
     waits up to 20 s.
 
 ## Setting up (Pi 5)
-1. `sudo apt install firefox` (Raspberry Pi OS ships Firefox; `firefox-esr`
-   also works).
-2. gridlink as for Term; gridfox sits beside it in `claude-link/` and is
-   found without installing.
+1. Get `claude-link/` from this branch onto the Pi and run `bash install.sh`
+   there.
+   - It copies `gridlink/` and `gridfox/` to `~/gridlink`, adds `wcwidth`
+     to the venv, and installs Firefox if it is missing.
+   - It keeps your `config.toml`.
+2. `sudo systemctl restart gridlink`.
 3. On the GRiD: `CLAUDE /W`.
+
+**If `CLAUDE /W` shows Claude Code**, with **Pi has no /W: update gridlink**
+on the band, the Pi's gridlink is older than gridfox (step 1). It doesn't
+know `app=web` and falls back to Term. Its log
+(`journalctl -u gridlink -n 20`) then says `Term (Claude Code on the Pi)`
+where the new one says `web (Firefox on the Pi)`.
+
+The first build of `install.sh` (2026-10-16) left out `gridfox/`, and the
+default command used the system Python, which has no `wcwidth`. Both are
+fixed.
 
 ## Next
 - **W2, the picture view.** A key flips to a picture of the same page:
