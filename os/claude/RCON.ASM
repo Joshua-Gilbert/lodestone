@@ -36,8 +36,19 @@
 ;  the last frame has its answer (else the bridge would hold SRQ up while
 ;  the program runs).  The GPIB
 ;  driver's SRQ check (AH=0Bh) is never called: it clears the program's
-;  latch.  Requests (files, RUN, GPIB) are M3's: each is answered F6h, a
-;  DOS program is paused.
+;  latch.
+;
+;  M3: Claude sees the program and types into it.  HELLO names it (its
+;  PSP's path, when DOS isn't busy), and so does the band.  SCREEN answers
+;  with the program's screen as kept in windows 1-2 (the reply's first
+;  bytes just in front of it, the bytes there kept aside meanwhile).  TYPE
+;  is a key script (RUN's: keys, FF FF n waits n ticks): the console goes
+;  back to the program, the stub feeds it the keys from here (rc_feed,
+;  this page in window 0 meanwhile), and when they are done the console
+;  comes back with the program's screen as TYPE's answer, the link as it
+;  was (a HELLO would cancel the Pi's call).  CODE-\ meanwhile stops them.
+;  Other requests (files, RUN, GPIB) are answered F6h, a DOS program is
+;  paused.
 ; =====================================================================
 cpu 286
 org 0
@@ -55,7 +66,11 @@ VSEG    equ 0B800h
 SAVESEG equ 0E400h              ; windows 1-2: the program's screen
 P_OLD16 equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
 P_INDOS equ 4
+P_KS    equ 12                  ;  r_ks, then r_pend
 NKEYS   equ 16
+REQMAX  equ 2 + 2048            ; a REQUEST: id, op, a TYPE script of 2 KB
+TAIL    equ 12                  ; the page's last bytes: a reply's first ones
+NAMEMAX equ 12                  ; the program's name (8.3)
 TXMAX   equ 256                 ; GRiD -> Pi payload: HELLO, POLL, KEYS, REPLY
 RXMAX   equ 255
 TXQN    equ 6
@@ -66,12 +81,16 @@ TITLEN  equ 36                  ; the Pi's title, then DOS busy (48 cells)
 nano    db      7               ; offset 2: CLAUDE /R /A:nn (CLAUDE.ASM RC_NANO)
 term    db      1               ; (TERMLINK: Term's polling)
 busy    db      0               ;  (and no chat turn)
+feed_e: jmp     near rc_feed    ; offset 5: the stub's feeder (CLAUDE.ASM RC_FEED)
+        times   -((feed_e - $$) != 5) db 0
 
 rc_main:
         push    ds
         push    cs
         pop     ds
         cld
+        mov     [parms], bx             ; (the stub's, for the feeder)
+        mov     [parms + 2], es
         mov     ax, [es:bx + P_OLD16]   ; the BIOS's INT 16h, and is DOS busy?
         mov     [old16], ax
         mov     ax, [es:bx + P_OLD16 + 2]
@@ -81,7 +100,13 @@ rc_main:
         lodsb
         pop     ds
         mov     [indos], al
-        xor     ax, ax                  ; INT 33h there?  The program's
+        mov     byte [prog], 0          ; the program's name (AH=62h, its PSP:
+        cmp     al, 1                   ;  the kernel runs a call made inside
+        ja      .pn                     ;  another on a stack of its own, its
+        mov     ah, 62h                 ;  frame there; not two deep, where
+        int     21h                     ;  that stack is an INT 24h handler's)
+        call    prog_name
+.pn:    xor     ax, ax                  ; INT 33h there?  The program's
         mov     es, ax                  ;  pointer off (its own cell back
         mov     [mouse], al             ;  first, before the screen is kept)
         mov     [mswap], al
@@ -145,6 +170,7 @@ rc_main:
         push    cs
         pop     es
         call    session
+        call    unborrow                ; (a reply cut short: its bytes back)
         mov     al, [bios]              ; the program's mode, screen and data
         xor     ah, ah
         int     10h
@@ -194,6 +220,124 @@ rc_main:
         mov     ax, 1
         int     33h
 .x:     pop     ds
+        retf
+
+; prog: the name the program was started by, from its PSP (BX): after its
+; environment's strings come a count and the path (the kernel's EXEC, as
+; DOS's); the name after its last \ or :, at most NAMEMAX characters, up
+; to a control character.  Only from an environment the program owns
+; still (EXEC gives it the block): one it freed may hold anything now.
+prog_name:
+        mov     es, bx
+        mov     ax, [es:2Ch]
+        or      ax, ax
+        jz      .x
+        dec     ax                      ; (its MCB)
+        mov     es, ax
+        cmp     [es:1], bx
+        jne     .x
+        inc     ax
+        mov     es, ax
+        xor     di, di
+        xor     al, al
+        mov     cx, 8000h
+.s:     cmp     [es:di], al             ; an empty string: the end
+        je      .e
+        repne   scasb                   ; past this one
+        je      .s
+        jmp     short .x                ; (no end in 32 KB)
+.e:     inc     di
+        cmp     word [es:di], 0         ; (no path after)
+        je      .x
+        add     di, 2
+        mov     si, di
+        mov     cx, 128
+.n:     mov     al, [es:di]
+        inc     di
+        or      al, al
+        jz      .c
+        cmp     al, '\'
+        je      .b
+        cmp     al, ':'
+        jne     .l
+.b:     mov     si, di
+.l:     loop    .n
+        jmp     short .x
+.c:     push    ds
+        push    es
+        pop     ds
+        push    cs
+        pop     es
+        mov     di, prog
+        mov     cx, NAMEMAX
+.k:     lodsb
+        cmp     al, 21h                 ; (the NUL; and no space or control
+        jb      .z                      ;  character in HELLO's line)
+        stosb
+        loop    .k
+.z:     mov     byte [es:di], 0
+        pop     ds
+.x:     push    cs
+        pop     es
+        ret
+
+; Claude's keys (TYPE), for the stub's r_feed: called far with this page in
+; window 0, on the program's stack, AH = its INT 16h call.  CF if no key
+; now (AX kept); else AX = the next key, taken if AH is a read (00h, 10h).
+; A wait (FF FF n) holds them n ticks; at the end (or a {SNAP}: TYPE's
+; screen comes at the end anyway) the stub's r_ks goes 0 and r_pend 1:
+; the console comes back, and answers TYPE.
+rc_feed:
+        push    ds
+        push    si
+        push    bx
+        push    cs
+        pop     ds
+        mov     bx, ax
+.l:     mov     si, [ks_pos]
+        cmp     si, [ks_len]
+        jae     .end
+        mov     ax, [reqbuf + si]
+        cmp     ax, 0FFFFh
+        je      .wt
+        cmp     ax, 0FEFFh
+        je      .end
+        test    bh, 1                   ; (a peek leaves it)
+        jnz     .k
+        add     word [ks_pos], 2
+.k:     clc
+        jmp     short .x
+.wt:    push    ds
+        push    40h
+        pop     ds
+        mov     ax, [6Ch]
+        pop     ds
+        cmp     byte [ks_wait], 0
+        jne     .w2
+        mov     byte [ks_wait], 1
+        push    ax
+        mov     al, [reqbuf + si + 2]
+        xor     ah, ah
+        mov     [ks_until], ax
+        pop     ax
+        add     [ks_until], ax
+.w2:    sub     ax, [ks_until]
+        js      .no
+        mov     byte [ks_wait], 0
+        add     word [ks_pos], 3
+        jmp     .l
+.end:   mov     byte [played], 1
+        push    es
+        push    di
+        les     di, [parms]
+        mov     word [es:di + P_KS], 0100h      ; r_ks 0, r_pend 1
+        pop     di
+        pop     es
+.no:    mov     ax, bx
+        stc
+.x:     pop     bx
+        pop     si
+        pop     ds
         retf
 
 ; the keys typed ahead go back in front of any typed since (the head moves
@@ -260,24 +404,40 @@ session:
         mov     [now], ax
         mov     [t_active], ax
         mov     byte [quit], 0
-        mov     byte [connected], 0
         mov     byte [n_failrun], 0
         mov     byte [sdc_due], 0
+        mov     al, 0                   ; back from Claude's keys (all played,
+        xchg    al, [type_due]          ;  or CODE-\ stopped them: the rest
+        mov     [type_back], al         ;  dropped)
+        les     di, [parms]
+        mov     byte [es:di + P_KS], 0
+        push    cs
+        pop     es
         call    find_gpib
         sbb     al, al                  ; (none: 0FFh)
         inc     al
         mov     [gp_ok], al
         mov     si, st_nogpib
-        jz      .st
+        jz      .nl
         mov     bx, 2000                ; our own timeout, 2 s: the driver's
         mov     ah, 0Ah                 ;  is the program's too (TM5000G's
         call    gg_call                 ;  TIME OUT n: up to 60 s a byte, with
         mov     [old_tmo], ax           ;  a stuck bridge); its own back after
-        mov     byte [lstate], LS_RESET ; HELLO at once
+        mov     si, st_connecting
+        cmp     byte [type_back], 0     ; TYPE's answer, the link as it was (a
+        je      .h                      ;  HELLO would cancel the Pi's call),
+        cmp     byte [connected], 0     ;  if it was up when we went
+        je      .h
+        cmp     byte [lstate], LS_IDLE
+        jne     .h
+        call    type_reply
+        mov     si, st_connecting       ; (type_reply leaves SI on the reply)
+        jmp     short .st
+.h:     mov     byte [lstate], LS_RESET ; HELLO at once
         mov     ax, [now]
         sub     ax, 18
         mov     [t_reset], ax
-        mov     si, st_connecting
+.nl:    mov     byte [connected], 0
 .st:    call    set_status
         call    term_redraw             ; Term's screen from the shadow, the band
 .loop:  call    get_ticks
@@ -292,10 +452,17 @@ session:
         jmp     .loop
 .out:   cmp     byte [gp_ok], 0         ; before going back: the keys typed so
         je      .x                      ;  far and what is queued go, and the
-        mov     ax, [now]               ;  last frame gets its answer (else
-        mov     [t_quit], ax            ;  the bridge would hold it, and SRQ,
-.d:     call    get_ticks               ;  while the program has the bus); 3 s
-        mov     [now], ax               ;  at most
+        cmp     byte [type_due], 0      ;  last frame gets its answer (else
+        jne     .dt                     ;  the bridge would hold it, and SRQ,
+        mov     al, G_EVENT             ;  while the program has the bus); 3 s
+        mov     dx, cs                  ;  at most.  The user's CODE-\ (not
+        mov     si, evaway              ;  TYPE's keys): an EVENT says so, and
+        mov     cx, 1                   ;  the Pi answers Claude Code's calls
+        call    txq_put                 ;  at once until the next HELLO
+.dt:    mov     ax, [now]
+        mov     [t_quit], ax
+.d:     call    get_ticks
+        mov     [now], ax
         sub     ax, [t_quit]
         cmp     ax, 54
         jbe     .w
@@ -319,6 +486,7 @@ session:
         mov     bl, [nano]
         mov     ah, 06h
         call    gg_call
+        mov     byte [connected], 0     ; (so the next pop-up says HELLO)
 .t:     mov     bx, [old_tmo]           ; the program's timeout back
         mov     ah, 0Ah
         call    gg_call
@@ -413,7 +581,15 @@ build_hello:                            ; -> CX = length of hellobuf
         call    put_num
         mov     al, 10
         stosb
-        cmp     byte [have_screen], 0   ; the screen we kept, so the Pi can go
+        cmp     byte [prog], 0          ; the program paused, if we know it
+        je      .s
+        mov     si, kv_prog
+        call    put_str
+        mov     si, prog
+        call    put_str
+        mov     al, 10
+        stosb
+.s:     cmp     byte [have_screen], 0   ; the screen we kept, so the Pi can go
         je      .n                      ;  on from it if it is one it sent
         mov     si, kv_screen
         call    put_str
@@ -467,11 +643,12 @@ msg_sent:
         ret
 .e:     cmp     al, G_EVENT
         jne     .r
-        mov     byte [rep_q], 0         ; (the only EVENT: repaint)
+        mov     byte [rep_q], 0         ; (repaint's; away's is the last)
         ret
 .r:     cmp     al, G_REPLY
         jne     .x
         mov     byte [reply_busy], 0
+        jmp     unborrow                ; (a screen's: the bytes before it back)
 .x:     ret
 
 ; the link went down (TERMLINK.INC link_fail): say so in the band
@@ -543,40 +720,223 @@ rf_title:
         call    make_title
         jmp     term_status
 
-; a REQUEST: its id from the first frame, and when the last has come, the
-; REPLY: F6h, a DOS program is paused (files, RUN and GPIB are M3's)
+; a REQUEST, its frames gathered in reqbuf (id, op, arguments).  SCREEN:
+; the program's screen; TYPE: Claude's keys for it (the answer when they
+; are done); anything else F6h, a DOS program is paused (files, RUN, GPIB)
 rf_request:
         cmp     byte [rq_more], 0
         jne     .c
-        jcxz    .c
-        mov     al, [si]
-        mov     [rq_id], al
-.c:     mov     al, [pf_kind]
+        mov     word [rq_len], 0
+        mov     byte [rq_over], 0
+.c:     mov     di, [rq_len]
+        mov     ax, di
+        add     ax, cx
+        cmp     ax, REQMAX
+        jbe     .p
+        mov     byte [rq_over], 1
+        jmp     short .m
+.p:     add     di, reqbuf
+        rep     movsb
+        mov     [rq_len], ax
+.m:     mov     al, [pf_kind]
         and     al, 80h
         mov     [rq_more], al
         jnz     .x
+        cmp     word [rq_len], 2        ; (an id and an op)
+        jb      .x
+        cmp     byte [quit], 0          ; (going back: the Pi has the EVENT)
+        jne     .x
         cmp     byte [reply_busy], 0    ; (one at a time, as CLAUDE.COM)
         jne     .x
         cmp     byte [txq_n], TXQN
         jae     .x
-        mov     al, [rq_id]
+        mov     al, [reqbuf]
+        mov     ah, 0F0h                ; too big for us
+        cmp     byte [rq_over], 0
+        jne     reply2
+        mov     ah, [reqbuf + 1]
+        cmp     ah, OP_TYPE
+        je      type_start
+        cmp     ah, OP_SCREEN
         mov     ah, 0F6h
-        mov     [replybuf], ax
+        jne     reply2
+        xor     cl, cl                  ; (no flags)
+        jmp     screen_msg
+.x:     ret
+
+; a REPLY of its own: AL = id, AH = status, no data
+reply2: mov     [replybuf], ax
         mov     byte [reply_busy], 1
         mov     al, G_REPLY
         mov     dx, cs
         mov     si, replybuf
         mov     cx, 2
-        call    txq_put
+        jmp     txq_put
+
+; TYPE (AL = its id): the keys go to the program, the console goes back
+; to it; the answer comes when they are done (the next pop-up: session)
+type_start:
+        mov     [type_id], al
+        mov     word [ks_pos], 2
+        mov     ax, [rq_len]
+        mov     [ks_len], ax
+        mov     byte [ks_wait], 0
+        mov     byte [played], 0
+        mov     byte [type_due], 1
+        les     di, [parms]
+        mov     byte [es:di + P_KS], 1
+        push    cs
+        pop     es
+        mov     byte [quit], 1
+        ret
+
+type_reply:                             ; TYPE's answer: flags, the screen
+        mov     al, [type_id]
+        mov     ah, [played]            ; (bit 0: all the keys were played)
+        mov     cl, 1
+        ; (falls through)
+
+; Queue the REPLY with the program's screen as kept (its mode's part of
+; windows 1-2), as CLAUDE.COM's SCREEN: mode, banks, bpp (0: text cells),
+; width, height, bytes a line, then the screen.  AL = id; CL = 1 with
+; TYPE's flags (AH) after the status, 0 without.  The reply's first bytes
+; go just in front of the screen (the page's tail, or the saved screen
+; there for a text page further on), the bytes there kept aside until it
+; has gone (unborrow).
+screen_msg:
+        push    ax
+        push    cx
+        call    unborrow
+        mov     bl, [bios]              ; the mode: text, from 40:4Eh, 40:4Ah
+        cmp     bl, 3                   ;  columns, 25 rows
+        ja      .g
+        mov     dl, [bios + 4Ah - 49h]
+        xor     dh, dh
+        mov     al, 50                  ; (cells of 2 bytes)
+        mul     dl
+        mov     cx, ax
+        mov     di, [bios + 4Eh - 49h]
+        mov     ax, 25
+        mov     bh, 1                   ; one bank
+        mov     si, dx                  ; bpl = columns * 2
+        shl     si, 1
+        xor     bp, bp                  ; bpp 0
+        jmp     short .h
+.g:     cmp     bl, 7                   ; (mono: not in our copy, B000h)
+        je      .no
+        xor     di, di
+        mov     si, 80
+        mov     dx, 640
+        mov     ax, 200
+        mov     bh, 2
+        mov     cx, 4000h
+        mov     bp, 1
+        cmp     bl, 6
+        je      .h
+        jb      .c4
+        mov     ax, 400                 ; mode 40h (and any other): 640x400,
+        mov     bh, 4                   ;  four banks
+        mov     cx, 8000h
+        jmp     short .h
+.c4:    mov     dx, 320                 ; modes 4, 5: 320x200, 2 bits
+        inc     bp
+.h:     mov     [sm_len], cx            ; DI = offset in windows 1-2
+        push    es
+        push    SAVESEG - 1             ; (the page's tail: E3FF:0004..000F)
+        pop     es
+        add     di, 10h - TAIL
+        mov     [borrow_at], di
+        push    si                      ; (bpl)
+        push    ds                      ; the bytes there, aside
+        push    di
+        push    es
+        pop     ds
+        mov     si, di
+        push    cs
+        pop     es
+        mov     di, borrowed
+        mov     cx, TAIL
+        rep     movsb
+        pop     di
+        pop     ds
+        pop     si
+        mov     byte [borrow_on], 1
+        push    SAVESEG - 1
+        pop     es
+        mov     [es:di + 3], bl         ; mode, banks, bpp, width, height, bpl
+        mov     [es:di + 4], bh
+        mov     [es:di + 5], bp         ; (bpp; the width writes over its 2nd
+        mov     [es:di + 6], dx         ;  byte)
+        mov     [es:di + 8], ax
+        mov     [es:di + 10], si
+        pop     es
+        pop     cx
+        pop     ax
+        mov     si, [borrow_at]
+        mov     dx, [sm_len]
+        add     dx, TAIL
+        push    es
+        push    SAVESEG - 1
+        pop     es
+        mov     [es:si + 2], ah         ; TYPE's flags, after id and status
+        or      cl, cl
+        jnz     .t
+        inc     si                      ; SCREEN: id, status, then the screen
+        dec     dx                      ;  (the status over the flags)
+.t:     mov     [es:si], al
+        mov     byte [es:si + 1], 0
+        pop     es
+        mov     cx, dx
+        mov     byte [reply_busy], 1
+        mov     al, G_REPLY
+        mov     dx, SAVESEG - 1
+        jmp     txq_put
+.no:    pop     cx                      ; no screen we can send: F5h (TYPE: and
+        pop     ax                      ;  its flags)
+        or      cl, cl
+        jz      .n2
+        mov     [replybuf + 2], ah
+        mov     ah, 0F5h
+        mov     [replybuf], ax
+        mov     byte [reply_busy], 1
+        mov     al, G_REPLY
+        mov     dx, cs
+        mov     si, replybuf
+        mov     cx, 3
+        jmp     txq_put
+.n2:    mov     ah, 0F5h
+        jmp     reply2
+
+; a reply's first bytes gone: the bytes they stood on back
+unborrow:
+        cmp     byte [borrow_on], 0
+        je      .x
+        mov     byte [borrow_on], 0
+        push    es
+        push    SAVESEG - 1
+        pop     es
+        mov     di, [borrow_at]
+        mov     si, borrowed
+        mov     cx, TAIL
+        rep     movsb
+        pop     es
 .x:     ret
 
 ; ---- the band ----------------------------------------------------
-; title_text: the Pi's title (or ours), then DOS busy if DOS was
+; title_text: the Pi's title (or ours), the program's name, then DOS busy
+; if DOS was (a long status on the right covers the end: the name is in
+; HELLO for Claude anyway)
 make_title:
-        mov     si, ptitle
         mov     di, title_text
+        mov     si, ptitle
         call    put_str
-        cmp     byte [indos], 0
+        cmp     byte [prog], 0
+        je      .t
+        mov     si, s_sep
+        call    put_str
+        mov     si, prog
+        call    put_str
+.t:     cmp     byte [indos], 0
         je      .z
         mov     si, s_dos
         call    put_str
@@ -623,6 +983,8 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 sig_gg      db 'GRIDGPIB'
 kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.1', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
+kv_prog     db 'prog=', 0
+s_sep       db '  ', 86h, '  ', 0
 s_title0    db 'Claude (resident)', 0
 s_dos       db '  ', 86h, '  DOS busy', 0
 s_tkeys     db 'CODE-\ back  CODE-R repaints', 0
@@ -632,6 +994,7 @@ st_lost     db 'Link to the Pi lost, reconnecting', 82h, 0
 st_noans    db 'No answer from the bridge at GPIB address ', 0
 st_nogpib   db 'No GPIB driver (GRIDGPIB)', 0
 evrepaint   db 03h
+evaway      db 04h                      ; (the user went back to the program)
 
 %include "TERMINUS.INC"
 %include "GLYPHS.INC"
@@ -693,10 +1056,26 @@ rq_len      resw 1
 req_ready   resb 1
 snap_reply  resb 1
 rq_more     resb 1                      ; a REQUEST's frames still coming
-rq_id       resb 1
+rq_over     resb 1                      ;  more than REQMAX of them
 reply_busy  resb 1
-replybuf    resw 1
-hellobuf    resb 80
+replybuf    resb 4                      ; a reply of our own: id, status (flags)
+hellobuf    resb 96
+; M3: the program, its screen, Claude's keys
+parms       resd 1                      ; the stub's parameters (r_ks, r_pend)
+prog        resb NAMEMAX + 1            ; the program's name, or nothing
+sm_len      resw 1                      ; a screen's bytes
+borrow_on   resb 1                      ; a reply's first bytes stand at
+borrow_at   resw 1                      ;  E3FF:this, over these
+borrowed    resb TAIL
+type_due    resb 1                      ; TYPE's keys out: answer at the pop-up
+type_back   resb 1
+type_id     resb 1
+played      resb 1                      ;  (all of them were)
+ks_pos      resw 1                      ; the next key in reqbuf
+ks_len      resw 1
+ks_wait     resb 1                      ; a wait under way, until
+ks_until    resw 1
+reqbuf      resb REQMAX                 ; a REQUEST: id, op, its arguments
 crctab      resw 256
 ; Term (TERMCELL.INC, TERMKEYS.INC)
 t_active    resw 1
@@ -713,11 +1092,12 @@ t_cur       resw 1
 have_screen resb 1                      ; the shadow holds what the Pi drew
 crc_hid     resb 1
 ptitle      resb TITLEN + 1
-title_text  resb TITLEN + 16
+title_text  resb NAMEMAX + 5 + TITLEN + 16
 status_text resb 72
             alignb 16
 shadow      resb TROWS * 160            ; Term's rows: glyph, attribute
 rc_top:
 
 section .text
-        times   -((rc_top - $$) > 4000h) db 0   ; (one EMS page, 16 KB)
+        times   -((rc_top - $$) > 4000h - TAIL) db 0    ; (one EMS page, 16 KB,
+                                                        ;  its last bytes a reply's)

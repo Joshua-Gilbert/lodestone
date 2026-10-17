@@ -109,10 +109,10 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no DOS calls), and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
-| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again) |
+| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
 | 05h | REPLY | id (1), status (1: 0 = OK, else DOS error code or 0FFh), data |
 | 06h | NAK | — |
 | 07h | KEYS | Term: key words as INT 16h AH=10h returns them (AL, AH; 2 bytes each) |
@@ -164,6 +164,7 @@ Strings are ASCIIZ. Numbers are little-endian.
 | 0Ah | FREE | drive (1, 0 = default) | free bytes (4), total bytes (4) |
 | 10h | RUN | flags (1: bit0 capture output, bit1 snapshot screen at exit), timeout s (2), key script length (2), key script, command line | exit code (2), flags (1: bit0 output captured, bit1 snapshot taken), output file name |
 | 11h | SCREEN | which (1: 0 = last snapshot, 1 = now) | mode (1), banks (1), bpp (1: 0 = text cells), width (2), height (2), bytes per line (2), video memory |
+| 12h | TYPE | key script (the rest of the request; resident Claude's console only, at most 2,048 bytes) | flags (1: bit0 all the keys were played), then as SCREEN: the program's screen afterwards |
 | 20h | GPIB | op (1), addr (1), flags (1), timeout ms (2), largest reply (2), data | bytes read, or the status byte (see below) |
 | 30h | SETTIME | year (2), month, day, hour, min, sec (1 each) | — |
 
@@ -189,8 +190,26 @@ throughout, and takes over once the script is used up.
 DOS errors come back as the DOS error code (83 = a disk error the critical
 error handler failed, e.g. drive not ready). Other statuses: F0h request
 too large, F1h no memory, F3h command line too long, F5h no snapshot,
-F6h a DOS program is paused (resident Claude's console answers every
-request so for now), FFh unknown request.
+F6h a DOS program is paused (resident Claude's console answers so every
+request but SCREEN and TYPE), FFh unknown request.
+
+Resident Claude's console (`app=resident`) answers SCREEN with the paused
+program's screen as it keeps it (`which` doesn't matter: there is one),
+and TYPE: the console goes back to the program, the key script plays into
+it (keys and waits as RUN's; a snapshot mark ends it), and when it is done
+the console comes back by itself and answers, with the screen then. CODE-\
+on the GRiD meanwhile stops the keys (flags bit 0 clear). The console
+doesn't say HELLO when it comes back for that answer, so the Pi's call
+goes on; the frames' sequence numbers go on from where they were. A mode
+the console doesn't keep (7, at B000h) answers status F5h (TYPE: with its
+flags byte).
+
+When the user goes back to the program (CODE-\ in the console; not when
+it goes for TYPE's keys), the console sends EVENT 04h (away), before the
+keys typed so far. The Pi ends the calls waiting for the GRiD and refuses new
+ones until the next HELLO, instead of waiting for an answer that can't
+come while the program runs. A REQUEST that reaches the console on its
+way out gets no answer: the EVENT has ended it on the Pi.
 
 ## 5. Session flow
 
@@ -231,9 +250,13 @@ title from TITLE, the link, the keys).
 * **Mode.** The GRiD's HELLO sets flags bit 0 and `app=term`; the Pi answers
   HELLO with flags bit 0. `app=resident` (CLAUDE /R's console, popped up
   over a DOS program) is Term too, the same `claude`: what was typed in
-  CLAUDE /T is on its screen, and the other way round. While the GRiD is
-  resident the GRiD's tools answer that they can't run (the program holds
-  the GRiD), and anything sent anyway gets status F6h. The console keeps
+  CLAUDE /T is on its screen, and the other way round. Its HELLO's `prog=`
+  names the paused program (its file name, when the console could ask DOS:
+  not when DOS is more than one call deep, nor from an environment the
+  program no longer owns). While the GRiD is resident only
+  grid_program (SCREEN) and grid_type (TYPE) run; the GRiD's other tools
+  answer that they can't (the program holds the GRiD), and anything sent
+  anyway gets status F6h. The console keeps
   its screen between pop-ups and draws it at once; its HELLO's `screen=`
   is the CRC-16 (as the frames') of its 24 rows (glyph, attribute for each
   cell, row by row), then the cursor's row, column and hidden flag (0 or

@@ -26,3 +26,5 @@ P_TITLE   equ 49h
 P_CLEAR   equ 4Ah
 P_CELLS   equ 4Bh
 HF_TERM   equ 01h                ; the Pi's HELLO: Term
+OP_SCREEN equ 11h                ; REQUEST ops the console answers (CLAUDE.COM's
+OP_TYPE   equ 12h                ;  optab has its own); TYPE is the console's only

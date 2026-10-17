@@ -53,7 +53,7 @@ program (TM5000G) ── INT 16h ──► CLAUDE /R stub (conventional, ~1.2 KB
   3. serve the link until CODE-\\ is pressed again (or the Pi says done);
   4. put the program's screen back exactly, byte for byte, then return to the program.
 - **New REQUESTs:**
-  - **12h TYPE:** a key script in RUN's format, fed to the program after pop-down. A snapshot mark brings Claude back silently at the next key wait, so it can see what the keys did.
+  - **12h TYPE:** a key script in RUN's format, fed to the program after pop-down. ~~A snapshot mark brings Claude back silently at the next key wait~~ When the keys are done the console comes back up (visibly: decided with Joshua for M3, so he sees the keys play and Claude Code's question before each TYPE) and Claude sees what they did.
   - **SCREEN of the paused program:** from the saved copy.
   - HELLO says `app=resident` and names the program (its PSP name).
 - **What Claude may do while a program is paused:**
@@ -127,7 +127,7 @@ On the 1520 (SPIKES.TXT; run without a GPIB address):
 ## Milestones
 1. **M1:** `CLAUDE /R` loads (EMS pages, stub) and unloads (`CLAUDE /U`). CODE-\\ flips to an empty console and back over TM5000G and over the Executive, with no link yet. Memory is measured. Done in the emulator and on the 1520 (below).
 2. **M2:** the Term session in the pop-up; the same `claude` session as `CLAUDE /T`. Done in the emulator (below).
-3. **M3:** the paused program's SCREEN and TYPE, with silent snapshot returns. Claude can drive TM5000G.
+3. **M3:** the paused program's SCREEN and TYPE, the console back with the screen after the keys. Claude can drive TM5000G. Done in the emulator (below).
 4. **M4 (0.5b):** background requests at key waits.
 
 Each milestone has emulator tests:
@@ -190,7 +190,7 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
 - **`indos`:** its address comes from INT 21h AH=34h at load.
   - The stub passes it to the console, which says "DOS busy" in its band when the program was inside DOS (COPY CON at the prompt).
   - The console calls nothing but INT 10h, the BIOS's INT 16h and INT 33h (whose AX=14h makes a DOS call: only when DOS isn't busy).
-  - Acting on it is M3's (file requests while a program is paused).
+  - Acting on it (file requests while a program is paused) comes after M3; M3's name lookup uses it (one call deep only).
 - **The stub's header**, at the same offsets in every CLAUDE.COM from now on: `CLRS` (100h), its version, where its hook is, the INT 16h it goes on to, its EMS handle, and the byte that stops pop-ups (10Dh). `/U` finds the stub among the memory blocks (owner 8, `CLRS` at 100h), so `/R` also knows when it is there already, even under another hook, and both work on a stub that another version of CLAUDE.COM left (copied to the floppy without a restart). M1 at first found it by its hook's offset, which another version's wouldn't share (PR #27's review). `/U` is refused when INT 16h no longer points at the stub's hook; otherwise it puts INT 16h back and frees the EMS pages and the block.
 - **Cost:**
   - **Resident:** 768 bytes of conventional memory: 360 of code and data, the 384-byte stack, and the block's MCB (704 before the review's fixes: the header, the in-service check, the no-key answer). DOS programs get 0.8 KB less, at the prompt and from the Executive alike (the plan's target was 1.2 KB). `/U` gives all of it back.
@@ -287,9 +287,55 @@ CODE-\ over a program now brings up Claude Code itself: Term, the same `claude` 
   - the stub looked for only at INT 16h's head: under HOOK16, `r_off` stays 0 while CLAUDE runs, and CODE-\ there brings the console up over it.
 - **On the 1520 now:** with no Pi, the console says "No answer from the bridge at GPIB address 7", and CODE-\ should still come back at once. `M1TEST.BAT` went through that with M2's console on 2026-10-14 (above): it came up and went back over every program. The rest waits for the Pi 5 and the bridge.
 
-## Open points, after M2
-- **Programs that hook INT 16h themselves**, and programs that read the keyboard through INT 09h only (not covered: Phase 2 left INT 09h hooks out). `/U` refuses while one sits above the stub. (CLAUDE.COM finds the stub under such a program too, and turns its hot key off.)
+## M3: Claude sees the paused program and types into it (2026-10-14)
+In the console, Claude Code can now look at the program it is popped up over and type into it: it drives TM5000G. Decided with Joshua: after Claude's keys the console comes back up in view, not silently as the plan had it, so the keys can be watched as they play, and Claude Code's question is on the screen before each `grid_type`.
+
+- **Two tools, in the console only** (gridlink's MCP server):
+  - `grid_program` looks: the program's name and its screen (text, or an image of a graphics screen).
+  - `grid_type` asks every time: keys into the program (`1A{WAIT 30}`), then its screen.
+  - The other GRiD tools still answer that they can't run while a program is paused (the program holds the GRiD); outside the console these two answer that no program is paused. The tool server now asks gridlink about each tool by name.
+- **The program's name:** the console asks DOS for the current PSP (INT 21h AH=62h) and takes the file name from the path after its environment's strings. That is a DOS call from inside INT 16h. The kernel runs a call made inside another on a stack of its own (`astack`), its frame there and nothing kept outside it, so the call is safe while DOS is one call deep; TM5000G reads its keys through DOS, so it is always one deep when the console comes up over it. Two deep, that stack is an INT 24h handler's, and the name is left out. It is also left out when the environment's block isn't the program's any more (EXEC gives it the block; a program that freed it leaves PSP:2Ch pointing at a block that may hold anything now), and it ends at a control character, so nothing stray reaches HELLO's lines (PR #30's review). HELLO says `prog=TM5000G.EXE`, and the band shows it after the title (where a long status on the right, "No answer from the bridge…", covers it: the band reads as in M2 then, as M1TEST expects).
+- **SCREEN** (11h) answers with the program's screen as the console keeps it, in CLAUDE.COM's SCREEN format:
+  - text from 40:4Eh (any page) at 40:4Ah columns by 25 rows;
+  - modes 4, 5 and 6: 16 KB; anything else (40h): 32 KB;
+  - mode 7 (B000h) isn't in the console's copy: status F5h.
+  - The reply goes straight from the saved screen (windows 1-2), its first 11 or 12 bytes just in front of it: the console page's last 12 bytes, kept free, or for a text page further on the saved screen's own bytes there, kept aside and put back once the reply has gone, or when the console goes.
+- **TYPE** (new request 12h): a key script in RUN's format (keys and waits; `{SNAP}` only at the end, where the screen is taken anyway), at most 2 KB, about 1,000 keys, kept in the console's page.
+  1. The console goes back to the program at once.
+  2. At each INT 16h call the stub maps the console's page into window 0 for a moment and asks it for the next key (`r_feed`, the console's `rc_feed` at E000:0005): a peek sees it, a read takes it, a wait holds them back, and real keys still work.
+  3. When the keys are done the stub brings the console back up at the program's next key call, as CODE-\ does (after the same in-service check), and the console answers TYPE with the program's screen then and "all played".
+  4. It comes back without a HELLO, the link as it was (the frames numbered on): gridlink cancels a waiting call at a HELLO. If the link failed meanwhile, or the bridge was cleared on the way down, it says HELLO, and Claude gets an error instead.
+  - CODE-\ while the keys play stops them: the console comes up and answers with the screen, not all played. The stub's flag is cleared at every pop-up.
+- **Going back** (PR #30's review): when the user goes back to the program with CODE-\ (not when the console goes for TYPE's keys), the console sends EVENT 04h, away, with the last keys. gridlink then ends any call waiting for the GRiD and refuses new ones at once ("the user has gone back…") until the next HELLO. Before, a call made in the 10 s after waited 120 s for an answer, or ended at the next pop-up. A REQUEST that reaches the console on its way out gets no answer, as the EVENT has ended it on the Pi, so the program doesn't wait while a screen goes.
+- **Cost:**
+  - conventional memory: the stub is 816 bytes with its MCB (768 in M2): its code grew 46 bytes, from 368 to 414 (the feeder's call, less 8 bytes of a test `r_hot` never needed, PR #30's review), three paragraphs more (47 to 50). DOS programs still get 0.8 KB less;
+  - EMS: 3 pages as before. The console is 6.4 KB of code and font, and with its data and the 2 KB for keys it uses 13.9 KB of its 16 KB page (2.1 KB spare);
+  - CLAUDE.COM: 20,404 bytes on disk (+846), and no more memory than M2's when it runs as chat or Term.
+- **Tests** (`test_resident_term.py`, `t_type` and `t_drive`, 28 checks):
+  - over TESTKEY (it echoes its keys): HELLO and the band name it; `grid_program` has its screen, and SCREEN's bytes are its cells byte for byte; `grid_type "hello"` plays into it, and the console comes back by itself with "TESTKEY ready: hello", with no HELLO (gridlink's count of them unchanged) and in step with the Pi, the band's status its own text; CODE-\ during a `{WAIT}` stops the keys, and TYPE says so; afterwards TESTKEY has had the 5 keys and no more;
+  - going back: after CODE-\, `grid_program` is refused at once (the EVENT), and works again after the next pop-up's HELLO; a `grid_program` on its way as the user presses CODE-\ (sent between the console's polls) gets no answer from the console and ends at once on the Pi;
+  - the name: TESTKEY's environment's block made someone else's, no name in HELLO or the band; a line feed put in its name, the name ends there and HELLO has no line of its own for the rest;
+  - into EMSUSE and EMSUSE /X (INT 16h AH=00h and 10h), which map EMS in all four windows and check them after every key: `grid_type "abc"`, then "3 keys, 0 bad";
+  - over GFXUSE in mode 6: an image, and SCREEN's 16 KB byte for byte; GFXUSE's own check afterwards, 0 bad;
+  - over PAGE1, a new test program with its text on page 1 (B800:1000h; pcemu's INT 10h AH=05h now keeps 40:62h and 40:4Eh as the BIOS does): its page in SCREEN; `grid_type "x"` into it and back with page 1, the band's status the console's own; its 32 KB byte for byte afterwards, the 12 bytes in front of page 1 too;
+  - over the Executive (mode 40h): SCREEN's 32 KB byte for byte, the reply running to the last byte of window 2, and its screen as it was afterwards;
+  - over TM5000G: `grid_program` has its main menu and its name; `grid_type "1A{WAIT 60}"` (Configure Modules, auto-detect) and the console comes back with FG5010, 8753D and DC5009 found, and TM5000G is left so.
+
+  claude-link's `test_mcp.py`: the two tools (look and ask), `grid_type`'s keys (a `{SNAP}` at the end dropped, one in the middle refused, too many keys or waits refused before the GRiD), its answers (all played, stopped, no screen), and `grid_program` without a name.
+- **Controls**, each run against the change it guards and failing a check:
+  - a HELLO when the console comes back: gridlink cancels the call ("the GRiD restarted the link"), 4 checks;
+  - the bytes in front of the screen not put back: PAGE1's screen differs at FF5h;
+  - the name asked only when DOS isn't busy: none for TM5000G;
+  - the stub's flag not cleared at the pop-up: the keys after CODE-\ play on (into GFXUSE and PAGE1);
+  - a peek that takes the key: TM5000G loses its keys (it peeks before it reads), and no auto-detect;
+  - from the review: the status not set after TYPE's return: the band's status is what was at the reply's address (over TESTKEY, empty), over TESTKEY and PAGE1; no EVENT away: gridlink doesn't learn the user went back, so the call after CODE-\ isn't refused, and the one on its way isn't ended; requests answered on the way out: the console sends TESTKEY's screen for a call already ended; the environment's owner not checked: the name from a block that isn't TESTKEY's in HELLO; the name not ended at a control character: a line of its own in HELLO.
+- **On the 1520 now:** nothing new to try without the Pi: the tools need it. The stub's new code runs only while Claude has keys for the program, and M1's and M2's checks pass in the emulator, so M1TEST should go as it did; worth a rerun with this CLAUDE.COM.
+
+## Open points, after M3
+- **Programs that hook INT 16h themselves**, and programs that read the keyboard through INT 09h only (not covered: Phase 2 left INT 09h hooks out). `/U` refuses while one sits above the stub. (CLAUDE.COM finds the stub under such a program too, and turns its hot key off.) Claude's keys (TYPE) go in through the stub's INT 16h too, so such a program doesn't get them either.
 - **An empty bus** (no instrument, no bridge): what the 1520's 7210 and the driver do with the console's commands to the bridge, and how long CODE-\ then takes, is to be seen on the 1520.
 - **A CRC that matches by chance** (1 in 65,536) would leave a wrong Term screen until those cells change; CODE-R draws it all again.
-- **The program's name** in HELLO and the band, files while a program is paused, its SCREEN and TYPE: M3.
-- **The mouse during a pop-up:** the INT 33h pointer is hidden meanwhile, and its event handler swapped out unless DOS is busy (M1). The console itself ignores the mouse. If the kernel's INT 33h noted a handler's owner without a DOS call (reading the current PSP itself), AX=0Ch and 14h would be safe from anywhere, and the swap could happen while DOS is busy too.
+- **Files and GPIB while a program is paused** (the plan's READ, DIR, WRITE..., GPIB queries): when DOS is busy under the program they need the kernel's own stack, a kernel change. Then M4 (0.5b), Claude working between keys.
+- **The mouse during a pop-up:** the INT 33h pointer is hidden meanwhile, and its event handler swapped out unless DOS is busy (M1). The console itself ignores the mouse. M3's name lookup showed that AH=62h (which AX=14h makes) is safe while DOS is one call deep: the kernel runs a call made inside another on a stack of its own. So the swap could happen then too (TM5000G reads its keys through DOS: always one deep); not done in M3, as it needs its own test. If the kernel's INT 33h noted a handler's owner without a DOS call (reading the current PSP itself), AX=0Ch and 14h would be safe from anywhere.
+- **Keys that quit the program:** the rest of a TYPE's keys go to whatever calls INT 16h next (the prompt, the Executive), as RUN's do, and the console comes back over that. `grid_type` says so.
+- **The program's name when DOS is two calls deep** (an INT 24h handler reading a key): not asked, as that stack is the handler's. A kernel call giving the current PSP's address (as AH=34h gives `indos`'s) would make it free.

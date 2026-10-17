@@ -19,7 +19,7 @@ TM5000G = next((p for p in (os.environ.get('TM5000G', ''), os.path.join(GOS, '..
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
-    for n in ('RSPIKE', 'EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE', 'HOOK16'):
+    for n in ('RSPIKE', 'EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE', 'HOOK16', 'PAGE1'):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(CL, n + '.COM'), os.path.join(CL, n + '.ASM')], check=True)
     subprocess.run(['sh', os.path.join(CL, 'build.sh')], check=True, stdout=subprocess.DEVNULL)  # RCON.BIN in CLAUDE.COM, its map
     # another version's CLAUDE.COM, as far as the stub goes: laid out otherwise after its header

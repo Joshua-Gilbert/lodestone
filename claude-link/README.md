@@ -55,6 +55,14 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
 | `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
 | `gpib_send` | every time | query, write, clear, trigger, local/remote |
+| `grid_program` | until allowed | resident Claude only: the DOS program its console is popped up over (its name and screen) |
+| `grid_type` | every time | resident Claude only: keys into that program (`1A{WAIT 30}`); the console goes while they play and comes back with the program's screen |
+
+While Claude Code is in resident Claude's console (CLAUDE /R, CODE-\ over a
+program), only `grid_program` and `grid_type` run: the program holds the
+GRiD. Outside it, those two say no program is paused. Once the user has
+gone back to the program (CODE-\ again), every GRiD tool says so at once
+until the console is up again.
 
 GPIB queries ask too: a query is a command, and some (`MEAS?` and `READ?`
 on a Keithley source-meter) switch a source's output on.
@@ -79,11 +87,11 @@ Limits the tools keep, whatever Claude asks for:
 - `.mcp.json` starts Python isolated (`-I`), so nothing in `~/grid` is
   imported in place of gridlink's own code.
 
-A Claude Code older than `requiresUserInteraction` asks for the three until
+A Claude Code older than `requiresUserInteraction` asks for the four until
 you allow them; to make it always ask, add to `~/grid/.claude/settings.json`:
 
 ```json
-{"permissions": {"ask": ["mcp__grid__grid_command", "mcp__grid__grid_change_files", "mcp__grid__gpib_send"]}}
+{"permissions": {"ask": ["mcp__grid__grid_command", "mcp__grid__grid_change_files", "mcp__grid__gpib_send", "mcp__grid__grid_type"]}}
 ```
 
 ### Setting up Term (Pi 5, 4 GB)
