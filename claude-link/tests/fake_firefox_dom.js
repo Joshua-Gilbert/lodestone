@@ -28,7 +28,11 @@ function load(url, html) {
   w.addEventListener('click', (e) => {
     if (e.defaultPrevented) return;
     const a = e.target.closest && e.target.closest('a[href]');
-    if (a) { nav = a.href; return; }
+    if (a) {
+      const here = w.location.href.split('#')[0], there = a.href.split('#')[0];
+      if (there === here && a.href.includes('#')) { w.location.hash = a.href.split('#')[1]; return; }  // same document
+      nav = a.href; return;
+    }
     const b = e.target.closest && e.target.closest('button, input[type=submit], input[type=image]');
     if (b && b.form && (b.type || 'submit') === 'submit') b.form.requestSubmit(b.tagName === 'BUTTON' || b.type === 'submit' ? b : undefined);
   });

@@ -22,6 +22,7 @@ SYNC_MAX = 0.5       # an unfinished ?2026 frame counts as done after this
 TERM_HOLD = 0.06     # the Pi's hold on a POLL in Term (250 ms in chat)
 TITLE_EVERY = 1.0
 ESC_GAP = 0.03       # after a lone Esc, before the next key
+STOP_WEB = 15.0      # gridfox's own wait for Firefox to quit is 10 s
 
 
 def _ctty():
@@ -198,6 +199,7 @@ class TermSession:
             here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             env['PYTHONPATH'] = os.pathsep.join([here] + [p for p in [env.get('PYTHONPATH')] if p])
             env['GRIDLINK'] = 'web'
+            env['PYTHONSAFEPATH'] = '1'       # (3.11+) its folder is not on sys.path at all
         try:
             s.child = subprocess.Popen(resolve(s.command), stdin=sl, stdout=sl, stderr=sl, cwd=s.cwd, env=env,
                                        start_new_session=True, preexec_fn=_ctty, close_fds=True)
@@ -222,7 +224,9 @@ class TermSession:
     def stop(s):
         if s.tools is not None: s.tools.stop()
         if s.child is not None:
-            try: s.child.terminate(); s.child.wait(3)
+            # gridfox asks Firefox to quit cleanly (cookies, sign-ins, session
+            # store written): give it the time, or Firefox is killed half-way
+            try: s.child.terminate(); s.child.wait(STOP_WEB if s.web else 3)
             except Exception:
                 try: s.child.kill()
                 except Exception: pass
@@ -246,9 +250,10 @@ class TermSession:
         try: os.close(fd)
         except OSError: pass
         if mine:
-            s.log('term: %s exited (%s)' % (s.command[0], code))
-            s._message('%s exited (code %s). Press Return to start it again, CODE-Q to leave.'
-                       % (s.command[0], code))
+            s.log('term: %s exited (%s)' % (s.name, code))
+            why = ' (it lost Firefox)' if s.web and code == 3 else ''
+            s._message('%s exited%s (code %s). Press Return to start it again, CODE-Q to leave.'
+                       % (s.name, why, code))
 
     def feed(s, data):
         s.stats['pty_in'] += len(data)

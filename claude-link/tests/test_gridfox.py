@@ -4,13 +4,13 @@ The layout and keys on their own; the real extract.js and act.js against a
 stand-in Firefox (fake_firefox.py: Marionette + jsdom); the app driven key by
 key; and end to end through gridlink and the GRiD's link (GridSim).
 
-    python3 tests/test_gridfox.py        (needs Node and `npm install` in tests/)
+    python3 tests/test_gridfox.py        (needs Node and `npm ci` in tests/; skips without)
 """
 import io, os, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.dirname(HERE))
 import pyte
-from fake_firefox import FakeFirefox
+from fake_firefox import FakeFirefox, missing
 from gridfox import page as P
 from gridfox.app import App, Keys, Line, to_url, looks_like_url, BODY
 from gridfox.browser import Browser
@@ -65,8 +65,18 @@ def test_keys_and_line():
 
 
 # ---- the real scripts on a stand-in Firefox ---------------------------------
-def browser():
-    f = FakeFirefox()
+_FAKE = None
+
+
+def fake(slow=None):
+    """The module's one stand-in Firefox (node and jsdom start once), reset."""
+    global _FAKE
+    if _FAKE is None: _FAKE = FakeFirefox()
+    return _FAKE.reset(slow)
+
+
+def browser(slow=None):
+    f = fake(slow)
     m = Marionette(port=f.port); m.new_session()
     return f, m, Browser(m)
 
@@ -92,7 +102,7 @@ def test_extract():
         assert mod['acts'][6]['opts'] == ['Volts', 'Amps', 'Ohms']
         assert mod['acts'][1]['h'] == U + 'long'
     finally:
-        m.close(); f.close()
+        m.close()
 
 
 # ---- the app, key by key ----------------------------------------------------
@@ -127,7 +137,7 @@ class Run:
         while s.app.rereads: s.app.rereads.pop(0); s.app.reread()
         s.pump()
 
-    def close(s): s.m.close(); s.f.close()
+    def close(s): s.m.close()
 
 
 def test_app_open_follow_back():
@@ -293,16 +303,15 @@ def test_form_not_sent_early():
 
 
 def test_slow_page_after_click():
-    f = FakeFirefox(slow={'long': 1.0})
-    m = Marionette(port=f.port); m.new_session()
-    out = io.BytesIO(); app = App(Browser(m), out=out)
+    f, m, b = browser(slow={'long': 1.0})
+    out = io.BytesIO(); app = App(b, out=out)
     try:
         app.go(U + 'index')
         app.select(1); t0 = time.time(); app.key('enter')         # Long page, which takes a second
         assert app.url == U + 'long' and time.time() - t0 >= 0.9, app.url
         assert any('Paragraph 1 of the long page.' in l for l in app.doc.text)
     finally:
-        m.close(); f.close()
+        m.close()
 
 
 def test_covered_link_falls_back():
@@ -372,7 +381,103 @@ def test_lost_firefox_ends_gridfox():
         th.join(5)
         assert not th.is_alive() and r.app.lost, r.app.lost
     finally:
-        os.close(wr); os.close(rd); r.f.close()
+        os.close(wr); os.close(rd)
+        time.sleep(0.2)                                          # (the stand-in sees the session go)
+
+
+# ---- Joshua's review (2026-10-17) -------------------------------------------
+def test_anchor_links_keep_the_page():
+    r = Run(U + 'anchors')
+    try:
+        assert '#' not in r.app.url
+        r.keys('tab', 'enter')                                   # GPIB commands: #gpib, the same document
+        assert r.app.url == U + 'anchors#gpib', r.app.url
+        top = r.app.top
+        assert top > 0 and r.app.doc.text[top].strip() == 'GPIB commands', (top, r.text())
+        assert r.has('ID? asks for the identity.')
+        r.app.url_t = 0; r.app._check_url(); r.pump()           # the idle look at the address: no jump
+        assert r.app.top == top, r.app.top
+        r.keys('home')
+        end = [i for i, a in enumerate(r.app.acts()) if a.get('h', '').endswith('#end')][0]
+        r.app.select(end); r.keys('enter')                       # #end: an <a name> in an empty spot
+        assert r.app.url == U + 'anchors#end' and r.has('The very end.'), r.text()
+        r.keys('home')
+        idx = [i for i, a in enumerate(r.app.acts()) if a.get('h', '').endswith('/long')][0]
+        r.app.select(idx); r.keys('enter')                       # a real new page still starts at the top
+        assert r.app.url == U + 'long' and r.app.top == 0
+        r.f.reset(); r.app.go(U + 'anchors#gpib'); r.pump()      # an address with a #fragment, opened
+        assert r.app.doc.text[r.app.top].strip() == 'GPIB commands', r.app.top
+    finally:
+        r.close()
+
+
+def test_pushstate_keeps_the_place():
+    r = Run(U + 'anchors')
+    try:
+        btn = [i for i, a in enumerate(r.app.acts()) if a.get('v') == 'Next view'][0]
+        r.app.select(btn); top = r.app.top
+        r.keys('enter')                                          # the page changes its own address
+        assert r.app.url == U + 'anchors?view=2', r.app.url
+        assert r.app.top == top and r.has('View two'), (r.app.top, top, r.text())
+        r.app._check_url(); r.pump()
+        assert r.app.top == top
+    finally:
+        r.close()
+
+
+def test_labels_and_details():
+    r = Run(U + 'anchors')
+    try:
+        d = r.app.doc.text
+        assert '[+] More settings' in d and 'Hidden until opened.' not in d, d[-12:]
+        assert '[-] Open already' in d and 'Shown from the start.' in d
+        cs = [i for i, a in enumerate(r.app.acts()) if a.get('name') == 'cs'][0]
+        r.app.select(cs); r.keys('enter')
+        assert r.text()[23].startswith('Call sign:'), r.text()[23]            # <label for>
+        r.keys('esc')
+        sq = [i for i, a in enumerate(r.app.acts()) if a.get('name') == 'sq'][0]
+        r.app.select(sq); r.keys('enter')
+        assert r.text()[23].startswith('Grid square:'), r.text()[23]          # a wrapping <label>
+        r.keys('esc')
+        det = [i for i, a in enumerate(r.app.acts()) if a.get('v') == 'More settings'][0]
+        r.app.select(det); r.keys('enter')                                    # Return opens it
+        assert '[-] More settings' in r.app.doc.text and 'Hidden until opened.' in r.app.doc.text
+    finally:
+        r.close()
+
+
+def test_firefox_quits_cleanly():
+    import subprocess
+    from gridfox.marionette import Firefox
+
+    class M:                        # what stop() needs of Marionette
+        dead = False
+        def __init__(s, ok): s.ok = ok; s.asked = 0
+        def quit(s): s.asked += 1; return s.ok
+    fx = Firefox()
+    fx.proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(0.3)'])
+    m = M(True); t0 = time.time(); fx.stop(m, wait=5)
+    assert m.asked == 1 and fx.proc.returncode == 0 and time.time() - t0 < 2      # asked, then waited for it
+    fx.proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    m = M(False); fx.stop(m, wait=0.5)
+    assert m.asked == 1 and fx.proc.returncode is not None                       # refused: SIGTERM after all
+    fx.proc = None; fx.stop(M(True))                                             # not ours: left alone
+
+
+def test_web_exit_banner():
+    from gridlink.term import TermSession
+    from gridlink.config import Config
+    import tempfile
+    cfg = Config(); cfg.web_dir = tempfile.mkdtemp()
+    t = TermSession(cfg, web=True, command=[sys.executable, '-c', 'import sys; sys.exit(3)'], log=lambda m: None)
+    try:
+        t.start(); end = time.time() + 5
+        while time.time() < end and t.exited is None: time.sleep(0.05)
+        time.sleep(0.1)
+        text = '\n'.join(t.text())
+        assert 'gridfox exited (it lost Firefox) (code 3)' in text and 'python' not in text, text
+    finally:
+        t.stop()
 
 
 # ---- end to end: gridlink + the GRiD's link (GridSim) -----------------------
@@ -420,12 +525,18 @@ def test_end_to_end_gridsim():
         f.close()
 
 
+NO_BROWSER = ('test_wrap_and_clean', 'test_layout_kinds', 'test_keys_and_line', 'test_keys_timing',
+              'test_firefox_quits_cleanly', 'test_web_exit_banner')       # (these run without the stand-in)
+
 if __name__ == '__main__':
     tests = [(n, v) for n, v in sorted(globals().items()) if n.startswith('test_') and callable(v)]
     only = sys.argv[1:]
     bad = 0
+    why = missing()
+    if why: print('skip: the stand-in Firefox needs Node and jsdom (%s); only the tests without it run' % why)
     for n, t in tests:
         if only and not any(o in n for o in only): continue
+        if why and n not in NO_BROWSER: print('skip %s' % n); continue
         t0 = time.time()
         try:
             t(); print('ok   %-34s %.1fs' % (n, time.time() - t0))

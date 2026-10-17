@@ -43,7 +43,8 @@ def main(argv=None):
     try:
         run_tty(app)
     finally:
-        m.close(); fx.stop()
+        fx.stop(m)                  # (a clean quit first: cookies and sign-ins kept)
+        m.close()
     if app.lost: log('stopped: %s' % app.lost)
     return 3 if app.lost else 0
 

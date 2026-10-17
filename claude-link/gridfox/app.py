@@ -190,6 +190,9 @@ class App:
             top, sel = s.places.get(s.url, (0, -1))
         s.busy = ''; s.status = err or ''
         s._relayout(top=top, sel=sel if sel is not None else -1)
+        try: s.b.mark()                          # this document, for telling it from the next
+        except ERRS: pass
+        if top == 0 and urllib.parse.urldefrag(s.url)[1]: s._to_anchor()   # page.html#section
         # pages that fill in after they load: look again shortly
         now = time.time(); s.rereads = [now + 0.6, now + 2.0, now + 5.0]
 
@@ -208,10 +211,22 @@ class App:
             m = s.b.read()
         except ERRS:
             return
-        if m.get('url') != s.url:
-            s.model = m; s.url = m.get('url', s.url); s._relayout(top=0, sel=-1); return
-        if m.get('blocks') != s.model.get('blocks') or m.get('acts') != s.model.get('acts'):
-            s.model = m; s._relayout()
+        new = m.get('url') or s.url
+        if new != s.url and not (_page(new) == _page(s.url) or s.b.same_document()):
+            s.model = m; s.url = new; s._relayout(top=0, sel=-1); s.b.mark(); return
+        moved = new != s.url                     # the same document at another address (#fragment, pushState)
+        if moved or m.get('blocks') != s.model.get('blocks') or m.get('acts') != s.model.get('acts'):
+            s.model = m; s.url = new; s._relayout()
+        if moved and urllib.parse.urldefrag(new)[1]:
+            s._to_anchor()
+
+    def _to_anchor(s):
+        """Scroll to the address's #fragment, if the page has it."""
+        frag = urllib.parse.unquote(urllib.parse.urldefrag(s.url)[1])
+        ln = s.doc.anchors.get(frag) if frag else None
+        if frag == 'top' and ln is None: ln = 0
+        if ln is not None:
+            s.top = max(0, min(ln, max(0, len(s.doc) - BODY))); s.draw()
 
     def _remember(s):
         if s.url: s.places[s.url] = (s.top, s.sel)
@@ -254,7 +269,7 @@ class App:
         a = acts[i]; t = a.get('t')
         if s.url == HOME: return
         if t == 'field':
-            label = (str(a.get('ph') or a.get('name') or 'Text'))[:24]
+            label = (str(a.get('lb') or a.get('ph') or a.get('name') or 'Text'))[:24]
             s.line = Line(label + ': ', a.get('v', ''), secret=a.get('type') == 'password')
             s.line_do = lambda text, i=i: s.fill(i, text)
             s.draw(); return
@@ -554,7 +569,10 @@ class App:
         """A page that arrived on its own (a slow link or form answered at last,
         a redirect, a script): read it."""
         u = s.b.m.url()
-        if u and u != s.url:
+        if not u or u == s.url: return
+        if _page(u) == _page(s.url) or s.b.same_document():
+            s.reread()                           # a #fragment or the page's own history.pushState
+        else:
             s._remember(); s._loaded(top=0)
 
     def _guard(s, fn):
@@ -570,6 +588,11 @@ class App:
             s.busy = ''; s.status = 'gridfox: %s' % _short(e); s.draw()
         if getattr(s.b.m, 'dead', False):
             s.lost = 'the connection to Firefox was lost'; s.quit = True
+
+
+def _page(url):
+    """The address without its #fragment: the same document."""
+    return urllib.parse.urldefrag(url or '')[0]
 
 
 def _fit(t, w):

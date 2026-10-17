@@ -87,6 +87,17 @@ class Browser:
             time.sleep(0.05)
         return True
 
+    def mark(s):
+        """Mark the document now open (so a later look can tell it is the same one)."""
+        s._stamp()
+
+    def same_document(s):
+        """The document marked last is still the one open (an address changed
+        by a #fragment or history.pushState, not a new page)."""
+        if s.stamp is None: return False
+        st = s._stamped()
+        return bool(st and st.get('same') and not st.get('leaving'))
+
     def _stamped(s):
         try:
             return s.m.script(ACT, ['stamped', 0, s.stamp], timeout=5)

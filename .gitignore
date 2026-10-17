@@ -15,6 +15,5 @@ rom/*.bin
 claude-link/config.toml
 claude-link/api_key
 
-# test-only Node packages (jsdom for the stand-in Firefox)
+# test-only Node packages (jsdom for the stand-in Firefox; package-lock.json is kept)
 claude-link/tests/node_modules/
-claude-link/tests/package-lock.json
