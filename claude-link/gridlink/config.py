@@ -1,5 +1,5 @@
 """Settings for gridlink: a TOML file plus command-line overrides."""
-import os
+import os, shlex, sys
 try:
     import tomllib
 except ImportError:                     # Python < 3.11
@@ -41,7 +41,9 @@ class Config:
         s.term_dir = os.path.expanduser('~/grid')
         s.term_socket = None                    # MCP bridge socket (default $XDG_RUNTIME_DIR/gridlink.sock)
         s.term_api_key = False                  # pass ANTHROPIC_API_KEY on to Claude Code (normally not)
-        s.web_command = 'python3 -m gridfox'    # CLAUDE /W: Firefox as text (gridfox) in the pty
+        # CLAUDE /W: Firefox as text (gridfox) in the pty, on gridlink's own
+        # Python (the venv: wcwidth is there, through pyte)
+        s.web_command = '%s -m gridfox' % shlex.quote(sys.executable)
         s.web_dir = os.path.expanduser('~/.cache/gridfox')   # where it runs (not ~/grid)
         s.source = None
 
