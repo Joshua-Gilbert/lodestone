@@ -210,6 +210,9 @@ def test_web_gridfox():
         assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.screen())
         assert wait_screen(h, 'Tektronix 7854 notes', 30), (h.log, h.screen())
         assert h.router.app == 'web' and h.router.term is None             # HELLO said app=web
+        band = lambda: h.screen().split('\n')[24]
+        assert band().startswith((' gridfox', ' Test Bench Home')), band()     # (never "Claude Code")
+        assert h.run_until(lambda: band().startswith(' Test Bench Home'), 5), band()   # then the page's title
         assert in_step(h), mismatch(h)
         shot(h, 'web_index')
         h.press(0x0F09); h.press(0x0F09); h.press(0x1C0D)                  # Tab Tab Return: the long page

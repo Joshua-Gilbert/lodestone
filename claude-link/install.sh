@@ -4,11 +4,14 @@
 set -e
 DEST=/home/$USER/gridlink
 mkdir -p "$DEST" ~/.config/gridlink ~/gridlink/work ~/gridlink/memories ~/gridlink/sessions
-cp -r gridlink PROTOCOL.md README.md config.example.toml gridlink.service "$DEST"/ 2>/dev/null || true
+cp -r gridlink gridfox PROTOCOL.md README.md config.example.toml gridlink.service "$DEST"/ 2>/dev/null || true
 cd "$DEST"
 python3 -m venv venv
 venv/bin/pip install --upgrade pip
-venv/bin/pip install anthropic pyserial pillow pyte
+venv/bin/pip install anthropic pyserial pillow pyte wcwidth
+# CLAUDE /W (gridfox) drives Firefox on this Pi
+command -v firefox >/dev/null || command -v firefox-esr >/dev/null || sudo apt-get install -y firefox || \
+    echo "Firefox didn't install: for CLAUDE /W, sudo apt install firefox (or firefox-esr)"
 [ -f ~/.config/gridlink/config.toml ] || cp config.example.toml ~/.config/gridlink/config.toml
 sudo usermod -a -G dialout "$USER"          # serial port access
 mkdir -p ~/grid
