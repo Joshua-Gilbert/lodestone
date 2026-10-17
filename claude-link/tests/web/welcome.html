@@ -1,0 +1,7 @@
+<!doctype html>
+<html><head><title>Welcome</title></head>
+<body><h1 id="h">Welcome</h1>
+<script>
+var p = new URLSearchParams(location.search);
+document.getElementById('h').textContent = 'Welcome, ' + (p.get('user') || 'nobody') + ' (' + (p.get('pw') || '').length + ' letter password)';
+</script></body></html>

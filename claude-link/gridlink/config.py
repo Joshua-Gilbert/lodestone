@@ -41,6 +41,8 @@ class Config:
         s.term_dir = os.path.expanduser('~/grid')
         s.term_socket = None                    # MCP bridge socket (default $XDG_RUNTIME_DIR/gridlink.sock)
         s.term_api_key = False                  # pass ANTHROPIC_API_KEY on to Claude Code (normally not)
+        s.web_command = 'python3 -m gridfox'    # CLAUDE /W: Firefox as text (gridfox) in the pty
+        s.web_dir = os.path.expanduser('~/.cache/gridfox')   # where it runs (not ~/grid)
         s.source = None
 
     def load(s, path=None):
@@ -72,6 +74,9 @@ class Config:
         if 'dir' in t: s.term_dir = os.path.expanduser(t['dir'])
         if 'socket' in t: s.term_socket = t['socket']
         s.term_api_key = bool(t.get('keep_api_key', s.term_api_key))
+        w = d.get('web', {})
+        s.web_command = w.get('command', s.web_command)
+        if 'dir' in w: s.web_dir = os.path.expanduser(w['dir'])
         for k in ('workdir', 'memory_dir', 'sessions_dir'):
             if k in g: setattr(s, k, os.path.expanduser(g[k]))
         s.bash_timeout = int(g.get('bash_timeout', s.bash_timeout))

@@ -164,6 +164,7 @@ class GridSim:
             s.nano.on_talk()
             data = s.nano.out[:255]
             s.clock.advance(len(data) * 25)
+            s.stats['rx_bytes'] += len(data)
             if s.corrupt_rx_every:
                 s.stats['rx_n'] += 1
                 if s.stats['rx_n'] % s.corrupt_rx_every == 0 and data:
@@ -319,7 +320,8 @@ class TermHarness:
     <-> a program in a real pty (tests/fake_claude.py).  Real time runs here:
     the Pi's holds and the program's output are real; the clock also counts
     the time the Pi takes."""
-    def __init__(s, command=None, patched=True, app='term', files=None, cfg_app='auto', key=False):
+    def __init__(s, command=None, patched=True, app='term', files=None, cfg_app='auto', key=False,
+                 web_command=None):
         s.clock = Clock()
         s.pending = []
         s.nano = AR488Model(s.clock, addr=7, patched=patched, to_pi=s._to_pi)
@@ -331,6 +333,8 @@ class TermHarness:
         cfg.term_dir = os.path.join(s.tmp, 'grid'); cfg.app = cfg_app
         cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
         cfg.term_command = command or '%s %s' % (sys.executable, os.path.join(HERE, 'fake_claude.py'))
+        cfg.web_command = web_command or '%s -m gridfox' % sys.executable
+        cfg.web_dir = os.path.join(s.tmp, 'web')
         cfg.api_key = 'sk-test' if key else None
         cfg.env_key = lambda: False
         s.cfg = cfg
@@ -365,7 +369,7 @@ class TermHarness:
         s.run_until(lambda: False, wall=secs)
 
     @property
-    def term(s): return s.router.term
+    def term(s): return s.router.web if s.router.app == 'web' else s.router.term
 
     def pi_screen(s):
         return s.term.text() if s.term else []
@@ -396,6 +400,7 @@ class TermHarness:
 
     def close(s):
         if s.router.term: s.router.term.stop()
+        if s.router.web: s.router.web.stop()
 
 
 class Harness:
