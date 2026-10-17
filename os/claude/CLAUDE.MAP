@@ -50,6 +50,8 @@ Value     Name
 0000004A  P_CLEAR
 0000004B  P_CELLS
 00000001  HF_TERM
+00000011  OP_SCREEN
+00000012  OP_TYPE
 00000003  R_PAGES
 00002B00  R_HOT
 00002BF0  R_HOTRAW
@@ -57,12 +59,13 @@ Value     Name
 00000258  R_EPORT
 00000180  R_STACK
 00000002  RC_NANO
+00000005  RC_FEED
 00000018  TROWS
 00000040  KEYMAX
 00001000  K_QUIT
 00001300  K_PAINT
 0000260C  K_CTRLL
-0000002F  R_PARAS
+00000032  R_PARAS
 
 
 ---- Section .text ------------------------------------------------------------
@@ -697,7 +700,7 @@ Real              Virtual           Name
             3508              3508  s_u_none
             3521              3521  s_u_over
             3583              3583  rcon_img
-            4BF5              4BF5  rcon_end
+            4F15              4F15  rcon_end
             3170              3170  res_cs
             3172              3172  ggint
             3173              3173  ggver
@@ -844,45 +847,49 @@ Real              Virtual           Name
 ---- Section rstub ------------------------------------------------------------
 
 Real              Virtual           Name
-            4BF6               100  r_sig
-            4BFA               104  r_ver
-            4BFB               105  r_hook
-            4BFD               107  r_old16
-            4C01               10B  r_handle
-            4C03               10D  r_inpop
-            4C04               10E  r_off
-            4C05               10F  r_pend
-            4C06               110  r_entry
-            4C0A               114  r_hw
-            4C0D               117  r_saved
-            4C11               11B  r_params
-            4C11               11B  r_pold16
-            4C15               11F  r_indos
-            4C19               123  r_ss
-            4C1B               125  r_sp
-            4C1D               127  r_int16
-            4C39               143  r_int16.ch
-            4C3E               148  r_int16.up
-            4C48               152  r_int16.nk
-            4C4E               158  r_int16.pk
-            4C53               15D  r_int16.rd
-            4C54               15E  r_int16.w
-            4C66               170  r_hot
-            4C82               18C  r_hot.s
-            4C99               1A3  r_hot.m
-            4C9F               1A9  r_hot.mv
-            4CB0               1BA  r_hot.e
-            4CB4               1BE  r_hot.p
-            4CD9               1E3  r_hot.no
-            4CDE               1E8  r_hot.x
-            4CDF               1E9  r_hot.nx
-            4CEB               1F5  r_hot.n
-            4CEC               1F6  r_popup
-            4D10               21A  r_popup.s
-            4D24               22E  r_popup.m
-            4D42               24C  r_popup.r
-            4D63               26D  r_int67
-            4D66               270  r_code_end
-            4EE6               3F0  r_stack_top
-            4EE6               3F0  r_end
+            4F16               100  r_sig
+            4F1A               104  r_ver
+            4F1B               105  r_hook
+            4F1D               107  r_old16
+            4F21               10B  r_handle
+            4F23               10D  r_inpop
+            4F24               10E  r_off
+            4F25               10F  r_entry
+            4F29               113  r_hw
+            4F2C               116  r_saved
+            4F30               11A  r_params
+            4F30               11A  r_pold16
+            4F34               11E  r_indos
+            4F38               122  r_ss
+            4F3A               124  r_sp
+            4F3C               126  r_ks
+            4F3D               127  r_pend
+            4F3E               128  r_int16
+            4F5A               144  r_int16.ch
+            4F5F               149  r_int16.up
+            4F69               153  r_int16.nk
+            4F6F               159  r_int16.pk
+            4F7D               167  r_int16.rd
+            4F7E               168  r_int16.w
+            4F95               17F  r_int16.ky
+            4F96               180  r_feed
+            4FBA               1A4  r_feed.no
+            4FBC               1A6  r_hot
+            4FD0               1BA  r_hot.s
+            4FE7               1D1  r_hot.m
+            4FED               1D7  r_hot.mv
+            4FFE               1E8  r_hot.e
+            5002               1EC  r_hot.p
+            5027               211  r_hot.no
+            502C               216  r_hot.x
+            502D               217  r_hot.nx
+            5039               223  r_hot.n
+            503A               224  r_popup
+            505E               248  r_popup.s
+            5072               25C  r_popup.m
+            5090               27A  r_popup.r
+            50B1               29B  r_int67
+            50B4               29E  r_code_end
+            5234               41E  r_stack_top
+            5234               41E  r_end
 

@@ -31,7 +31,8 @@ class Res(CK.KernelHarness):
     gridlink's router with the stand-in Claude Code; the console's state
     read from its EMS page (RCON.MAP)."""
     def __init__(s, tm=False, bridge=True, **kw):
-        files = {'A:\\' + n: open(os.path.join(CL, n), 'rb').read() for n in ('EMSUSE.COM', 'GFXUSE.COM')}
+        files = {'A:\\' + n: open(os.path.join(CL, n), 'rb').read() for n in ('EMSUSE.COM', 'GFXUSE.COM', 'PAGE1.COM')}
+        # (TESTKEY.COM is on the harness's disk already)
         files['A:\\MEMSZ.COM'] = open(os.path.join(HERE, 'MEMSZ.COM'), 'rb').read()
         if tm: files['A:\\TM5000G.EXE'] = open(TR.TM5000G, 'rb').read()
         super().__init__(files=files, term=FAKE, ems_pages=88, **kw)
@@ -327,6 +328,249 @@ def t_nopi():
         h.close()
 
 
+def tool(h, name, args, sim_s=30, wall=60):
+    """An MCP tool call, as Claude Code makes it (in a thread: it waits for
+    the GRiD, which runs meanwhile) -> (content, isError), or None."""
+    r = {}
+    th = threading.Thread(target=lambda: r.update(v=h.router.term.tools.request(
+        json.dumps({'tool': name, 'arguments': args}).encode() + b'\n')))
+    th.start()
+    h.run_until(lambda: not th.is_alive(), sim_s, wall)
+    th.join(30)
+    return r.get('v')
+
+def generation(h):
+    """gridlink's count of the GRiD's HELLOs (None before the first)."""
+    return h.router.term.grid.generation if h.router.term else None
+
+def popped(h, gen):
+    """CODE-\\ pressed: the console up and its HELLO through (the tools work)."""
+    return h.wait(lambda: generation(h) not in (None, gen) and h.rv('connected') == 1 and h.up(), 30)
+
+def raw_screen(h):
+    """The SCREEN reply's bytes (Grid.screen), the GRiD run meanwhile."""
+    r = {}
+    th = threading.Thread(target=lambda: r.update(v=h.router.term.grid.screen(0)))
+    th.start()
+    h.wait(lambda: not th.is_alive(), 30)
+    th.join(30)
+    return r.get('v')
+
+def status_ok(h):
+    """The band's status (shown when the link is down) the console's own
+    text after TYPE's return, not what was at its reply's address."""
+    return h.rv('status_text', 20) == b'Connecting to the Pi'
+
+def t_type():
+    """M3: Claude sees the program the console is up over and types into it
+    (TESTKEY echoes its keys): the console goes, the keys play, and it comes
+    back by itself with the program's screen; CODE-\\ stops the keys."""
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('testkey')
+        cells = h.m.rd(0xB800, 0, 4000)
+        h.press(HOT)
+        ok = h.has('Welcome to Claude Code', 30)
+        check('CODE-\\ over TESTKEY: HELLO names it (prog=TESTKEY.COM), and so does the band',
+              ok and h.router.term.hello.get('prog') == 'TESTKEY.COM' and 'TESTKEY.COM' in h.band(),
+              (h.router.term.hello, h.band()))
+        res = tool(h, 'grid_program', {})
+        check('grid_program: "TESTKEY.COM is paused", and its screen ("TESTKEY ready:")',
+              res and not res[1] and 'TESTKEY.COM is paused' in res[0][0]['text'] and
+              'TESTKEY ready:' in res[0][1]['text'], res)
+        raw = raw_screen(h)
+        check('... SCREEN\'s bytes: mode 3, 80x25 text, its cells as they were, byte for byte',
+              raw is not None and raw[:9] == bytes([3, 1, 0, 80, 0, 25, 0, 160, 0]) and raw[9:] == cells,
+              raw[:9] if raw else raw)
+        gen = generation(h)
+        res = tool(h, 'grid_type', {'keys': 'hello{WAIT 0.3}'}, 60)
+        check('grid_type "hello": the keys played into TESTKEY, and its screen afterwards ("TESTKEY ready: hello")',
+              res and not res[1] and res[0][0]['text'] == 'Typed into TESTKEY.COM.' and
+              'TESTKEY ready: hello' in res[0][1]['text'], res)
+        check('... the console back up by itself, the link as it was (no HELLO, the call not cancelled), in step',
+              h.up() and h.router.term.grid.generation == gen and in_step(h), (h.up(), gen, h.router.term.grid.generation))
+        check('... and the stub feeds nothing more (r_ks 0)', h.m.rd(h.stub(), h.sym['r_ks'], 1)[0] == 0)
+        check('... the band\'s status the console\'s own ("Connecting to the Pi"), not bytes at the reply\'s address',
+              status_ok(h), h.rv('status_text', 72))
+        # CODE-\ while the keys wait: they stop there, and TYPE says so
+        res, t0 = {}, None
+        th = threading.Thread(target=lambda: res.update(v=h.router.term.tools.request(
+            json.dumps({'tool': 'grid_type', 'arguments': {'keys': '{WAIT 5}abc', 'timeout': 30}}).encode() + b'\n')))
+        th.start()
+        down = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 20)
+        h.run_until(lambda: False, 0.5)
+        h.press(HOT)
+        h.wait(lambda: not th.is_alive(), 30); th.join(30)
+        res = res.get('v')
+        check('grid_type with CODE-\\ during its {WAIT}: the console back, "the user stopped the keys", none typed',
+              down and h.up() and res and not res[1] and 'stopped the keys (CODE-\\)' in res[0][0]['text'] and
+              'abc' not in res[0][1]['text'] and h.m.rd(h.stub(), h.sym['r_ks'], 1)[0] == 0, res)
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        away = h.pi_wait(lambda: h.router.term.away, 10)
+        t0 = time.time()
+        res = tool(h, 'grid_program', {}, 5, 20)
+        check('CODE-\\ back to TESTKEY: the console says so (EVENT away), and grid_program is refused at once',
+              back and away and res and res[1] and 'gone back' in res[0][0]['text'] and time.time() - t0 < 5, res)
+        # a call on its way as the user goes back: the console drops it, and the EVENT ends it on the Pi.
+        # (CODE-\ is read before the console's next poll: if that ever fails, the call succeeds with the
+        # screen, and `replies` isn't empty; the drop isn't at fault then)
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        check('... CODE-\\ again: its HELLO, and the tools work again', not h.router.term.away and
+              h.router.term.why_not('grid_program') is None, h.router.term.why_not('grid_program'))
+        h.run_until(lambda: False, 3)           # (quiet: then it polls once a second)
+        t = h.rv('t_last', 2)
+        quiet = h.run_until(lambda: h.rv('t_last', 2) != t and h.rv('lstate') == 1 and h.rv('pi_active') == 0 and
+                            h.rv('txq_n') == 0, 5)
+        g, replies = h.router.term.grid, []
+        on_reply = g.on_reply
+        g.on_reply = lambda b: (replies.append(bytes(b)), on_reply(b))
+        r = {}
+        th = threading.Thread(target=lambda: r.update(v=h.router.term.tools.request(
+            json.dumps({'tool': 'grid_program', 'arguments': {}}).encode() + b'\n')))
+        th.start()
+        end = time.time() + 10
+        while not g.waiting and time.time() < end: time.sleep(0.01)
+        h.press(HOT)                            # (before the console's next poll)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.wait(lambda: not th.is_alive(), 10); th.join(30)
+        g.on_reply = on_reply
+        res = r.get('v')
+        check('... a grid_program on its way as the user goes back: the console answers nothing, and the call '
+              'ends at once ("the user went back")', quiet and back and res and res[1] and
+              'went back' in res[0][0]['text'] and not replies, (quiet, back, res, replies))
+        # the name only from an environment TESTKEY still owns (one it freed may be anyone's now), and
+        # only up to a control character (HELLO is lines)
+        psp = h.m.u16(0x60, h.m.Y['cur_psp'])
+        env = h.m.u16(psp, 0x2C)
+        owner, blk = h.m.rd(env - 1, 1, 2), h.m.rd(env, 0, 256)
+        at = blk.find(b'TESTKEY.COM')
+        seen = []
+        for mcb, name in ((b'\0\0', b'TESTKEY.COM'), (owner, b'TE\nXX=1.COM')):
+            h.m.wr(env - 1, 1, mcb); h.m.wr(env, at, name)
+            gen = generation(h)
+            h.press(HOT)
+            popped(h, gen)
+            seen.append((dict(h.router.term.hello), h.band()))
+            h.press(HOT)
+            h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.m.wr(env - 1, 1, owner); h.m.wr(env, 0, blk)
+        check('its environment not its own (freed, PSP:2Ch stale): no name in HELLO or the band',
+              at > 0 and 'prog' not in seen[0][0] and 'TESTKEY' not in seen[0][1], seen[0])
+        check('... a control character in the name: the name ends there, no line of its own in HELLO',
+              seen[1][0].get('prog') == 'TE' and 'XX' not in seen[1][0], seen[1][0])
+        h.k.key(ESC)
+        check('TESTKEY afterwards: the 5 keys, no more ("TESTKEY ready: hello", then bye)',
+              back and 'TESTKEY ready: hello\nbye' in h.m.text_screen().replace('\r', ''), h.m.text_screen())
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+        # a program with EMS in all four windows, which it checks after every key: the stub's feeder maps
+        # the console's page into window 0 for each key, and the program's back
+        for arg, call in (('', '00h'), (' /x', '10h')):
+            h.cmd('emsuse' + arg)
+            gen = generation(h)
+            h.press(HOT)
+            popped(h, gen)
+            res = tool(h, 'grid_type', {'keys': 'abc{WAIT 0.3}'}, 60)
+            typed = res and not res[1] and res[0][0]['text'] == 'Typed into EMSUSE.COM.' and h.up()
+            h.press(HOT)
+            back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+            h.k.key(ESC)
+            o = h.m.text_screen()
+            check('grid_type "abc" into EMSUSE%s (INT 16h AH=%s): its four EMS windows whole after every key '
+                  '("3 keys, 0 bad")' % (arg.upper(), call), typed and back and 'EMSUSE: 3 keys, 0 bad' in o, (res, o))
+        # a graphics screen: mode 6, its 16 KB as they were
+        h.cmd('gfxuse 6')
+        vram = h.m.rd(0xB800, 0, 0x4000)
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        res = tool(h, 'grid_program', {})
+        raw = raw_screen(h)
+        check('over GFXUSE in mode 6: grid_program\'s image, SCREEN\'s bytes its 640x200 as they were',
+              res and not res[1] and res[0][-1]['type'] == 'image' and raw is not None and
+              raw[:9] == bytes([6, 2, 1, 128, 2, 200, 0, 80, 0]) and raw[9:] == vram,
+              (res and res[0][0].get('text'), raw and raw[:9]))
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 6 and h.inpop() == 0, 5)
+        h.k.key('x'); h.k.key(ESC)
+        check('... GFXUSE afterwards: its screen and data kept (0 bad)', '0 bad' in h.m.text_screen(), h.m.text_screen())
+        # text on page 1: the reply's first bytes stand on the saved screen in front of it, and go back
+        h.cmd('page1')
+        vram = h.m.rd(0xB800, 0, 0x8000)
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        res = tool(h, 'grid_program', {})
+        raw = raw_screen(h)
+        check('over PAGE1 (text on page 1, B800:1000h): its screen ("PAGE1 ready"), SCREEN\'s bytes page 1\'s',
+              res and not res[1] and 'PAGE1 ready' in res[0][1]['text'] and raw is not None and
+              raw[9:] == vram[0x1000:0x1000 + 4000], (res and res[0][1].get('text', '')[:40], raw and raw[:9]))
+        res = tool(h, 'grid_type', {'keys': 'x{WAIT 0.3}'}, 60)
+        check('... grid_type "x" into it: back with page 1, the band\'s status the console\'s own',
+              res and not res[1] and 'PAGE1 ready' in res[0][1]['text'] and h.up() and status_ok(h),
+              (res, h.rv('status_text', 72)))
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        check('... CODE-\\ back: its 32 KB byte for byte, the 12 in front of page 1 too',
+              back and h.m.rd(0xB800, 0, 0x8000) == vram,
+              next((hex(i) for i in range(0x8000) if h.m.rd(0xB800, i, 1)[0] != vram[i]), None))
+        h.k.key(ESC)
+        # mode 40h (the Executive): the 32 KB reply, to the last byte of window 2
+        h.cmd('exit')
+        h.k.settle(3)
+        vram = h.m.rd(0xB800, 0, 0x8000)
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        raw = raw_screen(h)
+        check('over the Executive (mode 40h): SCREEN\'s 640x400, 32 KB, byte for byte',
+              h.m.mode() == 0x40 and raw is not None and raw[:9] == bytes([0x40, 4, 1, 128, 2, 144, 1, 80, 0]) and
+              raw[9:] == vram, raw and (raw[:9], len(raw)))
+        h.press(HOT)
+        back = h.wait(lambda: h.inpop() == 0, 5)
+        h.k.settle(1)
+        check('... CODE-\\ back: the Executive\'s screen as it was', back and h.m.rd(0xB800, 0, 0x8000) == vram,
+              next((hex(i) for i in range(0x8000) if h.m.rd(0xB800, i, 1)[0] != vram[i]), None))
+    finally:
+        h.close()
+
+
+def t_drive():
+    """M3's aim: Claude drives TM5000G, the console popped up over it (its
+    module auto-detect through grid_type, the screen of what it found)."""
+    if not TR.TM5000G:
+        print('(no TM5000G.EXE: skipped)'); return
+    h = Res(tm=True); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('tm5000g'); h.k.key(ENTER, settle=False); h.k.settle(40)
+        h.k.key(ENTER)
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        res = tool(h, 'grid_program', {})
+        check('over TM5000G: grid_program has its main menu ("TM5000 CONTROL SYSTEM")',
+              res and not res[1] and 'TM5000G.EXE is paused' in res[0][0]['text'] and
+              'TM5000 CONTROL SYSTEM' in res[0][1]['text'], res)
+        res = tool(h, 'grid_type', {'keys': '1A{WAIT 60}', 'timeout': 120}, sim_s=120, wall=300)
+        txt = res[0][1]['text'] if res and not res[1] and len(res[0]) > 1 else ''
+        check('grid_type "1A{WAIT 60}" (Configure Modules, auto-detect): TM5000G finds FG5010, 8753D, DC5009, '
+              'and the console comes back with that screen', all(x in txt for x in ('FG5010', '8753D', 'DC5009'))
+              and h.up(), res)
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        check('... CODE-\\ back: TM5000G as Claude left it', back and all(x in h.m.text_screen() for x in
+              ('FG5010', '8753D', 'DC5009')), h.m.text_screen())
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
 def t_timeout():
     """The console's own GPIB timeout: the driver's is global, and the program's
     may be long (TM5000G's TIME OUT n leaves up to 60 s), which each byte to a
@@ -411,7 +655,7 @@ def t_tm5000g():
         h.close()
 
 
-TESTS = [t_popup, t_midstream, t_session, t_requests, t_nopi, t_timeout, t_tm5000g]
+TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_nopi, t_timeout, t_tm5000g, t_drive]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

@@ -350,8 +350,10 @@ Programs:
             CLAUDE /T: Claude Code itself (Term); CODE-R redraws.
             CLAUDE /R: resident (needs EMS; 0.8 KB): CODE-\ over a
             program waiting for a key brings Claude Code up, the same
-            session as CLAUDE /T; CODE-\ again goes back.  It can't
-            use the GRiD's files yet.  CLAUDE /U takes it out.
+            session as CLAUDE /T; CODE-\ again goes back.  Claude sees
+            that program and can type into it (asking you first; CODE-\
+            stops its keys); not yet the GRiD's files.  CLAUDE /U takes
+            it out.
   TM5000G   TM5000 3.7
   TESTDOS   checks the kernel's DOS functions (writes and deletes its
             own test files on this disk; "24 passed, 0 failed" is right)

@@ -743,7 +743,9 @@ class PC:
         elif ah == 0x02: s.set_cursor(s.r('dh'), s.r('dl'))
         elif ah == 0x03:
             r, c = s.cursor(); s.w('dx', (r << 8) | c); s.w('cx', 0x0607)
-        elif ah == 0x05: pass
+        elif ah == 0x05 and text:       # the page shown: the BIOS keeps it and its
+            s.wr(0, 0x462, [al & 7])    #  start (40:62h, 40:4Eh); the text model
+            s.wr(0, 0x44E, struct.pack('<H', (al & 7) * (0x800 if cols == 40 else 0x1000)))   # stays page 0's
         elif ah in (0x06, 0x07) and text:
             n = al; attr = s.r('bh')
             r0, c0, r1, c1 = s.r('ch'), s.r('cl'), s.r('dh'), s.r('dl')
