@@ -210,7 +210,9 @@ def test_web_gridfox():
         assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.screen())
         assert wait_screen(h, 'Tektronix 7854 notes', 30), (h.log, h.screen())
         assert h.router.app == 'web' and h.router.term is None             # HELLO said app=web
-        assert h.var('web_old') == 0 and 'CODE-Q quits' in h.screen().split('\n')[24]
+        band = lambda: h.screen().split('\n')[24]
+        assert band().startswith((' gridfox', ' Test Bench Home')), band()     # (never "Claude Code")
+        assert h.run_until(lambda: band().startswith(' Test Bench Home'), 5), band()   # then the page's title
         assert in_step(h), mismatch(h)
         shot(h, 'web_index')
         h.press(0x0F09); h.press(0x0F09); h.press(0x1C0D)                  # Tab Tab Return: the long page
@@ -223,31 +225,6 @@ def test_web_gridfox():
         check(h)
     finally:
         h.close(); f.close()
-
-
-def test_web_with_an_older_gridlink():
-    """CLAUDE /W against a gridlink that predates gridfox: it answers with
-    Claude Code (Term), and the band says why instead of nothing."""
-    h = EmuHarness(term=FAKE, args='/A:7 /W')
-    real = h.router.choose
-    h.router.choose = lambda body: 'term' if real(body) == 'web' else real(body)    # (the old Router)
-    try:
-        h.boot()
-        assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.screen())
-        assert wait_screen(h, 'Welcome to Claude Code', 20), h.screen()
-        band = h.screen().split('\n')[24]
-        assert 'Pi has no /W: update gridlink' in band and h.var('web_old') == 1, band
-        shot(h, 'web_old_gridlink')
-        check(h)
-    finally:
-        h.close()
-    h = EmuHarness(term=FAKE, args='/A:7 /T')                            # /T: no such warning
-    try:
-        h.boot()
-        assert wait_screen(h, 'Welcome to Claude Code', 20), h.screen()
-        assert 'CODE-Q quits' in h.screen().split('\n')[24] and h.var('web_old') == 0
-    finally:
-        h.close()
 
 
 def test_term_echo_time():
