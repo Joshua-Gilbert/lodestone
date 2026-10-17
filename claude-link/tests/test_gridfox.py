@@ -15,6 +15,7 @@ from gridfox import page as P
 from gridfox.app import App, Keys, Line, to_url, looks_like_url, BODY
 from gridfox.browser import Browser
 from gridfox.marionette import Marionette
+from gridlink import glp
 
 U = 'http://test.local/'
 
@@ -126,6 +127,9 @@ class Run:
                 for c in k: s.app.key(c)
             else: s.app.key(k)
         s.pump()
+
+    def click(s, col, row):
+        s.app.key('click:%d:%d' % (col, row)); s.pump()
 
     def text(s): return [l.rstrip() for l in s.scr.display]
 
@@ -480,6 +484,37 @@ def test_web_exit_banner():
         t.stop()
 
 
+# ---- the mouse (CLAUDE /W clicks) ---------------------------------------------
+def test_mouse_reports_and_clicks():
+    from gridfox.app import Keys
+    k = Keys()
+    assert k.feed(b'\x1b[<0;12;5M\x1b[<0;12;5mx\x1b[<2;1;1M\x1b[<64;3;3M', 0) == ['click:11:4', 'x']
+    r = Run(U + 'index')
+    try:
+        app = r.app
+        out = io.BytesIO(); app.out = out; app.draw(full=True)
+        assert b'\x1b[?1000h\x1b[?1006h' in out.getvalue()                  # reporting asked for
+        app.out = r.out; app.shown = [None] * 24
+        row, col = [(ln - app.top + 1, c) for ln, t in enumerate(app.doc.text) for c in [t.find('Long page')]
+                    if c >= 0][0]
+        r.click(col + 2, row)                                # on "Long page"
+        assert app.url == U + 'long' and r.has('Paragraph 1 of the long page.'), (app.url, r.text())
+        r.click(5, 0)                                                    # the address: Go
+        assert r.text()[23].startswith('Go:'), r.text()[23]
+        r.click(40, 10)                                                  # elsewhere: Go closed
+        assert app.line is None and not r.text()[23].startswith('Go:')
+        r.keys('left')
+        sel = [i for i, a in enumerate(app.acts()) if a['t'] == 'select'][0]
+        app.select(sel); r.keys('enter')                                       # the list's choices
+        r0, c0, h, w, first = app._menu_box()
+        r.click(c0 + 3, r0 + 1 + 2)                          # the third: Ohms
+        assert app.menu is None and r.has('[Ohms \u25bc]'), r.text()
+        r.click(0, 23)                                              # the status line: nothing
+        assert app.url == U + 'index'
+    finally:
+        r.close()
+
+
 # ---- end to end: gridlink + the GRiD's link (GridSim) -----------------------
 def test_end_to_end_gridsim():
     from gridsim import TermHarness
@@ -513,6 +548,13 @@ def test_end_to_end_gridsim():
             assert b1 - b0 < 3000 and b2 - b1 < 2000, (b1 - b0, b2 - b1)
             h.grid.press(0x08, 0x0E)                                            # Backspace: back
             assert h.wait_text('Plug-ins', wall=10), h.grid.screen_text()
+            assert h.settle()
+            # a click from the GRiD (EVENT 05h): on "Sign in", a link on the first page row
+            row = [i for i, l in enumerate(h.grid.screen_text()) if 'Sign in' in l][0]
+            col = h.grid.screen_text()[row].index('Sign in') + 1
+            h.grid.txq.append([glp.G_EVENT, bytes([glp.EV_CLICK, col, row]), 0])
+            assert h.wait_text('Password', wall=10), h.grid.screen_text()          # the sign-in page
+            assert h.grid.screen_text()[0].strip() == U + 'login', h.grid.screen_text()[0]
             assert h.settle()
             assert not h.nano.violations, h.nano.violations
             assert h.grid.stats['fail'] == 0, h.grid.stats

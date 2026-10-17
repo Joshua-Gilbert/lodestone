@@ -132,6 +132,8 @@ class TermSession:
             if body[0] == glp.EV_REPAINT:
                 with s.lock:
                     s.enc.reset(); s._mark()
+            elif body[0] == glp.EV_CLICK and len(body) >= 3:
+                s.click(body[1], body[2])
             elif body[0] == glp.EV_AWAY:        # (resident Claude's console, going: never for TYPE's keys)
                 s.away = True
                 s.grid.end_calls(s.AWAY_CALL)
@@ -294,6 +296,21 @@ class TermSession:
                 s._write(term_keys(body[start:i + 2], s.screen.app_cursor))
                 time.sleep(ESC_GAP); start = i + 2
         s._write(term_keys(body[start:], s.screen.app_cursor))
+
+    MOUSE_ON = tuple(m << 5 for m in (1000, 1002, 1003))      # (pyte keeps private modes << 5)
+    SGR = 1006 << 5
+
+    def click(s, col, row):
+        """A left click on the GRiD's cell (col, row): to the program as an
+        xterm's press and release, only if it asked for mouse reports."""
+        if s.fd is None or not (0 <= row < 24 and 0 <= col < 80): return
+        mode = s.screen.mode
+        if not any(m in mode for m in s.MOUSE_ON): return
+        x, y = col + 1, row + 1
+        if s.SGR in mode:
+            s._write(b'\x1b[<0;%d;%dM\x1b[<0;%d;%dm' % (x, y, x, y))
+        else:                                   # (the old X10 form: 32 + button, 32 + column, 32 + row)
+            s._write(b'\x1b[M' + bytes([32, 32 + x, 32 + y]) + b'\x1b[M' + bytes([35, 32 + x, 32 + y]))
 
     def _send_title(s, force=False):
         if s.link is None or s.link.source is not s: return
