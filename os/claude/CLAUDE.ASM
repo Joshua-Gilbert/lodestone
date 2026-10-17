@@ -52,6 +52,7 @@ BOXL     equ 5                  ; dialog boxes: left column, width
 BOXW     equ 70
 
 %include "GLP.INC"               ; the link's message types and states
+%define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi under /W; not in RCON)
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -156,7 +157,9 @@ main:   call    get_ticks
         call    maybe_idle
         jmp     main
 
-leave:  mov     al, [oldmode]
+leave:  mov     al, [oldmode]           ; (the pointer: the kernel takes the mouse
+                                        ;  back when CLAUDE ends; a mode set hides
+                                        ;  a Microsoft driver's)
         cmp     al, 40h
         jne     .m
         mov     al, 3
@@ -436,7 +439,21 @@ video_on:
 .s:     mov     ax, 0040h
         int     10h
         call    redraw_all
-        ret
+        cmp     byte [app_want], 'W'    ; /W: the mouse clicks gridfox's links
+        jne     .x
+        push    es                      ; INT 33h there?  (GRiD MS-DOS may have none)
+        xor     ax, ax
+        mov     es, ax
+        mov     ax, [es:33h * 4]
+        or      ax, [es:33h * 4 + 2]
+        pop     es
+        jz      .x
+        xor     ax, ax                  ; reset: the mouse is ours (AX = FFFFh)
+        int     33h
+        mov     [tmouse], al
+        mov     ax, 1                   ; the kernel draws the pointer
+        int     33h
+.x:     ret
 
 clear_screen:
         pusha
@@ -1608,7 +1625,7 @@ msg_sent:
         ret
 .e:     cmp     byte [done_type], G_EVENT
         jne     .r
-        mov     byte [rep_q], 0         ; (Term's only EVENT: repaint)
+        mov     byte [rep_q], 0         ; (Term's EVENTs: repaint, a click)
         ret
 .r:     cmp     byte [done_type], G_REPLY
         jne     .x
@@ -1722,6 +1739,12 @@ pf_cells:
         mov     ax, [now]
         mov     [t_active], ax
         call    term_cells
+        cmp     byte [tmouse], 0        ; the pointer back on top of what was drawn
+        je      .x                      ;  (hide puts back only bytes not written
+        mov     ax, 2                   ;  since; show draws it again)
+        int     33h
+        mov     ax, 1
+        int     33h
 .x:     ret
 
 pf_text:
@@ -3125,6 +3148,7 @@ kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
+evmouse     db 05h, 0, 0                ; EVENT click: column, row
 s_onint     db ' on INT ', 0
 s_none2     db 'none', 0
 s_pages     db ' pages free', 0
@@ -3764,7 +3788,8 @@ term        resb 1                      ; 1: the GRiD is Claude Code's terminal
 t_active    resw 1                      ; tick of the last key or screen change
 keyn        resb 1
 keys_q      resb 1                      ; a KEYS message is in the queue
-rep_q       resb 1                      ; a repaint EVENT is in the queue
+rep_q       resb 1                      ; an EVENT (repaint, or a click) is in the queue
+tmouse      resb 1                      ; not 0: /W with a mouse (INT 33h)
 keybuf      resw KEYMAX
 keysend     resw KEYMAX
 shadseg     resw 1                      ; TROWS x 80 (glyph, attribute)

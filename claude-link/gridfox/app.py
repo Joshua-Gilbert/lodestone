@@ -23,6 +23,7 @@ HELP = [
     ('li', 'Up/Down a line, PgUp/PgDn or Space a screen, Home/End top and bottom'),
     ('li', 'Tab and Shift-Tab: next and previous link, button or field'),
     ('li', 'Return: follow the link, press the button, fill in the field'),
+    ('li', 'The mouse: click a link, button or field to use it; click the address to go somewhere else'),
     ('li', 'F then a number: follow link number n on the screen (hints)'),
     ('li', 'Left or Backspace: back.  Right: forward.  R: reload.  Period: read the page again'),
     ('h2', 'Going somewhere'),
@@ -95,6 +96,11 @@ class Keys:
                 if n in (0x5B, 0x4F):
                     j = done
                     seq = b[1:j + 1].decode('latin1')
+                    if seq.startswith('[<') and seq[-1] in 'Mm':    # an SGR mouse report (?1006)
+                        b = b[j + 1:]
+                        k = _click(seq)
+                        if k: out.append(k)
+                        continue
                     out.append(s.SEQ.get(seq, 'unknown')); b = b[j + 1:]
                 elif n == 0x1B: out.append('esc'); b = b[1:]
                 elif n == 0x0D: out.append('meta-enter'); b = b[2:]
@@ -352,6 +358,7 @@ class App:
     def key(s, k):
         s.status = '' if not s.busy else s.status
         if k in s.quit_keys: s.quit = True; return           # (from anywhere, typing included)
+        if k.startswith('click:'): return s.click(*(int(v) for v in k[6:].split(':')))
         if s.menu is not None: return s._menu_key(k)
         if s.line is not None: return s._line_key(k)
         if s.hints is not None: return s._hint_key(k)
@@ -386,6 +393,40 @@ class App:
             s.reread(); s.status = 'Read again.'
         elif low == 'h' or k in ('?', 'f1'): s.go(HOME); return
         s.draw()
+
+    def click(s, col, row):
+        """A left click on a cell: in a list's choices, that choice; on the
+        address, Go; on a link, button or field, as Tab to it and Return.
+        A click elsewhere closes what is open (choices, numbers, typing)."""
+        if s.menu is not None:
+            i = s.menu[0]
+            box = s._menu_box()
+            if box[0] < row <= box[0] + box[2] and box[1] <= col < box[1] + box[3]:
+                s.menu = None; s.draw(); s.choose(i, box[4] + row - box[0] - 1); return
+            s.menu = None
+        if s.line is not None:
+            if row == ROWS - 1: return                      # (on the line being typed: nothing)
+            s.line = None; s.line_do = None
+        s.hints = None
+        if row == 0:
+            s.key('g'); return
+        if TOP <= row < TOP + BODY:
+            ln = s.top + row - TOP
+            if ln < len(s.doc):
+                acts = s.doc.act[ln]
+                a = acts[col] if col < len(acts) else -1
+                if a >= 0:
+                    s.sel = a; s.draw(); s.activate(a); return
+        s.status = ''
+        s.draw()
+
+    def _menu_box(s):
+        """Where the list's choices are drawn: (first row, column, rows, width, first choice)."""
+        if s.menu is None: return None
+        i, opts, n = s.menu
+        h = min(len(opts), BODY - 2); w = min(COLS - 4, max([len(o) for o in opts] + [10]) + 6)
+        first = max(0, min(n - h // 2, len(opts) - h))
+        return (TOP + max(0, (BODY - h - 2) // 2), (COLS - w) // 2, h, w, first)
 
     def scroll(s, n):
         s.top = max(0, min(s.top + n, max(0, len(s.doc) - BODY)))
@@ -485,9 +526,7 @@ class App:
 
     def _menu_rows(s, out):
         i, opts, n = s.menu
-        h = min(len(opts), BODY - 2); w = min(COLS - 4, max([len(o) for o in opts] + [10]) + 6)
-        first = max(0, min(n - h // 2, len(opts) - h))
-        r0 = TOP + max(0, (BODY - h - 2) // 2); c0 = (COLS - w) // 2
+        r0, c0, h, w, first = s._menu_box()
         box = ['┌' + '─' * (w - 2) + '┐']
         for k in range(first, first + h):
             mark = '▸' if k == n else ' '
@@ -518,7 +557,7 @@ class App:
     def draw(s, full=False):
         rows, cur = s.rows()
         parts = ['\x1b[?2026h']
-        if full: parts.append('\x1b[?7l\x1b[2J'); s.shown = [None] * ROWS
+        if full: parts.append('\x1b[?7l\x1b[2J\x1b[?1000h\x1b[?1006h'); s.shown = [None] * ROWS   # (clicks: CLAUDE /W)
         for r, (text, attr) in enumerate(rows):
             if s.shown[r] == (text, attr): continue
             s.shown[r] = (text, attr)
@@ -590,6 +629,16 @@ class App:
             s.lost = 'the connection to Firefox was lost'; s.quit = True
 
 
+def _click(seq):
+    """'[<0;12;5M' (left button down at column 12, row 5) -> 'click:11:4';
+    releases, other buttons and motion -> None."""
+    try:
+        b, x, y = (int(v) for v in seq[2:-1].split(';'))
+    except ValueError:
+        return None
+    return 'click:%d:%d' % (x - 1, y - 1) if seq[-1] == 'M' and b == 0 else None
+
+
 def _page(url):
     """The address without its #fragment: the same document."""
     return urllib.parse.urldefrag(url or '')[0]
@@ -630,6 +679,6 @@ def run_tty(app):
         app.run(fd)
     finally:
         if old: termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write('\x1b[?7h\x1b[?25h\x1b[0m\x1b[2J\x1b[H')
+        sys.stdout.write('\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[0m\x1b[2J\x1b[H')
         if app.lost: sys.stdout.write('\r\n  gridfox stopped: %s.\r\n' % app.lost)
         sys.stdout.write('\r\n'); sys.stdout.flush()

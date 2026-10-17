@@ -69,8 +69,8 @@ CLAUDE /W  ── KEYS ──────────────▶ (device, 7)
     `-m gridfox`.
 
 ### On the GRiD (`os/claude/CLAUDE.ASM`)
-`/W` is `/T` with `app=web` in the HELLO: 32 bytes. CLAUDE.COM is
-20,436 bytes. (A check that put "Pi has no /W" on the band was tried and
+`/W` is `/T` with `app=web` in the HELLO: 32 bytes. With the mouse
+(below), CLAUDE.COM is 20,564 bytes. (A check that put "Pi has no /W" on the band was tried and
 taken out: 96 bytes for something the band's title already shows.)
 
 ## Keys
@@ -90,6 +90,7 @@ taken out: 96 bytes for something the band's title already shows.)
 | R | reload |
 | H or ? | help |
 | Esc | cancels what is being typed |
+| A left click | on a link, button or field: uses it (as Tab to it and Return); on the address: Go; in a list's choices: that one; elsewhere: closes what is open |
 | . (period) | read the page again, without reloading (nothing is sent again) |
 | Ctrl-Q | closes gridfox; Return starts it again |
 | CODE-Q | leaves CLAUDE on the GRiD; gridfox and Firefox keep running on the Pi |
@@ -106,6 +107,42 @@ taken out: 96 bytes for something the band's title already shows.)
 address with a `#fragment`. A page that changes its own address
 (`history.pushState`) keeps your place. A closed `<details>` shows only its
 summary, as `[+] …`; Return on it opens it.
+
+## The mouse (2026-10-17)
+Joshua asked for the mouse the OS already supports in this mode. It uses
+the kernel's own INT 33h (`src/MOUSE33.INC`, the serial mouse) as it stands.
+
+- **On the GRiD (CLAUDE.COM, under `/W` only):**
+  - When the screen is set up, CLAUDE checks that INT 33h is there (GRiD
+    MS-DOS may have no mouse driver), resets it, and shows the pointer. The
+    kernel draws it in mode 40h.
+  - The key loop asks INT 33h AX=5 for left presses. That function counts
+    presses since it was last asked, so a quick click between two polls
+    isn't missed.
+  - Each press goes to the Pi as EVENT 05h with its cell, 8 x 16 pixels to
+    a cell. It shares the one-EVENT-at-a-time flag with CODE-R's repaint.
+  - After each CELLS frame the pointer is hidden and shown again. Hiding
+    puts back only bytes not drawn over since, so the pointer comes back on
+    top of the new screen instead of vanishing until the mouse moves.
+  - An older gridlink ignores the EVENT. Plain Term (`/T`) never takes the
+    mouse, and RCON (resident Claude) is unchanged.
+  - **Cost:** 124 bytes of code and data. The `align 16` before the font
+    makes it 128 in the file: CLAUDE.COM is 20,564 bytes.
+- **gridlink:** EVENT 05h goes to the pty as an xterm mouse report (press,
+  then release), in SGR form (`?1006`) or the older X10 form. It goes only
+  to a program that turned reports on (`?1000`, `?1002` or `?1003`), so
+  Claude Code under `/T` never sees a click. Row 24, CLAUDE's band, isn't
+  passed on.
+- **gridfox:** turns reports on when it starts (`?1000h ?1006h`) and off
+  when it ends.
+  - A click on a link, button or field uses it: it is selected first, then
+    used as Return would.
+  - A click on the address opens Go.
+  - A click on one of a list's choices picks it.
+  - A click elsewhere closes the choices, the numbers or the line being
+    typed. The status line does nothing.
+- Left only: Backspace already goes back. A serial Microsoft mouse has no
+  wheel.
 
 ## Measured (emulator and GridSim, stand-in Firefox)
 
@@ -147,6 +184,15 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
   - It can keep the old page up while a slow one loads.
   - It wants scripts in gridfox's sandbox, kept between calls.
   - It follows a `#fragment` link in the same document, as a browser does.
+- `os/tests/test_claude_mouse.py` (12 checks): the real CLAUDE.COM `/W` on
+  the Lodestone kernel in pcemu, with its serial mouse and the kernel's
+  INT 33h, the real gridlink, and gridfox on the stand-in Firefox.
+  - A click on a link follows it, and a click on the address opens Go.
+  - With no mouse, `/W` works from the keys.
+  - Plain Term doesn't take the mouse.
+  - `test_term.py` `test_click_only_when_asked` covers gridlink's side:
+    nothing reaches a program that asked for no reports, and both report
+    forms come out right.
 - `test_emu_term.py` `test_web_gridfox`: the real CLAUDE.COM `/W` in the
   emulator. The GRiD's screen matches the Pi's cell for cell after a page,
   a link followed and a PgDn.
@@ -318,7 +364,8 @@ fixed.
   2. Only changed tiles are sent, run-length coded, in one new GLP frame
      kind.
   3. A bitmap blitter in CLAUDE.COM, about 1 KB.
-  4. The mouse for clicks.
+  4. The mouse for clicks is in already (text view, 2026-10-17); the
+     picture view would use the same EVENT, in pixels.
 - **W3, Claude Code shares the browser.** Marionette takes one session at a
   time, so gridfox would keep it and offer a small local socket. A
   `grid_browser` MCP tool would then look at and act on the page you have

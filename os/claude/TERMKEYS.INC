@@ -56,6 +56,9 @@ term_kbd:
         mov     [t_active], ax
         jmp     .l
 term_send:                              ; the keys typed so far: one KEYS at a time
+%ifdef TERM_MOUSE
+        call    term_mouse
+%endif
         cmp     byte [keyn], 0
         je      .x
         cmp     byte [keys_q], 0
@@ -77,6 +80,36 @@ term_send:                              ; the keys typed so far: one KEYS at a t
         mov     si, keysend
         call    txq_put
 .x:     ret
+
+%ifdef TERM_MOUSE
+; A left click to the Pi: EVENT 05h and its cell.  INT 33h AX=5 counts
+; presses since it was last asked, so a quick click between two polls isn't
+; missed.  One EVENT at a time (rep_q), and a queue slot left for a REPLY,
+; as for CODE-R.  (A link restart empties the queue.)
+term_mouse:
+        cmp     byte [tmouse], 0
+        je      .x
+        cmp     byte [rep_q], 0
+        jne     .x
+        cmp     byte [txq_n], TXQN - 1
+        jae     .x
+        mov     ax, 5
+        xor     bx, bx                  ; the left button
+        int     33h                     ; BX = presses, CX, DX = where the last was
+        or      bx, bx
+        jz      .x
+        shr     cx, 3                   ; 8 x 16 cells
+        shr     dx, 4
+        mov     [evmouse + 1], cl
+        mov     [evmouse + 2], dl
+        mov     byte [rep_q], 1
+        mov     al, G_EVENT
+        mov     dx, cs
+        mov     si, evmouse
+        mov     cx, 3
+        jmp     txq_put
+.x:     ret
+%endif
 
 ; CODE-R: redraw from the shadow now, and ask the Pi for a fresh screen
 term_repaint:

@@ -112,7 +112,7 @@ the MORE bit set on all but the last.
 | 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term`, `app=web` or `app=chat` when CLAUDE was started with `/T`, `/W` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
-| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
+| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 05h click: column (1), row (1), a left click on that cell (CLAUDE /W, through INT 33h; the Pi passes it on as an xterm mouse report only to a program that asked for them, `?1000` with `?1006`, so an older gridlink ignores it) |
 | 05h | REPLY | id (1), status (1: 0 = OK, else DOS error code or 0FFh), data |
 | 06h | NAK | — |
 | 07h | KEYS | Term: key words as INT 16h AH=10h returns them (AL, AH; 2 bytes each) |
