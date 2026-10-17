@@ -3,8 +3,9 @@
     chat  CLAUDE.COM's own conversation, run by gridlink's agent (API key)
     term  the real Claude Code on the Pi, the GRiD as its terminal
           (your Claude subscription; no API key)
+    web   Firefox on the Pi as text (gridfox), the same terminal path as Term
 
-The GRiD's HELLO picks: `app=term` (CLAUDE /T) or `app=chat` (CLAUDE /C);
+The GRiD's HELLO picks: `app=term` (CLAUDE /T), `app=web` (CLAUDE /W) or `app=chat` (CLAUDE /C);
 `app=resident` (CLAUDE /R's pop-up over a DOS program) is Term too, the same
 `claude`; without any, the config's [grid] app decides ("auto": chat when the Pi
 has an API key, Term when it hasn't).  Term only goes to a CLAUDE that says
@@ -64,6 +65,7 @@ class Router:
         s.make_agent = make_agent          # (link) -> attached agent Session, or None (no key)
         s.link = None
         s.term = term; s.agent = None; s.active = None; s.app = None
+        s.web = None                       # gridfox's own pty session, kept apart from Claude Code's
 
     def attach(s, link):
         s.link = link
@@ -73,6 +75,7 @@ class Router:
         can_term = len(body) >= 2 and bool(body[1] & glp.GF_TERM)   # an older CLAUDE can't
         app = info.get('app', '').lower()
         if app == 'resident': app = 'term'          # CLAUDE /R's console: Term, the same session
+        if app == 'web': return 'web' if can_term else 'chat'
         if app in ('term', 'chat'): want = app
         else:
             want = getattr(s.cfg, 'app', 'auto')
@@ -90,10 +93,15 @@ class Router:
 
     def switch(s, app):
         if app == s.app: return
-        s.log('gridlink: %s' % ('Term (Claude Code on the Pi)' if app == 'term' else 'chat'))
+        s.log('gridlink: %s' % {'term': 'Term (Claude Code on the Pi)', 'web': 'web (Firefox on the Pi)'}.get(app, 'chat'))
         s.quiesce(s.active)
         if s.term is not None: s.term.detach()
-        if app == 'term':
+        if s.web is not None: s.web.detach()
+        if app == 'web':
+            if s.web is None: s.web = TermSession(s.cfg, log=s.log, web=True)
+            s.web.attach(s.link)
+            s.active = s.web
+        elif app == 'term':
             if s.term is None: s.term = TermSession(s.cfg, log=s.log)
             s.term.attach(s.link)
             s.active = s.term

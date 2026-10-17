@@ -2,10 +2,12 @@
 ;  CLAUDE.COM - Claude for GRiD: the GRiD side of the Claude link
 ;  Build:  nasm -f bin -i ../src/ -o CLAUDE.COM CLAUDE.ASM
 ;
-;  CLAUDE [/A:nn] [/T | /C]
+;  CLAUDE [/A:nn] [/T | /W | /C]
 ;    /A:nn  GPIB address of the AR488 bridge (default 7)
 ;    /T     Term: the GRiD is the screen and keyboard of the real Claude
 ;           Code on the Pi (your Claude subscription; no API key)
+;    /W     web: the same terminal, showing Firefox on the Pi as text
+;           (gridfox, claude-link/gridfox; docs/gridfox.md)
 ;    /C     chat: gridlink's own agent (an API key on the Pi)
 ;    neither: the Pi decides (gridlink's [grid] app setting)
 ;  CLAUDE /R [/A:nn]  resident: CODE-\ brings Claude Code up over a program
@@ -130,8 +132,10 @@ start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
         mov     ax, [convseg]           ; Term's shadow: the conversation's memory
         mov     [shadseg], ax
         cmp     byte [app_want], 'T'
+        je      .tm
+        cmp     byte [app_want], 'W'    ; /W: gridfox comes the Term way
         jne     .nt
-        mov     byte [term], 1
+.tm:    mov     byte [term], 1
 .nt:    call    vec_save
         call    vec_ours
         call    get_ticks
@@ -217,6 +221,8 @@ parse_args:
         lodsb
         and     al, 0DFh
         cmp     al, 'T'
+        je      .app
+        cmp     al, 'W'
         je      .app
         cmp     al, 'C'
         je      .app
@@ -2858,8 +2864,11 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     al, CROWS
         stosb
         call    build_kv
-        mov     si, kv_appterm          ; CLAUDE /T or /C
+        mov     si, kv_appterm          ; CLAUDE /T, /W or /C
         cmp     byte [app_want], 'T'
+        je      .a
+        mov     si, kv_appweb
+        cmp     byte [app_want], 'W'
         je      .a
         mov     si, kv_appchat
         cmp     byte [app_want], 'C'
@@ -3063,7 +3072,7 @@ fmt_clock:                              ; ES:DI <- "h:mm pm"
 ;  data
 ; =====================================================================
 nano        db 7                        ; the bridge's GPIB address (/A:nn), and
-app_want    db 0                        ;  'T' or 'C': data, not BSS, as CLAUDE
+app_want    db 0                        ;  'T', 'W' or 'C': data, not BSS, as CLAUDE
                                         ;  /R reads them where BSS goes
 sig_gg      db 'GRIDGPIB'
 s_emm       db 'EMMXXXX0'
@@ -3113,6 +3122,7 @@ kv_date     db 10, 'date=', 0
 kv_grid     db 10, 'grid=CLAUDE 1.1', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
+kv_appweb   db 'app=web', 10, 0
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
 s_onint     db ' on INT ', 0

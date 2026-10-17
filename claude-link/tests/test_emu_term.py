@@ -31,7 +31,7 @@ def start(**kw):
 
 
 def pi_cells(h):
-    t = h.router.term
+    t = h.router.web if h.router.app == 'web' else h.router.term
     with t.lock:
         tc, ta = t.screen.cells()
         c = t.screen.cursor
@@ -42,7 +42,8 @@ def pi_cells(h):
 def in_step(h, sim_s=20):
     """The GRiD's shadow and screen are what pyte has on the Pi."""
     def same():
-        if h.m.crash or h.router.term.dirty: return False
+        t = h.router.web if h.router.app == 'web' else h.router.term
+        if h.m.crash or t.dirty: return False
         tc, ta, cur = pi_cells(h)
         gc, ga = h.term_cells()
         return gc == tc and ga == ta and not h.term_vram_ok(tc, ta, cur)
@@ -193,6 +194,31 @@ def test_term_quit():
         check(h)
     finally:
         h.close()
+
+
+def test_web_gridfox():
+    """CLAUDE /W: the same Term path, showing gridfox (Firefox as text)."""
+    from fake_firefox import FakeFirefox
+    f = FakeFirefox()
+    h = EmuHarness(term=FAKE, web='%s -m gridfox --port %d http://test.local/index' % (sys.executable, f.port),
+                   args='/A:7 /W')
+    try:
+        h.boot()
+        assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.screen())
+        assert wait_screen(h, 'Tektronix 7854 notes', 30), (h.log, h.screen())
+        assert h.router.app == 'web' and h.router.term is None             # HELLO said app=web
+        assert in_step(h), mismatch(h)
+        shot(h, 'web_index')
+        h.press(0x0F09); h.press(0x0F09); h.press(0x1C0D)                  # Tab Tab Return: the long page
+        assert wait_screen(h, 'Paragraph 1 of the long page.'), h.screen()
+        assert in_step(h), mismatch(h)
+        h.press(0x5100)                                                     # PgDn
+        assert wait_screen(h, 'Paragraph 20 of'), h.screen()
+        assert in_step(h), mismatch(h)
+        shot(h, 'web_long')
+        check(h)
+    finally:
+        h.close(); f.close()
 
 
 def test_term_echo_time():
