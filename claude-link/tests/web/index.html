@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><title>Test Bench Home</title><style>.sr{position:absolute;width:1px;height:1px;overflow:hidden}</style></head>
+<body>
+<nav><a href="/index">Home</a> | <a href="/long">Long page</a> | <a href="/search">Search</a> | <a href="/login">Sign in</a></nav>
+<h1>Tektronix 7854 notes</h1>
+<p>The <b>7854</b> is a <a href="/long">waveform-processing oscilloscope</a> with a GPIB port. Its keystroke
+programs   are     stored in RAM.</p>
+<div style="display:none">This text is hidden and must not show.</div>
+<p hidden>Nor this.</p>
+<h2>Plug-ins</h2>
+<ul>
+  <li>7A26 dual-trace amplifier</li>
+  <li>7B53A timebase
+    <ul><li>delayed sweep</li></ul>
+  </li>
+</ul>
+<ol start="3"><li>Third</li><li>Fourth</li></ol>
+<h3>Waveform memory</h3>
+<table><tr><th>Item</th><th>Value</th></tr><tr><td>Points</td><td>512</td></tr></table>
+<pre>10 PRINT "HELLO"
+20   GOTO 10</pre>
+<blockquote>Measure twice, cut once.</blockquote>
+<p>Grüße, café — “quotes” &amp; ✓ done <img src="x.png" alt="scope photo"> 😀 end.</p>
+<hr>
+<p id="count">Clicked 0 times.</p>
+<button id="btn" type="button" onclick="var n=+this.dataset.n||0; this.dataset.n=++n; document.getElementById('count').textContent='Clicked '+n+' times.'">Count</button>
+<p><select id="sel"><option>Volts</option><option>Amps</option><option>Ohms</option></select>
+<label><input type="checkbox" id="cb"> Averaging</label></p>
+</body></html>

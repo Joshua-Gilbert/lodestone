@@ -826,7 +826,7 @@ class EmuHarness:
     """Real CLAUDE.COM <-> real GRIDGPIB <-> 7210 + bus <-> AR488 model <->
     real gridlink (Link + Session) <-> scripted Claude."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y', args='/A:7',
-                 claude_com=CLAUDE_COM, mapfile=None, baud=115200, term=None):
+                 claude_com=CLAUDE_COM, mapfile=None, baud=115200, term=None, web=None):
         s.m = m = Machine()
         s.pending = []
         s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
@@ -843,6 +843,7 @@ class EmuHarness:
         if term:
             # Term: gridlink's router and a program in a pty (no API key)
             cfg.term_dir = os.path.join(s.tmp, 'grid'); cfg.term_command = term
+            if web: cfg.web_command = web
             cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
             cfg.api_key = None; cfg.env_key = lambda: False; cfg.app = 'auto'
             s.router = Router(cfg, log=s.log.append)
@@ -977,6 +978,7 @@ class EmuHarness:
 
     def close(s):
         if s.router is not None and s.router.term is not None: s.router.term.stop()
+        if s.router is not None and getattr(s.router, 'web', None) is not None: s.router.web.stop()
 
     def shot(s, path):
         s.settle()

@@ -1,0 +1,290 @@
+"""gridfox (CLAUDE /W): Firefox on the Pi as text on the GRiD.
+
+The layout and keys on their own; the real extract.js and act.js against a
+stand-in Firefox (fake_firefox.py: Marionette + jsdom); the app driven key by
+key; and end to end through gridlink and the GRiD's link (GridSim).
+
+    python3 tests/test_gridfox.py        (needs Node and `npm install` in tests/)
+"""
+import io, os, sys, time
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE); sys.path.insert(0, os.path.dirname(HERE))
+import pyte
+from fake_firefox import FakeFirefox
+from gridfox import page as P
+from gridfox.app import App, Keys, Line, to_url, looks_like_url, BODY
+from gridfox.browser import Browser
+from gridfox.marionette import Marionette
+
+U = 'http://test.local/'
+
+
+# ---- layout -----------------------------------------------------------------
+def test_wrap_and_clean():
+    cs = P.cells([['one two three four five six seven', 0, -1]])
+    lines = [''.join(c for c, _, _ in l) for l in P.wrap(cs, 10)]
+    assert lines == ['one two', 'three four', 'five six', 'seven'], lines
+    long = P.cells([['x' * 25, 0, -1]])
+    assert [len(l) for l in P.wrap(long, 10)] == [10, 10, 5]
+    assert P.clean('café “hi” ​x \U0001F600y 中') == 'café "hi" x y ?'
+    assert all(len(t) <= 80 for t in P.layout({'blocks': [{'k': 'p', 'r': [['w ' * 300, 0, -1]]}]}).text)
+
+
+def test_layout_kinds():
+    m = {'blocks': [
+        {'k': 'h1', 'r': [['Title', 0, -1]]},
+        {'k': 'p', 'r': [['See ', 0, -1], ['this link', 0, 0], ['.', 0, -1]]},
+        {'k': 'li', 'd': 1, 'm': -1, 'r': [['a', 0, -1]]},
+        {'k': 'li', 'd': 2, 'm': 2, 'r': [['b', 0, 1]]},
+        {'k': 'pre', 'r': [['x = 1\n  y = 2', 4, -1]]},
+        {'k': 'hr', 'r': []},
+        {'k': 'h3', 'r': [['Sub', 0, -1]]}]}
+    d = P.layout(m)
+    t = d.text
+    assert t[0] == 'Title'.ljust(80) and all(a & P.A_INV for a in d.attr[0])
+    assert t[2] == 'See this link.' and d.attr[2][4] == P.A_LINK and d.act[2][4] == 0 and d.act[2][3] == -1
+    assert t[4] == '• a' and t[5] == '  2. b', t
+    assert t[7:9] == ['  x = 1', '    y = 2'], t
+    assert t[10] == '─' * 80 and t[12] == '▸ Sub', t
+    assert d.where == {0: (2, 4), 1: (5, 5)}, d.where
+    assert d.acts_in(0, 3) == [0] and d.find('y = 2') == 8
+
+
+def test_keys_and_line():
+    k = Keys()
+    assert k.feed(b'a\x1b[A\x1b[6~\t\x1b[Z\r\x7f\x1bg\xc3\xa9') == ['a', 'up', 'pgdn', 'tab', 'btab', 'enter',
+                                                                      'bksp', 'meta-g', 'é']
+    assert k.feed(b'\x1b[', 0) == [] and k.feed(b'B', 0) == ['down']         # split across reads
+    assert k.feed(b'\x1b', 10.0) == [] and k.take(10.1) == ['esc']           # a lone Esc, after a moment
+    ln = Line('Go: ', 'abc')
+    for x in ['left', 'X', 'home', 'Y', 'end', 'bksp']: ln.key(x)
+    assert ln.text == 'YabX', ln.text
+    assert looks_like_url('example.com') and looks_like_url('http://x') and not looks_like_url('two words')
+    assert to_url('example.com/a') == 'https://example.com/a'
+    assert to_url('7854 manual').endswith('q=7854+manual')
+
+
+# ---- the real scripts on a stand-in Firefox ---------------------------------
+def browser():
+    f = FakeFirefox()
+    m = Marionette(port=f.port); m.new_session()
+    return f, m, Browser(m)
+
+
+def test_extract():
+    f, m, b = browser()
+    try:
+        b.open(U + 'index')
+        mod = b.read()
+        d = P.layout(mod)
+        text = '\n'.join(d.text)
+        assert mod['title'] == 'Test Bench Home' and mod['url'] == U + 'index'
+        assert 'hidden' not in text and 'Nor this' not in text
+        assert 'programs are stored in RAM' in text                       # whitespace folded
+        assert '• 7A26 dual-trace amplifier' in d.text and '  • delayed sweep' in d.text
+        assert '3. Third' in d.text and '4. Fourth' in d.text
+        assert 'Item │ Value' in d.text and 'Points │ 512' in d.text
+        assert '  20   GOTO 10' in d.text                                 # pre keeps its spaces
+        assert '│ Measure twice, cut once.' in d.text
+        assert 'Grüße, café' in text and '[scope photo]' in text
+        kinds = [a['t'] for a in mod['acts']]
+        assert kinds == ['link'] * 5 + ['button', 'select', 'check'], kinds
+        assert mod['acts'][6]['opts'] == ['Volts', 'Amps', 'Ohms']
+        assert mod['acts'][1]['h'] == U + 'long'
+    finally:
+        m.close(); f.close()
+
+
+# ---- the app, key by key ----------------------------------------------------
+class Run:
+    def __init__(s, start=None):
+        s.f, s.m, s.b = browser()
+        s.out = io.BytesIO()
+        s.app = App(s.b, out=s.out)
+        s.scr = pyte.Screen(80, 24); s.st = pyte.ByteStream(s.scr)
+        s.app.draw(full=True)
+        if start: s.app.go(start)
+        s.pump()
+
+    def pump(s):
+        s.st.feed(s.out.getvalue()); s.out.seek(0); s.out.truncate()
+
+    def keys(s, *ks):
+        for k in ks:
+            if len(k) > 1 and k not in ('up', 'down', 'pgdn', 'pgup', 'home', 'end', 'tab', 'btab', 'enter',
+                                         'bksp', 'esc', 'left', 'right', 'f6'):
+                for c in k: s.app.key(c)
+            else: s.app.key(k)
+        s.pump()
+
+    def text(s): return [l.rstrip() for l in s.scr.display]
+
+    def has(s, t): return any(t in l for l in s.text())
+
+    def rereads(s):
+        """The app's timed looks at the page, done now."""
+        time.sleep(0.4)
+        while s.app.rereads: s.app.rereads.pop(0); s.app.reread()
+        s.pump()
+
+    def close(s): s.m.close(); s.f.close()
+
+
+def test_app_open_follow_back():
+    r = Run(U + 'index')
+    try:
+        t = r.text()
+        assert t[0].strip() == U + 'index' and r.scr.buffer[0][1].reverse     # the address bar
+        assert r.has('Tektronix 7854 notes') and r.has('Plug-ins')
+        assert r.scr.buffer[1][0].data == 'H' and r.scr.buffer[1][0].underscore  # links underlined
+        r.keys('tab')
+        assert r.app.sel == 0 and r.scr.buffer[1][0].reverse and r.text()[23].strip().startswith(U + 'index')
+        r.keys('tab', 'enter')                                 # the second link: Long page
+        assert r.app.url == U + 'long' and r.has('Paragraph 1 of the long page.'), r.text()
+        r.keys('pgdn', 'pgdn')
+        top = r.app.top
+        assert top == 2 * (BODY - 2) and r.has('Paragraph %d of' % (top // 2)), (top, r.text())
+        r.keys('end')
+        assert r.has('The end of the long page.') and r.text()[23].endswith('Bot')
+        r.keys('home', 'left')                                  # back
+        assert r.app.url == U + 'index' and r.app.top == 0 and r.app.sel == 1
+        r.keys('right')                                         # forward: the long page, where we were
+        assert r.app.url == U + 'long' and r.app.top == 0, r.app.top
+    finally:
+        r.close()
+
+
+def test_app_hints_and_find():
+    r = Run(U + 'index')
+    try:
+        r.keys('f')
+        assert r.scr.buffer[1][0].data == '1' and r.scr.buffer[1][0].reverse     # numbers over the links
+        assert r.has('Link number')
+        r.keys('4', 'enter')                                    # Sign in (1..9 would be ambiguous with 2 digits)
+        assert r.app.url == U + 'login', (r.app.url, r.text())
+        r.keys('left', '/')
+        assert r.text()[23].startswith('Find:')
+        r.keys('GOTO', 'enter')
+        assert 'Found on line' in r.text()[23] and r.has('20   GOTO 10'), r.text()
+    finally:
+        r.close()
+
+
+def test_app_search_form():
+    r = Run(U + 'search')
+    try:
+        r.keys('tab')
+        assert r.app.acts()[r.app.sel]['t'] == 'field'
+        r.keys('enter')
+        assert r.text()[23].startswith('Search words:')
+        r.keys('7854 manual', 'enter')                          # the form's only field: sent
+        assert r.app.url.startswith(U + 'search?q=7854+manual'), r.app.url
+        assert r.has('Results for 7854 manual:') and r.has('The long page about 7854 manual'), r.text()
+        assert r.app.model['title'] == 'Search: 7854 manual'
+    finally:
+        r.close()
+
+
+def test_app_login_two_fields():
+    r = Run(U + 'login')
+    try:
+        r.keys('tab', 'enter', 'joshua', 'enter')               # user: on to the password
+        assert r.app.url == U + 'login' and r.app.acts()[r.app.sel]['type'] == 'password', r.app.sel
+        assert r.has('[joshua')
+        r.keys('enter', 'hunter2')
+        assert r.text()[23].endswith('*******'), r.text()[23]    # the password isn't shown
+        r.keys('enter')
+        assert r.has('Welcome, joshua (7 letter password)'), r.text()
+    finally:
+        r.close()
+
+
+def test_app_button_select_check():
+    r = Run(U + 'index')
+    try:
+        btn = [i for i, a in enumerate(r.app.acts()) if a['t'] == 'button'][0]
+        r.app.select(btn); r.keys('enter')
+        assert r.has('Clicked 1 times.'), r.text()             # same page, read again
+        r.app.select(btn); r.keys('enter')
+        assert r.has('Clicked 2 times.')
+        sel = [i for i, a in enumerate(r.app.acts()) if a['t'] == 'select'][0]
+        r.app.select(sel); r.keys('enter')
+        assert r.has('│ ▸ Volts') and r.has('Ohms'), r.text()    # the choices
+        r.keys('down', 'down', 'enter')
+        assert r.has('[Ohms ▼]'), r.text()
+        cb = [i for i, a in enumerate(r.app.acts()) if a['t'] == 'check'][0]
+        r.app.select(cb); r.keys('enter')
+        assert r.has('[x] Averaging'), r.text()
+    finally:
+        r.close()
+
+
+def test_app_late_content_and_help():
+    r = Run(U + 'late')
+    try:
+        assert r.has('Loading...')
+        r.rereads()
+        assert r.has('Filled in by script later.'), r.text()
+        r.keys('h')
+        assert r.has('gridfox: Firefox on the GRiD') and r.text()[0].strip() == 'gridfox'
+        r.keys('g')
+        assert r.text()[23].startswith('Go:')
+        r.keys('test.local/long', 'enter')
+        # "test.local/long" has a dot: an address (https:// is added; the stand-in has no TLS, so 404 there)
+        assert r.app.url.startswith('https://test.local/long'), r.app.url
+    finally:
+        r.close()
+
+
+# ---- end to end: gridlink + the GRiD's link (GridSim) -----------------------
+def test_end_to_end_gridsim():
+    from gridsim import TermHarness
+    f = FakeFirefox()
+    try:
+        cmd = '%s -m gridfox --port %d %sindex' % (sys.executable, f.port, U)
+        h = TermHarness(app='web', web_command=cmd)
+        try:
+            assert h.wait_text('Tektronix 7854 notes', wall=20), (h.log, h.grid.screen_text())
+            assert h.router.app == 'web' and h.router.term is None             # no Claude Code started
+            assert h.run_until(lambda: h.grid.title == b'Test Bench Home', 5), h.grid.title   # (at most once a second)
+            assert h.settle()
+            h.grid.press(0x09, 0x0F); h.grid.press(0x09, 0x0F)
+            assert h.settle()
+            b0 = h.grid.stats['rx_bytes']
+            h.grid.press(0x0D, 0x1C)
+            assert h.wait_text('Paragraph 1 of the long page.', wall=10), h.grid.screen_text()
+            assert h.settle()
+            b1 = h.grid.stats['rx_bytes']
+            h.grid.press(0, 0x51)                                               # PgDn
+            assert h.wait_text('Paragraph 20 of', wall=10), h.grid.screen_text()
+            assert h.settle()
+            b2 = h.grid.stats['rx_bytes']
+            print('     a new page: %d bytes to the GRiD; a screen down: %d' % (b1 - b0, b2 - b1))
+            assert b1 - b0 < 3000 and b2 - b1 < 2000, (b1 - b0, b2 - b1)
+            h.grid.press(0x08, 0x0E)                                            # Backspace: back
+            assert h.wait_text('Plug-ins', wall=10), h.grid.screen_text()
+            assert h.settle()
+            assert not h.nano.violations, h.nano.violations
+            assert h.grid.stats['fail'] == 0, h.grid.stats
+            errs = [l for l in h.log if 'Traceback' in str(l)]
+            assert not errs, errs
+        finally:
+            h.close()
+    finally:
+        f.close()
+
+
+if __name__ == '__main__':
+    tests = [(n, v) for n, v in sorted(globals().items()) if n.startswith('test_') and callable(v)]
+    only = sys.argv[1:]
+    bad = 0
+    for n, t in tests:
+        if only and not any(o in n for o in only): continue
+        t0 = time.time()
+        try:
+            t(); print('ok   %-34s %.1fs' % (n, time.time() - t0))
+        except Exception:
+            bad += 1
+            import traceback; print('FAIL %s' % n); traceback.print_exc()
+    print('%d failed' % bad if bad else 'all passed')
+    sys.exit(1 if bad else 0)

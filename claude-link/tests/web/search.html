@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><title>Search</title></head>
+<body>
+<h1>Search the bench</h1>
+<form action="/search" method="get"><input type="search" name="q" placeholder="Search words"> <input type="submit" value="Go"></form>
+<div id="results"></div>
+<script>
+var q = new URLSearchParams(location.search).get('q');
+if (q) {
+  document.title = 'Search: ' + q;
+  document.getElementById('results').innerHTML = '<p>Results for <b>' + q.replace(/</g,'&lt;') + '</b>:</p>' +
+    '<ol><li><a href="/long">The long page about ' + q.replace(/</g,'&lt;') + '</a></li><li><a href="/index">Home</a></li></ol>';
+}
+</script>
+</body></html>
