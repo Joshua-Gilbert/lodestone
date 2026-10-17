@@ -78,6 +78,7 @@ def t_click_follows_a_link():
         check('/W: Term, connected', h.run_until(lambda: h.var('term') and h.var('connected'), 15), h.log)
         check('/W: gridfox shows the page', wait(h, 'Tektronix 7854 notes'), h.screen())
         check('/W: the mouse found (INT 33h reset)', h.var('tmouse') == 0xFF, h.var('tmouse'))
+        check('/W: the links row is drawn', wait(h, 'Long page | Search', 10), h.screen())   # (frames arrive in turn)
         rows = h.screen().split('\n')
         r = [i for i, l in enumerate(rows) if 'Long page' in l][0]
         c = rows[r].index('Long page') + 2

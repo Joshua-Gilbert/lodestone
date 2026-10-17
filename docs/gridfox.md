@@ -184,7 +184,7 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
   - It can keep the old page up while a slow one loads.
   - It wants scripts in gridfox's sandbox, kept between calls.
   - It follows a `#fragment` link in the same document, as a browser does.
-- `os/tests/test_claude_mouse.py` (12 checks): the real CLAUDE.COM `/W` on
+- `os/tests/test_claude_mouse.py` (13 checks): the real CLAUDE.COM `/W` on
   the Lodestone kernel in pcemu, with its serial mouse and the kernel's
   INT 33h, the real gridlink, and gridfox on the stand-in Firefox.
   - A click on a link follows it, and a click on the address opens Go.
