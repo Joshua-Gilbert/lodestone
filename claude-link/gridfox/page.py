@@ -53,6 +53,7 @@ class Doc:
     def __init__(s):
         s.text = []; s.attr = []; s.act = []
         s.where = {}            # act -> (line, col) of its first cell
+        s.anchors = {}          # id -> the line its block starts on (for #fragments)
 
     def add(s, text, attr, act):
         n = len(s.text)
@@ -141,6 +142,8 @@ def layout(model, width=W):
         if k in SPACED or (k in ('li', 'tr') and prev != k) or (prev in ('li', 'tr') and prev != k):
             doc.blank()
         prev = k
+        for i in b.get('ids') or ():
+            if isinstance(i, str): doc.anchors.setdefault(i, len(doc.text))
         qp = (BAR + ' ') * min(q, 4)
         if k == 'hr':
             doc.add(RULE * width, [0] * width, [-1] * width); continue

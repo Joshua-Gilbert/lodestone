@@ -130,8 +130,11 @@ class Marionette:
     def script(s, body, args=(), timeout=15):
         # a named sandbox: gridfox's globals and the DOM built-ins it calls are
         # out of the page's reach (the page sees its own window, not ours)
-        return s.value('WebDriver:ExecuteScript', {'script': body, 'args': list(args), 'sandbox': SANDBOX},
-                       timeout=timeout)
+        # newSandbox false: the same sandbox each time (extract.js leaves the
+        # elements there for act.js); the default, but said outright, as
+        # Marionette's own comments say otherwise
+        return s.value('WebDriver:ExecuteScript', {'script': body, 'args': list(args), 'sandbox': SANDBOX,
+                                                   'newSandbox': False}, timeout=timeout)
 
     def click(s, el, timeout=25):
         """A real click (trusted events, user activation) on a web element
@@ -146,6 +149,16 @@ class Marionette:
 
     def set_window(s, w, h):
         s.call('WebDriver:SetWindowRect', {'width': w, 'height': h})
+
+    def quit(s, timeout=10):
+        """Ask Firefox to shut down as it would from its menu (cookies, sign-ins
+        and the session store written out).  -> True if it agreed."""
+        try:
+            s.call('Marionette:Quit', {'flags': ['eAttemptQuit']}, timeout=timeout)
+            s.session = None
+            return True
+        except Exception:
+            return False
 
     def close(s):
         try:
@@ -220,8 +233,14 @@ class Firefox:
                 time.sleep(0.3)
         return m
 
-    def stop(s):
-        if s.proc is not None and s.proc.poll() is None:
-            s.proc.terminate()
-            try: s.proc.wait(1.5)
-            except subprocess.TimeoutExpired: s.proc.kill()
+    def stop(s, m=None, wait=8.0):
+        """The Firefox gridfox started: quit cleanly through Marionette, then
+        SIGTERM, and a kill only as the last resort.  One that was already
+        running when gridfox came is left running."""
+        if s.proc is None or s.proc.poll() is not None: return
+        if m is not None and not m.dead and m.quit():
+            try: s.proc.wait(wait); return
+            except subprocess.TimeoutExpired: pass
+        s.proc.terminate()
+        try: s.proc.wait(wait if m is None else 2.0)
+        except subprocess.TimeoutExpired: s.proc.kill()

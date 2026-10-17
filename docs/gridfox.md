@@ -98,21 +98,29 @@ CLAUDE /W  ── KEYS ──────────────▶ (device, 7)
   the form after the last one. A password is shown as stars.
 - Return on a check box ticks it.
 - Return on a list opens its choices: Up/Down, then Return.
+- The prompt is the field's `<label>`, else its placeholder or name.
+
+**Pages:** a link to `#section` on the same page scrolls there, as does an
+address with a `#fragment`. A page that changes its own address
+(`history.pushState`) keeps your place. A closed `<details>` shows only its
+summary, as `[+] …`; Return on it opens it.
 
 ## Measured (emulator and GridSim, stand-in Firefox)
 
 | | |
 |---|---|
-| A new page (the long test page), bytes to the GRiD | 579 |
-| One screen down | 337 |
+| A new page (the long test page), bytes to the GRiD | 563-587 |
+| One screen down | 318-337 |
 | At 3.2 KB/s (stock bridge) | about 0.18 s and 0.1 s |
 
-The page's own weight never crosses GPIB, only the cells that change. How
+The ranges are runs here and on Joshua's machine. The page's own weight
+never crosses GPIB, only the cells that change. How
 long Firefox takes on the Pi 5 for a real site is not measured yet.
 
 ## Tests
 
-- `claude-link/tests/test_gridfox.py` (19 tests):
+- `claude-link/tests/test_gridfox.py` (25 tests, about 15 s: one stand-in
+  Firefox for the whole run):
   - layout and wrapping, the key parser and line editor;
   - the real `extract.js` and `act.js` against a stand-in Firefox;
   - the app key by key: follow, back with the place kept, hints, find;
@@ -123,14 +131,20 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
   - the review's findings (below): the session's shape, real clicks and the
     fallback, a hostile page, a form not sent early, a slow page, Back from
     help, an error kept, Esc timing, no busy loop while typing, a lost
-    Firefox, gridfox's own folder and no API key.
+    Firefox, gridfox's own folder and no API key;
+  - Joshua's review (below): `#fragment` links and addresses, `pushState`,
+    `<label>`s, `<details>`, Firefox's clean quit, Term's exit line.
 - `tests/fake_firefox.py` is the stand-in: a Marionette server whose pages
-  are jsdom (`fake_firefox_dom.js`), served from `tests/web/`. It needs Node
-  and `npm install` in `tests/`.
+  are jsdom (`fake_firefox_dom.js`), served from `tests/web/`. It needs Node,
+  and `npm ci` in `tests/` (jsdom pinned, `package-lock.json` kept). Without
+  them the tests that need it say so and are skipped, in `test_gridfox.py`
+  and `test_emu_term.py` alike.
   - It refuses a session asked for in geckodriver's shape, as a real
     Firefox would silently ignore it.
   - It hands out element references and answers ElementClick.
   - It can keep the old page up while a slow one loads.
+  - It wants scripts in gridfox's sandbox, kept between calls.
+  - It follows a `#fragment` link in the same document, as a browser does.
 - `test_emu_term.py` `test_web_gridfox`: the real CLAUDE.COM `/W` in the
   emulator. The GRiD's screen matches the Pi's cell for cell after a page,
   a link followed and a PgDn.
@@ -178,8 +192,7 @@ it:
 - **No recovery from a lost Firefox.** A timeout or broken stream now marks
   the connection dead (a half-read message can't put it out of step), and
   gridfox ends with code 3. Term then offers Return to start it again.
-  Ctrl-Q quits from anywhere. Firefox dies with gridfox (`PR_SET_PDEATHSIG`),
-  and the teardown is shorter.
+  Ctrl-Q quits from anywhere. Firefox dies with gridfox (`PR_SET_PDEATHSIG`).
 - **gridfox ran in `~/grid`,** where Claude Code writes files. `python3 -m`
   puts that folder first on `sys.path`, so a `json.py` there would have
   been imported.
@@ -204,17 +217,65 @@ it:
   - Back from help returns to the page without touching Firefox's history;
   - an error opening a page stays on the status line.
 
+## Joshua's review (2026-10-17, on the PR)
+
+"Approve with changes." He ran the suites under WSL and read Firefox ESR
+128's Marionette source. That confirmed the flat capabilities (the BiDi
+path, `--remote-debugging-port`, is the one that takes the wrapped shape,
+and gridfox never uses it) and that the named sandbox is kept between calls.
+All of his findings are fixed:
+
+1. **`#section` links threw the reader to the top.** Any change of address
+   counted as a new page, and a page changing its own hash or query
+   reset the view every second.
+   - Now an address that differs only by its fragment, or a document that
+     is still the one marked when it loaded (`pushState`), keeps the place.
+   - `extract.js` gives each block the ids (and `<a name>`s) that start
+     there, so a fragment scrolls to its line.
+2. **The emulator suite needed Node.** Without Node and jsdom,
+   `test_web_gridfox` (and the browser tests) now say so and are skipped.
+   jsdom is pinned (24.1.3), and `package-lock.json` is committed.
+3. **Firefox had 1.5 s before SIGKILL.** That is too short to flush cookies
+   and the session store on a Pi.
+   - Now gridfox asks Firefox to quit as from its menu (`Marionette:Quit`,
+     `eAttemptQuit`) and waits up to 8 s.
+   - SIGTERM follows only if that fails, and a kill is the last resort.
+   - Term waits 15 s for gridfox, so it never kills it first.
+4. **Hardening.**
+   - `PYTHONSAFEPATH=1` for gridfox, so its folder isn't on `sys.path` at
+     all (Python 3.11+).
+   - `newSandbox: false` is passed explicitly; the stand-in checks for it.
+5. **Form prompts ignored `<label>`.** Fields now read `el.labels` first.
+6. **Term's exit line named the interpreter.** It now says "gridfox exited
+   (it lost Firefox) (code 3)" rather than "python3 exited".
+7. **The tests were slow.** About 6.5 s each, from a node and jsdom per
+   test; now one stand-in per run, and the suite takes about 15 s.
+8. **Nits.** The test counts are corrected, and PROTOCOL.md's HELLO lists
+   `app=web`.
+
+Also from the review: a closed `<details>` showed its contents (Firefox
+hides them without `display: none`, inside a shadow tree a script can't
+walk). Now only its summary shows, and Return opens it.
+
 ## Not yet tried
 - **A real Firefox.** Firefox could not be downloaded in the build
-  workspace, so the scripts have only run under jsdom. Untried in particular:
-  - the named sandbox, with React-style value setting;
-  - ElementClick;
-  - downloads. jsdom lays nothing
-  out, so `extract.js` falls back to tag names there. In Firefox it uses
-  computed styles, which is the better path but untested.
-  - First check on the Pi: `python3 -m gridfox --console https://example.com`
-    in an 80x24 terminal.
-  - gridfox's log is `~/.cache/gridfox/gridfox.log`.
+  workspace, so the scripts have only run under jsdom.
+  - jsdom lays nothing out, so `extract.js` falls back to tag names there.
+    In Firefox it uses computed styles, the better path but untested.
+  - Untried in particular: the named sandbox with React-style value
+    setting, ElementClick, `Marionette:Quit`, and downloads.
+- **The first check on the Pi** should drive the page, not only show it:
+  1. `python3 -m gridfox --console https://example.com` in an 80x24
+     terminal;
+  2. Tab to a link and Return;
+  3. Back;
+  4. a form field (fill it in, send it).
+
+  Those paths depend on the sandbox and element references, which jsdom
+  can't prove. gridfox's log is `~/.cache/gridfox/gridfox.log`.
+- **DuckDuckGo's HTML page sometimes serves a bot check** to headless
+  browsers. If the first search shows a near-empty page, that is why;
+  `--search` takes another search address (`%s` for the words).
 - **Busy waits.** gridfox waits while a page loads. Keys typed meanwhile
   are kept and act after it.
 - **The Pi's Marionette port is local only.** Any program on the Pi can

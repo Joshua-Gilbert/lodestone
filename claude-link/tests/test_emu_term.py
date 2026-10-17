@@ -198,7 +198,10 @@ def test_term_quit():
 
 def test_web_gridfox():
     """CLAUDE /W: the same Term path, showing gridfox (Firefox as text)."""
-    from fake_firefox import FakeFirefox
+    from fake_firefox import FakeFirefox, missing
+    if missing():
+        print('     skipped: %s (the stand-in Firefox runs on Node and jsdom)' % missing())
+        return
     f = FakeFirefox()
     h = EmuHarness(term=FAKE, web='%s -m gridfox --port %d http://test.local/index' % (sys.executable, f.port),
                    args='/A:7 /W')

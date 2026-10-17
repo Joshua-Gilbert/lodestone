@@ -1,8 +1,8 @@
 {
   "name": "gridlink-tests",
   "private": true,
-  "description": "jsdom, for gridfox's stand-in Firefox (tests/fake_firefox.py): npm install here",
+  "description": "jsdom, for gridfox's stand-in Firefox (tests/fake_firefox.py): npm ci here",
   "devDependencies": {
-    "jsdom": "^24.0.0"
+    "jsdom": "24.1.3"
   }
 }

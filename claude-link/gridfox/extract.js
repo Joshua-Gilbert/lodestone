@@ -7,6 +7,7 @@
 //   flags  1 bold, 2 italic, 4 code, 8 image, 16 field
 //   act    index into acts (a link, button or field), or -1
 //   acts   {t: 'link'|'button'|'field'|'check'|'select', h: href, v: value, ...}
+//   block.ids  the ids (and <a name>s) that start at the block, for #fragments
 //
 // The elements behind acts stay in window.__gridfox, so a later script can
 // click one or set its value by number (act.js).
@@ -31,6 +32,7 @@ return (function (opt) {
   var kind = 'p', depth = 0, item = 0, pre = 0, quote = 0;
   var flags = 0, act = -1;
   var rowCell = 0;                // cells so far in the current table row
+  var ids = [], nids = 0;         // anchors waiting for the next block
 
   function style(el) { try { return win.getComputedStyle(el); } catch (e) { return null; } }
 
@@ -61,6 +63,7 @@ return (function (opt) {
     if (!cur) {
       if (blocks.length >= MAXBLOCKS) return null;
       cur = {k: kind, d: depth, m: kind === 'li' ? item : 0, q: quote, r: []};
+      if (ids.length) { cur.ids = ids; ids = []; }
       blocks.push(cur);
       item = 0;                   // the marker goes on the item's first block only
     }
@@ -96,7 +99,13 @@ return (function (opt) {
   }
 
   function label(el) {
-    return (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+    // its <label>s first (most forms), then aria-label and title
+    var t = '';
+    try {
+      for (var i = 0; el.labels && i < el.labels.length && !t; i++)
+        t = el.labels[i].textContent.replace(/\s+/g, ' ').trim();
+    } catch (e) {}
+    return (t || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim().slice(0, 60);
   }
 
   function field(el, tag) {
@@ -105,7 +114,7 @@ return (function (opt) {
     var o, f = 16;
     if (tag === 'TEXTAREA' || (tag === 'INPUT' && TEXTISH[t])) {
       o = {t: 'field', type: tag === 'TEXTAREA' ? 'textarea' : (t || 'text'), v: el.value || '', f: formOf(el),
-           ph: el.getAttribute('placeholder') || label(el), name: el.name || '',
+           ph: el.getAttribute('placeholder') || label(el), lb: label(el), name: el.name || '',
            w: Math.max(6, Math.min(40, el.size > 1 ? el.size : 20))};
       var shown = o.type === 'password' ? el.value.replace(/./g, '*') : o.v;
       var a = addAct(o, el);
@@ -144,6 +153,11 @@ return (function (opt) {
     if (SKIP[tag]) return;
     var cs = style(el);
     if (hidden(el, cs)) return;
+    var id = el.id || (tag === 'A' && el.getAttribute('name')) || '';
+    if (id && nids < 3000) {
+      nids++;
+      if (cur) { (cur.ids = cur.ids || []).push(id); } else ids.push(id);
+    }
     if (tag === 'BR') { if (pre) put('\n', flags, act); else { var b = cur; flush(); if (!b) open(); } return; }
     if (tag === 'IMG') {
       var alt = (el.getAttribute('alt') || '').trim();
@@ -180,6 +194,12 @@ return (function (opt) {
       else if (tag === 'TR') { kind = 'tr'; rowCell = 0; }
       else if (kind !== 'li' && kind !== 'quote' && kind !== 'pre' && kind !== 'tr') kind = 'p';
     }
+    if (tag === 'SUMMARY' && el.parentElement && el.parentElement.tagName === 'DETAILS' && act < 0) {
+      // a <details> heading: Return opens or closes it, as a click does
+      act = addAct({t: 'button', v: el.textContent.replace(/\s+/g, ' ').trim().slice(0, 40) || 'Details',
+                    det: !!el.parentElement.open}, el);
+      put(el.parentElement.open ? '[-] ' : '[+] ', 0, act);
+    }
     if (tag === 'A' && el.hasAttribute('href') && act < 0) {
       var h = el.href || '';
       act = addAct({t: 'link', h: h, txt: el.textContent.trim().length > 0}, el);
@@ -201,6 +221,13 @@ return (function (opt) {
   // children appear only where a <slot> places them), a slot's assigned
   // nodes (or its fallback content), otherwise its children.
   function children(el, tag) {
+    if (tag === 'DETAILS' && !el.open) {
+      // closed: only its summary shows (Firefox hides the rest without
+      // display: none, inside a shadow tree a script can't walk)
+      var s = [];
+      for (var c = el.firstElementChild; c; c = c.nextElementSibling) if (c.tagName === 'SUMMARY') { s.push(c); break; }
+      return s;
+    }
     if (el.shadowRoot) return el.shadowRoot.childNodes;
     if (tag === 'SLOT' && el.assignedNodes) {
       var a = el.assignedNodes({flatten: true});
@@ -211,10 +238,15 @@ return (function (opt) {
 
   if (doc.body) walk(doc.body);
   // drop blocks with nothing in them (but keep rules)
+  var carry = [];
   blocks = blocks.filter(function (b) {
-    if (b.k === 'hr') return true;
-    for (var i = 0; i < b.r.length; i++) if (/\S/.test(b.r[i][0])) return true;
-    return false;
+    var keep = b.k === 'hr';
+    for (var i = 0; !keep && i < b.r.length; i++) if (/\S/.test(b.r[i][0])) keep = true;
+    // an empty block's anchors go to the next block kept
+    if (b.ids) carry = carry.concat(b.ids);
+    if (!keep) { delete b.ids; return false; }
+    if (carry.length) { b.ids = carry; carry = []; }
+    return true;
   });
   win.__gridfox = els;
   var focus = -1;

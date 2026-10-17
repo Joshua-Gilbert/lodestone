@@ -8,9 +8,17 @@ NAME.html there (the query string is left for the page's scripts).
 
 Needs Node and `npm install` in tests/ (jsdom).
 """
-import argparse, json, os, socket, subprocess, sys, threading, urllib.parse
+import argparse, json, os, shutil, socket, subprocess, sys, threading, urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+def missing():
+    """Why the stand-in can't run here (None: it can)."""
+    if not shutil.which('node'): return 'Node is not installed'
+    if not os.path.isdir(os.path.join(HERE, 'node_modules', 'jsdom')):
+        return 'jsdom is not installed (npm ci in claude-link/tests)'
+    return None
+
+
 NOT_FOUND = '<html><head><title>Not found</title></head><body><h1>Not found</h1><p>%s</p></body></html>'
 
 
@@ -18,7 +26,7 @@ class FakeFirefox:
     def __init__(s, pages=os.path.join(HERE, 'web'), port=0, delay=0.0, slow=None):
         s.pages = pages; s.delay = delay
         s.slow = slow or {}                 # path -> seconds the old page stays up after a click to it
-        s.caps = None; s.clicks = []
+        s.caps = None; s.clicks = []; s.quits = []
         s.node = subprocess.Popen(['node', os.path.join(HERE, 'fake_firefox_dom.js')], cwd=HERE,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         s.srv = socket.socket(); s.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -29,6 +37,13 @@ class FakeFirefox:
         s.lock = threading.Lock()
         s._load('about:blank', push=True)
         threading.Thread(target=s._serve, daemon=True).start()
+
+    def reset(s, slow=None):
+        """For the next test: a fresh tab and counters, the same node and port."""
+        with s.lock:
+            s.slow = slow or {}; s.caps = None; s.clicks = []; s.quits = []; s.calls = []
+            s.hist = []; s.pos = -1; s._load('about:blank', push=True)
+        return s
 
     # ---- the DOM ---------------------------------------------------------
     def _node(s, m):
@@ -109,6 +124,9 @@ class FakeFirefox:
             s.session = True
             return None, {'sessionId': 'fake', 'capabilities': {'browserName': 'firefox'}}
         if name == 'WebDriver:DeleteSession': s.session = False; return None, {}
+        if name == 'Marionette:Quit':
+            s.quits.append(p.get('flags')); s.session = False
+            return None, {'cause': 'shutdown'}
         if name == 'WebDriver:Navigate':
             if urllib.parse.urlsplit(p['url']).netloc == 'error.test':          # what Firefox says for a bad host
                 s._load('about:blank')
@@ -121,10 +139,15 @@ class FakeFirefox:
             if s.pos < len(s.hist) - 1: s.pos += 1; s._load(s.hist[s.pos], push=False)
             return None, {}
         if name == 'WebDriver:Refresh': s._load(s.url, push=False); return None, {}
-        if name == 'WebDriver:GetCurrentURL': return None, {'value': s.url}
+        if name == 'WebDriver:GetCurrentURL':      # the live address (#fragments, pushState)
+            r = s._node({'op': 'exec', 'script': 'return location.href;', 'args': []})
+            return None, {'value': r.get('value') or s.url}
         if name == 'WebDriver:GetTitle': return None, {'value': s.title}
         if name == 'WebDriver:SetWindowRect': return None, {}
         if name == 'WebDriver:ExecuteScript':
+            # gridfox's scripts rely on one sandbox kept between calls
+            if p.get('sandbox') != 'gridfox' or p.get('newSandbox') is not False:
+                return {'error': 'invalid argument', 'message': 'not in the gridfox sandbox: %r' % p}, None
             r = s._node({'op': 'exec', 'script': p['script'], 'args': p.get('args', [])})
             if not r['ok']: return {'error': 'javascript error', 'message': r['error']}, None
             if r.get('nav'): s._go(r['nav'])

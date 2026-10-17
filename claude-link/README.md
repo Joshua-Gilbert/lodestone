@@ -251,7 +251,7 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
   MCP server); `fake_claude.py` stands in for Claude Code in a pty (no
   login, no model).
   gridfox: `test_gridfox.py`, with `fake_firefox.py`, a stand-in Firefox
-  (Marionette over jsdom; Node, and `npm install` in `tests/`) serving
+  (Marionette over jsdom; Node, and `npm ci` in `tests/`) serving
   `tests/web/`.
   `python3 tests/test_emu.py shots/` also saves every screen as PNG + text.
   Needs `unicorn` and `pillow`; `bin/GRIDGPIB.COM` is the driver it loads.
