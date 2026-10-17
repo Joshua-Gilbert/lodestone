@@ -381,6 +381,29 @@ def test_router():
         h.close()
 
 
+def test_click_only_when_asked():
+    """EVENT 05h (a click, CLAUDE /W): passed on only to a program that
+    turned mouse reports on.  The stand-in Claude Code doesn't."""
+    h = start()
+    try:
+        n = h.router.term.stats['pty_out']
+        h.grid.txq.append([glp.G_EVENT, bytes([glp.EV_CLICK, 3, 4]), 0])
+        assert h.settle()
+        assert h.router.term.stats['pty_out'] == n, 'a click reached a program that asked for none'
+        t = h.router.term
+        for mode, want in (((1000,), b'\x1b[M\x20\x24\x25\x1b[M\x23\x24\x25'),
+                           ((1000, 1006), b'\x1b[<0;4;5M\x1b[<0;4;5m')):
+            got = []
+            w = t._write; t._write = got.append
+            t.screen.mode.update(m << 5 for m in mode)
+            t.click(3, 4); t.click(3, 24)                                    # (row 24 is CLAUDE's band: not)
+            t._write = w; t.screen.mode.difference_update(m << 5 for m in mode)
+            assert got == [want], (mode, got)
+        check(h)
+    finally:
+        h.close()
+
+
 def test_echo_latency():
     """Spike 1 (simulated): key -> KEYS -> pty -> echo -> pyte -> CELLS -> GRiD.
     The clock counts the modelled link and the Pi's real time."""
