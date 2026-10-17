@@ -3,7 +3,8 @@
     python3 -m gridfox [URL] [--port 2828] [--firefox PATH] [--images]
 
 gridlink starts it in Term's pty when the GRiD's HELLO says app=web; it also
-runs in any 80x24 xterm for trying it out (Ctrl-C quits there).
+runs in any 80x24 xterm for trying it out (Ctrl-C quits there; Ctrl-Q
+anywhere, and Return on the GRiD starts it again).
 """
 import argparse, os, sys, time
 from .marionette import Firefox
@@ -43,7 +44,8 @@ def main(argv=None):
         run_tty(app)
     finally:
         m.close(); fx.stop()
-    return 0
+    if app.lost: log('stopped: %s' % app.lost)
+    return 3 if app.lost else 0
 
 
 if __name__ == '__main__':

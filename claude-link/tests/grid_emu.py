@@ -843,7 +843,7 @@ class EmuHarness:
         if term:
             # Term: gridlink's router and a program in a pty (no API key)
             cfg.term_dir = os.path.join(s.tmp, 'grid'); cfg.term_command = term
-            if web: cfg.web_command = web
+            if web: cfg.web_command = web; cfg.web_dir = os.path.join(s.tmp, 'web')
             cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
             cfg.api_key = None; cfg.env_key = lambda: False; cfg.app = 'auto'
             s.router = Router(cfg, log=s.log.append)

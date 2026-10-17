@@ -45,7 +45,10 @@ class TermSession:
         s.web = web                     # gridfox (CLAUDE /W) instead of Claude Code: no GRiD tools
         default = getattr(cfg, 'web_command', 'python3 -m gridfox') if web else getattr(cfg, 'term_command', 'claude')
         s.command = command or shlex.split(default)
-        s.cwd = os.path.expanduser(cwd or getattr(cfg, 'term_dir', '~/grid'))
+        # gridfox runs in a folder of its own: `python3 -m` puts the folder
+        # first on sys.path, and Claude Code writes files in ~/grid
+        default_dir = getattr(cfg, 'web_dir', '~/.cache/gridfox') if web else getattr(cfg, 'term_dir', '~/grid')
+        s.cwd = os.path.expanduser(cwd or default_dir)
         s.name = 'gridfox' if web else 'Claude Code'
         s.lock = threading.RLock()
         s.screen = TermScreen(); s.stream = pyte.ByteStream(s.screen)
@@ -186,7 +189,7 @@ class TermSession:
         fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
         env = dict(os.environ, TERM='xterm-256color', LANG='C.UTF-8', COLUMNS='80', LINES='24')
         env.pop('COLORTERM', None)
-        if not getattr(s.cfg, 'term_api_key', False):
+        if s.web or not getattr(s.cfg, 'term_api_key', False):
             # Term is for the subscription: a key in gridlink's environment
             # (for the chat) must not make Claude Code bill the API instead
             for k in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'): env.pop(k, None)

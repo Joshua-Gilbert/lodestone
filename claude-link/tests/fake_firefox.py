@@ -15,8 +15,10 @@ NOT_FOUND = '<html><head><title>Not found</title></head><body><h1>Not found</h1>
 
 
 class FakeFirefox:
-    def __init__(s, pages=os.path.join(HERE, 'web'), port=0, delay=0.0):
+    def __init__(s, pages=os.path.join(HERE, 'web'), port=0, delay=0.0, slow=None):
         s.pages = pages; s.delay = delay
+        s.slow = slow or {}                 # path -> seconds the old page stays up after a click to it
+        s.caps = None; s.clicks = []
         s.node = subprocess.Popen(['node', os.path.join(HERE, 'fake_firefox_dom.js')], cwd=HERE,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         s.srv = socket.socket(); s.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -50,6 +52,17 @@ class FakeFirefox:
         s.title = t.get('value') or ''
         if push:
             s.hist = s.hist[:s.pos + 1] + [url]; s.pos = len(s.hist) - 1
+
+    def _go(s, url):
+        """A page a click or a form led to: at once, or after the old page has
+        stayed up a while (as a real browser does with a slow server)."""
+        wait = s.slow.get(urllib.parse.urlsplit(url).path.strip('/'))
+        if not wait: s._load(url); return
+        s._node({'op': 'unload'})
+        def later():
+            __import__('time').sleep(wait)
+            with s.lock: s._load(url)
+        threading.Thread(target=later, daemon=True).start()
 
     # ---- Marionette ------------------------------------------------------
     def _serve(s):
@@ -87,10 +100,20 @@ class FakeFirefox:
         if s.delay: __import__('time').sleep(s.delay)
         if name == 'WebDriver:NewSession':
             if s.session: return {'error': 'session not created', 'message': 'Maximum number of active sessions'}, None
+            # Marionette reads the parameters as the capabilities themselves: a
+            # geckodriver-style {capabilities: {alwaysMatch}} would be ignored
+            # without a word by the real one, so here it is an error
+            if 'capabilities' in p or p.get('pageLoadStrategy') != 'eager':
+                return {'error': 'invalid argument', 'message': 'capabilities not as Marionette reads them: %r' % p}, None
+            s.caps = p
             s.session = True
             return None, {'sessionId': 'fake', 'capabilities': {'browserName': 'firefox'}}
         if name == 'WebDriver:DeleteSession': s.session = False; return None, {}
-        if name == 'WebDriver:Navigate': s._load(p['url']); return None, {}
+        if name == 'WebDriver:Navigate':
+            if urllib.parse.urlsplit(p['url']).netloc == 'error.test':          # what Firefox says for a bad host
+                s._load('about:blank')
+                return {'error': 'unknown error', 'message': 'Reached error page: about:neterror?e=dnsNotFound'}, None
+            s._load(p['url']); return None, {}
         if name == 'WebDriver:Back':
             if s.pos > 0: s.pos -= 1; s._load(s.hist[s.pos], push=False)
             return None, {}
@@ -104,8 +127,14 @@ class FakeFirefox:
         if name == 'WebDriver:ExecuteScript':
             r = s._node({'op': 'exec', 'script': p['script'], 'args': p.get('args', [])})
             if not r['ok']: return {'error': 'javascript error', 'message': r['error']}, None
-            if r.get('nav'): s._load(r['nav'])
+            if r.get('nav'): s._go(r['nav'])
             return None, {'value': r['value']}
+        if name == 'WebDriver:ElementClick':
+            r = s._node({'op': 'click', 'id': p['id']})
+            if not r['ok']: return {'error': r['error'], 'message': r['error']}, None
+            s.clicks.append(p['id'])
+            if r.get('nav'): s._go(r['nav'])
+            return None, {}
         return {'error': 'unknown command', 'message': name}, None
 
     def close(s):

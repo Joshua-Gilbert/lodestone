@@ -7,10 +7,22 @@ const {JSDOM, VirtualConsole} = require('jsdom');
 const readline = require('readline');
 
 let dom = null, nav = null;
+const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
+let elements = [];                      // web element references handed out for this page
+
+// what Marionette does to a script's result: elements become references
+function serial(v, w) {
+  if (v === undefined || v === null) return null;
+  if (v instanceof w.Element) { elements.push(v); return {[ELEMENT]: String(elements.length - 1)}; }
+  if (Array.isArray(v)) return v.map((x) => serial(x, w));
+  if (typeof v === 'object') { const o = {}; for (const k of Object.keys(v)) o[k] = serial(v[k], w); return o; }
+  return v;
+}
 
 function load(url, html) {
   const vc = new VirtualConsole();           // (quiet: "navigation not implemented" and the like)
   dom = new JSDOM(html, {url, runScripts: 'dangerously', pretendToBeVisual: true, virtualConsole: vc});
+  elements = [];
   const w = dom.window;
   // what a browser would do after the page's own handlers: follow the link, send the form
   w.addEventListener('click', (e) => {
@@ -47,8 +59,19 @@ rl.on('line', (line) => {
       nav = null;
       const fn = dom.window.eval('(function(){' + m.script + '\n})');
       const v = fn.apply(dom.window, m.args || []);
-      out = {ok: true, value: v === undefined ? null : JSON.parse(JSON.stringify(v))};
+      out = {ok: true, value: serial(v, dom.window)};
       if (nav) out.nav = nav;
+    } else if (m.op === 'click') {
+      nav = null;
+      const el = elements[+m.id];
+      if (!el || !el.isConnected) out = {ok: false, error: 'stale element reference'};
+      else if (el.hasAttribute('data-covered')) out = {ok: false, error: 'element click intercepted'};
+      else { el.click(); out = {ok: true, value: null}; if (nav) out.nav = nav; }
+    } else if (m.op === 'unload') {
+      // a slow page on its way: the old one gets beforeunload and pagehide, and stays up
+      dom.window.dispatchEvent(new dom.window.Event('beforeunload'));
+      dom.window.dispatchEvent(new dom.window.Event('pagehide'));
+      out = {ok: true};
     } else out = {ok: false, error: 'unknown op'};
   } catch (e) {
     out = {ok: false, error: String(e && e.stack || e)};

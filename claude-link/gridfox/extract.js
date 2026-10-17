@@ -23,7 +23,9 @@ return (function (opt) {
     'datetime-local':1, month:1, week:1, color:1, '':1};
   var doc = document, win = window;
   // jsdom (the tests) lays nothing out: then only the styles count
-  var laidOut = !!(doc.body && doc.body.getBoundingClientRect().height > 0);
+  // (the root's width, not the body's height: many script-built pages have a
+  // body of height 0 with everything positioned inside it)
+  var laidOut = !!(doc.documentElement && doc.documentElement.getBoundingClientRect().width > 0);
   var blocks = [], acts = [], els = [], total = 0;
   var cur = null;                 // the block being filled
   var kind = 'p', depth = 0, item = 0, pre = 0, quote = 0;
@@ -81,7 +83,10 @@ return (function (opt) {
     else bl.r.push([text, f, a]);
   }
 
-  function addAct(o, el) { o.i = acts.length; acts.push(o); els.push(el); return o.i; }
+  function addAct(o, el) {
+    o.i = acts.length; if (o.f === undefined) o.f = formOf(el);
+    acts.push(o); els.push(el); return o.i;
+  }
 
   function formOf(el) {
     var f = el.form;
@@ -149,7 +154,7 @@ return (function (opt) {
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') { field(el, tag); return; }
     if (tag === 'IFRAME') { flush(); put('[frame]', 8, -1); flush(); return; }
 
-    var save = [kind, depth, pre, quote, flags, act], blk = isBlock(el, cs);
+    var save = [kind, depth, pre, quote, flags, act, rowCell], blk = isBlock(el, cs);
     if (tag === 'HR') { flush(); kind = 'hr'; open(); flush(); kind = save[0]; return; }
     if (tag === 'TD' || tag === 'TH') {
       if (rowCell++ > 0) put(' │ ', 0, -1);
@@ -161,11 +166,12 @@ return (function (opt) {
         kind = 'li';
         var p = el.parentElement;
         if (p && p.tagName === 'OL') {
-          var n = 1, s = p.getAttribute('start');
-          if (s && !isNaN(+s)) n = +s;
-          for (var c = p.firstElementChild; c && c !== el; c = c.nextElementSibling) if (c.tagName === 'LI') n++;
-          item = n;
+          var n = parseInt(p.getAttribute('start'), 10);
+          if (!isFinite(n)) n = 1;
+          for (var c = p.firstElementChild; c && c !== el && n < 1e6; c = c.nextElementSibling) if (c.tagName === 'LI') n++;
+          item = Math.max(1, Math.min(99999, n));           // (a page's start="1e80" fits in the margin)
         } else item = -1;
+        if (laidOut && cs && cs.listStyleType === 'none') item = 0;   // menus drawn as lists: no bullets
       }
       else if (tag === 'UL' || tag === 'OL' || tag === 'DL' || tag === 'MENU' || tag === 'DIR') depth++;
       else if (tag === 'DD') { kind = 'li'; item = 0; }
@@ -182,13 +188,25 @@ return (function (opt) {
     if (tag === 'I' || tag === 'EM' || tag === 'CITE') flags |= 2;
     if (tag === 'CODE' || tag === 'KBD' || tag === 'SAMP' || tag === 'TT') flags |= 4;
 
-    for (var ch = el.firstChild; ch; ch = ch.nextSibling) walk(ch);
-    // an element with an open shadow root shows that instead of (or with) its children
-    if (el.shadowRoot) for (ch = el.shadowRoot.firstChild; ch; ch = ch.nextSibling) walk(ch);
+    var kids = children(el, tag);
+    for (var k = 0; k < kids.length; k++) walk(kids[k]);
 
     if (blk) flush();
     kind = save[0]; depth = save[1]; pre = save[2]; quote = save[3]; flags = save[4]; act = save[5];
     if (tag === 'TR') rowCell = 0;
+    if (tag === 'TABLE') rowCell = save[6];              // a table inside a cell: the outer row goes on
+  }
+
+  // What is drawn inside an element: its shadow tree if it has one (light
+  // children appear only where a <slot> places them), a slot's assigned
+  // nodes (or its fallback content), otherwise its children.
+  function children(el, tag) {
+    if (el.shadowRoot) return el.shadowRoot.childNodes;
+    if (tag === 'SLOT' && el.assignedNodes) {
+      var a = el.assignedNodes({flatten: true});
+      if (a.length) return a;
+    }
+    return el.childNodes;
   }
 
   if (doc.body) walk(doc.body);

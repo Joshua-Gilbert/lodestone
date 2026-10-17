@@ -8,8 +8,10 @@ sends the GRiD one frame for it, and only the rows that changed.
 import os, select, signal, sys, termios, time, tty, urllib.parse
 from . import page as P
 from .marionette import MarionetteError
+ERRS = (MarionetteError, RuntimeError, OSError, ValueError)
 
 ROWS, COLS = 24, 80
+URL_EVERY = 1.0                     # seconds between looks at the address when idle
 TOP, BODY = 1, 22                   # page rows 1..22
 SEARCH = 'https://html.duckduckgo.com/html/?q=%s'
 HOME = 'about:gridfox'
@@ -22,11 +24,11 @@ HELP = [
     ('li', 'Tab and Shift-Tab: next and previous link, button or field'),
     ('li', 'Return: follow the link, press the button, fill in the field'),
     ('li', 'F then a number: follow link number n on the screen (hints)'),
-    ('li', 'Left or Backspace: back.  Right: forward.  R: reload'),
+    ('li', 'Left or Backspace: back.  Right: forward.  R: reload.  Period: read the page again'),
     ('h2', 'Going somewhere'),
     ('li', 'G (or O, or F6): type an address, or words to search for'),
     ('li', 'S: search.  /: find on the page, N: find the next one'),
-    ('li', 'H or ?: this help.  Esc cancels what you are typing'),
+    ('li', 'H or ?: this help.  Esc cancels what you are typing.  Ctrl-Q: close gridfox'),
     ('h2', 'Forms'),
     ('p', 'Return on a field asks for its text at the bottom; Return there fills it in and goes on to the '
           'form\'s next field, or sends the form after the last one.  Return on a check box ticks it; on a '
@@ -67,25 +69,31 @@ class Keys:
         s.buf += data
         return s.take(now if now is not None else time.time())
 
-    def take(s, now, lone_esc=0.05):
+    def take(s, now, lone_esc=0.015, stale=0.15):
+        # Term writes a lone Esc on its own and waits 30 ms before the next
+        # key, so 15 ms of nothing after an Esc means Esc; a sequence left
+        # unfinished for longer than `stale` was never going to finish.
         out = []
         b = s.buf
         while b:
             c = b[0]
             if c == 0x1B:
-                if len(b) == 1:
-                    if s.esc_t is None: s.esc_t = now
-                    if now - s.esc_t >= lone_esc: out.append('esc'); b = b''; s.esc_t = None
-                    break
-                s.esc_t = None
-                n = b[1]
+                n = b[1] if len(b) > 1 else None
+                done = None
                 if n in (0x5B, 0x4F):                       # CSI / SS3
                     j = 2
                     while j < len(b) and (0x30 <= b[j] <= 0x3F): j += 1
                     while j < len(b) and (0x20 <= b[j] <= 0x2F): j += 1
-                    if j >= len(b):
-                        if n == 0x4F and len(b) == 2: break
-                        break
+                    if j < len(b): done = j
+                if n is None or (n in (0x5B, 0x4F) and done is None):
+                    if s.esc_t is None: s.esc_t = now
+                    if now - s.esc_t >= (lone_esc if n is None else stale):
+                        out.append('esc'); b = b[1:]; s.esc_t = None
+                        continue
+                    break
+                s.esc_t = None
+                if n in (0x5B, 0x4F):
+                    j = done
                     seq = b[1:j + 1].decode('latin1')
                     out.append(s.SEQ.get(seq, 'unknown')); b = b[j + 1:]
                 elif n == 0x1B: out.append('esc'); b = b[1:]
@@ -111,7 +119,10 @@ class Keys:
 class Line:
     """A one-line editor (address bar, find, a form field)."""
     def __init__(s, prompt, text='', secret=False):
-        s.prompt = prompt; s.text = text; s.pos = len(text); s.secret = secret
+        # what the page gave (a field's value, its label) can hold anything:
+        # only what the GRiD can show goes on the screen, one cell a character
+        s.prompt = P.clean(prompt).replace('\n', ' '); s.text = P.clean(text or '')
+        s.pos = len(s.text); s.secret = secret
 
     def key(s, k):
         if k == 'left': s.pos = max(0, s.pos - 1)
@@ -129,7 +140,7 @@ class Line:
 
     def view(s, width):
         """-> (text, cursor column) fitted to width."""
-        shown = '*' * len(s.text) if s.secret else s.text
+        shown = '*' * len(s.text) if s.secret else s.text.replace('\n', '\u23ce')   # (a textarea's lines: one row)
         room = width - len(s.prompt) - 1
         start = max(0, s.pos - room + 1) if s.pos >= room else 0
         part = shown[start:start + room]
@@ -149,30 +160,35 @@ class App:
         s.find_text = ''; s.shown = [None] * ROWS
         s.rereads = []; s.places = {}            # url -> (top, sel), for Back
         s.title_sent = None; s.start = start
-        s.quit = False; s.quit_keys = tuple(quit_keys); s.found = -1
+        s.quit = False; s.quit_keys = tuple(quit_keys) + ('ctrl-q',); s.found = -1
+        s.lost = None                            # why Firefox can't be reached (gridfox then ends)
+        s.before_help = None                     # the page help was opened over
+        s.url_t = 0.0                            # when the address was last checked
 
     # ---- pages ------------------------------------------------------------
     def go(s, url):
         if url == HOME:
-            s._remember(); s.model = help_model(); s.url = HOME; s._relayout(top=0); return
-        s._remember()
+            if s.url != HOME: s.before_help = (s.model, s.url, s.top, s.sel)
+            s._remember(); s.model = help_model(); s.url = HOME; s._relayout(top=0, sel=-1); return
+        s._remember(); s.before_help = None
         s.busy = 'Loading %s' % url; s.draw()
+        err = None
         try:
             s.b.open(url)
-        except (MarionetteError, OSError, RuntimeError) as e:
-            s.busy = ''; s.status = 'Could not open it: %s' % _short(e)
-        s._loaded(top=0)
+        except ERRS as e:
+            err = 'Could not open it: %s' % _short(e)
+        s._loaded(top=0, err=err)
 
-    def _loaded(s, top=None, sel=None):
+    def _loaded(s, top=None, sel=None, err=None):
         s.busy = 'Reading the page'; s.draw()
         try:
             s.model = s.b.read()
-        except (MarionetteError, OSError, RuntimeError) as e:
-            s.busy = ''; s.status = 'Could not read the page: %s' % _short(e); s.draw(); return
+        except ERRS as e:
+            s.busy = ''; s.status = err or 'Could not read the page: %s' % _short(e); s.draw(); return
         s.url = s.model.get('url', '') or s.url
         if top is None:                          # Back/Forward: where we were
             top, sel = s.places.get(s.url, (0, -1))
-        s.busy = ''; s.status = ''
+        s.busy = ''; s.status = err or ''
         s._relayout(top=top, sel=sel if sel is not None else -1)
         # pages that fill in after they load: look again shortly
         now = time.time(); s.rereads = [now + 0.6, now + 2.0, now + 5.0]
@@ -187,9 +203,10 @@ class App:
 
     def reread(s):
         """Read the page again; keep the place if anything changed."""
+        if s.url == HOME: return
         try:
             m = s.b.read()
-        except (MarionetteError, OSError, RuntimeError):
+        except ERRS:
             return
         if m.get('url') != s.url:
             s.model = m; s.url = m.get('url', s.url); s._relayout(top=0, sel=-1); return
@@ -200,23 +217,33 @@ class App:
         if s.url: s.places[s.url] = (s.top, s.sel)
 
     def back(s):
+        if s.url == HOME:                        # help is not a page in Firefox's history
+            if s.before_help:
+                s.model, s.url, top, sel = s.before_help; s.before_help = None
+                s._relayout(top=top, sel=sel); s.reread()
+            return
         s._remember(); s.busy = 'Back'; s.draw()
+        err = None
         try: s.b.back()
-        except (MarionetteError, OSError) as e: s.status = 'Back: %s' % _short(e)
-        s._loaded()
+        except ERRS as e: err = 'Back: %s' % _short(e)
+        s._loaded(err=err)
 
     def forward(s):
+        if s.url == HOME: return
         s._remember(); s.busy = 'Forward'; s.draw()
+        err = None
         try: s.b.forward()
-        except (MarionetteError, OSError) as e: s.status = 'Forward: %s' % _short(e)
-        s._loaded()
+        except ERRS as e: err = 'Forward: %s' % _short(e)
+        s._loaded(err=err)
 
     def reload(s):
         if s.url == HOME: return
         s._remember(); s.busy = 'Reloading'; s.draw()
+        err = None
         try: s.b.reload()
-        except (MarionetteError, OSError) as e: s.status = 'Reload: %s' % _short(e)
-        s._loaded(*s.places.get(s.url, (0, -1)))
+        except ERRS as e: err = 'Reload: %s' % _short(e)
+        top, sel = s.places.get(s.url, (0, -1))
+        s._loaded(top, sel, err=err)
 
     # ---- acts -------------------------------------------------------------
     def acts(s): return s.model.get('acts', [])
@@ -227,34 +254,41 @@ class App:
         a = acts[i]; t = a.get('t')
         if s.url == HOME: return
         if t == 'field':
-            label = (a.get('ph') or a.get('name') or 'Text')[:24]
+            label = (str(a.get('ph') or a.get('name') or 'Text'))[:24]
             s.line = Line(label + ': ', a.get('v', ''), secret=a.get('type') == 'password')
             s.line_do = lambda text, i=i: s.fill(i, text)
             s.draw(); return
         if t == 'select':
-            s.menu = [i, a.get('opts', []), max(0, a.get('v', 0))]; s.draw(); return
+            opts = [_fit(str(o), 70) for o in (a.get('opts') or [])] or ['-']
+            v = a.get('v', 0); v = v if isinstance(v, int) and 0 <= v < len(opts) else 0
+            s.menu = [i, opts, v]; s.draw(); return
         s._do('click', i)
 
     def fill(s, i, text):
-        acts = s.acts(); a = acts[i]
+        a = s.acts()[i]
         try:
             s.b.act('set', i, text)
-        except (MarionetteError, RuntimeError) as e:
+        except ERRS as e:
             s.status = 'Could not fill it in: %s' % _short(e); s.draw(); return
-        # the form's next field, or send the form
-        nxt = [j for j in range(i + 1, len(acts)) if acts[j].get('t') == 'field'
-               and acts[j].get('f', -1) == a.get('f', -1) and a.get('f', -1) >= 0]
-        if a.get('type') == 'textarea' or nxt:
-            s.reread()
-            if nxt: s.select(nxt[0])
-            s.status = 'Filled in.' + ('  Return on the next field, or on the form\'s button.' if nxt else '')
+        s.reread()                               # (the page may have answered the typing)
+        acts = s.acts()
+        # The form is sent from its last field only when nothing else in it
+        # is still to be set (check boxes, lists, more fields); otherwise on
+        # to the next of them.  Its buttons don't count: Return sends with the
+        # first, as a browser does.
+        form = a.get('f', -1)
+        rest = [j for j in range(i + 1, len(acts)) if form >= 0 and acts[j].get('f', -1) == form
+                and acts[j].get('t') in ('field', 'check', 'select')]
+        if a.get('type') == 'textarea' or rest:
+            if rest: s.select(rest[0])
+            s.status = 'Filled in.' + ('  On to the next part of the form (its button sends it).' if rest else '')
             s.draw(); return
         s._do('submit', i)
 
     def choose(s, i, n):
         try:
             nav = s.b.act('select', i, n)
-        except (MarionetteError, RuntimeError) as e:
+        except ERRS as e:
             s.status = 'Could not choose it: %s' % _short(e); s.draw(); return
         if nav: s._loaded(top=0)
         else: s.reread()
@@ -263,7 +297,7 @@ class App:
         s._remember(); s.busy = 'Working'; s.draw()
         try:
             nav = s.b.act(op, i)
-        except (MarionetteError, RuntimeError, OSError) as e:
+        except ERRS as e:
             s.busy = ''; s.status = 'That did not work: %s' % _short(e); s.draw(); return
         if nav:
             s._loaded(top=0)
@@ -302,6 +336,7 @@ class App:
     # ---- keys -------------------------------------------------------------
     def key(s, k):
         s.status = '' if not s.busy else s.status
+        if k in s.quit_keys: s.quit = True; return           # (from anywhere, typing included)
         if s.menu is not None: return s._menu_key(k)
         if s.line is not None: return s._line_key(k)
         if s.hints is not None: return s._hint_key(k)
@@ -332,8 +367,9 @@ class App:
             if s.find_text: s.find(s.find_text, again=True)
         elif low == 'f': s._hints()
         elif low == 'r' or k == 'ctrl-r': s.reload(); return
+        elif k == '.':                           # read the page again (no reload, nothing sent again)
+            s.reread(); s.status = 'Read again.'
         elif low == 'h' or k in ('?', 'f1'): s.go(HOME); return
-        elif k in s.quit_keys: s.quit = True; return
         s.draw()
 
     def scroll(s, n):
@@ -482,15 +518,19 @@ class App:
         s.out.write(''.join(parts).encode('utf-8')); s.out.flush()
 
     # ---- the loop ---------------------------------------------------------
+    def modal(s): return s.line is not None or s.menu is not None or s.hints is not None
+
     def run(s, fd_in=0):
         keys = Keys()
         s.draw(full=True)
-        if s.start: s.go(to_url(s.start, s.search))
+        if s.start: s._guard(lambda: s.go(to_url(s.start, s.search)))
         while not s.quit:
             now = time.time()
             wait = 0.5
-            if s.rereads: wait = max(0.0, min(wait, s.rereads[0] - now))
-            if keys.buf: wait = min(wait, 0.05)
+            if not s.modal():                    # (while typing, the timed looks wait)
+                if s.rereads: wait = max(0.0, min(wait, s.rereads[0] - now))
+                if s.url != HOME: wait = max(0.0, min(wait, s.url_t + URL_EVERY - now))
+            if keys.buf: wait = min(wait, 0.02)
             r, _, _ = select.select([fd_in], [], [], wait)
             now = time.time()
             if r:
@@ -501,11 +541,35 @@ class App:
             else:
                 ks = keys.take(now)
             for k in ks:
-                s.key(k)
+                s._guard(lambda: s.key(k))
                 if s.quit: break
-            if s.rereads and time.time() >= s.rereads[0] and not s.line and not s.menu and not s.hints:
-                s.rereads.pop(0)
-                if s.url != HOME: s.reread()
+            if s.quit or s.modal(): continue
+            now = time.time()
+            if s.rereads and now >= s.rereads[0]:
+                s.rereads.pop(0); s._guard(s.reread)
+            elif s.url != HOME and now >= s.url_t + URL_EVERY:
+                s.url_t = now; s._guard(s._check_url)
+
+    def _check_url(s):
+        """A page that arrived on its own (a slow link or form answered at last,
+        a redirect, a script): read it."""
+        u = s.b.m.url()
+        if u and u != s.url:
+            s._remember(); s._loaded(top=0)
+
+    def _guard(s, fn):
+        """One step; a lost Firefox ends gridfox (Term offers to start it
+        again), anything else is shown and logged rather than fatal."""
+        try:
+            fn()
+        except ERRS as e:
+            if not getattr(s.b.m, 'dead', False):
+                s.busy = ''; s.status = _short(e); s.draw()
+        except Exception as e:
+            import traceback; s.log(traceback.format_exc())
+            s.busy = ''; s.status = 'gridfox: %s' % _short(e); s.draw()
+        if getattr(s.b.m, 'dead', False):
+            s.lost = 'the connection to Firefox was lost'; s.quit = True
 
 
 def _fit(t, w):
@@ -538,8 +602,11 @@ def run_tty(app):
     old = termios.tcgetattr(fd) if os.isatty(fd) else None
     try:
         if old: tty.setraw(fd)
-        signal.signal(signal.SIGTERM, lambda *_: setattr(app, 'quit', True))
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            signal.signal(sig, lambda *_: setattr(app, 'quit', True))
         app.run(fd)
     finally:
         if old: termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write('\x1b[?7h\x1b[?25h\x1b[0m\r\n'); sys.stdout.flush()
+        sys.stdout.write('\x1b[?7h\x1b[?25h\x1b[0m\x1b[2J\x1b[H')
+        if app.lost: sys.stdout.write('\r\n  gridfox stopped: %s.\r\n' % app.lost)
+        sys.stdout.write('\r\n'); sys.stdout.flush()
