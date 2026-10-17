@@ -22,6 +22,7 @@ SYNC_MAX = 0.5       # an unfinished ?2026 frame counts as done after this
 TERM_HOLD = 0.06     # the Pi's hold on a POLL in Term (250 ms in chat)
 TITLE_EVERY = 1.0
 ESC_GAP = 0.03       # after a lone Esc, before the next key
+STOP_WEB = 15.0      # gridfox's own wait for Firefox to quit is 10 s
 
 
 def _ctty():
@@ -40,10 +41,16 @@ def resolve(cmd):
 
 
 class TermSession:
-    def __init__(s, cfg, log=print, command=None, cwd=None):
+    def __init__(s, cfg, log=print, command=None, cwd=None, web=False):
         s.cfg, s.log = cfg, log
-        s.command = command or shlex.split(getattr(cfg, 'term_command', 'claude'))
-        s.cwd = os.path.expanduser(cwd or getattr(cfg, 'term_dir', '~/grid'))
+        s.web = web                     # gridfox (CLAUDE /W) instead of Claude Code: no GRiD tools
+        default = getattr(cfg, 'web_command', 'python3 -m gridfox') if web else getattr(cfg, 'term_command', 'claude')
+        s.command = command or shlex.split(default)
+        # gridfox runs in a folder of its own: `python3 -m` puts the folder
+        # first on sys.path, and Claude Code writes files in ~/grid
+        default_dir = getattr(cfg, 'web_dir', '~/.cache/gridfox') if web else getattr(cfg, 'term_dir', '~/grid')
+        s.cwd = os.path.expanduser(cwd or default_dir)
+        s.name = 'gridfox' if web else 'Claude Code'
         s.lock = threading.RLock()
         s.screen = TermScreen(); s.stream = pyte.ByteStream(s.screen)
         s.screen.write_process_input = s._answer_query
@@ -63,7 +70,7 @@ class TermSession:
         if s.link is not link:
             s.link = link; s.grid = Grid(link)
         link.source = s; link.hold = TERM_HOLD
-        if s.tools is None:
+        if s.tools is None and not s.web:
             # the GRiD's abilities for Claude Code (mcp.py), one request at a time
             try:
                 s.tools = mcp.ToolServer(s.sock, mcp.GridTools(s.grid, s.cfg, getattr(s.cfg, 'address', 7), root=s.cwd,
@@ -113,7 +120,7 @@ class TermSession:
                 # CLAUDE /R's console kept its screen: go on from it if we sent it
                 if not s.enc.resume(info.get('screen')): s.enc.reset()
                 s._mark()
-            s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, glp.HF_TERM]) + b'Claude Code')
+            s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, glp.HF_TERM]) + s.name.encode())
             s.title_sent = None
             if s.child is None and s.exited is None: s.start()
             s._send_title(force=True)
@@ -174,26 +181,34 @@ class TermSession:
 
     def _start(s):
         os.makedirs(s.cwd, exist_ok=True)
-        try:
-            if mcp.write_mcp_json(s.cwd, s.sock): s.log('term: registered the GRiD tools in %s/.mcp.json' % s.cwd)
-        except (OSError, ValueError) as e:
-            s.log('term: .mcp.json left alone: %s' % e)
+        if not s.web:
+            try:
+                if mcp.write_mcp_json(s.cwd, s.sock): s.log('term: registered the GRiD tools in %s/.mcp.json' % s.cwd)
+            except (OSError, ValueError) as e:
+                s.log('term: .mcp.json left alone: %s' % e)
         m, sl = os.openpty()
         fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
         env = dict(os.environ, TERM='xterm-256color', LANG='C.UTF-8', COLUMNS='80', LINES='24')
         env.pop('COLORTERM', None)
-        if not getattr(s.cfg, 'term_api_key', False):
+        if s.web or not getattr(s.cfg, 'term_api_key', False):
             # Term is for the subscription: a key in gridlink's environment
             # (for the chat) must not make Claude Code bill the API instead
             for k in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'): env.pop(k, None)
+        if s.web:
+            # gridfox sits beside gridlink (claude-link/gridfox): find it from anywhere
+            here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            env['PYTHONPATH'] = os.pathsep.join([here] + [p for p in [env.get('PYTHONPATH')] if p])
+            env['GRIDLINK'] = 'web'
+            env['PYTHONSAFEPATH'] = '1'       # (3.11+) its folder is not on sys.path at all
         try:
             s.child = subprocess.Popen(resolve(s.command), stdin=sl, stdout=sl, stderr=sl, cwd=s.cwd, env=env,
                                        start_new_session=True, preexec_fn=_ctty, close_fds=True)
         except OSError as e:
             os.close(sl); os.close(m)
             s.child = None; s.exited = -1
-            s._message('Can\'t start %s: %s.\r\nInstall Claude Code on the Pi (see the README), '
-                       'then press Return.' % (s.command[0], e.strerror or e))
+            s._message('Can\'t start %s: %s.\r\nInstall %s on the Pi (see the README), '
+                       'then press Return.' % (s.command[0], e.strerror or e,
+                                               'Firefox and gridfox' if s.web else 'Claude Code'))
             return False
         os.close(sl)
         s.fd = m; s.exited = None
@@ -209,7 +224,9 @@ class TermSession:
     def stop(s):
         if s.tools is not None: s.tools.stop()
         if s.child is not None:
-            try: s.child.terminate(); s.child.wait(3)
+            # gridfox asks Firefox to quit cleanly (cookies, sign-ins, session
+            # store written): give it the time, or Firefox is killed half-way
+            try: s.child.terminate(); s.child.wait(STOP_WEB if s.web else 3)
             except Exception:
                 try: s.child.kill()
                 except Exception: pass
@@ -233,9 +250,10 @@ class TermSession:
         try: os.close(fd)
         except OSError: pass
         if mine:
-            s.log('term: %s exited (%s)' % (s.command[0], code))
-            s._message('%s exited (code %s). Press Return to start it again, CODE-Q to leave.'
-                       % (s.command[0], code))
+            s.log('term: %s exited (%s)' % (s.name, code))
+            why = ' (it lost Firefox)' if s.web and code == 3 else ''
+            s._message('%s exited%s (code %s). Press Return to start it again, CODE-Q to leave.'
+                       % (s.name, why, code))
 
     def feed(s, data):
         s.stats['pty_in'] += len(data)
@@ -279,7 +297,7 @@ class TermSession:
 
     def _send_title(s, force=False):
         if s.link is None or s.link.source is not s: return
-        t = fold_title(s.title) or 'Claude Code'
+        t = fold_title(s.title) or s.name
         now = time.time()
         if t != s.title_sent and (force or now - s.title_t >= TITLE_EVERY):
             s.title_sent = t; s.title_t = now

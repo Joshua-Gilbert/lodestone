@@ -27,6 +27,9 @@ bash_timeout = 180
 command = "claude"           # sign in once with `claude` at the Pi's own terminal
 dir = "~/grid"               # where it starts: put CLAUDE.md here; .mcp.json is kept up to date
 
+[web]                        # CLAUDE /W: Firefox on this Pi, shown as text (gridfox)
+command = "python3 -m gridfox"   # add a start page, or --images, --search URL%s
+
 [permissions]
 mode = "ask"                 # ask, edits (accept file edits), auto (ask nothing)
 

@@ -153,13 +153,14 @@ def main(argv=None):
         threading.Thread(target=lambda: __import__('anthropic'), daemon=True).start()
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *x: stop.set())
-    log('waiting for the GRiD (run CLAUDE, or CLAUDE /T for Claude Code, on it)%s'
+    log('waiting for the GRiD (run CLAUDE, CLAUDE /T for Claude Code, or CLAUDE /W for Firefox, on it)%s'
         % ('' if key else '; no API key, so chat is off'))
     try:
         serve(t, link, stop)
     except KeyboardInterrupt:
         pass
     if R.term is not None: R.term.stop()
+    if R.web is not None: R.web.stop()
     log('stopped')
 
 

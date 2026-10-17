@@ -109,7 +109,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term`, `app=web` or `app=chat` when CLAUDE was started with `/T`, `/W` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
@@ -262,7 +262,10 @@ title from TITLE, the link, the keys).
   cell, row by row), then the cursor's row, column and hidden flag (0 or
   1). If that is the screen of the Pi's last CELLS frame, or of the one
   before, the Pi goes on from it and sends only what changed; else it
-  starts from a clear screen as for any HELLO. Without `app=`,
+  starts from a clear screen as for any HELLO. `app=web` (CLAUDE /W) is
+  Term's path with gridfox, Firefox shown as text, in a pty of its own
+  instead of `claude`; the Pi's HELLO answer then says `gridfox`, and the
+  GRiD's tools are not offered there. Without `app=`,
   gridlink's `[grid] app` setting
   decides (`auto`: chat when the Pi has an API key, else Term). The Pi's
   HELLO is followed by a CELLS frame that clears the screen and draws it all.

@@ -2,7 +2,8 @@
 
 Work with Claude from a GRiDCase 1520: Claude reading and editing files on
 the GRiD, running DOS programs (and typing into them), taking screenshots,
-and talking to the instruments on the GPIB bus. Two ways, one link:
+and talking to the instruments on the GPIB bus. Two ways, one link (and a
+third use of it: `CLAUDE /W`, Firefox on the Pi as text, below):
 
 - **Term (`CLAUDE /T`): the real Claude Code, on your Claude subscription.**
   The Pi (a Pi 5; Claude Code needs 4 GB) runs the unmodified `claude`
@@ -112,6 +113,16 @@ you allow them; to make it always ask, add to `~/grid/.claude/settings.json`:
 On the GRiD: `CLAUDE /T`. Settings: `[term]` in the config (`command`,
 `dir`), and `[grid] app` for what `CLAUDE` without /T or /C gets.
 
+## Web: Firefox on the GRiD (`CLAUDE /W`)
+
+The same terminal path as Term, with `gridfox` in the pty instead of
+`claude`: a headless Firefox on the Pi, driven through Marionette, each page
+laid out as text at 80 columns. Links are underlined; Tab moves between
+them, Return follows, F numbers them, G goes to an address or searches.
+A new page is a few hundred bytes on the link. `sudo apt install firefox` on
+the Pi; `[web]` in the config. Details: `docs/gridfox.md` in the Lodestone
+tree.
+
 ## Chat: gridlink's own agent
 
 ```
@@ -191,7 +202,7 @@ Copy `CLAUDE.COM` to the floppy, then:
 
 ```
 GRIDGPIB        (not on Lodestone: GPIB is built in; CODE-A in the Executive runs CLAUDE)
-CLAUDE          chat (CLAUDE /T: Term; CLAUDE /A:nn if the bridge is not at address 7)
+CLAUDE          chat (CLAUDE /T: Term; CLAUDE /W: Firefox; CLAUDE /A:nn if the bridge is not at address 7)
 ```
 
 It connects, sets the GRiD's clock from the Pi, and shows the welcome.
@@ -219,7 +230,10 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
 
 - `gridlink/` - the Pi service (Python 3.9+, `pyserial`, `pyte`, `pillow`; `anthropic` for chat).
   Term: `term.py` (the pty), `termscreen.py` (pyte, the cell diff), `router.py`
-  (chat or Term), `mcp.py` (the MCP server and its socket)
+  (chat, Term or web), `mcp.py` (the MCP server and its socket)
+- `gridfox/` - Firefox as text for `CLAUDE /W`: `marionette.py` (Firefox's
+  remote control), `extract.js` / `act.js` (run in the page), `page.py`
+  (80-column layout), `app.py` (the screen and keys)
 - `PROTOCOL.md` - GLP 1, the link protocol, including why it works the way it does
 - `AR488-gridlink.patch` - the optional AR488 patch
 - `CLAUDE.ASM` / `GLYPHS.INC` (Lodestone source tree, `os/claude/`) - the
@@ -236,6 +250,9 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
   model), `test_emu_term.py` (the real CLAUDE.COM /T), `test_mcp.py` (the
   MCP server); `fake_claude.py` stands in for Claude Code in a pty (no
   login, no model).
+  gridfox: `test_gridfox.py`, with `fake_firefox.py`, a stand-in Firefox
+  (Marionette over jsdom; Node, and `npm ci` in `tests/`) serving
+  `tests/web/`.
   `python3 tests/test_emu.py shots/` also saves every screen as PNG + text.
   Needs `unicorn` and `pillow`; `bin/GRIDGPIB.COM` is the driver it loads.
 
