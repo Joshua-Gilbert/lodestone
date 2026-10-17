@@ -68,8 +68,11 @@ CLAUDE /W  ── KEYS ──────────────▶ (device, 7)
     `python3 -m gridfox`).
 
 ### On the GRiD (`os/claude/CLAUDE.ASM`)
-`/W` is `/T` with `app=web` in the HELLO: 32 bytes. CLAUDE.COM is
-20,436 bytes.
+`/W` is `/T` with `app=web` in the HELLO. If the Pi's HELLO answer doesn't
+name `gridfox`, the band says **Pi has no /W: update gridlink**. That is what
+a gridlink older than gridfox does: it doesn't know `app=web` and gives
+Claude Code instead. Both together cost 128 bytes; CLAUDE.COM is 20,532 bytes.
+RCON (resident Claude) is unchanged.
 
 ## Keys
 
