@@ -69,11 +69,9 @@ CLAUDE /W  ── KEYS ──────────────▶ (device, 7)
     `-m gridfox`.
 
 ### On the GRiD (`os/claude/CLAUDE.ASM`)
-`/W` is `/T` with `app=web` in the HELLO. If the Pi's HELLO answer doesn't
-name `gridfox`, the band says **Pi has no /W: update gridlink**. That is what
-a gridlink older than gridfox does: it doesn't know `app=web` and gives
-Claude Code instead. Both together cost 128 bytes; CLAUDE.COM is 20,532 bytes.
-RCON (resident Claude) is unchanged.
+`/W` is `/T` with `app=web` in the HELLO: 32 bytes. CLAUDE.COM is
+20,436 bytes. (A check that put "Pi has no /W" on the band was tried and
+taken out: 96 bytes for something the band's title already shows.)
 
 ## Keys
 
@@ -302,8 +300,9 @@ walk). Now only its summary shows, and Return opens it.
 2. `sudo systemctl restart gridlink`.
 3. On the GRiD: `CLAUDE /W`.
 
-**If `CLAUDE /W` shows Claude Code**, with **Pi has no /W: update gridlink**
-on the band, the Pi's gridlink is older than gridfox (step 1). It doesn't
+**If `CLAUDE /W` shows Claude Code**, and the band's title says
+"Claude Code" instead of a page title, the Pi's gridlink is older than
+gridfox (step 1). It doesn't
 know `app=web` and falls back to Term. Its log
 (`journalctl -u gridlink -n 20`) then says `Term (Claude Code on the Pi)`
 where the new one says `web (Firefox on the Pi)`.

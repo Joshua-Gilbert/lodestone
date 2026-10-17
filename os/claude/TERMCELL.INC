@@ -300,12 +300,6 @@ term_status:
         mov     cx, 48                  ; (the keys take columns 50-78)
         call    draw_strn
         mov     si, s_tkeys
-%ifdef WEB_CHECK
-        cmp     byte [web_old], 0       ; (CLAUDE /W, an older gridlink on the Pi)
-        je      .k
-        mov     si, s_webold
-.k:
-%endif
         cmp     byte [connected], 0
         jne     .r
         mov     si, status_text
