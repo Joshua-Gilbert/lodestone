@@ -195,11 +195,12 @@ class PreFilter:
         out = bytearray(); answers = []
         for kind, b in s.parts(data):
             if kind == 'answer': answers.append(b)
-            else: out += b
+            elif kind == 'data': out += b
         return bytes(out), answers
 
     def parts(s, data):
-        """-> [('data', bytes for pyte) | ('answer', bytes for the program)]
+        """-> [('data', bytes for pyte) | ('answer', bytes for the program)
+        | ('pic', OSC 5150's argument: a picture for the GRiD, term.py)]
         in order: a program that asks several things and then DA1 (which
         pyte answers) must get the answers in the order it asked."""
         data = s.carry + bytes(data); s.carry = b''
@@ -220,7 +221,7 @@ class PreFilter:
             elif keep: cur += keep                    # rewritten
             if ans:
                 if cur: out.append(('data', bytes(cur))); cur = bytearray()
-                out.append(('answer', ans))
+                out.append(ans if isinstance(ans, tuple) else ('answer', ans))
             i = end
         if cur: out.append(('data', bytes(cur)))
         return out
@@ -254,6 +255,8 @@ class PreFilter:
                 k += 1
             else:
                 return None, False, None
+            if body.startswith(b'5150;'):            # a picture for the GRiD (gridfox): term.py
+                return end, False, ('pic', body[5:])
             m = re.fullmatch(rb'(1[01]);\?', body)
             if m:
                 rgb = b'rgb:ffff/aaaa/0000' if m.group(1) == b'10' else b'rgb:0000/0000/0000'
@@ -476,14 +479,18 @@ class Encoder:
         return best
 
 
-def apply(payload, chs, ats):
+def apply(payload, chs, ats, pix=None):
     """What the GRiD does with a CELLS payload (for tests and the console).
+    pix: the pixels of rows 0-23 (picture.SIZE bytes) for CLAUDE.COM's
+    pictures (op FDh; a cell drawn over them clears its 8 x 16).
     Returns (cursor_row, cursor_col, hidden)."""
+    from . import picture as PIC
     p = payload
     flags, crow, ccol = p[0], p[1], p[2]
     if flags & F_CLEAR:
         for r in range(ROWS):
             chs[r][:] = b' ' * COLS; ats[r][:] = bytes(COLS)
+        if pix is not None: pix[:] = PIC.BLANK
     i = 3
     while i < len(p):
         if p[i] == OP_SCROLL:
@@ -492,7 +499,15 @@ def apply(payload, chs, ats):
                 chs[r][:] = chs[r + k]; ats[r][:] = ats[r + k]
             for r in range(max(top, bottom - k + 1), bottom + 1):
                 chs[r][:] = b' ' * COLS; ats[r][:] = bytes(COLS)
+            if pix is not None:
+                a, b, n = top * 16 * 80, (bottom + 1) * 16 * 80, k * 16 * 80
+                pix[a:b] = pix[a + n:b] + bytes(n)
             continue
+        if p[i] == PIC.OP_PIX:                      # pixels: only CLAUDE.COM's (an older one ends here)
+            if pix is None: break
+            ok = PIC.apply_pixels(bytes([0, 0, 0]) + p[i:], pix, one=True)
+            if ok is False: break
+            i += ok; continue
         row, col, ln = p[i], p[i + 1], p[i + 2]; i += 3
         at = 0
         if ln & 0x80: at = p[i]; i += 1
@@ -503,4 +518,7 @@ def apply(payload, chs, ats):
         else:
             chs[row][col:col + n] = p[i:i + n]; i += n
         ats[row & 0x7F][col:col + n] = bytes([at]) * n
+        if pix is not None:
+            r = row & 0x7F
+            for y in range(r * 16, r * 16 + 16): pix[y * 80 + col:y * 80 + col + n] = bytes(n)
     return crow, ccol, bool(flags & F_HIDDEN)

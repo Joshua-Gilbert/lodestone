@@ -52,7 +52,8 @@ BOXL     equ 5                  ; dialog boxes: left column, width
 BOXW     equ 70
 
 %include "GLP.INC"               ; the link's message types and states
-%define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi under /W; not in RCON)
+%define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi; not in RCON)
+%define TERM_PIXELS              ; (TERMCELL.INC: pictures, CELLS op FDh; not in RCON)
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -439,9 +440,8 @@ video_on:
 .s:     mov     ax, 0040h
         int     10h
         call    redraw_all
-        cmp     byte [app_want], 'W'    ; /W: the mouse clicks gridfox's links
-        jne     .x
-        push    es                      ; INT 33h there?  (GRiD MS-DOS may have none)
+        push    es                      ; the mouse: INT 33h there?  (GRiD MS-DOS
+                                        ;  may have none.)  Clicks go to the Pi
         xor     ax, ax
         mov     es, ax
         mov     ax, [es:33h * 4]
@@ -2878,7 +2878,7 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
         mov     al, 1                   ; GLP version
         stosb
-        mov     al, 1                   ; flags: bit 0, Term understood
+        mov     al, 3                   ; flags: bit 0, Term understood; bit 1, pictures (FDh)
         stosb
         mov     ax, TXMAX
         stosw
@@ -3148,7 +3148,7 @@ kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
-evmouse     db 05h, 0, 0                ; EVENT click: column, row
+evmouse     db 05h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
 s_onint     db ' on INT ', 0
 s_none2     db 'none', 0
 s_pages     db ' pages free', 0
@@ -3789,7 +3789,7 @@ t_active    resw 1                      ; tick of the last key or screen change
 keyn        resb 1
 keys_q      resb 1                      ; a KEYS message is in the queue
 rep_q       resb 1                      ; an EVENT (repaint, or a click) is in the queue
-tmouse      resb 1                      ; not 0: /W with a mouse (INT 33h)
+tmouse      resb 1                      ; not 0: a mouse (INT 33h)
 keybuf      resw KEYMAX
 keysend     resw KEYMAX
 shadseg     resw 1                      ; TROWS x 80 (glyph, attribute)

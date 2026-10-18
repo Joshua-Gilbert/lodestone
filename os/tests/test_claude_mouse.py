@@ -2,8 +2,10 @@
 the kernel's own INT 33h, the real CLAUDE.COM, the real gridlink, and gridfox
 on the stand-in Firefox (claude-link/tests/fake_firefox.py, Node + jsdom).
 
-A left click on a link goes to the Pi as EVENT 05h (its cell), gridlink hands
-it to gridfox as an xterm mouse report, and gridfox follows the link.
+A left click goes to the Pi as EVENT 05h (its pixel).  On gridfox's links
+gridlink hands it to gridfox as an xterm mouse report, and gridfox follows
+the link; on a plot Claude Code showed (grid_plot), the point is typed into
+Claude Code's prompt.
 
     python3 tests/test_claude_mouse.py
 """
@@ -105,15 +107,36 @@ def t_no_mouse():
         h.close(); f.close()
 
 
-def t_plain_term_leaves_the_mouse():
-    """CLAUDE (Term, no /W): the mouse isn't taken (no INT 33h calls), so no pointer."""
+def t_plot_click_types_into_the_prompt():
+    """CLAUDE (Term, no /W): the pointer is on there too.  A plot from
+    grid_plot; a click on a point types it into Claude Code's prompt, and
+    Claude Code's screen comes back."""
+    sys.path.insert(0, CK.GL_TESTS)
+    from gridlink import plot as PL
+    import test_picture as TP
     h = CK.KernelHarness(term=FAKE)
     h.m.mouse = True
     try:
         h.boot()
         check('Term: connected', h.run_until(lambda: h.var('term') and h.var('connected'), 15), h.log)
         check('Term: Claude Code', wait(h, 'Welcome to Claude Code', 20), h.screen())
-        check('Term: tmouse 0', h.var('tmouse') == 0, h.var('tmouse'))
+        check('Term: the mouse found', h.var('tmouse') == 0xFF, h.var('tmouse'))
+        t = h.router.term
+        check('Term: pictures (HELLO flags)', t.can_picture(), t.gflags)
+        xs, ys = TP.sweep(201)
+        p = PL.Plot([{'name': 'S21', 'x': xs, 'y': ys}], title='Filter', x_label='Hz', y_label='dB')
+        t.tools.tools.viewer.show(p)
+        check('the plot is up', h.run_until(lambda: not t.ready() and t.pic is not None and
+                                                    'Esc: back' in h.screen().split('\n')[24], 30),
+              h.screen().split('\n')[24])
+        x, y = int(p.ax.px(xs[100])), int(p.ay.px(ys[100]))
+        point(h, x, y)
+        h.m.mouse_move(0, 0, 1); h.m.run_for(0.05)
+        h.m.mouse_move(0, 0, 0); h.m.run_for(0.05)
+        check('the click is typed into the prompt', wait(h, '[clicked plot "Filter": Hz = ', 20), h.screen())
+        check('the nearest point', wait(h, 'nearest point: S21', 5), h.screen())
+        check('Claude Code is back', t.pic is None and 'Welcome to Claude Code' in h.screen(), h.screen())
+        check('no link failures', h.var('n_fail', 2) == 0 and not h.m.crash, (h.var('n_fail', 2), h.m.crash))
     finally:
         h.close()
 
@@ -122,7 +145,7 @@ if __name__ == '__main__':
     why = missing()
     if why:
         print('skip: the stand-in Firefox needs Node and jsdom (%s)' % why); sys.exit(0)
-    for t in (t_click_follows_a_link, t_no_mouse, t_plain_term_leaves_the_mouse):
+    for t in (t_click_follows_a_link, t_no_mouse, t_plot_click_types_into_the_prompt):
         t0 = time.time()
         try:
             t()
