@@ -2305,7 +2305,8 @@ cbuf_get:
         jc      .no
 .ok:    mov     [cb_seg], ax
         shl     bx, 4
-        mov     [cb_len], bx
+        and     bx, 0FE00h              ; whole sectors: every read and write
+        mov     [cb_len], bx            ;  after the first starts on one
         ret
 .no:    mov     si, e_nomem
         call    err
