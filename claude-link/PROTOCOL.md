@@ -333,7 +333,9 @@ A program in a web session's pty (gridfox) asks for a picture with
 `OSC 5150 ; show ; FLAGS ; PATH BEL` (a PNG in its own folder, which
 gridlink dithers; FLAGS, comma-separated: `invert`, `plain` or neither for
 "light pictures dark", and `frame` for one of a stream, which waits until
-the GRiD has the picture on its way whole) and `OSC 5150 ; hide BEL`; its clicks then come as SGR reports in
+the GRiD has the picture on its way whole) and `OSC 5150 ; hide BEL`.
+gridlink answers on the pty with `OSC 5150 ; shown BEL` when the GRiD has a
+picture whole (gridfox paces a moving page's screenshots by it); its clicks then come as SGR reports in
 pixels if it set `?1016`.
 
 What the Pi does with Claude Code's output: Unicode is folded to one GRiD
