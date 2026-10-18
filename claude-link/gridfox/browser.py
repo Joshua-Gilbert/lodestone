@@ -1,5 +1,5 @@
 """The browser as gridfox uses it: one Firefox tab, read as a page model."""
-import os, random, time
+import base64, os, random, time
 from .marionette import MarionetteError, ELEMENT
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -7,6 +7,17 @@ EXTRACT = open(os.path.join(HERE, 'extract.js'), encoding='utf-8').read()
 ACT = open(os.path.join(HERE, 'act.js'), encoding='utf-8').read()
 
 GONE = ('no such window', 'javascript error', 'no such frame', 'unknown error', 'stale element reference')
+
+# WebDriver's codes for keys that aren't characters
+KEYS = {'enter': '\ue007', 'tab': '\ue004', 'bksp': '\ue003', 'del': '\ue017', 'left': '\ue012',
+        'right': '\ue014', 'up': '\ue013', 'down': '\ue015', 'home': '\ue011', 'end': '\ue010',
+        'pgup': '\ue00e', 'pgdn': '\ue00f', 'ins': '\ue016'}
+SHIFT = '\ue008'
+SCROLL = ('var d = arguments[0], to = arguments[1];'
+          'if (to !== null) window.scrollTo({top: to < 0 ? document.documentElement.scrollHeight : to,'
+          ' behavior: "instant"});'
+          'else window.scrollBy({top: d, behavior: "instant"});'
+          'return window.scrollY;')
 
 
 class Browser:
@@ -103,6 +114,50 @@ class Browser:
             return s.m.script(ACT, ['stamped', 0, s.stamp], timeout=5)
         except MarionetteError:
             return None                         # (the old page is unloading)
+
+    # ---- the picture view: Firefox's own pixels ----------------------------
+    def view_size(s, w, h):
+        """The viewport w x h (the window less whatever Firefox draws around it)."""
+        s.m.set_window(w, h)
+        try:
+            iw, ih = s.m.script('return [window.innerWidth, window.innerHeight];', timeout=5)
+            if (iw, ih) != (w, h): s.m.set_window(w + (w - int(iw)), h + (h - int(ih)))
+        except (MarionetteError, TypeError, ValueError):
+            pass
+
+    def screenshot(s):
+        """-> PNG bytes of the viewport."""
+        return base64.b64decode(s.m.screenshot())
+
+    def click_at(s, x, y):
+        """A click at viewport pixel (x, y): -> True if a new page came of it."""
+        s._stamp()
+        s.m.actions([{'type': 'pointer', 'id': 'gridfox-mouse', 'parameters': {'pointerType': 'mouse'},
+                      'actions': [{'type': 'pointerMove', 'x': int(x), 'y': int(y), 'origin': 'viewport',
+                                   'duration': 0},
+                                  {'type': 'pointerDown', 'button': 0}, {'type': 'pointerUp', 'button': 0}]}])
+        return s.settle()
+
+    def press(s, keys):
+        """gridfox's key names and characters, typed into the page (whatever
+        has the focus).  -> True if a new page came of them (Return in a form)."""
+        acts = []
+        for k in keys:
+            if k == 'btab':
+                acts += [{'type': 'keyDown', 'value': SHIFT}, {'type': 'keyDown', 'value': KEYS['tab']},
+                         {'type': 'keyUp', 'value': KEYS['tab']}, {'type': 'keyUp', 'value': SHIFT}]
+                continue
+            v = KEYS.get(k, k if len(k) == 1 else None)
+            if v is None: continue
+            acts += [{'type': 'keyDown', 'value': v}, {'type': 'keyUp', 'value': v}]
+        if not acts: return False
+        s._stamp()
+        s.m.actions([{'type': 'key', 'id': 'gridfox-keys', 'actions': acts}])
+        return s.settle() if 'enter' in keys else False
+
+    def scroll(s, dy=0, to=None):
+        """Scroll by dy pixels, or to a place (-1: the end).  -> the scroll position."""
+        return s.m.script(SCROLL, [dy, to], timeout=5)
 
     def ready_state(s):
         try: return s.m.script('return document.readyState;', timeout=5)

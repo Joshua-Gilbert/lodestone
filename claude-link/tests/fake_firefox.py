@@ -27,6 +27,7 @@ class FakeFirefox:
         s.pages = pages; s.delay = delay
         s.slow = slow or {}                 # path -> seconds the old page stays up after a click to it
         s.caps = None; s.clicks = []; s.quits = []
+        s.window = (1024, 768); s.points = []; s.keys = []; s.shots = 0
         s.node = subprocess.Popen(['node', os.path.join(HERE, 'fake_firefox_dom.js')], cwd=HERE,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         s.srv = socket.socket(); s.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -42,6 +43,7 @@ class FakeFirefox:
         """For the next test: a fresh tab and counters, the same node and port."""
         with s.lock:
             s.slow = slow or {}; s.caps = None; s.clicks = []; s.quits = []; s.calls = []
+            s.window = (1024, 768); s.points = []; s.keys = []; s.shots = 0; s._node({'op': 'resize', 'w': 1024, 'h': 768})
             s.hist = []; s.pos = -1; s._load('about:blank', push=True)
         return s
 
@@ -143,7 +145,31 @@ class FakeFirefox:
             r = s._node({'op': 'exec', 'script': 'return location.href;', 'args': []})
             return None, {'value': r.get('value') or s.url}
         if name == 'WebDriver:GetTitle': return None, {'value': s.title}
-        if name == 'WebDriver:SetWindowRect': return None, {}
+        if name == 'WebDriver:SetWindowRect':
+            # (the real one has a little chrome around the page: the viewport 10 x 8 smaller)
+            s.window = (p['width'], p['height'])
+            s._node({'op': 'resize', 'w': p['width'] - 10, 'h': p['height'] - 8})
+            return None, {}
+        if name == 'WebDriver:TakeScreenshot':
+            s.shots += 1
+            return None, {'value': s.screenshot()}
+        if name == 'WebDriver:PerformActions':
+            for src in p['actions']:
+                if src['type'] == 'pointer':
+                    x = y = 0
+                    for a in src['actions']:
+                        if a['type'] == 'pointerMove': x, y = a['x'], a['y']
+                        if a['type'] == 'pointerDown':
+                            r = s._node({'op': 'point', 'x': x, 'y': y})
+                            s.points.append((x, y, r.get('hit')))
+                            if r.get('nav'): s._go(r['nav'])
+                elif src['type'] == 'key':
+                    for a in src['actions']:
+                        if a['type'] == 'keyDown':
+                            r = s._node({'op': 'key', 'value': a['value']})
+                            s.keys.append(a['value'])
+                            if r.get('nav'): s._go(r['nav'])
+            return None, {}
         if name == 'WebDriver:ExecuteScript':
             # gridfox's scripts rely on one sandbox kept between calls
             if p.get('sandbox') != 'gridfox' or p.get('newSandbox') is not False:
@@ -159,6 +185,22 @@ class FakeFirefox:
             if r.get('nav'): s._go(r['nav'])
             return None, {}
         return {'error': 'unknown command', 'message': name}, None
+
+    def screenshot(s):
+        """The stand-in's picture of its page: its lines (fake_firefox_dom.js's
+        layout), dark on white, links underlined, 16 pixels a line, scrolled."""
+        import base64, io
+        from PIL import Image, ImageDraw
+        r = s._node({'op': 'lines'})
+        w, h = r['w'], r['h']
+        im = Image.new('L', (w, h), 255); d = ImageDraw.Draw(im)
+        for i, (text, kind) in enumerate(r['lines']):
+            y = i * 16 - r['y']
+            if y < -16 or y > h: continue
+            d.text((8, y + 2), text, fill=0)
+            if kind != 'text': d.line((8, y + 14, 8 + 6 * len(text), y + 14), fill=0)
+        out = io.BytesIO(); im.save(out, 'PNG')
+        return base64.b64encode(out.getvalue()).decode()
 
     def close(s):
         try: s.srv.close()

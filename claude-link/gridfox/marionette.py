@@ -33,7 +33,25 @@ PREFS = {
     'browser.download.useDownloadDir': True,
     'browser.download.always_ask_before_handling_new_types': False,
     'browser.download.manager.showWhenStarting': False,
+    # the picture view: scrolling in one step (so the GRiD gets a scroll, not a slide), crisp text
+    'general.smoothScroll': False,
+    'gfx.text.disable-aa': True,
 }
+
+# Fonts without antialiasing for gridfox's Firefox only (the picture view's
+# text dithers crisply then): a fontconfig file of its own, over the system's.
+FONTS_CONF = '''<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <match target="font">
+    <edit name="antialias" mode="assign"><bool>false</bool></edit>
+    <edit name="hinting" mode="assign"><bool>true</bool></edit>
+    <edit name="hintstyle" mode="assign"><const>hintfull</const></edit>
+    <edit name="rgba" mode="assign"><const>none</const></edit>
+  </match>
+</fontconfig>
+'''
 
 
 def _die_with_parent():
@@ -143,9 +161,14 @@ class Marionette:
         if not eid: raise MarionetteError({'error': 'no such element', 'message': 'not an element'})
         s.call('WebDriver:ElementClick', {'id': eid}, timeout=timeout)
 
-    def screenshot(s):
-        """The viewport as base64 PNG (for the picture view, later)."""
-        return s.value('WebDriver:TakeScreenshot', {'full': False, 'hash': False})
+    def screenshot(s, timeout=20):
+        """The viewport as base64 PNG (the picture view)."""
+        return s.value('WebDriver:TakeScreenshot', {'full': False, 'hash': False}, timeout=timeout)
+
+    def actions(s, acts, timeout=25):
+        """WebDriver actions (a pointer's moves and clicks, keys), as a person's:
+        trusted events, into whatever is under the pointer or has the focus."""
+        s.call('WebDriver:PerformActions', {'actions': acts}, timeout=timeout)
 
     def set_window(s, w, h):
         s.call('WebDriver:SetWindowRect', {'width': w, 'height': h})
@@ -187,7 +210,7 @@ def port_open(port, host='127.0.0.1'):
 class Firefox:
     """A headless Firefox with its own profile (cookies and sign-ins kept),
     or one already listening on the port."""
-    def __init__(s, binary=None, profile='~/.cache/gridfox/profile', port=2828, images=False,
+    def __init__(s, binary=None, profile='~/.cache/gridfox/profile', port=2828, images=True,
                  width=1024, height=768, log=None):
         s.binary = binary; s.profile = os.path.expanduser(profile); s.port = port
         s.images = images; s.size = (width, height); s.proc = None; s.log = log or (lambda m: None)
@@ -196,11 +219,12 @@ class Firefox:
         os.makedirs(s.profile, exist_ok=True)
         prefs = dict(PREFS)
         prefs['marionette.port'] = s.port
-        # the text view needs no pictures: not fetching them is most of a page's weight
+        # the picture view shows them; --no-images leaves them out (most of a page's weight)
         prefs['permissions.default.image'] = 1 if s.images else 2
         prefs['browser.download.dir'] = os.path.join(tempfile.gettempdir(), 'gridfox-downloads')
         with open(os.path.join(s.profile, 'user.js'), 'w') as f:
             for k, v in prefs.items(): f.write('user_pref(%s, %s);\n' % (json.dumps(k), json.dumps(v)))
+        with open(os.path.join(s.profile, 'fonts.conf'), 'w') as f: f.write(FONTS_CONF)
 
     def start(s, wait=40.0):
         """-> a connected Marionette (with a session)."""
@@ -208,7 +232,7 @@ class Firefox:
             exe = find_firefox(s.binary)
             if not exe: raise FileNotFoundError('Firefox is not installed (sudo apt install firefox)')
             s.write_prefs()
-            env = dict(os.environ, MOZ_HEADLESS='1')
+            env = dict(os.environ, MOZ_HEADLESS='1', FONTCONFIG_FILE=os.path.join(s.profile, 'fonts.conf'))
             env.pop('DISPLAY', None); env.pop('WAYLAND_DISPLAY', None)
             args = [exe, '--headless', '--marionette', '--no-remote', '--profile', s.profile,
                     '--width', str(s.size[0]), '--height', str(s.size[1]), 'about:blank']

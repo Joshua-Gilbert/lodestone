@@ -240,22 +240,35 @@ class TermSession:
                 return
         s.click(x // 8, y // 16, x, y)
 
+    PTY_PICTURE = 16 * 1024 * 1024              # bytes in a picture file from the pty
+
     def _osc_picture(s, arg):
-        """OSC 5150 from the program in the pty (gridfox only): `show;PATH`
-        (an image file in its own folder) or `hide`."""
+        """OSC 5150 from the program in the pty (gridfox only): `show;FLAGS;PATH`
+        (an image file in its own folder; FLAGS `invert`, `plain` or empty:
+        a light picture is shown dark, as the GRiD draws) or `hide`."""
         if not s.web: return
         try:
             cmd, _, rest = arg.decode('utf-8', 'replace').partition(';')
             if cmd == 'hide':
-                s.hide_picture('pty'); return
+                s.pty_inv = None; s.hide_picture('pty'); return
             if cmd != 'show': return
-            path = os.path.realpath(rest)
+            flags, _, path = rest.partition(';')
+            path = os.path.realpath(path)
             root = os.path.realpath(s.cwd)
             if os.path.commonpath([path, root]) != root: raise ValueError('not in %s' % root)
-            from PIL import Image
+            if os.path.getsize(path) > s.PTY_PICTURE: raise ValueError('too big')
+            from PIL import Image, ImageStat
             with Image.open(path) as im:
-                bits = PIC.dither(im)
-            s.show_picture(bits, 'pty')
+                if im.size[0] * im.size[1] > 16_000_000: raise ValueError('%dx%d is too big' % im.size)
+                g = im.convert('L')
+            if 'invert' in flags: inv = True
+            elif 'plain' in flags: inv = False
+            else:                               # (kept while the page's look stays near it: no flicker)
+                m = ImageStat.Stat(g).mean[0]
+                prev = getattr(s, 'pty_inv', None)
+                inv = prev if prev is not None and 90 <= m <= 166 else m > 128
+            s.pty_inv = inv
+            s.show_picture(PIC.dither(g, invert=inv), 'pty')
         except Exception as e:
             s.log('term: picture from %s: %s' % (s.name, e))
 

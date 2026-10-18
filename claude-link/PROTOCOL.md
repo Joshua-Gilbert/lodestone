@@ -329,6 +329,11 @@ the Pi uses it when a picture moved up by whole rows. CLAUDE keeps no copy
 of a picture: after a RUN, CODE-R or Ctrl-L it draws its text copy (blank
 under a picture), and the Pi sends the picture again. The band (row 24)
 stays CLAUDE's; the Pi's TITLE says what the picture is and how to leave it.
+A program in a web session's pty (gridfox) asks for a picture with
+`OSC 5150 ; show ; FLAGS ; PATH BEL` (a PNG in its own folder, which
+gridlink dithers; FLAGS `invert`, `plain` or empty for "light pictures
+dark") and `OSC 5150 ; hide BEL`; its clicks then come as SGR reports in
+pixels if it set `?1016`.
 
 What the Pi does with Claude Code's output: Unicode is folded to one GRiD
 glyph per cell (box drawing, ● ⎿ ✻ ❯ and the spinner have glyphs; a full
