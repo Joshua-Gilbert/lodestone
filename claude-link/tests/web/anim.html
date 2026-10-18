@@ -1,0 +1,7 @@
+<!doctype html>
+<html><head><title>Moving page</title></head>
+<body><h1>A page that changes by itself</h1>
+<p id="t">Frame 0</p>
+<p>Below it, a line that stays.</p>
+<script>var n = 0; setInterval(function () { document.getElementById('t').textContent = 'Frame ' + (++n); }, 100);</script>
+</body></html>

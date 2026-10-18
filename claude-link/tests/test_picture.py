@@ -242,6 +242,36 @@ def test_picture_layer():
         h.close() if hasattr(h, 'close') else None
 
 
+def test_a_stream_of_frames_shows_whole_frames():
+    """Frames faster than the link: each frame the GRiD gets is finished
+    before the next starts (the newest waiting), so none is left half drawn
+    and the bottom isn't starved by a top that keeps changing."""
+    h = start()
+    try:
+        t = h.term
+        page = a_page()                             # a still page with a moving band (a video's area)
+        frames = [page[:120 * 80] + noise_lines(80 * 80, 0.35) + page[200 * 80:] for _ in range(30)]
+        whole = set()
+        def look():
+            if bytes(h.grid.pix) in fset: whole.add(bytes(h.grid.pix))
+        fset = set(frames)
+        h.grid.on_cells = look
+        t.show_picture(frames[0], 'pty')
+        for fr in frames[1:]:
+            t.show_picture(fr, 'pty', frame=True)
+            h.run_until(lambda: False, wall=0.03)
+        assert shows(h, frames[-1], wall=20), 'the last frame never came whole'
+        h.grid.on_cells = None
+        assert len(whole) >= 4, len(whole)
+        # an action's picture (not a frame) goes at once, and drops the frame waiting
+        t.show_picture(frames[0], 'pty'); t.show_picture(frames[1], 'pty', frame=True)
+        t.show_picture(frames[2], 'pty')
+        assert t.pic['bits'] == frames[2] and t.pic_next is None
+        assert shows(h, frames[2], wall=20)
+    finally:
+        h.close()
+
+
 def test_old_claude_gets_no_pictures():
     h = TermHarness()
     h.grid.hello_flags = glp.GF_TERM                     # #32's CLAUDE.COM

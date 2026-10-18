@@ -25,6 +25,7 @@ function serial(v, w) {
 }
 
 function load(url, html) {
+  if (dom) dom.window.close();               // (the old page's timers stop with it)
   const vc = new VirtualConsole();           // (quiet: "navigation not implemented" and the like)
   dom = new JSDOM(html, {url, runScripts: 'dangerously', pretendToBeVisual: true, virtualConsole: vc});
   elements = [];
@@ -89,6 +90,7 @@ function layout() {
 }
 
 const rl = readline.createInterface({input: process.stdin});
+rl.on('close', () => process.exit(0));      // (a page's timers would keep Node up after the tests)
 rl.on('line', (line) => {
   const m = JSON.parse(line);
   let out;

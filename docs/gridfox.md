@@ -187,6 +187,16 @@ view stays the default: it is the fast one.
 - **Refresh:** a screenshot at once after each action, then at 0.5, 1.5 and
   4 s; while idle, one every 2 s. Only a changed one goes to the GRiD (a
   hash of the PNG), and the encoder sends only the lines that changed.
+- **A page that changes by itself** (a video, an animation; seen on the
+  1520 with YouTube, about a frame every 1.5 s at the idle pace): while
+  each look finds the page changed, the next comes after 0.25 s; the first
+  look that finds it still goes back to the idle pace. These pictures go to
+  gridlink as frames (`OSC 5150` flag `frame`): a frame waits until the GRiD
+  has the one on its way whole, the newest of those waiting kept. So the
+  rate is the link's, every frame arrives whole, and a top that keeps
+  changing can't starve the bottom (the encoder works top down). A key or
+  a click's picture still goes at once. Firefox's caret doesn't blink
+  (`ui.caretBlinkTime` 0), so a text field doesn't count as moving.
 - **Only with a GRiD that can:** gridlink tells gridfox (`GRIDLINK_PICTURES`)
   when the GRiD's HELLO says it takes pictures; otherwise V says CLAUDE.COM
   1.2 is needed.
@@ -202,6 +212,7 @@ view stays the default: it is the fast one.
 | At 3.2 KB/s (stock bridge) | about 0.18 s and 0.1 s |
 | The picture view: the index page (the stand-in's picture of it) | 2,440 |
 | Its next screen (PgDn) / three rows down | 1,914 / 675 |
+| A page that changes by itself, in GridSim (a fast link) | 11 whole frames in 3 s, against 2 at the idle pace |
 
 The ranges are runs here and on Joshua's machine. The page's own weight
 never crosses GPIB, only the cells that change. How

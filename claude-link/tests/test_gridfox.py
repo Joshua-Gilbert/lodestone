@@ -589,6 +589,27 @@ def test_picture_view():
         r.close()
 
 
+def test_picture_view_keeps_up_with_a_moving_page():
+    """A page that changes by itself (a video): looks every FRAME_SHOT, not
+    every IDLE_SHOT, as frames gridlink shows whole; a still page: the idle pace."""
+    import tempfile
+    from gridfox.app import FRAME_SHOT, IDLE_SHOT
+    r = Run(U + 'anim')
+    try:
+        app = r.app; app.pictures = True
+        app.view_path = os.path.join(tempfile.mkdtemp(prefix='gridfox-view-'), 'view.png')
+        out = io.BytesIO(); app.out = out
+        app.key('v'); app.shots = []
+        time.sleep(0.25); app._shoot(True)
+        assert app.moving and abs(app._next_shot() - app.shot_t - FRAME_SHOT) < 1e-6
+        assert b'5150;show;frame;' in out.getvalue(), out.getvalue()[-120:]
+        app.go(U + 'index'); app.shots = []
+        app._shoot(True); app._shoot(True)                       # (the second: nothing changed)
+        assert not app.moving and abs(app._next_shot() - app.shot_t - IDLE_SHOT) < 1e-6
+    finally:
+        r.close()
+
+
 def test_picture_view_end_to_end():
     from gridsim import TermHarness
     from gridlink import picture as PIC
@@ -630,6 +651,35 @@ def test_picture_view_end_to_end():
             b3 = h.grid.stats['rx_bytes']
             print('     a screen down: %d bytes; 3 rows down: %d' % (b2 - b1, b3 - b2))
             assert b3 - b2 < (b2 - b1) / 2, (b2 - b1, b3 - b2)
+            # a page that changes by itself: whole frames, one after another, at the link's pace
+            h.grid.press(0x1B, 0x01)
+            assert h.wait_text('Paragraph 1 of the long page.', wall=10)
+            for ch in 'g': h.grid.press(ord(ch), 0x22)
+            assert h.wait_text('Go:', wall=5)
+            for _ in range(80): h.grid.press(0x08, 0x0E)
+            for ch in U + 'anim': h.grid.press(ord(ch), 0)
+            h.grid.press(0x0D, 0x1C)
+            assert h.wait_text('Frame', wall=10), h.grid.screen_text()
+            h.grid.press(0x76, 0x2F)
+            assert h.run_until(lambda: t.pic is not None and bytes(h.grid.pix) == t.pic['bits'], 20)
+            seen = set(); n0 = f.shots
+            def whole():
+                if t.pic is not None and bytes(h.grid.pix) == t.pic['bits']: seen.add(bytes(h.grid.pix))
+            h.grid.on_cells = whole
+            t0 = time.time()
+            h.run_until(lambda: time.time() - t0 > 3.0, wall=4)
+            h.grid.on_cells = None
+            print('     a moving page: %d whole frames in 3 s (%d screenshots)' % (len(seen), f.shots - n0))
+            assert len(seen) >= 6, len(seen)                        # (at the idle pace: one or two)
+            h.grid.press(0x1B, 0x01)
+            assert h.wait_text('Frame', wall=10)
+            for ch in 'g': h.grid.press(ord(ch), 0x22)
+            assert h.wait_text('Go:', wall=5)
+            for _ in range(80): h.grid.press(0x08, 0x0E)
+            for ch in U + 'long': h.grid.press(ord(ch), 0)
+            h.grid.press(0x0D, 0x1C)
+            h.grid.press(0x76, 0x2F)
+            assert h.run_until(lambda: t.pic is not None and bytes(h.grid.pix) == t.pic['bits'], 20)
             # Esc: the text again, the long page
             h.grid.press(0x1B, 0x01)
             assert h.wait_text('Paragraph 1 of the long page.', wall=10), h.grid.screen_text()

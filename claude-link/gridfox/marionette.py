@@ -36,6 +36,7 @@ PREFS = {
     # the picture view: scrolling in one step (so the GRiD gets a scroll, not a slide), crisp text
     'general.smoothScroll': False,
     'gfx.text.disable-aa': True,
+    'ui.caretBlinkTime': 0,                            # a steady caret: a blink would read as a moving page
 }
 
 # Fonts without antialiasing for gridfox's Firefox only (the picture view's
