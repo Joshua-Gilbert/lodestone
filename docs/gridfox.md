@@ -189,8 +189,11 @@ view stays the default: it is the fast one.
   hash of the PNG), and the encoder sends only the lines that changed.
 - **A page that changes by itself** (a video, an animation; seen on the
   1520 with YouTube, about a frame every 1.5 s at the idle pace): while
-  each look finds the page changed, the next comes after 0.25 s; the first
-  look that finds it still goes back to the idle pace. These pictures go to
+  each look finds the page changed, the next comes as soon as the GRiD has
+  the last picture whole (gridlink says so on the pty, `OSC 5150 ; shown`),
+  and at most every 0.25 s: one screenshot a frame the link can carry,
+  none wasted on the Pi. The first look that finds the page still goes back
+  to the idle pace. These pictures go to
   gridlink as frames (`OSC 5150` flag `frame`): a frame waits until the GRiD
   has the one on its way whole, the newest of those waiting kept. So the
   rate is the link's, every frame arrives whole, and a top that keeps

@@ -182,9 +182,13 @@ class TermSession:
         with s.lock:
             if s.from_pic: s.penc.delivered()
             else: s.enc.delivered()
+            pic = s.pic; tell = False
+            if pic is not None and pic['owner'] == 'pty' and not pic.get('told') and s.penc.shown == pic['bits']:
+                pic['told'] = tell = True               # (gridfox paces a moving page's looks by it)
             nxt = s.pic_next
-            if nxt is not None and s.pic is not None and s.penc.shown == s.pic['bits']:
+            if nxt is not None and pic is not None and s.penc.shown == pic['bits']:
                 s.pic = nxt; s.pic_next = None          # the last frame is whole on the GRiD: the next
+        if tell: s._write(b'\x1b]5150;shown\x07')
 
     # ---- pictures (picture.py) -------------------------------------------
     def can_picture(s):
@@ -211,6 +215,9 @@ class TermSession:
                 s.pic_next = pic; return               # (no wake: the frame on its way goes on)
             if s.pic is None: s.penc.reset()   # (the first frame clears the text away)
             s.pic = pic; s.pic_next = None
+            tell = owner == 'pty' and s.penc.shown == pic['bits']   # (the same pixels: whole already)
+            if tell: pic['told'] = True
+        if tell: s._write(b'\x1b]5150;shown\x07')
         s.title_sent = None; s._send_title(force=True)
         if s.link is not None: s.link.wake()
 

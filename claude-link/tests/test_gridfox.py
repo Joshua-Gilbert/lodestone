@@ -489,6 +489,9 @@ def test_mouse_reports_and_clicks():
     from gridfox.app import Keys
     k = Keys()
     assert k.feed(b'\x1b[<0;12;5M\x1b[<0;12;5mx\x1b[<2;1;1M\x1b[<64;3;3M', 0) == ['click:11:4', 'x']
+    # gridlink's word (OSC 5150) is one event, in pieces too; CODE-] is still Meta-]
+    assert k.feed(b'a\x1b]5150;sho', 0) == ['a'] and k.feed(b'wn\x07b', 0.001) == ['osc:5150;shown', 'b']
+    assert k.feed(b'\x1b]x', 0) == ['meta-]', 'x']
     r = Run(U + 'index')
     try:
         app = r.app
@@ -601,8 +604,13 @@ def test_picture_view_keeps_up_with_a_moving_page():
         out = io.BytesIO(); app.out = out
         app.key('v'); app.shots = []
         time.sleep(0.25); app._shoot(True)
-        assert app.moving and abs(app._next_shot() - app.shot_t - FRAME_SHOT) < 1e-6
+        assert app.moving
         assert b'5150;show;frame;' in out.getvalue(), out.getvalue()[-120:]
+        # the next look waits for gridlink's word that the GRiD has the last whole
+        from gridfox.app import SHOWN_WAIT
+        assert app.awaiting and abs(app._next_shot() - app.sent_t - SHOWN_WAIT) < 1e-6
+        for k in Keys().feed(b'\x1b]5150;shown\x07', 0): app.key(k)
+        assert not app.awaiting and abs(app._next_shot() - app.shot_t - FRAME_SHOT) < 1e-6
         app.go(U + 'index'); app.shots = []
         app._shoot(True); app._shoot(True)                       # (the second: nothing changed)
         assert not app.moving and abs(app._next_shot() - app.shot_t - IDLE_SHOT) < 1e-6
@@ -671,6 +679,7 @@ def test_picture_view_end_to_end():
             h.grid.on_cells = None
             print('     a moving page: %d whole frames in 3 s (%d screenshots)' % (len(seen), f.shots - n0))
             assert len(seen) >= 6, len(seen)                        # (at the idle pace: one or two)
+            assert f.shots - n0 <= len(seen) + 3, (f.shots - n0, len(seen))   # (a look a frame: none wasted)
             h.grid.press(0x1B, 0x01)
             assert h.wait_text('Frame', wall=10)
             for ch in 'g': h.grid.press(ord(ch), 0x22)
