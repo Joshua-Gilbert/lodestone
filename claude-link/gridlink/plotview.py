@@ -9,6 +9,7 @@ from . import plot as PL
 OWNER = 'claude'
 ESC = 0x1B
 LINGER = 0.7                    # seconds a pick's last mark stays before Claude Code comes back
+BAND = 48                       # columns of the GRiD's band the title gets (CLAUDE's keys take the rest)
 
 
 class Viewer:
@@ -65,9 +66,9 @@ class Viewer:
         if pk is not None:
             left = pk['want'] - len(pk['got'])
             p = pk['prompt'] or ('click a point' if left == 1 else 'click %d points' % left)
-            return '%s  (Esc: cancel)' % p[:44]
+            return '%s  (Esc: cancel)' % p[:BAND - 15]
         name = (s.view.title if s.view is not None else '') or 'Picture'
-        return '%s  (Esc: back)' % name[:46]
+        return '%s  (Esc: back)' % name[:BAND - 13]
 
     def _up(s):
         s.term.show_picture(s.bits, OWNER, on_click=s._click, on_key=s._key, title=s._title())

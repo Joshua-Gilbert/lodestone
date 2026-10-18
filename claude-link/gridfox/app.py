@@ -24,6 +24,7 @@ SHOTS = (0.0, 0.5, 1.5, 4.0)        # after an action: pictures then (s), as the
 IDLE_SHOT = 2.0                     # and at most this often while idle, when it changed
 LINE_PX, PAGE_PX = 48, 352          # the picture view's scrolling (whole rows of 16 lines)
 VIEW_FILE = 'view.png'
+BAND = 48                           # columns of the GRiD's band the title gets (CLAUDE's keys take the rest)
 SEARCH = 'https://html.duckduckgo.com/html/?q=%s'
 HOME = 'about:gridfox'
 
@@ -688,7 +689,7 @@ class App:
             s.shown[r] = (text, attr)
             parts.append('\x1b[%d;1H' % (r + 1) + _sgr_line(text, attr))
         title = s.model.get('title') or s.url
-        if s.picture: title = '%s  (Esc: text)' % P.clean(title)[:44]
+        if s.picture: title = '%s  (Esc: text)' % _fit(title, BAND - 13)   # (the hint must show)
         if title != s.title_sent:
             s.title_sent = title
             parts.append('\x1b]0;%s\x07' % P.clean(title).replace('\x07', '')[:70])

@@ -385,8 +385,8 @@ def test_stdio_server_survives_anything():
              b'{"jsonrpc":"2.0","id":6,"method":"ping"}\n']
     out, _ = p.communicate(b''.join(lines), timeout=30)
     rs = [json.loads(l) for l in out.splitlines()]
-    assert p.returncode == 0 and rs[-1] == {'jsonrpc': '2.0', 'id': 6, 'result': {}}, rs
-    by = {r.get('id'): r for r in rs}
+    by = {r.get('id'): r for r in rs}               # (tool calls answer on their own threads: in any order)
+    assert p.returncode == 0 and by[6] == {'jsonrpc': '2.0', 'id': 6, 'result': {}}, rs
     assert by[1]['error']['code'] == -32602 and by[2]['error']['code'] == -32602 and by[3]['error']['code'] == -32602
     assert by[4]['result']['isError'] and by[5]['result']['protocolVersion'] == mcp.PROTOCOL
     # a version it doesn't know: it answers with its own; one it knows: that one

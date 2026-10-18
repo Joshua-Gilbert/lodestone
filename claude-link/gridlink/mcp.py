@@ -200,10 +200,10 @@ TOOLS = [
      'description': (
          "Ask the user to click points on the plot or picture you showed last (grid_plot, grid_image; it is "
          "shown again if they went back), and wait for the clicks: their data coordinates and, on a plot, "
-         "the nearest data point. The prompt is shown in the GRiD's band (keep it short: 'click the "
+         "the nearest data point. The prompt is shown in the GRiD's band (33 characters: 'click the "
          "notch'). Esc on the GRiD cancels."),
      'inputSchema': {'type': 'object', 'properties': {
-         'prompt': {'type': 'string', 'maxLength': 44},
+         'prompt': {'type': 'string', 'maxLength': 33},
          'count': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'description': 'Clicks to wait for (default 1).'},
          'timeout': {'type': 'integer', 'minimum': 5, 'maximum': MAX_PICK_WAIT,
                      'description': 'Seconds to wait (default 120).'}}},
@@ -654,7 +654,7 @@ class GridTools:
     def t_grid_pick(s, a):
         from . import plot as PL
         if s.viewer is None: return [text('Pictures need Term (CLAUDE /T) with CLAUDE.COM 1.2 or later.')], True
-        prompt = arg_str(a, 'prompt', most=44)
+        prompt = arg_str(a, 'prompt', most=33)
         count = arg_int(a, 'count', 1, 1, 10)
         tmo = arg_int(a, 'timeout', 120, 5, MAX_PICK_WAIT)
         try: got, why = s.viewer.pick(prompt, count, tmo)
@@ -869,7 +869,7 @@ def respond(line, sock):
 
 def main():
     sock = socket_path()
-    out = sys.stdout; lock = threading.Lock()
+    out = sys.stdout; lock = threading.Lock(); calls = []
     def answer(line):
         rs = respond(line, sock)
         with lock:
@@ -880,8 +880,11 @@ def main():
         if not line: continue
         # a tool call on its own thread: grid_pick waits for the user, gridlink keeps
         # the GRiD's own calls one at a time
-        if b'"tools/call"' in line: threading.Thread(target=answer, args=(line,), daemon=True).start()
+        if b'"tools/call"' in line:
+            th = threading.Thread(target=answer, args=(line,), daemon=True); th.start(); calls.append(th)
+            calls[:] = [t for t in calls if t.is_alive()]
         else: answer(line)
+    for th in calls: th.join()                   # (Claude Code closed its end: the answers still go)
 
 
 if __name__ == '__main__':
