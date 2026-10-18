@@ -675,7 +675,9 @@ class App:
     def draw(s, full=False):
         rows, cur = s.rows()
         parts = ['\x1b[?2026h']
-        if full: parts.append('\x1b[?7l\x1b[2J\x1b[?1000h\x1b[?1006h'); s.shown = [None] * ROWS   # (clicks: CLAUDE /W)
+        if full:                                 # (clicks: CLAUDE /W; in pixels only in the picture view)
+            parts.append('\x1b[?7l\x1b[2J\x1b[?1000h\x1b[?1006h' + ('' if s.pic_up else '\x1b[?1016l'))
+            s.shown = [None] * ROWS
         for r, (text, attr) in enumerate(rows):
             if s.shown[r] == (text, attr): continue
             s.shown[r] = (text, attr)

@@ -43,10 +43,10 @@ class Viewer:
             with s.lock:
                 if s.picking is pk: s.picking = None
             raise
-        end = time.time() + timeout
-        while not pk['done'].wait(min(1.0, max(0.0, end - time.time()))):
+        end = time.monotonic() + timeout
+        while not pk['done'].wait(min(1.0, max(0.0, end - time.monotonic()))):
             why = s.term.why_not('grid_pick')
-            if why or time.time() >= end:
+            if why or time.monotonic() >= end:
                 with s.lock:
                     if s.picking is pk:
                         s.picking = None
