@@ -323,6 +323,7 @@ FFFFFFFFFFFFFFE0  M_BACK
 00000010  NALLOC
 00000004  NWIN
 00000045  LODE_VER
+00000FFF  INI_READ
 0000008A  M33_ST
 00000000  M3_DI
 00000002  M3_SI
@@ -3164,6 +3165,7 @@ Real              Virtual           Name
             5574              5574  app_path
             55C4              55C4  rowtab
             58E4              58E4  tmp
+            7A46              7A46  FONT_BUF
             5944              5944  m33_st
             5944              5944  m33_x
             5946              5946  m33_y
