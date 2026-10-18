@@ -384,7 +384,11 @@ class TermHarness:
     def synced(s):
         """The GRiD shows what pyte has (and nothing is still on its way)."""
         t = s.term
-        if t is None or t.dirty: return False
+        if t is None: return False
+        pic = t.pic
+        if pic is not None:                             # a picture over the text
+            return not t.ready() and bytes(s.grid.pix) == pic['bits']
+        if t.dirty: return False
         with t.lock:
             tc, ta = t.screen.cells()
         return [bytes(r) for r in tc] == [bytes(r) for r in s.grid.cells] and \

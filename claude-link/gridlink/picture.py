@@ -102,7 +102,7 @@ def dither(img, invert=False):
     8 x 8 pattern fixed to the screen.  Pillow's own C, no per-pixel Python."""
     from PIL import Image, ImageChops
     g = img.convert('L')
-    if g.size != (W, H): g, _ = fit(g)
+    if g.size != (W, H): g, _ = fit(g, fill=255 if invert else 0)        # (dark bars either way)
     if invert: g = g.point(lambda v: 255 - v)
     g = g.point(lambda v: 0 if v <= DARK else 255 if v >= LIGHT else v)
     out = ImageChops.subtract(g, threshold()).point(lambda v: 255 if v else 0)

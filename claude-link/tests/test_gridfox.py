@@ -515,6 +515,127 @@ def test_mouse_reports_and_clicks():
         r.close()
 
 
+# ---- the picture view (V) -------------------------------------------------------
+def line_y(f, text):
+    """The y of the stand-in's line holding text (its layout: 16 pixels a line)."""
+    r = f._node({'op': 'lines'})
+    i = [k for k, (t, _) in enumerate(r['lines']) if text in t][0]
+    return i * 16 - r['y'] + 8
+
+
+def test_picture_view():
+    import tempfile
+    r = Run(U + 'index')
+    try:
+        app, f = r.app, r.f
+        d = tempfile.mkdtemp(prefix='gridfox-view-'); app.view_path = os.path.join(d, 'view.png')
+        out = io.BytesIO(); app.out = out
+        n0 = f.shots
+        app.key('v')
+        assert app.picture and app.pic_up and f.shots == n0 + 1
+        o = out.getvalue()
+        assert b'\x1b[?1016h' in o and (b'\x1b]5150;show;;%s\x07' % app.view_path.encode()) in o, o[-200:]
+        assert open(app.view_path, 'rb').read()[:8] == b'\x89PNG\r\n\x1a\n'
+        assert f.window == (650, 392) and app.pic_size == (640, 384), (f.window, app.pic_size)   # the viewport 640 x 384
+        assert b'(Esc: text)' in o                                        # the band says how to leave
+        # the same picture again: not sent again
+        out.seek(0); out.truncate(); app._shoot()
+        assert b'5150' not in out.getvalue()
+        # a click at a pixel: a real click there (on "Long page")
+        app.key('click:%d:%d' % (30, line_y(f, 'Long page')))
+        assert f.points and f.points[-1][2] == 'a', f.points
+        assert app.url == U + 'long', app.url
+        # scrolling: whole rows of 16 lines
+        app.key('pgdn'); assert app.b.scroll(0) == 352
+        app.key('down'); assert app.b.scroll(0) == 400
+        app.key('home'); assert app.b.scroll(0) == 0
+        app.key('end'); assert app.b.scroll(0) > 400
+        # typing goes to the page: the sign-in form's field
+        app.key('ctrl-b'); app.go(U + 'login')
+        app.key('click:%d:%d' % (30, line_y(f, '[User name]')))
+        for c in 'abc': app.key(c)
+        app.key('bksp')
+        assert f.keys[-4:] == ['a', 'b', 'c', '\ue003'], f.keys
+        assert f._node({'op': 'exec', 'script': 'return document.querySelector("[name=user]").value;',
+                        'args': []})['value'] == 'ab'
+        # the address: the text view's Go line over the picture, then the picture again
+        out.seek(0); out.truncate()
+        app.key('f6')
+        assert app.line is not None and not app.pic_up and b'5150;hide' in out.getvalue()
+        app.key('esc'); app._sync_view()
+        assert app.line is None and app.pic_up
+        # light or dark: the other way
+        out.seek(0); out.truncate(); app.key('ctrl-i')
+        assert b'5150;show;invert;' in out.getvalue(), out.getvalue()
+        # Esc: the text view again, as it was
+        out.seek(0); out.truncate()
+        app.key('esc')
+        o = out.getvalue()
+        assert not app.picture and b'5150;hide' in o and b'\x1b[?1016l' in o
+        assert f.window == (1034, 776), f.window
+        app.out = r.out; app.shown = [None] * 24; app.draw(); r.pump()
+        assert r.has('User') and r.text()[0].strip() == U + 'login', r.text()
+        # no picture of the help page
+        app.go('about:gridfox'); app.key('v')
+        assert not app.picture and 'G to go' in app.status
+    finally:
+        r.close()
+
+
+def test_picture_view_end_to_end():
+    from gridsim import TermHarness
+    from gridlink import picture as PIC
+    f = FakeFirefox()
+    try:
+        cmd = '%s -m gridfox --port %d %sindex' % (sys.executable, f.port, U)
+        h = TermHarness(app='web', web_command=cmd)
+        try:
+            assert h.wait_text('Tektronix 7854 notes', wall=20), (h.log, h.grid.screen_text())
+            assert h.settle()
+            t = h.router.web
+            b0 = h.grid.stats['rx_bytes']
+            h.grid.press(0x76, 0x2F)                                            # V
+            assert h.run_until(lambda: t.pic is not None and bytes(h.grid.pix) == t.pic['bits'], 20), h.log[-5:]
+            assert not any(bytes(r).strip() for r in h.grid.cells)              # the text is gone
+            bits = t.pic['bits']
+            lit = sum(bin(b).count('1') for b in bits) / (PIC.SIZE * 8)
+            assert lit < 0.2, lit                                               # a white page shown dark
+            assert h.run_until(lambda: h.grid.title.endswith(b'(Esc: text)'), 5), h.grid.title
+            print('     the page as a picture: %d bytes to the GRiD' % (h.grid.stats['rx_bytes'] - b0))
+            # a click at a pixel: gridlink reports it in pixels (?1016), gridfox clicks there
+            h.grid.click(30, line_y(f, 'Long page'))
+            assert h.run_until(lambda: b'A long page' in h.grid.title, 15), h.grid.title
+            assert h.run_until(lambda: t.pic is not None and bytes(h.grid.pix) == t.pic['bits'], 20)
+            # PgDn: a scroll op and a strip, not the whole picture again
+            assert h.settle()
+            b1 = h.grid.stats['rx_bytes']; sc0 = h.grid.stats['cells_frames']
+            h.grid.press(0, 0x51)
+            assert h.run_until(lambda: f.calls.count('WebDriver:TakeScreenshot') and
+                               bytes(h.grid.pix) == t.pic['bits'] and t.penc.shown == t.pic['bits'], 20)
+            assert h.settle()
+            b2 = h.grid.stats['rx_bytes']
+            # Down: 3 rows; the GRiD moves what it has (a scroll op) and gets the new rows
+            n = f.calls.count('WebDriver:TakeScreenshot')
+            h.grid.press(0, 0x50)
+            assert h.run_until(lambda: f.calls.count('WebDriver:TakeScreenshot') > n and
+                               bytes(h.grid.pix) == t.pic['bits'] and t.penc.shown == t.pic['bits'], 20)
+            assert h.settle()
+            b3 = h.grid.stats['rx_bytes']
+            print('     a screen down: %d bytes; 3 rows down: %d' % (b2 - b1, b3 - b2))
+            assert b3 - b2 < (b2 - b1) / 2, (b2 - b1, b3 - b2)
+            # Esc: the text again, the long page
+            h.grid.press(0x1B, 0x01)
+            assert h.wait_text('Paragraph 1 of the long page.', wall=10), h.grid.screen_text()
+            assert t.pic is None
+            assert h.grid.stats['fail'] == 0, h.grid.stats
+            errs = [l for l in h.log if 'Traceback' in str(l) or 'picture from' in str(l)]
+            assert not errs, errs
+        finally:
+            h.close()
+    finally:
+        f.close()
+
+
 # ---- end to end: gridlink + the GRiD's link (GridSim) -----------------------
 def test_end_to_end_gridsim():
     from gridsim import TermHarness

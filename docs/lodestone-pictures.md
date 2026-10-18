@@ -1,133 +1,94 @@
-# Pictures on the GRiD: gridfox's picture view and Claude Code's plots (plan)
+# Pictures on the GRiD: gridfox's picture view and Claude Code's plots
 
-Planned 2026-10-17, after W1 (gridfox, text view) and the mouse (PR #32) ran on the 1520.
+Planned and built 2026-10-17, after W1 (gridfox, text view) and the mouse (PR #32) ran on the 1520.
+Tested in emulation and against stand-ins; not yet on the 1520 and the Pi.
 
 ## What Joshua asked for
 - **A dithered picture mode for gridfox:** the whole browsing experience, the page as Firefox draws it.
 - **Claude Code showing plots on the GRiD that he can click on.**
 - Both should share code.
 
+## Decided (Joshua, 2026-10-17)
+1. **Clicks on a plot: both.** Your clicks type the point into Claude Code's prompt, not sent, and Claude can ask you to pick points with `grid_pick`.
+2. **The pointer is always on in Term**, `/T` included. A click does nothing unless a picture is up or the program asked for mouse reports.
+3. **gridfox's text view stays the default.** One key (V) flips to the picture of the same page; Esc goes back.
+
 ## The shared part
 Both are "the Pi draws a 640×384 one-bit picture and the GRiD shows it; a click
 comes back in pixels". Only the source of the picture differs:
 
 ```
-                    ┌ gridfox: Firefox's screenshot ─ dither ┐
-Pi:                 ┤                                         ├─ picture layer ─ encoder ─ CELLS frames ─┐
-                    └ Claude Code: grid_plot / grid_image ────┘   (what the GRiD shows,                   │
-                                                                    latest only)                          │ GPIB
-GRiD: CELLS op FDh (a rectangle of pixels) ─ video memory; the pointer re-shown ◄────────────────────────┘
-      a click ─ EVENT 05h in pixels ─► Pi: to whoever owns the picture (gridfox, or the plot's tool)
+                    ┌ gridfox: Firefox's screenshot (OSC 5150) ─ dither ┐
+Pi:                 ┤                                                    ├─ picture layer ─ encoder ─ CELLS frames ─┐
+                    └ Claude Code: grid_plot (drawn in one bit) /        ┘   (what the GRiD shows,                   │
+                                   grid_image (dithered)                      latest only)                          │ GPIB
+GRiD: CELLS op FDh (a rectangle of pixels) ─ video memory; the pointer re-shown ◄───────────────────────────────────┘
+      a click ─ EVENT 05h in pixels ─► Pi: to whoever owns the picture (gridfox, or Claude Code's plot)
 ```
 
-### On the GRiD (CLAUDE.COM): one CELLS operation, about 100–120 bytes
-- **CELLS op `FDh`, pixels:** `y` (2), `x` in bytes (1), width in bytes (1), height in lines (1), a flag, then the rectangle coded as below.
-  - CELLS today uses 00h–97h (runs and fills) and FEh (scroll), so FDh is free. An older CLAUDE.COM reads FDh as a fill on row 7Dh, which doesn't fit the screen, so the frame ends there: nothing breaks. The Pi sends pictures only to a CLAUDE that says it can, through HELLO flags bit 1 (no extra bytes: `mov al, 1` becomes `mov al, 3`).
-  - **Coding, chosen per rectangle by the flag:** PackBits run-lengths of the bytes, or of each line XORed with the line above.
-    - The GRiD undoes the XOR from video memory as it goes, with the 4-bank arithmetic Term already uses: line y is in bank y mod 4, at (y div 4) × 80.
-    - Measured on three typical screens (below), the right choice saves up to three-quarters.
-  - Every rectangle is checked against the screen (rows 0–383) and the payload, as CELLS operations are now.
-- **Scrolling reuses what is there.** The CELLS scroll op (FEh) moves rows of 16 lines. A page scrolled in 16-line steps arrives as a scroll plus a 16-line strip: about 200 bytes for text.
-  - Only scrolling up exists today. Scrolling back sends the strip at the top as pixels; a scroll-down op could come later if it's worth its bytes.
-- **No "picture mode" on the GRiD.**
-  - The Pi decides what is on the screen. While a picture is up, it sends no text frames; pyte goes on keeping the text screen.
-  - Going back to text is a clear plus a full redraw: the Pi resets its text encoder, as for CODE-R.
-  - CLAUDE keeps no picture memory, so a picture costs the GRiD no RAM.
-- **Clicks in pixels:** EVENT 05h carries x and y as words, 4 bytes instead of the column and row. That drops the two shifts, so it is about the same size. gridlink tells the two apart by length (3 bytes: cells, from #32's CLAUDE).
-- **The pointer in all of Term, not only under `/W`:** plots are under `/T`. Dropping the `/W` check saves 5 bytes; Claude Code still never sees a click unless a picture is up.
-- After an FDh rectangle the pointer is hidden and shown again, through the code #32 added for CELLS.
-- **RCON (resident Claude) unchanged,** as before: the new op is left out of it by `%ifdef`.
+### On the GRiD (CLAUDE.COM): 112 bytes
+- **CELLS op `FDh`, pixels:** `y` (2), `x` in bytes (1), width in bytes (1), height in lines (1), then each line's bytes as PackBits.
+  - CELLS used 00h–97h (runs and fills) and FEh (scroll), so FDh was free. An older CLAUDE.COM reads FDh as a fill on row 7Dh, which doesn't fit the screen, so the frame ends there: nothing breaks. The Pi sends pictures only to a CLAUDE that says it can, in HELLO flags bit 1 (`mov al, 1` became `mov al, 3`: no extra bytes).
+  - Line y is in bank y mod 4, at (y div 4) × 80; the next line is the next bank, or bank 0 and 80 bytes on. The decoder copies with `rep movsb` / `rep stosb` straight into video memory.
+  - Every rectangle is checked against rows 0–383 and the payload, and each line's codes must make exactly its bytes; anything else ends the frame, as for the other operations. The band (row 24) can't be drawn over.
+  - **The plan's second coding (each line XORed with the one above) was left out.** It saved most on plots with full vertical grid lines; the plots here have none (1,601 points are 5.2 KB with PackBits alone), so it wasn't worth its bytes on the GRiD.
+- **Scrolling reuses what is there:** CELLS's scroll op (FEh) moves rows of 16 lines, pixels and all. The Pi uses it when a picture moved up by whole rows.
+- **No "picture mode" on the GRiD.** The Pi decides what is on the screen. While a picture is up it sends only pictures (the cursor hidden); pyte goes on keeping the text. Going back is a clear and the whole text. CLAUDE keeps no copy of a picture: no RAM for it.
+- **Clicks in pixels:** EVENT 05h carries x and y as words. gridlink tells it from #32's (column, row) by its length.
+- **The pointer in all of Term:** the `/W` check went.
+- **RCON (resident Claude) unchanged**: the op and the mouse are left out of it by `%ifdef`.
+- **Size:** CLAUDE.COM 20,564 → 20,676 bytes, the same 112 in memory.
 
-### On the Pi (gridlink): `picture.py`, the shared layer
-- **A picture layer on the Term session** (Claude Code's or gridfox's):
-  - `show(image, on_click)` and `hide()`;
-  - while shown, it is the link's frame source instead of the text encoder.
-- **The encoder** keeps what the GRiD shows (a 640×384 bitmap) and sends only the difference:
-  - the lines that changed, grouped into rectangles;
-  - a vertical shift found by comparing 16-line bands, sent as a scroll op;
-  - each rectangle coded both ways, the smaller kept;
-  - split to fit the bridge's 254-byte frames (127 for the stock AR488).
-- **Latest picture, never a backlog,** as for text: a slow link means fewer pictures, not a queue. The rule that a frame counts as shown when the next one comes is Term's own.
-- **Dithering** (Pillow):
-  - grey → one bit with an 8×8 ordered (Bayer) pattern fixed to the screen;
-  - text-like pixels (near black or near white) thresholded rather than dithered, so text stays crisp.
-  - A fixed pattern keeps unchanged areas unchanged, so diffs stay small. Error diffusion would shimmer at every change.
-  - A 16-line scroll keeps the pattern aligned (16 is a multiple of 8), so a scrolled area really is a moved one.
-- **Clicks:**
-  - EVENT 05h in pixels goes to the picture's `on_click(x, y)` while a picture is up.
-  - Otherwise it becomes a cell, and the click goes to the pty as now (gridfox's text view).
+### On the Pi (gridlink)
+- **`picture.py`, the encoder:** keeps what the GRiD shows and sends only the difference.
+  - The lines that changed, grouped into rectangles as wide as their changes.
+  - A vertical shift, found by comparing 16-line rows, sent as a scroll op first.
+  - Split to fit the bridge's frames (254 bytes, or 127 for the stock AR488); a line too wide for a small frame goes in pieces.
+  - **Latest picture, never a backlog,** as for text: a frame counts as shown when the GRiD's next new frame arrives.
+- **Dithering** (Pillow, in C: about 8 ms): grey to one bit with an 8×8 ordered (Bayer) pattern fixed to the screen. Near black and near white are thresholded, so text stays crisp. A fixed pattern keeps unchanged areas unchanged, and a 16-line scroll keeps it aligned.
+- **The picture layer on the Term session** (`term.py`): `show_picture(bits, owner, on_click, on_key, title)` and `hide_picture()`. While a picture is up it is the link's frame source; clicks on it go to its owner; keys too, if it wants them. The band's title says what it is and how to leave ("Filter (Esc: back)").
+  - After a RUN, CODE-R or Ctrl-L the GRiD has drawn its text copy (blank under a picture), so the Pi sends the picture again.
 
-## Use 1: gridfox's picture view (W2)
-- **A key flips between text and picture views** of the same page. Firefox's viewport is set to 640×384.
-- **The picture:** Firefox's screenshot (`WebDriver:TakeScreenshot`, viewport), dithered.
-  - Pictures go on in Firefox's profile. The Pi's internet is fast; only GPIB is slow.
-  - For crisper text, fontconfig settings for gridfox's Firefox only: antialiasing off, full hinting. That is untested.
-- **A click is a real click at that pixel:** `WebDriver:PerformActions`, pointer move and click. Anything on the page answers it, not only the links the text view found.
-- **Typing** goes to the page through `WebDriver:PerformActions` key actions, into whatever has focus.
-  - A few keys stay gridfox's own: back, Go, the view key, Ctrl-Q.
-- **Scrolling:**
-  - PgUp, PgDn and arrows scroll the page by multiples of 16 pixels, so the encoder can send a scroll op.
-  - The GRiD's arrow keys move the page.
-- **Refresh:**
-  - a new screenshot after each action (at once, then at 0.5, 1.5 and 4 s, like the text view's rereads);
-  - while idle, at most one every 2 s, and only when the page changed (a cheap image hash on the Pi).
-  - Animations and video play as fast as the link allows: a frame or two a second for a changing area, never a backlog.
-- **The text view stays the default:** it is the fast one, and the picture view is a key away.
+## Use 1: Claude Code's plots
+Three MCP tools on the `grid` server. They only look, so they can be allowed for good:
 
-## Use 2: Claude Code's plots
-- **Two MCP tools on the `grid` server** (look tools, so they can be allowed for good):
-  - **`grid_plot`:** data in (series of x/y, or a CSV/JSON file on the Pi), with title, axis labels, line or scatter, log axes.
-    - gridlink draws it itself in one bit, at 640×384, with the GRiD's own Terminus font: crisp lines, no dithering.
-    - It knows the axes, so a click maps to data coordinates and the nearest point.
-  - **`grid_image`:** any picture file on the Pi (a matplotlib PNG, a scope screenshot), dithered.
-    - If Claude passes the plot area and axis ranges, clicks map to data coordinates too.
-- **On the GRiD:**
-  - The picture replaces Claude Code's screen until Esc, which goes back to Claude Code as it was. The band says so ("Esc: back to Claude Code").
-  - Claude Code goes on in the background meanwhile.
-- **Clicks** (both, decided below):
-  - **(a)** a click types the point into Claude Code's prompt, not sent, e.g. `[S21 at 1.2345 GHz, -3.10 dB]`, and goes back to the text. You add words and press Return. It is your own click, so it is your input.
-  - **(b)** `grid_pick`: Claude asks you to click ("click the dip you mean") and the tool waits for one or more clicks, with a time limit, and returns them.
-- **The bench is the point:**
-  - Claude reads an 8753D trace with `gpib_read` (1,601 points, a few KB, as now), shows it with `grid_plot`, and you click the notch to get its frequency.
-  - The same works for a 7854 or 11403 waveform, or a DM5120 log over time.
-- **The roadmap's rule** ("send numbers over the link, not pictures, unless only the Pi can make it") holds in spirit. A one-bit line plot is about 4 KB, under a second, and it costs the GRiD no plotting code. A native PLOT on the GRiD for data already there (the bench-app idea) stays separate and possible.
+- **`grid_plot`:** series of x/y (or y alone), or a Pi file in `~/grid` (CSV, numbers separated by spaces, one long line like an instrument's `CURVE 1,2,3`, or JSON). Title, axis labels, line / points / both, log axes, ranges, and `x_span` for data without x (an instrument's start and stop).
+  - `plot.py` draws it in one bit at 640×384 with the GRiD's own 8×16 font (`gridfont.py`, from FONT.INC and GLYPHS.INC): lit lines on a dark screen, dotted horizontal grid lines, ticks but no vertical grid lines, SI labels (1.5G, 250m, 2µ), up to 8 series told apart by dashes and marks. 1,601 points draw in about 20 ms.
+  - Claude gets the picture back as an image, as the GRiD shows it.
+- **`grid_image`:** a picture file from `~/grid` (a matplotlib PNG, a screenshot), fitted and dithered. A mostly white picture is inverted, lit lines on dark. With `plot_area` (the axes box in the picture's pixels) and the axis ranges, clicks map to data too.
+- **`grid_pick`:** asks the user to click points (the prompt in the band, "click the notch"), waits up to the time limit, and returns each click: data coordinates and, on a plot, the nearest point (series, index, x, y). Each click is marked on the picture. Esc cancels. It doesn't hold up the GRiD's other tools.
+- **Your own click** types the point into Claude Code's prompt as a paste, not sent, and goes back to Claude Code: `[clicked plot "S21": Hz = 1.49756e+09, dB = -25.9; nearest point: S21 #800 (1.50015e+09, -25.7)]`. You add words and press Return.
+- **Esc** goes back to Claude Code, which went on underneath.
+- **The bench path:** `gpib_read` or `gpib_send` with `save_to` puts an instrument's reply (an 8753D trace, 1,601 points) in a new Pi file, without passing it through the conversation; `grid_plot` with `file` shows it; you click the notch.
 
-## Measured (sizes, 2026-10-17)
-640×384, one bit, coded with PackBits, in a Python model of the encoder:
+## Use 2: gridfox's picture view (W2)
+Details in `docs/gridfox.md`. In short:
+- V: the viewport becomes 640×384; screenshots go to the picture layer through `OSC 5150` (a PNG in gridfox's folder; gridlink dithers it).
+- Clicks are real clicks at that pixel (`WebDriver:PerformActions`); typing goes to the page; arrows and PgUp/PgDn scroll in whole rows; Ctrl-B/F/R back, forward, reload; F6 an address; Ctrl-I light or dark; Esc the text again.
+- A screenshot after each action (at once, 0.5, 1.5, 4 s) and every 2 s while idle; only a changed one is sent.
+- Pictures load in Firefox now (`--no-images` for the old way); text is drawn without antialiasing.
 
-| Screen | Plain | Each line XORed with the one above | Kept | At 8 KB/s | At 15 KB/s |
-|---|---|---|---|---|---|
-| A text page (gridfox's own screenshot) | 5,170 B | 4,203 B | 4,203 B | 0.5 s | 0.3 s |
-| A dithered picture (gradients and shapes) | 6,882 B | 10,361 B | 6,882 B | 0.8 s | 0.4 s |
-| A line plot with a 9 × 7 grid | 16,645 B | 3,937 B | 3,937 B | 0.5 s | 0.3 s |
-| A 16-line strip of text (one scroll step) | 194 B | | | 0.02 s | |
+## Measured (emulation and models, 2026-10-17)
 
-- **The link speed:** the Pico 2 bridge removed the Nano's serial limit, so the GRiD's polled 7210 loop sets the rate now.
-  - It hasn't been measured on the 1520: **your THRUTEST results through the Pi will set these numbers.**
-  - In emulation the kernel's fast path did 22.8 KB in 2.9 s (7.9 KB/s) with a 2 Mbaud bridge. The table assumes 8–15 KB/s.
-- **Real photos** dither less tidily than the test picture: a full new photo-heavy page could be 15–25 KB, 1–3 s.
+| Picture | Bytes to the GRiD | At 8 KB/s | At 3.2 KB/s (stock bridge) |
+|---|---|---|---|
+| A plot of 1,601 points, two axes, title and labels | 5,206 (254-byte frames), 5,436 (127) | 0.65 s | 1.7 s |
+| A pick's mark on it | 84 | 0.01 s | 0.03 s |
+| A grey gradient, dithered | 683 | 0.1 s | 0.2 s |
+| gridfox, the stand-in's index page | 2,440 | 0.3 s | 0.8 s |
+| Its next screen (PgDn) / three rows down | 1,914 / 675 | 0.24 / 0.08 s | |
 
-## Milestones
-1. **P1, the shared base.**
-   - GRiD: op FDh, pixel clicks, the pointer in all of Term.
-   - Pi: `picture.py` (layer, encoder, dither) and a test pattern.
-   - Tests:
-     - pcemu, video memory against the Pi's bitmap bit for bit, in both codings, scrolls included;
-     - GridSim with a bitmap model;
-     - the kernel test with the serial mouse for pixel clicks.
-   - Bench: THRUTEST numbers, and the time for a full picture and for a scroll.
-2. **P2, Claude Code's plots.**
-   - `grid_plot` and `grid_image`, with Esc back to the text and clicks as decided.
-   - Tests: plot pixels against a reference, click to data point, the stand-in Claude Code calling the tools.
-3. **P3, gridfox's picture view.**
-   - The view key, screenshots, clicks and typing through Actions, 16-pixel scrolling, timed refreshes.
-   - The stand-in Firefox can't draw (jsdom lays nothing out). Its screenshot will be a picture of its page text drawn with Pillow, enough for the pipeline. How real pages look is a bench check on the Pi.
-4. **Later:**
-   - a scroll-down op if scrolling back is slow;
-   - zoom (Firefox's own, `layout.css.devPixelsPerPx`);
-   - Claude Code sharing the browser (W3), which can show its findings with the same layer.
+- The stand-in Firefox's page is only text: a real page with photographs dithers into more, perhaps 10–25 KB for a new photo-heavy screen.
+- The link's speed through the Pico 2 bridge on the 1520 isn't measured yet: **your THRUTEST results will set these numbers.**
 
-## Decided (Joshua, 2026-10-17)
-1. **Clicks on a plot: both.** Your clicks type the point into Claude Code's prompt, not sent, and Claude can ask you to pick points with `grid_pick`.
-2. **The pointer is always on in Term**, `/T` included (the smallest way: the `/W` check goes, 5 bytes saved). A click does nothing unless a picture is up or the program asked for mouse reports.
-3. **gridfox's text view stays the default.** One key (V) flips to the picture of the same page and back.
+## Tests
+- `claude-link/tests/test_picture.py` (15): PackBits; the encoder against a model of the GRiD's decoder at 254, 118 and 40-byte frames; scrolls; cells over pixels; malformed rectangles; dithering; plots, their clicks and labels; data files; the picture layer through GridSim (clicks, CODE-R, an old CLAUDE that gets no pictures, cell clicks from #32's CLAUDE); `grid_plot`, `grid_pick`, `grid_image` and `save_to` end to end through the MCP server.
+- `claude-link/tests/test_emu_picture.py` (4): the real CLAUDE.COM in the emulator, its video memory equal to the Pi's picture bit for bit after plots, a text page, noise, a scroll, a blank, one byte at the last line; with the stock AR488's frames; nine malformed rectangles (nothing drawn outside rows 0–23, CLAUDE goes on); the picture back after RUN, CODE-R and Ctrl-L.
+- `os/tests/test_claude_mouse.py`: under plain Term on the Lodestone kernel, a click through the serial mouse and INT 33h on a plot's point types it into the stand-in Claude Code's prompt.
+- `claude-link/tests/test_gridfox.py`: the picture view, key by key and end to end.
+
+## Later
+- A scroll-down op, if scrolling back is slow.
+- Zoom (Firefox's own, `layout.css.devPixelsPerPx`).
+- Claude Code sharing the browser (W3), which can show its findings with the same layer.
+- A native PLOT on the GRiD for data already there (the bench-app idea) stays separate and possible.

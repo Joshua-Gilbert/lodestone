@@ -1,6 +1,6 @@
 """gridfox: Firefox on the Pi, shown as text on the GRiD (CLAUDE /W).
 
-    python3 -m gridfox [URL] [--port 2828] [--firefox PATH] [--images]
+    python3 -m gridfox [URL] [--port 2828] [--firefox PATH] [--no-images]
 
 gridlink starts it in Term's pty when the GRiD's HELLO says app=web; it also
 runs in any 80x24 xterm for trying it out (Ctrl-C quits there; Ctrl-Q
@@ -18,7 +18,9 @@ def main(argv=None):
     ap.add_argument('--port', type=int, default=2828, help='Marionette port (an already running Firefox is used)')
     ap.add_argument('--firefox', help='the Firefox to run (default: firefox-esr or firefox on PATH)')
     ap.add_argument('--profile', default='~/.cache/gridfox/profile', help='Firefox profile (sign-ins kept here)')
-    ap.add_argument('--images', action='store_true', help='let Firefox load pictures (the text view needs none)')
+    ap.add_argument('--no-images', dest='images', action='store_false',
+                    help='Firefox loads no pictures (the text view needs none; the picture view shows none)')
+    ap.add_argument('--images', action='store_true', help=argparse.SUPPRESS)      # (the default now)
     ap.add_argument('--search', default=SEARCH, help='search address, %%s for the words')
     ap.add_argument('--log', default='~/.cache/gridfox/gridfox.log')
     ap.add_argument('--console', action='store_true', help='Ctrl-C quits (for trying it in a terminal)')
