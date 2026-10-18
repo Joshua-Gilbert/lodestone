@@ -41,8 +41,8 @@ the GRiD. The emulator measures 48 ms of GRiD time from a key to its echo on
 the screen, plus the Pi's own (about 20-25 ms on the simulated link, and
 Claude Code's rendering).
 
-The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`). Four only look,
-and you can allow them for good ("Yes, and don't ask again"). Three change
+The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`). Eight only look,
+and you can allow them for good ("Yes, and don't ask again"). Four change
 something, and Claude Code asks before every call: they carry
 `anthropic/requiresUserInteraction`, so it offers no "don't ask again" for
 them, no allow rule skips the question, and not even bypassPermissions does.
@@ -55,7 +55,10 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `gpib_read` | until allowed | scan, serial poll, read (sends nothing; a poll clears the instrument's service request) |
 | `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
 | `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
-| `gpib_send` | every time | query, write, clear, trigger, local/remote |
+| `gpib_send` | every time | query, write, clear, trigger, local/remote; a query's reply can go to a new Pi file (`save_to`) |
+| `grid_plot` | until allowed | a line or scatter plot on the GRiD's screen, from data or a Pi file (a trace saved with `save_to`); drawn in one bit with the GRiD's own font |
+| `grid_image` | until allowed | a picture file from `~/grid` (a matplotlib PNG), dithered to the GRiD's screen |
+| `grid_pick` | until allowed | asks the user to click points on the plot or picture, and returns them (data coordinates, the nearest point) |
 | `grid_program` | until allowed | resident Claude only: the DOS program its console is popped up over (its name and screen) |
 | `grid_type` | every time | resident Claude only: keys into that program (`1A{WAIT 30}`); the console goes while they play and comes back with the program's screen |
 
@@ -67,6 +70,15 @@ until the console is up again.
 
 GPIB queries ask too: a query is a command, and some (`MEAS?` and `READ?`
 on a Keithley source-meter) switch a source's output on.
+
+**Plots and pictures** (CLAUDE.COM 1.2, any Term): the picture replaces
+Claude Code's screen until Esc, and Claude Code goes on underneath. Your own
+click on a plot types the point into Claude Code's prompt, not sent, e.g.
+`[clicked plot "S21": Hz = 1.5e+09, dB = -25.7; nearest point: S21 #800
+(1.50015e+09, -25.6999)]`; you add words and press Return. Claude can also
+ask you to click (`grid_pick`). The GRiD needs the mouse (the kernel's
+INT 33h) for clicks; without one, plots still show. Details:
+`docs/lodestone-pictures.md` in the Lodestone tree.
 
 Limits the tools keep, whatever Claude asks for:
 
@@ -119,7 +131,9 @@ The same terminal path as Term, with `gridfox` in the pty instead of
 `claude`: a headless Firefox on the Pi, driven through Marionette, each page
 laid out as text at 80 columns. Links are underlined; Tab moves between
 them, Return follows, F numbers them, G goes to an address or searches.
-A new page is a few hundred bytes on the link. `sudo apt install firefox` on
+A new page is a few hundred bytes on the link. V shows the page as Firefox
+draws it, dithered: clicks and typing go to the page itself (Esc: back to
+the text). `sudo apt install firefox` on
 the Pi; `[web]` in the config. Details: `docs/gridfox.md` in the Lodestone
 tree.
 
@@ -230,7 +244,9 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
 
 - `gridlink/` - the Pi service (Python 3.9+, `pyserial`, `pyte`, `pillow`; `anthropic` for chat).
   Term: `term.py` (the pty), `termscreen.py` (pyte, the cell diff), `router.py`
-  (chat, Term or web), `mcp.py` (the MCP server and its socket)
+  (chat, Term or web), `mcp.py` (the MCP server and its socket). Pictures:
+  `picture.py` (the encoder, dithering), `plot.py` (plots in one bit),
+  `plotview.py` (what's shown and the clicks), `gridfont.py` (the GRiD's font)
 - `gridfox/` - Firefox as text for `CLAUDE /W`: `marionette.py` (Firefox's
   remote control), `extract.js` / `act.js` (run in the page), `page.py`
   (80-column layout), `app.py` (the screen and keys)
@@ -249,7 +265,8 @@ loops would be the next. Treat the numbers as +-30 % until the bench test.
   Term: `test_term.py` (screen, encoder, keys, end to end with the GRiD
   model), `test_emu_term.py` (the real CLAUDE.COM /T), `test_mcp.py` (the
   MCP server); `fake_claude.py` stands in for Claude Code in a pty (no
-  login, no model).
+  login, no model). Pictures: `test_picture.py` (the encoder, plots, the
+  tools end to end), `test_emu_picture.py` (the real CLAUDE.COM, bit for bit).
   gridfox: `test_gridfox.py`, with `fake_firefox.py`, a stand-in Firefox
   (Marionette over jsdom; Node, and `npm ci` in `tests/`) serving
   `tests/web/`.

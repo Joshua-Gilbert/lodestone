@@ -13,6 +13,7 @@ sys.path.insert(0, HERE)
 
 from gridlink import glp, keys as K
 from gridlink import termscreen as TS
+from gridlink import picture as PIC
 from gridlink.link import Link, answer_bytes
 from gridlink.agent import Session
 from gridlink.config import Config
@@ -67,6 +68,7 @@ class GridSim:
         # Term (CLAUDE /T)
         s.app = None; s.term = False; s.keybuf = bytearray(); s.t_active = -10e6
         s.cells, s.attrs = TS._blank_rows(); s.cursor = (0, 0, True)
+        s.pix = bytearray(PIC.SIZE)                 # pictures (CLAUDE.COM 1.2: hello_flags GF_PIX)
         s.on_cells = None
 
     # ---- outgoing ----------------------------------------------------------
@@ -86,7 +88,11 @@ class GridSim:
         if s.app: kv += 'app=%s\n' % s.app
         return bytes([1, s.hello_flags]) + struct.pack('<H', 1024) + bytes([80, 20]) + kv.encode()
 
-    hello_flags = glp.GF_TERM
+    hello_flags = glp.GF_TERM | glp.GF_PIX
+
+    def click(s, x, y):
+        """A left click at pixel (x, y): EVENT 06h as CLAUDE.COM 1.2 sends it."""
+        s.queue(glp.G_EVENT, bytes([glp.EV_PIXCLICK]) + struct.pack('<HH', x, y))
 
     # ---- Term ------------------------------------------------------------
     def press(s, al, ah):
@@ -203,7 +209,8 @@ class GridSim:
             s.busy = not s.term                                     # chat: until the Pi's READY
         elif t == glp.P_CELLS:
             if p[0] & TS.F_CLEAR: s.stats['clears'] += 1
-            s.cursor = TS.apply(p, s.cells, s.attrs); s.t_active = s.clock()
+            s.cursor = TS.apply(p, s.cells, s.attrs, s.pix if s.hello_flags & glp.GF_PIX else None)
+            s.t_active = s.clock()
             s.stats['cells_frames'] += 1; s.stats['cells_bytes'] += len(p)
             if s.on_cells: s.on_cells()
         elif t == glp.P_TEXT: s.screen += p
@@ -377,7 +384,11 @@ class TermHarness:
     def synced(s):
         """The GRiD shows what pyte has (and nothing is still on its way)."""
         t = s.term
-        if t is None or t.dirty: return False
+        if t is None: return False
+        pic = t.pic
+        if pic is not None:                             # a picture over the text
+            return not t.ready() and bytes(s.grid.pix) == pic['bits']
+        if t.dirty: return False
         with t.lock:
             tc, ta = t.screen.cells()
         return [bytes(r) for r in tc] == [bytes(r) for r in s.grid.cells] and \

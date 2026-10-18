@@ -31,8 +31,10 @@ CLAUDE /W  ── KEYS ──────────────▶ (device, 7)
   - `Firefox` starts it headless with its own profile, `~/.cache/gridfox/profile`,
     so cookies and sign-ins are kept. If a Firefox is already listening on
     the port, it uses that one.
-  - Pictures are off (`permissions.default.image` 2): the text view needs
-    none, and they are most of a page's weight. `--images` turns them on.
+  - Pictures load (the picture view shows them; the text view gives their
+    `alt` text). `--no-images` leaves them out, for the text view alone:
+    they are most of a page's weight, though only the Pi's own network
+    carries them, never GPIB.
   - Pages load "eager": gridfox reads the page at DOMContentLoaded rather
     than waiting for every last script.
 - **`extract.js`**: runs inside the page and walks what Firefox rendered.
@@ -112,7 +114,7 @@ summary, as `[+] …`; Return on it opens it.
 Joshua asked for the mouse the OS already supports in this mode. It uses
 the kernel's own INT 33h (`src/MOUSE33.INC`, the serial mouse) as it stands.
 
-- **On the GRiD (CLAUDE.COM, under `/W` only):**
+- **On the GRiD (CLAUDE.COM; under `/W` only at first, all of Term since the pictures):**
   - When the screen is set up, CLAUDE checks that INT 33h is there (GRiD
     MS-DOS may have no mouse driver), resets it, and shows the pointer. The
     kernel draws it in mode 40h.
@@ -120,12 +122,13 @@ the kernel's own INT 33h (`src/MOUSE33.INC`, the serial mouse) as it stands.
     presses since it was last asked, so a quick click between two polls
     isn't missed.
   - Each press goes to the Pi as EVENT 05h with its cell, 8 x 16 pixels to
-    a cell. It shares the one-EVENT-at-a-time flag with CODE-R's repaint.
+    a cell; since the pictures, as EVENT 06h with its pixel. It shares the one-EVENT-at-a-time flag with CODE-R's repaint.
   - After each CELLS frame the pointer is hidden and shown again. Hiding
     puts back only bytes not drawn over since, so the pointer comes back on
     top of the new screen instead of vanishing until the mouse moves.
-  - An older gridlink ignores the EVENT. Plain Term (`/T`) never takes the
-    mouse, and RCON (resident Claude) is unchanged.
+  - An older gridlink ignores the EVENT. RCON (resident Claude) is unchanged.
+    (Plain Term didn't take the mouse at first; since the pictures it does,
+    for clicks on plots, and Claude Code still sees no click unless it asks.)
   - **Cost:** 124 bytes of code and data. The `align 16` before the font
     makes it 128 in the file: CLAUDE.COM is 20,564 bytes.
 - **gridlink:** EVENT 05h goes to the pty as an xterm mouse report (press,
@@ -144,6 +147,52 @@ the kernel's own INT 33h (`src/MOUSE33.INC`, the serial mouse) as it stands.
 - Left only: Backspace already goes back. A serial Microsoft mouse has no
   wheel.
 
+## The picture view (W2, 2026-10-17)
+Joshua asked for "video dithering mode for the full browsing experience".
+V shows the page as Firefox draws it; Esc goes back to the text. The text
+view stays the default: it is the fast one.
+
+- **Firefox's own pixels:** the viewport becomes 640 x 384, the GRiD's rows
+  0-23 (the window is set, then corrected by what Firefox draws around the
+  page). gridfox takes a screenshot (`WebDriver:TakeScreenshot`), writes it
+  to `view.png` in its folder, and asks for it with `OSC 5150` (PROTOCOL.md,
+  section 6). gridlink dithers it and sends it as pixels: Term's picture
+  layer, shared with Claude Code's plots (`docs/lodestone-pictures.md`).
+  - A light page is shown dark, lit text on a dark screen as the GRiD
+    draws; Ctrl-I turns it the other way. The choice is kept while the page
+    stays about as light, so it doesn't flicker as you scroll.
+  - Text is drawn without antialiasing (a fontconfig file of gridfox's own,
+    and `gfx.text.disable-aa`), so it stays crisp after dithering. Not yet
+    seen on the Pi.
+- **Clicks are real clicks** at that pixel (`WebDriver:PerformActions`):
+  anything on the page answers, not only what the text view found. gridfox
+  asks for reports in pixels (`?1016`) while the picture is up.
+- **Typing goes to the page**, into whatever has the focus: characters,
+  Return, Tab, Backspace, Delete, Left and Right. A few keys are gridfox's:
+
+  | Key | Does (picture view) |
+  |---|---|
+  | Esc | back to the text view |
+  | Up / Down | scroll 3 rows (48 pixels) |
+  | PgUp / PgDn | scroll 22 rows |
+  | Home / End | top, bottom |
+  | F6 or Ctrl-L | an address: the text view comes back with its Go line, then the picture of the new page |
+  | Ctrl-B / Ctrl-F | back / forward |
+  | Ctrl-R | reload |
+  | Ctrl-I | light or dark the other way |
+
+- **Scrolling in whole rows** (and `general.smoothScroll` off): the encoder
+  sees the picture moved by 16-line rows and sends a scroll op and the new
+  strip.
+- **Refresh:** a screenshot at once after each action, then at 0.5, 1.5 and
+  4 s; while idle, one every 2 s. Only a changed one goes to the GRiD (a
+  hash of the PNG), and the encoder sends only the lines that changed.
+- **Only with a GRiD that can:** gridlink tells gridfox (`GRIDLINK_PICTURES`)
+  when the GRiD's HELLO says it takes pictures; otherwise V says CLAUDE.COM
+  1.2 is needed.
+- **Not yet:** a `<select>`'s choices open in a window of Firefox's own,
+  which a viewport screenshot doesn't show: use the text view for lists.
+
 ## Measured (emulator and GridSim, stand-in Firefox)
 
 | | |
@@ -151,6 +200,8 @@ the kernel's own INT 33h (`src/MOUSE33.INC`, the serial mouse) as it stands.
 | A new page (the long test page), bytes to the GRiD | 563-587 |
 | One screen down | 318-337 |
 | At 3.2 KB/s (stock bridge) | about 0.18 s and 0.1 s |
+| The picture view: the index page (the stand-in's picture of it) | 2,440 |
+| Its next screen (PgDn) / three rows down | 1,914 / 675 |
 
 The ranges are runs here and on Joshua's machine. The page's own weight
 never crosses GPIB, only the cells that change. How
@@ -184,12 +235,20 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
   - It can keep the old page up while a slow one loads.
   - It wants scripts in gridfox's sandbox, kept between calls.
   - It follows a `#fragment` link in the same document, as a browser does.
-- `os/tests/test_claude_mouse.py` (13 checks): the real CLAUDE.COM `/W` on
+- `os/tests/test_claude_mouse.py` (22 checks): the real CLAUDE.COM `/W` on
   the Lodestone kernel in pcemu, with its serial mouse and the kernel's
   INT 33h, the real gridlink, and gridfox on the stand-in Firefox.
   - A click on a link follows it, and a click on the address opens Go.
   - With no mouse, `/W` works from the keys.
-  - Plain Term doesn't take the mouse.
+  - Under plain Term, a click on a plot types its point into Claude Code's
+    prompt (`docs/lodestone-pictures.md`).
+  - In chat, CLAUDE leaves the mouse alone (no pointer).
+- `test_gridfox.py` `test_picture_view` and `test_picture_view_end_to_end`:
+  V, the viewport, a pixel click on a link, scrolling, typing into a
+  field, the Go line from the picture view, Ctrl-I, Esc back; V refused when gridlink doesn't say the GRiD can show pictures; and through
+  gridlink and GridSim, the GRiD's pixels equal to gridlink's picture, with
+  the byte counts. The stand-in's screenshot is its page's text drawn with
+  Pillow (jsdom lays nothing out), one line of 16 pixels a block or link.
   - `test_term.py` `test_click_only_when_asked` covers gridlink's side:
     nothing reaches a program that asked for no reports, and both report
     forms come out right.
