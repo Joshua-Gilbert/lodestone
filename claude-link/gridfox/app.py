@@ -170,7 +170,7 @@ class Line:
 
 
 class App:
-    def __init__(s, browser, out=None, start=None, search=SEARCH, log=None, quit_keys=()):
+    def __init__(s, browser, out=None, start=None, search=SEARCH, log=None, quit_keys=(), pictures=False):
         s.b = browser; s.out = out or sys.stdout.buffer
         s.search = search; s.log = log or (lambda m: None)
         s.model = help_model(); s.doc = P.layout(s.model)
@@ -187,6 +187,7 @@ class App:
         s.before_help = None                     # the page help was opened over
         s.url_t = 0.0                            # when the address was last checked
         # the picture view
+        s.pictures = pictures                    # the GRiD can show them (gridlink says so: GRIDLINK_PICTURES)
         s.picture = False                        # V: in it (the text goes on underneath)
         s.pic_up = False                         # the picture shown now (not while typing an address)
         s.pic_hash = None; s.pic_size = (PIC_W, PIC_H)
@@ -402,9 +403,7 @@ class App:
             else: s.status = 'Tab to a link first, or F for numbers.'
         elif k in ('left', 'bksp'): s.back(); return
         elif k == 'right': s.forward(); return
-        elif low in ('g', 'o') or k in ('f6', 'ctrl-l'):
-            s.line = Line('Go: ', '' if s.url == HOME else s.url)
-            s.line_do = lambda t: s.go(to_url(t, s.search)) if t.strip() else None
+        elif low in ('g', 'o') or k in ('f6', 'ctrl-l'): s._go_line()
         elif low == 's':
             s.line = Line('Search: ')
             s.line_do = lambda t: s.go(s.search % urllib.parse.quote_plus(t)) if t.strip() else None
@@ -436,7 +435,7 @@ class App:
             s.line = None; s.line_do = None
         s.hints = None
         if row == 0:
-            s.key('g'); return
+            s._go_line(); s.draw(); return
         if TOP <= row < TOP + BODY:
             ln = s.top + row - TOP
             if ln < len(s.doc):
@@ -446,6 +445,11 @@ class App:
                     s.sel = a; s.draw(); s.activate(a); return
         s.status = ''
         s.draw()
+
+    def _go_line(s):
+        """Go: an address, or words to search for, typed on the bottom row."""
+        s.line = Line('Go: ', '' if s.url == HOME else s.url)
+        s.line_do = lambda t: s.go(to_url(t, s.search)) if t.strip() else None
 
     def _menu_box(s):
         """Where the list's choices are drawn: (first row, column, rows, width, first choice)."""
@@ -473,6 +477,8 @@ class App:
     def picture_view(s, on):
         """V: Firefox's pixels on the GRiD (a 640 x 384 viewport); Esc: the text again."""
         if on == s.picture: return
+        if on and not s.pictures:
+            s.status = 'The picture view needs CLAUDE.COM 1.2 on the GRiD (CLAUDE /W).'; s.draw(); return
         if on and s.url == HOME:
             s.status = 'The picture view is of a page: G to go to one first.'; s.draw(); return
         s.picture = on; s.pic_hash = None
@@ -544,8 +550,7 @@ class App:
             s.b.scroll(d, 0 if k == 'home' else -1 if k == 'end' else None)
             s._shots(); s._shoot(); return
         if k in ('f6', 'ctrl-l'):
-            s.line = Line('Go: ', s.url); s.line_do = lambda t: s.go(to_url(t, s.search)) if t.strip() else None
-            s._sync_view(); s.draw(); return
+            s._go_line(); s._sync_view(); s.draw(); return
         if k == 'ctrl-b': s.back(); return
         if k == 'ctrl-f': s.forward(); return
         if k == 'ctrl-r': s.reload(); return

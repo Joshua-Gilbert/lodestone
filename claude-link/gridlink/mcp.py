@@ -53,10 +53,10 @@ GPIB_PROPS = {
                    'description': 'Per-byte read timeout (default 2000).'},
     'max_bytes': {'type': 'integer', 'minimum': 1, 'maximum': 15000,
                   'description': 'Largest reply to accept (default 4096).'},
-    'save_to': {'type': 'string', 'description': (
-        'A new Pi file (in this directory) to put the reply in instead of returning it: for a trace or '
-        'a long reading to show with grid_plot. You get its size and first lines.')},
 }
+SAVE_TO = {'save_to': {'type': 'string', 'description': (
+    'A query\'s reply into a new Pi file (in this directory) instead of returned: for a trace or a long '
+    'reading to show with grid_plot. You get its size and first lines.')}}
 RANGE = {'type': 'array', 'items': {'type': 'number'}, 'minItems': 2, 'maxItems': 2}
 AXES = {
     'title': {'type': 'string'},
@@ -150,7 +150,7 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'properties': dict(
          {'action': {'type': 'string', 'enum': ['query', 'write', 'clear', 'trigger', 'local', 'remote']},
           'command': {'type': 'string', 'maxLength': MAX_GPIB},
-          'terminator': {'type': 'string', 'enum': ['crlf', 'lf', 'none']}}, **GPIB_PROPS),
+          'terminator': {'type': 'string', 'enum': ['crlf', 'lf', 'none']}}, **GPIB_PROPS, **SAVE_TO),
          'required': ['action', 'address']},
      'annotations': {'readOnlyHint': False, 'destructiveHint': True, 'title': 'GPIB: send to an instrument'},
      '_meta': ASK},
@@ -159,7 +159,7 @@ TOOLS = [
      'description': (
          "Show a line or scatter plot on the GRiD's screen (640x384, one bit, in its own font), over this "
          "terminal until the user presses Esc; Claude Code goes on underneath. Data inline (series) or from "
-         "a Pi file in this directory: CSV or numbers separated by spaces (e.g. a trace saved with gpib_read's "
+         "a Pi file in this directory: CSV or numbers separated by spaces (e.g. a trace saved with gpib_send's "
          "save_to), or JSON (a list of series). The user can click the plot: a click types the point (data "
          "coordinates and the nearest point) into your prompt for them to add to. To have them point at "
          "something for you, show the plot, then call grid_pick. You get the picture the GRiD shows."),
@@ -481,14 +481,19 @@ class GridTools:
             r = G.gpib(glp.GP_SPOLL, addr, timeout_ms=tmo); v = r[0] if r else 0
             return [text('Status byte %02Xh (%s)' % (v, format(v, '08b')))], False
         r = G.gpib(glp.GP_READ, addr, timeout_ms=tmo, maxlen=maxb)
-        return s.reply(a, r)
+        return [text(r.decode('latin1').rstrip('\r\n') or '(empty reply)')], False
 
-    def reply(s, a, r):
-        """An instrument's reply: returned, or into a Pi file (save_to)."""
+    def save_path(s, a):
+        """save_to, checked before anything is sent (a new Pi file in ~/grid), or None."""
         to = arg_str(a, 'save_to')
-        if not to: return [text(r.decode('latin1').rstrip('\r\n') or '(empty reply)')], False
+        if not to: return None
         path = pi_path(s.root, to)
         if os.path.lexists(path): raise ValueError('%s is there already: save_to makes a new file' % path)
+        return path
+
+    def reply(s, path, r):
+        """An instrument's reply: returned, or into the Pi file save_path() checked."""
+        if path is None: return [text(r.decode('latin1').rstrip('\r\n') or '(empty reply)')], False
         write_pi(path, bytes(r))
         lines = r.decode('latin1').splitlines()
         head = '\n'.join(l[:200] for l in lines[:3])
@@ -579,6 +584,8 @@ class GridTools:
             return [text('Error: unknown action %s' % act)], True
         addr, tmo, maxb = s.gpib_args(a)
         G = s.G
+        if act != 'query' and a.get('save_to'): raise ValueError("save_to is for a query's reply")
+        dest = s.save_path(a)
         if act in ops:
             G.gpib(ops[act], addr, timeout_ms=tmo)
             return [text('%s sent to %d' % (act, addr))], False
@@ -591,7 +598,7 @@ class GridTools:
         except UnicodeEncodeError: raise ValueError('command must be Latin-1 text')
         if act == 'query':
             r = G.gpib(glp.GP_QUERY, addr, data, timeout_ms=tmo, maxlen=maxb)
-            return s.reply(a, r)
+            return s.reply(dest, r)
         G.gpib(glp.GP_WRITE, addr, data, flags=1, timeout_ms=tmo)
         return [text('Sent to %d' % addr)], False
 
@@ -780,7 +787,7 @@ def local_paths(tool, args):
         k = 'file' if tool == 'grid_plot' else 'path'
         if isinstance(args.get(k), str) and args[k]:
             return dict(args, **{k: os.path.abspath(os.path.expanduser(args[k]))})
-    if tool in ('gpib_read', 'gpib_send') and isinstance(args, dict) and isinstance(args.get('save_to'), str) \
+    if tool == 'gpib_send' and isinstance(args, dict) and isinstance(args.get('save_to'), str) \
             and args['save_to']:
         return dict(args, save_to=os.path.abspath(os.path.expanduser(args['save_to'])))
     if tool != 'grid_change_files' or not isinstance(args, dict): return args
@@ -862,12 +869,19 @@ def respond(line, sock):
 
 def main():
     sock = socket_path()
-    out = sys.stdout
+    out = sys.stdout; lock = threading.Lock()
+    def answer(line):
+        rs = respond(line, sock)
+        with lock:
+            for r in rs: out.write(json.dumps(r) + '\n')
+            out.flush()
     for line in sys.stdin.buffer:
         line = line.strip()
         if not line: continue
-        for r in respond(line, sock):
-            out.write(json.dumps(r) + '\n'); out.flush()
+        # a tool call on its own thread: grid_pick waits for the user, gridlink keeps
+        # the GRiD's own calls one at a time
+        if b'"tools/call"' in line: threading.Thread(target=answer, args=(line,), daemon=True).start()
+        else: answer(line)
 
 
 if __name__ == '__main__':

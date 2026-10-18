@@ -91,8 +91,8 @@ class GridSim:
     hello_flags = glp.GF_TERM | glp.GF_PIX
 
     def click(s, x, y):
-        """A left click at pixel (x, y): EVENT 05h as CLAUDE.COM 1.2 sends it."""
-        s.queue(glp.G_EVENT, bytes([glp.EV_CLICK]) + struct.pack('<HH', x, y))
+        """A left click at pixel (x, y): EVENT 06h as CLAUDE.COM 1.2 sends it."""
+        s.queue(glp.G_EVENT, bytes([glp.EV_PIXCLICK]) + struct.pack('<HH', x, y))
 
     # ---- Term ------------------------------------------------------------
     def press(s, al, ah):

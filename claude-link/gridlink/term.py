@@ -143,7 +143,7 @@ class TermSession:
             if body[0] == glp.EV_REPAINT:         # (the GRiD redrew the text: a picture is gone too)
                 with s.lock:
                     s.enc.reset(); s.penc.reset(); s._mark()
-            elif body[0] == glp.EV_CLICK and len(body) >= 5:       # x, y in pixels (CLAUDE 1.2)
+            elif body[0] == glp.EV_PIXCLICK and len(body) >= 5:    # x, y in pixels (CLAUDE 1.2)
                 s.click_at(body[1] | body[2] << 8, body[3] | body[4] << 8)
             elif body[0] == glp.EV_CLICK and len(body) >= 3:       # a cell (#32's CLAUDE)
                 s.click_at(body[1] * 8 + 4, body[2] * 16 + 8)
@@ -199,7 +199,7 @@ class TermSession:
         with s.lock:
             if s.pic is None: s.penc.reset()   # (the first frame clears the text away)
             s.pic = {'bits': bytes(bits), 'owner': owner, 'on_click': on_click, 'on_key': on_key,
-                     'title': fold_title(title) if title else None}
+                     'title': fold_title(''.join(c for c in title if c.isprintable())) if title else None}
         s.title_sent = None; s._send_title(force=True)
         if s.link is not None: s.link.wake()
 
@@ -220,6 +220,7 @@ class TermSession:
     def paste(s, text):
         """Words into the program's input as a paste (bracketed if it asked,
         ?2004), not sent: the user goes on typing."""
+        text = ''.join(ch for ch in text if ch.isprintable())   # (no Esc, no Return: never sent, never a key)
         data = text.encode('utf-8')
         if (2004 << 5) in s.screen.mode: data = b'\x1b[200~' + data + b'\x1b[201~'
         s._write(data)
@@ -312,6 +313,7 @@ class TermSession:
             here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             env['PYTHONPATH'] = os.pathsep.join([here] + [p for p in [env.get('PYTHONPATH')] if p])
             env['GRIDLINK'] = 'web'
+            if s.can_picture(): env['GRIDLINK_PICTURES'] = '1'   # (gridfox's picture view: this GRiD can)
             env['PYTHONSAFEPATH'] = '1'       # (3.11+) its folder is not on sys.path at all
         try:
             s.child = subprocess.Popen(resolve(s.command), stdin=sl, stdout=sl, stderr=sl, cwd=s.cwd, env=env,
@@ -360,6 +362,7 @@ class TermSession:
         mine = s.child is child                   # (not one started again since)
         if mine:
             s.child = None; s.fd = None; s.exited = code
+            s.hide_picture('pty')                # (gridfox's picture: it can't take it away now)
         try: os.close(fd)
         except OSError: pass
         if mine:

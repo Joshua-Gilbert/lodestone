@@ -529,6 +529,9 @@ def test_picture_view():
     try:
         app, f = r.app, r.f
         d = tempfile.mkdtemp(prefix='gridfox-view-'); app.view_path = os.path.join(d, 'view.png')
+        app.key('v')                                              # not without a GRiD that can show it
+        assert not app.picture and 'CLAUDE.COM 1.2' in app.status, app.status
+        app.pictures = True
         out = io.BytesIO(); app.out = out
         n0 = f.shots
         app.key('v')
@@ -578,6 +581,10 @@ def test_picture_view():
         # no picture of the help page
         app.go('about:gridfox'); app.key('v')
         assert not app.picture and 'G to go' in app.status
+        # the address bar clicked with the Go line open, in the picture view: no stray G typed into the page
+        app.go(U + 'login'); app.key('v'); n = len(f.keys)
+        app.key('f6'); app.key('click:5:0')
+        assert app.line is not None and len(f.keys) == n, (app.line, f.keys[n:])
     finally:
         r.close()
 
