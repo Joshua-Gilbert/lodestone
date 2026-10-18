@@ -773,6 +773,11 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
     - step 1: the sums at the prompt, exact ones checked, the rest logged for comparison;
     - `CALCTEST W`: the Executive side.
 - **Version:** LODE_VER 0045h. `releases/0.4.5`: LODE.SYS, LODE.TXT, CALC.COM, CALC.RUN, SYSTEM.RUN, CALCTEST.BAT, FPUPROBE.COM.
+- **Fixed after 0.4.5 (found by a code audit, 2026-10-17; tested in emulation):**
+  - **LODE.INI past 511 bytes:** `font_boot` read only the first 511 bytes, so once System's file grew past them its FONT=, SAVER= and TIDY= lines (written last) were lost at start-up. SPLASH= and MDISK= were already read past 1 KB (see `lodestone-splash.md`). It now reads 4095 bytes like them; the font file goes after them in the directory buffer. LODE.SYS is the same size and nothing more is resident. `t_saver_delay` checks all three after 960 bytes of other lines.
+  - **SET with no room:** LCMD took the old NAME= out before looking for room for the new value, so "Out of environment space" left the variable gone. It now looks first, counting the old entry as freed, as CALC already did. `t_calc` checks both a replacement that only just fits and one that doesn't.
+  - **COPY:** its 64 KB buffer is now whole sectors (65,024 bytes, not 65,520), so reads and writes after the first don't start part-way through a sector. A 300 KB COPY with the 1520's drive timing: 22.85 s → 21.26 s.
+  - LCMD.COM is 10,970 bytes.
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
