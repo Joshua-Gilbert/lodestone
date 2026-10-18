@@ -2305,7 +2305,8 @@ cbuf_get:
         jc      .no
 .ok:    mov     [cb_seg], ax
         shl     bx, 4
-        mov     [cb_len], bx
+        and     bx, 0FE00h              ; whole sectors: every read and write
+        mov     [cb_len], bx            ;  after the first starts on one
         ret
 .no:    mov     si, e_nomem
         call    err
@@ -3774,16 +3775,50 @@ env_set_line:
         jne     .n
         mov     byte [di], 0
         mov     [valp], si
-        ; remove the old one
+        ; the old one: where it is, and its length with its NUL (0: none)
+        mov     word [env_old], 0
         call    env_seg
         push    si
         mov     si, setbuf2
         call    env_find
         pop     si
-        jc      .add
+        jc      .room
         mov     si, setbuf2             ; DI -> value: back to the name
         call    strlen
         sub     di, cx
+        mov     [env_oldp], di
+        xor     al, al
+        mov     cx, 0FFFFh
+        repne   scasb
+        sub     di, [env_oldp]
+        mov     [env_old], di
+        ; room for NAME=value and two NULs once the old one is out?  Asked
+        ; before anything changes: when there isn't, the old one stays
+.room:  mov     si, [valp]
+        cmp     byte [si], 0
+        je      .del                    ; (NAME= alone: only takes it out)
+        xor     di, di                  ; the end
+.e:     cmp     byte [es:di], 0
+        je      .end
+        xor     al, al
+        mov     cx, 0FFFFh
+        repne   scasb
+        jmp     .e
+.end:   mov     si, setbuf2
+        call    strlen
+        mov     bx, cx
+        mov     si, [valp]
+        call    strlen
+        add     bx, cx
+        add     bx, di
+        add     bx, 2
+        sub     bx, [env_old]
+        cmp     bx, ENVPARA * 16
+        jae     .full
+        ; remove the old one
+.del:   cmp     word [env_old], 0
+        je      .add
+        mov     di, [env_oldp]
         push    ds
         push    es
         pop     ds
@@ -3803,25 +3838,14 @@ env_set_line:
 .add:   mov     si, [valp]
         cmp     byte [si], 0
         je      .x
-        call    env_seg
-        xor     di, di                  ; the end
-.e:     cmp     byte [es:di], 0
-        je      .end
+        xor     di, di                  ; the end (moved by the removal)
+.e2:    cmp     byte [es:di], 0
+        je      .a0
         xor     al, al
         mov     cx, 0FFFFh
         repne   scasb
-        jmp     .e
-.end:   mov     si, setbuf2
-        call    strlen
-        mov     bx, cx
-        mov     si, [valp]
-        call    strlen
-        add     bx, cx
-        add     bx, di
-        add     bx, 2
-        cmp     bx, ENVPARA * 16
-        jae     .full
-        mov     si, setbuf2
+        jmp     .e2
+.a0:    mov     si, setbuf2
 .a1:    lodsb
         or      al, al
         jz      .a2
@@ -4325,6 +4349,8 @@ extp        resw 1
 extend      resw 1
 pathp       resw 1
 valp        resw 1
+env_oldp    resw 1                      ; SET: the old NAME= in the environment
+env_old     resw 1                      ;  and its length with its NUL (0: none)
 canon_root  resw 1
 is_bat      resb 1
 pipe_rest   resw 1

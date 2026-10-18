@@ -643,6 +643,13 @@ def t_saver_delay():
     ini2 = os.path.join(OUT, 'LODE2.INI'); open(ini2, 'wb').write(b'SAVER=99\r\n')
     k = ktest.KPC(image('svd4.img', 'LODE.INI=' + ini2)); k.start()
     check('SAVER=99: 30 minutes at most', k.rd('saver_min', 1) == b'\x1e' and k.u16('saver_t') == 32760, k.rd('saver_min', 1))
+    # past 511 bytes of other lines (System keeps a LODE.INI up to 1 KB and
+    # puts its own lines last): font_boot read only the first 511
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'X1=1\r\n' * 160 + b'saver=2\r\nFONT=TERMINUS.FNT\r\nTIDY=0\r\n')
+    k = ktest.KPC(image('svd5.img', SYSTEM, TERMFNT, ini)); k.start()
+    check('SAVER=, FONT= and TIDY=0 after 960 bytes of other lines: all three taken at start-up (%d bytes)' % os.path.getsize(ini),
+          k.rd('saver_min', 1) == b'\x02' and core_font(k) == open(TERMFNT, 'rb').read() and k.rd('sv_notidy', 1) == b'\x01',
+          (k.rd('saver_min', 1), k.rd('sv_notidy', 1)))
 
 
 def t_saver_tidy():
