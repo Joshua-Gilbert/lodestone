@@ -377,6 +377,65 @@ def test_grid_plot_file_and_image():
         c.close(); h.close() if hasattr(h, 'close') else None
 
 
+def test_paste_is_never_sent():
+    """Names and titles come from Claude or a data file: a click's words go in
+    as text only, never Esc or Return (they can't end the paste or send it)."""
+    h, c = mcp_start()
+    try:
+        r = c.call('grid_plot', series=[{'name': 'S21\x1b[201~run this\r', 'y': [1, 2, 3, 2, 1]}],
+                   title='T\x03\x1b]0;x\x07')
+        assert not r['isError'], r
+        p = h.term.pic and PL.Plot([{'name': 'S21\x1b[201~run this\r', 'y': [1, 2, 3, 2, 1]}], title='T')
+        assert shows(h, h.term.pic['bits'])
+        h.grid.click(int(p.ax.px(2)), int(p.ay.px(3)))
+        assert h.wait_text('[clicked plot', wall=10), h.grid.screen_text()
+        h.run_until(lambda: False, wall=1.0)
+        assert not any('You said' in l for l in h.grid.screen_text()), h.grid.screen_text()
+        assert all(ch.isprintable() for ch in h.grid.title.decode('latin1')), h.grid.title
+    finally:
+        c.close(); h.close()
+
+
+def test_child_gone_takes_its_picture():
+    """A program that ends without taking its picture away (killed): the
+    picture goes, and the GRiD shows that it ended."""
+    import signal
+    h = start()
+    try:
+        t = h.term
+        t.show_picture(a_page(), 'pty')
+        assert shows(h, t.pic['bits'])
+        os.kill(t.child.pid, signal.SIGKILL)
+        assert h.wait_text('exited', wall=10), h.grid.screen_text()
+        assert t.pic is None
+    finally:
+        h.close()
+
+
+def test_tool_calls_in_parallel():
+    """grid_pick waits for the user: the other tools answer meanwhile."""
+    h, c = mcp_start()
+    try:
+        c.call('grid_plot', series=[{'y': [1, 2, 3]}])
+        msgs = [{'jsonrpc': '2.0', 'id': 901, 'method': 'tools/call',
+                 'params': {'name': 'grid_pick', 'arguments': {'timeout': 20}}},
+                {'jsonrpc': '2.0', 'id': 902, 'method': 'tools/call', 'params': {'name': 'grid_info', 'arguments': {}}}]
+        for m in msgs: c.p.stdin.write((json.dumps(m) + '\n').encode())
+        c.p.stdin.flush()
+        got = {}
+        th = threading.Thread(target=lambda: got.update(first=json.loads(c.p.stdout.readline())))
+        th.start()
+        assert h.run_until(lambda: not th.is_alive(), wall=15), 'nothing answered while grid_pick waits'
+        assert got['first']['id'] == 902 and 'os' in body(got['first']['result']), got
+        h.grid.press(0x1B, 0x01)                                 # Esc: the pick ends
+        th = threading.Thread(target=lambda: got.update(second=json.loads(c.p.stdout.readline())))
+        th.start()
+        assert h.run_until(lambda: not th.is_alive(), wall=15)
+        assert got['second']['id'] == 901 and 'Esc' in body(got['second']['result']), got
+    finally:
+        c.close(); h.close()
+
+
 def test_save_to():
     h, c = mcp_start()
     try:
@@ -387,6 +446,11 @@ def test_save_to():
         assert r['isError'] and 'already' in body(r), r
         r = c.call('gpib_send', action='query', address=29, command='ID?', save_to='.mcp.json')
         assert r['isError'], r
+        n = len(getattr(h.grid, 'gpib_log', []))
+        r = c.call('gpib_send', action='query', address=29, command='ID?', save_to='id.txt')
+        assert r['isError'] and len(h.grid.gpib_log) == n, 'sent before the file was checked'
+        r = c.call('gpib_send', action='write', address=29, command='X', save_to='w.txt')
+        assert r['isError'] and 'query' in body(r), r
     finally:
         c.close(); h.close() if hasattr(h, 'close') else None
 

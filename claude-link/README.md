@@ -41,8 +41,8 @@ the GRiD. The emulator measures 48 ms of GRiD time from a key to its echo on
 the screen, plus the Pi's own (about 20-25 ms on the simulated link, and
 Claude Code's rendering).
 
-The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`). Seven only look,
-and you can allow them for good ("Yes, and don't ask again"). Three change
+The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`). Eight only look,
+and you can allow them for good ("Yes, and don't ask again"). Four change
 something, and Claude Code asks before every call: they carry
 `anthropic/requiresUserInteraction`, so it offers no "don't ask again" for
 them, no allow rule skips the question, and not even bypassPermissions does.
@@ -52,7 +52,7 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_info` | until allowed | DOS version, drives, memory, EMS, GPIB driver, clock |
 | `grid_files` | until allowed | list, info, read (up to 48 KB), free |
 | `grid_screen` | until allowed | the last screenshot (text, or an image of a graphics screen) |
-| `gpib_read` | until allowed | scan, serial poll, read (sends nothing; a poll clears the instrument's service request); `save_to` puts a reply in a new Pi file instead |
+| `gpib_read` | until allowed | scan, serial poll, read (sends nothing; a poll clears the instrument's service request) |
 | `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
 | `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
 | `gpib_send` | every time | query, write, clear, trigger, local/remote; a query's reply can go to a new Pi file (`save_to`) |

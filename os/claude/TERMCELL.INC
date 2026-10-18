@@ -150,6 +150,7 @@ term_cells:
         mov     cx, ax
         jcxz    .pb0
         add     bp, cx
+        jc      .pb0                    ; (y near FFFFh: not a wrap to the top)
         cmp     bp, TROWS * 16
         ja      .pb0
 .pline: push    cx                      ; (CH stays 0: h, w < 256)

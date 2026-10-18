@@ -48,10 +48,12 @@ class Viewer:
             why = s.term.why_not('grid_pick')
             if why or time.monotonic() >= end:
                 with s.lock:
-                    if s.picking is pk:
+                    mine = s.picking is pk            # (not ended or replaced meanwhile)
+                    if mine:
                         s.picking = None
                         pk['why'] = why or 'the time limit (%d s) passed' % timeout
-                s.hide(); break
+                if mine: s.hide()
+                break
         return pk['got'], pk['why']
 
     def hide(s):

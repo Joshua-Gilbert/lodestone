@@ -122,7 +122,7 @@ the kernel's own INT 33h (`src/MOUSE33.INC`, the serial mouse) as it stands.
     presses since it was last asked, so a quick click between two polls
     isn't missed.
   - Each press goes to the Pi as EVENT 05h with its cell, 8 x 16 pixels to
-    a cell; since the pictures, with its pixel. It shares the one-EVENT-at-a-time flag with CODE-R's repaint.
+    a cell; since the pictures, as EVENT 06h with its pixel. It shares the one-EVENT-at-a-time flag with CODE-R's repaint.
   - After each CELLS frame the pointer is hidden and shown again. Hiding
     puts back only bytes not drawn over since, so the pointer comes back on
     top of the new screen instead of vanishing until the mouse moves.
@@ -176,7 +176,7 @@ view stays the default: it is the fast one.
   | Up / Down | scroll 3 rows (48 pixels) |
   | PgUp / PgDn | scroll 22 rows |
   | Home / End | top, bottom |
-  | F6 or Ctrl-L | an address (the text view's Go line, over the picture) |
+  | F6 or Ctrl-L | an address: the text view comes back with its Go line, then the picture of the new page |
   | Ctrl-B / Ctrl-F | back / forward |
   | Ctrl-R | reload |
   | Ctrl-I | light or dark the other way |
@@ -187,6 +187,9 @@ view stays the default: it is the fast one.
 - **Refresh:** a screenshot at once after each action, then at 0.5, 1.5 and
   4 s; while idle, one every 2 s. Only a changed one goes to the GRiD (a
   hash of the PNG), and the encoder sends only the lines that changed.
+- **Only with a GRiD that can:** gridlink tells gridfox (`GRIDLINK_PICTURES`)
+  when the GRiD's HELLO says it takes pictures; otherwise V says CLAUDE.COM
+  1.2 is needed.
 - **Not yet:** a `<select>`'s choices open in a window of Firefox's own,
   which a viewport screenshot doesn't show: use the text view for lists.
 
@@ -232,16 +235,17 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
   - It can keep the old page up while a slow one loads.
   - It wants scripts in gridfox's sandbox, kept between calls.
   - It follows a `#fragment` link in the same document, as a browser does.
-- `os/tests/test_claude_mouse.py` (19 checks): the real CLAUDE.COM `/W` on
+- `os/tests/test_claude_mouse.py` (22 checks): the real CLAUDE.COM `/W` on
   the Lodestone kernel in pcemu, with its serial mouse and the kernel's
   INT 33h, the real gridlink, and gridfox on the stand-in Firefox.
   - A click on a link follows it, and a click on the address opens Go.
   - With no mouse, `/W` works from the keys.
   - Under plain Term, a click on a plot types its point into Claude Code's
     prompt (`docs/lodestone-pictures.md`).
+  - In chat, CLAUDE leaves the mouse alone (no pointer).
 - `test_gridfox.py` `test_picture_view` and `test_picture_view_end_to_end`:
   V, the viewport, a pixel click on a link, scrolling, typing into a
-  field, the Go line over the picture, Ctrl-I, Esc back; and through
+  field, the Go line from the picture view, Ctrl-I, Esc back; V refused when gridlink doesn't say the GRiD can show pictures; and through
   gridlink and GridSim, the GRiD's pixels equal to gridlink's picture, with
   the byte counts. The stand-in's screenshot is its page's text drawn with
   Pillow (jsdom lays nothing out), one line of 16 pixels a block or link.

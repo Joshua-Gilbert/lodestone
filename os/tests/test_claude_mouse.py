@@ -141,11 +141,24 @@ def t_plot_click_types_into_the_prompt():
         h.close()
 
 
+def t_chat_leaves_the_mouse():
+    """Chat (no Term): no pointer (chat draws without hiding it), no INT 33h polls."""
+    h = CK.KernelHarness()
+    h.m.mouse = True
+    try:
+        h.boot()
+        check('chat: connected', h.run_until(lambda: h.var('connected'), 15), h.log)
+        check('chat: not Term', h.var('term') == 0, h.var('term'))
+        check('chat: tmouse 0', h.var('tmouse') == 0, h.var('tmouse'))
+    finally:
+        h.close()
+
+
 if __name__ == '__main__':
     why = missing()
     if why:
         print('skip: the stand-in Firefox needs Node and jsdom (%s)' % why); sys.exit(0)
-    for t in (t_click_follows_a_link, t_no_mouse, t_plot_click_types_into_the_prompt):
+    for t in (t_click_follows_a_link, t_no_mouse, t_plot_click_types_into_the_prompt, t_chat_leaves_the_mouse):
         t0 = time.time()
         try:
             t()

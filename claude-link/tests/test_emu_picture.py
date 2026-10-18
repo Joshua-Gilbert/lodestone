@@ -22,6 +22,13 @@ def vram_bits(h):
                     for y in range(PIC.H))
 
 
+def outside(h):
+    """All of B800:0000-FFFF but rows 0-23's 384 lines (96 in each bank):
+    the band, the gaps after the banks, and on past the 32 KB of video memory."""
+    v = h.m.rd(0xB800, 0, 0x10000)
+    return b''.join(bytes(v[b * 0x2000 + 96 * 80:(b + 1) * 0x2000]) for b in range(4)) + bytes(v[0x8000:])
+
+
 def band(h):
     v = h.m.rd(0xB800, 0, 0x8000)
     return b''.join(bytes(v[(y & 3) * 0x2000 + (y >> 2) * 80:(y & 3) * 0x2000 + (y >> 2) * 80 + 80])
@@ -87,7 +94,7 @@ def test_malformed_rectangles():
         page = TP.a_page()
         t.show_picture(page, 'test')
         assert shows(h, page)
-        b0 = band(h)
+        b0 = outside(h)
         bad = [
             bytes([0x02, 0, 0, PIC.OP_PIX, 380 & 255, 380 >> 8, 0, 80, 8]) + bytes([0xB1, 0xFF]) * 8,   # y + h > 384
             bytes([0x02, 0, 0, PIC.OP_PIX, 0, 0, 70, 20, 1, 0xED, 0xFF]),                               # x + w > 80
@@ -98,6 +105,7 @@ def test_malformed_rectangles():
             bytes([0x02, 0, 0, PIC.OP_PIX, 0, 0, 0, 40, 2, 0xD9]),                                      # cut short
             bytes([0x02, 0, 0, PIC.OP_PIX, 0x7F, 0x01]),                                                # the head cut
             bytes([0x02, 0, 0, PIC.OP_PIX, 0xFF, 0xFF, 0, 1, 1, 0, 0xFF]),                              # y FFFFh
+            bytes([0x02, 0, 0, PIC.OP_PIX, 0xF0, 0xFF, 0, 80, 32]) + bytes([0xB1, 0xFF]) * 32,         # y FFF0h: wraps
         ]
         real_take, real_ready = t.take, t.ready
         q = list(bad)
@@ -112,7 +120,7 @@ def test_malformed_rectangles():
             h.run_until(lambda: False, 1.0)
         finally:
             t.take, t.ready = real_take, real_ready
-        assert band(h) == b0, 'drawn over the band'
+        assert outside(h) == b0, 'drawn outside rows 0-23'
         assert not h.m.crash and h.var('n_fail', 2) == 0, (h.m.crash, h.var('n_fail', 2))
         # the screen got what came before the bad parts; the Pi sends the rest again
         t.picture_lost()

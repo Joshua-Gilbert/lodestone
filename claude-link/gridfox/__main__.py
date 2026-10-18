@@ -41,7 +41,8 @@ def main(argv=None):
         sys.stdout.flush()
         return 1
     app = App(Browser(m, log=log), start=a.url, search=a.search, log=log,
-              quit_keys=('ctrl-c',) if a.console or not os.environ.get('GRIDLINK') else ())
+              quit_keys=('ctrl-c',) if a.console or not os.environ.get('GRIDLINK') else (),
+              pictures=os.environ.get('GRIDLINK_PICTURES') == '1')
     try:
         run_tty(app)
     finally:
