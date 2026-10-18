@@ -15,6 +15,8 @@ from .grid import Grid
 from .keys import term_keys
 from .termscreen import TermScreen, PreFilter, Encoder, fold_title
 from . import mcp
+from . import picture as PIC
+from . import plotview
 
 SETTLE = 0.012       # no pty output for this long: the screen is drawn
 MAX_WAIT = 0.08      # but never hold changes back longer than this
@@ -64,17 +66,23 @@ class TermSession:
         s.away = False                  # resident Claude: the user went back to the program
         s.stats = dict(keys=0, pty_in=0, pty_out=0)
         s.tools = None; s.sock = mcp.socket_path(cfg)
+        # A picture over the text (picture.py): while one is up it is the
+        # link's frame source, and pyte goes on keeping the text underneath.
+        s.pic = None                    # {'bits', 'owner', 'on_click', 'on_key', 'title'}
+        s.penc = PIC.Encoder(); s.from_pic = False
+        s.gflags = 0                    # the GRiD's HELLO flags (bit 1: it takes pictures)
 
     # ---- the link ------------------------------------------------------
     def attach(s, link):
         if s.link is not link:
             s.link = link; s.grid = Grid(link)
+            s.grid.after_run = s.picture_lost         # (the program drew over a picture)
         link.source = s; link.hold = TERM_HOLD
         if s.tools is None and not s.web:
             # the GRiD's abilities for Claude Code (mcp.py), one request at a time
             try:
                 s.tools = mcp.ToolServer(s.sock, mcp.GridTools(s.grid, s.cfg, getattr(s.cfg, 'address', 7), root=s.cwd,
-                                                               hello=lambda: s.hello),
+                                                               hello=lambda: s.hello, viewer=plotview.Viewer(s)),
                                          available=s.why_not, log=s.log).start()
             except OSError as e:
                 s.log('term: no MCP socket at %s: %s' % (s.sock, e))
@@ -115,10 +123,13 @@ class TermSession:
             info = {}
             if len(body) >= 6: info.update(glp.kv_lines(body[6:]))
             s.hello = info; s.away = False
+            s.gflags = body[1] if len(body) >= 2 else 0
             s.grid.on_restart()
             with s.lock:
                 # CLAUDE /R's console kept its screen: go on from it if we sent it
                 if not s.enc.resume(info.get('screen')): s.enc.reset()
+                s.penc.reset()                    # (a picture: the GRiD's screen is unknown)
+                if s.pic is not None and not s.can_picture(): s._drop_picture()
                 s._mark()
             s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, glp.HF_TERM]) + s.name.encode())
             s.title_sent = None
@@ -129,11 +140,13 @@ class TermSession:
         elif t == glp.G_KEYS:
             s.keys(body)
         elif t == glp.G_EVENT and body:
-            if body[0] == glp.EV_REPAINT:
+            if body[0] == glp.EV_REPAINT:         # (the GRiD redrew the text: a picture is gone too)
                 with s.lock:
-                    s.enc.reset(); s._mark()
-            elif body[0] == glp.EV_CLICK and len(body) >= 3:
-                s.click(body[1], body[2])
+                    s.enc.reset(); s.penc.reset(); s._mark()
+            elif body[0] == glp.EV_PIXCLICK and len(body) >= 5:    # x, y in pixels (CLAUDE 1.2)
+                s.click_at(body[1] | body[2] << 8, body[3] | body[4] << 8)
+            elif body[0] == glp.EV_CLICK and len(body) >= 3:       # a cell (#32's CLAUDE)
+                s.click_at(body[1] * 8 + 4, body[2] * 16 + 8)
             elif body[0] == glp.EV_AWAY:        # (resident Claude's console, going: never for TYPE's keys)
                 s.away = True
                 s.grid.end_calls(s.AWAY_CALL)
@@ -143,6 +156,7 @@ class TermSession:
     # Link source: called with the link's lock held
     def ready(s):
         with s.lock:
+            if s.pic is not None: return s.penc.dirty(s.pic['bits'])
             if not s.dirty: return False
             now = time.time()
             if s.screen.sync and now - s.screen.sync_t < SYNC_MAX: return False
@@ -150,6 +164,11 @@ class TermSession:
 
     def take(s, maxpay):
         with s.lock:
+            if s.pic is not None:
+                p, more = s.penc.make(s.pic['bits'], maxpay)
+                s.from_pic = p is not None
+                return p
+            s.from_pic = False
             tc, ta = s.screen.cells()
             c = s.screen.cursor
             cur = (min(c.y, 23), min(c.x, 79), bool(c.hidden))
@@ -159,7 +178,100 @@ class TermSession:
             return p
 
     def delivered(s):
-        with s.lock: s.enc.delivered()
+        with s.lock:
+            if s.from_pic: s.penc.delivered()
+            else: s.enc.delivered()
+
+    # ---- pictures (picture.py) -------------------------------------------
+    def can_picture(s):
+        """The GRiD takes pictures: a CLAUDE.COM that says so, not resident
+        Claude's console (its CELLS have no pixels)."""
+        return bool(s.gflags & glp.GF_PIX) and not s.resident()
+
+    def show_picture(s, bits, owner, on_click=None, on_key=None, title=None):
+        """bits (picture.SIZE bytes) over the text, until hide_picture.
+        on_click(x, y) for a click on it; on_key(body) -> the keys left for
+        the program (b'' when it took them all)."""
+        if len(bits) != PIC.SIZE: raise ValueError('a picture is %d bytes' % PIC.SIZE)
+        if not s.can_picture():
+            raise RuntimeError('The GRiD can\'t show pictures here (it needs CLAUDE.COM 1.2 under CLAUDE /T or /W, '
+                               'not resident Claude\'s console).')
+        with s.lock:
+            if s.pic is None: s.penc.reset()   # (the first frame clears the text away)
+            s.pic = {'bits': bytes(bits), 'owner': owner, 'on_click': on_click, 'on_key': on_key,
+                     'title': fold_title(''.join(c for c in title if c.isprintable())) if title else None}
+        s.title_sent = None; s._send_title(force=True)
+        if s.link is not None: s.link.wake()
+
+    def hide_picture(s, owner=None):
+        """Back to the text (only owner's picture, if given).  -> whether one went."""
+        with s.lock:
+            if s.pic is None or (owner is not None and s.pic['owner'] != owner): return False
+            s._drop_picture()
+        s.title_sent = None; s._send_title(force=True)
+        if s.link is not None: s.link.wake()
+        return True
+
+    def _drop_picture(s):
+        s.pic = None
+        s.enc.reset(); s._mark()                # a clear and the whole text again
+        s.dirty = True; s.first_dirty = 0.0
+
+    def paste(s, text):
+        """Words into the program's input as a paste (bracketed if it asked,
+        ?2004), not sent: the user goes on typing."""
+        text = ''.join(ch for ch in text if ch.isprintable())   # (no Esc, no Return: never sent, never a key)
+        data = text.encode('utf-8')
+        if (2004 << 5) in s.screen.mode: data = b'\x1b[200~' + data + b'\x1b[201~'
+        s._write(data)
+
+    def picture_lost(s):
+        """The GRiD drew its text again (after a DOS program): send the picture again."""
+        with s.lock: s.penc.reset()
+        if s.link is not None: s.link.wake()
+
+    def click_at(s, x, y):
+        """A left click at pixel (x, y) of the GRiD's screen."""
+        pic = s.pic
+        if pic is not None:
+            if y >= PIC.H: return                 # (CLAUDE's band)
+            if pic['on_click'] is not None:
+                try: pic['on_click'](x, y)
+                except Exception as e: s.log('term: picture click: %r' % e)
+                return
+        s.click(x // 8, y // 16, x, y)
+
+    PTY_PICTURE = 16 * 1024 * 1024              # bytes in a picture file from the pty
+
+    def _osc_picture(s, arg):
+        """OSC 5150 from the program in the pty (gridfox only): `show;FLAGS;PATH`
+        (an image file in its own folder; FLAGS `invert`, `plain` or empty:
+        a light picture is shown dark, as the GRiD draws) or `hide`."""
+        if not s.web: return
+        try:
+            cmd, _, rest = arg.decode('utf-8', 'replace').partition(';')
+            if cmd == 'hide':
+                s.pty_inv = None; s.hide_picture('pty'); return
+            if cmd != 'show': return
+            flags, _, path = rest.partition(';')
+            path = os.path.realpath(path)
+            root = os.path.realpath(s.cwd)
+            if os.path.commonpath([path, root]) != root: raise ValueError('not in %s' % root)
+            if os.path.getsize(path) > s.PTY_PICTURE: raise ValueError('too big')
+            from PIL import Image, ImageStat
+            with Image.open(path) as im:
+                if im.size[0] * im.size[1] > 16_000_000: raise ValueError('%dx%d is too big' % im.size)
+                g = im.convert('L')
+            if 'invert' in flags: inv = True
+            elif 'plain' in flags: inv = False
+            else:                               # (kept while the page's look stays near it: no flicker)
+                m = ImageStat.Stat(g).mean[0]
+                prev = getattr(s, 'pty_inv', None)
+                inv = prev if prev is not None and 90 <= m <= 166 else m > 128
+            s.pty_inv = inv
+            s.show_picture(PIC.dither(g, invert=inv), 'pty')
+        except Exception as e:
+            s.log('term: picture from %s: %s' % (s.name, e))
 
     def _mark(s):
         if not s.dirty: s.first_dirty = time.time()
@@ -201,6 +313,7 @@ class TermSession:
             here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             env['PYTHONPATH'] = os.pathsep.join([here] + [p for p in [env.get('PYTHONPATH')] if p])
             env['GRIDLINK'] = 'web'
+            if s.can_picture(): env['GRIDLINK_PICTURES'] = '1'   # (gridfox's picture view: this GRiD can)
             env['PYTHONSAFEPATH'] = '1'       # (3.11+) its folder is not on sys.path at all
         try:
             s.child = subprocess.Popen(resolve(s.command), stdin=sl, stdout=sl, stderr=sl, cwd=s.cwd, env=env,
@@ -249,6 +362,7 @@ class TermSession:
         mine = s.child is child                   # (not one started again since)
         if mine:
             s.child = None; s.fd = None; s.exited = code
+            s.hide_picture('pty')                # (gridfox's picture: it can't take it away now)
         try: os.close(fd)
         except OSError: pass
         if mine:
@@ -260,11 +374,14 @@ class TermSession:
     def feed(s, data):
         s.stats['pty_in'] += len(data)
         with s.lock:
+            pics = []
             for kind, b in s.pre.parts(data):     # pyte answers DA as it goes: keep the order
                 if kind == 'data': s.stream.feed(b)
+                elif kind == 'pic': pics.append(b)
                 else: s._write(b)
             s.last_byte = time.time(); s._mark()
             s.title = s.screen.title
+        for b in pics: s._osc_picture(b)
         if s.link is not None: s.link.wake()
 
     def _answer_query(s, text):
@@ -285,6 +402,13 @@ class TermSession:
 
     def keys(s, body):
         s.stats['keys'] += len(body) // 2
+        pic = s.pic
+        if pic is not None and any(body[i:i + 2] == b'\x0c\x26' for i in range(0, len(body) - 1, 2)):
+            s.picture_lost()                    # (Ctrl-L: the GRiD drew its text again)
+        if pic is not None and pic['on_key'] is not None:
+            try: body = pic['on_key'](bytes(body))
+            except Exception as e: s.log('term: picture key: %r' % e)
+            if not body: return
         if s.child is None:
             if any(body[i] == 0x0D for i in range(0, len(body) - 1, 2)): s.start()
             return
@@ -299,22 +423,26 @@ class TermSession:
 
     MOUSE_ON = tuple(m << 5 for m in (1000, 1002, 1003))      # (pyte keeps private modes << 5)
     SGR = 1006 << 5
+    SGR_PIXELS = 1016 << 5                                     # (xterm: the same reports, in pixels)
 
-    def click(s, col, row):
-        """A left click on the GRiD's cell (col, row): to the program as an
-        xterm's press and release, only if it asked for mouse reports."""
+    def click(s, col, row, px=None, py=None):
+        """A left click on the GRiD's cell (col, row), or pixel (px, py): to
+        the program as an xterm's press and release, only if it asked for
+        mouse reports (in pixels if it asked for those, ?1016)."""
         if s.fd is None or not (0 <= row < 24 and 0 <= col < 80): return
         mode = s.screen.mode
         if not any(m in mode for m in s.MOUSE_ON): return
         x, y = col + 1, row + 1
-        if s.SGR in mode:
+        if s.SGR_PIXELS in mode and px is not None:
+            s._write(b'\x1b[<0;%d;%dM\x1b[<0;%d;%dm' % (px + 1, py + 1, px + 1, py + 1))
+        elif s.SGR in mode:
             s._write(b'\x1b[<0;%d;%dM\x1b[<0;%d;%dm' % (x, y, x, y))
         else:                                   # (the old X10 form: 32 + button, 32 + column, 32 + row)
             s._write(b'\x1b[M' + bytes([32, 32 + x, 32 + y]) + b'\x1b[M' + bytes([35, 32 + x, 32 + y]))
 
     def _send_title(s, force=False):
         if s.link is None or s.link.source is not s: return
-        t = fold_title(s.title) or s.name
+        t = (s.pic or {}).get('title') or fold_title(s.title) or s.name
         now = time.time()
         if t != s.title_sent and (force or now - s.title_t >= TITLE_EVERY):
             s.title_sent = t; s.title_t = now

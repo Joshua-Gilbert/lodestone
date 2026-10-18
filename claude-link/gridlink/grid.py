@@ -40,6 +40,7 @@ class Grid:
         s.generation = 0                       # bumps when the GRiD restarts
         s.ended = 0; s.why = ''                # bumps when the calls waiting end, and why
         s.info = {}
+        s.after_run = None                     # called when a RUN ends (Term: a picture is gone)
 
     # ---- plumbing ------------------------------------------------------
     def on_reply(s, body):
@@ -162,7 +163,10 @@ class Grid:
     def run(s, command, capture=True, snapshot=False, keys=b'', timeout=3600):
         flags = (1 if capture else 0) | (2 if snapshot else 0)
         args = struct.pack('<BHH', flags, min(timeout, 65535), len(keys)) + bytes(keys) + glp.asciiz(command)
-        st, r = s.call(glp.OP_RUN, args, timeout=timeout + 30)
+        try:
+            st, r = s.call(glp.OP_RUN, args, timeout=timeout + 30)
+        finally:
+            if s.after_run is not None: s.after_run()      # (the program drew over the screen)
         if st: raise GridError(errtext(st), st)
         code, rflags = struct.unpack_from('<HB', r)
         outname = r[3:].split(b'\0')[0].decode('cp437', 'replace')

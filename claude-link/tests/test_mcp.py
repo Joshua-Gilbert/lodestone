@@ -60,7 +60,8 @@ def test_protocol():
     assert mcp.handle({'jsonrpc': '2.0', 'method': 'notifications/initialized'}, '') is None
     r = mcp.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'}, '')
     tools = {t['name']: t for t in r['result']['tools']}
-    look = ['grid_info', 'grid_files', 'grid_screen', 'gpib_read', 'grid_program']
+    look = ['grid_info', 'grid_files', 'grid_screen', 'gpib_read', 'grid_program', 'grid_plot', 'grid_image',
+            'grid_pick']
     ask = ['grid_command', 'grid_change_files', 'gpib_send', 'grid_type']
     assert sorted(tools) == sorted(look + ask), list(tools)
     for n in look:                       # can be allowed for good: they only look
@@ -112,7 +113,7 @@ def test_files():
         r = c.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 't'}})
         assert r['result']['serverInfo']['name'] == 'gridlink'
         c.rpc('notifications/initialized', notify=True)
-        assert len(c.rpc('tools/list')['result']['tools']) == 9
+        assert len(c.rpc('tools/list')['result']['tools']) == 12
         r = c.call('grid_files', action='list', path='A:\\')
         assert 'CFG.C' in body(r) and not r['isError'], r
         r = c.call('grid_files', action='read', path='a:\\cfg.c')
@@ -384,8 +385,8 @@ def test_stdio_server_survives_anything():
              b'{"jsonrpc":"2.0","id":6,"method":"ping"}\n']
     out, _ = p.communicate(b''.join(lines), timeout=30)
     rs = [json.loads(l) for l in out.splitlines()]
-    assert p.returncode == 0 and rs[-1] == {'jsonrpc': '2.0', 'id': 6, 'result': {}}, rs
-    by = {r.get('id'): r for r in rs}
+    by = {r.get('id'): r for r in rs}               # (tool calls answer on their own threads: in any order)
+    assert p.returncode == 0 and by[6] == {'jsonrpc': '2.0', 'id': 6, 'result': {}}, rs
     assert by[1]['error']['code'] == -32602 and by[2]['error']['code'] == -32602 and by[3]['error']['code'] == -32602
     assert by[4]['result']['isError'] and by[5]['result']['protocolVersion'] == mcp.PROTOCOL
     # a version it doesn't know: it answers with its own; one it knows: that one

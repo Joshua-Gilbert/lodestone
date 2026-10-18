@@ -42,6 +42,10 @@ MAX_RUN = 3600                  # seconds the Pi waits for a program (the GRiD i
 MAX_GPIB = 4000                 # bytes sent to an instrument (CLAUDE.COM takes 4,700 per request)
 MAX_TYPE = 2048                 # a key script for the paused program (resident Claude's console takes 2 KB)
 MAX_TYPE_WAIT = 600             # seconds the Pi waits for those keys to play
+MAX_PLOT_FILE = 8 * 1024 * 1024 # a data file for grid_plot
+MAX_IMAGE_FILE = 20 * 1024 * 1024
+MAX_PICK_WAIT = 600             # seconds grid_pick waits for clicks
+PICTURE_TOOLS = ('grid_plot', 'grid_image', 'grid_pick')     # no GRiD request: not one at a time
 
 GPIB_PROPS = {
     'address': {'type': 'integer', 'minimum': 0, 'maximum': 30},
@@ -49,6 +53,16 @@ GPIB_PROPS = {
                    'description': 'Per-byte read timeout (default 2000).'},
     'max_bytes': {'type': 'integer', 'minimum': 1, 'maximum': 15000,
                   'description': 'Largest reply to accept (default 4096).'},
+}
+SAVE_TO = {'save_to': {'type': 'string', 'description': (
+    'A query\'s reply into a new Pi file (in this directory) instead of returned: for a trace or a long '
+    'reading to show with grid_plot. You get its size and first lines.')}}
+RANGE = {'type': 'array', 'items': {'type': 'number'}, 'minItems': 2, 'maxItems': 2}
+AXES = {
+    'title': {'type': 'string'},
+    'x_log': {'type': 'boolean'}, 'y_log': {'type': 'boolean'},
+    'x_range': dict(RANGE, description='[low, high] (default: the data\'s).'),
+    'y_range': dict(RANGE, description='[low, high] (default: the data\'s).'),
 }
 
 TOOLS = [
@@ -136,10 +150,64 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'properties': dict(
          {'action': {'type': 'string', 'enum': ['query', 'write', 'clear', 'trigger', 'local', 'remote']},
           'command': {'type': 'string', 'maxLength': MAX_GPIB},
-          'terminator': {'type': 'string', 'enum': ['crlf', 'lf', 'none']}}, **GPIB_PROPS),
+          'terminator': {'type': 'string', 'enum': ['crlf', 'lf', 'none']}}, **GPIB_PROPS, **SAVE_TO),
          'required': ['action', 'address']},
      'annotations': {'readOnlyHint': False, 'destructiveHint': True, 'title': 'GPIB: send to an instrument'},
      '_meta': ASK},
+    # pictures on the GRiD's screen (CLAUDE.COM 1.2, Term): plotview.py
+    {'name': 'grid_plot', 'title': 'GRiD: show a plot',
+     'description': (
+         "Show a line or scatter plot on the GRiD's screen (640x384, one bit, in its own font), over this "
+         "terminal until the user presses Esc; Claude Code goes on underneath. Data inline (series) or from "
+         "a Pi file in this directory: CSV or numbers separated by spaces (e.g. a trace saved with gpib_send's "
+         "save_to), or JSON (a list of series). The user can click the plot: a click types the point (data "
+         "coordinates and the nearest point) into your prompt for them to add to. To have them point at "
+         "something for you, show the plot, then call grid_pick. You get the picture the GRiD shows."),
+     'inputSchema': {'type': 'object', 'properties': dict({
+         'series': {'type': 'array', 'maxItems': 8, 'items': {'type': 'object', 'properties': {
+             'name': {'type': 'string'},
+             'x': {'type': 'array', 'items': {'type': 'number'}, 'description': 'Default: 0, 1, 2, ...'},
+             'y': {'type': 'array', 'items': {'type': 'number'}},
+             'style': {'type': 'string', 'enum': ['line', 'points', 'both']}}, 'required': ['y']}},
+         'file': {'type': 'string', 'description': 'A data file instead of series.'},
+         'x_column': {'type': 'integer', 'minimum': 0, 'description': (
+             "The file's x column (1 = the first, the default for two or more columns); 0: none, the points "
+             "are evenly spaced (over x_span).")},
+         'columns': {'type': 'array', 'items': {'type': 'integer', 'minimum': 1},
+                     'description': "The file's y columns (default: all but x)."},
+         'x_span': dict(RANGE, description=(
+             'Data without x (no x in a series, or x_column 0): the first and last points\' x, e.g. an '
+             'instrument\'s start and stop frequency.')),
+         'style': {'type': 'string', 'enum': ['line', 'points', 'both'], 'description': "The file's series."},
+         'x_label': {'type': 'string'}, 'y_label': {'type': 'string'}}, **AXES)},
+     'annotations': dict(LOOK, title='GRiD: show a plot')},
+    {'name': 'grid_image', 'title': 'GRiD: show a picture',
+     'description': (
+         "Show a picture file from this directory (PNG, JPEG, GIF, BMP: a matplotlib plot you saved, a "
+         "screenshot) on the GRiD's screen, scaled to fit 640x384 and dithered to one bit, until the user "
+         "presses Esc. A mostly white picture is inverted (lit lines on dark, as the GRiD draws) unless "
+         "invert says otherwise. With plot_area and the axis ranges, clicks map to data coordinates. Clicks "
+         "type into your prompt, or use grid_pick. You get the picture the GRiD shows."),
+     'inputSchema': {'type': 'object', 'properties': dict({
+         'path': {'type': 'string'},
+         'invert': {'type': 'boolean'},
+         'plot_area': {'type': 'array', 'items': {'type': 'number'}, 'minItems': 4, 'maxItems': 4,
+                       'description': ("The plot's axes box in the picture's own pixels: [left, top, right, "
+                                       "bottom], where x_range and y_range's ends are.")}}, **AXES),
+         'required': ['path']},
+     'annotations': dict(LOOK, title='GRiD: show a picture')},
+    {'name': 'grid_pick', 'title': 'GRiD: the user clicks points',
+     'description': (
+         "Ask the user to click points on the plot or picture you showed last (grid_plot, grid_image; it is "
+         "shown again if they went back), and wait for the clicks: their data coordinates and, on a plot, "
+         "the nearest data point. The prompt is shown in the GRiD's band (33 characters: 'click the "
+         "notch'). Esc on the GRiD cancels."),
+     'inputSchema': {'type': 'object', 'properties': {
+         'prompt': {'type': 'string', 'maxLength': 33},
+         'count': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'description': 'Clicks to wait for (default 1).'},
+         'timeout': {'type': 'integer', 'minimum': 5, 'maximum': MAX_PICK_WAIT,
+                     'description': 'Seconds to wait (default 120).'}}},
+     'annotations': dict(LOOK, idempotentHint=False, title='GRiD: the user clicks points')},
     # resident Claude (CLAUDE /R): Claude Code popped up over a DOS program
     {'name': 'grid_program', 'title': 'GRiD: the paused program',
      'description': (
@@ -304,10 +372,11 @@ def grid_path(a, k='path', wild=False):
 class GridTools:
     """The tools, on gridlink's side of the socket (a Grid to call).  Pi
     paths are kept inside root, the Term directory."""
-    def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}):
+    def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}, viewer=None):
         s.G = grid; s.cfg = cfg; s.bridge = bridge
         s.root = root or getattr(cfg, 'term_dir', None) or '~/grid'
         s.hello = hello                     # the GRiD's last HELLO (the paused program's name)
+        s.viewer = viewer                   # plotview.Viewer: pictures on the GRiD's screen
 
     def call(s, name, a):
         try:
@@ -414,6 +483,22 @@ class GridTools:
         r = G.gpib(glp.GP_READ, addr, timeout_ms=tmo, maxlen=maxb)
         return [text(r.decode('latin1').rstrip('\r\n') or '(empty reply)')], False
 
+    def save_path(s, a):
+        """save_to, checked before anything is sent (a new Pi file in ~/grid), or None."""
+        to = arg_str(a, 'save_to')
+        if not to: return None
+        path = pi_path(s.root, to)
+        if os.path.lexists(path): raise ValueError('%s is there already: save_to makes a new file' % path)
+        return path
+
+    def reply(s, path, r):
+        """An instrument's reply: returned, or into the Pi file save_path() checked."""
+        if path is None: return [text(r.decode('latin1').rstrip('\r\n') or '(empty reply)')], False
+        write_pi(path, bytes(r))
+        lines = r.decode('latin1').splitlines()
+        head = '\n'.join(l[:200] for l in lines[:3])
+        return [text('%d bytes (%d lines) saved to %s. It begins:\n%s' % (len(r), len(lines), path, head))], False
+
     def gpib_args(s, a, need_addr=True):
         addr = arg_int(a, 'address', None, 0, 30)
         if addr is None and need_addr: raise ValueError('address is required')
@@ -499,6 +584,8 @@ class GridTools:
             return [text('Error: unknown action %s' % act)], True
         addr, tmo, maxb = s.gpib_args(a)
         G = s.G
+        if act != 'query' and a.get('save_to'): raise ValueError("save_to is for a query's reply")
+        dest = s.save_path(a)
         if act in ops:
             G.gpib(ops[act], addr, timeout_ms=tmo)
             return [text('%s sent to %d' % (act, addr))], False
@@ -511,9 +598,89 @@ class GridTools:
         except UnicodeEncodeError: raise ValueError('command must be Latin-1 text')
         if act == 'query':
             r = G.gpib(glp.GP_QUERY, addr, data, timeout_ms=tmo, maxlen=maxb)
-            return [text(r.decode('latin1').rstrip('\r\n') or '(empty reply)')], False
+            return s.reply(dest, r)
         G.gpib(glp.GP_WRITE, addr, data, flags=1, timeout_ms=tmo)
         return [text('Sent to %d' % addr)], False
+
+
+    # ---- pictures on the GRiD's screen: no GRiD request, not one at a time --
+    def picture_args(s, a):
+        return dict(title=arg_str(a, 'title', most=200), x_log=arg_bool(a, 'x_log', False),
+                    y_log=arg_bool(a, 'y_log', False), x_range=a.get('x_range'), y_range=a.get('y_range'))
+
+    def shown(s, view, what):
+        """view up on the GRiD -> the tool's answer, with the picture as the GRiD shows it."""
+        if s.viewer is None: return [text('Pictures need Term (CLAUDE /T) with CLAUDE.COM 1.2 or later.')], True
+        try: s.viewer.show(view)
+        except RuntimeError as e: return [text(str(e))], True
+        return [text(what + ' Clicks on it go into your prompt; Esc on the GRiD goes back to this terminal.'),
+                picture_block(view.bits)], False
+
+    def t_grid_plot(s, a):
+        from . import plot as PL
+        kw = s.picture_args(a)
+        series = a.get('series'); f = arg_str(a, 'file')
+        if (series is None) == (not f): raise ValueError('give series or file (one of them)')
+        span = PL._range(a.get('x_span'), 'x_span', False) if a.get('x_span') is not None else None
+        if f:
+            data = read_pi(pi_path(s.root, f), MAX_PLOT_FILE).decode('utf-8', 'replace')
+            series = PL.series_from_file(data, arg_int(a, 'x_column', None, 0, 999), a.get('columns'),
+                                         a.get('style'))
+        if span is not None:
+            for sr in series if isinstance(series, list) else []:
+                if isinstance(sr, dict) and sr.get('x') is None and isinstance(sr.get('y'), list):
+                    n = len(sr['y'])
+                    sr['x'] = [span[0] + (span[1] - span[0]) * k / max(1, n - 1) for k in range(n)]
+        p = PL.Plot(series, x_label=arg_str(a, 'x_label', most=200), y_label=arg_str(a, 'y_label', most=200), **kw)
+        n = sum(len(sr['y']) for sr in p.series)
+        return s.shown(p, 'Shown on the GRiD: %d series, %d points; x %s to %s, y %s to %s.' % (
+            len(p.series), n, PL.num(p.xr[0]), PL.num(p.xr[1]), PL.num(p.yr[0]), PL.num(p.yr[1])))
+
+    def t_grid_image(s, a):
+        from PIL import Image
+        import io
+        from . import plot as PL
+        path = pi_path(s.root, arg_str(a, 'path', need=True))
+        im = Image.open(io.BytesIO(read_pi(path, MAX_IMAGE_FILE)))
+        if im.size[0] * im.size[1] > 40_000_000: raise ValueError('%s is too big (%dx%d)' % ((path,) + im.size))
+        inv = a.get('invert')
+        if inv is not None and not isinstance(inv, bool): raise ValueError('invert must be true or false')
+        kw = s.picture_args(a)
+        v = PL.ImageView(im, invert=inv, plot_area=a.get('plot_area'), **kw)
+        return s.shown(v, 'Shown on the GRiD: %s (%dx%d%s%s).' % (
+            os.path.basename(path), im.size[0], im.size[1], ', inverted' if v.inverted else '',
+            ', clicks map to data' if v.ax is not None else ''))
+
+    def t_grid_pick(s, a):
+        from . import plot as PL
+        if s.viewer is None: return [text('Pictures need Term (CLAUDE /T) with CLAUDE.COM 1.2 or later.')], True
+        prompt = arg_str(a, 'prompt', most=33)
+        count = arg_int(a, 'count', 1, 1, 10)
+        tmo = arg_int(a, 'timeout', 120, 5, MAX_PICK_WAIT)
+        try: got, why = s.viewer.pick(prompt, count, tmo)
+        except RuntimeError as e: return [text(str(e))], True
+        lines = []
+        for i, c in enumerate(got):
+            l = '%d: ' % (i + 1)
+            if c['x'] is not None: l += 'x = %s, y = %s' % (PL.num(c['x']), PL.num(c['y']))
+            elif c.get('image_pixel'): l += 'pixel (%d, %d) of the picture' % tuple(c['image_pixel'])
+            else: l += 'outside the plot'
+            n = c['nearest']
+            if n is not None:
+                l += '; nearest point: %s #%d (x = %s, y = %s)' % (n['series'], n['index'], PL.num(n['x']), PL.num(n['y']))
+            lines.append(l)
+        head = ('%d click%s' % (len(got), '' if len(got) == 1 else 's')) if got else 'No clicks'
+        if why: head += ' (%s)' % why
+        return [text(head + ('.\n' + '\n'.join(lines) if lines else '.'))], not got
+
+
+def picture_block(bits):
+    """A picture as the GRiD shows it (lit amber on dark), for Claude."""
+    import base64, io
+    from PIL import Image
+    im = Image.frombytes('1', (640, 384), bytes(bits)).convert('L').point(lambda v: 0xD8 if v else 0x10)
+    out = io.BytesIO(); im.save(out, 'PNG', optimize=True)
+    return {'type': 'image', 'data': base64.b64encode(out.getvalue()).decode(), 'mimeType': 'image/png'}
 
 
 NAMES = {t['name'] for t in TOOLS}
@@ -570,7 +737,8 @@ class ToolServer:
             with s.lock:                          # (a RUN going on keeps the GRiD from polling:
                 why = s.available(tool)           # wait for it, don't call that "not connected")
                 if why: return [text(why)], True
-                return s.tools.call(tool, args)
+                if tool not in PICTURE_TOOLS: return s.tools.call(tool, args)
+            return s.tools.call(tool, args)       # (grid_pick waits for the user, not the GRiD)
         except Exception as e:
             s.log('mcp: %r' % e); return [text('gridlink: %s' % e)], True
 
@@ -615,6 +783,13 @@ def local_paths(tool, args):
     """Pi paths are Claude Code's: relative ones are made absolute here, in
     its directory, before gridlink (elsewhere) sees them.  gridlink checks
     them against ~/grid."""
+    if tool in ('grid_plot', 'grid_image') and isinstance(args, dict):
+        k = 'file' if tool == 'grid_plot' else 'path'
+        if isinstance(args.get(k), str) and args[k]:
+            return dict(args, **{k: os.path.abspath(os.path.expanduser(args[k]))})
+    if tool == 'gpib_send' and isinstance(args, dict) and isinstance(args.get('save_to'), str) \
+            and args['save_to']:
+        return dict(args, save_to=os.path.abspath(os.path.expanduser(args['save_to'])))
     if tool != 'grid_change_files' or not isinstance(args, dict): return args
     a = dict(args); act = a.get('action')
     if act == 'copy_to_grid' and isinstance(a.get('path'), str) and a['path']:
@@ -694,12 +869,22 @@ def respond(line, sock):
 
 def main():
     sock = socket_path()
-    out = sys.stdout
+    out = sys.stdout; lock = threading.Lock(); calls = []
+    def answer(line):
+        rs = respond(line, sock)
+        with lock:
+            for r in rs: out.write(json.dumps(r) + '\n')
+            out.flush()
     for line in sys.stdin.buffer:
         line = line.strip()
         if not line: continue
-        for r in respond(line, sock):
-            out.write(json.dumps(r) + '\n'); out.flush()
+        # a tool call on its own thread: grid_pick waits for the user, gridlink keeps
+        # the GRiD's own calls one at a time
+        if b'"tools/call"' in line:
+            th = threading.Thread(target=answer, args=(line,), daemon=True); th.start(); calls.append(th)
+            calls[:] = [t for t in calls if t.is_alive()]
+        else: answer(line)
+    for th in calls: th.join()                   # (Claude Code closed its end: the answers still go)
 
 
 if __name__ == '__main__':

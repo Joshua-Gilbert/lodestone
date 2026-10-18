@@ -82,7 +82,7 @@ term_send:                              ; the keys typed so far: one KEYS at a t
 .x:     ret
 
 %ifdef TERM_MOUSE
-; A left click to the Pi: EVENT 05h and its cell.  INT 33h AX=5 counts
+; A left click to the Pi: EVENT 05h and where, in pixels.  INT 33h AX=5 counts
 ; presses since it was last asked, so a quick click between two polls isn't
 ; missed.  One EVENT at a time (rep_q), and a queue slot left for a REPLY,
 ; as for CODE-R.  (A link restart empties the queue.)
@@ -98,15 +98,13 @@ term_mouse:
         int     33h                     ; BX = presses, CX, DX = where the last was
         or      bx, bx
         jz      .x
-        shr     cx, 3                   ; 8 x 16 cells
-        shr     dx, 4
-        mov     [evmouse + 1], cl
-        mov     [evmouse + 2], dl
+        mov     [evmouse + 1], cx       ; x 0-639, y 0-399
+        mov     [evmouse + 3], dx
         mov     byte [rep_q], 1
         mov     al, G_EVENT
         mov     dx, cs
         mov     si, evmouse
-        mov     cx, 3
+        mov     cx, 5
         jmp     txq_put
 .x:     ret
 %endif

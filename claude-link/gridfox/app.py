@@ -4,8 +4,13 @@ It runs in Term's pty on the Pi (CLAUDE /W on the GRiD), or in any xterm.
 Row 0 is the address, rows 1-22 the page, row 23 the status line.  Every
 change is drawn as whole rows inside synchronised output (?2026), so Term
 sends the GRiD one frame for it, and only the rows that changed.
+
+V flips to the picture view: Firefox's own pixels, 640 x 384, through
+Term's pictures (gridlink's OSC 5150: a PNG file in this folder, which
+gridlink dithers and sends).  Clicks come back in pixels (?1016) and go to
+the page as a person's; so do the keys, but for a few of gridfox's own.
 """
-import os, select, signal, sys, termios, time, tty, urllib.parse
+import hashlib, os, select, signal, struct, sys, termios, time, tty, urllib.parse
 from . import page as P
 from .marionette import MarionetteError
 ERRS = (MarionetteError, RuntimeError, OSError, ValueError)
@@ -13,6 +18,13 @@ ERRS = (MarionetteError, RuntimeError, OSError, ValueError)
 ROWS, COLS = 24, 80
 URL_EVERY = 1.0                     # seconds between looks at the address when idle
 TOP, BODY = 1, 22                   # page rows 1..22
+PIC_W, PIC_H = 640, 384             # the picture view: the GRiD's rows 0-23
+TEXT_W, TEXT_H = 1024, 768          # Firefox's window for the text view
+SHOTS = (0.0, 0.5, 1.5, 4.0)        # after an action: pictures then (s), as the page settles
+IDLE_SHOT = 2.0                     # and at most this often while idle, when it changed
+LINE_PX, PAGE_PX = 48, 352          # the picture view's scrolling (whole rows of 16 lines)
+VIEW_FILE = 'view.png'
+BAND = 48                           # columns of the GRiD's band the title gets (CLAUDE's keys take the rest)
 SEARCH = 'https://html.duckduckgo.com/html/?q=%s'
 HOME = 'about:gridfox'
 
@@ -30,6 +42,11 @@ HELP = [
     ('li', 'G (or O, or F6): type an address, or words to search for'),
     ('li', 'S: search.  /: find on the page, N: find the next one'),
     ('li', 'H or ?: this help.  Esc cancels what you are typing.  Ctrl-Q: close gridfox'),
+    ('h2', 'The picture view'),
+    ('li', 'V: the page as Firefox draws it, dithered (slower than text: the GRiD gets pixels). Esc: back'),
+    ('li', 'There, a click is a real click anywhere on the page, and typing goes to the page'),
+    ('li', 'Up/Down and PgUp/PgDn scroll, Home/End top and bottom; Ctrl-B back, Ctrl-F forward, '
+           'Ctrl-R reload, F6 or Ctrl-L an address, Ctrl-I light or dark'),
     ('h2', 'Forms'),
     ('p', 'Return on a field asks for its text at the bottom; Return there fills it in and goes on to the '
           'form\'s next field, or sends the form after the last one.  Return on a check box ticks it; on a '
@@ -154,7 +171,7 @@ class Line:
 
 
 class App:
-    def __init__(s, browser, out=None, start=None, search=SEARCH, log=None, quit_keys=()):
+    def __init__(s, browser, out=None, start=None, search=SEARCH, log=None, quit_keys=(), pictures=False):
         s.b = browser; s.out = out or sys.stdout.buffer
         s.search = search; s.log = log or (lambda m: None)
         s.model = help_model(); s.doc = P.layout(s.model)
@@ -170,6 +187,14 @@ class App:
         s.lost = None                            # why Firefox can't be reached (gridfox then ends)
         s.before_help = None                     # the page help was opened over
         s.url_t = 0.0                            # when the address was last checked
+        # the picture view
+        s.pictures = pictures                    # the GRiD can show them (gridlink says so: GRIDLINK_PICTURES)
+        s.picture = False                        # V: in it (the text goes on underneath)
+        s.pic_up = False                         # the picture shown now (not while typing an address)
+        s.pic_hash = None; s.pic_size = (PIC_W, PIC_H)
+        s.shots = []; s.shot_t = 0.0             # pictures due, and when the last was taken
+        s.pic_inv = None                         # None: light pages dark (gridlink decides); or True/False
+        s.view_path = os.path.abspath(VIEW_FILE)
 
     # ---- pages ------------------------------------------------------------
     def go(s, url):
@@ -201,6 +226,7 @@ class App:
         if top == 0 and urllib.parse.urldefrag(s.url)[1]: s._to_anchor()   # page.html#section
         # pages that fill in after they load: look again shortly
         now = time.time(); s.rereads = [now + 0.6, now + 2.0, now + 5.0]
+        s._shots()
 
     def _relayout(s, top=None, sel=None):
         s.doc = P.layout(s.model)
@@ -326,6 +352,7 @@ class App:
             s.busy = ''
             s.reread()
             now = time.time(); s.rereads = [now + 0.5, now + 1.5]
+            s._shots()
             s.draw()
 
     def select(s, i):
@@ -358,6 +385,7 @@ class App:
     def key(s, k):
         s.status = '' if not s.busy else s.status
         if k in s.quit_keys: s.quit = True; return           # (from anywhere, typing included)
+        if s.picture and s.line is None and s.menu is None: return s._picture_key(k)
         if k.startswith('click:'): return s.click(*(int(v) for v in k[6:].split(':')))
         if s.menu is not None: return s._menu_key(k)
         if s.line is not None: return s._line_key(k)
@@ -376,9 +404,7 @@ class App:
             else: s.status = 'Tab to a link first, or F for numbers.'
         elif k in ('left', 'bksp'): s.back(); return
         elif k == 'right': s.forward(); return
-        elif low in ('g', 'o') or k in ('f6', 'ctrl-l'):
-            s.line = Line('Go: ', '' if s.url == HOME else s.url)
-            s.line_do = lambda t: s.go(to_url(t, s.search)) if t.strip() else None
+        elif low in ('g', 'o') or k in ('f6', 'ctrl-l'): s._go_line()
         elif low == 's':
             s.line = Line('Search: ')
             s.line_do = lambda t: s.go(s.search % urllib.parse.quote_plus(t)) if t.strip() else None
@@ -392,6 +418,7 @@ class App:
         elif k == '.':                           # read the page again (no reload, nothing sent again)
             s.reread(); s.status = 'Read again.'
         elif low == 'h' or k in ('?', 'f1'): s.go(HOME); return
+        elif low == 'v': s.picture_view(True); return
         s.draw()
 
     def click(s, col, row):
@@ -409,7 +436,7 @@ class App:
             s.line = None; s.line_do = None
         s.hints = None
         if row == 0:
-            s.key('g'); return
+            s._go_line(); s.draw(); return
         if TOP <= row < TOP + BODY:
             ln = s.top + row - TOP
             if ln < len(s.doc):
@@ -419,6 +446,11 @@ class App:
                     s.sel = a; s.draw(); s.activate(a); return
         s.status = ''
         s.draw()
+
+    def _go_line(s):
+        """Go: an address, or words to search for, typed on the bottom row."""
+        s.line = Line('Go: ', '' if s.url == HOME else s.url)
+        s.line_do = lambda t: s.go(to_url(t, s.search)) if t.strip() else None
 
     def _menu_box(s):
         """Where the list's choices are drawn: (first row, column, rows, width, first choice)."""
@@ -438,8 +470,100 @@ class App:
             s.line = None; s.line_do = None; s.draw()
             if do: do(text)
             return
+        elif k.startswith('click:'): return s.click(*(int(v) for v in k[6:].split(':')))
         else: s.line.key(k)
         s.draw()
+
+    # ---- the picture view ----------------------------------------------------
+    def picture_view(s, on):
+        """V: Firefox's pixels on the GRiD (a 640 x 384 viewport); Esc: the text again."""
+        if on == s.picture: return
+        if on and not s.pictures:
+            s.status = 'The picture view needs CLAUDE.COM 1.2 on the GRiD (CLAUDE /W).'; s.draw(); return
+        if on and s.url == HOME:
+            s.status = 'The picture view is of a page: G to go to one first.'; s.draw(); return
+        s.picture = on; s.pic_hash = None
+        try:
+            s.b.view_size(*((PIC_W, PIC_H) if on else (TEXT_W, TEXT_H)))
+        except ERRS as e:
+            s.log('view size: %r' % (e,))
+        if on:
+            s.busy = 'Drawing the page'; s.draw()
+            s._shots(); s._shoot()
+            s.busy = ''
+        else:
+            s._sync_view()
+            s.reread()
+        s.draw()
+
+    def _shots(s):
+        """Pictures as the page settles after an action (the picture view)."""
+        if s.picture:
+            now = time.time(); s.shots = [now + d for d in SHOTS]
+
+    def _shoot(s):
+        """Firefox's picture now; to the GRiD if it changed."""
+        if s.shots and time.time() >= s.shots[0] - 0.01: s.shots.pop(0)
+        s.shot_t = time.time()
+        png = s.b.screenshot()
+        if len(png) >= 24 and png[:8] == b'\x89PNG\r\n\x1a\n': s.pic_size = struct.unpack('>II', png[16:24])
+        h = hashlib.sha1(png).digest()
+        if h == s.pic_hash and s.pic_up: return
+        s.pic_hash = h
+        tmp = s.view_path + '.tmp'
+        with open(tmp, 'wb') as f: f.write(png)
+        os.replace(tmp, s.view_path)
+        s.pic_up = False; s._sync_view()
+
+    def _sync_view(s):
+        """The picture up when in the picture view and not typing an address; else the text."""
+        want = s.picture and not s.modal() and s.pic_hash is not None
+        if want == s.pic_up: return
+        s.pic_up = want
+        if want:
+            flags = '' if s.pic_inv is None else ('invert' if s.pic_inv else 'plain')
+            s.out.write(('\x1b[?1016h\x1b]5150;show;%s;%s\x07' % (flags, s.view_path)).encode('utf-8'))
+        else:
+            s.out.write(b'\x1b[?1016l\x1b]5150;hide\x07')
+        s.out.flush()
+
+    def _pic_xy(s, x, y):
+        """A pixel of the GRiD's picture -> the viewport's (gridlink fits a
+        screenshot that isn't 640 x 384, centred: the same sums)."""
+        iw, ih = s.pic_size
+        if (iw, ih) == (PIC_W, PIC_H): return x, y
+        sc = min(PIC_W / iw, PIC_H / ih)
+        nw, nh = max(1, round(iw * sc)), max(1, round(ih * sc))
+        return (x - (PIC_W - nw) // 2) / sc, (y - (PIC_H - nh) // 2) / sc
+
+    def _picture_key(s, k):
+        if k.startswith('click:'):
+            x, y = (int(v) for v in k[6:].split(':'))
+            vx, vy = s._pic_xy(x, y)
+            if not (0 <= vx < s.pic_size[0] and 0 <= vy < s.pic_size[1]): return
+            s._remember(); nav = s.b.click_at(vx, vy)
+            if nav: s._loaded(top=0)
+            else: s._shots(); s._shoot()
+            return
+        if k == 'esc': s.picture_view(False); return
+        if k in ('up', 'down', 'pgup', 'pgdn', 'home', 'end'):
+            d = {'up': -LINE_PX, 'down': LINE_PX, 'pgup': -PAGE_PX, 'pgdn': PAGE_PX}.get(k, 0)
+            s.b.scroll(d, 0 if k == 'home' else -1 if k == 'end' else None)
+            s._shots(); s._shoot(); return
+        if k in ('f6', 'ctrl-l'):
+            s._go_line(); s._sync_view(); s.draw(); return
+        if k == 'ctrl-b': s.back(); return
+        if k == 'ctrl-f': s.forward(); return
+        if k == 'ctrl-r': s.reload(); return
+        if k == 'ctrl-i':                                 # light or dark: the other way
+            s.pic_inv = not s.pic_inv if s.pic_inv is not None else True
+            s.pic_up = False; s._sync_view(); return
+        if k in ('enter', 'tab', 'btab', 'bksp', 'del', 'left', 'right', 'ins') or (len(k) == 1 and k.isprintable()):
+            s._remember()
+            if s.b.press([k]): s._loaded(top=0)
+            else:
+                s.shots = [time.time() + d for d in (0.15, 0.6, 1.5)]
+            return
 
     def _hints(s):
         on = s.doc.acts_in(s.top, BODY)
@@ -557,12 +681,15 @@ class App:
     def draw(s, full=False):
         rows, cur = s.rows()
         parts = ['\x1b[?2026h']
-        if full: parts.append('\x1b[?7l\x1b[2J\x1b[?1000h\x1b[?1006h'); s.shown = [None] * ROWS   # (clicks: CLAUDE /W)
+        if full:                                 # (clicks: CLAUDE /W; in pixels only in the picture view)
+            parts.append('\x1b[?7l\x1b[2J\x1b[?1000h\x1b[?1006h' + ('' if s.pic_up else '\x1b[?1016l'))
+            s.shown = [None] * ROWS
         for r, (text, attr) in enumerate(rows):
             if s.shown[r] == (text, attr): continue
             s.shown[r] = (text, attr)
             parts.append('\x1b[%d;1H' % (r + 1) + _sgr_line(text, attr))
         title = s.model.get('title') or s.url
+        if s.picture: title = '%s  (Esc: text)' % _fit(title, BAND - 13)   # (the hint must show)
         if title != s.title_sent:
             s.title_sent = title
             parts.append('\x1b]0;%s\x07' % P.clean(title).replace('\x07', '')[:70])
@@ -584,6 +711,7 @@ class App:
             if not s.modal():                    # (while typing, the timed looks wait)
                 if s.rereads: wait = max(0.0, min(wait, s.rereads[0] - now))
                 if s.url != HOME: wait = max(0.0, min(wait, s.url_t + URL_EVERY - now))
+                if s.picture: wait = max(0.0, min(wait, s._next_shot() - now))
             if keys.buf: wait = min(wait, 0.02)
             r, _, _ = select.select([fd_in], [], [], wait)
             now = time.time()
@@ -597,12 +725,18 @@ class App:
             for k in ks:
                 s._guard(lambda: s.key(k))
                 if s.quit: break
+            s._sync_view()
             if s.quit or s.modal(): continue
             now = time.time()
-            if s.rereads and now >= s.rereads[0]:
+            if s.picture and now >= s._next_shot():
+                s._guard(s._shoot)
+            elif s.rereads and now >= s.rereads[0]:
                 s.rereads.pop(0); s._guard(s.reread)
             elif s.url != HOME and now >= s.url_t + URL_EVERY:
                 s.url_t = now; s._guard(s._check_url)
+
+    def _next_shot(s):
+        return s.shots[0] if s.shots else s.shot_t + IDLE_SHOT
 
     def _check_url(s):
         """A page that arrived on its own (a slow link or form answered at last,
@@ -679,6 +813,6 @@ def run_tty(app):
         app.run(fd)
     finally:
         if old: termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write('\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[0m\x1b[2J\x1b[H')
+        sys.stdout.write('\x1b]5150;hide\x07\x1b[?1016l\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[0m\x1b[2J\x1b[H')
         if app.lost: sys.stdout.write('\r\n  gridfox stopped: %s.\r\n' % app.lost)
         sys.stdout.write('\r\n'); sys.stdout.flush()
