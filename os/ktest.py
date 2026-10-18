@@ -158,23 +158,29 @@ class KPC:
         """Text of the 640x400 screen: list of (y, line) for every pixel row
         where a glyph starts (columns on 8-pixel boundaries)."""
         pc = s.pc
-        if pc.mode() not in (0x40, 0x48):
+        mode = pc.mode()
+        if mode not in (0x40, 0x48):
             return [(r * 16, l) for r, l in enumerate(pc.text_screen().split('\n'))]
-        v = pc.rd(0xB800, 0, 0x8000)
-        rows = [bytes(v[(y & 3) * 0x2000 + (y >> 2) * 80:(y & 3) * 0x2000 + (y >> 2) * 80 + 80]) for y in range(400)]
-        F = font()
+        v = bytes(pc.rd(0xB800, 0, 0x8000))
+        last = getattr(s, '_ocr_last', None)        # the same screen as last time?
+        if last and last[0] == mode and last[1] == v: return list(last[2])
+        # the 400 scan lines in order, then each byte column as one string:
+        # a glyph's 16 bytes are a slice of it
+        lin = b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:(y & 3) * 0x2000 + (y >> 2) * 80 + 80] for y in range(400))
+        get = font().get
         hits = {}
-        for y in range(0, 400 - 15):
-            for x in range(80):
-                k = bytes(rows[y + i][x] for i in range(16))
-                c = F.get(k)
+        for x in range(80):
+            col = lin[x::80]
+            for y in range(0, 400 - 15):
+                c = get(col[y:y + 16])
                 if c: hits.setdefault(y, {})[x] = c
         out = []
         for y in sorted(hits):
             line = hits[y]
             if len(line) < 1: continue
             out.append((y, ''.join(line.get(x, ' ') for x in range(80)).rstrip()))
-        return out
+        s._ocr_last = (mode, v, out)
+        return list(out)
 
     def text(s):
         return '\n'.join(l for y, l in s.ocr())
