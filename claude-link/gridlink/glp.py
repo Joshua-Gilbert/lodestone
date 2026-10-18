@@ -14,10 +14,11 @@ G_HELLO, G_POLL, G_PROMPT, G_EVENT, G_REPLY, G_NAK, G_KEYS = 0x01, 0x02, 0x03, 0
 P_HELLO, P_NOP, P_TEXT, P_STATUS, P_REQUEST, P_ASK, P_READY, P_NAK, P_TITLE, P_CLEAR, P_CELLS = range(0x41, 0x4C)
 
 EV_INTERRUPT, EV_ANSWER, EV_REPAINT, EV_AWAY = 0x01, 0x02, 0x03, 0x04
-EV_CLICK = 0x05            # Term: a left click on a cell (column, row); CLAUDE /W
+EV_CLICK = 0x05            # Term: a left click: x, y (pixels, words; CLAUDE 1.2) or column, row (bytes)
 
 # HELLO flags
 GF_TERM = 0x01             # GRiD: this CLAUDE can be a terminal (Term)
+GF_PIX = 0x02              # GRiD: its CELLS take pictures (op FDh, picture.py); CLAUDE 1.2
 HF_TERM = 0x01             # Pi: Term: the GRiD is Claude Code's screen and keyboard
 
 # REQUEST ops

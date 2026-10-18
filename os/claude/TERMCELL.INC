@@ -15,6 +15,8 @@
 ;    run    row, col, len (bit 7: attribute follows), [attr], glyphs
 ;    fill   row | 80h, col, len, [attr], one glyph
 ;    scroll FEh, top, bottom, n: rows top..bottom up by n
+;    pixels FDh, y (word), x, w (bytes), h (lines), then each line as
+;           PackBits (CLAUDE.COM only: TERM_PIXELS; a picture)
 ;  A malformed operation ends the frame (the Pi's next ones repaint).
 ; =====================================================================
 TROWS   equ 24
@@ -41,6 +43,12 @@ term_cells:
         lodsb
         cmp     al, 0FEh
         je      .scroll
+%ifdef TERM_PIXELS
+        cmp     al, 0FDh
+        jne     .cl
+        jmp     .pix
+.cl:
+%endif
         mov     dl, al                  ; DL = row (bit 7: fill)
         cmp     si, bx
         jae     .done
@@ -114,6 +122,76 @@ term_cells:
         mov     byte [cur_on], 1
 .nc:    pop     es
 .r:     ret
+%ifdef TERM_PIXELS
+; Pixels: FDh, y (word, 0-383), x and w in bytes (x + w <= 80, w > 0),
+; h lines (y + h <= 384, h > 0), then each line's w bytes as PackBits:
+; n < 80h, n + 1 bytes follow; else one byte, 257 - n times.  A line's
+; codes end with it.  Line y is in bank y mod 4, at (y div 4) * 80.
+.pix:   lea     ax, [si+5]
+        cmp     ax, bx
+        ja      .pb0
+        lodsw                           ; AX = y
+        mov     bp, ax
+        mov     di, ax
+        shl     di, 14
+        shr     di, 1                   ; DI = (y mod 4) * 2000h
+        shr     ax, 2
+        imul    ax, ax, 80
+        add     di, ax                  ;  + (y div 4) * 80
+        lodsw                           ; AL = x, AH = w
+        mov     dh, ah                  ; DH = w
+        add     ah, al
+        jc      .pb0
+        cmp     ah, 80
+        ja      .pb0
+        xor     ah, ah
+        add     di, ax                  ;  + x
+        lodsb                           ; AX = h
+        mov     cx, ax
+        jcxz    .pb0
+        add     bp, cx
+        cmp     bp, TROWS * 16
+        ja      .pb0
+.pline: push    cx                      ; (CH stays 0: h, w < 256)
+        push    di
+        mov     dl, dh                  ; DL = bytes left in the line
+.pcode: cmp     si, bx
+        jae     .pb2
+        lodsb
+        mov     cl, al
+        or      al, al
+        js      .prun
+        inc     cx                      ; n < 80h: n + 1 bytes follow
+        sub     dl, cl
+        jb      .pb2
+        mov     ax, si
+        add     ax, cx
+        cmp     ax, bx
+        ja      .pb2
+        rep     movsb
+        jmp     .pnext
+.prun:  neg     cl                      ; else one byte, 257 - n times
+        inc     cx
+        sub     dl, cl
+        jb      .pb2
+        cmp     si, bx
+        jae     .pb2
+        lodsb
+        rep     stosb
+.pnext: or      dl, dl
+        jnz     .pcode
+        pop     di
+        add     di, 2000h               ; the next line: the next bank, or
+        cmp     di, 8000h               ;  bank 0 and 80 bytes on
+        jb      .pn
+        sub     di, 8000h - 80
+.pn:    pop     cx
+        loop    .pline
+        jmp     .op
+.pb2:   pop     di
+        pop     cx
+.pb0:   jmp     .done
+%endif
 
 ; AL = glyph, AH = attribute, DL = row, DH = column; ES = VSEG.
 ; The shadow and the screen.  Keeps everything.

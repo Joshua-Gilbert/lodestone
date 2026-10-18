@@ -109,10 +109,10 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term`, `app=web` or `app=chat` when CLAUDE was started with `/T`, `/W` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures, op FDh, section 6), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term`, `app=web` or `app=chat` when CLAUDE was started with `/T`, `/W` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
-| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 05h click: column (1), row (1), a left click on that cell (CLAUDE /W, through INT 33h; the Pi passes it on as an xterm mouse report only to a program that asked for them, `?1000` with `?1006`, so an older gridlink ignores it) |
+| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 05h click: x (2), y (2), a left click at that pixel of the screen (Term, through INT 33h; x 0-639, y 0-399). The Pi gives it to the picture on the screen, if there is one; else it passes it on as an xterm mouse report only to a program that asked for them (`?1000` with `?1006`; in pixels with `?1016`). An older CLAUDE (CLAUDE /W only) sends column (1), row (1) instead: the Pi tells them apart by length. An older gridlink ignores both |
 | 05h | REPLY | id (1), status (1: 0 = OK, else DOS error code or 0FFh), data |
 | 06h | NAK | — |
 | 07h | KEYS | Term: key words as INT 16h AH=10h returns them (AL, AH; 2 bytes each) |
@@ -306,12 +306,29 @@ CELLS payload:
 | run | row, col, len, [attr], len glyphs | cells (row, col) .. (row, col+len-1) |
 | fill | row \| 80h, col, len, [attr], glyph | the same glyph len times |
 | scroll | FEh, top, bottom, n | rows top..bottom up by n; n blank rows come in at the bottom |
+| pixels | FDh, y (2), x, w, h, then each line's codes | a rectangle of pixels: lines y..y+h-1 (0-383), bytes x..x+w-1 of each (8 pixels a byte, bit 7 the leftmost, 1 lit); a CLAUDE that set HELLO flags bit 1 only |
 
 `len` bit 7 means an attribute byte follows (bit 0 inverse, bit 1
 underline); without it the cells are plain. Glyphs are the GRiD's codes
 (20h-7Eh and 80h-A0h, as in TEXT). An operation that does not fit the
 screen or the payload ends the frame. The cursor is drawn as an inverted
 underline (glyph rows 14-15).
+
+**Pictures.** The Pi can put a 640x384 one-bit picture over rows 0-23
+(gridfox's picture view, Claude Code's plots: gridlink's `picture.py`).
+It sends them only to a CLAUDE whose HELLO set flags bit 1, never to
+resident Claude's console. Each line of a pixels rectangle is PackBits: a
+code n < 80h, then n + 1 bytes; else one byte, 257 - n times; a line's codes
+end exactly at its w bytes. A rectangle that doesn't fit rows 0-23 or the
+payload, or codes that don't make the line, end the frame. An older CLAUDE
+reads FDh as a fill on row 7Dh, which doesn't fit either. While a picture
+is up the Pi sends only pictures (the cursor hidden), its first frame
+clearing the screen; the text goes on in pyte meanwhile, and coming back is
+a clear and the whole text. A scroll op moves pixels too (16 lines a row):
+the Pi uses it when a picture moved up by whole rows. CLAUDE keeps no copy
+of a picture: after a RUN, CODE-R or Ctrl-L it draws its text copy (blank
+under a picture), and the Pi sends the picture again. The band (row 24)
+stays CLAUDE's; the Pi's TITLE says what the picture is and how to leave it.
 
 What the Pi does with Claude Code's output: Unicode is folded to one GRiD
 glyph per cell (box drawing, ● ⎿ ✻ ❯ and the spinner have glyphs; a full
