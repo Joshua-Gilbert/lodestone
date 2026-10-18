@@ -22,6 +22,7 @@ PIC_W, PIC_H = 640, 384             # the picture view: the GRiD's rows 0-23
 TEXT_W, TEXT_H = 1024, 768          # Firefox's window for the text view
 SHOTS = (0.0, 0.5, 1.5, 4.0)        # after an action: pictures then (s), as the page settles
 IDLE_SHOT = 2.0                     # and at most this often while idle, when it changed
+FRAME_SHOT = 0.25                   # while the page keeps changing by itself (a video, an animation)
 LINE_PX, PAGE_PX = 48, 352          # the picture view's scrolling (whole rows of 16 lines)
 VIEW_FILE = 'view.png'
 BAND = 48                           # columns of the GRiD's band the title gets (CLAUDE's keys take the rest)
@@ -193,6 +194,8 @@ class App:
         s.pic_up = False                         # the picture shown now (not while typing an address)
         s.pic_hash = None; s.pic_size = (PIC_W, PIC_H)
         s.shots = []; s.shot_t = 0.0             # pictures due, and when the last was taken
+        s.moving = False                         # the page changed by itself at the last look: look again soon
+        s.frame = False                          # the picture up is one of those (gridlink: whole frames, in turn)
         s.pic_inv = None                         # None: light pages dark (gridlink decides); or True/False
         s.view_path = os.path.abspath(VIEW_FILE)
 
@@ -501,15 +504,19 @@ class App:
         if s.picture:
             now = time.time(); s.shots = [now + d for d in SHOTS]
 
-    def _shoot(s):
-        """Firefox's picture now; to the GRiD if it changed."""
+    def _shoot(s, frame=False):
+        """Firefox's picture now; to the GRiD if it changed.  frame: a look
+        on our own, not the one at an action: if the page changed by itself,
+        the next look comes soon (FRAME_SHOT), else at the idle pace."""
         if s.shots and time.time() >= s.shots[0] - 0.01: s.shots.pop(0)
         s.shot_t = time.time()
         png = s.b.screenshot()
         if len(png) >= 24 and png[:8] == b'\x89PNG\r\n\x1a\n': s.pic_size = struct.unpack('>II', png[16:24])
         h = hashlib.sha1(png).digest()
-        if h == s.pic_hash and s.pic_up: return
-        s.pic_hash = h
+        changed = h != s.pic_hash
+        if frame: s.moving = changed
+        if not changed and s.pic_up: return
+        s.pic_hash = h; s.frame = frame
         tmp = s.view_path + '.tmp'
         with open(tmp, 'wb') as f: f.write(png)
         os.replace(tmp, s.view_path)
@@ -521,7 +528,8 @@ class App:
         if want == s.pic_up: return
         s.pic_up = want
         if want:
-            flags = '' if s.pic_inv is None else ('invert' if s.pic_inv else 'plain')
+            flags = ([] if s.pic_inv is None else ['invert' if s.pic_inv else 'plain']) + (['frame'] if s.frame else [])
+            flags = ','.join(flags)
             s.out.write(('\x1b[?1016h\x1b]5150;show;%s;%s\x07' % (flags, s.view_path)).encode('utf-8'))
         else:
             s.out.write(b'\x1b[?1016l\x1b]5150;hide\x07')
@@ -729,14 +737,15 @@ class App:
             if s.quit or s.modal(): continue
             now = time.time()
             if s.picture and now >= s._next_shot():
-                s._guard(s._shoot)
+                s._guard(lambda: s._shoot(True))     # (a look on our own: not the one at an action)
             elif s.rereads and now >= s.rereads[0]:
                 s.rereads.pop(0); s._guard(s.reread)
             elif s.url != HOME and now >= s.url_t + URL_EVERY:
                 s.url_t = now; s._guard(s._check_url)
 
     def _next_shot(s):
-        return s.shots[0] if s.shots else s.shot_t + IDLE_SHOT
+        t = s.shot_t + (FRAME_SHOT if s.moving else IDLE_SHOT)
+        return min(t, s.shots[0]) if s.shots else t
 
     def _check_url(s):
         """A page that arrived on its own (a slow link or form answered at last,
