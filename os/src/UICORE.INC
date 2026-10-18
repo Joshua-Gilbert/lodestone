@@ -234,7 +234,8 @@ api_font:
 ; makes that file the font.  No file, no line, or a file that isn't exactly
 ; FONT_BYTES long: GRiD's font stays.  "SAVER=n": the saver after n minutes
 ; (0: never).  "TIDY=0": the saver doesn't run DEFRAG.  (The directory
-; buffer is free yet.)
+; buffer is free yet: up to 4095 bytes of the file in it, as KSPLASH and
+; KMDISK read it, then the font file after them.)
 font_boot:
         mov     byte [font_path], '\'
         mov     dx, s_ini
@@ -243,7 +244,7 @@ font_boot:
         jc      .x
         mov     bx, ax
         mov     dx, entries
-        mov     cx, 511
+        mov     cx, INI_READ
         mov     ah, 3Fh
         int     21h
         pushf
@@ -324,14 +325,18 @@ font_boot:
         jmp     .line
 .x:     ret
 
-; font_path = "\NAME.FNT": that file is the font (if it is exactly one)
+; font_path = "\NAME.FNT": that file is the font (if it is exactly one).
+; Read past LODE.INI's text, which font_boot is still going through
+; (4096 + FONT_BYTES + 1 = 5,633 of the 7,680 bytes of entries)
+INI_READ equ 4095
+FONT_BUF equ entries + INI_READ + 1
 font_file:
         mov     dx, font_path
         mov     ax, 3D00h
         int     21h
         jc      .x
         mov     bx, ax
-        mov     dx, entries + 512
+        mov     dx, FONT_BUF
         mov     cx, FONT_BYTES + 1      ; (one byte more: a longer file isn't one)
         mov     ah, 3Fh
         int     21h
@@ -344,7 +349,7 @@ font_file:
         jc      .x
         cmp     ax, FONT_BYTES
         jne     .x
-        mov     si, entries + 512
+        mov     si, FONT_BUF
         mov     di, font_path + 1
         mov     al, 1
         jmp     api_font
