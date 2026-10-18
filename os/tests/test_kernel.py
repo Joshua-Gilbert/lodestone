@@ -1326,6 +1326,14 @@ def t_calc():
     o = sh.run('calc n=123456789 || echo EL')
     check('... full: "Out of environment space", ERRORLEVEL 1, and N as it was',
           'CALC: Out of environment space' in o and 'EL' in res(o) and b'N=2' + bytes(1) in env() and len(env()) == 1016, (o, env()[-40:]))
+    # SET the same way: a new value that fits only once the old one is out
+    # is taken; one that doesn't fit even then leaves the old one (SET
+    # used to take it out first, then find no room)
+    sh.run('set n=1234567')
+    check('... SET N= a value that fits in place of the old one', b'N=1234567' + bytes(1) in env() and len(env()) == 1022, env()[-40:])
+    o = sh.run('set n=12345678 || echo EL')
+    check('... SET N= one too long even then: "Out of environment space", ERRORLEVEL 1, and N as it was',
+          'Out of environment space' in o and 'EL' in res(o) and b'N=1234567' + bytes(1) in env() and len(env()) == 1022, (o, env()[-40:]))
     for c in pads: sh.run('set q%s=' % c)
     # found on the 1520: a real 80287's FNINIT leaves C0-C3 as they were,
     # and fpu_detect wanted the whole status word 0 (the -DCALC_287 build
