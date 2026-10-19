@@ -335,7 +335,8 @@ by its title strip, or press CODE-F7 and move it with the arrow keys
 (Return puts it there, ESC leaves it).  The x at the strip's right end
 closes it, as ESC does.  Programs on the UI core get this with API 6.
 
-Shift-PrtSc can print instead, through a printer driver: a .PRN file of
+PrtSc prints, through a printer driver (Shift-PrtSc still saves the
+file): a .PRN file of
 up to 1 KB, read from the disk only when PrtSc is pressed, so nothing of
 it stays in memory.  System, Devices, Return picks the next driver (the
 .PRN files in the drive's root, and from the ROM in C:\LODE), then none
@@ -361,6 +362,8 @@ The Executive (the file list):
                                  in Subject: Delete the subject)
   F5                             read the disk again after a swap
   Shift-PrtSc                    the screen to SCREENnn.BMP (or .TXT)
+  PrtSc                          printed, with a printer driver set
+                                 (System, Devices); else as Shift-PrtSc
   CODE-? (Alt+/) or F1           help
   5 minutes idle                 screen saver (DEFRAG on A:, B:, C:,
                                  then the time; System, Screen saver

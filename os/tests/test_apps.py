@@ -690,7 +690,7 @@ def t_saver_tidy():
 
 
 def t_prtsc_setting():
-    print('== Shift-PrtSc prints with a driver, or saves files (System, Devices, Return; LODE.INI PRINTER=)')
+    print('== PrtSc prints with a driver, or saves files (System, Devices, Return; LODE.INI PRINTER=); Shift-PrtSc a file')
     import shutil
     ps = os.path.join(GOS, 'drivers', 'PS.PRN')
     other = os.path.join(OUT, 'EPSON.PRN'); shutil.copy(ps, other)
@@ -701,9 +701,9 @@ def t_prtsc_setting():
         for _ in range(3): k.key(ktest.DOWN, settle=False)
         k.settle()
     topic(k)
-    line = lambda: next((l for l in lines(k) if 'Shift-PrtSc' in l), '')
+    line = lambda: next((l for l in lines(k) if l.strip().startswith('PrtSc')), '')
     path = lambda: k.rd('prn_path', 24).split(b'\0')[0]
-    check('Devices: "Shift-PrtSc  saves SCREENnn.BMP / .TXT"; RETURN in the band', 'saves SCREENnn' in line() and path() == b''
+    check('Devices: "PrtSc  saves SCREENnn.BMP / .TXT"; RETURN in the band', 'saves SCREENnn' in line() and path() == b''
           and 'RETURN: the next printer driver' in ' '.join(k.band()), (line(), k.band()))
     seen = []
     for _ in range(3):

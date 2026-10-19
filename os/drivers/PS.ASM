@@ -1,8 +1,8 @@
 ; =====================================================================
 ;  PS.PRN - Lodestone's PostScript printer driver     nasm -f bin
 ;
-;  A printer driver is a file of up to 1 KB.  When Shift-PrtSc is set to
-;  print (PRINTER=PS.PRN in LODE.INI; System, Devices), the kernel reads it
+;  A printer driver is a file of up to 1 KB.  With one set (PRINTER=PS.PRN
+;  in LODE.INI; System, Devices), PrtSc prints: the kernel reads the driver
 ;  at the next safe moment into a 1 KB buffer and calls it far at offset
 ;  0; it prints the screen and returns AL = 0, or AL = 1 if it couldn't.
 ;  Nothing of it stays in memory.  Interrupts are on; it may use the BIOS

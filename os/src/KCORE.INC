@@ -29,6 +29,7 @@ cap_req     resb 1              ; screen capture: 1 asked for (INT 5), 2 under
 cap_lim     resw 1              ; its buffer's size
 prn_path    resb PRN_PATH       ; PrtSc's printer driver ("A:\PS.PRN"; "": files)
 prn_call    resd 1              ; (where it is called)
+cap_file    resb 1              ; Shift was held: a file all the same
 brkflag     resb 1              ; INT 21h 33h
 verify      resb 1              ; INT 21h 2Eh/54h
 kbd_scan    resb 1              ; second half of an extended key
@@ -154,13 +155,23 @@ int27:  add     dx, 15                  ; TSR: DX = bytes from the PSP
 ;  through the disk cache's memory if the Executive or a .RUN is running
 ;  and it can be lent, else 1 KB at the bottom of the kernel stack (the
 ;  stack never gets near it).
-;  With a printer driver set (PRINTER= in LODE.INI, System's Devices) it
-;  is printed instead: the driver, a .PRN file of up to 1 KB, is read into
-;  that same 1 KB at the next safe moment, called far at its offset 0 (it
+;  With a printer driver set (PRINTER= in LODE.INI, System's Devices),
+;  PrtSc alone prints it instead (Shift-PrtSc still saves the file): the
+;  driver, a .PRN file of up to 1 KB, is read into that same 1 KB at the
+;  next safe moment, called far at its offset 0 (it
 ;  reads the screen itself and returns AL = 0 when it has printed it), and
 ;  forgotten.  Nothing of it stays resident.  (drivers/PS.ASM.)
 ; ---------------------------------------------------------------------
-int05:  or      byte [cs:cap_req], 1
+int05:  push    ax                      ; (Shift held: a file, even with a
+        push    ds                      ;  printer driver set)
+        push    0
+        pop     ds
+        mov     al, [417h]
+        pop     ds
+        and     al, 3
+        mov     [cs:cap_file], al
+        or      byte [cs:cap_req], 1
+        pop     ax
         iret
 
 capture:
@@ -188,8 +199,11 @@ capture:
                                         ;  disk behind our back, reading it
                                         ;  through the BIOS: check it first
         push    word [last_err]
+        cmp     byte [cap_file], 0      ; PrtSc with a printer driver: print
+        jne     .file
         cmp     byte [prn_path], 0
         jne     .prn
+.file:
         mov     al, [capdrv]            ; A:, or from the ROM C: (KROM.INC)
         mov     [cap_name], al
         push    0
