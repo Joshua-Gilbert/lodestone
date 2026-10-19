@@ -315,7 +315,8 @@ BIOS's own check ignores them, and now so does Lodestone.  New on this
 disk: CALCTEST.BAT tries the calculator step by step (its answers go to
 CALCTEST.TXT), and FPUPROBE shows what the coprocessor answers.
 
-0.6: Lodestone in ROM.  Burn LODE1.BIN (128 KB) to a 27C010 and put it in
+0.6: Lodestone in ROM.  Burn LODE1_EPROM.BIN (128 KB; LODE1.BIN with its
+halves swapped, as the 1520 wires its sockets) to a 27C010 and put it in
 the second ROM socket (the BIOS starts the last bootable ROM it finds;
 the GRiD MS-DOS EPROM can go in the first).  It starts on C: (or R:).
 R: is the ROM: LODE.SYS, LCMD, System, Write, the calculator, DEFRAG,
@@ -333,6 +334,13 @@ After 0.6: windows that move and close.  Drag the calculator's window
 by its title strip, or press CODE-F7 and move it with the arrow keys
 (Return puts it there, ESC leaves it).  The x at the strip's right end
 closes it, as ESC does.  Programs on the UI core get this with API 6.
+
+Shift-PrtSc can print instead: System, Devices, Return (PRTSC=PRINTER in
+LODE.INI).  The screen goes to the printer on LPT1 as PostScript, as
+TM5000G prints to a Brother laser: a picture across the top of the page
+in the graphics modes, lines of text in the text modes.  One beep when
+it is sent; a long one if the printer is off, busy for 10 s or out of
+paper.  Return again: SCREENnn files as before.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

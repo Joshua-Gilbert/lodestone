@@ -937,6 +937,17 @@ t_devices:
         stosb
 .lx:    mov     si, l_printer
         call    pline
+        call    vstart                  ; what Shift-PrtSc does (the kernel's)
+        mov     bl, 0FFh
+        mov     ax, 0F006h
+        int     21h
+        mov     si, s_prtfile
+        or      al, al
+        jz      .pr
+        mov     si, s_prtprn
+.pr:    call    UI_SBSTR
+        mov     si, l_prtsc
+        call    pline
         call    vstart                  ; floppy drives, from CMOS 10h
         mov     al, 10h
         pushf
@@ -1413,6 +1424,19 @@ sv_steps    db 1, 2, 5, 10, 15, 30, 0   ; minutes (0: never)
 
 NSTEPS      equ $ - sv_steps
 
+; Return on Devices: Shift-PrtSc prints, or saves a file again; saved in
+; LODE.INI (PRTSC=PRINTER), and the kernel told at once
+next_prtsc:
+        mov     bl, 0FFh
+        mov     ax, 0F006h
+        int     21h
+        mov     bl, al
+        xor     bl, 1
+        mov     ax, 0F006h
+        int     21h
+        call    save_ini
+        jmp     redraw
+
 ; Space on Display: the start-up picture or not; on Screen saver: tidy
 ; the disks first, or not
 k_space:
@@ -1702,9 +1726,9 @@ splash_scan:
         jne     .next
         jmp     .line
 
-; FONT=, SAVER=, TIDY=, MDISK= and SPLASH= in \LODE.INI for the font,
-; saver, temporary disk and start-up picture in use: its other lines are
-; kept, old FONT=, SAVER=, TIDY=, MDISK= and SPLASH= lines go, and GRiD's
+; FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRTSC= in \LODE.INI for the
+; font, saver, temporary disk, start-up picture and PrtSc in use: its other
+; lines are kept, old FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRTSC= lines go, and GRiD's
 ; font, the usual 5 minutes, tidying, 256 KB and the picture need none (no
 ; lines left: no file).  Without M: (no EMS) an MDISK= line stays as it
 ; is.  CF if it couldn't be saved (said in the band).
@@ -1748,6 +1772,9 @@ save_ini:
         call    ini_is
         je      .ours
         mov     di, s_splasheq
+        call    ini_is
+        je      .ours
+        mov     di, s_prtsceq
         call    ini_is
         je      .ours
         mov     di, s_mdeq              ; MDISK=: ours only with M: here
@@ -1802,8 +1829,17 @@ save_ini:
         mov     si, s_tidy0
         call    UI_SBSTR
 .wr3:   cmp     byte [splash_off], 0    ; no start-up picture: SPLASH=0
-        je      .wr3m
+        je      .wr3p
         mov     si, s_splash0
+        call    UI_SBSTR
+.wr3p:  push    di                      ; PrtSc prints: PRTSC=PRINTER
+        mov     bl, 0FFh
+        mov     ax, 0F006h
+        int     21h
+        pop     di
+        or      al, al
+        jz      .wr3m
+        mov     si, s_prtscp
         call    UI_SBSTR
 .wr3m:  cmp     byte [md_ok], 0         ; M:'s size, unless 256 KB
         je      .wr4
@@ -1978,6 +2014,8 @@ k_enter:
         mov     bx, [topics+LV_SEL]
         cmp     bx, 2
         je      set_clock
+        cmp     bx, 3
+        je      next_prtsc
         cmp     bx, 4
         je      scan_gpib
         cmp     bx, 5
@@ -2002,6 +2040,7 @@ keys:   KEY(K_NONE,      0,       h_topic)
         KEY(K_NONE,      0,       h_enter3)
         KEY(K_NONE,      0,       h_enter4)
         KEY(K_NONE,      0,       h_enter5)
+        KEY(K_NONE,      0,       h_enter6)
         KEY(K_SPACE,     k_space, h_space)
         KEY(K_NONE,      0,       h_space2)
         KEY(K_F5,        k_f5,    h_f5)
@@ -2018,7 +2057,7 @@ keys:   KEY(K_NONE,      0,       h_topic)
 topics:     dw TOP_Y, NTOPIC, NTOPIC, 0, 0, topic_row, show_topic, 1, PCOL - 3, topic_name
 topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_saver, n_mdisk, n_settings, n_about
 topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_saver, t_mdisk, t_settings, t_about
-topic_band  dw s_band2, s_band2, s_band_clk, s_band2, s_band_gp, s_band_font, s_band_sv, s_band_md, s_band_set, s_band2
+topic_band  dw s_band2, s_band2, s_band_clk, s_band_dev, s_band_gp, s_band_font, s_band_sv, s_band_md, s_band_set, s_band2
 n_memory    db 'Memory',0
 n_disks     db 'Disks',0
 n_clock     db 'Clock',0
@@ -2040,6 +2079,7 @@ s_band1     db 'System: Select a topic',0
 s_band2     db 'CODE-? for help    ESC: back to the Executive',0
 s_band_clk  db 'RETURN: set the date and time    ESC: back',0
 s_band_gp   db 'RETURN: scan the bus    ESC: back',0
+s_band_dev  db 'RETURN: Shift-PrtSc prints or saves a file    ESC: back',0
 s_band_font db 'RETURN: the next font    SPACE: picture or not    ESC: back',0
 s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
 s_band_md   db 'RETURN: the next size    ESC: back',0
@@ -2050,6 +2090,7 @@ h_enter2    db 'Return on GPIB               scan the bus',0
 h_enter3    db 'Return on Display            the next font',0
 h_enter4    db 'Return on Temporary disk M:  the next size',0
 h_enter5    db "Return on Settings           back to the ROM's",0
+h_enter6    db 'Return on Devices            Shift-PrtSc: print or file',0
 h_space     db 'Space on Display             the start-up picture or not',0
 h_space2    db 'Space on Screen saver        tidy the disks or not',0
 h_f5        db 'F5                           look again',0
@@ -2091,6 +2132,7 @@ l_display   db 'Display',0
 l_mouse     db 'Mouse',0
 l_serial    db 'Serial ports',0
 l_printer   db 'Printer port',0
+l_prtsc     db 'Shift-PrtSc',0
 l_floppy    db 'Floppy drives',0
 l_hdisk     db 'Hard disk',0
 s_286       db '80286',0
@@ -2188,6 +2230,10 @@ s_tidy0     db 'TIDY=0', 13, 10, 0
 s_splasheq  db 'SPLASH=',0
 s_splash0   db 'SPLASH=0', 13, 10, 0
 s_mdeq      db 'MDISK=',0
+s_prtsceq   db 'PRTSC=',0
+s_prtscp    db 'PRTSC=PRINTER', 13, 10, 0
+s_prtfile   db 'saves SCREENnn.BMP / .TXT',0
+s_prtprn    db 'prints on LPT1 (PostScript)',0
 s_mdalleq   db 'ALL',0
 l_mdsize    db 'Size',0
 l_mdfree    db 'Free',0

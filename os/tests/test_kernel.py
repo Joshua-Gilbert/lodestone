@@ -293,6 +293,53 @@ def t_capture():
           beeps() == 4 and sorted(files()) == before and not probs and sum(1 for a in calls21 if a >> 8 == 0x40) == 1,
           (beeps(), sorted(files()), probs, [hex(a) for a in calls21]))
 
+
+def t_print():
+    """PRTSC=PRINTER in LODE.INI: Shift-PrtSc sends the screen to LPT1 as
+    PostScript (the Brother HL-5370DW's language) instead of a file."""
+    import binascii
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'PRTSC=Printer\r\n')
+    k = ktest.KPC(image('prn.img', os.path.join(HERE, 'CAPTEST.COM'), ini)); k.start()
+    files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    beeps = lambda: ''.join(k.pc.tty).count('\x07')
+    def shot(sim_s=8.0):
+        k.pc.tty.clear(); k.pc.lpt.clear(); k.pc.prtsc(); k.settle(sim_s)
+        return bytes(k.pc.lpt)
+    check('PRTSC=Printer in LODE.INI: the kernel prints (any case)', k.rd('cap_prn', 1) == b'\1', k.rd('cap_prn', 1))
+    vram = k.pc.rd(0xB800, 0, 0x8000)
+    out = shot()
+    head, _, rest = out.partition(b'image\n')
+    rows = rest.split(b'\n')
+    want = [bytes(255 - v for v in vram[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]) for y in range(399, -1, -1)]
+    check('Executive: PostScript to LPT1, a 640 x 400 image, one beep, no file',
+          out.startswith(b'%!PS-Adobe-3.0\n') and b'640 400 1[640 0 0 400 0 0]' in head and out.endswith(b'showpage\n\x04')
+          and beeps() == 1 and not any('SCREEN' in n for n in files()), (out[:80], out[-20:], beeps(), sorted(files())))
+    check('... the screen, bottom line first, a lit pixel black (0), 80 bytes a line in hex',
+          [binascii.unhexlify(r) for r in rows[:400]] == want and rows[400] == b'showpage', (len(rows), rows[400:401]))
+    k.select('CAPTEST.COM'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: k.pc.mode() == 6, 5); k.settle()
+    out = shot()
+    rows = out.partition(b'image\n')[2].split(b'\n')
+    check('mode 6: the image, each line twice', [binascii.unhexlify(r) for r in rows[:400]] ==
+          [bytes([255 - (y >> 1)]) * 80 for y in range(399, -1, -1)] and beeps() == 1, beeps())
+    k.key(ktest.ENTER); out = shot()
+    lines = out.partition(b'def}def\n')[2].split(b'\n')
+    check('text: 25 lines in Courier, each "(...)l"', b'/Courier findfont' in out and len(lines) == 27 and
+          all(l.startswith(b'(') and l.endswith(b')l') for l in lines[:25]) and lines[25] == b'showpage', lines[:5])
+    check('... as the screen has them (80 columns, the NUL a blank)', lines[0] == b'(' + b'Line one'.ljust(80) + b')l'
+          and lines[3] == b'(' + b'ABCDE GHIJ'.ljust(80) + b')l', lines[:4])
+    # ( ) and \ are escaped; the PC's own graphics characters print as ?
+    k.pc.wr(0xB800, 0, b'(\x07)\x07\\\x07\xC9\x07'); out = shot()
+    check('( ) and \\ escaped, a box-drawing character as ?', b'\n(\\(\\)\\\\?' in out, out[:200])
+    # the printer busy for good: 10 s, then the long beep, nothing more sent
+    k.pc.lpt_status = 0x11; out = shot(14.0); k.pc.lpt_status = 0x90
+    check('printer busy 10 s: the long beep, nothing sent', out == b'' and beeps() == 4, (out[:20], beeps()))
+    k.pc.lpt_status = 0x38; out = shot(); k.pc.lpt_status = 0x90
+    check('out of paper: the long beep at once', out == b'' and beeps() == 4, (out[:20], beeps()))
+    k.pc.wr(0, 0x408, b'\0\0'); out = shot(); k.pc.wr(0, 0x408, b'\x78\x03')
+    check('no LPT1: the long beep', out == b'' and beeps() == 4, (out[:20], beeps()))
+    check('still no file', not any('SCREEN' in n for n in files()), sorted(files()))
+
 def mcbs(k):
     """The arena: (segment, type, owner, size, name) of each block."""
     seg, out = first_mcb(k), []
@@ -1390,7 +1437,7 @@ def t_calc():
     o = sh.run('calc 6*7 > full.txt || echo EL')
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
-TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_cache, t_cache_ems, t_mdisk,
+TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
          t_mdreview, t_lodeboot, t_command, t_cmdedit, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
