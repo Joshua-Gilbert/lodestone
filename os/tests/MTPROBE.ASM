@@ -1,5 +1,6 @@
-; MTPROBE.COM - INT 21h AH=F0h with AL = 00h, 10h, 11h, 12h (no room:
-; CX = 0), 13h and FFh, for test_mt.py: one line each,
+; MTPROBE.COM - INT 21h AH=F0h with AL = 00h, 11h (not from a task's
+; stub), 12h (no room: CX = 0), 13h (BL = 0, the Executive), 14h, 1Bh and
+; FFh, for test_mt.py: one line each,
 ;   "F0xx CF=c AX=xxxx BX=xxxx CX=xxxx"
 ; (CF set and BX = CX = 1234h before each call, so what changed shows)
 ; nasm -f bin -o MTPROBE.COM MTPROBE.ASM
@@ -20,7 +21,10 @@ org 100h
         cmp     al, 12h
         jne     .c
         xor     cx, cx                  ; MT_LIST with no room: counted only
-.c:     stc
+.c:     cmp     al, 13h
+        jne     .c1
+        xor     bx, bx                  ; MT_FRONT: task 0
+.c1:    stc
         int     21h
         pushf
         push    cx
@@ -84,7 +88,7 @@ chr:    push    dx
         pop     dx
         ret
 
-als     db      00h, 10h, 11h, 12h, 13h, 0FFh, 0EEh
+als     db      00h, 11h, 12h, 13h, 14h, 1Bh, 0FFh, 0EEh
 s_f0    db      'F0$'
 s_cf    db      ' CF=$'
 s_ax    db      ' AX=$'
