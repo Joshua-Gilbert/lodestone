@@ -3150,8 +3150,11 @@ ui_findapp:
         mov     [di], al
         inc     di
         or      al, al
-        jnz     .c
-        dec     di
+        jz      .end
+        cmp     di, app_path + 64       ; (a longer one: cut, as the rest
+        jb      .c                      ;  won't be found anyway)
+        jmp     short .e
+.end:   dec     di
         dec     si                      ; (on the end: the last one)
 .e:     cmp     di, app_path            ; (an empty one: none)
         je      .nx

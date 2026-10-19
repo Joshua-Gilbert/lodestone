@@ -95,6 +95,19 @@ Measured in pcemu by `tests/test_rom.py t_memory`: a DOS program's KB.
 
 **Without the ROM, 0.6 costs 0.1 KB against 0.4.5 (562.2 / 578.3 KB, was 562.3 / 578.4).** That is the PATH search in the Executive and the two-file settings reader. With the ROM in, R:'s module adds 446 bytes.
 
+## Review (2026-10-18)
+
+An independent review found three bugs, all fixed and tested:
+- The menu offered any other system-type-1 image as GRiD MS-DOS. GRiD's application ROMs are type 1 too, with no boot sector. It now checks the bootable flag (BB66h, 80h), as the BIOS does.
+- ini_read could read the second file past its buffer when the first was 4 KB or more. It now stops when there's no room.
+- Started with the ROM's own settings (the menu's 2), saving in System would have replaced the changes file's settings with the ROM's. System now says "not saved this time" instead.
+
+Also from the review:
+- Started from the external floppy (B:), captures go to B: again.
+- M: turned off while current goes back to R:, not A:.
+- A PATH entry too long for the search buffer is cut.
+- pcemu now refuses E402-E404 without E401's DS, as the BIOS does.
+
 ## Tests
 
 - **`tests/test_rom.py`** covers:

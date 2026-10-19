@@ -524,7 +524,25 @@ rm_dosimg:
         cmp     ah, 1
         jne     .n
         cmp     bx, R_ID
-        jne     .y
+        je      .n
+        push    es                      ; bootable, as the BIOS checks it: its
+        push    dx                      ;  trailer's BB66h and 80h (GRiD's
+        cli                             ;  application ROMs are system type 1
+        mov     ax, 0E403h              ;  too, without a boot sector)
+        int     15h
+        mov     ax, R_WIN + 1FF0h
+        mov     es, ax
+        cmp     word [es:0], 0BB66h
+        jne     .nb
+        cmp     byte [es:3], 80h
+.nb:    pushf
+        mov     ax, 0E404h
+        int     15h
+        popf
+        sti
+        pop     dx
+        pop     es
+        je      .y
 .n:     inc     dl
         jmp     .l
 .y:     mov     al, dl
@@ -618,7 +636,12 @@ s_rmcr  db      13, 10, 0
 ;  the settings' drive and the master environment's PATH.
 ; ---------------------------------------------------------------------
 rs_boot:
-        cmp     byte [es:bootdrv], R_DRV
+        mov     al, [es:bootdrv]        ; from a floppy: captures on it (A:, or
+        cmp     al, 2                   ;  B: from the external drive)
+        jae     .r
+        add     al, 'A'
+        mov     [es:capdrv], al
+.r:     cmp     byte [es:bootdrv], R_DRV
         jne     .x
         mov     dl, R_DRV               ; the current drive: C:, else R:
         cmp     byte [es:drvtab + 2 * DRVSZ + D_PRES], 0
@@ -707,6 +730,8 @@ ini_read:
         ret
 .one:   or      al, al
         jz      .r
+        cmp     di, INI_BUF + 4000      ; (room left for another file?)
+        jae     .r
         add     al, 'A' - 1
         mov     [MDB(s_rini)], al
         mov     dx, MDB(s_rini)

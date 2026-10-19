@@ -254,6 +254,11 @@ def t_settings():
     a = floppy('rom_set.img', os.path.join(OUT, 'LODE.INI'))
     k = boot(a)
     check('no C:, A:\\LODE.INI over the ROM\'s', u8(k, 'setdrv') == 1 and TS.ON not in [m[0] for m in k.pc.marks])
+    big = b'SAVER=10\r\n' + b'; padding\r\n' * 410          # (past the 4 KB the readers take)
+    k = boot(ata=sysinfo_hd(('LODE.INI', big)), ems_pages=88)
+    ui = k.pc.u16(0x60, k.Y['ui_seg'])
+    check('a C:\\LODE.INI of %d bytes: started, its SAVER= taken' % len(big), not k.crashed
+          and k.pc.mode() == 0x40 and k.pc.rd(ui, k.Y['saver_min'], 1)[0] == 10, (k.pc.crash, k.pc.rd(ui, k.Y['saver_min'], 1)))
     k = ktest.KPC(None, roms={1: rom()})
     k.pc.boot_rom(1); k.settle(25)
     check('no drive A: and no C:: started, the ROM\'s settings', not k.crashed and k.pc.mode() == 0x40
@@ -300,6 +305,11 @@ def t_menu():
               '%04X:%04X' % (k.pc.r('cs'), k.pc.r('ip')))
     else:
         print('   (GRiD MS-DOS: skipped, no EPROM image)')
+    other = mkrom.image(b'\xEB\xFE', sys_type=1, bootable=0, rom_id=0x1234)
+    k = ktest.KPC(floppy('rom_m5.img'), roms={0: other, 1: rom()})
+    k.pc.wr(0, 0x417, [SHIFT]); k.pc.boot_rom(1); k.settle(10)
+    check('a GRiD application ROM (system type 1, not bootable) in the other socket: no 3', '1  Lodestone' in k.pc.text_screen()
+          and '3  GRiD MS-DOS' not in k.pc.text_screen(), k.pc.text_screen())
     fl = floppy('rom_m4.img', A.SYS, LCMD)
     k = boot(fl, shift=True, keys=[ord('4')])
     check('4: the floppy (Lodestone from A:)', has(k, 'Floppy A:') and u8(k, 'bootdrv') == 0, A.screen(k))
@@ -325,6 +335,23 @@ def t_system():
     asked = any('Confirm' in l for l in k.band())
     k.key(ktest.ENTER)                                          # Return confirms
     check('Return: asks, then back to the ROM\'s (C:\\LODE.INI gone)', hd_file(k, 'LODE.INI') is None, (asked, k.band()))
+
+
+def t_nosave():
+    print('== started with the ROM\'s own settings: changes not saved over the file')
+    k = boot(ata=sysinfo_hd(('LODE.INI', b'SAVER=10\r\nSPLASH=0\r\n')), shift=True, keys=[ord('2')])
+    k.key(CODE['U'])
+    for _ in range(6): k.key(ktest.DOWN)                        # Screen saver
+    k.key(ktest.ENTER)
+    said = ' '.join(k.band())
+    k.key(ktest.ESC); k.key(ktest.ESC)
+    check('a change is not saved, and it says so; C:\\LODE.INI as it was', hd_file(k, 'LODE.INI') == b'SAVER=10\r\nSPLASH=0\r\n'
+          and 'not saved this time' in said, (said, hd_file(k, 'LODE.INI')))
+    img = floppy('rom_b.img')
+    b = floppy('rom_bb.img', A.SYS, LCMD)
+    k = ktest.KPC(img, b, roms={1: rom()})
+    k.pc.boot(1); k.settle(25)
+    check('started from a floppy in B:: captures on B:, as before 0.6', u8(k, 'bootdrv') == 1 and u8(k, 'capdrv') == ord('B'), u8(k, 'capdrv'))
 
 
 def t_paths():
@@ -366,7 +393,7 @@ if __name__ == '__main__':
     t0 = time.time()
     if 'nobuild' not in sys.argv: build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_paths, t_memory):
+    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_memory):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

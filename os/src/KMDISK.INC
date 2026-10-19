@@ -272,10 +272,7 @@ md_entry:
         jne     .c                      ;  drive: the one Lodestone started from
         cmp     byte [cur_drv], MD_DRV
         jne     .c
-        mov     al, [bootdrv]
-        cmp     al, NDRV
-        jb      .cd
-        xor     al, al
+        mov     al, [bootdrv]           ; (A:, B:, or from the ROM R:)
 .cd:    mov     [cur_drv], al
 .c:     mov     al, [cs:md_pg]
         call    md_kbof

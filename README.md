@@ -203,11 +203,11 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 1255 checks pass on 0.6 (2026-10-18); claude-link's own are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 1259 checks pass on 0.6 (2026-10-18); claude-link's own are in `claude-link/tests`.
 
 ```sh
 cd os
-python3 tests/test_rom.py             # 75 checks: 0.6, booting from the ROM: the image, the real BIOS (which socket boots; E400-E404), R:, settings, the menu, PATH, memory
+python3 tests/test_rom.py             # 79 checks: 0.6, booting from the ROM: the image, the real BIOS (which socket boots; E400-E404), R:, settings, the menu, PATH, memory
 python3 tests/test_kernel.py          # 360 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt, CALC
 python3 tests/test_apps.py            # 401 checks: UI core, Executive, System, Write, mouse, files, the calculator and the coprocessor lamp (add "shots" for screens/0.3)
 python3 tests/test_splash.py          # 62 checks: the start-up picture, bit for bit on every start-up path; SPLASH=, LODE.PIC, System's switch, memory
