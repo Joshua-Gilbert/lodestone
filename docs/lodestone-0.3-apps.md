@@ -336,7 +336,7 @@
   - A DOS program that reads the keyboard straight from the BIOS gets the picture at its next DOS call.
   - It runs on the kernel stack. Its own create, write, close and erase calls nest on the critical-error stack (about 90 of its 512 bytes in pcemu).
 - **The files:** `SCREEN01.BMP` … `SCREEN99.BMP`, or `SCREEN01.TXT` …, in the root of the boot drive. Each extension is numbered on its own, and create-new (5Bh) finds the first number free.
-  - **Graphics:** a 640 × 400, 1-bit BMP with the Windows 3 header, 32,062 bytes, in brown (28, 12, 0) and amber (255, 170, 50), the colours of the README's emulator shots. Modes 40h, 48h and 74h read four banks. The 200-line modes (4 to 6) read two banks and write each line twice; modes 4 and 5 come out as their bit patterns.
+  - **Graphics:** a 640 × 400, 1-bit BMP with the Windows 3 header, 32,062 bytes, in dark red (36, 8, 2) and orange (255, 120, 40), the 1520 plasma's colours and the README's (brown and amber before 2026-10-19). Modes 40h, 48h and 74h read four banks. The 200-line modes (4 to 6) read two banks and write each line twice; modes 4 and 5 come out as their bit patterns.
   - **Text** (modes 0–3): the shown page (40:4Eh) as 25 lines of 40 or 80 columns (40:4Ah), without trailing blanks, NUL as a blank, ending CR LF.
   - The mouse pointer is in the picture if it's on the screen.
 - **Written in big pieces.** The kernel writes straight to the disk, so a first build that wrote each 80-byte line on its own cost a disk turn per line: 94 s for one picture on pcemu's real-floppy timing. The capture now writes through a buffer:
