@@ -21,11 +21,15 @@ F_USP   equ 26                  ; where the frame lives on the caller's stack
 F_USS   equ 28
 F_SIZE  equ 30
 
+PRN_PATH equ 24                         ; ("C:\LODE\" and an 8.3 name, and its end)
 section .bss
 indos       resb 1              ; INT 21h nesting depth
 cap_req     resb 1              ; screen capture: 1 asked for (INT 5), 2 under
                                 ;  way, 4 a write failed (word with indos)
 cap_lim     resw 1              ; its buffer's size
+prn_path    resb PRN_PATH       ; PrtSc's printer driver ("A:\PS.PRN"; "": files)
+prn_call    resd 1              ; (where it is called)
+cap_file    resb 1              ; Shift was held: a file all the same
 brkflag     resb 1              ; INT 21h 33h
 verify      resb 1              ; INT 21h 2Eh/54h
 kbd_scan    resb 1              ; second half of an extended key
@@ -151,8 +155,24 @@ int27:  add     dx, 15                  ; TSR: DX = bytes from the PSP
 ;  through the disk cache's memory if the Executive or a .RUN is running
 ;  and it can be lent, else 1 KB at the bottom of the kernel stack (the
 ;  stack never gets near it).
+;  With a printer driver set (PRINTER= in LODE.INI, System's Devices),
+;  PrtSc alone prints it instead (Shift-PrtSc still saves the file): the
+;  driver, a .PRN file of 16 bytes to 1 KB starting with a JMP SHORT and
+;  "PRN", 1, is read into that same 1 KB at the next safe moment, called
+;  far at its offset 0 (it
+;  reads the screen itself and returns AL = 0 when it has printed it), and
+;  forgotten.  Nothing of it stays resident.  (drivers/PS.ASM.)
 ; ---------------------------------------------------------------------
-int05:  or      byte [cs:cap_req], 1
+int05:  push    ax                      ; (Shift held: a file, even with a
+        push    ds                      ;  printer driver set)
+        push    0
+        pop     ds
+        mov     al, [417h]
+        pop     ds
+        and     al, 3
+        mov     [cs:cap_file], al
+        or      byte [cs:cap_req], 1
+        pop     ax
         iret
 
 capture:
@@ -180,6 +200,11 @@ capture:
                                         ;  disk behind our back, reading it
                                         ;  through the BIOS: check it first
         push    word [last_err]
+        cmp     byte [cap_file], 0      ; PrtSc with a printer driver: print
+        jne     .file
+        cmp     byte [prn_path], 0
+        jne     .prn
+.file:
         mov     al, [capdrv]            ; A:, or from the ROM C: (KROM.INC)
         mov     [cap_name], al
         push    0
@@ -306,6 +331,8 @@ capture:
 .del:   mov     ah, 41h                 ; not all of it: none of it
         mov     dx, cap_name
         int     21h
+.pcl:   mov     ah, 3Eh
+        int     21h
 .f4:    mov     cx, 4                   ; a long beep
 .beep:  mov     al, 7
 .b:     call    tty_out
@@ -316,6 +343,58 @@ capture:
         pop     ds
         popa
         ret
+
+; the printer driver: up to 1 KB, into the 1 KB at the kernel stack's
+; bottom, then called there (AL = 0: printed)
+.prn:   mov     dx, prn_path
+        mov     ax, 3D00h
+        int     21h
+        jc      .f4
+        xchg    bx, ax
+        mov     ax, 4202h               ; its size (1 KB at most)
+        xor     cx, cx
+        cwd
+        int     21h
+        or      dx, dx
+        jnz     .pcl
+        cmp     ax, 1024
+        ja      .pcl
+        cmp     ax, 16                  ; (and 16 bytes at least)
+        jb      .pcl
+        push    ax
+        mov     ax, 4200h
+        cwd
+        int     21h
+        pop     cx
+        mov     ax, kstack_end + 15
+        shr     ax, 4
+        add     ax, KSEG
+        mov     es, ax
+        mov     [prn_call+2], ax
+        mov     word [prn_call], 0
+        push    es
+        pop     ds
+        xor     dx, dx
+        mov     ah, 3Fh
+        int     21h
+        push    cs
+        pop     ds
+        jc      .pcl
+        cmp     ax, cx
+        jne     .pcl
+        cmp     word [es:2], 'PR'       ; a driver's signature: JMP SHORT,
+        jne     .pcl                    ;  then "PRN", 1 (a print job saved
+        cmp     word [es:4], 'N' + 100h ;  as .PRN is no driver: not run)
+        jne     .pcl
+        mov     ah, 3Eh
+        int     21h
+        call    far [prn_call]
+        push    cs
+        pop     ds
+        mov     cx, 1
+        or      al, al
+        jz      .beep
+        jmp     .f4
 
 ; AL to the file (BX) through the buffer at ES:DI; full, it is written
 ; (cap_fl).  A write that fails sets cap_req bit 2.
@@ -1196,6 +1275,8 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ;   AL = 1: DL = drive (0 = A:) -> CX = files open on it
 ;   AL = 5: the Executive's screen saver, for a program at its prompt:
 ;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
+;   AL = 6: PrtSc's printer driver -> ES:BX = its path ("": files), CX =
+;           its room (the caller changes it there)
 f_F0:   mov     al, [bp+F_AX]
         or      al, al
         jnz     .1
@@ -1204,6 +1285,8 @@ f_F0:   mov     al, [bp+F_AX]
         jmp     ok_ax
 .1:     cmp     al, 2
         je      .lend
+        cmp     al, 6
+        je      .prn
         cmp     al, 3
         je      .back
         cmp     al, 4
@@ -1238,6 +1321,12 @@ f_F0:   mov     al, [bp+F_AX]
         mov     word [bp+F_BX], ui_saver_far
         mov     ax, [es:saver_t]
         jmp     ok_ax
+; AL=6: PrtSc's printer driver -> ES:BX = its path ("A:\PS.PRN"; "": none,
+; PrtSc saves files), CX = the room there: the caller changes it in place
+.prn:   mov     [bp+F_ES], cs
+        mov     word [bp+F_BX], prn_path
+        mov     word [bp+F_CX], PRN_PATH
+        jmp     ok
 ; AL=4: the UI segment has moved to BX (where the root process restarts)
 .useg:  mov     ax, [bp+F_BX]
         mov     [ui_seg], ax
