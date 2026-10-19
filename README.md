@@ -19,10 +19,10 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 
 | ![Claude Code on the GRiD](os/screens/readme/claude_code.png) | ![A plot from Claude Code](os/screens/readme/claude_plot.png) |
 | Claude Code on the GRiD (`CLAUDE /T`), measuring a terminator on an HP 8753D over GPIB | **On the real 1520:** an 8753D S11 trace plotted by Claude Code's `grid_plot`, saved with Shift-PrtSc |
-| ![gridfox](os/screens/readme/gridfox.png) | |
-| gridfox (`CLAUDE /W`): Firefox on the Pi, browsed from the GRiD as text | |
+| ![gridfox, text view](os/screens/readme/gridfox.png) | ![gridfox, picture view](os/screens/readme/gridfox_picture.png) |
+| gridfox (`CLAUDE /W`): Firefox on the Pi, browsed from the GRiD as text | **On the real 1520:** gridfox's picture view, the page as Firefox draws it, in one bit (Esc goes back to text) |
 
-*Screenshots from the emulator (`os/screens/readme_shots.py` and `claude-link/tests/readme_shots.py`), drawn as the 1520's amber plasma shows them. In the Claude Code and gridfox shots the session is scripted, standing in for Claude Code and Firefox; the GRiD side and the link are the real ones. The plot is a capture from the real 1520.*
+*Screenshots from the emulator (`os/screens/readme_shots.py` and `claude-link/tests/readme_shots.py`), drawn as the 1520's amber plasma shows them. In the Claude Code and gridfox text shots the session is scripted, standing in for Claude Code and Firefox; the GRiD side and the link are the real ones. The plot and the picture view are captures from the real 1520.*
 
 ## What's in it
 
