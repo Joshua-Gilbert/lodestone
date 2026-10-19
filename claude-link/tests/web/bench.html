@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Bench notes: HP 8753D</title></head>
+<body>
+<nav><a href="index">Home</a> | <a href="long">Instruments</a> | <a href="search">Search</a></nav>
+<h1>HP 8753D network analyzer</h1>
+<p>300 kHz to 3 GHz, two ports with the S-parameter test set. GPIB address 16 on the bench bus;
+the external reference input on the rear panel takes the bench's 10 MHz.</p>
+<h2>Getting a trace over GPIB</h2>
+<ol>
+<li>Set the sweep: <code>STAR 300KHZ;STOP 3GHZ;POIN 1601</code></li>
+<li>Pick the measurement and format: <code>S21;LOGM</code></li>
+<li>Take one sweep and wait for it: <code>SING;OPC?</code></li>
+<li>Read it as ASCII: <code>FORM4;OUTPFORM</code> (two numbers a point)</li>
+</ol>
+<h2>Formats</h2>
+<table>
+<tr><th>Command</th><th>Data</th><th>Bytes a point</th></tr>
+<tr><td>FORM4</td><td>ASCII</td><td>about 50</td></tr>
+<tr><td>FORM3</td><td>64-bit float</td><td>16</td></tr>
+<tr><td>FORM2</td><td>32-bit float</td><td>8</td></tr>
+</table>
+<p>See also: <a href="long">calibration kits</a>, <a href="search">the programming guide</a>.</p>
+</body></html>
