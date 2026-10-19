@@ -1,5 +1,5 @@
 ; =====================================================================
-;  UIAPI.INC - the Lodestone UI core as programs see it (API version 5)
+;  UIAPI.INC - the Lodestone UI core as programs see it (API version 6)
 ;
 ;  The UI core lives in the UI segment with the Executive.  A .RUN
 ;  program is loaded into the same segment, above the core, and calls it
@@ -38,9 +38,10 @@
 ; =====================================================================
 
         cpu     286
-UI_API      equ 5                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
+UI_API      equ 6                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
                                         ;  4: UI_SAVER's tidying, 5: the caller's redraw
-                                        ;  routine stays, exit code 0FFFFh)
+                                        ;  routine stays, exit code 0FFFFh, 6: W_FLAGS,
+                                        ;  windows that move and close, EV_MOVED)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Lodestone version (BH major, BL minor
@@ -74,6 +75,10 @@ UI_EVENT    equ 20 * 3  ; wait for an event -> AX = BIOS key (AL = ASCII,
                         ;  AH = scan code), or AX = EV_CLICK with BX = x, CX = y.
                         ;  The pointer shows while it waits.  The clock in the
                         ;  title bar and the screen saver are handled here.
+                        ;  The top window's title strip too (API 6, W_FLAGS):
+                        ;  a press there drags a WF_MOVE window, CODE-F7 moves
+                        ;  it with the arrow keys, then AX = EV_MOVED; a click
+                        ;  on a WF_CLOSE window's close box gives K_ESC
 UI_POLL     equ 21 * 3  ; the same without waiting: CF set if nothing happened
                         ;  (then AX, BX, CX are unchanged).  The pointer stays hidden.
 UI_TICK     equ 22 * 3  ; -> AX = BIOS tick count (18.2 per second)
@@ -110,7 +115,8 @@ UI_EDIT     equ 36 * 3  ; line editor: SI = ASCIIZ buffer, BP = most characters,
                         ;  replaces the text, an editing key keeps it
                         ;  -> AX = the key that ended it (Return, ESC, Tab,
                         ;  Shift-Tab, Up, Down, PgUp, PgDn, F1, a CODE key) or
-                        ;  EV_CLICK (BX = x, CX = y)
+                        ;  EV_CLICK (BX = x, CX = y).  In a window that moves
+                        ;  (API 6), the field moves with it and editing goes on
 UI_FORM     equ 37 * 3  ; SI = form (F_* below): a window with the fields;
                         ;  Return goes to the next field and confirms on the
                         ;  last -> CF set if cancelled with ESC
@@ -144,6 +150,8 @@ UI_LAST     equ 46 * 3
 FONT_BYTES  equ 96 * 16                 ; a font file (.FNT): exactly this long
 
 EV_CLICK    equ 0FF01h                  ; a left-button press (BX = x, CX = y)
+EV_MOVED    equ 0FF02h                  ; the top window was moved (API 6): its
+                                        ;  W_COL and W_Y are new, and it is drawn there
 
 ; ---- keys (BIOS INT 16h codes; CODE is the Alt key) -------------------
 ; The core reads keys with INT 16h AH=10h: the 1520's BIOS gives CODE with
@@ -178,6 +186,7 @@ K_CPGDN     equ 7600h
 K_F1        equ 3B00h
 K_F2        equ 3C00h
 K_F5        equ 3F00h
+K_CODE_F7   equ 6E00h                   ; move the top window (API 6)
 K_CODE_ENTER equ 1C00h
 K_CODE_ESC  equ 0100h
 K_CODE_A    equ 1E00h
@@ -219,8 +228,13 @@ W_W         equ 4                       ; width in bytes
 W_H         equ 6                       ; height in pixels
 W_TITLE     equ 8                       ; ASCIIZ (0 = no title strip)
 W_DRAW      equ 10                      ; contents (BX = the window), 0 = none
-W_SIZE      equ 12
+W_FLAGS     equ 12                      ; WF_* (API 6; a .RUN for API 5 or older
+                                        ;  has 12-byte windows: no flags)
+W_SIZE      equ 14
 W_TOP       equ 24                      ; first text row inside a titled window
+WF_MOVE     equ 1                       ; the user may move it by its title strip
+WF_CLOSE    equ 2                       ; a close box at the title strip's right
+                                        ;  end: a click on it is K_ESC
 
 ; ---- list view: LV_SIZE bytes -----------------------------------------
 LV_Y        equ 0                       ; first row's pixel y (multiple of 4)

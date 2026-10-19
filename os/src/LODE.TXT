@@ -329,6 +329,11 @@ the ROM's own settings; GRiD MS-DOS (when it is in the other socket);
 or the floppy.  This floppy still starts Lodestone as before (tap F),
 and R: is there then too.
 
+After 0.6: windows that move and close.  Drag the calculator's window
+by its title strip, or press CODE-F7 and move it with the arrow keys
+(Return puts it there, ESC leaves it).  The x at the strip's right end
+closes it, as ESC does.  Programs on the UI core get this with API 6.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title

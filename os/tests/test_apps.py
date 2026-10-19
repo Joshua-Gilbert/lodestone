@@ -437,8 +437,9 @@ def t_memory():
     kb = float(m.group(1)) if m else 0
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
-          'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB): the directory buffer is lent while it runs' % kb,
-          kb >= 562.2, out[-200:])
+          'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
+          'windows that move and close (UI API 6) 0.5 KB): the directory buffer is lent while it runs' % kb,
+          kb >= 561.7, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -1620,7 +1621,7 @@ def t_calc():
     Devices, and CALC.RUN, the window over the Executive (CODE-K)."""
     print('== the calculator, and the coprocessor lamp')
     hdr = open(CALCRUN, 'rb').read(6)
-    check('CALC.RUN needs API 5 (the caller\'s redraw stays, exit code 0FFFFh)', hdr == b'GRUN\x05\x00', hdr)
+    check('CALC.RUN needs API 6 (its window moves and closes; API 5: the caller\'s redraw stays, exit code 0FFFFh)', hdr == b'GRUN\x06\x00', hdr)
     hdrs = [open(f, 'rb').read(6) for f in (SYSTEM, WRITE, UITEST)]
     check('SYSTEM, WRITE and UITEST declare RUN_API 4 (a floppy with an older LODE.SYS still runs them)',
           hdrs == [b'GRUN\x04\x00'] * 3, hdrs)
@@ -1749,6 +1750,123 @@ def t_calc():
     k.key(ktest.F1)
     check('the Executive\'s help lists CODE-K', has(k, 'CODE-K') and has(k, 'Calculator'), screen(k))
     k.key(ktest.ESC)
+
+def point(k, x, y):
+    """Move the pointer to (x, y), no button."""
+    dx, dy = x - k.u16('mx'), y - k.u16('my')
+    while dx or dy:
+        sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+        k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+        dx -= sx; dy -= sy
+    k.settle()
+
+def drag(k, x0, y0, x1, y1):
+    """Press the left button at (x0, y0), move to (x1, y1) holding it, release."""
+    point(k, x0, y0)
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05)
+    dx, dy = x1 - x0, y1 - y0
+    while dx or dy:
+        sx, sy = max(-40, min(40, dx)), max(-40, min(40, dy))
+        k.pc.mouse_move(sx & 0xFF, sy & 0xFF, 1); k.pc.run_for(0.05)
+        dx -= sx; dy -= sy
+    k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+
+def t_calc_move():
+    """The calculator's window moves (API 6): its title strip dragged with the
+    mouse, CODE-F7 and the arrow keys; its close box closes it."""
+    print('== the calculator\'s window moves and closes (API 6)')
+    img = image('calcmv.img', CALCRUN, os.path.join(GOS, 'src', 'LCMD.COM'))
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    sy = run_syms('apps/CALC.ASM')
+    def win():
+        a = k.u16('run_base') + sy['win']
+        return k.pc.u16(k.useg, a), k.pc.u16(k.useg, a + 2)
+    def title_at():
+        """(column, y) where "Calculator" is drawn (the pointer put back where it
+        starts, out of the way)."""
+        point(k, 320, 200)
+        for y, l in k.ocr():
+            if 'Calculator' in l: return l.index('Calculator'), y
+    def ans(): return [l.strip() for l in lines(k) if l.strip().startswith('=')]
+    def parked():
+        """The screen under the title, the pointer back where it was at the start."""
+        point(k, 320, 200); return below_title(k)
+    scr0 = below_title(k)
+    k.key(CODE['K'])
+    check('it opens where it always did: column 41, row 28, the title at column 43',
+          win() == (41, 28) and title_at() == (43, 32), (win(), title_at()))
+    check('a close box, a dark cell, at the title strip\'s right end (column 77)',
+          77 not in lit_cells(k, 32, range(70, 79)) and 76 in lit_cells(k, 32, range(70, 79)), lit_cells(k, 32, range(70, 79)))
+    # the close box
+    click(k, 77 * 8 + 4, 36)
+    check('a click on the close box closes it: exit code 0FFFFh, the screen exactly as before',
+          not has(k, 'Calculator') and run_ret(k) == 0xFFFF and parked() == scr0, (hex(run_ret(k)), screen(k)))
+    # dragged by its title
+    k.key(CODE['K'])
+    k.key('12')
+    drag(k, 50 * 8 + 3, 36, 30 * 8 + 3, 76)
+    check('dragged by its title 20 columns left, 40 rows down: there now, drawn there',
+          win() == (21, 68) and title_at() == (23, 72), (win(), title_at(), screen(k)))
+    k.key('3'); k.key(ktest.ENTER)
+    check('the line editor moved with it and goes on where it was: 123', ans() == ['= 123'], (ans(), screen(k)))
+    ky = 68 + 80
+    def key_xy(r, c): return (22 + 6 * c + 3) * 8, ky + 24 * r + 12
+    for r, c in ((0, 0), (1, 3), (1, 2), (4, 3)):
+        click(k, *key_xy(r, c))
+    check('its keys work where it is now: 7 * 6 = 42', ans() == ['= 42'], (ans(), screen(k)))
+    # the keyboard: CODE-F7, arrows, Return; ESC leaves it
+    k.key(0x6E00, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.DOWN, ktest.DOWN, ktest.ENTER)
+    check('CODE-F7, Left x3, Down x2, Return: 3 columns left, 8 rows down', win() == (18, 76) and title_at() == (20, 80),
+          (win(), title_at()))
+    k.key(0x6E00, ktest.RIGHT, ktest.UP, ktest.ESC)
+    check('... CODE-F7, moved, then ESC: where it was', win() == (18, 76) and title_at() == (20, 80), (win(), title_at()))
+    check('... and the calculator still has the answer, and keeps going', has(k, '= 42'), screen(k))
+    # kept on the screen
+    drag(k, 25 * 8, 80, 0, 0)
+    check('dragged past the top left corner: column 0, just under the title rule (24)', win() == (0, 24), win())
+    drag(k, 4 * 8, 28, 639, 399)
+    check('past the bottom right: column 42 (80 - 38), its bottom on the band (360 - 228 = 132)', win() == (42, 132), win())
+    # the saver: the Executive and the window come back, where it was moved to
+    k.wr('saver_t', struct.pack('<H', 36))
+    for _ in range(40):
+        k.pc.run_for(0.25)
+        if not has(k, 'Calculator'): break
+    dark = not has(k, 'Calculator')
+    k.wr('saver_t', struct.pack('<H', 5460))
+    k.key(ktest.DOWN)
+    check('after the saver it is back where it was moved to', dark and title_at() == (44, 136), (dark, title_at()))
+    k.key(ktest.ESC)
+    check('ESC closes it; after the saver, exit code 0: the Executive redraws', not has(k, 'Calculator') and run_ret(k) == 0
+          and has(k, 'LCMD'), hex(run_ret(k)))
+    # moved, then closed: the save-under taken at the move puts the screen back
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    scr0 = below_title(k)
+    k.key(CODE['K'])
+    drag(k, 50 * 8 + 3, 36, 10 * 8 + 3, 100)
+    k.key(0x6E00, ktest.RIGHT, ktest.ENTER)
+    k.key(ktest.ESC)
+    check('moved twice, then closed: exit code 0FFFFh and the screen exactly as before (no redraw needed)',
+          run_ret(k) == 0xFFFF and parked() == scr0, hex(run_ret(k)))
+    # a click on the title strip that doesn't move it: nothing happens
+    k.key(CODE['K'])
+    click(k, 50 * 8, 36)
+    check('a click on the title (no move): still open, still there', win() == (41, 28) and title_at() == (43, 32), (win(), title_at()))
+    k.key(ktest.ESC)
+    # no save-under (the disk cache's memory already lent out): a move draws
+    # everything again, the Executive and the window at its new place
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    scr0 = parked()
+    k.wr('tc_lock', b'\x01')
+    k.key(CODE['K'])
+    unsaved = k.u16('wseg') == 0
+    drag(k, 50 * 8 + 3, 36, 30 * 8 + 3, 76)
+    check('no save-under: dragged, it is drawn at its new place, the Executive under its old one',
+          unsaved and win() == (21, 68) and title_at() == (23, 72) and has(k, 'LCMD'), (unsaved, win(), title_at()))
+    k.key('2+3'); k.key(ktest.ENTER)
+    check('... and it works there: 2+3 = 5', ans() == ['= 5'], ans())
+    k.key(ktest.ESC)
+    k.wr('tc_lock', b'\x00')
+    check('... closed: the screen exactly as before', not has(k, 'Calculator') and parked() == scr0, screen(k))
 
 # ---------------------------------------------------------------------
 def md_pages(k):
@@ -1889,7 +2007,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_mdisk, t_calc):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_mdisk, t_calc, t_calc_move):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

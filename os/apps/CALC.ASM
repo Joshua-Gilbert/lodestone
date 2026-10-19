@@ -12,19 +12,19 @@
 ;  the screen is as it was, the Executive doesn't redraw (API 5).  If the
 ;  Executive was redrawn under it meanwhile (the saver), its save-under
 ;  may be older than that: exit code 0, and the Executive redraws.
+;
+;  The window moves (API 6): by its title strip with the mouse, or
+;  CODE-F7 and the arrow keys; its close box is ESC.  Everything in it is
+;  drawn from where the window is now (icol, ey, ry, ky).
 ; =====================================================================
 %include "UIAPI.INC"
-RUN_API equ 5                           ; (the caller's redraw stays, 0FFFFh)
+RUN_API equ 6                           ; (W_FLAGS: it moves and closes)
         org     RUN_ORG
 
-WCOL    equ 41                          ; the window
+WCOL    equ 41                          ; the window, where it first opens
 WY      equ 28
 WW      equ 38
 WH      equ 228
-ICOL    equ WCOL + 1                    ; inside it: the line, the answer,
-EY      equ WY + 24                     ;  the keys
-RY      equ WY + 56
-KY      equ WY + 80
 KW      equ 6                           ; a key: 6 bytes by 24 pixels
 KH      equ 24
 EMAX    equ 120                         ; characters in the line
@@ -36,8 +36,10 @@ start:  call    calc_init
 .ed:    call    keep_line
         mov     si, ebuf
         mov     bp, EMAX
-        mov     bx, ICOL + 1
-        mov     dx, EY + 4
+        mov     bx, [icol]
+        inc     bx
+        mov     dx, [ey]
+        add     dx, 4
         mov     cx, KW * 6 - 2
         call    UI_EDIT
         cmp     ax, EV_CLICK
@@ -83,7 +85,7 @@ evaluate:
 .x:     ret
 
 ; a click on a key: BX = x, CX = y
-click:  sub     cx, KY
+click:  sub     cx, [ky]
         jb      .x
         mov     ax, cx
         xor     dx, dx
@@ -93,7 +95,7 @@ click:  sub     cx, KY
         jae     .x
         mov     di, ax                  ; DI = row
         shr     bx, 3
-        sub     bx, ICOL
+        sub     bx, [icol]
         jb      .x
         mov     ax, bx
         mov     cl, KW
@@ -190,8 +192,10 @@ keep_line:
 ; F2, the Deg key: degrees or radians (the key lit for degrees)
 k_deg:  xor     byte [c_deg], 1
 deg_lamp:
-        mov     bx, ICOL + 5 * KW + 1
-        mov     dx, KY + 5 * KH + 1
+        mov     bx, [icol]
+        add     bx, 5 * KW + 1
+        mov     dx, [ky]
+        add     dx, 5 * KH + 1
         mov     cx, KH - 1
         mov     bp, KW - 1
         jmp     UI_INVERT
@@ -212,10 +216,27 @@ streq:  lodsb
 .x:     ret
 
 ; the window's contents (BX = the window)
-w_draw: stc                             ; paints: 1 once, then 3, 7 ... FF
-        rcl     byte [paints], 1        ;  (never 1 again)
-        mov     bx, ICOL                ; the line's frame and the line
-        mov     dx, EY
+w_draw: mov     ax, [win+W_COL]         ; where the parts are now: inside it,
+        inc     ax                      ;  the line, the answer, the keys
+        mov     dx, [win+W_Y]
+        add     dx, 24
+        cmp     byte [paints], 0        ; drawn again at the same place: a
+        je      .n                      ;  repaint over an older screen (at a
+        cmp     ax, [icol]              ;  new place, a move saved what is
+        jne     .geo                    ;  under it just now)
+        cmp     dx, [ey]
+        jne     .geo
+.n:     stc
+        rcl     byte [paints], 1        ; paints: 1 once, then 3, 7 ... FF (never 1 again)
+.geo:   mov     [icol], ax
+        mov     [ey], dx
+        mov     ax, dx
+        add     ax, 32
+        mov     [ry], ax
+        add     ax, 24
+        mov     [ky], ax
+        mov     bx, [icol]              ; the line's frame and the line
+        mov     dx, [ey]
         mov     cx, KW * 6
         mov     bp, 24
         call    UI_BOX
@@ -225,36 +246,47 @@ w_draw: stc                             ; paints: 1 once, then 3, 7 ... FF
         jbe     .l
         mov     cx, KW * 6 - 2
 .l:     inc     bx
-        mov     dx, EY + 4
+        add     dx, 4
         xor     ah, ah
         call    UI_PUTSN
         call    draw_ans
-        mov     dx, KY                  ; the keys: lines,
-        mov     bx, ICOL
+        mov     dx, [ky]                ; the keys: lines,
+        mov     di, dx
+        add     di, 6 * KH
+        mov     bx, [icol]
         mov     cx, KW * 6
 .h:     call    UI_HLINE
         add     dx, KH
-        cmp     dx, KY + 6 * KH
+        cmp     dx, di
         jbe     .h
-        mov     ax, ICOL * 8
-        mov     dx, KY
+        mov     ax, [icol]
+        shl     ax, 3
+        mov     di, ax
+        add     di, 6 * KW * 8
+        mov     dx, [ky]
         mov     cx, 6 * KH + 1
 .v:     call    UI_VLINE
         add     ax, KW * 8
-        cmp     ax, (ICOL + 6 * KW) * 8
+        cmp     ax, di
         jbe     .v
         mov     si, klab                ;  and labels
-        mov     dx, KY + 4
-.r:     mov     bx, ICOL + 1
+        mov     dx, [ky]
+        mov     bp, dx
+        add     bp, 6 * KH
+        add     dx, 4
+        mov     di, [icol]
+        add     di, 6 * KW
+.r:     mov     bx, [icol]
+        inc     bx
 .k:     mov     cx, 4
         xor     ah, ah
         call    UI_PUTSN
         add     si, 4
         add     bx, KW
-        cmp     bx, ICOL + 6 * KW
+        cmp     bx, di
         jb      .k
         add     dx, KH
-        cmp     dx, KY + 6 * KH
+        cmp     dx, bp
         jb      .r
         cmp     byte [c_deg], 0
         je      .x
@@ -263,18 +295,18 @@ w_draw: stc                             ; paints: 1 once, then 3, 7 ... FF
 
 ; the answer's line, to the right
 draw_ans:
-        mov     bx, ICOL
-        mov     dx, RY
+        mov     bx, [icol]
+        mov     dx, [ry]
         mov     cx, 16
         mov     bp, KW * 6
         xor     al, al
         call    UI_FILL
         mov     si, rbuf
         call    UI_STRLEN
-        mov     bx, ICOL + KW * 6
+        add     bx, KW * 6
         sub     bx, cx
         jae     .p
-        mov     bx, ICOL
+        mov     bx, [icol]
 .p:     xor     ah, ah
         jmp     UI_PUTS
 
@@ -292,7 +324,7 @@ A_CLR   equ 3
 A_BS    equ 4
 A_DEG   equ 5
 
-win     dw WCOL, WY, WW, WH, s_title, w_draw
+win     dw WCOL, WY, WW, WH, s_title, w_draw, WF_MOVE | WF_CLOSE
 klab    db '  7   8   9   /   (   ) '
         db '  4   5   6   *   ^ sqrt'
         db '  1   2   3   -  sin cos'
@@ -312,6 +344,7 @@ keys    KEY(K_NONE,   0,      h_type)
         KEY(K_F1,     k_help, 0)
         KEY(K_ESC,    k_quit, h_quit)
         KEY(K_CODE_K, k_quit, 0)
+        KEY(K_NONE,   0,      h_move)
         KEY(K_NONE,   0,      h_fns)
         dw 0
 h_type  db 'Type a sum, Return       the answer',0
@@ -319,11 +352,16 @@ h_more  db '+ * / \ % ^ first        go on from it',0
 h_clear db 'Ctrl-Y                   clear the line',0
 h_deg   db 'F2                       degrees / radians',0
 h_quit  db 'ESC or CODE-K            close',0
+h_move  db 'CODE-F7, arrows, Return  move (or drag its title)',0
 h_fns   db '\ whole part  % remainder  sqrt sin cos tan',0
 s_title db 'Calculator',0
 s_help  db 'Calculator Help',0
 
 section .bss
+icol    resw 1                          ; inside the window, where it is now:
+ey      resw 1                          ;  the first column, the line's row,
+ry      resw 1                          ;  the answer's, the keys'
+ky      resw 1
 quit    resb 1
 paints  resb 1                          ; the window drawn: 1 once, more: not
 ebuf    resb EMAX + 2
