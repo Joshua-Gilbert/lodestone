@@ -330,7 +330,7 @@ class Ata:
 
 class PC:
     def __init__(s, a=None, b=None, chip=None, start=datetime.datetime(2026, 10, 4, 21, 30, 0), mem_kb=640,
-                 disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False):
+                 disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False, roms=None):
         s.mu = mu = Uc(UC_ARCH_X86, UC_MODE_16)
         mu.mem_map(0, 0x110000)
         s.ems_pages = ems_pages; s.ems_alias = ems_alias
@@ -370,6 +370,12 @@ class PC:
         if not os.path.exists(cm): s.cmos[0x10] = 0x40; s.cmos[0x15:0x17] = b'\x80\x02'
         s.cidx = 0
         s.mem_kb = mem_kb
+        # the application-ROM sockets: socket -> 128 KB image.  INT 15h E400-E404
+        # answer as the 1520's BIOS does (tools/simgrid.py runs the real one:
+        # tests/test_rom.py checks the two agree); while an image is mapped,
+        # A000-BFFF is the ROM and video memory is hidden
+        s.roms = dict(roms or {})
+        s.rom_mapped = None; s.rom_saved = None; s.rom_maps = 0
         s.bios_init()
         mu.hook_add(UC_HOOK_INTR, s.intr)
         mu.hook_add(UC_HOOK_INSN, s.hin, None, 1, 0, X.UC_X86_INS_IN)
@@ -878,8 +884,49 @@ class PC:
         if s.r('ah') == 0: s.lpt.append(s.r('al'))
         s.w('ax', (s.r('ax') & 0xFF) | 0x9000)
 
+    def rom_list(s):
+        """The logical images, as E401 counts them: socket 0's, then socket 1's
+        (an empty socket, or one without the BB66h trailer, has none)."""
+        out = []
+        for sock in (0, 1):
+            img = s.roms.get(sock)
+            if img and img[-256:-254] == b'\x66\xBB': out.append(sock)
+        return out
+
+    def rom_map(s, sock):
+        if s.rom_mapped is None: s.rom_saved = s.rd(0xA000, 0, 0x20000)
+        s.mu.mem_write(0xA0000, bytes(s.roms[sock])); s.rom_mapped = sock; s.rom_maps += 1
+
+    def rom_unmap(s):
+        if s.rom_mapped is not None:
+            s.mu.mem_write(0xA0000, s.rom_saved); s.rom_mapped = None; s.rom_saved = None
+
+    def boot_rom(s, sock=0):
+        """The BIOS's GridBootRom: the image (system type 1, bootable) copied to
+        8000:0000, entered at (bootSeg + 8000h):0000 with DL = 'r', IF on."""
+        img = s.roms[sock]; t = img[-256:]
+        assert t[0:2] == b'\x66\xBB' and t[2] == 1 and t[3] == 0x80, 'not a bootable image'
+        s.mu.mem_write(0x80000, bytes(img))
+        bseg = struct.unpack_from('<H', t, 4)[0]
+        s.w('cs', bseg if bseg >= 0x8000 else bseg + 0x8000); s.w('ip', 0)
+        s.w('dx', 0x72); s.w('ss', 0x0030); s.w('sp', 0x0100); s.w('flags', 0x202)
+
     def int15(s):
         ax, ah = s.r('ax'), s.r('ah')
+        if ah == 0xE4 and ax <= 0xE404:
+            al = ax & 0xFF; imgs = s.rom_list()
+            if al == 0: s.w('ax', 0x0008); s.w('bx', 5); s.w('cx', 2); s.cf(0); return
+            if al == 1:
+                if not imgs: s.w('ax', 0x0300); s.cf(1); return
+                s.w('ax', len(imgs)); s.cf(0); return
+            if al == 4: s.rom_unmap(); s.w('ax', 0); s.cf(0); return
+            dl = s.r('dl')
+            if dl >= len(imgs): s.w('ax', 0x0400); s.cf(1); return
+            sock = imgs[dl]; t = s.roms[sock][-256:]
+            if al == 2:
+                s.w('ax', 0x0080); s.w('bx', struct.unpack_from('<H', t, 19)[0])
+                s.w('cx', 0x0404 * sock); s.w('dx', t[2] << 8 | dl); s.w('es', 0xA000); s.cf(0); return
+            s.rom_map(sock); s.w('ax', 4 * sock); s.cf(0); return
         if ax == 0xE440: s.w('cx', s.ems_pages * 16 if s.ems_pages else 1408); s.w('ax', 0); s.cf(0); return
         if ax == 0xE441: s.w('cx', 0); s.w('ax', 0); s.cf(0); return
         if ax == 0xE442 and s.ems_pages and s.r('dl') == 0xFF:     # memory mode: EMS

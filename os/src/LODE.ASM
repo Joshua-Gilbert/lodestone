@@ -1,5 +1,5 @@
 ; =====================================================================
-;  LODE.SYS  -  Lodestone 0.3 kernel for the GRiDCase 1520
+;  LODE.SYS  -  Lodestone 0.6 kernel for the GRiDCase 1520
 ;  nasm -f bin -o LODE.SYS LODE.ASM
 ;
 ;  A small DOS 3.30-compatible kernel plus the GRiD-style Executive.
@@ -43,7 +43,7 @@ cpu 286
 org 0
 
 KSEG    equ 0060h               ; where the kernel lives
-VERSION equ 0004h               ; Lodestone 0.4
+VERSION equ 0006h               ; Lodestone 0.6
 
 start:  cli                     ; at 1000:0000 from the boot sector
         mov     ax, 2000h       ; temporary stack clear of the image
@@ -65,9 +65,10 @@ start:  cli                     ; at 1000:0000 from the boot sector
         xor     di, di
         mov     cx, (image_end - start + 1) / 2
         rep     movsw
-        jmp     section.boot.start + (ems_init - section.boot.vstart)   ; KEMS.INC's, in this
-                                        ; image (then KHD.INC's hd_init,
-                                        ; then KSEG:init)
+        jmp     section.boot.start + (rom_menu - section.boot.vstart)   ; KROM.INC's, in this
+                                        ; image (then KEMS.INC's ems_init,
+                                        ; KHD.INC's hd_init, KROM.INC's
+                                        ; rom_init, then KSEG:init)
 
 init:   cli
         mov     ax, cs
@@ -166,6 +167,8 @@ section boot progbits align=16 follows=hd vfollows=hd valign=16
 %define MDB(x) (section.boot.start + ((x) - section.boot.vstart))   ; (in the load image)
 MD_TPG  equ 1000h                       ; (its place in the cache's second page)
 section mdt progbits align=16 follows=boot vstart=MD_TPG
+; KROM.INC: R:'s resident part, assembled from 0 and relocated where it goes
+section rmt progbits align=16 follows=mdt vstart=0
 section .text
 
 %include "KCORE.INC"
@@ -178,6 +181,14 @@ section .text
 
 bootbpb     times 64 db 0
 bootdrv     db 0
+capdrv      db 'A'                      ; screen captures go here (from the ROM:
+                                        ;  C:, else A:; KROM.INC's rs_boot)
+setdrv      db 0                        ; INT 21h 3305h's DH: the drive (1 = A:)
+                                        ;  whose LODE.INI goes over the boot
+                                        ;  drive's (KROM.INC; 0: none)
+lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
+                                        ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
+                                        ;  18 with R: (KROM.INC)
             align 16                    ; (free: the BSS starts on a paragraph)
 image_end:                              ; everything above is copied low;
                                         ; the EMS section starts right here
@@ -193,11 +204,12 @@ hd_start:
 %include "KHD.INC"
 %include "KMDISK.INC"
 %include "KSPLASH.INC"                 ; (section boot: LODE.PIC's bootstrap)
+%include "KROM.INC"                    ; (R:, the ROM; section rmt, and boot)
 
 ; =====================================================================
 ;  The UI segment: offsets from 0 in a segment of its own
 ; =====================================================================
-section ui progbits align=16 follows=mdt vstart=0
+section ui progbits align=16 follows=rmt vstart=0
 section uibss nobits valign=16 vfollows=ui
 ; alignb would clash with vfollows in NASM's bin output (it sets a "real"
 ; section alignment); uibss starts on a paragraph, so this is the same thing

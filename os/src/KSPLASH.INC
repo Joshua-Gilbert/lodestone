@@ -73,32 +73,17 @@ sp_boot:
         movsw
         movsw
         movsb
-.on:    call    sp_wanted
+.on:    call    rs_boot                 ; (KROM.INC: booted from the ROM)
+        call    sp_wanted
         jc      .go
         call    sp_load
         jc      .go
         call    PIC_SEG:0000h           ; the picture: drawn, 2 s, back
 .go:    jmp     far [cs:MDB(sp_next)]
 
-; CF if \LODE.INI says SPLASH=0 (or No, or Off).  DS = CS.
+; CF if the settings say SPLASH=0 (or No, or Off).  DS = CS.
 sp_wanted:
-        mov     dx, MDB(s_spini)
-        mov     ax, 3D00h
-        int     21h
-        jc      .yes                    ; no file: wanted
-        mov     bx, ax
-        mov     dx, SP_BUF
-        mov     cx, 4095                ; (SYSTEM may write a little more
-        mov     ah, 3Fh                 ;  than its 1 KB: room for it)
-        int     21h
-        jnc     .rd
-        xor     ax, ax
-.rd:    mov     si, dx
-        add     ax, si
-        xchg    ax, di
-        mov     byte [di], 0
-        mov     ah, 3Eh
-        int     21h
+        call    ini_read                ; (KROM.INC: LODE.INI's, both)
 .line:  mov     di, MDB(s_speq)         ; "SPLASH=" (any case) starting
 .c:     mov     al, [di]                ;  the line?
         or      al, al
@@ -137,6 +122,10 @@ sp_wanted:
 ; signature, after a JMP SHORT, is "LODEPIC", 1, and the word after it is
 ; its length, exactly what was read (a cut-short copy isn't run).  DS = CS.
 sp_load:
+        mov     ax, 3305h               ; on the drive started from
+        int     21h
+        add     dl, 'A' - 1
+        mov     [MDB(s_sppic)], dl
         mov     dx, MDB(s_sppic)
         mov     ax, 3D00h
         int     21h
@@ -176,9 +165,8 @@ sp_load:
 .no:    stc
 .x:     ret
 
-s_spini db      '\LODE.INI', 0
 s_speq  db      'SPLASH', 1Dh, 0        ; (as "SPLASH=" AND 0DFh)
-s_sppic db      '\LODE.PIC', 0
+s_sppic db      '@:\LODE.PIC', 0
 s_picsig db     'LODEPIC', 1
 sp_next dw      run_ui, KSEG            ; where to after (or md_boot)
 sp_s0   db      0, 0, 0, 0, 0           ; KSEG:0000's 5 bytes, if ours

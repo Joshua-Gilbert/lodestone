@@ -14,7 +14,7 @@ BAND_Y      equ SCR_BAND_Y
 MIN_T       equ 1092                    ; a minute of ticks
 NALLOC      equ 16                      ; blocks a .RUN can have from UI_ALLOC
 NWIN        equ 4                       ; windows open at once
-LODE_VER    equ 0045h                   ; Lodestone 0.4.5 (BH.BL: major, minor<<4 | patch)
+LODE_VER    equ 0060h                   ; Lodestone 0.6.0 (BH.BL: major, minor<<4 | patch)
 
 ; ---- the jump table: UIAPI.INC's numbering, checked here ---------------
 %macro API 2
@@ -136,7 +136,6 @@ ed_off      resw 1
 ed_fresh    resb 1
 ed_keep     resb 1
 font_name   resb 13             ; UI_FONT: "" = GRiD's, built in
-font_path   resb 14             ; "\NAME.FNT"
 fm_ptr      resw 1
 fm_cur      resw 1
 fm_b1       resw 1
@@ -230,14 +229,31 @@ api_font:
         popa
         ret
 
-; at start-up: "FONT=NAME.FNT" in \LODE.INI (a line of its own, any case)
-; makes that file the font.  No file, no line, or a file that isn't exactly
-; FONT_BYTES long: GRiD's font stays.  "SAVER=n": the saver after n minutes
-; (0: never).  "TIDY=0": the saver doesn't run DEFRAG.  (The directory
-; buffer is free yet: up to 4095 bytes of the file in it, as KSPLASH and
-; KMDISK read it, then the font file after them.)
+; at start-up: "FONT=NAME.FNT" in LODE.INI (a line of its own, any case)
+; makes that file, on the drive started from, the font.  No file, no line,
+; "FONT=", or a file that isn't exactly FONT_BYTES long: GRiD's font stays.
+; "SAVER=n": the saver after n minutes (0: never).  "TIDY=0": the saver
+; doesn't run DEFRAG ("TIDY=1": it does).  Two files, the later line
+; winning: the boot drive's LODE.INI (from the ROM, its own settings), then
+; the one INT 21h 3305h's DH names (the changes made to them; KROM.INC).
+; (The directory buffer is free yet: up to 4095 bytes of a file in it, as
+; KSPLASH and KMDISK read it, then the font file after them.)
 font_boot:
-        mov     byte [font_path], '\'
+        mov     ax, 3305h
+        int     21h
+        add     dl, 'A' - 1
+        mov     [font_path], dl         ; (no FONT=: "X:\", not a font)
+        push    dx
+        mov     al, dl
+        call    .file
+        pop     dx
+        mov     al, dh
+        or      al, al
+        jz      .ff
+        add     al, 'A' - 1
+        call    .file
+.ff:    jmp     font_file
+.file:  mov     [s_ini], al
         mov     dx, s_ini
         mov     ax, 3D00h
         int     21h
@@ -266,9 +282,13 @@ font_boot:
         and     ax, 0DFDFh
         cmp     ax, 'DY'
         jne     .next
-        cmp     word [si+4], '=0'
+        cmp     byte [si+4], '='
         jne     .next
-        mov     byte [sv_notidy], 1
+        xor     al, al
+        cmp     byte [si+5], '0'
+        jne     .tn
+        inc     ax
+.tn:    mov     [sv_notidy], al
         jmp     .next
 .sv:    cmp     ax, 'SA'                ; "SAVER=n"?
         jne     .font
@@ -304,19 +324,15 @@ font_boot:
         cmp     byte [si+4], '='
         jne     .next
         add     si, 5
-        mov     di, font_path + 1
+        mov     di, font_path + 3       ; (the font is read once, after both)
         mov     cx, 12
 .c:     lodsb
         cmp     al, ' '                 ; (CR, LF, the end, a space or tab)
         jbe     .e
         stosb
         loop    .c
-.e:     mov     byte [di], 0
-        cmp     di, font_path + 1
-        je      .next                   ; ("FONT=": GRiD's)
-        push    si
-        call    font_file
-        pop     si
+.e:     mov     byte [di], 0            ; ("FONT=": GRiD's)
+        dec     si
 .next:  lodsb
         or      al, al
         jz      .x
@@ -325,7 +341,7 @@ font_boot:
         jmp     .line
 .x:     ret
 
-; font_path = "\NAME.FNT": that file is the font (if it is exactly one).
+; font_path = "X:\NAME.FNT": that file is the font (if it is exactly one).
 ; Read past LODE.INI's text, which font_boot is still going through
 ; (4096 + FONT_BYTES + 1 = 5,633 of the 7,680 bytes of entries)
 INI_READ equ 4095
@@ -350,7 +366,7 @@ font_file:
         cmp     ax, FONT_BYTES
         jne     .x
         mov     si, FONT_BUF
-        mov     di, font_path + 1
+        mov     di, font_path + 3
         mov     al, 1
         jmp     api_font
 .x:     ret
@@ -3105,41 +3121,101 @@ run_cleanup:
 .x:     popa
         ret
 
-; UI_FINDAPP: SI = name -> SI = path (this subject, then the root of the
-; disk Lodestone started from: the programs stay there when B: is shown)
+; UI_FINDAPP: SI = name -> SI = path (this subject, then each directory
+; in PATH: the drive started from, and from the ROM C:\LODE before it, so
+; copies there are used before the ROM's).  CF if none: SI = the name
 ui_findapp:
         push    ax
+        push    bx
         push    cx
         push    dx
         push    di
+        push    es
         mov     di, app_path
         call    api_sbstr
         mov     byte [di], 0
-        mov     dx, app_path
-        mov     ax, 4300h
-        int     21h
+        call    .try
         jnc     .yes
-        push    si
-        mov     ax, 3305h               ; DL = the boot drive (1 = A:)
-        int     21h
-        mov     al, dl
-        mov     di, app_path
-        add     al, 'A' - 1
-        stosb
-        mov     ax, ':\'
-        stosw
-        pop     si
-        call    api_sbstr
+        mov     bx, si                  ; BX = the name
+        mov     si, s_pathv
+        mov     cx, 5
+        call    env_find                ; ES:DI = PATH's value
+        jc      .no
+        mov     si, di                  ; ES:SI: its directories
+.ent:   mov     di, app_path
+.c:     mov     al, [es:si]
+        inc     si
+        cmp     al, ';'
+        je      .e
+        mov     [di], al
+        inc     di
+        or      al, al
+        jnz     .c
+        dec     di
+        dec     si                      ; (on the end: the last one)
+.e:     cmp     di, app_path            ; (an empty one: none)
+        je      .nx
+        cmp     byte [di-1], '\'
+        je      .s
+        mov     byte [di], '\'
+        inc     di
+.s:     push    si
+        push    es
+        push    ds
+        pop     es
+        mov     si, bx
+        call    api_sbstr               ; + the name
         mov     byte [di], 0
-        mov     dx, app_path
-        mov     ax, 4300h
-        int     21h
-        jc      .x
+        pop     es
+        pop     si
+        call    .try
+        jnc     .yes
+.nx:    cmp     byte [es:si], 0
+        jne     .ent
+.no:    mov     si, bx
+        stc
+        jmp     short .x
 .yes:   mov     si, app_path
-.x:     pop     di
+.x:     pop     es
+        pop     di
         pop     dx
         pop     cx
+        pop     bx
         pop     ax
+        ret
+.try:   mov     dx, app_path
+        mov     ax, 4300h
+        int     21h
+        ret
+
+; SI = "NAME=", CX = its length -> ES:DI = its value in the environment
+; (the root's: the master environment).  CF if it isn't there.  AX changed
+env_find:
+        push    bx
+        mov     ah, 62h
+        int     21h
+        mov     es, bx
+        mov     es, [es:2Ch]
+        xor     di, di
+.v:     cmp     byte [es:di], 0
+        stc
+        je      .x
+        push    si
+        push    cx
+        push    di
+        repe    cmpsb
+        pop     ax
+        pop     cx
+        pop     si
+        je      .x
+        mov     di, ax                  ; past this one
+        xor     al, al
+        push    cx
+        mov     cx, 0FFFFh
+        repne   scasb
+        pop     cx
+        jmp     .v
+.x:     pop     bx
         ret
 
 ; UI_RUN: SI = path, DI = tail -> AX = exit code, CF (AX = error)
@@ -3781,7 +3857,10 @@ months      db 'JanFebMarAprMayJunJulAugSepOctNovDec'
 s_defrag    db 'A:\DEFRAG.COM', 0
 s_svarg     db 'A: /S M=', 0
 s_svfont    db ' F=', 0
-s_ini       db '\LODE.INI', 0
+s_ini       db '@:\LODE.INI', 0
+s_pathv     db 'PATH='
+font_path   db '@:\'                ; "X:\NAME.FNT": on the drive started from
+            times 13 db 0
 exec_fcb    db 0, '           ', 0, 0, 0, 0
 s_err       db 'error ',0
 ; DOS errors (code, text); the INT 24h ones below

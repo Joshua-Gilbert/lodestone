@@ -173,8 +173,9 @@ Run the comparison with `python3 os/bench/compare3.py <GRiD MS-DOS EPROM image> 
 
 | Folder | What |
 |---|---|
-| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
+| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
 | `os/splash` | The start-up picture's source: the 1921 plate, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
+| `os/rom` | `LODE.INI`, the settings burned into the ROM; the ROM image itself is `os/LODE1.BIN`, built by `os/build.sh` with `tools/mkrom.py` |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN` and `CALC.RUN` (the calculator's window) |
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `os/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN; and for the 1520: CMDTEST.BAT (the batch language), CALCTEST.BAT (the calculator, step by step) and FPUPROBE.COM (what the coprocessor answers after FNINIT) |
@@ -193,7 +194,7 @@ Run the comparison with `python3 os/bench/compare3.py <GRiD MS-DOS EPROM image> 
 Needs NASM 2.15+, and Python 3 for the `.RUN` programs (`mkrun.py`).
 
 ```sh
-os/build.sh        # everything in os/src, apps, tests and bench
+os/build.sh        # everything in os/src, apps, tests and bench, and LODE1.BIN (ROM 1)
 os/kbuild.sh       # just the kernel, with LODE.MAP / .LST
 cd os/claude && ./build.sh
 ```
@@ -202,12 +203,13 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 1155 checks pass on 0.4.5 with resident Claude's M3 (2026-10-14); claude-link's own 70 (chat and Term) are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 1255 checks pass on 0.6 (2026-10-18); claude-link's own are in `claude-link/tests`.
 
 ```sh
 cd os
-python3 tests/test_kernel.py          # 358 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt, CALC
-python3 tests/test_apps.py            # 400 checks: UI core, Executive, System, Write, mouse, files, the calculator and the coprocessor lamp (add "shots" for screens/0.3)
+python3 tests/test_rom.py             # 75 checks: 0.6, booting from the ROM: the image, the real BIOS (which socket boots; E400-E404), R:, settings, the menu, PATH, memory
+python3 tests/test_kernel.py          # 360 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt, CALC
+python3 tests/test_apps.py            # 401 checks: UI core, Executive, System, Write, mouse, files, the calculator and the coprocessor lamp (add "shots" for screens/0.3)
 python3 tests/test_splash.py          # 62 checks: the start-up picture, bit for bit on every start-up path; SPLASH=, LODE.PIC, System's switch, memory
 python3 tests/test_hd.py              # 56 checks: drive C:, and C: with M:
 python3 tests/test_defrag.py          # 49 checks: DEFRAG on floppies and C:, the saver's round
@@ -222,7 +224,11 @@ python3 bench/run_bench.py <GRiD MS-DOS EPROM image>
 python3 bench/run_bench_hd.py         # BENCH on C: and M:
 ```
 
-Some tests need files that aren't in this repo: the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS330_ROM_300909-00.BIN`). Without it, those checks are skipped.
+Some tests need files that aren't in this repo: the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS330_ROM_300909-00.BIN`), and for `test_rom.py`'s real-BIOS checks the 1520's BIOS (`rom/ROM_F000.BIN`, with `rom/CMOS128.BIN`). Without them, those checks are skipped.
+
+## On the GRiD: from the ROM (0.6)
+
+Burn `os/LODE1.BIN` (exactly 128 KB) to a 27C010 (the 1520's: a TMS27C010A-12) and put it in the **second** socket: the BIOS boots the last bootable ROM it finds. Hold Shift while the 1520 starts for the menu (the ROM's own settings, GRiD MS-DOS from the other socket, the floppy). Settings changed in System go in `C:\LODE.INI` (A: without the hard disk); copies of programs in `C:\LODE` are used before the ROM's. See `docs/lodestone-rom.md`.
 
 ## On the GRiD (the floppy loop)
 
@@ -239,7 +245,7 @@ These aren't ours to publish, even privately: the 1520 BIOS and GRiD MS-DOS ROM 
 
 ## Status
 
-Lodestone 0.4.5 is the current release: 0.4.1 was the rename, 0.4.2 brings the command prompt's batch language, line editing and screen saver, 0.4.3 the start-up picture, 0.4.4 the calculator and the coprocessor lamp, and 0.4.5 finds a real 80287 (0.4.4 took the condition codes its FNINIT leaves behind for an empty socket). The calculator passes on the 1520 with its 80287 (`bench/CALCTEST_1520_2026-10-13.TXT`): every exact answer, the rest to the last of 15 digits but for `sin(1e6)` (1.5e−14 out, as designed), the lamp and the window. 0.4.1 boots on the 1520; 0.3.15 is the last release fully tested there, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/lodestone-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
+Lodestone 0.6 is the current release: it boots from an EPROM, with R: the ROM drive, the ROM's settings with your changes over them, and a boot menu (`docs/lodestone-rom.md`; in the emulator and against the 1520's real BIOS, not yet burned). Before it, 0.4.5: 0.4.1 was the rename, 0.4.2 brings the command prompt's batch language, line editing and screen saver, 0.4.3 the start-up picture, 0.4.4 the calculator and the coprocessor lamp, and 0.4.5 finds a real 80287 (0.4.4 took the condition codes its FNINIT leaves behind for an empty socket). The calculator passes on the 1520 with its 80287 (`bench/CALCTEST_1520_2026-10-13.TXT`): every exact answer, the rest to the last of 15 digits but for `sin(1e6)` (1.5e−14 out, as designed), the lamp and the window. 0.4.1 boots on the 1520; 0.3.15 is the last release fully tested there, where it boots, runs TESTDOS, TM5000G and CLAUDE.COM, uses the internal hard disk as C:, and the screen saver tidies every disk. 0.3.14 added M:, the RAM disk: Claude's future scratchpad, and fast scratch space now; on the 1520 it runs BENCH in 2.1 s against the floppy's 87.6 s. M:'s files don't survive a restart on the 1520: EMSKEEP showed that its BIOS rewrites EMS at Ctrl-Alt-Del, so copy anything worth keeping to A: or C:. 0.3.15 makes sure an old M: never comes back. 0.4.0 adds Term: the real Claude Code on the GRiD's screen, on your Claude plan, tested in the emulator and waiting for the Pi 5. See `docs/lodestone-0.3-apps.md` for 0.3 release by release, and `docs/term.md` for Term.
 
 **Next:**
 1. Claude (Term and chat) on the real GPIB bridge, with the Pi 5.
