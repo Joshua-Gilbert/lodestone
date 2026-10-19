@@ -1,6 +1,6 @@
 # Lodestone
 
-A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display), with GRiD's own look and feel. It boots from an EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them.
+A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display), with GRiD's own look and feel. The whole base suite fits in one 128 KB EPROM, with room to spare: the kernel, the Executive, the command prompt, System, Write, the calculator and DEFRAG. It boots from that EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them.
 
 Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB bus, Claude Code runs on the GRiD's screen and works with its files, its programs and the instruments on the bus.
 
@@ -17,7 +17,12 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 | ![The calculator](os/screens/readme/calculator.png) | ![CALC at the prompt](os/screens/readme/calc_prompt.png) |
 | The calculator over the Executive (CODE-K); the coprocessor lit in the info line (the emulator's is 387-class, so it reads as a 287XL) | `CALC` at the command prompt: sums, errors with ERRORLEVEL, `name=` for batch files |
 
-*Emulator screenshots (`os/screens/readme_shots.py`), drawn as the 1520's amber plasma shows them.*
+| ![Claude Code on the GRiD](os/screens/readme/claude_code.png) | ![A plot from Claude Code](os/screens/readme/claude_plot.png) |
+| Claude Code on the GRiD (`CLAUDE /T`), sweeping a filter on an HP 8753D over GPIB | The trace, plotted on the GRiD's screen by Claude Code's `grid_plot` |
+| ![gridfox](os/screens/readme/gridfox.png) | |
+| gridfox (`CLAUDE /W`): Firefox on the Pi, browsed from the GRiD as text | |
+
+*Emulator screenshots (`os/screens/readme_shots.py` and `claude-link/tests/readme_shots.py`), drawn as the 1520's amber plasma shows them. In the Claude shots the session is scripted, standing in for Claude Code and Firefox; the GRiD side and the link are the real ones.*
 
 ## What's in it
 
