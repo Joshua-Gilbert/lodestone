@@ -625,24 +625,10 @@ sel_path:
 ; CODE-P: the command prompt (COMSPEC)
 run_shell:
         push    es
-        mov     ah, 62h                 ; our PSP (the root's)
-        int     21h
-        mov     es, bx
-        mov     es, [es:2Ch]
-        xor     di, di
-.v:     cmp     byte [es:di], 0
-        je      .def
         mov     si, s_comspec
-        push    di
         mov     cx, 8
-        repe    cmpsb
-        je      .hit
-        pop     di
-        xor     al, al
-        mov     cx, 0FFFFh
-        repne   scasb
-        jmp     .v
-.hit:   add     sp, 2
+        call    env_find
+        jc      .def
         mov     si, di                  ; value -> runpath
         mov     di, runpath
 .c:     mov     al, [es:si]
@@ -738,6 +724,9 @@ refresh:
 
 ; AL = drive -> SI = its name: "Floppy A:", "Hard disk C:"
 dev_str:                                ; AL = the drive's letter -> SI
+        mov     si, s_dev_r
+        cmp     al, 'R'
+        je      .x
         mov     si, s_dev_m
         cmp     al, 'M'
         je      .x
@@ -760,7 +749,8 @@ ndrives:
         xor     cx, cx                  ; CX = drives so far
         mov     dl, ch                  ; DL = its place
         mov     di, o_drives
-        mov     bl, 1                   ; BL: A: to M: (D: to L: never there)
+        mov     bl, 1                   ; BL: A: to R: (D: to L:, N: to Q:
+                                        ;  never there)
 .l:     call    has_drv
         jc      .n
         cmp     bl, dh
@@ -772,7 +762,7 @@ ndrives:
         inc     di
         inc     cx
 .n:     inc     bx
-        cmp     bl, 13
+        cmp     bl, 18
         jbe     .l
         mov     [di], ch
         mov     dh, ch
@@ -3118,8 +3108,8 @@ h_code      db 'CODE is the Alt key.  Any key closes.',0
 ; ---------------------------------------------------------------------
 ;  data
 ; ---------------------------------------------------------------------
-s_brand     db 'Lodestone 0.4',0
-s_hlptitle  db 'Lodestone 0.4 Help',0
+s_brand     db 'Lodestone 0.6',0
+s_hlptitle  db 'Lodestone 0.6 Help',0
 prompts     dw s_prompt1, s_prdev, s_prsub
 s_prompt1   db 'Select a file and confirm',0
 s_prdev     db 'Device: Select item and confirm',0
@@ -3135,6 +3125,7 @@ s_lbl_kind  db 'Kind',0
 s_dev_a     db 'Floppy A:',0
 s_dev_c     db 'Hard disk C:',0
 s_dev_m     db 'Temporary disk M:',0
+s_dev_r     db 'ROM R:',0
 s_root      db 'Root',0
 s_bytes     db ' bytes',0
 s_dated     db '   dated ',0
@@ -3193,7 +3184,7 @@ del_form:   dw ftitle, s_delp, 44, 10, 1
             dw s_lbl_tits, FT_TEXT + (12 << 8), c_pat, 12
 ren_form:   dw ftitle, s_renp, 44, 10, 1
             dw s_lbl_new, FT_TEXT + (12 << 8), c_tit, 12
-o_drives    db 'A:', 0, 'B:', 0, 'C:', 0, 'M:', 0, 0    ; (ndrives: the drives there are)
+o_drives    db 'A:', 0, 'B:', 0, 'C:', 0, 'M:', 0, 'R:', 0, 0    ; (ndrives: the drives there are)
 o_repl      db 'Ask', 0, 'All', 0, 'None', 0, 0
 o_yesno     db 'No', 0, 'Yes', 0, 0
 s_lbl_tits  db 'Titles', 0
