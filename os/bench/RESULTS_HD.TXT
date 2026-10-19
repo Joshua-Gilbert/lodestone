@@ -1,3 +1,20 @@
+BENCH 1.4 on C: and M: in pcemu, Lodestone 0.6 (2026-10-18; python3 bench/run_bench_hd.py)
+Unchanged from 0.3.14 within 0.1 s.
+
+emulator timing (s)              C: no look-ah.  C: look-ahead    M: 1 MB
+Write 256 KB (16 KB writes)               0.763          0.745      0.181
+Read 256 KB (16 KB reads)                 0.560          0.345      0.107
+Read 256 KB (512-byte reads)              9.385          0.963      0.351
+Read 256 KB (128-byte reads)              9.370          1.893      1.257
+64 random 512-byte reads                  1.020          1.025      0.310
+Directory listing x 10                    0.018          0.018      0.012
+Open + close x 100                        0.216          0.216      0.197
+20 small files: create, delete            2.709          2.709      0.180
+Load + run 120 KB .EXE x 3                0.853          0.533      0.164
+INT 21h calls x 1000                      0.108          0.108      0.108
+Total                                     25.00           8.56       2.87
+
+
 Grid-OS on drive C: (the internal hard disk) and on M: (the RAM disk in EMS),
 BENCH 1.4 in pcemu (2026-10-08, 0.3.14)
 python3 bench/run_bench_hd.py
