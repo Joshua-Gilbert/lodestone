@@ -256,7 +256,7 @@ def pack(poly, nails):
 def amber_png(scr, path, scale=2):
     from PIL import Image
     img = Image.new('RGB', (W, H))
-    img.putdata([(255, 170, 50) if v else (28, 12, 0) for row in scr for v in row])
+    img.putdata([(255, 120, 40) if v else (36, 8, 2) for row in scr for v in row])
     if scale != 1:
         img = img.resize((W * scale, H * scale), Image.NEAREST)
     img.save(path)

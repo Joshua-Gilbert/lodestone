@@ -21,7 +21,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 | ![gridfox, text view](os/screens/readme/gridfox.png) | ![gridfox, picture view](os/screens/readme/gridfox_picture.png) |
 | gridfox (`CLAUDE /W`): Firefox on the Pi, browsed from the GRiD as text | **On the real 1520:** gridfox's picture view, the page as Firefox draws it, in one bit (Esc goes back to text) |
 
-*Screenshots from the emulator (`os/screens/readme_shots.py` and `claude-link/tests/readme_shots.py`), drawn as the 1520's amber plasma shows them. In the Claude Code and gridfox text shots the session is scripted, standing in for Claude Code and Firefox; the GRiD side and the link are the real ones. The plot and the picture view are captures from the real 1520.*
+*Screenshots from the emulator (`os/screens/readme_shots.py` and `claude-link/tests/readme_shots.py`), in the colours of the 1520's orange plasma (the captures from the real 1520 too). In the Claude Code and gridfox text shots the session is scripted, standing in for Claude Code and Firefox; the GRiD side and the link are the real ones. The plot and the picture view are captures from the real 1520.*
 
 ## What's in it
 

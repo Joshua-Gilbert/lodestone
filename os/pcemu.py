@@ -1120,7 +1120,7 @@ class PC:
 
     def png(s, path, font=None, scale=2):
         from PIL import Image
-        AMB, BG = (255, 170, 50), (28, 12, 0)
+        AMB, BG = (255, 120, 40), (36, 8, 2)
         m = s.mode()
         if m in (0x40, 0x48, 0x74):
             vram = s.rd(0xB800, 0, 0x8000)
