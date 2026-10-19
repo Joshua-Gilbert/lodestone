@@ -5,15 +5,22 @@
 ;  CODE-U in the Executive, as GRiD's "Usage CODE-U  Show memory and
 ;  device usage".  Topics on the left, details on the right.  Return sets
 ;  the clock (Clock), scans the GPIB bus (GPIB), or takes the next font,
-;  saver delay or size of the temporary disk M:.  Space turns the start-up
-;  picture (Display) or the saver's tidying on or off.
+;  saver delay or size of the temporary disk M:, or (Settings, started
+;  from the ROM) goes back to the ROM's own settings.  Space turns the
+;  start-up picture (Display) or the saver's tidying on or off.
+;
+;  The settings (LODE.INI): started from a floppy, the one on it.  Started
+;  from the ROM, R:\LODE.INI holds Lodestone's own, which are also the
+;  built-in defaults, and the changes made here go in C:\LODE.INI (A:\
+;  without the hard disk), read over them: INT 21h 3305h's DH says which
+;  (KROM.INC).  Only what differs from the defaults is written.
 ; =====================================================================
 %include "UIAPI.INC"
 RUN_API equ 4                           ; (UI_SAVER's tidying)
         org     RUN_ORG
 
 TOP_Y   equ 32                          ; first topic / detail line
-NTOPIC  equ 9
+NTOPIC  equ 10
 INI_MAX equ 1024                        ; LODE.INI: the most we rewrite
 PCOL    equ 18                          ; the details panel: from this column
 LCOL    equ 20                          ; labels
@@ -26,11 +33,26 @@ start:  mov     si, redraw
                                         ;  Executive's back)
         mov     ah, 1Ah
         int     21h
-        mov     ax, 3305h               ; fonts and LODE.INI: on the disk
-        int     21h                     ;  Lodestone started from (DL = 1: A:)
-        add     dl, 'A' - 1
-        mov     [s_fntall], dl
-        mov     [s_ini], dl
+        mov     ax, 3305h               ; fonts: on the disk Lodestone started
+        int     21h                     ;  from (DL = 1: A:); the settings
+        add     dl, 'A' - 1             ;  saved where DH says (from the ROM
+        mov     [s_fntall], dl          ;  with none yet: C:, else A:)
+        mov     [boot_l], dl
+        mov     al, dh
+        add     al, 'A' - 1
+        or      dh, dh
+        jnz     .si
+        mov     al, dl
+        cmp     al, 'R'
+        jne     .si
+        mov     ax, 4408h               ; (C: there?)
+        mov     bl, 3
+        int     21h
+        mov     al, 'C'
+        jnc     .si
+        mov     al, 'A'
+.si:    mov     [s_ini], al
+        mov     [read_l], dh
         call    find_gpib
         call    redraw
 .loop:  cmp     byte [quit], 0
@@ -1687,7 +1709,19 @@ splash_scan:
 ; lines left: no file).  Without M: (no EMS) an MDISK= line stays as it
 ; is.  CF if it couldn't be saved (said in the band).
 save_ini:
-        call    md_query                ; (md_ok: M: is ours to write)
+        cmp     byte [boot_l], 'R'      ; started with the ROM's own settings
+        jne     .ok                     ;  (the menu's 2) while there are
+        cmp     byte [read_l], 0        ;  changes: not saved, or the changes
+        jne     .ok                     ;  saved before would be lost
+        mov     dx, s_ini
+        mov     ax, 4300h
+        int     21h
+        jc      .ok
+        mov     si, s_setnosave
+        call    UI_MSG
+        stc
+        ret
+.ok:    call    md_query                ; (md_ok: M: is ours to write)
         sbb     al, al
         not     al
         mov     [md_ok], al
@@ -1859,6 +1893,85 @@ ini_is: push    si
         ret
 
 ; ---------------------------------------------------------------------
+;  Settings: where they come from, and where changes go
+; ---------------------------------------------------------------------
+t_settings:
+        call    vstart
+        mov     si, s_setrom            ; "the ROM, R:"
+        cmp     byte [boot_l], 'R'
+        je      .b
+        mov     si, s_setfl             ; "Floppy A:"
+        mov     al, [boot_l]
+        mov     [si + 7], al
+.b:     call    UI_SBSTR
+        mov     si, l_started
+        call    pline
+        cmp     byte [boot_l], 'R'
+        je      .rom
+        call    vstart                  ; from a floppy: its LODE.INI
+        mov     si, s_ini
+        call    UI_SBSTR
+        mov     si, l_setfile
+        call    pline
+        call    pgap
+        mov     si, s_setfl1
+        jmp     ptext
+.rom:   call    vstart
+        mov     si, s_setdef            ; "R:\LODE.INI (the ROM's own)"
+        call    UI_SBSTR
+        mov     si, l_setfile
+        call    pline
+        call    vstart                  ; the changes: there, none yet, or
+        mov     si, s_ini               ;  not read this time (the menu's 2)
+        call    UI_SBSTR
+        mov     dx, s_ini
+        mov     ax, 4300h
+        int     21h
+        mov     si, s_setnone
+        jc      .c
+        mov     si, s_setoff
+        cmp     byte [read_l], 0
+        je      .c
+        mov     si, s_empty
+.c:     call    UI_SBSTR
+        mov     si, l_setchg
+        call    pline
+        call    pgap
+        mov     si, s_setr1
+        call    ptext
+        mov     si, s_setr2
+        call    ptext
+        call    pgap
+        mov     si, s_setr3
+        call    ptext
+        mov     si, s_setr4
+        jmp     ptext
+
+; Return on Settings: back to the ROM's own (the changes' file deleted,
+; after asking).  From a floppy, or with no changes: a beep
+set_back:
+        cmp     byte [boot_l], 'R'
+        jne     .no
+        mov     dx, s_ini
+        mov     ax, 4300h
+        int     21h
+        jc      .no
+        mov     si, s_setask
+        call    UI_ASK
+        jc      .x
+        mov     dx, s_ini
+        mov     ah, 41h
+        int     21h
+        jc      .err
+        mov     si, s_setdone
+        call    UI_MSG
+        jmp     redraw
+.err:   mov     si, s_setcant
+        jmp     UI_MSG
+.no:    jmp     UI_BEEP
+.x:     ret
+
+; ---------------------------------------------------------------------
 ;  keys
 ; ---------------------------------------------------------------------
 k_enter:
@@ -1873,6 +1986,8 @@ k_enter:
         je      next_saver
         cmp     bx, 7
         je      next_mdisk
+        cmp     bx, 8
+        je      set_back
         ret
 k_help: mov     si, keys
         mov     di, s_helptitle
@@ -1886,6 +2001,7 @@ keys:   KEY(K_NONE,      0,       h_topic)
         KEY(K_NONE,      0,       h_enter2)
         KEY(K_NONE,      0,       h_enter3)
         KEY(K_NONE,      0,       h_enter4)
+        KEY(K_NONE,      0,       h_enter5)
         KEY(K_SPACE,     k_space, h_space)
         KEY(K_NONE,      0,       h_space2)
         KEY(K_F5,        k_f5,    h_f5)
@@ -1900,9 +2016,9 @@ keys:   KEY(K_NONE,      0,       h_topic)
 ;  data
 ; ---------------------------------------------------------------------
 topics:     dw TOP_Y, NTOPIC, NTOPIC, 0, 0, topic_row, show_topic, 1, PCOL - 3, topic_name
-topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_saver, n_mdisk, n_about
-topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_saver, t_mdisk, t_about
-topic_band  dw s_band2, s_band2, s_band_clk, s_band2, s_band_gp, s_band_font, s_band_sv, s_band_md, s_band2
+topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_saver, n_mdisk, n_settings, n_about
+topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_saver, t_mdisk, t_settings, t_about
+topic_band  dw s_band2, s_band2, s_band_clk, s_band2, s_band_gp, s_band_font, s_band_sv, s_band_md, s_band_set, s_band2
 n_memory    db 'Memory',0
 n_disks     db 'Disks',0
 n_clock     db 'Clock',0
@@ -1911,6 +2027,7 @@ n_gpib      db 'GPIB',0
 n_display   db 'Display',0
 n_saver     db 'Screen saver',0
 n_mdisk     db 'Temporary disk',0
+n_settings  db 'Settings',0
 n_about     db 'About',0
 
 clock_form: dw s_clocktitle, s_clockprompt, 46, 10, 2
@@ -1926,11 +2043,13 @@ s_band_gp   db 'RETURN: scan the bus    ESC: back',0
 s_band_font db 'RETURN: the next font    SPACE: picture or not    ESC: back',0
 s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
 s_band_md   db 'RETURN: the next size    ESC: back',0
+s_band_set  db "RETURN: back to the ROM's settings    ESC: back",0
 h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
 h_enter     db 'Return on Clock              set the date and time',0
 h_enter2    db 'Return on GPIB               scan the bus',0
 h_enter3    db 'Return on Display            the next font',0
 h_enter4    db 'Return on Temporary disk M:  the next size',0
+h_enter5    db "Return on Settings           back to the ROM's",0
 h_space     db 'Space on Display             the start-up picture or not',0
 h_space2    db 'Space on Screen saver        tidy the disks or not',0
 h_f5        db 'F5                           look again',0
@@ -2041,7 +2160,27 @@ l_font      db 'Font',0
 l_fonts     db 'Fonts on the start-up disk:',0
 s_gridfont  db 'GRiD (built in)',0
 s_fntall    db '@:\*.FNT',0              ; (@: the disk Lodestone started from,
-s_ini       db '@:\LODE.INI',0          ;  which reads them: set at the start)
+s_ini       db '@:\LODE.INI',0          ;  which reads them: set at the start;
+                                        ;  the settings: where changes go)
+boot_l      db 'A'                      ; the drive started from
+read_l      db 0                        ; 3305h's DH: the changes read (0 none)
+l_started   db 'Started from',0
+l_setfile   db 'Settings',0
+l_setchg    db 'Your changes',0
+s_setrom    db 'the ROM, R:',0
+s_setfl     db 'Floppy A:',0
+s_setdef    db "R:\LODE.INI, the ROM's own",0
+s_setnone   db ' (none yet)',0
+s_setoff    db ' (not read: started with the ROM',27h,'s)',0
+s_setfl1    db 'Changes made here are saved in it.',0
+s_setr1     db 'Changes made here are saved there, and read over',0
+s_setr2     db "the ROM's at every start-up.",0
+s_setr3     db "Return: back to the ROM's settings (it asks first).",0
+s_setr4     db "Shift held at start-up: 2 starts once with the ROM's.",0
+s_setask    db "Settings: Confirm to go back to the ROM's",0
+s_setdone   db "The ROM's settings are used from the next start-up",0
+s_setcant   db "Your changes can't be deleted",0
+s_setnosave db "Started with the ROM's own: not saved this time",0
 s_fonteq    db 'FONT=',0
 s_savereq   db 'SAVER=',0
 s_tidyeq    db 'TIDY=',0

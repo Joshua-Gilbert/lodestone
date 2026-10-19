@@ -88,7 +88,7 @@ def t_shell():
     check('CODE-P starts the shell', 'command shell' in k.pc.text_screen() and k.pc.mode() == 3, k.pc.text_screen())
     o = sh.run('dir')
     check('DIR lists the disk', all(x in o for x in ('Volume in drive A is LODESTONE', 'Directory of  A:\\', 'LCMD     COM', 'GAMES           <DIR>', '4 File(s)', 'bytes free')), o)
-    check('VER', 'Lodestone version 0.4' in sh.run('ver'))
+    check('VER', 'Lodestone version 0.6' in sh.run('ver'))
     check('bad command', 'Bad command or file name' in sh.run('nosuch'))
     check('bad drive', 'Invalid drive specification' in sh.run('b:'))
     sh.run('echo hello > a.txt')
@@ -125,7 +125,7 @@ def t_shell():
     check('SET removes', 'FOO' not in sh.run('set'))
     sh.run('copy con x.bat', 'echo off', 'echo batch says %1', 'ver', '\x1a')
     o = sh.run('x hi')
-    check('batch file, %1, ECHO OFF', 'batch says hi' in o and 'Lodestone version 0.4' in o and 'echo batch' not in o, o)
+    check('batch file, %1, ECHO OFF', 'batch says hi' in o and 'Lodestone version 0.6' in o and 'echo batch' not in o, o)
     check('ECHO back on after the batch', 'A:\\>' in sh.run('rem'))
     sh.run('date 1-2-27')
     check('DATE', 'Sat 01-02-2027' in sh.run('date', ''))
@@ -253,7 +253,7 @@ def t_capture():
     check('the program ended as usual', any('CAPTEST.COM ended' in l for l in k.band()), k.band())
     sh = Shell(k); sh.run('ver'); shot()
     got = files().get('A:\\SCREEN04.TXT', b'').decode('latin-1')
-    check('at the DOS prompt (LCMD): SCREEN04.TXT', 'Lodestone version 0.4' in got and beeps() == 1, repr(got[:200]))
+    check('at the DOS prompt (LCMD): SCREEN04.TXT', 'Lodestone version 0.6' in got and beeps() == 1, repr(got[:200]))
     sh.run('exit'); k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('disk consistent', not probs, '; '.join(probs))
@@ -649,8 +649,11 @@ def env_split(k):
     md = b[1] if b[1][4] == b'MD' else None
     return b[0][3], ((md[2], md[3]) if md else None)
 
-HOOKED = ('use_drive', 'drv_present', 'cwd_of', 'dio', 'f_0E.x')
-def hooks_in(k): return [k.pc.rd(0x60, k.Y[n], 1)[0] == 0xE9 for n in HOOKED]
+HOOKED = ('use_drive', 'drv_present', 'cwd_of', 'dio')
+def hooks_in(k):
+    """M:'s hooks in, and INT 21h 0Eh counting to M: (0.6: the count is a
+    byte, lastdrv, which M: raises to 13 and puts back)"""
+    return [k.pc.rd(0x60, k.Y[n], 1)[0] == 0xE9 for n in HOOKED] + [k.pc.rd(0x60, k.Y['lastdrv'], 1)[0] == 13]
 
 def md_size(out):
     m = re.search(r'result (\w\w) size (\d+)', out)

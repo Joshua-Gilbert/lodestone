@@ -807,6 +807,7 @@ hd_init:
         mov     ax, hd_drv_init         ; and init's call to drv_init
         sub     ax, init.cdrv + 3
         mov     [init.cdrv + 1], ax
+        mov     byte [lastdrv], 3       ; INT 21h 0Eh: to C:
         mov     ax, [hd_win]            ; the arena from above it all
         add     ax, HD_NWIN * 512
         cmp     ax, hd_end
@@ -814,7 +815,7 @@ hd_init:
         mov     ax, hd_end
 .k:     add     ax, 15
         mov     [kern_top], ax
-.no:    jmp     sp_hook                 ; (KSPLASH.INC: then KSEG:init)
+.no:    jmp     rom_init                ; (KROM.INC: then KSPLASH.INC, KSEG:init)
 
 ; is there a drive, with a FAT16 partition we can use?  CF if not.  Else
 ; the module's data set, and C:'s drive table entry made at [hd_win] + 512

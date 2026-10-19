@@ -43,7 +43,7 @@ proc_init:
 .c:     lodsb
         cmp     al, '@'
         jne     .s
-        mov     al, [cur_drv]
+        mov     al, [bootdrv]           ; (the drive started from: R: too)
         add     al, 'A'
 .s:     stosb
         cmp     si, env0_end
