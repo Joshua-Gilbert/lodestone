@@ -227,8 +227,7 @@ W_Y         equ 2                       ; pixel row (multiple of 4)
 W_W         equ 4                       ; width in bytes
 W_H         equ 6                       ; height in pixels
 W_TITLE     equ 8                       ; ASCIIZ (0 = no title strip)
-W_DRAW      equ 10                      ; contents (BX = the window), 0 = none;
-                                        ;  AX = EV_MOVED when drawn because of a move
+W_DRAW      equ 10                      ; contents (BX = the window), 0 = none
 W_FLAGS     equ 12                      ; WF_* (API 6; a .RUN for API 5 or older
                                         ;  has 12-byte windows: no flags)
 W_SIZE      equ 14
