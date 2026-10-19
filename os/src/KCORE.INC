@@ -21,12 +21,14 @@ F_USP   equ 26                  ; where the frame lives on the caller's stack
 F_USS   equ 28
 F_SIZE  equ 30
 
+PRN_PATH equ 24                         ; ("C:\LODE\" and an 8.3 name, and its end)
 section .bss
 indos       resb 1              ; INT 21h nesting depth
 cap_req     resb 1              ; screen capture: 1 asked for (INT 5), 2 under
                                 ;  way, 4 a write failed (word with indos)
 cap_lim     resw 1              ; its buffer's size
-cap_prn     resb 1              ; 1: PrtSc prints (PRTSC=PRINTER), 0: a file
+prn_path    resb PRN_PATH       ; PrtSc's printer driver ("A:\PS.PRN"; "": files)
+prn_call    resd 1              ; (where it is called)
 brkflag     resb 1              ; INT 21h 33h
 verify      resb 1              ; INT 21h 2Eh/54h
 kbd_scan    resb 1              ; second half of an extended key
@@ -151,13 +153,12 @@ int27:  add     dx, 15                  ; TSR: DX = bytes from the PSP
 ;  Written in big pieces (writes go straight to the disk, a turn each):
 ;  through the disk cache's memory if the Executive or a .RUN is running
 ;  and it can be lent, else 1 KB at the bottom of the kernel stack (the
-;  stack never gets near it).  With PRTSC=PRINTER (cap_prn) it goes to
-;  the printer on LPT1 instead, as PostScript (the Brother HL-5370DW's,
-;  as TM5000G prints): the graphics modes as a 640 x 400 image, lit
-;  pixels black, across the top of the page; the text modes as lines in
-;  Courier.  Through INT 17h, each byte tried for 10 s (a PostScript
-;  printer holds BUSY while it works); a fault, paper out or no LPT1: the
-;  long beep.
+;  stack never gets near it).
+;  With a printer driver set (PRINTER= in LODE.INI, System's Devices) it
+;  is printed instead: the driver, a .PRN file of up to 1 KB, is read into
+;  that same 1 KB at the next safe moment, called far at its offset 0 (it
+;  reads the screen itself and returns AL = 0 when it has printed it), and
+;  forgotten.  Nothing of it stays resident.  (drivers/PS.ASM.)
 ; ---------------------------------------------------------------------
 int05:  or      byte [cs:cap_req], 1
         iret
@@ -183,12 +184,12 @@ capture:
         push    cs
         pop     ds
         mov     byte [cap_req], 2       ; (no INT 24h meanwhile: crit_disk)
-        cmp     byte [cap_prn], 0
-        jne     .prn
         call    disk_reset              ; a program may have changed the
                                         ;  disk behind our back, reading it
                                         ;  through the BIOS: check it first
         push    word [last_err]
+        cmp     byte [prn_path], 0
+        jne     .prn
         mov     al, [capdrv]            ; A:, or from the ROM C: (KROM.INC)
         mov     [cap_name], al
         push    0
@@ -281,7 +282,16 @@ capture:
         mov     dx, 399
         push    0B800h
         pop     ds
-.row:   call    cap_row                 ; bottom up
+.row:   mov     si, dx                  ; bottom up: line DX's bank
+        and     si, 3
+        cmp     bp, 6
+        ja      .r4
+        shr     si, 1                   ; (200 lines: 2 banks, each line twice)
+.r4:    ror     si, 3
+        mov     ax, dx
+        shr     ax, 2
+        imul    ax, ax, 80
+        add     si, ax
         mov     cx, 80
 .px:    lodsb
         call    cap_b
@@ -306,163 +316,64 @@ capture:
 .del:   mov     ah, 41h                 ; not all of it: none of it
         mov     dx, cap_name
         int     21h
+.pcl:   mov     ah, 3Eh
+        int     21h
 .f4:    mov     cx, 4                   ; a long beep
 .beep:  mov     al, 7
 .b:     call    tty_out
         loop    .b
         pop     word [last_err]
-.done:  mov     byte [cap_req], 0       ; (pressed again meanwhile: dropped)
+        mov     byte [cap_req], 0       ; (pressed again meanwhile: dropped)
         pop     es
         pop     ds
         popa
         ret
-.prn:   call    cap_print               ; CX = 1 printed, 4 not
-.pb:    mov     al, 7
-        call    tty_out
-        loop    .pb
-        jmp     .done
 
-; SI = where screen line DX starts in B800h (BP = the video mode)
-cap_row:
-        mov     si, dx                  ; line DX's bank
-        and     si, 3
-        cmp     bp, 6
-        ja      .r4
-        shr     si, 1                   ; (200 lines: 2 banks, each line twice)
-.r4:    ror     si, 3
-        mov     ax, dx
-        shr     ax, 2
-        imul    ax, ax, 80
-        add     si, ax
-        ret
-
-; the screen to LPT1 as PostScript -> CX = 1 (sent) or 4 (not)
-cap_print:
-        push    ds
-        push    0
-        pop     es
-        mov     cx, 4
-        cmp     word [es:408h], 0       ; no LPT1
-        je      .r
-        mov     al, [es:449h]           ; the video mode
-        cbw
-        xchg    bp, ax
-        mov     si, ps_head
-        call    prn_s
-        cmp     bp, 3
-        ja      .g
-        mov     si, ps_text             ; text: each line as "(...)l"
-        call    prn_s
-        mov     si, [es:44Eh]
-        mov     bp, [es:44Ah]           ; (columns)
-        push    0B800h
-        pop     ds
-        mov     dx, 25
-.line:  mov     al, '('
-        call    prn_b
-        mov     cx, bp
-.ch:    lodsw
-        test    al, al                  ; (the PC's own graphics: ?)
-        jns     .a
-        mov     al, '?'
-.a:     cmp     al, ' '
-        jae     .b
-        mov     al, ' '
-.b:     cmp     al, '('
-        je      .esc
-        cmp     al, ')'
-        je      .esc
-        cmp     al, '\'
-        jne     .put
-.esc:   push    ax
-        mov     al, '\'
-        call    prn_b
-        pop     ax
-.put:   call    prn_b
-        loop    .ch
-        push    si
-        mov     si, ps_l
-        call    prn_s
-        pop     si
-        dec     dx
-        jnz     .line
-        jmp     short .end
-.g:     mov     si, ps_img              ; graphics: the lines bottom up, in
-        call    prn_s                   ;  hex, a lit pixel black (0)
-        push    0B800h
-        pop     ds
-        mov     dx, 399
-.row:   call    cap_row
-        mov     cx, 80
-.px:    lodsb
-        not     al
-        call    prn_hex
-        loop    .px
-        mov     al, 10
-        call    prn_b
-        dec     dx
-        jns     .row
-.end:   mov     si, ps_tail             ; the page, and the job's end (^D)
-        call    prn_s
-        mov     cx, 1
-        test    byte [cs:cap_req], 4
-        jz      .r
-        mov     cl, 4
-.r:     pop     ds
-        ret
-
-; the string at CS:SI to LPT1
-prn_s:  cs lodsb
-        or      al, al
-        jz      prn_b.x
-        call    prn_b
-        jmp     prn_s
-; AL as two hex digits
-prn_hex:
+; the printer driver: up to 1 KB, into the 1 KB at the kernel stack's
+; bottom, then called there (AL = 0: printed)
+.prn:   mov     dx, prn_path
+        mov     ax, 3D00h
+        int     21h
+        jc      .f4
+        xchg    bx, ax
+        mov     ax, 4202h               ; its size (1 KB at most)
+        xor     cx, cx
+        cwd
+        int     21h
+        or      dx, dx
+        jnz     .pcl
+        cmp     ax, 1024
+        ja      .pcl
         push    ax
-        shr     al, 4
-        call    prn_dig
-        pop     ax
-        and     al, 0Fh
-prn_dig:
-        add     al, 90h
-        daa
-        adc     al, 40h
-        daa
-; AL to LPT1 through INT 17h, for 10 s while it's busy; a fault or no
-; paper (or 10 s busy) sets cap_req bit 2, and nothing more is sent
-prn_b:  test    byte [cs:cap_req], 4
-        jnz     .x
-        pusha
-        push    ds
-        push    0
+        mov     ax, 4200h
+        cwd
+        int     21h
+        pop     cx
+        mov     ax, kstack_end + 15
+        shr     ax, 4
+        add     ax, KSEG
+        mov     es, ax
+        mov     [prn_call+2], ax
+        mov     word [prn_call], 0
+        push    es
         pop     ds
-        mov     cl, al
-        mov     si, [46Ch]
-.t:     mov     al, cl
-        mov     ah, 0
         xor     dx, dx
-        int     17h
-        test    ah, 28h                 ; I/O error, out of paper
-        jnz     .bad
-        test    ah, 1                   ; timed out: busy, again
-        jz      .ok
-        mov     ax, [46Ch]
-        sub     ax, si
-        cmp     ax, 182
-        jb      .t
-.bad:   or      byte [cs:cap_req], 4
-.ok:    pop     ds
-        popa
-.x:     ret
-
-ps_head db      '%!PS-Adobe-3.0', 10, 0
-ps_text db      '/Courier findfont 10 scalefont setfont/y 750 def'
-        db      '/l{36 y moveto show/y y 12 sub def}def', 10, 0
-ps_l    db      ')l', 10, 0
-ps_img  db      '/r 80 string def 36 400 translate 540 337.5 scale 640 400 1'
-        db      '[640 0 0 400 0 0]{currentfile r readhexstring pop}image', 10, 0
-ps_tail db      'showpage', 10, 4, 0
+        mov     ah, 3Fh
+        int     21h
+        push    cs
+        pop     ds
+        jc      .pcl
+        cmp     ax, cx
+        jne     .pcl
+        mov     ah, 3Eh
+        int     21h
+        call    far [prn_call]
+        push    cs
+        pop     ds
+        mov     cx, 1
+        or      al, al
+        jz      .beep
+        jmp     .f4
 
 ; AL to the file (BX) through the buffer at ES:DI; full, it is written
 ; (cap_fl).  A write that fails sets cap_req bit 2.
@@ -1343,7 +1254,8 @@ f_0D:   call    disk_reset              ; flush and forget the disks
 ;   AL = 1: DL = drive (0 = A:) -> CX = files open on it
 ;   AL = 5: the Executive's screen saver, for a program at its prompt:
 ;           AX = idle ticks before it (FFFFh: never), ES:BX = its far entry
-;   AL = 6: BL = 1: PrtSc prints, 0: it saves a file, FFh: ask -> AL
+;   AL = 6: PrtSc's printer driver -> ES:BX = its path ("": files), CX =
+;           its room (the caller changes it there)
 f_F0:   mov     al, [bp+F_AX]
         or      al, al
         jnz     .1
@@ -1388,15 +1300,12 @@ f_F0:   mov     al, [bp+F_AX]
         mov     word [bp+F_BX], ui_saver_far
         mov     ax, [es:saver_t]
         jmp     ok_ax
-; AL=6: PrtSc prints (BL = 1) or saves a file (BL = 0); BL = FFh only
-; asks.  -> AL = which it does now
-.prn:   mov     al, [bp+F_BX]
-        cmp     al, 0FFh
-        je      .pq
-        mov     [cap_prn], al
-.pq:    mov     al, [cap_prn]
-        xor     ah, ah
-        jmp     ok_ax
+; AL=6: PrtSc's printer driver -> ES:BX = its path ("A:\PS.PRN"; "": none,
+; PrtSc saves files), CX = the room there: the caller changes it in place
+.prn:   mov     [bp+F_ES], cs
+        mov     word [bp+F_BX], prn_path
+        mov     word [bp+F_CX], PRN_PATH
+        jmp     ok
 ; AL=4: the UI segment has moved to BX (where the root process restarts)
 .useg:  mov     ax, [bp+F_BX]
         mov     [ui_seg], ax

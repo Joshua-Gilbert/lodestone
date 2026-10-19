@@ -335,12 +335,15 @@ by its title strip, or press CODE-F7 and move it with the arrow keys
 (Return puts it there, ESC leaves it).  The x at the strip's right end
 closes it, as ESC does.  Programs on the UI core get this with API 6.
 
-Shift-PrtSc can print instead: System, Devices, Return (PRTSC=PRINTER in
-LODE.INI).  The screen goes to the printer on LPT1 as PostScript, as
-TM5000G prints to a Brother laser: a picture across the top of the page
-in the graphics modes, lines of text in the text modes.  One beep when
-it is sent; a long one if the printer is off, busy for 10 s or out of
-paper.  Return again: SCREENnn files as before.
+Shift-PrtSc can print instead, through a printer driver: a .PRN file of
+up to 1 KB, read from the disk only when PrtSc is pressed, so nothing of
+it stays in memory.  System, Devices, Return picks the next driver (the
+.PRN files in the drive's root, and from the ROM in C:\LODE), then none
+again: PRINTER=PS.PRN in LODE.INI.  PS.PRN (on the ROM too) prints
+PostScript on LPT1, as TM5000G prints to a Brother laser: a picture
+across the top of the page in the graphics modes, lines of text in the
+text modes.  One beep when it is sent; a long one if the printer is off,
+busy for 10 s or out of paper, or the driver isn't there.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

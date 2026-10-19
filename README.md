@@ -31,7 +31,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - Its own LIM 4.0 EMS manager, when the 1520's memory is set to EMS.
 - The GRIDGPIB driver API on INT 60h, built in, with a faster block transfer.
 - An INT 33h driver for a serial mouse on COM1 or COM2.
-- Screen capture: Shift-PrtSc saves the screen as `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text), or, set in System, prints it on LPT1 as PostScript (a picture of a graphics screen, the text of a text screen).
+- Screen capture: Shift-PrtSc saves the screen as `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text), or prints it through a printer driver chosen in System. A driver is a `.PRN` file of up to 1 KB, read from the disk only when PrtSc is pressed, so nothing of it stays in memory. `PS.PRN` prints PostScript on LPT1 (a picture of a graphics screen, the text of a text screen); other printers are other drivers (`os/drivers/PS.ASM` says how to write one).
 
 **Drives**
 - **A:** and **B:**, the internal and external floppy drives.
@@ -41,7 +41,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 
 **The Executive and its programs.** These run on one shared UI core, in GRiD's system font (other 8×16 fonts load from `.FNT` files).
 - **The Executive:** GRiD's File form (Device, Subject, Title). CODE-C copies, CODE-M moves, CODE-R renames and CODE-D deletes, with wildcards, Replace and Only newer, on files or whole subjects.
-- **System:** memory, disks, clock, devices (and whether Shift-PrtSc prints or saves a file), GPIB, display, screen saver, the temporary disk M:, and where the settings come from.
+- **System:** memory, disks, clock, devices (and Shift-PrtSc's printer driver), GPIB, display, screen saver, the temporary disk M:, and where the settings come from.
 - **Write:** a GRiDWrite-style text editor.
 - **The calculator** uses the 80287 or 287XL when one is fitted, and works with whole numbers when not. It runs as a window over the Executive (CODE-K) that you can drag by its title (or move with CODE-F7) and close with its x, and as `CALC` at the prompt, for batch files.
 - **The screen saver:** runs DEFRAG on every disk in turn, then darkens the screen.
@@ -58,7 +58,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner.
 - **The rest:** BENCH, GRIDPROBE and others are in `tools/` and `os/bench/`.
 
-**Settings** are kept in `LODE.INI`: the font, the screen saver, the start-up picture, M:'s size, what Shift-PrtSc does. From the ROM, the ROM's own `LODE.INI` gives the defaults, and changes go in `C:\LODE.INI` (A: without a hard disk).
+**Settings** are kept in `LODE.INI`: the font, the screen saver, the start-up picture, M:'s size, Shift-PrtSc's printer driver. From the ROM, the ROM's own `LODE.INI` gives the defaults, and changes go in `C:\LODE.INI` (A: without a hard disk).
 
 ## Claude on the GRiD
 
@@ -86,14 +86,14 @@ On the 1520, BENCH from each kind of drive, in seconds:
 | Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
 | **All ten tests** | **87.6** | **9.1** | **2.1** |
 
-Lodestone 0.6 (memory measured with printing and the windows that move) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
+Lodestone 0.6 (memory measured with the windows that move and the printer drivers) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
 
 | | Lodestone | GRiD MS-DOS 3.30 | FreeDOS |
 |---|---:|---:|---:|
 | BENCH file-system total | **78.8** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.43** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **577.2 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 561.1 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **577.6 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 561.5 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
@@ -132,6 +132,7 @@ See `docs/lodestone-floppy-dev.md`.
 | `os/splash` | The start-up picture's source: the source image, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
 | `os/rom` | `LODE.INI`, the settings burned into the ROM. The ROM images are `os/LODE1_EPROM.BIN` (to burn) and `os/LODE1.BIN` (as the BIOS sees it), built by `os/build.sh` with `tools/mkrom.py` |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN` and `CALC.RUN` (the calculator's window) |
+| `os/drivers` | Printer drivers for Shift-PrtSc (`.PRN`, up to 1 KB, read only when printing): `PS.PRN`, PostScript on LPT1; `PS.ASM` describes the interface |
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `os/tests` | `pcemu`-based tests (see Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN; and for the 1520: CMDTEST.BAT (the batch language), CALCTEST.BAT (the calculator, step by step) and FPUPROBE.COM (what the coprocessor answers after FNINIT) |
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |

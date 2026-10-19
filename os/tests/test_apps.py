@@ -438,8 +438,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printing (PRTSC=PRINTER) 0.6 KB): the directory buffer is lent while it runs' % kb,
-          kb >= 561.1, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at Shift-PrtSc (PRINTER=) 0.2 KB): the directory buffer is lent while it runs' % kb,
+          kb >= 561.5, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -690,8 +690,11 @@ def t_saver_tidy():
 
 
 def t_prtsc_setting():
-    print('== Shift-PrtSc prints or saves a file (System, Devices, Return; LODE.INI PRTSC=PRINTER)')
-    img = image('prs.img', SYSTEM)
+    print('== Shift-PrtSc prints with a driver, or saves files (System, Devices, Return; LODE.INI PRINTER=)')
+    import shutil
+    ps = os.path.join(GOS, 'drivers', 'PS.PRN')
+    other = os.path.join(OUT, 'EPSON.PRN'); shutil.copy(ps, other)
+    img = image('prs.img', SYSTEM, ps, other)
     k = ktest.KPC(img); k.start()
     def topic(k):
         k.key(CODE['U'])
@@ -699,19 +702,23 @@ def t_prtsc_setting():
         k.settle()
     topic(k)
     line = lambda: next((l for l in lines(k) if 'Shift-PrtSc' in l), '')
-    check('Devices: "Shift-PrtSc  saves SCREENnn.BMP or .TXT"', 'saves SCREENnn' in line() and k.rd('cap_prn', 1) == b'\0',
-          (line(), screen(k)))
-    k.key(ktest.ENTER)
-    check('Return: "prints on LPT1" at once, the kernel told, LODE.INI says PRTSC=PRINTER',
-          'prints on LPT1' in line() and k.rd('cap_prn', 1) == b'\1' and disk_file(k, 'LODE.INI') == b'PRTSC=PRINTER\r\n',
-          (line(), k.rd('cap_prn', 1), disk_file(k, 'LODE.INI')))
+    path = lambda: k.rd('prn_path', 24).split(b'\0')[0]
+    check('Devices: "Shift-PrtSc  saves SCREENnn.BMP / .TXT"; RETURN in the band', 'saves SCREENnn' in line() and path() == b''
+          and 'RETURN: the next printer driver' in ' '.join(k.band()), (line(), k.band()))
+    seen = []
+    for _ in range(3):
+        k.key(ktest.ENTER)
+        seen.append((line().split('  ')[-1].strip(), path(), disk_file(k, 'LODE.INI')))
+    names = [p for _, p, _ in seen]
+    check('Return: each .PRN on the disk in turn, then files again; the kernel told the full path',
+          sorted(names[:2]) == [b'A:\\EPSON.PRN', b'A:\\PS.PRN'] and names[2] == b'' and
+          all(('prints with ' + n.decode()[3:]) in t for t, n, _ in seen[:2]) and 'saves SCREENnn' in seen[2][0], seen)
+    check('... LODE.INI says PRINTER=NAME, and nothing when files', seen[0][2] == b'PRINTER=' + names[0][3:] + b'\r\n'
+          and seen[2][2] is None, [x[2] for x in seen])
+    k.key(ktest.ENTER)                                   # the first one again, kept
     k.key(ktest.ESC); k.settle()
     k = reboot(k, 'prs2.img')
-    check('after a restart: still printing (PRTSC=PRINTER taken)', k.rd('cap_prn', 1) == b'\1', k.rd('cap_prn', 1))
-    topic(k)
-    k.key(ktest.ENTER)
-    check('Return again: a file, the PRTSC= line gone (no file left)', 'saves SCREENnn' in line() and
-          k.rd('cap_prn', 1) == b'\0' and disk_file(k, 'LODE.INI') is None, (line(), disk_file(k, 'LODE.INI')))
+    check('after a restart: the same driver (PRINTER= taken, found along PATH)', path() == names[0], (path(), names[0]))
 
 
 # ---------------------------------------------------------------------

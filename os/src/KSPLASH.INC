@@ -74,6 +74,7 @@ sp_boot:
         movsw
         movsb
 .on:    call    rs_boot                 ; (KROM.INC: booted from the ROM)
+        call    pr_boot                 ; Shift-PrtSc's printer driver
         call    sp_wanted
         jc      .go
         call    sp_load
@@ -117,6 +118,72 @@ sp_wanted:
         cmp     al, 10
         jne     .next
         jmp     .line
+
+; PRINTER=NAME in the settings (the first such line, the changes' before
+; the ROM's; "PRINTER=": none) -> the kernel's prn_path, where PATH finds
+; it: from the ROM C:\LODE\NAME if it is there, else the root of the
+; drive started from.  Only the path is kept; KCORE.INC's capture reads
+; the driver at Shift-PrtSc.  DS = CS, ES = KSEG.
+pr_boot:
+        push    KSEG
+        pop     es
+        call    ini_read                ; (KROM.INC: LODE.INI's, both)
+.line:  mov     di, MDB(s_preq)         ; "PRINTER=" (any case) starting
+.c:     mov     al, [di]                ;  the line?
+        or      al, al
+        jz      .hit
+        mov     ah, [si]
+        and     ax, 0DFDFh
+        cmp     al, ah
+        jne     .next
+        inc     si
+        inc     di
+        jmp     .c
+.next:  lodsb                           ; on to the next line
+        or      al, al
+        jz      .x
+        cmp     al, 10
+        jne     .next
+        jmp     .line
+.hit:   cmp     byte [si], ' '          ; ("PRINTER=": none)
+        jbe     .x
+        mov     ax, 3305h
+        int     21h
+        add     dl, 'A' - 1
+        mov     [MDB(s_prroot)], dl
+        cmp     dl, 'R'
+        jne     .root
+        push    si
+        mov     bx, MDB(s_prlode)       ; from the ROM: C:\LODE's first
+        call    .cp
+        pop     si
+        push    ds
+        push    es
+        pop     ds
+        mov     dx, prn_path
+        mov     ax, 4300h
+        int     21h
+        pop     ds
+        jnc     .x
+.root:  mov     bx, MDB(s_prroot)
+; ES:prn_path = the string at BX, then the name at SI (to a blank or the
+; line's end, 12 characters at most)
+.cp:    mov     di, prn_path
+.p:     mov     al, [bx]
+        inc     bx
+        or      al, al
+        jz      .n
+        stosb
+        jmp     .p
+.n:     mov     cx, 12
+.nm:    lodsb
+        cmp     al, ' '
+        jbe     .z
+        stosb
+        loop    .nm
+.z:     xor     al, al
+        stosb
+.x:     ret
 
 ; \LODE.PIC into PIC_SEG:0000.  CF if there is none, or it isn't one: its
 ; signature, after a JMP SHORT, is "LODEPIC", 1, and the word after it is
@@ -166,6 +233,9 @@ sp_load:
 .x:     ret
 
 s_speq  db      'SPLASH', 1Dh, 0        ; (as "SPLASH=" AND 0DFh)
+s_preq  db      'PRINTER', 1Dh, 0       ; (as "PRINTER=" AND 0DFh)
+s_prlode db     'C:\LODE\', 0
+s_prroot db     '@:\', 0
 s_sppic db      '@:\LODE.PIC', 0
 s_picsig db     'LODEPIC', 1
 sp_next dw      run_ui, KSEG            ; where to after (or md_boot)

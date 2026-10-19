@@ -938,13 +938,14 @@ t_devices:
 .lx:    mov     si, l_printer
         call    pline
         call    vstart                  ; what Shift-PrtSc does (the kernel's)
-        mov     bl, 0FFh
-        mov     ax, 0F006h
-        int     21h
-        mov     si, s_prtfile
-        or      al, al
-        jz      .pr
-        mov     si, s_prtprn
+        call    prn_get
+        jz      .pf
+        push    si
+        mov     si, s_prtwith
+        call    UI_SBSTR
+        pop     si
+        jmp     short .pr
+.pf:    mov     si, s_prtfile
 .pr:    call    UI_SBSTR
         mov     si, l_prtsc
         call    pline
@@ -1424,16 +1425,85 @@ sv_steps    db 1, 2, 5, 10, 15, 30, 0   ; minutes (0: never)
 
 NSTEPS      equ $ - sv_steps
 
-; Return on Devices: Shift-PrtSc prints, or saves a file again; saved in
-; LODE.INI (PRTSC=PRINTER), and the kernel told at once
+; the printer driver Shift-PrtSc uses (the kernel's): its path into
+; prn_cur, SI = its name, ZF if there is none (PrtSc saves files).  DI kept
+prn_get:
+        push    di
+        push    es
+        mov     ax, 0F006h
+        int     21h                     ; ES:BX = its path
+        mov     si, prn_cur
+        mov     di, si                  ; (the name: after the last \)
+.c:     mov     al, [es:bx]
+        inc     bx
+        mov     [si], al
+        inc     si
+        cmp     al, '\'
+        jne     .n
+        mov     di, si
+.n:     or      al, al
+        jnz     .c
+        pop     es
+        mov     si, di
+        pop     di
+        cmp     byte [si], 0
+        ret
+
+; Return on Devices: the next printer driver (the .PRN files where PATH
+; finds programs: from the ROM C:\LODE, then the root of the drive
+; started from), then none again (Shift-PrtSc saves files).  The kernel
+; has its path at once; LODE.INI gets PRINTER=NAME.
 next_prtsc:
-        mov     bl, 0FFh
-        mov     ax, 0F006h
+        call    prn_get                 ; (prn_cur)
+        mov     byte [past], 0
+        cmp     byte [prn_cur], 0
+        jne     .d0
+        mov     byte [past], 1          ; none now: the first one is next
+.d0:    mov     al, [boot_l]
+        mov     [s_prnroot], al
+        mov     bx, s_prnlode           ; from the ROM: C:\LODE's first
+        cmp     al, 'R'
+        je      .dir
+.d1:    mov     bx, s_prnroot
+.dir:   mov     dx, bx
+        xor     cx, cx
+        mov     ah, 4Eh
         int     21h
-        mov     bl, al
-        xor     bl, 1
-        mov     ax, 0F006h
+.l:     jc      .nd
+        mov     si, bx                  ; vbuf = the directory, the name
+        mov     di, vbuf
+.p:     lodsb
+        cmp     al, '*'
+        je      .pn
+        stosb
+        jmp     .p
+.pn:    mov     si, dta + 30
+        call    UI_SBSTR
+        mov     byte [di], 0
+        cmp     byte [past], 0
+        jne     .set                    ; past the one in use: this one
+        mov     si, vbuf
+        mov     di, prn_cur
+        call    same_name
+        jne     .nx
+        mov     byte [past], 1
+.nx:    mov     ah, 4Fh
         int     21h
+        jmp     .l
+.nd:    cmp     bx, s_prnlode
+        je      .d1
+        mov     byte [vbuf], 0          ; past the last: none again
+.set:   push    es
+        mov     ax, 0F006h
+        int     21h                     ; ES:BX = the kernel's, CX its room
+        mov     di, bx
+        mov     si, vbuf
+.cp:    lodsb
+        stosb
+        or      al, al
+        loopnz  .cp
+        mov     byte [es:di-1], 0
+        pop     es
         call    save_ini
         jmp     redraw
 
@@ -1726,9 +1796,9 @@ splash_scan:
         jne     .next
         jmp     .line
 
-; FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRTSC= in \LODE.INI for the
+; FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRINTER= in \LODE.INI for the
 ; font, saver, temporary disk, start-up picture and PrtSc in use: its other
-; lines are kept, old FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRTSC= lines go, and GRiD's
+; lines are kept, old FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRINTER= lines go, and GRiD's
 ; font, the usual 5 minutes, tidying, 256 KB and the picture need none (no
 ; lines left: no file).  Without M: (no EMS) an MDISK= line stays as it
 ; is.  CF if it couldn't be saved (said in the band).
@@ -1774,7 +1844,7 @@ save_ini:
         mov     di, s_splasheq
         call    ini_is
         je      .ours
-        mov     di, s_prtsceq
+        mov     di, s_printeq
         call    ini_is
         je      .ours
         mov     di, s_mdeq              ; MDISK=: ours only with M: here
@@ -1832,15 +1902,15 @@ save_ini:
         je      .wr3p
         mov     si, s_splash0
         call    UI_SBSTR
-.wr3p:  push    di                      ; PrtSc prints: PRTSC=PRINTER
-        mov     bl, 0FFh
-        mov     ax, 0F006h
-        int     21h
-        pop     di
-        or      al, al
+.wr3p:  call    prn_get                 ; a printer driver: PRINTER=NAME
         jz      .wr3m
-        mov     si, s_prtscp
+        push    si
+        mov     si, s_printeq
         call    UI_SBSTR
+        pop     si
+        call    UI_SBSTR
+        mov     ax, 0A0Dh
+        stosw
 .wr3m:  cmp     byte [md_ok], 0         ; M:'s size, unless 256 KB
         je      .wr4
         mov     ax, [md_set]
@@ -2079,7 +2149,7 @@ s_band1     db 'System: Select a topic',0
 s_band2     db 'CODE-? for help    ESC: back to the Executive',0
 s_band_clk  db 'RETURN: set the date and time    ESC: back',0
 s_band_gp   db 'RETURN: scan the bus    ESC: back',0
-s_band_dev  db 'RETURN: Shift-PrtSc prints or saves a file    ESC: back',0
+s_band_dev  db 'RETURN: the next printer driver, or files    ESC: back',0
 s_band_font db 'RETURN: the next font    SPACE: picture or not    ESC: back',0
 s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
 s_band_md   db 'RETURN: the next size    ESC: back',0
@@ -2090,7 +2160,7 @@ h_enter2    db 'Return on GPIB               scan the bus',0
 h_enter3    db 'Return on Display            the next font',0
 h_enter4    db 'Return on Temporary disk M:  the next size',0
 h_enter5    db "Return on Settings           back to the ROM's",0
-h_enter6    db 'Return on Devices            Shift-PrtSc: print or file',0
+h_enter6    db 'Return on Devices            Shift-PrtSc: the next driver',0
 h_space     db 'Space on Display             the start-up picture or not',0
 h_space2    db 'Space on Screen saver        tidy the disks or not',0
 h_f5        db 'F5                           look again',0
@@ -2230,10 +2300,11 @@ s_tidy0     db 'TIDY=0', 13, 10, 0
 s_splasheq  db 'SPLASH=',0
 s_splash0   db 'SPLASH=0', 13, 10, 0
 s_mdeq      db 'MDISK=',0
-s_prtsceq   db 'PRTSC=',0
-s_prtscp    db 'PRTSC=PRINTER', 13, 10, 0
+s_printeq   db 'PRINTER=',0
 s_prtfile   db 'saves SCREENnn.BMP / .TXT',0
-s_prtprn    db 'prints on LPT1 (PostScript)',0
+s_prtwith   db 'prints with ',0
+s_prnroot   db '@:\*.PRN',0
+s_prnlode   db 'C:\LODE\*.PRN',0
 s_mdalleq   db 'ALL',0
 l_mdsize    db 'Size',0
 l_mdfree    db 'Free',0
@@ -2313,6 +2384,7 @@ gp_my       resb 1
 gp_nfound   resb 1
 gp_found    resb 32
 cur_font    resb 13
+prn_cur     resb 24                 ; the printer driver's path (the kernel's)
 md_set      resw 1                  ; M:: its setting (KB, 0 off, FFFFh all),
 md_size     resw 1                  ;  its size (KB), the most it can have,
 md_max      resw 1
