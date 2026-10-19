@@ -438,7 +438,7 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at Shift-PrtSc (PRINTER=) 0.2 KB): the directory buffer is lent while it runs' % kb,
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB): the directory buffer is lent while it runs' % kb,
           kb >= 561.5, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
@@ -694,7 +694,8 @@ def t_prtsc_setting():
     import shutil
     ps = os.path.join(GOS, 'drivers', 'PS.PRN')
     other = os.path.join(OUT, 'EPSON.PRN'); shutil.copy(ps, other)
-    img = image('prs.img', SYSTEM, ps, other)
+    job = os.path.join(OUT, 'JOB.PRN'); open(job, 'wb').write(b'\x1bEa print job saved as .PRN\r\n\x0c')
+    img = image('prs.img', SYSTEM, ps, other, job)
     k = ktest.KPC(img); k.start()
     def topic(k):
         k.key(CODE['U'])
@@ -710,7 +711,7 @@ def t_prtsc_setting():
         k.key(ktest.ENTER)
         seen.append((line().split('  ')[-1].strip(), path(), disk_file(k, 'LODE.INI')))
     names = [p for _, p, _ in seen]
-    check('Return: each .PRN on the disk in turn, then files again; the kernel told the full path',
+    check('Return: each driver on the disk in turn (not JOB.PRN, a print job), then files again; the kernel told the full path',
           sorted(names[:2]) == [b'A:\\EPSON.PRN', b'A:\\PS.PRN'] and names[2] == b'' and
           all(('prints with ' + n.decode()[3:]) in t for t, n, _ in seen[:2]) and 'saves SCREENnn' in seen[2][0], seen)
     check('... LODE.INI says PRINTER=NAME, and nothing when files', seen[0][2] == b'PRINTER=' + names[0][3:] + b'\r\n'
