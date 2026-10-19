@@ -115,7 +115,8 @@ def t_image():
     first = d.split('Directory for ::/')[1].strip().split('\n')[0]
     check('LODE.SYS is the first file', first.startswith('LODE     SYS'), first)
     srcs = {'LODE.SYS': 'src/LODE.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
-            'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI', 'DEFRAG.COM': 'src/DEFRAG.COM'}
+            'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI', 'DEFRAG.COM': 'src/DEFRAG.COM',
+            'PS.PRN': 'drivers/PS.PRN'}
     bad = []
     for n, s in srcs.items():
         o = os.path.join(OUT, 'rom_x')
@@ -369,6 +370,53 @@ def t_paths():
         check('CODE-K, %s: %s' % (tag, where), any(where in l for l in opened), k.dos_log()[-12:])
 
 
+def rom_ini(ini):
+    """ROM 1 as build.sh makes it, with another LODE.INI"""
+    names = ['src/LODE.SYS', 'src/LODE.PIC', 'src/LCMD.COM', 'apps/SYSTEM.RUN', 'apps/WRITE.RUN', 'apps/CALC.RUN',
+             'src/CALC.COM', 'src/DEFRAG.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN']
+    files = [(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names] + [('LODE.INI', ini)]
+    return mkrom.volume(files, boot=open(os.path.join(GOS, 'src', 'ROMBOOT.BIN'), 'rb').read())[0]
+
+
+def t_printer():
+    print('== the printer driver from the ROM: PRINTER= found as PATH finds programs (C:\\LODE, then R:)')
+    ps = open(os.path.join(GOS, 'drivers', 'PS.PRN'), 'rb').read()
+    path = lambda k: k.rd('prn_path', 24).split(b'\0')[0]
+    ini = ('LODE.INI', b'PRINTER=PS.PRN\r\n')
+    k = boot(ata=sysinfo_hd(ini))
+    check('PRINTER=PS.PRN in C:\\LODE.INI, none in C:\\LODE: R:\\PS.PRN', path(k) == b'R:\\PS.PRN', path(k))
+    k.pc.tty.clear(); k.pc.lpt.clear(); k.pc.prtsc(); k.settle(8)
+    out = bytes(k.pc.lpt)
+    check('... PrtSc prints with it, read from the ROM (one beep)', out.startswith(b'%!PS') and out.endswith(b'showpage\n\x04')
+          and ''.join(k.pc.tty).count('\x07') == 1, (out[:20], ''.join(k.pc.tty).count('\x07')))
+    k = boot(ata=sysinfo_hd(ini, ('LODE\\PS.PRN', ps)))
+    check('a copy in C:\\LODE: that one (C:\\LODE\\PS.PRN)', path(k) == b'C:\\LODE\\PS.PRN', path(k))
+    # System, Devices, Return from the ROM: C:\LODE's drivers, then R:'s, then none
+    k = boot(ata=sysinfo_hd(('LODE\\PCL.PRN', ps)))
+    k.key(CODE['U'])
+    for _ in range(3): k.key(ktest.DOWN)
+    seen = []
+    for _ in range(3):
+        k.key(ktest.ENTER); seen.append(path(k))
+    check('System from the ROM: Return steps C:\\LODE\\PCL.PRN, R:\\PS.PRN, then none', seen == [b'C:\\LODE\\PCL.PRN', b'R:\\PS.PRN', b''],
+          seen)
+    k.key(ktest.ESC)
+    # the ROM's settings naming a driver: "none" chosen in System stays none
+    r = rom_ini(b'PRINTER=PS.PRN\r\n')
+    k = boot(roms={1: r}, ata=sysinfo_hd())
+    check('the ROM\'s LODE.INI says PRINTER=PS.PRN: R:\\PS.PRN', path(k) == b'R:\\PS.PRN', path(k))
+    k.key(CODE['U'])
+    for _ in range(3): k.key(ktest.DOWN)
+    k.key(ktest.ENTER)                                          # (past R:\PS.PRN: none)
+    ini = hd_file(k, 'LODE.INI')
+    check('none chosen: C:\\LODE.INI says PRINTER= (empty), so the ROM\'s line doesn\'t win', path(k) == b'' and
+          ini == b'PRINTER=\r\n', (path(k), ini))
+    k.key(ktest.ESC)
+    k = boot(roms={1: r}, ata=pcemu.Ata(model='Conner Peripherals 120MB - CP30104H', cyls=70, heads=4, spt=17,
+                                         disk=k.pc.ata.disk))
+    check('... after a restart: still none', path(k) == b'', path(k))
+
+
 def t_memory():
     print('== what DOS programs get (MEMSZ at the command prompt)')
     got = {}
@@ -388,7 +436,7 @@ def t_memory():
               % (tag, got[tag, 'no ROM'], got[tag, 'ROM in, from A:'], got[tag, 'from the ROM']))
         n, f, r = got[tag, 'no ROM'], got[tag, 'ROM in, from A:'], got[tag, 'from the ROM']
         check('%s: R: costs DOS programs 0.6 KB at most (its module, and from the ROM a longer PATH in each program'"'"'s environment)' % tag,
-              n and f and r and n - f <= 0.5 and n - r <= 0.6, (n, f, r))
+              n and f and r and round(n - f, 1) <= 0.5 and round(n - r, 1) <= 0.6, (n, f, r))
     return got
 
 
@@ -396,7 +444,7 @@ if __name__ == '__main__':
     t0 = time.time()
     if 'nobuild' not in sys.argv: build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_memory):
+    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_memory):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

@@ -293,6 +293,92 @@ def t_capture():
           beeps() == 4 and sorted(files()) == before and not probs and sum(1 for a in calls21 if a >> 8 == 0x40) == 1,
           (beeps(), sorted(files()), probs, [hex(a) for a in calls21]))
 
+
+def t_print():
+    """PRINTER=PS.PRN in LODE.INI: PrtSc reads that driver (a file of
+    up to 1 KB) into the capture's 1 KB, calls it, and forgets it; PS.PRN
+    sends the screen to LPT1 as PostScript (the Brother HL-5370DW's)."""
+    import binascii, subprocess
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'printer=ps.prn\r\n')
+    ps = os.path.join(GOS, 'drivers', 'PS.PRN')
+    k = ktest.KPC(image('prn.img', os.path.join(HERE, 'CAPTEST.COM'), ini, ps)); k.start()
+    files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    beeps = lambda: ''.join(k.pc.tty).count('\x07')
+    def shot(sim_s=8.0):
+        k.pc.tty.clear(); k.pc.lpt.clear(); k.pc.prtsc(); k.settle(sim_s)
+        return bytes(k.pc.lpt)
+    path = lambda: k.rd('prn_path', 24).split(b'\0')[0]
+    check('PRINTER=ps.prn in LODE.INI: found as programs are, the kernel has A:\\ps.prn', path().upper() == b'A:\\PS.PRN', path())
+    check('PS.PRN fits the 1 KB buffer, in one sector, and has the signature',
+          os.path.getsize(ps) <= 512 and open(ps, 'rb').read()[2:6] == b'PRN\x01', os.path.getsize(ps))
+    vram = k.pc.rd(0xB800, 0, 0x8000)
+    out = shot()
+    head, _, rest = out.partition(b'image\n')
+    rows = rest.split(b'\n')
+    want = [bytes(255 - v for v in vram[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]) for y in range(399, -1, -1)]
+    check('Executive: PostScript to LPT1, a 640 x 400 image, one beep, no file',
+          out.startswith(b'%!PS-Adobe-3.0\n') and b'640 400 1[640 0 0 400 0 0]' in head and out.endswith(b'showpage\n\x04')
+          and beeps() == 1 and not any('SCREEN' in n for n in files()), (out[:80], out[-20:], beeps(), sorted(files())))
+    check('... the screen, bottom line first, a lit pixel black (0), 80 bytes a line in hex',
+          [binascii.unhexlify(r) for r in rows[:400]] == want and rows[400] == b'showpage', (len(rows), rows[400:401]))
+    k.select('CAPTEST.COM'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: k.pc.mode() == 6, 5); k.settle()
+    out = shot()
+    rows = out.partition(b'image\n')[2].split(b'\n')
+    check('mode 6, in a DOS program: the image, each line twice', [binascii.unhexlify(r) for r in rows[:400]] ==
+          [bytes([255 - (y >> 1)]) * 80 for y in range(399, -1, -1)] and beeps() == 1, beeps())
+    k.key(ktest.ENTER); out = shot()
+    lines = out.partition(b'def}def\n')[2].split(b'\n')
+    check('text: 25 lines in Courier, each "(...)l"', b'/Courier findfont' in out and len(lines) == 27 and
+          all(l.startswith(b'(') and l.endswith(b')l') for l in lines[:25]) and lines[25] == b'showpage', lines[:5])
+    check('... as the screen has them (80 columns, the NUL a blank)', lines[0] == b'(' + b'Line one'.ljust(80) + b')l'
+          and lines[3] == b'(' + b'ABCDE GHIJ'.ljust(80) + b')l', lines[:4])
+    k.pc.wr(0xB800, 0, b'(\x07)\x07\\\x07\xC9\x07'); out = shot()
+    check('( ) and \\ escaped, a box-drawing character as ?', b'\n(\\(\\)\\\\?' in out, out[:200])
+    k.pc.lpt_status = 0x11; out = shot(14.0); k.pc.lpt_status = 0x90
+    check('printer busy 10 s: the long beep, nothing sent', out == b'' and beeps() == 4, (out[:20], beeps()))
+    k.pc.lpt_status = 0x38; out = shot(); k.pc.lpt_status = 0x90
+    check('out of paper: the long beep at once', out == b'' and beeps() == 4, (out[:20], beeps()))
+    k.pc.wr(0, 0x408, b'\0\0'); out = shot(); k.pc.wr(0, 0x408, b'\x78\x03')
+    check('no LPT1: the long beep', out == b'' and beeps() == 4, (out[:20], beeps()))
+    # any driver: one that prints "Hi" through the BIOS and says it did
+    drv = os.path.join(OUT, 'drv.asm'); open(drv, 'w').write(
+        "org 0\njmp short s\ndb 'PRN', 1\ns: mov ax, 0048h\nxor dx, dx\nint 17h\nmov ax, 0069h\nint 17h\nxor al, al\nretf\n")
+    subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(OUT, 'HI.PRN'), drv], check=True)
+    hi = open(os.path.join(OUT, 'HI.PRN'), 'rb').read()
+    big = os.path.join(OUT, 'BIG.PRN'); open(big, 'wb').write(hi + bytes(1100))
+    # not drivers: a print job saved as .PRN (it would hang the machine if
+    # run), an empty file (the buffer's old contents), one too small, one
+    # without the signature
+    job = os.path.join(OUT, 'JOB.PRN'); open(job, 'wb').write(b'\x1b&l0O\x1bEHello from a saved print job\r\n\x0c')
+    zero = os.path.join(OUT, 'ZERO.PRN'); open(zero, 'wb').write(b'')
+    tiny = os.path.join(OUT, 'TINY.PRN'); open(tiny, 'wb').write(hi[:6] + b'\xcb' * 4)
+    nosig = os.path.join(OUT, 'NOSIG.PRN'); open(nosig, 'wb').write(hi[:2] + b'XXX\x01' + hi[6:])
+    k2 = ktest.KPC(image('prn2.img', os.path.join(OUT, 'HI.PRN'), big, job, zero, tiny, nosig)); k2.start()
+    def shot2(name):
+        k2.wr('prn_path', name.encode() + b'\0'); k2.pc.tty.clear(); k2.pc.lpt.clear(); k2.pc.prtsc(); k2.settle(6)
+        return bytes(k2.pc.lpt), ''.join(k2.pc.tty).count('\x07')
+    check('another driver (HI.PRN): it is what prints', shot2('A:\\HI.PRN') == (b'Hi', 1), shot2('A:\\HI.PRN'))
+    check('a driver over 1 KB: not run, the long beep', shot2('A:\\BIG.PRN') == (b'', 4), shot2('A:\\BIG.PRN'))
+    check('a driver that isn\'t there: the long beep', shot2('A:\\NONE.PRN') == (b'', 4), shot2('A:\\NONE.PRN'))
+    for n, what in (('JOB', 'a print job saved as .PRN'), ('ZERO', 'an empty file'), ('TINY', 'under 16 bytes'),
+                    ('NOSIG', 'no signature')):
+        got = shot2('A:\\%s.PRN' % n)
+        check('%s: not run, the long beep, and PrtSc free again (cap_req 0)' % what, got == (b'', 4) and
+              k2.rd('cap_req', 1) == b'\0', (got, k2.rd('cap_req', 1)))
+    check('... and the real driver still prints after them', shot2('A:\\HI.PRN') == (b'Hi', 1), shot2('A:\\HI.PRN'))
+    k2.wr('prn_path', b'\0')
+    out, _ = shot2('')
+    check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(bytes(k2.pc.drives[0].img)),
+          sorted(fatcheck.read_files(bytes(k2.pc.drives[0].img))))
+    check('still no file on the printing disk', not any('SCREEN' in n for n in files()), sorted(files()))
+    # Shift-PrtSc: the file all the same, the driver set
+    k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] | 2])); out = shot(); k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] & ~3]))
+    check('Shift-PrtSc with a driver set: SCREEN01.BMP, nothing to the printer', out == b'' and beeps() == 1 and
+          any('SCREEN01' in n for n in files()), (out[:20], beeps(), sorted(files())))
+    out = shot()
+    check('... and PrtSc alone prints again', out.startswith(b'%!PS'), out[:20])
+
 def mcbs(k):
     """The arena: (segment, type, owner, size, name) of each block."""
     seg, out = first_mcb(k), []
@@ -1390,7 +1476,7 @@ def t_calc():
     o = sh.run('calc 6*7 > full.txt || echo EL')
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
-TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_cache, t_cache_ems, t_mdisk,
+TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
          t_mdreview, t_lodeboot, t_command, t_cmdedit, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()

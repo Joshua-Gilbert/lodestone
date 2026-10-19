@@ -315,7 +315,8 @@ BIOS's own check ignores them, and now so does Lodestone.  New on this
 disk: CALCTEST.BAT tries the calculator step by step (its answers go to
 CALCTEST.TXT), and FPUPROBE shows what the coprocessor answers.
 
-0.6: Lodestone in ROM.  Burn LODE1.BIN (128 KB) to a 27C010 and put it in
+0.6: Lodestone in ROM.  Burn LODE1_EPROM.BIN (128 KB; LODE1.BIN with its
+halves swapped, as the 1520 wires its sockets) to a 27C010 and put it in
 the second ROM socket (the BIOS starts the last bootable ROM it finds;
 the GRiD MS-DOS EPROM can go in the first).  It starts on C: (or R:).
 R: is the ROM: LODE.SYS, LCMD, System, Write, the calculator, DEFRAG,
@@ -334,6 +335,17 @@ by its title strip, or press CODE-F7 and move it with the arrow keys
 (Return puts it there, ESC leaves it).  The x at the strip's right end
 closes it, as ESC does.  Programs on the UI core get this with API 6.
 
+PrtSc prints, through a printer driver (Shift-PrtSc still saves the
+file).  A driver is a .PRN file of up to 1 KB with a driver's signature
+(a print job saved as .PRN isn't one), read from the disk only when PrtSc
+is pressed, so nothing of it stays in memory.  System, Devices, Return
+picks the next driver (in the drive's root, and from the ROM C:\LODE
+first), then none again: PRINTER=PS.PRN in LODE.INI.  PS.PRN (on the ROM
+too) prints PostScript on LPT1, as TM5000G prints to a Brother laser: a
+picture across the top of the page in the graphics modes, lines of text
+in the text modes.  One beep when it is sent; a long one if the printer
+is off, busy for 10 s or out of paper, or the driver isn't there.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
@@ -350,6 +362,8 @@ The Executive (the file list):
                                  in Subject: Delete the subject)
   F5                             read the disk again after a swap
   Shift-PrtSc                    the screen to SCREENnn.BMP (or .TXT)
+  PrtSc                          printed, with a printer driver set
+                                 (System, Devices); else as Shift-PrtSc
   CODE-? (Alt+/) or F1           help
   5 minutes idle                 screen saver (DEFRAG on A:, B:, C:,
                                  then the time; System, Screen saver

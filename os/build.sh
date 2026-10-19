@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build Lodestone: boot sector, installer, kernel (with listing and symbol
 # map), the start-up picture LODE.PIC, LCMD.COM (the shell), DEFRAG.COM, HEADCLN.COM, CALC.COM, the .RUN programs
-# (apps/, with mkrun.py), the font files (fonts/), the test programs and BENCH.  Then:
+# (apps/, with mkrun.py), the font files (fonts/), the printer drivers (drivers/), the test programs and BENCH.  Then:
 # python3 tests/test_kernel.py, tests/test_apps.py, and bench/run_bench.py ROM-image
 set -e
 cd "$(dirname "$0")/src"
@@ -18,12 +18,14 @@ nasm -f bin -o HEADCLN.COM HEADCLN.ASM
 nasm -f bin -o CALC.COM CALC.ASM
 cd ../fonts
 nasm -f bin -i ../src/ -o TERMINUS.FNT TERMINUS.ASM
+cd ../drivers
+nasm -f bin -o PS.PRN PS.ASM            # printer drivers, read at PrtSc
 cd ..
 for a in SYSTEM WRITE CALC; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; done
 python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
 # ROM 1, the boot ROM (tools/mkrom.py): the kernel first, then the core set
 python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODE.PIC src/LCMD.COM \
-    apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN src/CALC.COM src/DEFRAG.COM fonts/TERMINUS.FNT rom/LODE.INI
+    apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN src/CALC.COM src/DEFRAG.COM fonts/TERMINUS.FNT drivers/PS.PRN rom/LODE.INI
 cd tests
 nasm -f bin -o TESTDOS.COM TESTDOS.ASM
 nasm -f bin -o UPPER.COM UPPER.ASM
