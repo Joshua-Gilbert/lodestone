@@ -117,10 +117,10 @@ From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C
 
 ### From a floppy
 
-1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `CALC.COM` and whatever programs you want. The current release's files are in `os/releases/`.
+1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODEMT.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `CALC.COM` and whatever programs you want. The current release's files are in `os/releases/`.
 2. Under GRiD MS-DOS, run `LODEBOOT` on it once (`B:LODEBOOT B` when booted from the EPROM, where the floppy is B:).
 3. Restart and tap **F** as the memory count finishes, or choose the floppy from Lodestone's boot menu.
-4. A new `LODE.SYS` can simply be copied over the old one.
+4. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`, still being built) reads it at start-up and stays off if it doesn't match.
 
 See `docs/lodestone-floppy-dev.md`.
 

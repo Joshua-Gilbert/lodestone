@@ -11,6 +11,7 @@ nasm -f bin -o LODEBOOT.COM LODEBOOT.ASM
 printf '[map symbols LODE.MAP]\n%%include "LODE.ASM"\n' > _m.asm
 nasm -f bin -o LODE.SYS _m.asm -l LODE.LST
 rm -f _m.asm
+python3 ../mkmt.py LODE.SYS LODE.MAP LODEMT.SYS      # multitasking's part: LODEMT.SYS
 nasm -f bin -o LODE.PIC SPLASH.ASM
 nasm -f bin -o LCMD.COM LCMD.ASM
 nasm -f bin -o DEFRAG.COM DEFRAG.ASM
@@ -22,7 +23,7 @@ cd ..
 for a in SYSTEM WRITE CALC; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; done
 python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
 # ROM 1, the boot ROM (tools/mkrom.py): the kernel first, then the core set
-python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODE.PIC src/LCMD.COM \
+python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODEMT.SYS src/LODE.PIC src/LCMD.COM \
     apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN src/CALC.COM src/DEFRAG.COM fonts/TERMINUS.FNT rom/LODE.INI
 cd tests
 nasm -f bin -o TESTDOS.COM TESTDOS.ASM

@@ -6,7 +6,7 @@ puts multitasking's resident part in a block of its own at the top of
 memory, with INT 08h and INT 21h F0h going through it; one task, the
 Executive, and nothing switches yet.  Off (no such line, any other value, or
 no EMS), nothing of it is in memory and everything is as before.
-python3 tests/test_mt.py [t_off t_on t_progs t_rom]"""
+python3 tests/test_mt.py [t_image t_off t_on t_file t_progs t_rom]"""
 import os, re, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
@@ -23,7 +23,9 @@ def check(name, cond, detail=''):
 
 MTPROBE = os.path.join(HERE, 'MTPROBE.COM')
 SYS = os.path.join(GOS, 'src', 'LODE.SYS')
+MTSYS = os.path.join(GOS, 'src', 'LODEMT.SYS')
 MAP = os.path.join(GOS, 'src', 'LODE.MAP')
+import mkmt
 INT08 = (STUB, 0x1000)                  # pcemu's BIOS timer handler
 
 # With the switch off these must not move (0.6 with UI API 6): the kernel's
@@ -33,8 +35,11 @@ OFF_MAP = {'image_end': 0x4450, 'bss_end': 0x7A90, 'ui_keep_end': 0x6CE4}
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
 
-def boot(name, text=None, ems=88, *more):
-    files = [A.LCMD, A.MEMSZ, MTPROBE] + list(more) + ([ini(text)] if text is not None else [])
+def boot(name, text=None, ems=88, *more, mt=MTSYS):
+    """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
+    MTPROBE, `more`, and LODE.INI holding `text`."""
+    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE] + list(more) \
+        + ([ini(text)] if text is not None else [])
     k = ktest.KPC(A.image(name, *files), ems_pages=ems); k.start(10)
     return k
 
@@ -193,22 +198,72 @@ def t_rom():
     k = R.boot(ata=R.sysinfo_hd(), ems_pages=88)
     check('started from the ROM, no C:\\LODE.INI (the ROM\'s settings): off', mt_seg(k) is None and vec(k, 8) == INT08, show(mcbs(k)))
 
+def sections(path):
+    """LODE.MAP: {section: [(real, virtual, name)]}"""
+    out, sec = {}, None
+    for line in open(path):
+        if line.startswith('---- Section'): sec = line.split()[2]
+        m = re.match(r'\s*([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$', line)
+        if m and sec: out.setdefault(sec, []).append((int(m.group(1), 16), int(m.group(2), 16), m.group(3)))
+    return out
+
 def t_image():
-    print('== the load image')
-    real = None
-    for line in open(MAP):
-        m = re.match(r'\s*([0-9A-F]+)\s+([0-9A-F]+)\s+mt_tend\s*$', line)
-        if m: real = int(m.group(1), 16)
-    size = os.path.getsize(SYS)
-    check('MT\'s image ends at %s in LODE.SYS (%d bytes), below 1000:F000, where LODE.INI is read (INI_BUF)'
-          % (real is not None and '%04Xh' % real, size), real is not None and real <= 0xF000, real)
+    print('== LODE.SYS and LODEMT.SYS')
+    secs, Y = sections(MAP), ktest.Syms()
+    sysb, mtb = open(SYS, 'rb').read(), open(MTSYS, 'rb').read()
+    start = [r for r, v, n in secs['mtt'] if n == 'mt_tstart'][0]
+    sumat = [r for r, v, n in secs['boot'] if n == 'mt_sum'][0]
+    check('LODEMT.SYS is the resident part, %d bytes (mt_tend - mt_tstart), cut off the end of LODE.SYS (%d bytes)'
+          % (len(mtb), len(sysb)), len(mtb) == Y['mt_tend'] - Y['mt_tstart'] and len(sysb) == start, (len(mtb), len(sysb), start))
+    got = sysb[sumat] | sysb[sumat + 1] << 8
+    check('LODE.SYS\'s mt_sum is LODEMT.SYS\'s checksum (%04Xh)' % mkmt.checksum(mtb), got == mkmt.checksum(mtb) != 0, hex(got))
+    boot_end = min(r for r, v, n in secs['mdt'])      # (section boot ends where mdt starts)
+    check('the start-ups (section boot) end at %04Xh, below 1000:F000, where LODE.INI is read (INI_BUF); LODE.SYS %d bytes, '
+          'under the ROM loader\'s 64 KB' % (boot_end, len(sysb)), boot_end < 0xF000 and len(sysb) < 0x10000, (hex(boot_end), len(sysb)))
+
+def merged(arena):
+    """The arena with free neighbours as one block, as KMEM's mem_alloc
+    merges them (lazily, on its next scan): what the next program gets."""
+    out = []
+    for seg, t, own, sz, nm in arena:
+        if out and own == 0 and out[-1][2] == 0:
+            s0, t0, o0, z0, n0 = out[-1]
+            out[-1] = (s0, t, 0, z0 + sz + 1, n0)
+        else:
+            out.append((seg, t, own, sz, nm if own else b''))
+    return out
+
+def sft_used(k):
+    """SFT entries in use (S_REF, the first byte of each of 24 x 44)."""
+    base = k.Y['sft']
+    return sum(1 for i in range(24) if k.pc.rd(0x60, base + i * 44, 1)[0] != 0)
+
+def t_file():
+    print('== LODEMT.SYS: none, or not this LODE.SYS\'s: it stays off')
+    mtb = open(MTSYS, 'rb').read()
+    k0 = boot('mt_f0.img', b'MULTITASK=0\r\n')
+    a0, used0 = mcbs(k0), sft_used(k0)
+    flip = bytearray(mtb); flip[len(flip) // 2] ^= 0x40
+    for tag, body in (('none', None), ('one byte changed (another build)', bytes(flip)), ('a byte short', mtb[:-1]),
+                      ('empty', b'')):
+        if body is None:
+            k = boot('mt_f1.img', b'MULTITASK=1\r\n', mt=None)
+        else:
+            p = os.path.join(A.OUT, 'LODEMT.SYS'); open(p, 'wb').write(body)
+            k = boot('mt_f1.img', b'MULTITASK=1\r\n', mt=p)
+        check('MULTITASK=1, LODEMT.SYS %s: off; memory as with MULTITASK=0 (MT\'s block freed; free neighbours counted as one, as the next allocation merges them), no file left open, '
+              'INT 08h and f_F0 untouched' % tag,
+              mt_seg(k) is None and merged(mcbs(k)) == merged(a0) and sft_used(k) == used0 and vec(k, 8) == INT08
+              and f0_bytes(k)[0] == 0x8A and k.pc.mode() == 0x40, (show(mcbs(k)), show(a0), sft_used(k), used0))
+    k = boot('mt_f1.img', b'MULTITASK=1\r\n', mt=MTSYS)
+    check('... and the file as built: on (no file left open either)', at_top(k) and sft_used(k) == used0, (show(mcbs(k)), sft_used(k)))
 
 if __name__ == '__main__':
     t0 = time.time()
     A.build()
     subprocess.run(['nasm', '-f', 'bin', '-o', MTPROBE, os.path.join(HERE, 'MTPROBE.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_progs, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_progs, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

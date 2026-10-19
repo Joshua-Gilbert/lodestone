@@ -336,8 +336,10 @@ closes it, as ESC does.  Programs on the UI core get this with API 6.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS) turns it on; so far that only puts its resident part in
-memory (240 bytes), and TASKS at the command prompt lists the one task
-there is, the Executive.  Without the line nothing of it is in memory.
+memory (240 bytes, read from LODEMT.SYS, which must sit beside LODE.SYS
+and come from the same build), and TASKS at the command prompt lists the
+one task there is, the Executive.  Without the line nothing of it is in
+memory, and LODEMT.SYS isn't even read.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
