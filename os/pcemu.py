@@ -406,6 +406,7 @@ class PC:
         equip = 0x4423 | (0x40 if s.drives[1] else 0)
         s.mu.mem_write(0x410, struct.pack('<H', equip))
         s.mu.mem_write(0x413, struct.pack('<H', s.mem_kb))
+        s.mu.mem_write(0x408, struct.pack('<H', 0x378))     # LPT1, as the 1520's BIOS sets it
         s.mu.mem_write(0x41A, struct.pack('<HH', 0x1E, 0x1E)); s.kbd_mirror = []
         s.mu.mem_write(0x480, struct.pack('<HH', KB_START, KB_END))
         s.mu.mem_write(0x449, bytes([3])); s.mu.mem_write(0x44A, struct.pack('<HH', 80, 4096))
@@ -881,8 +882,11 @@ class PC:
 
     def int14(s): s.w('ax', 0x8000 | (s.r('ax') & 0xFF))
     def int17(s):
-        if s.r('ah') == 0: s.lpt.append(s.r('al'))
-        s.w('ax', (s.r('ax') & 0xFF) | 0x9000)
+        """LPT1: lpt_status is the printer's (90h ready; 10h | 01h busy, timed
+        out; 38h out of paper...); a byte goes only when it is ready."""
+        st = getattr(s, 'lpt_status', 0x90)
+        if s.r('ah') == 0 and not st & 0x29: s.lpt.append(s.r('al'))
+        s.w('ax', (s.r('ax') & 0xFF) | st << 8)
 
     def rom_list(s):
         """The logical images, as E401 counts them: socket 0's, then socket 1's
@@ -1120,7 +1124,7 @@ class PC:
 
     def png(s, path, font=None, scale=2):
         from PIL import Image
-        AMB, BG = (255, 170, 50), (28, 12, 0)
+        AMB, BG = (255, 120, 40), (36, 8, 2)
         m = s.mode()
         if m in (0x40, 0x48, 0x74):
             vram = s.rd(0xB800, 0, 0x8000)

@@ -438,8 +438,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB): the directory buffer is lent while it runs' % kb,
-          kb >= 561.7, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB): the directory buffer is lent while it runs' % kb,
+          kb >= 561.5, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -687,6 +687,39 @@ def t_saver_tidy():
           and disk_file(k, 'LODE.INI') == b'SAVER=10\r\n', (tidy(), disk_file(k, 'LODE.INI')))
     k.key(ktest.ESC)
     check('... and the saver runs DEFRAG again', idle(k, 10 * 1092 + 18), lines(k)[:2])
+
+
+def t_prtsc_setting():
+    print('== PrtSc prints with a driver, or saves files (System, Devices, Return; LODE.INI PRINTER=); Shift-PrtSc a file')
+    import shutil
+    ps = os.path.join(GOS, 'drivers', 'PS.PRN')
+    other = os.path.join(OUT, 'EPSON.PRN'); shutil.copy(ps, other)
+    job = os.path.join(OUT, 'JOB.PRN'); open(job, 'wb').write(b'\x1bEa print job saved as .PRN\r\n\x0c')
+    img = image('prs.img', SYSTEM, ps, other, job)
+    k = ktest.KPC(img); k.start()
+    def topic(k):
+        k.key(CODE['U'])
+        for _ in range(3): k.key(ktest.DOWN, settle=False)
+        k.settle()
+    topic(k)
+    line = lambda: next((l for l in lines(k) if ' PrtSc ' in l), '')
+    path = lambda: k.rd('prn_path', 24).split(b'\0')[0]
+    check('Devices: "PrtSc  saves SCREENnn.BMP / .TXT"; RETURN in the band', 'saves SCREENnn' in line() and path() == b''
+          and 'RETURN: the next printer driver' in ' '.join(k.band()), (line(), k.band()))
+    seen = []
+    for _ in range(3):
+        k.key(ktest.ENTER)
+        seen.append((line().split('  ')[-1].strip(), path(), disk_file(k, 'LODE.INI')))
+    names = [p for _, p, _ in seen]
+    check('Return: each driver on the disk in turn (not JOB.PRN, a print job), then files again; the kernel told the full path',
+          sorted(names[:2]) == [b'A:\\EPSON.PRN', b'A:\\PS.PRN'] and names[2] == b'' and
+          all(('prints with ' + n.decode()[3:]) in t for t, n, _ in seen[:2]) and 'saves SCREENnn' in seen[2][0], seen)
+    check('... LODE.INI says PRINTER=NAME, and nothing when files', seen[0][2] == b'PRINTER=' + names[0][3:] + b'\r\n'
+          and seen[2][2] is None, [x[2] for x in seen])
+    k.key(ktest.ENTER)                                   # the first one again, kept
+    k.key(ktest.ESC); k.settle()
+    k = reboot(k, 'prs2.img')
+    check('after a restart: the same driver (PRINTER= taken, found along PATH)', path() == names[0], (path(), names[0]))
 
 
 # ---------------------------------------------------------------------
@@ -2007,7 +2040,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_mdisk, t_calc, t_calc_move):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
