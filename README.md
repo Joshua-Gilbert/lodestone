@@ -43,7 +43,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **The Executive:** GRiD's File form (Device, Subject, Title). CODE-C copies, CODE-M moves, CODE-R renames and CODE-D deletes, with wildcards, Replace and Only newer, on files or whole subjects.
 - **System:** memory, disks, clock, devices, GPIB, display, screen saver, the temporary disk M:, and where the settings come from.
 - **Write:** a GRiDWrite-style text editor.
-- **The calculator** uses the 80287 or 287XL when one is fitted, and works with whole numbers when not. It runs as a window over the Executive (CODE-K), and as `CALC` at the prompt, for batch files.
+- **The calculator** uses the 80287 or 287XL when one is fitted, and works with whole numbers when not. It runs as a window over the Executive (CODE-K) that you can drag by its title (or move with CODE-F7) and close with its x, and as `CALC` at the prompt, for batch files.
 - **The screen saver:** runs DEFRAG on every disk in turn, then darkens the screen.
 - **A start-up picture**¹, drawn from vectors (`LODE.PIC`, 2.5 KB).
 

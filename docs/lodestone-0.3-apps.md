@@ -779,6 +779,42 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
   - **COPY:** its 64 KB buffer is now whole sectors (65,024 bytes, not 65,520), so reads and writes after the first don't start part-way through a sector. A 300 KB COPY with the 1520's drive timing: 22.85 s → 21.26 s.
   - LCMD.COM is 10,970 bytes.
 
+## Windows that move and close (UI API 6, after 0.6, 2026-10-19)
+Joshua's aim: Lodestone's own programs as GUI-style windows, the calculator first; and the first step towards multitasking, where several will be open at once.
+- **API 6:**
+  - A window gets a seventh word, `W_FLAGS` (so `W_SIZE` is 14). `WF_MOVE`: the user may move it. `WF_CLOSE`: a close box at the right end of its title strip.
+  - The core reads `W_FLAGS` only from a `.RUN` that needs API 6 or newer (`win_flags`). An older `.RUN`'s windows are 12 bytes, so there is no such word: they never move. SYSTEM, WRITE and UITEST still declare API 4 and are unchanged.
+  - `UI_EVENT` handles the top window's title strip itself:
+    - a press drags a `WF_MOVE` window: a 1-pixel XOR outline follows the pointer, snapped to byte columns and to rows in fours (the glyph blitter's rule), kept between the title rule (row 24) and the band (360);
+    - CODE-F7 (6E00h) moves it with the arrow keys, a column or 4 rows a press; Return puts it there, ESC leaves it;
+    - a click on the close box (a dark cell with an x, the strip's last cell but one) gives K_ESC, which every program already treats as "close".
+  - After a move, `UI_EVENT` returns `EV_MOVED` (0FF02h).
+  - `UI_EDIT` in a moved window carries on: the core shifts the field with the window, and the cursor stays where it was in the line. (`UI_EDIT` sets the field's place on every call, so shifting it when no editor waits does no harm.)
+- **The move itself** (`win_move`):
+  1. the screen under the old place comes back from the save-under (`win_restore`, split out of `ui_wclose`);
+  2. what is under the new place is saved into the same slot (the size is unchanged);
+  3. the window is painted there.
+
+  With no save-under (the disk cache's memory already lent out), everything is drawn again (`redraw_all`).
+- **The calculator** draws everything from where its window is now (`icol`, `ey`, `ry`, `ky`, worked out in `w_draw`). A paint at a new place (after a move) doesn't count as a repaint over an older screen, so closing after a move still ends with 0FFFFh: the save-under taken at the move is current, and the Executive doesn't redraw. Its help lists CODE-F7.
+- **Not tested on the 1520 yet:** that its BIOS gives CODE-F7 as 6E00h through INT 16h AH=10h, as a PC BIOS gives Alt-F7. pcemu only confirms its own key mapping.
+- **Tests:** `t_calc_move`, 18 checks:
+  - the close box;
+  - a drag (the window, its title and its keys at the new place; the line editor goes on);
+  - CODE-F7 with Return and with ESC;
+  - clamping at both corners;
+  - the saver with a moved window;
+  - closing after two moves (exit code 0FFFFh, the screen exactly as before);
+  - a click on the title that doesn't move it;
+  - a move with no save-under.
+- **Cost:** the UI block's code grows by 530 bytes (`ui_image_end` 53EAh → 55FCh), so a DOS program gets 0.5 KB less: 561.7 KB without EMS, 577.8 KB with it (0.6: 562.2 / 578.3). The kernel is unchanged (`image_end`, `bss_end`). CALC.RUN is 4,378 bytes (+217). ROM 1 has 24,576 bytes left, one sector less (LODE.SYS is 48,380 bytes).
+  - It was 656 bytes at first. Reusing what the core already had saved 126:
+    - the outline is drawn by the form's field outline (`fm_outline`'s XOR frame, now `xor_rect`) instead of a routine of its own. That frame went pixel by pixel; it now runs along a row with a rotating bit and down a side a row lookup at a time, so a drag step costs about 10,500 instructions (52,000 pixel by pixel; the byte-wise routine before, 3,800), and the form's outline is quicker too;
+    - the drag reads the mouse through `mouse_event`;
+    - the mouse and the keys share one move routine (`win_mv`);
+    - no flag for "an editor waits" (above);
+    - and `W_DRAW` isn't told why it is drawn: the calculator compares its window's place with where it drew last.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
