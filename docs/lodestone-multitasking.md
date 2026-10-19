@@ -15,8 +15,9 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | | | Status |
 |---|---|---|
 | M0 | Windows that move and close (UI API 6), the calculator first | PR #40, merged. Costs 0.5 KB with the switch off: it is UI code, wanted anyway. See `lodestone-0.3-apps.md`. |
-| M1 | The switch and the skeleton | This PR. |
-| M2 | Spawning, task regions, cooperative switching at the kernel's key wait, the hot key | |
+| M1 | The switch and the skeleton | PR #43, merged. |
+| M2a | Spawning, task regions, switching when one waits for a key | This PR. |
+| M2b | The front: the CODE-] hot key, each task's screen saved and restored | |
 | M3 | Preemption from INT 08h at safe points | |
 | M4 | Virtual screens (an INT 10h hook) and the direct-write detector | |
 | M5 | Per-task vectors, ending and killing tasks | |
@@ -100,3 +101,65 @@ In M1 the UI goes on lending its directory buffer to DOS programs as before, so 
 - **From the ROM** (the 1520's own start-up): `C:\LODE.INI` with `MULTITASK=1` turns it on, and `TASKS` lists the Executive. With the ROM's own settings, it is off.
 
 **The load image's ceiling, settled.** LODE.SYS is loaded at 1000:0000, and LODE.INI is read into 1000:F000 (`INI_BUF`; KSPLASH's `SP_BUF` is there too), so the start-ups must end below 61,440 bytes into the file. The plan expects multitasking to add 8–12 KB. Moving its slow paths into an EMS page would not have helped here, because that image would still travel inside LODE.SYS. With the resident part (and, from M2, the EMS part too) in LODEMT.SYS, LODE.SYS grows only by `mt_boot`, and `test_mt` checks the start-ups' end.
+
+## M2a: tasks, switched when one waits for a key (2026-10-19)
+
+M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the front: the CODE-] hot key and each task's screen, saved and restored in EMS. All of M2a is in LODEMT.SYS; the kernel gains one label (`k_retf`, on `run_ui`'s RETF) and no bytes.
+
+**What it does:** a program can start another as a task, INT 21h F0h AL=10h (`MT_SPAWN`, MTAPI.INC). The task runs when the running one waits for a key in DOS, and the tasks take turns that way. Only the front task reads keys. Another that waits for one waits without reading, until it is brought to the front (F0h AL=13h, `MT_FRONT`, at the next key wait). Each task has its own memory, current directories, DTA, console line and PSP. When its program ends, the task ends: its region is freed, and the handles its stub inherited are closed.
+
+**The limit, plainly:** a task switches only when one waits for a key *inside DOS* (INT 21h AH=01h, 07h, 08h, 0Ah, or a read from CON).
+- The Executive and LCMD's prompt don't: they ask whether a key is there (INT 16h AH=11h, INT 21h AH=0Bh) and halt in their own loops. So with either in front, nothing switches.
+- A task that computes without waiting keeps the machine until it waits or ends.
+- M3's preemption (INT 08h at safe points) removes both limits.
+- Until M4 the tasks also share one screen: what a background task prints lands on the front one's.
+
+**How:**
+- **The key wait:** `kbd_get.k` (`MOV AH,1` / `INT 16h` / `JNZ .have`, 6 bytes at 06BCh, checked in the listing and by `test_mt`) becomes a far jump to `mt_kwait`.
+  - There, the front task looks for a key. If none is there, it lets a task that is ready run, and if there is none, it goes on to the kernel's own wait (PrtSc, INT 28h, HLT).
+  - A background task waits without looking. Its state becomes "waiting for a key" (`TS_WAITK`), and a ready task, or the front one, runs.
+  - So a background task can never take a keystroke meant for the front task.
+- **Switching** (`mt_switch`, `mt_load`) is done only inside INT 21h (`indos` 1, never in a nested call such as an INT 24h answer), and only at `mt_kwait` or when a task ends. A task's context, its TX, holds:
+  - its SS:SP;
+  - the kernel's per-task variables (`mt_ranges`): `indos`, the break and console state (`brkflag`..`onebyte`), `first_mcb`, the drives' current-directory clusters and strings, `cur_drv`, the DTA and the file and console-line state (`dta`..`rw_t0`), `cur_psp`, `last_exit`, `term_keep`;
+  - the kernel stack's slice from SP up, because a task waits inside INT 21h.
+
+  The slice measured 32–42 bytes for every console read; a TX has room for 256, and `mt_kwait` doesn't switch if it would need more.
+- **A task's region** is carved from the top of the highest free block that has room (the arena walked from its first MCB, free neighbours merged), downward from MT's block. It is a block of its own, owner 8, "T1".."T7", holding:
+  - its TX (42 paragraphs);
+  - its stub, a PSP and a few instructions at 100h: EXEC the program, then F0h AL=11h (`MT_END`). `make_psp` (called through `KCALL`) gives it the spawner's handles;
+  - a copy of the spawner's environment (up to 1 KB), because the spawner may end first;
+  - the task's own MCB chain, its `first_mcb`, ended by a 'Z' in the region.
+
+  The task's program gets its memory from that chain (a .COM takes all of it, as it would take all memory). Task 0's TX is in MT's block (`mttbss`), so MT's block is 148 paragraphs now.
+- **Ending** (`MT_END`, from the stub only): `close_all` on the stub's PSP (`KCALL`), the exit code kept, the region freed, and the next task runs without its context being saved.
+- **Calling the kernel:** `KCALL r` pushes MT's far return, then the offset of `k_retf`, and jumps to KSEG:r. The routine's near RET goes to the RETF, which comes back to MT.
+- **The API** (MTAPI.INC):
+  - `MT_SPAWN`: DS:DX = the program (with its extension), ES:BX = EXEC's block plus a word of paragraphs (0: 64 KB) and a flags byte (`SPF_FRONT`). → AL = the task, or CF with AX = 4 (8 tasks already) or 8 (no room).
+  - `MT_FRONT`: BL = a task.
+  - `MT_LIST` records now carry each task's state (1 running or ready, 2 waiting for a key).
+
+**Cost:**
+- **Switch off:** nothing. `test_mt` pins the map and MEMSZ; LODE.SYS grows 48 bytes, all in `mt_boot`.
+- **Switch on:** MT's block is 148 paragraphs plus its MCB, 2.3 KB; a DOS program gets 575.3 KB instead of 577.6. Each task takes its region: about 1.6 KB plus its environment, plus its memory (64 KB unless asked).
+- **Files:** LODEMT.SYS is 1,682 bytes; ROM 1 has 20,992 bytes left.
+
+**Tests:** `test_mt.py`, 68 checks. The new group is `t_tasks`, with three test programs:
+- `MTLAUNCH` starts the tasks it is given (`/F`, `/M:n`, `/R:n`), lists them, then waits for a line itself;
+- `MTLINE FILE` writes a line to FILE;
+- `MTCWD DIR FILE` changes directory, waits for a key, then writes its current directory.
+
+What the group checks:
+- **Two MTLINE tasks:**
+  - they run to their key waits and wait there in the background;
+  - their regions are T1 and T2, under MT's block;
+  - task 1 is brought to the front, "hel" typed, then task 2 gets "world" and ends;
+  - task 1, at the front again, gets "lo": its half-typed line survived ("hello");
+  - afterwards memory (free neighbours merged) and the SFT are exactly as before, and the prompt answers.
+- **`/F`:** the second task gets the first line.
+- **MTCWD:** each task keeps its own directory and writes its file there; the prompt's stays A:\.
+- **Errors:** no room gives error 8; with 8 at once, tasks 1–7 start and the eighth gives error 4. Each of the 7 then gets its own line in turn.
+- **Switch off:** MTLAUNCH reports error 1.
+- **The patches:**
+  - the 6 bytes at `kbd_get.k` are as expected in LODE.SYS, patched with the switch on and untouched with it off;
+  - task 0's TX sits on the paragraph after the image.

@@ -150,7 +150,7 @@ run_ui: cli
         sti
         push    ax
         push    word exec_main
-        retf
+k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 
 s_nouimem   db 'Lodestone: not enough memory for the Executive', 13, 10, 0
 
@@ -240,4 +240,5 @@ ui_bss_end:                             ;  directory (it reads it again after)  
 ;  (mkmt.py) cuts it off into LODEMT.SYS, and mt_boot reads that file.
 ; =====================================================================
 section mtt progbits align=16 follows=ui vstart=0
+section mttbss nobits valign=16 vfollows=mtt
 %include "KMT.INC"                      ; (section mtt, and boot: mt_boot)
