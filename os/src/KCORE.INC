@@ -180,8 +180,7 @@ capture:
                                         ;  disk behind our back, reading it
                                         ;  through the BIOS: check it first
         push    word [last_err]
-        mov     al, [bootdrv]
-        add     al, 'A'
+        mov     al, [capdrv]            ; A:, or from the ROM C: (KROM.INC)
         mov     [cap_name], al
         push    0
         pop     es
@@ -1263,8 +1262,7 @@ f_0E:   mov     al, [bp+F_DX]           ; select drive
         call    drv_present
         jc      .x
         mov     [cur_drv], al
-.x:     mov     al, 2                   ; drives A: and B: (and C:; KMDISK.INC:
-        add     al, [drvtab + 2 * DRVSZ + D_PRES]       ;  13, to M:)
+.x:     mov     al, [lastdrv]           ; drives A: to the last there is
 .xe:    jmp     ret_al
 f_19:   mov     al, [cur_drv]
         jmp     ret_al
@@ -1327,7 +1325,8 @@ f_33:   mov     al, [bp+F_AX]
 .boot:  mov     al, [bootdrv]
         and     al, 7Fh
         inc     al
-        mov     [bp+F_DX], al
+        mov     ah, [setdrv]            ; (Lodestone: DH = the drive whose
+        mov     [bp+F_DX], ax           ;  LODE.INI goes over this one's)
         jmp     done
 f_34:   mov     word [bp+F_ES], KSEG    ; the InDOS flag
         mov     word [bp+F_BX], indos

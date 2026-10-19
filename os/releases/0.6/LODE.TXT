@@ -1,0 +1,426 @@
+Lodestone 0.6 - boot floppy and ROM
+
+First time only: boot GRiD MS-DOS from the EPROM as usual, then run
+A:\LODEBOOT and answer Y. It adds the Lodestone loader to this disk
+and keeps all files.
+
+To start Lodestone: restart and tap F while the memory count finishes,
+so the BIOS boots this floppy instead of the EPROM.
+
+Lodestone 0.2 is its own DOS 3.30-compatible kernel: files, directories,
+programs (.COM and .EXE), memory, and the GPIB driver built in on
+INT 60h (GRIDGPIB is not needed under Lodestone).
+
+0.2.1 adds a disk cache.  When a program reads a file in order, the
+kernel reads the rest of that cylinder (both sides, up to 18 KB) in one
+pass, so small reads no longer cost a turn of the disk each.  Writes
+still go straight to the disk.  The cache takes 18 KB at the top of
+memory: programs get about 570 KB.
+
+0.2.2 adds a screen saver.  After 5 minutes without a key or the mouse
+the Executive runs DEFRAG (if it is on this disk): it shows every
+cluster of the disk and tidies it - deleted entries out of the root
+directory, every file in one piece, free space at the end.  When the
+disk is in order, the screen goes dark with just the time and date,
+moving every 20 seconds, so the plasma never holds one picture.  Any key
+or the mouse brings the Executive back (the key does nothing else).
+
+0.2.3: when a read of several sectors keeps failing, the kernel reads
+them one at a time before reporting a Data error.  A worn or dirty
+drive head often can't get a whole track through, yet reads each
+sector of it on its own.
+
+0.3 starts the application suite.  The Executive now sits on a shared
+UI core (lists, forms, windows, help, the line editor), and programs
+written for it are .RUN files that load next to it:
+  WRITE.RUN   Write, the text editor, after GRiDWrite.  Text, Source,
+              Batch, Settings and Profile files open in it from the list;
+              CODE-W starts a new file.  GRiDWrite's commands, verb first:
+              press the command, select with the cursor keys or the mouse,
+              then Return.  CODE-B Begin, CODE-D Duplicate, CODE-E Erase,
+              CODE-F Find, CODE-J Jump, CODE-M Move, CODE-O Options,
+              CODE-Q Quit (saves), CODE-S Substitute, CODE-T Transfer
+              (save, write to another file, include a file), CODE-U Usage,
+              ESC (or CODE-ESC) Cancel.  Files up to 64 KB; it saves to
+              NAME.$$$ first, so a failed save leaves the old file alone.
+  SYSTEM.RUN  Usage (CODE-U in the Executive): memory, disks (C: and M:
+              too), the clock (Return sets it), devices (the hard disk's
+              own name too), GPIB (Return finds instruments by serial
+              poll, then sets them back to local), display (Return
+              switches the screen font; Space: the start-up picture or
+              not), screen saver (Return: when it
+              starts; Space: whether it tidies the disks first), the
+              temporary disk M: (Return: its size), about.
+Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
+subject you work in).  A DOS program gets about 566 KB: while it runs
+the Executive lends it the memory of its file list.  The screen font is
+GRiD's own: the InteGRiD system font (TC8X16), as GRID.EXE drew it.
+TERMINUS.FNT is the font Lodestone had before; in System, Display, Return
+switches between them (and any other .FNT in the root of the disk).  The
+choice is kept in LODE.INI as FONT=TERMINUS.FNT; without that line, or
+without the file, it is GRiD's.  CODE-? opens the help everywhere (F1 too).
+
+0.3.1: DOS programs have the mouse too: Lodestone answers the Microsoft mouse
+calls (INT 33h) with its own serial-mouse driver, so no MOUSE.COM is
+needed.  TM5000G says "Mouse support enabled." and menus take clicks.
+The pointer shows in text modes and in CGA and GRiD graphics modes.
+A program that never asks for the mouse leaves COM1/COM2 alone.
+
+0.3.2: the Executive's File form, as in GRiDManager: Device, Subject,
+Title and Kind under the list, the outlined item's choices in the list.
+Tab (Shift-Tab back) moves the outline; in Device and Subject, Return
+moves on and ESC goes back to Title.  Device lists A: and B:, Subject
+the subjects (directories) of the drive as a tree, Title the files.
+The choice takes effect at once.  A click on an item outlines it.
+Programs (SYSTEM, WRITE, CLAUDE, the command prompt), the fonts and
+LODE.INI stay on the disk Lodestone started from.  CTRL-ALT-DEL
+restarts, so CODE-R is gone, and CODE-D too: for GRiD MS-DOS, restart
+without pressing F.
+
+0.3.3: file commands in the Executive, verb first as in GRiDManager:
+choose a title, press the command, fill in the form, confirm.
+  CODE-C  Copy: Device, Subject and Title of the copy (this drive,
+          subject and title to start with).  The copy is written as a
+          new file first and only then takes its name, so a full or
+          write-protected disk leaves what was there alone.  The date
+          and time go with it.
+  CODE-M  Move: Device and Subject.  On the same drive the entry just
+          moves; to the other drive it is copied, then erased (not a
+          read-only file).
+  CODE-R  Rename: the new title, in the same subject.
+  CODE-D  Delete (erase), after a question.  Read-only files stay.
+A title already there is replaced only if you confirm.  The Subject is
+typed as a path from the root (\ for Root, \DOS.330\DEEP); a title has
+no \ : * or ?, a subject no : * or ?.
+
+0.3.4: System has a Screen saver topic: Return steps through 1, 2, 5,
+10, 15 and 30 minutes, then never.  The choice goes in LODE.INI as
+SAVER=10 (no line for the usual 5 minutes) and is read at start-up.
+
+0.3.5: wildcards.  Copy, Move and Delete have a Titles field, filled in
+with the chosen title: type *.TXT, NOTES.* or ?.DAT for every title in
+the subject that matches (or another title, for that one).  Copy and
+Move have Replace for a title already there: Ask (the question for
+each; ESC leaves that one), All, or None.  Copy has Only newer: a title
+there already is replaced only by a newer one - for a backup to B:,
+*.* with Replace All and Only newer Yes.  Delete with * or ? asks
+first, saying how many; read-only titles stay and are counted.  Return
+moves through a form; CODE-Return confirms from anywhere in it.
+A Subject that isn't there is made, after a question ("B:\NEW isn't
+there: Confirm to make it"), each level of it.
+
+0.3.6: Delete on a subject.  Outline Subject, choose the subject, CODE-D:
+"Erase: Confirm to erase \OLD and all in it".  Return
+erases every title in it (read-only and hidden ones too) and every
+subject below it, then the subject; Subject then shows the one above.
+Root can't be erased.  A subject Windows wrote long names into can be
+erased too (RD as well).
+
+0.3.7: expanded memory (EMS) for DOS programs, when the 1520's memory
+above 640 KB is set to EMS (as GRIDMEM EMS sets it, then restart).
+Lodestone is the EMS manager itself, LIM 4.0 on INT 67h, the way GRiD's
+EMM.SYS drives the hardware: a 64 KB page frame at E000h, the 1408 KB
+in 16 KB pages.  Programs find it as they find any EMM (the name
+EMMXXXX0, the device EMMXXXX0).  It takes 1.8 KB of the memory
+programs get; with the memory set to extended, or no EMS, it takes
+nothing.  EMS a program leaves allocated comes back when it ends (a TSR
+keeps its own).  System's Memory topic shows the EMS and how much of it
+is free.  Not there: handle names are not kept, and 55h/56h (map and
+jump or call), 5Bh (alternate map sets) and 5Dh.  EMSTEST checks it.
+
+0.3.8: with EMS, the disk cache moves out of conventional memory into
+two EMS pages, so a DOS program gets 18 KB more: about 580 KB (the EMS
+manager now takes 1.9 KB).  Programs see 1376 KB of EMS: the other 32 KB
+are the cache's, and System's Memory topic says so.  The cache's pages
+are in the page frame only while the kernel reads or writes through the
+cache, and the frame is put back as the program left it; floppy DMA goes
+straight into the frame.  The windows' save-under no longer borrows the
+cache, so the cache keeps working while a window is open.  Without EMS,
+or with the memory set to extended, nothing changes.  CACHETST, with
+EMS, keeps four EMS pages of its own in the frame all along and checks
+them; it also reads into a buffer across a 64 KB boundary now.
+
+0.3.9: screen capture.  Shift-PrtSc saves the screen in the root of
+the boot disk instead of printing it: SCREEN01.BMP, SCREEN02.BMP ... in
+the graphics modes (640 x 400, amber on brown; 200-line modes have each
+line twice), SCREEN01.TXT ... in the text modes (the characters, line
+by line), up to 99 of each.  One beep when it is saved (a picture takes
+a few seconds); a long one if it couldn't be (write-protected or full:
+nothing is left behind).  It is taken at once in the Executive, .RUN
+programs and at the DOS prompt; a DOS program that reads the keyboard
+through the BIOS gets it at its next DOS call.
+
+0.3.10: the internal hard disk is drive C:.  The 1520's BIOS turns on
+only the few Conner drives it knows, so Lodestone drives the hard disk
+itself.  At start-up it looks for one (that takes no time when there is
+none); a drive with a FAT16 partition (as the FDISK and FORMAT of DOS 4
+and later make them, up to 2 GB) becomes C: for the Executive (Device:
+Hard disk C:), the command prompt and DOS programs alike.  A FAT12
+partition, or a drive still busy after 5 seconds, is left off.  It takes
+2.8 KB of the memory programs get (3.2 KB without EMS), and nothing
+without a drive.  Reads and writes go up to 127 sectors at a time; a
+sector that won't read gives the usual "Data error reading drive C" and
+Abort, Retry, Fail.  DEFRAG and the screen saver's tidying stay with the
+floppies.  HDPROBE and HDSCAN look a hard disk over, read-only.
+
+0.3.11: DEFRAG tidies the hard disk too: DEFRAG C: (or DEFRAG with C:
+current).  It works as on a floppy: each file moves whole and is read
+back before its directory entry changes, so a power cut leaves the old
+copy or the new one.  A sector that won't take a write gets its cluster
+marked bad and the work goes on; DEFRAG C: /T tests all the free space
+and marks the bad ones.  On the hard disk each square of the map stands
+for several clusters.  While it runs on C: DEFRAG needs about 200 KB
+more memory, all given back when it ends; on a floppy it needs a little
+less than before.  At
+most 240 files and 64 directories on a disk (more: the map only).  With
+a hard disk Lodestone keeps 0.1 KB more than 0.3.10 (for DEFRAG's disk
+calls): 2.9 KB in all (3.3 KB without EMS).
+
+0.3.12: the screen saver tidies every disk in turn: A:, then B: (if
+the GRiD has a second floppy drive), then C: (if there is a hard disk),
+each with its map, then the dark screen with the time.  DEFRAG.COM must
+be on the disk Lodestone started from.  A drive with no disk in it is
+passed over (after the few seconds the drive takes to say so), and a
+key or the mouse during any disk's turn ends the round.  In System,
+Screen saver, Space switches the tidying off (straight to the dark
+screen; LODE.INI then says TIDY=0) and on again.  System's Disks
+shows C: too, and Devices the hard disk's own name.
+
+0.3.13: Copy on a subject.  Outline Subject, choose the subject, CODE-C:
+the form has Device, Subject (where the copy goes: this subject to
+start with, so for a copy on another disk only Device changes), Replace
+and Only newer.  Every title in it and every subject below it is copied,
+empty subjects too; the subjects are made as needed, titles that are
+there already are replaced or left as Replace and Only newer say (for
+a backup to B: of a whole subject: Replace All, Only newer Yes).  Root
+copies the whole disk.  A subject can't be copied into itself or into a
+subject in it (nor Root into its own drive).  Hidden and system titles
+and subjects are copied too and stay hidden or system; a copy of a
+read-only title isn't read-only.  An error stops it and says why; what
+was copied stays.  Also: a subject that can't be made (or grow) on a
+write-protected B: no longer stops A: from being read.
+
+0.3.14: M:, the temporary disk.  With EMS, Lodestone keeps a disk in it:
+drive M:, 256 KB to start with, for files wanted fast and only for a
+while.  It works as A: and C: do (DIR, COPY, MD, programs run from it;
+the Executive's Device list and Copy form offer "Temporary disk M:"),
+but big reads and writes go some 80 to 100 times as fast as on a
+floppy, and small ones don't wait for a disk at all.  What is on it goes when the GRiD is switched
+off, and at CTRL-ALT-DEL unless the EMS kept it (Lodestone checks; EMSKEEP
+tells whether this 1520's EMS does).  System, Temporary disk: Return
+steps through Off, 64, 128, 256, 512 KB, 1 MB and All free, and the
+line shows the size M: has.  A new size starts M: empty: System asks
+first when there are files on it, and refuses while one is open.  The
+choice goes in LODE.INI as MDISK=512 (MDISK=0 off, MDISK=ALL all the
+free EMS; no line for 256 KB).  M: takes EMS pages that programs then
+don't get (256 KB of the 1376), and none of the memory programs get.
+Off, it takes nothing at all.  Without EMS (the memory set to extended)
+the topic says "needs EMS" and there is no M:.  DEFRAG and the screen
+saver leave M: alone (nothing to tidy).  The Device list shows B: only
+when the GRiD has a second floppy drive.
+
+0.3.15: a start-up with M: off (MDISK=0) clears what is left of an old
+M:, so a later start-up with M: on can't bring back a disk whose memory
+programs have used since.
+
+0.4.0: Term.  CLAUDE /T makes the GRiD the screen and keyboard of the
+real Claude Code, running on the Pi (a Pi 5) on your own Claude plan:
+its prompt, its answers, its questions before it changes anything, all
+on the GRiD's screen; only the parts of the screen that change cross the
+GPIB link.  Every key goes to Claude Code (CODE is Alt; CODE-Return or
+Ctrl-Return starts a new line), except CODE-Q, which quits, and CODE-R,
+which draws the screen again.  The bottom line shows the session and the
+link.  Claude Code reaches the GRiD's files, DOS programs (typing into
+them and taking screenshots) and the GPIB bus through the Pi, as Claude
+for GRiD always has; while a program runs the GRiD shows the program, and
+then Claude Code's screen again.  CLAUDE without /T is the chat as
+before (or Term, if the Pi has no API key for chat).
+
+0.4.1: Grid-OS is now called Lodestone.  The kernel is LODE.SYS (it was
+GRIDOS.SYS), its settings LODE.INI (GRIDOS.INI), the command prompt
+LCMD.COM (GRIDCMD.COM) and the installer LODEBOOT.COM (GOSBOOT.COM).
+To bring a Grid-OS floppy over: copy LODE.SYS, LCMD.COM and LODEBOOT.COM
+to it, keeping GRIDOS.SYS for now; rename GRIDOS.INI to LODE.INI; start
+Grid-OS as usual, run LODEBOOT at the command prompt (CODE-P) and answer
+Y; restart.  The disk now starts LODE.SYS, and GRIDOS.SYS, GRIDCMD.COM
+and GOSBOOT.COM can go.
+
+0.4.2: the command prompt (LCMD, CODE-P) grows up.
+  The line: Left, Right, Home, End, Backspace and Del edit it; ESC
+  clears it; Up and Down bring back the lines before (a few dozen);
+  F3 the rest of the last one; Tab finishes a file or subject name
+  (Tab again: the next one that fits).
+  The screen saver comes on at the prompt too (and at PAUSE and CHOICE),
+  as in the Executive: DEFRAG on each disk, then the dark screen.  A key
+  brings the prompt back as it was; the key does nothing else.
+  Batch files:  IF [NOT] EXIST name / ERRORLEVEL n / a==b  command
+                GOTO label (a line :label)
+                FOR %%F IN (*.TXT A.DAT) DO command %%F
+                CALL OTHER args (it runs, then this one goes on)
+                SHIFT, %NAME% (from SET), ECHO OFF, @, PAUSE, REM
+                CHOICE /C:YNC /N /T:N,10 text (ERRORLEVEL = the key's place)
+  Between commands: A && B runs B if A worked, A || B if it didn't.
+  ERRORLEVEL: a program's exit code; DIR, COPY, DEL and the other
+  commands that can fail set 0 or 1 (ECHO, REM, CLS, PAUSE, GOTO and
+  SHIFT leave it as it was).  An error in a batch file says where:
+  "BUILD line 7: File not found".
+  COPY takes up to 64 KB at a time from free memory, so big copies go
+  faster, and LCMD stays as small as before while a program runs from it.
+
+0.4.3: a start-up picture.  When the kernel has started, LODE.PIC shows
+Fig. 1 of F. A. Annett's Electrical Machinery (1921), "Lodestone
+attracting some iron nails", drawn from lines - the stone and 235 nails,
+each with its head and point - with LODESTONE beside it, for 2 seconds
+or until a key (the key does nothing else).  Copy LODE.PIC to the root of
+this disk to have it; without it Lodestone starts as before.  In System,
+Display, Space turns it off (LODE.INI then says SPLASH=0) and on again.
+It costs DOS programs nothing: the kernel reads it into free memory,
+shows it, and lets the memory go.
+
+0.4.4: a calculator, and the coprocessor lamp.
+  In the Executive, CODE-K opens the calculator (CALC.RUN) in a window
+  over the file list.  Type a sum and press Return: the answer shows
+  under it.  Typing after an answer starts a new sum; + * / \ % ^ first
+  go on from the answer.  The keys in the window are the same typing with
+  the mouse.  F2 (or the Deg key, lit while on) switches sin, cos, tan and
+  atan to degrees; F1 is its help; ESC or CODE-K closes it, and the
+  Executive is as it was.
+  At the command prompt:  CALC [/D] [name=]expression
+    CALC 4*4             16
+    CALC N=N+1           sets N for a batch file: %N% (the prompt's own
+                         variables; names in a sum are variables)
+    CALC /D sin(30)      0.5 (degrees)
+  It prints the answer (so > FILE works), or CALC: Divide by zero and the
+  like with ERRORLEVEL 1; so too with no sum, a wrong switch, or a disk
+  too full for the answer.  CALC /? says how to use it.  name= sets the
+  variable only at the command prompt; anywhere else CALC says so, with
+  ERRORLEVEL 1.  Names up to 15 letters, values up to 31 characters
+  (longer: Name too long, Value too long, never cut short).
+  + - * / ^ ( ), \ the whole part of a division,
+  % the remainder (write %% in a batch file); sqrt sin cos tan atan ln
+  log exp abs pi ans.  15 digits; 1.5E+20 beyond.
+  With an 80287 it works in its 80-bit numbers; a 287XL does sin, cos and
+  tan itself, faster and exact for big angles.  In degrees both chips give
+  the same answers, 0 and 1 exactly (cos 90 is 0).  Without a coprocessor:
+  whole numbers to 2147483647 (6/2 is 3; 7/2 needs an 80287).
+  The info line under the list lights up 80287 or 80287XL when one is
+  fitted (Lodestone checks the chip itself), and shows nothing otherwise;
+  System, Devices names it too.  The lamp and CODE-K cost DOS programs
+  0.2 KB; CALC.COM and CALC.RUN cost nothing until they run.
+
+0.4.5: the 80287 is found.  On a real 80287 the lamp stayed dark and the
+calculator worked in whole numbers: after its reset (FNINIT) the chip
+keeps four flags as they were, and Lodestone wanted them clear.  The
+BIOS's own check ignores them, and now so does Lodestone.  New on this
+disk: CALCTEST.BAT tries the calculator step by step (its answers go to
+CALCTEST.TXT), and FPUPROBE shows what the coprocessor answers.
+
+0.6: Lodestone in ROM.  Burn LODE1.BIN (128 KB) to a 27C010 and put it in
+the second ROM socket (the BIOS starts the last bootable ROM it finds;
+the GRiD MS-DOS EPROM can go in the first).  It starts on C: (or R:).
+R: is the ROM: LODE.SYS, LCMD, System, Write, the calculator, DEFRAG,
+the picture, the Terminus font and LODE.INI, read-only.  R:\LODE.INI
+holds the ROM's settings; what you change in System goes in C:\LODE.INI
+(A:\LODE.INI without the hard disk) and is read over them: System's
+Settings topic shows which, and Return there goes back to the ROM's.
+Programs in C:\LODE are used before the ROM's (PATH=C:\LODE;R:\).
+Hold Shift while the 1520 starts for a menu: Lodestone; Lodestone with
+the ROM's own settings; GRiD MS-DOS (when it is in the other socket);
+or the floppy.  This floppy still starts Lodestone as before (tap F),
+and R: is there then too.
+
+The Executive (the file list):
+  Up/Down, PgUp/PgDn, Home/End   choose
+  Tab, Shift-Tab                 Device, Subject, Title
+  Type its first letter          find a name
+  Return                         run it / open it (Device, Subject: on)
+  CODE-U                         Usage (SYSTEM.RUN)
+  CODE-W                         Write a new text file (WRITE.RUN)
+  CODE-A                         Claude (CLAUDE.COM)
+  CODE-K                         the calculator (CALC.RUN)
+  CODE-P                         command prompt (LCMD.COM, EXIT returns)
+  CODE-C, CODE-M                 Copy, Move (Titles: * and ? too;
+                                 in Subject: Copy the subject)
+  CODE-R, CODE-D                 Rename, Delete (Titles: * and ? too;
+                                 in Subject: Delete the subject)
+  F5                             read the disk again after a swap
+  Shift-PrtSc                    the screen to SCREENnn.BMP (or .TXT)
+  CODE-? (Alt+/) or F1           help
+  5 minutes idle                 screen saver (DEFRAG on A:, B:, C:,
+                                 then the time; System, Screen saver
+                                 sets when)
+  M:                             the temporary disk (with EMS; System,
+                                 Temporary disk sets its size)
+  Serial mouse on COM2 (or COM1).
+
+Programs:
+  LCMD      the command prompt: DIR TYPE COPY DEL REN MD RD CD CLS ECHO
+            VER VOL SET PATH PROMPT DATE TIME PAUSE REM EXIT, A:, programs,
+            .BAT files (IF GOTO FOR CALL SHIFT CHOICE %NAME%), && and ||,
+            redirection < > >> and pipes |; line editing, history, Tab
+  CALC      the calculator: CALC 4*4, CALC N=N+1 (CALC /?: how)
+  CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
+            (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
+            CLAUDE /T: Claude Code itself (Term); CODE-R redraws.
+            CLAUDE /R: resident (needs EMS; 0.8 KB): CODE-\ over a
+            program waiting for a key brings Claude Code up, the same
+            session as CLAUDE /T; CODE-\ again goes back.  Claude sees
+            that program and can type into it (asking you first; CODE-\
+            stops its keys); not yet the GRiD's files.  CLAUDE /U takes
+            it out.
+  TM5000G   TM5000 3.7
+  TESTDOS   checks the kernel's DOS functions (writes and deletes its
+            own test files on this disk; "24 passed, 0 failed" is right)
+  CACHETST  checks the disk cache: random reads and writes on two
+            files, every byte checked ("0 errors" is right; about 400 KB
+            free needed, a few minutes).  Results go to CACHETST.TXT too
+  EMSTEST   checks the EMS (INT 67h): "0 failed" is right; the results are added
+            to EMSTEST.TXT and it waits for a key.  Run it under
+            GRiD MS-DOS with EMM.SYS too, to compare: what only Lodestone
+            does is skipped there
+  BENCH     file system benchmark: run it here, then under GRiD MS-DOS
+            from this drive (B: there), and compare (about 400 KB free
+            needed; some 5 minutes under MS-DOS).  Each run is added to
+            BENCH.TXT on this disk; both wait for a key at the end.
+            BENCH /N 10 does each test 10 times over (for M:, too fast
+            for one)
+  HDPROBE   the internal hard disk close up: its registers, self-test,
+            IDENTIFY, heads and sectors (read-only; report HDPROBE.TXT).
+            HDPROBE /X exercises a sticky arm (HDPROBEX.TXT)
+  HDSCAN    what is on the hard disk, every directory, and a read of
+            every sector (read-only; report HDSCAN.TXT)
+  EMSKEEP   does the EMS keep what it holds through CTRL-ALT-DEL?
+            EMSKEEP fills 8 EMS pages with a pattern; press CTRL-ALT-DEL,
+            then run EMSKEEP /C: it says so, page by page (EMSKEEP.TXT)
+  GGTEST    GPIB driver test on the bus
+  CMDTEST   tries the batch language step by step ("All 11 tests
+            passed" is right; it waits 3 s at CHOICE: press no key)
+  TESTKEY   echoes keys until Esc (for checking Claude's key scripts)
+  GRIDGPIB  the GPIB driver for GRiD MS-DOS (load it first there)
+  DEFRAG    tidies this disk (also the screen saver; DEFRAG /S as one).
+            A file only ever moves whole: copied, read back and
+            compared, then its directory entry is switched over, so a
+            power cut or a pulled disk can't damage it.  It stops if the
+            disk is changed; it only shows the map on a write-protected
+            disk, under GRiD MS-DOS, or when files are open (run from a
+            .BAT file).  Any key stops it.  Old disks wear: a bad spot
+            in the free space gets its clusters marked bad (as FORMAT
+            does) and it carries on; a weak sector in a file is read
+            again and again, and the file moved to good ground.  Only a
+            drive that can't write at all stops it.  Each run that
+            changes the disk adds a line to DEFRAG.TXT on it
+            DEFRAG /T tests all the free space and marks the bad spots
+            DEFRAG B: (or B: /T) works on the floppy in drive B:
+  HEADCLN   head cleaning with a wet cleaning disk: spins the drive and
+            sweeps the heads for 30 s (HEADCLN B: 20 for drive B:, 20 s).
+            It only reads; it asks for the cleaning disk and for your
+            disk back, with a minute for the alcohol to dry
+
+To update Lodestone, replace LODE.SYS (and LCMD.COM, CALC.COM, the .RUN files)
+on this disk.
+No need to rerun LODEBOOT (except once, coming from Grid-OS: see 0.4.1).
+
+Keep COMMAND.COM, CONFIG.SYS and AUTOEXEC.BAT off this disk unless they
+are meant for GRiD MS-DOS: booted from the EPROM with this floppy in the
+drive, GRiD MS-DOS uses A:\COMMAND.COM (and A:\CONFIG.SYS) in place of
+its own.

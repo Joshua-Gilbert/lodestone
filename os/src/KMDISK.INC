@@ -123,9 +123,6 @@ md_cwdh: cmp    al, MD_DRV
 .t:     times cwd_of.hk - cwd_of db 90h
         KJMP    cwd_of.hk
 
-; INT 21h 0Eh: 13 drives, A: to M: (in place of f_0E.x's count)
-md_f0e: mov     al, MD_DRV + 1
-        KJMP    ret_al
 
 ; dio for M:: AH = 2 read / 3 write, DX = sector, CX = sectors, ES:BX =
 ; memory.  A piece at a time, each within one page: the page into a window
@@ -275,10 +272,7 @@ md_entry:
         jne     .c                      ;  drive: the one Lodestone started from
         cmp     byte [cur_drv], MD_DRV
         jne     .c
-        mov     al, [bootdrv]
-        cmp     al, NDRV
-        jb      .cd
-        xor     al, al
+        mov     al, [bootdrv]           ; (A:, B:, or from the ROM R:)
 .cd:    mov     [cur_drv], al
 .c:     mov     al, [cs:md_pg]
         call    md_kbof
@@ -694,9 +688,15 @@ md_fatok:
 .ok:    ret
 
 ; the hooks in: each place's first bytes to its .t (KHD.INC's jump there
-; made relative to its new place), a jump to the hook at the place
+; made relative to its new place), a jump to the hook at the place; and
+; INT 21h 0Eh counts to M: at least (what it said is kept for M: off)
 md_hook:
-        mov     si, md_hooks
+        mov     al, [lastdrv]
+        mov     [cs:md_ld], al
+        cmp     al, MD_DRV + 1
+        jae     .ld
+        mov     byte [lastdrv], MD_DRV + 1
+.ld:    mov     si, md_hooks
 .l:     mov     di, [cs:si]             ; the place
         or      di, di
         jz      .x
@@ -737,6 +737,8 @@ md_hook:
 
 ; and out again: each place's bytes back from its .t (or md_keep)
 md_unhook:
+        mov     al, [cs:md_ld]
+        mov     [lastdrv], al
         mov     si, md_hooks
 .l:     mov     di, [cs:si]
         or      di, di
@@ -826,7 +828,6 @@ md_hooks:
         dw      drv_present, drv_present.hk, md_pres, md_pres.t
         dw      cwd_of, cwd_of.hk, md_cwdh, md_cwdh.t
         dw      dio, dio.hk, md_dio, md_dio.t
-        dw      f_0E.x, 0, md_f0e, 0
         dw      0
 
 ; ---- the installer's own (here, in EMS) ----
@@ -839,7 +840,8 @@ md_delta    dw  0                       ; md_res's move: its block's offset from
                                         ;  KSEG - md_res
 md_env      dw  0                       ; the master environment
 md_envp     dw  0                       ;  and its size before the split
-md_keep     times 3 db 0                ; f_0E.x's first bytes
+md_keep     times 3 db 0                ; (a place hooked without a .t: none now)
+md_ld       db  0                       ; INT 21h 0Eh's count before M:
 md_dte      times DRVSZ db 0            ; M:'s drive table entry, made here
 
 ; the words in md_res that move with it (from md_res), each list ended
@@ -877,7 +879,6 @@ section mdt
         times (use_drive.hk - use_drive) - 3 resb 1
         times (drv_present.hk - drv_present) - 3 resb 1
         times (cwd_of.hk - cwd_of) - 3 resb 1
-        times (f_0E.xe - f_0E.x) - 3 resb 1
         times 128 - (init.go + 2 - start) resb 1        ; (init's JMP SHORT reaches 0)
 
 ; =====================================================================
@@ -925,24 +926,7 @@ md_boot:
         movsw
         movsw
         movsb
-        mov     cx, 256
-        mov     dx, MDB(s_mdini)
-        mov     ax, 3D00h
-        int     21h
-        jc      .go
-        mov     bx, ax
-        mov     dx, MD_IBUF
-        mov     cx, 4095                ; (SYSTEM may write a little more
-        mov     ah, 3Fh                 ;  than its 1 KB)
-        int     21h
-        jnc     .rd
-        xor     ax, ax
-.rd:    mov     si, dx
-        add     ax, si
-        xchg    ax, di
-        mov     byte [di], 0
-        mov     ah, 3Eh
-        int     21h
+        call    ini_read                ; (KROM.INC: LODE.INI's, both)
         mov     cx, 256
 .line:  mov     di, MDB(s_mdeq)         ; "MDISK=" (any case)?
 .c:     mov     al, [di]
@@ -993,7 +977,6 @@ md_boot:
         int     67h
         jmp     KSEG:run_ui
 md_s0   db      0, 0, 0, 0, 0               ; (ems_init: KSEG:0000's 5 bytes)
-s_mdini db      '\LODE.INI', 0
 s_mdeq  db      'MDISK', 1Dh, 0         ; (as "MDISK=" AND 0DFh)
 
 %endif

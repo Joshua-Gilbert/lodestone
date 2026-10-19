@@ -102,7 +102,7 @@ def t_core():
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
     # INT 16h AH=10h; pcemu now models that
     k.key(K_CODE_HELP)
-    check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 0.4 Help'), screen(k))
+    check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 0.6 Help'), screen(k))
     k.key(ktest.ESC)
     check('the Executive lists .RUN files as Program', 'UITEST.RUN' in k.exec_list() and has(k, 'Program'), screen(k))
     k.select('UITEST.RUN'); k.key(ktest.ENTER)
@@ -232,7 +232,7 @@ def t_system():
     shot(k, 'system_gpib')
     check('GPIB scan finds the instruments on the simulated bus (6, 14, 29)', re.search(r'Instruments at\s+6, 14, 29', screen(k)), screen(k))
     k.key('A')
-    check('About', has(k, 'Lodestone 0.4') and has(k, '3.30 compatible'), screen(k))
+    check('About', has(k, 'Lodestone 0.6') and has(k, '3.30 compatible'), screen(k))
     k.key(ktest.F1)
     check('help', has(k, 'System Help') and has(k, 'back to the Executive'), screen(k))
     k.key('x'); k.key(K_CODE_HELP)
@@ -437,8 +437,8 @@ def t_memory():
     kb = float(m.group(1)) if m else 0
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
-          'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB): the directory buffer is lent while it runs' % kb,
-          kb >= 562.3, out[-200:])
+          'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB): the directory buffer is lent while it runs' % kb,
+          kb >= 562.2, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
