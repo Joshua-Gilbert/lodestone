@@ -8,6 +8,7 @@ echo [map symbols LODE.MAP] > _m.asm
 echo %%include "LODE.ASM" >> _m.asm
 nasm -f bin -o LODE.SYS _m.asm -l LODE.LST
 del _m.asm
+python ..\mkmt.py LODE.SYS LODE.MAP LODEMT.SYS
 nasm -f bin -o LODE.PIC SPLASH.ASM
 nasm -f bin -o LCMD.COM LCMD.ASM
 nasm -f bin -o DEFRAG.COM DEFRAG.ASM

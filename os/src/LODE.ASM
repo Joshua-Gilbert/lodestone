@@ -26,6 +26,9 @@
 ;           the master environment's block
 ;    KSPLASH the start-up picture's bootstrap: loads, runs and drops
 ;           \LODE.PIC (SPLASH.ASM); load image only, never resident
+;    KMT    multitasking, only with MULTITASK=1 (and EMS): its start-up
+;           here (load image only), its resident part a file of its own,
+;           LODEMT.SYS, read into a block at the top of memory
 ;
 ;  The UI segment (section ui, our COMMON.SHR) follows the kernel in this
 ;  file.  At start-up it is copied into a block of its own (owner 8, "UI")
@@ -230,3 +233,11 @@ ui_keep_end:                            ; while a DOS program runs, the UI
 entries     resb 32 * MAXENT            ;  block lets go of the Executive's
 ui_bss_end:                             ;  directory (it reads it again after)                             ; (no alignb 16 here: in a vfollows
                                         ;  section it would clash in NASM)
+
+; =====================================================================
+;  KMT.INC: multitasking.  Its resident part (section mtt, assembled from
+;  0, run in a segment of its own) is the file's last section: the build
+;  (mkmt.py) cuts it off into LODEMT.SYS, and mt_boot reads that file.
+; =====================================================================
+section mtt progbits align=16 follows=ui vstart=0
+%include "KMT.INC"                      ; (section mtt, and boot: mt_boot)

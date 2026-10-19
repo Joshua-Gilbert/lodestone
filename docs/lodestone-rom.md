@@ -13,6 +13,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | File | What it is |
 |---|---|
 | LODE.SYS | the kernel, Executive and UI core (first, contiguous) |
+| LODEMT.SYS | multitasking's resident part, read only with `MULTITASK=1` (`docs/lodestone-multitasking.md`) |
 | LODE.PIC | the start-up picture |
 | LCMD.COM | the command prompt (COMSPEC) |
 | SYSTEM.RUN, WRITE.RUN, CALC.RUN | the programs |
@@ -20,7 +21,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-About 25 KB is left. CLAUDE.COM is meant for ROM 2. Until then it lives on C: or A:.
+About 22 KB is left (22,528 bytes with LODEMT.SYS and PS.PRN). CLAUDE.COM is meant for ROM 2. Until then it lives on C: or A:.
 
 ## Which socket
 

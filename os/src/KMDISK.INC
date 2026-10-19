@@ -909,7 +909,9 @@ md_stub_end:
 section boot
 
 ; init's last jump, through KSEG:0000 (CS = 1000h): MDISK= in \LODE.INI
-; (KB, 0 off, ALL; no line or a bad value: 256), then M:, then the UI
+; (KB, 0 off, ALL; no line or a bad value: 256), then M:; MULTITASK=1 (or
+; Yes, or On, any case; anything else is off; KMT.INC), then multitasking;
+; then the UI.  (Both settings are read before M: is made.)
 md_boot:
         cli
         mov     ax, KSEG
@@ -927,19 +929,33 @@ md_boot:
         movsw
         movsb
         call    ini_read                ; (KROM.INC: LODE.INI's, both)
-        mov     cx, 256
-.line:  mov     di, MDB(s_mdeq)         ; "MDISK=" (any case)?
-.c:     mov     al, [di]
-        or      al, al
-        jz      .hit
-        mov     ah, [si]
+        push    si
+        mov     di, MDB(s_mteq)         ; "MULTITASK=" (any case)?
+        call    ini_key
+        jc      .md
+        mov     ax, [si]                ; 1, On or Yes, and nothing after it
         and     ax, 0DFDFh
-        cmp     al, ah
-        jne     .next
+        cmp     al, '1' & 0DFh
+        je      .mt1
+        cmp     ax, 'ON'
+        je      .mt2
+        cmp     ax, 'YE'
+        jne     .md
+        mov     al, [si+2]
+        and     al, 0DFh
+        cmp     al, 'S'
+        jne     .md
         inc     si
-        inc     di
-        jmp     .c
-.hit:   mov     ax, [si]                ; "ALL"
+.mt2:   inc     si
+.mt1:   cmp     byte [si+1], ' '        ; (the line's end, a blank or the text's)
+        ja      .md
+        mov     byte [MDB(mt_on)], 1
+.md:    pop     si
+        mov     cx, 256
+        mov     di, MDB(s_mdeq)         ; "MDISK=" (any case)?
+        call    ini_key
+        jc      .go
+        mov     ax, [si]                ; "ALL"
         and     ax, 0DFDFh
         cmp     ax, 'AL'
         jne     .num
@@ -965,17 +981,13 @@ md_boot:
 .dn:    or      dx, dx
         jz      .go
         mov     cx, bx
-        jmp     short .go
-.next:  lodsb
-        or      al, al
-        jz      .go
-        cmp     al, 10
-        jne     .next
-        jmp     .line
 .go:    mov     ax, 5B4Dh               ; M:, keeping what it holds if it can
         mov     bl, 2
         int     67h
-        jmp     KSEG:run_ui
+        cmp     byte [cs:MDB(mt_on)], 0
+        je      .ui
+        call    mt_boot                 ; (KMT.INC)
+.ui:    jmp     KSEG:run_ui
 md_s0   db      0, 0, 0, 0, 0               ; (ems_init: KSEG:0000's 5 bytes)
 s_mdeq  db      'MDISK', 1Dh, 0         ; (as "MDISK=" AND 0DFh)
 
