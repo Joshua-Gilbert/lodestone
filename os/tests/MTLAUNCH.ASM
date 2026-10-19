@@ -3,7 +3,8 @@
 ; itself (AH=0Ah), so they run.
 ;   MTLAUNCH [/F] [/M:n] [/R:n] PROG.COM args; [/F] ... PROG2.COM args; ...
 ; /F: it comes to the front (SPF_FRONT); /M:n: n paragraphs for it; /R:n:
-; n of it (a command line holds 126 characters).
+; n of it (a command line holds 126 characters).  /G:n on its own: task n
+; to the front (AL=13h; "MTLAUNCH: error E" if it fails).
 ; Prints "task N" for each, or "MTLAUNCH: error E" (CF, AX = E); then
 ; "list:" and " N S NAME;" for each task (S: its TS_* state).
 ; nasm -f bin -i ../src/ -o MTLAUNCH.COM MTLAUNCH.ASM
@@ -44,9 +45,22 @@ org 100h
 .de:    dec     si
         cmp     byte [opt], 'R'
         je      .or
+        cmp     byte [opt], 'G'
+        je      .og
         mov     [pb + SP_PARAS], bx
         jmp     .opt
 .or:    mov     [rep_], bx
+        jmp     .opt
+.og:    mov     ax, 0F000h + MT_FRONT
+        int     21h
+        jnc     .opt
+        push    ax
+        mov     dx, s_err
+        call    out
+        pop     ax
+        call    dec_
+        mov     dx, s_nl
+        call    out
         jmp     .opt
 .prog:  mov     di, path                ; the program, to a blank, ; or the end
 .p:     lodsb

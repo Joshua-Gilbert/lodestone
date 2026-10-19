@@ -5,10 +5,14 @@
 ;  call MS-DOS doesn't have.
 ; =====================================================================
 MT_SPAWN    equ 10h                     ; a program as a new task: DS:DX = its
-                                        ;  path (ASCIIZ, with its extension),
-                                        ;  ES:BX = a block (SP_* below) -> AL =
-                                        ;  the task.  CF: AX = 4 (8 tasks
-                                        ;  already), 8 (no room for its region)
+                                        ;  path (ASCIIZ, with its extension; up
+                                        ;  to 127 characters), ES:BX = a block
+                                        ;  (SP_* below) -> AL = the task.  CF:
+                                        ;  AX = 4 (8 tasks already), 8 (no room
+                                        ;  for its region).  Success means the
+                                        ;  task is made: a program that can't be
+                                        ;  run ends it at once (no call returns
+                                        ;  its exit code yet)
 MT_END      equ 11h                     ; (the task's stub, when its program is
                                         ;  done: the task ends)
 MT_LIST     equ 12h                     ; the tasks: ES:DI = room for CX records
@@ -16,13 +20,17 @@ MT_LIST     equ 12h                     ; the tasks: ES:DI = room for CX records
                                         ;  tasks there are (records for as many
                                         ;  as fit), AL = the front task's number
 MT_FRONT    equ 13h                     ; BL = a task: it comes to the front at
-                                        ;  the next key wait.  CF: AX = 1 (none)
+                                        ;  the next key wait.  CF: AX = 1 (none).
+                                        ;  (When the front task ends, task 0
+                                        ;  comes to the front.)
 MT_TASKS    equ 8                       ; most tasks at once (0 is the Executive)
 MT_DEFARENA equ 1000h                   ; a task's memory if SP_PARAS is 0: 64 KB
 
 ; ---- MT_SPAWN's block (EXEC's, then two more fields) -----------------
-SP_ENV      equ 0                       ; word: environment (0: the caller's)
-SP_TAIL     equ 2                       ; far: the command tail (count, text, CR)
+SP_ENV      equ 0                       ; word: environment (0: the caller's;
+                                        ;  a copy of up to 1 KB is kept)
+SP_TAIL     equ 2                       ; far: the command tail (count, text,
+                                        ;  CR; 126 characters kept; 0:0: none)
 SP_FCB1     equ 6                       ; far (not used: the stub's are blank)
 SP_FCB2     equ 10                      ; far (not used)
 SP_PARAS    equ 14                      ; word: the task's memory, paragraphs

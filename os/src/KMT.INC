@@ -30,12 +30,13 @@
 ;  A task (1 to 7; task 0 is the Executive and whatever it runs) is a
 ;  region, a block of its own (owner 8, "T1".."T7") carved from the top of
 ;  the free memory below MT's block, downward:
-;    TX     its context while another runs: its SS:SP, the kernel's
-;           per-task variables (mt_ranges: the INT 21h nesting, the break
+;    TX     its context while another runs: its SS:SP, the EMS windows'
+;           page registers, the kernel's per-task variables (mt_ranges: the INT 21h nesting, the break
 ;           and console state, the current directories, the DTA and
 ;           console line, the current PSP, the memory arena's start), and
 ;           the kernel stack's slice from SP up (it waits inside INT 21h)
 ;    stub   a PSP and a few instructions: EXEC the program, then MT_END
+;           (its own parent: ended itself, it lands on MT_END too)
 ;    env    a copy of the spawner's environment (it may end first)
 ;    arena  the task's own MCB chain: its first_mcb, ended by a 'Z' here
 ;  Task 0's TX is in MT's block (section mttbss).  Switching happens only
@@ -58,7 +59,8 @@ MT_ENT      equ 24
 TX_SP       equ 0
 TX_SS       equ 2
 TX_KLEN     equ 4                       ; bytes of kernel stack saved (0: none)
-V_INDOS     equ 6                       ; the kernel's variables, mt_ranges'
+TX_EMS      equ 6                       ; the EMS windows' 4 page registers
+V_INDOS     equ 10                      ; the kernel's variables, mt_ranges'
 V_BRK       equ V_INDOS + 1             ;  order (V_x + (var - first) for one
 V_MCB       equ V_BRK + (onebyte + 1 - brkflag)   ;  inside a range)
 V_DCWD      equ V_MCB + 2
@@ -74,6 +76,8 @@ ST_PATH     equ 120h                    ; the program (ASCIIZ)
 ST_PB       equ 1A0h                    ; EXEC's block
 ST_TAIL     equ 1B0h                    ; its command tail
 ST_STK      equ 340h                    ; its stack's top
+ST_AFR      equ ST_STK - 64             ; a frame for terminate: the stub ends
+                                        ;  itself (an Abort while it EXECs)
 ST_PARAS    equ ST_STK / 16
 ENVMAX      equ 1024                    ; most of an environment kept
 
@@ -128,11 +132,12 @@ st_code:
         mov     dx, ST_PATH
         mov     bx, ST_PB
         int     21h
-        mov     ax, 0F000h + MT_END
-        int     21h
+.e:     mov     ax, 0F000h + MT_END     ; (PSP:0Ah: where it ends, its own
+        int     21h                     ;  parent, if it is aborted itself)
 .h:     hlt                             ; (never: MT_END doesn't come back)
         jmp     .h
 st_len      equ     $ - st_code
+ST_END      equ     100h + st_code.e - st_code
 
 ; INT 08h: the BIOS's handler first (the tick count, INT 1Ch, the end of
 ; the interrupt), then ours
@@ -166,7 +171,7 @@ mt_kwait:
 .f:     mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .bg
-        mov     ah, 1                   ; in front: a key?
+.k:     mov     ah, 1                   ; in front: a key?
         int     16h
         jnz     .have
         call    mt_can                  ; none: another task to run meanwhile?
@@ -184,8 +189,10 @@ mt_kwait:
         pop     ds
         jmp     KSEG:kbd_get.have
 ; in the background: it waits without reading keys, while another runs
+; (unless it can't be switched from: then it reads them, as in front; an
+; INT 24h answer, say)
 .bg:    call    mt_can
-        jc      .idle
+        jc      .k
         call    mt_pick                 ; one ready to run, or the front one
         jnc     .bgs
         mov     bl, [cs:mt_front]
@@ -270,6 +277,7 @@ mt_switch:
         pop     bx
         mov     [es:TX_SP], sp
         mov     [es:TX_SS], ss
+        call    mt_emsget
         mov     cx, kstack_top          ; its slice of the kernel stack
         sub     cx, sp
         mov     [es:TX_KLEN], cx
@@ -291,6 +299,13 @@ mt_load:
         push    KSEG
         pop     ds
         call    mt_vload
+        mov     dx, EMS_PORT            ; its EMS windows
+        mov     bx, TX_EMS
+.em:    mov     al, [es:bx]
+        out     dx, al
+        inc     bx
+        add     dh, 40h
+        jnc     .em
         mov     ss, [es:TX_SS]
         mov     sp, [es:TX_SP]
         mov     cx, [es:TX_KLEN]
@@ -306,6 +321,16 @@ mt_load:
         pop     ds
         popa
         sti
+        ret
+
+; the EMS windows' page registers to the TX at ES (AL, DX, DI changed)
+mt_emsget:
+        mov     dx, EMS_PORT
+        mov     di, TX_EMS
+.l:     in      al, dx
+        stosb
+        add     dh, 40h
+        jnc     .l
         ret
 
 ; the kernel's variables (DS = KSEG) to the TX at ES, or back
@@ -416,11 +441,15 @@ mt_end: mov     al, [cs:mt_cur]
         KCALL   close_all
         mov     ax, [last_exit]
         mov     [cs:bx+TE_EXIT], ax
-        mov     ax, [cs:bx+TE_REG]
-        dec     ax
-        mov     es, ax
-        mov     word [es:1], 0          ; the region: free
-        mov     byte [cs:bx+TE_STATE], TS_FREE
+        mov     cx, [cs:bx+TE_REG]
+        dec     cx
+        mov     es, cx
+        cmp     ah, 3                   ; the region: free (a program that
+        jne     .fr                     ;  stays resident keeps it, "TR")
+        mov     word [es:8], 'TR'
+        jmp     short .t
+.fr:    mov     word [es:1], 0
+.t:     mov     byte [cs:bx+TE_STATE], TS_FREE
         mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .f
@@ -462,7 +491,9 @@ mt_spawn:
         mov     ax, [es:2Ch]
 .ev:    mov     [cs:mt_envs], ax
         mov     es, ax                  ; its length: to its two NULs (or
-        xor     di, di                  ;  ENVMAX, cut there)
+        xor     di, di                  ;  ENVMAX, cut there; none: empty)
+        or      ax, ax
+        jz      .ee
 .el:    cmp     word [es:di], 0
         je      .ee
         inc     di
@@ -505,6 +536,15 @@ mt_spawn:
         add     dx, [cs:mt_size]        ; (the region's end)
         mov     bx, [cur_psp]
         KCALL   make_psp                ; (its environment: the copy)
+        mov     ax, es                  ; its own parent: if it is ended
+        mov     [es:16h], ax            ;  itself, it goes to MT_END
+        mov     word [es:0Ah], ST_END
+        mov     [es:0Ch], ax
+        mov     word [es:2Eh], ST_AFR
+        mov     [es:30h], ax
+        mov     [es:ST_AFR + F_DS], ax
+        mov     [es:ST_AFR + F_ES], ax
+        mov     word [es:ST_AFR + F_FL], 0202h
         ; the stub's code, the program's path, its name for MT_LIST
         push    ds
         push    cs
@@ -540,7 +580,9 @@ mt_spawn:
         jbe     .tl
         mov     cl, 126
 .tl:    xor     ch, ch
-        inc     cx
+        mov     [es:di], cl
+        inc     di
+        inc     si
         rep     movsb
         mov     al, 0Dh
         stosb
@@ -587,12 +629,15 @@ mt_spawn:
         ; its TX: the caller's variables (its directories, ...), then its own
         mov     es, [cs:mt_reg]
         call    mt_vsave
+        call    mt_emsget
         pop     ax
         mov     [es:V_MCB], ax
         mov     byte [es:V_INDOS], 0
         mov     byte [es:V_BRK + kbd_scan - brkflag], 0
         mov     byte [es:V_BRK + term_type - brkflag], 0
         mov     word [es:V_BRK + cc_sp - brkflag], 0
+        mov     word [es:V_DTA + con_lpos - dta], 0     ; (no line half read)
+        mov     word [es:V_DTA + con_llen - dta], 0
         mov     bx, [cs:mt_new]
         mov     ax, [cs:bx+TE_PSP]
         mov     [es:V_PSP + cur_psp - cur_psp], ax
@@ -680,7 +725,12 @@ mt_carve:
         mov     dx, [cs:mt_size]
         mov     ax, [cs:mt_mcb0]
 .w:     mov     es, ax
-        cmp     word [es:1], 0
+        mov     cl, [es:0]              ; (a chain gone bad: none)
+        cmp     cl, 'M'
+        je      .w1
+        cmp     cl, 'Z'
+        jne     .no
+.w1:    cmp     word [es:1], 0
         jne     .nx
 .mg:    cmp     byte [es:0], 'M'        ; free: merge the free ones after it
         jne     .fit
@@ -709,7 +759,8 @@ mt_carve:
         mov     es, bx
         mov     cx, [es:3]
         sub     cx, dx
-        jz      .all                    ; (exactly: all of it)
+        cmp     cx, 1
+        jbe     .all                    ; (exactly, or no room for an MCB: all)
         dec     cx                      ; the rest stays free, below
         mov     [es:3], cx
         mov     al, [es:0]
