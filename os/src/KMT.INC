@@ -4,13 +4,18 @@
 ;  docs/lodestone-multitasking.md); this is the first, the switch and the
 ;  skeleton: one task, the Executive, and nothing switches yet.
 ;
-;  Off, none of it is in memory: the resident part's image (section mtt)
-;  and its start-up (mt_boot, section boot) are only in the load image,
-;  and INT 21h F0h with AL = 10h and up fails as before (f_F0's f_bad).
-;  On, mt_boot (from md_boot, after M:) puts the resident part in a block
-;  of its own (owner 8, "MT") at the top of memory: a filler block takes
-;  the rest first, then goes, so DOS programs still get one block below
-;  it, and the UI block keeps its room for a .RUN right after it.  The
+;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
+;  only in the load image, its resident part (section mtt) isn't even in
+;  LODE.SYS, and INT 21h F0h with AL = 10h and up fails as before (f_F0's
+;  f_bad).  The resident part is the file's last section, which the build
+;  (mkmt.py) cuts off into LODEMT.SYS, writing its checksum into mt_sum.
+;  On, mt_boot (from md_boot, after M:) reads \LODEMT.SYS from the drive
+;  started from (R: from the ROM) into a block of its own (owner 8, "MT")
+;  at the top of memory: a filler block takes the rest first, then goes,
+;  so DOS programs still get one block below it, and the UI block keeps its
+;  room for a .RUN right after it.  A LODEMT.SYS that isn't this LODE.SYS's
+;  (shorter, or its first MT_LEN bytes' checksum differs), none, or no
+;  room: it stays off.  The
 ;  part runs in its own segment, assembled from 0; it reaches the kernel
 ;  with far jumps, so it doesn't have to be within KSEG's 64 KB.
 ;    - INT 08h goes through mt_tick (the BIOS's handler first);
@@ -83,21 +88,32 @@ MT_PARAS    equ     (MT_LEN + 15) / 16
 ; ---- start-up (section boot, in the load image: CS = 1000h) ----------
 section boot
 mt_on   db      0                       ; md_boot: MULTITASK=1 is in LODE.INI
+mt_sum  dw      0                       ; LODEMT.SYS's checksum (mkmt.py)
 s_mteq  db      'MULTITASK', 1Dh, 0     ; (as "MULTITASK=" AND 0DFh)
+s_mtsys db      '@:\LODEMT.SYS', 0
 
-; MT's resident part into a block at the top of memory, INT 08h and INT
-; 21h F0h through it.  Not enough memory: it stays off.
+; \LODEMT.SYS into a block at the top of memory, INT 08h and INT 21h F0h
+; through it.  No such file, not this LODE.SYS's, or no room: it stays off.
 mt_boot:
         push    cs
         pop     ds
+        mov     ax, 3305h               ; on the drive started from
+        int     21h
+        add     dl, 'A' - 1
+        mov     [MDB(s_mtsys)], dl
+        mov     dx, MDB(s_mtsys)
+        mov     ax, 3D00h
+        int     21h
+        jc      .x
+        mov     bp, ax                  ; BP = the file
         mov     ah, 48h
         mov     bx, 0FFFFh
         int     21h                     ; -> BX = the largest block
         sub     bx, MT_PARAS + 1
-        jbe     .x
+        jbe     .cl
         mov     ah, 48h                 ; a filler: all of it but MT's block
         int     21h                     ;  (and its MCB)
-        jc      .x
+        jc      .cl
         mov     es, ax
         mov     ah, 48h
         mov     bx, MT_PARAS
@@ -108,23 +124,39 @@ mt_boot:
         int     21h
         pop     dx                      ; DX = MT's block
         popf
-        jc      .x
+        jc      .cl
         mov     es, dx
         dec     dx                      ; the last block?  (Not if a hole
-        mov     ds, dx                  ;  below the largest one took it:
-        inc     dx                      ;  then it stays off.)
+        mov     ds, dx                  ;  below the largest one took it.)
         cmp     byte [0], 'Z'
+        jne     .fr
+        push    es
+        pop     ds
+        xor     dx, dx
+        mov     cx, MT_LEN
+        mov     bx, bp
+        mov     ah, 3Fh                 ; the file into it
+        int     21h
         push    cs
         pop     ds
-        je      .top
-        mov     ah, 49h
-        int     21h
-        ret
-.top:
-        mov     si, section.mtt.start
-        xor     di, di
+        jc      .fr
+        cmp     ax, MT_LEN
+        jne     .fr
+        xor     si, si                  ; this LODE.SYS's?  (mkmt.py's sum:
+        xor     dx, dx                  ;  rotate left, add the byte)
+        xor     ax, ax
         mov     cx, MT_LEN
-        rep     movsb
+.s:     mov     al, [es:si]
+        rol     dx, 1
+        add     dx, ax
+        inc     si
+        loop    .s
+        cmp     dx, [MDB(mt_sum)]
+        jne     .fr
+        mov     ah, 3Eh
+        mov     bx, bp
+        int     21h
+        mov     dx, es
         mov     ah, 62h                 ; task 0: the Executive, the root
         int     21h                     ;  process
         mov     [es:mt_tab+TR_PSP], bx
@@ -149,5 +181,13 @@ mt_boot:
         mov     [f_F0 + 3], es
         push    cs
         pop     ds
+        ret
+.fr:    push    cs                      ; (no: MT's block goes, and the file
+        pop     ds                      ;  is closed)
+        mov     ah, 49h
+        int     21h
+.cl:    mov     bx, bp
+        mov     ah, 3Eh
+        int     21h
 .x:     ret
 %endif

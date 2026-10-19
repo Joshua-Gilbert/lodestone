@@ -29,7 +29,7 @@ Each milestone's PR adds its section below, describing what was built and any de
 
 ## M1: the switch and the skeleton (2026-10-19)
 
-**What it does:** with `MULTITASK=1` (or `Yes`, or `On`, in any case, with nothing after it on the line) in LODE.INI, the kernel installs multitasking's resident part at start-up. Any other value leaves it off. It needs EMS, and enough of it (3 pages or more) for the disk cache to be there. With less, or with no EMS, it stays off without a word: System will say so in M7. A `-dNOTC` build (no disk cache) has none of it. There is one task, the Executive, and nothing switches yet. LCMD's new `TASKS` lists the tasks:
+**What it does:** with `MULTITASK=1` (or `Yes`, or `On`, in any case, with nothing after it on the line) in LODE.INI, the kernel reads multitasking's resident part from `LODEMT.SYS` at start-up. Any other value leaves it off. It needs EMS, and enough of it (3 pages or more) for the disk cache to be there. With less, or with no EMS, it stays off without a word: System will say so in M7. A `-dNOTC` build (no disk cache) has none of it. There is one task, the Executive, and nothing switches yet. LCMD's new `TASKS` lists the tasks:
 
 ```
 A:\>tasks
@@ -40,8 +40,13 @@ With the switch off, `TASKS` says `Multitasking is off (MULTITASK=1 in LODE.INI)
 
 **How:** `KMT.INC`, with the calls and the task record in `MTAPI.INC` (shared with LCMD).
 - **Reading the switch:** `md_boot`'s search for `MDISK=` became `ini_key`, which `md_boot` now uses for both settings. Both are read from the one LODE.INI read (KROM's `ini_read`, into `INI_BUF` at 1000:F000), before M: is made. `md_boot` only runs when the disk cache is in EMS, which is where the "needs EMS" comes from.
+- **`LODEMT.SYS`:** the resident part (section `mtt`, assembled from 0) is the last section of LODE.ASM's output. The build's `mkmt.py` cuts it off LODE.SYS into `LODEMT.SYS`, and writes its checksum into LODE.SYS's `mt_sum` (a 16-bit word, rotated left one bit before each byte is added; the Real column of LODE.MAP gives the places). So LODE.SYS carries only the start-up, and a build with the switch off never reads the file.
+  - **Joshua's choice (2026-10-19):** the alternative was moving the 4 KB INI buffer out of the load segment. A file of its own frees the load image for good: everything multitasking adds from M2 on goes into LODEMT.SYS.
+  - `mkmt.py` refuses a LODE.SYS that doesn't end with the part (one cut already), skips a `-dNOTC` build, and is deterministic: two builds give the same bytes.
 - **`mt_boot`** (section `boot`: in the load image only) runs after M:. It:
-  - puts the resident part (section `mtt`, assembled from 0) in a block of its own, owner 8, called "MT", at the very top of memory. A filler block takes everything but MT's paragraphs first, then goes. `mem_alloc` is first-fit, so MT only lands at the top if no free hole of its size sits lower down. That is always so at start-up, but `mt_boot` checks that MT's block is the last one, and frees it and stays off if not;
+  - opens `\LODEMT.SYS` on the drive started from (INT 21h 3305h, as `sp_load` finds LODE.PIC; R: when started from the ROM). No file: off, with nothing to undo;
+  - puts it in a block of its own, owner 8, called "MT", at the very top of memory. A filler block takes everything but MT's paragraphs first, then goes. `mem_alloc` is first-fit, so MT only lands at the top if no free hole of its size sits lower down. That is always so at start-up, but `mt_boot` checks that MT's block is the last one, and frees it and stays off if not;
+  - reads the file into it, and checks it read exactly `MT_LEN` bytes with the checksum `mt_sum` holds. A LODEMT.SYS from another build, a cut-short one or an empty one fails this: the block is freed, the file closed, and it stays off;
   - points INT 08h at `mt_tick`, which runs the BIOS's handler first and then counts the tick (M3 will switch tasks there);
   - turns `f_F0`'s first 5 bytes (`MOV AL,[BP+F_AX]` and `OR AL,AL`, checked in the listing) into a far jump to `mt_f0`. That routine handles AL=12h and otherwise does those two instructions and jumps back past them. KEMS patches `f_F0.lend` and `f_F0.back`, both further in, so they don't clash.
 - **The API:** INT 21h AH=F0h, AL=10h and up. With the switch off, every one of them fails with CF set and AX=1 (`f_F0` sends unknown functions to `f_bad`), so the off state needs no code at all.
@@ -57,16 +62,23 @@ With the switch off, `TASKS` says `Multitasking is off (MULTITASK=1 in LODE.INI)
 In M1 the UI goes on lending its directory buffer to DOS programs as before, so with the switch on DOS programs lose only MT's own block. Whether lending can stay on once tasks have regions of their own is for M2 to settle. The plan assumed not (7.5 KB); regions allocated downward from MT's block would let it stay.
 
 **Cost:**
-- **Switch off:** nothing resident. `image_end` (4450h), `bss_end` (7A90h), `ui_keep_end` (6CE4h) and MEMSZ from the Executive (561.7 / 577.8 KB) are unchanged, and `test_mt` pins all of them.
+- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end` (4450h), `bss_end` (7A90h), `ui_keep_end` (6CE4h) and MEMSZ from the Executive (561.7 / 577.8 KB) are unchanged, and `test_mt` pins all of them.
 - **One exception: LCMD.** It is 173 bytes bigger (`TASKS`). It keeps 11 paragraphs (176 bytes) more while a program runs from its prompt, so such programs get that much less, switch on or off.
 - **Switch on:** MT's block is 14 paragraphs plus its MCB, 240 bytes. A DOS program gets 577.5 KB instead of 577.8. `test_mt` checks the free paragraphs exactly.
 - **Files:**
-  - LODE.SYS is 48,828 bytes (+448, all in the load image);
+  - LODE.SYS is 48,720 bytes (+340 for the start-up, all in the load image);
+  - LODEMT.SYS is 221 bytes;
   - LCMD.COM is 11,143 bytes;
-  - ROM 1 has 24,064 bytes left (one sector less).
+  - ROM 1 holds LODEMT.SYS too, and has 23,552 bytes left.
 
-**Tests:** `tests/test_mt.py`, 43 checks, with `MTPROBE.COM`, which calls F0h AL=00h, 10h, 11h, 12h (with no room), 13h and FFh and prints CF, AX, BX and CX for each.
-- **The map:** with the switch off, the three map values above are pinned. MT's image must end below 1000:F000, where LODE.INI is read.
+**Tests:** `tests/test_mt.py`, 50 checks, with `MTPROBE.COM`, which calls F0h AL=00h, 10h, 11h, 12h (with no room), 13h and FFh and prints CF, AX, BX and CX for each.
+- **The files:**
+  - LODEMT.SYS is exactly the resident part, cut off the end of LODE.SYS;
+  - `mt_sum` is its checksum;
+  - the start-ups end below 1000:F000, where LODE.INI is read;
+  - LODE.SYS is under the ROM loader's 64 KB;
+  - with the switch off, the three map values above are pinned.
+- **LODEMT.SYS missing, one byte changed (another build), a byte short, or empty:** off. Memory is as with `MULTITASK=0` (the freed block merges on the next allocation), no file is left open, and INT 08h and `f_F0` are untouched. The file as built turns it on.
 - **Off, in eleven ways:** no LODE.INI; no line; `0`, `Off`, `No`, `2`, `10`, `Yikes`, `One`, and an empty value; and `1` without EMS. In each:
   - there is no MT block;
   - INT 08h is still the BIOS's handler (segment and offset);
@@ -85,9 +97,4 @@ In M1 the UI goes on lending its directory buffer to DOS programs as before, so 
 - **DOS programs:** free memory is exactly 15 paragraphs less with the switch on. MEMSZ from the Executive is 577.8 KB with `MULTITASK=0`. TESTDOS, EMSTEST and CACHETST pass. Afterwards MT is still at the top, still ticking, and F0h still goes through it.
 - **From the ROM** (the 1520's own start-up): `C:\LODE.INI` with `MULTITASK=1` turns it on, and `TASKS` lists the Executive. With the ROM's own settings, it is off.
 
-**Risk for later milestones: the load image's ceiling.**
-- LODE.SYS is loaded at 1000:0000, and LODE.INI is read into 1000:F000 (`INI_BUF`; KSPLASH's `SP_BUF` is there too). So everything `mt_boot` copies must lie below 61,440 bytes into the file, and the ROM loader refuses 64 KB in any case. LODE.SYS is 48,828 bytes now.
-- The plan expects multitasking to add 8–12 KB. Its "slow paths in an EMS page" frees conventional memory, but that image still travels inside LODE.SYS, so it doesn't help here.
-- **Two ways out:**
-  - **a quick one:** move the 4 KB INI buffer out of segment 1000h, which gains 4 KB, up to the 64 KB limit;
-  - **the real one:** load multitasking from a file of its own (`LODEMT.SYS`, the resident image and the EMS image) in `mt_boot`. That file would never be read with the switch off. It is to be decided before M2 adds the bulk.
+**The load image's ceiling, settled.** LODE.SYS is loaded at 1000:0000, and LODE.INI is read into 1000:F000 (`INI_BUF`; KSPLASH's `SP_BUF` is there too), so the start-ups must end below 61,440 bytes into the file. The plan expects multitasking to add 8–12 KB. Moving its slow paths into an EMS page would not have helped here, because that image would still travel inside LODE.SYS. With the resident part (and, from M2, the EMS part too) in LODEMT.SYS, LODE.SYS grows only by `mt_boot`, and `test_mt` checks the start-ups' end.

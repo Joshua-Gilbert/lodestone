@@ -114,7 +114,7 @@ def t_image():
     check('mtools reads it: LODE.SYS first, nothing free', 'LODE     SYS' in d and ' 0 bytes free' in d.replace('\u202f', ' '), d)
     first = d.split('Directory for ::/')[1].strip().split('\n')[0]
     check('LODE.SYS is the first file', first.startswith('LODE     SYS'), first)
-    srcs = {'LODE.SYS': 'src/LODE.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
+    srcs = {'LODE.SYS': 'src/LODE.SYS', 'LODEMT.SYS': 'src/LODEMT.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
             'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI', 'DEFRAG.COM': 'src/DEFRAG.COM'}
     bad = []
     for n, s in srcs.items():
