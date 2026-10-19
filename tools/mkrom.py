@@ -12,6 +12,12 @@
 # its boot sector copies out of the BIOS's RAM copy.  Every cluster no file
 # uses is marked bad as well, so the volume has nothing free: it is a ROM.
 # image() and trailer() are the old interface (tools/bootsim.py uses them).
+#
+# The 1520 inverts A16 to its ROM sockets: the chip's first 64 KB appears in
+# the upper half of the BIOS's window (GRiD's EPROM, read in a programmer, has
+# its trailer at FF00h).  So OUT.BIN is the image as the BIOS sees it (the
+# emulators' and the tests'), and OUT_EPROM.BIN, its halves swapped, is the
+# file to burn.
 import datetime, os, struct, sys
 
 SECT = 512
@@ -52,6 +58,11 @@ def image(code=b'', **kw):
     img[:len(code)] = code
     img[-256:] = trailer(**kw)
     return bytes(img)
+
+
+def eprom(img):
+    """The image as the chip holds it: the 1520 inverts A16, so the halves swap."""
+    return img[65536:] + img[:65536]
 
 
 def fat_name(name):
@@ -140,4 +151,6 @@ if __name__ == '__main__':
         files.append((dest, open(src, 'rb').read()))
     img, left = volume(files, boot=boot, data=(kind == '--data'))
     open(out, 'wb').write(img)
-    print('%s: %d files, %d bytes left' % (out, len(files), left))
+    burn = os.path.splitext(out)[0] + '_EPROM.BIN'
+    open(burn, 'wb').write(eprom(img))
+    print('%s: %d files, %d bytes left; burn %s' % (out, len(files), left, burn))

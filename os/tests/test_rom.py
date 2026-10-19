@@ -122,6 +122,9 @@ def t_image():
         subprocess.run(['mcopy', '-n', '-o', '-i', p, '::' + n, o], env=e, check=True)
         if open(o, 'rb').read() != open(os.path.join(GOS, s), 'rb').read(): bad.append(n)
     check('the files read back as built', not bad, bad)
+    burn = open(os.path.join(GOS, 'LODE1_EPROM.BIN'), 'rb').read()
+    check('the file to burn has its halves swapped (the 1520 inverts A16): trailer at FF00h, boot sector at 10000h',
+          burn == img[65536:] + img[:65536] and burn[0xFF00:0xFF02] == b'\x66\xBB' and burn[0x10003:0x1000B] == b'LODE ROM')
     try:
         mkrom.volume([('BIG.BIN', bytes(130000))])
         check('a ROM that would overflow is refused', False)

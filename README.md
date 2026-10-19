@@ -175,7 +175,7 @@ Run the comparison with `python3 os/bench/compare3.py <GRiD MS-DOS EPROM image> 
 |---|---|
 | `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
 | `os/splash` | The start-up picture's source: the 1921 plate, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
-| `os/rom` | `LODE.INI`, the settings burned into the ROM; the ROM image itself is `os/LODE1.BIN`, built by `os/build.sh` with `tools/mkrom.py` |
+| `os/rom` | `LODE.INI`, the settings burned into the ROM; the ROM image itself is `os/LODE1.BIN` (the file to burn is `os/LODE1_EPROM.BIN`), built by `os/build.sh` with `tools/mkrom.py` |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN` and `CALC.RUN` (the calculator's window) |
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `os/tests` | `pcemu`-based tests (the counts are under Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN; and for the 1520: CMDTEST.BAT (the batch language), CALCTEST.BAT (the calculator, step by step) and FPUPROBE.COM (what the coprocessor answers after FNINIT) |
@@ -203,11 +203,11 @@ The built binaries are committed too, so a fresh clone can go straight onto a fl
 
 ## Tests (emulator)
 
-Needs Python 3, `unicorn` 2.x and mtools. All 1259 checks pass on 0.6 (2026-10-18); claude-link's own are in `claude-link/tests`.
+Needs Python 3, `unicorn` 2.x and mtools. All 1260 checks pass on 0.6 (2026-10-18); claude-link's own are in `claude-link/tests`.
 
 ```sh
 cd os
-python3 tests/test_rom.py             # 79 checks: 0.6, booting from the ROM: the image, the real BIOS (which socket boots; E400-E404), R:, settings, the menu, PATH, memory
+python3 tests/test_rom.py             # 80 checks: 0.6, booting from the ROM: the image, the real BIOS (which socket boots; E400-E404), R:, settings, the menu, PATH, memory
 python3 tests/test_kernel.py          # 360 checks: DOS calls, files, EXEC, the cache, EMS, capture, M:, the move from Grid-OS, the command prompt, CALC
 python3 tests/test_apps.py            # 401 checks: UI core, Executive, System, Write, mouse, files, the calculator and the coprocessor lamp (add "shots" for screens/0.3)
 python3 tests/test_splash.py          # 62 checks: the start-up picture, bit for bit on every start-up path; SPLASH=, LODE.PIC, System's switch, memory
@@ -228,7 +228,7 @@ Some tests need files that aren't in this repo: the GRiD MS-DOS EPROM image (`GR
 
 ## On the GRiD: from the ROM (0.6)
 
-Burn `os/LODE1.BIN` (exactly 128 KB) to a 27C010 (the 1520's: a TMS27C010A-12) and put it in the **second** socket: the BIOS boots the last bootable ROM it finds. Hold Shift while the 1520 starts for the menu (the ROM's own settings, GRiD MS-DOS from the other socket, the floppy). Settings changed in System go in `C:\LODE.INI` (A: without the hard disk); copies of programs in `C:\LODE` are used before the ROM's. See `docs/lodestone-rom.md`.
+Burn `os/LODE1_EPROM.BIN` (exactly 128 KB; `os/LODE1.BIN` with its halves swapped, as the 1520 inverts A16 to its sockets) to a 27C010 (the 1520's: a TMS27C010A-12) and put it in the **second** socket: the BIOS boots the last bootable ROM it finds. Hold Shift while the 1520 starts for the menu (the ROM's own settings, GRiD MS-DOS from the other socket, the floppy). Settings changed in System go in `C:\LODE.INI` (A: without the hard disk); copies of programs in `C:\LODE` are used before the ROM's. See `docs/lodestone-rom.md`.
 
 ## On the GRiD (the floppy loop)
 
