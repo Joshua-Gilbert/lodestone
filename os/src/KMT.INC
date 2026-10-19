@@ -76,8 +76,9 @@ ST_PATH     equ 120h                    ; the program (ASCIIZ)
 ST_PB       equ 1A0h                    ; EXEC's block
 ST_TAIL     equ 1B0h                    ; its command tail
 ST_STK      equ 340h                    ; its stack's top
-ST_AFR      equ ST_STK - 64             ; a frame for terminate: the stub ends
-                                        ;  itself (an Abort while it EXECs)
+ST_AFR      equ ST_STK - 26             ; its EXEC call's frame (INT 21h's, on
+                                        ;  its stack): terminate's, if it is
+                                        ;  ended itself (an Abort while it EXECs)
 ST_PARAS    equ ST_STK / 16
 ENVMAX      equ 1024                    ; most of an environment kept
 
@@ -540,11 +541,8 @@ mt_spawn:
         mov     [es:16h], ax            ;  itself, it goes to MT_END
         mov     word [es:0Ah], ST_END
         mov     [es:0Ch], ax
-        mov     word [es:2Eh], ST_AFR
+        mov     word [es:2Eh], ST_AFR   ;  (as EXEC's .close would set it)
         mov     [es:30h], ax
-        mov     [es:ST_AFR + F_DS], ax
-        mov     [es:ST_AFR + F_ES], ax
-        mov     word [es:ST_AFR + F_FL], 0202h
         ; the stub's code, the program's path, its name for MT_LIST
         push    ds
         push    cs

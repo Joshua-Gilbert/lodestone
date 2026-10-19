@@ -204,7 +204,9 @@ def t_tasks():
           'task 1' in o and 'task 2' in o and 'list: 0 1 Executive; 1 1 MTLINE.COM; 2 1 MTLINE.COM;' in o, o)
     st = tstate(k)
     check('when MTLAUNCH waits for its line, both run to theirs and wait there (TS_WAITK) in the background; '
-          'the Executive\'s task in front', st == ([(0, 1, 'Executive'), (1, 2, 'MTLINE.COM'), (2, 2, 'MTLINE.COM')], 0, 0), st)
+          'the Executive\'s task in front; both prompts on the screen',
+          st == ([(0, 1, 'Executive'), (1, 2, 'MTLINE.COM'), (2, 2, 'MTLINE.COM')], 0, 0)
+          and k.pc.text_screen().count('MTLINE>') >= 2, (st, k.pc.text_screen()))
     a = mcbs(k)
     check('their regions: T1 right under MT\'s block, T2 under T1, the system\'s (owner 8)',
           [(b[4], b[2]) for b in a[-3:]] == [(b'T2', 8), (b'T1', 8), (b'MT', 8)]
@@ -341,12 +343,14 @@ def t_ends():
           'the system\'s); the prompt goes on', not k.crashed and tstate(k)[0] == [(0, 1, 'Executive')]
           and [(b[4], b[2]) for b in a[-2:]] == [(b'TR', 8), (b'MT', 8)] and 'Lodestone version' in v, (show(a), v))
     o = sh.run('mtlaunch mtline.com t.txt')
+    a1 = mcbs(k)
     front(k, 1); line(k, 'next')
     line(k, '')
     a = mcbs(k)
     check('... and the next task\'s region goes below it (T1), and ends', A.disk_file(k, 'T.TXT') == b'next'
+          and [(b[4], b[2]) for b in a1[-3:]] == [(b'T1', 8), (b'TR', 8), (b'MT', 8)]
           and tstate(k)[0] == [(0, 1, 'Executive')] and [(b[4], b[2]) for b in a[-2:]] == [(b'TR', 8), (b'MT', 8)],
-          (show(a), A.disk_file(k, 'T.TXT')))
+          (show(a1), show(a), A.disk_file(k, 'T.TXT')))
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
