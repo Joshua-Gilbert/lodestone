@@ -237,7 +237,8 @@ api_font:
 ; makes that file, on the drive started from, the font.  No file, no line,
 ; "FONT=", or a file that isn't exactly FONT_BYTES long: GRiD's font stays.
 ; "SAVER=n": the saver after n minutes (0: never).  "TIDY=0": the saver
-; doesn't run DEFRAG ("TIDY=1": it does).  Two files, the later line
+; doesn't run DEFRAG ("TIDY=1": it does).  "PRTSC=PRINTER": PrtSc prints
+; (the kernel's, set through INT 21h F006h; "PRTSC=FILE": a file).  Two files, the later line
 ; winning: the boot drive's LODE.INI (from the ROM, its own settings), then
 ; the one INT 21h 3305h's DH names (the changes made to them; KROM.INC).
 ; (The directory buffer is free yet: up to 4095 bytes of a file in it, as
@@ -278,9 +279,28 @@ font_boot:
         mov     di, si
         add     di, cx
         mov     byte [di], 0
-.line:  mov     ax, [si]                ; "TIDY=0"?
+.line:  mov     ax, [si]                ; "PRTSC=PRINTER"?  (the kernel's:
+        and     ax, 0DFDFh              ;  INT 21h F006h)
+        cmp     ax, 'PR'
+        jne     .ti
+        mov     ax, [si+2]
         and     ax, 0DFDFh
-        cmp     ax, 'TI'
+        cmp     ax, 'TS'
+        jne     .next
+        mov     ax, [si+4]
+        and     al, 0DFh
+        cmp     ax, 'C='
+        jne     .next
+        xor     bx, bx
+        mov     al, [si+6]
+        and     al, 0DFh
+        cmp     al, 'P'
+        jne     .pf
+        inc     bx
+.pf:    mov     ax, 0F006h
+        int     21h
+        jmp     .next
+.ti:    cmp     ax, 'TI'                ; "TIDY=0"?
         jne     .sv
         mov     ax, [si+2]
         and     ax, 0DFDFh

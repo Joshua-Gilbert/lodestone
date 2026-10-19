@@ -689,6 +689,31 @@ def t_saver_tidy():
     check('... and the saver runs DEFRAG again', idle(k, 10 * 1092 + 18), lines(k)[:2])
 
 
+def t_prtsc_setting():
+    print('== Shift-PrtSc prints or saves a file (System, Devices, Return; LODE.INI PRTSC=PRINTER)')
+    img = image('prs.img', SYSTEM)
+    k = ktest.KPC(img); k.start()
+    def topic(k):
+        k.key(CODE['U'])
+        for _ in range(3): k.key(ktest.DOWN, settle=False)
+        k.settle()
+    topic(k)
+    line = lambda: next((l for l in lines(k) if 'Shift-PrtSc' in l), '')
+    check('Devices: "Shift-PrtSc  saves SCREENnn.BMP or .TXT"', 'saves SCREENnn' in line() and k.rd('cap_prn', 1) == b'\0',
+          (line(), screen(k)))
+    k.key(ktest.ENTER)
+    check('Return: "prints on LPT1" at once, the kernel told, LODE.INI says PRTSC=PRINTER',
+          'prints on LPT1' in line() and k.rd('cap_prn', 1) == b'\1' and disk_file(k, 'LODE.INI') == b'PRTSC=PRINTER\r\n',
+          (line(), k.rd('cap_prn', 1), disk_file(k, 'LODE.INI')))
+    k.key(ktest.ESC); k.settle()
+    k = reboot(k, 'prs2.img')
+    check('after a restart: still printing (PRTSC=PRINTER taken)', k.rd('cap_prn', 1) == b'\1', k.rd('cap_prn', 1))
+    topic(k)
+    k.key(ktest.ENTER)
+    check('Return again: a file, the PRTSC= line gone (no file left)', 'saves SCREENnn' in line() and
+          k.rd('cap_prn', 1) == b'\0' and disk_file(k, 'LODE.INI') is None, (line(), disk_file(k, 'LODE.INI')))
+
+
 # ---------------------------------------------------------------------
 def start_dos(k, name):
     """Start a DOS program from the Executive; run until it waits for a key."""
@@ -2007,7 +2032,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_mdisk, t_calc, t_calc_move):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

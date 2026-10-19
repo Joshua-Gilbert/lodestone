@@ -31,7 +31,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - Its own LIM 4.0 EMS manager, when the 1520's memory is set to EMS.
 - The GRIDGPIB driver API on INT 60h, built in, with a faster block transfer.
 - An INT 33h driver for a serial mouse on COM1 or COM2.
-- Screen capture: Shift-PrtSc saves the screen as `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text).
+- Screen capture: Shift-PrtSc saves the screen as `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text), or, set in System, prints it on LPT1 as PostScript (a picture of a graphics screen, the text of a text screen).
 
 **Drives**
 - **A:** and **B:**, the internal and external floppy drives.
@@ -41,7 +41,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 
 **The Executive and its programs.** These run on one shared UI core, in GRiD's system font (other 8×16 fonts load from `.FNT` files).
 - **The Executive:** GRiD's File form (Device, Subject, Title). CODE-C copies, CODE-M moves, CODE-R renames and CODE-D deletes, with wildcards, Replace and Only newer, on files or whole subjects.
-- **System:** memory, disks, clock, devices, GPIB, display, screen saver, the temporary disk M:, and where the settings come from.
+- **System:** memory, disks, clock, devices (and whether Shift-PrtSc prints or saves a file), GPIB, display, screen saver, the temporary disk M:, and where the settings come from.
 - **Write:** a GRiDWrite-style text editor.
 - **The calculator** uses the 80287 or 287XL when one is fitted, and works with whole numbers when not. It runs as a window over the Executive (CODE-K) that you can drag by its title (or move with CODE-F7) and close with its x, and as `CALC` at the prompt, for batch files.
 - **The screen saver:** runs DEFRAG on every disk in turn, then darkens the screen.
@@ -58,7 +58,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner.
 - **The rest:** BENCH, GRIDPROBE and others are in `tools/` and `os/bench/`.
 
-**Settings** are kept in `LODE.INI`: the font, the screen saver, the start-up picture, M:'s size. From the ROM, the ROM's own `LODE.INI` gives the defaults, and changes go in `C:\LODE.INI` (A: without a hard disk).
+**Settings** are kept in `LODE.INI`: the font, the screen saver, the start-up picture, M:'s size, what Shift-PrtSc does. From the ROM, the ROM's own `LODE.INI` gives the defaults, and changes go in `C:\LODE.INI` (A: without a hard disk).
 
 ## Claude on the GRiD
 
