@@ -910,8 +910,8 @@ section boot
 
 ; init's last jump, through KSEG:0000 (CS = 1000h): MDISK= in \LODE.INI
 ; (KB, 0 off, ALL; no line or a bad value: 256), then M:; MULTITASK=1 (or
-; Yes, or On; KMT.INC), then multitasking; then the UI.  (Both settings
-; are read before M: is made.)
+; Yes, or On, any case; anything else is off; KMT.INC), then multitasking;
+; then the UI.  (Both settings are read before M: is made.)
 md_boot:
         cli
         mov     ax, KSEG
@@ -933,15 +933,23 @@ md_boot:
         mov     di, MDB(s_mteq)         ; "MULTITASK=" (any case)?
         call    ini_key
         jc      .md
-        mov     ax, [si]
+        mov     ax, [si]                ; 1, On or Yes, and nothing after it
         and     ax, 0DFDFh
         cmp     al, '1' & 0DFh
-        je      .mt
-        cmp     al, 'Y'
-        je      .mt
+        je      .mt1
         cmp     ax, 'ON'
+        je      .mt2
+        cmp     ax, 'YE'
         jne     .md
-.mt:    mov     byte [MDB(mt_on)], 1
+        mov     al, [si+2]
+        and     al, 0DFh
+        cmp     al, 'S'
+        jne     .md
+        inc     si
+.mt2:   inc     si
+.mt1:   cmp     byte [si+1], ' '        ; (the line's end, a blank or the text's)
+        ja      .md
+        mov     byte [MDB(mt_on)], 1
 .md:    pop     si
         mov     cx, 256
         mov     di, MDB(s_mdeq)         ; "MDISK=" (any case)?

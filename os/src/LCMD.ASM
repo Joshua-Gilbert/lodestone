@@ -3394,13 +3394,15 @@ do_tasks:
         mov     ax, 0F000h + MT_LIST
         mov     di, tail                ; (MT_TASKS records fit)
         mov     cx, MT_TASKS
+        stc                             ; (another DOS may leave CF as it was)
         int     21h
         mov     si, e_mtoff
         jc      .off
         cmp     cx, MT_TASKS
         jbe     .n
         mov     cx, MT_TASKS
-.n:     mov     dl, al                  ; (the front task)
+.n:     jcxz    .x
+        mov     dl, al                  ; (the front task)
         mov     si, tail
 .t:     mov     al, ' '
         call    putc
@@ -3413,8 +3415,15 @@ do_tasks:
         call    putc
         call    putc
         push    si
+        push    cx
         add     si, TR_NAME
-        call    puts
+        mov     cx, TR_NAMELEN
+.c:     lodsb                           ; (up to the NUL, or all 12)
+        or      al, al
+        jz      .e
+        call    putc
+        loop    .c
+.e:     pop     cx
         pop     si
         pop     ax
         cmp     al, dl
@@ -3426,7 +3435,7 @@ do_tasks:
 .nf:    call    crlf
         add     si, MT_REC
         loop    .t
-        ret
+.x:     ret
 .off:   jmp     err
 
 do_vol: mov     ah, 19h
