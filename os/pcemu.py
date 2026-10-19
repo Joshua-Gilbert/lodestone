@@ -918,7 +918,10 @@ class PC:
             if al == 0: s.w('ax', 0x0008); s.w('bx', 5); s.w('cx', 2); s.cf(0); return
             if al == 1:
                 if not imgs: s.w('ax', 0x0300); s.cf(1); return
+                s.rom_ds = s.r('ds')
                 s.w('ax', len(imgs)); s.cf(0); return
+            if s.r('ds') != getattr(s, 'rom_ds', None):     # (the BIOS checks DS is
+                s.w('ax', 0x0200); s.cf(1); return          #  the one E401 set up)
             if al == 4: s.rom_unmap(); s.w('ax', 0); s.cf(0); return
             dl = s.r('dl')
             if dl >= len(imgs): s.w('ax', 0x0400); s.cf(1); return

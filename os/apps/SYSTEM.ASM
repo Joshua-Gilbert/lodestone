@@ -1709,7 +1709,19 @@ splash_scan:
 ; lines left: no file).  Without M: (no EMS) an MDISK= line stays as it
 ; is.  CF if it couldn't be saved (said in the band).
 save_ini:
-        call    md_query                ; (md_ok: M: is ours to write)
+        cmp     byte [boot_l], 'R'      ; started with the ROM's own settings
+        jne     .ok                     ;  (the menu's 2) while there are
+        cmp     byte [read_l], 0        ;  changes: not saved, or the changes
+        jne     .ok                     ;  saved before would be lost
+        mov     dx, s_ini
+        mov     ax, 4300h
+        int     21h
+        jc      .ok
+        mov     si, s_setnosave
+        call    UI_MSG
+        stc
+        ret
+.ok:    call    md_query                ; (md_ok: M: is ours to write)
         sbb     al, al
         not     al
         mov     [md_ok], al
@@ -2168,6 +2180,7 @@ s_setr4     db "Shift held at start-up: 2 starts once with the ROM's.",0
 s_setask    db "Settings: Confirm to go back to the ROM's",0
 s_setdone   db "The ROM's settings are used from the next start-up",0
 s_setcant   db "Your changes can't be deleted",0
+s_setnosave db "Started with the ROM's own: not saved this time",0
 s_fonteq    db 'FONT=',0
 s_savereq   db 'SAVER=',0
 s_tidyeq    db 'TIDY=',0
