@@ -1,6 +1,7 @@
 """The README's Claude screenshots (os/screens/readme/), from the emulator:
 the real CLAUDE.COM and gridlink, with a scripted stand-in for Claude Code
-(readme_claude.py) and the stand-in Firefox.
+(readme_claude.py) and the stand-in Firefox. The README's plot,
+claude_plot.png, is a real capture from the 1520 (Shift-PrtSc), not made here.
 
     python3 tests/readme_shots.py
 """
@@ -9,9 +10,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from PIL import Image
 from grid_emu import EmuHarness
-from gridlink import plot as PL
 from test_emu_term import in_step, mismatch, wait_screen
-import test_picture as TP
 
 OUT = os.path.join(HERE, '..', '..', 'os', 'screens', 'readme')
 SCRIPT = '%s %s' % (sys.executable, os.path.join(HERE, 'readme_claude.py'))
@@ -29,15 +28,10 @@ h = EmuHarness(term=SCRIPT, args='/A:7 /T')
 try:
     h.boot()
     assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.screen())
-    assert wait_screen(h, 'C:\\TRACES', 20), h.screen()
-    h.term_type('yes, and plot the phase too')
+    assert wait_screen(h, 'measure it again', 20), h.screen()
+    h.term_type('yes, after the cal kit is on')
     assert in_step(h), mismatch(h)
     shot(h, 'claude_code')
-    xs, ys = TP.sweep(1601)
-    p = PL.Plot([{'name': 'S21', 'x': xs, 'y': ys}], title='8753D S21', x_label='Hz', y_label='dB')
-    h.router.term.show_picture(p.bits, 'readme', title='8753D S21')
-    assert h.run_until(lambda: '8753D S21' in h.screen().split('\n')[24], 10), h.screen()
-    shot(h, 'claude_plot')
 finally:
     h.close()
 
