@@ -16,7 +16,6 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 | Write, a GRiDWrite-style editor | BENCH 1.4 on Lodestone with EMS |
 | ![The calculator](os/screens/readme/calculator.png) | ![CALC at the prompt](os/screens/readme/calc_prompt.png) |
 | The calculator over the Executive (CODE-K); the coprocessor lit in the info line (the emulator's is 387-class, so it reads as a 287XL) | `CALC` at the command prompt: sums, errors with ERRORLEVEL, `name=` for batch files |
-
 | ![Claude Code on the GRiD](os/screens/readme/claude_code.png) | ![A plot from Claude Code](os/screens/readme/claude_plot.png) |
 | Claude Code on the GRiD (`CLAUDE /T`), measuring a terminator on an HP 8753D over GPIB | **On the real 1520:** an 8753D S11 trace plotted by Claude Code's `grid_plot`, saved with Shift-PrtSc |
 | ![gridfox, text view](os/screens/readme/gridfox.png) | ![gridfox, picture view](os/screens/readme/gridfox_picture.png) |
