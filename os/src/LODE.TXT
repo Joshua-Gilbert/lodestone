@@ -347,7 +347,7 @@ in the text modes.  One beep when it is sent; a long one if the printer
 is off, busy for 10 s or out of paper, or the driver isn't there.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
-(with EMS) turns it on: its resident part (2.5 KB, read from LODEMT.SYS,
+(with EMS) turns it on: its resident part (2.4 KB, read from LODEMT.SYS,
 which must sit beside LODE.SYS and come from the same build) goes into
 memory.  So far
 programs can start others as tasks (INT 21h F0h), each in memory of its

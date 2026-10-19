@@ -6,7 +6,7 @@
 ; =====================================================================
 MT_SPAWN    equ 10h                     ; a program as a new task: DS:DX = its
                                         ;  path (ASCIIZ, with its extension; up
-                                        ;  to 127 characters), ES:BX = a block
+                                        ;  to 126 characters), ES:BX = a block
                                         ;  (SP_* below) -> AL = the task.  CF:
                                         ;  AX = 4 (8 tasks already), 8 (no room
                                         ;  for its region).  Success means the
