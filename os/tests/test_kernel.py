@@ -309,7 +309,8 @@ def t_print():
         return bytes(k.pc.lpt)
     path = lambda: k.rd('prn_path', 24).split(b'\0')[0]
     check('PRINTER=ps.prn in LODE.INI: found as programs are, the kernel has A:\\ps.prn', path().upper() == b'A:\\PS.PRN', path())
-    check('nothing of the driver resident: its 1 KB buffer and a path in the kernel', os.path.getsize(ps) <= 1024, os.path.getsize(ps))
+    check('PS.PRN fits the 1 KB buffer, in one sector, and has the signature',
+          os.path.getsize(ps) <= 512 and open(ps, 'rb').read()[2:6] == b'PRN\x01', os.path.getsize(ps))
     vram = k.pc.rd(0xB800, 0, 0x8000)
     out = shot()
     head, _, rest = out.partition(b'image\n')
@@ -340,18 +341,32 @@ def t_print():
     check('out of paper: the long beep at once', out == b'' and beeps() == 4, (out[:20], beeps()))
     k.pc.wr(0, 0x408, b'\0\0'); out = shot(); k.pc.wr(0, 0x408, b'\x78\x03')
     check('no LPT1: the long beep', out == b'' and beeps() == 4, (out[:20], beeps()))
-    # any driver: a 3-byte one that prints "Hi" through the BIOS and says it did
+    # any driver: one that prints "Hi" through the BIOS and says it did
     drv = os.path.join(OUT, 'drv.asm'); open(drv, 'w').write(
-        'org 0\nmov ax, 0048h\nxor dx, dx\nint 17h\nmov ax, 0069h\nint 17h\nxor al, al\nretf\n')
+        "org 0\njmp short s\ndb 'PRN', 1\ns: mov ax, 0048h\nxor dx, dx\nint 17h\nmov ax, 0069h\nint 17h\nxor al, al\nretf\n")
     subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(OUT, 'HI.PRN'), drv], check=True)
-    big = os.path.join(OUT, 'BIG.PRN'); open(big, 'wb').write(open(os.path.join(OUT, 'HI.PRN'), 'rb').read() + bytes(1100))
-    k2 = ktest.KPC(image('prn2.img', os.path.join(OUT, 'HI.PRN'), big)); k2.start()
+    hi = open(os.path.join(OUT, 'HI.PRN'), 'rb').read()
+    big = os.path.join(OUT, 'BIG.PRN'); open(big, 'wb').write(hi + bytes(1100))
+    # not drivers: a print job saved as .PRN (it would hang the machine if
+    # run), an empty file (the buffer's old contents), one too small, one
+    # without the signature
+    job = os.path.join(OUT, 'JOB.PRN'); open(job, 'wb').write(b'\x1b&l0O\x1bEHello from a saved print job\r\n\x0c')
+    zero = os.path.join(OUT, 'ZERO.PRN'); open(zero, 'wb').write(b'')
+    tiny = os.path.join(OUT, 'TINY.PRN'); open(tiny, 'wb').write(hi[:6] + b'\xcb' * 4)
+    nosig = os.path.join(OUT, 'NOSIG.PRN'); open(nosig, 'wb').write(hi[:2] + b'XXX\x01' + hi[6:])
+    k2 = ktest.KPC(image('prn2.img', os.path.join(OUT, 'HI.PRN'), big, job, zero, tiny, nosig)); k2.start()
     def shot2(name):
         k2.wr('prn_path', name.encode() + b'\0'); k2.pc.tty.clear(); k2.pc.lpt.clear(); k2.pc.prtsc(); k2.settle(6)
         return bytes(k2.pc.lpt), ''.join(k2.pc.tty).count('\x07')
     check('another driver (HI.PRN): it is what prints', shot2('A:\\HI.PRN') == (b'Hi', 1), shot2('A:\\HI.PRN'))
     check('a driver over 1 KB: not run, the long beep', shot2('A:\\BIG.PRN') == (b'', 4), shot2('A:\\BIG.PRN'))
     check('a driver that isn\'t there: the long beep', shot2('A:\\NONE.PRN') == (b'', 4), shot2('A:\\NONE.PRN'))
+    for n, what in (('JOB', 'a print job saved as .PRN'), ('ZERO', 'an empty file'), ('TINY', 'under 16 bytes'),
+                    ('NOSIG', 'no signature')):
+        got = shot2('A:\\%s.PRN' % n)
+        check('%s: not run, the long beep, and PrtSc free again (cap_req 0)' % what, got == (b'', 4) and
+              k2.rd('cap_req', 1) == b'\0', (got, k2.rd('cap_req', 1)))
+    check('... and the real driver still prints after them', shot2('A:\\HI.PRN') == (b'Hi', 1), shot2('A:\\HI.PRN'))
     k2.wr('prn_path', b'\0')
     out, _ = shot2('')
     check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(bytes(k2.pc.drives[0].img)),

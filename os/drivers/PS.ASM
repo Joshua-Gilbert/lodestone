@@ -1,13 +1,18 @@
 ; =====================================================================
 ;  PS.PRN - Lodestone's PostScript printer driver     nasm -f bin
 ;
-;  A printer driver is a file of up to 1 KB.  With one set (PRINTER=PS.PRN
-;  in LODE.INI; System, Devices), PrtSc prints: the kernel reads the driver
-;  at the next safe moment into a 1 KB buffer and calls it far at offset
-;  0; it prints the screen and returns AL = 0, or AL = 1 if it couldn't.
-;  Nothing of it stays in memory.  Interrupts are on; it may use the BIOS
-;  (INT 17h for LPT1) but not DOS, and it has the kernel's stack (keep it
-;  small).  Other printers are other .PRN files written the same way.
+;  A printer driver is a file of 16 bytes to 1 KB that starts with a JMP
+;  SHORT and then "PRN", 1 (the kernel runs nothing else: a print job saved
+;  as a .PRN file isn't a driver).  With one set (PRINTER=PS.PRN in
+;  LODE.INI; System, Devices), PrtSc prints: the kernel reads the driver at
+;  the next safe moment into a 1 KB buffer and calls it far at offset 0.
+;  It gets DS = the kernel's segment, ES = its own, DF = 0, interrupts on,
+;  and the kernel's stack (about 450 bytes, shared with any hardware
+;  interrupt that comes); it may change every register but SS:SP.  It
+;  prints the screen (the BIOS data area says the mode; video memory is
+;  B800h) and returns with RETF, AL = 0, or AL = 1 if it couldn't.  It may
+;  use the BIOS (INT 17h for LPT1) but not DOS.  Nothing of it stays in
+;  memory.  Other printers are other .PRN files written the same way.
 ;
 ;  This one sends PostScript to LPT1, as TM5000G prints to a Brother
 ;  HL-5370DW: the graphics modes as a 640 x 400 image across the top of
@@ -19,11 +24,11 @@
 cpu 286
 org 0
 
-start:  push    ds
-        push    es
-        push    cs
-        pop     ds
-        mov     byte [bad], 0
+        jmp     short start
+        db      'PRN', 1                ; (the signature the kernel checks)
+
+start:  push    cs                      ; (`bad' is 0: the file is read
+        pop     ds                      ;  afresh at every PrtSc)
         push    0
         pop     es
         cmp     word [es:408h], 0       ; no LPT1
@@ -100,9 +105,7 @@ start:  push    ds
         mov     al, [cs:bad]
         jmp     short .x
 .no:    mov     al, 1
-.x:     pop     es
-        pop     ds
-        retf
+.x:     retf
 
 ; the string at CS:SI to LPT1
 prn_s:  cs lodsb

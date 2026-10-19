@@ -157,8 +157,9 @@ int27:  add     dx, 15                  ; TSR: DX = bytes from the PSP
 ;  stack never gets near it).
 ;  With a printer driver set (PRINTER= in LODE.INI, System's Devices),
 ;  PrtSc alone prints it instead (Shift-PrtSc still saves the file): the
-;  driver, a .PRN file of up to 1 KB, is read into that same 1 KB at the
-;  next safe moment, called far at its offset 0 (it
+;  driver, a .PRN file of 16 bytes to 1 KB starting with a JMP SHORT and
+;  "PRN", 1, is read into that same 1 KB at the next safe moment, called
+;  far at its offset 0 (it
 ;  reads the screen itself and returns AL = 0 when it has printed it), and
 ;  forgotten.  Nothing of it stays resident.  (drivers/PS.ASM.)
 ; ---------------------------------------------------------------------
@@ -358,6 +359,8 @@ capture:
         jnz     .pcl
         cmp     ax, 1024
         ja      .pcl
+        cmp     ax, 16                  ; (and 16 bytes at least)
+        jb      .pcl
         push    ax
         mov     ax, 4200h
         cwd
@@ -378,6 +381,10 @@ capture:
         pop     ds
         jc      .pcl
         cmp     ax, cx
+        jne     .pcl
+        cmp     word [es:2], 'PR'       ; a driver's signature: JMP SHORT,
+        jne     .pcl                    ;  then "PRN", 1 (a print job saved
+        cmp     word [es:4], 'N' + 100h ;  as .PRN is no driver: not run)
         jne     .pcl
         mov     ah, 3Eh
         int     21h

@@ -336,15 +336,15 @@ by its title strip, or press CODE-F7 and move it with the arrow keys
 closes it, as ESC does.  Programs on the UI core get this with API 6.
 
 PrtSc prints, through a printer driver (Shift-PrtSc still saves the
-file): a .PRN file of
-up to 1 KB, read from the disk only when PrtSc is pressed, so nothing of
-it stays in memory.  System, Devices, Return picks the next driver (the
-.PRN files in the drive's root, and from the ROM in C:\LODE), then none
-again: PRINTER=PS.PRN in LODE.INI.  PS.PRN (on the ROM too) prints
-PostScript on LPT1, as TM5000G prints to a Brother laser: a picture
-across the top of the page in the graphics modes, lines of text in the
-text modes.  One beep when it is sent; a long one if the printer is off,
-busy for 10 s or out of paper, or the driver isn't there.
+file).  A driver is a .PRN file of up to 1 KB with a driver's signature
+(a print job saved as .PRN isn't one), read from the disk only when PrtSc
+is pressed, so nothing of it stays in memory.  System, Devices, Return
+picks the next driver (in the drive's root, and from the ROM C:\LODE
+first), then none again: PRINTER=PS.PRN in LODE.INI.  PS.PRN (on the ROM
+too) prints PostScript on LPT1, as TM5000G prints to a Brother laser: a
+picture across the top of the page in the graphics modes, lines of text
+in the text modes.  One beep when it is sent; a long one if the printer
+is off, busy for 10 s or out of paper, or the driver isn't there.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

@@ -1481,8 +1481,11 @@ next_prtsc:
         call    UI_SBSTR
         mov     byte [di], 0
         cmp     byte [past], 0
-        jne     .set                    ; past the one in use: this one
-        mov     si, vbuf
+        je      .cur
+        call    prn_ok                  ; past the one in use: this one, if
+        jc      .nx                     ;  it is a driver
+        jmp     short .set
+.cur:   mov     si, vbuf
         mov     di, prn_cur
         call    same_name
         jne     .nx
@@ -1506,6 +1509,93 @@ next_prtsc:
         pop     es
         call    save_ini
         jmp     redraw
+
+; started from the ROM, and R:\LODE.INI's (first) PRINTER= line names a
+; driver?  CF if not.  (Reads it into ini_old: save_ini is past it.)
+rom_prn:
+        cmp     byte [boot_l], 'R'
+        jne     .no
+        pusha
+        mov     dx, s_romini
+        mov     ax, 3D00h
+        int     21h
+        jc      .n
+        xchg    bx, ax
+        mov     dx, ini_old
+        mov     cx, INI_MAX
+        mov     ah, 3Fh
+        int     21h
+        pushf
+        push    ax
+        mov     ah, 3Eh
+        int     21h
+        pop     cx
+        popf
+        jc      .n
+        mov     si, ini_old
+        mov     bx, si
+        add     bx, cx                  ; BX = its end
+.l:     cmp     si, bx
+        jae     .n
+        mov     di, s_printeq
+        call    ini_is
+        jne     .sk
+        add     si, 8                   ; (past "PRINTER=")
+        cmp     si, bx
+        jae     .n
+        cmp     byte [si], ' '
+        jbe     .n
+        popa
+        clc
+        ret
+.sk:    cmp     si, bx                  ; the next line
+        jae     .n
+        lodsb
+        cmp     al, 10
+        jne     .sk
+        jmp     .l
+.n:     popa
+.no:    stc
+        ret
+
+; vbuf = a .PRN's path, the DTA its entry: CF if it isn't a printer driver
+; (16 bytes to 1 KB, and "PRN", 1 after its JMP SHORT, as the kernel checks;
+; a print job saved as .PRN isn't one)
+prn_ok: cmp     word [dta + 28], 0
+        jne     .no
+        mov     ax, [dta + 26]
+        cmp     ax, 16
+        jb      .no
+        cmp     ax, 1024
+        ja      .no
+        push    bx
+        mov     dx, vbuf
+        mov     ax, 3D00h
+        int     21h
+        jc      .r
+        xchg    bx, ax
+        mov     dx, vbuf + 64
+        mov     cx, 6
+        mov     ah, 3Fh
+        int     21h
+        pushf
+        push    ax
+        mov     ah, 3Eh
+        int     21h
+        pop     ax
+        popf
+        jc      .r
+        cmp     ax, 6
+        jne     .nb
+        cmp     word [vbuf + 66], 'PR'
+        jne     .nb
+        cmp     word [vbuf + 68], 'N' + 100h
+        je      .r                      ; (CF clear)
+.nb:    stc
+.r:     pop     bx
+        ret
+.no:    stc
+        ret
 
 ; Space on Display: the start-up picture or not; on Screen saver: tidy
 ; the disks first, or not
@@ -1902,9 +1992,12 @@ save_ini:
         je      .wr3p
         mov     si, s_splash0
         call    UI_SBSTR
-.wr3p:  call    prn_get                 ; a printer driver: PRINTER=NAME
-        jz      .wr3m
-        push    si
+.wr3p:  call    prn_get                 ; a printer driver: PRINTER=NAME;
+        jnz     .wr3d                   ;  none while the ROM's settings name
+        call    rom_prn                 ;  one: PRINTER=, so none stays none
+        jc      .wr3m                   ;  (the changes' line is read first)
+        mov     si, s_empty
+.wr3d:  push    si
         mov     si, s_printeq
         call    UI_SBSTR
         pop     si
@@ -2301,6 +2394,7 @@ s_splasheq  db 'SPLASH=',0
 s_splash0   db 'SPLASH=0', 13, 10, 0
 s_mdeq      db 'MDISK=',0
 s_printeq   db 'PRINTER=',0
+s_romini    db 'R:\LODE.INI',0
 s_prtfile   db 'saves SCREENnn.BMP / .TXT',0
 s_prtwith   db 'prints with ',0
 s_prnroot   db '@:\*.PRN',0
