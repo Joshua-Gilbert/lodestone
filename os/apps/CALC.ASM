@@ -215,17 +215,22 @@ streq:  lodsb
         jnz     streq
 .x:     ret
 
-; the window's contents (BX = the window; AX = EV_MOVED after a move)
-w_draw: cmp     ax, EV_MOVED            ; (a move saved what is under its new
-        je      .geo                    ;  place just now: not a repaint over
-        stc                             ;  an older screen)
-        rcl     byte [paints], 1        ; paints: 1 once, then 3, 7 ... FF (never 1 again)
-.geo:   mov     ax, [win+W_COL]         ; where the parts are now: inside it,
+; the window's contents (BX = the window)
+w_draw: mov     ax, [win+W_COL]         ; where the parts are now: inside it,
         inc     ax                      ;  the line, the answer, the keys
-        mov     [icol], ax
-        mov     ax, [win+W_Y]
-        add     ax, 24
-        mov     [ey], ax
+        mov     dx, [win+W_Y]
+        add     dx, 24
+        cmp     byte [paints], 0        ; drawn again at the same place: a
+        je      .n                      ;  repaint over an older screen (at a
+        cmp     ax, [icol]              ;  new place, a move saved what is
+        jne     .geo                    ;  under it just now)
+        cmp     dx, [ey]
+        jne     .geo
+.n:     stc
+        rcl     byte [paints], 1        ; paints: 1 once, then 3, 7 ... FF (never 1 again)
+.geo:   mov     [icol], ax
+        mov     [ey], dx
+        mov     ax, dx
         add     ax, 32
         mov     [ry], ax
         add     ax, 24

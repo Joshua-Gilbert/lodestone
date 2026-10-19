@@ -120,7 +120,6 @@ wstack      resw 2 * NWIN       ; (window, save offset or 0FFFFh)
 help_w      resb W_SIZE
 help_tab    resw 1
 form_w      resb W_SIZE
-w_why       resw 1              ; AX for a window's W_DRAW (EV_MOVED after a move)
 mv_gx       resw 1              ; a move: where the window was taken (column and
 mv_gy       resw 1              ;  row inside it), and where its outline is now
 mv_c        resw 1
@@ -140,7 +139,6 @@ ed_pos      resw 1
 ed_off      resw 1
 ed_fresh    resb 1
 ed_keep     resb 1
-ed_live     resb 1              ; 1 while UI_EDIT (or a form's field) waits
 font_name   resb 13             ; UI_FONT: "" = GRiD's, built in
 fm_ptr      resw 1
 fm_cur      resw 1
@@ -471,8 +469,8 @@ api_setredraw:
 ; =====================================================================
 ; UI_EVENT: wait for a key or a click (the pointer shows meanwhile)
 ui_event:
-        mov     byte [ptr_on], 1
-.on:    call    show_cursor
+.on:    mov     byte [ptr_on], 1
+        call    show_cursor
 .l:     call    poll_once
         jnc     .got
         sti
@@ -2091,12 +2089,11 @@ win_paint:
         add     ax, bx
         dec     ax
         call    vline
-        mov     bx, [si+W_DRAW]
-        or      bx, bx
+        mov     ax, [si+W_DRAW]
+        or      ax, ax
         jz      .x
-        xchg    bx, si
-        mov     ax, [w_why]             ; (EV_MOVED after a move, else 0)
-        call    si
+        mov     bx, si
+        call    ax
 .x:     popa
         ret
 
@@ -2196,10 +2193,9 @@ win_ev: push    si
         jne     .pass
         shl     si, 2
         mov     si, [wstack+si-4]
-        push    ax
+        mov     dx, ax
         call    win_flags
-        mov     dl, al
-        pop     ax
+        xchg    ax, dx                  ; (DL = the flags)
         test    dl, WF_MOVE | WF_CLOSE
         jz      .pass
         cmp     ax, K_CODE_F7
@@ -2227,12 +2223,12 @@ win_ev: push    si
         jmp     short .pass
 .drag:  test    dl, WF_MOVE
         jz      .click
-        call    win_drag
-        jmp     short .moved
-.key:   test    dl, WF_MOVE
+        stc                             ; (CF set: by the mouse)
+        jmp     short .mv
+.key:   test    dl, WF_MOVE             ; (CF clear: by the keys)
         jz      .pass
-        call    win_keys
-.moved: mov     ax, EV_MOVED
+.mv:    call    win_mv
+        mov     ax, EV_MOVED
         jc      .pass                   ; (moved)
         stc                             ; (put back where it was)
         jmp     short .x
@@ -2242,10 +2238,12 @@ win_ev: push    si
         pop     si
         ret
 
-; drag window SI from the press at BX = x, CX = y: an outline follows the
-; pointer while the button is down -> CF set if the window moved
-win_drag:
-        pusha
+; move window SI by the mouse (CF set: the press at BX = x, CX = y on its
+; title strip; an outline follows the pointer while the button is down) or
+; by the keys (CF clear: CODE-F7; the arrows move the outline a column or 4
+; pixels, Return puts the window there, ESC leaves it) -> CF set if it moved
+win_mv: pusha
+        sbb     bp, bp                  ; (BP = 0FFFFh: the mouse)
         call    hide_cursor
         mov     ax, bx
         shr     ax, 3
@@ -2254,35 +2252,27 @@ win_drag:
         mov     ax, cx
         sub     ax, [si+W_Y]
         mov     [mv_gy], ax
-        call    mv_start
-.w:     cmp     byte [mflag], 0
-        jne     .m
-        sti
+        mov     ax, [si+W_COL]          ; the outline at its own place
+        mov     [mv_c], ax
+        mov     ax, [si+W_Y]
+        mov     [mv_y], ax
+        call    mv_frame
+        or      bp, bp
+        jz      .k
+        mov     byte [ptr_on], 0        ; (mouse_event leaves the pointer off)
+.w:     sti
         hlt
-        jmp     .w
-.m:     cli                             ; (x, y and the buttons of one packet)
-        mov     byte [mflag], 0
-        mov     ax, [mx]
-        mov     dx, [my]
-        mov     bl, [mb]
-        sti
+        cmp     byte [mflag], 0
+        je      .w
+        call    mouse_event             ; AX = x, BX = y; [oldmb] the buttons
+        mov     dx, bx
         shr     ax, 3
         sub     ax, [mv_gx]
         sub     dx, [mv_gy]
         call    mv_to
-        test    bl, 1
+        test    byte [oldmb], 1
         jnz     .w
-        mov     byte [oldmb], 0         ; (released: the next press is a click)
-        call    mv_end
-        popa                            ; (CF from mv_end)
-        ret
-
-; CODE-F7: move window SI with the arrow keys (a column, 4 pixels), Return
-; puts it there, ESC leaves it -> CF set if the window moved
-win_keys:
-        pusha
-        call    hide_cursor
-        call    mv_start
+        jmp     short .end              ; (released: the next press is a click)
 .k:     mov     ah, 11h
         int     16h
         jnz     .key
@@ -2311,28 +2301,33 @@ win_keys:
         xchg    ax, bx
         call    mv_to
         jmp     .k
-.esc:   mov     ax, [si+W_COL]          ; (back where it is: no move)
-        mov     dx, [si+W_Y]
-        call    mv_to
-.end:   call    mv_end
-        popa                            ; (CF from mv_end)
+.esc:   call    mv_frame                ; (the outline off: no move)
+        clc
+        jmp     short .x
+.end:   call    mv_frame                ; the outline off; somewhere else,
+        mov     ax, [mv_c]              ;  the window goes there
+        mov     dx, [mv_y]
+        cmp     ax, [si+W_COL]
+        jne     .mv
+        cmp     dx, [si+W_Y]
+        je      .x                      ; (CF clear)
+.mv:    call    win_move
+        stc
+.x:     popa
         ret
 
-; the outline of window SI at its own place
-mv_start:
-        mov     ax, [si+W_COL]
-        mov     [mv_c], ax
-        mov     ax, [si+W_Y]
-        mov     [mv_y], ax
-        ; (on into mv_frame)
-; XOR the outline of window SI at mv_c, mv_y
+; XOR the outline of window SI at mv_c, mv_y (fm_outline's frame)
 mv_frame:
         pusha
-        mov     bx, [mv_c]
+        mov     ax, [mv_c]
+        shl     ax, 3
+        mov     di, [si+W_W]
+        shl     di, 3
+        add     di, ax
+        dec     di
         mov     dx, [mv_y]
-        mov     bp, [si+W_W]
         mov     cx, [si+W_H]
-        call    xor_frame
+        call    xor_rect
         popa
         ret
 
@@ -2367,95 +2362,34 @@ mv_to:  pusha
 .x:     popa
         ret
 
-; the outline off; if it is somewhere else, window SI goes there -> CF set
-mv_end: call    mv_frame
-        mov     ax, [mv_c]
-        mov     dx, [mv_y]
-        cmp     ax, [si+W_COL]
-        jne     .mv
-        cmp     dx, [si+W_Y]
-        jne     .mv
-        clc
-        ret
-.mv:    call    win_move
-        stc
-        ret
-
 ; move the top window SI to AX = column, DX = row: the screen under it
-; back, then it is saved and drawn at the new place (its W_DRAW with AX =
-; EV_MOVED).  A line editor's field inside it goes with it.
+; back, then it is saved and drawn at the new place.  A line editor's field
+; goes with it (UI_EDIT waits in the top window; if none waits, no harm:
+; UI_EDIT sets them anew).
 win_move:
         pusha
-        call    hide_cursor
         mov     bp, ax
         sub     bp, [si+W_COL]          ; how far it goes
-        mov     cx, dx
-        sub     cx, [si+W_Y]
-        cmp     byte [ed_live], 0
-        je      .noed
-        mov     bx, [ed_col]
-        sub     bx, [si+W_COL]
-        cmp     bx, [si+W_W]
-        jae     .noed
-        mov     bx, [ed_y]
-        sub     bx, [si+W_Y]
-        cmp     bx, [si+W_H]
-        jae     .noed
         add     [ed_col], bp
-        add     [ed_y], cx
-.noed:  mov     bx, [wdepth]
+        mov     bp, dx
+        sub     bp, [si+W_Y]
+        add     [ed_y], bp
+        mov     bx, [wdepth]
         shl     bx, 2
         mov     di, [wstack+bx-2]       ; its save-under
-        mov     word [w_why], EV_MOVED
+        cmp     di, 0FFFFh
+        je      .set
+        call    win_restore
+.set:   mov     [si+W_COL], ax
+        mov     [si+W_Y], dx
         cmp     di, 0FFFFh
         je      .all
-        call    win_restore
-        mov     [si+W_COL], ax
-        mov     [si+W_Y], dx
         call    win_save
         call    win_paint
-        jmp     short .x
-.all:   mov     [si+W_COL], ax          ; (nothing saved: all of it again)
-        mov     [si+W_Y], dx
-        call    redraw_all
-.x:     mov     word [w_why], 0
         popa
         ret
-
-; XOR a 1-pixel frame: BX = column, DX = y, BP = width in bytes, CX = height
-xor_frame:
-        pusha
-        push    cx
-        mov     cx, 1
-        call    invert_band             ; the top
-        pop     cx
-        push    dx
-        add     dx, cx
-        dec     dx
-        push    cx
-        mov     cx, 1
-        call    invert_band             ; the bottom
-        pop     cx
-        pop     dx
-        sub     cx, 2                   ; the sides, between them
-        jbe     .x
-        inc     dx
-        call    clip_rows
-        jz      .x
-        push    es
-        push    VSEG
-        pop     es
-        add     bp, bx
-        dec     bp                      ; BP = the right edge's byte
-.r:     mov     di, dx
-        shl     di, 1
-        mov     di, [rowtab+di]
-        xor     byte [es:di+bx], 80h
-        xor     byte [es:bp+di], 01h
-        inc     dx
-        loop    .r
-        pop     es
-.x:     popa
+.all:   call    redraw_all              ; (nothing saved: all of it again)
+        popa
         ret
 
 ; UI_HELP: SI = key table, DI = title.  A window with the table's help
@@ -2821,7 +2755,6 @@ ed_enter:                               ; (ui_form, back in the same field:
         mov     [ed_col], bx
         mov     [ed_y], dx
         mov     [ed_w], cx
-        mov     byte [ed_live], 1       ; (win_move moves the field)
         cmp     byte [ed_keep], 0
         jne     .kept
         call    strlen
@@ -2900,8 +2833,7 @@ ed_enter:                               ; (ui_form, back in the same field:
         mov     byte [si], 0
         mov     word [ed_pos], 0
         jmp     .l
-.out:   mov     byte [ed_live], 0
-        push    ax
+.out:   push    ax
         push    word [ed_pos]
         xor     ax, ax                  ; shown from its start again (the
         mov     [ed_pos], ax            ;  cursor is kept for ed_enter)
@@ -3213,53 +3145,62 @@ fm_outline:
         shl     di, 3
         add     di, 2
         sub     dx, 3                   ; y0 = y - 3, y1 = y + 18
-        call    .h
-        add     dx, 21
-        call    .h
-        sub     dx, 21
         mov     cx, 22
-        call    .v
-        mov     ax, di
-        call    .v
+        call    xor_rect
         popa
         ret
-.h:     push    ax                      ; XOR pixels AX..DI on row DX
-.hl:    call    .px
-        inc     ax
-        cmp     ax, di
-        jbe     .hl
-        pop     ax
-        ret
-.v:     push    dx                      ; XOR pixels at column AX, rows DX..DX+CX-1
-        push    cx
-        inc     dx                      ; (the corners belong to .h)
-        sub     cx, 2
-.vl:    call    .px
-        inc     dx
-        loop    .vl
-        pop     cx
-        pop     dx
-        ret
-.px:    push    ax
-        push    bx
-        push    cx
+
+; XOR a 1-pixel frame: pixels AX..DI across (DI > AX + 1), rows DX..DX+CX-1
+xor_rect:
+        pusha
         push    es
         push    VSEG
         pop     es
+        mov     bp, cx                  ; BP = the height
+        call    .v                      ; the sides, corners and all
+        xchg    ax, di
+        call    .v
+        xchg    ax, di
+        call    .h                      ; the top and the bottom between them
+        add     dx, bp
+        dec     dx
+        call    .h
+        pop     es
+        popa
+        ret
+.h:     pusha                           ; pixels AX+1..DI-1 on row DX
+        inc     ax
+        mov     cx, di
+        sub     cx, ax
+        call    .col
         mov     bx, dx
         shl     bx, 1
         mov     bx, [rowtab+bx]
-        mov     cx, ax
-        shr     ax, 3
-        add     bx, ax
+.hl:    xor     [es:bx+si], al
+        ror     al, 1                   ; (past the byte's last bit: the next)
+        adc     si, 0
+        loop    .hl
+        popa
+        ret
+.v:     pusha                           ; BP rows from DX at pixel AX
+        mov     cx, bp
+        call    .col
+.vl:    mov     bx, dx
+        shl     bx, 1
+        mov     bx, [rowtab+bx]
+        xor     [es:bx+si], al
+        inc     dx
+        loop    .vl
+        popa
+        ret
+.col:   mov     si, ax                  ; pixel AX -> SI = its byte, AL = its bit
+        shr     si, 3
+        push    cx
+        mov     cl, al
         and     cl, 7
         mov     al, 80h
         shr     al, cl
-        xor     [es:bx], al
-        pop     es
         pop     cx
-        pop     bx
-        pop     ax
         ret
 
 ; field SI's value at BX, DX
