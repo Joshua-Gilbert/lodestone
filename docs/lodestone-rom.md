@@ -1,6 +1,6 @@
 # Lodestone 0.6: the ROM
 
-Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD MS-DOS 3.30 did. Floppy boot still works the same as before.
+Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD MS-DOS 3.30 did. Floppy boot still works the same as before. **First booted from ROM on the 1520 on 2026-10-18**, burned from `LODE1_EPROM.BIN`.
 
 ## What's in ROM 1
 
