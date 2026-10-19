@@ -69,6 +69,7 @@ class TermSession:
         # A picture over the text (picture.py): while one is up it is the
         # link's frame source, and pyte goes on keeping the text underneath.
         s.pic = None                    # {'bits', 'owner', 'on_click', 'on_key', 'title'}
+        s.pic_next = None               # a frame waiting for the one on its way to be whole (a video)
         s.penc = PIC.Encoder(); s.from_pic = False
         s.gflags = 0                    # the GRiD's HELLO flags (bit 1: it takes pictures)
 
@@ -181,6 +182,13 @@ class TermSession:
         with s.lock:
             if s.from_pic: s.penc.delivered()
             else: s.enc.delivered()
+            pic = s.pic; tell = False
+            if pic is not None and pic['owner'] == 'pty' and not pic.get('told') and s.penc.shown == pic['bits']:
+                pic['told'] = tell = True               # (gridfox paces a moving page's looks by it)
+            nxt = s.pic_next
+            if nxt is not None and pic is not None and s.penc.shown == pic['bits']:
+                s.pic = nxt; s.pic_next = None          # the last frame is whole on the GRiD: the next
+        if tell: s._write(b'\x1b]5150;shown\x07')
 
     # ---- pictures (picture.py) -------------------------------------------
     def can_picture(s):
@@ -188,18 +196,28 @@ class TermSession:
         Claude's console (its CELLS have no pixels)."""
         return bool(s.gflags & glp.GF_PIX) and not s.resident()
 
-    def show_picture(s, bits, owner, on_click=None, on_key=None, title=None):
+    def show_picture(s, bits, owner, on_click=None, on_key=None, title=None, frame=False):
         """bits (picture.SIZE bytes) over the text, until hide_picture.
         on_click(x, y) for a click on it; on_key(body) -> the keys left for
-        the program (b'' when it took them all)."""
+        the program (b'' when it took them all).  frame: one of a stream (a
+        video): it waits until the GRiD has the one on its way whole, as the
+        newest of those waiting.  (Else a fast stream would keep restarting the
+        top of the picture and the bottom would never come.)"""
         if len(bits) != PIC.SIZE: raise ValueError('a picture is %d bytes' % PIC.SIZE)
         if not s.can_picture():
             raise RuntimeError('The GRiD can\'t show pictures here (it needs CLAUDE.COM 1.2 under CLAUDE /T or /W, '
                                'not resident Claude\'s console).')
+        pic = {'bits': bytes(bits), 'owner': owner, 'on_click': on_click, 'on_key': on_key,
+               'title': fold_title(''.join(c for c in title if c.isprintable())) if title else None}
         with s.lock:
+            if (frame and s.pic is not None and s.pic['owner'] == owner and s.pic['title'] == pic['title']
+                    and s.penc.shown != s.pic['bits']):
+                s.pic_next = pic; return               # (no wake: the frame on its way goes on)
             if s.pic is None: s.penc.reset()   # (the first frame clears the text away)
-            s.pic = {'bits': bytes(bits), 'owner': owner, 'on_click': on_click, 'on_key': on_key,
-                     'title': fold_title(''.join(c for c in title if c.isprintable())) if title else None}
+            s.pic = pic; s.pic_next = None
+            tell = owner == 'pty' and s.penc.shown == pic['bits']   # (the same pixels: whole already)
+            if tell: pic['told'] = True
+        if tell: s._write(b'\x1b]5150;shown\x07')
         s.title_sent = None; s._send_title(force=True)
         if s.link is not None: s.link.wake()
 
@@ -213,7 +231,7 @@ class TermSession:
         return True
 
     def _drop_picture(s):
-        s.pic = None
+        s.pic = None; s.pic_next = None
         s.enc.reset(); s._mark()                # a clear and the whole text again
         s.dirty = True; s.first_dirty = 0.0
 
@@ -262,6 +280,7 @@ class TermSession:
             with Image.open(path) as im:
                 if im.size[0] * im.size[1] > 16_000_000: raise ValueError('%dx%d is too big' % im.size)
                 g = im.convert('L')
+            flags = flags.split(',')
             if 'invert' in flags: inv = True
             elif 'plain' in flags: inv = False
             else:                               # (kept while the page's look stays near it: no flicker)
@@ -269,7 +288,7 @@ class TermSession:
                 prev = getattr(s, 'pty_inv', None)
                 inv = prev if prev is not None and 90 <= m <= 166 else m > 128
             s.pty_inv = inv
-            s.show_picture(PIC.dither(g, invert=inv), 'pty')
+            s.show_picture(PIC.dither(g, invert=inv), 'pty', frame='frame' in flags)
         except Exception as e:
             s.log('term: picture from %s: %s' % (s.name, e))
 

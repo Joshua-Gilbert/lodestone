@@ -22,6 +22,8 @@ PIC_W, PIC_H = 640, 384             # the picture view: the GRiD's rows 0-23
 TEXT_W, TEXT_H = 1024, 768          # Firefox's window for the text view
 SHOTS = (0.0, 0.5, 1.5, 4.0)        # after an action: pictures then (s), as the page settles
 IDLE_SHOT = 2.0                     # and at most this often while idle, when it changed
+FRAME_SHOT = 0.25                   # while the page keeps changing by itself (a video, an animation)
+SHOWN_WAIT = 3.0                    # then the next look waits for the GRiD to have the last whole, or this
 LINE_PX, PAGE_PX = 48, 352          # the picture view's scrolling (whole rows of 16 lines)
 VIEW_FILE = 'view.png'
 BAND = 48                           # columns of the GRiD's band the title gets (CLAUDE's keys take the rest)
@@ -98,6 +100,16 @@ class Keys:
             if c == 0x1B:
                 n = b[1] if len(b) > 1 else None
                 done = None
+                if n == 0x5D and (b[2:7] == b'5150;' or (len(b) < 7 and b'5150;'.startswith(b[2:]))):
+                    # gridlink's OSC 5150 (`shown`: the GRiD has the last picture whole), not CODE-]
+                    j = b.find(b'\x07', 2)
+                    if j < 0:
+                        if s.esc_t is None: s.esc_t = now
+                        if now - s.esc_t < stale or len(b) < 64: break
+                        b = b[2:]; s.esc_t = None; continue        # (never ends: drop it)
+                    s.esc_t = None
+                    out.append('osc:' + b[2:j].decode('latin1')); b = b[j + 1:]
+                    continue
                 if n in (0x5B, 0x4F):                       # CSI / SS3
                     j = 2
                     while j < len(b) and (0x30 <= b[j] <= 0x3F): j += 1
@@ -193,6 +205,9 @@ class App:
         s.pic_up = False                         # the picture shown now (not while typing an address)
         s.pic_hash = None; s.pic_size = (PIC_W, PIC_H)
         s.shots = []; s.shot_t = 0.0             # pictures due, and when the last was taken
+        s.moving = False                         # the page changed by itself at the last look: look again soon
+        s.frame = False                          # the picture up is one of those (gridlink: whole frames, in turn)
+        s.awaiting = False; s.sent_t = 0.0       # sent, and the GRiD not yet said to have it whole (OSC 5150 shown)
         s.pic_inv = None                         # None: light pages dark (gridlink decides); or True/False
         s.view_path = os.path.abspath(VIEW_FILE)
 
@@ -384,6 +399,9 @@ class App:
     # ---- keys -------------------------------------------------------------
     def key(s, k):
         s.status = '' if not s.busy else s.status
+        if k.startswith('osc:'):                              # (gridlink's, never a key)
+            if k == 'osc:5150;shown': s.awaiting = False
+            return
         if k in s.quit_keys: s.quit = True; return           # (from anywhere, typing included)
         if s.picture and s.line is None and s.menu is None: return s._picture_key(k)
         if k.startswith('click:'): return s.click(*(int(v) for v in k[6:].split(':')))
@@ -482,7 +500,7 @@ class App:
             s.status = 'The picture view needs CLAUDE.COM 1.2 on the GRiD (CLAUDE /W).'; s.draw(); return
         if on and s.url == HOME:
             s.status = 'The picture view is of a page: G to go to one first.'; s.draw(); return
-        s.picture = on; s.pic_hash = None
+        s.picture = on; s.pic_hash = None; s.awaiting = False
         try:
             s.b.view_size(*((PIC_W, PIC_H) if on else (TEXT_W, TEXT_H)))
         except ERRS as e:
@@ -501,19 +519,24 @@ class App:
         if s.picture:
             now = time.time(); s.shots = [now + d for d in SHOTS]
 
-    def _shoot(s):
-        """Firefox's picture now; to the GRiD if it changed."""
+    def _shoot(s, frame=False):
+        """Firefox's picture now; to the GRiD if it changed.  frame: a look
+        on our own, not the one at an action: if the page changed by itself,
+        the next look comes soon (FRAME_SHOT), else at the idle pace."""
         if s.shots and time.time() >= s.shots[0] - 0.01: s.shots.pop(0)
         s.shot_t = time.time()
         png = s.b.screenshot()
         if len(png) >= 24 and png[:8] == b'\x89PNG\r\n\x1a\n': s.pic_size = struct.unpack('>II', png[16:24])
         h = hashlib.sha1(png).digest()
-        if h == s.pic_hash and s.pic_up: return
-        s.pic_hash = h
+        changed = h != s.pic_hash
+        if frame: s.moving = changed
+        if not changed and s.pic_up: return
+        s.pic_hash = h; s.frame = frame
         tmp = s.view_path + '.tmp'
         with open(tmp, 'wb') as f: f.write(png)
         os.replace(tmp, s.view_path)
         s.pic_up = False; s._sync_view()
+        s.awaiting = s.pic_up; s.sent_t = time.time()
 
     def _sync_view(s):
         """The picture up when in the picture view and not typing an address; else the text."""
@@ -521,7 +544,8 @@ class App:
         if want == s.pic_up: return
         s.pic_up = want
         if want:
-            flags = '' if s.pic_inv is None else ('invert' if s.pic_inv else 'plain')
+            flags = ([] if s.pic_inv is None else ['invert' if s.pic_inv else 'plain']) + (['frame'] if s.frame else [])
+            flags = ','.join(flags)
             s.out.write(('\x1b[?1016h\x1b]5150;show;%s;%s\x07' % (flags, s.view_path)).encode('utf-8'))
         else:
             s.out.write(b'\x1b[?1016l\x1b]5150;hide\x07')
@@ -729,14 +753,22 @@ class App:
             if s.quit or s.modal(): continue
             now = time.time()
             if s.picture and now >= s._next_shot():
-                s._guard(s._shoot)
+                s._guard(lambda: s._shoot(True))     # (a look on our own: not the one at an action)
             elif s.rereads and now >= s.rereads[0]:
                 s.rereads.pop(0); s._guard(s.reread)
             elif s.url != HOME and now >= s.url_t + URL_EVERY:
                 s.url_t = now; s._guard(s._check_url)
 
     def _next_shot(s):
-        return s.shots[0] if s.shots else s.shot_t + IDLE_SHOT
+        """A moving page: the next look once the GRiD has the last picture
+        whole (gridlink says so), at most every FRAME_SHOT: one look a frame
+        the link can carry, none wasted.  (SHOWN_WAIT if it never says.)"""
+        if s.moving:
+            t = s.shot_t + FRAME_SHOT
+            if s.awaiting: t = max(t, s.sent_t + SHOWN_WAIT)
+        else:
+            t = s.shot_t + IDLE_SHOT
+        return min(t, s.shots[0]) if s.shots else t
 
     def _check_url(s):
         """A page that arrived on its own (a slow link or form answered at last,
