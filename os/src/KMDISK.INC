@@ -909,7 +909,9 @@ md_stub_end:
 section boot
 
 ; init's last jump, through KSEG:0000 (CS = 1000h): MDISK= in \LODE.INI
-; (KB, 0 off, ALL; no line or a bad value: 256), then M:, then the UI
+; (KB, 0 off, ALL; no line or a bad value: 256), then M:; MULTITASK=1 (or
+; Yes, or On; KMT.INC), then multitasking; then the UI.  (Both settings
+; are read before M: is made.)
 md_boot:
         cli
         mov     ax, KSEG
@@ -927,19 +929,25 @@ md_boot:
         movsw
         movsb
         call    ini_read                ; (KROM.INC: LODE.INI's, both)
-        mov     cx, 256
-.line:  mov     di, MDB(s_mdeq)         ; "MDISK=" (any case)?
-.c:     mov     al, [di]
-        or      al, al
-        jz      .hit
-        mov     ah, [si]
+        push    si
+        mov     di, MDB(s_mteq)         ; "MULTITASK=" (any case)?
+        call    ini_key
+        jc      .md
+        mov     ax, [si]
         and     ax, 0DFDFh
-        cmp     al, ah
-        jne     .next
-        inc     si
-        inc     di
-        jmp     .c
-.hit:   mov     ax, [si]                ; "ALL"
+        cmp     al, '1' & 0DFh
+        je      .mt
+        cmp     al, 'Y'
+        je      .mt
+        cmp     ax, 'ON'
+        jne     .md
+.mt:    mov     byte [MDB(mt_on)], 1
+.md:    pop     si
+        mov     cx, 256
+        mov     di, MDB(s_mdeq)         ; "MDISK=" (any case)?
+        call    ini_key
+        jc      .go
+        mov     ax, [si]                ; "ALL"
         and     ax, 0DFDFh
         cmp     ax, 'AL'
         jne     .num
@@ -965,17 +973,38 @@ md_boot:
 .dn:    or      dx, dx
         jz      .go
         mov     cx, bx
-        jmp     short .go
-.next:  lodsb
-        or      al, al
-        jz      .go
-        cmp     al, 10
-        jne     .next
-        jmp     .line
 .go:    mov     ax, 5B4Dh               ; M:, keeping what it holds if it can
         mov     bl, 2
         int     67h
-        jmp     KSEG:run_ui
+        cmp     byte [cs:MDB(mt_on)], 0
+        je      .ui
+        call    mt_boot                 ; (KMT.INC)
+.ui:    jmp     KSEG:run_ui
+
+; SI = LODE.INI's text (ASCIIZ), DI = a key as "NAME", 1Dh, 0 (that is,
+; "NAME=" AND 0DFh, any case) -> SI = its value on the first line that has
+; it; CF if none.  (AX, BX, DI change; CX is kept.)
+ini_key:
+        mov     bx, di
+.line:  mov     di, bx
+.c:     mov     al, [di]
+        or      al, al
+        jz      .x                      ; (CF clear)
+        mov     ah, [si]
+        and     ax, 0DFDFh
+        cmp     al, ah
+        jne     .next
+        inc     si
+        inc     di
+        jmp     .c
+.next:  lodsb
+        or      al, al
+        jz      .no
+        cmp     al, 10
+        jne     .next
+        jmp     .line
+.no:    stc
+.x:     ret
 md_s0   db      0, 0, 0, 0, 0               ; (ems_init: KSEG:0000's 5 bytes)
 s_mdeq  db      'MDISK', 1Dh, 0         ; (as "MDISK=" AND 0DFh)
 

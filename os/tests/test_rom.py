@@ -388,7 +388,7 @@ def t_memory():
               % (tag, got[tag, 'no ROM'], got[tag, 'ROM in, from A:'], got[tag, 'from the ROM']))
         n, f, r = got[tag, 'no ROM'], got[tag, 'ROM in, from A:'], got[tag, 'from the ROM']
         check('%s: R: costs DOS programs 0.6 KB at most (its module, and from the ROM a longer PATH in each program'"'"'s environment)' % tag,
-              n and f and r and n - f <= 0.5 and n - r <= 0.6, (n, f, r))
+              n and f and r and round(n - f, 1) <= 0.5 and round(n - r, 1) <= 0.6, (n, f, r))   # (MEMSZ's tenths)
     return got
 
 
