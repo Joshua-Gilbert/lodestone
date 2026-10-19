@@ -295,17 +295,21 @@ def t_capture():
 
 
 def t_print():
-    """PRTSC=PRINTER in LODE.INI: Shift-PrtSc sends the screen to LPT1 as
-    PostScript (the Brother HL-5370DW's language) instead of a file."""
-    import binascii
-    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'PRTSC=Printer\r\n')
-    k = ktest.KPC(image('prn.img', os.path.join(HERE, 'CAPTEST.COM'), ini)); k.start()
+    """PRINTER=PS.PRN in LODE.INI: Shift-PrtSc reads that driver (a file of
+    up to 1 KB) into the capture's 1 KB, calls it, and forgets it; PS.PRN
+    sends the screen to LPT1 as PostScript (the Brother HL-5370DW's)."""
+    import binascii, subprocess
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'printer=ps.prn\r\n')
+    ps = os.path.join(GOS, 'drivers', 'PS.PRN')
+    k = ktest.KPC(image('prn.img', os.path.join(HERE, 'CAPTEST.COM'), ini, ps)); k.start()
     files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
     beeps = lambda: ''.join(k.pc.tty).count('\x07')
     def shot(sim_s=8.0):
         k.pc.tty.clear(); k.pc.lpt.clear(); k.pc.prtsc(); k.settle(sim_s)
         return bytes(k.pc.lpt)
-    check('PRTSC=Printer in LODE.INI: the kernel prints (any case)', k.rd('cap_prn', 1) == b'\1', k.rd('cap_prn', 1))
+    path = lambda: k.rd('prn_path', 24).split(b'\0')[0]
+    check('PRINTER=ps.prn in LODE.INI: found as programs are, the kernel has A:\\ps.prn', path().upper() == b'A:\\PS.PRN', path())
+    check('nothing of the driver resident: its 1 KB buffer and a path in the kernel', os.path.getsize(ps) <= 1024, os.path.getsize(ps))
     vram = k.pc.rd(0xB800, 0, 0x8000)
     out = shot()
     head, _, rest = out.partition(b'image\n')
@@ -320,7 +324,7 @@ def t_print():
     k.pc.run_until(lambda: k.pc.mode() == 6, 5); k.settle()
     out = shot()
     rows = out.partition(b'image\n')[2].split(b'\n')
-    check('mode 6: the image, each line twice', [binascii.unhexlify(r) for r in rows[:400]] ==
+    check('mode 6, in a DOS program: the image, each line twice', [binascii.unhexlify(r) for r in rows[:400]] ==
           [bytes([255 - (y >> 1)]) * 80 for y in range(399, -1, -1)] and beeps() == 1, beeps())
     k.key(ktest.ENTER); out = shot()
     lines = out.partition(b'def}def\n')[2].split(b'\n')
@@ -328,17 +332,31 @@ def t_print():
           all(l.startswith(b'(') and l.endswith(b')l') for l in lines[:25]) and lines[25] == b'showpage', lines[:5])
     check('... as the screen has them (80 columns, the NUL a blank)', lines[0] == b'(' + b'Line one'.ljust(80) + b')l'
           and lines[3] == b'(' + b'ABCDE GHIJ'.ljust(80) + b')l', lines[:4])
-    # ( ) and \ are escaped; the PC's own graphics characters print as ?
     k.pc.wr(0xB800, 0, b'(\x07)\x07\\\x07\xC9\x07'); out = shot()
     check('( ) and \\ escaped, a box-drawing character as ?', b'\n(\\(\\)\\\\?' in out, out[:200])
-    # the printer busy for good: 10 s, then the long beep, nothing more sent
     k.pc.lpt_status = 0x11; out = shot(14.0); k.pc.lpt_status = 0x90
     check('printer busy 10 s: the long beep, nothing sent', out == b'' and beeps() == 4, (out[:20], beeps()))
     k.pc.lpt_status = 0x38; out = shot(); k.pc.lpt_status = 0x90
     check('out of paper: the long beep at once', out == b'' and beeps() == 4, (out[:20], beeps()))
     k.pc.wr(0, 0x408, b'\0\0'); out = shot(); k.pc.wr(0, 0x408, b'\x78\x03')
     check('no LPT1: the long beep', out == b'' and beeps() == 4, (out[:20], beeps()))
-    check('still no file', not any('SCREEN' in n for n in files()), sorted(files()))
+    # any driver: a 3-byte one that prints "Hi" through the BIOS and says it did
+    drv = os.path.join(OUT, 'drv.asm'); open(drv, 'w').write(
+        'org 0\nmov ax, 0048h\nxor dx, dx\nint 17h\nmov ax, 0069h\nint 17h\nxor al, al\nretf\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(OUT, 'HI.PRN'), drv], check=True)
+    big = os.path.join(OUT, 'BIG.PRN'); open(big, 'wb').write(open(os.path.join(OUT, 'HI.PRN'), 'rb').read() + bytes(1100))
+    k2 = ktest.KPC(image('prn2.img', os.path.join(OUT, 'HI.PRN'), big)); k2.start()
+    def shot2(name):
+        k2.wr('prn_path', name.encode() + b'\0'); k2.pc.tty.clear(); k2.pc.lpt.clear(); k2.pc.prtsc(); k2.settle(6)
+        return bytes(k2.pc.lpt), ''.join(k2.pc.tty).count('\x07')
+    check('another driver (HI.PRN): it is what prints', shot2('A:\\HI.PRN') == (b'Hi', 1), shot2('A:\\HI.PRN'))
+    check('a driver over 1 KB: not run, the long beep', shot2('A:\\BIG.PRN') == (b'', 4), shot2('A:\\BIG.PRN'))
+    check('a driver that isn\'t there: the long beep', shot2('A:\\NONE.PRN') == (b'', 4), shot2('A:\\NONE.PRN'))
+    k2.wr('prn_path', b'\0')
+    out, _ = shot2('')
+    check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(bytes(k2.pc.drives[0].img)),
+          sorted(fatcheck.read_files(bytes(k2.pc.drives[0].img))))
+    check('still no file on the printing disk', not any('SCREEN' in n for n in files()), sorted(files()))
 
 def mcbs(k):
     """The arena: (segment, type, owner, size, name) of each block."""
