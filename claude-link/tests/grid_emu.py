@@ -764,13 +764,13 @@ class Machine:
                 for xb in range(80):
                     v = vram[base + xb]
                     for b in range(8):
-                        px[xb * 8 + b, y] = (255, 170, 50) if v & (0x80 >> b) else (28, 12, 0)
+                        px[xb * 8 + b, y] = (255, 120, 40) if v & (0x80 >> b) else (36, 8, 2)
             im = im.resize((640 * scale // 2 * 2, 400 * scale // 2 * 2), Image.NEAREST)
         else:
             from PIL import ImageDraw
-            im = Image.new('RGB', (640, 400), (28, 12, 0)); d = ImageDraw.Draw(im)
+            im = Image.new('RGB', (640, 400), (36, 8, 2)); d = ImageDraw.Draw(im)
             for i, line in enumerate(s.text_screen().split('\n')):
-                d.text((0, i * 16), line, fill=(255, 170, 50))
+                d.text((0, i * 16), line, fill=(255, 120, 40))
         im.save(path)
 
     def text_screen(s):
