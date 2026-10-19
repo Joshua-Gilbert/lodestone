@@ -937,7 +937,7 @@ t_devices:
         stosb
 .lx:    mov     si, l_printer
         call    pline
-        call    vstart                  ; what Shift-PrtSc does (the kernel's)
+        call    vstart                  ; what PrtSc does (the kernel's)
         call    prn_get
         jz      .pf
         push    si
@@ -1425,7 +1425,7 @@ sv_steps    db 1, 2, 5, 10, 15, 30, 0   ; minutes (0: never)
 
 NSTEPS      equ $ - sv_steps
 
-; the printer driver Shift-PrtSc uses (the kernel's): its path into
+; the printer driver PrtSc uses (the kernel's): its path into
 ; prn_cur, SI = its name, ZF if there is none (PrtSc saves files).  DI kept
 prn_get:
         push    di
@@ -1451,7 +1451,7 @@ prn_get:
 
 ; Return on Devices: the next printer driver (the .PRN files where PATH
 ; finds programs: from the ROM C:\LODE, then the root of the drive
-; started from), then none again (Shift-PrtSc saves files).  The kernel
+; started from), then none again (PrtSc saves files).  The kernel
 ; has its path at once; LODE.INI gets PRINTER=NAME.
 next_prtsc:
         call    prn_get                 ; (prn_cur)
@@ -2149,7 +2149,7 @@ s_band1     db 'System: Select a topic',0
 s_band2     db 'CODE-? for help    ESC: back to the Executive',0
 s_band_clk  db 'RETURN: set the date and time    ESC: back',0
 s_band_gp   db 'RETURN: scan the bus    ESC: back',0
-s_band_dev  db 'RETURN: the next printer driver, or files    ESC: back',0
+s_band_dev  db 'RETURN: the next printer driver (Shift-PrtSc: a file)   ESC: back',0
 s_band_font db 'RETURN: the next font    SPACE: picture or not    ESC: back',0
 s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
 s_band_md   db 'RETURN: the next size    ESC: back',0
@@ -2160,7 +2160,7 @@ h_enter2    db 'Return on GPIB               scan the bus',0
 h_enter3    db 'Return on Display            the next font',0
 h_enter4    db 'Return on Temporary disk M:  the next size',0
 h_enter5    db "Return on Settings           back to the ROM's",0
-h_enter6    db 'Return on Devices            Shift-PrtSc: the next driver',0
+h_enter6    db 'Return on Devices            PrtSc: the next printer driver',0
 h_space     db 'Space on Display             the start-up picture or not',0
 h_space2    db 'Space on Screen saver        tidy the disks or not',0
 h_f5        db 'F5                           look again',0
@@ -2202,7 +2202,7 @@ l_display   db 'Display',0
 l_mouse     db 'Mouse',0
 l_serial    db 'Serial ports',0
 l_printer   db 'Printer port',0
-l_prtsc     db 'Shift-PrtSc',0
+l_prtsc     db 'PrtSc',0
 l_floppy    db 'Floppy drives',0
 l_hdisk     db 'Hard disk',0
 s_286       db '80286',0

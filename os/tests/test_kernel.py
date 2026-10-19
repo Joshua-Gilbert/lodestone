@@ -295,7 +295,7 @@ def t_capture():
 
 
 def t_print():
-    """PRINTER=PS.PRN in LODE.INI: Shift-PrtSc reads that driver (a file of
+    """PRINTER=PS.PRN in LODE.INI: PrtSc reads that driver (a file of
     up to 1 KB) into the capture's 1 KB, calls it, and forgets it; PS.PRN
     sends the screen to LPT1 as PostScript (the Brother HL-5370DW's)."""
     import binascii, subprocess
@@ -357,6 +357,12 @@ def t_print():
     check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(bytes(k2.pc.drives[0].img)),
           sorted(fatcheck.read_files(bytes(k2.pc.drives[0].img))))
     check('still no file on the printing disk', not any('SCREEN' in n for n in files()), sorted(files()))
+    # Shift-PrtSc: the file all the same, the driver set
+    k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] | 2])); out = shot(); k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] & ~3]))
+    check('Shift-PrtSc with a driver set: SCREEN01.BMP, nothing to the printer', out == b'' and beeps() == 1 and
+          any('SCREEN01' in n for n in files()), (out[:20], beeps(), sorted(files())))
+    out = shot()
+    check('... and PrtSc alone prints again', out.startswith(b'%!PS'), out[:20])
 
 def mcbs(k):
     """The arena: (segment, type, owner, size, name) of each block."""

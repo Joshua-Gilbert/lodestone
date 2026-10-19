@@ -74,7 +74,7 @@ sp_boot:
         movsw
         movsb
 .on:    call    rs_boot                 ; (KROM.INC: booted from the ROM)
-        call    pr_boot                 ; Shift-PrtSc's printer driver
+        call    pr_boot                 ; PrtSc's printer driver
         call    sp_wanted
         jc      .go
         call    sp_load
@@ -123,7 +123,7 @@ sp_wanted:
 ; the ROM's; "PRINTER=": none) -> the kernel's prn_path, where PATH finds
 ; it: from the ROM C:\LODE\NAME if it is there, else the root of the
 ; drive started from.  Only the path is kept; KCORE.INC's capture reads
-; the driver at Shift-PrtSc.  DS = CS, ES = KSEG.
+; the driver at PrtSc.  DS = CS, ES = KSEG.
 pr_boot:
         push    KSEG
         pop     es

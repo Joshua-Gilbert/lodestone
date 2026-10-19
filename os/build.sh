@@ -19,7 +19,7 @@ nasm -f bin -o CALC.COM CALC.ASM
 cd ../fonts
 nasm -f bin -i ../src/ -o TERMINUS.FNT TERMINUS.ASM
 cd ../drivers
-nasm -f bin -o PS.PRN PS.ASM            # printer drivers, read at Shift-PrtSc
+nasm -f bin -o PS.PRN PS.ASM            # printer drivers, read at PrtSc
 cd ..
 for a in SYSTEM WRITE CALC; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; done
 python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
