@@ -16,7 +16,8 @@
 ;    - INT 08h goes through mt_tick (the BIOS's handler first);
 ;    - INT 21h F0h through mt_f0: f_F0's first 5 bytes (MOV AL,[BP+F_AX]
 ;      and OR AL,AL) become a far jump to it, and it comes back past
-;      them.  (KEMS.INC patches f_F0.back further in: no clash.)
+;      them.  (KEMS.INC patches f_F0.lend and .back, further in: no
+;      clash.)
 ;  The calls: MTAPI.INC.
 ; =====================================================================
 %ifndef NOTC
@@ -109,6 +110,17 @@ mt_boot:
         popf
         jc      .x
         mov     es, dx
+        dec     dx                      ; the last block?  (Not if a hole
+        mov     ds, dx                  ;  below the largest one took it:
+        inc     dx                      ;  then it stays off.)
+        cmp     byte [0], 'Z'
+        push    cs
+        pop     ds
+        je      .top
+        mov     ah, 49h
+        int     21h
+        ret
+.top:
         mov     si, section.mtt.start
         xor     di, di
         mov     cx, MT_LEN

@@ -14,7 +14,8 @@ MT_TASKS    equ 8                       ; most tasks at once (0 is the Executive
 TR_ID       equ 0                       ; byte: its number
 TR_STATE    equ 1                       ; byte: TS_*
 TR_PSP      equ 2                       ; word: its program's PSP
-TR_NAME     equ 4                       ; 12 bytes: its program's name, ASCIIZ
+TR_NAME     equ 4                       ; its program's name, NUL-padded: a
+TR_NAMELEN  equ 12                      ;  whole 8.3 name fills it (no NUL)
 MT_REC      equ 16
 
 TS_FREE     equ 0                       ; (no task: not listed)
