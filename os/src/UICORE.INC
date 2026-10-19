@@ -120,6 +120,11 @@ wstack      resw 2 * NWIN       ; (window, save offset or 0FFFFh)
 help_w      resb W_SIZE
 help_tab    resw 1
 form_w      resb W_SIZE
+w_why       resw 1              ; AX for a window's W_DRAW (EV_MOVED after a move)
+mv_gx       resw 1              ; a move: where the window was taken (column and
+mv_gy       resw 1              ;  row inside it), and where its outline is now
+mv_c        resw 1
+mv_y        resw 1
 ; lists, forms, the line editor
 lv_cur      resw 1
 disp_fn     resw 1
@@ -135,6 +140,7 @@ ed_pos      resw 1
 ed_off      resw 1
 ed_fresh    resb 1
 ed_keep     resb 1
+ed_live     resb 1              ; 1 while UI_EDIT (or a form's field) waits
 font_name   resb 13             ; UI_FONT: "" = GRiD's, built in
 fm_ptr      resw 1
 fm_cur      resw 1
@@ -466,13 +472,15 @@ api_setredraw:
 ; UI_EVENT: wait for a key or a click (the pointer shows meanwhile)
 ui_event:
         mov     byte [ptr_on], 1
-        call    show_cursor
+.on:    call    show_cursor
 .l:     call    poll_once
         jnc     .got
         sti
         hlt                             ; sleep until the next interrupt
         jmp     .l
-.got:   mov     byte [ptr_on], 0
+.got:   call    win_ev                  ; the top window's title strip, CODE-F7
+        jc      .on                     ; (taken, nothing to say: wait on)
+        mov     byte [ptr_on], 0
         jmp     hide_cursor
 
 ; UI_POLL: the same without waiting (CF set: nothing)
@@ -2055,6 +2063,14 @@ win_paint:
         mov     ah, 0FFh
         call    puts
         pop     si
+        call    win_flags               ; the close box: an x in a dark cell
+        test    al, WF_CLOSE            ;  at the strip's right end
+        jz      .frame
+        mov     bx, [si+W_COL]
+        add     bx, [si+W_W]
+        sub     bx, 2
+        mov     ax, 'x'                 ; (AH = 0: normal, on the lit strip)
+        call    putc
         jmp     .frame
 .notitle:
         mov     cx, bp
@@ -2075,13 +2091,25 @@ win_paint:
         add     ax, bx
         dec     ax
         call    vline
-        mov     ax, [si+W_DRAW]
-        or      ax, ax
+        mov     bx, [si+W_DRAW]
+        or      bx, bx
         jz      .x
-        mov     bx, si
-        call    ax
+        xchg    bx, si
+        mov     ax, [w_why]             ; (EV_MOVED after a move, else 0)
+        call    si
 .x:     popa
         ret
+
+; SI = window -> AL = its W_FLAGS: 0 for a .RUN's window from before API 6
+; (12 bytes: there is no such word)
+win_flags:
+        xor     al, al
+        cmp     byte [run_active], 0
+        je      .rd
+        cmp     word [run_hdr+4], 6
+        jb      .x
+.rd:    mov     al, [si+W_FLAGS]
+.x:     ret
 
 ; UI_WCLOSE
 ui_wclose:
@@ -2102,6 +2130,31 @@ ui_wclose:
         cmp     di, 0FFFFh
         je      .redraw
         mov     [wtop], di
+        call    win_restore
+        jmp     .done
+.redraw:
+        call    redraw_all              ; (nothing saved: draw it all again)
+.done:  cmp     word [wdepth], 0
+        jne     .x
+        call    win_giveback
+.x:     popa
+        ret
+
+win_giveback:
+        cmp     word [wseg], 0
+        je      .x
+        mov     word [wseg], 0
+%ifndef NOTC
+        push    ax
+        mov     ax, 0F003h              ; the disk cache has it back
+        int     21h
+        pop     ax
+%endif
+.x:     ret
+
+; the screen under window SI back from wseg:DI
+win_restore:
+        pusha
         push    ds
         push    es
         push    VSEG
@@ -2124,26 +2177,286 @@ ui_wclose:
         loop    .r
         pop     es
         pop     ds
-        jmp     .done
-.redraw:
-        call    redraw_all              ; (nothing saved: draw it all again)
-.done:  cmp     word [wdepth], 0
-        jne     .x
-        call    win_giveback
+        popa
+        ret
+
+; ---------------------------------------------------------------------
+;  windows that move and close (API 6, W_FLAGS)
+; ---------------------------------------------------------------------
+; an event (AX; BX, CX for a click) for the top window: a press on its
+; title strip drags a WF_MOVE window, on its close box (WF_CLOSE) it is
+; ESC; CODE-F7 moves it with the arrow keys.  -> CF clear: the event in AX
+; (EV_MOVED after a move); CF set: taken, nothing to say
+win_ev: push    si
+        push    dx
+        mov     si, [wdepth]
+        or      si, si
+        jz      .pass
+        cmp     word [wover], 0         ; (windows past NWIN: the top isn't drawn)
+        jne     .pass
+        shl     si, 2
+        mov     si, [wstack+si-4]
+        push    ax
+        call    win_flags
+        mov     dl, al
+        pop     ax
+        test    dl, WF_MOVE | WF_CLOSE
+        jz      .pass
+        cmp     ax, K_CODE_F7
+        je      .key
+        cmp     ax, EV_CLICK
+        jne     .pass
+        cmp     word [si+W_TITLE], 0
+        je      .pass
+        mov     ax, cx                  ; on the title strip?
+        sub     ax, [si+W_Y]
+        cmp     ax, 20
+        jae     .click
+        mov     ax, bx
+        shr     ax, 3
+        sub     ax, [si+W_COL]
+        cmp     ax, [si+W_W]
+        jae     .click
+        test    dl, WF_CLOSE
+        jz      .drag
+        inc     ax                      ; the close box: the strip's last cell
+        inc     ax                      ;  but one
+        cmp     ax, [si+W_W]
+        jne     .drag
+        mov     ax, K_ESC
+        jmp     short .pass
+.drag:  test    dl, WF_MOVE
+        jz      .click
+        call    win_drag
+        jmp     short .moved
+.key:   test    dl, WF_MOVE
+        jz      .pass
+        call    win_keys
+.moved: mov     ax, EV_MOVED
+        jc      .pass                   ; (moved)
+        stc                             ; (put back where it was)
+        jmp     short .x
+.click: mov     ax, EV_CLICK
+.pass:  clc
+.x:     pop     dx
+        pop     si
+        ret
+
+; drag window SI from the press at BX = x, CX = y: an outline follows the
+; pointer while the button is down -> CF set if the window moved
+win_drag:
+        pusha
+        call    hide_cursor
+        mov     ax, bx
+        shr     ax, 3
+        sub     ax, [si+W_COL]
+        mov     [mv_gx], ax             ; where it was taken
+        mov     ax, cx
+        sub     ax, [si+W_Y]
+        mov     [mv_gy], ax
+        call    mv_start
+.w:     cmp     byte [mflag], 0
+        jne     .m
+        sti
+        hlt
+        jmp     .w
+.m:     cli                             ; (x, y and the buttons of one packet)
+        mov     byte [mflag], 0
+        mov     ax, [mx]
+        mov     dx, [my]
+        mov     bl, [mb]
+        sti
+        shr     ax, 3
+        sub     ax, [mv_gx]
+        sub     dx, [mv_gy]
+        call    mv_to
+        test    bl, 1
+        jnz     .w
+        mov     byte [oldmb], 0         ; (released: the next press is a click)
+        call    mv_end
+        popa                            ; (CF from mv_end)
+        ret
+
+; CODE-F7: move window SI with the arrow keys (a column, 4 pixels), Return
+; puts it there, ESC leaves it -> CF set if the window moved
+win_keys:
+        pusha
+        call    hide_cursor
+        call    mv_start
+.k:     mov     ah, 11h
+        int     16h
+        jnz     .key
+        sti
+        hlt
+        jmp     .k
+.key:   call    read_key
+        mov     bx, [mv_c]
+        mov     dx, [mv_y]
+        cmp     ax, K_LEFT
+        jne     .1
+        dec     bx
+.1:     cmp     ax, K_RIGHT
+        jne     .2
+        inc     bx
+.2:     cmp     ax, K_UP
+        jne     .3
+        sub     dx, 4
+.3:     cmp     ax, K_DOWN
+        jne     .4
+        add     dx, 4
+.4:     cmp     al, 0Dh
+        je      .end
+        cmp     al, 1Bh
+        je      .esc
+        xchg    ax, bx
+        call    mv_to
+        jmp     .k
+.esc:   mov     ax, [si+W_COL]          ; (back where it is: no move)
+        mov     dx, [si+W_Y]
+        call    mv_to
+.end:   call    mv_end
+        popa                            ; (CF from mv_end)
+        ret
+
+; the outline of window SI at its own place
+mv_start:
+        mov     ax, [si+W_COL]
+        mov     [mv_c], ax
+        mov     ax, [si+W_Y]
+        mov     [mv_y], ax
+        ; (on into mv_frame)
+; XOR the outline of window SI at mv_c, mv_y
+mv_frame:
+        pusha
+        mov     bx, [mv_c]
+        mov     dx, [mv_y]
+        mov     bp, [si+W_W]
+        mov     cx, [si+W_H]
+        call    xor_frame
+        popa
+        ret
+
+; the outline to AX = column, DX = row (signed; kept on the screen,
+; between the title rule and the band, the row a multiple of 4)
+mv_to:  pusha
+        or      ax, ax
+        jns     .c1
+        xor     ax, ax
+.c1:    mov     bx, 80
+        sub     bx, [si+W_W]
+        cmp     ax, bx
+        jle     .c2
+        mov     ax, bx
+.c2:    mov     bx, SCR_BAND_Y
+        sub     bx, [si+W_H]
+        cmp     dx, bx
+        jle     .r1
+        mov     dx, bx
+.r1:    cmp     dx, SCR_TOP
+        jge     .r2
+        mov     dx, SCR_TOP
+.r2:    and     dx, 0FFFCh
+        cmp     ax, [mv_c]
+        jne     .mv
+        cmp     dx, [mv_y]
+        je      .x
+.mv:    call    mv_frame                ; off where it was, on where it is
+        mov     [mv_c], ax
+        mov     [mv_y], dx
+        call    mv_frame
 .x:     popa
         ret
 
-win_giveback:
-        cmp     word [wseg], 0
-        je      .x
-        mov     word [wseg], 0
-%ifndef NOTC
-        push    ax
-        mov     ax, 0F003h              ; the disk cache has it back
-        int     21h
-        pop     ax
-%endif
-.x:     ret
+; the outline off; if it is somewhere else, window SI goes there -> CF set
+mv_end: call    mv_frame
+        mov     ax, [mv_c]
+        mov     dx, [mv_y]
+        cmp     ax, [si+W_COL]
+        jne     .mv
+        cmp     dx, [si+W_Y]
+        jne     .mv
+        clc
+        ret
+.mv:    call    win_move
+        stc
+        ret
+
+; move the top window SI to AX = column, DX = row: the screen under it
+; back, then it is saved and drawn at the new place (its W_DRAW with AX =
+; EV_MOVED).  A line editor's field inside it goes with it.
+win_move:
+        pusha
+        call    hide_cursor
+        mov     bp, ax
+        sub     bp, [si+W_COL]          ; how far it goes
+        mov     cx, dx
+        sub     cx, [si+W_Y]
+        cmp     byte [ed_live], 0
+        je      .noed
+        mov     bx, [ed_col]
+        sub     bx, [si+W_COL]
+        cmp     bx, [si+W_W]
+        jae     .noed
+        mov     bx, [ed_y]
+        sub     bx, [si+W_Y]
+        cmp     bx, [si+W_H]
+        jae     .noed
+        add     [ed_col], bp
+        add     [ed_y], cx
+.noed:  mov     bx, [wdepth]
+        shl     bx, 2
+        mov     di, [wstack+bx-2]       ; its save-under
+        mov     word [w_why], EV_MOVED
+        cmp     di, 0FFFFh
+        je      .all
+        call    win_restore
+        mov     [si+W_COL], ax
+        mov     [si+W_Y], dx
+        call    win_save
+        call    win_paint
+        jmp     short .x
+.all:   mov     [si+W_COL], ax          ; (nothing saved: all of it again)
+        mov     [si+W_Y], dx
+        call    redraw_all
+.x:     mov     word [w_why], 0
+        popa
+        ret
+
+; XOR a 1-pixel frame: BX = column, DX = y, BP = width in bytes, CX = height
+xor_frame:
+        pusha
+        push    cx
+        mov     cx, 1
+        call    invert_band             ; the top
+        pop     cx
+        push    dx
+        add     dx, cx
+        dec     dx
+        push    cx
+        mov     cx, 1
+        call    invert_band             ; the bottom
+        pop     cx
+        pop     dx
+        sub     cx, 2                   ; the sides, between them
+        jbe     .x
+        inc     dx
+        call    clip_rows
+        jz      .x
+        push    es
+        push    VSEG
+        pop     es
+        add     bp, bx
+        dec     bp                      ; BP = the right edge's byte
+.r:     mov     di, dx
+        shl     di, 1
+        mov     di, [rowtab+di]
+        xor     byte [es:di+bx], 80h
+        xor     byte [es:bp+di], 01h
+        inc     dx
+        loop    .r
+        pop     es
+.x:     popa
+        ret
 
 ; UI_HELP: SI = key table, DI = title.  A window with the table's help
 ; lines; the next key or click closes it.
@@ -2508,6 +2821,7 @@ ed_enter:                               ; (ui_form, back in the same field:
         mov     [ed_col], bx
         mov     [ed_y], dx
         mov     [ed_w], cx
+        mov     byte [ed_live], 1       ; (win_move moves the field)
         cmp     byte [ed_keep], 0
         jne     .kept
         call    strlen
@@ -2519,6 +2833,8 @@ ed_enter:                               ; (ui_form, back in the same field:
         call    ed_cursor
         call    ui_event
         call    ed_cursor               ; (off again)
+        cmp     ax, EV_MOVED            ; the window moved, the field with it:
+        je      .l                      ;  drawn there, editing goes on
         cmp     ax, EV_CLICK
         je      .out
         cmp     al, 0Dh
@@ -2584,7 +2900,8 @@ ed_enter:                               ; (ui_form, back in the same field:
         mov     byte [si], 0
         mov     word [ed_pos], 0
         jmp     .l
-.out:   push    ax
+.out:   mov     byte [ed_live], 0
+        push    ax
         push    word [ed_pos]
         xor     ax, ax                  ; shown from its start again (the
         mov     [ed_pos], ax            ;  cursor is kept for ed_enter)

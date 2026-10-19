@@ -252,7 +252,8 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '562.2', 88: '578.3'}   # (0.6: 0.1 KB less, the PATH search and two settings files)
+MEM_044 = {0: '561.5', 88: '577.6'}   # (0.6: 0.1 KB less, the PATH search and two settings files;
+                                      #  then 0.7 KB less, windows that move and close, UI API 6)
 
 def t_memory():
     print('== what DOS programs get: the same with the picture as without it')
@@ -265,7 +266,7 @@ def t_memory():
             m = re.search(r'([\d.]+) KB for programs', out)
             got[tag, ems] = m and m.group(1)
     for ems in (0, 88):
-        check('%s: a DOS program gets %s KB after the picture, %s KB without LODE.PIC (0.6: %s KB)'
+        check('%s: a DOS program gets %s KB after the picture, %s KB without LODE.PIC (UI API 6: %s KB)'
               % ('EMS' if ems else 'no EMS', got['now', ems], got['now, no LODE.PIC', ems], MEM_044[ems]),
               got['now', ems] and got['now', ems] == got['now, no LODE.PIC', ems] == MEM_044[ems], got)
 
