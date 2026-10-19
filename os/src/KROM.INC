@@ -709,9 +709,16 @@ s_rsenve:
 ;  ini_read: the settings for the start-up's readers (KSPLASH.INC's,
 ;  KMDISK.INC's), which take the first match: DH's LODE.INI (the changes)
 ;  first, then the boot drive's (on R:, the ROM's own).  DS = CS = 1000h.
-;  -> SI = INI_BUF, the text, ended by a NUL
+;  -> SI = INI_BUF, the text, ended by a NUL.  Read from the disks once a
+;  start-up (rs_boot has chosen DH by then): the readers after the first
+;  get the same text (nothing writes INI_BUF meanwhile; LODE.PIC runs at
+;  PIC_SEG, past it).
 ; ---------------------------------------------------------------------
 ini_read:
+        mov     si, INI_BUF
+        cmp     byte [MDB(ini_got)], 0
+        jne     .r
+        mov     byte [MDB(ini_got)], 1
         push    es
         push    cs
         pop     es
@@ -752,3 +759,31 @@ ini_read:
         int     21h
 .r:     ret
 s_rini   db      '@:\LODE.INI', 0
+ini_got  db      0                      ; (read this start-up)
+
+; SI = LODE.INI's text (ASCIIZ), DI = a key as "NAME", 1Dh, 0 (that is,
+; "NAME=" AND 0DFh, any case) -> SI = its value on the first line that has
+; it; CF if none.  (AX, BX, DI change; CX is kept.)  The start-up's readers
+; all use it: KSPLASH.INC's SPLASH= and PRINTER=, KMDISK.INC's MDISK= and
+; MULTITASK=.
+ini_key:
+        mov     bx, di
+.line:  mov     di, bx
+.c:     mov     al, [di]
+        or      al, al
+        jz      .x                      ; (CF clear)
+        mov     ah, [si]
+        and     ax, 0DFDFh
+        cmp     al, ah
+        jne     .next
+        inc     si
+        inc     di
+        jmp     .c
+.next:  lodsb
+        or      al, al
+        jz      .no
+        cmp     al, 10
+        jne     .next
+        jmp     .line
+.no:    stc
+.x:     ret

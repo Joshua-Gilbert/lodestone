@@ -28,9 +28,9 @@ MAP = os.path.join(GOS, 'src', 'LODE.MAP')
 import mkmt
 INT08 = (STUB, 0x1000)                  # pcemu's BIOS timer handler
 
-# With the switch off these must not move (0.6 with UI API 6): the kernel's
+# With the switch off these must not move (main with UI API 6 and PrtSc's printing): the kernel's
 # image and BSS, the UI block kept while a DOS program runs
-OFF_MAP = {'image_end': 0x4450, 'bss_end': 0x7A90, 'ui_keep_end': 0x6CE4}
+OFF_MAP = {'image_end': 0x44F0, 'bss_end': 0x7B40, 'ui_keep_end': 0x6CE4}
 
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
@@ -169,7 +169,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', k1.run_file('MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 577.8 KB, as with no switch', m0 and m0.group(1) == '577.8', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 577.6 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '577.6', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = k.run_file('TESTDOS.COM', 120)

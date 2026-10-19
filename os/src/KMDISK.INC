@@ -988,31 +988,6 @@ md_boot:
         je      .ui
         call    mt_boot                 ; (KMT.INC)
 .ui:    jmp     KSEG:run_ui
-
-; SI = LODE.INI's text (ASCIIZ), DI = a key as "NAME", 1Dh, 0 (that is,
-; "NAME=" AND 0DFh, any case) -> SI = its value on the first line that has
-; it; CF if none.  (AX, BX, DI change; CX is kept.)
-ini_key:
-        mov     bx, di
-.line:  mov     di, bx
-.c:     mov     al, [di]
-        or      al, al
-        jz      .x                      ; (CF clear)
-        mov     ah, [si]
-        and     ax, 0DFDFh
-        cmp     al, ah
-        jne     .next
-        inc     si
-        inc     di
-        jmp     .c
-.next:  lodsb
-        or      al, al
-        jz      .no
-        cmp     al, 10
-        jne     .next
-        jmp     .line
-.no:    stc
-.x:     ret
 md_s0   db      0, 0, 0, 0, 0               ; (ems_init: KSEG:0000's 5 bytes)
 s_mdeq  db      'MDISK', 1Dh, 0         ; (as "MDISK=" AND 0DFh)
 

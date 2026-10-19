@@ -8,7 +8,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 - `os/LODE1_EPROM.BIN` is the one to burn, to a TMS27C010A (or any 27C010 / 128K × 8), with Xgpro set to that part and the address range on ALL.
 - `os/LODE1.BIN` is the same image as the BIOS sees it, which the emulators and tests use.
 
-**The 1520 inverts A16 to its ROM sockets,** so the chip's two 64 KB halves are swapped in the BIOS's window. GRiD's EPROM, read in a programmer, has its trailer at FF00h, not at the end. `LODE1_EPROM.BIN` is `LODE1.BIN` with its halves swapped (`mkrom.py` writes both). Both have the same Xgpro checksum (0x010599D4 for this build), so check the bytes instead: 10000h starts `EB 3C 90` and then `LODE ROM`. The first burn of `LODE1.BIN` itself gave the BIOS's "Disk Boot Error": with the halves swapped, it found no trailer and no ROM.
+**The 1520 inverts A16 to its ROM sockets,** so the chip's two 64 KB halves are swapped in the BIOS's window. GRiD's EPROM, read in a programmer, has its trailer at FF00h, not at the end. `LODE1_EPROM.BIN` is `LODE1.BIN` with its halves swapped (`mkrom.py` writes both). Both have the same Xgpro checksum (the sum of their bytes), so check the bytes instead: 10000h starts `EB 3C 90` and then `LODE ROM`. The first burn of `LODE1.BIN` itself gave the BIOS's "Disk Boot Error": with the halves swapped, it found no trailer and no ROM.
 
 | File | What it is |
 |---|---|
@@ -21,7 +21,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-About 23 KB is left (23,552 bytes with LODEMT.SYS, after multitasking M1). CLAUDE.COM is meant for ROM 2. Until then it lives on C: or A:.
+About 22 KB is left (22,528 bytes with LODEMT.SYS and PS.PRN). CLAUDE.COM is meant for ROM 2. Until then it lives on C: or A:.
 
 ## Which socket
 
