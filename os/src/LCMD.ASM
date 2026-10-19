@@ -30,6 +30,7 @@ org 100h
 
 LBUF    equ 128
 %include "LCMDENV.INC"                  ; ENVPARA: our environment, 1 KB
+%include "MTAPI.INC"                    ; TASKS: multitasking's calls
 HIST    equ 512                         ; the prompt's history
 RMAX    equ 12                          ; lines run inside lines (FOR, CALL)
 CMAX    equ 8                           ; CALLs inside CALLs
@@ -715,6 +716,7 @@ builtins:
         dw c_date, do_date
         dw c_time, do_time
         dw c_vol, do_vol
+        dw c_tasks, do_tasks
 builtins_pass:
         dw c_echo, do_echo
         dw c_rem, do_rem
@@ -3385,6 +3387,48 @@ do_echo:
 do_ver: mov     si, s_ver
         jmp     puts
 
+; TASKS: the tasks there are (multitasking, MTAPI.INC), the front one marked
+do_tasks:
+        push    ds
+        pop     es
+        mov     ax, 0F000h + MT_LIST
+        mov     di, tail                ; (MT_TASKS records fit)
+        mov     cx, MT_TASKS
+        int     21h
+        mov     si, e_mtoff
+        jc      .off
+        cmp     cx, MT_TASKS
+        jbe     .n
+        mov     cx, MT_TASKS
+.n:     mov     dl, al                  ; (the front task)
+        mov     si, tail
+.t:     mov     al, ' '
+        call    putc
+        call    putc
+        mov     al, [si+TR_ID]
+        push    ax
+        add     al, '0'
+        call    putc
+        mov     al, ' '
+        call    putc
+        call    putc
+        push    si
+        add     si, TR_NAME
+        call    puts
+        pop     si
+        pop     ax
+        cmp     al, dl
+        jne     .nf
+        push    si
+        mov     si, s_front
+        call    puts
+        pop     si
+.nf:    call    crlf
+        add     si, MT_REC
+        loop    .t
+        ret
+.off:   jmp     err
+
 do_vol: mov     ah, 19h
         int     21h
         mov     dl, al
@@ -4222,6 +4266,8 @@ c_for       db 'FOR', 0
 c_call      db 'CALL', 0
 c_shift     db 'SHIFT', 0
 c_choice    db 'CHOICE', 0
+c_tasks     db 'TASKS', 0
+s_front     db ' (in front)', 0
 s_not       db 'NOT', 0
 s_errlvl    db 'ERRORLEVEL', 0
 s_exist     db 'EXIST', 0
@@ -4286,6 +4332,7 @@ e_badcmd    db 'Bad command or file name', 13, 10, 0
 e_notfound  db 'File not found', 13, 10, 0
 e_create    db 'File creation error', 13, 10, 0
 e_drive     db 'Invalid drive specification', 13, 10, 0
+e_mtoff     db 'Multitasking is off (MULTITASK=1 in LODE.INI)', 13, 10, 0
 e_dir       db 'Invalid directory', 13, 10, 0
 e_mkdir     db 'Unable to create directory', 13, 10, 0
 e_rmdir     db 'Invalid path, not directory,', 13, 10, 'or directory not empty', 13, 10, 0

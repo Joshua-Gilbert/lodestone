@@ -334,6 +334,11 @@ by its title strip, or press CODE-F7 and move it with the arrow keys
 (Return puts it there, ESC leaves it).  The x at the strip's right end
 closes it, as ESC does.  Programs on the UI core get this with API 6.
 
+Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
+(with EMS) turns it on; so far that only puts its resident part in
+memory (240 bytes), and TASKS at the command prompt lists the one task
+there is, the Executive.  Without the line nothing of it is in memory.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title

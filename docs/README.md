@@ -10,6 +10,7 @@ Design notes, kept in step with the claude.ai Project "Grid-OS":
 - `lodestone-resident-claude.md`: resident Claude (0.5): the plan, `CLAUDE /R` and its milestones; the spikes and their results on the 1520, and the hook bug they found.
 - `term.md`: Term (0.4.0), the real Claude Code on the GRiD's screen through the Pi; and the design for Phase 2, Claude resident over DOS programs.
 - `gridfox.md`: gridfox (`CLAUDE /W`), Firefox on the Pi shown as text on the GRiD through Term's path: how it works, its keys, the tests, and the picture view and shared browser to come.
+- `lodestone-multitasking.md`: multitasking (0.7, being built behind `MULTITASK=1`): the milestones, and what each one built.
 - `lodestone-pictures.md`: the plan for pictures on the GRiD: gridfox's picture view and Claude Code's clickable plots, sharing one CELLS pixel operation and one Pi-side picture layer; sizes measured, decisions.
 
 The other notes are still only in the Project: the roadmap, the kernel hardware spec, the 1520 BIOS memory map, the GPIB driver design, the EMS investigation, the findings on the original GRiD binaries, and claude-link.

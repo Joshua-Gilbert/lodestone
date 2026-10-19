@@ -26,6 +26,8 @@
 ;           the master environment's block
 ;    KSPLASH the start-up picture's bootstrap: loads, runs and drops
 ;           \LODE.PIC (SPLASH.ASM); load image only, never resident
+;    KMT    multitasking, only with MULTITASK=1 (and EMS): its resident
+;           part in a block of its own at the top of memory
 ;
 ;  The UI segment (section ui, our COMMON.SHR) follows the kernel in this
 ;  file.  At start-up it is copied into a block of its own (owner 8, "UI")
@@ -169,6 +171,9 @@ MD_TPG  equ 1000h                       ; (its place in the cache's second page)
 section mdt progbits align=16 follows=boot vstart=MD_TPG
 ; KROM.INC: R:'s resident part, assembled from 0 and relocated where it goes
 section rmt progbits align=16 follows=mdt vstart=0
+; KMT.INC: multitasking's resident part, assembled from 0, run in a segment
+; of its own (mt_boot copies it there)
+section mtt progbits align=16 follows=rmt vstart=0
 section .text
 
 %include "KCORE.INC"
@@ -205,11 +210,12 @@ hd_start:
 %include "KMDISK.INC"
 %include "KSPLASH.INC"                 ; (section boot: LODE.PIC's bootstrap)
 %include "KROM.INC"                    ; (R:, the ROM; section rmt, and boot)
+%include "KMT.INC"                     ; (multitasking; section mtt, and boot)
 
 ; =====================================================================
 ;  The UI segment: offsets from 0 in a segment of its own
 ; =====================================================================
-section ui progbits align=16 follows=rmt vstart=0
+section ui progbits align=16 follows=mtt vstart=0
 section uibss nobits valign=16 vfollows=ui
 ; alignb would clash with vfollows in NASM's bin output (it sets a "real"
 ; section alignment); uibss starts on a paragraph, so this is the same thing
