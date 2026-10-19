@@ -346,7 +346,7 @@ bmp_hdr db 'BM'
         dd 40, 640, 400                 ; BITMAPINFOHEADER
         dw 1, 1                         ; 1 plane, 1 bit
         dd 0, 32000, 0, 0, 2, 0
-        db 0, 12, 28, 0, 50, 170, 255, 0 ; brown, amber (B, G, R)
+        db 2, 8, 36, 0, 40, 120, 255, 0 ; dark red, the plasma's orange (B, G, R)
 cap_name db 'A:\SCREEN'
 cap_num db '00.'
 cap_ext db 'BMP', 0

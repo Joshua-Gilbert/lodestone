@@ -142,7 +142,7 @@ them; it also reads into a buffer across a 64 KB boundary now.
 
 0.3.9: screen capture.  Shift-PrtSc saves the screen in the root of
 the boot disk instead of printing it: SCREEN01.BMP, SCREEN02.BMP ... in
-the graphics modes (640 x 400, amber on brown; 200-line modes have each
+the graphics modes (640 x 400, orange on dark red; 200-line modes have each
 line twice), SCREEN01.TXT ... in the text modes (the characters, line
 by line), up to 99 of each.  One beep when it is saved (a picture takes
 a few seconds); a long one if it couldn't be (write-protected or full:

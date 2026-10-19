@@ -203,7 +203,7 @@ def t_capture():
     def bmp_ok(data, line):
         """640 x 400, 1 bit, amber on brown, line y of the screen = line(y)."""
         im = Image.open(io.BytesIO(data))
-        if im.size != (640, 400) or im.getpalette()[:6] != [28, 12, 0, 255, 170, 50]: return False
+        if im.size != (640, 400) or im.getpalette()[:6] != [36, 8, 2, 255, 120, 40]: return False
         raw = im.tobytes()                      # (mode P: a byte a pixel)
         return all(bytes(sum((raw[y * 640 + x * 8 + b] != 0) << (7 - b) for b in range(8)) for x in range(80)) == line(y)
                    for y in range(400))
