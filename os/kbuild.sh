@@ -5,4 +5,5 @@ cd "$(dirname "$0")/src"
 printf '[map symbols LODE.MAP]\n%%include "LODE.ASM"\n' > _m.asm
 nasm -f bin -o LODE.SYS _m.asm -l LODE.LST
 rm -f _m.asm
+python3 ../mkmt.py LODE.SYS LODE.MAP LODEMT.SYS
 ls -l LODE.SYS

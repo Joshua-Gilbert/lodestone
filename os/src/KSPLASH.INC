@@ -85,18 +85,10 @@ sp_boot:
 ; CF if the settings say SPLASH=0 (or No, or Off).  DS = CS.
 sp_wanted:
         call    ini_read                ; (KROM.INC: LODE.INI's, both)
-.line:  mov     di, MDB(s_speq)         ; "SPLASH=" (any case) starting
-.c:     mov     al, [di]                ;  the line?
-        or      al, al
-        jz      .hit
-        mov     ah, [si]
-        and     ax, 0DFDFh
-        cmp     al, ah
-        jne     .next
-        inc     si
-        inc     di
-        jmp     .c
-.hit:   mov     al, [si]
+        mov     di, MDB(s_speq)         ; "SPLASH=" (any case)?
+        call    ini_key
+        jc      .yes                    ; (no such line)
+        mov     al, [si]
         cmp     al, '0'
         je      .no
         and     al, 0DFh
@@ -112,12 +104,6 @@ sp_wanted:
         ret
 .no:    stc
         ret
-.next:  lodsb                           ; on to the next line
-        or      al, al
-        jz      .yes
-        cmp     al, 10
-        jne     .next
-        jmp     .line
 
 ; PRINTER=NAME in the settings (the first such line, the changes' before
 ; the ROM's; "PRINTER=": none) -> the kernel's prn_path, where PATH finds
@@ -128,24 +114,10 @@ pr_boot:
         push    KSEG
         pop     es
         call    ini_read                ; (KROM.INC: LODE.INI's, both)
-.line:  mov     di, MDB(s_preq)         ; "PRINTER=" (any case) starting
-.c:     mov     al, [di]                ;  the line?
-        or      al, al
-        jz      .hit
-        mov     ah, [si]
-        and     ax, 0DFDFh
-        cmp     al, ah
-        jne     .next
-        inc     si
-        inc     di
-        jmp     .c
-.next:  lodsb                           ; on to the next line
-        or      al, al
-        jz      .x
-        cmp     al, 10
-        jne     .next
-        jmp     .line
-.hit:   cmp     byte [si], ' '          ; ("PRINTER=": none)
+        mov     di, MDB(s_preq)         ; "PRINTER=" (any case)?
+        call    ini_key
+        jc      .x                      ; (no such line)
+        cmp     byte [si], ' '          ; ("PRINTER=": none)
         jbe     .x
         mov     ax, 3305h
         int     21h

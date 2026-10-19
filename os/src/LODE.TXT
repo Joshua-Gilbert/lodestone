@@ -346,6 +346,13 @@ picture across the top of the page in the graphics modes, lines of text
 in the text modes.  One beep when it is sent; a long one if the printer
 is off, busy for 10 s or out of paper, or the driver isn't there.
 
+Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
+(with EMS) turns it on; so far that only puts its resident part in
+memory (240 bytes, read from LODEMT.SYS, which must sit beside LODE.SYS
+and come from the same build), and TASKS at the command prompt lists the
+one task there is, the Executive.  Without the line nothing of it is in
+memory, and LODEMT.SYS isn't even read.
+
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title

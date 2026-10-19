@@ -114,7 +114,7 @@ def t_image():
     check('mtools reads it: LODE.SYS first, nothing free', 'LODE     SYS' in d and ' 0 bytes free' in d.replace('\u202f', ' '), d)
     first = d.split('Directory for ::/')[1].strip().split('\n')[0]
     check('LODE.SYS is the first file', first.startswith('LODE     SYS'), first)
-    srcs = {'LODE.SYS': 'src/LODE.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
+    srcs = {'LODE.SYS': 'src/LODE.SYS', 'LODEMT.SYS': 'src/LODEMT.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
             'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI', 'DEFRAG.COM': 'src/DEFRAG.COM',
             'PS.PRN': 'drivers/PS.PRN'}
     bad = []
@@ -436,7 +436,7 @@ def t_memory():
               % (tag, got[tag, 'no ROM'], got[tag, 'ROM in, from A:'], got[tag, 'from the ROM']))
         n, f, r = got[tag, 'no ROM'], got[tag, 'ROM in, from A:'], got[tag, 'from the ROM']
         check('%s: R: costs DOS programs 0.6 KB at most (its module, and from the ROM a longer PATH in each program'"'"'s environment)' % tag,
-              n and f and r and round(n - f, 1) <= 0.5 and round(n - r, 1) <= 0.6, (n, f, r))
+              n and f and r and round(n - f, 1) <= 0.5 and round(n - r, 1) <= 0.6, (n, f, r))   # (MEMSZ's tenths)
     return got
 
 
