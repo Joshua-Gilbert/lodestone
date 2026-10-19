@@ -701,7 +701,7 @@ def t_prtsc_setting():
         for _ in range(3): k.key(ktest.DOWN, settle=False)
         k.settle()
     topic(k)
-    line = lambda: next((l for l in lines(k) if l.strip().startswith('PrtSc')), '')
+    line = lambda: next((l for l in lines(k) if ' PrtSc ' in l), '')
     path = lambda: k.rd('prn_path', 24).split(b'\0')[0]
     check('Devices: "PrtSc  saves SCREENnn.BMP / .TXT"; RETURN in the band', 'saves SCREENnn' in line() and path() == b''
           and 'RETURN: the next printer driver' in ' '.join(k.band()), (line(), k.band()))
