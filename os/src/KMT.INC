@@ -21,12 +21,9 @@
 ;  room: it stays off.  The part runs in its own segment, assembled from
 ;  0; it reaches the kernel with far jumps (and its near routines with
 ;  KCALL), so it doesn't have to be within KSEG's 64 KB.  Its hooks:
-;    - INT 08h goes through mt_tick (the BIOS's handler first); AH=25h
-;      and 35h for it set and give mt_old08 instead (f_25's and f_35's
-;      first 7 bytes become far jumps to mt_25 and mt_35), so a program's
-;      hook goes inside mt_tick, not ahead of it.  A hook chaining back to
-;      mt_tick reaches the start-up vector (mt_bios08); mt_tick written
-;      back over by what AH=35h gave is put back, on INT 21h's way out;
+;    - INT 08h goes through mt_tick (the BIOS's handler first).  A
+;      program's hook goes ahead of it, as in DOS (M5 gives each task its
+;      own); while one is there the tick doesn't switch;
 ;    - done.sw, INT 21h's way out, becomes a far jump to mt_exit;
 ;    - INT 21h F0h through mt_f0: f_F0's first 5 bytes (MOV AL,[BP+F_AX]
 ;      and OR AL,AL) become a far jump to it, and it comes back past
@@ -107,10 +104,7 @@ ENVMAX      equ 1024                    ; most of an environment kept
 ; ---- the resident part (in its own segment, from 0) -----------------
 section mtt
 mt_tstart:
-mt_old08    dd      0                   ; INT 08h's chain after mt_tick (AH=25h
-                                        ;  for INT 08h sets it: mt_25)
-mt_bios08   dd      0                   ; INT 08h as it was at start-up
-mt_in08     db      0                   ; 1: inside mt_old08's call
+mt_old08    dd      0                   ; INT 08h as it was
 mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
 mt_slice    db      2                   ; ticks left in the running task's turn
 mt_pend     db      0                   ; 1: another task's turn (its turn over,
@@ -172,13 +166,9 @@ ST_END      equ     100h + st_code.e - st_code
 ; INT 08h: the BIOS's handler first (the tick count, INT 1Ch, the end of
 ; the interrupt), then ours
 mt_tick:
-        cmp     byte [cs:mt_in08], 0    ; (from inside that: a hook set with
-        jne     .in                     ;  AH=25h chaining to mt_tick itself)
-        mov     byte [cs:mt_in08], 1
         pushf
         call    far [cs:mt_old08]       ; (back with the EOI sent; interrupts
         cli                             ;  off, whatever a hook there did)
-        mov     byte [cs:mt_in08], 0
         inc     word [cs:mt_ticks]
         push    ax
         push    bx
@@ -204,11 +194,11 @@ mt_tick:
 .w:     call    mt_kwant                ; (or a key for the front task)
         cmp     byte [cs:mt_pend], 0
         je      .r
-        push    es                      ; INT 08h still ours?  (Else a handler
-        xor     ax, ax                  ;  put ahead of it directly, not
-        mov     es, ax                  ;  through AH=25h, is what this
-        mov     ax, cs                  ;  interrupted: the switch waits for
-        cmp     word [es:8 * 4], mt_tick ;  INT 21h's way out.)
+        push    es                      ; INT 08h still ours?  (Else a hook
+        xor     ax, ax                  ;  ahead of it is what this
+        mov     es, ax                  ;  interrupted, not the task: the
+        mov     ax, cs                  ;  switch waits for INT 21h's way
+        cmp     word [es:8 * 4], mt_tick ;  out.)
         jne     .h
         cmp     [es:8 * 4 + 2], ax
 .h:     pop     es
@@ -227,28 +217,13 @@ mt_tick:
         pop     bx
         pop     ax
         iret
-.in:    jmp     far [cs:mt_bios08]
 
 ; INT 21h's way out (done's MOV SS,AX / MOV SP,BX / POPA: interrupts off,
 ; DS = KSEG, AX:BX = the caller's stack with its frame): another task's
-; turn, if one is due and the caller is at a safe point, then on out.
-; First: INT 08h in the vector table what mt_old08 holds (a program put
-; back there what AH=35h gave it): mt_tick put back ahead of it
+; turn, if one is due and the caller is at a safe point, then on out
 mt_exit:
         mov     ss, ax
         mov     sp, bx
-        push    es
-        xor     ax, ax
-        mov     es, ax
-        mov     ax, [es:8 * 4]
-        cmp     ax, [cs:mt_old08]
-        jne     .v
-        mov     ax, [es:8 * 4 + 2]
-        cmp     ax, [cs:mt_old08 + 2]
-        jne     .v
-        mov     word [es:8 * 4], mt_tick
-        mov     [es:8 * 4 + 2], cs
-.v:     pop     es
         cmp     byte [cs:mt_pend], 0
         jne     .c
 .go:    popa
@@ -662,51 +637,6 @@ mt_f0:  mov     al, [bp+F_AX]
 mt_bad: mov     ax, 1
 mt_fail:
         jmp     KSEG:fail
-
-; INT 21h AH=25h and 35h, from f_25's and f_35's first 7 bytes: for INT
-; 08h, mt_old08 instead of the vector, so mt_tick stays first and a hook
-; set this way runs inside it, before it decides anything
-mt_25:  cmp     byte [bp+F_AX], 08h
-        jne     .k
-        mov     ax, [bp+F_DX]
-        mov     dx, [bp+F_DS]
-        cli
-        cmp     ax, mt_tick             ; mt_tick itself (a program that read
-        jne     .s                      ;  the vector table, giving it back):
-        mov     bx, cs                  ;  in the table, if it isn't; else
-        cmp     dx, bx                  ;  the chain as at start-up, the
-        jne     .s                      ;  program's hook inside it gone
-        xor     bx, bx
-        mov     es, bx
-        cmp     [es:8 * 4], ax
-        jne     .t
-        cmp     [es:8 * 4 + 2], dx
-        jne     .t
-        les     ax, [cs:mt_bios08]
-        mov     dx, es
-.s:     mov     [cs:mt_old08], ax
-        mov     [cs:mt_old08 + 2], dx
-        sti
-        jmp     KSEG:done
-.t:     mov     [es:8 * 4], ax
-        mov     [es:8 * 4 + 2], dx
-        sti
-        jmp     KSEG:done
-.k:     xor     bx, bx                  ; (f_25's own first three, then on
-        mov     es, bx                  ;  there)
-        mov     bl, [bp+F_AX]
-        jmp     KSEG:f_25 + 7
-mt_35:  cmp     byte [bp+F_AX], 08h
-        jne     .k
-        mov     ax, [cs:mt_old08]
-        mov     [bp+F_BX], ax
-        mov     ax, [cs:mt_old08 + 2]
-        mov     [bp+F_ES], ax
-        jmp     KSEG:done
-.k:     xor     bx, bx                  ; (f_35's)
-        mov     es, bx
-        mov     bl, [bp+F_AX]
-        jmp     KSEG:f_35 + 7
 
 ; F0h AL=1 (files open on drive DL: DEFRAG and System ask before writing
 ; a disk's FAT and directories themselves): with another task there, at
@@ -1538,10 +1468,8 @@ mt_boot:
         cli
         mov     ax, [8 * 4]             ; INT 08h
         mov     [es:mt_old08], ax
-        mov     [es:mt_bios08], ax
         mov     ax, [8 * 4 + 2]
         mov     [es:mt_old08 + 2], ax
-        mov     [es:mt_bios08 + 2], ax
         mov     word [8 * 4], mt_tick
         mov     [8 * 4 + 2], es
         mov     ax, KSEG                ; INT 21h F0h: JMP FAR mt_f0
@@ -1555,14 +1483,6 @@ mt_boot:
         mov     byte [done.sw], 0EAh    ; INT 21h's way out: JMP FAR mt_exit
         mov     word [done.sw + 1], mt_exit
         mov     [done.sw + 3], es
-        mov     byte [f_25], 0EAh       ; AH=25h, 35h: JMP FAR mt_25, mt_35
-        mov     word [f_25 + 1], mt_25  ;  (and 2 NOPs: 7 bytes, done there)
-        mov     [f_25 + 3], es
-        mov     word [f_25 + 5], 9090h
-        mov     byte [f_35], 0EAh
-        mov     word [f_35 + 1], mt_35
-        mov     [f_35 + 3], es
-        mov     word [f_35 + 5], 9090h
         sti
         push    cs
         pop     ds

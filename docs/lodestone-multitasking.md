@@ -326,13 +326,7 @@ So, unlike M2a:
 
 A turn that ends anywhere else waits, as `mt_pend`, for the next safe tick or INT 21h exit.
 
-**INT 08h stays MT's:**
-- AH=25h and 35h for INT 08h set and give `mt_old08`, not the vector. f_25's and f_35's first 7 bytes become far jumps to `mt_25` and `mt_35`, which redo them for every other vector. So a program's or a TSR's timer hook runs inside `mt_tick`, before it decides anything, and the interrupted code it sees is still the task's.
-- A program that writes the vector table itself goes ahead of `mt_tick`. Then what `mt_tick` sees interrupted is that handler, not the task. So while INT 08h isn't `mt_tick`, the tick never switches. If the hook chains to `mt_tick` (what it read there), INT 21h's way out still does; if it chains past it (to what AH=35h gave), nothing does until the hook goes. `test_mt` shows a task with such a hook keeping the machine until it gives the vector back. M5's per-task vectors handle such programs properly.
-- **The two ways mixed:**
-  - A hook set with AH=25h that chains to `mt_tick` (read from the table) would call `mt_tick` from inside `mt_tick`. `mt_tick` notes it is inside its chain (`mt_in08`) and sends such a call on to the vector as it was at start-up (`mt_bios08`). Hooks set with AH=25h before that one drop out of the chain.
-  - AH=25h with `mt_tick` itself (a program giving back what it read in the table) puts `mt_tick` back in the table if it isn't there, and else puts the start-up vector back in `mt_old08`.
-  - What AH=35h gave written back in the table (a program that hooked by writing the table) takes `mt_tick` out. INT 21h's way out notices the table holding `mt_old08` and puts `mt_tick` back.
+**A hook on INT 08h goes ahead of `mt_tick`,** however it is set (AH=25h or the vector table), as in DOS. What `mt_tick` then finds interrupted is that hook, not the task, so while INT 08h isn't `mt_tick` the tick doesn't switch at all. INT 21h's way out still does, as long as the hook chains on to `mt_tick` (whatever AH=35h or the table gave it). See the limits.
 
 **Disks written behind DOS's back:** DEFRAG and System (resizing M:) ask INT 21h F0h AL=1 how many files are open on the drive before writing its FAT and directories themselves. With another task there, MT answers at least 1, since that task could open one meanwhile. So DEFRAG only shows the map, and System won't resize M:, while tasks are alive.
 
@@ -351,24 +345,22 @@ A turn that ends anywhere else waits, as `mt_pend`, for the next safe tick or IN
 - **The idle front task** sleeps out the rest of the tick it is given (it HLTs; MT only notices at the next tick). With the Executive or the prompt idle in front, a background task gets 55–65% of the processor in pcemu, not all of it.
 - **Index and data port pairs** (the CRTC's 3D4h/3D5h, the PIT's latch and its two reads): a task switched from between the two can find the index changed by another. `mt_safe` itself leaves the PIC reading its request register, as the BIOS does. M4's screen virtualisation.
 - **The EOI's order:** the in-service test assumes the BIOS's INT 08h sends the EOI before it returns. pcemu's does, and so does the 1520's (read in its ROM); M9 checks it on the machine.
-- **A faster timer:** a program that speeds up the timer chip and hooks INT 08h with AH=25h (music players, games) now has `mt_tick` run at its rate, so turns are that much shorter while it runs.
+- **A timer hook stops the tick switching.** While any program or TSR has INT 08h hooked (a clock, a spooler, a game), only INT 21h's way out switches. So a task that computes without calling DOS keeps the machine until the hook goes, or until it calls DOS. A hook that doesn't chain on stops `mt_tick` altogether, as it stops the BIOS's tick in DOS. M5's per-task vectors lift this: each task's own hooks run only while it does, inside `mt_tick`.
+
+  M3 first tried keeping INT 08h MT's by catching AH=25h and 35h for it, so a hook set that way would run inside `mt_tick`. That one global chain, mixed with programs that read or write the vector table themselves, gave two re-reviews four ways to hang the machine or lose `mt_tick` for good. So it was taken out again, and the job is left to M5's per-task vectors.
 - **C:'s INT 25h/26h** run kernel code outside INT 21h. An INT 24h handler raised from inside them (a disk error) could be preempted with that code's state half used. That needs a disk error on C: during INT 25h/26h. M5.
 - **Resident Claude's console** runs at E000h, so it is never preempted. But CLAUDE /R doesn't yet hold switching while it is up (the plan's `mt_hold`, M7).
 - **The UI's code in two tasks:** LCMD started as a task runs the Executive's screen saver in that task (it asked F0h AL=5 once, at its start), while the Executive is task 0. And the Executive, in the background, still draws its clock. Both are rare in M3 (tasks are started with MTLAUNCH); M7 gives the Executive its task list and the saver its owner.
 
 **Cost:**
-- **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 64 bytes, in `mt_boot` (the patches). The UI's two labels, KCORE's `done.sw` and `ctrlc.sw` cost no bytes.
-- **Switch on:** MT's block is 251 paragraphs plus its MCB, 3.9 KB, so a DOS program gets 573.7 KB instead of 577.6.
+- **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 16 bytes, in `mt_boot` (the new patch). The UI's two labels, KCORE's `done.sw` and `ctrlc.sw` cost no bytes.
+- **Switch on:** MT's block is 238 paragraphs plus its MCB, 3.7 KB, so a DOS program gets 573.9 KB instead of 577.6.
 - **A task's stack:** switching from outside INT 21h, MT uses at most about 44 bytes of the task's own stack below its SP at the tick (the interrupt's 6 included), and 56 on INT 21h's way out (the 26-byte INT 21h frame included). `test_mt` measures 42 and 54 at the start of every block MT and the kernel run meanwhile; a block's own pushes add 2.
-- **Files:** LODEMT.SYS is 3,304 bytes; ROM 1 has 19,456 bytes left.
+- **Files:** LODEMT.SYS is 3,093 bytes; ROM 1 has 19,456 bytes left.
 
-**Tests:** `test_mt.py`, 126 checks. The new groups are `t_preempt` and `t_rules`, with two new test programs:
+**Tests:** `test_mt.py`, 122 checks. The new groups are `t_preempt` and `t_rules`, with two new test programs:
 - `MTSPIN T CNTFILE [mode]` counts for T ticks of the BIOS's clock, then writes its count. It prints nothing. Its modes: D, an INT 21h call each count; W, a 64-byte record written to a file each count; C, the INT 21h call with interrupts off; S, its stack outside its memory (B800h) meanwhile; F, its stack in a block it took and gave back (free memory); R, INT 62h (MTHOOK's service) each count; H, its own INT 1Ch handler (STI, then INT 21h); T, its own INT 08h handler, written in the vector table; O, no counting, the count is F0h AL=1's answer.
-- `MTHOOK` hooks INT 08h (STI, then PUSHF / CALL FAR), each way:
-  - plain: a TSR, with AH=35h and 25h, and an INT 62h service that waits 2 ticks with interrupts on;
-  - X: a TSR, the old vector read from the table, its own set with AH=25h;
-  - Y: the table written for 5 ticks, then AH=25h with what it read there;
-  - Z: AH=35h, the table written for 5 ticks, then what AH=35h gave written back.
+- `MTHOOK` is a TSR that hooks INT 08h with AH=35h and 25h (STI, then PUSHF / CALL FAR). `MTHOOK S` is one with an INT 62h service instead, which waits 2 ticks with interrupts on.
 
 The checks:
 - **Spinners:** two take turns, about half each of what one counts alone, on a floppy 300 KB full. With one in front (turns of 2 ticks against 1), it counts about twice the other's.
@@ -382,12 +374,11 @@ The checks:
   - a stack outside the task's memory, in a task, and in task 0 from the prompt (at B800h, and in free memory: the arena walked): never switched from there;
   - code outside the task's memory on its stack (MTHOOK's INT 62h): never switched from there;
   - INT 21h with interrupts off, and from INT 1Ch with IRQ 0 in service (with a switch made due on every way out, by the audit);
-  - MTHOOK's INT 08h hook: inside `mt_tick`, spinners still take turns;
-  - MTHOOK X, Y and Z: `mt_tick` runs on every tick, it is back in the table, and spinners take turns after each;
   - a task's own INT 08h hook in the vector table: no switch at the tick while it is there;
+  - MTHOOK's INT 08h hook: `mt_tick` still runs every tick, the tick switches nothing, INT 21h's way out still does (spinners calling INT 21h take turns, others run one after the other);
   - F0h AL=1 with and without other tasks;
   - LCMD's screen saver: switched from at its idle HLT.
-- **The patches:** `done.sw`, `f_25` and `f_35` pinned in LODE.SYS, patched with the switch on, untouched with it off.
+- **The patch:** `done.sw` pinned in LODE.SYS, patched with the switch on, untouched with it off; `ctrlc.sw`'s copy untouched.
 - **The checks can fail:** each of these, broken on purpose, fails a check:
   - switching at the tick (the spinners, a key for the front task, the Executive, LCMD's saver);
   - switching on INT 21h's way out (the INT 21h spinners' way-out switches, and the rules met there);
@@ -395,5 +386,4 @@ The checks:
   - the UI's idle-point rule (the audit, with the Executive busy);
   - the front task's turn for a key (a key for the front task);
   - each safe-point rule: interrupts on, none in service (the audit, in `t_rules`); `m33_busy`; SS the task's own; CS the task's own (INT 62h); task 0's blocks found in the arena, in both directions (the prompt and LCMD's saver; B800h and free memory from the prompt); CS in the UI's not checked again (LCMD's saver);
-  - AH=25h's patch (MTHOOK), the check that INT 08h is still `mt_tick` (a task's own hook), F0h AL=1's answer;
-  - `mt_tick`'s guard against itself (X), AH=25h with `mt_tick` (Y), `mt_tick` put back on INT 21h's way out (Z).
+  - the check that INT 08h is still `mt_tick` (a task's own hook), F0h AL=1's answer.

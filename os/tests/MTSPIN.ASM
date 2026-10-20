@@ -10,7 +10,7 @@
 ;      text screen's pages in use)
 ;   F  counts with its stack in a block it took (AH=48h) and gave back:
 ;      free memory, nobody's
-;   R  INT 62h on each count (MTHOOK's service: 2 ticks, in its code)
+;   R  INT 62h on each count (MTHOOK S's service: 2 ticks, in its code)
 ;   H  hooks INT 1Ch (AH=25h) meanwhile: its handler does STI and, with
 ;      InDOS 0, AH=2Ch, then chains (so INT 21h's way out with IRQ 0 in
 ;      service)
