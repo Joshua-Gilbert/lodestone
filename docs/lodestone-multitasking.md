@@ -396,24 +396,37 @@ The checks:
 **Why:** the 80287 holds one set of registers, its control word and its status. A task switched from in the middle of a calculation, at the tick since M3 or at a key wait since M2a, found them as the last task to use the coprocessor left them. Two tasks using it at once (the calculator in the Executive and a program behind it, say) would each corrupt the other's numbers.
 
 **What it does:**
-- When a task is switched from, `mt_switch` saves its coprocessor state (FNSAVE, 94 bytes) in its TX, with a flag (`TX_FPV`).
-- `mt_load` puts back the incoming task's state (FRSTOR). A task with none saved yet (a new one) gets FNINIT's.
-- FNSAVE is the no-wait form. A task's pending coprocessor error stays with it, not raised in MT, and the 286 itself waits for the 287 to finish before giving it the next instruction.
-- **Only with a coprocessor:** `mt_boot` reads INT 11h's bit once (`mt_fpu`); on the 1520 that is POST's own probe. With none, the 286's EM bit may be set and these instructions would trap, so MT doesn't touch it.
+- When a task is switched from, `mt_switch` saves its coprocessor state (FNSAVE, then FWAIT, as Intel requires before anything else touches it) in its TX, with a flag (`TX_FPV`).
+- `mt_load` puts back the incoming task's state (FRSTOR). A task with none saved yet (a new one) gets FNINIT's. That matters when a task ends straight into a new one; otherwise FNSAVE has already left the chip as FNINIT does.
+- **Only with a coprocessor:** `mt_boot` reads INT 11h's bit once (`mt_fpu`). On the 1520 that bit is POST's own probe (its reset.asm). With no chip the 286's EM bit may be set and these instructions would trap, so MT doesn't touch it.
 
-**The coprocessor can't be a second thread.** It has no instruction fetch and no memory access of its own. It runs the instructions the 286 hands it, one at a time, overlapping only one long instruction (a divide or square root, a few hundred cycles) with the 286's own work. That overlap is something a program arranges in its own code; a scheduler can't give the coprocessor a task.
+**The 287's errors, on the 1520:**
+- **How they arrive:** the 1520 is wired like an AT (the GRiD BIOS's int75.asm). An unmasked error raises IRQ 13 and holds the 287's BUSY line to the 286 until the IRQ 13 handler (the BIOS's INT 75h) clears it with an OUT to port F0h. The 286 waits on BUSY before any coprocessor instruction but FNINIT.
+- **So FNSAVE runs with interrupts on.** If it ran with them off, an error still pending at a switch would hang the machine: FNSAVE would wait on BUSY forever, and IRQ 13 couldn't run to clear it. With them on, the error is delivered as in DOS, through INT 75h and then INT 02h, to the task it belongs to: until `mt_switch` finishes, that task is still the running one in every respect but the code running. A tick in that window finds MT's code interrupted and leaves at once; other interrupts run as they would at any point in the task.
+- **An error is delivered once.** Once FNSAVE is done, its error has been delivered. MT then clears the error summary (ES) in the saved status word, so that FRSTOR doesn't raise IRQ 13 again at each of the task's turns. The exception flags themselves stay.
+- **Also found:** MT never cleared the direction flag. A task interrupted inside `STD ... REP MOVS` (a memmove running backwards, an editor scrolling) reached `mt_switch` with DF set, and MT's copies of its context ran backwards over the TX and the kernel's memory. That has been there since M3. `mt_switch` and `mt_load` now CLD; the task gets its own DF back from its interrupt frame.
+
+**The coprocessor can't be a second thread.** It has no instruction fetch and no memory access of its own. It runs the instructions the 286 hands it, one at a time, while the 286 goes on with its own work until the next one. That overlap pays for the long instructions (divides, square roots, the transcendentals, a few hundred cycles each), and it is something a program arranges in its own code. A scheduler can't give the coprocessor a task.
 
 **The limits:**
-- **Every switch saves and restores it**, whether or not either task uses the coprocessor. That costs a few hundred of the 287's cycles each way, 18 to 36 times a second, well under a millisecond each time. Saving only for tasks that use it (trapping their first coprocessor instruction through the 286's TS bit) would avoid that, but needs INT 7 in real mode, which pcemu can't show; not worth it at this rate.
-- **A pending error comes back with its task.** Where the 287's error line is wired to IRQ 13, as on an AT, putting back a state that holds an unmasked error can raise it then, at the start of that task's turn, rather than at its next coprocessor instruction.
+- **Every switch saves and restores it**, whether or not either task uses the coprocessor. That costs about 200 of the 287's cycles each way, plus 47 word transfers: 0.1 to 0.2 ms a switch, with about 18 switches a second at the tick and more at key waits. Saving only for tasks that use it would avoid that: the 286's TS bit traps a task's first coprocessor instruction to INT 7 (in real mode too, and pcemu shows it). But it needs an INT 7 handler of MT's, which isn't worth it at this rate.
+- **INT 02h and INT 75h are global** until M5, so a task's error goes to whichever handler is hooked there, as with any vector.
+- **The error wiring is read from the GRiD BIOS, not tried:** pcemu has no BUSY latch and no IRQ 13 from its coprocessor. M9 checks a coprocessor error on the 1520 with a task behind it.
 
 **Cost:**
-- **Switch off:** nothing; LODE.SYS is unchanged.
-- **Switch on:** each task's TX grows by 95 bytes. Task 0's is in MT's block, now 247 paragraphs plus its MCB, 3.9 KB, so a DOS program gets 573.7 KB instead of 577.6.
-- **Files:** LODEMT.SYS is 3,145 bytes; ROM 1 has 19,456 bytes left.
+- **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 10 bytes, in `mt_boot` (reading INT 11h's bit), within section boot's padding, so its size is unchanged.
+- **Switch on:** each task's TX grows by 6 paragraphs (96 bytes: its flag, then the state, even-aligned), so a task's region is 103 paragraphs plus its environment and memory. Task 0's TX is in MT's block, now 248 paragraphs plus its MCB, 3.9 KB, so a DOS program gets 573.7 KB instead of 577.6.
+- **Files:** LODEMT.SYS is 3,156 bytes; ROM 1 has 19,456 bytes left.
 
-**Tests:** `test_mt.py`, 125 checks. The new group is `t_fpu`, with a new MTSPIN mode, P. It keeps its own values on the coprocessor (n and 2n in ST0 and ST1, n from its segment, its own rounding in the control word) and checks them on every count; if any has changed, the count it writes is 0.
+**Tests:** `test_mt.py`, 127 checks. The new group is `t_fpu`, with three new MTSPIN modes:
+- P keeps its own values on the coprocessor (n and 2n in ST0 and ST1, n from its segment, and its own rounding in the control word, never FNINIT's) and checks them on every count. If any has changed, the count it writes is 0.
+- I checks that the control word is FNINIT's (037Fh) before it uses the coprocessor.
+- B counts with the direction flag set.
+
+The checks:
 - Two P tasks switched at the tick all along: neither sees a change, and each counts about half of what one alone does.
 - Task 0 (P run from the prompt) with a P task behind it: both kept.
-- INT 11h saying there is no coprocessor: `mt_fpu` is 0, and tasks take turns as before.
-- **The checks can fail:** without the save, or without the restore, the P tasks see their values change.
+- A new task (I) run straight after one that set its own control word and ended: FNINIT's, three times.
+- INT 11h saying there is no coprocessor, with the 286's EM bit set so that any coprocessor instruction would trap: `mt_fpu` is 0, no INT 7, and tasks take turns as before.
+- Two B tasks switched at the tick: they take turns, the machine intact (`t_rules`).
+- **The checks can fail:** each of these, broken on purpose, fails a check: the save; the restore; FNINIT for a new task; the INT 11h gate; the CLD (9 checks fail). The interrupts-on window and the ES clearing need the 1520's wiring, which pcemu doesn't model.

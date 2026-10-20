@@ -23,6 +23,7 @@ import ktest
 import test_apps as A
 from test_kernel import Shell
 from pcemu import STUB
+from unicorn import x86_const as UX
 
 results = []
 def check(name, cond, detail=''):
@@ -49,11 +50,14 @@ def ini(text):
 def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
     MTPROBE, `more`, and LODE.INI holding `text`.  nofpu: INT 11h says no
-    coprocessor."""
+    coprocessor, and the 286's EM bit is set, so any coprocessor instruction
+    traps (INT 7, counted in pc.ints)."""
     files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
         + ([ini(text)] if text is not None else [])
     k = ktest.KPC(A.image(name, *files), ems_pages=ems)
-    if nofpu: k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))
+    if nofpu:
+        k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))
+        k.pc.mu.reg_write(UX.UC_X86_REG_CR0, k.pc.mu.reg_read(UX.UC_X86_REG_CR0) | 4)
     k.start(10)
     k.mcb0 = k.u16('first_mcb')         # (the whole arena's start: first_mcb is per task)
     return k
@@ -690,6 +694,12 @@ def t_rules():
           'that alone), so the two MTSPINs run one after the other, each about as much as alone (%d and %d; %d)'
           % (au.only['busy'] - b0, b1, b2, r0), len(au.ev) == n and au.only['busy'] > b0 and b1 > 0.8 * r0 and b2 > 0.8 * r0,
           (len(au.ev) - n, b1, b2, r0))
+    # interrupted with the direction flag set (STD ... REP MOVS, as a memmove backwards)
+    typ(k, 'mtlaunch mtspin.com 20 x1.txt b;mtspin.com 20 x2.txt b', 2.5); line(k, '')
+    x1, x2 = spun(k, 'X1.TXT'), spun(k, 'X2.TXT')
+    check('two tasks counting with the direction flag set (STD), switched at the tick: MT copies their contexts forward '
+          'all the same (CLD), and they take turns (%d and %d)' % (x1, x2),
+          0.3 * r0 < x1 < 0.7 * r0 and 0.3 * r0 < x2 < 0.7 * r0 and not k.crashed, (x1, x2, r0))
     # a stack outside the task's memory
     n, s0 = len(au.ev), au.only['ss']
     typ(k, 'mtlaunch mtspin.com 20 s1.txt s;mtspin.com 20 s2.txt', 3.0); line(k, '')
@@ -848,14 +858,22 @@ def t_fpu():
     p3, p4 = spun(k, 'P3.TXT'), spun(k, 'P4.TXT')
     check('... and task 0\'s (MTSPIN P from the prompt, another behind it): both kept (%d and %d)' % (p3, p4),
           p3 > 0 and 0.3 * p0 < p4 < 0.8 * p0, (p3, p4, p0))
+    # a new task finds FNINIT's state, also when the one before it ended with its own, straight into it (no
+    # switch between: the first writes its count to NUL, so it ends within its first turn)
+    for i in range(3):
+        typ(k, 'mtlaunch mtspin.com 0 nul p;mtspin.com 0 b%d.txt i' % i, 1.0); line(k, '')
+    ib = [A.disk_file(k, 'B%d.TXT' % i) for i in range(3)]
+    check('a new task finds the coprocessor as FNINIT leaves it (control word 037Fh), also run straight after one that '
+          'set its own and ended (%s)' % b' '.join(x or b'-' for x in ib).decode(), ib == [b'00000001'] * 3, ib)
     k = boot('mt_nf.img', b'MULTITASK=1\r\n', 88, nofpu=True)
     seg = mt_seg(k)
     Shell(k).run('ver')
     typ(k, 'mtlaunch mtspin.com 20 n1.txt;mtspin.com 20 n2.txt', 2.5); line(k, '')
     n1, n2 = spun(k, 'N1.TXT'), spun(k, 'N2.TXT')
-    check('INT 11h says no coprocessor: MT leaves it alone (none of its instructions, which might trap), and tasks take '
-          'turns as before (%d and %d)' % (n1, n2), seg and k.pc.rd(seg, Y['mt_fpu'], 1)[0] == 0 and n1 > 0 and n2 > 0
-          and 0.5 < n1 / n2 < 2, (seg, n1, n2))
+    check('INT 11h says no coprocessor (and the 286\'s EM bit set, so any coprocessor instruction would trap): MT runs '
+          'none (no INT 7), and tasks take turns as before (%d and %d)' % (n1, n2), seg
+          and k.pc.rd(seg, Y['mt_fpu'], 1)[0] == 0 and k.pc.ints[7] == 0 and not k.crashed and n1 > 0 and n2 > 0
+          and 0.5 < n1 / n2 < 2, (seg, k.pc.ints[7], n1, n2))
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')

@@ -5,7 +5,7 @@
 ;  a DOS program in a region of its own, switched when one waits for a
 ;  key (M2a); the front one chosen with CODE-Tab, each task's screen kept
 ;  in 2 EMS pages of its own (M2b); tasks preempted at the timer's tick,
-;  where it is safe (M3).
+;  where it is safe (M3); each task's coprocessor state kept (M3b).
 ;
 ;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
 ;  only in the load image, its resident part (section mtt) isn't even in
@@ -80,9 +80,9 @@ V_DTA       equ V_CWD + (cur_drv + 1 - cwdstr)
 V_PSP       equ V_DTA + (rw_t0 + 1 - dta)
 TX_KSTK     equ V_PSP + (term_keep + 2 - cur_psp)
 KSLICE      equ 256                     ; room for the kernel stack's slice
-TX_FPU      equ TX_KSTK + KSLICE        ; the coprocessor's state (FNSAVE's 94
-TX_FPV      equ TX_FPU + 94             ;  bytes); 1: kept there (0: FNINIT)
-TX_PARAS    equ (TX_FPV + 1 + 15) / 16
+TX_FPV      equ TX_KSTK + KSLICE        ; 1: its coprocessor state kept (0: FNINIT)
+TX_FPU      equ (TX_FPV + 2) & ~1       ; the state (FNSAVE's 94 bytes, even)
+TX_PARAS    equ (TX_FPU + 94 + 15) / 16
 
 ; ---- the stub (a PSP, then this at 100h) --------------------------------
 ST_PATH     equ 120h                    ; the program (ASCIIZ)
@@ -518,6 +518,7 @@ mt_switch:
         push    ds
         push    es
         cli
+        cld                             ; (DF as the task had it, at a tick)
         mov     al, [cs:mt_cur]
         push    bx
         call    mt_ent
@@ -527,10 +528,14 @@ mt_switch:
         mov     [es:TX_SS], ss
         call    mt_emsget
         cmp     byte [cs:mt_fpu], 0     ; its coprocessor's registers, control
-        je      .nf                     ;  and status (FNSAVE: a pending error
-        fnsave  [es:TX_FPU]             ;  kept for it, not raised here; the
-        mov     byte [es:TX_FPV], 1     ;  286 waits for the 287 itself)
-.nf:
+        je      .nf                     ;  and status.  Interrupts on for it:
+        sti                             ;  the 1520 (as an AT) holds the 287
+        fnsave  [es:TX_FPU]             ;  BUSY after an unmasked error until
+        fwait                           ;  IRQ 13's handler clears it, and the
+        cli                             ;  286 waits on BUSY first.  So the
+        and     byte [es:TX_FPU + 2], 7Fh ;  error reaches this task, still
+        mov     byte [es:TX_FPV], 1     ;  the running one; then its ES is
+.nf:                                    ;  cleared, not raised again by FRSTOR
         push    KSEG
         pop     ds
         xor     cx, cx                  ; its slice of the kernel stack (none:
@@ -547,6 +552,7 @@ mt_switch:
         pop     bx
 mt_load:
         cli
+        cld
         mov     [cs:mt_cur], bl
         mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
         mov     byte [cs:mt_slice], 1

@@ -415,8 +415,8 @@ FFFFFFFFFFFFFFE0  M_BACK
 000001B5  V_PSP
 000001BD  TX_KSTK
 00000100  KSLICE
-000002BD  TX_FPU
-0000031B  TX_FPV
+000002BD  TX_FPV
+000002BE  TX_FPU
 00000032  TX_PARAS
 00000120  ST_PATH
 000001A0  ST_PB
@@ -427,9 +427,9 @@ FFFFFFFFFFFFFFE0  M_BACK
 00000400  ENVMAX
 00000013  st_len
 0000010B  ST_END
-00000C49  MT_LEN
-000000C5  MT_TX0P
-000000F7  MT_PARAS
+00000C54  MT_LEN
+000000C6  MT_TX0P
+000000F8  MT_PARAS
 
 
 ---- Section .text ------------------------------------------------------------
@@ -3266,108 +3266,108 @@ Real              Virtual           Name
             C3C3               413  mt_pick.x
             C3C6               416  mt_ent
             C3D4               424  mt_switch
-            C3E5               435  mt_switch.sv
-            C405               455  mt_switch.nf
-            C416               466  mt_switch.k
-            C427               477  mt_load
-            C445               495  mt_load.t
-            C469               4B9  mt_load.fi
-            C46B               4BB  mt_load.nf
-            C477               4C7  mt_load.em
-            C49D               4ED  mt_load.go
-            C4A2               4F2  mt_emsget
-            C4A8               4F8  mt_emsget.l
-            C4B0               500  mt_vsave
-            C4B6               506  mt_vsave.r
-            C4C8               518  mt_vsave.x
-            C4C9               519  mt_vload
-            C4D3               523  mt_vload.r
-            C4E5               535  mt_vload.x
-            C4EA               53A  mt_f0
-            C511               561  mt_bad
-            C514               564  mt_fail
-            C519               569  mt_open
-            C523               573  mt_open.l
-            C53B               58B  mt_open.y
-            C545               595  mt_list
-            C554               5A4  mt_list.l
-            C575               5C5  mt_list.n
-            C58A               5DA  mt_frontc
-            C5A6               5F6  mt_end
-            C5CF               61F  ..@175.r
-            C5E9               639  mt_end.np
-            C601               651  mt_end.fr
-            C608               658  mt_end.t
-            C62A               67A  mt_end.f
-            C637               687  mt_end.s
-            C641               691  mt_end.go
-            C644               694  mt_spawn
-            C646               696  mt_spawn.e
-            C65B               6AB  mt_spawn.got
-            C674               6C4  mt_spawn.a
-            C68F               6DF  mt_spawn.ev
-            C69B               6EB  mt_spawn.el
-            C6A8               6F8  mt_spawn.ee
-            C6CF               71F  mt_spawn.room
-            C6D5               725  mt_spawn.r
-            C6F2               742  mt_spawn.sh
-            C6F4               744  mt_spawn.dh
-            C703               753  mt_spawn.dn
-            C764               7B4  ..@176.r
-            C79C               7EC  mt_spawn.p
-            C7C7               817  mt_spawn.tl
-            C7D5               825  mt_spawn.nt
-            C7D9               829  mt_spawn.te
-            C8E0               930  mt_spawn.x
-            C8E5               935  mt_name
-            C8ED               93D  mt_name.s
-            C8FA               94A  mt_name.m
-            C8FE               94E  mt_name.c
-            C90B               95B  mt_name.n
-            C91A               96A  mt_name.u
-            C922               972  mt_name.z
-            C929               979  mt_name.x
-            C92B               97B  mt_hot
-            C939               989  mt_hot.s
-            C961               9B1  mt_hot.sk
-            C968               9B8  mt_hot.m
-            C979               9C9  mt_hot.e
-            C98A               9DA  mt_hot.t
-            C98D               9DD  mt_hot.l
-            C99E               9EE  mt_hot.y
-            C9A7               9F7  mt_hot.q
-            C9AB               9FB  mt_hot.no
-            C9B0               A00  mt_hot.nx
-            C9BC               A0C  mt_hot.nr
-            C9BD               A0D  mt_scrto
-            C9DB               A2B  mt_scrto.x
-            C9DC               A2C  mt_m33
-            C9EF               A3F  mt_m33.x
-            C9F3               A43  mt_scrsv
-            CA33               A83  mt_scrsv.x
-            CA37               A87  mt_scrsv.gone
-            CA3C               A8C  mt_wgone
-            CA46               A96  mt_scrld
-            CA62               AB2  mt_scrld.clr
-            CA69               AB9  mt_scrld.k
-            CA83               AD3  mt_scrld.s
-            CAD6               B26  mt_scrld.x
-            CADA               B2A  mt_wsave
-            CAEB               B3B  mt_wrest
-            CAFC               B4C  mt_wmap
-            CB3B               B8B  mt_wmap.e
-            CB3C               B8C  mt_wmap.x
-            CB40               B90  mt_carve
-            CB4D               B9D  mt_carve.w
-            CB61               BB1  mt_carve.w1
-            CB69               BB9  mt_carve.mg
-            CB9A               BEA  mt_carve.fit
-            CBA3               BF3  mt_carve.nx
-            CBB3               C03  mt_carve.end
-            CBE8               C38  mt_carve.all
-            CBF5               C45  mt_carve.no
-            CBF6               C46  mt_carve.x
-            CBF9               C49  mt_tend
+            C3E6               436  mt_switch.sv
+            C40F               45F  mt_switch.nf
+            C420               470  mt_switch.k
+            C431               481  mt_load
+            C450               4A0  mt_load.t
+            C474               4C4  mt_load.fi
+            C476               4C6  mt_load.nf
+            C482               4D2  mt_load.em
+            C4A8               4F8  mt_load.go
+            C4AD               4FD  mt_emsget
+            C4B3               503  mt_emsget.l
+            C4BB               50B  mt_vsave
+            C4C1               511  mt_vsave.r
+            C4D3               523  mt_vsave.x
+            C4D4               524  mt_vload
+            C4DE               52E  mt_vload.r
+            C4F0               540  mt_vload.x
+            C4F5               545  mt_f0
+            C51C               56C  mt_bad
+            C51F               56F  mt_fail
+            C524               574  mt_open
+            C52E               57E  mt_open.l
+            C546               596  mt_open.y
+            C550               5A0  mt_list
+            C55F               5AF  mt_list.l
+            C580               5D0  mt_list.n
+            C595               5E5  mt_frontc
+            C5B1               601  mt_end
+            C5DA               62A  ..@175.r
+            C5F4               644  mt_end.np
+            C60C               65C  mt_end.fr
+            C613               663  mt_end.t
+            C635               685  mt_end.f
+            C642               692  mt_end.s
+            C64C               69C  mt_end.go
+            C64F               69F  mt_spawn
+            C651               6A1  mt_spawn.e
+            C666               6B6  mt_spawn.got
+            C67F               6CF  mt_spawn.a
+            C69A               6EA  mt_spawn.ev
+            C6A6               6F6  mt_spawn.el
+            C6B3               703  mt_spawn.ee
+            C6DA               72A  mt_spawn.room
+            C6E0               730  mt_spawn.r
+            C6FD               74D  mt_spawn.sh
+            C6FF               74F  mt_spawn.dh
+            C70E               75E  mt_spawn.dn
+            C76F               7BF  ..@176.r
+            C7A7               7F7  mt_spawn.p
+            C7D2               822  mt_spawn.tl
+            C7E0               830  mt_spawn.nt
+            C7E4               834  mt_spawn.te
+            C8EB               93B  mt_spawn.x
+            C8F0               940  mt_name
+            C8F8               948  mt_name.s
+            C905               955  mt_name.m
+            C909               959  mt_name.c
+            C916               966  mt_name.n
+            C925               975  mt_name.u
+            C92D               97D  mt_name.z
+            C934               984  mt_name.x
+            C936               986  mt_hot
+            C944               994  mt_hot.s
+            C96C               9BC  mt_hot.sk
+            C973               9C3  mt_hot.m
+            C984               9D4  mt_hot.e
+            C995               9E5  mt_hot.t
+            C998               9E8  mt_hot.l
+            C9A9               9F9  mt_hot.y
+            C9B2               A02  mt_hot.q
+            C9B6               A06  mt_hot.no
+            C9BB               A0B  mt_hot.nx
+            C9C7               A17  mt_hot.nr
+            C9C8               A18  mt_scrto
+            C9E6               A36  mt_scrto.x
+            C9E7               A37  mt_m33
+            C9FA               A4A  mt_m33.x
+            C9FE               A4E  mt_scrsv
+            CA3E               A8E  mt_scrsv.x
+            CA42               A92  mt_scrsv.gone
+            CA47               A97  mt_wgone
+            CA51               AA1  mt_scrld
+            CA6D               ABD  mt_scrld.clr
+            CA74               AC4  mt_scrld.k
+            CA8E               ADE  mt_scrld.s
+            CAE1               B31  mt_scrld.x
+            CAE5               B35  mt_wsave
+            CAF6               B46  mt_wrest
+            CB07               B57  mt_wmap
+            CB46               B96  mt_wmap.e
+            CB47               B97  mt_wmap.x
+            CB4B               B9B  mt_carve
+            CB58               BA8  mt_carve.w
+            CB6C               BBC  mt_carve.w1
+            CB74               BC4  mt_carve.mg
+            CBA5               BF5  mt_carve.fit
+            CBAE               BFE  mt_carve.nx
+            CBBE               C0E  mt_carve.end
+            CBF3               C43  mt_carve.all
+            CC00               C50  mt_carve.no
+            CC01               C51  mt_carve.x
+            CC04               C54  mt_tend
 
 ---- Section .bss -------------------------------------------------------------
 
@@ -3750,6 +3750,6 @@ Real              Virtual           Name
 ---- Section mttbss -----------------------------------------------------------
 
 Real              Virtual           Name
-             C50               C50  mt_tx0
-             F70               F70  mt_bend
+             C60               C60  mt_tx0
+             F80               F80  mt_bend
 
