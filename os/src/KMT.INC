@@ -117,6 +117,10 @@ mt_lfl      dw      0                   ;  by mt_safe when it says yes)
 mt_lsp      dw      0
 mt_fpu      db      0                   ; 1: a coprocessor (INT 11h), kept per
                                         ;  task
+mt_insw     db      0                   ; 1: in mt_switch's FNSAVE, interrupts
+                                        ;  on: no switch from there, below
+mt_insss    dw      0                   ;  this SS:SP
+mt_inssp    dw      0
 mt_front    db      0                   ; the task in front
 mt_cur      db      0                   ; the task running
 mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
@@ -182,7 +186,8 @@ mt_tick:
         mov     bp, sp                  ; ([bp+10]: the interrupted IP, CS, FL)
         mov     ax, cs                  ; (MT's own code interrupted: a task
         cmp     [bp+12], ax             ;  just resumed in mt_load, its turn
-        je      .r                      ;  not touched; elsewhere indos is 1)
+        je      .r                      ;  not touched; mt_switch's FNSAVE;
+                                        ;  elsewhere indos is 1)
         push    KSEG
         pop     ds
         push    es
@@ -282,7 +287,16 @@ mt_safe:
         jz      .no
         cmp     byte [indos], 0
         jne     .no
-        push    es                      ; (m33_busy is the UI's)
+        cmp     byte [cs:mt_insw], 0    ; in mt_switch's FNSAVE (an IRQ 13
+        je      .iw                     ;  handler, or what it called): its
+        mov     dx, ss                  ;  stack below that point.  Above it,
+        cmp     dx, [cs:mt_insss]       ;  the handler jumped out (a longjmp):
+        jne     .st                     ;  the flag is stale
+        mov     dx, [cs:mt_lsp]
+        cmp     dx, [cs:mt_inssp]
+        jb      .no
+.st:    mov     byte [cs:mt_insw], 0
+.iw:    push    es                      ; (m33_busy is the UI's)
         mov     es, [ui_seg]
         cmp     byte [es:m33_busy], 0
         pop     es
@@ -465,6 +479,8 @@ mt_kwait:
 ; 21h (an INT 24h answer), or more kernel stack than its TX holds
 mt_can: cmp     byte [indos], 1
         jne     .no
+        cmp     byte [cs:mt_insw], 0    ; (in mt_switch's FNSAVE)
+        jne     .no
         push    ax
         mov     ax, kstack_top          ; (and room for mt_switch's own
         sub     ax, sp                  ;  pushes)
@@ -529,13 +545,21 @@ mt_switch:
         call    mt_emsget
         cmp     byte [cs:mt_fpu], 0     ; its coprocessor's registers, control
         je      .nf                     ;  and status.  Interrupts on for it:
-        sti                             ;  the 1520 (as an AT) holds the 287
-        fnsave  [es:TX_FPU]             ;  BUSY after an unmasked error until
-        fwait                           ;  IRQ 13's handler clears it, and the
-        cli                             ;  286 waits on BUSY first.  So the
-        and     byte [es:TX_FPU + 2], 7Fh ;  error reaches this task, still
-        mov     byte [es:TX_FPV], 1     ;  the running one; then its ES is
-.nf:                                    ;  cleared, not raised again by FRSTOR
+        mov     [cs:mt_insss], ss
+        mov     [cs:mt_inssp], sp
+        mov     byte [cs:mt_insw], 1    ;  the 1520 (as an AT) holds the 287
+        sti                             ;  BUSY after an unmasked error until
+        nop                             ;  IRQ 13's handler clears it, and the
+        fnsave  [es:TX_FPU]             ;  286 waits on BUSY first.  So the
+        fwait                           ;  error reaches this task, still the
+        cli                             ;  running one (mt_insw: no switch
+        mov     byte [cs:mt_insw], 0    ;  meanwhile).  Then its unmasked
+        mov     al, [es:TX_FPU]         ;  exceptions and ES are cleared in
+        and     al, 3Fh                 ;  the saved status, so FRSTOR doesn't
+        or      al, 40h                 ;  raise them again (a 387-class chip
+        and     [es:TX_FPU + 2], al     ;  works ES out from them)
+        mov     byte [es:TX_FPV], 1
+.nf:
         push    KSEG
         pop     ds
         xor     cx, cx                  ; its slice of the kernel stack (none:
@@ -553,7 +577,8 @@ mt_switch:
 mt_load:
         cli
         cld
-        mov     [cs:mt_cur], bl
+        mov     byte [cs:mt_insw], 0    ; (a task ended from inside the FNSAVE
+        mov     [cs:mt_cur], bl         ;  window: no longer in it)
         mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
         mov     byte [cs:mt_slice], 1
         cmp     bl, [cs:mt_front]
