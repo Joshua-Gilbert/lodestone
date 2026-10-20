@@ -575,6 +575,7 @@ class Audit:
             f = sp + 12 if path == 'tick' else sp + 4 + 20     # (mt_tick's 5 pushes, or BP and INT 21h's frame: IP, CS, FL)
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
             r, cur = s.rules(cs, ip, fl, ss)
+            if path == 'tick': r['ivt'] = vec(k, 8) == (s.seg, k.Y['mt_tick'])   # (else a hook ahead was interrupted)
             s.ev.append(dict(path=path, cs=cs, ip=ip, fl=fl, task=cur, ss=ss, r=r, sw=False,
                              ok=path != '?' and all(r.values())))
             s.track = (ss, f + 6, path)                          # (the caller's SP: under the frame)
@@ -726,6 +727,49 @@ def t_rules():
           'never switched from inside it' % (k1, k2), vec(k, 8) == (seg, Y['mt_tick']) and old == INT08 and hk[0] != STUB
           and got == INT08 and 0.3 * r0 < k1 < 0.7 * r0 and 0.3 * r0 < k2 < 0.7 * r0
           and not [e for e in au.ev[n:] if e['cs'] == hk[0]], (vec(k, 8), old, hk, got, k1, k2))
+    # code outside the caller's memory, on its stack: MTHOOK's INT 62h
+    o0, n = au.only['own'], len(au.ev)
+    typ(k, 'mtlaunch mtspin.com 20 q1.txt r;mtspin.com 20 q2.txt', 3.0); line(k, '')
+    q1, q2 = spun(k, 'Q1.TXT'), spun(k, 'Q2.TXT')
+    check('a task calling a TSR\'s service (MTHOOK\'s INT 62h: STI, 2 ticks there): never switched from inside it, CS '
+          'not the task\'s (%d refused for that alone); both counted (%d and %d)' % (au.only['own'] - o0, q1, q2),
+          au.only['own'] > o0 and q1 and q2 and not [e for e in au.ev[n:] if e['cs'] == hk[0]], (au.only['own'] - o0, q1, q2))
+    # task 0 running a program (from the prompt) with its stack outside its own blocks, a task behind it
+    s0 = au.only['ss']
+    typ(k, 'mtlaunch mtspin.com 60 y0.txt', 0.5); typ(k, '', 0.3)
+    typ(k, 'mtspin 20 s3.txt s', 1.5); typ(k, 'mtspin 20 f3.txt f', 1.5); k.run_for(3.5)
+    s3, f3, y0 = spun(k, 'S3.TXT'), spun(k, 'F3.TXT'), spun(k, 'Y0.TXT')
+    check('task 0 running MTSPIN from the prompt, its stack at B800h, then in a block it gave back (nobody\'s): never '
+          'switched from there (%d refused for that alone, the arena walked), so each counts about as much as alone '
+          '(%d and %d; %d); the task behind them counted (%d)' % (au.only['ss'] - s0, s3, f3, r0, y0),
+          au.only['ss'] > s0 and s3 > 0.8 * r0 and f3 > 0.8 * r0 and y0, (au.only['ss'] - s0, s3, f3, r0, y0))
+    # INT 08h's vector read, or written, from the table itself, and AH=25h or 35h too
+    t0, b0 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
+    typ(k, 'mthook x', 1.0)
+    hx = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
+    gx = (k.pc.u16(hx[0], 0x104), k.pc.u16(hx[0], 0x102))
+    typ(k, 'mtlaunch mtspin.com 20 k3.txt;mtspin.com 20 k4.txt', 2.5); line(k, '')
+    k3, k4 = spun(k, 'K3.TXT'), spun(k, 'K4.TXT')
+    t1, b1 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
+    check('a TSR that read INT 08h from the vector table (mt_tick) and set its own with AH=25h, chaining to mt_tick: '
+          'inside mt_tick, mt_tick again from there going on to the start-up vector, not round again; mt_tick ran on every '
+          'tick (%d), two MTSPINs still take turns (%d and %d)' % ((t1 - t0) & 0xFFFF, k3, k4),
+          gx == (seg, Y['mt_tick']) and hx[0] not in (seg, hk[0]) and vec(k, 8) == (seg, Y['mt_tick'])
+          and (t1 - t0) & 0xFFFF == (b1 - b0) & 0xFFFF > 30 and 0.3 * r0 < k3 < 0.7 * r0 and 0.3 * r0 < k4 < 0.7 * r0,
+          (gx, hx, vec(k, 8), (t1 - t0) & 0xFFFF, k3, k4))
+    typ(k, 'mthook y', 1.0)
+    hy = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
+    check('a program that writes its hook in the vector table itself and gives it back with AH=25h (mt_tick, as it '
+          'read it): mt_tick in the table again, MT\'s chain left as it was', vec(k, 8) == (seg, Y['mt_tick']) and hy == hx,
+          (vec(k, 8), hy, hx))
+    typ(k, 'mthook z', 1.0)
+    hz = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
+    typ(k, 'mtlaunch mtspin.com 20 k5.txt;mtspin.com 20 k6.txt', 2.5); line(k, '')
+    k5, k6 = spun(k, 'K5.TXT'), spun(k, 'K6.TXT')
+    check('a program that writes its hook in the vector table itself, then writes back what AH=35h gave it (MT\'s chain, '
+          'without mt_tick): mt_tick put back on INT 21h\'s way out, so two MTSPINs take turns again (%d and %d)' % (k5, k6),
+          vec(k, 8) == (seg, Y['mt_tick']) and hz == hx and 0.3 * r0 < k5 < 0.7 * r0 and 0.3 * r0 < k6 < 0.7 * r0,
+          (vec(k, 8), hz, hx, k5, k6))
     # INT 08h written in the vector table directly, by a task: ahead of mt_tick
     n = len(au.ev)
     typ(k, 'mtlaunch mtspin.com 20 t1.txt t;mtspin.com 20 t2.txt', 3.0); line(k, '')

@@ -1,5 +1,5 @@
 ; MTSPIN.COM - for test_mt.py: a task that computes, for preemption.
-;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | H | T | O]
+;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | T | O]
 ; Counts, as fast as it can, for T ticks of the BIOS's clock (40:6Ch),
 ; then writes the count (8 hex digits) to CNTFILE.  It prints nothing.
 ;   D  an INT 21h call (AH=2Ch) on each count
@@ -8,6 +8,9 @@
 ;   C  AH=2Ch on each count with interrupts off (CLI before the INT 21h)
 ;   S  counts with its stack outside its own memory (B800:7F00, past the
 ;      text screen's pages in use)
+;   F  counts with its stack in a block it took (AH=48h) and gave back:
+;      free memory, nobody's
+;   R  INT 62h on each count (MTHOOK's service: 2 ticks, in its code)
 ;   H  hooks INT 1Ch (AH=25h) meanwhile: its handler does STI and, with
 ;      InDOS 0, AH=2Ch, then chains (so INT 21h's way out with IRQ 0 in
 ;      service)
@@ -87,14 +90,28 @@ org 100h
         pop     es
         mov     ax, [es:6Ch]
         mov     [t0], ax
+        mov     dx, 0B800h              ; (S: the stack at B800:7F00)
+        mov     cx, 7F00h
         cmp     byte [mode], 'S'
+        je      .ss
+        cmp     byte [mode], 'F'
         jne     .l
-        cli
+        mov     ah, 48h                 ; (F: in a block of 256 bytes taken,
+        mov     bx, 16                  ;  then given back)
+        int     21h
+        jc      .x
+        mov     dx, ax
+        push    es
+        mov     es, ax
+        mov     ah, 49h
+        int     21h
+        pop     es
+        mov     cx, 100h
+.ss:    cli
         mov     [ssv], ss
         mov     [spv], sp
-        mov     ax, 0B800h
-        mov     ss, ax
-        mov     sp, 7F00h
+        mov     ss, dx
+        mov     sp, cx
         sti
 .l:     add     word [cnt], 1
         adc     word [cnt + 2], 0
@@ -102,7 +119,10 @@ org 100h
         jne     .i
         mov     ah, 2Ch
         int     21h
-.i:     cmp     byte [mode], 'C'
+.i:     cmp     byte [mode], 'R'
+        jne     .i2
+        int     62h
+.i2:    cmp     byte [mode], 'C'
         jne     .w
         mov     ah, 2Ch
         cli
@@ -119,8 +139,8 @@ org 100h
         sub     ax, [t0]
         cmp     ax, [tks]
         jb      .l
-        cmp     byte [mode], 'S'
-        jne     .ue
+        cmp     word [ssv], 0
+        je      .ue
         cli
         mov     ss, [ssv]
         mov     sp, [spv]
