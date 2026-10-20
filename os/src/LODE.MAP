@@ -425,9 +425,9 @@ FFFFFFFFFFFFFFE0  M_BACK
 00000400  ENVMAX
 00000013  st_len
 0000010B  ST_END
-00000925  MT_LEN
-00000093  MT_TX0P
-000000BF  MT_PARAS
+00000979  MT_LEN
+00000098  MT_TX0P
+000000C4  MT_PARAS
 
 
 ---- Section .text ------------------------------------------------------------
@@ -3280,38 +3280,45 @@ Real              Virtual           Name
             C66F               6CF  mt_name.z
             C676               6D6  mt_name.x
             C678               6D8  mt_hot
-            C683               6E3  mt_hot.s
-            C69E               6FE  mt_hot.m
-            C6AF               70F  mt_hot.e
-            C6C0               720  mt_hot.t
-            C6C3               723  mt_hot.l
-            C6D4               734  mt_hot.y
-            C6DD               73D  mt_hot.q
-            C6E1               741  mt_hot.no
-            C6E6               746  mt_hot.nx
-            C6F2               752  mt_hot.nr
-            C6F3               753  mt_scrto
-            C705               765  mt_scrto.x
-            C706               766  mt_scrsv
-            C744               7A4  mt_scrsv.x
-            C748               7A8  mt_scrld
-            C760               7C0  mt_scrld.k
-            C77B               7DB  mt_scrld.s
-            C7CA               82A  mt_scrld.x
-            C7CE               82E  mt_wsave
-            C7DF               83F  mt_wrest
-            C7F0               850  mt_wmap
-            C80C               86C  mt_carve
-            C819               879  mt_carve.w
-            C82D               88D  mt_carve.w1
-            C835               895  mt_carve.mg
-            C866               8C6  mt_carve.fit
-            C86F               8CF  mt_carve.nx
-            C87F               8DF  mt_carve.end
-            C8B4               914  mt_carve.all
-            C8C1               921  mt_carve.no
-            C8C2               922  mt_carve.x
-            C8C5               925  mt_tend
+            C686               6E6  mt_hot.s
+            C6A7               707  mt_hot.m
+            C6B8               718  mt_hot.e
+            C6C9               729  mt_hot.t
+            C6CC               72C  mt_hot.l
+            C6DD               73D  mt_hot.y
+            C6E6               746  mt_hot.q
+            C6EA               74A  mt_hot.no
+            C6EF               74F  mt_hot.nx
+            C6FB               75B  mt_hot.nr
+            C6FC               75C  mt_scrto
+            C71A               77A  mt_scrto.x
+            C71B               77B  mt_m33
+            C72E               78E  mt_m33.x
+            C732               792  mt_scrsv
+            C772               7D2  mt_scrsv.x
+            C776               7D6  mt_scrsv.gone
+            C77B               7DB  mt_wgone
+            C785               7E5  mt_scrld
+            C7A1               801  mt_scrld.clr
+            C7A8               808  mt_scrld.k
+            C7C2               822  mt_scrld.s
+            C815               875  mt_scrld.x
+            C819               879  mt_wsave
+            C82A               88A  mt_wrest
+            C83B               89B  mt_wmap
+            C85C               8BC  mt_wmap.e
+            C85D               8BD  mt_wmap.x
+            C860               8C0  mt_carve
+            C86D               8CD  mt_carve.w
+            C881               8E1  mt_carve.w1
+            C889               8E9  mt_carve.mg
+            C8BA               91A  mt_carve.fit
+            C8C3               923  mt_carve.nx
+            C8D3               933  mt_carve.end
+            C908               968  mt_carve.all
+            C915               975  mt_carve.no
+            C916               976  mt_carve.x
+            C919               979  mt_tend
 
 ---- Section .bss -------------------------------------------------------------
 
@@ -3694,6 +3701,6 @@ Real              Virtual           Name
 ---- Section mttbss -----------------------------------------------------------
 
 Real              Virtual           Name
-             930               930  mt_tx0
-             BF0               BF0  mt_bend
+             980               980  mt_tx0
+             C40               C40  mt_bend
 

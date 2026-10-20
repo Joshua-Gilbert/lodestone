@@ -199,33 +199,82 @@ What they check:
 **Departure from the plan:** the plan had CODE-] bring up the Executive's Tasks window, and CODE-] again go back. The Tasks window is M7's (TASKS.RUN). Until then CODE-] cycles through the tasks, and M7 decides what it does then.
 
 **The limits, plainly:**
-- **CODE-] works only while a task waits for a key in DOS**, where tasks switch (M2a). With the Executive or LCMD's prompt in front it does nothing, and the key is lost: they ask whether a key is there, and the BIOS drops CODE keys for that question (INT 16h AH=01h; only AH=10h/11h give them). A program that asks before it reads (INT 21h AH=0Bh, then AH=08h) loses it too. M3 (switching anywhere) and M4's INT 16h hook (catching it before anyone asks) lift this.
-- **A background task's output still lands on the front screen** until M4's INT 16h/INT 10h hooks: it is kept with whichever task's screen is shown.
+- **CODE-] works only while a task waits for a key in DOS**, where tasks switch (M2a). Anywhere that only asks whether a key is there, the BIOS drops CODE keys (INT 16h AH=01h; only AH=10h/11h give them), so the key is lost:
+  - with the Executive or LCMD's prompt in front, it does nothing;
+  - a program that asks before it reads loses it too: INT 21h AH=0Bh, AH=06h with DL=FFh, AH=0Ch's flush, and IOCTL 4406h on CON all ask;
+  - a program that reads keys through INT 16h itself never gets to DOS's wait, so its tasks don't switch at all.
+
+  M3 (switching anywhere) and M4's INT 16h hook (catching the key before anyone asks) lift this.
+- **A small race:** a CODE-] typed in the instant between `mt_hot`'s look and the front task's own INT 16h AH=01h is dropped there; pressed again, it works. M4's hook closes this too.
+- **A background task's output still lands on the front screen** until M4's hooks: it is kept with whichever task's screen is shown.
 - **A task's screen, the first time it comes to the front, is mode 3 and clear.** What it wrote before then went to the front task's screen. A program that sets a graphics mode should come to the front first (`/F`).
-- **A DOS program's INT 33h pointer** isn't hidden around the switch (per-task mouse is M4). The Executive's pointer is drawn into its screen, which comes back byte for byte.
+- **The mouse:** a DOS program's INT 33h pointer is hidden while the screens change (AX=2, then AX=1, as Resident Claude does), but there is one mouse state for all tasks until M4. The Executive's pointer is drawn into its screen, which comes back byte for byte.
+- **What isn't kept:** a palette written straight to port 3D9h without the BIOS's copy (40:66h), and port 3D8h's settings beyond the mode (say blink off).
+- **A program that frees MT's pages:** EMS's AH=45h frees any handle, for anyone (CLAUDE /U frees its own that way, so KEMS can't refuse). If the pages can't be mapped when MT next needs them (AH=44h fails), that task keeps no screen from then on: nothing is copied, it comes to the front clear, and MT never frees that handle number, which may be someone else's by then. If the number has been handed out again before MT next maps it, MT can't tell.
 - **The 1520 itself:** CODE-] hasn't been pressed on the 1520 yet. The BIOS should keep it as 1BF0h, which AH=10h gives as 1B00h, as it does CODE-\ (Resident Claude's key, which works there). `os/claude/KEYCODE.COM` shows it. If it doesn't come through, the fallback is CODE-Tab: the two words are in one place, `mt_hotk`.
 
 **How:**
-- **The key:** `mt_kwait`, on each pass (each key wait, and each tick while one waits), looks through the BIOS's key buffer for 1BF0h or 1B00h. It looks before its own INT 16h AH=01h, which would drop the key. If the key is there, `mt_hot` takes it out (the words after it move back, as Resident Claude's `r_hot` does) and asks for the next task after the front one (`mt_swreq`; pressed again before that happens, the one after that). The buffer isn't searched from INT 08h: there it could be changed under the BIOS's own INT 16h code on the 1520.
+- **The key:** `mt_kwait`, on each pass (each key wait, and each tick while one waits), looks through the BIOS's key buffer for 1BF0h or 1B00h. It looks before its own INT 16h AH=01h, which would drop the key.
+  - **Order:** the key counts only when nothing but other CODE keys (which AH=01h drops anyway) is ahead of it. Keys typed before it are the front task's, and it reads them first; CODE-] then counts at its next pass.
+  - **Taking it:** `mt_hot` takes the key out (the words after it move back, as Resident Claude's `r_hot` does) and asks for the next task after the front one (`mt_swreq`; pressed again before that happens, the one after that).
+  - **The look is bounded:** at most 16 words, so a buffer whose pointers a program has spoiled isn't followed round.
+  - **Not from INT 08h:** there the buffer could be changed under the BIOS's own INT 16h code on the 1520.
 - **The switch** is made only where `mt_kwait` could switch tasks (`mt_can`). A request made in a nested INT 21h (an INT 24h answer) waits until then, so a task never reads keys in the background with another task's screen shown.
-- **The screens:** each task has 2 EMS pages, 32 KB, enough for any mode (the 1520's 640 × 400 is 32 KB at B800h). They are allocated with INT 67h when the task starts (task 0's in `mt_boot`) and freed when it ends. They are MT's (owner 0), not the program's, so ending the program doesn't free them. If there are none, `MT_SPAWN` fails with error 8, and with none for task 0, multitasking stays off.
+- **The screens:** each task has 2 EMS pages, 32 KB, enough for any mode (the 1520's 640 × 400 is 32 KB at B800h).
+  - They are allocated with INT 67h when the task starts (task 0's in `mt_boot`) and freed when it ends.
+  - They are MT's (owner 0), not the program's, so ending the program doesn't free them.
+  - If there are none, `MT_SPAWN` fails with error 8 (its region given back), and with none for task 0, multitasking stays off.
   - `mt_scrsv` keeps the screen: B800:0000's 32 KB into the pages, mapped into windows 0 and 1 (INT 67h AH=44h, the windows' page registers put back after), and the BIOS's video data (40:49h–66h, 30 bytes) into the task's TX.
-  - `mt_scrld` puts one back, in Resident Claude's order: the mode (INT 10h AH=00h); for CGA's modes, port 3D9h from 40:66h, before the screen; the 32 KB; the BIOS data; in text modes, the cursor's shape and place. A task whose screen was never kept gets mode 3, clear.
+  - `mt_scrld` puts one back, in Resident Claude's order: the mode (INT 10h AH=00h); for CGA's modes, port 3D9h from 40:66h, before the screen; the 32 KB; the BIOS data. In text modes it then sets the page shown (AH=05h) and the cursor's shape and place. A task whose screen was never kept gets mode 3, clear.
   - When the front task ends, task 0 comes to the front with its screen.
 - **The entries** grew to 32 bytes (`TE_SH`, the pages' handle; `TE_SF`, a screen kept), and a TX to 44 paragraphs (`TX_VID`).
 
 **Cost:**
-- **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 32 more bytes, all in `mt_boot`.
-- **Switch on:** MT's block is 191 paragraphs plus its MCB, 3.0 KB, so a DOS program gets 574.6 KB instead of 577.6. Each task's region is 1.5 KB plus its environment and memory, as before.
+- **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 32 more bytes, all in `mt_boot` (19 of code, the rest alignment).
+- **Switch on:** MT's block is 196 paragraphs plus its MCB, 3.1 KB, so a DOS program gets 574.5 KB instead of 577.6.
+- **Each task's region** is 97 paragraphs (1.5 KB) plus its environment and memory.
 - **EMS:** 32 KB per task, task 0 included.
-- **Files:** LODEMT.SYS is 2,341 bytes; ROM 1 has 20,480 bytes left.
+- **Files:** LODEMT.SYS is 2,425 bytes; ROM 1 has 20,480 bytes left.
 
-**Tests:** `test_mt.py`, 89 checks. The new group is `t_front`, with a new test program, `MTMODE MM FILE`: it sets video mode MM, fills the 32 KB with a pattern, waits for a key, then writes "ok" to FILE if the pattern is all still there. The checks:
-- **Pages:** each task takes 2 EMS pages.
-- **The cycle:** with two MTLINE tasks, CODE-] while MTLAUNCH waits brings up task 1. The key is gone from the buffer, and the screen is clear in mode 3. "hel" typed shows there. CODE-] gives task 2 (clear), then task 0 with MTLAUNCH's screen exactly as it was, then task 1 with "hel".
-- **Ending:** task 1 gets "lo" and ends; task 0 is in front with its screen. CODE-] then gives task 2. When all have ended, memory, files and EMS pages are as before.
-- **Graphics:** MTMODE in mode 40h, in front. CODE-] to task 0 (mode 3, MTLAUNCH's screen), then CODE-] back: mode 40h and all 32 KB as they were, and MTMODE finds its pattern intact.
-- **One task besides task 0:** CODE-] twice goes to it and back.
-- **At LCMD's prompt:** CODE-] does nothing, and the prompt goes on.
-- **No EMS left** (`MDISK=` all of it): multitasking stays off, and TASKS says so.
-- **The checks can fail:** with the screen copy in `mt_scrld` skipped, four of them do.
+**Tests:** `test_mt.py`, 95 checks. The new group is `t_front`, with two new test programs:
+- `MTMODE MM FILE` sets video mode MM, fills the 32 KB with a pattern, waits for a key, then writes "ok" to FILE if the pattern is all still there;
+- `FREEH N` frees EMS handle N, as a program that frees a handle not its own might.
+
+The checks:
+- **The cycle:**
+  - each task takes 2 EMS pages;
+  - with two MTLINE tasks, CODE-] while MTLAUNCH waits brings up task 1: the key is gone from the buffer, and the screen is clear in mode 3;
+  - "hel" typed shows there;
+  - CODE-] gives task 2 (clear), then task 0 with MTLAUNCH's screen, cursor and BIOS video data exactly as they were, then task 1 with "hel".
+- **Ending:** task 1 gets "lo" and ends, and task 0 is in front with its screen. When all have ended, memory, files and EMS pages are as before.
+- **Graphics:**
+  - MTMODE in mode 40h, in front: CODE-] to task 0 (mode 3, MTLAUNCH's screen), then CODE-] back gives mode 40h and all 32 KB as they were, and MTMODE finds its pattern intact.
+  - In mode 4, with palette 25h, 3D9h gets 25h after the mode set and before the screen, and 40:66h is 25h.
+- **Order:** "xy", CODE-], "z", Enter typed ahead: MTLAUNCH reads "xy", and task 1 gets "z".
+- **Other cases:**
+  - with one task besides task 0, CODE-] goes to it and back;
+  - at LCMD's prompt, with a task waiting, CODE-] does nothing and is gone; with MTLAUNCH waiting, it brings the task up;
+  - `/F` gives the task a screen of its own, and task 0's comes back when it ends.
+- **EMS:**
+  - FREEH frees task 0's handle: at the next CODE-] it keeps no screen, comes back clear, and nothing leaks;
+  - with no EMS left for a task's screen, MTLAUNCH gets error 8, and memory, files and EMS are as before;
+  - with `MDISK=` taking all of EMS, multitasking stays off;
+  - the abort and TSR endings give their pages back.
+- **The checks can fail:** each of these, broken on purpose, fails its check:
+  - the screen copy in `mt_scrld`;
+  - the key's order;
+  - the failed-map test;
+  - the 3D9h write;
+  - `mt_boot`'s allocation;
+  - the key taken out;
+  - the AH=45h at a task's end.
+
+**The review** (three reviewers, 2026-10-19) found no bug in the normal paths. Fixed from it:
+- keys typed before CODE-] went to the new front task;
+- a freed screen handle wasn't noticed (MT copied through whatever pages were mapped, then freed the number again);
+- the buffer scan wasn't bounded;
+- the DOS program's pointer wasn't hidden;
+- the page shown wasn't set again;
+- BX was trusted across the mode set.
+
+It also added the checks for 3D9h, the cursor, EMS running out at a spawn, `/F`'s screen, and the prompt with a task waiting.

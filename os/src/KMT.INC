@@ -749,7 +749,10 @@ mt_name:
         ret
 
 ; CODE-] in the BIOS's key buffer: taken out, and the next task (after the
-; one asked for, or the front one) asked for.  DS anything; AX, BX changed
+; one asked for, or the front one) asked for.  Only when no key but other
+; CODE keys (which AH=01h drops) is ahead of it: those are the front
+; task's, typed before it.  (At most 16 words looked at: a buffer gone bad
+; isn't followed round.)  DS anything; AX, BX changed
 mt_hot: push    ds
         push    si
         push    cx
@@ -757,6 +760,7 @@ mt_hot: push    ds
         pop     ds
         cli
         mov     bx, [1Ah]               ; (head to tail, wrapping at 40:82h)
+        mov     cx, 16
 .s:     cmp     bx, [1Ch]
         je      .no
         mov     ax, [bx]
@@ -764,8 +768,11 @@ mt_hot: push    ds
         je      .m
         cmp     ax, [cs:mt_hotk + 2]
         je      .m
+        cmp     al, 0F0h                ; (a key ahead of it: later)
+        jne     .no
         call    .nx
-        jmp     .s
+        loop    .s
+        jmp     short .no
 .m:     mov     si, bx                  ; the words after it, one back
         call    .nx
         cmp     bx, [1Ch]
@@ -803,19 +810,40 @@ mt_hot: push    ds
         mov     bx, [80h]
 .nr:    ret
 
-; task AL to the front: the front one's screen kept, AL's shown
+; task AL to the front: the front one's screen kept, AL's shown; a DOS
+; program's INT 33h pointer off meanwhile (as RCON does)
 mt_scrto:
         cmp     al, [cs:mt_front]
         je      .x
         push    ax
+        mov     ax, 2
+        call    mt_m33
         mov     al, [cs:mt_front]
         call    mt_scrsv
         pop     ax
-        jmp     mt_scrld
+        call    mt_scrld
+        mov     ax, 1
+        jmp     mt_m33
 .x:     ret
 
+; INT 33h function AX, if there is an INT 33h.  All kept
+mt_m33: pusha
+        push    ds
+        push    es
+        xor     bx, bx
+        mov     ds, bx
+        mov     bx, [33h * 4]
+        or      bx, [33h * 4 + 2]
+        jz      .x
+        int     33h
+.x:     pop     es
+        pop     ds
+        popa
+        ret
+
 ; the screen (B800:0000, 32 KB: any mode) and its BIOS data to task AL's
-; pages and TX (with none, nothing).  All kept but the flags
+; pages and TX (with none, nothing; with its pages gone, say a program
+; freed the handle, none from now on).  All kept but the flags
 mt_scrsv:
         pusha
         push    ds
@@ -825,6 +853,7 @@ mt_scrsv:
         je      .x
         call    mt_wsave
         call    mt_wmap
+        jc      .gone
         mov     byte [cs:bx+TE_SF], 1
         mov     es, [cs:bx+TE_TX]       ; its BIOS data
         push    40h
@@ -846,11 +875,20 @@ mt_scrsv:
         pop     ds
         popa
         ret
+.gone:  call    mt_wgone
+        jmp     .x
+
+; its pages gone: windows 0 and 1 back, and none kept for the entry at BX
+; (nor freed at its end: the number may be someone else's now)
+mt_wgone:
+        call    mt_wrest
+        mov     word [cs:bx+TE_SH], 0   ; (TE_SH, TE_SF)
+        ret
 
 ; task AL's screen shown, and AL in front: its mode, 3D9h (CGA's modes,
-; before the screen, as RCON does), the screen, its BIOS data, the
-; cursor.  Never shown yet (or none kept): mode 3, clear.  All kept but
-; the flags
+; before the screen, as RCON does), the screen, its BIOS data; in text
+; modes, the page shown and the cursor.  Never shown yet (or none kept):
+; mode 3, clear.  All kept but the flags
 mt_scrld:
         pusha
         push    ds
@@ -858,24 +896,28 @@ mt_scrld:
         mov     [cs:mt_front], al
         call    mt_ent
         cmp     byte [cs:bx+TE_SF], 0
-        jne     .k
-        mov     ax, 0003h
+        je      .clr
+        call    mt_wsave
+        call    mt_wmap
+        jnc     .k
+        call    mt_wgone
+.clr:   mov     ax, 0003h
         int     10h
         jmp     .x
-.k:     call    mt_wsave
-        mov     ds, [cs:bx+TE_TX]
+.k:     mov     ds, [cs:bx+TE_TX]
         mov     al, [TX_VID]            ; (40:49h)
         xor     ah, ah
         push    ax
+        push    bx
         int     10h
+        pop     bx
         pop     ax
         cmp     al, 6
         ja      .s
         mov     al, [TX_VID + 66h - 49h]
         mov     dx, 3D9h
         out     dx, al
-.s:     call    mt_wmap
-        push    EMS_FRAME
+.s:     push    EMS_FRAME
         pop     ds
         push    0B800h
         pop     es
@@ -895,8 +937,11 @@ mt_scrld:
         pop     ds
         cmp     byte [49h], 3
         ja      .x
+        mov     al, [62h]               ; the page shown
+        mov     ah, 5
+        int     10h
         mov     cx, [60h]               ; the cursor: its shape, and where it
-        mov     ah, 1                   ;  is on the page shown
+        mov     ah, 1                   ;  is on that page
         int     10h
         mov     bh, [62h]
         mov     bl, bh
@@ -912,8 +957,8 @@ mt_scrld:
         ret
 
 ; windows 0 and 1: their page registers kept (mt_wrest puts them back);
-; mt_wmap maps the 2 pages of the entry at BX into them (INT 67h AH=44h).
-; AL, DX changed
+; mt_wmap maps the 2 pages of the entry at BX into them (INT 67h AH=44h),
+; CF if it can't (its handle gone).  AL, DX changed
 mt_wsave:
         mov     dx, EMS_PORT
         in      al, dx
@@ -940,10 +985,15 @@ mt_wmap:
         xor     bx, bx
         int     67h
         pop     dx
+        or      ah, ah
+        jnz     .e
         mov     ax, 4401h
         mov     bx, 1
         int     67h
-        pop     cx
+        or      ah, ah
+        jz      .x
+.e:     stc
+.x:     pop     cx
         pop     bx
         ret
 
