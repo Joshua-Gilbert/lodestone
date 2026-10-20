@@ -21,7 +21,11 @@
 ;  room: it stays off.  The part runs in its own segment, assembled from
 ;  0; it reaches the kernel with far jumps (and its near routines with
 ;  KCALL), so it doesn't have to be within KSEG's 64 KB.  Its hooks:
-;    - INT 08h goes through mt_tick (the BIOS's handler first);
+;    - INT 08h goes through mt_tick (the BIOS's handler first); AH=25h
+;      and 35h for it set and give mt_old08 instead (f_25's and f_35's
+;      first 7 bytes become far jumps to mt_25 and mt_35), so a program's
+;      hook goes inside mt_tick, not ahead of it;
+;    - done.sw, INT 21h's way out, becomes a far jump to mt_exit;
 ;    - INT 21h F0h through mt_f0: f_F0's first 5 bytes (MOV AL,[BP+F_AX]
 ;      and OR AL,AL) become a far jump to it, and it comes back past
 ;      them.  (KEMS.INC patches f_F0.lend and .back, further in.)
@@ -41,8 +45,9 @@
 ;           (its own parent: ended itself, it lands on MT_END too)
 ;    env    a copy of the spawner's environment (it may end first)
 ;    arena  the task's own MCB chain: its first_mcb, ended by a 'Z' here
-;  Task 0's TX is in MT's block (section mttbss).  Switching happens only
-;  inside INT 21h (indos 1), at mt_kwait, or when a task ends.
+;  Task 0's TX is in MT's block (section mttbss).  Switching happens inside
+;  INT 21h (indos 1) at mt_kwait or when a task ends, and outside it at
+;  the tick or on INT 21h's way out, where it is safe (mt_safe).
 ;  The calls: MTAPI.INC.
 ; =====================================================================
 %ifndef NOTC
@@ -163,14 +168,18 @@ ST_END      equ     100h + st_code.e - st_code
 ; the interrupt), then ours
 mt_tick:
         pushf
-        call    far [cs:mt_old08]       ; (back with interrupts off, the EOI
-        inc     word [cs:mt_ticks]      ;  sent)
+        call    far [cs:mt_old08]       ; (back with the EOI sent; interrupts
+        cli                             ;  off, whatever a hook there did)
+        inc     word [cs:mt_ticks]
         push    ax
         push    bx
         push    dx
         push    ds
         push    bp
         mov     bp, sp                  ; ([bp+10]: the interrupted IP, CS, FL)
+        mov     ax, cs                  ; (in mt_load's last instructions, a
+        cmp     [bp+12], ax             ;  task just resumed: its turn not
+        je      .r                      ;  touched)
         push    KSEG
         pop     ds
         push    es
@@ -186,6 +195,15 @@ mt_tick:
 .w:     call    mt_kwant                ; (or a key for the front task)
         cmp     byte [cs:mt_pend], 0
         je      .r
+        push    es                      ; INT 08h still ours?  (Else a handler
+        xor     ax, ax                  ;  put ahead of it directly, not
+        mov     es, ax                  ;  through AH=25h, is what this
+        mov     ax, cs                  ;  interrupted: the switch waits for
+        cmp     word [es:8 * 4], mt_tick ;  INT 21h's way out.)
+        jne     .h
+        cmp     [es:8 * 4 + 2], ax
+.h:     pop     es
+        jne     .r
         lea     ax, [bp+16]
         mov     [cs:mt_lsp], ax
         mov     ax, [bp+12]
@@ -251,8 +269,8 @@ mt_kwant:
 ; under way; interrupts were on, and no other hardware interrupt is in
 ; service; CS below A000h (not the BIOS, the ROM, the EMS frame), not the
 ; kernel's or MT's; in the UI's segment, only at its idle HLTs; no INT 33h
-; event handler running; for tasks but 0, SS in the task's region.  DS =
-; KSEG; AX, BX, DX changed
+; event handler running; SS and CS in the task's own memory (mt_mine).
+; DS = KSEG; AX, BX, DX changed
 mt_safe:
         mov     [cs:mt_lcs], ax
         mov     [cs:mt_lip], bx
@@ -261,7 +279,10 @@ mt_safe:
         jz      .no
         cmp     byte [indos], 0
         jne     .no
-        cmp     byte [m33_busy], 0
+        push    es                      ; (m33_busy is the UI's)
+        mov     es, [ui_seg]
+        cmp     byte [es:m33_busy], 0
+        pop     es
         jne     .no
         cmp     ax, 0A000h
         jae     .no
@@ -284,25 +305,65 @@ mt_safe:
         out     20h, al
         or      ah, ah
         jnz     .no
-        mov     al, [cs:mt_cur]
-        or      al, al
-        jz      .y
-        call    mt_ent
-        mov     ax, ss
-        mov     dx, [cs:bx+TE_REG]
-        cmp     ax, dx
-        jb      .no
-        push    es
-        dec     dx
-        mov     es, dx
-        inc     dx
-        add     dx, [es:3]              ; (its MCB's size: the region's end)
-        pop     es
-        cmp     ax, dx
-        jae     .no
+        mov     ax, ss                  ; SS and CS the task's own: not a TSR's
+        call    mt_mine                 ;  or a driver's stack or code (CS in
+        jc      .no                     ;  the UI's: at an idle HLT, vetted
+        mov     ax, [cs:mt_lcs]         ;  above; LCMD's saver runs there)
+        cmp     ax, [ui_seg]
+        je      .y
+        call    mt_mine
+        ret
 .y:     clc
         ret
 .no:    stc
+        ret
+
+; segment AX: in the running task's own memory?  CF if not.  A task's: its
+; region.  Task 0's: the UI's block while the Executive runs, else a block
+; of the running program's (cur_psp's), found in the arena.  DS = KSEG; BX,
+; DX changed
+mt_mine:
+        push    es
+        mov     bx, [cur_psp]           ; (task 0 running a program)
+        cmp     byte [cs:mt_cur], 0
+        jne     .t
+        cmp     bx, [root_psp]
+        jne     .w
+        mov     bx, [ui_seg]            ; (the Executive)
+        jmp     .b
+.t:     push    ax                      ; (a task)
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        pop     ax
+        mov     bx, [cs:bx+TE_REG]
+.b:     dec     bx                      ; in the block at BX
+        mov     es, bx
+        inc     bx
+        cmp     ax, bx
+        jb      .no
+        add     bx, [es:3]
+        cmp     ax, bx
+        jae     .no
+        jmp     .y
+.w:     mov     dx, bx                  ; the block AX is in: cur_psp's?
+        mov     bx, [cs:mt_mcb0]
+.l:     mov     es, bx
+        inc     bx
+        cmp     ax, bx
+        jb      .no                     ; (an MCB itself)
+        add     bx, [es:3]
+        cmp     ax, bx
+        jb      .o
+        cmp     byte [es:0], 'Z'
+        jne     .l
+        jmp     .no                     ; (past the arena)
+.o:     cmp     [es:1], dx
+        jne     .no
+.y:     clc
+        pop     es
+        ret
+.no:    stc
+        pop     es
         ret
 
 ; another task's turn: the front one if it waits for a key that is there,
@@ -570,11 +631,60 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_end
         cmp     al, MT_FRONT
         je      mt_frontc
+        cmp     al, 1
+        je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
         jmp     KSEG:f_F0 + 5
 mt_bad: mov     ax, 1
 mt_fail:
         jmp     KSEG:fail
+
+; INT 21h AH=25h and 35h, from f_25's and f_35's first 7 bytes: for INT
+; 08h, mt_old08 instead of the vector, so mt_tick stays first and a hook
+; set this way runs inside it, before it decides anything
+mt_25:  cmp     byte [bp+F_AX], 08h
+        jne     .k
+        mov     ax, [bp+F_DX]
+        mov     dx, [bp+F_DS]
+        cli
+        mov     [cs:mt_old08], ax
+        mov     [cs:mt_old08 + 2], dx
+        sti
+        jmp     KSEG:done
+.k:     xor     bx, bx                  ; (f_25's own first three, then on
+        mov     es, bx                  ;  there)
+        mov     bl, [bp+F_AX]
+        jmp     KSEG:f_25 + 7
+mt_35:  cmp     byte [bp+F_AX], 08h
+        jne     .k
+        mov     ax, [cs:mt_old08]
+        mov     [bp+F_BX], ax
+        mov     ax, [cs:mt_old08 + 2]
+        mov     [bp+F_ES], ax
+        jmp     KSEG:done
+.k:     xor     bx, bx                  ; (f_35's)
+        mov     es, bx
+        mov     bl, [bp+F_AX]
+        jmp     KSEG:f_35 + 7
+
+; F0h AL=1 (files open on drive DL: DEFRAG and System ask before writing
+; a disk's FAT and directories themselves): with another task there, at
+; least 1, since it could open one meanwhile
+mt_open:
+        cmp     byte [cs:mt_cur], 0     ; (a task's: the Executive is another)
+        jne     .y
+        mov     al, 1
+.l:     call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        jne     .y
+        inc     al
+        cmp     al, MT_TASKS
+        jb      .l
+        mov     al, 1                   ; (none: f_F0's own answer)
+        or      al, al
+        jmp     KSEG:f_F0 + 5
+.y:     mov     word [bp+F_CX], 1
+        jmp     KSEG:ok
 
 ; MT_LIST: the records of the tasks there are, as many as fit in CX
 mt_list:
@@ -1402,6 +1512,14 @@ mt_boot:
         mov     byte [done.sw], 0EAh    ; INT 21h's way out: JMP FAR mt_exit
         mov     word [done.sw + 1], mt_exit
         mov     [done.sw + 3], es
+        mov     byte [f_25], 0EAh       ; AH=25h, 35h: JMP FAR mt_25, mt_35
+        mov     word [f_25 + 1], mt_25  ;  (and 2 NOPs: 7 bytes, done there)
+        mov     [f_25 + 3], es
+        mov     word [f_25 + 5], 9090h
+        mov     byte [f_35], 0EAh
+        mov     word [f_35 + 1], mt_35
+        mov     [f_35 + 3], es
+        mov     word [f_35 + 5], 9090h
         sti
         push    cs
         pop     ds
