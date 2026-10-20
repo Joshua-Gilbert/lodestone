@@ -84,8 +84,6 @@ def f0_bytes(k): return bytes(k.pc.rd(0x60, k.Y['f_F0'], 5))
 def kw_bytes(k): return bytes(k.pc.rd(0x60, k.Y['kbd_get.k'], 6))
 def dx_bytes(k): return bytes(k.pc.rd(0x60, k.Y['done.sw'], 5))
 EXIT5 = bytes([0x8E, 0xD0, 0x89, 0xDC, 0x61])      # MOV SS,AX / MOV SP,BX / POPA
-def vx_bytes(k): return bytes(k.pc.rd(0x60, k.Y['f_25'], 7)) + bytes(k.pc.rd(0x60, k.Y['f_35'], 7))
-VEC7 = bytes([0x31, 0xDB, 0x8E, 0xC3, 0x8A, 0x5E, 0x0E]) * 2  # f_25's and f_35's XOR BX,BX / MOV ES,BX / MOV BL,[BP+F_AX]
 
 def probe(k):
     """MTPROBE's lines: {AL: (CF, AX, BX, CX)}."""
@@ -114,9 +112,9 @@ def t_off():
                            ('MULTITASK=One', b'MULTITASK=One\r\n', 88), ('MULTITASK= (empty)', b'MULTITASK=\r\n', 88),
                            ('MULTITASK=1 but no EMS', b'MULTITASK=1\r\n', 0)):
         k = boot('mt_off.img', text, ems)
-        check('%s: no MT block, INT 08h the BIOS\'s, f_F0, kbd_get.k, done.sw, f_25 and f_35 as assembled' % tag,
+        check('%s: no MT block, INT 08h the BIOS\'s, f_F0, kbd_get.k and done.sw as assembled' % tag,
               mt_seg(k) is None and vec(k, 8) == INT08 and f0_bytes(k) == sysb[k.Y['f_F0']:k.Y['f_F0'] + 5]
-              and kw_bytes(k) == sysb[k.Y['kbd_get.k']:k.Y['kbd_get.k'] + 6] and dx_bytes(k) == EXIT5 and vx_bytes(k) == VEC7,
+              and kw_bytes(k) == sysb[k.Y['kbd_get.k']:k.Y['kbd_get.k'] + 6] and dx_bytes(k) == EXIT5,
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
@@ -152,10 +150,8 @@ def t_on():
     dx = dx_bytes(k)
     check('INT 21h\'s way out goes through mt_exit (JMP FAR over done.sw\'s MOV SS,AX / MOV SP,BX / POPA)',
           dx[0] == 0xEA and dx[1] | dx[2] << 8 == Y['mt_exit'] and dx[3] | dx[4] << 8 == seg, dx.hex())
-    vx = vx_bytes(k)
-    check('INT 21h AH=25h and 35h go through mt_25 and mt_35 (JMP FAR and 2 NOPs over f_25\'s and f_35\'s first 7 bytes); '
-          'ctrlc\'s copy of done.sw\'s bytes untouched', vx == b''.join(bytes([0xEA, Y[n] & 255, Y[n] >> 8, seg & 255, seg >> 8,
-          0x90, 0x90]) for n in ('mt_25', 'mt_35')) and bytes(k.pc.rd(0x60, Y['ctrlc.sw'], 5)) == EXIT5, vx.hex())
+    check('... ctrlc\'s copy of those bytes untouched', bytes(k.pc.rd(0x60, Y['ctrlc.sw'], 5)) == EXIT5,
+          bytes(k.pc.rd(0x60, Y['ctrlc.sw'], 5)).hex())
     check('task 0 is the Executive: its PSP the root process\'s',
           k.pc.u16(seg, Y['mt_tab'] + 2) == k.u16('root_psp'), (hex(k.pc.u16(seg, Y['mt_tab'] + 2)), hex(k.u16('root_psp'))))
     t0, b0 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
@@ -714,26 +710,6 @@ def t_rules():
           'times); the two still take turns (%d and %d), INT 1Ch given back' % (au.only['isr'] - q0, h1, h2),
           au.only['isr'] > q0 and 0.3 * r0 < h1 < 0.8 * r0 and 0.3 * r0 < h2 < 0.8 * r0
           and vec(k, 0x1C) == v1c, (au.only['isr'] - q0, h1, h2, vec(k, 0x1C), v1c))
-    # INT 08h hooked through AH=25h: inside mt_tick
-    old = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
-    typ(k, 'mthook', 1.0)
-    hk = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
-    got = (k.pc.u16(hk[0], 0x104), k.pc.u16(hk[0], 0x102))
-    n = len(au.ev)
-    typ(k, 'mtlaunch mtspin.com 20 k1.txt;mtspin.com 20 k2.txt', 2.5); line(k, '')
-    k1, k2 = spun(k, 'K1.TXT'), spun(k, 'K2.TXT')
-    check('a TSR hooking INT 08h with AH=35h/25h (STI, PUSHF / CALL FAR): INT 08h still mt_tick, the hook in mt_old08, '
-          'AH=35h gave it the BIOS\'s; the hook runs inside mt_tick, so two MTSPINs still take turns at the tick (%d and %d), '
-          'never switched from inside it' % (k1, k2), vec(k, 8) == (seg, Y['mt_tick']) and old == INT08 and hk[0] != STUB
-          and got == INT08 and 0.3 * r0 < k1 < 0.7 * r0 and 0.3 * r0 < k2 < 0.7 * r0
-          and not [e for e in au.ev[n:] if e['cs'] == hk[0]], (vec(k, 8), old, hk, got, k1, k2))
-    # code outside the caller's memory, on its stack: MTHOOK's INT 62h
-    o0, n = au.only['own'], len(au.ev)
-    typ(k, 'mtlaunch mtspin.com 20 q1.txt r;mtspin.com 20 q2.txt', 3.0); line(k, '')
-    q1, q2 = spun(k, 'Q1.TXT'), spun(k, 'Q2.TXT')
-    check('a task calling a TSR\'s service (MTHOOK\'s INT 62h: STI, 2 ticks there): never switched from inside it, CS '
-          'not the task\'s (%d refused for that alone); both counted (%d and %d)' % (au.only['own'] - o0, q1, q2),
-          au.only['own'] > o0 and q1 and q2 and not [e for e in au.ev[n:] if e['cs'] == hk[0]], (au.only['own'] - o0, q1, q2))
     # task 0 running a program (from the prompt) with its stack outside its own blocks, a task behind it
     s0 = au.only['ss']
     typ(k, 'mtlaunch mtspin.com 60 y0.txt', 0.5); typ(k, '', 0.3)
@@ -743,33 +719,16 @@ def t_rules():
           'switched from there (%d refused for that alone, the arena walked), so each counts about as much as alone '
           '(%d and %d; %d); the task behind them counted (%d)' % (au.only['ss'] - s0, s3, f3, r0, y0),
           au.only['ss'] > s0 and s3 > 0.8 * r0 and f3 > 0.8 * r0 and y0, (au.only['ss'] - s0, s3, f3, r0, y0))
-    # INT 08h's vector read, or written, from the table itself, and AH=25h or 35h too
-    t0, b0 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
-    typ(k, 'mthook x', 1.0)
-    hx = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
-    gx = (k.pc.u16(hx[0], 0x104), k.pc.u16(hx[0], 0x102))
-    typ(k, 'mtlaunch mtspin.com 20 k3.txt;mtspin.com 20 k4.txt', 2.5); line(k, '')
-    k3, k4 = spun(k, 'K3.TXT'), spun(k, 'K4.TXT')
-    t1, b1 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
-    check('a TSR that read INT 08h from the vector table (mt_tick) and set its own with AH=25h, chaining to mt_tick: '
-          'inside mt_tick, mt_tick again from there going on to the start-up vector, not round again; mt_tick ran on every '
-          'tick (%d), two MTSPINs still take turns (%d and %d)' % ((t1 - t0) & 0xFFFF, k3, k4),
-          gx == (seg, Y['mt_tick']) and hx[0] not in (seg, hk[0]) and vec(k, 8) == (seg, Y['mt_tick'])
-          and (t1 - t0) & 0xFFFF == (b1 - b0) & 0xFFFF > 30 and 0.3 * r0 < k3 < 0.7 * r0 and 0.3 * r0 < k4 < 0.7 * r0,
-          (gx, hx, vec(k, 8), (t1 - t0) & 0xFFFF, k3, k4))
-    typ(k, 'mthook y', 1.0)
-    hy = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
-    check('a program that writes its hook in the vector table itself and gives it back with AH=25h (mt_tick, as it '
-          'read it): mt_tick in the table again, MT\'s chain left as it was', vec(k, 8) == (seg, Y['mt_tick']) and hy == hx,
-          (vec(k, 8), hy, hx))
-    typ(k, 'mthook z', 1.0)
-    hz = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
-    typ(k, 'mtlaunch mtspin.com 20 k5.txt;mtspin.com 20 k6.txt', 2.5); line(k, '')
-    k5, k6 = spun(k, 'K5.TXT'), spun(k, 'K6.TXT')
-    check('a program that writes its hook in the vector table itself, then writes back what AH=35h gave it (MT\'s chain, '
-          'without mt_tick): mt_tick put back on INT 21h\'s way out, so two MTSPINs take turns again (%d and %d)' % (k5, k6),
-          vec(k, 8) == (seg, Y['mt_tick']) and hz == hx and 0.3 * r0 < k5 < 0.7 * r0 and 0.3 * r0 < k6 < 0.7 * r0,
-          (vec(k, 8), hz, hx, k5, k6))
+    # code outside the caller's memory, on its stack: a TSR's INT 62h
+    typ(k, 'mthook s', 1.0)
+    sv = vec(k, 0x62)
+    o0, n = au.only['own'], len(au.ev)
+    typ(k, 'mtlaunch mtspin.com 20 q1.txt r;mtspin.com 20 q2.txt', 3.0); line(k, '')
+    q1, q2 = spun(k, 'Q1.TXT'), spun(k, 'Q2.TXT')
+    check('a task calling a TSR\'s service (MTHOOK S\'s INT 62h: STI, 2 ticks there): never switched from inside it, CS '
+          'not the task\'s (%d refused for that alone); both counted (%d and %d)' % (au.only['own'] - o0, q1, q2),
+          sv[0] != STUB and au.only['own'] > o0 and q1 and q2 and not [e for e in au.ev[n:] if e['cs'] == sv[0]],
+          (sv, au.only['own'] - o0, q1, q2))
     # INT 08h written in the vector table directly, by a task: ahead of mt_tick
     n = len(au.ev)
     typ(k, 'mtlaunch mtspin.com 20 t1.txt t;mtspin.com 20 t2.txt', 3.0); line(k, '')
@@ -778,6 +737,28 @@ def t_rules():
           'interrupted): no switch at the tick meanwhile, so it counts about as much as alone (%d; %d), the other after it '
           '(%d); the vector given back' % (t1, r0, t2), t1 > 0.8 * r0 and t2 > 0 and vec(k, 8) == (seg, Y['mt_tick']),
           (t1, t2, r0, vec(k, 8)))
+    # a TSR hooking INT 08h (AH=35h/25h): ahead of mt_tick, for good
+    typ(k, 'mtlaunch mtspin.com 20 kd.txt d', 2.5); line(k, '')
+    kd = spun(k, 'KD.TXT')
+    typ(k, 'mthook', 1.0)
+    hk = vec(k, 8)
+    got = (k.pc.u16(hk[0], 0x104), k.pc.u16(hk[0], 0x102))
+    n = len(au.ev)
+    typ(k, 'mtlaunch mtspin.com 20 k1.txt d;mtspin.com 20 k2.txt d', 2.5); line(k, '')
+    k1, k2 = spun(k, 'K1.TXT'), spun(k, 'K2.TXT')
+    typ(k, 'mtlaunch mtspin.com 20 k3.txt;mtspin.com 20 k4.txt', 3.0); line(k, '')
+    k3, k4 = spun(k, 'K3.TXT'), spun(k, 'K4.TXT')
+    ev = au.ev[n:]
+    t0, b0 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
+    k.run_for(1.0)
+    t1_, b1 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
+    check('a TSR hooking INT 08h with AH=35h/25h (STI, PUSHF / CALL FAR): ahead of mt_tick, chaining to it (mt_tick runs '
+          'every tick); the tick switches nothing while it is there, INT 21h\'s way out still does: two MTSPINs calling '
+          'INT 21h take turns (%d and %d; %d alone), two that don\'t run one after the other (%d and %d; %d alone)'
+          % (k1, k2, kd, k3, k4, r0), hk[0] not in (seg, STUB) and got == (seg, Y['mt_tick']) and (t1_ - t0) == (b1 - b0) > 10
+          and not [e for e in ev if e['path'] == 'tick'] and [e for e in ev if e['sw']]
+          and 0.3 * kd < k1 < 0.7 * kd and 0.3 * kd < k2 < 0.7 * kd and k3 > 0.8 * r0 and k4 > 0.8 * r0,
+          (hk, got, (t1_ - t0, b1 - b0), k1, k2, kd, k3, k4, r0))
     bad = au.bad()
     check('every one of the %d times mt_safe said yes in these was at a safe point (as in t_preempt)' % len(au.ev),
           not bad and not k.crashed, bad[:3])
@@ -914,9 +895,6 @@ def t_image():
           'POP DS / POP ES / IRET, and ctrlc\'s copy of them is somewhere else (untouched)',
           ex == EXIT5 and sysb[Y['done.sw'] + 5:Y['done.sw'] + 8] == bytes([0x1F, 0x07, 0xCF])
           and sysb[Y['ctrlc.sw']:Y['ctrlc.sw'] + 5] == EXIT5 and Y['ctrlc.sw'] != Y['done.sw'], ex.hex())
-    vx = sysb[Y['f_25']:Y['f_25'] + 7] + sysb[Y['f_35']:Y['f_35'] + 7]
-    check('f_25 and f_35 in LODE.SYS start XOR BX,BX / MOV ES,BX / MOV BL,[BP+F_AX] (31 DB 8E C3 8A 5E 0E: what mt_boot '
-          'patches, and mt_25 and mt_35 redo)', vx == VEC7, vx.hex())
     boot_end = min(r for r, v, n in secs['mdt'])      # (section boot ends where mdt starts)
     check('the start-ups (section boot) end at %04Xh, below 1000:F000, where LODE.INI is read (INI_BUF); LODE.SYS %d bytes, '
           'under the ROM loader\'s 64 KB' % (boot_end, len(sysb)), boot_end < 0xF000 and len(sysb) < 0x10000, (hex(boot_end), len(sysb)))

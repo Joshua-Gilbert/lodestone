@@ -1365,9 +1365,9 @@ f_2F:   mov     ax, [dta+2]
         mov     ax, [dta]
         mov     [bp+F_BX], ax
         jmp     done
-f_25:   xor     bx, bx                  ; set vector (KMT.INC: MULTITASK=1
-        mov     es, bx                  ;  makes these 7 bytes a far jump
-        mov     bl, [bp+F_AX]           ;  to mt_25, which redoes them)
+f_25:   xor     bx, bx                  ; set vector
+        mov     es, bx
+        mov     bl, [bp+F_AX]
         shl     bx, 2
         mov     ax, [bp+F_DX]
         mov     dx, [bp+F_DS]
@@ -1376,8 +1376,8 @@ f_25:   xor     bx, bx                  ; set vector (KMT.INC: MULTITASK=1
         mov     [es:bx+2], dx
         sti
         jmp     done
-f_35:   xor     bx, bx                  ; get vector (and to mt_35: these
-        mov     es, bx                  ;  7 bytes, as f_25's)
+f_35:   xor     bx, bx                  ; get vector
+        mov     es, bx
         mov     bl, [bp+F_AX]
         shl     bx, 2
         mov     ax, [es:bx]
