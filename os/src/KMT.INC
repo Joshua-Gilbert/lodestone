@@ -4,7 +4,8 @@
 ;  docs/lodestone-multitasking.md).  So far: the switch (M1); tasks, each
 ;  a DOS program in a region of its own, switched when one waits for a
 ;  key (M2a); the front one chosen with CODE-Tab, each task's screen kept
-;  in 2 EMS pages of its own (M2b).  Nothing preempts a task yet (M3).
+;  in 2 EMS pages of its own (M2b); tasks preempted at the timer's tick,
+;  where it is safe (M3).
 ;
 ;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
 ;  only in the load image, its resident part (section mtt) isn't even in
@@ -101,6 +102,13 @@ section mtt
 mt_tstart:
 mt_old08    dd      0                   ; INT 08h as it was
 mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
+mt_slice    db      2                   ; ticks left in the running task's turn
+mt_pend     db      0                   ; 1: another task's turn (its turn over,
+                                        ;  or a key for the front one waiting)
+mt_lcs      dw      0                   ; (the last switch's interrupted CS,
+mt_lip      dw      0                   ;  IP, flags and SP, for test_mt: set
+mt_lfl      dw      0                   ;  by mt_safe when it says yes)
+mt_lsp      dw      0
 mt_front    db      0                   ; the task in front
 mt_cur      db      0                   ; the task running
 mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
@@ -155,9 +163,172 @@ ST_END      equ     100h + st_code.e - st_code
 ; the interrupt), then ours
 mt_tick:
         pushf
-        call    far [cs:mt_old08]
-        inc     word [cs:mt_ticks]
+        call    far [cs:mt_old08]       ; (back with interrupts off, the EOI
+        inc     word [cs:mt_ticks]      ;  sent)
+        push    ax
+        push    bx
+        push    dx
+        push    ds
+        push    bp
+        mov     bp, sp                  ; ([bp+10]: the interrupted IP, CS, FL)
+        push    KSEG
+        pop     ds
+        push    es
+        les     bx, [bp+10]             ; just after a HLT: idle, so its turn
+        cmp     byte [es:bx-1], 0F4h    ;  is over
+        pop     es
+        je      .p
+        cmp     byte [cs:mt_slice], 0   ; its turn over?
+        je      .p
+        dec     byte [cs:mt_slice]
+        jnz     .w
+.p:     mov     byte [cs:mt_pend], 1
+.w:     call    mt_kwant                ; (or a key for the front task)
+        cmp     byte [cs:mt_pend], 0
+        je      .r
+        lea     ax, [bp+16]
+        mov     [cs:mt_lsp], ax
+        mov     ax, [bp+12]
+        mov     bx, [bp+10]
+        mov     dx, [bp+14]
+        call    mt_safe
+        jc      .r
+        call    mt_preempt
+.r:     pop     bp
+        pop     ds
+        pop     dx
+        pop     bx
+        pop     ax
         iret
+
+; INT 21h's way out (done's MOV SS,AX / MOV SP,BX / POPA: interrupts off,
+; DS = KSEG, AX:BX = the caller's stack with its frame): another task's
+; turn, if one is due and the caller is at a safe point, then on out
+mt_exit:
+        mov     ss, ax
+        mov     sp, bx
+        cmp     byte [cs:mt_pend], 0
+        jne     .c
+.go:    popa
+        pop     ds
+        pop     es
+        iret
+.c:     push    bp
+        mov     bp, sp                  ; ([bp+2]: the frame, F_*)
+        lea     ax, [bp+2+F_USP]
+        mov     [cs:mt_lsp], ax
+        mov     ax, [bp+2+F_CS]
+        mov     bx, [bp+2+F_IP]
+        mov     dx, [bp+2+F_FL]
+        call    mt_safe
+        jc      .n
+        call    mt_preempt
+.n:     cli
+        pop     bp
+        jmp     .go
+
+; a key in the BIOS's buffer, the front task waiting for one in the
+; background: its turn (mt_pend).  DS = KSEG; AX, BX changed
+mt_kwant:
+        mov     al, [cs:mt_front]
+        cmp     al, [cs:mt_cur]
+        je      .x
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_WAITK
+        jne     .x
+        push    ds
+        push    40h
+        pop     ds
+        mov     ax, [1Ah]
+        cmp     ax, [1Ch]
+        pop     ds
+        je      .x
+        mov     byte [cs:mt_pend], 1
+.x:     ret
+
+; the interrupted (or calling) code at CS AX, IP BX, flags DX, on SS: may
+; the running task be switched from there?  CF if not.  Only if: no INT 21h
+; under way; interrupts were on, and no other hardware interrupt is in
+; service; CS below A000h (not the BIOS, the ROM, the EMS frame), not the
+; kernel's or MT's; in the UI's segment, only at its idle HLTs; no INT 33h
+; event handler running; for tasks but 0, SS in the task's region.  DS =
+; KSEG; AX, BX, DX changed
+mt_safe:
+        mov     [cs:mt_lcs], ax
+        mov     [cs:mt_lip], bx
+        mov     [cs:mt_lfl], dx
+        test    dh, 2                   ; (IF)
+        jz      .no
+        cmp     byte [indos], 0
+        jne     .no
+        cmp     byte [m33_busy], 0
+        jne     .no
+        cmp     ax, 0A000h
+        jae     .no
+        cmp     ax, KSEG
+        je      .no
+        mov     dx, cs
+        cmp     ax, dx
+        je      .no
+        cmp     ax, [ui_seg]
+        jne     .pic
+        cmp     bx, ..@ui_idle
+        je      .pic
+        cmp     bx, ..@ui_sidle
+        jne     .no
+.pic:   mov     al, 0Bh                 ; the PIC's in-service register (as
+        out     20h, al                 ;  capture reads it)
+        in      al, 20h
+        mov     ah, al
+        mov     al, 0Ah
+        out     20h, al
+        or      ah, ah
+        jnz     .no
+        mov     al, [cs:mt_cur]
+        or      al, al
+        jz      .y
+        call    mt_ent
+        mov     ax, ss
+        mov     dx, [cs:bx+TE_REG]
+        cmp     ax, dx
+        jb      .no
+        push    es
+        dec     dx
+        mov     es, dx
+        inc     dx
+        add     dx, [es:3]              ; (its MCB's size: the region's end)
+        pop     es
+        cmp     ax, dx
+        jae     .no
+.y:     clc
+        ret
+.no:    stc
+        ret
+
+; another task's turn: the front one if it waits for a key that is there,
+; else the next ready one.  (Called from mt_tick or mt_exit; returns when
+; this task runs again.)  None: this one goes on, a new turn
+mt_preempt:
+        mov     byte [cs:mt_pend], 0
+        mov     al, [cs:mt_front]
+        cmp     al, [cs:mt_cur]
+        je      .p
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_WAITK
+        jne     .p
+        push    ds
+        push    40h
+        pop     ds
+        mov     bx, [1Ah]
+        cmp     bx, [1Ch]
+        pop     ds
+        je      .p
+        mov     bl, al
+        jmp     mt_switch
+.p:     call    mt_pick
+        jnc     mt_switch
+        mov     byte [cs:mt_slice], 2
+        ret
 
 ; a new task's first return (mt_load): to its stub, flags with IF
 mt_first:
@@ -288,14 +459,17 @@ mt_switch:
         call    mt_ent
         mov     es, [cs:bx+TE_TX]
         pop     bx
-        mov     [es:TX_SP], sp
+.sv:    mov     [es:TX_SP], sp
         mov     [es:TX_SS], ss
         call    mt_emsget
-        mov     cx, kstack_top          ; its slice of the kernel stack
-        sub     cx, sp
-        mov     [es:TX_KLEN], cx
         push    KSEG
         pop     ds
+        xor     cx, cx                  ; its slice of the kernel stack (none:
+        cmp     byte [indos], 0         ;  switched from outside INT 21h, on
+        je      .k                      ;  its own stack)
+        mov     cx, kstack_top
+        sub     cx, sp
+.k:     mov     [es:TX_KLEN], cx
         mov     si, sp
         mov     di, TX_KSTK
         rep     movsb
@@ -305,6 +479,12 @@ mt_switch:
 mt_load:
         cli
         mov     [cs:mt_cur], bl
+        mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
+        mov     byte [cs:mt_slice], 1
+        cmp     bl, [cs:mt_front]
+        jne     .t
+        inc     byte [cs:mt_slice]
+.t:
         mov     al, bl
         call    mt_ent
         mov     byte [cs:bx+TE_STATE], TS_RUN
@@ -1219,6 +1399,9 @@ mt_boot:
         mov     byte [kbd_get.k], 0EAh  ; the key wait: JMP FAR mt_kwait
         mov     word [kbd_get.k + 1], mt_kwait
         mov     [kbd_get.k + 3], es
+        mov     byte [done.sw], 0EAh    ; INT 21h's way out: JMP FAR mt_exit
+        mov     word [done.sw + 1], mt_exit
+        mov     [done.sw + 3], es
         sti
         push    cs
         pop     ds

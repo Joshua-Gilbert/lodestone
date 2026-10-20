@@ -486,8 +486,8 @@ done:   push    cs
         mov     bx, [bp+F_USP]
         cli
         dec     byte [indos]
-        mov     ss, ax
-        mov     sp, bx
+.sw:    mov     ss, ax                  ; (KMT.INC: MULTITASK=1 makes these 5
+        mov     sp, bx                  ;  bytes a far jump to mt_exit)
         popa
         pop     ds
         pop     es

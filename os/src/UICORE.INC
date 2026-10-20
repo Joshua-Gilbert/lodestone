@@ -475,7 +475,8 @@ ui_event:
         jnc     .got
         sti
         hlt                             ; sleep until the next interrupt
-        jmp     .l
+..@ui_idle:                             ; (KMT.INC: a task may be switched
+        jmp     .l                      ;  from here, and the saver's)
 .got:   call    win_ev                  ; the top window's title strip, CODE-F7
         jc      .on                     ; (taken, nothing to say: wait on)
         mov     byte [ptr_on], 0
@@ -3956,6 +3957,7 @@ saver:  pusha
         call    sv_move
 .z:     sti
         hlt
+..@ui_sidle:
         jmp     .l
 .key:   call    read_key                ; the key that wakes it does
                                         ; nothing else

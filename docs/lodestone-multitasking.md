@@ -17,8 +17,8 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M0 | Windows that move and close (UI API 6), the calculator first | PR #40, merged. Costs 0.5 KB with the switch off: it is UI code, wanted anyway. See `lodestone-0.3-apps.md`. |
 | M1 | The switch and the skeleton | PR #43, merged. |
 | M2a | Spawning, task regions, switching when one waits for a key | PR #44, merged. |
-| M2b | The front: the CODE-Tab hot key, each task's screen saved and restored | This PR. |
-| M3 | Preemption from INT 08h at safe points | |
+| M2b | The front: the CODE-Tab hot key, each task's screen saved and restored | PR #45, merged. |
+| M3 | Preemption from INT 08h at safe points | This PR. |
 | M4 | Virtual screens (an INT 10h hook) and the direct-write detector | |
 | M5 | Per-task vectors, ending and killing tasks | |
 | M6 | Parking tasks in EMS and bringing them back | |
@@ -204,7 +204,7 @@ What they check:
   - a program that asks before it reads loses it too: INT 21h AH=0Bh, AH=06h with DL=FFh, AH=0Ch's flush, and IOCTL 4406h on CON all ask;
   - a program that reads keys through INT 16h itself never gets to DOS's wait, so its tasks don't switch at all.
 
-  M3 (switching anywhere) and M4's INT 16h hook (catching the key before anyone asks) lift this.
+  M4's INT 16h hook (catching the key before anyone asks) lifts this. (This first said M3 too; it doesn't: see M3's limits.)
 - **A small race:** a CODE-Tab typed in the instant between `mt_hot`'s look and the front task's own INT 16h AH=01h is dropped there; pressed again, it works. M4's hook closes this too.
 - **A background task's output still lands on the front screen** until M4's hooks: it is kept with whichever task's screen is shown.
 - **A task's screen, the first time it comes to the front, is mode 3 and clear.** What it wrote before then went to the front task's screen. A program that sets a graphics mode should come to the front first (`/F`).
@@ -297,3 +297,61 @@ A second look at those fixes found two gaps, both reproduced, now fixed and test
 It also had the pointer hidden when the front task ends.
 
 Not testable in pcemu: the page shown (AH=05h; pcemu shows page 0 whatever), BX across the mode set (pcemu's INT 10h keeps it), the INT 33h hiding (no test program uses INT 33h), and the owner check against a program's own allocation.
+
+## M3: preemption, at the timer's tick where it is safe (2026-10-20)
+
+**What it does:** a task no longer has to wait for a key to let another run. Each has a turn of timer ticks: 2 in front, 1 in the background. At the end of a turn, MT switches to the next ready task, provided the running one is at a safe point. A task interrupted just after a HLT is idle, so its turn ends at once. A front task waiting for a key in the background gets the next turn as soon as a key is in the buffer.
+
+So, unlike M2a:
+- tasks run with the Executive or LCMD's prompt in front;
+- a task that computes without waiting no longer keeps the machine;
+- a new task starts within a tick, not at someone's key wait.
+
+**Where it switches:**
+- **At the tick** (`mt_tick`, after the BIOS's own INT 08h handler: the tick counted, INT 1Ch run, the EOI sent).
+- **On the way out of INT 21h**, if a turn ended while the task was inside it. The common exit's `MOV SS,AX / MOV SP,BX / POPA` (5 bytes at `done.sw`, checked in the listing and by `test_mt`) becomes a far jump to `mt_exit`. Without it, a task that lives in DOS calls would hardly ever be caught outside them. `ctrlc` has a copy of those 5 bytes, left alone.
+
+**A safe point** (`mt_safe`), checked against the interrupted (or calling) code:
+- no INT 21h under way (`indos` 0): the kernel is never preempted;
+- interrupts were on, and no other hardware interrupt is in service (the PIC's in-service register, read as `capture` reads it);
+- CS below A000h (not the BIOS, the ROM, the EMS frame or Resident Claude's console), and not the kernel's or MT's own segment;
+- in the UI's segment, only at its two idle HLTs (`..@ui_idle` in `ui_event`, `..@ui_sidle` in the saver). These are labels the UI gained for this, at no cost in bytes. So the Executive is switched from only while it waits, never in the middle of drawing or a directory load;
+- no INT 33h event handler running (`m33_busy`);
+- for tasks but 0, SS inside the task's region, so not a TSR's or a driver's own stack.
+
+A turn that ends anywhere else waits, as `mt_pend`, for the next safe tick or INT 21h exit.
+
+**How:**
+- A task switched from outside INT 21h keeps no kernel-stack slice: `mt_switch` saves one only when `indos` is non-zero, and a TX notes its length (0 here).
+- It is resumed inside `mt_tick` or `mt_exit`, which then restore its registers from its own stack and return to it with IRET.
+- `mt_preempt` chooses the next task: the front one, if it waits for a key that is in the buffer; else the next ready one, in turn. None: the running one goes on.
+- `mt_load` starts each turn.
+
+**The limits, plainly:**
+- **Background output still lands on the front screen** until M4's INT 10h hook, now while the front task runs too. Background tasks should write to files, as the tests' do.
+- **CODE-Tab still needs a DOS key wait** (M2b), contrary to what the M2b section first said. M3 doesn't change that, because the Executive and LCMD poll for keys, and that poll loses CODE keys. M4's INT 16h hook lifts it.
+- **A program waiting in the BIOS** (INT 16h AH=00h called directly, as many do) can't be preempted on the 1520: the tick finds CS in the ROM. The other tasks wait until it has a key. (pcemu blocks such a call at the program's own INT 16h, so there it can be preempted; `test_mt` notes the difference.) M4's INT 16h hook lifts this too.
+- **The idle front task** sleeps out the rest of the tick it is given (it HLTs; MT only notices at the next tick). With the Executive or the prompt idle in front, a background task gets 55–65% of the processor in pcemu, not all of it.
+- **C:'s INT 25h/26h** run kernel code outside INT 21h. An INT 24h handler raised from inside them (a disk error) could be preempted with that code's state half used. That needs a disk error on C: during INT 25h/26h. M5.
+- **Resident Claude's console** runs at E000h, so it is never preempted. But CLAUDE /R doesn't yet hold switching while it is up (the plan's `mt_hold`, M7).
+
+**Cost:**
+- **Switch off:** nothing. `test_mt` pins the map and MEMSZ; LODE.SYS grows 16 bytes, in `mt_boot` (the new patch). The UI's two labels and KCORE's `done.sw` cost no bytes.
+- **Switch on:** MT's block is 226 paragraphs plus its MCB, 3.5 KB, so a DOS program gets 574.0 KB instead of 577.6.
+- **A task's stack:** MT uses at most 52 bytes of the task's own stack when it switches from outside INT 21h (measured by `test_mt`). That is on top of what an interrupt or an INT 21h call already takes there.
+- **Files:** LODEMT.SYS is 2,903 bytes; ROM 1 has 19,968 bytes left.
+
+**Tests:** `test_mt.py`, 108 checks. The new group is `t_preempt`, with a new test program. `MTSPIN T CNTFILE [D | W DATAFILE]` counts for T ticks of the BIOS's clock, then writes its count. D makes an INT 21h call each count; W writes a 64-byte record to DATAFILE each count. It prints nothing.
+
+The checks:
+- **Spinners:** two take turns, about half each of what one counts alone. With one in front (turns of 2 ticks against 1), it counts about twice the other's.
+- **DOS calls:** the same with an INT 21h call each count, which needs the switch on INT 21h's way out.
+- **Files:** two writers at once: both files whole, and the disk readable.
+- **In front:** with LCMD's prompt in front, a spinner runs most of the time. With the Executive in front, a spinner runs, and the Executive moves its selection 120 times meanwhile and is still there.
+- **An audit hook** on `mt_preempt` checks every preemptive switch (342 in the run) against every safe-point rule above, and measures MT's stack use.
+- **The exit patch:** bytes pinned in LODE.SYS, patched with the switch on, untouched with it off.
+- **The checks can fail:** each of these, broken on purpose, fails its check:
+  - switching on INT 21h's way out (the INT 21h spinners);
+  - switching at the tick (the spinners, the Executive);
+  - the idle-HLT rule (the Executive's case);
+  - the UI's idle-point rule (the audit, once the Executive is kept busy).

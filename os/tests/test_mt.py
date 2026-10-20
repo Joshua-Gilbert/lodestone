@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Multitasking (KMT.INC): the switch and the skeleton (M1), tasks switched
 when one waits for a key (M2a), the front one chosen with CODE-Tab, each with
-its own screen (M2b).
+its own screen (M2b), preempted at the timer's tick where it is safe (M3).
+
+(pcemu's INT 16h AH=00h with no key blocks at the caller's own INT 16h, so a
+program waiting there can be preempted; on the 1520 it waits inside the BIOS,
+where it can't.)
 
 MULTITASK=1 in LODE.INI (with EMS, enough for the disk cache to be in it)
 puts multitasking's resident part in a block of its own at the top of
@@ -9,7 +13,7 @@ memory, with INT 08h, INT 21h F0h and the kernel's key wait going through
 it.  Programs start others as tasks (MTLAUNCH), each in a region of its own,
 and they take turns when one waits for a key.  Off (no such line, any other
 value, or no EMS), nothing of it is in memory and everything is as before.
-python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_progs t_rom]"""
+python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_progs t_rom]"""
 import os, re, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
@@ -25,7 +29,7 @@ def check(name, cond, detail=''):
     print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:600]) if detail and not cond else ''))
 
 MTPROBE = os.path.join(HERE, 'MTPROBE.COM')
-MTL, MTLN, MTCW, MTMD, FREEH = (os.path.join(HERE, n + '.COM') for n in ('MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH'))
+MTL, MTLN, MTCW, MTMD, FREEH, MTSP = (os.path.join(HERE, n + '.COM') for n in ('MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN'))
 SYS = os.path.join(GOS, 'src', 'LODE.SYS')
 MTSYS = os.path.join(GOS, 'src', 'LODEMT.SYS')
 MAP = os.path.join(GOS, 'src', 'LODE.MAP')
@@ -43,7 +47,7 @@ def ini(text):
 def boot(name, text=None, ems=88, *more, mt=MTSYS):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
     MTPROBE, `more`, and LODE.INI holding `text`."""
-    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH] + list(more) \
+    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP] + list(more) \
         + ([ini(text)] if text is not None else [])
     k = ktest.KPC(A.image(name, *files), ems_pages=ems); k.start(10)
     k.mcb0 = k.u16('first_mcb')         # (the whole arena's start: first_mcb is per task)
@@ -76,6 +80,8 @@ def vec(k, n): return k.pc.u16(0, n * 4 + 2), k.pc.u16(0, n * 4)
 
 def f0_bytes(k): return bytes(k.pc.rd(0x60, k.Y['f_F0'], 5))
 def kw_bytes(k): return bytes(k.pc.rd(0x60, k.Y['kbd_get.k'], 6))
+def dx_bytes(k): return bytes(k.pc.rd(0x60, k.Y['done.sw'], 5))
+EXIT5 = bytes([0x8E, 0xD0, 0x89, 0xDC, 0x61])      # MOV SS,AX / MOV SP,BX / POPA
 
 def probe(k):
     """MTPROBE's lines: {AL: (CF, AX, BX, CX)}."""
@@ -106,7 +112,7 @@ def t_off():
         k = boot('mt_off.img', text, ems)
         check('%s: no MT block, INT 08h the BIOS\'s, f_F0 and kbd_get.k as assembled' % tag,
               mt_seg(k) is None and vec(k, 8) == INT08 and f0_bytes(k) == sysb[k.Y['f_F0']:k.Y['f_F0'] + 5]
-              and kw_bytes(k) == sysb[k.Y['kbd_get.k']:k.Y['kbd_get.k'] + 6],
+              and kw_bytes(k) == sysb[k.Y['kbd_get.k']:k.Y['kbd_get.k'] + 6] and dx_bytes(k) == EXIT5,
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
@@ -139,6 +145,9 @@ def t_on():
     kw = kw_bytes(k)
     check('the key wait goes through mt_kwait (JMP FAR over kbd_get.k\'s MOV AH,1 / INT 16h / JNZ)',
           kw[0] == 0xEA and kw[1] | kw[2] << 8 == Y['mt_kwait'] and kw[3] | kw[4] << 8 == seg, kw.hex())
+    dx = dx_bytes(k)
+    check('INT 21h\'s way out goes through mt_exit (JMP FAR over done.sw\'s MOV SS,AX / MOV SP,BX / POPA)',
+          dx[0] == 0xEA and dx[1] | dx[2] << 8 == Y['mt_exit'] and dx[3] | dx[4] << 8 == seg, dx.hex())
     check('task 0 is the Executive: its PSP the root process\'s',
           k.pc.u16(seg, Y['mt_tab'] + 2) == k.u16('root_psp'), (hex(k.pc.u16(seg, Y['mt_tab'] + 2)), hex(k.u16('root_psp'))))
     t0, b0 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
@@ -500,6 +509,100 @@ def t_front():
     check('MDISK= all of EMS and MULTITASK=1: no pages left for task 0\'s screen, so multitasking stays off (TASKS says so)',
           mt_seg(k) is None and OFF_MSG in o and A.md_pages(k) > 0, (show(mcbs(k)), o, A.md_pages(k)))
 
+def typ(k, s, t=0.5):
+    """Type a command without waiting for the machine to go idle (a task may be computing)."""
+    k.key(s, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+
+def spun(k, name):
+    v = A.disk_file(k, name)
+    return int(v, 16) if v else 0
+
+class Audit:
+    """Every preemptive switch (at mt_preempt, after mt_safe said yes): the interrupted or calling code's CS:IP,
+    flags and SP (mt_lcs, mt_lip, mt_lfl, mt_lsp), the task, SS, the PIC's in-service register, indos, m33_busy;
+    and the stack MT used on the task's own stack, at mt_emsget (mt_switch's deepest call) outside INT 21h."""
+    def __init__(s, k):
+        s.k, s.ev, s.depth = k, [], 0
+        seg = mt_seg(k)
+        s.at, s.em = seg * 16 + k.Y['mt_preempt'], seg * 16 + k.Y['mt_emsget']
+        s.seg = seg
+        k.pc.watch = s.watch
+    def w(s, o): return s.k.pc.u16(s.seg, s.k.Y[o])
+    def watch(s, a):
+        k, pc = s.k, s.k.pc
+        if a == s.at:
+            cur = pc.rd(s.seg, k.Y['mt_cur'], 1)[0]
+            reg = pc.u16(s.seg, k.Y['mt_tab'] + cur * MT_ENT + 4)
+            size = pc.u16(reg - 1, 3) if cur else 0
+            s.ev.append(dict(cs=s.w('mt_lcs'), ip=s.w('mt_lip'), fl=s.w('mt_lfl'), task=cur, ss=pc.r('ss'),
+                             isr=pc.isr, indos=pc.rd(0x60, k.Y['indos'], 1)[0], busy=pc.rd(0x60, k.Y['m33_busy'], 1)[0],
+                             ui=pc.u16(0x60, k.Y['ui_seg']), reg=reg, size=size))
+        elif a == s.em and pc.rd(0x60, s.k.Y['indos'], 1)[0] == 0:
+            s.depth = max(s.depth, s.w('mt_lsp') - pc.r('sp'))
+    def bad(s):
+        Y, seg = s.k.Y, s.seg
+        idle = (Y['..@ui_idle'], Y['..@ui_sidle'])
+        out = []
+        for e in s.ev:
+            ok = (e['cs'] < 0xA000 and e['cs'] not in (0x60, seg) and (e['cs'] != e['ui'] or e['ip'] in idle)
+                  and e['fl'] & 0x200 and e['isr'] == 0 and e['indos'] == 0 and e['busy'] == 0
+                  and (e['task'] == 0 or e['reg'] <= e['ss'] < e['reg'] + e['size']))
+            if not ok: out.append(e)
+        return out
+
+def t_preempt():
+    print('== preemption: tasks switched at the tick, where it is safe')
+    k = boot('mt_p.img', b'MULTITASK=1\r\n', 88)
+    au = Audit(k)
+    sh = Shell(k)
+    sh.run('ver')
+    a0, used0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+    typ(k, 'mtlaunch mtspin.com 20 c0.txt', 2.5); line(k, '')
+    typ(k, 'mtlaunch mtspin.com 20 c1.txt;mtspin.com 20 c2.txt', 2.5); line(k, '')
+    c0, c1, c2 = spun(k, 'C0.TXT'), spun(k, 'C1.TXT'), spun(k, 'C2.TXT')
+    check('two MTSPINs (no INT 21h, nothing printed) take turns at the tick: each counts about half what one alone '
+          'does in the same 20 ticks (alone %d; %d and %d)' % (c0, c1, c2),
+          c0 > 0 and 0.3 * c0 < c1 < 0.7 * c0 and 0.3 * c0 < c2 < 0.7 * c0, (c0, c1, c2))
+    typ(k, 'mtlaunch /f mtspin.com 20 c3.txt;mtspin.com 20 c4.txt', 2.5); line(k, '')
+    c3, c4 = spun(k, 'C3.TXT'), spun(k, 'C4.TXT')
+    check('the front one\'s turn is 2 ticks, the other\'s 1: about twice as many counts (%d and %d)' % (c3, c4),
+          c4 > 0 and 1.4 < c3 / c4 < 2.8, (c3, c4))
+    typ(k, 'mtlaunch mtspin.com 20 d0.txt d', 2.5); line(k, '')
+    typ(k, 'mtlaunch mtspin.com 20 d1.txt d;mtspin.com 20 d2.txt d', 2.5); line(k, '')
+    d0, d1, d2 = spun(k, 'D0.TXT'), spun(k, 'D1.TXT'), spun(k, 'D2.TXT')
+    check('the same with an INT 21h call on every count (AH=2Ch), switched on INT 21h\'s way out too: about half '
+          'each (alone %d; %d and %d)' % (d0, d1, d2), d0 > 0 and 0.3 * d0 < d1 < 0.7 * d0 and 0.3 * d0 < d2 < 0.7 * d0,
+          (d0, d1, d2))
+    typ(k, 'mtlaunch mtspin.com 15 w1.txt w w1.dat;mtspin.com 15 w2.txt w w2.dat', 2.5); line(k, '')
+    w1, w2 = spun(k, 'W1.TXT'), spun(k, 'W2.TXT')
+    rec = b'0123456789ABCDEF' * 3 + b'0123456789ABCDE\n'
+    check('two tasks writing a file each, 64 bytes a count, at once: both files whole (%d and %d records), the disk '
+          'readable' % (w1, w2), w1 > 0 and w2 > 0 and A.disk_file(k, 'W1.DAT') == rec * w1
+          and A.disk_file(k, 'W2.DAT') == rec * w2, (w1, w2, len(A.disk_file(k, 'W1.DAT') or b'')))
+    # at the command prompt, then in the Executive
+    typ(k, 'mtlaunch mtspin.com 30 p.txt', 0.5); typ(k, '', 3)
+    p = spun(k, 'P.TXT')
+    check('MTLAUNCH ended, LCMD\'s prompt in front (it polls, then HLTs): MTSPIN goes on in the background, most of '
+          'the time (%d in 30 ticks; %d in 20 alone)' % (p, c0), p > 0.8 * c0, (p, c0))
+    v = sh.run('ver')
+    typ(k, 'mtlaunch mtspin.com 60 e.txt', 0.5); typ(k, '', 0.3); typ(k, 'exit', 1.0)
+    k.key(*[ktest.DOWN, ktest.UP] * 60, settle=False)  # (the Executive busy drawing: ticks land mid-UI too)
+    k.run_for(3.5)
+    e = spun(k, 'E.TXT')
+    ui = [x for x in au.ev if x['cs'] == x['ui']]
+    check('... and with the Executive in front (LCMD ended): it is switched from at its idle HLT, MTSPIN runs '
+          '(%d in 60 ticks, the Executive moving its selection meanwhile), and the Executive is still there (mode 40h)' % e,
+          e > c0 and ui and k.pc.mode() == 0x40
+          and not k.crashed, (e, len(ui), hex(k.pc.mode())))
+    bad = au.bad()
+    check('every one of the %d preemptive switches was at a safe point: CS below A000h, not the kernel\'s or MT\'s, '
+          'in the UI only at its idle HLTs; interrupts on, none in service, outside INT 21h, no INT 33h handler; SS '
+          'in the task\'s region (tasks but 0)' % len(au.ev), len(au.ev) > 50 and not bad, (len(au.ev), bad[:3]))
+    print('   MT\'s own use of a task\'s stack, preempted outside INT 21h: %d bytes at most' % au.depth)
+    check('MT\'s use of a task\'s stack when it switches from outside INT 21h: %d bytes, under 64' % au.depth,
+          0 < au.depth < 64, au.depth)
+    k.pc.watch = None
+
 def t_ends():
     print('== tasks that end otherwise: aborted, resident')
     pad = os.path.join(A.OUT, 'PAD.BIN'); open(pad, 'wb').write(bytes(70000))
@@ -608,6 +711,11 @@ def t_image():
     check('kbd_get.k in LODE.SYS is MOV AH,1 / INT 16h / JNZ .have (B4 01 CD 16 75 xx: what mt_boot patches)',
           kw[:5] == bytes([0xB4, 1, 0xCD, 0x16, 0x75]) and Y['kbd_get.k'] + 6 + kw[5] == Y['kbd_get.have'], kw.hex())
     check('task 0\'s TX in MT\'s BSS: on the paragraph after the image', Y['mt_tx0'] == (len(mtb) + 15) // 16 * 16, hex(Y['mt_tx0']))
+    ex = sysb[Y['done.sw']:Y['done.sw'] + 5]
+    check('done.sw in LODE.SYS is MOV SS,AX / MOV SP,BX / POPA (8E D0 89 DC 61: what mt_boot patches), the bytes after it '
+          'POP DS / POP ES / IRET, and ctrlc\'s copy of them is somewhere else (untouched)',
+          ex == EXIT5 and sysb[Y['done.sw'] + 5:Y['done.sw'] + 8] == bytes([0x1F, 0x07, 0xCF])
+          and sysb.count(EXIT5) >= 2, ex.hex())
     boot_end = min(r for r, v, n in secs['mdt'])      # (section boot ends where mdt starts)
     check('the start-ups (section boot) end at %04Xh, below 1000:F000, where LODE.INI is read (INI_BUF); LODE.SYS %d bytes, '
           'under the ROM loader\'s 64 KB' % (boot_end, len(sysb)), boot_end < 0xF000 and len(sysb) < 0x10000, (hex(boot_end), len(sysb)))
@@ -653,11 +761,11 @@ def t_file():
 if __name__ == '__main__':
     t0 = time.time()
     A.build()
-    for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH'):
+    for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/', '-o', os.path.join(HERE, n + '.COM'),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_progs, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_progs, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
