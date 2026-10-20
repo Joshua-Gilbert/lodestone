@@ -1,5 +1,5 @@
 ; MTSPIN.COM - for test_mt.py: a task that computes, for preemption.
-;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | T | P | O]
+;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | T | B | P | I | O]
 ; Counts, as fast as it can, for T ticks of the BIOS's clock (40:6Ch),
 ; then writes the count (8 hex digits) to CNTFILE.  It prints nothing.
 ;   D  an INT 21h call (AH=2Ch) on each count
@@ -16,9 +16,13 @@
 ;      service)
 ;   T  hooks INT 08h meanwhile, writing the vector itself (not AH=25h):
 ;      its handler does STI and chains with PUSHF / CALL FAR
+;   B  counts with the direction flag set (STD)
 ;   P  keeps its own values on the coprocessor (n and 2n in ST0 and ST1,
-;      n from its segment, and its own rounding in the control word) and
-;      checks them on each count: any changed, the count it writes is 0
+;      n from its segment, and its own rounding in the control word, never
+;      FNINIT's) and checks them on each count: any changed, the count it
+;      writes is 0
+;   I  checks the coprocessor's control word is FNINIT's (037Fh) before it
+;      uses it: if not, the count it writes is 0
 ;   O  no counting: the count is what INT 21h F0h AL=1 says for A: (files
 ;      open there)
 ; nasm -f bin -o MTSPIN.COM MTSPIN.ASM
@@ -89,15 +93,24 @@ org 100h
         mov     word [es:8 * 4], h08
         mov     [es:8 * 4 + 2], cs
         sti
-.p0:    cmp     byte [mode], 'P'
-        jne     .go
+.p0:    cmp     byte [mode], 'I'
+        jne     .p1
+        fnstcw  [fpt + 4]               ; (I: FNINIT's control word, as a new
+        fwait                           ;  task must find it)
+        cmp     word [fpt + 4], 037Fh
+        je      .go
+        mov     byte [fpe], 1
+        jmp     .go
+.p1:    cmp     byte [mode], 'P'
+        jne     .b0
         mov     ax, cs                  ; (P: its own values on the
         and     ax, 0FFFh               ;  coprocessor: n and 2n, n from its
-        mov     [fpn], ax               ;  segment; rounding as n's low bits)
-        shl     ax, 1
+        mov     [fpn], ax               ;  segment; rounding as n's low bits,
+        shl     ax, 1                   ;  never FNINIT's)
         mov     [fpn2], ax
         mov     ax, [fpn]
         and     ax, 3
+        or      al, 1
         mov     cl, 10
         shl     ax, cl
         or      ax, 037Fh
@@ -107,6 +120,9 @@ org 100h
         fild    word [fpn]
         fld     st0
         fadd    st0, st0
+.b0:    cmp     byte [mode], 'B'        ; (B: counting with DF set)
+        jne     .go
+        std
 .go:    push    40h
         pop     es
         mov     ax, [es:6Ch]
@@ -157,7 +173,7 @@ org 100h
         mov     ax, [fpt + 4]
         cmp     ax, [fpcw]
         je      .i
-.pe:    inc     word [fpe]
+.pe:    mov     byte [fpe], 1
 .i:     cmp     byte [mode], 'R'
         jne     .i2
         int     62h
@@ -178,6 +194,7 @@ org 100h
         sub     ax, [t0]
         cmp     ax, [tks]
         jb      .l
+        cld
         cmp     word [ssv], 0
         je      .ue
         cli
@@ -206,7 +223,7 @@ org 100h
         mov     ah, 3Eh
         mov     bx, [dh_]
         int     21h
-.c:     cmp     word [fpe], 0           ; (P: anything changed: count 0)
+.c:     cmp     byte [fpe], 0           ; (P: anything changed: count 0)
         je      .c2
         mov     word [cnt], 0
         mov     word [cnt + 2], 0
@@ -296,7 +313,7 @@ fpn     dw      0
 fpn2    dw      0
 fpcw    dw      0
 fpt     dw      0, 0, 0
-fpe     dw      0
+fpe     db      0
 mode    db      0
 out_    times 8 db 0
 rec     db      '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDE', 0Ah
