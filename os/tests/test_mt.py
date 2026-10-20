@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Multitasking (KMT.INC): the switch and the skeleton (M1), tasks switched
-when one waits for a key (M2a), the front one chosen with CODE-], each with
+when one waits for a key (M2a), the front one chosen with CODE-Tab, each with
 its own screen (M2b).
 
 MULTITASK=1 in LODE.INI (with EMS, enough for the disk cache to be in it)
@@ -317,17 +317,17 @@ def file_lbas(path, name):
                 cl = v >> 4 if cl & 1 else v & 0xFFF
     return out
 
-HOT = 0x1B00                            # CODE-] (as AH=10h gives it; the BIOS keeps 1BF0h)
+HOT = 0xA500                            # CODE-Tab (as AH=10h gives it on the 1520)
 
 def hot(k):
     k.key(HOT); k.run_for(0.4)
 
 def ems_used(k): return k.pc.rd(0x60, k.Y['ems_used'], 1)[0]
 
-def no_hot(k): return not any(w in (0x1BF0, 0x1B00) for w in k.pc.kbd_ring())
+def no_hot(k): return not any(w in (0xA500, 0xA5F0) for w in k.pc.kbd_ring())
 
 def t_front():
-    print('== the front: CODE-] to the next task, each task its own screen')
+    print('== the front: CODE-Tab to the next task, each task its own screen')
     k = boot('mt_h.img', b'MULTITASK=1\r\n', 88)
     sh = Shell(k)
     sh.run('ver')
@@ -338,13 +338,13 @@ def t_front():
     scr0, cur0, bd0 = k.pc.text_screen(), k.pc.cursor(), bytes(k.pc.rd(0x40, 0x49, 30))
     hot(k)
     s1 = k.pc.text_screen()
-    check('CODE-] while MTLAUNCH waits: task 1 to the front, the key taken out of the buffer; its screen, never shown '
+    check('CODE-Tab while MTLAUNCH waits: task 1 to the front, the key taken out of the buffer; its screen, never shown '
           'yet, clear in mode 3', tstate(k)[1] == 1 and no_hot(k) and s1.strip() == '' and k.pc.mode() == 3,
           (tstate(k), k.pc.kbd_ring(), s1[-200:]))
     k.key('hel'); k.run_for(0.3)
     check('... what is typed goes to task 1, and shows on its screen', 'hel' in k.pc.text_screen(), k.pc.text_screen()[-200:])
     hot(k)
-    check('CODE-] again: task 2, its screen clear', tstate(k)[1] == 2 and k.pc.text_screen().strip() == '', (tstate(k), k.pc.text_screen()[-200:]))
+    check('CODE-Tab again: task 2, its screen clear', tstate(k)[1] == 2 and k.pc.text_screen().strip() == '', (tstate(k), k.pc.text_screen()[-200:]))
     hot(k)
     check('and again: round to task 0, MTLAUNCH\'s screen back as it was, its cursor and BIOS video data too',
           tstate(k)[1] == 0 and k.pc.text_screen() == scr0 and k.pc.cursor() == cur0 and bytes(k.pc.rd(0x40, 0x49, 30)) == bd0,
@@ -359,7 +359,7 @@ def t_front():
     hot(k)
     line(k, 'world')
     line(k, '')
-    check('CODE-] with tasks 0 and 2 left: task 2 (B.TXT "world"); all ended, memory, files and EMS pages as before',
+    check('CODE-Tab with tasks 0 and 2 left: task 2 (B.TXT "world"); all ended, memory, files and EMS pages as before',
           A.disk_file(k, 'B.TXT') == b'world' and tstate(k) == ([(0, 1, 'Executive')], 0, 0) and merged(mcbs(k)) == a0
           and sft_used(k) == used0 and ems_used(k) == e0, (A.disk_file(k, 'B.TXT'), tstate(k), ems_used(k), e0))
     # a graphics screen kept
@@ -372,7 +372,7 @@ def t_front():
     v2, m2 = bytes(k.pc.rd(0xB800, 0, 0x8000)), k.pc.mode()
     k.key('x'); k.run_for(0.5)
     line(k, '')
-    check('MTMODE in mode 40h (640 x 400, 32 KB), in front; CODE-] to task 0 (text, mode 3: MTLAUNCH\'s screen), CODE-] '
+    check('MTMODE in mode 40h (640 x 400, 32 KB), in front; CODE-Tab to task 0 (text, mode 3: MTLAUNCH\'s screen), CODE-Tab '
           'back: mode 40h and its 32 KB as they were; MTMODE finds its pattern intact (M.TXT "ok")',
           m1 == 0x40 and m0 == 3 and 'MTLAUNCH waits>' in s0 and m2 == 0x40 and v2 == v1 and A.disk_file(k, 'M.TXT') == b'ok'
           and tstate(k)[0] == [(0, 1, 'Executive')], (hex(m1), hex(m0), hex(m2), v1 == v2, A.disk_file(k, 'M.TXT')))
@@ -389,7 +389,7 @@ def t_front():
     v2, m2, c2, p2 = bytes(k.pc.rd(0xB800, 0, 0x8000)), k.pc.mode(), k.pc.ccr, k.pc.rd(0x40, 0x66, 1)[0]
     k.key('x'); k.run_for(0.5)
     line(k, '')
-    check('MTMODE in mode 4 (CGA, palette 25h in 40:66h and 3D9h): CODE-] away and back: mode 4, 3D9h 25h (written '
+    check('MTMODE in mode 4 (CGA, palette 25h in 40:66h and 3D9h): CODE-Tab away and back: mode 4, 3D9h 25h (written '
           'after the mode set, before the screen), 40:66h 25h, the screen as it was (N.TXT "ok")',
           m1 == 4 and m2 == 4 and c2 == 0x25 and p2 == 0x25 and v2 == v1 and ccr and ccr[-1] == (0x25, False)
           and A.disk_file(k, 'N.TXT') == b'ok', (hex(m1), hex(m2), hex(c2), hex(p2), ccr, v2 == v1, A.disk_file(k, 'N.TXT')))
@@ -399,21 +399,21 @@ def t_front():
     hot(k)
     st2 = tstate(k)
     front(k, 1); line(k, 'c'); line(k, '')
-    check('CODE-] twice with one task besides task 0: to it, and back to task 0; the task goes on as before',
+    check('CODE-Tab twice with one task besides task 0: to it, and back to task 0; the task goes on as before',
           st1[1] == 1 and st2[1] == 0 and A.disk_file(k, 'C.TXT') == b'c', (st1, st2, A.disk_file(k, 'C.TXT')))
-    # typed before CODE-]: still the front task's
+    # typed before CODE-Tab: still the front task's
     sh.run('mtlaunch mtline.com t1.txt')
     k.key('x', 'y', HOT, 'z', ktest.ENTER, settle=False); k.run_for(1.5)
     st = tstate(k)
     line(k, '')
-    check('"xy", CODE-], "z", Enter typed ahead: MTLAUNCH (in front) reads "xy" first, then task 1 comes to the front '
+    check('"xy", CODE-Tab, "z", Enter typed ahead: MTLAUNCH (in front) reads "xy" first, then task 1 comes to the front '
           'and gets "z" (T1.TXT)', A.disk_file(k, 'T1.TXT') == b'z', (A.disk_file(k, 'T1.TXT'), st))
     # at the command prompt, a task left waiting
     sh.run('mtlaunch mtline.com l.txt')
     line(k, '')
     k.key(HOT); k.run_for(0.4)
     st = tstate(k)
-    check('CODE-] at the command prompt, a task waiting: nothing switches (LCMD asks with INT 21h AH=0Bh), and the key '
+    check('CODE-Tab at the command prompt, a task waiting: nothing switches (LCMD asks with INT 21h AH=0Bh), and the key '
           'is gone (the BIOS drops it there)', st[0] == [(0, 1, 'Executive'), (1, 2, 'MTLINE.COM')] and st[1] == 0
           and no_hot(k), (st, k.pc.kbd_ring()))
     sh.run('mtlaunch')
@@ -421,7 +421,7 @@ def t_front():
     st = tstate(k)
     line(k, 'late'); line(k, '')
     v = sh.run('ver')
-    check('... with MTLAUNCH waiting, CODE-] brings it up; it gets its line ("late": L.TXT); the prompt goes on',
+    check('... with MTLAUNCH waiting, CODE-Tab brings it up; it gets its line ("late": L.TXT); the prompt goes on',
           st[1] == 1 and A.disk_file(k, 'L.TXT') == b'late' and tstate(k) == ([(0, 1, 'Executive')], 0, 0)
           and 'Lodestone version' in v and ems_used(k) == e0, (st, A.disk_file(k, 'L.TXT'), tstate(k), v))
     # a program frees task 0's screen handle
@@ -433,12 +433,12 @@ def t_front():
     sc, m = k.pc.text_screen(), k.pc.mode()
     hot(k); line(k, 'f'); line(k, '')
     v = sh.run('ver')
-    check('FREEH frees task 0\'s screen handle (%d): at the next CODE-] its pages can\'t be mapped, so it keeps none '
+    check('FREEH frees task 0\'s screen handle (%d): at the next CODE-Tab its pages can\'t be mapped, so it keeps none '
           '(TE_SH 0, nothing copied), and comes back clear in mode 3; the task goes on; EMS 2 pages fewer in use '
           '(FREEH\'s doing), no more' % h0, st[1] == 2 and bytes(h1) == b'\0\0' and sc.strip() == '' and m == 3
           and A.disk_file(k, 'F.TXT') == b'f' and 'Lodestone version' in v and ems_used(k) == e0 - 2 and not k.crashed,
           (st, bytes(h1).hex(), sc[-200:], A.disk_file(k, 'F.TXT'), ems_used(k), e0))
-    # keys AH=01h drops, ahead of CODE-]; and one it doesn't
+    # keys AH=01h drops, ahead of CODE-Tab; and one it doesn't
     k = boot('mt_hk.img', b'MULTITASK=1\r\n', 88)
     sh = Shell(k)
     sh.run('ver')
@@ -448,7 +448,7 @@ def t_front():
         k.key(ahead, HOT, 'z', ktest.ENTER, settle=False); k.run_for(1.5)
         got.append((tag, A.disk_file(k, 'K.TXT'), tstate(k)[0]))
         line(k, '')
-    check('ahead of CODE-]: keys the BIOS drops for AH=01h (CODE-?, Ctrl-Up) don\'t hold it back; a character (00F0h) '
+    check('ahead of CODE-Tab: keys the BIOS drops for AH=01h (CODE-?, Ctrl-Up) don\'t hold it back; a character (00F0h) '
           'is the front task\'s, read first; each time task 1 gets "z"',
           all(f == b'z' and len(st) == 1 for tag, f, st in got), got)
     # a handle freed by a program, given out again

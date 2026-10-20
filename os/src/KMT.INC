@@ -3,7 +3,7 @@
 ;  (with EMS; without it, it stays off).  Being built in steps (the plan:
 ;  docs/lodestone-multitasking.md).  So far: the switch (M1); tasks, each
 ;  a DOS program in a region of its own, switched when one waits for a
-;  key (M2a); the front one chosen with CODE-], each task's screen kept
+;  key (M2a); the front one chosen with CODE-Tab, each task's screen kept
 ;  in 2 EMS pages of its own (M2b).  Nothing preempts a task yet (M3).
 ;
 ;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
@@ -104,8 +104,10 @@ mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
 mt_front    db      0                   ; the task in front
 mt_cur      db      0                   ; the task running
 mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
-mt_hotk     dw      1BF0h, 1B00h        ; the hot key, CODE-]: as the 1520's
-                                        ;  BIOS keeps it, and as AH=10h gives it
+mt_hotk     dw      0A500h, 0A5F0h      ; the hot key, CODE-Tab, as AH=10h
+                                        ;  gives it on the 1520 (KEYCODE.COM),
+                                        ;  and as a BIOS keeping CODE keys with
+                                        ;  F0h would
 mt_wsv      db      0, 0                ; (mt_wsave: windows 0 and 1)
 mt_mcb0     dw      0                   ; the whole arena's first MCB
 mt_new      dw      0                   ; (MT_SPAWN: its entry, and the sizes)
@@ -170,7 +172,7 @@ mt_kwait:
         push    bx
         push    KSEG
         pop     ds
-.top:   call    mt_hot                  ; CODE-] typed?  (Before the look for
+.top:   call    mt_hot                  ; CODE-Tab typed?  (Before the look for
         mov     al, [cs:mt_swreq]       ;  a key: INT 16h AH=01h drops it.)
         cmp     al, 0FFh                ; a task to bring to the front?  (Only
         je      .f                      ;  where it could run: else later.)
@@ -760,7 +762,7 @@ mt_name:
 .x:     pop     ds
         ret
 
-; CODE-] in the BIOS's key buffer: taken out, and the next task (after the
+; CODE-Tab in the BIOS's key buffer: taken out, and the next task (after the
 ; one asked for, or the front one) asked for.  Only when no key but those
 ; AH=01h drops (the 1520's BIOS: scan codes 85h and up but E0h's, and
 ; CODE keys, xxF0h with a scan code) is ahead of it: the others are the

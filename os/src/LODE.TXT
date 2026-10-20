@@ -351,7 +351,7 @@ Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 read from LODEMT.SYS, which must sit beside LODE.SYS and come from the
 same build) goes into memory.  So far programs can start others as tasks
 (INT 21h F0h), each in memory of its own, and they take turns when one
-waits for a key; CODE-] then brings the next one to the front, each with
+waits for a key; CODE-Tab then brings the next one to the front, each with
 its own screen (32 KB of EMS a task).  TASKS at the command prompt lists
 them.  Nothing switches while the Executive or the prompt itself is in
 front yet.  Without the line nothing of it is in memory, and LODEMT.SYS
