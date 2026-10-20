@@ -3,7 +3,8 @@
 ;  (with EMS; without it, it stays off).  Being built in steps (the plan:
 ;  docs/lodestone-multitasking.md).  So far: the switch (M1); tasks, each
 ;  a DOS program in a region of its own, switched when one waits for a
-;  key (M2a).  Nothing preempts a task yet (M3).
+;  key (M2a); the front one chosen with CODE-Tab, each task's screen kept
+;  in 2 EMS pages of its own (M2b).  Nothing preempts a task yet (M3).
 ;
 ;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
 ;  only in the load image, its resident part (section mtt) isn't even in
@@ -53,14 +54,19 @@ TE_REG      equ 4                       ; its region (task 0: 0)
 TE_TX       equ 6                       ; its TX's segment
 TE_EXIT     equ 8                       ; its program's exit code (last_exit)
 TE_NAME     equ 10                      ; TR_NAMELEN bytes
-MT_ENT      equ 24
+TE_SH       equ 22                      ; its screen's EMS handle (2 pages; 0:
+                                        ;  none)
+TE_SF       equ 23                      ; 1: its screen is kept there
+MT_ENT      equ 32
 
 ; ---- a TX (context) ----------------------------------------------------
 TX_SP       equ 0
 TX_SS       equ 2
 TX_KLEN     equ 4                       ; bytes of kernel stack saved (0: none)
 TX_EMS      equ 6                       ; the EMS windows' 4 page registers
-V_INDOS     equ 10                      ; the kernel's variables, mt_ranges'
+TX_VID      equ 10                      ; its screen's BIOS data (40:49h-66h)
+VIDLEN      equ 30
+V_INDOS     equ TX_VID + VIDLEN         ; the kernel's variables, mt_ranges'
 V_BRK       equ V_INDOS + 1             ;  order (V_x + (var - first) for one
 V_MCB       equ V_BRK + (onebyte + 1 - brkflag)   ;  inside a range)
 V_DCWD      equ V_MCB + 2
@@ -98,6 +104,11 @@ mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
 mt_front    db      0                   ; the task in front
 mt_cur      db      0                   ; the task running
 mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
+mt_hotk     dw      0A500h, 0A5F0h      ; the hot key, CODE-Tab, as AH=10h
+                                        ;  gives it on the 1520 (KEYCODE.COM),
+                                        ;  and as a BIOS keeping CODE keys with
+                                        ;  F0h would
+mt_wsv      db      0, 0                ; (mt_wsave: windows 0 and 1)
 mt_mcb0     dw      0                   ; the whole arena's first MCB
 mt_new      dw      0                   ; (MT_SPAWN: its entry, and the sizes)
 mt_envs     dw      0
@@ -161,14 +172,17 @@ mt_kwait:
         push    bx
         push    KSEG
         pop     ds
-        mov     al, [cs:mt_swreq]       ; a task to bring to the front?
-        cmp     al, 0FFh
-        je      .f
+.top:   call    mt_hot                  ; CODE-Tab typed?  (Before the look for
+        mov     al, [cs:mt_swreq]       ;  a key: INT 16h AH=01h drops it.)
+        cmp     al, 0FFh                ; a task to bring to the front?  (Only
+        je      .f                      ;  where it could run: else later.)
+        call    mt_can
+        jc      .f
         mov     byte [cs:mt_swreq], 0FFh
         call    mt_ent                  ; (BX = its entry)
         cmp     byte [cs:bx+TE_STATE], TS_FREE
         je      .f
-        mov     [cs:mt_front], al
+        call    mt_scrto                ; its screen, and it is in front
 .f:     mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .bg
@@ -180,7 +194,7 @@ mt_kwait:
         call    mt_pick
         jc      .idle
         call    .park                   ; (it runs; then back here)
-        jmp     .f
+        jmp     .top
 .idle:  pop     bx                      ; the kernel's own wait: PrtSc,
         pop     ax                      ;  INT 28h, HLT, and here again
         pop     ds
@@ -203,7 +217,7 @@ mt_kwait:
         jne     .idle
         mov     bl, al
 .bgs:   call    .park
-        jmp     .f
+        jmp     .top
 ; this task waits (TS_WAITK) while task BL runs
 .park:  push    bx
         mov     al, [cs:mt_cur]
@@ -253,10 +267,8 @@ mt_pick:
 ; AL = a task -> BX = its entry in mt_tab
 mt_ent: push    ax
         xor     ah, ah
-        mov     bx, ax                  ; (AL * MT_ENT, 24: DX kept)
-        add     bx, ax
-        add     bx, ax
-        shl     bx, 3
+        mov     bx, ax                  ; (AL * MT_ENT, 32: DX kept)
+        shl     bx, 5
         add     bx, mt_tab
         pop     ax
         ret
@@ -442,6 +454,14 @@ mt_end: mov     al, [cs:mt_cur]
         KCALL   close_all
         mov     ax, [last_exit]
         mov     [cs:bx+TE_EXIT], ax
+        mov     dl, [cs:bx+TE_SH]       ; its screen's pages
+        xor     dh, dh
+        or      dl, dl
+        jz      .np
+        mov     ah, 45h
+        int     67h
+        mov     byte [cs:bx+TE_SH], 0
+.np:    mov     ax, [last_exit]
         mov     cx, [cs:bx+TE_REG]
         dec     cx
         mov     es, cx
@@ -454,7 +474,14 @@ mt_end: mov     al, [cs:mt_cur]
         mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .f
-        mov     byte [cs:mt_front], 0
+        push    ax                      ; it was in front: the Executive's
+        mov     ax, 2                   ;  task is, with its screen (the
+        call    mt_m33                  ;  INT 33h pointer off meanwhile)
+        xor     al, al
+        call    mt_scrld
+        mov     ax, 1
+        call    mt_m33
+        pop     ax
 .f:     cmp     al, [cs:mt_swreq]
         jne     .s
         mov     byte [cs:mt_swreq], 0FFh
@@ -516,7 +543,29 @@ mt_spawn:
 .room:  mov     ax, 8
         jmp     mt_fail
 .r:     mov     [cs:mt_reg], ax
+        push    ax                      ; its screen's 2 EMS pages (none: the
+        mov     ah, 43h                 ;  region goes again)
+        mov     bx, 2
+        int     67h
+        pop     cx
+        or      ah, ah
+        jz      .sh
+        dec     cx
+        mov     es, cx
+        mov     word [es:1], 0
+        jmp     .room
+.sh:    xor     al, al                  ; an entry with this number (its own
+.dh:    call    mt_ent                  ;  freed by a program, given out
+        cmp     [cs:bx+TE_SH], dl       ;  again): it keeps none
+        jne     .dn
+        mov     word [cs:bx+TE_SH], 0
+.dn:    inc     al
+        cmp     al, MT_TASKS
+        jb      .dh
         mov     bx, [cs:mt_new]
+        mov     [cs:bx+TE_SH], dl
+        mov     byte [cs:bx+TE_SF], 0
+        mov     ax, [cs:mt_reg]
         mov     [cs:bx+TE_REG], ax
         mov     [cs:bx+TE_TX], ax
         dec     ax                      ; its MCB: the system's, "T1".."T7"
@@ -713,6 +762,274 @@ mt_name:
 .x:     pop     ds
         ret
 
+; CODE-Tab in the BIOS's key buffer: taken out, and the next task (after the
+; one asked for, or the front one) asked for.  Only when no key but those
+; AH=01h drops (the 1520's BIOS: scan codes 85h and up but E0h's, and
+; CODE keys, xxF0h with a scan code) is ahead of it: the others are the
+; front task's, typed before it.  (At most 16 words looked at: a buffer gone bad
+; isn't followed round.)  DS anything; AX, BX changed
+mt_hot: push    ds
+        push    si
+        push    cx
+        push    40h
+        pop     ds
+        cli
+        mov     bx, [1Ah]               ; (head to tail, wrapping at 40:82h)
+        mov     cx, 16
+.s:     cmp     bx, [1Ch]
+        je      .no
+        mov     ax, [bx]
+        cmp     ax, [cs:mt_hotk]
+        je      .m
+        cmp     ax, [cs:mt_hotk + 2]
+        je      .m
+        cmp     ah, 0E0h                ; (a key ahead of it: later)
+        je      .no
+        cmp     ah, 85h
+        jae     .sk
+        cmp     al, 0F0h
+        jne     .no
+        or      ah, ah
+        jz      .no
+.sk:    call    .nx
+        loop    .s
+        jmp     short .no
+.m:     mov     si, bx                  ; the words after it, one back
+        call    .nx
+        cmp     bx, [1Ch]
+        je      .e
+        mov     ax, [bx]
+        mov     [si], ax
+        jmp     .m
+.e:     mov     [1Ch], si
+        sti
+        mov     al, [cs:mt_swreq]       ; the next task after that one
+        cmp     al, 0FFh
+        jne     .t
+        mov     al, [cs:mt_front]
+.t:     mov     cx, MT_TASKS - 1
+.l:     inc     al
+        and     al, MT_TASKS - 1
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        jne     .y
+        loop    .l
+        jmp     short .no               ; (the only one)
+.y:     cmp     al, [cs:mt_front]
+        jne     .q
+        mov     al, 0FFh                ; (round to the front one: as it is)
+.q:     mov     [cs:mt_swreq], al
+.no:    sti
+        pop     cx
+        pop     si
+        pop     ds
+        ret
+.nx:    inc     bx
+        inc     bx
+        cmp     bx, [82h]
+        jb      .nr
+        mov     bx, [80h]
+.nr:    ret
+
+; task AL to the front: the front one's screen kept, AL's shown; a DOS
+; program's INT 33h pointer off meanwhile (as RCON does)
+mt_scrto:
+        cmp     al, [cs:mt_front]
+        je      .x
+        push    ax
+        mov     ax, 2
+        call    mt_m33
+        mov     al, [cs:mt_front]
+        call    mt_scrsv
+        pop     ax
+        call    mt_scrld
+        mov     ax, 1
+        jmp     mt_m33
+.x:     ret
+
+; INT 33h function AX, if there is an INT 33h.  All kept
+mt_m33: pusha
+        push    ds
+        push    es
+        xor     bx, bx
+        mov     ds, bx
+        mov     bx, [33h * 4]
+        or      bx, [33h * 4 + 2]
+        jz      .x
+        int     33h
+.x:     pop     es
+        pop     ds
+        popa
+        ret
+
+; the screen (B800:0000, 32 KB: any mode) and its BIOS data to task AL's
+; pages and TX (with none, nothing; with its pages gone, say a program
+; freed the handle, none from now on).  All kept but the flags
+mt_scrsv:
+        pusha
+        push    ds
+        push    es
+        call    mt_ent
+        cmp     byte [cs:bx+TE_SH], 0
+        je      .x
+        call    mt_wsave
+        call    mt_wmap
+        jc      .gone
+        mov     byte [cs:bx+TE_SF], 1
+        mov     es, [cs:bx+TE_TX]       ; its BIOS data
+        push    40h
+        pop     ds
+        mov     si, 49h
+        mov     di, TX_VID
+        mov     cx, VIDLEN
+        rep     movsb
+        push    0B800h
+        pop     ds
+        push    EMS_FRAME
+        pop     es
+        xor     si, si
+        xor     di, di
+        mov     cx, 4000h
+        rep     movsw
+        call    mt_wrest
+.x:     pop     es
+        pop     ds
+        popa
+        ret
+.gone:  call    mt_wgone
+        jmp     .x
+
+; its pages gone: windows 0 and 1 back, and none kept for the entry at BX
+; (nor freed at its end: the number may be someone else's now)
+mt_wgone:
+        call    mt_wrest
+        mov     word [cs:bx+TE_SH], 0   ; (TE_SH, TE_SF)
+        ret
+
+; task AL's screen shown, and AL in front: its mode, 3D9h (CGA's modes,
+; before the screen, as RCON does), the screen, its BIOS data; in text
+; modes, the page shown and the cursor.  Never shown yet (or none kept):
+; mode 3, clear.  All kept but the flags
+mt_scrld:
+        pusha
+        push    ds
+        push    es
+        mov     [cs:mt_front], al
+        call    mt_ent
+        cmp     byte [cs:bx+TE_SF], 0
+        je      .clr
+        call    mt_wsave
+        call    mt_wmap
+        jnc     .k
+        call    mt_wgone
+.clr:   mov     ax, 0003h
+        int     10h
+        jmp     .x
+.k:     mov     ds, [cs:bx+TE_TX]
+        mov     al, [TX_VID]            ; (40:49h)
+        xor     ah, ah
+        push    ax
+        push    bx
+        int     10h
+        pop     bx
+        pop     ax
+        cmp     al, 6
+        ja      .s
+        mov     al, [TX_VID + 66h - 49h]
+        mov     dx, 3D9h
+        out     dx, al
+.s:     push    EMS_FRAME
+        pop     ds
+        push    0B800h
+        pop     es
+        xor     si, si
+        xor     di, di
+        mov     cx, 4000h
+        rep     movsw
+        mov     ds, [cs:bx+TE_TX]
+        push    40h
+        pop     es
+        mov     si, TX_VID
+        mov     di, 49h
+        mov     cx, VIDLEN
+        rep     movsb
+        call    mt_wrest
+        push    es
+        pop     ds
+        cmp     byte [49h], 3
+        ja      .x
+        mov     al, [62h]               ; the page shown
+        mov     ah, 5
+        int     10h
+        mov     cx, [60h]               ; the cursor: its shape, and where it
+        mov     ah, 1                   ;  is on that page
+        int     10h
+        mov     bh, [62h]
+        mov     bl, bh
+        xor     bh, bh
+        shl     bx, 1
+        mov     dx, [50h + bx]
+        mov     bh, [62h]
+        mov     ah, 2
+        int     10h
+.x:     pop     es
+        pop     ds
+        popa
+        ret
+
+; windows 0 and 1: their page registers kept (mt_wrest puts them back);
+; mt_wmap maps the 2 pages of the entry at BX into them (INT 67h AH=44h),
+; CF if it can't (its handle gone).  AL, DX changed
+mt_wsave:
+        mov     dx, EMS_PORT
+        in      al, dx
+        mov     [cs:mt_wsv], al
+        add     dh, 40h
+        in      al, dx
+        mov     [cs:mt_wsv + 1], al
+        ret
+mt_wrest:
+        mov     dx, EMS_PORT
+        mov     al, [cs:mt_wsv]
+        out     dx, al
+        add     dh, 40h
+        mov     al, [cs:mt_wsv + 1]
+        out     dx, al
+        ret
+mt_wmap:
+        push    bx
+        push    cx
+        push    ds
+        mov     dl, [cs:bx+TE_SH]       ; still MT's?  (Open, 2 pages, owner 0:
+        xor     dh, dh                  ;  a program's has its PSP)
+        push    KSEG
+        pop     ds
+        mov     bx, dx
+        shl     bx, 2
+        cmp     byte [ems_h + bx], 0FFh
+        je      .e
+        cmp     byte [ems_h + bx + 1], 2
+        jne     .e
+        cmp     word [ems_h + bx + 2], 0
+        jne     .e
+        push    dx
+        mov     ax, 4400h
+        xor     bx, bx
+        int     67h
+        pop     dx
+        or      ah, ah
+        jnz     .e
+        mov     ax, 4401h
+        mov     bx, 1
+        int     67h
+        or      ah, ah
+        jz      .x
+.e:     stc
+.x:     pop     ds
+        pop     cx
+        pop     bx
+        ret
+
 ; a region of [mt_size] paragraphs at the top of the highest free block
 ; that has room (the arena walked from mt_mcb0, free neighbours merged)
 ; -> AX = its segment; CF if none
@@ -857,6 +1174,12 @@ mt_boot:
         loop    .s
         cmp     dx, [MDB(mt_sum)]
         jne     .fr
+        mov     ah, 43h                 ; task 0's screen: 2 EMS pages (none:
+        mov     bx, 2                   ;  it stays off)
+        int     67h
+        or      ah, ah
+        jnz     .fr
+        mov     [es:mt_tab + TE_SH], dl
         mov     ah, 3Eh
         mov     bx, bp
         int     21h
