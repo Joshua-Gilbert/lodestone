@@ -1,9 +1,20 @@
 ; MTSPIN.COM - for test_mt.py: a task that computes, for preemption.
-;   MTSPIN T CNTFILE [D | W DATAFILE]
+;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | H | T | O]
 ; Counts, as fast as it can, for T ticks of the BIOS's clock (40:6Ch),
-; then writes the count (8 hex digits) to CNTFILE.  D: an INT 21h call
-; (AH=2Ch) on each count; W: a 64-byte record written to DATAFILE on each
-; (so its size is the count times 64).  It prints nothing.
+; then writes the count (8 hex digits) to CNTFILE.  It prints nothing.
+;   D  an INT 21h call (AH=2Ch) on each count
+;   W  a 64-byte record written to DATAFILE on each (so its size is the
+;      count times 64)
+;   C  AH=2Ch on each count with interrupts off (CLI before the INT 21h)
+;   S  counts with its stack outside its own memory (B800:7F00, past the
+;      text screen's pages in use)
+;   H  hooks INT 1Ch (AH=25h) meanwhile: its handler does STI and, with
+;      InDOS 0, AH=2Ch, then chains (so INT 21h's way out with IRQ 0 in
+;      service)
+;   T  hooks INT 08h meanwhile, writing the vector itself (not AH=25h):
+;      its handler does STI and chains with PUSHF / CALL FAR
+;   O  no counting: the count is what INT 21h F0h AL=1 says for A: (files
+;      open there)
 ; nasm -f bin -o MTSPIN.COM MTSPIN.ASM
 cpu 286
 org 100h
@@ -30,8 +41,15 @@ org 100h
         lodsb
         and     al, 0DFh
         mov     [mode], al
-        cmp     al, 'W'
-        jne     .go
+        cmp     al, 'O'
+        jne     .w0
+        mov     ax, 0F001h
+        xor     dl, dl
+        int     21h
+        mov     [cnt], cx
+        jmp     .c
+.w0:    cmp     al, 'W'
+        jne     .h0
         call    blanks
         mov     dx, si                  ; DATAFILE
         call    word_
@@ -40,16 +58,56 @@ org 100h
         int     21h
         jc      .x
         mov     [dh_], ax
+.h0:    cmp     byte [mode], 'H'
+        jne     .t0
+        mov     ah, 34h                 ; (InDOS)
+        int     21h
+        mov     [indp], bx
+        mov     [indp + 2], es
+        mov     ax, 351Ch
+        int     21h
+        mov     [o1c], bx
+        mov     [o1c + 2], es
+        mov     ax, 251Ch
+        mov     dx, h1c
+        int     21h
+.t0:    cmp     byte [mode], 'T'
+        jne     .go
+        xor     ax, ax
+        mov     es, ax
+        cli
+        mov     ax, [es:8 * 4]
+        mov     [o08], ax
+        mov     ax, [es:8 * 4 + 2]
+        mov     [o08 + 2], ax
+        mov     word [es:8 * 4], h08
+        mov     [es:8 * 4 + 2], cs
+        sti
 .go:    push    40h
         pop     es
         mov     ax, [es:6Ch]
         mov     [t0], ax
+        cmp     byte [mode], 'S'
+        jne     .l
+        cli
+        mov     [ssv], ss
+        mov     [spv], sp
+        mov     ax, 0B800h
+        mov     ss, ax
+        mov     sp, 7F00h
+        sti
 .l:     add     word [cnt], 1
         adc     word [cnt + 2], 0
         cmp     byte [mode], 'D'
-        jne     .w
+        jne     .i
         mov     ah, 2Ch
         int     21h
+.i:     cmp     byte [mode], 'C'
+        jne     .w
+        mov     ah, 2Ch
+        cli
+        int     21h
+        sti
 .w:     cmp     byte [mode], 'W'
         jne     .t
         mov     ah, 40h
@@ -61,7 +119,30 @@ org 100h
         sub     ax, [t0]
         cmp     ax, [tks]
         jb      .l
-        cmp     byte [mode], 'W'
+        cmp     byte [mode], 'S'
+        jne     .ue
+        cli
+        mov     ss, [ssv]
+        mov     sp, [spv]
+        sti
+.ue:    cmp     byte [mode], 'T'
+        jne     .uh
+        xor     ax, ax
+        mov     es, ax
+        cli
+        mov     ax, [o08]
+        mov     [es:8 * 4], ax
+        mov     ax, [o08 + 2]
+        mov     [es:8 * 4 + 2], ax
+        sti
+.uh:    cmp     byte [mode], 'H'
+        jne     .uw
+        push    ds
+        mov     ax, 251Ch
+        lds     dx, [o1c]
+        int     21h
+        pop     ds
+.uw:    cmp     byte [mode], 'W'
         jne     .c
         mov     ah, 3Eh
         mov     bx, [dh_]
@@ -85,6 +166,28 @@ org 100h
         int     21h
 .x:     mov     ax, 4C00h
         int     21h
+
+h1c:    sti                             ; INT 1Ch (H)
+        push    ds
+        push    bx
+        push    ax
+        push    cx
+        push    dx
+        lds     bx, [cs:indp]
+        cmp     byte [bx], 0
+        jne     .s
+        mov     ah, 2Ch
+        int     21h
+.s:     pop     dx
+        pop     cx
+        pop     ax
+        pop     bx
+        pop     ds
+        jmp     far [cs:o1c]
+h08:    sti                             ; INT 08h (T)
+        pushf
+        call    far [cs:o08]
+        iret
 
 blanks: lodsb
         cmp     al, ' '
@@ -121,6 +224,11 @@ t0      dw      0
 cnt     dw      0, 0
 cnf     dw      0
 dh_     dw      0
+ssv     dw      0
+spv     dw      0
+indp    dd      0
+o1c     dd      0
+o08     dd      0
 mode    db      0
 out_    times 8 db 0
 rec     db      '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDE', 0Ah

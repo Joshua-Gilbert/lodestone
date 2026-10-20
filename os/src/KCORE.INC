@@ -548,7 +548,7 @@ ctrlc:  push    cs
         mov     bx, [bp+F_USP]
         cli
         dec     byte [indos]
-        mov     ss, ax
+.sw:    mov     ss, ax                  ; (done.sw's bytes again, left alone)
         mov     sp, bx
         popa
         pop     ds
