@@ -24,7 +24,9 @@
 ;    - INT 08h goes through mt_tick (the BIOS's handler first); AH=25h
 ;      and 35h for it set and give mt_old08 instead (f_25's and f_35's
 ;      first 7 bytes become far jumps to mt_25 and mt_35), so a program's
-;      hook goes inside mt_tick, not ahead of it;
+;      hook goes inside mt_tick, not ahead of it.  A hook chaining back to
+;      mt_tick reaches the start-up vector (mt_bios08); mt_tick written
+;      back over by what AH=35h gave is put back, on INT 21h's way out;
 ;    - done.sw, INT 21h's way out, becomes a far jump to mt_exit;
 ;    - INT 21h F0h through mt_f0: f_F0's first 5 bytes (MOV AL,[BP+F_AX]
 ;      and OR AL,AL) become a far jump to it, and it comes back past
@@ -105,7 +107,10 @@ ENVMAX      equ 1024                    ; most of an environment kept
 ; ---- the resident part (in its own segment, from 0) -----------------
 section mtt
 mt_tstart:
-mt_old08    dd      0                   ; INT 08h as it was
+mt_old08    dd      0                   ; INT 08h's chain after mt_tick (AH=25h
+                                        ;  for INT 08h sets it: mt_25)
+mt_bios08   dd      0                   ; INT 08h as it was at start-up
+mt_in08     db      0                   ; 1: inside mt_old08's call
 mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
 mt_slice    db      2                   ; ticks left in the running task's turn
 mt_pend     db      0                   ; 1: another task's turn (its turn over,
@@ -167,9 +172,13 @@ ST_END      equ     100h + st_code.e - st_code
 ; INT 08h: the BIOS's handler first (the tick count, INT 1Ch, the end of
 ; the interrupt), then ours
 mt_tick:
+        cmp     byte [cs:mt_in08], 0    ; (from inside that: a hook set with
+        jne     .in                     ;  AH=25h chaining to mt_tick itself)
+        mov     byte [cs:mt_in08], 1
         pushf
         call    far [cs:mt_old08]       ; (back with the EOI sent; interrupts
         cli                             ;  off, whatever a hook there did)
+        mov     byte [cs:mt_in08], 0
         inc     word [cs:mt_ticks]
         push    ax
         push    bx
@@ -177,9 +186,9 @@ mt_tick:
         push    ds
         push    bp
         mov     bp, sp                  ; ([bp+10]: the interrupted IP, CS, FL)
-        mov     ax, cs                  ; (in mt_load's last instructions, a
-        cmp     [bp+12], ax             ;  task just resumed: its turn not
-        je      .r                      ;  touched)
+        mov     ax, cs                  ; (MT's own code interrupted: a task
+        cmp     [bp+12], ax             ;  just resumed in mt_load, its turn
+        je      .r                      ;  not touched; elsewhere indos is 1)
         push    KSEG
         pop     ds
         push    es
@@ -218,13 +227,28 @@ mt_tick:
         pop     bx
         pop     ax
         iret
+.in:    jmp     far [cs:mt_bios08]
 
 ; INT 21h's way out (done's MOV SS,AX / MOV SP,BX / POPA: interrupts off,
 ; DS = KSEG, AX:BX = the caller's stack with its frame): another task's
-; turn, if one is due and the caller is at a safe point, then on out
+; turn, if one is due and the caller is at a safe point, then on out.
+; First: INT 08h in the vector table what mt_old08 holds (a program put
+; back there what AH=35h gave it): mt_tick put back ahead of it
 mt_exit:
         mov     ss, ax
         mov     sp, bx
+        push    es
+        xor     ax, ax
+        mov     es, ax
+        mov     ax, [es:8 * 4]
+        cmp     ax, [cs:mt_old08]
+        jne     .v
+        mov     ax, [es:8 * 4 + 2]
+        cmp     ax, [cs:mt_old08 + 2]
+        jne     .v
+        mov     word [es:8 * 4], mt_tick
+        mov     [es:8 * 4 + 2], cs
+.v:     pop     es
         cmp     byte [cs:mt_pend], 0
         jne     .c
 .go:    popa
@@ -647,8 +671,25 @@ mt_25:  cmp     byte [bp+F_AX], 08h
         mov     ax, [bp+F_DX]
         mov     dx, [bp+F_DS]
         cli
-        mov     [cs:mt_old08], ax
+        cmp     ax, mt_tick             ; mt_tick itself (a program that read
+        jne     .s                      ;  the vector table, giving it back):
+        mov     bx, cs                  ;  in the table, if it isn't; else
+        cmp     dx, bx                  ;  the chain as at start-up, the
+        jne     .s                      ;  program's hook inside it gone
+        xor     bx, bx
+        mov     es, bx
+        cmp     [es:8 * 4], ax
+        jne     .t
+        cmp     [es:8 * 4 + 2], dx
+        jne     .t
+        les     ax, [cs:mt_bios08]
+        mov     dx, es
+.s:     mov     [cs:mt_old08], ax
         mov     [cs:mt_old08 + 2], dx
+        sti
+        jmp     KSEG:done
+.t:     mov     [es:8 * 4], ax
+        mov     [es:8 * 4 + 2], dx
         sti
         jmp     KSEG:done
 .k:     xor     bx, bx                  ; (f_25's own first three, then on
@@ -1497,8 +1538,10 @@ mt_boot:
         cli
         mov     ax, [8 * 4]             ; INT 08h
         mov     [es:mt_old08], ax
+        mov     [es:mt_bios08], ax
         mov     ax, [8 * 4 + 2]
         mov     [es:mt_old08 + 2], ax
+        mov     [es:mt_bios08 + 2], ax
         mov     word [8 * 4], mt_tick
         mov     [8 * 4 + 2], es
         mov     ax, KSEG                ; INT 21h F0h: JMP FAR mt_f0
