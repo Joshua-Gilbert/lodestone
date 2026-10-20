@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Multitasking (KMT.INC): the switch and the skeleton (M1), tasks switched
-when one waits for a key (M2a).
+when one waits for a key (M2a), the front one chosen with CODE-Tab, each with
+its own screen (M2b).
 
 MULTITASK=1 in LODE.INI (with EMS, enough for the disk cache to be in it)
 puts multitasking's resident part in a block of its own at the top of
@@ -8,7 +9,7 @@ memory, with INT 08h, INT 21h F0h and the kernel's key wait going through
 it.  Programs start others as tasks (MTLAUNCH), each in a region of its own,
 and they take turns when one waits for a key.  Off (no such line, any other
 value, or no EMS), nothing of it is in memory and everything is as before.
-python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_progs t_rom]"""
+python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_progs t_rom]"""
 import os, re, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
@@ -24,12 +25,13 @@ def check(name, cond, detail=''):
     print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:600]) if detail and not cond else ''))
 
 MTPROBE = os.path.join(HERE, 'MTPROBE.COM')
-MTL, MTLN, MTCW = (os.path.join(HERE, n + '.COM') for n in ('MTLAUNCH', 'MTLINE', 'MTCWD'))
+MTL, MTLN, MTCW, MTMD, FREEH = (os.path.join(HERE, n + '.COM') for n in ('MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH'))
 SYS = os.path.join(GOS, 'src', 'LODE.SYS')
 MTSYS = os.path.join(GOS, 'src', 'LODEMT.SYS')
 MAP = os.path.join(GOS, 'src', 'LODE.MAP')
 import mkmt
 INT08 = (STUB, 0x1000)                  # pcemu's BIOS timer handler
+MT_ENT, TE_NAME, TE_SH = 32, 10, 22      # KMT.INC: an entry in mt_tab, its name, its screen's EMS handle
 
 # With the switch off these must not move (main with UI API 6 and PrtSc's printing): the kernel's
 # image and BSS, the UI block kept while a DOS program runs
@@ -41,7 +43,7 @@ def ini(text):
 def boot(name, text=None, ems=88, *more, mt=MTSYS):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
     MTPROBE, `more`, and LODE.INI holding `text`."""
-    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW] + list(more) \
+    files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH] + list(more) \
         + ([ini(text)] if text is not None else [])
     k = ktest.KPC(A.image(name, *files), ems_pages=ems); k.start(10)
     k.mcb0 = k.u16('first_mcb')         # (the whole arena's start: first_mcb is per task)
@@ -181,9 +183,9 @@ def tstate(k):
     seg, Y = mt_seg(k), k.Y
     out = []
     for i in range(8):
-        b = Y['mt_tab'] + i * 24
+        b = Y['mt_tab'] + i * MT_ENT
         st = k.pc.rd(seg, b, 1)[0]
-        if st: out.append((i, st, bytes(k.pc.rd(seg, b + 10, 12)).rstrip(b'\0').decode()))
+        if st: out.append((i, st, bytes(k.pc.rd(seg, b + TE_NAME, 12)).rstrip(b'\0').decode()))
     return out, k.pc.rd(seg, Y['mt_front'], 1)[0], k.pc.rd(seg, Y['mt_cur'], 1)[0]
 
 def front(k, n):
@@ -234,10 +236,15 @@ def t_tasks():
     # /F: the second to the front
     o = sh.run('mtlaunch mtline.com c.txt;/f mtline.com d.txt')
     k.run_for(0.3)
-    check('/F (SPF_FRONT): task 2 comes to the front at the first key wait', tstate(k)[1] == 2, (tstate(k), o))
+    sf = k.pc.text_screen()
+    check('/F (SPF_FRONT): task 2 comes to the front at the first key wait, with a screen of its own (mode 3: the '
+          'tasks\' prompts, not MTLAUNCH\'s lines)', tstate(k)[1] == 2 and k.pc.mode() == 3 and 'MTLINE>' in sf
+          and 'MTLAUNCH' not in sf, (tstate(k), o, sf[-200:]))
     line(k, 'two')
     front(k, 1)
     line(k, 'one')
+    check('... and when the front task ends, task 0\'s screen is back (MTLAUNCH\'s)', 'MTLAUNCH waits>' in k.pc.text_screen(),
+          k.pc.text_screen()[-300:])
     line(k, '')
     check('... it got the first line ("two": D.TXT), task 1 the next ("one": C.TXT)',
           A.disk_file(k, 'D.TXT') == b'two' and A.disk_file(k, 'C.TXT') == b'one' and tstate(k)[0] == [(0, 1, 'Executive')],
@@ -310,13 +317,196 @@ def file_lbas(path, name):
                 cl = v >> 4 if cl & 1 else v & 0xFFF
     return out
 
+HOT = 0xA500                            # CODE-Tab (as AH=10h gives it on the 1520)
+
+def hot(k):
+    k.key(HOT); k.run_for(0.4)
+
+def ems_used(k): return k.pc.rd(0x60, k.Y['ems_used'], 1)[0]
+
+def no_hot(k): return not any(w in (0xA500, 0xA5F0) for w in k.pc.kbd_ring())
+
+def t_front():
+    print('== the front: CODE-Tab to the next task, each task its own screen')
+    k = boot('mt_h.img', b'MULTITASK=1\r\n', 88)
+    sh = Shell(k)
+    sh.run('ver')
+    a0, used0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+    sh.run('mtlaunch mtline.com a.txt;mtline.com b.txt')
+    e1 = ems_used(k)
+    check('each task\'s screen: 2 EMS pages of its own (task 1, task 2: 4 more pages in use)', e1 == e0 + 4, (e0, e1))
+    scr0, cur0, bd0 = k.pc.text_screen(), k.pc.cursor(), bytes(k.pc.rd(0x40, 0x49, 30))
+    hot(k)
+    s1 = k.pc.text_screen()
+    check('CODE-Tab while MTLAUNCH waits: task 1 to the front, the key taken out of the buffer; its screen, never shown '
+          'yet, clear in mode 3', tstate(k)[1] == 1 and no_hot(k) and s1.strip() == '' and k.pc.mode() == 3,
+          (tstate(k), k.pc.kbd_ring(), s1[-200:]))
+    k.key('hel'); k.run_for(0.3)
+    check('... what is typed goes to task 1, and shows on its screen', 'hel' in k.pc.text_screen(), k.pc.text_screen()[-200:])
+    hot(k)
+    check('CODE-Tab again: task 2, its screen clear', tstate(k)[1] == 2 and k.pc.text_screen().strip() == '', (tstate(k), k.pc.text_screen()[-200:]))
+    hot(k)
+    check('and again: round to task 0, MTLAUNCH\'s screen back as it was, its cursor and BIOS video data too',
+          tstate(k)[1] == 0 and k.pc.text_screen() == scr0 and k.pc.cursor() == cur0 and bytes(k.pc.rd(0x40, 0x49, 30)) == bd0,
+          (tstate(k), k.pc.cursor(), cur0, k.pc.text_screen()[-300:]))
+    hot(k)
+    check('and again: task 1, its screen back ("hel")', tstate(k)[1] == 1 and 'hel' in k.pc.text_screen()
+          and 'MTLAUNCH' not in k.pc.text_screen(), (tstate(k), k.pc.text_screen()[-200:]))
+    line(k, 'lo')
+    check('task 1 gets "lo" ("hello": its line kept) and ends: task 0 in front, MTLAUNCH\'s screen back',
+          A.disk_file(k, 'A.TXT') == b'hello' and tstate(k)[1] == 0 and k.pc.text_screen() == scr0,
+          (A.disk_file(k, 'A.TXT'), tstate(k), k.pc.text_screen()[-300:]))
+    hot(k)
+    line(k, 'world')
+    line(k, '')
+    check('CODE-Tab with tasks 0 and 2 left: task 2 (B.TXT "world"); all ended, memory, files and EMS pages as before',
+          A.disk_file(k, 'B.TXT') == b'world' and tstate(k) == ([(0, 1, 'Executive')], 0, 0) and merged(mcbs(k)) == a0
+          and sft_used(k) == used0 and ems_used(k) == e0, (A.disk_file(k, 'B.TXT'), tstate(k), ems_used(k), e0))
+    # a graphics screen kept
+    o = sh.run('mtlaunch /f mtmode.com 40 m.txt')
+    k.run_for(0.5)
+    v1, m1 = bytes(k.pc.rd(0xB800, 0, 0x8000)), k.pc.mode()
+    hot(k)
+    s0, m0 = k.pc.text_screen(), k.pc.mode()
+    hot(k)
+    v2, m2 = bytes(k.pc.rd(0xB800, 0, 0x8000)), k.pc.mode()
+    k.key('x'); k.run_for(0.5)
+    line(k, '')
+    check('MTMODE in mode 40h (640 x 400, 32 KB), in front; CODE-Tab to task 0 (text, mode 3: MTLAUNCH\'s screen), CODE-Tab '
+          'back: mode 40h and its 32 KB as they were; MTMODE finds its pattern intact (M.TXT "ok")',
+          m1 == 0x40 and m0 == 3 and 'MTLAUNCH waits>' in s0 and m2 == 0x40 and v2 == v1 and A.disk_file(k, 'M.TXT') == b'ok'
+          and tstate(k)[0] == [(0, 1, 'Executive')], (hex(m1), hex(m0), hex(m2), v1 == v2, A.disk_file(k, 'M.TXT')))
+    # a CGA mode: its palette (3D9h) back before the screen
+    o = sh.run('mtlaunch /f mtmode.com 04 n.txt')
+    k.run_for(0.5)
+    k.pc.wr(0x40, 0x66, bytes([0x25])); k.pc.set_ccr(0x25)
+    v1, m1 = bytes(k.pc.rd(0xB800, 0, 0x8000)), k.pc.mode()
+    hot(k)
+    ccr = []
+    k.pc.on_ccr = lambda v: ccr.append((v, bytes(k.pc.rd(0xB800, 0, 0x4000)) == v1[:0x4000]))
+    hot(k)
+    k.pc.on_ccr = None
+    v2, m2, c2, p2 = bytes(k.pc.rd(0xB800, 0, 0x8000)), k.pc.mode(), k.pc.ccr, k.pc.rd(0x40, 0x66, 1)[0]
+    k.key('x'); k.run_for(0.5)
+    line(k, '')
+    check('MTMODE in mode 4 (CGA, palette 25h in 40:66h and 3D9h): CODE-Tab away and back: mode 4, 3D9h 25h (written '
+          'after the mode set, before the screen), 40:66h 25h, the screen as it was (N.TXT "ok")',
+          m1 == 4 and m2 == 4 and c2 == 0x25 and p2 == 0x25 and v2 == v1 and ccr and ccr[-1] == (0x25, False)
+          and A.disk_file(k, 'N.TXT') == b'ok', (hex(m1), hex(m2), hex(c2), hex(p2), ccr, v2 == v1, A.disk_file(k, 'N.TXT')))
+    o = sh.run('mtlaunch mtline.com c.txt')
+    hot(k)
+    st1 = tstate(k)
+    hot(k)
+    st2 = tstate(k)
+    front(k, 1); line(k, 'c'); line(k, '')
+    check('CODE-Tab twice with one task besides task 0: to it, and back to task 0; the task goes on as before',
+          st1[1] == 1 and st2[1] == 0 and A.disk_file(k, 'C.TXT') == b'c', (st1, st2, A.disk_file(k, 'C.TXT')))
+    # typed before CODE-Tab: still the front task's
+    sh.run('mtlaunch mtline.com t1.txt')
+    k.key('x', 'y', HOT, 'z', ktest.ENTER, settle=False); k.run_for(1.5)
+    st = tstate(k)
+    line(k, '')
+    check('"xy", CODE-Tab, "z", Enter typed ahead: MTLAUNCH (in front) reads "xy" first, then task 1 comes to the front '
+          'and gets "z" (T1.TXT)', A.disk_file(k, 'T1.TXT') == b'z', (A.disk_file(k, 'T1.TXT'), st))
+    # at the command prompt, a task left waiting
+    sh.run('mtlaunch mtline.com l.txt')
+    line(k, '')
+    k.key(HOT); k.run_for(0.4)
+    st = tstate(k)
+    check('CODE-Tab at the command prompt, a task waiting: nothing switches (LCMD asks with INT 21h AH=0Bh), and the key '
+          'is gone (the BIOS drops it there)', st[0] == [(0, 1, 'Executive'), (1, 2, 'MTLINE.COM')] and st[1] == 0
+          and no_hot(k), (st, k.pc.kbd_ring()))
+    sh.run('mtlaunch')
+    hot(k)
+    st = tstate(k)
+    line(k, 'late'); line(k, '')
+    v = sh.run('ver')
+    check('... with MTLAUNCH waiting, CODE-Tab brings it up; it gets its line ("late": L.TXT); the prompt goes on',
+          st[1] == 1 and A.disk_file(k, 'L.TXT') == b'late' and tstate(k) == ([(0, 1, 'Executive')], 0, 0)
+          and 'Lodestone version' in v and ems_used(k) == e0, (st, A.disk_file(k, 'L.TXT'), tstate(k), v))
+    # a program frees task 0's screen handle
+    h0 = k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 1)[0]
+    sh.run('mtlaunch freeh.com %d;mtline.com f.txt' % h0)
+    hot(k)
+    st, h1 = tstate(k), k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 2)
+    hot(k)
+    sc, m = k.pc.text_screen(), k.pc.mode()
+    hot(k); line(k, 'f'); line(k, '')
+    v = sh.run('ver')
+    check('FREEH frees task 0\'s screen handle (%d): at the next CODE-Tab its pages can\'t be mapped, so it keeps none '
+          '(TE_SH 0, nothing copied), and comes back clear in mode 3; the task goes on; EMS 2 pages fewer in use '
+          '(FREEH\'s doing), no more' % h0, st[1] == 2 and bytes(h1) == b'\0\0' and sc.strip() == '' and m == 3
+          and A.disk_file(k, 'F.TXT') == b'f' and 'Lodestone version' in v and ems_used(k) == e0 - 2 and not k.crashed,
+          (st, bytes(h1).hex(), sc[-200:], A.disk_file(k, 'F.TXT'), ems_used(k), e0))
+    # keys AH=01h drops, ahead of CODE-Tab; and one it doesn't
+    k = boot('mt_hk.img', b'MULTITASK=1\r\n', 88)
+    sh = Shell(k)
+    sh.run('ver')
+    got = []
+    for tag, ahead in (('CODE-? (35F0h)', 0x3500), ('Ctrl-Up (8D00h)', 0x8D00), ('a character F0h (00F0h)', 0x00F0)):
+        sh.run('mtlaunch mtline.com k.txt')
+        k.key(ahead, HOT, 'z', ktest.ENTER, settle=False); k.run_for(1.5)
+        got.append((tag, A.disk_file(k, 'K.TXT'), tstate(k)[0]))
+        line(k, '')
+    check('ahead of CODE-Tab: keys the BIOS drops for AH=01h (CODE-?, Ctrl-Up) don\'t hold it back; a character (00F0h) '
+          'is the front task\'s, read first; each time task 1 gets "z"',
+          all(f == b'z' and len(st) == 1 for tag, f, st in got), got)
+    # a handle freed by a program, given out again
+    e0 = ems_used(k)
+    h0 = k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 1)[0]
+    sh.run('mtlaunch freeh.com %d' % h0)
+    line(k, '')
+    sh.run('mtlaunch mtline.com r.txt')
+    hs = [k.pc.rd(mt_seg(k), k.Y['mt_tab'] + i * MT_ENT + TE_SH, 1)[0] for i in (0, 1)]
+    hot(k); k.key('abc'); k.run_for(0.3)
+    hot(k)
+    s0 = k.pc.text_screen()
+    hot(k)
+    s1 = k.pc.text_screen()
+    line(k, ''); line(k, '')
+    check('task 0\'s handle (%d) freed by FREEH, then given to task 1 by MT_SPAWN: task 0 keeps none (TE_SH 0), so '
+          'task 1\'s screen isn\'t written over ("abc" still there after task 0 has been in front, clear); EMS: '
+          'only FREEH\'s 2 pages fewer' % h0, hs == [0, h0] and s0.strip() == '' and 'abc' in s1
+          and ems_used(k) == e0 - 2 and tstate(k)[0] == [(0, 1, 'Executive')], (hs, s0[-100:], s1[-100:], ems_used(k), e0))
+    # freed while its task is in the background, its screen kept
+    k = boot('mt_hb.img', b'MULTITASK=1\r\n', 88)
+    sh = Shell(k)
+    sh.run('ver')
+    h0 = k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 1)[0]
+    sh.run('mtlaunch /f mtline.com b2.txt;freeh.com %d' % h0)
+    k.run_for(0.5)
+    st, sf = tstate(k), k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 2)
+    hot(k)
+    sc, m, h1 = k.pc.text_screen(), k.pc.mode(), k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 2)
+    hot(k); line(k, 'b'); line(k, '')
+    check('task 0\'s screen kept (task 1 in front with /F), then its handle freed (FREEH, task 2): back in front it '
+          'can\'t be mapped, so task 0 comes back clear in mode 3 and keeps none; the rest goes on',
+          st[1] == 1 and bytes(sf) == bytes([h0, 1]) and sc.strip() == '' and m == 3 and bytes(h1) == b'\0\0'
+          and A.disk_file(k, 'B2.TXT') == b'b' and 'Lodestone version' in sh.run('ver'),
+          (st, bytes(sf).hex(), sc[-100:], bytes(h1).hex(), A.disk_file(k, 'B2.TXT')))
+    # no EMS for a task's screen
+    k = boot('mt_hf.img', b'MULTITASK=1\r\nMDISK=1344\r\n', 88)
+    sh = Shell(k)
+    sh.run('ver')
+    a0, used0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+    o = sh.run('mtlaunch mtline.com x.txt')
+    line(k, '')
+    check('no EMS left for a task\'s screen (MDISK=1344): MTLAUNCH: error 8; its region given back, memory, files and '
+          'EMS as before', 'MTLAUNCH: error 8' in o and tstate(k)[0] == [(0, 1, 'Executive')] and merged(mcbs(k)) == a0
+          and sft_used(k) == used0 and ems_used(k) == e0, (o, ems_used(k), e0))
+    # no EMS for a screen
+    k = boot('mt_he.img', b'MULTITASK=1\r\nMDISK=9999\r\n', 88)
+    o = Shell(k).run('tasks || echo FAILED')
+    check('MDISK= all of EMS and MULTITASK=1: no pages left for task 0\'s screen, so multitasking stays off (TASKS says so)',
+          mt_seg(k) is None and OFF_MSG in o and A.md_pages(k) > 0, (show(mcbs(k)), o, A.md_pages(k)))
+
 def t_ends():
     print('== tasks that end otherwise: aborted, resident')
     pad = os.path.join(A.OUT, 'PAD.BIN'); open(pad, 'wb').write(bytes(70000))
     k = boot('mt_ab.img', b'MULTITASK=1\r\n', 88, 'PAD.BIN=' + pad, 'ZZ.COM=' + MTLN)
     sh = Shell(k)
     sh.run('ver')
-    a0, used0 = merged(mcbs(k)), sft_used(k)
+    a0, used0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
     k.pc.drives[0].bad = set(file_lbas(os.path.join(A.OUT, 'mt_ab.img'), b'ZZ      COM'))
     k.key('mtlaunch zz.com q.txt'); k.key(ktest.ENTER); k.run_for(3)
     scr = k.pc.text_screen()
@@ -331,17 +521,20 @@ def t_ends():
     check('a read error while the stub EXECs its program, answered Abort: the stub ends itself (its own parent) and its '
           'task with it; MTLAUNCH, then the prompt, go on; memory as before, the handles the stub inherited closed',
           'Abort' in scr and not k.crashed and st and st[0] == [(0, 1, 'Executive')] and 'Lodestone version' in v
-          and merged(mcbs(k)) == a0 and sorted(d) == [0] * 23 + [1] and used0[d.index(1)] == 0, (scr[-300:], st, v, d))
+          and merged(mcbs(k)) == a0 and sorted(d) == [0] * 23 + [1] and used0[d.index(1)] == 0 and ems_used(k) == e0,
+          (scr[-300:], st, v, d, ems_used(k), e0))
     k = boot('mt_tsr.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TSR.COM'))
     sh = Shell(k)
     sh.run('ver')
+    e0 = ems_used(k)
     o = sh.run('mtlaunch tsr.com')
     line(k, '')
     a = mcbs(k)
     v = sh.run('ver')
     check('a program that stays resident in a task (TSR.COM, AH=31h): the task ends, its region stays (renamed TR, '
           'the system\'s); the prompt goes on', not k.crashed and tstate(k)[0] == [(0, 1, 'Executive')]
-          and [(b[4], b[2]) for b in a[-2:]] == [(b'TR', 8), (b'MT', 8)] and 'Lodestone version' in v, (show(a), v))
+          and [(b[4], b[2]) for b in a[-2:]] == [(b'TR', 8), (b'MT', 8)] and 'Lodestone version' in v
+          and ems_used(k) == e0, (show(a), v, ems_used(k), e0))
     o = sh.run('mtlaunch mtline.com t.txt')
     a1 = mcbs(k)
     front(k, 1); line(k, 'next')
@@ -460,11 +653,11 @@ def t_file():
 if __name__ == '__main__':
     t0 = time.time()
     A.build()
-    for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD'):
+    for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/', '-o', os.path.join(HERE, n + '.COM'),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_progs, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_progs, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

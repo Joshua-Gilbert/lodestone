@@ -16,8 +16,8 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 |---|---|---|
 | M0 | Windows that move and close (UI API 6), the calculator first | PR #40, merged. Costs 0.5 KB with the switch off: it is UI code, wanted anyway. See `lodestone-0.3-apps.md`. |
 | M1 | The switch and the skeleton | PR #43, merged. |
-| M2a | Spawning, task regions, switching when one waits for a key | This PR. |
-| M2b | The front: the CODE-] hot key, each task's screen saved and restored | |
+| M2a | Spawning, task regions, switching when one waits for a key | PR #44, merged. |
+| M2b | The front: the CODE-Tab hot key, each task's screen saved and restored | This PR. |
 | M3 | Preemption from INT 08h at safe points | |
 | M4 | Virtual screens (an INT 10h hook) and the direct-write detector | |
 | M5 | Per-task vectors, ending and killing tasks | |
@@ -104,7 +104,7 @@ In M1 the UI goes on lending its directory buffer to DOS programs as before, so 
 
 ## M2a: tasks, switched when one waits for a key (2026-10-19)
 
-M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the front: the CODE-] hot key and each task's screen, saved and restored in EMS. The plan's hardware check for M2 moves to M2b, since there is no hot key to press yet. All of M2a is in LODEMT.SYS; the kernel gains one label (`k_retf`, on `run_ui`'s RETF) and no bytes.
+M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the front: the CODE-Tab hot key and each task's screen, saved and restored in EMS. The plan's hardware check for M2 moves to M2b, since there is no hot key to press yet. All of M2a is in LODEMT.SYS; the kernel gains one label (`k_retf`, on `run_ui`'s RETF) and no bytes.
 
 **What it does:** a program can start another as a task, INT 21h F0h AL=10h (`MT_SPAWN`, MTAPI.INC). The task runs when the running one waits for a key in DOS, and the tasks take turns that way. Only the front task reads keys. Another that waits for one waits without reading, until it is brought to the front (F0h AL=13h, `MT_FRONT`, at the next key wait). Each task has its own memory, current directories on A: to D:, DTA, console line, PSP and EMS mapping. When its program ends, the task ends: its region is freed, and the handles its stub inherited are closed.
 
@@ -191,3 +191,109 @@ What they check:
 - a command tail longer than 126 characters kept its old count;
 - an environment segment of 0 copied the interrupt table;
 - `mt_carve` left an MCB of no paragraphs.
+
+## M2b: the front, CODE-Tab, and each task's screen (2026-10-19)
+
+**What it does:** CODE-Tab brings the next task to the front, in turn (0, 1, 2, ..., back to 0), and each task has a screen of its own. The front task's screen is the one shown. When another comes to the front, the screen is kept in the first task's own EMS pages, and the new front task's is put back.
+
+**Departure from the plan:** the plan had CODE-Tab bring up the Executive's Tasks window, and CODE-Tab again go back. The Tasks window is M7's (TASKS.RUN). Until then CODE-Tab cycles through the tasks, and M7 decides what it does then.
+
+**The limits, plainly:**
+- **CODE-Tab works only while a task waits for a key in DOS**, where tasks switch (M2a). Anywhere that only asks whether a key is there, the BIOS drops CODE keys (INT 16h AH=01h; only AH=10h/11h give them), so the key is lost:
+  - with the Executive or LCMD's prompt in front, it does nothing;
+  - a program that asks before it reads loses it too: INT 21h AH=0Bh, AH=06h with DL=FFh, AH=0Ch's flush, and IOCTL 4406h on CON all ask;
+  - a program that reads keys through INT 16h itself never gets to DOS's wait, so its tasks don't switch at all.
+
+  M3 (switching anywhere) and M4's INT 16h hook (catching the key before anyone asks) lift this.
+- **A small race:** a CODE-Tab typed in the instant between `mt_hot`'s look and the front task's own INT 16h AH=01h is dropped there; pressed again, it works. M4's hook closes this too.
+- **A background task's output still lands on the front screen** until M4's hooks: it is kept with whichever task's screen is shown.
+- **A task's screen, the first time it comes to the front, is mode 3 and clear.** What it wrote before then went to the front task's screen. A program that sets a graphics mode should come to the front first (`/F`).
+- **The mouse:** a DOS program's INT 33h pointer is hidden while the screens change, at CODE-Tab and when the front task ends (AX=2, then AX=1, as Resident Claude does), but there is one mouse state for all tasks until M4. The Executive's pointer is drawn into its screen, which comes back byte for byte.
+- **What isn't kept:** a palette written straight to port 3D9h without the BIOS's copy (40:66h), and port 3D8h's settings beyond the mode (say blink off).
+- **A program that frees MT's pages:** EMS's AH=45h frees any handle, for anyone (CLAUDE /U frees its own that way, so KEMS can't refuse). EMS hands out the lowest free number next, so a freed number comes back soon. MT guards in two ways:
+  - before each map, it checks that the handle is still its own: open, 2 pages, owner 0. A program's own allocation has its PSP as owner;
+  - when `MT_SPAWN` gets a number that another entry still holds, that entry keeps none.
+
+  Either way that task keeps no screen from then on: nothing is copied, it comes to the front clear, and MT never frees that number. What it can't tell is a 2-page allocation made with owner 0 (from code outside the current program's memory, an interrupt handler's, say) on a number it lost.
+- **The 1520 itself:** the key was first CODE-]. On the 1520 that takes CODE-Shift-], and its code depends on the order the keys go down. So Joshua chose CODE-Tab: `os/claude/KEYCODE.COM` shows it as A500h there (INT 16h AH=10h), every time. Its scan code, A5h, is one AH=01h drops, like the CODE keys. The words are in one place, `mt_hotk` (A500h, and A5F0h in case a BIOS keeps it with F0h).
+
+**How:**
+- **The key:** `mt_kwait`, on each pass (each key wait, and each tick while one waits), looks through the BIOS's key buffer for A500h (or A5F0h). It looks before its own INT 16h AH=01h, which would drop the key.
+  - **Order:** the key counts only when nothing is ahead of it but keys AH=01h drops anyway. On the 1520's BIOS (as pcemu models it) those are scan codes 85h and up but E0h's (F11, F12, Ctrl-Up and the like) and CODE keys (xxF0h with a scan code). Keys typed before it are the front task's, and it reads them first; CODE-Tab then counts at its next pass.
+  - **Taking it:** `mt_hot` takes the key out (the words after it move back, as Resident Claude's `r_hot` does) and asks for the next task after the front one (`mt_swreq`; pressed again before that happens, the one after that).
+  - **The look is bounded:** at most 16 words, so a buffer whose pointers a program has spoiled isn't followed round.
+  - **Not from INT 08h:** there the buffer could be changed under the BIOS's own INT 16h code on the 1520.
+- **The switch** is made only where `mt_kwait` could switch tasks (`mt_can`). A request made in a nested INT 21h (an INT 24h answer) waits until then, so a task never reads keys in the background with another task's screen shown.
+- **The screens:** each task has 2 EMS pages, 32 KB, enough for any mode (the 1520's 640 × 400 is 32 KB at B800h).
+  - They are allocated with INT 67h when the task starts (task 0's in `mt_boot`) and freed when it ends.
+  - They are MT's (owner 0), not the program's, so ending the program doesn't free them.
+  - If there are none, `MT_SPAWN` fails with error 8 (its region given back), and with none for task 0, multitasking stays off.
+  - `mt_scrsv` keeps the screen: B800:0000's 32 KB into the pages, mapped into windows 0 and 1 (INT 67h AH=44h, the windows' page registers put back after), and the BIOS's video data (40:49h–66h, 30 bytes) into the task's TX.
+  - `mt_scrld` puts one back, in Resident Claude's order: the mode (INT 10h AH=00h); for CGA's modes, port 3D9h from 40:66h, before the screen; the 32 KB; the BIOS data. In text modes it then sets the page shown (AH=05h) and the cursor's shape and place. A task whose screen was never kept gets mode 3, clear.
+  - When the front task ends, task 0 comes to the front with its screen.
+- **The entries** grew to 32 bytes (`TE_SH`, the pages' handle; `TE_SF`, a screen kept), and a TX to 44 paragraphs (`TX_VID`).
+
+**Cost:**
+- **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 32 more bytes, all in `mt_boot` (19 of code, the rest alignment).
+- **Switch on:** MT's block is 201 paragraphs plus its MCB, 3.2 KB, so a DOS program gets 574.4 KB instead of 577.6.
+- **Each task's region** is 97 paragraphs (1.5 KB) plus its environment and memory.
+- **EMS:** 32 KB per task, task 0 included.
+- **Files:** LODEMT.SYS is 2,505 bytes; ROM 1 has 20,480 bytes left.
+
+**Tests:** `test_mt.py`, 98 checks. The new group is `t_front`, with two new test programs:
+- `MTMODE MM FILE` sets video mode MM, fills the 32 KB with a pattern, waits for a key, then writes "ok" to FILE if the pattern is all still there;
+- `FREEH N` frees EMS handle N, as a program that frees a handle not its own might.
+
+The checks:
+- **The cycle:**
+  - each task takes 2 EMS pages;
+  - with two MTLINE tasks, CODE-Tab while MTLAUNCH waits brings up task 1: the key is gone from the buffer, and the screen is clear in mode 3;
+  - "hel" typed shows there;
+  - CODE-Tab gives task 2 (clear), then task 0 with MTLAUNCH's screen, cursor and BIOS video data exactly as they were, then task 1 with "hel".
+- **Ending:** task 1 gets "lo" and ends, and task 0 is in front with its screen. When all have ended, memory, files and EMS pages are as before.
+- **Graphics:**
+  - MTMODE in mode 40h, in front: CODE-Tab to task 0 (mode 3, MTLAUNCH's screen), then CODE-Tab back gives mode 40h and all 32 KB as they were, and MTMODE finds its pattern intact.
+  - In mode 4, with palette 25h, 3D9h gets 25h after the mode set and before the screen, and 40:66h is 25h.
+- **Order:**
+  - "xy", CODE-Tab, "z", Enter typed ahead: MTLAUNCH reads "xy", and task 1 gets "z";
+  - CODE-? or Ctrl-Up ahead of CODE-Tab (keys AH=01h drops) don't hold it back;
+  - a character F0h (00F0h) ahead of it is MTLAUNCH's. Each time task 1 gets "z".
+- **Other cases:**
+  - with one task besides task 0, CODE-Tab goes to it and back;
+  - at LCMD's prompt, with a task waiting, CODE-Tab does nothing and is gone; with MTLAUNCH waiting, it brings the task up;
+  - `/F` gives the task a screen of its own, and task 0's comes back when it ends.
+- **EMS:**
+  - FREEH frees task 0's handle:
+    - at the next CODE-Tab it keeps no screen, comes back clear, and nothing leaks;
+    - the same when its screen was kept and the handle goes while it is in the background;
+    - when the number is then given to a new task, task 0 keeps none, and the new task's screen isn't written over;
+  - with no EMS left for a task's screen, MTLAUNCH gets error 8, and memory, files and EMS are as before;
+  - with `MDISK=` taking all of EMS, multitasking stays off;
+  - the abort and TSR endings give their pages back.
+- **The checks can fail:** each of these, broken on purpose, fails its check:
+  - the screen copy in `mt_scrld`;
+  - the key's order, and each of its exceptions (Ctrl-Up's range, the F0h character);
+  - the failed-map test;
+  - the spawn's clearing of a number given out again;
+  - the 3D9h write;
+  - `mt_boot`'s allocation;
+  - the key taken out;
+  - the AH=45h at a task's end.
+
+**The review** (three reviewers, 2026-10-19) found no bug in the normal paths. Fixed from it:
+- keys typed before CODE-Tab went to the new front task;
+- a freed screen handle wasn't noticed (MT copied through whatever pages were mapped, then freed the number again);
+- the buffer scan wasn't bounded;
+- the DOS program's pointer wasn't hidden;
+- the page shown wasn't set again;
+- BX was trusted across the mode set.
+
+It also added the checks for 3D9h, the cursor, EMS running out at a spawn, `/F`'s screen, and the prompt with a task waiting.
+
+A second look at those fixes found two gaps, both reproduced, now fixed and tested:
+- **A reused number:** a freed number given out again (by `MT_SPAWN` itself) passed the failed-map test.
+- **The order rule was too narrow:** Ctrl-Up or F11 ahead of CODE-Tab held it back, and then AH=01h dropped both; a character F0h was skipped as droppable.
+
+It also had the pointer hidden when the front task ends.
+
+Not testable in pcemu: the page shown (AH=05h; pcemu shows page 0 whatever), BX across the mode set (pcemu's INT 10h keeps it), the INT 33h hiding (no test program uses INT 33h), and the owner check against a program's own allocation.
