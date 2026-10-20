@@ -473,8 +473,12 @@ mt_end: mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .f
         push    ax                      ; it was in front: the Executive's
-        xor     al, al                  ;  task is, with its screen
+        mov     ax, 2                   ;  task is, with its screen (the
+        call    mt_m33                  ;  INT 33h pointer off meanwhile)
+        xor     al, al
         call    mt_scrld
+        mov     ax, 1
+        call    mt_m33
         pop     ax
 .f:     cmp     al, [cs:mt_swreq]
         jne     .s
@@ -548,7 +552,15 @@ mt_spawn:
         mov     es, cx
         mov     word [es:1], 0
         jmp     .room
-.sh:    mov     bx, [cs:mt_new]
+.sh:    xor     al, al                  ; an entry with this number (its own
+.dh:    call    mt_ent                  ;  freed by a program, given out
+        cmp     [cs:bx+TE_SH], dl       ;  again): it keeps none
+        jne     .dn
+        mov     word [cs:bx+TE_SH], 0
+.dn:    inc     al
+        cmp     al, MT_TASKS
+        jb      .dh
+        mov     bx, [cs:mt_new]
         mov     [cs:bx+TE_SH], dl
         mov     byte [cs:bx+TE_SF], 0
         mov     ax, [cs:mt_reg]
@@ -749,9 +761,10 @@ mt_name:
         ret
 
 ; CODE-] in the BIOS's key buffer: taken out, and the next task (after the
-; one asked for, or the front one) asked for.  Only when no key but other
-; CODE keys (which AH=01h drops) is ahead of it: those are the front
-; task's, typed before it.  (At most 16 words looked at: a buffer gone bad
+; one asked for, or the front one) asked for.  Only when no key but those
+; AH=01h drops (the 1520's BIOS: scan codes 85h and up but E0h's, and
+; CODE keys, xxF0h with a scan code) is ahead of it: the others are the
+; front task's, typed before it.  (At most 16 words looked at: a buffer gone bad
 ; isn't followed round.)  DS anything; AX, BX changed
 mt_hot: push    ds
         push    si
@@ -768,9 +781,15 @@ mt_hot: push    ds
         je      .m
         cmp     ax, [cs:mt_hotk + 2]
         je      .m
-        cmp     al, 0F0h                ; (a key ahead of it: later)
+        cmp     ah, 0E0h                ; (a key ahead of it: later)
+        je      .no
+        cmp     ah, 85h
+        jae     .sk
+        cmp     al, 0F0h
         jne     .no
-        call    .nx
+        or      ah, ah
+        jz      .no
+.sk:    call    .nx
         loop    .s
         jmp     short .no
 .m:     mov     si, bx                  ; the words after it, one back
@@ -978,8 +997,19 @@ mt_wrest:
 mt_wmap:
         push    bx
         push    cx
-        mov     dl, [cs:bx+TE_SH]
-        xor     dh, dh
+        push    ds
+        mov     dl, [cs:bx+TE_SH]       ; still MT's?  (Open, 2 pages, owner 0:
+        xor     dh, dh                  ;  a program's has its PSP)
+        push    KSEG
+        pop     ds
+        mov     bx, dx
+        shl     bx, 2
+        cmp     byte [ems_h + bx], 0FFh
+        je      .e
+        cmp     byte [ems_h + bx + 1], 2
+        jne     .e
+        cmp     word [ems_h + bx + 2], 0
+        jne     .e
         push    dx
         mov     ax, 4400h
         xor     bx, bx
@@ -993,7 +1023,8 @@ mt_wmap:
         or      ah, ah
         jz      .x
 .e:     stc
-.x:     pop     cx
+.x:     pop     ds
+        pop     cx
         pop     bx
         ret
 

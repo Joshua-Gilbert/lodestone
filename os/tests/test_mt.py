@@ -438,6 +438,52 @@ def t_front():
           '(FREEH\'s doing), no more' % h0, st[1] == 2 and bytes(h1) == b'\0\0' and sc.strip() == '' and m == 3
           and A.disk_file(k, 'F.TXT') == b'f' and 'Lodestone version' in v and ems_used(k) == e0 - 2 and not k.crashed,
           (st, bytes(h1).hex(), sc[-200:], A.disk_file(k, 'F.TXT'), ems_used(k), e0))
+    # keys AH=01h drops, ahead of CODE-]; and one it doesn't
+    k = boot('mt_hk.img', b'MULTITASK=1\r\n', 88)
+    sh = Shell(k)
+    sh.run('ver')
+    got = []
+    for tag, ahead in (('CODE-? (35F0h)', 0x3500), ('Ctrl-Up (8D00h)', 0x8D00), ('a character F0h (00F0h)', 0x00F0)):
+        sh.run('mtlaunch mtline.com k.txt')
+        k.key(ahead, HOT, 'z', ktest.ENTER, settle=False); k.run_for(1.5)
+        got.append((tag, A.disk_file(k, 'K.TXT'), tstate(k)[0]))
+        line(k, '')
+    check('ahead of CODE-]: keys the BIOS drops for AH=01h (CODE-?, Ctrl-Up) don\'t hold it back; a character (00F0h) '
+          'is the front task\'s, read first; each time task 1 gets "z"',
+          all(f == b'z' and len(st) == 1 for tag, f, st in got), got)
+    # a handle freed by a program, given out again
+    e0 = ems_used(k)
+    h0 = k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 1)[0]
+    sh.run('mtlaunch freeh.com %d' % h0)
+    line(k, '')
+    sh.run('mtlaunch mtline.com r.txt')
+    hs = [k.pc.rd(mt_seg(k), k.Y['mt_tab'] + i * MT_ENT + TE_SH, 1)[0] for i in (0, 1)]
+    hot(k); k.key('abc'); k.run_for(0.3)
+    hot(k)
+    s0 = k.pc.text_screen()
+    hot(k)
+    s1 = k.pc.text_screen()
+    line(k, ''); line(k, '')
+    check('task 0\'s handle (%d) freed by FREEH, then given to task 1 by MT_SPAWN: task 0 keeps none (TE_SH 0), so '
+          'task 1\'s screen isn\'t written over ("abc" still there after task 0 has been in front, clear); EMS: '
+          'only FREEH\'s 2 pages fewer' % h0, hs == [0, h0] and s0.strip() == '' and 'abc' in s1
+          and ems_used(k) == e0 - 2 and tstate(k)[0] == [(0, 1, 'Executive')], (hs, s0[-100:], s1[-100:], ems_used(k), e0))
+    # freed while its task is in the background, its screen kept
+    k = boot('mt_hb.img', b'MULTITASK=1\r\n', 88)
+    sh = Shell(k)
+    sh.run('ver')
+    h0 = k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 1)[0]
+    sh.run('mtlaunch /f mtline.com b2.txt;freeh.com %d' % h0)
+    k.run_for(0.5)
+    st, sf = tstate(k), k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 2)
+    hot(k)
+    sc, m, h1 = k.pc.text_screen(), k.pc.mode(), k.pc.rd(mt_seg(k), k.Y['mt_tab'] + TE_SH, 2)
+    hot(k); line(k, 'b'); line(k, '')
+    check('task 0\'s screen kept (task 1 in front with /F), then its handle freed (FREEH, task 2): back in front it '
+          'can\'t be mapped, so task 0 comes back clear in mode 3 and keeps none; the rest goes on',
+          st[1] == 1 and bytes(sf) == bytes([h0, 1]) and sc.strip() == '' and m == 3 and bytes(h1) == b'\0\0'
+          and A.disk_file(k, 'B2.TXT') == b'b' and 'Lodestone version' in sh.run('ver'),
+          (st, bytes(sf).hex(), sc[-100:], bytes(h1).hex(), A.disk_file(k, 'B2.TXT')))
     # no EMS for a task's screen
     k = boot('mt_hf.img', b'MULTITASK=1\r\nMDISK=1344\r\n', 88)
     sh = Shell(k)
