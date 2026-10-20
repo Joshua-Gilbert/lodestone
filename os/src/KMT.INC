@@ -80,7 +80,9 @@ V_DTA       equ V_CWD + (cur_drv + 1 - cwdstr)
 V_PSP       equ V_DTA + (rw_t0 + 1 - dta)
 TX_KSTK     equ V_PSP + (term_keep + 2 - cur_psp)
 KSLICE      equ 256                     ; room for the kernel stack's slice
-TX_PARAS    equ (TX_KSTK + KSLICE + 15) / 16
+TX_FPU      equ TX_KSTK + KSLICE        ; the coprocessor's state (FNSAVE's 94
+TX_FPV      equ TX_FPU + 94             ;  bytes); 1: kept there (0: FNINIT)
+TX_PARAS    equ (TX_FPV + 1 + 15) / 16
 
 ; ---- the stub (a PSP, then this at 100h) --------------------------------
 ST_PATH     equ 120h                    ; the program (ASCIIZ)
@@ -113,6 +115,8 @@ mt_lcs      dw      0                   ; (the last switch's interrupted CS,
 mt_lip      dw      0                   ;  IP, flags and SP, for test_mt: set
 mt_lfl      dw      0                   ;  by mt_safe when it says yes)
 mt_lsp      dw      0
+mt_fpu      db      0                   ; 1: a coprocessor (INT 11h), kept per
+                                        ;  task
 mt_front    db      0                   ; the task in front
 mt_cur      db      0                   ; the task running
 mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
@@ -522,6 +526,11 @@ mt_switch:
 .sv:    mov     [es:TX_SP], sp
         mov     [es:TX_SS], ss
         call    mt_emsget
+        cmp     byte [cs:mt_fpu], 0     ; its coprocessor's registers, control
+        je      .nf                     ;  and status (FNSAVE: a pending error
+        fnsave  [es:TX_FPU]             ;  kept for it, not raised here; the
+        mov     byte [es:TX_FPV], 1     ;  286 waits for the 287 itself)
+.nf:
         push    KSEG
         pop     ds
         xor     cx, cx                  ; its slice of the kernel stack (none:
@@ -549,7 +558,14 @@ mt_load:
         call    mt_ent
         mov     byte [cs:bx+TE_STATE], TS_RUN
         mov     es, [cs:bx+TE_TX]
-        push    KSEG
+        cmp     byte [cs:mt_fpu], 0     ; its coprocessor state (none kept
+        je      .nf                     ;  yet: as FNINIT leaves it)
+        cmp     byte [es:TX_FPV], 0
+        je      .fi
+        frstor  [es:TX_FPU]
+        jmp     .nf
+.fi:    fninit
+.nf:    push    KSEG
         pop     ds
         call    mt_vload
         mov     dx, EMS_PORT            ; its EMS windows
@@ -953,6 +969,7 @@ mt_spawn:
         mov     word [es:V_DTA + 0], 80h
         mov     [es:V_DTA + 2], ax
         mov     word [es:TX_KLEN], 0
+        mov     byte [es:TX_FPV], 0     ; (its coprocessor: FNINIT's, first)
         ; its first run: on the stub's stack, as mt_load pops it: ES, DS,
         ; POPA's eight, mt_first, then IRET's IP, CS, flags
         mov     [es:TX_SS], ax
@@ -1455,6 +1472,10 @@ mt_boot:
         mov     ax, dx
         add     ax, MT_TX0P
         mov     [es:mt_tab+TE_TX], ax
+        int     11h                     ; a coprocessor?  (POST's own probe on
+        and     al, 2                   ;  the 1520; with none, its
+        shr     al, 1                   ;  instructions may trap: EM)
+        mov     [es:mt_fpu], al
         push    KSEG
         pop     ds
         mov     ax, [first_mcb]
