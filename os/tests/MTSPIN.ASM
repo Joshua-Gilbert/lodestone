@@ -1,5 +1,5 @@
 ; MTSPIN.COM - for test_mt.py: a task that computes, for preemption.
-;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | T | O]
+;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | T | P | O]
 ; Counts, as fast as it can, for T ticks of the BIOS's clock (40:6Ch),
 ; then writes the count (8 hex digits) to CNTFILE.  It prints nothing.
 ;   D  an INT 21h call (AH=2Ch) on each count
@@ -16,6 +16,9 @@
 ;      service)
 ;   T  hooks INT 08h meanwhile, writing the vector itself (not AH=25h):
 ;      its handler does STI and chains with PUSHF / CALL FAR
+;   P  keeps its own values on the coprocessor (n and 2n in ST0 and ST1,
+;      n from its segment, and its own rounding in the control word) and
+;      checks them on each count: any changed, the count it writes is 0
 ;   O  no counting: the count is what INT 21h F0h AL=1 says for A: (files
 ;      open there)
 ; nasm -f bin -o MTSPIN.COM MTSPIN.ASM
@@ -75,7 +78,7 @@ org 100h
         mov     dx, h1c
         int     21h
 .t0:    cmp     byte [mode], 'T'
-        jne     .go
+        jne     .p0
         xor     ax, ax
         mov     es, ax
         cli
@@ -86,6 +89,24 @@ org 100h
         mov     word [es:8 * 4], h08
         mov     [es:8 * 4 + 2], cs
         sti
+.p0:    cmp     byte [mode], 'P'
+        jne     .go
+        mov     ax, cs                  ; (P: its own values on the
+        and     ax, 0FFFh               ;  coprocessor: n and 2n, n from its
+        mov     [fpn], ax               ;  segment; rounding as n's low bits)
+        shl     ax, 1
+        mov     [fpn2], ax
+        mov     ax, [fpn]
+        and     ax, 3
+        mov     cl, 10
+        shl     ax, cl
+        or      ax, 037Fh
+        mov     [fpcw], ax
+        fninit
+        fldcw   [fpcw]
+        fild    word [fpn]
+        fld     st0
+        fadd    st0, st0
 .go:    push    40h
         pop     es
         mov     ax, [es:6Ch]
@@ -116,9 +137,27 @@ org 100h
 .l:     add     word [cnt], 1
         adc     word [cnt + 2], 0
         cmp     byte [mode], 'D'
-        jne     .i
+        jne     .p
         mov     ah, 2Ch
         int     21h
+.p:     cmp     byte [mode], 'P'
+        jne     .i
+        fist    word [fpt]              ; 2n in ST0, n in ST1, its own control
+        fxch                            ;  word: still?
+        fist    word [fpt + 2]
+        fxch
+        fnstcw  [fpt + 4]
+        fwait
+        mov     ax, [fpt]
+        cmp     ax, [fpn2]
+        jne     .pe
+        mov     ax, [fpt + 2]
+        cmp     ax, [fpn]
+        jne     .pe
+        mov     ax, [fpt + 4]
+        cmp     ax, [fpcw]
+        je      .i
+.pe:    inc     word [fpe]
 .i:     cmp     byte [mode], 'R'
         jne     .i2
         int     62h
@@ -167,7 +206,11 @@ org 100h
         mov     ah, 3Eh
         mov     bx, [dh_]
         int     21h
-.c:     mov     di, out_                ; the count, in hex
+.c:     cmp     word [fpe], 0           ; (P: anything changed: count 0)
+        je      .c2
+        mov     word [cnt], 0
+        mov     word [cnt + 2], 0
+.c2:    mov     di, out_                ; the count, in hex
         mov     ax, [cnt + 2]
         call    hex4
         mov     ax, [cnt]
@@ -249,6 +292,11 @@ spv     dw      0
 indp    dd      0
 o1c     dd      0
 o08     dd      0
+fpn     dw      0
+fpn2    dw      0
+fpcw    dw      0
+fpt     dw      0, 0, 0
+fpe     dw      0
 mode    db      0
 out_    times 8 db 0
 rec     db      '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDE', 0Ah

@@ -18,7 +18,8 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M1 | The switch and the skeleton | PR #43, merged. |
 | M2a | Spawning, task regions, switching when one waits for a key | PR #44, merged. |
 | M2b | The front: the CODE-Tab hot key, each task's screen saved and restored | PR #45, merged. |
-| M3 | Preemption from INT 08h at safe points | This PR. |
+| M3 | Preemption from INT 08h at safe points | PR #46, merged. |
+| M3b | Each task's own coprocessor state | This PR. |
 | M4 | Virtual screens (an INT 10h hook) and the direct-write detector | |
 | M5 | Per-task vectors, ending and killing tasks | |
 | M6 | Parking tasks in EMS and bringing them back | |
@@ -389,3 +390,30 @@ The checks:
   - the front task's turn for a key (a key for the front task);
   - each safe-point rule: interrupts on, none in service (the audit, in `t_rules`); `m33_busy`; SS the task's own; CS the task's own (INT 62h); task 0's blocks found in the arena, in both directions (the prompt and LCMD's saver; B800h and free memory from the prompt); CS in the UI's not checked again (LCMD's saver);
   - the check that INT 08h is still `mt_tick` (a task's own hook), F0h AL=1's answer.
+
+## M3b: each task's own coprocessor (2026-10-20)
+
+**Why:** the 80287 holds one set of registers, its control word and its status. A task switched from in the middle of a calculation, at the tick since M3 or at a key wait since M2a, found them as the last task to use the coprocessor left them. Two tasks using it at once (the calculator in the Executive and a program behind it, say) would each corrupt the other's numbers.
+
+**What it does:**
+- When a task is switched from, `mt_switch` saves its coprocessor state (FNSAVE, 94 bytes) in its TX, with a flag (`TX_FPV`).
+- `mt_load` puts back the incoming task's state (FRSTOR). A task with none saved yet (a new one) gets FNINIT's.
+- FNSAVE is the no-wait form. A task's pending coprocessor error stays with it, not raised in MT, and the 286 itself waits for the 287 to finish before giving it the next instruction.
+- **Only with a coprocessor:** `mt_boot` reads INT 11h's bit once (`mt_fpu`); on the 1520 that is POST's own probe. With none, the 286's EM bit may be set and these instructions would trap, so MT doesn't touch it.
+
+**The coprocessor can't be a second thread.** It has no instruction fetch and no memory access of its own. It runs the instructions the 286 hands it, one at a time, overlapping only one long instruction (a divide or square root, a few hundred cycles) with the 286's own work. That overlap is something a program arranges in its own code; a scheduler can't give the coprocessor a task.
+
+**The limits:**
+- **Every switch saves and restores it**, whether or not either task uses the coprocessor. That costs a few hundred of the 287's cycles each way, 18 to 36 times a second, well under a millisecond each time. Saving only for tasks that use it (trapping their first coprocessor instruction through the 286's TS bit) would avoid that, but needs INT 7 in real mode, which pcemu can't show; not worth it at this rate.
+- **A pending error comes back with its task.** Where the 287's error line is wired to IRQ 13, as on an AT, putting back a state that holds an unmasked error can raise it then, at the start of that task's turn, rather than at its next coprocessor instruction.
+
+**Cost:**
+- **Switch off:** nothing; LODE.SYS is unchanged.
+- **Switch on:** each task's TX grows by 95 bytes. Task 0's is in MT's block, now 247 paragraphs plus its MCB, 3.9 KB, so a DOS program gets 573.7 KB instead of 577.6.
+- **Files:** LODEMT.SYS is 3,145 bytes; ROM 1 has 19,456 bytes left.
+
+**Tests:** `test_mt.py`, 125 checks. The new group is `t_fpu`, with a new MTSPIN mode, P. It keeps its own values on the coprocessor (n and 2n in ST0 and ST1, n from its segment, its own rounding in the control word) and checks them on every count; if any has changed, the count it writes is 0.
+- Two P tasks switched at the tick all along: neither sees a change, and each counts about half of what one alone does.
+- Task 0 (P run from the prompt) with a P task behind it: both kept.
+- INT 11h saying there is no coprocessor: `mt_fpu` is 0, and tasks take turns as before.
+- **The checks can fail:** without the save, or without the restore, the P tasks see their values change.
