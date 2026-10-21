@@ -187,6 +187,7 @@ mt_33eb     dw      0                   ;  m33_ev and m33_busy,
 mt_33pk     db      0                   ;  the mouse's IRQ bit masked (0Ch,
 mt_33pm     db      0                   ;  14h: 0 else) and the mask before)
 mt_33sb     db      0                   ; (mt_scrto: m33_busy as it was)
+mt_33ot     db      0                   ; (mt_m33on: another driver answered)
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
@@ -1836,14 +1837,31 @@ mt_m33nb:
 ; after a change of the front: the pointer back on through INT 33h (AX=1,
 ; after mt_scrto's AX=2) when INT 33h is another driver, or a program's
 ; hook in front: its show count as it was.  With the UI's driver, or MT's
-; hook over it, mt_m33ld's 17h does that (the count exactly).  All kept
+; hook over it, mt_m33ld's 17h does that (the count exactly).  Whether
+; the UI's driver answered (its show count moved: a hook) or another one
+; did, in mt_33ot for mt_m33ld.  All kept
 mt_m33on:
+        mov     byte [cs:mt_33ot], 0
         call    mt_m33us
         je      .x
-        push    ax
-        mov     ax, 1
+        pusha
+        push    ds
+        push    es
+        push    KSEG
+        pop     ds
+        mov     cx, [ui_seg]
+        jcxz    .on                     ; (no UI: none to tell apart)
+        mov     es, cx
+        mov     dx, [es:m33_cnt]
+.on:    mov     ax, 1
         call    mt_m33
-        pop     ax
+        jcxz    .p
+        cmp     dx, [es:m33_cnt]        ; (after AX=2, the UI's count is
+        jne     .p                      ;  below 0, so AX=1 moves it)
+        mov     byte [cs:mt_33ot], 1
+.p:     pop     es
+        pop     ds
+        popa
 .x:     ret
 
 ; ZF set if INT 33h is the UI's driver, or MT's hook over it.  All kept
@@ -1892,8 +1910,9 @@ mt_m33to:
 ; task AL's state to the driver, by its own function 17h (the pointer
 ; taken away, the state copied in, the pointer drawn as it says), called
 ; directly: the UI's driver, whose state it is.  With another driver on
-; INT 33h, drawn in no mode (40:49h 0FFh meanwhile): that one's pointer
-; is the one shown.  All kept
+; INT 33h (mt_m33on, just before, found the UI's not answering), drawn in
+; no mode (40:49h 0FFh meanwhile): that one's pointer is the one shown.
+; All kept
 mt_m33ld:
         pusha
         push    ds
@@ -1908,7 +1927,7 @@ mt_m33ld:
         pushf
         cli
         mov     bl, 0FFh
-        call    mt_m33us
+        cmp     byte [cs:mt_33ot], 0
         jne     .md
         push    40h                     ; (ours: 40:49h as it is)
         pop     ds

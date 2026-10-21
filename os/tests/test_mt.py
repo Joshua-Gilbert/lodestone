@@ -1876,10 +1876,28 @@ def t_mouse():
     v = sh.run('ver')
     check('... all ended, the prompt as before', 'Lodestone version' in v and tstate(k)[0] == [(0, 1, 'Executive')]
           and not k.crashed, (v[-60:], tstate(k)))
+    # a program's INT 33h hook that jumps on (MTM33 J, resident) in front of MT's: F in front, B behind, CODE-Tab:
+    # B's pointer drawn, F's not left on B's screen (the UI's driver still answering, through the hook)
+    typ(k, 'mtm33 j', 0.5)
+    js_ = vec(k, 0x33)[0]
+    typ(k, 'mtlaunch /f mtm33.com f fj.txt;mtm33.com b bj.txt', 1.0)
+    bj = waitthree(k, 'BJ.TXT')
+    aj0 = (attr(40, 12), attr(25, 12))
+    k.key(HOT, settle=False); k.run_for(0.5)
+    stj, aj1 = tstate(k), (attr(40, 12), attr(25, 12))
+    k.key('q', settle=False); k.run_for(0.5)
+    front(k, 1)
+    k.key('q', settle=False); k.run_for(0.5)
+    line(k, '')
+    check('a program\'s INT 33h hook that jumps on (MTM33 J) in front of MT\'s: B\'s calls still its own (%s); CODE-Tab: '
+          'B\'s pointer drawn on its screen (25, 12), F\'s not left there (40, 12)' % (bj,), js_ not in (seg, k.useg)
+          and bj == (0, 200, 96) and aj0 == (0x70, 0x07) and stj[1] == 2 and aj1 == (0x07, 0x70),
+          (hex(js_), bj, aj0, stj, aj1))
     # another mouse driver (MTM33 D, resident, not chaining): MT's hook stays off it, and at each change of the
     # front its pointer goes (AX=2) and comes back (AX=1): its show count as it was
     # put in place while F (its pointer shown by the UI's driver) is behind: F back in front, the UI's pointer
-    # not drawn, D's being the one on INT 33h
+    # not drawn by the change, D's being the one on INT 33h (D doesn't take the mouse's IRQ, as a real driver
+    # would, so the mouse isn't moved here: the UI's own interrupt handler would draw it)
     typ(k, 'mtlaunch /f mtm33.com f fd.txt', 1.0)
     ad0 = attr(40, 12)
     k.key(HOT, settle=False); k.run_for(0.4)
@@ -1891,8 +1909,9 @@ def t_mouse():
     k.key('q', settle=False); k.run_for(0.5)
     line(k, '')
     check('another INT 33h driver put in place while F (its pointer shown, the UI\'s) is behind: F back in front, the '
-          'UI\'s pointer not drawn on its screen (40, 12), D\'s the one on INT 33h', ad0 == 0x70 and std[1] == 1
-          and ad == 0x07 and A.disk_file(k, 'FD.TXT') is not None and ds_ != seg, (hex(ad0), std, hex(ad), hex(ds_)))
+          'UI\'s pointer not drawn on its screen by the change (40, 12), D\'s the one on INT 33h', ad0 == 0x70
+          and std[1] == 1 and ad == 0x07 and A.disk_file(k, 'FD.TXT') is not None and ds_ not in (seg, k.useg),
+          (hex(ad0), std, hex(ad), hex(ds_)))
     d2s = [k.pc.u16(ds_, do_ - 4)]
     typ(k, 'mtlaunch /f mtline.com ld.txt', 0.8)
     st6 = tstate(k)
@@ -1920,15 +1939,15 @@ def t_mouse():
     in_, prev, hit = seg * 16 + Y['mt_33in'], k.pc.watch, []
     def w(a):
         if prev: prev(a)
-        if a == in_ and k.pc.r('ax') == 0x0C:
+        if a == in_ and k.pc.r('ax') in (0x0C, 0x14):
             hit.append(1); k.pc.wr(seg, Y['mt_33md'], b'\7')
     k.pc.watch = w
     md0 = k.pc.mode()
     typ(k, 'mtlaunch mtm33.com h h.txt', 1.0)
     k.pc.watch = prev
     hz = three(A.disk_file(k, 'H.TXT') or b'')
-    check('no mouse: MTM33 H behind (reset, 0Ch, 14h): no IRQ masked for 0Ch and 14h, and the mode byte (40:49h) '
-          'left as it was (%Xh, not MT\'s stale 7)' % k.pc.mode(), hit and md0 != 7 and k.pc.mode() == md0
+    check('no mouse: MTM33 H behind (reset, 0Ch, 14h): for 0Ch and 14h the mode byte (40:49h) left as it was (%Xh, '
+          'not MT\'s saved copy, made stale by the test as each call comes)' % k.pc.mode(), len(hit) == 2 and md0 != 7 and k.pc.mode() == md0
           and hz is not None and not k.crashed, (hit, hex(md0), hex(k.pc.mode()), hz))
 
 def t_progs():
