@@ -4349,12 +4349,14 @@ tail        equ pat                 ; (130 bytes: a program's command tail
 src         resb 80
 ; COPY's two names checked, in prog..src, which COPY doesn't use otherwise.
 ; Neither getarg nor canon has a bound: path2 (a line's last word, up to
-; LBUF-6 bytes) runs on into prog, so canon1 starts past that; canon2
-; (DOS's current directory, up to 65 characters, then path2 and a name)
-; ends before src
-canon1      equ prog + 48
-canon2      equ canon1 + 80
-        times   -(prog != out_name + 80 || canon1 - prog < LBUF - 6 - 80) resb 1
+; LBUF-6 characters) runs on into prog, so canon1 starts past that, with
+; room for any real file's name (X:\, 65 characters of directory, \, 8.3)
+; before canon2, and canon2 (that directory, then path2 and a name) ends
+; before src
+canon1      equ prog + 46
+canon2      equ canon1 + 82
+        times   -(prog != out_name + 80 || canon1 - prog < LBUF - 6 + 1 - 80) resb 1
+        times   -(canon2 - canon1 < 3 + 65 + 1 + 12 + 1) resb 1
         times   -(src - canon2 < 3 + 65 + 1 + (LBUF - 6) + 13 + 1) resb 1
 dst         resb 80
 setbuf      equ src                 ; (PATH, PROMPT, COMSPEC: no COPY then)
