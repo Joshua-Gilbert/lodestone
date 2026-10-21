@@ -7,9 +7,12 @@
 ;      the teletype with CR, LF, BS and BEL, the cursor, 09h and 0Ah, 13h's
 ;      four kinds, 06h and 07h, the cursor's shape, the colour select, and
 ;      what 03h, 08h and 0Fh answer; and the 1520's odd cases: windows
-;      the wrong way round after the clamps, page 8 (BH, and shown), 0Dh in a
-;      text mode, and the AX that 00h, 05h, 0Bh and 0Dh give back.  Then
-;      waits for a key (AH=08h), and ends
+;      the wrong way round after the clamps, page 8 (BH, and shown), 09h
+;      run on past the 32 KB round to page 0, 03h's CX for page 11, 0Ch and
+;      0Dh in a text mode, and the AX that 00h, 05h, 0Bh and 0Dh give back;
+;      an EMS page of its own in window 2, signed, checked at the end ("S+":
+;      nothing written past the task's 32 KB).  Then waits for a key
+;      (AH=08h), and ends
 ;   C  as P in mode 1 (40 columns); M  as P after a mode set of 83h (mode 2,
 ;      on the 1520)
 ;   L  mode 3, then 120 lines through DOS (AH=09h), then FILE "L"; waits
@@ -22,6 +25,12 @@
 ;      digits); waits for a key
 ;   I  hooks INT 1Ch, its handler writing '*' at the top right through
 ;      INT 10h (02h, 09h); waits 6 ticks, unhooks, FILE "I"; waits for a key
+;   W  waits for a key, then writes a word into B800h itself (no mode set),
+;      FILE "W"; waits for a key
+;   K  half a second, then MT_SCREEN (INT 21h F0h AL=1Ch), FILE "K"; ends
+;   R  an 'R' in 70h at row 0, column 60, through INT 10h 13h called from
+;      D800:0000 (test_mt puts INT 10h / RETF there: a ROM's code), FILE
+;      "R"; waits for a key
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
@@ -56,10 +65,32 @@ org 100h
         je      m_g
         cmp     al, 'I'
         je      m_i
+        cmp     al, 'W'
+        je      m_w
+        cmp     al, 'K'
+        je      m_k
+        cmp     al, 'R'
+        je      m_r
         jmp     fin
 
 ; ---- P: the script ----
-m_p:    mov     ax, [pmode]
+m_p:    mov     ah, 43h                 ; an EMS page of its own in window 2,
+        mov     bx, 1                   ;  signed (a window the wrong way round
+        int     67h                     ;  blanks on past the 32 KB on the
+        or      ah, ah                  ;  1520: MT's emulation stops there)
+        jnz     .ne
+        mov     [hnd], dx
+        mov     ax, 4402h
+        xor     bx, bx
+        int     67h
+        or      ah, ah
+        jnz     .ne
+        mov     byte [sig], 1
+        push    0E800h
+        pop     es
+        mov     word [es:0], 'SI'
+        mov     word [es:2], 'G!'
+.ne:    mov     ax, [pmode]
         int     10h
         mov     [ax0], ax
         mov     ax, 0600h               ; windows the wrong way round after the
@@ -181,10 +212,13 @@ m_p:    mov     ax, [pmode]
         mov     cx, 1400h
         mov     dx, 1504h
         int     10h
+        mov     ah, 1                   ; the cursor's shape (page 8's cursor
+        mov     cx, 0D0Eh               ;  too, 40:60h: the teletype below
+        int     10h                     ;  moves it on, to 0D0Fh)
         mov     ax, 0941h               ; page 8 (its cursor is 40:60h, the
-        mov     bx, 0807h               ;  cursor's shape: page 0's row 6,
-        mov     cx, 1                   ;  column 7, kept from here on, were it
-        int     10h                     ;  written; its page is past the 32 KB)
+        mov     bx, 0807h               ;  cursor's shape: page 0's row 0Dh,
+        mov     cx, 1                   ;  column 0Eh, kept from here on, were
+        int     10h                     ;  it written; its page is past 32 KB)
         mov     ax, 0508h               ; page 8 shown: the teletype's cursor
         int     10h                     ;  40:60h then, its character past the
         mov     [ax5], ax               ;  32 KB in 80 columns
@@ -192,9 +226,6 @@ m_p:    mov     ax, [pmode]
         mov     bx, 7
         int     10h
         mov     ax, 0500h
-        int     10h
-        mov     ah, 1                   ; the cursor's shape
-        mov     cx, 0D0Eh
         int     10h
         mov     ah, 0Bh                 ; the colour select
         xor     bh, bh
@@ -206,6 +237,19 @@ m_p:    mov     ax, [pmode]
         xor     dx, dx
         int     10h
         mov     [axd], ax
+        mov     ax, 0C55h               ; 0Ch, the same
+        xor     cx, cx
+        xor     dx, dx
+        int     10h
+        mov     [axc], ax
+        mov     ah, 2                   ; 09h from page 7's start, 4810h of
+        mov     bh, 7                   ;  them: past the 32 KB not written,
+        xor     dx, dx                  ;  but on round 16 bits as the 1520's
+        int     10h                     ;  DI goes, so in 80 columns page 0's
+        mov     ax, 0957h               ;  first 16 cells
+        mov     bx, 0717h
+        mov     cx, 4810h
+        int     10h
         mov     dx, 1300h               ; what 03h, 08h, 0Fh answer
         call    curto
         mov     ah, 3
@@ -221,6 +265,11 @@ m_p:    mov     ax, [pmode]
         int     10h
         mov     ax, dx
         call    hexw
+        mov     ah, 3                   ; (page 11: no cursor, CX the shape all
+        mov     bh, 0Bh                 ;  the same)
+        xor     cx, cx
+        int     10h
+        mov     [cx3], cx
         mov     dx, 0505h               ; (a cell 06h's window scrolled)
         call    curto
         mov     ah, 8
@@ -248,7 +297,32 @@ m_p:    mov     ax, [pmode]
         call    hexw
         mov     ax, [axd]
         call    hexw
-        mov     dx, 0246h
+        mov     dx, 1500h               ; 03h's CX for page 11, 0Ch's AX, the
+        call    curto                   ;  signed page in window 2
+        mov     ax, [cx3]
+        call    hexw
+        mov     ax, [axc]
+        call    hexw
+        mov     al, 'S'
+        call    tty1
+        mov     al, '?'
+        cmp     byte [sig], 0
+        je      .sg
+        mov     al, '-'
+        push    0E800h
+        pop     es
+        cmp     word [es:0], 'SI'
+        jne     .sg
+        cmp     word [es:2], 'G!'
+        jne     .sg
+        mov     al, '+'
+.sg:    call    tty1
+        cmp     byte [sig], 0
+        je      .sf
+        mov     ah, 45h
+        mov     dx, [hnd]
+        int     67h
+.sf:    mov     dx, 0246h
         call    curto
         mov     si, s_end
         call    ttys
@@ -276,6 +350,43 @@ m_d:    mov     ax, 0003h
         push    0B800h
         pop     es
         mov     word [es:160 * 2 + 20], 4E44h   ; 'D' in 4Eh, row 2
+        jmp     key
+
+; ---- W: a key, then the screen written itself, no mode set ----
+m_w:    mov     ah, 8
+        int     21h
+        push    0B800h
+        pop     es
+        mov     word [es:160 * 3 + 20], 4E57h   ; 'W' in 4Eh, row 3
+        mov     al, 'W'
+        call    wfile
+        jmp     key
+
+; ---- K: MT_SCREEN, half a second on ----
+m_k:    push    40h
+        pop     es
+        mov     ax, [es:6Ch]
+.w:     mov     dx, [es:6Ch]
+        sub     dx, ax
+        cmp     dx, 9
+        jb      .w
+        mov     ax, 0F01Ch
+        int     21h
+        mov     al, 'K'
+        call    wfile
+        jmp     fin
+
+; ---- R: a ROM's INT 10h ----
+m_r:    push    cs
+        pop     es
+        mov     ax, 1300h
+        mov     bx, 0070h
+        mov     cx, 1
+        mov     dx, 003Ch
+        mov     bp, s_r
+        call    far [romv]
+        mov     al, 'R'
+        call    wfile
         jmp     key
 
 ; ---- G, Q: graphics asked for ----
@@ -376,6 +487,10 @@ wbuf:   mov     ah, 3Ch
         int     21h
 .x:     ret
 
+tty1:   mov     ah, 0Eh                 ; AL through the teletype
+        mov     bx, 7
+        int     10h
+        ret
 curto:  mov     ah, 2                   ; the cursor to DX (page 0)
         xor     bh, bh
         int     10h
@@ -452,12 +567,18 @@ s_long  db      'a long listing line, about sixty characters wide....', 13, 10, 
 s_d     db      'writes the screen itself', 13, 10, 0
 s_g     db      'asks for graphics', 13, 10, 0
 s_end   db      'end', 0
+s_r     db      'R'
+romv    dw      0, 0D800h
 mode    db      0
 pmode   dw      0003h
 ax0     dw      0
 ax5     dw      0
 axb     dw      0
 axd     dw      0
+axc     dw      0
+cx3     dw      0
+hnd     dw      0
+sig     db      0
 fnm     dw      0
 o1c     dd      0
 out_    times 8 db 0

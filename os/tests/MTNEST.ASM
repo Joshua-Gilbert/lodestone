@@ -1,7 +1,10 @@
 ; MTNEST.COM - for test_mt.py: mt_v10 entered with interrupts on (PUSHF / CALL FAR,
 ; as a TSR's INT 10h hook that STIs and chains does), an INT 1Ch handler calling
 ; INT 10h meanwhile.  Its own EMS page in window 0 with a signature; after each
-; call the signature is checked.  FILE: "OK n" or "BAD i r n" (r: window 0's reg)
+; call the signature is checked.  FILE: "OK n" or "BAD i r n" (r: window 0's reg;
+; n: the ticks' INT 1Ch, counted).
+;   MTNEST FILE S  its stack in that page meanwhile (E000:1000h down)
+;   MTNEST FILE E  first, the signature written through INT 10h 13h from there
 ; nasm -f bin -o MTNEST.COM MTNEST.ASM
 cpu 286
 %ifndef COUNT
@@ -22,6 +25,14 @@ org 100h
         cmp     al, ' '
         ja      .w
         mov     byte [si-1], 0
+        cmp     al, 0Dh
+        je      .o0
+.o:     lodsb
+        cmp     al, ' '
+        je      .o
+        and     al, 0DFh
+        mov     [opt], al
+.o0:
         mov     ah, 43h                 ; one EMS page of its own, in window 0
         mov     bx, 1
         int     67h
@@ -40,7 +51,15 @@ org 100h
         pop     es
         mov     word [es:0], 'SI'
         mov     word [es:2], 'G!'
-        xor     ax, ax                  ; INT 10h's vector (mt_v10), INT 1Ch hooked
+        cmp     byte [opt], 'E'
+        jne     .ne
+        mov     ax, 1300h               ; E: the signature through 13h, from
+        mov     bx, 0007h               ;  window 0
+        mov     cx, 4
+        mov     dx, 1700h
+        xor     bp, bp
+        int     10h
+.ne:    xor     ax, ax                  ; INT 10h's vector (mt_v10), INT 1Ch hooked
         mov     es, ax
         mov     ax, [es:10h*4]
         mov     [v10], ax
@@ -54,7 +73,16 @@ org 100h
         mov     word [es:1Ch*4], h1c
         mov     [es:1Ch*4+2], cs
         sti
-        mov     cx, COUNT
+        cmp     byte [opt], 'S'
+        jne     .ns
+        cli                             ; S: its stack in window 0's page
+        mov     [sv_sp], sp
+        mov     [sv_ss], ss
+        mov     ax, 0E000h
+        mov     ss, ax
+        mov     sp, 1000h
+        sti
+.ns:    mov     cx, COUNT
 .l:     push    cx
         mov     ax, 0601h               ; a window not the whole width: row by
         mov     bh, 07h                 ;  row in the emulator
@@ -67,9 +95,10 @@ org 100h
         sti
         pushf
         call    far [v10]
-        sti                             ; (pcemu's BIOS returns with RETF 2, the
-                                        ;  flags as it had them: the 1520's IRETs)
 %endif
+        mov     si, 250                 ; a while with interrupts on, so ticks
+.dl:    dec     si                      ;  land (pcemu takes a pending one only
+        jnz     .dl                     ;  where it restarts with them on)
         push    0E000h
         pop     es
         cmp     word [es:0], 'SI'
@@ -99,8 +128,12 @@ org 100h
         stosb
         mov     ax, [n1c]
         call    hexa
-done:   cli                             ; INT 1Ch back
-        xor     ax, ax
+done:   cli                             ; INT 1Ch back (and the stack)
+        cmp     byte [opt], 'S'
+        jne     .rs
+        mov     ss, [sv_ss]
+        mov     sp, [sv_sp]
+.rs:    xor     ax, ax
         mov     es, ax
         mov     ax, [o1c]
         mov     [es:1Ch*4], ax
@@ -180,6 +213,9 @@ v10     dd      0
 o1c     dd      0
 n1c     dw      0
 iter    dw      0
+opt     db      0
+sv_sp   dw      0
+sv_ss   dw      0
 reg     dw      0
 outb    times 32 db 0
         times 256 db 0
