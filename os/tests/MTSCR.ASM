@@ -8,7 +8,8 @@
 ;      four kinds, 06h and 07h, the cursor's shape, the colour select, and
 ;      what 03h, 08h and 0Fh answer; and the 1520's odd cases: windows
 ;      the wrong way round after the clamps, page 8 (BH, and shown), 09h
-;      run on past the 32 KB round to page 0, 03h's CX for page 11, 0Ch and
+;      run on past the 32 KB round to page 0, 03h's CX for page 11, 08h on
+;      page 8, 0Ch and
 ;      0Dh in a text mode, and the AX that 00h, 05h, 0Bh and 0Dh give back;
 ;      an EMS page of its own in window 2, signed, checked at the end ("S+":
 ;      nothing written past the task's 32 KB).  Then waits for a key
@@ -270,6 +271,10 @@ m_p:    mov     ah, 43h                 ; an EMS page of its own in window 2,
         xor     cx, cx
         int     10h
         mov     [cx3], cx
+        mov     ah, 8                   ; (page 8: past the 32 KB in 80 columns)
+        mov     bh, 8
+        int     10h
+        mov     [ax8], ax
         mov     dx, 0505h               ; (a cell 06h's window scrolled)
         call    curto
         mov     ah, 8
@@ -302,6 +307,8 @@ m_p:    mov     ah, 43h                 ; an EMS page of its own in window 2,
         mov     ax, [cx3]
         call    hexw
         mov     ax, [axc]
+        call    hexw
+        mov     ax, [ax8]
         call    hexw
         mov     al, 'S'
         call    tty1
@@ -576,6 +583,7 @@ ax5     dw      0
 axb     dw      0
 axd     dw      0
 axc     dw      0
+ax8     dw      0
 cx3     dw      0
 hnd     dw      0
 sig     db      0

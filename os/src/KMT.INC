@@ -35,6 +35,9 @@
 ;      reads them; one that waits with nothing typed lets another run.
 ;    - INT 10h goes through mt_v10 (then the BIOS's): a background task's
 ;      calls are done in its own screen, the front one's shadowed there.
+;    - INT 13h goes through mt_i13, which counts the calls running.
+;    - crit_disk.c24 (MOV SI,crit_dev / INT 24h: 5 bytes) becomes a far
+;      call to mt_c24, which counts the critical error's prompt running.
 ;
 ;  A task (1 to 7; task 0 is the Executive and whatever it runs) is a
 ;  region, a block of its own (owner 8, "T1".."T7") carved from the top of
@@ -104,10 +107,7 @@ ST_PARAS    equ ST_STK / 16
 ENVMAX      equ 1024                    ; most of an environment kept
 
 %macro VCALL 0                          ; INT 10h: the BIOS's, not mt_v10
-        inc     byte [cs:mt_inb]        ; (its own nested calls, through a hook
-        pushf                           ;  loaded after MT, known by this)
-        call    far [cs:mt_old10]
-        dec     byte [cs:mt_inb]
+        call    mt_vcall
 %endmacro
 
 %macro KCALL 1                          ; CALL a near routine of the kernel
@@ -152,6 +152,11 @@ mt_inb      db      0                   ; MT's calls the BIOS is doing (VCALL;
 mt_vlost    db      0                   ; 1: a call went to the screen not
                                         ;  shadowed (mt_vlose): whether the
                                         ;  front task writes it is not known
+mt_isr0     db      0                   ; (mt_vcall: the interrupts in service
+                                        ;  when MT passed its call on)
+mt_old13    dd      0                   ; INT 13h as it was
+mt_in13     db      0                   ; INT 13h calls running (mt_i13)
+mt_crit     db      0                   ; the kernel's INT 24h running (mt_c24)
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
@@ -665,7 +670,9 @@ mt_switch:
 mt_load:
         cli
         cld
-        mov     [cs:mt_cur], bl
+        mov     byte [cs:mt_inb], 0     ; (none under way at a switch, nor an
+        mov     byte [cs:mt_crit], 0    ;  INT 24h prompt: one left by a program
+        mov     [cs:mt_cur], bl         ;  ended inside it, cleared)
         mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
         mov     byte [cs:mt_slice], 1
         cmp     bl, [cs:mt_front]
@@ -860,7 +867,10 @@ mt_screen:
 
 ; MT_END: from a task's stub, its program done.  Its handles (the
 ; inherited ones) closed, its region freed, and another task runs.
-mt_end: mov     al, [cs:mt_cur]
+mt_end: mov     byte [cs:mt_inb], 0     ; (as in mt_load; and INT 13h's count,
+        mov     byte [cs:mt_crit], 0    ;  should one have been left)
+        mov     byte [cs:mt_in13], 0
+        mov     al, [cs:mt_cur]
         or      al, al
         jz      mt_bad                  ; (not the Executive)
         call    mt_fdrain               ; (before mt_load's FRSTOR; then
@@ -914,6 +924,9 @@ mt_end: mov     al, [cs:mt_cur]
 
 ; MT_SPAWN: DS:DX = the program, ES:BX = the block -> AL = the new task
 mt_spawn:
+        mov     byte [cs:mt_inb], 0     ; (as in mt_end)
+        mov     byte [cs:mt_crit], 0
+        mov     byte [cs:mt_in13], 0
         mov     al, 1                   ; a free entry
 .e:     call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_FREE
@@ -1454,9 +1467,10 @@ mt_scrld:
         VCALL
         call    mt_others               ; (alone: nothing to shadow for)
         jc      .x
-        cmp     byte [cs:mt_vlost], 0   ; (an interrupt's call meanwhile, not
-        jne     .x                      ;  shadowed: not in step)
-        mov     byte [cs:mt_shd], 1
+        mov     byte [cs:mt_shd], 1     ; (but an interrupt's call meanwhile,
+        cmp     byte [cs:mt_vlost], 0   ;  not shadowed: not in step; one from
+        je      .x                      ;  here on finds mt_vbusy, and clears
+        mov     byte [cs:mt_shd], 0     ;  it itself)
 .x:     mov     byte [cs:mt_vbusy], 0
         pop     es
         pop     ds
@@ -1494,9 +1508,10 @@ mt_sync:
         mov     cx, 2000h
         rep     movsw
         call    mt_wrest
+        mov     byte [cs:mt_shd], 1     ; (as in mt_scrld)
         cmp     byte [cs:mt_vlost], 0
-        jne     .r
-        mov     byte [cs:mt_shd], 1
+        je      .r
+        mov     byte [cs:mt_shd], 0
 .r:     mov     byte [cs:mt_vbusy], 0
         mov     ax, 1
         call    mt_m33
@@ -1617,17 +1632,22 @@ mt_v10:
         jz      .sh
 .bios:  pop     bp
         jmp     far [cs:mt_old10]
-.rom:   cmp     byte [cs:mt_inb], 0     ; from A000h up: the BIOS's own, inside
-        jne     .bios                   ;  a call MT passed on to it; else a
-        cmp     byte [cs:mt_shd], 0     ;  ROM's or the EMS frame's (Resident
-        je      .bios                   ;  Claude's console), as it is too, not
-        jmp     short .lose             ;  shadowed
+.rom:   cmp     byte [cs:mt_inb], 0     ; from A000h up: inside a call MT
+        jne     .inb                    ;  passed on to the BIOS, the BIOS's
+        cmp     byte [cs:mt_vbusy], 0   ;  own; else a ROM's or the EMS frame's
+        jne     .lose                   ;  (Resident Claude's console), as it
+        cmp     byte [cs:mt_shd], 0     ;  is, not shadowed (nothing lost if
+        je      .bios                   ;  nothing was)
+        jmp     short .lose
 .busy:  cmp     byte [cs:mt_inb], 0     ; inside a call MT passed on to the
-        je      .lose                   ;  BIOS: the BIOS's own, through a hook
-        push    ax                      ;  loaded after MT (but an interrupt's,
-        call    mt_isr                  ;  meanwhile, not shadowed); else an
-        pop     ax                      ;  interrupt's inside MT's own use of
-        jz      .bios                   ;  the pages: not shadowed
+        je      .lose                   ;  BIOS: the BIOS's own (through a hook
+.inb:   push    ax                      ;  loaded after MT, say), unless an
+        call    mt_isr                  ;  interrupt came in meanwhile (one in
+        mov     al, [cs:mt_isr0]        ;  service now that wasn't then): not
+        not     al                      ;  shadowed.  Else an interrupt's
+        and     ah, al                  ;  inside MT's own use of the pages:
+        pop     ax                      ;  not shadowed
+        jz      .bios
 .lose:  call    mt_vlose
         jmp     .bios
 .sh:    pusha
@@ -1638,11 +1658,9 @@ mt_v10:
         sub     ax, EMS_FRAME           ;  and 1, where the pages are mapped:
         cmp     ax, 800h                ;  as it is, to the BIOS, not shadowed)
         jb      .lost
-        push    40h                     ; a floppy's motor on: a transfer may be
-        pop     ds                      ;  under way, its DMA into the frame's
-        test    byte [3Fh], 7           ;  windows, so none mapped for an
-        jnz     .mot                    ;  interrupt's call (.mot)
-.sm:    mov     ax, [bp+VF_AX]
+        cmp     byte [cs:mt_in13], 0    ; inside an INT 13h call (so an
+        jne     .lost                   ;  interrupt's): its DMA may be going
+        mov     ax, [bp+VF_AX]          ;  into the frame's windows: none mapped
         cmp     ah, 0Eh                 ; the teletype, not at a line's end
         jne     .sg                     ;  (most output): the short way
         mov     bl, [cs:mt_front]       ; (BX: its entry, as mt_ent gives it)
@@ -1659,22 +1677,21 @@ mt_v10:
         call    mt_vshad
 .pass:  pop     es                      ; (to the BIOS as MT's own: its nested
         pop     ds                      ;  calls not shadowed again, whatever
-        popa                            ;  hook they come through)
-        pop     bp
-        VCALL
+        popa                            ;  hook they come through; mt_vcall's
+        pop     bp                      ;  way, inline, interrupts off already)
+        push    ax
+        mov     al, 0Bh
+        out     20h, al
+        in      al, 20h
+        mov     [cs:mt_isr0], al
+        mov     al, 0Ah
+        out     20h, al
+        pop     ax
+        inc     byte [cs:mt_inb]
+        pushf
+        call    far [cs:mt_old10]
+        dec     byte [cs:mt_inb]
         iret
-.mot:   call    mt_isr                  ; (an interrupt in service; or code not
-        jnz     .lost                   ;  the running task's or the kernel's: a
-        push    KSEG                    ;  TSR's, called after an EOI)
-        pop     ds
-        mov     es, [ui_seg]
-        cmp     byte [es:m33_busy], 0
-        jne     .lost
-        mov     ax, [bp+4]
-        cmp     ax, KSEG
-        je      .sm
-        call    mt_mine
-        jnc     .sm
 .lost:  call    mt_vlose
         pop     es
         pop     ds
@@ -1688,34 +1705,27 @@ mt_v10:
         push    ds
         push    es
         cld
-        mov     ax, ss                  ; (the same)
-        sub     ax, EMS_FRAME
+        mov     ax, ss                  ; (the same, and the same for a call
+        sub     ax, EMS_FRAME           ;  inside INT 13h: to the real screen)
         cmp     ax, 800h
         jb      .lost
+        cmp     byte [cs:mt_in13], 0
+        jne     .lost
         mov     al, [cs:mt_cur]
         call    mt_ent
         test    byte [cs:bx+TE_VF], SPF_BG
         jnz     .real
-        push    KSEG                    ; inside INT 21h from code not the
-        pop     ds                      ;  kernel's (an INT 24h handler's
-        cmp     byte [indos], 1         ;  prompt: everything waits for its
-        jb      .k                      ;  answer; a TSR's INT 28h hook), or in a
-        ja      .real                   ;  nested one (the INT 24h handler's own
-        cmp     word [bp+4], KSEG       ;  DOS output): on the real screen
+        cmp     byte [cs:mt_crit], 0    ; a critical error's prompt (inside the
+        jne     .real                   ;  kernel's INT 24h: everything waits
+        push    KSEG                    ;  for its answer): on the real screen.
+        pop     ds                      ;  (Else inside INT 21h too the task's,
+.k:     call    mt_isr                  ;  whatever hook it comes through.)  A
+                                        ;  hardware interrupt in service, or an
+        jnz     .real                   ;  INT 33h event handler running: on the
+        mov     es, [ui_seg]            ;  real screen
+        cmp     byte [es:m33_busy], 0
         jne     .real
-.k:     call    mt_isr                  ; a hardware interrupt in service, an
-        jnz     .real                   ;  INT 33h event handler running, or
-        mov     es, [ui_seg]            ;  code not the task's own (a TSR's,
-        cmp     byte [es:m33_busy], 0   ;  called after an EOI): on the real
-        jne     .real                   ;  screen
-        mov     ax, [bp+4]
-        cmp     ax, KSEG
-        je      .own
-        call    mt_mine
-        jc      .real
-        mov     al, [cs:mt_cur]
-        call    mt_ent
-.own:   cmp     byte [bp+VF_AX+1], 0Eh  ; the teletype, not at a line's end:
+        cmp     byte [bp+VF_AX+1], 0Eh  ; the teletype, not at a line's end:
         jne     .bl                     ;  the short way
         mov     ds, [cs:bx+TE_TX]
         mov     si, TX_VID
@@ -1893,6 +1903,46 @@ mt_isr: mov     al, 0Bh
         out     20h, al
         or      ah, ah
         ret
+
+; INT 10h with the caller's registers, the BIOS's (not mt_v10's): MT's own
+; call, marked (mt_inb) so the BIOS's nested calls are known whatever hook
+; they come through, with the interrupts in service then (mt_isr0), so that
+; one that comes in meanwhile is told from them.  What the BIOS gives back;
+; the flags not kept
+mt_vcall:
+        push    ax
+        pushf
+        cli
+        call    mt_isr
+        mov     [cs:mt_isr0], ah
+        popf
+        pop     ax
+        inc     byte [cs:mt_inb]
+        pushf
+        call    far [cs:mt_old10]
+        dec     byte [cs:mt_inb]
+        ret
+
+; crit_disk.c24: the kernel's INT 24h (the critical error's prompt),
+; counted while it runs (mt_crit): mt_v10 puts what it prints on the real
+; screen, since everything waits for its answer
+mt_c24: mov     si, crit_dev
+        inc     byte [cs:mt_crit]
+        int     24h
+        dec     byte [cs:mt_crit]
+        retf
+
+; INT 13h: counted while it runs (mt_in13), so mt_v10 knows an INT 10h call
+; meanwhile is an interrupt's, while a floppy's DMA may be going into the
+; EMS frame: no window is mapped for it.  CF and the rest as the BIOS gives
+; them back
+mt_i13: inc     byte [cs:mt_in13]
+        pushf
+        call    far [cs:mt_old13]
+        pushf
+        dec     byte [cs:mt_in13]
+        popf
+        retf    2
 
 ; the front task's call, before the BIOS does it: one that writes the
 ; screen done in its pages too.  A mode set starts the shadow with a text
@@ -2715,6 +2765,12 @@ mt_boot:
         mov     [es:mt_old10 + 2], ax
         mov     word [10h * 4], mt_v10
         mov     [10h * 4 + 2], es
+        mov     ax, [13h * 4]           ; INT 13h
+        mov     [es:mt_old13], ax
+        mov     ax, [13h * 4 + 2]
+        mov     [es:mt_old13 + 2], ax
+        mov     word [13h * 4], mt_i13
+        mov     [13h * 4 + 2], es
         mov     ax, KSEG                ; INT 21h F0h: JMP FAR mt_f0
         mov     ds, ax
         mov     byte [f_F0], 0EAh
@@ -2726,6 +2782,9 @@ mt_boot:
         mov     byte [done.sw], 0EAh    ; INT 21h's way out: JMP FAR mt_exit
         mov     word [done.sw + 1], mt_exit
         mov     [done.sw + 3], es
+        mov     byte [crit_disk.c24], 9Ah       ; INT 24h: CALL FAR mt_c24
+        mov     word [crit_disk.c24 + 1], mt_c24
+        mov     [crit_disk.c24 + 3], es
         sti
         push    cs
         pop     ds

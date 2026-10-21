@@ -2,9 +2,9 @@
 ; loaded after multitasking does (below A000h): PUSHF / CALL FAR to what
 ; was there, then IRET.
 ;   VHOOK T  INT 08h too, chained first (PUSHF / CALL FAR: the BIOS's EOI
-;            done, interrupts off), then a 'T' in 70h at row 0, column 70
-;            of the page shown through INT 10h 13h: a TSR's clock, its
-;            code no task's
+;            done, interrupts off), then a digit in 70h at row 0, column 70
+;            of the page shown through INT 10h 13h, one more each tick (0-9
+;            round): a TSR's clock, its code no task's
 ; nasm -f bin -o VHOOK.COM VHOOK.ASM
 cpu 286
 org 100h
@@ -16,7 +16,11 @@ h08:    pushf
         call    far [cs:o08]
         pusha
         push    es
-        push    cs
+        inc     byte [cs:tch]
+        cmp     byte [cs:tch], '9'
+        jbe     .d
+        mov     byte [cs:tch], '0'
+.d:     push    cs
         pop     es
         mov     ax, 1300h
         mov     bx, 0070h
@@ -29,7 +33,7 @@ h08:    pushf
         iret
 o10     dd      0
 o08     dd      0
-tch     db      'T'
+tch     db      '0'
 init:   mov     ax, 3510h
         int     21h
         mov     [o10], bx
