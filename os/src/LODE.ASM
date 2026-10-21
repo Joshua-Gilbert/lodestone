@@ -98,9 +98,12 @@ init:   cli
 ; The UI section from the loaded file (still at 1000:section.ui.start)
 ; into a block of its own; then its BSS cleared.  Allocated at its image
 ; size first, so the block's new MCB can't land on the image being copied.
+; Section uiboot, the UI's start-up (next in the file), goes into the top
+; of its directory buffer, which the block grows over at once (all far
+; below the file's copy: nothing it still needs is in the way), and isn't
+; cleared: it runs once, from exec_main, before the directory is read.
 ui_load:
-        mov     bx, ui_image_end + 15
-        shr     bx, 4
+        mov     bx, UI_IMG_PARAS
         mov     dx, 8
         call    mem_alloc
         jc      .fail
@@ -111,16 +114,17 @@ ui_load:
         mov     ds, ax
         mov     si, section.ui.start
         xor     di, di
-        mov     cx, ui_image_end + 1
-        shr     cx, 1
+        mov     cx, (ui_image_end - ui_base) / 2
+        rep     movsw
+        mov     di, UIBOOT_ORG          ; (SI = section.uiboot.start)
+        mov     cx, UIBOOT_WORDS
         rep     movsw
         pop     ds
-        mov     bx, ui_bss_end + 15     ; + BSS and stack
-        shr     bx, 4
+        mov     bx, UI_PARAS            ; + BSS and stack
         call    mem_resize
         jc      .fail
         mov     di, ui_bss_start
-        mov     cx, ui_bss_end
+        mov     cx, UIBOOT_ORG
         sub     cx, di
         xor     al, al
         rep     stosb
@@ -218,6 +222,8 @@ section uibss nobits valign=16 vfollows=ui
 ; section alignment); uibss starts on a paragraph, so this is the same thing
 %define ualignb(n) resb ((n) - (($ - $$) % (n))) % (n)
 ui_bss_start:
+section uiboot                          ; (its attributes at the end: it runs
+uiboot_start:                           ;  at UIBOOT_ORG, known only there)
 section ui
 %include "UICORE.INC"                   ; (the jump table is at offset 0)
 %include "EXEC.INC"
@@ -242,12 +248,25 @@ UI_IMG_PARAS    equ (ui_image_end - ui_base + 15) >> 4
 UI_PARAS        equ UI_IMG_PARAS + ((ui_bss_end - ui_bss_start + 15) >> 4)
 UI_KEEP_PARAS   equ UI_IMG_PARAS + ((ui_keep_end - ui_bss_start + 15) >> 4)
 
+; The UI's start-up code (section uiboot: exec_main's first time, LODE.INI,
+; the mouse's probe, sysinfo) runs from the top of the directory buffer,
+; past what font_boot reads into it (LODE.INI, then the font file), and is
+; gone once the directory is read: it isn't part of the block DOS programs
+; leave the UI
+UIBOOT_ORG      equ (UI_IMG_PARAS << 4) + (FONT_BUF - ui_bss_start) + FONT_BYTES + 2   ; (even)
+UIBOOT_WORDS    equ (uiboot_end - uiboot_start + 1) >> 1
+section uiboot
+uiboot_end:
+        times   -(UIBOOT_ORG + (uiboot_end - uiboot_start) > (UI_IMG_PARAS << 4) + (ui_bss_end - ui_bss_start)) db 0
+        times   -((INI_READ + 1 + FONT_BYTES) & 1) db 0   ; (entries is even: ualignb(2))
+section uiboot progbits align=2 follows=ui vstart=UIBOOT_ORG
+
 ; =====================================================================
 ;  KMT.INC: multitasking.  Its resident part (section mtt, assembled from
 ;  0, run in a segment of its own) is the file's last section: the build
 ;  (mkmt.py) cuts it off into LODEMT.SYS, and mt_boot reads that file.
 ; =====================================================================
-section mtt progbits align=16 follows=ui vstart=0
+section mtt progbits align=16 follows=uiboot vstart=0
 section mttbss nobits valign=16 vfollows=mtt
 %include "KMT.INC"                      ; (section mtt, and boot: mt_boot)
 

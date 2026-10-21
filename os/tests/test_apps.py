@@ -141,6 +141,28 @@ def t_core():
     check('ask: Return = confirmed', has(k, 'confirmed'), screen(k))
     k.key(CODE['E'])
     check('error text: 19 is "Disk is write-protected"', has(k, 'Disk is write-protected'), screen(k))
+    # each INT 24h code through 83 (the message is DOS's code + 18 since U4),
+    # one past them, and the DOS codes only INT 24h's table used to hold
+    line, a, case = k.u16('run_base') + run_syms('tests/UITEST.ASM')['line'], k.Y['api_sberr'], []
+    def sberr(pc):
+        if case and pc.r('ip') == a and pc.r('cs') == k.useg:
+            ax, crit = case.pop(0)
+            pc.w('ax', ax); k.wr('crit_err', struct.pack('<H', crit))
+    k.hooks.append(sberr)
+    want = {(83, 1): 'Disk is write-protected', (83, 2): 'Unknown drive', (83, 3): 'Drive not ready (no disk?)',
+            (83, 4): 'Disk error (unknown command)', (83, 5): 'Disk error (data)', (83, 6): 'Disk error (bad request)',
+            (83, 7): 'Disk error (seek)', (83, 8): 'Not a DOS disk', (83, 9): 'Disk error (sector not found)',
+            (83, 10): 'Printer out of paper', (83, 11): 'Disk error (write)', (83, 12): 'Disk error (read)',
+            (83, 13): 'Disk error', (83, 14): 'error 14', (83, 0): 'Disk error', (20, 0): 'Unknown drive',
+            (22, 0): 'Disk error (unknown command)', (24, 0): 'Disk error (bad request)', (28, 0): 'Printer out of paper',
+            (32, 0): 'error 32'}
+    got = {}
+    for c in want:
+        case.append(c); k.key(CODE['E'])
+        got[c] = k.pc.rd(k.useg, line, 80).split(b'\0')[0].decode()
+    k.hooks.remove(sberr)
+    check("error text: an INT 24h error (83) says the disk's (1-13), or its number; DOS's 20/22/24/28 say theirs",
+          got == want, [(c, got[c]) for c in want if got[c] != want[c]])
     before = k.pc.rd(0xB800, 0, 0x8000)
     k.key(ktest.F1)
     check('help window from the key table', has(k, 'CODE-F     the form') and has(k, 'ESC        leave'), screen(k))
@@ -472,8 +494,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch): the directory buffer is lent while it runs' % kb,
-          kb >= 563.7, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer): the directory buffer is lent while it runs' % kb,
+          kb >= 564.6, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
