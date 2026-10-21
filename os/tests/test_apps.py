@@ -97,6 +97,8 @@ def t_core():
     img = image('core.img', UITEST, os.path.join(GOS, 'src', 'LCMD.COM'))
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     free0, ui0 = free_paras(k)
+    check('the map: uibss on the paragraph after ui_image_end (UI_PARAS, UIBOOT_ORG and the rest count on it; NASM can\'t check it)',
+          k.Y['ui_bss_start'] == (k.Y['ui_image_end'] + 15) & ~15, (hex(k.Y['ui_bss_start']), hex(k.Y['ui_image_end'])))
     shot(k, 'executive')
     k.key(ktest.F1); shot(k, 'executive_help'); k.key(ktest.ENTER)
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
@@ -527,6 +529,9 @@ def t_memory():
     m33seg = k.pc.u16(0, 0x33 * 4 + 2)
     check('... the kernel, INT 24h, the mouse and INT 33h know where it went', k.pc.u16(0x60, k.Y['ui_seg']) == k.useg and seg == k.useg and
           mseg == k.useg and m33seg == k.useg, (hex(seg), hex(mseg), hex(m33seg)))
+    dta = (k.pc.u16(0x60, k.Y['dta'] + 2), k.pc.u16(0x60, k.Y['dta']))
+    check("... and the Executive's DTA is exec_dta in the new block (ui_room sets it there)", dta == (k.useg, k.Y['exec_dta']),
+          (dta, (k.useg, k.Y['exec_dta'])))
     k.key(CODE['U'])
     check('... and .RUN programs load again (System)', has(k, 'Free for programs'), screen(k))
     k.key(ktest.ESC)
@@ -631,6 +636,17 @@ def t_font():
     to_display(k)
     k.key(ktest.ENTER)
     check('a .FNT of the wrong size is passed over (GRiD\'s stays)', core_font(k) == GRIDF and not k.crashed, screen(k))
+    # the start-up's reads at their longest: they share the directory buffer with the start-up
+    # code (section uiboot), which sits just past them.  4,095 bytes of LODE.INI with FONT= in
+    # them, then a font file of FONT_BYTES (taken) or of one byte more (read, and passed over)
+    for n in (1536, 1537):
+        f = os.path.join(OUT, 'EDGE.FNT'); data = bytes((i * 7 + 1) & 0xFF for i in range(n)); open(f, 'wb').write(data)
+        line = b'FONT=EDGE.FNT\r\n'
+        open(ini, 'wb').write(line + b'X' * (4095 - len(line) - 2) + b'\r\n' + b'Y' * 500)
+        k = ktest.KPC(image('font5.img', SYSTEM, f, ini)); k.start()
+        check('a LODE.INI longer than the 4,095 bytes read, FONT= in them, a font file of %d bytes: %s; the Executive comes up'
+              % (n, 'taken' if n == 1536 else 'GRiD\'s stays'), (core_font(k) == data if n == 1536 else core_font(k) == GRIDF)
+              and not k.crashed and 'SYSTEM.RUN' in k.exec_list() and k.u16('convkb') > 0, (k.where(), k.exec_list(), k.u16('convkb')))
 
 # ---------------------------------------------------------------------
 def t_saver():
