@@ -1667,8 +1667,10 @@ api_sberr:
 ; =====================================================================
 ;  clock (RTC through INT 1Ah) and the title bar
 ; =====================================================================
-; the RTC as a DOS time word (no seconds) and date word, for sb_date and
-; api_sbtime (two-digit years: 80-99 are 19xx, 00-79 20xx)
+; the RTC as a DOS time word (no seconds) and a date word, for api_sbtime
+; and sb_date.  (The date's year is the RTC's two digits + 20, which is
+; 1980-based for 20xx; sb_date shows only the two digits, so 19xx shows
+; right too.  For the title bar and the saver only.)
 read_clock:
         pusha
         mov     ah, 2
@@ -1684,12 +1686,10 @@ read_clock:
         mov     [rtc_t], ax
         mov     ah, 4
         int     1Ah
-        mov     al, cl                  ; the year, from 1980
+        mov     al, cl                  ; the year
         call    bcd
-        sub     al, 80
-        jnc     .y
-        add     al, 100
-.y:     xchg    bx, ax
+        add     al, 20
+        xchg    bx, ax
         mov     al, dh                  ; month
         call    bcd
         shl     bx, 4
