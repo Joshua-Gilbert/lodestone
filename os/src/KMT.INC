@@ -1850,16 +1850,19 @@ mt_m33on:
         push    KSEG
         pop     ds
         mov     cx, [ui_seg]
+        pushf                           ; (no interrupt's own call between)
+        cli
         jcxz    .on                     ; (no UI: none to tell apart)
         mov     es, cx
         mov     dx, [es:m33_cnt]
 .on:    mov     ax, 1
         call    mt_m33
         jcxz    .p
-        cmp     dx, [es:m33_cnt]        ; (after AX=2, the UI's count is
-        jne     .p                      ;  below 0, so AX=1 moves it)
-        mov     byte [cs:mt_33ot], 1
-.p:     pop     es
+        cmp     dx, [es:m33_cnt]        ; (after the change's AX=2, the UI's
+        jne     .p                      ;  count is below 0, so AX=1 moves it;
+        mov     byte [cs:mt_33ot], 1    ;  not so in mt_end inside a change)
+.p:     popf
+        pop     es
         pop     ds
         popa
 .x:     ret

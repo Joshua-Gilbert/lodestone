@@ -1884,14 +1884,14 @@ def t_mouse():
     bj = waitthree(k, 'BJ.TXT')
     aj0 = (attr(40, 12), attr(25, 12))
     k.key(HOT, settle=False); k.run_for(0.5)
-    stj, aj1 = tstate(k), (attr(40, 12), attr(25, 12))
+    stj, aj1, vj = tstate(k), (attr(40, 12), attr(25, 12)), vec(k, 0x33)[0]
     k.key('q', settle=False); k.run_for(0.5)
     front(k, 1)
     k.key('q', settle=False); k.run_for(0.5)
     line(k, '')
     check('a program\'s INT 33h hook that jumps on (MTM33 J) in front of MT\'s: B\'s calls still its own (%s); CODE-Tab: '
           'B\'s pointer drawn on its screen (25, 12), F\'s not left there (40, 12)' % (bj,), js_ not in (seg, k.useg)
-          and bj == (0, 200, 96) and aj0 == (0x70, 0x07) and stj[1] == 2 and aj1 == (0x07, 0x70),
+          and bj == (0, 200, 96) and aj0 == (0x70, 0x07) and stj[1] == 2 and aj1 == (0x07, 0x70) and vj == js_,
           (hex(js_), bj, aj0, stj, aj1))
     # another mouse driver (MTM33 D, resident, not chaining): MT's hook stays off it, and at each change of the
     # front its pointer goes (AX=2) and comes back (AX=1): its show count as it was
@@ -1910,7 +1910,7 @@ def t_mouse():
     line(k, '')
     check('another INT 33h driver put in place while F (its pointer shown, the UI\'s) is behind: F back in front, the '
           'UI\'s pointer not drawn on its screen by the change (40, 12), D\'s the one on INT 33h', ad0 == 0x70
-          and std[1] == 1 and ad == 0x07 and A.disk_file(k, 'FD.TXT') is not None and ds_ not in (seg, k.useg),
+          and std[1] == 1 and ad == 0x07 and A.disk_file(k, 'FD.TXT') is not None and ds_ not in (seg, k.useg, js_),
           (hex(ad0), std, hex(ad), hex(ds_)))
     d2s = [k.pc.u16(ds_, do_ - 4)]
     typ(k, 'mtlaunch /f mtline.com ld.txt', 0.8)
