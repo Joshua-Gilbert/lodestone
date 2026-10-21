@@ -155,7 +155,6 @@ ent_max     resw 1              ; directory entries that fit (EXEC.INC)
 alloc_tab   resw NALLOC
 run_hdr     resb 16
 run_hnd     resw 1
-run_dta     resw 2
 run_ret     resw 1
 run_tail    resb 130
 pc_ch       resb 1              ; putc's character
@@ -179,6 +178,17 @@ exec_main:
         call    run_cleanup             ; (a .RUN ended by ^C or an error)
         cmp     byte [mstarted], 0
         jne     .again
+        jmp     ui_boot                 ; (the first time: section uiboot)
+.again: call    m33_end
+        call    mouse_on
+.go:    call    set24
+        call    act_now
+        jmp     ex_start                ; the Executive
+
+; the first time only, from the top of the directory buffer (LODE.ASM's
+; ui_load put it there); nothing returns into it once ex_start runs
+section uiboot
+ui_boot:
         mov     byte [mstarted], 1
         mov     ax, UI_PARAS * 16       ; where .RUN programs load
         mov     [run_base], ax
@@ -201,12 +211,9 @@ exec_main:
         mov     bl, 5                   ; the saver after 5 minutes, unless
         call    saver_set               ;  LODE.INI says otherwise
         call    font_boot               ; LODE.INI's font and saver delay
-        jmp     .go
-.again: call    m33_end
-        call    mouse_on
-.go:    call    set24
-        call    act_now
-        jmp     ex_start                ; the Executive
+        call    sysinfo                 ; (the machine, once: EXEC.INC)
+        jmp     exec_main.go
+section ui
 
 ; UI_FONT: AL = 0 -> SI = the font's name; AL = 1: SI = glyphs, DI = name
 api_font:
@@ -232,6 +239,7 @@ api_font:
         popa
         ret
 
+section uiboot
 ; at start-up: "FONT=NAME.FNT" in LODE.INI (a line of its own, any case)
 ; makes that file, on the drive started from, the font.  No file, no line,
 ; "FONT=", or a file that isn't exactly FONT_BYTES long: GRiD's font stays.
@@ -373,6 +381,8 @@ font_file:
         mov     al, 1
         jmp     api_font
 .x:     ret
+
+section ui
 
 ; UI_SAVER: AL = 0 -> AL = the saver's delay in minutes (0 never), AH = 1
 ; if it doesn't tidy; AL = 1: BL = minutes; AL = 2: BL = 1 not to tidy
@@ -614,6 +624,7 @@ redraw_all:
 ; =====================================================================
 ;  mouse (Microsoft serial protocol, 1200 7N1) - COM2 first, then COM1
 ; =====================================================================
+section uiboot
 mouse_init:
         call    m33_hook                ; INT 33h for DOS programs
         call    m33_soft
@@ -629,6 +640,8 @@ mouse_init:
         ret
 .found: mov     ax, [mbase]
         mov     [mfound], ax
+        jmp     mouse_hook
+section ui
 mouse_hook:
         cli
         push    0
@@ -699,6 +712,7 @@ uart_line:
         out     dx, al
         ret
 
+section uiboot
 ; CF clear if a Microsoft mouse answers 'M' at [mbase]
 mouse_probe:
         mov     dx, [mbase]
@@ -754,6 +768,8 @@ uart_drain:
         in      al, dx
         loop    .d
 .x:     ret
+
+section ui
 
 mouse_off:
         cmp     word [mbase], 0
@@ -1185,6 +1201,7 @@ hide_cursor:
 ; =====================================================================
 ;  drawing primitives (mode 40h: 640x400, 4 interleaved banks of 100 rows)
 ; =====================================================================
+section uiboot
 mkrows: xor     bx, bx
         mov     di, rowtab
 .l:     mov     ax, bx
@@ -1200,6 +1217,8 @@ mkrows: xor     bx, bx
         cmp     bx, 400
         jb      .l
         ret
+
+section ui
 
 ; mode 40h; CF if the panel doesn't have it
 hires:  push    ax
@@ -1625,7 +1644,8 @@ sb_hex4:                                ; AX as 4 hex digits at DI
         ret
 
 ; AX = DOS error -> its message at DI.  83 (failed on a critical error)
-; says what the disk said instead.
+; says what the disk said instead: INT 24h's code k (DI + 1, 1-13) is DOS's
+; error k + 18, which dos_msgs holds too.
 api_sberr:
         push    ax
         push    bx
@@ -1638,7 +1658,9 @@ api_sberr:
         or      ax, ax
         jz      .chk
         mov     bx, ax
-        mov     si, crit_msgs
+        cmp     ax, 13
+        ja      .other                  ; (said as its own number, as before)
+        add     bl, 18
 .chk:   or      bh, bh                  ; (the tables hold codes under 256)
         jnz     .other
 .find:  mov     al, [si]
@@ -3578,19 +3600,11 @@ ui_room:
         mov     es, ax
         mov     word [es:1], 8          ; the system's, called UI
         mov     word [es:8], 'UI'
-        push    cs
-        pop     es
-        mov     ah, 2Fh                 ; the DTA, if it was in the old block
-        int     21h                     ;  (DX = the old block still)
-        mov     ax, es
-        cmp     ax, dx
-        jne     .dta
         push    dx
-        mov     dx, bx
-        mov     ah, 1Ah                 ; (DS = the new block)
+        mov     dx, exec_dta            ; the DTA, in the new block (DS)
+        mov     ah, 1Ah
         int     21h
-        pop     dx
-.dta:   mov     es, dx                  ; the old block goes
+        pop     es                      ; the old block goes
         mov     ah, 49h
         int     21h
         push    cs
@@ -3710,12 +3724,6 @@ run_app:
 .z:     xor     al, al
         rep     stosb
         mov     word [crit_err], 0
-        push    es
-        mov     ah, 2Fh                 ; the DTA, put back afterwards
-        int     21h
-        mov     [run_dta], bx
-        mov     [run_dta+2], es
-        pop     es
         mov     si, [run_ret]           ; the argument (the caller's redraw
                                         ;  routine stays until it sets its own)
         call    bp
@@ -3725,11 +3733,9 @@ run_app:
         push    cs
         pop     es
         mov     [run_ret], ax
-        push    ds
-        lds     dx, [run_dta]
-        mov     ah, 1Ah
+        mov     dx, exec_dta            ; the Executive's DTA again (the only
+        mov     ah, 1Ah                 ;  one it has: EXEC.INC ex_start)
         int     21h
-        pop     ds
         call    run_cleanup
         popa
         mov     ax, [run_ret]
@@ -3968,15 +3974,19 @@ months      db 'JanFebMarAprMayJunJulAugSepOctNovDec'
 s_defrag    db 'A:\DEFRAG.COM', 0
 s_svarg     db 'A: /S M=', 0
 s_svfont    db ' F=', 0
+section uiboot
 s_ini       db '@:\LODE.INI', 0
+section ui
 s_pathv     db 'PATH='
+section uiboot
 font_path   db '@:\'                ; "X:\NAME.FNT": on the drive started from
             times 13 db 0
+section ui
 exec_fcb    db 0, '           ', 0, 0, 0, 0
 run_epb     dw 0, run_tail, 0, exec_fcb, 0, exec_fcb, 0 ; exec_raw's EXEC block:
                                 ;  our environment; the segments are CS's
 s_err       db 'error ',0
-; DOS errors (code, text); the INT 24h ones below
+; DOS errors (code, text); 19-31 are INT 24h's too (its code + 18)
 dos_msgs    db 2, 'File not found',0
             db 3, 'Path not found',0
             db 4, 'Too many files open',0
@@ -3986,31 +3996,21 @@ dos_msgs    db 2, 'File not found',0
             db 15, 'No such drive',0
             db 18, 'No more files',0
             db 19, 'Disk is write-protected',0
+            db 20, 'Unknown drive',0
             db 21, 'Drive not ready (no disk?)',0
+            db 22, 'Disk error (unknown command)',0
             db 23, 'Disk error (data)',0
+            db 24, 'Disk error (bad request)',0
             db 25, 'Disk error (seek)',0
             db 26, 'Not a DOS disk',0
             db 27, 'Disk error (sector not found)',0
+            db 28, 'Printer out of paper',0
             db 29, 'Disk error (write)',0
             db 30, 'Disk error (read)',0
             db 31, 'Disk error',0
             db 39, 'Disk is full',0
             db 80, 'File already exists',0
             db 83, 'Disk error',0
-            db 0FFh
-crit_msgs   db 1, 'Disk is write-protected',0
-            db 2, 'Unknown drive',0
-            db 3, 'Drive not ready (no disk?)',0
-            db 4, 'Disk error (unknown command)',0
-            db 5, 'Disk error (data)',0
-            db 6, 'Disk error (bad request)',0
-            db 7, 'Disk error (seek)',0
-            db 8, 'Not a DOS disk',0
-            db 9, 'Disk error (sector not found)',0
-            db 10, 'Printer out of paper',0
-            db 11, 'Disk error (write)',0
-            db 12, 'Disk error (read)',0
-            db 13, 'Disk error',0
             db 0FFh
 
 lasttick    dw 0

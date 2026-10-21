@@ -17,8 +17,8 @@ TAB, BKSP, F1, CODE_P = 0x0F09, 0x0E08, 0x3B00, 0x1900   # CODE-P: the command p
 
 class Syms:
     """LODE.MAP: kernel symbols (sections .text/.bss, segment 0060h) and
-    UI symbols (sections ui/uibss, offsets in the UI segment)."""
-    UI = ('ui', 'uibss')
+    UI symbols (sections ui/uibss/uiboot, offsets in the UI segment)."""
+    UI = ('ui', 'uibss', 'uiboot')
     def __init__(s, path=os.path.join(HERE, 'src', 'LODE.MAP')):
         s.by_name, s.sec = {}, {}
         by_addr = {False: {}, True: {}}
