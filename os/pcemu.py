@@ -726,19 +726,65 @@ class PC:
         c, r = s.rd(0, 0x450, 2); return r, c
     def set_cursor(s, r, c): s.wr(0, 0x450, [c, r])
 
+    # the text modes as the 1520's BIOS does them (int10.asm, at_compat.asm's tables), which KMT's INT 10h
+    # emulates for a background task: per-page cursors, the teletype on the page shown, its scroll's
+    # attribute the cell's under the cursor it had, AH=13h; a mode set clears 16 KB
+    V_COLS = (40, 40, 80, 80); V_LEN = (0x800, 0x800, 0x1000, 0x1000); V_SEL = (0x2C, 0x28, 0x2D, 0x29)
+    def vlen(s): return s.u16(0, 0x44C)
+    def vcur(s, page):
+        c, r = s.rd(0, 0x450 + 2 * (page & 7), 2); return r, c
+    def vset(s, page, r, c): s.wr(0, 0x450 + 2 * (page & 7), [c & 0xFF, r & 0xFF])
+    def vaddr(s, page, r, c):
+        return ((page & 7) * s.vlen() + (r * s.rd(0, 0x44A, 1)[0] + c) * 2) & 0xFFFF
+    def vscroll(s, n, attr, r0, c0, r1, c1, down=False):
+        """VidWinScroll on the page shown: rows r0-r1, columns c0-c1 (r1, c1 kept on the screen)."""
+        cols = s.rd(0, 0x44A, 1)[0]
+        r1 = min(r1, 24); c1 = min(c1, cols - 1)
+        if r1 < r0 or c1 < c0: return
+        h, w, page = r1 - r0 + 1, c1 - c0 + 1, s.rd(0, 0x462, 1)[0]
+        if n > h - 1: n = 0
+        order = range(r1, r0 - 1, -1) if down else range(r0, r1 + 1)
+        for r in order:
+            src = r - n if down else r + n
+            d = s.vaddr(page, r, c0)
+            if d + w * 2 > 0x8000: continue
+            if n and r0 <= src <= r1: s.wr(0xB800, d, s.rd(0xB800, s.vaddr(page, src, c0), w * 2))
+            else: s.wr(0xB800, d, bytes([0x20, attr]) * w)
+    def vtty(s, ch, page, r, c, attr=None):
+        """VidTeletypeChar: ch at (r, c) on page `page` (its stored cursor), written as 0Ah (attr None) or 09h."""
+        r0, c0 = r, c
+        cols = s.rd(0, 0x44A, 1)[0]
+        if ch == 7: return r, c
+        if ch == 13: c = 0
+        elif ch == 8:
+            c = c - 1 if c else 0
+        elif ch == 10: r += 1
+        else:
+            a = s.vaddr(page, r, c)
+            if a < 0x7FFF: s.wr(0xB800, a, [ch] + ([attr] if attr is not None else []))
+            v = ((r << 8) | c) + 1; r, c = (v >> 8) & 0xFF, v & 0xFF
+            if c == cols: r += 1; c = 0
+        if r == 25:
+            r = 24
+            a = s.vaddr(page, r0, c0)
+            s.vscroll(1, s.rd(0xB800, a + 1, 1)[0] if a < 0x7FFF else 7, 0, 0, 24, cols - 1)
+        return r, c
+
     def int10(s):
         ah, al = s.r('ah'), s.r('al')
         mode = s.mode()
         text = mode in (0, 1, 2, 3, 7)
         cols = 40 if mode in (0, 1) else 80
         if ah == 0x00:
-            m = al & 0x7F
-            s.wr(0, 0x449, [m]); s.wr(0, 0x450, bytes(16))
+            m = al if al <= 6 or al in (0x40, 0x48, 0x74) else 2      # (bit 7 and the rest: mode 2, cleared)
+            s.wr(0, 0x449, [m]); s.wr(0, 0x450, bytes(16)); s.wr(0, 0x44E, b'\0\0'); s.wr(0, 0x462, [0])
             c = 40 if m in (0, 1, 4, 5) else 80
             s.wr(0, 0x44A, struct.pack('<H', c))
-            if not al & 0x80:
-                if m in (0, 1, 2, 3, 7): s.wr(0xB800, 0, b'\x20\x07' * 2000)
-                else: s.wr(0xB800, 0, bytes(0x8000))
+            s.wr(0, 0x44C, struct.pack('<H', s.V_LEN[m] if m < 4 else 0x4000))
+            if m < 4:
+                s.wr(0, 0x460, struct.pack('<H', 0x0607)); s.wr(0, 0x465, [s.V_SEL[m]])
+                s.wr(0xB800, 0, b'\x20\x07' * 0x2000)
+            else: s.wr(0xB800, 0, bytes(0x8000))
             # the colour select, as the 1520's BIOS sets it (int10.asm): 30h,
             # 3Fh in mode 6 (white on black); kept in 40:66h, and not written
             # to the port above the CGA modes
@@ -747,37 +793,26 @@ class PC:
             if m <= 6: s.set_ccr(v)
             s.log.append('[mode %02Xh]' % m)
         elif ah == 0x01: s.wr(0, 0x460, [s.r('cl'), s.r('ch')])
-        elif ah == 0x02: s.set_cursor(s.r('dh'), s.r('dl'))
+        elif ah == 0x02: s.vset(s.r('bh') if text else 0, s.r('dh'), s.r('dl'))
         elif ah == 0x03:
-            r, c = s.cursor(); s.w('dx', (r << 8) | c); s.w('cx', 0x0607)
+            r, c = s.vcur(s.r('bh') if text else 0); s.w('dx', (r << 8) | c); s.w('cx', s.u16(0, 0x460))
         elif ah == 0x05 and text:       # the page shown: the BIOS keeps it and its
             s.wr(0, 0x462, [al & 7])    #  start (40:62h, 40:4Eh); the text model
             s.wr(0, 0x44E, struct.pack('<H', (al & 7) * (0x800 if cols == 40 else 0x1000)))   # stays page 0's
         elif ah in (0x06, 0x07) and text:
-            n = al; attr = s.r('bh')
-            r0, c0, r1, c1 = s.r('ch'), s.r('cl'), s.r('dh'), s.r('dl')
-            r1 = min(r1, 24); c1 = min(c1, cols - 1)
-            rows = [bytearray(s.rd(0xB800, (r * cols + c0) * 2, (c1 - c0 + 1) * 2)) for r in range(r0, r1 + 1)]
-            blank = bytearray([0x20, attr] * (c1 - c0 + 1))
-            h = len(rows)
-            if n == 0 or n >= h: rows = [blank[:] for _ in rows]
-            elif ah == 6: rows = rows[n:] + [blank[:] for _ in range(n)]
-            else: rows = [blank[:] for _ in range(n)] + rows[:h - n]
-            for i, r in enumerate(range(r0, r1 + 1)):
-                s.wr(0xB800, (r * cols + c0) * 2, rows[i])
+            s.vscroll(al, s.r('bh'), s.r('ch'), s.r('cl'), s.r('dh'), s.r('dl'), ah == 7)
         elif ah == 0x08 and text:
-            r, c = s.cursor(); v = s.rd(0xB800, (r * cols + c) * 2, 2)
+            a = s.vaddr(s.r('bh'), *s.vcur(s.r('bh'))); v = s.rd(0xB800, a, 2)
             s.w('ax', v[0] | (v[1] << 8))
         elif ah in (0x09, 0x0A):
             if text:
-                r, c = s.cursor()
+                a = s.vaddr(s.r('bh'), *s.vcur(s.r('bh')))
                 for i in range(s.r('cx')):
-                    p = r * cols + c + i
-                    if p < 2000:
-                        s.wr(0xB800, p * 2, [al] + ([s.r('bl')] if ah == 9 else []))
+                    if a >= 0x7FFF: break
+                    s.wr(0xB800, a, [al] + ([s.r('bl')] if ah == 9 else [])); a += 2
         elif ah == 0x0E: s.tty_put(al)
         elif ah == 0x0F:
-            s.w('ax', (cols << 8) | mode); s.w('bx', s.r('bx') & 0xFF)
+            s.w('ax', (cols << 8) | mode); s.w('bx', (s.r('bx') & 0xFF) | (s.rd(0, 0x462, 1)[0] << 8))
         elif ah == 0x0C and mode in (4, 5, 6):
             x, y = s.r('cx'), s.r('dx')
             base = (y & 1) * 0x2000 + (y >> 1) * 80
@@ -794,23 +829,24 @@ class PC:
             bl = s.r('bl')              #  BH=1 the 320x200 palette
             v = (v & 0xE0) | (bl & 0x1F) if s.r('bh') == 0 else (v & 0xDF) | (0x20 if bl & 1 else 0)
             s.wr(0, 0x466, [v]); s.set_ccr(v)
+        elif ah == 0x13 and text and not al & 0xFC:     # (VidWriteString)
+            page, attr, n = s.r('bh') & 7, s.r('bl'), s.r('cx')
+            r, c = s.r('dh'), s.r('dl')
+            p = (s.r('es') << 4) + s.r('bp')
+            for i in range(n):
+                ch = s.mu.mem_read(p, 1)[0]; p += 1
+                if al & 2 and ch not in (7, 8, 10, 13): attr = s.mu.mem_read(p, 1)[0]; p += 1
+                r, c = s.vtty(ch, page, r, c, attr)
+            if al & 1: s.vset(page, r, c)
         elif ah in (0x10, 0x11, 0x12, 0x1A, 0x1B, 0x1C, 0x13): pass
 
     def tty_put(s, ch):
         s.tty.append(chr(ch))
         if s.mode() not in (0, 1, 2, 3, 7): return
-        cols = 40 if s.mode() in (0, 1) else 80
-        r, c = s.cursor()
-        if ch == 13: c = 0
-        elif ch == 10: r += 1
-        elif ch == 8: c = max(0, c - 1)
-        elif ch == 7: pass
-        else:
-            s.wr(0xB800, (r * cols + c) * 2, [ch]); c += 1
-            if c >= cols: c = 0; r += 1
-        if r >= 25:
-            v = s.rd(0xB800, cols * 2, cols * 2 * 24); s.wr(0xB800, 0, v + b'\x20\x07' * cols); r = 24
-        s.set_cursor(r, c)
+        page = s.rd(0, 0x462, 1)[0]
+        r, c = s.vcur(page)
+        r, c = s.vtty(ch, page, r, c)
+        s.vset(page, r, c)
 
     def int11(s): s.w('ax', s.u16(0, 0x410))
     def int12(s): s.w('ax', s.u16(0, 0x413))

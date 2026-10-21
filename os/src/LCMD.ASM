@@ -2206,7 +2206,13 @@ tick:   push    ds
 run_saver:
         pusha
         push    es
-        mov     ah, 0Fh
+        mov     ax, 0F000h + MT_LIST    ; (with multitasking, only in front:
+        xor     cx, cx                  ;  behind, the screen isn't ours)
+        int     21h
+        jc      .on
+        cmp     al, ah
+        jne     .x
+.on:    mov     ah, 0Fh
         int     10h
         cmp     al, 3
         ja      .x
