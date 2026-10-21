@@ -129,7 +129,10 @@ UI_RUN      equ 40 * 3  ; run a DOS program (.COM or .EXE; a .RUN gives error 11
                         ;  -> AX = its exit code; CF if it couldn't run (AX = error).
                         ;  Text mode while it runs, then the redraw routine.
 UI_FINDAPP  equ 41 * 3  ; SI = file name ("WRITE.RUN") -> SI = path where it is
-                        ;  (current subject, then the root); CF if nowhere
+                        ;  (current subject, then each directory in PATH); CF
+                        ;  if nowhere (SI = the name).  The path is in a buffer
+                        ;  the Executive's Copy and Move use: copy it before
+                        ;  the program ends
 UI_CRITERR  equ 42 * 3  ; -> AX = the last INT 24h error (DI + 1; 0 = none), cleared
 UI_BEEP     equ 43 * 3  ; a short beep
 UI_KEYSHIFT equ 44 * 3  ; -> AL = BIOS shift state (bit 0/1 Shift, 2 Ctrl, 3 CODE)
