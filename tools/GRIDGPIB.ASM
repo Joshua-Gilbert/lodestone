@@ -976,12 +976,17 @@ findres:
 unload: mov     [intno], al
         mov     ah, [intno]
         mov     byte [ucall+1], ah      ; self-modify: INT nn
+        mov     ah, 0Dh
+        call    ucall                   ; CX=PSP, DX:AX=old vector
+        jc      .bi                     ; (Lodestone's, in its kernel: no)
+        push    cx
+        push    dx
+        push    ax
         mov     bl, 0FFh                ; everyone back to local
         mov     ah, 09h
         call    ucall
-        mov     ah, 0Dh
-        call    ucall                   ; CX=PSP, DX:AX=old vector
-        push    cx
+        pop     ax
+        pop     dx
         push    ds
         mov     ds, dx
         mov     dx, ax
@@ -997,8 +1002,10 @@ unload: mov     [intno], al
         call    tputs
         mov     ax, 4C00h
         int     21h
+.bi:    mov     dx, s_unlb
+        jmp     short .bm
 .bad:   mov     dx, s_unlf
-        call    tputs
+.bm:    call    tputs
         mov     ax, 4C05h
         int     21h
 ucall:  int     60h
@@ -1100,3 +1107,4 @@ s_ok2   db 'h, bus initialised (IFC, REN), $'
 s_ok3   db ' bytes resident.',13,10,'$'
 s_unl   db 'Unloaded: bus released, REN off, memory freed.',13,10,'$'
 s_unlf  db '** Vector restored but memory could not be freed.',13,10,'$'
+s_unlb  db '** This driver is built into the system: nothing to unload.',13,10,'$'
