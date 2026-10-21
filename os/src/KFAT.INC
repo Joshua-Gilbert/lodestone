@@ -399,45 +399,42 @@ root_pre:
         pop     ax
         ret
 
-; find nm11 (wildcards allowed) in directory AX: files, directories,
-; hidden and system entries alike (CL isn't read); volume labels and long
-; names never match.  -> BX = index, SI = entry, de = copy.  CF: AX = 2
-dir_find:
+; find nm11 (wildcards allowed) in directory AX from entry BX, as a find
+; with attributes CL does: A_VOL alone, volume labels only; else no labels,
+; and hidden, system and directory entries only if CL has those bits.
+; Long names never match.  -> BX = index, SI = entry (AX kept).  CF: AX =
+; 18 at the end, else a disk error.  CH changes.  (The attributes are
+; looked at only once a name matches: most entries don't.)
+dir_scan:
         push    ax
         call    dir_lim
-        xor     bx, bx
+        mov     ch, cl
+        not     ch
 .l:     pop     ax
         push    ax
         call    dir_entry
         jc      .end
-.e:     mov     dl, [si]
-        or      dl, dl
+.e:     mov     al, [si]
+        or      al, al
         jz      .no
-        cmp     dl, 0E5h
+        cmp     al, 0E5h
         je      .n
-        mov     dl, [si+11]
-        cmp     dl, 0Fh
+        cmp     byte [si+11], 0Fh
         je      .n
-        test    dl, A_VOL
-        jnz     .n
         call    name_match
         jne     .n
-        mov     [d_index], bx           ; (found further into the sector)
-        mov     dx, bx
-        and     dx, 15
-        shl     dx, 5
-        and     word [d_off], 0FE00h
-        or      [d_off], dx
-        push    si
-        push    di
-        push    cx
-        mov     di, de
-        mov     cx, 16
-        rep     movsw
-        pop     cx
-        pop     di
-        pop     si
-        pop     ax
+        mov     al, [si+11]
+        test    al, A_VOL
+        jz      .nv
+        cmp     cl, A_VOL               ; a label: for a label search only
+        je      .m
+        jmp     short .n
+.nv:    cmp     cl, A_VOL               ; (a label search: labels only)
+        je      .n
+        and     al, A_HID | A_SYS | A_DIR
+        test    al, ch
+        jnz     .n
+.m:     pop     ax
         clc
         ret
 .n:     inc     bx                      ; the next entry: in this sector,
@@ -447,13 +444,41 @@ dir_find:
         jae     .l
         add     si, 32
         jmp     .e
-.end:   cmp     ax, 18
-        je      .no
-        add     sp, 2                   ; a disk error: AX says which
+.no:    mov     ax, 18
+.end:   add     sp, 2                   ; (18, or a disk error: AX says which)
         stc
         ret
-.no:    pop     ax
-        mov     ax, 2
+
+; find nm11 (wildcards allowed) in directory AX: files, directories,
+; hidden and system entries alike; volume labels and long names never
+; match.  -> BX = index, SI = entry, de = copy (AX kept).  CF: AX = 2, or
+; a disk error
+dir_find:
+        push    cx
+        mov     cl, A_HID | A_SYS | A_DIR
+        xor     bx, bx
+        call    dir_scan
+        jc      .end
+        mov     [d_index], bx           ; (found further into the sector)
+        mov     dx, bx
+        and     dx, 15
+        shl     dx, 5
+        and     word [d_off], 0FE00h
+        or      [d_off], dx
+        push    si
+        push    di
+        mov     di, de
+        mov     cx, 16
+        rep     movsw
+        pop     di
+        pop     si
+        pop     cx
+        clc
+        ret
+.end:   cmp     ax, 18
+        jne     .x
+        mov     al, 2                   ; (AH 0)
+.x:     pop     cx
         stc
         ret
 
