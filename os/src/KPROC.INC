@@ -39,6 +39,7 @@ ex_rel      equ path_buf        ; relocation entries, 64 at a time (256 of
         times -(nm11 - path_buf < 256) db 0             ;  nothing between, 256 B;
         times -(ren_de_end - ren_de < 28) db 0          ;  ren_de holds the header)
 
+section ovl
 proc_init:
         mov     bx, 32                  ; master environment, 512 bytes
         mov     dx, 8
@@ -97,6 +98,7 @@ proc_init:
         ret
 env0    db 'COMSPEC=@:\LCMD.COM', 0, 'PATH=@:\', 0, 'PROMPT=$P$G', 0, 0
 env0_end:
+section .text
 
 ; build a PSP at ES: AX = environment, BX = parent, DX = top of memory.
 ; Handles are inherited from the parent (unless opened with bit 7).
@@ -715,6 +717,7 @@ root_restart:
 ; ---------------------------------------------------------------------
 ;  the built-in GPIB driver: install on INT 60h if there is a uPD7210
 ; ---------------------------------------------------------------------
+section ovl
 gpib_init:
         call    gp_chip_init
         mov     dx, gp_R_ADR0
@@ -733,3 +736,4 @@ gpib_init:
         pop     es
         mov     byte [gp_ok], 1
 .no:    ret
+section .text

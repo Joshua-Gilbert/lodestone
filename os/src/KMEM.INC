@@ -11,6 +11,7 @@ mem_top     resw 1
 section .text
 
 kern_top    equ mem_init + 1            ; this immediate: KEMS.INC moves it up
+section ovl                             ;  (at start-up only: section ovl)
 mem_init:
         mov     ax, bss_end + 15        ; (the arena starts above the kernel)
         shr     ax, 4
@@ -60,6 +61,7 @@ mem_init:
         mov     [es:3], ax
         pop     es
         ret
+section .text
 
 ; merge the free blocks that follow the free block at ES (an MCB)
 mem_merge:

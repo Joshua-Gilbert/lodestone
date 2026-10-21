@@ -54,8 +54,9 @@ TS_WAITK = 2
 MTK = os.path.join(HERE, 'MTKEY.COM')
 
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
-# and UI batches): the kernel's image and BSS, the UI block kept while a DOS program runs
-OFF_MAP = {'image_end': 0x42B0, 'bss_end': 0x77E0, 'ui_keep_end': 0x67A8}
+# and UI batches, then its medium-risk kernel batch): the kernel's image and BSS, the UI block kept while
+# a DOS program runs
+OFF_MAP = {'image_end': 0x3E50, 'bss_end': 0x7380, 'ui_keep_end': 0x67A8}
 
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
@@ -1715,7 +1716,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', k1.run_file('MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 579.7 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '579.7', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 580.8 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.8', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = k.run_file('TESTDOS.COM', 120)
