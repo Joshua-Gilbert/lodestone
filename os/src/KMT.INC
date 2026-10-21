@@ -104,8 +104,10 @@ ST_PARAS    equ ST_STK / 16
 ENVMAX      equ 1024                    ; most of an environment kept
 
 %macro VCALL 0                          ; INT 10h: the BIOS's, not mt_v10
-        pushf
+        inc     byte [cs:mt_inb]        ; (its own nested calls, through a hook
+        pushf                           ;  loaded after MT, known by this)
         call    far [cs:mt_old10]
+        dec     byte [cs:mt_inb]
 %endmacro
 
 %macro KCALL 1                          ; CALL a near routine of the kernel
@@ -145,6 +147,11 @@ mt_shd      db      0                   ; 1: the front task's pages shadow
 mt_vbusy    db      0                   ; 1: MT has a task's screen pages
                                         ;  mapped itself (interrupts on): INT
                                         ;  10h meanwhile straight to the BIOS
+mt_inb      db      0                   ; MT's calls the BIOS is doing (VCALL;
+                                        ;  after mt_vbusy, for mt_v10's test)
+mt_vlost    db      0                   ; 1: a call went to the screen not
+                                        ;  shadowed (mt_vlose): whether the
+                                        ;  front task writes it is not known
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
@@ -334,6 +341,8 @@ mt_safe:
         jz      .no
         cmp     byte [indos], 0
         jne     .no
+        cmp     byte [cs:mt_inb], 0     ; (a hook's code inside a call MT
+        jne     .no                     ;  passed on to the BIOS)
         push    es                      ; (m33_busy is the UI's)
         mov     es, [ui_seg]
         cmp     byte [es:m33_busy], 0
@@ -544,6 +553,8 @@ mt_kwait:
 ; CF if the running task can't be switched away from here: a nested INT
 ; 21h (an INT 24h answer), or more kernel stack than its TX holds
 mt_can: cmp     byte [indos], 1
+        jne     .no
+        cmp     byte [cs:mt_inb], 0
         jne     .no
         push    ax
         mov     ax, kstack_top          ; (and room for mt_switch's own
@@ -1317,6 +1328,7 @@ mt_scrsv:
         push    es
         cld
         mov     byte [cs:mt_vbusy], 1
+        mov     byte [cs:mt_vlost], 0
         call    mt_ent
         and     byte [cs:bx+TE_VF], ~VF_DIRECT
         call    mt_smap
@@ -1337,6 +1349,8 @@ mt_scrsv:
         mov     cx, 2000h
         repe    cmpsw
         je      .cl
+        cmp     byte [cs:mt_vlost], 0   ; (an interrupt's call meanwhile, not
+        jne     .cl                     ;  shadowed: not known)
 .dir:   or      byte [cs:bx+TE_VF], VF_DIRECT
 .cl:    mov     byte [cs:mt_shd], 0
         mov     es, [cs:bx+TE_TX]       ; its BIOS data
@@ -1376,6 +1390,7 @@ mt_scrld:
         push    es
         cld
         mov     byte [cs:mt_vbusy], 1
+        mov     byte [cs:mt_vlost], 0
         mov     [cs:mt_front], al
         mov     byte [cs:mt_shd], 0
         call    mt_ent
@@ -1439,6 +1454,8 @@ mt_scrld:
         VCALL
         call    mt_others               ; (alone: nothing to shadow for)
         jc      .x
+        cmp     byte [cs:mt_vlost], 0   ; (an interrupt's call meanwhile, not
+        jne     .x                      ;  shadowed: not in step)
         mov     byte [cs:mt_shd], 1
 .x:     mov     byte [cs:mt_vbusy], 0
         pop     es
@@ -1456,7 +1473,10 @@ mt_sync:
         push    ds
         push    es
         cld
+        mov     ax, 2                   ; (a DOS program's INT 33h pointer off
+        call    mt_m33                  ;  meanwhile, not copied)
         mov     byte [cs:mt_vbusy], 1
+        mov     byte [cs:mt_vlost], 0
         push    40h
         pop     ds
         cmp     byte [49h], 4
@@ -1474,8 +1494,12 @@ mt_sync:
         mov     cx, 2000h
         rep     movsw
         call    mt_wrest
+        cmp     byte [cs:mt_vlost], 0
+        jne     .r
         mov     byte [cs:mt_shd], 1
 .r:     mov     byte [cs:mt_vbusy], 0
+        mov     ax, 1
+        call    mt_m33
         pop     es
         pop     ds
         popa
@@ -1579,9 +1603,9 @@ mt_v10:
         push    bp                      ;  on; the IRET puts the caller's back)
         mov     bp, sp
         cmp     word [bp+4], 0A000h
-        jae     .bios
-        cmp     byte [cs:mt_vbusy], 0   ; (an interrupt's call, inside MT's own
-        jne     .bios                   ;  use of the pages)
+        jae     .rom
+        cmp     word [cs:mt_vbusy], 0   ; (mt_vbusy, mt_inb: one test)
+        jne     .busy
 .top:   push    ax
         mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
@@ -1593,15 +1617,32 @@ mt_v10:
         jz      .sh
 .bios:  pop     bp
         jmp     far [cs:mt_old10]
+.rom:   cmp     byte [cs:mt_inb], 0     ; from A000h up: the BIOS's own, inside
+        jne     .bios                   ;  a call MT passed on to it; else a
+        cmp     byte [cs:mt_shd], 0     ;  ROM's or the EMS frame's (Resident
+        je      .bios                   ;  Claude's console), as it is too, not
+        jmp     short .lose             ;  shadowed
+.busy:  cmp     byte [cs:mt_inb], 0     ; inside a call MT passed on to the
+        je      .lose                   ;  BIOS: the BIOS's own, through a hook
+        push    ax                      ;  loaded after MT (but an interrupt's,
+        call    mt_isr                  ;  meanwhile, not shadowed); else an
+        pop     ax                      ;  interrupt's inside MT's own use of
+        jz      .bios                   ;  the pages: not shadowed
+.lose:  call    mt_vlose
+        jmp     .bios
 .sh:    pusha
         push    ds
         push    es
         cld
         mov     ax, ss                  ; (a stack in the EMS frame's windows 0
         sub     ax, EMS_FRAME           ;  and 1, where the pages are mapped:
-        cmp     ax, 800h                ;  as it is, to the BIOS)
-        jb      .pass
-        mov     ax, [bp+VF_AX]
+        cmp     ax, 800h                ;  as it is, to the BIOS, not shadowed)
+        jb      .lost
+        push    40h                     ; a floppy's motor on: a transfer may be
+        pop     ds                      ;  under way, its DMA into the frame's
+        test    byte [3Fh], 7           ;  windows, so none mapped for an
+        jnz     .mot                    ;  interrupt's call (.mot)
+.sm:    mov     ax, [bp+VF_AX]
         cmp     ah, 0Eh                 ; the teletype, not at a line's end
         jne     .sg                     ;  (most output): the short way
         mov     bl, [cs:mt_front]       ; (BX: its entry, as mt_ent gives it)
@@ -1616,7 +1657,26 @@ mt_v10:
         jnc     .pass
 .sg:    mov     ax, [bp+VF_AX]
         call    mt_vshad
-.pass:  pop     es
+.pass:  pop     es                      ; (to the BIOS as MT's own: its nested
+        pop     ds                      ;  calls not shadowed again, whatever
+        popa                            ;  hook they come through)
+        pop     bp
+        VCALL
+        iret
+.mot:   call    mt_isr                  ; (an interrupt in service; or code not
+        jnz     .lost                   ;  the running task's or the kernel's: a
+        push    KSEG                    ;  TSR's, called after an EOI)
+        pop     ds
+        mov     es, [ui_seg]
+        cmp     byte [es:m33_busy], 0
+        jne     .lost
+        mov     ax, [bp+4]
+        cmp     ax, KSEG
+        je      .sm
+        call    mt_mine
+        jnc     .sm
+.lost:  call    mt_vlose
+        pop     es
         pop     ds
         popa
         jmp     .bios
@@ -1631,7 +1691,7 @@ mt_v10:
         mov     ax, ss                  ; (the same)
         sub     ax, EMS_FRAME
         cmp     ax, 800h
-        jb      .pass
+        jb      .lost
         mov     al, [cs:mt_cur]
         call    mt_ent
         test    byte [cs:bx+TE_VF], SPF_BG
@@ -1643,15 +1703,19 @@ mt_v10:
         ja      .real                   ;  nested one (the INT 24h handler's own
         cmp     word [bp+4], KSEG       ;  DOS output): on the real screen
         jne     .real
-.k:     mov     al, 0Bh                 ; a hardware interrupt in service?
-        out     20h, al                 ;  (as mt_safe reads it)
-        in      al, 20h
-        mov     ah, al
-        mov     al, 0Ah
-        out     20h, al
-        or      ah, ah
-        jnz     .real
-        cmp     byte [bp+VF_AX+1], 0Eh  ; the teletype, not at a line's end:
+.k:     call    mt_isr                  ; a hardware interrupt in service, an
+        jnz     .real                   ;  INT 33h event handler running, or
+        mov     es, [ui_seg]            ;  code not the task's own (a TSR's,
+        cmp     byte [es:m33_busy], 0   ;  called after an EOI): on the real
+        jne     .real                   ;  screen
+        mov     ax, [bp+4]
+        cmp     ax, KSEG
+        je      .own
+        call    mt_mine
+        jc      .real
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+.own:   cmp     byte [bp+VF_AX+1], 0Eh  ; the teletype, not at a line's end:
         jne     .bl                     ;  the short way
         mov     ds, [cs:bx+TE_TX]
         mov     si, TX_VID
@@ -1801,12 +1865,34 @@ mt_vfast:
 mt_wfront:
         call    mt_fdrain               ; (first: nothing saved or chosen yet)
         mov     al, [cs:mt_cur]
-        call    mt_ent
+        cmp     al, [cs:mt_front]       ; (brought to the front meanwhile, in
+        je      .x                      ;  its handler: the call again, now
+        call    mt_ent                  ;  the front one's)
         mov     byte [cs:bx+TE_STATE], TS_WAITF
         call    mt_pick
         jnc     .go
         mov     bl, [cs:mt_front]
 .go:    jmp     mt_switch
+.x:     ret
+
+; a call not shadowed went to the screen: whether the front task writes it
+; itself can't be known at its switch away (not frozen for it), and its
+; shadow stops until it is in front again.  All kept
+mt_vlose:
+        mov     byte [cs:mt_shd], 0
+        mov     byte [cs:mt_vlost], 1
+        ret
+
+; the PIC's in-service register -> AH; ZF if no interrupt is in service.
+; AL changed
+mt_isr: mov     al, 0Bh
+        out     20h, al
+        in      al, 20h
+        mov     ah, al
+        mov     al, 0Ah
+        out     20h, al
+        or      ah, ah
+        ret
 
 ; the front task's call, before the BIOS does it: one that writes the
 ; screen done in its pages too.  A mode set starts the shadow with a text
@@ -1953,12 +2039,12 @@ mt_emu:
         mov     [VS_CUR + bx], ax
         clc
         ret
-.m3:    call    .pg
+.m3:    mov     ax, [VS_SHAPE]          ; (the shape, whatever the page)
+        mov     [bp+VF_CX], ax
+        call    .pg
         jc      .ok
         mov     ax, [VS_CUR + bx]
         mov     [bp+VF_DX], ax
-        mov     ax, [VS_SHAPE]
-        mov     [bp+VF_CX], ax
         clc
         ret
 ; 04h: the light pen, not triggered
@@ -1990,10 +2076,11 @@ mt_emu:
         mov     dx, [VS_CUR + bx]
         shr     bx, 1
         call    mt_vaddr
+        mov     ax, 0FFFFh              ; (past the 32 KB: nothing there)
         cmp     di, 8000h - 1
-        jae     .ok
+        jae     .m8x
         mov     ax, [es:di]
-        mov     [bp+VF_AX], ax
+.m8x:   mov     [bp+VF_AX], ax
         clc
         ret
 ; 09h (with BL's attribute), 0Ah: CX of AL from page BH's cursor on
@@ -2011,9 +2098,9 @@ mt_emu:
         pop     dx
         mov     al, [bp+VF_AX]
         mov     ah, [bp+VF_BX]
-.wl:    cmp     di, 8000h - 1
-        jae     .wz
-        stosb
+.wl:    cmp     di, 8000h - 1           ; (past the 32 KB: not written, but
+        jae     .ws                     ;  on round 16 bits, as the BIOS's DI,
+        stosb                           ;  to page 0)
         or      dl, dl
         jz      .wn
         mov     [es:di], ah
@@ -2021,6 +2108,8 @@ mt_emu:
         loop    .wl
 .wz:    clc
         ret
+.ws:    inc     di
+        jmp     short .wn
 .wp:    pop     dx
         clc
         ret
@@ -2082,7 +2171,7 @@ mt_emu:
         mov     ax, [bp+VF_ES]
         sub     ax, EMS_FRAME
         cmp     ax, 800h
-        jb      .sz
+        jb      .s13
         mov     dx, [bp+VF_DX]
         mov     bx, [bp+VF_BX]
         cmp     bh, 10
@@ -2116,6 +2205,9 @@ mt_emu:
         shl     bx, 1
         mov     [VS_CUR + bx], dx
 .sz:    clc
+        ret
+.s13:   call    mt_vlose                ; (the BIOS's alone, if in front)
+        clc
         ret
 ; BX = 2 * the page in the caller's BH; CF if past page 10
 .pg:    mov     bl, [bp+VF_BX+1]

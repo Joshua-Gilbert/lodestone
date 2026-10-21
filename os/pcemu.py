@@ -388,7 +388,7 @@ class PC:
         # IVT: BIOS services via stubs, IRQs via real code, 60h-67h null
         for n in range(256):
             s.mu.mem_write(n * 4, struct.pack('<HH', n * 8, STUB))
-            s.mu.mem_write(STUB * 16 + n * 8, bytes([0xCD, n, 0xCA, 0x02, 0x00]))
+            s.mu.mem_write(STUB * 16 + n * 8, bytes([0xCD, n, 0xCF] if n == 0x10 else [0xCD, n, 0xCA, 0x02, 0x00]))
         s.mu.mem_write(STUB * 16 + 0x1000, INT08)
         s.mu.mem_write(STUB * 16 + 0x1100, IRQEOI)
         s.mu.mem_write(STUB * 16 + 0x1200, IRET)
@@ -818,18 +818,20 @@ class PC:
             s.wr(0, 0x44E, struct.pack('<H', (al * s.vlen()) & 0xFFFF)); s.w('ax', 0)
         elif ah in (0x06, 0x07) and text:
             s.vscroll(al, s.r('bh'), s.r('ch'), s.r('cl'), s.r('dh'), s.r('dl'), ah == 7)
+        elif ah == 0x04: s.w('ax', al)                                  # (no light pen: AH 0)
         elif ah == 0x08 and text:
-            a = s.vaddr(s.r('bh'), *s.vcur(s.r('bh'))); v = s.rd(0xB800, a, 2)
-            s.w('ax', v[0] | (v[1] << 8))
+            a = s.vaddr(s.r('bh'), *s.vcur(s.r('bh')))
+            if a >= 0x7FFF: s.w('ax', 0xFFFF)                           # (past the 32 KB: nothing)
+            else: v = s.rd(0xB800, a, 2); s.w('ax', v[0] | (v[1] << 8))
         elif ah in (0x09, 0x0A):
-            if text:
-                a = s.vaddr(s.r('bh'), *s.vcur(s.r('bh')))
+            if text:                                                    # (past the 32 KB not written; DI
+                a = s.vaddr(s.r('bh'), *s.vcur(s.r('bh')))              #  on round 16 bits, to page 0)
                 for i in range(s.r('cx')):
-                    if a >= 0x7FFF: break
-                    s.wr(0xB800, a, [al] + ([s.r('bl')] if ah == 9 else [])); a += 2
+                    if a < 0x7FFF: s.wr(0xB800, a, [al] + ([s.r('bl')] if ah == 9 else []))
+                    a = (a + 2) & 0xFFFF
         elif ah == 0x0E: s.tty_put(al)
         elif ah == 0x0F:
-            s.w('ax', (cols << 8) | mode); s.w('bx', (s.r('bx') & 0xFF) | (s.rd(0, 0x462, 1)[0] << 8))
+            s.w('ax', (s.rd(0, 0x44A, 1)[0] << 8) | mode); s.w('bx', (s.r('bx') & 0xFF) | (s.rd(0, 0x462, 1)[0] << 8))
         elif ah in (0x0C, 0x0D) and text: s.w('ax', (mode << 8) | al)        # (nothing: VidGrapPelMask's CF)
         elif ah == 0x0C and mode in (4, 5, 6):
             x, y = s.r('cx'), s.r('dx')
