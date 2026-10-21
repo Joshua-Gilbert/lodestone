@@ -2208,6 +2208,7 @@ run_saver:
         push    es
         mov     ax, 0F000h + MT_LIST    ; (with multitasking, only in front:
         xor     cx, cx                  ;  behind, the screen isn't ours)
+        stc                             ; (another DOS may leave CF as it was)
         int     21h
         jc      .on
         cmp     al, ah
