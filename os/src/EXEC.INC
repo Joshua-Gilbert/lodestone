@@ -46,7 +46,9 @@ lampw       resb 1                  ; the coprocessor lamp: 0 none, 7 80287, 9 2
 biosdate    resb 8
 kindbuf     resb 4
 msgbuf      resb 128
-infobuf     resb 128
+infobuf     equ tmp                 ; the information line: built by draw_all
+                                    ;  just before it is drawn (draw_form and
+                                    ;  the clock use tmp too)
 dstpath     resb 84                 ; Copy, Move: X: + \ + a 66-char subject + \ +
 tmppath     resb 84                 ;  NAME.EXT (83); the subject it goes to, then
                                     ;  the new file in it (X:\SUBJECT\ABCDTMP, 78)
@@ -54,15 +56,16 @@ curdir      resb 72                 ; X:\SUBJECT, where the list is
 c_sub       resb SUBMAX + 1         ; the forms' fields: Subject, Title, Device
 c_tit       resb 13
 c_dev       resb 1
-fcbbuf      resb 11
+fcbbuf      equ tmp                 ; relist_name's title (11; load_dir
+                                    ;  doesn't use tmp)
 xmode       resb 1                  ; 0 Copy, 1 Move
 x_here      resb 1                  ; 1: it goes to the subject listed
 d_exists    resb 1                  ; the destination is there already
 tmp_made    resb 1                  ; copy_file made the new file (delete it on failure)
 tmp_kept    resb 1                  ; ... and kept it: the old destination was gone
 x_part      resb 1                  ; Move: copied, but the original stays
-id_src      resb 5                  ; same_file: drive, directory, entry
-id_dst      resb 5
+id_src      equ tmp                 ; same_file: drive, directory, entry
+id_dst      equ tmp + 5
 ftitle      resb 24                 ; the form's window title: "Copy NAME.EXT"
 o_sel       resw 1                  ; the list's place before a command
 o_top       resw 1
@@ -108,7 +111,6 @@ ex_start:
         mov     ah, 1Ah
         int     21h
         call    sysinfo
-        call    build_info
         call    hires
         jnc     .hi
         mov     si, s_nohires
@@ -2597,6 +2599,7 @@ draw_all:
         cmp     dx, FORM_Y + 4 * ITEM_H
         jb      .lbl
         call    draw_form
+        call    build_info              ; (in tmp: after draw_form)
         mov     si, infobuf
         mov     dx, INFO_Y
         call    center
