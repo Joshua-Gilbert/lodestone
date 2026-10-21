@@ -1751,8 +1751,6 @@ load_fnt:
         je      .x                      ; (CF clear)
         stc
 .x:     ret
-        times   -(FONT_BYTES + 1 > 2 * INI_MAX + 41) db 0   ; (fbuf: in ini_old
-                                                            ;  and ini_new)
 
 ; DX = a file's path: up to CX bytes of it to DI -> AX = how many (CF:
 ; it can't be opened or read; BX, CX, DX change)
@@ -2443,7 +2441,8 @@ past        resb 1
 fpath       resb 18
 ini_old     resb INI_MAX + 1
 ini_new     resb INI_MAX + 40
-fbuf        equ ini_old                 ; (a font file, or a disk's IDENTIFY
+        times   -(FONT_BYTES + 1 > $ - ini_old) resb 1  ; (fbuf fits in both)
+fbuf        equ ini_old                ; (a font file, or a disk's IDENTIFY
                                         ;  sector: never while LODE.INI is in
                                         ;  ini_old/ini_new; UI_FONT copies it)
 run_bss_end:

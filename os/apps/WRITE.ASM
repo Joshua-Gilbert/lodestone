@@ -2092,4 +2092,7 @@ iobuf       resb IOB                    ; a file read or written in one go:
 rowbuf      equ iobuf                   ;  these three are never live then
 stat_new    equ iobuf + ROWB            ;  (an I/O error is said in line
 line        equ iobuf + ROWB + 80       ;  once the file is closed)
+        times   -(ROWB + 80 + 96 > IOB) resb 1  ; (line is drawn from after
+                                        ;  redraw, which builds rowbuf and
+                                        ;  stat_new: it stays past them)
 run_bss_end:
