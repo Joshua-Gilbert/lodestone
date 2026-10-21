@@ -147,14 +147,12 @@ mt_vbusy    db      0                   ; 1: MT has a task's screen pages
                                         ;  10h meanwhile straight to the BIOS
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
-mt_vw       db      0                   ; (mt_vscr: columns, lines, attribute,
-mt_vn       db      0                   ;  left column, top and bottom rows,
-mt_va       db      0                   ;  step, last row)
-mt_vc       db      0
+mt_vw       db      0                   ; (mt_vscr: the window's width, its
+mt_vn       db      0                   ;  lines, attribute, rows moved and
+mt_va       db      0                   ;  blanked, down or up)
 mt_vt       db      0
 mt_vb       db      0
 mt_vd       db      0
-mt_vl       db      0
 ; a text mode as the 1520's BIOS sets it (int10.asm VidSetMode; the
 ; tables in at_compat.asm): columns and Mode Control by mode, then the
 ; BIOS data of mode 3, a new task's
@@ -755,6 +753,8 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_end
         cmp     al, MT_FRONT
         je      mt_frontc
+        cmp     al, MT_SCREEN
+        je      mt_screen
         cmp     al, 1
         je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
@@ -795,7 +795,12 @@ mt_list:
         mov     ah, [cs:bx+TE_STATE]
         or      ah, ah                  ; (TS_FREE)
         jz      .n
-        inc     cx
+        cmp     ah, TS_RUN              ; (ready but frozen behind: listed as
+        jne     .s                      ;  TS_FROZEN)
+        call    mt_frz
+        jz      .s
+        mov     ah, TS_FROZEN
+.s:     inc     cx
         cmp     cx, dx
         ja      .n                      ; (no room: only counted)
         stosw                           ; TR_ID, TR_STATE
@@ -827,6 +832,20 @@ mt_frontc:
         je      mt_bad
         mov     [cs:mt_swreq], al
         jmp     KSEG:ok
+
+; MT_SCREEN: the caller's screen, which it wrote itself, is as it should
+; be (put back after a screen saver, say): if it is the front task's, in a
+; text mode, with another task there, its pages are given the screen again,
+; so the switch away doesn't find it writing the screen itself
+mt_screen:
+        mov     al, [cs:mt_cur]
+        cmp     al, [cs:mt_front]
+        jne     .x
+        call    mt_others
+        jc      .x
+        mov     byte [cs:mt_shd], 0
+        call    mt_sync
+.x:     jmp     KSEG:ok
 
 ; MT_END: from a task's stub, its program done.  Its handles (the
 ; inherited ones) closed, its region freed, and another task runs.
@@ -1299,10 +1318,10 @@ mt_scrsv:
         cld
         mov     byte [cs:mt_vbusy], 1
         call    mt_ent
+        and     byte [cs:bx+TE_VF], ~VF_DIRECT
         call    mt_smap
         jc      .gone
         mov     byte [cs:bx+TE_SF], 1
-        and     byte [cs:bx+TE_VF], ~VF_DIRECT
         push    40h
         pop     ds
         cmp     byte [49h], 4
@@ -1547,7 +1566,8 @@ mt_wrest:
 ;  INT 10h again), the ROM or the EMS frame (Resident Claude); and a
 ;  background task's with SPF_BG, made with a hardware interrupt in
 ;  service (a TSR's clock: on the real screen, as in DOS), or made inside
-;  INT 21h by code that isn't the kernel's (an INT 24h handler's prompt)
+;  INT 21h by code that isn't the kernel's (an INT 24h handler's prompt);
+;  these last, on the real screen, are shadowed as the front task's own
 ; ---------------------------------------------------------------------
 VF_AX       equ -2                      ; (the caller's registers, PUSHA's,
 VF_CX       equ -4                      ;  from mt_v10's BP; the caller's own
@@ -1555,7 +1575,8 @@ VF_DX       equ -6                      ;  BP at [BP], then its IP, CS, flags)
 VF_BX       equ -8
 VF_ES       equ -20
 mt_v10:
-        push    bp
+        cli                             ; (a hook's PUSHF / CALL FAR: interrupts
+        push    bp                      ;  on; the IRET puts the caller's back)
         mov     bp, sp
         cmp     word [bp+4], 0A000h
         jae     .bios
@@ -1566,7 +1587,7 @@ mt_v10:
         cmp     al, [cs:mt_front]
         pop     ax
         jne     .bg
-        cmp     byte [cs:mt_shd], 0     ; in front: shadowed (a mode set may
+.fr:    cmp     byte [cs:mt_shd], 0     ; in front: shadowed (a mode set may
         jne     .sh                     ;  start it)
         or      ah, ah
         jz      .sh
@@ -1576,6 +1597,11 @@ mt_v10:
         push    ds
         push    es
         cld
+        mov     ax, ss                  ; (a stack in the EMS frame's windows 0
+        sub     ax, EMS_FRAME           ;  and 1, where the pages are mapped:
+        cmp     ax, 800h                ;  as it is, to the BIOS)
+        jb      .pass
+        mov     ax, [bp+VF_AX]
         cmp     ah, 0Eh                 ; the teletype, not at a line's end
         jne     .sg                     ;  (most output): the short way
         mov     bl, [cs:mt_front]       ; (BX: its entry, as mt_ent gives it)
@@ -1594,20 +1620,29 @@ mt_v10:
         pop     ds
         popa
         jmp     .bios
+.real:  pop     es                      ; (a background task's call for the
+        pop     ds                      ;  real screen: the BIOS's, shadowed
+        popa                            ;  as the front task's would be)
+        jmp     .fr
 .bg:    pusha
         push    ds
         push    es
         cld
+        mov     ax, ss                  ; (the same)
+        sub     ax, EMS_FRAME
+        cmp     ax, 800h
+        jb      .pass
         mov     al, [cs:mt_cur]
         call    mt_ent
         test    byte [cs:bx+TE_VF], SPF_BG
-        jnz     .pass
-        push    KSEG                    ; inside INT 21h, from code not the
-        pop     ds                      ;  kernel's: an INT 24h handler's prompt
-        cmp     byte [indos], 0         ;  (everything waits for its answer), a
-        je      .k                      ;  TSR's INT 28h hook: on the real screen
-        cmp     word [bp+4], KSEG
-        jne     .pass
+        jnz     .real
+        push    KSEG                    ; inside INT 21h from code not the
+        pop     ds                      ;  kernel's (an INT 24h handler's
+        cmp     byte [indos], 1         ;  prompt: everything waits for its
+        jb      .k                      ;  answer; a TSR's INT 28h hook), or in a
+        ja      .real                   ;  nested one (the INT 24h handler's own
+        cmp     word [bp+4], KSEG       ;  DOS output): on the real screen
+        jne     .real
 .k:     mov     al, 0Bh                 ; a hardware interrupt in service?
         out     20h, al                 ;  (as mt_safe reads it)
         in      al, 20h
@@ -1615,7 +1650,7 @@ mt_v10:
         mov     al, 0Ah
         out     20h, al
         or      ah, ah
-        jnz     .pass
+        jnz     .real
         cmp     byte [bp+VF_AX+1], 0Eh  ; the teletype, not at a line's end:
         jne     .bl                     ;  the short way
         mov     ds, [cs:bx+TE_TX]
@@ -1661,13 +1696,17 @@ mt_v10:
         mov     bx, [bp+2]
         mov     dx, [bp+6]
         call    mt_safe
-        jc      .ret
+        jc      .dr
         call    mt_wfront
 .wf:    cli
         pop     es
         pop     ds
         popa
         jmp     .top
+.dr:    mov     al, [cs:mt_cur]         ; (dropped: it may go on to write the
+        call    mt_ent                  ;  screen itself, so it is frozen behind
+        or      byte [cs:bx+TE_VF], VF_DIRECT   ;  from its next safe point, as
+        jmp     .ret                    ;  one that does)
 
 ; the teletype's character in mt_v10's frame (AL there) on the page shown,
 ; the cursor on a line of the screen, when it can't scroll: a character
@@ -1682,8 +1721,10 @@ mt_vfast:
         cmp     byte [si], 3            ; (a text mode)
         ja      .no
         push    bx
-        mov     bl, [si + 62h - 49h]    ; the page shown
-        and     bx, 7
+        mov     bl, [si + 62h - 49h]    ; the page shown (MT keeps the cursors of
+        xor     bh, bh                  ;  pages 0-10: 40:50h to 40:65h)
+        cmp     bl, 10
+        ja      .nb
         mov     di, bx
         shl     di, 1
         add     di, si                  ; (its cursor at [DI + 50h - 49h])
@@ -1808,7 +1849,9 @@ mt_vshad:
         pop     ds
         push    EMS_FRAME
         pop     es
-        call    mt_emu
+        push    word [bp+VF_AX]         ; (its registers to the BIOS as they
+        call    mt_emu                  ;  were: 00h's AX)
+        pop     word [bp+VF_AX]
         call    mt_wrest
         cmp     byte [bp+VF_AX+1], 0
         jne     .x
@@ -1837,9 +1880,12 @@ mt_tmode:
 
 ; mt_v10's call (its frame at BP) done as the 1520's BIOS does it in a
 ; text mode, in the screen at ES:0 (32 KB) and the BIOS data in mt_vs,
-; its results into the frame.  CF: not here (a graphics mode, a pixel, or
-; in a graphics mode now): it waits to be in front.  DS = CS; all changed
-; but BP, DS, ES
+; its results into the frame, the registers it changes as it changes them.
+; Pages as the BIOS takes them, whole bytes; MT keeps the cursors of pages
+; 0-10 (to 40:65h), and a call on a page past that does nothing.  Nothing
+; written past the 32 KB.  CF: not here (a graphics mode, a pixel, or in a
+; graphics mode now): it waits to be in front.  DS = CS; all changed but
+; BP, DS, ES
 mt_emu:
         mov     ax, [bp+VF_AX]
         or      ah, ah
@@ -1852,13 +1898,14 @@ mt_emu:
         xor     bh, bh
         shl     bx, 1
         jmp     [.tab + bx - 2]
-.tab:   dw      .m1, .m2, .m3, .m4, .m5, .m6, .m7, .m8, .m9, .mA, .mB, .wt
-        dw      .wt, .mE, .mF, .ok, .ok, .ok, .m13
+.tab:   dw      .m1, .m2, .m3, .m4, .m5, .m6, .m7, .m8, .m9, .mA, .mB, .mC
+        dw      .mC, .mE, .mF, .ok, .ok, .ok, .m13
 .wt:    stc
         ret
 .ok:    clc
         ret
-; 00h: a text mode (VidSetMode): the BIOS data, the screen 16 KB of blanks
+; 00h: a text mode (VidSetMode): the BIOS data, the screen 16 KB of blanks;
+; AX back as 00h and Mode Control
 .m0:    call    mt_tmode
         jc      .wt
         mov     [VS_MODE], al
@@ -1874,6 +1921,8 @@ mt_emu:
 .ml:    mov     [VS_LEN], ax
         mov     al, [mt_vsel + bx]
         mov     [VS_MSEL], al
+        xor     ah, ah
+        mov     [bp+VF_AX], ax
         push    es
         push    ds
         pop     es
@@ -1899,11 +1948,13 @@ mt_emu:
         ret
 ; 02h, 03h: page BH's cursor
 .m2:    call    .pg
+        jc      .ok
         mov     ax, [bp+VF_DX]
         mov     [VS_CUR + bx], ax
         clc
         ret
 .m3:    call    .pg
+        jc      .ok
         mov     ax, [VS_CUR + bx]
         mov     [bp+VF_DX], ax
         mov     ax, [VS_SHAPE]
@@ -1914,12 +1965,13 @@ mt_emu:
 .m4:    mov     byte [bp+VF_AX+1], 0
         clc
         ret
-; 05h: the page shown (only noted: the CRTC is the front task's)
-.m5:    and     al, 7
-        mov     [VS_PAGE], al
+; 05h: the page shown (only noted: the CRTC is the front task's); AX back
+; as 0, as the BIOS's multiplying leaves it
+.m5:    mov     [VS_PAGE], al
         xor     ah, ah
         mul     word [VS_LEN]
         mov     [VS_START], ax
+        mov     word [bp+VF_AX], 0
         clc
         ret
 ; 06h, 07h: a window scrolled up or down, on the page shown
@@ -1934,6 +1986,7 @@ mt_emu:
         ret
 ; 08h: the character and attribute at page BH's cursor
 .m8:    call    .pg
+        jc      .ok
         mov     dx, [VS_CUR + bx]
         shr     bx, 1
         call    mt_vaddr
@@ -1951,6 +2004,7 @@ mt_emu:
         jcxz    .wz
         push    dx
         call    .pg
+        jc      .wp
         mov     dx, [VS_CUR + bx]
         shr     bx, 1
         call    mt_vaddr
@@ -1958,7 +2012,7 @@ mt_emu:
         mov     al, [bp+VF_AX]
         mov     ah, [bp+VF_BX]
 .wl:    cmp     di, 8000h - 1
-        jae     .ok
+        jae     .wz
         stosb
         or      dl, dl
         jz      .wn
@@ -1967,7 +2021,11 @@ mt_emu:
         loop    .wl
 .wz:    clc
         ret
-; 0Bh: the colour select (put in 3D9h when the task is shown)
+.wp:    pop     dx
+        clc
+        ret
+; 0Bh: the colour select (put in 3D9h when the task is shown); AL back as
+; the new one
 .mB:    mov     al, [VS_PAL]
         mov     bx, [bp+VF_BX]
         or      bh, bh
@@ -1981,16 +2039,23 @@ mt_emu:
         jz      .pw
         or      al, 20h
 .pw:    mov     [VS_PAL], al
+        mov     [bp+VF_AX], al
+        clc
+        ret
+; 0Ch, 0Dh in a text mode: nothing (VidGrapPelMask's CF), AH back as the
+; mode
+.mC:    mov     al, [VS_MODE]
+        mov     [bp+VF_AX+1], al
         clc
         ret
 ; 0Eh: the teletype, on the page shown whatever BH says
 .mE:    mov     bl, [VS_PAGE]
-        and     bx, 7
+        cmp     bl, 10
+        ja      .ok
+        xor     bh, bh
+        mov     si, bx
+        shl     si, 1
         mov     bh, bl
-        shl     bl, 1
-        xor     ah, ah
-        mov     al, bl
-        mov     si, ax
         mov     dx, [VS_CUR + si]
         mov     al, [bp+VF_AX]
         xor     cl, cl                  ; (the character only, as 0Ah)
@@ -2008,14 +2073,20 @@ mt_emu:
         ret
 ; 13h: CX characters from ES:BP on page BH from DX (AL bit 1: each with its
 ; attribute, but BEL, BS, LF and CR; bit 0: the cursor left after them),
-; written with 09h as the teletype does (VidWriteString)
+; written with 09h as the teletype does (VidWriteString).  (A string in
+; the EMS frame's windows 0 and 1, under the pages: not done)
 .m13:   test    al, 0FCh
         jnz     .sz
         mov     cx, [bp+VF_CX]
         jcxz    .sz
+        mov     ax, [bp+VF_ES]
+        sub     ax, EMS_FRAME
+        cmp     ax, 800h
+        jb      .sz
         mov     dx, [bp+VF_DX]
         mov     bx, [bp+VF_BX]
-        and     bh, 7
+        cmp     bh, 10
+        ja      .sz
         mov     si, [bp]
 .sl:    push    cx
         push    ds
@@ -2046,10 +2117,15 @@ mt_emu:
         mov     [VS_CUR + bx], dx
 .sz:    clc
         ret
-; BX = 2 * the page in the caller's BH (0-7)
+; BX = 2 * the page in the caller's BH; CF if past page 10
 .pg:    mov     bl, [bp+VF_BX+1]
-        and     bx, 7
+        xor     bh, bh
+        cmp     bl, 10
+        ja      .pn
         shl     bx, 1
+        clc
+        ret
+.pn:    stc
         ret
 
 ; the teletype's character AL at DX (row, column; page BH's cursor) on
@@ -2117,8 +2193,8 @@ mt_vtty:
         pop     ax
         ret
 
-; DI = the offset of row DH, column DL on page BL (a text mode).  All else
-; kept
+; DI = the offset of row DH, column DL on page BL (a text mode), as
+; VidCalcOffsets works it out (16 bits).  All else kept
 mt_vaddr:
         push    ax
         push    dx
@@ -2137,62 +2213,47 @@ mt_vaddr:
         ret
 
 ; rows CH to DH, columns CL to DL of the page shown scrolled up (BL 0) or
-; down (BL 1) by AL lines (0, or more than there are: all of it blank), the
-; new ones in attribute BH; DH and DL kept on the screen (VidWinScroll).
-; All kept
+; down (BL 1) by AL lines, the new ones in attribute BH, as VidWinScroll
+; and VidScrollImpl do it: DH and DL kept on the screen, AL 0 or more
+; lines than the window has blanking all of it, and their counts bytes,
+; unchecked, so a window upside down or right to left after that runs on
+; as on the 1520 (within the 32 KB).  A whole-width window the right way up
+; (every teletype scroll) is moved at once.  All kept
 mt_vscr:
         pusha
-        cmp     dh, 25
-        jb      .r
-        mov     dh, 24
-.r:     cmp     dl, [VS_COLS]
-        jb      .c
-        mov     dl, [VS_COLS]
-        dec     dl
-.c:     mov     ah, dh
-        sub     ah, ch                  ; (rows - 1)
-        jb      .x
-        sub     dl, cl                  ; (columns - 1)
-        jb      .x
+        mov     bp, sp                  ; ([BP+14], 12, 10, 8: AX, CX, DX, BX)
+        call    .clamp
+        cmp     ch, dh
+        ja      .lit
+        or      cl, cl
+        jnz     .lit
+        mov     ah, [VS_COLS]
+        dec     ah
+        cmp     dl, ah
+        jne     .lit
+        mov     ah, dh
+        sub     ah, ch
+        inc     ah                      ; (the rows)
         cmp     al, ah
-        jbe     .n
+        jb      .rn
         xor     al, al
-.n:     inc     dl
-        mov     [mt_vw], dl
-        mov     [mt_vn], al
+.rn:    mov     [mt_vn], al
         mov     [mt_va], bh
-        mov     [mt_vc], cl
-        mov     [mt_vt], ch
-        mov     [mt_vb], dh
-        mov     al, 1                   ; up: from the top row down, each one
-        mov     ah, dh                  ;  the one AL below it; down: from the
-        mov     dh, ch                  ;  bottom up, the one AL above
-        or      bl, bl
-        jz      .go
-        neg     al
-        xchg    ah, dh
-.go:    mov     [mt_vd], al
-        mov     [mt_vl], ah
-        cmp     byte [mt_vc], 0         ; whole lines (the teletype's scroll):
-        jne     .row                    ;  one run, moved at once
-        mov     al, [VS_COLS]
-        cmp     al, [mt_vw]
-        jne     .row
-        mov     dh, [mt_vt]
+        mov     [mt_vd], bl
+        mov     al, ah
+        mul     byte [VS_COLS]
+        mov     si, ax                  ; (SI: the words in all the rows)
+        mov     dh, ch
         xor     dl, dl
         mov     bl, [VS_PAGE]
-        and     bl, 7
         call    mt_vaddr                ; (DI: the top row's start)
-        mov     al, [mt_vb]
-        sub     al, [mt_vt]
-        inc     al
-        mul     byte [VS_COLS]
-        mov     cx, ax                  ; (CX: the words in all the rows)
+        mov     ax, si
         shl     ax, 1
         add     ax, di
-        jc      .x
+        jc      .lit
         cmp     ax, 8000h
-        ja      .x
+        ja      .lit
+        mov     cx, si
         mov     al, [mt_vn]
         mul     byte [VS_COLS]          ; (AX: the words AL lines hold)
         or      ax, ax
@@ -2203,7 +2264,7 @@ mt_vscr:
         push    ds
         push    es
         pop     ds
-        cmp     byte [cs:mt_vd], 1
+        cmp     byte [cs:mt_vd], 0
         jne     .fd
         mov     si, di                  ; up: from AL lines below, forward
         add     si, ax
@@ -2227,54 +2288,149 @@ mt_vscr:
         mov     ah, [mt_va]
         rep     stosw
         jmp     .x
-.row:   mov     dl, [mt_vc]             ; (DH: the row)
+; the BIOS's own way, register for register
+.lit:   mov     ax, [bp+14]
+        mov     cx, [bp+12]
+        mov     dx, [bp+10]
+        mov     bx, [bp+8]
+        call    .clamp
+        mov     [mt_va], bh
+        sub     dl, cl
+        mov     ah, dh
+        sub     ah, ch
+        inc     dl
+        mov     [mt_vw], dl             ; the width
+        sub     ah, al
+        jnb     .l1
+        xor     al, al
+.l1:    or      al, al
+        jnz     .l2
+        mov     ah, -1
+.l2:    inc     ah
+        mov     [mt_vn], al             ; the lines
+        mov     [mt_vt], ah             ; the rows moved (0: 256)
+        mov     ah, dh
+        inc     ah
+        sub     ah, ch
+        sub     ah, [mt_vt]
+        mov     [mt_vb], ah             ; the rows blanked (0: 256)
+        or      bl, bl
+        jnz     .ld
+        mov     dh, ch                  ; (up: from the top row, down: the
+.ld:    mov     dl, cl                  ;  bottom one)
+        push    bx
         mov     bl, [VS_PAGE]
-        and     bl, 7
         call    mt_vaddr
-        mov     cl, [mt_vw]
+        pop     bx
+        mov     dx, [VS_COLS]
+        shl     dx, 1                   ; (DX: a row on)
+        mov     bp, dx
         xor     ch, ch
+        mov     cl, [mt_vw]
+        shl     cx, 1
+        sub     bp, cx                  ; (BP: a row's end to the next one)
+        or      bl, bl
+        jz      .lu
+        sub     bp, dx
+        sub     bp, dx
+        neg     dx
+.lu:    mov     al, [mt_vn]
+        or      al, al
+        jz      .lf
+        mov     si, di
+.ls:    add     si, dx
+        dec     al
+        jnz     .ls
+        mov     ah, [mt_vt]
+.lc:    mov     cl, [mt_vw]
+        xor     ch, ch
+        call    mt_vmov
+        add     si, bp
+        add     di, bp
+        dec     ah
+        jnz     .lc
+.lf:    mov     ah, [mt_vb]
+.lb:    mov     cl, [mt_vw]
+        xor     ch, ch
+        call    mt_vset
+        add     di, bp
+        dec     ah
+        jnz     .lb
+.x:     popa
+        ret
+.clamp: cmp     dh, 25
+        jb      .c1
+        mov     dh, 24
+.c1:    cmp     dl, [VS_COLS]
+        jb      .c2
+        mov     dl, [VS_COLS]
+        dec     dl
+.c2:    ret
+
+; CX words from ES:SI to ES:DI, each only where both are in the 32 KB;
+; SI, DI on past them.  All else kept
+mt_vmov:
+        jcxz    .x
+        push    ax
+        push    dx
         mov     ax, cx
         shl     ax, 1
-        add     ax, di
-        jc      .nr
-        cmp     ax, 8000h
-        ja      .nr
-        mov     al, [mt_vn]
-        or      al, al
-        jz      .bl
-        mov     ah, dh
-        cmp     byte [mt_vd], 1
-        jne     .sd
-        add     ah, al
-        cmp     ah, [mt_vb]
-        ja      .bl
-        jmp     short .cp
-.sd:    sub     ah, al
-        jb      .bl
-        cmp     ah, [mt_vt]
-        jb      .bl
-.cp:    push    dx
-        push    di
-        mov     dh, ah
-        call    mt_vaddr
-        mov     si, di
-        pop     di
-        pop     dx
-        push    ds
+        mov     dx, di
+        add     dx, ax
+        jc      .w
+        cmp     dx, 8000h
+        ja      .w
+        mov     dx, si
+        add     dx, ax
+        jc      .w
+        cmp     dx, 8000h
+        ja      .w
+        push    ds                      ; (all of it inside: at once)
         push    es
         pop     ds
         rep     movsw
         pop     ds
-        jmp     short .nr
-.bl:    mov     al, ' '
+        jmp     short .y
+.w:     cmp     di, 8000h - 1
+        jae     .s
+        cmp     si, 8000h - 1
+        jae     .s
+        mov     ax, [es:si]
+        mov     [es:di], ax
+.s:     inc     si
+        inc     si
+        inc     di
+        inc     di
+        loop    .w
+.y:     pop     dx
+        pop     ax
+.x:     ret
+
+; CX blanks in attribute [mt_va] at ES:DI, each only in the 32 KB; DI on
+; past them.  All else kept
+mt_vset:
+        jcxz    .x
+        push    ax
+        push    dx
+        mov     al, ' '
         mov     ah, [mt_va]
+        mov     dx, cx
+        shl     dx, 1
+        add     dx, di
+        jc      .w
+        cmp     dx, 8000h
+        ja      .w
         rep     stosw
-.nr:    cmp     dh, [mt_vl]
-        je      .x
-        add     dh, [mt_vd]
-        jmp     .row
-.x:     popa
-        ret
+        jmp     short .y
+.w:     cmp     di, 8000h - 1
+        jae     .s
+        mov     [es:di], ax
+.s:     inc     di
+        inc     di
+        loop    .w
+.y:     pop     dx
+        pop     ax
+.x:     ret
 
 ; a region of [mt_size] paragraphs at the top of the highest free block
 ; that has room (the arena walked from mt_mcb0, free neighbours merged)

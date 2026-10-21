@@ -24,6 +24,11 @@ MT_FRONT    equ 13h                     ; BL = a task: it comes to the front at
                                         ;  the next key wait.  CF: AX = 1 (none).
                                         ;  (When the front task ends, task 0
                                         ;  comes to the front.)
+MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
+                                        ;  itself, is as it should be (put back
+                                        ;  after a screen saver): not counted
+                                        ;  against it as writing the screen
+                                        ;  itself (M4a; only the front task's)
 MT_TASKS    equ 8                       ; most tasks at once (0 is the Executive)
 MT_DEFARENA equ 1000h                   ; a task's memory if SP_PARAS is 0: 64 KB
 
@@ -58,3 +63,6 @@ TS_WAITK    equ 2                       ; waiting for a key (in the background,
 TS_WAITF    equ 3                       ; waiting to be in front (a graphics
                                         ;  mode or a pixel asked for in the
                                         ;  background)
+TS_FROZEN   equ 4                       ; (MT_LIST only) ready, but frozen in the
+                                        ;  background: it writes the screen
+                                        ;  itself, or SPF_FREEZE
