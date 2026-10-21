@@ -455,10 +455,10 @@ session:
         cmp     byte [type_due], 0      ;  last frame gets its answer (else
         jne     .dt                     ;  the bridge would hold it, and SRQ,
         mov     al, G_EVENT             ;  while the program has the bus); 3 s
-        mov     dx, cs                  ;  at most.  The user's CODE-\ (not
-        mov     si, evaway              ;  TYPE's keys): an EVENT says so, and
-        mov     cx, 1                   ;  the Pi answers Claude Code's calls
-        call    txq_put                 ;  at once until the next HELLO
+        mov     si, evaway              ;  at most.  The user's CODE-\ (not
+        mov     cx, 1                   ;  TYPE's keys): an EVENT says so, and the
+        call    txq_put_cs              ;  Pi answers Claude Code's calls at once
+                                        ;  until the next HELLO
 .dt:    mov     ax, [now]
         mov     [t_quit], ax
 .d:     call    get_ticks
@@ -764,14 +764,15 @@ rf_request:
         jmp     screen_msg
 .x:     ret
 
-; a REPLY of its own: AL = id, AH = status, no data
-reply2: mov     [replybuf], ax
+; a REPLY of its own: AL = id, AH = status, no data (reply_n: CX = 3,
+; with TYPE's flags already at replybuf + 2)
+reply2: mov     cx, 2
+reply_n:
+        mov     [replybuf], ax
         mov     byte [reply_busy], 1
         mov     al, G_REPLY
-        mov     dx, cs
         mov     si, replybuf
-        mov     cx, 2
-        jmp     txq_put
+        jmp     txq_put_cs
 
 ; TYPE (AL = its id): the keys go to the program, the console goes back
 ; to it; the answer comes when they are done (the next pop-up: session)
@@ -893,19 +894,11 @@ screen_msg:
         jmp     txq_put
 .no:    pop     cx                      ; no screen we can send: F5h (TYPE: and
         pop     ax                      ;  its flags)
-        or      cl, cl
-        jz      .n2
         mov     [replybuf + 2], ah
         mov     ah, 0F5h
-        mov     [replybuf], ax
-        mov     byte [reply_busy], 1
-        mov     al, G_REPLY
-        mov     dx, cs
-        mov     si, replybuf
-        mov     cx, 3
-        jmp     txq_put
-.n2:    mov     ah, 0F5h
-        jmp     reply2
+        xor     ch, ch                  ; 2 bytes, 3 with the flags
+        add     cl, 2
+        jmp     reply_n
 
 ; a reply's first bytes gone: the bytes they stood on back
 unborrow:

@@ -95,11 +95,8 @@ redraw: mov     si, s_title
                                         ;  Executive's)
 
 topic_row:                              ; AX = topic, DX = y, CL = mask
+        call    topic_name
         mov     ah, cl
-        mov     bx, ax
-        xor     bh, bh
-        shl     bx, 1
-        mov     si, [topic_names+bx]
         mov     bx, 2
         jmp     UI_PUTS
 
@@ -178,6 +175,14 @@ ems_mgr:
         je      .x
         stc
 .x:     ret
+
+; AX = paragraphs, SI = the label -> "570.6 KB" on the next line
+kb_line:
+        push    si
+        call    vstart
+        call    sb_kb
+        pop     si
+        jmp     pline_r
 
 ; AX = paragraphs -> "570.6 KB" at DI
 sb_kb:  push    ax
@@ -297,41 +302,31 @@ t_memory:
         call    ems_mgr
         sbb     al, al
         mov     [m_noems], al
-        call    vstart
         int     12h
         mov     cx, 6
         shl     ax, cl
-        call    sb_kb
         mov     si, l_conv
-        call    pline_r
-        call    vstart
+        call    kb_line
         mov     ax, [m_kernel]
-        call    sb_kb
         mov     si, l_kernel
         cmp     byte [m_noems], 0
         jne     .kd
         mov     si, l_kernel_e          ; (Lodestone's EMS manager is in it)
-.kd:    call    pline_r
+.kd:    call    kb_line
         mov     ax, [m_md]              ; M:'s resident part: split off the
         or      ax, ax                  ;  environment's spare bytes
         jz      .nomd
-        call    vstart
-        call    sb_kb
         mov     si, l_mdres
-        call    pline_r
-.nomd:  call    vstart
-        mov     ax, [ui_base]
+        call    kb_line
+.nomd:  mov     ax, [ui_base]
         add     ax, [m_exec]
         inc     ax                      ; (its MCB)
-        call    sb_kb
         mov     si, l_exec
-        call    pline_r
-        call    vstart
+        call    kb_line
         mov     ax, [m_ui]
         sub     ax, [ui_base]
-        call    sb_kb
         mov     si, l_this
-        call    pline_r
+        call    kb_line
         call    vstart
         mov     ax, [m_cache]
         or      ax, ax                  ; no "SC" block, Lodestone's EMS: the
@@ -346,17 +341,13 @@ t_memory:
         call    pline_r
         cmp     word [m_other], 0
         je      .noother
-        call    vstart
         mov     ax, [m_other]
-        call    sb_kb
         mov     si, l_other
-        call    pline_r
+        call    kb_line
 .noother:
-        call    vstart
         mov     ax, [m_best]
-        call    sb_kb
         mov     si, l_free
-        call    pline_r
+        call    kb_line
         call    pgap
         cmp     byte [m_noems], 0       ; expanded memory: the EMS manager's
         jne     .bios                   ;  pages, and how many are free
@@ -373,37 +364,27 @@ t_memory:
         call    .pages
         jmp     short .noems
 .pages: shl     ax, 4                   ; AX pages, on a line labelled SI
-        push    si
+.kb:    push    si                      ; AX KB, on a line labelled SI
         call    vstart
         call    UI_SBU16
         mov     si, s_kb
         call    UI_SBSTR
         pop     si
         jmp     pline_r
-.bios:  call    vstart                  ; else expanded / extended as the GRiD
-        mov     ax, 0E440h              ;  BIOS has them
-        int     15h
+.bios:  mov     ax, 0E440h              ; else expanded / extended as the GRiD
+        int     15h                     ;  BIOS has them
         jc      .noems
-        or      cx, cx
-        jz      .noems
-        mov     ax, cx
-        call    UI_SBU16
-        mov     si, s_kb
-        call    UI_SBSTR
+        jcxz    .noems
+        xchg    ax, cx
         mov     si, l_ems
-        call    pline_r
-.noems: call    vstart
-        mov     ax, 0E441h
+        call    .kb
+.noems: mov     ax, 0E441h
         int     15h
         jc      .noext
-        or      cx, cx
-        jz      .noext
-        mov     ax, cx
-        call    UI_SBU16
-        mov     si, s_kb
-        call    UI_SBSTR
+        jcxz    .noext
+        xchg    ax, cx
         mov     si, l_ext
-        call    pline_r
+        jmp     .kb
 .noext: ret
 ; the end of a run of free blocks: as one block once this program has
 ; gone and a DOS program starts (the UI block shrinks into the run if it
@@ -501,25 +482,21 @@ disk_lines:
         call    UI_SBSTR
 .lab2:  mov     si, s_drive
         call    pline
-        call    vstart                  ; size
-        mov     ax, [d_total]
-        call    clus_kb
+        mov     ax, [d_total]           ; size
         mov     si, l_dsize
-        call    pline
-        call    vstart                  ; free
-        mov     ax, [d_free]
-        call    clus_kb
+        call    clus_line
+        mov     ax, [d_free]            ; free
         mov     si, l_dfree
-        call    pline
-        call    vstart                  ; in use
-        mov     ax, [d_total]
+        call    clus_line
+        mov     ax, [d_total]           ; in use
         sub     ax, [d_free]
-        call    clus_kb
         mov     si, l_dused
-        jmp     pline
+        ; (on into clus_line)
 
-; AX clusters -> "1423 KB" at DI
-clus_kb:
+; AX clusters, SI = the label -> "1423 KB" on the next line
+clus_line:
+        push    si
+        call    vstart
         mul     word [d_spc]            ; DX:AX = sectors
         mov     cx, [d_bps]
         shr     cx, 9                   ; 512-byte units per sector
@@ -534,7 +511,9 @@ clus_kb:
         mov     cx, dx
         call    UI_SBU32
         mov     si, s_kb
-        jmp     UI_SBSTR
+        call    UI_SBSTR
+        pop     si
+        jmp     pline
 
 ; ---------------------------------------------------------------------
 ;  Clock
@@ -1517,22 +1496,12 @@ rom_prn:
         jne     .no
         pusha
         mov     dx, s_romini
-        mov     ax, 3D00h
-        int     21h
-        jc      .n
-        xchg    bx, ax
-        mov     dx, ini_old
+        mov     di, ini_old
         mov     cx, INI_MAX
-        mov     ah, 3Fh
-        int     21h
-        pushf
-        push    ax
-        mov     ah, 3Eh
-        int     21h
-        pop     cx
-        popf
+        call    read_file
         jc      .n
-        mov     si, ini_old
+        xchg    cx, ax
+        mov     si, di
         mov     bx, si
         add     bx, cx                  ; BX = its end
 .l:     cmp     si, bx
@@ -1570,20 +1539,9 @@ prn_ok: cmp     word [dta + 28], 0
         ja      .no
         push    bx
         mov     dx, vbuf
-        mov     ax, 3D00h
-        int     21h
-        jc      .r
-        xchg    bx, ax
-        mov     dx, vbuf + 64
+        mov     di, vbuf + 64
         mov     cx, 6
-        mov     ah, 3Fh
-        int     21h
-        pushf
-        push    ax
-        mov     ah, 3Eh
-        int     21h
-        pop     ax
-        popf
+        call    read_file
         jc      .r
         cmp     ax, 6
         jne     .nb
@@ -1654,8 +1612,7 @@ t_mdisk:
 .s:     call    UI_SBSTR
 .l:     mov     si, l_mdsize
         call    pline
-        call    vstart                  ; and free on it
-        mov     dl, MD_DRV + 1
+        mov     dl, MD_DRV + 1          ; and free on it
         mov     ah, 36h
         int     21h
         cmp     ax, 0FFFFh
@@ -1663,9 +1620,8 @@ t_mdisk:
         mov     [d_spc], ax
         mov     [d_bps], cx
         xchg    ax, bx
-        call    clus_kb
         mov     si, l_mdfree
-        call    pline
+        call    clus_line
         jmp     short .tail
 .off:   mov     si, s_mdoff
         call    UI_SBSTR
@@ -1787,12 +1743,23 @@ load_fnt:
         call    UI_SBSTR
         mov     byte [di], 0
         mov     dx, fpath
+        mov     di, fbuf
+        mov     cx, FONT_BYTES + 1      ; (one more: a longer file isn't one)
+        call    read_file
+        jc      .x
+        cmp     ax, FONT_BYTES
+        je      .x                      ; (CF clear)
+        stc
+.x:     ret
+
+; DX = a file's path: up to CX bytes of it to DI -> AX = how many (CF:
+; it can't be opened or read; BX, CX, DX change)
+read_file:
         mov     ax, 3D00h
         int     21h
         jc      .x
-        mov     bx, ax
-        mov     dx, fbuf
-        mov     cx, FONT_BYTES + 1      ; (one more: a longer file isn't one)
+        xchg    bx, ax
+        mov     dx, di
         mov     ah, 3Fh
         int     21h
         pushf
@@ -1801,10 +1768,6 @@ load_fnt:
         int     21h
         pop     ax
         popf
-        jc      .x
-        cmp     ax, FONT_BYTES
-        je      .x                      ; (CF clear)
-        stc
 .x:     ret
 
 ; SI, DI: names (ASCIIZ, any case) -> ZF if they are the same
@@ -1826,24 +1789,14 @@ same_name:
 ; \LODE.INI into ini_old -> CX = its length (0: no file; INI_MAX + 1:
 ; longer than we keep)
 ini_read:
-        xor     cx, cx                  ; (none: nothing)
         mov     dx, s_ini
-        mov     ax, 3D00h
-        int     21h
-        jc      .x
-        mov     bx, ax
-        mov     dx, ini_old
+        mov     di, ini_old
         mov     cx, INI_MAX + 1
-        mov     ah, 3Fh
-        int     21h
-        mov     cx, 0
-        jc      .cl
-        mov     cx, ax
-.cl:    push    cx
-        mov     ah, 3Eh
-        int     21h
-        pop     cx
-.x:     ret
+        call    read_file
+        jnc     .x
+        xor     ax, ax                  ; (none, or unreadable: nothing)
+.x:     xchg    cx, ax
+        ret
 
 ; is the start-up picture off?  SPLASH=0 (or No, or Off) in \LODE.INI, as
 ; the kernel reads it -> splash_off.  Read once, when Display is first
@@ -2226,10 +2179,10 @@ n_disks     db 'Disks',0
 n_clock     db 'Clock',0
 n_devices   db 'Devices',0
 n_gpib      db 'GPIB',0
-n_display   db 'Display',0
+n_display   equ l_display
 n_saver     db 'Screen saver',0
 n_mdisk     db 'Temporary disk',0
-n_settings  db 'Settings',0
+n_settings  equ l_setfile
 n_about     db 'About',0
 
 clock_form: dw s_clocktitle, s_clockprompt, 46, 10, 2
@@ -2284,8 +2237,8 @@ l_time      db 'Time',0
 s_setclock  db 'Return: set the date and time',0
 s_clocktitle db 'Date and time',0
 s_clockprompt db 'Clock: Fill in form and confirm',0
-l_fdate     db 'Date',0
-l_ftime     db 'Time',0
+l_fdate     equ l_date
+l_ftime     equ l_time
 s_baddate   db 'Not a date: try 5-Oct-2026',0
 s_badtime   db 'Not a time: try 9:41 pm or 21:41',0
 l_cpu       db 'Processor',0
@@ -2314,7 +2267,7 @@ s_lpt       db 'LPT1 ',0
 s_and       db ' and ',0
 s_b         db 'A: ',0
 drive_types dw s_dnone, s_d360, s_d12, s_d720, s_d144
-s_dnone     db 'none',0
+s_dnone     equ s_none
 s_d360      db '360 KB',0
 s_d12       db '1.2 MB',0
 s_d720      db '720 KB',0
@@ -2400,8 +2353,8 @@ s_prtwith   db 'prints with ',0
 s_prnroot   db '@:\*.PRN',0
 s_prnlode   db 'C:\LODE\*.PRN',0
 s_mdalleq   db 'ALL',0
-l_mdsize    db 'Size',0
-l_mdfree    db 'Free',0
+l_mdsize    equ l_dsize + 2             ; ('Size' and 'Free')
+l_mdfree    equ l_dfree + 2
 l_mdmax     db 'All free EMS would give',0
 s_mb        db ' MB',0
 s_mdoff     db 'off',0
@@ -2486,7 +2439,10 @@ md_new      resw 1                  ;  the next setting
 md_ok       resb 1                  ;  and FFh: there is M: here
 past        resb 1
 fpath       resb 18
-fbuf        resb FONT_BYTES + 1
 ini_old     resb INI_MAX + 1
 ini_new     resb INI_MAX + 40
+        times   -(FONT_BYTES + 1 > $ - ini_old) resb 1  ; (fbuf fits in both)
+fbuf        equ ini_old                ; (a font file, or a disk's IDENTIFY
+                                        ;  sector: never while LODE.INI is in
+                                        ;  ini_old/ini_new; UI_FONT copies it)
 run_bss_end:

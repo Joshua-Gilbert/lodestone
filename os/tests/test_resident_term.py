@@ -539,6 +539,54 @@ def t_type():
         h.close()
 
 
+def t_noscreen():
+    """A program in a mode the console keeps no copy of (mono, mode 7):
+    SCREEN's REPLY is F5h and nothing after it; TYPE's is F5h and its
+    flags."""
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('testkey')
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        g = h.router.term.grid
+        replies, on_reply = [], g.on_reply
+        g.on_reply = lambda b: (replies.append(bytes(b)), on_reply(b))
+        mode = h.page() * 0x4000 + h.rsym['bios']               # (the program's mode as the console kept it)
+        h.m.ems_store[mode] = 7
+        r = {}
+        th = threading.Thread(target=lambda: r.update(v=g.call(glp.OP_SCREEN, b'\0', timeout=60)))
+        th.start(); h.wait(lambda: not th.is_alive(), 30); th.join(30)
+        h.m.ems_store[mode] = 3
+        check('over a program in mode 7: SCREEN\'s REPLY is F5h, nothing after it',
+              r.get('v') == (0xF5, b'') and len(replies) == 1 and len(replies[0]) == 2, (r, replies))
+        del replies[:]
+        res = {}
+        th = threading.Thread(target=lambda: res.update(v=h.router.term.tools.request(
+            json.dumps({'tool': 'grid_type', 'arguments': {'keys': '{WAIT 1}x'}}).encode() + b'\n')))
+        th.start()
+        down = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 20)
+        h.m.wr(0x40, 0x49, b'\x07')                             # mode 7 when the console comes back
+        h.run_until(lambda: not th.is_alive(), 30, 60); th.join(30)
+        res = res.get('v')
+        up = h.up()
+        h.m.ems_store[mode] = 3                                 # (so CODE-\ goes back to mode 3)
+        check('... grid_type there: TYPE\'s REPLY is F5h and its flags (all played), "No screenshot"',
+              down and up and res and not res[1] and len(replies) == 1 and replies[0][1:] == b'\xF5\x01' and
+              'Typed into TESTKEY.COM. No screenshot' in res[0][0]['text'], (down, up, res, replies))
+        g.on_reply = on_reply
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        check('TESTKEY afterwards: the key it was typed ("TESTKEY ready: x")',
+              back and 'TESTKEY ready: x' in h.m.text_screen(), h.m.text_screen())
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
 def t_drive():
     """M3's aim: Claude drives TM5000G, the console popped up over it (its
     module auto-detect through grid_type, the screen of what it found)."""
@@ -655,7 +703,7 @@ def t_tm5000g():
         h.close()
 
 
-TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_nopi, t_timeout, t_tm5000g, t_drive]
+TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

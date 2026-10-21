@@ -543,8 +543,6 @@ update: call    fix_view                ; (old_top/old_hs: the view last
         mov     [last_mode], al
         call    sel_range
         call    cursor_off
-        call    textlen
-        mov     [tlen], ax
         cmp     byte [dirty], 2
         je      .full
         mov     ax, [curline]           ; the cursor's row, on its line
@@ -684,25 +682,16 @@ build_row:
 
 ; draw row BP if it differs from the shadow
 put_row:
-        mov     [bp_save], bp
+        push    bp
         mov     ax, bp
         mov     dx, ROWB
         mul     dx
         add     ax, shadow
-        mov     di, ax
+        xchg    di, ax
         mov     si, rowbuf
         mov     cx, ROWB
-        push    es
-        push    cs
-        pop     es
-        push    di
-        repe    cmpsb
-        pop     di
-        je      .same
-        mov     si, rowbuf              ; the shadow takes it
-        mov     cx, ROWB
-        rep     movsb
-        pop     es
+        call    sync_buf
+        je      .x
         mov     ax, bp
         shl     ax, 4
         add     ax, TEXT_Y
@@ -733,8 +722,23 @@ put_row:
         jmp     .r
 .n:     inc     bx
         jmp     .r
-.same:  pop     es
-.x:     mov     bp, [cs:bp_save]
+.x:     pop     bp
+        ret
+
+; SI = CX bytes, DI = their shadow -> ZF if the same; else the shadow
+; takes them (SI, DI, CX kept)
+sync_buf:
+        push    es
+        push    cs
+        pop     es
+        pusha
+        repe    cmpsb
+        popa
+        je      .x
+        pusha
+        rep     movsb
+        popa                            ; (ZF stays clear)
+.x:     pop     es
         ret
 
 cursor_off:
@@ -810,20 +814,8 @@ status: mov     di, stat_new
         mov     si, stat_new            ; the same as last time?
         mov     di, stat_last
         mov     cx, 80
-        push    es
-        push    cs
-        pop     es
-        repe    cmpsb
-        pop     es
+        call    sync_buf
         je      .x
-        mov     si, stat_new
-        mov     di, stat_last
-        mov     cx, 80
-        push    es
-        push    cs
-        pop     es
-        rep     movsb
-        pop     es
         mov     dx, STAT_Y
         mov     cx, 16
         xor     bx, bx
@@ -1299,7 +1291,6 @@ k_find: mov     si, find_form
         jc      .x
         cmp     byte [f_text], 0
         je      .x
-        mov     byte [subst], 0
         mov     ax, [gap_s]                ; from the cursor
         mov     [fpos], ax
         call    find
@@ -1930,7 +1921,7 @@ help_keys:                              ; (only for the help window)
 ; ---------------------------------------------------------------------
 ;  forms
 ; ---------------------------------------------------------------------
-find_form:  dw s_findt, s_findp, 62, 11, 3
+find_form:  dw l_find, s_findp, 62, 11, 3
             dw l_find,  FT_TEXT + (40 << 8), f_text, 40
             dw l_match, FT_CHOICE, f_match, o_match
             dw l_dir,   FT_CHOICE, f_dir, o_dir
@@ -1992,7 +1983,6 @@ s_changed   db '   Changed',0
 s_txt       db '.TXT',0
 s_dollar    db '$$$',0
 s_dollar1   db '$$1',0
-s_findt     db 'Find',0
 s_findp     db 'Find: Fill in form and confirm',0
 s_subt      db 'Substitute',0
 s_subp      db 'Substitute: Fill in form and confirm',0
@@ -2075,13 +2065,11 @@ cur_r       resw 1
 cur_c       resw 1
 cur_on      resb 1
 eof_seen    resb 1
-bp_save     resw 1
 fpos        resw 1
 f_len       resw 1
 f_last      resw 1
 nsubst      resw 1
 s_all       resb 1
-subst       resb 1
 pend_cr     resb 1
 hnd         resw 1
 sv_name     resw 1
@@ -2093,15 +2081,18 @@ hassel      resb 1
 seg2        resb 1
 fname       resb 80
 tmpname     resb 80
-title       resb 96
-line        resb 96
+title       resb 96                     ; (UI_SCREEN keeps the pointer)
 f_text      resb 42
 r_text      resb 42
 j_text      resb 8
 t_name      resb 72
-stat_new    resb 80
 stat_last   resb 80
-rowbuf      resb ROWB
 shadow      resb NROWS * ROWB
-iobuf       resb IOB
+iobuf       resb IOB                    ; a file read or written in one go:
+rowbuf      equ iobuf                   ;  these three are never live then
+stat_new    equ iobuf + ROWB            ;  (an I/O error is said in line
+line        equ iobuf + ROWB + 80       ;  once the file is closed)
+        times   -(ROWB + 80 + 96 > IOB) resb 1  ; (line is drawn from after
+                                        ;  redraw, which builds rowbuf and
+                                        ;  stat_new: it stays past them)
 run_bss_end:

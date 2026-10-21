@@ -218,9 +218,16 @@ def t_system():
     check('... with its own band from the start (it was blank)', k.band()[:1] == ['System: Select a topic'], k.band())
     check('"Free for programs" is what a DOS program gets (MEMSZ %.1f KB, System %.1f KB)' % (memsz, free),
           memsz > 0 and abs(free - memsz) < 1.0, (memsz, free))
+    labels = ('Conventional memory', 'Kernel (DOS + GPIB)', 'Executive and UI core', 'System (this program)', 'Disk cache', 'Free for programs')
+    check('... each line its label and figure; "Expanded memory (EMS)  1408 KB" as the GRiD BIOS has it',
+          all(re.search(re.escape(l) + r'\s+[\d.]+ KB', screen(k)) for l in labels)
+          and re.search(r'Expanded memory \(EMS\)\s+1408 KB', screen(k)), screen(k))
     k.key(ktest.DOWN)
     shot(k, 'system_disks')
     check('Disks: label, size, free', has(k, 'Drive A:') and has(k, 'LODESTONE') and has(k, '1423 KB'), screen(k))
+    check('... "Size  1423 KB", "Free" and "In use" each labelled, adding up',
+          re.search(r'  Size\s+1423 KB', screen(k)) and sum(int(re.search(r'  %s\s+(\d+) KB' % l, screen(k)).group(1))
+                                                             for l in ('Free', 'In use')) == 1423, screen(k))
     k.key('C')
     check('a letter: the topic starting with it (Clock)', has(k, 'Date') and has(k, 'October 2026'), screen(k))
     k.key(ktest.ENTER)
@@ -590,6 +597,9 @@ def t_font():
     k.key(ktest.ENTER)
     check('... Return: GRiD\'s again, the other lines kept', core_font(k) == GRIDF and disk_file(k, 'LODE.INI') == b'KEYS=1\r\nLAST=2\r\n',
           disk_file(k, 'LODE.INI'))
+    k.key(ktest.ENTER)                  # (the font file is read where LODE.INI is: it must be in use before that)
+    check('... Return: Terminus again, every glyph, with a LODE.INI to rewrite', core_font(k) == term
+          and disk_file(k, 'LODE.INI') == b'KEYS=1\r\nLAST=2\r\nFONT=TERMINUS.FNT\r\n', disk_file(k, 'LODE.INI'))
     open(ini, 'wb').write(b'FONT=NOSUCH.FNT\r\n')
     bad = os.path.join(OUT, 'BAD.FNT'); open(bad, 'wb').write(term[:1000])
     k = ktest.KPC(image('font4.img', SYSTEM, bad, ini)); k.start()
@@ -1818,6 +1828,17 @@ def t_calc():
     k.key(CODE['K'])
     check('... after 257 repaints too: exit code 0, the Executive redraws', twice and run_ret(k) == 0 and not has(k, 'Calculator'),
           (twice, hex(run_ret(k))))
+    # CALC.RUN's whole numbers are the core's UI_SBU32 (CALC.COM keeps its own)
+    k = ktest.KPC(img); k.start()
+    k.key(CODE['K']); k.key('2^70'); k.key(ktest.ENTER)
+    check('2^70 = 1.18059162071741E+21 (the exponent in whole numbers)', ans() == ['= 1.18059162071741E+21'], ans())
+    k.key(ktest.ESC)
+    k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))     # INT 11h: no coprocessor
+    k.key(CODE['K']); got = []
+    for e in ('2^30', '-2147483647-1', '7*-3'):
+        k.key(e); k.key(ktest.ENTER); got += ans()
+    check('no coprocessor: whole numbers, 2^30, -2147483647-1, 7*-3', got == ['= 1073741824', '= -2147483648', '= -21'], got)
+    k.key(ktest.ESC)
     k = ktest.KPC(image('nocalc.img', SYSTEM)); k.start()
     k.key(CODE['K'])
     check('no CALC.RUN: the band says so', any('CALC.RUN is not on this disk' in l for l in k.band()), k.band())

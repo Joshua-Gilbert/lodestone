@@ -1356,6 +1356,113 @@ def t_cmdedit():
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     check('EXIT: the Executive', k.pc.mode() == 0x40, k.where())
 
+def t_cmdshare():
+    """The 2026-10-20 audit's LCMD batch: messages byte for byte with their
+    new line from err, INT 24h's message for each code (counted out of one
+    run of strings), buffers that share space, the built-ins as one table,
+    .COM before .EXE before .BAT, PROMPT $D $T; DIR after a path that named
+    a drive."""
+    def bat(name, *lines):
+        p = os.path.join(OUT, name)
+        open(p, 'wb').write(('\r\n'.join(lines) + '\r\n').encode())
+        return name + '=' + p
+    src = os.path.join(OUT, 'CRITALL.ASM')        # INT 24h for each code, 0-13, writing drive A
+    open(src, 'w').write('org 100h\n xor di,di\nl: mov ax,0100h\n push di\n int 24h\n pop di\n inc di\n'
+                         ' cmp di,14\n jb l\n mov ax,4C00h\n int 21h\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(OUT, 'CRITALL.COM'), src], check=True)
+    img = image('share.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(HERE, 'UPPER.COM'), os.path.join(GOS, 'src', 'CALC.COM'),
+                os.path.join(OUT, 'CRITALL.COM'), 'T.COM=' + os.path.join(HERE, 'UPPER.COM'), 'SUB\\',
+                bat('GO.BAT', '@echo off', 'type nosuch'), bat('T.BAT', '@echo off', 'echo the batch file'),
+                bat('U.BAT', '@echo off', 'echo U is a batch file'))
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    fs = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    sh.run('echo hello > a.txt')
+    sh.run('nosuch > e1.txt'); sh.run('call go > e2.txt'); sh.run('path ;'); sh.run('path > e3.txt')
+    sh.run('copy a.txt sub > e4.txt'); sh.run('rd sub > e5.txt'); sh.run('dir sub > e6.txt')
+    f = fs()
+    check('messages byte for byte, each with its new line', (f.get('A:\\E1.TXT'), f.get('A:\\E2.TXT'), f.get('A:\\E3.TXT'),
+          f.get('A:\\E4.TXT'), f.get('A:\\E5.TXT')) == (b'Bad command or file name\r\n', b'GO line 2: File not found\r\n',
+          b'No Path\r\n', b'        1 File(s) copied\r\n', b'Invalid path, not directory,\r\nor directory not empty\r\n')
+          and f.get('A:\\E6.TXT', b'').endswith(b' bytes free\r\n') and b'A        TXT' in f.get('A:\\E6.TXT', b''),
+          [(n, f.get(n)) for n in sorted(f) if n.startswith('A:\\E')])
+    check('... COPY into a directory with its output redirected (path1/path2 share in_name/out_name)', 'A:\\SUB\\A.TXT' in f, sorted(f))
+    k.key('cls'); k.key(ktest.ENTER); k.key('critall'); k.key(ktest.ENTER)
+    seen = []
+    for i in range(14):
+        L = k.pc.text_screen().rstrip().split('\n')
+        seen.append(tuple(x.rstrip() for x in L[-3:]))
+        k.key('f')
+    msgs = ['Write protect error', 'Unknown unit error', 'Not ready error', 'Unknown command error', 'Data error', 'Bad request error',
+            'Seek error', 'Unknown media type', 'Sector not found', 'Printer out of paper', 'Write fault', 'Read fault', 'General failure',
+            'General failure']
+    check("INT 24h: each code's message (over 12: General failure), a new line before it", seen ==
+          [('', m + ' writing drive A', 'Abort, Retry, Fail?') for m in msgs], seen)
+    sh.run('dir a:')
+    o = sh.run('dir')
+    sh.run('copy a.txt sub\\b.txt')
+    o2 = sh.run('dir')
+    check('DIR after DIR A: or a COPY: the current drive (not a drive from what the buffer held before)',
+          'Volume in drive A is LODESTONE' in o and 'Volume in drive A is LODESTONE' in o2 and o.count('bytes free') == 1, (o, o2))
+    sh.run('dir sub')
+    o = sh.run('calc 6*7')
+    o2 = sh.run('type a.txt | upper > up.txt')
+    check("a program's command tail after DIR (tail shares DIR's pattern); a pipe into a file after TYPE",
+          '42' in o.split('\n') and fs().get('A:\\UP.TXT') == b'HELLO \r\n', (o, o2, fs().get('A:\\UP.TXT')))
+    sh.run('copy a.txt *.bak'); sh.run('ren a.bak c.bak')
+    o = sh.run('calc 1+2')
+    check("COPY's and REN's names mapped (in the EXEC block's place), then a program", 'A:\\C.BAK' in fs() and '3' in o.split('\n'), (o, sorted(fs())))
+    sh.run('path a:\\'); sh.run('cd sub')
+    o = sh.run('calc 2+2')
+    check('a program found on the PATH, then $P (CD and $P share the PATH walk\'s buffer)', '4' in o.split('\n')
+          and o.rstrip().endswith('A:\\SUB>'), o)
+    sh.run('cd ..')
+    o = sh.run('cd q:')
+    check('CD of a drive that isn\'t there', 'Invalid drive specification' in o, o)
+    o = sh.run('type nosuch.x') + sh.run('echo kept && if errorlevel 1 echo P1')
+    o2 = sh.run('dir sub > nul && tasks || if errorlevel 1 echo T1')
+    check('the built-ins: ECHO (the first that leaves ERRORLEVEL) keeps it, TASKS (the last that sets it) sets it',
+          'P1' in o and 'Multitasking is off' in o2 and 'T1' in o2, (o, o2))
+    outs = [sh.run(c) for c in ('erase nosuch', 'rename nosuch x', 'mkdir mk', 'chdir mk', 'chdir ..', 'rmdir mk', 'rmdir mk')]
+    check('ERASE, RENAME, MKDIR, CHDIR, RMDIR: the same commands', 'File not found' in outs[0] and 'Duplicate file name' in outs[1]
+          and 'A:\\MK>' in outs[3] and 'Invalid path' in outs[6] and 'Bad command' not in ''.join(outs), outs)
+    o = sh.run('t < a.txt')
+    o2 = sh.run('u')
+    check('.COM before .BAT; a .BAT alone runs as a batch file', 'HELLO' in o and 'the batch file' not in o
+          and 'U is a batch file' in o2, (o, o2))
+    sh.run('date 1-2-27'); sh.run('time 9:05')
+    sh.run('prompt $d $t$g')
+    o = sh.run('rem')
+    sh.run('prompt $p$g')
+    check('PROMPT $D $T: "01-02-2027  9:05>"', o.rstrip().endswith('01-02-2027  9:05>'), o)
+    deep = ''.join('\\' + c * 8 for c in 'ABCDEFG') + '\\HH'     # as deep as CWDLEN allows (65 characters as 47h gives it)
+    for c in 'ABCDEFG':
+        sh.run('md ' + c * 8); sh.run('cd ' + c * 8)
+    sh.run('md HH'); sh.run('cd HH')
+    sh.run('echo hi > x.txt'); sh.run('echo DECOY > t')
+    outs = [sh.run(c) for c in ('copy x.txt longname.txt', 'copy x.txt longname.tx', 'copy x*.txt *.bak')]
+    o = sh.run('copy longname.txt longname.txt')
+    sh.run('cd \\')
+    f = fs()
+    check("COPY from a 65-character directory: COPY's two names checked (74-82 bytes) don't reach its source name",
+          [f.get('A:' + deep + n) for n in ('\\LONGNAME.TXT', '\\LONGNAME.TX', '\\X.BAK')] == [b'hi \r\n'] * 3
+          and all('1 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith('A:\\A'))))
+    check("... and a file there copied onto itself (an 81-character name): refused as such", 'cannot be copied onto itself' in o, o)
+    sh.run('cd sub')
+    outs = [sh.run('copy ?.txt ' + '.\\' * n + '????????.' + e) for n, e in ((34, 'BBK'), (51, 'CCK'))]   # 80 and 114 characters
+    sh.run('md \\q'); sh.run('cd \\q'); sh.run('echo 1 > a'); sh.run('echo 2 > b')
+    outs.append(sh.run('for %a in (' + '.\\' * 27 + ') do copy. %a%a.\\????????.DDK'))   # 122, the longest a line allows
+    sh.run('cd \\')
+    f = fs()
+    check("COPY with wildcards to a destination of 80, 114 and 122 characters (past its buffer): every file",
+          all(('A:\\SUB\\%s.%s' % (b, e)) in f for b in 'AB' for e in ('BBK', 'CCK'))
+          and 'A:\\Q\\A.DDK' in f and 'A:\\Q\\B.DDK' in f
+          and all('2 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith(('A:\\SUB', 'A:\\Q')))))
+    k.key('exit'); k.key(ktest.ENTER)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
+    probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('back in the Executive, disk consistent', k.pc.mode() == 0x40 and not probs, probs)
+
 def t_cmdsaver():
     """The Executive's screen saver at the prompt (and in PAUSE): DEFRAG,
     the dark screen, then the prompt as it was; the Executive's memory
@@ -1576,7 +1683,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_command, t_cmdedit, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
