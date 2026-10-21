@@ -1211,28 +1211,66 @@ dw_     db 'D?.TXT', 0
 """)
     Y = ktest.Syms(os.path.join(GOS, 'src', 'LODE.MAP'))
     stdin = com('STDIN', """
-        cmp byte [82h], 'c'
-        jne .go
-        mov ah, 3Eh
-        xor bx, bx
-        int 21h
-.go:    mov di, ops
-.l:     mov al, [di]
-        inc di
+        mov si, ops
+.l:     lodsb
         or al, al
         jz .x
         mov ah, al
-        mov si, SFT0            ; (SI: CON's SFT entry, as a stale SI would be)
+        push si
         int 21h
         call hex
         mov dl, ' '
         mov ah, 2
         int 21h
+        pop si
         jmp .l
 .x:     mov ax, 4C00h
         int 21h
 ops     db 0Bh, 08h, 0Bh, 08h, 0Bh, 08h, 0
-""".replace('SFT0', str(Y['sft'])))
+""")
+    stdk = com('STDK', """
+        mov ax, 3D00h           ; A.TXT open ("ab"): its SFT entry where
+        mov dx, fname           ;  the stack will be, so int21's SI (the
+        int 21h                 ;  caller's SP) points at it
+        jc .err
+        mov bx, ax
+        mov al, [bx+18h]
+        xor ah, ah
+        mov cx, SFTSZ
+        mul cx
+        add ax, SFT0
+        mov [newsp], ax
+        mov ah, 3Eh             ; no handle 0
+        xor bx, bx
+        int 21h
+        mov bp, ops
+.l:     mov al, [bp]
+        inc bp
+        or al, al
+        jz .x
+        mov ah, al
+        cli
+        mov [oldsp], sp
+        mov sp, [newsp]
+        sti
+        int 21h
+        cli
+        mov sp, [oldsp]
+        sti
+        call hex
+        mov dl, ' '
+        mov ah, 2
+        int 21h
+        jmp .l
+.err:   mov al, 0EEh
+        call hex
+.x:     mov ax, 4C00h
+        int 21h
+ops     db 08h, 07h, 01h, 0Bh, 0
+fname   db 'A.TXT', 0
+oldsp   dw 0
+newsp   dw 0
+""".replace('SFT0', str(Y['sft'])).replace('SFTSZ', '44'))
     find = com('FIND', """
         mov si, attrs
 .a:     lodsb
@@ -1272,12 +1310,15 @@ pat     db '*.*', 0
     open(os.path.join(OUT, 'AB.TXT'), 'wb').write(b'ab')
     big = bytes((i * 7 + i // 251) & 0xFF for i in range(100000))
     open(os.path.join(OUT, 'BIG.BIN'), 'wb').write(big)
-    img = image('kmed.img', os.path.join(GOS, 'src', 'LCMD.COM'), names, stdin, find, 'A.TXT=' + os.path.join(OUT, 'AB.TXT'),
+    img = image('kmed.img', os.path.join(GOS, 'src', 'LCMD.COM'), names, stdin, stdk, find, 'A.TXT=' + os.path.join(OUT, 'AB.TXT'),
                 'HID.TXT=' + os.path.join(OUT, 'AB.TXT'), 'SYS.TXT=' + os.path.join(OUT, 'AB.TXT'), 'SUB\\', 'ABCDEFGH\\',
-                'BIG.BIN=' + os.path.join(OUT, 'BIG.BIN'))
+                'A.B\\', 'BIG.BIN=' + os.path.join(OUT, 'BIG.BIN'))
     subprocess.run(['mattrib', '-i', img, '+h', '::HID.TXT'], check=True)
     subprocess.run(['mattrib', '-i', img, '+s', '::SYS.TXT'], check=True)
     k = ktest.KPC(img, image('kmedb.img')); k.start()
+    reads0 = [c for c in k.pc.calls13 if c[0] == 2 and c[1] == 0 and c[2:5] == (0, 0, 1)]
+    check("booted: A: mounted from the boot sector's BPB start was given (no INT 13h read of A:'s sector 0 for it)",
+          not reads0, reads0)
     sh = Shell(k)
     fs = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
     o = sh.run('copy big.bin big2.bin') + sh.run('copy big.bin b:big3.bin') + sh.run('copy b:big3.bin big4.bin')
@@ -1291,15 +1332,17 @@ pat     db '*.*', 0
     sh.run('find > fo.txt')
     o = fs().get('A:\\FO.TXT', b'').decode('latin-1')
     got = [set(x for x in part.split(',') if x) for part in o.split('/')[:6]]
-    plain = {'LODE.SYS', 'LCMD.COM', 'NAMES.COM', 'STDIN.COM', 'FIND.COM', 'A.TXT', 'BIG.BIN', 'BIG2.BIN', 'BIG4.BIN', 'FO.TXT'}
-    want = [plain, plain | {'HID.TXT'}, plain | {'SYS.TXT'}, plain | {'SUB', 'ABCDEFGH'}, {'LODESTON.E'},
-            plain | {'HID.TXT', 'SYS.TXT', 'SUB', 'ABCDEFGH'}]
+    plain = {'LODE.SYS', 'LCMD.COM', 'NAMES.COM', 'STDIN.COM', 'STDK.COM', 'FIND.COM', 'A.TXT', 'BIG.BIN', 'BIG2.BIN', 'BIG4.BIN',
+             'FO.TXT'}
+    want = [plain, plain | {'HID.TXT'}, plain | {'SYS.TXT'}, plain | {'SUB', 'ABCDEFGH', 'A.B'}, {'LODESTON.E'},
+            plain | {'HID.TXT', 'SYS.TXT', 'SUB', 'ABCDEFGH', 'A.B'}]
     check('FIND FIRST/NEXT with 0, hidden, system, directory, the label alone (as 8.3: LODESTON.E), all three: those entries each time',
           got == want, (o, got))
-    sh.run('stdin < a.txt > o1.txt'); sh.run('stdin c > o2.txt')
+    sh.run('stdin < a.txt > o1.txt'); sh.run('stdk > o2.txt')
     f = fs()
-    check('standard input from a file ("ab"): 0Bh, 08h each time FF a FF b, then at its end 00 and 1Ah; with no handle 0, 00 and 1Ah',
-          f.get('A:\\O1.TXT') == b'FF 61 FF 62 00 1A ' and f.get('A:\\O2.TXT') == b'00 1A 00 1A 00 1A ',
+    check('standard input from a file ("ab"): 0Bh, 08h each time FF a FF b, then at its end 00 and 1Ah; with no handle 0 '
+          '(and SI at another open file\'s SFT entry): 08h, 07h, 01h 1Ah, 0Bh 00',
+          f.get('A:\\O1.TXT') == b'FF 61 FF 62 00 1A ' and f.get('A:\\O2.TXT') == b'1A 1A \x1a1A 00 ',   # (01h echoes it)
           (f.get('A:\\O1.TXT'), f.get('A:\\O2.TXT')))
     sh.run('names > no.txt')
     o = fs().get('A:\\NO.TXT', b'')
@@ -1310,6 +1353,12 @@ pat     db '*.*', 0
     sh.run('cd \\')
     check('CD ABCDEFGHIJ: the directory ABCDEFGH, kept 8.3 (A:\\ABCDEFGH, as MS-DOS keeps it)',
           o.rstrip().endswith('A:\\ABCDEFGH>') and 'A:\\ABCDEFGH\n' in o2 + '\n', (o, o2))
+    o = sh.run('cd a.b.c'); sh.run('md made'); o2 = sh.run('cd ..') + sh.run('dir')
+    sh.run('cd \\')
+    dl = []; fatcheck.read_files(bytes(k.pc.drives[0].img), dirs=dl)
+    check('CD A.B.C (A.B there: the name taken as A.B, as resolve takes it): A:\\A.B, MD there makes A.B\\MADE, CD .. '
+          'is the root again', o.rstrip().endswith('A:\\A.B>') and 'A:\\A.B\\MADE' in dl and 'A:\\MADE' not in dl
+          and 'LODE     SYS' in o2, (o, o2, sorted(n for n in dl if 'MADE' in n)))
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 

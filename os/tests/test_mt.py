@@ -56,7 +56,7 @@ MTK = os.path.join(HERE, 'MTKEY.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel batch): the kernel's image and BSS, the UI block kept while
 # a DOS program runs
-OFF_MAP = {'image_end': 0x3E50, 'bss_end': 0x7380, 'ui_keep_end': 0x67A8}
+OFF_MAP = {'image_end': 0x3EA0, 'bss_end': 0x73D0, 'ui_keep_end': 0x67A8}
 
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
