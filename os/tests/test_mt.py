@@ -540,6 +540,9 @@ class Audit:
         s.depth, s.only = {'tick': 0, 'exit': 0}, collections.Counter()
         s.seg = seg = mt_seg(k)
         s.at, s.sa, s.swa, s.ex = (seg * 16 + k.Y[n] for n in ('mt_preempt', 'mt_safe', 'mt_switch', 'mt_exit'))
+        s.fd, s.fdw, s.due = seg * 16 + k.Y['mt_fdrain'], seg * 16 + k.Y['mt_fdrain.w'], False
+        s.inject, s.injected, s.open, s.nested = None, 0, {}, 0    # (IRQ 13 at mt_fdrain, when inject() says;
+                                                                    #  open drains: SS -> where they return)
         s.ret = {k.Y['mt_tick.r']: 'tick', k.Y['mt_exit.n']: 'exit'}
         s.prev, k.pc.watch = k.pc.watch, s.watch
     def stop(s): s.k.pc.watch = s.prev
@@ -566,7 +569,17 @@ class Audit:
         if s.track:
             if pc.r('ss') != s.track[0] or pc.r('cs') not in (s.seg, 0x60): s.track = None
             else: s.depth[s.track[2]] = max(s.depth[s.track[2]], s.track[1] - pc.r('sp'))
-        if a == s.ex:
+        if s.open and a in s.open.values():                 # (back from mt_fdrain: its RET's target)
+            s.open = {ss: r for ss, r in s.open.items() if not (r == a and ss == pc.r('ss'))}
+        if a == s.fd:
+            ss = pc.r('ss')
+            again = ss in s.open                            # (a drain inside one: no second IRQ)
+            if not again: s.open[ss] = s.seg * 16 + pc.u16(ss, pc.r('sp'))
+            s.due = s.inject and not again and s.inject()
+        elif a == s.fdw and s.due:                          # (interrupts on: raised and taken here, pcemu
+            s.due = False                                   #  delivering IRQs as its run loop starts again)
+            pc.irq_pending.add(13); s.injected += 1; pc.mu.emu_stop()
+        elif a == s.ex:
             if s.force and pc.rd(s.seg, k.Y['mt_pend'], 1)[0] == 0: pc.wr(s.seg, k.Y['mt_pend'], b'\1')
         elif a == s.sa:
             r, cur = s.rules(pc.r('ax'), pc.r('bx'), pc.r('dx'), pc.r('ss'))
@@ -574,6 +587,7 @@ class Audit:
             if len(no) == 1: s.only[no[0]] += 1
         elif a == s.at:
             ss, sp = pc.r('ss'), pc.r('sp')
+            if ss in s.open: s.nested += 1                  # (inside a drain of this task's, its IRQ 13 handler's)
             path = s.ret.get(pc.u16(ss, sp), '?')
             f = sp + 12 if path == 'tick' else sp + 4 + 20     # (mt_tick's 5 pushes, or BP and INT 21h's frame: IP, CS, FL)
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
@@ -865,6 +879,25 @@ def t_fpu():
     ib = [A.disk_file(k, 'B%d.TXT' % i) for i in range(3)]
     check('a new task finds the coprocessor as FNINIT leaves it (control word 037Fh), also run straight after one that '
           'set its own and ended (%s)' % b' '.join(x or b'-' for x in ib).decode(), ib == [b'00000001'] * 3, ib)
+    # a coprocessor error (IRQ 13, raised by the test) pending at a switch: handled at mt_fdrain, before anything is
+    # saved or chosen, by a handler that EOIs, STIs, calls INT 21h and waits for a tick, so it is preempted in there
+    au = Audit(k)
+    k.pc.pic2_mask &= ~0x20
+    def inj():
+        cur = k.pc.rd(seg, Y['mt_cur'], 1)[0]
+        reg = k.pc.u16(seg, Y['mt_tab'] + cur * MT_ENT + 4)
+        return cur and reg <= vec(k, 0x75)[0] < reg + k.pc.u16(reg - 1, 3)      # (the E task's own error)
+    au.inject = inj
+    v75 = vec(k, 0x75)
+    typ(k, 'mtlaunch mtspin.com 20 e1.txt e;mtspin.com 20 e2.txt p', 3.0); line(k, '')
+    au.inject = None
+    e1, e2 = spun(k, 'E1.TXT'), spun(k, 'E2.TXT')
+    check('a coprocessor error pending at each switch from a task (IRQ 13, %d times): handled first, before anything is '
+          'saved, by its handler, which was itself switched from %d times (a tick in it); both tasks counted (%d and %d, the '
+          'second keeping its own coprocessor values), the machine intact, INT 75h given back'
+          % (au.injected, au.nested, e1, e2), au.injected > 5 and au.nested > 0 and e1 > 0 and e2 > 0 and not k.crashed
+          and not au.bad() and vec(k, 0x75) == v75, (au.injected, au.nested, e1, e2, au.bad()[:2], vec(k, 0x75), v75))
+    au.stop()
     k = boot('mt_nf.img', b'MULTITASK=1\r\n', 88, nofpu=True)
     seg = mt_seg(k)
     Shell(k).run('ver')

@@ -1,5 +1,5 @@
 ; MTSPIN.COM - for test_mt.py: a task that computes, for preemption.
-;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | T | B | P | I | O]
+;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | E | T | B | P | I | O]
 ; Counts, as fast as it can, for T ticks of the BIOS's clock (40:6Ch),
 ; then writes the count (8 hex digits) to CNTFILE.  It prints nothing.
 ;   D  an INT 21h call (AH=2Ch) on each count
@@ -14,6 +14,10 @@
 ;   H  hooks INT 1Ch (AH=25h) meanwhile: its handler does STI and, with
 ;      InDOS 0, AH=2Ch, then chains (so INT 21h's way out with IRQ 0 in
 ;      service)
+;   E  hooks INT 75h (IRQ 13, a coprocessor error) meanwhile, as the
+;      BIOS's handler: both PICs' EOI, STI, then (its own) AH=2Ch and a
+;      wait for the next tick, so a tick lands in it (test_mt raises the
+;      IRQ itself)
 ;   T  hooks INT 08h meanwhile, writing the vector itself (not AH=25h):
 ;      its handler does STI and chains with PUSHF / CALL FAR
 ;   B  counts with the direction flag set (STD)
@@ -69,7 +73,7 @@ org 100h
         jc      .x
         mov     [dh_], ax
 .h0:    cmp     byte [mode], 'H'
-        jne     .t0
+        jne     .e0
         mov     ah, 34h                 ; (InDOS)
         int     21h
         mov     [indp], bx
@@ -80,6 +84,15 @@ org 100h
         mov     [o1c + 2], es
         mov     ax, 251Ch
         mov     dx, h1c
+        int     21h
+.e0:    cmp     byte [mode], 'E'
+        jne     .t0
+        mov     ax, 3575h
+        int     21h
+        mov     [o75], bx
+        mov     [o75 + 2], es
+        mov     ax, 2575h
+        mov     dx, h75
         int     21h
 .t0:    cmp     byte [mode], 'T'
         jne     .p0
@@ -218,7 +231,14 @@ org 100h
         lds     dx, [o1c]
         int     21h
         pop     ds
-.uw:    cmp     byte [mode], 'W'
+.uw:    cmp     byte [mode], 'E'
+        jne     .uw2
+        push    ds
+        mov     ax, 2575h
+        lds     dx, [o75]
+        int     21h
+        pop     ds
+.uw2:   cmp     byte [mode], 'W'
         jne     .c
         mov     ah, 3Eh
         mov     bx, [dh_]
@@ -264,6 +284,28 @@ h1c:    sti                             ; INT 1Ch (H)
         pop     bx
         pop     ds
         jmp     far [cs:o1c]
+h75:    push    ax                      ; INT 75h, IRQ 13 (E): as the BIOS's
+        mov     al, 20h                 ;  (both PICs' EOI first), then STI,
+        out     0A0h, al                ;  an INT 21h call, and a wait for the
+        out     20h, al                 ;  next tick: so a tick lands in here
+        sti
+        push    ds
+        push    bx
+        push    cx
+        push    dx
+        mov     ah, 2Ch
+        int     21h
+        push    40h
+        pop     ds
+        mov     bx, [6Ch]
+.w:     cmp     bx, [6Ch]
+        je      .w
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ds
+        pop     ax
+        iret
 h08:    sti                             ; INT 08h (T)
         pushf
         call    far [cs:o08]
@@ -308,6 +350,7 @@ ssv     dw      0
 spv     dw      0
 indp    dd      0
 o1c     dd      0
+o75     dd      0
 o08     dd      0
 fpn     dw      0
 fpn2    dw      0
@@ -317,5 +360,5 @@ fpe     db      0
 mode    db      0
 out_    times 8 db 0
 rec     db      '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDE', 0Ah
-        times   256 db 0
+        times   512 db 0
 stk_top:
