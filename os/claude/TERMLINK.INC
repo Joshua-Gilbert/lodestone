@@ -434,31 +434,24 @@ delay_ms:
 .x:     ret
 
 ; CRC-16/CCITT-FALSE.  AX = crc, DS:SI -> data, CX = count.  Destroys BX SI CX.
+; Four bits at a time from a 16-entry table: 32 bytes, not a 512-byte one
+; (~75 clocks a byte, not ~34: a 1 KB frame +5 ms at 8 MHz, RCON's
+; screen_crc ~16 -> ~36 ms; and no 256-entry table to build at start).
 crc16:  jcxz    .x
-.l:     mov     bl, ah
-        xor     bl, [si]
+.l:     xor     ah, [si]
         inc     si
-        xor     bh, bh
-        shl     bx, 1
-        mov     ah, al
-        xor     al, al
-        xor     ax, [crctab + bx]
+        mov     bl, ah                  ; the top four bits, as a word index
+        shr     bl, 3
+        and     bx, 1Eh
+        shl     ax, 4
+        xor     ax, [crcnib + bx]
+        mov     bl, ah                  ; and the next four
+        shr     bl, 3
+        and     bx, 1Eh
+        shl     ax, 4
+        xor     ax, [crcnib + bx]
         loop    .l
 .x:     ret
 
-crc_init:
-        xor     bx, bx
-.i:     mov     ah, bl
-        xor     al, al
-        mov     cx, 8
-.b:     shl     ax, 1
-        jnc     .n
-        xor     ax, 1021h
-.n:     loop    .b
-        mov     di, bx
-        shl     di, 1
-        mov     [crctab + di], ax
-        inc     bx
-        cmp     bx, 256
-        jb      .i
-        ret
+crcnib: dw 0000h, 1021h, 2042h, 3063h, 4084h, 50A5h, 60C6h, 70E7h       ; n << 12
+        dw 8108h, 9129h, 0A14Ah, 0B16Bh, 0C18Ch, 0D1ADh, 0E1CEh, 0F1EFh ;  through 1021h

@@ -389,9 +389,8 @@ keys_back:
 ;  Term over the link until CODE-\ or CODE-Q.  DS = ES = CS.
 ; =====================================================================
 session:
-        cmp     byte [inited], 0        ; the first time: the CRC table, Term's
-        jne     .i                      ;  screen blank, our title
-        call    crc_init
+        cmp     byte [inited], 0        ; the first time: Term's screen blank,
+        jne     .i                      ;  our title
         call    shadow_seg
         call    shadow_clear
         mov     si, s_title0
@@ -1069,7 +1068,6 @@ ks_len      resw 1
 ks_wait     resb 1                      ; a wait under way, until
 ks_until    resw 1
 reqbuf      resb REQMAX                 ; a REQUEST: id, op, its arguments
-crctab      resw 256
 ; Term (TERMCELL.INC, TERMKEYS.INC)
 t_active    resw 1
 keyn        resb 1
