@@ -10,8 +10,6 @@ last_exit   resw 1              ; AL = code, AH = how it ended
 term_keep   resw 1              ; TSR: paragraphs to keep
 gp_ok       resb 1              ; INT 60h installed
             alignb 2
-ex_hdr      resb 28             ; .EXE header
-ex_env      resw 1
 ex_psp      resw 1
 ex_size     resw 1              ; paragraphs given
 ex_load     resw 1
@@ -25,12 +23,19 @@ ex_min      resw 1
 ex_max      resw 1
 ex_isexe    resb 1
             alignb 2
-ex_tail     resw 2
+ex_env      resw 1              ; the EXEC parameter block's copy (f_4B
+ex_tail     resw 2              ;  moves it in one go: keep the order)
 ex_fcb1     resw 2
 ex_fcb2     resw 2
 ex_name     resb 132            ; full program name for the environment
-ex_rel      resb 256            ; relocation entries, 64 at a time
 section .text
+; scratch that is dead while a program loads (from the header read on
+; EXEC runs no path call and no RENAME; MULTITASK=1 switches tasks only
+; outside INT 21h, or at a key wait, which EXEC's own code never makes):
+ex_hdr      equ ren_de          ; .EXE header (28 of its 32 bytes)
+ex_rel      equ path_buf        ; relocation entries, 64 at a time (256 of
+                                ;  path_buf's and path2_buf's 260)
+        times -(path2_buf + 130 - path_buf < 256) db 0  ; (they must stay together)
 
 proc_init:
         mov     bx, 32                  ; master environment, 512 bytes
@@ -144,12 +149,10 @@ make_psp:
 .h:     mov     al, [18h+si]
         cmp     al, NSFT
         jae     .n
-        push    ax
-        mov     ah, SFT_SZ
-        mul     ah
-        add     ax, sft
-        mov     di, ax
-        pop     ax
+        push    si                      ; (SI: the handle)
+        call    sft_of
+        mov     di, si
+        pop     si
         test    byte [cs:di+S_MODE], 80h
         jnz     .n                      ; opened "not inherited"
         inc     byte [cs:di+S_REF]
@@ -180,24 +183,15 @@ f_4B:   cmp     byte [bp+F_AX], 0
         jmp     fail
 .go:    call    get_path
         jc      .e0
-        mov     es, [bp+F_ES]
-        mov     bx, [bp+F_BX]
-        mov     ax, [es:bx]
-        mov     [ex_env], ax
-        mov     ax, [es:bx+2]
-        mov     [ex_tail], ax
-        mov     ax, [es:bx+4]
-        mov     [ex_tail+2], ax
-        mov     ax, [es:bx+6]
-        mov     [ex_fcb1], ax
-        mov     ax, [es:bx+8]
-        mov     [ex_fcb1+2], ax
-        mov     ax, [es:bx+10]
-        mov     [ex_fcb2], ax
-        mov     ax, [es:bx+12]
-        mov     [ex_fcb2+2], ax
-        push    cs
-        pop     es
+        push    cs                      ; the parameter block, as it is laid
+        pop     es                      ;  out: ex_env, ex_tail, ex_fcb1,
+        push    ds                      ;  ex_fcb2
+        mov     ds, [bp+F_ES]
+        mov     si, [bp+F_BX]
+        mov     di, ex_env
+        mov     cx, 7
+        rep     movsw
+        pop     ds
         call    full_name
         jc      .e0
         call    find_file
@@ -526,21 +520,8 @@ f_4B:   cmp     byte [bp+F_AX], 0
 .e2s:   mov     ax, 11                  ; bad format
 .e2:    push    ax                      ; load failed: give everything back
         push    es
-        mov     es, [ex_psp]            ; the handles it inherited
-        xor     bx, bx
-.uh:    mov     al, [es:18h+bx]
-        cmp     al, NSFT
-        jae     .un
-        mov     ah, SFT_SZ
-        mul     ah
-        add     ax, sft
-        mov     di, ax
-        cmp     byte [di+S_REF], 0
-        je      .un
-        dec     byte [di+S_REF]
-.un:    inc     bx
-        cmp     bx, 20
-        jb      .uh
+        mov     es, [ex_psp]            ; the handles it inherited (the
+        call    close_all               ;  parent holds each: none commits)
         pop     es
         mov     ax, [ex_psp]
         call    mem_free_owner
@@ -698,7 +679,6 @@ terminate:
 section .bss
 t_ip        resw 1
 t_cs        resw 1
-ui_far      resw 2
 section .text
 
 ; tell the UI core that the program at BX ends (MOUSE33.INC's m33_gone)
@@ -706,12 +686,14 @@ ui_progend:
         mov     ax, [ui_seg]
         or      ax, ax
         jz      .x
-        mov     [ui_far + 2], ax
-        mov     word [ui_far], m33_gone
         push    bx
         push    ds
-        call    far [ui_far]
-        pop     ds
+        push    cs                      ; a far call: back to .r, to
+        push    .r                      ;  [ui_seg]:m33_gone
+        push    ax
+        push    m33_gone
+        retf
+.r:     pop     ds
         pop     bx
 .x:     ret
 
@@ -736,10 +718,9 @@ gpib_init:
         cmp     al, gp_MYADDR
         jne     .no
         call    gp_bus_init
-        mov     byte [gp_intno], 60h
         push    es
-        xor     ax, ax
-        mov     es, ax
+        push    0
+        pop     es
         cli
         mov     word [es:60h*4], gp_entry
         mov     [es:60h*4+2], cs

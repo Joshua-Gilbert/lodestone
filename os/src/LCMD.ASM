@@ -228,11 +228,7 @@ ctrlc:  cmp     byte [cs:sv_busy], 0    ; (the Executive's saver: on)
 
 ; INT 24h: "Not ready reading drive A / Abort, Retry, Fail?"
 crit:   sti
-        push    bx
-        push    cx
-        push    dx
-        push    si
-        push    di
+        pusha
         push    ds
         push    es
         push    cs
@@ -281,13 +277,11 @@ crit:   sti
         cmp     byte [child], 0
         jne     .x
         mov     al, 3
-.x:     pop     es
+.x:     mov     bp, sp                  ; the answer into pusha's AX
+        mov     [bp+4+14], al           ;  (past ES and DS)
+        pop     es
         pop     ds
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
+        popa
         iret
 
 ; console output for the critical error handler (BIOS only)
@@ -4076,22 +4070,14 @@ putc:   push    ax
         pop     dx
         pop     ax
         ret
-puts:   push    ax
-        push    bx
-        push    cx
-        push    dx
-        push    si
+puts:   pusha
         mov     dx, si
         call    strlen
         jcxz    .x
         mov     bx, 1
         mov     ah, 40h
         int     21h
-.x:     pop     si
-        pop     dx
-        pop     cx
-        pop     bx
-        pop     ax
+.x:     popa
         ret
 crlf:   push    si
         mov     si, s_crlf

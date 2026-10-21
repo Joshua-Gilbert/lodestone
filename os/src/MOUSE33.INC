@@ -21,6 +21,7 @@
 
 section uibss
 m33_st:                         ; (15h-17h save and restore from here)
+m33_btn     resw 1              ; (then x, y: 03h answers the three)
 m33_x       resw 1
 m33_y       resw 1
 m33_xmin    resw 1
@@ -33,7 +34,6 @@ m33_remx    resw 1              ; what didn't make a whole pixel (x 8)
 m33_remy    resw 1
 m33_mx      resw 1              ; mickeys since 0Bh last read them
 m33_my      resw 1
-m33_btn     resw 1
 m33_cnt     resw 1              ; 0: the pointer shows; -n: hidden n times
 m33_np      resw 2              ; presses of each button since asked,
 m33_px      resw 2              ;  and where the last one was
@@ -130,13 +130,18 @@ m33_end:
         cli
         call    m33_undraw
         mov     word [m33_cnt], -1
+        call    m33_forget
+        sti
+        ret
+
+; the event handler forgotten, none pending or running.  AX = 0
+m33_forget:
         xor     ax, ax
         mov     [m33_hmask], ax
         mov     [m33_hseg], ax
         mov     [m33_hpsp], ax
         mov     [m33_ev], al
         mov     [m33_busy], al
-        sti
         ret
 
 ; from the kernel, far, when the program at BX ends (not a TSR): if the
@@ -151,12 +156,7 @@ m33_gone:
         cli
         cmp     bx, [m33_hpsp]
         jne     .x
-        xor     ax, ax
-        mov     [m33_hmask], ax
-        mov     [m33_hseg], ax
-        mov     [m33_hpsp], ax
-        mov     [m33_ev], al
-        mov     [m33_busy], al
+        call    m33_forget
 .x:     popf
         pop     ds
         retf
@@ -193,8 +193,7 @@ m33_soft:
         mov     cx, 32 + 2
         rep     movsw                   ; (the arrow, then 77FFh, 7700h)
         pop     es
-        mov     byte [m33_busy], 0
-        mov     byte [m33_ev], 0
+        call    m33_forget              ; (the handler went with m33_st too)
         mov     word [m33_cnt], -1
         mov     word [m33_xmax], 639
         call    m33_maxy
@@ -255,11 +254,14 @@ f33_02: cmp     word [m33_cnt], 0       ; (and 10h: conditional off)
         dec     word [m33_cnt]
 .x:     ret
 
-f33_03: mov     ax, [m33_btn]
+f33_03: mov     si, m33_btn         ; buttons, x, y
+; three words at SI -> the caller's BX, CX, DX
+m33_out3:
+        lodsw
         mov     [bp + M3_BX], ax
-        mov     ax, [m33_x]
+        lodsw
         mov     [bp + M3_CX], ax
-        mov     ax, [m33_y]
+        lodsw
         mov     [bp + M3_DX], ax
         ret
 
@@ -426,13 +428,8 @@ f33_1A: mov     ax, [bp + M3_BX]
         mov     [m33_sens + 4], ax
         ret
 
-f33_1B: mov     ax, [m33_sens]
-        mov     [bp + M3_BX], ax
-        mov     ax, [m33_sens + 2]
-        mov     [bp + M3_CX], ax
-        mov     ax, [m33_sens + 4]
-        mov     [bp + M3_DX], ax
-        ret
+f33_1B: mov     si, m33_sens
+        jmp     m33_out3
 
 f33_1E: mov     word [bp + M3_BX], 0     ; display page 0
         ret
@@ -552,13 +549,8 @@ m33_step:
         mov     [si], dx
         add     ax, [di]
         pop     dx
-        cmp     ax, cx
-        jge     .lo
-        mov     ax, cx
-.lo:    cmp     ax, dx
-        jle     .hi
-        mov     ax, dx
-.hi:    mov     [di], ax
+        call    m33_clamp.one
+        mov     [di], ax
         ret
 
 ; the end of mouse_isr, after the EOI: the program's event handler, if

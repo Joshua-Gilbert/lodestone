@@ -113,14 +113,14 @@ gp_done    equ     gp_handler.out
 
 gp_functab dw gp_f_present, gp_f_init, gp_f_write, gp_f_read, gp_f_query, gp_f_spoll
         dw gp_f_clear, gp_f_trigger, gp_f_remote, gp_f_local, gp_f_timeout, gp_f_srq
-        dw gp_f_stats, gp_f_unload
-gp_NFUNC   equ ($-gp_functab)/2
+        dw gp_f_stats                   ; (0Dh, the standalone's unload: the
+gp_NFUNC   equ ($-gp_functab)/2         ;  bad-function answer, as it is built in)
 
 ; ---- function bodies: return AX (and CX/DX where documented) -------
 gp_f_present:
         mov     ax, 4747h
         mov     cx, 0120h               ; LODESTONE: 1.20 = built into the kernel
-        mov     dh, [gp_intno]
+        mov     dh, 60h                 ; (the only vector it is put on)
         mov     dl, gp_MYADDR
         jmp     gp_done
 
@@ -149,13 +149,8 @@ gp_f_query:
         call    gp_do_write
         or      ax, ax
         jnz     gp_fin_ax_cx
-        mov     es, [gp_c_es]
-        mov     di, [gp_c_di]
-        mov     cx, [gp_c_dx]
-        mov     al, [gp_c_al]
-        mov     [gp_lfstop], al
-        call    gp_do_read
-        jmp     gp_fin_read
+        mov     cx, [gp_c_dx]           ; then a read of at most DX bytes
+        jmp     gp_f_read
 
 gp_f_spoll:
         call    gp_spoll
@@ -269,18 +264,11 @@ gp_f_stats:
         mov     dx, gp_res_end - gp_entry ; LODESTONE: size of the built-in driver
         jmp     gp_done
 
-gp_f_unload:                            ; LODESTONE: built in, can't be unloaded
-        mov     ax, gp_E_FUNC
-        jmp     gp_fin_ax
-
 gp_cmdfail:
         call    gp_recover
         mov     ax, gp_E_TMO
-gp_fin_ax: mov     [gp_err], al
-        jmp     gp_done
+gp_fin_ax:
 gp_fin_ax_cx:
-        mov     [gp_err], al
-        jmp     gp_done
 gp_fin_read:
         mov     [gp_err], al
         jmp     gp_done
@@ -868,7 +856,6 @@ gp_lfstop  db 1
 gp_endr    db 0
 gp_auxra   db 0
 gp_renon   db 0
-gp_intno   db 0
 gp_c_al    db 0
 gp_recov   dw 0
 gp_ntmo    dw 0
@@ -884,5 +871,4 @@ gp_c_di    dw 0
 gp_c_cx    dw 0
 gp_c_dx    dw 0
 gp_c_bx    dw 0
-gp_oldvec  dd 0
 gp_res_end:

@@ -355,6 +355,10 @@ in, pointed INT 60h at nonsense and freed memory that wasn't its own;
 now it says the driver is built in.  Claude: the mouse pointer stayed
 on the screen after the Pi went from Term back to chat.
 
+0.9 KB more for DOS programs (578.5 KB with EMS, 562.4 KB without): the
+kernel calls one copy of routines it had written out several times, and
+EXEC's buffers share space with ones that are idle while it loads.
+
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
 read from LODEMT.SYS, which must sit beside LODE.SYS and come from the

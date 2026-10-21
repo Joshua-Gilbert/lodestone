@@ -954,12 +954,11 @@ ems_lend:
         call    mem_alloc
         jc      .no
         mov     [ems_su], ax
-        mov     [bp+F_ES], ax
         dec     ax
         mov     es, ax
         mov     word [es:8], 'SC'
-        mov     word [bp+F_CX], TC_SECS * 512
-        jmp     ok
+        inc     ax
+        jmp     f_F0.lx
 .no:    jmp     f_F0.nolend
 ems_back:
         xor     ax, ax
