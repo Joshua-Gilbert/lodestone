@@ -4340,15 +4340,22 @@ prog        resb 80
 prog2       resb 80
 cword2      equ prog2               ; (the built-in's name: before PATH)
 cdbuf       equ prog2               ; (CD and $P: not inside the PATH's walk)
-canon1      equ prog                ; (COPY's two names checked: canon has no
-canon2      equ prog2               ;  bound, ~195 at most, and COPY doesn't
-                                    ;  use prog..pat_dir: never into src)
 pat         resb 80
 pat_dir     resb 80
 tail        equ pat                 ; (130 bytes: a program's command tail
                                     ;  and TASKS's list; DIR and Tab: never
                                     ;  together)
+            resb 16                 ; (for canon2)
 src         resb 80
+; COPY's two names checked, in prog..src, which COPY doesn't use otherwise.
+; Neither getarg nor canon has a bound: path2 (a line's last word, up to
+; LBUF-6 bytes) runs on into prog, so canon1 starts past that; canon2
+; (DOS's current directory, up to 65 characters, then path2 and a name)
+; ends before src
+canon1      equ prog + 48
+canon2      equ canon1 + 80
+        times   -(prog != out_name + 80 || canon1 - prog < LBUF - 6 - 80) resb 1
+        times   -(src - canon2 < 3 + 65 + 1 + (LBUF - 6) + 13 + 1) resb 1
 dst         resb 80
 setbuf      equ src                 ; (PATH, PROMPT, COMSPEC: no COPY then)
 setbuf2     resb 80
