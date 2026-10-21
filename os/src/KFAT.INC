@@ -867,10 +867,10 @@ f_3A:   call    get_path                ; RMDIR
         jc      .e
         call    find_dir                ; (wildcards: 3, as for CHDIR)
         jc      .e
-        cmp     byte [r_name], 0        ; after it: for these find_dir
+        cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
         je      .acc                    ;  doesn't look the name up, so
         cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
-        je      .acc
+        je      .acc                    ;  (".." it finds, but is refused too)
         mov     si, [actp]
         cmp     ax, [si+D_CWD]
         je      .cur

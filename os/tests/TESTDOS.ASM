@@ -666,6 +666,8 @@ t_dir:  STEP 1
         STEP 3
         mov     dx, d_sub
         DOS     3Bh
+        mov     dx, d_dot               ; RD . in it: 5 (not 16, "the
+        DOSERR  3Ah, 5                  ;  current directory")
         STEP 4
         mov     si, buf
         xor     dl, dl
@@ -724,6 +726,12 @@ t_dir:  STEP 1
         DOS     41h
         mov     dx, d_subw              ; "S?B": wildcards, refused (it
         DOSERR  3Ah, 3                  ;  removed the first match)
+        mov     dx, d_subdot            ; SUB\., empty now: 5 (not SUB
+        DOSERR  3Ah, 5                  ;  through its own "." entry)
+        mov     dx, d_root              ; \: 5
+        DOSERR  3Ah, 5
+        mov     dx, d_up                ; .. in the root: 3, as for CD
+        DOSERR  3Ah, 3
         mov     dx, d_sub               ; so SUB is still there to remove
         DOS     3Ah
         STEP 11
@@ -1381,6 +1389,8 @@ d_sub       db 'SUB', 0
 d_up        db '..', 0
 d_dot       db '.', 0
 d_subw      db 'S?B', 0
+d_subdot    db 'SUB\.', 0
+d_root      db '\', 0
 f_in        db 'IN.TXT', 0
 f_subin     db 'SUB\IN.TXT', 0
 f_suball    db 'SUB\*.*', 0

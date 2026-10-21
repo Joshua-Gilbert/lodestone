@@ -1222,11 +1222,20 @@ dev_read:
         ret
 .aux:   push    cx
         push    dx
-        xor     bx, bx
         xor     dx, dx                  ; AUX = COM1 (DX 0), COM2 (DX 1)
         cmp     al, DEV_COM2
-        jne     .al
+        jne     .a0
         inc     dx
+.a0:    push    ds                      ; a port the BIOS didn't find (its
+        push    40h                     ;  base in the BDA 0): its INT 14h
+        pop     ds                      ;  then answers without a time-out,
+        mov     bx, dx                  ;  so this would read for ever
+        add     bx, bx
+        mov     bx, [bx]
+        pop     ds
+        test    bx, bx
+        jz      .ax                     ; (BX = 0: nothing read)
+        xor     bx, bx
 .al:    jcxz    .ax
         mov     ah, 2
         int     14h
