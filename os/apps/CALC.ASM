@@ -315,6 +315,7 @@ calc_var:                               ; (no variables here: only ANS)
         stc
         ret
 
+%define CALC_RUN                        ; (c_u32: the core's UI_SBU32)
 %include "CALC.INC"
 
 A_INS   equ 0                           ; what a key does: its label

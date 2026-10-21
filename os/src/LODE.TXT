@@ -358,11 +358,16 @@ on the screen after the Pi went from Term back to chat.
 0.9 KB more for DOS programs (578.5 KB with EMS, 562.4 KB without): the
 kernel calls one copy of routines it had written out several times, and
 EXEC's buffers share space with ones that are idle while it loads.  Then
-1.2-1.3 KB more (579.7 KB with EMS, 563.7 KB without): the Executive's screens
-and messages are drawn by shared routines, and its scratch buffers share
-space.  A
-disk that can't be read now says why ("Drive not ready (no disk?)", not
-"error 0"), and a .RUN file whose program is under 2 bytes is refused.
+1.2-1.3 KB more (579.7 KB with EMS, 563.7 KB without): the Executive's
+screens and messages are drawn by shared routines, and its scratch
+buffers share space.  A disk that can't be read now says why ("Drive not
+ready (no disk?)", not "error 0"), and a .RUN file whose program is
+under 2 bytes is refused.  Then the command prompt, Claude and the
+programs: a program started from the prompt has 1.2 KB more, CLAUDE.COM
+keeps 0.4 KB less while it runs one, and System and Write use 1.7 KB and
+0.4 KB less.  After DIR A:, a plain DIR said "Volume in drive   has no
+label" and gave another drive's free space; fixed.  COPY of a file
+onto itself in a deep directory now says so.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,

@@ -76,9 +76,8 @@ term_send:                              ; the keys typed so far: one KEYS at a t
         mov     byte [keyn], 0
         mov     byte [keys_q], 1
         mov     al, G_KEYS
-        mov     dx, cs
         mov     si, keysend
-        call    txq_put
+        call    txq_put_cs
 .x:     ret
 
 %ifdef TERM_MOUSE
@@ -102,10 +101,9 @@ term_mouse:
         mov     [evmouse + 3], dx
         mov     byte [rep_q], 1
         mov     al, G_EVENT
-        mov     dx, cs
         mov     si, evmouse
         mov     cx, 5
-        jmp     txq_put
+        jmp     txq_put_cs
 .x:     ret
 %endif
 
@@ -120,8 +118,7 @@ term_repaint:
         jae     .x
         mov     byte [rep_q], 1
         mov     al, G_EVENT
-        mov     dx, cs
         mov     si, evrepaint
         mov     cx, 1
-        call    txq_put
+        call    txq_put_cs
 .x:     ret
