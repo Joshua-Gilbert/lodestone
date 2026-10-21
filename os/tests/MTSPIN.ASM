@@ -1,5 +1,5 @@
 ; MTSPIN.COM - for test_mt.py: a task that computes, for preemption.
-;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | T | O]
+;   MTSPIN T CNTFILE [D | W DATAFILE | C | S | F | R | H | E | T | B | P | I | O]
 ; Counts, as fast as it can, for T ticks of the BIOS's clock (40:6Ch),
 ; then writes the count (8 hex digits) to CNTFILE.  It prints nothing.
 ;   D  an INT 21h call (AH=2Ch) on each count
@@ -14,8 +14,19 @@
 ;   H  hooks INT 1Ch (AH=25h) meanwhile: its handler does STI and, with
 ;      InDOS 0, AH=2Ch, then chains (so INT 21h's way out with IRQ 0 in
 ;      service)
+;   E  hooks INT 75h (IRQ 13, a coprocessor error) meanwhile, as the
+;      BIOS's handler: both PICs' EOI, STI, then (its own) AH=2Ch and a
+;      wait for the next tick, so a tick lands in it (test_mt raises the
+;      IRQ itself)
 ;   T  hooks INT 08h meanwhile, writing the vector itself (not AH=25h):
 ;      its handler does STI and chains with PUSHF / CALL FAR
+;   B  counts with the direction flag set (STD)
+;   P  keeps its own values on the coprocessor (n and 2n in ST0 and ST1,
+;      n from its segment, and its own rounding in the control word, never
+;      FNINIT's) and checks them on each count: any changed, the count it
+;      writes is 0
+;   I  checks the coprocessor's control word is FNINIT's (037Fh) before it
+;      uses it: if not, the count it writes is 0
 ;   O  no counting: the count is what INT 21h F0h AL=1 says for A: (files
 ;      open there)
 ; nasm -f bin -o MTSPIN.COM MTSPIN.ASM
@@ -62,7 +73,7 @@ org 100h
         jc      .x
         mov     [dh_], ax
 .h0:    cmp     byte [mode], 'H'
-        jne     .t0
+        jne     .e0
         mov     ah, 34h                 ; (InDOS)
         int     21h
         mov     [indp], bx
@@ -74,8 +85,17 @@ org 100h
         mov     ax, 251Ch
         mov     dx, h1c
         int     21h
+.e0:    cmp     byte [mode], 'E'
+        jne     .t0
+        mov     ax, 3575h
+        int     21h
+        mov     [o75], bx
+        mov     [o75 + 2], es
+        mov     ax, 2575h
+        mov     dx, h75
+        int     21h
 .t0:    cmp     byte [mode], 'T'
-        jne     .go
+        jne     .p0
         xor     ax, ax
         mov     es, ax
         cli
@@ -86,6 +106,36 @@ org 100h
         mov     word [es:8 * 4], h08
         mov     [es:8 * 4 + 2], cs
         sti
+.p0:    cmp     byte [mode], 'I'
+        jne     .p1
+        fnstcw  [fpt + 4]               ; (I: FNINIT's control word, as a new
+        fwait                           ;  task must find it)
+        cmp     word [fpt + 4], 037Fh
+        je      .go
+        mov     byte [fpe], 1
+        jmp     .go
+.p1:    cmp     byte [mode], 'P'
+        jne     .b0
+        mov     ax, cs                  ; (P: its own values on the
+        and     ax, 0FFFh               ;  coprocessor: n and 2n, n from its
+        mov     [fpn], ax               ;  segment; rounding as n's low bits,
+        shl     ax, 1                   ;  never FNINIT's)
+        mov     [fpn2], ax
+        mov     ax, [fpn]
+        and     ax, 3
+        or      al, 1
+        mov     cl, 10
+        shl     ax, cl
+        or      ax, 037Fh
+        mov     [fpcw], ax
+        fninit
+        fldcw   [fpcw]
+        fild    word [fpn]
+        fld     st0
+        fadd    st0, st0
+.b0:    cmp     byte [mode], 'B'        ; (B: counting with DF set)
+        jne     .go
+        std
 .go:    push    40h
         pop     es
         mov     ax, [es:6Ch]
@@ -116,9 +166,27 @@ org 100h
 .l:     add     word [cnt], 1
         adc     word [cnt + 2], 0
         cmp     byte [mode], 'D'
-        jne     .i
+        jne     .p
         mov     ah, 2Ch
         int     21h
+.p:     cmp     byte [mode], 'P'
+        jne     .i
+        fist    word [fpt]              ; 2n in ST0, n in ST1, its own control
+        fxch                            ;  word: still?
+        fist    word [fpt + 2]
+        fxch
+        fnstcw  [fpt + 4]
+        fwait
+        mov     ax, [fpt]
+        cmp     ax, [fpn2]
+        jne     .pe
+        mov     ax, [fpt + 2]
+        cmp     ax, [fpn]
+        jne     .pe
+        mov     ax, [fpt + 4]
+        cmp     ax, [fpcw]
+        je      .i
+.pe:    mov     byte [fpe], 1
 .i:     cmp     byte [mode], 'R'
         jne     .i2
         int     62h
@@ -139,6 +207,7 @@ org 100h
         sub     ax, [t0]
         cmp     ax, [tks]
         jb      .l
+        cld
         cmp     word [ssv], 0
         je      .ue
         cli
@@ -162,12 +231,23 @@ org 100h
         lds     dx, [o1c]
         int     21h
         pop     ds
-.uw:    cmp     byte [mode], 'W'
+.uw:    cmp     byte [mode], 'E'
+        jne     .uw2
+        push    ds
+        mov     ax, 2575h
+        lds     dx, [o75]
+        int     21h
+        pop     ds
+.uw2:   cmp     byte [mode], 'W'
         jne     .c
         mov     ah, 3Eh
         mov     bx, [dh_]
         int     21h
-.c:     mov     di, out_                ; the count, in hex
+.c:     cmp     byte [fpe], 0           ; (P: anything changed: count 0)
+        je      .c2
+        mov     word [cnt], 0
+        mov     word [cnt + 2], 0
+.c2:    mov     di, out_                ; the count, in hex
         mov     ax, [cnt + 2]
         call    hex4
         mov     ax, [cnt]
@@ -204,6 +284,28 @@ h1c:    sti                             ; INT 1Ch (H)
         pop     bx
         pop     ds
         jmp     far [cs:o1c]
+h75:    push    ax                      ; INT 75h, IRQ 13 (E): as the BIOS's
+        mov     al, 20h                 ;  (both PICs' EOI first), then STI,
+        out     0A0h, al                ;  an INT 21h call, and a wait for the
+        out     20h, al                 ;  next tick: so a tick lands in here
+        sti
+        push    ds
+        push    bx
+        push    cx
+        push    dx
+        mov     ah, 2Ch
+        int     21h
+        push    40h
+        pop     ds
+        mov     bx, [6Ch]
+.w:     cmp     bx, [6Ch]
+        je      .w
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ds
+        pop     ax
+        iret
 h08:    sti                             ; INT 08h (T)
         pushf
         call    far [cs:o08]
@@ -248,9 +350,15 @@ ssv     dw      0
 spv     dw      0
 indp    dd      0
 o1c     dd      0
+o75     dd      0
 o08     dd      0
+fpn     dw      0
+fpn2    dw      0
+fpcw    dw      0
+fpt     dw      0, 0, 0
+fpe     db      0
 mode    db      0
 out_    times 8 db 0
 rec     db      '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDE', 0Ah
-        times   256 db 0
+        times   512 db 0
 stk_top:

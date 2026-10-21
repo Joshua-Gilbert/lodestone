@@ -14,8 +14,8 @@ it.  Programs start others as tasks (MTLAUNCH), each in a region of its own,
 and they take turns at the timer's tick, where it is safe.  Off (no such
 line, any other value, or no EMS), nothing of it is in memory and everything
 is as before.
-python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_rules t_progs t_rom]"""
-import collections, os, re, subprocess, sys, time
+python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_rules t_fpu t_progs t_rom]"""
+import collections, os, re, struct, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
 sys.path.insert(0, GOS); sys.path.insert(0, HERE)
@@ -23,6 +23,7 @@ import ktest
 import test_apps as A
 from test_kernel import Shell
 from pcemu import STUB
+from unicorn import x86_const as UX
 
 results = []
 def check(name, cond, detail=''):
@@ -46,12 +47,18 @@ OFF_MAP = {'image_end': 0x44F0, 'bss_end': 0x7B40, 'ui_keep_end': 0x6CE4}
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
 
-def boot(name, text=None, ems=88, *more, mt=MTSYS):
+def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
-    MTPROBE, `more`, and LODE.INI holding `text`."""
+    MTPROBE, `more`, and LODE.INI holding `text`.  nofpu: INT 11h says no
+    coprocessor, and the 286's EM bit is set, so any coprocessor instruction
+    traps (INT 7, counted in pc.ints)."""
     files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
         + ([ini(text)] if text is not None else [])
-    k = ktest.KPC(A.image(name, *files), ems_pages=ems); k.start(10)
+    k = ktest.KPC(A.image(name, *files), ems_pages=ems)
+    if nofpu:
+        k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))
+        k.pc.mu.reg_write(UX.UC_X86_REG_CR0, k.pc.mu.reg_read(UX.UC_X86_REG_CR0) | 4)
+    k.start(10)
     k.mcb0 = k.u16('first_mcb')         # (the whole arena's start: first_mcb is per task)
     return k
 
@@ -533,6 +540,10 @@ class Audit:
         s.depth, s.only = {'tick': 0, 'exit': 0}, collections.Counter()
         s.seg = seg = mt_seg(k)
         s.at, s.sa, s.swa, s.ex = (seg * 16 + k.Y[n] for n in ('mt_preempt', 'mt_safe', 'mt_switch', 'mt_exit'))
+        s.fd, s.fdw, s.due = seg * 16 + k.Y['mt_fdrain'], seg * 16 + k.Y['mt_fdrain.w'], False
+        s.inject, s.injected, s.open, s.nested = None, 0, {}, collections.Counter()
+        # (IRQ 13 at mt_fdrain, when inject() says; open drains: SS -> the SP and where its call returns; switches
+        #  started inside one, by path)
         s.ret = {k.Y['mt_tick.r']: 'tick', k.Y['mt_exit.n']: 'exit'}
         s.prev, k.pc.watch = k.pc.watch, s.watch
     def stop(s): s.k.pc.watch = s.prev
@@ -559,7 +570,18 @@ class Audit:
         if s.track:
             if pc.r('ss') != s.track[0] or pc.r('cs') not in (s.seg, 0x60): s.track = None
             else: s.depth[s.track[2]] = max(s.depth[s.track[2]], s.track[1] - pc.r('sp'))
-        if a == s.ex:
+        if s.open:                                          # (back from that very mt_fdrain call: its RET's
+            ss = pc.r('ss')                                 #  target, its SP above the return address)
+            if ss in s.open and s.open[ss][1] == a and pc.r('sp') == s.open[ss][0] + 2: del s.open[ss]
+        if a == s.fd:
+            ss = pc.r('ss')
+            again = ss in s.open                            # (a drain inside this task's: no second IRQ)
+            if not again: s.open[ss] = (pc.r('sp'), s.seg * 16 + pc.u16(ss, pc.r('sp')))
+            s.due = s.inject and not again and s.inject()
+        elif a == s.fdw and s.due:                          # (interrupts on: raised and taken here, pcemu
+            s.due = False                                   #  delivering IRQs as its run loop starts again)
+            pc.irq_pending.add(13); s.injected += 1; pc.mu.emu_stop()
+        elif a == s.ex:
             if s.force and pc.rd(s.seg, k.Y['mt_pend'], 1)[0] == 0: pc.wr(s.seg, k.Y['mt_pend'], b'\1')
         elif a == s.sa:
             r, cur = s.rules(pc.r('ax'), pc.r('bx'), pc.r('dx'), pc.r('ss'))
@@ -568,6 +590,7 @@ class Audit:
         elif a == s.at:
             ss, sp = pc.r('ss'), pc.r('sp')
             path = s.ret.get(pc.u16(ss, sp), '?')
+            if ss in s.open: s.nested[path] += 1            # (inside a drain of this task's, its IRQ 13 handler's)
             f = sp + 12 if path == 'tick' else sp + 4 + 20     # (mt_tick's 5 pushes, or BP and INT 21h's frame: IP, CS, FL)
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
             r, cur = s.rules(cs, ip, fl, ss)
@@ -687,6 +710,12 @@ def t_rules():
           'that alone), so the two MTSPINs run one after the other, each about as much as alone (%d and %d; %d)'
           % (au.only['busy'] - b0, b1, b2, r0), len(au.ev) == n and au.only['busy'] > b0 and b1 > 0.8 * r0 and b2 > 0.8 * r0,
           (len(au.ev) - n, b1, b2, r0))
+    # interrupted with the direction flag set (STD ... REP MOVS, as a memmove backwards)
+    typ(k, 'mtlaunch mtspin.com 20 x1.txt b;mtspin.com 20 x2.txt b', 2.5); line(k, '')
+    x1, x2 = spun(k, 'X1.TXT'), spun(k, 'X2.TXT')
+    check('two tasks counting with the direction flag set (STD), switched at the tick: MT copies their contexts forward '
+          'all the same (CLD), and they take turns (%d and %d)' % (x1, x2),
+          0.3 * r0 < x1 < 0.7 * r0 and 0.3 * r0 < x2 < 0.7 * r0 and not k.crashed, (x1, x2, r0))
     # a stack outside the task's memory
     n, s0 = len(au.ev), au.only['ss']
     typ(k, 'mtlaunch mtspin.com 20 s1.txt s;mtspin.com 20 s2.txt', 3.0); line(k, '')
@@ -827,6 +856,62 @@ def t_ends():
           and tstate(k)[0] == [(0, 1, 'Executive')] and [(b[4], b[2]) for b in a[-2:]] == [(b'TR', 8), (b'MT', 8)],
           (show(a1), show(a), A.disk_file(k, 'T.TXT')))
 
+def t_fpu():
+    print('== the coprocessor: each task\'s own')
+    k = boot('mt_fp.img', b'MULTITASK=1\r\n', 88)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    typ(k, 'mtlaunch mtspin.com 20 p0.txt p', 2.5); line(k, '')
+    typ(k, 'mtlaunch mtspin.com 20 p1.txt p;mtspin.com 20 p2.txt p', 2.5); line(k, '')
+    p0, p1, p2 = spun(k, 'P0.TXT'), spun(k, 'P1.TXT'), spun(k, 'P2.TXT')
+    check('a coprocessor (INT 11h): kept per task.  Two MTSPINs each keeping its own values on it (n and 2n in ST0 and '
+          'ST1, its own rounding in the control word), switched at the tick all along: neither saw them change, and each '
+          'counted about half of one alone (%d and %d; %d)' % (p1, p2, p0), k.pc.rd(seg, Y['mt_fpu'], 1)[0] == 1
+          and p0 > 0 and 0.3 * p0 < p1 < 0.7 * p0 and 0.3 * p0 < p2 < 0.7 * p0, (p0, p1, p2))
+    typ(k, 'mtlaunch mtspin.com 40 p3.txt p', 0.5); typ(k, '', 0.3)
+    typ(k, 'mtspin 20 p4.txt p', 1.5); k.run_for(3.0)
+    p3, p4 = spun(k, 'P3.TXT'), spun(k, 'P4.TXT')
+    check('... and task 0\'s (MTSPIN P from the prompt, another behind it): both kept (%d and %d)' % (p3, p4),
+          p3 > 0 and 0.3 * p0 < p4 < 0.8 * p0, (p3, p4, p0))
+    # a new task finds FNINIT's state, also when the one before it ended with its own, straight into it (no
+    # switch between: the first writes its count to NUL, so it ends within its first turn)
+    for i in range(3):
+        typ(k, 'mtlaunch mtspin.com 0 nul p;mtspin.com 0 b%d.txt i' % i, 1.0); line(k, '')
+    ib = [A.disk_file(k, 'B%d.TXT' % i) for i in range(3)]
+    check('a new task finds the coprocessor as FNINIT leaves it (control word 037Fh), also run straight after one that '
+          'set its own and ended (%s)' % b' '.join(x or b'-' for x in ib).decode(), ib == [b'00000001'] * 3, ib)
+    # a coprocessor error (IRQ 13, raised by the test) pending at a switch: handled at mt_fdrain, before anything is
+    # saved or chosen, by a handler that EOIs, STIs, calls INT 21h and waits for a tick, so it is preempted in there
+    au = Audit(k)
+    k.pc.pic2_mask &= ~0x20
+    def inj():
+        cur = k.pc.rd(seg, Y['mt_cur'], 1)[0]
+        reg = k.pc.u16(seg, Y['mt_tab'] + cur * MT_ENT + 4)
+        return cur and reg <= vec(k, 0x75)[0] < reg + k.pc.u16(reg - 1, 3)      # (the E task's own error)
+    au.inject = inj
+    v75 = vec(k, 0x75)
+    typ(k, 'mtlaunch mtspin.com 40 e1.txt e;mtspin.com 40 e2.txt p', 4.0); line(k, '')
+    au.inject = None
+    e1, e2 = spun(k, 'E1.TXT'), spun(k, 'E2.TXT')
+    nt, nx = au.nested['tick'], au.nested['exit']
+    check('a coprocessor error pending when a task is switched from (IRQ 13, %d times, never again inside its own '
+          'handler): handled first, before anything is saved, by its handler, which was itself switched from (%d times at '
+          'a tick in it, %d on its INT 21h\'s way out); both tasks counted (%d and %d, the second keeping its own '
+          'coprocessor values), the machine intact, INT 75h given back' % (au.injected, nt, nx, e1, e2),
+          au.injected >= 3 and nt > 0 and nx > 0 and e1 > 0 and e2 > 0 and not k.crashed
+          and not au.bad() and vec(k, 0x75) == v75, (au.injected, dict(au.nested), e1, e2, au.bad()[:2], vec(k, 0x75), v75))
+    au.stop()
+    k = boot('mt_nf.img', b'MULTITASK=1\r\n', 88, nofpu=True)
+    seg = mt_seg(k)
+    Shell(k).run('ver')
+    typ(k, 'mtlaunch mtspin.com 20 n1.txt;mtspin.com 20 n2.txt', 2.5); line(k, '')
+    n1, n2 = spun(k, 'N1.TXT'), spun(k, 'N2.TXT')
+    check('INT 11h says no coprocessor (and the 286\'s EM bit set, so any coprocessor instruction would trap): MT runs '
+          'none (no INT 7), and tasks take turns as before (%d and %d)' % (n1, n2), seg
+          and k.pc.rd(seg, Y['mt_fpu'], 1)[0] == 0 and k.pc.ints[7] == 0 and not k.crashed and n1 > 0 and n2 > 0
+          and 0.5 < n1 / n2 < 2, (seg, k.pc.ints[7], n1, n2))
+
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
     k0 = boot('mt_mem0.img', b'MULTITASK=0\r\n')
@@ -944,7 +1029,7 @@ if __name__ == '__main__':
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/', '-o', os.path.join(HERE, n + '.COM'),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_progs, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_progs, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
