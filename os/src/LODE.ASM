@@ -234,6 +234,14 @@ entries     resb 32 * MAXENT            ;  block lets go of the Executive's
 ui_bss_end:                             ;  directory (it reads it again after)                             ; (no alignb 16 here: in a vfollows
                                         ;  section it would clash in NASM)
 
+; The UI block's sizes in paragraphs, folded by NASM: uibss starts on the
+; paragraph after ui_image_end (vfollows, valign=16), so each is the image's
+; paragraphs plus the BSS's to that label (the assertion at the end of the
+; file: nothing goes into section ui after ui_image_end)
+UI_IMG_PARAS    equ (ui_image_end - ui_base + 15) >> 4
+UI_PARAS        equ UI_IMG_PARAS + ((ui_bss_end - ui_bss_start + 15) >> 4)
+UI_KEEP_PARAS   equ UI_IMG_PARAS + ((ui_keep_end - ui_bss_start + 15) >> 4)
+
 ; =====================================================================
 ;  KMT.INC: multitasking.  Its resident part (section mtt, assembled from
 ;  0, run in a segment of its own) is the file's last section: the build
@@ -242,3 +250,6 @@ ui_bss_end:                             ;  directory (it reads it again after)  
 section mtt progbits align=16 follows=ui vstart=0
 section mttbss nobits valign=16 vfollows=mtt
 %include "KMT.INC"                      ; (section mtt, and boot: mt_boot)
+
+section ui                              ; (UI_PARAS: ui_image_end ends it)
+            times -($ - ui_image_end) db 0

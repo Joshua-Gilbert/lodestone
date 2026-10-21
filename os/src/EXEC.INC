@@ -2910,16 +2910,8 @@ draw_form:
         mov     dx, ax
         mov     bx, 13
         mov     cx, 67
-        call    hline
-        push    dx
-        add     dx, ITEM_H - 2
-        call    hline
-        pop     dx
-        mov     ax, 13 * 8
-        mov     cx, ITEM_H - 1
-        call    vline
-        mov     ax, 80 * 8 - 1
-        call    vline
+        mov     bp, ITEM_H - 1
+        call    box
         cmp     byte [focus], FOC_TIT   ; Title and Kind: the chosen title's
         jne     .x                      ;  (none while another item is
         cmp     word [nent], 0          ;  outlined)
