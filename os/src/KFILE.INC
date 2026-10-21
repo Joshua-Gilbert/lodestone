@@ -1616,12 +1616,14 @@ f_4E:   call    get_path
         inc     al
         stosb
         mov     si, r_name
+        mov     cx, 11
         cmp     byte [si], 0
         jne     .p
-        mov     si, all11
-.p:     mov     cx, 11
-        rep     movsb
-        mov     al, [bp+F_CX]
+        mov     al, '?'                 ; no name: everything
+        rep     stosb
+        jmp     short .q
+.p:     rep     movsb
+.q:     mov     al, [bp+F_CX]
         stosb
         mov     ax, [r_dir]
         stosw
@@ -1636,8 +1638,6 @@ f_4E:   call    get_path
         mov     ax, 2                   ; nothing at all: "file not found"
 .e:     jmp     fail
 .ok:    jmp     ok
-all11   db '???????????'
-
 f_4F:   call    find_next
         jmp     ret_cf
 

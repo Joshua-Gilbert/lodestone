@@ -253,12 +253,7 @@ mount_bpb:
         push    cs
         pop     es
         add     si, 0Bh
-        mov     al, [act]
-        mov     ah, BPBLEN
-        mul     ah
-        add     ax, bootcopy
-        mov     di, ax
-        mov     cx, BPBLEN
+        call    bpb_slot
         rep     movsb
         pop     es
         pop     si
@@ -272,6 +267,16 @@ mount_bpb:
         pop     dx
         pop     cx
         pop     bx
+        ret
+
+; drive [act]'s kept BPB -> DI, CX = its length.  AX changed
+bpb_slot:
+        mov     al, [act]
+        mov     ah, BPBLEN
+        mul     ah
+        add     ax, bootcopy
+        mov     di, ax
+        mov     cx, BPBLEN
         ret
 
 ; sector DX of drive [act] into bounce, without INT 24h.  CF: AX = error.
@@ -304,13 +309,8 @@ same_disk:
         xor     dx, dx
         call    raw_bounce
         jc      .diff
-        mov     al, [act]
-        mov     ah, BPBLEN
-        mul     ah
-        add     ax, bootcopy
-        mov     di, ax
+        call    bpb_slot
         mov     si, bounce + 0Bh
-        mov     cx, BPBLEN
         repe    cmpsb
         jne     .diff
         mov     al, [act]

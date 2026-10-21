@@ -591,22 +591,30 @@ clu_zero:
 
 ; a fresh directory entry at SI: name r_name, attribute CL, cluster AX,
 ; size 0, stamped now.  Then written to disk.  CF: AX = error.  AX and
-; CX changed (the fields go in their order, ES = DS)
+; CX changed (the fields go in their order, ES = DS).  An entry in use
+; (CREATE's truncate) keeps bytes 12-21, which other systems use: a free
+; slot (0, E5h) gets them zeroed
 new_entry:
         push    di
         push    si
         push    dx
         push    ax
         mov     di, si
+        mov     dl, [si]                ; (in use?)
         mov     si, r_name
         mov     al, cl
         mov     cx, 11
         rep     movsb                   ; [0] the name
         stosb                           ; [11] the attribute
-        xor     ax, ax
+        dec     dl                      ; 0, E5h (and E6h-FFh) -> FFh, E4h+
+        cmp     dl, 0E4h
+        jae     .z
+        add     di, 10                  ; [12] kept
+        jmp     short .t
+.z:     xor     ax, ax
         mov     cl, 5
-        rep     stosw                   ; [12] reserved
-        call    dos_stamp
+        rep     stosw                   ; [12] zeroed
+.t:     call    dos_stamp
         stosw                           ; [22] the time
         xchg    ax, dx
         stosw                           ; [24] the date
