@@ -4340,11 +4340,14 @@ prog        resb 80
 prog2       resb 80
 cword2      equ prog2               ; (the built-in's name: before PATH)
 cdbuf       equ prog2               ; (CD and $P: not inside the PATH's walk)
+canon1      equ prog                ; (COPY's two names checked: canon has no
+canon2      equ prog2               ;  bound, ~195 at most, and COPY doesn't
+                                    ;  use prog..pat_dir: never into src)
 pat         resb 80
 pat_dir     resb 80
 tail        equ pat                 ; (130 bytes: a program's command tail
-canon1      equ pat                 ;  and TASKS's list; COPY's two names
-canon2      equ pat_dir             ;  checked; DIR and Tab: never together)
+                                    ;  and TASKS's list; DIR and Tab: never
+                                    ;  together)
 src         resb 80
 dst         resb 80
 setbuf      equ src                 ; (PATH, PROMPT, COMSPEC: no COPY then)
