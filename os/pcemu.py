@@ -933,7 +933,11 @@ class PC:
             if al == 2:
                 s.w('ax', 0x0080); s.w('bx', struct.unpack_from('<H', t, 19)[0])
                 s.w('cx', 0x0404 * sock); s.w('dx', t[2] << 8 | dl); s.w('es', 0xA000); s.cf(0); return
-            s.rom_map(sock); s.w('ax', 4 * sock); s.cf(0); return
+            s.rom_map(sock); s.w('ax', 4 * sock); s.cf(0)
+            # the 1520's E403 (F000:DBC4) loads BX and CL from its table and
+            # leaves DH = 0Bh from its port writes: callers can't keep them
+            s.w('bx', 0x5A5A); s.w('cx', (s.r('cx') & 0xFF00) | 0xA5)
+            s.w('dx', 0x0B00 | dl); return
         if ax == 0xE440: s.w('cx', s.ems_pages * 16 if s.ems_pages else 1408); s.w('ax', 0); s.cf(0); return
         if ax == 0xE441: s.w('cx', 0); s.w('ax', 0); s.cf(0); return
         if ax == 0xE442 and s.ems_pages and s.r('dl') == 0xFF:     # memory mode: EMS
