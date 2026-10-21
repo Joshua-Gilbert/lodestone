@@ -56,7 +56,9 @@ bss_start:
 ; laid out alike in the file and in memory, so each is image_end - bss_end
 ; from where it runs in the load image.
 section ems progbits align=16 follows=.text vfollows=.bss valign=16
-section hd progbits align=16 follows=ems vfollows=ems valign=16
+section emsbss nobits vfollows=ems valign=1     ; (KEMS.INC's data: valign=1
+section hd progbits align=16 follows=ems vfollows=emsbss valign=16  ;  keeps it
+                                                ;  where it was, after the code)
 section boot progbits align=16 follows=hd vfollows=hd valign=16
 ; KMDISK.INC: M:'s installer, its resident part's image and that image's
 ; relocations, after the start-ups in the file; ems_init copies them into

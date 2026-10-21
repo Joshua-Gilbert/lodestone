@@ -968,20 +968,28 @@ ems_back:
         jmp     ok
 %endif
 
+ems_pend:                               ; (the end of the code)
+
 ; ---------------------------------------------------------------------
-;  data
+;  data: right after the code in memory, not in the file (section emsbss:
+;  ems_init lays it down as it starts)
 ; ---------------------------------------------------------------------
+section emsbss
+ems_bss:
 %ifndef NOTC
-ems_tcpg:   dw 0                        ; the cache's two pages (register values)
-ems_su:     dw 0                        ; the save-under block (F0h AL=2)
+ems_tcpg:   resw 1                      ; the cache's two pages (register values)
+ems_su:     resw 1                      ; the save-under block (F0h AL=2)
 %endif
-ems_h:      db 0, 0                     ; handles: start (FFh: closed), pages,
-            dw 0                        ;  owner PSP; 0 is the system's (its
-            times EMS_NH - 1 dd 0FFh    ;  owner's low byte: ems_used)
-ems_sv:     times EMS_NS * 5 db 0FFh    ; 47h: handle (FFh: free), 4 registers
-ems_ltab:   times 128 db 0              ; the pages (only those found stay)
-            align 16
+ems_h:      resb 4 * EMS_NH             ; handles: start (FFh: closed), pages,
+                                        ;  owner PSP; 0 is the system's (0, 0,
+                                        ;  0; its owner's low byte: ems_used),
+                                        ;  the others FFh, 0, 0
+ems_sv:     resb EMS_NS * 5             ; 47h: handle (FFh: free), 4 registers
+                                        ;  (all FFh)
+ems_ltab:   resb 128                    ; the pages (only those found stay; 0)
+            resb (16 - ((ems_pend - ems_start) + ($ - $$)) % 16) % 16   ; (align 16)
 ems_end:                                ; (KHD.INC's module follows)
+section ems
 
 ; ---------------------------------------------------------------------
 ;  start-up: `start' jumps here in the load image (1000h:image_end + ...,
@@ -995,10 +1003,30 @@ section boot
 ems_init:
         mov     si, image_end           ; (where this section is in the file)
         mov     di, bss_end
-        mov     cx, (ems_end - ems_start) / 2
+        mov     cx, (ems_pend - ems_start + 1) / 2
         rep     movsw
         push    es
         pop     ds
+        mov     di, ems_bss             ; then its data, as it starts
+        xor     ax, ax
+%ifndef NOTC
+        stosw                           ; ems_tcpg, ems_su
+        stosw
+%endif
+        stosw                           ; ems_h: 0, the system's
+        stosw
+        mov     cx, EMS_NH - 1
+.fh:    mov     al, 0FFh                ;  the others closed
+        stosw
+        xor     al, al
+        stosw
+        loop    .fh
+        mov     cx, EMS_NS * 5          ; ems_sv
+        mov     al, 0FFh
+        rep     stosb
+        mov     cx, ems_end - ems_ltab  ; ems_ltab
+        xor     al, al
+        rep     stosb
         mov     di, ems_ltab
         mov     ax, 0E442h              ; the BIOS: EMS mode?  (its CF is
         mov     dl, 0FFh                ;  whatever it was called with)
