@@ -116,7 +116,8 @@ wtop        resw 1
 wstack      resw 2 * NWIN       ; (window, save offset or 0FFFFh)
 help_w      resb W_SIZE
 help_tab    resw 1
-form_w      resb W_SIZE
+form_w      equ help_w          ; (never open at the same time: ui_help and
+                                ;  ui_form are each a window of their own)
 mv_gx       resw 1              ; a move: where the window was taken (column and
 mv_gy       resw 1              ;  row inside it), and where its outline is now
 mv_c        resw 1
@@ -158,7 +159,9 @@ run_dta     resw 2
 run_ret     resw 1
 run_tail    resb 130
 pc_ch       resb 1              ; putc's character
-app_path    resb 80
+app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
+                                ;  Copy/Move destination, free then (a .RUN's
+                                ;  answer lasts until its next file command)
 rowtab      resw 400
 tmp         resb 96
 section ui
@@ -4029,5 +4032,7 @@ sv_due      resw 1
 sv_col      resw 1
 sv_y        resw 1
 sv_seed     resw 1
-sv_tail     resb 40                 ; "A: /S M=ssss:oooo F=ssss:oooo"
+sv_tail     equ tmp                 ; "A: /S M=ssss:oooo F=ssss:oooo" (40):
+                                    ;  nothing else uses tmp while sv_defrag
+                                    ;  runs DEFRAG on each disk
 section ui
