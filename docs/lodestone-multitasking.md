@@ -21,8 +21,8 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M3 | Preemption from INT 08h at safe points | PR #46, merged. |
 | M3b | Each task's own coprocessor state | PR #47, merged. |
 | M4a | Each task's own screen (an INT 10h hook) and the direct-write detector | PR #50, merged. |
-| M4b | Keys for the front task only (an INT 16h hook: waits that can be switched from, CODE-Tab anywhere) | This PR. |
-| M4c | Each task's own mouse | |
+| M4b | Keys for the front task only (an INT 16h hook: waits that can be switched from, CODE-Tab anywhere) | PR #52, merged. |
+| M4c | Each task's own mouse | This PR. |
 | M5 | Per-task vectors, ending and killing tasks | |
 | M6 | Parking tasks in EMS and bringing them back | |
 | M7 | The Executive's task list (TASKS.RUN, CODE-T), LCMD START/FG/KILL/PARK/WAIT, System's switch | |
@@ -637,7 +637,7 @@ The checks:
 - **The M2b race is narrower, not gone:** a CODE-Tab arriving in the moment between `mt_hot`'s look and the BIOS's own AH=01h (once MT has passed the call on) is still dropped there.
 - **Key latency in front:** a front read waiting in MT gets its key when the tick finds the running background task at a safe point (or on its INT 21h's way out). A background task in a long INT 13h call, in ROM or TSR code, or with interrupts off delays it until then; before, the front task's BIOS wait kept the processor. A key typed just after the BIOS's look, before MT halts, waits for the next interrupt: up to a tick.
 - **The tick's look rewrites the buffer** (CODE-Tab taken out, the words after it moved back) inside the task's own code, at a safe point. A program that writes 40:1Ch itself at that moment (its own INT 09h hook after its EOI, a key stuffer) could lose a key or see stale ones. It needs CODE-Tab in the buffer at that same tick.
-- **A program that ends inside a change of the front** (its own mouse event handler, run on MT's stack while the screens are copied, exiting to DOS) leaves that change half done until the next CODE-Tab, and a DOS program's mouse pointer, hidden for it, can stay hidden until a program resets the mouse (INT 33h AX=0). MT's own state (`mt_swing`, `mt_vbusy`) is cleared at the task's end, so nothing else stays held.
+- **A program that ends inside a change of the front** (its own mouse event handler, run on MT's stack while the screens are copied, exiting to DOS) leaves that change half done until the next CODE-Tab, and a DOS program's mouse pointer, hidden for it, can stay hidden until a program resets the mouse (INT 33h AX=0; M4c puts the front task's INT 33h state back there). MT's own state (`mt_swing`, `mt_vbusy`) is cleared at the task's end, so nothing else stays held.
 - **A forced front** (a background task at a key wait it can't be switched from) replaces a CODE-Tab or MT_FRONT request still pending: it has to be asked again.
 - **A front program that only polls,** switched from at a peek with its shadow lost, is taken as in the middle of its run and frozen behind, to be safe, though it is in effect at a key wait.
 - **The BIOS isn't called while a front task waits:** MT HLTs instead, so anything the BIOS does in its own wait (INT 15h AH=90h, "device busy", which some idle detectors and power managers watch) doesn't happen.
@@ -701,3 +701,59 @@ The checks:
   - **A background task that can't be switched from:** not brought to the front; brought there inside a critical error's prompt, an INT 13h call or MT's call to the BIOS; `mt_can` not testing the INT 13h count.
 
   **Not tested here:** the M2b race and the key latency (both timing); a real interrupt landing in `mt_swnow`'s window (the tests set `mt_swing` themselves), so neither `mt_safe`'s test of `mt_swing` (a handler on its own stack there), `mt_swnow`'s first drain (an error pending as it starts), nor a task ending there (`mt_end` clearing `mt_swing`); a TSR popping up from the kernel's INT 28h in a background task's idle (`mt_idle`: reached only when nothing can run and the front task waits for something other than a key); the 1520's INT 16h turning interrupts on (M9); AH=05h from a background task.
+
+## M4c: each task's own mouse (2026-10-21)
+
+**What it does:** each task has its own INT 33h state. The UI's driver (MOUSE33.INC) is unchanged. It keeps one state, `m33_st` (138 bytes: where the pointer is, its ranges and speeds, the counts of presses and releases, the show count, the pointer's shape, the event handler), which its own functions 15h-17h already save and restore. MT keeps one copy of it per task, in the task's TX (`TX_M33`).
+- **The driver's state is the front task's.** The mouse moves it, its pointer is the one drawn, and its event handler is the one called.
+- **A change of the front swaps it** (`mt_scrto`). The task leaving the front keeps its state, its pointer is taken away (AX=2) before its screen is saved, and the task coming to the front gets its own back through the driver's own function 17h. 17h draws the pointer as that state says, so its show count comes back exactly as the program left it. The same happens when the front task ends and the Executive's task comes back.
+- **A background task's own INT 33h call is done on its own state** (`mt_i33`, an INT 33h hook in front of the UI's driver). Its state is swapped in for the call and the front task's goes back afterwards. Meanwhile the pointer on the real screen is left as it is, and no event handler runs:
+  - the driver draws in no mode (40:49h is 0FFh for the call; for a reset, 00h or 21h, the task's own mode, so its ranges are right);
+  - the pointer drawn on the screen is taken as none (`m33_dn`, `m33_dmode` kept aside);
+  - `m33_busy` is set, which also keeps the tick from switching, and the front task's pending events are kept aside.
+- **As they are** (on the driver's state, as before M4c): the front task's calls; MT's own (`mt_in33`); a call made with an interrupt in service (a TSR's, or a background task's own INT 1Ch handler: the machine's, as for INT 10h and 16h) or by an event handler (`m33_busy`); a call inside MT's call to the BIOS, an INT 13h call, a change of the front or a critical error's prompt; and a call that isn't from the running task's own code (a TSR's: `mt_mine`).
+- **A new task's state** is the driver's when it starts, with the pointer off and no event handler, until its program resets the mouse. (Not zeros: a mouse packet divides by the speed.)
+- **A background program's end** (`ui_progend`, which tells the driver, now a far jump to `mt_pgend` first): if its event handler is in its task's own state, it is forgotten there, as the driver's `m33_gone` forgets the front task's.
+- **The hook is put in place** at a task's spawn and at each change of the front, when INT 33h is the UI's driver: the UI sets it at its start, after `mt_boot`, and again when the root restarts. A program's own hook put there since is left alone.
+- **M4b's limit for a task ending inside a change of the front** is smaller: `mt_end` now puts the front task's own INT 33h state back, so no pointer stays hidden. The screen can still be half done until the next CODE-Tab.
+
+**Departures from the plan:**
+- **The event handler isn't held back** until its task is running. The plan had `mouse_isr` call a task's handler only while that task is current. A handler runs at the mouse's interrupt, the way DOS mouse drivers call it, so it is written for that; holding it back would drop or delay the front task's clicks during another task's turn. So the front task's handler runs whichever task the interrupt lands in, as before M4c.
+- **No change to the driver.** The plan called for swapping inside the INT 33h driver; MT does it from outside instead, with the driver's own 17h, and the UI block's size with MT off is unchanged.
+
+**The limits, plainly:**
+- **The front task's event handler runs in whichever task the interrupt lands in** (above). Its EMS windows may then be another task's, so a handler that reads its own EMS pages reads that task's. Its INT 10h calls go on the real screen (M4a), its INT 16h calls pass as an interrupt's.
+- **While a background task's call is in the driver with interrupts on** (a reset that turns the mouse on, 0Ch's and 14h's INT 21h AH=62h): a mouse packet then moves that task's state, not the front task's, and its events are dropped. An interrupt handler that reads the video mode then (40:49h) reads 0FFh.
+- **Only the UI's driver.** A program that installs a mouse driver of its own replaces this one for every task, as before; MT's hook goes only over the UI's driver.
+- **The Executive's own tidying after a program it ran ends behind** (`m33_end`, called in the UI, not through INT 33h) acts on the front task's state: its pointer goes and its handler is forgotten. Task 0's programs seldom end behind.
+- **A TSR's call from a background task's time** (not the task's own code) is done on the front task's state, as before.
+- **After the UI sets INT 33h again** (the root's restart), background calls are done on the front task's state until the next spawn or change of the front puts MT's hook back.
+- **Not tried on the 1520 yet** (M9).
+
+**How:** `mt_i33` sorts the call as `mt_i16` does. A background task's own call goes through `mt_33in`, which saves the front task's state to its TX, keeps the drawn pointer, the pending events and `m33_busy` aside, copies the task's own state in and sets the mode the driver draws in. The call is then made with the caller's registers. `mt_33out` copies the task's state back to its TX, the front task's back in, and the rest as it was. `mt_m33to` and `mt_m33ld` save and restore at a change of the front; `mt_m33new` makes a new task's state; `mt_33hk` puts the hook in place; `mt_pgend` is the program end's patch.
+
+**Cost:**
+- **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 16 bytes, in `mt_boot` (the `ui_progend` patch). MOUSE33.INC is unchanged.
+- **Switch on:** each TX grows by 9 paragraphs (`TX_M33`), so each task's region does too. MT's block is 555 paragraphs plus its MCB (8.7 KB; it was 508): task 0's TX and the new code. A DOS program gets 571.1 KB instead of 579.7.
+- **Files:** LODEMT.SYS is 6,902 bytes (6,289 after M4b); ROM 1 has 17,408 bytes left.
+
+**Tests:** `test_mt.py`, 204 checks (was 191). The new group is `t_mouse`, with a serial mouse on COM1 (pcemu's, `mouse=True`) and a new test program:
+- `MTM33 MODE FILE`:
+  - F resets the mouse, sets an event handler that counts its calls, shows the pointer and reads keys through DOS until "q", then writes its handler's calls and its position (03h);
+  - B is F with its position set to (200, 96) first, writing at once too;
+  - H sets a handler, swaps it for itself (14h), writes, and ends without taking it away; X runs H as a child, then waits as F;
+  - T sets its position, then for 18 ticks its INT 1Ch handler asks for the position, counting the answers that are its own.
+
+The checks:
+- **The hook:** INT 33h is the UI's driver until a task is spawned, then MT's, on to the UI's.
+- **B behind, F in front:** B's reset, position, pointer and handler are its own (its 03h gives (200, 96)); F's pointer stays on the real screen, nothing of B's is drawn there, the mode is as it was, and the driver's state is F's.
+- **The mouse moved:** F's pointer follows. CODE-Tab: B in front, its pointer where it put it, F's gone with F's screen; moved, B's follows and B's handler is called.
+- **B ends in front:** the Executive's task comes back with its own state, the pointer off; none drawn.
+- **F in front again:** its pointer where it was, its handler called only while it was in front (twice), its position moved only then.
+- **H, a child of X behind:** its handler, set on X's own state, is forgotten when it ends; a mouse packet while its 14h call is in the driver with interrupts on calls no handler.
+- **A new task that never asks for the mouse:** its state the driver's, the pointer off, no handler (on memory the test zeroed first); the mouse moving while it is in front draws and calls nothing.
+- **T's INT 1Ch handler, behind** (the timer's interrupt in service): its calls get F's position, never its own; its own code gets its own.
+- **Inside MT's call to the BIOS or an INT 13h call** (set by the test as B's first call comes): B's calls go to the driver's state as they are.
+- **The checks can fail:** each of these, broken on purpose, fails a check (the last two by hanging the group): the hook not put in place; a background call not swapped, or a front task's call swapped; the tests for an interrupt in service, MT's call to the BIOS or an INT 13h call left out; the drawn pointer not kept aside, or the driver left a mode to draw in; `m33_busy` not set for the call; the front task's state not saved, or not put back after the call; 17h replaced by AX=1 at a change of the front, or when the front task ends; a new task's state not made; the program end's patch not made.
+
+  **Not tested here:** MT's own calls are let through twice over (`mt_in33`, and their code is no task's own), and an event handler's calls likewise (`m33_busy`, and the handler is the front task's code), so leaving out either one alone fails nothing; a TSR's call from a background task's time (`mt_mine`); a critical error's prompt; a task ending inside a change of the front (`mt_end`'s 17h); the UI setting INT 33h again; the 1520's own mouse (M9).
