@@ -547,10 +547,10 @@ Every other suite passes unchanged with it. MT's emulation and pcemu's were writ
 
 **Cost:**
 - **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 64 bytes, in `mt_boot` (INT 10h's and INT 13h's hooks, the INT 24h patch); KDISK's new label costs nothing. LCMD.COM grows 25 bytes (the saver's check and MT_SCREEN).
-- **Switch on:** MT's block is 416 paragraphs plus its MCB (6.5 KB; it was 250), so a DOS program gets 571.1 KB instead of 577.6.
-- **Output speed in front, while another task exists:** 120 lines of 54 characters through DOS take 879 ms alone and 1,593 ms shadowed, in pcemu's time. pcemu counts its blocks at 4 µs, calibrated to the 1520's 10 MHz; its polling makes these good to about ±10%. That is about 110 µs more a character. Against it, DOS's own path costs about 135 µs a character in pcemu, where the BIOS costs nothing (that figure also includes loading the program). On the 1520 the BIOS's own teletype comes on top of both, so the slowdown there should be smaller than pcemu's 1.8 times; M9 measures it.
+- **Switch on:** MT's block is 416 paragraphs plus its MCB (6.5 KB; it was 250), so a DOS program gets 572.0 KB instead of 578.5.
+- **Output speed in front, while another task exists:** 120 lines of 54 characters through DOS take 934 ms alone and 1,648 ms shadowed, in pcemu's time. pcemu counts its blocks at 4 µs, calibrated to the 1520's 10 MHz; its polling makes these good to about ±10%. That is about 110 µs more a character. Against it, DOS's own path costs about 145 µs a character in pcemu, where the BIOS costs nothing (that figure also includes loading the program). On the 1520 the BIOS's own teletype comes on top of both, so the slowdown there should be smaller than pcemu's 1.8 times; M9 measures it.
 - **With no other task,** nothing is shadowed: each INT 10h call only passes `mt_v10`'s few checks on its way to the BIOS.
-- **Files:** LODEMT.SYS is 5,842 bytes; ROM 1 has 16,896 bytes left.
+- **Files:** LODEMT.SYS is 5,842 bytes; ROM 1 has 17,408 bytes left.
 
 **Tests:** `test_mt.py`, 165 checks (was 128). The new group is `t_screens`, with five new test programs:
 - `MTSCR MODE [FILE]`:
