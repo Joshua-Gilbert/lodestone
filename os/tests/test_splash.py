@@ -252,9 +252,9 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '563.7', 88: '579.8'}   # (0.6: 0.1 KB less, the PATH search and two settings files;
+MEM_044 = {0: '563.7', 88: '579.7'}   # (0.6: 0.1 KB less, the PATH search and two settings files;
                                       #  then 0.5 KB less, windows that move and close, UI API 6; printer drivers 0.2 KB;
-                                      #  then 0.9 KB more, the 2026-10-20 audit's kernel batch; 1.3 KB more, its UI batch)
+                                      #  then 0.9 KB more, the 2026-10-20 audit's kernel batch; 1.3 / 1.2 KB more, its UI batch)
 
 def t_memory():
     print('== what DOS programs get: the same with the picture as without it')

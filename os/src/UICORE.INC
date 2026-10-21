@@ -160,8 +160,8 @@ run_ret     resw 1
 run_tail    resb 130
 pc_ch       resb 1              ; putc's character
 app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
-                                ;  Copy/Move destination, free then (a .RUN's
-                                ;  answer lasts until its next file command)
+                                ;  Copy/Move destination, free while the
+                                ;  Executive asks or a .RUN runs (UIAPI.INC)
 rowtab      resw 400
 tmp         resb 96
 section ui
@@ -3975,7 +3975,7 @@ font_path   db '@:\'                ; "X:\NAME.FNT": on the drive started from
 exec_fcb    db 0, '           ', 0, 0, 0, 0
 run_epb     dw 0, run_tail, 0, exec_fcb, 0, exec_fcb, 0 ; exec_raw's EXEC block:
                                 ;  our environment; the segments are CS's
-s_err      db 'error ',0
+s_err       db 'error ',0
 ; DOS errors (code, text); the INT 24h ones below
 dos_msgs    db 2, 'File not found',0
             db 3, 'Path not found',0
@@ -4032,7 +4032,9 @@ sv_due      resw 1
 sv_col      resw 1
 sv_y        resw 1
 sv_seed     resw 1
-sv_tail     equ tmp                 ; "A: /S M=ssss:oooo F=ssss:oooo" (40):
-                                    ;  nothing else uses tmp while sv_defrag
-                                    ;  runs DEFRAG on each disk
+sv_tail     resb 30                 ; "A: /S M=ssss:oooo F=ssss:oooo", 0 (not tmp:
+                                    ;  it lasts through each DEFRAG run, and
+                                    ;  with MULTITASK=1 the Executive may draw
+                                    ;  meanwhile, e.g. a program of its own
+                                    ;  ending behind LCMD's saver)
 section ui

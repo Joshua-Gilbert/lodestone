@@ -122,6 +122,8 @@ def t_core():
     k.key(CODE['F']); k.key('world'); k.key(K_CODE_ENTER)
     k.key(CODE['F']); k.key(ktest.ESC)
     check('form: ESC cancels and changes nothing', has(k, 'Find: world 1 1') and not has(k, 'Fill in form'), screen(k))
+    k.key(CODE['F']); k.key(ktest.DOWN); f1 = k.u16('fm_cur'); k.key(ktest.DOWN, ktest.DOWN); f3 = k.u16('fm_cur'); k.key(ktest.ESC)
+    check('form: Down goes to the next field, and from the last back to the first', (f1, f3) == (1, 0), (f1, f3))
     # review fixes (2026-10-06)
     k.key(CODE['F'])
     click(k, 320, 5)                    # above the form's window
@@ -168,15 +170,35 @@ def t_core():
     open(os.path.join(OUT, 'BAD2.RUN'), 'wb').write(hdr(4, 0, 0x8000, 0x8000) + b'\xc3\x90\x90\x90')
     open(os.path.join(OUT, 'BAD3.RUN'), 'wb').write(hdr(4, 0, 1, 0) + b'\xc3\x90\x90\x90' + struct.pack('<H', 0xFFF0))
     open(os.path.join(OUT, 'BAD4.RUN'), 'wb').write(hdr(1, 0, 0, 0) + b'\xc3')     # an image under 2 bytes, no fixups
-    img = image('bad2.img', *(os.path.join(OUT, 'BAD%d.RUN' % i) for i in (2, 3, 4)))
+    open(os.path.join(OUT, 'BAD5.RUN'), 'wb').write(hdr(4, 0xFF00, 0, 0) + b'\xc3\x90\x90\x90')     # BSS past 64 KB
+    open(os.path.join(OUT, 'BAD6.RUN'), 'wb').write(hdr(100, 0, 0, 0) + b'\xc3\x90\x90\x90')        # the file cut short
+    img = image('bad2.img', *(os.path.join(OUT, 'BAD%d.RUN' % i) for i in range(2, 7)))
     k = ktest.KPC(img); k.start()
     table = k.pc.rd(k.useg, 0, 135)
-    for name in ('BAD2.RUN', 'BAD3.RUN', 'BAD4.RUN'):
+    for name, why in (('BAD2.RUN', 'Not a program'), ('BAD3.RUN', 'Not a program'), ('BAD4.RUN', 'Not a program'),
+                      ('BAD5.RUN', 'Not enough memory'), ('BAD6.RUN', 'Not a program')):
         k.select(name); k.key(ktest.ENTER)
-        check('%s (a damaged header): "Not a program", the core untouched' % name,
-              any("Can't run %s: Not a program" % name in l for l in k.band()) and not k.crashed and k.pc.rd(k.useg, 0, 135) == table,
-              (k.band(), k.where()))
+        check('%s (a damaged header): "%s", the core untouched, the UI block its own size again' % (name, why),
+              any("Can't run %s: %s" % (name, why) in l for l in k.band()) and not k.crashed and k.pc.rd(k.useg, 0, 135) == table
+              and free_paras(k)[1] == ui0, (k.band(), k.where(), free_paras(k)[1], ui0))
         k.key(ktest.ENTER)
+    # the kinds, and the band for one that nothing opens; Claude not on the disk
+    kinds = {'A.TXT': 'Text', 'B.DAT': 'Data', 'C.BAT': 'Batch', 'D.INI': 'Settings', 'E.TYP': 'Font', 'F.PRO': 'Profile',
+             'G.ASM': 'Source', 'H.C': 'Source', 'I.H': 'Source', 'J.XYZ': 'XYZ', 'K': 'File'}
+    for n in kinds: open(os.path.join(OUT, n), 'wb').write(b'x')
+    k = ktest.KPC(image('kinds.img', MEMSZ, *(os.path.join(OUT, n) for n in kinds))); k.start()
+    k.run_file('MEMSZ.COM', 20); k.key(ktest.ENTER)
+    check('after a DOS program the UI block is its own size again: UI_PARAS, (ui_bss_end + 15) / 16 paragraphs',
+          free_paras(k)[1] == (k.Y['ui_bss_end'] + 15) // 16, (free_paras(k)[1], k.Y['ui_bss_end']))
+    got = {}
+    for n in kinds:
+        k.select(n); got[n] = form(k)[3].split(' ')[0]
+    check('the Kind of each extension', got == kinds, got)
+    k.select('B.DAT'); k.key(ktest.ENTER)
+    check('Return on a kind nothing opens: "B  Data - nothing opens this kind yet"', k.band()[:1] == ['B  Data - nothing opens this kind yet'], k.band())
+    k.key(ktest.ENTER); k.key(CODE['A'])
+    check('CODE-A with no CLAUDE.COM: "CLAUDE.COM is not on this disk"', k.band()[:1] == ['CLAUDE.COM is not on this disk'], k.band())
+    k.key(ktest.ENTER)
 
 # ---------------------------------------------------------------------
 def t_system():
