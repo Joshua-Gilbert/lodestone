@@ -137,7 +137,7 @@ def masked(b):
     """ROMT.BIN with the flags words kept to CF and IF (the rest is whatever
     the code before left)"""
     b = bytearray(b)
-    for o in [8] + [10 + 16 * i + 10 for i in range(8)]:
+    for o in [8] + [10 + 32 * i + 10 for i in range(8)]:
         struct.pack_into('<H', b, o, struct.unpack_from('<H', b, o)[0] & 0x201)
     return bytes(b)
 
@@ -177,8 +177,15 @@ def t_bios():
         k.run_file('ROMT.COM', 20)
         emu = A.disk_file(k, 'ROMT.BIN')
         out[tuple(roms)] = (real, emu)
-        check('pcemu answers E400-E404 as the BIOS does, sockets %s' % sorted(roms), emu and masked(real) == masked(emu),
+        where = ', '.join('%d: %s' % (s, 'Lodestone' if roms[s] is r else 'MS-DOS') for s in roms)
+        check('pcemu answers E400-E404 as the BIOS does, sockets %s' % where, emu and masked(real) == masked(emu),
               (real[:40].hex(), emu[:40].hex() if emu else None))
+        # what E403 leaves of BX, CX, DX (ROMT passes 1111h, 2222h, 33h:image)
+        regs = lambda b: [struct.unpack_from('<3H', b, 10 + 32 * i + 16) for i in range(b[6])]
+        check('... and BX, CL, DH after E403 changed as the BIOS changes them (%s)' % where,
+              emu and regs(real) == regs(emu) and all(bx != 0x1111 and cx == 0x2200 and dx >> 8 == 0x0B
+                                                     for bx, cx, dx in regs(real)),
+              (regs(real), regs(emu) if emu else None))
 
 
 def t_boot():

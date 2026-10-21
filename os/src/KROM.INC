@@ -526,9 +526,10 @@ rm_dosimg:
         cmp     bx, R_ID
         je      .n
         push    es                      ; bootable, as the BIOS checks it: its
-        push    dx                      ;  trailer's BB66h and 80h (GRiD's
-        cli                             ;  application ROMs are system type 1
-        mov     ax, 0E403h              ;  too, without a boot sector)
+        push    cx                      ;  trailer's BB66h and 80h (GRiD's
+        push    dx                      ;  application ROMs are system type 1
+        cli                             ;  too, without a boot sector); E403
+        mov     ax, 0E403h              ;  leaves CL 0 (and BX, DH changed)
         int     15h
         mov     ax, R_WIN + 1FF0h
         mov     es, ax
@@ -541,6 +542,7 @@ rm_dosimg:
         popf
         sti
         pop     dx
+        pop     cx
         pop     es
         je      .y
 .n:     inc     dl

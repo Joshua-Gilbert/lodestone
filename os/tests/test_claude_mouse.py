@@ -154,11 +154,37 @@ def t_chat_leaves_the_mouse():
         h.close()
 
 
+def t_term_to_chat_hides_the_pointer():
+    """Term, then a HELLO after a lost link that the Pi answers with chat:
+    Term's pointer goes (it stayed, drawn over chat, tracking the mouse)."""
+    h = CK.KernelHarness(term=FAKE)
+    h.m.mouse = True
+    try:
+        h.boot()
+        check('Term: connected, the pointer on', h.run_until(lambda: h.var('term') and h.var('tmouse') == 0xFF, 20) and
+              h.k.u16('m33_cnt') == 0, (h.var('term'), h.var('tmouse'), h.k.u16('m33_cnt'), h.log[-3:]))
+        h.cfg.app = 'chat'                      # the Pi's choice at the next HELLO
+        real = h.transport.answer
+        h.transport.answer = lambda f: None     # the Pi goes quiet
+        lost = h.run_until(lambda: not h.var('connected'), 15)
+        h.transport.answer = real
+        check('chat after the link came back', lost and h.run_until(lambda: h.var('connected') and not h.var('term'), 20),
+              (lost, h.var('connected'), h.var('term'), h.log[-3:]))
+        check('... Term\'s pointer off', h.run_until(lambda: h.var('tmouse') == 0, 5) and h.k.u16('m33_cnt') != 0,
+              (h.var('tmouse'), h.k.u16('m33_cnt')))
+        check('... no crash', not h.m.crash, h.m.crash)
+    finally:
+        h.close()
+
+
 if __name__ == '__main__':
+    tests = [t_click_follows_a_link, t_no_mouse, t_plot_click_types_into_the_prompt, t_chat_leaves_the_mouse,
+             t_term_to_chat_hides_the_pointer]
     why = missing()
-    if why:
-        print('skip: the stand-in Firefox needs Node and jsdom (%s)' % why); sys.exit(0)
-    for t in (t_click_follows_a_link, t_no_mouse, t_plot_click_types_into_the_prompt, t_chat_leaves_the_mouse):
+    if why:                                     # (the first two are gridfox's)
+        print('skip t_click_follows_a_link, t_no_mouse: the stand-in Firefox needs Node and jsdom (%s)' % why)
+        tests = tests[2:]
+    for t in tests:
         t0 = time.time()
         try:
             t()

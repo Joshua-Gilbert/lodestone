@@ -1726,7 +1726,10 @@ pf_hello:
         call    shadow_clear                    ; (the conversation's memory)
         call    mouse_on                        ; (Term: the pointer)
         jmp     .same
-.toch:  call    conv_clear                      ; (it held Term's screen)
+.toch:  mov     ax, 2                           ; Term's pointer off (if it
+        call    pf_cells.m                      ;  had one); mouse_on turns
+        mov     byte [tmouse], 0                ;  it on again for Term
+        call    conv_clear                      ; (it held Term's screen)
         call    redraw_all
 .same:  cmp     byte [term], 0
         je      .chat

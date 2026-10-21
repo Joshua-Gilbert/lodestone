@@ -29,7 +29,7 @@ start:  cld
 .argd:  mov     al, [drv]
         add     al, 'A'
         mov     [s_drive], al
-        mov     [s_ask+39], al
+        mov     [s_askd], al
         ; ---- read sector 0 ----
         mov     bx, old
         call    rd0
@@ -177,7 +177,8 @@ s_found db 'Drive '
 s_drive db 'A: FAT12 floppy, $'
 s_kb    db ' KB.',13,10,'$'
 s_already db 'It already has the Lodestone loader (this rewrites it).',13,10,'$'
-s_ask   db 'Write the Lodestone boot sector to drive A:?  Files are kept. (Y/N) $'
+s_ask   db 'Write the Lodestone boot sector to drive '
+s_askd  db '?:?  Files are kept. (Y/N) $'    ; (the letter put in at the start)
 s_yes   db 'Y',13,10,'$'
 s_cancel db 'N',13,10,'Nothing written.',13,10,'$'
 s_rderr db 'Cannot read the boot sector - is a formatted disk in the drive?',13,10,'$'
