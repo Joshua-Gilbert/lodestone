@@ -346,6 +346,15 @@ picture across the top of the page in the graphics modes, lines of text
 in the text modes.  One beep when it is sent; a long one if the printer
 is off, busy for 10 s or out of paper, or the driver isn't there.
 
+Fixed: RD with * or ? in the name removed the first empty directory that
+matched (now "path not found", as CD answers).  REN onto . or .. in the
+root made an entry called "." that nothing could delete.  Reading from
+COM2 read nothing.  LODEBOOT asked about "drivA A:".  GRIDGPIB /U (the
+standalone driver's unloader) run on Lodestone, whose driver is built
+in, pointed INT 60h at nonsense and freed memory that wasn't its own;
+now it says the driver is built in.  Claude: the mouse pointer stayed
+on the screen after the Pi went from Term back to chat.
+
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
 read from LODEMT.SYS, which must sit beside LODE.SYS and come from the
