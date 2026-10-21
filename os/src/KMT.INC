@@ -9,7 +9,7 @@
 ;  background task's INT 10h output in its own screen, and a task that
 ;  writes the screen itself frozen in the background (M4a); keys for the
 ;  front task only, its waits in the BIOS switched from, CODE-Tab wherever
-;  it is typed (M4b).
+;  it is typed (M4b); each task's own INT 33h mouse state (M4c).
 ;
 ;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
 ;  only in the load image, its resident part (section mtt) isn't even in
@@ -42,6 +42,11 @@
 ;      read with nothing typed waits there while the other tasks run.
 ;    - crit_disk.c24 (MOV SI,crit_dev / INT 24h: 5 bytes) becomes a far
 ;      call to mt_c24, which counts the critical error's prompt running.
+;    - INT 33h goes through mt_i33 once the UI has set it to its driver
+;      (put there at a spawn or a change of the front): a background
+;      task's call is done on its own state.  And ui_progend (MOV AX,
+;      [ui_seg] / OR AX,AX: 5 bytes) becomes a far jump to mt_pgend,
+;      which forgets a background program's event handler as it ends.
 ;
 ;  A task (1 to 7; task 0 is the Executive and whatever it runs) is a
 ;  region, a block of its own (owner 8, "T1".."T7") carved from the top of
@@ -49,8 +54,9 @@
 ;    TX     its context while another runs: its SS:SP, the EMS windows'
 ;           page registers, the kernel's per-task variables (mt_ranges: the INT 21h nesting, the break
 ;           and console state, the current directories, the DTA and
-;           console line, the current PSP, the memory arena's start), and
-;           the kernel stack's slice from SP up (it waits inside INT 21h)
+;           console line, the current PSP, the memory arena's start),
+;           the kernel stack's slice from SP up (it waits inside INT 21h),
+;           its coprocessor's state and its INT 33h driver's (m33_st)
 ;    stub   a PSP and a few instructions: EXEC the program, then MT_END
 ;           (its own parent: ended itself, it lands on MT_END too)
 ;    env    a copy of the spawner's environment (it may end first)
@@ -97,7 +103,10 @@ TX_KSTK     equ V_PSP + (term_keep + 2 - cur_psp)
 KSLICE      equ 256                     ; room for the kernel stack's slice
 TX_FPV      equ TX_KSTK + KSLICE        ; 1: its coprocessor state kept (0: FNINIT)
 TX_FPU      equ (TX_FPV + 2) & ~1       ; the state (FNSAVE's 94 bytes, even)
-TX_PARAS    equ (TX_FPU + 94 + 15) / 16
+TX_M33      equ TX_FPU + 94             ; its INT 33h state (the driver's m33_st:
+                                        ;  where the pointer is, its ranges,
+                                        ;  counts, shape, event handler)
+TX_PARAS    equ (TX_M33 + M33_ST + 15) / 16
 
 ; ---- the stub (a PSP, then this at 100h) --------------------------------
 ST_PATH     equ 120h                    ; the program (ASCIIZ)
@@ -170,6 +179,11 @@ mt_mid      db      0                   ; 1: the front changed while the one in
                                         ;  front may be in the middle of its run
                                         ;  (not at a key wait: mt_scrsv)
 mt_ssv      dw      0, 0                ; (mt_swnow: the stack it came on)
+mt_old33    dd      0                   ; INT 33h as it was: the UI's driver
+mt_in33     db      0                   ; MT's own INT 33h calls (mt_m33)
+mt_33md     db      0                   ; (mt_i33: 40:49h as it was,
+mt_33dn     dw      0                   ;  m33_dn and m33_dmode,
+mt_33eb     dw      0                   ;  m33_ev and m33_busy)
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
@@ -902,7 +916,11 @@ mt_screen:
 
 ; MT_END: from a task's stub, its program done.  Its handles (the
 ; inherited ones) closed, its region freed, and another task runs.
-mt_end: mov     word [cs:mt_vbusy], 0   ; (as in mt_load; and INT 13h's count,
+mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
+        je      .sw                     ;  ended it inside: the front one's
+        mov     al, [cs:mt_front]       ;  INT 33h state put back, as that
+        call    mt_m33ld                ;  change would have)
+.sw:    mov     word [cs:mt_vbusy], 0   ; (as in mt_load; and INT 13h's count,
         mov     byte [cs:mt_crit], 0    ;  should one have been left; and a
         mov     word [cs:mt_in13], 0    ;  change of the front its handler ended
                                         ;  it inside: mt_swing, mt_vbusy)
@@ -945,10 +963,10 @@ mt_end: mov     word [cs:mt_vbusy], 0   ; (as in mt_load; and INT 13h's count,
         push    ax                      ; it was in front: the Executive's
         mov     ax, 2                   ;  task is, with its screen (the
         call    mt_m33                  ;  INT 33h pointer off meanwhile)
-        xor     al, al
+        xor     al, al                  ;  and its INT 33h state
         call    mt_scrld
-        mov     ax, 1
-        call    mt_m33
+        xor     al, al
+        call    mt_m33ld
         pop     ax
 .f:     cmp     al, [cs:mt_swreq]
         jne     .s
@@ -1169,6 +1187,8 @@ mt_spawn:
         mov     [es:V_DTA + 2], ax
         mov     word [es:TX_KLEN], 0
         mov     byte [es:TX_FPV], 0     ; (its coprocessor: FNINIT's, first)
+        call    mt_m33new               ; (its INT 33h state)
+        call    mt_33hk
         push    ax                      ; its screen: mode 3, clear (it may
         push    ds                      ;  print before it is ever in front)
         push    cs
@@ -1525,22 +1545,28 @@ mt_wkey:
 .x:     ret
 
 ; task AL to the front: the front one's screen kept, AL's shown; a DOS
-; program's INT 33h pointer off meanwhile (as RCON does)
+; program's INT 33h pointer off meanwhile (as RCON does), and each one's
+; INT 33h state its own (M4c)
 mt_scrto:
         cmp     al, [cs:mt_front]
         je      .x
+        call    mt_33hk
         push    ax
+        mov     al, [cs:mt_front]       ; its INT 33h state kept, then its
+        call    mt_m33to                ;  pointer off
         mov     ax, 2
         call    mt_m33
         mov     al, [cs:mt_front]
         call    mt_scrsv
         pop     ax
+        push    ax
         call    mt_scrld
-        mov     ax, 1
-        jmp     mt_m33
+        pop     ax
+        jmp     mt_m33ld                ; AL's state, its pointer as it says
 .x:     ret
 
-; INT 33h function AX, if there is an INT 33h.  All kept
+; INT 33h function AX, if there is an INT 33h (MT's own: mt_i33 lets it
+; through).  All kept
 mt_m33: pusha
         push    ds
         push    es
@@ -1549,11 +1575,312 @@ mt_m33: pusha
         mov     bx, [33h * 4]
         or      bx, [33h * 4 + 2]
         jz      .x
+        inc     byte [cs:mt_in33]
         int     33h
+        dec     byte [cs:mt_in33]
 .x:     pop     es
         pop     ds
         popa
         ret
+
+; ---------------------------------------------------------------------
+;  INT 33h (M4c): each task its own mouse.  The UI's driver keeps one
+;  state (m33_st: where the pointer is, its ranges, counts, shape, the
+;  event handler); it is the front task's, which the mouse moves and
+;  whose pointer is drawn.  The others' are in their TXs (TX_M33), and a
+;  change of the front swaps them (mt_scrto).  A background task's own
+;  call is done on its own state, swapped in for it, with the pointer on
+;  the real screen left as it is: the driver draws in no mode meanwhile
+;  (40:49h 0FFh; for a reset, the task's own mode, for its ranges), its
+;  drawn pointer is taken as none (m33_dn), and no event handler runs
+;  (m33_busy, which also keeps the tick from switching).  As they are:
+;  MT's own calls (mt_in33), the front task's, a call made with an
+;  interrupt in service or by an event handler (m33_busy: the front
+;  task's, whichever task it lands in), inside MT's call to the BIOS, an
+;  INT 13h call, a change of the front or a critical error's prompt, and
+;  a call that isn't from the task's own code (a TSR's: mt_mine)
+; ---------------------------------------------------------------------
+mt_i33: cli
+        push    bp
+        mov     bp, sp
+        push    ds
+        push    ax
+        push    bx
+        push    dx
+        push    KSEG
+        pop     ds
+        cmp     byte [cs:mt_in33], 0
+        jne     .pas
+        mov     al, [cs:mt_cur]
+        cmp     al, [cs:mt_front]
+        je      .pas
+        call    mt_isr
+        jnz     .pas
+        cmp     byte [cs:mt_inb], 0
+        jne     .pas
+        cmp     word [cs:mt_in13], 0
+        jne     .pas
+        cmp     byte [cs:mt_crit], 0    ; (a count left by a handler that never
+        je      .b                      ;  came back: not inside INT 21h now)
+        cmp     byte [indos], 0
+        jne     .pas
+.b:     push    es
+        mov     es, [ui_seg]
+        cmp     byte [es:m33_busy], 0
+        pop     es
+        jne     .pas
+        mov     ax, [bp+4]              ; (the caller's CS)
+        call    mt_mine
+        jnc     .bg
+.pas:   pop     dx
+        pop     bx
+        pop     ax
+        pop     ds
+        pop     bp
+        jmp     far [cs:mt_old33]
+.bg:    pop     dx
+        pop     bx
+        pop     ax
+        pop     ds
+        pop     bp
+        push    ds
+        push    es
+        pusha
+        call    mt_33in                 ; (AX: the function)
+        popa
+        pop     es
+        pop     ds
+        pushf                           ; the call, with its registers
+        call    far [cs:mt_old33]
+        push    ds
+        push    es
+        pusha
+        call    mt_33out
+        popa
+        pop     es
+        pop     ds
+        iret
+
+; mt_i33's swap in (AX = the function; interrupts off): the front task's
+; state to its TX, the background task's in its place; the pointer drawn
+; on the real screen, the events pending and m33_busy kept aside.  All but
+; the segment registers changed
+mt_33in:
+        mov     dx, ax
+        push    KSEG
+        pop     ds
+        mov     es, [ui_seg]
+        mov     al, [cs:mt_front]
+        call    mt_m33sv
+        mov     ax, [es:m33_dn]         ; (and m33_dmode)
+        mov     [cs:mt_33dn], ax
+        mov     byte [es:m33_dn], 0
+        mov     al, [es:m33_ev]
+        mov     ah, [es:m33_busy]
+        mov     [cs:mt_33eb], ax
+        mov     byte [es:m33_busy], 1
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        push    ds
+        mov     ds, [cs:bx+TE_TX]
+        mov     si, TX_M33
+        mov     di, m33_st
+        mov     cx, M33_ST / 2
+        cld
+        rep     movsw
+        mov     al, 0FFh                ; the mode it draws in: none (a reset:
+        or      dx, dx                  ;  the task's own, for its ranges)
+        jz      .own
+        cmp     dx, 21h
+        jne     .m
+.own:   mov     al, [TX_VID]            ; (40:49h)
+.m:     push    40h
+        pop     ds
+        xchg    al, [49h]
+        mov     [cs:mt_33md], al
+        pop     ds
+        ret
+
+; mt_i33's swap out: the background task's state back to its TX, the
+; front one's in its place, as it was
+mt_33out:
+        cli
+        push    KSEG
+        pop     ds
+        mov     es, [ui_seg]
+        push    ds
+        push    40h
+        pop     ds
+        mov     al, [cs:mt_33md]
+        mov     [49h], al
+        pop     ds
+        mov     al, [cs:mt_cur]
+        call    mt_m33sv
+        mov     al, [cs:mt_front]
+        call    mt_ent
+        push    ds
+        mov     ds, [cs:bx+TE_TX]
+        mov     si, TX_M33
+        mov     di, m33_st
+        mov     cx, M33_ST / 2
+        cld
+        rep     movsw
+        pop     ds
+        mov     ax, [cs:mt_33dn]
+        mov     [es:m33_dn], ax
+        mov     ax, [cs:mt_33eb]
+        mov     [es:m33_ev], al
+        mov     [es:m33_busy], ah
+        ret
+
+; the driver's state (ES = the UI's segment) to task AL's TX.  AX, BX, CX,
+; SI, DI changed
+mt_m33sv:
+        call    mt_ent
+        push    ds
+        push    es
+        push    es
+        pop     ds
+        mov     es, [cs:bx+TE_TX]
+        mov     si, m33_st
+        mov     di, TX_M33
+        mov     cx, M33_ST / 2
+        cld
+        rep     movsw
+        pop     es
+        pop     ds
+        ret
+
+; the driver's state to task AL's TX (none without the UI).  All kept
+mt_m33to:
+        pusha
+        push    ds
+        push    es
+        push    KSEG
+        pop     ds
+        mov     cx, [ui_seg]
+        jcxz    .x
+        mov     es, cx
+        pushf
+        cli
+        call    mt_m33sv
+        popf
+.x:     pop     es
+        pop     ds
+        popa
+        ret
+
+; task AL's state to the driver, by its own function 17h (the pointer
+; taken away, the state copied in, the pointer drawn as it says), called
+; directly: the UI's driver, whose state it is.  All kept
+mt_m33ld:
+        pusha
+        push    ds
+        push    es
+        push    KSEG
+        pop     ds
+        mov     cx, [ui_seg]
+        jcxz    .x
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+        mov     dx, TX_M33
+        mov     ax, 17h
+        pushf                           ; (as INT 33h: its IRET to .x)
+        push    cs
+        push    .x
+        push    cx
+        push    int33_ui
+        retf
+.x:     pop     es
+        pop     ds
+        popa
+        ret
+
+; a new task's INT 33h state (ES = its TX; DS = KSEG): the driver's now,
+; the pointer off and no event handler, until its program resets it.
+; All kept
+mt_m33new:
+        pusha
+        push    ds
+        mov     cx, [ui_seg]
+        jcxz    .x
+        mov     ds, cx
+        pushf
+        cli
+        mov     si, m33_st
+        mov     di, TX_M33
+        mov     cx, M33_ST / 2
+        cld
+        rep     movsw
+        popf
+        mov     word [es:TX_M33 + m33_cnt - m33_st], -1
+        xor     ax, ax
+        mov     [es:TX_M33 + m33_hmask - m33_st], ax
+        mov     [es:TX_M33 + m33_hoff - m33_st], ax
+        mov     [es:TX_M33 + m33_hseg - m33_st], ax
+        mov     [es:TX_M33 + m33_hpsp - m33_st], ax
+.x:     pop     ds
+        popa
+        ret
+
+; INT 33h through mt_i33, if the UI has set it to its driver (at its
+; start; again at the root's restart).  One put there since, a program's,
+; is left alone.  All kept
+mt_33hk:
+        push    ax
+        push    ds
+        push    es
+        push    KSEG
+        pop     ds
+        mov     ax, [ui_seg]
+        or      ax, ax
+        jz      .x
+        push    0
+        pop     es
+        pushf
+        cli
+        cmp     word [es:33h * 4], int33_ui
+        jne     .p
+        cmp     [es:33h * 4 + 2], ax
+        jne     .p
+        mov     word [cs:mt_old33], int33_ui
+        mov     [cs:mt_old33 + 2], ax
+        mov     word [es:33h * 4], mt_i33
+        mov     [es:33h * 4 + 2], cs
+.p:     popf
+.x:     pop     es
+        pop     ds
+        pop     ax
+        ret
+
+; KPROC's ui_progend (its first 5 bytes: MOV AX,[ui_seg] / OR AX,AX):
+; the program at BX ends.  In a background task its event handler, if it
+; is that program's, is forgotten in the task's own state, as the driver's
+; m33_gone does for the front task's (a shell's next program can be
+; loaded at the same segment).  Then on, past those bytes (DS = KSEG)
+mt_pgend:
+        push    ax
+        mov     al, [cs:mt_cur]
+        cmp     al, [cs:mt_front]
+        je      .k
+        push    bx
+        push    es
+        push    bx
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+        pop     bx
+        cmp     [es:TX_M33 + m33_hpsp - m33_st], bx
+        jne     .n
+        xor     ax, ax
+        mov     [es:TX_M33 + m33_hmask - m33_st], ax
+        mov     [es:TX_M33 + m33_hseg - m33_st], ax
+        mov     [es:TX_M33 + m33_hpsp - m33_st], ax
+.n:     pop     es
+        pop     bx
+.k:     pop     ax
+        mov     ax, [ui_seg]
+        or      ax, ax
+        jmp     KSEG:ui_progend + 5
 
 ; the screen (B800:0000, 32 KB: any mode) and its BIOS data to task AL's
 ; pages and TX (with none, nothing; with its pages gone, say a program
@@ -3027,6 +3354,9 @@ mt_boot:
         mov     byte [crit_disk.c24], 9Ah       ; INT 24h: CALL FAR mt_c24
         mov     word [crit_disk.c24 + 1], mt_c24
         mov     [crit_disk.c24 + 3], es
+        mov     byte [ui_progend], 0EAh ; a program's end: JMP FAR mt_pgend
+        mov     word [ui_progend + 1], mt_pgend
+        mov     [ui_progend + 3], es
         sti
         push    cs
         pop     ds
