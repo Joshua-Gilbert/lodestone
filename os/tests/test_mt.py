@@ -1172,27 +1172,11 @@ def t_screens():
           'isn\'t found to write the screen itself', i_ == b'I' and scr[158:160] == b'*\x70' and isl[158:160] != b'*\x70'
           and s_i == 1 and v0 & VF_DIRECT == 0 and len(tstate(k)[0]) == 1, (i_, scr[150:160], isl[150:160], s_i, v0,
                                                                            tstate(k)))
-    # ... inside an INT 13h call (mt_in13, as if the tick came during one: pcemu's BIOS does its transfers at once):
-    # a floppy's DMA may be going into the EMS frame's windows then, so none is mapped for the call: not shadowed, the
-    # shadow lost
+    # INT 13h through MT, which counts the calls running (inside one, an INT 10h call is taken as an interrupt's: below,
+    # VHOOK T's and MTNEST I's, with the count set by the test, since pcemu's BIOS does its transfers at once)
     v13, n13 = vec(k, 0x13), k.pc.rd(seg, Y['mt_in13'], 1)[0]
-    k.pc.wr(0xB800, 158, b' \x07')
-    typ(k, 'mtlaunch mtscr.com i i2.txt', 0.05)
-    for i in range(100):
-        if len(tstate(k)[0]) == 2: break
-        k.run_for(0.01)
-    k.pc.wr(seg, Y['mt_in13'], b'\1')
-    k.run_for(2.0)
-    i_, scr, s_m = A.disk_file(k, 'I2.TXT'), bytes(k.pc.rd(0xB800, 0, 160)), shd(k)
-    k.pc.wr(seg, Y['mt_in13'], b'\0')
-    front(k, 1)
-    v_m = vflags(k, 0)
-    line(k, ''); line(k, '')
-    check('INT 13h through MT (mt_i13), its count back at 0 after all the reading so far; I again, inside an INT 13h '
-          'call: its \'*\' on the real screen, not shadowed (no window mapped while a DMA may be going into one), so '
-          'MTLAUNCH\'s shadow is lost (mt_shd 0): switched from, not known to write the screen itself, so not frozen',
-          v13 == (seg, Y['mt_i13']) and n13 == 0 and i_ == b'I' and scr[158:160] == b'*\x70' and s_m == 0
-          and v_m & VF_DIRECT == 0, (v13, n13, i_, scr[150:160], s_m, v_m))
+    check('INT 13h through MT (mt_i13), its count back at 0 after all the reading so far', v13 == (seg, Y['mt_i13'])
+          and n13 == 0, (v13, n13))
     # a ROM's own INT 10h (CS at A000h or above, not inside a call MT passed on to the BIOS): as it is, on the real
     # screen, not shadowed, so the front task's shadow is lost
     k.pc.wr(0xD800, 0, bytes([0xCD, 0x10, 0xCB]))
@@ -1338,8 +1322,9 @@ def t_screens():
     line(k, '')
     check('a TSR\'s clock (VHOOK T: INT 08h, chained first, then INT 10h 13h, a new digit each tick; no interrupt in '
           'service) inside an INT 13h call, while MTSPIN runs behind MTLAUNCH: its digits go on on the real screen, none '
-          'more in MTSPIN\'s own', t_f != t_f0 and t_f[1:] == b'\x70' and t_s == t_s0
-          and st[0][1:] == [(1, 1, 'MTSPIN.COM')] and z, (t_f0, t_f, t_s0, t_s, st, z))
+          'more in MTSPIN\'s own (it runs throughout: no switch inside an INT 13h call)', t_f != t_f0
+          and t_f[1:] == b'\x70' and t_s == t_s0 and st[0][1:] == [(1, 1, 'MTSPIN.COM')] and st[2] == 1 and z,
+          (t_f0, t_f, t_s0, t_s, st, z))
     # the shadow's cost: 120 lines through DOS in front, alone and with a task behind it (shadowed)
     k = boot('mt_sc2.img', b'MULTITASK=1\r\n', 88, MTSC)
     sh = Shell(k)
