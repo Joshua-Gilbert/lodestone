@@ -195,9 +195,7 @@ mem_resize:
         call    mem_merge
         cmp     bx, [es:3]
         jbe     .grow
-        mov     ax, bx
-        mov     bx, [es:3]              ; most possible
-        xchg    ax, bx
+        mov     ax, [es:3]              ; most possible
         pop     bx                      ; can't: back to the old size
         call    mem_split
         mov     bx, ax
@@ -247,19 +245,13 @@ mem_largest:
 f_48:   mov     bx, [bp+F_BX]
         mov     dx, [cur_psp]
         call    mem_alloc
-        jc      .e
-        jmp     ok_ax
-.e:     mov     [bp+F_BX], bx
-        jmp     fail
+        mov     [bp+F_BX], bx           ; (the largest on failure; unchanged
+        jmp     ret_cfax                ;  when it worked)
 f_49:   mov     es, [bp+F_ES]
         call    mem_free
-        jc      .e
-        jmp     ok
-.e:     jmp     fail
+        jmp     ret_cf
 f_4A:   mov     es, [bp+F_ES]
         mov     bx, [bp+F_BX]
         call    mem_resize
-        jc      .e
-        jmp     ok
-.e:     mov     [bp+F_BX], bx
-        jmp     fail
+        mov     [bp+F_BX], bx           ; (as for 48h)
+        jmp     ret_cf

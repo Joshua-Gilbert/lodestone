@@ -66,7 +66,7 @@ With the switch off, `TASKS` says `Multitasking is off (MULTITASK=1 in LODE.INI)
 In M1 the UI goes on lending its directory buffer to DOS programs as before, so with the switch on DOS programs lose only MT's own block. Whether lending can stay on once tasks have regions of their own is for M2 to settle. The plan assumed not (7.5 KB); regions allocated downward from MT's block would let it stay.
 
 **Cost:**
-- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end` (44F0h), `bss_end` (7B40h), `ui_keep_end` (6CE4h) and MEMSZ from the Executive (561.5 / 577.6 KB) are main's, with PrtSc's printing (PR #42), unchanged, and `test_mt` pins all of them.
+- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch).
 - **One exception: LCMD.** It is 173 bytes bigger (`TASKS`). It keeps 11 paragraphs (176 bytes) more while a program runs from its prompt, so such programs get that much less, switch on or off.
 - **Switch on:** MT's block is 14 paragraphs plus its MCB, 240 bytes. A DOS program gets 577.4 KB instead of 577.6. `test_mt` checks the free paragraphs exactly.
 - **Files:**

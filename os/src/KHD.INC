@@ -38,13 +38,8 @@ hd_dio: test    al, 2
         jnz     .hd
 .t:     times dio.hk - dio db 90h
         jmp     dio.hk
-.hd:    push    bx
-        push    cx
-        push    dx
-        push    si
-        push    di
-        push    es
-        push    ax
+.hd:    push    di                      ; (hd_io changes AX only: hd_rw is
+        push    ax                      ;  pusha/push es, crit_disk saves the rest)
         shr     al, 2
         or      al, [lba_hi]
         xor     ah, ah
@@ -53,12 +48,7 @@ hd_dio: test    al, 2
         pop     ax
         call    hd_io
         mov     word [io_ra], 0         ; (read-ahead: the floppies')
-        pop     es
         pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
         ret
 
 ; AH = 2 read / 3 write, DI:DX = sector of the partition, CX = sectors,
@@ -643,15 +633,9 @@ hd_f36: mov     al, [bp+F_DX]           ; INT 21h 36h: C:'s free clusters,
         jne     .k0
         mov     [hd_free], dx
 .k0:    mov     ax, dx
-.k:     mov     [bp+F_BX], ax
-        mov     al, [C_DT + D_SPC]
-        xor     ah, ah
-        mov     [bp+F_AX], ax
-        mov     word [bp+F_CX], 512
-        mov     ax, [C_DT + D_NCL]
-        sub     ax, 2
-        mov     [bp+F_DX], ax
-        jmp     done
+.k:     mov     bx, ax                  ; the answer, as f_36 gives it
+        mov     si, C_DT
+        jmp     f_36.done
 
 ; INT 25h/26h (absolute disk read / write) for C: (AL = 2), in DOS 4's
 ; form: CX = FFFFh, DS:BX = a packet (dd first sector of the partition, dw
