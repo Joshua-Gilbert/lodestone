@@ -259,6 +259,10 @@ section uiboot
 uiboot_end:
         times   -(UIBOOT_ORG + (uiboot_end - uiboot_start) > (UI_IMG_PARAS << 4) + (ui_bss_end - ui_bss_start)) db 0
         times   -((INI_READ + 1 + FONT_BYTES) & 1) db 0   ; (entries is even: ualignb(2))
+        times   -(UIBOOT_ORG - (UI_IMG_PARAS << 4) - (entries - ui_bss_start) < INI_READ + 1 + FONT_BYTES + 1) db 0
+                                        ; (past font_file's read, FONT_BYTES + 1;
+                                        ;  ui_bss_start = UI_IMG_PARAS << 4, which
+                                        ;  NASM can't check here: test_apps does)
 section uiboot progbits align=2 follows=ui vstart=UIBOOT_ORG
 
 ; =====================================================================
