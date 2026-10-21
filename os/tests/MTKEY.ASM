@@ -6,7 +6,8 @@
 ;   C  the same as R, with interrupts off (CLI before the INT 16h)
 ;   H  stays resident, hooking INT 16h: a read waits in its own loop (a
 ;      peek of its kind through the INT 16h it found, then HLT), as
-;      Resident Claude's does, then goes on there; the rest go on there
+;      Resident Claude's does, then goes on there (JMP FAR); the rest are
+;      called there (PUSHF / CALL FAR, as most TSRs chain)
 ;   P  for 18 ticks, INT 16h AH=01h and AH=11h in turn: FILE gets
 ;      "nnnn kkkk", the peeks made and how many found a key
 ;   D  for 18 ticks, INT 21h AH=0Bh and AH=06h (DL=FFh) in turn, then
@@ -14,7 +15,9 @@
 ;      answers and the characters AH=06h got
 ;   X  as D, with INT 08h hooked meanwhile (its handler goes straight on
 ;      to the one it found: a timer hook ahead of MT's)
-;   Q  as P, each call made with interrupts off
+;   Y  as P, with INT 08h hooked meanwhile, as X
+;   Q  as P, each call made with interrupts off; only those that came back
+;      with them on (as the BIOS's do: its STI) counted
 ;   T  for 18 ticks, an INT 1Ch handler of its own peeks (INT 16h AH=01h,
 ;      with the timer's interrupt in service): FILE gets "nnnn kkkk", the
 ;      handler's calls and how many peeks found a key
@@ -46,8 +49,10 @@ org 100h
         je      hk_
         call    t18
         cmp     al, 'X'
+        je      .hx
+        cmp     al, 'Y'
         jne     .nx
-        push    es
+.hx:        push    es
         xor     ax, ax
         mov     es, ax
         cli
@@ -59,7 +64,9 @@ org 100h
         mov     [es:8 * 4 + 2], cs
         sti
         pop     es
-        mov     al, 'X'
+        mov     al, [mode]
+        cmp     al, 'Y'
+        je      .pl
 .nx:    cmp     al, 'P'
         je      .pl
         cmp     al, 'Q'
@@ -80,18 +87,6 @@ org 100h
         jc      .dl
         mov     ax, 0C00h
         int     21h
-        cmp     byte [mode], 'X'
-        jne     .two
-        push    es
-        xor     ax, ax
-        mov     es, ax
-        cli
-        mov     ax, [o08]
-        mov     [es:8 * 4], ax
-        mov     ax, [o08 + 2]
-        mov     [es:8 * 4 + 2], ax
-        sti
-        pop     es
         jmp     .two
 .pl:    mov     ah, 1                   ; P
         int     16h
@@ -104,19 +99,21 @@ org 100h
 .p2:    add     word [ca], 2
         call    tdone
         jc      .pl
+        jmp     .two
 .ql:    cli                             ; Q
         mov     ah, 1
         int     16h
+        pushf
         sti
-        jz      .q1
-        inc     word [cb]
-.q1:    cli
+        pop     bx
+        call    qcount
+        cli
         mov     ah, 11h
         int     16h
+        pushf
         sti
-        jz      .q2
-        inc     word [cb]
-.q2:    add     word [ca], 2
+        pop     bx
+        call    qcount
         call    tdone
         jc      .ql
         jmp     short .two
@@ -138,7 +135,19 @@ org 100h
         pop     ds
         push    ds                      ; (ES: AH=35h's)
         pop     es
-.two:   mov     ax, [ca]
+.two:   cmp     word [o08 + 2], 0       ; (X, Y: INT 08h back)
+        je      .t2
+        push    es
+        xor     ax, ax
+        mov     es, ax
+        cli
+        mov     ax, [o08]
+        mov     [es:8 * 4], ax
+        mov     ax, [o08 + 2]
+        mov     [es:8 * 4 + 2], ax
+        sti
+        pop     es
+.t2:    mov     ax, [ca]
         call    hex4
         mov     al, ' '
         stosb
@@ -197,6 +206,9 @@ h16:    cmp     ah, 0                   ; (H's: a read waits here)
         je      .w
         cmp     ah, 10h
         je      .w
+        pushf
+        call    far [cs:old16]
+        retf    2
 .go:    jmp     far [cs:old16]
 .w:     sti
         push    ax
@@ -225,6 +237,16 @@ t18:    push    es
         ret
 
 ; CF while the end isn't reached
+; Q's call, its flags BX: counted if back with interrupts on, found if ZF
+; clear
+qcount: test    bh, 2
+        jz      .x
+        inc     word [ca]
+        test    bl, 40h
+        jnz     .x
+        inc     word [cb]
+.x:     ret
+
 tdone:  push    es
         push    40h
         pop     es

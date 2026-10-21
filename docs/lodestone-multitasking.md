@@ -20,8 +20,9 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M2b | The front: the CODE-Tab hot key, each task's screen saved and restored | PR #45, merged. |
 | M3 | Preemption from INT 08h at safe points | PR #46, merged. |
 | M3b | Each task's own coprocessor state | PR #47, merged. |
-| M4a | Each task's own screen (an INT 10h hook) and the direct-write detector | This PR. |
-| M4b | Keys for the front task only (an INT 16h hook: waits that can be switched from, CODE-Tab anywhere), each task's own mouse | |
+| M4a | Each task's own screen (an INT 10h hook) and the direct-write detector | PR #50, merged. |
+| M4b | Keys for the front task only (an INT 16h hook: waits that can be switched from, CODE-Tab anywhere) | This PR. |
+| M4c | Each task's own mouse | |
 | M5 | Per-task vectors, ending and killing tasks | |
 | M6 | Parking tasks in EMS and bringing them back | |
 | M7 | The Executive's task list (TASKS.RUN, CODE-T), LCMD START/FG/KILL/PARK/WAIT, System's switch | |
@@ -120,7 +121,7 @@ M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the 
   - AH=0Bh, and AH=06h with DL=FFh, see a key typed for the front task. AH=06h then waits in the background until it is brought to the front;
   - INT 16h, called directly, reads them.
 
-  M4b's INT 16h hook closes this.
+  M4b's INT 16h hook closes this, except for a program's INT 16h calls through a TSR's hook loaded after MT (M4b's limits).
 - A task that waits for a key inside a nested INT 21h (an INT 24h handler asking for its answer with AH=01h, say) can't be switched from there. It reads the keyboard, in the background too: the prompt is answered, then it waits like the others.
 
 **Not per task yet (kept for later milestones, stated here so nobody relies on them):**
@@ -207,10 +208,10 @@ What they check:
   - a program that reads keys through INT 16h itself never gets to DOS's wait, so its tasks don't switch at all.
 
   M4b's INT 16h hook (catching the key before anyone asks) lifts this. (This first said M3 too; it doesn't: see M3's limits.)
-- **A small race:** a CODE-Tab typed in the instant between `mt_hot`'s look and the front task's own INT 16h AH=01h is dropped there; pressed again, it works. M4b's hook closes this too.
+- **A small race:** a CODE-Tab typed in the instant between `mt_hot`'s look and the front task's own INT 16h AH=01h is dropped there; pressed again, it works. M4b's hook narrows it (M4b's limits).
 - **A background task's output still lands on the front screen** until M4a's hook: it is kept with whichever task's screen is shown.
 - **Before M4a: a task's screen, the first time it came to the front, was mode 3 and clear.** What it wrote before then went to the front task's screen. M4a gives each task its screen from the start. A program that sets a graphics mode should come to the front first (`/F`).
-- **The mouse:** a DOS program's INT 33h pointer is hidden while the screens change, at CODE-Tab and when the front task ends (AX=2, then AX=1, as Resident Claude does), but there is one mouse state for all tasks until M4b. The Executive's pointer is drawn into its screen, which comes back byte for byte.
+- **The mouse:** a DOS program's INT 33h pointer is hidden while the screens change, at CODE-Tab and when the front task ends (AX=2, then AX=1, as Resident Claude does), but there is one mouse state for all tasks until M4c. The Executive's pointer is drawn into its screen, which comes back byte for byte.
 - **What isn't kept:** a palette written straight to port 3D9h without the BIOS's copy (40:66h), and port 3D8h's settings beyond the mode (say blink off).
 - **A program that frees MT's pages:** EMS's AH=45h frees any handle, for anyone (CLAUDE /U frees its own that way, so KEMS can't refuse). EMS hands out the lowest free number next, so a freed number comes back soon. MT guards in two ways:
   - before each map, it checks that the handle is still its own: open, 2 pages, owner 0. A program's own allocation has its PSP as owner;
@@ -441,7 +442,7 @@ The checks:
 
 ## M4a: each task's own screen, and the screen writers frozen behind (2026-10-20)
 
-**M4 is split in two,** as M2 was. M4a is the screen: INT 10h and the detector. M4b is the keys (an INT 16h hook: keys only for the front task, a program waiting in the BIOS switched from, CODE-Tab wherever the front task asks for a key) and each task's own mouse.
+**M4 is split in two,** as M2 was. M4a is the screen: INT 10h and the detector. M4b is the keys (an INT 16h hook: keys only for the front task, a program waiting in the BIOS switched from, CODE-Tab wherever the front task asks for a key) and each task's own mouse. (The mouse then moved to M4c.)
 
 **What it does:** INT 10h goes through `mt_v10`, with interrupts off from its first instruction. INT itself clears them, but a hook installed after MT that chains with PUSHF / CALL FAR comes in with them on; the IRET gives the caller's back.
 - **A background task's calls are done in its own screen:** its 2 EMS pages (M2b's, 32 KB), with its BIOS video data (40:49h-66h) in its TX. They are done the way the 1520's BIOS does them, read from GRiD's source (philip-searle/gridcase-bios, `int10.asm`, with the mode tables in `at_compat.asm`). So its output no longer lands on the screen in front, and when it comes to the front its screen is there, as it would have been.
@@ -533,13 +534,13 @@ Every other suite passes unchanged with it. MT's emulation and pcemu's were writ
 - **Only B800h's first 16 KB are compared:** text pages 0-3 in 80 columns, 0-7 in 40. Writes to the pages past them aren't seen.
 - **The BIOS data area:** a background program that reads 40:50h (the cursor) or 40:4Ah itself sees the front task's.
 - **The CRTC:** a background program that programs 3D4h/3D5h itself (its cursor, say) but prints through INT 10h isn't caught, and its port writes reach the screen. The BIOS's own CRTC writes are now only ever the front task's.
-- **On the real screen:** an INT 10h call made with an interrupt in service, or by an INT 33h event handler, goes there, whichever task it lands in. That is right for a TSR's clock, and wrong for a background task's own INT 1Ch or mouse handler that draws (M4b gives each task its own mouse). A background task's INT 24h prompt goes there on purpose, over the front screen.
+- **On the real screen:** an INT 10h call made with an interrupt in service, or by an INT 33h event handler, goes there, whichever task it lands in. That is right for a TSR's clock, and wrong for a background task's own INT 1Ch or mouse handler that draws (M4c gives each task its own mouse). A background task's INT 24h prompt goes there on purpose, over the front screen.
 - **In a background task's screen:** a TSR's call made after its EOI (a clock hooked on INT 08h that chains first), landing while a background task runs, goes in that task's screen, not on the real one: MT can't tell that code from the task's own, since a driver's INT 10h hook loaded after MT hides every caller's CS. So does a TSR's INT 28h popup, which then shows when that task comes to the front.
 - **Inside an INT 13h call** every INT 10h call is taken as an interrupt's, unshadowed: an interrupt's that lands during a transfer, or an INT 15h (AH=90h) or INT 40h hook the BIOS calls out to, loses the front task's shadow, or from a background task goes on the real screen. (A driver's INT 13h hook loaded after MT runs outside the count: its drawing is its task's own.)
 - **An interrupt handler's data in windows 0 and 1** (a terminal program's receive buffer in its own page there, say) is under MT's pages for the 10-30 ms a switch takes to copy screens, as it is during KEMS's cache fills. Bytes it writes meanwhile land in a screen page.
 - **A handler that never sends its EOI and then reads a key through DOS** lets another task run with its IRQ in service (`mt_can` doesn't read the PIC). That task's INT 10h calls then go to the real screen. M5 looks at it.
 - **A graphics call's wait trusts its caller,** as M3's INT 21h way out does: a task's own interrupt handler that sends its EOI, turns interrupts on and then asks for graphics is switched from inside that handler.
-- **Resident Claude,** popped up from a background task's own INT 16h call, shows and types into the front screen while it names that task's program. M4b's INT 16h hook gives keys only to the front task.
+- **Resident Claude,** popped up from a background task's own INT 16h call, shows and types into the front screen while it names that task's program. M4b's INT 16h hook can't change that, Resident Claude's hook being loaded after it: M7 does (M4b's limits).
 - **No beep** for a background task's BEL.
 - **Interrupts stay off** for the whole of an emulated call. A long 13h string that scrolls many times delays the tick.
 - **LCMD behind never starts its screen saver.**
@@ -607,3 +608,92 @@ The checks:
   With the teletype's and the scroll's short paths turned off, so the long paths do everything, every check still passes.
 
   **Not tested here:** a TSR's clock that chains INT 08h first, landing in a background task's screen (the limit above); a switch refused inside an INT 13h call; an INT 33h event handler's call; an interrupt's call during MT's own screen copies (`mt_vbusy`, through `.busy` or, from code at A000h up, `.rom`; and `mt_vlost`'s tests in `mt_scrsv`, `mt_scrld` and `mt_sync`, reachable only from one); an interrupt landing inside a call MT passed on to the BIOS (pcemu's BIOS never turns interrupts on); a switch refused inside a hook's code nested in MT's call to the BIOS (`mt_inb` in `mt_safe` and `mt_can`), and its clearing at a switch; `mt_sync` hiding the pointer; a task waiting for the front (`mt_wfront`) that its own handler brought there meanwhile; pcemu's 04h, and its 0Fh's AH from 40:4Ah (equal to the columns in every mode tried).
+
+## M4b: keys for the front task only, and CODE-Tab wherever it is typed (2026-10-21)
+
+**The mouse moves to M4c.** M4b was to be the keys and each task's own mouse. The mouse is a change of its own, in the INT 33h driver (in the Executive's segment), so it gets its own PR, as M2 and M4 were split.
+
+**What it does:** INT 16h goes through `mt_i16`.
+- **CODE-Tab is caught at every INT 16h call** made with no hardware interrupt in service, before the call goes on (`mt_hot`, M2b's), so a peek (AH=01h) no longer drops it first. The tick looks for it too, at the end of a turn, where it may switch (`mt_safe`), so it is found while the front program computes and asks for no keys.
+- **The task asked for comes to the front at the next safe point:** on the way out of the INT 21h call that found it, at the tick, at a peek or a read (below), or at a key wait. Before, only a key wait in DOS did it. So CODE-Tab now works with the Executive in front, at LCMD's prompt, in a program that reads keys through the BIOS, and in one that reads none. MT_FRONT is carried out the same way.
+- **Keys go to the front task only.** For the reads and peeks (AH = 00h, 01h, 10h, 11h):
+  - **DOS's own calls** (key status AH=0Bh, AH=06h with DL=FFh, AH=0Ch's flush, IOCTL 4406h on CON) from a background task find no key. They are known by the stack: the kernel's, even through a TSR's INT 16h hook. DOS's key reads already waited (M2a).
+  - **A program's own calls** (its code in its task's own memory, `mt_mine`): in the background, a peek finds no key. A read made where the task may be switched from (`mt_safe`, as at the tick) waits in MT as `TS_WAITK`: in the background until it is in front and a key comes, in front while nothing is typed, the other tasks running meanwhile (`mt_wkey`). The key brings it back as soon as it is typed, as for a DOS key wait (`mt_kwant`). The look for the key is a peek of the reader's own kind (AH=01h for 00h, 11h for 10h), so the BIOS drops what that read would skip.
+  - **A peek whose task's turn is over** (or with a task asked for in front) switches there, at a safe point, as INT 21h's way out does. A program that only polls INT 16h is otherwise seldom found at a safe point by the tick: the tick lands in MT or the BIOS.
+  - **As they are:** a call made with an interrupt in service (a TSR's pop-up or clock: the machine's, as its screen output is in M4a); any call while a critical error's prompt is up (everything waits for its answer, and the prompt is on the real screen); any call inside a call MT passed on to the BIOS, an INT 13h call, or a change of the front (`mt_inb`, `mt_in13`, `mt_swing`: an interrupt's, as M4a takes INT 10h's there); a call through a TSR's INT 16h hook loaded after MT, or from the ROM or the EMS frame; a read made where the task can't be switched from (interrupts off, say).
+  - **Other functions** go to the BIOS as they are.
+- **A program waiting in the BIOS is now switched from on the 1520 too:** its read with nothing typed waits in MT, not in the ROM, where the tick couldn't switch (M3's limit).
+- **A background task that must have a key but can't be switched from** (a nested INT 21h's key wait, say, or with too much kernel stack in use) comes to the front for it, since only the front task gets keys. Before, it read the front task's keys there. Inside a critical error's prompt, an INT 13h call or MT's call to the BIOS it reads them as before: no screen is changed there.
+- **A task switched from in the middle of its run** (at the tick or INT 21h's way out, not at a key wait), whose shadow was lost (M4a: not known whether it writes the screen itself), is now frozen behind, to be safe. Before M4b the front changed only at key waits, where a program isn't half-way through drawing.
+
+**Departures from the plan:**
+- **No poll counting.** The plan had a background poller yield after 50 empty peeks a tick (`MTPOLL`). A background task's turn is 1 tick anyway, and a peek with its turn over gives way at once.
+- **No per-task type-ahead.** Keys stay in the BIOS's buffer. CODE-Tab still counts only once the keys typed before it are read (M2b), so those reach the task they were typed for.
+- **INT 16h isn't per task:** one hook in front of the BIOS's, as INT 10h is. Per-task vectors are M5's.
+
+**The limits, plainly:**
+- **INT 16h hooks loaded after MT,** Resident Claude's included, hide whose call it is (the hook's code, not the program's). What a program asks through one is as before M4b: a background peek sees the front task's keys. A read that waits in the hook's own loop (Resident Claude's does) holds the processor there until a key is typed, since the tick can't switch from the hook's code (M3's rule); then its read, passed on with the program's own frame, waits in MT for the front, and the key goes to the front task. In front the same loop keeps the other tasks waiting. With Resident Claude loaded, its console can also pop up from a background task's call. DOS's own calls through such a hook are still known (by the stack). M7 makes Resident Claude ask MT whose call it is (the M4a section said M4b would; it can't from MT's side alone).
+- **CODE-Tab waits behind keys typed before it** that the front task never reads, as in M2b.
+- **The M2b race is narrower, not gone:** a CODE-Tab arriving in the moment between `mt_hot`'s look and the BIOS's own AH=01h (once MT has passed the call on) is still dropped there.
+- **Key latency in front:** a front read waiting in MT gets its key when the tick finds the running background task at a safe point (or on its INT 21h's way out). A background task in a long INT 13h call, in ROM or TSR code, or with interrupts off delays it until then; before, the front task's BIOS wait kept the processor.
+- **The tick's look rewrites the buffer** (CODE-Tab taken out, the words after it moved back) inside the task's own code, at a safe point. A program that writes 40:1Ch itself at that moment (its own INT 09h hook after its EOI, a key stuffer) could lose a key or see stale ones. It needs CODE-Tab in the buffer at that same tick.
+- **The BIOS isn't called while a front task waits:** MT HLTs instead, so anything the BIOS does in its own wait (INT 15h AH=90h, "device busy", which some idle detectors and power managers watch) doesn't happen.
+- **Whose code:** task 0's own memory is the running program's blocks (`cur_psp`'s), so a child's call through its parent's INT 16h hook counts as not task 0's own there, as it is (in tasks 1-7 the whole region is the task's). Code running in the EMS frame is never a task's own (`mt_safe` refuses A000h up): its reads go to the BIOS.
+- **The front changes mid-run now:** the index and data port pairs (M3's limit: 3D4h/3D5h, the PIT) can be split by the new front's mode set too.
+- **Programs that read the keyboard themselves** (port 60h, 40:1Ah-1Ch, their own INT 09h or INT 1Bh hooks) see the front task's keys, as before; INT 09h/1Bh are global until M5. A background task's AH=05h (a key put in the buffer) goes to the front task.
+- **Not tried on the 1520 yet** (M9). The 1520's INT 16h is taken to turn interrupts on, as the AT's does; pcemu's now does too.
+
+**How:**
+- **`mt_i16`** sorts the call:
+  1. an interrupt in service; inside MT's call to the BIOS, an INT 13h call or a change of the front; a critical error's prompt up (`mt_crit`, inside INT 21h): on to the BIOS;
+  2. `mt_hot`, then a task asked for makes a switch due (`mt_pend`);
+  3. not a read or a peek: on to the BIOS;
+  4. on the kernel's stack (DOS's calls, MT's key wait): in the background, a peek finds no key (ZF and IF set in the caller's flags; AX as it was);
+  5. not the program's own code (`mt_mine` on the caller's CS): on to the BIOS;
+  6. a peek: with a switch due, `mt_safe` and `mt_preempt` (the audit's fifth way in, path "peek"); then as in 4;
+  7. a read: `mt_safe`, or on to the BIOS. A task asked for comes to the front (`mt_swkw`). In front with a key there, on to the BIOS, which has it at once. Else `mt_wkey`: the task waits as `TS_WAITK` while the next ready one runs (in the background, the front one if none is), and then back to step 2. In front with no other task ready, it HLTs until the next interrupt.
+- **`mt_wkey`** is the audit's fourth way in, after the tick, INT 21h's way out and M4a's graphics wait: each switch it makes is checked against every safe-point rule.
+- **`mt_swnow`** (the task asked for to the front, if still there; from `mt_preempt`, `mt_i16`, `mt_kwait`) now runs outside INT 21h too, at the tick, on the interrupted task's own stack. So it moves to a stack of MT's own (512 bytes in its BSS: the screens' copies, the BIOS's mode set, the INT 33h driver and any interrupt meanwhile), with interrupts on (the serial mouse isn't held up) and `mt_swing` set: no switch meanwhile (`mt_safe` refuses MT's stack, `mt_can` the flag), and an interrupt handler's request meanwhile waits. `mt_preempt` calls it before the coprocessor's drain, so the drain comes after its interrupts-on window. `mt_mid` tells `mt_scrsv` whether the one in front may be in the middle of its run.
+- **`mt_tick`**, at the end of a turn (`mt_pend`), where it may switch: `mt_hot`, then `mt_preempt`.
+- **`mt_hot`** keeps the caller's interrupt flag (it turned interrupts on before), so a tick isn't taken inside MT, where it is lost.
+- **pcemu:** its INT 16h stub returned with RETF 2 and interrupts off (the INT's), so every call MT passed on came back to the program with interrupts off, which the BIOS doesn't do. It turns them on now, as the BIOS's STI does. The other suites pass unchanged.
+
+**Cost:**
+- **Switch off:** nothing. LODE.SYS grows 32 bytes, in `mt_boot` (INT 16h's hook).
+- **Switch on:** MT's block is 472 paragraphs plus its MCB (7.4 KB; it was 416), 32 of them `mt_swnow`'s stack, so a DOS program gets 571.1 KB instead of 578.5.
+- **Speed:** each INT 16h call passes `mt_i16`'s checks and `mt_hot`'s look at the buffer; console output is untouched.
+- **Files:** LODEMT.SYS is 6,239 bytes (5,842 after M4a); ROM 1 has 16,896 bytes left.
+
+**Tests:** `test_mt.py`, 191 checks (was 165). The new group is `t_keys`, with a new test program:
+- `MTKEY MODE FILE`:
+  - R reads a key with INT 16h AH=00h, E with AH=10h, C with AH=00h and interrupts off; each writes the key it got;
+  - P peeks with AH=01h and 11h for 18 ticks, Q the same with interrupts off, T from an INT 1Ch handler of its own, Y as P with its own INT 08h hook ahead of MT's; each writes how many peeks it made and how many found a key;
+  - D asks DOS (AH=0Bh, AH=06h with DL=FFh) for 18 ticks, then flushes (AH=0Ch); X the same with its own INT 08h hook;
+  - H stays resident, hooking INT 16h: its reads wait in its own loop, as Resident Claude's do, and it calls on with PUSHF / CALL FAR.
+
+The checks:
+- **MT off:** INT 16h untouched. **On:** INT 16h through `mt_i16`, on to the BIOS's.
+- **The references:** P, Q, T and D in front, alone, find the keys typed.
+- **Behind a task that reads no keys** (MTSPIN in front), keys typed: P and Q find none (each of Q's peeks back with interrupts on, as the BIOS's are), nor does D (DOS's status, AH=06h, the flush), and the keys are still there for the front task. T, from its INT 1Ch handler, finds them in every peek, some of them in its own task behind.
+- **Polling:** Y in front, the tick unable to switch: MTSPIN behind still runs, switched to from Y's peeks, at safe points.
+- **Inside an INT 13h call, or a call MT passed on to the BIOS** (the test sets the count as P starts peeking behind): P's peeks go on as they are and find the keys.
+- **A read behind:** R waits as `TS_WAITK` while MTLAUNCH in front gets its line; brought to the front at the command prompt, it gets the next key.
+- **A read in front:** R waits as `TS_WAITK` while MTSPIN runs; then the key reaches it. E's wait keeps CODE-? (a key AH=01h drops), and gets it.
+- **CODE-Tab:**
+  - while R waits in its read in front: the next task comes to the front, and back again;
+  - while MTSPIN computes in front: the tick finds it, and a request with no key is carried out too;
+  - while X asks DOS for keys in front, its own timer hook ahead of MT's: on the way out of the very INT 21h call that found it, no tick between;
+  - at LCMD's prompt (`t_front`, which until now checked it did nothing there), and in the Executive itself.
+- **Frozen when not known:** MTSPIN, computing in front, its shadow lost (set by the test), switched from by CODE-Tab: `VF_DIRECT`. MTLINE the same way at its key wait: not; nor MTLINE in front at its key wait, switched from at the tick while MTSPIN runs behind.
+- **Can't be switched from:** MTLINE behind at a nested DOS key wait (InDOS 2, set by the test for that wait) comes to the front and gets its line; inside an INT 13h call, or while the front is being changed (`mt_swing`, set by the test), it reads its keys from behind, as before. C's read with interrupts off waits in the BIOS, isn't switched from, and gets its key.
+- **A TSR's hook** (H): DOS's key status behind, through it, still finds none; a program's peek through it finds the keys (the hook's code); a background read through its wait loop waits in MT for the front, the key going to the front task; brought to the front, it gets the next.
+- **A change of the front under way** (`mt_swing`, set by the test): CODE-Tab's change waits until it is done.
+- **The audit:** every switch from INT 16h, and every other, at a safe point. MT uses under 64 bytes of the caller's stack at the tick, at INT 16h and at a peek (42-44): the front changes on its own stack.
+- **The checks can fail:** each of these, broken on purpose, fails a check:
+  - **The hook:** INT 16h not hooked (the group hangs); `mt_hot` not called there, or turning interrupts on; no switch made due there; the tests for an interrupt in service, a critical error's prompt, MT's call to the BIOS, an INT 13h call or a change of the front left out; the kernel's stack not told apart; a background peek's ZF or IF not set; `mt_mine` not asked.
+  - **Reads and peeks:** a read not checked with `mt_safe`; `mt_wkey` not called, or not marking `TS_WAITK`; the front read's look made with AH=01h for AH=10h; the task asked for not brought to the front at a read, or brought there as from mid-run (`mt_swnow` for `mt_swkw`); no `mt_preempt` at a peek.
+  - **The tick:** `mt_hot` not called at the end of a turn.
+  - **Changing the front:** `mt_swnow` not called from `mt_preempt` or `mt_kwait`; not on its own stack; a second change not refused meanwhile (in `mt_swnow`, or `mt_can` testing `mt_in13` alone); `mt_mid` not tested, the detector freezing nothing, or a task at its key wait taken as mid-run.
+  - **A background task that can't be switched from:** not brought to the front; brought there inside a critical error's prompt, an INT 13h call or MT's call to the BIOS; `mt_can` not testing the INT 13h count.
+
+  **Not tested here:** the M2b race and the key latency (both timing); a real interrupt landing in `mt_swnow`'s window (the tests set `mt_swing` themselves); the 1520's INT 16h turning interrupts on (M9); AH=05h from a background task.

@@ -160,8 +160,14 @@ mt_isr0     db      0                   ; (mt_vcall: the interrupts in service
                                         ;  when MT passed its call on)
 mt_old13    dd      0                   ; INT 13h as it was
 mt_in13     db      0                   ; INT 13h calls running (mt_i13)
-mt_old16    dd      0                   ; INT 16h as it was
+mt_swing    db      0                   ; 1: mt_swnow is changing the front
+                                        ;  (after mt_in13, for mt_i16's test)
 mt_crit     db      0                   ; the kernel's INT 24h running (mt_c24)
+mt_old16    dd      0                   ; INT 16h as it was
+mt_mid      db      0                   ; 1: the front changed while the one in
+                                        ;  front may be in the middle of its run
+                                        ;  (not at a key wait: mt_scrsv)
+mt_ssv      dw      0, 0                ; (mt_swnow: the stack it came on)
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
@@ -266,17 +272,8 @@ mt_tick:
 .p:     mov     byte [cs:mt_pend], 1
 .w:     call    mt_kwant                ; (or a key for the front task)
         cmp     byte [cs:mt_pend], 0
-        jne     .v
-        cmp     byte [cs:mt_swreq], 0FFh ; (or a task asked for in front)
-        jne     .v
-        push    ds                      ; (or a key typed, CODE-Tab it may be,
-        push    40h                     ;  with nothing asking for keys: looked
-        pop     ds                      ;  for below, where it is safe)
-        mov     ax, [1Ah]
-        cmp     ax, [1Ch]
-        pop     ds
         je      .r
-.v:     push    es                      ; INT 08h still ours?  (Else a hook
+        push    es                      ; INT 08h still ours?  (Else a hook
         xor     ax, ax                  ;  ahead of it is what this
         mov     es, ax                  ;  interrupted, not the task: the
         mov     ax, cs                  ;  switch waits for INT 21h's way
@@ -292,13 +289,9 @@ mt_tick:
         mov     dx, [bp+14]
         call    mt_safe
         jc      .r
-        call    mt_hot                  ; (the task's own code interrupted, not
-        cli                             ;  the BIOS's INT 16h changing the
-        cmp     byte [cs:mt_pend], 0    ;  buffer)
-        jne     .pe
-        cmp     byte [cs:mt_swreq], 0FFh
-        je      .r
-.pe:    call    mt_preempt
+        call    mt_hot                  ; CODE-Tab, typed with nothing asking
+        cli                             ;  for keys?  (Safe here: the task's own
+        call    mt_preempt              ;  code interrupted, not the BIOS's)
 .r:     pop     bp
         pop     ds
         pop     dx
@@ -463,9 +456,9 @@ mt_mine:
 ; again.)  None: this one goes on, a new turn (frozen in the background,
 ; it gives way to the front one all the same)
 mt_preempt:
-        call    mt_fdrain               ; (first: nothing saved or chosen yet)
+        call    mt_swnow                ; (first: interrupts on meanwhile)
+        call    mt_fdrain               ; (then: nothing saved or chosen yet)
         mov     byte [cs:mt_pend], 0
-        call    mt_swnow
         mov     al, [cs:mt_front]
         cmp     al, [cs:mt_cur]
         je      .p
@@ -527,7 +520,7 @@ mt_kwait:
 .top:   call    mt_hot                  ; CODE-Tab typed?  (Before the look for
         call    mt_can                  ;  a key: INT 16h AH=01h drops it.)  A
         jc      .f                      ;  task to bring to the front?  (Only
-        call    mt_swnow                ;  where it could run: else later.)
+        call    mt_swkw                 ;  where it could run: else later.)
 .f:     mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .bg
@@ -557,7 +550,12 @@ mt_kwait:
         jnc     .bgp
         cmp     byte [cs:mt_crit], 0
         jne     .k
-        call    mt_scrto                ; (AL: this task)
+        cmp     byte [cs:mt_inb], 0     ; (inside a call MT passed on to the
+        jne     .k                      ;  BIOS, an INT 13h call, or a change
+        cmp     word [cs:mt_in13], 0    ;  of the front: as it is, mt_i16
+        jne     .k                      ;  letting it read them)
+        mov     [cs:mt_swreq], al       ; (this task, as mt_swnow does it: the
+        call    mt_swnow                ;  one in front may be in its run)
         jmp     .k
 .bgp:
         call    mt_pick                 ; one ready to run, or the front one
@@ -580,12 +578,14 @@ mt_kwait:
         jmp     mt_switch
 
 ; CF if the running task can't be switched away from here: a nested INT
-; 21h (an INT 24h answer), or more kernel stack than its TX holds
+; 21h (an INT 24h answer), or more kernel stack than its TX holds; inside
+; a call MT passed on to the BIOS or an INT 13h call; while mt_swnow
+; changes the front (an interrupt handler's DOS call meanwhile)
 mt_can: cmp     byte [indos], 1
         jne     .no
         cmp     byte [cs:mt_inb], 0
         jne     .no
-        cmp     byte [cs:mt_in13], 0
+        cmp     word [cs:mt_in13], 0    ; (and mt_swing)
         jne     .no
         push    ax
         mov     ax, kstack_top          ; (and room for mt_switch's own
@@ -1264,8 +1264,10 @@ mt_name:
 ; front task's, typed before it.  (At most 16 words looked at: a buffer gone bad
 ; isn't followed round.)  Called at a key wait, an INT 16h call, and a tick
 ; at a safe point: never while the BIOS's own INT 16h code may be changing
-; the buffer.  DS anything; AX, BX changed; interrupts on after
-mt_hot: push    ds
+; the buffer.  DS anything; AX, BX changed; interrupts off meanwhile (as
+; the caller had them after)
+mt_hot: pushf
+        push    ds
         push    si
         push    cx
         push    40h
@@ -1299,7 +1301,6 @@ mt_hot: push    ds
         mov     [si], ax
         jmp     .m
 .e:     mov     [1Ch], si
-        sti
         mov     al, [cs:mt_swreq]       ; the next task after that one
         cmp     al, 0FFh
         jne     .t
@@ -1316,10 +1317,10 @@ mt_hot: push    ds
         jne     .q
         mov     al, 0FFh                ; (round to the front one: as it is)
 .q:     mov     [cs:mt_swreq], al
-.no:    sti
-        pop     cx
+.no:    pop     cx
         pop     si
         pop     ds
+        popf
         ret
 .nx:    inc     bx
         inc     bx
@@ -1330,9 +1331,22 @@ mt_hot: push    ds
 
 ; the task asked for in front (mt_swreq: CODE-Tab, MT_FRONT), if there is
 ; one and it is still there, brought there now: the caller is where tasks
-; may switch.  Interrupts on meanwhile (as in a key wait; after, as they
-; were).  AX changed
+; may switch.  On MT's own stack (the screens' copies, the BIOS's mode set
+; and the INT 33h driver need more than a program's may have), with
+; interrupts on (as in a key wait; after, as they were) and mt_swing set:
+; nothing switches meanwhile (mt_safe: not the task's stack; mt_can), and
+; a handler's call meanwhile leaves it for later.  From mt_preempt the one
+; in front may be in the middle of its run (mt_mid, for mt_scrsv); from a
+; key wait (mt_swkw) it is not, if it is the one waiting.  AX changed
+mt_swkw:
+        mov     al, [cs:mt_cur]
+        cmp     al, [cs:mt_front]
+        mov     byte [cs:mt_mid], 0
+        je      mt_swnow.go
 mt_swnow:
+        mov     byte [cs:mt_mid], 1
+.go:    cmp     byte [cs:mt_swing], 0   ; (one under way: this one later)
+        jne     .x
         mov     al, 0FFh
         xchg    al, [cs:mt_swreq]
         cmp     al, 0FFh
@@ -1343,8 +1357,19 @@ mt_swnow:
         pop     bx
         je      .x
         pushf
+        cli
+        mov     [cs:mt_ssv], sp
+        mov     [cs:mt_ssv + 2], ss
+        push    cs
+        pop     ss
+        mov     sp, mt_bend
+        mov     byte [cs:mt_swing], 1
         sti
         call    mt_scrto
+        cli
+        mov     byte [cs:mt_swing], 0
+        mov     ss, [cs:mt_ssv + 2]
+        mov     sp, [cs:mt_ssv]
         popf
 .x:     ret
 
@@ -1352,7 +1377,8 @@ mt_swnow:
 ;  INT 16h (M4b): keys for the front task only.  First, at any call made
 ;  with no hardware interrupt in service, CODE-Tab is taken out of the
 ;  buffer (mt_hot), before a peek could drop it; the task asked for then
-;  comes to the front at the next safe point (mt_pend), or here.  Then the
+;  comes to the front at the next safe point (mt_pend: the tick, INT 21h's
+;  way out), or here, in a read that may be switched from.  Then the
 ;  reads and peeks (AH = 00h, 01h, 10h, 11h):
 ;    - a critical error's prompt (the kernel's INT 24h running: everything
 ;      waits for its answer), or a call with an interrupt in service (a
@@ -1383,35 +1409,42 @@ mt_i16:
         pop     ds
         call    mt_isr
         jnz     .pas
+        cmp     byte [cs:mt_inb], 0     ; (inside a call MT passed on to the
+        jne     .pas                    ;  BIOS, an INT 13h call, or a change
+        cmp     word [cs:mt_in13], 0    ;  of the front: an interrupt's, as M4a
+        jne     .pas                    ;  takes INT 10h's there)
         cmp     byte [cs:mt_crit], 0    ; (a count left by a handler that never
         je      .top                    ;  came back: not inside INT 21h now)
         cmp     byte [indos], 0
         jne     .pas
 .top:   call    mt_hot
         cli
-        cmp     byte [cs:mt_swreq], 0FFh
-        je      .f
-        mov     byte [cs:mt_pend], 1
+        cmp     byte [cs:mt_swreq], 0FFh ; (a task asked for: on the way out
+        je      .f                      ;  of this INT 21h call, say, not only
+        mov     byte [cs:mt_pend], 1    ;  at the turn's end)
 .f:     test    byte [bp+I16_AH], 0EEh
         jnz     .pas
-        mov     ax, [bp+4]              ; whose?
-        cmp     ax, KSEG
-        je      .k
-        mov     bx, cs
-        cmp     ax, bx
-        je      .k
-        call    mt_mine                 ; (the program's own code: not a TSR's
-        jc      .pas                    ;  hook's, the ROM's, the frame's)
-        test    byte [bp+I16_AH], 1
-        jnz     .k                      ; a peek: none in the background
-        lea     bx, [bp+8]              ; a read: where it may be switched
-        mov     [cs:mt_lsp], bx         ;  from?
-        mov     ax, [bp+4]
+        mov     ax, ss                  ; whose?  The kernel's or MT's key wait
+        cmp     ax, KSEG                ;  (on the kernel's stack, through a
+        je      .k                      ;  TSR's hook too), or the program's
+        mov     ax, [bp+4]              ;  own code (not a TSR's hook's, the
+        call    mt_mine                 ;  ROM's, the frame's)?
+        jc      .pas
+        lea     bx, [bp+8]              ; where it may be switched from?
+        mov     [cs:mt_lsp], bx
         mov     bx, [bp+2]
         mov     dx, [bp+6]
-        call    mt_safe
+        test    byte [bp+I16_AH], 1
+        jz      .rd
+        cmp     byte [cs:mt_pend], 0    ; a peek: another task's turn due (its
+        je      .k                      ;  turn over, a task asked for in front),
+        call    mt_safe                 ;  as on INT 21h's way out (a program
+        jc      .k                      ;  that only polls, a tick seldom finds
+        call    mt_preempt              ;  at a safe point); then none in the
+.pk:    jmp     short .k                ;  background
+.rd:    call    mt_safe                 ; a read
         jc      .pas
-        call    mt_swnow
+        call    mt_swkw
         mov     al, [cs:mt_cur]         ; in the background it waits; in front
         cmp     al, [cs:mt_front]       ;  only with nothing typed (a peek of
         jne     .w                      ;  its kind: the BIOS drops what that
@@ -1431,8 +1464,8 @@ mt_i16:
         je      .pas
         test    byte [bp+I16_AH], 1
         jz      .pas
-        or      byte [bp+6], 40h        ; (ZF: no key)
-        jmp     short .ret
+        or      word [bp+6], 0240h      ; (ZF: no key; interrupts on, as the
+        jmp     short .ret              ;  BIOS returns)
 .pas:   pop     dx
         pop     bx
         pop     ax
@@ -1522,7 +1555,7 @@ mt_scrsv:
         cmp     byte [49h], 4
         jae     .dir
         cmp     byte [cs:mt_shd], 0
-        je      .cl
+        je      .nk
         push    0B800h
         pop     ds
         push    EMS_FRAME
@@ -1533,8 +1566,12 @@ mt_scrsv:
         repe    cmpsw
         je      .cl
         cmp     byte [cs:mt_vlost], 0   ; (an interrupt's call meanwhile, not
-        jne     .cl                     ;  shadowed: not known)
-.dir:   or      byte [cs:bx+TE_VF], VF_DIRECT
+        je      .dir                    ;  shadowed: not known)
+.nk:    cmp     byte [cs:mt_mid], 0     ; not known: at a key wait, as it is;
+        je      .cl                     ;  switched from in the middle of its
+        cmp     byte [cs:bx+TE_STATE], TS_WAITK ;  run (not waiting for a key),
+        je      .cl                     ;  it may be writing the screen: frozen
+.dir:   or      byte [cs:bx+TE_VF], VF_DIRECT   ;  behind, to be safe
 .cl:    mov     byte [cs:mt_shd], 0
         mov     es, [cs:bx+TE_TX]       ; its BIOS data
         push    40h
@@ -2817,10 +2854,12 @@ mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 
 MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
-MT_PARAS    equ     MT_TX0P + TX_PARAS  ;  on the paragraph after the image
+MT_SSTK     equ     512                 ;  on the paragraph after the image;
+MT_PARAS    equ     MT_TX0P + TX_PARAS + MT_SSTK / 16   ; then mt_swnow's stack
 
 section mttbss
 mt_tx0      resb    TX_PARAS * 16       ; (at MT_TX0P * 16)
+            resb    MT_SSTK             ; (mt_swnow's stack)
 mt_bend:
 
 ; ---- start-up (section boot, in the load image: CS = 1000h) ----------
