@@ -537,6 +537,12 @@ sft_commit:
         mov     di, si
         pop     si
         jc      .e
+        mov     ax, [si+S_CLU]          ; (field by field: a rep movsw would
+        mov     [di+26], ax             ;  need ES set up, close_all's PSP
+        mov     ax, [si+S_SIZE]         ;  here, and be no faster)
+        mov     [di+28], ax
+        mov     ax, [si+S_SIZE+2]
+        mov     [di+30], ax
         test    byte [si+S_FLAGS], SF_STAMP
         jnz     .st
         push    dx
@@ -544,20 +550,10 @@ sft_commit:
         mov     [si+S_TIME], ax
         mov     [si+S_DATE], dx
         pop     dx
-.st:    push    cx                      ; time, date, cluster, size into the
-        push    si                      ;  entry (ES may be close_all's PSP)
-        push    di
-        push    es
-        push    ds
-        pop     es
-        add     si, S_TIME
-        add     di, 22
-        mov     cx, 5
-        rep     movsw
-        pop     es
-        pop     di
-        pop     si
-        pop     cx
+.st:    mov     ax, [si+S_TIME]
+        mov     [di+22], ax
+        mov     ax, [si+S_DATE]
+        mov     [di+24], ax
         or      byte [di+11], A_ARC
         push    si
         mov     si, di

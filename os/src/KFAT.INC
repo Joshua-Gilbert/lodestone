@@ -984,9 +984,9 @@ f_3B:   call    get_path                ; CHDIR
         call    name_out
         pop     di
         mov     si, path2_buf
-        mov     ax, [cwd_p]
-        add     ax, CWDLEN - 2
-.cpl:   cmp     di, ax
+        mov     dx, [cwd_p]
+        add     dx, CWDLEN - 2
+.cpl:   cmp     di, dx
         jae     .cpx
         lodsb
         stosb
