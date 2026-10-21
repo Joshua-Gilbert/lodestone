@@ -18,11 +18,17 @@ MT_END      equ 11h                     ; (the task's stub, when its program is
 MT_LIST     equ 12h                     ; the tasks: ES:DI = room for CX records
                                         ;  (MT_REC bytes each) -> CX = how many
                                         ;  tasks there are (records for as many
-                                        ;  as fit), AL = the front task's number
+                                        ;  as fit), AL = the front task's number,
+                                        ;  AH = the caller's
 MT_FRONT    equ 13h                     ; BL = a task: it comes to the front at
                                         ;  the next key wait.  CF: AX = 1 (none).
                                         ;  (When the front task ends, task 0
                                         ;  comes to the front.)
+MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
+                                        ;  itself, is as it should be (put back
+                                        ;  after a screen saver): not counted
+                                        ;  against it as writing the screen
+                                        ;  itself (M4a; only the front task's)
 MT_TASKS    equ 8                       ; most tasks at once (0 is the Executive)
 MT_DEFARENA equ 1000h                   ; a task's memory if SP_PARAS is 0: 64 KB
 
@@ -37,6 +43,10 @@ SP_PARAS    equ 14                      ; word: the task's memory, paragraphs
 SP_FLAGS    equ 16                      ; byte: SPF_*
 SP_SIZE     equ 17
 SPF_FRONT   equ 1                       ; it comes to the front
+SPF_BG      equ 2                       ; it runs in the background whatever it
+                                        ;  does, its output on the screen in
+                                        ;  front (as before M4a)
+SPF_FREEZE  equ 4                       ; it never runs in the background
 
 ; ---- a task's record (MT_LIST) ----------------------------------------
 TR_ID       equ 0                       ; byte: its number
@@ -50,3 +60,9 @@ TS_FREE     equ 0                       ; (no task: not listed)
 TS_RUN      equ 1                       ; running, or ready to
 TS_WAITK    equ 2                       ; waiting for a key (in the background,
                                         ;  or in front with another running)
+TS_WAITF    equ 3                       ; waiting to be in front (a graphics
+                                        ;  mode or a pixel asked for in the
+                                        ;  background)
+TS_FROZEN   equ 4                       ; (MT_LIST only) ready, but frozen in the
+                                        ;  background: it writes the screen
+                                        ;  itself, or SPF_FREEZE
