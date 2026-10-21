@@ -364,7 +364,7 @@ buffers share space.  A disk that can't be read now says why ("Drive not
 ready (no disk?)", not "error 0"), and a .RUN file whose program is
 under 2 bytes is refused.  Then the command prompt, Claude and the
 programs: a program started from the prompt has 1.25 KB more, CLAUDE.COM
-keeps 0.9 KB less while it runs one, and System and Write use 1.5 KB and
+keeps 0.4 KB less while it runs one, and System and Write use 1.5 KB and
 0.3 KB less.  After DIR A:, a plain DIR showed another drive's label and
 free space; fixed.
 
