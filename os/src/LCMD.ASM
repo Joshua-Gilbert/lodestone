@@ -2259,6 +2259,8 @@ run_saver:
         mov     cx, 2000
         rep     movsw
         pop     ds
+        mov     ax, 0F000h + MT_SCREEN  ; (put back by us: multitasking isn't
+        int     21h                     ;  to take it as writing the screen)
         mov     es, bx
         mov     ah, 49h
         int     21h

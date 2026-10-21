@@ -6,8 +6,12 @@
 ;      cell under the cursor, and 09h there; then on page 0 DOS's console,
 ;      the teletype with CR, LF, BS and BEL, the cursor, 09h and 0Ah, 13h's
 ;      four kinds, 06h and 07h, the cursor's shape, the colour select, and
-;      what 03h, 08h and 0Fh answer.  Then waits for a key (AH=08h), and
-;      ends
+;      what 03h, 08h and 0Fh answer; and the 1520's odd cases: windows
+;      the wrong way round after the clamps, page 8 (BH, and shown), 0Dh in a
+;      text mode, and the AX that 00h, 05h, 0Bh and 0Dh give back.  Then
+;      waits for a key (AH=08h), and ends
+;   C  as P in mode 1 (40 columns); M  as P after a mode set of 83h (mode 2,
+;      on the 1520)
 ;   L  mode 3, then 120 lines through DOS (AH=09h), then FILE "L"; waits
 ;      for a key
 ;   D  mode 3, a line, then a word written into B800h itself; waits for a key
@@ -36,6 +40,12 @@ org 100h
         mov     al, [mode]
         cmp     al, 'P'
         je      m_p
+        mov     word [pmode], 0001h
+        cmp     al, 'C'
+        je      m_p
+        mov     word [pmode], 0083h
+        cmp     al, 'M'
+        je      m_p
         cmp     al, 'L'
         je      m_l
         cmp     al, 'D'
@@ -49,7 +59,22 @@ org 100h
         jmp     fin
 
 ; ---- P: the script ----
-m_p:    mov     ax, 0003h
+m_p:    mov     ax, [pmode]
+        int     10h
+        mov     [ax0], ax
+        mov     ax, 0600h               ; windows the wrong way round after the
+        mov     bh, 1Fh                 ;  clamps, which the BIOS runs on with:
+        mov     cx, 1900h               ;  its top row below its bottom one
+        mov     dx, 184Fh               ;  ("clear below the cursor", on the
+        int     10h                     ;  last line), its left column right of
+        mov     ax, 0601h               ;  its right one
+        mov     bh, 2Eh
+        mov     cx, 000Ah
+        mov     dx, 1805h
+        int     10h
+        mov     ax, 0941h               ; page 8 (its cursor is 40:60h, the
+        mov     bx, 0807h               ;  cursor's shape)
+        mov     cx, 1
         int     10h
         mov     ax, 0501h               ; page 1 first (the teletype writes
         int     10h                     ;  and scrolls the page shown): its
@@ -160,6 +185,14 @@ m_p:    mov     ax, 0003h
         mov     cx, 1400h
         mov     dx, 1504h
         int     10h
+        mov     ax, 0508h               ; page 8 shown: the teletype's cursor
+        int     10h                     ;  40:60h then, its character past the
+        mov     [ax5], ax               ;  32 KB in 80 columns
+        mov     ax, 0E7Ah
+        mov     bx, 7
+        int     10h
+        mov     ax, 0500h
+        int     10h
         mov     ah, 1                   ; the cursor's shape
         mov     cx, 0D0Eh
         int     10h
@@ -167,6 +200,12 @@ m_p:    mov     ax, 0003h
         xor     bh, bh
         mov     bl, 5
         int     10h
+        mov     [axb], ax
+        mov     ax, 0D55h               ; 0Dh in a text mode
+        xor     cx, cx
+        xor     dx, dx
+        int     10h
+        mov     [axd], ax
         mov     dx, 1300h               ; what 03h, 08h, 0Fh answer
         call    curto
         mov     ah, 3
@@ -198,6 +237,16 @@ m_p:    mov     ax, 0003h
         call    hexw
         pop     ax
         mov     al, ah
+        call    hexw
+        mov     dx, 1400h               ; the AX that 00h, 05h, 0Bh, 0Dh gave
+        call    curto
+        mov     ax, [ax0]
+        call    hexw
+        mov     ax, [ax5]
+        call    hexw
+        mov     ax, [axb]
+        call    hexw
+        mov     ax, [axd]
         call    hexw
         mov     dx, 0246h
         call    curto
@@ -404,6 +453,11 @@ s_d     db      'writes the screen itself', 13, 10, 0
 s_g     db      'asks for graphics', 13, 10, 0
 s_end   db      'end', 0
 mode    db      0
+pmode   dw      0003h
+ax0     dw      0
+ax5     dw      0
+axb     dw      0
+axd     dw      0
 fnm     dw      0
 o1c     dd      0
 out_    times 8 db 0
