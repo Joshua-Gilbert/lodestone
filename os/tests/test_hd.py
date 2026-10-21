@@ -112,7 +112,7 @@ def t_none():
     o = sh.run('c:')
     check('no drive: no C: ("Invalid drive specification"), nothing kept (the arena from the BSS\'s end)',
           'Invalid drive specification' in o and c_dt(k0)[27] == 0 and
-          k0.pc.u16(0x60, k0.Y['mem_init'] + 1) == k0.Y['bss_end'] + 15, o)
+          k0.pc.u16(0x60, k0.Y['first_mcb']) == ((k0.Y['bss_end'] + 15) >> 4) + 0x60, o)   # (mem_init's kern_top is gone with the start-up code)
     k1, t1 = boot('float', float_bus=True)
     check('a floating bus (the 1520 with its dead CP3044): no C:, boot as fast (%.2f s against %.2f s)' % (t1, t0),
           c_dt(k1)[27] == 0 and k1.pc.mode() == 0x40 and t1 < t0 + 0.2, (t0, t1))

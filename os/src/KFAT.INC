@@ -162,6 +162,27 @@ parse_comp:
 badchars equ sepchars + 2                ; '"+,/:;<=>[]|' (KCORE.INC: f_29's
 NBADC   equ NSEP - 2                    ;  separators past '.' and '\')
 
+; resolve path_buf for a name to make, as MS-DOS: CF: AX = 5 if there is
+; none, or it is "." or ".." (in the root no such entry would be found), 3
+; with wildcards, or resolve's error
+resolve_new:
+        call    resolve
+        jc      new_name.x
+new_name:                               ; (the same after a resolve)
+        mov     ax, 5
+        cmp     byte [r_name], 0
+        je      .f
+        mov     al, 3
+        cmp     byte [r_wild], 0
+        jne     .f
+        mov     al, 5
+        cmp     byte [r_name], '.'
+        je      .f
+        clc
+.x:     ret
+.f:     stc
+        ret
+
 ; resolve path_buf (or SI) -> r_drv, r_dir, r_name, r_wild.
 ; Gets the drive ready and its FAT loaded.  CF: AX = error (3 or 15)
 resolve:
@@ -399,45 +420,42 @@ root_pre:
         pop     ax
         ret
 
-; find nm11 (wildcards allowed) in directory AX: files, directories,
-; hidden and system entries alike (CL isn't read); volume labels and long
-; names never match.  -> BX = index, SI = entry, de = copy.  CF: AX = 2
-dir_find:
+; find nm11 (wildcards allowed) in directory AX from entry BX, as a find
+; with attributes CL does: A_VOL alone, volume labels only; else no labels,
+; and hidden, system and directory entries only if CL has those bits.
+; Long names never match.  -> BX = index, SI = entry (AX kept).  CF: AX =
+; 18 at the end, else a disk error.  CH changes.  (The attributes are
+; looked at only once a name matches: most entries don't.)
+dir_scan:
         push    ax
         call    dir_lim
-        xor     bx, bx
+        mov     ch, cl
+        not     ch
 .l:     pop     ax
         push    ax
         call    dir_entry
         jc      .end
-.e:     mov     dl, [si]
-        or      dl, dl
+.e:     mov     al, [si]
+        or      al, al
         jz      .no
-        cmp     dl, 0E5h
+        cmp     al, 0E5h
         je      .n
-        mov     dl, [si+11]
-        cmp     dl, 0Fh
+        cmp     byte [si+11], 0Fh
         je      .n
-        test    dl, A_VOL
-        jnz     .n
         call    name_match
         jne     .n
-        mov     [d_index], bx           ; (found further into the sector)
-        mov     dx, bx
-        and     dx, 15
-        shl     dx, 5
-        and     word [d_off], 0FE00h
-        or      [d_off], dx
-        push    si
-        push    di
-        push    cx
-        mov     di, de
-        mov     cx, 16
-        rep     movsw
-        pop     cx
-        pop     di
-        pop     si
-        pop     ax
+        mov     al, [si+11]
+        test    al, A_VOL
+        jz      .nv
+        cmp     cl, A_VOL               ; a label: for a label search only
+        je      .m
+        jmp     short .n
+.nv:    cmp     cl, A_VOL               ; (a label search: labels only)
+        je      .n
+        and     al, A_HID | A_SYS | A_DIR
+        test    al, ch
+        jnz     .n
+.m:     pop     ax
         clc
         ret
 .n:     inc     bx                      ; the next entry: in this sector,
@@ -447,13 +465,41 @@ dir_find:
         jae     .l
         add     si, 32
         jmp     .e
-.end:   cmp     ax, 18
-        je      .no
-        add     sp, 2                   ; a disk error: AX says which
+.no:    mov     ax, 18
+.end:   add     sp, 2                   ; (18, or a disk error: AX says which)
         stc
         ret
-.no:    pop     ax
-        mov     ax, 2
+
+; find nm11 (wildcards allowed) in directory AX: files, directories,
+; hidden and system entries alike; volume labels and long names never
+; match.  -> BX = index, SI = entry, de = copy (AX kept).  CF: AX = 2, or
+; a disk error
+dir_find:
+        push    cx
+        mov     cl, A_HID | A_SYS | A_DIR
+        xor     bx, bx
+        call    dir_scan
+        jc      .end
+        mov     [d_index], bx           ; (found further into the sector)
+        mov     dx, bx
+        and     dx, 15
+        shl     dx, 5
+        and     word [d_off], 0FE00h
+        or      [d_off], dx
+        push    si
+        push    di
+        mov     di, de
+        mov     cx, 16
+        rep     movsw
+        pop     di
+        pop     si
+        pop     cx
+        clc
+        ret
+.end:   cmp     ax, 18
+        jne     .x
+        mov     al, 2                   ; (AH 0)
+.x:     pop     cx
         stc
         ret
 
@@ -722,14 +768,8 @@ f_43:   call    get_path                ; get/set attributes
 
 f_39:   call    get_path                ; MKDIR
         jc      .e
-        call    resolve
+        call    resolve_new
         jc      .e
-        cmp     byte [r_name], 0
-        je      .acc
-        cmp     byte [r_wild], 0
-        jne     .np
-        cmp     byte [r_name], '.'
-        je      .acc
         call    find_named
         jnc     .acc                    ; already there
         cmp     ax, 2
@@ -795,8 +835,6 @@ f_39:   call    get_path                ; MKDIR
         xor     dx, dx
         call    fat_set
 .e4:    pop     ax
-        jmp     .e
-.np:    mov     ax, 3
         jmp     .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
@@ -898,32 +936,20 @@ f_3B:   call    get_path                ; CHDIR
         mov     word [di], '\'          ; absolute: start at the root
         inc     si
 .rel:   mov     [cwd_p], di
-.comp:  cmp     byte [si], 0
-        je      .end
-        mov     bx, si                  ; component start
-.f:     lodsb
-        or      al, al
-        jz      .ce
+.comp:  lodsb                           ; (a doubled '\': nothing)
         cmp     al, '\'
-        jne     .f
-.ce:    dec     si
-        mov     cx, si
-        sub     cx, bx                  ; length
-        cmp     byte [si], '\'
-        jne     .ap
-        inc     si
-.ap:    jcxz    .comp
-        cmp     cx, 1
-        jne     .dd
-        cmp     byte [bx], '.'
         je      .comp
-.dd:    cmp     cx, 2
-        jne     .add
-        cmp     word [bx], '..'
+        or      al, al
+        jz      .end
+        dec     si
+        call    parse_comp              ; -> nm11, SI after it (find_dir took
+        mov     ax, [nm11]              ;  the path: it parses)
+        cmp     ax, '. '
+        je      .comp
+        cmp     ax, '..'
         jne     .add
         ; up one level: cut at the last '\'
         mov     di, [cwd_p]
-        push    cx
         mov     cx, CWDLEN
         xor     al, al
         push    di
@@ -938,31 +964,34 @@ f_3B:   call    get_path                ; CHDIR
         cmp     di, cx
         je      .root
         mov     byte [di], 0
-        pop     cx
         jmp     .comp
 .root:  mov     di, cx
         mov     word [di], '\'
-        pop     cx
         jmp     .comp
-.add:   mov     di, [cwd_p]             ; append "\NAME"
-        push    cx
-        mov     cx, CWDLEN
+.add:   mov     di, [cwd_p]             ; append "\NAME.EXT", as MS-DOS keeps
+        mov     cx, CWDLEN              ;  it: 8.3, whatever was typed
         xor     al, al
         repne   scasb
-        pop     cx
         dec     di
         cmp     byte [di-1], '\'
         je      .cp
         mov     al, '\'
         stosb
 .cp:    push    si
-        mov     si, bx
-        mov     ax, [cwd_p]
-        add     ax, CWDLEN - 2
-.cpl:   cmp     di, ax
+        push    di
+        mov     si, nm11
+        mov     di, path2_buf           ; (free here)
+        call    name_out
+        pop     di
+        mov     si, path2_buf
+        mov     dx, [cwd_p]
+        add     dx, CWDLEN - 2
+.cpl:   cmp     di, dx
         jae     .cpx
-        movsb
-        loop    .cpl
+        lodsb
+        stosb
+        or      al, al
+        jnz     .cpl
 .cpx:   mov     byte [di], 0
         pop     si
         jmp     .comp
@@ -1022,12 +1051,8 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     al, [r_drv]
         cmp     al, [ren_drv]
         jne     .dev
-        cmp     byte [r_name], 0
-        je      .acc
-        cmp     byte [r_name], '.'      ; ("." or ".."; in the root there is
-        je      .acc                    ;  no such entry to find)
-        cmp     byte [r_wild], 0
-        jne     .acc
+        call    new_name
+        jc      .e
         call    find_named
         jnc     .acc                    ; the new name exists
         cmp     ax, 2

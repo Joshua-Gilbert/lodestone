@@ -1147,6 +1147,172 @@ def t_trunc():
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 
+def t_kmedium():
+    """The 2026-10-20 audit's medium-risk kernel batch, where it shows: a
+    file over 64 KB through the SFT's copies of its entry (time, date,
+    cluster and size in the entry's order); FIND FIRST/NEXT's attributes
+    (one scanner for them and the path lookups); standard input from a
+    file, and with no handle 0 (stdin_con hands back the SFT); RENAME,
+    MKDIR and CREATE of names that can't be made (RENAME onto a wildcard
+    name: 3, as GRiD MS-DOS 3.30 says); CD past 8.3 (kept as MS-DOS keeps
+    it: ABCDEFGH for ABCDEFGHIJ)."""
+    def com(name, src):
+        p = os.path.join(OUT, name + '.ASM')
+        open(p, 'w').write('org 100h\n' + src + LIB)
+        subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(OUT, name + '.COM'), p], check=True)
+        return os.path.join(OUT, name + '.COM')
+    LIB = """
+hex:    push ax
+        shr al, 4
+        call .d
+        pop ax
+        and al, 15
+.d:     add al, '0'
+        cmp al, '9'
+        jbe .p
+        add al, 7
+.p:     mov dl, al
+        mov ah, 2
+        int 21h
+        ret
+"""
+    names = com('NAMES', """
+        mov si, t
+.l:     lodsw
+        or ax, ax
+        jz .x
+        mov bx, ax
+        lodsw
+        mov dx, ax
+        lodsw
+        mov di, ax
+        push si
+        push ds
+        pop es
+        mov ah, bh
+        xor cx, cx
+        int 21h
+        jc .e
+        xor al, al
+.e:     call hex
+        mov dl, ' '
+        mov ah, 2
+        int 21h
+        pop si
+        jmp .l
+.x:     mov ax, 4C00h
+        int 21h
+t       dw 5600h, a, bw, 5600h, a, dot, 3900h, cw, 0, 3C00h, dw_, 0, 3C00h, dot, 0, 0
+a       db 'A.TXT', 0
+bw      db 'B?.TXT', 0
+dot     db '.', 0
+cw      db 'C?', 0
+dw_     db 'D?.TXT', 0
+""")
+    Y = ktest.Syms(os.path.join(GOS, 'src', 'LODE.MAP'))
+    stdin = com('STDIN', """
+        cmp byte [82h], 'c'
+        jne .go
+        mov ah, 3Eh
+        xor bx, bx
+        int 21h
+.go:    mov di, ops
+.l:     mov al, [di]
+        inc di
+        or al, al
+        jz .x
+        mov ah, al
+        mov si, SFT0            ; (SI: CON's SFT entry, as a stale SI would be)
+        int 21h
+        call hex
+        mov dl, ' '
+        mov ah, 2
+        int 21h
+        jmp .l
+.x:     mov ax, 4C00h
+        int 21h
+ops     db 0Bh, 08h, 0Bh, 08h, 0Bh, 08h, 0
+""".replace('SFT0', str(Y['sft'])))
+    find = com('FIND', """
+        mov si, attrs
+.a:     lodsb
+        cmp al, 0FFh
+        je .x
+        push si
+        xor ah, ah
+        mov cx, ax
+        mov dx, pat
+        mov ah, 4Eh
+        int 21h
+.f:     jc .nx
+        mov si, 80h + 30
+.n:     lodsb
+        or al, al
+        jz .pe
+        mov dl, al
+        mov ah, 2
+        int 21h
+        jmp .n
+.pe:    mov dl, ','
+        mov ah, 2
+        int 21h
+        mov ah, 4Fh
+        int 21h
+        jmp .f
+.nx:    mov dl, '/'
+        mov ah, 2
+        int 21h
+        pop si
+        jmp .a
+.x:     mov ax, 4C00h
+        int 21h
+attrs   db 00h, 02h, 04h, 10h, 08h, 16h, 0FFh
+pat     db '*.*', 0
+""")
+    open(os.path.join(OUT, 'AB.TXT'), 'wb').write(b'ab')
+    big = bytes((i * 7 + i // 251) & 0xFF for i in range(100000))
+    open(os.path.join(OUT, 'BIG.BIN'), 'wb').write(big)
+    img = image('kmed.img', os.path.join(GOS, 'src', 'LCMD.COM'), names, stdin, find, 'A.TXT=' + os.path.join(OUT, 'AB.TXT'),
+                'HID.TXT=' + os.path.join(OUT, 'AB.TXT'), 'SYS.TXT=' + os.path.join(OUT, 'AB.TXT'), 'SUB\\', 'ABCDEFGH\\',
+                'BIG.BIN=' + os.path.join(OUT, 'BIG.BIN'))
+    subprocess.run(['mattrib', '-i', img, '+h', '::HID.TXT'], check=True)
+    subprocess.run(['mattrib', '-i', img, '+s', '::SYS.TXT'], check=True)
+    k = ktest.KPC(img, image('kmedb.img')); k.start()
+    sh = Shell(k)
+    fs = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    o = sh.run('copy big.bin big2.bin') + sh.run('copy big.bin b:big3.bin') + sh.run('copy b:big3.bin big4.bin')
+    f = fs()
+    fb = fatcheck.read_files(bytes(k.pc.drives[1].img))
+    probs = fatcheck.check(bytes(k.pc.drives[0].img))[0] + fatcheck.check(bytes(k.pc.drives[1].img))[0]
+    check('a file over 64 KB read and written through the SFT (its entry\'s size, cluster, time, date): %d bytes, on A:, '
+          'from A: to B: and back (each read and write on its own drive)' % len(big),
+          f.get('A:\\BIG2.BIN') == big and fb.get('A:\\BIG3.BIN') == big and f.get('A:\\BIG4.BIN') == big and not probs,
+          (len(f.get('A:\\BIG2.BIN', b'')), len(fb.get('A:\\BIG3.BIN', b'')), len(f.get('A:\\BIG4.BIN', b'')), probs, o))
+    sh.run('find > fo.txt')
+    o = fs().get('A:\\FO.TXT', b'').decode('latin-1')
+    got = [set(x for x in part.split(',') if x) for part in o.split('/')[:6]]
+    plain = {'LODE.SYS', 'LCMD.COM', 'NAMES.COM', 'STDIN.COM', 'FIND.COM', 'A.TXT', 'BIG.BIN', 'BIG2.BIN', 'BIG4.BIN', 'FO.TXT'}
+    want = [plain, plain | {'HID.TXT'}, plain | {'SYS.TXT'}, plain | {'SUB', 'ABCDEFGH'}, {'LODESTON.E'},
+            plain | {'HID.TXT', 'SYS.TXT', 'SUB', 'ABCDEFGH'}]
+    check('FIND FIRST/NEXT with 0, hidden, system, directory, the label alone (as 8.3: LODESTON.E), all three: those entries each time',
+          got == want, (o, got))
+    sh.run('stdin < a.txt > o1.txt'); sh.run('stdin c > o2.txt')
+    f = fs()
+    check('standard input from a file ("ab"): 0Bh, 08h each time FF a FF b, then at its end 00 and 1Ah; with no handle 0, 00 and 1Ah',
+          f.get('A:\\O1.TXT') == b'FF 61 FF 62 00 1A ' and f.get('A:\\O2.TXT') == b'00 1A 00 1A 00 1A ',
+          (f.get('A:\\O1.TXT'), f.get('A:\\O2.TXT')))
+    sh.run('names > no.txt')
+    o = fs().get('A:\\NO.TXT', b'')
+    check('RENAME onto B?.TXT: 3 (as MS-DOS 3.30); onto ".": 5; MKDIR C?: 3; CREATE D?.TXT: 3; CREATE ".": 5',
+          o.split() == [b'03', b'05', b'03', b'03', b'05'], o)
+    o = sh.run('cd abcdefghij')
+    o2 = sh.run('cd')
+    sh.run('cd \\')
+    check('CD ABCDEFGHIJ: the directory ABCDEFGH, kept 8.3 (A:\\ABCDEFGH, as MS-DOS keeps it)',
+          o.rstrip().endswith('A:\\ABCDEFGH>') and 'A:\\ABCDEFGH\n' in o2 + '\n', (o, o2))
+    probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('... disk consistent', not probs, probs)
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -1691,7 +1857,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
