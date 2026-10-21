@@ -2206,7 +2206,14 @@ tick:   push    ds
 run_saver:
         pusha
         push    es
-        mov     ah, 0Fh
+        mov     ax, 0F000h + MT_LIST    ; (with multitasking, only in front:
+        xor     cx, cx                  ;  behind, the screen isn't ours)
+        stc                             ; (another DOS may leave CF as it was)
+        int     21h
+        jc      .on
+        cmp     al, ah
+        jne     .x
+.on:    mov     ah, 0Fh
         int     10h
         cmp     al, 3
         ja      .x
@@ -2252,6 +2259,8 @@ run_saver:
         mov     cx, 2000
         rep     movsw
         pop     ds
+        mov     ax, 0F000h + MT_SCREEN  ; (put back by us: multitasking isn't
+        int     21h                     ;  to take it as writing the screen)
         mov     es, bx
         mov     ah, 49h
         int     21h
