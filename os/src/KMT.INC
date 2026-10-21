@@ -347,7 +347,9 @@ mt_safe:
         cmp     byte [indos], 0
         jne     .no
         cmp     byte [cs:mt_inb], 0     ; (a hook's code inside a call MT
-        jne     .no                     ;  passed on to the BIOS)
+        jne     .no                     ;  passed on to the BIOS, or inside an
+        cmp     byte [cs:mt_in13], 0    ;  INT 13h call: an INT 15h or 40h hook
+        jne     .no                     ;  the BIOS calls out to meanwhile)
         push    es                      ; (m33_busy is the UI's)
         mov     es, [ui_seg]
         cmp     byte [es:m33_busy], 0
@@ -561,6 +563,8 @@ mt_can: cmp     byte [indos], 1
         jne     .no
         cmp     byte [cs:mt_inb], 0
         jne     .no
+        cmp     byte [cs:mt_in13], 0
+        jne     .no
         push    ax
         mov     ax, kstack_top          ; (and room for mt_switch's own
         sub     ax, sp                  ;  pushes)
@@ -671,8 +675,9 @@ mt_load:
         cli
         cld
         mov     byte [cs:mt_inb], 0     ; (none under way at a switch, nor an
-        mov     byte [cs:mt_crit], 0    ;  INT 24h prompt: one left by a program
-        mov     [cs:mt_cur], bl         ;  ended inside it, cleared)
+        mov     byte [cs:mt_crit], 0    ;  INT 24h prompt or INT 13h call: one
+        mov     byte [cs:mt_in13], 0    ;  left by a program ended inside it,
+        mov     [cs:mt_cur], bl         ;  cleared)
         mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
         mov     byte [cs:mt_slice], 1
         cmp     bl, [cs:mt_front]
@@ -1602,10 +1607,12 @@ mt_wrest:
 ;  in its pages too while another task is there (mt_shd), so that at the
 ;  switch away (mt_scrsv) the screen can be compared with them.  As they
 ;  are, to the BIOS: calls from the BIOS itself (the 1520's teletype calls
-;  INT 10h again), the ROM or the EMS frame (Resident Claude); and a
+;  INT 10h again), the ROM or the EMS frame (Resident Claude), and any
+;  inside an INT 13h call (mt_in13: taken as an interrupt's; no window
+;  mapped while a floppy's DMA may be going into the frame); and a
 ;  background task's with SPF_BG, made with a hardware interrupt in
-;  service (a TSR's clock: on the real screen, as in DOS), or made inside
-;  INT 21h by code that isn't the kernel's (an INT 24h handler's prompt);
+;  service (a TSR's clock: on the real screen, as in DOS), or made while
+;  the kernel's INT 24h runs (mt_crit: its prompt, whoever prints it);
 ;  these last, on the real screen, are shadowed as the front task's own
 ; ---------------------------------------------------------------------
 VF_AX       equ -2                      ; (the caller's registers, PUSHA's,
@@ -1715,11 +1722,13 @@ mt_v10:
         call    mt_ent
         test    byte [cs:bx+TE_VF], SPF_BG
         jnz     .real
-        cmp     byte [cs:mt_crit], 0    ; a critical error's prompt (inside the
-        jne     .real                   ;  kernel's INT 24h: everything waits
-        push    KSEG                    ;  for its answer): on the real screen.
-        pop     ds                      ;  (Else inside INT 21h too the task's,
-.k:     call    mt_isr                  ;  whatever hook it comes through.)  A
+        push    KSEG                    ; a critical error's prompt (inside the
+        pop     ds                      ;  kernel's INT 24h: everything waits
+        cmp     byte [cs:mt_crit], 0    ;  for its answer): on the real screen
+        je      .k                      ;  (a count left by a handler that never
+        cmp     byte [indos], 0         ;  came back: not inside INT 21h now).
+        jne     .real                   ;  Else inside INT 21h too the task's,
+.k:     call    mt_isr                  ;  whatever hook it comes through.  A
                                         ;  hardware interrupt in service, or an
         jnz     .real                   ;  INT 33h event handler running: on the
         mov     es, [ui_seg]            ;  real screen

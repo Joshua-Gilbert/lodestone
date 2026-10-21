@@ -461,7 +461,7 @@ The checks:
 - **To the real screen:**
   - calls from the BIOS itself, inside a call MT passed on to it (the 1520's teletype calls INT 10h again for each step: 03h, 0Ah, 08h, 06h, 02h), as they are. MT marks its own calls to the BIOS (`mt_inb`, around each one: VCALL), since a driver's INT 10h hook loaded after MT (below A000h) hides the BIOS's CS;
   - calls from code at A000h or above otherwise (a ROM's; the EMS frame's: Resident Claude's console), as they are, not shadowed;
-  - calls made inside an INT 13h call (MT counts them: `mt_i13`), which can only be an interrupt's. A floppy's DMA may be going into the EMS frame then (KDISK and KEMS's cache fills read straight into it), so MT maps no window for them: as they are, not shadowed;
+  - calls made inside an INT 13h call (MT counts them: `mt_i13`), taken as an interrupt's: a floppy's DMA may be going into the EMS frame then (KDISK and KEMS's cache fills read straight into it), so MT maps no window for them: as they are, not shadowed. No switch is made inside one (an INT 15h or INT 40h hook the BIOS calls out to meanwhile);
   - a background task's own calls with `SPF_BG` (below), shadowed;
   - calls made with a hardware interrupt in service, or while an INT 33h event handler runs, shadowed. A TSR's clock is the common case, and it lands on the real screen, as in DOS: GRiD's INT 08h (`rtc.asm`) calls INT 1Ch before its EOI;
   - calls made while the kernel's INT 24h runs (a critical error's "Abort, Retry, Fail", which everything waits for; MT counts it, `mt_c24`), whether the handler prints through the BIOS or through DOS, shadowed. Everything else inside INT 21h is the task's own, whatever hook it comes through: the kernel's console output goes in its screen.
@@ -500,7 +500,7 @@ The checks:
 - **LCMD's screen saver** starts only when LCMD is in front (AL = AH). In the background the screen isn't its own: its saver's direct drawing would have landed on the front screen, and the screen it saved and put back would have been the front task's.
 - **`mt_vbusy`:** while MT has a task's pages mapped itself with interrupts on (switching screens, `mt_sync`, a spawn's clear screen), an interrupt's INT 10h call goes straight to the BIOS, so that it can't map pages over MT's. The shadow is lost for it.
 - **Two new hooks:** INT 13h goes through `mt_i13`, which counts the calls running and passes CF back as the BIOS gives it. The kernel's one INT 24h call (`crit_disk.c24`, 5 bytes) becomes a far call to `mt_c24`, which counts it. M5's per-task vector tables must keep `mt_i13` at the base of every task's INT 13h.
-- **Left over:** `mt_inb`, `mt_crit` and `mt_in13` are cleared when a task ends or is spawned (and `mt_inb` and `mt_crit` at every switch, where none can be under way), in case a program was ended inside one.
+- **Left over:** `mt_inb`, `mt_crit` and `mt_in13` are cleared when a task ends or is spawned, and at every switch, where none can be under way, in case a program was ended inside one. A `mt_crit` left by an INT 24h handler that never came back counts only inside INT 21h.
 - **The mapping** reads KEMS's tables directly (`mt_smap`), as INT 67h AH=44h would: no INT 67h call on the way.
 - **A new task's screen** is set up at spawn: mode 3 (its BIOS video data from the 1520's tables), clear. Before M4a it was cleared when first shown; now a task can print before it is ever in front.
 
@@ -535,7 +535,7 @@ Every other suite passes unchanged with it. MT's emulation and pcemu's were writ
 - **The CRTC:** a background program that programs 3D4h/3D5h itself (its cursor, say) but prints through INT 10h isn't caught, and its port writes reach the screen. The BIOS's own CRTC writes are now only ever the front task's.
 - **On the real screen:** an INT 10h call made with an interrupt in service, or by an INT 33h event handler, goes there, whichever task it lands in. That is right for a TSR's clock, and wrong for a background task's own INT 1Ch or mouse handler that draws (M4b gives each task its own mouse). A background task's INT 24h prompt goes there on purpose, over the front screen.
 - **In a background task's screen:** a TSR's call made after its EOI (a clock hooked on INT 08h that chains first), landing while a background task runs, goes in that task's screen, not on the real one: MT can't tell that code from the task's own, since a driver's INT 10h hook loaded after MT hides every caller's CS. So does a TSR's INT 28h popup, which then shows when that task comes to the front.
-- **Inside an INT 13h call** every INT 10h call is taken as an interrupt's, unshadowed: a driver's INT 13h hook that draws (a disk light) loses the front task's shadow, and a background task's goes on the real screen.
+- **Inside an INT 13h call** every INT 10h call is taken as an interrupt's, unshadowed: an interrupt's that lands during a transfer, or an INT 15h (AH=90h) or INT 40h hook the BIOS calls out to, loses the front task's shadow, or from a background task goes on the real screen. (A driver's INT 13h hook loaded after MT runs outside the count: its drawing is its task's own.)
 - **An interrupt handler's data in windows 0 and 1** (a terminal program's receive buffer in its own page there, say) is under MT's pages for the 10-30 ms a switch takes to copy screens, as it is during KEMS's cache fills. Bytes it writes meanwhile land in a screen page.
 - **A handler that never sends its EOI and then reads a key through DOS** lets another task run with its IRQ in service (`mt_can` doesn't read the PIC). That task's INT 10h calls then go to the real screen. M5 looks at it.
 - **A graphics call's wait trusts its caller,** as M3's INT 21h way out does: a task's own interrupt handler that sends its EOI, turns interrupts on and then asks for graphics is switched from inside that handler.
@@ -547,10 +547,10 @@ Every other suite passes unchanged with it. MT's emulation and pcemu's were writ
 
 **Cost:**
 - **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 64 bytes, in `mt_boot` (INT 10h's and INT 13h's hooks, the INT 24h patch); KDISK's new label costs nothing. LCMD.COM grows 25 bytes (the saver's check and MT_SCREEN).
-- **Switch on:** MT's block is 414 paragraphs plus its MCB (6.5 KB; it was 250), so a DOS program gets 571.1 KB instead of 577.6.
+- **Switch on:** MT's block is 416 paragraphs plus its MCB (6.5 KB; it was 250), so a DOS program gets 571.1 KB instead of 577.6.
 - **Output speed in front, while another task exists:** 120 lines of 54 characters through DOS take 879 ms alone and 1,593 ms shadowed, in pcemu's time. pcemu counts its blocks at 4 µs, calibrated to the 1520's 10 MHz; its polling makes these good to about ±10%. That is about 110 µs more a character. Against it, DOS's own path costs about 135 µs a character in pcemu, where the BIOS costs nothing (that figure also includes loading the program). On the 1520 the BIOS's own teletype comes on top of both, so the slowdown there should be smaller than pcemu's 1.8 times; M9 measures it.
 - **With no other task,** nothing is shadowed: each INT 10h call only passes `mt_v10`'s few checks on its way to the BIOS.
-- **Files:** LODEMT.SYS is 5,813 bytes; ROM 1 has 16,896 bytes left.
+- **Files:** LODEMT.SYS is 5,842 bytes; ROM 1 has 16,896 bytes left.
 
 **Tests:** `test_mt.py`, 165 checks (was 128). The new group is `t_screens`, with five new test programs:
 - `MTSCR MODE [FILE]`:
@@ -606,4 +606,4 @@ The checks:
 
   With the teletype's and the scroll's short paths turned off, so the long paths do everything, every check still passes.
 
-  **Not tested here:** an INT 33h event handler's call; an interrupt's call during MT's own screen copies (`mt_vbusy`, through `.busy` or, from code at A000h up, `.rom`; and `mt_vlost`'s tests in `mt_scrsv`, `mt_scrld` and `mt_sync`, reachable only from one); an interrupt landing inside a call MT passed on to the BIOS (pcemu's BIOS never turns interrupts on); a switch refused inside a hook's code nested in MT's call to the BIOS (`mt_inb` in `mt_safe` and `mt_can`), and its clearing at a switch; `mt_sync` hiding the pointer; a task waiting for the front (`mt_wfront`) that its own handler brought there meanwhile; pcemu's 04h, and its 0Fh's AH from 40:4Ah (equal to the columns in every mode tried).
+  **Not tested here:** a TSR's clock that chains INT 08h first, landing in a background task's screen (the limit above); a switch refused inside an INT 13h call; an INT 33h event handler's call; an interrupt's call during MT's own screen copies (`mt_vbusy`, through `.busy` or, from code at A000h up, `.rom`; and `mt_vlost`'s tests in `mt_scrsv`, `mt_scrld` and `mt_sync`, reachable only from one); an interrupt landing inside a call MT passed on to the BIOS (pcemu's BIOS never turns interrupts on); a switch refused inside a hook's code nested in MT's call to the BIOS (`mt_inb` in `mt_safe` and `mt_can`), and its clearing at a switch; `mt_sync` hiding the pointer; a task waiting for the front (`mt_wfront`) that its own handler brought there meanwhile; pcemu's 04h, and its 0Fh's AH from 40:4Ah (equal to the columns in every mode tried).
