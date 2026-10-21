@@ -475,7 +475,7 @@ def t_memory():
     m = re.search(r'([\d.]+) KB for programs', out)
     kbe = float(m.group(1)) if m else 0
     check('with EMS a DOS program gets %.1f KB: the disk cache is in EMS (%.1f KB more)' % (kbe, kbe - kb),
-          kbe >= kb + 16.0, out[-200:])
+          kbe - kb > 15.85, out[-200:])      # (16 KB: both figures rounded to 0.1 KB)
     k.key(ktest.ENTER)
     k.key(CODE['U'])
     m = re.search(r'Free for programs\s+([\d.]+) KB', screen(k))
