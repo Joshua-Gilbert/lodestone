@@ -93,60 +93,8 @@ RC_FEED  equ 5                  ;  and its feeder of Claude's keys (TYPE)
 ; =====================================================================
 ;  start-up
 ; =====================================================================
-start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
-        mov     bp, ax                  ; (else resident Claude's stub, or 0)
-        mov     sp, stack_top
-        cld
-        push    cs
-        pop     es
-        mov     di, bss                 ; clear BSS (nothing on the stack yet)
-        mov     cx, bss_end
-        sub     cx, di
-        xor     al, al
-        rep     stosb
-        mov     bx, bss_end             ; keep code, data and BSS; free the rest
-        add     bx, 15
-        shr     bx, 4
-        mov     ah, 4Ah
-        int     21h
-        or      bp, bp                  ; resident Claude (version 2 on): its
-        jz      .nr                     ;  hot key off while we run (we have
-        mov     [res_cs], bp            ;  the link)
-        mov     es, bp
-        mov     byte [es:r_off], 1
-.nr:    push    cs
-        pop     es
-        call    parse_args
-        call    find_gpib
-        jnc     .gg
-        mov     dx, msg_nogg
-        jmp     fatal
-.gg:    call    alloc_bufs
-        jnc     .mem
-        mov     dx, msg_nomem
-        jmp     fatal
-.mem:   call    crc_init
-        call    sys_probe
-        mov     si, s_title0
-        mov     di, title_text
-        call    copyz
-        mov     word [c_dirty_col], 0FFFFh
-        mov     ax, [convseg]           ; Term's shadow: the conversation's memory
-        mov     [shadseg], ax
-        cmp     byte [app_want], 'T'
-        je      .tm
-        cmp     byte [app_want], 'W'    ; /W: gridfox comes the Term way
-        jne     .nt
-.tm:    mov     byte [term], 1
-.nt:    call    vec_save
-        call    vec_ours
-        call    get_ticks
-        mov     [now], ax
-        sub     ax, 100
-        mov     [t_reset], ax           ; first connection attempt right away
-        mov     si, st_connecting
-        call    set_status_quiet
-        call    video_on
+start:  jmp     boot                    ; (start-up: where inbuf goes)
+
 main:   call    get_ticks
         mov     [now], ax
         call    link_service
@@ -174,12 +122,6 @@ leave:  mov     al, [oldmode]           ; (the pointer: the kernel takes the mou
         mov     ax, 4C00h
         int     21h
 
-fatal:  call    res_hot_on
-        mov     ah, 9
-        int     21h
-        mov     ax, 4C01h
-        int     21h
-
 res_hot_on:                             ; resident Claude's hot key on again
         mov     ax, [res_cs]
         or      ax, ax
@@ -190,135 +132,9 @@ res_hot_on:                             ; resident Claude's hot key on again
         pop     es
 .x:     ret
 
-; CLAUDE /R or /U?  Then it never comes back.  This runs before BSS is
-; touched: CLAUDE /R copies the console from where BSS will be (rcon_img).
-; Else AX = resident Claude's stub (res_peek), or 0.
-res_args:
-        mov     si, 81h
-        mov     cl, [80h]
-        xor     ch, ch
-.l:     jcxz    .x
-        lodsb
-        dec     cx
-        cmp     al, '/'
-        jne     .l
-        mov     al, [si]
-        and     al, 0DFh
-        cmp     al, 'R'
-        je      res_load
-        cmp     al, 'U'
-        je      res_unload
-        jmp     .l
-.x:     jmp     res_peek
-
-; CLAUDE /A:nn
-parse_args:
-        mov     si, 81h
-        mov     bl, [80h]
-        xor     bh, bh
-        mov     byte [si+bx], 0
-.scan:  lodsb
-        or      al, al
-        jz      .done
-        cmp     al, '/'
-        jne     .scan
-        lodsb
-        and     al, 0DFh
-        cmp     al, 'T'
-        je      .app
-        cmp     al, 'W'
-        je      .app
-        cmp     al, 'C'
-        je      .app
-        cmp     al, 'A'
-        jne     .scan
-        lodsb
-        cmp     al, ':'
-        je      .num
-        cmp     al, '='
-        je      .num
-        dec     si
-.num:   xor     dx, dx
-.dig:   lodsb
-        sub     al, '0'
-        jb      .setn
-        cmp     al, 9
-        ja      .setn
-        imul    dx, dx, 10
-        xor     ah, ah
-        add     dx, ax
-        jmp     .dig
-.setn:  dec     si
-        cmp     dx, 1
-        jb      .scan
-        cmp     dx, 30
-        ja      .scan
-        mov     [nano], dl
-        jmp     .scan
-.app:   mov     [app_want], al
-        jmp     .scan
-.done:  ret
-
-; GRIDGPIB: first vector 60h-66h with 'GRIDGPIB' at entry+2.  CF if none.
-find_gpib:
-        mov     al, 60h
-.v:     push    ax
-        mov     ah, 35h
-        int     21h
-        pop     ax
-        mov     cx, es
-        or      cx, bx
-        jz      .next
-        lea     di, [bx+2]
-        mov     si, sig_gg
-        mov     cx, 8
-        repe    cmpsb
-        je      .found
-.next:  inc     al
-        cmp     al, 67h
-        jb      .v
-        push    cs
-        pop     es
-        stc
-        ret
-.found: push    cs
-        pop     es
-        mov     [ggint], al
-        mov     [gg_call+1], al         ; patch "INT nn"
-        mov     ah, 0
-        call    gg_call
-        cmp     ax, 4747h
-        jne     .bad
-        mov     [ggver], cx
-        clc
-        ret
-.bad:   stc
-        ret
-
 gg_call:
         int     60h                     ; (patched)
         ret
-
-alloc_bufs:
-        mov     bx, (NLINES * LINEB + 15) / 16
-        mov     ah, 48h
-        int     21h
-        jc      .x
-        mov     [convseg], ax
-        mov     bx, (IOSIZE + 15) / 16
-        mov     ah, 48h
-        int     21h
-        jc      .x
-        mov     [ioseg], ax
-        push    es
-        mov     es, [convseg]
-        xor     di, di
-        mov     ax, 0020h
-        mov     cx, NLINES * LINEB / 2
-        rep     stosw
-        pop     es
-        clc
-.x:     ret
 
 snap_alloc:                             ; CF if no memory
         cmp     word [snapseg], 0
@@ -341,57 +157,6 @@ snap_free:
         pop     es
         mov     word [snapseg], 0
 .x:     mov     byte [snap_taken], 0
-        ret
-
-; drives, EMS: things that don't change while we run
-sys_probe:
-        mov     di, drvstr
-        mov     bl, 1
-.d:     mov     ax, 4408h               ; IOCTL: removable?  error 0Fh = no drive
-        push    bx
-        int     21h
-        pop     bx
-        jnc     .have
-        cmp     ax, 0Fh
-        je      .nod
-.have:  mov     al, bl
-        add     al, 'A' - 1
-        stosb
-        mov     ax, ': '                ; ':' then ' '
-        stosw
-.nod:   inc     bl
-        cmp     bl, 27
-        jb      .d
-        mov     byte [di], 0
-        mov     ax, 3567h               ; EMS driver present?
-        int     21h
-        mov     di, 0Ah
-        mov     si, s_emm
-        mov     cx, 8
-        repe    cmpsb
-        push    cs
-        pop     es
-        jne     .x
-        mov     ah, 42h
-        int     67h
-        or      ah, ah
-        jnz     .x
-        mov     [ems_free], bx
-        mov     [ems_total], dx
-        mov     byte [ems_ok], 1
-.x:     ret
-
-vec_save:
-        mov     ax, 3523h
-        int     21h
-        mov     [old23], bx
-        mov     [old23+2], es
-        mov     ax, 3524h
-        int     21h
-        mov     [old24], bx
-        mov     [old24+2], es
-        push    cs
-        pop     es
         ret
 
 vec_ours:
@@ -3021,13 +2786,7 @@ fmt_clock:                              ; ES:DI <- "h:mm pm"
 nano        db 7                        ; the bridge's GPIB address (/A:nn), and
 app_want    db 0                        ;  'T', 'W' or 'C': data, not BSS, as CLAUDE
                                         ;  /R reads them where BSS goes
-sig_gg      db 'GRIDGPIB'
-s_emm       db 'EMMXXXX0'
-msg_nogg    db 'CLAUDE needs GRIDGPIB loaded first (run GRIDGPIB, then CLAUDE).', 13, 10, '$'
-msg_nomem   db 'Not enough memory for CLAUDE.', 13, 10, '$'
 msg_bye     db 'Claude for GRiD ended.', 13, 10, '$'
-s_title0    db 8Bh, ' Claude for GRiD', 0
-st_connecting db 'Connecting to the Pi through the GPIB bridge', 82h, 0
 st_connected db 'Connected to the Pi', 0
 st_lost     db 'Link to the Pi lost, reconnecting', 82h, 0
 st_noans    db 'No answer from the bridge at GPIB address ', 0
@@ -3076,6 +2835,20 @@ evmouse     db 06h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
 s_onint     db ' on INT ', 0
 s_none2     db 'none', 0
 s_pages     db ' pages free', 0
+; the longest HELLO build_hello can make: GLP's 6 bytes, then each key=value
+; line's text and its value at most (a 16-bit number 5 digits, the
+; directory 67 as cwdbuf holds, drvstr 78)
+HELLO_MAX   equ 6 + (kv_cwd - kv_os - 1) + 3 + 1 + 2 \
+                + (kv_drives - kv_cwd - 1) + 3 + 67 \
+                + (kv_mem - kv_drives - 1) + 78 \
+                + (kv_ems - kv_mem - 1) + 5 \
+                + (kv_gpib - kv_ems - 1) + 5 + 1 + 5 + (s_helptitle - s_pages - 1) \
+                + (kv_addr - kv_gpib - 1) + 3 + 1 + 2 + (s_none2 - s_onint - 1) + 2 + 1 \
+                + (kv_date - kv_addr - 1) + 5 \
+                + (kv_grid - kv_date - 1) + 5 + 1 + 2 + 1 + 2 + 1 + 2 + 1 + 2 \
+                + (kv_appterm - kv_grid - 1) + (kv_appchat - kv_appterm - 1)
+        times   -(kv_appweb - kv_appchat > kv_appchat - kv_appterm) db 0
+        times   -(s_tkeys - kv_appweb > kv_appchat - kv_appterm) db 0
 s_helptitle db 'Claude for GRiD ', 86h, ' keys', 0
 helptext    db 'Enter         send the prompt', 0
             db 'Ctrl-Enter    new line in the prompt', 0
@@ -3102,6 +2875,258 @@ bss:                                    ; from here, in the file only, what
                                         ;  console (RCON.ASM): BSS overlays
                                         ;  it all, so chat and Term runs
                                         ;  carry none of it
+; start-up: run once, from where inbuf goes (BSS clears from past inbuf)
+boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
+        mov     bp, ax                  ; (else resident Claude's stub, or 0)
+        mov     sp, stack_top
+        cld
+        push    cs
+        pop     es
+        mov     di, inbuf + MAXIN       ; clear BSS (nothing on the stack yet;
+                                        ;  inbuf holds this code)
+        mov     cx, bss_end
+        sub     cx, di
+        xor     al, al
+        rep     stosb
+        mov     bx, bss_end             ; keep code, data and BSS; free the rest
+        add     bx, 15
+        shr     bx, 4
+        mov     ah, 4Ah
+        int     21h
+        or      bp, bp                  ; resident Claude (version 2 on): its
+        jz      .nr                     ;  hot key off while we run (we have
+        mov     [res_cs], bp            ;  the link)
+        mov     es, bp
+        mov     byte [es:r_off], 1
+.nr:    push    cs
+        pop     es
+        call    parse_args
+        call    find_gpib
+        jnc     .gg
+        mov     dx, msg_nogg
+        jmp     fatal
+.gg:    call    alloc_bufs
+        jnc     .mem
+        mov     dx, msg_nomem
+        jmp     fatal
+.mem:   call    crc_init
+        call    sys_probe
+        mov     si, s_title0
+        mov     di, title_text
+        call    copyz
+        mov     word [c_dirty_col], 0FFFFh
+        mov     ax, [convseg]           ; Term's shadow: the conversation's memory
+        mov     [shadseg], ax
+        cmp     byte [app_want], 'T'
+        je      .tm
+        cmp     byte [app_want], 'W'    ; /W: gridfox comes the Term way
+        jne     .nt
+.tm:    mov     byte [term], 1
+.nt:    call    vec_save
+        call    vec_ours
+        call    get_ticks
+        mov     [now], ax
+        sub     ax, 100
+        mov     [t_reset], ax           ; first connection attempt right away
+        mov     si, st_connecting
+        call    set_status_quiet
+        call    video_on
+        jmp     main
+
+fatal:  call    res_hot_on
+        mov     ah, 9
+        int     21h
+        mov     ax, 4C01h
+        int     21h
+
+
+; CLAUDE /R or /U?  Then it never comes back.  This runs before BSS is
+; touched: CLAUDE /R copies the console from where BSS will be (rcon_img).
+; Else AX = resident Claude's stub (res_peek), or 0.
+res_args:
+        mov     si, 81h
+        mov     cl, [80h]
+        xor     ch, ch
+.l:     jcxz    .x
+        lodsb
+        dec     cx
+        cmp     al, '/'
+        jne     .l
+        mov     al, [si]
+        and     al, 0DFh
+        cmp     al, 'R'
+        je      res_load
+        cmp     al, 'U'
+        je      res_unload
+        jmp     .l
+.x:     jmp     res_peek
+
+; CLAUDE /A:nn
+parse_args:
+        mov     si, 81h
+        mov     bl, [80h]
+        xor     bh, bh
+        mov     byte [si+bx], 0
+.scan:  lodsb
+        or      al, al
+        jz      .done
+        cmp     al, '/'
+        jne     .scan
+        lodsb
+        and     al, 0DFh
+        cmp     al, 'T'
+        je      .app
+        cmp     al, 'W'
+        je      .app
+        cmp     al, 'C'
+        je      .app
+        cmp     al, 'A'
+        jne     .scan
+        lodsb
+        cmp     al, ':'
+        je      .num
+        cmp     al, '='
+        je      .num
+        dec     si
+.num:   xor     dx, dx
+.dig:   lodsb
+        sub     al, '0'
+        jb      .setn
+        cmp     al, 9
+        ja      .setn
+        imul    dx, dx, 10
+        xor     ah, ah
+        add     dx, ax
+        jmp     .dig
+.setn:  dec     si
+        cmp     dx, 1
+        jb      .scan
+        cmp     dx, 30
+        ja      .scan
+        mov     [nano], dl
+        jmp     .scan
+.app:   mov     [app_want], al
+        jmp     .scan
+.done:  ret
+
+; GRIDGPIB: first vector 60h-66h with 'GRIDGPIB' at entry+2.  CF if none.
+find_gpib:
+        mov     al, 60h
+.v:     push    ax
+        mov     ah, 35h
+        int     21h
+        pop     ax
+        mov     cx, es
+        or      cx, bx
+        jz      .next
+        lea     di, [bx+2]
+        mov     si, sig_gg
+        mov     cx, 8
+        repe    cmpsb
+        je      .found
+.next:  inc     al
+        cmp     al, 67h
+        jb      .v
+        push    cs
+        pop     es
+        stc
+        ret
+.found: push    cs
+        pop     es
+        mov     [ggint], al
+        mov     [gg_call+1], al         ; patch "INT nn"
+        mov     ah, 0
+        call    gg_call
+        cmp     ax, 4747h
+        jne     .bad
+        mov     [ggver], cx
+        clc
+        ret
+.bad:   stc
+        ret
+
+alloc_bufs:
+        mov     bx, (NLINES * LINEB + 15) / 16
+        mov     ah, 48h
+        int     21h
+        jc      .x
+        mov     [convseg], ax
+        mov     bx, (IOSIZE + 15) / 16
+        mov     ah, 48h
+        int     21h
+        jc      .x
+        mov     [ioseg], ax
+        push    es
+        mov     es, [convseg]
+        xor     di, di
+        mov     ax, 0020h
+        mov     cx, NLINES * LINEB / 2
+        rep     stosw
+        pop     es
+        clc
+.x:     ret
+
+
+; drives, EMS: things that don't change while we run
+sys_probe:
+        mov     di, drvstr
+        mov     bl, 1
+.d:     mov     ax, 4408h               ; IOCTL: removable?  error 0Fh = no drive
+        push    bx
+        int     21h
+        pop     bx
+        jnc     .have
+        cmp     ax, 0Fh
+        je      .nod
+.have:  mov     al, bl
+        add     al, 'A' - 1
+        stosb
+        mov     ax, ': '                ; ':' then ' '
+        stosw
+.nod:   inc     bl
+        cmp     bl, 27
+        jb      .d
+        mov     byte [di], 0
+        mov     ax, 3567h               ; EMS driver present?
+        int     21h
+        mov     di, 0Ah
+        mov     si, s_emm
+        mov     cx, 8
+        repe    cmpsb
+        push    cs
+        pop     es
+        jne     .x
+        mov     ah, 42h
+        int     67h
+        or      ah, ah
+        jnz     .x
+        mov     [ems_free], bx
+        mov     [ems_total], dx
+        mov     byte [ems_ok], 1
+.x:     ret
+
+vec_save:
+        mov     ax, 3523h
+        int     21h
+        mov     [old23], bx
+        mov     [old23+2], es
+        mov     ax, 3524h
+        int     21h
+        mov     [old24], bx
+        mov     [old24+2], es
+        push    cs
+        pop     es
+        ret
+
+sig_gg      db 'GRIDGPIB'
+s_emm       db 'EMMXXXX0'
+msg_nogg    db 'CLAUDE needs GRIDGPIB loaded first (run GRIDGPIB, then CLAUDE).', 13, 10, '$'
+msg_nomem   db 'Not enough memory for CLAUDE.', 13, 10, '$'
+s_title0    db 8Bh, ' Claude for GRiD', 0
+st_connecting db 'Connecting to the Pi through the GPIB bridge', 82h, 0
+boot_end:
+        times   -(boot_end - bss > MAXIN) db 0
+
 ; CLAUDE /R: three EMS pages (the frame at E000h), the console into the
 ; first, the stub into a block of the system's at the top of memory, INT
 ; 16h hooked; CLAUDE.COM then ends as any program does
@@ -3609,6 +3634,7 @@ R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
 
 section .text
 absolute bss
+inbuf       resb MAXIN                  ; (first: the start-up code is there)
 res_cs      resw 1                      ; resident Claude's stub, if loaded
 ggint       resb 1
 ggver       resw 1
@@ -3642,7 +3668,6 @@ view_off    resw 1
 inlen       resw 1
 incur       resw 1
 vstart      resw 1
-inbuf       resb MAXIN
 pbuf        resb MAXIN
 plen        resw 1
 qbuf        resb MAXIN
@@ -3665,13 +3690,8 @@ sline       resb 160
 rbuf        resb 64
 ; link
 lstate      resb 1
-g_seq       resb 1
-p_ack       resb 1
-have_pi     resb 1
-nak_pending resb 1
-resend      resb 1
+TERMLINK_RESET_VARS
 pi_active   resb 1
-pend_msg    resb 1
 pend_chunk  resw 1
 done_type   resb 1
 t_sent      resw 1
@@ -3683,8 +3703,6 @@ n_bad       resw 1
 spoll_errs  resb 1
 pit_last    resw 1
 pit_tick    resw 1
-txq_head    resb 1
-txq_n       resb 1
 txq         resb TXQN * 10
 txlen       resw 1
 txframe     resb TXMAX + 8
@@ -3692,23 +3710,15 @@ nakframe    resb 8
 rxn         resw 1
 rxbuf       resb RXMAX + 1
 pf_kind     resb 1
-rq_type     resb 1
-rq_len      resw 1
 rq_over     resb 1
 rq_id       resb 1
-req_ready   resb 1
-reply_busy  resb 1
-snap_reply  resb 1
 reqbuf      resb REQMAX + 4
-hellobuf    resb 512
+hellobuf    resb HELLO_MAX
 evans       resb 4
 crctab      resw 256
 ; Term
 term        resb 1                      ; 1: the GRiD is Claude Code's terminal
 t_active    resw 1                      ; tick of the last key or screen change
-keyn        resb 1
-keys_q      resb 1                      ; a KEYS message is in the queue
-rep_q       resb 1                      ; an EVENT (repaint, or a click) is in the queue
 tmouse      resb 1                      ; not 0: a mouse (INT 33h)
 keybuf      resw KEYMAX
 keysend     resw KEYMAX
@@ -3757,6 +3767,11 @@ ks_wait     resb 1
 ks_until    resw 1
 snap_taken  resb 1
 snap_len    resw 1
-            resb 2048
+        times   -(ems_ok - drvstr != 80 || old_tmo - cwdbuf != 68) resb 1  ; (HELLO_MAX)
+stack_bottom:                           ; the stack: claude-link's emulator tests
+            resb 1024                   ;  (under Lodestone, and GRIDGPIB) go 58
+                                        ;  bytes deep at most; the rest is for the
+                                        ;  BIOS, interrupts and drivers.  test_emu
+                                        ;  fails a run that uses over a quarter
 stack_top:
 bss_end:
