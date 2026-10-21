@@ -752,7 +752,8 @@ mt_frontc:
 mt_end: mov     al, [cs:mt_cur]
         or      al, al
         jz      mt_bad                  ; (not the Executive)
-        call    mt_fdrain               ; (before mt_load's FRSTOR)
+        call    mt_fdrain               ; (before mt_load's FRSTOR; then
+        sti                             ;  interrupts on, as INT 21h had them)
         call    mt_ent
         mov     ax, [cs:bx+TE_PSP]
         cmp     ax, [cur_psp]
