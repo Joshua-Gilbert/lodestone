@@ -361,9 +361,7 @@ term_redraw:
         je      .st
         call    cur_xor
 .st:    pop     es
-        popa
-        call    term_status
-        ret
+        popa                            ; (falls into term_status)
 
 ; row 24: the title on the left, the link or the keys on the right
 term_status:

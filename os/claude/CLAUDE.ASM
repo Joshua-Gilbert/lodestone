@@ -125,8 +125,7 @@ start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
         jnc     .mem
         mov     dx, msg_nomem
         jmp     fatal
-.mem:   call    crc_init
-        call    sys_probe
+.mem:   call    sys_probe
         mov     si, s_title0
         mov     di, title_text
         call    copyz
@@ -480,8 +479,7 @@ redraw_all:
         call    draw_title
         call    draw_rule
         call    draw_prompt
-        call    redraw_body
-        ret
+        jmp     redraw_body
 
 redraw_body:
         cmp     byte [term], 0
@@ -640,8 +638,7 @@ draw_status:
 ; SI -> ASCIIZ (our segment): new status text
 set_status:
         call    set_status_quiet
-        call    draw_status
-        ret
+        jmp     draw_status
 set_status_quiet:
         push    si
         push    di
@@ -658,6 +655,12 @@ set_status_quiet:
         pop     di
         pop     si
         ret
+
+; the prompt emptied, and drawn
+clear_input:
+        mov     word [inlen], 0
+        mov     word [incur], 0
+        ; (falls into draw_prompt)
 
 ; prompt: rows 23-24, "> " then 2 x 78 cells of the input
 draw_prompt:
@@ -899,8 +902,8 @@ draw_conv:
         call    draw_line
         pop     ds
         jmp     .nx
-.blank: mov     si, blankline
-        call    draw_line
+.blank: xor     ah, ah                  ; (blank_row draws what a line of
+        call    blank_row               ;  spaces, attribute 0, would)
 .nx:    inc     bp
         inc     dx
         cmp     dx, CROWS + 1
@@ -916,8 +919,7 @@ conv_clear:
         mov     word [view_off], 0
         mov     byte [c_attr], 0
         mov     byte [c_dirty_full], 1
-        call    conv_refresh
-        ret
+        jmp     conv_refresh
 
 ; "> prompt" into the conversation
 echo_prompt:
@@ -951,8 +953,7 @@ echo_prompt:
         call    conv_newline            ; blank line before the answer
         mov     word [view_off], 0
         mov     byte [c_dirty_full], 1
-        call    conv_refresh
-        ret
+        jmp     conv_refresh
 
 ; =====================================================================
 ;  dialogs: permission questions and help
@@ -1038,8 +1039,7 @@ open_ask:
         mov     byte [ask_sel], 0
         mov     byte [help_open], 0
         mov     byte [ask_open], 1
-        call    draw_ask
-        ret
+        jmp     draw_ask
 
 skipz:  lodsb
         or      al, al
@@ -1180,13 +1180,11 @@ ask_answer:                             ; AL = 'y', 'a' or 'n'
         mov     [evans+1], al
         mov     byte [evans], 02h
         mov     al, G_EVENT
-        mov     dx, cs
         mov     si, evans
         mov     cx, 3
-        call    txq_put
+        call    txq_put_cs
         mov     byte [ask_open], 0
-        call    redraw_body
-        ret
+        jmp     redraw_body
 
 draw_help:
         pusha
@@ -1239,17 +1237,14 @@ kbd_service:
         je      .hit
         add     si, 4
         jmp     .k
-.hit:   call    [si+2]
-        ret
+.hit:   jmp     [si+2]
 .other: cmp     al, 20h
         jb      .x
         cmp     al, 7Eh
         ja      .x
-        call    ins_char
-        ret
+        jmp     ins_char
 .help:  mov     byte [help_open], 0
-        call    redraw_body
-        ret
+        jmp     redraw_body
 .ask:   call    ask_key
 .x:     ret
 
@@ -1271,7 +1266,7 @@ keytab: dw 1C0Dh, k_enter
         dw 3B00h, k_help                ; F1
         dw 1000h, k_quit                ; CODE-Q
         dw 2D00h, k_quit                ; CODE-X
-        dw 260Ch, k_redraw              ; Ctrl-L
+        dw 260Ch, redraw_all            ; Ctrl-L
         dw 0
 
 k_newline:
@@ -1318,8 +1313,7 @@ del_at: mov     di, inbuf
         dec     cx
         rep     movsb
         dec     word [inlen]
-        call    draw_prompt
-        ret
+        jmp     draw_prompt
 
 k_left: cmp     word [incur], 0
         je      .x
@@ -1336,13 +1330,11 @@ k_right:
 .x:     ret
 
 k_home: mov     word [incur], 0
-        call    draw_prompt
-        ret
+        jmp     draw_prompt
 
 k_end:  mov     ax, [inlen]
         mov     [incur], ax
-        call    draw_prompt
-        ret
+        jmp     draw_prompt
 
 k_up:   mov     al, [hist_sel]
         cmp     al, [hist_n]
@@ -1354,13 +1346,8 @@ k_up:   mov     al, [hist_sel]
 k_down: cmp     byte [hist_sel], 0
         je      .x
         dec     byte [hist_sel]
-        cmp     byte [hist_sel], 0
-        jne     .l
-        mov     word [inlen], 0
-        mov     word [incur], 0
-        call    draw_prompt
-        ret
-.l:     call    hist_load
+        jz      clear_input             ; (back to the line being typed: empty)
+        call    hist_load
 .x:     ret
 
 hist_load:                              ; entry hist_sel back from the newest
@@ -1378,8 +1365,7 @@ hist_load:                              ; entry hist_sel back from the newest
         mov     [inlen], cx
         mov     [incur], cx
         rep     movsb
-        call    draw_prompt
-        ret
+        jmp     draw_prompt
 
 hist_push:
         mov     al, [hist_next]
@@ -1427,26 +1413,20 @@ view_changed:
 .x:     ret
 
 k_esc:  cmp     byte [busy], 0
-        je      .clear
+        je      clear_input
         cmp     byte [int_sent], 0
         jne     .x
         mov     byte [int_sent], 1
         mov     al, G_EVENT
-        mov     dx, cs
         mov     si, evint
         mov     cx, 1
-        call    txq_put
+        call    txq_put_cs
         mov     si, st_interrupting
-        call    set_status
-        ret
-.clear: mov     word [inlen], 0
-        mov     word [incur], 0
-        call    draw_prompt
+        jmp     set_status
 .x:     ret
 
 k_help: mov     byte [help_open], 1
-        call    draw_help
-        ret
+        jmp     draw_help
 
 k_quit: cmp     byte [busy], 0
         je      .q
@@ -1455,13 +1435,8 @@ k_quit: cmp     byte [busy], 0
         mov     byte [quit_armed], 1
         call    k_esc                   ; stop Claude first
         mov     si, st_quitarm
-        call    set_status
-        ret
+        jmp     set_status
 .q:     mov     byte [quit], 1
-        ret
-
-k_redraw:
-        call    redraw_all
         ret
 
 k_enter:
@@ -1474,8 +1449,7 @@ k_enter:
 .notq:  cmp     byte [connected], 0
         jne     .c
         mov     si, st_notconn
-        call    set_status
-        ret
+        jmp     set_status
 .c:     call    hist_push
         cmp     byte [busy], 0
         je      .send
@@ -1489,16 +1463,13 @@ k_enter:
         mov     byte [queued], 1
         mov     si, st_queued
         call    set_status
-        jmp     .clr
+        jmp     clear_input
 .full:  mov     si, st_qfull
-        call    set_status
-        ret
+        jmp     set_status
 .send:  mov     si, inbuf
         mov     cx, [inlen]
         call    send_text
-.clr:   mov     word [inlen], 0
-        mov     word [incur], 0
-        call    draw_prompt
+        jmp     clear_input
 .x:     ret
 
 ; CF if the input is /exit or /quit
@@ -1541,18 +1512,16 @@ send_text:
         rep     movsb
         call    echo_prompt
         mov     al, G_PROMPT
-        mov     dx, cs
         mov     si, pbuf
         mov     cx, [plen]
-        call    txq_put
+        call    txq_put_cs
         mov     byte [busy], 1
         mov     byte [int_sent], 0
         mov     byte [quit_armed], 0
         mov     ax, [now]
         mov     [turn_t0], ax
         mov     byte [status_text], 0
-        call    draw_status
-        ret
+        jmp     draw_status
 
 %include "TERMKEYS.INC"
 
@@ -1589,18 +1558,13 @@ tick_service:
 maybe_idle:                             ; HLT when nothing is due
         cmp     byte [lstate], LS_WAIT
         je      .x
-        cmp     byte [req_ready], 0
-        jne     .x
-        cmp     byte [txq_n], 0
-        jne     .x
-        cmp     byte [nak_pending], 0
-        jne     .x
-        cmp     byte [resend], 0
-        jne     .x
-        cmp     byte [busy], 0
-        jne     .x
-        cmp     byte [pi_active], 0
-        jne     .x
+        mov     al, [req_ready]
+        or      al, [txq_n]
+        or      al, [nak_pending]
+        or      al, [resend]
+        or      al, [busy]
+        or      al, [pi_active]
+        jnz     .x
         mov     ah, 1                   ; typed ahead: keep going
         cmp     byte [term], 0
         je      .pk
@@ -1623,15 +1587,16 @@ maybe_idle:                             ; HLT when nothing is due
 %include "TERMLINK.INC"
 
 msg_sent:
-        cmp     byte [done_type], G_KEYS
+        mov     al, [done_type]
+        cmp     al, G_KEYS
         jne     .e
         mov     byte [keys_q], 0        ; the next keys can go
         ret
-.e:     cmp     byte [done_type], G_EVENT
+.e:     cmp     al, G_EVENT
         jne     .r
         mov     byte [rep_q], 0         ; (Term's EVENTs: repaint, a click)
         ret
-.r:     cmp     byte [done_type], G_REPLY
+.r:     cmp     al, G_REPLY
         jne     .x
         mov     byte [reply_busy], 0
         cmp     byte [snap_reply], 0
@@ -1651,8 +1616,7 @@ link_lost:
         call    set_status_quiet
         call    draw_title
         call    draw_prompt
-        call    redraw_body
-        ret
+        jmp     redraw_body
 .nc:    cmp     byte [n_failrun], 3
         jb      .x
         mov     di, sline               ; "No answer at GPIB address 7 ..."
@@ -1697,7 +1661,7 @@ pi_frame:                               ; BX = frame offset in rxbuf
 .t:     jmp     [pf_ttab + di]
 .x:     ret
 pf_tab: dw pf_hello, pf_nop, pf_text, pf_status, pf_reasm, pf_reasm
-        dw pf_ready, pf_nop, pf_title, pf_clear, pf_cells
+        dw pf_ready, pf_nop, pf_title, conv_clear, pf_cells
 pf_ttab: dw pf_hello, pf_nop, pf_nop, pf_nop, pf_reasm, pf_nop  ; Term: the chat's
         dw pf_nop, pf_nop, pf_title, pf_nop, pf_cells           ; TEXT, ASK... ignored
 
@@ -1734,12 +1698,10 @@ pf_hello:
 .same:  cmp     byte [term], 0
         je      .chat
         mov     byte [busy], 0                  ; Term: no turns, no READY
-        call    redraw_all
-        ret
+        jmp     redraw_all
 .chat:  call    draw_status
         call    draw_title
-        call    draw_prompt
-        ret
+        jmp     draw_prompt
 
 pf_cells:
         cmp     byte [term], 0
@@ -1757,31 +1719,23 @@ pf_cells:
 
 pf_text:
         call    conv_text
-        call    conv_refresh
-        ret
+        jmp     conv_refresh
 
 pf_status:
         mov     di, status_text
-        cmp     cx, 70
-        jbe     .c
-        mov     cx, 70
-.c:     rep     movsb
-        mov     byte [di], 0
-        call    draw_status
-        ret
+        call    copy70
+        jmp     draw_status
 
 pf_title:
         mov     di, title_text
-        cmp     cx, 70
+        call    copy70
+        jmp     draw_title
+
+copy70: cmp     cx, 70                  ; DS:SI, CX bytes -> DI, ASCIIZ, 70 at most
         jbe     .c
         mov     cx, 70
 .c:     rep     movsb
         mov     byte [di], 0
-        call    draw_title
-        ret
-
-pf_clear:
-        call    conv_clear
         ret
 
 pf_ready:
@@ -1850,8 +1804,7 @@ exec_request:
         je      .ok
         mov     byte [rq_over], 0
         mov     al, 0F0h                ; too large
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 .ok:    mov     al, [reqbuf+1]
         mov     si, optab
 .l:     cmp     byte [si], 0
@@ -1862,8 +1815,7 @@ exec_request:
         jmp     .l
 .go:    jmp     [si+1]
 .bad:   mov     al, 0FFh
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 
 optab:  db 01h
         dw op_info
@@ -1895,6 +1847,11 @@ optab:  db 01h
         dw op_settime
         db 0
 
+; CF/AX from DOS, no data
+dos_result:
+        jc      reply0
+        xor     al, al
+reply0: xor     cx, cx                  ; AL = status, no data
 ; AL = status, CX = data bytes already at ioseg:2 -> queue the REPLY
 reply:  push    es
         mov     es, [ioseg]
@@ -1909,13 +1866,6 @@ reply:  push    es
         call    txq_put
         mov     byte [reply_busy], 1
         ret
-
-; CF/AX from DOS, no data
-dos_result:
-        jc      .e
-        xor     al, al
-.e:     xor     cx, cx
-        jmp     reply
 
 op_info:
         push    es
@@ -1944,22 +1894,11 @@ op_dir: mov     dx, dta
         cmp     ax, 2
         je      .done
         pop     es
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 .ent:   cmp     di, IOSIZE - 24
         ja      .done
-        mov     al, [dta+15h]
-        stosb
-        mov     ax, [dta+16h]
-        stosw
-        mov     ax, [dta+18h]
-        stosw
-        mov     ax, [dta+1Ah]
-        stosw
-        mov     ax, [dta+1Ch]
-        stosw
-        mov     si, dta+1Eh
-        mov     cx, 13
+        mov     si, dta+15h             ; attribute, time, date, size, name
+        mov     cx, 9 + 13
         rep     movsb
         mov     ah, 4Fh
         int     21h
@@ -2003,8 +1942,7 @@ op_read:
         mov     ah, 3Eh
         int     21h
         pop     ax
-.err:   xor     cx, cx
-        jmp     reply
+.err:   jmp     reply0
 
 ; mode (1: 0 create, 1 at offset, 2 append), offset (4), path, data
 op_write:
@@ -2023,20 +1961,20 @@ op_write:
         xor     cx, cx
         mov     ah, 3Ch
         int     21h
-        jc      .err
+        jc      op_read.err
         mov     bx, ax
         jmp     .wr
 .open:  mov     ax, 3D01h
         int     21h
         jnc     .seek
         cmp     ax, 2
-        jne     .err
+        jne     op_read.err
         cmp     byte [reqbuf+2], 2      ; append to a new file: create it
-        jne     .err
+        jne     op_read.err
         xor     cx, cx
         mov     ah, 3Ch
         int     21h
-        jc      .err
+        jc      op_read.err
 .seek:  mov     bx, ax
         mov     dx, [reqbuf+3]
         mov     cx, [reqbuf+5]
@@ -2047,12 +1985,12 @@ op_write:
         xor     dx, dx
         mov     ax, 4202h
 .sk:    int     21h
-        jc      .errc
+        jc      op_read.errc
 .wr:    mov     cx, [wr_len]
         mov     dx, [wr_data]
         mov     ah, 40h
         int     21h
-        jc      .errc
+        jc      op_read.errc
         mov     [wr_done], ax
         mov     ah, 3Eh
         int     21h
@@ -2063,12 +2001,6 @@ op_write:
         pop     es
         xor     al, al
         mov     cx, 2
-        jmp     reply
-.errc:  push    ax
-        mov     ah, 3Eh
-        int     21h
-        pop     ax
-.err:   xor     cx, cx
         jmp     reply
 
 op_delete:
@@ -2110,22 +2042,14 @@ op_stat:
         push    es
         mov     es, [ioseg]
         mov     di, 2
-        mov     al, [dta+15h]
-        stosb
-        mov     ax, [dta+16h]
-        stosw
-        mov     ax, [dta+18h]
-        stosw
-        mov     ax, [dta+1Ah]
-        stosw
-        mov     ax, [dta+1Ch]
-        stosw
+        mov     si, dta+15h             ; attribute, time, date, size
+        mov     cx, 9
+        rep     movsb
         pop     es
         mov     cx, 9
         xor     al, al
         jmp     reply
-.err:   xor     cx, cx
-        jmp     reply
+.err:   jmp     reply0
 
 op_free:
         mov     dl, [reqbuf+2]
@@ -2134,8 +2058,7 @@ op_free:
         cmp     ax, 0FFFFh
         jne     .ok
         mov     al, 15
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 .ok:    mov     si, dx                  ; total clusters
         mul     cx                      ; bytes per cluster
         mov     cx, ax
@@ -2199,8 +2122,7 @@ op_settime:
         int     1Ah
         call    draw_title
         xor     al, al
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 
 bin2bcd:
         aam
@@ -2360,11 +2282,9 @@ op_screen:
 .last:  cmp     byte [snap_taken], 0
         jne     .send
         mov     al, 0F5h
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 .nomem: mov     al, 0F1h
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 .send:  push    es
         mov     es, [snapseg]
         mov     al, [rq_id]
@@ -2482,12 +2402,10 @@ op_run: mov     si, reqbuf+2
 .sb:    call    snap_alloc
         jnc     .ns
         mov     al, 0F1h
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 .ns:    call    build_exec
         jnc     .go
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 .go:    mov     ax, 0003h               ; a plain text screen for the program
         int     10h
         call    vec_dos
@@ -2533,8 +2451,7 @@ op_run: mov     si, reqbuf+2
         jmp     reply
 .fail:  call    video_on
         mov     al, [run_err]
-        xor     cx, cx
-        jmp     reply
+        jmp     reply0
 
 ; CF if the key script holds a snapshot mark
 script_has_snap:
@@ -2747,8 +2664,7 @@ make_outname:
 .slash: mov     al, '\'
         stosb
 .name:  mov     si, s_outfile
-        call    copyz
-        ret
+        jmp     copyz
 
 do_exec:
         mov     [exec_ss], ss
@@ -3013,8 +2929,7 @@ build_kv:
         mov     al, cl
         call    put_dec2
         mov     si, kv_grid
-        call    put_str
-        ret
+        jmp     put_str
 
 ; ---- small helpers -----------------------------------------------
 put_str:                                ; DS:SI ASCIIZ -> ES:DI (no NUL)
@@ -3176,10 +3091,6 @@ spinseq     db 87h, 88h, 89h, 8Ah, 8Bh, 8Ch, 8Bh, 8Ah, 89h, 88h
 evint       db 01h
 fcb1        db 0, '           ', 0, 0, 0, 0
 fcb2        db 0, '           ', 0, 0, 0, 0
-blankline:
-%rep 80
-            db ' ', 0
-%endrep
 
 %include "TERMINUS.INC"
 %include "GLYPHS.INC"
@@ -3790,7 +3701,6 @@ snap_reply  resb 1
 reqbuf      resb REQMAX + 4
 hellobuf    resb 512
 evans       resb 4
-crctab      resw 256
 ; Term
 term        resb 1                      ; 1: the GRiD is Claude Code's terminal
 t_active    resw 1                      ; tick of the last key or screen change
