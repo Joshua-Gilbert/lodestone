@@ -794,6 +794,8 @@ def t_mouse():
     sv = tty_line(k, 'saved')
     check('15h-17h: the state saved (a size that fits), the pointer moved, restored: back at (100, 50)',
           sv and 0 < int(sv[0], 16) <= 256 and sv[2:] == ['0064', '0032'], sv)
+    check('1Ah sets the sensitivities, 1Bh gives them back (BX, CX, DX)', tty_line(k, 'sens')[1:] == ['0011', '0022', '0033'],
+          tty_line(k, 'sens'))
     k.pc.mouse_move(8, 0); k.pc.run_for(0.05)
     k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05)
     k.key(ktest.ENTER)
