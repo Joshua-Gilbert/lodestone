@@ -121,7 +121,8 @@ init:   cli
         sti
         xor     al, al                  ; clear the BSS (nothing on the stack
         mov     di, bss_start           ;  yet), all but this code
-        mov     cx, OVL_AT - (image_end - start)    ; (= bss_start)
+        mov     cx, OVL_AT
+        sub     cx, di
         rep     stosb
         mov     di, ovl_end
         mov     cx, bss_end - ovl_end

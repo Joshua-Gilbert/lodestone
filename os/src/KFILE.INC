@@ -1653,14 +1653,40 @@ find_next:
         pop     ds
         les     di, [dta]
         mov     ax, [es:di+13]
+        call    dir_lim
         mov     bx, [es:di+15]
-        mov     cl, [es:di+12]
+.l:     mov     ax, [es:di+13]
+        push    es
+        push    di
         push    cs
         pop     es
-        call    dir_scan
-        jc      .x                      ; (18 at the end, or a disk error)
+        call    dir_entry
+        pop     di
+        pop     es
+        jc      .derr
+.e:     mov     al, [si]
+        or      al, al
+        jz      .nomore
+        cmp     al, 0E5h
+        je      .n
+        mov     al, [si+11]
+        cmp     al, 0Fh
+        je      .n
+        mov     ah, [es:di+12]
+        cmp     ah, A_VOL
+        jne     .nv
+        test    al, A_VOL               ; label search: labels only
+        jz      .n
+        jmp     .m
+.nv:    test    al, A_VOL
+        jnz     .n
+        and     al, A_HID | A_SYS | A_DIR
+        not     ah
+        test    al, ah
+        jnz     .n
+.m:     call    name_match
+        jne     .n
         ; found: fill the DTA
-        les     di, [dta]
         inc     bx
         mov     [es:di+15], bx
         mov     al, [si+11]
@@ -1678,6 +1704,19 @@ find_next:
         push    cs
         pop     es
         clc
+        ret
+.n:     inc     bx                      ; the next entry: in this sector,
+        test    bl, 15                  ; straight on in the buffer
+        jz      .l
+        cmp     bx, [dl_lim]
+        jae     .l
+        add     si, 32
+        jmp     .e
+.derr:  cmp     ax, 18
+        je      .nomore
+        push    cs                      ; a disk error
+        pop     es
+        stc
         ret
 .nomore:
         push    cs
