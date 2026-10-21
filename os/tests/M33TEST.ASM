@@ -51,6 +51,26 @@
         int     33h
         mov     si, s_rng
         call    show
+        mov     ax, 15h                 ; the state's size; saved, the
+        int     33h                     ;  pointer moved, restored: back
+        mov     [stsz], bx              ;  where it was
+        push    cs
+        pop     es
+        mov     ax, 16h
+        mov     dx, stbuf
+        int     33h
+        mov     ax, 4
+        mov     cx, 150
+        mov     dx, 55
+        int     33h
+        mov     ax, 17h
+        mov     dx, stbuf
+        int     33h
+        mov     ax, 3
+        int     33h
+        mov     ax, [stsz]
+        mov     si, s_save
+        call    show
         mov     ax, 7                   ; whole screen again
         xor     cx, cx
         mov     dx, 639
@@ -172,4 +192,7 @@ s_mick  db 'mickeys: $'
 s_rng   db 'range: $'
 s_ev    db 'events: $'
 s_max   db 'max: $'
+s_save  db 'saved: $'
+stsz    dw 0
+stbuf   times 256 db 0
 s_crlf  db 13, 10, '$'

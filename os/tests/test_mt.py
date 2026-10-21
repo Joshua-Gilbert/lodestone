@@ -42,7 +42,7 @@ MT_ENT, TE_NAME, TE_SH = 32, 10, 22      # KMT.INC: an entry in mt_tab, its name
 
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # batch): the kernel's image and BSS, the UI block kept while a DOS program runs
-OFF_MAP = {'image_end': 0x42B0, 'bss_end': 0x77E0, 'ui_keep_end': 0x6CC4}
+OFF_MAP = {'image_end': 0x42B0, 'bss_end': 0x77E0, 'ui_keep_end': 0x6CB4}
 
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p

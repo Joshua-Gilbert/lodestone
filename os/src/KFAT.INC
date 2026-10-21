@@ -1069,4 +1069,5 @@ ren_drv     resb 1
 ren_lba     resw 1
 ren_off     resw 1
 ren_de      resb 32
+ren_de_end:                     ; (EXEC's ex_hdr: KPROC.INC)
 section .text

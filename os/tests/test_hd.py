@@ -249,6 +249,11 @@ def t_bad():
     o = sh.run('type c:\\readme.txt', 'r', 'f')
     check('a bad sector: "Data error reading drive C", Abort/Retry/Fail, Retry then Fail',
           o.count('Data error reading drive C') == 2 and 'Hello' not in o, o)
+    # the same sector readable again by the time Retry is pressed: the read
+    # goes on into the caller's memory (hd_dio keeps only DI itself: hd_io
+    # must leave BX, CX, DX, SI, ES as they were across INT 24h)
+    n, o = answer(k, 'type c:\\readme.txt', key='r', on_prompt=lambda: ata.bad.clear())
+    check('... then readable again: Retry, and the file is typed', n == 1 and 'Hello' in o, (n, o))
 
 def t_full():
     """A small FAT16 partition near full: COPY says so, nothing lost."""

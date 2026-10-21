@@ -254,6 +254,8 @@ f33_02: cmp     word [m33_cnt], 0       ; (and 10h: conditional off)
         dec     word [m33_cnt]
 .x:     ret
 
+f33_1B: mov     si, m33_sens        ; the three sensitivities
+        jmp     short m33_out3
 f33_03: mov     si, m33_btn         ; buttons, x, y
 ; three words at SI -> the caller's BX, CX, DX
 m33_out3:
@@ -428,10 +430,8 @@ f33_1A: mov     ax, [bp + M3_BX]
         mov     [m33_sens + 4], ax
         ret
 
-f33_1B: mov     si, m33_sens
-        jmp     m33_out3
 
-f33_1E: mov     word [bp + M3_BX], 0     ; display page 0
+f33_1E: and     word [bp + M3_BX], 0     ; display page 0 (flags: iret's)
         ret
 
 f33_1F: mov     word [bp + M3_AX], 0FFFFh ; (can't be disabled)
@@ -443,7 +443,7 @@ f33_24: mov     word [bp + M3_BX], 0626h ; version 6.26, a serial mouse
         mov     [bp + M3_CX], ax
         ret
 
-f33_26: mov     word [bp + M3_BX], 0
+f33_26: and     word [bp + M3_BX], 0
         mov     ax, [m33_xmax]
         mov     [bp + M3_CX], ax
         mov     ax, [m33_ymax]
