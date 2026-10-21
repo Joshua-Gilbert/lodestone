@@ -1441,18 +1441,23 @@ def t_cmdshare():
     sh.run('md HH'); sh.run('cd HH')
     sh.run('echo hi > x.txt'); sh.run('echo DECOY > t')
     outs = [sh.run(c) for c in ('copy x.txt longname.txt', 'copy x.txt longname.tx', 'copy x*.txt *.bak')]
+    o = sh.run('copy longname.txt longname.txt')
     sh.run('cd \\')
     f = fs()
     check("COPY from a 65-character directory: COPY's two names checked (74-82 bytes) don't reach its source name",
           [f.get('A:' + deep + n) for n in ('\\LONGNAME.TXT', '\\LONGNAME.TX', '\\X.BAK')] == [b'hi \r\n'] * 3
           and all('1 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith('A:\\A'))))
+    check("... and a file there copied onto itself (an 81-character name): refused as such", 'cannot be copied onto itself' in o, o)
     sh.run('cd sub')
     outs = [sh.run('copy ?.txt ' + '.\\' * n + '????????.' + e) for n, e in ((34, 'BBK'), (51, 'CCK'))]   # 80 and 114 characters
+    sh.run('md \\q'); sh.run('cd \\q'); sh.run('echo 1 > a'); sh.run('echo 2 > b')
+    outs.append(sh.run('for %a in (' + '.\\' * 27 + ') do copy. %a%a.\\????????.DDK'))   # 122, the longest a line allows
     sh.run('cd \\')
     f = fs()
-    check("COPY with wildcards to a destination of 80 and 114 characters (past its buffer): every file",
+    check("COPY with wildcards to a destination of 80, 114 and 122 characters (past its buffer): every file",
           all(('A:\\SUB\\%s.%s' % (b, e)) in f for b in 'AB' for e in ('BBK', 'CCK'))
-          and all('2 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith('A:\\SUB'))))
+          and 'A:\\Q\\A.DDK' in f and 'A:\\Q\\B.DDK' in f
+          and all('2 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith(('A:\\SUB', 'A:\\Q')))))
     k.key('exit'); k.key(ktest.ENTER)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))

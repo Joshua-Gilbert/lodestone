@@ -366,7 +366,8 @@ under 2 bytes is refused.  Then the command prompt, Claude and the
 programs: a program started from the prompt has 1.2 KB more, CLAUDE.COM
 keeps 0.4 KB less while it runs one, and System and Write use 1.7 KB and
 0.4 KB less.  After DIR A:, a plain DIR said "Volume in drive   has no
-label" and gave another drive's free space; fixed.
+label" and gave another drive's free space; fixed.  COPY of a file
+onto itself in a deep directory now says so.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
