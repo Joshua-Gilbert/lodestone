@@ -1150,6 +1150,10 @@ c_copy: cmp     si, bp
 .x:     ret
 
 ; DX:AX (unsigned) in decimal at DI
+%ifdef CALC_RUN
+c_u32:  mov     cx, dx                  ; (CALC.RUN: the core's, CX:AX; only
+        jmp     UI_SBU32                ;  CX changes)
+%else
 c_u32:  mov     bx, 10
         xor     cx, cx
 .d:     push    ax
@@ -1169,6 +1173,7 @@ c_u32:  mov     bx, 10
         stosb
         loop    .o
         ret
+%endif
 
 %include "FPU.INC"
 
