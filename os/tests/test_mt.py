@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Multitasking (KMT.INC): the switch and the skeleton (M1), tasks switched
 when one waits for a key (M2a), the front one chosen with CODE-Tab, each with
-its own screen (M2b), preempted at the timer's tick where it is safe (M3).
+its own screen (M2b), preempted at the timer's tick where it is safe (M3), each
+with its own coprocessor (M3b), a background task's output in its own screen and a
+task that writes the screen itself frozen there (M4a).
 
 (pcemu's INT 16h AH=00h with no key blocks at the caller's own INT 16h, so a
 program waiting there can be preempted; on the 1520 it waits inside the BIOS,
@@ -14,7 +16,7 @@ it.  Programs start others as tasks (MTLAUNCH), each in a region of its own,
 and they take turns at the timer's tick, where it is safe.  Off (no such
 line, any other value, or no EMS), nothing of it is in memory and everything
 is as before.
-python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_rules t_fpu t_progs t_rom]"""
+python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_rules t_fpu t_screens t_progs t_rom]"""
 import collections, os, re, struct, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
@@ -31,6 +33,8 @@ def check(name, cond, detail=''):
     print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:600]) if detail and not cond else ''))
 
 MTPROBE = os.path.join(HERE, 'MTPROBE.COM')
+MTSC = os.path.join(HERE, 'MTSCR.COM')
+VNEST = os.path.join(HERE, 'VNEST.BIN')
 MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK = (os.path.join(HERE, n + '.COM') for n in ('MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH',
                                                                                     'MTSPIN', 'MTHOOK'))
 SYS = os.path.join(GOS, 'src', 'LODE.SYS')
@@ -39,6 +43,9 @@ MAP = os.path.join(GOS, 'src', 'LODE.MAP')
 import mkmt
 INT08 = (STUB, 0x1000)                  # pcemu's BIOS timer handler
 MT_ENT, TE_NAME, TE_SH = 32, 10, 22      # KMT.INC: an entry in mt_tab, its name, its screen's EMS handle
+TE_TX, TE_VF, TX_VID = 6, 24, 10         # (its TX's segment, VF_DIRECT and the SPF_ overrides; a TX's BIOS video data)
+VF_DIRECT, SPF_BG, SPF_FREEZE, TS_WAITF = 1, 2, 4, 3
+INT10 = (STUB, 0x10 * 8)                # pcemu's BIOS INT 10h
 
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # batch): the kernel's image and BSS, the UI block kept while a DOS program runs
@@ -119,8 +126,8 @@ def t_off():
                            ('MULTITASK=One', b'MULTITASK=One\r\n', 88), ('MULTITASK= (empty)', b'MULTITASK=\r\n', 88),
                            ('MULTITASK=1 but no EMS', b'MULTITASK=1\r\n', 0)):
         k = boot('mt_off.img', text, ems)
-        check('%s: no MT block, INT 08h the BIOS\'s, f_F0, kbd_get.k and done.sw as assembled' % tag,
-              mt_seg(k) is None and vec(k, 8) == INT08 and f0_bytes(k) == sysb[k.Y['f_F0']:k.Y['f_F0'] + 5]
+        check('%s: no MT block, INT 08h and 10h the BIOS\'s, f_F0, kbd_get.k and done.sw as assembled' % tag,
+              mt_seg(k) is None and vec(k, 8) == INT08 and vec(k, 0x10) == INT10 and f0_bytes(k) == sysb[k.Y['f_F0']:k.Y['f_F0'] + 5]
               and kw_bytes(k) == sysb[k.Y['kbd_get.k']:k.Y['kbd_get.k'] + 6] and dx_bytes(k) == EXIT5,
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
@@ -148,6 +155,9 @@ def t_on():
     check('INT 08h goes through mt_tick', vec(k, 8) == (seg, Y['mt_tick']), (vec(k, 8), hex(seg or 0)))
     old = (k.pc.u16(seg, Y['mt_old08'] + 2), k.pc.u16(seg, Y['mt_old08']))
     check('... which goes on to the BIOS\'s', old == INT08, old)
+    old = (k.pc.u16(seg, Y['mt_old10'] + 2), k.pc.u16(seg, Y['mt_old10']))
+    check('INT 10h goes through mt_v10, and on to the BIOS\'s', vec(k, 0x10) == (seg, Y['mt_v10']) and old == INT10,
+          (vec(k, 0x10), old))
     f0 = f0_bytes(k)
     check('INT 21h F0h goes through mt_f0 (JMP FAR over f_F0\'s first 5 bytes)',
           f0[0] == 0xEA and f0[1] | f0[2] << 8 == Y['mt_f0'] and f0[3] | f0[4] << 8 == seg, f0.hex())
@@ -172,7 +182,8 @@ def t_on():
           and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x14, 0x1B, 0xFF)) and got.get(0x13, (1,))[0] == 0, out[-400:])
     check('F0h AL=13h with BL = 8 (no such task) and BL = 7 (a free one): CF, AX = 1',
           bad(got.get(0x113, (0, 0))) and bad(got.get(0x213, (0, 0))), out[-400:])
-    check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, nothing written', got.get(0x12, (1,))[:2] == (0, 0xF000)
+    check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, AH = 0 the caller, nothing written',
+          got.get(0x12, (1,))[:2] == (0, 0x0000)
           and got[0x12][3] == 1, out[-400:])
     sh = Shell(k)
     o = sh.run('tasks && echo WORKED')
@@ -226,9 +237,10 @@ def t_tasks():
           'task 1' in o and 'task 2' in o and 'list: 0 1 Executive; 1 1 MTLINE.COM; 2 1 MTLINE.COM;' in o, o)
     st = tstate(k)
     check('when MTLAUNCH waits for its line, both run to theirs and wait there (TS_WAITK) in the background; '
-          'the Executive\'s task in front; both prompts on the screen',
+          'the Executive\'s task in front; each prompt in its own task\'s screen, none on the one in front',
           st == ([(0, 1, 'Executive'), (1, 2, 'MTLINE.COM'), (2, 2, 'MTLINE.COM')], 0, 0)
-          and k.pc.text_screen().count('MTLINE>') >= 2, (st, k.pc.text_screen()))
+          and 'MTLINE>' not in k.pc.text_screen() and all('MTLINE>' in slot_text(k, i) for i in (1, 2)),
+          (st, k.pc.text_screen(), [slot_text(k, i)[:80] for i in (1, 2)]))
     a = mcbs(k)
     check('their regions: T1 right under MT\'s block, T2 under T1, the system\'s (owner 8)',
           [(b[4], b[2]) for b in a[-3:]] == [(b'T2', 8), (b'T1', 8), (b'MT', 8)]
@@ -248,7 +260,7 @@ def t_tasks():
           A.disk_file(k, 'A.TXT') == b'hello', A.disk_file(k, 'A.TXT'))
     line(k, '')
     a1, used1 = merged(mcbs(k)), sft_used(k)
-    v = sh.run('ver')                   # (the screen is shared until M4: the prompt's line is a jumble)
+    v = sh.run('ver')
     check('MTLAUNCH gets its line and ends; the command prompt back (VER answers); memory as before (free neighbours '
           'merged), no file left open (the stubs\' inherited handles closed)',
           tstate(k) == ([(0, 1, 'Executive')], 0, 0) and a1 == a0 and used1 == used0 and 'Lodestone version' in v,
@@ -359,12 +371,13 @@ def t_front():
     hot(k)
     s1 = k.pc.text_screen()
     check('CODE-Tab while MTLAUNCH waits: task 1 to the front, the key taken out of the buffer; its screen, never shown '
-          'yet, clear in mode 3', tstate(k)[1] == 1 and no_hot(k) and s1.strip() == '' and k.pc.mode() == 3,
-          (tstate(k), k.pc.kbd_ring(), s1[-200:]))
+          'yet: mode 3, its prompt (printed in the background) and nothing else', tstate(k)[1] == 1 and no_hot(k)
+          and s1.strip() == 'MTLINE>' and k.pc.mode() == 3, (tstate(k), k.pc.kbd_ring(), s1[-200:]))
     k.key('hel'); k.run_for(0.3)
     check('... what is typed goes to task 1, and shows on its screen', 'hel' in k.pc.text_screen(), k.pc.text_screen()[-200:])
     hot(k)
-    check('CODE-Tab again: task 2, its screen clear', tstate(k)[1] == 2 and k.pc.text_screen().strip() == '', (tstate(k), k.pc.text_screen()[-200:]))
+    check('CODE-Tab again: task 2, its own prompt only', tstate(k)[1] == 2 and k.pc.text_screen().strip() == 'MTLINE>',
+          (tstate(k), k.pc.text_screen()[-200:]))
     hot(k)
     check('and again: round to task 0, MTLAUNCH\'s screen back as it was, its cursor and BIOS video data too',
           tstate(k)[1] == 0 and k.pc.text_screen() == scr0 and k.pc.cursor() == cur0 and bytes(k.pc.rd(0x40, 0x49, 30)) == bd0,
@@ -537,14 +550,15 @@ class Audit:
     was met.  force: a switch due on every INT 21h way out (mt_pend set at mt_exit), so every one is checked."""
     def __init__(s, k):
         s.k, s.ev, s.force, s.track = k, [], False, None
-        s.depth, s.only = {'tick': 0, 'exit': 0}, collections.Counter()
+        s.depth, s.only = {'tick': 0, 'exit': 0, 'v10': 0}, collections.Counter()
         s.seg = seg = mt_seg(k)
         s.at, s.sa, s.swa, s.ex = (seg * 16 + k.Y[n] for n in ('mt_preempt', 'mt_safe', 'mt_switch', 'mt_exit'))
+        s.wf = seg * 16 + k.Y['mt_wfront']   # (a background task waiting at INT 10h to be in front)
         s.fd, s.fdw, s.due = seg * 16 + k.Y['mt_fdrain'], seg * 16 + k.Y['mt_fdrain.w'], False
         s.inject, s.injected, s.open, s.nested = None, 0, {}, collections.Counter()
         # (IRQ 13 at mt_fdrain, when inject() says; open drains: SS -> the SP and where its call returns; switches
         #  started inside one, by path)
-        s.ret = {k.Y['mt_tick.r']: 'tick', k.Y['mt_exit.n']: 'exit'}
+        s.ret = {k.Y['mt_tick.r']: 'tick', k.Y['mt_exit.n']: 'exit', k.Y['mt_v10.wf']: 'v10'}
         s.prev, k.pc.watch = k.pc.watch, s.watch
     def stop(s): s.k.pc.watch = s.prev
     def mine(s, x, task, reg, psp, root, ui):
@@ -587,11 +601,13 @@ class Audit:
             r, cur = s.rules(pc.r('ax'), pc.r('bx'), pc.r('dx'), pc.r('ss'))
             no = [n for n, ok in r.items() if not ok]
             if len(no) == 1: s.only[no[0]] += 1
-        elif a == s.at:
+        elif a in (s.at, s.wf):
             ss, sp = pc.r('ss'), pc.r('sp')
             path = s.ret.get(pc.u16(ss, sp), '?')
+            if a == s.wf and path != 'v10': path = '?'
             if ss in s.open: s.nested[path] += 1            # (inside a drain of this task's, its IRQ 13 handler's)
             f = sp + 12 if path == 'tick' else sp + 4 + 20     # (mt_tick's 5 pushes, or BP and INT 21h's frame: IP, CS, FL)
+            if path == 'v10': f = pc.r('bp') + 2             # (mt_v10's BP: the INT 10h frame after it)
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
             r, cur = s.rules(cs, ip, fl, ss)
             if path == 'tick': r['ivt'] = vec(k, 8) == (s.seg, k.Y['mt_tick'])   # (else a hook ahead was interrupted)
@@ -912,6 +928,189 @@ def t_fpu():
           and k.pc.rd(seg, Y['mt_fpu'], 1)[0] == 0 and k.pc.ints[7] == 0 and not k.crashed and n1 > 0 and n2 > 0
           and 0.5 < n1 / n2 < 2, (seg, k.pc.ints[7], n1, n2))
 
+def task_ent(k, n): return k.Y['mt_tab'] + n * MT_ENT
+
+def slot(k, n, size=0x4000):
+    """Task n's screen as MT keeps it: its 2 EMS pages (KEMS's tables, as mt_smap reads them)."""
+    pc, Y = k.pc, k.Y
+    h = pc.rd(mt_seg(k), task_ent(k, n) + TE_SH, 1)[0]
+    if not h: return None
+    st = pc.rd(0x60, Y['ems_h'] + h * 4, 1)[0]
+    return b''.join(pc.ems_read(pc.ems_page(pc.rd(0x60, Y['ems_ltab'] + st + i, 1)[0]), 0, 0x4000) for i in (0, 1))[:size]
+
+def slot_text(k, n):
+    v = slot(k, n, 4000) or bytes(4000)
+    return '\n'.join(''.join(chr(v[(r * 80 + c) * 2]) if 32 <= v[(r * 80 + c) * 2] < 127 else ' '
+                             for c in range(80)).rstrip() for r in range(25))
+
+def tvid(k, n):
+    """Task n's BIOS video data (40:49h-66h) in its TX."""
+    return bytes(k.pc.rd(k.pc.u16(mt_seg(k), task_ent(k, n) + TE_TX), TX_VID, 30))
+
+def vflags(k, n): return k.pc.rd(mt_seg(k), task_ent(k, n) + TE_VF, 1)[0]
+def set_vflags(k, n, v): k.pc.wr(mt_seg(k), task_ent(k, n) + TE_VF, bytes([v]))
+def shd(k): return k.pc.rd(mt_seg(k), k.Y['mt_shd'], 1)[0]
+
+def waitfile(k, name, sim_s=20.0):
+    """Run until the file is on the disk; the simulated microseconds it took (None: not in sim_s)."""
+    u0 = k.pc.us
+    while k.pc.us - u0 < sim_s * 1e6:
+        k.run_for(0.05)
+        if A.disk_file(k, name): return k.pc.us - u0
+    return None
+
+def t_screens():
+    print('== screens: a background task\'s INT 10h in its own screen; one that writes the screen itself frozen there')
+    k = boot('mt_sc.img', b'MULTITASK=1\r\n', 88, MTSC)
+    seg, Y = mt_seg(k), k.Y
+    au = Audit(k)
+    sh = Shell(k)
+    sh.run('ver')
+    # the reference: MTSCR P alone, from the prompt (no other task: the BIOS's own output, nothing shadowed)
+    typ(k, 'mtscr p', 3.0)
+    ref, rbd, sh0 = bytes(k.pc.rd(0xB800, 0, 0x4000)), bytes(k.pc.rd(0x40, 0x49, 30)), shd(k)
+    line(k, '')
+    rt, r1 = ('\n'.join(''.join(chr(ref[p + (r * 80 + c) * 2]) for c in range(80)) for r in range(25)) for p in (0, 0x1000))
+    check('MTSCR P alone, from the prompt: the BIOS draws it (no other task, so nothing shadowed: mt_shd 0): page 0 its '
+          'calls\' output, page 1 the 30 lines scrolled there in attribute 1Eh', sh0 == 0 and 'end' in rt and 'str1' in rt
+          and 'BBBBB' in rt and 'mvo' in rt and 's2' in rt and 'line A' in r1 and 'line Z' not in r1
+          and ref[0x1000 + (24 * 80) * 2 + 1] == 0x1E, (sh0, rt, r1))
+    # in the background, behind MTLAUNCH
+    sh.run('cls')
+    typ(k, 'mtlaunch mtscr.com p', 3.0)
+    st, front_, s_bg = tstate(k), k.pc.text_screen(), shd(k)
+    sl, tv = slot(k, 1), tvid(k, 1)
+    check('MTSCR P in the background (MTLAUNCH in front): none of its output on the screen in front; in its own screen '
+          '(its 2 EMS pages) all of it, byte for byte as the BIOS drew it alone (16 KB: pages 0-3; mode 3, the teletype '
+          'and DOS, the cursor, 09h, 0Ah, 13h\'s four kinds, 06h, 07h, page 1, what 03h, 08h, 0Fh answered, 30 lines '
+          'scrolled in the bottom line\'s attribute), its BIOS video data too (40:49h-66h: cursors, shape, page, colour '
+          'select)', st[0][1:] == [(1, 2, 'MTSCR.COM')] and 'MTLAUNCH waits>' in front_ and 'str1' not in front_
+          and 'line' not in front_ and sl == ref and tv == rbd,
+          (st, front_[-200:], [i for i in range(0, 0x4000, 2) if sl[i:i + 2] != ref[i:i + 2]][:8], tv.hex(), rbd.hex()))
+    front(k, 1)
+    check('... brought to the front: that screen shown, and its BIOS data; MTLAUNCH\'s, shadowed from the moment there was '
+          'a task behind it (mt_shd 1: its pages given the screen then), found not to write the screen itself',
+          bytes(k.pc.rd(0xB800, 0, 0x4000)) == ref and bytes(k.pc.rd(0x40, 0x49, 30)) == rbd and tstate(k)[1] == 1
+          and s_bg == 1 and vflags(k, 0) & VF_DIRECT == 0, (tstate(k), s_bg, vflags(k, 0), k.pc.text_screen()[-200:]))
+    line(k, ''); line(k, '')
+    check('... all ended, the prompt alone again: nothing shadowed (mt_shd 0)', shd(k) == 0 and len(tstate(k)[0]) == 1,
+          (shd(k), tstate(k)))
+    # the detector: in front with another task there, shadowed; compared when switched from
+    typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com p', 3.0)
+    s_on, f1 = shd(k), tstate(k)[1]
+    front(k, 0)
+    c_p = vflags(k, 2)
+    check('MTSCR P in front, another task there: its INT 10h calls shadowed in its pages (mt_shd 1); switched from, its '
+          'screen matches them, so it is known not to write the screen itself (VF_DIRECT clear: it may run behind)',
+          f1 == 2 and s_on == 1 and c_p & VF_DIRECT == 0 and slot(k, 2) == ref, (f1, s_on, c_p, tstate(k)))
+    front(k, 2); line(k, '')
+    front(k, 1); line(k, 'x'); line(k, '')
+    for mode, why in (('d', 'a word written into B800h itself'), ('g', 'in a graphics mode (6)')):
+        typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com %s %s.txt' % (mode, mode), 3.0)
+        f1 = tstate(k)[1]
+        front(k, 0)
+        c = vflags(k, 2)
+        check('MTSCR %s in front, another task there: switched from, it is found to write the screen itself (%s): '
+              'VF_DIRECT' % (mode.upper(), why), f1 == 2 and c & VF_DIRECT, (f1, c, tstate(k)))
+        front(k, 2); line(k, '')
+        front(k, 1); line(k, 'x'); line(k, '')
+    # the 1520's own teletype calls INT 10h again for each step: those calls are the BIOS's (from above A000h), not shadowed again
+    v = open(VNEST, 'rb').read()
+    k.pc.wr(0xD000, 0, v)
+    k.pc.wr(0xD000, len(v) - 4, struct.pack('<HH', INT10[1], INT10[0]))
+    k.pc.wr(seg, Y['mt_old10'], struct.pack('<HH', 0, 0xD000))
+    n10 = k.pc.ints[0x10]
+    typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com p', 3.0)
+    front(k, 0)
+    c_n = vflags(k, 2)
+    nested = k.pc.ints[0x10] - n10
+    check('with a teletype as the 1520\'s (VNEST at D000h, calling INT 10h again for its cursor, character, scroll: %d BIOS '
+          'calls): MTSCR P in front is still found not to write the screen itself, its pages as the screen' % nested,
+          c_n & VF_DIRECT == 0 and slot(k, 2) == ref and nested > 1000, (c_n, nested, tstate(k)))
+    front(k, 2); line(k, '')
+    front(k, 1); line(k, 'x'); line(k, '')
+    k.pc.wr(seg, Y['mt_old10'], struct.pack('<HH', INT10[1], INT10[0]))
+    # frozen in the background: never run there
+    typ(k, 'mtlaunch mtspin.com 20 z1.txt', 0.05)
+    for i in range(100):
+        if len(tstate(k)[0]) == 2: break
+        k.run_for(0.01)
+    set_vflags(k, 1, VF_DIRECT)
+    k.run_for(2.0)
+    z1, st1 = A.disk_file(k, 'Z1.TXT'), tstate(k)
+    set_vflags(k, 1, VF_DIRECT | SPF_BG)
+    k.run_for(2.0)
+    z1b, s_z = A.disk_file(k, 'Z1.TXT'), shd(k)
+    line(k, '')
+    check('a task marked VF_DIRECT is frozen in the background: never run there (MTSPIN 20 ticks: no count in 2 s, still '
+          'TS_RUN); with SPF_BG too it runs (its count written); it ends behind MTLAUNCH, the last task: nothing shadowed '
+          'from then (mt_shd 0)', z1 is None and st1[0][1:] == [(1, 1, 'MTSPIN.COM')] and z1b and s_z == 0,
+          (z1, st1, z1b, s_z))
+    typ(k, 'mtlaunch /z mtspin.com 8 z2.txt', 2.0)
+    z2, f2 = A.disk_file(k, 'Z2.TXT'), vflags(k, 1)
+    front(k, 1)
+    z2b = waitfile(k, 'Z2.TXT', 3.0)
+    line(k, '')
+    check('SPF_FREEZE (MTLAUNCH /Z): never run in the background (no count in 2 s), runs once in front',
+          z2 is None and f2 == SPF_FREEZE and z2b, (z2, f2, z2b))
+    # graphics asked for in the background: it waits to be in front
+    n = len(au.ev)
+    typ(k, 'mtlaunch mtscr.com g g2.txt', 2.0)
+    st, m0, g0, ft, gt = tstate(k), k.pc.mode(), A.disk_file(k, 'G2.TXT'), k.pc.text_screen(), slot_text(k, 1)
+    sw = au.switches(n, 'v10')
+    front(k, 1); k.run_for(0.5)
+    m1, g1 = k.pc.mode(), A.disk_file(k, 'G2.TXT')
+    line(k, ''); line(k, '')
+    check('MTSCR G in the background asks for mode 6: it waits to be in front (TS_WAITF), switched from there at a safe '
+          'point (%d times), its line in its own screen, the screen in front untouched (mode 3); brought to the front, mode 6 '
+          'and on' % len(sw), st[0][1:] == [(1, TS_WAITF, 'MTSCR.COM')] and m0 == 3 and g0 is None
+          and 'asks for graphics' in gt and 'graphics' not in ft and sw and m1 == 6 and g1 == b'G'
+          and not au.bad(), (st, hex(m0), g0, len(sw), hex(m1), g1, au.bad()[:2]))
+    typ(k, 'mtlaunch mtscr.com q q.txt', 2.0)
+    q, st = A.disk_file(k, 'Q.TXT'), tstate(k)
+    line(k, '')
+    check('... with interrupts off it can\'t wait (not a safe point): the mode set is dropped, it goes on in mode 3 '
+          '(Q.TXT "Q03"), the screen in front untouched', q == b'Q03' and k.pc.mode() == 3, (q, st, hex(k.pc.mode())))
+    # a hardware interrupt's INT 10h: the real screen's
+    typ(k, 'mtlaunch mtscr.com i i.txt', 2.0)
+    i_, scr, isl = A.disk_file(k, 'I.TXT'), bytes(k.pc.rd(0xB800, 0, 160)), slot(k, 1, 160)
+    line(k, '')
+    check('MTSCR I in the background, its INT 1Ch handler drawing \'*\' through INT 10h (IRQ 0 in service): on the '
+          'real screen, not in its own', i_ == b'I' and scr[158:160] == b'*\x70' and isl[158:160] != b'*\x70',
+          (i_, scr[150:160]))
+    # LCMD's screen saver doesn't start behind another task
+    ui = k.pc.u16(0x60, Y['ui_seg'])
+    k.pc.wr(ui, Y['saver_t'], bytes([36, 0]))           # (2 s: LCMD reads it when it starts)
+    typ(k, 'mtlaunch lcmd.com', 1.0)
+    s0, m0 = bytes(k.pc.rd(0xB800, 0, 0x4000)), k.pc.mode()
+    k.run_for(4.0)
+    s1, m1 = bytes(k.pc.rd(0xB800, 0, 0x4000)), k.pc.mode()
+    front(k, 1)
+    typ(k, 'exit', 1.0); line(k, '')
+    check('LCMD as a task behind MTLAUNCH, past its saver\'s time (2 s): its saver doesn\'t start (MT_LIST: it isn\'t in '
+          'front), the screen in front untouched', m0 == m1 == 3 and s1 == s0 and not k.crashed,
+          (hex(m0), hex(m1), s0 == s1, tstate(k)))
+    check('every switch in these was at a safe point (as in t_preempt), the ones from INT 10h too', not au.bad(), au.bad()[:3])
+    au.stop()
+    # the shadow's cost: 120 lines through DOS in front, alone and with a task behind it (shadowed)
+    k = boot('mt_sc2.img', b'MULTITASK=1\r\n', 88, MTSC)
+    sh = Shell(k)
+    sh.run('ver')
+    for n in ('lw', 'l0'):              # (the first only to have MTSCR.COM in the disk cache for the timed ones)
+        k.key('mtscr l %s.txt' % n); k.key(ktest.ENTER, settle=False)
+        u0 = waitfile(k, n.upper() + '.TXT')
+        line(k, '')
+    typ(k, 'mtlaunch mtline.com x.txt', 1.0)
+    line(k, '')
+    k.key('mtscr l l1.txt'); k.key(ktest.ENTER, settle=False)
+    s_, u1 = None, waitfile(k, 'L1.TXT')
+    s_ = shd(k)
+    line(k, '')
+    print('   120 lines of 54 characters through DOS: %.0f ms alone, %.0f ms shadowed (another task there), in pcemu\'s '
+          'time: %.1f us more a character' % (u0 / 1000, u1 / 1000, (u1 - u0) / (120 * 54)))
+    check('the front task\'s output shadowed only while another task is there: 120 lines through DOS cost %.1f us more a '
+          'character (in pcemu\'s time)' % ((u1 - u0) / (120 * 54)), u0 and u1 and s_ == 1 and u1 > u0, (u0, u1, s_))
+
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
     k0 = boot('mt_mem0.img', b'MULTITASK=0\r\n')
@@ -1025,11 +1224,12 @@ def t_file():
 if __name__ == '__main__':
     t0 = time.time()
     A.build()
-    for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK'):
-        subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/', '-o', os.path.join(HERE, n + '.COM'),
+    for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST'):
+        subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
+                        '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_progs, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_progs, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

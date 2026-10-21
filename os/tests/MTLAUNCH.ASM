@@ -1,8 +1,9 @@
 ; MTLAUNCH.COM - for test_mt.py: start programs as tasks (INT 21h F0h
 ; AL=10h, MTAPI.INC), list the tasks (AL=12h), then wait for a line
 ; itself (AH=0Ah), so they run.
-;   MTLAUNCH [/F] [/M:n] [/R:n] PROG.COM args; [/F] ... PROG2.COM args; ...
-; /F: it comes to the front (SPF_FRONT); /M:n: n paragraphs for it; /R:n:
+;   MTLAUNCH [/F] [/B] [/Z] [/M:n] [/R:n] PROG.COM args; [/F] ... PROG2.COM args; ...
+; /F: it comes to the front (SPF_FRONT); /B: it runs in the background
+; whatever it does (SPF_BG); /Z: never there (SPF_FREEZE); /M:n: n paragraphs for it; /R:n:
 ; n of it (a command line holds 126 characters).  /G:n on its own: task n
 ; to the front (AL=13h; "MTLAUNCH: error E" if it fails).
 ; Prints "task N" for each, or "MTLAUNCH: error E" (CF, AX = E); then
@@ -28,8 +29,16 @@ org 100h
         lodsb
         and     al, 0DFh
         cmp     al, 'F'
-        jne     .om
+        jne     .ob
         or      byte [pb + SP_FLAGS], SPF_FRONT
+        jmp     .opt
+.ob:    cmp     al, 'B'
+        jne     .oz
+        or      byte [pb + SP_FLAGS], SPF_BG
+        jmp     .opt
+.oz:    cmp     al, 'Z'
+        jne     .om
+        or      byte [pb + SP_FLAGS], SPF_FREEZE
         jmp     .opt
 .om:    mov     [opt], al
         inc     si                      ; /M:n, /R:n
