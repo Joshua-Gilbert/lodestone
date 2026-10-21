@@ -10,17 +10,17 @@ S_FLAGS equ 2
 S_DEV   equ 3                   ; device number
 S_DRV   equ 4
 S_ATTR  equ 5
-S_CLU   equ 6                   ; first cluster
-S_SIZE  equ 8                   ; dword
-S_POS   equ 12                  ; dword
-S_CCL   equ 16                  ; cached cluster (0 = none)
-S_CIX   equ 18                  ;   and its index in the chain
-S_DLBA  equ 20                  ; directory entry: sector,
-S_DOFF  equ 22                  ;   offset
-S_GADR  equ 24                  ; GPIB address
-S_TIME  equ 26
-S_DATE  equ 28
-S_NAME  equ 30                  ; 11
+S_TIME  equ 6                   ; time, date, first cluster, size: as in
+S_DATE  equ 8                   ;  the directory entry (its bytes 22-31),
+S_CLU   equ 10                  ;  for sft_fill and sft_commit
+S_SIZE  equ 12                  ; dword
+S_DLBA  equ 16                  ; directory entry: sector,
+S_DOFF  equ 18                  ;   offset (as d_lba, d_off)
+S_NAME  equ 20                  ; 11
+S_POS   equ 32                  ; dword
+S_CCL   equ 36                  ; cached cluster (0 = none)
+S_CIX   equ 38                  ;   and its index in the chain
+S_GADR  equ 40                  ; GPIB address
 S_RAE   equ 42                  ; where the last read ended (low word)
 SFT_SZ  equ 44
 NSFT    equ 24
@@ -193,30 +193,25 @@ sft_fill:
         mov     [si+S_DRV], al
         mov     al, [de+11]
         mov     [si+S_ATTR], al
-        mov     ax, [de+26]
-        mov     [si+S_CLU], ax
-        mov     ax, [de+28]
-        mov     [si+S_SIZE], ax
-        mov     ax, [de+30]
-        mov     [si+S_SIZE+2], ax
-        mov     ax, [de+22]
-        mov     [si+S_TIME], ax
-        mov     ax, [de+24]
-        mov     [si+S_DATE], ax
-        mov     ax, [d_lba]
-        mov     [si+S_DLBA], ax
-        mov     ax, [d_off]
-        mov     [si+S_DOFF], ax
         push    si
-        lea     di, [si+S_NAME]
-        mov     si, de
-        mov     cx, 11
+        lea     di, [si+S_TIME]         ; time, date, cluster, size
+        mov     si, de + 22
+        mov     cx, 5
+        rep     movsw
+        mov     si, d_lba               ; then d_lba, d_off
+        movsw
+        movsw
+        mov     si, de                  ; then the name
+        mov     cl, 11
         rep     movsb
         pop     si
         pop     di
         pop     cx
         pop     ax
         ret
+        times   -(S_DATE != S_TIME + 2 || S_CLU != S_TIME + 4 || S_SIZE != S_TIME + 6) db 0
+        times   -(S_DLBA != S_TIME + 10 || S_DOFF != S_DLBA + 2 || S_NAME != S_DLBA + 4) db 0
+        times   -(d_off != d_lba + 2) db 0
 
 ; ---------------------------------------------------------------------
 ;  devices by name
@@ -549,12 +544,6 @@ sft_commit:
         mov     di, si
         pop     si
         jc      .e
-        mov     ax, [si+S_CLU]
-        mov     [di+26], ax
-        mov     ax, [si+S_SIZE]
-        mov     [di+28], ax
-        mov     ax, [si+S_SIZE+2]
-        mov     [di+30], ax
         test    byte [si+S_FLAGS], SF_STAMP
         jnz     .st
         push    dx
@@ -562,10 +551,20 @@ sft_commit:
         mov     [si+S_TIME], ax
         mov     [si+S_DATE], dx
         pop     dx
-.st:    mov     ax, [si+S_TIME]
-        mov     [di+22], ax
-        mov     ax, [si+S_DATE]
-        mov     [di+24], ax
+.st:    push    cx                      ; time, date, cluster, size into the
+        push    si                      ;  entry (ES may be close_all's PSP)
+        push    di
+        push    es
+        push    ds
+        pop     es
+        add     si, S_TIME
+        add     di, 22
+        mov     cx, 5
+        rep     movsw
+        pop     es
+        pop     di
+        pop     si
+        pop     cx
         or      byte [di+11], A_ARC
         push    si
         mov     si, di
@@ -635,7 +634,9 @@ f_40:   mov     bx, [bp+F_BX]           ; WRITE
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
-; the memory pointer ES:DI as segment + offset < 16 in rw_seg / rw_off
+; a read or write of CX bytes for SFT SI begins: the memory pointer ES:DI
+; as segment + offset < 16 in rw_seg / rw_off; the file's drive, with
+; its FAT.  CF: AX = error
 rw_start:
         mov     [rw_sft], si
         mov     [rw_left], cx
@@ -648,7 +649,9 @@ rw_start:
         mov     ax, di
         and     ax, 15
         mov     [rw_off], ax
-        ret
+        mov     al, [si+S_DRV]          ; its drive, and that drive's FAT
+        call    use_drive_si
+        jmp     fat_load
 ; advance by AX bytes
 rw_step:
         add     [rw_done], ax
@@ -776,9 +779,6 @@ rw_where:
 
 file_read:
         call    rw_start
-        mov     al, [si+S_DRV]
-        call    use_drive_si
-        call    fat_load
         jc      .err
         ; no further than the end of the file
         mov     ax, [si+S_SIZE]
@@ -963,9 +963,6 @@ section .text
 
 file_write:
         call    rw_start
-        mov     al, [si+S_DRV]
-        call    use_drive_si
-        call    fat_load
         jc      .err
         or      byte [si+S_FLAGS], SF_DIRTY
         or      cx, cx
@@ -1667,40 +1664,14 @@ find_next:
         pop     ds
         les     di, [dta]
         mov     ax, [es:di+13]
-        call    dir_lim
         mov     bx, [es:di+15]
-.l:     mov     ax, [es:di+13]
-        push    es
-        push    di
+        mov     cl, [es:di+12]
         push    cs
         pop     es
-        call    dir_entry
-        pop     di
-        pop     es
-        jc      .derr
-.e:     mov     al, [si]
-        or      al, al
-        jz      .nomore
-        cmp     al, 0E5h
-        je      .n
-        mov     al, [si+11]
-        cmp     al, 0Fh
-        je      .n
-        mov     ah, [es:di+12]
-        cmp     ah, A_VOL
-        jne     .nv
-        test    al, A_VOL               ; label search: labels only
-        jz      .n
-        jmp     .m
-.nv:    test    al, A_VOL
-        jnz     .n
-        and     al, A_HID | A_SYS | A_DIR
-        not     ah
-        test    al, ah
-        jnz     .n
-.m:     call    name_match
-        jne     .n
+        call    dir_scan
+        jc      .x                      ; (18 at the end, or a disk error)
         ; found: fill the DTA
+        les     di, [dta]
         inc     bx
         mov     [es:di+15], bx
         mov     al, [si+11]
@@ -1718,19 +1689,6 @@ find_next:
         push    cs
         pop     es
         clc
-        ret
-.n:     inc     bx                      ; the next entry: in this sector,
-        test    bl, 15                  ; straight on in the buffer
-        jz      .l
-        cmp     bx, [dl_lim]
-        jae     .l
-        add     si, 32
-        jmp     .e
-.derr:  cmp     ax, 18
-        je      .nomore
-        push    cs                      ; a disk error
-        pop     es
-        stc
         ret
 .nomore:
         push    cs

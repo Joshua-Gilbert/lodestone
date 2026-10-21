@@ -655,37 +655,38 @@ con_puts:
         jmp     con_puts
 .x:     ret
 
-; is standard input the keyboard?  ZF = 1 if so.  Keeps registers.
+; is standard input the keyboard?  ZF = 1 if so.  Else SI = its SFT entry
+; (CF clear: a file or another device), or CF set: there is no handle 0.
+; Keeps AX, BX
 stdin_con:
         push    ax
         push    bx
-        push    si
         xor     bx, bx
         call    h2sft
         jc      .no
         test    byte [si+S_FLAGS], SF_DEV
-        jz      .no
+        jz      .nc
         cmp     byte [si+S_DEV], DEV_CON
-        jmp     .x
+        je      .x                      ; (CF clear)
+.nc:    or      sp, sp                  ; ZF = 0, CF = 0
+        jmp     short .x
 .no:    or      sp, sp                  ; ZF = 0
-.x:     pop     si
-        pop     bx
+        stc
+.x:     pop     bx
         pop     ax
         ret
 
 ; next character from standard input -> AL (0 then scan code for
-; extended keys; 1Ah at the end of a redirected file)
+; extended keys; 1Ah at the end of a redirected file).  SI changes
 con_in:
         call    stdin_con
         jz      kbd_get
+        mov     al, 1Ah
+        jc      .r                      ; (no handle 0: the end)
         push    bx
         push    cx
-        push    si
         push    di
         push    es
-        xor     bx, bx
-        call    h2sft
-        jc      .eof
         push    cs
         pop     es
         mov     di, onebyte
@@ -699,10 +700,9 @@ con_in:
 .eof:   mov     al, 1Ah
 .x:     pop     es
         pop     di
-        pop     si
         pop     cx
         pop     bx
-        ret
+.r:     ret
 
 ; keyboard (BIOS), sleeping while nothing is typed
 kbd_get:
@@ -729,7 +729,7 @@ kbd_get:
         mov     [cs:kbd_scan], ah
 .x:     ret
 
-; anything waiting on standard input?  ZF = 0 if so
+; anything waiting on standard input?  ZF = 0 if so.  SI changes
 con_ready:
         call    stdin_con
         jnz     .file
@@ -739,26 +739,20 @@ con_ready:
         int     16h
         ret
 .file:  push    ax
-        push    bx
-        push    si
-        xor     bx, bx
-        call    h2sft
-        jc      .no
+        jc      .no                     ; (no handle 0)
         test    byte [si+S_FLAGS], SF_DEV
         jnz     .yes
-        mov     ax, [si+S_POS]
-        mov     bx, [si+S_POS+2]
-        cmp     bx, [si+S_SIZE+2]
+        mov     ax, [si+S_POS+2]
+        cmp     ax, [si+S_SIZE+2]
         jb      .yes
         ja      .no
+        mov     ax, [si+S_POS]
         cmp     ax, [si+S_SIZE]
         jb      .yes
 .no:    cmp     al, al                  ; ZF = 1
         jmp     .r
 .yes:   or      sp, sp                  ; ZF = 0
-.r:     pop     si
-        pop     bx
-        pop     ax
+.r:     pop     ax
 .x:     ret
 
 f_01:   call    con_in                  ; read with echo
