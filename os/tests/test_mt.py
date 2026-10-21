@@ -1075,6 +1075,23 @@ def t_screens():
           'TS_RUN); with SPF_BG too it runs (its count written); it ends behind MTLAUNCH, the last task: nothing shadowed '
           'from then (mt_shd 0)', z1 is None and st1[0][1:] == [(1, 1, 'MTSPIN.COM')] and z1b and s_z == 0,
           (z1, st1, z1b, s_z))
+    # frozen while it runs, nothing else ready (the one in front waits for a key, TS_WAITK): it gives way to that one
+    typ(k, 'mtlaunch mtline.com z4.txt;mtspin.com 40 z3.txt', 0.05)
+    for i in range(100):
+        if len(tstate(k)[0]) == 3: break
+        k.run_for(0.01)
+    front(k, 1)
+    st3 = tstate(k)
+    set_vflags(k, 2, VF_DIRECT)
+    k.run_for(3.0)
+    z3, st3b = A.disk_file(k, 'Z3.TXT'), tstate(k)
+    set_vflags(k, 2, 0)
+    z3b = waitfile(k, 'Z3.TXT', 3.0)
+    line(k, 'x'); line(k, '')
+    check('a task frozen while it runs, the others waiting for a key (MTLINE in front, MTLAUNCH behind it): it gives way at '
+          'once, never runs again there (MTSPIN 40 ticks: no count in 3 s); thawed, it runs',
+          st3[0][1:] == [(1, 2, 'MTLINE.COM'), (2, 1, 'MTSPIN.COM')] and st3[1:] == (1, 2) and z3 is None
+          and st3b[0][2] == (2, 1, 'MTSPIN.COM') and z3b, (st3, z3, st3b, z3b))
     typ(k, 'mtlaunch /z mtspin.com 8 z2.txt', 2.0)
     z2, f2, lz = A.disk_file(k, 'Z2.TXT'), vflags(k, 1), k.pc.text_screen()
     front(k, 1)
