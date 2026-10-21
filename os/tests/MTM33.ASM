@@ -20,7 +20,8 @@
 ;      the mouse, writes FILE as F (its ranges: mode 40h's), then waits for
 ;      "q" and ends
 ;   D  stays resident as another INT 33h driver (not chaining): it counts
-;      AX=1 up and AX=2 down, in the word before its handler
+;      AX=1 up and AX=2 down, in the word before its handler, and its
+;      AX=2 calls in the word before that
 ; nasm -f bin -o MTM33.COM MTM33.ASM
 cpu 286
 org 100h
@@ -179,7 +180,8 @@ w18:    push    es
         pop     es
         ret
 
-; D's INT 33h: show count (AX=1 up, AX=2 down)
+; D's INT 33h: show count (AX=1 up, AX=2 down), and AX=2's calls
+d2cnt   dw      0
 dcnt    dw      0
 d33:    cmp     ax, 1
         jne     .h
@@ -188,6 +190,7 @@ d33:    cmp     ax, 1
 .h:     cmp     ax, 2
         jne     .r
         dec     word [cs:dcnt]
+        inc     word [cs:d2cnt]
 .r:     iret
 
 ; the event handler: counts its calls
