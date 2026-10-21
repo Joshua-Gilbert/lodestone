@@ -18,7 +18,8 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M1 | The switch and the skeleton | PR #43, merged. |
 | M2a | Spawning, task regions, switching when one waits for a key | PR #44, merged. |
 | M2b | The front: the CODE-Tab hot key, each task's screen saved and restored | PR #45, merged. |
-| M3 | Preemption from INT 08h at safe points | This PR. |
+| M3 | Preemption from INT 08h at safe points | PR #46, merged. |
+| M3b | Each task's own coprocessor state | This PR. |
 | M4 | Virtual screens (an INT 10h hook) and the direct-write detector | |
 | M5 | Per-task vectors, ending and killing tasks | |
 | M6 | Parking tasks in EMS and bringing them back | |
@@ -389,3 +390,50 @@ The checks:
   - the front task's turn for a key (a key for the front task);
   - each safe-point rule: interrupts on, none in service (the audit, in `t_rules`); `m33_busy`; SS the task's own; CS the task's own (INT 62h); task 0's blocks found in the arena, in both directions (the prompt and LCMD's saver; B800h and free memory from the prompt); CS in the UI's not checked again (LCMD's saver);
   - the check that INT 08h is still `mt_tick` (a task's own hook), F0h AL=1's answer.
+
+## M3b: each task's own coprocessor (2026-10-20)
+
+**Why:** the 80287 holds one set of registers, its control word and its status. A task switched from in the middle of a calculation, at the tick since M3 or at a key wait since M2a, found them as the last task to use the coprocessor left them. Two tasks using it at once (the calculator in the Executive and a program behind it, say) would each corrupt the other's numbers.
+
+**What it does:**
+- When a task is switched from, `mt_switch` saves its coprocessor state (FNSAVE, then FWAIT, as Intel requires before anything else touches it) in its TX, with a flag (`TX_FPV`).
+- `mt_load` puts back the incoming task's state (FRSTOR). A task with none saved yet (a new one) gets FNINIT's. That matters when a task ends straight into a new one; otherwise FNSAVE has already left the chip as FNINIT does.
+- **Only with a coprocessor:** `mt_boot` reads INT 11h's bit once (`mt_fpu`). On the 1520 that bit is POST's own probe (its reset.asm). With no chip the 286's EM bit may be set and these instructions would trap, so MT doesn't touch it.
+
+**The 287's errors, on the 1520:**
+- **How they arrive:** the 1520 is wired like an AT (the GRiD BIOS's int75.asm). An unmasked error raises IRQ 13 and holds the 287's BUSY line to the 286 until the IRQ 13 handler (the BIOS's INT 75h) clears it with an OUT to port F0h. The 286 waits on BUSY before any coprocessor instruction but FNINIT.
+- **So an error is drained first** (`mt_fdrain`). FNSAVE with interrupts off would hang the machine if an error were still pending: it would wait on BUSY for ever, and IRQ 13 couldn't run to clear it. So before a switch saves anything (at the start of `mt_preempt`, before it chooses the next task too; of `mt_kwait`'s `.park`, inside INT 21h, where nothing else can run meanwhile; and of `mt_end`), MT turns interrupts on and runs FNOP, which also waits on BUSY. A pending error is then delivered there, as in DOS, through INT 75h and INT 02h, to the task it belongs to, still the running one in every respect. After FNOP the 287 is idle, nothing of the task's in flight, so FNSAVE and FRSTOR, with interrupts off, can't be held up.
+- **Coming back into the scheduler from there is safe.** The error's handler may read a key through DOS, or a tick may land in it, and so switch tasks. But nothing is half saved at that point: such a switch is the task being preempted in its own handler, like any other, and when the task comes back, the switch it was starting goes on from the beginning (`test_mt` shows it). An earlier version ran FNSAVE itself with interrupts on, and two re-reviews found ways a handler there could overwrite a context half saved; draining first leaves nothing to guard.
+- **An error is delivered once.** Once the drain is done, its error has been delivered. MT then clears, in the saved status word, the error summary (ES) and the exceptions that weren't masked, so that FRSTOR doesn't raise IRQ 13 again at each of the task's turns. A 387-class chip in the 287's socket (a 287XL) works ES out from those flags, so clearing ES alone wouldn't do. The masked exceptions' flags stay.
+- **Also found:** MT never cleared the direction flag. A task interrupted inside `STD ... REP MOVS` (a memmove running backwards, an editor scrolling) reached `mt_switch` with DF set, and MT's copies of its context ran backwards over the TX and the kernel's memory. That has been there since M3. `mt_switch` and `mt_load` now CLD; the task gets its own DF back from its interrupt frame.
+
+**The coprocessor can't be a second thread.** It has no instruction fetch and no memory access of its own. It runs the instructions the 286 hands it, one at a time, while the 286 goes on with its own work until the next one. That overlap pays for the long instructions (divides, square roots, the transcendentals, a few hundred cycles each), and it is something a program arranges in its own code. A scheduler can't give the coprocessor a task.
+
+**The limits:**
+- **Every switch saves and restores it**, whether or not either task uses the coprocessor. That costs about 200 of the 287's cycles each way, plus 47 word transfers: 0.1 to 0.2 ms a switch, with about 18 switches a second at the tick and more at key waits. Saving only for tasks that use it would avoid that: the 286's TS bit traps a task's first coprocessor instruction to INT 7 (in real mode too, and pcemu shows it). But it needs an INT 7 handler of MT's, which isn't worth it at this rate.
+- **INT 02h and INT 75h are global** until M5, so a task's error goes to whichever handler is hooked there, as with any vector.
+- **A handler that doesn't free BUSY stops every task.** If IRQ 13 is masked, or a program's own INT 75h doesn't do the OUT to F0h, the drain's FNOP waits for ever with interrupts on. In DOS that stops only that program, at its next coprocessor instruction.
+- **Between FNOP and CLI**, an interrupt whose handler uses the coprocessor with exceptions unmasked could leave a new error pending, and FNSAVE would then wait for it. Nothing on a 286 closes that last instruction's gap; the handlers that could do it are other programs' (an NMI is the same).
+- **An error pending at a key wait inside an interrupt handler** (a key read from an INT 1Ch hook, say, with IRQ 0 in service) can't be delivered, so the drain's FNOP waits for ever. DOS hangs the same way, at that program's next coprocessor instruction.
+- **The drain's stack:** interrupts taken in it (the BIOS's tick and INT 1Ch, IRQ 13's handler) use the task's stack from about 20 bytes below where it was interrupted at the tick (the interrupt's frame, `mt_tick`'s pushes, two calls), or 32 on INT 21h's way out (its 26-byte frame too), where before nothing nested.
+- **The error wiring is read from the GRiD BIOS:** pcemu has no BUSY latch, and its coprocessor raises no IRQ 13 (`test_mt` raises one itself). The drain also relies on the 286 taking interrupts while it waits on BUSY, which the AT's design needs too. M9 checks a coprocessor error on the 1520 with a task behind it.
+
+**Cost:**
+- **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 10 bytes, in `mt_boot` (reading INT 11h's bit), within section boot's padding, so its size is unchanged.
+- **Switch on:** each task's TX grows by 6 paragraphs (96 bytes: its flag, then the state, even-aligned), so a task's region is 103 paragraphs plus its environment and memory. Task 0's TX is in MT's block, now 250 paragraphs plus its MCB, 3.9 KB, so a DOS program gets 573.7 KB instead of 577.6.
+- **Files:** LODEMT.SYS is 3,186 bytes; ROM 1 has 19,456 bytes left.
+
+**Tests:** `test_mt.py`, 128 checks. The new group is `t_fpu`, with four new MTSPIN modes:
+- P keeps its own values on the coprocessor (n and 2n in ST0 and ST1, n from its segment, and its own rounding in the control word, never FNINIT's) and checks them on every count. If any has changed, the count it writes is 0.
+- I checks that the control word is FNINIT's (037Fh) before it uses the coprocessor.
+- B counts with the direction flag set.
+- E hooks INT 75h with a handler like the BIOS's (both PICs' EOI, then STI; without its OUT F0h and INT 02h, which pcemu doesn't need), which calls INT 21h and waits for the next tick, so that a tick lands in it.
+
+The checks:
+- Two P tasks switched at the tick all along: neither sees a change, and each counts about half of what one alone does.
+- Task 0 (P run from the prompt) with a P task behind it: both kept.
+- A new task (I) run straight after one that set its own control word and ended: FNINIT's, three times.
+- INT 11h saying there is no coprocessor, with the 286's EM bit set so that any coprocessor instruction would trap: `mt_fpu` is 0, no INT 7, and tasks take turns as before.
+- Two B tasks switched at the tick: they take turns, the machine intact (`t_rules`).
+- An E task and a P task, the test raising IRQ 13 at the drain each time the E task is switched from, but not again in a drain inside its handler (pcemu's PIC delivers it there): the handler runs there every time, and is itself switched from, both at a tick in it and on its INT 21h's way out; both tasks count, P's values kept, the machine intact.
+- **The checks can fail:** each of these, broken on purpose, fails a check: the save; the restore; FNINIT for a new task; the INT 11h gate; the CLD (9 checks fail); the drain moved to after the context is half saved (the IRQ 13 check). What pcemu can't show is the BUSY latch itself, so a drain left out altogether only fails the check for want of the IRQ; and the clearing of a delivered error.
