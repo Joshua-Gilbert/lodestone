@@ -1813,7 +1813,9 @@ bat_arg:
 ; the command line into `line' (NUL-terminated).  From the keyboard with
 ; editing (Left, Right, Home, End, Backspace, Del, ESC clears), history
 ; (Up, Down, F3: the rest of the last line) and Tab completion of names
-; (again: the next one); from a file or another device DOS's own
+; (again: the next one); from a file or another device DOS's own.
+; Only prompt_loop calls it: the history it writes lies over the start-up
+; code, which /C still runs after its command
 edit_line:
         call    con_in                  ; standard input the console?
         jc      .dos
