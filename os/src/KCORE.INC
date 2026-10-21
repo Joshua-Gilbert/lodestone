@@ -331,6 +331,8 @@ capture:
 .del:   mov     ah, 41h                 ; not all of it: none of it
         mov     dx, cap_name
         int     21h
+        jmp     short .f4               ; (BX is closed already, even if
+                                        ;  the close failed: its slot is FFh)
 .pcl:   mov     ah, 3Eh
         int     21h
 .f4:    mov     cx, 4                   ; a long beep

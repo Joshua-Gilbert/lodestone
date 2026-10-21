@@ -409,9 +409,9 @@ root_pre:
         pop     ax
         ret
 
-; find nm11 (wildcards allowed) in directory AX.  CL = attributes the
-; caller accepts beyond plain files (A_DIR, A_HID, A_SYS); volume labels
-; never match.  -> BX = index, SI = entry, de = copy.  CF: AX = 2
+; find nm11 (wildcards allowed) in directory AX: files, directories,
+; hidden and system entries alike (CL isn't read); volume labels and long
+; names never match.  -> BX = index, SI = entry, de = copy.  CF: AX = 2
 dir_find:
         push    ax
         call    dir_lim
@@ -865,23 +865,12 @@ find_dir:
 
 f_3A:   call    get_path                ; RMDIR
         jc      .e
-        call    resolve
+        call    find_dir                ; (wildcards: 3, as for CHDIR)
         jc      .e
-        cmp     byte [r_name], 0
+        cmp     byte [r_name], 0        ; after it: for these find_dir
+        je      .acc                    ;  doesn't look the name up, so
+        cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
         je      .acc
-        cmp     byte [r_name], '.'
-        je      .acc
-        mov     si, r_name
-        mov     di, nm11
-        mov     cx, 11
-        rep     movsb
-        mov     ax, [r_dir]
-        mov     cl, A_DIR | A_HID | A_SYS
-        call    dir_find
-        jc      .np
-        test    byte [de+11], A_DIR
-        jz      .np
-        mov     ax, [de+26]
         mov     si, [actp]
         cmp     ax, [si+D_CWD]
         je      .cur
@@ -924,8 +913,6 @@ f_3A:   call    get_path                ; RMDIR
         jc      .e
         jmp     ok
 .cur:   mov     ax, 16                  ; the current directory
-        jmp     .e
-.np:    mov     ax, 3
         jmp     .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
@@ -1078,6 +1065,8 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         jne     .dev
         cmp     byte [r_name], 0
         je      .acc
+        cmp     byte [r_name], '.'      ; ("." or ".."; in the root there is
+        je      .acc                    ;  no such entry to find)
         cmp     byte [r_wild], 0
         jne     .acc
         mov     si, r_name
