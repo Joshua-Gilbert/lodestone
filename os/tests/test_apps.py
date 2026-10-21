@@ -167,10 +167,11 @@ def t_core():
     hdr = lambda size, bss, na, nr: b'GRUN' + struct.pack('<6H', 1, size, bss, na, nr, 0)
     open(os.path.join(OUT, 'BAD2.RUN'), 'wb').write(hdr(4, 0, 0x8000, 0x8000) + b'\xc3\x90\x90\x90')
     open(os.path.join(OUT, 'BAD3.RUN'), 'wb').write(hdr(4, 0, 1, 0) + b'\xc3\x90\x90\x90' + struct.pack('<H', 0xFFF0))
-    img = image('bad2.img', os.path.join(OUT, 'BAD2.RUN'), os.path.join(OUT, 'BAD3.RUN'))
+    open(os.path.join(OUT, 'BAD4.RUN'), 'wb').write(hdr(1, 0, 0, 0) + b'\xc3')     # an image under 2 bytes, no fixups
+    img = image('bad2.img', *(os.path.join(OUT, 'BAD%d.RUN' % i) for i in (2, 3, 4)))
     k = ktest.KPC(img); k.start()
     table = k.pc.rd(k.useg, 0, 135)
-    for name in ('BAD2.RUN', 'BAD3.RUN'):
+    for name in ('BAD2.RUN', 'BAD3.RUN', 'BAD4.RUN'):
         k.select(name); k.key(ktest.ENTER)
         check('%s (a damaged header): "Not a program", the core untouched' % name,
               any("Can't run %s: Not a program" % name in l for l in k.band()) and not k.crashed and k.pc.rd(k.useg, 0, 135) == table,
@@ -216,6 +217,10 @@ def t_system():
     check('a bad time: said so', any('Not a time' in l for l in k.band()), k.band())
     k.key(ktest.ENTER); k.key(ktest.ESC)
     check('... and the date wasn\'t changed either', lines(k)[0].strip().startswith('7-Nov-26'), lines(k)[0])
+    k.key(ktest.ENTER); k.key('31 dec 1999'); k.key(ktest.ENTER); k.key(ktest.ENTER)
+    check('a 19xx date: the title bar says 31-Dec-99', lines(k)[0].strip().startswith('31-Dec-99'), lines(k)[0])
+    k.key(ktest.ENTER); k.key('7 nov 2026'); k.key(ktest.ENTER); k.key(ktest.ENTER)
+    check('... and 7-Nov-26 again', lines(k)[0].strip().startswith('7-Nov-26'), lines(k)[0])
     for bad in ('65567-Oct-2026', '5-Octx-2026', '5-Oct-2026 x'):
         k.key(ktest.ENTER); k.key(bad); k.key(ktest.ENTER); k.key(ktest.ENTER)
         check('"%s" is not a date' % bad, any('Not a date' in l for l in k.band()), k.band())
@@ -438,8 +443,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit): the directory buffer is lent while it runs' % kb,
-          kb >= 562.4, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch): the directory buffer is lent while it runs' % kb,
+          kb >= 563.7, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -1003,7 +1008,8 @@ def t_form():
     # B: with no disk
     k.pc.drives[1].empty = True
     k.key(ktest.TAB); k.key(ktest.DOWN); k.key(ktest.ENTER, settle=False); k.settle(20)
-    check('B: with no disk: Subject has Root only and the band says why', subjects(k) == ['Root'] and "Can't read the disk" in ' '.join(k.band())
+    check('B: with no disk: Subject has Root only and the band says why ("Drive not ready", not "error 0")',
+          subjects(k) == ['Root'] and k.band()[:1] == ["Can't read the disk: Drive not ready (no disk?)"]
           and not k.crashed, (subjects(k), k.band()))
     k.key(ktest.ENTER)
     k.key(K_BTAB); k.key(ktest.UP); k.key(ktest.ESC)
@@ -1653,6 +1659,15 @@ def lit_cells(k, y, cols=range(80)):
 def below_title(k):
     buf = vram(k)
     return b''.join(vrow(buf, y) for y in range(20, 400))
+def watch_info(k):
+    """The information line each time draw_all hands it to center: it is
+    built in tmp just before (infobuf), which other drawing reuses."""
+    got, a = [], k.Y['center']
+    def h(pc):
+        if pc.r('ip') == a and pc.r('dx') == INFO_Y and pc.r('cs') == k.useg:
+            got.append(pc.rd(pc.r('cs'), pc.r('si'), 128).split(b'\0')[0].decode())
+    k.hooks.append(h)
+    return got
 
 def t_calc():
     """The calculator (0.4.4): the coprocessor lamp in the info line, System's
@@ -1664,8 +1679,8 @@ def t_calc():
     check('SYSTEM, WRITE and UITEST declare RUN_API 4 (a floppy with an older LODE.SYS still runs them)',
           hdrs == [b'GRUN\x04\x00'] * 3, hdrs)
     # the lamp: pcemu's coprocessor is 387-class, so a 287XL
-    k = ktest.KPC(image('lamp.img', SYSTEM)); k.start()
-    info = k.rd('infobuf', 128).split(b'\0')[0].decode()
+    k = ktest.KPC(image('lamp.img', SYSTEM)); infos = watch_info(k); k.start()
+    info = infos[-1] if infos else ''
     c0 = (90 - len(info)) // 2
     check('the info line: "80286 80287XL ..." (probed, not taken from the CMOS bit)', info.startswith('80286 80287XL   640K'), info)
     check('... " 80287XL " lit (inverse), nothing else', lit_cells(k, INFO_Y) == [c0, c0 + 8], (c0, lit_cells(k, INFO_Y)))
@@ -1675,8 +1690,8 @@ def t_calc():
     check('... and the lamp is lit again after System', lit_cells(k, INFO_Y) == [c0, c0 + 8], lit_cells(k, INFO_Y))
     k = ktest.KPC(image('nolamp.img', SYSTEM))
     k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))     # INT 11h: none
-    k.start()
-    info = k.rd('infobuf', 128).split(b'\0')[0].decode()
+    infos = watch_info(k); k.start()
+    info = infos[-1] if infos else ''
     check('no coprocessor: "80286   640K ...", nothing lit', info.startswith('80286   640K') and not lit_cells(k, INFO_Y), (info, lit_cells(k, INFO_Y)))
     k.key(CODE['U']); k.key('D'); k.key('D')
     check('... System, Devices: Coprocessor none', re.search(r'Coprocessor\s+none', screen(k)), screen(k))
