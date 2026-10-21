@@ -215,6 +215,8 @@ r_dio:  cmp     al, R_DRV
         ret
 r_tend:
 R_TLEN  equ r_tend - r_tstart
+        times   -(R_TLEN > 27 * 16) db 0        ; (27 paragraphs: one byte more
+                                                ;  costs DOS programs one more)
 
 ; the words that move with it (from r_tstart), each list ended by FFFFh
 r_relp:
