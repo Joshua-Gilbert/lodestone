@@ -1863,33 +1863,73 @@ def t_mouse():
     typ(k, 'mtlaunch /f /b mtm33.com g g1.txt', 0.1)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5)
     k.key(HOT, settle=False)
+    k.run_for(0.1)
+    st5b, g0 = tstate(k), A.disk_file(k, 'G1.TXT')
     g1 = waitthree(k, 'G1.TXT')
     st5, md5 = tstate(k), k.pc.mode()
     front(k, 1)
     k.key('q', settle=False); k.run_for(0.5)
     line(k, '')
     check('MTM33 G (mode 40h) sent behind before it resets: its reset there takes its ranges from its own mode (y in '
-          'the middle of 400 rows: %s), the screen in front text (mode %Xh)' % (g1, md5), st5[1] == 0 and md5 == 3
-          and g1 == (0, 320, 200), (st5, hex(md5), g1))
+          'the middle of 400 rows: %s), the screen in front text (mode %Xh)' % (g1, md5), st5b[1] == 0 and g0 is None
+          and st5[1] == 0 and md5 == 3 and g1 == (0, 320, 200), (st5b, g0, st5, hex(md5), g1))
     v = sh.run('ver')
     check('... all ended, the prompt as before', 'Lodestone version' in v and tstate(k)[0] == [(0, 1, 'Executive')]
           and not k.crashed, (v[-60:], tstate(k)))
     # another mouse driver (MTM33 D, resident, not chaining): MT's hook stays off it, and at each change of the
     # front its pointer goes (AX=2) and comes back (AX=1): its show count as it was
+    # put in place while F (its pointer shown by the UI's driver) is behind: F back in front, the UI's pointer
+    # not drawn, D's being the one on INT 33h
+    typ(k, 'mtlaunch /f mtm33.com f fd.txt', 1.0)
+    ad0 = attr(40, 12)
+    k.key(HOT, settle=False); k.run_for(0.4)
+    line(k, '')
     typ(k, 'mtm33 d', 0.5)
     ds_, do_ = vec(k, 0x33)
+    k.key(HOT, settle=False); k.run_for(0.4)
+    std, ad = tstate(k), attr(40, 12)
+    k.key('q', settle=False); k.run_for(0.5)
+    line(k, '')
+    check('another INT 33h driver put in place while F (its pointer shown, the UI\'s) is behind: F back in front, the '
+          'UI\'s pointer not drawn on its screen (40, 12), D\'s the one on INT 33h', ad0 == 0x70 and std[1] == 1
+          and ad == 0x07 and A.disk_file(k, 'FD.TXT') is not None and ds_ != seg, (hex(ad0), std, hex(ad), hex(ds_)))
+    d2s = [k.pc.u16(ds_, do_ - 4)]
     typ(k, 'mtlaunch /f mtline.com ld.txt', 0.8)
     st6 = tstate(k)
+    d2s.append(k.pc.u16(ds_, do_ - 4))
     k.key(HOT, settle=False); k.run_for(0.4)
+    st6b = tstate(k)
+    d2s.append(k.pc.u16(ds_, do_ - 4))
     k.key(HOT, settle=False); k.run_for(0.4)
     st7 = tstate(k)
+    d2s.append(k.pc.u16(ds_, do_ - 4))
     line(k, 'd')
     line(k, '')
-    dc = k.pc.u16(ds_, do_ - 2)
+    d2s.append(k.pc.u16(ds_, do_ - 4))
+    dc, d2 = k.pc.u16(ds_, do_ - 2), k.pc.u16(ds_, do_ - 4)
     check('another INT 33h driver, not the UI\'s: MT\'s hook not put over it; after three changes of the front and the '
-          'front task\'s end, its show count as it was (%d)' % (dc if dc < 0x8000 else dc - 0x10000), vec(k, 0x33) == (ds_, do_)
-          and ds_ != seg and st6[1] == 1 and st7[1] == 1 and dc == 0 and A.disk_file(k, 'LD.TXT') == b'd',
-          (vec(k, 0x33), st6, st7, dc, A.disk_file(k, 'LD.TXT')))
+          'front task\'s end, its pointer taken away at each (AX=2, counted after each: %s) and put back: its show count as it was (%d)'
+          % (d2s, dc if dc < 0x8000 else dc - 0x10000), vec(k, 0x33) == (ds_, do_) and ds_ != seg and st6[1] == 1
+          and st6b[1] == 0 and st7[1] == 1 and [d - d2s[0] for d in d2s] == [0, 2, 3, 4, 5] and dc == 0 and A.disk_file(k, 'LD.TXT') == b'd',
+          (vec(k, 0x33), st6, st6b, st7, d2, dc, A.disk_file(k, 'LD.TXT')))
+    # no mouse found: a background 0Ch masks nothing, and 40:49h is left as it is (MT's saved mode, made stale by
+    # the test as the call comes, not written back)
+    k = boot('mt_m0.img', b'MULTITASK=1\r\n', 88, MTM)
+    seg, Y = mt_seg(k), k.Y
+    Shell(k).run('ver')
+    in_, prev, hit = seg * 16 + Y['mt_33in'], k.pc.watch, []
+    def w(a):
+        if prev: prev(a)
+        if a == in_ and k.pc.r('ax') == 0x0C:
+            hit.append(1); k.pc.wr(seg, Y['mt_33md'], b'\7')
+    k.pc.watch = w
+    md0 = k.pc.mode()
+    typ(k, 'mtlaunch mtm33.com h h.txt', 1.0)
+    k.pc.watch = prev
+    hz = three(A.disk_file(k, 'H.TXT') or b'')
+    check('no mouse: MTM33 H behind (reset, 0Ch, 14h): no IRQ masked for 0Ch and 14h, and the mode byte (40:49h) '
+          'left as it was (%Xh, not MT\'s stale 7)' % k.pc.mode(), hit and md0 != 7 and k.pc.mode() == md0
+          and hz is not None and not k.crashed, (hit, hex(md0), hex(k.pc.mode()), hz))
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')

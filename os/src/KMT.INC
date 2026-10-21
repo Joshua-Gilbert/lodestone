@@ -921,8 +921,11 @@ mt_screen:
 ; inherited ones) closed, its region freed, and another task runs.
 mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
         je      .sw                     ;  ended it inside: the front one's
-        mov     al, [cs:mt_front]       ;  INT 33h state put back, as that
-        call    mt_m33ld                ;  change would have)
+        call    mt_m33on                ;  INT 33h state put back, as that
+        mov     al, [cs:mt_front]       ;  change would have, and m33_busy
+        call    mt_m33ld                ;  clear: a handler busy as it began
+        mov     byte [cs:mt_33sb], 0    ;  may be this task's, never back)
+        call    mt_m33nb
 .sw:    mov     word [cs:mt_vbusy], 0   ; (as in mt_load; and INT 13h's count,
         mov     byte [cs:mt_crit], 0    ;  should one have been left; and a
         mov     word [cs:mt_in13], 0    ;  change of the front its handler ended
@@ -1716,9 +1719,13 @@ mt_33in:
         mov     [cs:mt_33md], al
         pop     ds
         ret
-.msk:   pop     ds
-        cmp     word [es:mfound], 0     ; (no mouse: no packets either)
-        je      .x
+.msk:   cmp     word [es:mfound], 0     ; (no mouse: no packets either, and
+        jne     .k                      ;  40:49h kept as it is, through .m,
+        push    40h                     ;  for mt_33out)
+        pop     ds
+        mov     al, [49h]
+        jmp     short .m
+.k:     pop     ds
         mov     cl, [es:mirq]
         mov     ah, 1
         shl     ah, cl
@@ -1831,29 +1838,35 @@ mt_m33nb:
 ; hook in front: its show count as it was.  With the UI's driver, or MT's
 ; hook over it, mt_m33ld's 17h does that (the count exactly).  All kept
 mt_m33on:
+        call    mt_m33us
+        je      .x
         push    ax
-        push    bx
+        mov     ax, 1
+        call    mt_m33
+        pop     ax
+.x:     ret
+
+; ZF set if INT 33h is the UI's driver, or MT's hook over it.  All kept
+; but the flags
+mt_m33us:
+        push    ax
         push    ds
         push    es
         push    KSEG
         pop     ds
-        xor     bx, bx
-        mov     es, bx
+        xor     ax, ax
+        mov     es, ax
         cmp     word [es:33h * 4], mt_i33
         jne     .u
-        mov     bx, cs
-        cmp     [es:33h * 4 + 2], bx
-        je      .x
-.u:     cmp     word [es:33h * 4], int33_ui
-        jne     .on
-        mov     ax, [ui_seg]
+        mov     ax, cs
         cmp     [es:33h * 4 + 2], ax
         je      .x
-.on:    mov     ax, 1
-        call    mt_m33
+.u:     cmp     word [es:33h * 4], int33_ui
+        jne     .x
+        mov     ax, [ui_seg]
+        cmp     [es:33h * 4 + 2], ax
 .x:     pop     es
         pop     ds
-        pop     bx
         pop     ax
         ret
 
@@ -1878,7 +1891,9 @@ mt_m33to:
 
 ; task AL's state to the driver, by its own function 17h (the pointer
 ; taken away, the state copied in, the pointer drawn as it says), called
-; directly: the UI's driver, whose state it is.  All kept
+; directly: the UI's driver, whose state it is.  With another driver on
+; INT 33h, drawn in no mode (40:49h 0FFh meanwhile): that one's pointer
+; is the one shown.  All kept
 mt_m33ld:
         pusha
         push    ds
@@ -1890,13 +1905,31 @@ mt_m33ld:
         call    mt_ent
         mov     es, [cs:bx+TE_TX]
         mov     dx, TX_M33
+        pushf
+        cli
+        mov     bl, 0FFh
+        call    mt_m33us
+        jne     .md
+        push    40h                     ; (ours: 40:49h as it is)
+        pop     ds
+        mov     bl, [49h]
+.md:    push    40h
+        pop     ds
+        xchg    bl, [49h]
+        push    bx
         mov     ax, 17h
-        pushf                           ; (as INT 33h: its IRET to .x)
+        pushf                           ; (as INT 33h: its IRET to .r)
         push    cs
-        push    .x
+        push    .r
         push    cx
         push    int33_ui
         retf
+.r:     cli
+        pop     bx
+        push    40h
+        pop     ds
+        mov     [49h], bl
+        popf
 .x:     pop     es
         pop     ds
         popa
