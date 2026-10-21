@@ -739,7 +739,7 @@ The checks:
 **Cost:**
 - **Switch off:** nothing. `test_mt` pins the map and MEMSZ. LODE.SYS grows 16 bytes, in `mt_boot` (the `ui_progend` patch). MOUSE33.INC is unchanged.
 - **Switch on:** each TX grows by 9 paragraphs (`TX_M33`), so each task's region does too. MT's block is 579 paragraphs plus its MCB (9.1 KB; it was 508): task 0's TX and the new code. A DOS program gets 570.7 KB instead of 579.7.
-- **Files:** LODEMT.SYS is 7,287 bytes (6,289 after M4b); ROM 1 has 16,896 bytes left.
+- **Files:** LODEMT.SYS is 7,287 bytes (6,289 after M4b); ROM 1 has 17,920 bytes left (after PR #53).
 
 **Tests:** `test_mt.py`, 209 checks (was 191). The new group is `t_mouse`, with a serial mouse on COM1 (pcemu's, `mouse=True`) and a new test program:
 - `MTM33 MODE FILE`:
