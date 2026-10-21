@@ -51,10 +51,11 @@ VERSION equ 0006h               ; Lodestone 0.6
 section .bss nobits align=16 follows=.text
 bss_start:
 ; KEMS.INC: in the file right after the kernel image (at image_end), in
-; memory right after the BSS (where ems_init copies it); KHD.INC's module
-; after it; then both start-ups (in the load image only).  All three are
-; laid out alike in the file and in memory, so each is image_end - bss_end
-; from where it runs in the load image.
+; memory right after the BSS (where ems_init copies it), its data after it
+; in memory only (emsbss); KHD.INC's module after it; then both start-ups
+; (in the load image only).  ems is image_end - bss_end from where it runs
+; in the load image, hd and boot that less emsbss: they find themselves by
+; section.hd.start and section.boot.start (MDB).
 section ems progbits align=16 follows=.text vfollows=.bss valign=16
 section emsbss nobits vfollows=ems valign=1     ; (KEMS.INC's data: valign=1
 section hd progbits align=16 follows=ems vfollows=emsbss valign=16  ;  keeps it
@@ -69,7 +70,8 @@ section mdt progbits align=16 follows=boot vstart=MD_TPG
 ; KROM.INC: R:'s resident part, assembled from 0 and relocated where it goes
 section rmt progbits align=16 follows=mdt vstart=0
 ; the start-up code, run in the place of the disk buffers (in KSEG): see
-; init.  (A constant: the assertion after ovl_end keeps it inside them.)
+; init.  (A constant: the assertions at the end of this file keep it
+; inside them.)
 OVL_AT  equ 5800h
 section ovl progbits align=16 follows=rmt vstart=OVL_AT
 section .text

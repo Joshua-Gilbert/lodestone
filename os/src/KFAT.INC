@@ -162,8 +162,6 @@ parse_comp:
 badchars equ sepchars + 2                ; '"+,/:;<=>[]|' (KCORE.INC: f_29's
 NBADC   equ NSEP - 2                    ;  separators past '.' and '\')
 
-; resolve path_buf (or SI) -> r_drv, r_dir, r_name, r_wild.
-; Gets the drive ready and its FAT loaded.  CF: AX = error (3 or 15)
 ; resolve path_buf for a name to make, as MS-DOS: CF: AX = 5 if there is
 ; none, or it is "." or ".." (in the root no such entry would be found), 3
 ; with wildcards, or resolve's error
@@ -185,6 +183,8 @@ new_name:                               ; (the same after a resolve)
 .f:     stc
         ret
 
+; resolve path_buf (or SI) -> r_drv, r_dir, r_name, r_wild.
+; Gets the drive ready and its FAT loaded.  CF: AX = error (3 or 15)
 resolve:
         mov     si, path_buf
 resolve_si:
