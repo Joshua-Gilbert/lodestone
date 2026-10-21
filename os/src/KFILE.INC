@@ -77,18 +77,21 @@ h2sft:  cmp     bx, 20
         pop     es
         cmp     al, NSFT
         jae     .bad
-        push    ax
-        mov     ah, SFT_SZ
-        mul     ah
-        add     ax, sft
-        mov     si, ax
-        pop     ax
+        call    sft_of
         cmp     byte [si+S_REF], 0
         je      .bad
         clc
         ret
 .bad:   mov     ax, 6
         stc
+        ret
+
+; SFT entry AL (below NSFT) -> SI.  Keeps AX
+sft_of: push    ax
+        cbw                             ; (AL < 128)
+        imul    si, ax, SFT_SZ
+        add     si, sft
+        pop     ax
         ret
 
 ; a free SFT entry -> SI (cleared), AL = number.  CF: AX = 4
@@ -137,12 +140,17 @@ jft_alloc:
 
 ; SFT entry AL into handle BX, and return BX in AX (as INT 21h does)
 give_handle:
+        call    jft_set
+        mov     ax, bx
+        jmp     ok_ax
+
+; handle BX of the current process <- SFT entry AL (FFh: free)
+jft_set:
         push    es
         mov     es, [cur_psp]
         mov     [es:18h+bx], al
         pop     es
-        mov     ax, bx
-        jmp     ok_ax
+        ret
 
 ; is the directory entry d_lba/d_off of drive [act] open?  CF if so
 sft_busy:
@@ -327,7 +335,7 @@ f_3D:   call    get_path                ; OPEN
         jc      .e
         push    bx
         call    dev_lookup
-        jnc     .dev
+        jnc     create.dev              ; (the same: a device's handle)
         call    find_file
         jc      .e1
         test    byte [de+11], A_DIR | A_VOL
@@ -343,10 +351,6 @@ f_3D:   call    get_path                ; OPEN
         mov     al, [bp+F_AX]
         call    sft_fill
         pop     ax
-        pop     bx
-        jmp     give_handle
-.dev:   call    dev_open
-        jc      .e1
         pop     bx
         jmp     give_handle
 .acc:   mov     ax, 5
@@ -388,13 +392,7 @@ do_create:
         jne     .np
         cmp     byte [r_name], '.'
         je      .acc
-        mov     si, r_name
-        mov     di, nm11
-        mov     cx, 11
-        rep     movsb
-        mov     ax, [r_dir]
-        mov     cl, A_DIR | A_HID | A_SYS
-        call    dir_find
+        call    find_named
         jc      .new
         cmp     byte [cr_new], 0
         jne     .exists
@@ -402,35 +400,15 @@ do_create:
         jnz     .acc
         call    sft_busy
         jc      .acc
-        mov     ax, [si+26]             ; truncate the old file
-        call    free_chain
-        mov     word [si+26], 0
-        mov     word [si+28], 0
-        mov     word [si+30], 0
-        mov     al, [bp+F_CX]
-        and     al, 27h
-        mov     [si+11], al
-        push    ax
-        push    dx
-        call    dos_stamp
-        mov     [si+22], ax
-        mov     [si+24], dx
-        pop     dx
-        pop     ax
-        push    si
-        mov     di, de
-        mov     cx, 16
-        rep     movsw
-        pop     si
-        call    buf_put
-        jc      .x
-        jmp     .open
+        mov     ax, [si+26]             ; truncate the old file: its chain
+        call    free_chain              ;  freed, its entry a fresh one (the
+        jmp     short .ne               ;  name the same: no wildcards)
 .new:   cmp     ax, 2
         jne     .err
         mov     ax, [r_dir]
         call    dir_slot
         jc      .x
-        mov     cl, [bp+F_CX]
+.ne:    mov     cl, [bp+F_CX]
         and     cl, 27h
         xor     ax, ax
         call    new_entry
@@ -534,13 +512,10 @@ section .text
 f_3E:   mov     bx, [bp+F_BX]           ; CLOSE
         call    h2sft
         jc      .e
-        push    es
-        mov     es, [cur_psp]
-        mov     byte [es:18h+bx], 0FFh
-        pop     es
+        mov     al, 0FFh
+        call    jft_set
         call    sft_release
-        jc      .e
-        jmp     ok
+        jmp     ret_cf
 .e:     jmp     fail
 
 ; one user less for SFT SI; the last one writes the directory entry back
@@ -913,7 +888,6 @@ file_read:
         mov     dx, [rw_lba]
         push    si
         call    buf_getd
-        mov     word [io_ra], 0         ; (a buffer hit leaves it set)
         mov     bx, si
         pop     si
         pop     dx
@@ -1294,7 +1268,7 @@ dev_write:
         ret
 .aux:   push    cx
         push    dx
-        mov     dx, 0
+        xor     dx, dx
         cmp     byte [si+S_DEV], DEV_COM2
         jne     .a1
         inc     dx
@@ -1532,11 +1506,7 @@ f_44:   mov     al, [bp+F_AX]           ; IOCTL
 .ost:   mov     ax, 00FFh
         jmp     ok_ax
 .rem:   mov     al, [bp+F_BX]           ; removable?  (A: and B: are; C: and M:
-        or      al, al                  ;  not)
-        jnz     .rd
-        mov     al, [cur_drv]
-        inc     al
-.rd:    dec     al
+        call    drv_dflt                ;  not)
         call    drv_present
         jc      .bdrv
         cmp     al, 2
@@ -1578,10 +1548,7 @@ f_46:   mov     bx, [bp+F_BX]           ; DUP2: CX becomes a copy of BX
         pop     ax
         inc     byte [si+S_REF]
         mov     bx, [bp+F_CX]
-        push    es
-        mov     es, [cur_psp]
-        mov     [es:18h+bx], al
-        pop     es
+        call    jft_set
         jmp     ok
 .e2:    add     sp, 4
         mov     ax, 6
@@ -1626,12 +1593,7 @@ close_all:
         cmp     al, NSFT
         jae     .n
         mov     byte [es:18h+bx], 0FFh
-        push    ax
-        mov     ah, SFT_SZ
-        mul     ah
-        add     ax, sft
-        mov     si, ax
-        pop     ax
+        call    sft_of
         call    sft_release
 .n:     inc     bx
         cmp     bx, 20
@@ -1654,12 +1616,14 @@ f_4E:   call    get_path
         inc     al
         stosb
         mov     si, r_name
+        mov     cx, 11
         cmp     byte [si], 0
         jne     .p
-        mov     si, all11
-.p:     mov     cx, 11
-        rep     movsb
-        mov     al, [bp+F_CX]
+        mov     al, '?'                 ; no name: everything
+        rep     stosb
+        jmp     short .q
+.p:     rep     movsb
+.q:     mov     al, [bp+F_CX]
         stosb
         mov     ax, [r_dir]
         stosw
@@ -1674,12 +1638,8 @@ f_4E:   call    get_path
         mov     ax, 2                   ; nothing at all: "file not found"
 .e:     jmp     fail
 .ok:    jmp     ok
-all11   db '???????????'
-
 f_4F:   call    find_next
-        jc      .e
-        jmp     ok
-.e:     jmp     fail
+        jmp     ret_cf
 
 find_next:
         les     di, [dta]

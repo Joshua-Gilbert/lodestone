@@ -474,6 +474,8 @@ int21:  sti
         shl     bx, 1
         jmp     [ftab+bx]
 
+; CF: fail (AX = the error), else ok
+ret_cf: jc      fail
 ; return to the caller with CF clear
 ok:     and     byte [bp+F_FL], 0FEh
 ; return to the caller (frame as it is)
@@ -501,6 +503,9 @@ fail:   push    cs
         mov     [last_err], ax
         or      byte [bp+F_FL], 1
         jmp     done
+; CF: fail, else return AX with CF clear
+ret_cfax:
+        jc      fail
 ; return AX, CF clear
 ok_ax:  mov     [bp+F_AX], ax
         jmp     ok
@@ -655,7 +660,7 @@ stdin_con:
         push    ax
         push    bx
         push    si
-        mov     bx, 0
+        xor     bx, bx
         call    h2sft
         jc      .no
         test    byte [si+S_FLAGS], SF_DEV
@@ -678,7 +683,7 @@ con_in:
         push    si
         push    di
         push    es
-        mov     bx, 0
+        xor     bx, bx
         call    h2sft
         jc      .eof
         push    cs
@@ -736,7 +741,7 @@ con_ready:
 .file:  push    ax
         push    bx
         push    si
-        mov     bx, 0
+        xor     bx, bx
         call    h2sft
         jc      .no
         test    byte [si+S_FLAGS], SF_DEV
@@ -789,8 +794,7 @@ f_06:   mov     al, [bp+F_DX]           ; direct console I/O
         and     byte [bp+F_FL], 0BFh    ; ZF = 0: a character
         jmp     ret_al
 .none:  or      byte [bp+F_FL], 40h
-        xor     al, al
-        jmp     ret_al
+        jmp     f_nul0
 f_07:   call    con_in                  ; raw input, no echo
         jmp     ret_al
 f_08:   call    con_in                  ; input, no echo
@@ -832,8 +836,7 @@ f_0C:   call    stdin_con               ; flush, then 01/06/07/08/0A
         je      f_08
         cmp     al, 0Ah
         je      f_0A
-        xor     al, al
-        jmp     ret_al
+        jmp     f_nul0
 
 ; buffered line input: DS:DX -> max, count, text
 f_0A:   mov     es, [bp+F_DS]
@@ -1086,13 +1089,19 @@ f_2B:   mov     cx, [bp+F_CX]           ; set date
         mov     dl, al
         mov     ah, 5
         int     1Ah
-        xor     al, al
-        jmp     ret_al
-.bad:   mov     al, 0FFh
-        jmp     ret_al
+        jmp     f_nul0
+.bad:   jmp     f_fcb
 
 ; time: hundredths = ticks * 5.492549 (= 5 + 32280/65536)
-f_2C:   call    clock_ticks             ; CX:DX
+f_2C:   call    clk_hms
+        mov     [bp+F_CX], cx
+        mov     [bp+F_DX], dx
+        jmp     done
+
+; the time of day -> CH hours, CL minutes, DH seconds, DL hundredths (as
+; INT 21h 2Ch gives them).  AX, BX, SI, DI changed
+clk_hms:
+        call    clock_ticks             ; CX:DX
         mov     si, cx
         mov     di, dx
         mov     ax, dx
@@ -1124,14 +1133,14 @@ f_2C:   call    clock_ticks             ; CX:DX
         mov     ax, dx
         mov     bl, 100
         div     bl                      ; AL = seconds, AH = hundredths
-        mov     [bp+F_DX+1], al
-        mov     [bp+F_DX], ah
+        xchg    al, ah
+        mov     dx, ax
         pop     ax
         mov     bl, 60
-        div     bl
-        mov     [bp+F_CX+1], al         ; hours
-        mov     [bp+F_CX], ah           ; minutes
-        jmp     done
+        div     bl                      ; AL = hours, AH = minutes
+        xchg    al, ah
+        mov     cx, ax
+        ret
 
 ; set time: ticks = hundredths * 0.182065 (= 11932/65536)
 f_2D:   mov     cx, [bp+F_CX]
@@ -1188,10 +1197,8 @@ f_2D:   mov     cx, [bp+F_CX]
         xor     dl, dl
         mov     ah, 3
         int     1Ah
-        xor     al, al
-        jmp     ret_al
-.bad:   mov     al, 0FFh
-        jmp     ret_al
+        jmp     f_nul0
+.bad:   jmp     f_fcb
 
 ; DOS date/time words for now -> AX = time, DX = date
 dos_stamp:
@@ -1199,52 +1206,14 @@ dos_stamp:
         push    cx
         push    si
         push    di
-        call    clock_ticks
-        ; reuse f_2C's arithmetic without the frame
-        mov     si, cx
-        mov     di, dx
-        mov     ax, dx
-        mov     bx, 32280
-        mul     bx
-        mov     cx, dx
-        mov     ax, si
-        mul     bx
-        add     ax, cx
-        adc     dx, 0
-        push    ax
-        push    dx
-        mov     ax, di
-        mov     bx, 5
-        mul     bx
-        mov     cx, ax
-        mov     bx, dx
-        mov     ax, si
-        mov     dx, 5
-        mul     dx
-        add     bx, ax
-        pop     dx
-        pop     ax
-        add     ax, cx
-        adc     dx, bx
-        mov     cx, 6000
-        div     cx                      ; AX minutes, DX hundredths
-        push    ax
-        mov     ax, dx
-        mov     bl, 100
-        div     bl                      ; AL seconds
-        shr     al, 1
-        xor     ah, ah
-        mov     si, ax                  ; 2-second units
-        pop     ax
-        mov     bl, 60
-        div     bl                      ; AL hours, AH minutes
-        mov     bl, ah
-        xor     bh, bh
-        xor     ah, ah
-        shl     ax, 11
-        shl     bx, 5
-        or      ax, bx
-        or      ax, si
+        call    clk_hms
+        mov     al, cl                  ; hours << 11 | minutes << 5 |
+        xor     ah, ah                  ;  seconds / 2
+        shl     ax, 5
+        shr     dh, 1
+        or      al, dh
+        shl     ch, 3
+        or      ah, ch
         push    ax
         mov     ax, [cur_year]
         sub     ax, 1980
@@ -1267,10 +1236,8 @@ dos_stamp:
 ;  small services
 ; =====================================================================
 f_0D:   call    disk_reset              ; flush and forget the disks
-        mov     byte [bp+F_AX], 0       ; (AL = FFh: the FAT couldn't be
-        jnc     .x                      ;  written)
-        mov     byte [bp+F_AX], 0FFh
-.x:     jmp     done
+        sbb     al, al                  ; (AL = FFh: the FAT couldn't be
+        jmp     ret_al                  ;  written)
 
 ; INT 21h F0h: Lodestone's own calls (MS-DOS doesn't have it).
 ;   AL = 0: AX = 4F47h ('GO'), BX = version (0201h)
@@ -1308,7 +1275,7 @@ f_F0:   mov     al, [bp+F_AX]
         jne     .nolend
         mov     byte [tc_drv], 0FFh     ; nothing cached any more
         mov     byte [tc_lock], 1       ; and nothing goes in meanwhile
-        mov     [bp+F_ES], ax
+.lx:    mov     [bp+F_ES], ax           ; (KEMS.INC's ems_lend ends here too)
         mov     word [bp+F_CX], TC_SECS * 512
         jmp     ok
 .nolend:
@@ -1404,8 +1371,7 @@ f_33:   mov     al, [bp+F_AX]
         je      .set
         cmp     al, 5
         je      .boot
-        mov     al, 0FFh
-        jmp     ret_al
+        jmp     f_fcb
 .get:   mov     al, [brkflag]
         mov     [bp+F_DX], al
         jmp     done
@@ -1471,7 +1437,6 @@ f_59:   mov     ax, [last_err]
         mov     word [bp+F_BX], 0D01h   ; class 13 (unknown), action 1 (retry)
         mov     byte [bp+F_CX+1], 1     ; locus unknown
         jmp     done
-f_5C:   jmp     ok                      ; record locks: always granted
 f_66:   cmp     byte [bp+F_AX], 1       ; code page 437
         jne     .set
         mov     ax, 437
@@ -1479,6 +1444,7 @@ f_66:   cmp     byte [bp+F_AX], 1       ; code page 437
         mov     [bp+F_DX], ax
         jmp     ok
 .set:   jmp     ok
+f_5C    equ     f_66.set                ; record locks: always granted
 f_67:   cmp     word [bp+F_BX], 20      ; handle count: 20 is all we have
         ja      .no
         jmp     ok
@@ -1593,10 +1559,7 @@ f_29:   mov     ds, [bp+F_DS]
         loop    .st
         jmp     .fl
 .fe:    popf
-        jnz     .keep
-        or      ah, ah
-        jnz     .pad
-        jmp     .pad
+        jz      .pad                    ; (not kept: padded, taken or not)
 .keep:  or      ah, ah
         jz      .fx
 .pad:   jcxz    .fx
@@ -1620,7 +1583,8 @@ f_29:   mov     ds, [bp+F_DS]
         pop     cx
         pop     di
         ret
-sepchars db '.\/:;,=+"[]|<>'
+sepchars db '.\/:;,=+"[]|<>'           ; (from +2: KFAT.INC's badchars,
+                                        ;  the characters a name can't have)
 NSEP    equ $ - sepchars
 
 ; "list of lists" (INT 21h 52h): the first MCB segment is at lol-2

@@ -528,8 +528,8 @@ def t_cache(ems=0):
     o = sh.run('type big.txt', 'f')
     good = all('line %04d of the bad-sector file' % i in o for i in range(440, 451))
     check('bad sector: the file reads up to it, then Data error, read-ahead gave up once' + tag,
-          good and 'Data error reading drive A' in o and 'line 0460' not in o and k.pc.calls_bad <= 9,
-          '%d failed reads; %s' % (k.pc.calls_bad, o[-400:]))
+          good and 'Data error reading drive A' in o and 'line 0460' not in o and getattr(k.pc, 'calls_bad', 0) <= 9,
+          '%d failed reads; %s' % (getattr(k.pc, 'calls_bad', 0), o[-400:]))
     # a weak drive head (the 1520's side 0, inner tracks): a read of several
     # sectors on these tracks always fails with a CRC error, each sector on
     # its own reads fine.  The kernel falls back to sector-by-sector: the
@@ -1097,6 +1097,56 @@ def t_gridgpib():
     check('... the bus left alone (REN still on: it sent everyone to local first)', ren and chip.ren, (ren, chip.ren))
     check('... and GRIDGPIB still finds the driver', 'Already installed' in sh.run('gridgpib'))
 
+def t_exerel():
+    """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
+    than applying entries nobody read (ex_rel shares path_buf, so they would
+    come from the program's own name); the whole one runs."""
+    import struct
+    code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
+    def exe(nrel, rels=b''):
+        size = 32 + len(code) + len(rels)
+        hdr = struct.pack('<2s13H', b'MZ', size % 512, (size + 511) // 512, nrel, 2, 0x20, 0x20,
+                          1, 0x100, 0, 0, 0, 32 + len(code), 0)
+        return hdr + bytes(32 - len(hdr)) + code + rels
+    for n, data in (('CUT.EXE', exe(3)), ('WHOLE.EXE', exe(1, struct.pack('<HH', 0x30, 0)))):
+        open(os.path.join(OUT, n), 'wb').write(data)
+    k = ktest.KPC(image('exe.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'CUT.EXE=' + os.path.join(OUT, 'CUT.EXE'),
+                        'WHOLE.EXE=' + os.path.join(OUT, 'WHOLE.EXE'))); k.start()
+    sh = Shell(k)
+    src = open(os.path.join(GOS, 'src', 'KFILE.INC')).read()
+    eq = lambda n: int(re.search(r'^%s\s+equ\s+(\d+)' % n, src, re.M).group(1))
+    refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * eq('SFT_SZ') + eq('S_REF'), 1)[0] for i in range(eq('NSFT'))]
+    r0 = refs()
+    o = sh.run('cut')
+    check('relocation table past the end: not run', 'RAN' not in o and not k.crashed, o)
+    check('... the handles it inherited given back (SFT counts as before)', refs() == r0, (r0, refs()))
+    o = sh.run('whole')
+    check('... the same with its table there: runs', 'RAN' in o and not k.crashed, o)
+
+def t_trunc():
+    """CREATE onto a file there (here a redirection): truncated and stamped,
+    but bytes 12-21 of its entry, which other systems use (creation time,
+    last access), kept as they were."""
+    open(os.path.join(OUT, 'KEEP.TXT'), 'wb').write(b'old contents\r\n' * 50)
+    k = ktest.KPC(image('trunc.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'KEEP.TXT=' + os.path.join(OUT, 'KEEP.TXT'))); k.start()
+    ent = lambda: (lambda b, i: b[i:i + 32])(bytes(k.pc.drives[0].img), bytes(k.pc.drives[0].img).find(b'KEEP    TXT'))
+    before = ent()
+    sh = Shell(k)
+    sh.run('echo new > keep.txt')
+    after = ent()
+    check('CREATE truncates: the new contents', 'new' in sh.run('type keep.txt') and after[28:32] == bytes([6, 0, 0, 0]), after.hex())
+    check('... its entry\'s bytes 12-21 kept (%s)' % before[12:22].hex(), before[12:22] == after[12:22] and any(before[12:22]),
+          (before[12:22].hex(), after[12:22].hex()))
+    # deleted, then a new file takes its slot (E5h, the first free one):
+    # there bytes 12-21 are the deleted file's, so they are zeroed
+    at = bytes(k.pc.drives[0].img).find(b'KEEP    TXT')
+    sh.run('del keep.txt'); sh.run('echo x > again.txt')
+    img = bytes(k.pc.drives[0].img)
+    check('... a new file in a deleted one\'s slot: bytes 12-21 zeroed', img[at:at + 11] == b'AGAIN   TXT' and
+          img[at + 12:at + 22] == bytes(10), img[at:at + 32].hex())
+    probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('... disk consistent', not probs, probs)
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -1526,7 +1576,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_command, t_cmdedit, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_command, t_cmdedit, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

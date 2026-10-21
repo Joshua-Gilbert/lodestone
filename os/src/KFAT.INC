@@ -12,7 +12,7 @@ A_ARC   equ 20h
 
 section .bss
 path_buf    resb 130            ; the caller's path, copied here
-path2_buf   resb 130
+path2_buf   resb 130            ; (with path_buf: EXEC's ex_rel, KPROC.INC)
 nm11        resb 11             ; a parsed name component
 r_drv       resb 1              ; resolved path: drive,
             alignb 2
@@ -159,8 +159,8 @@ parse_comp:
         ret
 .err:   stc
         ret
-badchars db '"+,/:;<=>[]|'
-NBADC   equ $ - badchars
+badchars equ sepchars + 2                ; '"+,/:;<=>[]|' (KCORE.INC: f_29's
+NBADC   equ NSEP - 2                    ;  separators past '.' and '\')
 
 ; resolve path_buf (or SI) -> r_drv, r_dir, r_name, r_wild.
 ; Gets the drive ready and its FAT loaded.  CF: AX = error (3 or 15)
@@ -205,7 +205,6 @@ resolve_si:
         je      .comp
         push    si
         mov     ax, [r_dir]
-        mov     cl, A_DIR
         call    dir_find
         pop     si
         jc      .npe
@@ -323,7 +322,6 @@ dir_entry:
         mov     [lba_hi], ch
         mov     al, [act]
         call    buf_get
-        mov     word [io_ra], 0         ; (a buffer hit leaves it set)
         jc      .x
         cmp     byte [de_root], 0
         je      .got
@@ -390,19 +388,11 @@ root_pre:
         push    cx
 .hk:                                    ; (KHD.INC: not for C:)
         push    dx
-        push    es
-        push    cs
-        pop     es
-        mov     bx, bounce
         mov     ax, [di+D_RSEC]
         dec     ax
         mov     [io_ra], ax
         mov     dx, [di+D_ROOT]
-        mov     cx, 1
-        mov     al, [act]
-        mov     ah, 2
-        call    disk_io_raw
-        pop     es
+        call    raw_bounce
         pop     dx
         pop     cx
         pop     bx
@@ -600,40 +590,41 @@ clu_zero:
         ret
 
 ; a fresh directory entry at SI: name r_name, attribute CL, cluster AX,
-; size 0, stamped now.  Then written to disk.  CF: AX = error
+; size 0, stamped now.  Then written to disk.  CF: AX = error.  AX and
+; CX changed (the fields go in their order, ES = DS).  An entry in use
+; (CREATE's truncate) keeps bytes 12-21, which other systems use: a free
+; slot (0, E5h) gets them zeroed
 new_entry:
         push    di
-        push    cx
+        push    si
+        push    dx
         push    ax
         mov     di, si
-        push    si
+        mov     dl, [si]                ; (in use?)
         mov     si, r_name
+        mov     al, cl
         mov     cx, 11
-        rep     movsb
-        pop     si
+        rep     movsb                   ; [0] the name
+        stosb                           ; [11] the attribute
+        dec     dl                      ; 0, E5h (and E6h-FFh) -> FFh, E4h+
+        cmp     dl, 0E4h
+        jae     .z
+        add     di, 10                  ; [12] kept
+        jmp     short .t
+.z:     xor     ax, ax
+        mov     cl, 5
+        rep     stosw                   ; [12] zeroed
+.t:     call    dos_stamp
+        stosw                           ; [22] the time
+        xchg    ax, dx
+        stosw                           ; [24] the date
         pop     ax
-        pop     cx
-        mov     [si+11], cl
-        push    di
-        lea     di, [si+12]
-        push    ax
-        push    cx
-        mov     cx, 5
+        stosw                           ; [26] the cluster
         xor     ax, ax
-        rep     stosw
-        pop     cx
-        pop     ax
-        pop     di
-        mov     [si+26], ax
-        mov     word [si+28], 0
-        mov     word [si+30], 0
-        push    ax
-        push    dx
-        call    dos_stamp
-        mov     [si+22], ax
-        mov     [si+24], dx
+        stosw                           ; [28] the size
+        stosw
         pop     dx
-        pop     ax
+        pop     si
         pop     di
         jmp     buf_put
 
@@ -672,22 +663,18 @@ name_out:
 ; the path names an existing file: -> de, d_lba/d_off, SI.  CF: AX
 find_file:
         call    resolve
-        jc      .x
+        jc      find_named.x
         cmp     byte [r_name], 0
-        je      .nf
+        je      find_named.nf
         cmp     byte [r_wild], 0
-        jne     .nf
-        mov     si, r_name
-        mov     di, nm11
-        mov     cx, 11
-        rep     movsb
+        jne     find_named.nf
+; r_name in r_dir (resolve left it in nm11 too): dir_find's answer
+find_named:
         mov     ax, [r_dir]
-        mov     cl, A_HID | A_SYS | A_DIR
-        call    dir_find
-.x:     ret
+        jmp     dir_find
 .nf:    mov     ax, 2
         stc
-        ret
+.x:     ret
 
 f_41:   call    get_path                ; DELETE
         jc      .e
@@ -703,8 +690,7 @@ f_41:   call    get_path                ; DELETE
         mov     ax, [de+26]
         call    free_chain
         call    fat_flush
-        jc      .e
-        jmp     ok
+        jmp     ret_cf
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
@@ -728,8 +714,7 @@ f_43:   call    get_path                ; get/set attributes
         or      al, ah
         mov     [si+11], al
         call    buf_put
-        jc      .e
-        jmp     ok
+        jmp     ret_cf
 .bad:   mov     ax, 1
         jmp     .e
 .acc:   mov     ax, 5
@@ -745,22 +730,13 @@ f_39:   call    get_path                ; MKDIR
         jne     .np
         cmp     byte [r_name], '.'
         je      .acc
-        mov     si, r_name
-        mov     di, nm11
-        mov     cx, 11
-        rep     movsb
-        mov     ax, [r_dir]
-        mov     cl, A_HID | A_SYS | A_DIR
-        call    dir_find
+        call    find_named
         jnc     .acc                    ; already there
         cmp     ax, 2
         jne     .e
         mov     ax, [r_dir]
-        call    dir_slot
-        jc      .e
-        push    bx
-        push    word [d_lba]
-        push    word [d_off]
+        call    dir_slot                ; (d_lba/d_off: the slot, until the
+        jc      .e                      ;  next dir_entry or dir_find)
         xor     dx, dx
         mov     [new_dir], dx
         call    fat_keep
@@ -775,13 +751,9 @@ f_39:   call    get_path                ; MKDIR
         call    fat_set
         call    fat_back
         pop     ax
-        add     sp, 6
         jmp     .e
 .z:     call    fat_flush               ; its cluster is taken before it is named
         jc      .e3
-        pop     word [d_off]
-        pop     word [d_lba]
-        pop     bx
         mov     dx, [d_lba]
         mov     ax, [d_off]
         call    dent_buf                ; the parent's slot again
@@ -815,10 +787,8 @@ f_39:   call    get_path                ; MKDIR
         call    new_entry
         jc      .e
         call    fat_flush
-        jc      .e
-        jmp     ok
-.e3:    add     sp, 6
-        push    ax                      ; the cluster given back (a failed
+        jmp     ret_cf
+.e3:    push    ax                      ; the cluster given back (a failed
         mov     ax, [new_dir]           ;  write: else a lost cluster once
         or      ax, ax                  ;  the FAT goes out)
         jz      .e4
@@ -844,15 +814,9 @@ find_dir:
         je      .ok
         cmp     byte [r_wild], 0
         jne     .np
-        mov     si, r_name
-        mov     di, nm11
-        mov     cx, 11
-        rep     movsb
-        cmp     word [nm11], '. '
+        cmp     word [r_name], '. '
         je      .ok
-        mov     ax, [r_dir]
-        mov     cl, A_DIR | A_HID | A_SYS
-        call    dir_find
+        call    dir_find                ; (AX = r_dir; nm11 = r_name)
         jc      .np
         test    byte [de+11], A_DIR
         jz      .np
@@ -910,8 +874,7 @@ f_3A:   call    get_path                ; RMDIR
         call    free_chain
         mov     word [it_dir], 0
         call    fat_flush
-        jc      .e
-        jmp     ok
+        jmp     ret_cf
 .cur:   mov     ax, 16                  ; the current directory
         jmp     .e
 .acc:   mov     ax, 5
@@ -1011,11 +974,7 @@ cwd_p       resw 1
 section .text
 
 f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
-        or      al, al
-        jnz     .d
-        mov     al, [cur_drv]
-        inc     al
-.d:     dec     al
+        call    drv_dflt
         call    drv_present
         jc      .bad
         call    cwd_of
@@ -1069,13 +1028,7 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         je      .acc                    ;  no such entry to find)
         cmp     byte [r_wild], 0
         jne     .acc
-        mov     si, r_name
-        mov     di, nm11
-        mov     cx, 11
-        rep     movsb
-        mov     ax, [r_dir]
-        mov     cl, A_HID | A_SYS | A_DIR
-        call    dir_find
+        call    find_named
         jnc     .acc                    ; the new name exists
         cmp     ax, 2
         jne     .e
@@ -1104,8 +1057,7 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         call    buf_put
         jc      .e
         call    fat_flush               ; (the target may have grown)
-        jc      .e
-        jmp     ok
+        jmp     ret_cf
 .dev:   mov     ax, 17                  ; not the same device
         jmp     .e
 .acc:   mov     ax, 5
@@ -1117,4 +1069,5 @@ ren_drv     resb 1
 ren_lba     resw 1
 ren_off     resw 1
 ren_de      resb 32
+ren_de_end:                     ; (EXEC's ex_hdr: KPROC.INC)
 section .text
