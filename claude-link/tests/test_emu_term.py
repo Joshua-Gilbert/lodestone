@@ -72,6 +72,7 @@ def wait_screen(h, text, sim_s=20):
 def test_term_connect_and_type():
     h = start()
     try:
+        h.settle()          # (start holds when rows 0-23 match: row 24 may still be drawing)
         assert 'CODE-Q quits' in h.screen().split('\n')[24], h.screen()
         assert 'DA ok' in h.screen()
         h.term_type('hello'); h.press(0x1C0D)
