@@ -1117,7 +1117,9 @@ ems_init:
         mov     byte [0], 0EAh          ; JMP FAR md_boot
         mov     word [1], MDB(md_boot)
         mov     word [3], 1000h
-        mov     byte [init.go + 1], (start - (init.go + 2)) & 0FFh     ; (JMP SHORT 0000h)
+        xor     ax, ax                  ; JMP NEAR 0000h
+        sub     ax, init.go + 3
+        mov     [init.go + 1], ax
         pop     di
         mov     ax, di
         sub     ax, ems_ltab

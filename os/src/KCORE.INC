@@ -53,6 +53,7 @@ section .text
 ; ---------------------------------------------------------------------
 ;  interrupt vectors
 ; ---------------------------------------------------------------------
+section ovl
 ivt_init:
         push    es
         xor     ax, ax
@@ -108,6 +109,7 @@ vec_table:
         db 67h
 .v67:   dw int67                        ; (KEMS.INC: its handler, if EMS)
         db 0FFh
+section .text
 
 iret_op:
         iret
@@ -900,6 +902,7 @@ f_0A:   mov     es, [bp+F_DS]
 ; =====================================================================
 ;  clock: time from the BIOS tick count, date kept here (RTC at boot)
 ; =====================================================================
+section ovl
 clock_init:
         mov     word [cur_year], 1980
         mov     byte [cur_mon], 1
@@ -942,6 +945,7 @@ bcd2bin:                                ; AL BCD -> AL binary
         add     al, cl
         pop     cx
         ret
+section .text
 
 bin2bcd:                                ; AL (0-99) -> AL BCD
         aam

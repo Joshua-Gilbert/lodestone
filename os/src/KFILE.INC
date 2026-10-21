@@ -49,6 +49,7 @@ con_lpos    resw 1
 con_llen    resw 1
 section .text
 
+section ovl
 sft_init:
         mov     si, sft
         mov     byte [si+S_REF], 3      ; 0: CON (handles 0, 1, 2)
@@ -66,6 +67,7 @@ sft_init:
         mov     byte [si+S_FLAGS], SF_DEV
         mov     byte [si+S_DEV], DEV_PRN
         ret
+section .text
 
 ; handle BX (current process) -> SI = SFT entry, AL = its number.
 ; CF: AX = 6.  Keeps BX.
@@ -379,14 +381,8 @@ section .text
 
 ; create path_buf with attributes [bp+F_CX] -> SI = SFT, AL = number
 do_create:
-        call    resolve
+        call    resolve_new
         jc      .x
-        cmp     byte [r_name], 0
-        je      .acc
-        cmp     byte [r_wild], 0
-        jne     .np
-        cmp     byte [r_name], '.'
-        je      .acc
         call    find_named
         jc      .new
         cmp     byte [cr_new], 0
@@ -425,9 +421,6 @@ do_create:
 .x:     ret
 .exists:
         mov     ax, 80
-        stc
-        ret
-.np:    mov     ax, 3
         stc
         ret
 .acc:   mov     ax, 5

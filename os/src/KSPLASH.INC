@@ -49,7 +49,9 @@ sp_hook:
         pop     es
         mov     byte [cs:MDB(sp_back)], 1
         mov     byte [0], 0EAh
-        mov     byte [init.go + 1], (start - (init.go + 2)) & 0FFh     ; (JMP SHORT 0000h)
+        xor     ax, ax                  ; JMP NEAR 0000h
+        sub     ax, init.go + 3
+        mov     [init.go + 1], ax
 .j:     mov     word [1], MDB(sp_boot)
         mov     word [3], 1000h
         jmp     KSEG:init
