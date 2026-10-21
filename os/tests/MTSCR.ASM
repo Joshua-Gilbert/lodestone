@@ -72,10 +72,6 @@ m_p:    mov     ax, [pmode]
         mov     cx, 000Ah
         mov     dx, 1805h
         int     10h
-        mov     ax, 0941h               ; page 8 (its cursor is 40:60h, the
-        mov     bx, 0807h               ;  cursor's shape)
-        mov     cx, 1
-        int     10h
         mov     ax, 0501h               ; page 1 first (the teletype writes
         int     10h                     ;  and scrolls the page shown): its
         mov     ah, 2                   ;  bottom line in attribute 1Eh, so the
@@ -185,6 +181,10 @@ m_p:    mov     ax, [pmode]
         mov     cx, 1400h
         mov     dx, 1504h
         int     10h
+        mov     ax, 0941h               ; page 8 (its cursor is 40:60h, the
+        mov     bx, 0807h               ;  cursor's shape: page 0's row 6,
+        mov     cx, 1                   ;  column 7, kept from here on, were it
+        int     10h                     ;  written; its page is past the 32 KB)
         mov     ax, 0508h               ; page 8 shown: the teletype's cursor
         int     10h                     ;  40:60h then, its character past the
         mov     [ax5], ax               ;  32 KB in 80 columns
