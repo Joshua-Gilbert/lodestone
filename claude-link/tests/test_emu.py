@@ -394,10 +394,11 @@ def test_prompt_keys():
     assert line() == (3, 3, '> two'), line()
     h.key(0x5000); h.settle()                                  # past the newest: empty
     assert line() == (0, 0, '>'), line()
-    t = h.screen()
+    def noclock(): s = h.screen().split('\n'); return [s[0][:70]] + s[1:]     # (its minute may turn)
+    t = noclock()
     h.m.wr(0xB800, 0, bytes(0x8000))                           # Ctrl-L draws it all again
     h.key(0x260C); h.settle()
-    assert h.screen() == t, h.screen()
+    assert noclock() == t, h.screen()
     def text(name): return bytes(h.m.mu.mem_read(h.claude_psp * 16 + h.sym[name], 72))
     h.link.send(glp.P_STATUS, b'S' * 69 + b'+tail')
     h.run_until(lambda: text('status_text').startswith(b'S' * 69), 5); h.settle()
