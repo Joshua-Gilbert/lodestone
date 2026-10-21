@@ -12,6 +12,29 @@
 ;  DS = CS throughout.  No DOS calls.
 ; =====================================================================
 
+; The link's state that link_reset clears: each program declares it with
+; TERMLINK_RESET_VARS in its BSS (whatever is put inside is cleared too)
+%macro TERMLINK_RESET_VARS 0
+lr_first:
+g_seq       resb 1
+p_ack       resb 1
+have_pi     resb 1
+nak_pending resb 1
+resend      resb 1
+pend_msg    resb 1
+txq_head    resb 1
+txq_n       resb 1
+rq_type     resb 1
+rq_len      resw 1
+req_ready   resb 1
+reply_busy  resb 1
+snap_reply  resb 1
+keyn        resb 1
+keys_q      resb 1
+rep_q       resb 1
+lr_end:
+%endmacro
+
 link_service:
         mov     bl, [lstate]
         xor     bh, bh
@@ -27,22 +50,14 @@ link_reset:
         mov     bl, [nano]              ; clear a half-read line in the bridge
         mov     ah, 06h
         call    gg_call
-        mov     byte [have_pi], 0
-        mov     byte [p_ack], 0
-        mov     byte [g_seq], 0
-        mov     byte [nak_pending], 0
-        mov     byte [resend], 0
-        mov     byte [pend_msg], 0
-        mov     byte [rq_type], 0
-        mov     word [rq_len], 0
-        mov     byte [req_ready], 0
-        mov     byte [reply_busy], 0
-        mov     byte [snap_reply], 0
-        mov     byte [txq_n], 0
-        mov     byte [txq_head], 0
-        mov     byte [keys_q], 0
-        mov     byte [rep_q], 0
-        mov     byte [keyn], 0
+        push    es                      ; the link's state (TERMLINK_RESET_VARS)
+        push    ds
+        pop     es
+        mov     di, lr_first
+        mov     cx, lr_end - lr_first
+        xor     al, al
+        rep     stosb
+        pop     es
         call    build_hello
         mov     al, G_HELLO
         mov     si, hellobuf
