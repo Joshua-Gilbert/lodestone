@@ -46,7 +46,9 @@ lampw       resb 1                  ; the coprocessor lamp: 0 none, 7 80287, 9 2
 biosdate    resb 8
 kindbuf     resb 4
 msgbuf      resb 128
-infobuf     resb 128
+infobuf     equ tmp                 ; the information line: built by draw_all
+                                    ;  just before it is drawn (draw_form and
+                                    ;  the clock use tmp too)
 dstpath     resb 84                 ; Copy, Move: X: + \ + a 66-char subject + \ +
 tmppath     resb 84                 ;  NAME.EXT (83); the subject it goes to, then
                                     ;  the new file in it (X:\SUBJECT\ABCDTMP, 78)
@@ -54,15 +56,16 @@ curdir      resb 72                 ; X:\SUBJECT, where the list is
 c_sub       resb SUBMAX + 1         ; the forms' fields: Subject, Title, Device
 c_tit       resb 13
 c_dev       resb 1
-fcbbuf      resb 11
+fcbbuf      equ tmp                 ; relist_name's title (11; load_dir
+                                    ;  doesn't use tmp)
 xmode       resb 1                  ; 0 Copy, 1 Move
 x_here      resb 1                  ; 1: it goes to the subject listed
 d_exists    resb 1                  ; the destination is there already
 tmp_made    resb 1                  ; copy_file made the new file (delete it on failure)
 tmp_kept    resb 1                  ; ... and kept it: the old destination was gone
 x_part      resb 1                  ; Move: copied, but the original stays
-id_src      resb 5                  ; same_file: drive, directory, entry
-id_dst      resb 5
+id_src      equ tmp                 ; same_file: drive, directory, entry
+id_dst      equ tmp + 5
 ftitle      resb 24                 ; the form's window title: "Copy NAME.EXT"
 o_sel       resw 1                  ; the list's place before a command
 o_top       resw 1
@@ -108,7 +111,6 @@ ex_start:
         mov     ah, 1Ah
         int     21h
         call    sysinfo
-        call    build_info
         call    hires
         jnc     .hi
         mov     si, s_nohires
@@ -278,10 +280,8 @@ ex_chg: cmp     byte [focus], FOC_DEV
 .chg:   mov     byte [dirty], 1
         call    get_subject
 .form:  jmp     draw_form
-.bad:   mov     [ex_code], ax
-        mov     si, runpath
-        mov     bx, s_cantopen
-        jmp     cant_msg
+.bad:   mov     bx, s_cantopen
+        jmp     cant_ax
 
 ex_help:
         mov     si, ex_keys
@@ -315,8 +315,7 @@ load_dir:
         mov     word [dir_note], 0
         mov     dx, s_all
         xor     cx, cx                  ; files (the subjects are an item
-        mov     ah, 4Eh                 ;  of the form of their own)
-        int     21h
+        call    ff                      ;  of the form of their own)
         jc      .first
         mov     di, entries
 .e:     mov     ax, [nent]
@@ -384,35 +383,11 @@ relist: mov     al, [focus]
 .r:     jmp     draw_all
 
 ; exec_dta -> FAT-style entry at DI (name, attribute, time, date, size)
+; (AX, BX, CX, SI, DI change)
 dta2ent:
-        push    di
-        mov     cx, 11
-        mov     al, ' '
-        rep     stosb
-        pop     di
         mov     si, exec_dta + 30
-        mov     bx, di
-        mov     cx, 8
-.nl:    lodsb
-        or      al, al
-        jz      .rest
-        cmp     al, '.'
-        je      .ext
-        stosb
-        loop    .nl
-.sk:    lodsb                           ; (longer than 8: skip to '.')
-        or      al, al
-        jz      .rest
-        cmp     al, '.'
-        jne     .sk
-.ext:   lea     di, [bx+8]
-        mov     cx, 3
-.el:    lodsb
-        or      al, al
-        jz      .rest
-        stosb
-        loop    .el
-.rest:  mov     al, [exec_dta+21]
+        call    to_fcb                  ; (BX = DI as it was)
+        mov     al, [exec_dta+21]
         mov     [bx+11], al
         mov     ax, [exec_dta+22]
         mov     [bx+22], ax
@@ -511,10 +486,13 @@ kind_of:
         jne     .n
         cmp     dl, [bx+2]
         jne     .n
-        mov     si, [bx+3]
-        mov     al, [bx+5]
+        mov     al, [bx+3]              ; (from k_file)
+        cbw
+        add     ax, k_file
+        xchg    si, ax
+        mov     al, [bx+4]
         jmp     .x
-.n:     add     bx, 6
+.n:     add     bx, 5
         jmp     .k
 .raw:   mov     si, kindbuf             ; unknown extension: show it
         mov     [si], ax
@@ -560,9 +538,7 @@ confirm:
         call    kind_of
         call    sb_str
         mov     si, s_noopen
-        call    sb_str
-        mov     byte [di], 0
-        jmp     show_msg
+        jmp     sb_show
 .dos:   call    sel_name                ; NAME.EXT in the current directory
         jmp     run_prog
 .run:   call    sel_name
@@ -601,26 +577,13 @@ sb_fcb: push    si
 .x:     pop     si
         ret
 
-; the selected entry with its whole path in argpath
+; the selected entry with its whole path in argpath (and curdir set)
 sel_path:
         call    sel_name
-        mov     di, argpath
-        mov     ah, 19h
-        int     21h
-        add     al, 'A'
-        stosb
-        mov     ax, ':\'
-        stosw
-        mov     si, subject + 1
-        cmp     byte [si], 0
-        je      .n
-        call    sb_str
-        mov     al, '\'
-        stosb
-.n:     mov     si, runpath
-        call    sb_str
-        mov     byte [di], 0
-        ret
+        call    cur_dir
+.arg:   mov     di, argpath             ; (nm_next: runpath's whole path)
+        mov     si, runpath
+        jmp     sb_dirname
 
 ; CODE-P: the command prompt (COMSPEC)
 run_shell:
@@ -657,16 +620,9 @@ run_claude:
         call    ui_findapp
         jc      .no
         mov     di, runpath
-        call    sb_str
-        mov     byte [di], 0
+        call    sb_strz
         jmp     run_prog
-.no:    mov     di, msgbuf
-        mov     si, s_claude
-        call    sb_str
-        mov     si, s_notondisk
-        call    sb_str
-        mov     byte [di], 0
-        jmp     show_msg
+.no:    jmp     run_named.nf            ; (SI = the name: ui_findapp's answer)
 
 ; CODE-K: the calculator, a window over the list
 run_calc:
@@ -690,12 +646,9 @@ run_named:
         add     sp, 2
         jmp     run_run
 .no:    pop     si
-        mov     di, msgbuf
-        call    sb_str
+.nf:    call    msg_begin               ; "WRITE.RUN is not on this disk"
         mov     si, s_notondisk
-        call    sb_str
-        mov     byte [di], 0
-        jmp     show_msg
+        jmp     sb_show
 
 ; run the .RUN at SI with argument DI, then the list again (not after
 ; exit code 0FFFFh: it left the screen as it found it, as the calculator)
@@ -714,7 +667,8 @@ run_run:
         push    si
         call    relist
         pop     si
-        jmp     cant_run
+        mov     bx, s_cant
+        jmp     cant_msg
 
 ; F5: the disk again (after changing floppies)
 refresh:
@@ -837,12 +791,10 @@ sub_scan:
         mov     al, '\'
         stosb
 .r:     mov     si, s_all
-        call    sb_str
-        mov     byte [di], 0
+        call    sb_strz
         mov     dx, runpath
         mov     cx, 10h
-        mov     ah, 4Eh
-        int     21h
+        call    ff
         jc      .err
 .e:     test    byte [exec_dta + 21], 10h
         jz      .n
@@ -964,34 +916,38 @@ run_prog:
         mov     si, s_ended
         call    sb_str
         cmp     byte [ex_code], 0
-        je      .m
+        je      show_msgz
         mov     si, s_code
         call    sb_str
         mov     al, [ex_code]
         xor     ah, ah
         call    sb_u16
-.m:     mov     byte [di], 0
-        jmp     show_msg
+        jmp     short show_msgz
 .failed:
-        mov     [ex_code], ax
-        mov     si, runpath
-cant_run:                               ; "Can't run X: why"
         mov     bx, s_cant
-cant_msg:                               ; (BX = "Can't run " / "Can't open ")
-        mov     di, msgbuf
-        push    si
-        mov     si, bx
-        call    sb_str
-        pop     si
-        call    sb_base
+; "Can't run X: why" in the band (BX = the verb: s_cant, s_cantopen ...):
+; X runpath and the error AX (cant_ax) or ex_code's (cant_rp), or (cant_msg)
+; X the file name part of the path SI.  (BX changes)
+cant_ax:
+        mov     [ex_code], ax
+cant_rp:
+        mov     si, runpath
+cant_msg:
+        call    .h
         mov     si, s_colon
         call    sb_str
         mov     ax, [ex_code]
         call    api_sberr
-        mov     byte [di], 0
-        jmp     show_msg
+        jmp     short show_msgz
+.h:     push    si                      ; msgbuf = "Can't ", the verb BX, the
+        mov     si, s_cant_             ;  file name part of the path SI
+        call    msg_begin
+        mov     si, bx
+        call    sb_str
+        pop     si
+        ; (falls through)
 
-; the file name part of the path at SI, appended at DI
+; the file name part of the path at SI, appended at DI (BX changes)
 sb_base:
         mov     bx, si
 .f:     lodsb
@@ -1006,6 +962,24 @@ sb_base:
 .c:     mov     si, bx
         jmp     sb_str
 
+; msgbuf begun with the text at SI (DI past it)
+msg_begin:
+        mov     di, msgbuf
+        jmp     sb_str
+; the text at SI added at DI and ended with a 0 (DI on it; CF clear)
+sb_strz:
+        call    sb_str
+        mov     byte [di], 0
+        ret
+; the text at SI added, msgbuf ended and asked (ui_ask: CF for no)
+sb_ask: call    sb_strz
+        mov     si, msgbuf
+        jmp     ui_ask
+; the text at SI added, msgbuf ended (show_msgz: at DI) and shown
+sb_show:
+        call    sb_str
+show_msgz:
+        mov     byte [di], 0
 ; msgbuf in the prompt band until the next key or click
 show_msg:
         mov     si, msgbuf
@@ -1052,18 +1026,14 @@ ex_erase:
         jc      .x
         cmp     byte [wild], 0
         je      .go
-        mov     di, msgbuf              ; "Erase: Confirm to erase 5 titles *.BAK"
-        mov     si, s_eraseq
-        call    sb_str
+        mov     si, s_eraseq            ; "Erase: Confirm to erase 5 titles *.BAK"
+        call    msg_begin
         mov     ax, [nm_n]
         call    sb_n_tit
         mov     al, ' '
         stosb
         mov     si, c_pat
-        call    sb_str
-        mov     byte [di], 0
-        mov     si, msgbuf
-        call    ui_ask
+        call    sb_ask
         jc      nm_free
 .go:    call    nm_next
         jc      .end
@@ -1094,27 +1064,17 @@ ex_erase:
         jmp     cant_why
 .e:     mov     [ex_code], ax
         call    nm_relist
-        mov     si, runpath
         mov     bx, s_canterase
-        jmp     cant_msg
+        jmp     cant_rp
 .end:   call    nm_relist
         cmp     byte [wild], 0
         je      .x
-        mov     di, msgbuf              ; "Erased 5 titles, 1 read-only kept"
-        mov     si, s_erased
-        call    sb_str
+        mov     si, s_erased            ; "Erased 5 titles, 1 read-only kept"
+        call    msg_begin
         mov     ax, [n_done]
         call    sb_n_tit
-        cmp     word [n_skip], 0
-        je      .m
-        mov     si, s_comma
-        call    sb_str
-        mov     ax, [n_skip]
-        call    sb_u16
         mov     si, s_rokept
-        call    sb_str
-.m:     mov     byte [di], 0
-        jmp     show_msg
+        jmp     sum_skip
 
 ; CODE-D with Subject outlined: the chosen subject (the current one) and
 ; all in it, after a question ("Erase: Confirm to erase \OLD and all in
@@ -1124,24 +1084,13 @@ sub_erase:
         jne     .go
         jmp     ui_beep
 .go:    mov     di, tpath               ; "X:\OLD"
-        mov     ah, 19h
-        int     21h
-        add     al, 'A'
-        mov     ah, ':'
-        stosw
-        mov     si, subject
-        call    sb_str
-        mov     byte [di], 0
-        mov     di, msgbuf
+        call    cur_dir.at
         mov     si, s_eraseq
-        call    sb_str
+        call    msg_begin
         mov     si, subject
         call    sb_str
         mov     si, s_allin
-        call    sb_str
-        mov     byte [di], 0
-        mov     si, msgbuf
-        call    ui_ask
+        call    sb_ask
         jc      .x
         mov     dx, s_dotdot            ; out of it, to the one above
         mov     ah, 3Bh
@@ -1151,19 +1100,15 @@ sub_erase:
         call    tree_del
         jc      .bad
         call    .re
-        mov     di, msgbuf              ; "Erased \OLD"
-        mov     si, s_erased
-        call    sb_str
-        jmp     short .p
+        mov     si, s_erased            ; "Erased \OLD"
+        call    msg_begin
+        mov     si, tpath + 2
+        jmp     sb_show
 .bad:   mov     [ex_code], ax
         call    .re
         mov     si, tpath + 2           ; "Can't erase X.TXT: why"
         mov     bx, s_canterase
         jmp     cant_msg
-.p:     mov     si, tpath + 2
-        call    sb_str
-        mov     byte [di], 0
-        jmp     show_msg
 .re:    call    get_subject             ; the subjects again
         mov     al, FOC_SUB
         jmp     set_focus
@@ -1177,12 +1122,9 @@ tree_del:
         mov     word [t_lvl], 0
 .open:  call    tw_end                  ; X:\OLD\*.*
         mov     si, s_star
-        call    sb_str
-        mov     byte [di], 0
+        call    sb_strz
         mov     dx, tpath
-        mov     cx, 16h                 ; (hidden, system, subjects too)
-        mov     ah, 4Eh
-        int     21h
+        call    ff_16                   ; (hidden, system, subjects too)
         jc      .err
         cmp     byte [exec_dta + 30], '.'       ; a subject starts with ".":
         mov     ax, 3                   ;  else a damaged disk (the root, or
@@ -1232,9 +1174,7 @@ tw_name:
         mov     byte [di], '\'
         inc     di
         mov     si, exec_dta + 30
-        call    sb_str
-        mov     byte [di], 0
-        ret
+        jmp     sb_strz
 tw_cut: call    tw_end
 .b:     dec     di
         cmp     byte [di], '\'
@@ -1242,6 +1182,7 @@ tw_cut: call    tw_end
         mov     byte [di], 0
         ret
 tw_end: mov     di, tpath
+str_end:                                ; DI -> the 0 at the end of its text
         xor     al, al
         mov     cx, 0FFFFh
         repne   scasb
@@ -1271,10 +1212,7 @@ sub_copy:
         jc      .x
         call    .name                   ; (a redraw meanwhile used runpath)
         mov     bx, s_cantcopy
-        mov     si, c_sub
-        mov     di, s_subch
-        call    has_any
-        mov     si, s_badsub
+        call    chk_sub
         jc      .why
         call    xfer_dest               ; tmppath: where it goes ("B:\WORK")
         mov     si, curdir              ; not into itself (nor Root into a
@@ -1306,10 +1244,8 @@ sub_copy:
         stosb
         call    sc_list
         jnc     .mk
-        mov     [ex_code], ax           ; (nothing made: the list as it is)
-        mov     si, runpath
-        mov     bx, s_cantcopy
-        jmp     cant_msg
+        mov     bx, s_cantcopy          ; (nothing made: the list as it is)
+        jmp     cant_ax
 .mk:    call    xfer_mkdir              ; where it goes: there, or made
         jnc     .cp
         mov     si, tmppath
@@ -1324,13 +1260,8 @@ sub_copy:
         push    ax
         or      al, al
         jnz     .f
-        push    ds                      ; (tmppath: where it went)
-        mov     ds, [sc_seg]
-        xor     si, si
-        mov     di, c_sub
-        call    sb_str
+        call    sc_dest                 ; (tmppath: where it went)
         stosb
-        pop     ds
         call    xfer_dest
 .f:     call    nm_free
         mov     bx, sc_seg
@@ -1352,9 +1283,7 @@ sub_copy:
         jmp     .self
 .name:  mov     si, ftitle + 5          ; runpath: its name again, from the
         mov     di, runpath             ;  form's title ("Copy WORK")
-        call    sb_str
-        mov     byte [di], 0
-        ret
+        jmp     sb_strz
 
 SC_REL  equ 68                          ; sc_seg: where it goes (tmppath's
                                         ;  subject), then from here the list
@@ -1379,15 +1308,10 @@ sc_list:
         stc
         js      .r
         mov     bx, 0FFFh
-        mov     ah, 48h
-        int     21h
-        jnc     .m
-        cmp     bx, 16
-        jb      .r
-        mov     ah, 48h
-        int     21h
+        mov     cx, 16
+        call    alloc_big
         jc      .r
-.m:     mov     [sc_seg], ax
+        mov     [sc_seg], ax
         shl     bx, 4
         mov     [sc_max], bx
         push    es
@@ -1410,9 +1334,7 @@ sc_list:
         call    sb_join
         mov     byte [di], 0
         mov     dx, argpath
-        mov     cx, 16h                 ; (hidden and system ones too)
-        mov     ah, 4Eh
-        int     21h
+        call    ff_16                   ; (hidden and system ones too)
 .f:     jc      .nf
         test    byte [exec_dta + 21], 10h
         jz      .n
@@ -1440,10 +1362,8 @@ sc_list:
         clc
 .r:     ret
 .err:   pop     si
-        push    ax
         mov     bx, sc_seg
-        call    seg_free
-        pop     ax
+        call    seg_free                ; (AX kept)
         stc
         ret
 .len:   call    strlen                  ; SI -> CX: its length, 0 for "\"
@@ -1499,29 +1419,20 @@ sc_copy:
         mov     di, curdir              ; where its titles are
         call    sc_src
         push    si
-        push    ds                      ; where they go
-        mov     ds, [sc_seg]
-        xor     si, si
-        mov     di, c_sub
-        call    sb_str
-        pop     ds
+        call    sc_dest                 ; where they go
         mov     si, [sc_rd]
         call    sc_cat
         pop     word [sc_rd]
         call    xfer_dest
         cmp     byte [tmppath + 3], 0   ; (a root is there)
         je      .t
-        mov     dx, tmppath             ; made (hidden or system as it is),
-        mov     ah, 39h                 ;  unless it is there already as a
-        int     21h                     ;  subject (the first one: made by
-        jc      .m                      ;  xfer_mkdir, or a file, or no disk)
-        mov     si, curdir
-        call    hs_copy
+        call    xfer_mkdir.last         ; made (hidden or system as it is),
+        jc      .m                      ;  unless it is there already as a
+        mov     si, curdir              ;  subject (the first one: made by
+        call    hs_copy                 ;  xfer_mkdir, or a file, or no disk)
         jmp     short .t
-.m:     push    ax
-        mov     cx, 16h
-        mov     ah, 4Eh
-        int     21h
+.m:     push    ax                      ; (DX = tmppath)
+        call    ff_16
         pop     ax
         mov     si, tmppath
         jc      .e
@@ -1537,9 +1448,7 @@ sc_copy:
         mov     al, 2
         ret
 .c:     call    xfer_all
-        push    ax
-        call    nm_free
-        pop     ax
+        call    nm_free                 ; (AX kept)
         mov     si, argpath
         or      al, al
         jz      .l
@@ -1548,14 +1457,8 @@ sc_copy:
 ; DI = a buffer: "X:\SUBJECT" and the path at SI in sc_seg ("X:\SUBJECT\SUB",
 ; one '\' where they meet), a 0 at its end (DI); SI past the path
 sc_src:
-        mov     ah, 19h
-        int     21h
-        add     al, 'A'
-        mov     ah, ':'
-        stosw
         push    si
-        mov     si, subject
-        call    sb_str
+        call    cur_dir.at
         pop     si
 sc_cat: push    ds                      ; (the path at SI in sc_seg added at DI)
         mov     ds, [sc_seg]
@@ -1581,10 +1484,7 @@ pat_init:
         mov     word [c_repl], 0        ; (c_repl, c_newer)
 pat_name:
         mov     di, c_pat
-        mov     si, runpath
-        call    sb_str
-        mov     byte [di], 0
-        ret
+        jmp     name_to
 
 ; Titles checked (no \ or :; empty: the chosen one), wild set, and the
 ; titles that match found (pat_find).  CF: said why in the band ("Can't
@@ -1632,15 +1532,10 @@ pat_here:                               ; (sub_copy: in curdir, the counts go on
         mov     [nm_n], ax
         mov     [nm_i], ax
         mov     bx, 0FFFh               ; 64 KB: more titles than a disk holds
-        mov     ah, 48h
-        int     21h
-        jnc     .m
-        cmp     bx, 2
-        jb      .x
-        mov     ah, 48h
-        int     21h
+        mov     cx, 2
+        call    alloc_big
         jc      .x
-.m:     mov     [nm_seg], ax
+        mov     [nm_seg], ax
         mov     ax, bx
         shl     ax, 4
         xor     dx, dx
@@ -1692,9 +1587,7 @@ pat_here:                               ; (sub_copy: in curdir, the counts go on
         cmp     ax, 18
         jne     .e
         mov     al, 2
-.e:     push    ax                      ; (none: AX = the find's error)
-        call    nm_free
-        pop     ax
+.e:     call    nm_free                 ; (none: AX = the find's error)
         stc
 .x:     ret
 
@@ -1708,9 +1601,7 @@ sb_dirname:
         je      .n
         mov     al, '\'
         stosb
-.n:     call    sb_str
-        mov     byte [di], 0
-        ret
+.n:     jmp     sb_strz                 ; (CF clear: nm_next's answer)
 
 ; the next title found: runpath = NAME.EXT, argpath = its whole path,
 ; s_time and s_date.  CF: no more
@@ -1731,23 +1622,26 @@ nm_next:
         lodsw
         mov     [es:s_date], ax
         pop     ds
-        mov     di, argpath
-        mov     si, runpath
-        call    sb_dirname
-        clc
+        jmp     sel_path.arg            ; (CF clear)
 .x:     ret
 
 ; the block freed, and after a change the list read again
 nm_relist:
         call    nm_free
+; the list again if anything was done (the place kept)
+xfer_rel:
         cmp     word [n_done], 0
-        je      seg_free.x
+        je      relist_sel.x
+relist_sel:
         mov     ax, [sel]
         jmp     relist_at
+.x:     ret
 nm_free:
         mov     bx, nm_seg
 ; the block whose segment is in the word at BX freed, if there is one
+; (AX kept)
 seg_free:
+        push    ax
         mov     ax, [bx]
         or      ax, ax
         jz      .x
@@ -1757,6 +1651,19 @@ seg_free:
         int     21h
         pop     es
         mov     word [bx], 0
+.x:     pop     ax
+        ret
+
+; BX paragraphs, or as many as there are if at least CX -> AX = the
+; segment, BX = its size.  CF: AX = DOS error
+alloc_big:
+        mov     ah, 48h
+        int     21h
+        jnc     .x
+        cmp     bx, cx
+        jb      .x                      ; (CF, AX = 8)
+        mov     ah, 48h
+        int     21h
 .x:     ret
 
 ; AX as "5 titles" ("1 title") at DI
@@ -1779,10 +1686,7 @@ ex_rename:
         call    sel_name
         mov     si, s_rename
         call    form_title
-        mov     di, c_tit
-        mov     si, runpath
-        call    sb_str
-        mov     byte [di], 0
+        call    tit_name
         mov     si, ren_form
         call    ui_form
         jc      .x
@@ -1794,12 +1698,9 @@ ex_rename:
         mov     di, c_tit
         call    str_eq
         je      .x
-        mov     si, c_tit               ; a title only (RENAME would take a
-        mov     di, s_titch             ;  path and move the file)
-        call    has_any
-        jnc     .ok
+        call    chk_tit                 ; a title only (RENAME would take a
+        jnc     .ok                     ;  path and move the file)
         mov     bx, s_cantren
-        mov     si, s_badtit
         jmp     cant_why
 .ok:    call    api_criterr
         mov     dx, c_tit               ; that title taken: say so (RENAME
@@ -1815,10 +1716,8 @@ ex_rename:
         mov     si, c_tit
         jmp     relist_name
 .x:     ret
-.err:   mov     [ex_code], ax
-        mov     si, runpath
-        mov     bx, s_cantren
-        jmp     cant_msg
+.err:   mov     bx, s_cantren
+        jmp     cant_ax
 
 ; CODE-C: Copy, CODE-M: Move.  A form: Titles (the chosen one, or a
 ; pattern), Device, Subject (and for Copy a Title, as the copy is called),
@@ -1843,9 +1742,7 @@ xfer:   call    file_ok
         call    xfer_mkdir              ; a subject not there: made, if asked
         jc      .nomk
         call    xfer_all
-        push    ax
-        call    nm_free
-        pop     ax
+        call    nm_free                 ; (AX kept)
         cmp     al, 1
         je      .same
         cmp     al, 2
@@ -1860,45 +1757,36 @@ xfer:   call    file_ok
         je      xfer_done
         cmp     byte [x_skip], 2        ; (ESC at the question: nothing said)
         je      .x
-        mov     di, msgbuf              ; "NOTES.TXT is there already: left
-        mov     si, c_tit               ;  as it was"
-        call    sb_str
+        mov     si, c_tit               ; "NOTES.TXT is there already: left
+        call    msg_begin               ;  as it was"
         mov     si, s_left
-        jmp     short .m
+        jmp     sb_show
 .fail:  call    xfer_rel
         call    xfer_cant
-        mov     si, runpath
-        jmp     cant_msg
+        jmp     cant_rp
 .bad:   call    xfer_cant
         jmp     cant_why
-.nomk:  push    ax
-        call    nm_free                 ; (ESC: AX = 0, nothing said)
-        pop     ax
+.nomk:  call    nm_free                 ; (ESC: AX = 0, nothing said)
         or      ax, ax
         jz      .x
         mov     [ex_code], ax
         jmp     short .fail
 .x:     ret
-.same:  mov     di, msgbuf
-        mov     si, runpath
-        call    sb_str
+.same:  mov     si, runpath
+        call    msg_begin
         mov     si, s_same
-.m:     call    sb_str
-        mov     byte [di], 0
-        jmp     show_msg
-.kept:  mov     ax, [sel]               ; the old destination went, the copy
-        call    relist_at               ;  couldn't take its name: where it is
-.kmsg:  mov     di, msgbuf              ; "Copy kept as B:\WORK\ABCDTMP: why"
-        mov     si, s_kept
-        call    sb_str
+        jmp     sb_show
+.kept:  call    relist_sel              ; the old destination went, the copy
+                                        ;  couldn't take its name: where it is
+.kmsg:  mov     si, s_kept              ; "Copy kept as B:\WORK\ABCDTMP: why"
+        call    msg_begin
         mov     si, tmppath
         call    sb_str
         mov     si, s_colon
         call    sb_str
         mov     ax, [ex_code]
         call    api_sberr
-        mov     byte [di], 0
-        jmp     show_msg
+        jmp     show_msgz
 
 ; the subject it goes to: there, or made after a question ("B:\NEW isn't
 ; there: Confirm to make it"; each level made in turn).  CF: AX = DOS error,
@@ -1915,22 +1803,17 @@ xfer_mkdir:
         je      .ok
         mov     dx, tmppath
         mov     cx, 10h
-        mov     ah, 4Eh
-        int     21h
+        call    ff
         jnc     .ok                     ; (there, or a file: said later)
         cmp     ax, 3
         je      .ask
         cmp     ax, 2
         jne     .ok                     ; (a disk error: said later)
-.ask:   mov     di, msgbuf
-        mov     si, tmppath
-        call    sb_str
+.ask:   mov     si, tmppath
+        call    msg_begin
         mov     si, s_mkq
-        call    sb_str
-        mov     byte [di], 0
-        mov     si, msgbuf
-        call    ui_ask
-        mov     ax, 0
+        call    sb_ask
+        mov     ax, 0                   ; (CF kept)
         jc      .x
         mov     si, tmppath + 3         ; each level: "X:\A", "X:\A\B" ...
 .l:     lodsb
@@ -1939,12 +1822,10 @@ xfer_mkdir:
         cmp     al, '\'
         jne     .l
         mov     byte [si-1], 0
-        mov     dx, tmppath
-        mov     ah, 39h
-        int     21h                     ; (there already: Access denied)
+        call    .last                   ; (there already: Access denied)
         mov     byte [si-1], '\'
         jmp     .l
-.last:  mov     dx, tmppath
+.last:  mov     dx, tmppath             ; (sc_copy too: CF, AX = DOS error)
         mov     ah, 39h
         int     21h
         jc      .x
@@ -1995,12 +1876,9 @@ xfer_sum:
         mov     byte [c_tit], 0         ; (tmppath: the subject it went to)
         call    xfer_dest
         mov     si, s_copied
-        cmp     byte [xmode], 0
-        je      sum_to
-        mov     si, s_moved
+        call    xpick
 ; SI = "Copied to " or "Moved to ", tmppath = where (sub_copy too)
-sum_to: mov     di, msgbuf
-        call    sb_str
+sum_to: call    msg_begin
         sub     di, 3                   ; ("Copied to " less "to ")
         mov     ax, [n_done]
         call    sb_n_tit
@@ -2008,32 +1886,38 @@ sum_to: mov     di, msgbuf
         call    sb_str
         mov     si, tmppath
         call    sb_str
+        mov     si, s_leftn
+; ", 2 left as they were" (SI = the end) if any were left; then the band
+sum_skip:
         cmp     word [n_skip], 0
         je      .x
+        push    si
         mov     si, s_comma
         call    sb_str
         mov     ax, [n_skip]
         call    sb_u16
-        mov     si, s_leftn
-        call    sb_str
-.x:     mov     byte [di], 0
-        jmp     show_msg
+        pop     si
+        jmp     sb_show
+.x:     jmp     show_msgz
 
-; the list again if anything was done (the place kept)
-xfer_rel:
-        cmp     word [n_done], 0
+; SI = a Copy string -> the Move one after it in the data when it's a Move
+; (each Move string follows its Copy string: s_copy, s_copying, s_copied,
+; s_cantcopy)
+xpick:  cmp     byte [xmode], 0
         je      .x
-        mov     ax, [sel]
-        jmp     relist_at
+.s:     lodsb
+        or      al, al
+        jnz     .s
 .x:     ret
 
-; BX = "Can't copy " or "Can't move "
+; BX = "copy " or "move " (cant_msg's verb)
 xfer_cant:
-        mov     bx, s_cantcopy
-        cmp     byte [xmode], 0
-        je      .x
-        mov     bx, s_cantmove
-.x:     ret
+        push    si
+        mov     si, s_cantcopy
+        call    xpick
+        mov     bx, si
+        pop     si
+        ret
 
 ; CF (SI = why) if Title is not a plain title (as filled in, or empty: the
 ; same title; with * or ? in Titles it must be), or Subject has a wildcard
@@ -2051,17 +1935,23 @@ xfer_check:
         cmp     byte [c_tit], 0
         mov     si, s_badwtit
         stc
-        jne     .x
-.one:   mov     si, c_tit
-        mov     di, s_titch
-        call    has_any
-        mov     si, s_badtit
-        jc      .x
+        jne     chk_sub.x
+.one:   call    chk_tit
+        jc      chk_sub.x
+; CF (SI = why) if Subject has : * or ?
+chk_sub:
         mov     si, c_sub
         mov     di, s_subch
         call    has_any
         mov     si, s_badsub
 .x:     ret
+; CF (SI = why) if Title has \ : * or ?
+chk_tit:
+        mov     si, c_tit
+        mov     di, s_titch
+        call    has_any
+        mov     si, s_badtit
+        ret
 
 ; after Copy or Move: the list again (a copy here chosen in it), and in the
 ; band what happened
@@ -2073,38 +1963,29 @@ xfer_done:
         mov     si, c_tit
         call    relist_name
         jmp     short .msg
-.keep:  mov     ax, [sel]
-        call    relist_at
-.msg:   mov     di, msgbuf
-        cmp     byte [x_part], 0
+.keep:  call    relist_sel
+.msg:   cmp     byte [x_part], 0
         jne     .part
         mov     si, s_copied            ; "Copied to B:\WORK\NOTES.TXT"
-        cmp     byte [xmode], 0
-        je      .m1
-        mov     si, s_moved
-.m1:    call    sb_str
+        call    xpick
+        call    msg_begin
         mov     si, dstpath
-        call    sb_str
-        jmp     short .end
+        jmp     sb_show
 .part:  mov     si, s_partial           ; "Copied, but can't erase NOTES.TXT
-        call    sb_str                  ;  here: Disk is write-protected"
-        mov     si, runpath
-        call    sb_str
+        call    msg_begin               ;  here: Disk is write-protected"
+        call    sb_run
         mov     si, s_here
         call    sb_str
         mov     ax, [ex_code]
         call    api_sberr
-.end:   mov     byte [di], 0
-        jmp     show_msg
+        jmp     show_msgz
 
 ; the Copy or Move form, filled in with where the file is -> CF: cancelled
 xfer_form:
         call    sel_path                ; argpath = the file, runpath = NAME.EXT
         mov     si, s_copy
-        cmp     byte [xmode], 0
-        je      .t
-        mov     si, s_move
-.t:     call    form_title
+        call    xpick
+        call    form_title
         call    form_fill
         mov     si, copy_form
         cmp     byte [xmode], 0
@@ -2118,12 +1999,8 @@ form_fill:
         call    cur_dir
         mov     di, c_sub               ; "\" or "\DOS.330"
         mov     si, curdir + 2
-        call    sb_str
-        mov     byte [di], 0
-        mov     di, c_tit
-        mov     si, runpath
-        call    sb_str
-        mov     byte [di], 0
+        call    sb_strz
+        call    tit_name
         call    pat_init
         call    ndrives                 ; the drives there are, as choices,
         mov     [c_dev], dl             ;  this one chosen
@@ -2149,10 +2026,7 @@ xfer_dest:
         call    upcase_trim
         cmp     byte [c_tit], 0
         jne     .sub
-        mov     di, c_tit
-        mov     si, runpath
-        call    sb_str
-        mov     byte [di], 0
+        call    tit_name
 .sub:   mov     si, c_sub
         call    upcase_trim
         mov     di, tmppath
@@ -2179,8 +2053,7 @@ xfer_dest:
         mov     al, '\'
         stosb
 .s3:    mov     si, c_tit
-        call    sb_str
-        mov     byte [di], 0
+        call    sb_strz
         mov     byte [x_here], 0        ; (asked now: copy_file adds to
         mov     si, tmppath             ;  tmppath)
         mov     di, curdir
@@ -2201,11 +2074,9 @@ xfer_do:
         mov     [x_part], al
         mov     [tmp_kept], al
         mov     [x_skip], al
-        mov     dx, dstpath             ; there already?  (search state, time
-        mov     cx, 16h                 ;  and date in exec_dta: same_file
-        mov     ah, 4Eh                 ;  made it the DTA)
-        int     21h
-        jc      .new
+        call    ff_dst                  ; there already?  (search state, time
+        jc      .new                    ;  and date in exec_dta: same_file
+                                        ;  made it the DTA)
         test    byte [exec_dta + 21], 10h       ; (a subject: no)
         mov     ax, 5
         stc
@@ -2222,14 +2093,10 @@ xfer_do:
         cmp     al, 1
         je      .yes
         ja      .left
-        mov     di, msgbuf              ; "NAME.EXT is there already: ..."
-        mov     si, c_tit
-        call    sb_str
+        mov     si, c_tit               ; "NAME.EXT is there already: ..."
+        call    msg_begin
         mov     si, s_replace
-        call    sb_str
-        mov     byte [di], 0
-        mov     si, msgbuf
-        call    ui_ask
+        call    sb_ask
         jnc     .yes
         inc     byte [x_skip]           ; (2: ESC)
 .left:  inc     byte [x_skip]
@@ -2255,15 +2122,11 @@ xfer_do:
         mov     ax, 5
         stc
         jnz     .r2
-.copy:  mov     di, msgbuf              ; "Copying NAME.EXT" in the band
-        mov     si, s_copying
-        cmp     byte [xmode], 0
-        je      .c1
-        mov     si, s_moving
-.c1:    call    sb_str
+.copy:  mov     si, s_copying           ; "Copying NAME.EXT" in the band
+        call    xpick
+        call    msg_begin
         mov     si, runpath
-        call    sb_str
-        mov     byte [di], 0
+        call    sb_strz
         mov     si, msgbuf
         xor     di, di
         call    ui_band
@@ -2338,8 +2201,7 @@ same_file:
 ; state); CF if it isn't there
 file_id:
         mov     cx, 06h                 ; (hidden and system files too)
-        mov     ah, 4Eh
-        int     21h
+        call    ff
         jc      .x
         mov     al, [exec_dta]
         stosb
@@ -2411,10 +2273,7 @@ cf_open:
         mov     [f_time], cx
         mov     [f_date], dx
         mov     di, tmppath             ; "X:\SUBJECT\" for CREATE TEMPORARY
-        xor     al, al
-        mov     cx, 0FFFFh
-        repne   scasb
-        dec     di
+        call    str_end
         cmp     byte [di-1], '\'
         je      .t
         mov     word [di], '\'          ; ('\', 0)
@@ -2426,16 +2285,10 @@ cf_open:
         mov     [h_tmp], ax
         mov     byte [tmp_made], 1
         mov     bx, COPYBUF             ; the buffer: 32 KB, or what there is
-        mov     ah, 48h
-        int     21h
-        jnc     .buf
-        cmp     bx, 32                  ; (under 512 bytes: no)
-        mov     ax, 8
-        jb      .x
-        mov     ah, 48h
-        int     21h
+        mov     cx, 32                  ;  (under 512 bytes: no)
+        call    alloc_big
         jc      .x
-.buf:   mov     [buf_seg], ax
+        mov     [buf_seg], ax
         shl     bx, 4
         mov     [buf_len], bx
         clc
@@ -2515,22 +2368,45 @@ cf_free:
 form_title:
         mov     di, ftitle
         call    sb_str
-        mov     si, runpath
-        call    sb_str
-        mov     byte [di], 0
-        ret
+        jmp     short name_to
 
-; curdir = "X:\SUBJECT" ("X:\" for Root): where the list is
+; c_tit = runpath (the chosen title); name_to: at DI
+tit_name:
+        mov     di, c_tit
+name_to:
+        mov     si, runpath
+        jmp     sb_strz
+; runpath added at DI
+sb_run: mov     si, runpath
+        jmp     sb_str
+
+; curdir = "X:\SUBJECT" ("X:\" for Root): where the list is; .at: at DI
 cur_dir:
         mov     di, curdir
-        mov     ah, 19h
+.at:    mov     ah, 19h
         int     21h
         add     al, 'A'
         mov     ah, ':'
         stosw
         mov     si, subject
+        jmp     sb_strz
+
+; sc_seg's first path, where it goes, as c_sub (DI at its end, no 0)
+sc_dest:
+        push    ds
+        mov     ds, [sc_seg]
+        xor     si, si
+        mov     di, c_sub
         call    sb_str
-        mov     byte [di], 0
+        pop     ds
+        ret
+
+; find first: DX = the path (ff_dst: dstpath), CX = attributes (ff_16:
+; hidden, system and subjects)
+ff_dst: mov     dx, dstpath
+ff_16:  mov     cx, 16h
+ff:     mov     ah, 4Eh
+        int     21h
         ret
 
 ; the ASCIIZ text at SI as typed into a form: in capitals, '/' as '\',
@@ -2586,19 +2462,14 @@ has_any:
 .x:     pop     si
         ret
 
-; "Can't copy NAME.EXT" (BX = the first part; the name in runpath) and the
-; reason SI, in the band
+; "Can't copy NAME.EXT" (BX = the verb; the name in runpath) and the
+; reason SI, in the band (BX changes)
 cant_why:
         push    si
-        mov     di, msgbuf
-        mov     si, bx
-        call    sb_str
         mov     si, runpath
-        call    sb_str
+        call    cant_msg.h
         pop     si
-        call    sb_str
-        mov     byte [di], 0
-        jmp     show_msg
+        jmp     sb_show
 
 ; ZF set if the ASCIIZ texts at SI and DI are the same
 str_eq: push    si
@@ -2613,7 +2484,8 @@ str_eq: push    si
         pop     si
         ret
 
-; "NAME.EXT" at SI as an 11-byte FAT name at DI
+; "NAME.EXT" at SI as an 11-byte FAT name at DI (BX = that DI; dta2ent
+; counts on it)
 to_fcb: push    di
         mov     cx, 11
         mov     al, ' '
@@ -2726,6 +2598,7 @@ draw_all:
         cmp     dx, FORM_Y + 4 * ITEM_H
         jb      .lbl
         call    draw_form
+        call    build_info              ; (in tmp: after draw_form)
         mov     si, infobuf
         mov     dx, INFO_Y
         call    center
@@ -2752,21 +2625,19 @@ dir_band:
         mov     ax, [dir_note]
         or      ax, ax
         jz      draw_prompt_default
-        mov     di, msgbuf
         cmp     ax, 0FFFFh
         je      .more
         mov     si, s_cantdir           ; "Can't read the disk: why"
-        call    sb_str
+        call    msg_begin
+        mov     ax, [dir_note]          ; (AL: sb_str's 0)
         call    api_sberr
-        jmp     .m
+        jmp     show_msgz
 .more:  mov     si, s_first             ; "Only the first 240 are listed"
-        call    sb_str
+        call    msg_begin
         mov     ax, [nent]
         call    sb_u16
         mov     si, s_listed
-        call    sb_str
-.m:     mov     byte [di], 0
-        jmp     show_msg
+        jmp     sb_show
 
 draw_prompt_default:
         mov     byte [msgshown], 0
@@ -2810,23 +2681,15 @@ ex_row: mov     [rowmask], cl
         mov     si, s_root
         call    sb_str
         pop     si
-.sp:    mov     byte [di], 0
-        push    si
-        mov     si, tmp
-        mov     bx, TCOL
-        mov     ah, [rowmask]
-        call    puts
-        pop     si
+.sp:    mov     bx, TCOL
+        call    puts_tmp
         mov     ax, [si + 12]           ; its date (Root has none)
         or      ax, ax
         jz      .x
         mov     di, tmp
         call    sb_date
-        mov     byte [di], 0
-        mov     si, tmp
         mov     bx, 40
-        mov     ah, [rowmask]
-        jmp     puts
+        jmp     puts_tmp
 .dev:   xchg    ax, bx                  ; a drive
         call    drv_let
         call    dev_str
@@ -2837,38 +2700,20 @@ ex_row: mov     [rowmask], cl
 .tit:   call    ent_ptr                 ; SI -> directory entry
         mov     di, tmp
         call    sb_title
-        mov     byte [di], 0
-        push    si
-        mov     si, tmp
         mov     bx, TCOL
-        mov     ah, [rowmask]
-        call    puts
-        pop     si
-        ; date
-        mov     di, tmp
+        call    puts_tmp
+        mov     di, tmp                 ; date
         mov     ax, [si+24]
         call    sb_date
-        mov     byte [di], 0
-        push    si
-        mov     si, tmp
         mov     bx, 40
-        mov     ah, [rowmask]
-        call    puts
-        pop     si
-        ; size
-        mov     di, tmp
+        call    puts_tmp
+        mov     di, tmp                 ; size, ending at column 60
         mov     ax, [si+28]
         mov     cx, [si+30]
         call    sb_u32
-        mov     byte [di], 0
-        push    si
-        mov     si, tmp
-        mov     bx, 60
-        call    strlen
-        sub     bx, cx
-        mov     ah, [rowmask]
-        call    puts
-        pop     si
+        mov     bx, 60 + tmp
+        sub     bx, di
+        call    puts_tmp
         call    kind_of
         call    strlen
         mov     bx, KEND
@@ -2876,9 +2721,20 @@ ex_row: mov     [rowmask], cl
         mov     ah, [rowmask]
         jmp     puts
 
+; tmp, ended at DI, at column BX, row DX, with rowmask (SI kept)
+puts_tmp:
+        mov     byte [di], 0
+        push    si
+        mov     si, tmp
+        mov     ah, [rowmask]
+        call    puts
+        pop     si
+        ret
+
 ; the File form under the list: Device, Subject, Title, Kind (with the
 ; size and date), the outlined item in a box
 draw_form:
+        mov     byte [rowmask], 0       ; (puts_tmp: normal)
         mov     dx, FORM_Y - 2          ; clear the values (cols 12..79)
         mov     cx, 4 * ITEM_H - 4
         mov     bx, 12
@@ -2910,16 +2766,8 @@ draw_form:
         mov     dx, ax
         mov     bx, 13
         mov     cx, 67
-        call    hline
-        push    dx
-        add     dx, ITEM_H - 2
-        call    hline
-        pop     dx
-        mov     ax, 13 * 8
-        mov     cx, ITEM_H - 1
-        call    vline
-        mov     ax, 80 * 8 - 1
-        call    vline
+        mov     bp, ITEM_H - 1
+        call    box
         cmp     byte [focus], FOC_TIT   ; Title and Kind: the chosen title's
         jne     .x                      ;  (none while another item is
         cmp     word [nent], 0          ;  outlined)
@@ -2928,14 +2776,9 @@ draw_form:
         call    ent_ptr
         mov     di, tmp
         call    sb_title
-        mov     byte [di], 0
-        push    si
-        mov     si, tmp
         mov     bx, 14
         mov     dx, FORM_Y + 2 * ITEM_H
-        xor     ah, ah
-        call    puts
-        pop     si
+        call    puts_tmp
         push    si
         call    kind_of
         mov     dx, FORM_Y + 3 * ITEM_H
@@ -2954,11 +2797,8 @@ draw_form:
         pop     si
         mov     ax, [si+24]
         call    sb_date
-        mov     byte [di], 0
-        mov     si, tmp
         mov     bx, 30
-        xor     ah, ah
-        call    puts
+        jmp     puts_tmp
 .x:     ret
 
 ; ---------------------------------------------------------------------
@@ -3156,8 +2996,9 @@ s_defshell  db 'A:\LCMD.COM', 0
 s_noopen    db ' - nothing opens this kind yet', 0
 s_ended     db ' ended', 0
 s_code      db ', exit code ', 0
-s_cant      db "Can't run ", 0
-s_cantopen  db "Can't open ", 0
+s_cant_     db "Can't ", 0                ; (cant_msg: then one of these verbs)
+s_cant      db 'run ', 0
+s_cantopen  db 'open ', 0
 s_cantdir   db "Can't read the disk: ", 0
 s_first     db 'Only the first ', 0
 s_listed    db ' are listed', 0
@@ -3218,10 +3059,12 @@ s_copying   db 'Copying ', 0
 s_moving    db 'Moving ', 0
 s_copied    db 'Copied to ', 0
 s_moved     db 'Moved to ', 0
-s_cantcopy  db "Can't copy ", 0
-s_cantmove  db "Can't move ", 0
-s_canterase db "Can't erase ", 0
-s_cantren   db "Can't rename ", 0
+s_cantcopy  db 'copy ', 0                ; (xpick: the Move one next)
+s_cantmove  db 'move ', 0
+s_canterase db 'erase ', 0
+s_cantren   db 'rename ', 0
+            times -(s_move != s_copy + 6 || s_moving != s_copying + 9) db 0     ; (xpick: each
+            times -(s_moved != s_copied + 11 || s_cantmove != s_cantcopy + 6) db 0 ;  Move string next)
 s_readonly  db ': it is read-only', 0
 s_titch     db '\:'                     ; not in a title (a path,
 s_wildch    db '*?', 0                  ;  wildcards)
@@ -3245,59 +3088,61 @@ k_settings  db 'Settings',0
 k_font      db 'Font',0
 k_profile   db 'Profile',0
 k_source    db 'Source',0
-; extension, kind, what opens it (1 DOS, 2 .RUN, 3 Write)
+            times -(k_source - k_file > 127) db 0      ; (kind_of: cbw)
+; extension, kind (its offset from k_file), what opens it (1 DOS, 2 .RUN,
+; 3 Write)
 kinds       db 'COM'
-            dw k_run
+            db k_run - k_file
             db 1
             db 'EXE'
-            dw k_run
+            db k_run - k_file
             db 1
             db 'RUN'
-            dw k_program
+            db k_program - k_file
             db 2
             db 'SYS'
-            dw k_system
+            db k_system - k_file
             db 0
             db 'TXT'
-            dw k_text
+            db k_text - k_file
             db 3
             db 'DOC'
-            dw k_text
+            db k_text - k_file
             db 3
             db 'BIN'
-            dw k_data
+            db k_data - k_file
             db 0
             db 'DAT'
-            dw k_data
+            db k_data - k_file
             db 0
             db 'BAT'
-            dw k_batch
+            db k_batch - k_file
             db 3
             db 'CFG'
-            dw k_settings
+            db k_settings - k_file
             db 3
             db 'INI'
-            dw k_settings
+            db k_settings - k_file
             db 3
             db 'EMS'
-            dw k_settings
+            db k_settings - k_file
             db 0
             db 'TYP'
-            dw k_font
+            db k_font - k_file
             db 0
             db 'PRO'
-            dw k_profile
+            db k_profile - k_file
             db 3
             db 'ASM'
-            dw k_source
+            db k_source - k_file
             db 3
             db 'INC'
-            dw k_source
+            db k_source - k_file
             db 3
             db 'C  '
-            dw k_source
+            db k_source - k_file
             db 3
             db 'H  '
-            dw k_source
+            db k_source - k_file
             db 3
             db 0

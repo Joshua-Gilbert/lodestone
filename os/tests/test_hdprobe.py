@@ -154,7 +154,7 @@ def t_spinup():
     rep, f, sec, ok, k = probe('spinup', pcemu.Ata(unready=10, data={0: mbr()}))
     check('busy: the echo fails ("[4] waits for it"), busy throughout [3], ready in [4] after a few s',
           ok and '[4] waits' in rep and 'busy or not ready most of the time' in rep and
-          any(l.strip().startswith('Ready? (up to 31 s): ') and 'status 50' in l and
+          any(l.strip().startswith('Ready? (up to 31 s): ') and re.search(r'status 5[02] ', l) and   # (IDX: where the platter is)
               1000 < float(l.split(': ')[1].split(' ms')[0]) < 4000 for l in rep.splitlines()), rep[:2500])
     check('... then everything works', 'All three test reads worked' in rep and 'not ready after' not in rep, rep[-800:])
 

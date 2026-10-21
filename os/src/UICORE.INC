@@ -41,10 +41,10 @@ ui_base:
         API     UI_SBU32,     api_sbu32
         API     UI_SBDATE,    api_sbdate
         API     UI_SBTIME,    api_sbtime
-        API     UI_SBHEX4,    api_sbhex4
+        API     UI_SBHEX4,    sb_hex4
         API     UI_SBERR,     api_sberr
         API     UI_EVENT,     ui_event
-        API     UI_POLL,      ui_poll
+        API     UI_POLL,      poll_once
         API     UI_TICK,      tick
         API     UI_SETREDRAW, api_setredraw
         API     UI_SCREEN,    ui_screen
@@ -91,11 +91,8 @@ uh          resw 1
 cflags      resb 1
 ptr_on      resb 1              ; the pointer may show (UI_EVENT is waiting)
 ; clock, title bar, band
-rtc_h       resb 1
-rtc_m       resb 1
-rtc_y       resb 1
-rtc_mo      resb 1
-rtc_d       resb 1
+rtc_t       resw 1              ; read_clock: a DOS time word, no seconds,
+rtc_dt      resw 1              ;  and a DOS date word
 title_on    resb 1
 title_ptr   resw 1
 band1       resw 1
@@ -119,7 +116,8 @@ wtop        resw 1
 wstack      resw 2 * NWIN       ; (window, save offset or 0FFFFh)
 help_w      resb W_SIZE
 help_tab    resw 1
-form_w      resb W_SIZE
+form_w      equ help_w          ; (never open at the same time: ui_help and
+                                ;  ui_form are each a window of their own)
 mv_gx       resw 1              ; a move: where the window was taken (column and
 mv_gy       resw 1              ;  row inside it), and where its outline is now
 mv_c        resw 1
@@ -160,8 +158,10 @@ run_hnd     resw 1
 run_dta     resw 2
 run_ret     resw 1
 run_tail    resb 130
-run_epb     resw 7
-app_path    resb 80
+pc_ch       resb 1              ; putc's character
+app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
+                                ;  Copy/Move destination, free while the
+                                ;  Executive asks or a .RUN runs (UIAPI.INC)
 rowtab      resw 400
 tmp         resb 96
 section ui
@@ -180,8 +180,7 @@ exec_main:
         cmp     byte [mstarted], 0
         jne     .again
         mov     byte [mstarted], 1
-        mov     ax, ui_bss_end + 15     ; where .RUN programs load
-        and     ax, 0FFF0h
+        mov     ax, UI_PARAS * 16       ; where .RUN programs load
         mov     [run_base], ax
         mov     ax, 3524h               ; the kernel's critical-error handler
         int     21h
@@ -442,8 +441,8 @@ api_version:
         mov     bx, LODE_VER
         mov     cx, [ui_paras]
         mov     dx, [mbase]
-        mov     si, ui_keep_end + 15    ; the size it keeps while a DOS
-        shr     si, 4                   ;  program runs
+        mov     si, UI_KEEP_PARAS       ; the size it keeps while a DOS
+                                        ;  program runs
         ret
 
 api_criterr:
@@ -482,9 +481,7 @@ ui_event:
         mov     byte [ptr_on], 0
         jmp     hide_cursor
 
-; UI_POLL: the same without waiting (CF set: nothing)
-ui_poll:
-        jmp     poll_once
+; UI_POLL (poll_once): the same without waiting (CF set: nothing)
 
 ; the next key, through INT 16h AH=10h.  The 1520's BIOS marks CODE with
 ; most punctuation and with Return, ESC and Backspace (CODE-?, CODE-Return,
@@ -634,8 +631,8 @@ mouse_init:
         mov     [mfound], ax
 mouse_hook:
         cli
-        xor     ax, ax
-        mov     es, ax
+        push    0
+        pop     es
         mov     bl, [mirq]
         xor     bh, bh
         add     bx, 8
@@ -776,8 +773,8 @@ mouse_off:
         in      al, 21h
         or      al, ah
         out     21h, al
-        xor     ax, ax
-        mov     es, ax
+        push    0
+        pop     es
         mov     bx, [vecslot]
         mov     ax, [oldvec]
         mov     [es:bx], ax
@@ -941,19 +938,7 @@ show_cursor:
         call    move_cursor.rect
         mov     byte [cflags], 2
         call    compose
-        mov     si, new_save
-        mov     di, cur_save
-        mov     cx, 26
-        rep     movsb
-        mov     ax, [cnew_x]
-        mov     [cur_x], ax
-        mov     ax, [cnew_y]
-        mov     [cur_y], ax
-        mov     ax, [cnew_xb]
-        mov     [cur_xb], ax
-        mov     byte [curvis], 1
-        pop     es
-        popa
+        jmp     move_cursor.done        ; (it pops ES and the registers)
 .x:     ret
 
 ; move_cursor: AX = new x, BX = new y.  The old and new pointer areas are
@@ -1023,7 +1008,7 @@ move_cursor:
         call    .rect
         mov     byte [cflags], 1
         call    compose
-.done:  mov     si, new_save
+.done:  mov     si, new_save            ; (show_cursor's end too)
         mov     di, cur_save
         mov     cx, 26
         rep     movsb
@@ -1033,6 +1018,7 @@ move_cursor:
         mov     [cur_y], ax
         mov     ax, [cnew_xb]
         mov     [cur_xb], ax
+        mov     byte [curvis], 1
         pop     es
         popa
         ret
@@ -1220,8 +1206,8 @@ hires:  push    ax
         mov     ax, 0040h
         int     10h
         push    ds
-        xor     ax, ax
-        mov     ds, ax
+        push    0
+        pop     ds
         mov     al, [449h]
         pop     ds
         cmp     al, 40h
@@ -1384,52 +1370,27 @@ box:    pusha
         ret
 
 ; AL = char, BX = column, DX = y (multiple of 4), AH = 00 normal / FF inverse
-putc:   pusha
-        push    es
-        push    VSEG
-        pop     es
-        cmp     al, 32
-        jb      .bad
-        cmp     al, 127
-        jbe     .ok
-.bad:   mov     al, '?'
-.ok:    mov     cl, ah
-        xor     ah, ah
-        sub     al, 32
-        shl     ax, 4
-        add     ax, font
-        mov     si, ax
-        mov     di, dx
-        shl     di, 1
-        mov     di, [rowtab+di]
-        add     di, bx
-        mov     ah, cl
-%assign r 0
-%rep 16
-        lodsb
-        xor     al, ah
-        mov     [es:di + (r & 3) * 2000h + (r >> 2) * 80], al
-%assign r r + 1
-%endrep
-        pop     es
-        popa
+; (one character of putsn; pc_ch is a cell of its own, not the stack:
+;  ui_saver_far's callers don't have SS = DS)
+putc:   mov     [pc_ch], al
+        push    cx
+        push    si
+        mov     si, pc_ch
+        mov     cx, 1
+        call    putsn
+        pop     si
+        pop     cx
         ret
 
 ; SI = ASCIIZ, BX = column, DX = y, AH = mask.  Returns SI past the NUL.
 puts:
 api_puts:
-        push    bx
-        push    ax
-.l:     lodsb
-        or      al, al
-        jz      .x
-        cmp     bx, 80
-        jae     .l
-        call    putc
-        inc     bx
-        jmp     .l
-.x:     pop     ax
-        pop     bx
+        push    cx
+        call    strlen
+        call    putsn
+        add     si, cx
+        inc     si
+        pop     cx
         ret
 
 ; SI = text, CX = count, BX = column, DX = y, AH = mask.  The row's
@@ -1534,15 +1495,12 @@ api_sbu16:
         push    ax
         push    cx
         xor     cx, cx
-        call    sb_u32
-        pop     cx
-        pop     ax
-        ret
+        jmp     short api_sbu32.u
 
 api_sbu32:
         push    ax
         push    cx
-        call    sb_u32
+.u:     call    sb_u32
         pop     cx
         pop     ax
         ret
@@ -1666,9 +1624,6 @@ sb_hex4:                                ; AX as 4 hex digits at DI
         pop     cx
         ret
 
-api_sbhex4:
-        jmp     sb_hex4
-
 ; AX = DOS error -> its message at DI.  83 (failed on a critical error)
 ; says what the disk said instead.
 api_sberr:
@@ -1712,17 +1667,38 @@ api_sberr:
 ; =====================================================================
 ;  clock (RTC through INT 1Ah) and the title bar
 ; =====================================================================
+; the RTC as a DOS time word (no seconds) and a date word, for api_sbtime
+; and sb_date.  (The date's year is the RTC's two digits + 20, which is
+; 1980-based for 20xx; sb_date shows only the two digits, so 19xx shows
+; right too.  For the title bar and the saver only.)
 read_clock:
         pusha
         mov     ah, 2
         int     1Ah
-        mov     [rtc_h], ch
-        mov     [rtc_m], cl
+        mov     al, cl                  ; minutes
+        call    bcd
+        xchg    bx, ax
+        mov     al, ch                  ; hours
+        call    bcd
+        shl     ax, 6
+        or      ax, bx
+        shl     ax, 5
+        mov     [rtc_t], ax
         mov     ah, 4
         int     1Ah
-        mov     [rtc_y], cl
-        mov     [rtc_mo], dh
-        mov     [rtc_d], dl
+        mov     al, cl                  ; the year
+        call    bcd
+        add     al, 20
+        xchg    bx, ax
+        mov     al, dh                  ; month
+        call    bcd
+        shl     bx, 4
+        or      bx, ax
+        mov     al, dl                  ; day
+        call    bcd
+        shl     bx, 5
+        or      bx, ax
+        mov     [rtc_dt], bx
         popa
         ret
 
@@ -1730,9 +1706,9 @@ clock_tick:
         cmp     byte [title_on], 0
         je      .x
         push    ax
-        mov     al, [rtc_m]
+        mov     ax, [rtc_t]
         call    read_clock
-        cmp     al, [rtc_m]
+        cmp     ax, [rtc_t]
         pop     ax
         je      .x
         call    hide_cursor
@@ -1742,7 +1718,7 @@ clock_tick:
 
 draw_clock:
         pusha
-        mov     dx, 0
+        xor     dx, dx
         mov     cx, 16
         mov     bx, 1
         mov     bp, 11
@@ -1769,51 +1745,15 @@ draw_clock:
         popa
         ret
 
-; "4-Oct-26" at DI (NUL-terminated)
-sb_dmy: mov     al, [rtc_d]
-        call    bcd
-        call    sb_u16
-        mov     al, '-'
-        stosb
-        mov     al, [rtc_mo]
-        call    bcd
-        dec     ax
-        cmp     ax, 11
-        jbe     .mo
-        xor     ax, ax
-.mo:    imul    si, ax, 3
-        add     si, months
-        movsw
-        movsb
-        mov     al, '-'
-        stosb
-        mov     al, [rtc_y]
-        call    bcd
-        call    sb_2d
-        mov     byte [di], 0
-        ret
+; read_clock's date, "4-Oct-26", at DI (NUL-terminated; AX, CX change)
+sb_dmy: mov     ax, [rtc_dt]
+        call    sb_date
+        jmp     short sb_hm.z
 
-; "5:31 pm" at DI (NUL-terminated)
-sb_hm:  mov     al, [rtc_h]
-        call    bcd
-        mov     si, s_am
-        cmp     ax, 12
-        jb      .am
-        mov     si, s_pm
-        sub     ax, 12
-.am:    or      ax, ax
-        jnz     .h
-        mov     ax, 12
-.h:     push    si
-        call    sb_u16
-        mov     al, ':'
-        stosb
-        mov     al, [rtc_m]
-        call    bcd
-        call    sb_2d
-        pop     si
-        call    sb_str
-        mov     byte [di], 0
+; read_clock's time, "5:31 pm", at DI (NUL-terminated)
+sb_hm:  mov     ax, [rtc_t]
+        call    api_sbtime
+.z:     mov     byte [di], 0
         ret
 
 bcd:    mov     ah, al                  ; AL = BCD -> AX = binary
@@ -2003,8 +1943,8 @@ ui_wopen:
         mov     di, [wtop]
         mov     [wtop], ax
         call    win_save                ; SI = window, DI = where
-.push:  mov     bx, [wdepth]
-        shl     bx, 2
+.push:  shl     bx, 2                   ; (BX = [wdepth] still: F002h answers
+                                        ;  ES, CX, AX; win_save keeps all)
         mov     [wstack+bx], si
         mov     [wstack+bx+2], di
         inc     word [wdepth]
@@ -2050,8 +1990,11 @@ win_paint:
         mov     bp, [si+W_W]
         xor     al, al
         call    fill_band
+        xchg    cx, bp                  ; the frame (UI_BOX); a title strip
+        call    box                     ;  covers its top rule, and the
+        xchg    cx, bp                  ;  sides are ORed in
         cmp     word [si+W_TITLE], 0
-        je      .notitle
+        je      .frame
         mov     cx, 20                  ; title strip
         mov     al, 0FFh
         call    fill_band
@@ -2070,27 +2013,7 @@ win_paint:
         sub     bx, 2
         mov     ax, 'x'                 ; (AH = 0: normal, on the lit strip)
         call    putc
-        jmp     .frame
-.notitle:
-        mov     cx, bp
-        call    hline
-.frame: mov     dx, [si+W_Y]            ; bottom and sides
-        add     dx, [si+W_H]
-        dec     dx
-        mov     bx, [si+W_COL]
-        mov     cx, [si+W_W]
-        call    hline
-        mov     ax, [si+W_COL]
-        shl     ax, 3
-        mov     dx, [si+W_Y]
-        mov     cx, [si+W_H]
-        call    vline
-        mov     bx, [si+W_W]
-        shl     bx, 3
-        add     ax, bx
-        dec     ax
-        call    vline
-        mov     ax, [si+W_DRAW]
+.frame: mov     ax, [si+W_DRAW]
         or      ax, ax
         jz      .x
         mov     bx, si
@@ -2207,11 +2130,13 @@ win_ev: push    si
         je      .pass
         mov     ax, cx                  ; on the title strip?
         sub     ax, [si+W_Y]
+        mov     [mv_gy], ax             ; (win_mv's: where it is taken)
         cmp     ax, 20
         jae     .click
         mov     ax, bx
         shr     ax, 3
         sub     ax, [si+W_COL]
+        mov     [mv_gx], ax
         cmp     ax, [si+W_W]
         jae     .click
         test    dl, WF_CLOSE
@@ -2245,15 +2170,8 @@ win_ev: push    si
 ; pixels, Return puts the window there, ESC leaves it) -> CF set if it moved
 win_mv: pusha
         sbb     bp, bp                  ; (BP = 0FFFFh: the mouse)
-        call    hide_cursor
-        mov     ax, bx
-        shr     ax, 3
-        sub     ax, [si+W_COL]
-        mov     [mv_gx], ax             ; where it was taken
-        mov     ax, cx
-        sub     ax, [si+W_Y]
-        mov     [mv_gy], ax
-        mov     ax, [si+W_COL]          ; the outline at its own place
+        call    hide_cursor             ; (by the mouse: win_ev has set mv_gx
+        mov     ax, [si+W_COL]          ;  and mv_gy) the outline at its place
         mov     [mv_c], ax
         mov     ax, [si+W_Y]
         mov     [mv_y], ax
@@ -2695,13 +2613,7 @@ lv_setsel:
 
 ; UI_LVCLICK: BX = list, CX = y -> CF outside; AL = 1 the selected row again
 lv_click:
-        push    ax
-        push    bx
-        push    cx
-        push    dx
-        push    si
-        push    di
-        push    bp
+        pusha
         mov     [lv_cur], bx
         mov     ax, cx
         sub     ax, [bx+LV_Y]
@@ -2716,24 +2628,14 @@ lv_click:
         je      .again
         call    lv_setsel
         xor     ax, ax                  ; (AX, not just AL: AH was the
-        jmp     .in                     ;  row's high byte)
+        jmp     short .in               ;  row's high byte)
 .again: mov     ax, 1
-.in:    pop     bp
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
-        add     sp, 2                   ; (AL is the answer)
+.in:    mov     bp, sp                  ; (AX is the answer: pusha's AX)
+        mov     [bp+14], ax
+        popa
         clc
         ret
-.out:   pop     bp
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
-        pop     ax
+.out:   popa
         stc
         ret
 
@@ -3019,17 +2921,10 @@ ui_form:
         cmp     ax, K_LEFT
         je      .cprev
         jmp     .l
-.next:  mov     ax, [fm_cur]
-        inc     ax
-        mov     bx, [fm_ptr]
-        cmp     ax, [bx+F_N]
+.next:  call    .adv
         jae     .ok
-        mov     [fm_cur], ax
-        jmp     .l
-.down:  mov     ax, [fm_cur]
-        inc     ax
-        mov     bx, [fm_ptr]
-        cmp     ax, [bx+F_N]
+        jmp     short .set
+.down:  call    .adv
         jb      .set
         xor     ax, ax
 .set:   mov     [fm_cur], ax
@@ -3060,6 +2955,11 @@ ui_form:
         mov     al, cl
 .cp1:   dec     al
         jmp     .cset
+.adv:   mov     ax, [fm_cur]            ; AX = the next field: CF if there is one
+        inc     ax
+        mov     bx, [fm_ptr]
+        cmp     ax, [bx+F_N]
+        ret
 .click: cmp     cx, BAND_Y              ; the band: confirm
         jae     .ok
         mov     ax, cx                  ; a field's row: go there
@@ -3133,7 +3033,6 @@ fm_outline:
         xor     ch, ch
         cmp     byte [si+FL_TYPE], FT_CHOICE
         jne     .w
-        mov     cx, [fm_ptr]
         mov     cx, [form_w+W_W]
         add     cx, [form_w+W_COL]
         sub     cx, bx
@@ -3207,9 +3106,6 @@ xor_rect:
 ; field SI's value at BX, DX
 fm_value:
         pusha
-        push    si
-        push    bx
-        push    dx
         mov     ax, [form_w+W_COL]      ; blank to the window's inner edge
         add     ax, [form_w+W_W]
         sub     ax, bx
@@ -3217,10 +3113,7 @@ fm_value:
         mov     bp, ax
         mov     cx, 16
         xor     al, al
-        call    fill_band
-        pop     dx
-        pop     bx
-        pop     si
+        call    fill_band               ; (it keeps every register)
         cmp     byte [si+FL_TYPE], FT_CHOICE
         je      .ch
         mov     al, [si+FL_TYPE+1]      ; text: as much as the field shows
@@ -3384,12 +3277,8 @@ run_cleanup:
 ; in PATH: the drive started from, and from the ROM C:\LODE before it, so
 ; copies there are used before the ROM's).  CF if none: SI = the name
 ui_findapp:
-        push    ax
-        push    bx
-        push    cx
-        push    dx
-        push    di
         push    es
+        pusha
         mov     di, app_path
         call    api_sbstr
         mov     byte [di], 0
@@ -3438,12 +3327,10 @@ ui_findapp:
         stc
         jmp     short .x
 .yes:   mov     si, app_path
-.x:     pop     es
-        pop     di
-        pop     dx
-        pop     cx
-        pop     bx
-        pop     ax
+.x:     mov     bp, sp                  ; (SI is the answer: pusha's SI)
+        mov     [bp+2], si
+        popa
+        pop     es
         ret
 .try:   mov     dx, app_path
         mov     ax, 4300h
@@ -3481,25 +3368,13 @@ env_find:
         ret
 
 ; UI_RUN: SI = path, DI = tail -> AX = exit code, CF (AX = error)
-ui_run: push    bx
-        push    cx
-        push    dx
-        push    si
-        push    di
-        push    bp
-        push    es
+ui_run: push    es
+        pusha
         call    is_run                  ; (a .RUN isn't a DOS program: the
         jnc     .dos                    ;  kernel would take it for a .COM)
         mov     ax, 11
-        pop     es
-        pop     bp
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
         stc
-        ret
+        jmp     short .x
 .dos:   call    hide_cursor
         call    mouse_off
         mov     ax, 0003h
@@ -3515,13 +3390,10 @@ ui_run: push    bx
         call    redraw_all
         pop     ax
         popf
+.x:     mov     bp, sp                  ; (AX is the answer: pusha's AX)
+        mov     [bp+14], ax
+        popa
         pop     es
-        pop     bp
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
         ret
 
 ; CF if the path SI ends in .RUN
@@ -3540,17 +3412,13 @@ is_run: push    si
         mov     ax, [si+2]
         and     ax, 0DFDFh
         cmp     ax, 'UN'
-        jne     .no
-        pop     cx
-        pop     ax
+.no:    pop     cx                      ; (ZF: it does; every way here
+        pop     ax                      ;  but the last cmp leaves NZ)
         pop     si
         stc
-        ret
-.no:    pop     cx
-        pop     ax
-        pop     si
+        je      .x
         clc
-        ret
+.x:     ret
 
 ; EXEC SI with tail DI (as it is: no mode change, the mouse as it is);
 ; the kernel's own INT 24h meanwhile, our DTA kept.  -> AX = exit code / CF
@@ -3584,12 +3452,8 @@ exec_raw:
         xor     ax, ax                  ; (no tail: none at all)
         mov     byte [run_tail + 1], 13
 .len:   mov     [run_tail], al
-        mov     word [run_epb], 0       ; our environment
-        mov     word [run_epb+2], run_tail
-        mov     [run_epb+4], cs
-        mov     word [run_epb+6], exec_fcb
+        mov     [run_epb+4], cs         ; (the rest is set in the data)
         mov     [run_epb+8], cs
-        mov     word [run_epb+10], exec_fcb
         mov     [run_epb+12], cs
         call    unset24
         call    ui_lend                 ; (the directory's memory too)
@@ -3634,8 +3498,7 @@ ui_lend:
         cmp     byte [lent], 1          ;  run by a program, ui_saver_far)
         jne     .x
         pusha
-        mov     bx, ui_keep_end + 15
-        shr     bx, 4
+        mov     bx, UI_KEEP_PARAS
         mov     ah, 4Ah                 ; (ES = CS)
         int     21h
         popa
@@ -3651,8 +3514,7 @@ ui_reclaim:
         jnz     .x
         mov     byte [need_room], 1     ; (something resident may be in the way)
         pusha
-        mov     bx, ui_bss_end + 15
-        shr     bx, 4
+        mov     bx, UI_PARAS
         mov     ah, 4Ah
         int     21h
         jnc     .all
@@ -3688,13 +3550,11 @@ ui_room:
         cmp     byte [run_active], 0
         jne     .x
         pusha
-        mov     bx, ui_bss_end + 15 + RUN_ROOM * 16
-        shr     bx, 4
+        mov     bx, UI_PARAS + RUN_ROOM
         mov     ah, 4Ah                 ; (ES = CS) room here?
         int     21h
         jnc     .here
-        mov     bx, ui_bss_end + 15 + RUN_ROOM * 16
-        shr     bx, 4
+        mov     bx, UI_PARAS + RUN_ROOM
         mov     ah, 48h                 ; no: a block past what is in the way
         int     21h
         jc      .stay                   ; (memory is short anyway: stay)
@@ -3741,8 +3601,7 @@ ui_room:
         call    set24
         call    m33_hook
         call    mouse_on
-.here:  mov     bx, ui_bss_end + 15     ; whole again (and the room left free)
-        shr     bx, 4
+.here:  mov     bx, UI_PARAS            ; whole again (and the room left free)
         mov     ah, 4Ah
         int     21h
         mov     [ui_paras], bx
@@ -3785,7 +3644,8 @@ run_app:
         cmp     ax, 4000h               ;  overflow when doubled)
         jae     .bad
         shl     ax, 1
-        cmp     ax, [run_hdr+8]
+        mov     [run_hdr+14], ax        ; (the fixups' bytes, in the header's
+        cmp     ax, [run_hdr+8]         ;  spare word: mkrun.py writes 0)
         jae     .room
         mov     ax, [run_hdr+8]
 .room:  add     ax, [run_hdr+6]
@@ -3808,10 +3668,7 @@ run_app:
         mov     bx, [run_hnd]
         mov     dx, [run_base]
         mov     cx, [run_hdr+6]
-        add     cx, [run_hdr+10]
-        add     cx, [run_hdr+10]
-        add     cx, [run_hdr+12]
-        add     cx, [run_hdr+12]
+        add     cx, [run_hdr+14]
         mov     ah, 3Fh                 ; image + fixups in one read
         int     21h
         jc      .errr
@@ -3824,10 +3681,9 @@ run_app:
         add     si, [run_hdr+6]
         mov     dx, [run_hdr+6]         ; each must lie inside the image
         sub     dx, 2                   ;  (DX = the last word's offset)
+        jb      .badf                   ; (an image under 2 bytes: none)
         mov     cx, [run_hdr+10]
         jcxz    .rel
-        cmp     dx, [run_hdr+6]
-        ja      .badf                   ; (an image under 2 bytes)
 .abs:   lodsw
         cmp     ax, dx
         ja      .badf
@@ -3837,8 +3693,6 @@ run_app:
         loop    .abs
 .rel:   mov     cx, [run_hdr+12]
         jcxz    .bss
-        cmp     dx, [run_hdr+6]
-        ja      .badf
 .r:     lodsw
         cmp     ax, dx
         ja      .badf
@@ -3849,9 +3703,7 @@ run_app:
 .bss:   mov     di, bp                  ; BSS: zeroes (over the fixups too)
         add     di, [run_hdr+6]
         mov     cx, [run_hdr+8]
-        mov     ax, [run_hdr+10]
-        add     ax, [run_hdr+12]
-        shl     ax, 1
+        mov     ax, [run_hdr+14]
         cmp     cx, ax
         jae     .z
         mov     cx, ax
@@ -3883,30 +3735,26 @@ run_app:
         mov     ax, [run_ret]
         clc
         ret
-.badf:  mov     word [run_ret], 11      ; (the file is closed already)
-        call    run_cleanup
-        jmp     .fail
-.badr:  mov     ax, 11
-.errr:  push    ax
-        mov     bx, [run_hnd]
-        mov     ah, 3Eh
-        int     21h
-        pop     ax
-        mov     [run_ret], ax
-        call    run_cleanup
-        jmp     .fail
-.big:   mov     ax, 8
-        jmp     .errc
+; (the failures: close the file if it is open; run_cleanup, which also
+;  undoes the block's growth once run_active is set, and does nothing else
+;  here: the Executive runs a .RUN with no window open and nothing from
+;  UI_ALLOC)
+.badf:  mov     ax, 11                  ; (the file is closed already)
+        jmp     short .err
+.big:
 .mem:   mov     ax, 8
-        jmp     .errc
+        jmp     short .errc
+.badr:
 .bad:   mov     ax, 11
+.errr:
 .errc:  push    ax
         mov     bx, [run_hnd]
         mov     ah, 3Eh
         int     21h
         pop     ax
 .err:   mov     [run_ret], ax
-.fail:  popa
+        call    run_cleanup
+        popa
         mov     ax, [run_ret]
         stc
         ret
@@ -4089,8 +3937,8 @@ sv_defrag:
         ret
 
 tick:   push    ds
-        xor     ax, ax
-        mov     ds, ax
+        push    0
+        pop     ds
         mov     ax, [46Ch]
         pop     ds
         ret
@@ -4125,6 +3973,8 @@ s_pathv     db 'PATH='
 font_path   db '@:\'                ; "X:\NAME.FNT": on the drive started from
             times 13 db 0
 exec_fcb    db 0, '           ', 0, 0, 0, 0
+run_epb     dw 0, run_tail, 0, exec_fcb, 0, exec_fcb, 0 ; exec_raw's EXEC block:
+                                ;  our environment; the segments are CS's
 s_err       db 'error ',0
 ; DOS errors (code, text); the INT 24h ones below
 dos_msgs    db 2, 'File not found',0
@@ -4182,5 +4032,9 @@ sv_due      resw 1
 sv_col      resw 1
 sv_y        resw 1
 sv_seed     resw 1
-sv_tail     resb 40                 ; "A: /S M=ssss:oooo F=ssss:oooo"
+sv_tail     resb 30                 ; "A: /S M=ssss:oooo F=ssss:oooo", 0 (not tmp:
+                                    ;  it lasts through each DEFRAG run, and
+                                    ;  with MULTITASK=1 the Executive may draw
+                                    ;  meanwhile, e.g. a program of its own
+                                    ;  ending behind LCMD's saver)
 section ui
