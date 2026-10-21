@@ -622,8 +622,7 @@ run_claude:
         mov     di, runpath
         call    sb_strz
         jmp     run_prog
-.no:    mov     si, s_claude
-        jmp     run_named.nf
+.no:    jmp     run_named.nf            ; (SI = the name: ui_findapp's answer)
 
 ; CODE-K: the calculator, a window over the list
 run_calc:
@@ -3064,6 +3063,8 @@ s_cantcopy  db 'copy ', 0                ; (xpick: the Move one next)
 s_cantmove  db 'move ', 0
 s_canterase db 'erase ', 0
 s_cantren   db 'rename ', 0
+            times -(s_move != s_copy + 6 || s_moving != s_copying + 9) db 0     ; (xpick: each
+            times -(s_moved != s_copied + 11 || s_cantmove != s_cantcopy + 6) db 0 ;  Move string next)
 s_readonly  db ': it is read-only', 0
 s_titch     db '\:'                     ; not in a title (a path,
 s_wildch    db '*?', 0                  ;  wildcards)
