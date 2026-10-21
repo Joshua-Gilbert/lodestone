@@ -45,9 +45,8 @@ link_reset:
         mov     byte [keyn], 0
         call    build_hello
         mov     al, G_HELLO
-        mov     dx, cs
         mov     si, hellobuf
-        call    txq_put
+        call    txq_put_cs
         mov     byte [lstate], LS_IDLE
 .x:     ret
 
@@ -87,22 +86,37 @@ link_idle:
 ; POLL frame (no payload) with a new sequence number
 frame_poll:
         mov     byte [pend_msg], 0
-        mov     al, [g_seq]
-        inc     al
-        mov     [g_seq], al
+        inc     byte [g_seq]
         mov     di, txframe
-        mov     byte [di], 47h
-        mov     byte [di+1], G_POLL
-        mov     [di+2], al
-        mov     al, [p_ack]
-        mov     [di+3], al
-        mov     word [di+4], 0
-        mov     si, txframe+1
+        mov     ah, G_POLL
+        call    frame_short
+        mov     [txlen], cx
+        ret
+
+; a frame with no payload at DI: AH = type, the sequence number g_seq.
+; Returns SI = DI, CX = 8 (its length).  Destroys AX BX.
+frame_short:
+        mov     al, [g_seq]
+        xor     cx, cx
+        call    frame_hdr
+        lea     si, [di+1]
         mov     cx, 5
         mov     ax, 0FFFFh
         call    crc16
-        mov     [txframe+6], ax
-        mov     word [txlen], 8
+        mov     [di+6], ax
+        mov     si, di
+        mov     cx, 8
+        ret
+
+; a frame's header at DI: AH = type, AL = sequence number, CX = length.
+; Destroys AL.
+frame_hdr:
+        mov     byte [di], 47h
+        mov     [di+1], ah
+        mov     [di+2], al
+        mov     al, [p_ack]
+        mov     [di+3], al
+        mov     [di+4], cx
         ret
 
 ; next fragment of the message at the head of the queue
@@ -127,12 +141,7 @@ frame_next:
         xor     al, al                  ; HELLO is always frame 0
 .s:     mov     [g_seq], al
         mov     di, txframe
-        mov     byte [di], 47h
-        mov     [di+1], ah
-        mov     [di+2], al
-        mov     al, [p_ack]
-        mov     [di+3], al
-        mov     [di+4], cx
+        call    frame_hdr
         add     di, 6
         push    ds
         mov     si, [bx+4]
@@ -168,26 +177,13 @@ lw_go:  mov     bl, [nano]
         mov     [t_sent], ax
         mov     byte [lstate], LS_WAIT
         mov     byte [spoll_errs], 0
-        call    pit_mark
-        ret
+        jmp     pit_mark
 
 ; NAK the Pi's last answer (it was damaged); our pending fragment stays
 link_write_nak:
         mov     di, nakframe
-        mov     byte [di], 47h
-        mov     byte [di+1], G_NAK
-        mov     al, [g_seq]
-        mov     [di+2], al
-        mov     al, [p_ack]
-        mov     [di+3], al
-        mov     word [di+4], 0
-        mov     si, nakframe+1
-        mov     cx, 5
-        mov     ax, 0FFFFh
-        call    crc16
-        mov     [nakframe+6], ax
-        mov     si, nakframe
-        mov     cx, 8
+        mov     ah, G_NAK
+        call    frame_short
         jmp     lw_go
 
 link_wait:
@@ -238,8 +234,7 @@ link_read:
         mov     [rxn], cx
         call    find_frame
         jc      .bad
-        call    took_answer
-        ret
+        jmp     took_answer
 .bad:   mov     byte [nak_pending], 1
         mov     byte [lstate], LS_IDLE
         inc     word [n_bad]
@@ -301,8 +296,7 @@ took_answer:
         ret                             ; an answer we already handled
 .new:   mov     [p_ack], al
         mov     byte [have_pi], 1
-        call    pi_frame
-        ret
+        jmp     pi_frame
 
 commit_fragment:
         cmp     byte [pend_msg], 0
@@ -339,7 +333,9 @@ link_fail:
         inc     byte [n_failrun]
         jmp     link_lost
 
-; queue a message: AL = type, DX:SI = body, CX = length
+; queue a message: AL = type, DX:SI = body (txq_put_cs: CS:SI), CX = length
+txq_put_cs:
+        mov     dx, cs
 txq_put:
         push    bx
         push    di

@@ -2,7 +2,7 @@
 
     python3 tests/test_emu.py [outdir]     (screens go to outdir as PNG + TXT)
 """
-import os, struct, sys, time
+import os, re, struct, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from grid_emu import EmuHarness
 from fake_anthropic import reply
@@ -164,6 +164,7 @@ def test_damaged_frames():
     assert h.turn('read cfg.c', sim_s=60)
     assert 'noise.' in h.screen()
     assert h.var('n_bad', 2) > 0
+    assert h.link.stats['rx_nak'] > 0, h.link.stats         # (the GRiD's NAKs reach the Pi as NAKs)
     h.transport.corrupt_every = 0
     assert h.m.crash is None
 
@@ -323,6 +324,97 @@ def test_missing_program():
     assert h.turn('run nosuch')
     r = results(h, 1)[0]
     assert 'Bad command' in str(r['content']), r
+    check(h)
+
+
+def dta_dt(h):
+    """The emulator's clock as DIR and STAT give it ('2026-10-21 12:21'),
+    or None under the Lodestone kernel (test_claude_kernel.py)."""
+    if not hasattr(h.m, 'dos_dt'): return None
+    t, d = h.m.dos_dt()
+    return '%04d-%02d-%02d %02d:%02d' % (1980 + (d >> 9), (d >> 5) & 15, d & 31, t >> 11, (t >> 5) & 63)
+
+
+def test_files_list_info_errors():
+    """DIR and STAT copy the find's attribute, time, date, size and name;
+    a STAT that fails and a WRITE whose create fails answer the DOS error."""
+    h = start([reply(('tool', 'grid_files', {'action': 'list', 'path': 'A:\\'})),
+               reply(('tool', 'grid_files', {'action': 'info', 'path': 'A:\\CFG.C'})),
+               reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\NOSUCH.C'})),
+               reply(('tool', 'str_replace_based_edit_tool',
+                      {'command': 'create', 'path': 'A:\\NODIR\\X.C', 'file_text': 'x\n'})),
+               reply(('text', 'Done.'))], files={'A:\\CFG.C': CFG_C}, mode='auto')
+    g, replies = h.session.grid, []
+    on_reply = g.on_reply
+    g.on_reply = lambda b: (replies.append(bytes(b)), on_reply(b))
+    dts = {dta_dt(h)}
+    assert h.turn('look around', sim_s=60)
+    dts.add(dta_dt(h))
+    # the failures: STAT of A:\NOSUCH.C (file not found), then of A:\NODIR\X.C and the create of
+    # A:\NODIR\X.$$$ (path not found); each just the id and the status
+    assert [r[1:] for r in replies if r[1]] == [b'\x02', b'\x03', b'\x03'], replies
+    lst = results(h, 1)[0]['content'].split('\n')
+    cfg = [l for l in lst if l.startswith('CFG.C ')]
+    assert len(cfg) == 1 and cfg[0].split()[1] == str(len(CFG_C)), lst
+    when = ' '.join(cfg[0].split()[2:])
+    assert re.fullmatch(r'20[2-9]\d-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):[0-5]\d', when), lst
+    if None not in dts: assert when in dts, (lst, dts)                      # (grid_emu's clock)
+    ents = lst[1:-1]                                                        # (each entry 22 bytes, in step)
+    assert len(ents) >= 3 and all(re.fullmatch(r'[A-Z0-9_$~-]{1,8}(\.[A-Z0-9_$~-]{1,3})? +(\d+|<DIR>)  \S+ \S+', l)
+                                  for l in ents) and any(l.startswith('CLAUDE.COM ') for l in ents), lst
+    info = results(h, 2)[0]['content']
+    attr = '20h' if None not in dts else info[-3:]                          # (grid_emu: archive)
+    assert info == 'A:\\CFG.C: %d bytes, modified %s, attributes %s' % (len(CFG_C), when, attr), info
+    r = results(h, 3)[0]
+    assert r.get('is_error') and r['content'] == 'Error: the path A:\\NOSUCH.C does not exist.', r
+    r = results(h, 4)[0]
+    assert r.get('is_error') and r['content'] == 'Error on the GRiD: path not found', r
+    check(h)
+
+
+def test_prompt_keys():
+    """The prompt emptied (Esc while idle, Enter, Down past the newest
+    prompt), Ctrl-L's redraw, /clear's CLEAR, and STATUS and TITLE cut at
+    70 characters."""
+    from gridlink import glp
+    h = start([reply(('text', 'One.')), reply(('text', 'Two.'))])
+    def line(): return (h.var('inlen', 2), h.var('incur', 2), h.screen().split('\n')[23].rstrip())
+    h.type('abc', enter=False); h.settle()
+    assert line() == (3, 3, '> abc'), line()
+    h.key(0x011B); h.settle()                                  # Esc, Claude not working: emptied
+    assert line() == (0, 0, '>'), line()
+    assert h.turn('one') and line() == (0, 0, '>'), line()     # Enter empties it too
+    assert h.turn('two') and line() == (0, 0, '>'), line()
+    h.type('xyz', enter=False); h.settle()
+    h.key(0x4800); h.settle()                                  # Up
+    assert line() == (3, 3, '> two'), line()
+    h.key(0x4800); h.settle()
+    assert line() == (3, 3, '> one'), line()
+    h.key(0x5000); h.settle()                                  # Down
+    assert line() == (3, 3, '> two'), line()
+    h.key(0x5000); h.settle()                                  # past the newest: empty
+    assert line() == (0, 0, '>'), line()
+    t = h.screen()
+    h.m.wr(0xB800, 0, bytes(0x8000))                           # Ctrl-L draws it all again
+    h.key(0x260C); h.settle()
+    assert h.screen() == t, h.screen()
+    def text(name): return bytes(h.m.mu.mem_read(h.claude_psp * 16 + h.sym[name], 72))
+    h.link.send(glp.P_STATUS, b'S' * 69 + b'+tail')
+    h.run_until(lambda: text('status_text').startswith(b'S' * 69), 5); h.settle()
+    assert text('status_text') == b'S' * 69 + b'+\0' + text('status_text')[71:], text('status_text')
+    assert h.screen().split('\n')[21].startswith('S' * 69 + '+ '), h.screen().split('\n')[21]
+    h.link.send(glp.P_TITLE, b'T' * 69 + b'+tail')
+    h.run_until(lambda: text('title_text').startswith(b'T' * 69), 5); h.settle()
+    assert text('title_text') == b'T' * 69 + b'+\0' + text('title_text')[71:], text('title_text')
+    assert h.screen().split('\n')[0].startswith(' ' + 'T' * 56 + ' '), h.screen().split('\n')[0]
+    n = h.var('c_count', 2)
+    assert h.turn('/clear') and h.var('c_count', 2) < 4 < n, (n, h.var('c_count', 2), h.screen())
+    assert 'New conversation.' in h.screen() and 'Two.' not in h.screen(), h.screen()
+    v = h.m.rd(0xB800, 0, 0x8000)                              # the rows under it: blank cells, attribute 0
+    sp = bytes(h.m.rd(h.claude_psp, h.sym['font'], 16))       # (the space's glyph)
+    bad = [(r, c) for r in range(1 + h.var('c_count', 2), 21) for c in range(80)
+           if bytes(v[(i & 3) * 0x2000 + (r * 4 + (i >> 2)) * 80 + c] for i in range(16)) != sp]
+    assert not bad, bad[:5]
     check(h)
 
 
