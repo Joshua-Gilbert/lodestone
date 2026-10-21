@@ -1435,7 +1435,7 @@ def t_cmdshare():
     o = sh.run('rem')
     sh.run('prompt $p$g')
     check('PROMPT $D $T: "01-02-2027  9:05>"', o.rstrip().endswith('01-02-2027  9:05>'), o)
-    deep = ''.join('\\' + c * 8 for c in 'ABCDEFG') + '\\HH'     # 65 characters, as deep as CWDLEN allows
+    deep = ''.join('\\' + c * 8 for c in 'ABCDEFG') + '\\HH'     # as deep as CWDLEN allows (65 characters as 47h gives it)
     for c in 'ABCDEFG':
         sh.run('md ' + c * 8); sh.run('cd ' + c * 8)
     sh.run('md HH'); sh.run('cd HH')
@@ -1443,7 +1443,7 @@ def t_cmdshare():
     outs = [sh.run(c) for c in ('copy x.txt longname.txt', 'copy x.txt longname.tx', 'copy x*.txt *.bak')]
     sh.run('cd \\')
     f = fs()
-    check("COPY from a 65-character directory: COPY's two names checked (~90 bytes each) don't reach its source name",
+    check("COPY from a 65-character directory: COPY's two names checked (74-82 bytes) don't reach its source name",
           [f.get('A:' + deep + n) for n in ('\\LONGNAME.TXT', '\\LONGNAME.TX', '\\X.BAK')] == [b'hi \r\n'] * 3
           and all('1 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith('A:\\A'))))
     sh.run('cd sub')
