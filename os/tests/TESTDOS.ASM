@@ -1097,6 +1097,9 @@ t_time: STEP 1
         mov     bx, [h1]
         DOS     3Eh
         STEP 4                          ; 2Dh, then 2Ch and a new file's time
+        DOS     2Ch                     ;  (the clock kept, and put back: on
+        mov     [t_sv], cx              ;  a 1520 2Dh sets the RTC too)
+        mov     [t_sv+2], dx
         mov     cx, 0A0Bh               ;  (10:11:12.00) as it was set
         mov     dx, 0C00h
         mov     ah, 2Dh
@@ -1126,6 +1129,10 @@ t_time: STEP 1
         DOS     3Eh
         mov     dx, f_tm
         DOS     41h
+        mov     cx, [t_sv]              ; the time back (less the test's
+        mov     dx, [t_sv+2]            ;  few ticks)
+        mov     ah, 2Dh
+        int     21h
         clc
         ret
 
@@ -1420,6 +1427,7 @@ d_up        db '..', 0
 d_dot       db '.', 0
 d_subw      db 'S?B', 0
 f_tm        db 'TM.DAT', 0
+t_sv        dw 0, 0
 d_subdot    db 'SUB\.', 0
 d_root      db '\', 0
 f_in        db 'IN.TXT', 0

@@ -1137,6 +1137,13 @@ def t_trunc():
     check('CREATE truncates: the new contents', 'new' in sh.run('type keep.txt') and after[28:32] == bytes([6, 0, 0, 0]), after.hex())
     check('... its entry\'s bytes 12-21 kept (%s)' % before[12:22].hex(), before[12:22] == after[12:22] and any(before[12:22]),
           (before[12:22].hex(), after[12:22].hex()))
+    # deleted, then a new file takes its slot (E5h, the first free one):
+    # there bytes 12-21 are the deleted file's, so they are zeroed
+    at = bytes(k.pc.drives[0].img).find(b'KEEP    TXT')
+    sh.run('del keep.txt'); sh.run('echo x > again.txt')
+    img = bytes(k.pc.drives[0].img)
+    check('... a new file in a deleted one\'s slot: bytes 12-21 zeroed', img[at:at + 11] == b'AGAIN   TXT' and
+          img[at + 12:at + 22] == bytes(10), img[at:at + 32].hex())
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 
