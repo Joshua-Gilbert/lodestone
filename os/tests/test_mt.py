@@ -989,10 +989,11 @@ def t_screens():
             check('MTSCR P alone, from the prompt: the BIOS draws it (no other task, so nothing shadowed: mt_shd 0): page '
                   '0 its calls\' output, page 1 the 30 lines scrolled there in attribute 1Eh, and the AX 00h, 05h, 0Bh and '
                   '0Dh gave back (0029 0000 0B25 0355); 03h\'s CX for page 11 (the shape, page 8\'s cursor moved on: '
-                  '0D0F), 0Ch\'s AX (0355), its page in window 2 untouched (S+); 09h round to page 0 (16 "W")', sh0 == 0 and 'end' in rt and 'str1' in rt and 'BBBBB' in rt
+                  '0D0F), 0Ch\'s AX (0355), 08h past the 32 KB (FFFF), its page in window 2 untouched (S+); 09h '
+                  'round to page 0 (16 "W")', sh0 == 0 and 'end' in rt and 'str1' in rt and 'BBBBB' in rt
                   and 'mvo' in rt and 's2' in rt and 'line A' in r1 and 'line Z' not in r1
                   and ref[0x1000 + (24 * 80) * 2 + 1] == 0x1E and '0029 0000 0B25 0355' in rt
-                  and '0D0F 0355 S+' in rt and ref[:32] == b'W\x17' * 16, (sh0, rt, r1))
+                  and '0D0F 0355 FFFF S+' in rt and ref[:32] == b'W\x17' * 16, (sh0, rt, r1))
         # in the background, behind MTLAUNCH
         sh.run('cls')
         typ(k, 'mtlaunch mtscr.com %s' % m, 3.0)
@@ -1171,19 +1172,27 @@ def t_screens():
           'isn\'t found to write the screen itself', i_ == b'I' and scr[158:160] == b'*\x70' and isl[158:160] != b'*\x70'
           and s_i == 1 and v0 & VF_DIRECT == 0 and len(tstate(k)[0]) == 1, (i_, scr[150:160], isl[150:160], s_i, v0,
                                                                            tstate(k)))
-    # ... with a floppy's motor on (40:3Fh): a transfer may be under way, its DMA into the EMS frame's windows, so no
-    # window is mapped for an interrupt's call: not shadowed, the shadow lost
-    k.pc.wr(0x40, 0x3F, b'\1')
-    typ(k, 'mtlaunch mtscr.com i i2.txt', 2.0)
+    # ... inside an INT 13h call (mt_in13, as if the tick came during one: pcemu's BIOS does its transfers at once):
+    # a floppy's DMA may be going into the EMS frame's windows then, so none is mapped for the call: not shadowed, the
+    # shadow lost
+    v13, n13 = vec(k, 0x13), k.pc.rd(seg, Y['mt_in13'], 1)[0]
+    k.pc.wr(0xB800, 158, b' \x07')
+    typ(k, 'mtlaunch mtscr.com i i2.txt', 0.05)
+    for i in range(100):
+        if len(tstate(k)[0]) == 2: break
+        k.run_for(0.01)
+    k.pc.wr(seg, Y['mt_in13'], b'\1')
+    k.run_for(2.0)
     i_, scr, s_m = A.disk_file(k, 'I2.TXT'), bytes(k.pc.rd(0xB800, 0, 160)), shd(k)
-    k.pc.wr(0x40, 0x3F, b'\0')
+    k.pc.wr(seg, Y['mt_in13'], b'\0')
     front(k, 1)
     v_m = vflags(k, 0)
     line(k, ''); line(k, '')
-    check('... with a floppy\'s motor on (40:3Fh): its \'*\' on the real screen, not shadowed (no window mapped while a '
-          'DMA may be going into one), so MTLAUNCH\'s shadow is lost (mt_shd 0): switched from, not known to write the '
-          'screen itself, so not frozen', i_ == b'I' and scr[158:160] == b'*\x70' and s_m == 0 and v_m & VF_DIRECT == 0,
-          (i_, scr[150:160], s_m, v_m))
+    check('INT 13h through MT (mt_i13), its count back at 0 after all the reading so far; I again, inside an INT 13h '
+          'call: its \'*\' on the real screen, not shadowed (no window mapped while a DMA may be going into one), so '
+          'MTLAUNCH\'s shadow is lost (mt_shd 0): switched from, not known to write the screen itself, so not frozen',
+          v13 == (seg, Y['mt_i13']) and n13 == 0 and i_ == b'I' and scr[158:160] == b'*\x70' and s_m == 0
+          and v_m & VF_DIRECT == 0, (v13, n13, i_, scr[150:160], s_m, v_m))
     # a ROM's own INT 10h (CS at A000h or above, not inside a call MT passed on to the BIOS): as it is, on the real
     # screen, not shadowed, so the front task's shadow is lost
     k.pc.wr(0xD800, 0, bytes([0xCD, 0x10, 0xCB]))
@@ -1273,9 +1282,13 @@ def t_screens():
     # brought to the front by MTLAUNCH /F, so shadowed from the start (mt_scrld): N as it is (a control: the shadow kept),
     # S with its stack in its own page in window 0, E printing a 13h string from there: those calls not shadowed, so lost
     for o, what, s_e in (('n', 'as above', 1), ('s', 'its stack in its own EMS page in window 0, where the pages would go', 0),
-                    ('e', 'a 13h string from its own EMS page in window 0', 0)):
+                    ('e', 'a 13h string from its own EMS page in window 0', 0),
+                    ('i', 'running in front alone, inside an INT 13h call from the moment it runs (mt_in13, set by the '
+                     'test): every call an interrupt\'s', 0)):
         typ(k, 'mtlaunch mtline.com x.txt;/f mtnest.com r%s.txt %s' % (o, o), 1.0)
+        if o == 'i': k.pc.wr(mt_seg(k), k.Y['mt_in13'], b'\1')
         waitfile(k, 'R%s.TXT' % o.upper(), 60)
+        k.pc.wr(mt_seg(k), k.Y['mt_in13'], b'\0')
         r, s_o, st = A.disk_file(k, 'R%s.TXT' % o.upper()) or b'', shd(k), tstate(k)
         front(k, 0)
         v_o = vflags(k, 2)
@@ -1310,16 +1323,23 @@ def t_screens():
           '1520\'s (VNEST: %d BIOS calls, its own through the hook): MTSCR P in front is shadowed (mt_shd 1), its screen '
           'as the BIOS drew it alone, and it is found not to write the screen itself' % nested,
           s_h == 1 and c_h & VF_DIRECT == 0 and sl_h == ref and nested > 1000, (s_h, c_h, nested, tstate(k)))
-    # a TSR's clock (VHOOK T: INT 08h chained first, then INT 10h: no interrupt in service, its code no task's): on the
-    # real screen whichever task it lands in, never in a background task's own
+    # a TSR's clock (VHOOK T: INT 08h chained first, then INT 10h, a new digit each tick: no interrupt in service) inside
+    # an INT 13h call (mt_in13), while MTSPIN runs behind MTLAUNCH: no window mapped for it, so on the real screen,
+    # nothing more in MTSPIN's own
     sh.run('vhook t')
-    typ(k, 'mtlaunch mtspin.com 100 z.txt', 3.0)
+    typ(k, 'mtlaunch mtspin.com 100 z.txt', 1.0)
+    seg, Y = mt_seg(k), k.Y
+    k.pc.wr(seg, Y['mt_in13'], b'\1')
+    t_f0, t_s0 = bytes(k.pc.rd(0xB800, 140, 2)), (slot(k, 1, 160) or bytes(160))[140:142]
+    k.run_for(1.5)
     t_f, t_s, st = bytes(k.pc.rd(0xB800, 140, 2)), (slot(k, 1, 160) or bytes(160))[140:142], tstate(k)
+    k.pc.wr(seg, Y['mt_in13'], b'\0')
     z = waitfile(k, 'Z.TXT', 6.0)
     line(k, '')
-    check('a TSR\'s clock (VHOOK T: INT 08h, chained first, then INT 10h 13h; no interrupt in service, code no task\'s) '
-          'while MTSPIN runs behind MTLAUNCH: its \'T\' on the real screen, not in MTSPIN\'s own',
-          t_f == b'T\x70' and t_s != b'T\x70' and st[0][1:] == [(1, 1, 'MTSPIN.COM')] and z, (t_f, t_s, st, z))
+    check('a TSR\'s clock (VHOOK T: INT 08h, chained first, then INT 10h 13h, a new digit each tick; no interrupt in '
+          'service) inside an INT 13h call, while MTSPIN runs behind MTLAUNCH: its digits go on on the real screen, none '
+          'more in MTSPIN\'s own', t_f != t_f0 and t_f[1:] == b'\x70' and t_s == t_s0
+          and st[0][1:] == [(1, 1, 'MTSPIN.COM')] and z, (t_f0, t_f, t_s0, t_s, st, z))
     # the shadow's cost: 120 lines through DOS in front, alone and with a task behind it (shadowed)
     k = boot('mt_sc2.img', b'MULTITASK=1\r\n', 88, MTSC)
     sh = Shell(k)

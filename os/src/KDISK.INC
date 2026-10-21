@@ -1613,7 +1613,7 @@ crit_disk:
         or      ah, 1                   ; a write
 .r:     mov     al, [io_drv]
         mov     bp, cs
-        mov     si, crit_dev
+.c24:   mov     si, crit_dev            ; (multitasking: a far call, KMT.INC)
         int     24h
         pop     es
         pop     ds
