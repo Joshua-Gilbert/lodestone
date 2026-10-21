@@ -274,6 +274,20 @@ mount_bpb:
         pop     bx
         ret
 
+; sector DX of drive [act] into bounce, without INT 24h.  CF: AX = error.
+; AX, BX, CX changed
+raw_bounce:
+        push    es
+        push    cs
+        pop     es
+        mov     bx, bounce
+        mov     al, [act]
+        mov     cx, 1
+        mov     ah, 2
+        call    disk_io_raw
+        pop     es
+        ret
+
 ; The change line says the disk may have changed: is it the same one?
 ; Same boot sector BPB and, if our FAT cache is this drive's and clean,
 ; the same first FAT sector.  CF if different (or unreadable).
@@ -287,12 +301,8 @@ same_disk:
         push    es
         push    cs
         pop     es
-        mov     bx, bounce
-        mov     al, [act]
         xor     dx, dx
-        mov     cx, 1
-        mov     ah, 2
-        call    disk_io_raw
+        call    raw_bounce
         jc      .diff
         mov     al, [act]
         mov     ah, BPBLEN
@@ -310,10 +320,7 @@ same_disk:
         jne     .same
         mov     si, [actp]
         mov     dx, [si+D_RSV]
-        mov     bx, bounce
-        mov     cx, 1
-        mov     ah, 2
-        call    disk_io_raw
+        call    raw_bounce
         jc      .diff
         mov     si, bounce
         mov     di, fatbuf
@@ -372,16 +379,8 @@ drv_ready:
         push    bx
         push    cx
         push    dx
-        push    es
-        push    cs
-        pop     es
-        mov     bx, bounce
-        mov     al, [act]
         xor     dx, dx
-        mov     cx, 1
-        mov     ah, 2
-        call    disk_io_raw             ; no BPB yet: use a 9-sector guess
-        pop     es
+        call    raw_bounce              ; no BPB yet: use a 9-sector guess
         pop     dx
         pop     cx
         pop     bx
@@ -409,13 +408,18 @@ unmount:
         mov     word [di], '\'
         cmp     [fat_drv], al
         jne     .b
-        mov     byte [fat_drv], 0FFh
-        mov     byte [fat_dirty], 0
-        mov     word [fat_dmask], 0
+        call    fat_forget
 .b:     call    buf_inval
         pop     di
         pop     si
         pop     ax
+        ret
+
+; the cached FAT is nobody's (flags kept)
+fat_forget:
+        mov     byte [fat_drv], 0FFh
+        mov     byte [fat_dirty], 0
+        mov     word [fat_dmask], 0
         ret
 
 ; INT 21h 0Dh: write back and forget the cached FAT and sectors (the
@@ -433,9 +437,7 @@ disk_reset:
         jmp     short .f                ;  we can't tell, not written)
 .w:     call    fat_flush
 .f:     pushf
-        mov     byte [fat_drv], 0FFh
-        mov     byte [fat_dirty], 0
-        mov     word [fat_dmask], 0
+        call    fat_forget
         mov     al, 0
         call    buf_inval
         mov     al, 1
@@ -843,7 +845,8 @@ buf_get:
         shl     bx, 1
         mov     [buf_lba+bx], dx
         pop     bx
-.hit:   inc     word [buf_clock]
+.hit:   mov     word [io_ra], 0         ; (read-ahead is per transfer: a hit
+        inc     word [buf_clock]        ;  made none, so the caller's goes)
         mov     cx, [buf_clock]
         push    bx
         shl     bx, 1
@@ -954,6 +957,19 @@ buf_inval_range:
         pop     bx
         ret
 
+; AX = whole sectors from ES:BX to the next 64 KB boundary (dio's DMA
+; split, and the track cache's)
+tc_room:
+        mov     ax, es
+        shl     ax, 4
+        add     ax, bx
+        neg     ax
+        jz      .all
+        shr     ax, 9
+        ret
+.all:   mov     ax, 128
+        ret
+
 ; ---------------------------------------------------------------------
 ;  transfers.  AL = drive, AH = 2 read / 3 write, DX = LBA, CX = sectors,
 ;  ES:BX = memory.  Split at track ends and 64 KB DMA boundaries; a
@@ -1016,16 +1032,8 @@ dio:    push    bx
         or      al, al
         jnz     .adv
 %endif
-        ; room before the next 64 KB boundary
-        mov     ax, es
-        shl     ax, 4
-        add     ax, bx
-        neg     ax
-        jz      .r128
-        shr     ax, 9
-        jmp     .room
-.r128:  mov     ax, 128
-.room:  cmp     si, ax
+        call    tc_room                 ; room before the next 64 KB boundary
+        cmp     si, ax
         jbe     .s1
         mov     si, ax
 .s1:    cmp     si, cx
@@ -1417,18 +1425,6 @@ tc_mine:
 .x:     pop     ax
         ret
 
-; AX = whole sectors from ES:BX to the next 64 KB boundary
-tc_room:
-        mov     ax, es
-        shl     ax, 4
-        add     ax, bx
-        neg     ax
-        jz      .all
-        shr     ax, 9
-        ret
-.all:   mov     ax, 128
-        ret
-
 ; [io_n] sectors between the cache (from place io_ci) and the disk.
 ; Keeps all but AX
 tc_bios:
@@ -1648,14 +1644,20 @@ crit_dev:                               ; a block device header for INT 24h
         dw 0, 0
         db 1, 'LODE   '
 
-; INT 21h 36h: free space.  DL = drive (0 = current)
-f_36:   mov     al, [bp+F_DX]
-.hk:                                    ; (KHD.INC: C:'s, counted once)
+; AL = a drive as INT 21h numbers them (0 = the current one, 1 = A:)
+; -> AL = 0 for A:
+drv_dflt:
         or      al, al
         jnz     .d
         mov     al, [cur_drv]
         inc     al
 .d:     dec     al
+        ret
+
+; INT 21h 36h: free space.  DL = drive (0 = current)
+f_36:   mov     al, [bp+F_DX]
+.hk:                                    ; (KHD.INC: C:'s, counted once)
+        call    drv_dflt
         call    drv_ready
         jc      .bad
         call    fat_load
