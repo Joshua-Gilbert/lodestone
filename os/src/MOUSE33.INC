@@ -116,8 +116,8 @@ M33_N       equ ($ - m33_tab) / 2
 ; our INT 33h in the vector table (at start-up, and when the block moves)
 m33_hook:
         push    es
-        xor     ax, ax
-        mov     es, ax
+        push    0
+        pop     es
         cli
         mov     word [es:33h * 4], int33_ui
         mov     [es:33h * 4 + 2], cs
@@ -610,8 +610,8 @@ m33_redraw:
 m33_draw:
         pusha
         push    es
-        xor     ax, ax
-        mov     es, ax
+        push    0
+        pop     es
         mov     al, [es:449h]
         mov     [m33_dmode], al
         call    m33_gparm
@@ -673,8 +673,8 @@ m33_undraw:
         pusha
         push    es
         mov     byte [m33_dn], 0
-        xor     ax, ax
-        mov     es, ax
+        push    0
+        pop     es
         mov     al, [es:449h]
         cmp     al, [m33_dmode]
         jne     .x                      ; (the program changed modes)
