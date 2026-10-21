@@ -3768,9 +3768,13 @@ ks_until    resw 1
 snap_taken  resb 1
 snap_len    resw 1
         times   -(ems_ok - drvstr != 80 || old_tmo - cwdbuf != 68) resb 1  ; (HELLO_MAX)
+        times   -(kv_cwd < kv_os || kv_drives < kv_cwd || kv_mem < kv_drives || kv_ems < kv_mem \
+                  || kv_gpib < kv_ems || kv_addr < kv_gpib || kv_date < kv_addr || kv_grid < kv_date \
+                  || kv_appterm < kv_grid || kv_appchat < kv_appterm || s_none2 < s_onint \
+                  || s_helptitle < s_pages) resb 1     ; (HELLO_MAX's lengths: in this order)
 stack_bottom:                           ; the stack: claude-link's emulator tests
-            resb 1024                   ;  (under Lodestone, and GRIDGPIB) go 58
-                                        ;  bytes deep at most; the rest is for the
+            resb 1024                   ;  go 58 bytes deep at most under GRIDGPIB,
+                                        ;  70 under Lodestone; the rest is for the
                                         ;  BIOS, interrupts and drivers.  test_emu
                                         ;  fails a run that uses over a quarter
 stack_top:
