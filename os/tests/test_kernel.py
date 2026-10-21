@@ -449,7 +449,7 @@ def t_cache(ems=0):
     # the help window's save-under: the cache's memory, lent and given back;
     # with the cache in EMS, a block of its own while it is open (the cache
     # stays as it is)
-    rows = [k.u16('rowtab', 2 * y) for y in range(64, 64 + 232)]
+    rows = [(y & 3) * 0x2000 + (y >> 2) * 80 for y in range(64, 64 + 232)]   # (the screen's four banks)
     under = lambda: b''.join(k.pc.rd(0xB800, r + 16, 48) for r in rows)
     sublocks = lambda: [b for b in mcbs(k) if b[2] == 8 and b[3] == TC_PARAS]
     before, drv0, n0 = under(), k.pc.rd(0x60, k.Y['tc_drv'], 1), len(sublocks())

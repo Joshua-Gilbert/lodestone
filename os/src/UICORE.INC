@@ -161,7 +161,6 @@ pc_ch       resb 1              ; putc's character
 app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
                                 ;  Copy/Move destination, free while the
                                 ;  Executive asks or a .RUN runs (UIAPI.INC)
-rowtab      resw 400
 tmp         resb 96
 section ui
 
@@ -206,7 +205,6 @@ ui_boot:
         pop     es
         mov     [ui_paras], ax
         mov     word [ent_max], MAXENT
-        call    mkrows
         call    mouse_init
         mov     bl, 5                   ; the saver after 5 minutes, unless
         call    saver_set               ;  LODE.INI says otherwise
@@ -1054,6 +1052,15 @@ move_cursor:
 .h:     mov     [uh], cx
         ret
 
+; reg (a row's offset, a column in it) -> the next row down: the next
+; bank, or from the fourth the first bank's next row (past 7FFFh: SF)
+%macro  NEXTROW 1
+        add     %1, 2000h
+        jns     %%ok
+        sub     %1, 8000h - 80
+%%ok:
+%endmacro
+
 ; compose the area (ux0, uy0, uw, uh) in ubuf:  cflags bit 0 = restore the
 ; old pointer's background, bit 1 = save under and draw the new pointer
 compose:
@@ -1061,14 +1068,14 @@ compose:
         push    es
         push    VSEG
         pop     es
-        xor     bp, bp                  ; 1. screen -> ubuf
+        mov     dx, [uy0]               ; 1. screen -> ubuf
+        call    row_di
+        add     di, [ux0]
+        mov     bx, di                  ; (BX: the row on the screen)
+        xor     bp, bp
 .r1:    cmp     bp, [uh]
         jae     .r1d
-        mov     bx, [uy0]
-        add     bx, bp
-        shl     bx, 1
-        mov     si, [rowtab+bx]
-        add     si, [ux0]
+        mov     si, bx
         mov     di, bp
         shl     di, 2
         add     di, ubuf
@@ -1078,6 +1085,7 @@ compose:
         inc     si
         inc     di
         loop    .c1
+        NEXTROW bx
         inc     bp
         jmp     .r1
 .r1d:   test    byte [cflags], 1        ; 2. old background back into ubuf
@@ -1134,14 +1142,15 @@ compose:
 .n2:    inc     bp
         cmp     bp, 13
         jb      .r3
-.nonew: xor     bp, bp                  ; 4. ubuf -> screen, once
+.nonew: mov     dx, [uy0]               ; 4. ubuf -> screen, once
+        call    row_di
+        add     di, [ux0]
+        mov     bx, di
+        xor     bp, bp
 .r4:    cmp     bp, [uh]
         jae     .r4d
-        mov     bx, [uy0]
-        add     bx, bp
-        shl     bx, 1
-        mov     di, [rowtab+bx]
-        add     di, [ux0]
+        mov     di, bx
+        NEXTROW bx
         mov     si, bp
         shl     si, 2
         add     si, ubuf
@@ -1174,14 +1183,12 @@ hide_cursor:
         push    es
         push    VSEG
         pop     es
-        xor     si, si
-.row:   mov     bx, [cur_y]
-        add     bx, si
-        cmp     bx, 400
-        jae     .done
-        shl     bx, 1
-        mov     di, [rowtab+bx]
+        mov     dx, [cur_y]
+        call    row_di
         add     di, [cur_xb]
+        xor     si, si
+.row:   cmp     dx, 400
+        jae     .done
         mov     bx, si
         shl     bx, 1
         mov     al, [cur_save+bx]
@@ -1190,7 +1197,9 @@ hide_cursor:
         jae     .nx
         mov     al, [cur_save+bx+1]
         mov     [es:di+1], al
-.nx:    inc     si
+.nx:    NEXTROW di
+        inc     dx
+        inc     si
         cmp     si, 13
         jb      .row
 .done:  mov     byte [curvis], 0
@@ -1201,24 +1210,17 @@ hide_cursor:
 ; =====================================================================
 ;  drawing primitives (mode 40h: 640x400, 4 interleaved banks of 100 rows)
 ; =====================================================================
-section uiboot
-mkrows: xor     bx, bx
-        mov     di, rowtab
-.l:     mov     ax, bx
-        and     ax, 3
-        shl     ax, 13
-        mov     dx, bx
+; DX = y (0-399) -> DI = its row's offset: (y & 3) * 2000h + (y / 4) * 80
+row_di: push    dx
+        mov     di, dx
+        and     di, 3
+        ror     di, 3                   ; (bits 0-1 to 13-14)
         shr     dx, 2
         imul    dx, dx, 80
-        add     ax, dx
-        mov     [di], ax
-        add     di, 2
-        inc     bx
-        cmp     bx, 400
-        jb      .l
+        add     di, dx
+        pop     dx
         ret
 
-section ui
 
 ; mode 40h; CF if the panel doesn't have it
 hires:  push    ax
@@ -1267,15 +1269,14 @@ fill_band:
         push    es
         push    VSEG
         pop     es
-.r:     mov     si, dx
-        shl     si, 1
-        mov     di, [rowtab+si]
-        add     di, bx
+        call    row_di
+        lea     si, [di+bx]
+.r:     mov     di, si
         push    cx
         mov     cx, bp
         rep     stosb
         pop     cx
-        inc     dx
+        NEXTROW si
         loop    .r
         pop     es
 .none:  popa
@@ -1308,17 +1309,16 @@ invert_band:
         push    es
         push    VSEG
         pop     es
-.r:     mov     si, dx
-        shl     si, 1
-        mov     di, [rowtab+si]
-        add     di, bx
+        call    row_di
+        lea     si, [di+bx]
+.r:     mov     di, si
         push    cx
         mov     cx, bp
 .c:     not     byte [es:di]
         inc     di
         loop    .c
         pop     cx
-        inc     dx
+        NEXTROW si
         loop    .r
         pop     es
 .none:  popa
@@ -1358,11 +1358,9 @@ vline:  pusha
         mov     cl, al
         shr     ah, cl
         pop     cx
-.r:     mov     si, dx
-        shl     si, 1
-        mov     di, [rowtab+si]
-        or      [es:di+bx], ah
-        inc     dx
+        call    row_di
+.r:     or      [es:di+bx], ah
+        NEXTROW di
         loop    .r
         pop     es
 .none:  popa
@@ -1424,10 +1422,8 @@ putsn:  pusha
         mov     cx, bp
 .n:     jcxz    .x
         mov     bp, ax                  ; (BP high byte: the mask)
-        mov     di, dx
-        shl     di, 1
-        mov     di, [rowtab+di]
-        add     di, bx
+        imul    di, dx, 20              ; (y: a multiple of 4, the glyph's rows
+        add     di, bx                  ;  below are bank 0's to 3's from it)
         push    VSEG
         pop     es
         jmp     .l
@@ -1984,10 +1980,12 @@ win_save:
         mov     cx, [si+W_H]
         mov     bp, [si+W_W]
         mov     ax, [si+W_COL]
-.r:     mov     bx, dx
-        shl     bx, 1
-        mov     si, [rowtab+bx]
-        add     si, ax
+        push    di
+        call    row_di
+        add     di, ax
+        mov     bx, di                  ; (BX: the row on the screen)
+        pop     di                      ; (wseg:DI)
+.r:     mov     si, bx
         push    cx
         push    ds
         push    VSEG
@@ -1996,7 +1994,7 @@ win_save:
         rep     movsb
         pop     ds
         pop     cx
-        inc     dx
+        NEXTROW bx
         loop    .r
         pop     es
         pop     ds
@@ -2107,16 +2105,16 @@ win_restore:
         mov     bp, [si+W_W]
         mov     ax, [si+W_COL]
         mov     si, di
-        mov     ds, [wseg]
-.r:     mov     bx, dx
-        shl     bx, 1
-        mov     di, [cs:rowtab+bx]
+        call    row_di
         add     di, ax
+        mov     bx, di                  ; (BX: the row on the screen)
+        mov     ds, [wseg]
+.r:     mov     di, bx
         push    cx
         mov     cx, bp
         rep     movsb
         pop     cx
-        inc     dx
+        NEXTROW bx
         loop    .r
         pop     es
         pop     ds
@@ -3095,9 +3093,8 @@ xor_rect:
         mov     cx, di
         sub     cx, ax
         call    .col
-        mov     bx, dx
-        shl     bx, 1
-        mov     bx, [rowtab+bx]
+        call    row_di
+        mov     bx, di
 .hl:    xor     [es:bx+si], al
         ror     al, 1                   ; (past the byte's last bit: the next)
         adc     si, 0
@@ -3107,11 +3104,10 @@ xor_rect:
 .v:     pusha                           ; BP rows from DX at pixel AX
         mov     cx, bp
         call    .col
-.vl:    mov     bx, dx
-        shl     bx, 1
-        mov     bx, [rowtab+bx]
-        xor     [es:bx+si], al
-        inc     dx
+        call    row_di
+        mov     bx, di
+.vl:    xor     [es:bx+si], al
+        NEXTROW bx
         loop    .vl
         popa
         ret
