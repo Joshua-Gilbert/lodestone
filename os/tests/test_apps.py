@@ -141,6 +141,8 @@ def t_core():
     check('ask: Return = confirmed', has(k, 'confirmed'), screen(k))
     k.key(CODE['E'])
     check('error text: 19 is "Disk is write-protected"', has(k, 'Disk is write-protected'), screen(k))
+    check('... drawn where it was asked to be: column 2 of row 260', dict(k.ocr()).get(260, '')[:25] == '  Disk is write-protected',
+          dict(k.ocr()).get(260))
     # each INT 24h code through 83 (the message is DOS's code + 18 since U4),
     # one past them, and the DOS codes only INT 24h's table used to hold
     line, a, case = k.u16('run_base') + run_syms('tests/UITEST.ASM')['line'], k.Y['api_sberr'], []
@@ -494,8 +496,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers): the directory buffer is lent while it runs' % kb,
-          kb >= 565.7, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table): the directory buffer is lent while it runs' % kb,
+          kb >= 566.4, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -892,8 +894,13 @@ def t_mouse():
     check('... and the program runs to its end', k.band()[0] == 'M33TEST.COM ended', k.band())
     # the graphics pointer, bit for bit; the reset and shape asked with DF set
     k = ktest.KPC(image('m33g.img', M33['M33GFX'])); k.pc.mouse = True; k.start()
-    rows0 = k.rd('rowtab', 800)
+    pre, i33 = [], k.Y['int33_ui']      # tmp, below m33_st, as the first INT 33h (DF set) finds it: nothing
+    def first33(pc):                    #  else draws meanwhile, so a string write gone backwards shows there
+        if not pre and pc.r('ip') == i33 and pc.r('cs') == k.useg: pre.append(k.rd('tmp', 96))
+    k.hooks.append(first33)
     start_dos(k, 'M33GFX.COM')
+    k.hooks.remove(first33)
+    below = k.rd('tmp', 96)             # (after the reset and the shape, both with DF set)
     for x, y, hx, hy, H, banks, two, what in ((0, 0, 5, 7, 400, 4, 0, 'mode 40h, top left, hot spot (5, 7)'),
                                               (639, 399, 5, 7, 400, 4, 0, 'mode 40h, bottom right'),
                                               (333, 201, 5, 7, 400, 4, 0, 'mode 40h, an odd column'),
@@ -903,7 +910,7 @@ def t_mouse():
         check('pointer: ' + what, e == a and e, (len(e), len(a), sorted(e - a)[:4], sorted(a - e)[:4]))
         k.key(ktest.ENTER, settle=False); k.pc.run_for(0.05)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
-    check('DF set by the program: the reset and the shape still land where they should', k.rd('rowtab', 800) == rows0 and
+    check('DF set by the program: the reset and the shape still land where they should', pre and below == pre[0] and
           k.band()[0] == 'M33GFX.COM ended', k.band())
     # a program that ends inside its event handler; then the next one's handler
     k = ktest.KPC(image('m33q.img', M33['M33QUIT'], M33TEST)); k.pc.mouse = True; k.start()
