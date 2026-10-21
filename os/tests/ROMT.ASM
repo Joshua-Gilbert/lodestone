@@ -29,7 +29,7 @@ org 100h
         int 15h
         pop ds
         mov di, si
-        shl di, 4
+        shl di, 5
         mov [imgs+di], ax
         mov [imgs+di+2], bx
         mov [imgs+di+4], cx
@@ -39,12 +39,18 @@ org 100h
         push ds
         mov ds, [cs:seg_]
         mov ax, 0E403h
-        mov dx, si
+        mov bx, 1111h                   ; (what it leaves of BX, CX, DX:
+        mov cx, 2222h                   ;  the BIOS loads BX and CL, and
+        mov dx, si                      ;  DH from its port writes)
+        mov dh, 33h
         int 15h
         pop ds
         pushf
         pop word [imgs+di+10]
         mov [imgs+di+12], ax
+        mov [imgs+di+16], bx
+        mov [imgs+di+18], cx
+        mov [imgs+di+20], dx
         push ds
         mov ax, 0A000h
         mov ds, ax
@@ -76,7 +82,7 @@ fn db 'A:\ROMT.BIN',0
 seg_ dw 0
 r0 dw 0,0,0
 r1 dw 0,0
-imgs times 8*16 db 0
+imgs times 8*32 db 0
 end_:
 align 16
 tbl times 256 db 0

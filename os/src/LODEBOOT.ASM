@@ -178,7 +178,7 @@ s_drive db 'A: FAT12 floppy, $'
 s_kb    db ' KB.',13,10,'$'
 s_already db 'It already has the Lodestone loader (this rewrites it).',13,10,'$'
 s_ask   db 'Write the Lodestone boot sector to drive '
-s_askd  db 'A:?  Files are kept. (Y/N) $'
+s_askd  db '?:?  Files are kept. (Y/N) $'    ; (the letter put in at the start)
 s_yes   db 'Y',13,10,'$'
 s_cancel db 'N',13,10,'Nothing written.',13,10,'$'
 s_rderr db 'Cannot read the boot sector - is a formatted disk in the drive?',13,10,'$'

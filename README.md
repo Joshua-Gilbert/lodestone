@@ -157,7 +157,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,451 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,458 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -171,6 +171,7 @@ python3 tests/test_claude_kernel.py   # Claude-link scenarios on the kernel
 python3 tests/test_claude_mouse.py    # the mouse in Claude's views
 python3 tests/test_resident.py        # resident Claude: CLAUDE /R and /U, over other programs
 python3 tests/test_resident_term.py   # resident Claude's console, with gridlink and a stand-in Claude Code
+python3 tests/test_mt.py              # multitasking (MULTITASK=1), and nothing of it with the switch off
 python3 tests/test_hdprobe.py         # HDPROBE
 python3 tests/test_hdscan.py          # HDSCAN
 python3 tests/test_headcln.py         # HEADCLN

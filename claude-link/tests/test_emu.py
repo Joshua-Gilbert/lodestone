@@ -300,6 +300,23 @@ def test_gpib_scan():
     check(h)
 
 
+def test_gridgpib_unload():
+    """GRIDGPIB /U with the driver resident on its own (GRiD MS-DOS): INT 60h
+    back as it was before the install, the driver's memory freed."""
+    import grid_emu as G
+    m = G.Machine()
+    m.fs['A:\\GRIDGPIB.COM'] = bytearray(open(G.GRIDGPIB_COM, 'rb').read())
+    m.mu.mem_write(0x70010, b'\xCF'); m.mu.mem_write(0x60 * 4, struct.pack('<HH', 0x0010, 0x7000))   # an IRET before
+    vec0, blocks0 = m.rd(0, 0x60 * 4, 4), sorted(map(tuple, m.blocks))
+    m.run_program('A:\\GRIDGPIB.COM', limit_us=5e6)
+    assert m.rd(0, 0x60 * 4, 4) != vec0, 'not installed'
+    m.tty.clear()
+    out = m.run_program('A:\\GRIDGPIB.COM', '/U', limit_us=5e6)
+    assert 'Unloaded' in out, out
+    assert m.rd(0, 0x60 * 4, 4) == vec0, (m.rd(0, 0x60 * 4, 4).hex(), vec0.hex())
+    assert sorted(map(tuple, m.blocks)) == blocks0, (m.blocks, blocks0)
+
+
 def test_missing_program():
     h = start([reply(('tool', 'grid_command', {'command': 'NOSUCH /X'})),
                reply(('text', 'It does not exist.'))], mode='auto')

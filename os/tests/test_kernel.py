@@ -117,20 +117,31 @@ def t_shell():
     o = sh.run('del sub\\*.*', 'y')
     check('DEL *.* asks', 'Are you sure (Y/N)?' in o, o)
     check('RD', 'Invalid path' not in sh.run('rd sub') and 'SUB' not in sh.run('dir'))
-    # reads from the serial ports: COM2's from COM2 (they read nothing)
-    pc = k.pc; com = {0: list(b'one\r\n'), 1: list(b'two\r\n')}; asked = set()
+    # the serial ports, through an INT 14h like the 1520's: a port whose
+    # base in the BDA is 0 answers with AX as it was (no time-out bit)
+    pc = k.pc; com = {}; asked = []; sent = {0: b'', 1: b''}
+    pc.mu.mem_write(0x400, struct.pack('<HH', 0x3F8, 0x2F8))
     def int14():
         ah, dx = pc.r('ah'), pc.r('dx')
-        if ah == 2: asked.add(dx)
+        if ah == 2: asked.append(dx)
+        if not pc.u16(0x40, 2 * dx) and len(asked) < 200: return
+        if ah == 1: sent[dx] += bytes([pc.r('al')]); pc.w('ax', pc.r('al')); return
         if ah == 2 and com.get(dx): pc.w('ax', com[dx].pop(0)); return
         pc.w('ax', 0x8000 | (pc.r('ax') & 0xFF))
     pc.int14 = int14
+    com[1] = list(b'two\r\n')
     sh.run('copy com2 c2.txt')
     o = sh.run('type c2.txt')
-    check('COM2 reads COM2', 'two' in o and asked == {1}, (o, asked))
-    asked.clear(); sh.run('copy aux c1.txt')
+    check('COM2 reads COM2 (they read nothing)', 'two' in o and set(asked) == {1}, (o, asked))
+    com[0] = list(b'one\r\n'); asked.clear()
+    sh.run('copy aux c1.txt')
     o = sh.run('type c1.txt')
-    check('AUX reads COM1', 'one' in o and asked == {0}, (o, asked))
+    check('AUX reads COM1', 'one' in o and set(asked) == {0}, (o, asked))
+    sh.run('echo to1 > aux'); sh.run('echo to2 > com2')
+    check('AUX writes COM1, COM2 writes COM2', sent == {0: b'to1 \r\n', 1: b'to2 \r\n'}, sent)
+    pc.mu.mem_write(0x402, b'\0\0'); asked.clear()          # no COM2
+    o = sh.run('copy com2 c3.txt')
+    check('no COM2: the BIOS not asked (it would answer for ever), COPY back', not asked and 'A:\\>' in o, (asked[:5], o))
     del pc.int14
     sh.run('del c?.txt')
     sh.run('echo y | del *.bak')
@@ -209,7 +220,8 @@ def t_capture():
     k = ktest.KPC(image('cap.img', os.path.join(HERE, 'CAPTEST.COM'), os.path.join(GOS, 'src', 'LCMD.COM'))); k.start()
     files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
     beeps = lambda: ''.join(k.pc.tty).count('\x07')
-    calls21 = []                                # (AX) of the capture's 3Eh, 40h and F0h calls
+    calls21 = []                                # (AX) of the 3Eh, 40h and F0h calls made during a shot
+                                                #  (only the capture's: the Executive is idle then)
     def rec(pc):
         if pc.r('cs') == 0x60 and pc.r('ip') == k.Y['int21'] and pc.r('ah') in (0x3E, 0x40, 0xF0): calls21.append(pc.r('ax'))
     closes = lambda: sum(1 for a in calls21 if a >> 8 == 0x3E)
@@ -278,8 +290,8 @@ def t_capture():
     # handler would have kept the error for its next message)
     before = bytes(k.pc.drives[0].img)
     k.pc.drives[0].wp = True; shot(); k.pc.drives[0].wp = False
-    check('write-protected: a long beep, the disk untouched, no INT 24h, closed no more than once',
-          beeps() == 4 and bytes(k.pc.drives[0].img) == before and k.u16('crit_err') == 0 and closes() <= 1,
+    check('write-protected: a long beep, the disk untouched, no INT 24h, nothing to close',
+          beeps() == 4 and bytes(k.pc.drives[0].img) == before and k.u16('crit_err') == 0 and closes() == 0,
           (beeps(), k.u16('crit_err'), closes()))
     # another disk put in, which a program already read through the BIOS
     # (the change line is clear) and no INT 21h 0Dh yet: the capture must
@@ -1072,16 +1084,17 @@ def t_gridgpib():
     driver on INT 60h is the kernel's, so nothing is unloaded (it re-pointed
     INT 60h at junk and freed a block it took for the driver's)."""
     gg = os.path.join(GOS, '..', 'tools', 'GRIDGPIB.COM')
-    k = ktest.KPC(image('gg.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(HERE, 'MEMSZ.COM'), gg),
-                  chip=sim7210.NEC7210(sim7210.bus())); k.start()          # (the kernel's driver only with the chip)
+    chip = sim7210.NEC7210(sim7210.bus())       # (the kernel's driver only with the chip)
+    k = ktest.KPC(image('gg.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(HERE, 'MEMSZ.COM'), gg), chip=chip); k.start()
     check('the kernel\'s GPIB driver on INT 60h', k.pc.u16(0, 0x60 * 4 + 2) == 0x60)
     sh = Shell(k)
-    vec, kb = k.pc.rd(0, 0x60 * 4, 4), shell_memsz(sh)
+    vec, kb, ren = k.pc.rd(0, 0x60 * 4, 4), shell_memsz(sh), chip.ren
     o = sh.run('gridgpib /u && echo EL0 || if errorlevel 5 echo EL5')
     lines = [l.strip() for l in o.split('\n')]
     check('GRIDGPIB /U: refused (built in), exit code 5', 'built into the system' in o and 'EL5' in lines, o)
     check('... INT 60h still the kernel\'s, memory as it was', k.pc.rd(0, 0x60 * 4, 4) == vec and shell_memsz(sh) == kb,
           (k.pc.rd(0, 0x60 * 4, 4).hex(), vec.hex(), kb))
+    check('... the bus left alone (REN still on: it sent everyone to local first)', ren and chip.ren, (ren, chip.ren))
     check('... and GRIDGPIB still finds the driver', 'Already installed' in sh.run('gridgpib'))
 
 def t_command():

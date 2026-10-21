@@ -178,11 +178,13 @@ def t_term_to_chat_hides_the_pointer():
 
 
 if __name__ == '__main__':
+    tests = [t_click_follows_a_link, t_no_mouse, t_plot_click_types_into_the_prompt, t_chat_leaves_the_mouse,
+             t_term_to_chat_hides_the_pointer]
     why = missing()
-    if why:
-        print('skip: the stand-in Firefox needs Node and jsdom (%s)' % why); sys.exit(0)
-    for t in (t_click_follows_a_link, t_no_mouse, t_plot_click_types_into_the_prompt, t_chat_leaves_the_mouse,
-              t_term_to_chat_hides_the_pointer):
+    if why:                                     # (the first two are gridfox's)
+        print('skip t_click_follows_a_link, t_no_mouse: the stand-in Firefox needs Node and jsdom (%s)' % why)
+        tests = tests[2:]
+    for t in tests:
         t0 = time.time()
         try:
             t()
