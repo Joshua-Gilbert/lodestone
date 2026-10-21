@@ -541,8 +541,9 @@ class Audit:
         s.seg = seg = mt_seg(k)
         s.at, s.sa, s.swa, s.ex = (seg * 16 + k.Y[n] for n in ('mt_preempt', 'mt_safe', 'mt_switch', 'mt_exit'))
         s.fd, s.fdw, s.due = seg * 16 + k.Y['mt_fdrain'], seg * 16 + k.Y['mt_fdrain.w'], False
-        s.inject, s.injected, s.open, s.nested = None, 0, {}, 0    # (IRQ 13 at mt_fdrain, when inject() says;
-                                                                    #  open drains: SS -> where they return)
+        s.inject, s.injected, s.open, s.nested = None, 0, {}, collections.Counter()
+        # (IRQ 13 at mt_fdrain, when inject() says; open drains: SS -> the SP and where its call returns; switches
+        #  started inside one, by path)
         s.ret = {k.Y['mt_tick.r']: 'tick', k.Y['mt_exit.n']: 'exit'}
         s.prev, k.pc.watch = k.pc.watch, s.watch
     def stop(s): s.k.pc.watch = s.prev
@@ -569,12 +570,13 @@ class Audit:
         if s.track:
             if pc.r('ss') != s.track[0] or pc.r('cs') not in (s.seg, 0x60): s.track = None
             else: s.depth[s.track[2]] = max(s.depth[s.track[2]], s.track[1] - pc.r('sp'))
-        if s.open and a in s.open.values():                 # (back from mt_fdrain: its RET's target)
-            s.open = {ss: r for ss, r in s.open.items() if not (r == a and ss == pc.r('ss'))}
+        if s.open:                                          # (back from that very mt_fdrain call: its RET's
+            ss = pc.r('ss')                                 #  target, its SP above the return address)
+            if ss in s.open and s.open[ss][1] == a and pc.r('sp') == s.open[ss][0] + 2: del s.open[ss]
         if a == s.fd:
             ss = pc.r('ss')
-            again = ss in s.open                            # (a drain inside one: no second IRQ)
-            if not again: s.open[ss] = s.seg * 16 + pc.u16(ss, pc.r('sp'))
+            again = ss in s.open                            # (a drain inside this task's: no second IRQ)
+            if not again: s.open[ss] = (pc.r('sp'), s.seg * 16 + pc.u16(ss, pc.r('sp')))
             s.due = s.inject and not again and s.inject()
         elif a == s.fdw and s.due:                          # (interrupts on: raised and taken here, pcemu
             s.due = False                                   #  delivering IRQs as its run loop starts again)
@@ -587,8 +589,8 @@ class Audit:
             if len(no) == 1: s.only[no[0]] += 1
         elif a == s.at:
             ss, sp = pc.r('ss'), pc.r('sp')
-            if ss in s.open: s.nested += 1                  # (inside a drain of this task's, its IRQ 13 handler's)
             path = s.ret.get(pc.u16(ss, sp), '?')
+            if ss in s.open: s.nested[path] += 1            # (inside a drain of this task's, its IRQ 13 handler's)
             f = sp + 12 if path == 'tick' else sp + 4 + 20     # (mt_tick's 5 pushes, or BP and INT 21h's frame: IP, CS, FL)
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
             r, cur = s.rules(cs, ip, fl, ss)
@@ -889,14 +891,16 @@ def t_fpu():
         return cur and reg <= vec(k, 0x75)[0] < reg + k.pc.u16(reg - 1, 3)      # (the E task's own error)
     au.inject = inj
     v75 = vec(k, 0x75)
-    typ(k, 'mtlaunch mtspin.com 20 e1.txt e;mtspin.com 20 e2.txt p', 3.0); line(k, '')
+    typ(k, 'mtlaunch mtspin.com 40 e1.txt e;mtspin.com 40 e2.txt p', 4.0); line(k, '')
     au.inject = None
     e1, e2 = spun(k, 'E1.TXT'), spun(k, 'E2.TXT')
-    check('a coprocessor error pending at each switch from a task (IRQ 13, %d times): handled first, before anything is '
-          'saved, by its handler, which was itself switched from %d times (a tick in it); both tasks counted (%d and %d, the '
-          'second keeping its own coprocessor values), the machine intact, INT 75h given back'
-          % (au.injected, au.nested, e1, e2), au.injected > 5 and au.nested > 0 and e1 > 0 and e2 > 0 and not k.crashed
-          and not au.bad() and vec(k, 0x75) == v75, (au.injected, au.nested, e1, e2, au.bad()[:2], vec(k, 0x75), v75))
+    nt, nx = au.nested['tick'], au.nested['exit']
+    check('a coprocessor error pending when a task is switched from (IRQ 13, %d times, never again inside its own '
+          'handler): handled first, before anything is saved, by its handler, which was itself switched from (%d times at '
+          'a tick in it, %d on its INT 21h\'s way out); both tasks counted (%d and %d, the second keeping its own '
+          'coprocessor values), the machine intact, INT 75h given back' % (au.injected, nt, nx, e1, e2),
+          au.injected >= 3 and nt > 0 and nx > 0 and e1 > 0 and e2 > 0 and not k.crashed
+          and not au.bad() and vec(k, 0x75) == v75, (au.injected, dict(au.nested), e1, e2, au.bad()[:2], vec(k, 0x75), v75))
     au.stop()
     k = boot('mt_nf.img', b'MULTITASK=1\r\n', 88, nofpu=True)
     seg = mt_seg(k)
