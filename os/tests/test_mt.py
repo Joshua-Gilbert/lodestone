@@ -1421,8 +1421,8 @@ def t_keys():
         waitfile(k, 'S%s.TXT' % ms.upper(), 6.0)
         line(k, '')
     check('behind MTSPIN (in front, reading no keys), "abc" typed: MTKEY\'s INT 16h peeks find none (P %s), and Q\'s '
-          'with interrupts off none either (%s: whose code it is that counts), each back with interrupts on, as the '
-          'BIOS\'s are; nor DOS\'s key status, AH=06h or the flush '
+          'with interrupts off none either (%s, counting those back with interrupts on, as the BIOS\'s are: whose code '
+          'it is that counts); nor DOS\'s key status, AH=06h or the flush '
           '(D %s); the keys still there for the front task' % (got['p'], got['q'], got['d']),
           got['p'] and got['p'][0] > 10 and got['p'][1] == 0 and got['q'] and got['q'][0] > 10 and got['q'][1] == 0
           and got['d'] == (0, 0) and all(r == (1, [0x61, 0x62, 0x63]) for r in rings), (got, rings))
@@ -1621,8 +1621,9 @@ def t_keys():
     k.run_for(1.0)
     line(k, '')
     # a background task at a DOS key wait it can't be switched from: a nested INT 21h (InDOS 2, set by the test for
-    # that wait, as an INT 24h handler's own read would have it): it comes to the front for its keys, which only the
-    # front task gets; inside an INT 13h call (the count set by the test): as it is, it reads them there
+    # that wait, as a TSR's read from the kernel's INT 28h would have it): it comes to the front for its keys, which
+    # only the front task gets; inside an INT 13h call or a change of the front (set by the test): as it is, it reads
+    # them there
     hit, prev = [], k.pc.watch
     bg, hv = seg * 16 + Y['mt_kwait.bg'], seg * 16 + Y['mt_kwait.have']
     for n, tag in enumerate(('indos', 'in13', 'swing')):
@@ -1670,7 +1671,7 @@ def t_keys():
     check('every switch made from INT 16h (%d) or elsewhere (%d) at a safe point' % (len(au.switches(0, 'i16')),
           len(au.switches())), au.switches(0, 'i16') and not au.bad(), au.bad()[:3])
     check('the stack MT used under the caller\'s SP there: %d bytes at the tick, %d at INT 16h, %d at a peek (under '
-          '64: the front changed on MT\'s own)' % (au.depth['tick'], au.depth['i16'], au.depth['peek']),
+          '64; at the tick, the front changed on MT\'s own)' % (au.depth['tick'], au.depth['i16'], au.depth['peek']),
           all(0 < au.depth[p] < 64 for p in ('tick', 'i16', 'peek')), au.depth)
     au.stop()
     # a TSR's INT 16h hook loaded after MT, waiting in its own loop (as Resident Claude's does): its peeks are its

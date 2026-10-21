@@ -163,6 +163,8 @@ mt_in13     db      0                   ; INT 13h calls running (mt_i13)
 mt_swing    db      0                   ; 1: mt_swnow is changing the front
                                         ;  (after mt_in13, for mt_i16's test)
 mt_crit     db      0                   ; the kernel's INT 24h running (mt_c24)
+mt_idle     db      0                   ; 1: a key wait in the kernel's idle
+                                        ;  (its INT 28h; mt_kwait .idle)
 mt_old16    dd      0                   ; INT 16h as it was
 mt_mid      db      0                   ; 1: the front changed while the one in
                                         ;  front may be in the middle of its run
@@ -361,8 +363,10 @@ mt_safe:
         jne     .no
         cmp     byte [cs:mt_inb], 0     ; (a hook's code inside a call MT
         jne     .no                     ;  passed on to the BIOS, or inside an
-        cmp     byte [cs:mt_in13], 0    ;  INT 13h call: an INT 15h or 40h hook
-        jne     .no                     ;  the BIOS calls out to meanwhile)
+        cmp     word [cs:mt_in13], 0    ;  INT 13h call: an INT 15h or 40h hook
+        jne     .no                     ;  the BIOS calls out to meanwhile; or
+                                        ;  a handler's, on its own stack, while
+                                        ;  mt_swnow changes the front)
         push    es                      ; (m33_busy is the UI's)
         mov     es, [ui_seg]
         cmp     byte [es:m33_busy], 0
@@ -512,6 +516,7 @@ mt_fdrain:
 ;  kbd_get.k: a task waits for a key (inside INT 21h; DS anything)
 ; ---------------------------------------------------------------------
 mt_kwait:
+        mov     byte [cs:mt_idle], 0    ; (back from the kernel's idle)
         push    ds
         push    ax
         push    bx
@@ -535,8 +540,9 @@ mt_kwait:
         jmp     .top
 .idle:  pop     bx                      ; the kernel's own wait: PrtSc,
         pop     ax                      ;  INT 28h, HLT, and here again
-        pop     ds
-        jmp     KSEG:kbd_get.k + 6
+        pop     ds                      ;  (a TSR popping up from that INT 28h
+        mov     byte [cs:mt_idle], 1    ;  on the kernel's stack: its INT 16h
+        jmp     KSEG:kbd_get.k + 6      ;  calls its own, not the kernel's)
 .have:  pop     bx
         pop     ax
         pop     ds
@@ -697,8 +703,9 @@ mt_load:
         cli
         cld
         mov     byte [cs:mt_inb], 0     ; (none under way at a switch, nor an
-        mov     byte [cs:mt_crit], 0    ;  INT 24h prompt or INT 13h call: one
-        mov     byte [cs:mt_in13], 0    ;  left by a program ended inside it,
+        mov     byte [cs:mt_crit], 0    ;  INT 24h prompt, INT 13h call, change
+        mov     word [cs:mt_in13], 0    ;  of the front or kernel's idle: one
+        mov     byte [cs:mt_idle], 0    ;  left by a program ended inside it,
         mov     [cs:mt_cur], bl         ;  cleared)
         mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
         mov     byte [cs:mt_slice], 1
@@ -895,9 +902,10 @@ mt_screen:
 
 ; MT_END: from a task's stub, its program done.  Its handles (the
 ; inherited ones) closed, its region freed, and another task runs.
-mt_end: mov     byte [cs:mt_inb], 0     ; (as in mt_load; and INT 13h's count,
-        mov     byte [cs:mt_crit], 0    ;  should one have been left)
-        mov     byte [cs:mt_in13], 0
+mt_end: mov     word [cs:mt_vbusy], 0   ; (as in mt_load; and INT 13h's count,
+        mov     byte [cs:mt_crit], 0    ;  should one have been left; and a
+        mov     word [cs:mt_in13], 0    ;  change of the front its handler ended
+                                        ;  it inside: mt_swing, mt_vbusy)
         mov     al, [cs:mt_cur]
         or      al, al
         jz      mt_bad                  ; (not the Executive)
@@ -952,7 +960,9 @@ mt_end: mov     byte [cs:mt_inb], 0     ; (as in mt_load; and INT 13h's count,
 
 ; MT_SPAWN: DS:DX = the program, ES:BX = the block -> AL = the new task
 mt_spawn:
-        mov     byte [cs:mt_inb], 0     ; (as in mt_end)
+        mov     byte [cs:mt_inb], 0     ; (as in mt_end, but not mt_swing nor
+                                        ;  mt_vbusy: a handler's spawn inside
+                                        ;  a change of the front leaves them)
         mov     byte [cs:mt_crit], 0
         mov     byte [cs:mt_in13], 0
         mov     al, 1                   ; a free entry
@@ -1331,33 +1341,44 @@ mt_hot: pushf
 
 ; the task asked for in front (mt_swreq: CODE-Tab, MT_FRONT), if there is
 ; one and it is still there, brought there now: the caller is where tasks
-; may switch.  On MT's own stack (the screens' copies, the BIOS's mode set
-; and the INT 33h driver need more than a program's may have), with
-; interrupts on (as in a key wait; after, as they were) and mt_swing set:
-; nothing switches meanwhile (mt_safe: not the task's stack; mt_can), and
-; a handler's call meanwhile leaves it for later.  From mt_preempt the one
+; may switch.  The coprocessor drained first, on the caller's stack.  Then
+; on MT's own (1 KB: the screens' copies, the BIOS's mode set, the INT 33h
+; driver and a program's mouse handler need more than a program's may
+; have), with interrupts on (as in a key wait; after, as they were) and
+; mt_swing set: nothing switches meanwhile (mt_safe, mt_can), and a
+; handler's call meanwhile leaves it for later.  From mt_preempt the one
 ; in front may be in the middle of its run (mt_mid, for mt_scrsv); from a
 ; key wait (mt_swkw) it is not, if it is the one waiting.  AX changed
 mt_swkw:
-        mov     al, [cs:mt_cur]
-        cmp     al, [cs:mt_front]
-        mov     byte [cs:mt_mid], 0
-        je      mt_swnow.go
+        mov     ah, 0
+        jmp     short mt_swnow.go
 mt_swnow:
-        mov     byte [cs:mt_mid], 1
+        mov     ah, 1
 .go:    cmp     byte [cs:mt_swing], 0   ; (one under way: this one later)
         jne     .x
-        mov     al, 0FFh
+        cmp     byte [cs:mt_swreq], 0FFh
+        je      .x
+        pushf
+        call    mt_fdrain               ; (first, on the caller's own stack: a
+        cli                             ;  coprocessor error pending taken
+        mov     al, 0FFh                ;  there, not on MT's)
         xchg    al, [cs:mt_swreq]
         cmp     al, 0FFh
-        je      .x
+        je      .r
         push    bx
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_FREE
         pop     bx
-        je      .x
-        pushf
-        cli
+        je      .r
+        or      ah, ah                  ; (only now: a call meanwhile, refused,
+        jnz     .m                      ;  leaves this one's; and from a key
+        push    ax                      ;  wait, the one in front as it is
+        mov     al, [cs:mt_cur]         ;  after the drain: its own if it is
+        cmp     al, [cs:mt_front]       ;  the one waiting.  AL: the task for
+        pop     ax                      ;  mt_scrto)
+        je      .m
+        inc     ah
+.m:     mov     [cs:mt_mid], ah
         mov     [cs:mt_ssv], sp
         mov     [cs:mt_ssv + 2], ss
         push    cs
@@ -1370,7 +1391,7 @@ mt_swnow:
         mov     byte [cs:mt_swing], 0
         mov     ss, [cs:mt_ssv + 2]
         mov     sp, [cs:mt_ssv]
-        popf
+.r:     popf
 .x:     ret
 
 ; ---------------------------------------------------------------------
@@ -1426,9 +1447,11 @@ mt_i16:
         jnz     .pas
         mov     ax, ss                  ; whose?  The kernel's or MT's key wait
         cmp     ax, KSEG                ;  (on the kernel's stack, through a
-        je      .k                      ;  TSR's hook too), or the program's
-        mov     ax, [bp+4]              ;  own code (not a TSR's hook's, the
-        call    mt_mine                 ;  ROM's, the frame's)?
+        jne     .own                    ;  TSR's hook too, but not a pop-up's
+        cmp     byte [cs:mt_idle], 0    ;  from the kernel's INT 28h), or the
+        je      .k                      ;  program's own code (not a TSR's
+.own:   mov     ax, [bp+4]              ;  hook's, the ROM's, the frame's)?
+        call    mt_mine
         jc      .pas
         lea     bx, [bp+8]              ; where it may be switched from?
         mov     [cs:mt_lsp], bx
@@ -2854,7 +2877,7 @@ mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 
 MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
-MT_SSTK     equ     512                 ;  on the paragraph after the image;
+MT_SSTK     equ     1024                ;  on the paragraph after the image;
 MT_PARAS    equ     MT_TX0P + TX_PARAS + MT_SSTK / 16   ; then mt_swnow's stack
 
 section mttbss

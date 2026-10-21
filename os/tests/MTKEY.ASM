@@ -52,7 +52,7 @@ org 100h
         je      .hx
         cmp     al, 'Y'
         jne     .nx
-.hx:        push    es
+.hx:    push    es
         xor     ax, ax
         mov     es, ax
         cli
@@ -236,7 +236,6 @@ t18:    push    es
         pop     es
         ret
 
-; CF while the end isn't reached
 ; Q's call, its flags BX: counted if back with interrupts on, found if ZF
 ; clear
 qcount: test    bh, 2
@@ -247,6 +246,7 @@ qcount: test    bh, 2
         inc     word [cb]
 .x:     ret
 
+; CF while the end isn't reached
 tdone:  push    es
         push    40h
         pop     es
