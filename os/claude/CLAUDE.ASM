@@ -125,8 +125,7 @@ start:  call    res_args                ; CLAUDE /R, /U: before BSS is touched
         jnc     .mem
         mov     dx, msg_nomem
         jmp     fatal
-.mem:   call    crc_init
-        call    sys_probe
+.mem:   call    sys_probe
         mov     si, s_title0
         mov     di, title_text
         call    copyz
@@ -3702,7 +3701,6 @@ snap_reply  resb 1
 reqbuf      resb REQMAX + 4
 hellobuf    resb 512
 evans       resb 4
-crctab      resw 256
 ; Term
 term        resb 1                      ; 1: the GRiD is Claude Code's terminal
 t_active    resw 1                      ; tick of the last key or screen change
