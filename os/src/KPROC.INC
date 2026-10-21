@@ -35,7 +35,9 @@ section .text
 ex_hdr      equ ren_de          ; .EXE header (28 of its 32 bytes)
 ex_rel      equ path_buf        ; relocation entries, 64 at a time (256 of
                                 ;  path_buf's and path2_buf's 260)
-        times -(path2_buf - path_buf != 130) db 0       ; (they must stay together)
+        times -(path2_buf - path_buf != 130) db 0       ; (they must stay together,
+        times -(nm11 - path_buf < 256) db 0             ;  nothing between, 256 B;
+        times -(ren_de_end - ren_de < 28) db 0          ;  ren_de holds the header)
 
 proc_init:
         mov     bx, 32                  ; master environment, 512 bytes

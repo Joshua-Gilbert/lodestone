@@ -1096,6 +1096,36 @@ t_time: STEP 1
         EQ      cx, (12 << 11)
         mov     bx, [h1]
         DOS     3Eh
+        STEP 4                          ; 2Dh, then 2Ch and a new file's time
+        mov     cx, 0A0Bh               ;  (10:11:12.00) as it was set
+        mov     dx, 0C00h
+        mov     ah, 2Dh
+        int     21h
+        or      al, al
+        jnz     fail
+        DOS     2Ch
+        EQ      cx, 0A0Bh
+        cmp     dh, 12
+        jb      fail
+        cmp     dh, 13
+        ja      fail
+        mov     dx, f_tm
+        xor     cx, cx
+        DOS     3Ch
+        mov     [h1], ax
+        mov     bx, ax
+        mov     ax, 5700h
+        int     21h
+        jc      fail
+        mov     ax, cx
+        shr     ax, 5
+        EQ      ax, (10 << 6) | 11      ; 10:11
+        and     cx, 1Fh
+        EQ      cx, 6                   ; 12 or 13 s: six 2-second units
+        mov     bx, [h1]
+        DOS     3Eh
+        mov     dx, f_tm
+        DOS     41h
         clc
         ret
 
@@ -1389,6 +1419,7 @@ d_sub       db 'SUB', 0
 d_up        db '..', 0
 d_dot       db '.', 0
 d_subw      db 'S?B', 0
+f_tm        db 'TM.DAT', 0
 d_subdot    db 'SUB\.', 0
 d_root      db '\', 0
 f_in        db 'IN.TXT', 0

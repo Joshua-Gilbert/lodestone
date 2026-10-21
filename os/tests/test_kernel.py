@@ -528,8 +528,8 @@ def t_cache(ems=0):
     o = sh.run('type big.txt', 'f')
     good = all('line %04d of the bad-sector file' % i in o for i in range(440, 451))
     check('bad sector: the file reads up to it, then Data error, read-ahead gave up once' + tag,
-          good and 'Data error reading drive A' in o and 'line 0460' not in o and k.pc.calls_bad <= 9,
-          '%d failed reads; %s' % (k.pc.calls_bad, o[-400:]))
+          good and 'Data error reading drive A' in o and 'line 0460' not in o and getattr(k.pc, 'calls_bad', 0) <= 9,
+          '%d failed reads; %s' % (getattr(k.pc, 'calls_bad', 0), o[-400:]))
     # a weak drive head (the 1520's side 0, inner tracks): a read of several
     # sectors on these tracks always fails with a CRC error, each sector on
     # its own reads fine.  The kernel falls back to sector-by-sector: the
@@ -1113,8 +1113,13 @@ def t_exerel():
     k = ktest.KPC(image('exe.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'CUT.EXE=' + os.path.join(OUT, 'CUT.EXE'),
                         'WHOLE.EXE=' + os.path.join(OUT, 'WHOLE.EXE'))); k.start()
     sh = Shell(k)
+    src = open(os.path.join(GOS, 'src', 'KFILE.INC')).read()
+    eq = lambda n: int(re.search(r'^%s\s+equ\s+(\d+)' % n, src, re.M).group(1))
+    refs = lambda: [k.pc.rd(0x60, k.Y['sft'] + i * eq('SFT_SZ') + eq('S_REF'), 1)[0] for i in range(eq('NSFT'))]
+    r0 = refs()
     o = sh.run('cut')
     check('relocation table past the end: not run', 'RAN' not in o and not k.crashed, o)
+    check('... the handles it inherited given back (SFT counts as before)', refs() == r0, (r0, refs()))
     o = sh.run('whole')
     check('... the same with its table there: runs', 'RAN' in o and not k.crashed, o)
 
