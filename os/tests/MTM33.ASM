@@ -16,6 +16,11 @@
 ;      interrupt in service): FILE gets "nnnn kkkk xxxx", the handler's
 ;      calls, how many of them were given (200, 96), and the position's
 ;      x its own code is given then
+;   G  sets mode 40h, waits 18 ticks (to be sent behind meanwhile), resets
+;      the mouse, writes FILE as F (its ranges: mode 40h's), then waits for
+;      "q" and ends
+;   D  stays resident as another INT 33h driver (not chaining): it counts
+;      AX=1 up and AX=2 down, in the word before its handler
 ; nasm -f bin -o MTM33.COM MTM33.ASM
 cpu 286
 org 100h
@@ -40,7 +45,24 @@ org 100h
         pop     es
         cmp     byte [mode], 'X'
         je      .x
-        xor     ax, ax                  ; reset
+        cmp     byte [mode], 'D'
+        je      .d
+        cmp     byte [mode], 'G'
+        jne     .r0
+        mov     ax, 0040h               ; G: mode 40h, a while, then the reset
+        int     10h
+        call    w18
+        xor     ax, ax
+        int     33h
+        call    rec
+        jmp     .k
+.d:     mov     ax, 2533h               ; D: INT 33h its own, resident
+        mov     dx, d33
+        int     21h
+        mov     dx, (the_end - $$ + 100h + 15) / 16
+        mov     ax, 3100h
+        int     21h
+.r0:    xor     ax, ax                  ; reset
         int     33h
         cmp     byte [mode], 'T'
         je      .pos
@@ -94,21 +116,7 @@ org 100h
         mov     ax, 251Ch
         mov     dx, h1c
         int     21h
-        push    es
-        push    40h
-        pop     es
-        mov     dx, [es:6Ch]
-        add     dx, 18
-        pop     es
-.tw:    sti
-        hlt
-        push    es
-        push    40h
-        pop     es
-        mov     ax, [es:6Ch]
-        pop     es
-        sub     ax, dx
-        js      .tw
+        call    w18
         push    ds
         lds     dx, [o1c]
         mov     ax, 251Ch
@@ -156,6 +164,31 @@ rec3:   push    cx
         mov     ah, 3Eh
         int     21h
 .x:     ret
+
+; 18 ticks, with HLT.  AX, DX changed
+w18:    push    es
+        push    40h
+        pop     es
+        mov     dx, [es:6Ch]
+        add     dx, 18
+.w:     sti
+        hlt
+        mov     ax, [es:6Ch]
+        sub     ax, dx
+        js      .w
+        pop     es
+        ret
+
+; D's INT 33h: show count (AX=1 up, AX=2 down)
+dcnt    dw      0
+d33:    cmp     ax, 1
+        jne     .h
+        inc     word [cs:dcnt]
+        iret
+.h:     cmp     ax, 2
+        jne     .r
+        dec     word [cs:dcnt]
+.r:     iret
 
 ; the event handler: counts its calls
 hand:   inc     word [cs:cnt]

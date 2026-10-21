@@ -4,7 +4,7 @@ when one waits for a key (M2a), the front one chosen with CODE-Tab, each with
 its own screen (M2b), preempted at the timer's tick where it is safe (M3), each
 with its own coprocessor (M3b), a background task's output in its own screen and a
 task that writes the screen itself frozen there (M4a), keys for the front task
-only and CODE-Tab wherever it is typed (M4b).
+only and CODE-Tab wherever it is typed (M4b), each task's own mouse (M4c).
 
 (pcemu's INT 16h AH=00h with no key blocks at the caller's own INT 16h, so a
 program waiting there could be preempted even before M4b; on the 1520 it waited
@@ -18,7 +18,7 @@ it.  Programs start others as tasks (MTLAUNCH), each in a region of its own,
 and they take turns at the timer's tick, where it is safe.  Off (no such
 line, any other value, or no EMS), nothing of it is in memory and everything
 is as before.
-python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_rules t_fpu t_screens t_keys t_progs t_rom]"""
+python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_rules t_fpu t_screens t_keys t_mouse t_progs t_rom]"""
 import collections, os, re, struct, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
@@ -1762,14 +1762,14 @@ def t_mouse():
     a3 = (attr(27, 12), attr(25, 12))
     k.key('q', settle=False); k.run_for(0.5)
     b2 = three(A.disk_file(k, 'B1.TXT') or b'')
-    st4, a5, c5 = tstate(k), attr(27, 12), live('m33_cnt')
+    st4, a5, c5, x5 = tstate(k), attr(27, 12), live('m33_cnt'), live('m33_x')
     check('the mouse moved: F\'s pointer follows (50, 12); CODE-Tab: B in front, its pointer where it put it (25, 12), '
           'F\'s gone with F\'s screen; moved: B\'s follows (27, 12); B\'s handler called (%s), its position (216, 96)'
-          % (b2,), a1 == (0x70, 0x07) and st2[1] == 2 and a2 == (0x70, 0x07) and a3 == (0x70, 0x07) and b2
-          and b2[0] >= 1 and b2[1:] == (216, 96), (a1, st2, a2, a3, b2))
+          % (b2,), a1 == (0x70, 0x07) and st2[1] == 2 and a2 == (0x70, 0x07) and a3 == (0x70, 0x07)
+          and b2 == (1, 216, 96), (a1, st2, a2, a3, b2))
     check('B ended in front: the Executive\'s task in front, with its own INT 33h state (the pointer off, as MTLAUNCH '
-          'never asked for it), not B\'s: none drawn on its screen', st4[1] == 0 and a5 == 0x07 and c5 == 0xFFFF,
-          (st4, a5, c5))
+          'never asked for it), not B\'s (x %d, not 216): none drawn on its screen' % x5, st4[1] == 0 and a5 == 0x07
+          and c5 == 0xFFFF and x5 != 216, (st4, a5, c5, x5))
     front(k, 1)
     a4 = attr(50, 12)
     k.pc.mouse_move(8, 0); k.run_for(0.2)
@@ -1788,9 +1788,10 @@ def t_mouse():
         if len(psp) == 2 and not inj and k.pc.r('flags') & 0x200:     # (H's 14h, interrupts on: a packet)
             inj.append((k.pc.r('cs'), k.pc.r('ip'))); k.pc.mouse_move(8, 0); k.pc.mu.emu_stop()
     k.pc.watch = w
+    lx0 = live('m33_x')
     typ(k, 'mtlaunch mtm33.com x x1.txt', 1.0)
     k.pc.watch = prev
-    hh = three(A.disk_file(k, 'H.TXT') or b'')
+    hh, lx1 = three(A.disk_file(k, 'H.TXT') or b''), live('m33_x')
     st3 = tstate(k)
     pre = [e for e in pg if e[0] == e[1] != 0 and e[2] == 0x7F and e[3] == 1]
     h = (m33(1, 'm33_hseg'), m33(1, 'm33_hmask'), m33(1, 'm33_hpsp'))
@@ -1800,11 +1801,12 @@ def t_mouse():
     line(k, '')
     v = sh.run('ver')
     check('... a mouse packet while H\'s own call (14h) is in the driver with interrupts on (in its INT 21h AH=62h, '
-          'at %s): no event handler run meanwhile, H\'s own included (its calls %s)' % (inj, hh),
-          inj and hh is not None and hh[0] == 0, (inj, hh, len(psp)))
+          'at %s): held off (the mouse\'s IRQ masked meanwhile), then the front task\'s: H\'s handler not called, its '
+          'position not moved (%s); the front\'s moved 8 (%d to %d)' % (inj, hh, lx0, lx1),
+          inj and hh == (0, 320, 100) and lx1 == lx0 + 8, (inj, hh, lx0, lx1, len(psp)))
     check('MTM33 X behind runs H, which sets an event handler (on X\'s own state) and ends: forgotten there, as the '
           'driver forgets the front task\'s (%s; set when it ended: %s); X then gets its "q"' % (h, pre[:1]), st3[0][1:] == [(1, 2, 'MTM33.COM')]
-          and pre and h == (0, 0, 0) and x1 is not None and 'Lodestone version' in v and not k.crashed,
+          and pre and h == (0, 0, 0) and x1 == (0, 320, 100) and 'Lodestone version' in v and not k.crashed,
           (st3, pg, h, x1, v[-60:]))
     # a new task that never asks for the mouse: its state the driver's when it started, the pointer off and no
     # handler, so the mouse moving while it is in front is as before
@@ -1857,9 +1859,37 @@ def t_mouse():
               'driver\'s state, as they are: its pointer on the real screen (25, 12), F\'s taken away by its reset'
               % ('MT\'s call to the BIOS' if tag == 'i' else 'an INT 13h call', var), hit and bq == (0, 200, 96)
               and a == (0x70, 0x07, 200) and not k.crashed, (hit, bq, a))
+    # a reset behind in mode 40h (G, /B so it runs there): its ranges its own mode's, not the front one's text
+    typ(k, 'mtlaunch /f /b mtm33.com g g1.txt', 0.1)
+    k.pc.run_until(lambda: k.pc.mode() == 0x40, 5)
+    k.key(HOT, settle=False)
+    g1 = waitthree(k, 'G1.TXT')
+    st5, md5 = tstate(k), k.pc.mode()
+    front(k, 1)
+    k.key('q', settle=False); k.run_for(0.5)
+    line(k, '')
+    check('MTM33 G (mode 40h) sent behind before it resets: its reset there takes its ranges from its own mode (y in '
+          'the middle of 400 rows: %s), the screen in front text (mode %Xh)' % (g1, md5), st5[1] == 0 and md5 == 3
+          and g1 == (0, 320, 200), (st5, hex(md5), g1))
     v = sh.run('ver')
     check('... all ended, the prompt as before', 'Lodestone version' in v and tstate(k)[0] == [(0, 1, 'Executive')]
           and not k.crashed, (v[-60:], tstate(k)))
+    # another mouse driver (MTM33 D, resident, not chaining): MT's hook stays off it, and at each change of the
+    # front its pointer goes (AX=2) and comes back (AX=1): its show count as it was
+    typ(k, 'mtm33 d', 0.5)
+    ds_, do_ = vec(k, 0x33)
+    typ(k, 'mtlaunch /f mtline.com ld.txt', 0.8)
+    st6 = tstate(k)
+    k.key(HOT, settle=False); k.run_for(0.4)
+    k.key(HOT, settle=False); k.run_for(0.4)
+    st7 = tstate(k)
+    line(k, 'd')
+    line(k, '')
+    dc = k.pc.u16(ds_, do_ - 2)
+    check('another INT 33h driver, not the UI\'s: MT\'s hook not put over it; after three changes of the front and the '
+          'front task\'s end, its show count as it was (%d)' % (dc if dc < 0x8000 else dc - 0x10000), vec(k, 0x33) == (ds_, do_)
+          and ds_ != seg and st6[1] == 1 and st7[1] == 1 and dc == 0 and A.disk_file(k, 'LD.TXT') == b'd',
+          (vec(k, 0x33), st6, st7, dc, A.disk_file(k, 'LD.TXT')))
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')

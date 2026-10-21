@@ -183,7 +183,10 @@ mt_old33    dd      0                   ; INT 33h as it was: the UI's driver
 mt_in33     db      0                   ; MT's own INT 33h calls (mt_m33)
 mt_33md     db      0                   ; (mt_i33: 40:49h as it was,
 mt_33dn     dw      0                   ;  m33_dn and m33_dmode,
-mt_33eb     dw      0                   ;  m33_ev and m33_busy)
+mt_33eb     dw      0                   ;  m33_ev and m33_busy,
+mt_33pk     db      0                   ;  the mouse's IRQ bit masked (0Ch,
+mt_33pm     db      0                   ;  14h: 0 else) and the mask before)
+mt_33sb     db      0                   ; (mt_scrto: m33_busy as it was)
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
@@ -965,6 +968,7 @@ mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
         call    mt_m33                  ;  INT 33h pointer off meanwhile)
         xor     al, al                  ;  and its INT 33h state
         call    mt_scrld
+        call    mt_m33on
         xor     al, al
         call    mt_m33ld
         pop     ax
@@ -1550,6 +1554,7 @@ mt_wkey:
 mt_scrto:
         cmp     al, [cs:mt_front]
         je      .x
+        call    mt_m33bz                ; (no event handler meanwhile)
         call    mt_33hk
         push    ax
         mov     al, [cs:mt_front]       ; its INT 33h state kept, then its
@@ -1561,8 +1566,10 @@ mt_scrto:
         pop     ax
         push    ax
         call    mt_scrld
+        call    mt_m33on                ; (another driver's: back on)
         pop     ax
-        jmp     mt_m33ld                ; AL's state, its pointer as it says
+        call    mt_m33ld                ; AL's state, its pointer as it says
+        jmp     mt_m33nb
 .x:     ret
 
 ; INT 33h function AX, if there is an INT 33h (MT's own: mt_i33 lets it
@@ -1609,6 +1616,8 @@ mt_i33: cli
         push    dx
         push    KSEG
         pop     ds
+        mov     ax, [ui_seg]            ; (the UI's driver where the UI is
+        mov     [cs:mt_old33 + 2], ax   ;  now: its block can move)
         cmp     byte [cs:mt_in33], 0
         jne     .pas
         mov     al, [cs:mt_cur]
@@ -1688,18 +1697,37 @@ mt_33in:
         mov     cx, M33_ST / 2
         cld
         rep     movsw
-        mov     al, 0FFh                ; the mode it draws in: none (a reset:
-        or      dx, dx                  ;  the task's own, for its ranges)
-        jz      .own
-        cmp     dx, 21h
-        jne     .m
-.own:   mov     al, [TX_VID]            ; (40:49h)
+        mov     byte [cs:mt_33pk], 0
+        or      dx, dx                  ; a reset: its pointer taken as off
+        jz      .rst                    ;  (mouse_on turns interrupts on: a
+        cmp     dx, 21h                 ;  packet then draws none), its
+        je      .rst                    ;  ranges from its own mode
+        cmp     dx, 0Ch                 ; 0Ch, 14h: interrupts on in the
+        je      .msk                    ;  driver (INT 21h AH=62h): no packet
+        cmp     dx, 14h                 ;  meanwhile, and 40:49h left as it
+        je      .msk                    ;  is
+        mov     al, 0FFh                ; the rest, with interrupts off: the
+        jmp     short .m                ;  driver draws in no mode
+.rst:   mov     word [es:m33_cnt], -1
+        mov     al, [TX_VID]            ; (40:49h)
 .m:     push    40h
         pop     ds
         xchg    al, [49h]
         mov     [cs:mt_33md], al
         pop     ds
         ret
+.msk:   pop     ds
+        cmp     word [es:mfound], 0     ; (no mouse: no packets either)
+        je      .x
+        mov     cl, [es:mirq]
+        mov     ah, 1
+        shl     ah, cl
+        in      al, 21h
+        mov     [cs:mt_33pm], al
+        or      al, ah
+        out     21h, al
+        mov     [cs:mt_33pk], ah
+.x:     ret
 
 ; mt_i33's swap out: the background task's state back to its TX, the
 ; front one's in its place, as it was
@@ -1708,13 +1736,23 @@ mt_33out:
         push    KSEG
         pop     ds
         mov     es, [ui_seg]
-        push    ds
+        mov     ah, [cs:mt_33pk]        ; 0Ch, 14h: the mouse's IRQ unmasked,
+        or      ah, ah                  ;  if it was (else as the call left
+        jz      .md                     ;  it); a packet that came meanwhile
+        test    [cs:mt_33pm], ah        ;  is the front task's, after this
+        jnz     .cp
+        in      al, 21h
+        not     ah
+        and     al, ah
+        out     21h, al
+        jmp     short .cp
+.md:    push    ds
         push    40h
         pop     ds
         mov     al, [cs:mt_33md]
         mov     [49h], al
         pop     ds
-        mov     al, [cs:mt_cur]
+.cp:    mov     al, [cs:mt_cur]
         call    mt_m33sv
         mov     al, [cs:mt_front]
         call    mt_ent
@@ -1749,6 +1787,74 @@ mt_m33sv:
         rep     movsw
         pop     es
         pop     ds
+        ret
+
+; m33_busy set while the front changes (mt_scrto): no event handler runs
+; meanwhile, whose calls would act on the state being swapped (and the
+; tick doesn't switch); mt_m33nb gives it back as it was.  All kept
+mt_m33bz:
+        push    ax
+        push    ds
+        push    es
+        push    KSEG
+        pop     ds
+        mov     ax, [ui_seg]
+        or      ax, ax
+        jz      .x
+        mov     es, ax
+        mov     al, 1
+        xchg    al, [es:m33_busy]
+        mov     [cs:mt_33sb], al
+.x:     pop     es
+        pop     ds
+        pop     ax
+        ret
+mt_m33nb:
+        push    ax
+        push    ds
+        push    es
+        push    KSEG
+        pop     ds
+        mov     ax, [ui_seg]
+        or      ax, ax
+        jz      .x
+        mov     es, ax
+        mov     al, [cs:mt_33sb]
+        mov     [es:m33_busy], al
+.x:     pop     es
+        pop     ds
+        pop     ax
+        ret
+
+; after a change of the front: the pointer back on through INT 33h (AX=1,
+; after mt_scrto's AX=2) when INT 33h is another driver, or a program's
+; hook in front: its show count as it was.  With the UI's driver, or MT's
+; hook over it, mt_m33ld's 17h does that (the count exactly).  All kept
+mt_m33on:
+        push    ax
+        push    bx
+        push    ds
+        push    es
+        push    KSEG
+        pop     ds
+        xor     bx, bx
+        mov     es, bx
+        cmp     word [es:33h * 4], mt_i33
+        jne     .u
+        mov     bx, cs
+        cmp     [es:33h * 4 + 2], bx
+        je      .x
+.u:     cmp     word [es:33h * 4], int33_ui
+        jne     .on
+        mov     ax, [ui_seg]
+        cmp     [es:33h * 4 + 2], ax
+        je      .x
+.on:    mov     ax, 1
+        call    mt_m33
+.x:     pop     es
+        pop     ds
+        pop     bx
+        pop     ax
         ret
 
 ; the driver's state to task AL's TX (none without the UI).  All kept
@@ -1815,6 +1921,11 @@ mt_m33new:
         popf
         mov     word [es:TX_M33 + m33_cnt - m33_st], -1
         xor     ax, ax
+        mov     [es:TX_M33 + m33_mx - m33_st], ax       ; (no counts: the
+        mov     [es:TX_M33 + m33_my - m33_st], ax       ;  front task's)
+        mov     di, TX_M33 + m33_np - m33_st
+        mov     cx, (m33_rly + 4 - m33_np) / 2
+        rep     stosw
         mov     [es:TX_M33 + m33_hmask - m33_st], ax
         mov     [es:TX_M33 + m33_hoff - m33_st], ax
         mov     [es:TX_M33 + m33_hseg - m33_st], ax
@@ -1847,6 +1958,11 @@ mt_33hk:
         mov     [cs:mt_old33 + 2], ax
         mov     word [es:33h * 4], mt_i33
         mov     [es:33h * 4 + 2], cs
+        pusha                           ; the front task's state, the driver's
+        mov     es, ax                  ;  now, kept in its TX: the first time
+        mov     al, [cs:mt_front]       ;  (task 0's), it may be loaded before
+        call    mt_m33sv                ;  a change of the front saved it
+        popa
 .p:     popf
 .x:     pop     es
         pop     ds
@@ -1875,7 +1991,16 @@ mt_pgend:
         mov     [es:TX_M33 + m33_hmask - m33_st], ax
         mov     [es:TX_M33 + m33_hseg - m33_st], ax
         mov     [es:TX_M33 + m33_hpsp - m33_st], ax
-.n:     pop     es
+.n:     cmp     byte [cs:mt_cur], 0     ; the program the UI ran (the root's
+        jne     .e                      ;  child), in task 0: its pointer off
+        mov     ax, [root_psp]          ;  there, as the UI's m33_end will do,
+        push    es                      ;  but to the front task's state
+        mov     es, bx
+        cmp     [es:16h], ax
+        pop     es
+        jne     .e
+        mov     word [es:TX_M33 + m33_cnt - m33_st], -1
+.e:     pop     es
         pop     bx
 .k:     pop     ax
         mov     ax, [ui_seg]
