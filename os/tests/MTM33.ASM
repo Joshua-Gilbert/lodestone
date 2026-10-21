@@ -22,6 +22,8 @@
 ;   D  stays resident as another INT 33h driver (not chaining): it counts
 ;      AX=1 up and AX=2 down, in the word before its handler, and its
 ;      AX=2 calls in the word before that
+;   J  stays resident as a hook on INT 33h that jumps on (JMP FAR) to the
+;      one there before
 ; nasm -f bin -o MTM33.COM MTM33.ASM
 cpu 286
 org 100h
@@ -48,6 +50,8 @@ org 100h
         je      .x
         cmp     byte [mode], 'D'
         je      .d
+        cmp     byte [mode], 'J'
+        je      .j
         cmp     byte [mode], 'G'
         jne     .r0
         mov     ax, 0040h               ; G: mode 40h, a while, then the reset
@@ -59,6 +63,16 @@ org 100h
         jmp     .k
 .d:     mov     ax, 2533h               ; D: INT 33h its own, resident
         mov     dx, d33
+        int     21h
+        mov     dx, (the_end - $$ + 100h + 15) / 16
+        mov     ax, 3100h
+        int     21h
+.j:     mov     ax, 3533h               ; J: a hook on INT 33h, resident
+        int     21h
+        mov     [jold], bx
+        mov     [jold + 2], es
+        mov     ax, 2533h
+        mov     dx, j33
         int     21h
         mov     dx, (the_end - $$ + 100h + 15) / 16
         mov     ax, 3100h
@@ -192,6 +206,10 @@ d33:    cmp     ax, 1
         dec     word [cs:dcnt]
         inc     word [cs:d2cnt]
 .r:     iret
+
+; J's INT 33h: on to the one before, the caller's frame as it is
+j33:    jmp     far [cs:jold]
+jold    dd      0
 
 ; the event handler: counts its calls
 hand:   inc     word [cs:cnt]
