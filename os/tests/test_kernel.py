@@ -117,6 +117,22 @@ def t_shell():
     o = sh.run('del sub\\*.*', 'y')
     check('DEL *.* asks', 'Are you sure (Y/N)?' in o, o)
     check('RD', 'Invalid path' not in sh.run('rd sub') and 'SUB' not in sh.run('dir'))
+    # reads from the serial ports: COM2's from COM2 (they read nothing)
+    pc = k.pc; com = {0: list(b'one\r\n'), 1: list(b'two\r\n')}; asked = set()
+    def int14():
+        ah, dx = pc.r('ah'), pc.r('dx')
+        if ah == 2: asked.add(dx)
+        if ah == 2 and com.get(dx): pc.w('ax', com[dx].pop(0)); return
+        pc.w('ax', 0x8000 | (pc.r('ax') & 0xFF))
+    pc.int14 = int14
+    sh.run('copy com2 c2.txt')
+    o = sh.run('type c2.txt')
+    check('COM2 reads COM2', 'two' in o and asked == {1}, (o, asked))
+    asked.clear(); sh.run('copy aux c1.txt')
+    o = sh.run('type c1.txt')
+    check('AUX reads COM1', 'one' in o and asked == {0}, (o, asked))
+    del pc.int14
+    sh.run('del c?.txt')
     sh.run('echo y | del *.bak')
     check('DEL from a pipe', 'B        BAK' not in sh.run('dir'))
     sh.run('set foo=bar')
@@ -193,9 +209,10 @@ def t_capture():
     k = ktest.KPC(image('cap.img', os.path.join(HERE, 'CAPTEST.COM'), os.path.join(GOS, 'src', 'LCMD.COM'))); k.start()
     files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
     beeps = lambda: ''.join(k.pc.tty).count('\x07')
-    calls21 = []                                # (AX) of the capture's 40h and F0h calls
+    calls21 = []                                # (AX) of the capture's 3Eh, 40h and F0h calls
     def rec(pc):
-        if pc.r('cs') == 0x60 and pc.r('ip') == k.Y['int21'] and pc.r('ah') in (0x40, 0xF0): calls21.append(pc.r('ax'))
+        if pc.r('cs') == 0x60 and pc.r('ip') == k.Y['int21'] and pc.r('ah') in (0x3E, 0x40, 0xF0): calls21.append(pc.r('ax'))
+    closes = lambda: sum(1 for a in calls21 if a >> 8 == 0x3E)
     def shot(sim_s=6.0):
         calls21.clear(); k.hooks.append(rec)
         k.pc.tty.clear(); k.pc.prtsc(); k.settle(sim_s)
@@ -261,8 +278,9 @@ def t_capture():
     # handler would have kept the error for its next message)
     before = bytes(k.pc.drives[0].img)
     k.pc.drives[0].wp = True; shot(); k.pc.drives[0].wp = False
-    check('write-protected: a long beep, the disk untouched, no INT 24h',
-          beeps() == 4 and bytes(k.pc.drives[0].img) == before and k.u16('crit_err') == 0, (beeps(), k.u16('crit_err')))
+    check('write-protected: a long beep, the disk untouched, no INT 24h, closed no more than once',
+          beeps() == 4 and bytes(k.pc.drives[0].img) == before and k.u16('crit_err') == 0 and closes() <= 1,
+          (beeps(), k.u16('crit_err'), closes()))
     # another disk put in, which a program already read through the BIOS
     # (the change line is clear) and no INT 21h 0Dh yet: the capture must
     # not write the first disk's FAT and directory over it
@@ -289,9 +307,9 @@ def t_capture():
     before = sorted(files())
     shot()
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
-    check('disk full: a long beep, no SCREEN01.BMP, disk consistent, no write after the one that failed',
-          beeps() == 4 and sorted(files()) == before and not probs and sum(1 for a in calls21 if a >> 8 == 0x40) == 1,
-          (beeps(), sorted(files()), probs, [hex(a) for a in calls21]))
+    check('disk full: a long beep, no SCREEN01.BMP, disk consistent, no write after the one that failed, closed once',
+          beeps() == 4 and sorted(files()) == before and not probs and sum(1 for a in calls21 if a >> 8 == 0x40) == 1 and
+          closes() == 1, (beeps(), sorted(files()), probs, [hex(a) for a in calls21]))
 
 
 def t_print():
@@ -1043,10 +1061,28 @@ def t_lodeboot():
     s0 = bytes(k.pc.drives[0].img[:512])
     check('LODEBOOT under Lodestone: the new loader, the BPB kept',
           'Done' in o and s0[3:11] == b'LODESTON' and s0[11:0x3E] == bpb and s0[0x3E:] == new[0x3E:], o)
+    check('... asking about drive A: (the letter in its place)', 'to drive A:?' in o, o)
     k.pc.drives[0].save(os.path.join(OUT, 'lb2.img'))
     subprocess.run(['mdel', '-i', os.path.join(OUT, 'lb2.img'), '::GRIDOS.SYS'], check=True)
     k = ktest.KPC(os.path.join(OUT, 'lb2.img')); k.start()
     check('then it boots LODE.SYS', k.pc.mode() == 0x40 and 'LODE.SYS' in k.exec_list(), k.where())
+
+def t_gridgpib():
+    """GRIDGPIB /U, the standalone driver's unloader, under Lodestone: the
+    driver on INT 60h is the kernel's, so nothing is unloaded (it re-pointed
+    INT 60h at junk and freed a block it took for the driver's)."""
+    gg = os.path.join(GOS, '..', 'tools', 'GRIDGPIB.COM')
+    k = ktest.KPC(image('gg.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(HERE, 'MEMSZ.COM'), gg),
+                  chip=sim7210.NEC7210(sim7210.bus())); k.start()          # (the kernel's driver only with the chip)
+    check('the kernel\'s GPIB driver on INT 60h', k.pc.u16(0, 0x60 * 4 + 2) == 0x60)
+    sh = Shell(k)
+    vec, kb = k.pc.rd(0, 0x60 * 4, 4), shell_memsz(sh)
+    o = sh.run('gridgpib /u && echo EL0 || if errorlevel 5 echo EL5')
+    lines = [l.strip() for l in o.split('\n')]
+    check('GRIDGPIB /U: refused (built in), exit code 5', 'built into the system' in o and 'EL5' in lines, o)
+    check('... INT 60h still the kernel\'s, memory as it was', k.pc.rd(0, 0x60 * 4, 4) == vec and shell_memsz(sh) == kb,
+          (k.pc.rd(0, 0x60 * 4, 4).hex(), vec.hex(), kb))
+    check('... and GRIDGPIB still finds the driver', 'Already installed' in sh.run('gridgpib'))
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
@@ -1477,7 +1513,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_command, t_cmdedit, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_command, t_cmdedit, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

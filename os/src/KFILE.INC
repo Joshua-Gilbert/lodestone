@@ -1215,15 +1215,20 @@ dev_read:
         je      .gpib
         cmp     al, DEV_AUX
         je      .aux
+        cmp     al, DEV_COM2
+        je      .aux
         xor     ax, ax                  ; NUL, PRN: nothing
         clc
         ret
 .aux:   push    cx
         push    dx
         xor     bx, bx
+        xor     dx, dx                  ; AUX = COM1 (DX 0), COM2 (DX 1)
+        cmp     al, DEV_COM2
+        jne     .al
+        inc     dx
 .al:    jcxz    .ax
         mov     ah, 2
-        xor     dx, dx
         int     14h
         test    ah, 80h
         jnz     .ax
