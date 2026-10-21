@@ -664,9 +664,9 @@ The checks:
 
 **Cost:**
 - **Switch off:** nothing. LODE.SYS grows 32 bytes, in `mt_boot` (INT 16h's hook).
-- **Switch on:** MT's block is 508 paragraphs plus its MCB (8.0 KB; it was 416), 64 of them `mt_swnow`'s stack, so a DOS program gets 570.5 KB instead of 578.5.
+- **Switch on:** MT's block is 508 paragraphs plus its MCB (8.0 KB; it was 416), 64 of them `mt_swnow`'s stack, so a DOS program gets 571.8 KB instead of 579.7 (main's UI batch, PR #51).
 - **Speed:** each INT 16h call passes `mt_i16`'s checks and `mt_hot`'s look at the buffer; console output is untouched.
-- **Files:** LODEMT.SYS is 6,289 bytes (5,842 after M4a); ROM 1 has 16,896 bytes left.
+- **Files:** LODEMT.SYS is 6,289 bytes (5,842 after M4a); ROM 1 has 17,920 bytes left.
 
 **Tests:** `test_mt.py`, 191 checks (was 165). The new group is `t_keys`, with a new test program:
 - `MTKEY MODE FILE`:
