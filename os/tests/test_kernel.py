@@ -1347,6 +1347,14 @@ def t_cmdedit():
     run('echo nope', CTLC)
     o = k.pc.text_screen()
     check('Ctrl-C drops the line', 'echo nope^C' in o and 'nope' not in o.replace('echo nope', ''), o)
+    lines = ['rem line %02d %s' % (i, 'x' * (i % 17)) for i in range(40)]  # ~1 KB: the history (over
+    for l in lines: k.key(l); k.key(ktest.ENTER)                           #  LCMD's start-up code) wraps
+    seen = []
+    for i in range(20):
+        k.key(ktest.UP); seen.append(k.pc.text_screen().rstrip().split('\n')[-1].split('>', 1)[-1].rstrip())
+    k.key(ktest.ESC)
+    check('the history after 1 KB of lines: Up recalls the newest 20, newest first, and the shell still runs',
+          seen == [l.rstrip() for l in lines[::-1][:20]] and 'Lodestone version' in sh.run('ver'), seen)
     o = sh.run('lcmd < s.txt')
     check('standard input from a file: DOS line input, EXIT at its end', 'from a file' in o, o)
     o = sh.run('lcmd < s2.txt')
