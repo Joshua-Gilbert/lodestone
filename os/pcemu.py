@@ -1075,6 +1075,7 @@ class PC:
             for _ in range(n): head = head + 2 if head + 2 < KB_END else KB_START
             s.mu.mem_write(0x41A, struct.pack('<H', head)); s.kbd_mirror = s.kbd_mirror[n:]
         s.kbd_sync()
+        s.w('flags', s.r('flags') | 0x200)      # (the BIOS's STI: its RETF 2 returns with interrupts on)
 
     def int16_hle(s):
         ah = s.r('ah')

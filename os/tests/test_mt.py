@@ -560,22 +560,24 @@ class Audit:
     """Every arrival at mt_preempt (mt_safe said yes): the interrupted or calling code's CS:IP and flags, read
     from the frame on its own stack (mt_tick's or INT 21h's, told apart by mt_preempt's return address), checked
     against every rule, the task's own memory found from the arena; whether it switched (mt_switch reached from
-    there); the stack used below the caller's SP until MT is done there (every block, kernel calls included).
+    there); the stack used below the caller's SP until its frame is popped or its code runs (every block of that
+    task's on that stack: MT's, the kernel's, the UI's, the BIOS's, interrupts' to them).
     Every call of mt_safe that fails one rule alone counts under that rule (only), so the tests can show each one
     was met.  force: a switch due on every INT 21h way out (mt_pend set at mt_exit), so every one is checked."""
     def __init__(s, k):
         s.k, s.ev, s.force, s.track = k, [], False, None
-        s.depth, s.only = {'tick': 0, 'exit': 0, 'v10': 0, 'i16': 0}, collections.Counter()
+        s.depth, s.only = {'tick': 0, 'exit': 0, 'v10': 0, 'i16': 0, 'peek': 0}, collections.Counter()
         s.seg = seg = mt_seg(k)
         s.at, s.sa, s.swa, s.ex = (seg * 16 + k.Y[n] for n in ('mt_preempt', 'mt_safe', 'mt_switch', 'mt_exit'))
         s.wf = seg * 16 + k.Y['mt_wfront']   # (a background task waiting at INT 10h to be in front)
         s.wk = seg * 16 + k.Y['mt_wkey']     # (a task waiting at INT 16h for a key)
+        s.pss = None
         s.fd, s.fdw, s.due = seg * 16 + k.Y['mt_fdrain'], seg * 16 + k.Y['mt_fdrain.w'], False
         s.inject, s.injected, s.open, s.nested = None, 0, {}, collections.Counter()
         # (IRQ 13 at mt_fdrain, when inject() says; open drains: SS -> the SP and where its call returns; switches
         #  started inside one, by path)
         s.ret = {k.Y['mt_tick.r']: 'tick', k.Y['mt_exit.n']: 'exit', k.Y['mt_v10.wf']: 'v10', k.Y['mt_i16.wk']: 'i16',
-                 k.Y['mt_wkey.sw']: 'i16'}
+                 k.Y['mt_wkey.sw']: 'i16', k.Y['mt_i16.pk']: 'peek'}
         s.prev, k.pc.watch = k.pc.watch, s.watch
     def stop(s): s.k.pc.watch = s.prev
     def mine(s, x, task, reg, psp, root, ui):
@@ -599,8 +601,13 @@ class Audit:
         if s.prev: s.prev(a)
         k, pc = s.k, s.k.pc
         if s.track:
-            if pc.r('ss') != s.track[0] or pc.r('cs') not in (s.seg, 0x60): s.track = None
-            else: s.depth[s.track[2]] = max(s.depth[s.track[2]], s.track[1] - pc.r('sp'))
+            ss, sp, cs = pc.r('ss'), pc.r('sp'), pc.r('cs')
+            new, s.pss = ss != s.pss, ss
+            if new or ss != s.track[0] or pc.rd(s.seg, k.Y['mt_cur'], 1)[0] != s.track[3]: pass
+            elif sp >= s.track[1]: s.track = None       # (just loaded, between MOV SS and MOV SP; another task's,
+            elif cs < 0xA000 and cs not in s.track[4]:  #  or MT's own stack; the frame gone: back in the caller,
+                s.track = None                          #  or in its code)
+            else: s.depth[s.track[2]] = max(s.depth[s.track[2]], s.track[1] - sp)
         if s.open:                                          # (back from that very mt_fdrain call: its RET's
             ss = pc.r('ss')                                 #  target, its SP above the return address)
             if ss in s.open and s.open[ss][1] == a and pc.r('sp') == s.open[ss][0] + 2: del s.open[ss]
@@ -624,15 +631,17 @@ class Audit:
             if a == s.wf and path != 'v10': path = '?'
             if a == s.wk and path != 'i16': path = '?'
             if a != s.wk and path == 'i16': path = '?'
+            if a != s.at and path == 'peek': path = '?'
             if ss in s.open: s.nested[path] += 1            # (inside a drain of this task's, its IRQ 13 handler's)
             f = sp + 12 if path == 'tick' else sp + 4 + 20     # (mt_tick's 5 pushes, or BP and INT 21h's frame: IP, CS, FL)
-            if path in ('v10', 'i16'): f = pc.r('bp') + 2    # (mt_v10's or mt_i16's BP: the INT frame after it)
+            if path in ('v10', 'i16', 'peek'): f = pc.r('bp') + 2    # (mt_v10's or mt_i16's BP: the INT frame after it)
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
             r, cur = s.rules(cs, ip, fl, ss)
             if path == 'tick': r['ivt'] = vec(k, 8) == (s.seg, k.Y['mt_tick'])   # (else a hook ahead was interrupted)
             s.ev.append(dict(path=path, cs=cs, ip=ip, fl=fl, task=cur, ss=ss, r=r, sw=False,
                              ok=path != '?' and all(r.values())))
-            s.track = (ss, f + 6, path)                          # (the caller's SP: under the frame)
+            s.track = (ss, f + 6, path, cur, (s.seg, 0x60, pc.u16(0x60, k.Y['ui_seg'])))   # (the caller's SP:
+                                                                 #  under the frame; MT, the kernel, the UI)
         elif a == s.swa and s.ev and pc.u16(pc.r('ss'), pc.r('sp')) in s.ret:
             s.ev[-1]['sw'] = True
     def bad(s): return [e for e in s.ev if not e['ok']]
@@ -1393,24 +1402,71 @@ def t_keys():
           and ref['d'] and ref['d'][0] > 0 and ref['d'][1] == 2, ref)
     sh.run('cls')
     # behind a task in front that computes and reads no keys: none for them; the keys left for the front one
-    got, rings = {}, []
+    got, rings, own = {}, [], []
+    i16, prev = seg * 16 + Y['mt_i16'], k.pc.watch
+    def w(a):                                   # (T's handler's peeks in T's own task, task 3, behind: keys there)
+        if prev: prev(a)
+        if a == i16 and k.pc.isr and k.pc.rd(seg, Y['mt_cur'], 1)[0] == 3 and k.pc.rd(seg, Y['mt_front'], 1)[0] != 3 \
+                and k.pc.kbd_ring(): own.append(1)
     for ms in ('pd', 'qt'):
+        if ms == 'qt': k.pc.watch = w
         typ(k, 'mtlaunch /f mtspin.com 60 s%s.txt;mtkey.com %s %s1.txt;mtkey.com %s %s1.txt'
             % (ms, ms[0], ms[0], ms[1], ms[1]), 0.3)
         k.key('abc', settle=False)
         for m in ms:
             got[m] = waittwo(k, '%s1.TXT' % m.upper())
+        k.pc.watch = prev
         rings.append((tstate(k)[1], k.pc.kbd_ring()))
         kclear(k)
         waitfile(k, 'S%s.TXT' % ms.upper(), 6.0)
         line(k, '')
     check('behind MTSPIN (in front, reading no keys), "abc" typed: MTKEY\'s INT 16h peeks find none (P %s), and Q\'s '
-          'with interrupts off none either (%s: whose code it is that counts); nor DOS\'s key status, AH=06h or the flush '
+          'with interrupts off none either (%s: whose code it is that counts), each back with interrupts on, as the '
+          'BIOS\'s are; nor DOS\'s key status, AH=06h or the flush '
           '(D %s); the keys still there for the front task' % (got['p'], got['q'], got['d']),
           got['p'] and got['p'][0] > 10 and got['p'][1] == 0 and got['q'] and got['q'][0] > 10 and got['q'][1] == 0
           and got['d'] == (0, 0) and all(r == (1, [0x61, 0x62, 0x63]) for r in rings), (got, rings))
     check('... as it is from an INT 1Ch handler (T %s: the timer\'s interrupt in service, a TSR\'s peek, the machine\'s): '
-          'it finds them' % (got['t'],), got['t'] and got['t'][0] > 5 and got['t'][1] > 0, got['t'])
+          'every one finds them, in whichever task the tick lands, MTKEY T\'s own included (%d there)' % (got['t'], len(own)),
+          got['t'] and got['t'][0] > 5 and got['t'][1] == got['t'][0] and own, (got['t'], len(own)))
+    # a program that only polls in front: its peeks give the others their turns (mt_preempt from there, at a safe
+    # point), which on the 1520 a tick, landing in MT or the BIOS, seldom can; here (MTKEY Y) the tick can't at all,
+    # its own INT 08h hook being ahead of MT's
+    n0 = len(au.ev)
+    typ(k, 'mtlaunch /f mtkey.com y pp.txt;mtspin.com 15 sp.txt', 0.3)
+    k.key('a', settle=False)
+    pp = waittwo(k, 'PP.TXT')
+    waitfile(k, 'SP.TXT', 4.0)
+    kclear(k)
+    line(k, '')
+    sw = au.switches(n0, 'peek')
+    check('MTKEY Y polling in front ("a" there, %s), the tick kept from switching by its INT 08h hook: MTSPIN behind '
+          'still runs (%d), switched to from Y\'s peeks (%d times) at safe points' % (pp, spun(k, 'SP.TXT'), len(sw)), pp and pp[1] > 10 and spun(k, 'SP.TXT') > 0 and sw
+          and not au.bad(), (pp, spun(k, 'SP.TXT'), len(sw), au.bad()[:2]))
+    # inside an INT 13h call, or a call MT passed on to the BIOS (the test sets the count while P runs behind): an
+    # interrupt's, as it is
+    for var, f in (('mt_in13', '13'), ('mt_inb', 'ib')):
+        hit = []
+        def w(a):
+            if prev: prev(a)
+            if a == i16 and not hit and k.pc.rd(seg, Y['mt_cur'], 1)[0] == 2:
+                hit.append(1); k.pc.wr(seg, Y[var], b'\1')
+        k.pc.watch = w
+        typ(k, 'mtlaunch /f mtspin.com 60 s%s.txt;mtkey.com p p%s.txt' % (f, f), 0.3)
+        k.key('abc', settle=False)
+        p13 = waittwo(k, 'P%s.TXT' % f.upper())
+        k.pc.watch = prev
+        kclear(k)
+        waitfile(k, 'S%s.TXT' % f.upper(), 6.0)
+        n13 = k.pc.rd(seg, Y[var], 1)[0]
+        line(k, '')
+        if var == 'mt_in13':
+            check('MTKEY P behind, inside an INT 13h call (mt_in13 set by the test as it starts peeking): its peeks taken '
+                  'as an interrupt\'s, as they are: they find "abc" (%s); the count cleared when it ends' % (p13,),
+                  hit and p13 and p13[1] > 0 and n13 == 0, (hit, p13, n13))
+        else:
+            check('... inside a call MT passed on to the BIOS (mt_inb, set the same way): the same (%s)' % (p13,),
+                  hit and p13 and p13[1] > 0 and n13 == 0, (hit, p13, n13))
     sh.run('cls')
     # a read in the background (INT 16h AH=00h): it waits until it is in front, the keys typed meanwhile not its
     n0 = len(au.ev)
@@ -1456,10 +1512,57 @@ def t_keys():
     st = tstate(k)
     line(k, 'four')
     k.key(HOT, settle=False); k.run_for(0.5)
+    stb = tstate(k)
     k.key('q', settle=False); k.run_for(0.5)
     check('CODE-Tab while MTKEY waits in its INT 16h read (in front): MTLINE comes to the front, gets its line; CODE-Tab '
-          'back, and MTKEY gets "q"', st[1] == 2 and A.disk_file(k, 'L4.TXT') == b'four'
-          and A.disk_file(k, 'R4.TXT') == b'0071', (st, A.disk_file(k, 'L4.TXT'), A.disk_file(k, 'R4.TXT')))
+          'back, and MTKEY gets "q"', st[1] == 2 and A.disk_file(k, 'L4.TXT') == b'four' and stb[1] == 1
+          and A.disk_file(k, 'R4.TXT') == b'0071', (st, stb, A.disk_file(k, 'L4.TXT'), A.disk_file(k, 'R4.TXT')))
+    # switched from in the middle of its run, its shadow lost (not known whether it writes the screen itself):
+    # frozen behind, to be safe; switched from at its key wait, the same way: not
+    line(k, '')
+    typ(k, 'mtlaunch /f mtspin.com 60 s11.txt;mtline.com l11.txt', 0.8)
+    k.pc.wr(seg, Y['mt_shd'], b'\0'); set_vflags(k, 1, 0)
+    k.key(HOT, settle=False); k.run_for(0.4)
+    st, v1 = tstate(k), vflags(k, 1)
+    k.pc.wr(seg, Y['mt_shd'], b'\0')
+    k.key(HOT, settle=False); k.run_for(0.4)
+    st2, v2 = tstate(k), vflags(k, 2)
+    front(k, 2)
+    line(k, 'eleven')
+    front(k, 1)
+    waitfile(k, 'S11.TXT', 6.0)
+    line(k, '')
+    check('MTSPIN in front, computing, its shadow lost: switched from by CODE-Tab, it is taken as writing the screen '
+          'itself (VF_DIRECT: frozen behind); MTLINE, its shadow lost at its key wait, switched from: not',
+          st[1] == 2 and v1 & VF_DIRECT and st2[1] != 2 and not v2 & VF_DIRECT and A.disk_file(k, 'L11.TXT') == b'eleven',
+          (st, v1, st2, v2, A.disk_file(k, 'L11.TXT')))
+    # the one in front at its key wait, switched from while another runs (mt_swnow, from the tick in MTSPIN's turn):
+    # not in its run, so not frozen, however its shadow stands
+    line(k, '')
+    typ(k, 'mtlaunch /f mtline.com l13.txt;mtspin.com 60 s13w.txt', 0.8)
+    k.pc.wr(seg, Y['mt_shd'], b'\0'); set_vflags(k, 1, 0)
+    k.key(HOT, settle=False); k.run_for(0.4)
+    st, v1 = tstate(k), vflags(k, 1)
+    front(k, 1)
+    line(k, 'thirteen')
+    waitfile(k, 'S13W.TXT', 6.0)
+    line(k, '')
+    check('MTLINE in front at its key wait, MTSPIN running behind, MTLINE\'s shadow lost: switched from by CODE-Tab '
+          '(in MTSPIN\'s turn): not taken as writing the screen itself', st[1] == 2 and not v1 & VF_DIRECT
+          and A.disk_file(k, 'L13.TXT') == b'thirteen', (st, v1, A.disk_file(k, 'L13.TXT')))
+    # while mt_swnow changes the front (mt_swing, set by the test): CODE-Tab's change waits until it is done
+    typ(k, 'mtlaunch /f mtspin.com 60 s12.txt;mtline.com l12.txt', 0.8)
+    k.pc.wr(seg, Y['mt_swing'], b'\1')
+    k.key(HOT, settle=False); k.run_for(0.4)
+    st = tstate(k)
+    k.pc.wr(seg, Y['mt_swing'], b'\0'); k.run_for(0.4)
+    st2 = tstate(k)
+    line(k, 'twelve')
+    front(k, 1)
+    waitfile(k, 'S12.TXT', 6.0)
+    line(k, '')
+    check('CODE-Tab while the front is being changed (mt_swing, set by the test): not changed meanwhile; then it is',
+          st[1] == 1 and st2[1] == 2 and A.disk_file(k, 'L12.TXT') == b'twelve', (st, st2, A.disk_file(k, 'L12.TXT')))
     line(k, '')
     typ(k, 'mtlaunch /f mtspin.com 60 s5.txt;mtline.com l5.txt;mtline.com l5b.txt', 0.8)
     k.key(HOT, settle=False); k.run_for(0.4)
@@ -1485,42 +1588,71 @@ def t_keys():
         if vec(k, 8) != (seg, Y['mt_tick']) and st[1] == 1 and (2, TS_WAITK, 'MTLINE.COM') in st[0]: break
         k.run_for(0.05)
     v8 = vec(k, 8)
+    seen, prev = [], k.pc.watch                 # (CODE-Tab taken, then ticks and INT 21h's way out, in order)
+    marks = {seg * 16 + Y['mt_hot.m']: 'hot', seg * 16 + Y['mt_tick']: 'tick', seg * 16 + Y['mt_exit.c']: 'exit'}
+    def w(a):
+        if prev: prev(a)
+        m = marks.get(a)
+        if m and (seen or m == 'hot') and len(seen) < 40: seen.append(m)
+    k.pc.watch = w
     k.key(HOT, settle=False); k.run_for(0.3)
+    k.pc.watch = prev
     st, x8 = tstate(k), A.disk_file(k, 'X8.TXT')
+    first = seen[:seen.index('exit') + 1] if 'exit' in seen else seen
     line(k, 'eight')
     waittwo(k, 'X8.TXT')
-    check('CODE-Tab while MTKEY X asks DOS for keys in front, its own timer hook ahead of MT\'s: switched on INT 21h\'s '
-          'way out, at once, MTLINE in front for its line', v8 != (seg, Y['mt_tick']) and st[1] == 2 and x8 is None
+    check('CODE-Tab while MTKEY X asks DOS for keys in front, its own timer hook ahead of MT\'s (so the tick doesn\'t '
+          'switch): switched on the way out of the very INT 21h call that found it (no tick between: %s), MTLINE in '
+          'front for its line' % first, v8 != (seg, Y['mt_tick']) and st[1] == 2 and x8 is None
+          and first[:1] == ['hot'] and first[-1:] == ['exit'] and 'tick' not in first
           and A.disk_file(k, 'L8.TXT') == b'eight' and two(A.disk_file(k, 'X8.TXT')) == (0, 0)
-          and vec(k, 8) == (seg, Y['mt_tick']), (v8, st, x8, A.disk_file(k, 'L8.TXT'), A.disk_file(k, 'X8.TXT')))
+          and vec(k, 8) == (seg, Y['mt_tick']), (v8, st, x8, first, A.disk_file(k, 'L8.TXT'), A.disk_file(k, 'X8.TXT')))
     line(k, '')
     # a read with interrupts off: not where a task may be switched from, so as it is (to the BIOS)
     n0 = len(au.ev)
     typ(k, 'mtlaunch /f mtkey.com c c1.txt;mtspin.com 10 sc.txt', 0.8)
+    st, blk, c0 = tstate(k), k.pc.blocked, A.disk_file(k, 'C1.TXT')
     k.key('q', settle=False); k.run_for(1.0)
-    check('MTKEY C (its read with interrupts off) in front: not switched from there (no switch from INT 16h), as it '
-          'is: the key reaches it', A.disk_file(k, 'C1.TXT') == b'0071' and not au.switches(n0, 'i16')
-          and not au.bad(), (A.disk_file(k, 'C1.TXT'), len(au.switches(n0, 'i16')), au.bad()[:2]))
+    check('MTKEY C (its read with interrupts off) in front, waiting in the BIOS (the read before the key: running, '
+          'blocked): not switched from there (no switch from INT 16h), as it is: the key reaches it',
+          st[1] == 1 and st[2] == 1 and (1, 1, 'MTKEY.COM') in st[0] and blk and c0 is None
+          and A.disk_file(k, 'C1.TXT') == b'0071' and not au.switches(n0, 'i16') and not au.bad(),
+          (st, blk, c0, A.disk_file(k, 'C1.TXT'), len(au.switches(n0, 'i16')), au.bad()[:2]))
     k.run_for(1.0)
     line(k, '')
-    # a background task at a DOS key wait it can't be switched from (an INT 13h call taken as under way, set by the
-    # test just then): it comes to the front for its keys, which only the front task gets
+    # a background task at a DOS key wait it can't be switched from: a nested INT 21h (InDOS 2, set by the test for
+    # that wait, as an INT 24h handler's own read would have it): it comes to the front for its keys, which only the
+    # front task gets; inside an INT 13h call (the count set by the test): as it is, it reads them there
     hit, prev = [], k.pc.watch
-    bg = seg * 16 + Y['mt_kwait.bg']
-    def w(a):
-        if prev: prev(a)
-        if a == bg and not hit:
-            hit.append(tstate(k)); k.pc.wr(seg, Y['mt_in13'], b'\1')
-    k.pc.watch = w
-    typ(k, 'mtlaunch mtline.com l6.txt', 1.0)
-    st, n13 = tstate(k), k.pc.rd(seg, Y['mt_in13'], 1)[0]
-    line(k, 'six')
-    k.pc.watch = prev
-    k.pc.wr(seg, Y['mt_in13'], b'\0')
-    line(k, '')
-    check('MTLINE in the background at its DOS key wait, which can\'t give way (mt_in13 set): it comes to the front, '
-          'and gets its line', hit and hit[0][1] == 0 and st[1] == 1 and n13 == 1 and A.disk_file(k, 'L6.TXT') == b'six',
-          (hit, st, n13, A.disk_file(k, 'L6.TXT')))
+    bg, hv = seg * 16 + Y['mt_kwait.bg'], seg * 16 + Y['mt_kwait.have']
+    for n, tag in enumerate(('indos', 'in13', 'swing')):
+        def w(a):
+            if prev: prev(a)
+            if a == bg and len(hit) <= n:
+                hit.append(tstate(k))
+                if tag == 'indos': k.pc.wr(0x60, Y['indos'], b'\2')
+                else: k.pc.wr(seg, Y['mt_' + tag], b'\1')
+            elif a == hv and tag == 'indos' and k.pc.rd(0x60, Y['indos'], 1)[0] == 2:
+                k.pc.wr(0x60, Y['indos'], b'\1')
+        k.pc.watch = w
+        typ(k, 'mtlaunch mtline.com l6%s.txt' % 'abc'[n], 1.0)
+        st = tstate(k)
+        line(k, 'six')
+        k.pc.watch = prev
+        k.pc.wr(seg, Y['mt_in13'], b'\0'); k.pc.wr(seg, Y['mt_swing'], b'\0')
+        line(k, '')
+        if tag == 'indos':
+            check('MTLINE behind at its DOS key wait, nested (InDOS 2: it can\'t give way there): it comes to the front, '
+                  'and gets its line', hit and hit[0][1] == 0 and hit[0][2] == 1 and st[1] == 1
+                  and A.disk_file(k, 'L6A.TXT') == b'six', (hit, st, A.disk_file(k, 'L6A.TXT')))
+        elif tag == 'in13':
+            check('... inside an INT 13h call (mt_in13): not brought to the front (no screen mapped there); it reads the '
+                  'keys as it is, from behind', len(hit) == 2 and hit[1][2] == 1 and st[1] == 0
+                  and A.disk_file(k, 'L6B.TXT') == b'six', (hit, st, A.disk_file(k, 'L6B.TXT')))
+        else:
+            check('... while the front is being changed (mt_swing, set the same way): the same', len(hit) == 3
+                  and hit[2][2] == 1 and st[1] == 0 and A.disk_file(k, 'L6C.TXT') == b'six',
+                  (hit, st, A.disk_file(k, 'L6C.TXT')))
     v = sh.run('ver')
     check('... all ended, the prompt as before; nothing left in the key buffer', 'Lodestone version' in v
           and tstate(k)[0] == [(0, 1, 'Executive')] and k.pc.kbd_ring() == [] and not k.crashed, (v[-80:], tstate(k)))
@@ -1537,12 +1669,26 @@ def t_keys():
           and no_hot(k) and not k.crashed, (st0, hex(m0), st1, hex(m1), st2, hex(m2), A.disk_file(k, 'L7.TXT')))
     check('every switch made from INT 16h (%d) or elsewhere (%d) at a safe point' % (len(au.switches(0, 'i16')),
           len(au.switches())), au.switches(0, 'i16') and not au.bad(), au.bad()[:3])
+    check('the stack MT used under the caller\'s SP there: %d bytes at the tick, %d at INT 16h, %d at a peek (under '
+          '64: the front changed on MT\'s own)' % (au.depth['tick'], au.depth['i16'], au.depth['peek']),
+          all(0 < au.depth[p] < 64 for p in ('tick', 'i16', 'peek')), au.depth)
     au.stop()
     # a TSR's INT 16h hook loaded after MT, waiting in its own loop (as Resident Claude's does): its peeks are its
     # code's, not the task's, so they find the key; then it passes the read on, the program's own, which waits
     k = boot('mt_kh.img', b'MULTITASK=1\r\n', 88, MTK)
     sh = Shell(k)
     sh.run('mtkey h x')
+    typ(k, 'mtlaunch /f mtspin.com 60 sh.txt;mtkey.com d dh.txt;mtkey.com p ph.txt', 0.3)
+    k.key('abc', settle=False)
+    dh, ph = waittwo(k, 'DH.TXT'), waittwo(k, 'PH.TXT')
+    ring = k.pc.kbd_ring()
+    kclear(k)
+    waitfile(k, 'SH.TXT', 6.0)
+    line(k, '')
+    check('with MTKEY H\'s INT 16h hook loaded after MT (calling on with PUSHF / CALL FAR): DOS\'s key status behind '
+          'still finds none (D %s: the kernel\'s call, on its stack), the keys left for the front task; a program\'s '
+          'peek through it is the hook\'s code\'s, as it is (P %s finds them)' % (dh, ph),
+          dh == (0, 0) and ph and ph[1] > 0 and ring == [0x61, 0x62, 0x63], (dh, ph, ring))
     typ(k, 'mtlaunch mtkey.com r rh.txt', 1.0)
     k.key('q', settle=False); k.run_for(1.0)
     st, rh = tstate(k), A.disk_file(k, 'RH.TXT')
