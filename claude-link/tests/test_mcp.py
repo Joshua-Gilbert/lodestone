@@ -116,6 +116,8 @@ def test_files():
         assert len(c.rpc('tools/list')['result']['tools']) == 12
         r = c.call('grid_files', action='list', path='A:\\')
         assert 'CFG.C' in body(r) and not r['isError'], r
+        r = c.call('grid_files', action='info', path='A:\\NOPE.TXT')     # (STAT's 18: not there)
+        assert r['isError'] and 'file not found' in body(r), r
         r = c.call('grid_files', action='read', path='a:\\cfg.c')
         assert body(r) == CFG_C.decode().replace('\r\n', '\n'), r
         r = c.call('grid_files', action='write', path='A:\\NEW.TXT', content='x')
