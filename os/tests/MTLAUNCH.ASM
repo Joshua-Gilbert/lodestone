@@ -6,7 +6,7 @@
 ; whatever it does (SPF_BG); /Z: never there (SPF_FREEZE); /M:n: n paragraphs for it; /R:n:
 ; n of it (a command line holds 126 characters).  /G:n on its own: task n
 ; to the front (AL=13h; "MTLAUNCH: error E" if it fails); /K:n: task n
-; ended (AL=14h, the same).
+; ended (AL=14h, the same); /P:n: parked (AL=15h), /U:n: back (AL=16h).
 ; Prints "task N" for each, or "MTLAUNCH: error E" (CF, AX = E); then
 ; "list:" and " N S NAME;" for each task (S: its TS_* state).
 ; nasm -f bin -i ../src/ -o MTLAUNCH.COM MTLAUNCH.ASM
@@ -59,10 +59,18 @@ org 100h
         je      .og
         cmp     byte [opt], 'K'
         je      .okl
+        cmp     byte [opt], 'P'
+        je      .opk
+        cmp     byte [opt], 'U'
+        je      .oup
         mov     [pb + SP_PARAS], bx
         jmp     .opt
 .or:    mov     [rep_], bx
         jmp     .opt
+.opk:   mov     ax, 0F000h + MT_PARK
+        jmp     short .oc
+.oup:   mov     ax, 0F000h + MT_UNPARK
+        jmp     short .oc
 .og:    mov     ax, 0F000h + MT_FRONT
         jmp     short .oc
 .okl:   mov     ax, 0F000h + MT_KILL
