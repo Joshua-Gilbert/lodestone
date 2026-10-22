@@ -25,7 +25,8 @@
 ;      ssss oooo": the vector AH=35h gave the second time) and ends
 ;   W  as Q, but 9 ticks after the start puts INT 09h back with AH=25h (V
 ;      in front: it is behind), waits 3 ticks and ends
-;   X  sets INT 1Bh with AH=25h (a handler that goes on), then as K
+;   X  sets INT 1Bh with AH=25h (a handler that goes on), then as K (INT
+;      1Bh not put back)
 ;   Y  writes INT 09h in the table itself, puts it back at once with
 ;      AH=25h, waits N ticks and writes FILE ("k")
 ; nasm -f bin -i ../src/ -o MTVEC.COM MTVEC.ASM

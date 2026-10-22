@@ -862,19 +862,20 @@ The checks:
   - a hook's saved "old vector" is in the program's own memory.
 
   Only the tables are. A program started behind that hooks INT 09h chains to what AH=35h gave it, which is its own TX's (inherited); if it writes the table itself, it chains to the front task's.
+- **A program that never puts its INT 09h or 1Bh back** leaves it pointing at its freed memory, as in DOS, in the table and in any task it started in front (they started with it). `mt_vpg` puts back only what the running task's own vectors say, and those still hold the hook.
 - **The machine's vectors are as in DOS:**
   - two tasks hooking the same IRQ and ending out of order can still leave one pointing at the other's freed code (only the ones pointing into the ending task's own region are put back);
   - a format or fast-copy tool changing INT 1Eh (the diskette's parameters), or a program changing 1Fh/43h (fonts), changes them for every task until it puts them back;
   - a driver installed inside a task leaves its UART and the PIC's mask as it set them, when its IRQ vector is put back at the task's end.
 - **A background task's INT 09h written in the table itself** is in force for the rest of that turn. A hook that doesn't call on loses the front task's keys meanwhile.
-- **A background task that writes its INT 09h or 1Bh hook in the table itself and later writes back the front task's value there** (usually the BIOS's, the one it found): MT can't tell that write from none, so its TX keeps the hook. Brought to the front, its handler, still in its memory, gets the keys until the program ends. At its end the hook is replaced by the front task's value.
+- **A background task that writes its INT 09h or 1Bh hook in the table itself and later writes back the front task's value there** (usually the BIOS's, the one it found): MT can't tell that write from none, so its TX keeps the hook. Brought to the front, its handler, still in its memory, gets the keys until the program ends. If it ends behind, the hook is then replaced by the front task's value. If it ends in front, the hook stays in the table until its task ends: a program run from a shell inside the task can leave INT 09h pointing at freed memory.
 - **The front task's INT 09h and 1Bh hooks run on top of whichever task is running** (its EMS windows, its INT 21h state, its own 29 vectors), as the mouse's event handler does (M4c).
 - **Keys at a change of the front:** CODE-Tab changes the front at Tab's make code. CODE's and Tab's break codes then reach the new front task's INT 09h, so a program with a key table of its own may think them still held.
 - **Ctrl-Break** calls the front task's INT 1Bh (the BIOS's IRET unless a program hooked it) whichever task runs. The kernel has no INT 1Bh handler of its own; ^C is a key, seen by the task that reads it.
 - **INT 02h is also the NMI's:** an NMI during the two word writes of a switch's copy would land on a half-written vector. On the 1520 an NMI is a parity or channel check, fatal anyway (M9 confirms).
 - **A breakpoint (CCh) or divide error in code run from an interrupt** (the debugged program's IRQ or mouse handler, its INT 09h hook while in front) goes to whichever task's INT 03h or 00h is in the table then.
 - **A debugger single-stepping into INT 21h:** MT clears the trap flag in its own flags at a switch, so it doesn't single-step MT's copies. The task's frame keeps the flag.
-- **Found while testing M5a (M4b's): a CODE-Tab can be lost** while the front task polls the keyboard (DOS's key status, INT 16h AH=01h). If the key arrives after `mt_hot` has looked at the buffer and before the BIOS's AH=01h does, the BIOS drops it, as it does every key AH=01h can't give (scan code 85h and up). Pressing it again works. In pcemu it showed when a change of about 40 cycles per switch moved where a test's run stopped (`t_keys`'s MTKEY X check). The fix, MT doing AH=01h's drop itself with the hot key first, is for M5b.
+- **Found while testing M5a (M4b's): a CODE-Tab can be lost** while the front task waits for or polls keys: any of its INT 16h calls that reach the BIOS's AH=01h (DOS's key reads and key status, a program's own AH=00h/01h). If the key arrives after `mt_hot` has looked at the buffer and before the BIOS's AH=01h does, the BIOS drops it (on the 1520, if its INT 16h lets interrupts in before it looks: M9 confirms), as it does every key AH=01h can't give (scan code 85h and up). Pressing it again works. In pcemu it showed when a change of about 40 cycles per switch moved where a test's run stopped (`t_keys`'s MTKEY X check). The fix, MT doing AH=01h's drop itself with the hot key first, is for M5b.
 - **Still open, for M5b or later:** INT 24h raised inside C:'s INT 25h/26h (M3); a handler that never sends its EOI and then reads a key through DOS (M4a); a task's own timer hook calling DOS, switched on that call's way out (M3).
 - **Not tried on the 1520 yet** (M9).
 
@@ -949,7 +950,8 @@ The checks:
     - the other tasks' `TX_FVEC` fixed (only a task behind holding the ended one's 09h or 1Bh would show it);
     - `mt_fvto`'s `mt_fvset` (the next load puts `mt_fv` in the table anyway);
     - `mt_vpg` going through every block a program owns, not just its PSP's, and replacing a TX's 09h or 1Bh that points into it with the front task's;
-    - `mt_owners`'s checks (a damaged chain; an owner that isn't a PSP).
+    - `mt_owners`'s checks (a damaged chain; an owner that isn't a PSP);
+    - `mt_vpg` taking in the running task's writes to the table first.
   - **The 29 one by one:** only 08h, 10h, 16h, 1Ch, 23h, 24h and 2Fh are looked at. The CPU's traps, 02h, 21h, 22h, 28h, 34h-3Fh and 75h go the same way, through the same table. The kernel putting INT 22h-24h back into the ending program's task is not checked.
   - **A spawner behind giving a new task its 09h and 1Bh** from its TX (P is behind, but the task it starts never comes to the front).
   - **A key reaching a task's INT 09h hook:** pcemu has no IRQ 1, so only the table's contents are checked.
