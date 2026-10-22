@@ -69,7 +69,7 @@ class PicoProto:
         s.buf = bytearray(); s.firmware = ''; s.connected = False; s.online = False
         s.gen = 0; s.tx_ring = 16383; s.sent = 0; s.consumed = 0
         s.pending = collections.deque()
-        s.pong = {}; s.last_pong = 0.0; s.hello_at = 0.0
+        s.pong = {}; s.last_pong = 0.0; s.hello_at = 0.0; s.pongs = 0
         s.stats = collections.Counter()
         s.trace = None                      # a deque while gridlink.bench --trace runs: (time, event)
         s.lock = threading.RLock()          # feed() runs in the reader thread, answer() in the link's
@@ -129,7 +129,7 @@ class PicoProto:
         if t == F_CREDIT:
             s.consumed = struct.unpack_from('<I', f, 1)[0]; s._pump(); return b''
         if t == F_PONG:
-            s.last_pong = time.monotonic()
+            s.last_pong = time.monotonic(); s.pongs += 1
             s.pong = dict(zip(('online', 'address', 'listener', 'talker', 'ren', 'llo', 'spms', 'rsv'), f[1:9]))
             if not f[1]:
                 s.write(cobs_encode(bytes([F_CONFIG, s.addr, CF_ONLINE | CF_AUTO_RSV])))
@@ -171,6 +171,19 @@ class PicoProto:
 
     def ping(s):
         s.write(cobs_encode(bytes([F_PING])))
+
+    def usb_test(s, count, size, timeout=5.0):
+        """gridlink.bench --usb: `count` PINGs of `size` bytes (the firmware ignores what follows the type) sent
+        at once; returns the seconds until the bridge has answered them all, or None."""
+        size = max(1, min(size, TX_CHUNK + 4))
+        ping = cobs_encode(bytes([F_PING]) + bytes(i % 255 + 1 for i in range(size - 1)))
+        want = s.pongs + count
+        t0 = time.monotonic()
+        s.write(ping * count)
+        while s.pongs < want:
+            if time.monotonic() - t0 > timeout: return None
+            time.sleep(0.0002)
+        return time.monotonic() - t0
 
 
 def find_port(spec):

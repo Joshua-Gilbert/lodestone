@@ -4,6 +4,7 @@
     venv/bin/python -m gridlink.bench --size 128 --to A:\\BENCH.BIN --trips 50
     venv/bin/python -m gridlink.bench --sweep 246,512,1024,2048,4096   Pi -> GRiD frame sizes, one after another
     venv/bin/python -m gridlink.bench --size 32 --trace     where each copy's time goes, gap by gap
+    venv/bin/python -m gridlink.bench --usb                 also the Pi -> Pico USB speed alone
 
 Run it on the Pi while gridlink is serving and CLAUDE /T is up on the GRiD (the tools socket exists only in
 Term).  It talks to gridlink over the same socket as Claude Code's MCP server, so the numbers include
@@ -77,6 +78,7 @@ def main(argv=None):
     ap.add_argument('--trips', type=int, default=20, help='small requests for the round-trip time (default 20)')
     ap.add_argument('--dir', default='~/grid', help="Claude Code's directory on the Pi (default ~/grid)")
     ap.add_argument('--trace', action='store_true', help='show where each copy spends its time')
+    ap.add_argument('--usb', action='store_true', help="time the Pi -> Pico USB with PINGs, before the copies")
     ap.add_argument('--sweep', help='Pi -> GRiD payload sizes to try, comma-separated (each capped by what the '
                                     'GRiD and the bridge take); the link goes back to its own size after')
     a = ap.parse_args(argv)
@@ -97,6 +99,16 @@ def main(argv=None):
     rt.sort()
     print('round trip (grid_info, %d): best %.1f ms, median %.1f ms, worst %.1f ms'
           % (a.trips, rt[0] * 1e3, rt[len(rt) // 2] * 1e3, rt[-1] * 1e3))
+
+    if a.usb:
+        print('bridge USB (PINGs from the Pi, answered by the Pico):')
+        for count, size in ((1, 1), (20, 1), (1, 512), (4, 512), (40, 512)):
+            r = [link(sock, usb=[count, size])['usb'] for _ in range(5)]
+            if None in r:
+                print('  %2d x %3d bytes: no answer' % (count, size)); continue
+            best = min(r)
+            print('  %2d x %3d bytes: best %6.2f ms%s' % (count, size, best * 1e3,
+                  '  = %.0f KB/s' % (count * size / best / 1024) if count * size >= 2048 else ''))
 
     ok = True
     if not a.sweep:

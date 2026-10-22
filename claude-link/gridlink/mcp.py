@@ -807,6 +807,12 @@ class ToolServer:
                 if proto is not None: proto.trace = None
             else:
                 return [text("gridlink: trace is 'start' or 'stop'")], True
+        if 'usb' in args:                     # [count, size]: PINGs through the bridge's USB (PicoBridge only)
+            proto = getattr(L.t, 'proto', None)
+            if proto is None or not hasattr(proto, 'usb_test'):
+                return [text('gridlink: the bridge is not the Pico')], True
+            count, size = args['usb']
+            return [text(json.dumps({'usb': proto.usb_test(int(count), int(size))}))], False
         info = dict(maxpay=L.maxpay, grid_rx=L.grid_rx, grid_maxpay=L.grid_maxpay, frame_cap=L.frame_cap or 0,
                     bridge=getattr(L.t, 'version', ''), stats=dict(L.stats))
         if tr is not None: info['trace'] = tr
