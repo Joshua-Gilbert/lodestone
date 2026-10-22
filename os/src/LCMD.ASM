@@ -1671,6 +1671,8 @@ do_choice:
         inc     si
 .o:     cmp     al, 'C'
         jne     .on
+        cmp     byte [si], ' '          ; (/C with no keys: none could
+        jbe     .syn                    ;  answer it)
         mov     [ch_keys], si
 .ck:    lodsb                           ; to the end of the keys
         cmp     al, ' '
@@ -3803,6 +3805,8 @@ env_set_line:
 .n:     lodsb
         or      al, al
         jz      .syn
+        cmp     di, setbuf2 + 78        ; (a name longer than setbuf2
+        ja      .syn                    ;  takes, with = and its NUL)
         call    upcase
         stosb
         cmp     al, '='
