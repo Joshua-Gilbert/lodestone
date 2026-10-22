@@ -24,8 +24,8 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M4b | Keys for the front task only (an INT 16h hook: waits that can be switched from, CODE-Tab anywhere) | PR #52, merged. |
 | M4c | Each task's own mouse | PR #54, merged. |
 | M5a | Each task's own vectors | PR #57, merged. |
-| M5b | Ending and killing tasks | This PR. |
-| M6 | Parking tasks in EMS and bringing them back | |
+| M5b | Ending and killing tasks | PR #61, merged. |
+| M6 | Parking tasks in EMS and bringing them back | This PR. |
 | M7 | The Executive's task list (TASKS.RUN, CODE-T), LCMD START/FG/KILL/PARK/WAIT, System's switch | |
 | M8 | Several `.RUN` windows at once, as coroutines in the UI task | |
 | M9 | On the 1520, and release 0.7 | |
@@ -1083,3 +1083,88 @@ The checks:
   - **A real disk error on C: during INT 25h/26h:** the test sets `mt_crit` itself.
   - **A task ended while it is in front in a graphics mode.**
   - **The 1520's own BIOS:** whether its INT 16h lets interrupts in before it looks (the race `mt_drop` closes), M9.
+
+## M6: parking tasks in EMS (2026-10-22)
+
+**What it does:**
+- **INT 21h F0h AL=15h (`MT_PARK`, BL = the task) parks a task.**
+  - Its whole region goes to EMS pages of MT's own: its TX, its stub, its programs and their memory.
+  - The region is given back, for another task or a program to use.
+  - A parked task doesn't run and doesn't come to the front: CODE-Tab passes it by, and `MT_FRONT` refuses it (error 5).
+  - `MT_LIST` shows it as `TS_PARKED` (5).
+- **AL=16h (`MT_UNPARK`, BL = the task) brings it back,** at the same segment, where its programs' pointers, its stack and its vectors point.
+  - It goes on as it was when parked: waiting for a key, computing, or waiting to be in front. It never comes to the front by itself.
+  - **A task in the way is parked first:** one whose region is in the place now. So two tasks that want the same place take turns in it.
+  - **Memory in the way that isn't a task's** can't be moved: a program the Executive's task runs, say. Error 8.
+- **Refused (error 5):** the Executive's task, the caller's own, the one in front, one being ended, one already parked, and one **pinned**: a vector points into it that could be called while it is away. MT looks at:
+  - the vector table (the machine's vectors, and the running task's own);
+  - the front task's INT 09h and 1Bh (`mt_fv`);
+  - every other task's own vectors (`TX_VEC`, `TX_FVEC`), a parked one's too;
+  - the machine's vectors in every other task's copy of the table at its spawn (`TX_GSN`), which are put back when that task ends.
+- **Not enough EMS:** error 8, and nothing changes. A region takes one 16 KB page per 16 KB: a task with the default 64 KB (4,283 paragraphs with its TX, stub and environment) takes 5.
+- **`MT_KILL` on a parked task** brings it back first, then ends it as any. If it can't be brought back: error 8.
+- **MTLAUNCH /P:n and /U:n** park task n and bring it back. They are the tests' way in; LCMD's `PARK` and the Tasks window's CODE-Z are M7's.
+
+**How:**
+- **Parking** (`mt_pk`):
+  - the checks above (`mt_pinned` for the vectors);
+  - the region's size from its MCB (`TE_PSZ`);
+  - pages from INT 67h AH=43h. MT's own code asks, so their owner is 0, and no program's end takes them;
+  - the copy, with INT 67h AH=57h. KEMS lets interrupts in as it copies, and puts the windows back after. Meanwhile `mt_vbusy` is set, so an interrupt's INT 10h goes straight to the BIOS and maps no window over the copy;
+  - the MCB freed, and the state kept (`TE_PST`) before it becomes 5.
+- **Bringing back** (`mt_up`):
+  - its pages checked (`mt_pchk`): still open, MT's, and the size of its region;
+  - `mt_take` walks the arena from its start, merging free blocks as `mt_carve` does. The free block holding the place is split round it. A task in the way is parked first, and the walk starts again;
+  - the copy back, the MCB named "Tn" again, the pages given back, and the state as it was.
+- **A parked task's TX is in EMS with the rest,** at the start of its first page (checked at assembly: the TX fits in a page).
+  - Only `mt_vrep` reads the TX of a task that doesn't run: it puts right other tasks' vectors that point into memory being freed (M5a). `mt_pinned` reads it too.
+  - For a parked one, both map that page into window 0, with interrupts off (`mt_pmap`). So a program ending while a task is parked doesn't leave that task's vectors pointing into freed memory.
+- **A parked task's own vectors may point into its own place,** where another task may be now. Its INT 22h is its stub's end, for one; a hook of its own is another. While its TX is looked at, `mt_inr` passes its own place by (`mt_xr`, `mt_xe`).
+  - So the task now in that place isn't pinned by them.
+  - And that task's programs' ends don't "put right" the parked task's INT 22h. Without this, the parked task, back, would end into the other task's freed memory. (The tests found it.)
+- **A handle MT gets is taken off any entry that still had it** (`mt_hnew`, for screens as before, and now for parked regions). A program can free a handle it doesn't own; if MT is then given it again, the task that had it can't come back (error 8) rather than come back from someone else's pages.
+
+**The limits, plainly:**
+- **Parking takes time,** a copy of the region each way. Meanwhile the caller is inside INT 21h, so no other task runs, though interrupts and ticks go on. The 1520's speed is to be measured (M9).
+- **Bringing back can fail when memory has moved on:** a program the Executive's task runs in the place, or a task in the way that can't be parked (in front, the caller's, or pinned). Error 8; tasks parked on the way stay parked.
+- **Pinned is cautious:** the machine's vectors in another task's copy of the table at its spawn count, though that task may never put them back.
+- **A program that frees MT's EMS handle** (AH=45h with a number it doesn't own) loses that task: it can't be brought back or ended (error 8), and its entry stays.
+- **A task brought to the front just before it is parked** stays parked: the request is dropped when it comes to be done (`mt_swnow` passes a parked task by).
+- **Shadowing (M4a) stays on** while a parked task is there: `mt_others` counts it.
+- **What a parked task has open stays open:** its files and its own EMS pages. A disk changed meanwhile is the program's affair, as in DOS.
+- **Not tried on the 1520 yet** (M9).
+
+**Cost:**
+- **Switch off:** nothing. LODE.SYS is the same size (47,168 bytes); only `mt_sum` and `mt_boot`'s copies of LODEMT.SYS's sizes differ, in section boot. The map and MEMSZ are main's (582.2 KB).
+- **Switch on:** MT's block is 789 paragraphs plus its MCB (12,640 bytes; it was 711), so a DOS program gets 569.9 KB (571.1 before).
+- **Files:** LODEMT.SYS is 10,520 bytes (9,269 before); ROM 1 has 14,848 (15,872 before: two sectors less) bytes left.
+- **Speed:** none on the paths that run all the time. CODE-Tab's look for the next task and `mt_swnow`'s check of it each test one byte more; `mt_vrep` (a program's end) one more per task, and `mt_inr` two compares more per vector it looks at.
+
+**Tests:** `test_mt.py`, 248 checks (was 241). The new group is `t_park`, with new modes in the test programs: MTKILL E (takes every EMS page free, then waits for a line), MTVEC L (as P, but waits for a line before it ends) and MTVEC I (sets the machine's INT 62h, waits for a line, puts it back).
+
+The checks:
+- **MTKILL F behind,** waiting for a line inside INT 21h (its kernel stack's slice in its TX): parked (state 5, its MCB free, 5 pages taken), brought back at the same place with every byte as it was and its state again (the pages given back); then in front, its line: it goes on and ends.
+- **MTKILL S computing** (switched from at the tick): parked, it doesn't run for 3 s; back, it runs again; ended from there.
+- **Refused:** the Executive's task (5); bringing back one not parked, parking or bringing back no task (1); a parked one to the front (5), passed by by CODE-Tab (a watch on what `mt_swnow` is asked for), passed by by `mt_swnow` when asked for all the same (the test sets the request), parked again (5).
+- **MTVEC I in the parked one's place,** with the machine's INT 62h its own: it can't be parked (5), so the parked one can't come back (8); both as they were.
+- **MTKILL F in the parked one's place** (not pinned, though the parked one's own vectors point there): parked on the way and the parked one back, then the other way round. It ends while the other is parked; the other, back, ends through its own INT 22h. Memory, files and EMS as before.
+- **Every EMS page taken** (MTKILL E): parking fails (8), the task as it was, every byte; once the pages are back it parks, and is ended from there (`MT_KILL` on a parked task).
+- **MTVEC V, its INT 2Fh its spawner's hook** (MTVEC L): the spawner can't be parked (5), with V there or parked (its TX in EMS). V parked, the spawner ends meanwhile, and V's INT 2Fh, in its TX in EMS, is put back as it was before. V back, it reads it.
+- **The checks can fail:** each of these, broken on purpose, fails a check:
+  - `mt_vrep` not reaching a parked task's TX (V's INT 2Fh left in the freed region);
+  - a parked task's own place not passed by (`mt_xr`): the task now there counts as pinned;
+  - `mt_pinned` not called, or not looking at the other tasks' own vectors;
+  - the region not freed;
+  - a task in the way not parked;
+  - CODE-Tab not passing a parked task by, `mt_swnow` not passing it by, or `MT_FRONT` not refusing it;
+  - `MT_KILL` not bringing a parked task back first.
+
+  **Not tested here:**
+  - the state before parking put back (a task that was waiting waits again as soon as it runs, so it shows no difference);
+  - `mt_vbusy` during the copy (an interrupt's INT 10h landing in it: timing);
+  - `mt_pchk`'s tests, and `mt_hnew` for a parked region's handle (a program freeing MT's handle, and MT given it again);
+  - in `mt_pinned`, the tasks' own vectors in another's copy of the table at its spawn passed by (a task that changes a vector it inherited);
+  - the free block split above the place as well as below (each parked region here was at the top of its free block);
+  - parking the caller's own task or the one in front (the tests park from the Executive's task, in front);
+  - the copy failing (INT 67h AH=57h's errors);
+  - parking on the 1520, and how long it takes there.
