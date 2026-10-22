@@ -1018,12 +1018,7 @@ now         resw 1
 connected   resb 1
 pi_active   resb 1
 lstate      resb 1
-g_seq       resb 1
-p_ack       resb 1
-have_pi     resb 1
-nak_pending resb 1
-resend      resb 1
-pend_msg    resb 1
+TERMLINK_RESET_VARS
 pend_chunk  resw 1
 done_type   resb 1
 t_sent      resw 1
@@ -1035,8 +1030,6 @@ n_bad       resw 1
 spoll_errs  resb 1
 pit_last    resw 1
 pit_tick    resw 1
-txq_head    resb 1
-txq_n       resb 1
 txq         resb TXQN * 10
 txlen       resw 1
 txframe     resb TXMAX + 8
@@ -1044,13 +1037,8 @@ nakframe    resb 8
 rxn         resw 1
 rxbuf       resb RXMAX + 1
 pf_kind     resb 1
-rq_type     resb 1                      ; (link_reset clears these: CLAUDE.COM's)
-rq_len      resw 1
-req_ready   resb 1
-snap_reply  resb 1
 rq_more     resb 1                      ; a REQUEST's frames still coming
 rq_over     resb 1                      ;  more than REQMAX of them
-reply_busy  resb 1
 replybuf    resb 4                      ; a reply of our own: id, status (flags)
 hellobuf    resb 96
 ; M3: the program, its screen, Claude's keys
@@ -1072,9 +1060,6 @@ reqbuf      resb REQMAX                 ; a REQUEST: id, op, its arguments
 crctab      resw 256
 ; Term (TERMCELL.INC, TERMKEYS.INC)
 t_active    resw 1
-keyn        resb 1
-keys_q      resb 1
-rep_q       resb 1
 keybuf      resw KEYMAX
 keysend     resw KEYMAX
 shadseg     resw 1

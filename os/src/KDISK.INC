@@ -90,6 +90,7 @@ bufs        resb 512 * NBUF
 fatbuf      resb 512 * MAXSPF
 section .text
 
+section ovl
 drv_init:
         int     11h
         xor     cx, cx
@@ -131,6 +132,7 @@ drv_init:
         mov     si, bootbpb
         call    mount_bpb
 .x:     ret
+section .text
 
 ; AL = drive -> [act], [actp], SI = drive table entry
 use_drive:

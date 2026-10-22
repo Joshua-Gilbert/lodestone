@@ -106,11 +106,14 @@ top         dw 0
             dw ex_row, ex_chg, 1, 78, ex_lvname
 msgshown    db 0
 
+; The Executive's DTA is exec_dta from here on, always: exec_raw puts it
+; back after a DOS program, run_app after a .RUN, ui_room after the block
+; moves (with MULTITASK=1 the kernel keeps each task's own), so nothing
+; that finds files sets it again
 ex_start:
         mov     dx, exec_dta
         mov     ah, 1Ah
         int     21h
-        call    sysinfo
         call    hires
         jnc     .hi
         mov     si, s_nohires
@@ -1542,9 +1545,6 @@ pat_here:                               ; (sub_copy: in curdir, the counts go on
         mov     cx, 17
         div     cx
         mov     [nm_max], ax
-        mov     dx, exec_dta
-        mov     ah, 1Ah
-        int     21h
         mov     di, argpath             ; X:\SUBJECT\PATTERN
         mov     si, c_pat
         call    sb_dirname
@@ -2178,9 +2178,6 @@ move_here:
 ; first leaves the drive, the directory and the entry it found in the
 ; DTA's search state (KFILE.INC f_4E).  ZF clear if either isn't there
 same_file:
-        mov     dx, exec_dta
-        mov     ah, 1Ah
-        int     21h
         mov     dx, argpath
         mov     di, id_src
         call    file_id
@@ -2804,6 +2801,7 @@ draw_form:
 ; ---------------------------------------------------------------------
 ;  the system information line
 ; ---------------------------------------------------------------------
+section uiboot                          ; (once, at start-up: UICORE.INC ui_boot)
 sysinfo:
         int     12h
         mov     [convkb], ax
@@ -2839,6 +2837,7 @@ sysinfo:
         ret
 
 %include "FPU.INC"
+section ui
 
 ; "80286 80287XL   640K + ...": the coprocessor, when there is one, is lit
 ; (draw_all inverts " 80287 " or " 80287XL " after drawing the line)

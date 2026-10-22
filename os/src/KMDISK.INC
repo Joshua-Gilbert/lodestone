@@ -879,7 +879,6 @@ section mdt
         times (use_drive.hk - use_drive) - 3 resb 1
         times (drv_present.hk - drv_present) - 3 resb 1
         times (cwd_of.hk - cwd_of) - 3 resb 1
-        times 128 - (init.go + 2 - start) resb 1        ; (init's JMP SHORT reaches 0)
 
 ; =====================================================================
 ;  start-up (section boot, in the load image: CS = 1000h)
@@ -905,7 +904,7 @@ md_stub:
         ret
 md_stub_end:
 [absolute 0]
-        times (init - start - MD_STUB) - (md_stub_end - md_stub) resb 1
+        times (run_ui - start - MD_STUB) - (md_stub_end - md_stub) resb 1
 section boot
 
 ; init's last jump, through KSEG:0000 (CS = 1000h): MDISK= in \LODE.INI
