@@ -928,11 +928,16 @@ f_3A:   call    get_path                ; RMDIR
 .cur:   mov     ax, 16                  ; the current directory
         jmp     .e
 .nd:    cmp     ax, 3                   ; a wildcard: 16 (MS-DOS's); the path
-        jne     .e                      ;  there but its last name not, or not
-        cmp     byte [r_wild], 1        ;  a directory: 5, as MS-DOS
-        je      .cur
+        jne     .e                      ;  there but its last name a file's or
+        cmp     byte [r_wild], 1        ;  a device's: 5, not there: 3, as
+        je      .cur                    ;  MS-DOS
         cmp     byte [r_name], 0
         je      .e
+        call    find_named              ; (nm11: the last name still)
+        jnc     .acc
+        call    dev_lookup
+        mov     ax, 3                   ; (CF kept)
+        jc      .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
