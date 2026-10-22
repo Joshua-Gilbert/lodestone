@@ -40,7 +40,8 @@ CODE = {c: v for c, v in zip('ABCDEFGHIJKLMNOPQRSTUVWXYZ',
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
-    for src, dst in (('apps/SYSTEM.ASM', SYSTEM), ('apps/WRITE.ASM', WRITE), ('tests/UITEST.ASM', UITEST), ('apps/CALC.ASM', CALCRUN)):
+    for src, dst in (('apps/SYSTEM.ASM', SYSTEM), ('apps/WRITE.ASM', WRITE), ('tests/UITEST.ASM', UITEST), ('apps/CALC.ASM', CALCRUN),
+                     ('tests/RCTEST.ASM', os.path.join(HERE, 'RCTEST.RUN')), ('tests/RC6.ASM', os.path.join(HERE, 'RC6.RUN'))):
         mkrun.build(os.path.join(GOS, src), dst)
     subprocess.run(['nasm', '-f', 'bin', '-o', MEMSZ, os.path.join(HERE, 'MEMSZ.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
@@ -560,7 +561,7 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; 0.1 KB less, names and devices answered as MS-DOS 3.30): the directory buffer is lent while it runs' % kb,
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30): the directory buffer is lent while it runs' % kb,
           kb >= 566.2, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
@@ -2206,11 +2207,108 @@ def t_mdisk():
     k.key(ktest.CODE_P); k.key('defrag m:'); k.key(ktest.ENTER)
     check('DEFRAG M:: "M: is the temporary disk, in memory: nothing to tidy"', 'nothing to tidy' in k.pc.text_screen(), k.pc.text_screen())
 
+# ---------------------------------------------------------------------
+RCTEST = os.path.join(HERE, 'RCTEST.RUN')
+RC6 = os.path.join(HERE, 'RC6.RUN')
+
+def press(k, x, y, buttons):
+    """Move the pointer to (x, y), then the buttons down and up again."""
+    point(k, x, y)
+    k.pc.mouse_move(0, 0, buttons); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+
+def rc_events(k, src='tests/RCTEST.ASM'):
+    """The events RCTEST.RUN has had: (AX, BX, CX) each."""
+    sy, base = run_syms(src), k.u16('run_base')
+    n = k.pc.u16(k.useg, base + sy['nevs'])
+    return [struct.unpack('<3H', k.pc.rd(k.useg, base + sy['evs'] + 6 * i, 6)) for i in range(min(n, 32))]
+
+def t_rclick():
+    """Right clicks (UI API 7): EV_RCLICK, with x and y, only to a .RUN that
+    needs API 7; the core's own waits ignore it; the Executive and older
+    .RUNs never see it."""
+    print('== right clicks (UI API 7)')
+    hdr = open(RCTEST, 'rb').read(6), open(RC6, 'rb').read(6)
+    check('RCTEST.RUN needs API 7, RC6.RUN 6 (the same program)', hdr == (b'GRUN\x07\x00', b'GRUN\x06\x00'), hdr)
+    k = ktest.KPC(image('rclick.img', RCTEST, RC6)); k.pc.mouse = True; k.start()
+    made, ev = [], k.Y['ui_event.got']                  # (every event UI_EVENT gets, a jump target)
+    k.hooks.append(lambda pc: made.append(pc.r('ax')) if pc.r('cs') == k.useg and pc.r('ip') == ev else None)
+    sel0 = k.u16('sel')
+    press(k, 300, 200, 2); press(k, 320, 5, 1)
+    check('in the Executive: a right click makes no event at all (the left one does: the hook sees events)',
+          made == [0xFF01] and not k.crashed, [hex(a) for a in made])
+    k.select('RCTEST.RUN'); k.key(ktest.ENTER)
+    press(k, 100, 50, 2)
+    check('in an API 7 .RUN: a right press is EV_RCLICK (FF03h) at (100, 50), its release nothing', rc_events(k) == [(0xFF03, 100, 50)],
+          rc_events(k))
+    press(k, 200, 60, 1)
+    check('... a left press: EV_CLICK as before', rc_events(k)[1:] == [(0xFF01, 200, 60)], rc_events(k))
+    press(k, 210, 70, 3)
+    check('... both pressed in one packet: EV_CLICK only', rc_events(k)[2:] == [(0xFF01, 210, 70)], rc_events(k))
+    point(k, 220, 80); k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 3); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+    check('... left held, then the right pressed: EV_CLICK only (no right click while the left is down)',
+          rc_events(k)[3:] == [(0xFF01, 220, 80)], rc_events(k))
+    # a window dragged by its title, the right button pressed in the middle: the drag goes on as if not
+    k.key('W')
+    sy, base = run_syms('tests/RCTEST.ASM'), k.u16('run_base')
+    win = lambda: struct.unpack('<2H', k.pc.rd(k.useg, base + sy['win'], 4))
+    n0 = len(rc_events(k))
+    point(k, 20 * 8 + 40, 108)
+    for dx, dy, b in ((0, 0, 1), (40, 20, 1), (0, 0, 3), (40, 20, 3), (0, 0, 1), (0, 0, 0)):
+        k.pc.mouse_move(dx, dy, b); k.pc.run_for(0.05)
+    k.settle()
+    got = rc_events(k)[n0:]
+    check('a window dragged 80 right, 40 down, the right pressed half way: moved by exactly that, EV_MOVED, no EV_RCLICK',
+          win() == (30, 140) and [e[0] for e in got] == [0xFF02], (win(), got))
+    # the left let go and the right pressed in one packet, mid-drag: win_mv takes x, y from the event, not AX as x
+    n0 = len(rc_events(k))
+    point(k, 30 * 8 + 40, 148)
+    for dx, dy, b in ((0, 0, 1), (40, 20, 1), (0, 0, 2), (0, 0, 0)):
+        k.pc.mouse_move(dx, dy, b); k.pc.run_for(0.05)
+    k.settle()
+    got = rc_events(k)[n0:]
+    check('... dragged 40 right, 20 down, then the left up and the right down in one packet: there (35, 160), no EV_RCLICK',
+          win() == (35, 160) and 0xFF03 not in [e[0] for e in got], (win(), got))
+    # a right click on its close box and on its title strip: neither closes nor moves it; the program gets it
+    n0 = len(rc_events(k))
+    press(k, (35 + 30 - 2) * 8 + 4, 168, 2); press(k, 35 * 8 + 40, 168, 2)
+    got = rc_events(k)[n0:]
+    check('a right click on the close box, then on the title: the window open and where it was, two EV_RCLICKs',
+          win() == (35, 160) and k.pc.rd(k.useg, base + sy['wopen'], 1) == b'\x01' and [e[0] for e in got] == [0xFF03, 0xFF03], (win(), got))
+    k.key(ktest.ESC)
+    # the core's own waits: UI_EDIT and UI_ASK go on past a right click, which reaches them (seen at ui_event.got)
+    k.key('E'); k.key('ab'); k.key(ktest.ENTER)
+    n0, made[:] = len(rc_events(k)), []
+    k.key('E'); press(k, 50, 100, 2); k.key('x'); k.key(ktest.ENTER)
+    ed = k.pc.u16(k.useg, base + sy['edkey']), k.pc.asciiz(k.useg, base + sy['ebuf'])
+    check('UI_EDIT on "ab": a right click reaches it and is ignored, "x" typed first still replaces the text',
+          ed == (ktest.ENTER, b'x') and 0xFF03 in made and 0xFF03 not in [e[0] for e in rc_events(k)[n0:]], (ed, [hex(a) for a in made]))
+    n0, made[:] = len(rc_events(k)), []
+    k.key('A'); press(k, 50, 380, 2)
+    asking = k.band()[0] if k.band() else ''
+    k.key(ktest.ENTER)
+    ask = k.pc.u16(k.useg, base + sy['ask'])
+    check('UI_ASK: a right click (on the band too) reaches it, neither confirms nor cancels; Return confirms',
+          asking == 'Ask: Confirm' and ask == 1 and 0xFF03 in made and 0xFF03 not in [e[0] for e in rc_events(k)[n0:]],
+          (asking, ask, [hex(a) for a in made]))
+    k.key(ktest.ESC)
+    made.clear()
+    press(k, 300, 200, 2); press(k, 320, 5, 1)
+    check('back in the Executive (the last .RUN needed API 7): still no right clicks', made == [0xFF01] and k.rd('run_active', 1) == b'\x00',
+          [hex(a) for a in made])
+    k.select('RC6.RUN'); k.key(ktest.ENTER)
+    press(k, 100, 50, 2); press(k, 120, 60, 1)
+    got = rc_events(k, 'tests/RC6.ASM')
+    check('an API 6 .RUN: no EV_RCLICK, the left click as ever', got == [(0xFF01, 120, 60)], got)
+    k.key(ktest.ESC)
+    check('... and the Executive afterwards', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
