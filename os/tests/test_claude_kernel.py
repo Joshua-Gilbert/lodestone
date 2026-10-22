@@ -46,7 +46,44 @@ def test_run_tm5000g_from_claude():
     T.check(h)
 
 
+def test_write_no_name_leaves_no_temp():
+    """A file the Pi writes under a name DOS won't take (a second dot): the
+    write is refused, the file of its first 8.3 name is left alone, and the
+    NAME.$$$ written first is deleted again (the stand-in DOS can't say 3)."""
+    h = T.start([T.reply(('tool', 'str_replace_based_edit_tool',
+                          {'command': 'create', 'path': 'A:\\NOTES.V2.TXT', 'file_text': 'new text\n'})),
+                 T.reply(('text', 'It could not be written.'))], files={'A:\\NOTES.V2': b'old text\r\n'})
+    assert h.turn('write the notes', on_ask=lambda h: h.key(ord('y')))
+    assert bytes(h.m.fs['A:\\NOTES.V2']) == b'old text\r\n', h.m.fs.get('A:\\NOTES.V2')
+    assert not [n for n in h.m.fs if n.endswith('.$$$')], sorted(h.m.fs)
+    T.check(h)
+
+
+def test_write_safe_keeps_the_only_copy():
+    """write_file_safe's order on a stub link: the old file deleted, then the rename failing, leaves NAME.$$$
+    (the new data's only copy); the old file's delete refused takes NAME.$$$ away again."""
+    from gridlink import grid as G
+    class Stub(G.Grid):
+        def __init__(s, fail): s.fs, s.fail = {'A:\\NOTES.TXT': b'old'}, fail
+        def write_file(s, path, data, progress=None): s.fs[path] = data
+        def delete(s, path):
+            if s.fail == 'delete' and path == 'A:\\NOTES.TXT': raise G.GridError('access denied', 5)
+            if path not in s.fs: raise G.GridError('file not found', 2)
+            del s.fs[path]
+        def rename(s, old, new):
+            if s.fail == 'rename': raise G.GridError('disk error', 31)
+            s.fs[new] = s.fs.pop(old)
+    for fail, want in (('rename', {'A:\\NOTES.$$$': b'new'}), ('delete', {'A:\\NOTES.TXT': b'old'}),
+                       (None, {'A:\\NOTES.TXT': b'new'})):
+        g = Stub(fail)
+        try: g.write_file_safe('A:\\NOTES.TXT', b'new')
+        except G.GridError: pass
+        assert g.fs == want, (fail, g.fs)
+
+
 T.test_quit_to_dos = test_quit_to_dos
+T.test_write_no_name_leaves_no_temp = test_write_no_name_leaves_no_temp
+T.test_write_safe_keeps_the_only_copy = test_write_safe_keeps_the_only_copy
 T.test_run_tm5000g_from_claude = test_run_tm5000g_from_claude
 
 if __name__ == '__main__':
