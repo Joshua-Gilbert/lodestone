@@ -1671,13 +1671,9 @@ f_4E:   call    get_path
         stosw
         push    cs
         pop     es
-        call    find_next
-        jnc     .ok
-        cmp     ax, 18
-        jne     .e
-        mov     ax, 2                   ; nothing at all: "file not found"
+        call    find_next               ; (nothing at all: 18, as MS-DOS)
+        jmp     ret_cf
 .e:     jmp     fail
-.ok:    jmp     ok
 f_4F:   call    find_next
         jmp     ret_cf
 
