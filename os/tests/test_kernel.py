@@ -1570,6 +1570,69 @@ def t_nul():
     check("... and LCMD (its IF EXIST looks at the directory itself): IF EXIST NOSUCH\\NUL no, A.B\\NUL yes; TYPE NUL",
           'nosuch' not in o.replace('nosuch\\nul', '') and 'dir\n' in o + '\n', o)
 
+# NOMATCH.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+MS_NOMATCH = [('fn 4E NOSUCH.TXT', 'err 12'),
+              ('fn 4E Z*.*', 'err 12'),
+              ('fn 4E A.B\\N?L', 'err 12'),
+              ('fn 4E A.B\\X.TXT', 'ok'),
+              ('fn 4E A.B\\NOSUCH', 'err 12'),
+              ('fn 4E E.F\\*.TXT', 'err 12'),
+              ('fn 4E E.F\\*.*', 'err 12'),
+              ('fn 4E E.F\\NOSUCH', 'err 12'),
+              ('fn 4E HID.TXT', 'err 12'),
+              ('fn 4E HS.TXT', 'err 12'),
+              ('fn 4E SYS.TXT', 'err 12'),
+              ('fn 4E A.B', 'err 12'),
+              ('fn 4E *.TXT', 'ok'),
+              ('fn 4E *.*', 'ok'),
+              ('fn 4E NOSUCH\\*.*', 'err 03'),
+              ('fn 4E A.TXT\\*.*', 'err 03'),
+              ('fn 4E A?B\\*.*', 'err 03'),
+              ('fn 4E A.B.C', 'err 03'),
+              ('fn 4E A.B\\X.Y.Z', 'err 03'),
+              ('fn 4E ', 'err 03'),
+              ('fn 4E A:NOSUCH', 'err 12'),
+              ('fn 4E \\A.B\\..\\NOSUCH', 'err 12'),
+              ('fn 4E E.F\\..\\A.TXT', 'ok'),
+              ('fn 4E E.F\\*.*', 'ok'),
+              ('fn 4E E.F\\Z*.*', 'err 12'),
+              ('fn 4E NOSUCH.TXT', 'err 12'),
+              ('fn 4E A.B', 'ok'),
+              ('fn 4E HID.TXT', 'ok'),
+              ('fn 4E HS.TXT', 'ok'),
+              ('fn 4E NOSUCH.TXT', 'err 12'),
+              ('fn 4E Z*.*', 'err 12'),
+              ('fn 4E NOSUCH.TXT', 'err 12'),
+              ('fn 4E E.F\\*.*', 'err 12')]
+
+def t_nomatch():
+    """FIND FIRST that finds nothing is 18, "no more files", as in GRiD MS-DOS 3.30 (X22; it was 2): a name
+    that isn't there, a pattern that matches nothing, an empty directory, a hidden file without the bit; a
+    directory that isn't there is still 3.  LCMD and the Executive say "not found" as before."""
+    com = os.path.join(OUT, 'NOMATCH.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NOMATCH.ASM')], check=True)
+    names = ('a', 'hid', 'sys', 'hs', 'x')
+    for n in names:
+        open(os.path.join(OUT, 'NM_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
+    img = image('nomatch.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NOMATCH.COM=' + com,
+                *['%s.TXT=%s' % (n.upper(), os.path.join(OUT, 'NM_%s.TXT' % n)) for n in names if n != 'x'])
+    m = lambda *a: subprocess.run(list(a), check=True, stdin=subprocess.DEVNULL, capture_output=True)
+    m('mmd', '-i', img, '::A.B'); m('mmd', '-i', img, '::E.F')
+    m('mcopy', '-i', img, os.path.join(OUT, 'NM_x.TXT'), '::A.B/X.TXT')
+    m('mattrib', '-i', img, '+h', '::HID.TXT'); m('mattrib', '-i', img, '+s', '::SYS.TXT')
+    m('mattrib', '-i', img, '+h', '+s', '::HS.TXT')
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    assert run_long(k, 'nomatch > out.txt')
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+    want = [c + ' -> ' + a for c, a in MS_NOMATCH]
+    check("NOMATCH.COM: all %d calls answer as GRiD MS-DOS 3.30's do (nothing found: 18; a directory that isn't "
+          "there, or a bad name: 3)" % len(want), got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    o = sh.run('dir z*.*') + sh.run('dir e.f\\*.txt') + sh.run('del z*.*') + sh.run('if exist nosuch.txt echo yes')
+    check('... and LCMD: DIR and DEL of nothing say "File not found"; IF EXIST of nothing is false',
+          o.count('File not found') == 3 and 'yes' not in o.replace('echo yes', ''), o)
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -2114,7 +2177,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
