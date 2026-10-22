@@ -9,7 +9,11 @@
 ;  background task's INT 10h output in its own screen, and a task that
 ;  writes the screen itself frozen in the background (M4a); keys for the
 ;  front task only, its waits in the BIOS switched from, CODE-Tab wherever
-;  it is typed (M4b); each task's own INT 33h mouse state (M4c).
+;  it is typed (M4b); each task's own INT 33h mouse state (M4c); each
+;  task's own vectors (M5a: mt_vrun's swapped at every switch, the
+;  keyboard's 09h and 1Bh at a change of the front, the rest the
+;  machine's, those left pointing into a task's region put back at its
+;  end).
 ;
 ;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
 ;  only in the load image, its resident part (section mtt) isn't even in
@@ -26,8 +30,9 @@
 ;  0; it reaches the kernel with far jumps (and its near routines with
 ;  KCALL), so it doesn't have to be within KSEG's 64 KB.  Its hooks:
 ;    - INT 08h goes through mt_tick (the BIOS's handler first).  A
-;      program's hook goes ahead of it, as in DOS (M5 gives each task its
-;      own); while one is there the tick doesn't switch;
+;      program's hook goes ahead of it, as in DOS, in its own task's
+;      vectors (M5a); while the running task has one there the tick
+;      doesn't switch it;
 ;    - done.sw, INT 21h's way out, becomes a far jump to mt_exit;
 ;    - INT 21h F0h through mt_f0: f_F0's first 5 bytes (MOV AL,[BP+F_AX]
 ;      and OR AL,AL) become a far jump to it, and it comes back past
@@ -56,7 +61,8 @@
 ;           and console state, the current directories, the DTA and
 ;           console line, the current PSP, the memory arena's start),
 ;           the kernel stack's slice from SP up (it waits inside INT 21h),
-;           its coprocessor's state and its INT 33h driver's (m33_st)
+;           its coprocessor's state and its INT 33h driver's (m33_st),
+;           its own vectors (and, not task 0's, the table at its spawn)
 ;    stub   a PSP and a few instructions: EXEC the program, then MT_END
 ;           (its own parent: ended itself, it lands on MT_END too)
 ;    env    a copy of the spawner's environment (it may end first)
@@ -106,7 +112,17 @@ TX_FPU      equ (TX_FPV + 2) & ~1       ; the state (FNSAVE's 94 bytes, even)
 TX_M33      equ TX_FPU + 94             ; its INT 33h state (the driver's m33_st:
                                         ;  where the pointer is, its ranges,
                                         ;  counts, shape, event handler)
-TX_PARAS    equ (TX_M33 + M33_ST + 15) / 16
+TX_VEC      equ TX_M33 + M33_ST         ; its own vectors (mt_vrun's), while
+                                        ;  another runs
+TX_FVEC     equ TX_VEC + MT_NVEC * 4    ; its INT 09h and 1Bh (mt_vfr's), while
+                                        ;  another is in front
+TX0_PARAS   equ (TX_FVEC + MT_NFV * 4 + 15) / 16    ; (task 0's TX ends here)
+TX_GSN      equ TX0_PARAS * 16          ; the vector table at its spawn (a
+                                        ;  task's: the ones left pointing into
+                                        ;  its region at its end put back)
+TX_PARAS    equ TX0_PARAS + 1024 / 16
+MT_NVEC     equ 29                      ; (mt_vrun's and mt_vfr's counts)
+MT_NFV      equ 2
 
 ; ---- the stub (a PSP, then this at 100h) --------------------------------
 ST_PATH     equ 120h                    ; the program (ASCIIZ)
@@ -188,6 +204,29 @@ mt_33pk     db      0                   ;  the mouse's IRQ bit masked (0Ch,
 mt_33pm     db      0                   ;  14h: 0 else) and the mask before)
 mt_33sb     db      0                   ; (mt_scrto: m33_busy as it was)
 mt_33ot     db      0                   ; (mt_m33on: another driver answered)
+; each task's own vectors (M5a), swapped at every switch: DOS's (22h-24h
+; first: a new task's are MT's, not its spawner's; 21h, 28h, 2Fh), the
+; CPU's traps, INT 02h (where the BIOS's INT 75h sends a coprocessor's
+; error) and 75h, INT 08h (its timer hook ahead of mt_tick), 10h, 16h,
+; 1Ch, and 34h-3Fh (compilers' floating-point emulators, overlay
+; managers).  And the front task's: 09h and 1Bh (the keyboard's), swapped
+; at a change of the front.  The rest are the machine's (13h, 33h, the
+; other IRQs, 67h, the BIOS's tables)
+mt_vrun     db      22h, 23h, 24h, 21h, 28h, 2Fh
+            db      00h, 01h, 02h, 03h, 04h, 06h, 75h
+            db      08h, 10h, 16h, 1Ch
+            db      34h, 35h, 36h, 37h, 38h, 39h, 3Ah, 3Bh, 3Ch, 3Dh, 3Eh, 3Fh
+%if $ - mt_vrun != MT_NVEC
+%error "mt_vrun: MT_NVEC"
+%endif
+mt_vfr      db      09h, 1Bh
+mt_fv       times   MT_NFV * 2 dw 0     ; the front task's 09h and 1Bh while
+                                        ;  another runs (mt_vfr's order)
+mt_vr       dw      0                   ; (mt_vrep: the memory, its end, the
+mt_ve       dw      0                   ;  table put back from, at DS:mt_vsb,
+mt_vsb      dw      0                   ;  and 1 if the vector table is done
+mt_vtab     db      0                   ;  too; mt_vfr's from mt_vfs)
+mt_vfs      times   MT_NFV * 2 dw 0
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
@@ -294,10 +333,11 @@ mt_tick:
         cmp     byte [cs:mt_pend], 0
         je      .r
         push    es                      ; INT 08h still ours?  (Else a hook
-        xor     ax, ax                  ;  ahead of it is what this
-        mov     es, ax                  ;  interrupted, not the task: the
-        mov     ax, cs                  ;  switch waits for INT 21h's way
-        cmp     word [es:8 * 4], mt_tick ;  out.)
+        xor     ax, ax                  ;  ahead of it, in the running task's
+        mov     es, ax                  ;  vectors, is what this interrupted,
+        mov     ax, cs                  ;  maybe above a TSR's or the BIOS's
+        cmp     word [es:8 * 4], mt_tick ;  code: the switch waits for INT
+                                        ;  21h's way out.)
         jne     .h
         cmp     [es:8 * 4 + 2], ax
 .h:     pop     es
@@ -685,6 +725,11 @@ mt_switch:
         push    es
         cli
         cld                             ; (DF as the task had it, at a tick)
+        pushf                           ; (and TF: a debugger single-stepping
+        pop     ax                      ;  into INT 21h; its frame keeps it)
+        and     ah, 0FEh
+        push    ax
+        popf
         mov     al, [cs:mt_cur]
         push    bx
         call    mt_ent
@@ -693,6 +738,10 @@ mt_switch:
 .sv:    mov     [es:TX_SP], sp
         mov     [es:TX_SS], ss
         call    mt_emsget
+        push    bx
+        call    mt_vsv                  ; its own vectors, and the front's (09h,
+        call    mt_fvsync               ;  1Bh) as its turn left them
+        pop     bx
         cmp     byte [cs:mt_fpu], 0     ; its coprocessor's registers, control
         je      .nf                     ;  and status (mt_fdrain ran first:
         fnsave  [es:TX_FPU]             ;  the 287 is idle, so this can't wait
@@ -720,6 +769,11 @@ mt_switch:
 mt_load:
         cli
         cld
+        pushf                           ; (TF off, as in mt_switch)
+        pop     ax
+        and     ah, 0FEh
+        push    ax
+        popf
         mov     byte [cs:mt_inb], 0     ; (none under way at a switch, nor an
         mov     byte [cs:mt_crit], 0    ;  INT 24h prompt, INT 13h call, change
         mov     word [cs:mt_in13], 0    ;  of the front or kernel's idle: one
@@ -745,6 +799,8 @@ mt_load:
 .nf:    push    KSEG
         pop     ds
         call    mt_vload
+        call    mt_vld                  ; its own vectors; the front task's 09h
+        call    mt_fvset                ;  and 1Bh (one ended may have set them)
         mov     dx, EMS_PORT            ; its EMS windows
         mov     bx, TX_EMS
 .em:    mov     al, [es:bx]
@@ -809,6 +865,599 @@ mt_vload:
         push    ds
         pop     es
         pop     ds
+        ret
+
+; ---------------------------------------------------------------------
+;  each task's own vectors (M5a).  mt_vrun's are the running task's in
+;  the vector table and in its TX while another runs: whatever it set
+;  there, through AH=25h or itself, is saved at the switch away (mt_vsv)
+;  and put back as it runs again (mt_vld).  A new task starts with its
+;  spawner's.  mt_vfr's (INT 09h and 1Bh, which the keyboard's interrupt
+;  calls, whoever runs) are the front task's: kept in mt_fv while another
+;  runs, in a task's TX while another is in front (mt_fvto at a change of
+;  the front); one a background task set in its turn is its own, saved and
+;  taken off at the switch away (mt_fvsync, then mt_fvset).  Interrupts
+;  off for all of them
+; ---------------------------------------------------------------------
+; mt_vrun's vectors to the TX at ES.  AX, BX, CX, SI, DI changed
+mt_vsv: push    ds
+        xor     si, si
+        mov     ds, si
+        mov     bx, mt_vrun
+        mov     di, TX_VEC
+        mov     cx, MT_NVEC
+.l:     mov     al, [cs:bx]
+        inc     bx
+        xor     ah, ah
+        shl     ax, 2
+        mov     si, ax
+        movsw
+        movsw
+        loop    .l
+        pop     ds
+        ret
+
+; and back, from the TX at ES.  AX, BX, CX, SI, DI changed
+mt_vld: push    ds
+        push    es
+        push    es
+        pop     ds
+        xor     si, si
+        mov     es, si
+        mov     bx, mt_vrun
+        mov     si, TX_VEC
+        mov     cx, MT_NVEC
+.l:     mov     al, [cs:bx]
+        inc     bx
+        xor     ah, ah
+        shl     ax, 2
+        mov     di, ax
+        movsw
+        movsw
+        loop    .l
+        pop     es
+        pop     ds
+        ret
+
+; the running task's turn over (or the front changing): mt_vfr's vectors
+; as it left them.  The front task's go to mt_fv; another's, each one it
+; set (it differs from mt_fv), are its own, to its TX (mt_fvset puts
+; mt_fv's back).  AX, BX, CX, SI, DI changed (a switch's, on the task's
+; stack: kept short)
+mt_fvsync:
+        push    ds
+        push    es
+        cld
+        xor     ax, ax
+        mov     ds, ax
+        mov     al, [cs:mt_cur]
+        cmp     al, [cs:mt_front]
+        jne     .bg
+        push    cs
+        pop     es
+        mov     di, mt_fv
+        call    .cp
+        jmp     short .x
+.bg:    mov     bx, mt_vfr
+        mov     di, mt_fv
+        mov     cx, MT_NFV
+.c:     mov     al, [cs:bx]
+        inc     bx
+        xor     ah, ah
+        shl     ax, 2
+        mov     si, ax
+        mov     ax, [si]
+        cmp     ax, [cs:di]
+        jne     .d
+        mov     ax, [si+2]
+        cmp     ax, [cs:di+2]
+        je      .n
+.d:     push    bx                      ; (that one only: to its TX)
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+        pop     bx
+        sub     di, mt_fv - TX_FVEC
+        movsw
+        movsw
+        add     di, mt_fv - TX_FVEC - 4
+.n:     add     di, 4
+        loop    .c
+.x:     pop     es
+        pop     ds
+        ret
+.cp:    mov     bx, mt_vfr              ; (mt_vfr's, from the table at DS = 0,
+        mov     cx, MT_NFV              ;  to ES:DI)
+.cl:    mov     al, [cs:bx]
+        inc     bx
+        xor     ah, ah
+        shl     ax, 2
+        mov     si, ax
+        movsw
+        movsw
+        loop    .cl
+        ret
+
+; mt_fv to the vector table.  AX, BX, CX, SI, DI changed
+mt_fvset:
+        push    ds
+        push    es
+        cld
+        xor     ax, ax
+        mov     es, ax
+        push    cs
+        pop     ds
+        mov     si, mt_fv
+        mov     bx, mt_vfr
+        mov     cx, MT_NFV
+.l:     mov     al, [bx]
+        inc     bx
+        xor     ah, ah
+        shl     ax, 2
+        mov     di, ax
+        movsw
+        movsw
+        loop    .l
+        pop     es
+        pop     ds
+        ret
+
+; task AL to the front (mt_scrld, before mt_front is set): the one in
+; front keeps its 09h and 1Bh in its TX, AL's are put in.  All kept
+mt_fvto:
+        pushf
+        cli
+        pusha
+        push    ds
+        push    es
+        cld
+        push    ax
+        call    mt_fvsync
+        mov     al, [cs:mt_front]
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE  ; (ended: its region freed)
+        je      .ld
+        mov     es, [cs:bx+TE_TX]
+        push    cs
+        pop     ds
+        mov     si, mt_fv
+        mov     di, TX_FVEC
+        mov     cx, MT_NFV * 2
+        rep     movsw
+.ld:    pop     ax
+        call    mt_ent
+        mov     ds, [cs:bx+TE_TX]
+        push    cs
+        pop     es
+        mov     si, TX_FVEC
+        mov     di, mt_fv
+        mov     cx, MT_NFV * 2
+        rep     movsw
+        call    mt_fvset
+        pop     es
+        pop     ds
+        popa
+        popf
+        ret
+
+; a new task's vectors (the TX at ES, its entry at BX; mt_spawn): its
+; spawner's, but INT 22h-24h MT's (its stub's end, the kernel's ^C: end
+; the program, mt_i24's prompt), not a shell's whose code goes on running
+; in its own task (its ^C would go back to its prompt on this task's
+; stack), and may end first; and the whole table as it is now (TX_GSN),
+; with those and its 09h and 1Bh.  AX, BX, CX, SI, DI changed
+mt_vnew:
+        pushf
+        cli
+        push    bx
+        call    mt_vsv
+        call    mt_fvsync
+        pop     bx
+        call    mt_v24                  ; (TX_VEC's first three: 22h-24h)
+        push    ds
+        mov     al, [cs:mt_cur]         ; its 09h and 1Bh: the spawner's (in
+        cmp     al, [cs:mt_front]       ;  mt_fv if it is in front, else in its
+        jne     .o                      ;  TX)
+        push    cs
+        pop     ds
+        mov     si, mt_fv
+        jmp     short .c
+.o:     call    mt_ent
+        mov     ds, [cs:bx+TE_TX]
+        mov     si, TX_FVEC
+.c:     mov     di, TX_FVEC
+        mov     cx, MT_NFV * 2
+        rep     movsw
+        pop     ds
+        popf                            ; (the rest with interrupts on: none of
+        push    ds                      ;  the copies interrupts use)
+        xor     si, si
+        mov     ds, si
+        mov     di, TX_GSN
+        mov     cx, 1024 / 2
+        rep     movsw
+        push    es
+        pop     ds
+        mov     si, TX_VEC              ; 22h-24h, 09h and 1Bh as given above
+        mov     di, TX_GSN + 22h * 4
+        mov     cx, 3 * 2
+        rep     movsw
+        mov     si, TX_FVEC
+        mov     di, TX_GSN + 09h * 4
+        movsw
+        movsw
+        mov     di, TX_GSN + 1Bh * 4
+        movsw
+        movsw
+        pop     ds
+        ret
+
+; INT 22h-24h for a new task (BX = its entry): in its TX (ES), TX_VEC's
+; first three, and in its stub's PSP (0Ah-15h; 0Ah, its end, as set).
+; AX changed
+mt_v24: push    ds
+        push    di
+        mov     ds, [cs:bx+TE_PSP]
+        mov     ax, ST_END
+        mov     [es:TX_VEC], ax
+        mov     [es:TX_VEC + 2], ds
+        mov     ax, int23
+        mov     [es:TX_VEC + 4], ax
+        mov     [0Eh], ax
+        mov     ax, KSEG
+        mov     [es:TX_VEC + 6], ax
+        mov     [10h], ax
+        mov     ax, mt_i24
+        mov     [es:TX_VEC + 8], ax
+        mov     [12h], ax
+        mov     [es:TX_VEC + 10], cs
+        mov     [14h], cs
+        pop     di
+        pop     ds
+        ret
+
+; the task at BX ends (mt_end, its region not yet freed): every vector
+; left pointing into its region (a hook of its programs', one they never
+; took away; a TSR's) put back as it was at its spawn (TX_GSN).  All kept
+mt_vfix:
+        pusha
+        push    ds
+        push    es
+        mov     ax, [cs:bx+TE_REG]
+        mov     [cs:mt_vr], ax
+        dec     ax
+        mov     es, ax
+        mov     ax, [es:3]
+        add     ax, [cs:mt_vr]
+        mov     [cs:mt_ve], ax
+        mov     ds, [cs:mt_vr]          ; (its TX)
+        mov     word [cs:mt_vsb], TX_GSN
+        mov     byte [cs:mt_vtab], 1
+        cld
+        mov     si, TX_GSN + 09h * 4
+        mov     di, mt_vfs
+        call    .cp
+        mov     si, TX_GSN + 1Bh * 4
+        call    .cp
+        call    mt_vrep
+        pop     es
+        pop     ds
+        popa
+        ret
+.cp:    lodsw
+        mov     [cs:di], ax
+        lodsw
+        mov     [cs:di+2], ax
+        add     di, 4
+        ret
+
+; the task at BX ends: every program still owning memory in its arena
+; (one that stayed resident, AH=31h; not the stub) has its files closed
+; (if the owner is a PSP) and its EMS and memory freed, as terminate does
+; for one that ends.  A damaged chain: no further.  DS = KSEG.  All kept
+mt_owners:
+        pusha
+        push    es
+        mov     dx, [cs:bx+TE_PSP]
+        mov     bx, [first_mcb]         ; (the task's, running)
+.l:     mov     es, bx
+        mov     al, [es:0]
+        cmp     al, 'M'
+        je      .m
+        cmp     al, 'Z'
+        jne     .x
+.m:     mov     ax, [es:1]
+        or      ax, ax
+        jz      .n
+        cmp     ax, dx
+        je      .n
+        cmp     ax, 8
+        je      .n
+        push    es
+        mov     es, ax                  ; a program's: its files, then its EMS
+        cmp     word [es:0], 20CDh      ;  and its blocks (this one and on: the
+        jne     .f                      ;  walk goes on)
+        KCALL   close_all
+.f:     mov     ax, es
+        KCALL   ems_free_owner
+        pop     es
+.n:     cmp     byte [es:0], 'Z'
+        je      .x
+        add     bx, [es:3]
+        inc     bx
+        jmp     .l
+.x:     pop     es
+        popa
+        ret
+
+; a program ends (mt_pgend, before terminate frees its blocks; its PSP at
+; BX, INT 22h-24h put back from it): the other tasks' vectors pointing into
+; one of its blocks (they started with them, from it or its task) as the
+; running task's are now: the table's, but 09h and 1Bh behind its TX's.
+; DS = KSEG.  All kept
+mt_vpg: pusha
+        push    ds
+        push    es
+        mov     dx, bx
+        pushf                           ; (behind: its writes to the table's
+        cli                             ;  09h, 1Bh to its TX, the table the
+        call    mt_fvsync               ;  front's again)
+        call    mt_fvset
+        popf
+        mov     bx, [first_mcb]         ; its blocks (the task's arena)
+.l:     mov     es, bx
+        mov     al, [es:0]
+        cmp     al, 'M'
+        je      .m
+        cmp     al, 'Z'
+        jne     .x
+.m:     cmp     [es:1], dx
+        jne     .n
+        lea     ax, [bx+1]
+        mov     [cs:mt_vr], ax
+        add     ax, [es:3]
+        mov     [cs:mt_ve], ax
+        push    bx
+        push    dx
+        call    .fix
+        pop     dx
+        pop     bx
+        mov     es, bx
+.n:     cmp     byte [es:0], 'Z'
+        je      .x
+        add     bx, [es:3]
+        inc     bx
+        jmp     .l
+.x:     pop     es
+        pop     ds
+        popa
+        ret
+; the block mt_vr..mt_ve.  The running task's 09h and 1Bh: behind, its
+; TX's (one into the block, a write of the table's value it put back the
+; table never showed: the front's, the likeliest), in front mt_fv
+.fix:   mov     al, [cs:mt_cur]
+        push    cs
+        pop     es
+        mov     di, mt_fv
+        cmp     al, [cs:mt_front]
+        je      .s
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+        mov     di, TX_FVEC
+        xor     si, si
+        mov     cx, MT_NFV
+.o:     call    mt_inr
+        jc      .on
+        mov     ax, [cs:mt_fv+si]
+        mov     [es:di], ax
+        mov     ax, [cs:mt_fv+si+2]
+        mov     [es:di+2], ax
+.on:    add     di, 4
+        add     si, 4
+        loop    .o
+        mov     di, TX_FVEC
+.s:     mov     ax, [es:di]
+        mov     [cs:mt_vfs], ax
+        mov     ax, [es:di+2]
+        mov     [cs:mt_vfs+2], ax
+        mov     ax, [es:di+4]
+        mov     [cs:mt_vfs+4], ax
+        mov     ax, [es:di+6]
+        mov     [cs:mt_vfs+6], ax
+        xor     ax, ax
+        mov     ds, ax                  ; (the table)
+        mov     [cs:mt_vsb], ax
+        mov     [cs:mt_vtab], al
+        call    mt_vrep
+        pushf                           ; (mt_fv, fixed, to the table)
+        cli
+        call    mt_fvset
+        popf
+        ret
+
+; vectors pointing into mt_vr..mt_ve put back from the table at DS:mt_vsb
+; (its vector N at mt_vsb + N * 4; mt_vfr's from mt_vfs): in the vector table (if mt_vtab; each
+; with interrupts off), mt_fv, and the other tasks' (not the running one,
+; not free ones) TX_VEC, TX_FVEC and (not task 0's) TX_GSN.  All kept but
+; AX, BX, CX, DX, SI, DI, ES
+mt_vrep:
+        pushf
+        cld
+        cmp     byte [cs:mt_vtab], 0
+        je      .ft
+        xor     di, di
+        mov     es, di
+        call    .fa
+.ft:    push    cs
+        pop     es
+        mov     di, mt_fv
+        mov     bx, mt_vfr
+        mov     cx, MT_NFV
+        call    .fx
+        xor     al, al
+.t:     cmp     al, [cs:mt_cur]
+        je      .tn
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        je      .tn
+        mov     es, [cs:bx+TE_TX]
+        push    ax
+        mov     di, TX_VEC
+        mov     bx, mt_vrun
+        mov     cx, MT_NVEC
+        call    .fx
+        mov     di, TX_FVEC
+        mov     bx, mt_vfr
+        mov     cx, MT_NFV
+        call    .fx
+        pop     ax
+        or      al, al                  ; (task 0's TX has no TX_GSN)
+        jz      .tn
+        push    ax
+        mov     di, TX_GSN
+        call    .fa
+        pop     ax
+.tn:    inc     al
+        cmp     al, MT_TASKS
+        jb      .t
+        popf
+        ret
+; CX vectors at ES:DI, their numbers at CS:BX.  AX, BX, CX, SI, DI changed
+.fx:    call    mt_inr
+        jc      .fn
+        mov     al, [cs:bx]
+        xor     ah, ah
+        shl     ax, 2
+        call    .mv
+.fn:    add     di, 4
+        inc     bx
+        loop    .fx
+        ret
+; a whole table at ES:DI, each one with interrupts off (and then as
+; they came: one interrupt's turn between two).  AX, DX, SI, DI changed
+.fa:    xor     dx, dx
+.fl:    pushf
+        cli
+        call    mt_inr
+        jc      .fm
+        mov     ax, dx
+        call    .mv
+.fm:    popf
+        add     di, 4
+        add     dx, 4
+        cmp     dx, 1024
+        jb      .fl
+        ret
+; vector AX / 4 to ES:DI (DI kept): from DS:mt_vsb's table, mt_vfr's from
+; mt_vfs.  AX, SI changed
+.mv:    mov     si, mt_vfs
+        cmp     ax, 09h * 4
+        je      .mc
+        mov     si, mt_vfs + 4
+        cmp     ax, 1Bh * 4
+        je      .mc
+        mov     si, ax
+        add     si, [cs:mt_vsb]
+        movsw
+        movsw
+        sub     di, 4
+        ret
+.mc:    mov     ax, [cs:si]
+        mov     [es:di], ax
+        mov     ax, [cs:si+2]
+        mov     [es:di+2], ax
+        ret
+
+;  INT 24h for a task (mt_v24): "<what> reading|writing drive X: Abort,
+;  Retry, Fail?" through INT 10h's teletype and INT 16h, as a shell's
+;  prompt does (it goes to the screen in front: mt_crit); the answer in AL
+mt_i24: sti
+        cld
+        pusha
+        push    ds
+        push    cs
+        pop     ds
+        mov     dx, ax
+        mov     si, s_24c
+        call    .pr
+        mov     si, s_24e               ; what: by the error's code (DI)
+        mov     ax, di
+        cmp     al, 2
+        jne     .w
+        mov     si, s_24n
+.w:     or      al, al
+        jnz     .m
+        mov     si, s_24w
+.m:     call    .pr
+        test    dh, 80h                 ; (a character device: no drive)
+        jnz     .q
+        mov     si, s_24r
+        test    dh, 1
+        jz      .rw
+        mov     si, s_24wr
+.rw:    call    .pr
+        mov     al, dl
+        add     al, 'A'
+        call    .pc
+.q:     mov     si, s_24q
+        call    .pr
+.k:     xor     ah, ah
+        int     16h
+        and     al, 0DFh
+        mov     ah, 2
+        cmp     al, 'A'
+        je      .a
+        mov     ah, 1
+        cmp     al, 'R'
+        je      .a
+        mov     ah, 3
+        cmp     al, 'F'
+        jne     .k
+.a:     push    ax
+        call    .pc
+        mov     si, s_24c
+        call    .pr
+        pop     ax
+        mov     bp, sp                  ; the answer into POPA's AL (past DS)
+        mov     [bp+2+14], ah
+        pop     ds
+        popa
+        iret
+.pr:    lodsb
+        or      al, al
+        jz      .x
+        call    .pc
+        jmp     .pr
+.x:     ret
+.pc:    push    ax
+        push    bx
+        mov     ah, 0Eh
+        mov     bx, 7
+        int     10h
+        pop     bx
+        pop     ax
+        ret
+s_24c   db      13, 10, 0
+s_24e   db      'Disk error', 0
+s_24n   db      'Not ready', 0
+s_24w   db      'Write protect error', 0
+s_24r   db      ' reading drive ', 0
+s_24wr  db      ' writing drive ', 0
+s_24q   db      ': Abort, Retry, Fail? ', 0
+
+; the vector at ES:DI points into the region mt_vr..mt_ve?  CF if not.
+; AX changed
+mt_inr: mov     ax, [es:di]
+        shr     ax, 4
+        add     ax, [es:di+2]
+        jc      .no
+        cmp     ax, [cs:mt_vr]
+        jb      .no
+        cmp     ax, [cs:mt_ve]
+        jae     .no
+        clc
+        ret
+.no:    stc
         ret
 
 ; ---------------------------------------------------------------------
@@ -918,6 +1567,61 @@ mt_screen:
         call    mt_sync
 .x:     jmp     KSEG:ok
 
+; f_25 and f_35's first 7 bytes (XOR BX,BX / MOV ES,BX / MOV BL,[BP+F_AX])
+; become far jumps here.  INT 09h and 1Bh in a background task are its
+; own, in its TX (TX_FVEC): set and given there, the table (the front
+; task's) as it is.  Else on as they were.  DS = SS = KSEG, BP = the frame
+mt_25:  call    mt_fvx
+        jc      .k
+        mov     ax, [bp+F_DX]
+        mov     [es:di], ax
+        mov     ax, [bp+F_DS]
+        mov     [es:di+2], ax
+        jmp     KSEG:done
+.k:     xor     bx, bx
+        mov     es, bx
+        mov     bl, [bp+F_AX]
+        jmp     KSEG:f_25 + 7
+mt_35:  call    mt_fvx
+        jc      .k
+        mov     ax, [es:di]
+        mov     [bp+F_BX], ax
+        mov     ax, [es:di+2]
+        mov     [bp+F_ES], ax
+        jmp     KSEG:done
+.k:     xor     bx, bx
+        mov     es, bx
+        mov     bl, [bp+F_AX]
+        jmp     KSEG:f_35 + 7
+; the call's vector (AL) one of mt_vfr's, from a background task?  ES:DI =
+; its own in the running task's TX (its writes to the table this turn
+; there first, the table the front's again); CF if not.  AX, BX, CX, SI
+; changed
+mt_fvx: mov     al, [bp+F_AX]
+        cmp     al, 09h
+        je      .b
+        cmp     al, 1Bh
+        jne     .no
+.b:     mov     al, [cs:mt_cur]
+        cmp     al, [cs:mt_front]
+        je      .no
+        pushf
+        cli
+        call    mt_fvsync
+        call    mt_fvset
+        popf
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+        mov     di, TX_FVEC
+        cmp     byte [bp+F_AX], 09h
+        je      .y
+        mov     di, TX_FVEC + 4
+.y:     clc
+        ret
+.no:    stc
+        ret
+
 ; MT_END: from a task's stub, its program done.  Its handles (the
 ; inherited ones) closed, its region freed, and another task runs.
 mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
@@ -951,16 +1655,24 @@ mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
         mov     ah, 45h
         int     67h
         mov     byte [cs:bx+TE_SH], 0
-.np:    mov     ax, [last_exit]
-        mov     cx, [cs:bx+TE_REG]
-        dec     cx
-        mov     es, cx
-        cmp     ah, 3                   ; the region: free (a program that
-        jne     .fr                     ;  stays resident keeps it, "TR")
-        mov     word [es:8], 'TR'
-        jmp     short .t
-.fr:    mov     word [es:1], 0
-.t:     mov     byte [cs:bx+TE_STATE], TS_FREE
+.np:    call    mt_owners               ; (a TSR's files and EMS: closed, freed)
+        call    mt_vfix                 ; vectors left pointing into the region:
+        push    bx                      ;  as they were; then, till another
+        push    es                      ;  task runs, task 0's in the table (a
+        cli                             ;  tick meanwhile runs its hooks, not
+        xor     al, al                  ;  this one's own)
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+        call    mt_vld
+        call    mt_fvset
+        sti
+        pop     es
+        pop     bx
+        mov     cx, [cs:bx+TE_REG]      ; the region freed (a program that
+        dec     cx                      ;  stayed resident too: its hooks are
+        mov     es, cx                  ;  gone, so is it)
+        mov     word [es:1], 0
+        mov     byte [cs:bx+TE_STATE], TS_FREE
         call    mt_others               ; (the last one: no shadow, alone)
         jnc     .o
         mov     byte [cs:mt_shd], 0
@@ -1197,6 +1909,10 @@ mt_spawn:
         mov     byte [es:TX_FPV], 0     ; (its coprocessor: FNINIT's, first)
         call    mt_m33new               ; (its INT 33h state)
         call    mt_33hk
+        push    ax
+        mov     bx, [cs:mt_new]
+        call    mt_vnew                 ; (its vectors: the caller's, mostly)
+        pop     ax
         push    ax                      ; its screen: mode 3, clear (it may
         push    ds                      ;  print before it is ever in front)
         push    cs
@@ -2030,6 +2746,7 @@ mt_33hk:
 ; m33_gone does for the front task's (a shell's next program can be
 ; loaded at the same segment).  Then on, past those bytes (DS = KSEG)
 mt_pgend:
+        call    mt_vpg                  ; (the other tasks' vectors into it)
         push    ax
         mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
@@ -2139,6 +2856,7 @@ mt_scrld:
         push    ds
         push    es
         cld
+        call    mt_fvto                 ; (its INT 09h and 1Bh)
         mov     byte [cs:mt_vbusy], 1
         mov     byte [cs:mt_vlost], 0
         mov     [cs:mt_front], al
@@ -3385,10 +4103,11 @@ MT_LEN      equ     mt_tend - mt_tstart
 
 MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
 MT_SSTK     equ     1024                ;  on the paragraph after the image;
-MT_PARAS    equ     MT_TX0P + TX_PARAS + MT_SSTK / 16   ; then mt_swnow's stack
+MT_PARAS    equ     MT_TX0P + TX0_PARAS + MT_SSTK / 16  ; then mt_swnow's stack
 
 section mttbss
-mt_tx0      resb    TX_PARAS * 16       ; (at MT_TX0P * 16)
+mt_tx0      resb    TX0_PARAS * 16      ; (at MT_TX0P * 16; no TX_GSN: task 0
+                                        ;  never ends)
             resb    MT_SSTK             ; (mt_swnow's stack)
 mt_bend:
 
@@ -3520,11 +4239,29 @@ mt_boot:
         mov     [es:mt_old16 + 2], ax
         mov     word [16h * 4], mt_i16
         mov     [16h * 4 + 2], es
+        mov     si, mt_vfr              ; INT 09h and 1Bh: task 0's, in front
+        mov     di, mt_fv
+.fv:    mov     bl, [es:si]
+        xor     bh, bh
+        shl     bx, 2
+        mov     ax, [bx]
+        stosw
+        mov     ax, [bx+2]
+        stosw
+        inc     si
+        cmp     si, mt_vfr + MT_NFV
+        jb      .fv
         mov     ax, KSEG                ; INT 21h F0h: JMP FAR mt_f0
         mov     ds, ax
         mov     byte [f_F0], 0EAh
         mov     word [f_F0 + 1], mt_f0
         mov     [f_F0 + 3], es
+        mov     byte [f_25], 0EAh       ; AH=25h and 35h: JMP FAR mt_25, mt_35
+        mov     word [f_25 + 1], mt_25
+        mov     [f_25 + 3], es
+        mov     byte [f_35], 0EAh
+        mov     word [f_35 + 1], mt_35
+        mov     [f_35 + 3], es
         mov     byte [kbd_get.k], 0EAh  ; the key wait: JMP FAR mt_kwait
         mov     word [kbd_get.k + 1], mt_kwait
         mov     [kbd_get.k + 3], es
