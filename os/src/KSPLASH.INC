@@ -77,12 +77,34 @@ sp_boot:
         movsb
 .on:    call    rs_boot                 ; (KROM.INC: booted from the ROM)
         call    pr_boot                 ; PrtSc's printer driver
+        call    gi_boot                 ; GPIBIRQ=0: GPIB's SRQ interrupt off
         call    sp_wanted
         jc      .go
         call    sp_load
         jc      .go
         call    PIC_SEG:0000h           ; the picture: drawn, 2 s, back
 .go:    jmp     far [cs:MDB(sp_next)]
+
+; GPIBIRQ=0 in the settings (the first such line, the changes' before the
+; ROM's): the built-in GPIB driver's SRQ interrupt off (KGPIB.INC turns it
+; on at init, when the driver is in).  Another value leaves it on.  DS = CS.
+gi_boot:
+        call    ini_read                ; (KROM.INC: LODE.INI's, both)
+        mov     di, MDB(s_gieq)         ; "GPIBIRQ=" (any case)?
+        call    ini_key
+        jc      .x
+        cmp     byte [si], '0'
+        jne     .x
+        push    es
+        push    0
+        pop     es
+        les     bx, [es:60h*4]
+        cmp     word [es:bx+2], 'GR'    ; ('GRIDGPIB' at the driver's entry
+        pop     es                      ;  + 2: no 7210, no driver)
+        jne     .x
+        mov     ax, 0E00h
+        int     60h
+.x:     ret
 
 ; CF if the settings say SPLASH=0 (or No, or Off).  DS = CS.
 sp_wanted:
@@ -208,6 +230,7 @@ sp_load:
 
 s_speq  db      'SPLASH', 1Dh, 0        ; (as "SPLASH=" AND 0DFh)
 s_preq  db      'PRINTER', 1Dh, 0       ; (as "PRINTER=" AND 0DFh)
+s_gieq  db      'GPIBIRQ', 1Dh, 0       ; (as "GPIBIRQ=" AND 0DFh)
 s_prlode db     'C:\LODE\', 0
 s_prroot db     '@:\', 0
 s_sppic db      '@:\LODE.PIC', 0
