@@ -1,0 +1,74 @@
+# Pi ↔ Pico protocol (bridge firmware, protocol version 1)
+
+The Pico is a USB CDC serial port (`/dev/ttyACM0`, or `/dev/gpib-bridge` with the udev rule). The baud rate
+is ignored. Every frame is **COBS-encoded and ends with one 0x00 byte**, so either side can resynchronise
+at the next 0x00. A decoded frame is one type byte and its fields, little-endian. The
+reference code is `host_link.c` (Pico) and `pi/gpibbridge/protocol.py` (Pi).
+
+## Pi → Pico
+
+| Type | Name | Fields | What it does |
+|---|---|---|---|
+| 0x01 | HELLO_REQ | — | The Pico answers HELLO |
+| 0x02 | CONFIG | u8 address (0–30), u8 flags (bit 0 online, bit 1 auto service request) | Online: take part in the bus at this address. Offline: release everything. Auto service request: see below |
+| 0x03 | TX | u16 gen, u8 flags (bit 0 = EOI on the last byte), data | Reply bytes for the 1520's next read. Dropped if `gen` isn't the current one |
+| 0x04 | STB | u8 status byte, u8 rsv | Serial-poll status byte. rsv = 1 asserts SRQ until the 1520 polls |
+| 0x05 | PING | — | Every second. No PING for 5 s: the Pico goes offline |
+| 0x07 | BOOTSEL | — | Reboot into the USB bootloader (to flash firmware) |
+| 0x08 | WAKE | u16 gen | Auto service request mode: assert SRQ (status 40h, no READY) for an idle 1520 until it polls or sends a message; void if the 1520 has sent a newer message than `gen` (fw 2026-10-22b) |
+
+## Pico → Pi
+
+| Type | Name | Fields |
+|---|---|---|
+| 0x81 | HELLO | u8 protocol version, u16 tx ring size, u16 data chunk (240), u32 tx consumed, u16 tx entries queued, firmware tag |
+| 0x82 | DATA | u16 gen, u8 flags (bit 0 = EOI on the last byte: message ends; bit 1 = message ended without EOI), data |
+| 0x83 | EVENT | u8 code, u16 gen, u8 b, u32 arg |
+| 0x84 | LOG | text |
+| 0x85 | PONG | u8 online, address, listener, talker, ren, llo, spms, rsv; u16 gen; u32 tx consumed, commands, bytes in, bytes out, polls, events lost, NRFD holds, uptime ms, engine alive |
+| 0x87 | CREDIT | u32 tx entries consumed so far |
+
+**Event codes:** 0x10 LISTEN, 0x11 UNLISTEN, 0x12 TALK, 0x13 UNTALK, 0x14 TALK_WAIT (arg = tx consumed),
+0x15 DCL, 0x16 SDC, 0x17 GET, 0x18 GTL, 0x19 LLO, 0x1A IFC, 0x1B REN (arg 1 = asserted), 0x1C SPOLL
+(b = byte sent), 0x1D TX_DONE, 0x1E ONLINE (b = address), 0x1F OFFLINE.
+
+## Generations: how a reply is matched to its question
+
+- The Pico counts a **generation** (`gen`). It goes up at the first byte of every new message from the 1520,
+  at every DCL or SDC, and when the Pi brings it online.
+- Every DATA and EVENT frame carries the current gen. The Pi tags each reply with the gen of the message it
+  answers.
+- The Pico drops any reply whose gen is no longer current. A reply that arrives late (after the 1520 has
+  sent something new or cleared the device) can therefore never answer the wrong question.
+
+## Flow control
+
+- **1520 → Pi.** If the Pi falls behind, the Pico's receive ring fills and the Pico holds NRFD, which is
+  ordinary GPIB flow control. The 1520 waits; nothing is lost. PONG counts these holds.
+- **Pi → 1520.** The Pi may have at most *tx ring size* reply bytes outstanding: sent but not yet consumed
+  (sent to the 1520, or dropped as stale). CREDIT frames report consumption. HELLO tells a new session
+  where the count stands.
+
+## Talking with nothing queued
+
+When the 1520 addresses the bridge to talk and the ring holds nothing for the current gen, the Pico sends
+TALK_WAIT once and waits, without driving the bus. The arg is the consumed count at that moment.
+
+- If the Pi has already sent reply bytes the Pico hasn't consumed, they are on their way, and the Pi ignores
+  the TALK_WAIT.
+- Otherwise it asks the handler (`on_talk`).
+
+After a reply's EOI byte, the Pico doesn't ask again until it is next addressed to talk.
+
+## Auto service request (CONFIG flags bit 1): gridlink's GLP mode
+
+For CLAUDE.COM's link (GLP, `lodestone/claude-link`), the bridge requests service by itself, as the AR488
++GRiD1 patch does:
+
+- **It raises SRQ when a whole answer is in.** Status 60h (RQS + READY) appears once, when a TX with EOI on
+  its last byte has been queued for the current gen. The serial poll serves the RQS.
+- **It keeps READY (20h) until the answer has been read**, then reports 00h.
+- **A stale answer is dropped, and its SRQ and READY with it.** That happens after an SDC, or when the GRiD
+  has started a new message.
+- **The Pi sends each answer as one TX.** It needs credit for the whole frame first.
+- **The STB frame's bits 5 and 6 are ignored in this mode.**

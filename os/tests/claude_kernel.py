@@ -62,7 +62,7 @@ class KernelHarness(G.EmuHarness):
     router then, Term or chat as the GRiD's HELLO asks.  ems_pages: the
     1520's expanded memory (resident Claude needs it)."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y',
-                 claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0):
+                 claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0, bridge='ar488', frame_cap=None):
         s.tmp = tempfile.mkdtemp(prefix='gridk-')
         disk = [LODE_SYS, LCMD_COM, 'CLAUDE.COM=' + claude_com, 'TESTKEY.COM=' + G.TESTKEY_COM]
         for k, v in (files or {}).items():
@@ -75,10 +75,14 @@ class KernelHarness(G.EmuHarness):
         s.m = m = KMachine(img, chip, ems_pages=ems_pages)
         chip.clock = m.clock
         s.pending = []
-        s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
+        if bridge == 'pico':
+            s.nano = G.PicoModel(m.clock, addr=7, to_pi=s._to_pi)
+            s.transport = G.PicoModelTransport(s.nano)
+        else:
+            s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
+            s.transport = ModelTransport(s.nano, patched, baud=baud)
         chip.devices[7] = s.nano
         m.on_due = s.pump_pi
-        s.transport = ModelTransport(s.nano, patched, baud=baud)
         cfg = Config()
         cfg.workdir = os.path.join(s.tmp, 'work'); cfg.memory_dir = os.path.join(s.tmp, 'mem')
         cfg.sessions_dir = os.path.join(s.tmp, 'sessions'); cfg.mode = mode; cfg.web = False
