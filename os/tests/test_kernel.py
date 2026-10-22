@@ -1359,6 +1359,13 @@ pat     db '*.*', 0
     check('CD A.B.C (A.B there: the name taken as A.B, as resolve takes it): A:\\A.B, MD there makes A.B\\MADE, CD .. '
           'is the root again', o.rstrip().endswith('A:\\A.B>') and 'A:\\A.B\\MADE' in dl and 'A:\\MADE' not in dl
           and 'LODE     SYS' in o2, (o, o2, sorted(n for n in dl if 'MADE' in n)))
+    o = sh.run('cd \\a.b.c\\made'); sh.run('md made2'); sh.run('cd \\')
+    o2 = sh.run('cd a.b.c\\..')
+    sh.run('cd \\')
+    dl = []; fatcheck.read_files(bytes(k.pc.drives[0].img), dirs=dl)
+    check('... CD \\A.B.C\\MADE and CD A.B.C\\.. (resolve takes A.B.C as the last name): A:\\A.B both times, MD there makes A.B\\MADE2',
+          o.rstrip().endswith('A:\\A.B>') and o2.rstrip().endswith('A:\\A.B>') and 'A:\\A.B\\MADE2' in dl,
+          (o, o2, sorted(n for n in dl if 'MADE' in n)))
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 

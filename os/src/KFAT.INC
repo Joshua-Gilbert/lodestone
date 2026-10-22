@@ -918,12 +918,13 @@ f_3B:   call    get_path                ; CHDIR
         jz      .end
         dec     si
         call    parse_comp              ; -> nm11 (find_dir took the path)
-.sk:    lodsb                           ; SI past what it didn't take: the
-        or      al, al                  ;  name is the directory resolve
-        jz      .sk0                    ;  found ("A.B.C" is A.B, the last
-        cmp     al, '\'                ;  part only)
-        jne     .sk
-.sk0:   dec     si
+        cmp     byte [si], '\'
+        je      .sk0
+.sk:    lodsb                           ; stopped by anything else: resolve
+        or      al, al                  ;  took this name as the last and
+        jnz     .sk                     ;  the rest as nothing ("A.B.C\SUB"
+        dec     si                      ;  is A.B), so the string ends too
+.sk0:
         mov     ax, [nm11]
         cmp     ax, '. '
         je      .comp
