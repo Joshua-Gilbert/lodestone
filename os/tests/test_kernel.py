@@ -1421,7 +1421,7 @@ MS_NAMES = [('fn 3D A.TXT.X', 'err 02'),
 
 def t_names():
     """Names that are no names (a second dot, a bad character), device names,
-    CREATE over hidden and system files: NAMES.COM's 41 calls answer as GRiD
+    CREATE over hidden and system files: NAMES.COM's 58 calls answer as GRiD
     MS-DOS 3.30's do, and nothing is deleted, renamed or truncated that MS-DOS
     leaves alone (B.TXT.X deleted B.TXT, E.F.G removed E.F, A.TXT became C.D,
     MKDIR CON made a directory)."""
@@ -1457,7 +1457,7 @@ def t_names():
           all(f.get('A:\\' + n) == v for n, v in keep.items()) and 'A:\\E.F' in dl
           and not {'A:\\HID.TXT', 'A:\\SYS.TXT', 'A:\\CLOCK.TXT', 'A:\\C.D'} & set(f)
           and all(f.get('A:\\%s.TXT' % n) == b'' for n in ('HID2', 'HID3', 'HS2'))
-          and not {'A:\\CON', 'A:\\NUL', 'A:\\CLOCK'} & set(dl), (sorted(f), dl))
+          and not {'A:\\CON', 'A:\\NUL', 'A:\\CLOCK', 'A:\\CLOCK$'} & set(dl), (sorted(f), dl))
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 
