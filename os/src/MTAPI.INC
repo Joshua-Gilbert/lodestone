@@ -30,8 +30,11 @@ MT_KILL     equ 14h                     ; BL = a task: it ends, whatever runs in
                                         ;  code 0100h (as ^C ends a program).
                                         ;  Another task: when it next runs (soon:
                                         ;  the caller's turn ends on this call's
-                                        ;  way out); the caller's own: at once,
-                                        ;  no return.  CF: AX = 1 (no such task),
+                                        ;  way out, if it is at a safe point);
+                                        ;  the caller's own: at once, no return
+                                        ;  (from an interrupt's handler, an INT
+                                        ;  24h handler or a mouse event
+                                        ;  handler: at its next safe point).  CF: AX = 1 (no such task),
                                         ;  5 (task 0, the Executive)
 MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back

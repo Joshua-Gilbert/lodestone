@@ -6,10 +6,16 @@
 ;      still open; given one, writes "!" to it and ends
 ;   S  as F, but then computes for ever (no INT 21h call), interrupts on
 ;   C  runs MTKILL F N FILE as its child (AH=4Bh), then ends
-;   X  as F, but then ends its own task (AH=12h for its number, AH=14h);
+;   X  as F, but then ends its own task (AL=12h for its number, AL=14h);
 ;      back from that, writes "!" and ends
-;   K  waits 9 ticks, ends task N (AH=14h), and writes FILE: "cf ax" (CF
+;   K  waits 9 ticks, ends task N (AL=14h), and writes FILE: "cf ax" (CF
 ;      as 0 or 1, AX as 4 hex digits)
+;   M  sets a mouse event handler (INT 33h 0Ch, every event) and computes;
+;      the handler, called in its own task, waits for a key (AH=08h)
+;   Z  as M, but the handler ends its own task (AL=14h)
+;   T  hooks INT 1Ch and computes; its 5th call ends its own task (AL=14h,
+;      the timer's interrupt in service)
+;   (M, Z and T take N and FILE but use neither)
 ; nasm -f bin -i ../src/ -o MTKILL.COM MTKILL.ASM
 cpu 286
 org 100h
@@ -49,6 +55,12 @@ org 100h
         je      m_c
         cmp     al, 'K'
         je      m_k
+        cmp     al, 'M'
+        je      m_m
+        cmp     al, 'Z'
+        je      m_m
+        cmp     al, 'T'
+        je      m_t
         ; F, S, X: the file, N bytes, open
         mov     ah, 3Ch
         xor     cx, cx
@@ -68,6 +80,8 @@ org 100h
         int     21h
         pop     cx
         jc      ends
+        or      ax, ax                  ; (none written: a full disk)
+        jz      ends
         sub     cx, ax
         jmp     .w
 .we:    mov     ah, 43h                 ; an EMS page of its own
@@ -175,6 +189,77 @@ m_k:    push    es
         int     21h
         jmp     ends
 
+; M, Z: its task's number, a mouse event handler, then computing
+m_m:    call    mine_
+        xor     ax, ax
+        int     33h
+        mov     ax, 0Ch
+        mov     cx, 7Fh
+        push    cs
+        pop     es
+        mov     dx, hnd
+        int     33h
+        sti
+.s:     inc     word [cnt]
+        jmp     .s
+hnd:    pusha                           ; (called by the driver, far)
+        push    ds
+        push    es
+        push    cs
+        pop     ds
+        call    mine_.ask               ; (in its own task only: the front
+        cmp     ah, [mine]              ;  task's handler runs in whichever
+        jne     .x                      ;  task the mouse finds)
+        inc     word [hits]
+        cmp     byte [mode], 'Z'
+        je      .z
+        mov     ah, 08h
+        int     21h
+        jmp     short .x
+.z:     mov     bl, [mine]
+        mov     ax, 0F000h + MT_KILL
+        int     21h
+.x:     pop     es
+        pop     ds
+        popa
+        retf
+
+; T: its task's number, INT 1Ch hooked, then computing
+m_t:    call    mine_
+        mov     ax, 251Ch
+        mov     dx, h1c
+        int     21h
+        sti
+.s:     inc     word [cnt]
+        jmp     .s
+h1c:    push    ax
+        push    bx
+        push    ds
+        push    cs
+        pop     ds
+        inc     word [hits]
+        cmp     word [hits], 5
+        jne     .x
+        mov     bl, [mine]
+        mov     ax, 0F000h + MT_KILL
+        int     21h
+.x:     pop     ds
+        pop     bx
+        pop     ax
+        iret
+
+; its task's number (AH=12h's AH) -> [mine]
+mine_:  call    .ask
+        mov     [mine], ah
+        ret
+.ask:   mov     ax, 0F000h + MT_LIST
+        push    cs
+        pop     es
+        mov     di, recs
+        xor     cx, cx
+        int     21h
+        ret
+
 ; AX as 4 hex digits at DI
 hex4:   mov     cx, 4
 .h:     rol     ax, 4
@@ -215,6 +300,8 @@ n       dw      0
 fh      dw      0
 fpos    dw      0
 cnt     dw      0
+hits    dw      0
+mine    db      0
 mode    db      0
 s_bang  db      '!'
 s_prog  db      'MTKILL.COM', 0

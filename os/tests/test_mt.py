@@ -2174,11 +2174,22 @@ def t_kill():
     # a program with a child: both end with the task
     st, e1, o = killed(1, 'mtkill.com c 100 kc.txt')
     check('... running a child (MTKILL C, its child F waiting for a line): both ended with the task, the child\'s file '
-          'closed at its size, memory, files and EMS as before', (1, TS_WAITK, 'MTKILL.COM') in st[0]
+          'closed at its size, memory, files and EMS as before', (1, TS_WAITK, 'MTKILL.COM') in st[0] and e1 > e0
           and A.disk_file(k, 'KC.TXT') == ks(100) and ext(1) == 0x100 and back(), (st, e1, o, now()))
+    # computing behind with an INT 21h call on each count: switched from on INT 21h's way out (mt_exit)
+    xs, prev = [], k.pc.watch
+    def w(a):
+        if prev: prev(a)
+        if a == seg * 16 + Y['mt_exit.c'] and k.pc.rd(seg, Y['mt_cur'], 1)[0] == 1: xs.append(1)
+    k.pc.watch = w
+    st, e1, o = killed(1, 'mtspin.com 30000 kv.txt d')
+    k.pc.watch = prev
+    check('... computing behind with an INT 21h call on each count (MTSPIN D: nearly all its time inside INT 21h, so '
+          'switched from on its way out, mt_exit: %d times there): ended, as before' % len(xs),
+          (1, 1, 'MTSPIN.COM') in st[0] and xs and A.disk_file(k, 'KV.TXT') is None and back(), (st, len(xs), now()))
     # its own task
     sh.run('mtlaunch mtkill.com x 30 kx.txt'); line(k, ''); k.run_for(1.0)
-    check('a task ending itself (MTKILL X: AH=14h with its own number): at once, no return (no "!"), its file closed at '
+    check('a task ending itself (MTKILL X: AL=14h with its own number): at once, no return (no "!"), its file closed at '
           'its size, as before', A.disk_file(k, 'KX.TXT') == ks(30) and ext(1) == 0x100 and back(), now())
     # never run yet
     hits, prev = [], k.pc.watch
@@ -2200,12 +2211,15 @@ def t_kill():
           'file closed at its size', (1, TS_WAITK, 'MTKILL.COM') in st[0] and st[1] == 0
           and A.disk_file(k, 'KZ.TXT') == ks(40) and back(), (st, o, now()))
     # in front, ended by a task behind: the Executive's task in front again, its screen back
-    sh.run('mtlaunch /f mtkill.com f 50 kq.txt;mtkill.com k 1 kk.txt'); k.run_for(1.5)
+    sh.run('mtlaunch /f mtkill.com f 50 kq.txt;mtkill.com k 1 kk.txt')
+    pre = tstate(k)
+    k.run_for(1.5)
     st, scr = tstate(k), k.pc.text_screen()
     line(k, ''); k.run_for(0.6)
     kk = A.disk_file(k, 'KK.TXT')
     check('the task in front (MTKILL F, waiting for a line) ended by one behind (MTKILL K 1): the Executive\'s task in '
-          'front again, its screen back (MTLAUNCH waits>), the killer told CF clear', st[1] == 0 and 'MTLAUNCH waits>' in scr
+          'front again, its screen back (MTLAUNCH waits>), the killer told CF clear', pre[1] == 1
+          and (1, TS_WAITK, 'MTKILL.COM') in pre[0] and st[1] == 0 and 'MTLAUNCH waits>' in scr
           and kk is not None and kk.startswith(b'0 ') and A.disk_file(k, 'KQ.TXT') == ks(50) and back(), (st, kk, now()))
     # waiting in the BIOS (its own INT 16h read: mt_wkey) and waiting to be in front (a graphics mode behind: mt_wfront)
     st, e1, o = killed(1, 'mtkey.com r kr.txt')
@@ -2247,7 +2261,7 @@ def t_kill():
     check('CODE-Tab typed just after MT looked for it, inside the front task\'s DOS key status call (MTKEY D), before the '
           'BIOS\'s AH=01h: not lost (MT drops what that would, CODE-Tab taken): MTLINE, behind, comes to the front and '
           'gets its line; MTKEY D sees no key', hot and st[1] == 2 and A.disk_file(k, 'L9.TXT') == b'nine'
-          and d9 == (0, 0) and not k.crashed, (hot, st, A.disk_file(k, 'L9.TXT'), d9))
+          and d9 == (0, 0) and back(), (hot, st, A.disk_file(k, 'L9.TXT'), d9, now()))
     # the kernel's INT 24h running outside INT 21h (as C:'s INT 25h/26h raise it: mt_crit set here by the test): the
     # task it runs in not switched from at the tick, though another is ready; switched again once it is over
     typ(k, 'mtlaunch mtspin.com 40 p1.txt;mtspin.com 40 p2.txt', 0.3)
@@ -2268,6 +2282,71 @@ def t_kill():
           'task computing behind: not switched from at the tick for 0.3 s, though another is ready (%s); once it is '
           'over, switched again (%s)' % (sorted(seen), sorted(after)), seen == {1} and 2 in after
           and spun(k, 'P1.TXT') > 0 and spun(k, 'P2.TXT') > 0 and back(), (seen, after, now()))
+    # inside an interrupt's handler: the mouse's event handler (a serial mouse here), the timer's INT 1Ch
+    k = boot('mt_kl2.img', b'MULTITASK=1\r\n', 88, MTKL, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+    busy = lambda: k.pc.rd(k.useg, Y['m33_busy'], 1)[0]
+    cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+    def both():                         # two tasks computing: both get turns (the tick still switches)
+        typ(k, 'mtlaunch mtspin.com 30 q1.txt;mtspin.com 30 q2.txt', 0.3)
+        seen = set()
+        for i in range(60):
+            k.run_for(0.01); seen.add(cur())
+        waitfile(k, 'Q1.TXT', 6.0); waitfile(k, 'Q2.TXT', 6.0); line(k, ''); k.run_for(0.3)
+        return seen
+    def mouse(mode, more=''):
+        typ(k, 'mtlaunch /f mtkill.com %s 0 x%s' % (mode, more), 0.3)
+        b = []                          # (moved while task 1 runs: the front task's handler is called in whichever
+        for i in range(40):             #  task the mouse's interrupt finds, and does its part only in its own)
+            for j in range(200):
+                if cur() == 1: break
+                k.run_for(0.001)
+            k.pc.mouse_move(8, 0); k.run_for(0.01); b.append(busy())
+            if 1 in b: break
+        k.run_for(1.2)
+        st = tstate(k)
+        line(k, ''); k.run_for(0.3)
+        return b, st
+    b, st = mouse('m', ';mtkill.com k 1 km.txt')
+    seen = both()
+    check('a task ended while its mouse event handler waits for a key (MTKILL M, by MTKILL K behind): the driver\'s '
+          'm33_busy cleared as it ends (each program\'s end told to the UI: ui_progend), so the tick still switches: '
+          'two tasks computing after it both get turns (%s)' % sorted(seen), 1 in b and A.disk_file(k, 'KM.TXT')
+          and A.disk_file(k, 'KM.TXT').startswith(b'0 ') and busy() == 0 and {1, 2} <= seen
+          and merged(mcbs(k)) == m0 and sft_used(k) == s0 and ems_used(k) == e0 and not k.crashed, (b, st, seen, busy()))
+    zb, prev = [], k.pc.watch           # (m33_busy as the task ends: 1 if it ended inside its handler)
+    def w(a):
+        if prev: prev(a)
+        if a == seg * 16 + Y['mt_end'] and len(zb) < 4: zb.append(busy())
+    k.pc.watch = w
+    b, st = mouse('z')
+    k.pc.watch = prev
+    seen = both()
+    check('... and one whose handler ends its own task (MTKILL Z, computing for ever else): not there and then (the '
+          'handler\'s call isn\'t over: m33_busy %s as it ends), but at its next safe point; m33_busy clear, both '
+          'computing tasks after it get turns (%s)' % (zb, sorted(seen)),
+          zb and not any(zb) and [e[0] for e in st[0]] == [0] and busy() == 0 and {1, 2} <= seen
+          and merged(mcbs(k)) == m0 and ems_used(k) == e0 and not k.crashed, (b, st, seen, busy()))
+    isr, prev = [], k.pc.watch
+    def w(a):
+        if prev: prev(a)
+        if a == seg * 16 + Y['mt_end'] and len(isr) < 4: isr.append(k.pc.isr)
+    k.pc.watch = w
+    typ(k, 'mtlaunch mtkill.com t 0 x;mtspin.com 40 tq.txt', 0.3); k.run_for(1.0)
+    st = tstate(k)
+    waitfile(k, 'TQ.TXT', 6.0)
+    k.pc.watch = prev
+    line(k, ''); k.run_for(0.3)
+    seen = both()
+    check('a task whose INT 1Ch handler ends its own task (MTKILL T: the timer\'s interrupt in service), with another '
+          'computing (MTSPIN, so it is switched from, its return changed by mt_switch): it ends when next run, with no '
+          'interrupt in service (%s at mt_end), not inside the handler; the tick goes on (%s)' % (isr, sorted(seen)),
+          isr and not any(isr) and 'MTKILL.COM' not in [e[2] for e in st[0]] and (2, 1, 'MTSPIN.COM') in st[0]
+          and spun(k, 'TQ.TXT') > 0 and {1, 2} <= seen
+          and merged(mcbs(k)) == m0 and ems_used(k) == e0 and not k.crashed, (isr, st, seen))
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
