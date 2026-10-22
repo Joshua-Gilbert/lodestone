@@ -3803,10 +3803,18 @@ do_wait:
         or      al, al                  ; (free: the last one there ended)
         jz      .end
         mov     [wgen], ah
-.l:     mov     ah, 0Bh                 ; a key (in front only: behind, MT
-        int     21h                     ;  shows none) read; ^C raises INT 23h,
-        or      al, al                  ;  ours: back to the prompt (0Bh
-        jz      .h                      ;  doesn't look for it here)
+        call    con_in                  ; standard input the console?
+        mov     byte [wcon], 1
+        jc      .l
+        je      .l
+        mov     byte [wcon], 0
+.l:     cmp     byte [wcon], 0          ; a ^C waiting (in front only: behind,
+        je      .h                      ;  MT shows no keys) read: AH=08h
+        mov     ah, 1                   ;  raises INT 23h, ours: back to the
+        int     16h                     ;  prompt (Lodestone's 0Bh doesn't
+        jz      .h                      ;  look for it).  Other keys stay
+        cmp     al, 3                   ;  for the prompt
+        jne     .h
         mov     ah, 8
         int     21h
 .h:     sti
@@ -4648,6 +4656,7 @@ vol_drv     resb 1
 mt_me       resb 1                      ; our task (mt_lst)
 wtask       resb 1                      ; WAIT's task, and the count it has
 wgen        resb 1                      ;  (MT_EXIT's AH) while it runs
+wcon        resb 1                      ;  and 1 if its input is the console
 spb         resb SP_SIZE                ; START's block (MT_SPAWN)
 argp        resw 1
 argp2       resw 1
