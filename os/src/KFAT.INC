@@ -249,6 +249,8 @@ resolve_si:
         cmp     byte [si], '\'         ;  middle part 3, a bad or wild last
         jne     .rl                     ;  one marked (open, create: 2)
         inc     si
+        cmp     byte [si], 0            ; (a \ last: that part is the
+        je      .rl                     ;  last, as MS-DOS: wild 2, else 3)
         jmp     .rest
 .rl:    mov     [r_wild], al
         jmp     short .np

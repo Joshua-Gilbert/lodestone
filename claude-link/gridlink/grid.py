@@ -147,6 +147,7 @@ class Grid:
     def rmdir(s, path): s.ok(glp.OP_RMDIR, glp.asciiz(path))
 
     def stat(s, path):
+        if len(path) > 3: path = path.rstrip('\\')     # (SUB\: DOS says 3 for a \ last, as MS-DOS; not the root's)
         try: r = s.ok(glp.OP_STAT, glp.asciiz(path))
         except GridError as e:                  # (FIND FIRST's "no more files", as in
             if e.code == 18: raise GridError(errtext(2), 2) from None    #  MS-DOS: not there)
