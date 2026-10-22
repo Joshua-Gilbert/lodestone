@@ -1634,6 +1634,46 @@ def t_nomatch():
     check('... and LCMD (CF only, as before): DIR and DEL of nothing say "File not found"; IF EXIST of nothing is false',
           o.count('File not found') == 3 and 'yes' not in o.replace('echo yes', ''), o)
 
+def t_slashend():
+    """A "/" at the very end of a line (X14): COPY, DEL, DIR and CHOICE stop there, and don't read on into what an
+    earlier, longer line left in the buffer (COPY X.TXT / made a file named from it; DIR / listed it)."""
+    open(os.path.join(OUT, 'NM_x.TXT'), 'wb').write(b'x\r\n')
+    img = image('slash.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'X.TXT=' + os.path.join(OUT, 'NM_x.TXT'))
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    sh.run('rem 0123456789 abcdefghijklmnopqrst')       # (the buffer after "copy x.txt /": "9 abcdefghijklmnopqrst")
+    o = sh.run('copy x.txt /')
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    check('COPY X.TXT /: no file made from what an earlier line left (it made 9)', not [n for n in f if n not in
+          ('A:\\LODE.SYS', 'A:\\LCMD.COM', 'A:\\X.TXT')] and 'copied onto itself' in o, (sorted(f), o))
+    sh.run('rem 0123456789 abcdefghijklmnopqrst')
+    o = sh.run('del /')
+    check('DEL /: "Required parameter missing", nothing read past the end', 'Required parameter missing' in o
+          and 'A:\\X.TXT' in fatcheck.read_files(bytes(k.pc.drives[0].img)), o)
+    sh.run('rem   zzz*.q')                            # (after "dir /": "zzz*.q")
+    o = sh.run('dir /')
+    check('DIR /: the directory, not a pattern from an earlier line', 'X        TXT' in o and 'LCMD     COM' in o and '3 File(s)' in o
+          and 'File not found' not in o, o)
+    sh.run('rem xxxxxx,1 hello')                     # (after "choice /t": ",1 hello")
+    o = sh.run('choice /t')
+    check('CHOICE /T: "Syntax error", no default, time or text from an earlier line', 'Syntax error' in o and 'hello' not in o, o)
+    o = sh.run('choice /')
+    check('CHOICE /: "Syntax error"', 'Syntax error' in o, o)
+    k = ktest.KPC(img); k.start()                       # (a fresh shell: a CHOICE above that waits can't spill over)
+    sh = Shell(k)
+    sh.run('rem 0123456789 abcdefghijklmnopqrst')
+    o = sh.run('choice /c') + sh.run('choice /c hello')
+    check('CHOICE /C with no keys (/C last, or a space after it): "Syntax error", not keys from an earlier line '
+          'that no key can answer', o.count('Syntax error') == 2 and '[' not in o, o)
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    o = sh.run('set ' + 'A' * 87 + '=x') + sh.run('echo still here') + sh.run('set ' + 'B' * 79 + '=x')
+    sh.run('set ' + 'C' * 78 + '=y')
+    e = sh.run('set')
+    check('SET of a name longer than the shell keeps (87, 79 letters): "Syntax error", and the shell as it was (it wrote '
+          'over its own variables); 78 letters are kept', o.count('Syntax error') == 2 and 'still here' in o and 'A' * 87 not in e
+          and 'B' * 79 not in e and 'C' * 78 + '=Y' in e.upper().replace('\n', ''), (o, e))
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -2178,7 +2218,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
