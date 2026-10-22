@@ -42,7 +42,9 @@ LINEB    equ 160                ; bytes per line: 80 x (char, attribute)
 MAXIN    equ 1000               ; longest prompt
 HISTN    equ 4                  ; prompts remembered for Up/Down
 HISTL    equ 400
+%ifndef TXMAX
 TXMAX    equ 1024               ; GRiD -> Pi payload per frame
+%endif
 %ifndef RXPAY
 %assign RXPAY 2048             ; Pi -> GRiD payload we read (HELLO's rx=): 98 % of 4 KB frames' rate on the 1520
 %endif
