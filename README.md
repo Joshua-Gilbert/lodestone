@@ -86,18 +86,18 @@ On the 1520, BENCH from each kind of drive, in seconds:
 | Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
 | **All ten tests** | **87.6** | **9.1** | **2.1** |
 
-Lodestone 0.6 (memory measured with the windows that move, the printer drivers and the 2026-10-20 audit's kernel and UI savings) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
+Lodestone 0.6 (memory measured with the windows that move, the printer drivers and the 2026-10-20 audit's savings) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
 
 | | Lodestone | GRiD MS-DOS 3.30 | FreeDOS |
 |---|---:|---:|---:|
 | BENCH file-system total | **78.8** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.43** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **579.7 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 563.7 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **582.4 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 566.3 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
-- **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 17 KB more.
+- **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 14 KB more.
 - **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.4 KB when the ROM is there.
 - **The Executive stays resident on purpose:** Lodestone is meant to become multitasking.
 
@@ -157,7 +157,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,602 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,619 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os

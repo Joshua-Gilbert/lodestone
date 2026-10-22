@@ -69,7 +69,7 @@ With the switch off, `TASKS` says `Multitasking is off (MULTITASK=1 in LODE.INI)
 In M1 the UI goes on lending its directory buffer to DOS programs as before, so with the switch on DOS programs lose only MT's own block. Whether lending can stay on once tasks have regions of their own is for M2 to settle. The plan assumed not (7.5 KB); regions allocated downward from MT's block would let it stay.
 
 **Cost:**
-- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch; 42B0h, 77E0h, 67A8h and 563.7 / 579.7 KB since its UI batch).
+- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch; 42B0h, 77E0h, 67A8h and 563.7 / 579.7 KB since its UI batch; 3EA0h, 73D0h, 6134h and 566.3 / 582.4 KB since its medium-risk batches; ui_keep_end 6144h since UI-12).
 - **One exception: LCMD.** It is 173 bytes bigger (`TASKS`). It keeps 11 paragraphs (176 bytes) more while a program runs from its prompt, so such programs get that much less, switch on or off.
 - **Switch on:** MT's block is 14 paragraphs plus its MCB, 240 bytes. A DOS program gets 577.4 KB instead of 577.6. `test_mt` checks the free paragraphs exactly.
 - **Files:**
@@ -888,9 +888,9 @@ The checks:
 - **`mt_boot`** puts task 0's INT 09h and 1Bh in `mt_fv` and patches `f_25` and `f_35`.
 
 **Cost:**
-- **Switch off:** nothing. LODE.SYS grows 48 bytes, in `mt_boot`; the map and MEMSZ are unchanged (579.7 KB).
-- **Switch on:** MT's block is 682 paragraphs plus its MCB (10,928 bytes; it was 579 paragraphs), and a DOS program gets 569.1 KB instead of 570.7. Each task's region grows by about 1.1 KB (its TX).
-- **Files:** LODEMT.SYS is 8,801 bytes (7,287 after M4c); ROM 1 has 16,384 bytes left.
+- **Switch off:** nothing. LODE.SYS grows 64 bytes, in section boot (`mt_boot`); the map and MEMSZ are unchanged (582.4 KB, main's since its medium-risk batches).
+- **Switch on:** MT's block is 682 paragraphs plus its MCB (10,928 bytes; it was 579 paragraphs), so a DOS program gets 571.7 KB, 1.6 KB less than with M4c's block. Each task's region grows by about 1.1 KB (its TX).
+- **Files:** LODEMT.SYS is 8,801 bytes (7,287 after M4c); ROM 1 has 16,896 bytes left.
 
 **Tests:** `test_mt.py`, 225 checks (was 209). The new group is `t_vectors`, with a new test program:
 - `MTVEC MODE [N] [FILE]`:
