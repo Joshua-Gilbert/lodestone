@@ -223,22 +223,25 @@ It connects, sets the GRiD's clock from the Pi, and shows the welcome.
 
 ## Speed
 
-Measured in the emulator (real CLAUDE.COM and GRIDGPIB on a 7210 model,
-4 us per basic block, which is about a 10 MHz 286; whole turns including
-the screen updates, 22.8 KB file):
+Measured on the 1520 (Lodestone, CLAUDE /T, the Pico 2 bridge), with
+`python3 -m gridlink.bench` on the Pi: 128 KB copied each way through M:,
+every byte checked.
 
-| Bridge | Serial | Pi to GRiD | GRiD to Pi |
-|---|---|---|---|
-| patched | 115,200 | 4.4 KB/s | 7.9 KB/s |
-| patched | 230,400 | 5.7 KB/s | 9.7 KB/s |
-| patched | 500,000 | 6.8 KB/s | 9.7 KB/s |
-| stock | 115,200 | 3.2 KB/s | 7.4 KB/s |
+| Pi to GRiD frames | Pi to GRiD | GRiD to Pi |
+|---|---|---|
+| 246 (CLAUDE before 1.3) | 22.7 KB/s | 43.0 KB/s |
+| 512 | 27.7 KB/s | 43.0 KB/s |
+| 1024 | 31.1 KB/s | 43.0 KB/s |
+| 2048 (CLAUDE 1.3) | 32.4 KB/s | 43.0 KB/s |
+| 4096 | 33.1 KB/s | 43.0 KB/s |
 
-At 115,200 baud the Nano's serial line is the limit; above that the GRiD
-itself is (GRIDGPIB spends about 60 us per byte, most of it in the
-per-byte timeout bookkeeping). Raising `AR_SERIAL_SPEED` (and `baud` in
-the config) is the cheap win; a fast path in GRIDGPIB's read and write
-loops would be the next. Treat the numbers as +-30 % until the bench test.
+A request's round trip is 8 ms. That fits about 3.5 ms per frame plus
+29 us per byte. Before 2026-10-21 every request also waited up to 1 s for
+the GRiD's idle POLL (a REPLY was answered NOP at once), and every message
+from the GRiD sat up to 20 ms in the Pico transport's read: copies ran at
+3.0 / 5.7 KB/s. `gridlink.bench --sweep 246,1024,2048` tries frame sizes
+on a running link. (The AR488 Nano's figures, from the emulator, were
+3.2-6.8 KB/s.)
 
 ## Files
 

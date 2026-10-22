@@ -397,6 +397,7 @@ gp_fast_write:
         dec     cx                      ; not the last byte
         push    bx
         push    di
+        push    si                      ; (the count is SI's advance, added at the end)
         mov     dx, gp_R_ISR1
         mov     bh, [gp_shadow1]
 .n:     mov     di, 20000               ; ~ 40 ms of polling, then slow path
@@ -414,9 +415,11 @@ gp_fast_write:
         mov     dh, gp_R_CDOR >> 8
         out     dx, al
         mov     dh, gp_R_ISR1 >> 8
-        inc     word [gp_done_n]
         loop    .n
 .out:   mov     [gp_shadow1], bh
+        pop     ax
+        sub     ax, si
+        sub     [gp_done_n], ax         ; += the bytes sent
         pop     di
         pop     bx
 .x:     ret
@@ -428,13 +431,15 @@ gp_fast_write:
 gp_fast_read:
         push    bx
         push    si
-        mov     dx, gp_R_ISR1
+        push    cx
+        push    di                      ; (the count is DI's advance, added at the end)
         mov     bh, [gp_shadow1]
-.n:     mov     ax, [gp_done_n]
-        add     ax, 3
-        cmp     ax, [gp_count]
-        ja      .slow
-        mov     si, 20000
+        mov     cx, [gp_count]
+        sub     cx, [gp_done_n]
+        sub     cx, 2                   ; bytes while three or more are left
+        jbe     .slow                   ;  (or none: borrow, or zero)
+        mov     dx, gp_R_ISR1
+.n:     mov     si, 20000
 .w:     in      al, dx
         or      bh, al
         test    bh, gp_ISR1_DI
@@ -442,31 +447,34 @@ gp_fast_read:
         dec     si
         jnz     .w
         jmp     short .slow
-.g:     mov     ah, bh
-        and     bh, ~(gp_ISR1_DI | gp_ISR1_END)
-        mov     dh, gp_R_DIR >> 8
+.g:     mov     dh, gp_R_DIR >> 8
         in      al, dx
         mov     dh, gp_R_ISR1 >> 8
         stosb
-        inc     word [gp_done_n]
         cmp     al, 0Ah
-        jne     .ne
-        test    byte [gp_lfstop], 1
-        jz      .ne
-        mov     byte [gp_endr], 2
-        jmp     short .stop
-.ne:    test    ah, gp_ISR1_END
-        jz      .n
-        mov     byte [gp_endr], 1
-.stop:  mov     [gp_shadow1], bh
+        je      .lf
+.c:     test    bh, gp_ISR1_END
+        jnz     .end
+        and     bh, ~gp_ISR1_DI
+        loop    .n
+.slow:  xor     bl, bl                  ; CF clear: the careful loop goes on
+        jmp     short .t
+.lf:    test    byte [gp_lfstop], 1
+        jz      .c
+        mov     al, 2
+        jmp     short .st
+.end:   mov     al, 1
+.st:    mov     [gp_endr], al
+        and     bh, ~(gp_ISR1_DI | gp_ISR1_END)
+        mov     bl, 1                   ; CF set: stopped
+.t:     mov     [gp_shadow1], bh
+        pop     ax
+        sub     ax, di
+        sub     [gp_done_n], ax         ; += the bytes read
+        shr     bl, 1
+        pop     cx
         pop     si
         pop     bx
-        stc
-        ret
-.slow:  mov     [gp_shadow1], bh
-        pop     si
-        pop     bx
-        clc
         ret
 
 ; read from device BL into ES:DI, max CX.  AX = error, CX = count, DL = end

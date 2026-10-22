@@ -88,8 +88,13 @@ Same format both ways:
 
 * Pi → GRiD frames are at most 127 bytes in total with stock AR488 (payload
   ≤ 119) and 254 with the patched firmware (payload ≤ 246), one byte under
-  the line buffer so the terminating LF always ends the line. The GRiD reads
-  up to 255 bytes and scans for the sync byte, so leading garbage is
+  the line buffer so the terminating LF always ends the line. Through the
+  Pico bridge they are as big as the GRiD's HELLO says it reads (`rx=`:
+  2048 for CLAUDE 1.3 and its resident console; a HELLO without `rx=` means
+  246, as every CLAUDE before 1.3 reads). The Pi sends a big frame as TX
+  frames of 512 bytes, EOI only on the last, so it fits the firmware's input
+  buffer and the bridge raises SRQ only once the frame is whole. The GRiD
+  reads up to its buffer and scans for the sync byte, so leading garbage is
   tolerated.
 * GRiD → Pi frames carry up to 1024 payload bytes (the GRiD announces its
   limit in HELLO). The GRiD writes them with EOI on the last byte.
@@ -116,7 +121,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
