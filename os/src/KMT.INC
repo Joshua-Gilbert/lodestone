@@ -3090,6 +3090,9 @@ mt_ux:  pop     es
         retf
 
 ; AL = 0: Return
+MT_XENV equ (ENVMAX + 132 + 2 + 15) / 16 + 1 ; EXEC's copy of the stub's
+                                        ;  environment (ENVMAX at most) and
+                                        ;  the name, with its MCB (f_4B)
 mt_urun:
         mov     bp, si                  ; BP = the path
         mov     word [cs:mt_xpb + SP_PARAS], 0
@@ -3140,28 +3143,35 @@ mt_urun:
         cmp     ax, 'ZM'
         jne     .spd                    ; (EXEC takes it for a .COM)
 .mz:    mov     ax, [mt_hdr + 4]        ; its load image, paragraphs: its
-        shl     ax, 5                   ;  pages, less its header, less what
-        mov     cx, [mt_hdr + 2]        ;  the last page leaves unused
+        cmp     ax, 800h                ;  pages, less its header, less what
+        jae     .spd                    ;  the last page leaves unused (a
+        shl     ax, 5                   ;  header past 1 MB: EXEC's to refuse)
+        mov     cx, [mt_hdr + 2]
         jcxz    .fl
         neg     cx
         add     cx, 512
         shr     cx, 4
         sub     ax, cx
+        jb      .spd
 .fl:    sub     ax, [mt_hdr + 8]
         jb      .spd
-        add     ax, 10h                 ; and its PSP
+        add     ax, MT_XENV + 10h       ; and its PSP, and EXEC's copy of the
+        jc      .spd                    ;  environment, which goes in it too
         mov     dx, ax
         add     dx, [mt_hdr + 0Ah]      ; DX = the least it takes
         jc      .spd                    ; (more than there can be)
         add     ax, [mt_hdr + 0Ch]      ; AX = the most it asks for
         jnc     .hi
         mov     ax, 0FFFFh
-.hi:    push    ax
+.hi:    cmp     ax, dx                  ; (a maximum below its minimum: the
+        jae     .hi2                    ;  minimum, as EXEC takes it)
+        mov     ax, dx
+.hi2:   push    ax
         mov     ah, 48h                 ; the most it gets: the largest block
         mov     bx, 0FFFFh              ;  less this task's region's own and
-        int     21h                     ;  another's, with its 64 KB
-        pop     ax
-        sub     bx, 2 * (TX_PARAS + ST_PARAS + ENVMAX / 16 + 2) + MT_DEFARENA
+        int     21h                     ;  another's, with its 64 KB, and the
+        pop     ax                      ;  Executive's room for a .RUN
+        sub     bx, 2 * (TX_PARAS + ST_PARAS + ENVMAX / 16 + 2) + MT_DEFARENA + RUN_ROOM
         jnc     .cap
         xor     bx, bx
 .cap:   cmp     ax, bx                  ; its maximum, if that fits; else what
@@ -3210,7 +3220,7 @@ mt_urun:
         jmp     mt_uyes
 
 ; the ended task at BX: "X ended[, exit code n]", or "X could not be
-; started: error n" (EXEC's), at ES:DI, ASCIIZ.  (CX changes)
+; started: error n" (EXEC's), at ES:DI, ASCIIZ.  (AX, CX, SI change)
 mt_uend:
         lea     si, [bx+TE_NAME]
         mov     cx, TR_NAMELEN
@@ -3240,7 +3250,7 @@ mt_uend:
         mov     byte [es:di], 0
         ret
 
-; the text at CS:SI (ASCIIZ) at ES:DI, DI past it (AL changes)
+; the text at CS:SI (ASCIIZ) at ES:DI, DI and SI past it (AL changes)
 mt_ucpy:
         mov     al, [cs:si]
         inc     si

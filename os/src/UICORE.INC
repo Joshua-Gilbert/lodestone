@@ -3631,9 +3631,16 @@ ui_room:
         mov     ah, 4Ah                 ; (ES = CS) room here?
         int     21h
         jnc     .here
-        cmp     byte [ex_mtw], 0        ; (MULTITASK=1: never moved; tasks'
-        jne     .stay                   ;  copies of the vectors point here)
-        mov     bx, UI_PARAS + RUN_ROOM
+        cmp     byte [ex_mtw], 0        ; (MULTITASK=1: moved only with no
+        je      .mv                     ;  task but the Executive's, since
+        xor     cx, cx                  ;  tasks' copies of the vectors, parked
+        mov     ax, 0F012h              ;  ones' too, point here (MT_LIST); till
+        int     21h                     ;  then asked again at each wait)
+        cmp     cx, 1
+        jbe     .mv
+        inc     byte [need_room]
+        jmp     short .stay
+.mv:    mov     bx, UI_PARAS + RUN_ROOM
         mov     ah, 48h                 ; no: a block past what is in the way
         int     21h
         jc      .stay                   ; (memory is short anyway: stay)

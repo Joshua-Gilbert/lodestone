@@ -1868,14 +1868,27 @@ mt_scan:
         add     si, 10                  ; (past "MULTITASK=")
         cmp     si, bx
         jae     .done
-        mov     ax, [si]
-        cmp     al, '1'
-        je      .on
-        and     ax, 0DFDFh
-        cmp     al, 'Y'
-        je      .on
+        mov     ax, [si]                ; 1, On or Yes, and nothing after it,
+        and     ax, 0DFDFh              ;  as the kernel reads it (KMDISK)
+        mov     dx, 1
+        cmp     al, '1' & 0DFh
+        je      .end
+        inc     dx
         cmp     ax, 'ON'
+        je      .end
+        cmp     ax, 'YE'
         jne     .done
+        mov     al, [si+2]
+        and     al, 0DFh
+        cmp     al, 'S'
+        jne     .done
+        inc     dx
+.end:   add     si, dx
+        cmp     si, bx                  ; (the text's end, a blank or the
+        ja      .done                   ;  line's)
+        je      .on
+        cmp     byte [si], ' '
+        ja      .done
 .on:    mov     byte [mt_want], 1
 .done:  popa
 .x:     ret
@@ -2172,6 +2185,7 @@ set_back:
         mov     ah, 41h
         int     21h
         jc      .err
+        mov     byte [mt_known], 0      ; (MULTITASK= read again: the ROM's)
         mov     si, s_setdone
         call    UI_MSG
         jmp     redraw

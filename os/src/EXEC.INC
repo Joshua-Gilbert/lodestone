@@ -197,9 +197,10 @@ ex_loop:
 .nx:    mov     ax, K_ENTER             ; (Device, Subject: the next item)
         call    focus_key
         jmp     ex_loop
-.task:  je      .re                     ; a task ended: the list again (it may
+.task:  je      .tl                     ; a task ended: the list again (it may
         mov     byte [msgshown], 1      ;  have changed the files), the message
-        jmp     .re                     ;  shown kept; EV_TASKM: msgbuf's
+.tl:    call    ui_room                 ;  shown kept; EV_TASKM: msgbuf's (and
+        jmp     .re                     ;  the UI block moved, if it waited)
 
 ; Tab / Shift-Tab: the next / previous item of the form (Title, Device,
 ; Subject, round).  In Device and Subject also Return (the next item) and
