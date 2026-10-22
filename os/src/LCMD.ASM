@@ -1671,6 +1671,8 @@ do_choice:
         inc     si
 .o:     cmp     al, 'C'
         jne     .on
+        cmp     byte [si], ' '          ; (/C with no keys: none could
+        jbe     .syn                    ;  answer it)
         mov     [ch_keys], si
 .ck:    lodsb                           ; to the end of the keys
         cmp     al, ' '
@@ -1691,6 +1693,8 @@ do_choice:
 .ot:    cmp     al, 'T'
         jne     .syn
         lodsb
+        or      al, al                  ; ("/T" last)
+        jz      .syn
         mov     [ch_def], al
         cmp     byte [si], ','
         jne     .syn
@@ -2454,6 +2458,8 @@ do_dir: mov     byte [dir_w], 0
         cmp     al, '/'
         jne     .nm
         lodsb
+        or      al, al                  ; ("DIR /": the end, X14)
+        jz      .ad
         call    upcase
         cmp     al, 'W'
         jne     .ap
@@ -3799,6 +3805,8 @@ env_set_line:
 .n:     lodsb
         or      al, al
         jz      .syn
+        cmp     di, setbuf2 + 78        ; (a name longer than setbuf2
+        ja      .syn                    ;  takes, with = and its NUL)
         call    upcase
         stosb
         cmp     al, '='
@@ -4120,7 +4128,10 @@ getarg_sw:
         call    skipsp
         cmp     byte [si], '/'
         jne     .a
-        add     si, 2
+        inc     si
+        cmp     byte [si], 0            ; ("COPY X /": the end, X14)
+        je      .a
+        inc     si
         jmp     getarg_sw
 .a:     push    di
         call    getarg

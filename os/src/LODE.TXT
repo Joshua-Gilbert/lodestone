@@ -389,7 +389,11 @@ or system file is refused unless it asks for those attributes.  A
 device's name after a directory (DIR\NUL, the way programs ask whether a
 directory is there) opens only if the directory is there, as in MS-DOS
 (another 0.1 KB without EMS).  FIND FIRST that finds nothing says
-18, "no more files", as MS-DOS does (it said 2).
+18, "no more files", as MS-DOS does (it said 2).  At the prompt, a "/"
+at the very end of a line (COPY X.TXT /, DIR /) no longer reads on
+into what an earlier line left behind; CHOICE /C with no keys is a
+syntax error (it waited for ever), and so is a SET name too long for
+the shell (it wrote over the shell's own memory).
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
