@@ -1,0 +1,2 @@
+#!/bin/sh
+PYTHONPATH=/opt/gpib-bridge exec python3 -m gpibbridge.ctl "$@"
