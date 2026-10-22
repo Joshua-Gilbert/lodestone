@@ -76,7 +76,7 @@ org 100h
         jmp     short .oc
 .og:    mov     ax, 0F000h + MT_FRONT
         jmp     short .oc
-.oxc:   mov     ax, 0F000h + MT_EXIT    ; "exit: SS GG DXDX CC" (hex)
+.oxc:   mov     ax, 0F000h + MT_EXIT    ; "exit: SS GG XXXX EE" (hex)
         int     21h
         jc      .oe
         push    dx

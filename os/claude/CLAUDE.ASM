@@ -3410,7 +3410,8 @@ s_r_nomem   db 'CLAUDE /R: not enough memory.', 13, 10, '$'
 s_mcbname   db 'CLAUDE', 0, 0
 s_u_done    db 'Claude is no longer resident.', 13, 10, '$'
 s_u_none    db 'Claude isn', 27h, 't resident.', 13, 10, '$'
-s_u_tasks   db 'Claude can', 27h, 't be taken out while other tasks run: end them first.', 13, 10, '$'
+s_u_tasks   db 'Claude can', 27h, 't be taken out while other tasks run: end them, then', 13, 10
+            db 'CLAUDE /U from the Executive', 27h, 's task.', 13, 10, '$'
 s_u_over    db 'Claude can', 27h, 't be taken out: a program loaded after it has INT 16h.', 13, 10
             db 'Take that program out first.', 13, 10, '$'
 
