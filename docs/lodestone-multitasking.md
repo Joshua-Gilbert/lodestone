@@ -69,7 +69,7 @@ With the switch off, `TASKS` says `Multitasking is off (MULTITASK=1 in LODE.INI)
 In M1 the UI goes on lending its directory buffer to DOS programs as before, so with the switch on DOS programs lose only MT's own block. Whether lending can stay on once tasks have regions of their own is for M2 to settle. The plan assumed not (7.5 KB); regions allocated downward from MT's block would let it stay.
 
 **Cost:**
-- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch; 42B0h, 77E0h, 67A8h and 563.7 / 579.7 KB since its UI batch; 3EA0h, 73D0h, 6134h and 566.3 / 582.4 KB since its medium-risk batches; ui_keep_end 6144h since UI-12).
+- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch; 42B0h, 77E0h, 67A8h and 563.7 / 579.7 KB since its UI batch; 3EA0h, 73D0h, 6134h and 566.3 / 582.4 KB since its medium-risk batches; ui_keep_end 6144h since UI-12; 3EF0h, 7420h, 6164h and 566.2 / 582.2 KB since X15/X16 and the right clicks).
 - **One exception: LCMD.** It is 173 bytes bigger (`TASKS`). It keeps 11 paragraphs (176 bytes) more while a program runs from its prompt, so such programs get that much less, switch on or off.
 - **Switch on:** MT's block is 14 paragraphs plus its MCB, 240 bytes. A DOS program gets 577.4 KB instead of 577.6. `test_mt` checks the free paragraphs exactly.
 - **Files:**
@@ -1023,9 +1023,9 @@ The checks:
 - **Not tried on the 1520 yet** (M9).
 
 **Cost:**
-- **Switch off:** nothing. LODE.SYS is the same size (47,056 bytes); only `mt_sum` and `mt_boot`'s copies of LODEMT.SYS's sizes and offsets differ, in section boot, which is in the load image only. The map and MEMSZ are unchanged (582.4 KB).
-- **Switch on:** MT's block is 711 paragraphs plus its MCB (11,392 bytes; it was 682 paragraphs), so a DOS program gets 571.2 KB (571.7 after M5a).
-- **Files:** LODEMT.SYS is 9,269 bytes (8,801 after M5a); ROM 1 has 16,384 bytes left.
+- **Switch off:** nothing. LODE.SYS is the same size as main's (47,168 bytes); only `mt_sum` and `mt_boot`'s copies of LODEMT.SYS's sizes and offsets differ, in section boot, which is in the load image only. The map and MEMSZ are main's (582.2 KB).
+- **Switch on:** MT's block is 711 paragraphs plus its MCB (11,392 bytes; it was 682 paragraphs), so a DOS program gets 571.1 KB (571.6 on main, with M5a).
+- **Files:** LODEMT.SYS is 9,269 bytes (8,801 after M5a); ROM 1 has 15,872 bytes left (16,384 on main: one 512-byte sector more).
 - **Speed:** a front task's AH=00h and 01h look at the key buffer's head once more (`mt_drop`, a few instructions). `mt_safe` and `mt_can` each test one byte more, and `mt_switch` one. A switch is otherwise as before.
 
 **Tests:** `test_mt.py`, 241 checks (was 225). The new group is `t_kill`, with a new test program:

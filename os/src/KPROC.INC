@@ -199,7 +199,7 @@ f_4B:   cmp     byte [bp+F_AX], 0
         call    full_name
         jc      .e0
         call    find_file
-        jc      .e0
+        jc      .nf
         test    byte [de+11], A_DIR | A_VOL
         jnz     .acc
         call    sft_alloc
@@ -540,8 +540,9 @@ f_4B:   cmp     byte [bp+F_AX], 0
 .e1:    mov     si, [ex_sft]
         mov     byte [si+S_REF], 0
         jmp     .e0
-.acc:   mov     ax, 5
-.e0:    jmp     fail
+.acc:   mov     ax, 5                   ; (nf_last leaves 5 alone)
+.nf:    call    nf_last                 ; (a last part that is no name: 2,
+.e0:    jmp     fail                    ;  as OPEN, as MS-DOS)
 
 section .bss
 ex_srcenv   resw 1

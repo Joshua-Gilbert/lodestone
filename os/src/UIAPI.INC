@@ -38,10 +38,11 @@
 ; =====================================================================
 
         cpu     286
-UI_API      equ 6                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
+UI_API      equ 7                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
                                         ;  4: UI_SAVER's tidying, 5: the caller's redraw
                                         ;  routine stays, exit code 0FFFFh, 6: W_FLAGS,
-                                        ;  windows that move and close, EV_MOVED)
+                                        ;  windows that move and close, EV_MOVED,
+                                        ;  7: EV_RCLICK)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Lodestone version (BH major, BL minor
@@ -78,7 +79,11 @@ UI_EVENT    equ 20 * 3  ; wait for an event -> AX = BIOS key (AL = ASCII,
                         ;  The top window's title strip too (API 6, W_FLAGS):
                         ;  a press there drags a WF_MOVE window, CODE-F7 moves
                         ;  it with the arrow keys, then AX = EV_MOVED; a click
-                        ;  on a WF_CLOSE window's close box gives K_ESC
+                        ;  on a WF_CLOSE window's close box gives K_ESC.
+                        ;  A .RUN for API 7 also gets AX = EV_RCLICK (BX = x,
+                        ;  CX = y) for a right-button press while the left
+                        ;  one is up; older ones, and the Executive, never
+                        ;  see it
 UI_POLL     equ 21 * 3  ; the same without waiting: CF set if nothing happened
                         ;  (then AX, BX, CX are unchanged).  The pointer stays hidden.
 UI_TICK     equ 22 * 3  ; -> AX = BIOS tick count (18.2 per second)
@@ -155,6 +160,16 @@ FONT_BYTES  equ 96 * 16                 ; a font file (.FNT): exactly this long
 EV_CLICK    equ 0FF01h                  ; a left-button press (BX = x, CX = y)
 EV_MOVED    equ 0FF02h                  ; the top window was moved (API 6): its
                                         ;  W_COL and W_Y are new, and it is drawn there
+EV_RCLICK   equ 0FF03h                  ; a right-button press (API 7: only to a .RUN
+                                        ;  that needs API 7).  The core's own waits
+                                        ;  ignore it (UI_EDIT, UI_FORM, UI_ASK) or take
+                                        ;  it as any key (UI_MSG, UI_HELP); UI_LVKEY:
+                                        ;  CF, not a list key.  A right press on a
+                                        ;  window's title strip or close box neither
+                                        ;  moves nor closes it: the program gets it
+; UI_DISPATCH matches a key table's ASCII entries by AL alone, so an EV_*
+; code would run an entry for its low byte (01h-03h: Ctrl-A to Ctrl-C):
+; a table that has one should test for the events first
 
 ; ---- keys (BIOS INT 16h codes; CODE is the Alt key) -------------------
 ; The core reads keys with INT 16h AH=10h: the 1520's BIOS gives CODE with

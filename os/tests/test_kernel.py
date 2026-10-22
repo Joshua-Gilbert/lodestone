@@ -1346,26 +1346,118 @@ pat     db '*.*', 0
           (f.get('A:\\O1.TXT'), f.get('A:\\O2.TXT')))
     sh.run('names > no.txt')
     o = fs().get('A:\\NO.TXT', b'')
-    check('RENAME onto B?.TXT: 3 (as MS-DOS 3.30); onto ".": 5; MKDIR C?: 3; CREATE D?.TXT: 3; CREATE ".": 5',
-          o.split() == [b'03', b'05', b'03', b'03', b'05'], o)
+    check('RENAME onto B?.TXT: 3 (as MS-DOS 3.30); onto ".": 5; MKDIR C?: 3; CREATE D?.TXT: 2 (as MS-DOS); CREATE ".": 5',
+          o.split() == [b'03', b'05', b'03', b'02', b'05'], o)
     o = sh.run('cd abcdefghij')
     o2 = sh.run('cd')
     sh.run('cd \\')
     check('CD ABCDEFGHIJ: the directory ABCDEFGH, kept 8.3 (A:\\ABCDEFGH, as MS-DOS keeps it)',
           o.rstrip().endswith('A:\\ABCDEFGH>') and 'A:\\ABCDEFGH\n' in o2 + '\n', (o, o2))
-    o = sh.run('cd a.b.c'); sh.run('md made'); o2 = sh.run('cd ..') + sh.run('dir')
-    sh.run('cd \\')
-    dl = []; fatcheck.read_files(bytes(k.pc.drives[0].img), dirs=dl)
-    check('CD A.B.C (A.B there: the name taken as A.B, as resolve takes it): A:\\A.B, MD there makes A.B\\MADE, CD .. '
-          'is the root again', o.rstrip().endswith('A:\\A.B>') and 'A:\\A.B\\MADE' in dl and 'A:\\MADE' not in dl
-          and 'LODE     SYS' in o2, (o, o2, sorted(n for n in dl if 'MADE' in n)))
-    o = sh.run('cd \\a.b.c\\made'); sh.run('md made2'); sh.run('cd \\')
-    o2 = sh.run('cd a.b.c\\..')
-    sh.run('cd \\')
-    dl = []; fatcheck.read_files(bytes(k.pc.drives[0].img), dirs=dl)
-    check('... CD \\A.B.C\\MADE and CD A.B.C\\.. (resolve takes A.B.C as the last name): A:\\A.B both times, MD there makes A.B\\MADE2',
-          o.rstrip().endswith('A:\\A.B>') and o2.rstrip().endswith('A:\\A.B>') and 'A:\\A.B\\MADE2' in dl,
-          (o, o2, sorted(n for n in dl if 'MADE' in n)))
+    outs = [sh.run(c) for c in ('cd a.b.c', 'cd \\a.b.c\\made', 'cd a.b.c\\..')]
+    check('CD A.B.C, CD \\A.B.C\\MADE, CD A.B.C\\.. (A.B there): "Invalid directory" each time, still A:\\ (a second dot '
+          'is no name, as MS-DOS 3.30 says)', all('Invalid directory' in o and o.rstrip().endswith('A:\\>') for o in outs), outs)
+    probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+    check('... disk consistent', not probs, probs)
+
+# NAMES.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+MS_NAMES = [('fn 3D A.TXT.X', 'err 02'),
+            ('fn 3C N.A.B', 'err 02'),
+            ('fn 39 D.E.F', 'err 03'),
+            ('fn 4E A.TXT.X', 'err 03'),
+            ('fn 4E *.TXT.X', 'err 03'),
+            ('fn 43 A.TXT.X', 'err 03'),
+            ('fn 3B A.B.C', 'err 03'),
+            ('fn 3B \\', 'ok'),
+            ('fn 3D A.B.C\\X.TXT', 'err 03'),
+            ('fn 3D A.TXT.', 'err 02'),
+            ('fn 3D A..TXT', 'err 02'),
+            ('fn 56 A.TXT>C.D.E', 'err 03'),
+            ('fn 56 A.TXT.X>Z.TXT', 'err 03'),
+            ('fn 41 B.TXT.X', 'err 03'),
+            ('fn 3A E.F.G', 'err 03'),
+            ('fn 39 CON', 'err 05'),
+            ('fn 39 NUL', 'err 05'),
+            ('fn 3D HID.TXT', 'ok'),
+            ('fn 3C HID.TXT', 'err 05'),
+            ('fn 3C SYS.TXT', 'err 05'),
+            ('fn 3C RO.TXT', 'err 05'),
+            ('fn 5B HID.TXT', 'err 50'),
+            ('fn 41 SYS.TXT', 'ok'),
+            ('fn 41 HID.TXT', 'ok'),
+            ('fn 41 CON', 'err 05'),
+            ('fn 56 B.TXT>CON', 'err 05'),
+            ('fn 3D A|B', 'err 02'),
+            ('fn 3C A|B', 'err 02'),
+            ('fn 39 A|B', 'err 03'),
+            ('fn 3D A|B\\X.TXT', 'err 03'),
+            ('fn 41 A|B', 'err 03'),
+            ('fn 3C HID2.TXT', 'ok'),
+            ('fn 41 RO.TXT', 'err 05'),
+            ('fn 5B CON', 'ok'),
+            ('fn 3A CON', 'err 05'),
+            ('fn 3B CON', 'err 03'),
+            ('fn 3D CON.TXT', 'ok'),
+            ('fn 3C SYS2.TXT', 'err 05'),
+            ('fn 3C HID3.TXT', 'ok'),
+            ('fn 3C HS.TXT', 'err 05'),
+            ('fn 3C HS2.TXT', 'ok'),
+            ('fn 39 NOSUCH\\CON', 'err 03'),
+            ('fn 3A NOSUCH\\CON', 'err 03'),
+            ('fn 41 NOSUCH\\CON', 'err 03'),
+            ('fn 41 A.B\\CON', 'err 05'),
+            ('fn 39 A.B\\CON', 'err 05'),
+            ('fn 3A A.B\\CON', 'err 05'),
+            ('fn 56 NOSUCH.TXT>CON', 'err 02'),
+            ('fn 56 RO.TXT>NOSUCH\\CON', 'err 03'),
+            ('fn 41 CLOCK.TXT', 'ok'),
+            ('fn 39 CLOCK$', 'err 05'),
+            ('fn 39 CLOCK', 'ok'),
+            ('fn 3A CLOCK', 'ok'),
+            ('fn 4B A.B.C', 'err 02'),
+            ('fn 4B A.TXT.X', 'err 02'),
+            ('fn 4B A|B', 'err 02'),
+            ('fn 5B N.A.B', 'err 02'),
+            ('fn 5B A|B', 'err 02')]
+
+def t_names():
+    """Names that are no names (a second dot, a bad character), device names,
+    CREATE over hidden and system files: NAMES.COM's 58 calls answer as GRiD
+    MS-DOS 3.30's do, and nothing is deleted, renamed or truncated that MS-DOS
+    leaves alone (B.TXT.X deleted B.TXT, E.F.G removed E.F, A.TXT became C.D,
+    MKDIR CON made a directory)."""
+    com = os.path.join(OUT, 'NAMES_MS.COM')                # (t_kmedium has a NAMES.COM of its own)
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NAMES.ASM')], check=True)
+    names = ('a', 'b', 'hid', 'hid2', 'hid3', 'sys', 'sys2', 'hs', 'hs2', 'ro', 'clock', 'x')
+    for n in names:
+        open(os.path.join(OUT, 'NM_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
+    img = image('names.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NAMES.COM=' + com,
+                *['%s.TXT=%s' % (n.upper(), os.path.join(OUT, 'NM_%s.TXT' % n)) for n in names if n != 'x'])
+    m = lambda *a: subprocess.run(list(a), check=True, stdin=subprocess.DEVNULL, capture_output=True)
+    m('mmd', '-i', img, '::A.B'); m('mmd', '-i', img, '::E.F')
+    m('mcopy', '-i', img, os.path.join(OUT, 'NM_x.TXT'), '::A.B/X.TXT')
+    for n, a in (('HID', 'h'), ('HID2', 'h'), ('HID3', 'h'), ('SYS', 's'), ('SYS2', 's'), ('RO', 'r')):
+        m('mattrib', '-i', img, '+' + a, '::%s.TXT' % n)
+    for n in ('HS', 'HS2'):
+        m('mattrib', '-i', img, '+h', '+s', '::%s.TXT' % n)
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    sh.run('names > out.txt')
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+    want = [c + ' -> ' + a for c, a in MS_NAMES]
+    check("NAMES.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a second dot or a bad character: 2 from OPEN, "
+          "CREATE and EXEC on the last part, 3 otherwise; a device's name, where its directory is there: 5 for MKDIR, "
+          "RMDIR, DELETE and RENAME onto it (RENAME's old name looked up first); CREATE over a hidden or system file "
+          "not asking for it: 5)" % len(want), got == want,
+          [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    dl = []; f = fatcheck.read_files(bytes(k.pc.drives[0].img), dirs=dl)
+    keep = {n: (n.lower()[:-4] + '\r\n').encode() for n in ('B.TXT', 'A.TXT', 'HS.TXT', 'SYS2.TXT', 'RO.TXT')}
+    check('... and the disk as MS-DOS leaves it: HID, SYS and CLOCK.TXT deleted, HID2, HID3 and HS2 made empty; B, A, '
+          'HS, SYS2 and RO.TXT as they were, E.F there; no C.D, no directory CON, NUL, CLOCK or CLOCK$',
+          all(f.get('A:\\' + n) == v for n, v in keep.items()) and 'A:\\E.F' in dl
+          and not {'A:\\HID.TXT', 'A:\\SYS.TXT', 'A:\\CLOCK.TXT', 'A:\\C.D'} & set(f)
+          and all(f.get('A:\\%s.TXT' % n) == b'' for n in ('HID2', 'HID3', 'HS2'))
+          and not {'A:\\CON', 'A:\\NUL', 'A:\\CLOCK', 'A:\\CLOCK$'} & set(dl), (sorted(f), dl))
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 
@@ -1913,7 +2005,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
