@@ -2683,6 +2683,7 @@ def t_lcmd():
     typ(k, 'wait 1', 0.5)
     sp = tstate(k)[0]
     k.key('x', settle=False); k.key(0x2E03); k.run_for(0.5)            # (a key ahead of the ^C)
+    kb = '>x' not in k.pc.text_screen()                                 # (the keys up to it taken, not the prompt's)
     o1 = sh.run('echo BACKATPROMPT')
     sh.run('unpark 1')
     s1 = tstate(k)[0]
@@ -2696,8 +2697,8 @@ def t_lcmd():
     check('WAIT for a parked task (%s) ended by ^C, a key typed ahead of it: back at the prompt, the task still there, '
           'brought back (%s); WAIT '
           'whose task\'s number was used again and ended meanwhile: "Its exit code is lost", ERRORLEVEL 1' % (sp, s1),
-          sp[1:] == [(1, 5, 'MTLINE.COM')] and 'BACKATPROMPT' in o1 and s1[1:] == [(1, 2, 'MTLINE.COM')]
-          and 'Its exit code is lost' in o2 and 'LEVEL1' in o3 and back(), (sp, o1, s1, o2, o3))
+          sp[1:] == [(1, 5, 'MTLINE.COM')] and kb and 'BACKATPROMPT' in o1 and s1[1:] == [(1, 2, 'MTLINE.COM')]
+          and 'Its exit code is lost' in o2 and 'LEVEL1' in o3 and back(), (sp, kb, o1, s1, o2, o3))
     # keys typed while WAIT waits are left for the prompt (only a ^C is read)
     typ(k, 'cls', 0.2)
     typ(k, 'start /w mtspin.com 90 ta.txt', 0.3)    # (typed: the shell's run waits for an idle machine)
