@@ -2624,7 +2624,8 @@ def t_lcmd():
                          b'if errorlevel 7 echo LEVEL7\r\necho DONE\r\n')
     sg = os.path.join(A.OUT, 'SG.BAT'); open(sg, 'wb').write(b'@echo off\r\nstart /w mtline.com sg.txt\r\necho BATDONE\r\n')
     cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
-    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, cl)
+    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, cl,
+             os.path.join(HERE, 'UPPER.COM'))
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
     sh.run('ver')
@@ -2696,6 +2697,21 @@ def t_lcmd():
           'whose task\'s number was used again and ended meanwhile: "Its exit code is lost", ERRORLEVEL 1' % (sp, s1),
           sp[1:] == [(1, 5, 'MTLINE.COM')] and 'BACKATPROMPT' in o1 and s1[1:] == [(1, 2, 'MTLINE.COM')]
           and 'Its exit code is lost' in o2 and 'LEVEL1' in o3 and back(), (sp, o1, s1, o2, o3))
+    # keys typed while WAIT waits are left for the prompt (only a ^C is read)
+    typ(k, 'cls', 0.2)
+    typ(k, 'start /w mtspin.com 90 ta.txt', 0.3)    # (typed: the shell's run waits for an idle machine)
+    typ(k, 'wait 1', 0.3)
+    k.key('echo TYPED', settle=False)
+    sa = tstate(k)[0]
+    k.run_for(0.5)
+    o0 = k.pc.text_screen()
+    k.run_for(6.0)
+    s1 = tstate(k)[0]
+    k.key(ktest.ENTER); k.run_for(0.5)
+    o = k.pc.text_screen()
+    check('keys typed while WAIT waits (for MTSPIN, which ends by itself: %s, then %s) are left for the prompt: ECHO '
+          'TYPED runs after it' % (sa, s1), sa[1:] == [(1, 1, 'MTSPIN.COM')] and 'TYPED' not in o0
+          and s1 == [(0, 1, 'Executive')] and re.search(r'^TYPED\s*$', o, re.M) and back(), (sa, o0, s1, o))
     # PARK, UNPARK, KILL by number and name; WAIT of a killed one: AL 0, but failed
     sh.run('start /w mtline.com sp.txt')
     o1 = sh.run('park 1 && echo PARKED')
@@ -2798,6 +2814,11 @@ def t_lcmd():
           'the default 64 KB (regions of %d and %d paragraphs); TASK=2 after the second; START /D MTSPIN: TASKS says '
           '"(frozen)"' % (vf, s2, s1), vf == [2, 4] and s1 - s2 == 2048 and 'TASK=2' in o1
           and re.search(r'3\s+MTSPIN\.COM \(frozen\)', o2) and 'KILLED' in o and back(), (vf, s1, s2, o1, o2, o))
+    # a pipe with multitasking on (its files named by LCMD's task: pipe_names asks MT_LIST), none left
+    o = sh.run('echo hello there | upper | upper')
+    left = [n for n in ('PIPEA1.$$0', 'PIPEA2.$$0', 'PIPEA1.$$$', 'PIPEA2.$$$') if A.disk_file(k, n) is not None]
+    check('a pipe (ECHO | UPPER | UPPER) with multitasking on: HELLO THERE, its files gone', re.search(r'^HELLO THERE\s*$', o, re.M)
+          and not left and back(), (o, left))
     # CLAUDE /U refuses while other tasks run
     o1 = sh.run('claude /r')
     sh.run('start /w mtline.com sc.txt')
