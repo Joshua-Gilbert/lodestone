@@ -53,6 +53,7 @@ INT16 = (STUB, 0x16 * 8)                # and INT 16h
 TS_WAITK = 2
 MTK = os.path.join(HERE, 'MTKEY.COM')
 MTM = os.path.join(HERE, 'MTM33.COM')
+MTV = os.path.join(HERE, 'MTVEC.COM')
 
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches): the kernel's image and BSS, the UI block kept while a DOS program runs
@@ -891,24 +892,23 @@ def t_ends():
     k = boot('mt_tsr.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TSR.COM'))
     sh = Shell(k)
     sh.run('ver')
-    e0 = ems_used(k)
+    e0, m0 = ems_used(k), merged(mcbs(k))
     o = sh.run('mtlaunch tsr.com')
     line(k, '')
     a = mcbs(k)
     v = sh.run('ver')
-    check('a program that stays resident in a task (TSR.COM, AH=31h): the task ends, its region stays (renamed TR, '
-          'the system\'s); the prompt goes on', not k.crashed and tstate(k)[0] == [(0, 1, 'Executive')]
-          and [(b[4], b[2]) for b in a[-2:]] == [(b'TR', 8), (b'MT', 8)] and 'Lodestone version' in v
+    check('a program that stays resident in a task (TSR.COM, AH=31h): the task ends as if it had exited, its region '
+          'freed (its hooks, in its own vectors, gone with them: M5a); the prompt goes on', not k.crashed
+          and tstate(k)[0] == [(0, 1, 'Executive')] and merged(a) == m0 and 'Lodestone version' in v
           and ems_used(k) == e0, (show(a), v, ems_used(k), e0))
     o = sh.run('mtlaunch mtline.com t.txt')
     a1 = mcbs(k)
     front(k, 1); line(k, 'next')
     line(k, '')
     a = mcbs(k)
-    check('... and the next task\'s region goes below it (T1), and ends', A.disk_file(k, 'T.TXT') == b'next'
-          and [(b[4], b[2]) for b in a1[-3:]] == [(b'T1', 8), (b'TR', 8), (b'MT', 8)]
-          and tstate(k)[0] == [(0, 1, 'Executive')] and [(b[4], b[2]) for b in a[-2:]] == [(b'TR', 8), (b'MT', 8)],
-          (show(a1), show(a), A.disk_file(k, 'T.TXT')))
+    check('... and the next task\'s region goes at the top again (T1, below MT), and ends', A.disk_file(k, 'T.TXT') == b'next'
+          and [(b[4], b[2]) for b in a1[-2:]] == [(b'T1', 8), (b'MT', 8)]
+          and tstate(k)[0] == [(0, 1, 'Executive')] and merged(a) == m0, (show(a1), show(a), A.disk_file(k, 'T.TXT')))
 
 def t_fpu():
     print('== the coprocessor: each task\'s own')
@@ -1436,8 +1436,10 @@ def t_keys():
           got['p'] and got['p'][0] > 10 and got['p'][1] == 0 and got['q'] and got['q'][0] > 10 and got['q'][1] == 0
           and got['d'] == (0, 0) and all(r == (1, [0x61, 0x62, 0x63]) for r in rings), (got, rings))
     check('... as it is from an INT 1Ch handler (T %s: the timer\'s interrupt in service, a TSR\'s peek, the machine\'s): '
-          'every one finds them, in whichever task the tick lands, MTKEY T\'s own included (%d there)' % (got['t'], len(own)),
-          got['t'] and got['t'][0] > 5 and got['t'][1] == got['t'][0] and own, (got['t'], len(own)))
+          'every one finds them; INT 1Ch being each task\'s own (M5a), MTKEY T\'s handler is called in its own turns '
+          'only, of 18 ticks (%d there)' % (got['t'], len(own)),
+          got['t'] and 2 < got['t'][0] < 15 and got['t'][1] == got['t'][0] and len(own) == got['t'][0],
+          (got['t'], len(own)))
     # a program that only polls in front: its peeks give the others their turns (mt_preempt from there, at a safe
     # point), which on the 1520 a tick, landing in MT or the BIOS, seldom can; here (MTKEY Y) the tick can't at all,
     # its own INT 08h hook being ahead of MT's
@@ -1950,6 +1952,110 @@ def t_mouse():
           'not MT\'s saved copy, made stale by the test as each call comes)' % k.pc.mode(), len(hit) == 2 and md0 != 7 and k.pc.mode() == md0
           and hz is not None and not k.crashed, (hit, hex(md0), hex(k.pc.mode()), hz))
 
+def t_vectors():
+    print('== vectors: each task its own (M5a)')
+    k = boot('mt_v.img', b'MULTITASK=1\r\n', 88, MTV)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    v1c, v2f, v62, v09 = vec(k, 0x1C), vec(k, 0x2F), vec(k, 0x62), vec(k, 9)
+    cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+    def txvec(task, n):                 # task's own vector n (one of mt_vrun's), in its TX
+        tx = k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + 6)
+        run = list(k.pc.rd(seg, Y['mt_vrun'], equ('MT_NVEC')))
+        o = equ('TX_VEC') + run.index(n) * 4
+        return k.pc.u16(tx, o + 2), k.pc.u16(tx, o)
+    def notrun(task, s=2.0):            # run until task isn't the one running (its TX holds its vectors)
+        u0 = k.pc.us
+        while cur() == task and k.pc.us - u0 < s * 1e6: k.run_for(0.01)
+        return cur() != task
+    m0 = merged(mcbs(k))
+    # two tasks hooking INT 1Ch (AH=35h/25h), the first to hook ending first: each its own, counting its own turns
+    typ(k, 'mtlaunch mtvec.com h 20 h1.txt;mtvec.com h 40 h2.txt', 0.4)
+    k.run_for(0.3)
+    nr = notrun(1)
+    b = (txvec(1, 0x10), txvec(1, 0x16), txvec(1, 8), txvec(1, 0x1C))
+    reg1 = k.pc.u16(seg, Y['mt_tab'] + MT_ENT + 4)
+    waitfile(k, 'H2.TXT', 6.0)
+    line(k, '')
+    h1, h2 = spun(k, 'H1.TXT'), spun(k, 'H2.TXT')
+    check('a task\'s own vectors, in its TX while another runs: MT\'s at their base (INT 10h mt_v10, 16h mt_i16, 08h '
+          'mt_tick), its INT 1Ch its own hook (in its region)', nr and b[:3] == ((seg, Y['mt_v10']), (seg, Y['mt_i16']),
+          (seg, Y['mt_tick'])) and reg1 <= b[3][0] < reg1 + 0x1000, (nr, b, hex(reg1)))
+    check('two tasks hooking INT 1Ch, the first to hook ending first: each handler called in its own turns only (%d of '
+          '20 ticks, %d of 40), and INT 1Ch as it was after both (not the first one\'s, freed)' % (h1, h2),
+          0 < h1 < 17 and 0 < h2 < 36 and vec(k, 0x1C) == v1c and merged(mcbs(k)) == m0 and not k.crashed,
+          (h1, h2, vec(k, 0x1C), v1c))
+    # vectors left pointing into a task's region when it ends: the machine's put back; its own gone with it
+    typ(k, 'mtlaunch mtvec.com g g.txt', 0.4)
+    waitfile(k, 'G.TXT', 3.0); k.run_for(0.3)
+    line(k, '')
+    check('a task setting INT 62h (the machine\'s) and 2Fh (its own) and ending without putting them back: INT 62h put '
+          'back as it was at its spawn, INT 2Fh never changed for the Executive', A.disk_file(k, 'G.TXT') == b'g'
+          and vec(k, 0x62) == v62 and vec(k, 0x2F) == v2f and not k.crashed, (vec(k, 0x62), v62, vec(k, 0x2F), v2f))
+    typ(k, 'mtlaunch mtvec.com r r.txt', 0.4)
+    waitfile(k, 'R.TXT', 3.0); k.run_for(0.3)
+    line(k, '')
+    check('... and staying resident (AH=31h): the same, and its region freed', A.disk_file(k, 'R.TXT') == b'g'
+          and vec(k, 0x62) == v62 and vec(k, 0x2F) == v2f and merged(mcbs(k)) == m0 and not k.crashed,
+          (vec(k, 0x62), show(mcbs(k))))
+    # INT 09h (the keyboard's) written by a task behind: its own; the front task's in the table meanwhile
+    typ(k, 'mtlaunch mtvec.com k 90 k.txt;mtspin.com 40 ks.txt', 0.4)
+    k.run_for(0.4)
+    reg = k.pc.u16(seg, Y['mt_tab'] + MT_ENT + 4)
+    nr = notrun(1)
+    a1 = vec(k, 9)
+    front(k, 1); k.run_for(0.3)
+    st, a2 = tstate(k), vec(k, 9)
+    waitfile(k, 'K.TXT', 9.0); waitfile(k, 'KS.TXT', 6.0); k.run_for(0.3)
+    st3 = tstate(k)
+    line(k, '')
+    check('a task behind writing INT 09h in the table itself: the front task\'s there while another runs (%04X:%04X); '
+          'in front, its own (%04X:%04X); as it was after it ends' % (a1 + a2), nr and a1 == v09 and st[1] == 1
+          and reg <= a2[0] < reg + 0x1000 and A.disk_file(k, 'K.TXT') == b'k' and st3[1] == 0 and vec(k, 9) == v09,
+          (nr, a1, a2, st, st3, vec(k, 9), v09))
+    # a new task in front that never sets INT 09h: the one it started with, its spawner's (the Executive's)
+    typ(k, 'mtlaunch /f mtvec.com v 30 vf.txt', 0.6)
+    st, a3 = tstate(k), vec(k, 9)
+    waitfile(k, 'VF.TXT', 4.0); k.run_for(0.3)
+    line(k, '')
+    check('a new task in front that never sets INT 09h (MTVEC V, in a region where K\'s was): the one it started with, '
+          'its spawner\'s, is in the table (%04X:%04X)' % a3, st[1] == 1 and a3 == v09 and A.disk_file(k, 'VF.TXT')
+          and not k.crashed, (st, a3, v09))
+    # MTVEC Q in front writes INT 09h, starts V in front and ends: V's (Q's, which it started with) put back
+    typ(k, 'mtlaunch /f mtvec.com q 40 vq.txt', 0.4)
+    k.run_for(1.4)
+    st, a4 = tstate(k), vec(k, 9)
+    waitfile(k, 'VQ.TXT', 5.0); k.run_for(0.3)
+    line(k, '')
+    check('a task in front writing INT 09h, starting another in front and ending (MTVEC Q): the one in front then has '
+          'INT 09h as it was at Q\'s spawn (%04X:%04X), not Q\'s, freed' % a4, [e[2] for e in st[0]]
+          == ['Executive', 'MTVEC.COM'] and st[1] != 0 and a4 == v09 and A.disk_file(k, 'VQ.TXT')
+          and not k.crashed, (st, a4, v09))
+    # a task started by a task (MTVEC P, its INT 2Fh hooked, starting MTVEC V): its vectors its spawner's, those
+    # pointing into the spawner's region put back when that ends
+    typ(k, 'mtlaunch mtvec.com p 30 p.txt', 0.4)
+    waitfile(k, 'P.TXT', 6.0); k.run_for(0.3)
+    line(k, '')
+    pv = A.disk_file(k, 'P.TXT') or b''
+    pv = [int(x, 16) for x in pv.split()] if len(pv.split()) == 4 else None
+    check('a task started by a task that hooked INT 2Fh and then ended: its INT 2Fh (%s) put back as it was before that '
+          'one\'s spawn, not left in its freed region' % (pv and '%04X:%04X' % (pv[2], pv[3])),
+          pv and (pv[2], pv[3]) == v2f and (pv[0], pv[1]) == v1c and tstate(k)[0] == [(0, 1, 'Executive')]
+          and not k.crashed, (pv, v2f, v1c))
+    # a TSR hooking INT 1Ch in the Executive's task (MTVEC T): not in the tasks started before it, in those after
+    typ(k, 'mtlaunch mtvec.com v 40 v1.txt', 0.4); line(k, '')
+    typ(k, 'mtvec t', 0.6)
+    typ(k, 'mtlaunch mtvec.com v 1 v2.txt', 0.4)
+    waitfile(k, 'V1.TXT', 6.0); k.run_for(0.3)
+    line(k, '')
+    r1, r2 = (A.disk_file(k, n) or b'' for n in ('V1.TXT', 'V2.TXT'))
+    r1, r2 = ([int(x, 16) for x in r.split()] if len(r.split()) == 4 else None for r in (r1, r2))
+    check('a TSR hooking INT 1Ch in the Executive\'s task (MTVEC T): a task started before it keeps its own (%s), one '
+          'started after it has the TSR\'s (%s)' % (r1 and '%04X:%04X' % tuple(r1[:2]), r2 and '%04X:%04X' % tuple(r2[:2])),
+          r1 and r2 and tuple(r1[:2]) == v1c and tuple(r2[:2]) != v1c and r2[0] < reg and tuple(r2[2:]) == v2f
+          and not k.crashed, (r1, r2, v1c))
+
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
     k0 = boot('mt_mem0.img', b'MULTITASK=0\r\n')
@@ -2064,12 +2170,12 @@ if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_progs, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_progs, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

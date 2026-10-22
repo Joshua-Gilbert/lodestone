@@ -22,8 +22,9 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M3b | Each task's own coprocessor state | PR #47, merged. |
 | M4a | Each task's own screen (an INT 10h hook) and the direct-write detector | PR #50, merged. |
 | M4b | Keys for the front task only (an INT 16h hook: waits that can be switched from, CODE-Tab anywhere) | PR #52, merged. |
-| M4c | Each task's own mouse | This PR. |
-| M5 | Per-task vectors, ending and killing tasks | |
+| M4c | Each task's own mouse | PR #54, merged. |
+| M5a | Each task's own vectors | This PR. |
+| M5b | Ending and killing tasks | |
 | M6 | Parking tasks in EMS and bringing them back | |
 | M7 | The Executive's task list (TASKS.RUN, CODE-T), LCMD START/FG/KILL/PARK/WAIT, System's switch | |
 | M8 | Several `.RUN` windows at once, as coroutines in the UI task | |
@@ -126,7 +127,7 @@ M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the 
 
 **Not per task yet (kept for later milestones, stated here so nobody relies on them):**
 - **M: and R:'s current directories** are shared by all tasks. M: is turned on and off at run time (INT 67h AH=5Bh) and its drive entry moves with it, so it isn't in the fixed list of per-task variables. Sharing one directory is consistent, so nothing is damaged.
-- **INT 22h–24h** are global (per-task vectors are M5's). When a program ends, the kernel puts back the INT 23h/24h it found at its start. So a task can undo another's handler, or bring back one that has since ended; ^C or a disk error in one task runs whichever handler is in the table.
+- **INT 22h–24h** are global (per-task vectors are M5's). When a program ends, the kernel puts back the INT 23h/24h it found at its start. So a task can undo another's handler, or bring back one that has since ended; ^C or a disk error in one task runs whichever handler is in the table. **M5a:** they are each task's own now, so a task's handlers, and the kernel putting them back, act on that task's only.
 - **A directory a waiting task is in.** Its directory is saved as a cluster number. So don't remove a directory (RD) a waiting task is in, and don't change the disk in a drive where one has its current directory. Its next file operation there would use a cluster the disk no longer has as that directory, and could damage the disk. The fix (a per-drive mount count in each task's context, and RD refusing any task's directory) needs two more patches in the kernel and comes with its own change.
 - **INT 21h AH=52h's** first MCB is the whole memory chain's, not the running task's own.
 - **A program whose start fails:** `MT_SPAWN` succeeds once the task is made. If its program isn't there, or EXEC fails, the task ends at once, unseen; its exit code (`TE_EXIT`) is kept, but no call returns it until M7's WAIT.
@@ -150,7 +151,7 @@ M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the 
 
   The task's program gets its memory from that chain (a .COM takes all of it, as it would take all memory). Task 0's TX is in MT's block (`mttbss`).
 - **The UI's lending** of its directory buffer stays on. Regions come from the top of memory, away from the UI block, so they don't stand in the way of taking the buffer back.
-- **Ending** (`MT_END`, from the stub only): `close_all` on the stub's PSP (`KCALL`), the exit code kept, the region freed, and the next task runs without its context being saved. A program that stayed resident (AH=31h, `last_exit` AH=3) keeps the whole region, renamed "TR": its hooks may point into it. That costs the region (its TX, stub and the unused rest of its memory) until M5 handles it.
+- **Ending** (`MT_END`, from the stub only): `close_all` on the stub's PSP (`KCALL`), the exit code kept, the region freed, and the next task runs without its context being saved. A program that stayed resident (AH=31h, `last_exit` AH=3) keeps the whole region, renamed "TR": its hooks may point into it. That costs the region (its TX, stub and the unused rest of its memory) until M5 handles it. **M5a:** a program that stays resident ends its task as an exit does: its region is freed, and the vectors left pointing into it are put back.
 - **Calling the kernel:** `KCALL r` pushes MT's far return, then the offset of `k_retf`, and jumps to KSEG:r. The routine's near RET goes to the RETF, which comes back to MT.
 - **The API** (MTAPI.INC):
   - `MT_SPAWN`: DS:DX = the program (with its extension), ES:BX = EXEC's block plus a word of paragraphs (0: 64 KB) and a flags byte (`SPF_FRONT`). → AL = the task, or CF with AX = 4 (8 tasks already) or 8 (no room).
@@ -348,11 +349,11 @@ A turn that ends anywhere else waits, as `mt_pend`, for the next safe tick or IN
 - **The idle front task** sleeps out the rest of the tick it is given (it HLTs; MT only notices at the next tick). With the Executive or the prompt idle in front, a background task gets 55–65% of the processor in pcemu, not all of it.
 - **Index and data port pairs** (the CRTC's 3D4h/3D5h, the PIT's latch and its two reads): a task switched from between the two can find the index changed by another. `mt_safe` itself leaves the PIC reading its request register, as the BIOS does. M4a's screen virtualisation, for the CRTC (see M4a).
 - **The EOI's order:** the in-service test assumes the BIOS's INT 08h sends the EOI before it returns. pcemu's does, and so does the 1520's (read in its ROM); M9 checks it on the machine.
-- **A timer hook stops the tick switching.** While any program or TSR has INT 08h hooked (a clock, a spooler, a game), only INT 21h's way out switches. So a task that computes without calling DOS keeps the machine until the hook goes, or until it calls DOS. A hook that doesn't chain on stops `mt_tick` altogether, as it stops the BIOS's tick in DOS. M5's per-task vectors lift this: each task's own hooks run only while it does, inside `mt_tick`.
+- **A timer hook stops the tick switching.** While any program or TSR has INT 08h hooked (a clock, a spooler, a game), only INT 21h's way out switches. So a task that computes without calling DOS keeps the machine until the hook goes, or until it calls DOS. A hook that doesn't chain on stops `mt_tick` altogether, as it stops the BIOS's tick in DOS. M5's per-task vectors lift this: each task's own hooks run only while it does, inside `mt_tick`. **M5a:** only the running task's own hook does now (INT 08h is in each task's vectors); another task's, or a TSR loaded after a task started, doesn't stop the tick switching it.
 
   M3 first tried keeping INT 08h MT's by catching AH=25h and 35h for it, so a hook set that way would run inside `mt_tick`. That one global chain, mixed with programs that read or write the vector table themselves, gave two re-reviews four ways to hang the machine or lose `mt_tick` for good. So it was taken out again, and the job is left to M5's per-task vectors.
 - **A task's own timer hook that calls DOS** can be switched from on that INT 21h's way out. The rules are checked against the hook, the INT 21h caller (its own code, its stack), not against what the hook interrupted underneath. That could be a TSR's code or, on the 1520, the BIOS's, which another task could then enter again. It needs a program whose own INT 08h handler chains on and then calls INT 21h. A TSR's hook doing so is refused (its CS isn't the task's). M5 runs a task's hooks inside `mt_tick`, where what was interrupted is known.
-- **Vectors are global until M5:** two tasks that hook the same vector and end out of order (the first to hook ends first and puts back what it found) leave it pointing into the other's freed memory. For INT 08h that hangs the machine once the memory is used again. DOS, running one program at a time, never sees that order. Load programs that hook vectors one at a time, or as TSRs before starting tasks.
+- **Vectors are global until M5:** two tasks that hook the same vector and end out of order (the first to hook ends first and puts back what it found) leave it pointing into the other's freed memory. For INT 08h that hangs the machine once the memory is used again. DOS, running one program at a time, never sees that order. Load programs that hook vectors one at a time, or as TSRs before starting tasks. **M5a:** for the vectors each task has its own of (INT 08h among them), this is gone; the machine's (the other IRQs, 13h, 33h, ...) are as in DOS, but those left pointing into an ended task's region are put back.
 - **C:'s INT 25h/26h** run kernel code outside INT 21h. An INT 24h handler raised from inside them (a disk error) could be preempted with that code's state half used. That needs a disk error on C: during INT 25h/26h. M5.
 - **Resident Claude's console** runs at E000h, so it is never preempted. But CLAUDE /R doesn't yet hold switching while it is up (the plan's `mt_hold`, M7).
 - **The UI's code in two tasks:** LCMD started as a task runs the Executive's screen saver in that task (it asked F0h AL=5 once, at its start), while the Executive is task 0. And the Executive, in the background, still draws its clock. Both are rare in M3 (tasks are started with MTLAUNCH); M7 gives the Executive its task list and the saver its owner.
@@ -413,7 +414,7 @@ The checks:
 
 **The limits:**
 - **Every switch saves and restores it**, whether or not either task uses the coprocessor. That costs about 200 of the 287's cycles each way, plus 47 word transfers: 0.1 to 0.2 ms a switch, with about 18 switches a second at the tick and more at key waits. Saving only for tasks that use it would avoid that: the 286's TS bit traps a task's first coprocessor instruction to INT 7 (in real mode too, and pcemu shows it). But it needs an INT 7 handler of MT's, which isn't worth it at this rate.
-- **INT 02h and INT 75h are global** until M5, so a task's error goes to whichever handler is hooked there, as with any vector.
+- **INT 02h and INT 75h are global** until M5, so a task's error goes to whichever handler is hooked there, as with any vector. **M5a:** INT 75h is each task's own; INT 02h stays the machine's (an NMI can't be held off while a vector is half written).
 - **A handler that doesn't free BUSY stops every task.** If IRQ 13 is masked, or a program's own INT 75h doesn't do the OUT to F0h, the drain's FNOP waits for ever with interrupts on. In DOS that stops only that program, at its next coprocessor instruction.
 - **Between FNOP and CLI**, an interrupt whose handler uses the coprocessor with exceptions unmasked could leave a new error pending, and FNSAVE would then wait for it. Nothing on a 286 closes that last instruction's gap; the handlers that could do it are other programs' (an NMI is the same).
 - **An error pending at a key wait inside an interrupt handler** (a key read from an INT 1Ch hook, say, with IRQ 0 in service) can't be delivered, so the drain's FNOP waits for ever. DOS hangs the same way, at that program's next coprocessor instruction.
@@ -500,7 +501,7 @@ The checks:
 - **MT_LIST** (F0h AL=12h) returns the caller's task in AH, with the front task in AL.
 - **LCMD's screen saver** starts only when LCMD is in front (AL = AH). In the background the screen isn't its own: its saver's direct drawing would have landed on the front screen, and the screen it saved and put back would have been the front task's.
 - **`mt_vbusy`:** while MT has a task's pages mapped itself with interrupts on (switching screens, `mt_sync`, a spawn's clear screen), an interrupt's INT 10h call goes straight to the BIOS, so that it can't map pages over MT's. The shadow is lost for it.
-- **Two new hooks:** INT 13h goes through `mt_i13`, which counts the calls running and passes CF back as the BIOS gives it. The kernel's one INT 24h call (`crit_disk.c24`, 5 bytes) becomes a far call to `mt_c24`, which counts it. M5's per-task vector tables must keep `mt_i13` at the base of every task's INT 13h.
+- **Two new hooks:** INT 13h goes through `mt_i13`, which counts the calls running and passes CF back as the BIOS gives it. The kernel's one INT 24h call (`crit_disk.c24`, 5 bytes) becomes a far call to `mt_c24`, which counts it. M5's per-task vector tables must keep `mt_i13` at the base of every task's INT 13h. (M5a keeps INT 13h the machine's, so `mt_i13` stays at its base for every task.)
 - **Left over:** `mt_inb`, `mt_crit` and `mt_in13` are cleared when a task ends or is spawned, and at every switch, where none can be under way, in case a program was ended inside one. A `mt_crit` left by an INT 24h handler that never came back counts only inside INT 21h.
 - **The mapping** reads KEMS's tables directly (`mt_smap`), as INT 67h AH=44h would: no INT 67h call on the way.
 - **A new task's screen** is set up at spawn: mode 3 (its BIOS video data from the 1520's tables), clear. Before M4a it was cleared when first shown; now a task can print before it is ever in front.
@@ -629,7 +630,7 @@ The checks:
 **Departures from the plan:**
 - **No poll counting.** The plan had a background poller yield after 50 empty peeks a tick (`MTPOLL`). A background task's turn is 1 tick anyway, and a peek with its turn over gives way at once.
 - **No per-task type-ahead.** Keys stay in the BIOS's buffer. CODE-Tab still counts only once the keys typed before it are read (M2b), so those reach the task they were typed for.
-- **INT 16h isn't per task:** one hook in front of the BIOS's, as INT 10h is. Per-task vectors are M5's.
+- **INT 16h isn't per task:** one hook in front of the BIOS's, as INT 10h is. Per-task vectors are M5's. **M5a:** each task has its own INT 16h now, with `mt_i16` at its base.
 
 **The limits, plainly:**
 - **INT 16h hooks loaded after MT,** Resident Claude's included, hide whose call it is (the hook's code, not the program's). What a program asks through one is as before M4b: a background peek sees the front task's keys. A read that waits in the hook's own loop (Resident Claude's does) holds the processor there until a key is typed, since the tick can't switch from the hook's code (M3's rule); then its read, passed on with the program's own frame, waits in MT for the front, and the key goes to the front task. In front the same loop keeps the other tasks waiting. With Resident Claude loaded, its console can also pop up from a background task's call. DOS's own calls through such a hook are still known (by the stack). M7 makes Resident Claude ask MT whose call it is (the M4a section said M4b would; it can't from MT's side alone).
@@ -643,7 +644,7 @@ The checks:
 - **The BIOS isn't called while a front task waits:** MT HLTs instead, so anything the BIOS does in its own wait (INT 15h AH=90h, "device busy", which some idle detectors and power managers watch) doesn't happen.
 - **Whose code:** task 0's own memory is the running program's blocks (`cur_psp`'s), so a child's call through its parent's INT 16h hook counts as not task 0's own there, as it is (in tasks 1-7 the whole region is the task's). Code running in the EMS frame is never a task's own (`mt_safe` refuses A000h up): its reads go to the BIOS.
 - **The front changes mid-run now:** the index and data port pairs (M3's limit: 3D4h/3D5h, the PIT) can be split by the new front's mode set too.
-- **Programs that read the keyboard themselves** (port 60h, 40:1Ah-1Ch, their own INT 09h or INT 1Bh hooks) see the front task's keys, as before; INT 09h/1Bh are global until M5. A background task's AH=05h (a key put in the buffer) goes to the front task.
+- **Programs that read the keyboard themselves** (port 60h, 40:1Ah-1Ch, their own INT 09h or INT 1Bh hooks) see the front task's keys, as before; INT 09h/1Bh are global until M5. A background task's AH=05h (a key put in the buffer) goes to the front task. **M5a:** INT 09h and 1Bh are the front task's now, swapped at a change of the front.
 - **Not tried on the 1520 yet** (M9). The 1520's INT 16h is taken to turn interrupts on, as the AT's does; pcemu's now does too.
 
 **How:**
@@ -789,3 +790,92 @@ The checks:
     - Task 0's pointer taken as off at its program's end behind (`mt_pgend`).
     - A new task's counts zeroed.
   - **Situations not set up:** a TSR's call from a background task's time (`mt_mine`); a task ending inside a change of the front (`mt_end`'s 17h, its AX=1 to another driver and its clearing of `m33_busy`); a background task's 16h and 17h; a critical error's prompt; the UI setting INT 33h again; the 1520's own mouse (M9).
+
+## M5a: each task's own vectors (2026-10-21)
+
+**M5 is split in two,** as M2 and M4 were. M5a is the vectors; M5b is ending and killing tasks (the kernel's own end of a program, run in the task, until its stub's).
+
+**What it does:**
+- **Each task has its own copy of 16 vectors,** swapped at every switch (`mt_vrun`):
+  - the CPU's traps (00h, 01h, 03h, 04h, 06h);
+  - INT 08h (a timer hook ahead of `mt_tick`), 10h and 16h (with `mt_v10` and `mt_i16` at their base) and 1Ch;
+  - DOS's (21h to 24h, 28h, 2Fh);
+  - the coprocessor's IRQ 13 (75h).
+- **What a task changes there is its own,** whether through AH=25h or by writing the table itself. MT doesn't catch either: at a switch away it saves the 16 as the task left them (`mt_vsv`), and it puts the next task's back (`mt_vld`). It costs 128 bytes copied per switch.
+- **A new task starts with its spawner's vectors.** So a TSR loaded from the Executive before a task starts is in that task's vectors too; one loaded after isn't.
+- **INT 09h and 1Bh are the front task's** (`mt_vfr`). The keyboard's interrupt calls them whichever task runs, and keys are the front task's.
+  - They are swapped at a change of the front (`mt_fvto`, from `mt_scrld`).
+  - One a background task sets in its turn is its own: it is saved at the switch away, and the front task's are put back (`mt_fvsync`, `mt_fvset`).
+- **The rest are the machine's, one for all:** the other IRQs, 02h (an NMI can't be held off while a vector is half written), 13h (a disk cache must see every task's calls), 33h (M4c's hook), 67h, the BIOS's tables (1Dh-1Fh, 41h, 46h) and the rest.
+- **At a task's end** (`mt_vfix`), every vector left pointing into its region goes back to what it was at the task's spawn (`TX_GSN`, a copy of the whole table kept in its TX). That covers:
+  - a hook its programs never took away;
+  - a TSR's;
+  - one a task it spawned started with (in that task's TX), and `mt_fv`.
+- **A program that stays resident in a task** (AH=31h) ends it as an exit does: the region is freed. It used to stay, as "TR"; its hooks in the task's own vectors are gone with them, and the machine's are put back.
+
+**What it lifts:**
+- **Two tasks hooking the same vector and ending out of order** no longer leave it pointing into freed memory, for the 16. The first one's hook was in its own vectors only, so the second one's "old vector" is the one it found in its own.
+- **A timer hook only stops the tick switching the task whose hook it is.** Another task's, or a TSR loaded after a task started, doesn't.
+- **A frozen task's INT 09h hook** no longer sees the keys meant for the one in front.
+- **The kernel putting a program's INT 22h-24h back at its end** acts on its own task's.
+
+**Departures from the plan:**
+- **INT 08h is one of the task's own,** not "chained from `mt_tick` with an in-tick guard": the task's hook is ahead of `mt_tick` in its own vectors, as in DOS. M3 showed a global chain built by catching AH=25h/35h, mixed with programs that write the table themselves, breeds hangs.
+- **The tick still doesn't switch while the running task has a hook ahead of `mt_tick`.** A hook that calls on with PUSHF / CALL FAR could be on top of a TSR's or the BIOS's code, which MT can't see, and another task could enter that code again. INT 21h's way out still switches it, as before.
+- **INT 13h and 33h stay the machine's.** INT 13h: a disk cache loaded in one task must see every task's calls. INT 33h: M4c's hook gives each task its own mouse state through one driver, and its tests of which driver answers need one table.
+- **INT 01h, 03h, 04h and 06h are added** (a debugger's in one task is its own).
+- **No warning** when a program stays resident in a task: the task just ends.
+
+**The limits, plainly:**
+- **Background tasks' INT 08h and 1Ch hooks run in their own turns only,** so a program's own count of ticks goes slower than the clock (40:6Ch, the BIOS's count, is right). Programs that time themselves from 40:6Ch are unaffected.
+- **A TSR's hooks in the 16 belong to the tasks started after it,** and only to them. Load TSRs before starting tasks, as the plan says. A TSR loaded inside a task is gone with the task.
+- **The machine's vectors are as in DOS:** two tasks hooking the same IRQ and ending out of order can still leave one pointing at the other's freed code. Only the ones pointing into the ending task's own region are put back.
+- **A program that writes INT 09h in the table while in the background** has its hook called for the keys in the rest of that turn. It is taken off at the switch away.
+- **Ctrl-Break** (the keyboard's INT 1Bh, the front task's) sets the break flag of whichever task runs, as before: the kernel's handler sets its own variable.
+- **Still open, for M5b or later:** INT 24h raised inside C:'s INT 25h/26h (M3); a handler that never sends its EOI and then reads a key through DOS (M4a).
+- **Not tried on the 1520 yet** (M9).
+
+**How:**
+- **The TX** grows by `TX_VEC` (16 vectors) and `TX_FVEC` (09h, 1Bh): 72 bytes. A task's TX also gets `TX_GSN` (1 KB, in its own region). Task 0's TX, in MT's block, ends before `TX_GSN` (`TX0_PARAS`): task 0 never ends.
+- **`mt_switch`** calls `mt_vsv` and `mt_fvsync` as it saves the task, and **`mt_load`** calls `mt_vld` and `mt_fvset`, all with interrupts off. They save only DS and ES around themselves: MT's use of a task's stack at a switch stays under 64 bytes (48 to 58 in the tests).
+- **`mt_spawn`** calls `mt_vnew` and **`mt_end`** calls `mt_vfix`. `mt_boot` puts task 0's INT 09h and 1Bh in `mt_fv`.
+
+**Cost:**
+- **Switch off:** nothing. LODE.SYS grows 16 bytes, in `mt_boot`; the map and MEMSZ are unchanged (579.7 KB).
+- **Switch on:** MT's block is 619 paragraphs plus its MCB (9.7 KB; it was 579), and a DOS program gets 570.1 KB instead of 570.7. Each task's region grows by about 1.1 KB (its TX).
+- **Files:** LODEMT.SYS is 7,862 bytes (7,287 after M4c); ROM 1 has 17,408 bytes left.
+
+**Tests:** `test_mt.py`, 218 checks (was 209). The new group is `t_vectors`, with a new test program:
+- `MTVEC MODE [N] [FILE]`:
+  - H hooks INT 1Ch (counting its calls), waits N ticks, puts it back, writes its count;
+  - G sets INT 62h (the machine's) and 2Fh (its own) and ends without putting them back; R does that and stays resident;
+  - V waits N ticks and writes INT 1Ch and 2Fh as AH=35h gives them;
+  - T stays resident with an INT 1Ch hook;
+  - K writes INT 09h in the table itself, waits N ticks, and puts it back;
+  - P hooks INT 2Fh, starts MTVEC V as a task (F0h AL=10h), and ends;
+  - Q writes INT 09h in the table itself (in front), starts MTVEC V as a task in front, and ends 9 ticks later.
+
+The checks:
+- **A task's vectors in its TX** while another runs: INT 10h, 16h and 08h are MT's (`mt_v10`, `mt_i16`, `mt_tick`); its INT 1Ch is its own hook.
+- **Two H's** (20 and 40 ticks, the first to hook ending first): each handler is called in its own turns only, and INT 1Ch is as it was after both.
+- **G:** INT 62h is put back as it was at its spawn; INT 2Fh never changed for the Executive. **R:** the same, and its region is freed.
+- **K behind:** the front task's INT 09h is in the table while another runs; brought to the front, its own; as it was after it ends.
+- **A new task in front that never sets INT 09h** (V, in a region where K's was): the one it started with, its spawner's, is in the table.
+- **Q:** the task it started, in front when Q ends, has INT 09h as it was at Q's spawn, not Q's.
+- **P:** the task it started gets INT 2Fh as it was before P's spawn, not left in P's freed region.
+- **T in the Executive's task:** a task started before it keeps its own INT 1Ch; one started after it has the TSR's.
+- **Changed for M5a:**
+  - The TSR test in `t_ends` now expects the region freed.
+  - MTKEY T's INT 1Ch handler is called in its own turns only (5 of 18 ticks).
+- **The checks can fail:** each of these, broken on purpose, fails a check (three of them by hanging the group: a task's vectors not saved at a switch, not put back, or a new task's not made):
+  - the front task's 09h and 1Bh not taken from the table at a switch, not put back, or not swapped at a change of the front;
+  - a new task not given its spawner's 09h and 1Bh;
+  - the vectors left pointing into an ended task's region not put back: at all, in the table, in `mt_fv`, or in the other tasks' TXs;
+  - the table not kept at a spawn (`TX_GSN`).
+
+  **Not tested here:**
+  - **The 16 one by one:** only 08h, 10h, 16h, 1Ch and 2Fh are looked at. The CPU's traps, 21h-24h, 28h and 75h go the same way, through the same table. The kernel putting INT 22h-24h back into the ending program's task is not checked.
+  - **INT 1Bh:** only 09h is (the same code, the next entry).
+  - **A spawner behind giving a new task its 09h and 1Bh** from its TX (P is behind, but the task it starts never comes to the front).
+  - **A key reaching a task's INT 09h hook:** pcemu has no IRQ 1, so only the table's contents are checked.
+  - **A vector put back pointing into another ended task's region** (the machine's, hooked by two tasks ending out of order): as in DOS.
