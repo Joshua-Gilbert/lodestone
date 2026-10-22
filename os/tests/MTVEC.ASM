@@ -23,6 +23,11 @@
 ;   B  hooks INT 1Bh (AH=35h/25h), asks for it again (AH=35h), waits N
 ;      ticks, puts it back (AH=25h), waits 3 N ticks more, writes FILE ("b
 ;      ssss oooo": the vector AH=35h gave the second time) and ends
+;   W  as Q, but 9 ticks after the start puts INT 09h back with AH=25h (V
+;      in front: it is behind), waits 3 ticks and ends
+;   X  sets INT 1Bh with AH=25h (a handler that goes on), then as K
+;   Y  writes INT 09h in the table itself, puts it back at once with
+;      AH=25h, waits N ticks and writes FILE ("k")
 ; nasm -f bin -i ../src/ -o MTVEC.COM MTVEC.ASM
 cpu 286
 org 100h
@@ -69,6 +74,12 @@ org 100h
         je      m_t
         cmp     al, 'K'
         je      m_k
+        cmp     al, 'W'
+        je      m_q
+        cmp     al, 'X'
+        je      m_x
+        cmp     al, 'Y'
+        je      m_y
         cmp     al, 'P'
         je      m_p
         cmp     al, 'Q'
@@ -177,6 +188,35 @@ m_k:    xor     ax, ax
         mov     di, buf + 1
         jmp     wr_end
 
+m_x:    mov     ax, 351Bh               ; X: INT 1Bh set with AH=25h, then K
+        int     21h
+        mov     [old1b], bx
+        mov     [old1b + 2], es
+        mov     ax, 251Bh
+        mov     dx, h1b
+        int     21h
+        jmp     m_k
+m_y:    xor     ax, ax                  ; Y: INT 09h written, put back with
+        mov     es, ax                  ;  AH=25h at once, N ticks
+        cli
+        mov     ax, [es:9 * 4]
+        mov     [old09], ax
+        mov     ax, [es:9 * 4 + 2]
+        mov     [old09 + 2], ax
+        mov     word [es:9 * 4], k09
+        mov     [es:9 * 4 + 2], cs
+        sti
+        push    ds
+        lds     dx, [old09]
+        mov     ax, 2509h
+        int     21h
+        pop     ds
+        call    wait_n
+        push    cs
+        pop     es
+        mov     byte [buf], 'k'
+        mov     di, buf + 1
+        jmp     wr_end
 m_c:    mov     ax, 351Ch
         int     21h
         mov     [old1c], bx
@@ -273,9 +313,20 @@ m_pq:   push    cs
         mov     ax, 251Ch
         int     21h
         pop     ds
-.q:     cmp     byte [mode], 'Q'       ; (Q: until V is in front, then the end)
+.q:     cmp     byte [mode], 'Q'       ; (Q: until V is in front, then the end;
+        je      .qq                     ;  W: then INT 09h back with AH=25h,
+        cmp     byte [mode], 'W'        ;  behind now, 3 ticks, the end)
         jne     .e
-        mov     word [n], 9
+.qq:    mov     word [n], 9
+        call    wait_n
+        cmp     byte [mode], 'W'
+        jne     .e
+        push    ds
+        lds     dx, [old09]
+        mov     ax, 2509h
+        int     21h
+        pop     ds
+        mov     word [n], 3
         call    wait_n
 .e:     mov     ax, 4C00h
         int     21h

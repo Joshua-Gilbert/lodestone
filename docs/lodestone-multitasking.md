@@ -802,7 +802,7 @@ The checks:
   - INT 02h, where the BIOS's INT 75h sends a coprocessor's error, and 75h itself;
   - INT 08h (a timer hook ahead of `mt_tick`), 10h and 16h (with `mt_v10` and `mt_i16` at their base) and 1Ch;
   - 34h-3Fh: the compilers' floating-point emulators (Borland's, Microsoft's) and overlay managers.
-- **What a task changes there is its own,** whether through AH=25h or by writing the table itself. MT catches neither: at a switch away it saves the 29 as the task left them (`mt_vsv`), and it puts the next task's back (`mt_vld`). That is 232 bytes copied per switch.
+- **What a task changes there is its own,** whether through AH=25h or by writing the table itself. MT catches neither: at a switch away it saves the 29 as the task left them (`mt_vsv`), and it puts the next task's back (`mt_vld`). That is 116 bytes saved and 116 put back at each switch.
 - **A new task starts with its spawner's vectors** (`mt_vnew`), but INT 22h-24h are MT's:
   - 22h is its stub's end;
   - 23h is the kernel's ^C (end the program);
@@ -810,29 +810,30 @@ The checks:
 
   So a shell that starts a task (LCMD, through MTLAUNCH or, in M7, START) doesn't hand it its own ^C and critical-error handlers. Those would run the shell's code in the task (LCMD's ^C goes back to its prompt, on the task's stack), and point into freed memory once the shell ends. Its stub's PSP gets the same three, so its programs do too.
 - **A TSR loaded from the Executive before a task starts** is in that task's vectors too; one loaded after isn't.
-- **INT 09h and 1Bh are the front task's** (`mt_vfr`). The keyboard's interrupt calls them whichever task runs, and keys are the front task's.
+- **INT 09h and 1Bh are the front task's** (`mt_vfr`). They stay in the table whichever task runs: the keyboard's interrupt calls them, and keys are the front task's. While another task runs, `mt_fv` holds a copy of them, so MT can tell that task's own writes to the table from them.
   - They are swapped at a change of the front (`mt_fvto`, from `mt_scrld`).
-  - **A background task's own 09h and 1Bh** are kept in its TX. AH=25h and 35h for them, from a background task, set and give those (`mt_25`, `mt_35`: `f_25` and `f_35`'s first 7 bytes are far jumps to them). So a program that hooks INT 1Bh and puts it back with AH=25h, as Turbo Pascal's CRT unit does, leaves nothing behind.
-  - **One a background task writes in the table itself** is its own too: it is saved at the switch away, and the front task's are put back (`mt_fvsync`, `mt_fvset`).
+  - **A background task's own 09h and 1Bh** are kept in its TX. AH=25h and 35h for them, from a background task, set and give those (`mt_25`, `mt_35`: `f_25` and `f_35` start with a far jump to them, over their first 7 bytes, which those redo). A write the task made to the table itself earlier in the same turn is taken in first, so an AH=25h right after it isn't undone at the switch, and AH=35h gives it. So a program that hooks INT 1Bh and puts it back with AH=25h, as Turbo Pascal's CRT unit does, leaves nothing behind.
+  - **One a background task writes in the table itself** is its own too: at the switch away, each of the two that differs from `mt_fv` is saved to its TX (only that one), and the front task's are put back (`mt_fvsync`, `mt_fvset`).
 - **The rest are the machine's, one for all:** the other IRQs, 13h (a disk cache must see every task's calls), 33h (M4c's hook), 67h, the BIOS's tables (1Dh-1Fh, 41h, 43h, 46h) and the rest.
 - **At a task's end** (`mt_vfix`), every vector left pointing into its region goes back to what it was at the task's spawn (`TX_GSN`, a copy of the whole table kept in its TX). That covers:
   - a hook its programs never took away;
   - a TSR's;
   - copies in other tasks' vectors (a task it started began with them) and in `mt_fv`;
   - copies in other tasks' `TX_GSN`, where they would otherwise come back at those tasks' end.
-- **At a program's end, in any task** (`mt_vpg`, from `mt_pgend`), the other tasks' vectors pointing into its block go to what the running task's table holds now. Terminate has put INT 22h-24h back by then, and an unhook the program did is there too.
+- **At a program's end, in any task** (`mt_vpg`, from `mt_pgend`), the other tasks' vectors pointing into any block it owns (its PSP's, its environment's, an AH=48h block) go to what the running task's own are now. Those are the table's, except INT 09h and 1Bh when it runs behind: then they come from its TX, since the table's are the front task's. Terminate has put INT 22h-24h back by then, and an unhook the program did is there too.
   - Example: a program in the Executive's task hooks INT 1Ch, starts a task, puts INT 1Ch back and ends. The task's INT 1Ch, its copy, becomes the Executive's again.
+  - Example: a program in the Executive's task writes INT 09h, starts a task in front (which starts with that hook), puts INT 09h back with AH=25h (it is behind now) and ends. The front task's INT 09h, and the table's, become the Executive's again.
 - **A program that stays resident in a task** (AH=31h) ends it as an exit does, and the region is freed. Before M5a it stayed, as "TR".
   - Its hooks in the task's own vectors are gone with the task, and the machine's are put back.
-  - Its open files are closed, and its EMS and memory freed (`mt_owners`: every program still owning memory in the task's arena gets terminate's `close_all` and `ems_free_owner`).
+  - Its open files are closed, and its EMS and memory freed (`mt_owners`: every program still owning memory in the task's arena gets terminate's `close_all`, if the owner is a PSP, and `ems_free_owner`; the walk stops at a damaged block).
 
 **What it lifts:**
 - **Two tasks hooking the same vector and ending out of order** no longer leave it pointing into freed memory, for the 29. The first one's hook was in its own vectors only, so the second one's "old vector" is the one it found in its own.
 - **A timer hook ahead of `mt_tick` stops the tick switching only the tasks that have it:**
   - a task's own hook stops it only for that task;
-  - a TSR's stops it for the task it was loaded in and the tasks started after it.
+  - a TSR's stops it for the task it was loaded in and the tasks started from that task after it.
 
-  So an INT 08h TSR is best loaded before MT starts (from AUTOEXEC.BAT, say), where it sits behind `mt_tick` in every task. One loaded from the Executive after start-up is inherited by every later task, and none of them is switched at the tick.
+  MT hooks INT 08h at start-up, before AUTOEXEC.BAT runs, so an INT 08h TSR is always ahead of `mt_tick`. None of the tasks that have it is switched at the tick; INT 21h's way out still switches them.
 - **A frozen task's INT 09h hook** no longer sees the keys meant for the one in front.
 - **Two programs with floating point** (their INT 34h-3Dh) or a coprocessor error handler (INT 02h) in two tasks no longer undo each other's at their ends.
 - **The kernel putting a program's INT 22h-24h back at its end** acts on its own task's.
@@ -854,7 +855,7 @@ The checks:
   - Then the clock (40:6Ch) races, the hard disk's and GPIB's timeouts expire early, and every turn is a fast tick long.
   - Before M5a its hook was the machine's and kept the rate right.
   - A fix (keeping such a task's INT 08h hook in place for all tasks while counter 0 runs fast) is left for M5b or M9.
-- **A TSR's hooks in the 29 belong to the task it was loaded in and the tasks started after it,** and only to them. A TSR loaded inside a task is gone with the task.
+- **A TSR's hooks in the 29 belong to the task it was loaded in and the tasks started from that task after it,** and only to them. A TSR loaded inside a task is gone with the task.
 - **A TSR unloaded with AH=49h while tasks exist** (CLAUDE /U after CLAUDE /R, with tasks started after it) leaves its hooks in those tasks' vectors, pointing at freed memory. Only a program's end is caught (`mt_vpg`). Unload such TSRs before starting tasks, or end those tasks first. M7 makes CLAUDE /U refuse while tasks exist.
 - **Copies inside programs aren't fixed:**
   - a program's PSP holds the INT 22h-24h it started with, which terminate puts back;
@@ -866,12 +867,14 @@ The checks:
   - a format or fast-copy tool changing INT 1Eh (the diskette's parameters), or a program changing 1Fh/43h (fonts), changes them for every task until it puts them back;
   - a driver installed inside a task leaves its UART and the PIC's mask as it set them, when its IRQ vector is put back at the task's end.
 - **A background task's INT 09h written in the table itself** is in force for the rest of that turn. A hook that doesn't call on loses the front task's keys meanwhile.
+- **A background task that writes its INT 09h or 1Bh hook in the table itself and later writes back the front task's value there** (usually the BIOS's, the one it found): MT can't tell that write from none, so its TX keeps the hook. Brought to the front, its handler, still in its memory, gets the keys until the program ends. At its end the hook is replaced by the front task's value.
 - **The front task's INT 09h and 1Bh hooks run on top of whichever task is running** (its EMS windows, its INT 21h state, its own 29 vectors), as the mouse's event handler does (M4c).
 - **Keys at a change of the front:** CODE-Tab changes the front at Tab's make code. CODE's and Tab's break codes then reach the new front task's INT 09h, so a program with a key table of its own may think them still held.
 - **Ctrl-Break** calls the front task's INT 1Bh (the BIOS's IRET unless a program hooked it) whichever task runs. The kernel has no INT 1Bh handler of its own; ^C is a key, seen by the task that reads it.
 - **INT 02h is also the NMI's:** an NMI during the two word writes of a switch's copy would land on a half-written vector. On the 1520 an NMI is a parity or channel check, fatal anyway (M9 confirms).
 - **A breakpoint (CCh) or divide error in code run from an interrupt** (the debugged program's IRQ or mouse handler, its INT 09h hook while in front) goes to whichever task's INT 03h or 00h is in the table then.
 - **A debugger single-stepping into INT 21h:** MT clears the trap flag in its own flags at a switch, so it doesn't single-step MT's copies. The task's frame keeps the flag.
+- **Found while testing M5a (M4b's): a CODE-Tab can be lost** while the front task polls the keyboard (DOS's key status, INT 16h AH=01h). If the key arrives after `mt_hot` has looked at the buffer and before the BIOS's AH=01h does, the BIOS drops it, as it does every key AH=01h can't give (scan code 85h and up). Pressing it again works. In pcemu it showed when a change of about 40 cycles per switch moved where a test's run stopped (`t_keys`'s MTKEY X check). The fix, MT doing AH=01h's drop itself with the hot key first, is for M5b.
 - **Still open, for M5b or later:** INT 24h raised inside C:'s INT 25h/26h (M3); a handler that never sends its EOI and then reads a key through DOS (M4a); a task's own timer hook calling DOS, switched on that call's way out (M3).
 - **Not tried on the 1520 yet** (M9).
 
@@ -880,15 +883,15 @@ The checks:
 - **`mt_switch`** calls `mt_vsv` and `mt_fvsync` as it saves the task, and **`mt_load`** calls `mt_vld` and `mt_fvset`, all with interrupts off. They save only DS and ES around themselves: MT's use of a task's stack at a switch stays under 64 bytes (48 bytes at the tick, 50 at INT 16h, 60 on INT 21h's way out, in the tests).
 - **`mt_spawn`** calls `mt_vnew` (after `mt_33hk`, so a new task starts with `mt_i33` in INT 33h's place), which seeds INT 22h-24h (`mt_v24`) and copies the table to `TX_GSN` with interrupts on.
 - **`mt_end`** calls `mt_owners`, then `mt_vfix`. It then puts task 0's vectors in the table until the next task is loaded, so a tick meanwhile runs live handlers, not the ended task's.
-- **`mt_vfix` and `mt_vpg`** share `mt_vrep`. It goes through the vector table one entry at a time, each with interrupts off, so a serial port's byte isn't lost to a long CLI.
+- **`mt_vfix` and `mt_vpg`** share `mt_vrep`. It goes through the vector table one entry at a time, each with interrupts off, so a serial port's byte isn't lost to a long CLI. INT 09h and 1Bh are put back from `mt_vfs`: the ending task's `TX_GSN`, or the running task's own (`mt_vpg` first takes in its writes to the table, as `mt_25` does).
 - **`mt_boot`** puts task 0's INT 09h and 1Bh in `mt_fv` and patches `f_25` and `f_35`.
 
 **Cost:**
 - **Switch off:** nothing. LODE.SYS grows 48 bytes, in `mt_boot`; the map and MEMSZ are unchanged (579.7 KB).
-- **Switch on:** MT's block is 665 paragraphs plus its MCB (10,656 bytes; it was 579 paragraphs), and a DOS program gets 569.3 KB instead of 570.7. Each task's region grows by about 1.1 KB (its TX).
-- **Files:** LODEMT.SYS is 8,531 bytes (7,287 after M4c); ROM 1 has 16,896 bytes left.
+- **Switch on:** MT's block is 682 paragraphs plus its MCB (10,928 bytes; it was 579 paragraphs), and a DOS program gets 569.1 KB instead of 570.7. Each task's region grows by about 1.1 KB (its TX).
+- **Files:** LODEMT.SYS is 8,801 bytes (7,287 after M4c); ROM 1 has 16,384 bytes left.
 
-**Tests:** `test_mt.py`, 221 checks (was 209). The new group is `t_vectors`, with a new test program:
+**Tests:** `test_mt.py`, 225 checks (was 209). The new group is `t_vectors`, with a new test program:
 - `MTVEC MODE [N] [FILE]`:
   - H hooks INT 1Ch (counting its calls), waits N ticks, puts it back, writes its count;
   - G sets INT 62h (the machine's) and 2Fh (its own) and ends without putting them back; R does that, leaves a file open, takes an EMS page and stays resident;
@@ -897,7 +900,9 @@ The checks:
   - K writes INT 09h in the table itself, waits N ticks, and puts it back;
   - B hooks INT 1Bh with AH=25h, asks for it with AH=35h, waits, puts it back with AH=25h, and waits again;
   - P hooks INT 2Fh, starts MTVEC V as a task (F0h AL=10h), and ends; C does the same with INT 1Ch, putting it back first;
-  - Q writes INT 09h in the table itself (in front), starts MTVEC V as a task in front, and ends 9 ticks later.
+  - Q writes INT 09h in the table itself (in front), starts MTVEC V as a task in front, and ends 9 ticks later; W does the same, but puts INT 09h back with AH=25h (behind by then) before it ends;
+  - X sets INT 1Bh with AH=25h, then does as K;
+  - Y writes INT 09h in the table itself, puts it back at once with AH=25h, and waits N ticks.
 
 The checks:
 - **A task's vectors in its TX** while another runs (the task still there): INT 10h, 16h and 08h are MT's (`mt_v10`, `mt_i16`, `mt_tick`); its INT 1Ch is its own hook.
@@ -910,20 +915,25 @@ The checks:
 - **Q:** the task it started, in front when Q ends, has INT 09h as it was at Q's spawn, not Q's.
 - **P:** the task it started gets INT 2Fh as it was before P's spawn, not left in P's freed region.
 - **C, run from the prompt** (a program in the Executive's task): the task it started has the Executive's INT 1Ch after C ends, not C's.
+- **W, run from the prompt:** after it ends, the table's INT 09h, the front task's (`mt_fv`) and the Executive's own are as before, not W's.
 - **B behind:** its INT 1Bh hook is in its TX and AH=35h gives it; the table's is as it was; put back and brought to the front, the table's INT 1Bh is as before.
+- **X behind:** both its hooks are in its TX (the 09h it wrote taken from the table at the switch, its 1Bh from AH=25h kept); brought to the front while hooked, both are in the table; after it ends, both are as before.
+- **Y behind:** its INT 09h is as before at the switch away, not its handler.
 - **T in the Executive's task:**
   - V1, which T found already running, writes after T is loaded and still has its own INT 1Ch;
-  - one started after T has the TSR's (as read from the Executive's TX).
+  - one started after T has the TSR's (as read from the Executive's TX), below MT.
 - **Changed for M5a:**
   - The TSR test in `t_ends` now expects the region freed.
-  - MTKEY T's INT 1Ch handler is called in its own turns only (5 of 18 ticks).
+  - MTKEY T's INT 1Ch handler is called in its own turns only (about 4 or 5 of 18 ticks).
+  - `t_image` checks the 7 bytes `mt_boot` patches at `f_25` and `f_35`.
   - The read-error test in `t_ends` gets `mt_i24`'s "Abort" prompt.
 - **The checks can fail:** each of these, broken on purpose, fails a check (three of them by hanging the group: a task's vectors not saved at a switch, not put back, or a new task's not made):
   - the front task's 09h and 1Bh not taken from the table at a switch, not put back, or not swapped at a change of the front;
   - a new task not given its spawner's 09h and 1Bh, or not given MT's INT 22h-24h;
   - `mt_i24` replaced by the kernel's INT 24h (`t_ends`'s Abort prompt goes);
   - AH=25h or 35h not caught for a background task's 1Bh;
-  - the vectors left pointing into an ended task's region not put back: at all, in the table, in `mt_fv`, or in the other tasks' TXs;
+  - the review's three (each fails on the code before its fix): a background task's write to the table taken for both 09h and 1Bh (X); an AH=25h after such a write in the same turn undone (Y); `mt_vpg` taking INT 09h from the table, the front task's, for a program ending behind (W);
+  - the vectors left pointing into an ended task's region not put back: at all, in the table, in `mt_fv`, or in the other tasks' `TX_VEC`;
   - the other tasks' vectors not fixed at a program's end (`mt_vpg`);
   - the table not kept at a spawn (`TX_GSN`);
   - a resident program's files and EMS not freed at its task's end (`mt_owners`).
@@ -935,7 +945,11 @@ The checks:
     - `mt_fvto` not saving into an ended front task's freed TX;
     - the trap flag cleared at a switch;
     - `TX_GSN`'s INT 22h-24h, 09h and 1Bh taken from the new task's own;
-    - `mt_vnew` after `mt_33hk`.
+    - `mt_vnew` after `mt_33hk`;
+    - the other tasks' `TX_FVEC` fixed (only a task behind holding the ended one's 09h or 1Bh would show it);
+    - `mt_fvto`'s `mt_fvset` (the next load puts `mt_fv` in the table anyway);
+    - `mt_vpg` going through every block a program owns, not just its PSP's, and replacing a TX's 09h or 1Bh that points into it with the front task's;
+    - `mt_owners`'s checks (a damaged chain; an owner that isn't a PSP).
   - **The 29 one by one:** only 08h, 10h, 16h, 1Ch, 23h, 24h and 2Fh are looked at. The CPU's traps, 02h, 21h, 22h, 28h, 34h-3Fh and 75h go the same way, through the same table. The kernel putting INT 22h-24h back into the ending program's task is not checked.
   - **A spawner behind giving a new task its 09h and 1Bh** from its TX (P is behind, but the task it starts never comes to the front).
   - **A key reaching a task's INT 09h hook:** pcemu has no IRQ 1, so only the table's contents are checked.
