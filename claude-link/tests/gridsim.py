@@ -34,8 +34,10 @@ class ModelTransport:
         s.nano, s.patched, s.baud, s.latency = nano, patched, baud, latency_us
         s.version = 'AR488 model' + (' +GRiD1' if patched else '')
         s.answers = 0; s.corrupt_every = 0
+    big = 0                                   # > 0: frames up to this (the Pico's way), else the AR488's
     @property
     def frame_limit(s):
+        if s.big: return s.big
         return glp.PATCHED_FRAME_MAX if s.patched else glp.STOCK_FRAME_MAX
     def answer(s, frame):
         s.answers += 1
@@ -86,9 +88,11 @@ class GridSim:
         kv = 'os=MS-DOS 3.30\ncwd=A:\\\ndrives=A: B: C: \nmem=480\nems=none\n' \
              'gpib=GRIDGPIB 1.10 on INT 60h\naddr=7\ndate=2026-10-04 20:30\ngrid=gridsim\n'
         if s.app: kv += 'app=%s\n' % s.app
+        if s.rx != glp.GRID_RX_DEFAULT: kv += 'rx=%d\n' % s.rx      # CLAUDE 1.3's 2 KB frames
         return bytes([1, s.hello_flags]) + struct.pack('<H', 1024) + bytes([80, 20]) + kv.encode()
 
     hello_flags = glp.GF_TERM | glp.GF_PIX
+    rx = glp.GRID_RX_DEFAULT                  # payload it reads (CLAUDE 1.3: 2048)
 
     def click(s, x, y):
         """A left click at pixel (x, y): EVENT 06h as CLAUDE.COM 1.2 sends it."""
@@ -168,14 +172,14 @@ class GridSim:
                 s.h.pump_pi()
                 s.nano.service()
             s.nano.on_talk()
-            data = s.nano.out[:255]
+            data = s.nano.out[:s.rx + 9]
             s.clock.advance(len(data) * 25)
             s.stats['rx_bytes'] += len(data)
             if s.corrupt_rx_every:
                 s.stats['rx_n'] += 1
                 if s.stats['rx_n'] % s.corrupt_rx_every == 0 and data:
                     d = bytearray(data); d[len(d) // 2] ^= 0x04; data = bytes(d)
-            f, _ = glp.decode(data, 246)
+            f, _ = glp.decode(data, s.rx)
             s.state = 'idle'
             if not f:
                 s.nak = True; s.stats['bad_rx'] += 1; return
