@@ -139,7 +139,7 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
     - **I** inverts the view and the picture.
     - Cost: about 50 B in PAINT.RUN (palette compare, count, invert, the I key), 0 resident.
   - Files that aren't exactly 640 × 400, and top-down files, are read through **U** in pieces and placed into C one line at a time. A native-size bottom-up file reads straight into C.
-- **Option V2, deeper colour (a decision for Joshua, §9):** 4-, 8- and 24-bit uncompressed BMPs.
+- **P3, deeper colour: starts with 4-bit (16-colour) BMPs** (Joshua, 2026-10-21), about +0.3 KB. 8- and 24-bit files would follow later, for about +0.3 KB more. What the decoder does for every depth:
   - Each pixel's luma (`(77R + 150G + 29B) >> 8`, a 256-byte table from the palette for 4/8-bit) is compared with a 4 × 4 Bayer threshold (16 bytes) fixed to the screen. This is the ordered dither the Pi uses for gridfox pictures, scaled down.
   - Larger pictures are **fitted** by nearest-line and nearest-pixel steps (a DDA while streaming), keeping the aspect ratio.
   - Estimated +500 B in PAINT.RUN, 0 resident. A 640 × 480 24-bit file is 922 KB, so on a floppy it is disk-bound (tens of seconds); from C: or M: it is quick.
@@ -231,7 +231,8 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
 - **Pins:** MEMSZ and OFF_MAP as moved by §6 only. The README's check count goes up.
 
 ## 9. Decisions for Joshua
-1. **Deeper-colour BMPs (P3):** 4/8/24-bit dithered and fitted, +≈ 0.6 KB in PAINT.RUN and 0 resident? Or 1-bit only?
+1. **Deeper-colour BMPs (P3):** decided, 4-bit first (§4).
+1a. **The Executive's `.BMP` opener:** decided, in P1 (Return on a `.BMP` opens it in Paint, about 30 B resident, §6).
 2. **CODE-G "Paint" in the Executive:** +≈ 45 B resident? Without it, Paint starts from its file in the list, or from a `.BMP`.
 3. **Polarity:** decided, dark paper by default (§4).
 4. **Undo memory:** 64 KB while Paint runs (both buffers). Without U, 32 KB and no undo.
