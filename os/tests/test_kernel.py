@@ -1441,7 +1441,7 @@ def t_names():
         m('mattrib', '-i', img, '+h', '+s', '::%s.TXT' % n)
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    sh.run('names > out.txt')
+    assert run_long(k, 'names > out.txt')
     f = fatcheck.read_files(bytes(k.pc.drives[0].img))
     got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
     want = [c + ' -> ' + a for c, a in MS_NAMES]
@@ -1460,6 +1460,179 @@ def t_names():
           and not {'A:\\CON', 'A:\\NUL', 'A:\\CLOCK', 'A:\\CLOCK$'} & set(dl), (sorted(f), dl))
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
+
+# NULDIR.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+MS_NULDIR = [('fn 3D NOSUCH\\NUL', 'err 03'),
+             ('fn 3D A.B\\NUL', 'ok'),
+             ('fn 3D A.TXT\\NUL', 'err 03'),
+             ('fn 3D \\NUL', 'ok'),
+             ('fn 3D NUL', 'ok'),
+             ('fn 3D A:NUL', 'ok'),
+             ('fn 3D A:\\NUL', 'ok'),
+             ('fn 3D NOSUCH\\CON', 'err 03'),
+             ('fn 3D A.B\\CON', 'ok'),
+             ('fn 3D A.B\\NUL.TXT', 'ok'),
+             ('fn 3D NOSUCH\\NUL.TXT', 'err 03'),
+             ('fn 3D NOSUCH\\SUB\\NUL', 'err 03'),
+             ('fn 3D A.B\\..\\NUL', 'ok'),
+             ('fn 3D A.B\\.\\NUL', 'ok'),
+             ('fn 3D A.B\\NOSUCH\\NUL', 'err 03'),
+             ('fn 3D E.F\\NUL', 'ok'),
+             ('fn 3D \\DEV\\NUL', 'ok'),
+             ('fn 3D \\DEV\\CON', 'ok'),
+             ('fn 3D A:\\DEV\\NUL', 'ok'),
+             ('fn 3D \\DEV\\NUL.TXT', 'ok'),
+             ('fn 3D DEV\\NUL', 'err 03'),
+             ('fn 3D \\DEV\\SUB\\NUL', 'err 03'),
+             ('fn 3D A.B\\NUL.X.Y', 'err 02'),
+             ('fn 3D A.B\\NUL.*', 'err 02'),
+             ('fn 3D Q:NUL', 'ok'),
+             ('fn 3D NUL.*', 'ok'),
+             ('fn 3C NOSUCH\\NUL', 'err 03'),
+             ('fn 3C A.B\\NUL', 'ok'),
+             ('fn 3C A.TXT\\NUL', 'err 03'),
+             ('fn 3C \\NUL', 'ok'),
+             ('fn 3C NUL', 'ok'),
+             ('fn 3C A:NUL', 'ok'),
+             ('fn 3C A:\\NUL', 'ok'),
+             ('fn 3C NOSUCH\\CON', 'err 03'),
+             ('fn 3C A.B\\CON', 'ok'),
+             ('fn 3C A.B\\NUL.TXT', 'ok'),
+             ('fn 3C NOSUCH\\NUL.TXT', 'err 03'),
+             ('fn 3C NOSUCH\\SUB\\NUL', 'err 03'),
+             ('fn 3C A.B\\..\\NUL', 'ok'),
+             ('fn 3C A.B\\.\\NUL', 'ok'),
+             ('fn 3C A.B\\NOSUCH\\NUL', 'err 03'),
+             ('fn 3C E.F\\NUL', 'ok'),
+             ('fn 3C \\DEV\\NUL', 'ok'),
+             ('fn 3C \\DEV\\CON', 'ok'),
+             ('fn 3C A:\\DEV\\NUL', 'ok'),
+             ('fn 3C \\DEV\\NUL.TXT', 'ok'),
+             ('fn 3C DEV\\NUL', 'err 03'),
+             ('fn 3C \\DEV\\SUB\\NUL', 'err 03'),
+             ('fn 3C A.B\\NUL.X.Y', 'err 02'),
+             ('fn 3C A.B\\NUL.*', 'err 02'),
+             ('fn 3C Q:NUL', 'ok'),
+             ('fn 3C NUL.*', 'ok'),
+             ('fn 5B NOSUCH\\NUL', 'err 03'),
+             ('fn 5B A.B\\NUL', 'ok'),
+             ('fn 5B A.TXT\\NUL', 'err 03'),
+             ('fn 5B \\NUL', 'ok'),
+             ('fn 5B NUL', 'ok'),
+             ('fn 5B A:NUL', 'ok'),
+             ('fn 5B A:\\NUL', 'ok'),
+             ('fn 5B NOSUCH\\CON', 'err 03'),
+             ('fn 5B A.B\\CON', 'ok'),
+             ('fn 5B A.B\\NUL.TXT', 'ok'),
+             ('fn 5B NOSUCH\\NUL.TXT', 'err 03'),
+             ('fn 5B NOSUCH\\SUB\\NUL', 'err 03'),
+             ('fn 5B A.B\\..\\NUL', 'ok'),
+             ('fn 5B A.B\\.\\NUL', 'ok'),
+             ('fn 5B A.B\\NOSUCH\\NUL', 'err 03'),
+             ('fn 5B E.F\\NUL', 'ok'),
+             ('fn 5B \\DEV\\NUL', 'ok'),
+             ('fn 5B \\DEV\\CON', 'ok'),
+             ('fn 5B A:\\DEV\\NUL', 'ok'),
+             ('fn 5B \\DEV\\NUL.TXT', 'ok'),
+             ('fn 5B DEV\\NUL', 'err 03'),
+             ('fn 5B \\DEV\\SUB\\NUL', 'err 03'),
+             ('fn 5B A.B\\NUL.X.Y', 'err 02'),
+             ('fn 5B A.B\\NUL.*', 'err 02'),
+             ('fn 5B Q:NUL', 'ok'),
+             ('fn 5B NUL.*', 'ok')]
+
+def run_long(k, cmd, sim_s=30):
+    """A command at the prompt that may run past settle()'s 6 s (a probe writing its answers to a file a call at
+    a time: its directory entry is written at the close): until the prompt is back.  True if it is"""
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key(cmd); k.key(ktest.ENTER, settle=False)
+    return k.settle(sim_s)
+
+def t_nul():
+    """A device's name after a directory (X18, "IF EXIST DIR\\NUL"): OPEN, CREATE and CREATE NEW find the
+    device only where the directory is there, [X:]\\DEV\\ in front is the devices' own, and a wildcard or a
+    bad name after the directory is 2, as GRiD MS-DOS 3.30 answers; NUL, A:NUL and Q:NUL need no disk."""
+    com = os.path.join(OUT, 'NULDIR.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NULDIR.ASM')], check=True)
+    open(os.path.join(OUT, 'NM_a.TXT'), 'wb').write(b'a\r\n')
+    img = image('nul.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NULDIR.COM=' + com,
+                'A.TXT=' + os.path.join(OUT, 'NM_a.TXT'), 'A.B\\', 'E.F\\')
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    assert run_long(k, 'nuldir > out.txt')
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+    want = [c + ' -> ' + a for c, a in MS_NULDIR]
+    check("NULDIR.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a device's name behind a directory that isn't "
+          "there, or is a file: 3; \\DEV\\ the devices' own; a wildcard or bad name after a directory: 2)" % len(want),
+          got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    o = sh.run('if exist nosuch\\nul echo nosuch') + sh.run('if exist a.b\\nul echo dir') + sh.run('type nul')
+    check("... and LCMD (its IF EXIST looks at the directory itself): IF EXIST NOSUCH\\NUL no, A.B\\NUL yes; TYPE NUL",
+          'nosuch' not in o.replace('nosuch\\nul', '') and 'dir\n' in o + '\n', o)
+
+# NOMATCH.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+MS_NOMATCH = [('fn 4E NOSUCH.TXT', 'err 12'),
+              ('fn 4E Z*.*', 'err 12'),
+              ('fn 4E A.B\\N?L', 'err 12'),
+              ('fn 4E A.B\\X.TXT', 'ok'),
+              ('fn 4E A.B\\NOSUCH', 'err 12'),
+              ('fn 4E E.F\\*.TXT', 'err 12'),
+              ('fn 4E E.F\\*.*', 'err 12'),
+              ('fn 4E E.F\\NOSUCH', 'err 12'),
+              ('fn 4E HID.TXT', 'err 12'),
+              ('fn 4E HS.TXT', 'err 12'),
+              ('fn 4E SYS.TXT', 'err 12'),
+              ('fn 4E A.B', 'err 12'),
+              ('fn 4E *.TXT', 'ok'),
+              ('fn 4E *.*', 'ok'),
+              ('fn 4E NOSUCH\\*.*', 'err 03'),
+              ('fn 4E A.TXT\\*.*', 'err 03'),
+              ('fn 4E A?B\\*.*', 'err 03'),
+              ('fn 4E A.B.C', 'err 03'),
+              ('fn 4E A.B\\X.Y.Z', 'err 03'),
+              ('fn 4E ', 'err 03'),
+              ('fn 4E A:NOSUCH', 'err 12'),
+              ('fn 4E \\A.B\\..\\NOSUCH', 'err 12'),
+              ('fn 4E E.F\\..\\A.TXT', 'ok'),
+              ('fn 4E E.F\\*.*', 'ok'),
+              ('fn 4E E.F\\Z*.*', 'err 12'),
+              ('fn 4E NOSUCH.TXT', 'err 12'),
+              ('fn 4E A.B', 'ok'),
+              ('fn 4E HID.TXT', 'ok'),
+              ('fn 4E HS.TXT', 'ok'),
+              ('fn 4E NOSUCH.TXT', 'err 12'),
+              ('fn 4E Z*.*', 'err 12'),
+              ('fn 4E NOSUCH.TXT', 'err 12'),
+              ('fn 4E E.F\\*.*', 'err 12')]
+
+def t_nomatch():
+    """FIND FIRST that finds nothing is 18, "no more files", as in GRiD MS-DOS 3.30 (X22; it was 2): a name
+    that isn't there, a pattern that matches nothing, an empty directory, a hidden file without the bit; a
+    directory that isn't there is still 3.  (LCMD looks at CF only; the Executive's two that took 2 as "not
+    there" are test_apps's: Copy and Move to a new name, a Copy to a subject that isn't there.)"""
+    com = os.path.join(OUT, 'NOMATCH.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NOMATCH.ASM')], check=True)
+    names = ('a', 'hid', 'sys', 'hs', 'x')
+    for n in names:
+        open(os.path.join(OUT, 'NM_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
+    img = image('nomatch.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NOMATCH.COM=' + com,
+                *['%s.TXT=%s' % (n.upper(), os.path.join(OUT, 'NM_%s.TXT' % n)) for n in names if n != 'x'])
+    m = lambda *a: subprocess.run(list(a), check=True, stdin=subprocess.DEVNULL, capture_output=True)
+    m('mmd', '-i', img, '::A.B'); m('mmd', '-i', img, '::E.F')
+    m('mcopy', '-i', img, os.path.join(OUT, 'NM_x.TXT'), '::A.B/X.TXT')
+    m('mattrib', '-i', img, '+h', '::HID.TXT'); m('mattrib', '-i', img, '+s', '::SYS.TXT')
+    m('mattrib', '-i', img, '+h', '+s', '::HS.TXT')
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    assert run_long(k, 'nomatch > out.txt')
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+    want = [c + ' -> ' + a for c, a in MS_NOMATCH]
+    check("NOMATCH.COM: all %d calls answer as GRiD MS-DOS 3.30's do (nothing found: 18; a directory that isn't "
+          "there, or a bad name: 3)" % len(want), got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    o = sh.run('dir z*.*') + sh.run('dir e.f\\*.txt') + sh.run('del z*.*') + sh.run('if exist nosuch.txt echo yes')
+    check('... and LCMD (CF only, as before): DIR and DEL of nothing say "File not found"; IF EXIST of nothing is false',
+          o.count('File not found') == 3 and 'yes' not in o.replace('echo yes', ''), o)
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
@@ -2005,7 +2178,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
