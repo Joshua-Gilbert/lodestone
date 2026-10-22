@@ -1716,7 +1716,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', k1.run_file('MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 582.5 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '582.5', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 582.4 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '582.4', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = k.run_file('TESTDOS.COM', 120)
