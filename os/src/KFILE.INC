@@ -381,11 +381,23 @@ create: call    get_path
 .e:     jmp     fail
 
 ; a device's name with a directory in front: that directory must be there,
-; as MS-DOS says (NOSUCH\NUL is 3: "IF EXIST DIR\NUL").  AX kept; CF: AX =
-; resolve's error.  NUL, A:NUL: the device, no disk needed
+; as MS-DOS says (NOSUCH\NUL is 3: "IF EXIST DIR\NUL"), and the name no
+; wildcard or bad name (2).  [X:]\DEV\ in front is the devices' own, as in
+; MS-DOS.  AX kept; CF: AX = the error.  NUL, A:NUL, \DEV\NUL: no disk
 dev_where:
         push    ax
         mov     si, path_buf
+        cmp     byte [si+1], ':'
+        jne     .d
+        inc     si
+        inc     si
+.d:     cmp     word [si], '\D'
+        jne     .f
+        cmp     word [si+2], 'EV'
+        jne     .f
+        cmp     byte [si+4], '\'
+        jne     .f
+        add     si, 5
 .f:     lodsb
         cmp     al, '\'
         je      .r
@@ -395,9 +407,13 @@ dev_where:
         ret
 .r:     call    resolve
         pop     si
-        jc      .x                      ; (AX the error)
+        jc      .x
+        cmp     byte [r_wild], 0        ; (CF clear)
+        jne     .w
         xchg    ax, si
-.x:     ret
+        ret
+.w:     mov     ax, 3                   ; (a wildcard: 2, through nf_last)
+.x:     jmp     nf_last                 ; (a bad last name: 2)
 
 section .bss
 cr_new      resb 1
@@ -1635,8 +1651,6 @@ f_4E:   call    get_path
         jc      .e
         call    resolve
         jc      .e
-        call    dev_lookup              ; (a wildcard is never a device's)
-        jnc     .dv
         les     di, [dta]
         mov     al, [act]
         inc     al
@@ -1664,21 +1678,6 @@ f_4E:   call    get_path
         mov     ax, 2                   ; nothing at all: "file not found"
 .e:     jmp     fail
 .ok:    jmp     ok
-.dv:    les     di, [dta]               ; a device: found as MS-DOS finds it,
-        xor     ax, ax                  ;  attribute 40h, its name alone (find
-        stosb                           ;  next: no more, drive 0)
-        add     di, 20
-        mov     al, 40h
-        stosb
-        mov     al, ah                  ; (time, date, size 0)
-        stosw
-        stosw
-        stosw
-        stosw
-        mov     byte [r_name+8], ' '    ; (NUL.TXT finds NUL)
-        mov     si, r_name
-        call    name_out
-        jmp     ok                      ; (ES the DTA's, as after find_next)
 f_4F:   call    find_next
         jmp     ret_cf
 
