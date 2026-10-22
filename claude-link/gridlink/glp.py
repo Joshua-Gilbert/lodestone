@@ -20,7 +20,9 @@ EV_PIXCLICK = 0x06         # Term: a left click at a pixel: x, y (words; CLAUDE 
 # HELLO flags
 GF_TERM = 0x01             # GRiD: this CLAUDE can be a terminal (Term)
 GF_PIX = 0x02              # GRiD: its CELLS take pictures (op FDh, picture.py); CLAUDE 1.2
+GF_FCS = 0x04              # GRiD: it can check frames with the Fletcher sum (fletcher16); CLAUDE 1.3
 HF_TERM = 0x01             # Pi: Term: the GRiD is Claude Code's screen and keyboard
+HF_FCS = 0x04              # Pi: frames after this HELLO carry the Fletcher sum, both ways
 
 # REQUEST ops
 OP_INFO, OP_DIR, OP_READ, OP_WRITE, OP_DELETE, OP_RENAME, OP_MKDIR, OP_RMDIR, OP_STAT, OP_FREE = range(1, 11)
@@ -73,15 +75,25 @@ def crc16(data, crc=0xFFFF):
     return crc
 
 
-def encode(kind, seq, ack, payload=b''):
+def fletcher16(data):
+    """The GRiD's cheaper frame check (TERMLINK.INC fl16): A = 1 + the bytes,
+    B = the sum of the A's, both mod 256; B << 8 | A."""
+    a, b = 1, 0
+    for x in data:
+        a = (a + x) & 0xFF
+        b = (b + a) & 0xFF
+    return b << 8 | a
+
+
+def encode(kind, seq, ack, payload=b'', fl=False):
     body = struct.pack('<BBBH', kind & 0xFF, seq & 0xFF, ack & 0xFF, len(payload)) + bytes(payload)
-    return bytes([SYNC]) + body + struct.pack('<H', crc16(body))
+    return bytes([SYNC]) + body + struct.pack('<H', fletcher16(body) if fl else crc16(body))
 
 
 class Frame:
-    __slots__ = ('kind', 'seq', 'ack', 'payload')
-    def __init__(s, kind, seq, ack, payload):
-        s.kind, s.seq, s.ack, s.payload = kind, seq, ack, payload
+    __slots__ = ('kind', 'seq', 'ack', 'payload', 'fl')
+    def __init__(s, kind, seq, ack, payload, fl=False):
+        s.kind, s.seq, s.ack, s.payload, s.fl = kind, seq, ack, payload, fl
     @property
     def type(s): return s.kind & 0x7F
     @property
@@ -92,7 +104,8 @@ class Frame:
 
 
 def decode(buf, max_len=4096):
-    """Find the first complete frame with a good CRC at any sync position.
+    """Find the first complete frame with a good check (CRC-16, or the
+    Fletcher sum when HELLO agreed to it: Frame.fl) at any sync position.
     Returns (frame, end) or (None, keep) where keep is the index of the first
     sync byte (bytes before it are garbage)."""
     buf = bytes(buf)
@@ -105,8 +118,11 @@ def decode(buf, max_len=4096):
             end = i + OVERHEAD + n
             if n <= max_len and end <= len(buf):
                 (crc,) = struct.unpack_from('<H', buf, i + HEADER + n)
-                if crc16(buf[i + 1:i + HEADER + n]) == crc:
+                body = buf[i + 1:i + HEADER + n]
+                if crc16(body) == crc:
                     return Frame(kind, seq, ack, buf[i + HEADER:i + HEADER + n]), end
+                if fletcher16(body) == crc:          # (once HELLO has agreed to it)
+                    return Frame(kind, seq, ack, buf[i + HEADER:i + HEADER + n], fl=True), end
         i = buf.find(bytes([SYNC]), i + 1)
     return None, first
 

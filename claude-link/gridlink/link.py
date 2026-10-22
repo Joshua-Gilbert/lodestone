@@ -111,6 +111,8 @@ class Link:
         s.last_rx = time.monotonic()
         s.grid_maxpay = 1024
         s.grid_rx = glp.GRID_RX_DEFAULT       # payload the GRiD reads (its HELLO's rx=)
+        s.grid_fcs = False                    # the GRiD's HELLO offered the Fletcher sum
+        s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
 
     @property
@@ -171,7 +173,12 @@ class Link:
 
     def _answer(s, kind, payload):
         s.pi_seq = (s.pi_seq + 1) & 0xFF
-        frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload)
+        if kind == glp.P_HELLO and s.grid_fcs and len(payload) >= 2:   # the GRiD switches on reading it
+            payload = bytes(payload[:1]) + bytes([payload[1] | glp.HF_FCS]) + bytes(payload[2:])
+        # Each answer is checked as the frame it answers was: the HELLO (sent
+        # with the CRC, as link_reset leaves the GRiD) gets the CRC, the
+        # frames after it the Fletcher sum once the GRiD has switched.
+        frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload, fl=s.rx_fl)
         s.last_answer = frame
         s.t.answer(frame)
         s.stats['tx_frames'] += 1; s.stats['tx_bytes'] += len(frame)
@@ -194,12 +201,14 @@ class Link:
             s._answer_nak()
 
     def _answer_nak(s):
-        frame = glp.encode(glp.P_NAK, s.pi_seq, s.last_g if s.last_g is not None else 0)
+        frame = glp.encode(glp.P_NAK, s.pi_seq, s.last_g if s.last_g is not None else 0, fl=s.rx_fl)
         s.t.answer(frame)          # NAK does not replace last_answer
         s.stats['tx_nak'] += 1
 
     def handle(s, f):
         s.stats['rx_frames'] += 1; s.stats['rx_bytes'] += len(f.payload) + glp.OVERHEAD
+        s.rx_fl = f.fl
+        if f.fl: s.stats['rx_fletcher'] += 1
         t = f.type
         if t == glp.G_NAK:
             s.stats['rx_nak'] += 1
@@ -223,6 +232,7 @@ class Link:
             if mt == glp.G_HELLO and len(body) >= 4:
                 s.grid_maxpay = body[2] | (body[3] << 8)
                 s.grid_rx = glp.hello_rx(body)
+                s.grid_fcs = bool(body[1] & glp.GF_FCS)
             if mt != glp.G_POLL:
                 try: s.on_message(mt, body)
                 except Exception as e: s.log('link: handler error: %r' % e)

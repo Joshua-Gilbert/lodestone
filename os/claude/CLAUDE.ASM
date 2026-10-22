@@ -1446,7 +1446,10 @@ pf_hello:
         cmp     cx, 2
         jb      .f
         mov     bl, [si+1]
-        and     bl, HF_TERM
+        test    bl, HF_FCS                      ; the Pi takes the Fletcher sum:
+        jz      .crc                            ;  every frame from now on
+        mov     byte [use_fl], 1
+.crc:   and     bl, HF_TERM
 .f:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
         mov     ax, [now]
@@ -2576,8 +2579,8 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
         mov     al, 1                   ; GLP version
         stosb
-        mov     al, 3                   ; flags: bit 0, Term understood; bit 1, pictures (FDh)
-        stosb
+        mov     al, 7                   ; flags: bit 0, Term understood; bit 1, pictures (FDh);
+        stosb                           ;  bit 2, the Fletcher sum (FCS)
         mov     ax, TXMAX
         stosw
         mov     al, 80

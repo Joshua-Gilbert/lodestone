@@ -32,6 +32,7 @@ snap_reply  resb 1
 keyn        resb 1
 keys_q      resb 1
 rep_q       resb 1
+use_fl      resb 1                      ; 1: frames carry a Fletcher sum, not CRC-16
 lr_end:
 %endmacro
 
@@ -117,7 +118,7 @@ frame_short:
         lea     si, [di+1]
         mov     cx, 5
         mov     ax, 0FFFFh
-        call    crc16
+        call    fcs
         mov     [di+6], ax
         mov     si, di
         mov     cx, 8
@@ -170,7 +171,7 @@ frame_next:
         mov     si, txframe+1
         add     cx, 5
         mov     ax, 0FFFFh
-        call    crc16
+        call    fcs
         pop     cx
         mov     di, txframe+6
         add     di, cx
@@ -276,7 +277,7 @@ find_frame:
         lea     si, [rxbuf+bx+1]
         add     cx, 5
         mov     ax, 0FFFFh
-        call    crc16
+        call    fcs
         pop     cx
         pop     bx
         mov     si, bx
@@ -447,6 +448,43 @@ delay_ms:
         pop     bx
         pop     ax
 .x:     ret
+
+; A frame's check over DS:SI, CX bytes -> AX: CRC-16 until the Pi's HELLO
+; agrees to the Fletcher sum (use_fl; link_reset clears it, so HELLO and its
+; answer always go with the CRC).  Destroys BX SI CX.
+fcs:    cmp     byte [use_fl], 0
+        je      crc16
+; Fletcher-16 with 8-bit sums: A = 1 + the bytes, B = the sum of the A's,
+; both mod 256 (the registers' own wrap: no modulo step at all, where
+; Fletcher's mod 255 would cost an ADC after every add); AX = B << 8 | A.
+; Four bytes a pass: about 8.5 clocks a byte on the 286 by the tables,
+; against about 34 for the table CRC.  Destroys BX SI CX (as crc16).
+fl16:   push    dx
+        mov     bx, 1                   ; BL = A, BH = B
+        mov     dx, cx
+        shr     cx, 2
+        jcxz    .t
+.l:     lodsw
+        add     bl, al
+        add     bh, bl
+        add     bl, ah
+        add     bh, bl
+        lodsw
+        add     bl, al
+        add     bh, bl
+        add     bl, ah
+        add     bh, bl
+        loop    .l
+.t:     and     dx, 3                   ; the last 0-3 bytes
+        jz      .x
+.b:     lodsb
+        add     bl, al
+        add     bh, bl
+        dec     dx
+        jnz     .b
+.x:     mov     ax, bx
+        pop     dx
+        ret
 
 ; CRC-16/CCITT-FALSE.  AX = crc, DS:SI -> data, CX = count.  Destroys BX SI CX.
 crc16:  jcxz    .x
