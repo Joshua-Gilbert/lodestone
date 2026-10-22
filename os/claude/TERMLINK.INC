@@ -33,6 +33,9 @@ keyn        resb 1
 keys_q      resb 1
 rep_q       resb 1
 use_fl      resb 1                      ; 1: frames carry a Fletcher sum, not CRC-16
+%ifndef NO_SRQ
+wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driver latches SRQ)
+%endif
 lr_end:
 %endmacro
 
@@ -85,7 +88,24 @@ link_idle:
         sub     ax, [t_active]
         cmp     ax, 36
         jb      .poll
-.t:     mov     ax, [now]
+.t:
+%ifndef NO_SRQ
+        cmp     byte [wake_ok], 0       ; the Pi rang (SRQ while we are idle):
+        je      .t1                     ; POLL now, not at the next second
+        mov     ah, 0Bh
+        call    gg_call
+        jc      .t1
+        or      ax, ax
+        jz      .t1
+        mov     bl, [nano]              ; an SRQ since the last look: the Pi's,
+        mov     ah, 05h                 ; or one from our last answer (the driver
+        call    gg_call                 ; latches every SRQ it sees): ask
+        jc      .t1
+        test    al, 40h
+        jnz     .poll
+.t1:
+%endif
+        mov     ax, [now]
         sub     ax, [t_last]
         cmp     ax, 18
         jb      .x

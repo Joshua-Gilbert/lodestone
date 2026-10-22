@@ -24,7 +24,7 @@ from . import glp
 PICO_VID = 0x2E8A
 PROTO_VERSION = 1
 
-F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_BOOTSEL = 0x01, 0x02, 0x03, 0x04, 0x05, 0x07
+F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_BOOTSEL, F_WAKE = 0x01, 0x02, 0x03, 0x04, 0x05, 0x07, 0x08
 F_HELLO, F_DATA, F_EVENT, F_LOG, F_PONG, F_CREDIT = 0x81, 0x82, 0x83, 0x84, 0x85, 0x87
 CF_ONLINE, CF_AUTO_RSV = 0x01, 0x02
 DF_EOI, DF_END = 0x01, 0x02
@@ -172,6 +172,13 @@ class PicoProto:
     def ping(s):
         s.write(cobs_encode(bytes([F_PING])))
 
+    def ring(s):
+        """Ask for an SRQ while the GRiD is idle (bridge fw 2026-10-22b; older firmware ignores it).  It carries
+        the generation of the GRiD's last message, so the bridge drops it if the GRiD has sent a newer one."""
+        with s.lock:
+            s.stats['rings'] += 1
+            s.write(cobs_encode(struct.pack('<BH', F_WAKE, s.gen & 0xFFFF)))
+
     def usb_test(s, count, size, timeout=5.0):
         """gridlink.bench --usb: `count` PINGs of `size` bytes (the firmware ignores what follows the type) sent
         at once; returns the seconds until the bridge has answered them all, or None."""
@@ -305,6 +312,12 @@ class PicoBridge:
 
     def answer(s, frame):
         s.proto.answer(frame)
+
+    def ring(s):
+        s.proto.ring()
+
+    def poke(s):
+        with s.cv: s.cv.notify_all()
 
     def read(s):
         """GRiD bytes (whole messages), or b'' after a short wait."""

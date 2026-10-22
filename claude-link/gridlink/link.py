@@ -96,6 +96,7 @@ class Link:
     gives a CELLS payload (or None), source.delivered() says the GRiD has the
     last one (its next frame is a new one)."""
     HOLD = 0.25
+    RING_AGAIN = 0.1
     KEYS_HOLD = 0.03
 
     def __init__(s, transport, on_message, log=print, hold=HOLD):
@@ -113,6 +114,8 @@ class Link:
         s.grid_rx = glp.GRID_RX_DEFAULT       # payload the GRiD reads (its HELLO's rx=)
         s.grid_fcs = False                    # the GRiD's HELLO offered the Fletcher sum
         s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
+        s.grid_wake = False                   # the GRiD's HELLO said it POLLs when the bridge rings (GF_WAKE)
+        s.rang = None                         # when we last rang, since the GRiD's last frame
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
         s.trace = None                        # a deque while gridlink.bench --trace runs: (time, event)
 
@@ -128,6 +131,7 @@ class Link:
         with s.lock:
             s.outq.append((mtype, bytes(body)))
             s.lock.notify_all()
+        s._poke()
 
     def send_first(s, mtype, body=b''):
         """Jump the queue (the answer to HELLO must be HELLO)."""
@@ -141,6 +145,27 @@ class Link:
     def wake(s):
         """The source has something new."""
         with s.lock: s.lock.notify_all()
+        s._poke()
+
+    def _poke(s):
+        poke = getattr(s.t, 'poke', None)     # the serve loop's read returns now: ring_check sooner
+        if poke: poke()
+
+    def ring_check(s):
+        """From the serve loop, between frames (never while an answer is held): when we have something for an
+        idle GRiD, ask the bridge for an SRQ so it POLLs now instead of at its next idle POLL (up to 1 s).
+        Again every RING_AGAIN until the GRiD sends (a ring can be lost: the GRiD may take its SRQ for the
+        answer it is reading)."""
+        if not (s.grid_wake and s.connected): return
+        if s.rang is not None and time.monotonic() - s.rang < s.RING_AGAIN: return
+        ring = getattr(s.t, 'ring', None)
+        if ring is None: return
+        with s.lock:
+            if not s._has_output(): return
+        s.rang = time.monotonic()
+        s.stats['rang'] += 1
+        if s.trace is not None: s.trace.append((time.monotonic(), 'ring'))
+        ring()
 
     def _has_output(s):
         return bool(s.outq or s.cur) or (s.source is not None and s.source.ready())
@@ -209,6 +234,7 @@ class Link:
         s.stats['tx_nak'] += 1
 
     def handle(s, f):
+        s.rang = None
         if s.trace is not None:
             s.trace.append((time.monotonic(), 'grid ' + _name(f.type | (glp.MORE if f.more else 0), len(f.payload))))
         s.stats['rx_frames'] += 1; s.stats['rx_bytes'] += len(f.payload) + glp.OVERHEAD
@@ -238,6 +264,7 @@ class Link:
                 s.grid_maxpay = body[2] | (body[3] << 8)
                 s.grid_rx = glp.hello_rx(body)
                 s.grid_fcs = bool(body[1] & glp.GF_FCS)
+                s.grid_wake = bool(body[1] & glp.GF_WAKE)
             if mt != glp.G_POLL:
                 try: s.on_message(mt, body)
                 except Exception as e: s.log('link: handler error: %r' % e)
@@ -270,4 +297,4 @@ def serve(transport, link, stop):
     while not stop.is_set():
         data = transport.read()
         if data: link.feed(data)
-        else: link.idle_check()
+        else: link.idle_check(); link.ring_check()

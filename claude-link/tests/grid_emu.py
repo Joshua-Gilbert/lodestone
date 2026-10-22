@@ -906,6 +906,7 @@ class EmuHarness:
         end = s.m.us + sim_s * 1e6; wend = time.time() + wall
         while s.m.us < end and time.time() < wend:
             if cond(): return True
+            s.link.ring_check()               # (gridlink's serve loop does it between frames)
             if not s.m.run(): break
         return cond()
 

@@ -18,7 +18,7 @@ import collections, os, struct, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from gridlink.pico import (cobs_encode, cobs_decode, F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_HELLO,
+from gridlink.pico import (cobs_encode, cobs_decode, F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_WAKE, F_HELLO,
                            F_DATA, F_EVENT, F_PONG, F_CREDIT, CF_ONLINE, CF_AUTO_RSV, TXF_EOI, DF_EOI)
 from ar488_model import AR488Model
 
@@ -39,6 +39,7 @@ class PicoModel(AR488Model):
         s.consumed = 0; s.announced = 0; s.completed = 0
         s.rx_msg = bytearray()
         s.tx_frames = 0; s.big_tx = 0
+        s.bell = None; s.rings = 0            # WAKE (fw 2026-10-22b): SRQ for an idle GRiD, until it sends again
 
     # ---- USB ---------------------------------------------------------
     def pi_write(s, data, latency_us=None):
@@ -88,6 +89,9 @@ class PicoModel(AR488Model):
                 s.ring[-1][2] = True; s.completed += 1
         elif t == F_STB:
             pass
+        elif t == F_WAKE:
+            s.rings += 1
+            if struct.unpack_from('<H', f, 1)[0] == s.gen & 0xFFFF: s.bell = s.gen
 
     def _consume(s, n):
         s.consumed += n
@@ -101,11 +105,14 @@ class PicoModel(AR488Model):
         s._drop_stale()
         return bool(s.ring and s.ring[0][2])
 
+    def _bell(s):
+        return s.bell is not None and s.bell == s.gen
+
     # ---- GPIB --------------------------------------------------------
     @property
     def srq(s):
         s.service()
-        return s.online and s.auto and s._ready() and s.announced < s.completed
+        return s.online and s.auto and ((s._ready() and s.announced < s.completed) or s._bell())
 
     @srq.setter
     def srq(s, v):
@@ -116,8 +123,8 @@ class PicoModel(AR488Model):
         s.service(); s.spolls += 1
         if not s.auto: return 0
         ready = s._ready()
-        rqs = ready and s.announced < s.completed
-        if rqs: s.announced = s.completed
+        rqs = (ready and s.announced < s.completed) or s._bell()
+        if rqs: s.announced = s.completed; s.bell = None
         return (0x20 if ready else 0) | (0x40 if rqs else 0)
 
     def on_listen(s, active):
@@ -169,3 +176,6 @@ class PicoModelTransport:
 
     def answer(s, frame):
         s.proto.answer(frame)
+
+    def ring(s):
+        s.proto.ring()

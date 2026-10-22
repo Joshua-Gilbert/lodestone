@@ -84,7 +84,7 @@ Same format both ways:
 | 3 | 1 | ack: seq of the last good frame received from the other side |
 | 4 | 2 | len: payload bytes, little-endian |
 | 6 | len | payload |
-| 6+len | 2 | CRC-16/CCITT-FALSE (poly 1021h, init FFFFh, no reflection) over bytes 1 .. 5+len, little-endian |
+| 6+len | 2 | the check over bytes 1 .. 5+len, little-endian: CRC-16/CCITT-FALSE (poly 1021h, init FFFFh, no reflection), or the Fletcher sum once HELLO has agreed to it (below) |
 
 * Pi → GRiD frames are at most 127 bytes in total with stock AR488 (payload
   ≤ 119) and 254 with the patched firmware (payload ≤ 246), one byte under
@@ -102,12 +102,35 @@ Same format both ways:
   the frame with LF. In stock mode it sends `++status <64+ms>\n` first,
   in the same write.
 
+### Waking an idle GRiD
+
+Between messages the GRiD sends an idle POLL once a second, so news for an
+idle GRiD (the first tool call after Claude has been thinking, say) used to
+wait up to a second. A GRiD whose HELLO set flags bit 3 also looks for an
+SRQ in its idle loop (AH=0Bh of the GPIB driver); when there was one it
+serial-polls the bridge and POLLs at once if the status has 40h. gridlink
+then asks the GPIB-Pico2 bridge for that SRQ (its WAKE frame, bridge fw
+2026-10-22b) when it has something for the GRiD and no frame of the GRiD's
+is waiting for an answer, again every 100 ms until the GRiD sends. The
+bridge keeps the SRQ (status 40h, without the 20h of a waiting answer) until
+the GRiD polls it or sends a message, and ignores a WAKE for an older
+message than the GRiD's last. Older bridges ignore WAKE, and the GRiD goes on
+POLLing once a second.
+
 ### Sequencing and retransmission
 
 * HELLO resets both sequence counters to 0 (the HELLO frame itself has seq 0).
 * Each side increments seq for every new frame it sends, and copies the last
   good seq it received into ack.
-* Bad CRC: the receiver answers with a NAK (GRiD → Pi type 06h, Pi → GRiD
+* **The Fletcher sum** (CLAUDE 1.3): A = 1 plus the bytes, B = the sum of
+  the A after each byte, both mod 256; the check is B × 256 + A (A first on
+  the wire). It costs the 286 about 8.5 clocks a byte against the CRC's 34.
+  The GRiD offers it in its HELLO (flags bit 2); the Pi's HELLO answer takes
+  it (flags bit 2), and both sides use it for every frame after. HELLO and
+  its answer always carry the CRC, as does everything after a link reset.
+  The Pi accepts either check on any frame and answers each frame with the
+  check that frame came with.
+* Bad check: the receiver answers with a NAK (GRiD → Pi type 06h, Pi → GRiD
   48h); the sender then retransmits its last frame unchanged.
 * A frame whose seq equals the last one accepted is a duplicate (its answer
   was lost): don't process it again, just resend the last answer.
@@ -121,7 +144,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
@@ -133,7 +156,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 41h | HELLO | ver (1), flags (1: bit 0 = Term), then text: model name (or `Claude Code`) |
+| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on), then text: model name (or `Claude Code`) |
 | 42h | NOP | — |
 | 43h | TEXT | text to append to the conversation; control codes below |
 | 44h | STATUS | status-line text (empty = clear) |

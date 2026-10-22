@@ -78,6 +78,7 @@ def main(argv=None):
     ap.add_argument('--trips', type=int, default=20, help='small requests for the round-trip time (default 20)')
     ap.add_argument('--dir', default='~/grid', help="Claude Code's directory on the Pi (default ~/grid)")
     ap.add_argument('--trace', action='store_true', help='show where each copy spends its time')
+    ap.add_argument('--idle', type=int, default=5, help='calls after the link has gone idle (default 5, 0: none)')
     ap.add_argument('--usb', action='store_true', help="time the Pi -> Pico USB with PINGs, before the copies")
     ap.add_argument('--sweep', help='Pi -> GRiD payload sizes to try, comma-separated (each capped by what the '
                                     'GRiD and the bridge take); the link goes back to its own size after')
@@ -109,6 +110,17 @@ def main(argv=None):
     rt.sort()
     print('round trip (grid_info, %d): best %.1f ms, median %.1f ms, worst %.1f ms'
           % (a.trips, rt[0] * 1e3, rt[len(rt) // 2] * 1e3, rt[-1] * 1e3))
+    if a.idle:
+        # the first call after the link has gone idle: up to a second for the GRiD's idle POLL, unless the
+        # bridge can ring (fw 2026-10-22b, CLAUDE 1.3 with GF_WAKE)
+        it = []
+        for i in range(a.idle):
+            time.sleep(2.5 + 0.23 * i)                 # the GRiD stops polling back to back after ~2 s
+            it.append(tool(sock, 'grid_info', {})[0])
+        it.sort()
+        st = link(sock).get('stats', {})
+        print('first call after idle (%d): best %.0f ms, median %.0f ms, worst %.0f ms; rang %d times'
+              % (a.idle, it[0] * 1e3, it[len(it) // 2] * 1e3, it[-1] * 1e3, st.get('rang', 0)))
 
     ok = True
     if not a.sweep:
