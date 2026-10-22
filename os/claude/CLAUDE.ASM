@@ -3771,6 +3771,7 @@ snap_len    resw 1
         times   -(kv_cwd < kv_os || kv_drives < kv_cwd || kv_mem < kv_drives || kv_ems < kv_mem \
                   || kv_gpib < kv_ems || kv_addr < kv_gpib || kv_date < kv_addr || kv_grid < kv_date \
                   || kv_appterm < kv_grid || kv_appchat < kv_appterm || s_none2 < s_onint \
+                  || kv_appweb < kv_appchat || s_tkeys < kv_appweb \
                   || s_helptitle < s_pages) resb 1     ; (HELLO_MAX's lengths: in this order)
 stack_bottom:                           ; the stack: claude-link's emulator tests
             resb 1024                   ;  go 58 bytes deep at most under GRIDGPIB,
