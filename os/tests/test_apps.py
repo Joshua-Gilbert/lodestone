@@ -117,7 +117,7 @@ def xor_rect_unit():
     mu.mem_write(0x10000, code)
     regs = (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP)
     rnd = random.Random(1520)
-    screen, dseg = bytes(rnd.getrandbits(8) for _ in range(0x10000)), bytes(rnd.getrandbits(8) for _ in range(0x1000))
+    screen, dseg = bytes(rnd.getrandbits(8) for _ in range(0x10000)), bytes(rnd.getrandbits(8) for _ in range(0x10000))
     cases = [(x0, x0 + w, y, h) for y in (0, 1, 2, 3, 6, 389) for h in (2, 3, 5, 11)
              for x0 in range(0, 24) for w in range(2, 42)]
     cases += [(x0, 639, y, h) for x0 in range(600, 638) for y, h in ((0, 2), (3, 11), (388, 12))]
@@ -143,7 +143,7 @@ def xor_rect_unit():
             exp[(py & 3) * 0x2000 + (py >> 2) * 80 + px // 8] ^= 0x80 >> (px & 7)
         kept = [mu.reg_read(r) for r in regs] == list(vals) and mu.reg_read(UC_X86_REG_SP) == 0xFFFE \
             and mu.reg_read(UC_X86_REG_ES) == 0x2000 and mu.reg_read(UC_X86_REG_DS) == 0x5000 \
-            and bytes(mu.mem_read(0x50000, 0x1000)) == dseg
+            and bytes(mu.mem_read(0x50000, 0x10000)) == dseg
         n += 1
         if bytes(mu.mem_read(0xB8000, 0x10000)) != bytes(exp) or not kept:     # (all of ES: nothing past the plasma)
             bad.append((x0, x1, y, h, kept))
