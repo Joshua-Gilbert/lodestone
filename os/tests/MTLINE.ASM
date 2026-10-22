@@ -1,6 +1,6 @@
 ; MTLINE.COM - for test_mt.py: MTLINE FILE: a prompt, a line read with
 ; INT 21h AH=0Ah (the kernel's line editor: it waits in kbd_get), and the
-; line written to FILE.
+; line written to FILE.  A line "=n" ends it with exit code n.
 ; nasm -f bin -o MTLINE.COM MTLINE.ASM
 cpu 286
 org 100h
@@ -35,7 +35,21 @@ org 100h
         int     21h
         mov     ah, 3Eh
         int     21h
-.x:     mov     ax, 4C00h
+.x:     xor     ax, ax                  ; a line "=n": exit code n (WAIT)
+        mov     si, line + 2
+        cmp     byte [si], '='
+        jne     .q
+        inc     si
+.d:     mov     bl, [si]
+        sub     bl, '0'
+        cmp     bl, 9
+        ja      .q
+        mov     bh, 10
+        mul     bh
+        add     al, bl
+        inc     si
+        jmp     .d
+.q:     mov     ah, 4Ch
         int     21h
 
 s_pr    db      13, 10, 'MTLINE> $'
