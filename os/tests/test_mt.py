@@ -2682,7 +2682,7 @@ def t_lcmd():
     sh.run('park 1')
     typ(k, 'wait 1', 0.5)
     sp = tstate(k)[0]
-    k.key(0x2E03); k.run_for(0.5)
+    k.key('x', settle=False); k.key(0x2E03); k.run_for(0.5)            # (a key ahead of the ^C)
     o1 = sh.run('echo BACKATPROMPT')
     sh.run('unpark 1')
     s1 = tstate(k)[0]
@@ -2693,7 +2693,8 @@ def t_lcmd():
     o2 = k.pc.text_screen()
     o3 = sh.run('if errorlevel 1 echo LEVEL1')
     sh.run('kill 1')
-    check('WAIT for a parked task (%s) ended by ^C: back at the prompt, the task still there, brought back (%s); WAIT '
+    check('WAIT for a parked task (%s) ended by ^C, a key typed ahead of it: back at the prompt, the task still there, '
+          'brought back (%s); WAIT '
           'whose task\'s number was used again and ended meanwhile: "Its exit code is lost", ERRORLEVEL 1' % (sp, s1),
           sp[1:] == [(1, 5, 'MTLINE.COM')] and 'BACKATPROMPT' in o1 and s1[1:] == [(1, 2, 'MTLINE.COM')]
           and 'Its exit code is lost' in o2 and 'LEVEL1' in o3 and back(), (sp, o1, s1, o2, o3))
