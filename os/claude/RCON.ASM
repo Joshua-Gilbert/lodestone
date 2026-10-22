@@ -573,7 +573,7 @@ gg_call:                                ; INT 60h-66h, the driver's
 
 build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
-        mov     ax, 0101h               ; GLP 1; flags: Term
+        mov     ax, 0501h               ; GLP 1; flags: Term, the Fletcher sum
         stosw
         mov     ax, TXMAX
         stosw
@@ -701,7 +701,12 @@ pi_frame:                               ; BX = frame offset in rxbuf
         ret                             ; (the chat's TEXT, STATUS, ASK... no)
 
 rf_hello:
-        mov     byte [connected], 1
+        cmp     cx, 2                   ; the Pi takes the Fletcher sum: every
+        jb      .c                      ;  frame from now on
+        test    byte [si+1], HF_FCS
+        jz      .c
+        mov     byte [use_fl], 1
+.c:     mov     byte [connected], 1
         mov     byte [n_failrun], 0
         mov     byte [rq_more], 0
         mov     ax, [now]
