@@ -2410,6 +2410,202 @@ def t_kill():
           and spun(k, 'TQ.TXT') > 0 and {1, 2} <= seen
           and merged(mcbs(k)) == m0 and ems_used(k) == e0 and not k.crashed, (isr, st, seen))
 
+def t_park():
+    print('== tasks parked in EMS and brought back (M6)')
+    k = boot('mt_pk.img', b'MULTITASK=1\r\n', 128, MTKL, MTV)      # (2 MB of EMS: room for two parked)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    ent = lambda task, o: k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + o)
+    st = lambda task: k.pc.rd(seg, Y['mt_tab'] + task * MT_ENT, 1)[0]
+    cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+    m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+    alone = lambda: tstate(k)[0] == [(0, 1, 'Executive')]
+    back = lambda: alone() and merged(mcbs(k)) == m0 and sft_used(k) == s0 and ems_used(k) == e0 and not k.crashed
+    now = lambda: (tstate(k), show(mcbs(k)), sft_used(k), s0, ems_used(k), e0)
+    def region(task):                   # its region: segment, paragraphs (its MCB's), and its bytes
+        r = ent(task, 4)
+        n = k.pc.u16(r - 1, 3)
+        return r, n, bytes(k.pc.rd(r, 0, n * 16))
+    def mt(cmd):                        # MTLAUNCH's options, from the prompt
+        o = sh.run('mtlaunch ' + cmd); line(k, ''); k.run_for(0.3)
+        return o
+    def owners(task):                   # the owners in its own arena (its PSPs)
+        s, out = k.pc.u16(ent(task, 6), equ('V_MCB')), set()
+        for i in range(50):
+            t, o, n = k.pc.rd(s, 0, 1)[0], k.pc.u16(s, 1), k.pc.u16(s, 3)
+            if o: out.add(o)
+            if t != ord('M'): break
+            s += n + 1
+        return out
+    pages = lambda n: (n + 1023) // 1024
+    ks = lambda n: b'k' * n
+    # behind, waiting for a line inside INT 21h (its kernel stack's slice in its TX): parked, back, and on
+    mt('mtkill.com f 1500 kp.txt')
+    s1, (r1, n1, b1), e1 = st(1), region(1), ems_used(k)
+    o = mt('/p:1')
+    s2, own, e2 = st(1), k.pc.u16(r1 - 1, 1), ems_used(k)
+    k.pc.wr(r1, 0, b'\xcc' * (n1 * 16))  # (the freed place scribbled on: only the copy back puts it right)
+    o2 = mt('/u:1')
+    s3, (r3, n3, b3), e3 = st(1), region(1), ems_used(k)
+    if b3 == b1:                        # (not run if its bytes are wrong: ended, so the checks after go on)
+        front(k, 1); line(k, 'go'); k.run_for(0.5)
+    else:
+        mt('/k:1')
+    check('a task behind waiting for a line (MTKILL F, inside INT 21h) parked: its state 5, its region (%d paragraphs) '
+          'freed, %d EMS pages taken; brought back (its place scribbled on meanwhile): at the same place, every byte as '
+          'it was, its state again, the pages '
+          'given back; then in front, the line: it goes on ("!" written), and ends' % (n1, pages(n1)),
+          s1 == TS_WAITK and 'error' not in o + o2 and s2 == 5 and own == 0 and e2 == e1 + pages(n1)
+          and s3 == TS_WAITK and (r3, n3) == (r1, n1) and b3 == b1 and e3 == e1
+          and A.disk_file(k, 'KP.TXT') == ks(1500) + b'!' and back(), (s1, s2, own, e1, e2, s3, r1, r3, n1, n3, b1 == b3,
+                                                                        o, o2, now()))
+    # computing (switched from at the tick, outside INT 21h): parked, it doesn't run; back, it goes on
+    typ(k, 'mtlaunch mtkill.com s 10 ps.txt', 0.3); line(k, ''); k.run_for(0.3)
+    sr = st(1)
+    typ(k, 'mtlaunch /p:1', 0.3); line(k, ''); k.run_for(0.2)       # (typed: the shell's run waits for an idle
+    s1, ran = st(1), set()                                          #  machine)
+    for i in range(300):
+        k.run_for(0.01); ran.add(cur())
+    s2 = st(1)
+    typ(k, 'mtlaunch /u:1', 0.3); line(k, '')
+    s3, ran2 = st(1), set()
+    for i in range(100):
+        k.run_for(0.01); ran2.add(cur())
+    typ(k, 'mtlaunch /k:1', 0.3); line(k, ''); k.run_for(0.5)
+    check('a task computing (MTKILL S, switched from at the tick) parked: not run for 3 s (tasks run %s); back, it '
+          'runs again (%s); ended from there, its file closed at its size' % (sorted(ran), sorted(ran2)),
+          sr == 1 and s1 == s2 == 5 and 1 not in ran and s3 == 1 and 1 in ran2
+          and A.disk_file(k, 'PS.TXT') == ks(10) and back(), (sr, s1, s2, s3, ran, ran2, now()))
+    # what can't be parked, or brought back
+    mt('mtkill.com f 10 kq.txt')
+    pq = owners(1)                      # (its PSPs: those of the task in its place later, the same)
+    o0, o1, o3, o4 = mt('/p:0'), mt('/u:1'), mt('/p:3'), mt('/u:3')
+    s1 = st(1)
+    mt('/p:1')
+    og = mt('/g:1')
+    sw, prev = [], k.pc.watch           # (what mt_swnow is asked for: CODE-Tab's choice)
+    def w(a):
+        if prev: prev(a)
+        if a == seg * 16 + Y['mt_swnow']: sw.append(k.pc.rd(seg, Y['mt_swreq'], 1)[0])
+    k.pc.watch = w
+    hot(k)
+    k.pc.watch = prev
+    f1 = k.pc.rd(seg, Y['mt_front'], 1)[0]
+    front(k, 1); line(k, ''); k.run_for(0.3)    # (asked for anyway, as a request made before it was parked)
+    f2, rq = k.pc.rd(seg, Y['mt_front'], 1)[0], k.pc.rd(seg, Y['mt_swreq'], 1)[0]
+    o5 = mt('/p:1')
+    check('refused: the Executive\'s task parked (error 5); one not parked brought back, no such task parked or brought '
+          'back (error 1); a parked one: not to the front (MT_FRONT: error 5; CODE-Tab passes it by%s; asked for all the '
+          'same, mt_swnow passes it by: the front %d, the request %02Xh), not parked again (error 5)'
+          % (', no switch asked for' if set(sw) <= {255} else ', asking for %s' % sw, f2, rq), 'MTLAUNCH: error 5' in o0 and 'MTLAUNCH: error 1' in o1
+          and 'MTLAUNCH: error 1' in o3 and 'MTLAUNCH: error 1' in o4 and s1 == TS_WAITK and st(1) == 5
+          and 'MTLAUNCH: error 5' in og and 1 not in sw and f1 == 0 and f2 == 0 and rq == 0xFF and st(1) == 5
+          and 'MTLAUNCH: error 5' in o5 and not k.crashed, (o0, o1, o3, o4, og, sw, f1, f2, rq, o5, now()))
+    # in the way: a task whose region took the parked one's place; pinned (a vector into it), it can't be parked
+    sp1 = ent(1, 4), ent(1, 28)        # (the parked one's region: TE_REG, TE_PSZ)
+    eb = ems_used(k)                    # (the parked one's own EMS page among them: the programs in its place
+                                        #  below have their PSPs at its program's segment)
+    mt('mtvec.com i 0 x')               # (task 2: INT 62h its own, then a line)
+    k.run_for(0.3)
+    r2, n2 = ent(2, 4), k.pc.u16(ent(2, 4) - 1, 3)
+    lap = r2 - 1 < sp1[0] + sp1[1] and sp1[0] - 1 < r2 + n2
+    v62 = vec(k, 0x62)
+    o1, o2 = mt('/u:1'), mt('/p:2')
+    check('a task in the parked one\'s place (MTVEC I, %04X: %d paragraphs; the parked one at %04X), INT 62h its own: '
+          'it can\'t be parked (error 5), and the parked one doesn\'t come back (error 8); both as they were'
+          % (r2, n2, sp1[0]), lap and r2 <= v62[0] < r2 + n2 and 'MTLAUNCH: error 8' in o1 and 'MTLAUNCH: error 5' in o2 and st(1) == 5
+          and st(2) == TS_WAITK and vec(k, 0x62) == v62 and not k.crashed, (r2, n2, sp1, v62, o1, o2, now()))
+    front(k, 2); line(k, ''); k.run_for(0.5)                        # (I ends, INT 62h put back)
+    mt('mtkill.com f 10 kc.txt')        # (task 2 again, in the same place: its PSPs at the same segments)
+    r2, n2 = ent(2, 4), k.pc.u16(ent(2, 4) - 1, 3)
+    lap = r2 - 1 < sp1[0] + sp1[1] and sp1[0] - 1 < r2 + n2
+    pc = owners(2)
+    o1 = mt('/u:1')
+    sa, sb, ra = st(1), st(2), ent(1, 4)
+    o2 = mt('/u:2')
+    sc, sd = st(1), st(2)
+    front(k, 2); line(k, ''); k.run_for(0.5)                        # (it ends, as a program does, the other parked)
+    se, ec = st(2), ems_used(k)
+    o3 = mt('/u:1')
+    front(k, 1); line(k, ''); k.run_for(0.5)                        # (and that one, through its own INT 22h)
+    check('a task in the parked one\'s place, not pinned (MTKILL F; the parked one\'s own vectors, into that place, '
+          'don\'t pin it): parked on the way, the parked one back (%s); then the other way round (%s); it ends meanwhile, '
+          'the parked one\'s own vectors in its TX left as they were, and its EMS page its own (%d pages in use, as '
+          'when it was parked: the programs run in its place, their PSPs at its program\'s segment, freed only their '
+          'own); that one back, it ends too, '
+          'through its own INT 22h; memory, files and EMS as before (the pages given back)' % ((sa, sb), (sc, sd), ec),
+          lap and pq and pc == pq and 'error' not in o1 + o2 + o3 and (sa, sb) == (TS_WAITK, 5) and ra == sp1[0] and (sc, sd) == (5, TS_WAITK)
+          and se == 0 and ec == eb and A.disk_file(k, 'KQ.TXT') == ks(10) + b'!'
+          and A.disk_file(k, 'KC.TXT') == ks(10) + b'!' and back(), (lap, pq, pc, o1, o2, o3, sa, sb, sc, sd, se, eb, ec,
+                                                                     now()))
+    # asked from a task behind, whose own INT 09h (in its TX: the table's is the front one's) points into the one
+    # to be parked (the test writes it there as MT_PARK looks): pinned all the same
+    mt('mtkill.com f 10 kg.txt')
+    r1 = ent(1, 4)
+    pk, prev = [], k.pc.watch
+    def w(a):
+        if prev: prev(a)
+        if a == seg * 16 + Y['mt_pinned'] and cur() == 2 and not pk:
+            k.pc.wr(ent(2, 6), equ('TX_FVEC'), struct.pack('<HH', 0x100, r1 + 0x40))
+            pk.append(1)
+    k.pc.watch = w
+    typ(k, 'mtlaunch mtlaunch.com /p:1', 0.4); line(k, ''); k.run_for(0.5)
+    k.pc.watch = prev
+    s1 = st(1)
+    o1 = mt('/k:2 /k:1')
+    check('asked from a task behind (MTLAUNCH /P:1, task 2) whose own INT 09h, in its TX, points into task 1: task 1 '
+          'pinned all the same, not parked (state %d)' % s1, pk and s1 == TS_WAITK and 'error' not in o1
+          and A.disk_file(k, 'KG.TXT') == ks(10) and back(), (pk, s1, o1, now()))
+    # not enough EMS: a task taking every free page (MTKILL E)
+    mt('mtkill.com f 10 ke.txt;mtkill.com e 0 x')
+    k.run_for(0.5)
+    s1, r1b, e1 = st(1), region(1), ems_used(k)
+    o1 = mt('/p:1')
+    s2, r2b, e2 = st(1), region(1), ems_used(k)
+    front(k, 2); line(k, ''); k.run_for(0.5)                        # (E ends: its pages back)
+    o2 = mt('/p:1')
+    o3 = mt('/k:1')
+    check('every EMS page taken (MTKILL E): parking fails (error 8), the task as it was (its state, its region, every '
+          'byte); once they are back, it parks; ended from there', 'MTLAUNCH: error 8' in o1 and s2 == s1 == TS_WAITK
+          and r2b == r1b and e2 == e1 and 'error' not in o2 + o3 and A.disk_file(k, 'KE.TXT') == ks(10) and back(),
+          (o1, s1, s2, e1, e2, o2, o3, now()))
+    # a parked task's own vectors put right while it is parked (its TX in EMS: mt_vrep through window 0): MTVEC L
+    # hooks INT 2Fh and starts MTVEC V, which is parked; L ends, its hook in V's TX put back; V back, it reads it
+    v2f, v1c = vec(k, 0x2F), vec(k, 0x1C)
+    typ(k, 'mtlaunch mtvec.com l 90 pl.txt', 0.4); line(k, ''); k.run_for(0.3)
+    s2a = st(2)
+    oa = mt('/p:1')                     # (L pinned: V's own INT 2Fh is L's hook)
+    o1 = mt('/p:2')
+    ob = mt('/p:1')                     # (and with V parked: its TX in EMS)
+    front(k, 1); line(k, ''); k.run_for(0.5)                        # (L ends, INT 2Fh not put back)
+    s1, s2 = st(1), st(2)
+    o2 = mt('/u:2')
+    waitfile(k, 'PL.TXT', 8.0); k.run_for(0.3)
+    r = (A.disk_file(k, 'PL.TXT') or b'').split()
+    pv = [(int(r[n], 16), int(r[n + 1], 16)) for n in range(0, 8, 2)] if len(r) == 8 else None
+    check('a task (MTVEC V) whose INT 2Fh is its spawner\'s hook (MTVEC L): the spawner can\'t be parked (error 5), V '
+          'there or parked (its TX in EMS); V parked, the spawner ends, and V\'s own INT 2Fh, in its TX in EMS, is put '
+          'back as it was before (%s), not left in the freed region' % (pv and '%04X:%04X' % pv[1]),
+          s2a == 1 and 'MTLAUNCH: error 5' in oa and 'MTLAUNCH: error 5' in ob and 'error' not in o1 + o2 and s1 == 0
+          and s2 == 5 and pv and pv[1] == v2f and pv[0] == v1c and back(),
+          (s2a, s1, s2, oa, o1, ob, o2, pv, v2f, now()))
+    # pinned by another task's copy of the table at its spawn (TX_GSN) alone: MTVEC I twice; the second, started
+    # while INT 62h was the first's, takes INT 62h for itself
+    v62 = vec(k, 0x62)
+    mt('mtvec.com i 0 x')
+    mt('mtvec.com i 0 x')
+    r1, r2, va = ent(1, 4), ent(2, 4), vec(k, 0x62)
+    gv = struct.unpack('<HH', bytes(k.pc.rd(ent(2, 6), equ('TX_GSN') + 0x62 * 4, 4)))
+    o1 = mt('/p:1')
+    s1 = st(1)
+    front(k, 2); line(k, ''); k.run_for(0.5)                        # (each ends, INT 62h put back)
+    front(k, 1); line(k, ''); k.run_for(0.5)
+    check('a task (MTVEC I) whose INT 62h is only in another\'s copy of the table at its spawn (TX_GSN; the table\'s '
+          'is the other\'s own): pinned (error 5); both end, INT 62h as before', r2 <= va[0] < r2 + k.pc.u16(r2 - 1, 3)
+          and r1 <= gv[1] < r1 + k.pc.u16(r1 - 1, 3) and 'MTLAUNCH: error 5' in o1 and s1 == TS_WAITK
+          and vec(k, 0x62) == v62 and back(), (r1, r2, va, gv, o1, s1, now()))
+
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
     k0 = boot('mt_mem0.img', b'MULTITASK=0\r\n')
@@ -2532,7 +2728,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_progs, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_progs, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
