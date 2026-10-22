@@ -9,7 +9,7 @@ only ever ones inside ~/grid.
 
     python3 -I -c '...from gridlink.mcp import main; main()'   (what .mcp.json runs)
 """
-import json, os, socket, stat, sys, tempfile, threading, time
+import collections, json, os, socket, stat, sys, tempfile, threading, time
 from . import glp, keys as K, screen
 from .grid import READ_CHUNK, GridError, is_device, is_grid_path, norm
 
@@ -99,6 +99,17 @@ TOOLS = [
          'required': ['action']},
      'annotations': dict(LOOK, idempotentHint=False, title='GPIB: read')},   # (a read empties the instrument's
                                                                               #  output, a poll clears its status)
+    {'name': 'gpib_measure', 'title': 'GPIB: query a measuring instrument',
+     'description': (
+         "Ask a measuring instrument for a reading or its settings, without the user approving each call. "
+         "Only for the addresses the user listed in gridlink's config ([permissions] measure; the error "
+         "names them), and only one query per call: a single command ending in '?', with no ';' and no "
+         "line breaks (READ?, VOLTS?, ID?, *IDN?, FREQ?). Use it for series of readings. To set a range "
+         "or function, or anything to other instruments, use gpib_send, which the user approves."),
+     'inputSchema': {'type': 'object', 'properties': dict(
+         {'command': {'type': 'string', 'maxLength': 200}}, **GPIB_PROPS),
+         'required': ['address', 'command']},
+     'annotations': dict(LOOK, idempotentHint=False, title='GPIB: query a measuring instrument')},
     {'name': 'grid_command', 'title': 'GRiD: run a DOS program',
      'description': (
          "Run a DOS command line or program on the GRiD 1520 (through COMMAND.COM /C, in the GRiD's "
@@ -132,7 +143,7 @@ TOOLS = [
          "link can't leave half a file), delete, rename (to = new name), mkdir, rmdir, copy_from_grid "
          "(path = the GRiD file, to = a file in the Pi's ~/grid directory, default its own name there), "
          "copy_to_grid (path = a file in ~/grid on the Pi, to = the GRiD file). Pi files must be inside "
-         "~/grid. Copies and writes are at most 1 MB; the link moves roughly 3-7 KB/s. To edit a GRiD "
+         "~/grid. Copies and writes are at most 1 MB; the link moves roughly 30-40 KB/s through the Pico bridge. To edit a GRiD "
          "file with your own editing tools: copy_from_grid, edit the copy, copy_to_grid."),
      'inputSchema': {'type': 'object', 'properties': {
          'action': {'type': 'string', 'enum': ['write', 'delete', 'rename', 'mkdir', 'rmdir',
@@ -143,8 +154,10 @@ TOOLS = [
      '_meta': ASK},
     {'name': 'gpib_send', 'title': 'GPIB: send to an instrument',
      'description': (
-         "Send to an instrument on the GRiD's GPIB bus. The user approves every call: power supplies "
-         "and sources drive real circuits, so never change their outputs unless asked. Actions: query "
+         "Send to an instrument on the GRiD's GPIB bus. The user approves calls (a prompt, or in auto mode "
+         "what fits their request): power supplies and sources drive real circuits, so never change their "
+         "outputs beyond what the user asked for. For plain readings from the user's measuring "
+         "instruments, gpib_measure needs no approval. Actions: query "
          "(send a command, read the reply), write, clear (device clear), trigger (GET), local, remote. "
          "Commands get CR LF and EOI unless terminator says otherwise."),
      'inputSchema': {'type': 'object', 'properties': dict(
@@ -499,6 +512,21 @@ class GridTools:
         head = '\n'.join(l[:200] for l in lines[:3])
         return [text('%d bytes (%d lines) saved to %s. It begins:\n%s' % (len(r), len(lines), path, head))], False
 
+    def t_gpib_measure(s, a):
+        allowed = list(getattr(s.cfg, 'measure', None) or [])
+        addr, tmo, maxb = s.gpib_args(a)
+        if addr not in allowed:
+            return [text('Error: address %d is not one gpib_measure may query (allowed: %s). Use gpib_send, '
+                         'which the user approves.' % (addr, ', '.join(map(str, allowed)) or 'none set'))], True
+        cmd = arg_str(a, 'command', need=True, most=200).strip()
+        if not cmd.endswith('?') or ';' in cmd or any(ord(c) < 32 or ord(c) == 127 for c in cmd):
+            return [text("Error: gpib_measure sends one query: a command ending in '?', no ';', no control "
+                         "characters. Anything else goes through gpib_send.")], True
+        try: data = cmd.encode('ascii') + b'\r\n'
+        except UnicodeEncodeError: raise ValueError('command must be ASCII')
+        r = s.G.gpib(glp.GP_QUERY, addr, data, timeout_ms=tmo, maxlen=maxb)
+        return [text(r.decode('latin1').rstrip('\r\n') or '(empty reply)')], False
+
     def gpib_args(s, a, need_addr=True):
         addr = arg_int(a, 'address', None, 0, 30)
         if addr is None and need_addr: raise ValueError('address is required')
@@ -684,6 +712,20 @@ def picture_block(bits):
 
 
 NAMES = {t['name'] for t in TOOLS}
+ASKING = {t['name'] for t in TOOLS if t.get('_meta') == ASK}
+
+
+def listed_tools(auto_mode=None):
+    """The tools as Claude Code sees them.  The ones named in auto_mode
+    (default: $GRIDLINK_AUTO_MODE) lose anthropic/requiresUserInteraction:
+    Claude Code's own permission mode decides on them (in auto mode its
+    classifier lets calls through that fit what the user asked for; in the
+    default mode it still asks, with "don't ask again" offered)."""
+    if auto_mode is None:
+        auto_mode = [x for x in os.environ.get('GRIDLINK_AUTO_MODE', '').split(',') if x]
+    auto = set(auto_mode) & ASKING
+    if not auto: return TOOLS
+    return [{k: v for k, v in t.items() if k != '_meta'} if t['name'] in auto else t for t in TOOLS]
 
 
 class ToolServer:
@@ -734,6 +776,7 @@ class ToolServer:
             if args is None: args = {}
             if not isinstance(tool, str) or not isinstance(args, dict):
                 return [text('gridlink: a request needs a tool name and an arguments object')], True
+            if tool == '_link': return s.link_request(args)
             with s.lock:                          # (a RUN going on keeps the GRiD from polling:
                 why = s.available(tool)           # wait for it, don't call that "not connected")
                 if why: return [text(why)], True
@@ -741,6 +784,39 @@ class ToolServer:
             return s.tools.call(tool, args)       # (grid_pick waits for the user, not the GRiD)
         except Exception as e:
             s.log('mcp: %r' % e); return [text('gridlink: %s' % e)], True
+
+    def link_request(s, args):
+        """Not a tool (Claude Code never sees it): gridlink.bench reads the link's
+        frame sizes and counters, and sets frame_cap (0 = none) to sweep them."""
+        L = getattr(s.tools.G, 'link', None)
+        if L is None: return [text('gridlink: no link')], True
+        if 'frame_cap' in args:
+            c = args['frame_cap']
+            if not isinstance(c, int) or isinstance(c, bool) or not (c == 0 or 16 <= c <= 65535):
+                return [text('gridlink: frame_cap is 0 (none) or 16-65535')], True
+            L.frame_cap = c or None
+        tr = None
+        if 'trace' in args:                   # 'start' a timeline of frames and bridge events, 'stop' returns it
+            proto = getattr(L.t, 'proto', None)
+            if args['trace'] == 'start':
+                L.trace = collections.deque(maxlen=100000)
+                if proto is not None: proto.trace = L.trace
+            elif args['trace'] == 'stop':
+                tr = [[round(t, 6), e] for t, e in list(L.trace or ())]
+                L.trace = None
+                if proto is not None: proto.trace = None
+            else:
+                return [text("gridlink: trace is 'start' or 'stop'")], True
+        if 'usb' in args:                     # [count, size]: PINGs through the bridge's USB (PicoBridge only)
+            proto = getattr(L.t, 'proto', None)
+            if proto is None or not hasattr(proto, 'usb_test'):
+                return [text('gridlink: the bridge is not the Pico')], True
+            count, size = args['usb']
+            return [text(json.dumps({'usb': proto.usb_test(int(count), int(size))}))], False
+        info = dict(maxpay=L.maxpay, grid_rx=L.grid_rx, grid_maxpay=L.grid_maxpay, frame_cap=L.frame_cap or 0,
+                    bridge=getattr(L.t, 'version', ''), stats=dict(L.stats))
+        if tr is not None: info['trace'] = tr
+        return [text(json.dumps(info))], False
 
     def stop(s):
         if s.sock: s.sock.close()
@@ -753,9 +829,10 @@ class ToolServer:
 LAUNCH = 'import sys; sys.path.insert(0, %r); from gridlink.mcp import main; main()'
 
 
-def write_mcp_json(directory, sock):
+def write_mcp_json(directory, sock, auto_mode=()):
     """Register this server in Claude Code's project file, keeping any others.
-    A file that doesn't read as JSON is left alone (ValueError)."""
+    A file that doesn't read as JSON is left alone (ValueError).  auto_mode:
+    the asking tools that lose their always-ask flag ([permissions] auto_mode)."""
     p = os.path.join(directory, '.mcp.json')
     try:
         with open(p) as f: d = json.load(f)
@@ -769,6 +846,8 @@ def write_mcp_json(directory, sock):
     pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     entry = {'type': 'stdio', 'command': sys.executable, 'args': ['-I', '-c', LAUNCH % pkg],
              'env': {'GRIDLINK_SOCKET': sock}}
+    auto = sorted(set(auto_mode) & ASKING)
+    if auto: entry['env']['GRIDLINK_AUTO_MODE'] = ','.join(auto)
     if servers.get(NAME) == entry: return False
     servers[NAME] = entry
     os.makedirs(directory, exist_ok=True)
@@ -837,12 +916,13 @@ def handle(msg, sock):
     elif method == 'ping':
         res = {}
     elif method == 'tools/list':
-        res = {'tools': TOOLS}
+        res = {'tools': listed_tools()}
     elif method == 'tools/call':
         name = p.get('name'); args = p.get('arguments')
         if args is None: args = {}
         if not isinstance(name, str) or not isinstance(args, dict):
             return rpc_error(mid, -32602, 'tools/call needs a tool name and an arguments object')
+        if name not in NAMES: return rpc_error(mid, -32602, 'no tool %s' % name)
         res = call_gridlink(sock, name, args)
     else:
         return rpc_error(mid, -32601, 'no method %s' % method)

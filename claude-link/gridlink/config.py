@@ -25,10 +25,13 @@ CACHE_READ = {'claude-fable-5-1': 0.025, 'claude-opus-5-5': 0.05}
 
 class Config:
     def __init__(s):
-        s.port = '/dev/ttyUSB0'; s.baud = 115200; s.address = 7
+        s.bridge = 'pico'                   # pico (the GPIB-Pico2 bridge) or ar488 (the Nano)
+        s.port = 'auto'; s.baud = 115200; s.address = 7
         s.model = 'claude-opus-5-5'; s.max_tokens = 32000; s.web = True
         s.compact_at = 300000
         s.set_clock = True; s.mode = 'ask'
+        s.auto_mode = []                        # tools Claude Code's own mode decides on (no forced prompt)
+        s.measure = []                          # GPIB addresses gpib_measure may query without asking
         s.workdir = os.path.expanduser('~/gridlink/work')
         s.memory_dir = os.path.expanduser('~/gridlink/memories')
         s.sessions_dir = os.path.expanduser('~/gridlink/sessions')
@@ -60,6 +63,7 @@ class Config:
 
     def apply(s, d):
         b = d.get('bridge', {}); c = d.get('claude', {}); g = d.get('grid', {}); pm = d.get('permissions', {})
+        s.bridge = str(b.get('kind', s.bridge)).lower()
         s.port = b.get('port', s.port); s.baud = int(b.get('baud', s.baud)); s.address = int(b.get('address', s.address))
         s.model = MODELS.get(c.get('model', ''), c.get('model', s.model))
         s.max_tokens = int(c.get('max_tokens', s.max_tokens)); s.web = bool(c.get('web', s.web))
@@ -83,6 +87,17 @@ class Config:
             if k in g: setattr(s, k, os.path.expanduser(g[k]))
         s.bash_timeout = int(g.get('bash_timeout', s.bash_timeout))
         s.mode = pm.get('mode', s.mode)
+        if 'measure' in pm:
+            m = pm['measure']
+            if not isinstance(m, list) or not all(isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= 30
+                                                  for a in m):
+                raise SystemExit('[permissions] measure must be a list of GPIB addresses (0-30)')
+            s.measure = sorted(set(m))
+        if 'auto_mode' in pm:
+            m = pm['auto_mode']; ok = ('gpib_send', 'grid_command', 'grid_change_files', 'grid_type')
+            if not isinstance(m, list) or not all(x in ok for x in m):
+                raise SystemExit('[permissions] auto_mode must list some of: %s' % ', '.join(ok))
+            s.auto_mode = sorted(set(m))
         if 'bus' in d:
             s.bus = {int(k): str(v) for k, v in d['bus'].items()}
 

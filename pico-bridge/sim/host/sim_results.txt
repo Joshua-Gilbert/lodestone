@@ -1,0 +1,81 @@
+bus_sim on /dev/pts/0
+A  THRUTEST's steps, thrutest handler, address 10
+  PASS  1 bus init (IFC, REN)
+  PASS  2 empty address 30: nobody listens
+  PASS  3 serial poll answers (status 0)
+  PASS  4 *IDN? query returns the bench ID with EOI
+  PASS  5 DCL, then a read returns the ID
+  PASS  6 echo, 31 messages, every byte value both ways
+  PASS  7 SDC clears it (ID, not the old message)
+  PASS  8 DCL clears it
+  PASS  9 REN off/on, GTL, GET, IFC reach the Pi
+B  the other instrument (address 5) with the bridge online
+  PASS  20 writes/reads to address 5 all correct
+  PASS  the bridge passed none of that traffic to the Pi
+  PASS  the bridge still answers afterwards
+C  SRQ and serial poll
+  PASS  SRQ released at first
+  PASS  SRQ asserted after the Pi requests service
+  PASS  serial poll returns 0x45 (RQS + 0x05)
+  PASS  SRQ released after the poll
+  PASS  a second poll returns 0x05 (no RQS)
+  PASS  SRQ stays released after the next message and reply
+  PASS  and the poll after that has no RQS
+  PASS  a second, new request asserts SRQ again
+  PASS  served by its poll (0x45)
+D  big messages
+  PASS  241 bytes in and echoed back
+  PASS  1000 bytes in and echoed back
+  PASS  5000 bytes in and echoed back
+  PASS  20000 bytes in and echoed back
+     Pico NRFD holds (Pi slower than the bus) so far: 0
+H  a message without EOI (ended by UNL), and NRFD flow control when the Pi stalls
+  PASS  message ended by UNL reaches the Pi and is echoed
+  PASS  30000 bytes with the Pi stalled 2.5 s: all accepted, echoed intact
+     (NRFD holds meanwhile: 0 -- the pty's kernel buffer may absorb it all)
+  PASS  30000 bytes with the Pico's USB output stalled 2.5 s: echoed intact
+  PASS  ...and NRFD was held meanwhile (frames wait, nothing dropped)
+I  the daemon stalls 5.8 s (Pico times out and goes offline), then must bring it back by itself
+  PASS  back online without a restart
+E  the Pi daemon stops
+  PASS  bridge offline once the port closes
+  PASS  bridge drives no bus line
+  PASS  a write to 10 finds nobody (like a powered-off instrument)
+  PASS  address 5 still works
+  PASS  daemon restarted: answers again
+F  scpi handler
+  PASS  *IDN?
+  PASS  two queries in one message
+  PASS  an unknown command queues -113
+  PASS  error queue empty again
+  PASS  command error with ESE/SRE set raises SRQ
+  PASS  poll shows RQS + ESB (0x60) + EAV (0x04)
+  PASS  read with no query: times out (488.2), nothing sent
+G  address change from the Pi
+  PASS  nobody at 10 after moving to 7
+  PASS  answers at 7
+  PASS  started with address 30 from the command line/config
+J  gridlink's Pico transport, auto service request (CLAUDE.COM's way of reading)
+  PASS  PicoBridge connects and brings the bridge online at 7
+  PASS  the GRiD's frame reaches the Pi whole
+  PASS  SRQ asserted once the whole answer is in the bridge
+  PASS  serial poll: 60h (RQS + READY)
+  PASS  SRQ released by the poll
+  PASS  polled again before reading: 20h (READY, no RQS)
+  PASS  the read gets the answer with EOI
+  PASS  after the read: 00h
+  PASS  and no SRQ
+  PASS  SDC makes the waiting answer stale: SRQ gone, status 00h
+  PASS  the next exchange works (60h, then its own answer, not the stale one)
+  PASS  50 full-size exchanges (254-byte answers), every one right
+  PASS  20 exchanges of 2056-byte answers (split in 512s), every one right
+  PASS  idle after the reads: no SRQ
+  PASS  a ring asserts SRQ
+  PASS  its poll: 40h (RQS, no READY), and SRQ released
+  PASS  a ring ends when the GRiD sends instead of polling
+  PASS  and that exchange is as usual (60h, its answer)
+  PASS  a ring for an older message is void
+final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '140', 'cmds': '1906', 'rx': '100430', 'tx': '141705', 'polls': '83', 'lost': '0', 'holds': '1', 'fights': '0', 'late': '0'}
+  PASS  no events lost in the Pico
+
+65 of 65 checks passed

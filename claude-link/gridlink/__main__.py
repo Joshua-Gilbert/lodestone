@@ -1,6 +1,6 @@
 """gridlink: Claude for GRiD, Pi side.
 
-    python3 -m gridlink                      serve the GRiD through the AR488 bridge
+    python3 -m gridlink                      serve the GRiD through the GPIB bridge (Pico 2, or the AR488)
     python3 -m gridlink --console            talk to Claude in this terminal (no GRiD)
     python3 -m gridlink --save-bridge        also store the bridge settings in its EEPROM
 
@@ -11,6 +11,7 @@ import argparse, collections, logging, os, signal, sys, threading, time
 from . import glp
 from .config import Config, MODELS
 from .link import AR488Serial, Link, serve
+from .pico import PicoBridge
 from .router import Router
 
 GLYPHS = {0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x83: '\u2192', 0x84: '\u2713', 0x85: '\u2717',
@@ -97,6 +98,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog='gridlink', description='Claude for GRiD - Pi side')
     ap.add_argument('--config', help='TOML settings file')
     ap.add_argument('--port'); ap.add_argument('--baud', type=int); ap.add_argument('--address', type=int)
+    ap.add_argument('--bridge', choices=['pico', 'ar488'], help='which GPIB bridge (default: pico)')
     ap.add_argument('--model', help='opus, sonnet, haiku, fable or a model id')
     ap.add_argument('--mode', choices=['ask', 'edits', 'auto'])
     ap.add_argument('--console', action='store_true', help='chat in this terminal, no GRiD')
@@ -110,6 +112,7 @@ def main(argv=None):
     if a.port: cfg.port = a.port
     if a.baud: cfg.baud = a.baud
     if a.address: cfg.address = a.address
+    if a.bridge: cfg.bridge = a.bridge
     if a.model: cfg.model = MODELS.get(a.model, a.model)
     if a.mode: cfg.mode = a.mode
     if a.app: cfg.app = a.app
@@ -131,8 +134,13 @@ def main(argv=None):
                      % (cfg.source or '~/.config/gridlink/config.toml'))
         return console(cfg, make_client(), log)
 
-    t = AR488Serial(cfg.port, cfg.baud, cfg.address, log=log)
-    log('opening %s at %d baud' % (cfg.port, cfg.baud))
+    if cfg.bridge == 'ar488':
+        port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
+        t = AR488Serial(port, cfg.baud, cfg.address, log=log)
+        log('opening %s at %d baud' % (port, cfg.baud))
+    else:
+        t = PicoBridge(cfg.port, cfg.address, log=log)
+        log('looking for the GPIB-Pico2 bridge (%s)' % cfg.port)
     t.open()
     t.configure()
     if a.save_bridge:
