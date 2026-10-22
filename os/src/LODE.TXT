@@ -395,7 +395,8 @@ into what an earlier line left behind; CHOICE /C with no keys is a
 syntax error (it waited for ever), and so is a SET name too long for
 the shell (it wrote over the shell's own memory).  DIR of a path of
 more than 78 characters says File not found (81 or more hung the
-machine).
+machine), and DIR or COPY on a drive that isn't there no longer
+builds on what the one before left until the shell breaks.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,

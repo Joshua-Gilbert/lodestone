@@ -2859,11 +2859,12 @@ canon:  push    di
         je      .abs
         push    si                      ; relative: from the current directory
         mov     si, di
-        inc     dl
+        mov     byte [si], 0            ; (none if 47h fails, on a drive that
+        inc     dl                      ;  isn't there: not what was left)
         mov     ah, 47h
         int     21h
+        call    strend                  ; (DI -> its NUL)
         pop     si
-        call    .end
         jmp     .comp
 .abs:   inc     si
 .comp:  ; DI = end of what we have (no trailing \ except the root)
@@ -2913,11 +2914,6 @@ canon:  push    di
 .t:     mov     byte [di], 0
         pop     ax
         ret
-.end:   cmp     byte [di], 0
-        je      .ex
-        inc     di
-        jmp     .end
-.ex:    ret
 
 ; ---------------------------------------------------------------------
 ; TYPE file
