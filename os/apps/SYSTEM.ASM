@@ -20,7 +20,7 @@ RUN_API equ 4                           ; (UI_SAVER's tidying)
         org     RUN_ORG
 
 TOP_Y   equ 32                          ; first topic / detail line
-NTOPIC  equ 10
+NTOPIC  equ 11
 INI_MAX equ 1024                        ; LODE.INI: the most we rewrite
 PCOL    equ 18                          ; the details panel: from this column
 LCOL    equ 20                          ; labels
@@ -1567,7 +1567,7 @@ k_space:
         xor     byte [splash_off], 1    ; not saved: as it was (it only
 .rd:    jmp     redraw                  ;  counts at the next start-up)
 .sv:    cmp     word [topics+LV_SEL], 6
-        jne     .x
+        jne     .mt
         xor     al, al
         call    UI_SAVER
         mov     bl, ah
@@ -1575,6 +1575,14 @@ k_space:
         mov     al, 2
         call    UI_SAVER
         call    save_ini
+        jmp     redraw
+.mt:    cmp     word [topics+LV_SEL], 9 ; Multitasking: on or off from the
+        jne     .x                      ;  next start-up
+        call    mt_get
+        xor     byte [mt_want], 1
+        call    save_ini
+        jnc     .rd
+        xor     byte [mt_want], 1
         jmp     redraw
 .x:     ret
 
@@ -1839,6 +1847,45 @@ splash_scan:
         jne     .next
         jmp     .line
 
+; multitasking at the next start-up?  MULTITASK=1 (or On, or Yes) in
+; \LODE.INI, as the kernel reads it -> mt_want.  Read once, as splash_get.
+mt_get: cmp     byte [mt_known], 0
+        jne     mt_scan.x
+        call    ini_read
+; ... from the file in ini_old (CX bytes); all registers kept
+mt_scan:
+        pusha
+        mov     byte [mt_known], 1
+        mov     byte [mt_want], 0
+        mov     si, ini_old
+        mov     bx, si
+        add     bx, cx                  ; BX = its end
+.line:  cmp     si, bx
+        jae     .done
+        mov     di, s_mteq
+        call    ini_is
+        jne     .next
+        add     si, 10                  ; (past "MULTITASK=")
+        cmp     si, bx
+        jae     .done
+        mov     ax, [si]
+        cmp     al, '1'
+        je      .on
+        and     ax, 0DFDFh
+        cmp     al, 'Y'
+        je      .on
+        cmp     ax, 'ON'
+        jne     .done
+.on:    mov     byte [mt_want], 1
+.done:  popa
+.x:     ret
+.next:  cmp     si, bx
+        jae     .done
+        lodsb
+        cmp     al, 10
+        jne     .next
+        jmp     .line
+
 ; FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRINTER= in \LODE.INI for the
 ; font, saver, temporary disk, start-up picture and PrtSc in use: its other
 ; lines are kept, old FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRINTER= lines go, and GRiD's
@@ -1864,9 +1911,12 @@ save_ini:
         mov     [md_ok], al
         call    ini_read                ; the old file
         cmp     byte [splash_known], 0  ; (its SPLASH= line, if not read
-        jne     .kn                     ;  yet: it is kept as it says)
-        call    splash_scan
-.kn:    cmp     cx, INI_MAX             ; (longer than we keep: leave it be)
+        jne     .kn                     ;  yet: it is kept as it says; and
+        call    splash_scan             ;  its MULTITASK= line)
+.kn:    cmp     byte [mt_known], 0
+        jne     .km
+        call    mt_scan
+.km:    cmp     cx, INI_MAX             ; (longer than we keep: leave it be)
         ja      .long
 .new:   mov     si, ini_old
         mov     bx, si
@@ -1888,6 +1938,9 @@ save_ini:
         call    ini_is
         je      .ours
         mov     di, s_printeq
+        call    ini_is
+        je      .ours
+        mov     di, s_mteq
         call    ini_is
         je      .ours
         mov     di, s_mdeq              ; MDISK=: ours only with M: here
@@ -1942,10 +1995,14 @@ save_ini:
         mov     si, s_tidy0
         call    UI_SBSTR
 .wr3:   cmp     byte [splash_off], 0    ; no start-up picture: SPLASH=0
-        je      .wr3p
+        je      .wr3t
         mov     si, s_splash0
         call    UI_SBSTR
-.wr3p:  call    prn_get                 ; a printer driver: PRINTER=NAME;
+.wr3t:  cmp     byte [mt_want], 0       ; multitasking: MULTITASK=1
+        je      .wr3p
+        mov     si, s_mt1
+        call    UI_SBSTR
+.wr3p:  call    prn_get                ; a printer driver: PRINTER=NAME;
         jnz     .wr3d                   ;  none while the ROM's settings name
         call    rom_prn                 ;  one: PRINTER=, so none stays none
         jc      .wr3m                   ;  (the changes' line is read first)
@@ -2124,6 +2181,52 @@ set_back:
 .x:     ret
 
 ; ---------------------------------------------------------------------
+;  Multitasking: on now?  At the next start-up?  (MULTITASK=1 in
+;  \LODE.INI; it stays off without EMS, 32 KB of it free, or LODEMT.SYS)
+; ---------------------------------------------------------------------
+t_mtask:
+        call    mt_get
+        mov     ax, 0F012h              ; on now?  (MTAPI.INC's MT_LIST: CX = 0,
+        xor     cx, cx                  ;  only counted)
+        stc
+        int     21h
+        sbb     al, al
+        inc     al                      ; (AL = 1: on)
+        mov     [mt_now], al
+        call    vstart
+        mov     si, s_on
+        cmp     byte [mt_now], 0
+        jne     .n
+        mov     si, s_off
+.n:     call    UI_SBSTR
+        mov     si, l_mtnow
+        call    pline
+        call    vstart                  ; at the next start-up
+        mov     si, s_on
+        cmp     byte [mt_want], 0
+        jne     .w
+        mov     si, s_off
+.w:     call    UI_SBSTR
+        mov     si, l_mtnext
+        call    pline
+        call    pgap
+        cmp     byte [mt_now], 0        ; asked for, but off: why
+        jne     .t
+        cmp     byte [mt_want], 0
+        je      .t
+        mov     si, s_mtwhy1
+        call    ptext
+        mov     si, s_mtwhy2
+        call    ptext
+        call    pgap
+.t:     mov     si, s_mt1t
+        call    ptext
+        mov     si, s_mt2t
+        call    ptext
+        mov     si, s_mt3t
+        jmp     ptext
+
+; ---------------------------------------------------------------------
 ;  keys
 ; ---------------------------------------------------------------------
 k_enter:
@@ -2159,6 +2262,7 @@ keys:   KEY(K_NONE,      0,       h_topic)
         KEY(K_NONE,      0,       h_enter6)
         KEY(K_SPACE,     k_space, h_space)
         KEY(K_NONE,      0,       h_space2)
+        KEY(K_NONE,      0,       h_space3)
         KEY(K_F5,        k_f5,    h_f5)
         KEY(K_F1,        k_help,  h_help)
         KEY(K_CODE_HELP, k_help,  0)
@@ -2171,9 +2275,9 @@ keys:   KEY(K_NONE,      0,       h_topic)
 ;  data
 ; ---------------------------------------------------------------------
 topics:     dw TOP_Y, NTOPIC, NTOPIC, 0, 0, topic_row, show_topic, 1, PCOL - 3, topic_name
-topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_saver, n_mdisk, n_settings, n_about
-topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_saver, t_mdisk, t_settings, t_about
-topic_band  dw s_band2, s_band2, s_band_clk, s_band_dev, s_band_gp, s_band_font, s_band_sv, s_band_md, s_band_set, s_band2
+topic_names dw n_memory, n_disks, n_clock, n_devices, n_gpib, n_display, n_saver, n_mdisk, n_settings, n_mtask, n_about
+topic_draw  dw t_memory, t_disks, t_clock, t_devices, t_gpib, t_display, t_saver, t_mdisk, t_settings, t_mtask, t_about
+topic_band  dw s_band2, s_band2, s_band_clk, s_band_dev, s_band_gp, s_band_font, s_band_sv, s_band_md, s_band_set, s_band_mt, s_band2
 n_memory    db 'Memory',0
 n_disks     db 'Disks',0
 n_clock     db 'Clock',0
@@ -2183,6 +2287,7 @@ n_display   equ l_display
 n_saver     db 'Screen saver',0
 n_mdisk     db 'Temporary disk',0
 n_settings  equ l_setfile
+n_mtask     db 'Multitasking',0
 n_about     db 'About',0
 
 clock_form: dw s_clocktitle, s_clockprompt, 46, 10, 2
@@ -2200,6 +2305,7 @@ s_band_font db 'RETURN: the next font    SPACE: picture or not    ESC: back',0
 s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
 s_band_md   db 'RETURN: the next size    ESC: back',0
 s_band_set  db "RETURN: back to the ROM's settings    ESC: back",0
+s_band_mt   db 'SPACE: on or off from the next start-up    ESC: back',0
 h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
 h_enter     db 'Return on Clock              set the date and time',0
 h_enter2    db 'Return on GPIB               scan the bus',0
@@ -2209,6 +2315,7 @@ h_enter5    db "Return on Settings           back to the ROM's",0
 h_enter6    db 'Return on Devices            PrtSc: the next printer driver',0
 h_space     db 'Space on Display             the start-up picture or not',0
 h_space2    db 'Space on Screen saver        tidy the disks or not',0
+h_space3    db 'Space on Multitasking        on or off (next start-up)',0
 h_f5        db 'F5                           look again',0
 h_help      db 'CODE-?  or  F1               this help',0
 h_quit      db 'ESC  or  CODE-Q              back to the Executive',0
@@ -2346,6 +2453,20 @@ s_tidy0     db 'TIDY=0', 13, 10, 0
 s_splasheq  db 'SPLASH=',0
 s_splash0   db 'SPLASH=0', 13, 10, 0
 s_mdeq      db 'MDISK=',0
+s_mteq      db 'MULTITASK=',0
+s_mt1       db 'MULTITASK=1', 13, 10, 0
+l_mtnow     db 'Multitasking now',0
+l_mtnext    db 'From the next start-up',0
+s_on        db 'on',0
+s_off       db 'off',0
+s_mtwhy1    db 'Asked for, but off this time: it needs EMS, with',0
+s_mtwhy2    db '32 KB of it free, and LODEMT.SYS beside LODE.SYS.',0
+s_mt1t      db 'Programs started from the Executive run as tasks.',0
+s_mt2t      db 'CODE-Tab: the next task.  CODE-T in the',0
+s_mt3t      db 'Executive: the tasks.  LCMD: START, TASKS, WAIT.',0
+mt_want     db 0                        ; MULTITASK=1 in \LODE.INI
+mt_known    db 0                        ;  (1: read for it)
+mt_now      db 0                        ; (on now)
 s_printeq   db 'PRINTER=',0
 s_romini    db 'R:\LODE.INI',0
 s_prtfile   db 'saves SCREENnn.BMP / .TXT',0

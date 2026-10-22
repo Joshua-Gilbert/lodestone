@@ -22,11 +22,11 @@ nasm -f bin -i ../src/ -o TERMINUS.FNT TERMINUS.ASM
 cd ../drivers
 nasm -f bin -o PS.PRN PS.ASM            # printer drivers, read at PrtSc
 cd ..
-for a in SYSTEM WRITE CALC; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; done
+for a in SYSTEM WRITE CALC TASKS; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; done
 python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
 # ROM 1, the boot ROM (tools/mkrom.py): the kernel first, then the core set
 python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODEMT.SYS src/LODE.PIC src/LCMD.COM \
-    apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN src/CALC.COM src/DEFRAG.COM fonts/TERMINUS.FNT drivers/PS.PRN rom/LODE.INI
+    apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN apps/TASKS.RUN src/CALC.COM src/DEFRAG.COM fonts/TERMINUS.FNT drivers/PS.PRN rom/LODE.INI
 cd tests
 nasm -f bin -o TESTDOS.COM TESTDOS.ASM
 nasm -f bin -o UPPER.COM UPPER.ASM
