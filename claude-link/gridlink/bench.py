@@ -94,12 +94,6 @@ def main(argv=None):
     info = link(sock)
     print('link: %s; Pi -> GRiD frames up to %d payload bytes (the GRiD takes %d), GRiD -> Pi up to %d'
           % (info['bridge'], info['maxpay'], info['grid_rx'], info['grid_maxpay']))
-    tool(sock, 'grid_info', {})                       # wake the link: the first call waits for an idle POLL
-    rt = [tool(sock, 'grid_info', {})[0] for _ in range(a.trips)]
-    rt.sort()
-    print('round trip (grid_info, %d): best %.1f ms, median %.1f ms, worst %.1f ms'
-          % (a.trips, rt[0] * 1e3, rt[len(rt) // 2] * 1e3, rt[-1] * 1e3))
-
     if a.usb:
         print('bridge USB (PINGs from the Pi, answered by the Pico):')
         for count, size in ((1, 1), (20, 1), (1, 512), (4, 512), (40, 512)):
@@ -109,6 +103,12 @@ def main(argv=None):
             best = min(r)
             print('  %2d x %3d bytes: best %6.2f ms%s' % (count, size, best * 1e3,
                   '  = %.0f KB/s' % (count * size / best / 1024) if count * size >= 2048 else ''))
+
+    tool(sock, 'grid_info', {})                       # wake the link: the first call waits for an idle POLL
+    rt = [tool(sock, 'grid_info', {})[0] for _ in range(a.trips)]
+    rt.sort()
+    print('round trip (grid_info, %d): best %.1f ms, median %.1f ms, worst %.1f ms'
+          % (a.trips, rt[0] * 1e3, rt[len(rt) // 2] * 1e3, rt[-1] * 1e3))
 
     ok = True
     if not a.sweep:
