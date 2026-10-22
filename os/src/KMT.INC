@@ -90,6 +90,9 @@ TE_SF       equ 23                      ; 1: its screen is kept there
 TE_VF       equ 24                      ; VF_DIRECT, and its SPF_BG and SPF_FREEZE
 TE_KILL     equ 25                      ; 1: MT_KILL ended it (it ends when it
                                         ;  next runs: mt_kdie)
+TE_PST      equ 26                      ; parked (TS_PARKED): its state before
+TE_PH       equ 27                      ;  it, the EMS handle its region is in
+TE_PSZ      equ 28                      ;  (MT's), and the region's paragraphs
 VF_DIRECT   equ 1                       ; (it wrote the screen itself, or was in
                                         ;  graphics, when last switched from in
                                         ;  front: frozen in the background)
@@ -125,6 +128,9 @@ TX_GSN      equ TX0_PARAS * 16          ; the vector table at its spawn (a
                                         ;  task's: the ones left pointing into
                                         ;  its region at its end put back)
 TX_PARAS    equ TX0_PARAS + 1024 / 16
+%if TX_PARAS * 16 > 4000h
+%error "TX: in a parked region's first EMS page (mt_pmap)"
+%endif
 MT_NVEC     equ 29                      ; (mt_vrun's and mt_vfr's counts)
 MT_NFV      equ 2
 
@@ -227,6 +233,9 @@ mt_vrun     db      22h, 23h, 24h, 21h, 28h, 2Fh
 %error "mt_vrun: MT_NVEC"
 %endif
 mt_vfr      db      09h, 1Bh
+%if mt_vfr - mt_vrun != MT_NVEC
+%error "mt_vfr: just after mt_vrun (mt_own, mt_pinned)"
+%endif
 mt_fv       times   MT_NFV * 2 dw 0     ; the front task's 09h and 1Bh while
                                         ;  another runs (mt_vfr's order)
 mt_vr       dw      0                   ; (mt_vrep: the memory, its end, the
@@ -234,6 +243,18 @@ mt_ve       dw      0                   ;  table put back from, at DS:mt_vsb,
 mt_vsb      dw      0                   ;  and 1 if the vector table is done
 mt_vtab     db      0                   ;  too; mt_vfr's from mt_vfs)
 mt_vfs      times   MT_NFV * 2 dw 0
+mt_mv       dd      0                   ; (mt_move: INT 67h AH=57h's block: the
+mt_mvs      db      0                   ;  length, then the source and the
+            dw      0, 0, 0             ;  destination, each its type, handle,
+mt_mvd      db      0                   ;  offset, and segment or page)
+            dw      0, 0, 0
+mt_psv      db      0                   ; (mt_pmap: window 0 as it was)
+mt_hold     times   EMS_NH db 0         ; a parked task's programs' EMS handles:
+mt_hown     times   EMS_NH dw 0         ;  that task (0: none), their owners
+mt_xr       dw      0                   ; (mt_inr: a parked task's own region,
+mt_xe       dw      0                   ;  while its TX is looked at: its own
+                                        ;  vectors into it aren't another's,
+                                        ;  who may be there now; else empty)
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
@@ -1337,8 +1358,25 @@ mt_vrep:
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_FREE
         je      .tn
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        je      .tp
         mov     es, [cs:bx+TE_TX]
-        push    ax
+        call    .one
+.tn:    inc     al
+        cmp     al, MT_TASKS
+        jb      .t
+        popf
+        ret
+.tp:    pushf                           ; (parked: its TX in its pages' first,
+        cli                             ;  in window 0 meanwhile; its pages
+        call    mt_pmap                 ;  gone, nothing)
+        jc      .tq
+        call    .one
+        call    mt_punmap
+.tq:    popf
+        jmp     .tn
+; task AL's TX at ES.  AL kept
+.one:   push    ax
         mov     di, TX_VEC
         mov     bx, mt_vrun
         mov     cx, MT_NVEC
@@ -1349,16 +1387,12 @@ mt_vrep:
         call    .fx
         pop     ax
         or      al, al                  ; (task 0's TX has no TX_GSN)
-        jz      .tn
+        jz      .or
         push    ax
         mov     di, TX_GSN
         call    .fa
         pop     ax
-.tn:    inc     al
-        cmp     al, MT_TASKS
-        jb      .t
-        popf
-        ret
+.or:    ret
 ; CX vectors at ES:DI, their numbers at CS:BX.  AX, BX, CX, SI, DI changed
 .fx:    call    mt_inr
         jc      .fn
@@ -1482,8 +1516,8 @@ s_24r   db      ' reading drive ', 0
 s_24wr  db      ' writing drive ', 0
 s_24q   db      ': Abort, Retry, Fail? ', 0
 
-; the vector at ES:DI points into the region mt_vr..mt_ve?  CF if not.
-; AX changed
+; the vector at ES:DI points into the region mt_vr..mt_ve, and not into
+; mt_xr..mt_xe?  CF if not.  AX changed
 mt_inr: mov     ax, [es:di]
         shr     ax, 4
         add     ax, [es:di+2]
@@ -1492,7 +1526,11 @@ mt_inr: mov     ax, [es:di]
         jb      .no
         cmp     ax, [cs:mt_ve]
         jae     .no
-        clc
+        cmp     ax, [cs:mt_xr]
+        jb      .y
+        cmp     ax, [cs:mt_xe]
+        jb      .no
+.y:     clc
         ret
 .no:    stc
         ret
@@ -1511,6 +1549,10 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_frontc
         cmp     al, MT_KILL
         je      mt_kill
+        cmp     al, MT_PARK
+        je      mt_park
+        cmp     al, MT_UNPARK
+        je      mt_unpark
         cmp     al, MT_SCREEN
         je      mt_screen
         cmp     al, 1
@@ -1589,6 +1631,8 @@ mt_frontc:
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_FREE
         je      mt_bad
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        je      mt_park.r5
         mov     [cs:mt_swreq], al
         jmp     KSEG:ok
 
@@ -1606,7 +1650,11 @@ mt_kill:
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_FREE
         je      mt_bad
-        mov     byte [cs:bx+TE_KILL], 1
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        jne     .k
+        call    mt_up                   ; (parked: back first, then as any)
+        jc      mt_fail
+.k:     mov     byte [cs:bx+TE_KILL], 1
         cmp     al, [cs:mt_cur]
         jne     .o
         call    mt_kok                  ; its own: now, unless the call came
@@ -1640,6 +1688,653 @@ mt_kok: call    mt_can
         pop     es
 .x:     ret
 .no:    or      sp, sp                  ; (NZ)
+        ret
+
+; MT_PARK: task BL's region to EMS, given back (mt_pk)
+mt_park:
+        mov     al, [bp+F_BX]
+        cmp     al, MT_TASKS
+        jae     mt_bad
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        je      mt_bad
+        call    mt_pk
+        jc      mt_fail
+        jmp     KSEG:ok
+.r5:    mov     ax, 5
+        jmp     mt_fail
+
+; MT_UNPARK: parked task BL's region back where it was (mt_up)
+mt_unpark:
+        mov     al, [bp+F_BX]
+        cmp     al, MT_TASKS
+        jae     mt_bad
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        jne     mt_bad
+        call    mt_up
+        jc      mt_fail
+        jmp     KSEG:ok
+
+; task AL (its entry at BX, not free) parked: its region copied to pages
+; of MT's own (their owner MT's segment, which no PSP has: no program's end
+; takes them, and mt_pchk knows them from any other's) and freed.  Not task
+; 0, the running one, the one in front, one being ended or parked
+; already, nor one a vector points into (mt_pinned): AX = 5.  Not enough
+; EMS: AX = 8.  CF then, nothing changed.  DS = KSEG; AL, BX kept
+mt_pk:  push    cx
+        push    dx
+        push    es
+        push    ax
+        mov     cx, 5
+        or      al, al
+        jz      .no
+        cmp     al, [cs:mt_cur]
+        je      .no
+        cmp     al, [cs:mt_front]
+        je      .no
+        cmp     byte [cs:bx+TE_KILL], 0
+        jne     .no
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        je      .no
+        mov     dx, [cs:bx+TE_REG]      ; the region and its paragraphs
+        mov     [cs:mt_vr], dx
+        dec     dx
+        mov     es, dx
+        mov     dx, [es:3]
+        mov     [cs:bx+TE_PSZ], dx
+        add     dx, [cs:mt_vr]
+        mov     [cs:mt_ve], dx
+        call    mt_pinned
+        jc      .no
+        mov     cx, 8
+        push    bx                      ; its pages (16 KB: 1,024 paragraphs)
+        mov     bx, [cs:bx+TE_PSZ]
+        add     bx, 1023
+        shr     bx, 10
+        mov     ah, 43h
+        int     67h
+        pop     bx
+        or      ah, ah
+        jnz     .no
+        call    mt_hnew                 ; (no other entry keeps that handle)
+        mov     [cs:bx+TE_PH], dl
+        push    bx                      ; (its owner: MT's segment)
+        mov     bl, dl
+        xor     bh, bh
+        shl     bx, 2
+        mov     [ems_h + bx + 2], cs
+        pop     bx
+        xor     al, al                  ; the region to them
+        call    mt_move
+        jc      .fr
+        pop     ax                      ; its programs' EMS kept from their
+        push    ax                      ;  namesakes meanwhile (mt_hhide)
+        call    mt_hhide
+        mov     ax, [cs:bx+TE_REG]      ; and the region freed
+        dec     ax
+        mov     es, ax
+        mov     word [es:1], 0
+        mov     al, [cs:bx+TE_STATE]
+        mov     [cs:bx+TE_PST], al
+        mov     byte [cs:bx+TE_STATE], TS_PARKED
+        pop     ax                      ; (asked to the front: mt_swnow passes
+        pop     es                      ;  it by)
+        pop     dx
+        pop     cx
+        clc
+        ret
+.fr:    mov     dl, [cs:bx+TE_PH]       ; (the copy failed: its pages back)
+        xor     dh, dh
+        mov     ah, 45h
+        int     67h
+        mov     byte [cs:bx+TE_PH], 0
+.no:    pop     ax
+        mov     ax, cx
+        pop     es
+        pop     dx
+        pop     cx
+        stc
+        ret
+
+; parked task AL (its entry at BX) back: its region where it was (tasks
+; in the way parked first: mt_take, mt_pk), copied back from its pages,
+; which go back, and its state as before it was parked.  CF: AX = 8 (the
+; place has memory in it not a task's, or a task's that can't be parked;
+; or its pages are gone); tasks parked on the way stay parked.  DS = KSEG;
+; AL, BX kept
+mt_up:  push    cx
+        push    dx
+        push    si
+        push    es
+        push    ax
+        mov     cx, 8
+        call    mt_pchk
+        jc      .no
+.t:     call    mt_take
+        jnc     .got
+        cmp     al, 0FFh
+        je      .no
+        push    bx                      ; (task AL in the way: parked)
+        call    mt_ent
+        call    mt_pk
+        pop     bx
+        jnc     .t
+        jmp     short .no
+.got:   mov     al, 1                   ; the region back
+        call    mt_move
+        jc      .bad
+        mov     dx, [cs:bx+TE_REG]      ; its MCB: the system's, "T1".."T7"
+        dec     dx
+        mov     es, dx
+        pop     ax
+        push    ax
+        add     al, '0'
+        mov     ah, al
+        mov     al, 'T'
+        mov     [es:8], ax
+        xor     ax, ax
+        mov     [es:10], ax
+        mov     [es:12], ax
+        mov     [es:14], ax
+        pop     ax                      ; its programs' EMS theirs again
+        push    ax
+        call    mt_hshow
+        mov     dl, [cs:bx+TE_PH]       ; its pages given back
+        xor     dh, dh
+        mov     ah, 45h
+        int     67h
+        mov     byte [cs:bx+TE_PH], 0
+        mov     al, [cs:bx+TE_PST]
+        mov     [cs:bx+TE_STATE], al
+        pop     ax
+        pop     es
+        pop     si
+        pop     dx
+        pop     cx
+        clc
+        ret
+.bad:   mov     dx, [cs:bx+TE_REG]      ; (the copy failed: the place freed
+        dec     dx                      ;  again, it stays parked)
+        mov     es, dx
+        mov     word [es:1], 0
+.no:    pop     ax
+        mov     ax, cx
+        pop     es
+        pop     si
+        pop     dx
+        pop     cx
+        stc
+        ret
+
+; the region of the entry at BX (TE_REG, TE_PSZ) taken where it was: the
+; free block holding it (the arena walked from mt_mcb0, free neighbours
+; merged, as in mt_carve) split round it; its MCB owner 8 ("T" and the
+; task: mt_up's).  CF if something is in the way: AL = the task whose
+; region it is, or FFh (memory not a task's).  BX kept
+mt_take:
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    es
+        push    ds
+        mov     si, [cs:bx+TE_REG]
+        dec     si                      ; SI: its MCB's place
+        mov     di, si
+        add     di, [cs:bx+TE_PSZ]
+        inc     di                      ; DI: just past it
+        mov     ax, [cs:mt_mcb0]
+.w:     mov     es, ax
+        mov     cl, [es:0]              ; (a chain gone bad: no)
+        cmp     cl, 'M'
+        je      .w1
+        cmp     cl, 'Z'
+        jne     .oth
+.w1:    cmp     word [es:1], 0
+        jne     .e
+.mg:    cmp     byte [es:0], 'M'        ; free: the free ones after it merged
+        jne     .e
+        mov     cx, ax
+        add     cx, [es:3]
+        inc     cx
+        mov     ds, cx
+        cmp     word [ds:1], 0
+        jne     .e
+        mov     cl, [ds:0]
+        mov     [es:0], cl
+        mov     cx, [ds:3]
+        inc     cx
+        add     [es:3], cx
+        jmp     .mg
+.e:     mov     cx, ax
+        add     cx, [es:3]
+        inc     cx                      ; CX: just past this block
+        cmp     cx, si
+        jbe     .nx                     ; (below the place)
+        cmp     ax, di
+        jae     .oth                    ; (past it: can't be)
+        cmp     word [es:1], 0
+        jne     .in                     ; in the way
+        cmp     ax, si
+        ja      .oth                    ; (can't be: the one before had it)
+        cmp     cx, di
+        jb      .nx                     ; (free, but what follows is in the way)
+        mov     dl, [es:0]              ; the place in it: what is below it
+        cmp     ax, si                  ;  stays free
+        je      .h
+        mov     byte [es:0], 'M'
+        push    si
+        sub     si, ax
+        dec     si
+        mov     [es:3], si
+        pop     si
+.h:     mov     es, si                  ; the region
+        mov     byte [es:0], 'M'
+        mov     word [es:1], 8
+        mov     ax, di
+        sub     ax, si
+        dec     ax
+        mov     [es:3], ax
+        cmp     cx, di
+        je      .z
+        mov     es, di                  ; what is above it stays free
+        mov     [es:0], dl
+        mov     word [es:1], 0
+        sub     cx, di
+        dec     cx
+        mov     [es:3], cx
+        clc
+        jmp     short .x
+.z:     mov     [es:0], dl              ; (the end of it: the region's letter)
+        clc
+        jmp     short .x
+.nx:    cmp     byte [es:0], 'Z'
+        je      .oth
+        mov     ax, cx
+        jmp     .w
+.in:    cmp     word [es:1], 8          ; a task's region ("T1".."T7", that
+        jne     .oth                    ;  task's, resident)?
+        cmp     byte [es:8], 'T'
+        jne     .oth
+        mov     al, [es:9]
+        sub     al, '1'
+        cmp     al, MT_TASKS - 1
+        jae     .oth
+        inc     al
+        push    bx
+        call    mt_ent
+        mov     cx, es
+        inc     cx
+        cmp     [cs:bx+TE_REG], cx
+        jne     .ob
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        je      .ob
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        je      .ob
+        pop     bx
+        stc
+        jmp     short .x
+.ob:    pop     bx
+.oth:   mov     al, 0FFh
+        stc
+.x:     pop     ds
+        pop     es
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        ret
+
+; the region of the entry at BX to its pages (AL = 0) or back (AL = 1),
+; INT 67h AH=57h (interrupts on as it copies; meanwhile an interrupt's INT
+; 10h goes to the BIOS: mt_vbusy).  CF if it failed.  All kept but the
+; flags
+mt_move:
+        push    ds
+        push    si
+        push    ax
+        push    dx
+        push    cs
+        pop     ds
+        mov     dx, [bx+TE_PSZ]         ; the length: its paragraphs * 16
+        mov     si, dx
+        shl     si, 4
+        mov     [mt_mv], si
+        shr     dx, 12
+        mov     [mt_mv + 2], dx
+        push    di
+        mov     si, mt_mvs              ; the region: the source (to its
+        mov     di, mt_mvd              ;  pages) or the destination
+        or      al, al
+        jz      .c
+        xchg    si, di
+.c:     mov     byte [si], 0            ; (conventional, at its start)
+        mov     word [si + 1], 0
+        mov     word [si + 3], 0
+        mov     dx, [bx+TE_REG]
+        mov     [si + 5], dx
+        mov     si, di                  ; its pages: the other side, page 0
+        pop     di
+        mov     byte [si], 1
+        mov     dl, [bx+TE_PH]
+        xor     dh, dh
+        mov     [si + 1], dx
+        mov     word [si + 3], 0
+        mov     word [si + 5], 0
+        mov     si, mt_mv
+        mov     dl, 1
+        xchg    dl, [mt_vbusy]
+        mov     ax, 5700h
+        int     67h
+        mov     [mt_vbusy], dl
+        neg     ah                      ; (CF if AH isn't 0)
+        pop     dx
+        pop     ax
+        pop     si
+        pop     ds
+        ret
+
+; task AL (its entry at BX) parked: the EMS handles whose owner is a PSP
+; in its region (its programs') get owner FFFFh, which no PSP has, the
+; owner kept in mt_hown and the task in mt_hold.  Else a program run in
+; its place meanwhile, at the same segment (a task there is laid out as it
+; was), would free them at its end (terminate's ems_free_owner, mt_owners).
+; All kept
+mt_hhide:
+        pusha
+        push    ds
+        pushf
+        cli
+        push    KSEG
+        pop     ds
+        mov     cx, [cs:bx+TE_REG]
+        mov     dx, cx
+        add     dx, [cs:bx+TE_PSZ]
+        xor     di, di                  ; (handle 0: the system's)
+.l:     inc     di
+        cmp     di, EMS_NH
+        jae     .x
+        mov     si, di
+        shl     si, 2
+        cmp     byte [ems_h + si], 0FFh ; (closed)
+        je      .l
+        mov     bp, [ems_h + si + 2]
+        cmp     bp, cx
+        jb      .l
+        cmp     bp, dx
+        jae     .l
+        mov     [cs:mt_hold + di], al
+        mov     word [ems_h + si + 2], 0FFFFh
+        shl     di, 1
+        mov     [cs:mt_hown + di], bp
+        shr     di, 1
+        jmp     .l
+.x:     popf
+        pop     ds
+        popa
+        ret
+
+; task AL back: the handles mt_hhide kept for it their owners' again (one
+; that isn't FFFFh any more was freed meanwhile, maybe given out again:
+; not touched).  All kept
+mt_hshow:
+        pusha
+        push    ds
+        pushf
+        cli
+        push    KSEG
+        pop     ds
+        xor     di, di
+.l:     inc     di
+        cmp     di, EMS_NH
+        jae     .x
+        cmp     [cs:mt_hold + di], al
+        jne     .l
+        mov     byte [cs:mt_hold + di], 0
+        mov     si, di
+        shl     si, 2
+        cmp     byte [ems_h + si], 0FFh
+        je      .l
+        cmp     word [ems_h + si + 2], 0FFFFh
+        jne     .l
+        shl     di, 1
+        mov     bp, [cs:mt_hown + di]
+        shr     di, 1
+        mov     [ems_h + si + 2], bp
+        jmp     .l
+.x:     popf
+        pop     ds
+        popa
+        ret
+
+; CF if the parked region of the entry at BX has gone from its pages: its
+; handle closed, not MT's (its owner MT's segment: mt_pk), or not of its
+; size (a program freed it, and it was given out again).  Else SI = the handle's record (at
+; KSEG:ems_h + SI).  AX changed
+mt_pchk:
+        xor     ax, ax
+        mov     al, [cs:bx+TE_PH]
+        or      al, al
+        jz      .no
+        mov     si, ax
+        shl     si, 2
+        push    ds
+        push    KSEG
+        pop     ds
+        mov     ax, [cs:bx+TE_PSZ]
+        add     ax, 1023
+        shr     ax, 10
+        cmp     byte [ems_h + si], 0FFh
+        je      .nd
+        push    ax
+        mov     ax, cs
+        cmp     [ems_h + si + 2], ax
+        pop     ax
+        jne     .nd
+        cmp     [ems_h + si + 1], al
+        jne     .nd
+        pop     ds
+        clc
+        ret
+.nd:    pop     ds
+.no:    stc
+        ret
+
+; window 0: the first page of the parked region of the entry at BX (its
+; TX: at EMS_FRAME:0) -> ES = EMS_FRAME, window 0's page register kept in
+; mt_psv (mt_punmap puts it back), and its own region mt_inr's to pass by
+; (its own vectors may point into it; another task may be there now).
+; CF if its pages are gone (mt_pchk), nothing changed.  Interrupts off.  All kept but ES and the flags;
+; mt_punmap keeps all
+mt_pmap:
+        push    ds
+        push    si
+        push    ax
+        push    dx
+        call    mt_pchk
+        jc      .x
+        push    KSEG
+        pop     ds
+        mov     al, [ems_h + si]        ; (its run's start)
+        xor     ah, ah
+        mov     si, ax
+        mov     dx, EMS_PORT
+        in      al, dx
+        mov     [cs:mt_psv], al
+        mov     al, [ems_ltab + si]
+        out     dx, al
+        push    EMS_FRAME
+        pop     es
+        mov     ax, [cs:bx+TE_REG]      ; (its own region: mt_inr passes it by)
+        mov     [cs:mt_xr], ax
+        add     ax, [cs:bx+TE_PSZ]
+        mov     [cs:mt_xe], ax
+        clc
+.x:     pop     dx
+        pop     ax
+        pop     si
+        pop     ds
+        ret
+mt_punmap:
+        push    ax
+        push    dx
+        mov     dx, EMS_PORT
+        mov     al, [cs:mt_psv]
+        out     dx, al
+        mov     word [cs:mt_xr], 0
+        mov     word [cs:mt_xe], 0
+        pop     dx
+        pop     ax
+        ret
+
+; DL = a handle MT was just given: no entry keeps it as its screen's or
+; its parked region's (its own freed by a program, given out again: it
+; has none now).  All kept
+mt_hnew:
+        push    ax
+        push    bx
+        xor     al, al
+.l:     call    mt_ent
+        cmp     [cs:bx+TE_SH], dl
+        jne     .p
+        mov     word [cs:bx+TE_SH], 0
+.p:     cmp     [cs:bx+TE_PH], dl
+        jne     .n
+        mov     byte [cs:bx+TE_PH], 0
+.n:     inc     al
+        cmp     al, MT_TASKS
+        jb      .l
+        pop     bx
+        pop     ax
+        ret
+
+; CF if a vector points into mt_vr..mt_ve (the region of the entry at
+; BX): in the table (each with interrupts off), mt_fv, or another task's
+; own: its TX_VEC and TX_FVEC (the running one's TX_VEC are the table's;
+; its TX_FVEC, if it is behind), and in its TX_GSN the machine's (not a
+; task's own: those are put back from its TX at its end).  A parked
+; task's TX through window 0 (mt_pmap), interrupts off.  All kept
+mt_pinned:
+        pusha
+        push    es
+        cld
+        mov     bp, bx                  ; (the one asked about)
+        xor     di, di
+        mov     es, di
+        mov     cx, 256
+        call    .sc
+        jc      .x
+        push    cs
+        pop     es
+        mov     di, mt_fv
+        mov     cx, MT_NFV
+        call    .sc
+        jc      .x
+        xor     al, al
+.t:     cmp     al, [cs:mt_cur]
+        je      .tc
+        call    mt_ent
+        cmp     bx, bp
+        je      .tn
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        je      .tn
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        je      .tp
+        mov     es, [cs:bx+TE_TX]
+        call    .tx
+        jc      .x
+.tn:    inc     al
+        cmp     al, MT_TASKS
+        jb      .t
+        clc
+.x:     pop     es
+        popa
+        ret
+.tp:    pushf
+        cli
+        call    mt_pmap
+        cmc
+        jnc     .tq                     ; (its pages gone: nothing to see)
+        call    .tx
+        call    mt_punmap
+.tq:    sbb     si, si                  ; (CF: SI = FFFFh)
+        popf
+        neg     si
+        jc      .x
+        jmp     .tn
+.tc:    call    mt_ent                  ; the running one (never parked)
+        mov     es, [cs:bx+TE_TX]
+        cmp     al, [cs:mt_front]
+        je      .tg
+        push    ax                      ; behind: its own 09h and 1Bh
+        mov     di, TX_FVEC
+        mov     cx, MT_NFV
+        call    .sc
+        pop     ax
+        jc      .x
+.tg:    call    .gs
+        jc      .x
+        jmp     .tn
+; task AL's TX at ES -> CF if one there.  AL kept
+.tx:    push    ax
+        mov     di, TX_VEC              ; (TX_FVEC just after it)
+        mov     cx, MT_NVEC + MT_NFV
+        call    .sc
+        pop     ax
+        jc      .tr0
+; its TX_GSN's (task AL's TX at ES): CF if one there.  AL kept
+.gs:    push    ax
+        or      al, al                  ; (task 0's has no TX_GSN)
+        jz      .tr
+        mov     di, TX_GSN
+        xor     dx, dx
+.g:     call    mt_own
+        jc      .gn
+        call    mt_inr
+        jnc     .gy
+.gn:    add     di, 4
+        inc     dl
+        jnz     .g
+        clc
+.tr:    pop     ax
+.tr0:   ret
+.gy:    stc
+        jmp     .tr
+; CX vectors at ES:DI, each with interrupts off (a hook's change can't be
+; half read) -> CF if one points there.  AX, CX, DI changed
+.sc:    pushf
+        cli
+        call    mt_inr
+        jnc     .y
+        popf
+        add     di, 4
+        loop    .sc
+        clc
+        ret
+.y:     popf
+        stc
+        ret
+
+; CF if vector DL is a task's own (mt_vrun's, mt_vfr's).  All kept but
+; the flags
+mt_own: push    ax
+        push    cx
+        push    di
+        push    es
+        push    cs
+        pop     es
+        mov     al, dl
+        mov     di, mt_vrun
+        mov     cx, MT_NVEC + MT_NFV    ; (mt_vfr just after it)
+        repne   scasb
+        stc
+        je      .x
+        clc
+.x:     pop     es
+        pop     di
+        pop     cx
+        pop     ax
         ret
 
 ; a task MT_KILL ended, going on (mt_load's return, or mt_kill in its own
@@ -1892,15 +2587,8 @@ mt_spawn:
         mov     es, cx
         mov     word [es:1], 0
         jmp     .room
-.sh:    xor     al, al                  ; an entry with this number (its own
-.dh:    call    mt_ent                  ;  freed by a program, given out
-        cmp     [cs:bx+TE_SH], dl       ;  again): it keeps none
-        jne     .dn
-        mov     word [cs:bx+TE_SH], 0
-.dn:    inc     al
-        cmp     al, MT_TASKS
-        jb      .dh
-        mov     bx, [cs:mt_new]
+.sh:    call    mt_hnew                 ; (an entry with this number keeps
+        mov     bx, [cs:mt_new]         ;  none: a program freed it)
         mov     [cs:bx+TE_SH], dl
         mov     byte [cs:bx+TE_SF], 1   ; (kept: mode 3, clear, below)
         mov     al, [cs:mt_sflags]
@@ -2092,6 +2780,7 @@ mt_spawn:
         mov     bx, [cs:mt_new]
         mov     byte [cs:bx+TE_STATE], TS_RUN
         mov     byte [cs:bx+TE_KILL], 0
+        mov     byte [cs:bx+TE_PH], 0
         mov     word [cs:bx+TE_EXIT], 0
         call    mt_sync                 ; (the front one's screen shadowed now)
         test    byte [cs:mt_sflags], SPF_FRONT
@@ -2192,8 +2881,10 @@ mt_hot: pushf
         and     al, MT_TASKS - 1
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_FREE
+        je      .ln
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
         jne     .y
-        loop    .l
+.ln:    loop    .l
         jmp     short .no               ; (the only one)
 .y:     cmp     al, [cs:mt_front]
         jne     .q
@@ -2240,7 +2931,9 @@ mt_swnow:
         push    bx
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_FREE
-        pop     bx
+        je      .rp
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+.rp:    pop     bx
         je      .r
         or      ah, ah                  ; (only now: a call meanwhile, refused,
         jnz     .m                      ;  leaves this one's; and from a key

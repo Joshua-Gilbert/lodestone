@@ -21,7 +21,8 @@ MT_LIST     equ 12h                     ; the tasks: ES:DI = room for CX records
                                         ;  as fit), AL = the front task's number,
                                         ;  AH = the caller's
 MT_FRONT    equ 13h                     ; BL = a task: it comes to the front at
-                                        ;  the next key wait.  CF: AX = 1 (none).
+                                        ;  the next key wait.  CF: AX = 1 (none),
+                                        ;  5 (parked).
                                         ;  (When the front task ends, task 0
                                         ;  comes to the front.)
 MT_KILL     equ 14h                     ; BL = a task: it ends, whatever runs in
@@ -35,8 +36,26 @@ MT_KILL     equ 14h                     ; BL = a task: it ends, whatever runs in
                                         ;  (from an interrupt's handler, an INT
                                         ;  24h handler or a mouse event
                                         ;  handler: at its next safe point).
-                                        ;  CF: AX = 1 (no such task),
-                                        ;  5 (task 0, the Executive)
+                                        ;  A parked task: brought back first
+                                        ;  (MT_UNPARK).  CF: AX = 1 (no such
+                                        ;  task), 5 (task 0, the Executive), 8
+                                        ;  (parked, and it can't be brought back)
+MT_PARK     equ 15h                     ; BL = a task: its memory (its region)
+                                        ;  copied to EMS and given back; it
+                                        ;  doesn't run till MT_UNPARK.  CF: AX =
+                                        ;  1 (no such task), 5 (task 0, the
+                                        ;  caller's own, the one in front, one
+                                        ;  being ended or parked already, or one
+                                        ;  a vector points into: pinned), 8 (not
+                                        ;  enough EMS, or the copy failed)
+MT_UNPARK   equ 16h                     ; BL = a parked task: its memory back at
+                                        ;  the same place (tasks in the way
+                                        ;  parked first), and it goes on as it
+                                        ;  was (behind).  CF: AX = 1 (no such
+                                        ;  task, or not parked), 8 (the place
+                                        ;  taken by memory not a task's, or by a
+                                        ;  task that can't be parked; or its
+                                        ;  EMS gone, or the copy failed)
 MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back
                                         ;  after a screen saver): not counted
@@ -64,7 +83,8 @@ SPF_FREEZE  equ 4                       ; it never runs in the background
 ; ---- a task's record (MT_LIST) ----------------------------------------
 TR_ID       equ 0                       ; byte: its number
 TR_STATE    equ 1                       ; byte: TS_*
-TR_PSP      equ 2                       ; word: its stub's PSP (task 0: the root's)
+TR_PSP      equ 2                       ; word: its stub's PSP (task 0: the root's;
+                                        ;  parked: where it will be once back)
 TR_NAME     equ 4                       ; its program's name, NUL-padded: a
 TR_NAMELEN  equ 12                      ;  whole 8.3 name fills it (no NUL)
 MT_REC      equ 16
@@ -79,3 +99,4 @@ TS_WAITF    equ 3                       ; waiting to be in front (a graphics
 TS_FROZEN   equ 4                       ; (MT_LIST only) ready, but frozen in the
                                         ;  background: it writes the screen
                                         ;  itself, or SPF_FREEZE
+TS_PARKED   equ 5                       ; parked in EMS (MT_PARK): it doesn't run

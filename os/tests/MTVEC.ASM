@@ -29,6 +29,9 @@
 ;      1Bh not put back)
 ;   Y  writes INT 09h in the table itself, puts it back at once with
 ;      AH=25h, waits N ticks and writes FILE ("k")
+;   L  as P, but reads a line (AH=0Ah) before it ends
+;   I  sets INT 62h (the machine's) to a handler of its own, reads a line,
+;      puts it back and ends
 ; nasm -f bin -i ../src/ -o MTVEC.COM MTVEC.ASM
 cpu 286
 org 100h
@@ -83,6 +86,10 @@ org 100h
         je      m_y
         cmp     al, 'P'
         je      m_p
+        cmp     al, 'L'
+        je      m_p
+        cmp     al, 'I'
+        je      m_i
         cmp     al, 'Q'
         je      m_q
         cmp     al, 'C'
@@ -139,6 +146,28 @@ m_g:    mov     ax, 2562h
         int     21h
 .x:     mov     ax, 4C00h
         int     21h
+
+m_i:    mov     ax, 3562h
+        int     21h
+        mov     [old62], bx
+        mov     [old62 + 2], es
+        mov     ax, 2562h
+        mov     dx, hret
+        int     21h
+        call    rd_line
+        push    ds
+        lds     dx, [old62]
+        mov     ax, 2562h
+        int     21h
+        pop     ds
+        mov     ax, 4C00h
+        int     21h
+
+rd_line:
+        mov     dx, line
+        mov     ah, 0Ah
+        int     21h
+        ret
 
 m_v:    call    wait_n
         mov     di, buf
@@ -307,7 +336,11 @@ m_pq:   push    cs
         mov     dx, s_prog
         mov     bx, pb
         int     21h
-        cmp     byte [mode], 'C'        ; (C: INT 1Ch back, then the end)
+        cmp     byte [mode], 'L'        ; (L: a line first)
+        jne     .cq
+        call    rd_line
+        jmp     short .e
+.cq:    cmp     byte [mode], 'C'        ; (C: INT 1Ch back, then the end)
         jne     .q
         push    ds
         lds     dx, [old1c]
@@ -432,6 +465,9 @@ old1c   dd      0
 old2f   dd      0
 old09   dd      0
 old1b   dd      0
+old62   dd      0
+line    db      40, 0
+        times   41 db 0
 got1b   dd      0
 s_ro    db      'RO.TXT', 0
 n       dw      0
