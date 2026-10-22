@@ -27,5 +27,7 @@ P_CLEAR   equ 4Ah
 P_CELLS   equ 4Bh
 HF_TERM   equ 01h                ; the Pi's HELLO: Term
 HF_FCS    equ 04h                ; the Pi's HELLO: frames carry the Fletcher sum from now on
+GF_FCS    equ 04h                ; our HELLO: we can check frames with the Fletcher sum
+GF_WAKE   equ 08h                ; our HELLO: an SRQ while we are idle makes us POLL at once
 OP_SCREEN equ 11h                ; REQUEST ops the console answers (CLAUDE.COM's
 OP_TYPE   equ 12h                ;  optab has its own); TYPE is the console's only

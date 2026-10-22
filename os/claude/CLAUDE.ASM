@@ -2579,8 +2579,13 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
         mov     al, 1                   ; GLP version
         stosb
+        mov     ah, 0Bh                 ; a driver that latches SRQ (CF: one that doesn't)
+        call    gg_call                 ;  lets the Pi ring for us while we're idle
         mov     al, 7                   ; flags: bit 0, Term understood; bit 1, pictures (FDh);
-        stosb                           ;  bit 2, the Fletcher sum (FCS)
+        jc      .f                      ;  bit 2, the Fletcher sum (FCS); bit 3, GF_WAKE
+        mov     byte [wake_ok], 1
+        or      al, GF_WAKE
+.f:     stosb
         mov     ax, TXMAX
         stosw
         mov     al, 80

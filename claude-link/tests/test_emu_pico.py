@@ -63,6 +63,23 @@ def test_trace():
     assert [e for _, e in p.trace] == ['TX_DONE'], p.trace
 
 
+def test_ring_wakes_an_idle_grid():
+    # GF_WAKE: with something to send while the GRiD is idle, gridlink rings (WAKE), the bridge raises SRQ and
+    # CLAUDE POLLs at once instead of at its next once-a-second idle POLL
+    h = start([], mode='edits', bridge='pico')
+    assert h.link.grid_wake
+    lat = []
+    for i in range(4):
+        assert h.connect()
+        h.run_until(lambda: False, sim_s=0.3 + 0.17 * i)    # somewhere in the idle second
+        n, t0 = h.link.stats['rx_frames'], h.m.us
+        h.link.send(glp.P_TEXT, b'ring %d\r\n' % i)
+        assert h.run_until(lambda: h.link.stats['rx_frames'] > n, sim_s=2.0)
+        lat.append((h.m.us - t0) / 1e3)
+    assert h.nano.rings >= 4 and max(lat) < 150, (h.nano.rings, lat)
+    check(h)
+
+
 def test_old_claude_gets_246():
     body = bytes([1, 3, 0, 4, 80, 20]) + b'os=DOS 3.30\ngrid=CLAUDE 1.2\napp=term\n'
     assert glp.hello_rx(body) == 246
