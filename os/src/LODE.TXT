@@ -385,7 +385,10 @@ name: before, it was taken as A.TXT or A.B, so DEL B.TXT.X deleted
 B.TXT and REN A.TXT C.D.E made C.D.  MD, RD, DEL and REN onto a
 device's name (CON, NUL, AUX, COM1, COM2, PRN, LPT1, CLOCK$, EMMXXXX0
 with EMS, and the GPIB names) are refused, and a CREATE over a hidden
-or system file is refused unless it asks for those attributes.
+or system file is refused unless it asks for those attributes.  A
+device's name after a directory (DIR\NUL, the way programs ask whether a
+directory is there) opens only if the directory is there, and FIND
+FIRST finds it there, as in MS-DOS.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
