@@ -149,6 +149,10 @@ run_active  resb 1
 lent        resb 1              ; the directory's memory is out (ui_lend):
                                 ;  how many times over (2: a program's saver)
 need_room   resb 1              ; ui_room has a look at the next chance
+ui_mtx      resw 2              ; MULTITASK=1: LODEMT.SYS's far entry for
+                                ;  the Executive (MT_UI; 0:0 off)
+ex_mtw      resb 1              ; 1 with MULTITASK=1; 2 while the Executive's
+                                ;  own loop waits (poll_once: a task ended?)
 run_base    resw 1              ; where a .RUN loads (offset)
 ui_paras    resw 1              ; the UI block's own size
 ent_max     resw 1              ; directory entries that fit (EXEC.INC)
@@ -210,6 +214,13 @@ ui_boot:
         call    saver_set               ;  LODE.INI says otherwise
         call    font_boot               ; LODE.INI's font and saver delay
         call    sysinfo                 ; (the machine, once: EXEC.INC)
+        mov     ax, 0F019h              ; MULTITASK=1 (MTAPI.INC's MT_UI): the
+        stc                             ;  entry that starts a program as a
+        int     21h                     ;  task, and tells a task's end
+        jc      exec_main.go
+        mov     [ui_mtx], ax
+        mov     [ui_mtx + 2], dx
+        mov     byte [ex_mtw], 1
         jmp     exec_main.go
 section ui
 
@@ -534,7 +545,7 @@ poll_once:
         jz      .nokey
         call    act_now
         call    read_key
-        pop     cx                      ; (the mouse may have used them)
+.ev:    pop     cx                      ; (the mouse may have used them)
         pop     bx
         add     sp, 2
         clc
@@ -569,6 +580,21 @@ poll_once:
         jb      .none
         mov     [lasttick], ax
         call    clock_tick
+        cmp     byte [ex_mtw], 2        ; (MULTITASK=1, the Executive's own
+        jb      .none                   ;  wait: a task ended?  EV_TASK, or
+        push    es                      ;  EV_TASKM: a message in msgbuf)
+        push    di
+        push    cs
+        pop     es
+        mov     di, msgbuf
+        mov     al, 1
+        call    far [ui_mtx]
+        pop     di
+        pop     es
+        jnc     .none
+        mov     ah, EV_TASK >> 8        ; (AL = 0: EV_TASK; 1: EV_TASKM)
+        add     al, EV_TASK & 0FFh
+        jmp     .ev
 .none:  pop     cx
         pop     bx
         pop     ax
@@ -3605,7 +3631,16 @@ ui_room:
         mov     ah, 4Ah                 ; (ES = CS) room here?
         int     21h
         jnc     .here
-        mov     bx, UI_PARAS + RUN_ROOM
+        cmp     byte [ex_mtw], 0        ; (MULTITASK=1: moved only with no
+        je      .mv                     ;  task but the Executive's, since
+        xor     cx, cx                  ;  tasks' copies of the vectors, parked
+        mov     ax, 0F012h              ;  ones' too, point here (MT_LIST); till
+        int     21h                     ;  then asked again at each wait)
+        cmp     cx, 1
+        jbe     .mv
+        inc     byte [need_room]
+        jmp     short .stay
+.mv:    mov     bx, UI_PARAS + RUN_ROOM
         mov     ah, 48h                 ; no: a block past what is in the way
         int     21h
         jc      .stay                   ; (memory is short anyway: stay)

@@ -50,10 +50,12 @@ written for it are .RUN files that load next to it:
               switches the screen font; Space: the start-up picture or
               not), screen saver (Return: when it
               starts; Space: whether it tidies the disks first), the
-              temporary disk M: (Return: its size), about.
-Keep WRITE.RUN and SYSTEM.RUN in the root of this disk (or in the
-subject you work in).  A DOS program gets about 566 KB: while it runs
-the Executive lends it the memory of its file list.  The screen font is
+              temporary disk M: (Return: its size), multitasking
+              (Space: on or off from the next start-up), about.
+  TASKS.RUN   The tasks (CODE-T in the Executive, multitasking).
+Keep WRITE.RUN, SYSTEM.RUN and TASKS.RUN in the root of this disk (or
+in the subject you work in).  A DOS program gets about 566 KB: while it
+runs the Executive lends it the memory of its file list.  The screen font is
 GRiD's own: the InteGRiD system font (TC8X16), as GRID.EXE drew it.
 TERMINUS.FNT is the font Lodestone had before; in System, Display, Return
 switches between them (and any other .FNT in the root of the disk).  The
@@ -319,11 +321,12 @@ CALCTEST.TXT), and FPUPROBE shows what the coprocessor answers.
 halves swapped, as the 1520 wires its sockets) to a 27C010 and put it in
 the second ROM socket (the BIOS starts the last bootable ROM it finds;
 the GRiD MS-DOS EPROM can go in the first).  It starts on C: (or R:).
-R: is the ROM: LODE.SYS, LCMD, System, Write, the calculator, DEFRAG,
-the picture, the Terminus font and LODE.INI, read-only.  R:\LODE.INI
-holds the ROM's settings; what you change in System goes in C:\LODE.INI
-(A:\LODE.INI without the hard disk) and is read over them: System's
-Settings topic shows which, and Return there goes back to the ROM's.
+R: is the ROM: LODE.SYS, LODEMT.SYS, LCMD, System, Write, the
+calculator, Tasks, DEFRAG, the picture, the Terminus font and LODE.INI,
+read-only.  R:\LODE.INI holds the ROM's settings; what you change in
+System goes in C:\LODE.INI (A:\LODE.INI without the hard disk) and is
+read over them: System's Settings topic shows which, and Return there
+goes back to the ROM's.
 Programs in C:\LODE are used before the ROM's (PATH=C:\LODE;R:\).
 Hold Shift while the 1520 starts for a menu: Lodestone; Lodestone with
 the ROM's own settings; GRiD MS-DOS (when it is in the other socket);
@@ -406,21 +409,30 @@ wanted, .. in the root, RMDIR of the current directory and the like
 (0.1 KB less for DOS programs).
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
-(with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
-read from LODEMT.SYS, which must sit beside LODE.SYS and come from the
-same build) goes into memory.  So far programs can start others as tasks
-(INT 21h F0h), each in memory of its own, and they take turns at the
-timer's tick; CODE-Tab brings the next one to the front (while one waits
-for a key in DOS), each with its own screen (32 KB of EMS a task).
-TASKS at the command prompt lists them.  What a background task prints
-still lands on the screen shown.  Without the line nothing of it is in
+(with EMS, 32 KB of it free; System, Multitasking sets it) turns it on:
+its resident part (14 KB, read from LODEMT.SYS, which must sit beside
+LODE.SYS and come from the same build) goes into memory.  Return in the
+Executive then starts a program as a task, in front (Shift-Return: as
+before, the Executive waiting for it, with all the memory; the command
+prompt, CODE-P, runs that way too), and CODE-T lists the tasks: to the
+front, parked in EMS and back, ended.  Tasks take turns at the timer's
+tick, each in memory of its own with its own screen (32 KB of EMS a
+task); CODE-Tab brings the next one to the front.  A program that
+writes the screen itself waits while it is behind.  At the command
+prompt: START, TASKS, FG, KILL, PARK, UNPARK, WAIT.  In LODE.INI, BG=
+and FREEZE= name programs that may always, or never, run behind, and
+MTMEM= what memory a program gets (MTMEM=TM5000G:300; else a .COM 64 KB,
+an .EXE what it asks for).  Without the line nothing of it is in
 memory, and LODEMT.SYS isn't even read.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose
   Tab, Shift-Tab                 Device, Subject, Title
   Type its first letter          find a name
-  Return                         run it / open it (Device, Subject: on)
+  Return                         run it / open it (Device, Subject: on;
+                                 multitasking: a program as a task)
+  Shift-Return                   run it and wait (multitasking)
+  CODE-T                         the tasks (TASKS.RUN, multitasking)
   CODE-U                         Usage (SYSTEM.RUN)
   CODE-W                         Write a new text file (WRITE.RUN)
   CODE-A                         Claude (CLAUDE.COM)

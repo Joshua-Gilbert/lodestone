@@ -20,6 +20,8 @@ FOC_DEV equ 1           ;  Device (the drives),
 FOC_SUB equ 2           ;  Subject (the subjects of this drive)
 SUBJ    equ 14          ; a subject in the list: depth, NAME    EXT, date
 SUBMAX  equ 66          ; a subject's path, "\" and all (the kernel's CWDLEN - 2)
+EV_TASK equ 0FF10h      ; (poll_once, MULTITASK=1, only to ex_loop: a task ended;
+EV_TASKM equ 0FF11h     ;  one the Executive started: its message in msgbuf)
 
 section uibss
 exec_dta    resb 44
@@ -133,14 +135,18 @@ ex_loop:
         pop     ax
         cmp     ax, [ent_max]
         je      .ev
-        mov     al, [msgshown]
+.re:    mov     al, [msgshown]
         push    ax
         call    relist                  ; (it moved: the whole list again)
         pop     ax
         or      al, al                  ; ("TSR.COM ended" was in the band:
         jz      .ev                     ;  relist drew the usual prompt)
         call    show_msg
-.ev:    call    ui_event
+.ev:    inc     byte [ex_mtw]           ; (MULTITASK=1: 2, a task's end looked
+        call    ui_event                ;  for meanwhile: EV_TASK)
+        dec     byte [ex_mtw]
+        cmp     ax, EV_TASK
+        jae     .task
         cmp     byte [msgshown], 0      ; a message waits for the next key
         je      .k
         mov     byte [msgshown], 0
@@ -191,6 +197,10 @@ ex_loop:
 .nx:    mov     ax, K_ENTER             ; (Device, Subject: the next item)
         call    focus_key
         jmp     ex_loop
+.task:  je      .tl                     ; a task ended: the list again (it may
+        mov     byte [msgshown], 1      ;  have changed the files), the message
+.tl:    call    ui_room                 ;  shown kept; EV_TASKM: msgbuf's (and
+        jmp     .re                     ;  the UI block moved, if it waited)
 
 ; Tab / Shift-Tab: the next / previous item of the form (Title, Device,
 ; Subject, round).  In Device and Subject also Return (the next item) and
@@ -602,7 +612,7 @@ run_shell:
         jb      .c
         mov     byte [di], 0
 .go:    pop     es
-        jmp     run_prog
+        jmp     run_wait
 .def:   pop     es
         mov     si, s_defshell
         mov     di, runpath
@@ -610,7 +620,7 @@ run_shell:
         stosb
         or      al, al
         jnz     .d
-        jmp     run_prog
+        jmp     run_wait
 
 ; CODE-A: Claude (CLAUDE.COM here, else in the root)
 run_claude:
@@ -619,13 +629,18 @@ run_claude:
         jc      .no
         mov     di, runpath
         call    sb_strz
-        jmp     run_prog
+        jmp     run_wait
 .no:    jmp     run_named.nf            ; (SI = the name: ui_findapp's answer)
 
 ; CODE-K: the calculator, a window over the list
 run_calc:
         mov     si, s_calc
         jmp     run_write.e
+
+; CODE-T: the tasks (MULTITASK=1), a window over the list
+run_tasks:
+        mov     si, s_tasks
+        jmp     short run_write.e
 
 ; CODE-U: Usage, the System program; CODE-W: Write with a new file
 run_usage:
@@ -897,8 +912,27 @@ sub_path:
 .r:     pop     bx
         ret
 
-; run the DOS program at runpath; afterwards a fresh list and a message
+; Return on the DOS program at runpath.  With MULTITASK=1 it starts as a
+; task, in front (LODEMT.SYS's MT_UI: its memory, and the message if it
+; can't); its end is EV_TASK's.  Else, and Shift-Return, as run_wait
 run_prog:
+        cmp     byte [ex_mtw], 0
+        je      run_wait
+        mov     ah, 2                   ; (Shift held?)
+        int     16h
+        test    al, 3
+        jnz     run_wait
+        mov     si, runpath
+        mov     di, msgbuf
+        xor     al, al
+        call    far [ui_mtx]
+        jc      show_msg
+        ret
+; run it, in the Executive's own task, and wait for it (CODE-P's prompt
+; and CODE-A's Claude always, Shift-Return: all the memory, and a program
+; loaded resident from there is everyone's); afterwards a fresh list and
+; a message
+run_wait:
         mov     si, runpath
         mov     di, s_empty
         call    ui_run                  ; (redraws the list itself)
@@ -2912,13 +2946,14 @@ ex_keys:
         KEY(K_CODE_A,    run_claude, h_claude)
         KEY(K_CODE_K,    run_calc,   h_calc)
         KEY(K_CODE_P,    run_shell,  h_shell)
+        KEY(K_CODE_T,    run_tasks,  h_tasks)
         KEY(K_CODE_C,    ex_copy,    h_copy)
         KEY(K_CODE_D,    ex_erase,   h_erase)
         KEY(K_CODE_M,    ex_move,    h_move)
         KEY(K_CODE_R,    ex_rename,  h_rename)
         KEY(K_F5,        refresh,    h_f5)
         KEY(K_NONE,      0,          h_code)
-        dw 0                            ; (14 help lines; there is room for 18)
+        dw 0                            ; (15 help lines; there is room for 18)
 
 h_choose    db 'Up / Down, PgUp / PgDn   choose',0
 h_tab       db 'Tab / Shift-Tab          Device, Subject, Title',0
@@ -2929,6 +2964,7 @@ h_write     db 'CODE-W                   Write: a new text file',0
 h_claude    db 'CODE-A                   Claude',0
 h_calc      db 'CODE-K                   Calculator',0
 h_shell     db 'CODE-P                   command prompt',0
+h_tasks     db 'CODE-T                   Tasks',0
 h_copy      db 'CODE-C                   Copy the file / subject',0
 h_erase     db 'CODE-D                   Delete the file / subject',0
 h_move      db 'CODE-M                   Move the file',0
@@ -2981,6 +3017,7 @@ s_claude    db 'CLAUDE.COM', 0
 s_system    db 'SYSTEM.RUN', 0
 s_write     db 'WRITE.RUN', 0
 s_calc      db 'CALC.RUN', 0
+s_tasks     db 'TASKS.RUN', 0
 s_notondisk db ' is not on this disk', 0
 s_comspec   db 'COMSPEC='
 s_defshell  db 'A:\LCMD.COM', 0

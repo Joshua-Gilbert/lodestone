@@ -92,8 +92,8 @@ Lodestone 0.6 (memory measured with the windows that move, the printer drivers a
 |---|---:|---:|---:|
 | BENCH file-system total | **78.8** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.43** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **582.1 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 566.0 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **582.0 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 565.9 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
@@ -117,7 +117,7 @@ From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C
 
 ### From a floppy
 
-1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODEMT.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `CALC.COM` and whatever programs you want. The current release's files are in `os/releases/`.
+1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODEMT.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `TASKS.RUN`, `CALC.COM` and whatever programs you want. The current release's files are in `os/releases/`.
 2. Under GRiD MS-DOS, run `LODEBOOT` on it once (`B:LODEBOOT B` when booted from the EPROM, where the floppy is B:).
 3. Restart and tap **F** as the memory count finishes, or choose the floppy from Lodestone's boot menu.
 4. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`, still being built) reads it at start-up and stays off if it doesn't match.
@@ -131,7 +131,7 @@ See `docs/lodestone-floppy-dev.md`.
 | `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
 | `os/splash` | The start-up picture's source: the source image, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
 | `os/rom` | `LODE.INI`, the settings burned into the ROM. The ROM images are `os/LODE1_EPROM.BIN` (to burn) and `os/LODE1.BIN` (as the BIOS sees it), built by `os/build.sh` with `tools/mkrom.py` |
-| `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN` and `CALC.RUN` (the calculator's window) |
+| `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN` (the calculator's window) and `TASKS.RUN` (the tasks, CODE-T) |
 | `os/drivers` | Printer drivers for PrtSc (`.PRN`, up to 1 KB, read only when printing): `PS.PRN`, PostScript on LPT1; `PS.ASM` describes the interface |
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in) |
 | `os/tests` | `pcemu`-based tests (see Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN; and for the 1520: CMDTEST.BAT (the batch language), CALCTEST.BAT (the calculator, step by step) and FPUPROBE.COM (what the coprocessor answers after FNINIT) |
@@ -157,7 +157,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,701 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,724 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os

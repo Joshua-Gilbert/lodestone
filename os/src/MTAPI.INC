@@ -69,7 +69,20 @@ MT_EXIT     equ 17h                     ; BL = a task's number -> AL = its state
                                         ;  count it was started with (so CL =
                                         ;  AH: the one started last has ended)
                                         ;  CF: AX = 1 (no such number)
-MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
+MT_FLAGS    equ 18h                     ; BL = a task (not 0): its SPF_BG and
+                                        ;  SPF_FREEZE, CL's cleared, then CH's
+                                        ;  set (CX = 0: only read) -> AL = them,
+                                        ;  and MTF_DIRECT if it was found
+                                        ;  writing the screen itself.  From its
+                                        ;  next turn (SPF_BG: its next INT 10h
+                                        ;  call).  CF: AX = 1 (no such task),
+                                        ;  5 (task 0)
+MT_UI       equ 19h                     ; (the Executive's, at its start: DX:AX
+                                        ;  = LODEMT.SYS's far entry for it.
+                                        ;  AL = 0: start the program DS:SI
+                                        ;  (Return); AL = 1: has a task ended?
+                                        ;  ES:DI = room for a message)
+MT_SCREEN   equ 1Ch                    ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back
                                         ;  after a screen saver): not counted
                                         ;  against it as writing the screen
@@ -92,6 +105,9 @@ SPF_BG      equ 2                       ; it runs in the background whatever it
                                         ;  does, its output on the screen in
                                         ;  front (as before M4a)
 SPF_FREEZE  equ 4                       ; it never runs in the background
+MTF_DIRECT  equ 1                       ; (MT_FLAGS: found writing the screen
+                                        ;  itself, so frozen behind without
+                                        ;  SPF_BG)
 
 ; ---- a task's record (MT_LIST) ----------------------------------------
 TR_ID       equ 0                       ; byte: its number

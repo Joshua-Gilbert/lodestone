@@ -116,7 +116,7 @@ def t_image():
     check('LODE.SYS is the first file', first.startswith('LODE     SYS'), first)
     srcs = {'LODE.SYS': 'src/LODE.SYS', 'LODEMT.SYS': 'src/LODEMT.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
             'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI', 'DEFRAG.COM': 'src/DEFRAG.COM',
-            'PS.PRN': 'drivers/PS.PRN'}
+            'PS.PRN': 'drivers/PS.PRN', 'TASKS.RUN': 'apps/TASKS.RUN'}
     bad = []
     for n, s in srcs.items():
         o = os.path.join(OUT, 'rom_x')
