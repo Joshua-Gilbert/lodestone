@@ -1838,6 +1838,29 @@ def t_attr():
     check('CREATE of W.TXT with CX=8: 5, and W.TXT as it was', 'refused' in o.replace('echo refused', '') and before
           and fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\W.TXT') == before, (o, before))
 
+def t_errs():
+    """X17 and X20: the path calls (OPEN, CREATE, CREATE NEW, DELETE, GET ATTRIBUTES, FIND FIRST, MKDIR, RMDIR, CHDIR,
+    RENAME) answer as GRiD MS-DOS 3.30 does for a missing directory with a bad last name (2 for open and create),
+    a \\ last (3), two \\s (one), a wildcard where one name is wanted (3), an invalid drive (3), ".." in the root
+    (3), a device's name with a second dot (no device), RENAME of a device's name (5), RMDIR of the current
+    directory or of a wildcard (16) and of a file or a name not there (5).  ERRS_MS.TXT holds MS-DOS's answers;
+    what is left as it is (X20's row) is not in ERRS.ASM."""
+    com = os.path.join(OUT, 'ERRS.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'ERRS.ASM')], check=True)
+    open(os.path.join(OUT, 'ER_a.TXT'), 'wb').write(b'a\r\n')
+    a = os.path.join(OUT, 'ER_a.TXT')
+    img = image('errs.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'ERRS.COM=' + com, 'A.TXT=' + a, 'SUB\\', 'SUB\\X.TXT=' + a)
+    k = ktest.KPC(img); k.start()
+    Shell(k)
+    assert run_long(k, 'errs > out.txt', 300)
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    got = [' '.join(l.split()) for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+    want = [' '.join(l.split()) for l in open(os.path.join(HERE, 'ERRS_MS.TXT'), encoding='latin-1').read().split('\n')
+            if l.startswith('fn ')]
+    check("ERRS.COM: all %d calls answer as GRiD MS-DOS 3.30's do" % len(want), got == want,
+          [(w, g) for w, g in zip(want, got) if w != g][:8] or (len(want), len(got)))
+    check('... disk consistent', not fatcheck.check(bytes(k.pc.drives[0].img))[0], fatcheck.check(bytes(k.pc.drives[0].img))[0])
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -2382,7 +2405,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

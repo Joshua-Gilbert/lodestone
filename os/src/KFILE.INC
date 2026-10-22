@@ -256,7 +256,13 @@ dev_look_ax:
         or      al, al
         jz      .hit
         cmp     al, '.'
-        je      .hit
+        jne     .skip
+.e2:    inc     di                      ; (NUL.X.Y: no device, as MS-DOS)
+        mov     al, [di]
+        or      al, al
+        jz      .hit
+        cmp     al, '.'
+        jne     .e2
 .skip:  lodsb                           ; on past this name's 0
         or      al, al
         jnz     .skip
