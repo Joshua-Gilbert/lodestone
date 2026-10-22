@@ -2472,12 +2472,11 @@ do_dir: mov     byte [dir_w], 0
 .nm:    dec     si
         mov     di, path1
         call    getarg
-        jmp     .a
-.ad:    mov     si, path1
-        call    strlen
-        cmp     cx, 75                  ; (as Tab's: pat holds it and its
-        ja      .nf                     ;  \*.* with the NUL; no DOS path is
-        mov     di, pat                 ;  longer, X26)
+        cmp     di, path1 + 78          ; (DI on its NUL.  Longer, a directory
+        ja      .nf                     ;  part with the \ dir_all adds could
+        jmp     .a                      ;  reach pat_dir, which canon writes
+.ad:    mov     si, path1               ;  from its start: X26.  No DOS path
+        mov     di, pat                 ;  is longer but one of 79)
         call    make_pattern
         ; header
         call    crlf
@@ -4379,10 +4378,10 @@ canon2      equ canon1 + 82
         times   -(canon2 - canon1 < 3 + 65 + 1 + 12 + 1) resb 1
         times   -(src - canon2 < 3 + 65 + 1 + (LBUF - 6) + 13 + 1) resb 1
 dst         resb 80
-; DIR's canon (pat's directory part, 75 characters at most, after the
+; DIR's canon (pat's directory part, 79 characters at most, after the
 ; current directory) may run on past pat_dir, into canon2's 16 and src,
 ; which DIR doesn't use; never into dst
-        times   -(dst - pat_dir < 3 + 65 + 1 + 75 + 1) resb 1
+        times   -(dst - pat_dir < 3 + 65 + 1 + 79 + 1) resb 1
 setbuf      equ src                 ; (PATH, PROMPT, COMSPEC: no COPY then)
 setbuf2     resb 80
 failed      resb 1                  ; the command didn't work
