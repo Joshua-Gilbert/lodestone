@@ -3811,6 +3811,7 @@ do_wait:
         pop     ds                      ;  0Bh doesn't look for ^C).  Other
         cli                             ;  keys stay for the prompt
         mov     bx, [1Ah]
+        mov     cx, 16                  ; (a ring's worth at most, as mt_hot)
 .s:     cmp     bx, [1Ch]
         je      .n
         mov     ax, [bx]
@@ -3822,10 +3823,14 @@ do_wait:
 .w:     cmp     al, 3
         je      .c
         or      ax, ax
-        jnz     .s
+        jz      .c
+        loop    .s
+        jmp     short .n
 .c:     mov     [1Ah], bx
         sti
         pop     ds
+        mov     si, s_ctrlc             ; (as every ^C shows)
+        call    puts_nl
         int     23h
         jmp     short .h
 .n:     sti
