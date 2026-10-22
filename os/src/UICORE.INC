@@ -3088,17 +3088,32 @@ xor_rect:
         pop     es
         popa
         ret
-.h:     pusha                           ; pixels AX+1..DI-1 on row DX
+.h:     pusha                           ; pixels AX+1..DI-1 on row DX, a byte
+        push    ax                      ;  at a time between the end bytes
+        lea     ax, [di-1]
+        call    .col                    ; the last: BX its byte, CH its pixels
+        neg     al                      ;  up to it (bit 20h -> E0h; .col
+        mov     ch, al                  ;  keeps CX)
+        mov     bx, si
+        pop     ax
         inc     ax
-        mov     cx, di
-        sub     cx, ax
-        call    .col
+        call    .col                    ; the first: SI its byte, AL its
+        mov     cl, al                  ;  pixels from it on (20h -> 3Fh)
+        dec     cl
+        or      al, cl
         call    row_di
-        mov     bx, di
-.hl:    xor     [es:bx+si], al
-        ror     al, 1                   ; (past the byte's last bit: the next)
-        adc     si, 0
-        loop    .hl
+        add     di, si
+        sub     bx, si                  ; BX = bytes after the first
+        jz      .h1
+        xor     [es:di], al
+        mov     al, 0FFh
+.hn:    inc     di
+        dec     bx
+        jz      .h1
+        not     byte [es:di]
+        jmp     short .hn
+.h1:    and     al, ch                  ; the last byte (or the only one)
+        xor     [es:di], al
         popa
         ret
 .v:     pusha                           ; BP rows from DX at pixel AX
@@ -3112,6 +3127,7 @@ xor_rect:
         popa
         ret
 .col:   mov     si, ax                  ; pixel AX -> SI = its byte, AL = its bit
+                                        ; (CX and AH kept: .h holds a mask in CH)
         shr     si, 3
         push    cx
         mov     cl, al

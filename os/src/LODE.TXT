@@ -375,7 +375,9 @@ free at that point, and the screen's table of row addresses is gone.
 A program started from the prompt has 0.5 KB more again, and one run
 from Claude 1.9 KB more.  As in MS-DOS, RENAME onto a name with * or ?
 now gives error 3, and CD keeps each name to 8.3.  DOS errors 20, 22,
-24 and 28 now have their messages in the Executive.
+24 and 28 now have their messages in the Executive.  The outline of a
+form's field and of a window being moved is drawn two to four times
+faster (each key in a form, each move of the mouse in a drag).
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
