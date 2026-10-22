@@ -9,7 +9,7 @@ only ever ones inside ~/grid.
 
     python3 -I -c '...from gridlink.mcp import main; main()'   (what .mcp.json runs)
 """
-import json, os, socket, stat, sys, tempfile, threading, time
+import collections, json, os, socket, stat, sys, tempfile, threading, time
 from . import glp, keys as K, screen
 from .grid import READ_CHUNK, GridError, is_device, is_grid_path, norm
 
@@ -795,8 +795,21 @@ class ToolServer:
             if not isinstance(c, int) or isinstance(c, bool) or not (c == 0 or 16 <= c <= 65535):
                 return [text('gridlink: frame_cap is 0 (none) or 16-65535')], True
             L.frame_cap = c or None
+        tr = None
+        if 'trace' in args:                   # 'start' a timeline of frames and bridge events, 'stop' returns it
+            proto = getattr(L.t, 'proto', None)
+            if args['trace'] == 'start':
+                L.trace = collections.deque(maxlen=100000)
+                if proto is not None: proto.trace = L.trace
+            elif args['trace'] == 'stop':
+                tr = [[round(t, 6), e] for t, e in list(L.trace or ())]
+                L.trace = None
+                if proto is not None: proto.trace = None
+            else:
+                return [text("gridlink: trace is 'start' or 'stop'")], True
         info = dict(maxpay=L.maxpay, grid_rx=L.grid_rx, grid_maxpay=L.grid_maxpay, frame_cap=L.frame_cap or 0,
                     bridge=getattr(L.t, 'version', ''), stats=dict(L.stats))
+        if tr is not None: info['trace'] = tr
         return [text(json.dumps(info))], False
 
     def stop(s):

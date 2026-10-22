@@ -3,6 +3,7 @@
     venv/bin/python -m gridlink.bench                 64 KB each way through M:, 20 round trips
     venv/bin/python -m gridlink.bench --size 128 --to A:\\BENCH.BIN --trips 50
     venv/bin/python -m gridlink.bench --sweep 246,512,1024,2048,4096   Pi -> GRiD frame sizes, one after another
+    venv/bin/python -m gridlink.bench --size 32 --trace     where each copy's time goes, gap by gap
 
 Run it on the Pi while gridlink is serving and CLAUDE /T is up on the GRiD (the tools socket exists only in
 Term).  It talks to gridlink over the same socket as Claude Code's MCP server, so the numbers include
@@ -11,7 +12,7 @@ everything a real copy goes through: GLP frames, the bridge, CLAUDE.COM and the 
 Uses ~/grid/bench.bin and ~/grid/bench.back on the Pi and one file on the GRiD, which it deletes afterwards.
 Put the GRiD file on M: (the RAM disk) to time the link and not the floppy.
 """
-import argparse, json, os, sys, time
+import argparse, collections, json, os, sys, time
 from .mcp import call_gridlink, socket_path
 
 
@@ -29,10 +30,37 @@ def link(sock, **args):
     return json.loads(msg)
 
 
+def timeline(tr, title, top=14):
+    """Where a copy's time went: the gaps between successive events (the Pi's frames, the GRiD's frames as
+    gridlink got them, the bridge's GPIB events as they reached the Pi), summed by what came before and after."""
+    gaps = collections.defaultdict(list)
+    for (t0, e0), (t1, e1) in zip(tr, tr[1:]):
+        gaps[(e0, e1)].append(t1 - t0)
+    span = tr[-1][0] - tr[0][0] if len(tr) > 1 else 0
+    print('%s: %d events over %.2f s' % (title, len(tr), span))
+    print('  %-22s %-22s %5s %9s %8s %6s' % ('after', 'until', 'times', 'median', 'total', 'share'))
+    for (e0, e1), d in sorted(gaps.items(), key=lambda kv: -sum(kv[1]))[:top]:
+        d.sort()
+        print('  %-22s %-22s %5d %6.1f ms %6.2f s %5.1f%%' % (e0, e1, len(d), d[len(d) // 2] * 1e3, sum(d),
+                                                              100 * sum(d) / span if span else 0))
+
+
+def traced(sock, a, title, name, args):
+    if not a.trace: return tool(sock, name, args)
+    link(sock, trace='start')
+    try:
+        r = tool(sock, name, args)
+    finally:
+        tr = link(sock, trace='stop').get('trace', [])
+    timeline(tr, title)
+    return r
+
+
 def copies(sock, a, src, back, data, quiet=False):
     n = len(data)
-    up, _ = tool(sock, 'grid_change_files', {'action': 'copy_to_grid', 'path': src, 'to': a.to})
-    down, _ = tool(sock, 'grid_change_files', {'action': 'copy_from_grid', 'path': a.to, 'to': back})
+    up, _ = traced(sock, a, 'Pi -> GRiD', 'grid_change_files', {'action': 'copy_to_grid', 'path': src, 'to': a.to})
+    down, _ = traced(sock, a, 'GRiD -> Pi', 'grid_change_files',
+                     {'action': 'copy_from_grid', 'path': a.to, 'to': back})
     with open(back, 'rb') as f: ok = f.read() == data
     tool(sock, 'grid_change_files', {'action': 'delete', 'path': a.to})
     if quiet: return up, down, ok
@@ -48,6 +76,7 @@ def main(argv=None):
     ap.add_argument('--to', default='M:\\BENCH.BIN', help='the GRiD file (default M:\\BENCH.BIN)')
     ap.add_argument('--trips', type=int, default=20, help='small requests for the round-trip time (default 20)')
     ap.add_argument('--dir', default='~/grid', help="Claude Code's directory on the Pi (default ~/grid)")
+    ap.add_argument('--trace', action='store_true', help='show where each copy spends its time')
     ap.add_argument('--sweep', help='Pi -> GRiD payload sizes to try, comma-separated (each capped by what the '
                                     'GRiD and the bridge take); the link goes back to its own size after')
     a = ap.parse_args(argv)
