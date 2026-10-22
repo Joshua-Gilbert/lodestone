@@ -16,7 +16,8 @@
 ;   R  as Z, but once the handler has run, reads a key (INT 16h AH=00h)
 ;   T  hooks INT 1Ch and computes; its 5th call ends its own task (AL=14h,
 ;      the timer's interrupt in service)
-;   (M, Z, R and T take N and FILE but use neither)
+;   E  takes every EMS page free (AH=42h, 43h), then reads a line and ends
+;   (M, Z, R, T and E take N and FILE but use neither)
 ; nasm -f bin -i ../src/ -o MTKILL.COM MTKILL.ASM
 cpu 286
 org 100h
@@ -64,6 +65,8 @@ org 100h
         je      m_m
         cmp     al, 'T'
         je      m_t
+        cmp     al, 'E'
+        je      m_e
         ; F, S, X: the file, N bytes, open
         mov     ah, 3Ch
         xor     cx, cx
@@ -257,6 +260,18 @@ h1c:    push    ax
         pop     bx
         pop     ax
         iret
+
+; E: every free EMS page its own, then a line
+m_e:    mov     ah, 42h
+        int     67h
+        or      bx, bx
+        jz      .l
+        mov     ah, 43h
+        int     67h
+.l:     mov     dx, line
+        mov     ah, 0Ah
+        int     21h
+        jmp     ends
 
 ; its task's number (AH=12h's AH) -> [mine]
 mine_:  call    .ask
