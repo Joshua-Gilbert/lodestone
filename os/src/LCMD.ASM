@@ -2472,12 +2472,11 @@ do_dir: mov     byte [dir_w], 0
 .nm:    dec     si
         mov     di, path1
         call    getarg
-        cmp     di, path1 + 78          ; (DI on its NUL.  Longer, a directory
-        ja      .nf                     ;  part with the \ dir_all adds could
-        jmp     .a                      ;  reach pat_dir, which canon writes
-.ad:    mov     si, path1               ;  from its start: X26.  No DOS path
-        mov     di, pat                 ;  is longer but one of 79)
+        jmp     .a
+.ad:    mov     si, path1
+        mov     di, pat
         call    make_pattern
+        jc      .nf                     ; (too long for pat: X26)
         ; header
         call    crlf
         mov     dl, [pat_drv]
@@ -2696,7 +2695,8 @@ show_volume:
         jmp     puts_nl
 
 ; the pattern for path SI -> DI (pat), plus pat_drv and pat_dir
-; ("X:\DIR" for the header).  A directory gets \*.*, a bare name .*
+; ("X:\DIR" for the header).  A directory gets \*.*, a bare name .*.
+; CF if that is longer than pat takes
 make_pattern:
         push    di
         call    strcpy
@@ -2723,6 +2723,9 @@ make_pattern:
         call    strcpy
 .hdr:   ; the directory part, made absolute
         mov     si, pat
+        call    strlen                  ; (CF: the pattern doesn't fit pat
+        cmp     cx, 79                  ;  with its NUL.  What ran on is in
+        ja      .long                   ;  pat_dir, which canon then writes)
         call    name_part
         mov     [tmpw], si
         mov     al, [si]
@@ -2734,6 +2737,9 @@ make_pattern:
         mov     si, [tmpw]
         pop     ax
         mov     [si], al
+        clc
+        ret
+.long:  stc
         ret
 
 ; the drive of path SI -> AL (0 = A; the current one if it names none), SI
