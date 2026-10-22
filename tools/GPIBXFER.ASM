@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBXFER.COM 1.3 - real DMA through the 1520's 7210 (channel 3), and
+;  GPIBXFER.COM 1.4 - real DMA through the 1520's 7210 (channel 3), and
 ;  how fast it is next to the CPU's own loop.
 ;  Build:  nasm -f bin -o GPIBXFER.COM GPIBXFER.ASM
 ;  Usage:  GPIBXFER [a]      a = the echo device's address (default 7)
@@ -158,6 +158,76 @@ run_both:
         mov     ax, MSGLEN
         sub     ax, cx
         call    out_dec
+        call    out_crlf
+        ; what came back: the first bytes, how many are FF, and whether it
+        ; is the message shifted (rx[i] = tx[i+d], d = -3..+3)
+        mov     dx, s_sent
+        call    out_str
+        mov     si, [txp]
+        call    .hex16
+        mov     dx, s_gotb
+        call    out_str
+        mov     si, [rxp]
+        call    .hex16
+        mov     si, [rxp]
+        mov     cx, MSGLEN
+        xor     bx, bx
+.ff:    lodsb
+        cmp     al, 0FFh
+        jne     .nff
+        inc     bx
+.nff:   loop    .ff
+        mov     dx, s_ffs
+        call    out_str
+        mov     ax, bx
+        call    out_dec
+        call    out_crlf
+        mov     word [shift], -3
+.sh:    mov     si, [rxp]               ; matches of rx[i] against tx[i+d]
+        mov     di, [txp]
+        add     di, [shift]
+        xor     bx, bx                  ; BX = matches
+        mov     cx, MSGLEN - 6
+        add     si, 3
+        add     di, 3
+.sm:    mov     al, [si]
+        cmp     al, [di]
+        jne     .sn
+        inc     bx
+.sn:    inc     si
+        inc     di
+        loop    .sm
+        mov     dx, s_shift
+        call    out_str
+        mov     ax, [shift]
+        or      ax, ax
+        jns     .sp
+        push    ax
+        mov     al, '-'
+        call    out_chr
+        pop     ax
+        neg     ax
+.sp:    call    out_dec
+        mov     dx, s_match
+        call    out_str
+        mov     ax, bx
+        call    out_dec
+        mov     dx, s_of
+        call    out_str
+        inc     word [shift]
+        cmp     word [shift], 4
+        jl      .sh
+        ret
+
+; 16 bytes at SI in hex, then a new line
+.hex16: push    cx
+        mov     cx, 16
+.h:     lodsb
+        call    out_hex
+        mov     al, ' '
+        call    out_chr
+        loop    .h
+        pop     cx
         jmp     out_crlf
 .fail_o: mov    dx, s_fo
         jmp     short .f2
@@ -608,7 +678,7 @@ save_log:
 
 %include "direct.inc"
 
-s_title db 13,10,'GPIBXFER 1.3 - 16 x 4096-byte messages each way, echoed by the device at $'
+s_title db 13,10,'GPIBXFER 1.4 - 16 x 4096-byte messages each way, echoed by the device at $'
 s_pio   db 13,10,'CPU loop:',13,10,'$'
 s_dma   db 13,10,'DMA, channel 3:',13,10,'$'
 s_outr  db '  GRiD -> device: $'
@@ -617,6 +687,12 @@ s_ms    db ' ms, $'
 s_kbs   db ' KB/s',13,10,'$'
 s_fast  db ' (under a tick)',13,10,'$'
 s_same  db '  the echo is every byte right',13,10,'$'
+s_sent  db '  sent: $'
+s_gotb  db '  back: $'
+s_ffs   db '  FF bytes in what came back: $'
+s_shift db '  shifted by $'
+s_match db ': $'
+s_of    db ' of 4090 bytes match',13,10,'$'
 s_dmachk db '  (the DMA message read back by the CPU)',13,10,'$'
 s_diff  db '  THE ECHO DIFFERS from byte $'
 s_fo    db '  sending failed, step $'
@@ -640,6 +716,7 @@ tout    dw 0
 tin     dw 0
 ms      dw 0
 left    dw 0
+shift   dw 0
 got     dw 0
 dadr    dw 0
 dst     db 0
