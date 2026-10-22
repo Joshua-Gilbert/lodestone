@@ -135,7 +135,10 @@ class Grid:
         s.write_file(tmp, data, progress)
         try: s.delete(path)
         except GridError as e:
-            if e.code not in (2,): raise
+            if e.code not in (2,):          # the old file stays (a name DOS won't
+                try: s.delete(tmp)          #  take, 3; or 5): NAME.$$$ goes.  Once
+                except GridError: pass      #  it's deleted, NAME.$$$ is the only
+                raise                       #  copy: kept if the rename fails
         s.rename(tmp, path)
 
     def delete(s, path): s.ok(glp.OP_DELETE, glp.asciiz(path))
