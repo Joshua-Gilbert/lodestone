@@ -371,12 +371,33 @@ create: call    get_path
         jc      .e1
         pop     bx
         jmp     give_handle
-.dev:   call    dev_open
+.dev:   call    dev_where               ; (OPEN's too)
+        jc      .e1
+        call    dev_open
         jc      .e1
         pop     bx
         jmp     give_handle
 .e1:    pop     bx
 .e:     jmp     fail
+
+; a device's name with a directory in front: that directory must be there,
+; as MS-DOS says (NOSUCH\NUL is 3: "IF EXIST DIR\NUL").  AX kept; CF: AX =
+; resolve's error.  NUL, A:NUL: the device, no disk needed
+dev_where:
+        push    ax
+        mov     si, path_buf
+.f:     lodsb
+        cmp     al, '\'
+        je      .r
+        or      al, al                  ; (CF clear)
+        jnz     .f
+        pop     ax
+        ret
+.r:     call    resolve
+        pop     si
+        jc      .x                      ; (AX the error)
+        xchg    ax, si
+.x:     ret
 
 section .bss
 cr_new      resb 1
@@ -1614,6 +1635,8 @@ f_4E:   call    get_path
         jc      .e
         call    resolve
         jc      .e
+        call    dev_lookup              ; (a wildcard is never a device's)
+        jnc     .dv
         les     di, [dta]
         mov     al, [act]
         inc     al
@@ -1641,6 +1664,21 @@ f_4E:   call    get_path
         mov     ax, 2                   ; nothing at all: "file not found"
 .e:     jmp     fail
 .ok:    jmp     ok
+.dv:    les     di, [dta]               ; a device: found as MS-DOS finds it,
+        xor     ax, ax                  ;  attribute 40h, its name alone (find
+        stosb                           ;  next: no more, drive 0)
+        add     di, 20
+        mov     al, 40h
+        stosb
+        mov     al, ah                  ; (time, date, size 0)
+        stosw
+        stosw
+        stosw
+        stosw
+        mov     byte [r_name+8], ' '    ; (NUL.TXT finds NUL)
+        mov     si, r_name
+        call    name_out
+        jmp     ok                      ; (ES the DTA's, as after find_next)
 f_4F:   call    find_next
         jmp     ret_cf
 
