@@ -1,0 +1,47 @@
+// host_link.h -- core 0's side: the framed USB protocol to the Raspberry Pi (see PROTOCOL.md).
+// Shared by the Arduino sketch and the host simulation; the glue provides link_write_some() and link_bootsel().
+#pragma once
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// frame types, Pi -> Pico
+#define F_HELLO_REQ 0x01
+#define F_CONFIG    0x02   // u8 address 0..30, u8 flags: bit 0 online, bit 1 auto service request (GLP)
+#define F_TX        0x03   // u16 gen, u8 flags (bit 0: EOI with the last byte), data
+#define F_STB       0x04   // u8 status byte (bit 6 ignored), u8 rsv (1 = request service: SRQ)
+#define F_PING      0x05
+#define F_BOOTSEL   0x07   // reboot into the USB bootloader (to flash new firmware)
+#define F_WAKE      0x08   // u16 gen: auto mode: request service (status 40h) for an idle 1520, until it sends a
+                           // message newer than gen or is polled (gridlink rings when it has news; 2026-10-22b)
+// frame types, Pico -> Pi
+#define F_HELLO     0x81   // u8 protocol version, u16 tx ring size, u16 data chunk max, u32 tx consumed,
+                           //   u16 tx entries still queued, firmware tag text
+#define F_DATA      0x82   // u16 gen, u8 flags (bit 0: EOI on the last byte = message end; bit 1: message ended
+                           //   without EOI), data (may be empty when bit 1 is set)
+#define F_EVENT     0x83   // u8 code, u16 gen, u8 b, u32 arg (codes: gpib_engine.h E_*)
+#define F_LOG       0x84   // text
+#define F_PONG      0x85   // status block, see host_link.c send_pong()
+#define F_CREDIT    0x87   // u32 tx entries consumed so far (sent or dropped as stale)
+
+#define DF_EOI 0x01
+#define DF_END 0x02
+
+#define LINK_PING_TIMEOUT_MS 5000u   // no PING for this long: go offline (release the bus)
+#define DATA_CHUNK 240u
+
+void link_init(void);
+void link_input(const uint8_t *b, size_t n, uint32_t now_ms);
+void link_poll(uint32_t now_ms, bool host_open);
+
+// provided by the glue
+size_t link_write_some(const uint8_t *b, size_t n);   // never blocks: returns how many it took (0 if none)
+void link_bootsel(void);
+
+#ifdef __cplusplus
+}
+#endif
