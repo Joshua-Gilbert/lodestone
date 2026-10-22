@@ -13,9 +13,10 @@
 ;   M  sets a mouse event handler (INT 33h 0Ch, every event) and computes;
 ;      the handler, called in its own task, waits for a key (AH=08h)
 ;   Z  as M, but the handler ends its own task (AL=14h)
+;   R  as Z, but once the handler has run, reads a key (INT 16h AH=00h)
 ;   T  hooks INT 1Ch and computes; its 5th call ends its own task (AL=14h,
 ;      the timer's interrupt in service)
-;   (M, Z and T take N and FILE but use neither)
+;   (M, Z, R and T take N and FILE but use neither)
 ; nasm -f bin -i ../src/ -o MTKILL.COM MTKILL.ASM
 cpu 286
 org 100h
@@ -58,6 +59,8 @@ org 100h
         cmp     al, 'M'
         je      m_m
         cmp     al, 'Z'
+        je      m_m
+        cmp     al, 'R'
         je      m_m
         cmp     al, 'T'
         je      m_t
@@ -200,8 +203,15 @@ m_m:    call    mine_
         mov     dx, hnd
         int     33h
         sti
+        cmp     byte [mode], 'R'
+        je      .r
 .s:     inc     word [cnt]
         jmp     .s
+.r:     cmp     word [hits], 0          ; R: computing until its handler has
+        je      .r                      ;  ended its task, then a key read
+.k:     xor     ah, ah
+        int     16h
+        jmp     .k
 hnd:    pusha                           ; (called by the driver, far)
         push    ds
         push    es
@@ -211,8 +221,8 @@ hnd:    pusha                           ; (called by the driver, far)
         cmp     ah, [mine]              ;  task's handler runs in whichever
         jne     .x                      ;  task the mouse finds)
         inc     word [hits]
-        cmp     byte [mode], 'Z'
-        je      .z
+        cmp     byte [mode], 'M'
+        jne     .z
         mov     ah, 08h
         int     21h
         jmp     short .x

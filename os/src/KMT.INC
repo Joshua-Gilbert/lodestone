@@ -608,11 +608,13 @@ mt_kwait:
         jc      .idle
         call    .park                   ; (it runs; then back here)
         jmp     .top
-.idle:  mov     al, [cs:mt_cur]         ; (it ended itself: now)
-        call    mt_ent
-        cmp     byte [cs:bx+TE_KILL], 0
-        jne     mt_kdie
-        pop     bx                      ; the kernel's own wait: PrtSc,
+.idle:  mov     al, [cs:mt_cur]         ; (it ended itself: now, if it can be
+        call    mt_ent                  ;  here: this wait may be in its INT
+        cmp     byte [cs:bx+TE_KILL], 0 ;  24h handler, or its mouse's)
+        je      .wt
+        call    mt_kok
+        je      mt_kdie
+.wt:    pop     bx                      ; the kernel's own wait: PrtSc,
         pop     ax                      ;  INT 28h, HLT, and here again
         pop     ds                      ;  (a TSR popping up from that INT 28h
         mov     byte [cs:mt_idle], 1    ;  on the kernel's stack: its INT 16h
@@ -757,10 +759,11 @@ mt_switch:
         call    mt_ent
         mov     es, [cs:bx+TE_TX]
         cmp     byte [cs:bx+TE_KILL], 0 ; (it ended itself where that couldn't
-        pop     bx                      ;  be at once: it goes on at mt_kdie,
-        je      .sv                     ;  as one ended by another does)
-        mov     bp, sp
-        mov     word [bp+SW_RET], mt_kdie
+        je      .nk                     ;  be at once: it goes on at mt_kdie,
+        mov     byte [cs:bx+TE_STATE], TS_RUN ; as one ended by another does,
+        mov     bp, sp                  ;  ready whatever it was about to wait
+        mov     word [bp+SW_RET+2], mt_kdie ; for; BX still pushed)
+.nk:    pop     bx
 .sv:    mov     [es:TX_SP], sp
         mov     [es:TX_SS], ss
         call    mt_emsget
@@ -1606,17 +1609,10 @@ mt_kill:
         mov     byte [cs:bx+TE_KILL], 1
         cmp     al, [cs:mt_cur]
         jne     .o
-        call    mt_can                  ; its own: now, unless the call came
-        jc      .df                     ;  from an interrupt's handler (one in
-        call    mt_isr                  ;  service, the mouse's event handler),
-        jnz     .df                     ;  an INT 24h handler or a call MT
-        push    es                      ;  passed on: then where it next can
-        mov     es, [ui_seg]            ;  be (mt_switch, mt_preempt, a wait
-        cmp     byte [es:m33_busy], 0   ;  with none other to run)
-        pop     es
-        je      mt_kdie
-.df:    mov     byte [cs:mt_pend], 1
-        jmp     KSEG:ok
+        call    mt_kok                  ; its own: now, unless the call came
+        je      mt_kdie                 ;  from where it can't end (mt_kok):
+.df:    mov     byte [cs:mt_pend], 1    ;  then where it next can be (mt_switch,
+        jmp     KSEG:ok                 ;  mt_preempt, a wait with none other)
 .o:     mov     byte [cs:bx+TE_STATE], TS_RUN
         mov     es, [cs:bx+TE_TX]
         cmp     word [es:TX_KLEN], 0    ; (switched from inside INT 21h: the
@@ -1630,6 +1626,21 @@ mt_kill:
         jmp     KSEG:ok                 ;  out, if the caller is at a safe point)
 .ex:    mov     ax, 5
         jmp     mt_fail
+
+; ZF if the running task can end here, at mt_kdie: not from an interrupt's
+; handler (one in service, the mouse's event handler), an INT 24h handler
+; or a call MT passed on (mt_can).  DS = KSEG; AX changed
+mt_kok: call    mt_can
+        jc      .no
+        call    mt_isr
+        jnz     .x
+        push    es
+        mov     es, [ui_seg]
+        cmp     byte [es:m33_busy], 0
+        pop     es
+.x:     ret
+.no:    or      sp, sp                  ; (NZ)
+        ret
 
 ; a task MT_KILL ended, going on (mt_load's return, or mt_kill in its own
 ; task): MT_END, as its stub makes it, with the stub the current PSP:
