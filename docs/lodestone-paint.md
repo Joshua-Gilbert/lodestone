@@ -133,7 +133,11 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
   - Line stride = `((w + 31) / 32) × 4`.
   - A negative height means top-down: the line step is flipped.
   - A smaller picture is centred on a dark screen.
-  - **Polarity:** the brighter palette entry (R + G + B) is lit. A Windows black-on-white file therefore shows as lit paper with dark ink, as on the 1520's plasma. **I** inverts the view.
+  - **Polarity: dark paper by default** (Joshua, 2026-10-21).
+    - A file with the kernel's own palette (dark red, then orange: Paint's and Shift-PrtSc's files) is shown exactly as saved. That keeps the start-up picture's lit paper, and every capture, as they were.
+    - Any other 1-bit file: the colour covering more of the picture is shown dark. The lit bits are counted with a 256-entry table built in BSS, about 30 ms. So a Windows black-on-white file shows as lit ink on dark paper.
+    - **I** inverts the view and the picture.
+    - Cost: about 50 B in PAINT.RUN (palette compare, count, invert, the I key), 0 resident.
   - Files that aren't exactly 640 × 400, and top-down files, are read through **U** in pieces and placed into C one line at a time. A native-size bottom-up file reads straight into C.
 - **Option V2, deeper colour (a decision for Joshua, §9):** 4-, 8- and 24-bit uncompressed BMPs.
   - Each pixel's luma (`(77R + 150G + 29B) >> 8`, a 256-byte table from the palette for 4/8-bit) is compared with a 4 × 4 Bayer threshold (16 bytes) fixed to the screen. This is the ordered dither the Pi uses for gridfox pictures, scaled down.
@@ -229,6 +233,6 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
 ## 9. Decisions for Joshua
 1. **Deeper-colour BMPs (P3):** 4/8/24-bit dithered and fitted, +≈ 0.6 KB in PAINT.RUN and 0 resident? Or 1-bit only?
 2. **CODE-G "Paint" in the Executive:** +≈ 45 B resident? Without it, Paint starts from its file in the list, or from a `.BMP`.
-3. **Polarity:** brighter palette entry = lit (white paper shows lit), with **I** to flip? Or always dark paper?
+3. **Polarity:** decided, dark paper by default (§4).
 4. **Undo memory:** 64 KB while Paint runs (both buffers). Without U, 32 KB and no undo.
-5. **P2's scope:** all of ellipse, fill, text, select, zoom, or a subset first?
+5. **P2's scope:** decided after P1 is built.
