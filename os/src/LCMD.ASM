@@ -103,6 +103,8 @@ start:  mov     sp, stack_top
         cmp     al, '/'
         jne     .word                   ; a path ("A:\ /P"): skip it
         lodsb
+        or      al, al                  ; ("/" last: the end, X14)
+        jz      .swd
         call    upcase
         cmp     al, 'C'
         je      .slc
@@ -1691,6 +1693,8 @@ do_choice:
 .ot:    cmp     al, 'T'
         jne     .syn
         lodsb
+        or      al, al                  ; ("/T" last)
+        jz      .syn
         mov     [ch_def], al
         cmp     byte [si], ','
         jne     .syn
@@ -2454,6 +2458,8 @@ do_dir: mov     byte [dir_w], 0
         cmp     al, '/'
         jne     .nm
         lodsb
+        or      al, al                  ; ("DIR /": the end, X14)
+        jz      .ad
         call    upcase
         cmp     al, 'W'
         jne     .ap
@@ -4120,7 +4126,10 @@ getarg_sw:
         call    skipsp
         cmp     byte [si], '/'
         jne     .a
-        add     si, 2
+        inc     si
+        cmp     byte [si], 0            ; ("COPY X /": the end, X14)
+        je      .a
+        inc     si
         jmp     getarg_sw
 .a:     push    di
         call    getarg
