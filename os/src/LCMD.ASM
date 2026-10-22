@@ -3803,20 +3803,33 @@ do_wait:
         or      al, al                  ; (free: the last one there ended)
         jz      .end
         mov     [wgen], ah
-        call    con_in                  ; standard input the console?
-        mov     byte [wcon], 1
-        jc      .l
-        je      .l
-        mov     byte [wcon], 0
-.l:     cmp     byte [wcon], 0          ; a ^C waiting (in front only: behind,
-        je      .h                      ;  MT shows no keys) read: AH=08h
-        mov     ah, 1                   ;  raises INT 23h, ours: back to the
-        int     16h                     ;  prompt (Lodestone's 0Bh doesn't
-        jz      .h                      ;  look for it).  Other keys stay
-        cmp     al, 3                   ;  for the prompt
-        jne     .h
-        mov     ah, 8
-        int     21h
+.l:     mov     ah, 1                   ; keys waiting (in front only: behind,
+        int     16h                     ;  MT shows none)?  A ^C or a Ctrl-
+        jz      .h                      ;  Break (0000h) among them: the keys
+        push    ds                      ;  up to it taken, and INT 23h, ours:
+        push    40h                     ;  back to the prompt (Lodestone's
+        pop     ds                      ;  0Bh doesn't look for ^C).  Other
+        cli                             ;  keys stay for the prompt
+        mov     bx, [1Ah]
+.s:     cmp     bx, [1Ch]
+        je      .n
+        mov     ax, [bx]
+        inc     bx
+        inc     bx
+        cmp     bx, [82h]               ; (wrapping at 40:82h)
+        jb      .w
+        mov     bx, [80h]
+.w:     cmp     al, 3
+        je      .c
+        or      ax, ax
+        jnz     .s
+.c:     mov     [1Ah], bx
+        sti
+        pop     ds
+        int     23h
+        jmp     short .h
+.n:     sti
+        pop     ds
 .h:     sti
         hlt                             ; (the other tasks run)
         call    .get
@@ -4656,8 +4669,8 @@ vol_drv     resb 1
 mt_me       resb 1                      ; our task (mt_lst)
 wtask       resb 1                      ; WAIT's task, and the count it has
 wgen        resb 1                      ;  (MT_EXIT's AH) while it runs
-wcon        resb 1                      ;  and 1 if its input is the console
 spb         resb SP_SIZE                ; START's block (MT_SPAWN)
+            alignb  2                   ; (the words after the bytes: even)
 argp        resw 1
 argp2       resw 1
 extp        resw 1
@@ -4782,7 +4795,8 @@ for_dta     resb 44
 for_buf     resb LBUF + 2
 for_cmd     resb LBUF + 2
 BATCTX      equ $ - bat_ctx
-            resb 1024
+            alignb  2                   ; (the stack even, whatever the bytes
+            resb 1024                   ;  before it)
 stack_top:
 prog_end:
 hist        equ start               ; (the code that starts LCMD: the
