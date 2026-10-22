@@ -873,7 +873,9 @@ mouse_isr:
         iret
 
 ; the main-loop side of the mouse: move the pointer (if it shows);
-; CF set with AX = EV_CLICK, BX = x, CX = y for a left-button press
+; CF set with AX = EV_CLICK, BX = x, CX = y for a left-button press, or
+; EV_RCLICK for a right-button press with the left up while a .RUN for
+; API 7 runs (both at once: the left).  No event: AX = x, BX = y
 mouse_event:
         push    dx
         cli
@@ -897,11 +899,21 @@ mouse_event:
         pop     cx
 .btn:   mov     ch, [oldmb]
         mov     [oldmb], cl
-        test    cl, 1
+        not     ch                      ; only on press: CH = the buttons
+        and     ch, cl                  ;  down now and not before
+        mov     dx, EV_CLICK            ; (AX, BX stay x, y without an event:
+        test    ch, 1                   ;  win_mv)
+        jnz     .ev
+        shr     cl, 1                   ; the right one, the left up (nor with
+        jc      .no                     ;  it), and only to a .RUN for API 7
+        test    ch, 2
         jz      .no
-        test    ch, 1
-        jnz     .no                     ; only on press
-        mov     ax, EV_CLICK
+        cmp     byte [run_active], 0
+        je      .no
+        cmp     word [run_hdr+4], 7
+        jb      .no
+        mov     dl, EV_RCLICK & 0FFh
+.ev:    xchg    ax, dx
         cli                             ; (x and y from the same packet)
         mov     bx, [mx]
         mov     cx, [my]
@@ -2204,7 +2216,10 @@ win_mv: pusha
         cmp     byte [mflag], 0
         je      .w
         call    mouse_event             ; AX = x, BX = y; [oldmb] the buttons
-        mov     dx, bx
+        jnc     .xy                     ; (an event: the left up and the right
+        xchg    ax, bx                  ;  down in one look, EV_RCLICK, has
+        mov     bx, cx                  ;  them in BX, CX)
+.xy:    mov     dx, bx
         shr     ax, 3
         sub     ax, [mv_gx]
         sub     dx, [mv_gy]
@@ -2689,10 +2704,12 @@ ed_enter:                               ; (ui_form, back in the same field:
         call    ed_cursor
         call    ui_event
         call    ed_cursor               ; (off again)
-        cmp     ax, EV_MOVED            ; the window moved, the field with it:
-        je      .l                      ;  drawn there, editing goes on
-        cmp     ax, EV_CLICK
-        je      .out
+        cmp     ah, 0FFh                ; an event: a click ends it; any other
+        jne     .ch                     ;  (EV_MOVED: the window moved, the
+        cmp     al, EV_CLICK & 0FFh     ;  field with it, drawn there;
+        je      .out                    ;  EV_RCLICK) and editing goes on, a
+        jmp     .l                      ;  first character still replacing
+.ch:
         cmp     al, 0Dh
         je      .out
         cmp     al, 1Bh
