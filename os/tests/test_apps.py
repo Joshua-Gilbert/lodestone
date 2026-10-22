@@ -1146,14 +1146,23 @@ def t_form():
     k.key(ktest.ENTER)
     k.key(CODE['R']); k.key(ktest.ESC); k.key(CODE['C']); k.key(ktest.ESC)
     check('CODE-R, CODE-D open their forms; ESC changes nothing', not k.crashed and k.exec_list() == ['INNER.TXT'] and k.pc.mode() == 0x40, k.where())
-    # B: with no disk
-    k.pc.drives[1].empty = True
+    # B: with no disk (taken out: the change line says so, so B: is mounted again: INT 24h, the UI's says why)
+    k.pc.drives[1].empty = True; k.pc.drives[1].changed = True
     k.key(ktest.TAB); k.key(ktest.DOWN); k.key(ktest.ENTER, settle=False); k.settle(20)
     check('B: with no disk: Subject has Root only and the band says why ("Drive not ready", not "error 0")',
           subjects(k) == ['Root'] and k.band()[:1] == ["Can't read the disk: Drive not ready (no disk?)"]
           and not k.crashed, (subjects(k), k.band()))
     k.key(ktest.ENTER)
     k.key(K_BTAB); k.key(ktest.UP); k.key(ktest.ESC)
+    # a disk that isn't a DOS disk (blank): said as such, not "Path not found"
+    saved = k.pc.drives[1].img
+    k.pc.drives[1].img = bytearray(len(saved)); k.pc.drives[1].empty = False; k.pc.drives[1].changed = True
+    k.key(ktest.TAB); k.key(ktest.DOWN); k.key(ktest.ENTER, settle=False); k.settle(20)
+    check('B: with a blank disk: "Can\'t read the disk: Not a DOS disk"', k.band()[:1] == ["Can't read the disk: Not a DOS disk"]
+          and not k.crashed, (subjects(k), k.band()))
+    k.key(ktest.ENTER)
+    k.key(K_BTAB); k.key(ktest.UP); k.key(ktest.ESC)
+    k.pc.drives[1].img = saved; k.pc.drives[1].empty = True; k.pc.drives[1].changed = True
     check('... Shift-Tab, Up, ESC: back to A:', k.exec_list() == ['INNER.TXT'] and form(k)[0] == 'Floppy A:', (k.exec_list(), form(k), k.band()))
     # one drive
     k = ktest.KPC(a); k.start()
