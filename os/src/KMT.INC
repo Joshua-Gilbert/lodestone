@@ -14,7 +14,8 @@
 ;  keyboard's 09h and 1Bh at a change of the front, the rest the
 ;  machine's, those left pointing into a task's region put back at its
 ;  end); tasks ended whatever runs in them (M5b: MT_KILL, at their stub's
-;  MT_END when they next run).  CODE-Tab never lost to the BIOS (mt_drop).
+;  MT_END when they next run).  CODE-Tab not lost to the BIOS's look for
+;  a key (mt_drop).
 ;
 ;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
 ;  only in the load image, its resident part (section mtt) isn't even in
@@ -548,9 +549,11 @@ mt_preempt:
 .p:     call    mt_pick
         jnc     mt_switch
         mov     al, [cs:mt_cur]         ; none: this one goes on, a new turn;
-        call    mt_ent                  ;  unless it is frozen here: then the
-        call    mt_frz                  ;  front one (waiting for a key, or it
-        jnz     .fz                     ;  would have been picked)
+        call    mt_ent                  ;  unless it ended itself (now), or it
+        cmp     byte [cs:bx+TE_KILL], 0 ;  is frozen here: then the front one
+        jne     mt_kdie                 ;  (waiting for a key, or it would
+        call    mt_frz                  ;  have been picked)
+        jnz     .fz
         mov     byte [cs:mt_slice], 2
         ret
 .fz:    mov     bl, [cs:mt_front]
@@ -605,7 +608,11 @@ mt_kwait:
         jc      .idle
         call    .park                   ; (it runs; then back here)
         jmp     .top
-.idle:  pop     bx                      ; the kernel's own wait: PrtSc,
+.idle:  mov     al, [cs:mt_cur]         ; (it ended itself: now)
+        call    mt_ent
+        cmp     byte [cs:bx+TE_KILL], 0
+        jne     mt_kdie
+        pop     bx                      ; the kernel's own wait: PrtSc,
         pop     ax                      ;  INT 28h, HLT, and here again
         pop     ds                      ;  (a TSR popping up from that INT 28h
         mov     byte [cs:mt_idle], 1    ;  on the kernel's stack: its INT 16h
@@ -749,7 +756,11 @@ mt_switch:
         push    bx
         call    mt_ent
         mov     es, [cs:bx+TE_TX]
-        pop     bx
+        cmp     byte [cs:bx+TE_KILL], 0 ; (it ended itself where that couldn't
+        pop     bx                      ;  be at once: it goes on at mt_kdie,
+        je      .sv                     ;  as one ended by another does)
+        mov     bp, sp
+        mov     word [bp+SW_RET], mt_kdie
 .sv:    mov     [es:TX_SP], sp
         mov     [es:TX_SS], ss
         call    mt_emsget
@@ -1191,8 +1202,16 @@ mt_owners:
         push    es
         mov     es, ax                  ; a program's: its files, then its EMS
         cmp     word [es:0], 20CDh      ;  and its blocks (this one and on: the
-        jne     .f                      ;  walk goes on)
-        KCALL   close_all
+        jne     .f                      ;  walk goes on); its end told to the UI
+        KCALL   close_all               ;  as terminate does (ui_progend: its
+        push    ax                      ;  mouse handler forgotten, m33_busy
+        push    bx                      ;  cleared if it ended inside it)
+        push    es
+        mov     bx, es
+        KCALL   ui_progend
+        pop     es
+        pop     bx
+        pop     ax
 .f:     mov     ax, es
         KCALL   ems_free_owner
         pop     es
@@ -1573,7 +1592,8 @@ mt_frontc:
 ; MT_KILL: task BL ended, whatever runs in it.  Another task: where it would
 ; go on, mt_switch's return, becomes mt_kdie, which ends it when it next
 ; runs (no code of its programs' runs again); waiting, it is ready now, and
-; frozen behind it runs all the same (mt_pick).  The caller's own: now
+; frozen behind it runs all the same (mt_pick).  The caller's own: now, or
+; from its next safe point
 mt_kill:
         mov     al, [bp+F_BX]
         cmp     al, MT_TASKS
@@ -1585,8 +1605,19 @@ mt_kill:
         je      mt_bad
         mov     byte [cs:bx+TE_KILL], 1
         cmp     al, [cs:mt_cur]
+        jne     .o
+        call    mt_can                  ; its own: now, unless the call came
+        jc      .df                     ;  from an interrupt's handler (one in
+        call    mt_isr                  ;  service, the mouse's event handler),
+        jnz     .df                     ;  an INT 24h handler or a call MT
+        push    es                      ;  passed on: then where it next can
+        mov     es, [ui_seg]            ;  be (mt_switch, mt_preempt, a wait
+        cmp     byte [es:m33_busy], 0   ;  with none other to run)
+        pop     es
         je      mt_kdie
-        mov     byte [cs:bx+TE_STATE], TS_RUN
+.df:    mov     byte [cs:mt_pend], 1
+        jmp     KSEG:ok
+.o:     mov     byte [cs:bx+TE_STATE], TS_RUN
         mov     es, [cs:bx+TE_TX]
         cmp     word [es:TX_KLEN], 0    ; (switched from inside INT 21h: the
         je      .st                     ;  return in its kernel stack's slice)
@@ -1615,6 +1646,16 @@ mt_kdie:
         mov     ax, [cs:bx+TE_PSP]
         mov     [cur_psp], ax
         mov     word [last_exit], 0100h
+        push    ds                      ; INT 22h-24h the stub's (MT's), as a
+        mov     ds, ax                  ;  program's end puts them back: a disk
+        mov     si, 0Ah                 ;  error as its files close gets
+        xor     di, di                  ;  mt_i24, not a dying program's
+        mov     es, di                  ;  handler
+        mov     di, 22h * 4
+        mov     cx, 6
+        cld
+        rep     movsw
+        pop     ds
         cmp     byte [indos], 0
         je      .out
         jmp     mt_end
@@ -2254,10 +2295,8 @@ mt_i16:
         jne     .pas                    ;  BIOS, an INT 13h call, or a change
         cmp     word [cs:mt_in13], 0    ;  of the front: an interrupt's, as M4a
         jne     .pas                    ;  takes INT 10h's there)
-        cmp     byte [cs:mt_crit], 0    ; (a count left by a handler that never
-        je      .top                    ;  came back: not inside INT 21h now)
-        cmp     byte [indos], 0
-        jne     .pas
+        cmp     byte [cs:mt_crit], 0    ; (the kernel's INT 24h's prompt, raised
+        jne     .pas                    ;  inside INT 21h or not: as it is)
 .top:   call    mt_hot
         cli
         cmp     byte [cs:mt_swreq], 0FFh ; (a task asked for: on the way out
@@ -2304,8 +2343,12 @@ mt_i16:
         jnz     .pas
 .w:     call    mt_wkey
 .wk:    jnc     .top
-        sti                             ; (no other task ready: until the
-        hlt                             ;  next interrupt)
+        mov     al, [cs:mt_cur]         ; (no other task ready: until the
+        call    mt_ent                  ;  next interrupt; unless it ended
+        cmp     byte [cs:bx+TE_KILL], 0 ;  itself: now)
+        jne     mt_kdie
+        sti
+        hlt
         jmp     .top
 .k:     mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
@@ -2485,10 +2528,8 @@ mt_i33: cli
         jne     .pas
         cmp     word [cs:mt_in13], 0
         jne     .pas
-        cmp     byte [cs:mt_crit], 0    ; (a count left by a handler that never
-        je      .b                      ;  came back: not inside INT 21h now)
-        cmp     byte [indos], 0
-        jne     .pas
+        cmp     byte [cs:mt_crit], 0    ; (the kernel's INT 24h's prompt, raised
+        jne     .pas                    ;  inside INT 21h or not: as it is)
 .b:     push    es
         mov     es, [ui_seg]
         cmp     byte [es:m33_busy], 0
@@ -3312,10 +3353,9 @@ mt_v10:
         jnz     .real
         push    KSEG                    ; a critical error's prompt (inside the
         pop     ds                      ;  kernel's INT 24h: everything waits
-        cmp     byte [cs:mt_crit], 0    ;  for its answer): on the real screen
-        je      .k                      ;  (a count left by a handler that never
-        cmp     byte [indos], 0         ;  came back: not inside INT 21h now).
-        jne     .real                   ;  Else inside INT 21h too the task's,
+        cmp     byte [cs:mt_crit], 0    ;  for its answer; raised inside INT 21h
+        jne     .real                   ;  or not): on the real screen.  Else
+                                        ;  inside INT 21h too the task's,
 .k:     call    mt_isr                  ;  whatever hook it comes through.  A
                                         ;  hardware interrupt in service, or an
         jnz     .real                   ;  INT 33h event handler running: on the
@@ -3526,8 +3566,10 @@ mt_vcall:
 mt_c24: mov     si, crit_dev
         inc     byte [cs:mt_crit]
         int     24h
+        cmp     byte [cs:mt_crit], 0    ; (cleared meanwhile: its handler ran a
+        je      .x                      ;  program that ended)
         dec     byte [cs:mt_crit]
-        retf
+.x:     retf
 
 ; INT 13h: counted while it runs (mt_in13), so mt_v10 knows an INT 10h call
 ; meanwhile is an interrupt's, while a floppy's DMA may be going into the
