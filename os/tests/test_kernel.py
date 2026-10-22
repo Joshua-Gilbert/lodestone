@@ -1674,6 +1674,28 @@ def t_slashend():
           'over its own variables); 78 letters are kept', o.count('Syntax error') == 2 and 'still here' in o and 'A' * 87 not in e
           and 'B' * 79 not in e and 'C' * 78 + '=Y' in e.upper().replace('\n', ''), (o, e))
 
+def t_dirlong():
+    """DIR of a path longer than DIR's pattern takes (X26): "File not found", and the shell goes on.  Its
+    directory part ran past pat into pat_dir, and canon then copied over LCMD's own code: the machine hung.  A
+    75-character path is still taken; DIR from a deep directory (canon's output past pat_dir) works too.  (With
+    the bound gone, LCMD's overwritten code can loop inside one emulator call: then this test hangs, not fails.)"""
+    img = image('dirlong.img', os.path.join(GOS, 'src', 'LCMD.COM'))
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    o = sh.run('dir ' + 'abcdefgh\\' * 8 + 'abcdefg\\x') + sh.run('dir ' + 'abcdefgh\\' * 9 + 'x') + sh.run('echo still here')
+    check('DIR of an 81- and a 91-character path (directory parts of 80 and 81): "File not found", the shell as it was (it hung)',
+          o.count('File not found') == 2 and 'still here' in o and not k.crashed, o)
+    o = sh.run('dir ' + 'a' * 73 + '\\x') + sh.run('dir ' + 'a' * 74 + '\\x')
+    check('... 75 and 76 characters (each side of the limit): "File not found", no hang', o.count('File not found') == 2
+          and not k.crashed, o)
+    deep = 'aaaaaaaa\\bbbbbbbb\\cccccccc\\dddddddd\\eeeeeeee\\ffffffff\\gggggggg'
+    for p in deep.split('\\'):
+        sh.run('md ' + p); sh.run('cd ' + p)
+    sh.run('echo x > f.txt')
+    o = sh.run('dir ' + 'z' * 60 + '\\..\\f.txt') + sh.run('dir') + sh.run('echo still here')
+    check('DIR from a 62-character directory of a 72-character relative path: no hang, and DIR there lists F.TXT',
+          'F        TXT' in o and 'still here' in o and not k.crashed, o)
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -2218,7 +2240,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
