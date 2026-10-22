@@ -72,7 +72,11 @@ REQMAX  equ 2 + 2048            ; a REQUEST: id, op, a TYPE script of 2 KB
 TAIL    equ 12                  ; the page's last bytes: a reply's first ones
 NAMEMAX equ 12                  ; the program's name (8.3)
 TXMAX   equ 256                 ; GRiD -> Pi payload: HELLO, POLL, KEYS, REPLY
-RXMAX   equ 255
+%ifndef RXPAY
+%assign RXPAY 2048                 ; Pi -> GRiD payload (HELLO's rx=); the EMS page has room for ~2.4 KB
+%endif
+RXMAX   equ RXPAY + 9                 ; a frame and one byte more (see CLAUDE.ASM)
+%defstr RXPAY_S RXPAY
 TXQN    equ 6
 TITLEN  equ 36                  ; the Pi's title, then DOS busy (48 cells)
 %include "GLP.INC"
@@ -569,7 +573,7 @@ gg_call:                                ; INT 60h-66h, the driver's
 
 build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
-        mov     ax, 0101h               ; GLP 1; flags: Term
+        mov     ax, 0501h               ; GLP 1; flags: Term, the Fletcher sum
         stosw
         mov     ax, TXMAX
         stosw
@@ -697,7 +701,12 @@ pi_frame:                               ; BX = frame offset in rxbuf
         ret                             ; (the chat's TEXT, STATUS, ASK... no)
 
 rf_hello:
-        mov     byte [connected], 1
+        cmp     cx, 2                   ; the Pi takes the Fletcher sum: every
+        jb      .c                      ;  frame from now on
+        test    byte [si+1], HF_FCS
+        jz      .c
+        mov     byte [use_fl], 1
+.c:     mov     byte [connected], 1
         mov     byte [n_failrun], 0
         mov     byte [rq_more], 0
         mov     ax, [now]
@@ -974,7 +983,7 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.1', 10, 'addr=', 0
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.3', 10, 'rx=', RXPAY_S, 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
 s_sep       db '  ', 86h, '  ', 0
@@ -1040,7 +1049,7 @@ pf_kind     resb 1
 rq_more     resb 1                      ; a REQUEST's frames still coming
 rq_over     resb 1                      ;  more than REQMAX of them
 replybuf    resb 4                      ; a reply of our own: id, status (flags)
-hellobuf    resb 96
+hellobuf    resb 104
 ; M3: the program, its screen, Claude's keys
 parms       resd 1                      ; the stub's parameters (r_ks, r_pend)
 prog        resb NAMEMAX + 1            ; the program's name, or nothing

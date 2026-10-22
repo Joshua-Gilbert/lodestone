@@ -66,11 +66,11 @@ class Grid:
             rid = s.next_id; s.next_id = s.next_id % 250 + 1
             s.waiting.add(rid); s.replies.pop(rid, None); gen = s.ended
         s.link.send(glp.P_REQUEST, bytes([rid, op]) + bytes(args))
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         with s.cv:
             try:
                 while rid not in s.replies:
-                    left = deadline - time.time()
+                    left = deadline - time.monotonic()
                     if s.ended != gen: raise GridError(s.why)
                     if left <= 0: raise GridError('the GRiD did not answer in %d s' % timeout)
                     s.cv.wait(min(left, 0.5))
