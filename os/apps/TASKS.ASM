@@ -8,9 +8,10 @@
 ;  task to the front (a parked one is brought back first) and closes the
 ;  window: the change comes at the Executive's next wait.  CODE-Z parks a
 ;  task or brings it back, CODE-B goes round auto, yes, no, CODE-D ends
-;  it (after a question).  The list is as it was at the last key: F5 looks
-;  again.  A task asked to end goes once the Executive waits again; till
-;  then its row says so.
+;  it (after a question).  The list is as it was when the window opened or
+;  at the last change: F5 looks again.  A task asked to end goes at its
+;  next turn (this window's wait is a safe point); its row says so till
+;  the list is read again.
 ;
 ;  As the calculator, it never sets a redraw routine and ends with exit
 ;  code 0FFFFh (the screen as it was), or 0 if the saver repainted the

@@ -71,7 +71,7 @@ With the switch off, `TASKS` says `Multitasking is off (MULTITASK=1 in LODE.INI)
 In M1 the UI goes on lending its directory buffer to DOS programs as before, so with the switch on DOS programs lose only MT's own block. Whether lending can stay on once tasks have regions of their own is for M2 to settle. The plan assumed not (7.5 KB); regions allocated downward from MT's block would let it stay.
 
 **Cost:**
-- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch; 42B0h, 77E0h, 67A8h and 563.7 / 579.7 KB since its UI batch; 3EA0h, 73D0h, 6134h and 566.3 / 582.4 KB since its medium-risk batches; ui_keep_end 6144h since UI-12; 3EF0h, 7420h, 6164h and 566.2 / 582.2 KB since X15/X16 and the right clicks; 3F30h, 7460h, 6164h and 566.1 / 582.2 KB since X18; ui_keep_end 6154h since X22; 3F80h, 74B0h, 6154h and 566.0 / 582.1 KB since X17/X20; 61EAh since M7b).
+- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch; 42B0h, 77E0h, 67A8h and 563.7 / 579.7 KB since its UI batch; 3EA0h, 73D0h, 6134h and 566.3 / 582.4 KB since its medium-risk batches; ui_keep_end 6144h since UI-12; 3EF0h, 7420h, 6164h and 566.2 / 582.2 KB since X15/X16 and the right clicks; 3F30h, 7460h, 6164h and 566.1 / 582.2 KB since X18; ui_keep_end 6154h since X22; 3F80h, 74B0h, 6154h and 566.0 / 582.1 KB since X17/X20; 620Ah and 565.9 / 582.0 KB since M7b).
 - **One exception: LCMD.** It is 173 bytes bigger (`TASKS`). It keeps 11 paragraphs (176 bytes) more while a program runs from its prompt, so such programs get that much less, switch on or off.
 - **Switch on:** MT's block is 14 paragraphs plus its MCB, 240 bytes. A DOS program gets 577.4 KB instead of 577.6. `test_mt` checks the free paragraphs exactly.
 - **Files:**
@@ -1271,7 +1271,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
 - **How much memory a task from Return gets:**
   - **`MTMEM=`'s size,** if LODE.INI names the program.
   - **A `.COM`:** 64 KB.
-  - **An `.EXE`:** at least its header's minimum, and up to its maximum. The maximum is capped at the largest free block, less this task's region's own paragraphs and another task's, with its 64 KB. So an `.EXE` whose maximum is FFFFh, which most are, still leaves room for one more task.
+  - **An `.EXE`:** at least its header's minimum, and up to its maximum (a maximum below the minimum counts as the minimum, as EXEC takes it). Both get room for EXEC's copy of the environment, which goes in the task's memory too. The maximum is capped at the largest free block, less this task's region's own paragraphs, another task's with its 64 KB, and 16 KB for a `.RUN` (`RUN_ROOM`). So an `.EXE` whose maximum is FFFFh, which most are, still leaves room for one more task and for the Tasks window.
 - **CODE-T: the Tasks window (TASKS.RUN),** a window over the Executive, as the calculator is. It moves and closes.
   - There is one row a task: its number, its program, and what it is doing. That is "in front", "running", "waiting for a key", "waiting to be in front", "frozen behind", "parked", or "being ended".
   - Each row also says whether the task may run behind:
@@ -1288,7 +1288,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
   - With multitasking off, the window says so, and how to turn it on.
 - **System's Multitasking topic,** the tenth (before About), says whether multitasking is on now and whether it will be from the next start-up.
   - Space switches the next start-up's setting: `MULTITASK=1` is written to LODE.INI, or its line goes.
-  - If LODE.INI asks for multitasking but it is off, System says why: no EMS (32 KB of it free), or no LODEMT.SYS.
+  - If LODE.INI asks for multitasking but it is off, System says what it needs: EMS with 32 KB of it free, and LODEMT.SYS beside LODE.SYS.
 - **LODE.INI's `BG=`, `FREEZE=` and `MTMEM=`** are read at start-up and apply to every task, the Executive's and LCMD's START alike.
   - Each holds program names, separated by commas, semicolons or blanks: `BG=CLOCK, SPOOL.COM`.
   - A name without an extension names the program whatever its extension; one with an extension names only that.
@@ -1298,10 +1298,11 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
   - **`MT_UI` (AL=19h):** the Executive's entry, below.
 
 **How:**
-- **The Executive's entry.** `MT_UI` gives the Executive a far entry into LODEMT.SYS (`mt_ui`). The Executive gets it once, at its start (in `ui_boot`, which is discarded), and keeps only its 4 bytes. The Executive calls it in its own task, not inside INT 21h, so the entry may call DOS: it reads an `.EXE`'s header itself, and asks for the largest block with AH=48h. With CS in MT's block, no switch comes meanwhile (`mt_safe`).
+- **The Executive's entry.** `MT_UI` gives the Executive a far entry into LODEMT.SYS (`mt_ui`). The Executive gets it once, at its start (in `ui_boot`, which is discarded), and keeps only its 4 bytes, and a byte for its wait (`ex_mtw`). The Executive calls it in its own task, not inside INT 21h, so the entry may call DOS: it reads an `.EXE`'s header itself, and asks for the largest block with AH=48h. With CS in MT's block, no switch comes meanwhile (`mt_safe`).
 - **Sizing an `.EXE`:**
-  - its pages less its header and the last page's unused part, plus its PSP;
-  - plus its minimum (`DX`), or up to its maximum (`AX`), capped as above.
+  - its pages less its header and the last page's unused part, plus its PSP, plus `MT_XENV` (74 paragraphs: EXEC's copy of the stub's environment, `ENVMAX` at most, and the name, with its MCB);
+  - plus its minimum (`DX`), or up to its maximum (`AX`, at least `DX`), capped as above;
+  - a header past 1 MB, or one whose sums overflow, is left to EXEC to refuse.
 - **Starting it:** the entry spawns the task with its own `MT_SPAWN` block and notes the task's count (`TE_GEN`) in `mt_xgen`.
 - **Telling an end:**
   - `mt_end` counts the tasks ended (`mt_nend`) and notes each one's place in that count (`mt_eord`).
@@ -1309,57 +1310,62 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
   - The answer is `EV_TASK` (the list only) or `EV_TASKM` (a message for one the Executive started, in `msgbuf`). Both go through `ex_loop`'s "the list again, the message shown kept" path.
   - There is one message a look, the first ended first, so the band ends with the last one's.
 - **LODE.INI's lists** are read in `mt_boot` (`mt_lists`, start-up code, discarded) into 160 bytes of MT's BSS. Each name is stored upper case with its NUL and a word (`MTMEM=`'s KB). `mt_spawn` matches the name part of the path it is given (`mt_lname`, `mt_lmat`) before it sizes the region.
-- **The UI block never moves while multitasking is on:**
-  - `ui_room` doesn't move it, because tasks' copies of the vector table (`TX_GSN`, M5a) may point into it.
-  - The Executive no longer runs programs itself, except with Shift-Return, CODE-P and CODE-A. So the block only needs to grow back after a `.RUN`, and memory past it is taken from the top down (regions).
+- **The UI block moves only while no task but the Executive's is there:**
+  - After a program the Executive ran itself (Shift-Return, CODE-P, CODE-A) has left a TSR right after the UI block, `ui_room` moves the block past it, as with multitasking off. With other tasks there, parked ones too (`MT_LIST`'s count), it doesn't, because their copies of the vector table (`TX_GSN`, M5a) may point into it. It asks again at each wait, and at each task's end (`ex_loop`'s `.tl`), so the block moves once the last task has gone.
+  - With only the Executive's task, the move is safe: nothing holds the old place but what `ui_room` already tells (the kernel's `ui_seg`, which MT reads on each use, INT 24h, the mouse, the DTA), and task 0's own vectors are saved again at its next switch.
+  - Otherwise the block only needs to grow back after a `.RUN`, and memory past it is taken from the top down (regions).
 - **`pcemu`'s INT 16h AH=02h** returns the shift state at 40:17h, as the BIOS does. The tests hold Shift there for Shift-Return.
 
 **The limits, plainly:**
 - **Return gives a `.COM` 64 KB.** A `.COM` that needs more, or one that runs other programs (a shell), needs `MTMEM=` or Shift-Return.
 - **An `.EXE` is sized from its header.** One that asks for little and takes more with AH=48h as it runs finds memory short. `MTMEM=` or Shift-Return fixes that.
 - **The Executive passes no command tail,** as before.
+- **Shift is read when the Executive takes the Return, not when it was typed.** A Shift-Return typed ahead while the Executive is busy can start a task. Shift held at a double click's second click runs the program in the Executive's own task too.
 - **`MTMEM=`, `BG=` and `FREEZE=` go by the name MT is given.** A batch file STARTed runs as LCMD.COM, so its own name can't be listed. The lists hold 160 bytes: what doesn't fit is left out, and names are cut at 12 characters.
-- **The Tasks window shows the tasks as they were at the last key** (F5 looks again).
-  - A task asked to end goes once the Executive waits again: a `.RUN` runs in the UI's code, where no switch is safe. Till then its row says "being ended".
+- **The Tasks window shows the tasks as they were when it opened, or at the last change it made** (F5 looks again).
+  - A task asked to end goes at its next turn, since the window's own wait (`..@ui_idle`) is a safe point. Its row says "being ended" till the list is read again.
 - **A task's end while a `.RUN` window is open** (Tasks, the calculator) is said once the window has closed.
 - **Two ends close together give two messages,** each until the next look (half a second); the last one stays.
 - **A task the Executive started can end unannounced.** If it ends, and its number is used again before the Executive looks, its end isn't said. The list is still read again.
 - **CODE-B's change counts from the task's next turn.** For `SPF_BG`, it counts from its next INT 10h call. What it printed to its own screen before stays there.
 - **A task found writing the screen itself** still shows "auto", with "frozen behind" as what it is doing.
-- **A `.RUN` may not find room.** With the UI block never moved, and memory past it taken by tasks, a `.RUN` that doesn't fit gets "not enough memory".
+- **A `.RUN` may not find room.** An `.EXE` from Return leaves 16 KB for one, but a task started otherwise (START, `MTMEM=`) can take memory right after the UI block; a `.RUN` that doesn't fit then gets "not enough memory".
+- **A TSR loaded from the Executive's own task while other tasks are there** (with Shift-Return, or at CODE-P's prompt) leaves the Executive's list empty, and its `.RUN`s unable to load, until the last task has ended and the block has moved past it. Load TSRs before starting tasks (M5a).
 - **`MT_UI`'s entry is the Executive's alone.**
 
 **Cost:**
 - **Switch off:**
   - The kernel's map is unchanged: `image_end` 3F30h, `bss_end` 7460h.
-  - The Executive's resident part is 150 bytes bigger (`ui_keep_end` 6154h → 61EAh). It holds:
+  - The Executive's resident part is 182 bytes bigger (`ui_keep_end` 6154h → 620Ah). It holds:
     - Return's call and Shift-Return;
     - the wait's INC and DEC, and the end's events;
     - the poll;
-    - the UI block kept in place;
+    - the UI block kept in place while tasks are there, and moved once they have gone;
     - CODE-T's key and help line.
-  - So MEMSZ from the Executive is **582.1 KB with EMS** (582.2 before) and **566.0 KB without** (566.1).
-  - LODE.SYS is 400 bytes bigger (47,600), all of it start-up code: `mt_lists`.
-  - System is 781 bytes bigger (12,694).
+  - So MEMSZ from the Executive is **582.0 KB with EMS** (582.2 before) and **565.9 KB without** (566.1).
+  - LODE.SYS is 432 bytes bigger (47,632): about 220 bytes of the kernel's start-up code (`mt_lists`), and the rest the Executive's (its resident part, and `ui_boot`'s `MT_UI` call).
+  - System is 816 bytes bigger (12,729).
   - TASKS.RUN (1,869 bytes) is read only on CODE-T.
 - **Switch on:**
-  - MT's block is 886 paragraphs plus its MCB (814 before).
+  - MT's block is 887 paragraphs plus its MCB (814 before).
   - A program run with Shift-Return (or from CODE-P's prompt, less LCMD's own) gets 568.2 KB (569.5 before).
-  - LODEMT.SYS is 11,886 bytes (10,914 before).
-- **ROM 1** has 9,728 bytes left (13,312 before): LODEMT.SYS takes two sectors more, SYSTEM.RUN one, and TASKS.RUN four.
+  - LODEMT.SYS is 11,904 bytes (10,914 before).
+- **ROM 1** has 9,216 bytes left (13,312 before): LODE.SYS takes one sector more, LODEMT.SYS two, SYSTEM.RUN one, and TASKS.RUN four.
 - **Speed:** nothing on the paths that run all the time. The Executive's wait makes a far call every half second. `mt_spawn` compares the program's name with the lists' names, and `mt_end` does a few moves more.
 
-**Tests:** test_mt has 286 checks (267 before), in four new groups:
+**Tests:** test_mt has 289 checks (267 before), in four new groups:
 - **`t_exec`:**
   - Return with the switch off, as before.
   - The entry.
   - Return as a task, its end and its message.
   - A file a task made, listed after.
-  - An `.EXE`'s sizes, from small, `FFFFh` and too-big headers.
+  - An `.EXE`'s sizes, from small, `FFFFh` and too-big headers, and the Tasks window opening after an `FFFFh` one and a `.COM`.
+  - `.EXE`s whose minimum is their maximum, and whose maximum is below their minimum, started and ended.
   - Shift-Return, with all the memory.
   - CODE-P in the Executive's own task.
   - Too many tasks.
   - A task ending under the calculator.
+  - A TSR from Shift-Return with a task there: the UI block stays; once the task has ended, it moves past the TSR, and the list and the Tasks window are back.
 - **`t_lists`:**
   - The lists as read.
   - START with `BG=`, `FREEZE=`, `MTMEM=` and `/M:`.
@@ -1379,13 +1385,14 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
   - The topic.
   - Space both ways.
   - Asked for but off.
+  - `MULTITASK=1X`: off for the kernel and for System alike.
 
 Changes to existing checks:
 - MTPROBE, MEMSZ (with the switch on), TESTDOS, EMSTEST and CACHETST run with Shift-Return.
 - The off map's `ui_keep_end`, and MEMSZ off (test_mt, test_apps, test_splash), are moved.
-- t_preempt's INT 21h group asks for the way out's switches and a total, not both kinds. On this build, with MT's block 72 paragraphs lower, all 20 came on the way out, and the tick's are the first group's.
+- t_preempt's INT 21h group asks for the way out's switches and a total, not both kinds. On M7b's first build, with MT's block 72 paragraphs lower, all 20 came on the way out. So a switch at the tick inside a task that calls INT 21h is no longer asked for; the tick's switches are asked for in the first group, whose tasks make no INT 21h calls.
 
-**The checks can fail:** each of these mutations, broken on purpose, fails a check (34 in all):
+**The checks can fail:** each of these mutations, broken on purpose, fails a check (41 in all):
 - **The lists:**
   - not read;
   - `BG=` or `FREEZE=` not applied;
@@ -1399,6 +1406,9 @@ Changes to existing checks:
   - no minimum;
   - the last page's unused part kept;
   - no PSP;
+  - no room for EXEC's copy of the environment;
+  - a maximum below the minimum kept;
+  - no `RUN_ROOM` in the cap;
   - `.EXE` not told from `.COM`.
 - **Telling an end:**
   - the end not counted;
@@ -1407,10 +1417,12 @@ Changes to existing checks:
   - the message not flagged;
   - the poll not limited to the Executive's own wait, either way;
   - no list again;
-  - a shown message cleared.
+  - a shown message cleared;
+  - the UI block not moved at a task's end.
 - **The Executive:**
   - Shift-Return lost;
-  - CODE-P as a task.
+  - CODE-P as a task;
+  - the UI block never moved with multitasking on, or moved with tasks there.
 - **`MT_FLAGS`:**
   - its clearing lost;
   - task 0 accepted.
@@ -1423,12 +1435,13 @@ Changes to existing checks:
 - **System:**
   - its `MULTITASK=` line not replaced;
   - "On" not read;
+  - something after the `1` accepted;
   - `MULTITASK=1` not written.
 
 **Not tested here:**
-- `ui_room` keeping the UI block in place with tasks: no test fills the memory past the block (`roomguard` survives).
 - A number used again before the Executive looks.
 - The lists overflowing their 160 bytes.
 - CODE-B's change on a running task's output.
 - "auto" for a task found writing the screen.
+- In the Tasks window: F5, a click on the selected row, and ESC or CODE-T closing it with multitasking on. Its "No such task" and "Not enough memory or EMS" messages.
 - Any of it on the 1520.

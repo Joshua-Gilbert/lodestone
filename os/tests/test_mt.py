@@ -59,8 +59,8 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x3F80, 'bss_end': 0x74B0, 'ui_keep_end': 0x61EA}  # (6144h before right clicks, UI API 7; 6164h before X22;
-                                        #  6154h before M7b: the Executive's Return as a task, CODE-T)
+OFF_MAP = {'image_end': 0x3F80, 'bss_end': 0x74B0, 'ui_keep_end': 0x620A}  # (6144h before right clicks, UI API 7; 6164h before X22;
+                                        #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left)
 
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
@@ -699,8 +699,8 @@ def t_preempt():
     sw, dx, dt = len(au.switches(n)), len(au.switches(n, 'exit')), len(au.switches(n, 'tick'))
     # (each turn ends with a switch, at the tick or on INT 21h's way out; which of the two depends on where the
     #  ticks land in the spinners' loop, and that moves with the code's layout and what ran before: on one build,
-    #  e.g., the split reversed between this group and the step run alone, the total the same; on M7b's build, its
-    #  MT block 12 paragraphs lower, all 20 on the way out.  The tick's are the first group's, with no INT 21h)
+    #  e.g., the split reversed between this group and the step run alone, the total the same; on M7b's first build, its
+    #  MT block 72 paragraphs lower, all 20 on the way out.  The tick's are the first group's, with no INT 21h)
     check('the same with an INT 21h call on every count (AH=2Ch): about half each (alone %d; %d and %d); a switch at '
           'each turn\'s end, %d in all: %d at the tick, %d on INT 21h\'s way out' % (d0, d1, d2, sw, dt, dx),
           d0 > 0 and 0.3 * d0 < d1 < 0.7 * d0 and 0.3 * d0 < d2 < 0.7 * d0 and 18 <= sw <= 30 and dx >= 1
@@ -2877,10 +2877,11 @@ def t_exec():
           'MTLINE.COM runs it and waits: "MTLINE.COM ended, exit code 4"', k.u16('ui_mtx') == 0 and k.u16('ui_mtx', 2) == 0
           and k.rd('ex_mtw', 1) == b'\x01' and b0[:1] == ['MTLINE.COM ended, exit code 4'], (k.rd('ex_mtw', 1), b0))
     mk = os.path.join(A.OUT, 'MKFILE.COM'); open(mk, 'wb').write(MKFILE)
-    xs, xa, xb = (mz(os.path.join(A.OUT, n + '.EXE'), mi, ma) for n, mi, ma in
-                  (('EXS', 0x20, 0x300), ('EXA', 0x20, 0xFFFF), ('EXB', 0xA000, 0xFFFF)))
+    xs, xa, xb, xm, xl = (mz(os.path.join(A.OUT, n + '.EXE'), mi, ma) for n, mi, ma in
+                          (('EXS', 0x20, 0x300), ('EXA', 0x20, 0xFFFF), ('EXB', 0xA000, 0xFFFF), ('EXM', 0x20, 0x20),
+                           ('EXL', 0x40, 0x10)))
     k = boot('mt_ex.img', b'MULTITASK=1\r\n', 88, 'MKFILE.COM=' + mk, 'EXS.EXE=' + xs, 'EXA.EXE=' + xa, 'EXB.EXE=' + xb,
-             A.CALCRUN)
+             'EXM.EXE=' + xm, 'EXL.EXE=' + xl, A.CALCRUN, A.TSR, os.path.join(GOS, 'apps', 'TASKS.RUN'))
     seg, Y = mt_seg(k), k.Y
     arena = lambda: k.pc.u16(seg, Y['mt_arena'])
     m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
@@ -2916,16 +2917,33 @@ def t_exec():
     hot(k)                              # (back to the Executive: another fits)
     ret(k, 'MTLINE.COM')
     st3 = tstate(k)
+    front(k, 0)                         # (and the Tasks window, still: RUN_ROOM kept)
+    k.key(A.CODE['T']); k.run_for(0.5)
+    tw = k.rd('run_active', 1)
+    k.key(ktest.ESC); k.run_for(0.3)
+    front(k, 2)
     line(k, '=1'); k.run_for(1.0); k.settle()
     b3 = k.band()
     front(k, 1); k.key('x', settle=False); k.run_for(1.0); k.settle()
     b4 = k.band()
-    cap = big - 2 * (equ('TX_PARAS') + equ('ST_PARAS') + equ('ENVMAX') // 16 + 2) - 0x1000
-    check('an .EXE: what its header asks for: EXS.EXE (one paragraph, PSP, most 300h past it) %04Xh = 311h; EXA.EXE '
-          '(most FFFFh) %04Xh: the largest block (%04Xh) less two regions\' own and 64 KB, so MTLINE.COM still starts '
-          '(%s); each one\'s end said' % (a1, a2, big, st3[0]), a1 == 0x311 and a2 == cap
+    cap = big - 2 * (equ('TX_PARAS') + equ('ST_PARAS') + equ('ENVMAX') // 16 + 2) - 0x1000 - 1024
+    check('an .EXE: what its header asks for: EXS.EXE (one paragraph, PSP, most 300h past it, and 4Ah for EXEC\'s copy of '
+          'the environment) %04Xh = 35Bh; EXA.EXE (most FFFFh) %04Xh: the largest block (%04Xh) less two regions\' own, '
+          '64 KB and RUN_ROOM, so MTLINE.COM still starts (%s), and the Tasks window still opens; each one\'s end said'
+          % (a1, a2, big, st3[0]), a1 == 0x35B and a2 == cap and tw == b'\x01'
           and [n for i, s, n in st3[0]] == ['Executive', 'EXA.EXE', 'MTLINE.COM'] and b3[:1] == ['MTLINE.COM ended, exit code 1']
-          and b4[:1] == ['EXA.EXE ended'] and back(), (a1, a2, cap, big, st3, b3, b4))
+          and b4[:1] == ['EXA.EXE ended'] and back(), (a1, a2, cap, big, tw, st3, b3, b4))
+    # least = most, and most < least (as EXEC: the least): each starts, room for the environment's copy in it
+    got = []
+    for n in ('EXM.EXE', 'EXL.EXE'):
+        ret(k, n)
+        got.append((arena(), [t[2] for t in tstate(k)[0]]))
+        k.key('x', settle=False); k.run_for(1.0); k.settle()
+        got[-1] += (k.band()[:1],)
+    check('an .EXE whose least is its most (20h): %04Xh = 7Bh, and one whose most (10h) is below its least (40h): %04Xh '
+          '= 9Bh; both start and end ("X ended")' % (got[0][0], got[1][0]),
+          got == [(0x7B, ['Executive', 'EXM.EXE'], ['EXM.EXE ended']), (0x9B, ['Executive', 'EXL.EXE'], ['EXL.EXE ended'])]
+          and back(), got)
     ret(k, 'EXB.EXE')
     b5, st5 = k.band(), tstate(k)
     k.key(ktest.ENTER)
@@ -2960,7 +2978,27 @@ def t_exec():
     k.key(ktest.ESC); k.run_for(1.0); k.settle()
     b7 = k.band()
     check('a task (EXS.EXE) ending while the calculator is open: the calculator goes on (no event for it); once it '
-          'is closed, "EXS.EXE ended"', k.rd('run_active', 1) == b'\x00' and b7[:1] == ['EXS.EXE ended'] and back(), (up, b7))
+          'is closed, "EXS.EXE ended"', up == b'\x01' and k.rd('run_active', 1) == b'\x00' and b7[:1] == ['EXS.EXE ended'] and back(), (up, b7))
+    # a TSR from the Executive's own task (Shift-Return), right after the UI block: with a task there, the block
+    # stays (tasks' copies of the vectors point into it); once the task has gone, it moves past the TSR (last:
+    # the TSR stays)
+    ret(k, 'MTLINE.COM')
+    front(k, 0)
+    u0 = k.useg
+    run_wait(k, 'TSR.COM', 10)
+    k.key(ktest.ENTER); k.run_for(0.3)
+    s1 = (k.useg == u0, k.u16('ent_max'), tstate(k)[0])
+    front(k, 1); line(k, '=3'); k.run_for(1.0); k.settle()
+    b8 = k.band()
+    s2 = (k.useg != u0, k.u16('ent_max'), k.pc.u16(0x60, k.Y['ui_seg']) == k.useg, 'TSR.COM' in k.exec_list())
+    k.key(A.CODE['T']); k.run_for(0.5)
+    tw = k.rd('run_active', 1)
+    k.key(ktest.ESC); k.run_for(0.3)
+    check('a TSR right after the UI block, from Shift-Return, with a task (MTLINE.COM) there: the block stays (%s); '
+          'the task ends ("%s"): the block moves past the TSR, its whole list again, and the Tasks window opens'
+          % (s1[:2], b8[:1]), s1[:2] == (True, 0) and [t[2] for t in s1[2]] == ['Executive', 'MTLINE.COM']
+          and b8[:1] == ['MTLINE.COM ended, exit code 3'] and s2 == (True, 240, True, True) and tw == b'\x01'
+          and k.rd('run_active', 1) == b'\x00' and not k.crashed, (s1, b8, s2, tw))
 
 def t_lists():
     print('== LODE.INI\'s BG=, FREEZE= and MTMEM= (M7b)')
@@ -3049,6 +3087,7 @@ def t_tasksrun():
     k.key(ktest.ENTER); k.run_for(0.2)
     r2 = rows()
     k.key(ktest.UP); k.key(A.CODE['Z']); k.run_for(0.3)
+    pz = tstate(k)[0][1]
     k.key(ktest.ENTER); k.run_for(1.0)
     st = tstate(k)
     rr = A.run_ret(k)
@@ -3057,8 +3096,8 @@ def t_tasksrun():
     check('CODE-D on task 2: asked ("%s"), Return: its row "being ended"; task 1 parked, then Return: brought back, in '
           'front, the window closed (exit code 0FFFFh), task 2 gone (%s); task 1 ends: "MTLINE.COM ended, exit code 2"'
           % (b1[:1], st[:2]), b1[:1] == ['End MTLINE.COM: Confirm to end the task'] and 'being ended' in r2[2]
-          and [n for i, s, n in st[0]] == ['Executive', 'MTLINE.COM'] and st[1] == 1 and rr == 0xFFFF
-          and b2[:1] == ['MTLINE.COM ended, exit code 2'] and tstate(k)[0] == [(0, 1, 'Executive')], (b1, r2, st, rr, b2))
+          and pz == (1, 5, 'MTLINE.COM') and [n for i, s, n in st[0]] == ['Executive', 'MTLINE.COM'] and st[1] == 1 and rr == 0xFFFF
+          and b2[:1] == ['MTLINE.COM ended, exit code 2'] and tstate(k)[0] == [(0, 1, 'Executive')], (b1, r2, pz, st, rr, b2))
 
 def t_system():
     print('== System: the Multitasking topic (M7b)')
@@ -3082,6 +3121,13 @@ def t_system():
     check('asked for (multitask=On, as the kernel reads it) but off (no LODEMT.SYS): said why',
           re.search(r'Multitasking now\s+off', t3) and re.search(r'From the next start-up\s+on', t3)
           and 'Asked for, but off this time' in t3, t3[-900:])
+    k = boot('mt_sy3.img', b'MULTITASK=1X\r\n', 88, A.SYSTEM)
+    k.key(A.CODE['U'])
+    for _ in range(9): k.key(ktest.DOWN)
+    t4 = k.text()
+    check('MULTITASK=1X: off, for the kernel and for System alike (something after the 1)',
+          re.search(r'Multitasking now\s+off', t4) and re.search(r'From the next start-up\s+off', t4)
+          and 'Asked for' not in t4, t4[-900:])
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
@@ -3094,7 +3140,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 582.1 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '582.1', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 582.0 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '582.0', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
