@@ -94,12 +94,15 @@ def click(k, x, y):
 # ---------------------------------------------------------------------
 def xor_rect_unit():
     """xor_rect as UICORE.INC has it (with row_di and NEXTROW), assembled on
-    its own and run under unicorn against a model of the frame: every start
-    bit, widths from 2 to 41 pixels, rows in each bank, several heights."""
+    its own and run under unicorn against a model of the frame XORed into a
+    random screen: every start bit, widths from 2 to 41 pixels, rows in each
+    bank, several heights, frames to x 639 and to row 399; DF set every other
+    time, DS its own segment and untouched."""
+    import random
     from unicorn import Uc, UC_ARCH_X86, UC_MODE_16
     from unicorn.x86_const import (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI,
                                    UC_X86_REG_DI, UC_X86_REG_BP, UC_X86_REG_SP, UC_X86_REG_CS, UC_X86_REG_DS,
-                                   UC_X86_REG_ES, UC_X86_REG_SS)
+                                   UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_EFLAGS)
     s = open(os.path.join(GOS, 'src', 'UICORE.INC'), 'rb').read().decode('latin-1')
     part = lambda a, b: s[s.index(a):s.index(b, s.index(a))]
     src = ('cpu 286\norg 0\nVSEG equ 0B800h\n' + part('%macro  NEXTROW', '; compose the area') +
@@ -112,42 +115,46 @@ def xor_rect_unit():
     mu.mem_map(0, 0x100000)
     mu.mem_write(0x10000, code)
     regs = (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP)
+    rnd = random.Random(1520)
+    screen, dseg = bytes(rnd.getrandbits(8) for _ in range(0x8000)), bytes(rnd.getrandbits(8) for _ in range(0x1000))
+    cases = [(x0, x0 + w, y, h) for y in (0, 1, 2, 3, 6, 389) for h in (2, 3, 5, 11)
+             for x0 in range(0, 24) for w in range(2, 42)]
+    cases += [(x0, 639, y, h) for x0 in range(600, 638) for y, h in ((0, 2), (3, 11), (388, 12))]
+    cases += [(x0, x0 + w, y, 400 - y) for y in range(388, 399) for x0 in (0, 5, 600) for w in (2, 9, 30)]
+    cases += [(0, 639, 0, 400), (1, 638, 1, 399)]
     bad, n = [], 0
-    for y in (0, 1, 2, 3, 6, 389):
-        for h in (2, 3, 5, 11):
-            for x0 in range(0, 24):
-                for w in range(2, 42):
-                    x1 = x0 + w                          # DI: the right edge's pixel
-                    mu.mem_write(0xB8000, bytes(0x8000))
-                    vals = (x0, 0x1234, h, y, 0x5678, x1, 0x9ABC)
-                    for r, v in zip(regs, vals): mu.reg_write(r, v)
-                    for r, v in ((UC_X86_REG_CS, 0x1000), (UC_X86_REG_DS, 0x1000), (UC_X86_REG_ES, 0x2000),
-                                 (UC_X86_REG_SS, 0x3000), (UC_X86_REG_SP, 0xFFFE)):
-                        mu.reg_write(r, v)
-                    mu.emu_start(0x10000, 0x10003, count=100000)
-                    want = set()                         # the frame, each pixel XORed as often as drawn
-                    for yy in range(y, y + h):
-                        want ^= {(x0, yy)}; want ^= {(x1, yy)}
-                    for xx in range(x0 + 1, x1):
-                        want ^= {(xx, y)}; want ^= {(xx, y + h - 1)}
-                    exp = {}
-                    for px, py in want:
-                        o = (py & 3) * 0x2000 + (py >> 2) * 80 + px // 8
-                        exp[o] = exp.get(o, 0) | (0x80 >> (px & 7))
-                    v = bytes(mu.mem_read(0xB8000, 0x8000))
-                    kept = [mu.reg_read(r) for r in regs] == list(vals) and mu.reg_read(UC_X86_REG_SP) == 0xFFFE \
-                        and mu.reg_read(UC_X86_REG_ES) == 0x2000
-                    n += 1
-                    if len(v) - v.count(0) != len(exp) or any(v[o] != b for o, b in exp.items()) or not kept:
-                        bad.append((x0, x1, y, h, kept))
+    for x0, x1, y, h in cases:                  # DI: the right edge's pixel
+        mu.mem_write(0xB8000, screen)
+        mu.mem_write(0x50000, dseg)
+        vals = (x0, 0x1234, h, y, 0x5678, x1, 0x9ABC)
+        for r, v in zip(regs, vals): mu.reg_write(r, v)
+        for r, v in ((UC_X86_REG_CS, 0x1000), (UC_X86_REG_DS, 0x5000), (UC_X86_REG_ES, 0x2000),
+                     (UC_X86_REG_SS, 0x3000), (UC_X86_REG_SP, 0xFFFE), (UC_X86_REG_EFLAGS, 0x0402 if n & 1 else 0x0002)):
+            mu.reg_write(r, v)
+        mu.emu_start(0x10000, 0x10003, count=1000000)
+        want = set()                            # the frame, each pixel XORed as often as drawn
+        for yy in range(y, y + h):
+            want ^= {(x0, yy)}; want ^= {(x1, yy)}
+        for xx in range(x0 + 1, x1):
+            want ^= {(xx, y)}; want ^= {(xx, y + h - 1)}
+        exp = bytearray(screen)
+        for px, py in want:
+            exp[(py & 3) * 0x2000 + (py >> 2) * 80 + px // 8] ^= 0x80 >> (px & 7)
+        kept = [mu.reg_read(r) for r in regs] == list(vals) and mu.reg_read(UC_X86_REG_SP) == 0xFFFE \
+            and mu.reg_read(UC_X86_REG_ES) == 0x2000 and mu.reg_read(UC_X86_REG_DS) == 0x5000 \
+            and bytes(mu.mem_read(0x50000, 0x1000)) == dseg
+        n += 1
+        if bytes(mu.mem_read(0xB8000, 0x8000)) != bytes(exp) or not kept:
+            bad.append((x0, x1, y, h, kept))
     return n, bad
 
 # ---------------------------------------------------------------------
 def t_core():
     print('== core (UITEST.RUN)')
     n, bad = xor_rect_unit()
-    check('xor_rect on its own (%d frames: every start bit, 2-41 pixels wide, each bank, heights 2-11): the frame '
-          'XORed once, corners included, the registers and ES kept' % n, n > 20000 and not bad, bad[:5])
+    check('xor_rect on its own (%d frames on a random screen: every start bit, 2-41 pixels wide, each bank, heights '
+          '2-11, to x 639 and row 399, DF either way): the frame XORed once, corners included, nothing else touched, '
+          'the registers, DS and ES kept' % n, n > 20000 and not bad, bad[:5])
     img = image('core.img', UITEST, os.path.join(GOS, 'src', 'LCMD.COM'))
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     free0, ui0 = free_paras(k)

@@ -3127,6 +3127,7 @@ xor_rect:
         popa
         ret
 .col:   mov     si, ax                  ; pixel AX -> SI = its byte, AL = its bit
+                                        ; (CX and AH kept: .h holds a mask in CH)
         shr     si, 3
         push    cx
         mov     cl, al
