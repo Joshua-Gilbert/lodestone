@@ -103,8 +103,6 @@ start:  mov     sp, stack_top
         cmp     al, '/'
         jne     .word                   ; a path ("A:\ /P"): skip it
         lodsb
-        or      al, al                  ; ("/" last: the end, X14)
-        jz      .swd
         call    upcase
         cmp     al, 'C'
         je      .slc
