@@ -93,7 +93,7 @@ Lodestone 0.6 (memory measured with the windows that move, the printer drivers a
 | BENCH file-system total | **78.8** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.43** | 2.87 | 2.87 |
 | Memory for programs, with EMS | **582.2 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 566.1 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, no EMS | 566.2 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
@@ -157,7 +157,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,639 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,653 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
