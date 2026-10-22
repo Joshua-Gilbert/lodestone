@@ -3436,7 +3436,17 @@ do_cd:  call    getarg1
         call    upcase
         sub     al, 'A' - 1
         jmp     .sh
-.set:   mov     dx, path1
+.set:   mov     si, path1               ; a \ last (Tab puts one after a
+        call    strend                  ;  directory's name) cut, not the
+        dec     di                      ;  root's (\, X:\): DOS says 3 for
+        cmp     di, si                  ;  SUB\, as MS-DOS (X20)
+        jbe     .go
+        cmp     byte [di], '\'
+        jne     .go
+        cmp     byte [di-1], ':'
+        je      .go
+        mov     byte [di], 0
+.go:    mov     dx, si
         mov     ah, 3Bh
         int     21h
         jnc     .x

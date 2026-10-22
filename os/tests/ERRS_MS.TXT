@@ -11,6 +11,8 @@ fn 43 A.TXT\ -> err 03
 fn 43 NOSUCH\ -> err 03
 fn 43 SUB\\X.TXT -> ok
 fn 43 SUB\X.TXT\ -> err 03
+fn 43 NOSUCH\A.TXT\ -> err 03
+fn 43 NOSUCH\*.TXT\ -> err 03
 fn 43 .. -> err 03
 fn 43 SUB\. -> ok
 fn 43 SUB\.. -> ok
@@ -42,6 +44,8 @@ fn 4E A.TXT\ -> err 03
 fn 4E NOSUCH\ -> err 03
 fn 4E SUB\\X.TXT -> ok
 fn 4E SUB\X.TXT\ -> err 03
+fn 4E NOSUCH\A.TXT\ -> err 03
+fn 4E NOSUCH\*.TXT\ -> err 03
 fn 4E . -> err 12
 fn 4E .. -> err 03
 fn 4E SUB\. -> ok
@@ -72,6 +76,8 @@ fn 3D A.TXT\ -> err 03
 fn 3D NOSUCH\ -> err 03
 fn 3D SUB\\X.TXT -> ok
 fn 3D SUB\X.TXT\ -> err 03
+fn 3D NOSUCH\A.TXT\ -> err 03
+fn 3D NOSUCH\*.TXT\ -> err 02
 fn 3D .. -> err 03
 fn 3D SUB\. -> err 05
 fn 3D SUB\.. -> err 05
@@ -115,6 +121,10 @@ fn 3B \ -> ok
 fn 3B \\A.TXT -> err 03
 fn 3B \ -> ok
 fn 3B SUB\X.TXT\ -> err 03
+fn 3B \ -> ok
+fn 3B NOSUCH\A.TXT\ -> err 03
+fn 3B \ -> ok
+fn 3B NOSUCH\*.TXT\ -> err 03
 fn 3B \ -> ok
 fn 3B . -> ok
 fn 3B \ -> ok
@@ -189,6 +199,10 @@ fn 56 Z.TXT>A.TXT -> err 05
 fn 56 Z.TXT>A.TXT -> err 05
 fn 56 SUB\X.TXT\>Z.TXT -> err 03
 fn 56 Z.TXT>A.TXT -> err 05
+fn 56 NOSUCH\A.TXT\>Z.TXT -> err 03
+fn 56 Z.TXT>A.TXT -> err 05
+fn 56 NOSUCH\*.TXT\>Z.TXT -> err 03
+fn 56 Z.TXT>A.TXT -> err 05
 fn 56 .>Z.TXT -> err 02
 fn 56 Z.TXT>A.TXT -> err 05
 fn 56 ..>Z.TXT -> err 03
@@ -257,6 +271,10 @@ fn 56 A.TXT>SUB\\X.TXT -> ok
 fn 56 SUB\\X.TXT>A.TXT -> ok
 fn 56 A.TXT>SUB\X.TXT\ -> err 03
 fn 56 SUB\X.TXT\>A.TXT -> err 03
+fn 56 A.TXT>NOSUCH\A.TXT\ -> err 03
+fn 56 NOSUCH\A.TXT\>A.TXT -> err 03
+fn 56 A.TXT>NOSUCH\*.TXT\ -> err 03
+fn 56 NOSUCH\*.TXT\>A.TXT -> err 03
 fn 56 A.TXT>. -> err 05
 fn 56 .>A.TXT -> err 02
 fn 56 A.TXT>.. -> err 03
@@ -345,6 +363,8 @@ fn 5B A.TXT\ -> err 03
 fn 5B NOSUCH\ -> err 03
 fn 5B SUB\\X.TXT -> ok
 fn 5B SUB\X.TXT\ -> err 03
+fn 5B NOSUCH\A.TXT\ -> err 03
+fn 5B NOSUCH\*.TXT\ -> err 02
 fn 5B . -> err 05
 fn 5B .. -> err 03
 fn 5B SUB\. -> err 05
@@ -374,6 +394,8 @@ fn 3C A.TXT\ -> err 03
 fn 3C NOSUCH\ -> err 03
 fn 3C SUB\\X.TXT -> ok
 fn 3C SUB\X.TXT\ -> err 03
+fn 3C NOSUCH\A.TXT\ -> err 03
+fn 3C NOSUCH\*.TXT\ -> err 02
 fn 3C . -> err 05
 fn 3C .. -> err 03
 fn 3C SUB\. -> err 05
@@ -403,6 +425,8 @@ fn 39 A.TXT\ -> err 03
 fn 39 NOSUCH\ -> err 03
 fn 39 SUB\\X.TXT -> err 05
 fn 39 SUB\X.TXT\ -> err 03
+fn 39 NOSUCH\A.TXT\ -> err 03
+fn 39 NOSUCH\*.TXT\ -> err 03
 fn 39 . -> err 05
 fn 39 .. -> err 03
 fn 39 SUB\. -> err 05
@@ -433,6 +457,8 @@ fn 3A A.TXT\ -> err 03
 fn 3A NOSUCH\ -> err 03
 fn 3A SUB\\X.TXT -> err 05
 fn 3A SUB\X.TXT\ -> err 03
+fn 3A NOSUCH\A.TXT\ -> err 03
+fn 3A NOSUCH\*.TXT\ -> err 10
 fn 3A . -> err 10
 fn 3A .. -> err 03
 fn 3A SUB\. -> err 05
@@ -466,6 +492,8 @@ fn 41 A.TXT\ -> err 03
 fn 41 NOSUCH\ -> err 03
 fn 41 SUB\\X.TXT -> ok
 fn 41 SUB\X.TXT\ -> err 03
+fn 41 NOSUCH\A.TXT\ -> err 03
+fn 41 NOSUCH\*.TXT\ -> err 03
 fn 41 .. -> err 03
 fn 41 SUB\.. -> err 05
 fn 41 \.. -> err 03

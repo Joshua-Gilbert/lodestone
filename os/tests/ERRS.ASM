@@ -130,6 +130,8 @@ tests   dw 4300h, p0, 0, 0000h
         dw 4300h, p28, 0, 0000h
         dw 4300h, p29, 0, 0000h
         dw 4300h, p30, 0, 0000h
+        dw 4300h, p31, 0, 0000h
+        dw 4300h, p32, 0, 0000h
         dw 4E00h, p0, 0, 0016h
         dw 4E00h, p1, 0, 0016h
         dw 4E00h, p2, 0, 0016h
@@ -142,12 +144,12 @@ tests   dw 4300h, p0, 0, 0000h
         dw 4E00h, p9, 0, 0016h
         dw 4E00h, p10, 0, 0016h
         dw 4E00h, p11, 0, 0016h
-        dw 4E00h, p31, 0, 0016h
         dw 4E00h, p12, 0, 0016h
         dw 4E00h, p13, 0, 0016h
-        dw 4E00h, p32, 0, 0016h
+        dw 4E00h, p33, 0, 0016h
+        dw 4E00h, p14, 0, 0016h
         dw 4E00h, p15, 0, 0016h
-        dw 4E00h, p16, 0, 0016h
+        dw 4E00h, p34, 0, 0016h
         dw 4E00h, p17, 0, 0016h
         dw 4E00h, p18, 0, 0016h
         dw 4E00h, p19, 0, 0016h
@@ -156,10 +158,12 @@ tests   dw 4300h, p0, 0, 0000h
         dw 4E00h, p22, 0, 0016h
         dw 4E00h, p23, 0, 0016h
         dw 4E00h, p24, 0, 0016h
-        dw 4E00h, p27, 0, 0016h
-        dw 4E00h, p28, 0, 0016h
+        dw 4E00h, p25, 0, 0016h
+        dw 4E00h, p26, 0, 0016h
         dw 4E00h, p29, 0, 0016h
         dw 4E00h, p30, 0, 0016h
+        dw 4E00h, p31, 0, 0016h
+        dw 4E00h, p32, 0, 0016h
         dw 3D00h, p0, 0, 0000h
         dw 3D00h, p1, 0, 0000h
         dw 3D00h, p2, 0, 0000h
@@ -181,258 +185,272 @@ tests   dw 4300h, p0, 0, 0000h
         dw 3D00h, p18, 0, 0000h
         dw 3D00h, p19, 0, 0000h
         dw 3D00h, p20, 0, 0000h
-        dw 3D00h, p23, 0, 0000h
-        dw 3D00h, p24, 0, 0000h
-        dw 3D00h, p33, 0, 0000h
+        dw 3D00h, p21, 0, 0000h
+        dw 3D00h, p22, 0, 0000h
         dw 3D00h, p25, 0, 0000h
         dw 3D00h, p26, 0, 0000h
+        dw 3D00h, p35, 0, 0000h
         dw 3D00h, p27, 0, 0000h
         dw 3D00h, p28, 0, 0000h
         dw 3D00h, p29, 0, 0000h
         dw 3D00h, p30, 0, 0000h
+        dw 3D00h, p31, 0, 0000h
+        dw 3D00h, p32, 0, 0000h
         dw 3B00h, p0, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p1, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p2, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p3, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p4, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p5, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p6, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p7, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p8, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p9, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p10, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p35, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p37, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p11, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p31, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p12, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p13, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p33, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p14, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p32, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p15, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p16, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p17, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p18, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p19, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p20, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p21, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
         dw 3B00h, p36, 0, 0000h
         dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p37, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p17, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p18, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p19, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p20, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p21, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p22, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p23, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p38, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p39, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p24, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 3B00h, p33, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p25, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p26, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p35, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p27, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p28, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p29, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 3B00h, p30, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
-        dw 5600h, p0, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p1, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p2, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p3, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p4, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p5, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p6, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p7, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p8, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p9, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p10, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p11, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p31, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p12, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p13, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p32, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p15, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p16, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p17, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p18, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p19, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p20, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p21, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p22, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p23, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p24, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p25, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p26, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p27, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p28, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p29, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p30, p38, 0000h
-        dw 5600h, p38, p27, 0000h
-        dw 5600h, p27, p0, 0000h
-        dw 5600h, p0, p27, 0000h
-        dw 5600h, p27, p1, 0000h
-        dw 5600h, p1, p27, 0000h
-        dw 5600h, p27, p2, 0000h
-        dw 5600h, p2, p27, 0000h
-        dw 5600h, p27, p3, 0000h
-        dw 5600h, p3, p27, 0000h
-        dw 5600h, p27, p4, 0000h
-        dw 5600h, p4, p27, 0000h
-        dw 5600h, p27, p5, 0000h
-        dw 5600h, p5, p27, 0000h
-        dw 5600h, p27, p6, 0000h
-        dw 5600h, p6, p27, 0000h
-        dw 5600h, p27, p7, 0000h
-        dw 5600h, p7, p27, 0000h
-        dw 5600h, p27, p8, 0000h
-        dw 5600h, p8, p27, 0000h
-        dw 5600h, p27, p9, 0000h
-        dw 5600h, p9, p27, 0000h
-        dw 5600h, p27, p10, 0000h
-        dw 5600h, p10, p27, 0000h
-        dw 5600h, p27, p11, 0000h
-        dw 5600h, p11, p27, 0000h
-        dw 5600h, p27, p31, 0000h
-        dw 5600h, p31, p27, 0000h
-        dw 5600h, p27, p12, 0000h
-        dw 5600h, p12, p27, 0000h
-        dw 5600h, p27, p13, 0000h
-        dw 5600h, p13, p27, 0000h
-        dw 5600h, p27, p14, 0000h
-        dw 5600h, p27, p32, 0000h
-        dw 5600h, p32, p27, 0000h
-        dw 5600h, p27, p15, 0000h
-        dw 5600h, p15, p27, 0000h
-        dw 5600h, p27, p16, 0000h
-        dw 5600h, p16, p27, 0000h
-        dw 5600h, p27, p17, 0000h
-        dw 5600h, p17, p27, 0000h
-        dw 5600h, p27, p18, 0000h
-        dw 5600h, p18, p27, 0000h
-        dw 5600h, p27, p19, 0000h
-        dw 5600h, p19, p27, 0000h
-        dw 5600h, p27, p20, 0000h
-        dw 5600h, p20, p27, 0000h
-        dw 5600h, p27, p21, 0000h
-        dw 5600h, p21, p27, 0000h
-        dw 5600h, p27, p23, 0000h
-        dw 5600h, p23, p27, 0000h
-        dw 5600h, p27, p24, 0000h
-        dw 5600h, p24, p27, 0000h
-        dw 5600h, p25, p27, 0000h
-        dw 5600h, p27, p26, 0000h
-        dw 5600h, p26, p27, 0000h
-        dw 5600h, p27, p27, 0000h
-        dw 5600h, p27, p27, 0000h
-        dw 5600h, p27, p28, 0000h
-        dw 5600h, p28, p27, 0000h
-        dw 5600h, p27, p29, 0000h
-        dw 5600h, p29, p27, 0000h
-        dw 5600h, p27, p30, 0000h
-        dw 5600h, p30, p27, 0000h
-        dw 4300h, p39, 0, 0000h
-        dw 4100h, p39, 0, 0000h
-        dw 3900h, p39, 0, 0000h
-        dw 3A00h, p39, 0, 0000h
-        dw 5600h, p39, p38, 0000h
-        dw 5600h, p27, p39, 0000h
-        dw 4300h, p40, 0, 0000h
-        dw 4100h, p40, 0, 0000h
-        dw 3900h, p40, 0, 0000h
-        dw 3A00h, p40, 0, 0000h
-        dw 5600h, p40, p38, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p31, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 3B00h, p32, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
+        dw 5600h, p0, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p1, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p2, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p3, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p4, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p5, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p6, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p7, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p8, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p9, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p10, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p11, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p12, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p13, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p33, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p14, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p15, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p34, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p17, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p18, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p19, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p20, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p21, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p22, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p23, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p24, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p25, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p26, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p40, p29, 0000h
         dw 5600h, p27, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p28, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p29, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p30, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p31, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p32, p40, 0000h
+        dw 5600h, p40, p29, 0000h
+        dw 5600h, p29, p0, 0000h
+        dw 5600h, p0, p29, 0000h
+        dw 5600h, p29, p1, 0000h
+        dw 5600h, p1, p29, 0000h
+        dw 5600h, p29, p2, 0000h
+        dw 5600h, p2, p29, 0000h
+        dw 5600h, p29, p3, 0000h
+        dw 5600h, p3, p29, 0000h
+        dw 5600h, p29, p4, 0000h
+        dw 5600h, p4, p29, 0000h
+        dw 5600h, p29, p5, 0000h
+        dw 5600h, p5, p29, 0000h
+        dw 5600h, p29, p6, 0000h
+        dw 5600h, p6, p29, 0000h
+        dw 5600h, p29, p7, 0000h
+        dw 5600h, p7, p29, 0000h
+        dw 5600h, p29, p8, 0000h
+        dw 5600h, p8, p29, 0000h
+        dw 5600h, p29, p9, 0000h
+        dw 5600h, p9, p29, 0000h
+        dw 5600h, p29, p10, 0000h
+        dw 5600h, p10, p29, 0000h
+        dw 5600h, p29, p11, 0000h
+        dw 5600h, p11, p29, 0000h
+        dw 5600h, p29, p12, 0000h
+        dw 5600h, p12, p29, 0000h
+        dw 5600h, p29, p13, 0000h
+        dw 5600h, p13, p29, 0000h
+        dw 5600h, p29, p33, 0000h
+        dw 5600h, p33, p29, 0000h
+        dw 5600h, p29, p14, 0000h
+        dw 5600h, p14, p29, 0000h
+        dw 5600h, p29, p15, 0000h
+        dw 5600h, p15, p29, 0000h
+        dw 5600h, p29, p16, 0000h
+        dw 5600h, p29, p34, 0000h
+        dw 5600h, p34, p29, 0000h
+        dw 5600h, p29, p17, 0000h
+        dw 5600h, p17, p29, 0000h
+        dw 5600h, p29, p18, 0000h
+        dw 5600h, p18, p29, 0000h
+        dw 5600h, p29, p19, 0000h
+        dw 5600h, p19, p29, 0000h
+        dw 5600h, p29, p20, 0000h
+        dw 5600h, p20, p29, 0000h
+        dw 5600h, p29, p21, 0000h
+        dw 5600h, p21, p29, 0000h
+        dw 5600h, p29, p22, 0000h
+        dw 5600h, p22, p29, 0000h
+        dw 5600h, p29, p23, 0000h
+        dw 5600h, p23, p29, 0000h
+        dw 5600h, p29, p25, 0000h
+        dw 5600h, p25, p29, 0000h
+        dw 5600h, p29, p26, 0000h
+        dw 5600h, p26, p29, 0000h
+        dw 5600h, p27, p29, 0000h
+        dw 5600h, p29, p28, 0000h
+        dw 5600h, p28, p29, 0000h
+        dw 5600h, p29, p29, 0000h
+        dw 5600h, p29, p29, 0000h
+        dw 5600h, p29, p30, 0000h
+        dw 5600h, p30, p29, 0000h
+        dw 5600h, p29, p31, 0000h
+        dw 5600h, p31, p29, 0000h
+        dw 5600h, p29, p32, 0000h
+        dw 5600h, p32, p29, 0000h
         dw 4300h, p41, 0, 0000h
         dw 4100h, p41, 0, 0000h
         dw 3900h, p41, 0, 0000h
         dw 3A00h, p41, 0, 0000h
-        dw 5600h, p41, p38, 0000h
-        dw 5600h, p27, p41, 0000h
-        dw 4300h, p26, 0, 0000h
-        dw 4100h, p26, 0, 0000h
-        dw 3900h, p26, 0, 0000h
-        dw 3A00h, p26, 0, 0000h
-        dw 5600h, p26, p38, 0000h
-        dw 5600h, p27, p26, 0000h
+        dw 5600h, p41, p40, 0000h
+        dw 5600h, p29, p41, 0000h
         dw 4300h, p42, 0, 0000h
         dw 4100h, p42, 0, 0000h
         dw 3900h, p42, 0, 0000h
         dw 3A00h, p42, 0, 0000h
-        dw 5600h, p42, p38, 0000h
-        dw 5600h, p27, p42, 0000h
-        dw 3A00h, p34, 0, 0000h
-        dw 3A00h, p32, 0, 0000h
-        dw 3B00h, p29, 0, 0000h
-        dw 3A00h, p31, 0, 0000h
+        dw 5600h, p42, p40, 0000h
+        dw 5600h, p29, p42, 0000h
+        dw 4300h, p43, 0, 0000h
+        dw 4100h, p43, 0, 0000h
+        dw 3900h, p43, 0, 0000h
         dw 3A00h, p43, 0, 0000h
+        dw 5600h, p43, p40, 0000h
+        dw 5600h, p29, p43, 0000h
+        dw 4300h, p28, 0, 0000h
+        dw 4100h, p28, 0, 0000h
+        dw 3900h, p28, 0, 0000h
+        dw 3A00h, p28, 0, 0000h
+        dw 5600h, p28, p40, 0000h
+        dw 5600h, p29, p28, 0000h
+        dw 4300h, p44, 0, 0000h
+        dw 4100h, p44, 0, 0000h
+        dw 3900h, p44, 0, 0000h
         dw 3A00h, p44, 0, 0000h
-        dw 3A00h, p12, 0, 0000h
-        dw 3B00h, p34, 0, 0000h
+        dw 5600h, p44, p40, 0000h
+        dw 5600h, p29, p44, 0000h
+        dw 3A00h, p36, 0, 0000h
+        dw 3A00h, p34, 0, 0000h
+        dw 3B00h, p31, 0, 0000h
+        dw 3A00h, p33, 0, 0000h
+        dw 3A00h, p45, 0, 0000h
+        dw 3A00h, p46, 0, 0000h
+        dw 3A00h, p14, 0, 0000h
+        dw 3B00h, p36, 0, 0000h
         dw 5B00h, p0, 0, 0000h
         dw 5B00h, p1, 0, 0000h
         dw 5B00h, p2, 0, 0000h
@@ -445,23 +463,25 @@ tests   dw 4300h, p0, 0, 0000h
         dw 5B00h, p9, 0, 0000h
         dw 5B00h, p10, 0, 0000h
         dw 5B00h, p11, 0, 0000h
-        dw 5B00h, p31, 0, 0000h
         dw 5B00h, p12, 0, 0000h
         dw 5B00h, p13, 0, 0000h
+        dw 5B00h, p33, 0, 0000h
         dw 5B00h, p14, 0, 0000h
-        dw 5B00h, p32, 0, 0000h
         dw 5B00h, p15, 0, 0000h
         dw 5B00h, p16, 0, 0000h
+        dw 5B00h, p34, 0, 0000h
         dw 5B00h, p17, 0, 0000h
         dw 5B00h, p18, 0, 0000h
         dw 5B00h, p19, 0, 0000h
         dw 5B00h, p20, 0, 0000h
-        dw 5B00h, p23, 0, 0000h
-        dw 5B00h, p24, 0, 0000h
-        dw 5B00h, p33, 0, 0000h
+        dw 5B00h, p21, 0, 0000h
+        dw 5B00h, p22, 0, 0000h
         dw 5B00h, p25, 0, 0000h
         dw 5B00h, p26, 0, 0000h
-        dw 5B00h, p30, 0, 0000h
+        dw 5B00h, p35, 0, 0000h
+        dw 5B00h, p27, 0, 0000h
+        dw 5B00h, p28, 0, 0000h
+        dw 5B00h, p32, 0, 0000h
         dw 3C00h, p0, 0, 0000h
         dw 3C00h, p1, 0, 0000h
         dw 3C00h, p2, 0, 0000h
@@ -474,23 +494,25 @@ tests   dw 4300h, p0, 0, 0000h
         dw 3C00h, p9, 0, 0000h
         dw 3C00h, p10, 0, 0000h
         dw 3C00h, p11, 0, 0000h
-        dw 3C00h, p31, 0, 0000h
         dw 3C00h, p12, 0, 0000h
         dw 3C00h, p13, 0, 0000h
+        dw 3C00h, p33, 0, 0000h
         dw 3C00h, p14, 0, 0000h
-        dw 3C00h, p32, 0, 0000h
         dw 3C00h, p15, 0, 0000h
         dw 3C00h, p16, 0, 0000h
+        dw 3C00h, p34, 0, 0000h
         dw 3C00h, p17, 0, 0000h
         dw 3C00h, p18, 0, 0000h
         dw 3C00h, p19, 0, 0000h
         dw 3C00h, p20, 0, 0000h
-        dw 3C00h, p23, 0, 0000h
-        dw 3C00h, p24, 0, 0000h
-        dw 3C00h, p33, 0, 0000h
+        dw 3C00h, p21, 0, 0000h
+        dw 3C00h, p22, 0, 0000h
         dw 3C00h, p25, 0, 0000h
         dw 3C00h, p26, 0, 0000h
-        dw 3C00h, p30, 0, 0000h
+        dw 3C00h, p35, 0, 0000h
+        dw 3C00h, p27, 0, 0000h
+        dw 3C00h, p28, 0, 0000h
+        dw 3C00h, p32, 0, 0000h
         dw 3900h, p0, 0, 0000h
         dw 3900h, p1, 0, 0000h
         dw 3900h, p2, 0, 0000h
@@ -503,13 +525,13 @@ tests   dw 4300h, p0, 0, 0000h
         dw 3900h, p9, 0, 0000h
         dw 3900h, p10, 0, 0000h
         dw 3900h, p11, 0, 0000h
-        dw 3900h, p31, 0, 0000h
         dw 3900h, p12, 0, 0000h
         dw 3900h, p13, 0, 0000h
+        dw 3900h, p33, 0, 0000h
         dw 3900h, p14, 0, 0000h
-        dw 3900h, p32, 0, 0000h
         dw 3900h, p15, 0, 0000h
         dw 3900h, p16, 0, 0000h
+        dw 3900h, p34, 0, 0000h
         dw 3900h, p17, 0, 0000h
         dw 3900h, p18, 0, 0000h
         dw 3900h, p19, 0, 0000h
@@ -520,7 +542,9 @@ tests   dw 4300h, p0, 0, 0000h
         dw 3900h, p24, 0, 0000h
         dw 3900h, p25, 0, 0000h
         dw 3900h, p26, 0, 0000h
-        dw 3900h, p30, 0, 0000h
+        dw 3900h, p27, 0, 0000h
+        dw 3900h, p28, 0, 0000h
+        dw 3900h, p32, 0, 0000h
         dw 3A00h, p0, 0, 0000h
         dw 3A00h, p1, 0, 0000h
         dw 3A00h, p2, 0, 0000h
@@ -533,13 +557,13 @@ tests   dw 4300h, p0, 0, 0000h
         dw 3A00h, p9, 0, 0000h
         dw 3A00h, p10, 0, 0000h
         dw 3A00h, p11, 0, 0000h
-        dw 3A00h, p31, 0, 0000h
         dw 3A00h, p12, 0, 0000h
         dw 3A00h, p13, 0, 0000h
+        dw 3A00h, p33, 0, 0000h
         dw 3A00h, p14, 0, 0000h
-        dw 3A00h, p32, 0, 0000h
         dw 3A00h, p15, 0, 0000h
         dw 3A00h, p16, 0, 0000h
+        dw 3A00h, p34, 0, 0000h
         dw 3A00h, p17, 0, 0000h
         dw 3A00h, p18, 0, 0000h
         dw 3A00h, p19, 0, 0000h
@@ -554,6 +578,8 @@ tests   dw 4300h, p0, 0, 0000h
         dw 3A00h, p28, 0, 0000h
         dw 3A00h, p29, 0, 0000h
         dw 3A00h, p30, 0, 0000h
+        dw 3A00h, p31, 0, 0000h
+        dw 3A00h, p32, 0, 0000h
         dw 4100h, p0, 0, 0000h
         dw 4100h, p1, 0, 0000h
         dw 4100h, p2, 0, 0000h
@@ -567,8 +593,8 @@ tests   dw 4300h, p0, 0, 0000h
         dw 4100h, p10, 0, 0000h
         dw 4100h, p11, 0, 0000h
         dw 4100h, p12, 0, 0000h
+        dw 4100h, p13, 0, 0000h
         dw 4100h, p14, 0, 0000h
-        dw 4100h, p15, 0, 0000h
         dw 4100h, p16, 0, 0000h
         dw 4100h, p17, 0, 0000h
         dw 4100h, p18, 0, 0000h
@@ -580,7 +606,9 @@ tests   dw 4300h, p0, 0, 0000h
         dw 4100h, p24, 0, 0000h
         dw 4100h, p25, 0, 0000h
         dw 4100h, p26, 0, 0000h
-        dw 4100h, p30, 0, 0000h
+        dw 4100h, p27, 0, 0000h
+        dw 4100h, p28, 0, 0000h
+        dw 4100h, p32, 0, 0000h
         dw 0
 p0      db 'NOSUCH\A.TXT', 0
 p1      db 'NOSUCH\A.TXT.X', 0
@@ -594,36 +622,38 @@ p8      db 'A.TXT\', 0
 p9      db 'NOSUCH\', 0
 p10     db 'SUB\\X.TXT', 0
 p11     db 'SUB\X.TXT\', 0
-p12     db '..', 0
-p13     db 'SUB\.', 0
-p14     db 'SUB\..', 0
-p15     db '\..', 0
-p16     db '*.*', 0
-p17     db 'SUB\*.*', 0
-p18     db 'A?.TXT', 0
-p19     db 'Q:A.TXT', 0
-p20     db 'Q:\', 0
-p21     db 'Q:', 0
-p22     db '', 0
-p23     db 'NUL.X.Y', 0
-p24     db '\DEV\NUL.X.Y', 0
-p25     db 'SUB\NUL.*', 0
-p26     db 'CON', 0
-p27     db 'A.TXT', 0
-p28     db 'SUB\X.TXT', 0
-p29     db 'SUB', 0
-p30     db 'NOSUCH.TXT', 0
-p31     db '.', 0
-p32     db '\.', 0
-p33     db '\DEV\NUL', 0
-p34     db '\', 0
-p35     db '\\A.TXT', 0
-p36     db 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', 0
-p37     db 'SUB\YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY', 0
-p38     db 'Z.TXT', 0
-p39     db 'NOSUCH\NUL', 0
-p40     db 'SUB\NUL', 0
-p41     db 'NUL', 0
-p42     db 'SUB\CON', 0
-p43     db '\SUB', 0
-p44     db '..\SUB', 0
+p12     db 'NOSUCH\A.TXT\', 0
+p13     db 'NOSUCH\*.TXT\', 0
+p14     db '..', 0
+p15     db 'SUB\.', 0
+p16     db 'SUB\..', 0
+p17     db '\..', 0
+p18     db '*.*', 0
+p19     db 'SUB\*.*', 0
+p20     db 'A?.TXT', 0
+p21     db 'Q:A.TXT', 0
+p22     db 'Q:\', 0
+p23     db 'Q:', 0
+p24     db '', 0
+p25     db 'NUL.X.Y', 0
+p26     db '\DEV\NUL.X.Y', 0
+p27     db 'SUB\NUL.*', 0
+p28     db 'CON', 0
+p29     db 'A.TXT', 0
+p30     db 'SUB\X.TXT', 0
+p31     db 'SUB', 0
+p32     db 'NOSUCH.TXT', 0
+p33     db '.', 0
+p34     db '\.', 0
+p35     db '\DEV\NUL', 0
+p36     db '\', 0
+p37     db '\\A.TXT', 0
+p38     db 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', 0
+p39     db 'SUB\YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY', 0
+p40     db 'Z.TXT', 0
+p41     db 'NOSUCH\NUL', 0
+p42     db 'SUB\NUL', 0
+p43     db 'NUL', 0
+p44     db 'SUB\CON', 0
+p45     db '\SUB', 0
+p46     db '..\SUB', 0
