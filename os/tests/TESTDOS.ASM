@@ -587,11 +587,11 @@ t_rename:
         EQ      ax, 5
         STEP 5                          ; onto "." or ".." in the root:
         mov     dx, f_t2                ;  refused (it made an entry "."
-        mov     di, d_dot               ;  nothing could name)
-        DOSERR  56h, 5
-        mov     dx, f_t2
+        mov     di, d_dot               ;  nothing could name): 5, and
+        DOSERR  56h, 5                  ;  3 for "..", none there, as GRiD
+        mov     dx, f_t2                ;  MS-DOS 3.30 (X20)
         mov     di, d_up
-        DOSERR  56h, 5
+        DOSERR  56h, 3
         mov     dx, f_t2                ; still there
         mov     ax, 3D00h
         int     21h
@@ -666,8 +666,8 @@ t_dir:  STEP 1
         STEP 3
         mov     dx, d_sub
         DOS     3Bh
-        mov     dx, d_dot               ; RD . in it: 5 (not 16, "the
-        DOSERR  3Ah, 5                  ;  current directory")
+        mov     dx, d_dot               ; RD . in it: 16, "the current
+        DOSERR  3Ah, 16                 ;  directory", as GRiD MS-DOS 3.30 (X20)
         STEP 4
         mov     si, buf
         xor     dl, dl
@@ -725,11 +725,12 @@ t_dir:  STEP 1
         mov     dx, f_subin
         DOS     41h
         mov     dx, d_subw              ; "S?B": wildcards, refused (it
-        DOSERR  3Ah, 3                  ;  removed the first match)
+        DOSERR  3Ah, 16                 ;  removed the first match): 16, as
+                                        ;  GRiD MS-DOS 3.30 (X20)
         mov     dx, d_subdot            ; SUB\., empty now: 5 (not SUB
         DOSERR  3Ah, 5                  ;  through its own "." entry)
-        mov     dx, d_root              ; \: 5
-        DOSERR  3Ah, 5
+        mov     dx, d_root              ; \, the current directory: 16, as
+        DOSERR  3Ah, 16                 ;  GRiD MS-DOS 3.30 (X20)
         mov     dx, d_up                ; .. in the root: 3, as for CD
         DOSERR  3Ah, 3
         mov     dx, d_sub               ; so SUB is still there to remove

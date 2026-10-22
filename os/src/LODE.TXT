@@ -400,7 +400,10 @@ no longer builds on what the one before left until the shell breaks.
 A file made by CREATE has the archive bit even if nothing is written
 to it, as in MS-DOS; CREATE with a directory's, a label's or an
 unknown attribute bit is refused, and no longer empties a file of
-that name.
+that name.  The path calls give MS-DOS's error codes for an invalid
+drive, a path ending in \, two \s, a wildcard where one name is
+wanted, .. in the root, RMDIR of the current directory and the like
+(0.1 KB less for DOS programs).
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
