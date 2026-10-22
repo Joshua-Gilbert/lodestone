@@ -393,7 +393,8 @@ directory is there) opens only if the directory is there, as in MS-DOS
 at the very end of a line (COPY X.TXT /, DIR /) no longer reads on
 into what an earlier line left behind; CHOICE /C with no keys is a
 syntax error (it waited for ever), and so is a SET name too long for
-the shell (it wrote over the shell's own memory).
+the shell (it wrote over the shell's own memory).  DIR of a path too
+long for DOS says File not found (it hung the machine).
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
