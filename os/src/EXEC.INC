@@ -335,12 +335,7 @@ load_dir:
         mov     ah, 4Fh
         int     21h
         jnc     .e
-        cmp     ax, 18                  ; no more files: the end
-        je      .done
-        jmp     .err
-.first: cmp     ax, 18                  ; nothing there
-        je      .done
-        cmp     ax, 2
+.first: cmp     ax, 18                  ; none (more) there: the end
         je      .done
 .err:   mov     [dir_note], ax          ; a disk error: said in the band
         jmp     .done
@@ -852,11 +847,7 @@ sub_scan:
 .n:     mov     ah, 4Fh
         int     21h
         jnc     .e
-        cmp     ax, 18
-        je      .x
-.err:   cmp     ax, 18                  ; (none there)
-        je      .x
-        cmp     ax, 2
+.err:   cmp     ax, 18                  ; (none (more) there)
         je      .x
         mov     [dir_note], ax
 .x:     ret
@@ -1165,7 +1156,10 @@ tree_del:
         js      .x                      ; (CF clear: done)
         call    tw_cut                  ; the one above, from its start
         jmp     .open
-.err:   push    ax                      ; (tpath: the subject)
+.err:   cmp     ax, 18                  ; (no entries, not even ".": a
+        jne     .e3                     ;  damaged disk, as above)
+        mov     al, 3
+.e3:    push    ax                      ; (tpath: the subject)
         call    tw_cut
         pop     ax
 .bad:   stc
@@ -1349,8 +1343,6 @@ sc_list:
         int     21h
         jmp     .f
 .nf:    cmp     ax, 18                  ; (no more, or none)
-        je      .nx
-        cmp     ax, 2
         jne     .err
 .nx:    pop     word [sc_rd]
         jmp     .s

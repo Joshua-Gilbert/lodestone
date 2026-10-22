@@ -1608,7 +1608,8 @@ MS_NOMATCH = [('fn 4E NOSUCH.TXT', 'err 12'),
 def t_nomatch():
     """FIND FIRST that finds nothing is 18, "no more files", as in GRiD MS-DOS 3.30 (X22; it was 2): a name
     that isn't there, a pattern that matches nothing, an empty directory, a hidden file without the bit; a
-    directory that isn't there is still 3.  LCMD and the Executive say "not found" as before."""
+    directory that isn't there is still 3.  (LCMD looks at CF only; the Executive's two that took 2 as "not
+    there" are test_apps's: Copy and Move to a new name, a Copy to a subject that isn't there.)"""
     com = os.path.join(OUT, 'NOMATCH.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NOMATCH.ASM')], check=True)
     names = ('a', 'hid', 'sys', 'hs', 'x')
@@ -1630,7 +1631,7 @@ def t_nomatch():
     check("NOMATCH.COM: all %d calls answer as GRiD MS-DOS 3.30's do (nothing found: 18; a directory that isn't "
           "there, or a bad name: 3)" % len(want), got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
     o = sh.run('dir z*.*') + sh.run('dir e.f\\*.txt') + sh.run('del z*.*') + sh.run('if exist nosuch.txt echo yes')
-    check('... and LCMD: DIR and DEL of nothing say "File not found"; IF EXIST of nothing is false',
+    check('... and LCMD (CF only, as before): DIR and DEL of nothing say "File not found"; IF EXIST of nothing is false',
           o.count('File not found') == 3 and 'yes' not in o.replace('echo yes', ''), o)
 
 def t_command():

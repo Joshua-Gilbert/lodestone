@@ -1602,6 +1602,20 @@ def t_subdel():
     k.pc.drives[0].wp = False
     k.key(ktest.ENTER)
     check('... and Title lists the titles of where it is now', not k.crashed, '')
+    # a damaged subject inside the one erased: its directory without even "." (FIND FIRST: 18, X22): a damaged
+    # disk, 3, as one whose first entry isn't "."; it and the subject above it are left
+    a = image('subdel2.img', t, 'OLD\\', 'OLD\\BROKEN\\', 'KEEP\\', 'KEEP\\K.TXT=' + t)
+    raw = bytearray(open(a, 'rb').read())
+    o = [o for o in range(0, len(raw), 32) if raw[o:o + 11] == b'BROKEN     ' and raw[o + 11] & 0x10][0]
+    clus = raw[o + 26] | raw[o + 27] << 8
+    dots = [d for d in range(0, len(raw), 32) if raw[d:d + 11] == b'.          ' and raw[d + 26] | raw[d + 27] << 8 == clus]
+    raw[dots[0]:dots[0] + 64] = bytes(64)                               # (no ".", no "..": the directory ends at once)
+    open(a, 'wb').write(raw)
+    k = ktest.KPC(a); k.start()
+    pick_subject(k, 'OLD'); k.key(CODE['D']); k.key(ktest.ENTER)
+    check('a subject with no entries at all (not even ".") in the one erased: "Path not found", as a damaged disk; both stay',
+          k.band()[0].endswith(': Path not found') and 'OLD' in [x.strip() for x in subjects(k)] and not k.crashed,
+          (k.band(), subjects(k)))
 
 def attr_at(img, name):
     """Offsets of every directory entry called NAME.EXT, subjects too."""

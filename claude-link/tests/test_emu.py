@@ -367,6 +367,8 @@ def test_files_list_info_errors():
                reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\NOSUCH.C'})),
                reply(('tool', 'str_replace_based_edit_tool',
                       {'command': 'create', 'path': 'A:\\NODIR\\X.C', 'file_text': 'x\n'})),
+               reply(('tool', 'grid_files', {'action': 'mkdir', 'path': 'A:\\SUB'})),
+               reply(('tool', 'grid_files', {'action': 'list', 'path': 'A:\\SUB'})),
                reply(('text', 'Done.'))], files={'A:\\CFG.C': CFG_C}, mode='auto')
     g, replies = h.session.grid, []
     on_reply = g.on_reply
@@ -393,6 +395,8 @@ def test_files_list_info_errors():
     assert r.get('is_error') and r['content'] == 'Error: the path A:\\NOSUCH.C does not exist.', r
     r = results(h, 4)[0]
     assert r.get('is_error') and r['content'] == 'Error on the GRiD: path not found', r
+    r = results(h, 6)[0]                        # (an empty subject: grid_emu's has no . or .., its FIND FIRST 18)
+    assert not r.get('is_error') and r['content'].startswith('Directory of A:\\SUB\\\n(empty)\n'), r
     check(h)
 
 
