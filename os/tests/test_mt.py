@@ -2296,8 +2296,8 @@ def t_kill():
         st = tstate(k)
         if st[1] == 1 and (2, TS_WAITK, 'MTLINE.COM') in st[0]: break
         k.run_for(0.05)
-    top, hot, prev = seg * 16 + Y['mt_i16.top'] + 3, [], k.pc.watch
-    def w(a):                                   # (just back from .top's CALL mt_hot: the key put in the buffer)
+    top, hot, prev = seg * 16 + Y['mt_i16.nh'], [], k.pc.watch
+    def w(a):                                   # (just back from .top's CALL mt_hot, at .nh: the key put in the buffer)
         if prev: prev(a)
         if a == top and not hot and k.pc.rd(seg, Y['mt_cur'], 1)[0] == 1 == k.pc.rd(seg, Y['mt_front'], 1)[0] \
                 and k.pc.r('ss') == 0x60:
@@ -3144,6 +3144,66 @@ def t_system():
           re.search(r'Multitasking now\s+off', t4) and re.search(r'From the next start-up\s+off', t4)
           and 'Asked for' not in t4, t4[-900:])
 
+def t_rclaude():
+    print('== Resident Claude with tasks: MT_TSR, its key wait, its pop-up the front task\'s (M7c)')
+    import test_resident as R
+    cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
+    k = boot('mt_rc.img', b'MULTITASK=1\r\n', 88, cl, MTK)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    tsr = lambda: (k.pc.u16(seg, Y['mt_tsrs']), k.pc.u16(seg, Y['mt_tsro']))
+    # CLAUDE /R inside a task: refused (exit code 3), nothing resident
+    sh.run('start /w claude.com /r'); k.run_for(1.0)
+    o = sh.run('wait 1')
+    o2 = sh.run('if errorlevel 3 echo LEVEL3')
+    check('CLAUDE /R inside a task (START): refused, exit code 3 (WAIT\'s ERRORLEVEL), no stub, nothing for MT',
+          'LEVEL3' in o2 and tsr() == (0, 0) and not any(n == 'CLAUDE' for s, ow, p, n in R.mcbs(k)), (o, o2, tsr()))
+    # from the Executive's own task (CODE-P's prompt): resident, MT told
+    o = sh.run('claude /r')
+    stub = R.stub_seg(k)
+    rmt = (k.pc.u16(stub, R.csym('r_mt')), k.pc.u16(stub, R.csym('r_mt') + 2))
+    check('CLAUDE /R at CODE-P\'s prompt: resident (stub version 3); MT_TSR: MT has its key wait (%04X:%04X), the stub '
+          'MT\'s two bytes (front, running)' % tsr(), 'Claude is resident' in o and k.pc.rd(stub, 0x104, 1) == b'\x03'
+          and tsr() == (stub, R.csym('..@r_idle')) and rmt == (Y['mt_front'], seg), (o, tsr(), rmt))
+    # the front task waiting for a key in the stub's own loop: a task behind still runs (switched from its HLT)
+    typ(k, 'start /w mtspin.com 36 rs.txt', 0.3)
+    typ(k, 'mtkey r rr.txt', 0.2)
+    k.run_for(4.0)
+    rs, cur = spun(k, 'RS.TXT'), tstate(k)
+    k.key('q', settle=False); k.run_for(1.0); k.settle()
+    check('MTKEY R in front waiting in the stub\'s read loop (the BIOS\'s key wait through Resident Claude): MTSPIN '
+          'behind runs its 36 ticks meanwhile (%d counted); then "q" read' % rs,
+          rs > 0 and A.disk_file(k, 'RR.TXT') == b'0071' and not k.crashed, (rs, cur, A.disk_file(k, 'RR.TXT')))
+    # CODE-\ in a background task's call: the pop-up waits for the front task's
+    typ(k, 'start /w mtkey.com r br.txt', 0.3)
+    typ(k, 'mtspin 36 fs.txt', 0.6)
+    k.key(R.HOT, settle=False); k.run_for(0.6)
+    pend, inpop, mode, ring = (k.pc.rd(stub, R.csym('r_pend'), 1)[0], k.pc.rd(stub, R.csym('r_inpop'), 1)[0],
+                               k.pc.mode(), k.pc.kbd_ring())
+    k.run_for(3.0)
+    up, st = R.console(k), tstate(k)
+    check('CODE-\\ while MTKEY R waits behind in the stub\'s loop (its calls Resident Claude\'s) and MTSPIN computes in '
+          'front: taken, the pop-up pending, not over the front screen (mode %02Xh); once the front task (LCMD\'s '
+          'prompt) asks for a key, the console comes, in front' % mode, pend == 1 and inpop == 0 and mode == 3
+          and not {0x2B00, 0x2BF0} & set(ring) and spun(k, 'FS.TXT') > 0 and up and st[1] == 0
+          and (1, 1, 'MTKEY.COM') in st[0], (pend, inpop, hex(mode), ring, spun(k, 'FS.TXT'), up, st))
+    # CODE-Tab in the console: the console's key, not MT's (no switch once it closes)
+    k.key(HOT, settle=False); k.run_for(0.3)
+    sw = k.pc.rd(seg, Y['mt_swreq'], 1)[0]
+    k.key(R.HOT); k.run_for(0.5)
+    st = tstate(k)
+    check('CODE-Tab with the console up: left to it (MT asks for no switch: mt_swreq %02Xh); the console closed, the '
+          'front task as it was' % sw, sw == 0xFF and st[1] == 0 and not R.console(k) and k.pc.mode() == 3, (sw, st))
+    front(k, 1)
+    k.key('z', settle=False); k.run_for(1.0); k.settle()
+    check('... MTKEY R brought to the front: its read gets "z" (007A)', A.disk_file(k, 'BR.TXT') == b'007A'
+          and tstate(k)[0] == [(0, 1, 'Executive')], (A.disk_file(k, 'BR.TXT'), tstate(k)))
+    # CLAUDE /U: MT forgets the key wait
+    o = sh.run('claude /u')
+    check('CLAUDE /U: out, and MT has no key wait of its any more (0:0)', 'no longer resident' in o and tsr() == (0, 0),
+          (o, tsr()))
+
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
     k0 = boot('mt_mem0.img', b'MULTITASK=0\r\n')
@@ -3299,7 +3359,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_system, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

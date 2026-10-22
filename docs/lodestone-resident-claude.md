@@ -339,3 +339,11 @@ In the console, Claude Code can now look at the program it is popped up over and
 - **The mouse during a pop-up:** the INT 33h pointer is hidden meanwhile, and its event handler swapped out unless DOS is busy (M1). The console itself ignores the mouse. M3's name lookup showed that AH=62h (which AX=14h makes) is safe while DOS is one call deep: the kernel runs a call made inside another on a stack of its own. So the swap could happen then too (TM5000G reads its keys through DOS: always one deep); not done in M3, as it needs its own test. If the kernel's INT 33h noted a handler's owner without a DOS call (reading the current PSP itself), AX=0Ch and 14h would be safe from anywhere.
 - **Keys that quit the program:** the rest of a TYPE's keys go to whatever calls INT 16h next (the prompt, the Executive), as RUN's do, and the console comes back over that. `grid_type` says so.
 - **The program's name when DOS is two calls deep** (an INT 24h handler reading a key): not asked, as that stack is the handler's. A kernel call giving the current PSP's address (as AH=34h gives `indos`'s) would make it free.
+
+## With Lodestone's multitasking (M7c, 2026-10-22)
+`docs/lodestone-multitasking.md` (M7c) has the details. With `MULTITASK=1`:
+- **`CLAUDE /R` tells MT about the stub** (`MT_TSR`, F0h AL=1Ah). MT may then switch from the stub's key wait, so tasks behind keep running while the front program waits for a key through it. The stub reads which task is in front and which is running.
+- **The console comes up only in the front task's call.** A CODE-\ seen in a background task's call waits for the front task's next one. TYPE's keys go to the front task alone.
+- **CODE-Tab typed in the console is the console's,** not a switch.
+- **`CLAUDE /R` inside a task is refused** (exit code 3): load it at the Executive's prompt (CODE-P), before starting tasks. `CLAUDE /U` refuses while other tasks exist (M7a).
+- **The stub is version 3** (`r_mt`, after `r_pend`).
