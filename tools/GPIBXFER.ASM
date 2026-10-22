@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBXFER.COM 1.1 - real DMA through the 1520's 7210 (channel 3), and
+;  GPIBXFER.COM 1.2 - real DMA through the 1520's 7210 (channel 3), and
 ;  how fast it is next to the CPU's own loop.
 ;  Build:  nasm -f bin -o GPIBXFER.COM GPIBXFER.ASM
 ;  Usage:  GPIBXFER [a]      a = the echo device's address (default 7)
@@ -352,7 +352,11 @@ msg_in:
         test    al, ISR1_END
         jz      .f
         jmp     short .end
-.pio:   call    d_do_gts
+.pio:   push    cx
+        mov     cx, T_XFER              ; the first byte: up to ~2 s (the Pi
+        call    d_tmo_start             ;  answers once the stale replies go)
+        pop     cx
+        call    d_do_gts
         mov     byte [why], 14h         ; (14h: a byte didn't come)
         mov     dx, R_ISR1
         xor     ah, ah
@@ -365,6 +369,10 @@ msg_in:
         jnz     .lateend
         dec     bx
         jnz     .pw
+        cmp     di, [rxp]               ; nothing yet: wait on to the timeout
+        jne     .pf
+        call    d_tmo_check
+        jnc     .pb
         jmp     short .pf
 .pg:    mov     dx, R_DIR
         in      al, dx
@@ -601,7 +609,7 @@ save_log:
 
 %include "direct.inc"
 
-s_title db 13,10,'GPIBXFER 1.1 - 16 x 4096-byte messages each way, echoed by the device at $'
+s_title db 13,10,'GPIBXFER 1.2 - 16 x 4096-byte messages each way, echoed by the device at $'
 s_pio   db 13,10,'CPU loop:',13,10,'$'
 s_dma   db 13,10,'DMA, channel 3:',13,10,'$'
 s_outr  db '  GRiD -> device: $'
