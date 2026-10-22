@@ -46,7 +46,8 @@ TXMAX    equ 1024               ; GRiD -> Pi payload per frame
 %ifndef RXPAY
 %assign RXPAY 2048             ; Pi -> GRiD payload we read (HELLO's rx=): 98 % of 4 KB frames' rate on the 1520
 %endif
-RXMAX    equ RXPAY + 8          ; Pi -> GRiD frame
+RXMAX    equ RXPAY + 9          ; the read: a whole frame (RXPAY + 8) and one byte
+                                ;  more, so a frame never fills it (as 255 for 254)
 %defstr RXPAY_S RXPAY
 REQMAX   equ 4700               ; request reassembly
 IOSIZE   equ 16384              ; reply buffer segment

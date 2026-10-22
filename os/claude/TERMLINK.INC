@@ -265,7 +265,7 @@ find_frame:
         cmp     byte [rxbuf+bx], 47h
         jne     .nx
         mov     cx, [rxbuf+bx+4]
-        cmp     cx, RXMAX - 8
+        cmp     cx, RXMAX - 9
         ja      .nx
         mov     dx, cx
         add     dx, 8

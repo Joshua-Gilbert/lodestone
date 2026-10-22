@@ -75,7 +75,7 @@ TXMAX   equ 256                 ; GRiD -> Pi payload: HELLO, POLL, KEYS, REPLY
 %ifndef RXPAY
 %assign RXPAY 2048                 ; Pi -> GRiD payload (HELLO's rx=); the EMS page has room for ~2.4 KB
 %endif
-RXMAX   equ RXPAY + 8
+RXMAX   equ RXPAY + 9                 ; a frame and one byte more (see CLAUDE.ASM)
 %defstr RXPAY_S RXPAY
 TXQN    equ 6
 TITLEN  equ 36                  ; the Pi's title, then DOS busy (48 cells)
