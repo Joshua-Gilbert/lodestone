@@ -369,6 +369,14 @@ keeps 0.4 KB less while it runs one, and System and Write use 1.7 KB and
 label" and gave another drive's free space; fixed.  COPY of a file
 onto itself in a deep directory now says so.
 
+Then 2.6-2.7 KB more (582.4 KB with EMS, 566.3 KB without): the
+kernel's and the Executive's start-up code runs from buffers that are
+free at that point, and the screen's table of row addresses is gone.
+A program started from the prompt has 0.5 KB more again, and one run
+from Claude 1.9 KB more.  As in MS-DOS, RENAME onto a name with * or ?
+now gives error 3, and CD keeps each name to 8.3.  DOS errors 20, 22,
+24 and 28 now have their messages in the Executive.
+
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,
 read from LODEMT.SYS, which must sit beside LODE.SYS and come from the
