@@ -1218,7 +1218,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
 - **`TASK=` in a full environment:** the task starts, but "Out of environment space" and ERRORLEVEL 1 follow.
 
 **Cost:**
-- **Switch off:** the kernel's map and MEMSZ are main's. **LCMD is 937 bytes bigger** (11,563 bytes) and keeps 60 paragraphs (960 bytes) more while a program runs from its prompt (928 instead of 868), switch on or off, as TASKS did in M1.
+- **Switch off:** the kernel's map and MEMSZ are main's. **LCMD is 937 bytes bigger** (11,596 bytes) and keeps 60 paragraphs (960 bytes) more while a program runs from its prompt (930 instead of 870), switch on or off, as TASKS did in M1.
 - **Switch on:** MT's block is 814 paragraphs plus its MCB (13,040 bytes; it was 808), so a DOS program run from the Executive gets 569.5 KB (569.6 before); from LCMD's prompt, LCMD's 960 bytes less as well.
 - **Files:** LODEMT.SYS is 10,914 bytes (10,827 before); CLAUDE.COM 20,226 (20,098); ROM 1 has 13,312 bytes left (14,336 before: LCMD.COM takes two sectors more).
 - **Speed:** none on any path that runs all the time: `MT_EXIT` is a new call, and spawn and `mt_end` do a few moves more.
