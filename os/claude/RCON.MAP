@@ -19,7 +19,7 @@ Value     Name
 0000000C  TAIL
 0000000C  NAMEMAX
 00000100  TXMAX
-00000808  RXMAX
+00000809  RXMAX
 00000006  TXQN
 00000024  TITLEN
 00000000  LS_RESET
@@ -354,40 +354,40 @@ Real              Virtual           Name
             1ACE              1ACE  nakframe
             1AD6              1AD6  rxn
             1AD8              1AD8  rxbuf
-            22E1              22E1  pf_kind
-            22E2              22E2  rq_more
-            22E3              22E3  rq_over
-            22E4              22E4  replybuf
-            22E8              22E8  hellobuf
-            2350              2350  parms
-            2354              2354  prog
-            2361              2361  sm_len
-            2363              2363  borrow_on
-            2364              2364  borrow_at
-            2366              2366  borrowed
-            2372              2372  type_due
-            2373              2373  type_back
-            2374              2374  type_id
-            2375              2375  played
-            2376              2376  ks_pos
-            2378              2378  ks_len
-            237A              237A  ks_wait
-            237B              237B  ks_until
-            237D              237D  reqbuf
-            2B7F              2B7F  crctab
-            2D7F              2D7F  t_active
-            2D81              2D81  keybuf
-            2E01              2E01  keysend
-            2E81              2E81  shadseg
-            2E83              2E83  cur_on
-            2E84              2E84  cur_di
-            2E86              2E86  t_flags
-            2E87              2E87  t_cur
-            2E89              2E89  have_screen
-            2E8A              2E8A  crc_hid
-            2E8B              2E8B  ptitle
-            2EB0              2EB0  title_text
-            2EF5              2EF5  status_text
+            22E2              22E2  pf_kind
+            22E3              22E3  rq_more
+            22E4              22E4  rq_over
+            22E5              22E5  replybuf
+            22E9              22E9  hellobuf
+            2351              2351  parms
+            2355              2355  prog
+            2362              2362  sm_len
+            2364              2364  borrow_on
+            2365              2365  borrow_at
+            2367              2367  borrowed
+            2373              2373  type_due
+            2374              2374  type_back
+            2375              2375  type_id
+            2376              2376  played
+            2377              2377  ks_pos
+            2379              2379  ks_len
+            237B              237B  ks_wait
+            237C              237C  ks_until
+            237E              237E  reqbuf
+            2B80              2B80  crctab
+            2D80              2D80  t_active
+            2D82              2D82  keybuf
+            2E02              2E02  keysend
+            2E82              2E82  shadseg
+            2E84              2E84  cur_on
+            2E85              2E85  cur_di
+            2E87              2E87  t_flags
+            2E88              2E88  t_cur
+            2E8A              2E8A  have_screen
+            2E8B              2E8B  crc_hid
+            2E8C              2E8C  ptitle
+            2EB1              2EB1  title_text
+            2EF6              2EF6  status_text
             2F40              2F40  shadow
             3E40              3E40  rc_top
 
