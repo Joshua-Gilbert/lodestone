@@ -1652,7 +1652,8 @@ def t_slashend():
           and 'A:\\X.TXT' in fatcheck.read_files(bytes(k.pc.drives[0].img)), o)
     sh.run('rem   zzz*.q')                            # (after "dir /": "zzz*.q")
     o = sh.run('dir /')
-    check('DIR /: the directory, not a pattern from an earlier line', 'X        TXT' in o and 'File not found' not in o, o)
+    check('DIR /: the directory, not a pattern from an earlier line', 'X        TXT' in o and 'LCMD     COM' in o and '3 File(s)' in o
+          and 'File not found' not in o, o)
     sh.run('rem xxxxxx,1 hello')                     # (after "choice /t": ",1 hello")
     o = sh.run('choice /t')
     check('CHOICE /T: "Syntax error", no default, time or text from an earlier line', 'Syntax error' in o and 'hello' not in o, o)
