@@ -10,17 +10,17 @@ S_FLAGS equ 2
 S_DEV   equ 3                   ; device number
 S_DRV   equ 4
 S_ATTR  equ 5
-S_CLU   equ 6                   ; first cluster
-S_SIZE  equ 8                   ; dword
-S_POS   equ 12                  ; dword
-S_CCL   equ 16                  ; cached cluster (0 = none)
-S_CIX   equ 18                  ;   and its index in the chain
-S_DLBA  equ 20                  ; directory entry: sector,
-S_DOFF  equ 22                  ;   offset
-S_GADR  equ 24                  ; GPIB address
-S_TIME  equ 26
-S_DATE  equ 28
-S_NAME  equ 30                  ; 11
+S_TIME  equ 6                   ; time, date, first cluster, size: as in
+S_DATE  equ 8                   ;  the directory entry (its bytes 22-31),
+S_CLU   equ 10                  ;  for sft_fill and sft_commit
+S_SIZE  equ 12                  ; dword
+S_DLBA  equ 16                  ; directory entry: sector,
+S_DOFF  equ 18                  ;   offset (as d_lba, d_off)
+S_NAME  equ 20                  ; 11
+S_POS   equ 32                  ; dword
+S_CCL   equ 36                  ; cached cluster (0 = none)
+S_CIX   equ 38                  ;   and its index in the chain
+S_GADR  equ 40                  ; GPIB address
 S_RAE   equ 42                  ; where the last read ended (low word)
 SFT_SZ  equ 44
 NSFT    equ 24
@@ -49,6 +49,7 @@ con_lpos    resw 1
 con_llen    resw 1
 section .text
 
+section ovl
 sft_init:
         mov     si, sft
         mov     byte [si+S_REF], 3      ; 0: CON (handles 0, 1, 2)
@@ -66,6 +67,7 @@ sft_init:
         mov     byte [si+S_FLAGS], SF_DEV
         mov     byte [si+S_DEV], DEV_PRN
         ret
+section .text
 
 ; handle BX (current process) -> SI = SFT entry, AL = its number.
 ; CF: AX = 6.  Keeps BX.
@@ -193,30 +195,25 @@ sft_fill:
         mov     [si+S_DRV], al
         mov     al, [de+11]
         mov     [si+S_ATTR], al
-        mov     ax, [de+26]
-        mov     [si+S_CLU], ax
-        mov     ax, [de+28]
-        mov     [si+S_SIZE], ax
-        mov     ax, [de+30]
-        mov     [si+S_SIZE+2], ax
-        mov     ax, [de+22]
-        mov     [si+S_TIME], ax
-        mov     ax, [de+24]
-        mov     [si+S_DATE], ax
-        mov     ax, [d_lba]
-        mov     [si+S_DLBA], ax
-        mov     ax, [d_off]
-        mov     [si+S_DOFF], ax
         push    si
-        lea     di, [si+S_NAME]
-        mov     si, de
-        mov     cx, 11
+        lea     di, [si+S_TIME]         ; time, date, cluster, size
+        mov     si, de + 22
+        mov     cx, 5
+        rep     movsw
+        mov     si, d_lba               ; then d_lba, d_off
+        movsw
+        movsw
+        mov     si, de                  ; then the name
+        mov     cl, 11
         rep     movsb
         pop     si
         pop     di
         pop     cx
         pop     ax
         ret
+        times   -(S_DATE != S_TIME + 2 || S_CLU != S_TIME + 4 || S_SIZE != S_TIME + 6) db 0
+        times   -(S_DLBA != S_TIME + 10 || S_DOFF != S_DLBA + 2 || S_NAME != S_DLBA + 4) db 0
+        times   -(d_off != d_lba + 2) db 0
 
 ; ---------------------------------------------------------------------
 ;  devices by name
@@ -384,14 +381,8 @@ section .text
 
 ; create path_buf with attributes [bp+F_CX] -> SI = SFT, AL = number
 do_create:
-        call    resolve
+        call    resolve_new
         jc      .x
-        cmp     byte [r_name], 0
-        je      .acc
-        cmp     byte [r_wild], 0
-        jne     .np
-        cmp     byte [r_name], '.'
-        je      .acc
         call    find_named
         jc      .new
         cmp     byte [cr_new], 0
@@ -430,9 +421,6 @@ do_create:
 .x:     ret
 .exists:
         mov     ax, 80
-        stc
-        ret
-.np:    mov     ax, 3
         stc
         ret
 .acc:   mov     ax, 5
@@ -549,9 +537,9 @@ sft_commit:
         mov     di, si
         pop     si
         jc      .e
-        mov     ax, [si+S_CLU]
-        mov     [di+26], ax
-        mov     ax, [si+S_SIZE]
+        mov     ax, [si+S_CLU]          ; (field by field: a rep movsw would
+        mov     [di+26], ax             ;  need ES set up, close_all's PSP
+        mov     ax, [si+S_SIZE]         ;  here, and be no faster)
         mov     [di+28], ax
         mov     ax, [si+S_SIZE+2]
         mov     [di+30], ax
@@ -635,7 +623,9 @@ f_40:   mov     bx, [bp+F_BX]           ; WRITE
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
-; the memory pointer ES:DI as segment + offset < 16 in rw_seg / rw_off
+; a read or write of CX bytes for SFT SI begins: the memory pointer ES:DI
+; as segment + offset < 16 in rw_seg / rw_off; the file's drive, with
+; its FAT.  CF: AX = error
 rw_start:
         mov     [rw_sft], si
         mov     [rw_left], cx
@@ -648,7 +638,9 @@ rw_start:
         mov     ax, di
         and     ax, 15
         mov     [rw_off], ax
-        ret
+        mov     al, [si+S_DRV]          ; its drive, and that drive's FAT
+        call    use_drive_si
+        jmp     fat_load
 ; advance by AX bytes
 rw_step:
         add     [rw_done], ax
@@ -776,9 +768,6 @@ rw_where:
 
 file_read:
         call    rw_start
-        mov     al, [si+S_DRV]
-        call    use_drive_si
-        call    fat_load
         jc      .err
         ; no further than the end of the file
         mov     ax, [si+S_SIZE]
@@ -963,9 +952,6 @@ section .text
 
 file_write:
         call    rw_start
-        mov     al, [si+S_DRV]
-        call    use_drive_si
-        call    fat_load
         jc      .err
         or      byte [si+S_FLAGS], SF_DIRTY
         or      cx, cx

@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from grid_emu import EmuHarness
 from fake_anthropic import reply
 from gridlink import tools
+from unicorn.x86_const import UC_X86_REG_SP as SP
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('EMU_OUT', '')
 CFG_C = b'#include <stdio.h>\r\nint rate = 1;\r\nint main(void) { return rate; }\r\n'
@@ -29,12 +30,20 @@ def check(h):
     errs = [l for l in h.log if 'Traceback' in str(l) or 'error' in str(l).lower()]
     assert not errs, errs
     assert h.var('n_fail', 2) == 0, ('link failures', h.var('n_fail', 2))
+    if hasattr(h, 'stk'):                       # CLAUDE.COM's stack: under a quarter of it used
+        lo, top = h.stk
+        b = h.m.mu.mem_read(h.claude_psp * 16 + lo, top - lo)
+        used = top - lo - (len(b) - len(bytes(b).lstrip(b'\xa5')))
+        assert used <= (top - lo) // 4, ('stack', used, top - lo)
 
 
 def start(script, **kw):
     h = EmuHarness(script, **kw)
     h.boot()
     assert h.connect(), ('no connection', h.m.crash, h.screen())
+    lo, top = h.sym['stack_bottom'], h.sym['stack_top']    # paint the stack below SP (check() reads it)
+    h.m.mu.mem_write(h.claude_psp * 16 + lo, b'\xa5' * (h.m.mu.reg_read(SP) - 16 - lo))
+    h.stk = (lo, top)
     return h
 
 
@@ -261,6 +270,21 @@ def test_link_loss_and_reconnect():
     h.settle()
     assert 'lost' in h.screen().split('\n')[21], h.screen()
     shot(h, 'link_lost')
+    # link_reset clears the link's state (TERMLINK_RESET_VARS, first to last): set it while a HELLO
+    # waits for no answer, and look at it when the next reset builds its HELLO
+    from unicorn import UC_HOOK_CODE
+    LR = ('g_seq', 'p_ack', 'have_pi', 'nak_pending', 'resend', 'rq_type', 'rq_len', 'keyn', 'keys_q', 'rep_q')
+    base = h.claude_psp * 16
+    assert h.run_until(lambda: h.var('lstate') == 2, 5), h.var('lstate')
+    for n in LR: h.m.mu.mem_write(base + h.sym[n], b'\x01')
+    seen = []
+    at = base + h.sym['build_hello']
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, ud: seen or seen.append(
+        [uc.mem_read(base + h.sym[n], 1)[0] for n in LR]), None, at, at)
+    h.m.mu.ctl_remove_cache(at, at + 1)            # (unicorn hooks only code it translates afresh)
+    assert h.run_until(lambda: seen, 5), 'no link reset'
+    h.m.mu.hook_del(hk)
+    assert seen[0] == [0] * len(LR), list(zip(LR, seen[0]))
     h.transport.answer = real
     assert h.run_until(h.idle, 15), h.screen()
     assert h.var('n_fail', 2) >= 1

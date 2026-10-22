@@ -48,6 +48,34 @@ org 0
 KSEG    equ 0060h               ; where the kernel lives
 VERSION equ 0006h               ; Lodestone 0.6
 
+section .bss nobits align=16 follows=.text
+bss_start:
+; KEMS.INC: in the file right after the kernel image (at image_end), in
+; memory right after the BSS (where ems_init copies it), its data after it
+; in memory only (emsbss); KHD.INC's module after it; then both start-ups
+; (in the load image only).  ems is image_end - bss_end from where it runs
+; in the load image, hd and boot that less emsbss: they find themselves by
+; section.hd.start and section.boot.start (MDB).
+section ems progbits align=16 follows=.text vfollows=.bss valign=16
+section emsbss nobits vfollows=ems valign=1     ; (KEMS.INC's data: valign=1
+section hd progbits align=16 follows=ems vfollows=emsbss valign=16  ;  keeps it
+                                                ;  where it was, after the code)
+section boot progbits align=16 follows=hd vfollows=hd valign=16
+; KMDISK.INC: M:'s installer, its resident part's image and that image's
+; relocations, after the start-ups in the file; ems_init copies them into
+; the disk cache's EMS (the installer runs there, at E000:MD_TPG)
+%define MDB(x) (section.boot.start + ((x) - section.boot.vstart))   ; (in the load image)
+MD_TPG  equ 1000h                       ; (its place in the cache's second page)
+section mdt progbits align=16 follows=boot vstart=MD_TPG
+; KROM.INC: R:'s resident part, assembled from 0 and relocated where it goes
+section rmt progbits align=16 follows=mdt vstart=0
+; the start-up code, run in the place of the disk buffers (in KSEG): see
+; init.  (A constant: the assertions at the end of this file keep it
+; inside them.)
+OVL_AT  equ 5800h
+section ovl progbits align=16 follows=rmt vstart=OVL_AT
+section .text
+
 start:  cli                     ; at 1000:0000 from the boot sector
         mov     ax, 2000h       ; temporary stack clear of the image
         mov     ss, ax
@@ -56,7 +84,7 @@ start:  cli                     ; at 1000:0000 from the boot sector
         cld
         push    cs
         pop     es
-        mov     di, bootbpb
+        mov     di, section.ovl.start + (bootbpb - init)  ; (in this image)
         mov     cx, 64
         rep     movsb           ; BPB from DS:SI (the boot sector)
         mov     [cs:bootdrv], dl
@@ -68,11 +96,22 @@ start:  cli                     ; at 1000:0000 from the boot sector
         xor     di, di
         mov     cx, (image_end - start + 1) / 2
         rep     movsw
+        mov     si, section.ovl.start   ; and the start-up code (section ovl)
+        mov     di, OVL_AT              ;  where the disk buffers will be
+        mov     cx, (ovl_end - init) / 2
+        rep     movsw
         jmp     section.boot.start + (rom_menu - section.boot.vstart)   ; KROM.INC's, in this
                                         ; image (then KEMS.INC's ems_init,
                                         ; KHD.INC's hd_init, KROM.INC's
                                         ; rom_init, then KSEG:init)
 
+; ---------------------------------------------------------------------
+;  Start-up only (section ovl): copied by `start' into the place of the
+;  disk buffers, which nothing uses until init has gone (no disk is read
+;  before INT 21h is hooked), patched there by the start-ups, run once.
+;  Nothing returns into it after init's last jump.
+; ---------------------------------------------------------------------
+section ovl
 init:   cli
         mov     ax, cs
         mov     ds, ax
@@ -80,9 +119,13 @@ init:   cli
         mov     ss, ax
         mov     sp, kstack_top
         sti
-        mov     di, bss_start           ; clear BSS (nothing on the stack yet)
-        mov     cx, bss_end - bss_start
-        xor     al, al
+        xor     al, al                  ; clear the BSS (nothing on the stack
+        mov     di, bss_start           ;  yet), all but this code
+        mov     cx, OVL_AT
+        sub     cx, di
+        rep     stosb
+        mov     di, ovl_end
+        mov     cx, bss_end - ovl_end
         rep     stosb
         call    ivt_init
         call    sft_init
@@ -92,15 +135,18 @@ init:   cli
         call    gpib_init
         call    proc_init               ; master environment + root PSP
         call    ui_load
-.go:    jmp     short run_ui            ; (KSPLASH.INC: to LODE.PIC's bootstrap,
+.go:    jmp     near run_ui             ; (KSPLASH.INC: to LODE.PIC's bootstrap,
                                         ;  then KMDISK.INC: to M:'s start-up)
 
 ; The UI section from the loaded file (still at 1000:section.ui.start)
 ; into a block of its own; then its BSS cleared.  Allocated at its image
 ; size first, so the block's new MCB can't land on the image being copied.
+; Section uiboot, the UI's start-up (next in the file), goes into the top
+; of its directory buffer, which the block grows over at once (all far
+; below the file's copy: nothing it still needs is in the way), and isn't
+; cleared: it runs once, from exec_main, before the directory is read.
 ui_load:
-        mov     bx, ui_image_end + 15
-        shr     bx, 4
+        mov     bx, UI_IMG_PARAS
         mov     dx, 8
         call    mem_alloc
         jc      .fail
@@ -111,16 +157,17 @@ ui_load:
         mov     ds, ax
         mov     si, section.ui.start
         xor     di, di
-        mov     cx, ui_image_end + 1
-        shr     cx, 1
+        mov     cx, (ui_image_end - ui_base) / 2
+        rep     movsw
+        mov     di, UIBOOT_ORG          ; (SI = section.uiboot.start)
+        mov     cx, UIBOOT_WORDS
         rep     movsw
         pop     ds
-        mov     bx, ui_bss_end + 15     ; + BSS and stack
-        shr     bx, 4
+        mov     bx, UI_PARAS            ; + BSS and stack
         call    mem_resize
         jc      .fail
         mov     di, ui_bss_start
-        mov     cx, ui_bss_end
+        mov     cx, UIBOOT_ORG
         sub     cx, di
         xor     al, al
         rep     stosb
@@ -141,6 +188,8 @@ ui_load:
         jmp     .p
 .h:     hlt
         jmp     .h
+s_nouimem   db 'Lodestone: not enough memory for the Executive', 13, 10, 0
+section .text
 
 ; enter (or re-enter) the root process: the Executive, on its own stack
 run_ui: cli
@@ -152,27 +201,6 @@ run_ui: cli
         push    word exec_main
 k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 
-s_nouimem   db 'Lodestone: not enough memory for the Executive', 13, 10, 0
-
-section .bss nobits align=16 follows=.text
-bss_start:
-; KEMS.INC: in the file right after the kernel image (at image_end), in
-; memory right after the BSS (where ems_init copies it); KHD.INC's module
-; after it; then both start-ups (in the load image only).  All three are
-; laid out alike in the file and in memory, so each is image_end - bss_end
-; from where it runs in the load image.
-section ems progbits align=16 follows=.text vfollows=.bss valign=16
-section hd progbits align=16 follows=ems vfollows=ems valign=16
-section boot progbits align=16 follows=hd vfollows=hd valign=16
-; KMDISK.INC: M:'s installer, its resident part's image and that image's
-; relocations, after the start-ups in the file; ems_init copies them into
-; the disk cache's EMS (the installer runs there, at E000:MD_TPG)
-%define MDB(x) (section.boot.start + ((x) - section.boot.vstart))   ; (in the load image)
-MD_TPG  equ 1000h                       ; (its place in the cache's second page)
-section mdt progbits align=16 follows=boot vstart=MD_TPG
-; KROM.INC: R:'s resident part, assembled from 0 and relocated where it goes
-section rmt progbits align=16 follows=mdt vstart=0
-section .text
 
 %include "KCORE.INC"
 %include "KMEM.INC"
@@ -182,7 +210,11 @@ section .text
 %include "KPROC.INC"
 %include "KGPIB.INC"
 
+section ovl
 bootbpb     times 64 db 0
+            align 2
+ovl_end:
+section .text
 bootdrv     db 0
 capdrv      db 'A'                      ; screen captures go here (from the ROM:
                                         ;  C:, else A:; KROM.INC's rs_boot)
@@ -212,12 +244,14 @@ hd_start:
 ; =====================================================================
 ;  The UI segment: offsets from 0 in a segment of its own
 ; =====================================================================
-section ui progbits align=16 follows=rmt vstart=0
+section ui progbits align=16 follows=ovl vstart=0
 section uibss nobits valign=16 vfollows=ui
 ; alignb would clash with vfollows in NASM's bin output (it sets a "real"
 ; section alignment); uibss starts on a paragraph, so this is the same thing
 %define ualignb(n) resb ((n) - (($ - $$) % (n))) % (n)
 ui_bss_start:
+section uiboot                          ; (its attributes at the end: it runs
+uiboot_start:                           ;  at UIBOOT_ORG, known only there)
 section ui
 %include "UICORE.INC"                   ; (the jump table is at offset 0)
 %include "EXEC.INC"
@@ -242,14 +276,37 @@ UI_IMG_PARAS    equ (ui_image_end - ui_base + 15) >> 4
 UI_PARAS        equ UI_IMG_PARAS + ((ui_bss_end - ui_bss_start + 15) >> 4)
 UI_KEEP_PARAS   equ UI_IMG_PARAS + ((ui_keep_end - ui_bss_start + 15) >> 4)
 
+; The UI's start-up code (section uiboot: exec_main's first time, LODE.INI,
+; the mouse's probe, sysinfo) runs from the top of the directory buffer,
+; past what font_boot reads into it (LODE.INI, then the font file), and is
+; gone once the directory is read: it isn't part of the block DOS programs
+; leave the UI
+UIBOOT_ORG      equ (UI_IMG_PARAS << 4) + (FONT_BUF - ui_bss_start) + FONT_BYTES + 2   ; (even)
+UIBOOT_WORDS    equ (uiboot_end - uiboot_start + 1) >> 1
+section uiboot
+uiboot_end:
+        times   -(UIBOOT_ORG + (uiboot_end - uiboot_start) > (UI_IMG_PARAS << 4) + (ui_bss_end - ui_bss_start)) db 0
+        times   -((INI_READ + 1 + FONT_BYTES) & 1) db 0   ; (entries is even: ualignb(2))
+        times   -(UIBOOT_ORG - (UI_IMG_PARAS << 4) - (entries - ui_bss_start) < INI_READ + 1 + FONT_BYTES + 1) db 0
+                                        ; (past font_file's read, FONT_BYTES + 1;
+                                        ;  ui_bss_start = UI_IMG_PARAS << 4, which
+                                        ;  NASM can't check here: test_apps does)
+section uiboot progbits align=2 follows=ui vstart=UIBOOT_ORG
+
 ; =====================================================================
 ;  KMT.INC: multitasking.  Its resident part (section mtt, assembled from
 ;  0, run in a segment of its own) is the file's last section: the build
 ;  (mkmt.py) cuts it off into LODEMT.SYS, and mt_boot reads that file.
 ; =====================================================================
-section mtt progbits align=16 follows=ui vstart=0
+section mtt progbits align=16 follows=uiboot vstart=0
 section mttbss nobits valign=16 vfollows=mtt
 %include "KMT.INC"                      ; (section mtt, and boot: mt_boot)
 
 section ui                              ; (UI_PARAS: ui_image_end ends it)
             times -($ - ui_image_end) db 0
+
+; section ovl inside the disk buffers (bss_start is image_end; init comes
+; first in it)
+[absolute 0]
+        times   -(OVL_AT < (image_end - start) + (bufs - bss_start)) resb 1
+        times   -(OVL_AT + (ovl_end - init) > (image_end - start) + (fatbuf - bss_start) + 512 * MAXSPF) resb 1
