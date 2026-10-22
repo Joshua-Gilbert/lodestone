@@ -1039,7 +1039,7 @@ The checks:
   - T hooks INT 1Ch and computes; the handler's 5th call ends its own task.
 
 The checks:
-- **F behind,** waiting for a line inside INT 21h: ended, none of its code run after the call (a watch on its region, as for S, C and MTSPIN D), its file closed at its size (1,500 bytes, 3 clusters), its EMS page given back, memory, files and EMS as before, its exit code 0100h.
+- **F behind,** waiting for a line inside INT 21h: ended, none of its code run after the call (a watch on its region, as for S, C, MTSPIN D, MTKEY R and MTMODE 04), its file closed at its size (1,500 bytes, 3 clusters), its EMS page given back, memory, files and EMS as before, its exit code 0100h.
 - **S behind,** computing outside INT 21h: the same.
 - **C behind,** its child waiting with its own EMS page: both ended with the task.
 - **MTSPIN D behind** (an INT 21h call on each count, so it is switched from on INT 21h's way out): ended.

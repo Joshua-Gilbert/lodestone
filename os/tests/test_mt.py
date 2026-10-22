@@ -2245,11 +2245,13 @@ def t_kill():
           and kk is not None and kk.startswith(b'0 ') and A.disk_file(k, 'KQ.TXT') == ks(50) and back(), (st, kk, now()))
     # waiting in the BIOS (its own INT 16h read: mt_wkey) and waiting to be in front (a graphics mode behind: mt_wfront)
     st, e1, o = killed(1, 'mtkey.com r kr.txt')
+    r1 = kr['ran']
     st2, e2, o2 = killed(1, 'mtmode.com 04 km.txt')
     check('a task waiting in its own INT 16h read behind (MTKEY R), and one waiting to be in front (MTMODE 04, a graphics '
-          'mode asked for behind): each ended, as before', (1, TS_WAITK, 'MTKEY.COM') in st[0]
-          and (1, 3, 'MTMODE.COM') in st2[0] and A.disk_file(k, 'KR.TXT') is None
-          and A.disk_file(k, 'KM.TXT') is None and back(), (st, st2, now()))
+          'mode asked for behind): each ended, none of its code run after the call, as before',
+          (1, TS_WAITK, 'MTKEY.COM') in st[0] and (1, 3, 'MTMODE.COM') in st2[0] and not r1 and not kr['ran']
+          and A.disk_file(k, 'KR.TXT') is None and A.disk_file(k, 'KM.TXT') is None and back(),
+          (st, st2, r1, kr, now()))
     # twice (the second too late); and what can't be ended
     sh.run('mtlaunch mtkill.com f 10 kd.txt'); line(k, ''); k.run_for(0.6)
     o = sh.run('mtlaunch /k:1 /k:1'); line(k, ''); k.run_for(0.6)
