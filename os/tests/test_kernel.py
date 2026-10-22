@@ -1659,6 +1659,17 @@ def t_slashend():
     check('CHOICE /T: "Syntax error", no default, time or text from an earlier line', 'Syntax error' in o and 'hello' not in o, o)
     o = sh.run('choice /')
     check('CHOICE /: "Syntax error"', 'Syntax error' in o, o)
+    k = ktest.KPC(img); k.start()                       # (a fresh shell: a CHOICE above that waits can't spill over)
+    sh = Shell(k)
+    sh.run('rem 0123456789 abcdefghijklmnopqrst')
+    o = sh.run('choice /c') + sh.run('choice /c hello')
+    check('CHOICE /C with no keys (/C last, or a space after it): "Syntax error", not keys from an earlier line '
+          'that no key can answer', o.count('Syntax error') == 2 and '[' not in o, o)
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    o = sh.run('set ' + 'A' * 87 + '=x') + sh.run('echo still here')
+    check('SET of a name longer than the shell keeps (87 letters): "Syntax error", and the shell as it was (it wrote '
+          'over its own variables)', 'Syntax error' in o and 'still here' in o and 'A' * 87 not in sh.run('set'), o)
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
