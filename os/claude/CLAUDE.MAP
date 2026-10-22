@@ -19,7 +19,7 @@ Value     Name
 000003E8  MAXIN
 00000004  HISTN
 00000190  HISTL
-00000400  TXMAX
+00000800  TXMAX
 00000809  RXMAX
 0000125C  REQMAX
 00004000  IOSIZE
@@ -819,67 +819,67 @@ Real              Virtual           Name
             42CF              42CF  txq
             430B              430B  txlen
             430D              430D  txframe
-            4715              4715  nakframe
-            471D              471D  rxn
-            471F              471F  rxbuf
-            4F29              4F29  pf_kind
-            4F2A              4F2A  rq_over
-            4F2B              4F2B  rq_id
-            4F2C              4F2C  reqbuf
-            618C              618C  hellobuf
-            62CC              62CC  evans
-            62D0              62D0  crctab
-            64D0              64D0  term
-            64D1              64D1  t_active
-            64D3              64D3  tmouse
-            64D4              64D4  keybuf
-            6554              6554  keysend
-            65D4              65D4  shadseg
-            65D6              65D6  cur_on
-            65D7              65D7  cur_di
-            65D9              65D9  t_flags
-            65DA              65DA  t_cur
-            65DC              65DC  ask_open
-            65DD              65DD  help_open
-            65DE              65DE  ask_id
-            65DF              65DF  ask_kind
-            65E0              65E0  ask_sel
-            65E1              65E1  ask_q
-            65E3              65E3  ask_d
-            65E5              65E5  ask_a
-            65E7              65E7  askbuf
-            696B              696B  optbuf
-            69A3              69A3  dta
-            69CF              69CF  cwdbuf
-            6A13              6A13  old_tmo
-            6A15              6A15  gp_dlen
-            6A17              6A17  gp_max
-            6A19              6A19  wr_data
-            6A1B              6A1B  wr_len
-            6A1D              6A1D  wr_done
-            6A1F              6A1F  run_flags
-            6A20              6A20  run_cmd
-            6A22              6A22  run_rest
-            6A24              6A24  run_exit
-            6A26              6A26  run_err
-            6A28              6A28  ext_at
-            6A2A              6A2A  exec_path
-            6A7A              6A7A  outname
-            6ACA              6ACA  tail
-            6B4C              6B4C  epb
-            6B5A              6B5A  exec_ss
-            6B5C              6B5C  exec_sp
-            6B5E              6B5E  ks_active
-            6B5F              6B5F  ks_len
-            6B61              6B61  ks_ptr
-            6B63              6B63  ks_pos
-            6B65              6B65  ks_wait
-            6B66              6B66  ks_until
-            6B68              6B68  snap_taken
-            6B69              6B69  snap_len
-            6B6B              6B6B  stack_bottom
-            6F6B              6F6B  stack_top
-            6F6B              6F6B  bss_end
+            4B15              4B15  nakframe
+            4B1D              4B1D  rxn
+            4B1F              4B1F  rxbuf
+            5329              5329  pf_kind
+            532A              532A  rq_over
+            532B              532B  rq_id
+            532C              532C  reqbuf
+            658C              658C  hellobuf
+            66CC              66CC  evans
+            66D0              66D0  crctab
+            68D0              68D0  term
+            68D1              68D1  t_active
+            68D3              68D3  tmouse
+            68D4              68D4  keybuf
+            6954              6954  keysend
+            69D4              69D4  shadseg
+            69D6              69D6  cur_on
+            69D7              69D7  cur_di
+            69D9              69D9  t_flags
+            69DA              69DA  t_cur
+            69DC              69DC  ask_open
+            69DD              69DD  help_open
+            69DE              69DE  ask_id
+            69DF              69DF  ask_kind
+            69E0              69E0  ask_sel
+            69E1              69E1  ask_q
+            69E3              69E3  ask_d
+            69E5              69E5  ask_a
+            69E7              69E7  askbuf
+            6D6B              6D6B  optbuf
+            6DA3              6DA3  dta
+            6DCF              6DCF  cwdbuf
+            6E13              6E13  old_tmo
+            6E15              6E15  gp_dlen
+            6E17              6E17  gp_max
+            6E19              6E19  wr_data
+            6E1B              6E1B  wr_len
+            6E1D              6E1D  wr_done
+            6E1F              6E1F  run_flags
+            6E20              6E20  run_cmd
+            6E22              6E22  run_rest
+            6E24              6E24  run_exit
+            6E26              6E26  run_err
+            6E28              6E28  ext_at
+            6E2A              6E2A  exec_path
+            6E7A              6E7A  outname
+            6ECA              6ECA  tail
+            6F4C              6F4C  epb
+            6F5A              6F5A  exec_ss
+            6F5C              6F5C  exec_sp
+            6F5E              6F5E  ks_active
+            6F5F              6F5F  ks_len
+            6F61              6F61  ks_ptr
+            6F63              6F63  ks_pos
+            6F65              6F65  ks_wait
+            6F66              6F66  ks_until
+            6F68              6F68  snap_taken
+            6F69              6F69  snap_len
+            6F6B              6F6B  stack_bottom
+            736B              736B  stack_top
+            736B              736B  bss_end
 
 ---- Section rstub ------------------------------------------------------------
 
