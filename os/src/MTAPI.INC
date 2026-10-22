@@ -34,7 +34,8 @@ MT_KILL     equ 14h                     ; BL = a task: it ends, whatever runs in
                                         ;  the caller's own: at once, no return
                                         ;  (from an interrupt's handler, an INT
                                         ;  24h handler or a mouse event
-                                        ;  handler: at its next safe point).  CF: AX = 1 (no such task),
+                                        ;  handler: at its next safe point).
+                                        ;  CF: AX = 1 (no such task),
                                         ;  5 (task 0, the Executive)
 MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back

@@ -2154,28 +2154,41 @@ def t_kill():
     m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
     back = lambda: alone() and merged(mcbs(k)) == m0 and sft_used(k) == s0 and ems_used(k) == e0 and not k.crashed
     now = lambda: (tstate(k), show(mcbs(k)), sft_used(k), s0, ems_used(k), e0)
+    kr = {}
     def killed(n, cmd, settle=0.6):     # cmd started (MTLAUNCH's), run a while, then MTLAUNCH /K:n
         sh.run('mtlaunch ' + cmd); line(k, ''); k.run_for(settle)
         st, e1 = tstate(k), ems_used(k)
+        reg = k.pc.u16(seg, Y['mt_tab'] + n * MT_ENT + 4)                  # (TE_REG: its region, its MCB before it)
+        lo, hi = (reg * 16, (reg + k.pc.u16(reg - 1, 3)) * 16) if reg else (0, 0)
+        ka, ea, ph, ran, prev = seg * 16 + Y['mt_kill'], seg * 16 + Y['mt_end'], [0], [], k.pc.watch
+        def w(a):                       # (code run in its region from MT_KILL to its MT_END: none, if it ends
+            if prev: prev(a)            #  where it would have gone on)
+            if a == ka and ph[0] == 0: ph[0] = 1
+            elif a == ea and ph[0] == 1: ph[0] = 2
+            elif ph[0] == 1 and lo <= a < hi and len(ran) < 4: ran.append(hex(a))
+        k.pc.watch = w
         o = sh.run('mtlaunch /k:%d' % n); line(k, ''); k.run_for(0.5)
+        k.pc.watch = prev
+        kr['ran'] = ran if ph[0] == 2 else ['no MT_END', ph[0]]
         return st, e1, o
     ks = lambda n: b'k' * n
     # behind, waiting for a line inside INT 21h (kbd_get), a file open and an EMS page taken
     st, e1, o = killed(1, 'mtkill.com f 1500 kf.txt')
     check('a task behind waiting for a line (MTKILL F: in kbd_get, inside INT 21h), its file open, an EMS page its own: '
-          'ended, its file closed at its size (1,500 bytes: 3 clusters), the page given back, its region freed, the files and EMS as '
-          'before; its exit code 0100h (as ^C)', (1, TS_WAITK, 'MTKILL.COM') in st[0] and e1 > e0 and 'error' not in o
-          and A.disk_file(k, 'KF.TXT') == ks(1500) and ext(1) == 0x100 and back(), (st, e1, o, now(), hex(ext(1))))
+          'ended, none of its code run after the call (a watch on its region), its file closed at its size (1,500 bytes: 3 '
+          'clusters), the page given back, its region freed, the files and EMS as before; its exit code 0100h (as ^C)',
+          (1, TS_WAITK, 'MTKILL.COM') in st[0] and e1 > e0 and 'error' not in o and not kr['ran']
+          and A.disk_file(k, 'KF.TXT') == ks(1500) and ext(1) == 0x100 and back(), (st, e1, o, kr, now(), hex(ext(1))))
     # behind, computing (no INT 21h call): switched from at the tick, outside INT 21h
     st, e1, o = killed(1, 'mtkill.com s 200 ks.txt')
     check('... computing behind (MTKILL S, never calling INT 21h: on its own stack, outside the kernel): the same',
           (1, 1, 'MTKILL.COM') in st[0] and e1 > e0 and A.disk_file(k, 'KS.TXT') == ks(200) and ext(1) == 0x100
-          and back(), (st, e1, o, now()))
+          and not kr['ran'] and back(), (st, e1, o, kr, now()))
     # a program with a child: both end with the task
     st, e1, o = killed(1, 'mtkill.com c 100 kc.txt')
     check('... running a child (MTKILL C, its child F waiting for a line): both ended with the task, the child\'s file '
           'closed at its size, memory, files and EMS as before', (1, TS_WAITK, 'MTKILL.COM') in st[0] and e1 > e0
-          and A.disk_file(k, 'KC.TXT') == ks(100) and ext(1) == 0x100 and back(), (st, e1, o, now()))
+          and A.disk_file(k, 'KC.TXT') == ks(100) and ext(1) == 0x100 and not kr['ran'] and back(), (st, e1, o, kr, now()))
     # computing behind with an INT 21h call on each count: switched from on INT 21h's way out (mt_exit)
     xs, prev = [], k.pc.watch
     def w(a):
@@ -2185,12 +2198,21 @@ def t_kill():
     st, e1, o = killed(1, 'mtspin.com 30000 kv.txt d')
     k.pc.watch = prev
     check('... computing behind with an INT 21h call on each count (MTSPIN D: nearly all its time inside INT 21h, so '
-          'switched from on its way out, mt_exit: %d times there): ended, as before' % len(xs),
-          (1, 1, 'MTSPIN.COM') in st[0] and xs and A.disk_file(k, 'KV.TXT') is None and back(), (st, len(xs), now()))
+          'its turns end on the way out, mt_exit: reached %d times with one due): ended, as before' % len(xs),
+          (1, 1, 'MTSPIN.COM') in st[0] and xs and A.disk_file(k, 'KV.TXT') is None and not kr['ran'] and back(),
+          (st, len(xs), kr, now()))
     # its own task
+    xp, prev = [], k.pc.watch
+    def w(a):
+        if prev: prev(a)
+        if a in (seg * 16 + Y['mt_kill.df'], seg * 16 + Y['mt_kill.o']): xp.append(hex(a))
+        if a == seg * 16 + Y['mt_kdie']: xp.append('kdie')
+    k.pc.watch = w
     sh.run('mtlaunch mtkill.com x 30 kx.txt'); line(k, ''); k.run_for(1.0)
-    check('a task ending itself (MTKILL X: AL=14h with its own number): at once, no return (no "!"), its file closed at '
-          'its size, as before', A.disk_file(k, 'KX.TXT') == ks(30) and ext(1) == 0x100 and back(), now())
+    k.pc.watch = prev
+    check('a task ending itself (MTKILL X: AL=14h with its own number): at once, no return (no "!"; mt_kdie reached '
+          'from mt_kill, neither its put-off path nor its path for another task taken), its file closed at its size, as '
+          'before', xp == ['kdie'] and A.disk_file(k, 'KX.TXT') == ks(30) and ext(1) == 0x100 and back(), (xp, now()))
     # never run yet
     hits, prev = [], k.pc.watch
     def w(a):
@@ -2235,7 +2257,8 @@ def t_kill():
     o3 = sh.run('mtlaunch /k:3'); line(k, '')
     o9 = sh.run('mtlaunch /k:9'); line(k, '')
     check('ended twice in one command (/K:1 /K:1): the first ends it on that call\'s way out (its turn comes at once), so '
-          'the second finds none: error 1; the Executive\'s task: error 5; a free entry, or no such task: error 1',
+          'the second finds none: error 1; the Executive\'s task: error 5; a task number with no task (3) or past 7 (9): '
+          'error 1',
           o.count('MTLAUNCH: error 1') == 1 and A.disk_file(k, 'KD.TXT') == ks(10) and 'MTLAUNCH: error 5' in o0
           and 'MTLAUNCH: error 1' in o3 and 'MTLAUNCH: error 1' in o9 and back(), (o, o0, o3, o9, now()))
     # CODE-Tab coming in after mt_hot looked, inside the front task's DOS key status call, before the BIOS's AH=01h
@@ -2304,6 +2327,8 @@ def t_kill():
             for j in range(200):
                 if cur() == 1: break
                 k.run_for(0.001)
+            else:
+                continue
             k.pc.mouse_move(8, 0); k.run_for(0.01); b.append(busy())
             if 1 in b: break
         k.run_for(1.2)
@@ -2330,6 +2355,31 @@ def t_kill():
           'computing tasks after it get turns (%s)' % (zb, sorted(seen)),
           zb and not any(zb) and [e[0] for e in st[0]] == [0] and busy() == 0 and {1, 2} <= seen
           and merged(mcbs(k)) == m0 and ems_used(k) == e0 and not k.crashed, (b, st, seen, busy()))
+    kd, prev = [], k.pc.watch           # (mt_kdie reached: the handler's kill, put off, then done)
+    def w(a):
+        if prev: prev(a)
+        if a == seg * 16 + Y['mt_kdie']: kd.append(cur())
+        if a == seg * 16 + Y['mt_kill.df']: kd.append('df')
+    k.pc.watch = w
+    marked = lambda: k.pc.rd(seg, Y['mt_tab'] + MT_ENT + 25, 1)[0]     # (task 1's TE_KILL)
+    typ(k, 'mtlaunch /f mtkill.com r 0 x;mtspin.com 400 rq.txt', 0.3)
+    for i in range(40):                 # (moves only until its handler's kill is put off: MTSPIN still computing
+        for j in range(200):            #  after, so it isn't ended for want of another task to run)
+            if cur() == 1: break
+            k.run_for(0.001)
+        else:
+            continue
+        k.pc.mouse_move(8, 0); k.run_for(0.01)
+        if marked(): break
+    mk = marked()
+    k.run_for(1.0)
+    k.pc.watch = prev
+    st = tstate(k)
+    sh.run('mtlaunch /k:2'); line(k, ''); k.run_for(0.5)
+    check('... and one that, its handler\'s kill put off, goes on to read a key in front (MTKILL R, MTSPIN computing '
+          'behind): ended when switched from, not left waiting for the key (mt_switch makes it ready); no key typed',
+          mk and kd == ['df', 1] and [e[2] for e in st[0]] == ['Executive', 'MTSPIN.COM'] and busy() == 0
+          and merged(mcbs(k)) == m0 and ems_used(k) == e0 and not k.crashed, (mk, kd, st, busy()))
     isr, prev = [], k.pc.watch
     def w(a):
         if prev: prev(a)

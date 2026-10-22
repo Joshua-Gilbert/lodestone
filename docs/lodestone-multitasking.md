@@ -502,7 +502,7 @@ The checks:
 - **LCMD's screen saver** starts only when LCMD is in front (AL = AH). In the background the screen isn't its own: its saver's direct drawing would have landed on the front screen, and the screen it saved and put back would have been the front task's.
 - **`mt_vbusy`:** while MT has a task's pages mapped itself with interrupts on (switching screens, `mt_sync`, a spawn's clear screen), an interrupt's INT 10h call goes straight to the BIOS, so that it can't map pages over MT's. The shadow is lost for it.
 - **Two new hooks:** INT 13h goes through `mt_i13`, which counts the calls running and passes CF back as the BIOS gives it. The kernel's one INT 24h call (`crit_disk.c24`, 5 bytes) becomes a far call to `mt_c24`, which counts it. M5's per-task vector tables must keep `mt_i13` at the base of every task's INT 13h. (M5a keeps INT 13h the machine's, so `mt_i13` stays at its base for every task.)
-- **Left over:** `mt_inb`, `mt_crit` and `mt_in13` are cleared when a task ends or is spawned, and at every switch, where none can be under way, in case a program was ended inside one. A `mt_crit` left by an INT 24h handler that never came back counts only inside INT 21h.
+- **Left over:** `mt_inb`, `mt_crit` and `mt_in13` are cleared when a task ends or is spawned, and at every switch, where none can be under way, in case a program was ended inside one. A `mt_crit` left by an INT 24h handler that never came back counts only inside INT 21h. (M5b: it counts everywhere, and is cleared at that program's end.)
 - **The mapping** reads KEMS's tables directly (`mt_smap`), as INT 67h AH=44h would: no INT 67h call on the way.
 - **A new task's screen** is set up at spawn: mode 3 (its BIOS video data from the 1520's tables), clear. Before M4a it was cleared when first shown; now a task can print before it is ever in front.
 
@@ -993,12 +993,12 @@ The checks:
   - `mt_switch` keeps that address, its return, 20 bytes above the SP it saves (`SW_RET`). It is on the task's own stack, or in its kernel stack's slice in the TX if it was switched from inside INT 21h.
   - For a task that has never run, it is the return to `mt_first` (its first IRET into the stub).
   - One word written covers every place a task can be switched from: the tick, INT 21h's way out, a key wait, its own INT 16h read, a graphics call behind.
-  - A task ending itself where it can't at once is marked, and `mt_switch` writes the same word as it saves it.
+  - A task ending itself where it can't at once is marked, and `mt_switch` writes the same word as it saves it. It also makes the task ready, whatever it was about to wait for (a key, the front), so it ends on its next turn.
 - **`mt_kdie` makes the stub's own `MT_END` call,** with the stub the current PSP and the exit code set:
   - First it puts INT 22h-24h back from the stub's PSP, as a program's end does. So a disk error as the files close gets `mt_i24`, not a dying program's handler.
   - Inside INT 21h (a key wait), it goes to `mt_end` from there.
   - Outside it, it goes through the kernel's own INT 21h entry, not the task's vector, which a program may have hooked.
-- **`MT_END` does what it does for any task's end.** M5a's `mt_owners` closes the files and frees the EMS and memory of every program still in the task's arena. Each one's end is now told to the UI, as terminate does (`ui_progend`), so a mouse event handler it was inside is forgotten and `m33_busy` cleared. `mt_vfix` puts the vectors back, and the region is freed.
+- **`MT_END` does what it does for any task's end.** M5a's `mt_owners` closes the files and frees the EMS and memory of every program still in the task's arena. Each one's end is now told to the UI, as terminate does (`ui_progend`), so a mouse event handler it was inside is forgotten and `m33_busy` cleared. With MT on that is `mt_pgend`, so other tasks' copies of its vectors are put right and a stale `mt_crit` cleared too, as for any program's end. `mt_vfix` puts the vectors back, and the region is freed.
 - **No code of the task's programs runs again.** So a frozen task that writes the screen itself doesn't scribble on the one in front as it ends.
 
 **Departures from the plan and from M5a's note:**
@@ -1016,7 +1016,7 @@ The checks:
   - When the caller isn't at a safe point on the call's way out (an INT 21h hook of its own around the call, say), it is within a round of the other tasks' turns.
   - While the running task is never at a safe point (task 0 inside a TSR's own key loop, say), no other task runs, the one being ended included, until it is.
 - **A mouse event handler running on another task's stack:** the front task's handler runs in whichever task the mouse's interrupt finds. If it waits for a key there and that task is ended, the handler's own program doesn't end, so `m33_busy` stays set and the tick stops switching until the driver is reset.
-- **An INT 24h handler that goes back into its program without answering** (Turbo C's `hardretn`, say): the kernel's `indos` stays set (the INT 21h call never comes back out), so that task is never switched from again until it ends. For one raised by C:'s INT 25h/26h, `mt_crit` stays set the same way. Before M5b, `indos` was so.
+- **An INT 24h handler that goes back into its program without answering** (Turbo C's `hardretn`, say): the kernel's `indos` stays set (the INT 21h call never comes back out), so that task is never switched from again until it ends. For one raised by C:'s INT 25h/26h, `mt_crit` stays set the same way, until that program ends: the task isn't switched from, and its INT 10h, 16h and 33h calls go to the real screen, keys and mouse even when it is behind. That was already so for `indos` before M5b.
 - **What a program changed outside DOS stays as it set it:** the PIT's rate, the PIC's mask, a UART it turned on (as at any task's end: M5a's limits).
 - **A timer speed-up** (M5a's regression) is left for M9.
 - **Still open, for M9:** a handler that never sends its EOI and then reads a key through DOS (M4a; a check in `mt_can` would change how a background task's key wait behaves); a task's own timer hook calling DOS, switched on that call's way out (M3).
@@ -1024,26 +1024,26 @@ The checks:
 
 **Cost:**
 - **Switch off:** nothing. LODE.SYS is the same size (47,056 bytes); only `mt_sum` and `mt_boot`'s copies of LODEMT.SYS's sizes and offsets differ, in section boot, which is in the load image only. The map and MEMSZ are unchanged (582.4 KB).
-- **Switch on:** MT's block is 710 paragraphs plus its MCB (11,376 bytes; it was 682 paragraphs), so a DOS program gets 571.2 KB (571.7 after M5a).
-- **Files:** LODEMT.SYS is 9,253 bytes (8,801 after M5a); ROM 1 has 16,384 bytes left.
+- **Switch on:** MT's block is 711 paragraphs plus its MCB (11,392 bytes; it was 682 paragraphs), so a DOS program gets 571.2 KB (571.7 after M5a).
+- **Files:** LODEMT.SYS is 9,269 bytes (8,801 after M5a); ROM 1 has 16,384 bytes left.
 - **Speed:** a front task's AH=00h and 01h look at the key buffer's head once more (`mt_drop`, a few instructions). `mt_safe` and `mt_can` each test one byte more, and `mt_switch` one. A switch is otherwise as before.
 
-**Tests:** `test_mt.py`, 240 checks (was 225). The new group is `t_kill`, with a new test program:
+**Tests:** `test_mt.py`, 241 checks (was 225). The new group is `t_kill`, with a new test program:
 - `MTKILL MODE N FILE`:
   - F creates FILE, writes N bytes to it, takes an EMS page, and reads a line, the file still open;
   - S does the same, then computes for ever without calling INT 21h;
   - C runs MTKILL F as its child;
   - X does as F, then ends its own task;
   - K waits 9 ticks, ends task N, and writes what the call gave back;
-  - M sets a mouse event handler and computes; the handler, in its own task, waits for a key; Z does the same, but its handler ends its own task;
+  - M sets a mouse event handler and computes; the handler, in its own task, waits for a key; Z does the same, but its handler ends its own task; R is Z, but once its handler has run it reads a key (INT 16h AH=00h);
   - T hooks INT 1Ch and computes; the handler's 5th call ends its own task.
 
 The checks:
-- **F behind,** waiting for a line inside INT 21h: ended, its file closed at its size (1,500 bytes, 3 clusters), its EMS page given back, memory, files and EMS as before, its exit code 0100h.
+- **F behind,** waiting for a line inside INT 21h: ended, none of its code run after the call (a watch on its region, as for S, C and MTSPIN D), its file closed at its size (1,500 bytes, 3 clusters), its EMS page given back, memory, files and EMS as before, its exit code 0100h.
 - **S behind,** computing outside INT 21h: the same.
 - **C behind,** its child waiting with its own EMS page: both ended with the task.
 - **MTSPIN D behind** (an INT 21h call on each count, so it is switched from on INT 21h's way out): ended.
-- **X:** its own task ended at once, the call not coming back.
+- **X:** its own task ended at once, the call not coming back (`mt_kdie` reached from `mt_kill`, neither the put-off path nor the path for another task taken).
 - **A task ended before it ever ran** (MTLAUNCH starting it, then /K:1 in the same command): its stub never run (a watch on `mt_first`).
 - **A task frozen behind** (/Z, in front first, then behind): ended all the same.
 - **The task in front** (seen there first) **ended by one behind** (MTKILL K 1): the Executive's task in front again, its screen back.
@@ -1054,6 +1054,7 @@ The checks:
 - **On a machine with a serial mouse:**
   - **M,** ended by MTKILL K while its handler waits for a key: `m33_busy` cleared, and two tasks computing after it both get turns.
   - **Z:** its handler's kill waits for the handler to be over (`m33_busy` 0 as it ends); then the same.
+  - **R,** in front, with MTSPIN computing behind: its handler's kill put off, it goes on to wait for a key, and is ended when switched from, no key typed.
   - **T,** with MTSPIN computing beside it: it ends with no interrupt in service, when it is next run (its return changed by `mt_switch`); the tick goes on.
 - **The checks can fail:** each of these, broken on purpose, fails a check (one, the Executive's task not refused, by taking the machine down):
   - a frozen task not taken by `mt_pick`;
@@ -1063,7 +1064,7 @@ The checks:
   - the stub not made the current PSP in `mt_kdie`, or the exit code not set;
   - the caller's own task not ended at once;
   - its own task's end not put off inside an interrupt's handler (T) or the mouse's event handler (Z);
-  - `mt_switch` not changing a marked task's return (T), or `mt_preempt` not ending it with none to switch to (Z);
+  - `mt_switch` not changing a marked task's return (T), or not making it ready (R); `mt_preempt` not ending it with none to switch to (Z);
   - each program's end not told to the UI (M: `m33_busy` stays set);
   - `mt_safe`'s test of `mt_crit`;
   - `mt_drop` not called for the front task's AH=00h and 01h, or CODE-Tab not taken in it.
@@ -1071,10 +1072,11 @@ The checks:
   **Not tested here:**
   - **Fixes no check reaches:**
     - `mt_can`'s test of `mt_crit` (a key wait inside the kernel's INT 24h raised outside INT 21h), and `mt_kill` putting off its own task's end inside an INT 24h handler or a call MT passed on;
-    - a marked task ended at a key wait or its own INT 16h read with none other ready;
+    - a marked task ended at a key wait or its own INT 16h read with none other ready, and a key wait inside its INT 24h or mouse event handler not ending it there (`mt_kok` at `mt_kwait`'s `.idle`);
     - `mt_kdie` putting INT 22h-24h back (no disk error as the files close);
     - INT 10h, 16h and 33h taking `mt_crit` as a prompt outside INT 21h; `mt_c24` not going below 0; `mt_pgend` clearing a count left over;
     - the kill flag cleared at a spawn and at a task's end;
+    - a task whose own end was put off, next switched from inside INT 21h (`mt_switch` writes the return into the kernel stack before copying its slice; R and T are switched from outside it);
     - `mt_drop`'s limit of 16 words, and its drops of the other keys AH=01h skips (only CODE-Tab is put in);
     - `mt_drop` in a program's own AH=00h read in front, with a key typed in the window (`t_keys`'s front reads go through it, without one);
     - a task ended after it was last switched from at an INT 16h peek (`mt_i16`'s `.pk`).
