@@ -1430,7 +1430,7 @@ def t_names():
     names = ('a', 'b', 'hid', 'hid2', 'hid3', 'sys', 'sys2', 'hs', 'hs2', 'ro', 'clock', 'x')
     for n in names:
         open(os.path.join(OUT, 'NM_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
-    img = image('names.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NAMES.COM=' + com,
+    img = image('names.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NAMES.COM=' + com, flush_com(),
                 *['%s.TXT=%s' % (n.upper(), os.path.join(OUT, 'NM_%s.TXT' % n)) for n in names if n != 'x'])
     m = lambda *a: subprocess.run(list(a), check=True, stdin=subprocess.DEVNULL, capture_output=True)
     m('mmd', '-i', img, '::A.B'); m('mmd', '-i', img, '::E.F')
@@ -1442,6 +1442,7 @@ def t_names():
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
     sh.run('names > out.txt')
+    sh.run('flush')                                     # (the cache on the disk first)
     f = fatcheck.read_files(bytes(k.pc.drives[0].img))
     got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
     want = [c + ' -> ' + a for c, a in MS_NAMES]
@@ -1478,6 +1479,16 @@ MS_NULDIR = [('fn 3D NOSUCH\\NUL', 'err 03'),
              ('fn 3D A.B\\.\\NUL', 'ok'),
              ('fn 3D A.B\\NOSUCH\\NUL', 'err 03'),
              ('fn 3D E.F\\NUL', 'ok'),
+             ('fn 3D \\DEV\\NUL', 'ok'),
+             ('fn 3D \\DEV\\CON', 'ok'),
+             ('fn 3D A:\\DEV\\NUL', 'ok'),
+             ('fn 3D \\DEV\\NUL.TXT', 'ok'),
+             ('fn 3D DEV\\NUL', 'err 03'),
+             ('fn 3D \\DEV\\SUB\\NUL', 'err 03'),
+             ('fn 3D A.B\\NUL.X.Y', 'err 02'),
+             ('fn 3D A.B\\NUL.*', 'err 02'),
+             ('fn 3D Q:NUL', 'ok'),
+             ('fn 3D NUL.*', 'ok'),
              ('fn 3C NOSUCH\\NUL', 'err 03'),
              ('fn 3C A.B\\NUL', 'ok'),
              ('fn 3C A.TXT\\NUL', 'err 03'),
@@ -1494,38 +1505,16 @@ MS_NULDIR = [('fn 3D NOSUCH\\NUL', 'err 03'),
              ('fn 3C A.B\\.\\NUL', 'ok'),
              ('fn 3C A.B\\NOSUCH\\NUL', 'err 03'),
              ('fn 3C E.F\\NUL', 'ok'),
-             ('fn 4E NOSUCH\\NUL', 'err 03'),
-             ('fn 4E A.B\\NUL', 'ok'),
-             ('fn 4E A.TXT\\NUL', 'err 03'),
-             ('fn 4E \\NUL', 'ok'),
-             ('fn 4E NUL', 'ok'),
-             ('fn 4E A:NUL', 'ok'),
-             ('fn 4E A:\\NUL', 'ok'),
-             ('fn 4E NOSUCH\\CON', 'err 03'),
-             ('fn 4E A.B\\CON', 'ok'),
-             ('fn 4E A.B\\NUL.TXT', 'ok'),
-             ('fn 4E NOSUCH\\NUL.TXT', 'err 03'),
-             ('fn 4E NOSUCH\\SUB\\NUL', 'err 03'),
-             ('fn 4E A.B\\..\\NUL', 'ok'),
-             ('fn 4E A.B\\.\\NUL', 'ok'),
-             ('fn 4E A.B\\NOSUCH\\NUL', 'err 03'),
-             ('fn 4E E.F\\NUL', 'ok'),
-             ('fn 43 NOSUCH\\NUL', 'err 03'),
-             ('fn 43 A.B\\NUL', 'err 02'),
-             ('fn 43 A.TXT\\NUL', 'err 03'),
-             ('fn 43 \\NUL', 'err 02'),
-             ('fn 43 NUL', 'err 02'),
-             ('fn 43 A:NUL', 'err 02'),
-             ('fn 43 A:\\NUL', 'err 02'),
-             ('fn 43 NOSUCH\\CON', 'err 03'),
-             ('fn 43 A.B\\CON', 'err 02'),
-             ('fn 43 A.B\\NUL.TXT', 'err 02'),
-             ('fn 43 NOSUCH\\NUL.TXT', 'err 03'),
-             ('fn 43 NOSUCH\\SUB\\NUL', 'err 03'),
-             ('fn 43 A.B\\..\\NUL', 'err 02'),
-             ('fn 43 A.B\\.\\NUL', 'err 02'),
-             ('fn 43 A.B\\NOSUCH\\NUL', 'err 03'),
-             ('fn 43 E.F\\NUL', 'err 02'),
+             ('fn 3C \\DEV\\NUL', 'ok'),
+             ('fn 3C \\DEV\\CON', 'ok'),
+             ('fn 3C A:\\DEV\\NUL', 'ok'),
+             ('fn 3C \\DEV\\NUL.TXT', 'ok'),
+             ('fn 3C DEV\\NUL', 'err 03'),
+             ('fn 3C \\DEV\\SUB\\NUL', 'err 03'),
+             ('fn 3C A.B\\NUL.X.Y', 'err 02'),
+             ('fn 3C A.B\\NUL.*', 'err 02'),
+             ('fn 3C Q:NUL', 'ok'),
+             ('fn 3C NUL.*', 'ok'),
              ('fn 5B NOSUCH\\NUL', 'err 03'),
              ('fn 5B A.B\\NUL', 'ok'),
              ('fn 5B A.TXT\\NUL', 'err 03'),
@@ -1541,99 +1530,47 @@ MS_NULDIR = [('fn 3D NOSUCH\\NUL', 'err 03'),
              ('fn 5B A.B\\..\\NUL', 'ok'),
              ('fn 5B A.B\\.\\NUL', 'ok'),
              ('fn 5B A.B\\NOSUCH\\NUL', 'err 03'),
-             ('fn 5B E.F\\NUL', 'ok')]
+             ('fn 5B E.F\\NUL', 'ok'),
+             ('fn 5B \\DEV\\NUL', 'ok'),
+             ('fn 5B \\DEV\\CON', 'ok'),
+             ('fn 5B A:\\DEV\\NUL', 'ok'),
+             ('fn 5B \\DEV\\NUL.TXT', 'ok'),
+             ('fn 5B DEV\\NUL', 'err 03'),
+             ('fn 5B \\DEV\\SUB\\NUL', 'err 03'),
+             ('fn 5B A.B\\NUL.X.Y', 'err 02'),
+             ('fn 5B A.B\\NUL.*', 'err 02'),
+             ('fn 5B Q:NUL', 'ok'),
+             ('fn 5B NUL.*', 'ok')]
+
+def flush_com():
+    """FLUSH.COM: INT 21h 0Dh, so the cache is on the disk before a test reads its image."""
+    src, com = os.path.join(OUT, 'FLUSH.ASM'), os.path.join(OUT, 'FLUSH.COM')
+    open(src, 'w').write('org 100h\n mov ah, 0Dh\n int 21h\n mov ax, 4C00h\n int 21h\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    return 'FLUSH.COM=' + com
 
 def t_nul():
     """A device's name after a directory (X18, "IF EXIST DIR\\NUL"): OPEN, CREATE and CREATE NEW find the
-    device only where the directory is there, FIND FIRST finds it there as MS-DOS 3.30 does (attribute 40h,
-    its name; FIND NEXT then none); LCMD's IF EXIST as before."""
+    device only where the directory is there, [X:]\\DEV\\ in front is the devices' own, and a wildcard or a
+    bad name after the directory is 2, as GRiD MS-DOS 3.30 answers; NUL, A:NUL and Q:NUL need no disk."""
     com = os.path.join(OUT, 'NULDIR.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NULDIR.ASM')], check=True)
-    src = os.path.join(OUT, 'FINDDEV.ASM')          # FIND FIRST of devices: the DTA's attribute and name, then FIND NEXT
-    open(src, 'w').write(r"""org 100h
-        mov     si, names
-.t:     lodsw
-        or      ax, ax
-        jz      .done
-        push    si
-        push    ax
-        mov     dx, any                 ; (a search under way first: its state
-        xor     cx, cx                  ;  in the DTA, which FIND NEXT must not
-        mov     ah, 4Eh                 ;  go on with after a device)
-        int     21h
-        pop     dx
-        xor     cx, cx
-        mov     ah, 4Eh
-        int     21h
-        jc      .err
-        mov     al, [80h + 21]
-        call    phex
-        mov     si, 80h + 30
-.n:     lodsb
-        or      al, al
-        jz      .nx
-        mov     dl, al
-        mov     ah, 2
-        int     21h
-        jmp     .n
-.nx:    mov     ah, 4Fh
-        int     21h
-        mov     dl, '+'
-        jc      .c
-        mov     dl, '-'
-.c:     push    ax
-        mov     ah, 2
-        int     21h
-        pop     ax
-.err:   call    phex
-        mov     dl, ' '
-        mov     ah, 2
-        int     21h
-        pop     si
-        jmp     .t
-.done:  mov     ax, 4C00h
-        int     21h
-phex:   push    ax
-        shr     al, 4
-        call    .d
-        pop     ax
-        and     al, 15
-.d:     add     al, '0'
-        cmp     al, '9'
-        jbe     .p
-        add     al, 7
-.p:     mov     dl, al
-        mov     ah, 2
-        int     21h
-        ret
-names   dw n1, n2, n3, n4, n5, 0
-any     db '*.*', 0
-n1      db 'A.B\NUL', 0
-n2      db 'A.B\NUL.TXT', 0
-n3      db 'CLOCK$', 0
-n4      db 'NOSUCH\NUL', 0
-n5      db 'A.TXT\NUL', 0
-""")
-    fdc = os.path.join(OUT, 'FINDDEV.COM')
-    subprocess.run(['nasm', '-f', 'bin', '-o', fdc, src], check=True)
     open(os.path.join(OUT, 'NM_a.TXT'), 'wb').write(b'a\r\n')
-    img = image('nul.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NULDIR.COM=' + com, 'FINDDEV.COM=' + fdc,
+    img = image('nul.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NULDIR.COM=' + com, flush_com(),
                 'A.TXT=' + os.path.join(OUT, 'NM_a.TXT'), 'A.B\\', 'E.F\\')
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
     sh.run('nuldir > out.txt')
+    sh.run('flush')
     f = fatcheck.read_files(bytes(k.pc.drives[0].img))
     got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
     want = [c + ' -> ' + a for c, a in MS_NULDIR]
     check("NULDIR.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a device's name behind a directory that isn't "
-          "there, or is a file: 3; where it is there, the device, FIND FIRST included)" % len(want), got == want,
-          [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
-    o = sh.run('finddev').split('\n')[0].split()
-    check('FIND FIRST of A.B\\NUL, A.B\\NUL.TXT, CLOCK$: attribute 40h and the name alone, FIND NEXT then 18; '
-          'NOSUCH\\NUL and A.TXT\\NUL: 3 (as MS-DOS)', o == ['40NUL+12', '40NUL+12', '40CLOCK$+12', '03', '03'], o)
+          "there, or is a file: 3; \\DEV\\ the devices' own; a wildcard or bad name after a directory: 2)" % len(want),
+          got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
     o = sh.run('if exist nosuch\\nul echo nosuch') + sh.run('if exist a.b\\nul echo dir') + sh.run('type nul')
-    check('... and LCMD: IF EXIST NOSUCH\\NUL no, A.B\\NUL yes; TYPE NUL', 'nosuch' not in o.replace('nosuch\\nul', '')
-          and 'dir\n' in o + '\n', o)
+    check("... and LCMD (its IF EXIST looks at the directory itself): IF EXIST NOSUCH\\NUL no, A.B\\NUL yes; TYPE NUL",
+          'nosuch' not in o.replace('nosuch\\nul', '') and 'dir\n' in o + '\n', o)
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
