@@ -926,7 +926,7 @@ def t_mouse():
         check('pointer: ' + what, e == a and e, (len(e), len(a), sorted(e - a)[:4], sorted(a - e)[:4]))
         k.key(ktest.ENTER, settle=False); k.pc.run_for(0.05)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
-    check('DF set by the program: the reset and the shape still land where they should', pre and below == pre[0] and
+    check('DF set by the program: the reset and the shape still land where they should', pre and any(pre[0]) and below == pre[0] and
           k.band()[0] == 'M33GFX.COM ended', k.band())
     # a program that ends inside its event handler; then the next one's handler
     k = ktest.KPC(image('m33q.img', M33['M33QUIT'], M33TEST)); k.pc.mouse = True; k.start()
