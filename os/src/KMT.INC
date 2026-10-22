@@ -13,7 +13,9 @@
 ;  task's own vectors (M5a: mt_vrun's swapped at every switch, the
 ;  keyboard's 09h and 1Bh at a change of the front, the rest the
 ;  machine's, those left pointing into a task's region put back at its
-;  end).
+;  end); tasks ended whatever runs in them (M5b: MT_KILL, at their stub's
+;  MT_END when they next run).  CODE-Tab not lost to the BIOS's look for
+;  a key (mt_drop).
 ;
 ;  Off, none of it is in memory: its start-up (mt_boot, section boot) is
 ;  only in the load image, its resident part (section mtt) isn't even in
@@ -86,6 +88,8 @@ TE_SH       equ 22                      ; its screen's EMS handle (2 pages; 0:
                                         ;  none)
 TE_SF       equ 23                      ; 1: its screen is kept there
 TE_VF       equ 24                      ; VF_DIRECT, and its SPF_BG and SPF_FREEZE
+TE_KILL     equ 25                      ; 1: MT_KILL ended it (it ends when it
+                                        ;  next runs: mt_kdie)
 VF_DIRECT   equ 1                       ; (it wrote the screen itself, or was in
                                         ;  graphics, when last switched from in
                                         ;  front: frozen in the background)
@@ -129,6 +133,9 @@ ST_PATH     equ 120h                    ; the program (ASCIIZ)
 ST_PB       equ 1A0h                    ; EXEC's block
 ST_TAIL     equ 1B0h                    ; its command tail
 ST_STK      equ 340h                    ; its stack's top
+SW_RET      equ 20                      ; (mt_switch's frame from the SP it
+                                        ;  keeps: ES, DS, POPA's 8, then where
+                                        ;  it goes back to: mt_load's RET)
 ST_AFR      equ ST_STK - 26             ; its EXEC call's frame (INT 21h's, on
                                         ;  its stack): terminate's, if it is
                                         ;  ended itself (an Abort while it EXECs)
@@ -419,6 +426,9 @@ mt_safe:
         jz      .no
         cmp     byte [indos], 0
         jne     .no
+        cmp     byte [cs:mt_crit], 0    ; (the kernel's INT 24h, raised outside
+        jne     .no                     ;  INT 21h: C:'s INT 25h/26h, its code
+                                        ;  half way; its handler's own code)
         cmp     byte [cs:mt_inb], 0     ; (a hook's code inside a call MT
         jne     .no                     ;  passed on to the BIOS, or inside an
         cmp     word [cs:mt_in13], 0    ;  INT 13h call: an INT 15h or 40h hook
@@ -539,9 +549,11 @@ mt_preempt:
 .p:     call    mt_pick
         jnc     mt_switch
         mov     al, [cs:mt_cur]         ; none: this one goes on, a new turn;
-        call    mt_ent                  ;  unless it is frozen here: then the
-        call    mt_frz                  ;  front one (waiting for a key, or it
-        jnz     .fz                     ;  would have been picked)
+        call    mt_ent                  ;  unless it ended itself (now), or it
+        cmp     byte [cs:bx+TE_KILL], 0 ;  is frozen here: then the front one
+        jne     mt_kdie                 ;  (waiting for a key, or it would
+        call    mt_frz                  ;  have been picked)
+        jnz     .fz
         mov     byte [cs:mt_slice], 2
         ret
 .fz:    mov     bl, [cs:mt_front]
@@ -596,7 +608,13 @@ mt_kwait:
         jc      .idle
         call    .park                   ; (it runs; then back here)
         jmp     .top
-.idle:  pop     bx                      ; the kernel's own wait: PrtSc,
+.idle:  mov     al, [cs:mt_cur]         ; (it ended itself: now, if it can be
+        call    mt_ent                  ;  here: this wait may be in its INT
+        cmp     byte [cs:bx+TE_KILL], 0 ;  24h handler, or its mouse's)
+        je      .wt
+        call    mt_kok
+        je      mt_kdie
+.wt:    pop     bx                      ; the kernel's own wait: PrtSc,
         pop     ax                      ;  INT 28h, HLT, and here again
         pop     ds                      ;  (a TSR popping up from that INT 28h
         mov     byte [cs:mt_idle], 1    ;  on the kernel's stack: its INT 16h
@@ -644,10 +662,14 @@ mt_kwait:
 ; CF if the running task can't be switched away from here: a nested INT
 ; 21h (an INT 24h answer), or more kernel stack than its TX holds; inside
 ; a call MT passed on to the BIOS or an INT 13h call; while mt_swnow
-; changes the front (an interrupt handler's DOS call meanwhile)
+; changes the front (an interrupt handler's DOS call meanwhile); inside
+; the kernel's INT 24h (raised by C:'s INT 25h/26h, outside INT 21h: its
+; handler's own DOS call)
 mt_can: cmp     byte [indos], 1
         jne     .no
         cmp     byte [cs:mt_inb], 0
+        jne     .no
+        cmp     byte [cs:mt_crit], 0
         jne     .no
         cmp     word [cs:mt_in13], 0    ; (and mt_swing)
         jne     .no
@@ -677,6 +699,8 @@ mt_pick:
         cmp     byte [cs:bx+TE_STATE], TS_RUN
         jne     .n
         call    mt_frz
+        jz      .n
+        cmp     byte [cs:bx+TE_KILL], 1 ; (frozen, but ended: it runs, to end)
 .n:     pop     bx
         je      .y
         loop    .l
@@ -734,7 +758,12 @@ mt_switch:
         push    bx
         call    mt_ent
         mov     es, [cs:bx+TE_TX]
-        pop     bx
+        cmp     byte [cs:bx+TE_KILL], 0 ; (it ended itself where that couldn't
+        je      .nk                     ;  be at once: it goes on at mt_kdie,
+        mov     byte [cs:bx+TE_STATE], TS_RUN ; as one ended by another does,
+        mov     bp, sp                  ;  ready whatever it was about to wait
+        mov     word [bp+SW_RET+2], mt_kdie ; for; BX still pushed)
+.nk:    pop     bx
 .sv:    mov     [es:TX_SP], sp
         mov     [es:TX_SS], ss
         call    mt_emsget
@@ -1176,8 +1205,16 @@ mt_owners:
         push    es
         mov     es, ax                  ; a program's: its files, then its EMS
         cmp     word [es:0], 20CDh      ;  and its blocks (this one and on: the
-        jne     .f                      ;  walk goes on)
-        KCALL   close_all
+        jne     .f                      ;  walk goes on); its end told to the UI
+        KCALL   close_all               ;  as terminate does (ui_progend: its
+        push    ax                      ;  mouse handler forgotten, m33_busy
+        push    bx                      ;  cleared if it ended inside it)
+        push    es
+        mov     bx, es
+        KCALL   ui_progend
+        pop     es
+        pop     bx
+        pop     ax
 .f:     mov     ax, es
         KCALL   ems_free_owner
         pop     es
@@ -1472,6 +1509,8 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_end
         cmp     al, MT_FRONT
         je      mt_frontc
+        cmp     al, MT_KILL
+        je      mt_kill
         cmp     al, MT_SCREEN
         je      mt_screen
         cmp     al, 1
@@ -1552,6 +1591,92 @@ mt_frontc:
         je      mt_bad
         mov     [cs:mt_swreq], al
         jmp     KSEG:ok
+
+; MT_KILL: task BL ended, whatever runs in it.  Another task: where it would
+; go on, mt_switch's return, becomes mt_kdie, which ends it when it next
+; runs (no code of its programs' runs again); waiting, it is ready now, and
+; frozen behind it runs all the same (mt_pick).  The caller's own: now, or
+; from its next safe point
+mt_kill:
+        mov     al, [bp+F_BX]
+        cmp     al, MT_TASKS
+        jae     mt_bad
+        or      al, al
+        jz      .ex
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        je      mt_bad
+        mov     byte [cs:bx+TE_KILL], 1
+        cmp     al, [cs:mt_cur]
+        jne     .o
+        call    mt_kok                  ; its own: now, unless the call came
+        je      mt_kdie                 ;  from where it can't end (mt_kok):
+.df:    mov     byte [cs:mt_pend], 1    ;  then where it next can be (mt_switch,
+        jmp     KSEG:ok                 ;  mt_preempt, a wait with none other)
+.o:     mov     byte [cs:bx+TE_STATE], TS_RUN
+        mov     es, [cs:bx+TE_TX]
+        cmp     word [es:TX_KLEN], 0    ; (switched from inside INT 21h: the
+        je      .st                     ;  return in its kernel stack's slice)
+        mov     word [es:TX_KSTK + SW_RET], mt_kdie
+        jmp     short .p
+.st:    mov     di, [es:TX_SP]          ; (else on its own stack; a new task's:
+        mov     es, [es:TX_SS]          ;  mt_first's place)
+        mov     word [es:di + SW_RET], mt_kdie
+.p:     mov     byte [cs:mt_pend], 1    ; (its turn soon: from this call's way
+        jmp     KSEG:ok                 ;  out, if the caller is at a safe point)
+.ex:    mov     ax, 5
+        jmp     mt_fail
+
+; ZF if the running task can end here, at mt_kdie: not from an interrupt's
+; handler (one in service, the mouse's event handler), an INT 24h handler
+; or a call MT passed on (mt_can).  DS = KSEG; AX changed
+mt_kok: call    mt_can
+        jc      .no
+        call    mt_isr
+        jnz     .x
+        push    es
+        mov     es, [ui_seg]
+        cmp     byte [es:m33_busy], 0
+        pop     es
+.x:     ret
+.no:    or      sp, sp                  ; (NZ)
+        ret
+
+; a task MT_KILL ended, going on (mt_load's return, or mt_kill in its own
+; task): MT_END, as its stub makes it, with the stub the current PSP:
+; whatever ran in it ends with the task (mt_owners: their files closed,
+; their EMS and memory freed), the exit code ^C's.  Inside INT 21h (a key
+; wait), from here; else through INT 21h, the kernel's own (the task's
+; vector may be a program's hook)
+mt_kdie:
+        cli
+        push    KSEG
+        pop     ds
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        mov     ax, [cs:bx+TE_PSP]
+        mov     [cur_psp], ax
+        mov     word [last_exit], 0100h
+        push    ds                      ; INT 22h-24h the stub's (MT's), as a
+        mov     ds, ax                  ;  program's end puts them back: a disk
+        mov     si, 0Ah                 ;  error as its files close gets
+        xor     di, di                  ;  mt_i24, not a dying program's
+        mov     es, di                  ;  handler
+        mov     di, 22h * 4
+        mov     cx, 6
+        cld
+        rep     movsw
+        pop     ds
+        cmp     byte [indos], 0
+        je      .out
+        jmp     mt_end
+.out:   pushf                           ; (the call's frame: never gone back
+        push    cs                      ;  to)
+        push    word .h
+        mov     ax, 0F000h + MT_END
+        jmp     KSEG:int21
+.h:     hlt
+        jmp     .h
 
 ; MT_SCREEN: the caller's screen, which it wrote itself, is as it should
 ; be (put back after a screen saver, say): if it is the front task's, in a
@@ -1655,7 +1780,8 @@ mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
         mov     ah, 45h
         int     67h
         mov     byte [cs:bx+TE_SH], 0
-.np:    call    mt_owners               ; (a TSR's files and EMS: closed, freed)
+.np:    call    mt_owners               ; (a TSR's files and EMS: closed, freed;
+                                        ;  a killed task's programs' too)
         call    mt_vfix                 ; vectors left pointing into the region:
         push    bx                      ;  as they were; then, till another
         push    es                      ;  task runs, task 0's in the table (a
@@ -1673,6 +1799,7 @@ mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
         mov     es, cx                  ;  gone, so is it)
         mov     word [es:1], 0
         mov     byte [cs:bx+TE_STATE], TS_FREE
+        mov     byte [cs:bx+TE_KILL], 0
         call    mt_others               ; (the last one: no shadow, alone)
         jnc     .o
         mov     byte [cs:mt_shd], 0
@@ -1964,6 +2091,7 @@ mt_spawn:
         pop     es
         mov     bx, [cs:mt_new]
         mov     byte [cs:bx+TE_STATE], TS_RUN
+        mov     byte [cs:bx+TE_KILL], 0
         mov     word [cs:bx+TE_EXIT], 0
         call    mt_sync                 ; (the front one's screen shadowed now)
         test    byte [cs:mt_sflags], SPF_FRONT
@@ -2178,10 +2306,8 @@ mt_i16:
         jne     .pas                    ;  BIOS, an INT 13h call, or a change
         cmp     word [cs:mt_in13], 0    ;  of the front: an interrupt's, as M4a
         jne     .pas                    ;  takes INT 10h's there)
-        cmp     byte [cs:mt_crit], 0    ; (a count left by a handler that never
-        je      .top                    ;  came back: not inside INT 21h now)
-        cmp     byte [indos], 0
-        jne     .pas
+        cmp     byte [cs:mt_crit], 0    ; (the kernel's INT 24h's prompt, raised
+        jne     .pas                    ;  inside INT 21h or not: as it is)
 .top:   call    mt_hot
         cli
         cmp     byte [cs:mt_swreq], 0FFh ; (a task asked for: on the way out
@@ -2213,25 +2339,41 @@ mt_i16:
         jc      .pas
         call    mt_swkw
         mov     al, [cs:mt_cur]         ; in the background it waits; in front
-        cmp     al, [cs:mt_front]       ;  only with nothing typed (a peek of
-        jne     .w                      ;  its kind: the BIOS drops what that
-        mov     ah, [bp+I16_AH]         ;  read would skip)
+        cmp     al, [cs:mt_front]       ;  only with nothing typed: for AH=00h,
+        jne     .w                      ;  the keys it would skip dropped by
+        test    byte [bp+I16_AH], 10h   ;  MT (mt_drop); for AH=10h, a peek of
+        jnz     .rx                     ;  its kind (11h drops none)
+        call    mt_drop
+        jnz     .pas                    ; (one: the BIOS's read has it at once)
+        jmp     short .w
+.rx:    mov     ah, [bp+I16_AH]
         inc     ah
         pushf
         call    far [cs:mt_old16]
         cli
-        jnz     .pas                    ; (one: the BIOS's read has it at once)
+        jnz     .pas
 .w:     call    mt_wkey
 .wk:    jnc     .top
-        sti                             ; (no other task ready: until the
-        hlt                             ;  next interrupt)
+        mov     al, [cs:mt_cur]         ; (no other task ready: until the
+        call    mt_ent                  ;  next interrupt; unless it ended
+        cmp     byte [cs:bx+TE_KILL], 0 ;  itself: now)
+        jne     mt_kdie
+        sti
+        hlt
         jmp     .top
 .k:     mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
-        je      .pas
-        test    byte [bp+I16_AH], 1
+        jne     .kb
+        test    byte [bp+I16_AH], 0FEh  ; in front, AH=00h or 01h: the keys
+        jnz     .pas                    ;  they skip dropped by MT first, so
+        call    mt_drop                 ;  the BIOS's own drops none (a key
+        jnz     .pas                    ;  typed after MT looked: seen at the
+        test    byte [bp+I16_AH], 1     ;  next look, not lost); none left: a
+        jz      .pas                    ;  peek's answer is MT's, a read the
+        jmp     short .none             ;  BIOS's (it waits)
+.kb:    test    byte [bp+I16_AH], 1
         jz      .pas
-        or      word [bp+6], 0240h      ; (ZF: no key; interrupts on, as the
+.none:  or      word [bp+6], 0240h      ; (ZF: no key; interrupts on, as the
         jmp     short .ret              ;  BIOS returns)
 .pas:   pop     dx
         pop     bx
@@ -2245,6 +2387,54 @@ mt_i16:
         pop     ds
         pop     bp
         iret
+
+; the 1520's BIOS drops the keys AH=00h and 01h can't give (scan codes 85h
+; and up but E0h's, and CODE keys: xxF0h with a scan code) as it looks, with
+; interrupts on: CODE-Tab typed after mt_hot looked and before the BIOS
+; does would go.  So MT drops them first, with interrupts off, taking
+; CODE-Tab (mt_hot) as it comes to it.  ZF if no key is left; else the one
+; at the head is one AH=00h and 01h give.  (At most 16 looked at: a buffer
+; gone bad is left to the BIOS.)  AX, BX changed
+mt_drop:
+        push    ds
+        push    cx
+        push    40h
+        pop     ds
+        mov     cx, 16
+.l:     mov     bx, [1Ah]
+        cmp     bx, [1Ch]
+        je      .x                      ; (ZF: none)
+        mov     ax, [bx]
+        cmp     ax, [cs:mt_hotk]
+        je      .h
+        cmp     ax, [cs:mt_hotk + 2]
+        je      .h
+        cmp     ah, 0E0h                ; (as mt_hot tells them: kept)
+        je      .k
+        cmp     ah, 85h
+        jae     .d
+        cmp     al, 0F0h
+        jne     .k
+        or      ah, ah
+        jz      .k
+.d:     inc     bx                      ; dropped, as the BIOS would
+        inc     bx
+        cmp     bx, [82h]
+        jb      .s
+        mov     bx, [80h]
+.s:     mov     [1Ah], bx
+        loop    .l
+        jmp     short .k
+.h:     call    mt_hot                  ; (out, its task asked for: on the
+        cli                             ;  way out of this call, as mt_i16's)
+        cmp     byte [cs:mt_swreq], 0FFh
+        je      .hl
+        mov     byte [cs:mt_pend], 1
+.hl:    loop    .l
+.k:     or      sp, sp                  ; (ZF clear: a key)
+.x:     pop     cx
+        pop     ds
+        ret
 
 ; the running task waits for a key (from mt_i16, where the caller is at a
 ; safe point): TS_WAITK, while the next ready task runs (mt_kwant and
@@ -2349,10 +2539,8 @@ mt_i33: cli
         jne     .pas
         cmp     word [cs:mt_in13], 0
         jne     .pas
-        cmp     byte [cs:mt_crit], 0    ; (a count left by a handler that never
-        je      .b                      ;  came back: not inside INT 21h now)
-        cmp     byte [indos], 0
-        jne     .pas
+        cmp     byte [cs:mt_crit], 0    ; (the kernel's INT 24h's prompt, raised
+        jne     .pas                    ;  inside INT 21h or not: as it is)
 .b:     push    es
         mov     es, [ui_seg]
         cmp     byte [es:m33_busy], 0
@@ -2746,6 +2934,8 @@ mt_33hk:
 ; m33_gone does for the front task's (a shell's next program can be
 ; loaded at the same segment).  Then on, past those bytes (DS = KSEG)
 mt_pgend:
+        mov     byte [cs:mt_crit], 0    ; (left by an INT 24h handler that ended
+                                        ;  its program instead of answering)
         call    mt_vpg                  ; (the other tasks' vectors into it)
         push    ax
         mov     al, [cs:mt_cur]
@@ -3174,10 +3364,9 @@ mt_v10:
         jnz     .real
         push    KSEG                    ; a critical error's prompt (inside the
         pop     ds                      ;  kernel's INT 24h: everything waits
-        cmp     byte [cs:mt_crit], 0    ;  for its answer): on the real screen
-        je      .k                      ;  (a count left by a handler that never
-        cmp     byte [indos], 0         ;  came back: not inside INT 21h now).
-        jne     .real                   ;  Else inside INT 21h too the task's,
+        cmp     byte [cs:mt_crit], 0    ;  for its answer; raised inside INT 21h
+        jne     .real                   ;  or not): on the real screen.  Else
+                                        ;  inside INT 21h too the task's,
 .k:     call    mt_isr                  ;  whatever hook it comes through.  A
                                         ;  hardware interrupt in service, or an
         jnz     .real                   ;  INT 33h event handler running: on the
@@ -3388,8 +3577,10 @@ mt_vcall:
 mt_c24: mov     si, crit_dev
         inc     byte [cs:mt_crit]
         int     24h
+        cmp     byte [cs:mt_crit], 0    ; (cleared meanwhile: its handler ran a
+        je      .x                      ;  program that ended)
         dec     byte [cs:mt_crit]
-        retf
+.x:     retf
 
 ; INT 13h: counted while it runs (mt_in13), so mt_v10 knows an INT 10h call
 ; meanwhile is an interrupt's, while a floppy's DMA may be going into the
