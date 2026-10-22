@@ -1823,6 +1823,20 @@ def t_attr():
     check("ATTR.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a file created gets 20h; 10h, 40h, 80h refused with 5)"
           % len(want), got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
     check('... disk consistent', not fatcheck.check(bytes(k.pc.drives[0].img))[0], fatcheck.check(bytes(k.pc.drives[0].img))[0])
+    # CX with a label's bit (8): MS-DOS makes a volume label, leaving a file of that name alone; Lodestone has none
+    # to make: 5, the file kept (it was truncated)
+    src, cr8 = os.path.join(OUT, 'CR8.ASM'), os.path.join(OUT, 'CR8.COM')
+    open(src, 'w').write('org 100h\n mov dx, nm\n mov cx, 8\n mov ah, 3Ch\n int 21h\n jc e\n mov bx, ax\n mov ah, 3Eh\n'
+                         ' int 21h\n xor al, al\ne: mov ah, 4Ch\n int 21h\nnm db "W.TXT", 0\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', cr8, src], check=True)
+    before = f.get('A:\\W.TXT')
+    open(img, 'r+b').write(bytes(k.pc.drives[0].img))  # (the disk ATTR.COM left)
+    subprocess.run(['mcopy', '-o', '-i', img, cr8, '::CR8.COM'], check=True, stdin=subprocess.DEVNULL, capture_output=True)
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    o = sh.run('cr8') + sh.run('if errorlevel 5 if not errorlevel 6 echo refused')
+    check('CREATE of W.TXT with CX=8: 5, and W.TXT as it was', 'refused' in o.replace('echo refused', '') and before
+          and fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\W.TXT') == before, (o, before))
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
