@@ -1343,12 +1343,12 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
     - the UI block kept in place while tasks are there, and moved once they have gone;
     - CODE-T's key and help line.
   - So MEMSZ from the Executive is **582.0 KB with EMS** (582.2 before) and **565.9 KB without** (566.1).
-  - LODE.SYS is 432 bytes bigger (47,632): about 220 bytes of the kernel's start-up code (`mt_lists`), and the rest the Executive's (its resident part, and `ui_boot`'s `MT_UI` call).
+  - LODE.SYS is 432 bytes bigger (47,712): about 220 bytes of the kernel's start-up code (`mt_lists`), and the rest the Executive's (its resident part, and `ui_boot`'s `MT_UI` call).
   - System is 816 bytes bigger (12,729).
   - TASKS.RUN (1,869 bytes) is read only on CODE-T.
 - **Switch on:**
   - MT's block is 887 paragraphs plus its MCB (814 before).
-  - A program run with Shift-Return (or from CODE-P's prompt, less LCMD's own) gets 568.2 KB (569.5 before).
+  - A program run with Shift-Return (or from CODE-P's prompt, less LCMD's own) gets 568.1 KB: MT's 73 paragraphs more, and the Executive's 182 bytes.
   - LODEMT.SYS is 11,904 bytes (10,914 before).
 - **ROM 1** has 9,216 bytes left (13,312 before): LODE.SYS takes one sector more, LODEMT.SYS two, SYSTEM.RUN one, and TASKS.RUN four.
 - **Speed:** nothing on the paths that run all the time. The Executive's wait makes a far call every half second. `mt_spawn` compares the program's name with the lists' names, and `mt_end` does a few moves more.
