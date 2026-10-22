@@ -109,7 +109,8 @@ parse_comp:
         mov     cx, 3
         call    .field
         jc      .bad
-.ok:    mov     al, ah
+        jmp     short .dots             ; (then \ or 0: a second dot is no
+.ok:    mov     al, ah                  ;  name, as MS-DOS)
         clc
         jmp     .x
 .bad:   stc
@@ -216,7 +217,7 @@ resolve_si:
 .comp:  cmp     byte [si], 0
         je      .ok
         call    parse_comp
-        jc      .np
+        jc      .bad
         cmp     byte [si], '\'
         jne     .last
         inc     si
@@ -247,6 +248,12 @@ resolve_si:
         pop     si
 .ok:    clc
         ret
+.bad:   lodsb                           ; no name: if it is the last part,
+        cmp     al, '\'                 ;  r_wild = FFh (open and create say
+        je      .np                     ;  2 then, as MS-DOS: nf_last)
+        or      al, al
+        jnz     .bad
+        dec     byte [r_wild]           ; (from 0)
 .np:    mov     ax, 3
         stc
 .x:     ret
@@ -700,7 +707,7 @@ find_named:
 f_41:   call    get_path                ; DELETE
         jc      .e
         call    find_file
-        jc      .e
+        jc      .nf
         test    byte [de+11], A_DIR | A_RO | A_VOL
         jnz     .acc
         call    sft_busy                ; open?  then refuse
@@ -712,6 +719,11 @@ f_41:   call    get_path                ; DELETE
         call    free_chain
         call    fat_flush
         jmp     ret_cf
+.nf:    cmp     ax, 2                   ; not there (its directory is): a
+        jne     .e                      ;  device's name is 5, as MS-DOS
+        call    dev_lookup
+        mov     ax, 2                   ; (CF kept)
+        jc      .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
@@ -749,6 +761,8 @@ f_39:   call    get_path                ; MKDIR
         jnc     .acc                    ; already there
         cmp     ax, 2
         jne     .e
+        call    dev_lookup              ; a device's name (its directory
+        jnc     .acc                    ;  there): 5, as MS-DOS
         mov     ax, [r_dir]
         call    dir_slot                ; (d_lba/d_off: the slot, until the
         jc      .e                      ;  next dir_entry or dir_find)
@@ -843,7 +857,7 @@ find_dir:
 f_3A:   call    get_path                ; RMDIR
         jc      .e
         call    find_dir                ; (wildcards: 3, as for CHDIR)
-        jc      .e
+        jc      .nd
         cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
         je      .acc                    ;  doesn't look the name up, so
         cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
@@ -890,6 +904,13 @@ f_3A:   call    get_path                ; RMDIR
         jmp     ret_cf
 .cur:   mov     ax, 16                  ; the current directory
         jmp     .e
+.nd:    cmp     ax, 3                   ; the path there but not its last
+        jne     .e                      ;  name (resolve got to it): a
+        cmp     byte [r_name], 0        ;  device's name is 5, as MS-DOS
+        je      .e
+        call    dev_lookup
+        mov     ax, 3                   ; (CF kept)
+        jc      .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
@@ -917,15 +938,8 @@ f_3B:   call    get_path                ; CHDIR
         or      al, al
         jz      .end
         dec     si
-        call    parse_comp              ; -> nm11 (find_dir took the path)
-        cmp     byte [si], '\'
-        je      .sk0
-.sk:    lodsb                           ; stopped by anything else: resolve
-        or      al, al                  ;  took this name as the last and
-        jnz     .sk                     ;  the rest as nothing ("A.B.C\SUB"
-        dec     si                      ;  is A.B), so the string ends too
-.sk0:
-        mov     ax, [nm11]
+        call    parse_comp              ; -> nm11 (find_dir took the path, so
+        mov     ax, [nm11]              ;  each part is a name, up to \ or 0)
         cmp     ax, '. '
         je      .comp
         cmp     ax, '..'
@@ -1030,6 +1044,9 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     si, path2_buf
         call    resolve_si              ; the new name
         jc      .e
+        mov     ax, path2_buf           ; a device's name (its directory
+        call    dev_look_ax             ;  there): 5, as MS-DOS
+        jnc     .acc
         mov     al, [r_drv]
         cmp     al, [ren_drv]
         jne     .dev

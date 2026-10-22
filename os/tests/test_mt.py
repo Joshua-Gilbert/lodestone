@@ -58,7 +58,7 @@ MTV = os.path.join(HERE, 'MTVEC.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x3EA0, 'bss_end': 0x73D0, 'ui_keep_end': 0x6164}  # (6144h before right clicks, UI API 7)
+OFF_MAP = {'image_end': 0x3EF0, 'bss_end': 0x7420, 'ui_keep_end': 0x6164}  # (6144h before right clicks, UI API 7)
 
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
@@ -1444,16 +1444,22 @@ def t_keys():
     # a program that only polls in front: its peeks give the others their turns (mt_preempt from there, at a safe
     # point), which on the 1520 a tick, landing in MT or the BIOS, seldom can; here (MTKEY Y) the tick can't at all,
     # its own INT 08h hook being ahead of MT's
+    # Y's turn is made due once its hook is in: a tick that lands in MT's own code (mt_i16, where Y's loop spends
+    # most of its time) leaves the slice as it is, so with the emulator's tick in step with that loop Y's turn
+    # may never end by itself (X21)
     n0 = len(au.ev)
     typ(k, 'mtlaunch /f mtkey.com y pp.txt;mtspin.com 15 sp.txt', 0.3)
+    k.pc.run_until(lambda: vec(k, 8) != (seg, Y['mt_tick']), 3)
+    k.pc.wr(seg, Y['mt_pend'], b'\1')
     k.key('a', settle=False)
     pp = waittwo(k, 'PP.TXT')
     waitfile(k, 'SP.TXT', 4.0)
     kclear(k)
     line(k, '')
     sw = au.switches(n0, 'peek')
-    check('MTKEY Y polling in front ("a" there, %s), the tick kept from switching by its INT 08h hook: MTSPIN behind '
-          'still runs (%d), switched to from Y\'s peeks (%d times) at safe points' % (pp, spun(k, 'SP.TXT'), len(sw)), pp and pp[1] > 10 and spun(k, 'SP.TXT') > 0 and sw
+    check('MTKEY Y polling in front ("a" there, %s), the tick kept from switching by its INT 08h hook, its turn made '
+          'due: MTSPIN behind still runs (%d), switched to from Y\'s peeks (%d times) at safe points'
+          % (pp, spun(k, 'SP.TXT'), len(sw)), pp and pp[1] > 10 and spun(k, 'SP.TXT') > 0 and sw
           and not au.bad(), (pp, spun(k, 'SP.TXT'), len(sw), au.bad()[:2]))
     # inside an INT 13h call, or a call MT passed on to the BIOS (the test sets the count while P runs behind): an
     # interrupt's, as it is
@@ -2153,7 +2159,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', k1.run_file('MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 582.3 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '582.3', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 582.2 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '582.2', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = k.run_file('TESTDOS.COM', 120)
