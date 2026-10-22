@@ -25,8 +25,10 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M4c | Each task's own mouse | PR #54, merged. |
 | M5a | Each task's own vectors | PR #57, merged. |
 | M5b | Ending and killing tasks | PR #61, merged. |
-| M6 | Parking tasks in EMS and bringing them back | PR #65. |
-| M7 | The Executive's task list (TASKS.RUN, CODE-T), LCMD START/FG/KILL/PARK/WAIT, System's switch | |
+| M6 | Parking tasks in EMS and bringing them back | PR #65, merged. |
+| M7a | LCMD's START, FG, KILL, PARK, UNPARK and WAIT; a task's exit code (`MT_EXIT`); CLAUDE /U refused while tasks run | This PR. |
+| M7b | The Executive: programs started as tasks, its task list (TASKS.RUN, CODE-T); System's switch; LODE.INI's `BG=` and `FREEZE=` | |
+| M7c | Resident Claude holding switches while its console is up | |
 | M8 | Several `.RUN` windows at once, as coroutines in the UI task | |
 | M9 | On the 1520, and release 0.7 | |
 
@@ -130,7 +132,7 @@ M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the 
 - **INT 22h–24h** are global (per-task vectors are M5's). When a program ends, the kernel puts back the INT 23h/24h it found at its start. So a task can undo another's handler, or bring back one that has since ended; ^C or a disk error in one task runs whichever handler is in the table. **M5a:** they are each task's own now, so a task's handlers, and the kernel putting them back, act on that task's only.
 - **A directory a waiting task is in.** Its directory is saved as a cluster number. So don't remove a directory (RD) a waiting task is in, and don't change the disk in a drive where one has its current directory. Its next file operation there would use a cluster the disk no longer has as that directory, and could damage the disk. The fix (a per-drive mount count in each task's context, and RD refusing any task's directory) needs two more patches in the kernel and comes with its own change.
 - **INT 21h AH=52h's** first MCB is the whole memory chain's, not the running task's own.
-- **A program whose start fails:** `MT_SPAWN` succeeds once the task is made. If its program isn't there, or EXEC fails, the task ends at once, unseen; its exit code (`TE_EXIT`) is kept, but no call returns it until M7's WAIT.
+- **A program whose start fails:** `MT_SPAWN` succeeds once the task is made. If its program isn't there, or EXEC fails, the task ends at once, unseen; its exit code (`TE_EXIT`) is kept, but no call returns it until M7's WAIT. (M7a: it is FFxxh, xx EXEC's error; `MT_EXIT` returns it.)
 
 **How:**
 - **The key wait:** `kbd_get.k` (`MOV AH,1` / `INT 16h` / `JNZ .have`, 6 bytes at 06BCh, checked in the listing and by `test_mt`) becomes a far jump to `mt_kwait`.
@@ -492,7 +494,7 @@ The checks:
   - `SPF_BG` (2): it runs behind whatever it does, its output on the front screen (as before M4a);
   - `SPF_FREEZE` (4): it never runs behind.
 
-  MTLAUNCH /B and /Z set them; LODE.INI's `BG=` and `FREEZE=` lists come with START in M7.
+  MTLAUNCH /B and /Z set them; LODE.INI's `BG=` and `FREEZE=` lists come with START in M7. (M7a moved them to M7b: they are read at start-up, for the Executive's tasks too.)
 - **The Executive** is in a graphics mode, so it is frozen while another task is in front. Its clock no longer lands on the front screen (an M3 limit), and its polls stop meanwhile.
 - **Shadowing always, not until a task is classified:** a departure from the plan, which shadowed a task until its first switch away and then trusted that. That would have needed a per-program classification, reset when a task's program changes. It would also have let a program that writes the screen itself only now and then run behind and scribble. Comparing at every switch away costs output speed instead, but only while another task exists (see the cost).
 - **Short ways:** a printable character inside a line, and CR, LF (not on the last line), BS and BEL, which change only the cursor, skip the general emulator (`mt_vfast`). A whole-width scroll the right way up (every teletype scroll) moves the rows at once.
@@ -856,7 +858,7 @@ The checks:
   - Before M5a its hook was the machine's and kept the rate right.
   - A fix (keeping such a task's INT 08h hook in place for all tasks while counter 0 runs fast) is left for M9.
 - **A TSR's hooks in the 29 belong to the task it was loaded in and the tasks started from that task after it,** and only to them. A TSR loaded inside a task is gone with the task.
-- **A TSR unloaded with AH=49h while tasks exist** (CLAUDE /U after CLAUDE /R, with tasks started after it) leaves its hooks in those tasks' vectors, pointing at freed memory. Only a program's end is caught (`mt_vpg`). Unload such TSRs before starting tasks, or end those tasks first. M7 makes CLAUDE /U refuse while tasks exist.
+- **A TSR unloaded with AH=49h while tasks exist** (CLAUDE /U after CLAUDE /R, with tasks started after it) leaves its hooks in those tasks' vectors, pointing at freed memory. Only a program's end is caught (`mt_vpg`). Unload such TSRs before starting tasks, or end those tasks first. M7 makes CLAUDE /U refuse while tasks exist (done in M7a: exit code 3).
 - **Copies inside programs aren't fixed:**
   - a program's PSP holds the INT 22h-24h it started with, which terminate puts back;
   - a hook's saved "old vector" is in the program's own memory.
@@ -1176,3 +1178,53 @@ The checks:
   - parking the caller's own task or the one in front (the tests park from the Executive's task, in front, except one that asks from a task behind and is refused);
   - the copy failing (INT 67h AH=57h's errors);
   - parking on the 1520, and how long it takes there.
+
+## M7a: LCMD's task commands, and a task's exit code (2026-10-22)
+
+The plan's M7 is split in three: M7a (this) is LCMD's commands and what they need from the kernel; M7b is the Executive's side (programs started as tasks, the Tasks window on CODE-T, System's switch, and LODE.INI's `BG=` and `FREEZE=` lists, which are read at start-up for the Executive's tasks as much as LCMD's); M7c is Resident Claude holding switches while its console is up.
+
+**What it does:**
+- **LCMD's commands,** with multitasking on. Each names a task by its number (as TASKS shows it) or by its program's name (`MTLINE` or `MTLINE.COM`, in any case; the first such task):
+  - `START [/B] [/D] [/W] [/M:kb] program [args]` starts the program as a new task, found as LCMD finds a program (here, then along PATH; `.COM`, `.EXE`, `.BAT`). It comes to the front unless `/W` is given. `/B` lets it run behind whatever it does (`SPF_BG`), `/D` never (`SPF_FREEZE`), and `/M:kb` gives its programs that much memory instead of the default 64 KB. A batch file runs through COMSPEC (`LCMD /C file args`), since a task's stub can only EXEC a program. `TASK=` is then set to the new task's number, in LCMD's environment (not the task's: it has its copy already), so a batch file can say `WAIT %TASK%`.
+  - `FG task` brings it to the front; `KILL task` ends it; `PARK task` parks it in EMS and `UNPARK task` brings it back (M6).
+  - `WAIT task` waits till it ends. ERRORLEVEL is then its exit code (AL of AH=4Dh's word, as for a program LCMD runs itself), and `&&` / `||` see it as failed unless the whole word is 0: a task ended by ^C or `KILL` (0100h) gives ERRORLEVEL 0, but fails. A task whose program couldn't be started fails with "Its program could not be started", ERRORLEVEL EXEC's error. A task that has ended already answers at once, with the exit code of the last task that had that number. ^C ends the wait (LCMD's own ^C: back to the prompt).
+  - `TASKS` also marks parked and frozen tasks: `1  MTLINE.COM (parked)`.
+  - Errors: "No such task", "Not possible for that task" (error 5: the Executive's task, the one in front, a parked one to the front, a pinned one, or `WAIT` for LCMD's own), "Too many tasks", "Not enough memory or EMS". With multitasking off each says so, as TASKS does, and fails (ERRORLEVEL 1).
+- **`MT_EXIT` (F0h AL=17h, BL = a task's number)** answers its state, how many tasks have been started with that number (1-255, then 1 again; 0: none yet), and the exit code of the last one ended there with that count. So a caller that noted the count while the task ran knows when that task has ended even if the number has been given to another meanwhile: the code stays until that one ends too. `WAIT` polls it.
+- **A task whose program can't be started** (EXEC fails in its stub) now ends with exit code FFxxh, xx EXEC's error, instead of 0.
+- **CLAUDE /U refuses while other tasks exist** (exit code 3, "end them first"): its INT 16h hook is in the vectors of every task started after CLAUDE /R, which /U can't put back (M5a's limits).
+
+**How:**
+- **The entry's last two bytes** count the tasks started there (`TE_GEN`, at spawn) and remember the count of the last one ended (`TE_EGEN`, at `mt_end`). `TE_EXIT` isn't cleared at spawn any more: it holds the last ended one's code till the next ends.
+- **The stub** (`st_code`) keeps EXEC's error at `ST_FAIL` (PSP:1AEh, after EXEC's block) with FFh after it if EXEC fails; `mt_spawn` clears it, and `mt_end` takes FFxxh from there instead of `last_exit`.
+- **LCMD:** the PATH search and the command tail are split out of `run_external` (`find_prog`, `tcopy`) for `START`; `START` has its own `MT_SPAWN` block (`spb`: EXEC's `epb` is 14 bytes and shared with REN and COPY). `WAIT` loops on AH=0Bh (so ^C reaches LCMD) and HLT (where the other tasks run), as LCMD's own key wait does. `WAIT` is among the commands that set ERRORLEVEL themselves.
+
+**The limits, plainly:**
+- **`%TASK%` is expanded in batch files only,** as every `%NAME%` is in DOS 3.30's shell; at the prompt, `TASKS` shows the number.
+- **A name names the first task running that program;** a task that has ended has no name, so `WAIT` of one that ended takes its number.
+- **`WAIT` for a task that waits for a key behind** waits till someone brings it to the front (`FG`, CODE-Tab) and types it one. ^C ends the wait.
+- **`UNPARK` of a task that isn't parked** says "No such task" (`MT_UNPARK`'s error 1 means both).
+- **A number reused twice** while `WAIT` sleeps (another task given it, and ended, within one tick) would hide the first one's code. `WAIT` looks every tick.
+- **255 starts with one number** bring its count round to 1 again: a `WAIT` from 255 starts before would take the new one's end for its own.
+
+**Cost:**
+- **Switch off:** the kernel's map and MEMSZ are main's. **LCMD is 770 bytes bigger** (11,396 bytes) and keeps 50 paragraphs (800 bytes) more while a program runs from its prompt (918 instead of 868), switch on or off, as TASKS did in M1.
+- **Switch on:** MT's block is 814 paragraphs plus its MCB (13,040 bytes; it was 808), so a DOS program gets 569.5 KB (569.6 before).
+- **Files:** LODEMT.SYS is 10,914 bytes (10,827 before); CLAUDE.COM 20,188 (20,098); ROM 1 has 13,312 bytes left (14,336 before: LCMD.COM takes two sectors more).
+- **Speed:** none on any path that runs all the time: `MT_EXIT` is a new call, and spawn and `mt_end` do a few moves more.
+
+**Tests:** `test_mt.py`, 262 checks (was 250). The new group is `t_lcmd`; MTLINE now ends with exit code n when its line is "=n", and MTLAUNCH /X:n prints `MT_EXIT`'s answer. The checks:
+- **Off:** START, FG, KILL, PARK, UNPARK and WAIT each say multitasking is off and fail (ERRORLEVEL 1).
+- **START** in front: the task in front, its line typed to it, it ends; `TASK=1` in the environment.
+- **START /W, TASKS, WAIT by name:** behind, listed; `MT_EXIT` says waiting, started twice there, the first one's code 0; WAIT waits while the task waits for a key; the task ends with 7: ERRORLEVEL 7, and `MT_EXIT` free, code 7, the count of the one started last.
+- **The number again:** `MT_EXIT` says started three times, the last one's code (7) kept till the new one ends (with 3); WAIT after it ended answers at once, ERRORLEVEL 3, failed.
+- **PARK, UNPARK, KILL** by number and by name in mixed case; TASKS says "(parked)"; WAIT of the killed one fails, ERRORLEVEL 0.
+- **Refused,** each with its message: no such number or name, a name's first letters only, the Executive's task, WAIT for LCMD's own task or a number never used, UNPARK of one not parked, START of no program, of none, with an unknown switch.
+- **START /M:1 LCMD.COM:** its program can't be started: `MT_EXIT`'s code FF08h; WAIT says so, fails, ERRORLEVEL 8. Then **START /M:1 MTLINE.COM** in the same place runs and ends with 2: not taken for one that couldn't start.
+- **START /W SB.BAT:** LCMD /C SB.BAT as the task; its MTLINE's line typed, the batch file ends, and WAIT's ERRORLEVEL is its last command's (4).
+- **A batch file** with START /W, `WAIT %TASK%` and IF ERRORLEVEL: 6.
+- **START /B and /D:** the task's flags; **/M:32:** 2,048 paragraphs less than the default.
+- **CLAUDE /U** with another task refused (exit code 3); with none, taken out.
+- **The checks can fail:** each of these, broken on purpose, fails a check: `TE_EGEN` not set at the end; `TE_EXIT` cleared at spawn; the stub not keeping EXEC's error; `mt_spawn` not clearing it; a name matched by its first letters; WAIT not refusing LCMD's own task; WAIT not failing on a nonzero code; TASKS without "(parked)"; a batch file started directly; `TASK=` not set; `/B` lost; `/M` not turned into paragraphs; CLAUDE /U not refusing.
+
+  **Not tested here:** the count wrapping round at 255; a number reused within one of `WAIT`'s ticks; `START /D`'s freezing itself and `/B`'s running behind (M4a's tests cover the flags); `WAIT` ended by ^C; any of it on the 1520.

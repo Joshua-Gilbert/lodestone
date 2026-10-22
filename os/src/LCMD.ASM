@@ -12,7 +12,8 @@
 ; CLS ECHO VER VOL SET PATH PROMPT DATE TIME PAUSE REM EXIT, drive changes
 ; (A:), programs through PATH (.COM .EXE), batch files (.BAT, %0-%9,
 ; %NAME%, @, ECHO OFF, IF, GOTO, FOR, CALL, SHIFT, CHOICE), redirection
-; < > >> and pipes |, and && / || between commands.
+; < > >> and pipes |, and && / || between commands.  With multitasking on
+; (MULTITASK=1, MTAPI.INC): TASKS, START, FG, KILL, PARK, UNPARK and WAIT.
 ;
 ; The prompt edits its line (Left, Right, Home, End, Backspace, Del, ESC),
 ; keeps a history (Up, Down, F3) and completes file names (Tab, again for
@@ -22,7 +23,8 @@
 ;
 ; ERRORLEVEL: a program's exit code; a built-in command that can fail sets
 ; 0 or 1 (ECHO, REM, CLS, VER, PAUSE, GOTO, SHIFT, IF, FOR and CALL leave it
-; to the commands they run, CHOICE sets the key's number).  && runs the next
+; to the commands they run, CHOICE sets the key's number, WAIT the task's
+; exit code).  && runs the next
 ; command if the last one worked, || if it didn't.  In a batch file an error
 ; says where: "NAME line n: File not found".
 cpu 286
@@ -820,7 +822,19 @@ builtins:
         dw do_vol
         db 'TASKS', 0
         dw do_tasks
+        db 'START', 0
+        dw do_start
+        db 'FG', 0
+        dw do_fg
+        db 'KILL', 0
+        dw do_kill
+        db 'PARK', 0
+        dw do_park
+        db 'UNPARK', 0
+        dw do_unpark
 builtins_pass:
+        db 'WAIT', 0
+        dw do_wait
         db 'ECHO', 0
         dw do_echo
         db 'REM', 0
@@ -850,83 +864,20 @@ builtins_pass:
 ; ---------------------------------------------------------------------
 ; programs: NAME[.COM|.EXE|.BAT] here or on the PATH
 run_external:
-        mov     si, cword
-        mov     di, prog
-        call    strcpy
-        mov     si, prog
-        call    name_part
-        call    find_ext
-        ; a path given: only there
-        mov     si, prog
-        call    has_path
-        jc      .dir
-        call    try_exts
+        call    find_prog
         jnc     .found
-        jmp     .bad
-.dir:   call    try_exts                ; current directory, then the PATH
-        jnc     .found
-        push    es
-        mov     si, s_pathv
-        call    env_find
-        pop     es
-        jc      .bad
-        mov     [pathp], di
-.pl:    mov     si, [pathp]
-        call    env_seg                 ; one directory from the PATH
-        mov     di, prog2
-        cmp     byte [es:si], 0
-        je      .pe
-.pc:    mov     al, [es:si]
-        inc     si
-        cmp     al, ';'
-        je      .pd
-        or      al, al
-        jz      .pz
-        mov     [di], al
-        inc     di
-        jmp     .pc
-.pz:    dec     si
-.pd:    push    cs
-        pop     es
-        mov     [pathp], si
-        cmp     di, prog2
-        je      .pl
-        cmp     byte [di-1], '\'
-        je      .ps
-        mov     al, '\'
-        stosb
-.ps:    mov     si, cword
-        call    strcpy
-        mov     si, prog2
-        mov     di, prog
-        call    strcpy
-        mov     si, prog
-        call    name_part
-        call    find_ext
-        call    try_exts
-        jnc     .found
-        jmp     .pl
-.pe:    push    cs
-        pop     es
-.bad:   mov     byte [errlvl], 1
+        mov     byte [errlvl], 1
         mov     si, e_badcmd
         jmp     err
 .found: cmp     byte [is_bat], 0
         je      .run
         jmp     bat_start
 .run:   ; command tail: " args", FCBs from the first two
-        mov     si, [argp]
         mov     di, tail + 1
         xor     cx, cx
-.t:     lodsb
-        or      al, al
-        jz      .te
-        cmp     cx, 126
-        jae     .t
-        stosb
-        inc     cx
-        jmp     .t
-.te:    mov     [tail], cl
+        mov     si, [argp]
+        call    tcopy
+        mov     [tail], cl
         mov     byte [di], 13
         mov     si, tail + 1
         mov     di, fcb1
@@ -980,6 +931,79 @@ run_external:
         je      .fm
         mov     si, e_badcmd
 .fm:    jmp     err
+
+; the ASCIIZ at SI added to the tail at DI (CX characters so far, 126 kept)
+tcopy:  lodsb
+        or      al, al
+        jz      .x
+        cmp     cx, 126
+        jae     tcopy
+        stosb
+        inc     cx
+        jmp     tcopy
+.x:     ret
+
+; the program cword names, here or on the PATH -> prog (its path), is_bat;
+; CF if there's none
+find_prog:
+        mov     si, cword
+        mov     di, prog
+        call    strcpy
+        mov     si, prog
+        call    name_part
+        call    find_ext
+        ; a path given: only there
+        mov     si, prog
+        call    has_path
+        jc      .dir
+        jmp     try_exts
+.dir:   call    try_exts                ; current directory, then the PATH
+        jnc     .x
+        push    es
+        mov     si, s_pathv
+        call    env_find
+        pop     es
+        jc      .x
+        mov     [pathp], di
+.pl:    mov     si, [pathp]
+        call    env_seg                 ; one directory from the PATH
+        mov     di, prog2
+        cmp     byte [es:si], 0
+        je      .pe
+.pc:    mov     al, [es:si]
+        inc     si
+        cmp     al, ';'
+        je      .pd
+        or      al, al
+        jz      .pz
+        mov     [di], al
+        inc     di
+        jmp     .pc
+.pz:    dec     si
+.pd:    push    cs
+        pop     es
+        mov     [pathp], si
+        cmp     di, prog2
+        je      .pl
+        cmp     byte [di-1], '\'
+        je      .ps
+        mov     al, '\'
+        stosb
+.ps:    mov     si, cword
+        call    strcpy
+        mov     si, prog2
+        mov     di, prog
+        call    strcpy
+        mov     si, prog
+        call    name_part
+        call    find_ext
+        call    try_exts
+        jnc     .x
+        jmp     .pl
+.pe:    push    cs
+        pop     es
+        stc
+.x:     ret
 
 ; extp = after the '.' in the name at SI (0 if none)
 find_ext:
@@ -3471,28 +3495,37 @@ do_echo:
 do_ver: mov     si, s_ver
         jmp     puts
 
-; TASKS: the tasks there are (multitasking, MTAPI.INC), the front one marked
-do_tasks:
-        push    ds
+; the tasks' records (multitasking, MTAPI.INC) in tail -> CX of them, AL =
+; the front one, AH = ours (mt_me too); CF, SI = the message, if it's off
+mt_lst: push    ds
         pop     es
         mov     ax, 0F000h + MT_LIST
         mov     di, tail                ; (MT_TASKS records fit)
         mov     cx, MT_TASKS
         stc                             ; (another DOS may leave CF as it was)
         int     21h
-        mov     si, e_mtoff
         jc      .off
+        mov     [mt_me], ah
         cmp     cx, MT_TASKS
         jbe     .n
         mov     cx, MT_TASKS
-.n:     jcxz    .x
+.n:     clc
+        ret
+.off:   mov     si, e_mtoff
+        ret
+
+; TASKS: the tasks there are, the front one marked, and the parked and
+; frozen ones
+do_tasks:
+        call    mt_lst
+        jc      .off
+        jcxz    .x
         mov     dl, al                  ; (the front task)
         mov     si, tail
 .t:     mov     al, ' '
         call    putc
         call    putc
         mov     al, [si+TR_ID]
-        push    ax
         add     al, '0'
         call    putc
         mov     al, ' '
@@ -3509,18 +3542,268 @@ do_tasks:
         loop    .c
 .e:     pop     cx
         pop     si
-        pop     ax
-        cmp     al, dl
-        jne     .nf
         push    si
+        mov     al, [si+TR_STATE]
+        mov     ah, [si+TR_ID]
         mov     si, s_front
-        call    puts
-        pop     si
-.nf:    call    crlf
+        cmp     ah, dl
+        je      .s
+        mov     si, s_parked
+        cmp     al, TS_PARKED
+        je      .s
+        mov     si, s_frozen
+        cmp     al, TS_FROZEN
+        jne     .nf
+.s:     call    puts
+.nf:    pop     si
+        call    crlf
         add     si, MT_REC
         loop    .t
 .x:     ret
 .off:   jmp     err
+
+; the task named at SI, by its number or its program's name (MTLINE or
+; MTLINE.COM, any case) -> BL; CF, SI = the message, if there's none
+task_arg:
+        call    mt_lst                  ; (SI kept, unless off)
+        jc      .x
+        mov     al, [si]
+        sub     al, '0'
+        cmp     al, 9
+        ja      .nm
+        call    getnum
+        cmp     ax, MT_TASKS
+        jae     .no
+        mov     bl, al
+        clc
+        ret
+.nm:    mov     bx, tail                ; each record's name
+.r:     jcxz    .no
+        push    si
+        lea     di, [bx+TR_NAME]
+        xor     dx, dx                  ; (characters alike)
+.c:     lodsb
+        call    upcase
+        mov     ah, [di]
+        cmp     al, ' '                 ; (the word's end)
+        jbe     .e
+        cmp     dx, TR_NAMELEN
+        je      .nx
+        cmp     al, ah
+        jne     .nx
+        inc     di
+        inc     dx
+        jmp     .c
+.e:     cmp     dx, TR_NAMELEN          ; all of it, or up to its '.'
+        je      .y
+        or      ah, ah
+        jz      .y
+        cmp     ah, '.'
+        je      .y
+.nx:    pop     si
+        add     bx, MT_REC
+        dec     cx
+        jmp     .r
+.y:     pop     si                      ; (CF clear)
+        mov     bl, [bx+TR_ID]
+        ret
+.no:    mov     si, e_notask
+        stc
+.x:     ret
+
+; FG, KILL, PARK, UNPARK: the task named, to the front, ended, parked,
+; brought back
+do_fg:  mov     dl, MT_FRONT
+        jmp     short task_do
+do_kill:
+        mov     dl, MT_KILL
+        jmp     short task_do
+do_park:
+        mov     dl, MT_PARK
+        jmp     short task_do
+do_unpark:
+        mov     dl, MT_UNPARK
+task_do:
+        push    dx
+        call    task_arg
+        pop     ax
+        jc      .e
+        mov     ah, 0F0h
+        stc
+        int     21h
+        jnc     .x
+        call    mt_emsg
+.e:     jmp     err
+.x:     ret
+
+; a call's error (AX) -> SI = its message
+mt_emsg:
+        mov     si, e_notask
+        cmp     ax, 1
+        je      .x
+        mov     si, e_tmany
+        cmp     ax, 4
+        je      .x
+        mov     si, e_tnot
+        cmp     ax, 5
+        je      .x
+        mov     si, e_tmem
+.x:     ret
+
+; START [/B] [/D] [/W] [/M:kb] program [args]: the program as a new task (in
+; front, unless /W; /B: it always runs behind, /D: never), TASK= its number
+do_start:
+        call    mt_lst
+        jc      .er
+        mov     word [spb + SP_PARAS], 0
+        mov     byte [spb + SP_FLAGS], SPF_FRONT
+.sw:    call    skipsp
+        cmp     byte [si], '/'
+        jne     .pg
+        mov     al, [si+1]
+        call    upcase
+        add     si, 2
+        mov     bl, SPF_BG
+        cmp     al, 'B'
+        je      .or
+        mov     bl, SPF_FREEZE
+        cmp     al, 'D'
+        je      .or
+        cmp     al, 'W'
+        je      .w
+        cmp     al, 'M'
+        jne     .sy
+        cmp     byte [si], ':'
+        jne     .sy
+        inc     si
+        call    getnum
+        shl     ax, 6                   ; (KB: paragraphs)
+        mov     [spb + SP_PARAS], ax
+        cmp     byte [si-1], '/'        ; (getnum went past one: a switch's
+        jne     .sw                     ;  back)
+        dec     si
+        jmp     .sw
+.w:     and     byte [spb + SP_FLAGS], ~SPF_FRONT
+        jmp     .sw
+.or:    or      [spb + SP_FLAGS], bl
+        jmp     .sw
+.sy:    mov     si, e_syntax
+.er:    jmp     err
+.pg:    mov     di, cword               ; the program's name, upper case
+        mov     cx, 70
+.c:     lodsb
+        call    is_wordend
+        je      .ce
+        call    upcase
+        stosb
+        loop    .c
+.ce:    dec     si
+        mov     byte [di], 0
+        mov     [argp], si
+        mov     si, e_param
+        cmp     di, cword
+        je      .er
+        call    find_prog
+        mov     si, e_badcmd
+        jc      .er
+        cmp     byte [is_bat], 0        ; its tail; a batch file's through
+        je      .t0                     ;  COMSPEC: " /C file args"
+        push    es
+        mov     si, s_comspec2
+        call    env_find
+        jc      .nc
+        mov     si, di
+        mov     di, prog2
+.cc:    mov     al, [es:si]
+        inc     si
+        mov     [di], al
+        inc     di
+        or      al, al                  ; (CF clear)
+        jnz     .cc
+.nc:    pop     es
+        mov     si, e_badcmd
+        jc      .er
+        mov     di, tail + 1
+        xor     cx, cx
+        mov     si, s_slashc
+        call    tcopy
+        mov     si, prog
+        call    tcopy
+        mov     dx, prog2
+        jmp     short .t
+.t0:    mov     dx, prog
+        mov     di, tail + 1
+        xor     cx, cx
+.t:     mov     si, [argp]
+        call    tcopy
+        mov     [tail], cl
+        mov     byte [di], 13
+        mov     word [spb + SP_ENV], 0
+        mov     word [spb + SP_TAIL], tail
+        mov     [spb + SP_TAIL + 2], cs
+        mov     bx, spb
+        mov     ax, 0F000h + MT_SPAWN
+        stc
+        int     21h
+        jnc     .ok
+        call    mt_emsg
+        jmp     .er
+.ok:    push    ax
+        mov     di, setbuf              ; TASK=n
+        mov     si, s_taskv
+        call    strcpy
+        pop     ax
+        add     al, '0'
+        mov     ah, 0
+        stosw
+        mov     si, setbuf
+        jmp     env_set_line
+
+; WAIT task: till it ends; ERRORLEVEL its exit code (AL of 4Dh's), and
+; && / || as for a program (ended by ^C or KILL: AL 0, but failed)
+do_wait:
+        call    task_arg
+        jc      .er
+        cmp     bl, [mt_me]
+        mov     si, e_tnot
+        je      .er
+        mov     [wtask], bl
+        call    .get
+        jc      .er
+        or      ah, ah
+        mov     si, e_notask
+        jz      .er
+        or      al, al                  ; (free: the last one there ended)
+        jz      .end
+        mov     [wgen], ah
+.l:     mov     ah, 0Bh                 ; (^C: back to the prompt)
+        int     21h
+        sti
+        hlt                             ; (the other tasks run)
+        call    .get
+        jc      .er
+        cmp     cl, [wgen]
+        jne     .l
+.end:   mov     [errlvl], dl
+        mov     byte [failed], 0
+        or      dx, dx
+        jz      .x
+        mov     byte [failed], 1
+        cmp     dh, 0FFh                ; (its program not started)
+        jne     .x
+        mov     si, e_nostart
+        jmp     err
+.x:     ret
+.er:    mov     byte [errlvl], 1
+        jmp     err
+.get:   mov     bl, [wtask]             ; MT_EXIT
+        mov     ax, 0F000h + MT_EXIT
+        stc
+        int     21h
+        jnc     .gx
+        call    mt_emsg
+        stc
+.gx:    ret
 
 do_vol: call    drv_of
         mov     dl, al
@@ -4201,6 +4484,11 @@ pu32w:  mov     [padw], cx
 
 ; ---------------------------------------------------------------------
 s_front     db ' (in front)', 0
+s_parked    db ' (parked)', 0
+s_frozen    db ' (frozen)', 0
+s_taskv     db 'TASK=', 0
+s_comspec2  db 'COMSPEC=', 0            ; (s_comspecv: under the history)
+s_slashc    db ' /C ', 0
 s_not       db 'NOT', 0
 s_errlvl    db 'ERRORLEVEL', 0
 s_exist     db 'EXIST', 0
@@ -4255,6 +4543,11 @@ e_notfound  db 'File not found', 0
 e_create    db 'File creation error', 0
 e_drive     db 'Invalid drive specification', 0
 e_mtoff     db 'Multitasking is off (MULTITASK=1 in LODE.INI)', 0
+e_notask    db 'No such task', 0
+e_tmany     db 'Too many tasks', 0
+e_tnot      db 'Not possible for that task', 0
+e_tmem      db 'Not enough memory or EMS', 0
+e_nostart   db 'Its program could not be started', 0
 e_dir       db 'Invalid directory', 0
 e_mkdir     db 'Unable to create directory', 0
 e_rmdir     db 'Invalid path, not directory,', 13, 10, 'or directory not empty', 0
@@ -4314,6 +4607,10 @@ crit_ah     resb 1
 crit_al     resb 1
 ampm        resb 1
 vol_drv     resb 1
+mt_me       resb 1                      ; our task (mt_lst)
+wtask       resb 1                      ; WAIT's task, and the count it has
+wgen        resb 1                      ;  (MT_EXIT's AH) while it runs
+spb         resb SP_SIZE                ; START's block (MT_SPAWN)
 argp        resw 1
 argp2       resw 1
 extp        resw 1

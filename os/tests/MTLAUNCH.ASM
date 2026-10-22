@@ -6,7 +6,8 @@
 ; whatever it does (SPF_BG); /Z: never there (SPF_FREEZE); /M:n: n paragraphs for it; /R:n:
 ; n of it (a command line holds 126 characters).  /G:n on its own: task n
 ; to the front (AL=13h; "MTLAUNCH: error E" if it fails); /K:n: task n
-; ended (AL=14h, the same); /P:n: parked (AL=15h), /U:n: back (AL=16h).
+; ended (AL=14h, the same); /P:n: parked (AL=15h), /U:n: back (AL=16h);
+; /X:n: "exit: SS GG XXXX EE" (AL=17h, hex: state, count, exit code, its count).
 ; Prints "task N" for each, or "MTLAUNCH: error E" (CF, AX = E); then
 ; "list:" and " N S NAME;" for each task (S: its TS_* state).
 ; nasm -f bin -i ../src/ -o MTLAUNCH.COM MTLAUNCH.ASM
@@ -63,6 +64,8 @@ org 100h
         je      .opk
         cmp     byte [opt], 'U'
         je      .oup
+        cmp     byte [opt], 'X'
+        je      .oxc
         mov     [pb + SP_PARAS], bx
         jmp     .opt
 .or:    mov     [rep_], bx
@@ -73,9 +76,37 @@ org 100h
         jmp     short .oc
 .og:    mov     ax, 0F000h + MT_FRONT
         jmp     short .oc
+.oxc:   mov     ax, 0F000h + MT_EXIT    ; "exit: SS GG DXDX CC" (hex)
+        int     21h
+        jc      .oe
+        push    dx
+        push    cx
+        push    ax
+        mov     dx, s_exit
+        call    out
+        pop     ax
+        push    ax
+        call    hx2
+        pop     ax
+        mov     al, ah
+        call    hx2
+        pop     cx
+        pop     dx
+        push    cx
+        mov     al, dh
+        call    hx2
+        mov     al, dl
+        call    hx1
+        pop     cx
+        mov     al, cl
+        call    hx2
+        mov     dx, s_nl
+        call    out
+        jmp     .opt
 .okl:   mov     ax, 0F000h + MT_KILL
 .oc:    int     21h
         jnc     .opt
+.oe:
         push    ax
         mov     dx, s_err
         call    out
@@ -192,6 +223,20 @@ chr:    push    dx
         int     21h
         pop     dx
         ret
+hx2:    push    ax                      ; " " and AL in hex (hx1: no blank)
+        mov     al, ' '
+        call    chr
+        pop     ax
+hx1:    push    ax
+        shr     al, 4
+        call    .d
+        pop     ax
+        and     al, 0Fh
+.d:     add     al, '0'
+        cmp     al, '9'
+        jbe     .c
+        add     al, 7
+.c:     jmp     chr
 dec_:   aam                             ; AL (0..99) in decimal
         or      ah, ah
         jz      .1
@@ -205,6 +250,7 @@ dec_:   aam                             ; AL (0..99) in decimal
 
 s_task  db      'task $'
 s_err   db      'MTLAUNCH: error $'
+s_exit  db      'exit:$'
 s_list  db      'list:$'
 s_wait  db      13, 10, 'MTLAUNCH waits> $'
 s_nl    db      13, 10, '$'
