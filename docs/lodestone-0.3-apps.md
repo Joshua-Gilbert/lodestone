@@ -816,6 +816,45 @@ Joshua's aim: Lodestone's own programs as GUI-style windows, the calculator firs
     - no flag for "an editor waits" (above);
     - and `W_DRAW` isn't told why it is drawn: the calculator compares its window's place with where it drew last.
 
+## Right clicks (UI API 7, 2026-10-21)
+- **What:** `UI_EVENT` and `UI_POLL` give `AX = EV_RCLICK` (FF03h), with BX = x and CX = y as for `EV_CLICK`, for a press of the right button.
+  - It is the first user of the right button. Paint (`PAINT.RUN`, on its own branch) will use it to erase.
+- **Only to a program that asks:**
+  - The program must be a `.RUN` that needs API 7 (`RUN_API equ 7`); the core checks its header's version, as `W_FLAGS` does for API 6. Older `.RUN`s (System, Write, the calculator, UITEST) and the Executive never see the event. Their key handling was written before it existed.
+  - The left button must be up.
+  - Both buttons pressed in one packet give `EV_CLICK` only.
+- **A window's drag:** `win_mv` follows the mouse through `mouse_event`, which with no event leaves x and y in AX and BX.
+  - When the left comes up and the right goes down in one look (a roll from one finger to the other, or two packets while the outline is drawn), `mouse_event` returns `EV_RCLICK`, with x and y in BX and CX.
+  - `win_mv` now takes them from there; before, it read the event code as x, and the window jumped to the right edge. The press goes into ending the drag and doesn't reach the program.
+  - A right press on a window's title strip or close box neither moves nor closes it: the program gets it.
+- **The core's own waits,** inside an API 7 program:
+  - `UI_EDIT`, and so `UI_FORM`'s text fields, ignore every event but `EV_CLICK`. A first character typed still replaces the text: before, a right click went down the editing-key path and lost that.
+  - `UI_FORM`'s choices and `UI_ASK` ignore it.
+  - `UI_MSG` and `UI_HELP` take it as any key.
+  - `UI_LVKEY` returns CF: not a list key.
+  - **`UI_DISPATCH` matches ASCII entries by AL alone,** so a table entry for 01h–03h (Ctrl-A to Ctrl-C) would run on `EV_CLICK`, `EV_MOVED` or `EV_RCLICK`. No table has one. UIAPI.INC says so.
+- **The code:**
+  - `mouse_event` finds the buttons pressed since the last look (`NOT old AND new`).
+  - It builds the event in DX, so AX and BX still hold x and y when there's none.
+  - The "left up" test is a `SHR CL, 1` into CF.
+- **Versioning:** `UI_API` is 7, so a `.RUN` built without `RUN_API` now needs 7 and is refused by an older LODE.SYS, as at 5 and 6. Every `.RUN` here declares its own `RUN_API` (System, Write, UITEST 4, the calculator 6), so they are byte for byte as before.
+- **Known limit (as for the left button since 0.3.1):** after `UI_RUN` the core doesn't take the buttons' state again. A button still held when the DOS program ends gives a click on the way back. Only the saver's wake takes it again.
+- **Cost:**
+  - The core's code grows by 31 bytes: 25 for the event, 5 for `win_mv`, and 1 for `UI_EDIT`. `ui_image_end` grows by 30 (4E90h → 4EAEh), because an `align 2` takes up one.
+  - `ui_keep_end` grows by 32 (6144h → 6164h). MEMSZ reads 0.1 KB less: 566.2 KB without EMS, 582.3 KB with it.
+  - The kernel is unchanged.
+- **Tests (`t_rclick`, 14 checks; `tests/RCTEST.ASM`, an API 7 `.RUN` that records every event, and `RC6.ASM`, the same for API 6):**
+  - the event with its x and y; nothing at the release;
+  - the left click as before; both at once; the right while the left is held;
+  - a window dragged with the right pressed half way, and one where the left goes up as the right goes down in one packet: each exactly where the drag left it;
+  - right clicks on the close box and the title strip;
+  - `UI_EDIT` on "ab" and `UI_ASK`: the right click seen reaching them, and ignored;
+  - nothing in the Executive, before or after an API 7 `.RUN`;
+  - nothing in the API 6 build.
+  - Six mutations each fail a check: each gate taken out, the event built in AX, `win_mv` reading AX as x, `UI_EDIT` taking it as an editing key.
+  - The review panel (the core, the tests, the API) found the drag's roll case and `UI_EDIT`'s lost "typed first replaces". Both are fixed with a check each.
+  - The hook that watches the Executive sits at `ui_event.got`, a jump target. A label reached by falling through, as `mouse_event.ev` is on the right button's path, is not hooked in pcemu, so a hook there would have seen nothing.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
