@@ -1,0 +1,574 @@
+; =====================================================================
+;  GPIBXFER.COM 1.0 - real DMA through the 1520's 7210 (channel 3), and
+;  how fast it is next to the CPU's own loop.
+;  Build:  nasm -f bin -o GPIBXFER.COM GPIBXFER.ASM
+;  Usage:  GPIBXFER [a]      a = the echo device's address (default 7)
+;
+;  The other end must echo: the Pico bridge with the gpib-bridge daemon's
+;  thrutest handler (on the Pi: sudo systemctl stop gridlink;
+;  sudo systemctl start gpib-bridge).  Each message is 4096 bytes, every
+;  byte value; the bridge sends back the last message it got.
+;
+;    1. CPU (PIO): 16 messages out, 16 echoes in, the last one checked.
+;    2. DMA:       the same through 8237 channel 3 (GPIBDMA 1.0 found the
+;                  7210's DRQ there).  Out: mode 4Bh (single, memory to
+;                  the 7210), all but the last byte, which goes by the CPU
+;                  with EOI.  In: mode 47h (single, the 7210 to memory),
+;                  every byte; the 7210 holds RFD after the END byte.
+;  Each echo is compared with what was sent.  A DMA that ends at once with
+;  wrong bytes means DACK isn't wired to the 7210 (the 8237 runs its
+;  cycles, nothing answers them).  Channel 3 is masked again after every
+;  message and on any error.
+;
+;  Chip-level like GPIBDMA: reboot before CLAUDE or TM5000 afterwards.
+;  Appends what it prints to GPIBXFER.TXT.
+; =====================================================================
+cpu 286
+org 100h
+
+%include "direct_equ.inc"
+
+MSGLEN  equ 4096
+NMSG    equ 16
+IMR2_DMAI equ 10h
+IMR2_DMAO equ 20h
+AUXRA_HOLDEND equ 82h           ; RFD holdoff on END
+T_XFER  equ 36                  ; ~2 s for one message
+
+start:  cld
+        mov     byte [dev], 7
+        mov     si, 81h
+.sp:    lodsb
+        cmp     al, ' '
+        je      .sp
+        sub     al, '0'
+        cmp     al, 9
+        ja      .go
+        mov     ah, al
+        lodsb
+        sub     al, '0'
+        cmp     al, 9
+        ja      .one
+        xchg    al, ah
+        mov     bl, 10
+        mul     bl
+        add     al, ah
+        jmp     short .set
+.one:   mov     al, ah
+.set:   cmp     al, 30
+        ja      .go
+        mov     [dev], al
+.go:    call    place                   ; buffers clear of a 64 KB boundary
+        mov     dx, s_title
+        call    out_str
+        mov     al, [dev]
+        call    out_num
+        call    out_crlf
+        mov     di, [txp]               ; the message: every byte value
+        xor     cx, cx
+.f:     mov     al, cl
+        mov     ah, ch
+        shr     ah, 3
+        add     al, ah
+        stosb
+        inc     cx
+        cmp     cx, MSGLEN
+        jb      .f
+        call    d_recover
+
+        ; ---- 1. the CPU's loop ----------------------------------------
+        mov     dx, s_pio
+        call    out_str
+        mov     byte [usedma], 0
+        call    run_both
+        ; ---- 2. DMA, channel 3 -----------------------------------------
+        mov     dx, s_dma
+        call    out_str
+        mov     byte [usedma], 1
+        call    run_both
+        call    dma_off
+        call    d_recover
+        mov     dx, s_done
+        call    out_str
+        call    save_log
+        mov     ax, 4C00h
+        int     21h
+
+; NMSG messages out, then NMSG echoes in; the times and the check
+run_both:
+        call    d_tick
+        mov     [t0], ax
+        mov     cx, NMSG
+.w:     push    cx
+        call    msg_out
+        pop     cx
+        jc      .fail_o
+        loop    .w
+        call    d_tick
+        sub     ax, [t0]
+        mov     [tout], ax
+        mov     di, [rxp]               ; spoil the receive buffer first
+        mov     cx, MSGLEN
+        mov     al, 0A5h
+        rep     stosb
+        call    d_tick
+        mov     [t0], ax
+        mov     cx, NMSG
+.r:     push    cx
+        call    msg_in
+        pop     cx
+        jc      .fail_i
+        loop    .r
+        call    d_tick
+        sub     ax, [t0]
+        mov     [tin], ax
+        mov     dx, s_outr
+        call    out_str
+        mov     ax, [tout]
+        call    rate
+        mov     dx, s_inr
+        call    out_str
+        mov     ax, [tin]
+        call    rate
+        mov     si, [txp]               ; the last echo against the message
+        mov     di, [rxp]
+        mov     cx, MSGLEN
+        repe    cmpsb
+        jne     .bad
+        mov     dx, s_same
+        jmp     out_str
+.bad:   mov     dx, s_diff
+        call    out_str
+        mov     ax, MSGLEN
+        sub     ax, cx
+        call    out_dec
+        jmp     out_crlf
+.fail_o: mov    dx, s_fo
+        jmp     short .f2
+.fail_i: mov    dx, s_fi
+.f2:    call    out_str
+        mov     al, [why]
+        call    out_hex
+        mov     dx, s_cnt
+        call    out_str
+        mov     ax, [left]
+        call    out_dec
+        call    out_crlf
+        call    dma_off
+        jmp     d_recover
+
+; AX ticks for NMSG * MSGLEN bytes -> "n.n s, n KB/s"
+rate:   push    ax
+        mov     bx, 55
+        mul     bx                      ; ms
+        mov     [ms], ax
+        call    out_dec
+        mov     dx, s_ms
+        call    out_str
+        pop     ax
+        or      ax, ax
+        jnz     .k
+        mov     dx, s_fast
+        jmp     out_str
+.k:     mov     ax, NMSG * MSGLEN / 1024 * 1000
+        xor     dx, dx
+        div     word [ms]
+        call    out_dec
+        mov     dx, s_kbs
+        jmp     out_str
+
+; ---- one message out (the GRiD talks, the device listens) -------------
+msg_out:
+        mov     byte [why], 1
+        call    d_cmd_begin
+        mov     al, UNL
+        call    d_send_cmd
+        jc      .f
+        mov     al, 40h + MYADDR
+        call    d_send_cmd
+        jc      .f
+        mov     al, [dev]
+        or      al, 20h
+        call    d_send_cmd
+        jc      .f
+        call    d_wait_co
+        jc      .f
+        mov     si, [txp]
+        mov     cx, MSGLEN - 1          ; all but the last byte
+        cmp     byte [usedma], 0
+        je      .pio
+        mov     byte [why], 2
+        mov     al, 4Bh                 ; single, read (memory -> I/O), ch 3
+        mov     bx, si
+        call    dma_set
+        call    d_do_gts
+        mov     dx, R_IMR2
+        mov     al, IMR2_DMAO
+        out     dx, al
+        call    dma_wait
+        pushf
+        mov     dx, R_IMR2
+        xor     al, al
+        out     dx, al
+        call    dma_off
+        popf
+        jc      .f
+        add     si, MSGLEN - 1
+        jmp     short .last
+.pio:   call    d_do_gts
+        mov     byte [why], 3
+        mov     dx, R_ISR1
+.pb:    mov     bx, 0                   ; ~ the kernel's fast loop
+.pw:    in      al, dx
+        test    al, ISR1_DO | ISR1_ERR
+        jnz     .pg
+        dec     bx
+        jnz     .pw
+        jmp     short .f
+.pg:    test    al, ISR1_ERR
+        jnz     .f
+        lodsb
+        mov     dx, R_CDOR
+        out     dx, al
+        mov     dx, R_ISR1
+        loop    .pb
+        mov     byte [shadow1], 0
+.last:  mov     byte [why], 4           ; the last byte, with EOI
+        mov     cx, T_XFER
+        call    d_tmo_start
+.lw:    mov     ah, ISR1_DO | ISR1_ERR
+        call    d_isr1_test
+        jnz     .lg
+        call    d_tmo_check
+        jnc     .lw
+        jmp     short .f
+.lg:    test    al, ISR1_ERR
+        jnz     .f
+        mov     dx, R_AUXMR
+        mov     al, AUX_SEOI
+        out     dx, al
+        mov     dx, R_CDOR
+        lodsb
+        out     dx, al
+        mov     byte [why], 5
+        mov     cx, T_XFER
+        call    d_tmo_start
+.lx:    mov     ah, ISR1_DO
+        call    d_isr1_test
+        jnz     .ok
+        call    d_tmo_check
+        jnc     .lx
+.f:     stc
+        ret
+.ok:    clc
+        ret
+
+; ---- one echo in (the device talks, the GRiD listens) -----------------
+msg_in:
+        mov     byte [why], 11h
+        call    d_cmd_begin
+        mov     al, UNL
+        call    d_send_cmd
+        jc      .f
+        mov     al, 20h + MYADDR
+        call    d_send_cmd
+        jc      .f
+        mov     al, [dev]
+        or      al, 40h
+        call    d_send_cmd
+        jc      .f
+        call    d_wait_co
+        jc      .f
+        call    d_clear_in
+        mov     dx, R_AUXMR
+        mov     al, AUXRA_HOLDEND
+        out     dx, al
+        mov     di, [rxp]
+        mov     cx, MSGLEN
+        cmp     byte [usedma], 0
+        je      .pio
+        mov     byte [why], 12h
+        mov     al, 47h                 ; single, write (I/O -> memory), ch 3
+        mov     bx, di
+        call    dma_set
+        mov     dx, R_IMR2
+        mov     al, IMR2_DMAI
+        out     dx, al
+        call    d_do_gts
+        call    dma_wait
+        pushf
+        mov     dx, R_IMR2
+        xor     al, al
+        out     dx, al
+        call    dma_off
+        popf
+        jc      .f
+        mov     byte [why], 13h         ; the END byte was the last
+        mov     dx, R_ISR1
+        in      al, dx
+        or      al, [shadow1]
+        mov     byte [shadow1], 0
+        test    al, ISR1_END
+        jz      .f
+        jmp     short .end
+.pio:   call    d_do_gts
+        mov     byte [why], 14h
+        mov     dx, R_ISR1
+        xor     ah, ah
+.pb:    mov     bx, 0
+.pw:    in      al, dx
+        or      ah, al
+        test    ah, ISR1_DI
+        jnz     .pg
+        dec     bx
+        jnz     .pw
+        jmp     short .f
+.pg:    mov     dx, R_DIR
+        in      al, dx
+        stosb
+        mov     dx, R_ISR1
+        test    ah, ISR1_END
+        jnz     .pend
+        and     ah, ~ISR1_DI
+        loop    .pb
+        jmp     short .f                ; no END by MSGLEN bytes
+.pend:  dec     cx
+        jnz     .f                      ; END too early
+        mov     byte [shadow1], 0
+.end:   call    d_rd_end
+        clc
+        ret
+.f:     call    d_rd_end
+        stc
+        ret
+
+; ---- 8237 channel 3: AL = mode, BX = offset in DS, CX = bytes ----------
+dma_set:
+        push    ax
+        mov     al, 07h                 ; mask channel 3
+        out     0Ah, al
+        pop     ax
+        out     0Bh, al                 ; mode
+        out     0Ch, al                 ; clear the byte flip-flop
+        mov     ax, ds                  ; physical address of DS:BX
+        mov     dx, ax
+        shl     ax, 4
+        shr     dx, 12
+        add     ax, bx
+        adc     dl, 0
+        out     06h, al                 ; channel 3 address
+        mov     al, ah
+        out     06h, al
+        mov     al, dl
+        out     82h, al                 ; channel 3 page
+        mov     ax, cx
+        dec     ax
+        out     07h, al                 ; channel 3 count - 1
+        mov     al, ah
+        out     07h, al
+        in      al, 08h                 ; (clear any old TC)
+        mov     al, 03h                 ; unmask channel 3
+        out     0Ah, al
+        ret
+
+dma_off:
+        mov     al, 07h
+        out     0Ah, al
+        ret
+
+; wait for channel 3's terminal count (status bit 3); CF=1 on a timeout,
+; [left] = the bytes the 8237 had left then
+dma_wait:
+        push    cx
+        mov     cx, T_XFER
+        call    d_tmo_start
+.w:     in      al, 08h
+        test    al, 08h
+        jnz     .ok
+        call    d_tmo_check
+        jnc     .w
+        out     0Ch, al                 ; how far it got
+        in      al, 07h
+        mov     ah, al
+        in      al, 07h
+        xchg    al, ah
+        inc     ax
+        mov     [left], ax
+        pop     cx
+        stc
+        ret
+.ok:    mov     word [left], 0
+        pop     cx
+        clc
+        ret
+
+; buffers that don't cross a 64 KB physical boundary (8237 pages)
+place:  mov     ax, ds
+        mov     dx, ax
+        shl     ax, 4
+        add     ax, bufs                ; low 16 bits of the physical address
+        mov     bx, bufs
+        mov     cx, ax
+        add     cx, 2 * MSGLEN
+        jnc     .ok                     ; both fit before the boundary
+        neg     ax                      ; bytes to the boundary
+        add     bx, ax                  ; start right after it
+.ok:    mov     [txp], bx
+        add     bx, MSGLEN
+        mov     [rxp], bx
+        ret
+
+; ---- output (as GPIBDMA) -----------------------------------------------
+out_str:
+        push    ax
+        push    si
+        mov     si, dx
+.l:     lodsb
+        cmp     al, '$'
+        je      .x
+        call    out_chr
+        jmp     .l
+.x:     pop     si
+        pop     ax
+        ret
+
+out_crlf:
+        push    ax
+        mov     al, 13
+        call    out_chr
+        mov     al, 10
+        call    out_chr
+        pop     ax
+        ret
+
+out_chr:
+        push    ax
+        push    dx
+        push    di
+        mov     dl, al
+        mov     ah, 02h
+        int     21h
+        mov     di, [logp]
+        cmp     di, logbuf + LOGMAX
+        jae     .x
+        mov     [di], dl
+        inc     word [logp]
+.x:     pop     di
+        pop     dx
+        pop     ax
+        ret
+
+out_hex:
+        push    ax
+        push    ax
+        shr     al, 4
+        call    .d
+        pop     ax
+        and     al, 0Fh
+        call    .d
+        pop     ax
+        ret
+.d:     add     al, '0'
+        cmp     al, '9'
+        jbe     .p
+        add     al, 7
+.p:     jmp     out_chr
+
+out_num:
+        push    ax
+        xor     ah, ah
+        call    out_dec
+        pop     ax
+        ret
+
+out_dec:                                ; AX unsigned
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        mov     bx, 10
+        xor     cx, cx
+.d:     xor     dx, dx
+        div     bx
+        push    dx
+        inc     cx
+        or      ax, ax
+        jnz     .d
+.p:     pop     ax
+        add     al, '0'
+        call    out_chr
+        loop    .p
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+save_log:
+        mov     dx, s_logname
+        mov     ax, 3D01h
+        int     21h
+        jnc     .op
+        mov     ah, 3Ch
+        xor     cx, cx
+        int     21h
+        jc      .x
+.op:    mov     bx, ax
+        mov     ax, 4202h
+        xor     cx, cx
+        xor     dx, dx
+        int     21h
+        mov     cx, [logp]
+        sub     cx, logbuf
+        mov     dx, logbuf
+        mov     ah, 40h
+        int     21h
+        mov     ah, 3Eh
+        int     21h
+.x:     ret
+
+%include "direct.inc"
+
+s_title db 13,10,'GPIBXFER 1.0 - 16 x 4096-byte messages each way, echoed by the device at $'
+s_pio   db 13,10,'CPU loop:',13,10,'$'
+s_dma   db 13,10,'DMA, channel 3:',13,10,'$'
+s_outr  db '  GRiD -> device: $'
+s_inr   db '  device -> GRiD: $'
+s_ms    db ' ms, $'
+s_kbs   db ' KB/s',13,10,'$'
+s_fast  db ' (under a tick)',13,10,'$'
+s_same  db '  the echo is every byte right',13,10,'$'
+s_diff  db '  THE ECHO DIFFERS from byte $'
+s_fo    db '  sending failed, step $'
+s_fi    db '  receiving failed, step $'
+s_cnt   db 'h; the 8237 had bytes left: $'
+s_done  db 13,10,'Done.  Reboot before CLAUDE or TM5000.  Also in GPIBXFER.TXT.',13,10,'$'
+s_logname db 'GPIBXFER.TXT',0
+
+RBUFLEN equ 80
+LOGMAX  equ 1024
+dev     db 7
+usedma  db 0
+why     db 0
+t0      dw 0
+tout    dw 0
+tin     dw 0
+ms      dw 0
+left    dw 0
+txp     dw 0
+rxp     dw 0
+shadow1 db 0
+shadow2 db 0
+recov   dw 0
+rxcnt   dw 0
+lat     dw 0
+rawisr1 db 0
+rawadsr db 0
+rawdir  db 0
+t_start dw 0
+t_len   dw 0
+logp    dw logbuf
+rbuf    times RBUFLEN+2 db 0
+logbuf  times LOGMAX db 0
+bufs:                                   ; 2 * MSGLEN, and room to move past
+                                        ;  a 64 KB boundary (place)
