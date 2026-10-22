@@ -26,7 +26,7 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M5a | Each task's own vectors | PR #57, merged. |
 | M5b | Ending and killing tasks | PR #61, merged. |
 | M6 | Parking tasks in EMS and bringing them back | PR #65, merged. |
-| M7a | LCMD's START, FG, KILL, PARK, UNPARK and WAIT; a task's exit code (`MT_EXIT`); CLAUDE /U refused while tasks run | This PR. |
+| M7a | LCMD's START, FG, KILL, PARK, UNPARK and WAIT; a task's exit code (`MT_EXIT`); CLAUDE /U refused while tasks run | PR #67. |
 | M7b | The Executive: programs started as tasks, its task list (TASKS.RUN, CODE-T); System's switch; LODE.INI's `BG=` and `FREEZE=` | |
 | M7c | Resident Claude holding switches while its console is up | |
 | M8 | Several `.RUN` windows at once, as coroutines in the UI task | |
