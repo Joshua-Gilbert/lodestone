@@ -11,8 +11,8 @@ MT_SPAWN    equ 10h                     ; a program as a new task: DS:DX = its
                                         ;  AX = 4 (8 tasks already), 8 (no room
                                         ;  for its region).  Success means the
                                         ;  task is made: a program that can't be
-                                        ;  run ends it at once (no call returns
-                                        ;  its exit code yet)
+                                        ;  run ends it at once (its exit code
+                                        ;  FFxxh, xx EXEC's error: MT_EXIT)
 MT_END      equ 11h                     ; (the task's stub, when its program is
                                         ;  done: the task ends)
 MT_LIST     equ 12h                     ; the tasks: ES:DI = room for CX records
@@ -56,6 +56,19 @@ MT_UNPARK   equ 16h                     ; BL = a parked task: its memory back at
                                         ;  taken by memory not a task's, or by a
                                         ;  task that can't be parked; or its
                                         ;  EMS gone, or the copy failed)
+MT_EXIT     equ 17h                     ; BL = a task's number -> AL = its state
+                                        ;  (TS_*: TS_FREE once ended), AH = how
+                                        ;  many tasks have been started with
+                                        ;  that number (1-255, then 1 again; 0:
+                                        ;  none yet); DX = the exit code of the
+                                        ;  last one ended (its high byte 4Dh's
+                                        ;  AH: 0 ended, 1 ^C or MT_KILL, 2 a
+                                        ;  critical error's Abort, 3 stayed
+                                        ;  resident; FFxxh: its program not
+                                        ;  started, xx EXEC's error), CL = the
+                                        ;  count it was started with (so CL =
+                                        ;  AH: the one started last has ended)
+                                        ;  CF: AX = 1 (no such number)
 MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back
                                         ;  after a screen saver): not counted
