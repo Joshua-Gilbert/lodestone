@@ -249,6 +249,8 @@ mt_mvs      db      0                   ;  length, then the source and the
 mt_mvd      db      0                   ;  offset, and segment or page)
             dw      0, 0, 0
 mt_psv      db      0                   ; (mt_pmap: window 0 as it was)
+mt_hold     times   EMS_NH db 0         ; a parked task's programs' EMS handles:
+mt_hown     times   EMS_NH dw 0         ;  that task (0: none), their owners
 mt_xr       dw      0                   ; (mt_inr: a parked task's own region,
 mt_xe       dw      0                   ;  while its TX is looked at: its own
                                         ;  vectors into it aren't another's,
@@ -1715,7 +1717,8 @@ mt_unpark:
         jmp     KSEG:ok
 
 ; task AL (its entry at BX, not free) parked: its region copied to pages
-; of MT's own (owner 0: no program's end takes them) and freed.  Not task
+; of MT's own (their owner MT's segment, which no PSP has: no program's end
+; takes them, and mt_pchk knows them from any other's) and freed.  Not task
 ; 0, the running one, the one in front, one being ended or parked
 ; already, nor one a vector points into (mt_pinned): AX = 5.  Not enough
 ; EMS: AX = 8.  CF then, nothing changed.  DS = KSEG; AL, BX kept
@@ -1756,10 +1759,19 @@ mt_pk:  push    cx
         jnz     .no
         call    mt_hnew                 ; (no other entry keeps that handle)
         mov     [cs:bx+TE_PH], dl
+        push    bx                      ; (its owner: MT's segment)
+        mov     bl, dl
+        xor     bh, bh
+        shl     bx, 2
+        mov     [ems_h + bx + 2], cs
+        pop     bx
         xor     al, al                  ; the region to them
         call    mt_move
         jc      .fr
-        mov     ax, [cs:bx+TE_REG]      ; and freed
+        pop     ax                      ; its programs' EMS kept from their
+        push    ax                      ;  namesakes meanwhile (mt_hhide)
+        call    mt_hhide
+        mov     ax, [cs:bx+TE_REG]      ; and the region freed
         dec     ax
         mov     es, ax
         mov     word [es:1], 0
@@ -1825,6 +1837,9 @@ mt_up:  push    cx
         mov     [es:10], ax
         mov     [es:12], ax
         mov     [es:14], ax
+        pop     ax                      ; its programs' EMS theirs again
+        push    ax
+        call    mt_hshow
         mov     dl, [cs:bx+TE_PH]       ; its pages given back
         xor     dh, dh
         mov     ah, 45h
@@ -2008,10 +2023,11 @@ mt_move:
         mov     word [si + 3], 0
         mov     word [si + 5], 0
         mov     si, mt_mv
-        mov     byte [mt_vbusy], 1
+        mov     dl, 1
+        xchg    dl, [mt_vbusy]
         mov     ax, 5700h
         int     67h
-        mov     byte [mt_vbusy], 0
+        mov     [mt_vbusy], dl
         neg     ah                      ; (CF if AH isn't 0)
         pop     dx
         pop     ax
@@ -2019,9 +2035,82 @@ mt_move:
         pop     ds
         ret
 
+; task AL (its entry at BX) parked: the EMS handles whose owner is a PSP
+; in its region (its programs') get owner FFFFh, which no PSP has, the
+; owner kept in mt_hown and the task in mt_hold.  Else a program run in
+; its place meanwhile, at the same segment (a task there is laid out as it
+; was), would free them at its end (terminate's ems_free_owner, mt_owners).
+; All kept
+mt_hhide:
+        pusha
+        push    ds
+        pushf
+        cli
+        push    KSEG
+        pop     ds
+        mov     cx, [cs:bx+TE_REG]
+        mov     dx, cx
+        add     dx, [cs:bx+TE_PSZ]
+        xor     di, di                  ; (handle 0: the system's)
+.l:     inc     di
+        cmp     di, EMS_NH
+        jae     .x
+        mov     si, di
+        shl     si, 2
+        cmp     byte [ems_h + si], 0FFh ; (closed)
+        je      .l
+        mov     bp, [ems_h + si + 2]
+        cmp     bp, cx
+        jb      .l
+        cmp     bp, dx
+        jae     .l
+        mov     [cs:mt_hold + di], al
+        mov     word [ems_h + si + 2], 0FFFFh
+        shl     di, 1
+        mov     [cs:mt_hown + di], bp
+        shr     di, 1
+        jmp     .l
+.x:     popf
+        pop     ds
+        popa
+        ret
+
+; task AL back: the handles mt_hhide kept for it their owners' again (one
+; that isn't FFFFh any more was freed meanwhile, maybe given out again:
+; not touched).  All kept
+mt_hshow:
+        pusha
+        push    ds
+        pushf
+        cli
+        push    KSEG
+        pop     ds
+        xor     di, di
+.l:     inc     di
+        cmp     di, EMS_NH
+        jae     .x
+        cmp     [cs:mt_hold + di], al
+        jne     .l
+        mov     byte [cs:mt_hold + di], 0
+        mov     si, di
+        shl     si, 2
+        cmp     byte [ems_h + si], 0FFh
+        je      .l
+        cmp     word [ems_h + si + 2], 0FFFFh
+        jne     .l
+        shl     di, 1
+        mov     bp, [cs:mt_hown + di]
+        shr     di, 1
+        mov     [ems_h + si + 2], bp
+        jmp     .l
+.x:     popf
+        pop     ds
+        popa
+        ret
+
 ; CF if the parked region of the entry at BX has gone from its pages: its
-; handle closed, not MT's (owner 0), or not of its size (a program freed
-; it, and it was given out again).  Else SI = the handle's record (at
+; handle closed, not MT's (its owner MT's segment: mt_pk), or not of its
+; size (a program freed it, and it was given out again).  Else SI = the handle's record (at
 ; KSEG:ems_h + SI).  AX changed
 mt_pchk:
         xor     ax, ax
@@ -2038,7 +2127,10 @@ mt_pchk:
         shr     ax, 10
         cmp     byte [ems_h + si], 0FFh
         je      .nd
-        cmp     word [ems_h + si + 2], 0
+        push    ax
+        mov     ax, cs
+        cmp     [ems_h + si + 2], ax
+        pop     ax
         jne     .nd
         cmp     [ems_h + si + 1], al
         jne     .nd
@@ -2118,10 +2210,11 @@ mt_hnew:
         ret
 
 ; CF if a vector points into mt_vr..mt_ve (the region of the entry at
-; BX): in the table, mt_fv, or another task's own (not the running one's,
-; whose are the table's): its TX_VEC and TX_FVEC, and in its TX_GSN the
-; machine's (not a task's own: those are put back from its TX at its end).
-; A parked task's TX through window 0 (mt_pmap), interrupts off.  All kept
+; BX): in the table (each with interrupts off), mt_fv, or another task's
+; own: its TX_VEC and TX_FVEC (the running one's TX_VEC are the table's;
+; its TX_FVEC, if it is behind), and in its TX_GSN the machine's (not a
+; task's own: those are put back from its TX at its end).  A parked
+; task's TX through window 0 (mt_pmap), interrupts off.  All kept
 mt_pinned:
         pusha
         push    es
@@ -2140,7 +2233,7 @@ mt_pinned:
         jc      .x
         xor     al, al
 .t:     cmp     al, [cs:mt_cur]
-        je      .tn
+        je      .tc
         call    mt_ent
         cmp     bx, bp
         je      .tn
@@ -2170,14 +2263,28 @@ mt_pinned:
         neg     si
         jc      .x
         jmp     .tn
+.tc:    call    mt_ent                  ; the running one (never parked)
+        mov     es, [cs:bx+TE_TX]
+        cmp     al, [cs:mt_front]
+        je      .tg
+        push    ax                      ; behind: its own 09h and 1Bh
+        mov     di, TX_FVEC
+        mov     cx, MT_NFV
+        call    .sc
+        pop     ax
+        jc      .x
+.tg:    call    .gs
+        jc      .x
+        jmp     .tn
 ; task AL's TX at ES -> CF if one there.  AL kept
 .tx:    push    ax
         mov     di, TX_VEC              ; (TX_FVEC just after it)
         mov     cx, MT_NVEC + MT_NFV
         call    .sc
-        jc      .tr
         pop     ax
-        push    ax
+        jc      .tr0
+; its TX_GSN's (task AL's TX at ES): CF if one there.  AL kept
+.gs:    push    ax
         or      al, al                  ; (task 0's has no TX_GSN)
         jz      .tr
         mov     di, TX_GSN
@@ -2191,17 +2298,22 @@ mt_pinned:
         jnz     .g
         clc
 .tr:    pop     ax
-        ret
+.tr0:   ret
 .gy:    stc
         jmp     .tr
-; CX vectors at ES:DI -> CF if one points there.  AX, CX, DI changed
-.sc:    call    mt_inr
+; CX vectors at ES:DI, each with interrupts off (a hook's change can't be
+; half read) -> CF if one points there.  AX, CX, DI changed
+.sc:    pushf
+        cli
+        call    mt_inr
         jnc     .y
+        popf
         add     di, 4
         loop    .sc
         clc
         ret
-.y:     stc
+.y:     popf
+        stc
         ret
 
 ; CF if vector DL is a task's own (mt_vrun's, mt_vfr's).  All kept but
