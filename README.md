@@ -29,7 +29,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - INT 21h for the programs of its day: COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
 - A cylinder read-ahead cache for the floppies, kept in EMS when there is EMS.
 - Its own LIM 4.0 EMS manager, when the 1520's memory is set to EMS.
-- The GRIDGPIB driver API on INT 60h, built in, with a faster block transfer.
+- The GRIDGPIB driver API on INT 60h, built in, with a faster block transfer and SRQ on IRQ 5.
 - An INT 33h driver for a serial mouse on COM1 or COM2.
 - Screen capture and printing: Shift-PrtSc saves the screen as `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text). PrtSc alone prints it through the printer driver chosen in System (or saves the file when none is chosen). A driver is a `.PRN` file of up to 1 KB that starts with a driver's signature, read from the disk only when PrtSc is pressed, so nothing of it stays in memory. `PS.PRN` prints PostScript on LPT1 (a picture of a graphics screen, the text of a text screen); other printers are other drivers (`os/drivers/PS.ASM` says how to write one).
 

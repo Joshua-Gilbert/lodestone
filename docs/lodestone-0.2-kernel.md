@@ -185,7 +185,12 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
   - TSR (31h) keeps its files open.
   - ^C runs INT 23h on the caller's stack: IRET restarts the call, RETF with CF ends the program.
 - **Built-in GPIB (INT 60h).**
-  - The GRIDGPIB 1.1 API, unchanged, reporting version 1.20. It installs only if a 7210 answers at the GRiD's GPIB ports.
+  - The GRIDGPIB 1.1 API, reporting version 1.21. It installs only if a 7210 answers at the GRiD's GPIB ports.
+  - SRQ on IRQ 5 (1.21, the GPIB cartridge's E1 jumper). The 7210 interrupts on SRQ only (IMR2 SRQI). The handler ORs ISR2 into the shadow AH=0Bh reads, and adds 1 to a count.
+    - AH=0Eh: AL = 0 off, 1 on, anything else just asks. It returns AX = the IRQ in use (5, or 0) and DX:CX = the count. A client reads the count with interrupts off before a HLT, so it can't sleep through an SRQ.
+    - On by default. `GPIBIRQ=0` in LODE.INI turns it off at start-up (KSPLASH.INC's `gi_boot`). 32 interrupts in one tick (no jumper, a floating line) turn it off by themselves.
+    - The handler checks the PIC's in-service register first: in real mode the 286 also raises INT 0Dh for a word at offset FFFFh, and that goes on to the old vector.
+    - On the 1520 (tools/GPIBIRQ.COM): one IRQ 5 an SRQ, as fast as polling, and it wakes a HLT. SRQI latches on SRQ's edge and clears on read, so a held SRQ doesn't interrupt again.
   - Fast path: a tight ISR1 polling loop for the bulk of each transfer. The careful per-byte code still handles EOI, RFD holdoff and timeouts.
   - Measured in emulation:
     - GGTEST ID? 6.9 → 4.2 ms;

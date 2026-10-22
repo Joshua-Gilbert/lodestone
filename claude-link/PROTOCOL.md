@@ -117,6 +117,13 @@ the GRiD polls it or sends a message, and ignores a WAKE for an older
 message than the GRiD's last. Older bridges ignore WAKE, and the GRiD goes on
 POLLing once a second.
 
+With a GPIB driver that takes SRQ on IRQ 5 (Lodestone's built-in one,
+version 1.21, or GRIDGPIB 1.2; INT 60h AH=0Eh gives its SRQ count), CLAUDE
+sleeps (HLT) while it is idle or waiting for an answer, and the SRQ wakes it
+at once: about a millisecond instead of up to the next 55 ms timer tick.
+While it waits it serial-polls when the count moves, and once a tick in
+case an SRQ went astray, instead of every 2-4 ms.
+
 ### Sequencing and retransmission
 
 * HELLO resets both sequence counters to 0 (the HELLO frame itself has seq 0).

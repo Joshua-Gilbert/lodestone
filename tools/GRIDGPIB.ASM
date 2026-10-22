@@ -6,16 +6,19 @@
 ;  GRIDGPIB /I:nn    install on INT nn (hex, 60-66)
 ;  GRIDGPIB /U       unload (bus released, REN off, memory freed)
 ;  GRIDGPIB /F       install even if Driver488 is loaded (not advised)
+;  GRIDGPIB /N       no SRQ interrupt (IRQ 5): SRQ is only polled, as 1.1
 ;
 ;  Direct uPD7210 access (base 02E1h, reg n at +n*400h), Grid = system
 ;  controller at address 21.  Polled, no fixed delays: every call returns
 ;  as soon as the bus transaction is done, or on timeout.  Built from the
-;  GPIBSCAN/GPIBTEST primitives proven on the real bus.
+;  GPIBSCAN/GPIBTEST primitives proven on the real bus.  1.2: SRQ also on
+;  IRQ 5 (the GPIB cartridge's E1 jumper; GPIBIRQ 1.0 on the 1520), as
+;  Lodestone's built-in driver (os/src/KGPIB.INC): clients sleep until it.
 ;
 ;  ---- API: INT nn, AH = function.  CF=1 on error, AX = error code ----
 ;  BX SI DI BP DS ES are preserved; CX/DX hold results where listed,
 ;  otherwise their contents are undefined.
-;  AH=00 presence   out AX='GG'(4747h) CX=version(0110h) DH=int DL=own addr
+;  AH=00 presence   out AX='GG'(4747h) CX=version(0120h) DH=int DL=own addr
 ;  AH=01 init bus   IFC, REN on                                out AX
 ;  AH=02 write      BL=addr DS:SI=data CX=len AL bit0=EOI on last byte
 ;                   out AX, CX=bytes sent
@@ -33,7 +36,12 @@
 ;  AH=0A timeout    BX=ms per byte (0 = default 2000)  out AX=old ms
 ;  AH=0B SRQ        out AX=1 if SRQ was asserted since the last call
 ;  AH=0C stats      out AX=chip recoveries, CX=timeouts, DX=resident bytes
-;  AH=0D unload     (internal) out CX=PSP, DX:AX=previous vector
+;  AH=0D unload     (internal) out CX=PSP, DX:AX=previous vector (IRQ 5 off
+;                   and INT 0Dh given back first; error 6 if INT 0Dh was
+;                   taken after us)
+;  AH=0E SRQ IRQ    AL=0 off, 1 on, else ask.  out AX=IRQ in use (5, or 0),
+;                   DX:CX=a word +1 at every SRQ interrupt (compare it with
+;                   interrupts off, then HLT: an SRQ can't be slept through)
 ;  Errors: 1 timeout, 2 no listener, 3 not controller/no chip,
 ;          4 bad function, 5 no data (read timeout), 6 busy (re-entry)
 ; =====================================================================
@@ -152,13 +160,13 @@ done    equ     handler.out
 
 functab dw f_present, f_init, f_write, f_read, f_query, f_spoll
         dw f_clear, f_trigger, f_remote, f_local, f_timeout, f_srq
-        dw f_stats, f_unload
+        dw f_stats, f_unload, f_irq
 NFUNC   equ ($-functab)/2
 
 ; ---- function bodies: return AX (and CX/DX where documented) -------
 f_present:
         mov     ax, 4747h
-        mov     cx, 0110h
+        mov     cx, 0120h
         mov     dh, [intno]
         mov     dl, MYADDR
         jmp     done
@@ -309,9 +317,47 @@ f_stats:
         jmp     done
 
 f_unload:
+        cli
+        call    irq_mask
+        cmp     byte [hooked], 0
+        je      .v
+        push    es
+        push    0
+        pop     es
+        cmp     word [es:IRQVEC*4], isr ; INT 0Dh back as we found it - if
+        jne     .taken                  ;  it is still ours
+        mov     ax, cs
+        cmp     [es:IRQVEC*4+2], ax
+        jne     .taken
+        mov     ax, [oldirq]
+        mov     [es:IRQVEC*4], ax
+        mov     ax, [oldirq+2]
+        mov     [es:IRQVEC*4+2], ax
+        mov     byte [hooked], 0
+        pop     es
+.v:     sti
         mov     cx, cs                  ; .COM: CS = our PSP segment
         mov     ax, [oldvec]
         mov     dx, [oldvec+2]
+        jmp     done
+.taken: pop     es
+        sti
+        mov     ax, E_BUSY
+        jmp     fin_ax
+
+f_irq:  mov     al, [c_al]
+        cmp     al, 1
+        ja      .q
+        je      .on
+        cli
+        call    irq_mask
+        sti
+        jmp     short .q
+.on:    call    irq_on
+.q:     mov     al, [irq]
+        xor     ah, ah
+        mov     cx, nsrq
+        mov     dx, cs
         jmp     done
 
 cmdfail:
@@ -623,7 +669,9 @@ chip_init:
         mov     dx, R_IMR1
         out     dx, al
         mov     dx, R_IMR2
-        out     dx, al
+        mov     al, [imr2]              ; SRQI on while IRQ 5 is (a reset clears
+        out     dx, al                  ;  IMR2)
+        xor     al, al
         mov     dx, R_SPMR
         out     dx, al
         mov     dx, R_ADMR
@@ -807,6 +855,97 @@ wait_co:
         pop     ax
         ret
 
+; ---- SRQ on IRQ 5 (as os/src/KGPIB.INC's) ------------------------------
+IRQVEC  equ 0Dh
+IRQBIT  equ 20h
+isr:    push    ax
+        mov     al, 0Bh                 ; OCW3: is IRQ 5 in service?  (In real
+        out     20h, al                 ;  mode the 286 also raises INT 0Dh for
+        in      al, 20h                 ;  a word at offset FFFFh: that goes on
+        mov     ah, al                  ;  to the vector we found)
+        mov     al, 0Ah                 ; (and port 20h reads the IRR again)
+        out     20h, al
+        test    ah, IRQBIT
+        jz      .not
+        push    dx
+        push    ds
+        push    cs
+        pop     ds
+        mov     dx, R_ISR2
+        in      al, dx
+        or      [shadow2], al
+        inc     word [nsrq]
+        push    es                      ; a line that keeps firing: IRQ 5 off
+        xor     ax, ax                  ;  after 32 in one tick
+        mov     es, ax
+        mov     ax, [es:46Ch]
+        pop     es
+        cmp     ax, [irqt]
+        je      .same
+        mov     [irqt], ax
+        mov     byte [irqn], 0
+.same:  inc     byte [irqn]
+        cmp     byte [irqn], 32
+        jb      .e
+        call    irq_mask
+.e:     mov     al, 20h                 ; EOI
+        out     20h, al
+        pop     ds
+        pop     dx
+        pop     ax
+        iret
+.not:   pop     ax
+        jmp     far [cs:oldirq]
+
+irq_on: cmp     byte [irq], 0
+        jne     .x
+        push    ax
+        push    dx
+        push    es
+        push    0
+        pop     es
+        cli
+        cmp     byte [hooked], 0
+        jne     .h
+        mov     byte [hooked], 1
+        mov     ax, [es:IRQVEC*4]
+        mov     [oldirq], ax
+        mov     ax, [es:IRQVEC*4+2]
+        mov     [oldirq+2], ax
+        mov     word [es:IRQVEC*4], isr
+        mov     [es:IRQVEC*4+2], cs
+.h:     mov     byte [irq], 5
+        mov     byte [imr2], ISR2_SRQ
+        mov     byte [irqn], 0
+        mov     dx, R_ISR2
+        in      al, dx
+        or      [shadow2], al
+        mov     al, ISR2_SRQ
+        out     dx, al                  ; (IMR2)
+        in      al, 21h
+        and     al, ~IRQBIT
+        out     21h, al
+        sti
+        pop     es
+        pop     dx
+        pop     ax
+.x:     ret
+
+irq_mask:                               ; (interrupts off)
+        push    ax
+        push    dx
+        mov     byte [irq], 0
+        mov     byte [imr2], 0
+        mov     dx, R_IMR2
+        xor     al, al
+        out     dx, al
+        in      al, 21h
+        or      al, IRQBIT
+        out     21h, al
+        pop     dx
+        pop     ax
+        ret
+
 ; ---- resident data ----------------------------------------------------
 busy    db 0
 err     db 0
@@ -834,6 +973,13 @@ c_cx    dw 0
 c_dx    dw 0
 c_bx    dw 0
 oldvec  dd 0
+irq     db 0                            ; 5 while SRQ comes on IRQ 5
+imr2    db 0                            ;  IMR2 for chip_init (SRQI, or 0)
+irqn    db 0                            ;  interrupts in tick irqt
+hooked  db 0                            ;  INT 0Dh is ours
+irqt    dw 0
+nsrq    dw 0                            ;  +1 every interrupt (AH=0Eh)
+oldirq  dd 0                            ;  INT 0Dh as we found it
 res_end:
 
 ; =====================================================================
@@ -914,12 +1060,20 @@ install:
         mov     ah, 25h
         mov     al, [intno]
         int     21h
-        mov     dx, s_ok1
+        cmp     byte [o_n], 0           ; SRQ on IRQ 5, unless /N
+        jne     .noirq
+        call    irq_on
+.noirq: mov     dx, s_ok1
         call    tputs
         mov     al, [intno]
         call    thex8
         mov     dx, s_ok2
         call    tputs
+        cmp     byte [irq], 0
+        je      .ni
+        mov     dx, s_okirq
+        call    tputs
+.ni:
         mov     ax, res_end - 100h + 100h
         call    tdec
         mov     dx, s_ok3
@@ -978,7 +1132,12 @@ unload: mov     [intno], al
         mov     byte [ucall+1], ah      ; self-modify: INT nn
         mov     ah, 0Dh
         call    ucall                   ; CX=PSP, DX:AX=old vector
-        jc      .bi                     ; (Lodestone's, in its kernel: no)
+        jnc     .go
+        cmp     ax, E_BUSY              ; INT 0Dh taken after us
+        jne     .bi                     ; (Lodestone's, in its kernel: no)
+        mov     dx, s_unlirq
+        jmp     short .bm
+.go:
         push    cx
         push    dx
         push    ax
@@ -1024,8 +1183,12 @@ parse:  mov     si, 81h
         mov     byte [o_u], 1
         jmp     .l
 .f:     cmp     al, 'f'
-        jne     .i
+        jne     .nn
         mov     byte [o_f], 1
+        jmp     .l
+.nn:    cmp     al, 'n'
+        jne     .i
+        mov     byte [o_n], 1
         jmp     .l
 .i:     cmp     al, 'i'
         jne     .l
@@ -1092,9 +1255,10 @@ tdec:   xor     cx, cx
 
 o_u     db 0
 o_f     db 0
+o_n     db 0
 o_int   db 0
 n_ieee  db 'IEEEOUT',0
-s_title db 'GRIDGPIB 1.1 - resident GPIB driver for the GRiDCase 1520 (Lodestone)',13,10,'$'
+s_title db 'GRIDGPIB 1.2 - resident GPIB driver for the GRiDCase 1520 (Lodestone)',13,10,'$'
 s_already db 'Already installed.  GRIDGPIB /U unloads it.',13,10,'$'
 s_notres db 'Not installed - nothing to unload.',13,10,'$'
 s_d488  db '** Driver488 (DRVR488) is loaded and owns the GPIB chip.',13,10
@@ -1104,7 +1268,9 @@ s_nocic db '** Not controller in charge after IFC - is the GPIB cable OK?',13,10
 s_novec db '** No free interrupt 60h-66h (use /I:nn).',13,10,'$'
 s_ok1   db 'Installed on INT $'
 s_ok2   db 'h, bus initialised (IFC, REN), $'
+s_okirq db 'SRQ on IRQ 5, $'
 s_ok3   db ' bytes resident.',13,10,'$'
 s_unl   db 'Unloaded: bus released, REN off, memory freed.',13,10,'$'
 s_unlf  db '** Vector restored but memory could not be freed.',13,10,'$'
 s_unlb  db '** This driver is built into the system: nothing to unload.',13,10,'$'
+s_unlirq db '** Another program took INT 0Dh after GRIDGPIB: unload it first.',13,10,'$'
