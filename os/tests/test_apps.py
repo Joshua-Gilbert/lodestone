@@ -561,8 +561,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30): the directory buffer is lent while it runs' % kb,
-          kb >= 566.2, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL): the directory buffer is lent while it runs' % kb,
+          kb >= 566.1, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -1602,6 +1602,20 @@ def t_subdel():
     k.pc.drives[0].wp = False
     k.key(ktest.ENTER)
     check('... and Title lists the titles of where it is now', not k.crashed, '')
+    # a damaged subject inside the one erased: its directory without even "." (FIND FIRST: 18, X22): a damaged
+    # disk, 3, as one whose first entry isn't "."; it and the subject above it are left
+    a = image('subdel2.img', t, 'OLD\\', 'OLD\\BROKEN\\', 'KEEP\\', 'KEEP\\K.TXT=' + t)
+    raw = bytearray(open(a, 'rb').read())
+    o = [o for o in range(0, len(raw), 32) if raw[o:o + 11] == b'BROKEN     ' and raw[o + 11] & 0x10][0]
+    clus = raw[o + 26] | raw[o + 27] << 8
+    dots = [d for d in range(0, len(raw), 32) if raw[d:d + 11] == b'.          ' and raw[d + 26] | raw[d + 27] << 8 == clus]
+    raw[dots[0]:dots[0] + 64] = bytes(64)                               # (no ".", no "..": the directory ends at once)
+    open(a, 'wb').write(raw)
+    k = ktest.KPC(a); k.start()
+    pick_subject(k, 'OLD'); k.key(CODE['D']); k.key(ktest.ENTER)
+    check('a subject with no entries at all (not even ".") in the one erased: "Path not found", as a damaged disk; both stay',
+          k.band()[0].endswith(': Path not found') and 'OLD' in [x.strip() for x in subjects(k)] and not k.crashed,
+          (k.band(), subjects(k)))
 
 def attr_at(img, name):
     """Offsets of every directory entry called NAME.EXT, subjects too."""

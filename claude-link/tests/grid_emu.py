@@ -532,7 +532,7 @@ class Machine:
         d, _, pat = p.rpartition('\\'); d += '\\'
         if not s.isdir(d): return s.err(3)
         lst = [e for e in s.entries(d) if s.matches(pat, e[0]) and (e[1] != 0x10 or cx & 0x10)]
-        if not lst: return s.err(2)
+        if not lst: return s.err(18)            # (nothing: 18, as MS-DOS and Lodestone)
         st = {'list': lst, 'i': 0}; s.finds[s.dta] = st
         s.put_find(st); s.cf(0)
     def d4f(s, *a):
