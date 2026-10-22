@@ -2,7 +2,7 @@
 
 See PROTOCOL.md.  Shared by the Pi service and the test models.
 """
-import struct
+import binascii, itertools, struct
 
 SYNC = 0x47
 MORE = 0x80
@@ -70,6 +70,11 @@ def _make_table():
 _CRC = _make_table()
 
 def crc16(data, crc=0xFFFF):
+    """CRC-16/CCITT-FALSE: binascii's C crc_hqx (the table loop below cost ~0.3 ms a 2 KB frame)."""
+    return binascii.crc_hqx(data, crc)
+
+
+def crc16_table(data, crc=0xFFFF):
     for b in data:
         crc = ((crc << 8) & 0xFFFF) ^ _CRC[(crc >> 8) ^ b]
     return crc
@@ -78,11 +83,8 @@ def crc16(data, crc=0xFFFF):
 def fletcher16(data):
     """The GRiD's cheaper frame check (TERMLINK.INC fl16): A = 1 + the bytes,
     B = the sum of the A's, both mod 256; B << 8 | A."""
-    a, b = 1, 0
-    for x in data:
-        a = (a + x) & 0xFF
-        b = (b + a) & 0xFF
-    return b << 8 | a
+    # B is the sum of the running A's: accumulate() makes them in C, twice the speed of a Python loop
+    return ((sum(itertools.accumulate(data, initial=1)) - 1) & 0xFF) << 8 | (1 + sum(data)) & 0xFF
 
 
 def encode(kind, seq, ack, payload=b'', fl=False):
@@ -103,9 +105,10 @@ class Frame:
                                                 s.seq, s.ack, len(s.payload))
 
 
-def decode(buf, max_len=4096):
+def decode(buf, max_len=4096, fl_first=False):
     """Find the first complete frame with a good check (CRC-16, or the
-    Fletcher sum when HELLO agreed to it: Frame.fl) at any sync position.
+    Fletcher sum when HELLO agreed to it: Frame.fl) at any sync position;
+    fl_first tries the Fletcher sum first (one check fewer a frame).
     Returns (frame, end) or (None, keep) where keep is the index of the first
     sync byte (bytes before it are garbage)."""
     buf = bytes(buf)
@@ -119,10 +122,9 @@ def decode(buf, max_len=4096):
             if n <= max_len and end <= len(buf):
                 (crc,) = struct.unpack_from('<H', buf, i + HEADER + n)
                 body = buf[i + 1:i + HEADER + n]
-                if crc16(body) == crc:
-                    return Frame(kind, seq, ack, buf[i + HEADER:i + HEADER + n]), end
-                if fletcher16(body) == crc:          # (once HELLO has agreed to it)
-                    return Frame(kind, seq, ack, buf[i + HEADER:i + HEADER + n], fl=True), end
+                for fl in ((True, False) if fl_first else (False, True)):   # (the Fletcher sum once HELLO
+                    if (fletcher16(body) if fl else crc16(body)) == crc:    #  has agreed to it)
+                        return Frame(kind, seq, ack, buf[i + HEADER:i + HEADER + n], fl=fl), end
         i = buf.find(bytes([SYNC]), i + 1)
     return None, first
 
@@ -132,7 +134,7 @@ class StreamParser:
     before a good frame is dropped.  When the line goes quiet with bytes
     still pending, call idle(): they can never become a frame, so the
     caller should NAK."""
-    def __init__(s, max_len=4096): s.buf = bytearray(); s.max_len = max_len
+    def __init__(s, max_len=4096): s.buf = bytearray(); s.max_len = max_len; s.fl = False
     def pending(s): return len(s.buf)
     def idle(s):
         had = bool(s.buf)
@@ -142,9 +144,10 @@ class StreamParser:
         s.buf += data
         out = []
         while s.buf:
-            f, used = decode(s.buf, s.max_len)
+            f, used = decode(s.buf, s.max_len, s.fl)
             del s.buf[:used]
             if f is None: break
+            s.fl = f.fl                                  # the next frame most likely has the same check
             out.append(f)
         return out
 

@@ -114,6 +114,7 @@ class Link:
         s.grid_fcs = False                    # the GRiD's HELLO offered the Fletcher sum
         s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
+        s.trace = None                        # a deque while gridlink.bench --trace runs: (time, event)
 
     @property
     def maxpay(s):
@@ -123,6 +124,7 @@ class Link:
 
     # ---- outbound -----------------------------------------------------
     def send(s, mtype, body=b''):
+        if s.trace is not None: s.trace.append((time.monotonic(), 'send'))
         with s.lock:
             s.outq.append((mtype, bytes(body)))
             s.lock.notify_all()
@@ -180,6 +182,7 @@ class Link:
         # frames after it the Fletcher sum once the GRiD has switched.
         frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload, fl=s.rx_fl)
         s.last_answer = frame
+        if s.trace is not None: s.trace.append((time.monotonic(), 'pi ' + _name(kind, len(payload))))
         s.t.answer(frame)
         s.stats['tx_frames'] += 1; s.stats['tx_bytes'] += len(frame)
 
@@ -206,6 +209,8 @@ class Link:
         s.stats['tx_nak'] += 1
 
     def handle(s, f):
+        if s.trace is not None:
+            s.trace.append((time.monotonic(), 'grid ' + _name(f.type | (glp.MORE if f.more else 0), len(f.payload))))
         s.stats['rx_frames'] += 1; s.stats['rx_bytes'] += len(f.payload) + glp.OVERHEAD
         s.rx_fl = f.fl
         if f.fl: s.stats['rx_fletcher'] += 1
@@ -253,6 +258,11 @@ class Link:
                     s.lock.wait(min(left, 0.005) if s.source is not None else left)
             kind, payload = s._next_payload()
         s._answer(kind, payload)
+
+
+def _name(kind, n):
+    """A frame for gridlink.bench --trace: REQUEST+ (MORE), CELLS ...; 'big' when it carries 512 bytes or more."""
+    return glp.NAMES.get(kind & 0x7F, '%02X' % (kind & 0x7F)) + ('+' if kind & glp.MORE else '') + (' big' if n >= 512 else '')
 
 
 def serve(transport, link, stop):

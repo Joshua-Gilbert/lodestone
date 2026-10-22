@@ -71,6 +71,7 @@ class PicoProto:
         s.pending = collections.deque()
         s.pong = {}; s.last_pong = 0.0; s.hello_at = 0.0
         s.stats = collections.Counter()
+        s.trace = None                      # a deque while gridlink.bench --trace runs: (time, event)
         s.lock = threading.RLock()          # feed() runs in the reader thread, answer() in the link's
 
     # Pico -> Pi
@@ -119,6 +120,7 @@ class PicoProto:
             s._gen(gen)
             name = EVENTS.get(code, hex(code))
             s.stats[name] += 1
+            if s.trace is not None: s.trace.append((time.monotonic(), name))
             if name == 'ONLINE': s.online = True
             elif name == 'OFFLINE':
                 s.online = False

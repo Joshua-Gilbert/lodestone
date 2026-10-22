@@ -13,11 +13,12 @@ from gridlink import glp
 BIG = ''.join('line %05d: the quick brown fox jumps over the lazy dog\n' % i for i in range(400))
 
 
-def big_turn(**kw):
+def big_turn(trace=None, **kw):
     h = start([reply(('tool', 'str_replace_based_edit_tool',
                       {'command': 'create', 'path': 'A:\\BIG.TXT', 'file_text': BIG})),
                reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\BIG.TXT', 'view_range': [395, 400]})),
                reply(('text', 'Written and checked.'))], mode='edits', bridge='pico', **kw)
+    if trace is not None: h.link.trace = h.link.t.proto.trace = trace
     t0 = h.m.us
     assert h.turn('write a big file', sim_s=120)
     assert bytes(h.m.fs['A:\\BIG.TXT']) == BIG.replace('\n', '\r\n').encode()
@@ -42,6 +43,24 @@ def test_big_frames_are_split_for_the_pico():
 def test_old_frame_size_still_works():
     h, _ = big_turn(frame_cap=glp.GRID_RX_DEFAULT)
     assert h.link.maxpay == 246
+
+
+def test_trace():
+    # gridlink.bench --trace: the link's frames and the bridge's GPIB events, in order
+    import collections
+    tr = collections.deque()
+    big_turn(trace=tr)
+    names = [e for _, e in tr]
+    for want in ('pi REQUEST+ big', 'grid POLL', 'grid REPLY+ big', 'send'):
+        assert want in names, (want, sorted(set(names)))
+    assert all(a[0] <= b[0] for a, b in zip(tr, list(tr)[1:]))
+    # (the model sends no GPIB events; the firmware's reach the trace through PicoProto)
+    import struct
+    from gridlink.pico import PicoProto, cobs_encode, F_EVENT
+    p = PicoProto(lambda d: None, log=lambda *a: None)
+    p.connected = True; p.trace = collections.deque()
+    p.feed(cobs_encode(struct.pack('<BBHBI', F_EVENT, 0x1D, 0, 0, 0)))
+    assert [e for _, e in p.trace] == ['TX_DONE'], p.trace
 
 
 def test_old_claude_gets_246():
