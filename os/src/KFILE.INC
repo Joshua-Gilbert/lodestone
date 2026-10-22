@@ -371,12 +371,49 @@ create: call    get_path
         jc      .e1
         pop     bx
         jmp     give_handle
-.dev:   call    dev_open
+.dev:   call    dev_where               ; (OPEN's too)
+        jc      .e1
+        call    dev_open
         jc      .e1
         pop     bx
         jmp     give_handle
 .e1:    pop     bx
 .e:     jmp     fail
+
+; a device's name with a directory in front: that directory must be there,
+; as MS-DOS says (NOSUCH\NUL is 3: "IF EXIST DIR\NUL"), and the name no
+; wildcard or bad name (2).  [X:]\DEV\ in front is the devices' own, as in
+; MS-DOS.  AX kept; CF: AX = the error.  NUL, A:NUL, \DEV\NUL: no disk
+dev_where:
+        push    ax
+        mov     si, path_buf
+        cmp     byte [si+1], ':'
+        jne     .d
+        inc     si
+        inc     si
+.d:     cmp     word [si], '\D'
+        jne     .f
+        cmp     word [si+2], 'EV'
+        jne     .f
+        cmp     byte [si+4], '\'
+        jne     .f
+        add     si, 5
+.f:     lodsb
+        cmp     al, '\'
+        je      .r
+        or      al, al                  ; (CF clear)
+        jnz     .f
+        pop     ax
+        ret
+.r:     call    resolve
+        pop     si
+        jc      .x
+        cmp     byte [r_wild], 0        ; (CF clear)
+        jne     .w
+        xchg    ax, si
+        ret
+.w:     mov     ax, 3                   ; (a wildcard: 2, through nf_last)
+.x:     jmp     nf_last                 ; (a bad last name: 2)
 
 section .bss
 cr_new      resb 1
