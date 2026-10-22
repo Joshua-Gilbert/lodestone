@@ -1329,8 +1329,8 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
 - **A task the Executive started can end unannounced.** If it ends, and its number is used again before the Executive looks, its end isn't said. The list is still read again.
 - **CODE-B's change counts from the task's next turn.** For `SPF_BG`, it counts from its next INT 10h call. What it printed to its own screen before stays there.
 - **A task found writing the screen itself** still shows "auto", with "frozen behind" as what it is doing.
-- **A `.RUN` may not find room.** An `.EXE` from Return leaves 16 KB for one, but a task started otherwise (START, `MTMEM=`) can take memory right after the UI block; a `.RUN` that doesn't fit then gets "not enough memory".
-- **A TSR loaded from the Executive's own task while other tasks are there** (with Shift-Return, or at CODE-P's prompt) leaves the Executive's list empty, and its `.RUN`s unable to load, until the last task has ended and the block has moved past it. Load TSRs before starting tasks (M5a).
+- **A `.RUN` may not find room.** An `.EXE` from Return leaves 16 KB for one, but a task started otherwise (START, `MTMEM=`), or an `.EXE` whose minimum alone is more than the cap, can take memory right after the UI block; a `.RUN` that doesn't fit then gets "not enough memory".
+- **A TSR loaded from the Executive's own task while other tasks are there** (with Shift-Return, or at CODE-P's prompt) leaves the Executive's list empty, and its `.RUN`s unable to load, until the last task has ended and the block has moved past it. Load TSRs before starting tasks (M5a). Meanwhile the tasks can still be ended: CODE-Tab to each and quit it, or CODE-P's prompt with KILL (and UNPARK for a parked one).
 - **`MT_UI`'s entry is the Executive's alone.**
 
 **Cost:**
@@ -1353,7 +1353,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
 - **ROM 1** has 9,216 bytes left (13,312 before): LODE.SYS takes one sector more, LODEMT.SYS two, SYSTEM.RUN one, and TASKS.RUN four.
 - **Speed:** nothing on the paths that run all the time. The Executive's wait makes a far call every half second. `mt_spawn` compares the program's name with the lists' names, and `mt_end` does a few moves more.
 
-**Tests:** test_mt has 289 checks (267 before), in four new groups:
+**Tests:** test_mt has 290 checks (267 before), in four new groups:
 - **`t_exec`:**
   - Return with the switch off, as before.
   - The entry.
@@ -1365,7 +1365,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
   - CODE-P in the Executive's own task.
   - Too many tasks.
   - A task ending under the calculator.
-  - A TSR from Shift-Return with a task there: the UI block stays; once the task has ended, it moves past the TSR, and the list and the Tasks window are back.
+  - A TSR from Shift-Return with a task there: the UI block stays; once the task has ended, it moves past the TSR, and the list and the Tasks window are back. Then a task again: INT 33h hooked again at the new place, the Executive in front and back, the end.
 - **`t_lists`:**
   - The lists as read.
   - START with `BG=`, `FREEZE=`, `MTMEM=` and `/M:`.
@@ -1444,4 +1444,6 @@ Changes to existing checks:
 - CODE-B's change on a running task's output.
 - "auto" for a task found writing the screen.
 - In the Tasks window: F5, a click on the selected row, and ESC or CODE-T closing it with multitasking on. Its "No such task" and "Not enough memory or EMS" messages.
+- A junk `.EXE` header (past 1 MB, or sums that overflow) left to EXEC.
+- System reading `MULTITASK=` again after "back to the ROM's settings".
 - Any of it on the 1520.

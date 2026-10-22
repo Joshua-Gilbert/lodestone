@@ -2999,6 +2999,19 @@ def t_exec():
           % (s1[:2], b8[:1]), s1[:2] == (True, 0) and [t[2] for t in s1[2]] == ['Executive', 'MTLINE.COM']
           and b8[:1] == ['MTLINE.COM ended, exit code 3'] and s2 == (True, 240, True, True) and tw == b'\x01'
           and k.rd('run_active', 1) == b'\x00' and not k.crashed, (s1, b8, s2, tw))
+    # ... and MT after the move: a task again (INT 33h hooked again, at the new block), the Executive in front and
+    # back (task 0's state saved at its new place), the task's end
+    u1 = k.useg
+    ret(k, 'MTLINE.COM')
+    v33 = struct.unpack('<HH', k.pc.rd(0, 0x33 * 4, 4))
+    front(k, 0); k.settle()
+    s3 = (k.useg == u1, k.u16('ent_max'), 'TSR.COM' in k.exec_list(), k.pc.mode())
+    front(k, 1); line(k, '=2'); k.run_for(1.0); k.settle()
+    b9 = k.band()
+    check('... then Return on MTLINE.COM: a task again, INT 33h through MT (mt_i33) once more; the Executive in front '
+          'and back, its list whole (%s); the task ends: "%s"' % (s3[:3], b9[:1]),
+          v33 == (Y['mt_i33'], seg) and s3 == (True, 240, True, 0x40) and b9[:1] == ['MTLINE.COM ended, exit code 2']
+          and tstate(k)[:2] == ([(0, 1, 'Executive')], 0) and k.pc.mode() == 0x40 and not k.crashed, (v33, s3, b9))
 
 def t_lists():
     print('== LODE.INI\'s BG=, FREEZE= and MTMEM= (M7b)')
