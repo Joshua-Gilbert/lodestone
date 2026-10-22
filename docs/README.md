@@ -12,6 +12,7 @@ Design notes, kept in step with the claude.ai Project "Grid-OS":
 - `gridfox.md`: gridfox (`CLAUDE /W`), Firefox on the Pi shown as text on the GRiD through Term's path: how it works, its keys, the tests, and the picture view and shared browser to come.
 - `lodestone-multitasking.md`: multitasking (0.7, being built behind `MULTITASK=1`): the milestones, and what each one built.
 - `lodestone-pictures.md`: the plan for pictures on the GRiD: gridfox's picture view and Claude Code's clickable plots, sharing one CELLS pixel operation and one Pi-side picture layer; sizes measured, decisions.
+- `lodestone-paint.md`: the plan for Paint (`PAINT.RUN`), a fast painter that is also the BMP viewer: the screen as the canvas, two buffers in file order, INT 33h for the mouse, its resident cost, phases, tests, and the decisions still open.
 - `lodestone-audit-2026-10.md`: the first read-only audit (2026-10-17): duplication, memory and speed, with the fixes since marked.
 - `lodestone-audit-2026-10-20.md`: the second (2026-10-20): space and reuse, every finding re-checked by a second agent; reuse themes, bugs (fixed since), and an order of work.
 

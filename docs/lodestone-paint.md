@@ -39,9 +39,25 @@ Both hold the picture **in BMP file order**: line 399 first, 80 bytes per line, 
 | **Screen saver** | The core calls Paint's redraw routine afterwards, which copies C to the screen. No checkpoint timer is needed, because C always holds the committed picture. |
 | **Band in use** (`UI_MSG` / `UI_ASK`) | Afterwards, copy C's lines 360–399 back. No 3.2 KB band buffer is needed. |
 | **Save** | `3Ch`, then two writes: the 62-byte header and C (32,000 bytes). The kernel writes straight to disk, so big writes matter: one write per line cost 94 s for the capture. |
-| **Load** (native 640 × 400, 1-bit) | One `3Fh` reads the file straight into C (after reading the header), fixes the polarity if needed, then copies C to the screen. |
+| **Load** (native 640 × 400, 1-bit, bottom-up) | One `3Fh` reads the file straight into C (after reading the header), fixes the polarity if needed, then copies C to the screen. A top-down file, or any other size, goes through U (§4). |
 
-If the second buffer can't be allocated (MT with a small region, a TSR in the way), Paint runs without undo and says so once.
+If the second buffer can't be allocated (MT with a small region, a TSR in the way), Paint runs without undo **and without flood fill**, which needs U (§3), and says so once.
+
+**The band after the saver (checked, UICORE.INC:595 and :1810):**
+- `redraw_all` calls the program's redraw routine first, then `band_redraw`, then the open windows.
+- `band_redraw` always fills lines 360–399 with an inverse band, even when `band1` and `band2` are 0. So after the saver the band lands on the picture.
+- **The fix costs 0 resident bytes:**
+  - Paint's redraw routine copies C to the screen and sets a flag.
+  - Paint's loop sees the flag after `UI_POLL` and the other calls that wait (`UI_EVENT`, `UI_HELP`, `UI_FORM`), and copies C's lines 360–399 back. If a window is open, this waits until it closes.
+  - The band shows for a few milliseconds.
+- The alternative is a core guard ("no band when both lines are 0", about 10 B resident, API 7). It would change how a program that sets a blank band redraws, so it is not proposed.
+
+**Invariants:**
+- **What goes into C:** a commit (screen → C) happens only with the pointer hidden (INT 33h function 2) and no window open. Otherwise the pointer or a window would end up in the picture.
+- **The core's arrow:** the core shows its own arrow inside `UI_EVENT`, `UI_MSG`, `UI_ASK`, `UI_HELP` and `UI_FORM`. Paint calls function 2 before any of them, so two pointers never show, and function 1 after.
+- **Moving the tool window:** dragging a window by its title strip (`win_ev`) works only inside `UI_EVENT`, not `UI_POLL`. While the tool window is open, Paint waits in `UI_EVENT`.
+
+**Under MULTITASK=1:** Paint writes video memory directly. In the background it is frozen like any direct-writing DOS program, as the approved multitasking design does.
 
 ### The mouse: INT 33h, no core change
 `UI_EVENT` and `UI_POLL` report only left-button presses. A painter also needs motion, releases and the button state. The core's own INT 33h driver already provides them:
@@ -75,7 +91,12 @@ If the second buffer can't be allocated (MT with a small region, a TSR in the wa
 Every inner loop works on whole bytes or words where it can, and on the screen in place. Nothing is drawn twice.
 
 - **A line table in BSS:** 400 words, `y → bank offset`, filled at start from `row_di`'s formula. A pixel costs one table read, a mask read (an 8-byte `80h >> n` table) and one `or`/`and`/`xor` on `es:[di+bx]`. Lines step with `NEXTROW` and never recompute.
-- **One drawing op, patched in place:** `OR` (ink), `AND NOT` (erase / right button), `XOR` (rubber band, invert). Paint writes the opcode byte into the pixel loop and the span loop once per stroke. That is one copy of each loop instead of three, and smaller and faster than testing a mode per pixel. (This is safe on the 286: the patch is far ahead of execution.)
+- **One drawing op as two masks, with no code patching:** every write is `and [es:di], ah` then `xor [es:di], al`.
+  - For a pixel with bit b, AH = ~(b & A) and AL = b & X, where (A, X) is (FFh, FFh) for ink, (FFh, 00h) for erase or the right button, and (00h, FFh) for XOR (rubber band, invert).
+  - A pattern span uses A = FFh and X = the pattern's byte.
+  - So one loop serves every op, with no test of the mode per pixel.
+  - Patching the opcode (self-modifying code) was rejected: unicorn, under pcemu, keeps a stale translation of code it has already run (found in M4a), so the tests would only ever exercise the first op.
+  - If the line target in the table below is missed, the fallback is three copies of the line loop, chosen by an indirect jump once per stroke (about +60 B in PAINT.RUN).
 - **Spans are the workhorse:** `span(x0, x1, y, pattern byte)` handles the left edge mask, then `rep stosw` across the middle, then the right edge mask. Filled rectangles, ellipses, the eraser, thick brushes and flood fill all go through it. Patterns are 8 rows of 8 bits: the span's byte is `pat[y & 7]`, written `(screen & ~m) | (pat & m)`. Solid black and white are just two of the 8 patterns.
 - **The pencil and brush** draw a Bresenham segment from the last sample to this one. The 1,200-baud mouse gives about 40 packets a second, so fast strokes would otherwise have gaps. Each segment hides the pointer once, draws, and shows it once.
 - **Rubber bands** (line, rectangle, ellipse) draw in XOR: draw, then on the next sample undraw and draw again. The figure is drawn in ink only on release. The canvas is never copied for a preview.
@@ -113,7 +134,7 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
   - A negative height means top-down: the line step is flipped.
   - A smaller picture is centred on a dark screen.
   - **Polarity:** the brighter palette entry (R + G + B) is lit. A Windows black-on-white file therefore shows as lit paper with dark ink, as on the 1520's plasma. **I** inverts the view.
-  - Files that aren't exactly 640 × 400 are read through **U** in pieces and placed into C one line at a time. The native size reads straight into C.
+  - Files that aren't exactly 640 × 400, and top-down files, are read through **U** in pieces and placed into C one line at a time. A native-size bottom-up file reads straight into C.
 - **Option V2, deeper colour (a decision for Joshua, §9):** 4-, 8- and 24-bit uncompressed BMPs.
   - Each pixel's luma (`(77R + 150G + 29B) >> 8`, a 256-byte table from the palette for 4/8-bit) is compared with a 4 × 4 Bayer threshold (16 bytes) fixed to the screen. This is the ordered dither the Pi uses for gridfox pictures, scaled down.
   - Larger pictures are **fitted** by nearest-line and nearest-pixel steps (a DDA while streaming), keeping the aspect ratio.
@@ -164,6 +185,7 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
    - `kinds` gets `'BMP', k_picture - k_file, 4`, and `k_picture db 'Picture', 0`.
    - `confirm`'s `.write` branch becomes "opener ≥ 3: path the file, SI = `[apps + 2·(AL − 3)]`", with `apps dw s_write, s_paint` and `s_paint db 'PAINT.RUN', 0`.
    - About **30 B** in the UI block, so `ui_keep_end` moves by about 2 paragraphs and MEMSZ by about −0.03 KB. The exact numbers go in the PR, and the MT branches get the new OFF_MAP pins.
+   - `kind_of`'s other callers (EXEC.INC:541, 2714, 2780) only show the kind's string, so opener 4 doesn't affect them. This was checked.
 2. **An Executive hot key (optional, §9):** CODE-G "Paint", one `KEY()` entry, a help line and a 4-byte handler, about **45 B**. CODE-P is taken (the command prompt). CODE-G is free in `ex_keys`, and the help has room (14 of 18 lines used).
 3. **Nothing in the kernel, and no new UI API.** RUN_API stays 6, so PAINT.RUN runs on 0.6's LODE.SYS too.
 
@@ -195,7 +217,9 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
   - refused files: 4-bit (until P3), RLE, a truncated file, width 641, height 0, `bfOffBits` past the end. Each must give the message and leave the screen and memory unchanged.
 - **State:**
   - undo and redo after each tool;
-  - the screen saver mid-session (the redraw is C, exactly);
+  - the screen saver mid-session: the whole screen equals C afterwards, lines 360–399 included (the band repair), also with the tool window open during the saver;
+  - only one pointer ever drawn; C never holds a pointer or window pixel;
+  - every op (ink, erase, XOR, pattern) exercised in one session, so stale translated code can't hide a wrong op;
   - `UI_MSG` / `UI_ASK` restore lines 360–399;
   - Esc with changes asks;
   - only one buffer allocated → no undo, and still correct.
