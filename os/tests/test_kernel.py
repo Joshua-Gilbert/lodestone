@@ -1676,25 +1676,35 @@ def t_slashend():
 
 def t_dirlong():
     """DIR of a path longer than DIR's pattern takes (X26): "File not found", and the shell goes on.  Its
-    directory part ran past pat into pat_dir, and canon then copied over LCMD's own code: the machine hung.  A
-    75-character path is still taken; DIR from a deep directory (canon's output past pat_dir) works too.  (With
-    the bound gone, LCMD's overwritten code can loop inside one emulator call: then this test hangs, not fails.)"""
+    directory part ran past pat into pat_dir, and canon then copied over LCMD's own code: the machine hung.  The
+    limit is 78 characters: the longest whose directory part, with the \\ dir_all adds, ends inside pat; a real
+    78-character path is listed.  DIR from a deep directory (canon's output past pat_dir) works.  (With the
+    bound gone, LCMD's overwritten code can loop inside one emulator call: then this test hangs, not fails.)"""
     img = image('dirlong.img', os.path.join(GOS, 'src', 'LCMD.COM'))
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
     o = sh.run('dir ' + 'abcdefgh\\' * 8 + 'abcdefg\\x') + sh.run('dir ' + 'abcdefgh\\' * 9 + 'x') + sh.run('echo still here')
-    check('DIR of an 81- and a 91-character path (directory parts of 80 and 81): "File not found", the shell as it was (it hung)',
+    check('DIR of an 81- and an 82-character path (directory parts of 80 and 81): "File not found", the shell as it was (it hung)',
           o.count('File not found') == 2 and 'still here' in o and not k.crashed, o)
-    o = sh.run('dir ' + 'a' * 73 + '\\x') + sh.run('dir ' + 'a' * 74 + '\\x')
-    check('... 75 and 76 characters (each side of the limit): "File not found", no hang', o.count('File not found') == 2
-          and not k.crashed, o)
+    sh.run('md d')
+    p78, p79 = 'd\\..\\' * 15 + '.\\d', 'd\\..\\' * 14 + '.\\.\\.\\.\\d'
+    assert len(p78) == 78 and len(p79) == 79
+    o78 = sh.run('dir ' + p78); o79 = sh.run('dir ' + p79) + sh.run('echo still here')
+    check('a 78-character path naming a directory (the \\ dir_all adds still inside pat): its header, no hang (its *.* '
+          'spills past pat: File not found, as on main); 79: refused, "File not found" with no header',
+          'Directory of  A:\\D\n' in o78 and 'Directory' not in o79 and 'File not found' in o79 and 'still here' in o79
+          and not k.crashed, (o78, o79))
     deep = 'aaaaaaaa\\bbbbbbbb\\cccccccc\\dddddddd\\eeeeeeee\\ffffffff\\gggggggg'
     for p in deep.split('\\'):
         sh.run('md ' + p); sh.run('cd ' + p)
-    sh.run('echo x > f.txt')
-    o = sh.run('dir ' + 'z' * 60 + '\\..\\f.txt') + sh.run('dir') + sh.run('echo still here')
-    check('DIR from a 62-character directory of a 72-character relative path: no hang, and DIR there lists F.TXT',
-          'F        TXT' in o and 'still here' in o and not k.crashed, o)
+    sh.run('echo x > ffffffff.txt')
+    full = 'a:\\' + deep + '\\ffffffff.txt'
+    assert len(full) == 78
+    o = sh.run('dir ' + full)
+    check('DIR of a real 78-character path (an 8.3 name in a 63-character directory): listed', 'FFFFFFFF TXT' in o, o)
+    o = sh.run('dir ' + 'z' * 60 + '\\..\\f.txt') + sh.run('echo still here')
+    check('DIR from that directory of a 69-character relative path (canon past pat_dir): its header right, no hang',
+          'Directory of  A:\\' + deep.upper() + '\n' in o.replace('\r', '') and 'still here' in o and not k.crashed, o)
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
