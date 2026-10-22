@@ -1,4 +1,22 @@
 ; ERRS.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+fn 3A NOSUCH -> err 03
+fn 41 NOSUCH -> err 02
+fn 3A NOSUCH.TXT -> err 03
+fn 41 NOSUCH.TXT -> err 02
+fn 3A \NOSUCH -> err 03
+fn 41 \NOSUCH -> err 02
+fn 3A SUB\NOSUCH -> err 03
+fn 41 SUB\NOSUCH -> err 02
+fn 3A A:NOSUCH -> err 03
+fn 41 A:NOSUCH -> err 02
+fn 3A A.TXT -> err 05
+fn 43 A.TXT -> ok
+fn 3A SUB\X.TXT -> err 05
+fn 43 SUB\X.TXT -> ok
+fn 3A CON -> err 05
+fn 41 CON -> err 05
+fn 3A SUB\NUL -> err 05
+fn 41 SUB\NUL -> err 05
 fn 43 NOSUCH\A.TXT -> err 03
 fn 43 NOSUCH\A.TXT.X -> err 03
 fn 43 NOSUCH\A|B -> err 03
