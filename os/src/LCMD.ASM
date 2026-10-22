@@ -2476,6 +2476,7 @@ do_dir: mov     byte [dir_w], 0
 .ad:    mov     si, path1
         mov     di, pat
         call    make_pattern
+        jc      .nf                     ; (too long for pat: X26)
         ; header
         call    crlf
         mov     dl, [pat_drv]
@@ -2491,7 +2492,7 @@ do_dir: mov     byte [dir_w], 0
         mov     ah, 4Eh
         int     21h
         jnc     .e
-        mov     si, e_notfound
+.nf:    mov     si, e_notfound
         jmp     err
 .e:     inc     word [dir_n]
         cmp     byte [dir_w], 0
@@ -2694,7 +2695,8 @@ show_volume:
         jmp     puts_nl
 
 ; the pattern for path SI -> DI (pat), plus pat_drv and pat_dir
-; ("X:\DIR" for the header).  A directory gets \*.*, a bare name .*
+; ("X:\DIR" for the header).  A directory gets \*.*, a bare name .*.
+; CF if that is longer than pat takes
 make_pattern:
         push    di
         call    strcpy
@@ -2721,6 +2723,9 @@ make_pattern:
         call    strcpy
 .hdr:   ; the directory part, made absolute
         mov     si, pat
+        call    strlen                  ; (CF: the pattern doesn't fit pat
+        cmp     cx, 79                  ;  with its NUL.  What ran on is in
+        ja      .long                   ;  pat_dir, which canon then writes)
         call    name_part
         mov     [tmpw], si
         mov     al, [si]
@@ -2732,6 +2737,9 @@ make_pattern:
         mov     si, [tmpw]
         pop     ax
         mov     [si], al
+        clc
+        ret
+.long:  stc
         ret
 
 ; the drive of path SI -> AL (0 = A; the current one if it names none), SI
@@ -2857,11 +2865,12 @@ canon:  push    di
         je      .abs
         push    si                      ; relative: from the current directory
         mov     si, di
-        inc     dl
+        mov     byte [si], 0            ; (none if 47h fails, on a drive that
+        inc     dl                      ;  isn't there: not what was left)
         mov     ah, 47h
         int     21h
+        call    strend                  ; (DI -> its NUL)
         pop     si
-        call    .end
         jmp     .comp
 .abs:   inc     si
 .comp:  ; DI = end of what we have (no trailing \ except the root)
@@ -2911,11 +2920,6 @@ canon:  push    di
 .t:     mov     byte [di], 0
         pop     ax
         ret
-.end:   cmp     byte [di], 0
-        je      .ex
-        inc     di
-        jmp     .end
-.ex:    ret
 
 ; ---------------------------------------------------------------------
 ; TYPE file
@@ -4376,6 +4380,10 @@ canon2      equ canon1 + 82
         times   -(canon2 - canon1 < 3 + 65 + 1 + 12 + 1) resb 1
         times   -(src - canon2 < 3 + 65 + 1 + (LBUF - 6) + 13 + 1) resb 1
 dst         resb 80
+; DIR's canon (pat's directory part, 79 characters at most, after the
+; current directory) may run on past pat_dir, into canon2's 16 and src,
+; which DIR doesn't use; never into dst
+        times   -(dst - pat_dir < 3 + 65 + 1 + 79 + 1) resb 1
 setbuf      equ src                 ; (PATH, PROMPT, COMSPEC: no COPY then)
 setbuf2     resb 80
 failed      resb 1                  ; the command didn't work
