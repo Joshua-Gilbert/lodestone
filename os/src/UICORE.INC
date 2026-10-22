@@ -155,14 +155,12 @@ ent_max     resw 1              ; directory entries that fit (EXEC.INC)
 alloc_tab   resw NALLOC
 run_hdr     resb 16
 run_hnd     resw 1
-run_dta     resw 2
 run_ret     resw 1
 run_tail    resb 130
 pc_ch       resb 1              ; putc's character
 app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
                                 ;  Copy/Move destination, free while the
                                 ;  Executive asks or a .RUN runs (UIAPI.INC)
-rowtab      resw 400
 tmp         resb 96
 section ui
 
@@ -179,6 +177,17 @@ exec_main:
         call    run_cleanup             ; (a .RUN ended by ^C or an error)
         cmp     byte [mstarted], 0
         jne     .again
+        jmp     ui_boot                 ; (the first time: section uiboot)
+.again: call    m33_end
+        call    mouse_on
+.go:    call    set24
+        call    act_now
+        jmp     ex_start                ; the Executive
+
+; the first time only, from the top of the directory buffer (LODE.ASM's
+; ui_load put it there); nothing returns into it once ex_start runs
+section uiboot
+ui_boot:
         mov     byte [mstarted], 1
         mov     ax, UI_PARAS * 16       ; where .RUN programs load
         mov     [run_base], ax
@@ -196,17 +205,13 @@ exec_main:
         pop     es
         mov     [ui_paras], ax
         mov     word [ent_max], MAXENT
-        call    mkrows
         call    mouse_init
         mov     bl, 5                   ; the saver after 5 minutes, unless
         call    saver_set               ;  LODE.INI says otherwise
         call    font_boot               ; LODE.INI's font and saver delay
-        jmp     .go
-.again: call    m33_end
-        call    mouse_on
-.go:    call    set24
-        call    act_now
-        jmp     ex_start                ; the Executive
+        call    sysinfo                 ; (the machine, once: EXEC.INC)
+        jmp     exec_main.go
+section ui
 
 ; UI_FONT: AL = 0 -> SI = the font's name; AL = 1: SI = glyphs, DI = name
 api_font:
@@ -232,6 +237,7 @@ api_font:
         popa
         ret
 
+section uiboot
 ; at start-up: "FONT=NAME.FNT" in LODE.INI (a line of its own, any case)
 ; makes that file, on the drive started from, the font.  No file, no line,
 ; "FONT=", or a file that isn't exactly FONT_BYTES long: GRiD's font stays.
@@ -373,6 +379,8 @@ font_file:
         mov     al, 1
         jmp     api_font
 .x:     ret
+
+section ui
 
 ; UI_SAVER: AL = 0 -> AL = the saver's delay in minutes (0 never), AH = 1
 ; if it doesn't tidy; AL = 1: BL = minutes; AL = 2: BL = 1 not to tidy
@@ -614,6 +622,7 @@ redraw_all:
 ; =====================================================================
 ;  mouse (Microsoft serial protocol, 1200 7N1) - COM2 first, then COM1
 ; =====================================================================
+section uiboot
 mouse_init:
         call    m33_hook                ; INT 33h for DOS programs
         call    m33_soft
@@ -629,6 +638,8 @@ mouse_init:
         ret
 .found: mov     ax, [mbase]
         mov     [mfound], ax
+        jmp     mouse_hook
+section ui
 mouse_hook:
         cli
         push    0
@@ -699,6 +710,7 @@ uart_line:
         out     dx, al
         ret
 
+section uiboot
 ; CF clear if a Microsoft mouse answers 'M' at [mbase]
 mouse_probe:
         mov     dx, [mbase]
@@ -754,6 +766,8 @@ uart_drain:
         in      al, dx
         loop    .d
 .x:     ret
+
+section ui
 
 mouse_off:
         cmp     word [mbase], 0
@@ -1038,6 +1052,15 @@ move_cursor:
 .h:     mov     [uh], cx
         ret
 
+; reg (a row's offset, a column in it) -> the next row down: the next
+; bank, or from the fourth the first bank's next row (past 7FFFh: SF)
+%macro  NEXTROW 1
+        add     %1, 2000h
+        jns     %%ok
+        sub     %1, 8000h - 80
+%%ok:
+%endmacro
+
 ; compose the area (ux0, uy0, uw, uh) in ubuf:  cflags bit 0 = restore the
 ; old pointer's background, bit 1 = save under and draw the new pointer
 compose:
@@ -1045,14 +1068,14 @@ compose:
         push    es
         push    VSEG
         pop     es
-        xor     bp, bp                  ; 1. screen -> ubuf
+        mov     dx, [uy0]               ; 1. screen -> ubuf
+        call    row_di
+        add     di, [ux0]
+        mov     bx, di                  ; (BX: the row on the screen)
+        xor     bp, bp
 .r1:    cmp     bp, [uh]
         jae     .r1d
-        mov     bx, [uy0]
-        add     bx, bp
-        shl     bx, 1
-        mov     si, [rowtab+bx]
-        add     si, [ux0]
+        mov     si, bx
         mov     di, bp
         shl     di, 2
         add     di, ubuf
@@ -1062,6 +1085,7 @@ compose:
         inc     si
         inc     di
         loop    .c1
+        NEXTROW bx
         inc     bp
         jmp     .r1
 .r1d:   test    byte [cflags], 1        ; 2. old background back into ubuf
@@ -1118,14 +1142,15 @@ compose:
 .n2:    inc     bp
         cmp     bp, 13
         jb      .r3
-.nonew: xor     bp, bp                  ; 4. ubuf -> screen, once
+.nonew: mov     dx, [uy0]               ; 4. ubuf -> screen, once
+        call    row_di
+        add     di, [ux0]
+        mov     bx, di
+        xor     bp, bp
 .r4:    cmp     bp, [uh]
         jae     .r4d
-        mov     bx, [uy0]
-        add     bx, bp
-        shl     bx, 1
-        mov     di, [rowtab+bx]
-        add     di, [ux0]
+        mov     di, bx
+        NEXTROW bx
         mov     si, bp
         shl     si, 2
         add     si, ubuf
@@ -1158,14 +1183,12 @@ hide_cursor:
         push    es
         push    VSEG
         pop     es
-        xor     si, si
-.row:   mov     bx, [cur_y]
-        add     bx, si
-        cmp     bx, 400
-        jae     .done
-        shl     bx, 1
-        mov     di, [rowtab+bx]
+        mov     dx, [cur_y]
+        call    row_di
         add     di, [cur_xb]
+        xor     si, si
+.row:   cmp     dx, 400
+        jae     .done
         mov     bx, si
         shl     bx, 1
         mov     al, [cur_save+bx]
@@ -1174,7 +1197,9 @@ hide_cursor:
         jae     .nx
         mov     al, [cur_save+bx+1]
         mov     [es:di+1], al
-.nx:    inc     si
+.nx:    NEXTROW di
+        inc     dx
+        inc     si
         cmp     si, 13
         jb      .row
 .done:  mov     byte [curvis], 0
@@ -1185,21 +1210,17 @@ hide_cursor:
 ; =====================================================================
 ;  drawing primitives (mode 40h: 640x400, 4 interleaved banks of 100 rows)
 ; =====================================================================
-mkrows: xor     bx, bx
-        mov     di, rowtab
-.l:     mov     ax, bx
-        and     ax, 3
-        shl     ax, 13
-        mov     dx, bx
+; DX = y (0-399) -> DI = its row's offset: (y & 3) * 2000h + (y / 4) * 80
+row_di: push    dx
+        mov     di, dx
+        and     di, 3
+        ror     di, 3                   ; (bits 0-1 to 13-14)
         shr     dx, 2
         imul    dx, dx, 80
-        add     ax, dx
-        mov     [di], ax
-        add     di, 2
-        inc     bx
-        cmp     bx, 400
-        jb      .l
+        add     di, dx
+        pop     dx
         ret
+
 
 ; mode 40h; CF if the panel doesn't have it
 hires:  push    ax
@@ -1248,15 +1269,14 @@ fill_band:
         push    es
         push    VSEG
         pop     es
-.r:     mov     si, dx
-        shl     si, 1
-        mov     di, [rowtab+si]
-        add     di, bx
+        call    row_di
+        lea     si, [di+bx]
+.r:     mov     di, si
         push    cx
         mov     cx, bp
         rep     stosb
         pop     cx
-        inc     dx
+        NEXTROW si
         loop    .r
         pop     es
 .none:  popa
@@ -1289,17 +1309,16 @@ invert_band:
         push    es
         push    VSEG
         pop     es
-.r:     mov     si, dx
-        shl     si, 1
-        mov     di, [rowtab+si]
-        add     di, bx
+        call    row_di
+        lea     si, [di+bx]
+.r:     mov     di, si
         push    cx
         mov     cx, bp
 .c:     not     byte [es:di]
         inc     di
         loop    .c
         pop     cx
-        inc     dx
+        NEXTROW si
         loop    .r
         pop     es
 .none:  popa
@@ -1339,11 +1358,9 @@ vline:  pusha
         mov     cl, al
         shr     ah, cl
         pop     cx
-.r:     mov     si, dx
-        shl     si, 1
-        mov     di, [rowtab+si]
-        or      [es:di+bx], ah
-        inc     dx
+        call    row_di
+.r:     or      [es:di+bx], ah
+        NEXTROW di
         loop    .r
         pop     es
 .none:  popa
@@ -1405,10 +1422,8 @@ putsn:  pusha
         mov     cx, bp
 .n:     jcxz    .x
         mov     bp, ax                  ; (BP high byte: the mask)
-        mov     di, dx
-        shl     di, 1
-        mov     di, [rowtab+di]
-        add     di, bx
+        imul    di, dx, 20              ; (y: a multiple of 4, the glyph's rows
+        add     di, bx                  ;  below are bank 0's to 3's from it)
         push    VSEG
         pop     es
         jmp     .l
@@ -1625,7 +1640,8 @@ sb_hex4:                                ; AX as 4 hex digits at DI
         ret
 
 ; AX = DOS error -> its message at DI.  83 (failed on a critical error)
-; says what the disk said instead.
+; says what the disk said instead: INT 24h's code k (DI + 1, 1-13) is DOS's
+; error k + 18, which dos_msgs holds too.
 api_sberr:
         push    ax
         push    bx
@@ -1638,7 +1654,9 @@ api_sberr:
         or      ax, ax
         jz      .chk
         mov     bx, ax
-        mov     si, crit_msgs
+        cmp     ax, 13
+        ja      .other                  ; (said as its own number, as before)
+        add     bl, 18
 .chk:   or      bh, bh                  ; (the tables hold codes under 256)
         jnz     .other
 .find:  mov     al, [si]
@@ -1962,10 +1980,12 @@ win_save:
         mov     cx, [si+W_H]
         mov     bp, [si+W_W]
         mov     ax, [si+W_COL]
-.r:     mov     bx, dx
-        shl     bx, 1
-        mov     si, [rowtab+bx]
-        add     si, ax
+        push    di
+        call    row_di
+        add     di, ax
+        mov     bx, di                  ; (BX: the row on the screen)
+        pop     di                      ; (wseg:DI)
+.r:     mov     si, bx
         push    cx
         push    ds
         push    VSEG
@@ -1974,7 +1994,7 @@ win_save:
         rep     movsb
         pop     ds
         pop     cx
-        inc     dx
+        NEXTROW bx
         loop    .r
         pop     es
         pop     ds
@@ -2085,16 +2105,16 @@ win_restore:
         mov     bp, [si+W_W]
         mov     ax, [si+W_COL]
         mov     si, di
-        mov     ds, [wseg]
-.r:     mov     bx, dx
-        shl     bx, 1
-        mov     di, [cs:rowtab+bx]
+        call    row_di
         add     di, ax
+        mov     bx, di                  ; (BX: the row on the screen)
+        mov     ds, [wseg]
+.r:     mov     di, bx
         push    cx
         mov     cx, bp
         rep     movsb
         pop     cx
-        inc     dx
+        NEXTROW bx
         loop    .r
         pop     es
         pop     ds
@@ -3068,32 +3088,46 @@ xor_rect:
         pop     es
         popa
         ret
-.h:     pusha                           ; pixels AX+1..DI-1 on row DX
+.h:     pusha                           ; pixels AX+1..DI-1 on row DX, a byte
+        push    ax                      ;  at a time between the end bytes
+        lea     ax, [di-1]
+        call    .col                    ; the last: BX its byte, CH its pixels
+        neg     al                      ;  up to it (bit 20h -> E0h; .col
+        mov     ch, al                  ;  keeps CX)
+        mov     bx, si
+        pop     ax
         inc     ax
-        mov     cx, di
-        sub     cx, ax
-        call    .col
-        mov     bx, dx
-        shl     bx, 1
-        mov     bx, [rowtab+bx]
-.hl:    xor     [es:bx+si], al
-        ror     al, 1                   ; (past the byte's last bit: the next)
-        adc     si, 0
-        loop    .hl
+        call    .col                    ; the first: SI its byte, AL its
+        mov     cl, al                  ;  pixels from it on (20h -> 3Fh)
+        dec     cl
+        or      al, cl
+        call    row_di
+        add     di, si
+        sub     bx, si                  ; BX = bytes after the first
+        jz      .h1
+        xor     [es:di], al
+        mov     al, 0FFh
+.hn:    inc     di
+        dec     bx
+        jz      .h1
+        not     byte [es:di]
+        jmp     short .hn
+.h1:    and     al, ch                  ; the last byte (or the only one)
+        xor     [es:di], al
         popa
         ret
 .v:     pusha                           ; BP rows from DX at pixel AX
         mov     cx, bp
         call    .col
-.vl:    mov     bx, dx
-        shl     bx, 1
-        mov     bx, [rowtab+bx]
-        xor     [es:bx+si], al
-        inc     dx
+        call    row_di
+        mov     bx, di
+.vl:    xor     [es:bx+si], al
+        NEXTROW bx
         loop    .vl
         popa
         ret
 .col:   mov     si, ax                  ; pixel AX -> SI = its byte, AL = its bit
+                                        ; (CX and AH kept: .h holds a mask in CH)
         shr     si, 3
         push    cx
         mov     cl, al
@@ -3578,19 +3612,11 @@ ui_room:
         mov     es, ax
         mov     word [es:1], 8          ; the system's, called UI
         mov     word [es:8], 'UI'
-        push    cs
-        pop     es
-        mov     ah, 2Fh                 ; the DTA, if it was in the old block
-        int     21h                     ;  (DX = the old block still)
-        mov     ax, es
-        cmp     ax, dx
-        jne     .dta
         push    dx
-        mov     dx, bx
-        mov     ah, 1Ah                 ; (DS = the new block)
+        mov     dx, exec_dta            ; the DTA, in the new block (DS)
+        mov     ah, 1Ah
         int     21h
-        pop     dx
-.dta:   mov     es, dx                  ; the old block goes
+        pop     es                      ; the old block goes
         mov     ah, 49h
         int     21h
         push    cs
@@ -3710,12 +3736,6 @@ run_app:
 .z:     xor     al, al
         rep     stosb
         mov     word [crit_err], 0
-        push    es
-        mov     ah, 2Fh                 ; the DTA, put back afterwards
-        int     21h
-        mov     [run_dta], bx
-        mov     [run_dta+2], es
-        pop     es
         mov     si, [run_ret]           ; the argument (the caller's redraw
                                         ;  routine stays until it sets its own)
         call    bp
@@ -3725,11 +3745,9 @@ run_app:
         push    cs
         pop     es
         mov     [run_ret], ax
-        push    ds
-        lds     dx, [run_dta]
-        mov     ah, 1Ah
+        mov     dx, exec_dta            ; the Executive's DTA again (the only
+        mov     ah, 1Ah                 ;  one it has: EXEC.INC ex_start)
         int     21h
-        pop     ds
         call    run_cleanup
         popa
         mov     ax, [run_ret]
@@ -3968,15 +3986,19 @@ months      db 'JanFebMarAprMayJunJulAugSepOctNovDec'
 s_defrag    db 'A:\DEFRAG.COM', 0
 s_svarg     db 'A: /S M=', 0
 s_svfont    db ' F=', 0
+section uiboot
 s_ini       db '@:\LODE.INI', 0
+section ui
 s_pathv     db 'PATH='
+section uiboot
 font_path   db '@:\'                ; "X:\NAME.FNT": on the drive started from
             times 13 db 0
+section ui
 exec_fcb    db 0, '           ', 0, 0, 0, 0
 run_epb     dw 0, run_tail, 0, exec_fcb, 0, exec_fcb, 0 ; exec_raw's EXEC block:
                                 ;  our environment; the segments are CS's
 s_err       db 'error ',0
-; DOS errors (code, text); the INT 24h ones below
+; DOS errors (code, text); 19-31 are INT 24h's too (its code + 18)
 dos_msgs    db 2, 'File not found',0
             db 3, 'Path not found',0
             db 4, 'Too many files open',0
@@ -3986,31 +4008,21 @@ dos_msgs    db 2, 'File not found',0
             db 15, 'No such drive',0
             db 18, 'No more files',0
             db 19, 'Disk is write-protected',0
+            db 20, 'Unknown drive',0
             db 21, 'Drive not ready (no disk?)',0
+            db 22, 'Disk error (unknown command)',0
             db 23, 'Disk error (data)',0
+            db 24, 'Disk error (bad request)',0
             db 25, 'Disk error (seek)',0
             db 26, 'Not a DOS disk',0
             db 27, 'Disk error (sector not found)',0
+            db 28, 'Printer out of paper',0
             db 29, 'Disk error (write)',0
             db 30, 'Disk error (read)',0
             db 31, 'Disk error',0
             db 39, 'Disk is full',0
             db 80, 'File already exists',0
             db 83, 'Disk error',0
-            db 0FFh
-crit_msgs   db 1, 'Disk is write-protected',0
-            db 2, 'Unknown drive',0
-            db 3, 'Drive not ready (no disk?)',0
-            db 4, 'Disk error (unknown command)',0
-            db 5, 'Disk error (data)',0
-            db 6, 'Disk error (bad request)',0
-            db 7, 'Disk error (seek)',0
-            db 8, 'Not a DOS disk',0
-            db 9, 'Disk error (sector not found)',0
-            db 10, 'Printer out of paper',0
-            db 11, 'Disk error (write)',0
-            db 12, 'Disk error (read)',0
-            db 13, 'Disk error',0
             db 0FFh
 
 lasttick    dw 0

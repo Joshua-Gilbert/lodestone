@@ -137,8 +137,100 @@ start:  mov     sp, stack_top
 .quit:  mov     al, [errlvl]
         mov     ah, 4Ch
         int     21h
-.inter: mov     si, s_banner
+; ---------------------------------------------------------------------
+; the environment: a 1 KB copy of our own, so SET has room
+env_init:
+        mov     bx, ENVPARA
+        mov     ah, 48h
+        int     21h
+        jc      .x
+        mov     es, ax
+        xor     di, di
+        mov     cx, ENVPARA * 8
+        xor     ax, ax
+        rep     stosw
+        push    ds
+        mov     ds, [mypsp]
+        mov     ax, [2Ch]
+        or      ax, ax                  ; (none at all: start empty)
+        jz      .none
+        mov     ds, ax
+        xor     si, si
+        xor     di, di
+.c:     cmp     byte [si], 0
+        je      .d
+.s:     lodsb
+        stosb
+        or      al, al
+        jnz     .s
+        cmp     di, ENVPARA * 16 - 2
+        jb      .c
+.d:     pop     ds
+        push    es
+        mov     es, [mypsp]             ; give the old one back
+        mov     ax, [es:2Ch]
+        pop     bx
+        mov     [es:2Ch], bx
+        mov     es, ax
+        mov     ah, 49h
+        int     21h
+.x:     push    cs
+        pop     es
+        ret
+.none:  pop     ds
+        mov     ax, es
+        mov     es, [mypsp]
+        mov     [es:2Ch], ax
+        jmp     .x
+
+; the first shell: COMSPEC if nobody set it, then \AUTOEXEC.BAT
+perm_start:
+        mov     si, s_comspecv
+        call    env_find
+        push    cs
+        pop     es
+        jnc     .ae
+        mov     di, setbuf
+        mov     si, s_comspecv
+        call    strcpy
+        mov     ah, 19h
+        int     21h
+        add     al, 'A'
+        stosb
+        mov     si, s_selfname
+        call    strcpy
+        mov     si, setbuf
+        call    env_set_line
+.ae:    mov     ah, 19h                 ; X:\AUTOEXEC.BAT
+        int     21h
+        add     al, 'A'
+        mov     [prog], al
+        mov     si, s_autoexec
+        mov     di, prog + 1
+        call    strcpy
+        mov     dx, prog
+        mov     ax, 4300h
+        int     21h
+        jc      .x
+        mov     si, s_autoname
+        mov     di, cword
+        call    strcpy
+        mov     word [argp], s_empty
+        call    bat_start
+.x:     ret
+
+s_banner    db 13, 10, 'Lodestone 0.6 command shell (DOS 3.30 compatible)', 13, 10
+            db 'Type EXIT to return to the Executive.', 13, 10, 0
+s_comspecv  db 'COMSPEC=', 0
+s_selfname  db ':\LCMD.COM', 0
+s_autoexec  db ':\AUTOEXEC.BAT', 0
+s_autoname  db 'AUTOEXEC', 0
+
+start.inter:
+        mov     si, s_banner
         call    puts
+        ; (from start to here: only run once, so the history lies over
+        ;  it: hist equ start)
 
 ; ---- the prompt loop ----------------------------------------------------
 prompt_loop:
@@ -1721,7 +1813,9 @@ bat_arg:
 ; the command line into `line' (NUL-terminated).  From the keyboard with
 ; editing (Left, Right, Home, End, Backspace, Del, ESC clears), history
 ; (Up, Down, F3: the rest of the last line) and Tab completion of names
-; (again: the next one); from a file or another device DOS's own
+; (again: the next one); from a file or another device DOS's own.
+; Only prompt_loop calls it: the history it writes lies over the start-up
+; code, which /C still runs after its command
 edit_line:
         call    con_in                  ; standard input the console?
         jc      .dos
@@ -3662,88 +3756,6 @@ getnum: push    cx
         pop     cx
         ret
 
-; ---------------------------------------------------------------------
-; the environment: a 1 KB copy of our own, so SET has room
-env_init:
-        mov     bx, ENVPARA
-        mov     ah, 48h
-        int     21h
-        jc      .x
-        mov     es, ax
-        xor     di, di
-        mov     cx, ENVPARA * 8
-        xor     ax, ax
-        rep     stosw
-        push    ds
-        mov     ds, [mypsp]
-        mov     ax, [2Ch]
-        or      ax, ax                  ; (none at all: start empty)
-        jz      .none
-        mov     ds, ax
-        xor     si, si
-        xor     di, di
-.c:     cmp     byte [si], 0
-        je      .d
-.s:     lodsb
-        stosb
-        or      al, al
-        jnz     .s
-        cmp     di, ENVPARA * 16 - 2
-        jb      .c
-.d:     pop     ds
-        push    es
-        mov     es, [mypsp]             ; give the old one back
-        mov     ax, [es:2Ch]
-        pop     bx
-        mov     [es:2Ch], bx
-        mov     es, ax
-        mov     ah, 49h
-        int     21h
-.x:     push    cs
-        pop     es
-        ret
-.none:  pop     ds
-        mov     ax, es
-        mov     es, [mypsp]
-        mov     [es:2Ch], ax
-        jmp     .x
-
-; the first shell: COMSPEC if nobody set it, then \AUTOEXEC.BAT
-perm_start:
-        mov     si, s_comspecv
-        call    env_find
-        push    cs
-        pop     es
-        jnc     .ae
-        mov     di, setbuf
-        mov     si, s_comspecv
-        call    strcpy
-        mov     ah, 19h
-        int     21h
-        add     al, 'A'
-        stosb
-        mov     si, s_selfname
-        call    strcpy
-        mov     si, setbuf
-        call    env_set_line
-.ae:    mov     ah, 19h                 ; X:\AUTOEXEC.BAT
-        int     21h
-        add     al, 'A'
-        mov     [prog], al
-        mov     si, s_autoexec
-        mov     di, prog + 1
-        call    strcpy
-        mov     dx, prog
-        mov     ax, 4300h
-        int     21h
-        jc      .x
-        mov     si, s_autoname
-        mov     di, cword
-        call    strcpy
-        mov     word [argp], s_empty
-        call    bat_start
-.x:     ret
-
 env_seg:                                ; AX (and ES) = environment
         push    ds
         mov     ds, [cs:mypsp]
@@ -4190,16 +4202,10 @@ x_bat       db 'BAT', 0
             times -(x_bat != x_com + 8) db 0
 wordends    db ' ', 9, '/', '=', ';', ',', '+', 0
 
-s_banner    db 13, 10, 'Lodestone 0.6 command shell (DOS 3.30 compatible)', 13, 10
-            db 'Type EXIT to return to the Executive.', 13, 10, 0
 s_ver       db 13, 10, 'Lodestone version 0.6 (DOS 3.30 compatible)', 13, 10, 0
 s_crlf      db 13, 10, 0
 s_defprompt db '$P$G', 0
 s_promptv   db 'PROMPT=', 0
-s_comspecv  db 'COMSPEC=', 0
-s_selfname  db ':\LCMD.COM', 0
-s_autoexec  db ':\AUTOEXEC.BAT', 0
-s_autoname  db 'AUTOEXEC', 0
 s_empty     db 0
 s_pathv     db 'PATH=', 0
 s_nopath    db 'No Path', 0
@@ -4392,7 +4398,6 @@ hist_end    resw 1
 hist_cur    resw 1
 rsave       resw 2 * RMAX
 call_segs   resw CMAX
-hist        resb HIST
 ; a batch file's place, the line being run and FOR's state: CALL keeps
 ; them in a block of its own while the other batch file runs
 bat_ctx:
@@ -4417,3 +4422,6 @@ BATCTX      equ $ - bat_ctx
             resb 1024
 stack_top:
 prog_end:
+hist        equ start               ; (the code that starts LCMD: the
+                                    ;  prompt is the first to write it)
+        times   -(prompt_loop - start < HIST) resb 1

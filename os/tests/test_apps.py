@@ -92,11 +92,75 @@ def click(k, x, y):
     k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.settle()
 
 # ---------------------------------------------------------------------
+def xor_rect_unit():
+    """xor_rect as UICORE.INC has it (with row_di and NEXTROW), assembled on
+    its own and run under unicorn against a model of the frame XORed into a
+    random screen: every start bit, widths from 2 to 41 pixels, rows in each
+    bank, several heights, frames to x 639 and to row 399; DF set every other
+    time, DS its own segment and untouched."""
+    import random
+    from unicorn import Uc, UC_ARCH_X86, UC_MODE_16
+    from unicorn.x86_const import (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI,
+                                   UC_X86_REG_DI, UC_X86_REG_BP, UC_X86_REG_SP, UC_X86_REG_CS, UC_X86_REG_DS,
+                                   UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_EFLAGS)
+    s = open(os.path.join(GOS, 'src', 'UICORE.INC'), 'rb').read().decode('latin-1')
+    part = lambda a, b: s[s.index(a):s.index(b, s.index(a))]
+    src = ('cpu 286\norg 0\nVSEG equ 0B800h\n' + part('%macro  NEXTROW', '; compose the area') +
+           'go: call xor_rect\n hlt\n' + part('row_di:', '; mode 40h') + part('xor_rect:', '; field SI\'s value'))
+    asm, out = os.path.join(OUT, 'XORUNIT.ASM'), os.path.join(OUT, 'XORUNIT.BIN')
+    open(asm, 'w').write(src)
+    subprocess.run(['nasm', '-f', 'bin', '-o', out, asm], check=True)
+    code = open(out, 'rb').read()               # go: at 0 (the macro makes no code), its hlt at 3
+    assert code[3] == 0xF4, code[:4].hex()
+    mu = Uc(UC_ARCH_X86, UC_MODE_16)
+    mu.mem_map(0, 0x100000)
+    mu.mem_write(0x10000, code)
+    regs = (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP)
+    rnd = random.Random(1520)
+    screen, dseg = bytes(rnd.getrandbits(8) for _ in range(0x10000)), bytes(rnd.getrandbits(8) for _ in range(0x10000))
+    cases = [(x0, x0 + w, y, h) for y in (0, 1, 2, 3, 6, 389) for h in (2, 3, 5, 11)
+             for x0 in range(0, 24) for w in range(2, 42)]
+    cases += [(x0, 639, y, h) for x0 in range(600, 638) for y, h in ((0, 2), (3, 11), (388, 12))]
+    cases += [(x0, x0 + w, y, 400 - y) for y in range(388, 399) for x0 in (0, 5, 600) for w in (2, 9, 30)]
+    cases += [(0, 639, 0, 400), (1, 638, 1, 399)]
+    bad, n = [], 0
+    for x0, x1, y, h in cases:                  # DI: the right edge's pixel
+        mu.mem_write(0xB8000, screen)
+        mu.mem_write(0x50000, dseg)
+        vals = (x0, 0x1234, h, y, 0x5678, x1, 0x9ABC)
+        for r, v in zip(regs, vals): mu.reg_write(r, v)
+        for r, v in ((UC_X86_REG_CS, 0x1000), (UC_X86_REG_DS, 0x5000), (UC_X86_REG_ES, 0x2000),
+                     (UC_X86_REG_SS, 0x3000), (UC_X86_REG_SP, 0xFFFE), (UC_X86_REG_EFLAGS, 0x0402 if n & 1 else 0x0002)):
+            mu.reg_write(r, v)
+        mu.emu_start(0x10000, 0x10003, count=1000000)
+        want = set()                            # the frame, each pixel XORed as often as drawn
+        for yy in range(y, y + h):
+            want ^= {(x0, yy)}; want ^= {(x1, yy)}
+        for xx in range(x0 + 1, x1):
+            want ^= {(xx, y)}; want ^= {(xx, y + h - 1)}
+        exp = bytearray(screen)
+        for px, py in want:
+            exp[(py & 3) * 0x2000 + (py >> 2) * 80 + px // 8] ^= 0x80 >> (px & 7)
+        kept = [mu.reg_read(r) for r in regs] == list(vals) and mu.reg_read(UC_X86_REG_SP) == 0xFFFE \
+            and mu.reg_read(UC_X86_REG_ES) == 0x2000 and mu.reg_read(UC_X86_REG_DS) == 0x5000 \
+            and bytes(mu.mem_read(0x50000, 0x10000)) == dseg
+        n += 1
+        if bytes(mu.mem_read(0xB8000, 0x10000)) != bytes(exp) or not kept:     # (all of ES: nothing past the plasma)
+            bad.append((x0, x1, y, h, kept))
+    return n, bad
+
+# ---------------------------------------------------------------------
 def t_core():
     print('== core (UITEST.RUN)')
+    n, bad = xor_rect_unit()
+    check('xor_rect on its own (%d frames on a random screen: every start bit, 2-41 pixels wide, each bank, heights '
+          '2-11, to x 639 and row 399, DF either way): the frame XORed once, corners included, nothing else touched, '
+          'the registers, DS and ES kept' % n, n > 20000 and not bad, bad[:5])
     img = image('core.img', UITEST, os.path.join(GOS, 'src', 'LCMD.COM'))
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     free0, ui0 = free_paras(k)
+    check('the map: uibss on the paragraph after ui_image_end (UI_PARAS, UIBOOT_ORG and the rest count on it; NASM can\'t check it)',
+          k.Y['ui_bss_start'] == (k.Y['ui_image_end'] + 15) & ~15, (hex(k.Y['ui_bss_start']), hex(k.Y['ui_image_end'])))
     shot(k, 'executive')
     k.key(ktest.F1); shot(k, 'executive_help'); k.key(ktest.ENTER)
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
@@ -141,6 +205,30 @@ def t_core():
     check('ask: Return = confirmed', has(k, 'confirmed'), screen(k))
     k.key(CODE['E'])
     check('error text: 19 is "Disk is write-protected"', has(k, 'Disk is write-protected'), screen(k))
+    check('... drawn where it was asked to be: column 2 of row 260', dict(k.ocr()).get(260, '')[:25] == '  Disk is write-protected',
+          dict(k.ocr()).get(260))
+    # each INT 24h code through 83 (the message is DOS's code + 18 since U4),
+    # one past them, and the DOS codes only INT 24h's table used to hold
+    line, a, case = k.u16('run_base') + run_syms('tests/UITEST.ASM')['line'], k.Y['api_sberr'], []
+    def sberr(pc):
+        if case and pc.r('ip') == a and pc.r('cs') == k.useg:
+            ax, crit = case.pop(0)
+            pc.w('ax', ax); k.wr('crit_err', struct.pack('<H', crit))
+    k.hooks.append(sberr)
+    want = {(83, 1): 'Disk is write-protected', (83, 2): 'Unknown drive', (83, 3): 'Drive not ready (no disk?)',
+            (83, 4): 'Disk error (unknown command)', (83, 5): 'Disk error (data)', (83, 6): 'Disk error (bad request)',
+            (83, 7): 'Disk error (seek)', (83, 8): 'Not a DOS disk', (83, 9): 'Disk error (sector not found)',
+            (83, 10): 'Printer out of paper', (83, 11): 'Disk error (write)', (83, 12): 'Disk error (read)',
+            (83, 13): 'Disk error', (83, 14): 'error 14', (83, 0): 'Disk error', (20, 0): 'Unknown drive',
+            (22, 0): 'Disk error (unknown command)', (24, 0): 'Disk error (bad request)', (28, 0): 'Printer out of paper',
+            (32, 0): 'error 32'}
+    got = {}
+    for c in want:
+        case.append(c); k.key(CODE['E'])
+        got[c] = k.pc.rd(k.useg, line, 80).split(b'\0')[0].decode()
+    k.hooks.remove(sberr)
+    check("error text: an INT 24h error (83) says the disk's (1-13), or its number; DOS's 20/22/24/28 say theirs",
+          got == want, [(c, got[c]) for c in want if got[c] != want[c]])
     before = k.pc.rd(0xB800, 0, 0x8000)
     k.key(ktest.F1)
     check('help window from the key table', has(k, 'CODE-F     the form') and has(k, 'ESC        leave'), screen(k))
@@ -472,8 +560,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch): the directory buffer is lent while it runs' % kb,
-          kb >= 563.7, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table): the directory buffer is lent while it runs' % kb,
+          kb >= 566.3, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -503,6 +591,9 @@ def t_memory():
     m33seg = k.pc.u16(0, 0x33 * 4 + 2)
     check('... the kernel, INT 24h, the mouse and INT 33h know where it went', k.pc.u16(0x60, k.Y['ui_seg']) == k.useg and seg == k.useg and
           mseg == k.useg and m33seg == k.useg, (hex(seg), hex(mseg), hex(m33seg)))
+    dta = (k.pc.u16(0x60, k.Y['dta'] + 2), k.pc.u16(0x60, k.Y['dta']))
+    check("... and the Executive's DTA is exec_dta in the new block (ui_room sets it there)", dta == (k.useg, k.Y['exec_dta']),
+          (dta, (k.useg, k.Y['exec_dta'])))
     k.key(CODE['U'])
     check('... and .RUN programs load again (System)', has(k, 'Free for programs'), screen(k))
     k.key(ktest.ESC)
@@ -607,6 +698,17 @@ def t_font():
     to_display(k)
     k.key(ktest.ENTER)
     check('a .FNT of the wrong size is passed over (GRiD\'s stays)', core_font(k) == GRIDF and not k.crashed, screen(k))
+    # the start-up's reads at their longest: they share the directory buffer with the start-up
+    # code (section uiboot), which sits just past them.  4,095 bytes of LODE.INI with FONT= in
+    # them, then a font file of FONT_BYTES (taken) or of one byte more (read, and passed over)
+    for n in (1536, 1537):
+        f = os.path.join(OUT, 'EDGE.FNT'); data = bytes((i * 7 + 1) & 0xFF for i in range(n)); open(f, 'wb').write(data)
+        line = b'FONT=EDGE.FNT\r\n'
+        open(ini, 'wb').write(line + b'X' * (4095 - len(line) - 2) + b'\r\n' + b'Y' * 500)
+        k = ktest.KPC(image('font5.img', SYSTEM, f, ini)); k.start()
+        check('a LODE.INI longer than the 4,095 bytes read, FONT= in them, a font file of %d bytes: %s; the Executive comes up'
+              % (n, 'taken' if n == 1536 else 'GRiD\'s stays'), (core_font(k) == data if n == 1536 else core_font(k) == GRIDF)
+              and not k.crashed and 'SYSTEM.RUN' in k.exec_list() and k.u16('convkb') > 0, (k.where(), k.exec_list(), k.u16('convkb')))
 
 # ---------------------------------------------------------------------
 def t_saver():
@@ -870,8 +972,13 @@ def t_mouse():
     check('... and the program runs to its end', k.band()[0] == 'M33TEST.COM ended', k.band())
     # the graphics pointer, bit for bit; the reset and shape asked with DF set
     k = ktest.KPC(image('m33g.img', M33['M33GFX'])); k.pc.mouse = True; k.start()
-    rows0 = k.rd('rowtab', 800)
+    pre, i33 = [], k.Y['int33_ui']      # tmp, below m33_st, as the first INT 33h (DF set) finds it: nothing
+    def first33(pc):                    #  else draws meanwhile, so a string write gone backwards shows there
+        if not pre and pc.r('ip') == i33 and pc.r('cs') == k.useg: pre.append(k.rd('tmp', 96))
+    k.hooks.append(first33)
     start_dos(k, 'M33GFX.COM')
+    k.hooks.remove(first33)
+    below = k.rd('tmp', 96)             # (after the reset and the shape, both with DF set)
     for x, y, hx, hy, H, banks, two, what in ((0, 0, 5, 7, 400, 4, 0, 'mode 40h, top left, hot spot (5, 7)'),
                                               (639, 399, 5, 7, 400, 4, 0, 'mode 40h, bottom right'),
                                               (333, 201, 5, 7, 400, 4, 0, 'mode 40h, an odd column'),
@@ -881,7 +988,7 @@ def t_mouse():
         check('pointer: ' + what, e == a and e, (len(e), len(a), sorted(e - a)[:4], sorted(a - e)[:4]))
         k.key(ktest.ENTER, settle=False); k.pc.run_for(0.05)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 10); k.settle()
-    check('DF set by the program: the reset and the shape still land where they should', k.rd('rowtab', 800) == rows0 and
+    check('DF set by the program: the reset and the shape still land where they should', pre and any(pre[0]) and below == pre[0] and
           k.band()[0] == 'M33GFX.COM ended', k.band())
     # a program that ends inside its event handler; then the next one's handler
     k = ktest.KPC(image('m33q.img', M33['M33QUIT'], M33TEST)); k.pc.mouse = True; k.start()

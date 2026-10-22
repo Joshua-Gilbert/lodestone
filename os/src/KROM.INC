@@ -181,40 +181,42 @@ r_dio:  cmp     al, R_DRV
 .x:     ret
 
 ; DI sectors from sector DX to ES:BX, the ROM mapped meanwhile and
-; interrupts off (DS = KSEG; everything kept)
+; interrupts off (DS = KSEG; everything kept).  The 1520's BIOS (F000:
+; D9D6 keeps SI and DI; E403 at DBC4 changes AX, BX, CL and DH, E404 at
+; DBF5 AX): neither touches ES or DS
 .piece: pushf
         pusha
         push    ds
-        push    es
-        mov     bp, sp                  ; [bp]: ES, DS, then PUSHA's DI, SI,
-        RADR    mov ax, [r_tseg]        ;  BP, SP, BX, DX, CX, AX
+        push    dx                      ; (the sector,
+        push    di                      ;  the count,
+        push    bx                      ;  the place)
+        RADR    mov ax, [r_tseg]
         RADR    mov dl, [r_img]
         cli
         mov     ds, ax
         mov     ax, 0E403h              ; the image into A000-BFFF
         int     15h
-        mov     ax, [bp+14]             ; the sector
+        mov     bp, ds                  ; (for E404)
+        pop     di
+        pop     cx                      ; sectors
+        pop     ax
         shl     ax, 5
         add     ax, R_WIN
         mov     ds, ax
         xor     si, si
-        mov     es, [bp]
-        mov     di, [bp+12]             ; (BX)
-        mov     cx, [bp+4]              ; (DI): sectors
         xchg    cl, ch                  ; words
         rep     movsw
-        mov     ds, [bp+2]
-        RADR    mov ax, [r_tseg]
-        mov     ds, ax
+        mov     ds, bp
         mov     ax, 0E404h              ; and out again: video memory back
         int     15h
-        pop     es
         pop     ds
         popa
         popf
         ret
 r_tend:
 R_TLEN  equ r_tend - r_tstart
+        times   -(R_TLEN > 27 * 16) db 0        ; (27 paragraphs: one byte more
+                                                ;  costs DOS programs one more)
 
 ; the words that move with it (from r_tstart), each list ended by FFFFh
 r_relp:
