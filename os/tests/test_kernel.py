@@ -1718,6 +1718,126 @@ def t_dirlong():
           'Directory of  A:\\' + deep.upper() + 'File not found' in o.replace('\n', '') and 'still here' in o
           and not k.crashed, o)
 
+# ATTR.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+MS_ATTR = [('fn 3C C0.TXT 0000', 'ok'),
+           ('fn 43 C0.TXT 0000', 'attr 20'),
+           ('fn 3C C1.TXT 0001', 'ok'),
+           ('fn 43 C1.TXT 0000', 'attr 21'),
+           ('fn 3C C2.TXT 0002', 'ok'),
+           ('fn 43 C2.TXT 0000', 'attr 22'),
+           ('fn 3C C4.TXT 0004', 'ok'),
+           ('fn 43 C4.TXT 0000', 'attr 24'),
+           ('fn 3C C6.TXT 0006', 'ok'),
+           ('fn 43 C6.TXT 0000', 'attr 26'),
+           ('fn 3C C7.TXT 0007', 'ok'),
+           ('fn 43 C7.TXT 0000', 'attr 27'),
+           ('fn 3C C10.TXT 0010', 'err 05'),
+           ('fn 43 C10.TXT 0000', 'err 02'),
+           ('fn 3C C20.TXT 0020', 'ok'),
+           ('fn 43 C20.TXT 0000', 'attr 20'),
+           ('fn 3C C21.TXT 0021', 'ok'),
+           ('fn 43 C21.TXT 0000', 'attr 21'),
+           ('fn 3C C27.TXT 0027', 'ok'),
+           ('fn 43 C27.TXT 0000', 'attr 27'),
+           ('fn 3C C40.TXT 0040', 'err 05'),
+           ('fn 43 C40.TXT 0000', 'err 02'),
+           ('fn 3C C80.TXT 0080', 'err 05'),
+           ('fn 43 C80.TXT 0000', 'err 02'),
+           ('fn 3C C100.TXT 0100', 'ok'),
+           ('fn 43 C100.TXT 0000', 'attr 20'),
+           ('fn 3C C8000.TXT 8000', 'ok'),
+           ('fn 43 C8000.TXT 0000', 'attr 20'),
+           ('fn 5B N0.TXT 0000', 'ok'),
+           ('fn 43 N0.TXT 0000', 'attr 20'),
+           ('fn 5B N1.TXT 0001', 'ok'),
+           ('fn 43 N1.TXT 0000', 'attr 21'),
+           ('fn 5B N10.TXT 0010', 'err 05'),
+           ('fn 43 N10.TXT 0000', 'err 02'),
+           ('fn 5B N20.TXT 0020', 'ok'),
+           ('fn 43 N20.TXT 0000', 'attr 20'),
+           ('fn 5B N40.TXT 0040', 'err 05'),
+           ('fn 43 N40.TXT 0000', 'err 02'),
+           ('fn 5B N80.TXT 0080', 'err 05'),
+           ('fn 43 N80.TXT 0000', 'err 02'),
+           ('fn 43 T0.TXT 0000', 'attr 00'),
+           ('fn 3C T0.TXT 0000', 'ok'),
+           ('fn 43 T0.TXT 0000', 'attr 20'),
+           ('fn 43 T2.TXT 0000', 'attr 00'),
+           ('fn 3C T2.TXT 0002', 'ok'),
+           ('fn 43 T2.TXT 0000', 'attr 22'),
+           ('fn 43 TH.TXT 0000', 'attr 02'),
+           ('fn 3C TH.TXT 0002', 'ok'),
+           ('fn 43 TH.TXT 0000', 'attr 22'),
+           ('fn 43 W.TXT 0000', 'attr 00'),
+           ('fn 01 W.TXT 0000', 'ok'),
+           ('fn 43 W.TXT 0000', 'attr 20'),
+           ('fn 43 O.TXT 0000', 'attr 00'),
+           ('fn 02 O.TXT 0000', 'ok'),
+           ('fn 43 O.TXT 0000', 'attr 00'),
+           ('fn 3C NOSUCH\\X.TXT 0010', 'err 05'),
+           ('fn 5B T0.TXT 0010', 'err 05'),
+           ('fn 3C A.B 0010', 'err 05'),
+           ('fn 3C A.B 0000', 'err 05'),
+           ('fn 5A A.B\\ 0000', 'ok'),
+           ('fn 5A A.B\\ 0001', 'ok'),
+           ('fn 5A A.B\\ 0020', 'ok'),
+           ('fn 5A NOSUCH\\ 0000', 'err 03'),
+           ('fn 5A E.F\\ 0000', 'ok'),
+           ('fn 4E E.F\\*.* 0027', 'attr 20'),
+           ('fn 5A G.H\\ 0001', 'ok'),
+           ('fn 4E G.H\\*.* 0027', 'attr 21'),
+           ('fn 5A A.B\\ 0002', 'ok'),
+           ('fn 5A A.B\\ 0004', 'ok'),
+           ('fn 5A A.B\\ 0027', 'ok'),
+           ('fn 3C A.B\\NUL 0010', 'err 05'),
+           ('fn 3C NUL 0010', 'err 05'),
+           ('fn 3C NUL 0040', 'err 05'),
+           ('fn 5B NUL 0010', 'err 05'),
+           ('fn 3D LPT1 0000', 'ok'),
+           ('fn 3D COM1 0000', 'ok'),
+           ('fn 3D PRN 0000', 'ok'),
+           ('fn 3D AUX 0000', 'ok')]
+
+def t_attr():
+    """CREATE, CREATE NEW and CREATE TEMPORARY give a file the archive bit, new or made anew (X19), as GRiD MS-DOS
+    3.30 does; CREATE and CREATE NEW refuse CX with 10h, 40h or 80h (5, before the path is looked at, for a
+    device too) and leave CX's high byte alone; a file written gets the archive bit, one only opened doesn't."""
+    com = os.path.join(OUT, 'ATTR.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'ATTR.ASM')], check=True)
+    for n in ('t0', 't2', 'th', 'w', 'o'):
+        open(os.path.join(OUT, 'AT_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
+    img = image('attr.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'ATTR.COM=' + com,
+                *['%s.TXT=%s' % (n.upper(), os.path.join(OUT, 'AT_%s.TXT' % n)) for n in ('t0', 't2', 'th', 'w', 'o')])
+    m = lambda *a: subprocess.run(list(a), check=True, stdin=subprocess.DEVNULL, capture_output=True)
+    for n in ('T0', 'T2', 'TH', 'W', 'O'):
+        m('mattrib', '-i', img, '-a', '::%s.TXT' % n)
+    m('mattrib', '-i', img, '+h', '::TH.TXT')
+    for n in ('A.B', 'E.F', 'G.H'):
+        m('mmd', '-i', img, '::' + n)
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    assert run_long(k, 'attr > out.txt')
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+    want = [c + ' -> ' + a for c, a in MS_ATTR]
+    check("ATTR.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a file created gets 20h; 10h, 40h, 80h refused with 5)"
+          % len(want), got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    check('... disk consistent', not fatcheck.check(bytes(k.pc.drives[0].img))[0], fatcheck.check(bytes(k.pc.drives[0].img))[0])
+    # CX with a label's bit (8): MS-DOS makes a volume label, leaving a file of that name alone; Lodestone has none
+    # to make: 5, the file kept (it was truncated)
+    src, cr8 = os.path.join(OUT, 'CR8.ASM'), os.path.join(OUT, 'CR8.COM')
+    open(src, 'w').write('org 100h\n mov dx, nm\n mov cx, 8\n mov ah, 3Ch\n int 21h\n jc e\n mov bx, ax\n mov ah, 3Eh\n'
+                         ' int 21h\n xor al, al\ne: mov ah, 4Ch\n int 21h\nnm db "W.TXT", 0\n')
+    subprocess.run(['nasm', '-f', 'bin', '-o', cr8, src], check=True)
+    before = f.get('A:\\W.TXT')
+    open(img, 'r+b').write(bytes(k.pc.drives[0].img))  # (the disk ATTR.COM left)
+    subprocess.run(['mcopy', '-o', '-i', img, cr8, '::CR8.COM'], check=True, stdin=subprocess.DEVNULL, capture_output=True)
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    o = sh.run('cr8') + sh.run('if errorlevel 5 if not errorlevel 6 echo refused')
+    check('CREATE of W.TXT with CX=8: 5, and W.TXT as it was', 'refused' in o.replace('echo refused', '') and before
+          and fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\W.TXT') == before, (o, before))
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -2262,7 +2382,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
