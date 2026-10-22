@@ -1694,6 +1694,14 @@ def t_dirlong():
           'spills past pat: File not found, as on main); 79: refused, "File not found" with no header',
           'Directory of  A:\\D\n' in o78 and 'Directory' not in o79 and 'File not found' in o79 and 'still here' in o79
           and not k.crashed, (o78, o79))
+    k = ktest.KPC(img); k.start()                       # (a fresh shell: on main the DIRs above leave it hung)
+    sh = Shell(k)
+    runs = [sh.run('dir b:' + 'a' * 72 + '\\').replace('\n', '') for _ in range(6)]
+    o = sh.run('copy lcmd.com q:' + 'b' * 70 + '\\c') + sh.run('copy lcmd.com q:' + 'b' * 70 + '\\c') + sh.run('echo still here')
+    check('DIR and COPY on a drive that isn\'t there, six and two times: each from "B:\\" afresh (canon took what the one '
+          'before left as the current directory, growing until it wrote over the shell); COPY says File creation error',
+          all('Directory of  B:\\' + 'A' * 72 + 'File not found' in r for r in runs) and o.count('File creation error') == 2
+          and 'still here' in o, (runs[-1], o))
     deep = 'aaaaaaaa\\bbbbbbbb\\cccccccc\\dddddddd\\eeeeeeee\\ffffffff\\gggggggg'
     for p in deep.split('\\'):
         sh.run('md ' + p); sh.run('cd ' + p)
