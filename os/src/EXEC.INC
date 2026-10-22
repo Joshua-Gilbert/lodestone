@@ -1807,7 +1807,7 @@ xfer_mkdir:
         jnc     .ok                     ; (there, or a file: said later)
         cmp     ax, 3
         je      .ask
-        cmp     ax, 2
+        cmp     ax, 18                  ; (none: not there)
         jne     .ok                     ; (a disk error: said later)
 .ask:   mov     si, tmppath
         call    msg_begin
@@ -2104,7 +2104,7 @@ xfer_do:
         ret
 .yes:   mov     byte [d_exists], 1
         jmp     short .go
-.new:   cmp     ax, 2                   ; (only "not found" is good news)
+.new:   cmp     ax, 18                  ; (only "none there" is good news)
         stc
         jne     .r
 .go:    cmp     byte [xmode], 0

@@ -374,9 +374,9 @@ def test_files_list_info_errors():
     dts = {dta_dt(h)}
     assert h.turn('look around', sim_s=60)
     dts.add(dta_dt(h))
-    # the failures: STAT of A:\NOSUCH.C (file not found), then of A:\NODIR\X.C and the create of
-    # A:\NODIR\X.$$$ (path not found); each just the id and the status
-    assert [r[1:] for r in replies if r[1]] == [b'\x02', b'\x03', b'\x03'], replies
+    # the failures: STAT of A:\NOSUCH.C (FIND FIRST's no more files), then of A:\NODIR\X.C and the
+    # create of A:\NODIR\X.$$$ (path not found); each just the id and the status
+    assert [r[1:] for r in replies if r[1]] == [b'\x12', b'\x03', b'\x03'], replies
     lst = results(h, 1)[0]['content'].split('\n')
     cfg = [l for l in lst if l.startswith('CFG.C ')]
     assert len(cfg) == 1 and cfg[0].split()[1] == str(len(CFG_C)), lst
