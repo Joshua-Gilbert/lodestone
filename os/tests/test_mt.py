@@ -2430,6 +2430,14 @@ def t_park():
     def mt(cmd):                        # MTLAUNCH's options, from the prompt
         o = sh.run('mtlaunch ' + cmd); line(k, ''); k.run_for(0.3)
         return o
+    def owners(task):                   # the owners in its own arena (its PSPs)
+        s, out = k.pc.u16(ent(task, 6), equ('V_MCB')), set()
+        for i in range(50):
+            t, o, n = k.pc.rd(s, 0, 1)[0], k.pc.u16(s, 1), k.pc.u16(s, 3)
+            if o: out.add(o)
+            if t != ord('M'): break
+            s += n + 1
+        return out
     pages = lambda n: (n + 1023) // 1024
     ks = lambda n: b'k' * n
     # behind, waiting for a line inside INT 21h (its kernel stack's slice in its TX): parked, back, and on
@@ -2440,8 +2448,10 @@ def t_park():
     k.pc.wr(r1, 0, b'\xcc' * (n1 * 16))  # (the freed place scribbled on: only the copy back puts it right)
     o2 = mt('/u:1')
     s3, (r3, n3, b3), e3 = st(1), region(1), ems_used(k)
-    if b3 == b1:                        # (not run if its bytes are wrong)
+    if b3 == b1:                        # (not run if its bytes are wrong: ended, so the checks after go on)
         front(k, 1); line(k, 'go'); k.run_for(0.5)
+    else:
+        mt('/k:1')
     check('a task behind waiting for a line (MTKILL F, inside INT 21h) parked: its state 5, its region (%d paragraphs) '
           'freed, %d EMS pages taken; brought back (its place scribbled on meanwhile): at the same place, every byte as '
           'it was, its state again, the pages '
@@ -2469,6 +2479,7 @@ def t_park():
           and A.disk_file(k, 'PS.TXT') == ks(10) and back(), (sr, s1, s2, s3, ran, ran2, now()))
     # what can't be parked, or brought back
     mt('mtkill.com f 10 kq.txt')
+    pq = owners(1)                      # (its PSPs: those of the task in its place later, the same)
     o0, o1, o3, o4 = mt('/p:0'), mt('/u:1'), mt('/p:3'), mt('/u:3')
     s1 = st(1)
     mt('/p:1')
@@ -2509,6 +2520,7 @@ def t_park():
     mt('mtkill.com f 10 kc.txt')        # (task 2 again, in the same place: its PSPs at the same segments)
     r2, n2 = ent(2, 4), k.pc.u16(ent(2, 4) - 1, 3)
     lap = r2 - 1 < sp1[0] + sp1[1] and sp1[0] - 1 < r2 + n2
+    pc = owners(2)
     o1 = mt('/u:1')
     sa, sb, ra = st(1), st(2), ent(1, 4)
     o2 = mt('/u:2')
@@ -2523,9 +2535,10 @@ def t_park():
           'when it was parked: the programs run in its place, their PSPs at its program\'s segment, freed only their '
           'own); that one back, it ends too, '
           'through its own INT 22h; memory, files and EMS as before (the pages given back)' % ((sa, sb), (sc, sd), ec),
-          lap and 'error' not in o1 + o2 + o3 and (sa, sb) == (TS_WAITK, 5) and ra == sp1[0] and (sc, sd) == (5, TS_WAITK)
+          lap and pq and pc == pq and 'error' not in o1 + o2 + o3 and (sa, sb) == (TS_WAITK, 5) and ra == sp1[0] and (sc, sd) == (5, TS_WAITK)
           and se == 0 and ec == eb and A.disk_file(k, 'KQ.TXT') == ks(10) + b'!'
-          and A.disk_file(k, 'KC.TXT') == ks(10) + b'!' and back(), (lap, o1, o2, o3, sa, sb, sc, sd, se, eb, ec, now()))
+          and A.disk_file(k, 'KC.TXT') == ks(10) + b'!' and back(), (lap, pq, pc, o1, o2, o3, sa, sb, sc, sd, se, eb, ec,
+                                                                     now()))
     # asked from a task behind, whose own INT 09h (in its TX: the table's is the front one's) points into the one
     # to be parked (the test writes it there as MT_PARK looks): pinned all the same
     mt('mtkill.com f 10 kg.txt')
@@ -2583,13 +2596,15 @@ def t_park():
     mt('mtvec.com i 0 x')
     mt('mtvec.com i 0 x')
     r1, r2, va = ent(1, 4), ent(2, 4), vec(k, 0x62)
+    gv = struct.unpack('<HH', bytes(k.pc.rd(ent(2, 6), equ('TX_GSN') + 0x62 * 4, 4)))
     o1 = mt('/p:1')
     s1 = st(1)
     front(k, 2); line(k, ''); k.run_for(0.5)                        # (each ends, INT 62h put back)
     front(k, 1); line(k, ''); k.run_for(0.5)
     check('a task (MTVEC I) whose INT 62h is only in another\'s copy of the table at its spawn (TX_GSN; the table\'s '
           'is the other\'s own): pinned (error 5); both end, INT 62h as before', r2 <= va[0] < r2 + k.pc.u16(r2 - 1, 3)
-          and 'MTLAUNCH: error 5' in o1 and s1 == TS_WAITK and vec(k, 0x62) == v62 and back(), (r1, r2, va, o1, s1, now()))
+          and r1 <= gv[1] < r1 + k.pc.u16(r1 - 1, 3) and 'MTLAUNCH: error 5' in o1 and s1 == TS_WAITK
+          and vec(k, 0x62) == v62 and back(), (r1, r2, va, gv, o1, s1, now()))
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')

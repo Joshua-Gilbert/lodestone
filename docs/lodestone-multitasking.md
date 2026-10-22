@@ -1128,6 +1128,7 @@ The checks:
 **The limits, plainly:**
 - **Parking takes time,** a copy of the region each way. Meanwhile the caller is inside INT 21h, so no other task runs, though interrupts and ticks go on. The 1520's speed is to be measured (M9).
 - **Bringing back can fail when memory has moved on:** a program the Executive's task runs in the place, or a task in the way that can't be parked (in front, the caller's, or pinned). Error 8; tasks parked on the way stay parked.
+- **Ending a parked task brings it back first,** so the tasks in its place are parked on the way, and they stay parked once it has ended: `MT_UNPARK` brings them back. If one of them can't be parked (in front, the caller's, or pinned), the kill fails too (error 8). (A reviewer pointed this out; M7's Tasks window can bring them back.)
 - **Pinned is cautious:** the machine's vectors in another task's copy of the table at its spawn count, though that task may never put them back.
 - **A program that frees MT's EMS handle** (AH=45h with a number it doesn't own) loses that task: it can't be brought back or ended (error 8), and its entry stays.
 - **A parked task whose place holds memory not a task's** can't be ended either (`MT_KILL` brings it back first: error 8) till that memory is freed. A parked task that can never come back keeps its entry, its pages, and its programs' files and EMS handles (owner FFFFh).
@@ -1172,6 +1173,6 @@ The checks:
   - `mt_pchk`'s tests, and `mt_hnew` for a parked region's handle (a program freeing MT's handle, and MT given it again);
   - in `mt_pinned`, the tasks' own vectors in a copy of the table at a spawn passed by (a task that changes a vector it inherited), and the caller's own `TX_GSN`;
   - the free block split above the place as well as below (each parked region here was at its free block's high end);
-  - parking the caller's own task or the one in front (the tests park from the Executive's task, in front);
+  - parking the caller's own task or the one in front (the tests park from the Executive's task, in front, except one that asks from a task behind and is refused);
   - the copy failing (INT 67h AH=57h's errors);
   - parking on the 1520, and how long it takes there.
