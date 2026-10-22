@@ -46,7 +46,21 @@ def test_run_tm5000g_from_claude():
     T.check(h)
 
 
+def test_write_no_name_leaves_no_temp():
+    """A file the Pi writes under a name DOS won't take (a second dot): the
+    write is refused, the file of its first 8.3 name is left alone, and the
+    NAME.$$$ written first is deleted again (the stand-in DOS can't say 3)."""
+    h = T.start([T.reply(('tool', 'str_replace_based_edit_tool',
+                          {'command': 'create', 'path': 'A:\\NOTES.V2.TXT', 'file_text': 'new text\n'})),
+                 T.reply(('text', 'It could not be written.'))], files={'A:\\NOTES.V2': b'old text\r\n'})
+    assert h.turn('write the notes', on_ask=lambda h: h.key(ord('y')))
+    assert bytes(h.m.fs['A:\\NOTES.V2']) == b'old text\r\n', h.m.fs.get('A:\\NOTES.V2')
+    assert not [n for n in h.m.fs if n.endswith('.$$$')], sorted(h.m.fs)
+    T.check(h)
+
+
 T.test_quit_to_dos = test_quit_to_dos
+T.test_write_no_name_leaves_no_temp = test_write_no_name_leaves_no_temp
 T.test_run_tm5000g_from_claude = test_run_tm5000g_from_claude
 
 if __name__ == '__main__':

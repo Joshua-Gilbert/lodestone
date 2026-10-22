@@ -379,12 +379,13 @@ now gives error 3, and CD keeps each name to 8.3.  DOS errors 20, 22,
 form's field and of a window being moved is drawn two to four times
 faster (each key in a form, each move of the mouse in a drag).
 
-Names and devices now answer as in MS-DOS 3.30 (0.1 KB less for DOS
-programs).  A name with a second dot (A.TXT.X, A.B.C) is no name: DEL
-B.TXT.X deleted B.TXT, RD E.F.G removed E.F and REN A.TXT C.D.E made
-C.D; now each says "file" or "path not found".  MD, RD, DEL and REN
-onto a device's name (CON, NUL...) are refused, and a CREATE over a
-hidden or system file is refused unless it asks for those attributes.
+Files and devices now answer INT 21h as MS-DOS 3.30 does (0.1 KB less
+for DOS programs).  A name with a second dot (A.TXT.X, A.B.C) is no
+name: before, it was taken as A.TXT or A.B, so DEL B.TXT.X deleted
+B.TXT and REN A.TXT C.D.E made C.D.  MD, RD, DEL and REN onto a
+device's name (CON, NUL, AUX, COM1, COM2, PRN, LPT1, CLOCK$) are
+refused, and a CREATE over a hidden or system file is refused unless
+it asks for those attributes.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,

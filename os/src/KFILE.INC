@@ -306,7 +306,7 @@ dev_look_ax:
         pop     bx
         ret
 dev_names   db 'CON', 0, 'NUL', 0, 'AUX', 0, 'COM1', 0, 'COM2', 0
-            db 'PRN', 0, 'LPT1', 0, 'CLOCK', 0
+            db 'PRN', 0, 'LPT1', 0, 'CLOCK$', 0
 .emm        db 0, 'MMXXXX0', 0, 0       ; (KEMS.INC: 'E' here, with EMS)
 dev_nums    db DEV_CON, DEV_NUL, DEV_AUX, DEV_AUX, DEV_COM2, DEV_PRN, DEV_PRN, DEV_NUL
             db DEV_EMM

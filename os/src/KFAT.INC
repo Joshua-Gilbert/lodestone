@@ -706,10 +706,8 @@ find_named:
 
 f_41:   call    get_path                ; DELETE
         jc      .e
-        call    dev_lookup              ; a device's name: 5, as MS-DOS
-        jnc     .acc
         call    find_file
-        jc      .e
+        jc      .nf
         test    byte [de+11], A_DIR | A_RO | A_VOL
         jnz     .acc
         call    sft_busy                ; open?  then refuse
@@ -721,6 +719,11 @@ f_41:   call    get_path                ; DELETE
         call    free_chain
         call    fat_flush
         jmp     ret_cf
+.nf:    cmp     ax, 2                   ; not there (its directory is): a
+        jne     .e                      ;  device's name is 5, as MS-DOS
+        call    dev_lookup
+        mov     ax, 2                   ; (CF kept)
+        jc      .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
@@ -752,14 +755,14 @@ f_43:   call    get_path                ; get/set attributes
 
 f_39:   call    get_path                ; MKDIR
         jc      .e
-        call    dev_lookup              ; a device's name: 5, as MS-DOS
-        jnc     .acc
         call    resolve_new
         jc      .e
         call    find_named
         jnc     .acc                    ; already there
         cmp     ax, 2
         jne     .e
+        call    dev_lookup              ; a device's name (its directory
+        jnc     .acc                    ;  there): 5, as MS-DOS
         mov     ax, [r_dir]
         call    dir_slot                ; (d_lba/d_off: the slot, until the
         jc      .e                      ;  next dir_entry or dir_find)
@@ -853,10 +856,8 @@ find_dir:
 
 f_3A:   call    get_path                ; RMDIR
         jc      .e
-        call    dev_lookup              ; a device's name: 5, as MS-DOS
-        jnc     .acc
         call    find_dir                ; (wildcards: 3, as for CHDIR)
-        jc      .e
+        jc      .nd
         cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
         je      .acc                    ;  doesn't look the name up, so
         cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
@@ -903,6 +904,13 @@ f_3A:   call    get_path                ; RMDIR
         jmp     ret_cf
 .cur:   mov     ax, 16                  ; the current directory
         jmp     .e
+.nd:    cmp     ax, 3                   ; the path there but not its last
+        jne     .e                      ;  name (resolve got to it): a
+        cmp     byte [r_name], 0        ;  device's name is 5, as MS-DOS
+        je      .e
+        call    dev_lookup
+        mov     ax, 3                   ; (CF kept)
+        jc      .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
@@ -1017,9 +1025,6 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         call    gpath
         pop     word [bp+F_DS]
         jc      .e
-        mov     ax, path2_buf           ; onto a device's name: 5, as MS-DOS
-        call    dev_look_ax
-        jnc     .acc
         call    find_file               ; the old name
         jc      .e
         test    byte [de+11], A_DIR | A_VOL
@@ -1039,6 +1044,9 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     si, path2_buf
         call    resolve_si              ; the new name
         jc      .e
+        mov     ax, path2_buf           ; a device's name (its directory
+        call    dev_look_ax             ;  there): 5, as MS-DOS
+        jnc     .acc
         mov     al, [r_drv]
         cmp     al, [ren_drv]
         jne     .dev
