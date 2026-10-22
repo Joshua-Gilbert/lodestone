@@ -42,19 +42,19 @@ class AR488Serial:
     def _quiet(s, ms=300, limit=10.0):
         """Wait until the GRiD has been silent for ms, so a command we send
         cannot collide with a frame it is writing (the Nano would drop it)."""
-        t_end = time.time() + limit; last = time.time(); junk = b''
-        while time.time() < t_end:
+        t_end = time.monotonic() + limit; last = time.monotonic(); junk = b''
+        while time.monotonic() < t_end:
             d = s.ser.read(256)
-            if d: last = time.time(); junk += d
-            elif time.time() - last >= ms / 1000.0: return junk
+            if d: last = time.monotonic(); junk += d
+            elif time.monotonic() - last >= ms / 1000.0: return junk
         return junk
 
     def _cmd(s, text, reply=False):
         s._quiet()
         s.ser.write(text.encode() + b'\n')
         if not reply: time.sleep(0.05); return ''
-        t_end = time.time() + 1.0; buf = b''
-        while time.time() < t_end:
+        t_end = time.monotonic() + 1.0; buf = b''
+        while time.monotonic() < t_end:
             buf += s.ser.read(256)
             if b'\n' in buf: break
         return buf.decode('latin1', 'replace')
@@ -108,7 +108,7 @@ class Link:
         s.reasm = glp.Reassembler()
         s.pi_seq = 0; s.last_g = None; s.last_answer = None
         s.stats = collections.Counter(); s.connected = False
-        s.last_rx = time.time()
+        s.last_rx = time.monotonic()
         s.grid_maxpay = 1024
 
     # ---- outbound -----------------------------------------------------
@@ -171,7 +171,7 @@ class Link:
     # ---- inbound ------------------------------------------------------
     def feed(s, data):
         """Bytes from the Nano.  Returns the number of frames handled."""
-        if data: s.last_rx = time.time()
+        if data: s.last_rx = time.monotonic()
         n = 0
         for f in s.parser.feed(data):
             s.handle(f); n += 1
@@ -180,7 +180,7 @@ class Link:
     def idle_check(s, quiet=0.15):
         """Bytes that sat for `quiet` seconds without making a frame were
         damaged in transit: ask the GRiD to resend."""
-        if s.parser.pending() and time.time() - s.last_rx > quiet:
+        if s.parser.pending() and time.monotonic() - s.last_rx > quiet:
             s.parser.idle()
             s.stats['rx_damaged'] += 1
             s._answer_nak()
@@ -218,14 +218,17 @@ class Link:
                 try: s.on_message(mt, body)
                 except Exception as e: s.log('link: handler error: %r' % e)
         # Answer.  A POLL may wait for output, and in Term so may KEYS (for
-        # the echo); anything else is answered now.
+        # the echo); anything else is answered now.  A REPLY's last frame waits
+        # too: whoever made the call usually sends the next REQUEST within a few
+        # ms (the next chunk of a copy), and answering NOP at once sent the GRiD
+        # back to its once-a-second idle POLL, so every request cost ~1 s.
         with s.lock:
-            hold = s.hold if t == glp.G_POLL and not f.more else 0
+            hold = s.hold if t in (glp.G_POLL, glp.G_REPLY) and not f.more else 0
             if t == glp.G_KEYS and s.source is not None: hold = s.keys_hold
             if hold and not s._has_output():
-                end = time.time() + hold
+                end = time.monotonic() + hold
                 while not s._has_output():
-                    left = end - time.time()
+                    left = end - time.monotonic()
                     if left <= 0: break
                     # the source may become ready by time alone (output settling)
                     s.lock.wait(min(left, 0.005) if s.source is not None else left)

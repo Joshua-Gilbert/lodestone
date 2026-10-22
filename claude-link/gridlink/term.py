@@ -109,7 +109,7 @@ class TermSession:
             return 'The GRiD is not in Term mode (CLAUDE /T on the GRiD).'
         prog = s.hello.get('prog') or 'its name unknown'
         if s.away and s.resident(): return s.AWAY % prog
-        if not s.hello or time.time() - s.link.last_rx > 10:
+        if not s.hello or time.monotonic() - s.link.last_rx > 10:
             return 'The GRiD is not connected (start CLAUDE /T on it).'
         if s.resident():
             if tool in s.PAUSED_TOOLS: return None
@@ -159,7 +159,7 @@ class TermSession:
         with s.lock:
             if s.pic is not None: return s.penc.dirty(s.pic['bits'])
             if not s.dirty: return False
-            now = time.time()
+            now = time.monotonic()
             if s.screen.sync and now - s.screen.sync_t < SYNC_MAX: return False
             return now - s.last_byte >= SETTLE or now - s.first_dirty >= MAX_WAIT
 
@@ -293,7 +293,7 @@ class TermSession:
             s.log('term: picture from %s: %s' % (s.name, e))
 
     def _mark(s):
-        if not s.dirty: s.first_dirty = time.time()
+        if not s.dirty: s.first_dirty = time.monotonic()
         s.dirty = True
 
     def _settime(s):
@@ -316,7 +316,8 @@ class TermSession:
         os.makedirs(s.cwd, exist_ok=True)
         if not s.web:
             try:
-                if mcp.write_mcp_json(s.cwd, s.sock): s.log('term: registered the GRiD tools in %s/.mcp.json' % s.cwd)
+                if mcp.write_mcp_json(s.cwd, s.sock, getattr(s.cfg, 'auto_mode', ())):
+                    s.log('term: registered the GRiD tools in %s/.mcp.json' % s.cwd)
             except (OSError, ValueError) as e:
                 s.log('term: .mcp.json left alone: %s' % e)
         m, sl = os.openpty()
@@ -398,7 +399,7 @@ class TermSession:
                 if kind == 'data': s.stream.feed(b)
                 elif kind == 'pic': pics.append(b)
                 else: s._write(b)
-            s.last_byte = time.time(); s._mark()
+            s.last_byte = time.monotonic(); s._mark()
             s.title = s.screen.title
         for b in pics: s._osc_picture(b)
         if s.link is not None: s.link.wake()
@@ -462,7 +463,7 @@ class TermSession:
     def _send_title(s, force=False):
         if s.link is None or s.link.source is not s: return
         t = (s.pic or {}).get('title') or fold_title(s.title) or s.name
-        now = time.time()
+        now = time.monotonic()
         if t != s.title_sent and (force or now - s.title_t >= TITLE_EVERY):
             s.title_sent = t; s.title_t = now
             s.link.send(glp.P_TITLE, t.encode('latin1', 'replace'))

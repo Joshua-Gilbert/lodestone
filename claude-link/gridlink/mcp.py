@@ -99,6 +99,17 @@ TOOLS = [
          'required': ['action']},
      'annotations': dict(LOOK, idempotentHint=False, title='GPIB: read')},   # (a read empties the instrument's
                                                                               #  output, a poll clears its status)
+    {'name': 'gpib_measure', 'title': 'GPIB: query a measuring instrument',
+     'description': (
+         "Ask a measuring instrument for a reading or its settings, without the user approving each call. "
+         "Only for the addresses the user listed in gridlink's config ([permissions] measure; the error "
+         "names them), and only one query per call: a single command ending in '?', with no ';' and no "
+         "line breaks (READ?, VOLTS?, ID?, *IDN?, FREQ?). Use it for series of readings. To set a range "
+         "or function, or anything to other instruments, use gpib_send, which the user approves."),
+     'inputSchema': {'type': 'object', 'properties': dict(
+         {'command': {'type': 'string', 'maxLength': 200}}, **GPIB_PROPS),
+         'required': ['address', 'command']},
+     'annotations': dict(LOOK, idempotentHint=False, title='GPIB: query a measuring instrument')},
     {'name': 'grid_command', 'title': 'GRiD: run a DOS program',
      'description': (
          "Run a DOS command line or program on the GRiD 1520 (through COMMAND.COM /C, in the GRiD's "
@@ -143,8 +154,10 @@ TOOLS = [
      '_meta': ASK},
     {'name': 'gpib_send', 'title': 'GPIB: send to an instrument',
      'description': (
-         "Send to an instrument on the GRiD's GPIB bus. The user approves every call: power supplies "
-         "and sources drive real circuits, so never change their outputs unless asked. Actions: query "
+         "Send to an instrument on the GRiD's GPIB bus. The user approves calls (a prompt, or in auto mode "
+         "what fits their request): power supplies and sources drive real circuits, so never change their "
+         "outputs beyond what the user asked for. For plain readings from the user's measuring "
+         "instruments, gpib_measure needs no approval. Actions: query "
          "(send a command, read the reply), write, clear (device clear), trigger (GET), local, remote. "
          "Commands get CR LF and EOI unless terminator says otherwise."),
      'inputSchema': {'type': 'object', 'properties': dict(
@@ -499,6 +512,21 @@ class GridTools:
         head = '\n'.join(l[:200] for l in lines[:3])
         return [text('%d bytes (%d lines) saved to %s. It begins:\n%s' % (len(r), len(lines), path, head))], False
 
+    def t_gpib_measure(s, a):
+        allowed = list(getattr(s.cfg, 'measure', None) or [])
+        addr, tmo, maxb = s.gpib_args(a)
+        if addr not in allowed:
+            return [text('Error: address %d is not one gpib_measure may query (allowed: %s). Use gpib_send, '
+                         'which the user approves.' % (addr, ', '.join(map(str, allowed)) or 'none set'))], True
+        cmd = arg_str(a, 'command', need=True, most=200).strip()
+        if not cmd.endswith('?') or ';' in cmd or any(ord(c) < 32 or ord(c) == 127 for c in cmd):
+            return [text("Error: gpib_measure sends one query: a command ending in '?', no ';', no control "
+                         "characters. Anything else goes through gpib_send.")], True
+        try: data = cmd.encode('ascii') + b'\r\n'
+        except UnicodeEncodeError: raise ValueError('command must be ASCII')
+        r = s.G.gpib(glp.GP_QUERY, addr, data, timeout_ms=tmo, maxlen=maxb)
+        return [text(r.decode('latin1').rstrip('\r\n') or '(empty reply)')], False
+
     def gpib_args(s, a, need_addr=True):
         addr = arg_int(a, 'address', None, 0, 30)
         if addr is None and need_addr: raise ValueError('address is required')
@@ -684,6 +712,20 @@ def picture_block(bits):
 
 
 NAMES = {t['name'] for t in TOOLS}
+ASKING = {t['name'] for t in TOOLS if t.get('_meta') == ASK}
+
+
+def listed_tools(auto_mode=None):
+    """The tools as Claude Code sees them.  The ones named in auto_mode
+    (default: $GRIDLINK_AUTO_MODE) lose anthropic/requiresUserInteraction:
+    Claude Code's own permission mode decides on them (in auto mode its
+    classifier lets calls through that fit what the user asked for; in the
+    default mode it still asks, with "don't ask again" offered)."""
+    if auto_mode is None:
+        auto_mode = [x for x in os.environ.get('GRIDLINK_AUTO_MODE', '').split(',') if x]
+    auto = set(auto_mode) & ASKING
+    if not auto: return TOOLS
+    return [{k: v for k, v in t.items() if k != '_meta'} if t['name'] in auto else t for t in TOOLS]
 
 
 class ToolServer:
@@ -753,9 +795,10 @@ class ToolServer:
 LAUNCH = 'import sys; sys.path.insert(0, %r); from gridlink.mcp import main; main()'
 
 
-def write_mcp_json(directory, sock):
+def write_mcp_json(directory, sock, auto_mode=()):
     """Register this server in Claude Code's project file, keeping any others.
-    A file that doesn't read as JSON is left alone (ValueError)."""
+    A file that doesn't read as JSON is left alone (ValueError).  auto_mode:
+    the asking tools that lose their always-ask flag ([permissions] auto_mode)."""
     p = os.path.join(directory, '.mcp.json')
     try:
         with open(p) as f: d = json.load(f)
@@ -769,6 +812,8 @@ def write_mcp_json(directory, sock):
     pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     entry = {'type': 'stdio', 'command': sys.executable, 'args': ['-I', '-c', LAUNCH % pkg],
              'env': {'GRIDLINK_SOCKET': sock}}
+    auto = sorted(set(auto_mode) & ASKING)
+    if auto: entry['env']['GRIDLINK_AUTO_MODE'] = ','.join(auto)
     if servers.get(NAME) == entry: return False
     servers[NAME] = entry
     os.makedirs(directory, exist_ok=True)
@@ -837,7 +882,7 @@ def handle(msg, sock):
     elif method == 'ping':
         res = {}
     elif method == 'tools/list':
-        res = {'tools': TOOLS}
+        res = {'tools': listed_tools()}
     elif method == 'tools/call':
         name = p.get('name'); args = p.get('arguments')
         if args is None: args = {}

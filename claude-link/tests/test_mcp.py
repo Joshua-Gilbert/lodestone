@@ -60,8 +60,8 @@ def test_protocol():
     assert mcp.handle({'jsonrpc': '2.0', 'method': 'notifications/initialized'}, '') is None
     r = mcp.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'}, '')
     tools = {t['name']: t for t in r['result']['tools']}
-    look = ['grid_info', 'grid_files', 'grid_screen', 'gpib_read', 'grid_program', 'grid_plot', 'grid_image',
-            'grid_pick']
+    look = ['grid_info', 'grid_files', 'grid_screen', 'gpib_read', 'gpib_measure', 'grid_program', 'grid_plot',
+            'grid_image', 'grid_pick']
     ask = ['grid_command', 'grid_change_files', 'gpib_send', 'grid_type']
     assert sorted(tools) == sorted(look + ask), list(tools)
     for n in look:                       # can be allowed for good: they only look
@@ -113,7 +113,7 @@ def test_files():
         r = c.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 't'}})
         assert r['result']['serverInfo']['name'] == 'gridlink'
         c.rpc('notifications/initialized', notify=True)
-        assert len(c.rpc('tools/list')['result']['tools']) == 12
+        assert len(c.rpc('tools/list')['result']['tools']) == 13
         r = c.call('grid_files', action='list', path='A:\\')
         assert 'CFG.C' in body(r) and not r['isError'], r
         r = c.call('grid_files', action='info', path='A:\\NOPE.TXT')     # (STAT's 18: not there)
@@ -175,7 +175,7 @@ def test_not_connected():
     h, c = start()
     try:
         h.grid.state = 'reset'; h.grid.connected = False          # the GRiD went away
-        h.link.last_rx = time.time() - 60
+        h.link.last_rx = time.monotonic() - 60
         r = c.rpc('tools/call', {'name': 'grid_info', 'arguments': {}})['result']
         assert r['isError'] and 'not connected' in body(r), r
     finally:

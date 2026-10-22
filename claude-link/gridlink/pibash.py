@@ -36,9 +36,9 @@ class Bash:
         mark = '__gridlink_%s__' % uuid.uuid4().hex[:12]
         s.p.stdin.write((command + '\n' + 'echo; echo %s $?\n' % mark).encode())
         s.p.stdin.flush()
-        out = []; size = 0; code = None; deadline = time.time() + timeout
+        out = []; size = 0; code = None; deadline = time.monotonic() + timeout
         while True:
-            left = deadline - time.time()
+            left = deadline - time.monotonic()
             if left <= 0:
                 s.restart()
                 return _clip(''.join(out)) + '\n[timed out after %d s; shell restarted]' % timeout, 124
