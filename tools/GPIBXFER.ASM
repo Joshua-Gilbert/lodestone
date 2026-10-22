@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBXFER.COM 1.2 - real DMA through the 1520's 7210 (channel 3), and
+;  GPIBXFER.COM 1.3 - real DMA through the 1520's 7210 (channel 3), and
 ;  how fast it is next to the CPU's own loop.
 ;  Build:  nasm -f bin -o GPIBXFER.COM GPIBXFER.ASM
 ;  Usage:  GPIBXFER [a]      a = the echo device's address (default 7)
@@ -94,7 +94,11 @@ start:  cld
         mov     ax, 4C00h
         int     21h
 
-; NMSG messages out, then NMSG echoes in; the times and the check
+; out: NMSG messages (CPU or DMA as usedma) -> the GRiD -> device rate.
+; CPU run: then NMSG write + read pairs (the bridge answers a read once per
+; message, as THRUTEST uses it), less the writes -> the device -> GRiD rate.
+; DMA run: one write by DMA, its echo read by the CPU and checked (DMA reads
+; are not wired: 1.1/1.2 got FF in memory while the 7210 gave its bytes up).
 run_both:
         call    d_tick
         mov     [t0], ax
@@ -111,26 +115,38 @@ run_both:
         call    out_str
         mov     ax, [tout]
         call    rate
-        mov     di, [rxp]               ; spoil the receive buffer first
-        mov     cx, MSGLEN
-        mov     al, 0A5h
-        rep     stosb
+        cmp     byte [usedma], 0
+        jne     .dmachk
         call    d_tick
         mov     [t0], ax
         mov     cx, NMSG
 .r:     push    cx
+        call    spoil
+        call    msg_out
+        jc      .rf_o
         call    msg_in
-        pop     cx
+.rf_o:  pop     cx
         jc      .fail_i
         loop    .r
         call    d_tick
         sub     ax, [t0]
-        mov     [tin], ax
+        sub     ax, [tout]              ; the pairs less the writes alone
+        jns     .pos
+        xor     ax, ax
+.pos:   mov     [tin], ax
         mov     dx, s_inr
         call    out_str
         mov     ax, [tin]
         call    rate
-        mov     si, [txp]               ; the last echo against the message
+        jmp     short .cmp
+.dmachk: call   spoil                   ; the last DMA message's echo, by the CPU
+        mov     byte [usedma], 0
+        call    msg_in
+        mov     byte [usedma], 1
+        jc      .fail_i
+        mov     dx, s_dmachk
+        call    out_str
+.cmp:   mov     si, [txp]               ; the last echo against the message
         mov     di, [rxp]
         mov     cx, MSGLEN
         repe    cmpsb
@@ -158,35 +174,18 @@ run_both:
         mov     al, [lastisr]
         call    out_hex
         call    out_crlf
-        cmp     byte [usedma], 0
-        je      .nd
-        mov     dx, s_cnt
-        call    out_str
-        mov     ax, [left]
-        call    out_dec
-        mov     dx, s_adr
-        call    out_str
-        mov     ax, [dadr]
-        xchg    al, ah
-        call    out_hex
-        xchg    al, ah
-        call    out_hex
-        mov     dx, s_st
-        call    out_str
-        mov     al, [dst]
-        call    out_hex
-        mov     dx, s_first
-        call    out_str
-        mov     si, [rxp]
-        mov     cx, 8
-.fb:    lodsb
-        call    out_hex
-        mov     al, ' '
-        call    out_chr
-        loop    .fb
-        call    out_crlf
-.nd:    call    dma_off
+        call    dma_off
         jmp     d_recover
+
+spoil:  push    cx
+        push    di
+        mov     di, [rxp]
+        mov     cx, MSGLEN
+        mov     al, 0A5h
+        rep     stosb
+        pop     di
+        pop     cx
+        ret
 
 ; AX ticks for NMSG * MSGLEN bytes -> "n.n s, n KB/s"
 rate:   push    ax
@@ -609,7 +608,7 @@ save_log:
 
 %include "direct.inc"
 
-s_title db 13,10,'GPIBXFER 1.2 - 16 x 4096-byte messages each way, echoed by the device at $'
+s_title db 13,10,'GPIBXFER 1.3 - 16 x 4096-byte messages each way, echoed by the device at $'
 s_pio   db 13,10,'CPU loop:',13,10,'$'
 s_dma   db 13,10,'DMA, channel 3:',13,10,'$'
 s_outr  db '  GRiD -> device: $'
@@ -618,6 +617,7 @@ s_ms    db ' ms, $'
 s_kbs   db ' KB/s',13,10,'$'
 s_fast  db ' (under a tick)',13,10,'$'
 s_same  db '  the echo is every byte right',13,10,'$'
+s_dmachk db '  (the DMA message read back by the CPU)',13,10,'$'
 s_diff  db '  THE ECHO DIFFERS from byte $'
 s_fo    db '  sending failed, step $'
 s_fi    db '  receiving failed, step $'
