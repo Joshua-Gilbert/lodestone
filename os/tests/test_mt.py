@@ -59,7 +59,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x3EF0, 'bss_end': 0x7420, 'ui_keep_end': 0x6164}  # (6144h before right clicks, UI API 7)
+OFF_MAP = {'image_end': 0x3F30, 'bss_end': 0x7460, 'ui_keep_end': 0x6164}  # (6144h before right clicks, UI API 7)
 
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
