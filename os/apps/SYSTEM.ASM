@@ -1115,7 +1115,20 @@ t_gpib: call    vstart
         call    UI_SBU16
         mov     si, l_myaddr
         call    pline
-        call    pgap
+        mov     ax, 0EFFh               ; SRQ on IRQ 5 (driver 1.21: AH=0Eh,
+        call    gpib                    ;  just asking), or polled
+        jc      .nq
+        push    ax
+        call    vstart
+        pop     ax
+        mov     si, s_srqirq
+        or      ax, ax
+        jnz     .sq
+        mov     si, s_srqpoll
+.sq:    call    UI_SBSTR
+        mov     si, l_srq
+        call    pline
+.nq:    call    pgap
         cmp     byte [gp_scanned], 0
         je      .hint
         call    vstart                  ; what the last scan found
@@ -2396,6 +2409,9 @@ s_d720      db '720 KB',0
 s_d144      db '1.44 MB',0
 l_driver    db 'Driver',0
 l_myaddr    db 'Our address',0
+l_srq       db 'SRQ',0
+s_srqirq    db 'on IRQ 5 (GPIBIRQ=0 in LODE.INI: polled)',0
+s_srqpoll   db 'polled',0
 l_found     db 'Instruments at',0
 s_nogpib    db 'no GPIB controller found',0
 s_gpver     db 'built in, version ',0
