@@ -302,6 +302,23 @@ mt_reg      dw      0
 mt_size     dw      0
 mt_arena    dw      0
 mt_sflags   db      0
+mt_nend     db      0                   ; tasks ended (mt_end), and the count
+mt_send     db      0                   ;  MT_UI's look last saw
+mt_xgen     times MT_TASKS db 0         ; MT_UI: the count of the task the
+                                        ;  Executive started there (0: none)
+mt_eord     times MT_TASKS db 0         ; (each task's end: mt_nend then)
+mt_xnm      dw      0                   ; (MT_UI: the program's name)
+mt_xpb      times SP_SIZE db 0          ; (MT_UI's MT_SPAWN block)
+mt_lbg      dw      mt_lnone            ; LODE.INI's lists (mt_lists): BG=,
+mt_lfz      dw      mt_lnone            ;  FREEZE=, MTMEM=; in mt_ini
+mt_lmem     dw      mt_lnone
+mt_lnone    db      0
+mt_scant    db      "Can't run ", 0     ; (MT_UI's messages)
+mt_smany    db      ': too many tasks', 0
+mt_snomem   db      ': not enough memory or EMS; park or end a task', 0
+mt_sended   db      ' ended', 0
+mt_scode    db      ', exit code ', 0
+mt_snost    db      ' could not be started: error ', 0
             align   2
 ; the kernel's per-task variables: (offset, bytes), as V_* lays them out
 mt_ranges:  dw      indos, 1
@@ -1568,6 +1585,10 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_screen
         cmp     al, MT_EXIT
         je      mt_xcode
+        cmp     al, MT_FLAGS
+        je      mt_flagsc
+        cmp     al, MT_UI
+        je      mt_uic
         cmp     al, 1
         je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
@@ -1609,6 +1630,33 @@ mt_xcode:
         mov     [bp+F_DX], ax
         mov     al, [cs:bx+TE_EGEN]
         mov     [bp+F_CX], al
+        jmp     KSEG:ok
+
+; MT_FLAGS: task BL's SPF_BG and SPF_FREEZE, CL's cleared, then CH's set
+; -> AL = them, and MTF_DIRECT (VF_DIRECT) as the detector last found it
+mt_flagsc:
+        mov     al, [bp+F_BX]
+        cmp     al, MT_TASKS
+        jae     mt_bad
+        or      al, al
+        jz      .t0
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        je      mt_bad
+        mov     cx, [bp+F_CX]
+        and     cx, (SPF_BG | SPF_FREEZE) * 101h
+        not     cl
+        and     [cs:bx+TE_VF], cl
+        or      [cs:bx+TE_VF], ch
+        mov     al, [cs:bx+TE_VF]
+        mov     [bp+F_AX], al
+        jmp     KSEG:ok
+.t0:    mov     ax, 5                   ; (the Executive: frozen behind always,
+        jmp     mt_fail                 ;  it draws in a graphics mode)
+
+; MT_UI: the Executive's entry (mt_ui), far
+mt_uic: mov     word [bp+F_AX], mt_ui
+        mov     [bp+F_DX], cs
         jmp     KSEG:ok
 
 ; MT_LIST: the records of the tasks there are, as many as fit in CX
@@ -2503,6 +2551,13 @@ mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
 .ex:    mov     [cs:bx+TE_EXIT], ax
         mov     al, [cs:bx+TE_GEN]      ; (MT_EXIT: this one's, ended)
         mov     [cs:bx+TE_EGEN], al
+        inc     byte [cs:mt_nend]       ; (MT_UI's look: one more ended, and
+        mov     al, [cs:mt_nend]        ;  this one's place in that count)
+        push    bx
+        mov     bl, [cs:mt_cur]
+        xor     bh, bh
+        mov     [cs:mt_eord+bx], al
+        pop     bx
         mov     dl, [cs:bx+TE_SH]       ; its screen's pages
         xor     dh, dh
         or      dl, dl
@@ -2574,12 +2629,31 @@ mt_spawn:
         mov     es, [bp+F_ES]
         mov     di, [bp+F_BX]
         mov     ax, [es:di+SP_PARAS]
-        or      ax, ax
-        jnz     .a
-        mov     ax, MT_DEFARENA
-.a:     mov     [cs:mt_arena], ax
+        mov     [cs:mt_arena], ax
         mov     al, [es:di+SP_FLAGS]
         mov     [cs:mt_sflags], al
+        mov     es, [bp+F_DS]           ; LODE.INI's lists, by its name: BG=,
+        mov     si, [bp+F_DX]           ;  FREEZE=, and MTMEM= unless the block
+        call    mt_lname                ;  gave its memory
+        mov     di, [cs:mt_lbg]
+        call    mt_lmat
+        jnc     .bg
+        or      byte [cs:mt_sflags], SPF_BG
+.bg:    mov     di, [cs:mt_lfz]
+        call    mt_lmat
+        jnc     .fz
+        or      byte [cs:mt_sflags], SPF_FREEZE
+.fz:    cmp     word [cs:mt_arena], 0
+        jne     .a
+        mov     di, [cs:mt_lmem]
+        call    mt_lmat                 ; (AX = its KB)
+        jnc     .d
+        shl     ax, 6
+        jmp     short .m
+.d:     mov     ax, MT_DEFARENA
+.m:     mov     [cs:mt_arena], ax
+.a:     mov     es, [bp+F_ES]
+        mov     di, [bp+F_BX]
         mov     ax, [es:di+SP_ENV]      ; the environment: the block's, or
         or      ax, ax                  ;  the caller's
         jnz     .ev
@@ -2865,6 +2939,340 @@ mt_name:
         inc     di
         loop    .z
 .x:     pop     ds
+        ret
+
+; the name part of the path at ES:SI (after its last \ or :) -> SI
+mt_lname:
+        push    ax
+        push    di
+        mov     di, si
+.l:     mov     al, [es:si]
+        inc     si
+        or      al, al
+        jz      .x
+        cmp     al, '\'
+        je      .m
+        cmp     al, ':'
+        jne     .l
+.m:     mov     di, si
+        jmp     .l
+.x:     mov     si, di
+        pop     di
+        pop     ax
+        ret
+
+; is the name at ES:SI (to its NUL, any case) in LODE.INI's list at CS:DI
+; (mt_lists: names, upper case, each with its 0 and a word)?  CF if so,
+; AX = its word.  An entry with no '.' names the program whatever its
+; extension (MTSPIN: MTSPIN.COM, MTSPIN.EXE); one with a '.', only that.
+; (AX changes)
+mt_lmat:
+        push    si
+        push    di
+.e:     cmp     byte [cs:di], 0         ; (the list's end)
+        je      .no
+        push    si
+.c:     mov     al, [es:si]
+        inc     si
+        cmp     al, 'a'
+        jb      .u
+        cmp     al, 'z'
+        ja      .u
+        sub     al, 20h
+.u:     mov     ah, [cs:di]
+        inc     di
+        or      ah, ah
+        jz      .end
+        cmp     al, ah
+        je      .c
+.sk:    mov     ah, [cs:di]             ; (not this one: past its 0)
+        inc     di
+        or      ah, ah
+        jnz     .sk
+.nx:    inc     di                      ; (and its word)
+        inc     di
+        pop     si
+        jmp     .e
+.end:   or      al, al                  ; the entry done: the name too, or at
+        jz      .y                      ;  its extension
+        cmp     al, '.'
+        jne     .nx
+.y:     pop     si
+        mov     ax, [cs:di]
+        pop     di
+        pop     si
+        stc
+        ret
+.no:    pop     di
+        pop     si
+        clc
+        ret
+
+; ---------------------------------------------------------------------
+;  MT_UI's entry: the Executive's, called far in its own task (task 0),
+;  not inside INT 21h, so it may call DOS; with CS here no switch comes
+;  meanwhile (mt_safe).  DS = ES = the UI's segment.
+;  AL = 0: Return on a program: start the program at DS:SI (its path, as
+;   the Executive has it) as a task, in front.  Its memory: MTMEM='s (at
+;   the spawn); else a .COM's 64 KB; an .EXE's as its header asks: at
+;   least its minimum, up to its maximum but not more than leaves 64 KB
+;   for another task.  CF if it can't: ES:DI = why ("Can't run X: ...",
+;   ASCIIZ).
+;  AL = 1: has a task ended since the last look?  CF if so (the files may
+;   have changed); then AL = 1 for one the Executive started, its message
+;   at ES:DI ("X ended[, exit code n]"), else AL = 0, ES:DI untouched.
+;   One at a time, the first ended first: a second one's the next look.
+; ---------------------------------------------------------------------
+mt_ui:  push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    bp
+        push    ds
+        push    es
+        cld
+        or      al, al
+        jz      mt_urun
+        mov     al, [cs:mt_nend]        ; (the usual answer: no)
+        cmp     al, [cs:mt_send]
+        je      mt_uok
+        mov     dx, 00FFh               ; DL: the first end of the Executive's
+        xor     bp, bp                  ;  found (BP: its task), DH: how many
+        mov     cx, 1
+.l:     mov     si, cx                  ; (SI = the task)
+        mov     ah, [cs:mt_xgen+si]
+        or      ah, ah
+        jz      .n                      ; (not the Executive's)
+        mov     al, cl
+        call    mt_ent
+        cmp     ah, [cs:bx+TE_GEN]      ; (its number given again since: its
+        jne     .drop                   ;  end missed, nothing to say)
+        cmp     ah, [cs:bx+TE_EGEN]
+        jne     .n                      ; (still there)
+        inc     dh
+        mov     al, [cs:mt_eord+si]     ; (ended: the first to end first, so
+        sub     al, [cs:mt_send]        ;  the last one's message stays)
+        cmp     al, dl
+        jae     .n
+        mov     dl, al
+        mov     bp, si
+        jmp     short .n
+.drop:  mov     byte [cs:mt_xgen+si], 0
+.n:     inc     cx
+        cmp     cx, MT_TASKS
+        jb      .l
+        or      bp, bp
+        jz      .seen                   ; (none of the Executive's: ES:DI as
+        mov     byte [cs:mt_xgen+bp], 0 ;  it was, AL = 0)
+        mov     ax, bp
+        call    mt_ent
+        call    mt_uend
+        mov     al, 1                   ; (a message)
+        cmp     dh, 1                   ; (another to tell: the next look)
+        ja      mt_uyes
+        jmp     short .all
+.seen:  xor     al, al
+.all:   mov     ah, [cs:mt_nend]        ; all seen
+        mov     [cs:mt_send], ah
+mt_uyes:
+        stc
+        jmp     short mt_ux
+mt_uok: clc
+mt_ux:  pop     es
+        pop     ds
+        pop     bp
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        retf
+
+; AL = 0: Return
+MT_XENV equ (ENVMAX + 132 + 2 + 15) / 16 + 1 ; EXEC's copy of the stub's
+                                        ;  environment (ENVMAX at most) and
+                                        ;  the name, with its MCB (f_4B)
+mt_urun:
+        mov     bp, si                  ; BP = the path
+        mov     word [cs:mt_xpb + SP_PARAS], 0
+        push    ds
+        pop     es
+        call    mt_lname
+        mov     [cs:mt_xnm], si         ; (the name, for a message)
+        mov     di, [cs:mt_lmem]
+        call    mt_lmat
+        jc      .sp                     ; (MTMEM=: mt_spawn takes it from there)
+.d:     lodsb                           ; an .EXE?
+        or      al, al
+        jz      .sp
+        cmp     al, '.'
+        jne     .d
+        lodsw
+        and     ax, 0DFDFh
+        cmp     ax, 'EX'
+        jne     .sp
+        lodsb
+        and     al, 0DFh
+        cmp     al, 'E'
+        jne     .sp
+        mov     dx, bp                  ; its header
+        mov     ax, 3D00h
+        int     21h
+        jc      .sp                     ; (EXEC will say why)
+        mov     bx, ax
+        push    ds
+        push    cs
+        pop     ds
+        mov     dx, mt_hdr
+        mov     cx, 1Ch
+        mov     ah, 3Fh
+        int     21h
+        pushf
+        push    ax
+        mov     ah, 3Eh
+        int     21h
+        pop     ax
+        popf
+        jc      .spd
+        cmp     ax, 1Ch
+        jb      .spd
+        mov     ax, [mt_hdr]
+        cmp     ax, 'MZ'
+        je      .mz
+        cmp     ax, 'ZM'
+        jne     .spd                    ; (EXEC takes it for a .COM)
+.mz:    mov     ax, [mt_hdr + 4]        ; its load image, paragraphs: its
+        cmp     ax, 800h                ;  pages, less its header, less what
+        jae     .spd                    ;  the last page leaves unused (a
+        shl     ax, 5                   ;  header past 1 MB: EXEC's to refuse)
+        mov     cx, [mt_hdr + 2]
+        jcxz    .fl
+        neg     cx
+        add     cx, 512
+        shr     cx, 4
+        sub     ax, cx
+        jb      .spd
+.fl:    sub     ax, [mt_hdr + 8]
+        jb      .spd
+        add     ax, MT_XENV + 10h       ; and its PSP, and EXEC's copy of the
+        jc      .spd                    ;  environment, which goes in it too
+        mov     dx, ax
+        add     dx, [mt_hdr + 0Ah]      ; DX = the least it takes
+        jc      .spd                    ; (more than there can be)
+        add     ax, [mt_hdr + 0Ch]      ; AX = the most it asks for
+        jnc     .hi
+        mov     ax, 0FFFFh
+.hi:    cmp     ax, dx                  ; (a maximum below its minimum: the
+        jae     .hi2                    ;  minimum, as EXEC takes it)
+        mov     ax, dx
+.hi2:   push    ax
+        mov     ah, 48h                 ; the most it gets: the largest block
+        mov     bx, 0FFFFh              ;  less this task's region's own and
+        int     21h                     ;  another's, with its 64 KB, and the
+        pop     ax                      ;  Executive's room for a .RUN
+        sub     bx, 2 * (TX_PARAS + ST_PARAS + ENVMAX / 16 + 2) + MT_DEFARENA + RUN_ROOM
+        jnc     .cap
+        xor     bx, bx
+.cap:   cmp     ax, bx                  ; its maximum, if that fits; else what
+        jbe     .w                      ;  fits, but its minimum anyway (it
+        mov     ax, bx                  ;  fails if even that doesn't fit:
+        cmp     ax, dx                  ;  "not enough memory")
+        jae     .w
+        mov     ax, dx
+.w:     mov     [mt_xpb + SP_PARAS], ax
+.spd:   pop     ds
+.sp:    mov     byte [cs:mt_xpb + SP_FLAGS], SPF_FRONT
+        mov     dx, bp
+        push    cs
+        pop     es
+        mov     bx, mt_xpb
+        mov     ax, 0F000h + MT_SPAWN
+        stc
+        int     21h
+        pop     es                      ; (the message's room: ES:DI)
+        push    es
+        jc      .er
+        mov     si, ax                  ; the Executive's: its count, to tell
+        and     si, 0FFh                ;  its end by (mt_ui AL = 1)
+        call    mt_ent
+        mov     ah, [cs:bx+TE_GEN]
+        mov     [cs:mt_xgen+si], ah
+        jmp     mt_uok
+.er:    mov     si, mt_snomem           ; "Can't run X: why"
+        cmp     ax, 4
+        jne     .em
+        mov     si, mt_smany
+.em:    mov     bx, sp
+        mov     di, [ss:bx+6]           ; (the caller's DI, pushed)
+        push    si
+        mov     si, mt_scant
+        call    mt_ucpy
+        mov     si, [cs:mt_xnm]         ; (DS: the caller's)
+.nm:    lodsb
+        or      al, al
+        jz      .why
+        stosb
+        jmp     .nm
+.why:   pop     si
+        call    mt_ucpy
+        mov     byte [es:di], 0
+        jmp     mt_uyes
+
+; the ended task at BX: "X ended[, exit code n]", or "X could not be
+; started: error n" (EXEC's), at ES:DI, ASCIIZ.  (AX, CX, SI change)
+mt_uend:
+        lea     si, [bx+TE_NAME]
+        mov     cx, TR_NAMELEN
+.n:     mov     al, [cs:si]
+        or      al, al
+        jz      .e
+        stosb
+        inc     si
+        loop    .n
+.e:     mov     ax, [cs:bx+TE_EXIT]
+        push    ax
+        mov     si, mt_snost
+        cmp     ah, 0FFh
+        je      .c
+        mov     si, mt_sended
+        call    mt_ucpy
+        pop     ax
+        push    ax
+        or      al, al                  ; (as the Executive says it for a
+        jz      .x                      ;  program it ran itself: AL)
+        mov     si, mt_scode
+.c:     call    mt_ucpy
+        pop     ax
+        push    ax
+        call    mt_udec
+.x:     pop     ax
+        mov     byte [es:di], 0
+        ret
+
+; the text at CS:SI (ASCIIZ) at ES:DI, DI and SI past it (AL changes)
+mt_ucpy:
+        mov     al, [cs:si]
+        inc     si
+        or      al, al
+        jz      .x
+        stosb
+        jmp     mt_ucpy
+.x:     ret
+
+; AL in decimal at ES:DI (AX, CL change)
+mt_udec:
+        xor     ah, ah
+        mov     cl, 10
+        div     cl
+        push    ax
+        or      al, al
+        jz      .d
+        call    mt_udec
+.d:     pop     ax
+        mov     al, ah
+        add     al, '0'
+        stosb
         ret
 
 ; CODE-Tab in the BIOS's key buffer: taken out, and the next task (after the
@@ -5026,11 +5434,14 @@ MT_LEN      equ     mt_tend - mt_tstart
 
 MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
 MT_SSTK     equ     1024                ;  on the paragraph after the image;
-MT_PARAS    equ     MT_TX0P + TX0_PARAS + MT_SSTK / 16  ; then mt_swnow's stack
-
+MT_INIL     equ     160                 ; LODE.INI's lists' room
+MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MT_SSTK) / 16
+                                        ; (then the lists, a header, the stack)
 section mttbss
 mt_tx0      resb    TX0_PARAS * 16      ; (at MT_TX0P * 16; no TX_GSN: task 0
                                         ;  never ends)
+mt_ini      resb    MT_INIL             ; (mt_lists)
+mt_hdr      resb    20h                 ; (MT_UI: an .EXE's header)
             resb    MT_SSTK             ; (mt_swnow's stack)
 mt_bend:
 
@@ -5116,6 +5527,7 @@ mt_boot:
         mov     cx, MT_PARAS * 16 - MT_LEN
         xor     al, al
         rep     stosb
+        call    mt_lists                ; LODE.INI's BG=, FREEZE=, MTMEM=
         mov     dx, es
         mov     ah, 62h                 ; task 0: the Executive, the root
         int     21h                     ;  process; its TX in MT's BSS
@@ -5209,4 +5621,115 @@ mt_boot:
         mov     ah, 3Eh
         int     21h
 .x:     ret
+
+; LODE.INI's BG=, FREEZE= and MTMEM= lists into mt_ini (ES = MT's block,
+; its BSS zeroed; DS = CS), for mt_spawn: each program's name, upper case,
+; its 0 and a word (MTMEM='s KB, 1-1023; 0 for the others), a 0 after a
+; list's last.  Names are separated by commas, semicolons or blanks, and
+; cut at 12 characters; MTMEM= gives NAME:kb (an entry without a number
+; is left out).  What doesn't fit in mt_ini is left out.
+mt_lists:
+        cld
+        mov     di, mt_ini
+        mov     bx, MDB(s_bgeq)
+        mov     bp, mt_lbg
+        call    .one
+        mov     bx, MDB(s_fzeq)
+        mov     bp, mt_lfz
+        call    .one
+        mov     bx, MDB(s_memeq)
+        mov     bp, mt_lmem
+.one:   call    ini_read                ; (SI = the text: read already)
+        push    di
+        mov     di, bx
+        call    ini_key
+        pop     di
+        jc      .x
+        mov     [es:bp], di             ; (the list: here)
+.e:     lodsb                           ; to the next name
+        call    .sep
+        jc      .end
+        je      .e
+        cmp     di, mt_ini + MT_INIL - 18       ; (room: a name, 0, word, and
+        ja      .end                    ;  the lists' three ends)
+        mov     dx, di                  ; (the entry, should it go)
+        mov     cx, 12
+.n:     cmp     al, 'a'
+        jb      .u
+        cmp     al, 'z'
+        ja      .u
+        sub     al, 20h
+.u:     jcxz    .nn                     ; (past 12: left out)
+        stosb
+        dec     cx
+.nn:    lodsb
+        cmp     al, ':'
+        je      .k
+        call    .sep
+        jne     .n
+        dec     si                      ; (the separator or the line's end
+        cmp     bp, mt_lmem             ;  again, next)
+        je      .drop                   ; (MTMEM= without a number)
+        xor     ax, ax
+        stosb
+        stosw
+        jmp     .e
+.k:     xor     al, al                  ; NAME:kb
+        stosb
+        xor     bx, bx                  ; (BX = the KB)
+.kd:    lodsb
+        sub     al, '0'
+        cmp     al, 9
+        ja      .kn
+        cbw
+        cmp     bx, 1024                ; (too big already: stays so)
+        jae     .kd
+        shl     bx, 1                   ; BX * 10 + the digit
+        add     ax, bx
+        shl     bx, 2
+        add     bx, ax
+        jmp     .kd
+.kn:    dec     si
+        xor     ax, ax
+        cmp     bp, mt_lmem             ; (BG=, FREEZE=: a number is nothing)
+        jne     .kw
+        mov     ax, bx
+        or      ax, ax
+        jz      .drop
+        cmp     ax, 1024
+        jae     .drop
+.kw:    stosw
+.sk:    lodsb                           ; (and on to the separator)
+        call    .sep
+        jne     .sk
+        dec     si
+        jmp     .e
+.drop:  mov     di, dx                  ; (MTMEM='s, not usable)
+        jmp     .sk
+.end:   xor     al, al
+        stosb
+.x:     ret
+; AL a separator (ZF), the line's end (ZF and CF), or neither (both clear)?
+.sep:   cmp     al, ','
+        je      .sx
+        cmp     al, ';'
+        je      .sx
+        cmp     al, ' '
+        je      .sx
+        cmp     al, 9
+        je      .sx
+        cmp     al, 13
+        je      .se
+        cmp     al, 10
+        je      .se
+        or      al, al
+        jz      .se
+.sx:    ret                             ; (CF clear from CMP or OR)
+.se:    cmp     al, al
+        stc
+        ret
+
+s_bgeq  db      'BG', 1Dh, 0            ; (as "BG=" AND 0DFh)
+s_fzeq  db      'FREEZE', 1Dh, 0
+s_memeq db      'MTMEM', 1Dh, 0
 %endif

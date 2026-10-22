@@ -20,6 +20,7 @@ cd ..
 python mkrun.py apps\SYSTEM.ASM apps\SYSTEM.RUN
 python mkrun.py apps\WRITE.ASM apps\WRITE.RUN
 python mkrun.py apps\CALC.ASM apps\CALC.RUN
+python mkrun.py apps\TASKS.ASM apps\TASKS.RUN
 python mkrun.py tests\UITEST.ASM tests\UITEST.RUN
 cd tests
 nasm -f bin -o TESTDOS.COM TESTDOS.ASM
