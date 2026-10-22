@@ -1093,7 +1093,7 @@ class PC:
                 w = PC.bios_word(s.keys[0])
                 s.w('ax', PC.old_read(w) if ah == 1 else PC.ext_read(w)); s.zf(0)
             else: s.zf(1)
-        elif ah in (0x02, 0x12): s.w('ax', s.r('ax') & 0xFF00)
+        elif ah in (0x02, 0x12): s.w('ax', (s.r('ax') & 0xFF00) | s.rd(0x40, 0x17, 1)[0])   # (the shift state)
         elif ah == 0x05:                        # (full at 15, as the BIOS's buffer)
             if len(s.keys) >= 15: s.w('ax', (s.r('ax') & 0xFF00) | 1)
             else: s.keys.append(s.r('cx')); s.w('ax', 0)
