@@ -189,7 +189,10 @@ new_name:                               ; (the same after a resolve)
 resolve:
         mov     si, path_buf
 resolve_si:
-        mov     word [it_dir], 0
+        xor     ax, ax
+        mov     [it_dir], ax
+        mov     [r_wild], al            ; (before the drive: nf_last and
+        mov     [r_name], al            ;  RMDIR read them)
         mov     al, [cur_drv]
         cmp     byte [si+1], ':'
         jne     .d
@@ -200,7 +203,7 @@ resolve_si:
         call    drv_ready
         mov     bx, si
         pop     si
-        jc      .x
+        jc      .drv
         mov     al, [act]
         mov     [r_drv], al
         call    fat_load
@@ -212,15 +215,17 @@ resolve_si:
         xor     ax, ax
         inc     si
 .c:     mov     [r_dir], ax
-        mov     byte [r_name], 0
-        mov     byte [r_wild], 0
 .comp:  cmp     byte [si], 0
         je      .ok
         call    parse_comp
         jc      .bad
         cmp     byte [si], '\'
         jne     .last
-        inc     si
+.bs:    inc     si
+        cmp     byte [si], '\'         ; (two \s: one, as MS-DOS)
+        je      .bs
+        cmp     byte [si], 0            ; (a \ last: 3, as MS-DOS)
+        je      .np
         or      al, al
         jnz     .np
         cmp     word [nm11], '. '
@@ -236,10 +241,22 @@ resolve_si:
         mov     [r_dir], ax
         jmp     .comp
 .npe:   cmp     ax, 2
-        je      .np
+        je      .rest
         stc                             ; a disk error
         ret
-.last:  mov     [r_wild], al
+.rest:  call    parse_comp              ; a directory not there: the rest
+        jc      .bad                    ;  read on, as MS-DOS (X17): a bad
+        cmp     byte [si], '\'         ;  middle part 3, a bad or wild last
+        jne     .rl                     ;  one marked (open, create: 2)
+        inc     si
+        jmp     .rest
+.rl:    mov     [r_wild], al
+        jmp     short .np
+.last:  cmp     word [nm11], '..'       ; (".." last in the root: 3, as
+        jne     .l1                     ;  MS-DOS)
+        cmp     word [r_dir], 0
+        je      .np
+.l1:    mov     [r_wild], al
         push    si
         mov     si, nm11
         mov     di, r_name
@@ -257,6 +274,10 @@ resolve_si:
 .np:    mov     ax, 3
         stc
 .x:     ret
+.drv:   cmp     al, 15                  ; (an invalid drive: 3, as MS-DOS)
+        je      .np
+        stc
+        ret
 
 ; entry BX of directory AX -> SI (in a sector buffer), d_lba, d_off.
 ; CF: past the end of the directory (AX = 18) or a disk error
@@ -695,7 +716,7 @@ find_file:
         cmp     byte [r_name], 0
         je      find_named.nf
         cmp     byte [r_wild], 0
-        jne     find_named.nf
+        jne     resolve_si.np           ; (3, as MS-DOS; open's 2: nf_last)
 ; r_name in r_dir (resolve left it in nm11 too): dir_find's answer
 find_named:
         mov     ax, [r_dir]
@@ -856,15 +877,15 @@ find_dir:
 
 f_3A:   call    get_path                ; RMDIR
         jc      .e
-        call    find_dir                ; (wildcards: 3, as for CHDIR)
+        call    find_dir
         jc      .nd
+        mov     si, [actp]              ; the current directory (".", or the
+        cmp     ax, [si+D_CWD]          ;  root from it): 16, as MS-DOS
+        je      .cur
         cmp     byte [r_name], 0        ; after it: for "" and "." find_dir
         je      .acc                    ;  doesn't look the name up, so
         cmp     byte [r_name], '.'      ;  d_lba/d_off aren't the entry's
         je      .acc                    ;  (".." it finds, but is refused too)
-        mov     si, [actp]
-        cmp     ax, [si+D_CWD]
-        je      .cur
         mov     [new_dir], ax
         push    word [d_lba]
         push    word [d_off]
@@ -904,13 +925,12 @@ f_3A:   call    get_path                ; RMDIR
         jmp     ret_cf
 .cur:   mov     ax, 16                  ; the current directory
         jmp     .e
-.nd:    cmp     ax, 3                   ; the path there but not its last
-        jne     .e                      ;  name (resolve got to it): a
-        cmp     byte [r_name], 0        ;  device's name is 5, as MS-DOS
+.nd:    cmp     ax, 3                   ; a wildcard: 16 (MS-DOS's); the path
+        jne     .e                      ;  there but its last name not, or not
+        cmp     byte [r_wild], 1        ;  a directory: 5, as MS-DOS
+        je      .cur
+        cmp     byte [r_name], 0
         je      .e
-        call    dev_lookup
-        mov     ax, 3                   ; (CF kept)
-        jc      .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
 
@@ -1025,8 +1045,8 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         call    gpath
         pop     word [bp+F_DS]
         jc      .e
-        call    find_file               ; the old name
-        jc      .e
+        call    find_file               ; the old name (a device's: 5, as
+        jc      f_41.nf                 ;  MS-DOS, DELETE's answer)
         test    byte [de+11], A_DIR | A_VOL
         jnz     .acc
         call    sft_busy
