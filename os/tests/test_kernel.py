@@ -1453,7 +1453,7 @@ def t_names():
     dl = []; f = fatcheck.read_files(bytes(k.pc.drives[0].img), dirs=dl)
     keep = {n: (n.lower()[:-4] + '\r\n').encode() for n in ('B.TXT', 'A.TXT', 'HS.TXT', 'SYS2.TXT', 'RO.TXT')}
     check('... and the disk as MS-DOS leaves it: HID, SYS and CLOCK.TXT deleted, HID2, HID3 and HS2 made empty; B, A, '
-          'HS, SYS2 and RO.TXT as they were, E.F there; no C.D, no directory CON, NUL or CLOCK',
+          'HS, SYS2 and RO.TXT as they were, E.F there; no C.D, no directory CON, NUL, CLOCK or CLOCK$',
           all(f.get('A:\\' + n) == v for n, v in keep.items()) and 'A:\\E.F' in dl
           and not {'A:\\HID.TXT', 'A:\\SYS.TXT', 'A:\\CLOCK.TXT', 'A:\\C.D'} & set(f)
           and all(f.get('A:\\%s.TXT' % n) == b'' for n in ('HID2', 'HID3', 'HS2'))
