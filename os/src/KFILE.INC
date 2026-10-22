@@ -218,14 +218,16 @@ sft_fill:
 ; ---------------------------------------------------------------------
 ;  devices by name
 ; ---------------------------------------------------------------------
-; is the last component of path_buf a device?  -> AL = device,
-; AH = GPIB address.  CF if not.
+; is the last component of path_buf (or of the path at AX) a device?
+; -> AL = device, AH = GPIB address.  CF if not.
 dev_lookup:
+        mov     ax, path_buf
+dev_look_ax:
         push    bx
         push    cx
         push    si
         push    di
-        mov     si, path_buf
+        xchg    si, ax
         mov     bx, si
 .f:     lodsb
         or      al, al
@@ -334,7 +336,7 @@ f_3D:   call    get_path                ; OPEN
         call    dev_lookup
         jnc     create.dev              ; (the same: a device's handle)
         call    find_file
-        jc      .e1
+        jc      .nf
         test    byte [de+11], A_DIR | A_VOL
         jnz     .acc
         mov     al, [bp+F_AX]
@@ -350,7 +352,8 @@ f_3D:   call    get_path                ; OPEN
         pop     ax
         pop     bx
         jmp     give_handle
-.acc:   mov     ax, 5
+.acc:   mov     ax, 5                   ; (nf_last leaves 5 alone)
+.nf:    call    nf_last
 .e1:    pop     bx
 .e:     jmp     fail
 
@@ -382,12 +385,15 @@ section .text
 ; create path_buf with attributes [bp+F_CX] -> SI = SFT, AL = number
 do_create:
         call    resolve_new
-        jc      .x
+        jc      nf_last
         call    find_named
         jc      .new
         cmp     byte [cr_new], 0
         jne     .exists
-        test    byte [de+11], A_DIR | A_VOL | A_RO
+        mov     al, [bp+F_CX]           ; a directory, label or read-only
+        and     al, A_HID | A_SYS       ;  file, or hidden or system without
+        xor     al, A_DIR | A_VOL | A_HID | A_SYS | A_RO   ; asking for it
+        test    [de+11], al             ;  again: 5, as MS-DOS
         jnz     .acc
         call    sft_busy
         jc      .acc
@@ -425,6 +431,17 @@ do_create:
         ret
 .acc:   mov     ax, 5
 .err:   stc
+        ret
+
+; open, create: a last part that is no name (resolve: r_wild FFh) or has
+; wildcards (1) is "file not found", as MS-DOS says, not 3.  CF kept set
+nf_last:
+        cmp     ax, 3
+        jne     .x
+        cmp     [r_wild], ah            ; (AH = 0)
+        je      .x
+        dec     ax
+.x:     stc
         ret
 
 f_5A:   call    get_path                ; CREATE TEMPORARY: path + name

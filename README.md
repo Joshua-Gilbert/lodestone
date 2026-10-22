@@ -92,8 +92,8 @@ Lodestone 0.6 (memory measured with the windows that move, the printer drivers a
 |---|---:|---:|---:|
 | BENCH file-system total | **78.8** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.43** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **582.4 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 566.3 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **582.3 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 566.2 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
