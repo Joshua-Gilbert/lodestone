@@ -259,7 +259,9 @@ MEM_044 = {0: '566.0', 88: '582.1'}   # (0.6: 0.1 KB less, the PATH search and t
                                       #  then 0.1 KB less, 32 bytes, right clicks: UI API 7;
                                       #  0.1 KB less, names and devices answered as MS-DOS 3.30;
                                       #  0.1 KB less (no EMS), a device behind a directory: DIR\NUL;
-                                      #  0.1 KB less, the path calls' error codes as MS-DOS 3.30's: X17, X20)
+                                      #  0.1 KB less, the path calls' error codes as MS-DOS 3.30's: X17, X20;
+                                      #  0.1 KB less, the Executive's part of multitasking: Return
+                                      #  as a task, CODE-T, 150 bytes)
 
 def t_memory():
     print('== what DOS programs get: the same with the picture as without it')

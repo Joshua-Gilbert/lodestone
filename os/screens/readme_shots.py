@@ -17,7 +17,7 @@ def dummy(name, size):
     p = os.path.join(TMP, name); open(p, 'wb').write(bytes((i * 7) & 255 for i in range(size))); return p
 
 files = [os.path.join(GOS, 'src', f) for f in ('LODE.SYS', 'LCMD.COM', 'DEFRAG.COM', 'HEADCLN.COM', 'LODE.TXT', 'CALC.COM')]
-files += [os.path.join(GOS, 'apps', f) for f in ('SYSTEM.RUN', 'WRITE.RUN', 'CALC.RUN')]
+files += [os.path.join(GOS, 'apps', f) for f in ('SYSTEM.RUN', 'WRITE.RUN', 'CALC.RUN', 'TASKS.RUN')]
 files += [os.path.join(GOS, 'fonts', 'TERMINUS.FNT'), os.path.join(GOS, 'claude', 'CLAUDE.COM'),
           os.path.join(GOS, 'bench', 'BENCH.COM'), os.path.join(GOS, 'tests', 'EMSTEST.COM'),
           os.path.join(GOS, 'tests', 'TESTDOS.COM'), dummy('TM5000G.EXE', 296634),
