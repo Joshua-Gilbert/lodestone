@@ -397,6 +397,9 @@ the shell (it wrote over the shell's own memory).  DIR of a path too
 long for its pattern says File not found (it could hang the machine);
 every MS-DOS path is listed.  DIR or COPY on a drive that isn't there
 no longer builds on what the one before left until the shell breaks.
+A file made by CREATE has the archive bit, as in MS-DOS, so a backup
+program sees it as new; CREATE with a directory's attribute is
+refused.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free) turns it on: its resident part (3.9 KB,

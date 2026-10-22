@@ -365,6 +365,8 @@ create: call    get_path
         call    jft_alloc
         jc      .e
         push    bx
+        test    byte [bp+F_CX], 0D0h    ; (a directory's, 40h or 80h: 5, as
+        jnz     f_3D.acc                ;  MS-DOS, before the path is looked at)
         call    dev_lookup
         jnc     .dev
         call    do_create
@@ -443,7 +445,8 @@ do_create:
         call    dir_slot
         jc      .x
 .ne:    mov     cl, [bp+F_CX]
-        and     cl, 27h
+        and     cl, 7                   ; (8: a label in MS-DOS, a file here)
+        or      cl, A_ARC               ; new, or made anew: archive, as MS-DOS
         xor     ax, ax
         call    new_entry
         jc      .x
