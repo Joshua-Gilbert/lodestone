@@ -533,13 +533,23 @@ do_pipe:
         int     21h
 .r:     ret
 
-; this level's pipe files: \PIPEx1.$$$ and \PIPEx2.$$$, x for the level
-; (a pipe inside a CALL or FOR inside a pipe has its own)
+; this level's pipe files: \PIPEx1.$$n and \PIPEx2.$$n, x for the level
+; (a pipe inside a CALL or FOR inside a pipe has its own), n our task's
+; number ($ with multitasking off: LCMDs in two tasks have their own)
 pipe_names:
         mov     al, [rdepth]
         add     al, 'A' - 1
         mov     [pipe_a + 5], al
         mov     [pipe_b + 5], al
+        push    si
+        call    mt_lst
+        mov     al, '$'
+        jc      .n
+        mov     al, [mt_me]
+        add     al, '0'
+.n:     mov     [pipe_a + 10], al
+        mov     [pipe_b + 10], al
+        pop     si
         ret
 
 ; one level of redirection done: the one around it again
@@ -1099,7 +1109,7 @@ bat_start:
         mov     dl, [bat_echo]
 .new:   push    dx
         mov     dx, prog
-        mov     ax, 3D00h
+        mov     ax, 3D80h               ; (not inherited: a task START's keeps none)
         int     21h
         pop     dx
         jnc     .op
@@ -3568,7 +3578,12 @@ task_arg:
         call    mt_lst                  ; (SI kept, unless off)
         jc      .x
         mov     al, [si]
-        sub     al, '0'
+        cmp     al, 0
+        jne     .a
+        mov     si, e_param
+        stc
+        ret
+.a:     sub     al, '0'
         cmp     al, 9
         ja      .nm
         call    getnum
@@ -3676,7 +3691,13 @@ do_start:
         cmp     byte [si], ':'
         jne     .sy
         inc     si
+        mov     al, [si]                ; (digits, under 1024)
+        sub     al, '0'
+        cmp     al, 9
+        ja      .sy
         call    getnum
+        cmp     ax, 1024
+        jae     .sy
         shl     ax, 6                   ; (KB: paragraphs)
         mov     [spb + SP_PARAS], ax
         cmp     byte [si-1], '/'        ; (getnum went past one: a switch's
@@ -3688,7 +3709,13 @@ do_start:
 .or:    or      [spb + SP_FLAGS], bl
         jmp     .sw
 .sy:    mov     si, e_syntax
-.er:    jmp     err
+.er:    push    si                      ; (TASK= out: not an earlier one's)
+        push    es
+        mov     si, s_taskv
+        call    env_set_line
+        pop     es
+        pop     si
+        jmp     err
 .pg:    mov     di, cword               ; the program's name, upper case
         mov     cx, 70
 .c:     lodsb
@@ -3776,18 +3803,28 @@ do_wait:
         or      al, al                  ; (free: the last one there ended)
         jz      .end
         mov     [wgen], ah
-.l:     mov     ah, 0Bh                 ; (^C: back to the prompt)
+.l:     mov     ah, 0Bh                 ; a key (in front only: behind, MT
+        int     21h                     ;  shows none) read; ^C raises INT 23h,
+        or      al, al                  ;  ours: back to the prompt (0Bh
+        jz      .h                      ;  doesn't look for it here)
+        mov     ah, 8
         int     21h
-        sti
+.h:     sti
         hlt                             ; (the other tasks run)
         call    .get
         jc      .er
         cmp     cl, [wgen]
-        jne     .l
+        je      .end
+        cmp     ah, [wgen]              ; (the number given to another, and
+        je      .l                      ;  that one ended too: its code lost)
+        mov     si, e_lost
+        jmp     short .er
 .end:   mov     [errlvl], dl
         mov     byte [failed], 0
         or      dx, dx
         jz      .x
+        cmp     dx, 0300h               ; (stayed resident, code 0: worked)
+        je      .x
         mov     byte [failed], 1
         cmp     dh, 0FFh                ; (its program not started)
         jne     .x
@@ -4548,6 +4585,7 @@ e_tmany     db 'Too many tasks', 0
 e_tnot      db 'Not possible for that task', 0
 e_tmem      db 'Not enough memory or EMS', 0
 e_nostart   db 'Its program could not be started', 0
+e_lost      db 'Its exit code is lost', 0
 e_dir       db 'Invalid directory', 0
 e_mkdir     db 'Unable to create directory', 0
 e_rmdir     db 'Invalid path, not directory,', 13, 10, 'or directory not empty', 0

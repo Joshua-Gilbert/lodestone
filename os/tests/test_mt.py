@@ -2611,16 +2611,20 @@ def t_lcmd():
     cmds = ('start mtline.com x.txt', 'fg 1', 'kill 1', 'park 1', 'unpark 1', 'wait 1')
     k = boot('mt_lc0.img', None)
     sh = Shell(k)
-    outs = [sh.run(c + ' || echo FAILED') for c in cmds]
-    o = sh.run('if errorlevel 1 echo LEVEL1')
-    check('off: each says multitasking is off and fails (ERRORLEVEL 1, WAIT\'s too)',
-          all(OFF_MSG in x and 'FAILED' in x for x in outs) and 'LEVEL1' in o, (outs, o))
-    sb = os.path.join(A.OUT, 'SB.BAT'); open(sb, 'wb').write(b'@echo off\r\nmtline.com sb.txt\r\n')
+    outs, lv = [], []
+    for c in cmds:                      # (VER first: ERRORLEVEL 0 before each)
+        sh.run('ver')
+        outs.append(sh.run(c + ' || echo FAILED'))
+        lv.append(sh.run('if errorlevel 1 echo LEVEL1'))
+    check('off: each says multitasking is off and fails, ERRORLEVEL 1',
+          all(OFF_MSG in x and 'FAILED' in x for x in outs) and all('LEVEL1' in x for x in lv), (outs, lv))
+    sb = os.path.join(A.OUT, 'SB.BAT'); open(sb, 'wb').write(b'@echo off\r\nmtline.com %1\r\n')
     tw = os.path.join(A.OUT, 'TW.BAT')
     open(tw, 'wb').write(b'@echo off\r\nstart /w mtline.com tw.txt\r\nwait %TASK%\r\nif errorlevel 6 echo LEVEL6\r\n'
                          b'if errorlevel 7 echo LEVEL7\r\necho DONE\r\n')
+    sg = os.path.join(A.OUT, 'SG.BAT'); open(sg, 'wb').write(b'@echo off\r\nstart /w mtline.com sg.txt\r\necho BATDONE\r\n')
     cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
-    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, cl)
+    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, cl)
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
     sh.run('ver')
@@ -2657,15 +2661,41 @@ def t_lcmd():
           and x1 and x1.groups() == ('02', '02', '0000', '01') and w1[0][1] == (1, 2, 'MTLINE.COM')
           and 'LEVEL7' in o3 and 'LEVEL8' not in o4 and x2 and x2.groups() == ('00', '02', '0007', '02')
           and A.disk_file(k, 'SW.TXT') == b'=7' and back(), (o1, o2, x1 and x1.groups(), w1, o3, o4, x2 and x2.groups()))
-    # the number used again: MT_EXIT keeps the last one's code till the new one ends; WAIT of an ended one at once
+    # the number used again: MT_EXIT keeps the last one's code till the new one ends; FG; WAIT of an ended one at once
     sh.run('start /w mtline.com sr.txt')
     x3 = xc(1)
-    front(k, 1); line(k, '=3'); k.run_for(0.3)
+    o4 = sh.run('fg 1 && echo FRONTED')
+    f1 = tstate(k)[1]
+    line(k, '=3'); k.run_for(0.3)
+    s1 = tstate(k)[0]
     o5 = sh.run('wait 1 && echo W0')
     o6 = sh.run('if errorlevel 3 echo LEVEL3')
-    check('the same number again: MT_EXIT says started twice, the last one\'s code (7) kept till it ends; WAIT 1 after '
-          'it ended (with 3): at once, ERRORLEVEL 3, failed', x3 and x3.groups() == ('02', '03', '0007', '02')
-          and 'W0' not in o5 and 'LEVEL3' in o6 and back(), (x3 and x3.groups(), o5, o6))
+    check('the same number again: MT_EXIT says started three times, the last one\'s code (7) kept till it ends; FG 1: in '
+          'front, its line typed to it; WAIT 1 after it ended (with 3): at once, ERRORLEVEL 3, failed',
+          x3 and x3.groups() == ('02', '03', '0007', '02') and f1 == 1 and s1 == [(0, 1, 'Executive')]
+          and A.disk_file(k, 'SR.TXT') == b'=3' and 'W0' not in o5 and 'LEVEL3' in o6 and back(),
+          (x3 and x3.groups(), o4, f1, s1, o5, o6))
+    # WAIT for a parked task ended by ^C (the task goes on); WAIT whose task's number was given to another, which
+    # ended too: lost
+    sh.run('start /w mtline.com sx.txt')
+    sh.run('park 1')
+    typ(k, 'wait 1', 0.5)
+    sp = tstate(k)[0]
+    k.key(0x2E03); k.run_for(0.5)
+    o1 = sh.run('echo BACKATPROMPT')
+    sh.run('unpark 1')
+    s1 = tstate(k)[0]
+    g = k.pc.rd(seg, Y['mt_tab'] + MT_ENT + 30, 1)[0]
+    typ(k, 'wait 1', 0.5)
+    k.pc.wr(seg, Y['mt_tab'] + MT_ENT + 30, bytes([g + 1, g + 1]))     # (as if ended, another started and ended)
+    k.run_for(0.5)
+    o2 = k.pc.text_screen()
+    o3 = sh.run('if errorlevel 1 echo LEVEL1')
+    sh.run('kill 1')
+    check('WAIT for a parked task (%s) ended by ^C: back at the prompt, the task still there, brought back (%s); WAIT '
+          'whose task\'s number was used again and ended meanwhile: "Its exit code is lost", ERRORLEVEL 1' % (sp, s1),
+          sp[1:] == [(1, 5, 'MTLINE.COM')] and 'BACKATPROMPT' in o1 and s1[1:] == [(1, 2, 'MTLINE.COM')]
+          and 'Its exit code is lost' in o2 and 'LEVEL1' in o3 and back(), (sp, o1, s1, o2, o3))
     # PARK, UNPARK, KILL by number and name; WAIT of a killed one: AL 0, but failed
     sh.run('start /w mtline.com sp.txt')
     o1 = sh.run('park 1 && echo PARKED')
@@ -2682,17 +2712,33 @@ def t_lcmd():
           and 'WFAILED' in o5 and 'LEVEL1' not in o6 and back(), (o1, o2, s1, o3, s2, o4, o5, o6))
     # what fails
     sh.run('start /w mtline.com se.txt')
-    outs = {c: sh.run(c + ' || echo FAILED') for c in ('fg 7', 'fg nosuch', 'fg mtl', 'kill 0', 'wait 0', 'wait 5',
-                                                         'park 0', 'unpark 1', 'start nosuch.com', 'start',
-                                                         'start /q mtline.com', 'wait 2')}
-    want = {'fg 7': 'No such task', 'fg nosuch': 'No such task', 'fg mtl': 'No such task',
-            'kill 0': 'Not possible for that task', 'wait 0': 'Not possible for that task', 'wait 5': 'No such task',
-            'park 0': 'Not possible for that task', 'unpark 1': 'No such task', 'start nosuch.com': 'Bad command or file name',
-            'start': 'Required parameter missing', 'start /q mtline.com': 'Syntax error', 'wait 2': 'No such task'}
-    o = sh.run('kill 1')
-    check('refused, with its message, failing: %s' % '; '.join('%s: %s' % kv for kv in want.items()),
-          all(want[c] in outs[c] and 'FAILED' in outs[c] for c in want) and back(), outs)
+    want = {'fg 7': 'No such task', 'fg nosuch': 'No such task', 'fg mtl': 'No such task', 'kill 257': 'No such task',
+            'fg': 'Required parameter missing', 'kill 0': 'Not possible for that task',
+            'wait 0': 'Not possible for that task', 'wait 5': 'No such task', 'park 0': 'Not possible for that task',
+            'unpark 1': 'No such task', 'start nosuch.com': 'Bad command or file name', 'start': 'Required parameter missing',
+            'start /q mtline.com': 'Syntax error', 'start /m:1024 mtline.com': 'Syntax error',
+            'start /m:x mtline.com': 'Syntax error', 'start /w /m:1000 mtline.com': 'Not enough memory or EMS',
+            'wait 2': 'No such task'}
+    outs = {}
+    for c in want:                      # (VER first: ERRORLEVEL 0 before each)
+        sh.run('ver')
+        outs[c] = sh.run(c + ' || echo FAILED') + sh.run('if errorlevel 1 echo LEVEL1')
+    o = sh.run('set')
+    sh.run('kill 1')
+    check('refused, with its message, failing (ERRORLEVEL 1): %s; and TASK= gone after a START that failed'
+          % '; '.join('%s: %s' % kv for kv in want.items()),
+          all(want[c] in outs[c] and 'FAILED' in outs[c] and 'LEVEL1' in outs[c] for c in want)
+          and 'TASK=' not in o and back(), (outs, o))
+    # eight tasks at most: the eighth START says so
+    for i in range(7):
+        sh.run('start /w /m:1 mtline.com t%d.txt' % i)
+    o1 = sh.run('start /w /m:1 mtline.com t7.txt || echo FAILED')
+    n = len(tstate(k)[0])
+    o2 = sh.run('kill 1 && kill 2 && kill 3 && kill 4 && kill 5 && kill 6 && kill 7 && echo KILLED')
+    check('seven tasks and the Executive\'s: the next START says "Too many tasks" and fails',
+          n == 8 and 'Too many tasks' in o1 and 'FAILED' in o1 and 'KILLED' in o2 and back(), (n, o1, o2))
     # a program that can't be started (LCMD.COM in 1 KB): the task ends at once, its code FF08h; WAIT says so
+    sh.run('set task=1')                # (both environments copied alike: the next one in the same place)
     o1 = sh.run('start /w /m:1 lcmd.com')
     k.run_for(0.5)
     x1 = xc(1)
@@ -2712,15 +2758,24 @@ def t_lcmd():
     check('START /M:1 MTLINE.COM, in the same place (%04X): it runs (%s), ends with 2; WAIT: ERRORLEVEL 2, not "could not '
           'be started"' % (rm, s1), rm == rf and s1[1:] == [(1, 2, 'MTLINE.COM')] and 'could not' not in o2
           and 'FAILED' in o2 and 'LEVEL2' in o3 and A.disk_file(k, 'SM.TXT') == b'=2' and back(), (rf, rm, s1, o2, o3))
-    # a batch file: through COMSPEC (LCMD /C)
-    sh.run('start /w sb.bat')
+    # a batch file: through COMSPEC (LCMD /C), its arguments too
+    sh.run('start /w sb.bat sb.txt')
     s1 = tstate(k)[0]
     front(k, 1); line(k, '=4'); k.run_for(0.5)
     o = sh.run('wait 1 || echo WF')
     o2 = sh.run('if errorlevel 4 echo LEVEL4')
-    check('START /W SB.BAT: LCMD.COM /C SB.BAT as the task (%s); its MTLINE\'s line typed (=4), the batch file ends, so '
+    check('START /W SB.BAT SB.TXT: LCMD.COM /C SB.BAT SB.TXT as the task (%s); its MTLINE (%%1: SB.TXT) gets its line '
+          '(=4), the batch file ends, so '
           'does the task: WAIT\'s ERRORLEVEL LCMD /C\'s, its last command\'s (4)' % (s1,), s1[1:] == [(1, 2, 'LCMD.COM')]
           and A.disk_file(k, 'SB.TXT') == b'=4' and 'WF' in o and 'LEVEL4' in o2 and back(), (s1, o, o2))
+    # a task started from a batch file doesn't keep it open (LCMD opens it not inherited)
+    o1 = sh.run('sg.bat')
+    s1 = tstate(k)[0]
+    o2 = sh.run('del sg.bat && echo DELETED')
+    o3 = sh.run('kill 1 && echo KILLED')
+    check('a batch file that STARTs a task (%s): once it is done, it can be deleted while the task runs' % (s1,),
+          'BATDONE' in o1 and s1[1:] == [(1, 2, 'MTLINE.COM')] and 'DELETED' in o2 and 'KILLED' in o3 and back(),
+          (o1, s1, o2, o3))
     # in a batch file: START, then WAIT %TASK% and IF ERRORLEVEL
     typ(k, 'cls', 0.3)
     typ(k, 'tw.bat', 0.8)               # (typed: it waits)
@@ -2732,13 +2787,17 @@ def t_lcmd():
     # /B and /D: the task's flags (TE_VF), and how much memory /M gives
     sh.run('start /w /b mtline.com sb1.txt')
     sh.run('start /w /d /m:32 mtline.com sb2.txt')
+    o1 = sh.run('set')
     vf = [k.pc.rd(seg, Y['mt_tab'] + t * MT_ENT + 24, 1)[0] for t in (1, 2)]
     r1, r2 = (k.pc.u16(seg, Y['mt_tab'] + t * MT_ENT + 4) for t in (1, 2))
     s1, s2 = k.pc.u16(r1 - 1, 3), k.pc.u16(r2 - 1, 3)
-    o = sh.run('kill 1 && kill 2 && echo KILLED')
+    sh.run('start /w /d mtspin.com 200 fz.txt')     # (a task computing, never run behind: frozen)
+    o2 = sh.run('tasks')
+    o = sh.run('kill 1 && kill 2 && kill 3 && echo KILLED')
     check('START /B: SPF_BG; START /D: SPF_FREEZE (TE_VF %s); /M:32: 2048 paragraphs for its programs, 32 KB less than '
-          'the default 64 KB (regions of %d and %d paragraphs)' % (vf, s2, s1), vf == [2, 4] and s1 - s2 == 2048
-          and 'KILLED' in o and back(), (vf, s1, s2, o))
+          'the default 64 KB (regions of %d and %d paragraphs); TASK=2 after the second; START /D MTSPIN: TASKS says '
+          '"(frozen)"' % (vf, s2, s1), vf == [2, 4] and s1 - s2 == 2048 and 'TASK=2' in o1
+          and re.search(r'3\s+MTSPIN\.COM \(frozen\)', o2) and 'KILLED' in o and back(), (vf, s1, s2, o1, o2, o))
     # CLAUDE /U refuses while other tasks run
     o1 = sh.run('claude /r')
     sh.run('start /w mtline.com sc.txt')
@@ -2749,7 +2808,7 @@ def t_lcmd():
     o5 = sh.run('if errorlevel 1 echo LEVEL1')
     check('CLAUDE /U with another task: refused (exit code 3); with none, taken out',
           'can\'t be taken out while other tasks run' in o2 and 'LEVEL3' in o3 and 'no longer resident' in o4
-          and 'LEVEL1' not in o5, (o1, o2, o3, o4, o5))
+          and 'LEVEL1' not in o5 and back(), (o1, o2, o3, o4, o5))
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')

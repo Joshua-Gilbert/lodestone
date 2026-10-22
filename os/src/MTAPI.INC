@@ -61,12 +61,14 @@ MT_EXIT     equ 17h                     ; BL = a task's number -> AL = its state
                                         ;  many tasks have been started with
                                         ;  that number (1-255, then 1 again; 0:
                                         ;  none yet); DX = the exit code of the
-                                        ;  last one ended (AH = 4Dh's: 0 ended,
-                                        ;  1 ^C or MT_KILL, 3 stayed resident;
-                                        ;  FFxxh: its program not started, xx
-                                        ;  EXEC's error), CL = its AH then (so
-                                        ;  CL = AH: the one started last has
-                                        ;  ended).  CF: AX = 1 (no such number)
+                                        ;  last one ended (its high byte 4Dh's
+                                        ;  AH: 0 ended, 1 ^C or MT_KILL, 2 a
+                                        ;  critical error's Abort, 3 stayed
+                                        ;  resident; FFxxh: its program not
+                                        ;  started, xx EXEC's error), CL = the
+                                        ;  count it was started with (so CL =
+                                        ;  AH: the one started last has ended)
+                                        ;  CF: AX = 1 (no such number)
 MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back
                                         ;  after a screen saver): not counted
