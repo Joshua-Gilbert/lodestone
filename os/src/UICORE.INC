@@ -1687,8 +1687,11 @@ api_sberr:
         mov     bx, ax
         mov     si, dos_msgs
         cmp     bx, 83
-        jne     .chk
-        mov     ax, [crit_err]
+        je      .ce
+        cmp     bx, 3                   ; (a drive not ready: 3 after INT 24h,
+        jne     .chk                    ;  as MS-DOS; the reason is ours)
+.ce:    xor     ax, ax
+        xchg    ax, [crit_err]          ; (said once)
         or      ax, ax
         jz      .chk
         mov     bx, ax

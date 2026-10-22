@@ -203,7 +203,7 @@ resolve_si:
         call    drv_ready
         mov     bx, si
         pop     si
-        jc      .np                     ; (invalid, or not ready: 3, MS-DOS's)
+        jc      .dr                     ; (invalid, or not ready: 3, MS-DOS's)
         mov     al, [act]
         mov     [r_drv], al
         call    fat_load
@@ -276,6 +276,10 @@ resolve_si:
 .np:    mov     ax, 3
         stc
 .x:     ret
+.dr:    cmp     al, 26                  ; (not a DOS disk: said as such)
+        jne     .np
+        stc
+        ret
 
 ; entry BX of directory AX -> SI (in a sector buffer), d_lba, d_off.
 ; CF: past the end of the directory (AX = 18) or a disk error

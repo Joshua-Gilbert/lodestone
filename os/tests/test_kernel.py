@@ -1889,6 +1889,17 @@ def t_nodisk():
     got = [' '.join(l.split()) for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
     check("NODISK.COM: all %d calls answer as GRiD MS-DOS 3.30's do (INT 24h, then 3)" % len(MS_NODISK), got == MS_NODISK,
           [(w, g) for w, g in zip(MS_NODISK, got) if w != g] or (len(MS_NODISK), len(got)))
+    # a handler that answers Ignore, which the mount doesn't offer: Fail, as MS-DOS (it mounted B: from A:'s boot sector)
+    ig = os.path.join(OUT, 'NODISKIG.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', ig, os.path.join(HERE, 'NODISKIG.ASM')], check=True)
+    k = ktest.KPC(image('nodiskig.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISKIG.COM=' + ig), bytes(1474560))
+    k.pc.drives[1].empty = True
+    k.start()
+    sh = Shell(k)
+    assert run_long(k, 'nodiskig > out.txt')
+    o = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\OUT.TXT', b'').decode('latin-1')
+    check('... a handler that answers Ignore at the mount: Fail all the same (open and FIND FIRST 3, free space FFFFh), '
+          'not B: mounted from what A: left', 'open B:X.TXT err 0003' in o and 'B: free FFFF' in o and 'find B:*.* err 0003' in o, o)
     k.key('cls'); k.key(ktest.ENTER)
     k.key('type b:x.txt'); k.key(ktest.ENTER)
     o1 = k.pc.text_screen()

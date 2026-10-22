@@ -1159,7 +1159,9 @@ dio:    push    bx
         call    bios2dos
         stc
         ret
-.bign:  mov     byte [io_ign], 1
+.bign:  cmp     byte [io_crit], 2       ; (mounting: no Ignore was offered;
+        je      .bfail                  ;  Fail, as MS-DOS, not a stale BPB)
+        mov     byte [io_ign], 1
         call    .wfail
 .bok:   clc
         ret
