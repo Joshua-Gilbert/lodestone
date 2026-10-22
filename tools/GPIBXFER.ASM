@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBXFER.COM 1.0 - real DMA through the 1520's 7210 (channel 3), and
+;  GPIBXFER.COM 1.1 - real DMA through the 1520's 7210 (channel 3), and
 ;  how fast it is next to the CPU's own loop.
 ;  Build:  nasm -f bin -o GPIBXFER.COM GPIBXFER.ASM
 ;  Usage:  GPIBXFER [a]      a = the echo device's address (default 7)
@@ -107,6 +107,10 @@ run_both:
         call    d_tick
         sub     ax, [t0]
         mov     [tout], ax
+        mov     dx, s_outr
+        call    out_str
+        mov     ax, [tout]
+        call    rate
         mov     di, [rxp]               ; spoil the receive buffer first
         mov     cx, MSGLEN
         mov     al, 0A5h
@@ -122,10 +126,6 @@ run_both:
         call    d_tick
         sub     ax, [t0]
         mov     [tin], ax
-        mov     dx, s_outr
-        call    out_str
-        mov     ax, [tout]
-        call    rate
         mov     dx, s_inr
         call    out_str
         mov     ax, [tin]
@@ -149,12 +149,43 @@ run_both:
 .f2:    call    out_str
         mov     al, [why]
         call    out_hex
+        mov     dx, s_got
+        call    out_str
+        mov     ax, [got]
+        call    out_dec
+        mov     dx, s_isr
+        call    out_str
+        mov     al, [lastisr]
+        call    out_hex
+        call    out_crlf
+        cmp     byte [usedma], 0
+        je      .nd
         mov     dx, s_cnt
         call    out_str
         mov     ax, [left]
         call    out_dec
+        mov     dx, s_adr
+        call    out_str
+        mov     ax, [dadr]
+        xchg    al, ah
+        call    out_hex
+        xchg    al, ah
+        call    out_hex
+        mov     dx, s_st
+        call    out_str
+        mov     al, [dst]
+        call    out_hex
+        mov     dx, s_first
+        call    out_str
+        mov     si, [rxp]
+        mov     cx, 8
+.fb:    lodsb
+        call    out_hex
+        mov     al, ' '
+        call    out_chr
+        loop    .fb
         call    out_crlf
-        call    dma_off
+.nd:    call    dma_off
         jmp     d_recover
 
 ; AX ticks for NMSG * MSGLEN bytes -> "n.n s, n KB/s"
@@ -301,18 +332,28 @@ msg_in:
         xor     al, al
         out     dx, al
         call    dma_off
+        mov     dx, R_ISR1
+        in      al, dx
+        mov     [lastisr], al
+        mov     ax, MSGLEN
+        sub     ax, [left]
+        mov     [got], ax
         popf
         jc      .f
         mov     byte [why], 13h         ; the END byte was the last
         mov     dx, R_ISR1
         in      al, dx
+        mov     ah, al
+        in      al, dx
+        or      al, ah
         or      al, [shadow1]
         mov     byte [shadow1], 0
+        mov     [lastisr], al
         test    al, ISR1_END
         jz      .f
         jmp     short .end
 .pio:   call    d_do_gts
-        mov     byte [why], 14h
+        mov     byte [why], 14h         ; (14h: a byte didn't come)
         mov     dx, R_ISR1
         xor     ah, ah
 .pb:    mov     bx, 0
@@ -320,24 +361,47 @@ msg_in:
         or      ah, al
         test    ah, ISR1_DI
         jnz     .pg
+        test    ah, ISR1_END            ; END latched after the last byte's DI
+        jnz     .lateend
         dec     bx
         jnz     .pw
-        jmp     short .f
+        jmp     short .pf
 .pg:    mov     dx, R_DIR
         in      al, dx
         stosb
         mov     dx, R_ISR1
+        and     ah, ~ISR1_DI            ; this byte's DI is used up
+        in      al, dx                  ; a second look, for END (as d_isr1_test);
+        or      ah, al                  ;  a DI here is the next byte's
         test    ah, ISR1_END
-        jnz     .pend
-        and     ah, ~ISR1_DI
-        loop    .pb
-        jmp     short .f                ; no END by MSGLEN bytes
+        jz      .more
+        cmp     cx, 1
+        je      .pend                   ; END with the last byte: done
+        test    ah, ISR1_DI
+        jz      .pend                   ; END and nothing more: early
+.more:  loop    .pb
+        mov     byte [why], 16h         ; (16h: no END by MSGLEN bytes)
+        mov     bx, 0                   ;  - or END just late: one more look
+.pl:    in      al, dx
+        or      ah, al
+        test    ah, ISR1_END
+        jnz     .pok
+        dec     bx
+        jnz     .pl
+        jmp     short .pf
+.lateend: mov   byte [why], 15h         ; (15h: END with bytes still to come)
+        jmp     short .pf
 .pend:  dec     cx
-        jnz     .f                      ; END too early
-        mov     byte [shadow1], 0
+        mov     byte [why], 15h
+        jnz     .pf
+.pok:   mov     byte [shadow1], 0
 .end:   call    d_rd_end
         clc
         ret
+.pf:    mov     [lastisr], ah
+        mov     ax, di
+        sub     ax, [rxp]
+        mov     [got], ax
 .f:     call    d_rd_end
         stc
         ret
@@ -387,6 +451,8 @@ dma_wait:
         jnz     .ok
         call    d_tmo_check
         jnc     .w
+        in      al, 08h
+        mov     [dst], al
         out     0Ch, al                 ; how far it got
         in      al, 07h
         mov     ah, al
@@ -394,6 +460,12 @@ dma_wait:
         xchg    al, ah
         inc     ax
         mov     [left], ax
+        out     0Ch, al
+        in      al, 06h
+        mov     ah, al
+        in      al, 06h
+        xchg    al, ah
+        mov     [dadr], ax
         pop     cx
         stc
         ret
@@ -529,7 +601,7 @@ save_log:
 
 %include "direct.inc"
 
-s_title db 13,10,'GPIBXFER 1.0 - 16 x 4096-byte messages each way, echoed by the device at $'
+s_title db 13,10,'GPIBXFER 1.1 - 16 x 4096-byte messages each way, echoed by the device at $'
 s_pio   db 13,10,'CPU loop:',13,10,'$'
 s_dma   db 13,10,'DMA, channel 3:',13,10,'$'
 s_outr  db '  GRiD -> device: $'
@@ -541,7 +613,12 @@ s_same  db '  the echo is every byte right',13,10,'$'
 s_diff  db '  THE ECHO DIFFERS from byte $'
 s_fo    db '  sending failed, step $'
 s_fi    db '  receiving failed, step $'
-s_cnt   db 'h; the 8237 had bytes left: $'
+s_got   db 'h; bytes in: $'
+s_isr   db ', 7210 ISR1 $'
+s_cnt   db '  8237 channel 3: bytes left $'
+s_adr   db ', address $'
+s_st    db 'h, status $'
+s_first db 'h; buffer starts $'
 s_done  db 13,10,'Done.  Reboot before CLAUDE or TM5000.  Also in GPIBXFER.TXT.',13,10,'$'
 s_logname db 'GPIBXFER.TXT',0
 
@@ -555,6 +632,10 @@ tout    dw 0
 tin     dw 0
 ms      dw 0
 left    dw 0
+got     dw 0
+dadr    dw 0
+dst     db 0
+lastisr db 0
 txp     dw 0
 rxp     dw 0
 shadow1 db 0
