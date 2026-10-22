@@ -24,6 +24,15 @@ MT_FRONT    equ 13h                     ; BL = a task: it comes to the front at
                                         ;  the next key wait.  CF: AX = 1 (none).
                                         ;  (When the front task ends, task 0
                                         ;  comes to the front.)
+MT_KILL     equ 14h                     ; BL = a task: it ends, whatever runs in
+                                        ;  it, its programs' files closed and
+                                        ;  their EMS and memory freed, its exit
+                                        ;  code 0100h (as ^C ends a program).
+                                        ;  Another task: when it next runs (soon:
+                                        ;  the caller's turn ends on this call's
+                                        ;  way out); the caller's own: at once,
+                                        ;  no return.  CF: AX = 1 (no such task),
+                                        ;  5 (task 0, the Executive)
 MT_SCREEN   equ 1Ch                     ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back
                                         ;  after a screen saver): not counted
