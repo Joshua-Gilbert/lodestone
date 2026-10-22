@@ -16,7 +16,8 @@
 ;              code 0 resident, 1 no EMS or not enough, 2 resident already.
 ;              While CLAUDE itself runs, its hot key is off
 ;  CLAUDE /U   takes it out.  Exit code 0 done, 1 not resident, 2 a
-;              program loaded after it has INT 16h (take that out first)
+;              program loaded after it has INT 16h (take that out first),
+;              3 other tasks run (Lodestone's multitasking: end them first)
 ;
 ;  Runs under MS-DOS 3.x with GRIDGPIB loaded (and later on Lodestone).
 ;  Screen: 640x400 mode 40h, Terminus Bold 8x16, 80 x 25 cells:
@@ -3315,7 +3316,19 @@ res_unload:
         mov     al, 1
         jmp     res_quit
 .f:     mov     bp, ax                  ; its CS
-        mov     ax, 3516h
+        push    ax                      ; other tasks (Lodestone's multitasking:
+        mov     ax, 0F012h              ;  MT_LIST) have its hook among their
+        xor     cx, cx                  ;  own vectors: not while there are
+        stc                             ;  (another DOS leaves CF set)
+        int     21h
+        pop     ax
+        jc      .one
+        cmp     cx, 1
+        jbe     .one
+        mov     dx, s_u_tasks
+        mov     al, 3
+        jmp     res_quit
+.one:   mov     ax, 3516h
         int     21h
         mov     ax, es
         cmp     ax, bp
@@ -3397,6 +3410,8 @@ s_r_nomem   db 'CLAUDE /R: not enough memory.', 13, 10, '$'
 s_mcbname   db 'CLAUDE', 0, 0
 s_u_done    db 'Claude is no longer resident.', 13, 10, '$'
 s_u_none    db 'Claude isn', 27h, 't resident.', 13, 10, '$'
+s_u_tasks   db 'Claude can', 27h, 't be taken out while other tasks run: end them, then', 13, 10
+            db 'CLAUDE /U from the Executive', 27h, 's task.', 13, 10, '$'
 s_u_over    db 'Claude can', 27h, 't be taken out: a program loaded after it has INT 16h.', 13, 10
             db 'Take that program out first.', 13, 10, '$'
 

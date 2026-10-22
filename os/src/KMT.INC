@@ -82,7 +82,9 @@ TE_STATE    equ 0                       ; TS_*
 TE_PSP      equ 2                       ; its stub's PSP (task 0: the root's)
 TE_REG      equ 4                       ; its region (task 0: 0)
 TE_TX       equ 6                       ; its TX's segment
-TE_EXIT     equ 8                       ; its program's exit code (last_exit)
+TE_EXIT     equ 8                       ; the exit code of the last task ended
+                                        ;  here (its program's: last_exit), kept
+                                        ;  while the entry is free (MT_EXIT)
 TE_NAME     equ 10                      ; TR_NAMELEN bytes
 TE_SH       equ 22                      ; its screen's EMS handle (2 pages; 0:
                                         ;  none)
@@ -93,6 +95,9 @@ TE_KILL     equ 25                      ; 1: MT_KILL ended it (it ends when it
 TE_PST      equ 26                      ; parked (TS_PARKED): its state before
 TE_PH       equ 27                      ;  it, the EMS handle its region is in
 TE_PSZ      equ 28                      ;  (MT's), and the region's paragraphs
+TE_GEN      equ 30                      ; the tasks started here, counted (1..255,
+                                        ;  then 1 again; 0: none yet)
+TE_EGEN     equ 31                      ; TE_GEN of the last one ended here
 VF_DIRECT   equ 1                       ; (it wrote the screen itself, or was in
                                         ;  graphics, when last switched from in
                                         ;  front: frozen in the background)
@@ -137,6 +142,8 @@ MT_NFV      equ 2
 ; ---- the stub (a PSP, then this at 100h) --------------------------------
 ST_PATH     equ 120h                    ; the program (ASCIIZ)
 ST_PB       equ 1A0h                    ; EXEC's block
+ST_FAIL     equ 1AEh                    ; EXEC's error, then 0FFh, if it failed
+                                        ;  (0 if not): the exit code FFxxh
 ST_TAIL     equ 1B0h                    ; its command tail
 ST_STK      equ 340h                    ; its stack's top
 SW_RET      equ 20                      ; (mt_switch's frame from the SP it
@@ -321,12 +328,16 @@ st_code:
         mov     dx, ST_PATH
         mov     bx, ST_PB
         int     21h
+        jnc     .e
+        mov     [ST_FAIL], al           ; (its program not started: MT_END
+        mov     byte [ST_FAIL + 1], 0FFh ;  keeps FFxxh as its exit code)
 .e:     mov     ax, 0F000h + MT_END     ; (PSP:0Ah: where it ends, its own
         int     21h                     ;  parent, if it is aborted itself)
 .h:     hlt                             ; (never: MT_END doesn't come back)
         jmp     .h
 st_len      equ     $ - st_code
 ST_END      equ     100h + st_code.e - st_code
+            times   -(100h + st_len > ST_PATH) db 0     ; (it fits below ST_PATH)
 
 ; INT 08h: the BIOS's handler first (the tick count, INT 1Ch, the end of
 ; the interrupt), then ours
@@ -1555,6 +1566,8 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_unpark
         cmp     al, MT_SCREEN
         je      mt_screen
+        cmp     al, MT_EXIT
+        je      mt_xcode
         cmp     al, 1
         je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
@@ -1580,6 +1593,22 @@ mt_open:
         or      al, al
         jmp     KSEG:f_F0 + 5
 .y:     mov     word [bp+F_CX], 1
+        jmp     KSEG:ok
+
+; MT_EXIT: entry BL's state and count of tasks started there; the exit
+; code of the last one ended there, and its count
+mt_xcode:
+        mov     al, [bp+F_BX]
+        cmp     al, MT_TASKS
+        jae     mt_bad
+        call    mt_ent
+        mov     al, [cs:bx+TE_STATE]
+        mov     ah, [cs:bx+TE_GEN]
+        mov     [bp+F_AX], ax
+        mov     ax, [cs:bx+TE_EXIT]
+        mov     [bp+F_DX], ax
+        mov     al, [cs:bx+TE_EGEN]
+        mov     [bp+F_CX], al
         jmp     KSEG:ok
 
 ; MT_LIST: the records of the tasks there are, as many as fit in CX
@@ -2467,7 +2496,13 @@ mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
         mov     es, ax
         KCALL   close_all
         mov     ax, [last_exit]
-        mov     [cs:bx+TE_EXIT], ax
+        mov     es, [cs:bx+TE_PSP]      ; (its program not started: FFxxh)
+        cmp     byte [es:ST_FAIL + 1], 0FFh
+        jne     .ex
+        mov     ax, [es:ST_FAIL]
+.ex:    mov     [cs:bx+TE_EXIT], ax
+        mov     al, [cs:bx+TE_GEN]      ; (MT_EXIT: this one's, ended)
+        mov     [cs:bx+TE_EGEN], al
         mov     dl, [cs:bx+TE_SH]       ; its screen's pages
         xor     dh, dh
         or      dl, dl
@@ -2681,6 +2716,8 @@ mt_spawn:
         stosw
         mov     ax, es
         stosw
+        xor     ax, ax                  ; ST_FAIL: not failed (yet)
+        stosw
         ; the environment's copy
         push    ds
         mov     ax, es
@@ -2781,8 +2818,10 @@ mt_spawn:
         mov     byte [cs:bx+TE_STATE], TS_RUN
         mov     byte [cs:bx+TE_KILL], 0
         mov     byte [cs:bx+TE_PH], 0
-        mov     word [cs:bx+TE_EXIT], 0
-        call    mt_sync                 ; (the front one's screen shadowed now)
+        inc     byte [cs:bx+TE_GEN]     ; (TE_EXIT kept: the last one's, for
+        jnz     .g                      ;  MT_EXIT till this one ends)
+        inc     byte [cs:bx+TE_GEN]
+.g:     call    mt_sync                ; (the front one's screen shadowed now)
         test    byte [cs:mt_sflags], SPF_FRONT
         jz      .x
         mov     al, [bp+F_AX]
