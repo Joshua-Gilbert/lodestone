@@ -6,9 +6,10 @@
 ;      FILE: "cccc", its handler's calls
 ;   G  sets INT 62h (the machine's) and 2Fh (its own) to handlers of its
 ;      own, writes FILE ("g") and ends, putting neither back
-;   R  as G, then stays resident (AH=31h)
-;   V  waits N ticks, then writes FILE: "ssss oooo ssss oooo", INT 1Ch and
-;      INT 2Fh as AH=35h gives them
+;   R  as G, then, a file (RO.TXT) open and an EMS page taken, stays
+;      resident (AH=31h)
+;   V  waits N ticks, then writes FILE: "ssss oooo" for INT 1Ch, 2Fh, 23h
+;      and 24h, as AH=35h gives them
 ;   T  stays resident with an INT 1Ch hook (AH=35h/25h) that counts its
 ;      calls (the word before its handler) and goes on
 ;   K  writes INT 09h in the vector table itself (a handler that goes on),
@@ -17,6 +18,11 @@
 ;      FILE as a task (INT 21h F0h AL=10h), and ends, putting it not back
 ;   Q  writes INT 09h in the table itself (in front, its own), starts
 ;      MTVEC V N FILE as a task in front, and ends, putting it not back
+;   C  hooks INT 1Ch (AH=35h/25h), starts MTVEC V N FILE as a task, puts
+;      INT 1Ch back and ends
+;   B  hooks INT 1Bh (AH=35h/25h), asks for it again (AH=35h), waits N
+;      ticks, puts it back (AH=25h), waits 3 N ticks more, writes FILE ("b
+;      ssss oooo": the vector AH=35h gave the second time) and ends
 ; nasm -f bin -i ../src/ -o MTVEC.COM MTVEC.ASM
 cpu 286
 org 100h
@@ -67,6 +73,10 @@ org 100h
         je      m_p
         cmp     al, 'Q'
         je      m_q
+        cmp     al, 'C'
+        je      m_c
+        cmp     al, 'B'
+        je      m_b
         mov     ax, 4C01h
         int     21h
 
@@ -105,6 +115,13 @@ m_g:    mov     ax, 2562h
         call    wr_file
         cmp     byte [mode], 'R'
         jne     .x
+        mov     ah, 3Ch                 ; (R: a file left open, an EMS page)
+        xor     cx, cx
+        mov     dx, s_ro
+        int     21h
+        mov     ah, 43h
+        mov     bx, 1
+        int     67h
         mov     dx, (the_end - $$ + 100h + 15) / 16
         mov     ax, 3100h
         int     21h
@@ -116,6 +133,10 @@ m_v:    call    wait_n
         mov     ax, 351Ch
         call    vec4
         mov     ax, 352Fh
+        call    vec4
+        mov     ax, 3523h
+        call    vec4
+        mov     ax, 3524h
         call    vec4
         dec     di
         jmp     wr_end
@@ -156,6 +177,47 @@ m_k:    xor     ax, ax
         mov     di, buf + 1
         jmp     wr_end
 
+m_c:    mov     ax, 351Ch
+        int     21h
+        mov     [old1c], bx
+        mov     [old1c + 2], es
+        mov     ax, 251Ch
+        mov     dx, h1c
+        int     21h
+        jmp     m_pq
+m_b:    mov     ax, 351Bh
+        int     21h
+        mov     [old1b], bx
+        mov     [old1b + 2], es
+        mov     ax, 251Bh
+        mov     dx, h1b
+        int     21h
+        mov     ax, 351Bh
+        int     21h
+        mov     [got1b], bx
+        mov     [got1b + 2], es
+        call    wait_n
+        push    ds
+        lds     dx, [old1b]
+        mov     ax, 251Bh
+        int     21h
+        pop     ds
+        mov     ax, [n]
+        imul    ax, ax, 3
+        mov     [n], ax
+        call    wait_n
+        push    cs
+        pop     es
+        mov     di, buf
+        mov     ax, 'b '
+        stosw
+        mov     ax, [got1b + 2]
+        call    hex4
+        mov     al, ' '
+        stosb
+        mov     ax, [got1b]
+        call    hex4
+        jmp     wr_end
 m_q:    xor     ax, ax
         mov     es, ax
         cli
@@ -204,7 +266,14 @@ m_pq:   push    cs
         mov     dx, s_prog
         mov     bx, pb
         int     21h
-        cmp     byte [mode], 'Q'       ; (Q: until V is in front, then the end)
+        cmp     byte [mode], 'C'        ; (C: INT 1Ch back, then the end)
+        jne     .q
+        push    ds
+        lds     dx, [old1c]
+        mov     ax, 251Ch
+        int     21h
+        pop     ds
+.q:     cmp     byte [mode], 'Q'       ; (Q: until V is in front, then the end)
         jne     .e
         mov     word [n], 9
         call    wait_n
@@ -305,10 +374,14 @@ h1c:    inc     word [cs:cnt]
 hret:   iret
 h2f:    jmp     far [cs:old2f]
 k09:    jmp     far [cs:old09]
+h1b:    jmp     far [cs:old1b]
 
 old1c   dd      0
 old2f   dd      0
 old09   dd      0
+old1b   dd      0
+got1b   dd      0
+s_ro    db      'RO.TXT', 0
 n       dw      0
 mode    db      0
 s_v     db      ' v ', 0
