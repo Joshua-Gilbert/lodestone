@@ -127,7 +127,7 @@ class TermScreen(pyte.Screen):
     def set_mode(s, *modes, **kw):
         if kw.get('private'):
             if 2026 in modes:
-                s.sync = True; s.sync_t = time.time()
+                s.sync = True; s.sync_t = time.monotonic()
             if any(m in s.ALT for m in modes) and s.main is None:
                 if 1049 in modes: s.save_cursor()
                 s.main = {y: dict(line) for y, line in s.buffer.items()}

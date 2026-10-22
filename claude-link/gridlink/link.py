@@ -42,19 +42,19 @@ class AR488Serial:
     def _quiet(s, ms=300, limit=10.0):
         """Wait until the GRiD has been silent for ms, so a command we send
         cannot collide with a frame it is writing (the Nano would drop it)."""
-        t_end = time.time() + limit; last = time.time(); junk = b''
-        while time.time() < t_end:
+        t_end = time.monotonic() + limit; last = time.monotonic(); junk = b''
+        while time.monotonic() < t_end:
             d = s.ser.read(256)
-            if d: last = time.time(); junk += d
-            elif time.time() - last >= ms / 1000.0: return junk
+            if d: last = time.monotonic(); junk += d
+            elif time.monotonic() - last >= ms / 1000.0: return junk
         return junk
 
     def _cmd(s, text, reply=False):
         s._quiet()
         s.ser.write(text.encode() + b'\n')
         if not reply: time.sleep(0.05); return ''
-        t_end = time.time() + 1.0; buf = b''
-        while time.time() < t_end:
+        t_end = time.monotonic() + 1.0; buf = b''
+        while time.monotonic() < t_end:
             buf += s.ser.read(256)
             if b'\n' in buf: break
         return buf.decode('latin1', 'replace')
@@ -96,6 +96,7 @@ class Link:
     gives a CELLS payload (or None), source.delivered() says the GRiD has the
     last one (its next frame is a new one)."""
     HOLD = 0.25
+    RING_AGAIN = 0.1
     KEYS_HOLD = 0.03
 
     def __init__(s, transport, on_message, log=print, hold=HOLD):
@@ -108,14 +109,29 @@ class Link:
         s.reasm = glp.Reassembler()
         s.pi_seq = 0; s.last_g = None; s.last_answer = None
         s.stats = collections.Counter(); s.connected = False
-        s.last_rx = time.time()
+        s.last_rx = time.monotonic()
         s.grid_maxpay = 1024
+        s.grid_rx = glp.GRID_RX_DEFAULT       # payload the GRiD reads (its HELLO's rx=)
+        s.grid_fcs = False                    # the GRiD's HELLO offered the Fletcher sum
+        s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
+        s.grid_wake = False                   # the GRiD's HELLO said it POLLs when the bridge rings (GF_WAKE)
+        s.rang = None                         # when we last rang, since the GRiD's last frame
+        s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
+        s.trace = None                        # a deque while gridlink.bench --trace runs: (time, event)
+
+    @property
+    def maxpay(s):
+        """Payload of the Pi's frames: what the bridge, the GRiD and any cap allow."""
+        m = min(s.t.frame_limit - glp.OVERHEAD, s.grid_rx)
+        return min(m, s.frame_cap) if s.frame_cap else m
 
     # ---- outbound -----------------------------------------------------
     def send(s, mtype, body=b''):
+        if s.trace is not None: s.trace.append((time.monotonic(), 'send'))
         with s.lock:
             s.outq.append((mtype, bytes(body)))
             s.lock.notify_all()
+        s._poke()
 
     def send_first(s, mtype, body=b''):
         """Jump the queue (the answer to HELLO must be HELLO)."""
@@ -129,12 +145,33 @@ class Link:
     def wake(s):
         """The source has something new."""
         with s.lock: s.lock.notify_all()
+        s._poke()
+
+    def _poke(s):
+        poke = getattr(s.t, 'poke', None)     # the serve loop's read returns now: ring_check sooner
+        if poke: poke()
+
+    def ring_check(s):
+        """From the serve loop, between frames (never while an answer is held): when we have something for an
+        idle GRiD, ask the bridge for an SRQ so it POLLs now instead of at its next idle POLL (up to 1 s).
+        Again every RING_AGAIN until the GRiD sends (a ring can be lost: the GRiD may take its SRQ for the
+        answer it is reading)."""
+        if not (s.grid_wake and s.connected): return
+        if s.rang is not None and time.monotonic() - s.rang < s.RING_AGAIN: return
+        ring = getattr(s.t, 'ring', None)
+        if ring is None: return
+        with s.lock:
+            if not s._has_output(): return
+        s.rang = time.monotonic()
+        s.stats['rang'] += 1
+        if s.trace is not None: s.trace.append((time.monotonic(), 'ring'))
+        ring()
 
     def _has_output(s):
         return bool(s.outq or s.cur) or (s.source is not None and s.source.ready())
 
     def _next_payload(s):
-        maxpay = s.t.frame_limit - glp.OVERHEAD
+        maxpay = s.maxpay
         src = s.source
         # The queue and the source take turns when both have something;
         # the answer to HELLO is always first.
@@ -163,15 +200,21 @@ class Link:
 
     def _answer(s, kind, payload):
         s.pi_seq = (s.pi_seq + 1) & 0xFF
-        frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload)
+        if kind == glp.P_HELLO and s.grid_fcs and len(payload) >= 2:   # the GRiD switches on reading it
+            payload = bytes(payload[:1]) + bytes([payload[1] | glp.HF_FCS]) + bytes(payload[2:])
+        # Each answer is checked as the frame it answers was: the HELLO (sent
+        # with the CRC, as link_reset leaves the GRiD) gets the CRC, the
+        # frames after it the Fletcher sum once the GRiD has switched.
+        frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload, fl=s.rx_fl)
         s.last_answer = frame
+        if s.trace is not None: s.trace.append((time.monotonic(), 'pi ' + _name(kind, len(payload))))
         s.t.answer(frame)
         s.stats['tx_frames'] += 1; s.stats['tx_bytes'] += len(frame)
 
     # ---- inbound ------------------------------------------------------
     def feed(s, data):
         """Bytes from the Nano.  Returns the number of frames handled."""
-        if data: s.last_rx = time.time()
+        if data: s.last_rx = time.monotonic()
         n = 0
         for f in s.parser.feed(data):
             s.handle(f); n += 1
@@ -180,18 +223,23 @@ class Link:
     def idle_check(s, quiet=0.15):
         """Bytes that sat for `quiet` seconds without making a frame were
         damaged in transit: ask the GRiD to resend."""
-        if s.parser.pending() and time.time() - s.last_rx > quiet:
+        if s.parser.pending() and time.monotonic() - s.last_rx > quiet:
             s.parser.idle()
             s.stats['rx_damaged'] += 1
             s._answer_nak()
 
     def _answer_nak(s):
-        frame = glp.encode(glp.P_NAK, s.pi_seq, s.last_g if s.last_g is not None else 0)
+        frame = glp.encode(glp.P_NAK, s.pi_seq, s.last_g if s.last_g is not None else 0, fl=s.rx_fl)
         s.t.answer(frame)          # NAK does not replace last_answer
         s.stats['tx_nak'] += 1
 
     def handle(s, f):
+        s.rang = None
+        if s.trace is not None:
+            s.trace.append((time.monotonic(), 'grid ' + _name(f.type | (glp.MORE if f.more else 0), len(f.payload))))
         s.stats['rx_frames'] += 1; s.stats['rx_bytes'] += len(f.payload) + glp.OVERHEAD
+        s.rx_fl = f.fl
+        if f.fl: s.stats['rx_fletcher'] += 1
         t = f.type
         if t == glp.G_NAK:
             s.stats['rx_nak'] += 1
@@ -214,18 +262,24 @@ class Link:
             mt, body = msg
             if mt == glp.G_HELLO and len(body) >= 4:
                 s.grid_maxpay = body[2] | (body[3] << 8)
+                s.grid_rx = glp.hello_rx(body)
+                s.grid_fcs = bool(body[1] & glp.GF_FCS)
+                s.grid_wake = bool(body[1] & glp.GF_WAKE)
             if mt != glp.G_POLL:
                 try: s.on_message(mt, body)
                 except Exception as e: s.log('link: handler error: %r' % e)
         # Answer.  A POLL may wait for output, and in Term so may KEYS (for
-        # the echo); anything else is answered now.
+        # the echo); anything else is answered now.  A REPLY's last frame waits
+        # too: whoever made the call usually sends the next REQUEST within a few
+        # ms (the next chunk of a copy), and answering NOP at once sent the GRiD
+        # back to its once-a-second idle POLL, so every request cost ~1 s.
         with s.lock:
-            hold = s.hold if t == glp.G_POLL and not f.more else 0
+            hold = s.hold if t in (glp.G_POLL, glp.G_REPLY) and not f.more else 0
             if t == glp.G_KEYS and s.source is not None: hold = s.keys_hold
             if hold and not s._has_output():
-                end = time.time() + hold
+                end = time.monotonic() + hold
                 while not s._has_output():
-                    left = end - time.time()
+                    left = end - time.monotonic()
                     if left <= 0: break
                     # the source may become ready by time alone (output settling)
                     s.lock.wait(min(left, 0.005) if s.source is not None else left)
@@ -233,9 +287,14 @@ class Link:
         s._answer(kind, payload)
 
 
+def _name(kind, n):
+    """A frame for gridlink.bench --trace: REQUEST+ (MORE), CELLS ...; 'big' when it carries 512 bytes or more."""
+    return glp.NAMES.get(kind & 0x7F, '%02X' % (kind & 0x7F)) + ('+' if kind & glp.MORE else '') + (' big' if n >= 512 else '')
+
+
 def serve(transport, link, stop):
     """Reader loop for a real serial transport."""
     while not stop.is_set():
         data = transport.read()
         if data: link.feed(data)
-        else: link.idle_check()
+        else: link.idle_check(); link.ring_check()

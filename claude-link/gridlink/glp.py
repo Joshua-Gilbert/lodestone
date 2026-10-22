@@ -2,7 +2,7 @@
 
 See PROTOCOL.md.  Shared by the Pi service and the test models.
 """
-import struct
+import binascii, itertools, struct
 
 SYNC = 0x47
 MORE = 0x80
@@ -20,7 +20,10 @@ EV_PIXCLICK = 0x06         # Term: a left click at a pixel: x, y (words; CLAUDE 
 # HELLO flags
 GF_TERM = 0x01             # GRiD: this CLAUDE can be a terminal (Term)
 GF_PIX = 0x02              # GRiD: its CELLS take pictures (op FDh, picture.py); CLAUDE 1.2
+GF_FCS = 0x04              # GRiD: it can check frames with the Fletcher sum (fletcher16); CLAUDE 1.3
+GF_WAKE = 0x08             # GRiD: an SRQ while it is idle makes it POLL at once (Link.ring_check); CLAUDE 1.3
 HF_TERM = 0x01             # Pi: Term: the GRiD is Claude Code's screen and keyboard
+HF_FCS = 0x04              # Pi: frames after this HELLO carry the Fletcher sum, both ways
 
 # REQUEST ops
 OP_INFO, OP_DIR, OP_READ, OP_WRITE, OP_DELETE, OP_RENAME, OP_MKDIR, OP_RMDIR, OP_STAT, OP_FREE = range(1, 11)
@@ -42,6 +45,8 @@ ST_RQS, ST_READY, ST_WAITMASK = 0x40, 0x20, 0x1F
 STOCK_FRAME_MAX = 127      # AR488 PBSIZE 128, minus one so the LF ends the line
 PATCHED_FRAME_MAX = 254    # patched PBSIZE 255
 HEADER = 6
+GRID_RX_DEFAULT = 246      # Pi -> GRiD payload a CLAUDE without rx= in its HELLO reads (255-byte buffer)
+GRID_RX_MAX = 8192
 OVERHEAD = 8               # header + CRC
 
 # TEXT control codes
@@ -66,20 +71,32 @@ def _make_table():
 _CRC = _make_table()
 
 def crc16(data, crc=0xFFFF):
+    """CRC-16/CCITT-FALSE: binascii's C crc_hqx (the table loop below cost ~0.3 ms a 2 KB frame)."""
+    return binascii.crc_hqx(data, crc)
+
+
+def crc16_table(data, crc=0xFFFF):
     for b in data:
         crc = ((crc << 8) & 0xFFFF) ^ _CRC[(crc >> 8) ^ b]
     return crc
 
 
-def encode(kind, seq, ack, payload=b''):
+def fletcher16(data):
+    """The GRiD's cheaper frame check (TERMLINK.INC fl16): A = 1 + the bytes,
+    B = the sum of the A's, both mod 256; B << 8 | A."""
+    # B is the sum of the running A's: accumulate() makes them in C, twice the speed of a Python loop
+    return ((sum(itertools.accumulate(data, initial=1)) - 1) & 0xFF) << 8 | (1 + sum(data)) & 0xFF
+
+
+def encode(kind, seq, ack, payload=b'', fl=False):
     body = struct.pack('<BBBH', kind & 0xFF, seq & 0xFF, ack & 0xFF, len(payload)) + bytes(payload)
-    return bytes([SYNC]) + body + struct.pack('<H', crc16(body))
+    return bytes([SYNC]) + body + struct.pack('<H', fletcher16(body) if fl else crc16(body))
 
 
 class Frame:
-    __slots__ = ('kind', 'seq', 'ack', 'payload')
-    def __init__(s, kind, seq, ack, payload):
-        s.kind, s.seq, s.ack, s.payload = kind, seq, ack, payload
+    __slots__ = ('kind', 'seq', 'ack', 'payload', 'fl')
+    def __init__(s, kind, seq, ack, payload, fl=False):
+        s.kind, s.seq, s.ack, s.payload, s.fl = kind, seq, ack, payload, fl
     @property
     def type(s): return s.kind & 0x7F
     @property
@@ -89,8 +106,10 @@ class Frame:
                                                 s.seq, s.ack, len(s.payload))
 
 
-def decode(buf, max_len=4096):
-    """Find the first complete frame with a good CRC at any sync position.
+def decode(buf, max_len=4096, fl_first=False):
+    """Find the first complete frame with a good check (CRC-16, or the
+    Fletcher sum when HELLO agreed to it: Frame.fl) at any sync position;
+    fl_first tries the Fletcher sum first (one check fewer a frame).
     Returns (frame, end) or (None, keep) where keep is the index of the first
     sync byte (bytes before it are garbage)."""
     buf = bytes(buf)
@@ -103,8 +122,10 @@ def decode(buf, max_len=4096):
             end = i + OVERHEAD + n
             if n <= max_len and end <= len(buf):
                 (crc,) = struct.unpack_from('<H', buf, i + HEADER + n)
-                if crc16(buf[i + 1:i + HEADER + n]) == crc:
-                    return Frame(kind, seq, ack, buf[i + HEADER:i + HEADER + n]), end
+                body = buf[i + 1:i + HEADER + n]
+                for fl in ((True, False) if fl_first else (False, True)):   # (the Fletcher sum once HELLO
+                    if (fletcher16(body) if fl else crc16(body)) == crc:    #  has agreed to it)
+                        return Frame(kind, seq, ack, buf[i + HEADER:i + HEADER + n], fl=fl), end
         i = buf.find(bytes([SYNC]), i + 1)
     return None, first
 
@@ -114,7 +135,7 @@ class StreamParser:
     before a good frame is dropped.  When the line goes quiet with bytes
     still pending, call idle(): they can never become a frame, so the
     caller should NAK."""
-    def __init__(s, max_len=4096): s.buf = bytearray(); s.max_len = max_len
+    def __init__(s, max_len=4096): s.buf = bytearray(); s.max_len = max_len; s.fl = False
     def pending(s): return len(s.buf)
     def idle(s):
         had = bool(s.buf)
@@ -124,9 +145,10 @@ class StreamParser:
         s.buf += data
         out = []
         while s.buf:
-            f, used = decode(s.buf, s.max_len)
+            f, used = decode(s.buf, s.max_len, s.fl)
             del s.buf[:used]
             if f is None: break
+            s.fl = f.fl                                  # the next frame most likely has the same check
             out.append(f)
         return out
 
@@ -181,3 +203,14 @@ def kv_lines(data):
         if '=' in line:
             k, v = line.split('=', 1); d[k.strip()] = v.strip()
     return d
+
+
+def hello_rx(body):
+    """The Pi -> GRiD payload limit a GRiD HELLO announces (an `rx=` line), else
+    the 246 every CLAUDE before 1.3 reads."""
+    for line in bytes(body[6:]).split(b'\n'):
+        if line.startswith(b'rx='):
+            try: n = int(line[3:])
+            except ValueError: break
+            return max(GRID_RX_DEFAULT, min(n, GRID_RX_MAX))
+    return GRID_RX_DEFAULT

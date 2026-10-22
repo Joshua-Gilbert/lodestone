@@ -218,7 +218,8 @@ def test_queued_prompt():
     assert h.run_until(lambda: h.var('busy') and h.var('c_count', 2) > 6, 20)
     h.type('second')
     assert h.run_until(lambda: h.var('queued'), 5), h.screen()
-    assert 'queued' in h.screen().split('\n')[21], h.screen()
+    # (the flag is set just before the status line is drawn: give the drawing a moment)
+    assert h.run_until(lambda: 'queued' in h.screen().split('\n')[21], 0.5), h.screen()
     assert h.run_until(lambda: not h.var('queued') and h.idle(), 30), h.screen()
     t = h.screen()
     assert '> second' in t and 'Second answer.' in t, t

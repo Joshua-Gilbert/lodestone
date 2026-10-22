@@ -22,6 +22,7 @@ from unicorn import x86_const as X
 import sim7210 as S
 from ar488_model import AR488Model
 from gridsim import ModelTransport
+from pico_model import PicoModel, PicoModelTransport
 from fake_anthropic import FakeAnthropic
 from gridlink.link import Link
 from gridlink.agent import Session
@@ -826,13 +827,18 @@ class EmuHarness:
     """Real CLAUDE.COM <-> real GRIDGPIB <-> 7210 + bus <-> AR488 model <->
     real gridlink (Link + Session) <-> scripted Claude."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y', args='/A:7',
-                 claude_com=CLAUDE_COM, mapfile=None, baud=115200, term=None, web=None):
+                 claude_com=CLAUDE_COM, mapfile=None, baud=115200, term=None, web=None, bridge='ar488',
+                 frame_cap=None):
         s.m = m = Machine()
         s.pending = []
-        s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
+        if bridge == 'pico':
+            s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi)
+            s.transport = PicoModelTransport(s.nano)
+        else:
+            s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
+            s.transport = ModelTransport(s.nano, patched, baud=baud)
         m.chip.devices[7] = s.nano
         m.on_due = s.pump_pi
-        s.transport = ModelTransport(s.nano, patched, baud=baud)
         s.tmp = tempfile.mkdtemp(prefix='gridemu-')
         cfg = Config()
         cfg.workdir = os.path.join(s.tmp, 'work'); cfg.memory_dir = os.path.join(s.tmp, 'mem')
@@ -856,6 +862,7 @@ class EmuHarness:
             s.link = Link(s.transport, s.session.on_message, log=s.log.append, hold=0.0)
             s.session.attach(s.link)
             threading.Thread(target=s.session.run, daemon=True).start()
+        s.link.frame_cap = frame_cap
         img = open(claude_com, 'rb').read()
         m.fs['A:\\CLAUDE.COM'] = bytearray(img)
         m.fs['A:\\GRIDGPIB.COM'] = bytearray(open(GRIDGPIB_COM, 'rb').read())
@@ -877,7 +884,9 @@ class EmuHarness:
         now = s.m.us
         ready = sorted([p for p in s.pending if p[0] <= now], key=lambda p: p[0])
         s.pending = [p for p in s.pending if p[0] > now]
-        for t, data in ready: s.link.feed(data)
+        for t, data in ready:
+            if isinstance(s.transport, PicoModelTransport): data = s.transport.feed(data)
+            if data: s.link.feed(data)
         if s.pending: s.m.schedule(min(p[0] for p in s.pending))
 
     # CLAUDE's variables
@@ -897,6 +906,7 @@ class EmuHarness:
         end = s.m.us + sim_s * 1e6; wend = time.time() + wall
         while s.m.us < end and time.time() < wend:
             if cond(): return True
+            s.link.ring_check()               # (gridlink's serve loop does it between frames)
             if not s.m.run(): break
         return cond()
 

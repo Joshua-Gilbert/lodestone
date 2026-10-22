@@ -13,6 +13,13 @@ section 6).
 GRiD 1520 (controller, addr 21) ==GPIB== AR488 Nano (device, addr 7) --USB serial-- Pi --internet-- Claude API
 ```
 
+Since 2026-10-16 the bridge can also be the GPIB-Pico2 board (`gridlink/pico.py`, `[bridge] kind = "pico"`,
+the default). GLP is unchanged on the GPIB side: the Pico bridge behaves as the patched AR488 below (status
+60h raised by itself when a whole answer is in, kept until it is read, a frame up to 254 bytes, the GRiD's
+frames forwarded whole), and as for SDC, it also drops an answer a newer GRiD frame has made stale. On the USB
+side it needs no escaping and no `++` commands: its own framed protocol (the bridge firmware's PROTOCOL.md)
+carries each GRiD frame and each answer whole. Section 1 is about the AR488.
+
 The GRiD stays controller-in-charge; the instruments share the bus. Every
 instrument access Claude makes goes through the GRiD.
 
@@ -77,12 +84,17 @@ Same format both ways:
 | 3 | 1 | ack: seq of the last good frame received from the other side |
 | 4 | 2 | len: payload bytes, little-endian |
 | 6 | len | payload |
-| 6+len | 2 | CRC-16/CCITT-FALSE (poly 1021h, init FFFFh, no reflection) over bytes 1 .. 5+len, little-endian |
+| 6+len | 2 | the check over bytes 1 .. 5+len, little-endian: CRC-16/CCITT-FALSE (poly 1021h, init FFFFh, no reflection), or the Fletcher sum once HELLO has agreed to it (below) |
 
 * Pi → GRiD frames are at most 127 bytes in total with stock AR488 (payload
   ≤ 119) and 254 with the patched firmware (payload ≤ 246), one byte under
-  the line buffer so the terminating LF always ends the line. The GRiD reads
-  up to 255 bytes and scans for the sync byte, so leading garbage is
+  the line buffer so the terminating LF always ends the line. Through the
+  Pico bridge they are as big as the GRiD's HELLO says it reads (`rx=`:
+  2048 for CLAUDE 1.3 and its resident console; a HELLO without `rx=` means
+  246, as every CLAUDE before 1.3 reads). The Pi sends a big frame as TX
+  frames of 512 bytes, EOI only on the last, so it fits the firmware's input
+  buffer and the bridge raises SRQ only once the frame is whole. The GRiD
+  reads up to its buffer and scans for the sync byte, so leading garbage is
   tolerated.
 * GRiD → Pi frames carry up to 1024 payload bytes (the GRiD announces its
   limit in HELLO). The GRiD writes them with EOI on the last byte.
@@ -90,12 +102,35 @@ Same format both ways:
   the frame with LF. In stock mode it sends `++status <64+ms>\n` first,
   in the same write.
 
+### Waking an idle GRiD
+
+Between messages the GRiD sends an idle POLL once a second, so news for an
+idle GRiD (the first tool call after Claude has been thinking, say) used to
+wait up to a second. A GRiD whose HELLO set flags bit 3 also looks for an
+SRQ in its idle loop (AH=0Bh of the GPIB driver); when there was one it
+serial-polls the bridge and POLLs at once if the status has 40h. gridlink
+then asks the GPIB-Pico2 bridge for that SRQ (its WAKE frame, bridge fw
+2026-10-22b) when it has something for the GRiD and no frame of the GRiD's
+is waiting for an answer, again every 100 ms until the GRiD sends. The
+bridge keeps the SRQ (status 40h, without the 20h of a waiting answer) until
+the GRiD polls it or sends a message, and ignores a WAKE for an older
+message than the GRiD's last. Older bridges ignore WAKE, and the GRiD goes on
+POLLing once a second.
+
 ### Sequencing and retransmission
 
 * HELLO resets both sequence counters to 0 (the HELLO frame itself has seq 0).
 * Each side increments seq for every new frame it sends, and copies the last
   good seq it received into ack.
-* Bad CRC: the receiver answers with a NAK (GRiD → Pi type 06h, Pi → GRiD
+* **The Fletcher sum** (CLAUDE 1.3): A = 1 plus the bytes, B = the sum of
+  the A after each byte, both mod 256; the check is B × 256 + A (A first on
+  the wire). It costs the 286 about 8.5 clocks a byte against the CRC's 34.
+  The GRiD offers it in its HELLO (flags bit 2); the Pi's HELLO answer takes
+  it (flags bit 2), and both sides use it for every frame after. HELLO and
+  its answer always carry the CRC, as does everything after a link reset.
+  The Pi accepts either check on any frame and answers each frame with the
+  check that frame came with.
+* Bad check: the receiver answers with a NAK (GRiD → Pi type 06h, Pi → GRiD
   48h); the sender then retransmits its last frame unchanged.
 * A frame whose seq equals the last one accepted is a duplicate (its answer
   was lost): don't process it again, just resend the last answer.
@@ -109,10 +144,10 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures, op FDh, section 6), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term`, `app=web` or `app=chat` when CLAUDE was started with `/T`, `/W` or `/C`. Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
-| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 05h click on a cell: column (1), row (1) (CLAUDE /W of PR #32); 06h click at a pixel: x (2), y (2), x 0-639, y 0-399 (Term, CLAUDE 1.2): left clicks through INT 33h. The Pi gives a click to the picture on the screen, if there is one; else it passes it on as an xterm mouse report only to a program that asked for them (`?1000` with `?1006`; in pixels with `?1016`). A gridlink older than each ignores it |
+| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
 | 05h | REPLY | id (1), status (1: 0 = OK, else DOS error code or 0FFh), data |
 | 06h | NAK | — |
 | 07h | KEYS | Term: key words as INT 16h AH=10h returns them (AL, AH; 2 bytes each) |
@@ -121,7 +156,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 41h | HELLO | ver (1), flags (1: bit 0 = Term), then text: model name (or `Claude Code`) |
+| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on), then text: model name (or `Claude Code`) |
 | 42h | NOP | — |
 | 43h | TEXT | text to append to the conversation; control codes below |
 | 44h | STATUS | status-line text (empty = clear) |
@@ -262,10 +297,7 @@ title from TITLE, the link, the keys).
   cell, row by row), then the cursor's row, column and hidden flag (0 or
   1). If that is the screen of the Pi's last CELLS frame, or of the one
   before, the Pi goes on from it and sends only what changed; else it
-  starts from a clear screen as for any HELLO. `app=web` (CLAUDE /W) is
-  Term's path with gridfox, Firefox shown as text, in a pty of its own
-  instead of `claude`; the Pi's HELLO answer then says `gridfox`, and the
-  GRiD's tools are not offered there. Without `app=`,
+  starts from a clear screen as for any HELLO. Without `app=`,
   gridlink's `[grid] app` setting
   decides (`auto`: chat when the Pi has an API key, else Term). The Pi's
   HELLO is followed by a CELLS frame that clears the screen and draws it all.
@@ -306,37 +338,12 @@ CELLS payload:
 | run | row, col, len, [attr], len glyphs | cells (row, col) .. (row, col+len-1) |
 | fill | row \| 80h, col, len, [attr], glyph | the same glyph len times |
 | scroll | FEh, top, bottom, n | rows top..bottom up by n; n blank rows come in at the bottom |
-| pixels | FDh, y (2), x, w, h, then each line's codes | a rectangle of pixels: lines y..y+h-1 (0-383), bytes x..x+w-1 of each (8 pixels a byte, bit 7 the leftmost, 1 lit); a CLAUDE that set HELLO flags bit 1 only |
 
 `len` bit 7 means an attribute byte follows (bit 0 inverse, bit 1
 underline); without it the cells are plain. Glyphs are the GRiD's codes
 (20h-7Eh and 80h-A0h, as in TEXT). An operation that does not fit the
 screen or the payload ends the frame. The cursor is drawn as an inverted
 underline (glyph rows 14-15).
-
-**Pictures.** The Pi can put a 640x384 one-bit picture over rows 0-23
-(gridfox's picture view, Claude Code's plots: gridlink's `picture.py`).
-It sends them only to a CLAUDE whose HELLO set flags bit 1, never to
-resident Claude's console. Each line of a pixels rectangle is PackBits: a
-code n < 80h, then n + 1 bytes; else one byte, 257 - n times; a line's codes
-end exactly at its w bytes. A rectangle that doesn't fit rows 0-23 or the
-payload, or codes that don't make the line, end the frame. An older CLAUDE
-reads FDh as a fill on row 7Dh, which doesn't fit either. While a picture
-is up the Pi sends only pictures (the cursor hidden), its first frame
-clearing the screen; the text goes on in pyte meanwhile, and coming back is
-a clear and the whole text. A scroll op moves pixels too (16 lines a row):
-the Pi uses it when a picture moved up by whole rows. CLAUDE keeps no copy
-of a picture: after a RUN, CODE-R or Ctrl-L it draws its text copy (blank
-under a picture), and the Pi sends the picture again. The band (row 24)
-stays CLAUDE's; the Pi's TITLE says what the picture is and how to leave it.
-A program in a web session's pty (gridfox) asks for a picture with
-`OSC 5150 ; show ; FLAGS ; PATH BEL` (a PNG in its own folder, which
-gridlink dithers; FLAGS, comma-separated: `invert`, `plain` or neither for
-"light pictures dark", and `frame` for one of a stream, which waits until
-the GRiD has the picture on its way whole) and `OSC 5150 ; hide BEL`.
-gridlink answers on the pty with `OSC 5150 ; shown BEL` when the GRiD has a
-picture whole (gridfox paces a moving page's screenshots by it); its clicks then come as SGR reports in
-pixels if it set `?1016`.
 
 What the Pi does with Claude Code's output: Unicode is folded to one GRiD
 glyph per cell (box drawing, ● ⎿ ✻ ❯ and the spinner have glyphs; a full
