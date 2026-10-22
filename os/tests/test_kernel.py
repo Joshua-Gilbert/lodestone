@@ -1861,6 +1861,42 @@ def t_errs():
           [(w, g) for w, g in zip(want, got) if w != g][:8] or (len(want), len(got)))
     check('... disk consistent', not fatcheck.check(bytes(k.pc.drives[0].img))[0], fatcheck.check(bytes(k.pc.drives[0].img))[0])
 
+# NODISK.COM's lines as GRiD MS-DOS 3.30 gives them, drive B with no disk (run in the emulator from its ROM image)
+MS_NODISK = ['fn 3D B:X.TXT -> err 03 crit 1A 02',
+             'fn 3C B:X.TXT -> err 03 crit 1A 02',
+             'fn 43 B:X.TXT -> err 03 crit 1A 02',
+             'fn 4E B:*.* -> err 03 crit 1A 02',
+             'fn 3B B:\\ -> err 03 crit 1A 02',
+             'fn 39 B:\\D -> err 03 crit 1A 02',
+             'fn 3A B:\\D -> err 03 crit 1A 02',
+             'fn 41 B:X.TXT -> err 03 crit 1A 02',
+             'fn 56 B:X.TXT -> err 03 crit 1A 02',
+             'fn 36 -> err FF crit 1A 02',
+             'fn 3D B:X.TXT -> err 03 crit 1A 02']
+
+def t_nodisk():
+    """A drive with no disk (B:): each path call raises INT 24h as GRiD MS-DOS 3.30 does (AH 1Ah: Retry or Fail,
+    read, the FAT's area; DI 2, not ready), then answers 3 (free space FFFFh) when it is told Fail.  It answered 21
+    with no INT 24h: the mount read the boot sector without one.  LCMD asks "Abort, Retry, Fail?" as COMMAND.COM."""
+    com = os.path.join(OUT, 'NODISK.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NODISK.ASM')], check=True)
+    k = ktest.KPC(image('nodisk.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISK.COM=' + com), bytes(1474560))
+    k.pc.drives[1].empty = True
+    k.start()
+    sh = Shell(k)
+    assert run_long(k, 'nodisk > out.txt')
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    got = [' '.join(l.split()) for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+    check("NODISK.COM: all %d calls answer as GRiD MS-DOS 3.30's do (INT 24h, then 3)" % len(MS_NODISK), got == MS_NODISK,
+          [(w, g) for w, g in zip(MS_NODISK, got) if w != g] or (len(MS_NODISK), len(got)))
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('type b:x.txt'); k.key(ktest.ENTER)
+    o1 = k.pc.text_screen()
+    k.key('f')
+    o = k.pc.text_screen()
+    check('LCMD: TYPE B:X.TXT with no disk: "Not ready error reading drive B", "Abort, Retry, Fail?"; F: back at the prompt',
+          'Not ready error reading drive B' in o1 and 'Abort, Retry, Fail?' in o1 and o.rstrip().endswith('A:\\>'), (o1, o))
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -2405,7 +2441,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
