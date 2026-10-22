@@ -2185,7 +2185,8 @@ set_back:
         mov     ah, 41h
         int     21h
         jc      .err
-        mov     byte [mt_known], 0      ; (MULTITASK= read again: the ROM's)
+        mov     byte [mt_known], 0      ; (MULTITASK= read again: the file is
+                                        ;  gone, and the ROM's has none: off)
         mov     si, s_setdone
         call    UI_MSG
         jmp     redraw
