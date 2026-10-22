@@ -142,6 +142,25 @@ tests   dw 3D00h, a_x, 0, 0
         dw 3C00h, hid3, 0, 6
         dw 3C00h, hs, 0, 2
         dw 3C00h, hs2, 0, 6
+; devices only where the path is there; MS-DOS looks up RENAME's old name first
+        dw 3900h, nos_con, 0, 0
+        dw 3A00h, nos_con, 0, 0
+        dw 4100h, nos_con, 0, 0
+        dw 4100h, ab_con, 0, 0
+        dw 3900h, ab_con, 0, 0
+        dw 3A00h, ab_con, 0, 0
+        dw 5600h, nos_txt, s_con, 0
+        dw 5600h, ro, nos_con, 0
+        dw 4100h, clk_txt, 0, 0
+        dw 3900h, clk_s, 0, 0
+        dw 3900h, clk, 0, 0
+        dw 3A00h, clk, 0, 0
+; EXEC answers as OPEN; CREATE NEW as CREATE
+        dw 4B00h, ab_c, 0, 0
+        dw 4B00h, a_x, 0, 0
+        dw 4B00h, s_bar, 0, 0
+        dw 5B00h, n_ab, 0, 0
+        dw 5B00h, s_bar, 0, 0
         dw 0
 a_x     db 'A.TXT.X', 0
 w_x     db '*.TXT.X', 0
@@ -171,3 +190,9 @@ sys2    db 'SYS2.TXT', 0
 hid3    db 'HID3.TXT', 0
 hs      db 'HS.TXT', 0
 hs2     db 'HS2.TXT', 0
+nos_con db 'NOSUCH\CON', 0
+ab_con  db 'A.B\CON', 0
+nos_txt db 'NOSUCH.TXT', 0
+clk_txt db 'CLOCK.TXT', 0
+clk_s   db 'CLOCK$', 0
+clk     db 'CLOCK', 0

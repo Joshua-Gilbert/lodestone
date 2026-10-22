@@ -133,10 +133,15 @@ class Grid:
         a half-written file under the real name."""
         tmp = temp_name(path)
         s.write_file(tmp, data, progress)
-        try: s.delete(path)
-        except GridError as e:
-            if e.code not in (2,): raise
-        s.rename(tmp, path)
+        try:
+            try: s.delete(path)
+            except GridError as e:
+                if e.code not in (2,): raise
+            s.rename(tmp, path)
+        except GridError:                   # (e.g. a name DOS won't take, 3:
+            try: s.delete(tmp)              #  NAME.$$$ isn't left behind)
+            except GridError: pass
+            raise
 
     def delete(s, path): s.ok(glp.OP_DELETE, glp.asciiz(path))
     def rename(s, old, new): s.ok(glp.OP_RENAME, glp.asciiz(old) + glp.asciiz(new))

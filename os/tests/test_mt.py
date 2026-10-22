@@ -57,7 +57,7 @@ MTM = os.path.join(HERE, 'MTM33.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x3ED0, 'bss_end': 0x7400, 'ui_keep_end': 0x6144}
+OFF_MAP = {'image_end': 0x3EF0, 'bss_end': 0x7420, 'ui_keep_end': 0x6144}
 
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
@@ -1442,17 +1442,23 @@ def t_keys():
     # a program that only polls in front: its peeks give the others their turns (mt_preempt from there, at a safe
     # point), which on the 1520 a tick, landing in MT or the BIOS, seldom can; here (MTKEY Y) the tick can't at all,
     # its own INT 08h hook being ahead of MT's
-    n0 = len(au.ev)
-    typ(k, 'mtlaunch /f mtkey.com y pp.txt;mtspin.com 15 sp.txt', 0.3)
-    k.key('a', settle=False)
-    pp = waittwo(k, 'PP.TXT')
-    waitfile(k, 'SP.TXT', 4.0)
-    kclear(k)
-    line(k, '')
-    sw = au.switches(n0, 'peek')
+    # Once Y's hook is in, no tick can switch, so a peek can switch once at most: whether Y is polling when
+    # MTSPIN's turn comes depends on where the tick lands in Y's start-up.  The launch is tried after a few
+    # delays until one shows it (the machine is deterministic: the same delay always does the same)
+    for i, t in enumerate((0.3, 0.25, 0.35, 0.2)):
+        n0 = len(au.ev)
+        typ(k, 'mtlaunch /f mtkey.com y pp%d.txt;mtspin.com 15 sp%d.txt' % (i, i), t)
+        k.key('a', settle=False)
+        pp = waittwo(k, 'PP%d.TXT' % i)
+        waitfile(k, 'SP%d.TXT' % i, 4.0)
+        kclear(k)
+        line(k, '')
+        sw = au.switches(n0, 'peek')
+        if sw: break
     check('MTKEY Y polling in front ("a" there, %s), the tick kept from switching by its INT 08h hook: MTSPIN behind '
-          'still runs (%d), switched to from Y\'s peeks (%d times) at safe points' % (pp, spun(k, 'SP.TXT'), len(sw)), pp and pp[1] > 10 and spun(k, 'SP.TXT') > 0 and sw
-          and not au.bad(), (pp, spun(k, 'SP.TXT'), len(sw), au.bad()[:2]))
+          'still runs (%d), switched to from Y\'s peeks (%d times) at safe points (launched after %.2f s)'
+          % (pp, spun(k, 'SP%d.TXT' % i), len(sw), t), pp and pp[1] > 10 and spun(k, 'SP%d.TXT' % i) > 0 and sw
+          and not au.bad(), (pp, spun(k, 'SP%d.TXT' % i), len(sw), au.bad()[:2]))
     # inside an INT 13h call, or a call MT passed on to the BIOS (the test sets the count while P runs behind): an
     # interrupt's, as it is
     for var, f in (('mt_in13', '13'), ('mt_inb', 'ib')):

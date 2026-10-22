@@ -1400,7 +1400,24 @@ MS_NAMES = [('fn 3D A.TXT.X', 'err 02'),
             ('fn 3C SYS2.TXT', 'err 05'),
             ('fn 3C HID3.TXT', 'ok'),
             ('fn 3C HS.TXT', 'err 05'),
-            ('fn 3C HS2.TXT', 'ok')]
+            ('fn 3C HS2.TXT', 'ok'),
+            ('fn 39 NOSUCH\\CON', 'err 03'),
+            ('fn 3A NOSUCH\\CON', 'err 03'),
+            ('fn 41 NOSUCH\\CON', 'err 03'),
+            ('fn 41 A.B\\CON', 'err 05'),
+            ('fn 39 A.B\\CON', 'err 05'),
+            ('fn 3A A.B\\CON', 'err 05'),
+            ('fn 56 NOSUCH.TXT>CON', 'err 02'),
+            ('fn 56 RO.TXT>NOSUCH\\CON', 'err 03'),
+            ('fn 41 CLOCK.TXT', 'ok'),
+            ('fn 39 CLOCK$', 'err 05'),
+            ('fn 39 CLOCK', 'ok'),
+            ('fn 3A CLOCK', 'ok'),
+            ('fn 4B A.B.C', 'err 02'),
+            ('fn 4B A.TXT.X', 'err 02'),
+            ('fn 4B A|B', 'err 02'),
+            ('fn 5B N.A.B', 'err 02'),
+            ('fn 5B A|B', 'err 02')]
 
 def t_names():
     """Names that are no names (a second dot, a bad character), device names,
@@ -1408,9 +1425,9 @@ def t_names():
     MS-DOS 3.30's do, and nothing is deleted, renamed or truncated that MS-DOS
     leaves alone (B.TXT.X deleted B.TXT, E.F.G removed E.F, A.TXT became C.D,
     MKDIR CON made a directory)."""
-    com = os.path.join(OUT, 'NAMES.COM')
+    com = os.path.join(OUT, 'NAMES_MS.COM')                # (t_kmedium has a NAMES.COM of its own)
     subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NAMES.ASM')], check=True)
-    names = ('a', 'b', 'hid', 'hid2', 'hid3', 'sys', 'sys2', 'hs', 'hs2', 'ro', 'x')
+    names = ('a', 'b', 'hid', 'hid2', 'hid3', 'sys', 'sys2', 'hs', 'hs2', 'ro', 'clock', 'x')
     for n in names:
         open(os.path.join(OUT, 'NM_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
     img = image('names.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NAMES.COM=' + com,
@@ -1428,15 +1445,19 @@ def t_names():
     f = fatcheck.read_files(bytes(k.pc.drives[0].img))
     got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
     want = [c + ' -> ' + a for c, a in MS_NAMES]
-    check("NAMES.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a second dot or a bad character: 2 from OPEN and "
-          "CREATE on the last part, 3 otherwise; a device's name: 5 for MKDIR, RMDIR, DELETE, RENAME onto it; CREATE "
-          "over a hidden or system file not asking for it: 5)" % len(want), got == want,
+    check("NAMES.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a second dot or a bad character: 2 from OPEN, "
+          "CREATE and EXEC on the last part, 3 otherwise; a device's name, where its directory is there: 5 for MKDIR, "
+          "RMDIR, DELETE and RENAME onto it (RENAME's old name looked up first); CREATE over a hidden or system file "
+          "not asking for it: 5)" % len(want), got == want,
           [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
     dl = []; f = fatcheck.read_files(bytes(k.pc.drives[0].img), dirs=dl)
-    check('... and the disk: B.TXT, E.F, A.TXT and HS.TXT as they were, no C.D, no directory CON or NUL',
-          f.get('A:\\B.TXT') == b'b\r\n' and 'A:\\E.F' in dl and f.get('A:\\A.TXT') == b'a\r\n'
-          and f.get('A:\\HS.TXT') == b'hs\r\n' and 'A:\\C.D' not in f and 'A:\\CON' not in dl and 'A:\\NUL' not in dl,
-          (sorted(f), dl))
+    keep = {n: (n.lower()[:-4] + '\r\n').encode() for n in ('B.TXT', 'A.TXT', 'HS.TXT', 'SYS2.TXT', 'RO.TXT')}
+    check('... and the disk as MS-DOS leaves it: HID, SYS and CLOCK.TXT deleted, HID2, HID3 and HS2 made empty; B, A, '
+          'HS, SYS2 and RO.TXT as they were, E.F there; no C.D, no directory CON, NUL or CLOCK',
+          all(f.get('A:\\' + n) == v for n, v in keep.items()) and 'A:\\E.F' in dl
+          and not {'A:\\HID.TXT', 'A:\\SYS.TXT', 'A:\\CLOCK.TXT', 'A:\\C.D'} & set(f)
+          and all(f.get('A:\\%s.TXT' % n) == b'' for n in ('HID2', 'HID3', 'HS2'))
+          and not {'A:\\CON', 'A:\\NUL', 'A:\\CLOCK'} & set(dl), (sorted(f), dl))
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 
