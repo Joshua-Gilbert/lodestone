@@ -25,7 +25,7 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M4c | Each task's own mouse | PR #54, merged. |
 | M5a | Each task's own vectors | PR #57, merged. |
 | M5b | Ending and killing tasks | PR #61, merged. |
-| M6 | Parking tasks in EMS and bringing them back | This PR. |
+| M6 | Parking tasks in EMS and bringing them back | PR #65. |
 | M7 | The Executive's task list (TASKS.RUN, CODE-T), LCMD START/FG/KILL/PARK/WAIT, System's switch | |
 | M8 | Several `.RUN` windows at once, as coroutines in the UI task | |
 | M9 | On the 1520, and release 0.7 | |
