@@ -143,7 +143,7 @@ TOOLS = [
          "link can't leave half a file), delete, rename (to = new name), mkdir, rmdir, copy_from_grid "
          "(path = the GRiD file, to = a file in the Pi's ~/grid directory, default its own name there), "
          "copy_to_grid (path = a file in ~/grid on the Pi, to = the GRiD file). Pi files must be inside "
-         "~/grid. Copies and writes are at most 1 MB; the link moves roughly 3-7 KB/s. To edit a GRiD "
+         "~/grid. Copies and writes are at most 1 MB; the link moves roughly 30-40 KB/s through the Pico bridge. To edit a GRiD "
          "file with your own editing tools: copy_from_grid, edit the copy, copy_to_grid."),
      'inputSchema': {'type': 'object', 'properties': {
          'action': {'type': 'string', 'enum': ['write', 'delete', 'rename', 'mkdir', 'rmdir',
@@ -776,6 +776,7 @@ class ToolServer:
             if args is None: args = {}
             if not isinstance(tool, str) or not isinstance(args, dict):
                 return [text('gridlink: a request needs a tool name and an arguments object')], True
+            if tool == '_link': return s.link_request(args)
             with s.lock:                          # (a RUN going on keeps the GRiD from polling:
                 why = s.available(tool)           # wait for it, don't call that "not connected")
                 if why: return [text(why)], True
@@ -783,6 +784,20 @@ class ToolServer:
             return s.tools.call(tool, args)       # (grid_pick waits for the user, not the GRiD)
         except Exception as e:
             s.log('mcp: %r' % e); return [text('gridlink: %s' % e)], True
+
+    def link_request(s, args):
+        """Not a tool (Claude Code never sees it): gridlink.bench reads the link's
+        frame sizes and counters, and sets frame_cap (0 = none) to sweep them."""
+        L = getattr(s.tools.G, 'link', None)
+        if L is None: return [text('gridlink: no link')], True
+        if 'frame_cap' in args:
+            c = args['frame_cap']
+            if not isinstance(c, int) or isinstance(c, bool) or not (c == 0 or 16 <= c <= 65535):
+                return [text('gridlink: frame_cap is 0 (none) or 16-65535')], True
+            L.frame_cap = c or None
+        info = dict(maxpay=L.maxpay, grid_rx=L.grid_rx, grid_maxpay=L.grid_maxpay, frame_cap=L.frame_cap or 0,
+                    bridge=getattr(L.t, 'version', ''), stats=dict(L.stats))
+        return [text(json.dumps(info))], False
 
     def stop(s):
         if s.sock: s.sock.close()
@@ -888,6 +903,7 @@ def handle(msg, sock):
         if args is None: args = {}
         if not isinstance(name, str) or not isinstance(args, dict):
             return rpc_error(mid, -32602, 'tools/call needs a tool name and an arguments object')
+        if name not in NAMES: return rpc_error(mid, -32602, 'no tool %s' % name)
         res = call_gridlink(sock, name, args)
     else:
         return rpc_error(mid, -32601, 'no method %s' % method)

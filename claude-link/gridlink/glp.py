@@ -42,6 +42,8 @@ ST_RQS, ST_READY, ST_WAITMASK = 0x40, 0x20, 0x1F
 STOCK_FRAME_MAX = 127      # AR488 PBSIZE 128, minus one so the LF ends the line
 PATCHED_FRAME_MAX = 254    # patched PBSIZE 255
 HEADER = 6
+GRID_RX_DEFAULT = 246      # Pi -> GRiD payload a CLAUDE without rx= in its HELLO reads (255-byte buffer)
+GRID_RX_MAX = 8192
 OVERHEAD = 8               # header + CRC
 
 # TEXT control codes
@@ -181,3 +183,14 @@ def kv_lines(data):
         if '=' in line:
             k, v = line.split('=', 1); d[k.strip()] = v.strip()
     return d
+
+
+def hello_rx(body):
+    """The Pi -> GRiD payload limit a GRiD HELLO announces (an `rx=` line), else
+    the 246 every CLAUDE before 1.3 reads."""
+    for line in bytes(body[6:]).split(b'\n'):
+        if line.startswith(b'rx='):
+            try: n = int(line[3:])
+            except ValueError: break
+            return max(GRID_RX_DEFAULT, min(n, GRID_RX_MAX))
+    return GRID_RX_DEFAULT

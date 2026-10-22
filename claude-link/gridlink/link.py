@@ -110,6 +110,14 @@ class Link:
         s.stats = collections.Counter(); s.connected = False
         s.last_rx = time.monotonic()
         s.grid_maxpay = 1024
+        s.grid_rx = glp.GRID_RX_DEFAULT       # payload the GRiD reads (its HELLO's rx=)
+        s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
+
+    @property
+    def maxpay(s):
+        """Payload of the Pi's frames: what the bridge, the GRiD and any cap allow."""
+        m = min(s.t.frame_limit - glp.OVERHEAD, s.grid_rx)
+        return min(m, s.frame_cap) if s.frame_cap else m
 
     # ---- outbound -----------------------------------------------------
     def send(s, mtype, body=b''):
@@ -134,7 +142,7 @@ class Link:
         return bool(s.outq or s.cur) or (s.source is not None and s.source.ready())
 
     def _next_payload(s):
-        maxpay = s.t.frame_limit - glp.OVERHEAD
+        maxpay = s.maxpay
         src = s.source
         # The queue and the source take turns when both have something;
         # the answer to HELLO is always first.
@@ -214,6 +222,7 @@ class Link:
             mt, body = msg
             if mt == glp.G_HELLO and len(body) >= 4:
                 s.grid_maxpay = body[2] | (body[3] << 8)
+                s.grid_rx = glp.hello_rx(body)
             if mt != glp.G_POLL:
                 try: s.on_message(mt, body)
                 except Exception as e: s.log('link: handler error: %r' % e)

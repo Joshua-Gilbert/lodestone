@@ -12,7 +12,8 @@ What it gives GLP, compared with the AR488:
   mode (CONFIG flags bit 1) the bridge itself raises SRQ with status 60h (RQS + READY) once the whole frame is
   in its buffer, keeps READY until the GRiD has read it, and drops a reply that a newer GRiD message or an SDC
   has made stale -- the AR488 +GRiD1 patch's behaviour, so CLAUDE.COM needs no change.
-* Frames up to 254 bytes (CLAUDE reads up to 255), as with the patched Nano.
+* Frames as big as the GRiD says it takes (HELLO's rx=; 246-byte payloads for a CLAUDE that doesn't say),
+  split into TX frames of TX_CHUNK so they fit the firmware's input buffer.
 
 The bridge takes no part in the bus until we put it online, and drops off again if our PINGs stop for 5 s.
 """
@@ -28,6 +29,8 @@ F_HELLO, F_DATA, F_EVENT, F_LOG, F_PONG, F_CREDIT = 0x81, 0x82, 0x83, 0x84, 0x85
 CF_ONLINE, CF_AUTO_RSV = 0x01, 0x02
 DF_EOI, DF_END = 0x01, 0x02
 TXF_EOI = 0x01
+TX_CHUNK = 512          # data bytes per TX frame: 4 + 512 + COBS's 3 fit the firmware's 600-byte input buffer
+FRAME_MAX = 4104        # GLP frames to the GRiD: 4096 payload + 8 (what the GRiD takes is its HELLO's rx=)
 EVENTS = {0x10: 'LISTEN', 0x11: 'UNLISTEN', 0x12: 'TALK', 0x13: 'UNTALK', 0x14: 'TALK_WAIT', 0x15: 'DCL',
           0x16: 'SDC', 0x17: 'GET', 0x18: 'GTL', 0x19: 'LLO', 0x1A: 'IFC', 0x1B: 'REN', 0x1C: 'SPOLL',
           0x1D: 'TX_DONE', 0x1E: 'ONLINE', 0x1F: 'OFFLINE'}
@@ -150,8 +153,13 @@ class PicoProto:
         while s.pending and s.connected:
             g, data = s.pending[0]
             room = s.tx_ring - ((s.sent - s.consumed) & 0xFFFFFFFF)
-            if room < len(data): return             # a frame goes in one TX, so the bridge sees it complete
-            s.write(cobs_encode(struct.pack('<BHB', F_TX, g, TXF_EOI) + data))
+            if room < len(data): return             # the whole frame must fit before any of it goes
+            # The firmware's input buffer holds a COBS frame of 600 bytes (host_link.c), so a GLP frame
+            # bigger than TX_CHUNK goes as several TX frames, EOI only on the last: the bridge raises SRQ
+            # when that one is in, so the GRiD still sees the frame only once it is whole.
+            for i in range(0, max(len(data), 1), TX_CHUNK):
+                last = i + TX_CHUNK >= len(data)
+                s.write(cobs_encode(struct.pack('<BHB', F_TX, g, TXF_EOI if last else 0) + data[i:i + TX_CHUNK]))
             s.sent = (s.sent + len(data)) & 0xFFFFFFFF
             s.pending.popleft()
 
@@ -183,7 +191,7 @@ def find_port(spec):
 
 class PicoBridge:
     """gridlink transport: frame_limit, open(), configure(), answer(frame), read()."""
-    frame_limit = glp.PATCHED_FRAME_MAX
+    frame_limit = FRAME_MAX
     patched = True
 
     def __init__(s, port='auto', addr=7, log=print):

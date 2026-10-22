@@ -2,6 +2,7 @@
 
     venv/bin/python -m gridlink.bench                 64 KB each way through M:, 20 round trips
     venv/bin/python -m gridlink.bench --size 128 --to A:\\BENCH.BIN --trips 50
+    venv/bin/python -m gridlink.bench --sweep 246,512,1024,2048,4096   Pi -> GRiD frame sizes, one after another
 
 Run it on the Pi while gridlink is serving and CLAUDE /T is up on the GRiD (the tools socket exists only in
 Term).  It talks to gridlink over the same socket as Claude Code's MCP server, so the numbers include
@@ -10,7 +11,7 @@ everything a real copy goes through: GLP frames, the bridge, CLAUDE.COM and the 
 Uses ~/grid/bench.bin and ~/grid/bench.back on the Pi and one file on the GRiD, which it deletes afterwards.
 Put the GRiD file on M: (the RAM disk) to time the link and not the floppy.
 """
-import argparse, os, sys, time
+import argparse, json, os, sys, time
 from .mcp import call_gridlink, socket_path
 
 
@@ -23,12 +24,32 @@ def tool(sock, name, args):
     return dt, msg
 
 
+def link(sock, **args):
+    _, msg = tool(sock, '_link', args)
+    return json.loads(msg)
+
+
+def copies(sock, a, src, back, data, quiet=False):
+    n = len(data)
+    up, _ = tool(sock, 'grid_change_files', {'action': 'copy_to_grid', 'path': src, 'to': a.to})
+    down, _ = tool(sock, 'grid_change_files', {'action': 'copy_from_grid', 'path': a.to, 'to': back})
+    with open(back, 'rb') as f: ok = f.read() == data
+    tool(sock, 'grid_change_files', {'action': 'delete', 'path': a.to})
+    if quiet: return up, down, ok
+    print('Pi -> GRiD: %d bytes in %.2f s = %.1f KB/s' % (n, up, n / up / 1024))
+    print('GRiD -> Pi: %d bytes in %.2f s = %.1f KB/s' % (n, down, n / down / 1024))
+    print('copy back: %s' % ('every byte right' if ok else 'DIFFERENT from what was sent'))
+    return ok
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='gridlink.bench', description=__doc__.split('\n')[0])
     ap.add_argument('--size', type=int, default=64, help='KB to send each way (default 64)')
     ap.add_argument('--to', default='M:\\BENCH.BIN', help='the GRiD file (default M:\\BENCH.BIN)')
     ap.add_argument('--trips', type=int, default=20, help='small requests for the round-trip time (default 20)')
     ap.add_argument('--dir', default='~/grid', help="Claude Code's directory on the Pi (default ~/grid)")
+    ap.add_argument('--sweep', help='Pi -> GRiD payload sizes to try, comma-separated (each capped by what the '
+                                    'GRiD and the bridge take); the link goes back to its own size after')
     a = ap.parse_args(argv)
     sock = socket_path()
     if not os.path.exists(sock):
@@ -39,18 +60,30 @@ def main(argv=None):
     data = os.urandom(n)                      # every byte value, nothing to compress
     with open(src, 'wb') as f: f.write(data)
 
+    info = link(sock)
+    print('link: %s; Pi -> GRiD frames up to %d payload bytes (the GRiD takes %d), GRiD -> Pi up to %d'
+          % (info['bridge'], info['maxpay'], info['grid_rx'], info['grid_maxpay']))
+    tool(sock, 'grid_info', {})                       # wake the link: the first call waits for an idle POLL
     rt = [tool(sock, 'grid_info', {})[0] for _ in range(a.trips)]
     rt.sort()
     print('round trip (grid_info, %d): best %.1f ms, median %.1f ms, worst %.1f ms'
           % (a.trips, rt[0] * 1e3, rt[len(rt) // 2] * 1e3, rt[-1] * 1e3))
 
-    up, _ = tool(sock, 'grid_change_files', {'action': 'copy_to_grid', 'path': src, 'to': a.to})
-    print('Pi -> GRiD: %d bytes in %.2f s = %.1f KB/s' % (n, up, n / up / 1024))
-    down, _ = tool(sock, 'grid_change_files', {'action': 'copy_from_grid', 'path': a.to, 'to': back})
-    print('GRiD -> Pi: %d bytes in %.2f s = %.1f KB/s' % (n, down, n / down / 1024))
-    with open(back, 'rb') as f: ok = f.read() == data
-    print('copy back: %s' % ('every byte right' if ok else 'DIFFERENT from what was sent'))
-    tool(sock, 'grid_change_files', {'action': 'delete', 'path': a.to})
+    ok = True
+    if not a.sweep:
+        ok = copies(sock, a, src, back, data)
+    else:
+        caps = [int(x) for x in a.sweep.split(',') if x.strip()]
+        print('%8s %8s %12s %12s' % ('asked', 'frames', 'Pi->GRiD', 'GRiD->Pi'))
+        try:
+            for c in caps:
+                got = link(sock, frame_cap=c)['maxpay']
+                up, down, good = copies(sock, a, src, back, data, quiet=True)
+                ok = ok and good
+                print('%8d %8d %9.1f KB/s %9.1f KB/s%s' % (c, got, n / up / 1024, n / down / 1024,
+                                                          '' if good else '  COPY DIFFERENT'))
+        finally:
+            link(sock, frame_cap=0)
     for p in (src, back):
         try: os.unlink(p)
         except OSError: pass

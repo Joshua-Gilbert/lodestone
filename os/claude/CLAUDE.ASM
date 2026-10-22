@@ -43,7 +43,11 @@ MAXIN    equ 1000               ; longest prompt
 HISTN    equ 4                  ; prompts remembered for Up/Down
 HISTL    equ 400
 TXMAX    equ 1024               ; GRiD -> Pi payload per frame
-RXMAX    equ 255                ; Pi -> GRiD frame (patched AR488 line)
+%ifndef RXPAY
+%assign RXPAY 2048             ; Pi -> GRiD payload we read (HELLO's rx=): 98 % of 4 KB frames' rate on the 1520
+%endif
+RXMAX    equ RXPAY + 8          ; Pi -> GRiD frame
+%defstr RXPAY_S RXPAY
 REQMAX   equ 4700               ; request reassembly
 IOSIZE   equ 16384              ; reply buffer segment
 SNAPMAX  equ 32768 + 11         ; snapshot segment: id, status, header, data
@@ -2578,6 +2582,8 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     al, CROWS
         stosb
         call    build_kv
+        mov     si, kv_rx               ; the Pi's frames may be this big
+        call    put_str
         mov     si, kv_appterm          ; CLAUDE /T, /W or /C
         cmp     byte [app_want], 'T'
         je      .a
@@ -2826,10 +2832,11 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.2', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.3', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
+kv_rx       db 'rx=', RXPAY_S, 10, 0
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
 evmouse     db 06h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
@@ -2847,9 +2854,10 @@ HELLO_MAX   equ 6 + (kv_cwd - kv_os - 1) + 3 + 1 + 2 \
                 + (kv_addr - kv_gpib - 1) + 3 + 1 + 2 + (s_none2 - s_onint - 1) + 2 + 1 \
                 + (kv_date - kv_addr - 1) + 5 \
                 + (kv_grid - kv_date - 1) + 5 + 1 + 2 + 1 + 2 + 1 + 2 + 1 + 2 \
-                + (kv_appterm - kv_grid - 1) + (kv_appchat - kv_appterm - 1)
+                + (kv_appterm - kv_grid - 1) + (kv_appchat - kv_appterm - 1) \
+                + (s_tkeys - kv_rx - 1)
         times   -(kv_appweb - kv_appchat > kv_appchat - kv_appterm) db 0
-        times   -(s_tkeys - kv_appweb > kv_appchat - kv_appterm) db 0
+        times   -(kv_rx - kv_appweb > kv_appchat - kv_appterm) db 0
 s_helptitle db 'Claude for GRiD ', 86h, ' keys', 0
 helptext    db 'Enter         send the prompt', 0
             db 'Ctrl-Enter    new line in the prompt', 0
@@ -3786,7 +3794,7 @@ snap_len    resw 1
         times   -(kv_cwd < kv_os || kv_drives < kv_cwd || kv_mem < kv_drives || kv_ems < kv_mem \
                   || kv_gpib < kv_ems || kv_addr < kv_gpib || kv_date < kv_addr || kv_grid < kv_date \
                   || kv_appterm < kv_grid || kv_appchat < kv_appterm || s_none2 < s_onint \
-                  || kv_appweb < kv_appchat || s_tkeys < kv_appweb \
+                  || kv_appweb < kv_appchat || kv_rx < kv_appweb || s_tkeys < kv_rx \
                   || s_helptitle < s_pages) resb 1     ; (HELLO_MAX's lengths: in this order)
 stack_bottom:                           ; the stack: claude-link's emulator tests
             resb 1024                   ;  go 58 bytes deep at most under GRIDGPIB,
