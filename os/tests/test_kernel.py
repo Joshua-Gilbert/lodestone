@@ -1430,7 +1430,7 @@ def t_names():
     names = ('a', 'b', 'hid', 'hid2', 'hid3', 'sys', 'sys2', 'hs', 'hs2', 'ro', 'clock', 'x')
     for n in names:
         open(os.path.join(OUT, 'NM_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
-    img = image('names.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NAMES.COM=' + com, flush_com(),
+    img = image('names.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NAMES.COM=' + com,
                 *['%s.TXT=%s' % (n.upper(), os.path.join(OUT, 'NM_%s.TXT' % n)) for n in names if n != 'x'])
     m = lambda *a: subprocess.run(list(a), check=True, stdin=subprocess.DEVNULL, capture_output=True)
     m('mmd', '-i', img, '::A.B'); m('mmd', '-i', img, '::E.F')
@@ -1441,8 +1441,7 @@ def t_names():
         m('mattrib', '-i', img, '+h', '+s', '::%s.TXT' % n)
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    sh.run('names > out.txt')
-    sh.run('flush')                                     # (the cache on the disk first)
+    assert run_long(k, 'names > out.txt')
     f = fatcheck.read_files(bytes(k.pc.drives[0].img))
     got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
     want = [c + ' -> ' + a for c, a in MS_NAMES]
@@ -1542,12 +1541,12 @@ MS_NULDIR = [('fn 3D NOSUCH\\NUL', 'err 03'),
              ('fn 5B Q:NUL', 'ok'),
              ('fn 5B NUL.*', 'ok')]
 
-def flush_com():
-    """FLUSH.COM: INT 21h 0Dh, so the cache is on the disk before a test reads its image."""
-    src, com = os.path.join(OUT, 'FLUSH.ASM'), os.path.join(OUT, 'FLUSH.COM')
-    open(src, 'w').write('org 100h\n mov ah, 0Dh\n int 21h\n mov ax, 4C00h\n int 21h\n')
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
-    return 'FLUSH.COM=' + com
+def run_long(k, cmd, sim_s=30):
+    """A command at the prompt that may run past settle()'s 6 s (a probe writing its answers to a file a call at
+    a time: its directory entry is written at the close): until the prompt is back.  True if it is"""
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key(cmd); k.key(ktest.ENTER, settle=False)
+    return k.settle(sim_s)
 
 def t_nul():
     """A device's name after a directory (X18, "IF EXIST DIR\\NUL"): OPEN, CREATE and CREATE NEW find the
@@ -1556,12 +1555,11 @@ def t_nul():
     com = os.path.join(OUT, 'NULDIR.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NULDIR.ASM')], check=True)
     open(os.path.join(OUT, 'NM_a.TXT'), 'wb').write(b'a\r\n')
-    img = image('nul.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NULDIR.COM=' + com, flush_com(),
+    img = image('nul.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NULDIR.COM=' + com,
                 'A.TXT=' + os.path.join(OUT, 'NM_a.TXT'), 'A.B\\', 'E.F\\')
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    sh.run('nuldir > out.txt')
-    sh.run('flush')
+    assert run_long(k, 'nuldir > out.txt')
     f = fatcheck.read_files(bytes(k.pc.drives[0].img))
     got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
     want = [c + ' -> ' + a for c, a in MS_NULDIR]
