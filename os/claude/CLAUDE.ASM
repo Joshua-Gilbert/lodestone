@@ -43,7 +43,8 @@ MAXIN    equ 1000               ; longest prompt
 HISTN    equ 4                  ; prompts remembered for Up/Down
 HISTL    equ 400
 %ifndef TXMAX
-TXMAX    equ 2048               ; GRiD -> Pi payload per frame: ~9 % faster than 1024 on the 1520
+TXMAX    equ 3300               ; GRiD -> Pi payload per frame: a 16 KB read's reply in five frames (1.6:
+                                ;  2048, and an 8 KB read's reply took five, the last two bytes long)
 %endif
 %ifndef RXPAY
 %assign RXPAY 3340             ; Pi -> GRiD payload we read (HELLO's rx=): a whole 16 KB write request in five
@@ -54,7 +55,7 @@ RXMAX    equ RXPAY + 9          ; the read: a whole frame (RXPAY + 8) and one by
                                 ;  more, so a frame never fills it (as 255 for 254)
 %defstr RXPAY_S RXPAY
 REQMAX   equ 16700              ; request reassembly (HELLO's req=: writes of 16 KB and a path; 1.5: 8700)
-IOSIZE   equ 16384              ; reply buffer segment
+IOSIZE   equ 16384 + 16         ; reply buffer segment: a 16 KB read and its 2-byte header (HELLO's rd=)
 SNAPMAX  equ 32768 + 11         ; snapshot segment: id, status, header, data
 TXQN     equ 6                  ; outgoing messages queued
 ASKMAX   equ 900
@@ -2680,6 +2681,8 @@ build_hello:                            ; -> CX = length of hellobuf
         call    put_str
         mov     si, kv_req              ; and its requests
         call    put_str
+        mov     si, kv_rd               ; and the reads it answers whole
+        call    put_str
         mov     si, kv_appterm          ; CLAUDE /T, /W or /C
         cmp     byte [app_want], 'T'
         je      .a
@@ -2928,12 +2931,13 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.6', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.7', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
 kv_rx       db 'rx=', RXPAY_S, 10, 0
 kv_req      db 'req=16700', 10, 0            ; (REQMAX: the biggest REQUEST we take)
+kv_rd       db 'rd=16384', 10, 0             ; (IOSIZE - 2 and more: the biggest read answered whole)
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
 evmouse     db 06h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
