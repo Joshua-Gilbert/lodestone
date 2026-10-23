@@ -3257,16 +3257,34 @@ def t_file():
     k = boot('mt_f1.img', b'MULTITASK=1\r\n', mt=MTSYS)
     check('... and the file as built: on (no file left open either)', at_top(k) and sft_used(k) == used0, (show(mcbs(k)), sft_used(k)))
 
+def t_nodisk():
+    print('== a task behind with no INT 24h of its own, B: with no disk: Fail at once, not a prompt nobody sees')
+    nd = os.path.join(HERE, 'NODISKMT.COM')
+    files = ['LODEMT.SYS=' + MTSYS, A.LCMD, MTL, nd, ini(b'MULTITASK=1\r\n')]
+    k = ktest.KPC(A.image('mt_nd.img', *files), bytes(1474560), ems_pages=88)
+    k.pc.drives[1].empty = True
+    k.start(10)
+    k.mcb0 = k.u16('first_mcb')
+    ret(k, 'NODISKMT.COM', 0.3)                # (it waits 2 s, then opens B:X.TXT)
+    front(k, 0)
+    k.run_for(3.0)
+    crit = k.pc.rd(mt_seg(k), k.Y['mt_crit'], 1)[0]
+    sel0 = k.u16('sel')
+    k.pc.keys.append(ktest.DOWN); k.run_for(1.0)
+    check('NODISKMT behind the Executive opens B:X.TXT with no disk: 3 at once (RES.TXT "03"), no prompt waiting '
+          '(mt_crit 0), and the Executive still takes keys', A.disk_file(k, 'RES.TXT') == b'03' and crit == 0
+          and k.u16('sel') != sel0, (A.disk_file(k, 'RES.TXT'), crit, sel0, k.u16('sel')))
+
 if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_system, t_progs, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_system, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

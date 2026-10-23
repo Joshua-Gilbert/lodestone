@@ -512,8 +512,9 @@ do_pipe:
         mov     si, pipe_a
 .po:    mov     di, out_name
         call    strcpy
-.no:    call    parse_redir
-        jc      .x
+.no:    inc     byte [pipe_n]           ; (counted first: a later one's
+        call    parse_redir             ;  redirection failing, the files
+        jc      .x                      ;  the one before made go too)
         call    redir_do
         jc      .x
         mov     si, cmdl
@@ -522,7 +523,6 @@ do_pipe:
         push    cs
         pop     es
         call    redir_undo
-        inc     byte [pipe_n]
         cmp     word [pipe_rest], 0
         jne     .seg
 .x:     call    redir_undo
@@ -1896,7 +1896,8 @@ edit_line:
         mov     [ed_tab], al
         mov     ax, [hist_end]
         mov     [hist_cur], ax
-.key:   mov     al, [ed_tab]            ; (no saver between Tabs: DEFRAG
+.key:   mov     byte [crit_q], 0        ; (Tab's looking done)
+        mov     al, [ed_tab]            ; (no saver between Tabs: DEFRAG
         mov     [sv_req], al            ;  could upset the search)
         xor     cx, cx
         call    wait_key
@@ -2074,7 +2075,8 @@ edit_line:
         rep     movsb
         mov     [hist_end], di
 .x:     ret
-.tab:   or      bl, bl                  ; Tab again: the next name
+.tab:   mov     byte [crit_q], 1        ; (no INT 24h prompt in the line)
+        or      bl, bl                  ; Tab again: the next name
         jnz     .tnext
         mov     bl, dl                  ; the word before the cursor
         xor     bh, bh
@@ -2126,9 +2128,7 @@ edit_line:
         mov     dx, pat
         mov     cx, 10h
         mov     ah, 4Eh
-        mov     byte [crit_q], 1
 .tfind: int     21h
-        mov     byte [crit_q], 0
         jc      .beep
 .tdot:  cmp     byte [dta + 30], '.'    ; (not . and ..)
         jne     .tput

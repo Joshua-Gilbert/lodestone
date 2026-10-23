@@ -475,11 +475,11 @@ FFFFFFFFFFFFFFFC  VF_CX
 FFFFFFFFFFFFFFFA  VF_DX
 FFFFFFFFFFFFFFF8  VF_BX
 FFFFFFFFFFFFFFEC  VF_ES
-00002E90  MT_LEN
-000002E9  MT_TX0P
+00002EB3  MT_LEN
+000002EC  MT_TX0P
 00000400  MT_SSTK
 000000A0  MT_INIL
-00000378  MT_PARAS
+0000037B  MT_PARAS
 
 
 ---- Section .text ------------------------------------------------------------
@@ -3924,102 +3924,103 @@ Real              Virtual           Name
             E432              2852  mt_isr
             E441              2861  mt_vcall
             E45F              287F  mt_c24
-            E46F              288F  mt_c24.f
-            E486              28A6  mt_c24.x
-            E487              28A7  mt_i13
-            E49C              28BC  mt_vshad
-            E4BC              28DC  mt_vshad.w
-            E4DA              28FA  mt_vshad.go
-            E50D              292D  mt_vshad.x
-            E50E              292E  mt_vshad.gone
-            E515              2935  mt_tmode
-            E527              2947  mt_tmode.t
-            E52B              294B  mt_tmode.g
-            E52D              294D  mt_emu
-            E54A              296A  mt_emu.tab
-            E570              2990  mt_emu.wt
-            E572              2992  mt_emu.ok
-            E574              2994  mt_emu.m0
-            E593              29B3  mt_emu.ml
-            E5D2              29F2  mt_emu.m1
-            E5DA              29FA  mt_emu.m2
-            E5E8              2A08  mt_emu.m3
-            E5FF              2A1F  mt_emu.m4
-            E605              2A25  mt_emu.m5
-            E618              2A38  mt_emu.m6
-            E61C              2A3C  mt_emu.m7
-            E61E              2A3E  mt_emu.sc
-            E62C              2A4C  mt_emu.m8
-            E649              2A69  mt_emu.m8x
-            E64E              2A6E  mt_emu.m9
-            E652              2A72  mt_emu.mA
-            E654              2A74  mt_emu.wc
-            E66F              2A8F  mt_emu.wl
-            E67D              2A9D  mt_emu.wn
-            E680              2AA0  mt_emu.wz
-            E682              2AA2  mt_emu.ws
-            E685              2AA5  mt_emu.wp
-            E688              2AA8  mt_emu.mB
-            E69B              2ABB  mt_emu.pp
-            E6A4              2AC4  mt_emu.pw
-            E6AC              2ACC  mt_emu.mC
-            E6B4              2AD4  mt_emu.mE
-            E6DA              2AFA  mt_emu.mF
-            E6EC              2B0C  mt_emu.m13
-            E70E              2B2E  mt_emu.sl
-            E72D              2B4D  mt_emu.sw
-            E746              2B66  mt_emu.sz
-            E748              2B68  mt_emu.s13
-            E74D              2B6D  mt_emu.pg
-            E75B              2B7B  mt_emu.pn
-            E75D              2B7D  mt_vtty
-            E778              2B98  mt_vtty.nb
-            E780              2BA0  mt_vtty.ch
-            E795              2BB5  mt_vtty.nx
-            E79E              2BBE  mt_vtty.cr
-            E7A0              2BC0  mt_vtty.w
-            E7BD              2BDD  mt_vtty.sa
-            E7CE              2BEE  mt_vtty.x
-            E7D3              2BF3  mt_vaddr
-            E7F1              2C11  mt_vscr
-            E81B              2C3B  mt_vscr.rn
-            E86C              2C8C  mt_vscr.fd
-            E87E              2C9E  mt_vscr.fb
-            E881              2CA1  mt_vscr.fa
-            E88C              2CAC  mt_vscr.lit
-            E8B1              2CD1  mt_vscr.l1
-            E8B7              2CD7  mt_vscr.l2
-            E8D4              2CF4  mt_vscr.ld
-            E8FB              2D1B  mt_vscr.lu
-            E904              2D24  mt_vscr.ls
-            E90E              2D2E  mt_vscr.lc
-            E91F              2D3F  mt_vscr.lf
-            E923              2D43  mt_vscr.lb
-            E932              2D52  mt_vscr.x
-            E934              2D54  mt_vscr.clamp
-            E93B              2D5B  mt_vscr.c1
-            E947              2D67  mt_vscr.c2
-            E948              2D68  mt_vmov
-            E970              2D90  mt_vmov.w
-            E982              2DA2  mt_vmov.s
-            E988              2DA8  mt_vmov.y
-            E98A              2DAA  mt_vmov.x
-            E98B              2DAB  mt_vset
-            E9A7              2DC7  mt_vset.w
-            E9B0              2DD0  mt_vset.s
-            E9B4              2DD4  mt_vset.y
-            E9B6              2DD6  mt_vset.x
-            E9B7              2DD7  mt_carve
-            E9C4              2DE4  mt_carve.w
-            E9D8              2DF8  mt_carve.w1
-            E9E0              2E00  mt_carve.mg
-            EA11              2E31  mt_carve.fit
-            EA1A              2E3A  mt_carve.nx
-            EA2A              2E4A  mt_carve.end
-            EA5F              2E7F  mt_carve.all
-            EA6C              2E8C  mt_carve.no
-            EA6D              2E8D  mt_carve.x
-            EA70              2E90  mt_tend
+            E490              28B0  mt_c24.p
+            E492              28B2  mt_c24.f
+            E4A9              28C9  mt_c24.x
+            E4AA              28CA  mt_i13
+            E4BF              28DF  mt_vshad
+            E4DF              28FF  mt_vshad.w
+            E4FD              291D  mt_vshad.go
+            E530              2950  mt_vshad.x
+            E531              2951  mt_vshad.gone
+            E538              2958  mt_tmode
+            E54A              296A  mt_tmode.t
+            E54E              296E  mt_tmode.g
+            E550              2970  mt_emu
+            E56D              298D  mt_emu.tab
+            E593              29B3  mt_emu.wt
+            E595              29B5  mt_emu.ok
+            E597              29B7  mt_emu.m0
+            E5B6              29D6  mt_emu.ml
+            E5F5              2A15  mt_emu.m1
+            E5FD              2A1D  mt_emu.m2
+            E60B              2A2B  mt_emu.m3
+            E622              2A42  mt_emu.m4
+            E628              2A48  mt_emu.m5
+            E63B              2A5B  mt_emu.m6
+            E63F              2A5F  mt_emu.m7
+            E641              2A61  mt_emu.sc
+            E64F              2A6F  mt_emu.m8
+            E66C              2A8C  mt_emu.m8x
+            E671              2A91  mt_emu.m9
+            E675              2A95  mt_emu.mA
+            E677              2A97  mt_emu.wc
+            E692              2AB2  mt_emu.wl
+            E6A0              2AC0  mt_emu.wn
+            E6A3              2AC3  mt_emu.wz
+            E6A5              2AC5  mt_emu.ws
+            E6A8              2AC8  mt_emu.wp
+            E6AB              2ACB  mt_emu.mB
+            E6BE              2ADE  mt_emu.pp
+            E6C7              2AE7  mt_emu.pw
+            E6CF              2AEF  mt_emu.mC
+            E6D7              2AF7  mt_emu.mE
+            E6FD              2B1D  mt_emu.mF
+            E70F              2B2F  mt_emu.m13
+            E731              2B51  mt_emu.sl
+            E750              2B70  mt_emu.sw
+            E769              2B89  mt_emu.sz
+            E76B              2B8B  mt_emu.s13
+            E770              2B90  mt_emu.pg
+            E77E              2B9E  mt_emu.pn
+            E780              2BA0  mt_vtty
+            E79B              2BBB  mt_vtty.nb
+            E7A3              2BC3  mt_vtty.ch
+            E7B8              2BD8  mt_vtty.nx
+            E7C1              2BE1  mt_vtty.cr
+            E7C3              2BE3  mt_vtty.w
+            E7E0              2C00  mt_vtty.sa
+            E7F1              2C11  mt_vtty.x
+            E7F6              2C16  mt_vaddr
+            E814              2C34  mt_vscr
+            E83E              2C5E  mt_vscr.rn
+            E88F              2CAF  mt_vscr.fd
+            E8A1              2CC1  mt_vscr.fb
+            E8A4              2CC4  mt_vscr.fa
+            E8AF              2CCF  mt_vscr.lit
+            E8D4              2CF4  mt_vscr.l1
+            E8DA              2CFA  mt_vscr.l2
+            E8F7              2D17  mt_vscr.ld
+            E91E              2D3E  mt_vscr.lu
+            E927              2D47  mt_vscr.ls
+            E931              2D51  mt_vscr.lc
+            E942              2D62  mt_vscr.lf
+            E946              2D66  mt_vscr.lb
+            E955              2D75  mt_vscr.x
+            E957              2D77  mt_vscr.clamp
+            E95E              2D7E  mt_vscr.c1
+            E96A              2D8A  mt_vscr.c2
+            E96B              2D8B  mt_vmov
+            E993              2DB3  mt_vmov.w
+            E9A5              2DC5  mt_vmov.s
+            E9AB              2DCB  mt_vmov.y
+            E9AD              2DCD  mt_vmov.x
+            E9AE              2DCE  mt_vset
+            E9CA              2DEA  mt_vset.w
+            E9D3              2DF3  mt_vset.s
+            E9D7              2DF7  mt_vset.y
+            E9D9              2DF9  mt_vset.x
+            E9DA              2DFA  mt_carve
+            E9E7              2E07  mt_carve.w
+            E9FB              2E1B  mt_carve.w1
+            EA03              2E23  mt_carve.mg
+            EA34              2E54  mt_carve.fit
+            EA3D              2E5D  mt_carve.nx
+            EA4D              2E6D  mt_carve.end
+            EA82              2EA2  mt_carve.all
+            EA8F              2EAF  mt_carve.no
+            EA90              2EB0  mt_carve.x
+            EA93              2EB3  mt_tend
 
 ---- Section .bss -------------------------------------------------------------
 
@@ -4411,8 +4412,8 @@ Real              Virtual           Name
 ---- Section mttbss -----------------------------------------------------------
 
 Real              Virtual           Name
-            2E90              2E90  mt_tx0
-            32C0              32C0  mt_ini
-            3360              3360  mt_hdr
-            3780              3780  mt_bend
+            2EC0              2EC0  mt_tx0
+            32F0              32F0  mt_ini
+            3390              3390  mt_hdr
+            37B0              37B0  mt_bend
 
