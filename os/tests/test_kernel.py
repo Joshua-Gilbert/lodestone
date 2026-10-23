@@ -1892,7 +1892,10 @@ def t_nodisk():
     # a handler that answers Ignore, which the mount doesn't offer: Fail, as MS-DOS (it mounted B: from A:'s boot sector)
     ig = os.path.join(OUT, 'NODISKIG.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', ig, os.path.join(HERE, 'NODISKIG.ASM')], check=True)
-    k = ktest.KPC(image('nodiskig.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISKIG.COM=' + ig), bytes(1474560))
+    cmds = os.path.join(OUT, 'CMDS.TXT'); open(cmds, 'wb').write(b'dir b:*.txt' + bytes([13, 10]) + b'dir b:*.txt' + bytes([13, 10]) + b'exit' + bytes([13, 10]))
+    nd2 = os.path.join(OUT, 'ND2.BAT'); open(nd2, 'wb').write(b'@dir b:*.txt' + bytes([13, 10]) + b'@echo hi > b:y.txt' + bytes([13, 10]))
+    k = ktest.KPC(image('nodiskig.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISKIG.COM=' + ig, 'ND2.BAT=' + nd2, 'CMDS.TXT=' + cmds, 'BIN' + chr(92),
+                        'BIN' + chr(92) + 'NODISKMT.COM=' + os.path.join(HERE, 'NODISKMT.COM')), bytes(1474560))
     k.pc.drives[1].empty = True
     k.start()
     sh = Shell(k)
@@ -1931,6 +1934,72 @@ def t_nodisk():
     o = k.pc.text_screen()
     check('... "echo hi | echo x < nosuch.txt": "File not found" for the redirection, and no \\PIPEA1.$$$ left',
           o.count('File not found') == 2 and 'PIPEA1' not in o, o)
+    # one question for each command, though it makes several calls (COMMAND.COM asks up to 5 times): F, or A, answers
+    # the rest of it; a batch file's next line asks again
+    def asks(c, ans='f'):
+        n0 = len(k.pc.tty)
+        k.key(c); k.key(ktest.ENTER)
+        for i in range(8):
+            if ''.join(k.pc.tty)[n0:].count('Fail?') > i: k.key(ans)
+            else: break
+        return ''.join(k.pc.tty)[n0:]
+    n = {c: asks(c).count('Fail?') for c in ('dir b:*.txt', 'dir b:\\sub', 'copy b:x.bat a:', 'del b:x.bat',
+                                             'dir b:x.txt > o.txt', 'copy b:x.txt+a.txt c.txt')}
+    na = asks('copy b:*.* a:', 'a').count('Fail?')
+    check('... DIR, COPY, DEL on B:: one question each, F answering the rest of the command (A as F, in LCMD\'s own work)',
+          set(n.values()) == {1} and na == 1, (n, na))
+    k.key('echo dir b:*.txt > nd.bat'); k.key(ktest.ENTER)
+    k.key('echo del b:x.bat >> nd.bat'); k.key(ktest.ENTER)
+    o = asks('nd')
+    check('... a batch file of two such lines: one question for each line', o.count('Fail?') == 2, o)
+    # the next line's redirection asks too (it's opened before the command runs)
+    o = asks('nd2')
+    check('... a batch line redirected to B: after one answered F: asked again (two questions)', o.count('Fail?') == 2, o)
+    # a program LCMD runs is asked, though LCMD's own PATH search on B: was answered F in the same line
+    k.key('set path=b:\\;a:\\bin'); k.key(ktest.ENTER)
+    n0 = len(k.pc.tty)
+    k.key('nodiskmt'); k.key(ktest.ENTER, settle=False)
+    seen = 0
+    for i in range(6):
+        k.run_for(1.5)
+        if ''.join(k.pc.tty)[n0:].count('Fail?') > seen: seen += 1; k.key('f', settle=False)
+    k.settle()
+    o = ''.join(k.pc.tty)[n0:]
+    res = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\RES.TXT')
+    check('... NODISKMT found in A:\\BIN after the PATH\'s B:\\: two questions, the PATH search\'s and the program\'s own '
+          '(RES.TXT "03")', o.count('Fail?') == 2 and res == b'03', (o, res))
+    # lines read from a file, not the console (lcmd < cmds.txt): each asks again too
+    o = asks('lcmd < cmds.txt')
+    check('... LCMD reading its lines from a file (two DIR B:*.TXT): one question for each line', o.count('Fail?') == 2, o)
+    # a COPY whose writes fail part way (B: write-protected after its 3rd sector): F, then the partial copy's close and
+    # delete ask again, so a Retry with the disk put right leaves no 0-byte file and no lost clusters
+    big = os.path.join(OUT, 'BIG.DAT'); open(big, 'wb').write(bytes(range(256)) * 160)
+    k = ktest.KPC(image('nodiskcp.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'BIG.DAT=' + big),
+                  open(image('nodiskb.img', 'ND2.BAT=' + nd2), 'rb').read())
+    k.start()
+    k.key('cls'); k.key(ktest.ENTER)
+    free0 = re.search(r'([\d,]+) bytes free', asks('dir b:')).group(1)
+    orig, st = type(k.pc).int13, {'on': True, 'w': 0}
+    def int13(s):
+        if st['on'] and s.r('ah') == 3 and s.r('dl') == 1:
+            st['w'] += 1
+            if st['w'] == 4: s.drives[1].wp = True
+        return orig(s)
+    type(k.pc).int13 = int13
+    try:
+        n0 = len(k.pc.tty)
+        k.key('copy big.dat b:'); k.key(ktest.ENTER)
+        k.key('f'); st['on'] = False; k.pc.drives[1].wp = False
+        for i in range(6):
+            if ''.join(k.pc.tty)[n0:].count('Fail?') > i + 1: k.key('r')
+        o = ''.join(k.pc.tty)[n0:]
+    finally:
+        type(k.pc).int13 = orig
+    m = re.search(r'([\d,]+) bytes free', asks('dir b:'))
+    files = fatcheck.read_files(bytes(k.pc.drives[1].img))
+    check('... COPY to B: failing part way: F, then its clean-up asks again; R there: no BIG.DAT left, B:\'s free space as '
+          'before', o.count('Fail?') >= 2 and 'B:\\BIG.DAT' not in files and m and m.group(1) == free0,
+          (o, sorted(files), free0, m and m.group(1)))
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,

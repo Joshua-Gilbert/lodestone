@@ -28,8 +28,9 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M6 | Parking tasks in EMS and bringing them back | PR #65, merged. |
 | M7a | LCMD's START, FG, KILL, PARK, UNPARK and WAIT; a task's exit code (`MT_EXIT`); CLAUDE /U refused while tasks run | PR #67, merged. |
 | M7b | The Executive: programs started as tasks, its task list (TASKS.RUN, CODE-T); System's switch; LODE.INI's `BG=`, `FREEZE=` and `MTMEM=` | PR #71, merged. |
-| M7c | Resident Claude with tasks: its pop-up and TYPE's keys the front task's, its key wait a place to switch from, CODE-Tab in the console its own, `/R` not inside a task (`MT_TSR`) | PR #73. |
-| M8 | Several `.RUN` windows at once, as coroutines in the UI task | |
+| M7c | Resident Claude with tasks: its pop-up and TYPE's keys the front task's, its key wait a place to switch from, CODE-Tab in the console its own, `/R` not inside a task (`MT_TSR`) | PR #73, merged. |
+| M8a | Several window `.RUN`s at once, each a session in the UI task; the Executive waits meanwhile | PR #77. |
+| M8b | A live base under the windows: the Executive, Write or System working under them (clipping) | |
 | M9 | On the 1520, and release 0.7 | |
 
 Each milestone's PR adds its section below, describing what was built and any departure from the plan.
@@ -1540,4 +1541,120 @@ Two survive, both for cases no test makes:
   - the console doesn't use the SRQ path.
 
   So nothing here changes for it. One point for M9: CLAUDE.COM, waiting for the link with a HLT (#70's sleep until SRQ) as a front task with another ready, loses its turn at the tick, and an SRQ doesn't bring it back early (`mt_kwant` looks for keys only).
+- Any of it on the 1520.
+
+## M8a: several window .RUNs at once (2026-10-22)
+
+**Joshua's decisions** (for M8; M8a is its first half):
+- Any number of window `.RUN`s (RUN_API 6 and up: CALC, TASKS, and later ones) can be open at once, over one full-screen base: the Executive, Write or System. Write and System stay full-screen, one at a time. A `.RUN` that doesn't fit says so.
+- With a window over the base, the core clips the base's own drawing around it, so Write keeps working under the calculator (M8b).
+- CODE-K and CODE-T work from inside any `.RUN`. A click on a window brings it to the front and gives it the keys, and CODE-F6 brings the next one there. CODE-Tab stays MT's.
+- Only with `MULTITASK=1`. With the switch off, the UI is byte for byte as it was.
+- A window `.RUN` doesn't make what started it wait: it opens in front, and the starter goes on. CODE-K with the calculator open brings that one to the front. When one ends, the next comes to the front.
+- With multitasking on, there are no save-unders. Closing, moving or bringing a window to the front draws the screen again.
+- **The split:** M8a has several windows over the Executive, which waits meanwhile, as it waits for a `.RUN` today. M8b makes the base live under them: the Executive, Write or System working under the windows, CODE-W and CODE-U from a window, a task's end said while windows are open.
+
+**What it does:**
+- **A session for each window `.RUN`.** It has:
+  - its own load area in the UI segment (a slot, the lowest from `run_base` up that is clear of the others);
+  - its own stack, 2,560 bytes at the slot's end, as big as the core's;
+  - its own copy of the core's globals that belong to one program: the band and the title, the redraw routine, the list, form and line editor's state, `UI_ALLOC`'s blocks, its header and argument (`mw_ctx`'s ranges, 98 bytes).
+
+  Sessions take turns inside the UI task. Only the one in front runs. The others wait inside `UI_EVENT`, where they were, each on its own stack. The Executive waits in `run_app` until the last one has ended. All of them wait at the same idle HLT (`..@ui_idle`), or the saver's (`..@ui_sidle`), so `mt_safe` takes each one's stack as task 0's (`mt_mine`: the UI block), and MT's rules don't change.
+- **The code is LODEMT.SYS's** (`KMW.INC`, in MT's block). The UI is patched when `MT_UI` is first asked, at start-up. Each patch goes over 5 bytes that it checks first (for `ui_event.got`, a call with a relative address, only its opcodes: E8h and the JC after it), and none is made if any differ:
+  - `run_app`'s first instruction becomes a far jump to `mw_run`. A window `.RUN` starts as a session; any other goes back into `run_app` as before.
+  - `ui_event.got` (the call of `win_ev`) becomes a far call to `mw_got`. With sessions, it handles:
+    - CODE-K and CODE-T, which open the calculator and the tasks, or bring them to the front. When that one is already in front, the key is its own, as without tasks (CODE-K closes the calculator);
+    - CODE-F6;
+    - a click on another session's window, which gives that session the focus (the click goes no further).
+
+    Everything else goes on to `win_ev` as before. While sessions run, `mw_got` sets ES to the UI's itself: a `.RUN` may call `UI_EVENT` with any ES.
+  - `run_cleanup`'s first 5 bytes become a far jump to `mw_clean`. When the root starts over (^C or a crash in a `.RUN`), every session is forgotten and each one's `UI_ALLOC` blocks are freed.
+  - `ui_wopen`'s borrow of the disk cache becomes a far call to `mw_lend`. While a window `.RUN` runs, it borrows nothing: there is no save-under. Closing, moving or bringing a window to the front then draws the whole screen again (`redraw_all`: the Executive's list, the band, each window in order), and the result is right whichever window is in front.
+
+    With no window `.RUN` running, it borrows as before, so the Executive's own help and forms keep their save-under. **This narrows the decision above:** without it, closing the Executive's F1 help would run `relist`, which reads the directory from the disk again.
+
+  The patches travel with the UI block when `ui_room` moves it. The code itself never moves.
+- **Whose window:** a window belongs to the session whose slot holds its structure. `help_w` (`UI_HELP`'s and `UI_FORM`'s window) belongs to the session running. While a help or form window is open, it is modal: the session keeps the focus, and the keys and clicks are its own.
+- **Bringing one to the front:** its windows go to the top of the window stack, in their order, and the screen is drawn again once it runs.
+- **Starting one:**
+  - `mw_start` reads the header and checks it is a window `.RUN`;
+  - it finds a slot and grows the UI block to the highest slot's end;
+  - it reads and fixes the image as `run_app` does;
+  - it keeps the starter's globals, then sets the new one's. Started from another window, the new one's are the Executive's as it left them, as when the Executive starts it: no band, title or redraw routine pointing into the starter's slot. Its band is then drawn;
+  - it builds its stack: a JMP FAR to `mw_end` at the slot's end, for the `.RUN`'s RET;
+  - then it runs it.
+
+  Started from the Executive (`run_app`), a failure says why as before: "Can't run CALC.RUN: …". Started from a window, the band says it: "CALC.RUN doesn't fit: close a window first" (no room, or as many as there may be), "CALC.RUN is not on this disk", or, for any other error (a damaged file), "CALC.RUN can't start". The message waits for a key, as `UI_MSG`'s do; meanwhile CODE-K and CODE-T are that key, so they don't stack messages one on another.
+- **One ending:**
+  - its `UI_ALLOC` blocks are freed;
+  - its windows come off the stack (and the screen is drawn again, if any were left);
+  - its slot is free, and the UI block shrinks to the highest slot still used (from the next one's stack, so none runs on memory given back);
+  - the next session in front gets its windows on top, if they aren't (the screen is drawn again then); otherwise its band is drawn again (a question of its own still waiting, say).
+
+  The next session runs on, where it waited. After the last one, the Executive runs on, with an exit code from them: the last one other than 0FFFFh that any of them returned (0 if one left windows open), or 0FFFFh if they all returned that (no relist), as from one `.RUN`.
+
+**The limits, plainly:**
+- **The Executive waits while windows are open** (M8b). CODE-W and CODE-U inside a window are that window's keys (the calculator's: none).
+- **A window over the Executive is drawn again through `relist`,** which reads the directory again (from the cache, or the disk). With the disk out, closing the calculator can bring up the drive's question (INT 24h), as the saver's redraw can today.
+- **RUN_API 6 is what makes a `.RUN` a window `.RUN`.** One at API 6 or more that takes the whole screen (Paint, on its branch) would become a session too. It must say which it is before it is merged (M8b).
+- **Four windows at once in all** (`NWIN`), and four window `.RUN`s. A help or form window counts as one, so a help left open in a session behind can stop a fourth from starting. With all four windows open, one more (a help) is only counted (`wover`), and that count is shared by the sessions; with CALC and TASKS there can't be four.
+- **A help window closes on any key, CODE-F6 included,** as it always has. CODE-F6 then brings no other one to the front.
+- **The band's message is in the core's `tmp`,** which the Executive's information line also uses. The saver while "CALC.RUN is not on this disk" waits brings the Executive's line back in its place.
+- **The calculator's `keep_line`** puts keys typed meanwhile back in the BIOS's buffer (INT 16h AH=05h). A change of front just then gives them to the other window.
+- **Moving a window** (its outline following the pointer or the arrow keys) halts in `win_mv`'s own loops, which aren't places MT switches from: tasks behind wait until the window is put down (as since M0).
+- **The DTA is shared:** a `.RUN` that searches for files (AH=4Eh) while another does would see the other's. Neither CALC nor TASKS does.
+- **A `.RUN` that reads its keys with `UI_POLL` only,** never `UI_EVENT`, gets no CODE-K, CODE-T, CODE-F6 or focus by click.
+- **`UI_RUN`'s contract:** a window `.RUN` started from another doesn't make it wait. `UI_RUN` itself still refuses a `.RUN` (error 11), as before.
+- **Room:** the slots grow the UI block, CALC by 7,040 bytes and TASKS by 4,464. `ui_room` keeps 16 KB free after the block when the Executive is idle, but a task or a TSR placed right after it can leave less. Then a second window "doesn't fit".
+- **Memory when one ends in the middle:** a slot left free below others is used again by the next that fits (first fit). The block shrinks only to the highest slot still used.
+
+**Cost:**
+- **Switch off:** nothing. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ are main's. The UI image is byte for byte the same: the only new things are labels (`..@ui_retf`, `..@ui_ret`, `..@ui_wlend`) and an equate (`K_CODE_F6`). LODE.SYS differs only in start-up bytes that are thrown away (`mt_sum`, and `mt_boot`'s copy of `MT_LEN` and `MT_PARAS`).
+- **Switch on:** MT's block is 1,098 paragraphs (902 before): KMW's code, and its sessions' records in MT's BSS (`MW_BSS`, 626 bytes). MEMSZ with Shift-Return is 564.4 KB (567.5 before). LODEMT.SYS is 14,629 bytes (12,140 before).
+- **ROM 1:** 5,632 bytes left (8,192 on main): LODEMT.SYS takes five sectors more.
+- **Speed:** every event the UI takes passes through one far call and a byte compare (`mw_got`, no sessions: straight on to `win_ev`). While window `.RUN`s run, closing, moving or bringing a window to the front draws the screen again, where a save-under was copied back before: closing the calculator over the Executive takes 56.7 ms in pcemu (7.6 ms with the switch off, from its save-under).
+
+**TASKS.RUN, fixed:** CODE-D's question ("End MTLINE.COM: Confirm to end the task") has its own buffer, `qline`. It was built in `line`, which drawing the rows uses too, so a redraw while it waited (now any change of front) put a row's text in the band. TASKS.RUN's file is the same size; its BSS is 48 bytes bigger.
+
+**Tests:** test_mt's new group `t_windows` (14 checks; test_mt 317, 303 before):
+- CODE-K, then CODE-T inside the calculator:
+  - the calculator is a session in the first slot (`run_base`);
+  - the Executive waits on its own stack;
+  - the tasks open in front, with both windows on the screen.
+- Keys go to the window in front only. CODE-F6 brings the calculator to the front (its window on top), and "2+2" Return gives "= 4".
+- CODE-F7, Left ×3, Return: the calculator 3 columns left, the tasks' window and the Executive's list drawn again under where it was. Then it is moved back.
+- F1 in the calculator opens its help. CODE-F6 then closes it, as any key does, and brings no other window to the front. A click on the tasks' window brings them to the front.
+- The tasks' question waits in their band; the calculator in front has its own; the tasks brought back show the question again.
+- A click on the calculator brings it to the front. CODE-K with the tasks in front brings the calculator there, without starting another. The calculator's stack, painted where it wasn't used: 172 of 2,560 bytes used.
+- With as many window `.RUN`s as there may be (poked), CODE-K says "CALC.RUN doesn't fit: close a window first".
+- CODE-K in the calculator, in front, is its own key: it closes, and the tasks are drawn again. CODE-K starts it again, in the slot it left.
+- The saver with both windows open, then a key: the Executive and both windows come back, and MTSPIN still counts behind.
+- The tasks brought to the front and closed: the calculator in front, the UI block back to the end of its slot.
+- ESC: the Executive is back, nothing is loaded, and the UI block is as before. Every switch meanwhile was by the rules (the Audit, with MTSPIN computing behind), 1,622 of 3,472 from a session's own stack, all at the UI's idle HLTs.
+- CODE-D in the tasks, then CODE-K while they ask: the calculator's band is the Executive's, after the saver too. ESC: the tasks' question again.
+- With no CALC.RUN on the disk, CODE-K in the tasks says "CALC.RUN is not on this disk". Five more CODE-Ks end it and say it again in turn, never one inside another.
+- A CALC.RUN cut short: CODE-K in the Executive says "Can't run CALC.RUN: Not a program", with nothing loaded and the UI block as it was; CODE-K in the tasks says "CALC.RUN can't start".
+
+t_on's check that MT passes F0h AL=2 and 3 on to the kernel (the help's save-under lent and given back) stands, since the Executive alone borrows as before. The Audit now notes each switch's SP (`csp`), the caller's, under its frame.
+
+**The checks can fail:** each of 20 mutations fails at least one check of `t_windows` or `t_on`:
+- the patches not made (`run_app`'s; `ui_wopen`'s borrow); the borrow refused with no session too;
+- a starter's globals not kept, or a session's not loaded;
+- a window started from another with the starter's globals, or its band not drawn; the next one's band not drawn at an end;
+- no raise, or no redraw after one;
+- no focus by click, no CODE-K, no CODE-F6;
+- CODE-K not passed to the calculator in front, or to a message waiting;
+- the help not modal;
+- the UI block not shrunk;
+- a slot over another one;
+- no message in the band;
+- TASKS' question built in `line` again.
+
+**Not tested here:**
+- A session ending with windows still open (CALC and TASKS close theirs). `UI_ALLOC` blocks freed at a session's end (neither has any).
+- Three sessions: the next one's windows raised at an end. With CALC and TASKS, the next one's are always on top.
+- A `.RUN` calling `UI_EVENT` with ES not the UI's; a header whose counts overflow; the exit codes of several sessions.
+- The real no-room path (`mw_slot` or `mw_grow` failing), and four windows open stopping a start: only the poked count is.
+- The root starting over with sessions open (`mw_clean`).
 - Any of it on the 1520.

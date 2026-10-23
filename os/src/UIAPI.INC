@@ -204,6 +204,7 @@ K_CPGDN     equ 7600h
 K_F1        equ 3B00h
 K_F2        equ 3C00h
 K_F5        equ 3F00h
+K_CODE_F6   equ 6D00h                   ; the next window (MULTITASK=1, M8)
 K_CODE_F7   equ 6E00h                   ; move the top window (API 6)
 K_CODE_ENTER equ 1C00h
 K_CODE_ESC  equ 0100h

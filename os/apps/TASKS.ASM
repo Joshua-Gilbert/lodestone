@@ -195,7 +195,7 @@ k_end:  call    sel_task
         jc      k_front.x
         push    ax
         push    si
-        mov     di, line                ; "End MTLINE.COM: Confirm to end the task"
+        mov     di, qline               ; "End MTLINE.COM: Confirm to end the task"
         mov     si, s_endq
         call    UI_SBSTR
         pop     si
@@ -203,7 +203,7 @@ k_end:  call    sel_task
         mov     si, s_endq2
         call    UI_SBSTR
         mov     byte [di], 0
-        mov     si, line
+        mov     si, qline
         call    UI_ASK
         pop     bx
         jc      .x
@@ -428,4 +428,6 @@ front   resb 1                          ; the task in front
 recs    resb MT_TASKS * MT_REC          ; MT_LIST's records
 flags   resb MT_TASKS                   ; each one's MT_FLAGS (FFh: task 0)
 line    resb 80
+qline   resb 48                         ; (the question: drawing the rows, line,
+                                        ;  while it waits would change it)
 run_bss_end:
