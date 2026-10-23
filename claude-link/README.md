@@ -233,7 +233,8 @@ every byte checked.
 | gridlink's read and hold fixes | 8 ms | up to 1 s | 22.7 KB/s | 43.0 KB/s |
 | bridge fw 2026-10-21a, 2 KB frames to the GRiD | 8 ms | up to 1 s | 34.3 KB/s | 42.8 KB/s |
 | 2 KB frames from the GRiD, the Fletcher sum (CLAUDE 1.3) | 7.0 ms | up to 1 s | 34.0 KB/s | 56.5 KB/s |
-| bridge fw 2026-10-22a (bulk USB reads) and 22b (wake-up) | **7.0 ms** | **51 ms** median | **45.7 KB/s** | **56.7 KB/s** |
+| bridge fw 2026-10-22a (bulk USB reads) and 22b (wake-up) | 7.0 ms | 51 ms median | 45.7 KB/s | 56.7 KB/s |
+| SRQ on IRQ 5 (Lodestone's GPIB driver 1.21, CLAUDE 1.3) | **7.0 ms** | **9 ms** median | **44.9 KB/s** | **56.7 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -242,11 +243,17 @@ every byte checked.
   byte; the Fletcher sum costs 8.5.
 - **The first call after idle:** CLAUDE POLLs once a second between
   messages. The bridge now raises SRQ when gridlink has news for an idle GRiD
-  (WAKE, PROTOCOL.md), and CLAUDE POLLs at once. The 51 ms left is CLAUDE's
+  (WAKE, PROTOCOL.md), and CLAUDE POLLs at once. That left 51 ms: CLAUDE's
   HLT until the next timer tick. With the GPIB driver's SRQ interrupt (IRQ 5:
-  Lodestone's built-in driver 1.21, or GRIDGPIB 1.2) the SRQ itself wakes it:
-  2.5 ms instead of 74 in the emulator. That is still to be measured on the
-  1520.
+  Lodestone's built-in driver 1.21, or GRIDGPIB 1.2) the SRQ itself wakes it,
+  and the first call after idle takes 9 ms: a round trip and about 2 ms.
+  gridlink rings only a GRiD that has read its last answer and been quiet
+  for 50 ms, five times at most, then takes the SRQ back.
+- **Code alignment matters on the 286:** it fetches words, and a jump to an
+  odd address costs another fetch. When the kernel grew by an odd number of
+  bytes, the GPIB driver's two fast loops moved by one, and a 2 KB frame into
+  the GRiD took 30.0 ms instead of 27-28 (copies 42.7 / 54.8 KB/s). Two pad
+  bytes keep them where they were measured fastest.
 - **What is left, per 2 KB frame** (`bench --trace`):
   - Pi to GRiD: the GPIB transfer about 28 ms, USB into the bridge 4.6 ms,
     and the GRiD's own work between frames about 5 ms.
