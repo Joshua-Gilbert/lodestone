@@ -72,16 +72,16 @@ Details in `docs/gridfox.md`. In short:
 
 ## Measured (emulation and models, 2026-10-17)
 
-| Picture | Bytes to the GRiD | At 87 KB/s (Pico 2 bridge) | At 8 KB/s | At 3.2 KB/s (stock bridge) |
+| Picture | Bytes to the GRiD | At 109 KB/s (Pico 2 bridge) | At 8 KB/s | At 3.2 KB/s (stock bridge) |
 |---|---|---|---|---|
-| A plot of 1,601 points, two axes, title and labels | 5,206 (254-byte frames), 5,436 (127) | 0.06 s | 0.65 s | 1.7 s |
+| A plot of 1,601 points, two axes, title and labels | 5,206 (254-byte frames), 5,436 (127) | 0.05 s | 0.65 s | 1.7 s |
 | A pick's mark on it | 84 | under 0.01 s | 0.01 s | 0.03 s |
 | A grey gradient, dithered | 683 | 0.01 s | 0.1 s | 0.2 s |
-| gridfox, the stand-in's index page | 2,440 | 0.03 s | 0.3 s | 0.8 s |
+| gridfox, the stand-in's index page | 2,440 | 0.02 s | 0.3 s | 0.8 s |
 | Its next screen (PgDn) / three rows down | 1,914 / 675 | 0.02 / 0.01 s | 0.24 / 0.08 s | |
 
 - The stand-in Firefox's page is only text: a real page with photographs dithers into more, perhaps 10–25 KB for a new photo-heavy screen.
-- The link through the Pico 2 bridge, measured on the 1520 (2026-10-23, `gridlink.bench`, GPIB driver 1.23, bridge fw 2026-10-23a): 87.2 KB/s to the GRiD, with 6 ms round trips (claude-link/README.md has the table). Add a round trip to each figure in that column; drawing on the GRiD takes longer than the transfer now.
+- The link through the Pico 2 bridge, measured on the 1520 (2026-10-23, `gridlink.bench`, GPIB driver 1.23, bridge fw 2026-10-23d, CLAUDE 1.7): 109.3 KB/s to the GRiD, with 6 ms round trips (claude-link/README.md has the table). Add a round trip to each figure in that column; drawing on the GRiD takes longer than the transfer now.
 
 ## Tests
 - `claude-link/tests/test_picture.py` (18): PackBits; the encoder against a model of the GRiD's decoder at 254, 118 and 40-byte frames; scrolls; cells over pixels; malformed rectangles; dithering; plots, their clicks and labels; data files; the picture layer through GridSim (clicks, CODE-R, an old CLAUDE that gets no pictures, cell clicks from #32's CLAUDE); `grid_plot`, `grid_pick`, `grid_image` and `save_to` end to end through the MCP server; names with Esc and Return pasted harmlessly; a killed program's picture going with it; a tool answered while `grid_pick` waits.

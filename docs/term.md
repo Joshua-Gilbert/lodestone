@@ -100,7 +100,7 @@ The frame format is in `claude-link/PROTOCOL.md`, section 6.
 | Key to echo on screen, GRiD time (pcemu, real CLAUDE.COM) | 48 ms, plus the Pi's own |
 
 At 3.2 KB/s (stock firmware) a streamed answer can scroll about 29 lines a
-second; the patched bridge doubles that. Through the Pico 2 bridge (87 KB/s
+second; the patched bridge doubles that. Through the Pico 2 bridge (109 KB/s
 to the GRiD, measured on the 1520) the link no longer sets the pace: the
 GRiD's own drawing does.
 
