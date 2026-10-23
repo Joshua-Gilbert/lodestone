@@ -271,15 +271,21 @@ every byte checked.
   lets the driver append its own (copies are REP MOVSW now). The GRiD's
   time between frames went from 4.9 to 2.8 ms into the GRiD and from 4.8
   to 1.1 ms out of it.
-- **What is left, per 2 KB frame** (`bench --trace`):
-  - Pi to GRiD: the GPIB transfer ~13 ms, the GRiD's own work between
-    frames 2.9 ms, and the rest (the Pi's answer, SRQ, the poll) about 5 ms.
-    With bridge fw 2026-10-23a the bridge says an answer is ready once its
-    first 128 bytes are in, so the ~4 ms of USB per 2 KB frame overlaps the
-    GRiD's read (21.6 ms a frame instead of 25.6). The trace's TALK times
-    come late while the bridge is still taking the answer in: its events
-    reach the Pi between USB reads.
-  - GRiD to Pi: the GPIB transfer about 19 ms, and the GRiD's work 1.1 ms.
+- **Where a 2 KB frame's time goes**, on the bridge's own clock (fw 2026-10-23b
+  stamps its events; `bench --trace`), so the GRiD is now the limit both ways:
+
+  | Pi to GRiD, 21.5 ms a frame | | GRiD to Pi, 19 ms a frame | |
+  |---|---:|---|---:|
+  | GRiD reads it (TALK -> TX_DONE) | 14.1 ms | GRiD writes it (LISTEN -> RX_END) | 18.8 ms |
+  | GRiD between frames | 2.9 ms | GRiD between frames | 1.3 ms |
+  | USB, the reply's first 128 bytes | 1.0 ms | USB, the Pi's NOP | 0.6 ms |
+  | SRQ, serial poll, addressing | ~1 ms | SRQ, serial poll, addressing | ~0.7 ms |
+  | gridlink | 0.2 ms | gridlink | 0.1 ms |
+
+  The GPIB time is the GRiD's byte loops (6.4 µs a byte reading, 9 writing,
+  with the frame check). With bridge fw 2026-10-23a the bridge says an
+  answer is ready once its first 128 bytes are in, so the ~4 ms of USB per
+  2 KB frame overlaps the GRiD's read (21.6 ms a frame instead of 25.6).
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
