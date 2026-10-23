@@ -20,7 +20,10 @@ File layout (all words little-endian):
      include; the core refuses a program that needs more than it has), else
      UI_API when it was built
   6  image bytes          8  BSS bytes (zeroed by the loader)
-  10 absolute fixups      12 relative fixups      14 0
+  10 absolute fixups      12 relative fixups
+  14 RUN_FLAGS (RUN_FLAGS equ n after the include; 0 without one): bit 0,
+     RF_WIN, a window .RUN, which runs as a session beside others with
+     MULTITASK=1 (M8).  The core with the switch off ignores the word
   16 the image, then the absolute fixups, then the relative ones (offsets
      into the image)
 """
@@ -74,7 +77,7 @@ def build(src, dst, incs=()):
         elif d == (-DELTA) & 0xFFFF: relf.append(i)
         else: raise SystemExit('%s: offset %04X differs by %04X: not a word address' % (src, i, d))
         i += 2
-    hdr = b'GRUN' + struct.pack('<6H', api, len(a), bss, len(absf), len(relf), 0)
+    hdr = b'GRUN' + struct.pack('<6H', api, len(a), bss, len(absf), len(relf), sa.get('RUN_FLAGS', 0))
     data = hdr + a + struct.pack('<%dH' % len(absf), *absf) + struct.pack('<%dH' % len(relf), *relf)
     open(dst, 'wb').write(data)
     return dict(image=len(a), bss=bss, abs=len(absf), rel=len(relf), size=len(data), syms=sa)
