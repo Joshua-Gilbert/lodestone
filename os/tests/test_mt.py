@@ -220,12 +220,12 @@ def t_on():
     su = []
     for i in range(2):
         k.key(ktest.F1)
-        su.append((k.u16('wseg'), k.rd('ems_su', 2)))
+        su.append((k.u16('wseg'), k.rd('ems_su', 2), A.has(k, 'Help')))
         k.key(ktest.ESC)
-        su.append((k.u16('wseg'), k.rd('ems_su', 2)))
-    check('the other F0h calls go on to the kernel: the help window\'s save-under is lent (AL=2) and given back (AL=3), twice',
-          all(su[i][0] != 0 and su[i][1] != b'\0\0' for i in (0, 2)) and all(su[i] == (0, b'\0\0') for i in (1, 3)),
-          [(hex(w), bytes(e).hex()) for w, e in su])
+        su.append((k.u16('wseg'), k.rd('ems_su', 2), A.has(k, 'Help')))
+    check('the help window, twice: open, then closed and the screen drawn again, with no save-under (M8a: with '
+          'MULTITASK=1 ui_wopen borrows nothing, F0h AL=2 not asked)', [s[2] for s in su] == [True, False] * 2
+          and all(s[:2] == (0, b'\0\0') for s in su), [(hex(w), bytes(e).hex(), h) for w, e, h in su])
     for text in (b'MULTITASK=Yes\r\n', b'multitask=on\r\n', b'MULTITASK=1', b'MULTITASK=yes \r\n',
                  b'NOTE=MULTITASK=0\r\nMULTITASK=1\r\n'):
         k = boot('mt_on2.img', text)
@@ -671,7 +671,7 @@ class Audit:
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
             r, cur = s.rules(cs, ip, fl, ss)
             if path == 'tick': r['ivt'] = vec(k, 8) == (s.seg, k.Y['mt_tick'])   # (else a hook ahead was interrupted)
-            s.ev.append(dict(path=path, cs=cs, ip=ip, fl=fl, task=cur, ss=ss, r=r, sw=False,
+            s.ev.append(dict(path=path, cs=cs, ip=ip, fl=fl, task=cur, ss=ss, csp=f + 6, r=r, sw=False,
                              ok=path != '?' and all(r.values())))
             s.track = (ss, f + 6, path, cur, (s.seg, 0x60, pc.u16(0x60, k.Y['ui_seg'])))   # (the caller's SP:
                                                                  #  under the frame; MT, the kernel, the UI)
@@ -3120,6 +3120,134 @@ def t_tasksrun():
           and pz == (1, 5, 'MTLINE.COM') and [n for i, s, n in st[0]] == ['Executive', 'MTLINE.COM'] and st[1] == 1 and rr == 0xFFFF
           and b2[:1] == ['MTLINE.COM ended, exit code 2'] and tstate(k)[0] == [(0, 1, 'Executive')], (b1, r2, pz, st, rr, b2))
 
+SE_SIZE, SE_BASE, SE_END, SE_SP, MW_STK = 122, 2, 4, 6, 1536    # KMW.INC: a session's record
+
+def t_windows():
+    print('== several window .RUNs at once: the calculator and the tasks (M8a)')
+    TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
+    k = boot('mt_win.img', b'MULTITASK=1\r\n', 88, TR, A.CALCRUN, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    rec = lambda i, o: k.pc.u16(seg, Y['mw_ses'] + i * SE_SIZE + o)
+    top = lambda: k.u16('wstack') if False else k.pc.u16(k.useg, Y['wstack'] + 4 * (k.u16('wdepth') - 1))
+    free0 = A.free_paras(k)
+    # something computing behind meanwhile, and every switch checked
+    k.key(A.CODE['P']); k.run_for(1.0)
+    typ(k, 'start /w mtspin.com 250 ws.txt', 0.3); typ(k, 'exit', 1.0); k.settle()
+    au = Audit(k)
+    k.key(A.CODE['K']); k.run_for(0.5)
+    n1, b1, x0 = mb('mw_n'), rec(1, SE_BASE), rec(0, SE_SP)
+    k.key(A.CODE['T']); k.run_for(0.5)
+    n2, c2, w2 = mb('mw_n'), mb('mw_cur'), k.u16('wdepth')
+    check('CODE-K: the calculator, a session (%d) in the first slot (run_base, %04Xh), the Executive waiting on its own '
+          'stack (%04Xh); CODE-T inside it: the tasks, in front (session %d), the calculator still there: %d windows'
+          % (n1, b1, x0, c2, w2), n1 == 1 and b1 == k.u16('run_base') and Y['ui_stack_top'] - 2560 <= x0 < Y['ui_stack_top']
+          and n2 == 2 and c2 == 2 and w2 == 2 and A.has(k, 'Calculator') and A.has(k, 'Tasks')
+          and rec(2, SE_BASE) == rec(1, SE_END), (n1, hex(b1), hex(x0), n2, c2, w2, A.screen(k)))
+    # the calculator's stack, painted where it isn't used, to see how deep it goes
+    cb = rec(1, SE_END) - 8 - MW_STK
+    k.pc.wr(k.useg, cb, b'\xa5' * (rec(1, SE_SP) - cb))
+    def ans(): return [m.group(0) for l in A.lines(k) for m in [re.search(r'= -?[\d.]+', l)] if m]
+    k.key('9*9'); k.run_for(0.3)                    # (the tasks: no such keys)
+    a0 = A.has(k, '9*9')
+    k.key(0x6D00); k.run_for(0.5)
+    c3, t3 = mb('mw_cur'), top()
+    k.key('2+2'); k.key(ktest.ENTER); k.run_for(0.3)
+    a1 = ans()
+    check('keys go to the window in front only: "9*9" in the tasks, none for the calculator; CODE-F6: the calculator '
+          'in front (session %d, its window on top), "2+2" Return: = 4 (%s)' % (c3, a1),
+          not a0 and c3 == 1 and rec(1, SE_BASE) <= t3 < rec(1, SE_END) and a1 == ['= 4'] and mb('mw_n') == 2,
+          (a0, c3, hex(t3), a1, mb('mw_n')))
+    k.key(ktest.F1); k.run_for(0.3)
+    hp = A.has(k, 'Calculator Help')
+    k.key(0x6D00); k.run_for(0.3)
+    c4, hp4 = mb('mw_cur'), A.has(k, 'Calculator Help')
+    A.click(k, 20 * 8, 270); k.run_for(0.3)        # (the tasks' window only)
+    c5, t5 = mb('mw_cur'), top()
+    check('F1 in the calculator: its help; CODE-F6 meanwhile is its key, as any, which closes it: no change of front '
+          '(session %d); a click on the tasks\' window: the tasks in front (session %d, on top)' % (c4, c5),
+          hp and not hp4 and c4 == 1 and c5 == 2 and rec(2, SE_BASE) <= t5 < rec(2, SE_END), (hp, hp4, c4, c5, hex(t5)))
+    # each one's band its own: the tasks' question waiting, the calculator's band meanwhile the Executive's
+    q = 'End Executive: Confirm to end the task'
+    k.key(A.CODE['D']); k.run_for(0.3)              # (on the Executive's row: asked, then "not possible")
+    bt = k.band()
+    A.click(k, 70 * 8, 100); k.run_for(0.3)
+    bc, beh = k.band(), A.has(k, 'Behind')
+    A.click(k, 20 * 8, 270); k.run_for(0.3)
+    bt2, beh2 = k.band(), A.has(k, 'Behind')
+    k.key(ktest.ESC); k.run_for(0.3)
+    check('the tasks\' question waiting in the band (%s), a click on the calculator: in front, its own band (%s), the '
+          'tasks\' columns under it; a click on the tasks: their question again, as it was (TASKS.RUN: its own buffer, '
+          'not the rows\'), their window on top; ESC: no' % (bt[:1], bc[:1]), bt[:1] == [q]
+          and bc[:1] == ['Select a file and confirm'] and not beh and bt2[:1] == [q] and beh2 and mb('mw_cur') == 2
+          and mb('mw_n') == 2, (bt, bc, beh, bt2, beh2))
+    A.click(k, 70 * 8, 100); k.run_for(0.3)        # (the calculator's only)
+    c6 = mb('mw_cur')
+    A.click(k, 20 * 8, 270); k.run_for(0.3)
+    k.key(A.CODE['K']); k.run_for(0.5)
+    c7, n7 = mb('mw_cur'), mb('mw_n')
+    used = MW_STK - next(i for i, b in enumerate(k.pc.rd(k.useg, cb, MW_STK)) if b != 0xA5)
+    print('   the calculator\'s stack: %d bytes of %d used' % (used, MW_STK))
+    check('a click on the calculator: in front (%d); CODE-K with the tasks in front: the calculator brought there, not '
+          'another (session %d, %d running); its stack: %d of %d bytes used' % (c6, c7, n7, used, MW_STK),
+          c6 == 1 and c7 == 1 and n7 == 2 and used < MW_STK * 3 // 4, (c6, c7, n7, used))
+    k.key(A.CODE['K']); k.run_for(0.5)
+    n8, c8 = mb('mw_n'), mb('mw_cur')
+    calc8, tasks8 = A.has(k, 'Calculator'), A.has(k, 'Tasks')
+    k.pc.wr(seg, Y['mw_n'], bytes([4]))             # (as many as there may be: poked)
+    k.key(A.CODE['K']); k.run_for(0.5)
+    bf = k.band()
+    k.key(ktest.ENTER); k.run_for(0.3)
+    k.pc.wr(seg, Y['mw_n'], bytes([1]))
+    check('... with as many window .RUNs as there may be, CODE-K: "CALC.RUN doesn\'t fit: close a window first" in the '
+          'band (%s), the tasks in front still' % bf[:1], bf[:1] == ["CALC.RUN doesn't fit: close a window first"]
+          and mb('mw_cur') == 2 and not A.has(k, 'Calculator'), (bf, mb('mw_cur')))
+    k.key(A.CODE['K']); k.run_for(0.5)
+    b9, n9 = rec(1, SE_BASE) if rec(1, 0) else rec(3, SE_BASE), mb('mw_n')
+    check('CODE-K in the calculator, in front: its own key, as without tasks: it closes (%d running, the tasks in front, '
+          'session %d; its window gone, the tasks\' drawn again); CODE-K: it starts again, in the slot it left (%04Xh)'
+          % (n8, c8, b9), n8 == 1 and c8 == 2 and not calc8 and tasks8 and n9 == 2 and b9 == k.u16('run_base'),
+          (n8, c8, calc8, tasks8, hex(b9), n9))
+    k.wr('saver_t', struct.pack('<H', 36))
+    for _ in range(40):
+        k.pc.run_for(0.25)
+        if not A.has(k, 'Calculator'): break
+    dark = not A.has(k, 'Calculator')
+    k.wr('saver_t', struct.pack('<H', 5460))
+    k.key(ktest.DOWN); k.run_for(0.5)
+    check('the saver with both open, then a key: the Executive and both windows back',
+          dark and A.has(k, 'Calculator') and A.has(k, 'Tasks') and A.has(k, 'LCMD'), A.screen(k))
+    ts = [i for i in (1, 2, 3, 4) if rec(i, 0) and rec(i, SE_BASE) > k.u16('run_base')]     # (the tasks' slot: above)
+    hi0 = A.free_paras(k)[1]
+    k.key(0x6D00); k.run_for(0.5)                       # (the tasks in front)
+    k.key(ktest.ESC); k.run_for(0.5)
+    n10, c10, ub = mb('mw_n'), mb('mw_cur'), A.free_paras(k)[1]
+    check('the tasks in front (CODE-F6), ESC: they close, the calculator in front; the UI block back to the end of its '
+          'slot, the highest left (%d paragraphs, from %d)' % (ub, hi0), ts and n10 == 1 and c10 == 1
+          and hi0 == rec(ts[0], SE_END) // 16 and ub == rec(1, SE_END) // 16 and A.has(k, 'Calculator')
+          and not A.has(k, 'Tasks'), (ts, n10, c10, hi0, ub, hex(rec(1, SE_END))))
+    k.key(ktest.ESC); k.run_for(0.5); k.settle()
+    au.stop()
+    sw = au.switches()
+    ss = [e for e in sw if e['task'] == 0 and e['ss'] == k.useg and e['csp'] >= k.u16('run_base')]
+    check('ESC, ESC: both closed (%d, then %d), the Executive back: its list, nothing loaded (run_active 0), the UI block '
+          'as before; every switch meanwhile by the rules (%d, %d of them from a session\'s own stack, at the UI\'s idle '
+          'HLT)' % (n10, mb('mw_n'), len(sw), len(ss)),
+          n10 == 1 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and A.free_paras(k)[1] == free0[1]
+          and A.has(k, 'Select a file and confirm') and not au.bad() and ss and not k.crashed
+          and all(e['ip'] == Y['..@ui_idle'] for e in ss), (n10, A.free_paras(k), free0, au.bad()[:3], len(sw), len(ss), k.crashed))
+    k = boot('mt_win2.img', b'MULTITASK=1\r\n', 88, TR)
+    seg = mt_seg(k)
+    k.key(A.CODE['T']); k.run_for(0.5)
+    k.key(A.CODE['K']); k.run_for(0.5)
+    bf = k.band()
+    k.key(ktest.ENTER); k.run_for(0.3)
+    up = A.has(k, 'Tasks')
+    k.key(ktest.ESC); k.run_for(0.5)
+    check('no CALC.RUN on the disk, CODE-K in the tasks: "CALC.RUN is not on this disk" (%s); a key, and the tasks '
+          'are there still; ESC: the Executive' % bf[:1], bf[:1] == ['CALC.RUN is not on this disk'] and up
+          and k.pc.rd(seg, k.Y['mw_n'], 1)[0] == 0 and A.has(k, 'Select a file and confirm'), (bf, up, A.screen(k)))
+
 def t_system():
     print('== System: the Multitasking topic (M7b)')
     k = boot('mt_sy.img', b'MULTITASK=1\r\nSAVER=10\r\n', 88, A.SYSTEM)
@@ -3487,7 +3615,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

@@ -28,8 +28,9 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M6 | Parking tasks in EMS and bringing them back | PR #65, merged. |
 | M7a | LCMD's START, FG, KILL, PARK, UNPARK and WAIT; a task's exit code (`MT_EXIT`); CLAUDE /U refused while tasks run | PR #67, merged. |
 | M7b | The Executive: programs started as tasks, its task list (TASKS.RUN, CODE-T); System's switch; LODE.INI's `BG=`, `FREEZE=` and `MTMEM=` | PR #71, merged. |
-| M7c | Resident Claude with tasks: its pop-up and TYPE's keys the front task's, its key wait a place to switch from, CODE-Tab in the console its own, `/R` not inside a task (`MT_TSR`) | PR #73. |
-| M8 | Several `.RUN` windows at once, as coroutines in the UI task | |
+| M7c | Resident Claude with tasks: its pop-up and TYPE's keys the front task's, its key wait a place to switch from, CODE-Tab in the console its own, `/R` not inside a task (`MT_TSR`) | PR #73, merged. |
+| M8a | Several window `.RUN`s at once, each a session in the UI task; the Executive waits meanwhile | This PR. |
+| M8b | A live base under the windows: the Executive, Write or System working under them (clipping) | |
 | M9 | On the 1520, and release 0.7 | |
 
 Each milestone's PR adds its section below, describing what was built and any departure from the plan.
