@@ -771,9 +771,11 @@ def test_video_find_and_page():
             calls.append(a); code, out, err = answers.pop(0)
             return types.SimpleNamespace(returncode=code, stdout=out, stderr=err)
         return r
-    good = json.dumps({'title': '2001: A Space Odyssey <trailer>', 'url': 'https://rr1.googlevideo.com/v?a=1&b=2'})
+    good = json.dumps({'title': '2001: A Space Odyssey <trailer>', 'url': 'https://rr1.googlevideo.com/v?a=1&b=2',
+                       'http_headers': {'User-Agent': 'com.google.android.youtube/1'}})
     assert V.find('U', run=run([(0, good + '\n', '')]), cmd=['yt-dlp']) == \
-        ('https://rr1.googlevideo.com/v?a=1&b=2', '2001: A Space Odyssey <trailer>')
+        ('https://rr1.googlevideo.com/v?a=1&b=2', '2001: A Space Odyssey <trailer>',
+         {'User-Agent': 'com.google.android.youtube/1'})
     assert '--cookies-from-browser' not in calls[-1] and calls[-1][-1] == 'U'
     prof = tempfile.mkdtemp(prefix='gridfox-profile-')
     calls.clear()
@@ -801,6 +803,55 @@ def test_video_find_and_page():
     assert '<b>title' not in h
 
 
+def test_video_relay():
+    """The relay: YouTube's file fetched with yt-dlp's headers (a stand-in
+    server that refuses any other User-Agent and any piece over CHUNK, as
+    YouTube does), whole or from where Firefox seeks to."""
+    import threading, urllib.error, urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from gridfox import video as V
+    data = bytes(range(256)) * 20                                   # 5120 bytes
+    asks = []
+    class Up(BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+        def log_message(h, *a): pass
+        def do_GET(h):
+            a, b = (int(x) for x in h.headers['Range'][6:].split('-'))
+            asks.append((a, b))
+            if h.headers.get('User-Agent') != 'yt-app' or b - a + 1 > 1000:
+                h.send_response(403); h.send_header('Content-Length', '0'); h.end_headers(); return
+            b = min(b, len(data) - 1); body = data[a:b + 1]
+            h.send_response(206); h.send_header('Content-Type', 'video/mp4')
+            h.send_header('Content-Range', 'bytes %d-%d/%d' % (a, b, len(data)))
+            h.send_header('Content-Length', str(len(body))); h.end_headers(); h.wfile.write(body)
+    up = ThreadingHTTPServer(('127.0.0.1', 0), Up); up.daemon_threads = True
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    chunk = V.CHUNK; V.CHUNK = 1000
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    relay = V.Relay(opener=direct.open)
+    try:
+        src = 'http://127.0.0.1:%d/v' % up.server_address[1]
+        at = relay.add(src, {'User-Agent': 'yt-app'})
+        assert at.startswith('http://127.0.0.1:%d/v/' % relay.port) and at.endswith('.mp4')
+        get = lambda rng: direct.open(urllib.request.Request(at, headers={'Range': rng,
+                                      'User-Agent': 'Mozilla/5.0 Firefox/140.0'}), timeout=10)
+        r = get('bytes=0-')                                         # Firefox's first ask: all of it
+        assert r.status == 206 and r.headers['Content-Range'] == 'bytes 0-5119/5120', dict(r.headers)
+        assert r.read() == data
+        assert all(b - a + 1 <= 1000 for a, b in asks) and len(asks) == 6, asks
+        r = get('bytes=3000-3499')                                  # a seek
+        assert r.headers['Content-Range'] == 'bytes 3000-3499/5120' and r.read() == data[3000:3500]
+        refused = relay.add(src, {'User-Agent': 'Mozilla/5.0 Firefox/140.0'})   # (Firefox's own: 403)
+        try: direct.open(urllib.request.Request(refused, headers={'Range': 'bytes=0-'}), timeout=10)
+        except urllib.error.HTTPError as e: assert e.code == 403
+        else: raise AssertionError('no 403')
+        try: direct.open('http://127.0.0.1:%d/v/0123456789abcdef.mp4' % relay.port, timeout=10)
+        except urllib.error.HTTPError as e: assert e.code == 404
+        else: raise AssertionError('no 404')
+    finally:
+        V.CHUNK = chunk; relay.close(); up.shutdown(); up.server_close()
+
+
 def test_app_plain_video():
     """Y in gridfox: off a video's page, a word why not; on one, the page of
     its own opened, the picture view up, and a person's click to start it."""
@@ -826,10 +877,12 @@ def test_app_plain_video():
         app.key('ctrl-y'); r.pump()
         assert seen and seen[0].startswith('Finding the video'), seen
         assert not app.picture and r.has('Y: Video unavailable')  # (back to the text, to say why)
-        V.find = lambda u, profile=None: ('https://rr1.googlevideo.com/v', '2001 trailer')
+        V.find = lambda u, profile=None: ('https://rr1.googlevideo.com/v', '2001 trailer', {'User-Agent': 'app'})
         n = len(r.f.points)
         r.keys('y')
         assert app.url.startswith('file://') and app.url.endswith('/video.html'), app.url
+        page = open(os.path.join(os.path.dirname(app.view_path), 'video.html'), encoding='utf-8').read()
+        assert 'src="http://127.0.0.1:' in page and 'googlevideo' not in page     # (through the relay)
         assert app.picture and len(r.f.points) > n
         assert 'Playing: 2001 trailer' in app.status
         assert os.path.exists(os.path.join(os.path.dirname(app.view_path), 'video.html'))
@@ -840,7 +893,7 @@ def test_app_plain_video():
 
 NO_BROWSER = ('test_wrap_and_clean', 'test_layout_kinds', 'test_keys_and_line', 'test_keys_timing',
               'test_firefox_quits_cleanly', 'test_web_exit_banner',
-              'test_video_find_and_page')       # (these run without the stand-in)
+              'test_video_find_and_page', 'test_video_relay')       # (these run without the stand-in)
 
 if __name__ == '__main__':
     tests = [(n, v) for n, v in sorted(globals().items()) if n.startswith('test_') and callable(v)]
