@@ -2,7 +2,9 @@
 ;  TERMLINK.INC - GLP 1, the GRiD side of the link (gridlink/PROTOCOL.md)
 ;
 ;  Shared by CLAUDE.COM's chat and Term modes, and by resident Claude's
-;  console (RCON.ASM, NO_SRQ defined).  The program provides:
+;  console (RCON.ASM, RCON defined: never INT 60h AH=0Bh, which clears the
+;  program's SRQ latch; the driver's SRQ interrupt count instead, when it
+;  has one).  The program provides:
 ;    build_hello  -> CX = length of hellobuf
 ;    pi_frame     a new frame from the Pi at rxbuf+BX
 ;    msg_sent     a queued message has gone (done_type)
@@ -33,9 +35,8 @@ keyn        resb 1
 keys_q      resb 1
 rep_q       resb 1
 use_fl      resb 1                      ; 1: frames carry a Fletcher sum, not CRC-16
-%ifndef NO_SRQ
-wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driver latches SRQ)
-%endif
+wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driver latches SRQ;
+                                        ;  RCON: it counts SRQ interrupts)
 lr_end:
 %endmacro
 
@@ -88,29 +89,31 @@ link_idle:
         sub     ax, [t_active]
         cmp     ax, 36
         jb      .poll
-.t:
-%ifndef NO_SRQ
-        cmp     byte [wake_ok], 0       ; the Pi rang (SRQ while we are idle):
+.t:     cmp     byte [wake_ok], 0       ; the Pi rang (SRQ while we are idle):
         je      .t1                     ; POLL now, not at the next second
         cmp     word [irq_ptr+2], 0     ; (the driver's SRQ interrupt: its
-        je      .t2                     ;  count moved?)
+%ifdef RCON                             ;  count moved?  RCON offers GF_WAKE
+        je      .t1                     ;  only with it)
+%else
+        je      .t2
+%endif
         call    srq_new
         jz      .t1
+%ifndef RCON
         jmp     short .ts
 .t2:    mov     ah, 0Bh
         call    gg_call
         jc      .t1
         or      ax, ax
         jz      .t1
+%endif
 .ts:    mov     bl, [nano]              ; an SRQ since the last look: the Pi's,
         mov     ah, 05h                 ; or one from our last answer (the driver
         call    gg_call                 ; latches every SRQ it sees): ask
         jc      .t1
         test    al, 40h
         jnz     .poll
-.t1:
-%endif
-        mov     ax, [now]
+.t1:    mov     ax, [now]
         sub     ax, [t_last]
         cmp     ax, 18
         jb      .x
@@ -233,12 +236,10 @@ link_write:
         mov     [lw_eoi], al
 %endif
 lw_go:
-%ifndef NO_SRQ
         cmp     word [irq_ptr+2], 0     ; (SRQs before our frame aren't its
         je      .w                      ;  answer's)
         call    srq_new
 .w:
-%endif
         mov     bl, [nano]
 %ifdef KSUM
         mov     al, [lw_eoi]
@@ -273,26 +274,26 @@ link_wait:
         cmp     ax, 40                  ; ~2 s without an answer
         jbe     .t
         jmp     link_fail
-%ifndef NO_SRQ
 .t:     cmp     word [irq_ptr+2], 0
         je      .t0
         call    srq_new                 ; the SRQ interrupt came: poll now
-        jnz     .poll                   ;  (maybe_idle sleeps till it)
+        jnz     .poll                   ;  (maybe_idle, RCON's idle, sleep till it)
         mov     ax, [now]               ; else once a tick, should one go astray
         cmp     ax, [pit_tick]
         je      .x
         jmp     short .poll
-.t0:    mov     ah, 0Bh                 ; SRQ since the last call?
-        PROF    3
+.t0:
+%ifndef RCON                            ; (resident: never AH=0Bh, which clears
+        mov     ah, 0Bh                 ;  the program's SRQ latch)
+        PROF    3                       ; SRQ since the last call?
         call    gg_call
         PROF    0
         jc      .chk
         or      ax, ax
         jnz     .poll
-.chk:   call    pit_due                 ; else poll every few ms
-%else                                   ; (resident: never AH=0Bh, which clears
-.t:     call    pit_due                 ;  the program's SRQ latch; poll the
-%endif                                  ;  bridge every few ms)
+.chk:
+%endif
+        call    pit_due                 ; else poll every few ms
         jnc     .x
 .poll:  call    pit_mark
         mov     bl, [nano]
@@ -315,7 +316,11 @@ link_wait:
         jne     .x                      ;  once, not after a round of the main
         cmp     byte [req_ready], 0     ;  loop (keys, ticks: ~0.4 ms a frame on
         jne     .x                      ;  the 1520) -- unless a request is to
-        jmp     link_idle               ;  run first: its REPLY is what goes
+%ifdef RCON                             ;  run first: its REPLY is what goes.
+        cmp     byte [quit], 0          ;  (RCON going back: what is queued
+        jne     .x                      ;  goes, and no POLLs, from session)
+%endif
+        jmp     link_idle
 %endif
 .x:     ret
 .perr:  inc     byte [spoll_errs]
@@ -538,7 +543,6 @@ pit_read:                               ; AX = PIT channel 0 count
         xchg    al, ah
         ret
 
-%ifndef NO_SRQ
 ; ZF clear: an SRQ interrupt since the last look (the GPIB driver's count,
 ; INT 60h AH=0Eh: irq_ptr; Lodestone's built-in driver, IRQ 5)
 srq_new:
@@ -551,7 +555,6 @@ srq_new:
         cmp     ax, [srq_seen]
         mov     [srq_seen], ax          ; (MOV keeps the flags)
         ret
-%endif
 
 pit_mark:
         push    ax
