@@ -100,6 +100,10 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   an older generation that core 1 drops as stale. The bus simulation's J tests cover a streamed read, an SDC
   in the middle and an answer never finished. On the 1520 (gridlink.bench --size 128): Pi → GRiD 73.6 →
   87.2 KB/s.
+- **2026-10-23b.** Every event frame carries the time it happened (u32, the microsecond timer; core 1 stamps
+  its records), and three new events say when the 1520's message ended (RX_END), a reply was queued (TX_IN)
+  and SRQ went up (SRQ). gridlink's trace puts the bridge's events on its own clock with them: the Pico sends
+  its events between USB reads, so a TALK used to reach the Pi ms after it happened.
 
 ## Build
 

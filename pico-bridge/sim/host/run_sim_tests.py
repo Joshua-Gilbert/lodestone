@@ -19,6 +19,7 @@ pseudo-terminal, and runs:
 
 usage: run_sim_tests.py          (writes sim/host/sim_results.txt)
 """
+import collections
 import struct
 import json
 import os
@@ -488,6 +489,30 @@ def gridlink_auto_srq(sim):
         if int(st) != 0x60 or data != ans or end != 1 or int(st2) != 0:
             bad += 1
     check("10 more 2056-byte EARLY answers after those, every one right, 00h after each", bad == 0, f"{bad} bad")
+    # event times (fw 2026-10-23b): every EVENT says when it happened on the Pico's clock; RX_END, TX_IN, SRQ
+    br.proto.trace = collections.deque()
+    ask(b"GLP timed\n")
+    br.answer(ans)
+    t0 = time.time()
+    while sim.cmd("srq")[0] != "1" and time.time() - t0 < 3:
+        pass
+    sim.cmd("spoll 7")
+    sim.read(7, 2057)
+    time.sleep(0.2)
+    tr = list(br.proto.trace)
+    br.proto.trace = None
+    by_t = [e[1] for e in sorted(tr, key=lambda e: e[2])]          # (core 0's own events come out ahead of
+    want, k = ["RX_END", "TX_IN", "SRQ", "SPOLL", "TALK", "TX_DONE"], 0   #  core 1's ring: arrival isn't order)
+    for n in by_t:
+        if k < len(want) and n == want[k]: k += 1
+    check("bridge events carry their time; by it: RX_END, TX_IN, SRQ, SPOLL, TALK, TX_DONE",
+          all(len(e) == 3 for e in tr) and k == len(want), f"{by_t}")
+    rt = pico.retime(tr)
+    arr = sorted(e[0] for e in tr)
+    check("retime puts them on the Pi's clock, in their order, none after it arrived",
+          len(rt) == len(tr) and [n for _, n in rt] == by_t
+          and all(r <= a + 1e-6 for (r, _), a in zip(rt, [e[0] for e in sorted(tr, key=lambda e: e[2])])),
+          f"{rt[:4]}")
     # WAKE (fw 2026-10-22b): gridlink rings when it has news for an idle GRiD; SRQ (40h, no READY) until the
     # GRiD polls or sends, and a ring for an older message than the GRiD's last is void
     check("idle after the reads: no SRQ", sim.cmd("srq")[0] == "0")

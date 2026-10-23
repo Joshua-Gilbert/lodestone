@@ -23,14 +23,17 @@ reference code is `host_link.c` (Pico) and `pi/gpibbridge/protocol.py` (Pi).
 |---|---|---|
 | 0x81 | HELLO | u8 protocol version, u16 tx ring size, u16 data chunk (240), u32 tx consumed, u16 tx entries queued, firmware tag |
 | 0x82 | DATA | u16 gen, u8 flags (bit 0 = EOI on the last byte: message ends; bit 1 = message ended without EOI), data |
-| 0x83 | EVENT | u8 code, u16 gen, u8 b, u32 arg |
+| 0x83 | EVENT | u8 code, u16 gen, u8 b, u32 arg, and (fw 2026-10-23b) u32 t: when it happened, on the Pico's microsecond timer |
 | 0x84 | LOG | text |
 | 0x85 | PONG | u8 online, address, listener, talker, ren, llo, spms, rsv; u16 gen; u32 tx consumed, commands, bytes in, bytes out, polls, events lost, NRFD holds, uptime ms, engine alive |
 | 0x87 | CREDIT | u32 tx entries consumed so far |
 
 **Event codes:** 0x10 LISTEN, 0x11 UNLISTEN, 0x12 TALK, 0x13 UNTALK, 0x14 TALK_WAIT (arg = tx consumed),
 0x15 DCL, 0x16 SDC, 0x17 GET, 0x18 GTL, 0x19 LLO, 0x1A IFC, 0x1B REN (arg 1 = asserted), 0x1C SPOLL
-(b = byte sent), 0x1D TX_DONE, 0x1E ONLINE (b = address), 0x1F OFFLINE.
+(b = byte sent), 0x1D TX_DONE, 0x1E ONLINE (b = address), 0x1F OFFLINE.  From fw 2026-10-23b, for
+`gridlink.bench --trace`: 0x20 RX_END (the last byte of a message from the 1520, with EOI, came), 0x21 TX_IN
+(a reply is queued: READY from now), 0x22 SRQ (asserted).  A Pi that reads only the first 9 bytes of an EVENT
+sees nothing new.
 
 ## Generations: how a reply is matched to its question
 
