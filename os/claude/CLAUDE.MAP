@@ -929,6 +929,7 @@ Real              Virtual           Name
             50E3               18B  r_front
             50FA               1A2  r_front.x
             50FB               1A3  r_feed
+            5125               1CD  r_feed.wk
             513A               1E2  r_feed.no
             513B               1E3  r_feed.x
             513C               1E4  r_hot
