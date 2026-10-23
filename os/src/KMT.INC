@@ -183,6 +183,8 @@ mt_mdrag    db      0                   ; 1: task 0 switched from at a drag's
 mt_mx       dw      0                   ;  wait (..@ui_midle), the mouse there
 mt_my       dw      0                   ;  then (the UI's mx, my, mb): moved
 mt_mb       db      0                   ;  since, it runs next (mt_mwant)
+mt_mrot     db      0                   ; the task such a boost took the turn
+                                        ;  from: mt_pick goes on after it
 mt_fpu      db      0                   ; 1: a coprocessor (INT 11h), kept per
                                         ;  task
 mt_front    db      0                   ; the task in front
@@ -696,7 +698,10 @@ mt_preempt:
         call    mt_kin
         je      .p
         mov     byte [cs:mt_tsrk], 0    ; (given: Resident Claude's pop-up is
-.mw:    mov     bl, al                  ;  the front task's call's to bring)
+        jmp     short .f                ;  the front task's call's to bring)
+.mw:    mov     ah, [cs:mt_cur]         ; (the turn taken from it: the round
+        mov     [cs:mt_mrot], ah        ;  goes on after it, mt_pick)
+.f:     mov     bl, al
         jmp     short .sw
 .p:     call    mt_pick
         jnc     .sw
@@ -865,9 +870,14 @@ mt_pick:
         push    ax
         push    cx
         mov     al, [cs:mt_cur]
-        mov     cx, MT_TASKS - 1
+        or      al, al                  ; (task 0 after a mouse boost: on
+        jnz     .go                     ;  from the task it took the turn
+        xchg    al, [cs:mt_mrot]        ;  from, not task 1 again; once)
+.go:    mov     cx, MT_TASKS
 .l:     inc     al
         and     al, MT_TASKS - 1
+        cmp     al, [cs:mt_cur]
+        je      .nx
         push    bx
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_RUN
@@ -877,7 +887,7 @@ mt_pick:
         cmp     byte [cs:bx+TE_KILL], 1 ; (frozen, but ended: it runs, to end)
 .n:     pop     bx
         je      .y
-        loop    .l
+.nx:    loop    .l
         stc
         jmp     short .x
 .y:     mov     bl, al
@@ -982,7 +992,10 @@ mt_load:
         mov     word [cs:mt_in13], 0    ;  of the front or kernel's idle: one
         mov     byte [cs:mt_idle], 0    ;  left by a program ended inside it,
         mov     [cs:mt_cur], bl         ;  cleared)
-        mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
+        or      bl, bl                  ; (task 0 running again: a boost of
+        jnz     .md                     ;  its drag used up, mt_mdset sets it
+        mov     [cs:mt_mdrag], bl       ;  again at the next switch from it)
+.md:    mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
         mov     byte [cs:mt_slice], 1
         cmp     bl, [cs:mt_front]
         jne     .t

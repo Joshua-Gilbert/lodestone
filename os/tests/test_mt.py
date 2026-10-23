@@ -3578,9 +3578,12 @@ def t_menu():
         seen += k.pc.u16(k.useg, base + sy['d1'] + 2) == k.u16('mx')
     k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.3)
     sw1 = len(au.switches(n1))
+    turns = collections.Counter(e['task'] for e in au.switches(n1) if e['task'])     # (the turns each MTSPIN had)
     check('... the mouse moving (a packet every tick, two MTSPINs computing behind): the drag has each position within the tick '
-          '(%d of 20; without it every third tick), the MTSPINs still switched to (%d switches)' % (seen, sw1), seen >= 19 and sw1 >= 10
-          and not au.bad() and A.disk_file(k, 'TB.TXT') is None, (seen, sw1, au.bad()[:2]))
+          '(%d of 20; without it every third tick), and both MTSPINs take turns in between (%s: the round goes on after the '
+          'one a boost took the turn from)' % (seen, dict(turns)), seen >= 19 and sw1 >= 10 and len(turns) == 2
+          and min(turns.values()) >= 4 and not au.bad() and A.disk_file(k, 'TB.TXT') is None and A.disk_file(k, 'TC.TXT') is None,
+          (seen, sw1, dict(turns), au.bad()[:2]))
     k.key(ktest.ESC); k.key(ktest.ESC); k.run_for(0.5)
     check('ESC, ESC: MENUTEST ended, the Executive in front (MTSPIN still behind)', mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and not k.crashed,
           (mb('mw_n'), k.band()))
