@@ -20,6 +20,7 @@ GPIB_ERRORS = {1: 'timeout', 2: 'no listener at that address', 3: 'GRiD is not t
                4: 'bad function', 5: 'no data (read timeout)', 6: 'GPIB driver busy'}
 
 READ_CHUNK = 8192
+HUGE_READ_CHUNK = 16384     # CLAUDE 1.7 says rd=16384 (and frames of 3300 out of it: five a read)
 WRITE_CHUNK = 4000      # a CLAUDE before 1.5 takes 4,700-byte requests: 4,000 bytes and a path
 BIG_WRITE_CHUNK = 8192  # CLAUDE 1.5 says req=8700: each write request's DOS open, seek and close goes for twice as much
 HUGE_WRITE_CHUNK = 16384   # CLAUDE 1.6 says req=16700 (and rx=3340: five frames a request, no short last one)
@@ -105,13 +106,18 @@ class Grid:
         no_device(path)
         return s.ok(glp.OP_READ, struct.pack('<IH', offset, length) + glp.asciiz(path))
 
+    def read_chunk(s):
+        return HUGE_READ_CHUNK if getattr(s.link, 'grid_rd', 0) >= HUGE_READ_CHUNK else READ_CHUNK
+
     def read_file(s, path, limit=256 * 1024, progress=None):
         data = bytearray()
+        size = s.read_chunk()
         while len(data) < limit:
-            chunk = s.read(path, len(data), min(READ_CHUNK, limit - len(data)))
+            want = min(size, limit - len(data))
+            chunk = s.read(path, len(data), want)
             data += chunk
             if progress: progress(len(data))
-            if len(chunk) < READ_CHUNK: break
+            if len(chunk) < want: break
         return bytes(data)
 
     def write(s, path, data, mode=0, offset=0):

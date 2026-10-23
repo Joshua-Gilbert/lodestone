@@ -216,6 +216,16 @@ def hello_req(body):
     return GRID_REQ_DEFAULT
 
 
+def hello_rd(body):
+    """The biggest file read a GRiD HELLO says it answers whole (an `rd=` line, CLAUDE 1.7), else 0: every
+    CLAUDE before answers at most 16,382 bytes, so a read of 16 KB would look like the end of the file."""
+    for line in bytes(body[6:]).split(b'\n'):
+        if line.startswith(b'rd='):
+            try: return max(0, min(int(line[3:]), 65000))
+            except ValueError: break
+    return 0
+
+
 def hello_rx(body):
     """The Pi -> GRiD payload limit a GRiD HELLO announces (an `rx=` line), else
     the 246 every CLAUDE before 1.3 reads."""

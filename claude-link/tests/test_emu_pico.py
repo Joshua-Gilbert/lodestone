@@ -31,6 +31,8 @@ def big_turn(trace=None, setup=None, **kw):
 def test_hello_announces_rx():
     h, _ = big_turn()
     assert h.link.grid_rx == 3340 and h.link.maxpay == 3340, (h.link.grid_rx, h.link.maxpay)
+    # CLAUDE 1.7: frames of 3300 out of the GRiD, and 16 KB reads (the 22 KB file comes back in two)
+    assert h.link.grid_maxpay == 3300 and h.link.grid_rd == 16384, (h.link.grid_maxpay, h.link.grid_rd)
     assert h.nano.big_tx == 0 and not h.nano.violations, h.nano.violations
     assert h.link.stats['tx_bytes'] > 20000
 
