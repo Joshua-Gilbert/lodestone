@@ -69,13 +69,21 @@ J  gridlink's Pico transport, auto service request (CLAUDE.COM's way of reading)
   PASS  the next exchange works (60h, then its own answer, not the stale one)
   PASS  50 full-size exchanges (254-byte answers), every one right
   PASS  20 exchanges of 2056-byte answers (split in 512s), every one right
+  PASS  the bridge takes EARLY answers (fw 2026-10-23a), and gridlink uses them
+  PASS  EARLY: SRQ with the first 128 bytes in, before the rest
+  PASS  ... 60h, and the read waits for the rest and gets all 2056 bytes, EOI on the last
+  PASS  ... then 00h
+  FAIL  an EARLY answer the SDC made stale: SRQ gone, 00h at once   [s=96]
+  FAIL  ... and still 00h when its stale rest comes   [s=32]
+  PASS  an EARLY answer never finished, then a new message: its answer as usual (60h)
+  FAIL  10 more 2056-byte EARLY answers after those, every one right, 00h after each   [10 bad]
   PASS  idle after the reads: no SRQ
   PASS  a ring asserts SRQ
-  PASS  its poll: 40h (RQS, no READY), and SRQ released
+  FAIL  its poll: 40h (RQS, no READY), and SRQ released   [s=96]
   PASS  a ring ends when the GRiD sends instead of polling
   PASS  and that exchange is as usual (60h, its answer)
   PASS  a ring for an older message is void
-final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '140', 'cmds': '1906', 'rx': '100430', 'tx': '141705', 'polls': '83', 'lost': '0', 'holds': '1', 'fights': '0', 'late': '0'}
+final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '156', 'cmds': '2196', 'rx': '100667', 'tx': '164337', 'polls': '109', 'lost': '0', 'holds': '1', 'fights': '0', 'late': '0'}
   PASS  no events lost in the Pico
 
-65 of 65 checks passed
+69 of 73 checks passed

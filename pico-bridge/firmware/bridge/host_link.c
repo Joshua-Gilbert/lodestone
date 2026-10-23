@@ -82,6 +82,38 @@ static void put32(uint8_t *p, uint32_t v) { for (int i = 0; i < 4; i++) p[i] = (
 
 static uint32_t consumed_total(void) { return SH.tx_consumed + SH.tx_dropped0; }
 
+// ---- replies streamed in (TXF_EARLY, 2026-10-23a) ------------------------------------------------------------
+// gridlink sends a 2 KB reply as TX frames of 512.  Without EARLY the bridge says READY once the last one is
+// in: the whole reply crosses USB (~4 ms) before the 1520 starts reading it.  With EARLY on the first frame the
+// reply counts as queued at once (tx_eoi_pushed), so SRQ comes then and the 1520 reads while the rest arrives
+// (USB is ~3.5 times faster than the 1520 reads; if the ring runs dry, core 1 waits as for any reply).  Core 1
+// counts a reply done when its EOI entry leaves the ring, so every announced reply must put exactly one EOI
+// entry in it.  One that will never be finished (stale before its last frame, another reply announced, a new
+// session, offline) gets a stand-in: one EOI entry of an older generation, which core 1 drops as stale.
+static bool ann_open;          // an EARLY frame came, its ANNOUNCED last frame hasn't
+static uint16_t ann_gen;
+static uint32_t ann_due;       // stand-ins still to queue (the ring was full)
+
+static void ann_flush(void) {
+  while (ann_due) {
+    uint32_t h = SH.tx_head, t = SH.tx_tail;
+    if (((t - h - 1u) & (TX_RING - 1u)) == 0) return;   // no room yet: core 1 makes some
+    SH.tx[h] = ((uint32_t)(uint16_t)(ann_gen - 1u) << 16) | (TXF_EOI << 8);
+    SH.tx_dropped0--;                                  // (it is no byte of the Pi's: its pop mustn't count)
+    DMB();
+    SH.tx_head = (h + 1u) & (TX_RING - 1u);
+    ann_due--;
+    SH.wake_seq++;
+  }
+}
+
+static void ann_close(void) {
+  if (!ann_open) return;
+  ann_open = false;
+  ann_due++;
+  ann_flush();
+}
+
 static void send_log(const char *t) {
   uint8_t f[200]; size_t n = strlen(t); if (n > 190) n = 190;
   f[0] = F_LOG; memcpy(f + 1, t, n); send_ctl(f, n + 1);
@@ -127,6 +159,7 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
   if (n < 1) return;
   switch (p[0]) {
     case F_HELLO_REQ:
+      ann_close();
       SH.session_seq++; request();                   // a new session always starts clean (core 1 resets)
       send_hello();
       break;
@@ -152,8 +185,10 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
       uint16_t gen = (uint16_t)(p[1] | (p[2] << 8));
       uint32_t flags = p[3];
       size_t len = n - 4;
+      if (ann_open && (gen != ann_gen || (flags & TXF_EARLY))) ann_close();   // that reply won't be finished
       if ((int16_t)(gen - SH.gen) < 0) {             // older than core 1's generation: stale already
         SH.tx_dropped0 += (uint32_t)len;
+        if (ann_open && gen == ann_gen) ann_close();  // (an announced reply gone stale before its end)
         break;
       }
       uint32_t h = SH.tx_head, t = SH.tx_tail;
@@ -172,9 +207,18 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
       DMB();
       SH.tx_head = h;
       DMB();
-      if (take == len && len && (flags & 1)) {       // a whole reply is queued
+      if (take < len) ann_close();                   // (its EOI may be lost: a stand-in for it)
+      if ((flags & TXF_EARLY) && !(flags & 1) && take == len && len) {   // a reply begins: ready now
+        ann_open = true; ann_gen = gen;
         SH.tx_eoi_pushed++;
-        if (SH.auto_rsv) { request(); break; }       // core 1 raises SRQ for it (request() wakes it too)
+        if (SH.auto_rsv) { request(); break; }
+      } else if (take == len && len && (flags & 1)) {
+        bool counted = (flags & TXF_ANN) && ann_open;
+        ann_open = false;
+        if (!counted) {                              // a whole reply is queued
+          SH.tx_eoi_pushed++;
+          if (SH.auto_rsv) { request(); break; }     // core 1 raises SRQ for it (request() wakes it too)
+        }
       }
       SH.wake_seq++;                                 // wakes core 1 if it waits to talk (not a request)
       break;
@@ -210,9 +254,12 @@ void link_input(const uint8_t *b, size_t n, uint32_t now_ms) {
 // ---- records from core 1 --------------------------------------------------------------------------------------
 void link_poll(uint32_t now_ms, bool host_open) {
   if (!host_open) {                                  // nobody listening: offline, drop the records and output
+    ann_close();
     go_offline(); SH.rx_tail = SH.rx_head; out_r = out_w = 0;
     return;
   }
+  if (ann_open && (uint16_t)SH.gen != ann_gen) ann_close();   // core 1 moved on (SDC, a new message)
+  ann_flush();
   if (host_session && now_ms - last_ping_ms > LINK_PING_TIMEOUT_MS) {
     go_offline();
     send_log("no PING from the Pi for 5 s: offline (bus released)");

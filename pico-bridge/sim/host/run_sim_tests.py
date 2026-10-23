@@ -401,7 +401,7 @@ def gridlink_auto_srq(sim):
             bad += 1
     check("50 full-size exchanges (254-byte answers), every one right", bad == 0, f"{bad} bad")
     # big answers (CLAUDE 1.3 reads 2 KB frames): gridlink splits each into TX frames of 512 that fit the
-    # firmware's 600-byte input buffer, EOI only on the last; the bridge must raise SRQ only once all are in
+    # firmware's 600-byte input buffer, EOI only on the last (and since fw 2026-10-23a, EARLY on the first)
     bad = 0
     for i in range(20):
         sim.write(7, b"GLP big %d\n" % i)
@@ -419,6 +419,75 @@ def gridlink_auto_srq(sim):
         if int(st) != 0x60 or data != ans or end != 1:
             bad += 1
     check("20 exchanges of 2056-byte answers (split in 512s), every one right", bad == 0, f"{bad} bad")
+    # EARLY (fw 2026-10-23a): the first TX frame of a big answer says the answer is ready, so the GRiD reads
+    # while the rest is still on its way over USB; an announced answer that goes stale doesn't leave READY on
+    check("the bridge takes EARLY answers (fw 2026-10-23a), and gridlink uses them", br.proto.early,
+          br.proto.firmware)
+    import threading
+
+    def tx(g, fl, data):                      # one TX frame by hand (gridlink's credit count kept right)
+        br.proto.write(pico.cobs_encode(struct.pack("<BHB", pico.F_TX, g, fl) + data))
+        br.proto.sent = (br.proto.sent + len(data)) & 0xFFFFFFFF
+
+    def ask(text):
+        sim.write(7, text)
+        got = b""
+        t0 = time.time()
+        while time.time() - t0 < 3 and not got.endswith(b"\n"):
+            got += br.read()
+        return br.proto.gen
+
+    ans = bytes((k * 29 + 3) & 0xFF for k in range(2056))
+    g = ask(b"GLP early\n")
+    tx(g, pico.TXF_EARLY, ans[:128])
+    time.sleep(0.1)
+    check("EARLY: SRQ with the first 128 bytes in, before the rest", sim.cmd("srq")[0] == "1")
+    r, st = sim.cmd("spoll 7")
+    rest = threading.Timer(0.3, lambda: (tx(g, 0, ans[128:640]), tx(g, 0, ans[640:1152]), tx(g, 0, ans[1152:1664]),
+                                         tx(g, pico.TXF_EOI | pico.TXF_ANN, ans[1664:])))
+    rest.start()
+    r, data, end = sim.read(7, 2057)
+    rest.join()
+    check("... 60h, and the read waits for the rest and gets all 2056 bytes, EOI on the last",
+          int(st) == 0x60 and data == ans and end == 1, f"s={st} {len(data)} {end}")
+    r, st = sim.cmd("spoll 7")
+    check("... then 00h", int(st) == 0, f"s={st}")
+    g = ask(b"GLP early, then SDC\n")
+    tx(g, pico.TXF_EARLY, ans[:128])
+    time.sleep(0.1)
+    sim.cmd("sdc 7")
+    time.sleep(0.1)
+    r, st = sim.cmd("spoll 7")
+    check("an EARLY answer the SDC made stale: SRQ gone, 00h at once", sim.cmd("srq")[0] == "0" and int(st) == 0,
+          f"s={st}")
+    tx(g, 0, ans[128:640]); tx(g, pico.TXF_EOI | pico.TXF_ANN, ans[640:])
+    time.sleep(0.1)
+    r, st = sim.cmd("spoll 7")
+    check("... and still 00h when its stale rest comes", int(st) == 0, f"s={st}")
+    g = ask(b"GLP early, never finished\n")
+    tx(g, pico.TXF_EARLY, ans[:128])
+    time.sleep(0.1)
+    sim.cmd("spoll 7")
+    got = ask(b"GLP the next message\n")   # (the GRiD gave up on it: a new message, no read)
+    br.answer(b"the next answer\n")
+    time.sleep(0.2)
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 255)
+    check("an EARLY answer never finished, then a new message: its answer as usual (60h)",
+          int(st) == 0x60 and data == b"the next answer\n" and end == 1, f"s={st} {data!r}")
+    bad = 0
+    for i in range(10):
+        ask(b"GLP big after %d\n" % i)
+        br.answer(ans)
+        t0 = time.time()
+        while sim.cmd("srq")[0] != "1" and time.time() - t0 < 3:
+            pass
+        r, st = sim.cmd("spoll 7")
+        r, data, end = sim.read(7, 2057)
+        r, st2 = sim.cmd("spoll 7")
+        if int(st) != 0x60 or data != ans or end != 1 or int(st2) != 0:
+            bad += 1
+    check("10 more 2056-byte EARLY answers after those, every one right, 00h after each", bad == 0, f"{bad} bad")
     # WAKE (fw 2026-10-22b): gridlink rings when it has news for an idle GRiD; SRQ (40h, no READY) until the
     # GRiD polls or sends, and a ring for an older message than the GRiD's last is void
     check("idle after the reads: no SRQ", sim.cmd("srq")[0] == "0")

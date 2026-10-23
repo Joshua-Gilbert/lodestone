@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define FW_TAG "bridge fw 2026-10-22b"
+#define FW_TAG "bridge fw 2026-10-23a"
 #define PROTO_VERSION 1
 
 // ---- pins ----------------------------------------------------------------------------------------------------
