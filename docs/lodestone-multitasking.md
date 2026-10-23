@@ -1818,7 +1818,7 @@ t_windows: with both windows open, and with one, the UI block is the whole segme
 - CODE-F6 ×3 from the second Write: the Executive, the first Write, the second.
 - CODE-K in the second Write: the calculator; ESC: that Write again. A click on the Executive, CODE-K: the calculator, the Executive waiting in its `UI_EVENT`, the calculator's `ex_mtw` 1. ESC: the Executive in front, its `ex_mtw` 2, Up its key.
 - CODE-U: "SYSTEM.RUN needs the whole screen: close the windows first"; nothing started.
-- Copy OTHER.TXT to SUB, which has one, Replace Ask: the Executive's question. CODE-K meanwhile: the calculator, its band blank (not the question), the Copy's destination (`dstpath`) as it was. ESC: the question back; ESC: SUB's OTHER.TXT untouched.
+- Copy OTHER.TXT to SUB, which has one, Replace Ask: the Executive's question. CODE-K meanwhile: the calculator, its band not the question (`held1` 0), the Copy's destination (`dstpath`) as it was. ESC: the question back; ESC: SUB's OTHER.TXT untouched.
 - CODE-P, `START /W MTSPIN.COM 400 TB.TXT`, EXIT: both Writes back. The second Write in front while MTSPIN ends: no `EV_TASK` for it, its own band, the Executive's list without TB.TXT. A click on the Executive: its list again, with TB.TXT.
 - Both Writes closed: the Executive in front, nothing loaded, the UI block as before, `fill_band` as it was.
 - The calculator moved so its top edge crosses a list row; the list left of it blanked on the screen, the Executive in front, F5: every name left of it drawn again right (13 of 13), the crossed row a row of pixels at a time, the calculator untouched.
