@@ -124,6 +124,8 @@ class Link:
         s.clock = time.monotonic              # (the emulator tests give theirs: the rings' timing is the GRiD's)
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
         s.trace = None                        # a deque while gridlink.bench --trace runs: (time, event)
+        s.spec = None                         # the reply held in the bridge for the GRiD's next POLL (_speculate)
+        s.holding = True                      # (tests and gridlink.bench --nohold switch it off)
 
     @property
     def maxpay(s):
@@ -262,6 +264,7 @@ class Link:
         s.stats['tx_nak'] += 1
 
     def handle(s, f):
+        spec, s.spec = s.spec, None
         s.rang = None; s.rings_left = s.RING_TRIES; s.unrung = True    # (its frame ended any ring)
         if s.trace is not None:
             s.trace.append((time.monotonic(), 'grid ' + _name(f.type | (glp.MORE if f.more else 0), len(f.payload))))
@@ -297,6 +300,10 @@ class Link:
             if mt != glp.G_POLL:
                 try: s.on_message(mt, body)
                 except Exception as e: s.log('link: handler error: %r' % e)
+        if spec is not None and t == glp.G_POLL and s.t.hold_used():
+            s._commit(spec)                     # the bridge has answered it with the held reply
+            s._speculate(f)
+            return
         # Answer.  A POLL may wait for output, and in Term so may KEYS (for
         # the echo); anything else is answered now.  A REPLY's last frame waits
         # too: whoever made the call usually sends the next REQUEST within a few
@@ -314,6 +321,45 @@ class Link:
                     s.lock.wait(min(left, 0.005) if s.source is not None else left)
             kind, payload = s._next_payload()
         s._answer(kind, payload)
+        s._speculate(f)
+
+    # ---- held replies (bridge fw 2026-10-23c) ---------------------------
+    # While a message goes to the GRiD in fragments, its next frame is all but certain: having read a MORE
+    # fragment, CLAUDE POLLs for the next (TERMLINK frame_poll: its sequence number + 1, acknowledging ours,
+    # no payload, checked as before).  So with the answer we give the bridge that POLL, byte for byte, and our
+    # answer to it, the next fragment.  If the GRiD's next message is that POLL, the bridge raises SRQ at its
+    # last byte and the GRiD reads the fragment at once: the trip over USB to us and back (~1.5 ms of each
+    # ~17 ms frame) is gone.  Anything else (KEYS, a NAK, a REPLY) and the bridge drops the fragment, and we
+    # answer as usual: nothing has changed here until DATA says the hold was used (hold_used).
+    def _speculate(s, f):
+        hold = getattr(s.t, 'hold', None)
+        if hold is None or not s.holding or f.type == glp.G_HELLO or s.parser.pending(): return
+        with s.lock:
+            cur = s.cur
+            if cur is None: return              # (a whole message's last fragment: the GRiD answers it its way)
+            if s.source is not None and s.last_q and s.source.ready(): return   # (the source's turn next)
+            t, body, off = cur
+            chunk = body[off:off + s.maxpay]
+            kind = t if off + len(chunk) >= len(body) else t | glp.MORE
+            seq = (f.seq + 1) & 0xFF
+            expect = glp.encode(glp.G_POLL, seq, s.pi_seq, b'', fl=s.rx_fl)
+            frame = glp.encode(kind, (s.pi_seq + 1) & 0xFF, seq, chunk, fl=s.rx_fl)
+            if hold(expect, frame):
+                s.spec = (cur, off, len(chunk), kind, frame)
+
+    def _commit(s, spec):
+        """The held reply answered the GRiD's POLL: what _answer would have done."""
+        cur, off, n, kind, frame = spec
+        with s.lock:
+            if s.cur is cur and cur[2] == off:
+                if off + n >= len(cur[1]): s.cur = None
+                else: cur[2] = off + n
+            s.last_q = True
+        s.pi_seq = (s.pi_seq + 1) & 0xFF
+        s.last_answer = frame
+        s.t_answered = s.clock()
+        if s.trace is not None: s.trace.append((time.monotonic(), 'pi ' + _name(kind, n) + ' held'))
+        s.stats['tx_frames'] += 1; s.stats['tx_bytes'] += len(frame); s.stats['tx_held'] += 1
 
 
 def _name(kind, n):

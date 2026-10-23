@@ -19,7 +19,8 @@ import collections, os, struct, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from gridlink.pico import (cobs_encode, cobs_decode, F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_WAKE, F_HELLO,
-                           F_DATA, F_EVENT, F_PONG, F_CREDIT, CF_ONLINE, CF_AUTO_RSV, TXF_EOI, DF_EOI)
+                           F_DATA, F_EVENT, F_PONG, F_CREDIT, CF_ONLINE, CF_AUTO_RSV, TXF_EOI, DF_EOI, F_HOLD,
+                           TXF_HELD, DF_HELD)
 from ar488_model import AR488Model
 
 INBUF = 600           # host_link.c inbuf[600]: a longer COBS frame is dropped
@@ -28,8 +29,14 @@ TX_RING = 16383
 
 
 class PicoModel(AR488Model):
-    def __init__(s, clock, addr=7, to_pi=None, usb_us=500):
+    def __init__(s, clock, addr=7, to_pi=None, usb_us=500, holds=False):
         super().__init__(clock, addr=addr, patched=True, to_pi=to_pi)
+        # holds: the model says it is fw 2026-10-23c and takes F_HOLD (a reply held for the next message, sent
+        # if that message is the one expected).  (gridlink then also sends EARLY frames: here only partial ones.)
+        s.holds = holds
+        s.hold = None; s.cmp = None          # the hold out (gen, expected bytes); the one this message is compared to
+        s.held = collections.deque()         # [gen, bytearray, complete] held replies
+        s.n_held = 0
         s.usb_us = usb_us
         s.inq = collections.deque()          # (arrival_us, bytes) from the Pi
         s.inbuf = bytearray(); s.overrun = False
@@ -71,7 +78,8 @@ class PicoModel(AR488Model):
         t = f[0]
         if t == F_HELLO_REQ:
             s.online = False
-            s._send(struct.pack('<BBHHIH', F_HELLO, 1, TX_RING, DATA_CHUNK, s.consumed, 0) + b'bridge model')
+            s._send(struct.pack('<BBHHIH', F_HELLO, 1, TX_RING, DATA_CHUNK, s.consumed, 0)
+                    + (b'bridge fw 2026-10-23c (model)' if s.holds else b'bridge model'))
         elif t == F_CONFIG:
             was = s.online
             s.addr, fl = f[1], f[2]
@@ -79,6 +87,16 @@ class PicoModel(AR488Model):
             if s.online and not was: s.gen += 1; s.ring.clear()
         elif t == F_PING:
             s._send(bytes([F_PONG, 1 if s.online else 0]) + bytes(46))
+        elif t == F_HOLD and s.holds:
+            s.hold = (struct.unpack_from('<H', f, 1)[0], bytes(f[3:]))
+        elif t == F_TX and s.holds and f[3] & TXF_HELD:
+            gen, fl = struct.unpack_from('<HB', f, 1)
+            data = f[4:]; s.tx_frames += 1
+            if ((gen - s.gen) & 0xFFFF) != 1:      # its message has come (or gone) already: dropped
+                s._consume(len(data)); return
+            if s.held and s.held[-1][0] == gen and not s.held[-1][2]: s.held[-1][1] += data
+            else: s.held.append([gen, bytearray(data), False])
+            if fl & TXF_EOI: s.held[-1][2] = True
         elif t == F_TX:
             gen, fl = struct.unpack_from('<HB', f, 1)
             data = f[4:]; s.tx_frames += 1
@@ -139,6 +157,7 @@ class PicoModel(AR488Model):
         now = s.clock()
         if not s.partial:
             s.gen += 1; s.partial = True; s.rx_msg = bytearray()
+            s.cmp, s.hold = (s.hold[1] if s.hold and s.hold[0] == s.gen & 0xFFFF else None), None
         s.rx_msg.append(v)
         if eoi: s._end_msg(True)
         return now
@@ -146,9 +165,21 @@ class PicoModel(AR488Model):
     def _end_msg(s, eoi):
         m = bytes(s.rx_msg); s.partial = False; s.rx_msg = bytearray()
         t = s.clock()
+        hit = eoi and s.cmp is not None and m == s.cmp
+        s.cmp = None
+        while s.held and s.held[0][0] != s.gen & 0xFFFF:   # (older ones: stale)
+            s._consume(len(s.held.popleft()[1]))
+        if s.held:
+            g, d, c = s.held.popleft()
+            if hit and c:                        # its reply is ready now: SRQ at once
+                s.ring.append([g, d, True]); s.completed += 1; s.n_held += 1
+                if s.wake: s.wake(t)
+            else:
+                s._consume(len(d)); hit = False
         for i in range(0, max(len(m), 1), DATA_CHUNK):
             last = i + DATA_CHUNK >= len(m)
-            s._send(struct.pack('<BHB', F_DATA, s.gen & 0xFFFF, (DF_EOI if eoi else 2) if last else 0)
+            s._send(struct.pack('<BHB', F_DATA, s.gen & 0xFFFF,
+                                ((DF_EOI | (DF_HELD if hit else 0)) if eoi else 2) if last else 0)
                     + m[i:i + DATA_CHUNK], t)
 
     def on_talk(s):
@@ -163,7 +194,7 @@ class PicoModel(AR488Model):
         s._send(struct.pack('<BBHBI', F_EVENT, 0x1D, s.gen & 0xFFFF, 0, 0))
 
     def sdc(s):
-        s.gen += 1; s.partial = False; s._drop_stale()
+        s.gen += 1; s.partial = False; s.cmp = None; s._drop_stale()
 
 
 class PicoModelTransport:
@@ -184,6 +215,12 @@ class PicoModelTransport:
 
     def answer(s, frame):
         s.proto.answer(frame)
+
+    def hold(s, expect, frame):
+        return s.proto.hold(expect, frame)
+
+    def hold_used(s):
+        return s.proto.hold_used()
 
     def ring(s):
         s.proto.ring()

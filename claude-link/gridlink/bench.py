@@ -5,6 +5,7 @@
     venv/bin/python -m gridlink.bench --sweep 246,512,1024,2048,4096   Pi -> GRiD frame sizes, one after another
     venv/bin/python -m gridlink.bench --size 32 --trace     where each copy's time goes, gap by gap
     venv/bin/python -m gridlink.bench --usb                 also the Pi -> Pico USB speed alone
+    venv/bin/python -m gridlink.bench --nohold              without held replies (bridge fw 2026-10-23c), to compare
 
 Run it on the Pi while gridlink is serving and CLAUDE /T is up on the GRiD (the tools socket exists only in
 Term).  It talks to gridlink over the same socket as Claude Code's MCP server, so the numbers include
@@ -59,13 +60,16 @@ def traced(sock, a, title, name, args):
 
 def copies(sock, a, src, back, data, quiet=False):
     n = len(data)
+    h0 = link(sock).get('stats', {}).get('tx_held', 0)
     up, _ = traced(sock, a, 'Pi -> GRiD', 'grid_change_files', {'action': 'copy_to_grid', 'path': src, 'to': a.to})
     down, _ = traced(sock, a, 'GRiD -> Pi', 'grid_change_files',
                      {'action': 'copy_from_grid', 'path': a.to, 'to': back})
+    held = link(sock).get('stats', {}).get('tx_held', 0) - h0
     with open(back, 'rb') as f: ok = f.read() == data
     tool(sock, 'grid_change_files', {'action': 'delete', 'path': a.to})
     if quiet: return up, down, ok
-    print('Pi -> GRiD: %d bytes in %.2f s = %.1f KB/s' % (n, up, n / up / 1024))
+    print('Pi -> GRiD: %d bytes in %.2f s = %.1f KB/s%s' % (n, up, n / up / 1024,
+          ', %d frames held in the bridge' % held if held else ''))
     print('GRiD -> Pi: %d bytes in %.2f s = %.1f KB/s' % (n, down, n / down / 1024))
     print('copy back: %s' % ('every byte right' if ok else 'DIFFERENT from what was sent'))
     return ok
@@ -80,6 +84,7 @@ def main(argv=None):
     ap.add_argument('--trace', action='store_true', help='show where each copy spends its time')
     ap.add_argument('--idle', type=int, default=5, help='calls after the link has gone idle (default 5, 0: none)')
     ap.add_argument('--usb', action='store_true', help="time the Pi -> Pico USB with PINGs, before the copies")
+    ap.add_argument('--nohold', action='store_true', help='no held replies: every answer from the Pi (to compare)')
     ap.add_argument('--sweep', help='Pi -> GRiD payload sizes to try, comma-separated (each capped by what the '
                                     'GRiD and the bridge take); the link goes back to its own size after')
     a = ap.parse_args(argv)
@@ -95,6 +100,16 @@ def main(argv=None):
     info = link(sock)
     print('link: %s; Pi -> GRiD frames up to %d payload bytes (the GRiD takes %d), GRiD -> Pi up to %d'
           % (info['bridge'], info['maxpay'], info['grid_rx'], info['grid_maxpay']))
+    if a.nohold: link(sock, hold=0)
+    print('held replies (the bridge answers the GRiD\'s POLLs between fragments itself): %s'
+          % ('off (--nohold)' if a.nohold else 'on' if info.get('holds') else 'off (the bridge firmware is older)'))
+    try:
+        return run(sock, a, src, back, data, n)
+    finally:
+        if a.nohold: link(sock, hold=1)
+
+
+def run(sock, a, src, back, data, n):
     if a.usb:
         print('bridge USB (PINGs from the Pi, answered by the Pico):')
         for count, size in ((1, 1), (20, 1), (1, 512), (4, 512), (40, 512)):

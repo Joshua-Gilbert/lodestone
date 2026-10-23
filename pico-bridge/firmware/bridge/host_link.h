@@ -15,11 +15,14 @@ extern "C" {
 #define F_TX        0x03   // u16 gen, u8 flags (bit 0: EOI with the last byte; bit 1 EARLY, bit 2 ANNOUNCED), data
 #define TXF_EARLY   0x02   // (TX flags, 2026-10-23a) the first frame of a reply: count it ready now, the rest follows
 #define TXF_ANN     0x04   //  the last frame (EOI) of a reply an EARLY frame announced: not counted again
+#define TXF_HELD    0x08   // (2026-10-23c) part of a held reply for generation gen (the next message's): see F_HOLD
 #define F_STB       0x04   // u8 status byte (bit 6 ignored), u8 rsv (1 = request service: SRQ)
 #define F_PING      0x05
 #define F_BOOTSEL   0x07   // reboot into the USB bootloader (to flash new firmware)
 #define F_WAKE      0x08   // u16 gen: auto mode: request service (status 40h) for an idle 1520, until it sends a
                            // message newer than gen or is polled (gridlink rings when it has news; 2026-10-22b)
+#define F_HOLD      0x09   // u16 gen, the bytes (1..16) the 1520's message of that generation is expected to be:
+                           // the TXF_HELD reply that follows is its answer, sent only if it is (2026-10-23c)
 // frame types, Pico -> Pi
 #define F_HELLO     0x81   // u8 protocol version, u16 tx ring size, u16 data chunk max, u32 tx consumed,
                            //   u16 tx entries still queued, firmware tag text
@@ -32,6 +35,7 @@ extern "C" {
 
 #define DF_EOI 0x01
 #define DF_END 0x02
+#define DF_HELD 0x04       // (with DF_EOI) the message matched the hold: the held reply answers it (2026-10-23c)
 
 #define LINK_PING_TIMEOUT_MS 5000u   // no PING for this long: go offline (release the bus)
 #define DATA_CHUNK 240u

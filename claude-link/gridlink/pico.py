@@ -24,14 +24,15 @@ from . import glp
 PICO_VID = 0x2E8A
 PROTO_VERSION = 1
 
-F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_BOOTSEL, F_WAKE = 0x01, 0x02, 0x03, 0x04, 0x05, 0x07, 0x08
+F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_BOOTSEL, F_WAKE, F_HOLD = 0x01, 0x02, 0x03, 0x04, 0x05, 0x07, 0x08, 0x09
 F_HELLO, F_DATA, F_EVENT, F_LOG, F_PONG, F_CREDIT = 0x81, 0x82, 0x83, 0x84, 0x85, 0x87
 CF_ONLINE, CF_AUTO_RSV = 0x01, 0x02
-DF_EOI, DF_END = 0x01, 0x02
-TXF_EOI, TXF_EARLY, TXF_ANN = 0x01, 0x02, 0x04
+DF_EOI, DF_END, DF_HELD = 0x01, 0x02, 0x04
+TXF_EOI, TXF_EARLY, TXF_ANN, TXF_HELD = 0x01, 0x02, 0x04, 0x08
 TX_CHUNK = 512          # data bytes per TX frame: 4 + 512 + COBS's 3 fit the firmware's 600-byte input buffer
 TX_FIRST = 128          # an EARLY reply's first TX frame: small, so the bridge says READY as soon as it can
 EARLY_FW = 'bridge fw 2026-10-23'   # firmware from this date on takes TXF_EARLY (PROTOCOL.md)
+HOLD_FW = 'bridge fw 2026-10-23c'   # and from this one F_HOLD: a reply held for the GRiD's next message
 FRAME_MAX = 4104        # GLP frames to the GRiD: 4096 payload + 8 (what the GRiD takes is its HELLO's rx=)
 EVENTS = {0x10: 'LISTEN', 0x11: 'UNLISTEN', 0x12: 'TALK', 0x13: 'UNTALK', 0x14: 'TALK_WAIT', 0x15: 'DCL',
           0x16: 'SDC', 0x17: 'GET', 0x18: 'GTL', 0x19: 'LLO', 0x1A: 'IFC', 0x1B: 'REN', 0x1C: 'SPOLL',
@@ -68,9 +69,10 @@ class PicoProto:
 
     def __init__(s, write, addr=7, log=print):
         s.write, s.addr, s.log = write, addr, log
-        s.buf = bytearray(); s.firmware = ''; s.early = False; s.connected = False; s.online = False
+        s.buf = bytearray(); s.firmware = ''; s.early = False; s.holds = False; s.connected = False; s.online = False
         s.gen = 0; s.tx_ring = 16383; s.sent = 0; s.consumed = 0
-        s.pending = collections.deque()
+        s.pending = collections.deque()     # (gen, frame, expect): expect is a held reply's hold, else None
+        s.hold_gen = None; s.hold_hit = None  # the hold out, and whether the bridge used it (DF_HELD)
         s.pong = {}; s.last_pong = 0.0; s.hello_at = 0.0; s.pongs = 0
         s.stats = collections.Counter()
         s.trace = None                      # a deque while gridlink.bench --trace runs: (time, event)
@@ -105,6 +107,8 @@ class PicoProto:
             proto, ring, chunk, consumed, queued = struct.unpack_from('<BHHIH', f, 1)
             s.firmware = f[12:].decode('ascii', 'replace')
             s.early = s.firmware[:len(EARLY_FW)] >= EARLY_FW and s.firmware.startswith('bridge fw ')
+            s.holds = s.firmware[:len(HOLD_FW)] >= HOLD_FW and s.firmware.startswith('bridge fw ')
+            s.hold_gen = None
             if proto != PROTO_VERSION:
                 s.log('bridge: firmware protocol %d, gridlink speaks %d: update one of them' % (proto, PROTO_VERSION))
                 return b''
@@ -119,6 +123,9 @@ class PicoProto:
             gen, flags = struct.unpack_from('<HB', f, 1)
             s._gen(gen)
             s.stats['rx_bytes'] += len(f) - 4
+            if flags & (DF_EOI | DF_END) and gen == s.hold_gen:   # the message the hold was for: used or not
+                s.hold_hit = bool(flags & DF_HELD); s.hold_gen = None
+                s.stats['held' if s.hold_hit else 'hold_missed'] += 1
             return f[4:]
         if t == F_EVENT:
             code, gen, b, arg = struct.unpack_from('<BHBI', f, 1)
@@ -149,21 +156,52 @@ class PicoProto:
     def _gen(s, g):
         if g != s.gen:
             s.gen = g
-            s.pending = collections.deque(p for p in s.pending if p[0] == g)   # replies for older messages
+            # replies for older messages go, and a held reply not yet sent once its message has come
+            nxt = (g + 1) & 0xFFFF
+            s.pending = collections.deque(p for p in s.pending if p[0] == (g if p[2] is None else nxt))
 
     # Pi -> Pico
     def answer(s, frame):
         """One GLP frame for the GRiD's next read: the reply to its last message."""
         with s.lock:
-            s.pending.append((s.gen, bytes(frame)))
+            s.pending.append((s.gen, bytes(frame), None))
             s.stats['tx_frames'] += 1
             s._pump()
 
+    def hold(s, expect, frame):
+        """A reply held for the GRiD's next message (bridge fw 2026-10-23c): if that message is exactly `expect`
+        (its next POLL, Link works it out), the bridge sends `frame` as its answer by itself, SRQ at its last
+        byte, with no round trip to us; DATA's DF_HELD then says so (hold_used).  If it is anything else the
+        bridge drops `frame` and we answer it as usual.  False if the firmware can't."""
+        with s.lock:
+            if not (s.holds and s.connected) or not 0 < len(expect) <= 16: return False
+            g = (s.gen + 1) & 0xFFFF
+            s.hold_gen, s.hold_hit = g, None
+            s.pending.append((g, bytes(frame), bytes(expect)))
+            s.stats['holds'] += 1
+            s._pump()
+            return True
+
+    def hold_used(s):
+        """Whether the bridge answered the GRiD's last message with the held reply (True), or not."""
+        with s.lock:
+            hit, s.hold_hit = s.hold_hit, None
+            return bool(hit)
+
     def _pump(s):
         while s.pending and s.connected:
-            g, data = s.pending[0]
+            g, data, expect = s.pending[0]
             room = s.tx_ring - ((s.sent - s.consumed) & 0xFFFFFFFF)
             if room < len(data): return             # the whole frame must fit before any of it goes
+            if expect is not None:                  # a held reply: the hold, then the reply in 512s
+                out = [cobs_encode(struct.pack('<BH', F_HOLD, g) + expect)]
+                for i in range(0, len(data), TX_CHUNK):
+                    fl = TXF_HELD | (TXF_EOI if i + TX_CHUNK >= len(data) else 0)
+                    out.append(cobs_encode(struct.pack('<BHB', F_TX, g, fl) + data[i:i + TX_CHUNK]))
+                s.write(b''.join(out))
+                s.sent = (s.sent + len(data)) & 0xFFFFFFFF
+                s.pending.popleft()
+                continue
             # The firmware's input buffer holds a COBS frame of 600 bytes (host_link.c), so a GLP frame
             # bigger than TX_CHUNK goes as several TX frames, EOI only on the last.  Older firmware raises SRQ
             # when that one is in; from fw 2026-10-23 the first (a small one) says EARLY, and the bridge raises
@@ -354,6 +392,12 @@ class PicoBridge:
 
     def answer(s, frame):
         s.proto.answer(frame)
+
+    def hold(s, expect, frame):
+        return s.proto.hold(expect, frame)
+
+    def hold_used(s):
+        return s.proto.hold_used()
 
     def ring(s):
         s.proto.ring()

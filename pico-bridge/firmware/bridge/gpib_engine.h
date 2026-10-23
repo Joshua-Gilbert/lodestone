@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define FW_TAG "bridge fw 2026-10-23b"
+#define FW_TAG "bridge fw 2026-10-23c"
 #define PROTO_VERSION 1
 
 // ---- pins ----------------------------------------------------------------------------------------------------
@@ -51,7 +51,8 @@ extern "C" {
 
 // ---- records core 1 -> core 0 (what came off the bus, in bus order) --------------------------------------------
 enum {
-  R_DATA = 0,        // b = data byte, arg bit 0 = EOI was asserted with it (end of message)
+  R_DATA = 0,        // b = data byte, arg bit 0 = EOI was asserted with it (end of message); with EOI, bit 1 =
+                     //   the message was the one the Pi's hold (F_HOLD) expected: its held reply is ready
   R_END = 1,         // the message ended without EOI (unlistened, IFC) -- no byte
   // events: arg as noted
   E_LISTEN = 0x10, E_UNLISTEN, E_TALK, E_UNTALK,
@@ -64,7 +65,8 @@ enum {
   E_OFFLINE,
   // (2026-10-23b, for gridlink.bench --trace: every event frame carries the time it happened, on the Pico's
   //  microsecond timer)
-  E_RX_END,          // core 0: the last byte of a message from the 1520 (with EOI) came, at the record's time
+  E_RX_END,          // core 0: the last byte of a message from the 1520 (with EOI) came, at the record's time;
+                     //   b = 1: it matched the hold, the held reply answers it (2026-10-23c)
   E_TX_IN,           // core 0: a reply is queued (its first TX frame, or a whole one): READY from now
   E_SRQ,             // SRQ asserted
 };
@@ -75,6 +77,8 @@ typedef struct { uint8_t code, b; uint16_t gen; uint32_t arg; uint32_t t; } rec_
 #define RX_RESERVE 64u     // kept free for events: data stops (NRFD held) before the ring is full
 #define TX_RING  16384u    // entries, power of 2.  entry = gen << 16 | flags << 8 | byte
 #define TXF_EOI  0x01u
+#define TXE_HELD 0x02u     // (2026-10-23c) a held reply: sent only if the message of its generation matches the hold
+#define HOLD_MAX 16u       // bytes a hold can expect (GLP's POLL is 8)
 
 typedef struct {
   // core 1 -> core 0
@@ -99,6 +103,15 @@ typedef struct {
   // reply has been sent, and drops it all if the reply goes stale -- as the AR488 +GRiD1 patch does.
   volatile uint8_t auto_rsv;
   volatile uint32_t tx_eoi_pushed;      // complete replies queued by core 0 (EOI entries), ever
+  // A held reply (F_HOLD, 2026-10-23c): the Pi expects the 1520's next message to be exactly hold_exp (its next
+  // POLL) and has queued the answer to it ahead, as TXE_HELD entries of the next generation.  If the message is
+  // that, core 1 counts the reply ready at its EOI byte (SRQ at once, no round trip to the Pi); if it isn't,
+  // the held entries are dropped and the Pi answers it as usual.  hold_seq is odd while core 0 writes the rest.
+  volatile uint32_t hold_seq;
+  volatile uint16_t hold_gen;
+  volatile uint8_t hold_n;
+  volatile uint8_t hold_exp[HOLD_MAX];
+  volatile uint32_t n_held, n_held_void;  // held replies used / not (core 1)
   // status from core 1 (for reports)
   volatile uint8_t online, listener, talker, ren, llo, spms, cur_rsv;
   volatile uint16_t gen;
