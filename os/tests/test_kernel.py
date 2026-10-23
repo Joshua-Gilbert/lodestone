@@ -2363,6 +2363,36 @@ def t_cmdsaver():
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     check('EXIT: the Executive with its directory back', k.pc.mode() == 0x40 and k.rd('lent', 1) == b'\x00'
           and 'LCMD.COM' in k.exec_list() and 'DEFRAG.COM' in k.exec_list(), (k.rd('lent', 1), k.exec_list()))
+    # the start-up floppy taken out at the prompt (the change line stays on, reads time out): the saver's
+    # look for A:\DEFRAG.COM fails without LCMD's "Abort, Retry, Fail?", the dark screen as in the Executive
+    k = ktest.KPC(img); k.start()
+    k.wr('saver_t', struct.pack('<H', 36))
+    Shell(k)
+    orig, st = type(k.pc).int13, {'out': True, 'n': 0}
+    def int13(s):
+        if st['out'] and s.r('dl') == 0 and s.r('ah') in (2, 3, 4, 0x16):
+            st['n'] += 1
+            s.w('ax', 0x0600 if s.r('ah') == 0x16 else 0x8000); s.cf(1); return
+        return orig(s)
+    type(k.pc).int13 = int13
+    try:
+        n0 = len(k.pc.tty)
+        for _ in range(60):
+            k.pc.run_for(0.25)
+            if 'Fail?' in ''.join(k.pc.tty)[n0:]: break
+            if k.pc.mode() == 0x40 and any(':' in l and l.strip().endswith('m') for y, l in k.ocr()): break
+        dark = [l.strip() for y, l in k.ocr() if len(l.strip()) > 2] if k.pc.mode() == 0x40 else []
+        q = ''.join(k.pc.tty)[n0:]
+        check('A: taken out at the prompt: the saver looks for DEFRAG there, fails without a question, the dark screen',
+              st['n'] and 'Fail?' not in q and len(dark) == 2, (st['n'], q, dark))
+        k.key(ktest.DOWN)
+        n0 = len(k.pc.tty)
+        k.key('dir'); k.key(ktest.ENTER)
+        q = ''.join(k.pc.tty)[n0:]
+        check('... a key: the prompt back, and the next line\'s DIR of A: asks', k.pc.mode() == 3 and q.count('Fail?') == 1, q)
+        k.key('f')
+    finally:
+        type(k.pc).int13 = orig
 
 def t_calc():
     """CALC.COM (0.4.4): sums at the prompt, errors with ERRORLEVEL, name=
