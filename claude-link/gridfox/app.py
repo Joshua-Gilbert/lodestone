@@ -507,12 +507,12 @@ class App:
             s.status = 'Y plays a YouTube video on its own: open the video\'s page first.'; s.draw(); return
         s.busy = 'Finding the video (yt-dlp)'; s.draw()
         try:
-            src, title = V.find(s.url, profile=s.profile)
+            src, title, headers = V.find(s.url, profile=s.profile)
         except V.NotFound as e:
             s.busy = ''
             if s.picture: s.picture_view(False)  # (the picture covers the status line: the text, to say why)
             s.status = 'Y: %s' % _short(e); s.draw(); return
-        s.go(V.write_page(src, title, os.path.dirname(s.view_path)))
+        s.go(V.write_page(V.serve(src, headers), title, os.path.dirname(s.view_path)))
         if s.pictures and not s.picture: s.picture_view(True)
         try:
             s.b.click_at(8, 8)                   # (a person's click: Firefox lets it start the sound)
