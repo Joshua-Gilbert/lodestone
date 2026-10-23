@@ -376,11 +376,12 @@ crit:   sti
         call    bputs
         pop     ax
         mov     al, ah
-        cmp     al, 2                   ; Abort in our own work: Fail instead
-        jne     .x
-        cmp     byte [child], 0
-        jne     .x
-        mov     al, 3
+        cmp     byte [child], 0         ; Abort or Fail in our own work:
+        jne     .x                      ;  Fail, and the rest of this
+        cmp     al, 1                   ;  command fails without asking
+        je      .x                      ;  again (one question, not one
+        mov     al, 3                   ;  for each call it makes)
+        mov     [crit_q], al
 .x:     mov     bp, sp                  ; the answer into pusha's AX
         mov     [bp+4+14], al           ;  (past ES and DS)
         pop     es
@@ -910,6 +911,7 @@ run_external:
         mov     dx, prog
         mov     bx, epb
         mov     byte [child], 1
+        mov     byte [crit_q], 0        ; (a program is asked each time)
         mov     [stack_seg], ss
         mov     [main_sp_run], sp
         mov     ax, 4B00h
@@ -1205,7 +1207,8 @@ bat_read:
 
 ; run the batch file's next line (or end it)
 bat_next:
-        call    bat_read
+        mov     byte [crit_q], 0        ; (each line asks again, as each
+        call    bat_read                ;  typed one does: edit_line's .key)
         jc      bat_end
         mov     si, bat_raw             ; %n, %NAME% and %%
         mov     di, line
@@ -1861,7 +1864,8 @@ bat_arg:
 ; Only prompt_loop calls it: the history it writes lies over the start-up
 ; code, which /C still runs after its command
 edit_line:
-        call    con_in                  ; standard input the console?
+        mov     byte [crit_q], 0        ; (each line asks again: one read
+        call    con_in                  ;  from a file too) the console?
         jc      .dos
         je      .ed
         jns     .dos                    ; a file at its end: this shell is
@@ -3244,8 +3248,9 @@ copy_one:
         jmp     .err
 .rerr:  mov     si, e_read
 .err:   call    err
-        call    close2
-        mov     dx, dst
+        mov     byte [crit_q], 0        ; (the partial copy's close and
+        call    close2                  ;  delete ask again: a Retry there
+        mov     dx, dst                 ;  leaves no lost clusters)
         mov     ah, 41h
         int     21h
         stc
@@ -4686,7 +4691,8 @@ errlvl      resb 1
 tmpb        resb 1
 tmpw        resw 1
 crit_ah     resb 1
-crit_q      resb 1                      ; Tab is looking: INT 24h fails
+crit_q      resb 1                      ; INT 24h fails (Tab looking; a
+                                        ;  line answered F or A once)
 crit_al     resb 1
 ampm        resb 1
 vol_drv     resb 1
