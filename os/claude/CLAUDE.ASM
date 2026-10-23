@@ -62,6 +62,7 @@ BOXW     equ 70
 %include "GLP.INC"               ; the link's message types and states
 %define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi; not in RCON)
 %define TERM_PIXELS              ; (TERMCELL.INC: pictures, CELLS op FDh; not in RCON)
+%define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23; not in RCON)
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -124,6 +125,9 @@ leave:  mov     al, [oldmode]           ; (the pointer: the kernel takes the mou
         int     10h
         call    vec_dos
         call    res_hot_on
+%ifdef PROFILE
+        call    prof_end
+%endif
         mov     dx, msg_bye
         mov     ah, 9
         int     21h
@@ -1346,9 +1350,17 @@ maybe_idle:                             ; HLT when nothing is due
         pop     es
         cmp     ax, [srq_seen]
         jne     .s
+%ifdef PROFILE
+        sti
+        PROF    10
+        hlt
+        PROF    0
+        ret
+%else
         sti                             ; (STI's shadow covers the HLT)
         hlt
         ret
+%endif
 .s:     sti
         ret
 .i:
@@ -1379,6 +1391,9 @@ maybe_idle:                             ; HLT when nothing is due
 ;  the link (GLP 1): TERMLINK.INC, and what CLAUDE does with it
 ; =====================================================================
 %include "TERMLINK.INC"
+%ifdef PROFILE
+%include "PROF.INC"
+%endif
 
 msg_sent:
         mov     al, [done_type]
@@ -1566,7 +1581,12 @@ pf_reasm:
         mov     di, reqbuf
         add     di, [rq_len]
         mov     [rq_len], ax
+        PROF    5
+        shr     cx, 1
+        rep     movsw
+        adc     cx, cx
         rep     movsb
+        PROF    0
         jmp     .more
 .over:  mov     byte [rq_over], 1
 .more:  test    byte [pf_kind], 80h
@@ -1710,28 +1730,36 @@ op_dir: mov     dx, dta
 op_read:
         mov     dx, reqbuf+8
         mov     ax, 3D00h
+        PROF    6
         int     21h
+        PROF    0
         jc      .err
         mov     bx, ax
         mov     dx, [reqbuf+2]
         mov     cx, [reqbuf+4]
         mov     ax, 4200h
+        PROF    7
         int     21h
+        PROF    0
         jc      .errc
         mov     cx, [reqbuf+6]
         cmp     cx, IOSIZE - 2
         jbe     .n
         mov     cx, IOSIZE - 2
-.n:     push    ds
+.n:     PROF    8
+        push    ds
         mov     ds, [ioseg]
         mov     dx, 2
         mov     ah, 3Fh
         int     21h
         pop     ds
+        PROF    0
         jc      .errc
         push    ax
         mov     ah, 3Eh
+        PROF    9
         int     21h
+        PROF    0
         pop     cx
         xor     al, al
         jmp     reply
@@ -1757,12 +1785,16 @@ op_write:
         jne     .open
         xor     cx, cx
         mov     ah, 3Ch
+        PROF    6
         int     21h
+        PROF    0
         jc      op_read.err
         mov     bx, ax
         jmp     .wr
 .open:  mov     ax, 3D01h
+        PROF    6
         int     21h
+        PROF    0
         jnc     .seek
         cmp     ax, 2
         jne     op_read.err
@@ -1770,7 +1802,9 @@ op_write:
         jne     op_read.err
         xor     cx, cx
         mov     ah, 3Ch
+        PROF    6
         int     21h
+        PROF    0
         jc      op_read.err
 .seek:  mov     bx, ax
         mov     dx, [reqbuf+3]
@@ -1781,16 +1815,22 @@ op_write:
         xor     cx, cx
         xor     dx, dx
         mov     ax, 4202h
-.sk:    int     21h
+.sk:    PROF    7
+        int     21h
+        PROF    0
         jc      op_read.errc
 .wr:    mov     cx, [wr_len]
         mov     dx, [wr_data]
         mov     ah, 40h
+        PROF    8
         int     21h
+        PROF    0
         jc      op_read.errc
         mov     [wr_done], ax
         mov     ah, 3Eh
+        PROF    9
         int     21h
+        PROF    0
         push    es
         mov     es, [ioseg]
         mov     ax, [wr_done]
@@ -2871,7 +2911,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.3', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.4', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
@@ -2979,6 +3019,9 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         mov     si, st_connecting
         call    set_status_quiet
         call    video_on
+%ifdef PROFILE
+        call    prof_start
+%endif
         jmp     main
 
 fatal:  call    res_hot_on
@@ -3088,7 +3131,12 @@ find_gpib:
         cmp     ax, 4747h
         jne     .bad
         mov     [ggver], cx
-        clc
+        cmp     cx, 0123h               ; Lodestone's driver 1.23 and up keeps
+        jb      .ok                     ;  the frame check as it moves the bytes
+        cmp     cx, 0200h
+        jae     .ok
+        mov     byte [ksum], 1
+.ok:    clc
         ret
 .bad:   stc
         ret
@@ -3776,6 +3824,10 @@ inbuf       resb MAXIN                  ; (first: the start-up code is there)
 res_cs      resw 1                      ; resident Claude's stub, if loaded
 ggint       resb 1
 ggver       resw 1
+ksum        resb 1                      ; 1: INT 60h 02h AL=3, 03h AL=2 (KSUM)
+tx_app      resb 1                      ; 1: txframe's check is the driver's to add
+lw_eoi      resb 1                      ; lw_go's AL for INT 60h 02h: 1, or 3
+n_kok       resw 1                      ; frames ks_check passed (the tests)
 convseg     resw 1
 ioseg       resw 1
 snapseg     resw 1
@@ -3913,6 +3965,13 @@ snap_len    resw 1
                   || kv_appterm < kv_grid || kv_appchat < kv_appterm || s_none2 < s_onint \
                   || kv_appweb < kv_appchat || kv_rx < kv_appweb || s_tkeys < kv_rx \
                   || s_helptitle < s_pages) resb 1     ; (HELLO_MAX's lengths: in this order)
+%ifdef PROFILE
+prof_acc    resd PB_N                   ; (PROF.INC: prof_start clears these
+prof_cnt    resw PB_N                   ;  three together)
+prof_t0     resd 1
+prof_cur    resb 1
+prof_txt    resb 1024
+%endif
 stack_bottom:                           ; the stack: claude-link's emulator tests
             resb 1024                   ;  go 58 bytes deep at most under GRIDGPIB,
                                         ;  70 under Lodestone; the rest is for the
