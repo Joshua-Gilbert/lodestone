@@ -179,6 +179,12 @@ mt_lcs      dw      0                   ; (the last switch's interrupted CS,
 mt_lip      dw      0                   ;  IP, flags and SP, for test_mt: set
 mt_lfl      dw      0                   ;  by mt_safe when it says yes)
 mt_lsp      dw      0
+mt_mdrag    db      0                   ; 1: task 0 switched from at a drag's
+mt_mx       dw      0                   ;  wait (..@ui_midle), the mouse there
+mt_my       dw      0                   ;  then (the UI's mx, my, mb): moved
+mt_mb       db      0                   ;  since, it runs next (mt_mwant)
+mt_mrot     db      0                   ; the task such a boost took the turn
+                                        ;  from: mt_pick goes on after it
 mt_fpu      db      0                   ; 1: a coprocessor (INT 11h), kept per
                                         ;  task
 mt_front    db      0                   ; the task in front
@@ -453,12 +459,76 @@ mt_kwant:
         mov     al, [cs:mt_front]
         cmp     al, [cs:mt_cur]
         je      .x
+        call    mt_mwant                ; (or the mouse for the UI's drag)
+        jnz     .p
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_WAITK
         jne     .x
         call    mt_kin
         je      .x
-        mov     byte [cs:mt_pend], 1
+.p:     mov     byte [cs:mt_pend], 1
+.x:     ret
+
+; front task AL: task 0 switched from at a drag's wait, and the mouse
+; moved (or a button) since?  ZF clear if so: it runs next, so a drag
+; follows the mouse while tasks behind take the pauses.  Registers kept
+mt_mwant:
+        or      al, al
+        jnz     .no
+        cmp     byte [cs:mt_mdrag], 0
+        je      .x
+        push    ds
+        push    es
+        push    bx
+        push    KSEG
+        pop     ds
+        mov     es, [ui_seg]
+        mov     bx, [es:mx]
+        cmp     bx, [cs:mt_mx]
+        jne     .y
+        mov     bx, [es:my]
+        cmp     bx, [cs:mt_my]
+        jne     .y
+        mov     bl, [es:mb]
+        cmp     bl, [cs:mt_mb]
+.y:     pop     bx
+        pop     es
+        pop     ds
+.x:     ret
+.no:    cmp     al, al
+        ret
+
+; the running task switched from: task 0 at a drag's wait (mt_safe's
+; mt_lcs, mt_lip at ..@ui_midle)?  mt_mdrag, and the mouse then.
+; Registers kept
+mt_mdset:
+        cmp     byte [cs:mt_cur], 0
+        jne     .x
+        push    ax
+        push    bx
+        push    ds
+        push    es
+        push    KSEG
+        pop     ds
+        mov     es, [ui_seg]
+        xor     al, al
+        mov     bx, [cs:mt_lcs]
+        cmp     bx, [ui_seg]
+        jne     .s
+        cmp     word [cs:mt_lip], ..@ui_midle
+        jne     .s
+        inc     ax
+        mov     bx, [es:mx]
+        mov     [cs:mt_mx], bx
+        mov     bx, [es:my]
+        mov     [cs:mt_my], bx
+        mov     bl, [es:mb]
+        mov     [cs:mt_mb], bl
+.s:     mov     [cs:mt_mdrag], al
+        pop     es
+        pop     ds
+        pop     bx
+        pop     ax
 .x:     ret
 
 ; a key for the front task: one in the BIOS's buffer, or Resident Claude's
@@ -532,6 +602,8 @@ mt_safe:
 .ui:    cmp     ax, [ui_seg]
         jne     .pic
         cmp     bx, ..@ui_idle
+        je      .pic
+        cmp     bx, ..@ui_midle         ; (a drag's: UI_MOUSE, win_mv)
         je      .pic
         cmp     bx, ..@ui_sidle
         jne     .no
@@ -618,13 +690,18 @@ mt_preempt:
         mov     al, [cs:mt_front]
         cmp     al, [cs:mt_cur]
         je      .p
+        call    mt_mwant                ; (the mouse moved in the UI's drag)
+        jnz     .mw
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_WAITK
         jne     .p
         call    mt_kin
         je      .p
         mov     byte [cs:mt_tsrk], 0    ; (given: Resident Claude's pop-up is
-        mov     bl, al                  ;  the front task's call's to bring)
+        jmp     short .f                ;  the front task's call's to bring)
+.mw:    mov     ah, [cs:mt_cur]         ; (the turn taken from it: the round
+        mov     [cs:mt_mrot], ah        ;  goes on after it, mt_pick)
+.f:     mov     bl, al
         jmp     short .sw
 .p:     call    mt_pick
         jnc     .sw
@@ -637,7 +714,8 @@ mt_preempt:
         mov     byte [cs:mt_slice], 2
         ret
 .fz:    mov     bl, [cs:mt_front]
-.sw:    call    mt_tsrw
+.sw:    call    mt_mdset
+        call    mt_tsrw
         jmp     mt_switch
 
 ; the running task, switched from Resident Claude's key wait (its HLT, where
@@ -792,9 +870,14 @@ mt_pick:
         push    ax
         push    cx
         mov     al, [cs:mt_cur]
-        mov     cx, MT_TASKS - 1
+        or      al, al                  ; (task 0 after a mouse boost: on
+        jnz     .go                     ;  from the task it took the turn
+        xchg    al, [cs:mt_mrot]        ;  from, not task 1 again; once)
+.go:    mov     cx, MT_TASKS
 .l:     inc     al
         and     al, MT_TASKS - 1
+        cmp     al, [cs:mt_cur]
+        je      .nx
         push    bx
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_RUN
@@ -804,7 +887,7 @@ mt_pick:
         cmp     byte [cs:bx+TE_KILL], 1 ; (frozen, but ended: it runs, to end)
 .n:     pop     bx
         je      .y
-        loop    .l
+.nx:    loop    .l
         stc
         jmp     short .x
 .y:     mov     bl, al
@@ -909,7 +992,10 @@ mt_load:
         mov     word [cs:mt_in13], 0    ;  of the front or kernel's idle: one
         mov     byte [cs:mt_idle], 0    ;  left by a program ended inside it,
         mov     [cs:mt_cur], bl         ;  cleared)
-        mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
+        or      bl, bl                  ; (task 0 running again: a boost of
+        jnz     .md                     ;  its drag used up, mt_mdset sets it
+        mov     [cs:mt_mdrag], bl       ;  again at the next switch from it)
+.md:    mov     byte [cs:mt_pend], 0    ; its turn: 2 ticks in front, 1 else
         mov     byte [cs:mt_slice], 1
         cmp     bl, [cs:mt_front]
         jne     .t

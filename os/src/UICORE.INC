@@ -70,6 +70,8 @@ ui_base:
         API     UI_KEYSHIFT,  api_keyshift
         API     UI_FONT,      api_font
         API     UI_SAVER,     api_saver
+        API     UI_MENU,      ui_menu
+        API     UI_MOUSE,     api_mouse
 
 section uibss
 ; mouse and pointer
@@ -122,6 +124,9 @@ mv_gx       resw 1              ; a move: where the window was taken (column and
 mv_gy       resw 1              ;  row inside it), and where its outline is now
 mv_c        resw 1
 mv_y        resw 1
+mn_tab      resw 1              ; UI_MENU: its items, its list (in help_w),
+mn_lv       resb LV_SIZE        ;  and whether it borrowed the cache itself
+mn_lent     resb 1              ;  (help_w modal: KMW.INC changes no focus)
 ; lists, forms, the line editor
 lv_cur      resw 1
 disp_fn     resw 1
@@ -955,6 +960,30 @@ mouse_event:
 .no:    pop     dx
         clc
         ret
+
+; UI_MOUSE (API 8): one interrupt's wait, then -> AX = the buttons down
+; (bit 0 the left, bit 1 the right), BX = x, CX = y; CF set if there is
+; no mouse.  The pointer stays hidden; a press seen here is no event later
+api_mouse:
+        cmp     word [mbase], 0
+        stc
+        je      .x
+        call    act_now                 ; (a drag isn't idle: no saver)
+        call    mwait
+        cli                             ; (x, y and buttons from one packet)
+        mov     bx, [mx]
+        mov     cx, [my]
+        mov     al, [mb]
+        sti
+        mov     [oldmb], al
+        xor     ah, ah                  ; (CF clear)
+.x:     ret
+
+; sleep until the next interrupt (win_mv, UI_MOUSE)
+mwait:  sti
+        hlt
+..@ui_midle:                            ; (KMT.INC: a task may be switched
+        ret                             ;  from here too)
 
 %include "MOUSE33.INC"
 
@@ -2249,8 +2278,7 @@ win_mv: pusha
         or      bp, bp
         jz      .k
         mov     byte [ptr_on], 0        ; (mouse_event leaves the pointer off)
-.w:     sti
-        hlt
+.w:     call    mwait
         cmp     byte [mflag], 0
         je      .w
         call    mouse_event             ; AX = x, BX = y; [oldmb] the buttons
@@ -2468,6 +2496,171 @@ help_draw:
         add     dx, 16
         jmp     .l
 .x:     ret
+
+; UI_MENU (API 8): SI = AL items (word pointers to ASCIIZ), AH = the one
+; lit first, BX = x, CX = y (where it was clicked).  A window there (kept
+; on the screen) with the items; the arrows, a letter, then Return, or a
+; click on one, choose -> CF clear, AX = the item; ESC or a click outside
+; the window -> CF set (the click is taken)
+ui_menu:
+        cmp     al, 1                   ; 1-20 items
+        jb      .full
+        cmp     al, 20
+        ja      .full
+        cmp     word [wover], 0         ; no room for its window (NWIN open):
+        jne     .full                   ;  none, as if cancelled (not drawn,
+        cmp     word [wdepth], NWIN     ;  it would be no window: not modal,
+        jb      .room                   ;  and a borrow nobody gives back)
+.full:  call    ui_beep
+        stc
+        ret
+.room:  pusha
+        push    bx
+        push    cx
+        mov     [mn_tab], si
+        xor     dx, dx
+        mov     dl, al
+        mov     [mn_lv+LV_N], dx
+        mov     [mn_lv+LV_ROWS], dx
+        mov     di, dx
+        mov     dl, ah
+        cmp     dl, al                  ; (one past the last: the first)
+        jb      .s
+        xor     dl, dl
+.s:     mov     [mn_lv+LV_SEL], dx
+        mov     word [mn_lv+LV_TOP], 0
+        xor     bp, bp                  ; the longest item
+.c:     lodsw
+        push    si
+        xchg    si, ax
+        call    strlen
+        pop     si
+        cmp     cx, bp
+        jbe     .n
+        mov     bp, cx
+.n:     dec     di
+        jnz     .c
+        add     bp, 4                   ; (a column either side of the lit band)
+        cmp     bp, 80                  ; (longer items cut at the right edge)
+        jbe     .w
+        mov     bp, 80
+.w:     mov     [help_w+W_W], bp
+        pop     cx
+        pop     bx
+        shr     bx, 3                   ; the click's column, kept on the screen
+        mov     ax, 80
+        sub     ax, bp
+        cmp     bx, ax
+        jbe     .c1
+        xchg    bx, ax
+.c1:    mov     [help_w+W_COL], bx
+        inc     bx
+        mov     [mn_lv+LV_COL], bx
+        dec     bp
+        dec     bp
+        mov     [mn_lv+LV_W], bp
+        mov     ax, [mn_lv+LV_N]
+        shl     ax, 4
+        add     ax, 8
+        mov     [help_w+W_H], ax
+        mov     dx, BAND_Y              ; the row: between the title rule and
+        sub     dx, ax                  ;  the band, a multiple of 4
+        and     cx, 0FFFCh
+        cmp     cx, dx
+        jbe     .r1
+        mov     cx, dx
+.r1:    cmp     cx, SCR_TOP
+        jae     .r2
+        mov     cx, SCR_TOP
+.r2:    mov     [help_w+W_Y], cx
+        add     cx, 4
+        mov     [mn_lv+LV_Y], cx
+        xor     ax, ax
+        mov     [help_w+W_TITLE], ax
+        mov     [help_w+W_FLAGS], ax
+        mov     [mn_lv+LV_CHG], ax
+        mov     word [help_w+W_DRAW], mn_draw
+        mov     word [mn_lv+LV_DRAW], mn_row
+        mov     word [mn_lv+LV_NAME], mn_name
+        mov     [mn_lent], al
+%ifndef NOTC
+        cmp     word [wdepth], 0        ; over another window with nothing
+        je      .open                   ;  saved (MULTITASK=1: a window .RUN's,
+        cmp     word [wseg], 0          ;  mw_lend lends none): the menu
+        jne     .open                   ;  borrows the cache itself, as it is
+        push    es                      ;  modal and doesn't move
+        mov     ax, 0F002h
+        int     21h
+        jc      .nl
+        mov     [wseg], es
+        mov     [wcap], cx
+        mov     word [wtop], 0
+        inc     byte [mn_lent]
+.nl:    pop     es
+%endif
+.open:  mov     si, help_w
+        call    ui_wopen
+.l:     call    ui_event
+        cmp     ah, 1                   ; ESC, CODE-ESC
+        je      .no
+        cmp     ah, 1Ch                 ; Return, CODE-Return
+        je      .yes
+        cmp     ax, EV_CLICK
+        je      .clk
+        cmp     ax, EV_RCLICK
+        je      .clk
+        mov     bx, mn_lv
+        call    lv_key
+        jmp     .l
+.clk:   shr     bx, 3                   ; outside the window: no choice
+        sub     bx, [help_w+W_COL]
+        cmp     bx, [help_w+W_W]
+        jae     .no
+        mov     ax, cx
+        sub     ax, [help_w+W_Y]
+        cmp     ax, [help_w+W_H]
+        jae     .no
+        mov     bx, mn_lv
+        call    lv_click
+        jc      .l                      ; (its edge, not an item)
+.yes:   call    mn_close
+        mov     ax, [mn_lv+LV_SEL]
+        mov     bp, sp
+        mov     [bp+14], ax             ; (pusha's AX)
+        popa
+        clc
+        ret
+.no:    call    mn_close
+        popa
+        stc
+        ret
+
+mn_close:
+        call    ui_wclose
+%ifndef NOTC
+        cmp     byte [mn_lent], 0
+        je      .x
+        call    win_giveback
+.x:
+%endif
+        ret
+
+mn_draw:
+        mov     bx, mn_lv
+        jmp     lv_draw
+
+mn_row: call    mn_name                 ; AX = item, DX = y, CL = mask
+        mov     bx, [mn_lv+LV_COL]
+        inc     bx
+        mov     ah, cl
+        jmp     puts
+
+mn_name:                                ; AX = item -> SI = its text
+        xchg    si, ax
+        add     si, si
+        add     si, [mn_tab]
+        mov     si, [si]
+        ret
 
 ; =====================================================================
 ;  key tables
