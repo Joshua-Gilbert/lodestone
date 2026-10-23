@@ -1707,7 +1707,7 @@ t_on's check that MT passes F0h AL=2 and 3 on to the kernel (the help's save-und
 
 **Cost:**
 - **Switch off:** nothing in the UI image: one more label (`..@ui_rdfn`), and equates in UIAPI.INC (`RF_WIN`, `WF_SIZE`, `EV_SIZE`, `K_CODE_F8`). WRITE.RUN is 8,679 bytes (8,160 before): its window code, and the shadow copy in a block of its own, which it takes with the switch off too (190 paragraphs while Write runs). Its BSS is 3,023 bytes smaller.
-- **Switch on:** MT's block is 1,139 paragraphs (1,098 before). MEMSZ with Shift-Return is 563.8 KB (564.4 before). LODEMT.SYS is 15,283 bytes (14,629 before).
+- **Switch on:** MT's block is 1,139 paragraphs (1,098 before). MEMSZ with Shift-Return is 563.6 KB (564.2 on main). LODEMT.SYS is 15,283 bytes (14,629 before).
 - **ROM 1:** 4,608 bytes left (5,632 before): WRITE.RUN and LODEMT.SYS take a sector more each.
 
 **Tests:** test_mt's new group `t_write` (14 checks; test_mt 331, 317 before):
