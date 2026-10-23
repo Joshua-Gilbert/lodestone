@@ -98,7 +98,8 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   ~4 ms of USB per 2 KB frame overlaps the GPIB transfer. Every announced answer puts exactly one EOI entry in
   the ring (core 1 counts answers done by them): one that won't be finished gets a stand-in, an EOI entry of
   an older generation that core 1 drops as stale. The bus simulation's J tests cover a streamed read, an SDC
-  in the middle and an answer never finished.
+  in the middle and an answer never finished. On the 1520 (gridlink.bench --size 128): Pi → GRiD 73.6 →
+  87.2 KB/s.
 
 ## Build
 

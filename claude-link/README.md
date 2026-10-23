@@ -236,7 +236,8 @@ every byte checked.
 | bridge fw 2026-10-22a (bulk USB reads) and 22b (wake-up) | 7.0 ms | 51 ms median | 45.7 KB/s | 56.7 KB/s |
 | SRQ on IRQ 5 (Lodestone's GPIB driver 1.21, CLAUDE 1.3) | 7.0 ms | 9 ms median | 44.9 KB/s | 56.7 KB/s |
 | the driver's fast loops (1.22, GPIBLOOP) | 6.4 ms | 8 ms median | 70.2 KB/s | 73.3 KB/s |
-| the driver's frame check (1.23, CLAUDE 1.4) | **6.0 ms** | **8 ms** median | **73.6 KB/s** | **82.2 KB/s** |
+| the driver's frame check (1.23, CLAUDE 1.4) | 6.0 ms | 8 ms median | 73.6 KB/s | 82.2 KB/s |
+| bridge fw 2026-10-23a: EARLY answers (read while the rest crosses USB) | **6.0 ms** | **8 ms** median | **87.2 KB/s** | **81.9 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -271,8 +272,13 @@ every byte checked.
   time between frames went from 4.9 to 2.8 ms into the GRiD and from 4.8
   to 1.1 ms out of it.
 - **What is left, per 2 KB frame** (`bench --trace`):
-  - Pi to GRiD: the GPIB transfer 14 ms, the Pi and USB into the bridge
-    about 5-6 ms, and the GRiD's own work between frames 2.8 ms.
+  - Pi to GRiD: the GPIB transfer ~13 ms, the GRiD's own work between
+    frames 2.9 ms, and the rest (the Pi's answer, SRQ, the poll) about 5 ms.
+    With bridge fw 2026-10-23a the bridge says an answer is ready once its
+    first 128 bytes are in, so the ~4 ms of USB per 2 KB frame overlaps the
+    GRiD's read (21.6 ms a frame instead of 25.6). The trace's TALK times
+    come late while the bridge is still taking the answer in: its events
+    reach the Pi between USB reads.
   - GRiD to Pi: the GPIB transfer about 19 ms, and the GRiD's work 1.1 ms.
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
