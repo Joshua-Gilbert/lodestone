@@ -60,17 +60,19 @@ def traced(sock, a, title, name, args):
 
 def copies(sock, a, src, back, data, quiet=False):
     n = len(data)
-    h0 = link(sock).get('stats', {}).get('tx_held', 0)
+    held = lambda: link(sock).get('stats', {}).get('tx_held', 0)
+    h0 = held()
     up, _ = traced(sock, a, 'Pi -> GRiD', 'grid_change_files', {'action': 'copy_to_grid', 'path': src, 'to': a.to})
+    h1 = held()
     down, _ = traced(sock, a, 'GRiD -> Pi', 'grid_change_files',
                      {'action': 'copy_from_grid', 'path': a.to, 'to': back})
-    held = link(sock).get('stats', {}).get('tx_held', 0) - h0
+    h2 = held()
     with open(back, 'rb') as f: ok = f.read() == data
     tool(sock, 'grid_change_files', {'action': 'delete', 'path': a.to})
     if quiet: return up, down, ok
-    print('Pi -> GRiD: %d bytes in %.2f s = %.1f KB/s%s' % (n, up, n / up / 1024,
-          ', %d frames held in the bridge' % held if held else ''))
-    print('GRiD -> Pi: %d bytes in %.2f s = %.1f KB/s' % (n, down, n / down / 1024))
+    note = lambda k, what: ', %d %s held in the bridge' % (k, what) if k else ''
+    print('Pi -> GRiD: %d bytes in %.2f s = %.1f KB/s%s' % (n, up, n / up / 1024, note(h1 - h0, 'frames')))
+    print('GRiD -> Pi: %d bytes in %.2f s = %.1f KB/s%s' % (n, down, n / down / 1024, note(h2 - h1, 'NOPs')))
     print('copy back: %s' % ('every byte right' if ok else 'DIFFERENT from what was sent'))
     return ok
 
