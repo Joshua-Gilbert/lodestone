@@ -9,6 +9,8 @@ cd "$DEST"
 python3 -m venv venv
 venv/bin/pip install --upgrade pip
 venv/bin/pip install anthropic pyserial pillow pyte wcwidth
+# gridfox's Y (a YouTube video without YouTube's player); it wants deno or node for YouTube
+venv/bin/pip install -U "yt-dlp[default]" || echo "yt-dlp didn't install: gridfox's Y needs it (venv/bin/pip install yt-dlp)"
 # CLAUDE /W (gridfox) drives Firefox on this Pi
 command -v firefox >/dev/null || command -v firefox-esr >/dev/null || sudo apt-get install -y firefox || \
     echo "Firefox didn't install: for CLAUDE /W, sudo apt install firefox (or firefox-esr)"

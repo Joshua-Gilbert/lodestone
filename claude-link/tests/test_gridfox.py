@@ -754,8 +754,78 @@ def test_end_to_end_gridsim():
         f.close()
 
 
+def test_video_find_and_page():
+    """Y's half on the Pi: which addresses are videos, yt-dlp asked (and asked
+    again with Firefox's cookies when YouTube wants a sign-in), the page made."""
+    import json, subprocess, tempfile, types
+    from gridfox import video as V
+    for u in ('https://www.youtube.com/watch?v=Z2UWOeBcsJI', 'https://m.youtube.com/watch?v=Z2UWOeBcsJI&t=4',
+              'https://youtu.be/Z2UWOeBcsJI', 'https://www.youtube.com/shorts/abcdefGHIJK'):
+        assert V.is_video(u), u
+    for u in ('https://www.youtube.com/', 'https://www.youtube.com/results?search_query=2001',
+              'https://notyoutube.com/watch?v=Z2UWOeBcsJI', 'about:gridfox', None):
+        assert not V.is_video(u), u
+    calls = []
+    def run(answers):
+        def r(a, **kw):
+            calls.append(a); code, out, err = answers.pop(0)
+            return types.SimpleNamespace(returncode=code, stdout=out, stderr=err)
+        return r
+    good = json.dumps({'title': '2001: A Space Odyssey <trailer>', 'url': 'https://rr1.googlevideo.com/v?a=1&b=2'})
+    assert V.find('U', run=run([(0, good + '\n', '')]), cmd=['yt-dlp']) == \
+        ('https://rr1.googlevideo.com/v?a=1&b=2', '2001: A Space Odyssey <trailer>')
+    assert '--cookies-from-browser' not in calls[-1] and calls[-1][-1] == 'U'
+    prof = tempfile.mkdtemp(prefix='gridfox-profile-')
+    calls.clear()
+    bot = (1, '', "ERROR: [youtube] Z2UWOeBcsJI: Sign in to confirm you're not a bot. Use --cookies")
+    assert V.find('U', profile=prof, run=run([bot, (0, good, '')]), cmd=['yt-dlp'])[1].startswith('2001')
+    assert len(calls) == 2 and calls[1][1:3] == ['--cookies-from-browser', 'firefox:' + prof], calls[1]
+    calls.clear()
+    try: V.find('U', profile=prof, run=run([(1, '', 'ERROR: [youtube] Z2UWOeBcsJI: Video unavailable')]), cmd=['yt-dlp'])
+    except V.NotFound as e: assert str(e) == 'Video unavailable', e
+    else: raise AssertionError('no NotFound')
+    assert len(calls) == 1                                       # (cookies wouldn't help that)
+    def slow(a, **kw): raise subprocess.TimeoutExpired(a, 1)
+    try: V.find('U', run=slow, cmd=['yt-dlp'])
+    except V.NotFound as e: assert 'too long' in str(e)
+    url = V.write_page('https://rr1.googlevideo.com/v?a=1&b="2"', 'A <b>title</b>', prof)
+    assert url.startswith('file://') and url.endswith('/video.html')
+    h = open(os.path.join(prof, 'video.html'), encoding='utf-8').read()
+    assert 'src="https://rr1.googlevideo.com/v?a=1&amp;b=&quot;2&quot;"' in h and 'A &lt;b&gt;title' in h
+    assert '<b>title' not in h
+
+
+def test_app_plain_video():
+    """Y in gridfox: off a video's page, a word why not; on one, the page of
+    its own opened, the picture view up, and a person's click to start it."""
+    import tempfile
+    from gridfox import video as V
+    r = Run(U + 'index')
+    real = V.is_video, V.find
+    try:
+        app = r.app; app.pictures = True
+        app.view_path = os.path.join(tempfile.mkdtemp(prefix='gridfox-view-'), 'view.png')
+        r.keys('y')
+        assert r.has('open the video') and not app.picture
+        V.is_video = lambda u: True
+        V.find = lambda u, profile=None: (_ for _ in ()).throw(V.NotFound('yt-dlp is not installed on the Pi'))
+        r.keys('y')
+        assert r.has('Y: yt-dlp is not installed') and not app.picture
+        V.find = lambda u, profile=None: ('https://rr1.googlevideo.com/v', '2001 trailer')
+        n = len(r.f.points)
+        r.keys('y')
+        assert app.url.startswith('file://') and app.url.endswith('/video.html'), app.url
+        assert app.picture and len(r.f.points) > n
+        assert 'Playing: 2001 trailer' in app.status
+        assert os.path.exists(os.path.join(os.path.dirname(app.view_path), 'video.html'))
+    finally:
+        V.is_video, V.find = real
+        r.close()
+
+
 NO_BROWSER = ('test_wrap_and_clean', 'test_layout_kinds', 'test_keys_and_line', 'test_keys_timing',
-              'test_firefox_quits_cleanly', 'test_web_exit_banner')       # (these run without the stand-in)
+              'test_firefox_quits_cleanly', 'test_web_exit_banner',
+              'test_video_find_and_page')       # (these run without the stand-in)
 
 if __name__ == '__main__':
     tests = [(n, v) for n, v in sorted(globals().items()) if n.startswith('test_') and callable(v)]

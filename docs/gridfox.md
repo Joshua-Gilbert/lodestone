@@ -90,6 +90,7 @@ taken out: 96 bytes for something the band's title already shows.)
 | S | search (DuckDuckGo's HTML page; `--search` changes it) |
 | / and N | find on the page, find the next |
 | R | reload |
+| Y (Ctrl-Y in the picture view) | on a YouTube video: play it without YouTube's player (below) |
 | H or ? | help |
 | Esc | cancels what is being typed |
 | A left click | on a link, button or field: uses it (as Tab to it and Return); on the address: Go; in a list's choices: that one; elsewhere: closes what is open |
@@ -205,6 +206,44 @@ view stays the default: it is the fast one.
   1.2 is needed.
 - **Not yet:** a `<select>`'s choices open in a window of Firefox's own,
   which a viewport screenshot doesn't show: use the text view for lists.
+
+## YouTube without its player: Y (2026-10-23)
+YouTube's player shows gridfox's Firefox a bot check, because Firefox is
+remote controlled and won't hide that. Its runs of ads also flood the
+picture view. Google's sign-in page refuses a remote-controlled Firefox too.
+Signing in on a PC and copying `cookies.sqlite` into gridfox's profile works,
+but Google can sign that session out again.
+
+**Y** skips the player. On a video's page (a watch page, `youtu.be`,
+shorts, an embed):
+1. gridfox runs **yt-dlp** on the Pi for the video's own file: one with
+   picture and sound together, H.264 first, at most 480 lines. The GRiD shows
+   640 x 384, so more would be wasted.
+2. If YouTube asks yt-dlp to sign in, it tries again with the cookies in
+   gridfox's own Firefox profile (`--cookies-from-browser firefox:PROFILE`).
+3. gridfox writes a plain page, `~/.cache/gridfox/video.html`, holding only a
+   `<video>` filling the window, and opens it. When the GRiD can show
+   pictures, it switches to the picture view.
+4. It clicks the page once to start playback. Firefox lets only a person's
+   click start sound (`media.autoplay.default` is 5), and a WebDriver click
+   counts as one.
+
+On that page, a click or Space plays and pauses, Left and Right skip 10 s,
+and Back (Ctrl-B, or Left in the text view) returns to YouTube. The file's
+address is good for some hours, from this Pi only.
+
+**On the Pi:**
+```
+~/gridlink/venv/bin/pip install -U "yt-dlp[default]"
+```
+For YouTube, yt-dlp also needs a JavaScript runtime: deno, or node (gridfox
+enables node as well as yt-dlp's default, deno). YouTube changes often, so
+when Y stops working, the first thing to try is `pip install -U` again.
+
+Tested against a stand-in yt-dlp and the stand-in Firefox
+(`test_video_find_and_page`, `test_app_plain_video`). The real yt-dlp accepts
+the command as built, but YouTube itself couldn't be reached from the build
+workspace.
 
 ## Measured (emulator and GridSim, stand-in Firefox)
 
