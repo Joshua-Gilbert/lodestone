@@ -1982,7 +1982,7 @@ ui_wopen:
         mov     word [wtop], 0
 %ifndef NOTC
         push    es
-..@ui_wlend:                            ; (KMW.INC: with MULTITASK=1, STC here)
+..@ui_wlend:                            ; (KMW.INC: with MULTITASK=1, CALL FAR mw_lend)
         mov     ax, 0F002h
         int     21h
         jc      .nolend

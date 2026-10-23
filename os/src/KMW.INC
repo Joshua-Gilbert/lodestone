@@ -24,17 +24,17 @@
 ;      front, and a click on another session's window gives it the focus;
 ;    - run_cleanup's first 5 bytes become a far jump to mw_clean: the root
 ;      starting over (^C, a crash) forgets every session;
-;    - ui_wopen's cache borrow (MOV AX,0F002h / INT 21h) becomes STC: no
-;      save-under, so closing, moving or bringing a window to the front
-;      draws the screen again (redraw_all), which stays right whichever
-;      window is in front.
+;    - ui_wopen's cache borrow (MOV AX,0F002h / INT 21h) becomes a far call
+;      to mw_lend: while a window .RUN runs, no save-under, so closing,
+;      moving or bringing a window to the front draws the screen again
+;      (redraw_all), which stays right whichever window is in front.
 ;  Window .RUNs started from anywhere don't make the starter wait: the new
 ;  one takes the focus.  A window belongs to the session whose slot holds
 ;  its structure (help_w: the running one's; a help or form window is
 ;  modal: no change of focus while one is open).
 ; =====================================================================
 MW_MAX      equ 4                       ; window .RUNs at once (NWIN windows)
-MW_STK      equ 1536                    ; a session's stack
+MW_STK      equ 2560                    ; a session's stack (the core's is as big)
 MW_TRAMP    equ 8                       ; (the slot's last bytes: JMP FAR mw_end)
 ; a session's record (mw_ses: 0 is the Executive's)
 SE_USE      equ 0                       ; 1: a window .RUN runs here
@@ -73,6 +73,7 @@ mw_on       db      0                   ; 1: the UI is patched
 mw_n        db      0                   ; window .RUNs running
 mw_cur      db      0                   ; the session running (0: the Executive)
 mw_rd       db      0                   ; 1: the screen again once switched
+mw_msg      db      0                   ; 1: mw_say's message waits (UI_MSG)
 mw_mru      times MW_MAX db 0           ; the sessions, the focus first
 mw_xc       dw      0                   ; the last one's exit code
 mw_new      db      0                   ; (mw_start: the one starting)
@@ -119,9 +120,9 @@ mw_patch:
         mov     byte [es:run_cleanup], 0EAh     ; JMP FAR mw_clean
         mov     word [es:run_cleanup + 1], mw_clean
         mov     [es:run_cleanup + 3], cs
-        mov     word [es:..@ui_wlend], 90F9h    ; STC, then NOPs
-        mov     word [es:..@ui_wlend + 2], 9090h
-        mov     byte [es:..@ui_wlend + 4], 90h
+        mov     byte [es:..@ui_wlend], 9Ah      ; CALL FAR mw_lend
+        mov     word [es:..@ui_wlend + 1], mw_lend
+        mov     [es:..@ui_wlend + 3], cs
         mov     byte [cs:mw_on], 1
 .x:     ret
 
@@ -136,6 +137,7 @@ mw_run: cmp     byte [run_active], 0
         cmp     word [cs:mw_hdr+4], 6
         jb      .orig
         mov     byte [run_active], 1
+        mov     word [cs:mw_xc], 0FFFFh ; (none has said "the list again" yet)
         call    mw_start                ; (the Executive waits in here till
         jc      .fail                   ;  the last window .RUN has ended)
         mov     ax, [cs:mw_xc]
@@ -162,6 +164,18 @@ mw_run: cmp     byte [run_active], 0
 .orig:  cmp     byte [run_active], 0    ; run_app as it was (ZF: its JE .free)
         push    ds
         push    word run_app + 5
+        retf
+
+; ui_wopen's borrow of the cache (CALL FAR): as before while no window
+; .RUN runs (the Executive's help and forms have their save-under), none
+; while one does (the screen is drawn again instead)
+mw_lend:
+        cmp     byte [cs:mw_n], 0
+        jne     .no
+        mov     ax, 0F002h
+        int     21h
+        retf
+.no:    stc
         retf
 
 ; the header of .RUN SI into mw_hdr -> CF (AX = error, 11: not a .RUN)
@@ -227,6 +241,7 @@ mw_start:
         jb      .no
         mov     ax, [cs:mw_hdr+10]      ; its footprint, as run_app reckons it
         add     ax, [cs:mw_hdr+12]
+        jc      .bad                    ; (a damaged header, as run_app says)
         cmp     ax, 4000h
         jae     .bad
         shl     ax, 1
@@ -280,7 +295,14 @@ mw_start:
         mov     al, [cs:mw_cur]
         call    mw_rec                  ; BP = the starter's record
         call    mw_save
-        mov     cx, NALLOC + 8 + 1      ; alloc_tab, run_hdr, run_hnd: none
+        cmp     byte [cs:mw_cur], 0     ; started from a window: the band, the
+        je      .ex                     ;  title, the redraw and the rest as
+        mov     di, mw_ses              ;  the Executive left them, not
+        call    mw_load_ctx.di          ;  pointers into the starter's slot
+        pusha                           ; (and that band on the screen)
+        UCALL   band_redraw
+        popa
+.ex:    mov     cx, NALLOC + 8 + 1      ; alloc_tab, run_hdr, run_hnd: none
         mov     di, alloc_tab
         xor     ax, ax
         rep     stosw
@@ -349,8 +371,10 @@ mw_end: cld
         pop     ds
         push    ss
         pop     es
+        cmp     ax, 0FFFFh              ; its exit code, unless 0FFFFh (no
+        je      .xk                     ;  relist): any other one's is kept
         mov     [cs:mw_xc], ax
-        mov     si, alloc_tab           ; its UI_ALLOC blocks
+.xk:    mov     si, alloc_tab           ; its UI_ALLOC blocks
 .f:     mov     ax, [si]
         or      ax, ax
         jz      .fn
@@ -373,19 +397,37 @@ mw_end: cld
         mov     byte [cs:bp+SE_USE], 0
         call    mw_drop                 ; out of mw_mru
         dec     byte [cs:mw_n]
-        call    mw_shrink
         xor     al, al                  ; the next in front, else the Executive
         cmp     byte [cs:mw_n], 0
         je      .go
         mov     al, [cs:mw_mru]
 .go:    mov     [cs:mw_cur], al
         call    mw_rec
+        mov     sp, [cs:bp+SE_SP]       ; (its stack now: this slot's may go)
+        call    mw_shrink
         or      al, al
-        jnz     .sw
+        jnz     .top
         mov     byte [cs:mw_rd], 0      ; (the Executive draws its list itself)
+        jmp     short .sw
+.top:   mov     bx, [wdepth]            ; its windows on top, if they aren't
+        or      bx, bx
+        jz      .sw
+        shl     bx, 2
+        mov     si, [wstack+bx-4]
+        mov     ah, al
+        call    mw_own                  ; (AL = whose the top one is)
+        cmp     al, ah
+        mov     al, ah
+        je      .sw
+        call    mw_raise
+        mov     byte [cs:mw_rd], 1
 .sw:    call    mw_load_ctx
-        mov     sp, [cs:bp+SE_SP]
-        jmp     mw_back
+        cmp     byte [cs:mw_cur], 0     ; a session's band, if the screen
+        je      .b                      ;  isn't drawn again anyway (its
+        cmp     byte [cs:mw_rd], 0      ;  question, still waiting)
+        jne     .b
+        UCALL   band_redraw
+.b:     jmp     mw_back
 
 ; ---------------------------------------------------------------------
 ;  ui_event.got (CALL FAR): AX = the event (BX, CX for a click), DS = the
@@ -396,8 +438,12 @@ mw_got: cmp     byte [cs:mw_n], 0
         je      .win                    ; (no window .RUN: as before)
         pusha
         push    es
+        push    ds                      ; (a .RUN may call UI_EVENT with any ES)
+        pop     es
         call    mw_modal                ; (a help or form window open: its)
         jc      .own
+        cmp     byte [cs:mw_msg], 0     ; (mw_say's message waiting: any key
+        jne     .own                    ;  ends it, as without tasks)
         cmp     ax, K_CODE_K
         je      .calc
         cmp     ax, K_CODE_T
@@ -514,7 +560,9 @@ mw_say: pusha
         jnz     .m
         pop     ds
         mov     si, tmp
+        mov     byte [cs:mw_msg], 1
         UCALL   ui_msg
+        mov     byte [cs:mw_msg], 0
         pop     es
         popa
         ret
@@ -1064,6 +1112,7 @@ mw_clean:
         mov     byte [cs:mw_n], 0
         mov     byte [cs:mw_cur], 0
         mov     byte [cs:mw_rd], 0
+        mov     byte [cs:mw_msg], 0
         mov     word [cs:mw_mru], 0
         mov     word [cs:mw_mru + 2], 0
         mov     byte [run_active], 1    ; (so run_cleanup shrinks the block)
