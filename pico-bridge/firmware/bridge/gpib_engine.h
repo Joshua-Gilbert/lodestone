@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define FW_TAG "bridge fw 2026-10-23a"
+#define FW_TAG "bridge fw 2026-10-23b"
 #define PROTO_VERSION 1
 
 // ---- pins ----------------------------------------------------------------------------------------------------
@@ -62,9 +62,14 @@ enum {
   E_TX_DONE,         // the last byte of a reply (EOI) was accepted
   E_ONLINE,          // b = address, arg = REN asserted (1/0)
   E_OFFLINE,
+  // (2026-10-23b, for gridlink.bench --trace: every event frame carries the time it happened, on the Pico's
+  //  microsecond timer)
+  E_RX_END,          // core 0: the last byte of a message from the 1520 (with EOI) came, at the record's time
+  E_TX_IN,           // core 0: a reply is queued (its first TX frame, or a whole one): READY from now
+  E_SRQ,             // SRQ asserted
 };
 
-typedef struct { uint8_t code, b; uint16_t gen; uint32_t arg; } rec_t;
+typedef struct { uint8_t code, b; uint16_t gen; uint32_t arg; uint32_t t; } rec_t;   // t: the timer, us
 
 #define RX_RING  4096u     // records, power of 2
 #define RX_RESERVE 64u     // kept free for events: data stops (NRFD held) before the ring is full

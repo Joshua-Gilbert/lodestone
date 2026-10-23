@@ -9,9 +9,13 @@
 #include "host_link.h"
 
 #ifdef GPIB_SIM
+#include "hal_sim.h"
 #define DMB() __atomic_thread_fence(__ATOMIC_SEQ_CST)
+#define LINK_US() hal_us()
 #else
+#include "hardware/structs/timer.h"
 #define DMB() __asm volatile("dmb" ::: "memory")
+#define LINK_US() (timer0_hw->timerawl)          // the timer core 1 stamps its records with
 #endif
 
 static uint8_t inbuf[600];
@@ -81,6 +85,14 @@ static void put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(
 static void put32(uint8_t *p, uint32_t v) { for (int i = 0; i < 4; i++) p[i] = (uint8_t)(v >> (8 * i)); }
 
 static uint32_t consumed_total(void) { return SH.tx_consumed + SH.tx_dropped0; }
+
+// An EVENT frame: code, gen, b, arg, and (2026-10-23b) when it happened on the Pico's microsecond timer.
+static void ev_fill(uint8_t *f, uint8_t code, uint16_t gen, uint8_t b, uint32_t arg, uint32_t t) {
+  f[0] = F_EVENT; f[1] = code; put16(f + 2, gen); f[4] = b; put32(f + 5, arg); put32(f + 9, t);
+}
+static void send_event_now(uint8_t code) {   // core 0's own events (not in the ring: core 1 is its producer)
+  uint8_t f[13]; ev_fill(f, code, SH.gen, 0, 0, LINK_US()); send_ctl(f, 13);
+}
 
 // ---- replies streamed in (TXF_EARLY, 2026-10-23a) ------------------------------------------------------------
 // gridlink sends a 2 KB reply as TX frames of 512.  Without EARLY the bridge says READY once the last one is
@@ -211,12 +223,14 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
       if ((flags & TXF_EARLY) && !(flags & 1) && take == len && len) {   // a reply begins: ready now
         ann_open = true; ann_gen = gen;
         SH.tx_eoi_pushed++;
+        send_event_now(E_TX_IN);
         if (SH.auto_rsv) { request(); break; }
       } else if (take == len && len && (flags & 1)) {
         bool counted = (flags & TXF_ANN) && ann_open;
         ann_open = false;
         if (!counted) {                              // a whole reply is queued
           SH.tx_eoi_pushed++;
+          send_event_now(E_TX_IN);
           if (SH.auto_rsv) { request(); break; }     // core 1 raises SRQ for it (request() wakes it too)
         }
       }
@@ -273,6 +287,7 @@ void link_poll(uint32_t now_ms, bool host_open) {
     rec_t r = SH.rx[t];
     size_t used = 1;                                 // records this frame takes
     size_t flen;
+    uint32_t end_t = 0;
     if (r.code == R_DATA) {                          // gather a run of data of one generation
       size_t dn = 0;
       uint8_t flags = 0;
@@ -282,7 +297,7 @@ void link_poll(uint32_t now_ms, bool host_open) {
         if (q.code != R_DATA || q.gen != r.gen) break;
         f[4 + dn++] = q.b;
         i = (i + 1u) & (RX_RING - 1u);
-        if (q.arg & 1u) { flags = DF_EOI; break; }
+        if (q.arg & 1u) { flags = DF_EOI; end_t = q.t; break; }
       }
       used = dn;
       f[0] = F_DATA; put16(f + 1, r.gen); f[3] = flags;
@@ -291,12 +306,15 @@ void link_poll(uint32_t now_ms, bool host_open) {
       f[0] = F_DATA; put16(f + 1, r.gen); f[3] = DF_END;
       flen = 4;
     } else {
-      f[0] = F_EVENT; f[1] = r.code; put16(f + 2, r.gen); f[4] = r.b; put32(f + 5, r.arg);
-      flen = 9;
+      ev_fill(f, r.code, r.gen, r.b, r.arg, r.t);
+      flen = 13;
     }
     if (!send_frame(f, flen)) break;                 // no room: the records wait in the ring (NRFD backs up)
     DMB();
     SH.rx_tail = (t + (uint32_t)used) & (RX_RING - 1u);
+    if (f[0] == F_DATA && (f[3] & DF_EOI)) {         // (when the message's last byte came: for the trace)
+      uint8_t e[13]; ev_fill(e, E_RX_END, r.gen, 0, 0, end_t); send_ctl(e, 13);
+    }
   }
   uint32_t c = consumed_total();
   if (c != credit_reported && (c - credit_reported >= 1024u || now_ms - last_credit_ms >= 5u)) {
