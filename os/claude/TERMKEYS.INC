@@ -22,6 +22,23 @@ K_CTRLL equ 260Ch                       ; Ctrl-L: repaint here, and the Pi's too
 %endif
 
 term_kbd:
+%ifdef KBD_EVERY
+        cmp     byte [lstate], LS_IDLE  ; while a frame is on its way, the keys
+        je      .l                      ;  (and the mouse) every KBD_EVERY PIT
+        mov     ax, [now]               ;  counts, not every round of the main
+        cmp     ax, [kbd_tick]          ;  loop: INT 16h and INT 33h took
+        jne     .due                    ;  ~0.25 ms a round on the 1520
+        call    pit_read
+        mov     dx, [kbd_pit]
+        sub     dx, ax
+        cmp     dx, KBD_EVERY
+        jae     .due
+        ret
+.due:   call    pit_read
+        mov     [kbd_pit], ax
+        mov     ax, [now]
+        mov     [kbd_tick], ax
+%endif
 .l:     mov     ah, 11h
         kbd
         jz      term_send

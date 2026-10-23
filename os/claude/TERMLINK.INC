@@ -310,6 +310,13 @@ link_wait:
         mov     cx, ax
         call    delay_ms
 .read:  call    link_read
+%ifdef LINK_CHAIN
+        cmp     byte [lstate], LS_IDLE  ; the answer is in: the next frame at
+        jne     .x                      ;  once, not after a round of the main
+        cmp     byte [req_ready], 0     ;  loop (keys, ticks: ~0.4 ms a frame on
+        jne     .x                      ;  the 1520) -- unless a request is to
+        jmp     link_idle               ;  run first: its REPLY is what goes
+%endif
 .x:     ret
 .perr:  inc     byte [spoll_errs]
         cmp     byte [spoll_errs], 8
