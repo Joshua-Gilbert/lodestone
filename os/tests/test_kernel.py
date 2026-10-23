@@ -1861,6 +1861,77 @@ def t_errs():
           [(w, g) for w, g in zip(want, got) if w != g][:8] or (len(want), len(got)))
     check('... disk consistent', not fatcheck.check(bytes(k.pc.drives[0].img))[0], fatcheck.check(bytes(k.pc.drives[0].img))[0])
 
+# NODISK.COM's lines as GRiD MS-DOS 3.30 gives them, drive B with no disk (run in the emulator from its ROM image)
+MS_NODISK = ['fn 3D B:X.TXT -> err 03 crit 1A 02',
+             'fn 3C B:X.TXT -> err 03 crit 1A 02',
+             'fn 43 B:X.TXT -> err 03 crit 1A 02',
+             'fn 4E B:*.* -> err 03 crit 1A 02',
+             'fn 3B B:\\ -> err 03 crit 1A 02',
+             'fn 39 B:\\D -> err 03 crit 1A 02',
+             'fn 3A B:\\D -> err 03 crit 1A 02',
+             'fn 41 B:X.TXT -> err 03 crit 1A 02',
+             'fn 56 B:X.TXT -> err 03 crit 1A 02',
+             'fn 36 -> err FF crit 1A 02',
+             'fn 3D B:X.TXT -> err 03 crit 1A 02']
+
+def t_nodisk():
+    """A drive with no disk (B:): each path call raises INT 24h as GRiD MS-DOS 3.30 does (AH 1Ah: Retry or Fail,
+    read, the FAT's area; DI 2, not ready), then answers 3 (free space FFFFh) when it is told Fail.  It answered 21
+    with no INT 24h: the mount read the boot sector without one.  LCMD asks "Abort, Retry, Fail?" as COMMAND.COM."""
+    com = os.path.join(OUT, 'NODISK.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NODISK.ASM')], check=True)
+    k = ktest.KPC(image('nodisk.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISK.COM=' + com), bytes(1474560))
+    k.pc.drives[1].empty = True
+    k.start()
+    sh = Shell(k)
+    assert run_long(k, 'nodisk > out.txt')
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    got = [' '.join(l.split()) for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+    check("NODISK.COM: all %d calls answer as GRiD MS-DOS 3.30's do (INT 24h, then 3)" % len(MS_NODISK), got == MS_NODISK,
+          [(w, g) for w, g in zip(MS_NODISK, got) if w != g] or (len(MS_NODISK), len(got)))
+    # a handler that answers Ignore, which the mount doesn't offer: Fail, as MS-DOS (it mounted B: from A:'s boot sector)
+    ig = os.path.join(OUT, 'NODISKIG.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', ig, os.path.join(HERE, 'NODISKIG.ASM')], check=True)
+    k = ktest.KPC(image('nodiskig.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISKIG.COM=' + ig), bytes(1474560))
+    k.pc.drives[1].empty = True
+    k.start()
+    sh = Shell(k)
+    assert run_long(k, 'nodiskig > out.txt')
+    o = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\OUT.TXT', b'').decode('latin-1')
+    check('... a handler that answers Ignore at the mount: Fail all the same (open and FIND FIRST 3, free space FFFFh), '
+          'not B: mounted from what A: left', 'open B:X.TXT err 0003' in o and 'B: free FFFF' in o and 'find B:*.* err 0003' in o, o)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('type b:x.txt'); k.key(ktest.ENTER)
+    o1 = k.pc.text_screen()
+    k.key('f')
+    o = k.pc.text_screen()
+    check('LCMD: TYPE B:X.TXT with no disk: "Not ready error reading drive B", "Abort, Retry, Fail?"; F: back at the prompt',
+          'Not ready error reading drive B' in o1 and 'Abort, Retry, Fail?' in o1 and o.rstrip().endswith('A:\\>'), (o1, o))
+    # B: current, no disk: nothing asked at each prompt (a pipe's files went only after a pipe); a program looked for
+    # there: one question, not one for each of .COM .EXE .BAT; Tab: a beep, no question in the line
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('b:'); k.key(ktest.ENTER); k.key(ktest.ENTER); k.key(ktest.ENTER)
+    o1 = k.pc.text_screen()
+    k.key('x'); k.key(ktest.ENTER)
+    o2 = k.pc.text_screen()
+    k.key('f')
+    o3 = k.pc.text_screen()
+    k.key('a:'); k.key(ktest.ENTER); k.key('cls'); k.key(ktest.ENTER)
+    k.key('type b:'); k.key(ktest.TAB)
+    o4 = k.pc.text_screen()
+    k.key(ktest.ESC); k.key(ktest.ENTER)
+    check('... B: current with no disk: no question at the prompts; X there: one, then "Bad command or file name"; '
+          'Tab on B:: none, the line as typed', 'Fail?' not in o1 and o1.count('B:\\>') >= 3 and o2.count('Fail?') == 1
+          and o3.count('Fail?') == 1 and 'Bad command or file name' in o3 and 'Fail?' not in o4 and 'A:\\>type b:' in o4,
+          (o1, o2, o3, o4))
+    # a pipe whose second command's redirection fails: the first's file deleted all the same
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('echo hi | echo x < nosuch.txt'); k.key(ktest.ENTER)
+    k.key('dir \\pipe*.*'); k.key(ktest.ENTER)
+    o = k.pc.text_screen()
+    check('... "echo hi | echo x < nosuch.txt": "File not found" for the redirection, and no \\PIPEA1.$$$ left',
+          o.count('File not found') == 2 and 'PIPEA1' not in o, o)
+
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
     errors that say where, IF, GOTO, SHIFT, FOR, CALL, %NAME%, CHOICE."""
@@ -2405,7 +2476,7 @@ def t_calc():
     check("a full disk: \"CALC: Can't write the answer\", ERRORLEVEL 1", "CALC: Can't write the answer" in o and 'EL' in res(o), o)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
