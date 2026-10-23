@@ -240,7 +240,8 @@ every byte checked.
 | bridge fw 2026-10-23a: EARLY answers (read while the rest crosses USB) | 6.0 ms | 8 ms median | 87.2 KB/s | 81.9 KB/s |
 | CLAUDE 1.5: 8 KB write requests, the next frame straight after an answer | 6.0 ms | 8 ms median | 89.4 KB/s | 82.1 KB/s |
 | bridge fw 2026-10-23c: held replies (the bridge answers the POLLs between fragments) | 6.0 ms | 8 ms median | 94.1 KB/s | 82.1 KB/s |
-| CLAUDE 1.6: 3340-byte frames and 16 KB write requests | **6.0 ms** | **8 ms** median | **109.5 KB/s** | **82.1 KB/s** |
+| CLAUDE 1.6: 3340-byte frames and 16 KB write requests | 6.0 ms | 8 ms median | 109.5 KB/s | 82.1 KB/s |
+| CLAUDE 1.7: 3300-byte frames out of the GRiD and 16 KB reads | **6.0 ms** | **8 ms** median | **109.5 KB/s** | **89.6 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -308,6 +309,10 @@ every byte checked.
   its size. A 16 KB request is now exactly five full frames, and there are
   half as many requests (DOS open, seek and close) per file: 128 KB goes in
   40 frames instead of 80. Pi to GRiD went from 94.1 to 109.5 KB/s.
+  CLAUDE 1.7 does the same the other way: 3300-byte frames out of the GRiD
+  and 16 KB reads (the GRiD's HELLO says `rd=16384`; an older CLAUDE
+  answers at most 16,382 bytes, so gridlink asks it for 8 KB). GRiD to Pi
+  went from 82.1 to 89.6 KB/s.
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
