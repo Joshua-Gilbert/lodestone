@@ -30,7 +30,7 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M7b | The Executive: programs started as tasks, its task list (TASKS.RUN, CODE-T); System's switch; LODE.INI's `BG=`, `FREEZE=` and `MTMEM=` | PR #71, merged. |
 | M7c | Resident Claude with tasks: its pop-up and TYPE's keys the front task's, its key wait a place to switch from, CODE-Tab in the console its own, `/R` not inside a task (`MT_TSR`) | PR #73, merged. |
 | M8a | Several window `.RUN`s at once, each a session in the UI task; the Executive waits meanwhile | PR #77, merged. |
-| M8b | Write as a window, several at once; windows resized by the mouse or CODE-F8; window `.RUN`s marked in their header | This PR. |
+| M8b | Write as a window, several at once; windows resized by the mouse or CODE-F8; window `.RUN`s marked in their header | PR #79. |
 | M8c | A live base under the windows: the Executive or System working under them (clipping) | |
 | M9 | On the 1520, and release 0.7 | |
 
