@@ -623,10 +623,11 @@ mt_preempt:
         jne     .p
         call    mt_kin
         je      .p
-        mov     bl, al
-        jmp     mt_switch
+        mov     byte [cs:mt_tsrk], 0    ; (given: Resident Claude's pop-up is
+        mov     bl, al                  ;  the front task's call's to bring)
+        jmp     short .sw
 .p:     call    mt_pick
-        jnc     mt_switch
+        jnc     .sw
         mov     al, [cs:mt_cur]         ; none: this one goes on, a new turn;
         call    mt_ent                  ;  unless it ended itself (now), or it
         cmp     byte [cs:bx+TE_KILL], 0 ;  is frozen here: then the front one
@@ -636,7 +637,28 @@ mt_preempt:
         mov     byte [cs:mt_slice], 2
         ret
 .fz:    mov     bl, [cs:mt_front]
+.sw:    call    mt_tsrw
         jmp     mt_switch
+
+; the running task, switched from Resident Claude's key wait (its HLT, where
+; mt_safe said yes: mt_lcs, mt_lip): it waits for a key, as in MT
+; (TS_WAITK), so it gets no turns behind, and in front one when a key comes
+; (mt_kin) instead of every round.  Registers kept
+mt_tsrw:
+        push    ax
+        mov     ax, [cs:mt_lcs]
+        cmp     ax, [cs:mt_tsrs]
+        jne     .x
+        mov     ax, [cs:mt_lip]
+        cmp     ax, [cs:mt_tsro]
+        jne     .x
+        push    bx
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        mov     byte [cs:bx+TE_STATE], TS_WAITK
+        pop     bx
+.x:     pop     ax
+        ret
 
 ; a new task's first return (mt_load): to its stub, flags with IF
 mt_first:
@@ -3498,8 +3520,12 @@ mt_i16:
         je      .h                      ;  header)
         push    ds
         mov     ds, [cs:mt_tsrs]
+        cmp     word [100h], 'CL'       ; (its header still there: not after
+        jne     .hd                     ;  an older CLAUDE /U)
         cmp     byte [10Dh], 0
-        pop     ds
+        jmp     short .he
+.hd:    cmp     al, al
+.he:    pop     ds
         jne     .nh
 .h:     call    mt_hot
 .nh:    cli
