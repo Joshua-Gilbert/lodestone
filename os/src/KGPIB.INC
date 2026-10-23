@@ -121,7 +121,8 @@ gp_NFUNC   equ ($-gp_functab)/2         ;  bad-function answer, as it is built i
 ; ---- function bodies: return AX (and CX/DX where documented) -------
 gp_f_present:
         mov     ax, 4747h
-        mov     cx, 0121h               ; LODESTONE: 1.2x = built into the kernel (1.21: IRQ, 0Eh)
+        mov     cx, 0122h               ; LODESTONE: 1.2x = built into the kernel (1.21: IRQ, 0Eh;
+                                        ;  1.22: GPIBLOOP's fast loops)
         mov     dh, 60h                 ; (the only vector it is put on)
         mov     dl, gp_MYADDR
         jmp     gp_done
