@@ -464,7 +464,7 @@ Programs:
   CLAUDE    Claude for GRiD. Needs the Pi bridge at GPIB address 7
             (CLAUDE /A:nn for another). F1 keys, CODE-Q quits.
             CLAUDE /T: Claude Code itself (Term); CODE-R redraws.
-            CLAUDE /R: resident (needs EMS; 0.8 KB): CODE-\ over a
+            CLAUDE /R: resident (needs EMS; 0.9 KB): CODE-\ over a
             program waiting for a key brings Claude Code up, the same
             session as CLAUDE /T; CODE-\ again goes back.  Claude sees
             that program and can type into it (asking you first; CODE-\

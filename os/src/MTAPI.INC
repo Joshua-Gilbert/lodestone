@@ -82,6 +82,16 @@ MT_UI       equ 19h                     ; (the Executive's, at its start: DX:AX
                                         ;  AL = 0: start the program DS:SI
                                         ;  (Return); AL = 1: has a task ended?
                                         ;  ES:DI = room for a message)
+MT_TSR      equ 1Ah                     ; (Resident Claude's, at CLAUDE /R and
+                                        ;  /U: M7c) ES:BX = the instruction
+                                        ;  after its key wait's HLT, where the
+                                        ;  tick may switch from it in the task
+                                        ;  whose call it is (0:0: none any
+                                        ;  more) -> DX:AX = MT's three bytes:
+                                        ;  the front task's number, the running
+                                        ;  one's, and 1 while its pop-up waits
+                                        ;  for the front task (the stub's to
+                                        ;  set and clear)
 MT_SCREEN   equ 1Ch                    ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back
                                         ;  after a screen saver): not counted
