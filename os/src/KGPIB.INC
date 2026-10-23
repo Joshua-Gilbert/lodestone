@@ -411,6 +411,14 @@ gp_do_write:
 .x:     mov     cx, [gp_done_n]
         ret
 
+; (LODESTONE: the two fast loops at the parity they had when they were
+; measured fastest on the 1520: gp_fast_write at an odd address, so its
+; .n and .g are even, and gp_fast_read at an even one, so its .w is.  The
+; 286 fetches words: a jump to an odd address costs another fetch.  The
+; kernel growing by an odd number of bytes above them moved both, and the
+; copies through the link lost 4-10 % (bench --trace: TALK -> TX_DONE
+; 27.2 -> 30.0 ms a 2 KB frame).  The pad bytes are never executed.)
+        times 1 - (($ - $$) & 1) db 90h
 ; Fast path for the bulk of a write: a tight loop on ISR1 DO, the byte
 ; out as soon as the chip takes the last one.  Leaves the last byte (it
 ; may need EOI) and anything unusual (ERR, a slow listener) to the
@@ -447,6 +455,7 @@ gp_fast_write:
         pop     bx
 .x:     ret
 
+        times ($ - $$) & 1 db 90h
 ; Fast path for the bulk of a read: while at least three bytes of room are
 ; left, a tight loop on ISR1 DI.  Stops on END or LF-stop (CF set) or at the
 ; last two bytes / anything slow (CF clear: the careful loop goes on from
