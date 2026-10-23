@@ -811,6 +811,15 @@ def test_app_plain_video():
         V.find = lambda u, profile=None: (_ for _ in ()).throw(V.NotFound('yt-dlp is not installed on the Pi'))
         r.keys('y')
         assert r.has('Y: yt-dlp is not installed') and not app.picture
+        app.picture_view(True); assert app.picture
+        seen = []
+        def slow(u, profile=None):
+            seen.append(app.title_sent)          # what the GRiD's band says while yt-dlp works
+            raise V.NotFound('Video unavailable')
+        V.find = slow
+        app.key('ctrl-y'); r.pump()
+        assert seen and seen[0].startswith('Finding the video'), seen
+        assert not app.picture and r.has('Y: Video unavailable')  # (back to the text, to say why)
         V.find = lambda u, profile=None: ('https://rr1.googlevideo.com/v', '2001 trailer')
         n = len(r.f.points)
         r.keys('y')
