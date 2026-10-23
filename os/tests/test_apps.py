@@ -43,7 +43,8 @@ def build():
     for src, dst in (('apps/SYSTEM.ASM', SYSTEM), ('apps/WRITE.ASM', WRITE), ('tests/UITEST.ASM', UITEST), ('apps/CALC.ASM', CALCRUN),
                      ('apps/TASKS.ASM', os.path.join(GOS, 'apps', 'TASKS.RUN')),
                      ('tests/RCTEST.ASM', os.path.join(HERE, 'RCTEST.RUN')), ('tests/RC6.ASM', os.path.join(HERE, 'RC6.RUN')),
-                     ('tests/MENUTEST.ASM', os.path.join(HERE, 'MENUTEST.RUN'))):
+                     ('tests/MENUTEST.ASM', os.path.join(HERE, 'MENUTEST.RUN')),
+                     ('tests/CLIPTEST.ASM', os.path.join(HERE, 'CLIPTEST.RUN'))):
         mkrun.build(os.path.join(GOS, src), dst)
     subprocess.run(['nasm', '-f', 'bin', '-o', MEMSZ, os.path.join(HERE, 'MEMSZ.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
@@ -564,8 +565,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8): the directory buffer is lent while it runs' % kb,
-          kb >= 564.9, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP): the directory buffer is lent while it runs' % kb,
+          kb >= 564.6, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -2436,11 +2437,96 @@ def t_menu():
     k.key(ktest.ESC, ktest.ESC)
     check('no mouse: UI_MOUSE says so (CF)', dcf == 0xFFFF and k.rd('run_active', 1) == b'\x00' and not k.crashed, dcf)
 
+CLIPTEST = os.path.join(HERE, 'CLIPTEST.RUN')
+CLIPPAT = bytes((i * 7 + 3) & 0xFF for i in range(16385))
+
+class Clip:
+    """CLIPTEST.RUN running in k: put, get, size (UI_CLIP AL = 0, 1, 2)."""
+    def __init__(s, k):
+        s.k = k
+        k.select('CLIPTEST.RUN'); k.key(ktest.ENTER)
+        s.sy, s.base = run_syms('tests/CLIPTEST.ASM'), k.u16('run_base')
+    def v(s, n): return s.k.pc.u16(s.k.useg, s.base + s.sy[n])
+    def set(s, n, x): s.k.pc.wr(s.k.useg, s.base + s.sy[n], struct.pack('<H', x))
+    def put(s, data):
+        s.k.pc.wr(s.v('bseg'), 0, data); s.set('plen', len(data)); s.k.key('P')
+        return (s.v('rcf'), s.v('rret')) if s.v('rcf') else 0
+    def get(s, room):
+        s.k.pc.wr(s.v('bseg'), 16400, bytes(room + 16)); s.set('gmax', room); s.k.key('G')
+        return (s.v('rcf'), s.v('rret')) if s.v('rcf') else bytes(s.k.pc.rd(s.v('bseg'), 16400, s.v('gcx'))), \
+            bytes(s.k.pc.rd(s.v('bseg'), 16400 + s.v('gcx'), 16))
+    def size(s):
+        s.k.key('S'); return s.v('scx')
+
+def t_clip():
+    """UI_CLIP (UI API 8): a clipboard every .RUN shares, kept when they end:
+    in an EMS page of its own, else in CLIP.$$$ on the settings drive."""
+    print('== the clipboard (UI_CLIP, UI API 8)')
+    k = ktest.KPC(image('clip.img', CLIPTEST), ems_pages=88); k.start()
+    c = Clip(k)
+    s0 = c.size()
+    e0 = c.put(b'')
+    h0 = k.u16('clip_h')
+    r = c.put(CLIPPAT[:1000])
+    h = k.u16('clip_h')
+    rec = k.rd('ems_h', 4, 4 * h) if h else b''
+    check('EMS: empty at first (%d), and emptied takes no page yet; 1000 bytes put: its size 1000, in a page of its own (handle %d: %r, nobody\'s), not the file'
+          % (s0, h, rec.hex()), s0 == 0 and e0 == 0 and h0 == 0 and r == 0 and c.size() == 1000 and 0 < h < 32 and rec[1] == 1
+          and rec[2:] == b'\0\0' and k.rd('clip_f', 1) == b'\0' and disk_file(k, 'CLIP.$$$') is None, (s0, r, h, rec))
+    g, past = c.get(2000)
+    g10, past10 = c.get(10)
+    check('got with room for 2000: the 1000 bytes, nothing past them; with room for 10: those 10, nothing past them',
+          g == CLIPPAT[:1000] and past == bytes(16) and c.v('gcx') == 10 and g10 == CLIPPAT[:10] and past10 == bytes(16),
+          (len(g) if isinstance(g, bytes) else g, past, g10))
+    k.key(ktest.ESC)
+    c = Clip(k)
+    g, _ = c.get(2000)
+    check('the program ended and started again: still the 1000 bytes (kept by the core, not the program)',
+          c.size() == 1000 and g == CLIPPAT[:1000] and k.u16('clip_h') == h, (c.size(), k.u16('clip_h')))
+    big = c.put(CLIPPAT)
+    full = c.put(CLIPPAT[:16384])
+    g, _ = c.get(16384)
+    check('16385 bytes: refused (CF, error 8), what it held kept; 16384: the page full, got back whole',
+          big == (0xFFFF, 8) and full == 0 and g == CLIPPAT[:16384] and c.size() == 16384 and k.u16('clip_h') == h, (big, full, k.u16('clip_h')))
+    e = c.put(b'')
+    g, _ = c.get(100)
+    check('0 bytes put: empty (size 0, nothing to get)', e == 0 and c.size() == 0 and g == b'' and c.v('gcx') == 0, (e, c.size()))
+    k.key(ktest.ESC)
+    check('... and the Executive again', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
+    # no EMS: CLIP.$$$ on the start-up disk (no settings drive of its own here)
+    k = ktest.KPC(image('clip0.img', CLIPTEST)); k.start()
+    c = Clip(k)
+    e0 = c.put(b'')
+    f0 = disk_file(k, 'CLIP.$$$')
+    r = c.put(CLIPPAT[:3000])
+    g, _ = c.get(4000)
+    f = disk_file(k, 'CLIP.$$$')
+    check('no EMS: emptied first writes no file; 3000 bytes put go to A:\\CLIP.$$$ (exactly them), got back whole',
+          e0 == 0 and f0 is None and r == 0 and k.u16('clip_h') == 0
+          and k.rd('clip_f', 1) == b'\x01' and f == CLIPPAT[:3000] and g == CLIPPAT[:3000] and c.size() == 3000,
+          (r, k.u16('clip_h'), f and len(f)))
+    k.key(ktest.ESC)
+    c = Clip(k)
+    g, _ = c.get(4000)
+    r2 = c.put(CLIPPAT[5:105])
+    check('... the program started again: still them; 100 others put: the file just those',
+          g == CLIPPAT[:3000] and r2 == 0 and disk_file(k, 'CLIP.$$$') == CLIPPAT[5:105] and c.size() == 100, (len(g), r2))
+    k.key(ktest.ESC)
+    # EMS, every page M:'s (MDISK=ALL): none to be had, so the file
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'MDISK=ALL\r\n')
+    k = ktest.KPC(image('clipm.img', CLIPTEST, 'LODE.INI=' + ini), ems_pages=88); k.start()
+    c = Clip(k)
+    r = c.put(CLIPPAT[:500])
+    g, _ = c.get(500)
+    check('EMS but every page M:\'s (MDISK=ALL): the file instead (A:\\CLIP.$$$), got back whole', r == 0 and k.u16('clip_h') == 0
+          and k.rd('clip_f', 1) == b'\x01' and disk_file(k, 'CLIP.$$$') == CLIPPAT[:500] and g == CLIPPAT[:500], (r, k.u16('clip_h')))
+    k.key(ktest.ESC)
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

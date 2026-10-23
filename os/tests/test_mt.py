@@ -59,7 +59,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x63D0}  # (621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x6506}  # (63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -3588,6 +3588,42 @@ def t_menu():
     check('ESC, ESC: MENUTEST ended, the Executive in front (MTSPIN still behind)', mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and not k.crashed,
           (mb('mw_n'), k.band()))
 
+def t_clip():
+    print('== the clipboard (UI_CLIP) with tasks: a window .RUN\'s, kept while tasks are parked and killed')
+    k = boot('mt_clip.img', b'MULTITASK=1\r\n', 88, A.CLIPTEST)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    sy = A.run_syms('tests/CLIPTEST.ASM')
+    def start():
+        k.select('CLIPTEST.RUN'); k.key(ktest.ENTER); k.run_for(1.0)
+        return k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+    v = lambda b, n: k.pc.u16(k.useg, b + sy[n])
+    def put(b, data):
+        k.pc.wr(v(b, 'bseg'), 0, data); k.pc.wr(k.useg, b + sy['plen'], struct.pack('<H', len(data))); k.key('P')
+        return v(b, 'rcf')
+    def get(b, room):
+        k.pc.wr(v(b, 'bseg'), 16400, bytes(room)); k.pc.wr(k.useg, b + sy['gmax'], struct.pack('<H', room)); k.key('G')
+        return bytes(k.pc.rd(v(b, 'bseg'), 16400, v(b, 'gcx'))) if not v(b, 'rcf') else None
+    b = start()
+    cf, h, ses = put(b, A.CLIPPAT[:2000]), k.u16('clip_h'), mb('mw_cur')
+    k.key(ktest.ESC); k.run_for(0.5)
+    sh = Shell(k)
+    sh.run('start /w mtline.com cl.txt')
+    op = sh.run('park 1 && echo PARKED')
+    ou = sh.run('unpark 1 && echo BACK')
+    ok_ = sh.run('kill 1 && echo KILLED')
+    typ(k, 'exit', 1.0); k.settle()
+    for _ in range(10):                             # ("LCMD.COM ended": a key reads it, once it shows)
+        k.run_for(0.3)
+        if 'Press any key' in k.band(): k.key(ktest.ESC); break
+    b = start()
+    g, rec = get(b, 4000), k.rd('ems_h', 4, 4 * h) if h else b''
+    k.key(ktest.ESC); k.run_for(0.5)
+    check('CLIPTEST a window .RUN (session %d): 2000 bytes put (handle %d); ended; a task started, parked, back and '
+          'killed from LCMD; CLIPTEST again: the same 2000 bytes, its handle as it was (%r: one page, nobody\'s)'
+          % (ses, h, rec.hex()), cf == 0 and ses == 1 and 0 < h < 32 and g == A.CLIPPAT[:2000] and k.u16('clip_h') == h
+          and rec[1] == 1 and rec[2:] == b'\0\0' and mb('mw_n') == 0 and 'PARKED' in op and 'BACK' in ou and 'KILLED' in ok_ and not k.crashed, (cf, ses, h, g and len(g), rec, op[-80:], ou[-80:], ok_[-80:]))
+
 def t_write():
     print('== Write as a window (M8b): beside the calculator and another Write, moved and resized')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
@@ -3958,7 +3994,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 581.0 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '581.0', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 580.7 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.7', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
@@ -4102,7 +4138,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
