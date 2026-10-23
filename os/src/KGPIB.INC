@@ -424,7 +424,8 @@ gp_do_write:
 ; Fast path for the bulk of a write: the next byte is fetched while the bus
 ; handshakes, so DO -> OUT is three instructions, and a poll that misses
 ; costs one taken jump (back to the count just above the poll).  Polls DO
-; alone; ERR (no listener) ends it by the count.  Leaves the last byte (it
+; alone; every 64 misses it looks for ERR (no listener: out at once), and
+; 256 such waits send it to the careful loop.  Leaves the last byte (it
 ; may need EOI) and anything unusual to the careful loop above, which picks
 ; up at [gp_done_n] with ES:SI.
 gp_fast_write:
@@ -440,14 +441,16 @@ gp_fast_write:
         mov     bh, [gp_shadow1]
         es lodsb
         mov     ah, al
-        xor     di, di
+        mov     di, 64
+        xor     bl, bl                  ; 256 waits of 64 polls
         test    bh, gp_ISR1_DO
         jz      .w
         and     bh, ~gp_ISR1_DO
         jmp     short .put
-        times ($ + 3 - $$) & 1 db 90h   ; .w even, .put odd
-.r:     dec     di                      ; 65535 misses (~ 50 ms), then the
-        jz      .t                      ;  careful loop
+        times ($ + 5 - $$) & 1 db 90h   ; .w even, .put odd
+.r:     or      bh, al                  ; a miss (ERR is cleared as it is read)
+        dec     di
+        jz      .c
 .w:     in      al, dx
         test    al, gp_ISR1_DO
         jz      .r
@@ -457,10 +460,14 @@ gp_fast_write:
         mov     dh, gp_R_ISR1 >> 8
         es lodsb                        ; (the last byte, after the last)
         mov     ah, al
-        xor     di, di
+        mov     di, 64
         loop    .w
         jmp     short .o
-.t:     or      bh, al                  ; (ERR: the careful loop says NOL)
+.c:     mov     di, 64                  ; 64 misses: ERR?  256 times?
+        test    bh, gp_ISR1_ERR
+        jnz     .o                      ; (ERR: the careful loop says NOL)
+        dec     bl
+        jnz     .w
 .o:     dec     si                      ; (the byte fetched, not sent)
         mov     [gp_shadow1], bh
         mov     ax, si
