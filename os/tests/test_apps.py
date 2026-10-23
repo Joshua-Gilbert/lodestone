@@ -564,8 +564,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.4 KB, pop-up menus and drags, UI API 8): the directory buffer is lent while it runs' % kb,
-          kb >= 565.0, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8): the directory buffer is lent while it runs' % kb,
+          kb >= 564.9, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -2375,10 +2375,22 @@ def t_menu():
     point(k, 100, 100); k.key(ktest.ESC)
     check('ESC: none, and the ESC the menu\'s (the program\'s window still open)', v16('mres') == 0xFFFF
           and k.pc.rd(k.useg, base + sy['wopen'], 1) == b'\x01' and body(k) == v0, v16('mres'))
-    k.key('M'); at = hw(); k.key(ktest.ESC)
-    k.key('N'); at2 = hw(); k.key(ktest.ESC)
-    check('at (639, 399): kept on the screen above the band (column 60, row 272); at (0, 0): under the title rule (0, 24)',
-          at[:2] == (60, 272) and at2[:2] == (0, 24) and body(k) == v0, (at, at2))
+    k.key('M'); at = hw(); k.key(ktest.ENTER); mm = v16('mres')
+    k.key('N'); at2 = hw(); k.key(ktest.ENTER)
+    check('at (639, 399): kept on the screen above the band (column 60, row 272), AH = 3 lit first (Return: 3); at (0, 0): '
+          'under the title rule (0, 24), and AH past the last item: the first lit (Return: 0)',
+          at[:2] == (60, 272) and mm == 3 and at2[:2] == (0, 24) and v16('mres') == 0 and body(k) == v0, (at, mm, at2, v16('mres')))
+    k.key('T'); at4 = hw(); k.key(ktest.ESC)
+    check('20 items at (100, 399): 328 rows high, from row 32 (the band below it)', at4 == (12, 32, 20, 328) and body(k) == v0, at4)
+    k.key('L'); at3 = hw(); k.key(ktest.ESC)
+    check('an item of 90 characters: the menu the screen\'s width (80 columns, from column 0), the item cut at its edge',
+          at3[0] == 0 and at3[2] == 80 and body(k) == v0, at3)
+    k.key('O', 'O', 'O'); nm, dp = v16('nmenu'), k.u16('wdepth')
+    rpress(100, 100)
+    full = v16('nmenu') - nm, v16('mres'), k.u16('wdepth'), k.u16('wover'), has(k, 'Paste')
+    k.key(ktest.ESC, ktest.ESC, ktest.ESC); point(k, 100, 100)
+    check('four windows open (the most): a right click gives no menu, none at once (FFFFh), nothing over the windows (%s)' % (full,),
+          dp == 4 and full == (1, 0xFFFF, 4, 0, False) and k.u16('wdepth') == 1 and body(k) == v0, (dp, full, k.u16('wdepth')))
     # the saver while it is open: the menu back after, with what was lit
     rpress(100, 100); k.key(ktest.DOWN)
     k.wr('saver_t', struct.pack('<H', 36))
@@ -2416,6 +2428,13 @@ def t_menu():
           lent and v16('mres') == 0 and k.u16('wseg') == 0 and k.u16('wdepth') == 0 and body(k) == v1, (lent, v16('mres'), k.u16('wseg')))
     k.key(ktest.ESC)
     check('ESC: the Executive again', k.rd('run_active', 1) == b'\x00' and not k.crashed and has(k, 'MENUTEST'), k.band())
+    k = ktest.KPC(image('menu.img', MENUTEST)); k.start()
+    k.select('MENUTEST.RUN'); k.key(ktest.ENTER)
+    base = k.u16('run_base')
+    k.key('U')
+    dcf = k.pc.u16(k.useg, base + sy['dcf'])
+    k.key(ktest.ESC, ktest.ESC)
+    check('no mouse: UI_MOUSE says so (CF)', dcf == 0xFFFF and k.rd('run_active', 1) == b'\x00' and not k.crashed, dcf)
 
 if __name__ == '__main__':
     t0 = time.time()

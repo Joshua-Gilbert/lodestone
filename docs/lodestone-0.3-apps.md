@@ -883,7 +883,8 @@ The first of four steps toward right-click editing in Write: this one is the cor
   - In: SI = AL items (1–20), each a word pointer to ASCIIZ; AH = the item lit first (below AL); BX = x, CX = y, as `EV_RCLICK` gives them.
   - A window at that point, without a title, kept on the screen: its column at most 80 less its width, its row between the title rule and the band, a multiple of 4. It is as wide as the longest item and 4 columns more, and 16 rows per item and 8 more high.
   - The arrows, PgUp, PgDn, Home and End move the light; a letter lights the next item starting with it (`UI_LVKEY`); Return (or CODE-Return) or a click on an item chooses: CF clear, AX = the item.
-  - ESC (or CODE-ESC), or a click outside the window: CF set. The click does nothing else (it is taken). A click inside the window but on no item (its edge) does nothing.
+  - ESC (or CODE-ESC), or a click outside the window: CF set. The click does nothing else (it is taken). A click inside the window above the first item or below the last (its top and bottom edges) does nothing; one on its left or right edge, on an item's row, chooses that item.
+  - With four windows open (`NWIN`) there is no room for it: CF at once, with a beep, as `UI_FORM` does. Otherwise it would be no window: not drawn, not modal, and (with `MULTITASK=1`) a borrow of the cache nobody gives back. AL outside 1–20 is refused the same way; AH past the last item lights the first. It is at most 80 columns wide: longer items are cut at the edge.
   - Items that don't apply are left out by the caller, not greyed: it costs the core nothing.
   - It is built from what was there: the help window's structure (`help_w`, as `UI_HELP` and `UI_FORM` use it) and a list view (`LV_*`) in the core's BSS.
 - **`UI_MOUSE` (entry 48):** the mouse now, for a drag.
@@ -894,25 +895,27 @@ The first of four steps toward right-click editing in Write: this one is the cor
 - **With `MULTITASK=1`:**
   - **The menu saves what is under it.** A window `.RUN`'s windows have no save-under (M8a: `mw_lend` lends no cache while one runs, so closing one draws the screen again, through the Executive's directory). A menu over one would have done that at every close. So when windows are open and none is saved, the menu borrows the cache itself (F002h) and gives it back after (`mn_lent`). That is safe where M8's rule isn't needed: the menu is modal and doesn't move, and nothing else is drawn over it meanwhile.
   - **It is modal:** it is `help_w`, so `mw_modal` keeps the focus where it is. CODE-F6 and the launch keys do nothing; a click on another window is a click outside: no choice, and that window doesn't come to the front.
-  - **A drag lets the tasks run.** `UI_MOUSE` and `win_mv` (a window moved by its title strip) wait in `mwait`, whose HLT is a safe point like the UI's idle one (`..@ui_midle`, beside `..@ui_idle` and `..@ui_sidle` in `mt_safe`). Before, a window's drag held every DOS task until the button came up. While the mouse moves its packets end each wait before the tick does, so the tasks get their turns mostly while it is still.
+  - **A drag lets the tasks run.** `UI_MOUSE` and `win_mv` (a window moved by its title strip) wait in `mwait`, whose HLT is a safe point like the UI's idle one (`..@ui_midle`, beside `..@ui_idle` and `..@ui_sidle` in `mt_safe`). Before, a window's drag held every DOS task until the button came up. As at the idle HLT, a tick that finds the UI there ends its turn (`mt_tick`: just after a HLT), and between the mouse's bytes (about 8 ms each) it is there nearly all the time: so the tasks get their turns while it moves too. So that a drag still follows the mouse, MT notes where the mouse was when it switched from the UI there (`mt_mdset`: `mt_mdrag`, `mt_mx`, `mt_my`, `mt_mb`), and once it has moved, or a button has changed, the UI is the next to run, at the next tick, ahead of the tasks behind (`mt_mwant`, beside `mt_kwant`'s key for the front task). While it moves, the drag runs every other tick at least, whatever the number of tasks; held still, the UI waits its turn and the tasks get the rest. Resizing (`mw_size`, in MT's own code) still holds them.
 - **Versioning:** `UI_API` is 8. Every `.RUN` here declares its `RUN_API`, so they are byte for byte as before; Write moves to 8 with its menu (an older LODE.SYS will refuse that WRITE.RUN).
 - **Cost:**
-  - The core's code grows by 380 bytes (`ui_image_end` 4F5Ah → 50D6h): `UI_MENU` is most of it, `UI_MOUSE` and `mwait` about 40. Its BSS by 23 (`mn_tab`, `mn_lv`, `mn_lent`, outside every range a session keeps: M8's `mw_ctx` doesn't grow).
-  - `ui_keep_end` grows by 406 bytes (621Ah → 63B0h). MEMSZ reads 0.4 KB less: 565.0 KB without EMS, 581.1 KB with it; with `MULTITASK=1` 561.3 KB (561.7 before; MT's block 1,264 paragraphs, one more, for `..@ui_midle`).
-  - LODE.SYS is 48,672 bytes (48,288 before), LODEMT.SYS 17,282 (17,270). ROM 1 has 2,048 bytes left (2,560 before).
+  - The core's code grows by 422 bytes (`ui_image_end` 4F5Ah → 5100h): `UI_MENU` is most of it, `UI_MOUSE` and `mwait` about 40. Its BSS by 23 (`mn_tab`, `mn_lv`, `mn_lent`, outside every range a session keeps: M8's `mw_ctx` doesn't grow).
+  - `ui_keep_end` grows by 438 bytes (621Ah → 63D0h). MEMSZ reads 0.5 KB less: 564.9 KB without EMS, 581.0 KB with it; with `MULTITASK=1` 561.1 KB (561.7 before; MT's block 1,274 paragraphs, 11 more, for `..@ui_midle` and `mt_mwant`).
+  - LODE.SYS is 48,704 bytes (48,288 before), LODEMT.SYS 17,445 (17,270). ROM 1 has 1,536 bytes left (2,560 before).
 - **Tests:**
-  - `t_menu` in test_apps (16 checks; `tests/MENUTEST.ASM`, an API 8 window `.RUN` that opens a window with a pattern in it, a menu at each right click, M and N for menus at (639, 399) and (0, 0), and a drag at each left press):
+  - `t_menu` in test_apps (20 checks; `tests/MENUTEST.ASM`, an API 8 window `.RUN` that opens a window with a pattern in it, a menu at each right click, M and N for menus at (639, 399) and (0, 0), and a drag at each left press):
     - placed at the click, its size from its items; Down, Down, Return; a letter; a click on an item; a click outside (taken: no event, no drag); a click on its edge (still open); ESC (the program's window still open);
     - the screen under the title bar byte for byte as before after each;
-    - kept on the screen at (639, 399) and (0, 0);
+    - kept on the screen at (639, 399) and (0, 0); AH = 3 lit first, and AH past the last item (the first lit); 20 items at (100, 399), from row 32; an item of 90 characters (the menu 80 columns wide, from column 0);
+    - four windows open (the most): no menu, CF at once, nothing drawn;
     - the saver while it is open: back after it, with the same item lit;
     - a drag followed to its end, and the next press an event again; the right pressed during a drag and let go after the left: no right click after it (no menu);
-    - with no window open: the menu's own save-under, and the cache given back.
-  - `t_menu` in test_mt (4 checks):
+    - with no window open: `ui_wopen`'s own save-under, and the cache given back;
+    - with no mouse: `UI_MOUSE`'s CF.
+  - `t_menu` in test_mt (5 checks):
     - in a window session: the cache borrowed, the screen as it was with no `redraw_all`;
     - CODE-F6 and a click on the Executive while it is open: the focus stays;
-    - a drag with MTSPIN behind: switched to from `UI_MOUSE`'s wait (`..@ui_midle`), every switch at a safe point (the audit's rules know the new spot).
-  - Twelve mutations each fail a check of one or the other: the three clamps (right, below, above), the column test and the row test of a click, a click on the edge taken as outside, no ESC, the light not where AH says, no borrow of the cache, the cache not given back, `UI_MOUSE` not keeping the buttons (a right press during a drag became a menu after it), and `..@ui_midle` not a safe point.
+    - a drag with two MTSPINs behind: switched to from `UI_MOUSE`'s wait (`..@ui_midle`), every switch at a safe point (the audit's rules know the new spot); held still, the UI only its turn; moving, each position seen within the tick (`mt_mwant`).
+  - Eighteen mutations each fail a check of one or the other: the three clamps (right, below, above), the column test and the row test of a click, a click on the edge taken as outside, no ESC, the light not where AH says, AH past the last item kept, no width clamp, no `NWIN` guard, no borrow of the cache, the cache not given back, `UI_MOUSE` not keeping the buttons (a right press during a drag became a menu after it), its CF not set with no mouse, `..@ui_midle` not a safe point, no `mt_mwant`, and the buttons not noted by `mt_mdset`.
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:

@@ -3,7 +3,9 @@
 ; its window (a pattern inside) at the start; ESC closes it, and ESC with
 ; none open ends it.  A right click: UI_MENU there (its answer in mres,
 ; 0FFFFh for none; nmenu counts them).  M and N: the menu at (639, 399)
-; and at (0, 0).  A left click: UI_MOUSE until the left button is up
+; and at (0, 0) (M with the fourth item lit first, N with AH past the
+; last); T: 20 items at (100, 399); L: one item longer than a line; O:
+; one more window (ESC closes those first); U: UI_MOUSE once (dcf).  A left click: UI_MOUSE until the left button is up
 ; (dn samples, the first and the last in d0 and d1, dcf its CF).  Every
 ; event UI_EVENT gives goes into evs (AX; nevs of them).
 ;   python3 mkrun.py tests/MENUTEST.ASM tests/MENUTEST.RUN
@@ -26,7 +28,12 @@ start:  call    UI_VERSION
         inc     word [nevs]
 .full:  cmp     ax, K_ESC
         jne     .r
-        cmp     byte [wopen], 0
+        cmp     byte [nmore], 0         ; (the windows O opened first)
+        je      .w
+        dec     byte [nmore]
+        call    UI_WCLOSE
+        jmp     .l
+.w:     cmp     byte [wopen], 0
         je      .x
         mov     byte [wopen], 0
         call    UI_WCLOSE
@@ -35,17 +42,46 @@ start:  call    UI_VERSION
         je      .menu
         cmp     ax, EV_CLICK
         je      .drag
+        xchg    dx, ax                  ; (DL: the key)
+        cmp     dl, 'U'                 ; U: UI_MOUSE once (its CF in dcf)
+        je      .mouse
         mov     bx, 639
         mov     cx, 399
-        cmp     al, 'M'
-        je      .menu
+        mov     si, items
+        mov     ax, (3 << 8) | NITEMS   ; M: the fourth lit first
+        cmp     dl, 'M'
+        je      .call
+        mov     bx, 100
+        mov     si, many
+        mov     ax, 20                  ; T: 20 items, near the band
+        cmp     dl, 'T'
+        je      .call
+        cmp     dl, 'O'                 ; O: one more window (ESC closes it)
+        je      .more
+        mov     bx, 300
+        mov     cx, 100
+        mov     si, longi
+        mov     ax, 1
+        cmp     dl, 'L'                 ; L: an item too long for the screen
+        je      .call
         xor     bx, bx
         xor     cx, cx
-        cmp     al, 'N'
-        jne     .l
+        mov     si, items
+        mov     ax, (9 << 8) | NITEMS   ; N: AH past the last item
+        cmp     dl, 'N'
+        je      .call
+        jmp     .l
+.mouse: call    UI_MOUSE
+        sbb     dx, dx
+        mov     [dcf], dx
+        jmp     .l
+.more:  mov     si, win2
+        call    UI_WOPEN
+        inc     byte [nmore]
+        jmp     .l
 .menu:  mov     si, items
         mov     ax, NITEMS
-        call    UI_MENU
+.call:  call    UI_MENU
         jnc     .got
         mov     ax, 0FFFFh
 .got:   mov     [mres], ax
@@ -85,17 +121,23 @@ paint:  mov     dx, [bx+W_Y]
 
 NITEMS  equ 5
 items   dw s_cut, s_copy, s_paste, s_erase, s_find
+many    times 4 dw s_cut, s_copy, s_paste, s_erase, s_find
 s_cut   db 'Cut       CODE-Z',0
 s_copy  db 'Copy      CODE-C',0
 s_paste db 'Paste     CODE-V',0
 s_erase db 'Erase     CODE-E',0
 s_find  db 'Find...   CODE-F',0
+longi   dw s_long
+s_long  db 'A very long item, longer than a line of the screen: ninety characters, and then some more.',0
+win2    dw 50, 200, 20, 60, s_win2, 0, 0
+s_win2  db 'More',0
 win     dw 4, 48, 72, 280, s_win, paint, WF_MOVE | WF_CLOSE
 s_win   db 'Menu test',0
 
 section .bss
 ver     resw 1
 wopen   resb 1
+nmore   resb 1
 mres    resw 1
 nmenu   resw 1
 dn      resw 1

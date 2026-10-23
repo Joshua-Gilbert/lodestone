@@ -160,7 +160,11 @@ UI_MENU     equ 47 * 3  ; a pop-up menu (API 8): SI = AL items (1-20; word
                         ;  kept on the screen.  The arrows, a letter (the next
                         ;  item starting with it), Return or a click on an item
                         ;  -> CF clear, AX = the item; ESC or a click outside
-                        ;  the window (taken: it does nothing else) -> CF set.
+                        ;  the window (taken: it does nothing else) -> CF set;
+                        ;  at once, with a beep, with 4 windows open (no room
+                        ;  for it) or AL not 1-20.  AH past the last: the
+                        ;  first lit.  At most 80 columns wide (longer items
+                        ;  are cut)
                         ;  It is modal: with MULTITASK=1 no window comes to
                         ;  the front meanwhile
 UI_MOUSE    equ 48 * 3  ; the mouse now (API 8), for a drag: waits for the next
