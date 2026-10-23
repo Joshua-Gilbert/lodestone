@@ -1924,6 +1924,13 @@ def t_nodisk():
           'Tab on B:: none, the line as typed', 'Fail?' not in o1 and o1.count('B:\\>') >= 3 and o2.count('Fail?') == 1
           and o3.count('Fail?') == 1 and 'Bad command or file name' in o3 and 'Fail?' not in o4 and 'A:\\>type b:' in o4,
           (o1, o2, o3, o4))
+    # a pipe whose second command's redirection fails: the first's file deleted all the same
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('echo hi | echo x < nosuch.txt'); k.key(ktest.ENTER)
+    k.key('dir \\pipe*.*'); k.key(ktest.ENTER)
+    o = k.pc.text_screen()
+    check('... "echo hi | echo x < nosuch.txt": "File not found" for the redirection, and no \\PIPEA1.$$$ left',
+          o.count('File not found') == 2 and 'PIPEA1' not in o, o)
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
