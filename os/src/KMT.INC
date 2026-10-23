@@ -4714,7 +4714,14 @@ mt_vcall:
 ; crit_disk.c24: the kernel's INT 24h (the critical error's prompt),
 ; counted while it runs (mt_crit): mt_v10 puts what it prints on the real
 ; screen, since everything waits for its answer
-mt_c24: mov     si, crit_dev
+mt_c24: push    ax                      ; (a task not in front: Fail, no
+        mov     al, [cs:mt_cur]         ;  prompt where nobody would see it,
+        cmp     al, [cs:mt_front]       ;  everything stopped for its answer)
+        pop     ax
+        je      .f
+        mov     al, 3
+        retf
+.f:     mov     si, crit_dev
         inc     byte [cs:mt_crit]
         int     24h
         cmp     byte [cs:mt_crit], 0    ; (cleared meanwhile: its handler ran a

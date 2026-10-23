@@ -1907,6 +1907,23 @@ def t_nodisk():
     o = k.pc.text_screen()
     check('LCMD: TYPE B:X.TXT with no disk: "Not ready error reading drive B", "Abort, Retry, Fail?"; F: back at the prompt',
           'Not ready error reading drive B' in o1 and 'Abort, Retry, Fail?' in o1 and o.rstrip().endswith('A:\\>'), (o1, o))
+    # B: current, no disk: nothing asked at each prompt (a pipe's files went only after a pipe); a program looked for
+    # there: one question, not one for each of .COM .EXE .BAT; Tab: a beep, no question in the line
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('b:'); k.key(ktest.ENTER); k.key(ktest.ENTER); k.key(ktest.ENTER)
+    o1 = k.pc.text_screen()
+    k.key('x'); k.key(ktest.ENTER)
+    o2 = k.pc.text_screen()
+    k.key('f')
+    o3 = k.pc.text_screen()
+    k.key('a:'); k.key(ktest.ENTER); k.key('cls'); k.key(ktest.ENTER)
+    k.key('type b:'); k.key(ktest.TAB)
+    o4 = k.pc.text_screen()
+    k.key(ktest.ESC); k.key(ktest.ENTER)
+    check('... B: current with no disk: no question at the prompts; X there: one, then "Bad command or file name"; '
+          'Tab on B:: none, the line as typed', 'Fail?' not in o1 and o1.count('B:\\>') >= 3 and o2.count('Fail?') == 1
+          and o3.count('Fail?') == 1 and 'Bad command or file name' in o3 and 'Fail?' not in o4 and 'A:\\>type b:' in o4,
+          (o1, o2, o3, o4))
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,

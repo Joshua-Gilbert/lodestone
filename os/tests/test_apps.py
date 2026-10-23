@@ -1775,10 +1775,11 @@ def t_subcopy():
     check('an empty subject to B:\\EFILE, a file there: "Can\'t copy EFILE: Access denied", the file as it was',
           band() == "Can't copy EFILE: Access denied" and B().get('A:\\EFILE') == b'was on B\r\n', (k.band(), B().get('A:\\EFILE')))
     k.key(ktest.ENTER)
-    k.pc.drives[1].empty = True
+    k.pc.drives[1].empty = True; k.pc.drives[1].changed = True     # (taken out: B: is mounted again, INT 24h)
     k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\x2', K_CODE_ENTER, settle=False); k.settle(60)
-    check('... to B: with no disk in it: "Can\'t copy X2: ..." (not "Copied 0 titles")', band().startswith("Can't copy X2: ") and not k.crashed, k.band())
-    k.pc.drives[1].empty = False
+    check('... to B: with no disk in it: "Can\'t copy X2: Drive not ready (no disk?)" (not "Copied 0 titles", nor '
+          '"B:\\X2 isn\'t there: Confirm to make it")', band() == "Can't copy X2: Drive not ready (no disk?)" and not k.crashed, k.band())
+    k.pc.drives[1].empty = False; k.pc.drives[1].changed = True
     k.key(ktest.ENTER)
     # a path DOS can't take where it goes: said before anything is made
     longsub = '\\' + '\\'.join(['ABCDEFGH'] * 6) + '\\ABCDEF'       # 61 characters: \WORK\EMPTY under it would be 67
