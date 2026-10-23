@@ -11,7 +11,7 @@ gridlink dithers and sends).  Clicks come back in pixels (?1016) and go to
 the page as a person's; so do the keys, but for a few of gridfox's own.
 """
 import hashlib, os, select, signal, struct, sys, termios, time, tty, urllib.parse
-from . import page as P
+from . import page as P, video as V
 from .marionette import MarionetteError
 ERRS = (MarionetteError, RuntimeError, OSError, ValueError)
 
@@ -40,6 +40,7 @@ HELP = [
     ('li', 'The mouse: click a link, button or field to use it; click the address to go somewhere else'),
     ('li', 'F then a number: follow link number n on the screen (hints)'),
     ('li', 'Left or Backspace: back.  Right: forward.  R: reload.  Period: read the page again'),
+    ('li', 'Y on a YouTube video: play it without YouTube\'s player (no bot check, no ads; yt-dlp on the Pi)'),
     ('h2', 'Going somewhere'),
     ('li', 'G (or O, or F6): type an address, or words to search for'),
     ('li', 'S: search.  /: find on the page, N: find the next one'),
@@ -48,7 +49,8 @@ HELP = [
     ('li', 'V: the page as Firefox draws it, dithered (slower than text: the GRiD gets pixels). Esc: back'),
     ('li', 'There, a click is a real click anywhere on the page, and typing goes to the page'),
     ('li', 'Up/Down and PgUp/PgDn scroll, Home/End top and bottom; Ctrl-B back, Ctrl-F forward, '
-           'Ctrl-R reload, F6 or Ctrl-L an address, Ctrl-I light or dark'),
+           'Ctrl-R reload, F6 or Ctrl-L an address, Ctrl-I light or dark, Ctrl-Y the video on its own'),
+    ('li', 'In a video played with Y: a click or Space plays and pauses, Left and Right go 10 s; Ctrl-B: back to YouTube'),
     ('h2', 'Forms'),
     ('p', 'Return on a field asks for its text at the bottom; Return there fills it in and goes on to the '
           'form\'s next field, or sends the form after the last one.  Return on a check box ticks it; on a '
@@ -183,7 +185,8 @@ class Line:
 
 
 class App:
-    def __init__(s, browser, out=None, start=None, search=SEARCH, log=None, quit_keys=(), pictures=False):
+    def __init__(s, browser, out=None, start=None, search=SEARCH, log=None, quit_keys=(), pictures=False,
+                 profile=None):
         s.b = browser; s.out = out or sys.stdout.buffer
         s.search = search; s.log = log or (lambda m: None)
         s.model = help_model(); s.doc = P.layout(s.model)
@@ -210,6 +213,7 @@ class App:
         s.awaiting = False; s.sent_t = 0.0       # sent, and the GRiD not yet said to have it whole (OSC 5150 shown)
         s.pic_inv = None                         # None: light pages dark (gridlink decides); or True/False
         s.view_path = os.path.abspath(VIEW_FILE)
+        s.profile = profile                      # Firefox's profile (Y: its cookies, if YouTube asks yt-dlp to sign in)
 
     # ---- pages ------------------------------------------------------------
     def go(s, url):
@@ -437,6 +441,7 @@ class App:
             s.reread(); s.status = 'Read again.'
         elif low == 'h' or k in ('?', 'f1'): s.go(HOME); return
         elif low == 'v': s.picture_view(True); return
+        elif low == 'y': s.plain_video(); return
         s.draw()
 
     def click(s, col, row):
@@ -491,6 +496,28 @@ class App:
         elif k.startswith('click:'): return s.click(*(int(v) for v in k[6:].split(':')))
         else: s.line.key(k)
         s.draw()
+
+    def plain_video(s):
+        """Y: the YouTube video open now, without YouTube's player: yt-dlp
+        on the Pi finds its file, and gridfox plays that in a page of its own
+        (video.py), in the picture view when the GRiD can show it."""
+        try: s.url = s.b.m.url() or s.url        # (YouTube moves between videos by itself)
+        except ERRS: pass
+        if not V.is_video(s.url):
+            s.status = 'Y plays a YouTube video on its own: open the video\'s page first.'; s.draw(); return
+        s.busy = 'Finding the video (yt-dlp)'; s.draw()
+        try:
+            src, title = V.find(s.url, profile=s.profile)
+        except V.NotFound as e:
+            s.busy = ''; s.status = 'Y: %s' % _short(e); s.draw(); return
+        s.go(V.write_page(src, title, os.path.dirname(s.view_path)))
+        if s.pictures and not s.picture: s.picture_view(True)
+        try:
+            s.b.click_at(8, 8)                   # (a person's click: Firefox lets it start the sound)
+        except ERRS as e:
+            s.log('video start: %r' % (e,))
+        s._shots()
+        s.status = 'Playing: %s  (Back: YouTube)' % title; s.draw()
 
     # ---- the picture view ----------------------------------------------------
     def picture_view(s, on):
@@ -579,6 +606,7 @@ class App:
         if k == 'ctrl-b': s.back(); return
         if k == 'ctrl-f': s.forward(); return
         if k == 'ctrl-r': s.reload(); return
+        if k == 'ctrl-y': s.plain_video(); return
         if k == 'ctrl-i':                                 # light or dark: the other way
             s.pic_inv = not s.pic_inv if s.pic_inv is not None else True
             s.pic_up = False; s._sync_view(); return
