@@ -623,6 +623,7 @@ ptr_restore:
 redraw_all:
         pusha
         call    hide_cursor
+..@ui_rdfn:                             ; (KMW.INC: with MULTITASK=1, CALL FAR mw_rdfn)
         mov     si, [redraw_fn]
         or      si, si
         jz      .nofn

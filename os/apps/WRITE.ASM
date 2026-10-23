@@ -17,22 +17,29 @@
 ;    CODE-Q Quit        save and exit
 ;    CODE-S Substitute  substitute specified text
 ;    CODE-T Transfer    save, write to another file, include a file
+;                       (CODE-X with MULTITASK=1)
 ;    CODE-U Usage       characters, lines and room left
 ;    CODE-ESC / ESC     Cancel: exit without saving
 ;
 ;  The text lives in a gap buffer in a block of its own (up to 64 KB).
 ;  Lines end in LF inside; files are read and written with CR LF.  The
-;  screen is drawn from a shadow copy, so a key redraws only the rows that
-;  changed.
+;  screen is drawn from a shadow copy (a block of its own too), so a key
+;  redraws only the rows that changed.
+;
+;  With MULTITASK=1 it is a window .RUN (M8b): a window that moves,
+;  closes and is resized, with the text, its rule and the status line
+;  inside, beside other windows and other Writes.  CODE-T is then the
+;  Tasks window's, so Transfer is CODE-X.  With the switch off it has the
+;  whole screen, as always.
 ; =====================================================================
 %include "UIAPI.INC"
-RUN_API equ 4                           ; (as 0.4.3 shipped it)
+RUN_API equ 4                           ; (as 0.4.3 shipped it: RF_WIN gives its
+                                        ;  window W_FLAGS with MULTITASK=1)
+RUN_FLAGS equ RF_WIN                    ; (with MULTITASK=1, one of several windows)
         org     RUN_ORG
 
-NROWS   equ 19                          ; text rows
+NROWS   equ 19                          ; text rows (the most: the whole screen's)
 TEXT_Y  equ 24
-RULE_Y  equ 334
-STAT_Y  equ 340
 HSTEP   equ 20                          ; horizontal scroll step (columns)
 ROWB    equ 160                         ; a row in the shadow: 80 chars, 80 marks
 IOB     equ 1024                        ; file I/O chunk
@@ -44,8 +51,38 @@ M_FOUND equ 3                           ; showing what Find found
 start:  mov     di, fname               ; the argument: the file to open
         call    UI_SBSTR
         mov     byte [di], 0
-        mov     si, redraw
+        mov     ax, 0F01Dh              ; a window .RUN's session? (MT_WIN, M8b:
+        stc                             ;  it fails with the switch off, and
+        int     21h                     ;  with a LODEMT.SYS from before it)
+        jc      .full
+        mov     byte [wmode], 1         ; a window: CODE-T is the tasks'
+        mov     word [kt_xfer], K_CODE_X
+        mov     byte [h10x], 'X'
+        call    UI_VERSION              ; (CX: the core's paragraphs, where the
+        shl     cx, 4                   ;  windows' slots start) one higher up
+        mov     ax, start               ;  the segment than the first opens a
+        sub     ax, cx                  ;  little lower and to the right, so
+        jb      .shd                    ;  a second Write isn't right over it
+        mov     cl, 12
+        shr     ax, cl                  ; (4 KB steps, two at most)
+        cmp     ax, 2
+        jbe     .c
+        mov     ax, 2
+.c:     mov     bx, ax
+        shl     bx, 1
+        add     [win+W_COL], bx
+        sub     [win+W_W], bx
+        shl     ax, 4
+        add     [win+W_Y], ax
+        sub     [win+W_H], ax
+        jmp     short .shd
+.full:  mov     si, redraw
         call    UI_SETREDRAW
+.shd:   call    geom
+        mov     bx, (NROWS * ROWB + 15) / 16    ; the shadow copy
+        call    UI_ALLOC
+        jc      .nomem
+        mov     [sseg], ax
         mov     bx, 1000h               ; the text buffer: 64 KB, or what there is
         call    UI_ALLOC
         jnc     .buf
@@ -81,6 +118,7 @@ start:  mov     di, fname               ; the argument: the file to open
         call    redraw
         mov     si, line
         call    UI_MSG
+        call    wclose
         mov     ax, 1
         ret
 .new:   mov     word [changed], 0
@@ -94,6 +132,7 @@ start:  mov     di, fname               ; the argument: the file to open
         call    do_key
         cmp     byte [quit], 0
         je      .loop
+        call    wclose
         xor     ax, ax
         ret
 .nomem: mov     si, s_nomem
@@ -390,7 +429,12 @@ center_view:
         mov     [top], ax
         mov     ax, [curline]
         mov     [topline], ax
-        mov     cx, NROWS / 3
+        mov     ax, [rows]              ; (a third of the rows)
+        mov     cl, 3
+        div     cl
+        xor     ah, ah
+        mov     cx, ax
+        jcxz    .x
 .l:     cmp     word [top], 0
         je      .x
         mov     ax, [top]
@@ -414,11 +458,14 @@ fix_view:
         mov     [topline], ax
         jmp     .h
 .below: sub     ax, [topline]
-        cmp     ax, NROWS
+        cmp     ax, [rows]
         jb      .h
-        cmp     ax, NROWS * 2
+        mov     dx, [rows]
+        shl     dx, 1
+        cmp     ax, dx
         jae     .far
-        sub     ax, NROWS - 1           ; lines to scroll
+        sub     ax, [rows]              ; lines to scroll
+        inc     ax
         mov     cx, ax
 .d:     mov     ax, [top]
         call    line_end
@@ -432,7 +479,7 @@ fix_view:
         sub     word [hs], HSTEP
         jmp     .hl
 .hr:    mov     dx, [hs]
-        add     dx, 80
+        add     dx, [cols]
         cmp     ax, dx
         jb      .x
         add     word [hs], HSTEP
@@ -443,7 +490,9 @@ fix_view:
         mov     [top], ax
         mov     ax, [curline]
         mov     [topline], ax
-        mov     cx, NROWS - 1
+        mov     cx, [rows]
+        dec     cx
+        jcxz    .h
 .fl:    cmp     word [top], 0
         je      .h
         mov     ax, [top]
@@ -467,24 +516,91 @@ redraw: mov     di, title               ; "Write: NOTES.TXT"
         call    base_name
 .t:     call    UI_SBSTR
         mov     byte [di], 0
+        cmp     byte [wmode], 0
+        jne     .win
         mov     si, title
         call    UI_SCREEN
-        mov     dx, RULE_Y
-        mov     bx, 0
-        mov     cx, 80
+        jmp     short w_draw
+.win:   call    wclose                  ; a window: (again, with the title)
+        mov     si, win
+        call    UI_WOPEN                ; (its W_DRAW, w_draw, draws the rest)
+        mov     byte [wopen], 1
+        ret
+
+; the text area, its rule and the status line, all drawn (the window's
+; W_DRAW too: after a move, a resize or another window's close)
+w_draw: push    es                      ; (as W_DRAW, from any session's
+        push    ds                      ;  redraw: ES may be anything, and
+        pop     es                      ;  is kept)
+        call    .d
+        pop     es
+        ret
+.d:     call    geom
+        mov     dx, [rule_y]
+        mov     bx, [x0]
+        mov     cx, [cols]
         call    UI_DOTS
         push    es                      ; everything must be drawn again
-        push    cs
-        pop     es
-        mov     di, shadow
+        mov     es, [sseg]
+        xor     di, di
         mov     cx, NROWS * ROWB
         mov     al, 0FEh
         rep     stosb
         pop     es
         mov     byte [stat_last], 0FFh
-        mov     byte [cur_on], 0
+        mov     byte [cur_on], 0        ; (not on the screen any more)
         mov     byte [dirty], 2
         jmp     update
+
+; Write's window closed, if it is open
+wclose: cmp     byte [wopen], 0
+        je      .x
+        mov     byte [wopen], 0
+        call    UI_WCLOSE
+.x:     ret
+
+; where the text goes: the whole screen, or inside the window as it is
+; now (x0 = first column, cols, y0 = first row's y, rows, the rule's y
+; and the status line's)
+geom:   push    ax
+        push    dx
+        cmp     byte [wmode], 0
+        jne     .w
+        mov     word [x0], 0
+        mov     word [cols], 80
+        mov     word [y0], TEXT_Y
+        mov     ax, NROWS
+        jmp     short .r
+.w:     mov     ax, [win+W_COL]
+        inc     ax
+        mov     [x0], ax
+        mov     ax, [win+W_W]
+        sub     ax, 2
+        mov     [cols], ax
+        mov     ax, [win+W_Y]
+        add     ax, W_TOP
+        mov     [y0], ax
+        mov     ax, [win+W_H]           ; the rows that fit over the rule, the
+        sub     ax, W_TOP + 12 + 16 + 4 ;  status line and the bottom edge
+        jns     .h
+        xor     ax, ax
+.h:     shr     ax, 4
+        cmp     ax, 1
+        jge     .h1
+        mov     ax, 1
+.h1:    cmp     ax, NROWS
+        jbe     .r
+        mov     ax, NROWS
+.r:     mov     [rows], ax              ; (the whole screen: rule 334, status 340)
+        shl     ax, 4
+        add     ax, [y0]
+        add     ax, 6
+        mov     [rule_y], ax
+        add     ax, 6
+        mov     [stat_y], ax
+        pop     dx
+        pop     ax
+        ret
 
 ; SI = path -> SI = its file name part
 base_name:
@@ -569,7 +685,7 @@ update: call    fix_view                ; (old_top/old_hs: the view last
 .row:   call    build_row
         call    put_row
         inc     bp
-        cmp     bp, NROWS
+        cmp     bp, [rows]
         jb      .row
 .done:  mov     byte [dirty], 0
         mov     ax, [top]               ; the view now on the screen
@@ -673,7 +789,7 @@ build_row:
         mov     di, cx
         sub     di, [cs:hs]
         jb      .px
-        cmp     di, 80
+        cmp     di, [cs:cols]
         jae     .px
         mov     [cs:rowbuf+di], al
         mov     [cs:rowbuf+80+di], ah
@@ -686,29 +802,31 @@ put_row:
         mov     ax, bp
         mov     dx, ROWB
         mul     dx
-        add     ax, shadow
-        xchg    di, ax
+        xchg    di, ax                  ; (in the shadow's block)
         mov     si, rowbuf
         mov     cx, ROWB
+        push    es
+        mov     es, [sseg]
         call    sync_buf
+        pop     es
         je      .x
         mov     ax, bp
         shl     ax, 4
-        add     ax, TEXT_Y
+        add     ax, [y0]
         mov     dx, ax
         mov     si, rowbuf
-        mov     cx, 80
-        xor     bx, bx
+        mov     cx, [cols]
+        mov     bx, [x0]
         xor     ah, ah
         call    UI_PUTSN
         xor     bx, bx                  ; the selection: runs of marked cells
-.r:     cmp     bx, 80
+.r:     cmp     bx, [cols]
         jae     .x
         cmp     byte [rowbuf+80+bx], 0
         je      .n
         mov     si, bx
 .rl:    inc     bx
-        cmp     bx, 80
+        cmp     bx, [cols]
         jae     .inv
         cmp     byte [rowbuf+80+bx], 0
         jne     .rl
@@ -716,6 +834,7 @@ put_row:
         mov     bp, bx
         sub     bp, si
         mov     bx, si
+        add     bx, [x0]
         mov     cx, 16
         call    UI_INVERT
         pop     bx
@@ -725,12 +844,9 @@ put_row:
 .x:     pop     bp
         ret
 
-; SI = CX bytes, DI = their shadow -> ZF if the same; else the shadow
+; SI = CX bytes, ES:DI = their shadow -> ZF if the same; else the shadow
 ; takes them (SI, DI, CX kept)
 sync_buf:
-        push    es
-        push    cs
-        pop     es
         pusha
         repe    cmpsb
         popa
@@ -738,8 +854,7 @@ sync_buf:
         pusha
         rep     movsb
         popa                            ; (ZF stays clear)
-.x:     pop     es
-        ret
+.x:     ret
 
 cursor_off:
         cmp     byte [cur_on], 0
@@ -749,9 +864,11 @@ cursor_off:
 .x:     ret
 
 cursor_on:
-        cmp     word [crow], NROWS
+        mov     ax, [crow]
+        cmp     ax, [rows]
         jae     .x
-        cmp     word [ccol], 80
+        mov     ax, [ccol]
+        cmp     ax, [cols]
         jae     .x
         mov     ax, [crow]
         mov     [cur_r], ax
@@ -764,8 +881,9 @@ cursor_on:
 cursor_xor:                             ; invert the cursor's cell
         mov     dx, [cur_r]
         shl     dx, 4
-        add     dx, TEXT_Y
+        add     dx, [y0]
         mov     bx, [cur_c]
+        add     bx, [x0]
         mov     cx, 16
         mov     bp, 1
         cmp     byte [ovr], 0
@@ -814,18 +932,28 @@ status: mov     di, stat_new
         mov     si, stat_new            ; the same as last time?
         mov     di, stat_last
         mov     cx, 80
+        push    es
+        push    cs
+        pop     es
         call    sync_buf
+        pop     es
         je      .x
-        mov     dx, STAT_Y
+        mov     dx, [stat_y]
         mov     cx, 16
-        xor     bx, bx
-        mov     bp, 80
+        mov     bx, [x0]
+        mov     bp, [cols]
         xor     al, al
         call    UI_FILL
-        mov     si, stat_new
-        mov     bx, 1
+        mov     si, stat_new            ; (as much as fits, from the second
+        call    UI_STRLEN               ;  column)
+        mov     ax, [cols]
+        dec     ax
+        cmp     cx, ax
+        jbe     .p
+        mov     cx, ax
+.p:     inc     bx
         xor     ah, ah
-        call    UI_PUTS
+        call    UI_PUTSN
 .x:     ret
 
 ; the band for plain editing
@@ -837,7 +965,11 @@ edit_band:
 ; ---------------------------------------------------------------------
 ;  keys
 ; ---------------------------------------------------------------------
-do_key: cmp     ax, EV_CLICK
+do_key: cmp     ax, EV_MOVED            ; the window moved or resized: drawn
+        je      .x                      ;  there already (w_draw)
+        cmp     ax, EV_SIZE
+        je      .x
+        cmp     ax, EV_CLICK
         je      click
         mov     [lastkey], ax
         cmp     byte [mode], M_FOUND    ; after Find: Return finds the next one,
@@ -993,7 +1125,7 @@ set_goal:
         mov     [goal], ax
 .x:     ret
 
-k_pgdn: mov     cx, NROWS - 1           ; a page: the cursor and the view
+k_pgdn: call    page                    ; a page: the cursor and the view
 .l:     push    cx
         call    k_down
         pop     cx
@@ -1011,7 +1143,7 @@ k_pgdn: mov     cx, NROWS - 1           ; a page: the cursor and the view
 .n:     loop    .l
 .x:     ret
 
-k_pgup: mov     cx, NROWS - 1
+k_pgup: call    page
 .l:     push    cx
         call    k_up
         pop     cx
@@ -1024,6 +1156,12 @@ k_pgup: mov     cx, NROWS - 1
         mov     [top], ax
         dec     word [topline]
 .n:     loop    .l
+.x:     ret
+
+page:   mov     cx, [rows]              ; -> CX = a page's lines: the rows but
+        dec     cx                      ;  one (at least one)
+        jnz     .x
+        inc     cx
 .x:     ret
 
 k_ctop: mov     word [goal], 0FFFFh
@@ -1107,10 +1245,14 @@ click:  cmp     cx, SCR_BAND_Y
         call    edit_band
         pop     cx
         pop     bx
-.t1:    sub     cx, TEXT_Y
-        jb      .x
-        shr     cx, 4
-        cmp     cx, NROWS
+.t1:    sub     cx, [y0]                ; (in the text area only: a window's
+        jb      .x                      ;  frame, its rule and status, and
+        shr     cx, 4                   ;  what is around it are not text)
+        cmp     cx, [rows]
+        jae     .x
+        shr     bx, 3
+        sub     bx, [x0]
+        cmp     bx, [cols]              ; (left of it too: below 0, a big one)
         jae     .x
         mov     ax, [top]               ; that row's line: walk down to it
         jcxz    .at
@@ -1124,8 +1266,7 @@ click:  cmp     cx, SCR_BAND_Y
         mov     ax, dx
         inc     ax
         loop    .dn
-.at:    mov     dx, bx
-        shr     dx, 3
+.at:    mov     dx, bx                  ; (BX: the column in the text area)
         add     dx, [hs]
         call    pos_at_col
         mov     word [goal], 0FFFFh
@@ -1332,7 +1473,7 @@ center_if_far:                          ; (a long way off: centre it)
         cmp     ax, [topline]
         jb      center_view
         sub     ax, [topline]
-        cmp     ax, NROWS
+        cmp     ax, [rows]
         jae     center_view
         ret
 
@@ -1566,7 +1707,10 @@ k_options:
         xor     bh, bh
         mov     al, [tabws+bx]
         mov     [tabw], al
-        jmp     redraw                  ; (tabs may show differently)
+        cmp     byte [wmode], 0         ; (tabs may show differently: in a
+        je      .fs                     ;  window, its contents again, not the
+        jmp     w_draw                  ;  whole screen and the directory)
+.fs:    jmp     redraw
 .x:     ret
 
 k_usage:
@@ -1894,6 +2038,7 @@ edit_keys:
         KEY(K_CODE_J,   k_jump,     0)
         KEY(K_CODE_O,   k_options,  0)
         KEY(K_CODE_U,   k_usage,    0)
+kt_xfer equ $                           ; (with MULTITASK=1: K_CODE_X)
         KEY(K_CODE_T,   k_transfer, 0)
         KEY(K_CODE_Q,   k_quit,     0)
         KEY(K_CODE_ESC, k_cancel,   0)
@@ -2020,7 +2165,8 @@ h6          db 'Move        CODE-M    Move selected text',0
 h7          db 'Options     CODE-O    Set indent and tab stops',0
 h8          db 'Quit        CODE-Q    Exit and save all changes',0
 h9          db 'Substitute  CODE-S    Substitute specified text',0
-h10         db 'Transfer    CODE-T    Save, write or include files',0
+h10         db 'Transfer    CODE-'
+h10x        db 'T    Save, write or include files',0
 h11         db 'Usage       CODE-U    Show size and room left',0
 h12         db 'Cancel      CODE-ESC  Exit without saving (or ESC)',0
 h13         db 'Commands: press it, select, then confirm (Return)',0
@@ -2037,6 +2183,9 @@ mode        db M_EDIT
 ovr         db 0
 autoind     db 0
 changed     dw 0
+WIN_ROWS    equ 15                      ; (its text rows when it opens)
+win:        dw 2, SCR_TOP + 8, 76, W_TOP + WIN_ROWS * 16 + 12 + 16 + 4
+            dw title, w_draw, WF_MOVE | WF_CLOSE | WF_SIZE
 
 section .bss
 bseg        resw 1
@@ -2079,6 +2228,15 @@ dirty       resb 1
 last_mode   resb 1
 hassel      resb 1
 seg2        resb 1
+wmode       resb 1                      ; 1: in a window (MULTITASK=1)
+wopen       resb 1                      ; 1: the window is open
+sseg        resw 1                      ; the shadow copy's block (NROWS * ROWB)
+x0          resw 1                      ; geom: the text area's first column,
+cols        resw 1                      ;  its columns,
+y0          resw 1                      ;  its first row's y,
+rows        resw 1                      ;  its rows,
+rule_y      resw 1                      ;  the rule under it
+stat_y      resw 1                      ;  and the status line
 fname       resb 80
 tmpname     resb 80
 title       resb 96                     ; (UI_SCREEN keeps the pointer)
@@ -2087,7 +2245,6 @@ r_text      resb 42
 j_text      resb 8
 t_name      resb 72
 stat_last   resb 80
-shadow      resb NROWS * ROWB
 iobuf       resb IOB                    ; a file read or written in one go:
 rowbuf      equ iobuf                   ;  these three are never live then
 stat_new    equ iobuf + ROWB            ;  (an I/O error is said in line

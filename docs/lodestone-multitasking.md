@@ -29,8 +29,9 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M7a | LCMD's START, FG, KILL, PARK, UNPARK and WAIT; a task's exit code (`MT_EXIT`); CLAUDE /U refused while tasks run | PR #67, merged. |
 | M7b | The Executive: programs started as tasks, its task list (TASKS.RUN, CODE-T); System's switch; LODE.INI's `BG=`, `FREEZE=` and `MTMEM=` | PR #71, merged. |
 | M7c | Resident Claude with tasks: its pop-up and TYPE's keys the front task's, its key wait a place to switch from, CODE-Tab in the console its own, `/R` not inside a task (`MT_TSR`) | PR #73, merged. |
-| M8a | Several window `.RUN`s at once, each a session in the UI task; the Executive waits meanwhile | PR #77. |
-| M8b | A live base under the windows: the Executive, Write or System working under them (clipping) | |
+| M8a | Several window `.RUN`s at once, each a session in the UI task; the Executive waits meanwhile | PR #77, merged. |
+| M8b | Write as a window, several at once; windows resized by the mouse or CODE-F8; window `.RUN`s marked in their header | PR #79. |
+| M8c | A live base under the windows: the Executive or System working under them (clipping) | |
 | M9 | On the 1520, and release 0.7 | |
 
 Each milestone's PR adds its section below, describing what was built and any departure from the plan.
@@ -1658,3 +1659,83 @@ t_on's check that MT passes F0h AL=2 and 3 on to the kernel (the help's save-und
 - The real no-room path (`mw_slot` or `mw_grow` failing), and four windows open stopping a start: only the poked count is.
 - The root starting over with sessions open (`mw_clean`).
 - Any of it on the 1520.
+
+## M8b: Write as a window, and windows that resize (2026-10-22)
+
+**Joshua's decisions:**
+- With `MULTITASK=1`, Write is a window. With the switch off, it has the whole screen, as before.
+- Several Writes can be open at once, one file each.
+- Windows are resized with the mouse, by their bottom-right corner, reusing the move's outline. It is a general window feature: the calculator is to use it later.
+- Window `.RUN`s are marked in their header, not by their API (Paint, which takes the whole screen, will say so).
+- CODE-T is the Tasks window's everywhere, Write included, so Write's Transfer moves to CODE-X with the switch on.
+- The live Executive under the windows, with clipping, moves to M8c. Write needs no clipping as a window: only the session in front draws.
+
+**What it does:**
+- **A window `.RUN` is marked in its header.** `RUN_FLAGS equ RF_WIN` puts bit 0 in word 14 (`mkrun.py`), which was always 0 and which no core reads with the switch off. `mw_run` and `mw_start` test it, where M8a tested `RUN_API` ≥ 6. A window `.RUN`'s windows have `W_FLAGS` whatever its API: `mw_start` records it as API 6 for `win_flags`. So Write still asks for API 4: an older core runs it, full-screen (it asks `MT_WIN`, below, which fails there). CALC and TASKS set the flag too: their files differ from main's only in that byte. SYSTEM doesn't.
+- **Write in a window.** At its start it asks `INT 21h AX=F01Dh` (`MT_WIN`, new: CF clear if the UI code running is a window `.RUN`'s session). It fails with the switch off, with a LODEMT.SYS from before M8b, and if KMW's patches weren't made. If it doesn't fail:
+  - it opens a window (76 columns, 15 text rows) that moves, closes and resizes (`WF_MOVE | WF_CLOSE | WF_SIZE`), with its title strip, text, rule and status line inside, instead of `UI_SCREEN`;
+  - it sets no redraw routine: the window's `W_DRAW` (`w_draw`) draws it all, after a move, a resize, the saver or another window's close;
+  - where it draws comes from the window as it is now (`geom`: the text area's first column, its columns, its first row and its rows; the rule and the status line under them). With the switch off, `geom` gives the whole screen's: column 0, 80 columns, 19 rows from row 24, the rule at 334, the status line at 340, as before;
+  - a click outside the text area is no text click;
+  - a second Write opens a little lower and to the right, by how far up the UI segment its slot is (4 KB steps, two at most), so it isn't right over the first;
+  - CODE-T is the Tasks window's, so Transfer is CODE-X: its key table entry and its help line are changed at the start;
+  - the shadow copy (3,040 bytes) is in a block of its own (`UI_ALLOC`), as the text is, with the switch on or off. That makes Write's slot in the UI segment 11,408 bytes (14,048 before), so two Writes fit with the calculator, or with the tasks.
+- **CODE-W** from any window starts another Write, for a new file (`mw_open.new`: even if one runs).
+- **Resizing** (`mw_size`, in KMW.INC, as `win_mv` moves):
+  - a press on a `WF_SIZE` window's bottom-right corner (its last column, the bottom 12 pixel rows), while that window is on top and its session's, drags the outline's corner: snapped to columns and to rows in fours;
+  - CODE-F8 does it with the arrows: a column, or 16 rows (a text row), a press. Return keeps the size, ESC leaves it;
+  - it stays at least 24 columns by 72 rows, and on the screen above the band (ESC puts the size it had back as it was, whatever it was);
+  - then `W_W` and `W_H` are new, the screen is drawn again (`redraw_all`: the window's `W_DRAW` at its new size), and `UI_EVENT` returns `EV_SIZE` (0FF04h).
+- **The UI block takes the whole segment while window `.RUN`s run** (`mw_grow`): 64 KB, or as much of it as is free after it. A session's own blocks (`UI_ALLOC`: Write's text and shadow) then go past it. In M8a the block grew only to the highest slot, so Write's blocks went right after it, and no window could start after a Write. It stays so till the last ends (`run_cleanup` then shrinks it to what it was): shrunk when one ended, it would leave a hole after it that anything allocated could take.
+- **The base drawn again keeps the session's band** (a new patch, `redraw_all`'s `MOV SI,[redraw_fn] / OR SI,SI` → CALL FAR `mw_rdfn`). The Executive's `relist` sets its own band, so after a resize or the saver, Write's band showed the Executive's "Select a file and confirm". With a session in front, `mw_rdfn` calls the routine itself, between saving the session's `band1`/`band2` and putting them back.
+
+**The limits, plainly:**
+- **The UI segment's 64 KB:** the slots have 32,720 bytes above `run_base`. Two Writes (11,408 each), the calculator (7,040) and the tasks (4,464) don't all fit: the fourth "doesn't fit".
+- **While window `.RUN`s run, the UI block holds up to 64 KB** (32 KB more than without them), which DOS programs started as tasks meanwhile don't get.
+- **A second Write is a new file.** The Executive waits while windows are open (until M8c), so another file is opened from Write itself: in a new Write, CODE-X, Include a file. Opening one file in two Writes isn't stopped.
+- **Resizing,** like moving, halts in its own loops, which aren't places MT switches from: tasks behind wait until the window is put down.
+- **The corner has no mark.** It is where the frame's bottom-right corner is.
+- **The minimum size is the core's, not the window's** (24 by 72: a title strip, a text row and a status line; Write's title fits, and its sideways scroll of 20 columns still shows the cursor). A `.RUN` with a bigger minimum lays itself out in what it gets.
+- **Each Write has its own text buffer:** 64 KB, or what is left (at least 4 KB). With tasks running, a second Write may get less.
+- **Write's forms and help (Find, Options, CODE-?) close with the screen drawn again,** through the Executive's `relist`, which reads its directory: as any window closing over the Executive does while window `.RUN`s run (M8a). Options then draws Write's text once more, for the new tab stops, but doesn't close and open its window again.
+- **A Write behind shows its cursor.** Drawn again from another session's `redraw_all`, its `w_draw` ends as any update does.
+- **A second Write's place** comes from where its slot is, so it depends on what else is open: after the calculator, one step lower; after another Write, two.
+
+**Changes to M8a's limits:**
+- "RUN_API 6 is what makes a `.RUN` a window `.RUN`" no longer holds: the header says so (`RF_WIN`).
+- "The block shrinks only to the highest slot still used": it doesn't shrink while sessions run; it is the whole segment till the last ends.
+
+**Cost:**
+- **Switch off:** nothing in the UI image: one more label (`..@ui_rdfn`), and equates in UIAPI.INC (`RF_WIN`, `WF_SIZE`, `EV_SIZE`, `K_CODE_F8`). WRITE.RUN is 8,679 bytes (8,160 before): its window code, and the shadow copy in a block of its own, which it takes with the switch off too (190 paragraphs while Write runs). Its BSS is 3,023 bytes smaller.
+- **Switch on:** MT's block is 1,139 paragraphs (1,098 before). MEMSZ with Shift-Return is 563.6 KB (564.2 on main). LODEMT.SYS is 15,283 bytes (14,629 before).
+- **ROM 1:** 4,608 bytes left (5,632 before): WRITE.RUN and LODEMT.SYS take a sector more each.
+
+**Tests:** test_mt's new group `t_write` (14 checks; test_mt 331, 317 before):
+- Return on NOTES.TXT: Write in a window, a session, its text and status line inside it; WRITE.RUN asks for API 4, with `RF_WIN`.
+- CODE-K in Write: the calculator beside it, "2+2" = 4 there; CODE-F6: Write's keys its own again.
+- CODE-F8, Left ×4, Up ×2: 4 columns narrower, 2 rows shorter, the status line up with it, Write's own band still, the Executive around it.
+- Its corner dragged with the mouse: bigger by as much. Each time, Write's `do_key` is given `EV_SIZE`, not the key or the click.
+- A click left of it, on the Executive: no cursor moved. CODE-F8, Left, Up, ESC: as it was. CODE-F8, Left ×70: 24 columns, no fewer.
+- Ctrl-End, then CODE-F8, Up ×30: 72 rows, no fewer, one text row, line 5 in it; PgUp: a page is one line. Right ×10, Down ×20: as far as the screen's right edge and the band.
+- CODE-F7: moved, the text with it; Write is given `EV_MOVED`.
+- CODE-W in Write: another Write, a new file, lower and to the right.
+- CODE-X: Transfer. CODE-T: the tasks, which don't fit beside two Writes and the calculator (the segment really out of room, not poked).
+- In the new Write, "abc", CODE-Q, a name: saved, its window gone, the first in front.
+- CODE-T now: the tasks fit, in the slot the second Write left; ESC. CODE-W, then a click on the new Write's close box: as ESC ("Cancel: Confirm to exit without saving (unchanged)"), Return: gone, the first in front.
+- The saver, then a key: the Executive and Write's text back, its status line where it was, its own band (not the Executive's).
+- CODE-Q in the first: NOTES.TXT saved; ESC in the calculator: the Executive, nothing loaded, the UI block as before.
+- Without LODEMT.SYS: CODE-W gives the whole-screen Write.
+
+t_windows: with both windows open, and with one, the UI block is the whole segment (4,096 paragraphs).
+
+**The checks can fail:** each of 17 mutations fails at least one check of `t_write`, `t_windows` or `t_on` (one hangs them, its shadow copy written over the UI segment):
+- Write without `RF_WIN`, or a window `.RUN` not recorded as API 6, or `MT_WIN` failing;
+- no CODE-W, no CODE-F8, no corner, the size not taken, no minimum, ESC not putting it back, no `EV_SIZE`;
+- the base's band kept no more (`mw_rdfn`);
+- the UI block grown only to the highest slot;
+- Write's CODE-X not made, no cascade, its text area at the frame's column, no bound on a click's column, its shadow copy in the UI segment again.
+
+**Not tested here:**
+- A resize while a session behind has a help window open (`wover`).
+- Write's Include into a window, and Write's messages (out of memory) in a window.
+- Any of it on the 1520, CODE-F8's key code included.
