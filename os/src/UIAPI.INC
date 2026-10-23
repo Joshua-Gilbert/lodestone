@@ -173,7 +173,7 @@ EV_RCLICK   equ 0FF03h                  ; a right-button press (API 7: only to a
                                         ;  window's title strip or close box neither
                                         ;  moves nor closes it: the program gets it
 ; UI_DISPATCH matches a key table's ASCII entries by AL alone, so an EV_*
-; code would run an entry for its low byte (01h-03h: Ctrl-A to Ctrl-C):
+; code would run an entry for its low byte (01h-04h: Ctrl-A to Ctrl-D):
 ; a table that has one should test for the events first
 
 ; ---- keys (BIOS INT 16h codes; CODE is the Alt key) -------------------

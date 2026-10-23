@@ -3245,9 +3245,9 @@ def t_windows():
     k.key(0x6D00); k.run_for(0.5)                       # (the tasks in front)
     k.key(ktest.ESC); k.run_for(0.5)
     n10, c10, ub = mb('mw_n'), mb('mw_cur'), uip()[1]
-    check('the tasks in front (CODE-F6), ESC: they close, the calculator in front; the UI block back to the end of its '
-          'slot, the highest left (%s paragraphs, from %s: the whole segment while they run, M8b)' % (ub, hi0), ts and n10 == 1 and c10 == 1
-          and hi0 == 4096 and ub == rec(1, SE_END) // 16 and A.has(k, 'Calculator')
+    check('the tasks in front (CODE-F6), ESC: they close, the calculator in front; the UI block the whole '
+          'segment still while one runs (%s paragraphs, and %s with both: M8b)' % (ub, hi0), ts and n10 == 1 and c10 == 1
+          and hi0 == 4096 and ub == 4096 and A.has(k, 'Calculator')
           and not A.has(k, 'Tasks'), (ts, n10, c10, hi0, ub, hex(rec(1, SE_END))))
     k.key(ktest.ESC); k.run_for(0.5); k.settle()
     au.stop()
@@ -3363,7 +3363,6 @@ def t_write():
     cx, cy = (2 + 72 - 1) * 8 + 4, 32 + 264 - 4
     A.drag(k, cx, cy, cx + 16, cy + 16); k.run_for(0.3)
     w3, s3, ev3 = win(1), at('Line 1 of 5'), ev[len(ev2):]
-    k.hooks.remove(evh)
     check('its bottom-right corner dragged 2 columns right, 16 pixels down: that much bigger (%s), the status line '
           'down a row (%s); Write given EV_SIZE each time, not the key or the click' % (w3, s3), w3 == (2, 32, 74, 280)
           and s3 == (4, 292) and mb('mw_cur') == 1 and ev3 == [0xFF04], (w3, s3, [hex(e) for e in ev3], A.screen(k)))
@@ -3373,14 +3372,30 @@ def t_write():
     we = win(1)
     k.key(0x6F00, *([ktest.LEFT] * 70), ktest.ENTER); k.run_for(0.5)
     wm = win(1)
-    k.key(0x6F00, *([ktest.RIGHT] * 58), ktest.ENTER); k.run_for(0.5)
+    k.key(0x6F00, *([ktest.RIGHT] * 50), ktest.ENTER); k.run_for(0.5)
     check('a click left of it (on the Executive) moves no cursor (%s); CODE-F8, Left, Up, ESC: as it was (%s); CODE-F8, '
-          'Left x70: no narrower than 16 columns (%s); Right x58: back (%s)' % (sc, we, wm, win(1)), sc == (4, 292)
-          and we == (2, 32, 74, 280) and wm == (2, 32, 16, 280) and win(1) == (2, 32, 74, 280), (sc, we, wm, win(1), A.screen(k)))
+          'Left x70: no narrower than 24 columns (%s); Right x50: back (%s)' % (sc, we, wm, win(1)), sc == (4, 292)
+          and we == (2, 32, 74, 280) and wm == (2, 32, 24, 280) and win(1) == (2, 32, 74, 280), (sc, we, wm, win(1), A.screen(k)))
+    # one row: the view follows the cursor there; then as big as the screen allows
+    k.key(0x7500); k.run_for(0.3)                   # (Ctrl-End: line 5)
+    k.key(0x6F00, *([ktest.UP] * 30), ktest.ENTER); k.run_for(0.5)
+    w1r, s1r, l1r = win(1), at('Line 5 of 5'), A.has(k, 'last line') and not A.has(k, 'Tabbed line')
+    k.key(A.K_PGUP); k.run_for(0.3)
+    s1u, l1u = at('Line 4 of 5'), A.has(k, 'bed line') and not A.has(k, 'last line')
+    k.key(0x6F00, *([ktest.RIGHT] * 10), *([ktest.DOWN] * 20), ktest.ENTER); k.run_for(0.5)
+    wbig = win(1)
+    k.key(0x6F00, *([ktest.LEFT] * 4), *([ktest.UP] * 3), ktest.ENTER); k.run_for(0.5)
+    k.key(0x7700, *([ktest.RIGHT] * 10)); k.run_for(0.3)    # (Ctrl-Home, Right x10: where it was)
+    check('CODE-F8, Up x30: no shorter than 72 rows, one text row (%s): line 5 shown, its status line (%s); PgUp: a page '
+          'is a line (%s); Right x10, Down x20: no further than the screen\'s right edge and the band (%s)'
+          % (w1r, s1r, s1u, wbig), w1r == (2, 32, 74, 72) and s1r == (4, 84) and l1r and s1u == (4, 84) and l1u
+          and wbig == (2, 32, 78, 328) and win(1) == (2, 32, 74, 280), (w1r, s1r, l1r, s1u, l1u, wbig, win(1), A.screen(k)))
+    n0 = len(ev)
     k.key(0x6E00, ktest.RIGHT, ktest.RIGHT, ktest.DOWN, ktest.DOWN, ktest.ENTER); k.run_for(0.5)
-    w4, t4 = win(1), at('Hello. Hi')
-    check('CODE-F7, Right x2, Down x2, Return: moved (%s), the text with it (%s)' % (w4, t4),
-          w4 == (4, 40, 74, 280) and t4 == (5, 64), (w4, t4, A.screen(k)))
+    w4, t4, ev4 = win(1), at('Hello. Hi'), ev[n0:]
+    k.hooks.remove(evh)
+    check('CODE-F7, Right x2, Down x2, Return: moved (%s), the text with it (%s); Write given EV_MOVED' % (w4, t4),
+          w4 == (4, 40, 74, 280) and t4 == (5, 64) and ev4 == [0xFF02], (w4, t4, [hex(e) for e in ev4], A.screen(k)))
     k.key(A.CODE['W']); k.run_for(1.0)
     n5, c5 = mb('mw_n'), mb('mw_cur')
     w5 = win(c5)
@@ -3402,6 +3417,19 @@ def t_write():
     check('in the new Write, "abc", CODE-Q, Return, a name, Return: saved (%r), its window gone, the first Write in '
           'front (%d running, session %d)' % (d6, n6, c6), d6 == b'abc' and n6 == 2 and c6 == 1
           and not A.has(k, 'Write: (new)') and A.has(k, 'Write: NOTES.TXT'), (d6, n6, c6, A.screen(k)))
+    k.key(A.CODE['T']); k.run_for(0.5)
+    nt, tk = mb('mw_n'), A.has(k, 'Tasks')
+    k.key(ktest.ESC); k.run_for(0.5)
+    k.key(A.CODE['W']); k.run_for(1.0)
+    w9, n9 = win(mb('mw_cur')), mb('mw_n')
+    A.click(k, (w9[0] + w9[2] - 2) * 8 + 4, w9[1] + 8); k.run_for(0.5)
+    bq = k.band()
+    k.key(ktest.ENTER); k.run_for(0.5)
+    check('CODE-T now: the tasks fit, in the slot the second Write left (%d running); ESC.  CODE-W, then a click on the '
+          'new Write\'s close box: as ESC, "%s", Return: gone (%d, then %d running), the first in front'
+          % (nt, bq[:1], n9, mb('mw_n')), nt == 3 and tk and n9 == 3
+          and bq[:1] == ['Cancel: Confirm to exit without saving (unchanged)'] and mb('mw_n') == 2 and mb('mw_cur') == 1,
+          (nt, tk, n9, w9, bq, mb('mw_n'), mb('mw_cur'), A.screen(k)))
     k.wr('saver_t', struct.pack('<H', 36))
     for _ in range(40):
         k.pc.run_for(0.25)
@@ -3409,10 +3437,11 @@ def t_write():
     dark = not A.has(k, 'Hello. Hi')
     k.wr('saver_t', struct.pack('<H', 5460))
     k.key(ktest.DOWN); k.run_for(0.5)
-    s8 = at('Line 1 of 5')
+    s8, b8 = at('Line 1 of 5'), k.band()
     check('the saver with Write and the calculator (behind it) open, then a key: the Executive and Write\'s text back, '
-          'its status line where it was (%s)' % (s8,), dark and A.has(k, 'Hello. Hi') and A.has(k, 'LCMD')
-          and mb('mw_n') == 2 and s8 == (6, 300), (s8, A.screen(k)))
+          'its status line where it was (%s), its own band (%s), not the Executive\'s' % (s8, b8[:1]), dark
+          and A.has(k, 'Hello. Hi') and A.has(k, 'LCMD') and mb('mw_n') == 2 and s8 == (6, 300)
+          and b8[:1] == ['Type, or choose a command (CODE-? lists them)'], (s8, b8, A.screen(k)))
     k.key(A.CODE['Q']); k.run_for(0.3); k.key(ktest.ENTER); k.run_for(1.0)
     d7, n7 = A.disk_file(k, 'NOTES.TXT'), mb('mw_n')
     k.key(ktest.ESC); k.run_for(0.5); k.settle()

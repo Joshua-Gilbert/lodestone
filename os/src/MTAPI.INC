@@ -92,6 +92,11 @@ MT_TSR      equ 1Ah                     ; (Resident Claude's, at CLAUDE /R and
                                         ;  one's, and 1 while its pop-up waits
                                         ;  for the front task (the stub's to
                                         ;  set and clear)
+MT_WIN      equ 1Dh                     ; (a window .RUN's, at its start: M8b)
+                                        ;  CF clear if the UI code running is a
+                                        ;  window .RUN's session, beside others:
+                                        ;  it is a window then.  CF: AX = 1
+                                        ;  (not one: it has the whole screen)
 MT_SCREEN   equ 1Ch                    ; the caller's screen, which it wrote
                                         ;  itself, is as it should be (put back
                                         ;  after a screen saver): not counted
