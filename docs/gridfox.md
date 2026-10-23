@@ -236,8 +236,15 @@ address is good for some hours, from this Pi only.
 ```
 ~/gridlink/venv/bin/pip install -U "yt-dlp[default]"
 ```
-For YouTube, yt-dlp also needs a JavaScript runtime: deno, or node (gridfox
-enables node as well as yt-dlp's default, deno). YouTube changes often, so
+For YouTube, yt-dlp also needs a JavaScript runtime, or it finds no formats
+("Requested format is not available"). Install deno where gridlink's service
+can find it (its PATH has no `~/.deno/bin`):
+```
+sudo apt-get install -y unzip
+curl -fsSL https://deno.land/install.sh | sh -s -- -y --no-modify-path
+sudo ln -sf ~/.deno/bin/deno /usr/local/bin/deno
+```
+gridfox also enables node, if that is on the PATH instead. YouTube changes often, so
 when Y stops working, the first thing to try is `pip install -U` again.
 
 Tested against a stand-in yt-dlp and the stand-in Firefox

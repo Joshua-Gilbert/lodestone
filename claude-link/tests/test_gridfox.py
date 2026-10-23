@@ -785,6 +785,12 @@ def test_video_find_and_page():
     except V.NotFound as e: assert str(e) == 'Video unavailable', e
     else: raise AssertionError('no NotFound')
     assert len(calls) == 1                                       # (cookies wouldn't help that)
+    calls.clear()
+    nojs = (1, '', 'WARNING: [youtube] No supported JavaScript runtime could be found. Only deno is enabled\n'
+                   'ERROR: [youtube] e-QFj59PON4: Requested format is not available.')
+    try: V.find('U', run=run([nojs]), cmd=['yt-dlp'])
+    except V.NotFound as e: assert 'needs deno' in str(e), e
+    else: raise AssertionError('no NotFound')
     def slow(a, **kw): raise subprocess.TimeoutExpired(a, 1)
     try: V.find('U', run=slow, cmd=['yt-dlp'])
     except V.NotFound as e: assert 'too long' in str(e)
