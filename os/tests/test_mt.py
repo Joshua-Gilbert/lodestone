@@ -3274,6 +3274,21 @@ def t_nodisk():
     check('NODISKMT behind the Executive opens B:X.TXT with no disk: 3 at once (RES.TXT "03"), no prompt waiting '
           '(mt_crit 0), and the Executive still takes keys', A.disk_file(k, 'RES.TXT') == b'03' and crit == 0
           and k.u16('sel') != sel0, (A.disk_file(k, 'RES.TXT'), crit, sel0, k.u16('sel')))
+    # with a handler of its own that prompts (LCMD's, which NODISKMT run from LCMD as a task inherits): the same
+    k = ktest.KPC(A.image('mt_nd2.img', *files), bytes(1474560), ems_pages=88)
+    k.pc.drives[1].empty = True
+    k.start(10)
+    k.mcb0 = k.u16('first_mcb')
+    ret(k, 'LCMD.COM', 1.0)
+    k.key('nodiskmt'); k.key(ktest.ENTER, settle=False); k.run_for(0.3)
+    front(k, 0)
+    k.run_for(3.0)
+    crit = k.pc.rd(mt_seg(k), k.Y['mt_crit'], 1)[0]
+    sel0 = k.u16('sel')
+    k.pc.keys.append(ktest.DOWN); k.run_for(1.0)
+    check('... run from LCMD as a task (LCMD\'s INT 24h, which prompts), the Executive in front: the same, 3 at once, '
+          'nothing waiting for an answer nobody can read', A.disk_file(k, 'RES.TXT') == b'03' and crit == 0
+          and k.u16('sel') != sel0, (A.disk_file(k, 'RES.TXT'), crit, sel0, k.u16('sel')))
 
 if __name__ == '__main__':
     t0 = time.time()
