@@ -1892,8 +1892,9 @@ def t_nodisk():
     # a handler that answers Ignore, which the mount doesn't offer: Fail, as MS-DOS (it mounted B: from A:'s boot sector)
     ig = os.path.join(OUT, 'NODISKIG.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', ig, os.path.join(HERE, 'NODISKIG.ASM')], check=True)
+    cmds = os.path.join(OUT, 'CMDS.TXT'); open(cmds, 'wb').write(b'dir b:*.txt' + bytes([13, 10]) + b'dir b:*.txt' + bytes([13, 10]) + b'exit' + bytes([13, 10]))
     nd2 = os.path.join(OUT, 'ND2.BAT'); open(nd2, 'wb').write(b'@dir b:*.txt' + bytes([13, 10]) + b'@echo hi > b:y.txt' + bytes([13, 10]))
-    k = ktest.KPC(image('nodiskig.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISKIG.COM=' + ig, 'ND2.BAT=' + nd2, 'BIN' + chr(92),
+    k = ktest.KPC(image('nodiskig.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISKIG.COM=' + ig, 'ND2.BAT=' + nd2, 'CMDS.TXT=' + cmds, 'BIN' + chr(92),
                         'BIN' + chr(92) + 'NODISKMT.COM=' + os.path.join(HERE, 'NODISKMT.COM')), bytes(1474560))
     k.pc.drives[1].empty = True
     k.start()
@@ -1967,6 +1968,9 @@ def t_nodisk():
     res = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\RES.TXT')
     check('... NODISKMT found in A:\\BIN after the PATH\'s B:\\: two questions, the PATH search\'s and the program\'s own '
           '(RES.TXT "03")', o.count('Fail?') == 2 and res == b'03', (o, res))
+    # lines read from a file, not the console (lcmd < cmds.txt): each asks again too
+    o = asks('lcmd < cmds.txt')
+    check('... LCMD reading its lines from a file (two DIR B:*.TXT): one question for each line', o.count('Fail?') == 2, o)
     # a COPY whose writes fail part way (B: write-protected after its 3rd sector): F, then the partial copy's close and
     # delete ask again, so a Retry with the disk put right leaves no 0-byte file and no lost clusters
     big = os.path.join(OUT, 'BIG.DAT'); open(big, 'wb').write(bytes(range(256)) * 160)

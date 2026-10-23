@@ -1864,7 +1864,8 @@ bat_arg:
 ; Only prompt_loop calls it: the history it writes lies over the start-up
 ; code, which /C still runs after its command
 edit_line:
-        call    con_in                  ; standard input the console?
+        mov     byte [crit_q], 0        ; (each line asks again: one read
+        call    con_in                  ;  from a file too) the console?
         jc      .dos
         je      .ed
         jns     .dos                    ; a file at its end: this shell is
