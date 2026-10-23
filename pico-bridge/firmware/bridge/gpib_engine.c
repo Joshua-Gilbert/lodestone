@@ -55,7 +55,7 @@ INL uint32_t rx_free(void) { return (SH.rx_tail - SH.rx_head - 1u) & (RX_RING - 
 INL void rx_push(uint8_t code, uint8_t b, uint32_t arg) {
   uint32_t h = SH.rx_head, n = (h + 1u) & (RX_RING - 1u);
   if (n == SH.rx_tail) { SH.ev_lost++; return; }
-  SH.rx[h].code = code; SH.rx[h].b = b; SH.rx[h].gen = gen; SH.rx[h].arg = arg;
+  SH.rx[h].code = code; SH.rx[h].b = b; SH.rx[h].gen = gen; SH.rx[h].arg = arg; SH.rx[h].t = hal_us();
   DMB();
   SH.rx_head = n;
 }
@@ -111,7 +111,11 @@ INL void cfg_talk(void) {
   cfg = CFG_TALK;
 }
 
-INL void set_srq(void) { if (rsv && online) hal_clr(SRQ_M); else hal_set(SRQ_M); }
+static bool srq_on;
+INL void set_srq(void) {
+  if (rsv && online) { hal_clr(SRQ_M); if (!srq_on) { srq_on = true; EV(E_SRQ); } }
+  else { hal_set(SRQ_M); srq_on = false; }
+}
 
 // Auto mode: READY while a complete reply waits, RQS once for each new one.
 INL void auto_status(void) {

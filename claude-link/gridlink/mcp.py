@@ -802,7 +802,8 @@ class ToolServer:
                 L.trace = collections.deque(maxlen=100000)
                 if proto is not None: proto.trace = L.trace
             elif args['trace'] == 'stop':
-                tr = [[round(t, 6), e] for t, e in list(L.trace or ())]
+                from .pico import retime          # (the bridge's events on its own clock, when it stamps them)
+                tr = [[round(t, 6), e] for t, e in retime(list(L.trace or ()))]
                 L.trace = None
                 if proto is not None: proto.trace = None
             else:
