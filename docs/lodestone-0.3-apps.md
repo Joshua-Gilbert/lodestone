@@ -928,7 +928,7 @@ The second of the four steps toward right-click editing in Write: a clipboard ev
 - **Kept when a program ends:** the core holds it, so a `.RUN` can copy, end, and another (or the same, on another file) paste. With `MULTITASK=1` every window `.RUN` shares it, and the state (`clip_h`, `clip_len`, `clip_f`) is outside every range a session keeps (`mw_ctx`).
 - **Where:**
   - **An EMS page of its own,** taken the first time something is put (INT 67h 43h, one page) and copied in and out with 57h, so the page frame isn't touched. The handle is nobody's: the UI's code isn't in the running program's memory, so `ems_alloc` gives it owner 0, and no program's end (nor a task's, parked or killed) takes it back.
-  - **Without EMS, or with none free** (`MDISK=ALL` takes every page): `CLIP.$$$` in the root of the settings drive (INT 21h 3305h's DH, where LODE.INI's changes go), else of the start-up drive. Written anew at each put, read at each get. A short write (the disk full) is error 29, and empties it (the file was cut).
+  - **Without EMS, or with none free** (`MDISK=ALL` takes every page): `CLIP.$$$` in the root of the settings drive (INT 21h 3305h's DH, where LODE.INI's changes go), else of the start-up drive. Written anew at each put, read at each get. A short write (the disk full) is error 29; any error writing it empties it (the file may be cut).
 - **Cost:**
   - The core's code grows by 322 bytes (`ui_image_end` 5100h → 5242h), its BSS by 5.
   - `ui_keep_end` grows by 342 bytes (63D0h → 6526h). MEMSZ reads 0.3 KB less: 564.6 KB without EMS, 580.7 KB with it; with `MULTITASK=1` 560.7 KB.
