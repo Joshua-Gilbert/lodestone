@@ -241,7 +241,8 @@ every byte checked.
 | CLAUDE 1.5: 8 KB write requests, the next frame straight after an answer | 6.0 ms | 8 ms median | 89.4 KB/s | 82.1 KB/s |
 | bridge fw 2026-10-23c: held replies (the bridge answers the POLLs between fragments) | 6.0 ms | 8 ms median | 94.1 KB/s | 82.1 KB/s |
 | CLAUDE 1.6: 3340-byte frames and 16 KB write requests | 6.0 ms | 8 ms median | 109.5 KB/s | 82.1 KB/s |
-| CLAUDE 1.7: 3300-byte frames out of the GRiD and 16 KB reads | **6.0 ms** | **8 ms** median | **109.5 KB/s** | **89.6 KB/s** |
+| CLAUDE 1.7: 3300-byte frames out of the GRiD and 16 KB reads | 6.0 ms | 8 ms median | 109.5 KB/s | 89.6 KB/s |
+| bridge fw 2026-10-23d: held NOPs (checked by the bridge) | **6.0 ms** | **8 ms** median | **109.3 KB/s** | **91.1 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -318,7 +319,8 @@ every byte checked.
   answer to it is a NOP either way. So the bridge gets that frame's first 4
   bytes and the NOP, and checks the rest itself, the length and the Fletcher
   sum, before it sends the NOP. It's the check gridlink makes, on the same
-  bytes.
+  bytes. GRiD to Pi went from 89.6 to 91.1 KB/s (3 of each 16 KB read's 5
+  frames: the last one is answered with the next request, not a NOP).
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
