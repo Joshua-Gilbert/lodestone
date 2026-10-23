@@ -72,6 +72,7 @@ ui_base:
         API     UI_SAVER,     api_saver
         API     UI_MENU,      ui_menu
         API     UI_MOUSE,     api_mouse
+        API     UI_CLIP,      api_clip
 
 section uibss
 ; mouse and pointer
@@ -127,6 +128,9 @@ mv_y        resw 1
 mn_tab      resw 1              ; UI_MENU: its items, its list (in help_w),
 mn_lv       resb LV_SIZE        ;  and whether it borrowed the cache itself
 mn_lent     resb 1              ;  (help_w modal: KMW.INC changes no focus)
+clip_h      resw 1              ; UI_CLIP: its EMS handle (0: none yet),
+clip_len    resw 1              ;  what it holds, and 1 if that is in the
+clip_f      resb 1              ;  file (no EMS page to be had)
 ; lists, forms, the line editor
 lv_cur      resw 1
 disp_fn     resw 1
@@ -978,6 +982,164 @@ api_mouse:
         mov     [oldmb], al
         xor     ah, ah                  ; (CF clear)
 .x:     ret
+
+; UI_CLIP (API 8): the clipboard every .RUN shares, kept when they end.
+; AL = 0: CX bytes from ES:DI into it (16384 at most: else CF, AX = 8);
+; AL = 1: what it holds into ES:DI, CX bytes at most -> CX = how many;
+; AL = 2: -> CX = how many it holds (0: empty).  CF, AX = the error (an
+; EMS one, 80h and up, or DOS's).  In an EMS page of its own (its handle
+; nobody's: no program's end takes it), else in CLIP.$$$ on the settings
+; drive (3305h's DH; else the start-up one)
+CLIP_MAX    equ 16384
+api_clip:
+        cmp     al, 2
+        jne     .rw
+        mov     cx, [clip_len]
+        clc
+        ret
+.rw:    pusha
+        mov     bx, ax                  ; (BL: what to do)
+        or      al, al
+        jnz     .get
+        mov     ax, 8
+        cmp     cx, CLIP_MAX
+        ja      .err
+        jcxz    .set
+        cmp     byte [clip_f], 0
+        jne     .f
+        cmp     word [clip_h], 0
+        jne     .e
+        push    bx                      ; a page of its own, the first time
+        mov     ah, 43h
+        mov     bx, 1
+        int     67h
+        pop     bx
+        or      ah, ah
+        jnz     .nf                     ; (no EMS, or none free: the file)
+        mov     [clip_h], dx
+.e:     call    clip_ems
+        jnc     .set
+        jmp     short .err
+.nf:    inc     byte [clip_f]
+.f:     call    clip_file
+        jnc     .set
+        mov     word [clip_len], 0      ; (3Ch cut the file: what it held is gone)
+        jmp     short .err
+.set:   mov     [clip_len], cx
+        jmp     short .ok
+.get:   cmp     cx, [clip_len]          ; at most what it holds
+        jbe     .n
+        mov     cx, [clip_len]
+.n:     mov     bp, sp
+        mov     [bp+12], cx             ; (pusha's CX: the answer)
+        jcxz    .ok
+        cmp     byte [clip_f], 0
+        jne     .fg
+        call    clip_ems
+        jnc     .ok
+        jmp     short .err
+.fg:    call    clip_file
+        jc      .err
+.ok:    popa
+        clc
+        ret
+.err:   mov     bp, sp
+        mov     [bp+14], ax             ; (pusha's AX)
+        popa
+        stc
+        ret
+
+; CX bytes between ES:DI and the clipboard's page (BL = 0: into it, 1:
+; out of it), by INT 67h 57h -> CF, AX = the error.  AX, SI, DX change
+clip_ems:
+        push    bp
+        sub     sp, 18                  ; 57h's region: the length, then the
+        mov     bp, sp                  ;  source and the destination
+        mov     [bp], cx
+        xor     ax, ax
+        mov     [bp+2], ax
+        mov     dx, [clip_h]            ; both sides the page first ...
+        mov     si, bp
+        add     si, 4
+        call    .side
+        call    .side
+        mov     si, bp                  ; ... then the program's over one
+        add     si, 4
+        or      bl, bl
+        jz      .p
+        add     si, 7
+.p:     mov     byte [si], 0
+        mov     [si+1], ax
+        mov     [si+3], di
+        mov     [si+5], es
+        mov     si, bp
+        mov     ax, 5700h
+        int     67h
+        add     sp, 18
+        pop     bp
+        mov     al, ah
+        xor     ah, ah
+        cmp     al, 1                   ; (CF if AL was 0: so CMC)
+        cmc
+        ret
+.side:  mov     byte [si], 1            ; (AX = 0)
+        mov     [si+1], dx
+        mov     [si+3], ax
+        mov     [si+5], ax
+        add     si, 7
+        ret
+
+; the same through CLIP.$$$ (BL = 0: written, 1: read) -> CF, AX = the
+; error.  AX, DX change
+clip_file:
+        push    bx
+        push    cx
+        push    ds
+        mov     ax, 3305h               ; the settings drive, else the
+        int     21h                     ;  start-up one
+        or      dh, dh
+        jz      .d
+        mov     dl, dh
+.d:     add     dl, 'A' - 1
+        mov     [s_clip], dl
+        mov     dx, s_clip
+        mov     ax, 3D00h
+        or      bl, bl
+        jnz     .o
+        mov     ah, 3Ch                 ; (written: made anew; CX = 0 for it)
+        push    cx
+        xor     cx, cx
+        int     21h
+        pop     cx
+        jmp     short .h
+.o:     int     21h
+.h:     jc      .x
+        xchg    bx, ax                  ; (BX: the handle; AL: what to do)
+        mov     ah, 40h
+        or      al, al
+        jz      .rw
+        mov     ah, 3Fh
+.rw:    push    es                      ; (DS:DX = ES:DI for 3Fh and 40h)
+        pop     ds
+        mov     dx, di
+        int     21h
+        push    cs
+        pop     ds
+        jc      .c
+        cmp     ax, cx                  ; (short: the disk full, or the file
+        mov     ax, 29                  ;  cut since: error 29, write fault)
+        jb      .c
+        clc
+.c:     pushf
+        push    ax
+        mov     ah, 3Eh
+        int     21h
+        pop     ax
+        popf
+.x:     pop     ds
+        pop     cx
+        pop     bx
+        ret
 
 ; sleep until the next interrupt (win_mv, UI_MOUSE)
 mwait:  sti
@@ -4248,6 +4410,7 @@ s_svfont    db ' F=', 0
 section uiboot
 s_ini       db '@:\LODE.INI', 0
 section ui
+s_clip      db '@:\CLIP.$$$', 0     ; UI_CLIP's file without EMS (named at each use)
 s_pathv     db 'PATH='
 section uiboot
 font_path   db '@:\'                ; "X:\NAME.FNT": on the drive started from
