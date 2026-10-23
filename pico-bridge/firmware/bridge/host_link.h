@@ -12,7 +12,9 @@ extern "C" {
 // frame types, Pi -> Pico
 #define F_HELLO_REQ 0x01
 #define F_CONFIG    0x02   // u8 address 0..30, u8 flags: bit 0 online, bit 1 auto service request (GLP)
-#define F_TX        0x03   // u16 gen, u8 flags (bit 0: EOI with the last byte), data
+#define F_TX        0x03   // u16 gen, u8 flags (bit 0: EOI with the last byte; bit 1 EARLY, bit 2 ANNOUNCED), data
+#define TXF_EARLY   0x02   // (TX flags, 2026-10-23a) the first frame of a reply: count it ready now, the rest follows
+#define TXF_ANN     0x04   //  the last frame (EOI) of a reply an EARLY frame announced: not counted again
 #define F_STB       0x04   // u8 status byte (bit 6 ignored), u8 rsv (1 = request service: SRQ)
 #define F_PING      0x05
 #define F_BOOTSEL   0x07   // reboot into the USB bootloader (to flash new firmware)

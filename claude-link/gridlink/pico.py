@@ -28,8 +28,10 @@ F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_BOOTSEL, F_WAKE = 0x01, 0x02, 0x03
 F_HELLO, F_DATA, F_EVENT, F_LOG, F_PONG, F_CREDIT = 0x81, 0x82, 0x83, 0x84, 0x85, 0x87
 CF_ONLINE, CF_AUTO_RSV = 0x01, 0x02
 DF_EOI, DF_END = 0x01, 0x02
-TXF_EOI = 0x01
+TXF_EOI, TXF_EARLY, TXF_ANN = 0x01, 0x02, 0x04
 TX_CHUNK = 512          # data bytes per TX frame: 4 + 512 + COBS's 3 fit the firmware's 600-byte input buffer
+TX_FIRST = 128          # an EARLY reply's first TX frame: small, so the bridge says READY as soon as it can
+EARLY_FW = 'bridge fw 2026-10-23'   # firmware from this date on takes TXF_EARLY (PROTOCOL.md)
 FRAME_MAX = 4104        # GLP frames to the GRiD: 4096 payload + 8 (what the GRiD takes is its HELLO's rx=)
 EVENTS = {0x10: 'LISTEN', 0x11: 'UNLISTEN', 0x12: 'TALK', 0x13: 'UNTALK', 0x14: 'TALK_WAIT', 0x15: 'DCL',
           0x16: 'SDC', 0x17: 'GET', 0x18: 'GTL', 0x19: 'LLO', 0x1A: 'IFC', 0x1B: 'REN', 0x1C: 'SPOLL',
@@ -37,15 +39,14 @@ EVENTS = {0x10: 'LISTEN', 0x11: 'UNLISTEN', 0x12: 'TALK', 0x13: 'UNTALK', 0x14: 
 
 
 def cobs_encode(data):
-    out = bytearray([0]); code_at, code = 0, 1
-    for b in data:
-        if b == 0:
-            out[code_at] = code; code_at, code = len(out), 1; out.append(0)
-        else:
-            out.append(b); code += 1
-            if code == 0xFF:
-                out[code_at] = code; code_at, code = len(out), 1; out.append(0)
-    out[code_at] = code; out.append(0)
+    """COBS, and the 0x00 that ends the frame: each run between zeros as its length + 1 and the run (254 bytes
+    at most: then FFh, and the run goes on).  By runs, not bytes: ~25 times faster in Python."""
+    out = bytearray()
+    for run in bytes(data).split(b'\0'):
+        while len(run) >= 254:
+            out.append(255); out += run[:254]; run = run[254:]
+        out.append(len(run) + 1); out += run
+    out.append(0)
     return bytes(out)
 
 
@@ -66,7 +67,7 @@ class PicoProto:
 
     def __init__(s, write, addr=7, log=print):
         s.write, s.addr, s.log = write, addr, log
-        s.buf = bytearray(); s.firmware = ''; s.connected = False; s.online = False
+        s.buf = bytearray(); s.firmware = ''; s.early = False; s.connected = False; s.online = False
         s.gen = 0; s.tx_ring = 16383; s.sent = 0; s.consumed = 0
         s.pending = collections.deque()
         s.pong = {}; s.last_pong = 0.0; s.hello_at = 0.0; s.pongs = 0
@@ -102,6 +103,7 @@ class PicoProto:
         if t == F_HELLO:
             proto, ring, chunk, consumed, queued = struct.unpack_from('<BHHIH', f, 1)
             s.firmware = f[12:].decode('ascii', 'replace')
+            s.early = s.firmware[:len(EARLY_FW)] >= EARLY_FW and s.firmware.startswith('bridge fw ')
             if proto != PROTO_VERSION:
                 s.log('bridge: firmware protocol %d, gridlink speaks %d: update one of them' % (proto, PROTO_VERSION))
                 return b''
@@ -160,11 +162,20 @@ class PicoProto:
             room = s.tx_ring - ((s.sent - s.consumed) & 0xFFFFFFFF)
             if room < len(data): return             # the whole frame must fit before any of it goes
             # The firmware's input buffer holds a COBS frame of 600 bytes (host_link.c), so a GLP frame
-            # bigger than TX_CHUNK goes as several TX frames, EOI only on the last: the bridge raises SRQ
-            # when that one is in, so the GRiD still sees the frame only once it is whole.
-            for i in range(0, max(len(data), 1), TX_CHUNK):
-                last = i + TX_CHUNK >= len(data)
-                s.write(cobs_encode(struct.pack('<BHB', F_TX, g, TXF_EOI if last else 0) + data[i:i + TX_CHUNK]))
+            # bigger than TX_CHUNK goes as several TX frames, EOI only on the last.  Older firmware raises SRQ
+            # when that one is in; from fw 2026-10-23 the first (a small one) says EARLY, and the bridge raises
+            # it then: the GRiD reads while the rest crosses USB, ~3.5 times faster than it reads.  All of them
+            # in one write.
+            early = s.early and len(data) > TX_CHUNK
+            cuts = [0, TX_FIRST] if early else [0]
+            while cuts[-1] + TX_CHUNK < len(data): cuts.append(cuts[-1] + TX_CHUNK)
+            cuts.append(len(data))
+            out = []
+            for k in range(len(cuts) - 1):
+                last = k == len(cuts) - 2
+                fl = (TXF_EOI | (TXF_ANN if early else 0)) if last else (TXF_EARLY if early and k == 0 else 0)
+                out.append(cobs_encode(struct.pack('<BHB', F_TX, g, fl) + data[cuts[k]:cuts[k + 1]]))
+            s.write(b''.join(out))
             s.sent = (s.sent + len(data)) & 0xFFFFFFFF
             s.pending.popleft()
 

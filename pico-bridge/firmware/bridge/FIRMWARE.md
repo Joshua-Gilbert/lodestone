@@ -93,12 +93,21 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   raises SRQ (status 40h, no READY) for an idle 1520 until it serial-polls or sends a message. A WAKE for
   an older message than the 1520's last is ignored. gridlink uses it so news reaches an idle CLAUDE at
   once instead of at its once-a-second idle POLL: median 51 ms instead of up to a second.
+- **2026-10-23a.** EARLY answers (TX flags bit 1, bit 2 on the last; PROTOCOL.md). A 2 KB answer counts as
+  ready when its first TX frame is in, so the 1520 reads while the rest crosses USB, instead of after: the
+  ~4 ms of USB per 2 KB frame overlaps the GPIB transfer. Every announced answer puts exactly one EOI entry in
+  the ring (core 1 counts answers done by them): one that won't be finished gets a stand-in, an EOI entry of
+  an older generation that core 1 drops as stale. The bus simulation's J tests cover a streamed read, an SDC
+  in the middle and an answer never finished. On the 1520 (gridlink.bench --size 128): Pi → GRiD 73.6 →
+  87.2 KB/s.
 
 ## Build
 
 Use arduino-cli with the arduino-pico core (`rp2040:rp2040` 6.3.0 was used). Put the `.c/.h` files next to
 the sketch. (With arduino-cli on Linux, `bridge.ino` may need to become `bridge_main.cpp` with
-`#include <Arduino.h>` on top, next to a `bridge.ino` that is only a comment, when its ctags step fails.)
+`#include <Arduino.h>` on top, next to a `bridge.ino` that is only a comment, when its ctags step fails.
+If arduino-cli has no ctags at all, point it at a stand-in that prints nothing:
+`--build-property 'runtime.tools.ctags.path=DIR'`, DIR holding an executable `ctags` that exits 0.)
 
 ```
 arduino-cli compile -b rp2040:rp2040:rpipico2:opt=Optimize2,freq=150 \
