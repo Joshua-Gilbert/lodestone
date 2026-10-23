@@ -487,6 +487,7 @@ api_setredraw:
 ; =====================================================================
 ; UI_EVENT: wait for a key or a click (the pointer shows meanwhile)
 ui_event:
+        mov     word [crit_err], 0      ; (INT 24h's reason: this action's)
 .on:    mov     byte [ptr_on], 1
         call    show_cursor
 .l:     call    poll_once
@@ -1687,8 +1688,11 @@ api_sberr:
         mov     bx, ax
         mov     si, dos_msgs
         cmp     bx, 83
-        jne     .chk
-        mov     ax, [crit_err]
+        je      .ce
+        cmp     bx, 3                   ; (a drive not ready: 3 after INT 24h,
+        jne     .chk                    ;  as MS-DOS; the reason is ours)
+.ce:    xor     ax, ax
+        xchg    ax, [crit_err]          ; (said once)
         or      ax, ax
         jz      .chk
         mov     bx, ax

@@ -1831,6 +1831,8 @@ xfer_mkdir:
         mov     cx, 10h
         call    ff
         jnc     .ok                     ; (there, or a file: said later)
+        cmp     word [crit_err], 0      ; (a drive not ready, INT 24h: said
+        jne     .ok                     ;  later, no offer to make it)
         cmp     ax, 3
         je      .ask
         cmp     ax, 18                  ; (none: not there)

@@ -281,17 +281,22 @@ bpb_slot:
         mov     cx, BPBLEN
         ret
 
-; sector DX of drive [act] into bounce, without INT 24h.  CF: AX = error.
-; AX, BX, CX changed
+; sector DX of drive [act] into bounce: crit_bounce with INT 24h, as
+; MS-DOS's when it mounts (Retry, Fail), raw_bounce without.  CF: AX =
+; error.  AX, BX, CX changed
+crit_bounce:
+        mov     byte [io_crit], 2
+        jmp     short raw_bounce.go
 raw_bounce:
-        push    es
+        mov     byte [io_crit], 0
+.go:    push    es
         push    cs
         pop     es
         mov     bx, bounce
         mov     al, [act]
         mov     cx, 1
         mov     ah, 2
-        call    disk_io_raw
+        call    dio
         pop     es
         ret
 
@@ -382,7 +387,7 @@ drv_ready:
         push    cx
         push    dx
         xor     dx, dx
-        call    raw_bounce              ; no BPB yet: use a 9-sector guess
+        call    crit_bounce             ; no BPB yet: use a 9-sector guess
         pop     dx
         pop     cx
         pop     bx
@@ -979,10 +984,7 @@ tc_room:
 ;  Errors go to INT 24h; CF: AX = DOS error code.
 ; ---------------------------------------------------------------------
 disk_io:
-        mov     byte [io_crit], 1
-        jmp     dio
-disk_io_raw:                            ; the same without INT 24h (mounting)
-        mov     byte [io_crit], 0
+        mov     byte [io_crit], 1       ; (raw_bounce: 0, crit_bounce: 2)
 dio:    push    bx
         push    cx
         push    dx
@@ -1157,7 +1159,9 @@ dio:    push    bx
         call    bios2dos
         stc
         ret
-.bign:  mov     byte [io_ign], 1
+.bign:  cmp     byte [io_crit], 2       ; (mounting: no Ignore was offered;
+        je      .bfail                  ;  Fail, as MS-DOS, not a stale BPB)
+        mov     byte [io_ign], 1
         call    .wfail
 .bok:   clc
         ret
@@ -1610,6 +1614,10 @@ crit_disk:
         xor     ah, ah
         mov     di, ax
         mov     ah, 38h | 06h           ; ignore, retry, fail allowed; data area
+        cmp     byte [io_crit], 2
+        jne     .m
+        mov     ah, 18h | 02h           ; mounting: retry, fail; the FAT's, as
+.m:                                     ;  MS-DOS (no data to ignore)
         cmp     byte [io_op], 3
         jne     .r
         or      ah, 1                   ; a write

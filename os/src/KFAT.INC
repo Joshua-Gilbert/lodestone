@@ -203,7 +203,7 @@ resolve_si:
         call    drv_ready
         mov     bx, si
         pop     si
-        jc      .drv
+        jc      .dr                     ; (invalid, or not ready: 3, MS-DOS's)
         mov     al, [act]
         mov     [r_drv], al
         call    fat_load
@@ -276,8 +276,8 @@ resolve_si:
 .np:    mov     ax, 3
         stc
 .x:     ret
-.drv:   cmp     al, 15                  ; (an invalid drive: 3, as MS-DOS)
-        je      .np
+.dr:    cmp     al, 26                  ; (not a DOS disk: said as such)
+        jne     .np
         stc
         ret
 
