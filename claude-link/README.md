@@ -234,7 +234,8 @@ every byte checked.
 | bridge fw 2026-10-21a, 2 KB frames to the GRiD | 8 ms | up to 1 s | 34.3 KB/s | 42.8 KB/s |
 | 2 KB frames from the GRiD, the Fletcher sum (CLAUDE 1.3) | 7.0 ms | up to 1 s | 34.0 KB/s | 56.5 KB/s |
 | bridge fw 2026-10-22a (bulk USB reads) and 22b (wake-up) | 7.0 ms | 51 ms median | 45.7 KB/s | 56.7 KB/s |
-| SRQ on IRQ 5 (Lodestone's GPIB driver 1.21, CLAUDE 1.3) | **7.0 ms** | **9 ms** median | **44.9 KB/s** | **56.7 KB/s** |
+| SRQ on IRQ 5 (Lodestone's GPIB driver 1.21, CLAUDE 1.3) | 7.0 ms | 9 ms median | 44.9 KB/s | 56.7 KB/s |
+| the driver's fast loops (1.22, GPIBLOOP) | **6.4 ms** | **8 ms** median | **70.2 KB/s** | **73.3 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -245,7 +246,7 @@ every byte checked.
   messages. The bridge now raises SRQ when gridlink has news for an idle GRiD
   (WAKE, PROTOCOL.md), and CLAUDE POLLs at once. That left 51 ms: CLAUDE's
   HLT until the next timer tick. With the GPIB driver's SRQ interrupt (IRQ 5:
-  Lodestone's built-in driver 1.21, or GRIDGPIB 1.2) the SRQ itself wakes it,
+  Lodestone's built-in driver 1.21 and up, or GRIDGPIB 1.2) the SRQ itself wakes it,
   and the first call after idle takes 9 ms: a round trip and about 2 ms.
   gridlink rings only a GRiD that has read its last answer and been quiet
   for 50 ms, five times at most, then takes the SRQ back.
@@ -254,14 +255,20 @@ every byte checked.
   bytes, the GPIB driver's two fast loops moved by one, and a 2 KB frame into
   the GRiD took 30.0 ms instead of 27-28 (copies 42.7 / 54.8 KB/s). Two pad
   bytes keep them where they were measured fastest.
+- **The driver's byte loops** (tools/GPIBLOOP.COM, 4 KB echoes, 1.0-1.6):
+  both are CPU-bound, so every clock counts and a taken jump costs about
+  0.6 µs. Reading went 70 -> 152 KB/s (the count in a register, END from the
+  chip, the wait out of line), writing 77 -> 112 (no INC in memory per byte,
+  the next byte fetched while the bus handshakes, a miss costing one jump).
+  A 2 KB frame into the GRiD went from 28 to 13 ms.
 - **What is left, per 2 KB frame** (`bench --trace`):
-  - Pi to GRiD: the GPIB transfer about 28 ms, USB into the bridge 4.6 ms,
-    and the GRiD's own work between frames about 5 ms.
-  - GRiD to Pi: the GPIB transfer about 26 ms, and the GRiD's work about 5 ms.
-- **The GPIB ceilings**, with no protocol (tools/GPIBXFER.COM, the CPU's
-  own loop): 72-77 KB/s to the GRiD and 105 KB/s from it. The 7210 runs the
-  handshake by itself when the GRiD talks; when it listens, every byte waits
-  for the 286. DMA isn't wired on the 1520's GPIB cartridge.
+  - Pi to GRiD: the GPIB transfer 13 ms, USB into the bridge about 5 ms,
+    and the GRiD's own work between frames 5 ms.
+  - GRiD to Pi: the GPIB transfer about 18 ms, and the GRiD's work 5 ms.
+- **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
+  the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
+  loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
+  1520's GPIB cartridge.
 - **The frame sizes** (2026-10-21, before the bridge's USB fix): 246, 512,
   1024, 2048 and 4096 bytes to the GRiD gave 22.7, 27.7, 31.1, 32.4 and
   33.1 KB/s. 2 KB frames get 98 % of 4 KB's rate for 1.8 KB less memory.
