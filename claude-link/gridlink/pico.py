@@ -35,7 +35,8 @@ EARLY_FW = 'bridge fw 2026-10-23'   # firmware from this date on takes TXF_EARLY
 FRAME_MAX = 4104        # GLP frames to the GRiD: 4096 payload + 8 (what the GRiD takes is its HELLO's rx=)
 EVENTS = {0x10: 'LISTEN', 0x11: 'UNLISTEN', 0x12: 'TALK', 0x13: 'UNTALK', 0x14: 'TALK_WAIT', 0x15: 'DCL',
           0x16: 'SDC', 0x17: 'GET', 0x18: 'GTL', 0x19: 'LLO', 0x1A: 'IFC', 0x1B: 'REN', 0x1C: 'SPOLL',
-          0x1D: 'TX_DONE', 0x1E: 'ONLINE', 0x1F: 'OFFLINE'}
+          0x1D: 'TX_DONE', 0x1E: 'ONLINE', 0x1F: 'OFFLINE',
+          0x20: 'RX_END', 0x21: 'TX_IN', 0x22: 'SRQ'}   # (fw 2026-10-23b: for the trace)
 
 
 def cobs_encode(data):
@@ -124,7 +125,9 @@ class PicoProto:
             s._gen(gen)
             name = EVENTS.get(code, hex(code))
             s.stats[name] += 1
-            if s.trace is not None: s.trace.append((time.monotonic(), name))
+            if s.trace is not None:          # (fw 2026-10-23b: when it happened, on the Pico's us timer)
+                s.trace.append((time.monotonic(), name) if len(f) < 13 else
+                               (time.monotonic(), name, struct.unpack_from('<I', f, 9)[0]))
             if name == 'TX_DONE': s.tx_done_at = s.clock()
             if name == 'ONLINE': s.online = True
             elif name == 'OFFLINE':
@@ -211,6 +214,25 @@ class PicoProto:
             if time.monotonic() - t0 > timeout: return None
             time.sleep(0.0002)
         return time.monotonic() - t0
+
+
+def retime(trace):
+    """A trace's bridge events on the bridge's own clock (fw 2026-10-23b stamps them): each moved to when it
+    happened, not when it reached the Pi -- the Pico sends its events between its USB reads, so a TALK can
+    arrive ms late.  The Pico's timer is put on the Pi's clock by the smallest gap seen between an event's
+    stamp and its arrival (so bridge times are late by about the quickest USB delivery, ~0.1 ms).  Returns
+    [(time, event)] in time order."""
+    stamped = [e for e in trace if len(e) == 3]
+    if not stamped: return [(e[0], e[1]) for e in trace]
+    base, last, wraps = stamped[0][2], stamped[0][2], 0
+    us = {}
+    for e in stamped:                                  # (the 32-bit us count wraps every 71 minutes)
+        if e[2] < last and last - e[2] > 0x80000000: wraps += 1
+        last = e[2]; us[id(e)] = (e[2] + (wraps << 32) - base) * 1e-6
+    off = min(e[0] - us[id(e)] for e in stamped)
+    out = [(us[id(e)] + off, e[1]) if len(e) == 3 else (e[0], e[1]) for e in trace]
+    out.sort(key=lambda x: x[0])
+    return out
 
 
 def find_port(spec):
