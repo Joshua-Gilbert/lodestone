@@ -2386,10 +2386,15 @@ def t_cmdsaver():
         check('A: taken out at the prompt: the saver looks for DEFRAG there, fails without a question, the dark screen',
               st['n'] and 'Fail?' not in q and len(dark) == 2, (st['n'], q, dark))
         k.key(ktest.DOWN)
+        back = k.pc.mode() == 3
         n0 = len(k.pc.tty)
-        k.key('dir'); k.key(ktest.ENTER)
+        k.key('pause && dir'); k.key(ktest.ENTER)
+        k.pc.run_until(lambda: k.pc.mode() == 0x40, 8)
+        in_pause = k.pc.mode() == 0x40
+        k.key(ktest.DOWN); k.pc.run_for(0.5); k.key(ktest.ENTER)
         q = ''.join(k.pc.tty)[n0:]
-        check('... a key: the prompt back, and the next line\'s DIR of A: asks', k.pc.mode() == 3 and q.count('Fail?') == 1, q)
+        check('... a key: the prompt back; "pause && dir": the saver in PAUSE without a question, then DIR of A: asks (the '
+              'rest of the line as before the saver)', back and in_pause and q.count('Fail?') == 1, (back, in_pause, q))
         k.key('f')
     finally:
         type(k.pc).int13 = orig
