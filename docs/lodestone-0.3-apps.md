@@ -139,9 +139,9 @@
   - it moves (its title strip, or CODE-F7), closes (its close box, as ESC), and is resized by its bottom-right corner or CODE-F8 and the arrows;
   - several can be open at once, each with its own file, beside the calculator and the tasks. CODE-W from any window opens another, for a new file. A second one opens a little lower and to the right;
   - CODE-T is then the Tasks window's, so **Transfer is CODE-X**, and its help says so;
-  - the shadow copy is in a block of its own, as the text is, so each Write takes 11,344 bytes of the UI segment.
+  - the shadow copy is in a block of its own, as the text is, so each Write takes 11,408 bytes of the UI segment.
 
-  It still asks for UI API 4, so an older core runs it, full-screen. With the switch off it is as it was.
+  It is a window only when it runs as one (`MT_WIN`, F0h AL=1Dh). It still asks for UI API 4, so an older core runs it, full-screen, as does one with the switch off.
 
 ## GRiD's font (2026-10-06)
 - Joshua asked why Lodestone didn't use the GRiD's built-in fonts. What the 1520 has:
@@ -833,7 +833,7 @@ Only with the switch on; the core with it off ignores all of this. The details a
   - by its bottom-right corner (its last column, the bottom 12 pixel rows): a press there drags the outline's corner, snapped to columns and to rows in fours;
   - by CODE-F8 (6F00h): the arrows widen or narrow it a column, lengthen or shorten it 16 rows; Return keeps the size, ESC leaves it.
 
-  It stays at least 16 columns by 72 rows, on the screen above the band. Then the screen is drawn again (the window's `W_DRAW` at its new size) and `UI_EVENT` returns `EV_SIZE` (0FF04h).
+  It stays at least 24 columns by 72 rows, on the screen above the band; ESC puts back the size it had. Then the screen is drawn again (the window's `W_DRAW` at its new size) and `UI_EVENT` returns `EV_SIZE` (0FF04h).
 
 ## Right clicks (UI API 7, 2026-10-21)
 - **What:** `UI_EVENT` and `UI_POLL` give `AX = EV_RCLICK` (FF03h), with BX = x and CX = y as for `EV_CLICK`, for a press of the right button.

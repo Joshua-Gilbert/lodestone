@@ -3,14 +3,15 @@
 ;  Part of LODEMT.SYS (section mtt): off, none of it is in memory and the
 ;  UI is byte for byte as it was.
 ;
-;  A window .RUN (RUN_API 6 and up: CALC, TASKS) is a session: its own
-;  load area in the UI segment (a slot, from run_base up, first fit), its
-;  own stack at the slot's end, and its own copy of the core's globals
+;  A window .RUN (its header says so, RF_WIN: CALC, TASKS, WRITE) is a
+;  session: its own load area in the UI segment (a slot, from run_base
+;  up, first fit), its own stack at the slot's end, and its own copy of
+;  the core's globals
 ;  that belong to one program (mw_ctx's ranges: the band, the title, the
 ;  list and form and line editor's state, UI_ALLOC's blocks, its header).
 ;  Sessions run in turn inside the UI task: only the one in front (the
 ;  focus) runs; the others wait inside UI_EVENT, where they were.  The
-;  Executive waits meanwhile in run_app until the last has ended (M8b
+;  Executive waits meanwhile in run_app until the last has ended (M8c
 ;  makes it live), as it waits for a .RUN today.
 ;
 ;  The UI's own code is patched when MT_UI is first asked (ui_boot), each
@@ -86,8 +87,10 @@ mw_rd       db      0                   ; 1: the screen again once switched
 mw_msg      db      0                   ; 1: mw_say's message waits (UI_MSG)
 mw_ow       dw      0                   ; (mw_size: the size it had)
 mw_oh       dw      0
-MW_MINW     equ     16                  ; the smallest a window is resized to:
-MW_MINH     equ     72                  ;  columns, pixels (title, a row, a status)
+MW_MINW     equ     24                  ; the smallest a window is resized to:
+MW_MINH     equ     72                  ;  columns (a title fits, and Write scrolls
+                                        ;  sideways by 20), pixels (a title, a
+                                        ;  row, a status line)
 MW_CORNER   equ     12                  ; its resize corner: its last column, the
                                         ;  bottom 12 pixel rows
 mw_mru      times MW_MAX db 0           ; the sessions, the focus first
@@ -385,7 +388,7 @@ mw_start:
         popa                            ; (back here when the starter runs again)
         clc
         ret
-.lf:    call    mw_shrink               ; (no record kept: SE_USE is 0)
+.lf:                                    ; (no record kept: SE_USE is 0)
         jmp     short .no
 .bad:   mov     ax, 11
         jmp     short .no
@@ -458,8 +461,9 @@ mw_end: cld
         mov     al, [cs:mw_mru]
 .go:    mov     [cs:mw_cur], al
         call    mw_rec
-        mov     sp, [cs:bp+SE_SP]       ; (its stack now: this slot's may go)
-        call    mw_shrink
+        mov     sp, [cs:bp+SE_SP]       ; (its stack now; the UI block stays
+                                        ;  the whole segment till the last ends:
+                                        ;  run_cleanup shrinks it then)
         or      al, al
         jnz     .top
         mov     byte [cs:mw_rd], 0      ; (the Executive draws its list itself)
@@ -884,19 +888,6 @@ mw_top: push    bp
         pop     cx
         pop     bp
         ret
-; the UI block back to the highest end still used (any: run_cleanup's)
-mw_shrink:
-        cmp     byte [cs:mw_n], 0
-        je      .x
-        pusha
-        call    mw_top                  ; AX = that end
-        add     ax, 15
-        shr     ax, 4
-        mov     bx, ax
-        mov     ah, 4Ah
-        int     21h                     ; (ES = the UI)
-        popa
-.x:     ret
 
 ; read .RUN SI's image and fixups to BX, fix it there, its BSS zeroes
 ; (mw_hdr) -> CF, AX = error
@@ -1290,9 +1281,14 @@ mw_size:
         xchg    ax, bx
         call    mw_szto
         jmp     .k
-.esc:   mov     ax, [cs:mw_ow]          ; (back as it was)
-        mov     dx, [cs:mw_oh]
-        call    mw_szto
+.esc:   UCALL   mv_frame                ; (back as it was, exactly: not through
+        mov     ax, [cs:mw_ow]          ;  mw_szto's rules, which a window's
+        mov     [si+W_W], ax            ;  own size needn't keep)
+        mov     ax, [cs:mw_oh]
+        mov     [si+W_H], ax
+        popa
+        clc
+        ret
 .end:   UCALL   mv_frame                ; the outline off
         mov     ax, [si+W_W]
         cmp     ax, [cs:mw_ow]

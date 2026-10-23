@@ -51,10 +51,9 @@ M_FOUND equ 3                           ; showing what Find found
 start:  mov     di, fname               ; the argument: the file to open
         call    UI_SBSTR
         mov     byte [di], 0
-        mov     ax, 0F012h              ; MULTITASK=1? (MT_LIST, counting only:
-        xor     cx, cx                  ;  it fails with the switch off)
-        stc
-        int     21h
+        mov     ax, 0F01Dh              ; a window .RUN's session? (MT_WIN, M8b:
+        stc                             ;  it fails with the switch off, and
+        int     21h                     ;  with a LODEMT.SYS from before it)
         jc      .full
         mov     byte [wmode], 1         ; a window: CODE-T is the tasks'
         mov     word [kt_xfer], K_CODE_X
@@ -530,7 +529,13 @@ redraw: mov     di, title               ; "Write: NOTES.TXT"
 
 ; the text area, its rule and the status line, all drawn (the window's
 ; W_DRAW too: after a move, a resize or another window's close)
-w_draw: call    geom
+w_draw: push    es                      ; (as W_DRAW, from any session's
+        push    ds                      ;  redraw: ES may be anything, and
+        pop     es                      ;  is kept)
+        call    .d
+        pop     es
+        ret
+.d:     call    geom
         mov     dx, [rule_y]
         mov     bx, [x0]
         mov     cx, [cols]
@@ -1702,7 +1707,10 @@ k_options:
         xor     bh, bh
         mov     al, [tabws+bx]
         mov     [tabw], al
-        jmp     redraw                  ; (tabs may show differently)
+        cmp     byte [wmode], 0         ; (tabs may show differently: in a
+        je      .fs                     ;  window, its contents again, not the
+        jmp     w_draw                  ;  whole screen and the directory)
+.fs:    jmp     redraw
 .x:     ret
 
 k_usage:
