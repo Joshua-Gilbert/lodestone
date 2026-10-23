@@ -1250,6 +1250,9 @@ hide_cursor:
 
 ; =====================================================================
 ;  drawing primitives (mode 40h: 640x400, 4 interleaved banks of 100 rows)
+;  (KMW.INC, with MULTITASK=1: while window .RUNs run, clear_screen,
+;  fill_band, invert_band, vline, putsn and xor_rect start with a JMP FAR
+;  to its clipping, win_paint and saver too: mw_cpt)
 ; =====================================================================
 ; DX = y (0-399) -> DI = its row's offset: (y & 3) * 2000h + (y / 4) * 80
 row_di: push    dx
