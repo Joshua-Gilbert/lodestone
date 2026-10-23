@@ -30,8 +30,8 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M7b | The Executive: programs started as tasks, its task list (TASKS.RUN, CODE-T); System's switch; LODE.INI's `BG=`, `FREEZE=` and `MTMEM=` | PR #71, merged. |
 | M7c | Resident Claude with tasks: its pop-up and TYPE's keys the front task's, its key wait a place to switch from, CODE-Tab in the console its own, `/R` not inside a task (`MT_TSR`) | PR #73, merged. |
 | M8a | Several window `.RUN`s at once, each a session in the UI task; the Executive waits meanwhile | PR #77, merged. |
-| M8b | Write as a window, several at once; windows resized by the mouse or CODE-F8; window `.RUN`s marked in their header | PR #79. |
-| M8c | A live base under the windows: the Executive or System working under them (clipping) | |
+| M8b | Write as a window, several at once; windows resized by the mouse or CODE-F8; window `.RUN`s marked in their header | PR #79, merged. |
+| M8c | The Executive live under the windows: in front by a click or CODE-F6, its drawing clipped around them | PR #82. |
 | M9 | On the 1520, and release 0.7 | |
 
 Each milestone's PR adds its section below, describing what was built and any departure from the plan.
@@ -1739,3 +1739,116 @@ t_windows: with both windows open, and with one, the UI block is the whole segme
 - A resize while a session behind has a help window open (`wover`).
 - Write's Include into a window, and Write's messages (out of memory) in a window.
 - Any of it on the 1520, CODE-F8's key code included.
+
+## M8c: the Executive live under the windows (2026-10-23)
+
+**Joshua's decisions:** M8c follows M8b: the live Executive under the windows, with clipping (M8a's "the core clips the base's own drawing around it"). The two CALCs in the Executive's list are noted as a limit for now, not changed (below).
+
+**Choices made here** (not Joshua's; easy to change):
+- **The Executive is the only live base.** System and other full-screen `.RUN`s still take the whole screen, one at a time: CODE-U with windows open says "SYSTEM.RUN needs the whole screen: close the windows first". System under the windows would need its end handled while windows run (it returns into `run_app`, whose cleanup would close them).
+- **CODE-F6 includes the Executive** in its round, so it can be reached from the keyboard.
+- **When a window `.RUN` ends,** the one in front before it comes to the front, the Executive included. CODE-F6 sends the one it leaves to the end of the round, so after CODE-F6 from the calculator to the tasks, closing the tasks brings the Executive, not the calculator (M8a brought the calculator).
+
+**What it does:**
+- **The Executive is a session too** (record 0, already its in M8a). It comes to the front by:
+  - a click on it: its list, its form or its information lines, anywhere above the band not under a window. The click only brings it to the front, as a click on a window does;
+  - CODE-F6;
+  - the window in front ending.
+- **The windows stay on top while it is in front,** and keep their places. Its band is its own. Its keys are its own: the list, Tab, Return, F1, its forms and its file commands, CODE-P's prompt, and Shift-Return. CODE-K, CODE-T and CODE-W bring a window to the front or start one, as from a window. With the Executive in front, CODE-F7, CODE-F8 and a press on a window's title strip don't move or resize the window on top: a press on a window brings it to the front first.
+- **Return on a text file** with windows open opens it in another Write, beside them. M8b's Writes could only start with a new file then. Return on a window `.RUN` (CALC.RUN, TASKS.RUN) starts another one. A program (`.COM`, `.EXE`) starts as a task, as with no windows.
+- **Its drawing is clipped.** While window `.RUN`s run, the core's drawing primitives are patched (`mw_cpt`, LODEMT.SYS's `KMW.INC`). Each patch is a JMP FAR over the routine's first 5 bytes, checked at start-up with M8a's patches; none is made if any differ:
+  - `clear_screen`, `fill_band`, `invert_band`, `vline`, `putsn` and `xor_rect`;
+  - with the Executive in front, what they draw is cut around the sessions' windows, unless it lies inside a window of the Executive's own (its help, a form): nothing under that window cuts it;
+  - a cut drawing goes in bands of rows between the windows' edges. Each band's visible stretches are drawn by the primitive's own code: text by `putsn`'s unrolled glyph loop. Only text rows a window's top or bottom edge crosses go a row of pixels at a time;
+  - with nothing in the way, or a window `.RUN` in front, the primitive runs on as it was (its first instructions done in KMW, then back);
+  - `win_paint` and the saver draw unclipped (`mw_nc`). The Executive's `redraw_all` draws the sessions' windows through `win_paint`; the saver's dark screen is all of it;
+  - the patches go in when the first window `.RUN` starts and come out when the last ends (or when the root starts over), so with no window `.RUN` running the core is as M8b left it.
+- **A task's end is the Executive's event,** given only when it is in front. `ex_mtw` (2 in the Executive's `UI_EVENT`) is now one of each session's globals, and a new session's is 1, so a window `.RUN` in front never gets `EV_TASK`. Before, the Executive waited outside `UI_EVENT`, so nobody got it.
+- **The Executive can be in front while it asks** (Copy's "Replace?", a message): CODE-K, CODE-T and CODE-W still start or bring a window there. So:
+  - `mw_open` keeps `dstpath` (UI_FINDAPP's answer is there, and it is Copy and Move's destination) on the stack while it looks for the `.RUN`, and starts it from a copy of the path;
+  - a window started then gets no band of the Executive's question (`held1`, `held2`, `band1`, `band2` cleared): its band is blank till it sets its own;
+  - while a window `.RUN` "can't start" message waits (`mw_say`), `ex_mtw` is 1: a task's end meanwhile is the Executive's event later, not the key that ends the message.
+- **The saver run by a DOS task** (`ui_saver_far`, LCMD's, on its own stack) isn't counted in `mw_nc`, and nothing drawn on a stack other than the UI's is cut: that task's screen isn't the windows'.
+- **Changes of front draw less.** M8a drew the whole screen at each one:
+  - to the Executive: its band;
+  - to a window `.RUN` whose windows are on top already: its band;
+  - otherwise: its windows, bottom to top (on top of the rest now), then its band.
+
+  M8a's other redraws (a window closed, moved or resized, the saver) are as they were.
+- **The sessions' close boxes** are drawn by the Executive's `redraw_all` too. `win_flags` reads the API of the code running, and the Executive's is recorded as 6 while windows run.
+- **The list again:** with no save-under, a window closing draws the whole screen again, the Executive's list from the disk included (M8a). So the exit codes of window `.RUN`s aren't used any more (`mw_xc` is gone), and `run_app` returns 0FFFFh (no list again) once one has started.
+
+**The limits, plainly:**
+- **Only the Executive is a live base;** System is refused while windows are open (above).
+- **The windows show no sign of which is in front,** with the Executive in front or not: the band says whose keys they are.
+- **The Executive's list isn't read again while it is behind.** A file saved from Write shows in it when that Write's window closes (the screen drawn again), or after F5. A task that ends while a window is in front is told when the Executive comes to the front; its list is drawn again then.
+- **A message the Executive was showing** ("LCMD.COM ended") still waits when it comes back to the front: the click that brought it there isn't the one that reads it.
+- **Speed** (pcemu, from the key to the next wait; the list under Write, or beside the calculator):
+
+  | | No window | Write over the list | The calculator beside it |
+  |---|---|---|---|
+  | Down in the list | 9.0 ms | 10.2–13.5 ms | 11.8–13.6 ms |
+  | F5 (the list again) | 107.7 ms | 130.6 ms | 132.3 ms |
+
+  pcemu charges a fixed time for each basic block, and the clipping is branchy, so on the 1520 it may cost less than this. A first version that drew everything a row of pixels at a time took 28 ms and 240 ms.
+- **While windows run, every primitive's call** goes through the patch: a far jump and two compares more (a window `.RUN` in front), or the clipping's test (the Executive in front).
+- **`xor_rect` is clipped too (on a side row only the two columns of its sides are touched), but nothing the Executive draws reaches it today.** Its form's item outline is a box (lines and rules), and its XOR outlines are in its own windows (a form's field), which aren't cut. An XOR drawn on the base and taken off with a window opened, moved or closed in between would leave the difference; the whole screen is drawn again then anyway.
+- **The two CALCs** (noted 2026-10-23, Joshua; not changed): the Executive lists CALC.COM and CALC.RUN both as "CALC", Kind "Program". Return on CALC.COM runs the command-line calculator: with no expression it prints its usage (`CALC [/D] [name=]expression`, the operators and functions) on the text screen, ends with exit code 1, and the Executive is back at once ("CALC.COM ended, exit code 1"), with the switch on or off. The calculator window is CALC.RUN, or CODE-K.
+
+**Changes to M8a's and M8b's limits:**
+- "The Executive waits while windows are open" no longer holds.
+- "A second Write is a new file" no longer holds: Return on a text file in the Executive opens it in another Write.
+- M8a's "CODE-F6 brings the next one there" now passes through the Executive.
+- M8a's "The Executive waits in `run_app` until the last one has ended": it waits only until it comes to the front again, then works under the windows, waiting in its own `UI_EVENT` when it isn't in front.
+- M8a's "closing, moving or bringing a window to the front then draws the whole screen again": a change of front now draws the band, or the raised windows (above). Closing and moving still draw it all.
+- M8a's "the next session in front" after one ends: now the one in front before it, the Executive included.
+- M8a's "After the last one, the Executive runs on, with an exit code from them": `run_app` returns 0FFFFh once a window `.RUN` has started, and the exit codes aren't kept (`mw_xc` is gone). M8a's untested "exit codes of several sessions" is moot.
+
+**Cost:**
+- **Switch off:** nothing. `image_end`, `bss_end` and `ui_keep_end` are main's (4170h, 76A0h, 621Ah); the UI image is byte for byte the same (UICORE.INC got a comment).
+- **Switch on:** MT's block is 1,263 paragraphs (1,139 before). MEMSZ with Shift-Return is 561.7 KB (563.6 on main). LODEMT.SYS is 17,270 bytes (15,283 before).
+- **ROM 1:** 2,560 bytes left (4,608 before): LODEMT.SYS takes four sectors more. **Paint's 9 sectors no longer fit:** DEFRAG.COM (20 sectors) or CALC.COM (8) has to move to ROM 2 first.
+
+**Tests:** test_mt's new group `t_base` (14 checks; test_mt 345, 331 before):
+- Return on NOTES.TXT: Write in a window. A click left of it: the Executive in front, its band, Write still open, the focus order (the Executive, then Write), `fill_band` patched.
+- Down ×2 moves the Executive's selection under Write; Tab outlines Device; Tab ×2: Title. Write's window, byte for byte, as it was throughout.
+- F1: the Executive's help over Write; a key closes it: Write as it was, byte for byte, its close box drawn.
+- CODE-R on OTHER.TXT: the rename form over Write, "QQ" typed in it shown there.
+- Return on OTHER.TXT: a second Write with it, in front, the first still open.
+- CODE-F6 ×3 from the second Write: the Executive, the first Write, the second.
+- CODE-K in the second Write: the calculator; ESC: that Write again. A click on the Executive, CODE-K: the calculator, the Executive waiting in its `UI_EVENT`, the calculator's `ex_mtw` 1. ESC: the Executive in front, its `ex_mtw` 2, Up its key.
+- CODE-U: "SYSTEM.RUN needs the whole screen: close the windows first"; nothing started.
+- Copy OTHER.TXT to SUB, which has one, Replace Ask: the Executive's question. CODE-K meanwhile: the calculator, its band not the question (`held1` 0), the Copy's destination (`dstpath`) as it was. ESC: the question back; ESC: SUB's OTHER.TXT untouched.
+- CODE-P, `START /W MTSPIN.COM 400 TB.TXT`, EXIT: both Writes back. The second Write in front while MTSPIN ends: no `EV_TASK` for it, its own band, the Executive's list without TB.TXT. A click on the Executive: its list again, with TB.TXT.
+- Both Writes closed: the Executive in front, nothing loaded, the UI block as before, `fill_band` as it was.
+- The calculator moved so its top edge crosses a list row; the list left of it blanked on the screen, the Executive in front, F5: every name left of it drawn again right (13 of 13), the crossed row a row of pixels at a time, the calculator untouched.
+- The calculator moved over the form; Tab: Device's outline drawn around it (a side cut by the clipping), the calculator untouched; Tab ×2: the screen there as it was.
+- The Executive in front: CODE-F7, Left ×3, Return don't move the calculator; its title strip dragged: the calculator in front, unmoved (the press only brought it there).
+
+`t_windows` and `t_write` follow the new round: closing the tasks after CODE-F6 brings the Executive (then CODE-F6 the calculator); a click left of Write brings the Executive, and one on Write's status line brings Write back.
+
+**The checks can fail:** each of 17 mutations fails at least one check of `t_base`, `t_windows`, `t_write` or `t_on`:
+- the patches not made, or not taken out;
+- `ex_mtw` not one of the sessions' globals, or a new session's not 1;
+- `mw_topses` gone (the Executive moving a session's window);
+- the Executive's own windows cut too;
+- a crossed text row drawn whole;
+- no focus by a click on the Executive;
+- the Executive not in the round (the last one's end then has nowhere to go);
+- `win_paint` clipped;
+- a raised session's windows not drawn;
+- System started beside the windows;
+- the sessions' close boxes not drawn from the Executive's `redraw_all`;
+- one band for all rows;
+- a window's columns not skipped;
+- the Copy/Move destination not kept through CODE-K's search;
+- the Executive's question given to a window started meanwhile.
+
+**Not tested here:**
+- The saver's dark screen unclipped with the Executive in front (its moving clock lands under a window only by chance), and a DOS task's saver (`ui_saver_far`) left out of `mw_nc`.
+- A task's end while a "can't start" message waits (`mw_say`'s `ex_mtw` 1).
+- A clipped `xor_rect` and `invert_band` drawing their visible parts (the Executive's XORs are in its own windows; `invert_band` lights the coprocessor lamp on its information line, which only a window made long enough reaches).
+- With windows open: Return on a `.COM` or `.EXE` (a task), Return on CALC.RUN or TASKS.RUN (another one), CODE-W and CODE-T with the Executive in front, CODE-F8 with the Executive in front (`mw_szwin` takes only the running session's window).
+- The two CALCs ("CALC.COM ended, exit code 1"), checked by hand in pcemu with the switch on and off, not in a test.
+- The root starting over with the clipping's patches in (`mw_clean`).
+- Any of it on the 1520.

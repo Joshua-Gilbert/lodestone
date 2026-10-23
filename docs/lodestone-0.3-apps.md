@@ -75,6 +75,7 @@
   - shows `.RUN` files as Kind "Program";
   - opens Text, Source, Batch, Settings and Profile files with `WRITE.RUN`, passing the whole path;
   - CODE-U runs System, CODE-W starts Write with a new file.
+  - With `MULTITASK=1` and window `.RUN`s open (M8c, `docs/lodestone-multitasking.md`), it stays live under them: a click on it or CODE-F6 brings it to the front, the windows staying on top, and what it draws is cut around them. Return on a text file then opens it in another Write. System still needs the whole screen: CODE-U says to close the windows first.
 
 ## SYSTEM.RUN — Usage (7.4 KB)
 - **Layout:** topics on the left (Memory, Disks, Clock, Devices, GPIB, Display, About), details on the right. (It was 4.9 KB before Display, which brought a copy of GRiD's font: below.)
@@ -137,7 +138,7 @@
 - **With `MULTITASK=1`** (M8b, `docs/lodestone-multitasking.md`), Write is a window:
   - it opens near full width (76 columns, 15 text rows), with its title, rule and status line inside, and the Executive's list around it;
   - it moves (its title strip, or CODE-F7), closes (its close box, as ESC), and is resized by its bottom-right corner or CODE-F8 and the arrows;
-  - several can be open at once, each with its own file, beside the calculator and the tasks. CODE-W from any window opens another, for a new file. A second one opens a little lower and to the right;
+  - several can be open at once, each with its own file, beside the calculator and the tasks. CODE-W from any window opens another, for a new file, and Return on a text file in the Executive opens that file in another (M8c). A second one opens a little lower and to the right;
   - CODE-T is then the Tasks window's, so **Transfer is CODE-X**, and its help says so;
   - the shadow copy is in a block of its own, as the text is, so each Write takes 11,408 bytes of the UI segment.
 
@@ -672,6 +673,7 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
   - An answer it couldn't write (a full disk under `> FILE`) is "Can't write the answer", ERRORLEVEL 1.
   - `CALC /?` says how to use it, and which coprocessor it found, on standard output. `CALC` alone or a wrong switch says the same on standard error with ERRORLEVEL 1.
   - It leaves the coprocessor as FNINIT leaves it, so no sticky flag waits for the next program (on the 1520, POST unmasks IRQ 13 when there is a chip).
+  - **Two CALCs in the Executive's list** (a known limit, 2026-10-23): CALC.COM and CALC.RUN both show as "CALC", Kind "Program". Return on CALC.COM runs this one with no expression: its usage flashes on the text screen and the Executive says "CALC.COM ended, exit code 1". The calculator window is CALC.RUN, or CODE-K.
 - **CALC.RUN** (CODE-K) is a 38-byte by 228-pixel window, with 8.5 KB of save-under in the lent cache memory:
   - the core's line editor for the sum;
   - the answer under it, right-aligned;
@@ -827,7 +829,8 @@ Joshua's aim: Lodestone's own programs as GUI-style windows, the calculator firs
     - and `W_DRAW` isn't told why it is drawn: the calculator compares its window's place with where it drew last.
 
 ## Window .RUNs and resizing (with MULTITASK=1, M8, 2026-10-22)
-Only with the switch on; the core with it off ignores all of this. The details are in `docs/lodestone-multitasking.md` (M8a, M8b).
+Only with the switch on; the core with it off ignores all of this. The details are in `docs/lodestone-multitasking.md` (M8a, M8b, M8c).
+- **The Executive stays live under the windows** (M8c), and what it draws is cut around them. A full-screen `.RUN` (System, Paint) can't start while window `.RUN`s are open: the Executive says to close them first.
 - **`RUN_FLAGS equ RF_WIN`** after the include puts bit 0 in the header's word 14 (`mkrun.py`; it was always 0, and no core reads it with the switch off). It says the `.RUN` is a window `.RUN`: with `MULTITASK=1` it runs as a session, beside other windows, and doesn't make its starter wait. Its windows then have `W_FLAGS` whatever its `RUN_API`, so Write can keep asking for API 4. CALC, TASKS and WRITE set it; SYSTEM doesn't, and a full-screen `.RUN` such as Paint shouldn't.
 - **`WF_SIZE` (4) in `W_FLAGS`:** the user may resize the window:
   - by its bottom-right corner (its last column, the bottom 12 pixel rows): a press there drags the outline's corner, snapped to columns and to rows in fours;
