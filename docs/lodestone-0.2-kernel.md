@@ -185,7 +185,7 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
   - TSR (31h) keeps its files open.
   - ^C runs INT 23h on the caller's stack: IRET restarts the call, RETF with CF ends the program.
 - **Built-in GPIB (INT 60h).**
-  - The GRIDGPIB 1.1 API, reporting version 1.22. It installs only if a 7210 answers at the GRiD's GPIB ports.
+  - The GRIDGPIB 1.1 API, reporting version 1.23. It installs only if a 7210 answers at the GRiD's GPIB ports.
   - SRQ on IRQ 5 (1.21, the GPIB cartridge's E1 jumper). The 7210 interrupts on SRQ only (IMR2 SRQI). The handler ORs ISR2 into the shadow AH=0Bh reads, and adds 1 to a count.
     - AH=0Eh: AL = 0 off, 1 on, anything else just asks. It returns AX = the IRQ in use (5, or 0) and DX:CX = the count. A client reads the count with interrupts off before a HLT, so it can't sleep through an SRQ.
     - On by default. `GPIBIRQ=0` in LODE.INI turns it off at start-up (KSPLASH.INC's `gi_boot`). 32 interrupts in one tick (no jumper, a floating line) turn it off by themselves.
@@ -197,6 +197,11 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
     - Write: the next byte fetched while the bus handshakes, so DO → OUT is three instructions; a miss costs one taken jump, back to a count just above the poll. Each miss ORs its ISR1 read into the shadow, since ERR clears as it is read; every 64 misses it looks for ERR (no listener), and 256 such waits go to the careful loop.
     - `gp_done_n` is settled from SI/DI at the end (an INC in memory per byte cost 1.6 µs of a 12.6 µs write byte). Pad bytes keep the jump targets at their measured parity. 48 bytes more than 1.21.
     - Tried and dropped: AUXRB's TRI (no change: T1 isn't the limit), LOOPZ polls (slower), END tested on the same read as DI (its first poll came too early and missed), the unbounded write poll (119 KB/s, but it would hang on a listener that stops).
+  - **The frame check (1.23).** The driver keeps a Fletcher-16 (mod 256: A = 1 + the bytes, B = the sum of the A's) as it moves the bytes, two ADDs a byte in the fast loops. CLAUDEP.COM's profile on the 1520 had CLAUDE's own pass over each 2 KB frame at ~2.65 ms (1.3 µs a byte), more than half of the GRiD's 5 ms between frames.
+    - **03h with AL = 2:** a binary read that returns BX = the check of every byte read (BL = A, BH = B; A = 1, B = 0 to start).
+    - **02h with AL = 3:** after the data, the check of all but the first byte (GLP's 47h) as two more bytes, A then B, EOI with B. CX counts them.
+    - Other AL values are as before (bit 0: EOI, or stop at LF). CLAUDE uses these with 1.23 and up, once the Pi has agreed to the Fletcher sum: a lone frame is checked from BX in a dozen instructions (`ks_check`), anything else by the scan as before; its frames go out for the driver to finish. The bytes on the wire are the same.
+    - It costs the fast loops ~0.3 µs a byte (reads ~5 % slower for other programs) and 144 bytes resident.
   - Measured in emulation:
     - GGTEST ID? 6.9 → 4.2 ms;
     - Claude, 22.8 KB each way: 8.0 → 6.8 s at 115,200 baud, and 5.4 → 2.9 s with a 2 Mbaud bridge.

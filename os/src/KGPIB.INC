@@ -87,6 +87,7 @@ gp_handler:
         mov     [gp_c_bx], bx
         mov     [gp_c_al], al
         mov     byte [gp_err], 0
+        mov     word [gp_fa], 1         ; (the frame check: A = 1, B = 0)
         mov     bl, ah
         cmp     bl, gp_NFUNC
         jb      .ok
@@ -121,8 +122,9 @@ gp_NFUNC   equ ($-gp_functab)/2         ;  bad-function answer, as it is built i
 ; ---- function bodies: return AX (and CX/DX where documented) -------
 gp_f_present:
         mov     ax, 4747h
-        mov     cx, 0122h               ; LODESTONE: 1.2x = built into the kernel (1.21: IRQ, 0Eh;
-                                        ;  1.22: GPIBLOOP's fast loops)
+        mov     cx, 0123h               ; LODESTONE: 1.2x = built into the kernel (1.21: IRQ, 0Eh;
+                                        ;  1.22: GPIBLOOP's fast loops; 1.23: the
+                                        ;  frame check, 02h AL=3, 03h AL=2)
         mov     dh, 60h                 ; (the only vector it is put on)
         mov     dl, gp_MYADDR
         jmp     gp_done
@@ -143,6 +145,11 @@ gp_f_read: mov     es, [gp_c_es]
         mov     al, [gp_c_al]
         mov     [gp_lfstop], al
         call    gp_do_read
+        cmp     byte [gp_c_al], 2       ; AL = 2: BX = the Fletcher-16 (mod
+        jne     gp_fin_read             ;  256, A = 1, B = 0 to start, BH = B)
+        mov     bp, sp                  ;  of every byte read
+        mov     bx, [gp_fa]
+        mov     [bp+10], bx             ; (the caller's BX, as pushed)
         jmp     gp_fin_read
 
 gp_f_query:
@@ -378,7 +385,10 @@ gp_do_write:
         inc     ax
         cmp     ax, [gp_count]
         jne     .noeoi
-        test    byte [gp_eoiflag], 1
+        mov     al, [gp_eoiflag]
+        cmp     al, 3                   ; (3: EOI on the check, appended)
+        je      .noeoi
+        test    al, 1
         jz      .noeoi
         mov     dx, gp_R_AUXMR
         mov     al, gp_AUX_SEOI
@@ -387,9 +397,22 @@ gp_do_write:
         inc     si
         mov     dx, gp_R_CDOR
         out     dx, al
-        inc     word [gp_done_n]
+        cmp     word [gp_done_n], 0     ; the check: the bytes after the first
+        je      .n1
+        call    gp_fsum
+.n1:    inc     word [gp_done_n]
         jmp     .wb
-.sent:  mov     cx, [gp_tdata]             ; last byte accepted?
+.sent:  cmp     byte [gp_eoiflag], 3    ; AL = 3: then the frame check, A and
+        jne     .last                   ;  B, as two more bytes, EOI with B
+        mov     ax, [gp_fa]
+        mov     [gp_chk], ax
+        add     word [gp_count], 2
+        mov     byte [gp_eoiflag], 1
+        push    ds
+        pop     es
+        mov     si, gp_chk
+        jmp     .wb
+.last:  mov     cx, [gp_tdata]             ; last byte accepted?
         call    gp_tmo_start
 .wl:    mov     ah, gp_ISR1_DO | gp_ISR1_ERR
         call    gp_isr1_test
@@ -438,10 +461,14 @@ gp_fast_write:
         push    bx
         push    di
         push    si
+        push    bp
+        mov     bp, cx
         mov     dx, gp_R_ISR1
         mov     bh, [gp_shadow1]
-        es lodsb
-        mov     ah, al
+        es lodsb                        ; (always the first byte: it is not in
+        mov     ah, al                  ;  the frame check, so CL = A and CH = B
+        mov     cx, 0FF01h              ;  start where its add leaves them at
+        sub     cl, al                  ;  1 and 0)
         mov     di, 64
         xor     bl, bl                  ; 256 waits of 64 polls
         test    bh, gp_ISR1_DO
@@ -459,10 +486,13 @@ gp_fast_write:
         mov     dh, gp_R_CDOR >> 8
         out     dx, al
         mov     dh, gp_R_ISR1 >> 8
+        add     cl, al                  ; the frame check (Fletcher-16, mod 256)
+        add     ch, cl
         es lodsb                        ; (the last byte, after the last)
         mov     ah, al
         mov     di, 64
-        loop    .w
+        dec     bp
+        jnz     .w
         jmp     short .o
 .c:     mov     di, 64                  ; 64 misses: ERR?  256 times?
         test    bh, gp_ISR1_ERR
@@ -471,6 +501,8 @@ gp_fast_write:
         jnz     .w
 .o:     dec     si                      ; (the byte fetched, not sent)
         mov     [gp_shadow1], bh
+        mov     [gp_fa], cx
+        pop     bp
         mov     ax, si
         pop     di                      ; (SI as it came)
         sub     ax, di
@@ -478,6 +510,14 @@ gp_fast_write:
         pop     di
         pop     bx
 .x:     ret
+
+gp_fsum:                                ; the frame check, one byte (AL)
+        push    ax
+        add     [gp_fa], al
+        mov     al, [gp_fa]
+        add     [gp_fb], al
+        pop     ax
+        ret
 
 ; Fast path for the bulk of a read: all but the last two bytes of room (the
 ; careful loop holds off the one that fills the buffer), normal handshake.
@@ -497,6 +537,8 @@ gp_fast_read:
         push    di
         mov     dx, gp_R_ISR1
         mov     bh, [gp_shadow1]
+        mov     bl, [gp_fa]             ; BL = A, AH = B (the frame check)
+        mov     ah, [gp_fb]
         times ($ - $$) & 1 db 90h       ; .w and .g even
 .w:     in      al, dx
         or      bh, al
@@ -505,6 +547,8 @@ gp_fast_read:
 .g:     mov     dh, gp_R_DIR >> 8
         in      al, dx                  ; (and the talker sends the next)
         mov     dh, gp_R_ISR1 >> 8
+        add     bl, al
+        add     ah, bl
         stosb
         test    bh, gp_ISR1_END
         jnz     .end
@@ -518,27 +562,29 @@ gp_fast_read:
         jnz     .e
         dec     si
         jnz     .s2
-.slow:  xor     bl, bl
+.slow:  xor     cl, cl
         jmp     short .t
 .e:     test    bh, gp_ISR1_DI
         jnz     .g
-        mov     ah, 1                   ; END after the last byte's DI
+        mov     al, 1                   ; END after the last byte's DI
         jmp     short .st
-.end:   mov     ah, 1
-        cmp     al, 0Ah
+.end:   cmp     al, 0Ah
+        mov     al, 1
         jne     .st
         test    byte [gp_lfstop], 1
         jz      .st
-        inc     ah                      ; 2: stopped at LF
-.st:    mov     [gp_endr], ah
+        inc     al                      ; 2: stopped at LF
+.st:    mov     [gp_endr], al
         and     bh, ~(gp_ISR1_DI | gp_ISR1_END)
-        mov     bl, 1
+        mov     cl, 1
 .t:     mov     [gp_shadow1], bh
+        mov     [gp_fa], bl
+        mov     [gp_fb], ah
         mov     ax, di
         pop     si                      ; (DI as it came)
         sub     ax, si
         add     [gp_done_n], ax
-        shr     bl, 1                   ; CF: stopped
+        shr     cl, 1                   ; CF: stopped
         pop     si
         pop     bx
         ret
@@ -552,6 +598,7 @@ gp_fast_read:
 gp_do_read:
         mov     [gp_count], cx
         mov     word [gp_done_n], 0
+        mov     word [gp_fa], 1         ; (04h: the read's own frame check)
         mov     byte [gp_endr], 0
         call    gp_ensure_ctrl
         jc      .cf
@@ -620,6 +667,7 @@ gp_do_read:
 .rd:    mov     dx, gp_R_DIR
         in      al, dx                  ; (completes the handshake unless held)
         stosb
+        call    gp_fsum
         inc     word [gp_done_n]
         cmp     al, 0Ah
         jne     .ne
@@ -1055,4 +1103,7 @@ gp_c_di    dw 0
 gp_c_cx    dw 0
 gp_c_dx    dw 0
 gp_c_bx    dw 0
+gp_fa      db 1                         ; the frame check's A and B (a word:
+gp_fb      db 0                         ;  gp_fa first)
+gp_chk     dw 0                         ; (02h AL=3: the check, as sent)
 gp_res_end:
