@@ -42,7 +42,7 @@ UI_API      equ 8                       ; this file's API version (2: UI_FONT, 3
                                         ;  4: UI_SAVER's tidying, 5: the caller's redraw
                                         ;  routine stays, exit code 0FFFFh, 6: W_FLAGS,
                                         ;  windows that move and close, EV_MOVED,
-                                        ;  7: EV_RCLICK, 8: UI_MENU, UI_MOUSE)
+                                        ;  7: EV_RCLICK, 8: UI_MENU, UI_MOUSE, UI_CLIP)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Lodestone version (BH major, BL minor
@@ -173,7 +173,17 @@ UI_MOUSE    equ 48 * 3  ; the mouse now (API 8), for a drag: waits for the next
                         ;  CF set if there is no mouse.  The pointer stays
                         ;  hidden.  A press seen here is no event later: call
                         ;  it after EV_CLICK until the left button is up
-UI_LAST     equ 48 * 3
+UI_CLIP     equ 49 * 3  ; the clipboard every .RUN shares (API 8), kept when
+                        ;  they end: AL = 0: CX bytes from ES:DI into it
+                        ;  (16384 at most, else CF and AX = 8; CX = 0 empties
+                        ;  it); AL = 1: what it holds into ES:DI, CX bytes at
+                        ;  most -> CX = how many; AL = 2: -> CX = how many it
+                        ;  holds.  CF: AX = the error (an EMS one, 80h and up,
+                        ;  or DOS's: UI_SBERR).  Bytes as they are: text in a
+                        ;  program's own form (Write's lines end in LF).  In an
+                        ;  EMS page of its own; with none to be had, in
+                        ;  CLIP.$$$ on the settings drive (INT 21h 3305h)
+UI_LAST     equ 49 * 3
 FONT_BYTES  equ 96 * 16                 ; a font file (.FNT): exactly this long
 
 EV_CLICK    equ 0FF01h                  ; a left-button press (BX = x, CX = y)
