@@ -3285,7 +3285,6 @@ def t_windows():
     bf, m1 = k.band(), k.pc.rd(seg, k.Y['mw_msg'], 1)[0]
     for _ in range(5): k.key(A.CODE['K']); k.run_for(0.2)     # (each one ends the message, or says it again)
     m2 = k.pc.rd(seg, k.Y['mw_msg'], 1)[0]
-    sp = k.pc.u16(seg, k.Y['mw_ses'] + SE_SP)                   # (the Executive's, kept since)
     k.run_for(0.3)
     up, m3 = A.has(k, 'Tasks'), k.pc.rd(seg, k.Y['mw_msg'], 1)[0]
     k.key(ktest.ESC); k.run_for(0.5)
@@ -3293,7 +3292,7 @@ def t_windows():
           'meanwhile ends it, as any key, never nested (%d after five: ended, said, ended..., then %d); the tasks there still; '
           'ESC: the Executive' % (bf[:1], m1, m2, m3), bf[:1] == ['CALC.RUN is not on this disk'] and m1 == 1 and m2 == 0
           and m3 == 0 and up and k.pc.rd(seg, k.Y['mw_n'], 1)[0] == 0 and A.has(k, 'Select a file and confirm')
-          and not k.crashed, (bf, m1, m2, m3, hex(sp), up, A.screen(k)))
+          and not k.crashed, (bf, m1, m2, m3, up, A.screen(k)))
     # a damaged CALC.RUN (cut short): from the Executive, run_app's message; from the tasks, the band's
     cr = open(A.CALCRUN, 'rb').read()
     bad = os.path.join(A.OUT, 'CALCBAD.RUN'); open(bad, 'wb').write(cr[:len(cr) // 2])

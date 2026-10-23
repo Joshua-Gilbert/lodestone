@@ -1568,7 +1568,7 @@ Two survive, both for cases no test makes:
     - CODE-F6;
     - a click on another session's window, which gives that session the focus (the click goes no further).
 
-    Everything else goes on to `win_ev` as before. `mw_got` sets ES to the UI's itself: a `.RUN` may call `UI_EVENT` with any ES.
+    Everything else goes on to `win_ev` as before. While sessions run, `mw_got` sets ES to the UI's itself: a `.RUN` may call `UI_EVENT` with any ES.
   - `run_cleanup`'s first 5 bytes become a far jump to `mw_clean`. When the root starts over (^C or a crash in a `.RUN`), every session is forgotten and each one's `UI_ALLOC` blocks are freed.
   - `ui_wopen`'s borrow of the disk cache becomes a far call to `mw_lend`. While a window `.RUN` runs, it borrows nothing: there is no save-under. Closing, moving or bringing a window to the front then draws the whole screen again (`redraw_all`: the Executive's list, the band, each window in order), and the result is right whichever window is in front.
 
