@@ -353,6 +353,7 @@ class PC:
         s.due_at = float('inf'); s.on_due = None
         s.irq_pending = set(); s.pic_mask = 0xB8
         s.isr = 0; s.pic_rr = 2         # in service (EOI ends it); OCW3: what port 20h reads
+        s.chip_int_was = False; s.irqs5 = 0
         s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
         s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
         s.keys = collections.deque(); s.tty = []; s.log = []; s.lpt = []
@@ -493,7 +494,19 @@ class PC:
         if s.us >= s.due_at:
             s.due_at = float('inf')
             if s.on_due: s.on_due()
+        s.chip_int()
         s.next_event = min(s.next_tick, s.due_at)
+
+    def chip_int(s):
+        """IRQ 5 on the rising edge of the 7210's INT (the GPIB cartridge's E1 jumper), for a chip that models
+        it (int_line: grid_emu.Chip).  Looked at after the Pi's events, at ticks and at the chip's ports."""
+        f = getattr(s.chip, 'int_line', None)
+        if f is None: return
+        v = f()
+        if v and not s.chip_int_was:
+            s.irq_pending.add(5); s.irqs5 += 1
+            s.mu.emu_stop()
+        s.chip_int_was = v
 
     def pit_read(s):
         """Latch channel 0.  Mode 3 (the BIOS's) counts down by 2, twice a
@@ -582,7 +595,9 @@ class PC:
         if 0x2F8 <= port <= 0x2FF: return s.uart_in(port - 0x2F8)
         if s.ems_pages and (port & 0x3FFF) == 0x258: s.us += EMS_IO_US; return s.ems_reg[port >> 14]
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
-            return s.chip.read(port >> 10)
+            v = s.chip.read(port >> 10)
+            s.chip_int()
+            return v
         return 0xFF
 
     # ---- EMS board ------------------------------------------------------------
@@ -681,6 +696,7 @@ class PC:
             s.us += EMS_IO_US; s.ems_reg[port >> 14] = val; s.ems_map(port >> 14); return
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             s.chip.write(port >> 10, val)
+            s.chip_int()
         if port == 0x3D9: s.set_ccr(val)
 
     def set_ccr(s, v):
@@ -1157,7 +1173,13 @@ class PC:
         here = s.lin()
         s.halted = a + z == here and s.rd(0, here - 1, 1)[0] == 0xF4
         if (s.blocked or s.halted) and not s.deliverable():
-            s.sleep_to_tick()                   # (an IRQ still waiting goes first,
+            if s.halted and s.due_at < s.next_tick:
+                # HLT and an event (the Pi's) before the tick: to the event; it may raise an IRQ (the 7210's
+                # SRQ: IRQ 5).  None: still halted, back onto the HLT
+                s.us = max(s.us, s.due_at); s.on_time()
+                if not s.deliverable(): s.w('ip', s.r('ip') - 1)
+            else:
+                s.sleep_to_tick()               # (an IRQ still waiting goes first,
         return not (s.stopped or s.crash)       #  as a real PIC would after IRET)
 
     def unmasked(s, i):

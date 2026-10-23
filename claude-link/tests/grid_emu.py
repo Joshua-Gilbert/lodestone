@@ -66,6 +66,21 @@ class Chip(S.NEC7210):
         super().__init__(devices)
         s.pending_talk = None
         s.clock = lambda: 0.0; s.do_at = 0.0
+        s.imr2 = 0
+
+    def int_line(s):
+        """The 7210's INT pin as far as SRQ goes (the only interrupt Lodestone's driver turns on: IMR2 SRQI).
+        The machine raises IRQ 5 on its rising edge, as the cartridge's E1 jumper and the PIC do."""
+        if not s.imr2 & 0x40: return False
+        for d in s.devices.values():
+            if isinstance(d, AR488Model):
+                d.service()
+                if d.srq: return True
+        return False
+
+    def write(s, reg, v):
+        if reg == 2: s.imr2 = v & 0xFF
+        return super().write(reg, v)
 
     def ar(s, a):
         d = s.devices.get(a)
@@ -144,6 +159,8 @@ class Machine:
         s.pit_latch = None; s.pit_hi = False
         s.last_blk = (0, 0); s.halted = False; s.blocked = False
         s.ints = collections.Counter()
+        # the PIC as far as IRQ 5 goes (the 7210's INT through the GPIB cartridge's E1 jumper; GRIDGPIB 1.2)
+        s.pic_mask = 0xB8; s.in5 = False; s.pic_rr = 2; s.irq5 = False; s.chip_int_was = False; s.irqs5 = 0
         for n in range(256):
             mu.mem_write(n * 4, struct.pack('<HH', n * 8, STUB))
             mu.mem_write(STUB * 16 + n * 8, bytes([0xCD, n, 0xCA, 0x02, 0x00]))
@@ -186,6 +203,7 @@ class Machine:
         s.last_blk = (addr, size)
         s.us += BLOCK_US
         if s.us >= s.next_event: s.on_time()
+        if s.irq5 and s.deliverable(): uc.emu_stop()      # (after an STI, say)
 
     def on_time(s):
         while s.us >= s.next_tick:
@@ -195,7 +213,25 @@ class Machine:
         if s.us >= s.due_at:
             s.due_at = float('inf')
             if s.on_due: s.on_due()          # may schedule() again
+        s.chip_int()
         s.next_event = min(s.next_tick, s.due_at)
+
+    def chip_int(s):
+        """IRQ 5 pending on the rising edge of the 7210's INT (Chip.int_line)."""
+        v = s.chip.int_line()
+        if v and not s.chip_int_was:
+            s.irq5 = True; s.irqs5 += 1
+            if s.deliverable(): s.mu.emu_stop()
+        s.chip_int_was = v
+
+    def deliverable(s):
+        return s.irq5 and not s.in5 and not s.pic_mask & 0x20 and bool(s.r('flags') & 0x200)
+
+    def deliver(s):
+        s.irq5 = False; s.in5 = True
+        off, seg = struct.unpack('<HH', s.rd(0, 0x0D * 4, 4))
+        s.push(s.r('flags')); s.push(s.r('cs')); s.push(s.r('ip'))
+        s.w('flags', s.r('flags') & ~0x300); s.w('cs', seg); s.w('ip', off)
 
     def sleep_to_tick(s):
         s.us = max(s.us, s.next_tick); s.on_time()
@@ -214,8 +250,12 @@ class Machine:
             s.pit_latch = None; return v >> 8
         if port == 0x61:
             return 0x00 | ((int(s.us / 15.085) & 1) << 4)
+        if port == 0x21: return s.pic_mask
+        if port == 0x20: return (0x20 if s.in5 else 0) if s.pic_rr == 3 else (0x20 if s.irq5 else 0)
         if (port & 0x3FF) == S.BASE and port < 0x2000:
-            return s.chip.read(port >> 10)
+            v = s.chip.read(port >> 10)
+            s.chip_int()
+            return v
         return 0xFF
 
     def hout(s, uc, port, size, val, ud):
@@ -224,8 +264,14 @@ class Machine:
                 n = int(s.us * 1.193182) % 32768
                 s.pit_latch = (65536 - 2 * n) & 0xFFFF; s.pit_hi = False
             return
+        if port == 0x21: s.pic_mask = val & 0xFF; return
+        if port == 0x20:
+            if val == 0x20: s.in5 = False                   # EOI
+            elif val & 0x9A == 0x0A: s.pic_rr = val & 3     # OCW3: read IRR / ISR
+            return
         if (port & 0x3FF) == S.BASE and port < 0x2000:
             s.chip.write(port >> 10, val & 0xFF)
+            s.chip_int()
 
     # ---- interrupts ---------------------------------------------------------
     def intr(s, uc, n, ud):
@@ -734,6 +780,7 @@ class Machine:
     def run(s, n=40000):
         if s.stopped or s.crash: return False
         s.blocked = False
+        if s.deliverable(): s.deliver()
         try:
             s.mu.emu_start(s.lin(), 0xFFFFFFFF, count=n)
         except UcError as e:
@@ -741,8 +788,13 @@ class Machine:
         a, z = s.last_blk
         here = s.lin()
         s.halted = a + z == here and s.rd(0, here - 1, 1)[0] == 0xF4
-        if s.blocked or s.halted:
-            s.sleep_to_tick()                    # HLT, or waiting for a key
+        if (s.blocked or s.halted) and not s.deliverable():
+            if s.halted and s.due_at < s.next_tick:
+                # HLT, and an event (the Pi's) before the tick: to it; it may raise IRQ 5.  None: still halted
+                s.us = max(s.us, s.due_at); s.on_time()
+                if not s.deliverable(): s.w('ip', s.r('ip') - 1)
+            else:
+                s.sleep_to_tick()                # HLT, or waiting for a key
         return not (s.stopped or s.crash)
 
     def run_program(s, path, args='', limit_us=30e6):
@@ -838,6 +890,7 @@ class EmuHarness:
             s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
             s.transport = ModelTransport(s.nano, patched, baud=baud)
         m.chip.devices[7] = s.nano
+        s.nano.wake = m.schedule                  # (a HLT ends when the bridge's SRQ can rise: IRQ 5)
         m.on_due = s.pump_pi
         s.tmp = tempfile.mkdtemp(prefix='gridemu-')
         cfg = Config()

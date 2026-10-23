@@ -26,6 +26,8 @@ gp_ISR1_ERR equ 04h
 gp_ISR1_END equ 10h
 gp_ISR2_CO  equ 08h
 gp_ISR2_SRQ equ 40h
+gp_IRQVEC  equ 0Dh                 ; IRQ 5: the cartridge's E1 jumper puts the 7210's INT pin there
+gp_IRQBIT  equ 20h                 ;  (its bit in the PIC's mask and in-service register)
 gp_ADSR_CIC equ 80h
 gp_AUX_PON  equ 00h
 gp_AUX_CR   equ 02h
@@ -113,13 +115,13 @@ gp_done    equ     gp_handler.out
 
 gp_functab dw gp_f_present, gp_f_init, gp_f_write, gp_f_read, gp_f_query, gp_f_spoll
         dw gp_f_clear, gp_f_trigger, gp_f_remote, gp_f_local, gp_f_timeout, gp_f_srq
-        dw gp_f_stats                   ; (0Dh, the standalone's unload: the
+        dw gp_f_stats, gp_f_bad, gp_f_irq ; (0Dh, the standalone's unload: the
 gp_NFUNC   equ ($-gp_functab)/2         ;  bad-function answer, as it is built in)
 
 ; ---- function bodies: return AX (and CX/DX where documented) -------
 gp_f_present:
         mov     ax, 4747h
-        mov     cx, 0120h               ; LODESTONE: 1.20 = built into the kernel
+        mov     cx, 0121h               ; LODESTONE: 1.2x = built into the kernel (1.21: IRQ, 0Eh)
         mov     dh, 60h                 ; (the only vector it is put on)
         mov     dl, gp_MYADDR
         jmp     gp_done
@@ -257,6 +259,30 @@ gp_f_srq:  mov     dx, gp_R_ISR2
         inc     ax
         and     byte [gp_shadow2], ~gp_ISR2_SRQ
 .n:     jmp     gp_done
+
+; 0Eh (LODESTONE): SRQ on IRQ 5.  AL = 0 off, 1 on, anything else: just ask.
+; -> AX = the IRQ in use (5, or 0: none), DX:CX = a word the interrupt adds 1
+; to at every SRQ: a client compares it with interrupts off before a HLT, so
+; it can't sleep through an SRQ (AH=0Bh's latch is ORed in as before)
+gp_f_irq:
+        mov     al, [gp_c_al]
+        cmp     al, 1
+        ja      .q
+        je      .on
+        cli
+        call    gp_irq_mask
+        sti
+        jmp     short .q
+.on:    call    gp_irq_on
+.q:     mov     al, [gp_irq]
+        xor     ah, ah
+        mov     cx, gp_nsrq
+        mov     dx, cs
+        jmp     gp_done
+
+gp_f_bad:
+        mov     ax, gp_E_FUNC
+        jmp     gp_fin_ax
 
 gp_f_stats:
         mov     ax, [gp_recov]
@@ -662,7 +688,9 @@ gp_chip_init:
         mov     dx, gp_R_IMR1
         out     dx, al
         mov     dx, gp_R_IMR2
-        out     dx, al
+        mov     al, [gp_imr2]           ; LODESTONE: SRQI on while IRQ 5 is (a
+        out     dx, al                  ;  reset clears IMR2)
+        xor     al, al
         mov     dx, gp_R_SPMR
         out     dx, al
         mov     dx, gp_R_ADMR
@@ -846,6 +874,107 @@ gp_wait_co:
         pop     ax
         ret
 
+; =====================================================================
+;  LODESTONE: SRQ on IRQ 5 (INT 0Dh).  The 7210 interrupts on SRQ only
+;  (IMR2 SRQI).  GPIBIRQ 1.0 on the 1520: one IRQ 5 an SRQ, at once, and it
+;  wakes a HLT; SRQI latches on SRQ's edge and clears on read, so a held SRQ
+;  doesn't interrupt again.  The handler ORs ISR2 into the shadow, as every
+;  polled read of ISR2 does (AH=0Bh sees it), and counts the interrupt.
+; =====================================================================
+gp_isr:    push    ax
+        mov     al, 0Bh                 ; OCW3: is IRQ 5 in service?  (In real
+        out     20h, al                 ;  mode the 286 also raises INT 0Dh for
+        in      al, 20h                 ;  a word at offset FFFFh: that goes on
+        mov     ah, al                  ;  to the vector we found)
+        mov     al, 0Ah                 ; (and port 20h reads the IRR again)
+        out     20h, al
+        test    ah, gp_IRQBIT
+        jz      .not
+        push    dx
+        push    ds
+        push    cs
+        pop     ds
+        mov     dx, gp_R_ISR2
+        in      al, dx
+        or      [gp_shadow2], al
+        inc     word [gp_nsrq]
+        push    es                      ; a line that keeps firing (no jumper,
+        xor     ax, ax                  ;  a floating line): IRQ 5 off after 32
+        mov     es, ax                  ;  in one tick
+        mov     ax, [es:46Ch]
+        pop     es
+        cmp     ax, [gp_irqt]
+        je      .same
+        mov     [gp_irqt], ax
+        mov     byte [gp_irqn], 0
+.same:  inc     byte [gp_irqn]
+        cmp     byte [gp_irqn], 32
+        jb      .e
+        call    gp_irq_mask
+.e:     mov     al, 20h                 ; EOI
+        out     20h, al
+        pop     ds
+        pop     dx
+        pop     ax
+        iret
+.not:   pop     ax
+        jmp     far [cs:gp_oldirq]
+
+; IRQ 5 on: our vector (once; the one we found is kept for INT 0Dh's
+; exception), SRQI in IMR2, IRQ 5 unmasked.  An SRQI already latched goes
+; into the shadow first, so it doesn't fire at once.
+gp_irq_on:
+        cmp     byte [gp_irq], 0
+        jne     .x
+        push    ax
+        push    dx
+        push    es
+        push    0
+        pop     es
+        cli
+        cmp     byte [gp_hooked], 0
+        jne     .h
+        mov     byte [gp_hooked], 1
+        mov     ax, [es:gp_IRQVEC*4]
+        mov     [gp_oldirq], ax
+        mov     ax, [es:gp_IRQVEC*4+2]
+        mov     [gp_oldirq+2], ax
+        mov     word [es:gp_IRQVEC*4], gp_isr
+        mov     [es:gp_IRQVEC*4+2], cs
+.h:     mov     byte [gp_irq], 5
+        mov     byte [gp_imr2], gp_ISR2_SRQ
+        mov     byte [gp_irqn], 0
+        mov     dx, gp_R_ISR2
+        in      al, dx
+        or      [gp_shadow2], al
+        mov     al, gp_ISR2_SRQ
+        out     dx, al                  ; (IMR2)
+        in      al, 21h
+        and     al, ~gp_IRQBIT
+        out     21h, al
+        sti
+        pop     es
+        pop     dx
+        pop     ax
+.x:     ret
+
+; IRQ 5 off (interrupts off): masked at the PIC, SRQI out of IMR2.  The
+; vector stays ours: IRQ 5 doesn't come masked, and the exception goes on.
+gp_irq_mask:
+        push    ax
+        push    dx
+        mov     byte [gp_irq], 0
+        mov     byte [gp_imr2], 0
+        mov     dx, gp_R_IMR2
+        xor     al, al
+        out     dx, al
+        in      al, 21h
+        or      al, gp_IRQBIT
+        out     21h, al
+        pop     dx
+        pop     ax
+        ret
+
 ; ---- resident data ----------------------------------------------------
 gp_busy    db 0
 gp_err     db 0
@@ -857,6 +986,13 @@ gp_endr    db 0
 gp_auxra   db 0
 gp_renon   db 0
 gp_c_al    db 0
+gp_irq     db 0                     ; LODESTONE: 5 while SRQ comes on IRQ 5
+gp_imr2    db 0                     ;  IMR2 for gp_chip_init (SRQI, or 0)
+gp_irqn    db 0                     ;  interrupts in tick gp_irqt
+gp_hooked  db 0                     ;  INT 0Dh is ours
+gp_irqt    dw 0
+gp_nsrq    dw 0                     ;  +1 every interrupt (AH=0Eh's DX:CX)
+gp_oldirq  dw 0, 0                  ;  INT 0Dh as we found it
 gp_recov   dw 0
 gp_ntmo    dw 0
 gp_tdata   dw gp_T_DEF

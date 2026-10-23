@@ -92,12 +92,17 @@ link_idle:
 %ifndef NO_SRQ
         cmp     byte [wake_ok], 0       ; the Pi rang (SRQ while we are idle):
         je      .t1                     ; POLL now, not at the next second
-        mov     ah, 0Bh
+        cmp     word [irq_ptr+2], 0     ; (the driver's SRQ interrupt: its
+        je      .t2                     ;  count moved?)
+        call    srq_new
+        jz      .t1
+        jmp     short .ts
+.t2:    mov     ah, 0Bh
         call    gg_call
         jc      .t1
         or      ax, ax
         jz      .t1
-        mov     bl, [nano]              ; an SRQ since the last look: the Pi's,
+.ts:    mov     bl, [nano]              ; an SRQ since the last look: the Pi's,
         mov     ah, 05h                 ; or one from our last answer (the driver
         call    gg_call                 ; latches every SRQ it sees): ask
         jc      .t1
@@ -203,7 +208,14 @@ frame_next:
 link_write:
         mov     si, txframe
         mov     cx, [txlen]
-lw_go:  mov     bl, [nano]
+lw_go:
+%ifndef NO_SRQ
+        cmp     word [irq_ptr+2], 0     ; (SRQs before our frame aren't its
+        je      .w                      ;  answer's)
+        call    srq_new
+.w:
+%endif
+        mov     bl, [nano]
         mov     al, 1                   ; EOI with the last byte
         mov     ah, 02h
         call    gg_call
@@ -229,7 +241,15 @@ link_wait:
         jbe     .t
         jmp     link_fail
 %ifndef NO_SRQ
-.t:     mov     ah, 0Bh                 ; SRQ since the last call?
+.t:     cmp     word [irq_ptr+2], 0
+        je      .t0
+        call    srq_new                 ; the SRQ interrupt came: poll now
+        jnz     .poll                   ;  (maybe_idle sleeps till it)
+        mov     ax, [now]               ; else once a tick, should one go astray
+        cmp     ax, [pit_tick]
+        je      .x
+        jmp     short .poll
+.t0:    mov     ah, 0Bh                 ; SRQ since the last call?
         call    gg_call
         jc      .chk
         or      ax, ax
@@ -415,6 +435,21 @@ pit_read:                               ; AX = PIT channel 0 count
         popf
         xchg    al, ah
         ret
+
+%ifndef NO_SRQ
+; ZF clear: an SRQ interrupt since the last look (the GPIB driver's count,
+; INT 60h AH=0Eh: irq_ptr; Lodestone's built-in driver, IRQ 5)
+srq_new:
+        push    es
+        push    bx
+        les     bx, [irq_ptr]
+        mov     ax, [es:bx]
+        pop     bx
+        pop     es
+        cmp     ax, [srq_seen]
+        mov     [srq_seen], ax          ; (MOV keeps the flags)
+        ret
+%endif
 
 pit_mark:
         push    ax
