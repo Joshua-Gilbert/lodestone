@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBLOOP.COM 1.3 - which GPIB byte loop is fastest on the 1520, and at
+;  GPIBLOOP.COM 1.4 - which GPIB byte loop is fastest on the 1520, and at
 ;  which alignment.
 ;  Build:  nasm -f bin -o GPIBLOOP.COM GPIBLOOP.ASM
 ;  Usage:  GPIBLOOP [a]      a = the echo device's address (default 7)
@@ -38,6 +38,13 @@
 ;          is as tight as write 4's and still ends
 ;    write 4 as the reference; 5: the same LOOPZ poll on DO alone (ERR,
 ;          no listener, ends it by the time-out), the count in DI
+;  1.4 (after 1.3: read 4 129, write 5 101 -- slower than 2 and 4: the
+;       loops are CPU-bound, every clock counts, and a poll that misses
+;       costs its whole length):
+;    read  2 as the reference; 5: 2 with its wait unrolled, IN / TEST /
+;          JNZ four times a count, the shortest a poll that misses can be
+;    write 4 as the reference; 7: the same unrolled wait on DO alone
+;          (ERR ends it by the time-out), straight to the OUT
 ;  4096-byte messages; the rounds go through every loop in turn, 6 times,
 ;  and each loop's median is shown, in ns a byte and KB/s, with the
 ;  parity of its spin loop's label (.w) and of the label it jumps to for a
@@ -754,6 +761,95 @@ per_byte:
         ret
 %endmacro
 
+%macro R5 1                             ; 2 with the wait unrolled
+%1:     mov     dx, R_ISR1
+%1_w:   in      al, dx
+        or      bh, al
+        test    bh, ISR1_DI
+        jz      %1_s
+%1_g:   mov     dh, R_DIR >> 8
+        in      al, dx
+        mov     dh, R_ISR1 >> 8
+        stosb
+        test    bh, ISR1_END
+        jnz     %1_x
+        and     bh, ~ISR1_DI
+        loop    %1_w
+%1_x:   clc
+        ret
+%1_s:   mov     si, 16384               ; 65536 polls, then give up
+%1_s2:  in      al, dx
+        test    al, ISR1_DI | ISR1_END
+        jnz     %1_h
+        in      al, dx
+        test    al, ISR1_DI | ISR1_END
+        jnz     %1_h
+        in      al, dx
+        test    al, ISR1_DI | ISR1_END
+        jnz     %1_h
+        in      al, dx
+        test    al, ISR1_DI | ISR1_END
+        jnz     %1_h
+        dec     si
+        jnz     %1_s2
+        stc
+        ret
+%1_h:   or      bh, al
+        test    bh, ISR1_DI
+        jnz     %1_g
+        clc                             ; END after the last DI: the end
+        ret
+%endmacro
+
+%macro W7 1                             ; 4 with the wait unrolled
+%1:     push    di
+        mov     dx, R_ISR1
+        and     bh, ~ISR1_DO
+        es lodsb
+        mov     ah, al
+        jmp     short %1_put
+%1_w:   in      al, dx
+        test    al, ISR1_DO
+        jnz     %1_put
+        in      al, dx
+        test    al, ISR1_DO
+        jnz     %1_put
+        in      al, dx
+        test    al, ISR1_DO
+        jnz     %1_put
+        mov     di, 16384               ; then 65536 polls, then give up
+%1_s:   in      al, dx
+        test    al, ISR1_DO
+        jnz     %1_put
+        in      al, dx
+        test    al, ISR1_DO
+        jnz     %1_put
+        in      al, dx
+        test    al, ISR1_DO
+        jnz     %1_put
+        in      al, dx
+        test    al, ISR1_DO
+        jnz     %1_put
+        dec     di
+        jnz     %1_s
+        or      bh, al                  ; (ERR: no listener)
+        dec     si
+        pop     di
+        stc
+        ret
+%1_put: mov     al, ah
+        mov     dh, R_CDOR >> 8
+        out     dx, al
+        mov     dh, R_ISR1 >> 8
+        es lodsb                        ; (one past the end on the last)
+        mov     ah, al
+        loop    %1_w
+        dec     si
+        pop     di
+        clc
+        ret
+%endmacro
+
 %macro WK 1                             ; the kernel's gp_fast_write
 %1:     push    di
         mov     dx, R_ISR1
@@ -815,29 +911,29 @@ per_byte:
         nop
         R2      r21                     ; the fastest so far (.w and .g even)
         align   2
-        R4      r40                     ; starts even
+        R5      r50                     ; starts even
         align   2
         nop
-        R4      r41                     ; starts odd
+        R5      r51                     ; starts odd
         align   2
         W4      w40                     ; the fastest so far (.w even)
         align   2
-        W5      w50
+        W7      w70
         align   2
         nop
-        W5      w51
+        W7      w71
 
 NR      equ 3
 NW      equ 3
-rvar    dw r21, r40, r41
-rname   dw s_r2, s_r4, s_r4
+rvar    dw r21, r50, r51
+rname   dw s_r2, s_r5, s_r5
 rpar    db (r21_w - $$) & 1, (r21_g - $$) & 1
-        db (r40_w - $$) & 1, (r40_g - $$) & 1, (r41_w - $$) & 1, (r41_g - $$) & 1
-wvar    dw w40, w50, w51
+        db (r50_w - $$) & 1, (r50_g - $$) & 1, (r51_w - $$) & 1, (r51_g - $$) & 1
+wvar    dw w40, w70, w71
 wtri    db 0, 0, 0, 0, 0, 0                 ; (by BX: words; 1 = AUXRB TRI)
-wname   dw s_w4, s_w5, s_w5
+wname   dw s_w4, s_w7, s_w7
 wpar    db (w40_w - $$) & 1, (w40_put - $$) & 1
-        db (w50_w - $$) & 1, (w50_put - $$) & 1, (w51_w - $$) & 1, (w51_put - $$) & 1
+        db (w70_w - $$) & 1, (w70_put - $$) & 1, (w71_w - $$) & 1, (w71_put - $$) & 1
 
 ; ---- time (as GPIBIRQ) ---------------------------------------------------
 pit_init:
@@ -1012,7 +1108,7 @@ save_log:
 
 %include "direct.inc"
 
-s_title db 13,10,'GPIBLOOP 1.3 - the GPIB byte loops at both alignments, echo at $'
+s_title db 13,10,'GPIBLOOP 1.4 - the GPIB byte loops at both alignments, echo at $'
 s_rhead db 13,10,'Reading 4096 bytes (median of 6; best-worst in ns):',13,10,'$'
 s_whead db 13,10,'Writing 4096 bytes:',13,10,'$'
 s_rk    db '  K (the kernel',27h,'s)  $'
@@ -1027,6 +1123,8 @@ s_w3    db '  3 (byte early)  $'
 s_w4    db '  4 (no time-out) $'
 s_r4    db '  4 (LOOPZ poll)  $'
 s_w5    db '  5 (LOOPZ poll)  $'
+s_r5    db '  5 (wait x4)     $'
+s_w7    db '  7 (wait x4)     $'
 s_weven db '.w even $'
 s_wodd  db '.w odd  $'
 s_geven db '.g even:  $'
