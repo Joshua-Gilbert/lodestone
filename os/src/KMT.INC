@@ -1643,6 +1643,8 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_uic
         cmp     al, MT_TSR
         je      mt_tsrc
+        cmp     al, MT_WIN
+        je      mt_winc
         cmp     al, 1
         je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
@@ -1715,6 +1717,12 @@ mt_uic: mov     word [bp+F_AX], mt_ui
         mov     es, [ui_seg]            ;  window .RUNs at once: KMW.INC)
         call    mw_patch
         pop     es
+        jmp     KSEG:ok
+
+; MT_WIN: is the UI code running a window .RUN's session (KMW.INC)?
+mt_winc:
+        cmp     byte [cs:mw_cur], 0
+        je      mt_bad
         jmp     KSEG:ok
 
 ; MT_TSR: Resident Claude's key wait, where it may be switched from

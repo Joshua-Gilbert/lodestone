@@ -3,14 +3,15 @@
 ;  Part of LODEMT.SYS (section mtt): off, none of it is in memory and the
 ;  UI is byte for byte as it was.
 ;
-;  A window .RUN (RUN_API 6 and up: CALC, TASKS) is a session: its own
-;  load area in the UI segment (a slot, from run_base up, first fit), its
-;  own stack at the slot's end, and its own copy of the core's globals
+;  A window .RUN (its header says so, RF_WIN: CALC, TASKS, WRITE) is a
+;  session: its own load area in the UI segment (a slot, from run_base
+;  up, first fit), its own stack at the slot's end, and its own copy of
+;  the core's globals
 ;  that belong to one program (mw_ctx's ranges: the band, the title, the
 ;  list and form and line editor's state, UI_ALLOC's blocks, its header).
 ;  Sessions run in turn inside the UI task: only the one in front (the
 ;  focus) runs; the others wait inside UI_EVENT, where they were.  The
-;  Executive waits meanwhile in run_app until the last has ended (M8b
+;  Executive waits meanwhile in run_app until the last has ended (M8c
 ;  makes it live), as it waits for a .RUN today.
 ;
 ;  The UI's own code is patched when MT_UI is first asked (ui_boot), each
@@ -27,7 +28,17 @@
 ;    - ui_wopen's cache borrow (MOV AX,0F002h / INT 21h) becomes a far call
 ;      to mw_lend: while a window .RUN runs, no save-under, so closing,
 ;      moving or bringing a window to the front draws the screen again
-;      (redraw_all), which stays right whichever window is in front.
+;      (redraw_all), which stays right whichever window is in front;
+;    - redraw_all's MOV SI,[redraw_fn] / OR SI,SI becomes a far call to
+;      mw_rdfn: the base (the Executive) drawn again under a session keeps
+;      the session's band, not its own (M8b).
+;  A window .RUN is one whose header says so (RUN_FLAGS: RF_WIN; its
+;  windows have W_FLAGS then, whatever its RUN_API).  M8b: CODE-W from
+;  any window starts another Write (a new file); a WF_SIZE window is
+;  resized by its bottom-right corner or CODE-F8 (mw_size, win_mv's way),
+;  then its .RUN gets EV_SIZE.  While window .RUNs run, the UI block takes
+;  the whole segment it can (mw_grow), so their own blocks (UI_ALLOC) go
+;  past it and the next one still fits.
 ;  Window .RUNs started from anywhere don't make the starter wait: the new
 ;  one takes the focus.  A window belongs to the session whose slot holds
 ;  its structure (help_w: the running one's; a help or form window is
@@ -74,6 +85,14 @@ mw_n        db      0                   ; window .RUNs running
 mw_cur      db      0                   ; the session running (0: the Executive)
 mw_rd       db      0                   ; 1: the screen again once switched
 mw_msg      db      0                   ; 1: mw_say's message waits (UI_MSG)
+mw_ow       dw      0                   ; (mw_size: the size it had)
+mw_oh       dw      0
+MW_MINW     equ     24                  ; the smallest a window is resized to:
+MW_MINH     equ     72                  ;  columns (a title fits, and Write scrolls
+                                        ;  sideways by 20), pixels (a title, a
+                                        ;  row, a status line)
+MW_CORNER   equ     12                  ; its resize corner: its last column, the
+                                        ;  bottom 12 pixel rows
 mw_mru      times MW_MAX db 0           ; the sessions, the focus first
 mw_xc       dw      0                   ; the last one's exit code
 mw_new      db      0                   ; (mw_start: the one starting)
@@ -111,6 +130,16 @@ mw_patch:
         jne     .x
         cmp     byte [es:..@ui_wlend + 4], 21h
         jne     .x
+        cmp     word [es:..@ui_rdfn], 368Bh     ; MOV SI,[redraw_fn] / OR SI,SI
+        jne     .x
+        cmp     word [es:..@ui_rdfn + 2], redraw_fn
+        jne     .x
+        cmp     word [es:..@ui_rdfn + 4], 0F609h
+        jne     .x
+        mov     byte [es:..@ui_rdfn], 9Ah       ; CALL FAR mw_rdfn, NOP
+        mov     word [es:..@ui_rdfn + 1], mw_rdfn
+        mov     [es:..@ui_rdfn + 3], cs
+        mov     byte [es:..@ui_rdfn + 5], 90h
         mov     byte [es:run_app], 0EAh         ; JMP FAR mw_run
         mov     word [es:run_app + 1], mw_run
         mov     [es:run_app + 3], cs
@@ -134,8 +163,8 @@ mw_run: cmp     byte [run_active], 0
         jne     .busy
         call    mw_peek                 ; a window .RUN?
         jc      .orig                   ; (can't tell: run_app says why)
-        cmp     word [cs:mw_hdr+4], 6
-        jb      .orig
+        test    byte [cs:mw_hdr+14], RF_WIN     ; (its header says so: RUN_FLAGS)
+        jz      .orig
         mov     byte [run_active], 1
         mov     word [cs:mw_xc], 0FFFFh ; (none has said "the list again" yet)
         call    mw_start                ; (the Executive waits in here till
@@ -164,6 +193,31 @@ mw_run: cmp     byte [run_active], 0
 .orig:  cmp     byte [run_active], 0    ; run_app as it was (ZF: its JE .free)
         push    ds
         push    word run_app + 5
+        retf
+
+; redraw_all's call of the redraw routine (CALL FAR, for MOV SI,[redraw_fn]
+; / OR SI,SI): -> SI, ZF as they would be.  With a session in front, the
+; routine (the Executive's relist, drawing the base) is called from here,
+; and the session's band kept through it: the base would leave its own.
+; Then SI = 0, so redraw_all calls nothing more
+mw_rdfn:
+        mov     si, [redraw_fn]
+        cmp     byte [cs:mw_cur], 0
+        je      .x
+        or      si, si
+        jz      .x
+        push    word [band1]
+        push    word [band2]
+        push    cs                      ; (as UCALL, to SI)
+        push    word .back
+        push    word ..@ui_retf
+        push    ds
+        push    si
+        retf
+.back:  pop     word [band2]
+        pop     word [band1]
+        xor     si, si
+.x:     or      si, si
         retf
 
 ; ui_wopen's borrow of the cache (CALL FAR): as before while no window
@@ -237,8 +291,12 @@ mw_start:
         call    mw_peek
         jc      .no
         mov     ax, 11
-        cmp     word [cs:mw_hdr+4], 6
-        jb      .no
+        test    byte [cs:mw_hdr+14], RF_WIN
+        jz      .no
+        cmp     word [cs:mw_hdr+4], 6   ; (a window .RUN's windows have W_FLAGS,
+        jae     .api                    ;  whatever API it asks for: run_hdr
+        mov     word [cs:mw_hdr+4], 6   ;  says 6 then, for win_flags)
+.api:
         mov     ax, [cs:mw_hdr+10]      ; its footprint, as run_app reckons it
         add     ax, [cs:mw_hdr+12]
         jc      .bad                    ; (a damaged header, as run_app says)
@@ -330,7 +388,7 @@ mw_start:
         popa                            ; (back here when the starter runs again)
         clc
         ret
-.lf:    call    mw_shrink               ; (no record kept: SE_USE is 0)
+.lf:                                    ; (no record kept: SE_USE is 0)
         jmp     short .no
 .bad:   mov     ax, 11
         jmp     short .no
@@ -403,8 +461,9 @@ mw_end: cld
         mov     al, [cs:mw_mru]
 .go:    mov     [cs:mw_cur], al
         call    mw_rec
-        mov     sp, [cs:bp+SE_SP]       ; (its stack now: this slot's may go)
-        call    mw_shrink
+        mov     sp, [cs:bp+SE_SP]       ; (its stack now; the UI block stays
+                                        ;  the whole segment till the last ends:
+                                        ;  run_cleanup shrinks it then)
         or      al, al
         jnz     .top
         mov     byte [cs:mw_rd], 0      ; (the Executive draws its list itself)
@@ -448,11 +507,31 @@ mw_got: cmp     byte [cs:mw_n], 0
         je      .calc
         cmp     ax, K_CODE_T
         je      .tasks
+        cmp     ax, K_CODE_W
+        je      .write
         cmp     ax, K_CODE_F6
         je      .next
+        cmp     ax, K_CODE_F8
+        je      .szk
         cmp     ax, EV_CLICK
         jne     .own
-        call    mw_hit                  ; AL = whose window is clicked
+        call    mw_szwin                ; (on the top window's resize corner?)
+        jc      .hit
+        call    mw_corner
+        jnc     .hit
+        stc                             ; (by the mouse)
+        jmp     short .size
+.szk:   call    mw_szwin                ; CODE-F8: the top window, if it may be
+        jc      .own                    ;  resized (else the key is the .RUN's)
+        clc                             ; (by the keys)
+.size:  call    mw_size
+        jnc     .took                   ; (left as it was)
+        mov     bp, sp                  ; EV_SIZE for the .RUN (pusha's AX,
+        mov     word [bp+2+14], EV_SIZE ;  past the ES pushed)
+        pop     es
+        popa
+        jmp     short .ret
+.hit:   call    mw_hit                  ; AL = whose window is clicked
         jc      .own
         or      al, al                  ; (the Executive's: it waits, M8a)
         jz      .own
@@ -467,6 +546,13 @@ mw_got: cmp     byte [cs:mw_n], 0
         call    mw_open
         pop     si
         jnc     .took
+        jmp     short .why
+.write: mov     si, s_write             ; CODE-W: a new Write, whichever is
+        push    si                      ;  in front (one more file)
+        call    mw_open.new
+        pop     si
+        jnc     .took
+.why:
         cmp     ax, 0FFFFh              ; (it is the one in front: the key is
         je      .own                    ;  its own, as without tasks)
         call    mw_say                  ; (why not, in the band)
@@ -481,7 +567,7 @@ mw_got: cmp     byte [cs:mw_n], 0
         popa
 .win:   UCALL   win_ev
         jc      .wait
-        retf                            ; (ui_event.got + 5: the event)
+.ret:   retf                            ; (ui_event.got + 5: the event)
 .wait:  push    bp
         mov     bp, sp
         mov     word [bp+2], ui_event.on
@@ -522,7 +608,8 @@ mw_open:
         cmp     al, MW_MAX
         jbe     .s
         pop     bp
-        UCALL   ui_findapp              ; SI = its path
+.new:   UCALL   ui_findapp              ; SI = its path (.new: started, even
+                                        ;  if one runs: CODE-W's Write)
         jc      .nf
         push    di
         mov     di, s_empty
@@ -753,7 +840,10 @@ mw_slot:
         ret
 
 ; the UI block to hold DX (a new slot's end) and every session's: CF if
-; it can't grow
+; it can't.  It takes the whole segment (64 KB), or as much of it as is
+; free after it: the new session's own blocks (UI_ALLOC: Write's text and
+; its shadow) then go past it, not right after it, where they would keep
+; the next window from fitting
 mw_grow:
         push    ax
         push    bx
@@ -762,12 +852,20 @@ mw_grow:
         cmp     dx, ax
         jae     .s
         mov     dx, ax
-.s:     mov     bx, dx                  ; (at most 0FFF0h: no carry)
-        add     bx, 15
-        shr     bx, 4
+.s:     mov     ax, dx                  ; (at most 0FFF0h: no carry)
+        add     ax, 15
+        shr     ax, 4                   ; AX = the paragraphs it needs
+        mov     bx, 1000h
+        push    ax
         mov     ah, 4Ah
         int     21h                     ; (ES = the UI)
-        pop     dx
+        pop     ax
+        jnc     .x
+        cmp     bx, ax                  ; (BX: the most it can have)
+        jb      .x                      ; (CF: too little)
+        mov     ah, 4Ah
+        int     21h
+.x:     pop     dx
         pop     bx
         pop     ax
         ret
@@ -790,15 +888,6 @@ mw_top: push    bp
         pop     cx
         pop     bp
         ret
-; the UI block back to the highest end still used (any: run_cleanup's)
-mw_shrink:
-        cmp     byte [cs:mw_n], 0
-        je      .x
-        push    dx
-        xor     dx, dx
-        call    mw_grow
-        pop     dx
-.x:     ret
 
 ; read .RUN SI's image and fixups to BX, fix it there, its BSS zeroes
 ; (mw_hdr) -> CF, AX = error
@@ -1073,6 +1162,179 @@ mw_modal:
         jmp     short .x
 .no:    clc
 .x:     pop     bx
+        ret
+
+; ---------------------------------------------------------------------
+;  resizing (WF_SIZE): win_mv's way, the outline's size following the
+;  pointer or the arrow keys instead of its place
+; ---------------------------------------------------------------------
+; the top window, if the session running may resize it -> SI; CF if not
+mw_szwin:
+        push    ax
+        mov     si, [wdepth]
+        or      si, si
+        jz      .no
+        cmp     word [wover], 0         ; (windows past NWIN: the top isn't drawn)
+        jne     .no
+        shl     si, 2
+        mov     si, [wstack+si-4]
+        UCALL   win_flags               ; AL = its W_FLAGS (0 before API 6)
+        test    al, WF_SIZE
+        jz      .no
+        call    mw_own
+        cmp     al, [cs:mw_cur]
+        jne     .no
+        pop     ax
+        clc
+        ret
+.no:    pop     ax
+        stc
+        ret
+
+; a press at BX = x, CX = y on window SI's resize corner (its last
+; column, the bottom 12 pixel rows)? CF if so
+mw_corner:
+        push    ax
+        mov     ax, bx
+        shr     ax, 3
+        sub     ax, [si+W_COL]
+        inc     ax
+        cmp     ax, [si+W_W]
+        jne     .no
+        mov     ax, [si+W_Y]
+        add     ax, [si+W_H]
+        sub     ax, cx                  ; (rows from its bottom edge: 1 ...)
+        jbe     .no
+        cmp     ax, MW_CORNER
+        ja      .no
+        pop     ax
+        stc
+        ret
+.no:    pop     ax
+        clc
+        ret
+
+; resize window SI by the mouse (CF set: pressed on its corner; the
+; outline's corner follows the pointer while the button is down) or by the
+; keys (CF clear: CODE-F8; the arrows widen or narrow it a column, lengthen
+; or shorten it a text row, Return keeps the size, ESC leaves it) -> CF
+; set if its size changed (and the screen is drawn again)
+mw_size:
+        pusha
+        sbb     bp, bp                  ; (BP = 0FFFFh: the mouse)
+        UCALL   hide_cursor
+        mov     ax, [si+W_COL]          ; the outline at its place, its size
+        mov     [mv_c], ax
+        mov     ax, [si+W_Y]
+        mov     [mv_y], ax
+        mov     ax, [si+W_W]
+        mov     [cs:mw_ow], ax
+        mov     ax, [si+W_H]
+        mov     [cs:mw_oh], ax
+        UCALL   mv_frame
+        or      bp, bp
+        jz      .k
+        mov     byte [ptr_on], 0        ; (mouse_event leaves the pointer off)
+.w:     sti
+        hlt
+        cmp     byte [mflag], 0
+        je      .w
+        UCALL   mouse_event             ; AX = x, BX = y (as win_mv takes them)
+        jnc     .xy
+        xchg    ax, bx
+        mov     bx, cx
+.xy:    mov     dx, bx
+        shr     ax, 3
+        sub     ax, [si+W_COL]
+        inc     ax                      ; (the pointer's column: the last)
+        sub     dx, [si+W_Y]
+        add     dx, 4                   ; (its row: in the last 4)
+        call    mw_szto
+        test    byte [oldmb], 1
+        jnz     .w
+        jmp     short .end              ; (released: the next press is a click)
+.k:     mov     ah, 11h
+        int     16h
+        jnz     .key
+        sti
+        hlt
+        jmp     .k
+.key:   UCALL   read_key
+        mov     bx, [si+W_W]
+        mov     dx, [si+W_H]
+        cmp     ax, K_LEFT
+        jne     .1
+        dec     bx
+.1:     cmp     ax, K_RIGHT
+        jne     .2
+        inc     bx
+.2:     cmp     ax, K_UP
+        jne     .3
+        sub     dx, 16
+.3:     cmp     ax, K_DOWN
+        jne     .4
+        add     dx, 16
+.4:     cmp     al, 0Dh
+        je      .end
+        cmp     al, 1Bh
+        je      .esc
+        xchg    ax, bx
+        call    mw_szto
+        jmp     .k
+.esc:   UCALL   mv_frame                ; (back as it was, exactly: not through
+        mov     ax, [cs:mw_ow]          ;  mw_szto's rules, which a window's
+        mov     [si+W_W], ax            ;  own size needn't keep)
+        mov     ax, [cs:mw_oh]
+        mov     [si+W_H], ax
+        popa
+        clc
+        ret
+.end:   UCALL   mv_frame                ; the outline off
+        mov     ax, [si+W_W]
+        cmp     ax, [cs:mw_ow]
+        jne     .new
+        mov     ax, [si+W_H]
+        cmp     ax, [cs:mw_oh]
+        je      .same
+.new:   UCALL   redraw_all              ; (its W_DRAW, at the new size)
+        popa
+        stc
+        ret
+.same:  popa
+        clc
+        ret
+
+; the outline of window SI to AX columns by DX pixels (signed; at least
+; MW_MINW by MW_MINH, kept on the screen above the band, the height a
+; multiple of 4): W_W and W_H take it
+mw_szto:
+        pusha
+        cmp     ax, MW_MINW
+        jge     .w1
+        mov     ax, MW_MINW
+.w1:    mov     bx, 80
+        sub     bx, [si+W_COL]
+        cmp     ax, bx
+        jle     .w2
+        mov     ax, bx
+.w2:    cmp     dx, MW_MINH
+        jge     .h1
+        mov     dx, MW_MINH
+.h1:    mov     bx, SCR_BAND_Y
+        sub     bx, [si+W_Y]
+        cmp     dx, bx
+        jle     .h2
+        mov     dx, bx
+.h2:    and     dx, 0FFFCh
+        cmp     ax, [si+W_W]
+        jne     .ch
+        cmp     dx, [si+W_H]
+        je      .x
+.ch:    UCALL   mv_frame                ; off at the old size, on at the new
+        mov     [si+W_W], ax
+        mov     [si+W_H], dx
+        UCALL   mv_frame
+.x:     popa
         ret
 
 ; ---------------------------------------------------------------------
