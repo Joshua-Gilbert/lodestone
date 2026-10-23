@@ -1967,6 +1967,35 @@ def t_nodisk():
     res = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\RES.TXT')
     check('... NODISKMT found in A:\\BIN after the PATH\'s B:\\: two questions, the PATH search\'s and the program\'s own '
           '(RES.TXT "03")', o.count('Fail?') == 2 and res == b'03', (o, res))
+    # a COPY whose writes fail part way (B: write-protected after its 3rd sector): F, then the partial copy's close and
+    # delete ask again, so a Retry with the disk put right leaves no 0-byte file and no lost clusters
+    big = os.path.join(OUT, 'BIG.DAT'); open(big, 'wb').write(bytes(range(256)) * 160)
+    k = ktest.KPC(image('nodiskcp.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'BIG.DAT=' + big),
+                  open(image('nodiskb.img', 'ND2.BAT=' + nd2), 'rb').read())
+    k.start()
+    k.key('cls'); k.key(ktest.ENTER)
+    free0 = re.search(r'([\d,]+) bytes free', asks('dir b:')).group(1)
+    orig, st = type(k.pc).int13, {'on': True, 'w': 0}
+    def int13(s):
+        if st['on'] and s.r('ah') == 3 and s.r('dl') == 1:
+            st['w'] += 1
+            if st['w'] == 4: s.drives[1].wp = True
+        return orig(s)
+    type(k.pc).int13 = int13
+    try:
+        n0 = len(k.pc.tty)
+        k.key('copy big.dat b:'); k.key(ktest.ENTER)
+        k.key('f'); st['on'] = False; k.pc.drives[1].wp = False
+        for i in range(6):
+            if ''.join(k.pc.tty)[n0:].count('Fail?') > i + 1: k.key('r')
+        o = ''.join(k.pc.tty)[n0:]
+    finally:
+        type(k.pc).int13 = orig
+    m = re.search(r'([\d,]+) bytes free', asks('dir b:'))
+    files = fatcheck.read_files(bytes(k.pc.drives[1].img))
+    check('... COPY to B: failing part way: F, then its clean-up asks again; R there: no BIG.DAT left, B:\'s free space as '
+          'before', o.count('Fail?') >= 2 and 'B:\\BIG.DAT' not in files and m and m.group(1) == free0,
+          (o, sorted(files), free0, m and m.group(1)))
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
