@@ -480,6 +480,7 @@ api_keyshift:
 
 api_setredraw:
         mov     [redraw_fn], si
+..@ui_ret:                              ; (KMW.INC: a RET it returns through)
         ret
 
 ; =====================================================================
@@ -1981,6 +1982,7 @@ ui_wopen:
         mov     word [wtop], 0
 %ifndef NOTC
         push    es
+..@ui_wlend:                            ; (KMW.INC: with MULTITASK=1, STC here)
         mov     ax, 0F002h
         int     21h
         jc      .nolend
@@ -3662,6 +3664,7 @@ ui_room:
         sti
         push    ax
         push    word .moved
+..@ui_retf:                             ; (KMW.INC: a RETF it calls through)
         retf
 .moved: mov     ds, ax
         dec     ax
