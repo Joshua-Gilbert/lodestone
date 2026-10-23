@@ -1892,7 +1892,9 @@ def t_nodisk():
     # a handler that answers Ignore, which the mount doesn't offer: Fail, as MS-DOS (it mounted B: from A:'s boot sector)
     ig = os.path.join(OUT, 'NODISKIG.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', ig, os.path.join(HERE, 'NODISKIG.ASM')], check=True)
-    k = ktest.KPC(image('nodiskig.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISKIG.COM=' + ig), bytes(1474560))
+    nd2 = os.path.join(OUT, 'ND2.BAT'); open(nd2, 'wb').write(b'@dir b:*.txt' + bytes([13, 10]) + b'@echo hi > b:y.txt' + bytes([13, 10]))
+    k = ktest.KPC(image('nodiskig.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISKIG.COM=' + ig, 'ND2.BAT=' + nd2, 'BIN' + chr(92),
+                        'BIN' + chr(92) + 'NODISKMT.COM=' + os.path.join(HERE, 'NODISKMT.COM')), bytes(1474560))
     k.pc.drives[1].empty = True
     k.start()
     sh = Shell(k)
@@ -1949,6 +1951,22 @@ def t_nodisk():
     k.key('echo del b:x.bat >> nd.bat'); k.key(ktest.ENTER)
     o = asks('nd')
     check('... a batch file of two such lines: one question for each line', o.count('Fail?') == 2, o)
+    # the next line's redirection asks too (it's opened before the command runs)
+    o = asks('nd2')
+    check('... a batch line redirected to B: after one answered F: asked again (two questions)', o.count('Fail?') == 2, o)
+    # a program LCMD runs is asked, though LCMD's own PATH search on B: was answered F in the same line
+    k.key('set path=b:\\;a:\\bin'); k.key(ktest.ENTER)
+    n0 = len(k.pc.tty)
+    k.key('nodiskmt'); k.key(ktest.ENTER, settle=False)
+    seen = 0
+    for i in range(6):
+        k.run_for(1.5)
+        if ''.join(k.pc.tty)[n0:].count('Fail?') > seen: seen += 1; k.key('f', settle=False)
+    k.settle()
+    o = ''.join(k.pc.tty)[n0:]
+    res = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\RES.TXT')
+    check('... NODISKMT found in A:\\BIN after the PATH\'s B:\\: two questions, the PATH search\'s and the program\'s own '
+          '(RES.TXT "03")', o.count('Fail?') == 2 and res == b'03', (o, res))
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,

@@ -706,7 +706,6 @@ run_cmd:
         jne     .w
         ret
 .w:     mov     byte [failed], 0
-        mov     byte [crit_q], 0        ; (each command asks again)
         mov     di, cword               ; the first word, upper case
         mov     cx, 70
 .c:     lodsb
@@ -912,6 +911,7 @@ run_external:
         mov     dx, prog
         mov     bx, epb
         mov     byte [child], 1
+        mov     byte [crit_q], 0        ; (a program is asked each time)
         mov     [stack_seg], ss
         mov     [main_sp_run], sp
         mov     ax, 4B00h
@@ -1207,7 +1207,8 @@ bat_read:
 
 ; run the batch file's next line (or end it)
 bat_next:
-        call    bat_read
+        mov     byte [crit_q], 0        ; (each line asks again, as each
+        call    bat_read                ;  typed one does: edit_line's .key)
         jc      bat_end
         mov     si, bat_raw             ; %n, %NAME% and %%
         mov     di, line
@@ -4689,7 +4690,7 @@ tmpb        resb 1
 tmpw        resw 1
 crit_ah     resb 1
 crit_q      resb 1                      ; INT 24h fails (Tab looking; a
-                                        ;  command answered F or A once)
+                                        ;  line answered F or A once)
 crit_al     resb 1
 ampm        resb 1
 vol_drv     resb 1
