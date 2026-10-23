@@ -164,7 +164,9 @@ run_tail    resb 130
 pc_ch       resb 1              ; putc's character
 app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
                                 ;  Copy/Move destination, free while the
-                                ;  Executive asks or a .RUN runs (UIAPI.INC)
+                                ;  Executive asks or a .RUN runs (UIAPI.INC);
+                                ;  KMW.INC's mw_open keeps it (M8c: the
+                                ;  Executive may wait at its question then)
 tmp         resb 96
 section ui
 
@@ -1250,6 +1252,9 @@ hide_cursor:
 
 ; =====================================================================
 ;  drawing primitives (mode 40h: 640x400, 4 interleaved banks of 100 rows)
+;  (KMW.INC, with MULTITASK=1: while window .RUNs run, clear_screen,
+;  fill_band, invert_band, vline, putsn and xor_rect start with a JMP FAR
+;  to its clipping, win_paint and saver too: mw_cpt)
 ; =====================================================================
 ; DX = y (0-399) -> DI = its row's offset: (y & 3) * 2000h + (y / 4) * 80
 row_di: push    dx
