@@ -2402,7 +2402,8 @@ run_saver:
         rep     movsw
         pop     ds
         mov     byte [sv_busy], 1       ; (Ctrl-C meanwhile: nothing)
-        push    ds
+        inc     byte [crit_q]           ; (no disk to look for DEFRAG on:
+        push    ds                      ;  Fail, no prompt; put back after)
         push    es
         mov     ds, [sv_entry+2]        ; (DS, ES: the Executive's)
         push    ds
@@ -2410,6 +2411,7 @@ run_saver:
         call    far [cs:sv_entry]
         pop     es
         pop     ds
+        dec     byte [crit_q]
         mov     byte [sv_busy], 0
         mov     al, [sv_mode]
         xor     ah, ah
@@ -2436,7 +2438,8 @@ run_saver:
         xor     bh, bh
         mov     ah, 2
         int     10h
-        mov     dx, crit                ; our INT 24h (the kernel's now)
+        mov     dx, crit                ; our INT 24h (the Executive's now,
+                                        ;  after a DEFRAG run)
         mov     ax, 2524h
         int     21h
 .x:     pop     es
@@ -4691,8 +4694,8 @@ errlvl      resb 1
 tmpb        resb 1
 tmpw        resw 1
 crit_ah     resb 1
-crit_q      resb 1                      ; INT 24h fails (Tab looking; a
-                                        ;  line answered F or A once)
+crit_q      resb 1                      ; INT 24h fails (Tab looking; the
+                                        ;  saver; a line answered F or A once)
 crit_al     resb 1
 ampm        resb 1
 vol_drv     resb 1

@@ -3898,8 +3898,9 @@ saver:  pusha
 ; through the address INT 21h F0h AL=5 gives, with DS = ES = this segment:
 ; as in the Executive (DEFRAG on each disk unless TIDY=0, then the dark
 ; screen), back at a key, which it takes.  Nothing is redrawn: the caller
-; sets its video mode and screen again, and its own INT 24h (the kernel's
-; is in place).
+; sets its video mode and screen again, and its own INT 24h (ui_int24 is
+; in place after a DEFRAG run).  The look for DEFRAG runs under the
+; caller's INT 24h, so that must Fail without asking (LCMD: crit_q).
 ui_saver_far:
         call    saver
         retf
