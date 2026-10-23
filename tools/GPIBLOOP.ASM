@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBLOOP.COM 1.1 - which GPIB byte loop is fastest on the 1520, and at
+;  GPIBLOOP.COM 1.2 - which GPIB byte loop is fastest on the 1520, and at
 ;  which alignment.
 ;  Build:  nasm -f bin -o GPIBLOOP.COM GPIBLOOP.ASM
 ;  Usage:  GPIBLOOP [a]      a = the echo device's address (default 7)
@@ -24,6 +24,13 @@
 ;    write K and R as before, 2 (the same for writes), and 2 with AUXRB's
 ;          TRI bit: T1, the 7210's settling time before DAV, 500 ns
 ;          instead of 2 us after the first byte (three-state drivers)
+;  1.2 (after 1.1: read 2 152 KB/s even; write 2 77, TRI no change, R 88 --
+;       the write's first poll mostly misses, so its spin belongs inline):
+;    read  2 as the reference, and 3: END tested on the same ISR1 read
+;          as DI (no OR into the shadow, no AND per byte)
+;    write R as the reference; 3: the next byte fetched while the bus
+;          handshakes, so DO -> OUT is three instructions; 4: 3 with the
+;          poll at its tightest (no time-out count: a bench figure only)
 ;  4096-byte messages; the rounds go through every loop in turn, 6 times,
 ;  and each loop's median is shown, in ns a byte and KB/s, with the
 ;  parity of its spin loop's label (.w) and of the label it jumps to for a
@@ -569,6 +576,110 @@ per_byte:
         jmp     short %1_put
 %endmacro
 
+%macro R3 1                             ; END from the same ISR1 read
+%1:     mov     dx, R_ISR1
+%1_w:   in      al, dx
+        test    al, ISR1_DI
+        jz      %1_s
+        test    al, ISR1_END
+        jnz     %1_l
+%1_g:   mov     dh, R_DIR >> 8
+        in      al, dx
+        mov     dh, R_ISR1 >> 8
+        stosb
+        loop    %1_w
+        clc
+        ret
+%1_l:   or      bh, al                  ; the last byte
+        and     bh, ~ISR1_DI
+        mov     dh, R_DIR >> 8
+        in      al, dx
+        stosb
+        clc
+        ret
+%1_s:   or      bh, al
+        test    bh, ISR1_DI | ISR1_END
+        jnz     %1_e
+        mov     si, 20000
+%1_s2:  in      al, dx
+        or      bh, al
+        test    bh, ISR1_DI | ISR1_END
+        jnz     %1_e
+        dec     si
+        jnz     %1_s2
+        stc
+        ret
+%1_e:   test    bh, ISR1_DI
+        jz      %1_x
+        mov     al, bh
+        and     bh, ~(ISR1_DI | ISR1_END)
+        test    al, ISR1_END
+        jz      %1_g
+        mov     bh, al
+        jmp     short %1_l
+%1_x:   clc                             ; END after the last DI: the end
+        ret
+%endmacro
+
+%macro W3 1                             ; the next byte fetched early
+%1:     push    di
+        mov     dx, R_ISR1
+        and     bh, ~ISR1_DO
+        es lodsb
+        mov     ah, al
+        jmp     short %1_put
+%1_n:   mov     di, 20000
+%1_w:   in      al, dx
+        test    al, ISR1_DO | ISR1_ERR
+        jnz     %1_g
+        dec     di
+        jnz     %1_w
+        jmp     short %1_out
+%1_g:   test    al, ISR1_ERR
+        jnz     %1_e
+%1_put: mov     al, ah
+        mov     dh, R_CDOR >> 8
+        out     dx, al
+        mov     dh, R_ISR1 >> 8
+        es lodsb                        ; (one past the end on the last)
+        mov     ah, al
+        loop    %1_n
+        dec     si
+        pop     di
+        clc
+        ret
+%1_e:   or      bh, al
+%1_out: pop     di
+        stc
+        ret
+%endmacro
+
+%macro W4 1                             ; 3 with no time-out count
+%1:     mov     dx, R_ISR1
+        and     bh, ~ISR1_DO
+        es lodsb
+        mov     ah, al
+        jmp     short %1_put
+%1_w:   in      al, dx
+        test    al, ISR1_DO | ISR1_ERR
+        jz      %1_w
+        test    al, ISR1_ERR
+        jnz     %1_e
+%1_put: mov     al, ah
+        mov     dh, R_CDOR >> 8
+        out     dx, al
+        mov     dh, R_ISR1 >> 8
+        es lodsb
+        mov     ah, al
+        loop    %1_w
+        dec     si
+        clc
+        ret
+%1_e:   or      bh, al
+        stc
+        ret
+%endmacro
+
 %macro WK 1                             ; the kernel's gp_fast_write
 %1:     push    di
         mov     dx, R_ISR1
@@ -628,37 +739,37 @@ per_byte:
 
         align   2
         nop
-        RK      rk1                     ; starts odd (1.0's faster K)
+        R2      r21                     ; 1.1's fastest (.w and .g even)
+        align   2
+        R3      r30                     ; starts even
         align   2
         nop
-        RR      rr1                     ; (and R)
-        align   2
-        R2      r20                     ; starts even
-        align   2
-        nop
-        R2      r21                     ; starts odd
-        align   2
-        WK      wk0
+        R3      r31                     ; starts odd
         align   2
         WR      wr0
         align   2
-        W2      w20
+        W3      w30
         align   2
         nop
-        W2      w21
+        W3      w31
+        align   2
+        W4      w40
+        align   2
+        nop
+        W4      w41
 
-NR      equ 4
-NW      equ 6
-rvar    dw rk1, rr1, r20, r21
-rname   dw s_rk, s_rr, s_r2, s_r2
-rpar    db (rk1_w - $$) & 1, (rk1_g - $$) & 1, (rr1_w - $$) & 1, (rr1_g - $$) & 1
-        db (r20_w - $$) & 1, (r20_g - $$) & 1, (r21_w - $$) & 1, (r21_g - $$) & 1
-wvar    dw wk0, wr0, w20, w21, w20, w21
-wtri    db 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0     ; (by BX: words)
-wname   dw s_wk, s_wr, s_w2, s_w2, s_w2t, s_w2t
-wpar    db (wk0_w - $$) & 1, (wk0_put - $$) & 1, (wr0_w - $$) & 1, (wr0_put - $$) & 1
-        db (w20_w - $$) & 1, (w20_put - $$) & 1, (w21_w - $$) & 1, (w21_put - $$) & 1
-        db (w20_w - $$) & 1, (w20_put - $$) & 1, (w21_w - $$) & 1, (w21_put - $$) & 1
+NR      equ 3
+NW      equ 5
+rvar    dw r21, r30, r31
+rname   dw s_r2, s_r3, s_r3
+rpar    db (r21_w - $$) & 1, (r21_g - $$) & 1
+        db (r30_w - $$) & 1, (r30_g - $$) & 1, (r31_w - $$) & 1, (r31_g - $$) & 1
+wvar    dw wr0, w30, w31, w40, w41
+wtri    db 0, 0, 0, 0, 0, 0, 0, 0, 0, 0     ; (by BX: words; 1 = AUXRB TRI)
+wname   dw s_wr, s_w3, s_w3, s_w4, s_w4
+wpar    db (wr0_w - $$) & 1, (wr0_put - $$) & 1
+        db (w30_w - $$) & 1, (w30_put - $$) & 1, (w31_w - $$) & 1, (w31_put - $$) & 1
+        db (w40_w - $$) & 1, (w40_put - $$) & 1, (w41_w - $$) & 1, (w41_put - $$) & 1
 
 ; ---- time (as GPIBIRQ) ---------------------------------------------------
 pit_init:
@@ -833,7 +944,7 @@ save_log:
 
 %include "direct.inc"
 
-s_title db 13,10,'GPIBLOOP 1.1 - the GPIB byte loops at both alignments, echo at $'
+s_title db 13,10,'GPIBLOOP 1.2 - the GPIB byte loops at both alignments, echo at $'
 s_rhead db 13,10,'Reading 4096 bytes (median of 6; best-worst in ns):',13,10,'$'
 s_whead db 13,10,'Writing 4096 bytes:',13,10,'$'
 s_rk    db '  K (the kernel',27h,'s)  $'
@@ -843,6 +954,9 @@ s_wr    db '  R (no INC)      $'
 s_r2    db '  2 (spin aside)  $'
 s_w2    db '  2 (spin aside)  $'
 s_w2t   db '  2 + TRI (T1 .5) $'
+s_r3    db '  3 (END same in) $'
+s_w3    db '  3 (byte early)  $'
+s_w4    db '  4 (no time-out) $'
 s_weven db '.w even $'
 s_wodd  db '.w odd  $'
 s_geven db '.g even:  $'
