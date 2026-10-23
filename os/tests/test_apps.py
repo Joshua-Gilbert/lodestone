@@ -42,7 +42,8 @@ def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
     for src, dst in (('apps/SYSTEM.ASM', SYSTEM), ('apps/WRITE.ASM', WRITE), ('tests/UITEST.ASM', UITEST), ('apps/CALC.ASM', CALCRUN),
                      ('apps/TASKS.ASM', os.path.join(GOS, 'apps', 'TASKS.RUN')),
-                     ('tests/RCTEST.ASM', os.path.join(HERE, 'RCTEST.RUN')), ('tests/RC6.ASM', os.path.join(HERE, 'RC6.RUN'))):
+                     ('tests/RCTEST.ASM', os.path.join(HERE, 'RCTEST.RUN')), ('tests/RC6.ASM', os.path.join(HERE, 'RC6.RUN')),
+                     ('tests/MENUTEST.ASM', os.path.join(HERE, 'MENUTEST.RUN'))):
         mkrun.build(os.path.join(GOS, src), dst)
     subprocess.run(['nasm', '-f', 'bin', '-o', MEMSZ, os.path.join(HERE, 'MEMSZ.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
@@ -563,8 +564,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5): the directory buffer is lent while it runs' % kb,
-          kb >= 565.4, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8): the directory buffer is lent while it runs' % kb,
+          kb >= 564.9, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -2330,11 +2331,116 @@ def t_rclick():
     k.key(ktest.ESC)
     check('... and the Executive afterwards', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
 
+MENUTEST = os.path.join(HERE, 'MENUTEST.RUN')
+
+def body(k):
+    """The screen under the title bar (rows 24-399), row by row."""
+    v = k.pc.rd(0xB800, 0, 0x8000)
+    return b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:][:80] for y in range(24, 400))
+
+def t_menu():
+    """UI_MENU and UI_MOUSE (UI API 8): a pop-up menu at a right click, chosen
+    by keys or a click, cancelled by ESC or a click outside; the screen under
+    it as it was; a drag followed with UI_MOUSE."""
+    print('== pop-up menus and drags (UI API 8)')
+    hdr = open(MENUTEST, 'rb').read(6)
+    check('MENUTEST.RUN needs API 8', hdr == b'GRUN\x08\x00', hdr)
+    k = ktest.KPC(image('menu.img', MENUTEST)); k.pc.mouse = True; k.start()
+    k.select('MENUTEST.RUN'); k.key(ktest.ENTER)
+    sy, base = run_syms('tests/MENUTEST.ASM'), k.u16('run_base')
+    v16 = lambda n, i=0: k.pc.u16(k.useg, base + sy[n] + 2 * i)
+    evs = lambda: [v16('evs', i) for i in range(min(v16('nevs'), 64))]
+    hw = lambda: struct.unpack('<4H', k.rd('help_w', 8))
+    def rpress(x, y):
+        point(k, x, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+    check('UI_VERSION: API 8', v16('ver') == 8, v16('ver'))
+    point(k, 100, 100); v0 = body(k)
+    rpress(100, 100)
+    shown = hw(), has(k, 'Cut') and has(k, 'Paste') and has(k, 'Find...')
+    k.key(ktest.DOWN); k.key(ktest.DOWN); k.key(ktest.ENTER)
+    check('a right click at (100, 100): the menu there (column 12, row 100, 20 wide, 88 high) with its items; Down, Down, Return: item 2',
+          shown == ((12, 100, 20, 88), True) and v16('mres') == 2 and v16('nmenu') == 1, (shown, v16('mres'), v16('nmenu')))
+    check('... the screen under it as it was (its save-under), the keys the menu\'s, not the program\'s',
+          body(k) == v0 and evs() == [0xFF03], [hex(e) for e in evs()])
+    rpress(100, 100); k.key('F'); k.key(ktest.ENTER)
+    check('a letter: the item starting with it (F: Find..., 4)', v16('mres') == 4, v16('mres'))
+    rpress(100, 100); press(k, 120, 128, 1); point(k, 100, 100)
+    check('a click on its second item: item 1; the screen as it was', v16('mres') == 1 and body(k) == v0, v16('mres'))
+    n0 = v16('nevs')
+    rpress(100, 100); press(k, 500, 128, 1); m1 = v16('mres'); rpress(100, 100); press(k, 100, 300, 1); point(k, 100, 100)
+    check('a click right of it (on its second row\'s level), then one under it: none (FFFFh) each; the clicks taken (no EV_CLICK, no drag), the screen as it was',
+          m1 == 0xFFFF and v16('mres') == 0xFFFF and v16('nmenu') == 5 and evs()[n0:] == [0xFF03, 0xFF03] and v16('dn') == 0 and body(k) == v0, ([hex(e) for e in evs()[n0:]], v16('dn')))
+    rpress(100, 100); press(k, 100, 186, 1)
+    check('a click inside it but on no item (its bottom edge, row 186): it stays open', has(k, 'Paste') and v16('nmenu') == 5, v16('nmenu'))
+    point(k, 100, 100); k.key(ktest.ESC)
+    check('ESC: none, and the ESC the menu\'s (the program\'s window still open)', v16('mres') == 0xFFFF
+          and k.pc.rd(k.useg, base + sy['wopen'], 1) == b'\x01' and body(k) == v0, v16('mres'))
+    k.key('M'); at = hw(); k.key(ktest.ENTER); mm = v16('mres')
+    k.key('N'); at2 = hw(); k.key(ktest.ENTER)
+    check('at (639, 399): kept on the screen above the band (column 60, row 272), AH = 3 lit first (Return: 3); at (0, 0): '
+          'under the title rule (0, 24), and AH past the last item: the first lit (Return: 0)',
+          at[:2] == (60, 272) and mm == 3 and at2[:2] == (0, 24) and v16('mres') == 0 and body(k) == v0, (at, mm, at2, v16('mres')))
+    k.key('T'); at4 = hw(); k.key(ktest.ESC)
+    check('20 items at (100, 399): 328 rows high, from row 32 (the band below it)', at4 == (12, 32, 20, 328) and body(k) == v0, at4)
+    k.key('L'); at3 = hw(); k.key(ktest.ESC)
+    check('an item of 90 characters: the menu the screen\'s width (80 columns, from column 0), the item cut at its edge',
+          at3[0] == 0 and at3[2] == 80 and body(k) == v0, at3)
+    k.key('O', 'O', 'O'); nm, dp = v16('nmenu'), k.u16('wdepth')
+    rpress(100, 100)
+    full = v16('nmenu') - nm, v16('mres'), k.u16('wdepth'), k.u16('wover'), has(k, 'Paste')
+    k.key(ktest.ESC, ktest.ESC, ktest.ESC); point(k, 100, 100)
+    check('four windows open (the most): a right click gives no menu, none at once (FFFFh), nothing over the windows (%s)' % (full,),
+          dp == 4 and full == (1, 0xFFFF, 4, 0, False) and k.u16('wdepth') == 1 and body(k) == v0, (dp, full, k.u16('wdepth')))
+    # the saver while it is open: the menu back after, with what was lit
+    rpress(100, 100); k.key(ktest.DOWN)
+    k.wr('saver_t', struct.pack('<H', 36))
+    for _ in range(40):
+        k.pc.run_for(0.25)
+        if not has(k, 'Paste'): break
+    dark = not has(k, 'Paste')
+    k.wr('saver_t', struct.pack('<H', 5460))
+    k.key(ktest.DOWN)
+    back = has(k, 'Paste') and has(k, 'Menu test')
+    k.key(ktest.ENTER)
+    check('the saver while it is open, a key: the menu back over the window, item 1 still lit; Return: 1, the screen as it was',
+          dark and back and v16('mres') == 1 and body(k) == v0, (dark, back, v16('mres')))
+    # a drag: UI_MOUSE until the left button is up
+    n0 = v16('nevs')
+    drag(k, 200, 200, 280, 240)
+    d0, d1 = [tuple(v16(n, i) for i in range(3)) for n in ('d0', 'd1')]
+    check('a drag from (200, 200) to (280, 240): one EV_CLICK, then UI_MOUSE: the left down on the way (240, 240), up at (280, 240) at the end',
+          evs()[n0:] == [0xFF01] and d0 == (1, 240, 240) and d1 == (0, 280, 240) and v16('dn') >= 3 and v16('dcf') == 0, (evs()[n0:], d0, d1, v16('dn')))
+    press(k, 300, 250, 1)
+    check('... the next press is an event again (EV_CLICK)', evs()[n0:] == [0xFF01, 0xFF01], [hex(e) for e in evs()[n0:]])
+    nm = v16('nmenu')
+    point(k, 200, 200)
+    for b in (1, 3, 3, 2, 0):                       # (the right pressed during the drag, let go after the left)
+        k.pc.mouse_move(4, 0, b); k.pc.run_for(0.05)
+    k.settle()
+    check('... the right pressed during a drag, let go after the left: UI_MOUSE saw it (3), so it is no EV_RCLICK after (no menu)',
+          evs()[n0:] == [0xFF01] * 3 and v16('nmenu') == nm and not has(k, 'Paste'), ([hex(e) for e in evs()[n0:]], v16('nmenu') - nm))
+    # no window open: the menu borrows the cache itself (ui_wopen's first window) and gives it back
+    k.key(ktest.ESC)
+    point(k, 100, 100); v1 = body(k)
+    rpress(100, 100); lent = k.u16('wseg') != 0
+    k.key(ktest.ENTER)
+    check('its window closed (none open): the menu saves under it all the same, gives the cache back after; item 0',
+          lent and v16('mres') == 0 and k.u16('wseg') == 0 and k.u16('wdepth') == 0 and body(k) == v1, (lent, v16('mres'), k.u16('wseg')))
+    k.key(ktest.ESC)
+    check('ESC: the Executive again', k.rd('run_active', 1) == b'\x00' and not k.crashed and has(k, 'MENUTEST'), k.band())
+    k = ktest.KPC(image('menu.img', MENUTEST)); k.start()
+    k.select('MENUTEST.RUN'); k.key(ktest.ENTER)
+    base = k.u16('run_base')
+    k.key('U')
+    dcf = k.pc.u16(k.useg, base + sy['dcf'])
+    k.key(ktest.ESC, ktest.ESC)
+    check('no mouse: UI_MOUSE says so (CF)', dcf == 0xFFFF and k.rd('run_active', 1) == b'\x00' and not k.crashed, dcf)
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
