@@ -47,6 +47,7 @@ PATCHED_FRAME_MAX = 254    # patched PBSIZE 255
 HEADER = 6
 GRID_RX_DEFAULT = 246      # Pi -> GRiD payload a CLAUDE without rx= in its HELLO reads (255-byte buffer)
 GRID_RX_MAX = 8192
+GRID_REQ_DEFAULT = 4700     # the biggest REQUEST a CLAUDE without HELLO's req= takes (its REQMAX)
 OVERHEAD = 8               # header + CRC
 
 # TEXT control codes
@@ -203,6 +204,16 @@ def kv_lines(data):
         if '=' in line:
             k, v = line.split('=', 1); d[k.strip()] = v.strip()
     return d
+
+
+def hello_req(body):
+    """The biggest REQUEST a GRiD HELLO says it takes (a `req=` line, CLAUDE 1.5), else the 4,700 of
+    every CLAUDE before."""
+    for line in bytes(body[6:]).split(b'\n'):
+        if line.startswith(b'req='):
+            try: return max(GRID_REQ_DEFAULT, min(int(line[4:]), 65000))
+            except ValueError: break
+    return GRID_REQ_DEFAULT
 
 
 def hello_rx(body):

@@ -51,7 +51,7 @@ TXMAX    equ 2048               ; GRiD -> Pi payload per frame: ~9 % faster than
 RXMAX    equ RXPAY + 9          ; the read: a whole frame (RXPAY + 8) and one byte
                                 ;  more, so a frame never fills it (as 255 for 254)
 %defstr RXPAY_S RXPAY
-REQMAX   equ 4700               ; request reassembly
+REQMAX   equ 8700               ; request reassembly (HELLO's req=: writes of 8 KB and a path)
 IOSIZE   equ 16384              ; reply buffer segment
 SNAPMAX  equ 32768 + 11         ; snapshot segment: id, status, header, data
 TXQN     equ 6                  ; outgoing messages queued
@@ -63,6 +63,8 @@ BOXW     equ 70
 %define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi; not in RCON)
 %define TERM_PIXELS              ; (TERMCELL.INC: pictures, CELLS op FDh; not in RCON)
 %define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23; not in RCON)
+%define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer; not in RCON)
+%define KBD_EVERY 6000           ; (TERMKEYS.INC: keys every ~2.5 ms while the link is busy; not in RCON)
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -106,10 +108,18 @@ start:  jmp     boot                    ; (start-up: where inbuf goes)
 
 main:   call    get_ticks
         mov     [now], ax
+        PROF    11
         call    link_service
+        PROF    0
+        PROF    12
         call    kbd_service
+        PROF    0
+        PROF    13
         call    req_service
+        PROF    0
+        PROF    14
         call    tick_service
+        PROF    0
         cmp     byte [quit], 0
         jne     leave
         call    maybe_idle
@@ -1957,6 +1967,9 @@ op_settime:
         mov     dl, al
         mov     ah, 05h
         int     1Ah
+%ifdef PROFILE
+        call    prof_rebase             ; (the clock moved: not a stretch of time)
+%endif
         call    draw_title
         xor     al, al
         jmp     reply0
@@ -2663,6 +2676,8 @@ build_hello:                            ; -> CX = length of hellobuf
         call    build_kv
         mov     si, kv_rx               ; the Pi's frames may be this big
         call    put_str
+        mov     si, kv_req              ; and its requests
+        call    put_str
         mov     si, kv_appterm          ; CLAUDE /T, /W or /C
         cmp     byte [app_want], 'T'
         je      .a
@@ -2911,11 +2926,12 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.4', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.5', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
 kv_rx       db 'rx=', RXPAY_S, 10, 0
+kv_req      db 'req=8700', 10, 0             ; (REQMAX: the biggest REQUEST we take)
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
 evmouse     db 06h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
@@ -3892,6 +3908,8 @@ n_failrun   resb 1
 n_bad       resw 1
 spoll_errs  resb 1
 pit_last    resw 1
+kbd_pit     resw 1                      ; (KBD_EVERY: when the keys were last looked at)
+kbd_tick    resw 1
 pit_tick    resw 1
 irq_ptr     resw 2                      ; the GPIB driver's SRQ count (AH=0Eh), seg 0: none
 srq_seen    resw 1                      ;  as it was at the last look
@@ -3966,10 +3984,12 @@ snap_len    resw 1
                   || kv_appweb < kv_appchat || kv_rx < kv_appweb || s_tkeys < kv_rx \
                   || s_helptitle < s_pages) resb 1     ; (HELLO_MAX's lengths: in this order)
 %ifdef PROFILE
-prof_acc    resd PB_N                   ; (PROF.INC: prof_start clears these
-prof_cnt    resw PB_N                   ;  three together)
+prof_acc    resd PB_N + 1               ; (PROF.INC: prof_start clears these
+prof_cnt    resw PB_N + 1               ;  together; the last: PROF's own end)
 prof_t0     resd 1
 prof_cur    resb 1
+prof_sp     resb 1
+prof_stk    resb PS_N
 prof_txt    resb 1024
 %endif
 stack_bottom:                           ; the stack: claude-link's emulator tests

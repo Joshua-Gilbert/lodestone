@@ -33,8 +33,8 @@ OP_SCREEN equ 11h                ; REQUEST ops the console answers (CLAUDE.COM's
 OP_TYPE   equ 12h                ;  optab has its own); TYPE is the console's only
 
 ; PROF n: in a profiling build (nasm -dPROFILE: CLAUDEP.COM, PROF.INC), the
-; time from here on goes to bucket n; nothing otherwise.  Keeps every
-; register and the flags.
+; time from here on goes to bucket n, and PROF 0 gives it back to the bucket
+; before (they nest); nothing otherwise.  Keeps every register and the flags.
 %macro PROF 1
 %ifdef PROFILE
         pushf

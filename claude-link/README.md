@@ -237,7 +237,8 @@ every byte checked.
 | SRQ on IRQ 5 (Lodestone's GPIB driver 1.21, CLAUDE 1.3) | 7.0 ms | 9 ms median | 44.9 KB/s | 56.7 KB/s |
 | the driver's fast loops (1.22, GPIBLOOP) | 6.4 ms | 8 ms median | 70.2 KB/s | 73.3 KB/s |
 | the driver's frame check (1.23, CLAUDE 1.4) | 6.0 ms | 8 ms median | 73.6 KB/s | 82.2 KB/s |
-| bridge fw 2026-10-23a: EARLY answers (read while the rest crosses USB) | **6.0 ms** | **8 ms** median | **87.2 KB/s** | **81.9 KB/s** |
+| bridge fw 2026-10-23a: EARLY answers (read while the rest crosses USB) | 6.0 ms | 8 ms median | 87.2 KB/s | 81.9 KB/s |
+| CLAUDE 1.5: 8 KB write requests, the next frame straight after an answer | **6.0 ms** | **8 ms** median | **89.4 KB/s** | **82.1 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -274,16 +275,19 @@ every byte checked.
 - **Where a 2 KB frame's time goes**, on the bridge's own clock (fw 2026-10-23b
   stamps its events; `bench --trace`), so the GRiD is now the limit both ways:
 
-  | Pi to GRiD, 21.5 ms a frame | | GRiD to Pi, 19 ms a frame | |
+  | Pi to GRiD | | GRiD to Pi | |
   |---|---:|---|---:|
-  | GRiD reads it (TALK -> TX_DONE) | 14.1 ms | GRiD writes it (LISTEN -> RX_END) | 18.8 ms |
-  | GRiD between frames | 2.9 ms | GRiD between frames | 1.3 ms |
+  | GRiD reads it (TALK -> TX_DONE) | 14.5 ms | GRiD writes it (LISTEN -> RX_END) | 18.8 ms |
+  | GRiD between frames (CLAUDE 1.5; 1.4: 2.9) | 1.4 ms | GRiD between frames (1.4: 1.3) | 1.0 ms |
   | USB, the reply's first 128 bytes | 1.0 ms | USB, the Pi's NOP | 0.6 ms |
   | SRQ, serial poll, addressing | ~1 ms | SRQ, serial poll, addressing | ~0.7 ms |
   | gridlink | 0.2 ms | gridlink | 0.1 ms |
 
-  The GPIB time is the GRiD's byte loops (6.4 µs a byte reading, 9 writing,
-  with the frame check). With bridge fw 2026-10-23a the bridge says an
+  The GPIB time is the GRiD's byte loops (7 µs a byte reading, 9 writing,
+  with the frame check). CLAUDE 1.5's 8 KB write requests halve the DOS
+  open, seek and close per byte copied to the GRiD, and its next frame goes
+  straight after an answer instead of after a round of its main loop (keys
+  and the mouse were 0.27 ms of it). With bridge fw 2026-10-23a the bridge says an
   answer is ready once its first 128 bytes are in, so the ~4 ms of USB per
   2 KB frame overlaps the GRiD's read (21.6 ms a frame instead of 25.6).
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
