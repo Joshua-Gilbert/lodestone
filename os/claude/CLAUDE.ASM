@@ -3597,8 +3597,8 @@ r_front:
 ; after; when the keys are done it sets r_pend, and the console comes.
 r_feed: cmp     byte [cs:r_ks], 0
         je      .no
-        call    r_front                 ; (the front task's alone)
-        jne     .no
+        call    r_front                 ; (the front task's alone: a call from
+        jne     .wk                     ;  behind, after a CODE-Tab, tells MT)
         push    dx
         push    bx
         mov     bx, ax
@@ -3616,7 +3616,7 @@ r_feed: cmp     byte [cs:r_ks], 0
         pop     bx
         pop     dx
         jnc     .x
-        cmp     word [cs:r_mt + 2], 0   ; none now, the keys not done (a wait)
+.wk:    cmp     word [cs:r_mt + 2], 0   ; none now, the keys not done (a wait)
         je      .no                     ;  or just done (r_pend: the console
         push    ds                      ;  to come): MT told (mt_tsrk), or a
         push    si                      ;  wait at our HLT would never end

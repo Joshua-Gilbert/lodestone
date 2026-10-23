@@ -3312,7 +3312,8 @@ def t_rclaude():
     def w(a):
         if prev: prev(a)
         cur = k.pc.rd(seg, Y['mt_cur'], 1)[0]
-        if a == r16 and not fed and cur == 0 and k.pc.r('ax') >> 8 == 0:
+        if a == r16 and not fed and cur == 0 and k.pc.r('ax') >> 8 == 0 and k.pc.r('ss') != 0x60:   # (not DOS's
+            # read of LCMD's line, on the kernel's stack: MTKEY's own)
             fed.append(1); k.pc.wr(stub, R.csym('r_ks'), b'\1')
         if fed and cur != 0: waits.add(tstate(k)[0][0][1])
     k.pc.watch = w
