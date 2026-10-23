@@ -40,10 +40,13 @@ class PicoModel(AR488Model):
         s.rx_msg = bytearray()
         s.tx_frames = 0; s.big_tx = 0
         s.bell = None; s.rings = 0            # WAKE (fw 2026-10-22b): SRQ for an idle GRiD, until it sends again
+        s.wake = None                         # the machine's schedule(t), so a HLT ends when SRQ can rise
 
     # ---- USB ---------------------------------------------------------
     def pi_write(s, data, latency_us=None):
-        s.inq.append((s.clock() + (s.usb_us if latency_us is None else latency_us), bytes(data)))
+        t = s.clock() + (s.usb_us if latency_us is None else latency_us)
+        s.inq.append((t, bytes(data)))
+        if s.wake: s.wake(t)                  # (a machine that sleeps: look at us then, SRQ may come)
 
     def _send(s, frame, t=None):
         s.to_pi(cobs_encode(frame), (s.clock() if t is None else t) + s.usb_us)

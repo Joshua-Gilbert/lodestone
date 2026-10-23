@@ -227,21 +227,41 @@ Measured on the 1520 (Lodestone, CLAUDE /T, the Pico 2 bridge), with
 `python3 -m gridlink.bench` on the Pi: 128 KB copied each way through M:,
 every byte checked.
 
-| Pi to GRiD frames | Pi to GRiD | GRiD to Pi |
-|---|---|---|
-| 246 (CLAUDE before 1.3) | 22.7 KB/s | 43.0 KB/s |
-| 512 | 27.7 KB/s | 43.0 KB/s |
-| 1024 | 31.1 KB/s | 43.0 KB/s |
-| 2048 (CLAUDE 1.3) | 32.4 KB/s | 43.0 KB/s |
-| 4096 | 33.1 KB/s | 43.0 KB/s |
+| | Round trip | First call after idle | Pi to GRiD | GRiD to Pi |
+|---|---|---|---|---|
+| Before 2026-10-21 | 990 ms | up to 1 s | 3.0 KB/s | 5.7 KB/s |
+| gridlink's read and hold fixes | 8 ms | up to 1 s | 22.7 KB/s | 43.0 KB/s |
+| bridge fw 2026-10-21a, 2 KB frames to the GRiD | 8 ms | up to 1 s | 34.3 KB/s | 42.8 KB/s |
+| 2 KB frames from the GRiD, the Fletcher sum (CLAUDE 1.3) | 7.0 ms | up to 1 s | 34.0 KB/s | 56.5 KB/s |
+| bridge fw 2026-10-22a (bulk USB reads) and 22b (wake-up) | **7.0 ms** | **51 ms** median | **45.7 KB/s** | **56.7 KB/s** |
 
-A request's round trip is 8 ms. That fits about 3.5 ms per frame plus
-29 us per byte. Before 2026-10-21 every request also waited up to 1 s for
-the GRiD's idle POLL (a REPLY was answered NOP at once), and every message
-from the GRiD sat up to 20 ms in the Pico transport's read: copies ran at
-3.0 / 5.7 KB/s. `gridlink.bench --sweep 246,1024,2048` tries frame sizes
-on a running link. (The AR488 Nano's figures, from the emulator, were
-3.2-6.8 KB/s.)
+- **What was slow:** gridlink's Pico transport waited out a 20 ms read for
+  every message. A REPLY was answered NOP at once, so the next request waited
+  for the GRiD's 1 s idle POLL. The bridge read USB a byte at a time
+  (106 KB/s; now 510 KB/s). The table CRC cost the 286 about 34 clocks a
+  byte; the Fletcher sum costs 8.5.
+- **The first call after idle:** CLAUDE POLLs once a second between
+  messages. The bridge now raises SRQ when gridlink has news for an idle GRiD
+  (WAKE, PROTOCOL.md), and CLAUDE POLLs at once. The 51 ms left is CLAUDE's
+  HLT until the next timer tick. With the GPIB driver's SRQ interrupt (IRQ 5:
+  Lodestone's built-in driver 1.21, or GRIDGPIB 1.2) the SRQ itself wakes it:
+  2.5 ms instead of 74 in the emulator. That is still to be measured on the
+  1520.
+- **What is left, per 2 KB frame** (`bench --trace`):
+  - Pi to GRiD: the GPIB transfer about 28 ms, USB into the bridge 4.6 ms,
+    and the GRiD's own work between frames about 5 ms.
+  - GRiD to Pi: the GPIB transfer about 26 ms, and the GRiD's work about 5 ms.
+- **The GPIB ceilings**, with no protocol (tools/GPIBXFER.COM, the CPU's
+  own loop): 72-77 KB/s to the GRiD and 105 KB/s from it. The 7210 runs the
+  handshake by itself when the GRiD talks; when it listens, every byte waits
+  for the 286. DMA isn't wired on the 1520's GPIB cartridge.
+- **The frame sizes** (2026-10-21, before the bridge's USB fix): 246, 512,
+  1024, 2048 and 4096 bytes to the GRiD gave 22.7, 27.7, 31.1, 32.4 and
+  33.1 KB/s. 2 KB frames get 98 % of 4 KB's rate for 1.8 KB less memory.
+- `gridlink.bench`: `--sweep 246,1024,2048` tries frame sizes on the
+  running link; `--trace` shows where each copy's time goes, gap by gap;
+  `--usb` times the Pi to Pico USB alone; `--idle N` the first call after
+  idle. The AR488 Nano's figures, from the emulator, were 3.2-6.8 KB/s.
 
 ## Files
 

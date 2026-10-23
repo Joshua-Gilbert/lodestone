@@ -76,7 +76,8 @@ def test_ring_wakes_an_idle_grid():
         h.link.send(glp.P_TEXT, b'ring %d\r\n' % i)
         assert h.run_until(lambda: h.link.stats['rx_frames'] > n, sim_s=2.0)
         lat.append((h.m.us - t0) / 1e3)
-    assert h.nano.rings >= 4 and max(lat) < 150, (h.nano.rings, lat)
+    # GRIDGPIB 1.2 takes SRQ on IRQ 5, which wakes CLAUDE's HLT at once (without it: up to a 55 ms tick)
+    assert h.nano.rings >= 4 and max(lat) < 20 and h.m.irqs5 > 0, (h.nano.rings, lat, h.m.irqs5)
     check(h)
 
 

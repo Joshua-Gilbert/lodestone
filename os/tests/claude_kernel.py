@@ -82,6 +82,7 @@ class KernelHarness(G.EmuHarness):
             s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
             s.transport = ModelTransport(s.nano, patched, baud=baud)
         chip.devices[7] = s.nano
+        s.nano.wake = m.schedule                  # (the 7210's SRQ interrupt: a HLT ends when it rises)
         m.on_due = s.pump_pi
         cfg = Config()
         cfg.workdir = os.path.join(s.tmp, 'work'); cfg.memory_dir = os.path.join(s.tmp, 'mem')

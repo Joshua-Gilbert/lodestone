@@ -1331,7 +1331,27 @@ tick_service:
 
 maybe_idle:                             ; HLT when nothing is due
         cmp     byte [lstate], LS_WAIT
-        je      .x
+        jne     .i
+        cmp     word [irq_ptr+2], 0     ; waiting for an answer, with the SRQ
+        je      .x                      ;  interrupt: sleep till it (or a tick,
+        mov     ah, 11h                 ;  or a key), unless it came already or
+        int     16h                     ;  a key is waiting (11h: as Term's)
+        jnz     .x
+        push    es
+        push    bx
+        les     bx, [irq_ptr]
+        cli
+        mov     ax, [es:bx]
+        pop     bx
+        pop     es
+        cmp     ax, [srq_seen]
+        jne     .s
+        sti                             ; (STI's shadow covers the HLT)
+        hlt
+        ret
+.s:     sti
+        ret
+.i:
         mov     al, [req_ready]
         or      al, [txq_n]
         or      al, [nak_pending]
@@ -2579,6 +2599,14 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
         mov     al, 1                   ; GLP version
         stosb
+        mov     ax, 0EFFh               ; the driver's SRQ interrupt (IRQ 5, Lodestone's
+        call    gg_call                 ;  KGPIB 1.21): DX:CX = its count; else none
+        jc      .ni
+        or      ax, ax
+        jnz     .ii
+.ni:    xor     dx, dx
+.ii:    mov     [irq_ptr], cx
+        mov     [irq_ptr+2], dx
         mov     ah, 0Bh                 ; a driver that latches SRQ (CF: one that doesn't)
         call    gg_call                 ;  lets the Pi ring for us while we're idle
         mov     al, 7                   ; flags: bit 0, Term understood; bit 1, pictures (FDh);
@@ -3737,6 +3765,8 @@ n_bad       resw 1
 spoll_errs  resb 1
 pit_last    resw 1
 pit_tick    resw 1
+irq_ptr     resw 2                      ; the GPIB driver's SRQ count (AH=0Eh), seg 0: none
+srq_seen    resw 1                      ;  as it was at the last look
 txq         resb TXQN * 10
 txlen       resw 1
 txframe     resb TXMAX + 8
