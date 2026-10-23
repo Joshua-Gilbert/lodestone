@@ -29,7 +29,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - INT 21h for the programs of its day: COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
 - A cylinder read-ahead cache for the floppies, kept in EMS when there is EMS.
 - Its own LIM 4.0 EMS manager, when the 1520's memory is set to EMS.
-- The GRIDGPIB driver API on INT 60h, built in, with a faster block transfer.
+- The GRIDGPIB driver API on INT 60h, built in, with a faster block transfer and SRQ on IRQ 5.
 - An INT 33h driver for a serial mouse on COM1 or COM2.
 - Screen capture and printing: Shift-PrtSc saves the screen as `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text). PrtSc alone prints it through the printer driver chosen in System (or saves the file when none is chosen). A driver is a `.PRN` file of up to 1 KB that starts with a driver's signature, read from the disk only when PrtSc is pressed, so nothing of it stays in memory. `PS.PRN` prints PostScript on LPT1 (a picture of a graphics screen, the text of a text screen); other printers are other drivers (`os/drivers/PS.ASM` says how to write one).
 
@@ -70,7 +70,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **gridfox (`CLAUDE /W`):** Firefox on the Pi, shown on the GRiD as text, with the mouse, and with pictures in a 1-bit view.
 - **Chat (`CLAUDE`):** gridlink's own agent, on an API key, for a Pi too small for Claude Code.
 
-The link runs at about 19 KB/s each way through the Pico 2 bridge. See `claude-link/README.md`, `docs/term.md`, `docs/lodestone-resident-claude.md`, `docs/lodestone-pictures.md` and `docs/gridfox.md`.
+Through the Pico 2 bridge the link moves 46 KB/s to the GRiD and 57 KB/s from it, with 7 ms round trips. See `claude-link/README.md`, `docs/term.md`, `docs/lodestone-resident-claude.md`, `docs/lodestone-pictures.md` and `docs/gridfox.md`.
 
 ## Speed and memory
 
@@ -92,8 +92,8 @@ Lodestone 0.6 (memory measured with the windows that move, the printer drivers a
 |---|---:|---:|---:|
 | BENCH file-system total | **78.8** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.43** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **582.0 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 565.9 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **581.7 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 565.6 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
@@ -157,7 +157,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,724 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,727 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os

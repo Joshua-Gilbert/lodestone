@@ -736,5 +736,6 @@ gpib_init:
         sti
         pop     es
         mov     byte [gp_ok], 1
-.no:    ret
+        call    gp_irq_on               ; SRQ on IRQ 5 (GPIBIRQ=0 in LODE.INI:
+.no:    ret                             ;  off again, KMDISK.INC's md_boot)
 section .text

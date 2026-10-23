@@ -81,6 +81,58 @@ def test_write_safe_keeps_the_only_copy():
         assert g.fs == want, (fail, g.fs)
 
 
+def gp(h, name, size=1):
+    a = h.m.Y[name]
+    return h.m.u16(0x60, a) if size == 2 else h.m.rd(0x60, a, 1)[0]
+
+
+def test_srq_on_irq5():
+    """The kernel's GPIB driver takes SRQ on IRQ 5 (KGPIB.INC): its vector, IRQ 5 unmasked, SRQI in IMR2, AH=0Eh
+    says 5; a turn through the Pico model, every SRQ an interrupt (the handler counts them)."""
+    h = T.start([T.reply(('text', 'Hello over the interrupt. ' * 20))], bridge='pico')
+    assert gp(h, 'gp_irq') == 5 and not h.m.pic_mask & 0x20 and h.m.chip.imr2 == 0x40, \
+        (gp(h, 'gp_irq'), hex(h.m.pic_mask), h.m.chip.imr2)
+    off, seg = struct.unpack('<HH', h.m.rd(0, 0x0D * 4, 4))
+    assert (seg, off) == (0x60, h.m.Y['gp_isr']), (hex(seg), hex(off))
+    n0, i0 = gp(h, 'gp_nsrq', 2), h.m.irqs5
+    assert h.turn('hello', sim_s=30)
+    n, i = gp(h, 'gp_nsrq', 2) - n0, h.m.irqs5 - i0
+    assert n > 3 and n == i, (n, i)
+    assert gp(h, 'gp_irq') == 5                    # (no storm)
+    T.check(h)
+
+
+def test_gpibirq_0_turns_it_off():
+    """GPIBIRQ=0 in LODE.INI: the start-up (KSPLASH.INC's gi_boot) turns the interrupt off (AH=0Eh AL=0);
+    CLAUDE polls as before."""
+    h = T.start([T.reply(('text', 'Polled.'))], bridge='pico', files={'A:\\LODE.INI': b'GPIBIRQ=0\r\n'})
+    assert gp(h, 'gp_irq') == 0 and h.m.pic_mask & 0x20 and h.m.chip.imr2 == 0, \
+        (gp(h, 'gp_irq'), hex(h.m.pic_mask), h.m.chip.imr2)
+    i0 = h.m.irqs5
+    assert h.turn('hello', sim_s=30)
+    assert gp(h, 'gp_nsrq', 2) == 0 and h.m.irqs5 == i0
+    T.check(h)
+
+
+def test_irq5_storm_masks_it():
+    """IRQ 5 that keeps firing (no jumper, a floating line): after 32 in one tick the driver masks it and takes
+    SRQI out of IMR2; the link goes on polled."""
+    h = T.start([T.reply(('text', 'Still here.'))], bridge='pico')
+    assert gp(h, 'gp_irq') == 5
+    n0 = gp(h, 'gp_nsrq', 2)
+    for i in range(40):
+        h.m.irq_pending.add(5)
+        h.m.run(50)
+        if gp(h, 'gp_irq') == 0: break
+    assert gp(h, 'gp_irq') == 0 and h.m.pic_mask & 0x20 and h.m.chip.imr2 == 0, (i, gp(h, 'gp_irq'))
+    assert 32 <= gp(h, 'gp_nsrq', 2) - n0 <= 34, gp(h, 'gp_nsrq', 2) - n0
+    assert h.turn('are you there', sim_s=30)
+    T.check(h)
+
+
+T.test_srq_on_irq5 = test_srq_on_irq5
+T.test_gpibirq_0_turns_it_off = test_gpibirq_0_turns_it_off
+T.test_irq5_storm_masks_it = test_irq5_storm_masks_it
 T.test_quit_to_dos = test_quit_to_dos
 T.test_write_no_name_leaves_no_temp = test_write_no_name_leaves_no_temp
 T.test_write_safe_keeps_the_only_copy = test_write_safe_keeps_the_only_copy
