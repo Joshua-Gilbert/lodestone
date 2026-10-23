@@ -114,13 +114,14 @@ def main(argv=None):
         # the first call after the link has gone idle: up to a second for the GRiD's idle POLL, unless the
         # bridge can ring (fw 2026-10-22b, CLAUDE 1.3 with GF_WAKE)
         it = []
+        r0 = link(sock).get('stats', {}).get('rang', 0)
         for i in range(a.idle):
             time.sleep(2.5 + 0.23 * i)                 # the GRiD stops polling back to back after ~2 s
             it.append(tool(sock, 'grid_info', {})[0])
         it.sort()
         st = link(sock).get('stats', {})
         print('first call after idle (%d): best %.0f ms, median %.0f ms, worst %.0f ms; rang %d times'
-              % (a.idle, it[0] * 1e3, it[len(it) // 2] * 1e3, it[-1] * 1e3, st.get('rang', 0)))
+              % (a.idle, it[0] * 1e3, it[len(it) // 2] * 1e3, it[-1] * 1e3, st.get('rang', 0) - r0))
 
     ok = True
     if not a.sweep:

@@ -94,7 +94,8 @@ class PicoModel(AR488Model):
             pass
         elif t == F_WAKE:
             s.rings += 1
-            if struct.unpack_from('<H', f, 1)[0] == s.gen & 0xFFFF: s.bell = s.gen
+            # (as the firmware: a WAKE replaces the bell; one for an older message is void, so it takes it back)
+            s.bell = s.gen if struct.unpack_from('<H', f, 1)[0] == s.gen & 0xFFFF else None
 
     def _consume(s, n):
         s.consumed += n
@@ -157,6 +158,10 @@ class PicoModel(AR488Model):
             g, d, c = s.ring.popleft()
             s.out = bytes(d); s._consume(len(d))
 
+    def on_sent(s):
+        """The reply's last byte went (the chip model calls it): TX_DONE, as the firmware's."""
+        s._send(struct.pack('<BBHBI', F_EVENT, 0x1D, s.gen & 0xFFFF, 0, 0))
+
     def sdc(s):
         s.gen += 1; s.partial = False; s._drop_stale()
 
@@ -182,3 +187,10 @@ class PicoModelTransport:
 
     def ring(s):
         s.proto.ring()
+
+    def unring(s):
+        s.proto.unring()
+
+    @property
+    def delivered_at(s):
+        return s.proto.tx_done_at

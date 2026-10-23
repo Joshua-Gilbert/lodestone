@@ -81,6 +81,33 @@ def test_ring_wakes_an_idle_grid():
     check(h)
 
 
+def test_ring_gives_up_and_takes_the_srq_back():
+    # a GRiD that doesn't answer (CLAUDE ended: the Executive, a DOS program, TM5000): RING_TRIES rings, then
+    # the SRQ is taken back, so it isn't left held on the bus; nothing more until the GRiD sends again
+    h = start([], mode='edits', bridge='pico')
+    assert h.connect()
+    r0, u0 = h.link.stats['rang'], h.link.stats['unrung']
+    h.link.send(glp.P_TEXT, b'nobody there\r\n')
+    srq = []
+    for i in range(20):                       # (the GRiD stopped: only time goes on, 0.12 s a step)
+        h.m.us += 120000
+        h.link.ring_check()
+        h.nano.service()
+        srq.append(h.nano.srq)
+    assert h.link.stats['rang'] - r0 == h.link.RING_TRIES and h.link.stats['unrung'] - u0 == 1, h.link.stats
+    assert any(srq) and not any(srq[-10:]), srq
+    # and a GRiD that comes back: its next frame lets us ring again
+    h.link.stats['rang'] = 0
+    assert h.run_until(lambda: h.link.stats['rx_frames'] > 0 and 'nobody there' in h.screen(), sim_s=3.0)
+    check(h)
+
+
+def test_no_rings_while_busy():
+    # a copy keeps the GRiD busy (its next frame comes within RING_IDLE): no rings in between
+    h, _ = big_turn()
+    assert h.link.stats['rang'] <= 3, h.link.stats['rang']
+
+
 def test_old_claude_gets_246():
     body = bytes([1, 3, 0, 4, 80, 20]) + b'os=DOS 3.30\ngrid=CLAUDE 1.2\napp=term\n'
     assert glp.hello_rx(body) == 246
