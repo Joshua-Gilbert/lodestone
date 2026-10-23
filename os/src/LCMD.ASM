@@ -2438,7 +2438,8 @@ run_saver:
         xor     bh, bh
         mov     ah, 2
         int     10h
-        mov     dx, crit                ; our INT 24h (the kernel's now)
+        mov     dx, crit                ; our INT 24h (the Executive's now,
+                                        ;  after a DEFRAG run)
         mov     ax, 2524h
         int     21h
 .x:     pop     es
