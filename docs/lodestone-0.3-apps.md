@@ -669,6 +669,7 @@ Joshua's aim: the roadmap's calculator on the 80287, scriptable at the prompt (`
   - a 6×6 keypad drawn, hit-tested and acted on from one table.
   - A click ends `UI_EDIT`, so the window adds the key's text itself. After an answer it starts afresh, as typing does. It then pushes one End key with INT 16h AH=05h, so `UI_EDIT` doesn't replace the line at the next key typed. Keys typed meanwhile are taken out first (AH=11h/10h, as the core reads them) and put back after the End, in order, so End always has room and comes first.
   - F2 or the Deg key switches to degrees, and the key is lit while on. F1 is its help. ESC or CODE-K closes it.
+  - With `MULTITASK=1`, it can stay open beside the Tasks window: CODE-T opens the tasks from inside it, CODE-K brings it back to the front from the tasks (in front, it still closes it), a click or CODE-F6 changes which is in front (not while its help is open), and there is no save-under (`docs/lodestone-multitasking.md`, M8a).
 - **API 5:** the window never sets a redraw routine. So:
   - `run_app` no longer clears the caller's. The Executive's `relist` stays underneath, and after the saver (or a save-under that couldn't be lent) the Executive and then the window are redrawn.
   - Exit code 0FFFFh means the screen is as the program found it, and `run_run` skips the directory read and redraw.
