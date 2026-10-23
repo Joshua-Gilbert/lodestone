@@ -3247,8 +3247,9 @@ copy_one:
         jmp     .err
 .rerr:  mov     si, e_read
 .err:   call    err
-        call    close2
-        mov     dx, dst
+        mov     byte [crit_q], 0        ; (the partial copy's close and
+        call    close2                  ;  delete ask again: a Retry there
+        mov     dx, dst                 ;  leaves no lost clusters)
         mov     ah, 41h
         int     21h
         stc
