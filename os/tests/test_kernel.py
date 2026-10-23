@@ -1931,6 +1931,24 @@ def t_nodisk():
     o = k.pc.text_screen()
     check('... "echo hi | echo x < nosuch.txt": "File not found" for the redirection, and no \\PIPEA1.$$$ left',
           o.count('File not found') == 2 and 'PIPEA1' not in o, o)
+    # one question for each command, though it makes several calls (COMMAND.COM asks up to 5 times): F, or A, answers
+    # the rest of it; a batch file's next line asks again
+    def asks(c, ans='f'):
+        n0 = len(k.pc.tty)
+        k.key(c); k.key(ktest.ENTER)
+        for i in range(8):
+            if ''.join(k.pc.tty)[n0:].count('Fail?') > i: k.key(ans)
+            else: break
+        return ''.join(k.pc.tty)[n0:]
+    n = {c: asks(c).count('Fail?') for c in ('dir b:*.txt', 'dir b:\\sub', 'copy b:x.bat a:', 'del b:x.bat',
+                                             'dir b:x.txt > o.txt', 'copy b:x.txt+a.txt c.txt')}
+    na = asks('copy b:*.* a:', 'a').count('Fail?')
+    check('... DIR, COPY, DEL on B:: one question each, F answering the rest of the command (A as F, in LCMD\'s own work)',
+          set(n.values()) == {1} and na == 1, (n, na))
+    k.key('echo dir b:*.txt > nd.bat'); k.key(ktest.ENTER)
+    k.key('echo del b:x.bat >> nd.bat'); k.key(ktest.ENTER)
+    o = asks('nd')
+    check('... a batch file of two such lines: one question for each line', o.count('Fail?') == 2, o)
 
 def t_command():
     """LCMD 0.4.2's batch language: && and ||, ERRORLEVEL from built-ins,
