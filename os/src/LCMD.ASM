@@ -327,7 +327,11 @@ crit:   sti
         push    es
         push    cs
         pop     ds
-        mov     [crit_ah], ah
+        cmp     byte [crit_q], 0        ; (Tab looking: Fail, no prompt in
+        je      .ask                    ;  the line being edited)
+        mov     al, 3
+        jmp     .x
+.ask:   mov     [crit_ah], ah
         mov     [crit_al], al
         mov     si, s_crlf
         call    bputs
@@ -508,8 +512,9 @@ do_pipe:
         mov     si, pipe_a
 .po:    mov     di, out_name
         call    strcpy
-.no:    call    parse_redir
-        jc      .x
+.no:    inc     byte [pipe_n]           ; (counted first: a later one's
+        call    parse_redir             ;  redirection failing, the files
+        jc      .x                      ;  the one before made go too)
         call    redir_do
         jc      .x
         mov     si, cmdl
@@ -518,12 +523,11 @@ do_pipe:
         push    cs
         pop     es
         call    redir_undo
-        inc     byte [pipe_n]
         cmp     word [pipe_rest], 0
         jne     .seg
 .x:     call    redir_undo
-        cmp     byte [pipe_n], 0        ; a pipe leaves its files
-        je      .r
+        cmp     byte [pipe_n], 1        ; a pipe leaves its files (one
+        jbe     .r                      ;  command: none, and no INT 24h)
         call    pipe_names
         mov     dx, pipe_a
         mov     ah, 41h
@@ -1073,7 +1077,9 @@ try_exts:
         mov     byte [is_bat], 1
 .ok:    clc
         ret
-.an:    cmp     bx, x_bat
+.an:    cmp     ax, 3                   ; (no directory, or a drive not
+        je      .none                   ;  ready: one INT 24h, not three)
+        cmp     bx, x_bat
         jb      .a
 .none:  mov     di, [extend]
         mov     byte [di], 0
@@ -1890,7 +1896,8 @@ edit_line:
         mov     [ed_tab], al
         mov     ax, [hist_end]
         mov     [hist_cur], ax
-.key:   mov     al, [ed_tab]            ; (no saver between Tabs: DEFRAG
+.key:   mov     byte [crit_q], 0        ; (Tab's looking done)
+        mov     al, [ed_tab]            ; (no saver between Tabs: DEFRAG
         mov     [sv_req], al            ;  could upset the search)
         xor     cx, cx
         call    wait_key
@@ -2068,7 +2075,8 @@ edit_line:
         rep     movsb
         mov     [hist_end], di
 .x:     ret
-.tab:   or      bl, bl                  ; Tab again: the next name
+.tab:   mov     byte [crit_q], 1        ; (no INT 24h prompt in the line)
+        or      bl, bl                  ; Tab again: the next name
         jnz     .tnext
         mov     bl, dl                  ; the word before the cursor
         xor     bh, bh
@@ -4678,6 +4686,7 @@ errlvl      resb 1
 tmpb        resb 1
 tmpw        resw 1
 crit_ah     resb 1
+crit_q      resb 1                      ; Tab is looking: INT 24h fails
 crit_al     resb 1
 ampm        resb 1
 vol_drv     resb 1

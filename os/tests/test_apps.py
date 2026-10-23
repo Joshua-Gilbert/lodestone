@@ -564,7 +564,7 @@ def t_memory():
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
           'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5): the directory buffer is lent while it runs' % kb,
-          kb >= 565.6, out[-200:])
+          kb >= 565.5, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -1147,14 +1147,23 @@ def t_form():
     k.key(ktest.ENTER)
     k.key(CODE['R']); k.key(ktest.ESC); k.key(CODE['C']); k.key(ktest.ESC)
     check('CODE-R, CODE-D open their forms; ESC changes nothing', not k.crashed and k.exec_list() == ['INNER.TXT'] and k.pc.mode() == 0x40, k.where())
-    # B: with no disk
-    k.pc.drives[1].empty = True
+    # B: with no disk (taken out: the change line says so, so B: is mounted again: INT 24h, the UI's says why)
+    k.pc.drives[1].empty = True; k.pc.drives[1].changed = True
     k.key(ktest.TAB); k.key(ktest.DOWN); k.key(ktest.ENTER, settle=False); k.settle(20)
     check('B: with no disk: Subject has Root only and the band says why ("Drive not ready", not "error 0")',
           subjects(k) == ['Root'] and k.band()[:1] == ["Can't read the disk: Drive not ready (no disk?)"]
           and not k.crashed, (subjects(k), k.band()))
     k.key(ktest.ENTER)
     k.key(K_BTAB); k.key(ktest.UP); k.key(ktest.ESC)
+    # a disk that isn't a DOS disk (blank): said as such, not "Path not found"
+    saved = k.pc.drives[1].img
+    k.pc.drives[1].img = bytearray(len(saved)); k.pc.drives[1].empty = False; k.pc.drives[1].changed = True
+    k.key(ktest.TAB); k.key(ktest.DOWN); k.key(ktest.ENTER, settle=False); k.settle(20)
+    check('B: with a blank disk: "Can\'t read the disk: Not a DOS disk"', k.band()[:1] == ["Can't read the disk: Not a DOS disk"]
+          and not k.crashed, (subjects(k), k.band()))
+    k.key(ktest.ENTER)
+    k.key(K_BTAB); k.key(ktest.UP); k.key(ktest.ESC)
+    k.pc.drives[1].img = saved; k.pc.drives[1].empty = True; k.pc.drives[1].changed = True
     check('... Shift-Tab, Up, ESC: back to A:', k.exec_list() == ['INNER.TXT'] and form(k)[0] == 'Floppy A:', (k.exec_list(), form(k), k.band()))
     # one drive
     k = ktest.KPC(a); k.start()
@@ -1767,10 +1776,11 @@ def t_subcopy():
     check('an empty subject to B:\\EFILE, a file there: "Can\'t copy EFILE: Access denied", the file as it was',
           band() == "Can't copy EFILE: Access denied" and B().get('A:\\EFILE') == b'was on B\r\n', (k.band(), B().get('A:\\EFILE')))
     k.key(ktest.ENTER)
-    k.pc.drives[1].empty = True
+    k.pc.drives[1].empty = True; k.pc.drives[1].changed = True     # (taken out: B: is mounted again, INT 24h)
     k.key(CODE['C']); k.key(ktest.RIGHT, ktest.ENTER, '\\x2', K_CODE_ENTER, settle=False); k.settle(60)
-    check('... to B: with no disk in it: "Can\'t copy X2: ..." (not "Copied 0 titles")', band().startswith("Can't copy X2: ") and not k.crashed, k.band())
-    k.pc.drives[1].empty = False
+    check('... to B: with no disk in it: "Can\'t copy X2: Drive not ready (no disk?)" (not "Copied 0 titles", nor '
+          '"B:\\X2 isn\'t there: Confirm to make it")', band() == "Can't copy X2: Drive not ready (no disk?)" and not k.crashed, k.band())
+    k.pc.drives[1].empty = False; k.pc.drives[1].changed = True
     k.key(ktest.ENTER)
     # a path DOS can't take where it goes: said before anything is made
     longsub = '\\' + '\\'.join(['ABCDEFGH'] * 6) + '\\ABCDEF'       # 61 characters: \WORK\EMPTY under it would be 67
