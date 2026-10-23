@@ -72,6 +72,8 @@ class PicoProto:
         s.pong = {}; s.last_pong = 0.0; s.hello_at = 0.0; s.pongs = 0
         s.stats = collections.Counter()
         s.trace = None                      # a deque while gridlink.bench --trace runs: (time, event)
+        s.clock = time.monotonic            # (the emulator tests give theirs)
+        s.tx_done_at = None                 # when the GRiD last read a whole answer (the bridge's TX_DONE)
         s.lock = threading.RLock()          # feed() runs in the reader thread, answer() in the link's
 
     # Pico -> Pi
@@ -121,6 +123,7 @@ class PicoProto:
             name = EVENTS.get(code, hex(code))
             s.stats[name] += 1
             if s.trace is not None: s.trace.append((time.monotonic(), name))
+            if name == 'TX_DONE': s.tx_done_at = s.clock()
             if name == 'ONLINE': s.online = True
             elif name == 'OFFLINE':
                 s.online = False
@@ -178,6 +181,12 @@ class PicoProto:
         with s.lock:
             s.stats['rings'] += 1
             s.write(cobs_encode(struct.pack('<BH', F_WAKE, s.gen & 0xFFFF)))
+
+    def unring(s):
+        """Take a ring back: a WAKE for an older generation than the GRiD's last replaces the bell and is void
+        at once (bridge fw 2026-10-22b), so SRQ is released."""
+        with s.lock:
+            s.write(cobs_encode(struct.pack('<BH', F_WAKE, (s.gen - 1) & 0xFFFF)))
 
     def usb_test(s, count, size, timeout=5.0):
         """gridlink.bench --usb: `count` PINGs of `size` bytes (the firmware ignores what follows the type) sent
@@ -315,6 +324,13 @@ class PicoBridge:
 
     def ring(s):
         s.proto.ring()
+
+    def unring(s):
+        s.proto.unring()
+
+    @property
+    def delivered_at(s):
+        return s.proto.tx_done_at
 
     def poke(s):
         with s.cv: s.cv.notify_all()
