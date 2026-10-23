@@ -34,6 +34,7 @@ class AR488Model:
         for b in data:
             t += s.byte_us
             s.rx.append((t, b))
+        if getattr(s, 'wake', None): s.wake(t)   # (a machine that sleeps: look at us then, SRQ may come)
 
     def service(s):
         """Run the firmware main loop up to now."""
