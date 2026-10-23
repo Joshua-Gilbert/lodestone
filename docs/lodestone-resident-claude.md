@@ -156,7 +156,7 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
 - **The stub: in a block of its own at the top of memory, with no PSP.** This changed from the plan (and from RSPIKE, which keeps its PSP with INT 21h AH=31h).
   - **Why:** measured with the stub kept that way and loaded at the prompt, a program the Executive started afterwards got 534.8 KB instead of 578.4: 43.6 KB less. When LCMD ended, the Executive's block couldn't grow back past the stub (`ui_room`), so it moved above it, leaving everything below unused. Any TSR loaded at the prompt does this today.
   - **How:**
-    1. `/R` takes the largest free block and cuts it to its size less the stub's 47 paragraphs and an MCB. The kernel leaves the rest, at that block's top, as a free block of exactly the stub's size.
+    1. `/R` takes the largest free block and cuts it to its size less the stub's paragraphs (`R_PARAS`: 47 then, 57 since M7c) and an MCB. The kernel leaves the rest, at that block's top, as a free block of exactly the stub's size.
     2. It claims that block for the stub, as the system's block (owner 8), called CLAUDE, and gives the rest of the largest block back. (A second INT 21h AH=48h would take the first hole that fits, possibly one lower down, which would bring the 43.6 KB loss back; HOLE.COM makes such a hole in the tests.)
     3. It copies the stub in at the same offsets: the stub's CS is 10h paragraphs below its block.
     4. CLAUDE.COM then ends like any program.
@@ -343,7 +343,7 @@ In the console, Claude Code can now look at the program it is popped up over and
 ## With Lodestone's multitasking (M7c, 2026-10-22)
 `docs/lodestone-multitasking.md` (M7c) has the details. With `MULTITASK=1`:
 - **`CLAUDE /R` tells MT about the stub** (`MT_TSR`, F0h AL=1Ah). MT may then switch from the stub's key wait, so tasks behind keep running while the front program waits for a key through it. The stub reads which task is in front and which is running. A task switched from there waits as in MT, so it costs the others nothing; behind, the loop looks at the BIOS's buffer only with AH=11h, which drops none of the front task's keys.
-- **The console comes up only in the front task's call.** A CODE-\ seen in a background task's call waits for the front task's next one, which MT brings on as for a key. TYPE's keys go to the front task alone.
+- **The console comes up only in the front task's call.** A CODE-\ seen in a background task's call waits for the front task's next one, which MT brings on as for a key. TYPE's keys go to the front task alone, and while they are under way (a wait, or just done) the front task's call asks MT for its turn, so a task behind doesn't hold them up.
 - **CLAUDE.COM run as a task** turns the pop-up off for every task while it runs (`r_off`); ended with `KILL`, it leaves it off until `CLAUDE /R` again.
 - **CODE-Tab typed in the console is the console's,** not a switch.
 - **`CLAUDE /R` inside a task is refused** (exit code 3): load it at the Executive's prompt (CODE-P), before starting tasks. `CLAUDE /U` refuses while other tasks exist (M7a).
