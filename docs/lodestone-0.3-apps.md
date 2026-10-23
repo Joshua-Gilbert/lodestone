@@ -928,11 +928,11 @@ The second of the four steps toward right-click editing in Write: a clipboard ev
 - **Kept when a program ends:** the core holds it, so a `.RUN` can copy, end, and another (or the same, on another file) paste. With `MULTITASK=1` every window `.RUN` shares it, and the state (`clip_h`, `clip_len`, `clip_f`) is outside every range a session keeps (`mw_ctx`).
 - **Where:**
   - **An EMS page of its own,** taken the first time something is put (INT 67h 43h, one page) and copied in and out with 57h, so the page frame isn't touched. The handle is nobody's: the UI's code isn't in the running program's memory, so `ems_alloc` gives it owner 0, and no program's end (nor a task's, parked or killed) takes it back.
-  - **Without EMS, or with none free** (`MDISK=ALL` takes every page): `CLIP.$$$` in the root of the settings drive (INT 21h 3305h's DH, where LODE.INI's changes go), else of the start-up drive. Written anew at each put, read at each get. A short write (the disk full) is error 29.
+  - **Without EMS, or with none free** (`MDISK=ALL` takes every page): `CLIP.$$$` in the root of the settings drive (INT 21h 3305h's DH, where LODE.INI's changes go), else of the start-up drive. Written anew at each put, read at each get. A short write (the disk full) is error 29, and empties it (the file was cut).
 - **Cost:**
-  - The core's code grows by 302 bytes (`ui_image_end` 5100h → 522Eh), its BSS by 5.
-  - `ui_keep_end` grows by 310 bytes (63D0h → 6506h). MEMSZ reads 0.3 KB less: 564.6 KB without EMS, 580.7 KB with it; with `MULTITASK=1` 560.8 KB.
-  - LODE.SYS is 49,024 bytes (48,704 before); LODEMT.SYS is unchanged. ROM 1 still has 1,536 bytes left. One EMS page, only once something is put.
+  - The core's code grows by 322 bytes (`ui_image_end` 5100h → 5242h), its BSS by 5.
+  - `ui_keep_end` grows by 342 bytes (63D0h → 6526h). MEMSZ reads 0.3 KB less: 564.6 KB without EMS, 580.7 KB with it; with `MULTITASK=1` 560.7 KB.
+  - LODE.SYS is 49,040 bytes (48,704 before); LODEMT.SYS is the same size (17,484 bytes). ROM 1 still has 1,536 bytes left. One EMS page, only once something is put.
 - **Tests:**
   - `t_clip` in test_apps (9 checks; `tests/CLIPTEST.ASM`, an API 8 window `.RUN` with keys for put, get and size, and a block of its own for the bytes):
     - with EMS: empty at first, and emptied takes no page yet; 1000 bytes put (a page of its own, one page, nobody's; no file); got with room for 2000 (just them, nothing past) and for 10;
@@ -940,8 +940,8 @@ The second of the four steps toward right-click editing in Write: a clipboard ev
     - 16,385 refused (error 8, what it held kept); 16,384 put and got back whole, the same handle; 0 bytes: empty;
     - no EMS: emptied first writes no file; `A:\CLIP.$$$` holds exactly what was put, got back whole, and after the program starts again; another put rewrites it;
     - EMS with every page M:'s (`MDISK=ALL`): the file.
-  - `t_clip` in test_mt (1 check): put from a window session; the session ended; a task started, parked, back and killed from LCMD; the clipboard and its handle as they were.
-  - Eight mutations each fail a check: no 16 KB limit, the size not kept, a get not cut to what it holds, a new page at every put, no fall-back to the file, both copies in the same direction, the error not in AX, and emptying not done at once (it took a page, or wrote the file). Untested: the settings drive over the start-up one (a floppy start has both as A:).
+  - `t_clip` in test_mt (1 check): put from a window session; the session ended; a task with an EMS page of its own (MTKILL F) started, parked, back and killed from LCMD, its page freed; the clipboard and its handle as they were.
+  - Eight mutations each fail a check: no 16 KB limit, the size not kept, a get not cut to what it holds, a new page at every put, no fall-back to the file, both copies in the same direction, the error not in AX, and emptying not done at once (it took a page, or wrote the file). Untested: the settings drive over the start-up one (a floppy start has both as A:), and a short write to the file (a full disk).
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
