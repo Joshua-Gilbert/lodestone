@@ -177,16 +177,13 @@ class Link:
         if not (s.grid_wake and s.connected): return
         ring = getattr(s.t, 'ring', None)
         if ring is None: return
+        may = getattr(s.source, 'may_ring', None)
+        if may is not None and not may():         # (resident Claude's console gone back to its program:
+            s._unring(); return                   #  an SRQ now would be the program's)
         now = s.clock()
         if s.rang is not None and now - s.rang < s.RING_AGAIN: return
         if s.rings_left <= 0:
-            if not s.unrung:
-                s.unrung = True
-                unring = getattr(s.t, 'unring', None)
-                if unring: unring()
-                s.stats['unrung'] += 1
-                if s.trace is not None: s.trace.append((time.monotonic(), 'unring'))
-            return
+            s._unring(); return
         base = s.t_answered
         done = getattr(s.t, 'delivered_at', None)     # (the Pico's TX_DONE: the GRiD has read it)
         if done is not None:
@@ -199,6 +196,15 @@ class Link:
         s.stats['rang'] += 1
         if s.trace is not None: s.trace.append((time.monotonic(), 'ring'))
         ring()
+
+    def _unring(s):
+        """The bridge's SRQ taken back, if we rang since the GRiD's last frame."""
+        if s.unrung: return
+        s.unrung = True
+        unring = getattr(s.t, 'unring', None)
+        if unring: unring()
+        s.stats['unrung'] += 1
+        if s.trace is not None: s.trace.append((time.monotonic(), 'unring'))
 
     def _has_output(s):
         return bool(s.outq or s.cur) or (s.source is not None and s.source.ready())

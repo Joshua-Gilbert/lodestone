@@ -30,22 +30,31 @@ class Res(CK.KernelHarness):
     """The floppy with CLAUDE.COM and the resident tests' programs, EMS,
     gridlink's router with the stand-in Claude Code; the console's state
     read from its EMS page (RCON.MAP)."""
-    def __init__(s, tm=False, bridge=True, **kw):
+    def __init__(s, tm=False, bridge=True, ini=None, pico=False, **kw):
         files = {'A:\\' + n: open(os.path.join(CL, n), 'rb').read() for n in ('EMSUSE.COM', 'GFXUSE.COM', 'PAGE1.COM')}
         # (TESTKEY.COM is on the harness's disk already)
         files['A:\\MEMSZ.COM'] = open(os.path.join(HERE, 'MEMSZ.COM'), 'rb').read()
         if tm: files['A:\\TM5000G.EXE'] = open(TR.TM5000G, 'rb').read()
+        if ini: files['A:\\LODE.INI'] = ini
+        if pico: kw['bridge'] = 'pico'            # (the Pico 2 bridge's model: it can ring, GF_WAKE)
         super().__init__(files=files, term=FAKE, ems_pages=88, **kw)
         if not bridge: del s.m.chip.devices[7]
         s.rsym = G.symbols(os.path.join(CL, 'RCON.MAP'))
         rcon = open(os.path.join(CL, 'RCON.BIN'), 'rb').read()
         s.font_img = rcon[s.rsym['font']:s.rsym['font'] + 0x81 * 16]
         s.srq_calls = 0                         # the driver's SRQ check (AH=0Bh) while the console is up
-        srq, watch = s.m.Y['gp_f_srq'], s.m.watch
+        s.spolls = 0                            # and its serial polls (AH=05h)
+        s.pit_dues = 0                          # the console's look at the PIT for its next poll (pit_due)
+        srq, spoll, watch = s.m.Y['gp_f_srq'], s.m.Y['gp_f_spoll'], s.m.watch
+        s.naps = 0                              # and its sleeps till an answer's SRQ (idle's HLT)
+        due, nap = 0xE0000 + s.rsym['pit_due'], 0xE0000 + s.rsym['idle.z']
         def w(addr):
-            if s.m.r('cs') == 0x60 and s.m.r('ip') == srq and s.stub() != 0xF000 and s.inpop() == 1 \
-                    and s.m.ems_reg[0] == s.m.rd(s.stub(), s.sym['r_hw'], 1)[0]:    # (the console's page in)
-                s.srq_calls += 1
+            if (addr in (due, nap) or s.m.r('cs') == 0x60 and s.m.r('ip') in (srq, spoll)) and s.stub() != 0xF000 \
+                    and s.inpop() == 1 and s.m.ems_reg[0] == s.m.rd(s.stub(), s.sym['r_hw'], 1)[0]:
+                if addr == due: s.pit_dues += 1     # (the console's page in)
+                elif addr == nap: s.naps += 1
+                elif s.m.r('ip') == srq: s.srq_calls += 1
+                else: s.spolls += 1
             watch(addr)
         s.m.watch = w
 
@@ -703,7 +712,91 @@ def t_tm5000g():
         h.close()
 
 
-TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive]
+def t_driver():
+    """The console on the kernel's GPIB driver 1.23: the frame check the
+    driver keeps as it moves the bytes, the SRQ interrupt's count (read, never
+    AH=0Bh) to take each answer as it comes and to sleep till it, GF_WAKE so
+    the Pi rings an idle console, and never a ring once the console has gone
+    back to the program.  GPIBIRQ=0: polled, as before."""
+    for irq in (True, False):
+        what = 'SRQ interrupt' if irq else 'GPIBIRQ=0'
+        h = Res(ini=None if irq else b'GPIBIRQ=0\r\n', pico=True); h.boot()
+        try:
+            h.cmd('claude /r')
+            h.cmd('emsuse')
+            h.press(HOT)
+            h.has('Welcome to Claude Code', 30)
+            st0, k0, p0, d0, n0 = dict(h.link.stats), h.rv('n_kok', 2), h.spolls, h.pit_dues, h.naps
+            h.term_type('big'); h.press(ENTER)
+            ok = h.has('line 59', 60) and in_step(h)
+            st = {k: v - st0.get(k, 0) for k, v in h.link.stats.items()}
+            kok, polls, dues, naps = h.rv('n_kok', 2) - k0, h.spolls - p0, h.pit_dues - d0, h.naps - n0
+            seg = h.rv('irq_ptr', 4)[2:]
+            check('[%s] the console checks the Pi\'s frames by the driver\'s sum (1.23): all %d of them'
+                  % (what, st.get('tx_frames', 0)),
+                  ok and h.rv('ksum') == 1 and h.rv('use_fl') == 1 and st.get('tx_frames', 0) > 5
+                  and abs(kok - st['tx_frames']) <= 1           # (the two counts read a frame apart at most)
+                  and h.rv('n_bad', 2) == 0, (ok, h.rv('ksum'), kok, st))
+            check('[%s] ... and its own go with the check the driver adds (02h AL=3), every one good at the Pi'
+                  % what, st.get('rx_fletcher') == st.get('rx_frames') > 5 and not st.get('rx_bad'), st)
+            if irq:
+                check('the SRQ interrupt\'s count found (AH=0Eh, the kernel\'s) and GF_WAKE offered',
+                      seg == b'\x60\x00' and h.rv('wake_ok') == 1 and h.link.grid_wake, (seg, h.rv('wake_ok')))
+                check('... each answer taken at its SRQ, the PIT never asked: %d serial polls for %d frames'
+                      % (polls, st['rx_frames']), polls <= st['rx_frames'] * 1.2 + 2 and dues == 0, (polls, dues, st))
+                check('... asleep (HLT) till the SRQ while an answer is due: %d times' % naps, naps > 0, naps)
+            else:
+                check('GPIBIRQ=0: never asleep while an answer is due', naps == 0, naps)
+                check('GPIBIRQ=0: no count, no GF_WAKE, polled by the PIT (%d looks; %d serial polls for %d frames)'
+                      % (dues, polls, st['rx_frames']), seg == b'\x00\x00' and h.rv('wake_ok') == 0
+                      and not h.link.grid_wake and dues > 0, (seg, h.rv('wake_ok'), polls, dues))
+            check('[%s] ... never the driver\'s SRQ check (AH=0Bh)' % what, h.srq_calls == 0, h.srq_calls)
+            # the Pi has something for the console once it is quiet (polling once a second): with the
+            # interrupt it rings, and the console POLLs at once
+            h.run_until(lambda: False, 3)
+            r0, t0 = h.link.stats.get('rang', 0), h.m.us
+            h.link.send(glp.P_TITLE, b'Rung up')
+            ok = h.run_until(lambda: 'Rung up' in h.band(), 3)
+            ms, rang = (h.m.us - t0) / 1000, h.link.stats.get('rang', 0) - r0
+            if irq:
+                check('a title from the Pi while the console is quiet: it rings, the band has it in %.0f ms' % ms,
+                      ok and rang > 0 and ms < 300, (ok, rang, ms, h.band()))
+                # the console down while TYPE's keys wait: nothing rings
+                res = {}
+                th = threading.Thread(target=lambda: res.update(v=h.router.term.tools.request(
+                    json.dumps({'tool': 'grid_type', 'arguments': {'keys': '{WAIT 3}', 'timeout': 30}}).encode()
+                    + b'\n')))
+                th.start()
+                down = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 20)
+                r1 = h.link.stats.get('rang', 0)
+                h.link.send(glp.P_TITLE, b'While the keys wait')
+                quiet = h.run_until(lambda: not bridge_quiet(h) or h.link.stats.get('rang', 0) != r1, 1)
+                h.wait(lambda: not th.is_alive() and h.up(), 30); th.join(30)
+                res = res.get('v')
+                check('... while TYPE\'s keys wait (the console down): no ring, the bridge holds no SRQ',
+                      down and not quiet and res and not res[1], (down, quiet, h.link.stats, res))
+                # the user goes back: nothing rings while EMSUSE runs, whatever the Pi has
+                h.run_until(lambda: in_step(h, 0.1), 10)
+                h.press(HOT)
+                h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+                away = h.pi_wait(lambda: h.router.term.away, 10)
+                r1 = h.link.stats.get('rang', 0)
+                h.link.send(glp.P_TITLE, b'Nobody there')
+                rings = h.run_until(lambda: not bridge_quiet(h) or h.link.stats.get('rang', 0) != r1, 2)
+                check('... gone back to the program: no ring, the bridge holds no SRQ for it',
+                      away and not rings, (away, h.link.stats, h.nano.srq))
+                h.k.key(ESC)
+                check('EMSUSE afterwards', 'EMSUSE: 0 keys, 0 bad' in h.m.text_screen(), h.m.text_screen())
+            else:
+                check('GPIBIRQ=0: the title at the next idle POLL (%.0f ms), no ring' % ms, ok and rang == 0,
+                      (ok, rang, ms))
+            ok, why = clean(h)
+            check('[%s] no link failure, nothing wrong in gridlink\'s log' % what, ok, why)
+        finally:
+            h.close()
+
+
+TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

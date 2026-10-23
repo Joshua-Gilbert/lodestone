@@ -44,6 +44,7 @@ class Grid:
         s.ended = 0; s.why = ''                # bumps when the calls waiting end, and why
         s.info = {}
         s.after_run = None                     # called when a RUN ends (Term: a picture is gone)
+        s.typing = 0                           # TYPEs waiting: resident Claude's console is down meanwhile
 
     # ---- plumbing ------------------------------------------------------
     def on_reply(s, body):
@@ -202,7 +203,11 @@ class Grid:
         resident Claude's console.  The answer comes once they have played,
         or CODE-\\ stopped them: (all played?, the screen then as SCREEN
         gives it, or None if its mode isn't one the console keeps)."""
-        st, r = s.call(glp.OP_TYPE, bytes(keys), timeout=timeout)
+        with s.cv: s.typing += 1
+        try:
+            st, r = s.call(glp.OP_TYPE, bytes(keys), timeout=timeout)
+        finally:
+            with s.cv: s.typing -= 1
         if st not in (0, 0xF5) or not r: raise GridError(errtext(st), st)
         return bool(r[0] & 1), (r[1:] if st == 0 else None)
 
