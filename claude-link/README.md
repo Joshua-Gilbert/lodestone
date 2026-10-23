@@ -238,7 +238,11 @@ every byte checked.
 | the driver's fast loops (1.22, GPIBLOOP) | 6.4 ms | 8 ms median | 70.2 KB/s | 73.3 KB/s |
 | the driver's frame check (1.23, CLAUDE 1.4) | 6.0 ms | 8 ms median | 73.6 KB/s | 82.2 KB/s |
 | bridge fw 2026-10-23a: EARLY answers (read while the rest crosses USB) | 6.0 ms | 8 ms median | 87.2 KB/s | 81.9 KB/s |
-| CLAUDE 1.5: 8 KB write requests, the next frame straight after an answer | **6.0 ms** | **8 ms** median | **89.4 KB/s** | **82.1 KB/s** |
+| CLAUDE 1.5: 8 KB write requests, the next frame straight after an answer | 6.0 ms | 8 ms median | 89.4 KB/s | 82.1 KB/s |
+| bridge fw 2026-10-23c: held replies (the bridge answers the POLLs between fragments) | 6.0 ms | 8 ms median | 94.1 KB/s | 82.1 KB/s |
+| CLAUDE 1.6: 3340-byte frames and 16 KB write requests | 6.0 ms | 8 ms median | 109.5 KB/s | 82.1 KB/s |
+| CLAUDE 1.7: 3300-byte frames out of the GRiD and 16 KB reads | 6.0 ms | 8 ms median | 109.5 KB/s | 89.6 KB/s |
+| bridge fw 2026-10-23d: held NOPs (checked by the bridge) | **6.0 ms** | **8 ms** median | **109.3 KB/s** | **91.1 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -290,6 +294,33 @@ every byte checked.
   and the mouse were 0.27 ms of it). With bridge fw 2026-10-23a the bridge says an
   answer is ready once its first 128 bytes are in, so the ~4 ms of USB per
   2 KB frame overlaps the GRiD's read (21.6 ms a frame instead of 25.6).
+- **Held replies** (bridge fw 2026-10-23c): while a message goes to the
+  GRiD in fragments, its next frame is known to the byte: a POLL for the
+  next fragment. gridlink hands the bridge that POLL and the answer to it
+  along with each fragment. When the POLL comes, the bridge raises SRQ at
+  its last byte and sends the answer itself; the USB trip to the Pi and back
+  and gridlink's turn (~1.5 ms of each frame) are gone. Anything else (keys,
+  a NAK, a REPLY) and the bridge drops it and gridlink answers as before.
+  Measured: 94.1 KB/s into the GRiD against 89.5 with `--nohold`, 64 of a
+  128 KB copy's 80 frames held (each 8 KB write request is five frames, and
+  the GRiD's answer to the last is its REPLY, not a POLL).
+- **Frames of 3340 bytes and 16 KB write requests** (CLAUDE 1.6): with 2 KB
+  frames an 8 KB request took five, the last a few bytes long, and every
+  frame costs the GRiD ~2.5 ms of SRQ, serial poll and addressing whatever
+  its size. A 16 KB request is now exactly five full frames, and there are
+  half as many requests (DOS open, seek and close) per file: 128 KB goes in
+  40 frames instead of 80. Pi to GRiD went from 94.1 to 109.5 KB/s.
+  CLAUDE 1.7 does the same the other way: 3300-byte frames out of the GRiD
+  and 16 KB reads (the GRiD's HELLO says `rd=16384`; an older CLAUDE
+  answers at most 16,382 bytes, so gridlink asks it for 8 KB). GRiD to Pi
+  went from 82.1 to 89.6 KB/s.
+- **Held NOPs** (bridge fw 2026-10-23d): out of the GRiD, the frame after a
+  MORE fragment is the next fragment. Its payload isn't known, but gridlink's
+  answer to it is a NOP either way. So the bridge gets that frame's first 4
+  bytes and the NOP, and checks the rest itself, the length and the Fletcher
+  sum, before it sends the NOP. It's the check gridlink makes, on the same
+  bytes. GRiD to Pi went from 89.6 to 91.1 KB/s (3 of each 16 KB read's 5
+  frames: the last one is answered with the next request, not a NOP).
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
@@ -300,7 +331,7 @@ every byte checked.
 - `gridlink.bench`: `--sweep 246,1024,2048` tries frame sizes on the
   running link; `--trace` shows where each copy's time goes, gap by gap;
   `--usb` times the Pi to Pico USB alone; `--idle N` the first call after
-  idle. The AR488 Nano's figures, from the emulator, were 3.2-6.8 KB/s.
+  idle; `--nohold` turns held replies off, to compare. The AR488 Nano's figures, from the emulator, were 3.2-6.8 KB/s.
 
 ## Files
 

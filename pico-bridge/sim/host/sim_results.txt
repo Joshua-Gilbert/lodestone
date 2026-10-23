@@ -79,13 +79,37 @@ J  gridlink's Pico transport, auto service request (CLAUDE.COM's way of reading)
   PASS  10 more 2056-byte EARLY answers after those, every one right, 00h after each
   PASS  bridge events carry their time; by it: RX_END, TX_IN, SRQ, SPOLL, TALK, TX_DONE
   PASS  retime puts them on the Pi's clock, in their order, none after it arrived
+  PASS  the bridge takes holds (fw 2026-10-23c), and gridlink uses them
+  PASS  hold: the answer before it goes first, as usual
+  PASS  hold: the expected message gets SRQ, 60h and the held answer, the Pi saying nothing
+  PASS  ... and the Pi gets the message, marked answered (DF_HELD)
+  PASS  ... then 00h
+  PASS  hold: another message gets no SRQ, and the Pi hears it wasn't answered
+  PASS  ... then the Pi's own answer (60h), not the held one
+  PASS  hold: a shorter message isn't it: no SRQ till the Pi answers, then that answer
+  PASS  hold: a longer message isn't it: no SRQ till the Pi answers, then that answer
+  PASS  hold: one that comes after its message is void: no SRQ
+  PASS  ... and the Pi's answer goes, not the held one
+  PASS  hold: a held answer the SDC made stale: SRQ gone, 00h
+  PASS  ... and the next exchange is as usual
+  PASS  hold: 11 held 2 KB answers in a row, every one right, 00h after
+  PASS  the Pico counted the holds
+  PASS  the bridge takes GLP holds (fw 2026-10-23d)
+  PASS  GLP hold, a good frame: the held NOP
+  PASS  GLP hold, another sequence number: the Pi answers
+  PASS  GLP hold, a bad sum: the Pi answers
+  PASS  GLP hold, a byte changed: the Pi answers
+  PASS  GLP hold, too short (EOI early): the Pi answers
+  PASS  GLP hold, a byte more: the Pi answers
+  PASS  GLP hold, the CRC, not the sum: the Pi answers
+  PASS  GLP hold, an empty frame: the held NOP
   PASS  idle after the reads: no SRQ
   PASS  a ring asserts SRQ
   PASS  its poll: 40h (RQS, no READY), and SRQ released
   PASS  a ring ends when the GRiD sends instead of polling
   PASS  and that exchange is as usual (60h, its answer)
   PASS  a ring for an older message is void
-final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '157', 'cmds': '2212', 'rx': '100677', 'tx': '166393', 'polls': '110', 'lost': '0', 'holds': '1', 'fights': '0', 'late': '0'}
+final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '186', 'cmds': '2671', 'rx': '124062', 'tx': '193352', 'polls': '140', 'lost': '0', 'holds': '1', 'fights': '0', 'late': '0', 'held': '15', 'held_void': '9'}
   PASS  no events lost in the Pico
 
-75 of 75 checks passed
+99 of 99 checks passed

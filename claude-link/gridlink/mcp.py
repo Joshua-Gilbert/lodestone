@@ -787,7 +787,7 @@ class ToolServer:
 
     def link_request(s, args):
         """Not a tool (Claude Code never sees it): gridlink.bench reads the link's
-        frame sizes and counters, and sets frame_cap (0 = none) to sweep them."""
+        frame sizes and counters, sets frame_cap (0 = none) to sweep them, and hold."""
         L = getattr(s.tools.G, 'link', None)
         if L is None: return [text('gridlink: no link')], True
         if 'frame_cap' in args:
@@ -795,6 +795,13 @@ class ToolServer:
             if not isinstance(c, int) or isinstance(c, bool) or not (c == 0 or 16 <= c <= 65535):
                 return [text('gridlink: frame_cap is 0 (none) or 16-65535')], True
             L.frame_cap = c or None
+        if 'prof' in args:                    # CLAUDEP's counts: 'start' again from now, 'stop' (CLPROF.TXT written)
+            try:
+                s.tools.G.ok(glp.OP_PROF, bytes([0 if args['prof'] == 'start' else 1]), timeout=20.0)
+            except Exception as e:
+                return [text('gridlink: no profile (%s): is it CLAUDEP on the GRiD?' % e)], True
+        if 'hold' in args:                    # held replies (bridge fw 2026-10-23c) on or off: gridlink.bench --nohold
+            L.holding = bool(args['hold'])
         tr = None
         if 'trace' in args:                   # 'start' a timeline of frames and bridge events, 'stop' returns it
             proto = getattr(L.t, 'proto', None)
@@ -815,7 +822,8 @@ class ToolServer:
             count, size = args['usb']
             return [text(json.dumps({'usb': proto.usb_test(int(count), int(size))}))], False
         info = dict(maxpay=L.maxpay, grid_rx=L.grid_rx, grid_maxpay=L.grid_maxpay, frame_cap=L.frame_cap or 0,
-                    bridge=getattr(L.t, 'version', ''), stats=dict(L.stats))
+                    bridge=getattr(L.t, 'version', ''), stats=dict(L.stats),
+                    holds=bool(getattr(getattr(L.t, 'proto', None), 'holds', False)) and L.holding)
         if tr is not None: info['trace'] = tr
         return [text(json.dumps(info))], False
 

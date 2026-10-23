@@ -31,6 +31,7 @@ OP_RUN, OP_SCREEN = 0x10, 0x11
 OP_TYPE = 0x12                  # resident Claude's console: keys into the paused program
 OP_GPIB = 0x20
 OP_SETTIME = 0x30
+OP_PROF = 0x31                  # CLAUDEP only: 0 starts its counts again, 1 writes CLPROF.TXT (gridlink.bench --prof)
 
 GP_WRITE, GP_READ, GP_QUERY, GP_SPOLL, GP_CLEAR, GP_TRIGGER, GP_LOCAL, GP_REMOTE, GP_SCAN = range(1, 10)
 
@@ -207,13 +208,23 @@ def kv_lines(data):
 
 
 def hello_req(body):
-    """The biggest REQUEST a GRiD HELLO says it takes (a `req=` line, CLAUDE 1.5), else the 4,700 of
+    """The biggest REQUEST a GRiD HELLO says it takes (a `req=` line, CLAUDE 1.5 on), else the 4,700 of
     every CLAUDE before."""
     for line in bytes(body[6:]).split(b'\n'):
         if line.startswith(b'req='):
             try: return max(GRID_REQ_DEFAULT, min(int(line[4:]), 65000))
             except ValueError: break
     return GRID_REQ_DEFAULT
+
+
+def hello_rd(body):
+    """The biggest file read a GRiD HELLO says it answers whole (an `rd=` line, CLAUDE 1.7), else 0: every
+    CLAUDE before answers at most 16,382 bytes, so a read of 16 KB would look like the end of the file."""
+    for line in bytes(body[6:]).split(b'\n'):
+        if line.startswith(b'rd='):
+            try: return max(0, min(int(line[3:]), 65000))
+            except ValueError: break
+    return 0
 
 
 def hello_rx(body):

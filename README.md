@@ -70,7 +70,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **gridfox (`CLAUDE /W`):** Firefox on the Pi, shown on the GRiD as text, with the mouse, and with pictures in a 1-bit view.
 - **Chat (`CLAUDE`):** gridlink's own agent, on an API key, for a Pi too small for Claude Code.
 
-Through the Pico 2 bridge the link moves 89 KB/s to the GRiD and 82 KB/s from it, with 6 ms round trips, and an idle GRiD answers within 8 ms. In serial terms that's about 900,000 baud (8N1), nearly eight times the 1520's own 115,200-baud port. It's about 15 times a 56k modem and 5 times two-channel ISDN, roughly an early-2000s DSL line, but the same speed both ways. See `claude-link/README.md`, `docs/term.md`, `docs/lodestone-resident-claude.md`, `docs/lodestone-pictures.md` and `docs/gridfox.md`.
+Through the Pico 2 bridge the link moves 109 KB/s to the GRiD and 91 KB/s from it, with 6 ms round trips, and an idle GRiD answers within 8 ms. In serial terms that's over a million baud (8N1) into the GRiD and about 930,000 out of it: eight to ten times the 1520's own 115,200-baud port. It's 16 to 20 times a 56k modem and 7 to 9 times two-channel ISDN, roughly an early-2000s DSL line, with more speed out of the GRiD than most DSL lines of the day had upstream. See `claude-link/README.md`, `docs/term.md`, `docs/lodestone-resident-claude.md`, `docs/lodestone-pictures.md` and `docs/gridfox.md`.
 
 ## Speed and memory
 
