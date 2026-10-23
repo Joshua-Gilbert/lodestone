@@ -6,6 +6,7 @@
     venv/bin/python -m gridlink.bench --size 32 --trace     where each copy's time goes, gap by gap
     venv/bin/python -m gridlink.bench --usb                 also the Pi -> Pico USB speed alone
     venv/bin/python -m gridlink.bench --nohold              without held replies (bridge fw 2026-10-23c), to compare
+    venv/bin/python -m gridlink.bench --prof                with CLAUDEP on the GRiD: CLPROF.TXT for the copies alone
 
 Run it on the Pi while gridlink is serving and CLAUDE /T is up on the GRiD (the tools socket exists only in
 Term).  It talks to gridlink over the same socket as Claude Code's MCP server, so the numbers include
@@ -86,6 +87,7 @@ def main(argv=None):
     ap.add_argument('--trace', action='store_true', help='show where each copy spends its time')
     ap.add_argument('--idle', type=int, default=5, help='calls after the link has gone idle (default 5, 0: none)')
     ap.add_argument('--usb', action='store_true', help="time the Pi -> Pico USB with PINGs, before the copies")
+    ap.add_argument('--prof', action='store_true', help="CLAUDEP's CLPROF.TXT for the two copies alone")
     ap.add_argument('--nohold', action='store_true', help='no held replies: every answer from the Pi (to compare)')
     ap.add_argument('--sweep', help='Pi -> GRiD payload sizes to try, comma-separated (each capped by what the '
                                     'GRiD and the bridge take); the link goes back to its own size after')
@@ -142,7 +144,11 @@ def run(sock, a, src, back, data, n):
 
     ok = True
     if not a.sweep:
+        if a.prof: link(sock, prof='start')
         ok = copies(sock, a, src, back, data)
+        if a.prof:
+            link(sock, prof='stop')
+            print('CLPROF.TXT on the GRiD: the two copies alone')
     else:
         caps = [int(x) for x in a.sweep.split(',') if x.strip()]
         print('%8s %8s %12s %12s' % ('asked', 'frames', 'Pi->GRiD', 'GRiD->Pi'))

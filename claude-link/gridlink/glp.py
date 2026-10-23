@@ -31,6 +31,7 @@ OP_RUN, OP_SCREEN = 0x10, 0x11
 OP_TYPE = 0x12                  # resident Claude's console: keys into the paused program
 OP_GPIB = 0x20
 OP_SETTIME = 0x30
+OP_PROF = 0x31                  # CLAUDEP only: 0 starts its counts again, 1 writes CLPROF.TXT (gridlink.bench --prof)
 
 GP_WRITE, GP_READ, GP_QUERY, GP_SPOLL, GP_CLEAR, GP_TRIGGER, GP_LOCAL, GP_REMOTE, GP_SCAN = range(1, 10)
 

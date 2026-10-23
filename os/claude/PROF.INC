@@ -151,6 +151,27 @@ prof_sw:                                ; AL = the bucket from now on, 0: back
         pop     bx
         ret
 
+; OP 31h (CLAUDEP only; gridlink.bench --prof): AL = 0 starts the counts
+; again from now, 1 writes CLPROF.TXT now and keeps it (the end doesn't
+; write it again), so the file covers just what came between
+prof_window:
+        or      al, al
+        jnz     .w
+        push    es
+        push    ds
+        pop     es
+        mov     di, prof_acc
+        mov     cx, (PB_N + 1) * 3
+        xor     ax, ax
+        rep     stosw
+        pop     es
+        mov     byte [prof_kept], 0
+        jmp     prof_rebase
+.w:     PROF    15                      ; (the stretch up to here counted)
+        PROF    0
+        mov     byte [prof_kept], 1
+        jmp     prof_write
+
 ; the PIT back to mode 3, and CLPROF.TXT written
 prof_end:
         PROF    15                      ; (the last stretch counted: in no bucket)
@@ -162,6 +183,9 @@ prof_end:
         jmp     short $+2
         out     40h, al
         sti
+        cmp     byte [prof_kept], 0     ; (a window's file is kept)
+        jne     prof_write.x
+prof_write:
         push    ds
         pop     es
         mov     di, prof_txt

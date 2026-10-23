@@ -795,6 +795,11 @@ class ToolServer:
             if not isinstance(c, int) or isinstance(c, bool) or not (c == 0 or 16 <= c <= 65535):
                 return [text('gridlink: frame_cap is 0 (none) or 16-65535')], True
             L.frame_cap = c or None
+        if 'prof' in args:                    # CLAUDEP's counts: 'start' again from now, 'stop' (CLPROF.TXT written)
+            try:
+                s.tools.G.ok(glp.OP_PROF, bytes([0 if args['prof'] == 'start' else 1]), timeout=20.0)
+            except Exception as e:
+                return [text('gridlink: no profile (%s): is it CLAUDEP on the GRiD?' % e)], True
         if 'hold' in args:                    # held replies (bridge fw 2026-10-23c) on or off: gridlink.bench --nohold
             L.holding = bool(args['hold'])
         tr = None
