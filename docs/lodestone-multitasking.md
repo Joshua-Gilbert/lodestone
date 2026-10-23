@@ -1486,11 +1486,11 @@ Changes to existing checks:
 
 **Cost:**
 - **Switch off:** nothing in the kernel, the UI or LCMD. CLAUDE.COM is 276 bytes bigger (20,836). Its stub, resident with `/R`, is 7 paragraphs bigger: 57 paragraphs, 928 bytes with its MCB (816 before).
-- **Switch on:** MT's block is 900 paragraphs plus its MCB (887 before). MEMSZ with Shift-Return is 567.6 KB (567.8 on main, with #70). LODEMT.SYS is 12,105 bytes (11,904 before).
+- **Switch on:** MT's block is 902 paragraphs plus its MCB (890 on main). MEMSZ with Shift-Return is 567.5 KB (567.7 on main). LODEMT.SYS is 12,140 bytes (11,939 on main).
 - **ROM 1:** 8,704 bytes left, as on main (PR #70's SYSTEM.RUN took a sector); LODEMT.SYS takes no more.
 - **Speed:** with tasks, the stub's pop-up, TYPE and peek checks read two bytes. `mt_safe` compares the interrupted CS once more (and, at the stub's HLT, looks at the caller), `mt_i16` compares the caller's CS before its CODE-Tab look, `mt_kin` reads one byte more, and a switch compares where it came from (`mt_tsrw`). A task waiting through the stub no longer takes turns (above): MTSPIN behind such a task counts as fast as alone.
 
-**Tests:** test_mt's new group `t_rclaude` (11 checks; test_mt 301, 290 before):
+**Tests:** test_mt's new group `t_rclaude` (11 checks; test_mt 303, 292 before):
 - `CLAUDE /R` from a task (START): exit code 3, no stub, nothing for MT.
 - `CLAUDE /R` at CODE-P's prompt: the stub's version and `r_mt`, MT's `mt_tsrs`:`mt_tsro`.
 - MTKEY R in front, waiting in the stub's loop, while MTSPIN computes behind:
