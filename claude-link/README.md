@@ -238,7 +238,8 @@ every byte checked.
 | the driver's fast loops (1.22, GPIBLOOP) | 6.4 ms | 8 ms median | 70.2 KB/s | 73.3 KB/s |
 | the driver's frame check (1.23, CLAUDE 1.4) | 6.0 ms | 8 ms median | 73.6 KB/s | 82.2 KB/s |
 | bridge fw 2026-10-23a: EARLY answers (read while the rest crosses USB) | 6.0 ms | 8 ms median | 87.2 KB/s | 81.9 KB/s |
-| CLAUDE 1.5: 8 KB write requests, the next frame straight after an answer | **6.0 ms** | **8 ms** median | **89.4 KB/s** | **82.1 KB/s** |
+| CLAUDE 1.5: 8 KB write requests, the next frame straight after an answer | 6.0 ms | 8 ms median | 89.4 KB/s | 82.1 KB/s |
+| bridge fw 2026-10-23c: held replies (the bridge answers the POLLs between fragments) | **6.0 ms** | **8 ms** median | **94.1 KB/s** | **82.1 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -297,6 +298,9 @@ every byte checked.
   its last byte and sends the answer itself; the USB trip to the Pi and back
   and gridlink's turn (~1.5 ms of each frame) are gone. Anything else (keys,
   a NAK, a REPLY) and the bridge drops it and gridlink answers as before.
+  Measured: 94.1 KB/s into the GRiD against 89.5 with `--nohold`, 64 of a
+  128 KB copy's 80 frames held (each 8 KB write request is five frames, and
+  the GRiD's answer to the last is its REPLY, not a POLL).
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
