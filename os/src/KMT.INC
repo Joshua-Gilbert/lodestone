@@ -182,12 +182,18 @@ mt_lsp      dw      0
 mt_fpu      db      0                   ; 1: a coprocessor (INT 11h), kept per
                                         ;  task
 mt_front    db      0                   ; the task in front
-mt_cur      db      0                   ; the task running
-mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
+mt_cur      db      0                   ; the task running (the three in this
+mt_tsrk     db      0                   ;  order: MT_TSR gives their address);
+                                        ;  1: Resident Claude's pop-up waits
+                                        ;  for the front task (as a key would:
+                                        ;  mt_kin)
+mt_tsro     dw      0                   ; Resident Claude's key wait (MT_TSR):
+mt_tsrs     dw      0                   ;  a switch may come there; 0:0 none
 mt_hotk     dw      0A500h, 0A5F0h      ; the hot key, CODE-Tab, as AH=10h
                                         ;  gives it on the 1520 (KEYCODE.COM),
                                         ;  and as a BIOS keeping CODE keys with
                                         ;  F0h would
+mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
 mt_wsv      db      0, 0                ; (mt_smap: windows 0 and 1 as they were)
 mt_old10    dd      0                   ; INT 10h as it was
 mt_shd      db      0                   ; 1: the front task's pages shadow
@@ -450,21 +456,32 @@ mt_kwant:
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_WAITK
         jne     .x
+        call    mt_kin
+        je      .x
+        mov     byte [cs:mt_pend], 1
+.x:     ret
+
+; a key for the front task: one in the BIOS's buffer, or Resident Claude's
+; pop-up waiting for its call (mt_tsrk: CODE-\ taken in another task's).
+; ZF if none.  Registers kept
+mt_kin: cmp     byte [cs:mt_tsrk], 0
+        jne     .x
         push    ds
+        push    ax
         push    40h
         pop     ds
         mov     ax, [1Ah]
         cmp     ax, [1Ch]
+        pop     ax
         pop     ds
-        je      .x
-        mov     byte [cs:mt_pend], 1
 .x:     ret
 
 ; the interrupted (or calling) code at CS AX, IP BX, flags DX, on SS: may
 ; the running task be switched from there?  CF if not.  Only if: no INT 21h
 ; under way; interrupts were on, and no other hardware interrupt is in
 ; service; CS below A000h (not the BIOS, the ROM, the EMS frame), not the
-; kernel's or MT's; in the UI's segment, only at its idle HLTs; no INT 33h
+; kernel's or MT's; in the UI's segment, only at its idle HLTs, and in
+; Resident Claude's stub only at its key wait's (MT_TSR); no INT 33h
 ; event handler running; SS and CS in the task's own memory (mt_mine).
 ; DS = KSEG; AX, BX, DX changed
 mt_safe:
@@ -496,7 +513,23 @@ mt_safe:
         mov     dx, cs
         cmp     ax, dx
         je      .no
+        cmp     ax, [cs:mt_tsrs]        ; (Resident Claude's stub: only at its
+        jne     .ui                     ;  key wait's HLT, MT_TSR, still there
+        cmp     bx, [cs:mt_tsro]        ;  (an older CLAUDE /U doesn't say it
+        jne     .no                     ;  went), in a read of the program's
+        push    es                      ;  own: its frame's CS the task's, not
+        mov     es, ax                  ;  the UI's (the Executive switched
+        cmp     byte [es:bx-1], 0F4h    ;  from only at its idle HLTs) or a
+        pop     es                      ;  TSR's)
+        jne     .no
+        mov     bx, [cs:mt_lsp]
+        mov     ax, [ss:bx+2]
         cmp     ax, [ui_seg]
+        je      .no
+        call    mt_mine
+        jc      .no
+        jmp     short .pic
+.ui:    cmp     ax, [ui_seg]
         jne     .pic
         cmp     bx, ..@ui_idle
         je      .pic
@@ -513,8 +546,10 @@ mt_safe:
         mov     ax, ss                  ; SS and CS the task's own: not a TSR's
         call    mt_mine                 ;  or a driver's stack or code (CS in
         jc      .no                     ;  the UI's: at an idle HLT, vetted
-        mov     ax, [cs:mt_lcs]         ;  above; LCMD's saver runs there)
-        cmp     ax, [ui_seg]
+        mov     ax, [cs:mt_lcs]         ;  above; LCMD's saver runs there;
+        cmp     ax, [ui_seg]            ;  Resident Claude's, at its HLT)
+        je      .y
+        cmp     ax, [cs:mt_tsrs]
         je      .y
         call    mt_mine
         ret
@@ -586,17 +621,13 @@ mt_preempt:
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_WAITK
         jne     .p
-        push    ds
-        push    40h
-        pop     ds
-        mov     bx, [1Ah]
-        cmp     bx, [1Ch]
-        pop     ds
+        call    mt_kin
         je      .p
-        mov     bl, al
-        jmp     mt_switch
+        mov     byte [cs:mt_tsrk], 0    ; (given: Resident Claude's pop-up is
+        mov     bl, al                  ;  the front task's call's to bring)
+        jmp     short .sw
 .p:     call    mt_pick
-        jnc     mt_switch
+        jnc     .sw
         mov     al, [cs:mt_cur]         ; none: this one goes on, a new turn;
         call    mt_ent                  ;  unless it ended itself (now), or it
         cmp     byte [cs:bx+TE_KILL], 0 ;  is frozen here: then the front one
@@ -606,7 +637,28 @@ mt_preempt:
         mov     byte [cs:mt_slice], 2
         ret
 .fz:    mov     bl, [cs:mt_front]
+.sw:    call    mt_tsrw
         jmp     mt_switch
+
+; the running task, switched from Resident Claude's key wait (its HLT, where
+; mt_safe said yes: mt_lcs, mt_lip): it waits for a key, as in MT
+; (TS_WAITK), so it gets no turns behind, and in front one when a key comes
+; (mt_kin) instead of every round.  Registers kept
+mt_tsrw:
+        push    ax
+        mov     ax, [cs:mt_lcs]
+        cmp     ax, [cs:mt_tsrs]
+        jne     .x
+        mov     ax, [cs:mt_lip]
+        cmp     ax, [cs:mt_tsro]
+        jne     .x
+        push    bx
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        mov     byte [cs:bx+TE_STATE], TS_WAITK
+        pop     bx
+.x:     pop     ax
+        ret
 
 ; a new task's first return (mt_load): to its stub, flags with IF
 mt_first:
@@ -1589,6 +1641,8 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_flagsc
         cmp     al, MT_UI
         je      mt_uic
+        cmp     al, MT_TSR
+        je      mt_tsrc
         cmp     al, 1
         je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
@@ -1656,6 +1710,18 @@ mt_flagsc:
 
 ; MT_UI: the Executive's entry (mt_ui), far
 mt_uic: mov     word [bp+F_AX], mt_ui
+        mov     [bp+F_DX], cs
+        jmp     KSEG:ok
+
+; MT_TSR: Resident Claude's key wait, where it may be switched from
+; (mt_safe), and where it finds whose call it is (mt_front, mt_cur)
+mt_tsrc:
+        mov     ax, [bp+F_BX]
+        mov     [cs:mt_tsro], ax
+        mov     ax, [bp+F_ES]
+        mov     [cs:mt_tsrs], ax
+        mov     byte [cs:mt_tsrk], 0
+        mov     word [bp+F_AX], mt_front
         mov     [bp+F_DX], cs
         jmp     KSEG:ok
 
@@ -3448,8 +3514,21 @@ mt_i16:
         jne     .pas                    ;  takes INT 10h's there)
         cmp     byte [cs:mt_crit], 0    ; (the kernel's INT 24h's prompt, raised
         jne     .pas                    ;  inside INT 21h or not: as it is)
-.top:   call    mt_hot
-        cli
+.top:   cmp     word [bp+4], 0A000h     ; (Resident Claude's console, at E000h,
+        jb      .h                      ;  up: its keys its own, CODE-Tab too;
+        cmp     word [cs:mt_tsrs], 0    ;  r_inpop, at 10Dh in its stub's
+        je      .h                      ;  header)
+        push    ds
+        mov     ds, [cs:mt_tsrs]
+        cmp     word [100h], 'CL'       ; (its header still there: not after
+        jne     .hd                     ;  an older CLAUDE /U)
+        cmp     byte [10Dh], 0
+        jmp     short .he
+.hd:    cmp     al, al
+.he:    pop     ds
+        jne     .nh
+.h:     call    mt_hot
+.nh:    cli
         cmp     byte [cs:mt_swreq], 0FFh ; (a task asked for: on the way out
         je      .f                      ;  of this INT 21h call, say, not only
         mov     byte [cs:mt_pend], 1    ;  at the turn's end)

@@ -3188,7 +3188,17 @@ res_load:
 .ag:    mov     dx, s_r_again
         mov     al, 2
         jmp     res_quit
-.new:   mov     ax, 3567h               ; an EMS manager, its frame at E000h
+.new:   mov     ax, 0F012h              ; not inside a task (Lodestone's
+        xor     cx, cx                  ;  multitasking, MT_LIST: AH = ours):
+        stc                             ;  its memory goes when it ends
+        int     21h
+        jc      .t0
+        or      ah, ah
+        jz      .t0
+        mov     dx, s_r_task
+        mov     al, 3
+        jmp     res_quit
+.t0:    mov     ax, 3567h               ; an EMS manager, its frame at E000h
         int     21h
         mov     di, 0Ah
         mov     si, s_emm
@@ -3312,7 +3322,14 @@ res_load:
         pop     es
         pop     ax                      ; window 0 as it was
         out     dx, al
-        mov     dx, s_r_ok
+        mov     ax, 0F01Ah              ; Lodestone's multitasking (MT_TSR):
+        mov     bx, ..@r_idle           ;  our key wait may be switched from,
+        stc                             ;  and whose call it is, from its two
+        int     21h                     ;  bytes (ES = the stub)
+        jc      .nomt
+        mov     [es:r_mt], ax
+        mov     [es:r_mt + 2], dx
+.nomt:  mov     dx, s_r_ok
         mov     ah, 9
         int     21h
         push    ds                      ; INT 16h last
@@ -3390,6 +3407,13 @@ res_unload:
         mov     dx, [es:r_handle]
         mov     ah, 45h
         int     67h
+        push    es                      ; (no key wait of ours for MT any more)
+        mov     ax, 0F01Ah
+        xor     bx, bx
+        mov     es, bx
+        stc
+        int     21h
+        pop     es
         lea     ax, [bp + 10h]          ; its block
         mov     es, ax
         mov     ah, 49h
@@ -3455,6 +3479,8 @@ s_r_noems   db 'CLAUDE /R needs EMS, with its page frame at E000h.', 13, 10, '$'
 s_r_nopages db 'CLAUDE /R needs 3 free EMS pages (48 KB).', 13, 10, '$'
 s_r_nomem   db 'CLAUDE /R: not enough memory.', 13, 10, '$'
 s_mcbname   db 'CLAUDE', 0, 0
+s_r_task    db 'CLAUDE /R from inside a task: its memory would go with the task.', 13, 10
+            db 'Load it at the Executive', 27h, 's prompt (CODE-P).', 13, 10, '$'
 s_u_done    db 'Claude is no longer resident.', 13, 10, '$'
 s_u_none    db 'Claude isn', 27h, 't resident.', 13, 10, '$'
 s_u_tasks   db 'Claude can', 27h, 't be taken out while other tasks run: end them, then', 13, 10
@@ -3478,7 +3504,8 @@ r_sig    db     'CLRS'          ; 100h
 %ifdef STUB_VER                 ; (the tests: an older version's stub)
 r_ver    db     STUB_VER
 %else
-r_ver    db     2               ; 104h: the stub's version (2: r_off)
+r_ver    db     3               ; 104h: the stub's version (2: r_off; 3:
+                                ;  Lodestone's multitasking asked, r_mt)
 %endif
 r_hook   dw     r_int16         ; 105h: INT 16h points at CS:this
 r_old16  dd     0               ; 107h: and went on to this
@@ -3502,6 +3529,10 @@ r_ss     dw     0
 r_sp     dw     0
 r_ks     db     0               ;  not 0: the console has keys for the program
 r_pend   db     0               ;  CODE-\ taken (or the keys done): the console
+r_mt     dd     0               ; Lodestone's multitasking (MT_TSR): its bytes,
+                                ;  the front task's number, the running one's,
+                                ;  and ours: 1 while the pop-up waits for the
+                                ;  front task (0:0: none)
 r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         jne     .up                     ;  else (a TSR, from an interrupt)
         cmp     ah, 0                   ;  sees no key, as the BIOS's AH=01h
@@ -3531,14 +3562,34 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         call    r_feed
         jnc     .ky
         push    ax
-        inc     ah                      ; (a peek of the caller's kind)
-        pushf
-        call    far [cs:r_old16]
-        pop     ax
+        inc     ah                      ; (a peek of the caller's kind; for a
+        call    r_front                 ;  background task's, AH=11h: the
+        je      .pf                     ;  BIOS's AH=01h drops the keys AH=00h
+        mov     ah, 11h                 ;  can't give, the front task's.  A
+.pf:    pushf                           ;  key: the read on to MT, which holds
+        call    far [cs:r_old16]        ;  it behind, or lets it through where
+        pop     ax                      ;  it can't switch: an INT 24h prompt's)
         jnz     .ch
         hlt
+..@r_idle:                              ; (MT_TSR: another task may run here)
         jmp     .w
 .ky:    iret
+
+; the call is the front task's (Lodestone's multitasking), or there are no
+; tasks: ZF.  Registers kept
+r_front:
+        cmp     word [cs:r_mt + 2], 0
+        je      .x
+        push    ds
+        push    bx
+        push    ax
+        lds     bx, [cs:r_mt]
+        mov     ax, [bx]
+        cmp     al, ah
+        pop     ax
+        pop     bx
+        pop     ds
+.x:     ret
 
 ; Claude's keys for the program (TYPE, M3), from the console's page: CF if
 ; none now (AX kept), else AX = the key, taken if AH is a read.  The
@@ -3546,6 +3597,8 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
 ; after; when the keys are done it sets r_pend, and the console comes.
 r_feed: cmp     byte [cs:r_ks], 0
         je      .no
+        call    r_front                 ; (the front task's alone: a call from
+        jne     .wk                     ;  behind, after a CODE-Tab, tells MT)
         push    dx
         push    bx
         mov     bx, ax
@@ -3562,16 +3615,27 @@ r_feed: cmp     byte [cs:r_ks], 0
         xchg    ax, bx
         pop     bx
         pop     dx
-        ret
+        jnc     .x
+.wk:    cmp     word [cs:r_mt + 2], 0   ; none now, the keys not done (a wait)
+        je      .no                     ;  or just done (r_pend: the console
+        push    ds                      ;  to come): MT told (mt_tsrk), or a
+        push    si                      ;  wait at our HLT would never end
+        lds     si, [cs:r_mt]
+        mov     byte [si + 2], 1
+        pop     si
+        pop     ds
 .no:    stc
-        ret
+.x:     ret
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
 ; move back one), and the console runs, unless a hardware interrupt is in
 ; service: INT 16h called from one (a TSR peeking from INT 1Ch, which the
 ; BIOS's INT 08h calls before its EOI) would leave the keyboard's IRQ
 ; waiting and the console hung.  Then it runs at the next INT 16h call
-; made with none in service.  Registers kept.  (Never called with the
+; made with none in service.  With Lodestone's tasks, only in a call of
+; the front task's: the console takes the front screen and keys.  Taken
+; in another task's call, it tells MT once (mt_tsrk, r_pend 2), which
+; gives the front task a turn as for a key.  Registers kept.  (Never called with the
 ; console up: r_int16 answers itself then, and r_popup clears r_inpop
 ; before it returns here.)
 r_hot:  cmp     byte [cs:r_off], 0
@@ -3604,6 +3668,8 @@ r_hot:  cmp     byte [cs:r_off], 0
 .e:     mov     [1Ch], si               ; the tail one back
 .p:     cmp     byte [cs:r_pend], 0
         je      .no
+        call    r_front                 ; (a background task's call: at the
+        jne     .df                     ;  front one's, over its screen)
         mov     al, 0Bh                 ; the PIC's in-service register,
         out     20h, al                 ;  then back to the request one (as
         in      al, 20h                 ;  the kernel's screen capture does)
@@ -3613,7 +3679,11 @@ r_hot:  cmp     byte [cs:r_off], 0
         or      ah, ah
         jnz     .no
         mov     byte [cs:r_pend], 0
-        sti
+        cmp     word [cs:r_mt + 2], 0   ; (no longer waiting, for MT)
+        je      .pp
+        lds     si, [cs:r_mt]
+        mov     byte [si + 2], 0
+.pp:    sti
         pop     ds
         pop     si
         pop     bx
@@ -3625,6 +3695,12 @@ r_hot:  cmp     byte [cs:r_off], 0
         pop     bx
         pop     ax
 .x:     ret
+.df:    cmp     byte [cs:r_pend], 1     ; (MT told once, r_pend 2: the front
+        jne     .no                     ;  task's turn to come, as for a key,
+        mov     byte [cs:r_pend], 2     ;  so its call does; MT clears it as
+        lds     si, [cs:r_mt]           ;  it gives it)
+        mov     byte [si + 2], 1
+        jmp     .no
 .nx:    inc     bx                      ; the next word, round the buffer
         inc     bx
         cmp     bx, [82h]

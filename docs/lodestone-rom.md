@@ -21,7 +21,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-About 9 KB is left (9,216 bytes, with multitasking's LODEMT.SYS and TASKS.RUN). CLAUDE.COM is meant for ROM 2. Until then it lives on C: or A:.
+About 8.5 KB is left (8,704 bytes, with multitasking's LODEMT.SYS and TASKS.RUN). CLAUDE.COM is meant for ROM 2. Until then it lives on C: or A:.
 
 ## Which socket
 
