@@ -572,7 +572,7 @@ Joshua's aim: a command prompt resident Claude can script against, as Claude Cod
   - Up and Down step through a 512-byte history (the same line twice in a row is kept once); F3 adds the rest of the last line.
   - Tab completes the word before the cursor as a file or subject name (`*` or `*.*` added); Tab again gives the next name, then the first again. A subject gets its `\`.
   - A line wraps over rows; when the screen scrolls the line's start goes up with it.
-- **The screen saver at the prompt.** LCMD waits for keys in its own loop (INT 21h 0Bh, then `hlt`). After the Executive's delay it calls the Executive's own saver: DEFRAG on each disk unless TIDY=0, then the dark screen with the time. It keeps the 80×25 text screen in 4,000 bytes taken for the purpose, and puts the screen back afterwards, cursor included. The key that ends the saver is taken.
+- **The screen saver at the prompt.** LCMD waits for keys in its own loop (INT 21h 0Bh, then `hlt`). After the Executive's delay it calls the Executive's own saver: DEFRAG on each disk unless TIDY=0, then the dark screen with the time. It keeps the 80×25 text screen in 4,000 bytes taken for the purpose, and puts the screen back afterwards, cursor included. The key that ends the saver is taken. With the start-up floppy taken out, the saver's look for DEFRAG there fails without LCMD's "Abort, Retry, Fail?", as in the Executive, and the dark screen comes on (2026-10-22: it stopped at the question).
   - The kernel's INT 21h F0h AL=5 gives the delay and the far entry, `ui_saver_far` (`call saver` + `retf`).
   - The Executive's `saver` no longer redraws on its own; its event loop does that.
   - `ui_lend`/`ui_reclaim` count, so the saver's DEFRAG, run while LCMD (itself a child of the Executive) is the program, doesn't give the directory buffer back early.
@@ -611,7 +611,7 @@ Joshua's aim: a command prompt resident Claude can script against, as Claude Cod
   - CHOICE /S was ignored.
   - DEFRAG could run under a directory search.
   - All are fixed, with tests.
-- **Tests:** `t_command` (34 checks: the batch language, exit codes, every review case, and CMDTEST.BAT), `t_cmdedit` (18: the editor, history, Tab, Ctrl-C, input from a file), `t_cmdsaver` (8: the saver at the prompt and in PAUSE, the Executive's memory and INT 24h afterwards).
+- **Tests:** `t_command` (34 checks: the batch language, exit codes, every review case, and CMDTEST.BAT), `t_cmdedit` (18: the editor, history, Tab, Ctrl-C, input from a file), `t_cmdsaver` (10: the saver at the prompt and in PAUSE, the Executive's memory and INT 24h afterwards, the start-up floppy taken out).
 - **Version:** LODE_VER 0042h.
 - **Copy to the floppy** (`releases/0.4.2`): LODE.SYS, LCMD.COM, LODE.TXT, and CMDTEST.BAT, a self-test of the batch language for the 1520 ("All 11 tests passed"). CLEANOLD.BAT deletes the Grid-OS files 0.4.1 replaced. On the 1520 the prompt, history, Tab and the saver all work, and CMDTEST passes all 11 (Joshua).
 - **Fixed after 0.4.2 (found by SPIKES.BAT on the 1520, 2026-10-09):** `ECHO.` (a blank line), `ECHO.text`, `CD..` and `CD\` didn't work.
