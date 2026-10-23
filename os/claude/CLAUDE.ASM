@@ -3561,15 +3561,16 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
         call    r_feed
         jnc     .ky
-        call    r_front                 ; (a background task's: the BIOS's
-        jne     .h                      ;  buffer is the front one's, and its
-        push    ax                      ;  AH=01h drops the keys AH=00h can't
-        inc     ah                      ;  give: left alone till it is in
-        pushf                           ;  front)
-        call    far [cs:r_old16]        ; (a peek of the caller's kind)
-        pop     ax
+        push    ax
+        inc     ah                      ; (a peek of the caller's kind; for a
+        call    r_front                 ;  background task's, AH=11h: the
+        je      .pf                     ;  BIOS's AH=01h drops the keys AH=00h
+        mov     ah, 11h                 ;  can't give, the front task's.  A
+.pf:    pushf                           ;  key: the read on to MT, which holds
+        call    far [cs:r_old16]        ;  it behind, or lets it through where
+        pop     ax                      ;  it can't switch: an INT 24h prompt's)
         jnz     .ch
-.h:     hlt
+        hlt
 ..@r_idle:                              ; (MT_TSR: another task may run here)
         jmp     .w
 .ky:    iret
@@ -3624,8 +3625,9 @@ r_feed: cmp     byte [cs:r_ks], 0
 ; BIOS's INT 08h calls before its EOI) would leave the keyboard's IRQ
 ; waiting and the console hung.  Then it runs at the next INT 16h call
 ; made with none in service.  With Lodestone's tasks, only in a call of
-; the front task's: the console takes the front screen and keys.
-; Registers kept.  (Never called with the
+; the front task's: the console takes the front screen and keys.  Taken
+; in another task's call, it tells MT once (mt_tsrk, r_pend 2), which
+; gives the front task a turn as for a key.  Registers kept.  (Never called with the
 ; console up: r_int16 answers itself then, and r_popup clears r_inpop
 ; before it returns here.)
 r_hot:  cmp     byte [cs:r_off], 0
@@ -3685,8 +3687,11 @@ r_hot:  cmp     byte [cs:r_off], 0
         pop     bx
         pop     ax
 .x:     ret
-.df:    lds     si, [cs:r_mt]           ; (MT: the front task's turn to come,
-        mov     byte [si + 2], 1        ;  as for a key, so its call does)
+.df:    cmp     byte [cs:r_pend], 1     ; (MT told once, r_pend 2: the front
+        jne     .no                     ;  task's turn to come, as for a key,
+        mov     byte [cs:r_pend], 2     ;  so its call does; MT clears it as
+        lds     si, [cs:r_mt]           ;  it gives it)
+        mov     byte [si + 2], 1
         jmp     .no
 .nx:    inc     bx                      ; the next word, round the buffer
         inc     bx
