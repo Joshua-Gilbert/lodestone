@@ -193,10 +193,12 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
       if (n >= 3) { SH.bell_gen = (uint16_t)(p[1] | (p[2] << 8)); DMB(); SH.bell_seq++; request(); }
       break;
     case F_HOLD:                                     // the 1520's next message, expected (2026-10-23c)
-      if (n >= 4 && n - 3 <= HOLD_MAX) {
+    case F_HOLD_GLP:                                 //  or the start of its next GLP frame (2026-10-23d)
+      if (n >= 4 && n - 3 <= HOLD_MAX && (p[0] == F_HOLD || n == 7)) {
         SH.hold_seq++;                               // odd: being written
         DMB();
         SH.hold_gen = (uint16_t)(p[1] | (p[2] << 8));
+        SH.hold_kind = p[0] == F_HOLD ? HOLD_EXACT : HOLD_GLP;
         SH.hold_n = (uint8_t)(n - 3);
         for (size_t i = 0; i < n - 3; i++) SH.hold_exp[i] = p[3 + i];
         DMB();

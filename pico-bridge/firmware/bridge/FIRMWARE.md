@@ -113,6 +113,11 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   `tx_eoi_pushed`: core 1 makes them ready itself (`hold_ok`, one RQS). The bus simulation's J tests cover a
   match, another message, a shorter and a longer one, a HOLD too late, an SDC after a match and 11 held 2 KB
   answers in a row.
+- **2026-10-23d.** HOLD_GLP (`0x0A`). A hold for the 1520's next GLP frame by its first 4 bytes, its length and
+  its Fletcher sum, so the Pi's NOP for the next fragment of a message out of the 1520 waits in the bridge too.
+  Core 1 keeps the sum as the bytes come (two adds a byte, `hold_glp_byte`). The J tests add a good frame, an
+  empty one, and a wrong sequence number, a bad sum, a changed byte, one too short, one too long and one with
+  the CRC: 99 checks.
 
 ## Build
 

@@ -17,6 +17,7 @@ reference code is `host_link.c` (Pico) and `pi/gpibbridge/protocol.py` (Pi).
 | 0x07 | BOOTSEL | — | Reboot into the USB bootloader (to flash firmware) |
 | 0x08 | WAKE | u16 gen | Auto service request mode: assert SRQ (status 40h, no READY) for an idle 1520 until it polls or sends a message; void if the 1520 has sent a newer message than `gen` (fw 2026-10-22b) |
 | 0x09 | HOLD | u16 gen, 1–16 bytes | Auto service request mode: the 1520's message of generation `gen` is expected to be exactly these bytes, and the HELD TX frames that follow are the answer to it (fw 2026-10-23c, below) |
+| 0x0A | HOLD_GLP | u16 gen, 4 bytes | The same, for a message that is one GLP frame starting with these 4 bytes (sync, type, seq, ack), its length field right (payload up to 8 KB) and its Fletcher sum good (fw 2026-10-23d, below) |
 
 ## Pico → Pi
 
@@ -95,4 +96,10 @@ For CLAUDE.COM's link (GLP, `lodestone/claude-link`), the bridge requests servic
   bit 2). A HOLD is taken by the first message after it arrives and only if that message is its generation:
   one that comes too late is void. Held answers never count in READY until they match, so EARLY and ANNOUNCED
   don't apply to them. gridlink holds with firmware from 2026-10-23c on.
+- **HOLD_GLP (fw 2026-10-23d): held for a frame the bridge checks.** Out of the 1520 the next frame is the
+  next fragment of the same message: its first 4 bytes are known, its payload isn't, and the Pi's answer (a
+  NOP) doesn't depend on it. With HOLD_GLP the bridge takes the message if it is one GLP frame with those 4
+  bytes, as long as its length field says (8 + length bytes, EOI on the last) and with a good Fletcher sum
+  over all but the sync byte (A = 1 + the bytes, B = the sum of the A's, both mod 256, stored A then B):
+  the check the Pi itself makes, on the same bytes. A frame checked with the CRC isn't taken.
 - **The STB frame's bits 5 and 6 are ignored in this mode.**

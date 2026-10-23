@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define FW_TAG "bridge fw 2026-10-23c"
+#define FW_TAG "bridge fw 2026-10-23d"
 #define PROTO_VERSION 1
 
 // ---- pins ----------------------------------------------------------------------------------------------------
@@ -79,6 +79,11 @@ typedef struct { uint8_t code, b; uint16_t gen; uint32_t arg; uint32_t t; } rec_
 #define TXF_EOI  0x01u
 #define TXE_HELD 0x02u     // (2026-10-23c) a held reply: sent only if the message of its generation matches the hold
 #define HOLD_MAX 16u       // bytes a hold can expect (GLP's POLL is 8)
+#define HOLD_EXACT 0u      // the message is exactly hold_exp
+#define HOLD_GLP 1u        // (2026-10-23d) the message is one GLP frame whose first 4 bytes are hold_exp (sync, type,
+                           //  seq, ack), whose length field is right and whose Fletcher sum is good (CLAUDE's next
+                           //  fragment of a message: the Pi's answer to it, a NOP, can't depend on what it carries)
+#define HOLD_GLP_MAX 8192u // the longest payload such a frame may have
 
 typedef struct {
   // core 1 -> core 0
@@ -110,6 +115,7 @@ typedef struct {
   volatile uint32_t hold_seq;
   volatile uint16_t hold_gen;
   volatile uint8_t hold_n;
+  volatile uint8_t hold_kind;           // HOLD_EXACT, or (2026-10-23d) HOLD_GLP: a good GLP frame starting thus
   volatile uint8_t hold_exp[HOLD_MAX];
   volatile uint32_t n_held, n_held_void;  // held replies used / not (core 1)
   // status from core 1 (for reports)

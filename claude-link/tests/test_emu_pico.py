@@ -117,8 +117,10 @@ def test_held_replies():
     h0, t0 = big_turn()
     h, t = big_turn(bridge='pico-hold')
     st = h.link.stats
-    # (CLAUDE 1.6: the 22 KB file goes as a 16 KB request of five 3340-byte frames and a 6 KB one of two: 4 + 1)
-    assert h.transport.proto.holds and st['tx_held'] >= 5, (h.transport.proto.firmware, st)
+    # (CLAUDE 1.6: the 22 KB file goes as a 16 KB request of five 3340-byte frames and a 6 KB one of two: 4 + 1;
+    #  fw 2026-10-23d: and comes back (CLAUDE 1.7, 16 KB reads of five 3300-byte frames) with the NOPs after
+    #  the 2nd to 4th held: 3 more)
+    assert h.transport.proto.holds_glp and st['tx_held'] >= 8, (h.transport.proto.firmware, st)
     assert h.nano.n_held == st['tx_held'] == h.transport.proto.stats['held'], (h.nano.n_held, st)
     assert not h.nano.violations, h.nano.violations
     assert abs(t - t0) < 0.5, (t, t0)          # (the emulation doesn't time the Pi: no gain shows here)
@@ -162,6 +164,47 @@ def test_held_reply_bookkeeping():
     f3 = glp.decode(t.sent[-1], 8192)[0]
     assert len(t.sent) == n + 1 and f3.seq == 3 and f3.payload == body[4096:] and k.cur is None, f3
     assert len(t.holds) == 2                          # (the message's last fragment: nothing more to hold)
+
+
+def test_held_nop_bookkeeping():
+    # fw 2026-10-23d: the NOP for the GRiD's next fragment held in the bridge; used, it answers nothing here and
+    # the message reassembles as usual; a held one for a fragment we couldn't read drops that message
+    class T:
+        frame_limit = 4104
+        def __init__(t): t.sent, t.holds, t.used = [], [], False
+        def answer(t, f): t.sent.append(f)
+        def hold(t, expect, frame, glp=False): t.holds.append((expect, frame, glp)); return True
+        def hold_used(t): u, t.used = t.used, False; return u
+    from gridlink.link import Link
+    got = []
+    t = T()
+    k = Link(t, lambda mt, body: got.append((mt, body)), log=lambda *a: None, hold=0.0)
+    k.last_g = 4; k.connected = True; k.rx_fl = True
+    rep = lambda seq, ack, more, data: glp.Frame(glp.G_REPLY | (glp.MORE if more else 0), seq, ack, data, fl=True)
+    k.handle(rep(5, 0, True, b'a' * 10))                # -> NOP; the next fragment held
+    nop = glp.decode(t.sent[-1], 8192)[0]
+    assert nop.kind == glp.P_NOP and nop.seq == 1 and nop.ack == 5, nop
+    head, held, g = t.holds[-1]
+    assert g and head == bytes([0x47, glp.G_REPLY | glp.MORE, 6, 1]), head
+    h = glp.decode(held, 8192)[0]
+    assert h.kind == glp.P_NOP and h.seq == 2 and h.ack == 6, h
+    n = len(t.sent)
+    t.used = True
+    k.handle(rep(6, 1, True, b'b' * 10))                # answered by the bridge: nothing from us
+    assert len(t.sent) == n and k.pi_seq == 2 and k.last_answer == held and k.stats['tx_held'] == 1
+    assert t.holds[-1][0] == bytes([0x47, glp.G_REPLY | glp.MORE, 7, 2])
+    k.handle(rep(7, 2, False, b'c' * 10))               # the last: not the hold's (no MORE), answered here
+    assert len(t.sent) == n + 1 and got == [(glp.G_REPLY, b'a' * 10 + b'b' * 10 + b'c' * 10)], got
+    # a held NOP for bytes that never made a frame here: that message is dropped, not delivered with a hole
+    k.handle(rep(8, 3, True, b'd' * 10))
+    assert t.holds[-1][2]
+    k.parser.feed(b'\x47\x85\x09\x04\x0a\x00junk')     # (a damaged fragment: no frame)
+    t.used = True
+    k.last_rx -= 1
+    k.idle_check()
+    assert k.stats['held_unread'] == 1 and k.spec is None
+    k.handle(rep(10, 4, False, b'f' * 10))              # its message ends: dropped
+    assert len(got) == 1, got
 
 
 def test_old_claude_gets_246():

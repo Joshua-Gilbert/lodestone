@@ -23,6 +23,8 @@ extern "C" {
                            // message newer than gen or is polled (gridlink rings when it has news; 2026-10-22b)
 #define F_HOLD      0x09   // u16 gen, the bytes (1..16) the 1520's message of that generation is expected to be:
                            // the TXF_HELD reply that follows is its answer, sent only if it is (2026-10-23c)
+#define F_HOLD_GLP  0x0A   // u16 gen, 4 bytes: the same, for a message that is a good GLP frame (Fletcher sum)
+                           // starting with these 4 bytes, any length up to 8 KB (2026-10-23d)
 // frame types, Pico -> Pi
 #define F_HELLO     0x81   // u8 protocol version, u16 tx ring size, u16 data chunk max, u32 tx consumed,
                            //   u16 tx entries still queued, firmware tag text
