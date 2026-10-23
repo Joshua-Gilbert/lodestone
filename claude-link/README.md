@@ -235,7 +235,8 @@ every byte checked.
 | 2 KB frames from the GRiD, the Fletcher sum (CLAUDE 1.3) | 7.0 ms | up to 1 s | 34.0 KB/s | 56.5 KB/s |
 | bridge fw 2026-10-22a (bulk USB reads) and 22b (wake-up) | 7.0 ms | 51 ms median | 45.7 KB/s | 56.7 KB/s |
 | SRQ on IRQ 5 (Lodestone's GPIB driver 1.21, CLAUDE 1.3) | 7.0 ms | 9 ms median | 44.9 KB/s | 56.7 KB/s |
-| the driver's fast loops (1.22, GPIBLOOP) | **6.4 ms** | **8 ms** median | **70.2 KB/s** | **73.3 KB/s** |
+| the driver's fast loops (1.22, GPIBLOOP) | 6.4 ms | 8 ms median | 70.2 KB/s | 73.3 KB/s |
+| the driver's frame check (1.23, CLAUDE 1.4) | **6.0 ms** | **8 ms** median | **73.6 KB/s** | **82.2 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
@@ -261,10 +262,18 @@ every byte checked.
   chip, the wait out of line), writing 77 -> 112 (no INC in memory per byte,
   the next byte fetched while the bus handshakes, a miss costing one jump).
   A 2 KB frame into the GRiD went from 28 to 13 ms.
+- **The frame check** (CLAUDEP.COM, a profiling build of CLAUDE that
+  times its pieces on the PIT and writes CLPROF.TXT): of the GRiD's 5 ms
+  between 2 KB frames, the Fletcher pass took ~2.65 ms (1.3 µs a byte) and
+  the frame copy ~0.7 ms. The GPIB driver (1.23) now keeps the sum as it
+  moves the bytes, two ADDs a byte, and CLAUDE checks a frame from it and
+  lets the driver append its own (copies are REP MOVSW now). The GRiD's
+  time between frames went from 4.9 to 2.8 ms into the GRiD and from 4.8
+  to 1.1 ms out of it.
 - **What is left, per 2 KB frame** (`bench --trace`):
-  - Pi to GRiD: the GPIB transfer 13 ms, USB into the bridge about 5 ms,
-    and the GRiD's own work between frames 5 ms.
-  - GRiD to Pi: the GPIB transfer about 18 ms, and the GRiD's work 5 ms.
+  - Pi to GRiD: the GPIB transfer 14 ms, the Pi and USB into the bridge
+    about 5-6 ms, and the GRiD's own work between frames 2.8 ms.
+  - GRiD to Pi: the GPIB transfer about 19 ms, and the GRiD's work 1.1 ms.
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
