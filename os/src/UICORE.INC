@@ -164,7 +164,9 @@ run_tail    resb 130
 pc_ch       resb 1              ; putc's character
 app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
                                 ;  Copy/Move destination, free while the
-                                ;  Executive asks or a .RUN runs (UIAPI.INC)
+                                ;  Executive asks or a .RUN runs (UIAPI.INC);
+                                ;  KMW.INC's mw_open keeps it (M8c: the
+                                ;  Executive may wait at its question then)
 tmp         resb 96
 section ui
 

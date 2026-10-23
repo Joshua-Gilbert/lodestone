@@ -386,7 +386,16 @@ mw_start:
         mov     di, alloc_tab
         xor     ax, ax
         rep     stosw
-        pop     ax
+        cmp     [held1], ax             ; the Executive's question waiting (M8c:
+        je      .nq                     ;  it may be in front at one): not the
+        mov     [held1], ax             ;  new one's, nor its band
+        mov     [held2], ax
+        mov     [band1], ax
+        mov     [band2], ax
+        pusha
+        UCALL   band_redraw
+        popa
+.nq:    pop     ax
         mov     [run_ret], ax           ; (its argument)
         push    ds
         mov     si, mw_hdr
@@ -638,16 +647,40 @@ mw_open:
         cmp     al, MW_MAX
         jbe     .s
         pop     bp
-.new:   UCALL   ui_findapp              ; SI = its path (.new: started, even
-                                        ;  if one runs: CODE-W's Write)
-        jc      .nf
+.new:   push    bp                      ; (.new: started, even if one runs:
+        mov     bp, sp                  ;  CODE-W's Write)
+        sub     sp, 2 * MW_PATH
+        push    cx
         push    di
+        push    ds                      ; ui_findapp's answer is in dstpath,
+        pop     es                      ;  the Executive's Copy/Move destination,
+        push    si                      ;  which may be waiting at its question
+        mov     si, dstpath             ;  (M8c): kept on the stack meanwhile,
+        lea     di, [bp - MW_PATH]      ;  and the path found copied there
+        mov     cx, MW_PATH / 2
+        rep     movsw
+        pop     si                      ; (the name)
+        UCALL   ui_findapp              ; SI = its path
+        pushf
+        lea     di, [bp - 2 * MW_PATH]
+        mov     cx, MW_PATH / 2
+        rep     movsw
+        lea     si, [bp - MW_PATH]
+        mov     di, dstpath
+        mov     cx, MW_PATH / 2
+        rep     movsw
+        popf
+        lea     si, [bp - 2 * MW_PATH]
+        mov     ax, 2                   ; (not found)
+        jc      .nf
         mov     di, s_empty
         call    mw_start
-        pop     di
+.nf:    pop     di
+        pop     cx
+        mov     sp, bp
+        pop     bp
         ret
-.nf:    mov     ax, 2
-        ret
+MW_PATH     equ     84                  ; (dstpath's size, EXEC.INC)
 
 ; window .RUN SI (its name) couldn't start, AX = why: said in the band
 ; (UI_MSG: till a key or a click), the name first
@@ -691,7 +724,12 @@ mw_say: pusha
         pop     ds
         mov     si, tmp
         mov     byte [cs:mw_msg], 1
+        mov     al, [ex_mtw]            ; (a task's end meanwhile isn't the
+        push    ax                      ;  message's key: the Executive's, later)
+        mov     byte [ex_mtw], 1
         UCALL   ui_msg
+        pop     ax
+        mov     [ex_mtw], al
         mov     byte [cs:mw_msg], 0
         pop     es
         popa
@@ -1457,6 +1495,7 @@ mw_cpt: dw      clear_screen, mw_c_cls  ; where, to; its own first 5 bytes
 MW_CPE      equ     9
 mw_cp       db      0                   ; 1: the patches are in
 mw_nc       db      0                   ; (win_paint, the saver: unclipped)
+mw_useg     dw      0                   ; the UI's segment (mw_clipon)
 mw_kind     db      0                   ; the primitive (MK_*)
 MK_FILL     equ     0
 MK_INV      equ     1
@@ -1513,6 +1552,8 @@ mw_cpchk:
 mw_clipon:
         cmp     byte [cs:mw_cp], 0
         jne     .x
+        mov     byte [cs:mw_nc], 0
+        mov     [cs:mw_useg], ds        ; (the UI's: its stack is in it)
         pusha
         mov     si, mw_cpt
 .l:     mov     di, [cs:si]
@@ -1751,8 +1792,19 @@ mw_uret:                                ; RET (near) into the UI: to the
         push    word ..@ui_ret
         retf
 
-mw_c_sv:                                ; the saver: unclipped
-        inc     byte [cs:mw_nc]
+mw_c_sv:                                ; the saver: unclipped (in a DOS task,
+        push    ax                      ;  ui_saver_far's, on its stack: not
+        mov     ax, ss                  ;  counted, its drawing never clipped
+        cmp     ax, [cs:mw_useg]        ;  there: mw_clipq)
+        pop     ax
+        je      .ui
+        pusha
+        UCALL   hide_cursor
+        cli
+        push    ds
+        push    word saver + 5
+        retf
+.ui:    inc     byte [cs:mw_nc]
         push    cs
         push    word .back
         push    word ..@ui_retf
@@ -1792,6 +1844,9 @@ mw_cbox:
 mw_clipq:
         pusha
         xor     di, di                  ; (mw_cl's bytes)
+        mov     ax, ss                  ; (a DOS task's call, ui_saver_far's:
+        cmp     ax, [cs:mw_useg]        ;  its screen, not the windows')
+        jne     .e
         mov     bx, [wdepth]
 .l:     dec     bx
         js      .e
@@ -1999,27 +2054,49 @@ mw_span:
         cmp     ax, [cs:mw_r+6]
         je      .xl
         mov     byte [cs:mw_xh], 0
-.xl:    mov     ax, [cs:mw_p0]
-        mov     bx, [cs:mw_p1]
         cmp     byte [cs:mw_xh], 0
-        jne     .xm
-        mov     bx, ax
+        je      .xs
+.xl:    mov     ax, [cs:mw_p0]          ; top or bottom: each column's p0..p1
+        mov     bx, [cs:mw_p1]
         call    mw_pmask
-        mov     ah, al
-        push    ax
-        mov     ax, [cs:mw_p1]
-        mov     bx, ax
-        call    mw_pmask
-        pop     bx
-        or      al, bh
-        jmp     short .xo
-.xm:    call    mw_pmask
-.xo:    xor     [es:di], al
+        xor     [es:di], al
         inc     di
         inc     si
         dec     bp
         jnz     .xl
         jmp     .x
+.xs:    mov     ax, [cs:mw_p0]          ; a side row: the columns of p0 and p1
+        call    .xc                     ;  only, if in AX..BX (SI .. SI+BP)
+        mov     ax, [cs:mw_p1]
+        mov     bx, ax
+        shr     bx, 3
+        mov     cx, [cs:mw_p0]
+        shr     cx, 3
+        cmp     bx, cx                  ; (the same column: done)
+        je      .x
+        call    .xc
+        jmp     .x
+.xc:    push    di                      ; pixel AX, if its column is in the span
+        push    si
+        mov     bx, ax
+        shr     bx, 3
+        sub     bx, si                  ; (columns past the span's first)
+        cmp     bx, bp
+        jae     .xn
+        add     di, bx
+        add     si, bx
+        mov     ax, [cs:mw_p0]          ; p0's and p1's bits in that column
+        mov     bx, ax
+        call    mw_pmask
+        mov     cl, al
+        mov     ax, [cs:mw_p1]
+        mov     bx, ax
+        call    mw_pmask
+        or      al, cl
+        xor     [es:di], al
+.xn:    pop     si
+        pop     di
+        ret
 
 ; column SI's pixels AX..BX (signed; those in it) -> AL, a bit each
 mw_pmask:

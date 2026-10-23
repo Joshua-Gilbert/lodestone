@@ -3322,7 +3322,9 @@ def t_base():
     print('== the Executive live under the windows (M8c): in front by a click or CODE-F6, its drawing clipped')
     p = os.path.join(A.OUT, 'NOTES.TXT'); open(p, 'wb').write(A.TEXT)
     q = os.path.join(A.OUT, 'OTHER.TXT'); open(q, 'wb').write(b'Other file\r\nsecond line')
-    k = boot('mt_base.img', b'MULTITASK=1\r\n', 88, A.CALCRUN, A.WRITE, A.SYSTEM, p, q, mouse=True)
+    sq = os.path.join(A.OUT, 'SUBOTHER.TXT'); open(sq, 'wb').write(b'was in SUB\r\n')
+    k = boot('mt_base.img', b'MULTITASK=1\r\n', 88, A.CALCRUN, A.WRITE, A.SYSTEM, p, q, 'SUB\\', 'SUB\\OTHER.TXT=' + sq,
+             mouse=True)
     seg, Y = mt_seg(k), k.Y
     mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
     rec = lambda i, o: k.pc.u16(seg, Y['mw_ses'] + i * SE_SIZE + o)
@@ -3408,6 +3410,23 @@ def t_base():
     check('CODE-U (System) with windows open: "%s" in the band; nothing started' % bu[:1],
           bu[:1] == ['SYSTEM.RUN needs the whole screen: close the windows first'] and mb('mw_n') == 2
           and mb('mw_cur') == 0 and k.rd('run_active', 1) == b'\x01', (bu, mb('mw_n')))
+    # a window started while the Executive asks: its question and Copy/Move's destination (dstpath) left alone
+    k.select('OTHER.TXT')
+    k.key(A.CODE['C']); k.run_for(0.3)              # (Copy to SUB, which has an OTHER.TXT: Replace Ask's question)
+    k.key(ktest.ENTER, ktest.ENTER, '\\sub', A.K_CODE_ENTER); k.run_for(0.5)
+    bq0, dq0 = k.band(), bytes(k.rd('dstpath', 84)).split(b'\x00')[0]
+    k.key(A.CODE['K']); k.run_for(0.5)
+    cq, hq, bq1, dq = mb('mw_cur'), k.u16('held1'), k.band(), bytes(k.rd('dstpath', 84)).split(b'\x00')[0]
+    k.key(ktest.ESC); k.run_for(0.5)
+    bq2 = k.band()
+    k.key(ktest.ESC); k.run_for(0.5)
+    sub = A.fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\SUB\\OTHER.TXT')
+    check('Copy OTHER.TXT to SUB, Replace Ask: the Executive asks (%s; its destination %r); CODE-K meanwhile: the '
+          'calculator, its band not the question (%s), the destination kept (%r); ESC: the question back; ESC: SUB\'s '
+          'OTHER.TXT as it was' % (bq0[:1], dq0, bq1[:1], dq), bq0[:1] == ['OTHER.TXT is there already: Confirm to replace it']
+          and dq0.upper().endswith(b'\\SUB\\OTHER.TXT') and cq == 3 and hq == 0 and not any('there already' in b for b in bq1)
+          and dq == dq0 and bq2[:1] == bq0[:1] and sub == b'was in SUB\r\n' and mb('mw_cur') == 0,
+          (bq0, dq0, cq, hq, bq1, dq, bq2, sub, mb('mw_cur')))
     # a task's end is the Executive's event, not a window's (ex_mtw is each one's own)
     k.key(A.CODE['P']); k.run_for(1.0)
     typ(k, 'start /w mtspin.com 400 tb.txt', 0.3); typ(k, 'exit', 1.0); k.settle()    # (22 s: it ends later)
@@ -3452,6 +3471,8 @@ def t_base():
     c0 = cwin()
     A.click(k, 8, 100); k.run_for(0.3)             # (the list: the Executive in front, the click taken)
     pc0, nt = pix(*c0), [0]
+    for r in range(24, 24 + 13 * 16):               # (the list left of it blanked: F5 must draw it)
+        k.pc.wr(0xB800, (r & 3) * 0x2000 + (r >> 2) * 80, bytes(c0[0]))
     def th(pc):
         if pc.r('cs') == seg and pc.r('ip') == Y['mw_span'] and pc.rd(seg, Y['mw_kind'], 1)[0] == 3: nt[0] += 1
     k.hooks.append(th)
@@ -3465,15 +3486,37 @@ def t_base():
           'again around the calculator, every name left of it there (%d of %d), the row its edge crosses drawn a row at a '
           'time (%d rows of glyphs), the calculator not touched' % (c0[1], len(seen), len(want), nt[0]), (c0[1] - 24) % 16
           and seen == want and nt[0] > 0 and pix(*c0) == pc0 and mb('mw_cur') == 0, (c0, seen, want, nt[0], pix(*c0) == pc0))
+    # the form's outline (XOR) cut by the calculator: drawn left of it, taken off exactly
+    A.click(k, (c0[0] + 5) * 8, c0[1] + 8); k.run_for(0.3)    # (the calculator in front: moved over the form)
+    k.key(0x6E00, *([ktest.LEFT] * 28), ktest.ENTER); k.run_for(0.5)
+    c0 = cwin()
+    A.click(k, 8, 100); k.run_for(0.3)
+    fy, pc0 = 236, pix(*c0)                         # (FORM_Y - 8: Device's and Subject's outlines below)
+    def rest():
+        """The screen from row fy to the band, but for the calculator."""
+        return pix(0, fy, c0[0], 360 - fy) + pix(c0[0], c0[1] + c0[3], 80 - c0[0], 360 - c0[1] - c0[3])
+    l0, nx = rest(), [0]
+    def xh(pc):
+        if pc.r('cs') == seg and pc.r('ip') == Y['mw_rect'] and pc.rd(seg, Y['mw_kind'], 1)[0] == 2: nx[0] += 1
+    k.hooks.append(xh)
+    k.key(ktest.TAB); k.run_for(0.3)
+    l1, pc1 = rest(), pix(*c0)
+    k.key(ktest.TAB, ktest.TAB); k.run_for(0.3)
+    k.hooks.remove(xh)
+    check('the calculator moved over the form (column %d); Tab in the Executive: Device\'s outline (a box) drawn around it, cut '
+          '(%d pieces of its sides by the clipping), the calculator not touched; Tab x2: Title again, the outlines gone, the '
+          'screen there as it was' % (c0[0], nx[0]), l1 != l0 and nx[0] > 0 and pc1 == pc0 and rest() == l0
+          and pix(*c0) == pc0 and mb('mw_cur') == 0, (c0, l1 != l0, nx[0], pc1 == pc0, rest() == l0, k.band()))
     k.select('LODE.SYS')                            # (Return on it: only "nothing opens it")
     k.key(0x6E00, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.ENTER); k.run_for(0.5)
     c1 = cwin()
-    A.click(k, (c0[0] + 5) * 8, c0[1] + 8); k.run_for(0.3)     # (its title strip)
+    sx, sy = (c0[0] + 5) * 8, c0[1] + 8             # (its title strip)
+    A.drag(k, sx, sy, sx - 80, sy + 40); k.run_for(0.3)
     c2, cc = cwin(), mb('mw_cur')
     k.key(ktest.ESC); k.run_for(0.5); k.settle()
-    check('the Executive in front: CODE-F7, Left x3, Return don\'t move the calculator (%s), a session\'s window; a click on '
-          'its title strip: the calculator in front (%d), not moved either (%s); ESC: closed' % (c1[:2], cc, c2[:2]),
-          c1 == c0 and cc == 1 and c2 == c0 and mb('mw_n') == 0, (c0, c1, cc, c2, mb('mw_n')))
+    check('the Executive in front: CODE-F7, Left x3, Return don\'t move the calculator (%s), a session\'s window; its '
+          'title strip dragged: the calculator in front (%d), not moved (%s): the press only brought it there; ESC: '
+          'closed' % (c1[:2], cc, c2[:2]), c1 == c0 and cc == 1 and c2 == c0 and mb('mw_n') == 0, (c0, c1, cc, c2, mb('mw_n')))
 
 def t_write():
     print('== Write as a window (M8b): beside the calculator and another Write, moved and resized')
