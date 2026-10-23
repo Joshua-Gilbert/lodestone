@@ -30,7 +30,7 @@ def big_turn(trace=None, setup=None, **kw):
 
 def test_hello_announces_rx():
     h, _ = big_turn()
-    assert h.link.grid_rx == 2048 and h.link.maxpay == 2048, (h.link.grid_rx, h.link.maxpay)
+    assert h.link.grid_rx == 3340 and h.link.maxpay == 3340, (h.link.grid_rx, h.link.maxpay)
     assert h.nano.big_tx == 0 and not h.nano.violations, h.nano.violations
     assert h.link.stats['tx_bytes'] > 20000
 

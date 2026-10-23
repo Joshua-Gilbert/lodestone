@@ -46,12 +46,14 @@ HISTL    equ 400
 TXMAX    equ 2048               ; GRiD -> Pi payload per frame: ~9 % faster than 1024 on the 1520
 %endif
 %ifndef RXPAY
-%assign RXPAY 2048             ; Pi -> GRiD payload we read (HELLO's rx=): 98 % of 4 KB frames' rate on the 1520
+%assign RXPAY 3340             ; Pi -> GRiD payload we read (HELLO's rx=): a whole 16 KB write request in five
+                               ;  frames (1.5: 2048, 98 % of 4 KB frames' rate, but an 8 KB request took five,
+                               ;  the last a few bytes long, and each frame costs ~2.5 ms of SRQ and poll)
 %endif
 RXMAX    equ RXPAY + 9          ; the read: a whole frame (RXPAY + 8) and one byte
                                 ;  more, so a frame never fills it (as 255 for 254)
 %defstr RXPAY_S RXPAY
-REQMAX   equ 8700               ; request reassembly (HELLO's req=: writes of 8 KB and a path)
+REQMAX   equ 16700              ; request reassembly (HELLO's req=: writes of 16 KB and a path; 1.5: 8700)
 IOSIZE   equ 16384              ; reply buffer segment
 SNAPMAX  equ 32768 + 11         ; snapshot segment: id, status, header, data
 TXQN     equ 6                  ; outgoing messages queued
@@ -2926,12 +2928,12 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.5', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.6', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
 kv_rx       db 'rx=', RXPAY_S, 10, 0
-kv_req      db 'req=8700', 10, 0             ; (REQMAX: the biggest REQUEST we take)
+kv_req      db 'req=16700', 10, 0            ; (REQMAX: the biggest REQUEST we take)
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
 evmouse     db 06h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
@@ -2970,6 +2972,7 @@ evint       db 01h
 fcb1        db 0, '           ', 0, 0, 0, 0
 fcb2        db 0, '           ', 0, 0, 0, 0
 
+            align 2                     ; (the glyphs are read a word at a time)
 %include "TERMINUS.INC"
 %include "GLYPHS.INC"
 
@@ -3922,7 +3925,8 @@ rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_over     resb 1
 rq_id       resb 1
-reqbuf      resb REQMAX + 4
+            alignb 2                    ; (frames are copied in with REP MOVSW: an odd
+reqbuf      resb REQMAX + 4             ;  destination costs the 286 a bus cycle a word)
 hellobuf    resb HELLO_MAX
 evans       resb 4
 crctab      resw 256
@@ -3992,6 +3996,7 @@ prof_sp     resb 1
 prof_stk    resb PS_N
 prof_txt    resb 1024
 %endif
+            alignb 2                    ; (an odd stack costs every PUSH and POP)
 stack_bottom:                           ; the stack: claude-link's emulator tests
             resb 1024                   ;  go 58 bytes deep at most under GRIDGPIB,
                                         ;  70 under Lodestone; the rest is for the

@@ -22,6 +22,7 @@ GPIB_ERRORS = {1: 'timeout', 2: 'no listener at that address', 3: 'GRiD is not t
 READ_CHUNK = 8192
 WRITE_CHUNK = 4000      # a CLAUDE before 1.5 takes 4,700-byte requests: 4,000 bytes and a path
 BIG_WRITE_CHUNK = 8192  # CLAUDE 1.5 says req=8700: each write request's DOS open, seek and close goes for twice as much
+HUGE_WRITE_CHUNK = 16384   # CLAUDE 1.6 says req=16700 (and rx=3340: five frames a request, no short last one)
 
 
 class GridError(Exception):
@@ -122,7 +123,9 @@ class Grid:
 
     def write_chunk(s):
         req = getattr(s.link, 'grid_req', glp.GRID_REQ_DEFAULT)
-        return BIG_WRITE_CHUNK if req >= BIG_WRITE_CHUNK + 300 else WRITE_CHUNK
+        for c in (HUGE_WRITE_CHUNK, BIG_WRITE_CHUNK):
+            if req >= c + 300: return c
+        return WRITE_CHUNK
 
     def write_file(s, path, data, progress=None):
         data = bytes(data)

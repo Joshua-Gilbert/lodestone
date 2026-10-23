@@ -207,7 +207,7 @@ def kv_lines(data):
 
 
 def hello_req(body):
-    """The biggest REQUEST a GRiD HELLO says it takes (a `req=` line, CLAUDE 1.5), else the 4,700 of
+    """The biggest REQUEST a GRiD HELLO says it takes (a `req=` line, CLAUDE 1.5 on), else the 4,700 of
     every CLAUDE before."""
     for line in bytes(body[6:]).split(b'\n'):
         if line.startswith(b'req='):

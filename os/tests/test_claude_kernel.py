@@ -142,7 +142,7 @@ def test_driver_frame_check():
                                                                    'view_range': [395, 400]})),
                  T.reply(('text', 'Written and checked.'))], mode='edits', bridge='pico')
     assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 1, (h.var('ksum', 1), h.var('use_fl', 1))
-    assert h.link.grid_req == 8700, h.link.grid_req      # (CLAUDE 1.5's HELLO: req=, so 8 KB write requests)
+    assert h.link.grid_req == 16700, h.link.grid_req     # (CLAUDE 1.6's HELLO: req=, so 16 KB write requests)
     k0, st0 = h.var('n_kok', 2), dict(h.link.stats)
     assert h.turn('write a big file', sim_s=120)
     assert bytes(h.m.fs['A:\\BIG.TXT']) == big.replace('\n', '\r\n').encode()
