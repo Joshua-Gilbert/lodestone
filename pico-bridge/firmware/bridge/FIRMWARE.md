@@ -104,6 +104,15 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   its records), and three new events say when the 1520's message ended (RX_END), a reply was queued (TX_IN)
   and SRQ went up (SRQ). gridlink's trace puts the bridge's events on its own clock with them: the Pico sends
   its events between USB reads, so a TALK used to reach the Pi ms after it happened.
+- **2026-10-23c.** HOLD (`0x09`) and held answers (TX flags bit 3; PROTOCOL.md). The Pi gives the bridge the
+  1520's next message, expected byte for byte (its POLL for the next fragment), and the answer to it. Core 1
+  compares the message as it arrives (`got_data`, a few instructions a byte, between handshakes) and if it
+  matches makes the held answer ready at its EOI byte: SRQ at once instead of after a trip to the Pi and back
+  (~1.5 ms of each ~17 ms 2 KB frame into the GRiD). Held entries wait in the ring (a newer generation is no
+  longer "stale", only an older one) and are dropped if the message doesn't match. They never count in
+  `tx_eoi_pushed`: core 1 makes them ready itself (`hold_ok`, one RQS). The bus simulation's J tests cover a
+  match, another message, a shorter and a longer one, a HOLD too late, an SDC after a match and 11 held 2 KB
+  answers in a row.
 
 ## Build
 

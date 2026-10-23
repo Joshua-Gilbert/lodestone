@@ -883,8 +883,8 @@ class EmuHarness:
                  frame_cap=None):
         s.m = m = Machine()
         s.pending = []
-        if bridge == 'pico':
-            s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi)
+        if bridge in ('pico', 'pico-hold'):
+            s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi, holds=bridge == 'pico-hold')
             s.transport = PicoModelTransport(s.nano)
         else:
             s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)

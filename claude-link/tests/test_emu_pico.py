@@ -13,12 +13,13 @@ from gridlink import glp
 BIG = ''.join('line %05d: the quick brown fox jumps over the lazy dog\n' % i for i in range(400))
 
 
-def big_turn(trace=None, **kw):
+def big_turn(trace=None, setup=None, **kw):
     h = start([reply(('tool', 'str_replace_based_edit_tool',
                       {'command': 'create', 'path': 'A:\\BIG.TXT', 'file_text': BIG})),
                reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\BIG.TXT', 'view_range': [395, 400]})),
-               reply(('text', 'Written and checked.'))], mode='edits', bridge='pico', **kw)
+               reply(('text', 'Written and checked.'))], mode='edits', **dict(dict(bridge='pico'), **kw))
     if trace is not None: h.link.trace = h.link.t.proto.trace = trace
+    if setup: setup(h)
     t0 = h.m.us
     assert h.turn('write a big file', sim_s=120)
     assert bytes(h.m.fs['A:\\BIG.TXT']) == BIG.replace('\n', '\r\n').encode()
@@ -106,6 +107,58 @@ def test_no_rings_while_busy():
     # a copy keeps the GRiD busy (its next frame comes within RING_IDLE): no rings in between
     h, _ = big_turn()
     assert h.link.stats['rang'] <= 3, h.link.stats['rang']
+
+
+def test_held_replies():
+    # bridge fw 2026-10-23c: while a message goes to the GRiD in fragments, gridlink gives the bridge the
+    # GRiD's next POLL and the answer to it; the bridge answers that POLL itself, no round trip to the Pi
+    h0, t0 = big_turn()
+    h, t = big_turn(bridge='pico-hold')
+    st = h.link.stats
+    assert h.transport.proto.holds and st['tx_held'] >= 8, (h.transport.proto.firmware, st)
+    assert h.nano.n_held == st['tx_held'] == h.transport.proto.stats['held'], (h.nano.n_held, st)
+    assert not h.nano.violations, h.nano.violations
+    assert abs(t - t0) < 0.5, (t, t0)          # (the emulation doesn't time the Pi: no gain shows here)
+    # and switched off (gridlink.bench --nohold): none
+    h2, _ = big_turn(bridge='pico-hold', setup=lambda h: setattr(h.link, 'holding', False))
+    assert h2.link.stats['tx_held'] == 0 and h2.nano.n_held == 0
+
+
+def test_held_reply_bookkeeping():
+    # Link alone, on a transport that holds: a used hold answers nothing and moves on as an answer would; a
+    # missed one (the GRiD sent something else) is answered as usual, with the same fragment
+    class T:
+        frame_limit = 4104
+        def __init__(t): t.sent, t.holds, t.used = [], [], False
+        def answer(t, f): t.sent.append(f)
+        def hold(t, expect, frame): t.holds.append((expect, frame)); return True
+        def hold_used(t): u, t.used = t.used, False; return u
+    t = T()
+    from gridlink.link import Link
+    k = Link(t, lambda *a: None, log=lambda *a: None, hold=0.0)
+    k.grid_rx = 2048; k.last_g = 4; k.connected = True; k.rx_fl = True
+    body = bytes(range(256)) * 24                     # 6 KB: three fragments
+    k.send(glp.P_REQUEST, body)
+    poll = lambda seq, ack: glp.Frame(glp.G_POLL, seq, ack, b'', fl=True)
+    k.handle(poll(5, 0))                              # -> fragment 1 sent, fragment 2 held for POLL 6
+    f1 = glp.decode(t.sent[-1], 8192)[0]
+    assert f1.more and f1.payload == body[:2048] and f1.seq == 1, f1
+    exp, held = t.holds[-1]
+    assert exp == glp.encode(glp.G_POLL, 6, 1, b'', fl=True), exp
+    h2 = glp.decode(held, 8192)[0]
+    assert h2.seq == 2 and h2.ack == 6 and h2.more and h2.payload == body[2048:4096], h2
+    n = len(t.sent)
+    t.used = True
+    k.handle(poll(6, 1))                              # the bridge answered it: nothing from us
+    assert len(t.sent) == n and k.pi_seq == 2 and k.last_answer == held and k.stats['tx_held'] == 1
+    exp, held3 = t.holds[-1]
+    assert exp == glp.encode(glp.G_POLL, 7, 2, b'', fl=True)
+    h3 = glp.decode(held3, 8192)[0]
+    assert h3.seq == 3 and not h3.more and h3.payload == body[4096:], h3
+    k.handle(glp.Frame(glp.G_KEYS, 7, 2, b'x', fl=True))   # not the POLL: answered as usual, the same fragment
+    f3 = glp.decode(t.sent[-1], 8192)[0]
+    assert len(t.sent) == n + 1 and f3.seq == 3 and f3.payload == body[4096:] and k.cur is None, f3
+    assert len(t.holds) == 2                          # (the message's last fragment: nothing more to hold)
 
 
 def test_old_claude_gets_246():

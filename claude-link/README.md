@@ -290,6 +290,13 @@ every byte checked.
   and the mouse were 0.27 ms of it). With bridge fw 2026-10-23a the bridge says an
   answer is ready once its first 128 bytes are in, so the ~4 ms of USB per
   2 KB frame overlaps the GRiD's read (21.6 ms a frame instead of 25.6).
+- **Held replies** (bridge fw 2026-10-23c): while a message goes to the
+  GRiD in fragments, its next frame is known to the byte: a POLL for the
+  next fragment. gridlink hands the bridge that POLL and the answer to it
+  along with each fragment. When the POLL comes, the bridge raises SRQ at
+  its last byte and sends the answer itself; the USB trip to the Pi and back
+  and gridlink's turn (~1.5 ms of each frame) are gone. Anything else (keys,
+  a NAK, a REPLY) and the bridge drops it and gridlink answers as before.
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
@@ -300,7 +307,7 @@ every byte checked.
 - `gridlink.bench`: `--sweep 246,1024,2048` tries frame sizes on the
   running link; `--trace` shows where each copy's time goes, gap by gap;
   `--usb` times the Pi to Pico USB alone; `--idle N` the first call after
-  idle. The AR488 Nano's figures, from the emulator, were 3.2-6.8 KB/s.
+  idle; `--nohold` turns held replies off, to compare. The AR488 Nano's figures, from the emulator, were 3.2-6.8 KB/s.
 
 ## Files
 
