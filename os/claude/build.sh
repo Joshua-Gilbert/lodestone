@@ -11,6 +11,10 @@ nasm -f bin -i ../src/ -o CLAUDE.COM CLAUDE.ASM -l CLAUDE.LST
 printf '[map symbols CLAUDE.MAP]\n%%include "CLAUDE.ASM"\n' > _map.asm
 nasm -f bin -i ../src/ -o _map.bin _map.asm
 cmp -s _map.bin CLAUDE.COM
+nasm -f bin -i ../src/ -dPROFILE -o CLAUDEP.COM CLAUDE.ASM     # where the time goes (PROF.INC)
+printf '[map symbols CLAUDEP.MAP]\n%%include "CLAUDE.ASM"\n' > _map.asm
+nasm -f bin -i ../src/ -dPROFILE -o _map.bin _map.asm
+cmp -s _map.bin CLAUDEP.COM
 rm -f _map.asm _map.bin
 nasm -f bin -o TESTKEY.COM TESTKEY.ASM
-ls -l CLAUDE.COM TESTKEY.COM
+ls -l CLAUDE.COM CLAUDEP.COM TESTKEY.COM

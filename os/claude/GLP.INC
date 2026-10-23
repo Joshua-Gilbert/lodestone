@@ -31,3 +31,17 @@ GF_FCS    equ 04h                ; our HELLO: we can check frames with the Fletc
 GF_WAKE   equ 08h                ; our HELLO: an SRQ while we are idle makes us POLL at once
 OP_SCREEN equ 11h                ; REQUEST ops the console answers (CLAUDE.COM's
 OP_TYPE   equ 12h                ;  optab has its own); TYPE is the console's only
+
+; PROF n: in a profiling build (nasm -dPROFILE: CLAUDEP.COM, PROF.INC), the
+; time from here on goes to bucket n; nothing otherwise.  Keeps every
+; register and the flags.
+%macro PROF 1
+%ifdef PROFILE
+        pushf
+        push    ax
+        mov     al, %1
+        call    prof_sw
+        pop     ax
+        popf
+%endif
+%endmacro
