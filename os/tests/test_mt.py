@@ -3245,10 +3245,13 @@ def t_windows():
     k.key(0x6D00); k.run_for(0.5)                       # (the tasks in front)
     k.key(ktest.ESC); k.run_for(0.5)
     n10, c10, ub = mb('mw_n'), mb('mw_cur'), uip()[1]
-    check('the tasks in front (CODE-F6), ESC: they close, the calculator in front; the UI block the whole '
-          'segment still while one runs (%s paragraphs, and %s with both: M8b)' % (ub, hi0), ts and n10 == 1 and c10 == 1
-          and hi0 == 4096 and ub == 4096 and A.has(k, 'Calculator')
-          and not A.has(k, 'Tasks'), (ts, n10, c10, hi0, ub, hex(rec(1, SE_END))))
+    k.key(0x6D00); k.run_for(0.5)
+    c10b = mb('mw_cur')
+    check('the tasks in front (CODE-F6), ESC: they close, the one in front before them next: the Executive (M8c: '
+          'CODE-F6 put the calculator last), the calculator still open; CODE-F6: the calculator in front; the UI block the '
+          'whole segment still while one runs (%s paragraphs, and %s with both: M8b)' % (ub, hi0), ts and n10 == 1
+          and c10 == 0 and c10b == 1 and hi0 == 4096 and ub == 4096 and A.has(k, 'Calculator')
+          and not A.has(k, 'Tasks'), (ts, n10, c10, c10b, hi0, ub, hex(rec(1, SE_END))))
     k.key(ktest.ESC); k.run_for(0.5); k.settle()
     au.stop()
     sw = au.switches()
@@ -3315,6 +3318,163 @@ def t_windows():
           and bt[:1] == ["CALC.RUN can't start"] and n1 == 1 and up and A.free_paras(k) == f0 and not k.crashed,
           (be, re0, n0, f0, f1, bt, n1, up, A.free_paras(k)))
 
+def t_base():
+    print('== the Executive live under the windows (M8c): in front by a click or CODE-F6, its drawing clipped')
+    p = os.path.join(A.OUT, 'NOTES.TXT'); open(p, 'wb').write(A.TEXT)
+    q = os.path.join(A.OUT, 'OTHER.TXT'); open(q, 'wb').write(b'Other file\r\nsecond line')
+    k = boot('mt_base.img', b'MULTITASK=1\r\n', 88, A.CALCRUN, A.WRITE, A.SYSTEM, p, q, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    rec = lambda i, o: k.pc.u16(seg, Y['mw_ses'] + i * SE_SIZE + o)
+    mru = lambda: list(k.pc.rd(seg, Y['mw_mru'], 5))
+    WS = A.run_syms('apps/WRITE.ASM')
+    def win(i):
+        a = rec(i, SE_BASE) + WS['win']
+        return tuple(k.pc.u16(k.useg, a + o) for o in (0, 2, 4, 6))
+    def pix(c, y, w, h):
+        """The screen's bytes in columns c.., rows y.. (the pointer out of the way)."""
+        A.point(k, 639, 399)
+        return b''.join(bytes(k.pc.rd(0xB800, (r & 3) * 0x2000 + (r >> 2) * 80 + c, w)) for r in range(y, y + h))
+    def strip(t):
+        """The title strip's line holding t, as read."""
+        A.point(k, 639, 399)
+        return next((l.rstrip() for y, l in k.ocr() if t in l), '')
+    free0 = A.free_paras(k)
+    fb0 = bytes(k.pc.rd(k.useg, Y['fill_band'], 5))
+    k.select('NOTES.TXT'); k.key(ktest.ENTER); k.run_for(1.0)
+    w1, fb1 = win(1), bytes(k.pc.rd(k.useg, Y['fill_band'], 5))
+    A.click(k, 4, 72); k.run_for(0.3)               # (left of Write: the Executive's list)
+    c1, b1, m1 = mb('mw_cur'), k.band(), mru()
+    px = pix(*w1)
+    check('Write in a window (%s), then a click on the Executive left of it: the Executive in front (%d), its own band '
+          '(%s), Write still open (focus order %s); the core\'s drawing patched while windows run (fill_band: %s)'
+          % (w1, c1, b1[:1], m1, fb1.hex()), mb('mw_n') == 1 and c1 == 0 and b1[:1] == ['Select a file and confirm']
+          and m1 == [0, 1, 255, 255, 255] and fb1[0] == 0xEA and fb0[0] == 0x60 and A.has(k, 'Write: NOTES.TXT'),
+          (w1, c1, b1, m1, fb0.hex(), fb1.hex()))
+    s0 = k.u16('sel')
+    k.key(ktest.DOWN, ktest.DOWN); k.run_for(0.3)
+    s1, pd = k.u16('sel'), pix(*w1)
+    k.key(ktest.TAB); k.run_for(0.3)
+    pt, bt = pix(*w1), k.band()
+    k.key(ktest.TAB, ktest.TAB); k.run_for(0.3)
+    check('its keys its own: Down x2 moves its selection (%d to %d) under Write, Tab outlines Device (%s), Tab x2: '
+          'Title again; Write\'s window not touched meanwhile (its bytes as they were)' % (s0, s1, bt[:1]), s1 == s0 + 2
+          and pd == px and pt == px and bt[:1] == ['Device: Select item and confirm'] and pix(*w1) == px
+          and mb('mw_cur') == 0, (s0, s1, pd == px, pt == px, bt, pix(*w1) == px))
+    k.key(ktest.F1); k.run_for(0.5)
+    hp = A.has(k, 'Lodestone 0.6 Help')
+    k.key(ktest.ESC); k.run_for(0.5)
+    st1 = strip('Write: NOTES.TXT')
+    check('F1 in the Executive: its help, over Write; a key closes it: Write drawn again as it was (its bytes), its close '
+          'box too (%r)' % st1, hp and not A.has(k, 'Lodestone 0.6 Help') and st1.endswith('x') and pix(*w1) == px
+          and mb('mw_cur') == 0, (hp, st1, pix(*w1) == px, A.screen(k)))
+    k.select('OTHER.TXT'); k.key(A.CODE['R']); k.run_for(0.5)
+    k.key('QQ'); k.run_for(0.3)
+    A.point(k, 639, 399)
+    rf = [l.strip() for y, l in k.ocr() if 'New title' in l]
+    k.key(ktest.ESC); k.run_for(0.5)
+    check('CODE-R in the Executive: its form over Write, what is typed in it shown there (%s), not cut around Write: a '
+          'window of its own' % rf, rf[:1] == ['New title  QQ'] and 'OTHER.TXT' in k.exec_list() and mb('mw_cur') == 0, rf)
+    k.select('OTHER.TXT'); k.key(ktest.ENTER); k.run_for(1.0)
+    c2, n2 = mb('mw_cur'), mb('mw_n')
+    check('Return on OTHER.TXT in the Executive, Write open: a second Write with that file (session %d, %d running), in '
+          'front; the first still open' % (c2, n2), c2 == 2 and n2 == 2 and A.has(k, 'Write: OTHER.TXT')
+          and A.has(k, 'ther file') and A.has(k, 'Write: NOTES.TXT'), A.screen(k))
+    cy = []
+    for _ in range(3):
+        k.key(0x6D00); k.run_for(0.5); cy.append(mb('mw_cur'))
+    check('CODE-F6 x3 from the second Write: the Executive, the first Write, the second again (%s): the Executive is one '
+          'of them' % cy, cy == [0, 1, 2], (cy, mru()))
+    k.key(A.CODE['K']); k.run_for(0.5)
+    ck = mb('mw_cur')
+    k.key(ktest.ESC); k.run_for(0.5)
+    ce = mb('mw_cur')
+    A.click(k, 4, 340); k.run_for(0.3)              # (the Executive's information line)
+    k.key(A.CODE['K']); k.run_for(0.5)
+    ck2, x0, mk = mb('mw_cur'), rec(0, SE_SP), k.rd('ex_mtw', 1)[0]
+    k.key(ktest.ESC); k.run_for(0.5)
+    ce2, me = mb('mw_cur'), k.rd('ex_mtw', 1)[0]
+    s2 = k.u16('sel')
+    k.key(ktest.UP); k.run_for(0.3)
+    check('CODE-K in the second Write: the calculator (session %d); ESC: the Write in front again (%d); a click on the '
+          'Executive, CODE-K: the calculator again (%d), the Executive waiting in its UI_EVENT, the calculator\'s ex_mtw 1 '
+          '(%d: a task\'s end not its event); ESC: the Executive in front (%d), its ex_mtw 2 again (%d), Up its key'
+          % (ck, ce, ck2, mk, ce2, me), ck == 3 and ce == 2 and ck2 == 3 and ce2 == 0 and mk == 1 and me == 2
+          and k.u16('sel') == s2 - 1 and mb('mw_n') == 2 and Y['ui_stack_top'] - 2560 <= x0 < Y['ui_stack_top'],
+          (ck, ce, ck2, mk, ce2, me, s2, k.u16('sel'), hex(x0)))
+    k.key(A.CODE['U']); k.run_for(0.5)
+    bu = k.band()
+    k.key(ktest.ENTER); k.run_for(0.3)
+    check('CODE-U (System) with windows open: "%s" in the band; nothing started' % bu[:1],
+          bu[:1] == ['SYSTEM.RUN needs the whole screen: close the windows first'] and mb('mw_n') == 2
+          and mb('mw_cur') == 0 and k.rd('run_active', 1) == b'\x01', (bu, mb('mw_n')))
+    # a task's end is the Executive's event, not a window's (ex_mtw is each one's own)
+    k.key(A.CODE['P']); k.run_for(1.0)
+    typ(k, 'start /w mtspin.com 400 tb.txt', 0.3); typ(k, 'exit', 1.0); k.settle()    # (22 s: it ends later)
+    bp = (A.has(k, 'Write: OTHER.TXT'), A.has(k, 'Write: NOTES.TXT'), mb('mw_cur'))
+    ev, dk = [], rec(2, SE_BASE) + WS['do_key']
+    def evh(pc):
+        if pc.r('ip') == dk and pc.r('cs') == k.useg: ev.append(pc.r('ax'))
+    k.hooks.append(evh)
+    w2 = win(2)
+    A.click(k, (w2[0] + 40) * 8, w2[1] + w2[3] - 12); k.run_for(0.3)    # (the second Write's status line)
+    cw, tb0, lw0 = mb('mw_cur'), A.disk_file(k, 'TB.TXT'), 'TB.TXT' in k.exec_list()
+    for _ in range(120):
+        k.run_for(0.25)
+        if A.disk_file(k, 'TB.TXT'): break
+    k.run_for(0.5)
+    k.hooks.remove(evh)
+    tb, bw, lw = A.disk_file(k, 'TB.TXT'), k.band(), 'TB.TXT' in k.exec_list()
+    A.click(k, 4, 340); k.run_for(0.5)
+    lx = 'TB.TXT' in k.exec_list()
+    A.click(k, 4, 340); k.run_for(0.3)             # ("LCMD.COM ended" still waits: a click reads it)
+    check('CODE-P with windows open, START /W MTSPIN.COM, EXIT: both Writes back (%s); the second Write in front while '
+          'MTSPIN ends: given no task\'s end (%s), its band its own (%s), the Executive\'s list as it was (no TB.TXT); a '
+          'click on the Executive: its list again, TB.TXT in it' % (bp, [hex(e) for e in ev if e >= 0xFF10], bw[:1]),
+          bp == (True, True, 0) and cw == 2 and tb0 is None and not lw0 and tb is not None
+          and not any(e in (0xFF10, 0xFF11) for e in ev) and not lw and lx
+          and bw[:1] == ['Type, or choose a command (CODE-? lists them)'] and mb('mw_cur') == 0,
+          (bp, cw, tb0, lw0, tb, ev, bw, lw, lx))
+    for i in (2, 1):                                # each Write: ESC, Return (unchanged)
+        A.click(k, (win(i)[0] + 40) * 8, win(i)[1] + win(i)[3] - 12); k.run_for(0.3)
+        k.key(ktest.ESC); k.run_for(0.3); k.key(ktest.ENTER); k.run_for(0.8)
+    k.settle()
+    fb2 = bytes(k.pc.rd(k.useg, Y['fill_band'], 5))
+    check('both Writes closed: the Executive in front, nothing loaded (run_active 0), the UI block as before, the '
+          'drawing unpatched (%s)' % fb2.hex(), mb('mw_n') == 0 and mb('mw_cur') == 0 and k.rd('run_active', 1) == b'\x00'
+          and A.free_paras(k) == free0 and fb2 == fb0 and mb('mw_cp') == 0 and A.has(k, 'Select a file and confirm')
+          and not k.crashed, (mb('mw_n'), mb('mw_cur'), k.rd('run_active', 1), mb('mw_cp'), k.band(), k.crashed, A.free_paras(k), free0, fb2.hex(), A.screen(k)))
+    # the Executive's text cut by the calculator: right where it shows, the rows its top edge crosses too
+    CS = A.run_syms('apps/CALC.ASM')
+    k.key(A.CODE['K']); k.run_for(0.5)
+    cwin = lambda: tuple(k.pc.u16(k.useg, rec(1, SE_BASE) + CS['win'] + o) for o in (0, 2, 4, 6))
+    k.key(0x6E00, *([ktest.DOWN] * (1 if (cwin()[1] + 4 - 24) % 16 else 2)), ktest.ENTER); k.run_for(0.5)
+    c0 = cwin()
+    A.click(k, 8, 100); k.run_for(0.3)             # (the list: the Executive in front, the click taken)
+    pc0, nt = pix(*c0), [0]
+    def th(pc):
+        if pc.r('cs') == seg and pc.r('ip') == Y['mw_span'] and pc.rd(seg, Y['mw_kind'], 1)[0] == 3: nt[0] += 1
+    k.hooks.append(th)
+    k.key(0x3F00); k.run_for(1.0)                   # (F5: the list again)
+    k.hooks.remove(th)
+    A.point(k, 639, 399)
+    rows = {y: l[:c0[0]] for y, l in k.ocr() if 24 <= y < 24 + 13 * 16}
+    want = [n.split('.')[0] for n in k.exec_list()[k.u16('top'):k.u16('top') + 13]]
+    seen = [n for n in want if any(r[:40].split()[:1] == [n] for r in rows.values())]
+    check('the calculator moved so its top edge (y %d) crosses a list row; the Executive in front, F5: its list drawn '
+          'again around the calculator, every name left of it there (%d of %d), the row its edge crosses drawn a row at a '
+          'time (%d rows of glyphs), the calculator not touched' % (c0[1], len(seen), len(want), nt[0]), (c0[1] - 24) % 16
+          and seen == want and nt[0] > 0 and pix(*c0) == pc0 and mb('mw_cur') == 0, (c0, seen, want, nt[0], pix(*c0) == pc0))
+    k.select('LODE.SYS')                            # (Return on it: only "nothing opens it")
+    k.key(0x6E00, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.ENTER); k.run_for(0.5)
+    c1 = cwin()
+    A.click(k, (c0[0] + 5) * 8, c0[1] + 8); k.run_for(0.3)     # (its title strip)
+    c2, cc = cwin(), mb('mw_cur')
+    k.key(ktest.ESC); k.run_for(0.5); k.settle()
+    check('the Executive in front: CODE-F7, Left x3, Return don\'t move the calculator (%s), a session\'s window; a click on '
+          'its title strip: the calculator in front (%d), not moved either (%s); ESC: closed' % (c1[:2], cc, c2[:2]),
+          c1 == c0 and cc == 1 and c2 == c0 and mb('mw_n') == 0, (c0, c1, cc, c2, mb('mw_n')))
+
 def t_write():
     print('== Write as a window (M8b): beside the calculator and another Write, moved and resized')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
@@ -3367,15 +3527,19 @@ def t_write():
           'down a row (%s); Write given EV_SIZE each time, not the key or the click' % (w3, s3), w3 == (2, 32, 74, 280)
           and s3 == (4, 292) and mb('mw_cur') == 1 and ev3 == [0xFF04], (w3, s3, [hex(e) for e in ev3], A.screen(k)))
     A.click(k, 4, 72); k.run_for(0.3)              # (left of it, on the Executive: row 1's height)
-    sc = at('Line 1 of 5')
+    sc, ce, be = at('Line 1 of 5'), mb('mw_cur'), k.band()
+    A.click(k, 40 * 8, 292 + 8); k.run_for(0.3)    # (its status line: Write in front again)
+    cw = mb('mw_cur')
     k.key(0x6F00, ktest.LEFT, ktest.UP, ktest.ESC); k.run_for(0.5)
     we = win(1)
     k.key(0x6F00, *([ktest.LEFT] * 70), ktest.ENTER); k.run_for(0.5)
     wm = win(1)
     k.key(0x6F00, *([ktest.RIGHT] * 50), ktest.ENTER); k.run_for(0.5)
-    check('a click left of it (on the Executive) moves no cursor (%s); CODE-F8, Left, Up, ESC: as it was (%s); CODE-F8, '
-          'Left x70: no narrower than 24 columns (%s); Right x50: back (%s)' % (sc, we, wm, win(1)), sc == (4, 292)
-          and we == (2, 32, 74, 280) and wm == (2, 32, 24, 280) and win(1) == (2, 32, 74, 280), (sc, we, wm, win(1), A.screen(k)))
+    check('a click left of it, on the Executive: the Executive in front (M8c), its band (%s), no cursor moved (%s); a '
+          'click on Write\'s status line: Write in front; CODE-F8, Left, Up, ESC: as it was (%s); CODE-F8, Left x70: no '
+          'narrower than 24 columns (%s); Right x50: back (%s)' % (be[:1], sc, we, wm, win(1)), sc == (4, 292) and ce == 0
+          and be[:1] == ['Select a file and confirm'] and cw == 1 and we == (2, 32, 74, 280) and wm == (2, 32, 24, 280)
+          and win(1) == (2, 32, 74, 280), (sc, ce, be, cw, we, wm, win(1), A.screen(k)))
     # one row: the view follows the cursor there; then as big as the screen allows
     k.key(0x7500); k.run_for(0.3)                   # (Ctrl-End: line 5)
     k.key(0x6F00, *([ktest.UP] * 30), ktest.ENTER); k.run_for(0.5)
@@ -3443,11 +3607,14 @@ def t_write():
           and A.has(k, 'Hello. Hi') and A.has(k, 'LCMD') and mb('mw_n') == 2 and s8 == (6, 300)
           and b8[:1] == ['Type, or choose a command (CODE-? lists them)'], (s8, b8, A.screen(k)))
     k.key(A.CODE['Q']); k.run_for(0.3); k.key(ktest.ENTER); k.run_for(1.0)
-    d7, n7 = A.disk_file(k, 'NOTES.TXT'), mb('mw_n')
+    d7, n7, c7 = A.disk_file(k, 'NOTES.TXT'), mb('mw_n'), mb('mw_cur')
+    k.key(0x6D00); k.run_for(0.5)
+    c7b = mb('mw_cur')
     k.key(ktest.ESC); k.run_for(0.5); k.settle()
-    check('CODE-Q, Return in it: NOTES.TXT saved (%r...), the calculator in front (%d running); ESC: the Executive, '
-          'nothing loaded, the UI block as before' % (d7[:16], n7), d7.startswith(b'Hello. Hi The quick brown fox\r\n')
-          and n7 == 1 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and A.free_paras(k) == free0
+    check('CODE-Q, Return in it: NOTES.TXT saved (%r...), the calculator still open (%d running), the Executive in front '
+          '(%d: CODE-F6 put the calculator last, M8c); CODE-F6: the calculator (%d); ESC: the Executive, nothing loaded, '
+          'the UI block as before' % (d7[:16], n7, c7, c7b), d7.startswith(b'Hello. Hi The quick brown fox\r\n')
+          and n7 == 1 and c7 == 0 and c7b == 2 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and A.free_paras(k) == free0
           and A.has(k, 'Select a file and confirm') and not k.crashed, (d7, n7, A.free_paras(k), free0, A.screen(k)))
     k = boot('mt_wr0.img', b'MULTITASK=1\r\n', 88, A.WRITE, mt=None)
     k.key(A.CODE['W']); k.run_for(1.0)
@@ -3822,7 +3989,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
