@@ -376,11 +376,12 @@ crit:   sti
         call    bputs
         pop     ax
         mov     al, ah
-        cmp     al, 2                   ; Abort in our own work: Fail instead
-        jne     .x
-        cmp     byte [child], 0
-        jne     .x
-        mov     al, 3
+        cmp     byte [child], 0         ; Abort or Fail in our own work:
+        jne     .x                      ;  Fail, and the rest of this
+        cmp     al, 1                   ;  command fails without asking
+        je      .x                      ;  again (one question, not one
+        mov     al, 3                   ;  for each call it makes)
+        mov     [crit_q], al
 .x:     mov     bp, sp                  ; the answer into pusha's AX
         mov     [bp+4+14], al           ;  (past ES and DS)
         pop     es
@@ -705,6 +706,7 @@ run_cmd:
         jne     .w
         ret
 .w:     mov     byte [failed], 0
+        mov     byte [crit_q], 0        ; (each command asks again)
         mov     di, cword               ; the first word, upper case
         mov     cx, 70
 .c:     lodsb
@@ -4686,7 +4688,8 @@ errlvl      resb 1
 tmpb        resb 1
 tmpw        resw 1
 crit_ah     resb 1
-crit_q      resb 1                      ; Tab is looking: INT 24h fails
+crit_q      resb 1                      ; INT 24h fails (Tab looking; a
+                                        ;  command answered F or A once)
 crit_al     resb 1
 ampm        resb 1
 vol_drv     resb 1
