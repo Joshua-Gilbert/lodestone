@@ -3246,8 +3246,8 @@ def t_windows():
     k.key(ktest.ESC); k.run_for(0.5)
     n10, c10, ub = mb('mw_n'), mb('mw_cur'), uip()[1]
     check('the tasks in front (CODE-F6), ESC: they close, the calculator in front; the UI block back to the end of its '
-          'slot, the highest left (%s paragraphs, from %s)' % (ub, hi0), ts and n10 == 1 and c10 == 1
-          and hi0 == rec(ts[0], SE_END) // 16 and ub == rec(1, SE_END) // 16 and A.has(k, 'Calculator')
+          'slot, the highest left (%s paragraphs, from %s: the whole segment while they run, M8b)' % (ub, hi0), ts and n10 == 1 and c10 == 1
+          and hi0 == 4096 and ub == rec(1, SE_END) // 16 and A.has(k, 'Calculator')
           and not A.has(k, 'Tasks'), (ts, n10, c10, hi0, ub, hex(rec(1, SE_END))))
     k.key(ktest.ESC); k.run_for(0.5); k.settle()
     au.stop()
@@ -3314,6 +3314,117 @@ def t_windows():
           any(b.startswith("Can't run") for b in be) and re0 == b'\x00' and n0 == 0 and f1 == f0
           and bt[:1] == ["CALC.RUN can't start"] and n1 == 1 and up and A.free_paras(k) == f0 and not k.crashed,
           (be, re0, n0, f0, f1, bt, n1, up, A.free_paras(k)))
+
+def t_write():
+    print('== Write as a window (M8b): beside the calculator and another Write, moved and resized')
+    TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
+    p = os.path.join(A.OUT, 'NOTES.TXT'); open(p, 'wb').write(A.TEXT)
+    k = boot('mt_wr.img', b'MULTITASK=1\r\n', 88, TR, A.CALCRUN, A.WRITE, p, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    rec = lambda i, o: k.pc.u16(seg, Y['mw_ses'] + i * SE_SIZE + o)
+    WS = A.run_syms('apps/WRITE.ASM')
+    def win(i):
+        """Session i's Write window: (W_COL, W_Y, W_W, W_H)."""
+        a = rec(i, SE_BASE) + WS['win']
+        return tuple(k.pc.u16(k.useg, a + o) for o in (0, 2, 4, 6))
+    def at(t):
+        """(column, y) where t is drawn (the pointer out of the way)."""
+        A.point(k, 639, 399)
+        return next(((l.index(t), y) for y, l in k.ocr() if t in l), None)
+    free0 = A.free_paras(k)
+    hdr = open(A.WRITE, 'rb').read(16)
+    k.select('NOTES.TXT'); k.key(ktest.ENTER); k.run_for(1.0)
+    w1, t1, s1 = win(1), at('jumps over'), at('Line 1 of 5')
+    check('Return on NOTES.TXT with MULTITASK=1: Write in a window (%s), a session, its text inside it (%s) and its status '
+          'line (%s), not the whole screen\'s; WRITE.RUN still asks for API 4, with RF_WIN in its header' % (w1, t1, s1),
+          mb('mw_n') == 1 and w1 == (2, 32, 76, 296) and t1 == (3, 72) and s1 == (4, 308) and A.has(k, 'Write: NOTES.TXT')
+          and struct.unpack('<H', hdr[4:6])[0] == 4 and struct.unpack('<H', hdr[14:16])[0] == 1, (w1, t1, s1, A.screen(k)))
+    k.key('Hello. ')
+    k.key(A.CODE['K']); k.run_for(0.5)
+    n2 = mb('mw_n')
+    k.key('2+2'); k.key(ktest.ENTER); k.run_for(0.3)
+    calc = A.has(k, '= 4')
+    k.key(0x6D00); k.run_for(0.5)
+    k.key('Hi '); k.run_for(0.3)
+    check('CODE-K in Write: the calculator beside it (%d running), "2+2" there: = 4; CODE-F6: Write in front, its keys '
+          'its own again' % n2, n2 == 2 and calc and mb('mw_cur') == 1 and A.has(k, 'Hello. Hi') and A.has(k, 'he quick brown'), A.screen(k))
+    ev, dk = [], rec(1, SE_BASE) + WS['do_key']        # (what Write's do_key is given)
+    def evh(pc):
+        if pc.r('ip') == dk and pc.r('cs') == k.useg: ev.append(pc.r('ax'))
+    k.hooks.append(evh)
+    k.key(0x6F00, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.UP, ktest.UP, ktest.ENTER); k.run_for(0.5)
+    w2, s2, b2 = win(1), at('Line 1 of 5'), k.band()
+    ev2 = list(ev)
+    check('CODE-F8, Left x4, Up x2, Return: 4 columns narrower, 2 rows shorter (%s), its status line up with it (%s), its own '
+          'band still (%s), the Executive drawn again around it' % (w2, s2, b2[:1]),
+          w2 == (2, 32, 72, 264) and s2 == (4, 276) and b2[:1] == ['Type, or choose a command (CODE-? lists them)']
+          and A.has(k, 'Hello. Hi') and A.has(k, 'Kind') and ev2 == [0xFF04], (w2, s2, b2, [hex(e) for e in ev2], A.screen(k)))
+    cx, cy = (2 + 72 - 1) * 8 + 4, 32 + 264 - 4
+    A.drag(k, cx, cy, cx + 16, cy + 16); k.run_for(0.3)
+    w3, s3, ev3 = win(1), at('Line 1 of 5'), ev[len(ev2):]
+    k.hooks.remove(evh)
+    check('its bottom-right corner dragged 2 columns right, 16 pixels down: that much bigger (%s), the status line '
+          'down a row (%s); Write given EV_SIZE each time, not the key or the click' % (w3, s3), w3 == (2, 32, 74, 280)
+          and s3 == (4, 292) and mb('mw_cur') == 1 and ev3 == [0xFF04], (w3, s3, [hex(e) for e in ev3], A.screen(k)))
+    A.click(k, 4, 72); k.run_for(0.3)              # (left of it, on the Executive: row 1's height)
+    sc = at('Line 1 of 5')
+    k.key(0x6F00, ktest.LEFT, ktest.UP, ktest.ESC); k.run_for(0.5)
+    we = win(1)
+    k.key(0x6F00, *([ktest.LEFT] * 70), ktest.ENTER); k.run_for(0.5)
+    wm = win(1)
+    k.key(0x6F00, *([ktest.RIGHT] * 58), ktest.ENTER); k.run_for(0.5)
+    check('a click left of it (on the Executive) moves no cursor (%s); CODE-F8, Left, Up, ESC: as it was (%s); CODE-F8, '
+          'Left x70: no narrower than 16 columns (%s); Right x58: back (%s)' % (sc, we, wm, win(1)), sc == (4, 292)
+          and we == (2, 32, 74, 280) and wm == (2, 32, 16, 280) and win(1) == (2, 32, 74, 280), (sc, we, wm, win(1), A.screen(k)))
+    k.key(0x6E00, ktest.RIGHT, ktest.RIGHT, ktest.DOWN, ktest.DOWN, ktest.ENTER); k.run_for(0.5)
+    w4, t4 = win(1), at('Hello. Hi')
+    check('CODE-F7, Right x2, Down x2, Return: moved (%s), the text with it (%s)' % (w4, t4),
+          w4 == (4, 40, 74, 280) and t4 == (5, 64), (w4, t4, A.screen(k)))
+    k.key(A.CODE['W']); k.run_for(1.0)
+    n5, c5 = mb('mw_n'), mb('mw_cur')
+    w5 = win(c5)
+    check('CODE-W in Write: another Write, a new file (%d running, session %d), opening lower and to the right (%s), not '
+          'over the first' % (n5, c5, w5), n5 == 3 and c5 == 3 and w5 == (6, 64, 72, 264) and A.has(k, 'Write: (new)')
+          and win(1) == w4, (n5, c5, w5, A.screen(k)))
+    k.key(A.CODE['X']); k.run_for(0.5)
+    xf = A.has(k, 'Include a file') and k.band()[:1] == ['Transfer: Fill in form and confirm']
+    k.key(ktest.ESC); k.run_for(0.3)
+    k.key(A.CODE['T']); k.run_for(0.5)
+    bt = k.band()
+    k.key(ktest.ENTER); k.run_for(0.3)
+    check('CODE-X: Write\'s Transfer (with MULTITASK=1); CODE-T: the tasks\', which don\'t fit beside two Writes and the '
+          'calculator: "%s" (the segment\'s room, really out)' % bt[:1], xf and bt[:1] == ["TASKS.RUN doesn't fit: close a window first"]
+          and mb('mw_n') == 3, (xf, bt, A.screen(k)))
+    k.key('abc'); k.key(A.CODE['Q']); k.run_for(0.3); k.key(ktest.ENTER); k.run_for(0.3)
+    k.key('W2.TXT'); k.key(ktest.ENTER); k.run_for(1.0)
+    n6, c6, d6 = mb('mw_n'), mb('mw_cur'), A.disk_file(k, 'W2.TXT')
+    check('in the new Write, "abc", CODE-Q, Return, a name, Return: saved (%r), its window gone, the first Write in '
+          'front (%d running, session %d)' % (d6, n6, c6), d6 == b'abc' and n6 == 2 and c6 == 1
+          and not A.has(k, 'Write: (new)') and A.has(k, 'Write: NOTES.TXT'), (d6, n6, c6, A.screen(k)))
+    k.wr('saver_t', struct.pack('<H', 36))
+    for _ in range(40):
+        k.pc.run_for(0.25)
+        if not A.has(k, 'Hello. Hi'): break
+    dark = not A.has(k, 'Hello. Hi')
+    k.wr('saver_t', struct.pack('<H', 5460))
+    k.key(ktest.DOWN); k.run_for(0.5)
+    s8 = at('Line 1 of 5')
+    check('the saver with Write and the calculator (behind it) open, then a key: the Executive and Write\'s text back, '
+          'its status line where it was (%s)' % (s8,), dark and A.has(k, 'Hello. Hi') and A.has(k, 'LCMD')
+          and mb('mw_n') == 2 and s8 == (6, 300), (s8, A.screen(k)))
+    k.key(A.CODE['Q']); k.run_for(0.3); k.key(ktest.ENTER); k.run_for(1.0)
+    d7, n7 = A.disk_file(k, 'NOTES.TXT'), mb('mw_n')
+    k.key(ktest.ESC); k.run_for(0.5); k.settle()
+    check('CODE-Q, Return in it: NOTES.TXT saved (%r...), the calculator in front (%d running); ESC: the Executive, '
+          'nothing loaded, the UI block as before' % (d7[:16], n7), d7.startswith(b'Hello. Hi The quick brown fox\r\n')
+          and n7 == 1 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and A.free_paras(k) == free0
+          and A.has(k, 'Select a file and confirm') and not k.crashed, (d7, n7, A.free_paras(k), free0, A.screen(k)))
+    k = boot('mt_wr0.img', b'MULTITASK=1\r\n', 88, A.WRITE, mt=None)
+    k.key(A.CODE['W']); k.run_for(1.0)
+    check('without LODEMT.SYS (the switch off), CODE-W: Write has the whole screen, as before (its title in the title '
+          'bar, its status line at y 340)', any(y == 0 and 'Write: (new)' in l for y, l in k.ocr())
+          and any(y == 340 and 'Line 1 of 1' in l for y, l in k.ocr()), A.screen(k))
 
 def t_system():
     print('== System: the Multitasking topic (M7b)')
@@ -3682,7 +3793,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

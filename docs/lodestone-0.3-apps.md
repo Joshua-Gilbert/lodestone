@@ -108,7 +108,7 @@
   | Options | CODE-O | automatic indent; tab stops 8 / 4 / 2 |
   | Quit | CODE-Q | save and exit (asks for a name for a new file; .TXT added) |
   | Substitute | CODE-S | form: search, replace, match, direction, Verification (Y / N / S single / A all / ESC) |
-  | Transfer | CODE-T | Save, Write to a file, Include a file |
+  | Transfer | CODE-T (CODE-X with `MULTITASK=1`) | Save, Write to a file, Include a file |
   | Usage | CODE-U | characters, lines, room left |
   | Cancel | CODE-ESC or ESC | exit without saving |
 
@@ -133,6 +133,15 @@
   | cursor keys | about 1.5 ms |
   | Return | about 100 ms |
   | Ctrl-Home / Ctrl-End | about 0.2 s |
+
+- **With `MULTITASK=1`** (M8b, `docs/lodestone-multitasking.md`), Write is a window:
+  - it opens near full width (76 columns, 15 text rows), with its title, rule and status line inside, and the Executive's list around it;
+  - it moves (its title strip, or CODE-F7), closes (its close box, as ESC), and is resized by its bottom-right corner or CODE-F8 and the arrows;
+  - several can be open at once, each with its own file, beside the calculator and the tasks. CODE-W from any window opens another, for a new file. A second one opens a little lower and to the right;
+  - CODE-T is then the Tasks window's, so **Transfer is CODE-X**, and its help says so;
+  - the shadow copy is in a block of its own, as the text is, so each Write takes 11,344 bytes of the UI segment.
+
+  It still asks for UI API 4, so an older core runs it, full-screen. With the switch off it is as it was.
 
 ## GRiD's font (2026-10-06)
 - Joshua asked why Lodestone didn't use the GRiD's built-in fonts. What the 1520 has:
@@ -816,6 +825,15 @@ Joshua's aim: Lodestone's own programs as GUI-style windows, the calculator firs
     - the mouse and the keys share one move routine (`win_mv`);
     - no flag for "an editor waits" (above);
     - and `W_DRAW` isn't told why it is drawn: the calculator compares its window's place with where it drew last.
+
+## Window .RUNs and resizing (with MULTITASK=1, M8, 2026-10-22)
+Only with the switch on; the core with it off ignores all of this. The details are in `docs/lodestone-multitasking.md` (M8a, M8b).
+- **`RUN_FLAGS equ RF_WIN`** after the include puts bit 0 in the header's word 14 (`mkrun.py`; it was always 0, and no core reads it with the switch off). It says the `.RUN` is a window `.RUN`: with `MULTITASK=1` it runs as a session, beside other windows, and doesn't make its starter wait. Its windows then have `W_FLAGS` whatever its `RUN_API`, so Write can keep asking for API 4. CALC, TASKS and WRITE set it; SYSTEM doesn't, and a full-screen `.RUN` such as Paint shouldn't.
+- **`WF_SIZE` (4) in `W_FLAGS`:** the user may resize the window:
+  - by its bottom-right corner (its last column, the bottom 12 pixel rows): a press there drags the outline's corner, snapped to columns and to rows in fours;
+  - by CODE-F8 (6F00h): the arrows widen or narrow it a column, lengthen or shorten it 16 rows; Return keeps the size, ESC leaves it.
+
+  It stays at least 16 columns by 72 rows, on the screen above the band. Then the screen is drawn again (the window's `W_DRAW` at its new size) and `UI_EVENT` returns `EV_SIZE` (0FF04h).
 
 ## Right clicks (UI API 7, 2026-10-21)
 - **What:** `UI_EVENT` and `UI_POLL` give `AX = EV_RCLICK` (FF03h), with BX = x and CX = y as for `EV_CLICK`, for a press of the right button.

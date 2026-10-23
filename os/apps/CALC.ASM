@@ -19,6 +19,8 @@
 ; =====================================================================
 %include "UIAPI.INC"
 RUN_API equ 6                           ; (W_FLAGS: it moves and closes)
+RUN_FLAGS equ RF_WIN                    ; (a window .RUN: with MULTITASK=1 one
+                                        ;  of several at once, M8)
         org     RUN_ORG
 
 WCOL    equ 41                          ; the window, where it first opens

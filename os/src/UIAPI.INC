@@ -160,6 +160,11 @@ FONT_BYTES  equ 96 * 16                 ; a font file (.FNT): exactly this long
 EV_CLICK    equ 0FF01h                  ; a left-button press (BX = x, CX = y)
 EV_MOVED    equ 0FF02h                  ; the top window was moved (API 6): its
                                         ;  W_COL and W_Y are new, and it is drawn there
+EV_SIZE     equ 0FF04h                  ; the top window was resized (MULTITASK=1,
+                                        ;  M8b: a WF_SIZE window's bottom-right
+                                        ;  corner dragged, or CODE-F8 and the arrow
+                                        ;  keys): its W_W and W_H are new, and the
+                                        ;  screen is drawn again (its W_DRAW too)
 EV_RCLICK   equ 0FF03h                  ; a right-button press (API 7: only to a .RUN
                                         ;  that needs API 7).  The core's own waits
                                         ;  ignore it (UI_EDIT, UI_FORM, UI_ASK) or take
@@ -206,6 +211,7 @@ K_F2        equ 3C00h
 K_F5        equ 3F00h
 K_CODE_F6   equ 6D00h                   ; the next window (MULTITASK=1, M8)
 K_CODE_F7   equ 6E00h                   ; move the top window (API 6)
+K_CODE_F8   equ 6F00h                   ; resize the top window (MULTITASK=1, M8b)
 K_CODE_ENTER equ 1C00h
 K_CODE_ESC  equ 0100h
 K_CODE_A    equ 1E00h
@@ -254,6 +260,18 @@ W_TOP       equ 24                      ; first text row inside a titled window
 WF_MOVE     equ 1                       ; the user may move it by its title strip
 WF_CLOSE    equ 2                       ; a close box at the title strip's right
                                         ;  end: a click on it is K_ESC
+WF_SIZE     equ 4                       ; MULTITASK=1 (M8b): the user may resize it
+                                        ;  by its bottom-right corner (or CODE-F8),
+                                        ;  then EV_SIZE.  The core with the switch
+                                        ;  off ignores it
+
+; ---- a .RUN's header flags (RUN_FLAGS equ n after the include) ---------
+RF_WIN      equ 1                       ; a window .RUN: with MULTITASK=1 it runs
+                                        ;  as a session, beside other windows,
+                                        ;  and doesn't make its starter wait (M8);
+                                        ;  its windows have W_FLAGS then, whatever
+                                        ;  its RUN_API (Write's is 4, so an older
+                                        ;  core still runs it, full-screen)
 
 ; ---- list view: LV_SIZE bytes -----------------------------------------
 LV_Y        equ 0                       ; first row's pixel y (multiple of 4)
