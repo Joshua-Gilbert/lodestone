@@ -7,21 +7,26 @@
 ;  times it was entered, and the mean.  PROF itself costs ~30 us a switch,
 ;  counted in the bucket after it.
 ; =====================================================================
-PB_N    equ 11
+PB_N    equ 15
+PS_N    equ 8                           ; how deep PROF n ... PROF 0 nest
 
 prof_names:
-        dw pn0, pn1, pn2, pn3, pn4, pn5, pn6, pn7, pn8, pn9, pn10
-pn0     db 'other (main loop, screen, keys)$'
+        dw pn0, pn1, pn2, pn3, pn4, pn5, pn6, pn7, pn8, pn9, pn10, pn11, pn12, pn13, pn14
+pn0     db 'other (the main loop itself)$'
 pn1     db 'GPIB write (INT 60h 02h)$'
 pn2     db 'GPIB read (INT 60h 03h)$'
 pn3     db 'GPIB polls (05h, 0Bh)$'
 pn4     db 'frame check (Fletcher)$'
-pn5     db 'frame copies (REP MOVSB)$'
+pn5     db 'frame copies (REP MOVSW)$'
 pn6     db 'DOS open / create$'
 pn7     db 'DOS seek$'
 pn8     db 'DOS read / write$'
 pn9     db 'DOS close$'
 pn10    db 'HLT, waiting$'
+pn11    db 'link logic (frames, answers)$'
+pn12    db 'keys$'
+pn13    db 'requests (but their DOS calls)$'
+pn14    db 'ticks, the screen$'
 s_prof  db 'CLPROF.TXT', 0
 s_ph    db 'CLAUDE profile (PIT counts of 838 ns)', 13, 10
         db 'bucket                            total ms   times   mean us', 13, 10, '$'
@@ -31,7 +36,7 @@ prof_start:                             ; PIT channel 0 to mode 2, the clock on
         push    ds
         pop     es
         mov     di, prof_acc
-        mov     cx, PB_N * 3
+        mov     cx, (PB_N + 1) * 3
         xor     ax, ax
         rep     stosw
         pop     es
@@ -47,6 +52,17 @@ prof_start:                             ; PIT channel 0 to mode 2, the clock on
         mov     [prof_t0], ax
         mov     [prof_t0+2], dx
         mov     byte [prof_cur], 0
+        mov     byte [prof_sp], 0
+        ret
+
+prof_rebase:                            ; the clock was set: time from here on
+        push    ax
+        push    dx
+        call    prof_now
+        mov     [prof_t0], ax
+        mov     [prof_t0+2], dx
+        pop     dx
+        pop     ax
         ret
 
 prof_now:                               ; DX:AX = the BIOS tick, the PIT count
@@ -86,7 +102,7 @@ prof_now:                               ; DX:AX = the BIOS tick, the PIT count
         pop     bx
         ret
 
-prof_sw:                                ; AL = the bucket from now on
+prof_sw:                                ; AL = the bucket from now on, 0: back
         push    bx
         push    cx
         push    dx
@@ -107,11 +123,28 @@ prof_sw:                                ; AL = the bucket from now on
         shl     bx, 2
         add     [prof_acc+bx], ax
         adc     [prof_acc+bx+2], dx
-        mov     [prof_cur], cl
-        mov     bl, cl
+        or      cl, cl                  ; 0: the bucket before
+        jnz     .push
+        mov     bl, [prof_sp]
+        or      bl, bl
+        jz      .set                    ; (none: 0)
+        dec     bl
+        mov     [prof_sp], bl
+        xor     bh, bh
+        mov     cl, [prof_stk+bx]
+        jmp     short .set
+.push:  mov     bl, [prof_sp]
+        cmp     bl, PS_N
+        jae     .cnt                    ; (too deep: no way back past here)
+        xor     bh, bh
+        mov     al, [prof_cur]
+        mov     [prof_stk+bx], al
+        inc     byte [prof_sp]
+.cnt:   mov     bl, cl
         xor     bh, bh
         shl     bx, 1
         inc     word [prof_cnt+bx]
+.set:   mov     [prof_cur], cl
         pop     si
         pop     dx
         pop     cx
@@ -120,7 +153,7 @@ prof_sw:                                ; AL = the bucket from now on
 
 ; the PIT back to mode 3, and CLPROF.TXT written
 prof_end:
-        PROF    0                       ; (the last stretch counted)
+        PROF    15                      ; (the last stretch counted: in no bucket)
         cli
         mov     al, 36h
         out     43h, al

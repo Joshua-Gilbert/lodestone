@@ -114,6 +114,7 @@ class Link:
         s.last_rx = time.monotonic()
         s.grid_maxpay = 1024
         s.grid_rx = glp.GRID_RX_DEFAULT       # payload the GRiD reads (its HELLO's rx=)
+        s.grid_req = glp.GRID_REQ_DEFAULT     # the biggest REQUEST it takes (its HELLO's req=)
         s.grid_fcs = False                    # the GRiD's HELLO offered the Fletcher sum
         s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
         s.grid_wake = False                   # the GRiD's HELLO said it POLLs when the bridge rings (GF_WAKE)
@@ -290,6 +291,7 @@ class Link:
             if mt == glp.G_HELLO and len(body) >= 4:
                 s.grid_maxpay = body[2] | (body[3] << 8)
                 s.grid_rx = glp.hello_rx(body)
+                s.grid_req = glp.hello_req(body)
                 s.grid_fcs = bool(body[1] & glp.GF_FCS)
                 s.grid_wake = bool(body[1] & glp.GF_WAKE)
             if mt != glp.G_POLL:

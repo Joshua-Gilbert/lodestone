@@ -131,7 +131,8 @@ def test_irq5_storm_masks_it():
 
 
 def test_driver_frame_check():
-    """GPIB driver 1.23 keeps the frame check as it moves the bytes: CLAUDE checks every frame from the Pi by
+    """GPIB driver 1.23 keeps the frame check as it moves the bytes (and CLAUDE 1.5 takes 8 KB write requests,
+    req= in its HELLO, so this 22 KB file goes in three): CLAUDE checks every frame from the Pi by
     the driver's sum (03h AL=2, ks_check: none left for find_frame's scan), and its own frames go out with the
     check the driver added (02h AL=3), every one good at the Pi.  A 22 KB file each way."""
     big = ''.join('line %05d: the quick brown fox jumps over the lazy dog\n' % i for i in range(400))
@@ -141,6 +142,7 @@ def test_driver_frame_check():
                                                                    'view_range': [395, 400]})),
                  T.reply(('text', 'Written and checked.'))], mode='edits', bridge='pico')
     assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 1, (h.var('ksum', 1), h.var('use_fl', 1))
+    assert h.link.grid_req == 8700, h.link.grid_req      # (CLAUDE 1.5's HELLO: req=, so 8 KB write requests)
     k0, st0 = h.var('n_kok', 2), dict(h.link.stats)
     assert h.turn('write a big file', sim_s=120)
     assert bytes(h.m.fs['A:\\BIG.TXT']) == big.replace('\n', '\r\n').encode()
