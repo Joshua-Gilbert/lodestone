@@ -63,6 +63,8 @@ BOXW     equ 70
 %define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi; not in RCON)
 %define TERM_PIXELS              ; (TERMCELL.INC: pictures, CELLS op FDh; not in RCON)
 %define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23; not in RCON)
+%define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer; not in RCON)
+%define KBD_EVERY 6000           ; (TERMKEYS.INC: keys every ~2.5 ms while the link is busy; not in RCON)
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -3906,6 +3908,8 @@ n_failrun   resb 1
 n_bad       resw 1
 spoll_errs  resb 1
 pit_last    resw 1
+kbd_pit     resw 1                      ; (KBD_EVERY: when the keys were last looked at)
+kbd_tick    resw 1
 pit_tick    resw 1
 irq_ptr     resw 2                      ; the GPIB driver's SRQ count (AH=0Eh), seg 0: none
 srq_seen    resw 1                      ;  as it was at the last look
