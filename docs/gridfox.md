@@ -228,6 +228,14 @@ shorts, an embed):
    click start sound (`media.autoplay.default` is 5), and a WebDriver click
    counts as one.
 
+**The relay (2026-10-23).** On the Pi, most videos then failed with "Firefox
+could not play this video". The file's address only works for the YouTube app
+yt-dlp claimed to be: YouTube checks the request's headers and answered
+Firefox with 403 (seen with curl on the Pi). So Firefox doesn't fetch the file.
+A relay inside gridfox, on `127.0.0.1`, fetches it with yt-dlp's headers, in
+pieces of at most 10 MB as yt-dlp does, and Firefox plays the relay's
+address. Firefox's Range requests go on to YouTube, so seeking still works.
+
 On that page, a click or Space plays and pauses, Left and Right skip 10 s,
 and Back (Ctrl-B, or Left in the text view) returns to YouTube. The file's
 address is good for some hours, from this Pi only.
@@ -236,8 +244,15 @@ address is good for some hours, from this Pi only.
 ```
 ~/gridlink/venv/bin/pip install -U "yt-dlp[default]"
 ```
-For YouTube, yt-dlp also needs a JavaScript runtime: deno, or node (gridfox
-enables node as well as yt-dlp's default, deno). YouTube changes often, so
+For YouTube, yt-dlp also needs a JavaScript runtime, or it finds no formats
+("Requested format is not available"). Install deno where gridlink's service
+can find it (its PATH has no `~/.deno/bin`):
+```
+sudo apt-get install -y unzip
+curl -fsSL https://deno.land/install.sh | sh -s -- -y --no-modify-path
+sudo ln -sf ~/.deno/bin/deno /usr/local/bin/deno
+```
+gridfox also enables node, if that is on the PATH instead. YouTube changes often, so
 when Y stops working, the first thing to try is `pip install -U` again.
 
 Tested against a stand-in yt-dlp and the stand-in Firefox

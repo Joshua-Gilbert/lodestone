@@ -507,10 +507,12 @@ class App:
             s.status = 'Y plays a YouTube video on its own: open the video\'s page first.'; s.draw(); return
         s.busy = 'Finding the video (yt-dlp)'; s.draw()
         try:
-            src, title = V.find(s.url, profile=s.profile)
+            src, title, headers = V.find(s.url, profile=s.profile)
         except V.NotFound as e:
-            s.busy = ''; s.status = 'Y: %s' % _short(e); s.draw(); return
-        s.go(V.write_page(src, title, os.path.dirname(s.view_path)))
+            s.busy = ''
+            if s.picture: s.picture_view(False)  # (the picture covers the status line: the text, to say why)
+            s.status = 'Y: %s' % _short(e); s.draw(); return
+        s.go(V.write_page(V.serve(src, headers), title, os.path.dirname(s.view_path)))
         if s.pictures and not s.picture: s.picture_view(True)
         try:
             s.b.click_at(8, 8)                   # (a person's click: Firefox lets it start the sound)
@@ -741,7 +743,8 @@ class App:
             s.shown[r] = (text, attr)
             parts.append('\x1b[%d;1H' % (r + 1) + _sgr_line(text, attr))
         title = s.model.get('title') or s.url
-        if s.picture: title = '%s  (Esc: text)' % _fit(title, BAND - 13)   # (the hint must show)
+        if s.picture:                            # (the band is all that shows over the picture)
+            title = (_fit(s.busy, BAND - 1) + '…') if s.busy else '%s  (Esc: text)' % _fit(title, BAND - 13)
         if title != s.title_sent:
             s.title_sent = title
             parts.append('\x1b]0;%s\x07' % P.clean(title).replace('\x07', '')[:70])
