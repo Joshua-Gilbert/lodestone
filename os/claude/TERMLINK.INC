@@ -189,7 +189,9 @@ frame_next:
         add     si, [bx+8]
         mov     ds, [bx+2]
         push    cx
+        PROF    5
         rep     movsb
+        PROF    0
         pop     cx
         pop     ds
         push    cx
@@ -218,7 +220,9 @@ lw_go:
         mov     bl, [nano]
         mov     al, 1                   ; EOI with the last byte
         mov     ah, 02h
+        PROF    1
         call    gg_call
+        PROF    0
         jnc     .ok
         jmp     link_fail
 .ok:    mov     ax, [now]
@@ -250,7 +254,9 @@ link_wait:
         je      .x
         jmp     short .poll
 .t0:    mov     ah, 0Bh                 ; SRQ since the last call?
+        PROF    3
         call    gg_call
+        PROF    0
         jc      .chk
         or      ax, ax
         jnz     .poll
@@ -262,7 +268,9 @@ link_wait:
 .poll:  call    pit_mark
         mov     bl, [nano]
         mov     ah, 05h
+        PROF    3
         call    gg_call                 ; AL = status byte
+        PROF    0
         jc      .perr
         mov     byte [spoll_errs], 0
         test    al, 40h
@@ -285,7 +293,9 @@ link_read:
         mov     bl, [nano]
         xor     al, al                  ; binary: stop at EOI only
         mov     ah, 03h
+        PROF    2
         call    gg_call
+        PROF    0
         jc      .bad
         mov     [rxn], cx
         call    find_frame
@@ -507,7 +517,16 @@ delay_ms:
 ; A frame's check over DS:SI, CX bytes -> AX: CRC-16 until the Pi's HELLO
 ; agrees to the Fletcher sum (use_fl; link_reset clears it, so HELLO and its
 ; answer always go with the CRC).  Destroys BX SI CX.
-fcs:    cmp     byte [use_fl], 0
+%ifdef PROFILE
+fcs:    PROF    4
+        call    fcs_
+        PROF    0
+        ret
+fcs_:
+%else
+fcs:
+%endif
+        cmp     byte [use_fl], 0
         je      crc16
 ; Fletcher-16 with 8-bit sums: A = 1 + the bytes, B = the sum of the A's,
 ; both mod 256 (the registers' own wrap: no modulo step at all, where
