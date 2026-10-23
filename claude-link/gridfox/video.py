@@ -51,7 +51,7 @@ def find(url, profile=None, run=subprocess.run, cmd=None):
     base = cmd or command()
     if not base:
         raise NotFound('yt-dlp is not installed on the Pi (pip install "yt-dlp[default]")')
-    args = base + ['--no-playlist', '--no-warnings', '--js-runtimes', 'node', '-f', FORMAT,
+    args = base + ['--no-playlist', '--js-runtimes', 'node', '-f', FORMAT,
                    '-O', '%(.{title,url,duration})j', url]
     tries = [args]
     if profile and os.path.isdir(profile):
@@ -82,10 +82,12 @@ def _parse(out):
 
 def _why(err):
     lines = [l.strip() for l in (err or '').splitlines() if l.strip()]
-    errs = [l for l in lines if l.startswith('ERROR')] or lines
+    errs = [l for l in lines if l.startswith('ERROR')] or [l for l in lines if not l.startswith('WARNING')]
+    # without a JavaScript runtime YouTube's formats are locked: yt-dlp only warns, then finds none
+    if 'javascript runtime' in (err or '').lower():
+        return 'yt-dlp needs deno on the Pi for YouTube (see docs/gridfox.md)'
     if not errs: return ''
     t = re.sub(r'^ERROR:\s*(\[[^\]]*\]\s*)?([\w-]{6,}:\s*)?', '', errs[-1])
-    if 'js' in t.lower() and 'runtime' in t.lower(): t += ' (install deno or node on the Pi)'
     return t[:160]
 
 
