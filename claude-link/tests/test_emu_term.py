@@ -143,7 +143,8 @@ def test_term_repaint_and_run():
         assert res['r']['exit'] == 0, res
         assert h.m.mode() == 0x40
         assert in_step(h), mismatch(h)
-        assert 'CODE-Q quits' in h.screen().split('\n')[24]
+        # (the status line is drawn as CLAUDE carries on after its REPLY: the emulator may stop mid-line)
+        assert h.run_until(lambda: 'CODE-Q quits' in h.screen().split('\n')[24], 2), h.screen().split('\n')[24]
         check(h)
     finally:
         h.close()

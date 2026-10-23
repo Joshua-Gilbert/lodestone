@@ -115,7 +115,8 @@ def test_held_replies():
     h0, t0 = big_turn()
     h, t = big_turn(bridge='pico-hold')
     st = h.link.stats
-    assert h.transport.proto.holds and st['tx_held'] >= 8, (h.transport.proto.firmware, st)
+    # (CLAUDE 1.6: the 22 KB file goes as a 16 KB request of five 3340-byte frames and a 6 KB one of two: 4 + 1)
+    assert h.transport.proto.holds and st['tx_held'] >= 5, (h.transport.proto.firmware, st)
     assert h.nano.n_held == st['tx_held'] == h.transport.proto.stats['held'], (h.nano.n_held, st)
     assert not h.nano.violations, h.nano.violations
     assert abs(t - t0) < 0.5, (t, t0)          # (the emulation doesn't time the Pi: no gain shows here)
