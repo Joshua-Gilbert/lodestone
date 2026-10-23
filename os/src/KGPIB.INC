@@ -121,7 +121,8 @@ gp_NFUNC   equ ($-gp_functab)/2         ;  bad-function answer, as it is built i
 ; ---- function bodies: return AX (and CX/DX where documented) -------
 gp_f_present:
         mov     ax, 4747h
-        mov     cx, 0121h               ; LODESTONE: 1.2x = built into the kernel (1.21: IRQ, 0Eh)
+        mov     cx, 0122h               ; LODESTONE: 1.2x = built into the kernel (1.21: IRQ, 0Eh;
+                                        ;  1.22: GPIBLOOP's fast loops)
         mov     dh, 60h                 ; (the only vector it is put on)
         mov     dl, gp_MYADDR
         jmp     gp_done
@@ -411,10 +412,23 @@ gp_do_write:
 .x:     mov     cx, [gp_done_n]
         ret
 
-; Fast path for the bulk of a write: a tight loop on ISR1 DO, the byte
-; out as soon as the chip takes the last one.  Leaves the last byte (it
-; may need EOI) and anything unusual (ERR, a slow listener) to the
-; careful loop above, which picks up at [gp_done_n] with ES:SI.
+; (LODESTONE: the two fast loops, as GPIBLOOP measured them fastest on the
+; 1520.  Both are CPU-bound: the bus keeps up, so every clock counts, and
+; on the 286 a taken jump (the prefetch queue refilled) costs ~0.6 us.  So
+; a byte that is ready costs one taken jump, LOOP's, and so does a write's
+; poll that misses (a read's first poll does not miss).  The counts are
+; kept in registers and [gp_done_n] is settled from SI/DI at the end.  The
+; pad bytes put the jump targets at the parity they were measured at
+; (they are executed once a call, if at all).
+; GPIBLOOP 1.4-1.6: read 70 -> 152 KB/s, write 77 -> 119.)
+;
+; Fast path for the bulk of a write: the next byte is fetched while the bus
+; handshakes, so DO -> OUT is three instructions, and a poll that misses
+; costs one taken jump (back to the count just above the poll).  Polls DO
+; alone; every 64 misses it looks for ERR (no listener: out at once), and
+; 256 such waits send it to the careful loop.  Leaves the last byte (it
+; may need EOI) and anything unusual to the careful loop above, which picks
+; up at [gp_done_n] with ES:SI.
 gp_fast_write:
         mov     cx, [gp_count]
         sub     cx, [gp_done_n]
@@ -423,76 +437,110 @@ gp_fast_write:
         dec     cx                      ; not the last byte
         push    bx
         push    di
+        push    si
         mov     dx, gp_R_ISR1
         mov     bh, [gp_shadow1]
-.n:     mov     di, 20000               ; ~ 40 ms of polling, then slow path
-.w:     in      al, dx
-        or      bh, al
-        test    bh, gp_ISR1_DO | gp_ISR1_ERR
-        jnz     .g
-        dec     di
-        jnz     .w
-        jmp     short .out
-.g:     test    bh, gp_ISR1_ERR
-        jnz     .out
-        and     bh, ~gp_ISR1_DO
         es lodsb
+        mov     ah, al
+        mov     di, 64
+        xor     bl, bl                  ; 256 waits of 64 polls
+        test    bh, gp_ISR1_DO
+        jz      .w
+        and     bh, ~gp_ISR1_DO
+        jmp     short .put
+        times ($ + 5 - $$) & 1 db 90h   ; .w even, .put odd
+.r:     or      bh, al                  ; a miss (ERR is cleared as it is read)
+        dec     di
+        jz      .c
+.w:     in      al, dx
+        test    al, gp_ISR1_DO
+        jz      .r
+.put:   mov     al, ah
         mov     dh, gp_R_CDOR >> 8
         out     dx, al
         mov     dh, gp_R_ISR1 >> 8
-        inc     word [gp_done_n]
-        loop    .n
-.out:   mov     [gp_shadow1], bh
+        es lodsb                        ; (the last byte, after the last)
+        mov     ah, al
+        mov     di, 64
+        loop    .w
+        jmp     short .o
+.c:     mov     di, 64                  ; 64 misses: ERR?  256 times?
+        test    bh, gp_ISR1_ERR
+        jnz     .o                      ; (ERR: the careful loop says NOL)
+        dec     bl
+        jnz     .w
+.o:     dec     si                      ; (the byte fetched, not sent)
+        mov     [gp_shadow1], bh
+        mov     ax, si
+        pop     di                      ; (SI as it came)
+        sub     ax, di
+        add     [gp_done_n], ax
         pop     di
         pop     bx
 .x:     ret
 
-; Fast path for the bulk of a read: while at least three bytes of room are
-; left, a tight loop on ISR1 DI.  Stops on END or LF-stop (CF set) or at the
-; last two bytes / anything slow (CF clear: the careful loop goes on from
-; [gp_done_n] with ES:DI).
+; Fast path for the bulk of a read: all but the last two bytes of room (the
+; careful loop holds off the one that fills the buffer), normal handshake.
+; A byte that is there costs no taken jump but LOOP's; the wait is out of
+; line.  END (the chip's, or LF with REOS when stopping at LF) stops it
+; with CF set and [gp_endr] 1 or 2; at the count or anything slow, CF clear
+; and the careful loop goes on from [gp_done_n] with ES:DI.
 gp_fast_read:
-        push    bx
+        mov     cx, [gp_count]
+        sub     cx, [gp_done_n]
+        sub     cx, 2
+        ja      .go
+        clc
+        ret
+.go:    push    bx
         push    si
+        push    di
         mov     dx, gp_R_ISR1
         mov     bh, [gp_shadow1]
-.n:     mov     ax, [gp_done_n]
-        add     ax, 3
-        cmp     ax, [gp_count]
-        ja      .slow
-        mov     si, 20000
+        times ($ - $$) & 1 db 90h       ; .w and .g even
 .w:     in      al, dx
         or      bh, al
         test    bh, gp_ISR1_DI
-        jnz     .g
-        dec     si
-        jnz     .w
-        jmp     short .slow
-.g:     mov     ah, bh
-        and     bh, ~(gp_ISR1_DI | gp_ISR1_END)
-        mov     dh, gp_R_DIR >> 8
-        in      al, dx
+        jz      .s
+.g:     mov     dh, gp_R_DIR >> 8
+        in      al, dx                  ; (and the talker sends the next)
         mov     dh, gp_R_ISR1 >> 8
         stosb
-        inc     word [gp_done_n]
+        test    bh, gp_ISR1_END
+        jnz     .end
+        and     bh, ~gp_ISR1_DI
+        loop    .w
+        jmp     short .slow
+.s:     mov     si, 20000               ; ~ 40 ms, then the careful loop
+.s2:    in      al, dx
+        or      bh, al
+        test    bh, gp_ISR1_DI | gp_ISR1_END
+        jnz     .e
+        dec     si
+        jnz     .s2
+.slow:  xor     bl, bl
+        jmp     short .t
+.e:     test    bh, gp_ISR1_DI
+        jnz     .g
+        mov     ah, 1                   ; END after the last byte's DI
+        jmp     short .st
+.end:   mov     ah, 1
         cmp     al, 0Ah
-        jne     .ne
+        jne     .st
         test    byte [gp_lfstop], 1
-        jz      .ne
-        mov     byte [gp_endr], 2
-        jmp     short .stop
-.ne:    test    ah, gp_ISR1_END
-        jz      .n
-        mov     byte [gp_endr], 1
-.stop:  mov     [gp_shadow1], bh
+        jz      .st
+        inc     ah                      ; 2: stopped at LF
+.st:    mov     [gp_endr], ah
+        and     bh, ~(gp_ISR1_DI | gp_ISR1_END)
+        mov     bl, 1
+.t:     mov     [gp_shadow1], bh
+        mov     ax, di
+        pop     si                      ; (DI as it came)
+        sub     ax, si
+        add     [gp_done_n], ax
+        shr     bl, 1                   ; CF: stopped
         pop     si
         pop     bx
-        stc
-        ret
-.slow:  mov     [gp_shadow1], bh
-        pop     si
-        pop     bx
-        clc
         ret
 
 ; read from device BL into ES:DI, max CX.  AX = error, CX = count, DL = end

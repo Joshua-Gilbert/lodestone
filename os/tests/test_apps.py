@@ -351,7 +351,7 @@ def t_system():
     k.key('D')
     check('Devices: 80287XL (pcemu\'s is 387-class), BIOS, panel, mouse', has(k, '80287XL') and has(k, '10/25/89') and has(k, 'Plasma 640x400') and has(k, 'COM2'), screen(k))
     k.key('G')
-    check('GPIB: the built-in driver, SRQ on IRQ 5', has(k, 'built in, version 1.21, INT 60h') and has(k, '21')
+    check('GPIB: the built-in driver, SRQ on IRQ 5', has(k, 'built in, version 1.22, INT 60h') and has(k, '21')
           and has(k, 'on IRQ 5'), screen(k))
     k.key(ktest.ENTER); k.key(ktest.ENTER, settle=False); k.settle(30)
     shot(k, 'system_gpib')

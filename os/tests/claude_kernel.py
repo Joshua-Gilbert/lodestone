@@ -104,6 +104,8 @@ class KernelHarness(G.EmuHarness):
             s.link = Link(s.transport, s.session.on_message, log=s.log.append, hold=0.0)
             s.session.attach(s.link)
             threading.Thread(target=s.session.run, daemon=True).start()
+        s.link.clock = lambda: s.m.us / 1e6        # (ring_check's times: the GRiD's, simulated)
+        if hasattr(s.transport, 'proto'): s.transport.proto.clock = s.link.clock
         s.sym = G.symbols(os.path.splitext(claude_com)[0] + '.MAP')
         s.font = G.Font(open(claude_com, 'rb').read(), s.sym['font'] - 0x100)
         s.answer = answer

@@ -213,6 +213,7 @@ view stays the default: it is the fast one.
 | A new page (the long test page), bytes to the GRiD | 563-587 |
 | One screen down | 318-337 |
 | At 3.2 KB/s (stock bridge) | about 0.18 s and 0.1 s |
+| At 70 KB/s (Pico 2 bridge, measured on the 1520), a round trip included | about 15 ms and 11 ms |
 | The picture view: the index page (the stand-in's picture of it) | 2,440 |
 | Its next screen (PgDn) / three rows down | 1,914 / 675 |
 | A page that changes by itself, in GridSim (a fast link) | 11 whole frames in 3 s, against 2 at the idle pace |
