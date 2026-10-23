@@ -237,7 +237,8 @@ every byte checked.
 | SRQ on IRQ 5 (Lodestone's GPIB driver 1.21, CLAUDE 1.3) | 7.0 ms | 9 ms median | 44.9 KB/s | 56.7 KB/s |
 | the driver's fast loops (1.22, GPIBLOOP) | 6.4 ms | 8 ms median | 70.2 KB/s | 73.3 KB/s |
 | the driver's frame check (1.23, CLAUDE 1.4) | 6.0 ms | 8 ms median | 73.6 KB/s | 82.2 KB/s |
-| bridge fw 2026-10-23a: EARLY answers (read while the rest crosses USB) | **6.0 ms** | **8 ms** median | **87.2 KB/s** | **81.9 KB/s** |
+| bridge fw 2026-10-23a: EARLY answers (read while the rest crosses USB) | 6.0 ms | 8 ms median | 87.2 KB/s | 81.9 KB/s |
+| CLAUDE 1.5: 8 KB write requests, the next frame straight after an answer | **6.0 ms** | **8 ms** median | **89.4 KB/s** | **82.1 KB/s** |
 
 - **What was slow:** gridlink's Pico transport waited out a 20 ms read for
   every message. A REPLY was answered NOP at once, so the next request waited
