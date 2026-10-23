@@ -3486,7 +3486,7 @@ def t_base():
           'again around the calculator, every name left of it there (%d of %d), the row its edge crosses drawn a row at a '
           'time (%d rows of glyphs), the calculator not touched' % (c0[1], len(seen), len(want), nt[0]), (c0[1] - 24) % 16
           and seen == want and nt[0] > 0 and pix(*c0) == pc0 and mb('mw_cur') == 0, (c0, seen, want, nt[0], pix(*c0) == pc0))
-    # the form's outline (XOR) cut by the calculator: drawn left of it, taken off exactly
+    # the form's outline (a box of lines) cut by the calculator: drawn left of it, taken off exactly
     A.click(k, (c0[0] + 5) * 8, c0[1] + 8); k.run_for(0.3)    # (the calculator in front: moved over the form)
     k.key(0x6E00, *([ktest.LEFT] * 28), ktest.ENTER); k.run_for(0.5)
     c0 = cwin()
