@@ -2371,7 +2371,7 @@ def t_cmdsaver():
     orig, st = type(k.pc).int13, {'out': True, 'n': 0}
     def int13(s):
         if st['out'] and s.r('dl') == 0 and s.r('ah') in (2, 3, 4, 0x16):
-            st['n'] += 1
+            st['n'] += s.r('ah') != 0x16                # (reads tried, not the change line's looks)
             s.w('ax', 0x0600 if s.r('ah') == 0x16 else 0x8000); s.cf(1); return
         return orig(s)
     type(k.pc).int13 = int13
