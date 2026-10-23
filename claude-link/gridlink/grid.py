@@ -20,7 +20,8 @@ GPIB_ERRORS = {1: 'timeout', 2: 'no listener at that address', 3: 'GRiD is not t
                4: 'bad function', 5: 'no data (read timeout)', 6: 'GPIB driver busy'}
 
 READ_CHUNK = 8192
-WRITE_CHUNK = 4000
+WRITE_CHUNK = 4000      # a CLAUDE before 1.5 takes 4,700-byte requests: 4,000 bytes and a path
+BIG_WRITE_CHUNK = 8192  # CLAUDE 1.5 says req=8700: each write request's DOS open, seek and close goes for twice as much
 
 
 class GridError(Exception):
@@ -119,13 +120,18 @@ class Grid:
         n = struct.unpack('<H', r[:2])[0] if len(r) >= 2 else len(data)
         if n != len(data): raise GridError('disk full (wrote %d of %d bytes)' % (n, len(data)), 0xF4)
 
+    def write_chunk(s):
+        req = getattr(s.link, 'grid_req', glp.GRID_REQ_DEFAULT)
+        return BIG_WRITE_CHUNK if req >= BIG_WRITE_CHUNK + 300 else WRITE_CHUNK
+
     def write_file(s, path, data, progress=None):
         data = bytes(data)
-        s.write(path, data[:WRITE_CHUNK], mode=0)
-        done = min(len(data), WRITE_CHUNK)
+        chunk = s.write_chunk()
+        s.write(path, data[:chunk], mode=0)
+        done = min(len(data), chunk)
         while done < len(data):
-            s.write(path, data[done:done + WRITE_CHUNK], mode=2)
-            done += WRITE_CHUNK
+            s.write(path, data[done:done + chunk], mode=2)
+            done += chunk
             if progress: progress(min(done, len(data)))
 
     def write_file_safe(s, path, data, progress=None):
