@@ -619,10 +619,13 @@ class Audit:
         cur = pc.rd(s.seg, Y['mt_cur'], 1)[0]
         reg = pc.u16(s.seg, Y['mt_tab'] + cur * MT_ENT + 4)
         ui, psp, root = pc.u16(0x60, Y['ui_seg']), pc.u16(0x60, Y['cur_psp']), pc.u16(0x60, Y['root_psp'])
-        r = dict(cs=cs < 0xA000 and cs not in (0x60, s.seg) and (cs != ui or ip in (Y['..@ui_idle'], Y['..@ui_sidle'])),
+        ts = pc.u16(s.seg, Y['mt_tsrs'])                # (Resident Claude's stub, MT_TSR: only at its HLT, not
+        stub = ts != 0 and cs == ts                     #  on the UI's stack)
+        r = dict(cs=cs < 0xA000 and cs not in (0x60, s.seg) and (cs != ui or ip in (Y['..@ui_idle'], Y['..@ui_sidle']))
+                 and (not stub or (ip == pc.u16(s.seg, Y['mt_tsro']) and ss != ui and pc.rd(cs, ip - 1, 1) == b'\xf4')),
                  iff=bool(fl & 0x200), isr=pc.isr == 0, indos=pc.rd(0x60, Y['indos'], 1)[0] == 0,
                  busy=pc.rd(ui, Y['m33_busy'], 1)[0] == 0, ss=s.mine(ss, cur, reg, psp, root, ui),
-                 own=cs == ui or s.mine(cs, cur, reg, psp, root, ui))
+                 own=cs == ui or stub or s.mine(cs, cur, reg, psp, root, ui))
         return r, cur
     def watch(s, a):
         if s.prev: s.prev(a)
@@ -3164,17 +3167,34 @@ def t_rclaude():
     stub = R.stub_seg(k)
     rmt = (k.pc.u16(stub, R.csym('r_mt')), k.pc.u16(stub, R.csym('r_mt') + 2))
     check('CLAUDE /R at CODE-P\'s prompt: resident (stub version 3); MT_TSR: MT has its key wait (%04X:%04X), the stub '
-          'MT\'s two bytes (front, running)' % tsr(), 'Claude is resident' in o and k.pc.rd(stub, 0x104, 1) == b'\x03'
+          'MT\'s three bytes (front, running, the pop-up waiting)' % tsr(), 'Claude is resident' in o and k.pc.rd(stub, 0x104, 1) == b'\x03'
           and tsr() == (stub, R.csym('..@r_idle')) and rmt == (Y['mt_front'], seg), (o, tsr(), rmt))
     # the front task waiting for a key in the stub's own loop: a task behind still runs (switched from its HLT)
+    au = Audit(k)
     typ(k, 'start /w mtspin.com 36 rs.txt', 0.3)
     typ(k, 'mtkey r rr.txt', 0.2)
+    # meanwhile a timer interrupt, a switch due, raised elsewhere in the stub with interrupts on (r_hot, just after
+    # its STI): not a place to switch from
+    at, raised, prev = stub * 16 + R.csym('r_hot.no') + 1, [], k.pc.watch
+    def w(a):
+        if prev: prev(a)
+        if a == at and len(raised) < 5 and k.pc.rd(seg, Y['mt_cur'], 1)[0] == 0:
+            raised.append(k.pc.us); k.pc.wr(seg, Y['mt_pend'], b'\1')
+            k.pc.irq_pending.add(0); k.pc.mu.emu_stop()
+    k.pc.watch = w
     k.run_for(4.0)
+    k.pc.watch = prev
     rs, cur = spun(k, 'RS.TXT'), tstate(k)
     k.key('q', settle=False); k.run_for(1.0); k.settle()
-    check('MTKEY R in front waiting in the stub\'s read loop (the BIOS\'s key wait through Resident Claude): MTSPIN '
-          'behind runs its 36 ticks meanwhile (%d counted); then "q" read' % rs,
-          rs > 0 and A.disk_file(k, 'RR.TXT') == b'0071' and not k.crashed, (rs, cur, A.disk_file(k, 'RR.TXT')))
+    au.stop()
+    at_hlt = [e for e in au.switches() if e['cs'] == stub]
+    check('MTKEY R in front waiting in the stub\'s HLT loop (not in MT\'s wait): MTSPIN behind runs its 36 ticks '
+          'meanwhile (%d counted), switched from at the stub\'s HLT (%d times) and nowhere else in it (%d timer interrupts '
+          'raised just after r_hot\'s STI), every switch by the rules; then "q" read' % (rs, len(at_hlt), len(raised)),
+          rs > 0 and A.disk_file(k, 'RR.TXT') == b'0071' and not k.crashed and at_hlt and len(raised) == 5
+          and all(e['ip'] == R.csym('..@r_idle') for e in at_hlt) and not au.bad()
+          and not any(t == 0 and s == TS_WAITK for t, s, n in cur[0]),
+          (rs, cur, A.disk_file(k, 'RR.TXT'), len(at_hlt), len(raised), au.bad()[:3]))
     # CODE-\ in a background task's call: the pop-up waits for the front task's
     typ(k, 'start /w mtkey.com r br.txt', 0.3)
     typ(k, 'mtspin 36 fs.txt', 0.6)
@@ -3195,6 +3215,51 @@ def t_rclaude():
     st = tstate(k)
     check('CODE-Tab with the console up: left to it (MT asks for no switch: mt_swreq %02Xh); the console closed, the '
           'front task as it was' % sw, sw == 0xFF and st[1] == 0 and not R.console(k) and k.pc.mode() == 3, (sw, st))
+    # a key only AH=10h gives (CODE-ESC: the BIOS's AH=01h drops it) while MTKEY R waits behind in the stub's loop:
+    # the front task's AH=10h read gets it, every time (the background loop leaves the buffer alone)
+    got, prev, peeks = [], k.pc.watch, []
+    idle, i16 = stub * 16 + R.csym('..@r_idle'), seg * 16 + Y['mt_i16']
+    for i in range(3):
+        typ(k, 'mtkey e e%d.txt' % i, 0.4)
+        put = []
+        # the key typed as MTKEY R, behind, wakes at the stub's HLT, so its loop's next look is first; a look from
+        # behind is counted (whether MT takes the stub's call as the task's own, and answers it, or passes it to the
+        # BIOS, whose AH=01h drops the key, depends on where the stub sits: here just above task 1's region)
+        def w(a):
+            if prev: prev(a)
+            cur = k.pc.rd(seg, Y['mt_cur'], 1)[0]
+            if a == idle and not put and cur == 1:
+                put.append(1); k.pc.keys.append(0x0100); k.pc.kbd_sync()
+            if a == i16 and k.pc.u16(k.pc.r('ss'), k.pc.r('sp') + 2) == stub and cur != k.pc.rd(seg, Y['mt_front'], 1)[0]:
+                peeks.append(k.pc.us)
+        k.pc.watch = w
+        k.run_for(1.0)
+        k.pc.watch = prev
+        k.settle()
+        got.append((bool(put), A.disk_file(k, 'E%d.TXT' % i)))
+    check('CODE-ESC (only AH=10h gives it; the BIOS\'s AH=01h drops it) typed as MTKEY R, waiting behind in the stub\'s '
+          'loop, wakes at its HLT, MTKEY E (AH=10h) in front: the front read gets it each time (%s), MTKEY R still '
+          'waiting; its loop never looked at the BIOS\'s buffer meanwhile (%d looks from behind)' % (got, len(peeks)),
+          got == [(True, b'0100')] * 3 and not peeks
+          and A.disk_file(k, 'BR.TXT') is None and (1, 1, 'MTKEY.COM') in tstate(k)[0], (got, len(peeks), tstate(k)))
+    # CODE-\ typed as MTKEY R, behind, wakes at the stub's HLT, MTLINE in front waiting in MT for its line (DOS's
+    # key wait: TS_WAITK): taken in MTKEY's call, the pop-up pending; MT brings the front task's turn as for a key
+    # (mt_tsrk), and the console comes
+    typ(k, 'start mtline.com ml.txt', 0.6)
+    put = []
+    def w(a):
+        if prev: prev(a)
+        if a == idle and not put and k.pc.rd(seg, Y['mt_cur'], 1)[0] == 1:
+            put.append([e for e in tstate(k)[0] if e[2] == 'MTLINE.COM']); k.pc.keys.append(R.HOT); k.pc.kbd_sync()
+    k.pc.watch = w
+    k.run_for(1.0)
+    k.pc.watch = prev
+    up, tk = R.console(k), k.pc.rd(seg, Y['mt_tsrk'], 1)[0]
+    k.key(R.HOT); k.run_for(0.5)
+    line(k, 'ml'); k.run_for(0.5)
+    check('CODE-\\ typed as MTKEY R wakes behind in the stub\'s loop, MTLINE in front waiting in MT for its line (%s): '
+          'the console comes (the front task\'s turn brought on, mt_tsrk), and goes; MTLINE gets its line' % put,
+          put == [[(2, TS_WAITK, 'MTLINE.COM')]] and up and tk == 0 and A.disk_file(k, 'ML.TXT') == b'ml', (put, up, tk))
     front(k, 1)
     k.key('z', settle=False); k.run_for(1.0); k.settle()
     check('... MTKEY R brought to the front: its read gets "z" (007A)', A.disk_file(k, 'BR.TXT') == b'007A'

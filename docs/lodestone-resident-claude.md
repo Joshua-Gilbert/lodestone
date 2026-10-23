@@ -342,8 +342,9 @@ In the console, Claude Code can now look at the program it is popped up over and
 
 ## With Lodestone's multitasking (M7c, 2026-10-22)
 `docs/lodestone-multitasking.md` (M7c) has the details. With `MULTITASK=1`:
-- **`CLAUDE /R` tells MT about the stub** (`MT_TSR`, F0h AL=1Ah). MT may then switch from the stub's key wait, so tasks behind keep running while the front program waits for a key through it. The stub reads which task is in front and which is running.
-- **The console comes up only in the front task's call.** A CODE-\ seen in a background task's call waits for the front task's next one. TYPE's keys go to the front task alone.
+- **`CLAUDE /R` tells MT about the stub** (`MT_TSR`, F0h AL=1Ah). MT may then switch from the stub's key wait, so tasks behind keep running while the front program waits for a key through it. The stub reads which task is in front and which is running. Behind, its loop leaves the BIOS's buffer alone: the keys there are the front task's.
+- **The console comes up only in the front task's call.** A CODE-\ seen in a background task's call waits for the front task's next one, which MT brings on as for a key. TYPE's keys go to the front task alone.
+- **CLAUDE.COM run as a task** turns the pop-up off for every task while it runs (`r_off`); ended with `KILL`, it leaves it off until `CLAUDE /R` again.
 - **CODE-Tab typed in the console is the console's,** not a switch.
 - **`CLAUDE /R` inside a task is refused** (exit code 3): load it at the Executive's prompt (CODE-P), before starting tasks. `CLAUDE /U` refuses while other tasks exist (M7a).
 - **The stub is version 3** (`r_mt`, after `r_pend`).

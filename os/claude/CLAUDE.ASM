@@ -3530,9 +3530,10 @@ r_sp     dw     0
 r_ks     db     0               ;  not 0: the console has keys for the program
 r_pend   db     0               ;  CODE-\ taken (or the keys done): the console
 r_mt     dd     0               ; Lodestone's multitasking (MT_TSR): its bytes,
-                                ;  the front task's number, then the running
-                                ;  one's (0:0: none)
-r_int16:cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
+                                ;  the front task's number, the running one's,
+                                ;  and ours: 1 while the pop-up waits for the
+                                ;  front task (0:0: none)
+r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         jne     .up                     ;  else (a TSR, from an interrupt)
         cmp     ah, 0                   ;  sees no key, as the BIOS's AH=01h
         je      .rd                     ;  would drop CODE-\, the console's
@@ -3560,13 +3561,15 @@ r_int16:cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
         call    r_feed
         jnc     .ky
-        push    ax
-        inc     ah                      ; (a peek of the caller's kind)
-        pushf
-        call    far [cs:r_old16]
+        call    r_front                 ; (a background task's: the BIOS's
+        jne     .h                      ;  buffer is the front one's, and its
+        push    ax                      ;  AH=01h drops the keys AH=00h can't
+        inc     ah                      ;  give: left alone till it is in
+        pushf                           ;  front)
+        call    far [cs:r_old16]        ; (a peek of the caller's kind)
         pop     ax
         jnz     .ch
-        hlt
+.h:     hlt
 ..@r_idle:                              ; (MT_TSR: another task may run here)
         jmp     .w
 .ky:    iret
@@ -3656,8 +3659,8 @@ r_hot:  cmp     byte [cs:r_off], 0
 .p:     cmp     byte [cs:r_pend], 0
         je      .no
         call    r_front                 ; (a background task's call: at the
-        jne     .no                     ;  front one's, over its screen)
-        mov     al, 0Bh                ; the PIC's in-service register,
+        jne     .df                     ;  front one's, over its screen)
+        mov     al, 0Bh                 ; the PIC's in-service register,
         out     20h, al                 ;  then back to the request one (as
         in      al, 20h                 ;  the kernel's screen capture does)
         mov     ah, al
@@ -3666,7 +3669,11 @@ r_hot:  cmp     byte [cs:r_off], 0
         or      ah, ah
         jnz     .no
         mov     byte [cs:r_pend], 0
-        sti
+        cmp     word [cs:r_mt + 2], 0   ; (no longer waiting, for MT)
+        je      .pp
+        lds     si, [cs:r_mt]
+        mov     byte [si + 2], 0
+.pp:    sti
         pop     ds
         pop     si
         pop     bx
@@ -3678,6 +3685,9 @@ r_hot:  cmp     byte [cs:r_off], 0
         pop     bx
         pop     ax
 .x:     ret
+.df:    lds     si, [cs:r_mt]           ; (MT: the front task's turn to come,
+        mov     byte [si + 2], 1        ;  as for a key, so its call does)
+        jmp     .no
 .nx:    inc     bx                      ; the next word, round the buffer
         inc     bx
         cmp     bx, [82h]
