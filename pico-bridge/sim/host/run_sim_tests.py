@@ -513,6 +513,7 @@ def gridlink_auto_srq(sim):
           len(rt) == len(tr) and [n for _, n in rt] == by_t
           and all(r <= a + 1e-6 for (r, _), a in zip(rt, [e[0] for e in sorted(tr, key=lambda e: e[2])])),
           f"{rt[:4]}")
+    held_replies(sim, br, pico, ask, tx, ans)
     # WAKE (fw 2026-10-22b): gridlink rings when it has news for an idle GRiD; SRQ (40h, no READY) until the
     # GRiD polls or sends, and a ring for an older message than the GRiD's last is void
     check("idle after the reads: no SRQ", sim.cmd("srq")[0] == "0")
@@ -540,6 +541,174 @@ def gridlink_auto_srq(sim):
     br.stop.set()
     br._drop()
     time.sleep(6.5)                        # the bridge sees the PINGs stop and goes offline
+
+
+def held_replies(sim, br, pico, ask, tx, ans):
+    """F_HOLD (fw 2026-10-23c): the Pi gives the bridge the GRiD's next message, expected, and the answer to it;
+    if the message is that, the bridge raises SRQ at its last byte and sends the answer, with no word from the
+    Pi; if not, the held answer is dropped and the Pi answers as usual."""
+    check("the bridge takes holds (fw 2026-10-23c), and gridlink uses them", br.proto.holds, br.proto.firmware)
+
+    def drain(want):                          # the Pi side: the GRiD's message, and whether the hold answered it
+        got = b""
+        t0 = time.time()
+        while time.time() - t0 < 3 and not got.endswith(want[-1:]):
+            got += br.read()
+        return got, br.proto.hold_used()
+
+    def wait_srq(t=1.0):
+        t0 = time.time()
+        while sim.cmd("srq")[0] != "1" and time.time() - t0 < t:
+            pass
+        return sim.cmd("srq")[0] == "1"
+
+    h1 = bytes((k * 11 + 5) & 0xFF for k in range(2056))
+    ask(b"GLP hold base\n")
+    br.answer(b"first answer\n")
+    br.proto.hold(b"GLP poll 1\n", h1)          # (held behind the first answer, for the message after it)
+    wait_srq()
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 255)
+    check("hold: the answer before it goes first, as usual", int(st) == 0x60 and data == b"first answer\n",
+          f"s={st} {data!r}")
+    time.sleep(0.1)
+    sim.write(7, b"GLP poll 1\n")
+    srq = wait_srq(0.2)
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 2057)
+    got, used = drain(b"\n")
+    check("hold: the expected message gets SRQ, 60h and the held answer, the Pi saying nothing",
+          srq and int(st) == 0x60 and data == h1 and end == 1, f"srq={srq} s={st} {len(data)}")
+    check("... and the Pi gets the message, marked answered (DF_HELD)", got == b"GLP poll 1\n" and used,
+          f"{got!r} {used}")
+    r, st = sim.cmd("spoll 7")
+    check("... then 00h", int(st) == 0, f"s={st}")
+    # not the message expected: dropped, the Pi answers
+    br.proto.hold(b"GLP poll 2\n", h1)
+    time.sleep(0.1)
+    sim.write(7, b"GLP keys\n")
+    time.sleep(0.2)
+    srq = sim.cmd("srq")[0]
+    got, used = drain(b"\n")
+    check("hold: another message gets no SRQ, and the Pi hears it wasn't answered", srq == "0" and not used
+          and got == b"GLP keys\n", f"srq={srq} {got!r} {used}")
+    br.answer(b"keys answered\n")
+    wait_srq()
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 255)
+    check("... then the Pi's own answer (60h), not the held one", int(st) == 0x60 and data == b"keys answered\n",
+          f"s={st} {data!r}")
+    # a message that is only the start of the one expected (EOI early), and one that is longer
+    for msg, what in ((b"GLP poll", "shorter"), (b"GLP poll 3\nX", "longer")):
+        br.proto.hold(b"GLP poll 3\n", h1)
+        time.sleep(0.1)
+        sim.write(7, msg)
+        time.sleep(0.2)
+        srq = sim.cmd("srq")[0]
+        got, used = drain(msg)
+        br.answer(b"answered " + msg + b"\n")
+        wait_srq()
+        r, st = sim.cmd("spoll 7")
+        r, data, end = sim.read(7, 255)
+        check(f"hold: a {what} message isn't it: no SRQ till the Pi answers, then that answer",
+              srq == "0" and not used and data == b"answered " + msg + b"\n", f"srq={srq} {used} {data!r}")
+    # too late: the hold comes after its message (by hand: gridlink's hold() is always for the next one)
+    g = ask(b"GLP late\n")
+    br.proto.write(pico.cobs_encode(struct.pack("<BH", pico.F_HOLD, g) + b"GLP late\n"))
+    tx(g, pico.TXF_HELD | pico.TXF_EOI, b"held, too late\n")
+    time.sleep(0.2)
+    check("hold: one that comes after its message is void: no SRQ", sim.cmd("srq")[0] == "0")
+    br.answer(b"on time\n")
+    wait_srq()
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 255)
+    check("... and the Pi's answer goes, not the held one", int(st) == 0x60 and data == b"on time\n",
+          f"s={st} {data!r}")
+    # matched, then SDC before the read: stale like any answer
+    br.proto.hold(b"GLP poll 4\n", h1)
+    time.sleep(0.1)
+    sim.write(7, b"GLP poll 4\n")
+    wait_srq(0.2)
+    drain(b"\n")
+    sim.cmd("sdc 7")
+    time.sleep(0.1)
+    r, st = sim.cmd("spoll 7")
+    check("hold: a held answer the SDC made stale: SRQ gone, 00h", sim.cmd("srq")[0] == "0" and int(st) == 0,
+          f"s={st}")
+    ask(b"GLP after SDC\n")
+    br.answer(b"after SDC\n")
+    wait_srq()
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 255)
+    check("... and the next exchange is as usual", int(st) == 0x60 and data == b"after SDC\n", f"s={st} {data!r}")
+    # a chain, as gridlink runs it: each held answer read, the expected POLL, the next hold
+    frags = [bytes((i * 37 + k * 5) & 0xFF for k in range(2056)) for i in range(12)]
+    ask(b"GLP chain\n")
+    br.answer(frags[0])
+    bad = 0
+    t_srq = []
+    for i in range(1, 12):
+        br.proto.hold(b"GLP poll %d\n" % i, frags[i])
+        wait_srq()
+        r, st = sim.cmd("spoll 7")
+        r, data, end = sim.read(7, 2057)
+        if int(st) != 0x60 or data != frags[i - 1] or end != 1:
+            bad += 1
+        time.sleep(0.02)
+        t0 = time.time()
+        sim.write(7, b"GLP poll %d\n" % i)
+        if not wait_srq(0.5): bad += 1
+        t_srq.append(time.time() - t0)
+        got, used = drain(b"\n")
+        if not used: bad += 1
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 2057)
+    if int(st) != 0x60 or data != frags[11]:
+        bad += 1
+    r, st = sim.cmd("spoll 7")
+    check("hold: 11 held 2 KB answers in a row, every one right, 00h after", bad == 0 and int(st) == 0,
+          f"{bad} bad, s={st}")
+    st = sim.stats()
+    check("the Pico counted the holds", int(st.get("held", 0)) >= 13, f"{st}")
+    held_glp(sim, br, pico, wait_srq, drain)
+
+
+def held_glp(sim, br, pico, wait_srq, drain):
+    """F_HOLD_GLP (fw 2026-10-23d): held for a GLP frame by its first 4 bytes, its length and its Fletcher sum
+    (the GRiD's next fragment, whatever it carries); anything else, the Pi answers."""
+    from gridlink import glp
+    check("the bridge takes GLP holds (fw 2026-10-23d)", br.proto.holds_glp, br.proto.firmware)
+    nop = b"held NOP\n"
+    payload = bytes((k * 7 + 1) & 0xFF for k in range(3300))
+    good = glp.encode(glp.G_REPLY | glp.MORE, 21, 9, payload, fl=True)
+    head = good[:4]
+    cases = [("a good frame", good, True),
+             ("another sequence number", glp.encode(glp.G_REPLY | glp.MORE, 22, 9, payload, fl=True), False),
+             ("a bad sum", good[:-1] + bytes([good[-1] ^ 1]), False),
+             ("a byte changed", good[:100] + bytes([good[100] ^ 0x40]) + good[101:], False),
+             ("too short (EOI early)", good[:-1], False),
+             ("a byte more", good + b"\x00", False),
+             ("the CRC, not the sum", glp.encode(glp.G_REPLY | glp.MORE, 21, 9, payload, fl=False), False),
+             ("an empty frame", glp.encode(glp.G_REPLY | glp.MORE, 21, 9, b"", fl=True), True)]
+    for what, msg, want in cases:
+        br.proto.hold(msg[:4] if want and msg is not good else head, nop, glp=True)
+        time.sleep(0.1)
+        sim.write(7, msg)
+        srq = wait_srq(0.2)
+        got = b""
+        t0 = time.time()
+        while time.time() - t0 < 3 and len(got) < len(msg):
+            got += br.read()
+        used = br.proto.hold_used()
+        if not used:
+            br.answer(b"Pi: " + what.encode() + b"\n")
+            wait_srq()
+        r, st = sim.cmd("spoll 7")
+        r, data, end = sim.read(7, 255)
+        ok = (used == want and srq == want and got == msg and int(st) == 0x60
+              and data == (nop if want else b"Pi: " + what.encode() + b"\n"))
+        check(f"GLP hold, {what}: {'the held NOP' if want else 'the Pi answers'}", ok,
+              f"used={used} srq={srq} s={st} {data[:20]!r} {len(got)}/{len(msg)}")
 
 
 def main():

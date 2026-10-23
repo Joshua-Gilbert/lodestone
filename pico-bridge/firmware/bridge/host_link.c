@@ -192,15 +192,29 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
     case F_WAKE:
       if (n >= 3) { SH.bell_gen = (uint16_t)(p[1] | (p[2] << 8)); DMB(); SH.bell_seq++; request(); }
       break;
+    case F_HOLD:                                     // the 1520's next message, expected (2026-10-23c)
+    case F_HOLD_GLP:                                 //  or the start of its next GLP frame (2026-10-23d)
+      if (n >= 4 && n - 3 <= HOLD_MAX && (p[0] == F_HOLD || n == 7)) {
+        SH.hold_seq++;                               // odd: being written
+        DMB();
+        SH.hold_gen = (uint16_t)(p[1] | (p[2] << 8));
+        SH.hold_kind = p[0] == F_HOLD ? HOLD_EXACT : HOLD_GLP;
+        SH.hold_n = (uint8_t)(n - 3);
+        for (size_t i = 0; i < n - 3; i++) SH.hold_exp[i] = p[3 + i];
+        DMB();
+        SH.hold_seq++;                               // even: core 1 takes it when that message begins
+      }
+      break;
     case F_TX: {
       if (n < 4) break;
       uint16_t gen = (uint16_t)(p[1] | (p[2] << 8));
       uint32_t flags = p[3];
       size_t len = n - 4;
-      if (ann_open && (gen != ann_gen || (flags & TXF_EARLY))) ann_close();   // that reply won't be finished
+      bool held = (flags & TXF_HELD) != 0;          // (a held reply: core 1 counts it, if its message matches)
+      if (!held && ann_open && (gen != ann_gen || (flags & TXF_EARLY))) ann_close();   // that one won't be finished
       if ((int16_t)(gen - SH.gen) < 0) {             // older than core 1's generation: stale already
         SH.tx_dropped0 += (uint32_t)len;
-        if (ann_open && gen == ann_gen) ann_close();  // (an announced reply gone stale before its end)
+        if (!held && ann_open && gen == ann_gen) ann_close();  // (an announced reply gone stale before its end)
         break;
       }
       uint32_t h = SH.tx_head, t = SH.tx_tail;
@@ -212,13 +226,14 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
         take = freeq;
       }
       for (size_t i = 0; i < take; i++) {
-        uint32_t fl = (i == len - 1 && (flags & 1)) ? TXF_EOI : 0;
+        uint32_t fl = ((i == len - 1 && (flags & 1)) ? TXF_EOI : 0) | (held ? TXE_HELD : 0);
         SH.tx[h] = ((uint32_t)gen << 16) | (fl << 8) | p[4 + i];
         h = (h + 1u) & (TX_RING - 1u);
       }
       DMB();
       SH.tx_head = h;
       DMB();
+      if (held) { SH.wake_seq++; break; }
       if (take < len) ann_close();                   // (its EOI may be lost: a stand-in for it)
       if ((flags & TXF_EARLY) && !(flags & 1) && take == len && len) {   // a reply begins: ready now
         ann_open = true; ann_gen = gen;
@@ -288,6 +303,7 @@ void link_poll(uint32_t now_ms, bool host_open) {
     size_t used = 1;                                 // records this frame takes
     size_t flen;
     uint32_t end_t = 0;
+    uint8_t held = 0;
     if (r.code == R_DATA) {                          // gather a run of data of one generation
       size_t dn = 0;
       uint8_t flags = 0;
@@ -297,7 +313,7 @@ void link_poll(uint32_t now_ms, bool host_open) {
         if (q.code != R_DATA || q.gen != r.gen) break;
         f[4 + dn++] = q.b;
         i = (i + 1u) & (RX_RING - 1u);
-        if (q.arg & 1u) { flags = DF_EOI; end_t = q.t; break; }
+        if (q.arg & 1u) { flags = DF_EOI; end_t = q.t; if (q.arg & 2u) { flags |= DF_HELD; held = 1; } break; }
       }
       used = dn;
       f[0] = F_DATA; put16(f + 1, r.gen); f[3] = flags;
@@ -313,7 +329,7 @@ void link_poll(uint32_t now_ms, bool host_open) {
     DMB();
     SH.rx_tail = (t + (uint32_t)used) & (RX_RING - 1u);
     if (f[0] == F_DATA && (f[3] & DF_EOI)) {         // (when the message's last byte came: for the trace)
-      uint8_t e[13]; ev_fill(e, E_RX_END, r.gen, 0, 0, end_t); send_ctl(e, 13);
+      uint8_t e[13]; ev_fill(e, E_RX_END, r.gen, held, 0, end_t); send_ctl(e, 13);   // b = 1: the held reply
     }
   }
   uint32_t c = consumed_total();

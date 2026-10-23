@@ -48,6 +48,14 @@ static uint32_t eoi_consumed, auto_served;              // auto mode: replies ta
 static bool bell;                                       // auto mode: the Pi rang (F_WAKE) for generation bell_gen
 static uint16_t bell_gen;
 static uint32_t bell_seen;
+// The hold (F_HOLD): compared byte by byte as the message of its generation arrives
+static uint32_t hold_seen;                              // SH.hold_seq last taken
+static bool hold_cmp;                                   // this message may still be the one the hold expects
+static bool hold_ok;                                    // it was: the held reply (this generation's) may go
+static bool hold_rqs;                                   //  and RQS hasn't been served for it yet
+static uint8_t hold_n, hold_kind, hold_exp[HOLD_MAX];
+static uint32_t hold_pos, hold_end;                     // HOLD_GLP: bytes so far; the frame's length (8 + payload)
+static uint8_t hold_a, hold_b;                          //  and its Fletcher sums so far (A = 1 + bytes, B = sum of A)
 
 // ---- rings ----------------------------------------------------------------------------------------------------
 INL uint32_t rx_free(void) { return (SH.rx_tail - SH.rx_head - 1u) & (RX_RING - 1u); }
@@ -72,7 +80,21 @@ INL void tx_pop(uint32_t e) {
   DMB();                                   // the slot is read before core 0 may reuse it
   SH.tx_tail = (SH.tx_tail + 1u) & (TX_RING - 1u);
   SH.tx_consumed++;
-  if ((e >> 8) & TXF_EOI) eoi_consumed++;  // a reply has left (sent, or dropped as stale)
+  if ((e >> 8) & TXF_EOI) {
+    if (!((e >> 8) & TXE_HELD)) eoi_consumed++;   // a reply has left (sent, or dropped as stale)
+    else if ((uint16_t)(e >> 16) == gen) hold_ok = false;   // (a held one was never in tx_eoi_pushed)
+  }
+}
+
+// What to do with the entry at the ring's tail: send it, wait (leave it), or drop it as stale.  A held reply is
+// for the next message: it waits until that message has come and matched (sent) or not (dropped).
+enum { TXC_SEND, TXC_WAIT, TXC_DROP };
+INL int tx_class(uint32_t e) {
+  int16_t d = (int16_t)((uint16_t)(e >> 16) - gen);
+  if (d < 0) return TXC_DROP;                           // queued before a clear or a newer message
+  if (d > 0) return TXC_WAIT;                           // held for the next message
+  if (!((e >> 8) & TXE_HELD) || hold_ok) return TXC_SEND;
+  return (rx_partial && hold_cmp) ? TXC_WAIT : TXC_DROP;  // its message still arriving / it didn't match
 }
 
 // ---- bus configurations ---------------------------------------------------------------------------------------
@@ -121,21 +143,23 @@ INL void set_srq(void) {
 INL void auto_status(void) {
   if (!auto_rsv) return;
   uint32_t pushed = SH.tx_eoi_pushed;
-  reply_ready = pushed != eoi_consumed;
+  reply_ready = pushed != eoi_consumed || hold_ok;
   if (bell && bell_gen != gen) bell = false;            // the 1520 has sent since: it is awake
-  rsv = (reply_ready && pushed != auto_served) || bell;
+  rsv = (reply_ready && pushed != auto_served) || (hold_ok && hold_rqs) || bell;
   SH.cur_rsv = rsv;
   set_srq();
 }
 
 // ---- state changes --------------------------------------------------------------------------------------------
+INL void hold_void(void) { if (hold_cmp) { hold_cmp = false; SH.n_held_void++; } }
+
 INL void end_partial(void) {                     // the 1520 unaddressed us mid-message: that ends the message
-  if (rx_partial) { rx_push(R_END, 0, 0); rx_partial = false; }
+  if (rx_partial) { hold_void(); rx_push(R_END, 0, 0); rx_partial = false; }
 }
 
 INL void drop_partial(void) {                    // IFC, going offline: a half message is thrown away, not ended
-  if (rx_partial) { rx_partial = false; gen++; } // (the Pi drops its partial on the IFC/OFFLINE event)
-}
+  if (rx_partial) { hold_void(); rx_partial = false; gen++; hold_ok = false; }   // (the Pi drops its partial on
+}                                                // the IFC/OFFLINE event)
 
 INL void unaddress(void) {
   if (listener) { listener = false; EV(E_UNLISTEN); }
@@ -144,8 +168,10 @@ INL void unaddress(void) {
 }
 
 INL void device_clear(uint8_t code) {
+  if (rx_partial) hold_void();
   rx_partial = false;                      // the Pi drops what it has of the message
   gen++;                                   // replies queued before the clear become stale
+  hold_ok = false;
   talk_wait_sent = false;
   if (bell) auto_status();
   EV(code);
@@ -184,14 +210,64 @@ static void RAMFUNC(do_cmd)(uint8_t c) {
   }
 }
 
+// A new message: is there a hold for it?  (Taken once: a hold is for one message.)  hold_seq is a sequence lock:
+// odd while core 0 writes, so a hold read while it changes is no hold.
+INL void hold_take(void) {
+  uint32_t q = SH.hold_seq;
+  if (q == hold_seen || (q & 1u)) return;
+  DMB();
+  uint8_t n = SH.hold_n, k = SH.hold_kind;
+  bool mine = SH.hold_gen == gen && n && n <= HOLD_MAX && (k == HOLD_EXACT || (k == HOLD_GLP && n == 4));
+  if (mine) for (uint32_t i = 0; i < n; i++) hold_exp[i] = SH.hold_exp[i];
+  DMB();
+  if (SH.hold_seq != q) return;                         // rewritten meanwhile: look again at the next message
+  hold_seen = q;
+  if (!mine) { SH.n_held_void++; return; }             // too late (or after a clear): its reply will be dropped
+  hold_n = n; hold_kind = k; hold_pos = 0; hold_cmp = true;
+  hold_a = 1; hold_b = 0; hold_end = 8;
+}
+
+// HOLD_GLP, one byte: the 4 bytes expected, the length (its frame ends 8 bytes after it), the payload, then the
+// Fletcher sum of all but the sync byte, A then B, with EOI on B.  False: it isn't the frame expected.
+INL bool hold_glp_byte(uint8_t b, bool eoi) {
+  uint32_t p = hold_pos++;
+  if (p == 0) return b == hold_exp[0] && !eoi;          // (the sync byte: not in the sum)
+  if (p < 4 && b != hold_exp[p]) return false;
+  if (p == 4) hold_end = b;                             // (the length's low byte, for now)
+  else if (p == 5) {
+    hold_end = 8u + (hold_end | ((uint32_t)b << 8));
+    if (hold_end > 8u + HOLD_GLP_MAX) return false;
+  } else if (p > 5 && p + 2u >= hold_end) {             // the check
+    if (p + 2u == hold_end) return b == hold_a && !eoi;
+    return p + 1u == hold_end && b == hold_b && eoi;    // (EOI with the last byte, and nothing after it)
+  }
+  hold_a += b; hold_b += hold_a;
+  return !eoi;
+}
+
 INL void got_data(uint8_t b, bool eoi) {
+  uint32_t arg = eoi ? 1u : 0u;
   if (!rx_partial) {                                    // a new message voids the old reply (and a ring)
     gen++; rx_partial = true; talk_wait_sent = false;
+    hold_ok = false; hold_cmp = false;
+    hold_take();
     if (bell) auto_status();
   }
-  rx_push(R_DATA, b, eoi ? 1u : 0u);
+  if (hold_cmp) {
+    bool good, done;
+    if (hold_kind == HOLD_GLP) { good = hold_glp_byte(b, eoi); done = good && eoi; }
+    else {
+      good = hold_pos < hold_n && b == hold_exp[hold_pos];
+      hold_pos++;
+      done = good && eoi && hold_pos == hold_n;
+      if (good && eoi && !done) good = false;           // (a shorter message)
+    }
+    if (!good) hold_void();
+    else if (done) { hold_cmp = false; hold_ok = hold_rqs = true; SH.n_held++; arg |= 2u; }
+  }
+  rx_push(R_DATA, b, arg);
   SH.n_rx++;
-  if (eoi) rx_partial = false;
+  if (eoi) { rx_partial = false; if (hold_ok) auto_status(); }   // SRQ for the held reply now
 }
 
 // Mid-byte, only IFC, ATN or the Pi taking the bridge offline may interrupt a handshake.  (Other requests --
@@ -364,7 +440,7 @@ static void RAMFUNC(talk)(void) {
     rx_push(E_SPOLL, b, 0);
     if (b & 0x40) {                                     // the request is served
       rsv = false; SH.cur_rsv = 0; bell = false;
-      if (auto_rsv) auto_served = pushed_used; else rsv_served = rsv_seq_used;
+      if (auto_rsv) { auto_served = pushed_used; hold_rqs = false; } else rsv_served = rsv_seq_used;
       set_srq();
     }
     return;
@@ -377,7 +453,14 @@ static void RAMFUNC(talk)(void) {
         spin(true, &SH.wake_seq);                       // returns on ATN (engaged), IFC/REN, a request or a
         return;                                         // TX frame (core 0 bumps wake_seq for both)
       }
-      if ((uint16_t)(e >> 16) == gen) break;
+      int c = tx_class(e);
+      if (c == TXC_SEND) break;
+      if (c == TXC_WAIT) {                              // (only a held reply, for a message still to come)
+        if (!talk_wait_sent) { rx_push(E_TALK_WAIT, 0, SH.tx_consumed); talk_wait_sent = true; }
+        if (cfg != CFG_IDLE) cfg_listen(false);
+        spin(true, &SH.wake_seq);
+        return;
+      }
       tx_pop(e);                                        // stale: queued before a clear or a new message
       auto_status();
     }
@@ -420,7 +503,7 @@ static void RAMFUNC(apply_requests)(void) {
   }
   if (want && (!online || a != addr)) {
     if (online) { drop_partial(); unaddress(); }
-    if (!online) gen++;                                 // a new session: whatever is left in the tx ring is stale
+    if (!online) { gen++; hold_ok = false; }            // a new session: whatever is left in the tx ring is stale
     addr = a; online = true;
     rx_push(E_ONLINE, addr, (last_ifc_ren & REN_M) ? 0u : 1u);
   } else if (!want && online) {
@@ -461,6 +544,7 @@ void RAMFUNC(engine_run)(void) {
   hal_set(SRQ_M);
   last_ifc_ren = hal_in() & (IFC_M | REN_M);
   session_seen = SH.session_seq;
+  hold_seen = SH.hold_seq & ~1u;
   req_seen = SH.req_seq - 1u;                           // apply the first requests at once
   for (;;) {
 #ifdef GPIB_SIM
@@ -483,7 +567,7 @@ void RAMFUNC(engine_run)(void) {
     publish(g);
     for (int k = 0; k < 8; k++) {                       // drop stale replies, a few at a time (core 0 drops
       uint32_t e;                                       // most of them before they reach the ring)
-      if (!tx_peek(&e) || (uint16_t)(e >> 16) == gen) break;
+      if (!tx_peek(&e) || tx_class(e) != TXC_DROP) break;
       tx_pop(e);
       auto_status();
     }
@@ -500,7 +584,7 @@ void RAMFUNC(engine_run)(void) {
     } else {
       if (cfg != CFG_IDLE) cfg_listen(false);           // ATN false and not addressed: take no part
       uint32_t e;
-      if (tx_peek(&e) && (uint16_t)(e >> 16) != gen) continue;   // more stale entries to drop first
+      if (tx_peek(&e) && tx_class(e) == TXC_DROP) continue;   // more stale entries to drop first
       spin(true, &SH.req_seq);
     }
   }

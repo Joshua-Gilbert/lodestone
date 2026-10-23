@@ -43,16 +43,19 @@ MAXIN    equ 1000               ; longest prompt
 HISTN    equ 4                  ; prompts remembered for Up/Down
 HISTL    equ 400
 %ifndef TXMAX
-TXMAX    equ 2048               ; GRiD -> Pi payload per frame: ~9 % faster than 1024 on the 1520
+TXMAX    equ 3300               ; GRiD -> Pi payload per frame: a 16 KB read's reply in five frames (1.6:
+                                ;  2048, and an 8 KB read's reply took five, the last two bytes long)
 %endif
 %ifndef RXPAY
-%assign RXPAY 2048             ; Pi -> GRiD payload we read (HELLO's rx=): 98 % of 4 KB frames' rate on the 1520
+%assign RXPAY 3340             ; Pi -> GRiD payload we read (HELLO's rx=): a whole 16 KB write request in five
+                               ;  frames (1.5: 2048, 98 % of 4 KB frames' rate, but an 8 KB request took five,
+                               ;  the last a few bytes long, and each frame costs ~2.5 ms of SRQ and poll)
 %endif
 RXMAX    equ RXPAY + 9          ; the read: a whole frame (RXPAY + 8) and one byte
                                 ;  more, so a frame never fills it (as 255 for 254)
 %defstr RXPAY_S RXPAY
-REQMAX   equ 8700               ; request reassembly (HELLO's req=: writes of 8 KB and a path)
-IOSIZE   equ 16384              ; reply buffer segment
+REQMAX   equ 16700              ; request reassembly (HELLO's req=: writes of 16 KB and a path; 1.5: 8700)
+IOSIZE   equ 16384 + 16         ; reply buffer segment: a 16 KB read and its 2-byte header (HELLO's rd=)
 SNAPMAX  equ 32768 + 11         ; snapshot segment: id, status, header, data
 TXQN     equ 6                  ; outgoing messages queued
 ASKMAX   equ 900
@@ -1672,6 +1675,10 @@ optab:  db 01h
         dw op_gpib
         db 30h
         dw op_settime
+%ifdef PROFILE
+        db 31h
+        dw op_prof
+%endif
         db 0
 
 ; CF/AX from DOS, no data
@@ -1973,6 +1980,14 @@ op_settime:
         call    draw_title
         xor     al, al
         jmp     reply0
+
+%ifdef PROFILE
+op_prof:                                ; (CLAUDEP: gridlink.bench --prof)
+        mov     al, [reqbuf+2]
+        call    prof_window
+        xor     al, al
+        jmp     reply0
+%endif
 
 bin2bcd:
         aam
@@ -2678,6 +2693,8 @@ build_hello:                            ; -> CX = length of hellobuf
         call    put_str
         mov     si, kv_req              ; and its requests
         call    put_str
+        mov     si, kv_rd               ; and the reads it answers whole
+        call    put_str
         mov     si, kv_appterm          ; CLAUDE /T, /W or /C
         cmp     byte [app_want], 'T'
         je      .a
@@ -2926,12 +2943,13 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.5', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.7', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
 kv_rx       db 'rx=', RXPAY_S, 10, 0
-kv_req      db 'req=8700', 10, 0             ; (REQMAX: the biggest REQUEST we take)
+kv_req      db 'req=16700', 10, 0            ; (REQMAX: the biggest REQUEST we take)
+kv_rd       db 'rd=16384', 10, 0             ; (IOSIZE - 2 and more: the biggest read answered whole)
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
 evmouse     db 06h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
@@ -2970,6 +2988,7 @@ evint       db 01h
 fcb1        db 0, '           ', 0, 0, 0, 0
 fcb2        db 0, '           ', 0, 0, 0, 0
 
+            align 2                     ; (the glyphs are read a word at a time)
 %include "TERMINUS.INC"
 %include "GLYPHS.INC"
 
@@ -3922,7 +3941,8 @@ rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_over     resb 1
 rq_id       resb 1
-reqbuf      resb REQMAX + 4
+            alignb 2                    ; (frames are copied in with REP MOVSW: an odd
+reqbuf      resb REQMAX + 4             ;  destination costs the 286 a bus cycle a word)
 hellobuf    resb HELLO_MAX
 evans       resb 4
 crctab      resw 256
@@ -3988,10 +4008,12 @@ prof_acc    resd PB_N + 1               ; (PROF.INC: prof_start clears these
 prof_cnt    resw PB_N + 1               ;  together; the last: PROF's own end)
 prof_t0     resd 1
 prof_cur    resb 1
+prof_kept   resb 1                      ; (1: CLPROF.TXT written by OP 31h, kept)
 prof_sp     resb 1
 prof_stk    resb PS_N
 prof_txt    resb 1024
 %endif
+            alignb 2                    ; (an odd stack costs every PUSH and POP)
 stack_bottom:                           ; the stack: claude-link's emulator tests
             resb 1024                   ;  go 58 bytes deep at most under GRIDGPIB,
                                         ;  70 under Lodestone; the rest is for the
