@@ -1711,6 +1711,10 @@ mt_flagsc:
 ; MT_UI: the Executive's entry (mt_ui), far
 mt_uic: mov     word [bp+F_AX], mt_ui
         mov     [bp+F_DX], cs
+        push    es                      ; (and the UI patched for several
+        mov     es, [ui_seg]            ;  window .RUNs at once: KMW.INC)
+        call    mw_patch
+        pop     es
         jmp     KSEG:ok
 
 ; MT_TSR: Resident Claude's key wait, where it may be switched from
@@ -5526,19 +5530,24 @@ mt_carve:
 .x:     pop     ds
         pop     es
         ret
+
+%include "KMW.INC"                      ; (several window .RUNs at once, M8a)
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 
 MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
 MT_SSTK     equ     1024                ;  on the paragraph after the image;
 MT_INIL     equ     160                 ; LODE.INI's lists' room
-MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MT_SSTK) / 16
-                                        ; (then the lists, a header, the stack)
+MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MW_BSS + MT_SSTK + 15) / 16
+                                        ; (then the lists, a header, KMW's
+                                        ;  sessions, the stack)
 section mttbss
 mt_tx0      resb    TX0_PARAS * 16      ; (at MT_TX0P * 16; no TX_GSN: task 0
                                         ;  never ends)
 mt_ini      resb    MT_INIL             ; (mt_lists)
 mt_hdr      resb    20h                 ; (MT_UI: an .EXE's header)
+mw_ses      resb    (MW_MAX + 1) * SE_SIZE  ; (KMW.INC: the sessions)
+mw_tmp      resb    NWIN * 4            ; (mw_raise: the window stack, reordered)
             resb    MT_SSTK             ; (mt_swnow's stack)
 mt_bend:
 
