@@ -2503,7 +2503,18 @@ help_draw:
 ; click on one, choose -> CF clear, AX = the item; ESC or a click outside
 ; the window -> CF set (the click is taken)
 ui_menu:
-        pusha
+        cmp     al, 1                   ; 1-20 items
+        jb      .full
+        cmp     al, 20
+        ja      .full
+        cmp     word [wover], 0         ; no room for its window (NWIN open):
+        jne     .full                   ;  none, as if cancelled (not drawn,
+        cmp     word [wdepth], NWIN     ;  it would be no window: not modal,
+        jb      .room                   ;  and a borrow nobody gives back)
+.full:  call    ui_beep
+        stc
+        ret
+.room:  pusha
         push    bx
         push    cx
         mov     [mn_tab], si
@@ -2513,7 +2524,10 @@ ui_menu:
         mov     [mn_lv+LV_ROWS], dx
         mov     di, dx
         mov     dl, ah
-        mov     [mn_lv+LV_SEL], dx
+        cmp     dl, al                  ; (one past the last: the first)
+        jb      .s
+        xor     dl, dl
+.s:     mov     [mn_lv+LV_SEL], dx
         mov     word [mn_lv+LV_TOP], 0
         xor     bp, bp                  ; the longest item
 .c:     lodsw
@@ -2527,7 +2541,10 @@ ui_menu:
 .n:     dec     di
         jnz     .c
         add     bp, 4                   ; (a column either side of the lit band)
-        mov     [help_w+W_W], bp
+        cmp     bp, 80                  ; (longer items cut at the right edge)
+        jbe     .w
+        mov     bp, 80
+.w:     mov     [help_w+W_W], bp
         pop     cx
         pop     bx
         shr     bx, 3                   ; the click's column, kept on the screen

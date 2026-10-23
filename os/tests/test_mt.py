@@ -59,7 +59,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x63B0}  # (621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x63D0}  # (621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -3546,31 +3546,43 @@ def t_menu():
     check('the menu open: CODE-F6 does nothing (%s: no other window in front, still open); a click on the Executive: no '
           'choice (%04Xh), the focus still MENUTEST\'s (%d), the menu gone' % (f6, v16('mres'), mb('mw_cur')),
           f6 == (1, True) and v16('mres') == 0xFFFF and mb('mw_cur') == 1 and not A.has(k, 'Paste'), (f6, v16('mres'), mb('mw_cur')))
-    # a drag: UI_MOUSE waits at ..@ui_midle, where MTSPIN behind gets its turns (no settling while it
-    # computes: the machine is never idle)
+    # a drag: UI_MOUSE waits at ..@ui_midle, where MTSPIN behind gets its turns.  (While it computes the
+    # machine is never idle: each settle runs to its 6 s timeout, so MTSPIN gets 2000 ticks, 110 s.)
     k.hooks.remove(rh)
     A.click(k, 4, 340); k.run_for(0.3)              # (the Executive in front: CODE-P is its key)
     k.key(A.CODE['P']); k.run_for(1.0)
-    typ(k, 'start /w mtspin.com 400 tb.txt', 0.3); typ(k, 'exit', 1.0); k.settle()
+    typ(k, 'start /w mtspin.com 2000 tb.txt', 0.3); typ(k, 'start /w mtspin.com 2000 tc.txt', 0.3)
+    typ(k, 'exit', 1.0); k.settle()
     A.click(k, 4, 340); k.run_for(0.3)              # ("LCMD.COM ended" waits in the Executive: a click reads it)
     A.click(k, 300, 300); k.run_for(0.3)            # (MENUTEST's window: it in front again)
     cm, n0, d0 = mb('mw_cur'), len(au.ev), v16('dn')
     k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05)
     for i in range(10):
         k.pc.mouse_move((4 if i % 2 else -4) & 0xFF, 0, 1); k.pc.run_for(0.05)
+    nh = len(au.ev)
     k.pc.run_for(1.5)                               # (held still: the mouse sends nothing)
+    hold = sum(1 for e in au.ev[nh:] if e['sw'] and e['task'] == 0)
     k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.3)
     mid = [e for e in au.ev[n0:] if e['cs'] == k.useg and e['ip'] == Y['..@ui_midle'] and e['sw']]
     tb0 = A.disk_file(k, 'TB.TXT')
-    check('MTSPIN started behind (CODE-P, START /W, EXIT), MENUTEST in front again (%d); a drag in it, the button held '
-          'still 1.5 s (UI_MOUSE %d times): MTSPIN switched to %d times from UI_MOUSE\'s wait, every switch at a safe '
-          'point' % (cm, v16('dn'), len(mid)), cm == 1 and v16('dn') >= 20 and len(mid) >= 10
-          and not au.bad(), (cm, v16('dn'), len(mid), tb0, au.bad()[:2], len(au.switches(n0))))
-    for _ in range(120):
-        k.run_for(0.25)
-        if A.disk_file(k, 'TB.TXT'): break
+    check('two MTSPINs started behind (CODE-P, START /W, EXIT), MENUTEST in front again (%d); a drag in it, the button '
+          'held still 1.5 s (UI_MOUSE %d times): the MTSPINs switched to %d times from UI_MOUSE\'s wait, the drag given '
+          'only its turn in three (%d turns: the mouse still, nothing brings it back sooner), every switch at a safe '
+          'point' % (cm, v16('dn'), len(mid), hold), cm == 1 and v16('dn') >= 15 and len(mid) >= 10 and tb0 is None
+          and not au.bad() and hold <= 12, (cm, v16('dn'), len(mid), tb0, au.bad()[:2], len(au.switches(n0)), hold))
+    # the mouse moving: each packet brings MENUTEST back at the next tick (mt_mwant), ahead of MTSPIN
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.06)
+    seen, n1 = 0, len(au.ev)
+    for i in range(20):
+        k.pc.mouse_move(2, 0, 1); k.pc.run_for(0.06)  # (a tick: the drag's, ahead of the MTSPINs)
+        seen += k.pc.u16(k.useg, base + sy['d1'] + 2) == k.u16('mx')
+    k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.3)
+    sw1 = len(au.switches(n1))
+    check('... the mouse moving (a packet every tick, two MTSPINs computing behind): the drag has each position within the tick '
+          '(%d of 20; without it every third tick), the MTSPINs still switched to (%d switches)' % (seen, sw1), seen >= 19 and sw1 >= 10
+          and not au.bad() and A.disk_file(k, 'TB.TXT') is None, (seen, sw1, au.bad()[:2]))
     k.key(ktest.ESC); k.key(ktest.ESC); k.run_for(0.5)
-    check('ESC, ESC: MENUTEST ended, the Executive in front', mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and not k.crashed,
+    check('ESC, ESC: MENUTEST ended, the Executive in front (MTSPIN still behind)', mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and not k.crashed,
           (mb('mw_n'), k.band()))
 
 def t_write():
@@ -3943,7 +3955,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 581.1 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '581.1', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 581.0 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '581.0', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
