@@ -94,13 +94,22 @@ J  gridlink's Pico transport, auto service request (CLAUDE.COM's way of reading)
   PASS  ... and the next exchange is as usual
   PASS  hold: 11 held 2 KB answers in a row, every one right, 00h after
   PASS  the Pico counted the holds
+  PASS  the bridge takes GLP holds (fw 2026-10-23d)
+  PASS  GLP hold, a good frame: the held NOP
+  PASS  GLP hold, another sequence number: the Pi answers
+  PASS  GLP hold, a bad sum: the Pi answers
+  PASS  GLP hold, a byte changed: the Pi answers
+  PASS  GLP hold, too short (EOI early): the Pi answers
+  PASS  GLP hold, a byte more: the Pi answers
+  PASS  GLP hold, the CRC, not the sum: the Pi answers
+  PASS  GLP hold, an empty frame: the held NOP
   PASS  idle after the reads: no SRQ
   PASS  a ring asserts SRQ
   PASS  its poll: 40h (RQS, no READY), and SRQ released
   PASS  a ring ends when the GRiD sends instead of polling
   PASS  and that exchange is as usual (60h, its answer)
   PASS  a ring for an older message is void
-final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '177', 'cmds': '2543', 'rx': '100898', 'tx': '193206', 'polls': '132', 'lost': '0', 'holds': '1', 'fights': '0', 'late': '0', 'held': '13', 'held_void': '3'}
+final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '186', 'cmds': '2671', 'rx': '124062', 'tx': '193352', 'polls': '140', 'lost': '0', 'holds': '1', 'fights': '0', 'late': '0', 'held': '15', 'held_void': '9'}
   PASS  no events lost in the Pico
 
-90 of 90 checks passed
+99 of 99 checks passed

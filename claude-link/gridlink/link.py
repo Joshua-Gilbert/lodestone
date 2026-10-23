@@ -125,7 +125,9 @@ class Link:
         s.clock = time.monotonic              # (the emulator tests give theirs: the rings' timing is the GRiD's)
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
         s.trace = None                        # a deque while gridlink.bench --trace runs: (time, event)
-        s.spec = None                         # the reply held in the bridge for the GRiD's next POLL (_speculate)
+        s.spec = None                         # the reply held in the bridge for the GRiD's next frame (_speculate)
+        s.last_kind = None                    # the kind of our last answer
+        s.drop_types = set()                  # a held answer went for a frame we never read: drop that message
         s.holding = True                      # (tests and gridlink.bench --nohold switch it off)
 
     @property
@@ -237,7 +239,7 @@ class Link:
         # with the CRC, as link_reset leaves the GRiD) gets the CRC, the
         # frames after it the Fletcher sum once the GRiD has switched.
         frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload, fl=s.rx_fl)
-        s.last_answer = frame
+        s.last_answer = frame; s.last_kind = kind
         if s.trace is not None: s.trace.append((time.monotonic(), 'pi ' + _name(kind, len(payload))))
         s._to_grid(frame)
         s.stats['tx_frames'] += 1; s.stats['tx_bytes'] += len(frame)
@@ -257,6 +259,16 @@ class Link:
         if s.parser.pending() and time.monotonic() - s.last_rx > quiet:
             s.parser.idle()
             s.stats['rx_damaged'] += 1
+            spec = s.spec
+            if spec is not None and spec[0] is None and s.t.hold_used():
+                # The bridge passed a fragment we can't read, and has acknowledged it: the rest of that message
+                # would come without it.  Never expected (the bridge checks the same sum on the same bytes), but
+                # a message with a hole must not be taken for whole: it is dropped, and its caller times out.
+                s.spec = None
+                s.reasm.parts.pop(spec[1], None); s.drop_types.add(spec[1])
+                s.stats['held_unread'] += 1
+                s.log('link: the bridge acknowledged a frame gridlink could not read: dropping that message')
+                return
             s._answer_nak()
 
     def _answer_nak(s):
@@ -282,6 +294,7 @@ class Link:
             with s.lock:
                 s.outq.clear(); s.cur = None
             s.reasm = glp.Reassembler(); s.pi_seq = 0; s.last_g = None; s.connected = True
+            s.drop_types.clear()
         elif s.last_g is not None and f.seq == s.last_g:
             s.stats['rx_dup'] += 1
             if s.last_answer: s._to_grid(s.last_answer)
@@ -290,6 +303,8 @@ class Link:
             s.source.delivered()            # a new frame: our last answer arrived
         s.last_g = f.seq
         msg = s.reasm.add(f)
+        if msg and msg[0] in s.drop_types:
+            s.drop_types.discard(msg[0]); msg = None
         if msg:
             mt, body = msg
             if mt == glp.G_HELLO and len(body) >= 4:
@@ -302,7 +317,8 @@ class Link:
             if mt != glp.G_POLL:
                 try: s.on_message(mt, body)
                 except Exception as e: s.log('link: handler error: %r' % e)
-        if spec is not None and t == glp.G_POLL and s.t.hold_used():
+        if spec is not None and (t == glp.G_POLL if spec[0] is not None else f.more and f.fl) \
+                and s.t.hold_used():
             s._commit(spec)                     # the bridge has answered it with the held reply
             s._speculate(f)
             return
@@ -333,12 +349,25 @@ class Link:
     # last byte and the GRiD reads the fragment at once: the trip over USB to us and back (~1.5 ms of each
     # ~17 ms frame) is gone.  Anything else (KEYS, a NAK, a REPLY) and the bridge drops the fragment, and we
     # answer as usual: nothing has changed here until DATA says the hold was used (hold_used).
+    # Out of the GRiD it is the same the other way round (bridge fw 2026-10-23d): having sent a MORE fragment and
+    # read our NOP, CLAUDE sends the next fragment of the same message (seq + 1, acknowledging the NOP).  What
+    # it carries we can't know, but our answer doesn't depend on it while we have nothing to send: a NOP.  So
+    # the bridge gets that frame's first 4 bytes and the NOP, and checks the rest itself: the length, and the
+    # Fletcher sum the GRiD put on it (the very check we make here), before it lets the NOP go.
     def _speculate(s, f):
         hold = getattr(s.t, 'hold', None)
         if hold is None or not s.holding or f.type == glp.G_HELLO or s.parser.pending(): return
         with s.lock:
             cur = s.cur
-            if cur is None: return              # (a whole message's last fragment: the GRiD answers it its way)
+            if cur is None:
+                if not (f.more and f.fl and s.last_kind == glp.P_NOP) or s.outq: return
+                if s.source is not None and s.source.ready(): return
+                seq = (f.seq + 1) & 0xFF
+                frame = glp.encode(glp.P_NOP, (s.pi_seq + 1) & 0xFF, seq, b'', fl=True)
+                if hold(bytes([glp.SYNC, f.kind, seq, s.pi_seq]), frame, glp=True):
+                    s.spec = (None, f.type, 0, glp.P_NOP, frame)
+                return
+            if f.more: return                   # (the GRiD's message isn't finished: it doesn't POLL)
             if s.source is not None and s.last_q and s.source.ready(): return   # (the source's turn next)
             t, body, off = cur
             chunk = body[off:off + s.maxpay]
@@ -353,12 +382,12 @@ class Link:
         """The held reply answered the GRiD's POLL: what _answer would have done."""
         cur, off, n, kind, frame = spec
         with s.lock:
-            if s.cur is cur and cur[2] == off:
+            if cur is not None and s.cur is cur and cur[2] == off:
                 if off + n >= len(cur[1]): s.cur = None
                 else: cur[2] = off + n
-            s.last_q = True
+            s.last_q = cur is not None
         s.pi_seq = (s.pi_seq + 1) & 0xFF
-        s.last_answer = frame
+        s.last_answer = frame; s.last_kind = kind
         s.t_answered = s.clock()
         if s.trace is not None: s.trace.append((time.monotonic(), 'pi ' + _name(kind, n) + ' held'))
         s.stats['tx_frames'] += 1; s.stats['tx_bytes'] += len(frame); s.stats['tx_held'] += 1

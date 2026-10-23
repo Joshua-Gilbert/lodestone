@@ -313,6 +313,12 @@ every byte checked.
   and 16 KB reads (the GRiD's HELLO says `rd=16384`; an older CLAUDE
   answers at most 16,382 bytes, so gridlink asks it for 8 KB). GRiD to Pi
   went from 82.1 to 89.6 KB/s.
+- **Held NOPs** (bridge fw 2026-10-23d): out of the GRiD, the frame after a
+  MORE fragment is the next fragment. Its payload isn't known, but gridlink's
+  answer to it is a NOP either way. So the bridge gets that frame's first 4
+  bytes and the NOP, and checks the rest itself, the length and the Fletcher
+  sum, before it sends the NOP. It's the check gridlink makes, on the same
+  bytes.
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the

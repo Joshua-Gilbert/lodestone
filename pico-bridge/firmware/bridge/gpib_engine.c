@@ -53,7 +53,9 @@ static uint32_t hold_seen;                              // SH.hold_seq last take
 static bool hold_cmp;                                   // this message may still be the one the hold expects
 static bool hold_ok;                                    // it was: the held reply (this generation's) may go
 static bool hold_rqs;                                   //  and RQS hasn't been served for it yet
-static uint8_t hold_n, hold_pos, hold_exp[HOLD_MAX];
+static uint8_t hold_n, hold_kind, hold_exp[HOLD_MAX];
+static uint32_t hold_pos, hold_end;                     // HOLD_GLP: bytes so far; the frame's length (8 + payload)
+static uint8_t hold_a, hold_b;                          //  and its Fletcher sums so far (A = 1 + bytes, B = sum of A)
 
 // ---- rings ----------------------------------------------------------------------------------------------------
 INL uint32_t rx_free(void) { return (SH.rx_tail - SH.rx_head - 1u) & (RX_RING - 1u); }
@@ -214,14 +216,33 @@ INL void hold_take(void) {
   uint32_t q = SH.hold_seq;
   if (q == hold_seen || (q & 1u)) return;
   DMB();
-  uint8_t n = SH.hold_n;
-  bool mine = SH.hold_gen == gen && n && n <= HOLD_MAX;
+  uint8_t n = SH.hold_n, k = SH.hold_kind;
+  bool mine = SH.hold_gen == gen && n && n <= HOLD_MAX && (k == HOLD_EXACT || (k == HOLD_GLP && n == 4));
   if (mine) for (uint32_t i = 0; i < n; i++) hold_exp[i] = SH.hold_exp[i];
   DMB();
   if (SH.hold_seq != q) return;                         // rewritten meanwhile: look again at the next message
   hold_seen = q;
   if (!mine) { SH.n_held_void++; return; }             // too late (or after a clear): its reply will be dropped
-  hold_n = n; hold_pos = 0; hold_cmp = true;
+  hold_n = n; hold_kind = k; hold_pos = 0; hold_cmp = true;
+  hold_a = 1; hold_b = 0; hold_end = 8;
+}
+
+// HOLD_GLP, one byte: the 4 bytes expected, the length (its frame ends 8 bytes after it), the payload, then the
+// Fletcher sum of all but the sync byte, A then B, with EOI on B.  False: it isn't the frame expected.
+INL bool hold_glp_byte(uint8_t b, bool eoi) {
+  uint32_t p = hold_pos++;
+  if (p == 0) return b == hold_exp[0] && !eoi;          // (the sync byte: not in the sum)
+  if (p < 4 && b != hold_exp[p]) return false;
+  if (p == 4) hold_end = b;                             // (the length's low byte, for now)
+  else if (p == 5) {
+    hold_end = 8u + (hold_end | ((uint32_t)b << 8));
+    if (hold_end > 8u + HOLD_GLP_MAX) return false;
+  } else if (p > 5 && p + 2u >= hold_end) {             // the check
+    if (p + 2u == hold_end) return b == hold_a && !eoi;
+    return p + 1u == hold_end && b == hold_b && eoi;    // (EOI with the last byte, and nothing after it)
+  }
+  hold_a += b; hold_b += hold_a;
+  return !eoi;
 }
 
 INL void got_data(uint8_t b, bool eoi) {
@@ -233,12 +254,16 @@ INL void got_data(uint8_t b, bool eoi) {
     if (bell) auto_status();
   }
   if (hold_cmp) {
-    if (hold_pos < hold_n && b == hold_exp[hold_pos]) hold_pos++;
-    else hold_void();
-    if (eoi && hold_cmp) {
-      if (hold_pos == hold_n) { hold_cmp = false; hold_ok = hold_rqs = true; SH.n_held++; arg |= 2u; }
-      else hold_void();                                 // (a shorter message)
+    bool good, done;
+    if (hold_kind == HOLD_GLP) { good = hold_glp_byte(b, eoi); done = good && eoi; }
+    else {
+      good = hold_pos < hold_n && b == hold_exp[hold_pos];
+      hold_pos++;
+      done = good && eoi && hold_pos == hold_n;
+      if (good && eoi && !done) good = false;           // (a shorter message)
     }
+    if (!good) hold_void();
+    else if (done) { hold_cmp = false; hold_ok = hold_rqs = true; SH.n_held++; arg |= 2u; }
   }
   rx_push(R_DATA, b, arg);
   SH.n_rx++;

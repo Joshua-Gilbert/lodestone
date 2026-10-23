@@ -670,6 +670,45 @@ def held_replies(sim, br, pico, ask, tx, ans):
           f"{bad} bad, s={st}")
     st = sim.stats()
     check("the Pico counted the holds", int(st.get("held", 0)) >= 13, f"{st}")
+    held_glp(sim, br, pico, wait_srq, drain)
+
+
+def held_glp(sim, br, pico, wait_srq, drain):
+    """F_HOLD_GLP (fw 2026-10-23d): held for a GLP frame by its first 4 bytes, its length and its Fletcher sum
+    (the GRiD's next fragment, whatever it carries); anything else, the Pi answers."""
+    from gridlink import glp
+    check("the bridge takes GLP holds (fw 2026-10-23d)", br.proto.holds_glp, br.proto.firmware)
+    nop = b"held NOP\n"
+    payload = bytes((k * 7 + 1) & 0xFF for k in range(3300))
+    good = glp.encode(glp.G_REPLY | glp.MORE, 21, 9, payload, fl=True)
+    head = good[:4]
+    cases = [("a good frame", good, True),
+             ("another sequence number", glp.encode(glp.G_REPLY | glp.MORE, 22, 9, payload, fl=True), False),
+             ("a bad sum", good[:-1] + bytes([good[-1] ^ 1]), False),
+             ("a byte changed", good[:100] + bytes([good[100] ^ 0x40]) + good[101:], False),
+             ("too short (EOI early)", good[:-1], False),
+             ("a byte more", good + b"\x00", False),
+             ("the CRC, not the sum", glp.encode(glp.G_REPLY | glp.MORE, 21, 9, payload, fl=False), False),
+             ("an empty frame", glp.encode(glp.G_REPLY | glp.MORE, 21, 9, b"", fl=True), True)]
+    for what, msg, want in cases:
+        br.proto.hold(msg[:4] if want and msg is not good else head, nop, glp=True)
+        time.sleep(0.1)
+        sim.write(7, msg)
+        srq = wait_srq(0.2)
+        got = b""
+        t0 = time.time()
+        while time.time() - t0 < 3 and len(got) < len(msg):
+            got += br.read()
+        used = br.proto.hold_used()
+        if not used:
+            br.answer(b"Pi: " + what.encode() + b"\n")
+            wait_srq()
+        r, st = sim.cmd("spoll 7")
+        r, data, end = sim.read(7, 255)
+        ok = (used == want and srq == want and got == msg and int(st) == 0x60
+              and data == (nop if want else b"Pi: " + what.encode() + b"\n"))
+        check(f"GLP hold, {what}: {'the held NOP' if want else 'the Pi answers'}", ok,
+              f"used={used} srq={srq} s={st} {data[:20]!r} {len(got)}/{len(msg)}")
 
 
 def main():
