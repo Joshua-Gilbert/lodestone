@@ -323,7 +323,7 @@ So, unlike M2a:
 - no INT 21h under way (`indos` 0): the kernel is never preempted;
 - interrupts were on, and no other hardware interrupt is in service (the PIC's in-service register, read as `capture` reads it);
 - CS below A000h (not the BIOS, the ROM, the EMS frame or Resident Claude's console), and not the kernel's or MT's own segment;
-- in the UI's segment, only at its two idle HLTs (`..@ui_idle` in `ui_event`, `..@ui_sidle` in the saver). These are labels the UI gained for this, at no cost in bytes. So the Executive is switched from only while it waits, never in the middle of drawing or a directory load;
+- in the UI's segment, only at its idle HLTs (`..@ui_idle` in `ui_event`, `..@ui_sidle` in the saver; and since UI API 8 `..@ui_midle`, a drag's wait in `UI_MOUSE` and `win_mv`). These are labels the UI gained for this, at no cost in bytes. So the Executive is switched from only while it waits, never in the middle of drawing or a directory load;
 - no INT 33h event handler running (the UI's `m33_busy`);
 - SS and CS in the task's own memory (`mt_mine`), so not a TSR's or a driver's stack or code:
   - a task's: its region;
@@ -1852,3 +1852,12 @@ t_windows: with both windows open, and with one, the UI block is the whole segme
 - The two CALCs ("CALC.COM ended, exit code 1"), checked by hand in pcemu with the switch on and off, not in a test.
 - The root starting over with the clipping's patches in (`mw_clean`).
 - Any of it on the 1520.
+
+## After M8c: pop-up menus and drags (UI API 8, 2026-10-23)
+Not a milestone of this plan: the core's part of right-click editing (docs/lodestone-0.3-apps.md, "Pop-up menus and drags"). Two things in it are multitasking's:
+- **A drag lets the tasks run.** `UI_MOUSE` (a `.RUN` following a drag) and `win_mv` (a window moved by its title strip) wait for the next interrupt in `mwait`, whose HLT is a third safe point of the UI's (`..@ui_midle`, one more compare in `mt_safe`: MT's block is 1,264 paragraphs). Before, a window's drag held every DOS task till the button came up. While the mouse moves, its packets end each wait before the tick does, so the tasks get their turns mostly while it is still.
+- **`UI_MENU` saves what is under it** even while window `.RUN`s run, when none of their windows is saved (`mw_lend` lends nothing then): it borrows the cache itself (F002h) and gives it back (`mn_lent`). M8a's rule (no save-under while sessions run) is there because windows move, close and come to the front in any order; the menu does none of that. It is `help_w`, so `mw_modal` keeps the focus where it is while it is open.
+
+**Tests:** test_mt's new group `t_menu` (4 checks; test_mt 349, 345 before): the menu in a window session (the cache borrowed and given back, the screen as it was, no `redraw_all`); CODE-F6 and a click on the Executive while it is open (the focus stays); a drag with MTSPIN behind, the button held still 1.5 s: switched to from `..@ui_midle` (11 times), every switch at a safe point (the audit's rules know the new spot). Mutations: no `..@ui_midle` compare, no borrow, the cache not given back: each fails one.
+
+**Figures:** MEMSZ with Shift-Return 561.3 KB (561.7 before), off 581.1 KB (581.5). LODEMT.SYS 17,282 bytes.

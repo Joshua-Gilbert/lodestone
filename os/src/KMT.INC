@@ -533,6 +533,8 @@ mt_safe:
         jne     .pic
         cmp     bx, ..@ui_idle
         je      .pic
+        cmp     bx, ..@ui_midle         ; (a drag's: UI_MOUSE, win_mv)
+        je      .pic
         cmp     bx, ..@ui_sidle
         jne     .no
 .pic:   mov     al, 0Bh                 ; the PIC's in-service register (as
