@@ -1,5 +1,5 @@
 ; =====================================================================
-;  GPIBLOOP.COM 1.0 - which GPIB byte loop is fastest on the 1520, and at
+;  GPIBLOOP.COM 1.1 - which GPIB byte loop is fastest on the 1520, and at
 ;  which alignment.
 ;  Build:  nasm -f bin -o GPIBLOOP.COM GPIBLOOP.ASM
 ;  Usage:  GPIBLOOP [a]      a = the echo device's address (default 7)
@@ -18,6 +18,12 @@
 ;    read  R  the count in CX (LOOP), no LF stop, END ends it
 ;    write K  the kernel's gp_fast_write (INC of a word in memory a byte)
 ;    write R  without it
+;  1.1 (after 1.0 on the 1520: read K 70 KB/s, R 129; write K 77, R 88):
+;    read  K and R at their faster alignment, and 2: R with the spin out
+;          of line (a byte that is there costs no taken jump but LOOP's)
+;    write K and R as before, 2 (the same for writes), and 2 with AUXRB's
+;          TRI bit: T1, the 7210's settling time before DAV, 500 ns
+;          instead of 2 us after the first byte (three-state drivers)
 ;  4096-byte messages; the rounds go through every loop in turn, 6 times,
 ;  and each loop's median is shown, in ns a byte and KB/s, with the
 ;  parity of its spin loop's label (.w) and of the label it jumps to for a
@@ -254,7 +260,12 @@ msg_out:
         jc      .f
         call    d_wait_co
         jc      .f
-        call    d_do_gts
+        cmp     byte [wtri+bx], 0       ; TRI: T1 500 ns after the first byte
+        je      .nt
+        mov     dx, R_AUXMR
+        mov     al, 0A4h                ; AUXRB: TRI
+        out     dx, al
+.nt:    call    d_do_gts
         mov     byte [why], 2
         mov     dx, R_ISR1              ; the chip ready for the first byte
         mov     bh, [shadow1]
@@ -312,12 +323,23 @@ msg_out:
         jnz     .ok
         call    d_tmo_check
         jnc     .lx
-.f:     mov     byte [shadow1], 0
+.f:     call    no_tri
+        mov     byte [shadow1], 0
         stc
         ret
 .ok:    call    stamp
+        call    no_tri
         mov     cx, MSGLEN
         jmp     per_byte
+
+no_tri: push    ax                      ; AUXRB back to its default
+        push    dx
+        mov     dx, R_AUXMR
+        mov     al, 0A0h
+        out     dx, al
+        pop     dx
+        pop     ax
+        ret
 
 ; ---- one echo in with read loop BX -> AX = ns a byte; CF on failure
 msg_in:
@@ -482,6 +504,71 @@ per_byte:
         ret
 %endmacro
 
+%macro R2 1                             ; the spin out of line
+%1:     mov     dx, R_ISR1
+%1_w:   in      al, dx
+        or      bh, al
+        test    bh, ISR1_DI
+        jz      %1_s
+%1_g:   mov     dh, R_DIR >> 8
+        in      al, dx
+        mov     dh, R_ISR1 >> 8
+        stosb
+        test    bh, ISR1_END
+        jnz     %1_x
+        and     bh, ~ISR1_DI
+        loop    %1_w
+%1_x:   clc
+        ret
+%1_s:   mov     si, 20000
+%1_s2:  in      al, dx
+        or      bh, al
+        test    bh, ISR1_DI | ISR1_END
+        jnz     %1_e
+        dec     si
+        jnz     %1_s2
+        stc
+        ret
+%1_e:   test    bh, ISR1_DI
+        jnz     %1_g
+        clc                             ; END after the last DI: the end
+        ret
+%endmacro
+
+%macro W2 1                             ; the spin out of line (ERR there)
+%1:     push    di
+        mov     dx, R_ISR1
+        jmp     short %1_put
+%1_w:   in      al, dx
+        or      bh, al
+        test    bh, ISR1_DO
+        jz      %1_s
+%1_put: and     bh, ~ISR1_DO
+        es lodsb
+        mov     dh, R_CDOR >> 8
+        out     dx, al
+        mov     dh, R_ISR1 >> 8
+        loop    %1_w
+        pop     di
+        clc
+        ret
+%1_s:   test    bh, ISR1_ERR
+        jnz     %1_f
+        mov     di, 20000
+%1_s2:  in      al, dx
+        or      bh, al
+        test    bh, ISR1_DO | ISR1_ERR
+        jnz     %1_e
+        dec     di
+        jnz     %1_s2
+%1_f:   pop     di
+        stc
+        ret
+%1_e:   test    bh, ISR1_ERR
+        jnz     %1_f
+        jmp     short %1_put
+%endmacro
+
 %macro WK 1                             ; the kernel's gp_fast_write
 %1:     push    di
         mov     dx, R_ISR1
@@ -540,36 +627,38 @@ per_byte:
 %endmacro
 
         align   2
-        RK      rk0                     ; starts even
+        nop
+        RK      rk1                     ; starts odd (1.0's faster K)
         align   2
         nop
-        RK      rk1                     ; starts odd
+        RR      rr1                     ; (and R)
         align   2
-        RR      rr0
+        R2      r20                     ; starts even
         align   2
         nop
-        RR      rr1
+        R2      r21                     ; starts odd
         align   2
         WK      wk0
         align   2
-        nop
-        WK      wk1
-        align   2
         WR      wr0
         align   2
+        W2      w20
+        align   2
         nop
-        WR      wr1
+        W2      w21
 
 NR      equ 4
-NW      equ 4
-rvar    dw rk0, rk1, rr0, rr1
-rname   dw s_rk, s_rk, s_rr, s_rr
-rpar    db (rk0_w - $$) & 1, (rk0_g - $$) & 1, (rk1_w - $$) & 1, (rk1_g - $$) & 1
-        db (rr0_w - $$) & 1, (rr0_g - $$) & 1, (rr1_w - $$) & 1, (rr1_g - $$) & 1
-wvar    dw wk0, wk1, wr0, wr1
-wname   dw s_wk, s_wk, s_wr, s_wr
-wpar    db (wk0_w - $$) & 1, (wk0_g - $$) & 1, (wk1_w - $$) & 1, (wk1_g - $$) & 1
-        db (wr0_w - $$) & 1, (wr0_g - $$) & 1, (wr1_w - $$) & 1, (wr1_g - $$) & 1
+NW      equ 6
+rvar    dw rk1, rr1, r20, r21
+rname   dw s_rk, s_rr, s_r2, s_r2
+rpar    db (rk1_w - $$) & 1, (rk1_g - $$) & 1, (rr1_w - $$) & 1, (rr1_g - $$) & 1
+        db (r20_w - $$) & 1, (r20_g - $$) & 1, (r21_w - $$) & 1, (r21_g - $$) & 1
+wvar    dw wk0, wr0, w20, w21, w20, w21
+wtri    db 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0     ; (by BX: words)
+wname   dw s_wk, s_wr, s_w2, s_w2, s_w2t, s_w2t
+wpar    db (wk0_w - $$) & 1, (wk0_put - $$) & 1, (wr0_w - $$) & 1, (wr0_put - $$) & 1
+        db (w20_w - $$) & 1, (w20_put - $$) & 1, (w21_w - $$) & 1, (w21_put - $$) & 1
+        db (w20_w - $$) & 1, (w20_put - $$) & 1, (w21_w - $$) & 1, (w21_put - $$) & 1
 
 ; ---- time (as GPIBIRQ) ---------------------------------------------------
 pit_init:
@@ -744,13 +833,16 @@ save_log:
 
 %include "direct.inc"
 
-s_title db 13,10,'GPIBLOOP 1.0 - the GPIB byte loops at both alignments, echo at $'
+s_title db 13,10,'GPIBLOOP 1.1 - the GPIB byte loops at both alignments, echo at $'
 s_rhead db 13,10,'Reading 4096 bytes (median of 6; best-worst in ns):',13,10,'$'
 s_whead db 13,10,'Writing 4096 bytes:',13,10,'$'
 s_rk    db '  K (the kernel',27h,'s)  $'
 s_rr    db '  R (count in CX) $'
 s_wk    db '  K (the kernel',27h,'s)  $'
 s_wr    db '  R (no INC)      $'
+s_r2    db '  2 (spin aside)  $'
+s_w2    db '  2 (spin aside)  $'
+s_w2t   db '  2 + TRI (T1 .5) $'
 s_weven db '.w even $'
 s_wodd  db '.w odd  $'
 s_geven db '.g even:  $'
