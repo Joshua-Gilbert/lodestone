@@ -11,7 +11,7 @@ reference code is `host_link.c` (Pico) and `pi/gpibbridge/protocol.py` (Pi).
 |---|---|---|---|
 | 0x01 | HELLO_REQ | — | The Pico answers HELLO |
 | 0x02 | CONFIG | u8 address (0–30), u8 flags (bit 0 online, bit 1 auto service request) | Online: take part in the bus at this address. Offline: release everything. Auto service request: see below |
-| 0x03 | TX | u16 gen, u8 flags (bit 0 = EOI on the last byte), data | Reply bytes for the 1520's next read. Dropped if `gen` isn't the current one |
+| 0x03 | TX | u16 gen, u8 flags (bit 0 = EOI on the last byte; bit 1 = EARLY, bit 2 = ANNOUNCED: fw 2026-10-23a, below), data | Reply bytes for the 1520's next read. Dropped if `gen` isn't the current one |
 | 0x04 | STB | u8 status byte, u8 rsv | Serial-poll status byte. rsv = 1 asserts SRQ until the 1520 polls |
 | 0x05 | PING | — | Every second. No PING for 5 s: the Pico goes offline |
 | 0x07 | BOOTSEL | — | Reboot into the USB bootloader (to flash firmware) |
@@ -70,5 +70,13 @@ For CLAUDE.COM's link (GLP, `lodestone/claude-link`), the bridge requests servic
 - **It keeps READY (20h) until the answer has been read**, then reports 00h.
 - **A stale answer is dropped, and its SRQ and READY with it.** That happens after an SDC, or when the GRiD
   has started a new message.
-- **The Pi sends each answer as one TX.** It needs credit for the whole frame first.
+- **The Pi sends each answer as one TX.** It needs credit for the whole frame first. (An answer bigger than
+  the 600-byte input buffer goes as several TX frames, EOI only on the last.)
+- **EARLY (fw 2026-10-23a): the answer is ready at its first TX frame.** A TX with flags bit 1 (EARLY) and no
+  EOI begins an answer and counts it as queued at once: SRQ and 60h come then, and the 1520 reads while the
+  rest crosses USB (~3.5 times faster than the 1520 reads; if the bridge runs dry it waits, as for any answer
+  not yet there). The answer's last TX has EOI and bit 2 (ANNOUNCED), so it isn't counted again. An announced
+  answer that won't be finished (stale before its end, another EARLY or a new generation from the Pi, a new
+  session, the port closed) is closed by the bridge itself, and its READY goes. gridlink uses EARLY with
+  firmware from 2026-10-23 on: a 128-byte first frame, then 512s.
 - **The STB frame's bits 5 and 6 are ignored in this mode.**
