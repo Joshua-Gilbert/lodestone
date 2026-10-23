@@ -1675,6 +1675,10 @@ optab:  db 01h
         dw op_gpib
         db 30h
         dw op_settime
+%ifdef PROFILE
+        db 31h
+        dw op_prof
+%endif
         db 0
 
 ; CF/AX from DOS, no data
@@ -1976,6 +1980,14 @@ op_settime:
         call    draw_title
         xor     al, al
         jmp     reply0
+
+%ifdef PROFILE
+op_prof:                                ; (CLAUDEP: gridlink.bench --prof)
+        mov     al, [reqbuf+2]
+        call    prof_window
+        xor     al, al
+        jmp     reply0
+%endif
 
 bin2bcd:
         aam
@@ -3996,6 +4008,7 @@ prof_acc    resd PB_N + 1               ; (PROF.INC: prof_start clears these
 prof_cnt    resw PB_N + 1               ;  together; the last: PROF's own end)
 prof_t0     resd 1
 prof_cur    resb 1
+prof_kept   resb 1                      ; (1: CLPROF.TXT written by OP 31h, kept)
 prof_sp     resb 1
 prof_stk    resb PS_N
 prof_txt    resb 1024
