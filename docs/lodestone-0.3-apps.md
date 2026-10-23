@@ -917,6 +917,32 @@ The first of four steps toward right-click editing in Write: this one is the cor
     - a drag with two MTSPINs behind: switched to from `UI_MOUSE`'s wait (`..@ui_midle`), every switch at a safe point (the audit's rules know the new spot); held still, the UI only its turn; moving, each position seen within the tick (`mt_mwant`), and both MTSPINs taking turns between.
   - Nineteen mutations each fail a check of one or the other: the three clamps (right, below, above), the column test and the row test of a click, a click on the edge taken as outside, no ESC, the light not where AH says, AH past the last item kept, no width clamp, no `NWIN` guard, no borrow of the cache, the cache not given back, `UI_MOUSE` not keeping the buttons (a right press during a drag became a menu after it), its CF not set with no mouse, `..@ui_midle` not a safe point, no `mt_mwant`, the buttons not noted by `mt_mdset`, and the round not going on after the task a boost took the turn from.
 
+## The clipboard (UI_CLIP, UI API 8, 2026-10-23)
+The second of the four steps toward right-click editing in Write: a clipboard every `.RUN` shares. Write's Cut, Copy and Paste (step 4) will use it, and any program after them.
+- **`UI_CLIP` (entry 49):**
+  - AL = 0: CX bytes from ES:DI into it, at most 16,384 (more: CF, AX = 8, and what it held is kept). CX = 0 empties it.
+  - AL = 1: what it holds into ES:DI, CX bytes at most -> CX = how many.
+  - AL = 2: -> CX = how many it holds (0: empty).
+  - CF: AX = the error, an EMS one (80h and up) or DOS's (`UI_SBERR` words them).
+  - The bytes are as given: text in the program's own form (Write's lines end in LF, as in its buffer).
+- **Kept when a program ends:** the core holds it, so a `.RUN` can copy, end, and another (or the same, on another file) paste. With `MULTITASK=1` every window `.RUN` shares it, and the state (`clip_h`, `clip_len`, `clip_f`) is outside every range a session keeps (`mw_ctx`).
+- **Where:**
+  - **An EMS page of its own,** taken the first time something is put (INT 67h 43h, one page) and copied in and out with 57h, so the page frame isn't touched. The handle is nobody's: the UI's code isn't in the running program's memory, so `ems_alloc` gives it owner 0, and no program's end (nor a task's, parked or killed) takes it back.
+  - **Without EMS, or with none free** (`MDISK=ALL` takes every page): `CLIP.$$$` in the root of the settings drive (INT 21h 3305h's DH, where LODE.INI's changes go), else of the start-up drive. Written anew at each put, read at each get. A short write (the disk full) is error 29; any error writing it empties it (the file may be cut).
+- **Cost:**
+  - The core's code grows by 322 bytes (`ui_image_end` 5100h → 5242h), its BSS by 5.
+  - `ui_keep_end` grows by 342 bytes (63D0h → 6526h). MEMSZ reads 0.3 KB less: 564.6 KB without EMS, 580.7 KB with it; with `MULTITASK=1` 560.7 KB.
+  - LODE.SYS is 49,040 bytes (48,704 before); LODEMT.SYS is the same size (17,484 bytes). ROM 1 still has 1,536 bytes left. One EMS page, only once something is put.
+- **Tests:**
+  - `t_clip` in test_apps (9 checks; `tests/CLIPTEST.ASM`, an API 8 window `.RUN` with keys for put, get and size, and a block of its own for the bytes):
+    - with EMS: empty at first, and emptied takes no page yet; 1000 bytes put (a page of its own, one page, nobody's; no file); got with room for 2000 (just them, nothing past) and for 10;
+    - the program ended and started again: still them, the same handle;
+    - 16,385 refused (error 8, what it held kept); 16,384 put and got back whole, the same handle; 0 bytes: empty;
+    - no EMS: emptied first writes no file; `A:\CLIP.$$$` holds exactly what was put, got back whole, and after the program starts again; another put rewrites it;
+    - EMS with every page M:'s (`MDISK=ALL`): the file.
+  - `t_clip` in test_mt (1 check): put from a window session; the session ended; a task with an EMS page of its own (MTKILL F) started, parked, back and killed from LCMD, its page freed; the clipboard and its handle as they were.
+  - Eight mutations each fail a check: no 16 KB limit, the size not kept, a get not cut to what it holds, a new page at every put, no fall-back to the file, both copies in the same direction, the error not in AX, and emptying not done at once (it took a page, or wrote the file). Untested: the settings drive over the start-up one (a floppy start has both as A:), and a short write to the file (a full disk).
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
