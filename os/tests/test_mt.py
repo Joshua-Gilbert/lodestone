@@ -3180,7 +3180,8 @@ def t_rclaude():
     typ(k, 'start /w mtspin.com 36 rs.txt', 0.3)
     typ(k, 'mtkey r rr.txt', 0.2)
     # meanwhile a timer interrupt, a switch due, raised elsewhere in the stub with interrupts on (r_hot, just after
-    # its STI): not a place to switch from
+    # its STI): not a place to switch from.  (All five come in MTKEY R's first turn, before it is switched from at the
+    # HLT, once, and waits; MTSPIN's count, about 0.97 of its count alone, has room for the ticks they add.)
     at, raised, prev, waits = stub * 16 + R.csym('r_hot.no') + 1, [], k.pc.watch, set()
     def w(a):
         if prev: prev(a)
@@ -3198,8 +3199,8 @@ def t_rclaude():
     at_hlt = [e for e in au.switches() if e['cs'] == stub]
     check('MTKEY R in front waiting in the stub\'s HLT loop: switched from at its HLT (%d times) and nowhere else in the '
           'stub (%d timer interrupts raised just after r_hot\'s STI), every switch by the rules; meanwhile it waits as in '
-          'MT (TS_WAITK while MTSPIN runs: %s), so MTSPIN behind counts as fast as alone (%d, alone %d); then "q" read'
-          % (len(at_hlt), len(raised), sorted(waits), rs, r0),
+          'MT (TS_WAITK while MTSPIN runs: %s), so MTSPIN behind counts as fast as alone (%d, alone %d: %.2f); then "q" read'
+          % (len(at_hlt), len(raised), sorted(waits), rs, r0, rs / max(r0, 1)),
           r0 > 0 and rs > 0.85 * r0 and A.disk_file(k, 'RR.TXT') == b'0071' and not k.crashed and at_hlt
           and len(raised) == 5 and all(e['ip'] == R.csym('..@r_idle') for e in at_hlt) and not au.bad()
           and TS_WAITK in waits, (rs, r0, sorted(waits), A.disk_file(k, 'RR.TXT'), len(at_hlt), len(raised),
@@ -3238,7 +3239,6 @@ def t_rclaude():
     # a key only AH=10h gives (CODE-ESC: the BIOS's AH=01h drops it) while MTKEY R waits behind in the stub's loop:
     # the front task's AH=10h read gets it, every time; the read behind waits (TS_WAITK), and no look of its at the
     # buffer is an AH=01h
-    typ(k, 'start /w mtkey.com r br.txt', 0.5)
     got, peeks = [], []
     i16 = seg * 16 + Y['mt_i16']
     def w(a):
@@ -3246,7 +3246,8 @@ def t_rclaude():
         if a == i16 and k.pc.u16(k.pc.r('ss'), k.pc.r('sp') + 2) == stub \
                 and k.pc.rd(seg, Y['mt_cur'], 1)[0] != k.pc.rd(seg, Y['mt_front'], 1)[0]:
             peeks.append(k.pc.r('ax') >> 8)
-    k.pc.watch = w
+    k.pc.watch = w                                      # (from its start: its first looks, before its first HLT)
+    typ(k, 'start /w mtkey.com r br.txt', 0.5)
     for i in range(3):
         typ(k, 'mtkey e e%d.txt' % i, 0.4)
         k.key(0x0100, settle=False); k.run_for(1.0); k.settle()
@@ -3256,7 +3257,7 @@ def t_rclaude():
     check('CODE-ESC (only AH=10h gives it; the BIOS\'s AH=01h drops it) for MTKEY E (AH=10h) in front, MTKEY R waiting '
           'behind in the stub\'s loop: the front read gets it each time (%s); MTKEY R waits (TS_WAITK), its loop\'s looks '
           'from behind AH=11h only (%s)' % (got, sorted(set(peeks))), got == [b'0100'] * 3
-          and set(peeks) <= {0x11} and A.disk_file(k, 'BR.TXT') is None and (1, TS_WAITK, 'MTKEY.COM') in st[0],
+          and peeks and set(peeks) == {0x11} and A.disk_file(k, 'BR.TXT') is None and (1, TS_WAITK, 'MTKEY.COM') in st[0],
           (got, peeks, st))
     # CODE-\ typed as MTKEY P, behind, calls through the stub, MTLINE in front waiting in MT for its line (DOS's key
     # wait: TS_WAITK): taken in MTKEY's call, the pop-up pending; MT brings the front task's turn as for a key
@@ -3296,6 +3297,34 @@ def t_rclaude():
     k.key('z', settle=False); k.run_for(1.0); k.settle()
     check('... MTKEY R brought to the front: its read gets "z" (007A)', A.disk_file(k, 'BR.TXT') == b'007A'
           and tstate(k)[0] == [(0, 1, 'Executive')], (A.disk_file(k, 'BR.TXT'), tstate(k)))
+    # TYPE's keys (put in the console's page as its REQUEST leaves them: a wait of 5 ticks, then "x") for MTKEY R in
+    # front, waiting in the stub's loop, MTSPIN behind: switched from at the HLT in the wait (TS_WAITK), the front task
+    # still gets its turns (mt_tsrk), the key comes, and at the end the console (to answer TYPE)
+    typ(k, 'start /w mtspin.com 144 ts.txt', 0.3)        # (8 s: still computing when the keys are done)
+    rp = k.pc.ems_page(k.pc.rd(stub, R.csym('r_hw'), 1)[0]) * 0x4000
+    rsym = {m.group(2): int(m.group(1), 16) for m in (re.match(r'\s*[0-9A-F]+\s+([0-9A-F]+)\s+(\S+)\s*$', l)
+                                                      for l in open(os.path.join(GOS, 'claude', 'RCON.MAP'))) if m}
+    def ems(name, b): a = rp + rsym[name]; k.pc.ems_store[a:a + len(b)] = b
+    ems('reqbuf', b'\xff\xff\x05\x78\x2d'); ems('ks_pos', b'\0\0'); ems('ks_len', b'\5\0'); ems('ks_wait', b'\0')
+    typ(k, 'mtkey r tr.txt', 0.05)
+    # the keys start in MTKEY R's read (AH=00h), as when the console goes, leaving them, in the program's call
+    waits, fed = set(), []
+    def w(a):
+        if prev: prev(a)
+        cur = k.pc.rd(seg, Y['mt_cur'], 1)[0]
+        if a == r16 and not fed and cur == 0 and k.pc.r('ax') >> 8 == 0:
+            fed.append(1); k.pc.wr(stub, R.csym('r_ks'), b'\1')
+        if fed and cur != 0: waits.add(tstate(k)[0][0][1])
+    k.pc.watch = w
+    k.run_for(2.5)
+    k.pc.watch = prev
+    tr, up, st = A.disk_file(k, 'TR.TXT'), R.console(k), tstate(k)
+    k.key(R.HOT); k.run_for(0.5)
+    k.run_for(7.0); k.settle()
+    check('TYPE\'s keys (a 5-tick wait, then "x") for MTKEY R in front, MTSPIN behind: through the wait (MTKEY R '
+          'waiting as in MT meanwhile: %s) the key comes (%s), then the console, to answer TYPE, MTSPIN still computing'
+          % (sorted(waits), tr), fed and tr == b'2D78' and up and TS_WAITK in waits and any(n == 'MTSPIN.COM' for i, s, n in st[0])
+          and spun(k, 'TS.TXT') > 0, (tr, up, sorted(waits), st))
     # CLAUDE /U: MT forgets the key wait
     o = sh.run('claude /u')
     check('CLAUDE /U: out, and MT has no key wait of its any more (0:0)', 'no longer resident' in o and tsr() == (0, 0),

@@ -3615,9 +3615,17 @@ r_feed: cmp     byte [cs:r_ks], 0
         xchg    ax, bx
         pop     bx
         pop     dx
-        ret
+        jnc     .x
+        cmp     word [cs:r_mt + 2], 0   ; none now, the keys not done (a wait)
+        je      .no                     ;  or just done (r_pend: the console
+        push    ds                      ;  to come): MT told (mt_tsrk), or a
+        push    si                      ;  wait at our HLT would never end
+        lds     si, [cs:r_mt]
+        mov     byte [si + 2], 1
+        pop     si
+        pop     ds
 .no:    stc
-        ret
+.x:     ret
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
 ; move back one), and the console runs, unless a hardware interrupt is in

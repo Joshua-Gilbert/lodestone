@@ -1467,9 +1467,9 @@ Changes to existing checks:
 
   Before, the tick couldn't switch from the stub's code, so a front program waiting for a key through Resident Claude stopped every task behind.
 - **A task switched from at the stub's HLT waits as in MT** (`mt_tsrw`, in `mt_preempt`: `TS_WAITK`). Behind it gets no turns; in front it gets one when a key comes, or a pending pop-up (`mt_kin`), as a task waiting in MT's own key waits does. So a task waiting for a key through Resident Claude costs the others nothing (before, it took a turn every round and spent it halted till the next tick).
-- **Behind, the stub's loop looks at the BIOS's buffer with AH=11h.** The buffer holds the front task's keys, and the BIOS's AH=01h drops the keys AH=00h can't give (CODE keys, scan codes from 85h); AH=11h drops none. Behind, the loop runs only where MT can't switch from it (an INT 24h prompt reading its answer, a TSR's own key read): with a key there, it passes the read on to MT, which holds it behind or, there, lets it through, as before M7c.
+- **Behind, the stub's loop looks at the BIOS's buffer with AH=11h.** The buffer holds the front task's keys, and the BIOS's AH=01h drops the keys AH=00h can't give (CODE keys, scan codes from 85h); AH=11h drops none. Behind, the loop runs only briefly: a read's first look, before its first HLT (MT then has it wait, above), or where MT can't switch from it (an INT 24h prompt reading its answer, a TSR's own key read). With a key there, it passes the read on to MT, which holds it behind or, where it can't switch, lets it through, as before M7c.
 - **The pop-up is the front task's.** `r_hot` still takes CODE-\ out of the buffer in any task's call, but brings the console up only in a call made while the front task runs (`r_front`: `mt_cur` = `mt_front`). Otherwise it stays pending (`r_pend`), and the stub sets `mt_tsrk`, once for each CODE-\ (`r_pend` 2: told). While it is set, MT treats the front task as having a key (`mt_kin`, in `mt_kwant` and `mt_preempt`): a front task waiting in MT (DOS's key wait, `TS_WAITK`) gets its turn, and MT clears `mt_tsrk` as it gives it. The front task's call through the stub then brings the console (the stub clears `mt_tsrk` too). A front task whose wait doesn't call through the stub gets that one turn only; the pop-up waits for its next call through it. `MT_TSR` clears `mt_tsrk` as well.
-- **TYPE's keys** (`r_feed`) go only to calls made while the front task runs.
+- **TYPE's keys** (`r_feed`) go only to calls made while the front task runs. While they are under way and none is due now (a wait, `{wait}`), and when they have just ended (the console to come back and answer TYPE), the front task's call sets `mt_tsrk`. So a front task switched from at the stub's HLT gets its turn about every other tick until they are done, and its next call brings the console. (Without it, a task behind ready to run would have stopped TYPE at its first wait, and the console would not have come back, until a real key.)
 - **MT doesn't look for CODE-Tab while the console is up** (`mt_i16`: a caller at A000h or above while the stub's `r_inpop`, at 10Dh in its header, is set). The console takes it as any other key (in its chat view its AH=01h drops it, as for other CODE keys), and the front task stays as it was.
 - **`CLAUDE /R` inside a task** says "CLAUDE /R from inside a task: its memory would go with the task. Load it at the Executive's prompt (CODE-P)." and ends with exit code 3. (It asks `MT_LIST`: AH = its own task.)
 - **The stub is version 3** (`r_ver`). `r_mt` (the address of MT's three bytes, 0:0 without tasks) follows `r_pend`. `CLAUDE /U` takes out any version's stub, as before; a version 2 stub, left by an older CLAUDE.COM, knows nothing of tasks.
@@ -1479,34 +1479,37 @@ Changes to existing checks:
 - **A read that passed the stub's loop on to MT** (behind, a key seen: above) then waits in MT, not in the stub. A CODE-\ typed while it is in front, still waiting there, goes as the BIOS's read takes it (dropped by AH=00h, a CODE key), until the program's next call through the stub.
 - **A pending pop-up comes over whatever task is in front at the time.** If the front changes before the front task calls, it comes over the new one.
 - **TYPE's keys go to the front task at each call.** A CODE-Tab in the middle of TYPE's keys splits them between the two tasks.
+- **A read behind where MT can't switch** (an INT 24h prompt, a TSR's read) passes on to the BIOS when the loop sees a key, which is the front task's: the BIOS's AH=00h takes it (or drops it, a CODE key). That is what an INT 24h prompt needs.
 - **CLAUDE.COM run as a task** (START, or Return in the Executive since M7b) turns the pop-up off for every task while it runs (`r_off`, one for the one link). Ended with `KILL`, it leaves it off until `CLAUDE /R` again.
 - **Where the stub sits** decides how MT takes the stub's own calls: its CS is 10h paragraphs below its block, so it can fall inside the top of the region below (`mt_mine` then takes it as that task's). That changes nothing now that its loop doesn't look at the buffer from behind.
 
 **Cost:**
-- **Switch off:** nothing in the kernel, the UI or LCMD. CLAUDE.COM is 254 bytes bigger (20,686). Its stub, resident with `/R`, is 6 paragraphs bigger: 56 paragraphs, 912 bytes with its MCB (816 before).
-- **Switch on:** MT's block is 900 paragraphs plus its MCB (887 before). MEMSZ with Shift-Return is 567.9 KB (568.1 before). LODEMT.SYS is 12,105 bytes (11,904 before).
-- **ROM 1:** 9,216 bytes left, as before (LODEMT.SYS takes no more sectors).
+- **Switch off:** nothing in the kernel, the UI or LCMD. CLAUDE.COM is 276 bytes bigger (20,836). Its stub, resident with `/R`, is 7 paragraphs bigger: 57 paragraphs, 928 bytes with its MCB (816 before).
+- **Switch on:** MT's block is 900 paragraphs plus its MCB (887 before). MEMSZ with Shift-Return is 567.6 KB (567.8 on main, with #70). LODEMT.SYS is 12,105 bytes (11,904 before).
+- **ROM 1:** 8,704 bytes left, as on main (PR #70's SYSTEM.RUN took a sector); LODEMT.SYS takes no more.
 - **Speed:** with tasks, the stub's pop-up, TYPE and peek checks read two bytes. `mt_safe` compares the interrupted CS once more (and, at the stub's HLT, looks at the caller), `mt_i16` compares the caller's CS before its CODE-Tab look, `mt_kin` reads one byte more, and a switch compares where it came from (`mt_tsrw`). A task waiting through the stub no longer takes turns (above): MTSPIN behind such a task counts as fast as alone.
-- **The figures are before PR #70** (GPIB SRQ on IRQ 5, which grows LODE.SYS and CLAUDE.COM too). Whichever of the two merges second rebuilds and measures again.
+- **The figures are after PR #70** (GPIB SRQ on IRQ 5), measured on main with it.
 
-**Tests:** test_mt's new group `t_rclaude` (10 checks; test_mt 300, 290 before):
+**Tests:** test_mt's new group `t_rclaude` (11 checks; test_mt 301, 290 before):
 - `CLAUDE /R` from a task (START): exit code 3, no stub, nothing for MT.
 - `CLAUDE /R` at CODE-P's prompt: the stub's version and `r_mt`, MT's `mt_tsrs`:`mt_tsro`.
 - MTKEY R in front, waiting in the stub's loop, while MTSPIN computes behind:
   - MTKEY R is switched from at the stub's HLT and waits as in MT (`TS_WAITK`);
-  - MTSPIN counts as fast as it does alone (above 85% of it);
+  - MTSPIN counts as fast as it does alone (above 85% of it; 97% measured);
   - the test's Audit checks every switch against the rules: switches came at the stub's HLT and none elsewhere in the stub, though the test raised five timer interrupts just after `r_hot`'s STI with a switch due;
   - then the key.
 - CODE-\ typed as MTKEY P (behind, MTLAUNCH /F) calls through the stub, MTSPIN computing in front: the pop-up pending, the front screen as it was; at the next front task's call (task 0's), the console comes.
 - CODE-Tab with the console up, MTLINE behind: no switch asked for; the console closed, the front task as it was.
-- CODE-ESC (only AH=10h gives it) for MTKEY E (AH=10h) in front, MTKEY R waiting behind: the front read gets it, three times; MTKEY R waits (`TS_WAITK`), and any look of its loop at the buffer from behind is an AH=11h.
+- CODE-ESC (only AH=10h gives it) for MTKEY E (AH=10h) in front, MTKEY R waiting behind: the front read gets it, three times; MTKEY R waits (`TS_WAITK`), and its loop's looks at the buffer from behind (its first, before its first HLT) are AH=11h.
 - CODE-\ typed as MTKEY P (behind) calls through the stub, MTLINE in front waiting in MT for its line: the console comes (`mt_tsrk`), and MTLINE gets its line.
 - A read error in a task behind (START /W of a file with bad sectors): MT's INT 24h prompt reads its answer through the stub's loop, where no switch can come; answered, the task goes and the machine goes on.
-- MTKEY R brought to the front gets its key. `CLAUDE /U`: MT forgets the key wait.
+- MTKEY R brought to the front gets its key.
+- TYPE's keys (put in the console's page as a REQUEST leaves them: a wait of 5 ticks, then a key) for MTKEY R in front, MTSPIN behind: MTKEY R waits as in MT meanwhile, the key comes, then the console.
+- `CLAUDE /U`: MT forgets the key wait.
 
 The Audit (test_mt's check of every switch) knows the stub's HLT as a place to switch from, under the same rules as `mt_safe`. t_kill's look at CODE-Tab arriving inside `mt_i16` watches at `mt_i16.nh` (the instruction after `mt_hot`'s call moved).
 
-**The checks can fail:** 12 of 15 mutations fail a check:
+**The checks can fail:** 14 of 16 mutations fail a check:
 - the stub's code taken as safe anywhere, not only at its HLT;
 - the stub's CS not taken as the task's at its HLT;
 - `MT_TSR` keeping nothing;
@@ -1515,25 +1518,26 @@ The Audit (test_mt's check of every switch) knows the stub's HLT as a place to s
 - `mt_tsrk` not set, or not read (`mt_kin`);
 - the task at the stub's HLT not waiting as in MT (`mt_tsrw`);
 - the loop behind halting without a look (the read error's prompt then hangs);
+- AH=01h, not AH=11h, for the loop's look behind;
+- TYPE's keys not telling MT (`mt_tsrk`) while they are under way;
 - `/R` not asking `MT_TSR`;
 - `/R` in a task not refused;
 - `/U` not telling MT.
 
-Three survive, all for cases no test makes:
+Two survive, both for cases no test makes:
 - the check of the caller at the stub's HLT (a TSR's read, made from its own interrupt code, waiting in the stub);
-- the check that the HLT is still there (a stale place after an older `/U`; `mt_i16`'s look at `r_inpop` checks the stub's 'CLRS' header for the same reason);
-- AH=11h, not AH=01h, for the loop's look behind (it runs behind only where no switch can come; no test types a CODE key there).
+- the check that the HLT is still there (a stale place after an older `/U`; `mt_i16`'s look at `r_inpop` checks the stub's 'CLRS' header for the same reason).
 
 **Not tested here:**
-- TYPE's keys held back from a background task (they need the link).
-- The three cases above.
+- TYPE's keys held back from a background task, and TYPE over the link with tasks (t_rclaude puts the keys in the console's page itself).
+- The two cases above.
 - The wake being one-shot: a front task whose wait doesn't call through the stub gets one turn, not one at every tick.
 - A task started before `CLAUDE /R`.
-- PR #70's GPIB SRQ on IRQ 5 with tasks:
+- GPIB's SRQ on IRQ 5 (PR #70) with tasks:
   - MT never switches at the tick or on INT 21h's way out while an interrupt is in service;
   - IRQ 5's vector (INT 0Dh) isn't one MT keeps per task;
   - its handler sends its EOI with interrupts off and makes no DOS call;
   - the console doesn't use the SRQ path.
 
-  So nothing here changes for it. One point for #70 or M9: CLAUDE.COM, waiting for the link with a HLT (#70's sleep until SRQ) as a front task with another ready, loses its turn at the tick, and an SRQ doesn't bring it back early (`mt_kwant` looks for keys only).
+  So nothing here changes for it. One point for M9: CLAUDE.COM, waiting for the link with a HLT (#70's sleep until SRQ) as a front task with another ready, loses its turn at the tick, and an SRQ doesn't bring it back early (`mt_kwant` looks for keys only).
 - Any of it on the 1520.
