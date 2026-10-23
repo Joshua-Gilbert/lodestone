@@ -414,17 +414,19 @@ gp_do_write:
 ; (LODESTONE: the two fast loops, as GPIBLOOP measured them fastest on the
 ; 1520.  Both are CPU-bound: the bus keeps up, so every clock counts, and
 ; on the 286 a taken jump (the prefetch queue refilled) costs ~0.6 us.  So
-; a byte that is ready costs one taken jump, LOOP's, and the waits are out
-; of line.  The counts are kept in registers and [gp_done_n] is settled
-; from SI/DI at the end.  The pad bytes put the jump targets at the parity
-; they were measured at (they are executed once a call, if at all).
-; GPIBLOOP 1.4: read 70 -> 152 KB/s, write 77 -> 119.)
+; a byte that is ready costs one taken jump, LOOP's, and so does a write's
+; poll that misses (a read's first poll does not miss).  The counts are
+; kept in registers and [gp_done_n] is settled from SI/DI at the end.  The
+; pad bytes put the jump targets at the parity they were measured at
+; (they are executed once a call, if at all).
+; GPIBLOOP 1.4-1.6: read 70 -> 152 KB/s, write 77 -> 119.)
 ;
 ; Fast path for the bulk of a write: the next byte is fetched while the bus
-; handshakes, so DO -> OUT is three instructions.  Polls DO alone; ERR (no
-; listener) ends it by the time-out.  Leaves the last byte (it may need EOI)
-; and anything unusual to the careful loop above, which picks up at
-; [gp_done_n] with ES:SI.
+; handshakes, so DO -> OUT is three instructions, and a poll that misses
+; costs one taken jump (back to the count just above the poll).  Polls DO
+; alone; ERR (no listener) ends it by the count.  Leaves the last byte (it
+; may need EOI) and anything unusual to the careful loop above, which picks
+; up at [gp_done_n] with ES:SI.
 gp_fast_write:
         mov     cx, [gp_count]
         sub     cx, [gp_done_n]
@@ -438,38 +440,27 @@ gp_fast_write:
         mov     bh, [gp_shadow1]
         es lodsb
         mov     ah, al
+        xor     di, di
         test    bh, gp_ISR1_DO
         jz      .w
         and     bh, ~gp_ISR1_DO
         jmp     short .put
-        times ($ - $$) & 1 db 90h       ; .w even, .put odd
+        times ($ + 3 - $$) & 1 db 90h   ; .w even, .put odd
+.r:     dec     di                      ; 65535 misses (~ 50 ms), then the
+        jz      .t                      ;  careful loop
 .w:     in      al, dx
         test    al, gp_ISR1_DO
-        jz      .m
+        jz      .r
 .put:   mov     al, ah
         mov     dh, gp_R_CDOR >> 8
         out     dx, al
         mov     dh, gp_R_ISR1 >> 8
         es lodsb                        ; (the last byte, after the last)
         mov     ah, al
+        xor     di, di
         loop    .w
         jmp     short .o
-.m:     mov     di, 16384               ; 65536 polls (~ 50 ms), then the
-.m2:    in      al, dx                  ;  careful loop
-        test    al, gp_ISR1_DO
-        jnz     .put
-        in      al, dx
-        test    al, gp_ISR1_DO
-        jnz     .put
-        in      al, dx
-        test    al, gp_ISR1_DO
-        jnz     .put
-        in      al, dx
-        test    al, gp_ISR1_DO
-        jnz     .put
-        dec     di
-        jnz     .m2
-        or      bh, al                  ; (ERR: the careful loop says NOL)
+.t:     or      bh, al                  ; (ERR: the careful loop says NOL)
 .o:     dec     si                      ; (the byte fetched, not sent)
         mov     [gp_shadow1], bh
         mov     ax, si

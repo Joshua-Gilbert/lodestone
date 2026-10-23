@@ -4714,7 +4714,25 @@ mt_vcall:
 ; crit_disk.c24: the kernel's INT 24h (the critical error's prompt),
 ; counted while it runs (mt_crit): mt_v10 puts what it prints on the real
 ; screen, since everything waits for its answer
-mt_c24: mov     si, crit_dev
+mt_c24: push    ds                      ; (a task not in front, a graphics
+        push    ax                      ;  screen in front: Fail, not a
+        mov     al, [cs:mt_cur]         ;  prompt, its handler's or
+        cmp     al, [cs:mt_front]       ;  mt_i24's, where nobody could
+        je      .p                      ;  read it, everything stopped for
+        xor     ax, ax                  ;  its answer.  A text one: its
+        mov     ds, ax                  ;  handler runs, as MS-DOS)
+        mov     al, [449h]              ; (the BIOS's mode: text 0-3, 7)
+        cmp     al, 7
+        je      .p
+        cmp     al, 3
+        jbe     .p
+        pop     ax
+        pop     ds
+        mov     al, 3
+        retf
+.p:     pop     ax
+        pop     ds
+.f:     mov     si, crit_dev
         inc     byte [cs:mt_crit]
         int     24h
         cmp     byte [cs:mt_crit], 0    ; (cleared meanwhile: its handler ran a
