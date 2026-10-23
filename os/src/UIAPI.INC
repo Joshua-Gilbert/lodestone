@@ -1,5 +1,5 @@
 ; =====================================================================
-;  UIAPI.INC - the Lodestone UI core as programs see it (API version 6)
+;  UIAPI.INC - the Lodestone UI core as programs see it (API version 8)
 ;
 ;  The UI core lives in the UI segment with the Executive.  A .RUN
 ;  program is loaded into the same segment, above the core, and calls it
@@ -38,11 +38,11 @@
 ; =====================================================================
 
         cpu     286
-UI_API      equ 7                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
+UI_API      equ 8                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
                                         ;  4: UI_SAVER's tidying, 5: the caller's redraw
                                         ;  routine stays, exit code 0FFFFh, 6: W_FLAGS,
                                         ;  windows that move and close, EV_MOVED,
-                                        ;  7: EV_RCLICK)
+                                        ;  7: EV_RCLICK, 8: UI_MENU, UI_MOUSE)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Lodestone version (BH major, BL minor
@@ -154,7 +154,22 @@ UI_SAVER    equ 46 * 3  ; the screen saver's delay (API 3).  AL = 0 -> AL =
                         ;  0 = never); AL = 2: BL = 1 not to tidy, 0 to tidy
                         ;  (API 4).  At start-up the core takes SAVER= in
                         ;  \LODE.INI (5 without it), and TIDY=0.
-UI_LAST     equ 46 * 3
+UI_MENU     equ 47 * 3  ; a pop-up menu (API 8): SI = AL items (1-20; word
+                        ;  pointers to ASCIIZ), AH = the one lit first (below
+                        ;  AL), BX = x, CX = y (EV_RCLICK's): a window there,
+                        ;  kept on the screen.  The arrows, a letter (the next
+                        ;  item starting with it), Return or a click on an item
+                        ;  -> CF clear, AX = the item; ESC or a click outside
+                        ;  the window (taken: it does nothing else) -> CF set.
+                        ;  It is modal: with MULTITASK=1 no window comes to
+                        ;  the front meanwhile
+UI_MOUSE    equ 48 * 3  ; the mouse now (API 8), for a drag: waits for the next
+                        ;  interrupt (a tick at most) -> AX = the buttons down
+                        ;  (bit 0 the left, bit 1 the right), BX = x, CX = y;
+                        ;  CF set if there is no mouse.  The pointer stays
+                        ;  hidden.  A press seen here is no event later: call
+                        ;  it after EV_CLICK until the left button is up
+UI_LAST     equ 48 * 3
 FONT_BYTES  equ 96 * 16                 ; a font file (.FNT): exactly this long
 
 EV_CLICK    equ 0FF01h                  ; a left-button press (BX = x, CX = y)

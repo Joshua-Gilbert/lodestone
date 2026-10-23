@@ -59,7 +59,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x621A}  # (6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x63B0}  # (621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -624,7 +624,7 @@ class Audit:
         ts = pc.u16(s.seg, Y['mt_tsrs'])                # (Resident Claude's stub, MT_TSR: only at its HLT, in a
         stub = ts != 0 and cs == ts                     #  read of the program's own: its frame's CS, at the
         caller = pc.u16(ss, pc.u16(s.seg, Y['mt_lsp']) + 2)   # interrupted SP, the task's and not the UI's)
-        r = dict(cs=cs < 0xA000 and cs not in (0x60, s.seg) and (cs != ui or ip in (Y['..@ui_idle'], Y['..@ui_sidle']))
+        r = dict(cs=cs < 0xA000 and cs not in (0x60, s.seg) and (cs != ui or ip in (Y['..@ui_idle'], Y['..@ui_sidle'], Y['..@ui_midle']))
                  and (not stub or (ip == pc.u16(s.seg, Y['mt_tsro']) and pc.rd(cs, ip - 1, 1) == b'\xf4'
                                    and caller != ui and s.mine(caller, cur, reg, psp, root, ui))),
                  iff=bool(fl & 0x200), isr=pc.isr == 0, indos=pc.rd(0x60, Y['indos'], 1)[0] == 0,
@@ -3518,6 +3518,61 @@ def t_base():
           'title strip dragged: the calculator in front (%d), not moved (%s): the press only brought it there; ESC: '
           'closed' % (c1[:2], cc, c2[:2]), c1 == c0 and cc == 1 and c2 == c0 and mb('mw_n') == 0, (c0, c1, cc, c2, mb('mw_n')))
 
+def t_menu():
+    print('== pop-up menus (UI API 8) in a window .RUN: saved under, modal; a drag lets the tasks run')
+    k = boot('mt_menu.img', b'MULTITASK=1\r\n', 88, A.MENUTEST, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    au = Audit(k)
+    k.select('MENUTEST.RUN'); k.key(ktest.ENTER); k.run_for(1.0)
+    sy, base = A.run_syms('tests/MENUTEST.ASM'), k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+    v16 = lambda n: k.pc.u16(k.useg, base + sy[n])
+    rd = [0]
+    def rh(pc):
+        if pc.r('cs') == k.useg and pc.r('ip') == Y['redraw_all']: rd[0] += 1
+    k.hooks.append(rh)
+    A.point(k, 100, 100); v0 = A.body(k)
+    A.press(k, 100, 100, 2)
+    lent, shown = (k.u16('wseg') != 0, k.rd('mn_lent', 1)[0]), A.has(k, 'Paste')
+    k.key(ktest.DOWN); k.key(ktest.ENTER); k.run_for(0.3)
+    check('MENUTEST a window .RUN (session %d; its window drawn again on a close: no save-under), a right click in it: the '
+          'menu, which borrows the cache itself (%s); Down, Return: item 1, the cache given back, the screen as it was '
+          'with no redraw (%d)' % (mb('mw_cur'), lent, rd[0]), mb('mw_cur') == 1 and mb('mw_n') == 1 and shown and lent == (True, 1)
+          and v16('mres') == 1 and k.u16('wseg') == 0 and rd[0] == 0 and A.body(k) == v0, (mb('mw_cur'), lent, shown, v16('mres'), rd[0]))
+    A.press(k, 100, 100, 2)
+    k.key(0x6D00); k.run_for(0.5)
+    f6 = mb('mw_cur'), A.has(k, 'Paste')
+    A.press(k, 8, 200, 1); k.run_for(0.3)           # (left of its window: the Executive's)
+    check('the menu open: CODE-F6 does nothing (%s: no other window in front, still open); a click on the Executive: no '
+          'choice (%04Xh), the focus still MENUTEST\'s (%d), the menu gone' % (f6, v16('mres'), mb('mw_cur')),
+          f6 == (1, True) and v16('mres') == 0xFFFF and mb('mw_cur') == 1 and not A.has(k, 'Paste'), (f6, v16('mres'), mb('mw_cur')))
+    # a drag: UI_MOUSE waits at ..@ui_midle, where MTSPIN behind gets its turns (no settling while it
+    # computes: the machine is never idle)
+    k.hooks.remove(rh)
+    A.click(k, 4, 340); k.run_for(0.3)              # (the Executive in front: CODE-P is its key)
+    k.key(A.CODE['P']); k.run_for(1.0)
+    typ(k, 'start /w mtspin.com 400 tb.txt', 0.3); typ(k, 'exit', 1.0); k.settle()
+    A.click(k, 4, 340); k.run_for(0.3)              # ("LCMD.COM ended" waits in the Executive: a click reads it)
+    A.click(k, 300, 300); k.run_for(0.3)            # (MENUTEST's window: it in front again)
+    cm, n0, d0 = mb('mw_cur'), len(au.ev), v16('dn')
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05)
+    for i in range(10):
+        k.pc.mouse_move((4 if i % 2 else -4) & 0xFF, 0, 1); k.pc.run_for(0.05)
+    k.pc.run_for(1.5)                               # (held still: the mouse sends nothing)
+    k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.3)
+    mid = [e for e in au.ev[n0:] if e['cs'] == k.useg and e['ip'] == Y['..@ui_midle'] and e['sw']]
+    tb0 = A.disk_file(k, 'TB.TXT')
+    check('MTSPIN started behind (CODE-P, START /W, EXIT), MENUTEST in front again (%d); a drag in it, the button held '
+          'still 1.5 s (UI_MOUSE %d times): MTSPIN switched to %d times from UI_MOUSE\'s wait, every switch at a safe '
+          'point' % (cm, v16('dn'), len(mid)), cm == 1 and v16('dn') >= 20 and len(mid) >= 10
+          and not au.bad(), (cm, v16('dn'), len(mid), tb0, au.bad()[:2], len(au.switches(n0))))
+    for _ in range(120):
+        k.run_for(0.25)
+        if A.disk_file(k, 'TB.TXT'): break
+    k.key(ktest.ESC); k.key(ktest.ESC); k.run_for(0.5)
+    check('ESC, ESC: MENUTEST ended, the Executive in front', mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and not k.crashed,
+          (mb('mw_n'), k.band()))
+
 def t_write():
     print('== Write as a window (M8b): beside the calculator and another Write, moved and resized')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
@@ -3888,7 +3943,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 581.5 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '581.5', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 581.1 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '581.1', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
@@ -4032,7 +4087,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
