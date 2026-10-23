@@ -327,7 +327,11 @@ crit:   sti
         push    es
         push    cs
         pop     ds
-        mov     [crit_ah], ah
+        cmp     byte [crit_q], 0        ; (Tab looking: Fail, no prompt in
+        je      .ask                    ;  the line being edited)
+        mov     al, 3
+        jmp     .x
+.ask:   mov     [crit_ah], ah
         mov     [crit_al], al
         mov     si, s_crlf
         call    bputs
@@ -522,8 +526,8 @@ do_pipe:
         cmp     word [pipe_rest], 0
         jne     .seg
 .x:     call    redir_undo
-        cmp     byte [pipe_n], 0        ; a pipe leaves its files
-        je      .r
+        cmp     byte [pipe_n], 1        ; a pipe leaves its files (one
+        jbe     .r                      ;  command: none, and no INT 24h)
         call    pipe_names
         mov     dx, pipe_a
         mov     ah, 41h
@@ -1073,7 +1077,9 @@ try_exts:
         mov     byte [is_bat], 1
 .ok:    clc
         ret
-.an:    cmp     bx, x_bat
+.an:    cmp     ax, 3                   ; (no directory, or a drive not
+        je      .none                   ;  ready: one INT 24h, not three)
+        cmp     bx, x_bat
         jb      .a
 .none:  mov     di, [extend]
         mov     byte [di], 0
@@ -2120,7 +2126,9 @@ edit_line:
         mov     dx, pat
         mov     cx, 10h
         mov     ah, 4Eh
+        mov     byte [crit_q], 1
 .tfind: int     21h
+        mov     byte [crit_q], 0
         jc      .beep
 .tdot:  cmp     byte [dta + 30], '.'    ; (not . and ..)
         jne     .tput
@@ -4678,6 +4686,7 @@ errlvl      resb 1
 tmpb        resb 1
 tmpw        resw 1
 crit_ah     resb 1
+crit_q      resb 1                      ; Tab is looking: INT 24h fails
 crit_al     resb 1
 ampm        resb 1
 vol_drv     resb 1

@@ -487,6 +487,7 @@ api_setredraw:
 ; =====================================================================
 ; UI_EVENT: wait for a key or a click (the pointer shows meanwhile)
 ui_event:
+        mov     word [crit_err], 0      ; (INT 24h's reason: this action's)
 .on:    mov     byte [ptr_on], 1
         call    show_cursor
 .l:     call    poll_once
