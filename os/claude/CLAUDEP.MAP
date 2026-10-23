@@ -20,8 +20,8 @@ Value     Name
 00000004  HISTN
 00000190  HISTL
 00000800  TXMAX
-00000809  RXMAX
-000021FC  REQMAX
+00000D15  RXMAX
+0000413C  REQMAX
 00004000  IOSIZE
 0000800B  SNAPMAX
 00000006  TXQN
@@ -70,7 +70,7 @@ Value     Name
 0000260C  K_CTRLL
 0000000F  PB_N
 00000008  PS_N
-0000014A  HELLO_MAX
+0000014B  HELLO_MAX
 00000039  R_PARAS
 
 
@@ -706,19 +706,19 @@ Real              Virtual           Name
             2B50              2B50  kv_appweb
             2B59              2B59  kv_rx
             2B62              2B62  kv_req
-            2B6C              2B6C  s_tkeys
-            2B8A              2B8A  evrepaint
-            2B8B              2B8B  evmouse
-            2B90              2B90  s_onint
-            2B99              2B99  s_none2
-            2B9E              2B9E  s_pages
-            2BAA              2BAA  s_helptitle
-            2BC1              2BC1  helptext
-            2D2F              2D2F  spinseq
-            2D39              2D39  evint
-            2D3A              2D3A  fcb1
-            2D4A              2D4A  fcb2
-            2D5A              2D5A  font
+            2B6D              2B6D  s_tkeys
+            2B8B              2B8B  evrepaint
+            2B8C              2B8C  evmouse
+            2B91              2B91  s_onint
+            2B9A              2B9A  s_none2
+            2B9F              2B9F  s_pages
+            2BAB              2BAB  s_helptitle
+            2BC2              2BC2  helptext
+            2D30              2D30  spinseq
+            2D3A              2D3A  evint
+            2D3B              2D3B  fcb1
+            2D4B              2D4B  fcb2
+            2D5C              2D5C  font
             3570              3570  bss
             3570              3570  boot
             35A4              35A4  boot.nr
@@ -896,71 +896,71 @@ Real              Virtual           Name
             51F4              51F4  nakframe
             51FC              51FC  rxn
             51FE              51FE  rxbuf
-            5A08              5A08  pf_kind
-            5A09              5A09  rq_over
-            5A0A              5A0A  rq_id
-            5A0B              5A0B  reqbuf
-            7C0B              7C0B  hellobuf
-            7D55              7D55  evans
-            7D59              7D59  crctab
-            7F59              7F59  term
-            7F5A              7F5A  t_active
-            7F5C              7F5C  tmouse
-            7F5D              7F5D  keybuf
-            7FDD              7FDD  keysend
-            805D              805D  shadseg
-            805F              805F  cur_on
-            8060              8060  cur_di
-            8062              8062  t_flags
-            8063              8063  t_cur
-            8065              8065  ask_open
-            8066              8066  help_open
-            8067              8067  ask_id
-            8068              8068  ask_kind
-            8069              8069  ask_sel
-            806A              806A  ask_q
-            806C              806C  ask_d
-            806E              806E  ask_a
-            8070              8070  askbuf
-            83F4              83F4  optbuf
-            842C              842C  dta
-            8458              8458  cwdbuf
-            849C              849C  old_tmo
-            849E              849E  gp_dlen
-            84A0              84A0  gp_max
-            84A2              84A2  wr_data
-            84A4              84A4  wr_len
-            84A6              84A6  wr_done
-            84A8              84A8  run_flags
-            84A9              84A9  run_cmd
-            84AB              84AB  run_rest
-            84AD              84AD  run_exit
-            84AF              84AF  run_err
-            84B1              84B1  ext_at
-            84B3              84B3  exec_path
-            8503              8503  outname
-            8553              8553  tail
-            85D5              85D5  epb
-            85E3              85E3  exec_ss
-            85E5              85E5  exec_sp
-            85E7              85E7  ks_active
-            85E8              85E8  ks_len
-            85EA              85EA  ks_ptr
-            85EC              85EC  ks_pos
-            85EE              85EE  ks_wait
-            85EF              85EF  ks_until
-            85F1              85F1  snap_taken
-            85F2              85F2  snap_len
-            85F4              85F4  prof_acc
-            8634              8634  prof_cnt
-            8654              8654  prof_t0
-            8658              8658  prof_cur
-            8659              8659  prof_sp
-            865A              865A  prof_stk
-            8662              8662  prof_txt
-            8A62              8A62  stack_bottom
-            8E62              8E62  stack_top
-            8E62              8E62  bss_end
+            5F14              5F14  pf_kind
+            5F15              5F15  rq_over
+            5F16              5F16  rq_id
+            5F18              5F18  reqbuf
+            A058              A058  hellobuf
+            A1A3              A1A3  evans
+            A1A7              A1A7  crctab
+            A3A7              A3A7  term
+            A3A8              A3A8  t_active
+            A3AA              A3AA  tmouse
+            A3AB              A3AB  keybuf
+            A42B              A42B  keysend
+            A4AB              A4AB  shadseg
+            A4AD              A4AD  cur_on
+            A4AE              A4AE  cur_di
+            A4B0              A4B0  t_flags
+            A4B1              A4B1  t_cur
+            A4B3              A4B3  ask_open
+            A4B4              A4B4  help_open
+            A4B5              A4B5  ask_id
+            A4B6              A4B6  ask_kind
+            A4B7              A4B7  ask_sel
+            A4B8              A4B8  ask_q
+            A4BA              A4BA  ask_d
+            A4BC              A4BC  ask_a
+            A4BE              A4BE  askbuf
+            A842              A842  optbuf
+            A87A              A87A  dta
+            A8A6              A8A6  cwdbuf
+            A8EA              A8EA  old_tmo
+            A8EC              A8EC  gp_dlen
+            A8EE              A8EE  gp_max
+            A8F0              A8F0  wr_data
+            A8F2              A8F2  wr_len
+            A8F4              A8F4  wr_done
+            A8F6              A8F6  run_flags
+            A8F7              A8F7  run_cmd
+            A8F9              A8F9  run_rest
+            A8FB              A8FB  run_exit
+            A8FD              A8FD  run_err
+            A8FF              A8FF  ext_at
+            A901              A901  exec_path
+            A951              A951  outname
+            A9A1              A9A1  tail
+            AA23              AA23  epb
+            AA31              AA31  exec_ss
+            AA33              AA33  exec_sp
+            AA35              AA35  ks_active
+            AA36              AA36  ks_len
+            AA38              AA38  ks_ptr
+            AA3A              AA3A  ks_pos
+            AA3C              AA3C  ks_wait
+            AA3D              AA3D  ks_until
+            AA3F              AA3F  snap_taken
+            AA40              AA40  snap_len
+            AA42              AA42  prof_acc
+            AA82              AA82  prof_cnt
+            AAA2              AAA2  prof_t0
+            AAA6              AAA6  prof_cur
+            AAA7              AAA7  prof_sp
+            AAA8              AAA8  prof_stk
+            AAB0              AAB0  prof_txt
+            AEB0              AEB0  stack_bottom
+            B2B0              B2B0  stack_top
+            B2B0              B2B0  bss_end
 
 ---- Section rstub ------------------------------------------------------------
 

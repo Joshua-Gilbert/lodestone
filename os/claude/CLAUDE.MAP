@@ -20,8 +20,8 @@ Value     Name
 00000004  HISTN
 00000190  HISTL
 00000800  TXMAX
-00000809  RXMAX
-000021FC  REQMAX
+00000D15  RXMAX
+0000413C  REQMAX
 00004000  IOSIZE
 0000800B  SNAPMAX
 00000006  TXQN
@@ -68,7 +68,7 @@ Value     Name
 00001000  K_QUIT
 00001300  K_PAINT
 0000260C  K_CTRLL
-0000014A  HELLO_MAX
+0000014B  HELLO_MAX
 00000039  R_PARAS
 
 
@@ -660,19 +660,19 @@ Real              Virtual           Name
             25E0              25E0  kv_appweb
             25E9              25E9  kv_rx
             25F2              25F2  kv_req
-            25FC              25FC  s_tkeys
-            261A              261A  evrepaint
-            261B              261B  evmouse
-            2620              2620  s_onint
-            2629              2629  s_none2
-            262E              262E  s_pages
-            263A              263A  s_helptitle
-            2651              2651  helptext
-            27BF              27BF  spinseq
-            27C9              27C9  evint
-            27CA              27CA  fcb1
-            27DA              27DA  fcb2
-            27EA              27EA  font
+            25FD              25FD  s_tkeys
+            261B              261B  evrepaint
+            261C              261C  evmouse
+            2621              2621  s_onint
+            262A              262A  s_none2
+            262F              262F  s_pages
+            263B              263B  s_helptitle
+            2652              2652  helptext
+            27C0              27C0  spinseq
+            27CA              27CA  evint
+            27CB              27CB  fcb1
+            27DB              27DB  fcb2
+            27EC              27EC  font
             3000              3000  bss
             3000              3000  boot
             3034              3034  boot.nr
@@ -850,64 +850,64 @@ Real              Virtual           Name
             4C84              4C84  nakframe
             4C8C              4C8C  rxn
             4C8E              4C8E  rxbuf
-            5498              5498  pf_kind
-            5499              5499  rq_over
-            549A              549A  rq_id
-            549B              549B  reqbuf
-            769B              769B  hellobuf
-            77E5              77E5  evans
-            77E9              77E9  crctab
-            79E9              79E9  term
-            79EA              79EA  t_active
-            79EC              79EC  tmouse
-            79ED              79ED  keybuf
-            7A6D              7A6D  keysend
-            7AED              7AED  shadseg
-            7AEF              7AEF  cur_on
-            7AF0              7AF0  cur_di
-            7AF2              7AF2  t_flags
-            7AF3              7AF3  t_cur
-            7AF5              7AF5  ask_open
-            7AF6              7AF6  help_open
-            7AF7              7AF7  ask_id
-            7AF8              7AF8  ask_kind
-            7AF9              7AF9  ask_sel
-            7AFA              7AFA  ask_q
-            7AFC              7AFC  ask_d
-            7AFE              7AFE  ask_a
-            7B00              7B00  askbuf
-            7E84              7E84  optbuf
-            7EBC              7EBC  dta
-            7EE8              7EE8  cwdbuf
-            7F2C              7F2C  old_tmo
-            7F2E              7F2E  gp_dlen
-            7F30              7F30  gp_max
-            7F32              7F32  wr_data
-            7F34              7F34  wr_len
-            7F36              7F36  wr_done
-            7F38              7F38  run_flags
-            7F39              7F39  run_cmd
-            7F3B              7F3B  run_rest
-            7F3D              7F3D  run_exit
-            7F3F              7F3F  run_err
-            7F41              7F41  ext_at
-            7F43              7F43  exec_path
-            7F93              7F93  outname
-            7FE3              7FE3  tail
-            8065              8065  epb
-            8073              8073  exec_ss
-            8075              8075  exec_sp
-            8077              8077  ks_active
-            8078              8078  ks_len
-            807A              807A  ks_ptr
-            807C              807C  ks_pos
-            807E              807E  ks_wait
-            807F              807F  ks_until
-            8081              8081  snap_taken
-            8082              8082  snap_len
-            8084              8084  stack_bottom
-            8484              8484  stack_top
-            8484              8484  bss_end
+            59A4              59A4  pf_kind
+            59A5              59A5  rq_over
+            59A6              59A6  rq_id
+            59A8              59A8  reqbuf
+            9AE8              9AE8  hellobuf
+            9C33              9C33  evans
+            9C37              9C37  crctab
+            9E37              9E37  term
+            9E38              9E38  t_active
+            9E3A              9E3A  tmouse
+            9E3B              9E3B  keybuf
+            9EBB              9EBB  keysend
+            9F3B              9F3B  shadseg
+            9F3D              9F3D  cur_on
+            9F3E              9F3E  cur_di
+            9F40              9F40  t_flags
+            9F41              9F41  t_cur
+            9F43              9F43  ask_open
+            9F44              9F44  help_open
+            9F45              9F45  ask_id
+            9F46              9F46  ask_kind
+            9F47              9F47  ask_sel
+            9F48              9F48  ask_q
+            9F4A              9F4A  ask_d
+            9F4C              9F4C  ask_a
+            9F4E              9F4E  askbuf
+            A2D2              A2D2  optbuf
+            A30A              A30A  dta
+            A336              A336  cwdbuf
+            A37A              A37A  old_tmo
+            A37C              A37C  gp_dlen
+            A37E              A37E  gp_max
+            A380              A380  wr_data
+            A382              A382  wr_len
+            A384              A384  wr_done
+            A386              A386  run_flags
+            A387              A387  run_cmd
+            A389              A389  run_rest
+            A38B              A38B  run_exit
+            A38D              A38D  run_err
+            A38F              A38F  ext_at
+            A391              A391  exec_path
+            A3E1              A3E1  outname
+            A431              A431  tail
+            A4B3              A4B3  epb
+            A4C1              A4C1  exec_ss
+            A4C3              A4C3  exec_sp
+            A4C5              A4C5  ks_active
+            A4C6              A4C6  ks_len
+            A4C8              A4C8  ks_ptr
+            A4CA              A4CA  ks_pos
+            A4CC              A4CC  ks_wait
+            A4CD              A4CD  ks_until
+            A4CF              A4CF  snap_taken
+            A4D0              A4D0  snap_len
+            A4D2              A4D2  stack_bottom
+            A8D2              A8D2  stack_top
+            A8D2              A8D2  bss_end
 
 ---- Section rstub ------------------------------------------------------------
 
