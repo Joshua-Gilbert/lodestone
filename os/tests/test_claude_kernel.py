@@ -130,6 +130,28 @@ def test_irq5_storm_masks_it():
     T.check(h)
 
 
+def test_driver_frame_check():
+    """GPIB driver 1.23 keeps the frame check as it moves the bytes: CLAUDE checks every frame from the Pi by
+    the driver's sum (03h AL=2, ks_check: none left for find_frame's scan), and its own frames go out with the
+    check the driver added (02h AL=3), every one good at the Pi.  A 22 KB file each way."""
+    big = ''.join('line %05d: the quick brown fox jumps over the lazy dog\n' % i for i in range(400))
+    h = T.start([T.reply(('tool', 'str_replace_based_edit_tool',
+                          {'command': 'create', 'path': 'A:\\BIG.TXT', 'file_text': big})),
+                 T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\BIG.TXT',
+                                                                   'view_range': [395, 400]})),
+                 T.reply(('text', 'Written and checked.'))], mode='edits', bridge='pico')
+    assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 1, (h.var('ksum', 1), h.var('use_fl', 1))
+    k0, st0 = h.var('n_kok', 2), dict(h.link.stats)
+    assert h.turn('write a big file', sim_s=120)
+    assert bytes(h.m.fs['A:\\BIG.TXT']) == big.replace('\n', '\r\n').encode()
+    st = {k: v - st0.get(k, 0) for k, v in h.link.stats.items()}
+    assert h.var('n_bad', 2) == 0 and not st.get('rx_nak') and not st.get('rx_bad'), st
+    assert h.var('n_kok', 2) - k0 == st['tx_frames'] > 40, (h.var('n_kok', 2) - k0, st)   # (every Pi frame)
+    assert st['rx_fletcher'] == st['rx_frames'], st                                       # (every one of ours)
+    T.check(h)
+
+
+T.test_driver_frame_check = test_driver_frame_check
 T.test_srq_on_irq5 = test_srq_on_irq5
 T.test_gpibirq_0_turns_it_off = test_gpibirq_0_turns_it_off
 T.test_irq5_storm_masks_it = test_irq5_storm_masks_it
