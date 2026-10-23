@@ -126,6 +126,9 @@ link_idle:
 
 ; POLL frame (no payload) with a new sequence number
 frame_poll:
+%ifdef KSUM
+        mov     byte [tx_app], 0
+%endif
         mov     byte [pend_msg], 0
         inc     byte [g_seq]
         mov     di, txframe
@@ -190,10 +193,23 @@ frame_next:
         mov     ds, [bx+2]
         push    cx
         PROF    5
+        shr     cx, 1
+        rep     movsw
+        adc     cx, cx
         rep     movsb
         PROF    0
         pop     cx
         pop     ds
+%ifdef KSUM
+        mov     al, [ksum]              ; the driver adds the check as it sends
+        and     al, [use_fl]            ;  (1.23: 02h AL=3)
+        mov     [tx_app], al
+        jz      .fc
+        add     cx, 6
+        mov     [txlen], cx
+        ret
+.fc:
+%endif
         push    cx
         mov     si, txframe+1
         add     cx, 5
@@ -210,6 +226,12 @@ frame_next:
 link_write:
         mov     si, txframe
         mov     cx, [txlen]
+%ifdef KSUM
+        mov     al, [tx_app]            ; 3: EOI, after the driver's check
+        shl     al, 1
+        or      al, 1
+        mov     [lw_eoi], al
+%endif
 lw_go:
 %ifndef NO_SRQ
         cmp     word [irq_ptr+2], 0     ; (SRQs before our frame aren't its
@@ -218,7 +240,11 @@ lw_go:
 .w:
 %endif
         mov     bl, [nano]
+%ifdef KSUM
+        mov     al, [lw_eoi]
+%else
         mov     al, 1                   ; EOI with the last byte
+%endif
         mov     ah, 02h
         PROF    1
         call    gg_call
@@ -233,6 +259,9 @@ lw_go:
 
 ; NAK the Pi's last answer (it was damaged); our pending fragment stays
 link_write_nak:
+%ifdef KSUM
+        mov     byte [lw_eoi], 1
+%endif
         mov     di, nakframe
         mov     ah, G_NAK
         call    frame_short
@@ -292,19 +321,75 @@ link_read:
         mov     cx, RXMAX
         mov     bl, [nano]
         xor     al, al                  ; binary: stop at EOI only
+%ifdef KSUM
+        mov     al, [ksum]              ; 2: and BX = the driver's check of
+        and     al, [use_fl]            ;  every byte (1.23)
+        shl     al, 1
+%endif
         mov     ah, 03h
         PROF    2
         call    gg_call
         PROF    0
         jc      .bad
         mov     [rxn], cx
+%ifdef KSUM
+        mov     al, [ksum]
+        and     al, [use_fl]
+        jz      .scan
+        call    ks_check
+        jnc     .ok
+.scan:
+%endif
         call    find_frame
         jc      .bad
-        jmp     took_answer
+.ok:    jmp     took_answer
 .bad:   mov     byte [nak_pending], 1
         mov     byte [lstate], LS_IDLE
         inc     word [n_bad]
         ret
+
+%ifdef KSUM
+; One frame and nothing else, CX = rxn bytes: is it good, by the driver's
+; Fletcher-16 of all of them (BL = A, BH = B; A = 1, B = 0 to start)?  The
+; frame's own check leaves out the first byte (47h) and the check (the last
+; two, A then B), so:  A1 = A - 47h, B1 = B - 1 - n * 47h, then
+; A2 = A1 - a - b and B2 = B1 - 2 A1 + b must be the a and b sent.
+; -> BX = 0, CF clear if it is good.  (find_frame scans for anything else.)
+ks_check:
+        cmp     cx, 8
+        jb      .no
+        cmp     byte [rxbuf], 47h
+        jne     .no
+        mov     ax, [rxbuf+4]
+        cmp     ax, RXMAX - 9
+        ja      .no
+        add     ax, 8
+        cmp     ax, cx
+        jne     .no
+        PROF    4
+        mov     si, cx
+        mov     dx, [rxbuf+si-2]        ; DL = a, DH = b
+        mov     al, cl
+        mov     ah, 47h
+        mul     ah                      ; AL = n * 47h (mod 256)
+        sub     bh, al
+        dec     bh                      ; B1
+        sub     bl, 47h                 ; A1
+        sub     bh, bl
+        sub     bh, bl
+        add     bh, dh                  ; B2
+        sub     bl, dl
+        sub     bl, dh                  ; A2
+        PROF    0
+        cmp     bx, dx
+        jne     .no
+        inc     word [n_kok]            ; (frames the driver's check passed)
+        xor     bx, bx
+        clc
+        ret
+.no:    stc
+        ret
+%endif
 
 ; rxbuf[0..rxn) -> BX = offset of the first good frame, CF if none
 find_frame:

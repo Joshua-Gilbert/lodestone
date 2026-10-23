@@ -62,6 +62,7 @@ BOXW     equ 70
 %include "GLP.INC"               ; the link's message types and states
 %define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi; not in RCON)
 %define TERM_PIXELS              ; (TERMCELL.INC: pictures, CELLS op FDh; not in RCON)
+%define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23; not in RCON)
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -1581,6 +1582,9 @@ pf_reasm:
         add     di, [rq_len]
         mov     [rq_len], ax
         PROF    5
+        shr     cx, 1
+        rep     movsw
+        adc     cx, cx
         rep     movsb
         PROF    0
         jmp     .more
@@ -3127,7 +3131,12 @@ find_gpib:
         cmp     ax, 4747h
         jne     .bad
         mov     [ggver], cx
-        clc
+        cmp     cx, 0123h               ; Lodestone's driver 1.23 and up keeps
+        jb      .ok                     ;  the frame check as it moves the bytes
+        cmp     cx, 0200h
+        jae     .ok
+        mov     byte [ksum], 1
+.ok:    clc
         ret
 .bad:   stc
         ret
@@ -3815,6 +3824,10 @@ inbuf       resb MAXIN                  ; (first: the start-up code is there)
 res_cs      resw 1                      ; resident Claude's stub, if loaded
 ggint       resb 1
 ggver       resw 1
+ksum        resb 1                      ; 1: INT 60h 02h AL=3, 03h AL=2 (KSUM)
+tx_app      resb 1                      ; 1: txframe's check is the driver's to add
+lw_eoi      resb 1                      ; lw_go's AL for INT 60h 02h: 1, or 3
+n_kok       resw 1                      ; frames ks_check passed (the tests)
 convseg     resw 1
 ioseg       resw 1
 snapseg     resw 1
