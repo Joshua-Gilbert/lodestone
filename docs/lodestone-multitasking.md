@@ -1697,6 +1697,7 @@ t_on's check that MT passes F0h AL=2 and 3 on to the kernel (the help's save-und
 - **The corner has no mark.** It is where the frame's bottom-right corner is.
 - **The minimum size is the core's, not the window's** (24 by 72: a title strip, a text row and a status line; Write's title fits, and its sideways scroll of 20 columns still shows the cursor). A `.RUN` with a bigger minimum lays itself out in what it gets.
 - **Each Write has its own text buffer:** 64 KB, or what is left (at least 4 KB). With tasks running, a second Write may get less.
+- **Write's forms and help (Find, Options, CODE-?) close with the screen drawn again,** through the Executive's `relist`, which reads its directory: as any window closing over the Executive does while window `.RUN`s run (M8a). Options then draws Write's text once more, for the new tab stops, but doesn't close and open its window again.
 - **A Write behind shows its cursor.** Drawn again from another session's `redraw_all`, its `w_draw` ends as any update does.
 - **A second Write's place** comes from where its slot is, so it depends on what else is open: after the calculator, one step lower; after another Write, two.
 
@@ -1717,7 +1718,6 @@ t_on's check that MT passes F0h AL=2 and 3 on to the kernel (the help's save-und
 - A click left of it, on the Executive: no cursor moved. CODE-F8, Left, Up, ESC: as it was. CODE-F8, Left ×70: 24 columns, no fewer.
 - Ctrl-End, then CODE-F8, Up ×30: 72 rows, no fewer, one text row, line 5 in it; PgUp: a page is one line. Right ×10, Down ×20: as far as the screen's right edge and the band.
 - CODE-F7: moved, the text with it; Write is given `EV_MOVED`.
-- CODE-F7: moved, the text with it.
 - CODE-W in Write: another Write, a new file, lower and to the right.
 - CODE-X: Transfer. CODE-T: the tasks, which don't fit beside two Writes and the calculator (the segment really out of room, not poked).
 - In the new Write, "abc", CODE-Q, a name: saved, its window gone, the first in front.
