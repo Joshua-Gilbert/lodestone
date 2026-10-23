@@ -34,14 +34,14 @@ start:  mov     bx, 2 * GOFF / 16 + 1
         je      .call
         inc     ax                      ; S: its size
         cmp     dl, 'S'
-        jne     .l
+        jne     .es
 .call:  call    UI_CLIP
         sbb     dx, dx
         mov     [rcf], dx
         mov     [rret], ax
         mov     [gcx], cx               ; (G's and S's CX; P's is plen)
         mov     [scx], cx
-        push    ds
+.es:    push    ds
         pop     es
         jmp     .l
 .end:   call    UI_WCLOSE

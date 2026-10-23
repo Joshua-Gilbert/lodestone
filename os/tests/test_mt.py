@@ -59,7 +59,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x6506}  # (63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x6526}  # (63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -3590,7 +3590,7 @@ def t_menu():
 
 def t_clip():
     print('== the clipboard (UI_CLIP) with tasks: a window .RUN\'s, kept while tasks are parked and killed')
-    k = boot('mt_clip.img', b'MULTITASK=1\r\n', 88, A.CLIPTEST)
+    k = boot('mt_clip.img', b'MULTITASK=1\r\n', 88, A.CLIPTEST, MTKL)
     seg, Y = mt_seg(k), k.Y
     mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
     sy = A.run_syms('tests/CLIPTEST.ASM')
@@ -3608,21 +3608,27 @@ def t_clip():
     cf, h, ses = put(b, A.CLIPPAT[:2000]), k.u16('clip_h'), mb('mw_cur')
     k.key(ktest.ESC); k.run_for(0.5)
     sh = Shell(k)
-    sh.run('start /w mtline.com cl.txt')
+    e0 = ems_used(k)
+    sh.run('start /w mtkill.com f 100 ck.txt')      # (an EMS page its own, then waits for a line)
+    k.run_for(0.6); e1 = ems_used(k)
     op = sh.run('park 1 && echo PARKED')
     ou = sh.run('unpark 1 && echo BACK')
     ok_ = sh.run('kill 1 && echo KILLED')
+    k.run_for(0.5); e2 = ems_used(k)
     typ(k, 'exit', 1.0); k.settle()
+    seen = False
     for _ in range(10):                             # ("LCMD.COM ended": a key reads it, once it shows)
         k.run_for(0.3)
-        if 'Press any key' in k.band(): k.key(ktest.ESC); break
+        if 'Press any key' in k.band(): k.key(ktest.ESC); seen = True; break
     b = start()
     g, rec = get(b, 4000), k.rd('ems_h', 4, 4 * h) if h else b''
     k.key(ktest.ESC); k.run_for(0.5)
-    check('CLIPTEST a window .RUN (session %d): 2000 bytes put (handle %d); ended; a task started, parked, back and '
-          'killed from LCMD; CLIPTEST again: the same 2000 bytes, its handle as it was (%r: one page, nobody\'s)'
-          % (ses, h, rec.hex()), cf == 0 and ses == 1 and 0 < h < 32 and g == A.CLIPPAT[:2000] and k.u16('clip_h') == h
-          and rec[1] == 1 and rec[2:] == b'\0\0' and mb('mw_n') == 0 and 'PARKED' in op and 'BACK' in ou and 'KILLED' in ok_ and not k.crashed, (cf, ses, h, g and len(g), rec, op[-80:], ou[-80:], ok_[-80:]))
+    check('CLIPTEST a window .RUN (session %d): 2000 bytes put (handle %d); ended; a task with an EMS page of its own '
+          '(MTKILL F) started, parked, back and killed from LCMD (its page freed: %d, %d, %d in use); CLIPTEST again: the same '
+          '2000 bytes, its handle as it was (%r: one page, nobody\'s)' % (ses, h, e0, e1, e2, rec.hex()),
+          cf == 0 and ses == 1 and 0 < h < 32 and g == A.CLIPPAT[:2000] and k.u16('clip_h') == h and e1 > e0 and e2 == e0
+          and rec[1] == 1 and rec[2:] == b'\0\0' and mb('mw_n') == 0 and 'PARKED' in op and 'BACK' in ou and 'KILLED' in ok_
+          and seen and not k.crashed, (cf, ses, h, g and len(g), rec, e0, e1, e2, seen, op[-80:], ou[-80:], ok_[-80:], k.band()))
 
 def t_write():
     print('== Write as a window (M8b): beside the calculator and another Write, moved and resized')

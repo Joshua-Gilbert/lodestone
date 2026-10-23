@@ -1022,7 +1022,9 @@ api_clip:
         jmp     short .err
 .nf:    inc     byte [clip_f]
 .f:     call    clip_file
-        jc      .err
+        jnc     .set
+        mov     word [clip_len], 0      ; (3Ch cut the file: what it held is gone)
+        jmp     short .err
 .set:   mov     [clip_len], cx
         jmp     short .ok
 .get:   cmp     cx, [clip_len]          ; at most what it holds
@@ -4407,8 +4409,8 @@ s_svarg     db 'A: /S M=', 0
 s_svfont    db ' F=', 0
 section uiboot
 s_ini       db '@:\LODE.INI', 0
-s_clip      db '@:\CLIP.$$$', 0     ; UI_CLIP's file without EMS
 section ui
+s_clip      db '@:\CLIP.$$$', 0     ; UI_CLIP's file without EMS (named at each use)
 s_pathv     db 'PATH='
 section uiboot
 font_path   db '@:\'                ; "X:\NAME.FNT": on the drive started from

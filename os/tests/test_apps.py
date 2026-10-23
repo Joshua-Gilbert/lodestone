@@ -2484,10 +2484,12 @@ def t_clip():
     check('the program ended and started again: still the 1000 bytes (kept by the core, not the program)',
           c.size() == 1000 and g == CLIPPAT[:1000] and k.u16('clip_h') == h, (c.size(), k.u16('clip_h')))
     big = c.put(CLIPPAT)
+    kept, kn = c.get(2000)[0], c.size()
     full = c.put(CLIPPAT[:16384])
     g, _ = c.get(16384)
     check('16385 bytes: refused (CF, error 8), what it held kept; 16384: the page full, got back whole',
-          big == (0xFFFF, 8) and full == 0 and g == CLIPPAT[:16384] and c.size() == 16384 and k.u16('clip_h') == h, (big, full, k.u16('clip_h')))
+          big == (0xFFFF, 8) and kept == CLIPPAT[:1000] and kn == 1000 and full == 0 and g == CLIPPAT[:16384]
+          and c.size() == 16384 and k.u16('clip_h') == h, (big, kn, full, k.u16('clip_h')))
     e = c.put(b'')
     g, _ = c.get(100)
     check('0 bytes put: empty (size 0, nothing to get)', e == 0 and c.size() == 0 and g == b'' and c.v('gcx') == 0, (e, c.size()))
