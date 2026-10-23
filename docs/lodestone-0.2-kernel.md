@@ -185,13 +185,18 @@ The old `src\COMMAND.ASM/.COM` and `releases\0.2\COMMAND.COM` on the PC are obso
   - TSR (31h) keeps its files open.
   - ^C runs INT 23h on the caller's stack: IRET restarts the call, RETF with CF ends the program.
 - **Built-in GPIB (INT 60h).**
-  - The GRIDGPIB 1.1 API, reporting version 1.21. It installs only if a 7210 answers at the GRiD's GPIB ports.
+  - The GRIDGPIB 1.1 API, reporting version 1.22. It installs only if a 7210 answers at the GRiD's GPIB ports.
   - SRQ on IRQ 5 (1.21, the GPIB cartridge's E1 jumper). The 7210 interrupts on SRQ only (IMR2 SRQI). The handler ORs ISR2 into the shadow AH=0Bh reads, and adds 1 to a count.
     - AH=0Eh: AL = 0 off, 1 on, anything else just asks. It returns AX = the IRQ in use (5, or 0) and DX:CX = the count. A client reads the count with interrupts off before a HLT, so it can't sleep through an SRQ.
     - On by default. `GPIBIRQ=0` in LODE.INI turns it off at start-up (KSPLASH.INC's `gi_boot`). 32 interrupts in one tick (no jumper, a floating line) turn it off by themselves.
     - The handler checks the PIC's in-service register first: in real mode the 286 also raises INT 0Dh for a word at offset FFFFh, and that goes on to the old vector.
     - On the 1520 (tools/GPIBIRQ.COM): one IRQ 5 an SRQ, as fast as polling, and it wakes a HLT. SRQI latches on SRQ's edge and clears on read, so a held SRQ doesn't interrupt again.
   - Fast path: a tight ISR1 polling loop for the bulk of each transfer. The careful per-byte code still handles EOI, RFD holdoff and timeouts.
+    - 1.22, from tools/GPIBLOOP.COM on the 1520 (1.0-1.6, 4 KB echoes through the Pico 2 bridge): reading 70 → 152 KB/s, writing 77 → 112. Both loops are CPU-bound (the bus keeps up), and a taken jump costs about 0.6 µs, so a byte that is ready costs one, LOOP's.
+    - Read: the count in CX (all but the last two bytes of room), END from the chip (LF too, with REOS) instead of a compare per byte, the wait out of line. A read's first poll doesn't miss.
+    - Write: the next byte fetched while the bus handshakes, so DO → OUT is three instructions; a miss costs one taken jump, back to a count just above the poll. Each miss ORs its ISR1 read into the shadow, since ERR clears as it is read; every 64 misses it looks for ERR (no listener), and 256 such waits go to the careful loop.
+    - `gp_done_n` is settled from SI/DI at the end (an INC in memory per byte cost 1.6 µs of a 12.6 µs write byte). Pad bytes keep the jump targets at their measured parity. 48 bytes more than 1.21.
+    - Tried and dropped: AUXRB's TRI (no change: T1 isn't the limit), LOOPZ polls (slower), END tested on the same read as DI (its first poll came too early and missed), the unbounded write poll (119 KB/s, but it would hang on a listener that stops).
   - Measured in emulation:
     - GGTEST ID? 6.9 → 4.2 ms;
     - Claude, 22.8 KB each way: 8.0 → 6.8 s at 115,200 baud, and 5.4 → 2.9 s with a 2 Mbaud bridge.

@@ -96,7 +96,9 @@ class Link:
     gives a CELLS payload (or None), source.delivered() says the GRiD has the
     last one (its next frame is a new one)."""
     HOLD = 0.25
-    RING_AGAIN = 0.1
+    RING_AGAIN = 0.1                          # ring again this long after a ring the GRiD didn't answer
+    RING_IDLE = 0.05                          # the GRiD is idle once our last answer is this old
+    RING_TRIES = 5                            # then give up (CLAUDE gone: Executive, a DOS program, TM5000)
     KEYS_HOLD = 0.03
 
     def __init__(s, transport, on_message, log=print, hold=HOLD):
@@ -116,6 +118,9 @@ class Link:
         s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
         s.grid_wake = False                   # the GRiD's HELLO said it POLLs when the bridge rings (GF_WAKE)
         s.rang = None                         # when we last rang, since the GRiD's last frame
+        s.rings_left = s.RING_TRIES; s.unrung = True
+        s.t_answered = 0.0                    # when our last answer went to the bridge
+        s.clock = time.monotonic              # (the emulator tests give theirs: the rings' timing is the GRiD's)
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
         s.trace = None                        # a deque while gridlink.bench --trace runs: (time, event)
 
@@ -151,18 +156,40 @@ class Link:
         poke = getattr(s.t, 'poke', None)     # the serve loop's read returns now: ring_check sooner
         if poke: poke()
 
+    def _to_grid(s, frame):
+        s.t_answered = s.clock()
+        s.t.answer(frame)
+
     def ring_check(s):
         """From the serve loop, between frames (never while an answer is held): when we have something for an
         idle GRiD, ask the bridge for an SRQ so it POLLs now instead of at its next idle POLL (up to 1 s).
-        Again every RING_AGAIN until the GRiD sends (a ring can be lost: the GRiD may take its SRQ for the
-        answer it is reading)."""
+        Idle: the GRiD read our last answer (the bridge's TX_DONE, where it tells us) RING_IDLE ago, and
+        hasn't sent since (a busy GRiD sends its next frame sooner); never while an answer waits unread.  Again every
+        RING_AGAIN until the GRiD sends (a ring can be lost: the GRiD may take its SRQ for the answer it is
+        reading), RING_TRIES times; then the SRQ is taken back (unring), so an Executive or a DOS program
+        doesn't find it held on the bus, and we wait for the GRiD's next frame."""
         if not (s.grid_wake and s.connected): return
-        if s.rang is not None and time.monotonic() - s.rang < s.RING_AGAIN: return
         ring = getattr(s.t, 'ring', None)
         if ring is None: return
+        now = s.clock()
+        if s.rang is not None and now - s.rang < s.RING_AGAIN: return
+        if s.rings_left <= 0:
+            if not s.unrung:
+                s.unrung = True
+                unring = getattr(s.t, 'unring', None)
+                if unring: unring()
+                s.stats['unrung'] += 1
+                if s.trace is not None: s.trace.append((time.monotonic(), 'unring'))
+            return
+        base = s.t_answered
+        done = getattr(s.t, 'delivered_at', None)     # (the Pico's TX_DONE: the GRiD has read it)
+        if done is not None:
+            if done < s.t_answered: return            # our answer isn't read yet: the GRiD is busy with it
+            base = done
+        if now - base < s.RING_IDLE: return
         with s.lock:
             if not s._has_output(): return
-        s.rang = time.monotonic()
+        s.rang = now; s.rings_left -= 1; s.unrung = False
         s.stats['rang'] += 1
         if s.trace is not None: s.trace.append((time.monotonic(), 'ring'))
         ring()
@@ -208,7 +235,7 @@ class Link:
         frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload, fl=s.rx_fl)
         s.last_answer = frame
         if s.trace is not None: s.trace.append((time.monotonic(), 'pi ' + _name(kind, len(payload))))
-        s.t.answer(frame)
+        s._to_grid(frame)
         s.stats['tx_frames'] += 1; s.stats['tx_bytes'] += len(frame)
 
     # ---- inbound ------------------------------------------------------
@@ -230,11 +257,11 @@ class Link:
 
     def _answer_nak(s):
         frame = glp.encode(glp.P_NAK, s.pi_seq, s.last_g if s.last_g is not None else 0, fl=s.rx_fl)
-        s.t.answer(frame)          # NAK does not replace last_answer
+        s._to_grid(frame)          # NAK does not replace last_answer
         s.stats['tx_nak'] += 1
 
     def handle(s, f):
-        s.rang = None
+        s.rang = None; s.rings_left = s.RING_TRIES; s.unrung = True    # (its frame ended any ring)
         if s.trace is not None:
             s.trace.append((time.monotonic(), 'grid ' + _name(f.type | (glp.MORE if f.more else 0), len(f.payload))))
         s.stats['rx_frames'] += 1; s.stats['rx_bytes'] += len(f.payload) + glp.OVERHEAD
@@ -243,7 +270,7 @@ class Link:
         t = f.type
         if t == glp.G_NAK:
             s.stats['rx_nak'] += 1
-            if s.last_answer: s.t.answer(s.last_answer)
+            if s.last_answer: s._to_grid(s.last_answer)
             else: s._answer(glp.P_NOP, b'')
             return
         if t == glp.G_HELLO:
@@ -252,7 +279,7 @@ class Link:
             s.reasm = glp.Reassembler(); s.pi_seq = 0; s.last_g = None; s.connected = True
         elif s.last_g is not None and f.seq == s.last_g:
             s.stats['rx_dup'] += 1
-            if s.last_answer: s.t.answer(s.last_answer)
+            if s.last_answer: s._to_grid(s.last_answer)
             return
         elif s.source is not None:
             s.source.delivered()            # a new frame: our last answer arrived

@@ -51,6 +51,7 @@ class NEC7210:
         if s.spe: b, e = d.status, False
         elif d.out:
             b = d.out[0]; d.out = d.out[1:]; e = (len(d.out) == 0)
+            if e and getattr(d, 'on_sent', None): d.on_sent()      # (its last byte: the Pico's TX_DONE)
         else: return
         end = e or (s.reos and b == 0x0A)
         s.dir = b; s.dir_full = True; s.isr1 |= 0x01 | (0x10 if end else 0)

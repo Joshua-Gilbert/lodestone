@@ -70,7 +70,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **gridfox (`CLAUDE /W`):** Firefox on the Pi, shown on the GRiD as text, with the mouse, and with pictures in a 1-bit view.
 - **Chat (`CLAUDE`):** gridlink's own agent, on an API key, for a Pi too small for Claude Code.
 
-Through the Pico 2 bridge the link moves 46 KB/s to the GRiD and 57 KB/s from it, with 7 ms round trips. See `claude-link/README.md`, `docs/term.md`, `docs/lodestone-resident-claude.md`, `docs/lodestone-pictures.md` and `docs/gridfox.md`.
+Through the Pico 2 bridge the link moves 70 KB/s to the GRiD and 73 KB/s from it, with 6.4 ms round trips, and an idle GRiD answers within 8 ms. See `claude-link/README.md`, `docs/term.md`, `docs/lodestone-resident-claude.md`, `docs/lodestone-pictures.md` and `docs/gridfox.md`.
 
 ## Speed and memory
 
