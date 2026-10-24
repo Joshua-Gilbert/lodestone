@@ -4075,6 +4075,15 @@ def t_tcore():
     sh.run('mtterm f %d rg.txt' % n)
     g = A.disk_file(k, 'RG.TXT') or bytes(9)
     check('MT_TROWS with its room in the EMS frame\'s window 0, where the pages go: CF, AX = 1', g[:3] == b'\1\1\0', g[:9])
+    sh.run('mtterm w %d rw.txt' % n)
+    g = A.disk_file(k, 'RW.TXT') or bytes(9)
+    txs = k.pc.u16(mt_seg(k), task_ent(k, n) + TE_TX)
+    k.pc.wr(txs, TX_VID + 1, b'\x84')                     # (132 columns: its BIOS data, 40:4Ah, as a program left it)
+    wide = rows(n, 'rx.txt')
+    k.pc.wr(txs, TX_VID + 1, b'\x50')
+    check('MT_TROWS with its room at F100h (4000 bytes round its segment\'s end): CF, AX = 1; a task of 132 columns: '
+          'nothing copied (DL 2), the room untouched', g[:3] == b'\1\1\0' and wide[0] == 0 and wide[4] & 0xFF == 2
+          and wide[3] & 0xFF == 0x84 and wide[5] == bytes(4000), (g[:9], wide[:5]))
     front(k, n); front(k, 0)
     d = rows(n, 'r5.txt')
     check('... brought to the front and back (nothing written meanwhile): its count up (%d, %d before: mt_scrsv)'
@@ -4090,12 +4099,18 @@ def t_tcore():
     # a task reading no keys (MTSPIN, frozen behind: START /D): 32 taken, the 33rd refused; MT_TROWS says frozen
     typ(k, 'start /w /d mtspin.com 30000 sp.txt', 0.5)   # (till killed)
     n = tnum('MTSPIN.COM')
+    txs, kn = k.pc.u16(mt_seg(k), task_ent(k, n) + TE_TX), equ('TX_KN')
+    k.pc.wr(txs, kn, b'\0\x14')                        # (none waiting, the first's place 20: as after 20 taken)
+    past = bytes(k.pc.rd(txs, kn + 2 + 64, 32))
     got = (keys(n, 'k4.txt', *([0x1E61] * 20)), keys(n, 'k5.txt', *([0x1E61] * 13)))   # (a command line: 127 at most)
+    ring = bytes(k.pc.rd(txs, kn, 2 + 64 + 32))
     fz = rows(n, 'rz.txt')
     check('MT_TKEY to MTSPIN (task %s, frozen behind: START /D), reading none: 20, then 12 of 13 taken, the 33rd refused '
-          '(AX = 8: %s); MT_TROWS\'s DH TS_FROZEN, as MT_LIST says (ready, TS_RUN in MT\'s table)' % (n, got),
+          '(AX = 8: %s), the ring filled round its end (its first at 20), nothing past it written; MT_TROWS\'s DH TS_FROZEN, '
+          'as MT_LIST says (ready, TS_RUN in MT\'s table)' % (n, got),
           got == (b'0014 0000', b'000C 0008') and fz[0] == 0 and fz[4] >> 8 == TS_FROZEN
-          and [s_ for i, s_, nm in tstate(k)[0] if i == n] == [1], (got, fz[:5], tstate(k)))
+          and ring[:2] == b'\x20\x14' and ring[2:66] == b'\x61\x1E' * 32 and ring[66:] == past
+          and [s_ for i, s_, nm in tstate(k)[0] if i == n] == [1], (got, fz[:5], tstate(k), ring.hex()))
     sh.run('kill %d' % n)
     # parked: both refused (AX = 5)
     typ(k, 'start /w mtscr.com p', 3.0)

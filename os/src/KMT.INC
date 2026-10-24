@@ -1992,14 +1992,14 @@ mt_ring:
         jne     .no
         cmp     word [cs:mt_in13], 0
         jne     .no
-        push    ax
-        call    mt_isr
-        pop     ax
-        jnz     .no
-        call    mt_ent
-        mov     es, [cs:bx+TE_TX]
         pushf
         cli
+        push    ax
+        call    mt_isr                  ; (the PIC asked with interrupts off)
+        pop     ax
+        jnz     .none
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
 .l:     cmp     byte [es:TX_KN], 0
         je      .none
         mov     bl, [es:TX_KH]
