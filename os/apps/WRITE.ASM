@@ -26,6 +26,10 @@
 ;  screen is drawn from a shadow copy (a block of its own too), so a key
 ;  redraws only the rows that changed.
 ;
+;  The mouse: a click puts the cursor there; a drag selects, and then a
+;  command (CODE-E, CODE-M, CODE-D, Backspace or Delete) works on what it
+;  selected; a right click in the text gives a menu of the commands.
+;
 ;  With MULTITASK=1 it is a window .RUN (M8b): a window that moves,
 ;  closes and is resized, with the text, its rule and the status line
 ;  inside, beside other windows and other Writes.  CODE-T is then the
@@ -33,8 +37,8 @@
 ;  whole screen, as always.
 ; =====================================================================
 %include "UIAPI.INC"
-RUN_API equ 4                           ; (as 0.4.3 shipped it: RF_WIN gives its
-                                        ;  window W_FLAGS with MULTITASK=1)
+RUN_API equ 8                           ; (UI_MENU, UI_MOUSE; EV_RCLICK.  RF_WIN
+                                        ;  gives its window W_FLAGS with MULTITASK=1)
 RUN_FLAGS equ RF_WIN                    ; (with MULTITASK=1, one of several windows)
         org     RUN_ORG
 
@@ -44,7 +48,8 @@ HSTEP   equ 20                          ; horizontal scroll step (columns)
 ROWB    equ 160                         ; a row in the shadow: 80 chars, 80 marks
 IOB     equ 1024                        ; file I/O chunk
 M_EDIT  equ 0                           ; modes
-M_SEL   equ 1                           ; making a selection
+M_SEL   equ 1                           ; making a selection (cmd 0: a drag's,
+                                        ;  the command still to come)
 M_POINT equ 2                           ; pointing to a destination (Move, Duplicate)
 M_FOUND equ 3                           ; showing what Find found
 
@@ -971,6 +976,8 @@ do_key: cmp     ax, EV_MOVED            ; the window moved or resized: drawn
         je      .x
         cmp     ax, EV_CLICK
         je      click
+        cmp     ax, EV_RCLICK
+        je      rclick
         mov     [lastkey], ax
         cmp     byte [mode], M_FOUND    ; after Find: Return finds the next one,
         jne     .m                      ;  anything else is ordinary again
@@ -984,7 +991,17 @@ do_key: cmp     ax, EV_MOVED            ; the window moved or resized: drawn
         jnc     .x
         cmp     byte [mode], M_EDIT
         je      .edit
-        mov     si, sel_keys            ; selecting or pointing
+        cmp     byte [mode], M_SEL      ; a drag's selection: its commands; any
+        jne     .sel                    ;  other key ends it and goes on as in
+        cmp     byte [cmd], 0           ;  editing
+        jne     .sel
+        mov     si, drag_keys
+        call    UI_DISPATCH
+        jnc     .x
+        call    k_cancel_cmd
+        mov     ax, [lastkey]
+        jmp     short .edit
+.sel:   mov     si, sel_keys            ; selecting or pointing
         call    UI_DISPATCH
         jnc     .x
         jmp     UI_BEEP
@@ -1230,48 +1247,204 @@ is_word:                                ; AL -> CF if a letter, digit or _
 .y:     stc
         ret
 
-; a click in the text: the cursor there; on the band: help, or confirm
+; a click in the text: the cursor there, and held down, a drag (UI_MOUSE
+; until the left button is up): editing, a selection of its own (cmd 0,
+; its command after it); making one, the drag is it; pointing, the
+; cursor follows.  A click ends a drag's selection.  On the band: help,
+; or confirm
 click:  cmp     cx, SCR_BAND_Y
         jb      .text
         cmp     byte [mode], M_EDIT
         je      k_help
         mov     ax, K_ENTER
         jmp     do_key
-.text:  cmp     byte [mode], M_FOUND    ; (a click ends Found, like a key)
-        jne     .t1
+.text:  call    end_found               ; (a click ends Found, like a key)
+        xor     si, si
+        call    pos_xy
+        jc      .x
+        mov     word [goal], 0FFFFh
+        call    drag_sel
+        jne     .t
+        push    ax
+        call    k_cancel_cmd
+        pop     ax
+.t:     call    gap_to
+        mov     [press], ax
+        mov     byte [dragged], 0
+.d:     call    update
+        call    UI_MOUSE
+        jc      .x                      ; (no mouse)
+        test    al, 1
+        jz      .x                      ; (let go)
+        mov     si, 1
+        call    pos_xy
+        cmp     ax, [gap_s]
+        je      .d
+        cmp     byte [dragged], 0       ; the first move: what the drag is
+        jne     .mv
+        inc     byte [dragged]
+        cmp     byte [mode], M_POINT
+        je      .mv
+        mov     dx, [press]
+        mov     [anchor], dx
+        cmp     byte [mode], M_SEL
+        je      .mv
+        mov     byte [mode], M_SEL
+        mov     byte [cmd], 0
+        push    ax
+        mov     si, s_drag1
+        mov     di, s_drag2
+        call    UI_BAND
+        pop     ax
+.mv:    call    gap_to
+        jmp     short .d
+.x:     call    drag_sel                ; (a drag back where it began: none)
+        jne     .r
+        mov     ax, [anchor]
+        cmp     ax, [gap_s]
+        je      k_cancel_cmd
+.r:     ret
+
+; -> ZF if a drag's selection is up (M_SEL, cmd 0)
+drag_sel:
+        cmp     byte [mode], M_SEL
+        jne     .x
+        cmp     byte [cmd], 0
+.x:     ret
+
+; Found shown: back to editing (BX, CX kept)
+end_found:
+        cmp     byte [mode], M_FOUND
+        jne     .x
         mov     byte [mode], M_EDIT
         push    bx
         push    cx
         call    edit_band
         pop     cx
         pop     bx
-.t1:    sub     cx, [y0]                ; (in the text area only: a window's
-        jb      .x                      ;  frame, its rule and status, and
-        shr     cx, 4                   ;  what is around it are not text)
-        cmp     cx, [rows]
-        jae     .x
+.x:     ret
+
+; BX = x, CX = y -> AX = the position there; CF if not in the text area
+; (a window's frame, its rule and status, and what is around it are not
+; text; nor are the rows below the text's end).  SI = 1, for a drag:
+; never CF; above the area the line before the top one, below it the
+; line after the last row, and a column either side, so the view
+; scrolls to them; below the text, its end
+pos_xy: push    bx
+        push    cx
+        push    dx
         shr     bx, 3
-        sub     bx, [x0]
-        cmp     bx, [cols]              ; (left of it too: below 0, a big one)
-        jae     .x
-        mov     ax, [top]               ; that row's line: walk down to it
-        jcxz    .at
-.dn:    push    ax
+        sub     bx, [x0]                ; BX = the column in the area
+        jge     .c1
+        or      si, si
+        jz      .out
+        mov     bx, -1
+.c1:    cmp     bx, [cols]
+        jl      .c2
+        or      si, si
+        jz      .out
+        mov     bx, [cols]
+.c2:    mov     ax, [top]
+        sub     cx, [y0]
+        jge     .r1
+        or      si, si
+        jz      .out
+        or      ax, ax                  ; above: the line before the top one
+        jz      .at
+        dec     ax
+        call    line_start
+        jmp     short .at
+.r1:    shr     cx, 4                   ; CX = the row
+        cmp     cx, [rows]
+        jb      .r2
+        or      si, si
+        jz      .out
+        mov     cx, [rows]              ; below: the line after the last row
+.r2:    jcxz    .at
+.dn:    push    ax                      ; that row's line: walk down to it
         call    line_end
         mov     dx, ax
         call    textlen
         cmp     dx, ax
         pop     ax
-        jae     .x                      ; (below the text)
+        jae     .end                    ; (below the text)
         mov     ax, dx
         inc     ax
         loop    .dn
-.at:    mov     dx, bx                  ; (BX: the column in the text area)
+.at:    mov     dx, bx
         add     dx, [hs]
-        call    pos_at_col
+        jns     .p
+        xor     dx, dx                  ; (left of it, not scrolled: column 0)
+.p:     call    pos_at_col
+        jmp     short .ok
+.end:   or      si, si
+        jz      .out
+        call    textlen
+.ok:    clc
+        jmp     short .x
+.out:   stc
+.x:     pop     dx
+        pop     cx
+        pop     bx
+        ret
+
+; a right click: the menu (UI_MENU), in the text area only, editing or
+; with a drag's selection (kept; editing, the cursor goes there first)
+rclick: cmp     byte [mode], M_POINT
+        je      .x
+        cmp     byte [mode], M_SEL
+        jne     .e
+        cmp     byte [cmd], 0
+        jne     .x
+.e:     xor     si, si
+        call    pos_xy
+        jc      .x
+        call    drag_sel
+        je      .m
+        call    end_found
         mov     word [goal], 0FFFFh
-        jmp     gap_to
+        call    gap_to
+        push    bx
+        push    cx
+        call    update                  ; (the cursor there under the menu)
+        pop     cx
+        pop     bx
+.m:     mov     si, menu
+        mov     ax, NMENU
+        call    UI_MENU
+        jc      .x
+        mov     bx, ax
+        add     bx, bx
+        jmp     [menu_do + bx]
 .x:     ret
+
+; the menu's commands: Erase, Move and Duplicate on a drag's selection,
+; else as their keys (verb first); the others end it first
+m_erase:
+        mov     di, k_erase
+        mov     si, k_serase
+        jmp     short m_sel
+m_move: mov     di, k_move
+        mov     si, k_smove
+        jmp     short m_sel
+m_dup:  mov     di, k_dup
+        mov     si, k_sdup
+m_sel:  call    drag_sel
+        jne     .k
+        jmp     si
+.k:     jmp     di
+m_find: mov     di, k_find
+        jmp     short m_ed
+m_subst:
+        mov     di, k_subst
+        jmp     short m_ed
+m_jump: mov     di, k_jump
+m_ed:   call    drag_sel
+        jne     .k
+        push    di
+        call    k_cancel_cmd
+        pop     di
+.k:     jmp     di
 
 ; ---------------------------------------------------------------------
 ;  the commands
@@ -1298,6 +1471,21 @@ k_begin:                                ; (CODE-B: the selection starts here)
         mov     ax, [gap_s]
         mov     [anchor], ax
         ret
+
+; a drag's selection: Erase it now, or Move or Duplicate it (where to?)
+k_serase:
+        mov     dl, 'E'
+        jmp     short k_sverb
+k_smove:
+        mov     dl, 'M'
+        jmp     short k_sverb
+k_sdup: mov     dl, 'D'
+k_sverb:
+        mov     ax, [anchor]            ; (empty: a beep, and still a drag's,
+        cmp     ax, [gap_s]             ;  cmd 0, not a command's selection)
+        jne     .v
+        jmp     UI_BEEP
+.v:     mov     [cmd], dl
 
 ; Return while selecting or pointing
 k_confirm:
@@ -2024,6 +2212,18 @@ sel_keys:
         KEY(K_CODE_B,     k_begin,      0)
         dw 0
 
+drag_keys:                              ; (a drag's selection: cmd 0)
+        KEY(K_CODE_E,     k_serase,     0)
+        KEY(K_BKSP,       k_serase,     0)
+        KEY(K_DEL,        k_serase,     0)
+        KEY(K_CODE_M,     k_smove,      0)
+        KEY(K_CODE_D,     k_sdup,       0)
+        KEY(K_CODE_B,     k_begin,      0)
+        KEY(K_ESC,        k_cancel_cmd, 0)
+        KEY(K_ENTER,      UI_BEEP,      0)  ; (the command first)
+        KEY(K_CODE_ENTER, UI_BEEP,      0)
+        dw 0
+
 edit_keys:
         KEY(K_ENTER,    k_enter,    0)
         KEY(K_BKSP,     k_bksp,     0)
@@ -2099,6 +2299,17 @@ s_erase     db 'Erase: Make a selection and confirm',0
 s_movesel   db 'Move: Make a selection and confirm',0
 s_dupsel    db 'Duplicate: Make a selection and confirm',0
 s_selband   db 'Cursor keys or the mouse select   CODE-B begins again   ESC cancels',0
+s_drag1     db 'Selected: CODE-E erases   CODE-M moves   CODE-D duplicates',0
+s_drag2     db 'Right click: the commands   ESC cancels',0
+NMENU       equ 6
+menu        dw mi1, mi2, mi3, mi4, mi5, mi6
+menu_do     dw m_erase, m_move, m_dup, m_find, m_subst, m_jump
+mi1         db 'Erase          CODE-E',0
+mi2         db 'Move           CODE-M',0
+mi3         db 'Duplicate      CODE-D',0
+mi4         db 'Find...        CODE-F',0
+mi5         db 'Substitute...  CODE-S',0
+mi6         db 'Jump...        CODE-J',0
 s_movept    db 'Move: Point to destination and confirm',0
 s_duppt     db 'Duplicate: Point to destination and confirm',0
 s_ptband    db 'Cursor keys or the mouse point   ESC cancels',0
@@ -2169,9 +2380,9 @@ h10         db 'Transfer    CODE-'
 h10x        db 'T    Save, write or include files',0
 h11         db 'Usage       CODE-U    Show size and room left',0
 h12         db 'Cancel      CODE-ESC  Exit without saving (or ESC)',0
-h13         db 'Commands: press it, select, then confirm (Return)',0
+h13         db 'Command, select, confirm (Return); or drag first',0
 h14         db 'Arrows, PgUp/PgDn, Ctrl-arrows, Ctrl-Home/End move',0
-h15         db 'Ins switches insert/overtype.  Any key closes.',0
+h15         db 'Ins: overtype.  Right click: menu.  Any key closes',0
 f_match     db 0
 f_dir       db 0
 f_verify    db 0
@@ -2202,6 +2413,8 @@ hs          resw 1                      ; first column shown
 tabw        resb 1
 cmd         resb 1
 anchor      resw 1
+press       resw 1                      ; where the left button went down
+dragged     resb 1                      ; 1: it has moved since
 sel_a       resw 1
 sel_b       resw 1
 fix_a       resw 1

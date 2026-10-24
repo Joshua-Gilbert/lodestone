@@ -299,8 +299,8 @@ RF_WIN      equ 1                       ; a window .RUN: with MULTITASK=1 it run
                                         ;  as a session, beside other windows,
                                         ;  and doesn't make its starter wait (M8);
                                         ;  its windows have W_FLAGS then, whatever
-                                        ;  its RUN_API (Write's is 4, so an older
-                                        ;  core still runs it, full-screen)
+                                        ;  its RUN_API (Write's was 4, so an older
+                                        ;  core ran it full-screen; 8 since its menu)
 
 ; ---- list view: LV_SIZE bytes -----------------------------------------
 LV_Y        equ 0                       ; first row's pixel y (multiple of 4)
