@@ -39,7 +39,7 @@
 ;  whole screen, as always.
 ; =====================================================================
 %include "UIAPI.INC"
-RUN_API equ 8                           ; (UI_MENU, UI_MOUSE; EV_RCLICK.  RF_WIN
+RUN_API equ 8                           ; (UI_MENU, UI_MOUSE, UI_CLIP; EV_RCLICK.  RF_WIN
                                         ;  gives its window W_FLAGS with MULTITASK=1)
 RUN_FLAGS equ RF_WIN                    ; (with MULTITASK=1, one of several windows)
         org     RUN_ORG
@@ -1513,16 +1513,17 @@ k_scopy:
         ret
 
 ; Paste: what it holds at the cursor, over a drag's selection (that goes
-; first); no room for it: said, nothing changes
+; first); no room for it: said, nothing changes.  (Its read failing, an
+; EMS or disk error: said, the selection gone already)
 k_paste:
         mov     al, 2
         call    UI_CLIP                 ; CX = what it holds
         jcxz    .b
+        call    sel_range               ; (sel_a = sel_b with no selection)
         mov     ax, [gap_e]             ; AX = the room: the gap's, and the
-        sub     ax, [gap_s]             ;  selection's it replaces
-        call    drag_sel
-        jne     .r
-        call    sel_range
+        sub     ax, [gap_s]             ;  selection's it replaces (sel_range
+        call    drag_sel                ;  gives a command's too: only a
+        jne     .r                      ;  drag's counts)
         add     ax, [sel_b]
         sub     ax, [sel_a]
 .r:     cmp     cx, ax
