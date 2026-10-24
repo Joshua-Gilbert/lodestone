@@ -3848,8 +3848,8 @@ def t_rclaude():
     o = sh.run('claude /r')
     stub = R.stub_seg(k)
     rmt = (k.pc.u16(stub, R.csym('r_mt')), k.pc.u16(stub, R.csym('r_mt') + 2))
-    check('CLAUDE /R at CODE-P\'s prompt: resident (stub version 3); MT_TSR: MT has its key wait (%04X:%04X), the stub '
-          'MT\'s three bytes (front, running, the pop-up waiting)' % tsr(), 'Claude is resident' in o and k.pc.rd(stub, 0x104, 1) == b'\x03'
+    check('CLAUDE /R at CODE-P\'s prompt: resident (stub version 4, r_mt since 3); MT_TSR: MT has its key wait (%04X:%04X), the stub '
+          'MT\'s three bytes (front, running, the pop-up waiting)' % tsr(), 'Claude is resident' in o and k.pc.rd(stub, 0x104, 1) == b'\x04'
           and tsr() == (stub, R.csym('..@r_idle')) and rmt == (Y['mt_front'], seg), (o, tsr(), rmt))
     # the front task waiting for a key in the stub's own loop: a task behind runs (switched from its HLT), as fast as
     # alone (the waiting task gets no turns: TS_WAITK, as in MT's own wait)
@@ -3977,7 +3977,7 @@ def t_rclaude():
     k.key('z', settle=False); k.run_for(1.0); k.settle()
     check('... MTKEY R brought to the front: its read gets "z" (007A)', A.disk_file(k, 'BR.TXT') == b'007A'
           and tstate(k)[0] == [(0, 1, 'Executive')], (A.disk_file(k, 'BR.TXT'), tstate(k)))
-    # TYPE's keys (put in the console's page as its REQUEST leaves them: a wait of 5 ticks, then "x") for MTKEY R in
+    # TYPE's keys (put in the console's page as type_start leaves them, in ksbuf: a wait of 5 ticks, then "x") for MTKEY R in
     # front, waiting in the stub's loop, MTSPIN behind: switched from at the HLT in the wait (TS_WAITK), the front task
     # still gets its turns (mt_tsrk), the key comes, and at the end the console (to answer TYPE)
     typ(k, 'start /w mtspin.com 144 ts.txt', 0.3)        # (8 s: still computing when the keys are done)
@@ -3985,7 +3985,7 @@ def t_rclaude():
     rsym = {m.group(2): int(m.group(1), 16) for m in (re.match(r'\s*[0-9A-F]+\s+([0-9A-F]+)\s+(\S+)\s*$', l)
                                                       for l in open(os.path.join(GOS, 'claude', 'RCON.MAP'))) if m}
     def ems(name, b): a = rp + rsym[name]; k.pc.ems_store[a:a + len(b)] = b
-    ems('reqbuf', b'\xff\xff\x05\x78\x2d'); ems('ks_pos', b'\0\0'); ems('ks_len', b'\5\0'); ems('ks_wait', b'\0')
+    ems('ksbuf', b'\xff\xff\x05\x78\x2d'); ems('ks_pos', b'\0\0'); ems('ks_len', b'\5\0'); ems('ks_wait', b'\0')
     typ(k, 'mtkey r tr.txt', 0.05)
     # the keys start in MTKEY R's read (AH=00h), as when the console goes, leaving them, in the program's call
     waits, fed = set(), []
