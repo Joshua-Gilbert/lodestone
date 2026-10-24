@@ -56,9 +56,15 @@
 ;  its own, and nothing of the file system's is in use).  Not two deep,
 ;  not from a program's INT 24h handler waiting for a key (one deep, but
 ;  the call is its own: the kernel's disk state is the failed call's), and
-;  not from Lodestone's tasks' (MT's) key wait, whose INT 16h calls come
-;  from MT's segment, as do those of its INT 24h prompt: those answer F7h,
-;  DOS busy, and the band says so.  Each request runs with INT 23h and 24h ours (a critical
+;  never from MT's segment (Lodestone's tasks): its key wait and its INT
+;  24h prompt both call INT 16h from there, the prompt even with DOS not
+;  busy (a disk error under INT 25h/26h).  Nor over DEFRAG (the saver's
+;  too), which writes the disk itself with the FAT in its own memory.
+;  Those answer F7h, DOS busy, and the band says so.  Not covered: a
+;  program's own INT 24h handler reading a key during INT 25h/26h (DOS
+;  not busy then), and a program that writes the disk itself, but for
+;  DEFRAG.  A device's name (CON, AUX, GPIBnn...) isn't opened: reading
+;  CON would wait for a key the console never gives.  Each request runs with INT 23h and 24h ours (a critical
 ;  error fails the call; ^C does nothing) and our DTA, the program's back
 ;  after; its file handle is the program's PSP's, closed before the reply.
 ;  The request and its reply share a buffer in window 3 after the shadow
@@ -101,12 +107,13 @@ P_OLD16 equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
 P_INDOS equ 4
 P_SS    equ 8                   ;  the stack the stub came on: the INT 16h call's
 P_KS    equ 12                  ;  r_ks, then r_pend
+P_MT    equ 14                  ;  r_mt: Lodestone's tasks (0:0 none)
 NKEYS   equ 16
 KSMAX   equ 2 + 2048            ; TYPE: id, op, a key script of 2 KB (gridlink's MAX_TYPE)
 TAIL    equ 12                  ; the page's last bytes: a reply's first ones
 NAMEMAX equ 12                  ; the program's name (8.3)
 %ifndef RXPAY
-%assign RXPAY 2048                 ; Pi -> GRiD payload (HELLO's rx=); the EMS page has room for ~2.4 KB
+%assign RXPAY 2048                 ; Pi -> GRiD payload (HELLO's rx=); the EMS page has room for ~2.8 KB
 %endif
 RXMAX   equ RXPAY + 9                 ; a frame and one byte more (see CLAUDE.ASM)
 %defstr RXPAY_S RXPAY
@@ -140,15 +147,14 @@ rc_main:
         lodsb
         pop     ds
         mov     [indos], al
-        call    dos_check
-        mov     al, [indos]
         mov     byte [prog], 0          ; the program's name (AH=62h, its PSP:
         cmp     al, 1                   ;  the kernel runs a call made inside
         ja      .pn                     ;  another on a stack of its own, its
         mov     ah, 62h                 ;  frame there; not two deep, where
         int     21h                     ;  that stack is an INT 24h handler's)
         call    prog_name
-.pn:    xor     ax, ax                  ; INT 33h there?  The program's
+.pn:    call    dos_check
+        xor     ax, ax                  ; INT 33h there?  The program's
         mov     es, ax                  ;  pointer off (its own cell back
         mov     [mouse], al             ;  first, before the screen is kept)
         mov     [mswap], al
@@ -159,10 +165,13 @@ rc_main:
         mov     ax, 2
         int     33h
         cmp     byte [indos], 0         ; and its event handler off (AX=14h,
-        jne     .nm                     ;  no events), else clicks meant for
-        mov     ax, 14h                 ;  the console reach the program, on
-        xor     cx, cx                  ;  our stack.  (14h makes a DOS call,
-        xor     dx, dx                  ;  AH=62h: not while DOS is busy)
+        je      .sw                     ;  no events), else clicks meant for
+        cmp     byte [dos_ok], 0        ;  the console reach the program, on
+        je      .nm                     ;  our stack (or the kernel's second,
+.sw:                                    ;  under our DOS calls).  (14h makes a
+        mov     ax, 14h                 ;  DOS call, AH=62h: with DOS busy
+        xor     cx, cx                  ;  only where ours may be made)
+        xor     dx, dx
         mov     es, dx
         int     33h
         mov     [mh_mask], cx
@@ -264,26 +273,50 @@ rc_main:
 .x:     pop     ds
         retf
 
-; dos_ok: 1 if the file requests may call DOS (the header).  AL = indos.
+; dos_ok: 1 if the file requests may call DOS (the header), after prog.
 ; The INT 16h call's frame on the stack the stub came on: the stub's pushes
-; (ES, DS, PUSHA), r_hot's return, then IP, CS
+; (ES, DS, PUSHA), r_hot's return, then IP, CS.  -> ES = CS
 dos_check:
         mov     byte [dos_ok], 0
-        cmp     al, 1
-        jb      .ok
-        ja      .x
-        push    es
         les     bx, [parms]
-        mov     dx, [es:bx + P_INDOS + 2]       ; the kernel's segment
+        mov     cx, [es:bx + P_MT + 2]  ; MT's segment (0: no tasks)
+        mov     dx, [es:bx + P_INDOS + 2]       ; the kernel's
         mov     ax, [es:bx + P_SS]      ; (SS, then SP)
         mov     bx, [es:bx + P_SS + 2]
         mov     es, ax
-        cmp     dx, [es:bx + 2 + 2 + 16 + 2 + 2]
-        jne     .p
+        mov     ax, [es:bx + 2 + 2 + 16 + 2 + 2]        ; the INT 16h call's CS
+        push    cs
         pop     es
-.ok:    mov     byte [dos_ok], 1
+        jcxz    .m
+        cmp     ax, cx                  ; (MT's key wait, its INT 24h prompt)
+        je      .x
+.m:     cmp     byte [indos], 1
+        ja      .x
+        jb      .d
+        cmp     ax, dx                  ; one deep: the kernel's key wait
+        jne     .x
+.d:     mov     si, prog                ; DEFRAG writes the disk itself
+        mov     di, s_defrag
+        mov     cx, 11
+        repe    cmpsb
+        je      .x
+        mov     byte [dos_ok], 1
 .x:     ret
-.p:     pop     es
+
+; BX = a file just opened (OPS.INC): a device's name (CON, AUX, GPIBnn...)
+; -> CF, AX = 5 (access denied), the handle closed
+ops_nodev:
+        mov     ax, 4400h
+        int     21h
+        jc      .f
+        test    dl, 80h
+        jz      .f
+        mov     ah, 3Eh
+        int     21h
+        mov     ax, 5
+        stc
+        ret
+.f:     clc
         ret
 
 ; prog: the name the program was started by, from its PSP (BX): after its
@@ -833,7 +866,11 @@ rf_title:
         call    make_title
         jmp     term_status
 
-; a REQUEST, its frames gathered in reqbuf (id, op, arguments).  SCREEN:
+; a REQUEST, its frames gathered in reqbuf (id, op, arguments), unless a
+; REPLY is on its way (a file's or GPIB's bytes are reqbuf's: frame_next
+; takes each frame from there as it goes) or a request waits to run: then
+; it is dropped whole (the Pi gave up on the last call, and this one's
+; times out too; gridlink makes one call at a time).  SCREEN:
 ; the program's screen; TYPE: Claude's keys for it (the answer when they
 ; are done); files and GPIB: req_service, from the session's loop (F7h,
 ; DOS busy, for a file's when DOS can't be called); anything else F6h, a
@@ -843,7 +880,12 @@ rf_request:
         jne     .c
         mov     word [rq_len], 0
         mov     byte [rq_over], 0
-.c:     mov     di, [rq_len]
+        mov     al, [reply_busy]
+        or      al, [req_ready]
+        mov     [rq_skip], al
+.c:     cmp     byte [rq_skip], 0
+        jne     .m
+        mov     di, [rq_len]
         mov     ax, di
         add     ax, cx
         cmp     ax, REQMAX
@@ -857,6 +899,8 @@ rf_request:
         and     al, 80h
         mov     [rq_more], al
         jnz     .x
+        cmp     byte [rq_skip], 0
+        jne     .x
         cmp     word [rq_len], 2        ; (an id and an op)
         jb      .x
         cmp     byte [quit], 0          ; (going back: the Pi has the EVENT)
@@ -1204,6 +1248,7 @@ kv_prog     db 'prog=', 0
 s_sep       db '  ', 86h, '  ', 0
 s_title0    db 'Claude (resident)', 0
 s_dos       db '  ', 86h, '  DOS busy', 0
+s_defrag    db 'DEFRAG.COM', 0
 s_tkeys     db 'CODE-\ back  CODE-R repaints', 0
 s_back      db '  ', 86h, '  CODE-\ back', 0
 st_connecting db 'Connecting to the Pi', 82h, 0
@@ -1268,6 +1313,7 @@ rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_more     resb 1                      ; a REQUEST's frames still coming
 rq_over     resb 1                      ;  more than REQMAX of them
+rq_skip     resb 1                      ;  dropped (rf_request)
 replybuf    resb 4                      ; a reply of our own: id, status (flags)
 hellobuf    resb 128
 ; M3: the program, its screen, Claude's keys

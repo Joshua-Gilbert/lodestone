@@ -63,7 +63,10 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_type` | every time | resident Claude only: keys into that program (`1A{WAIT 30}`); the console goes while they play and comes back with the program's screen |
 
 While Claude Code is in resident Claude's console (CLAUDE /R, CODE-\ over a
-program), only `grid_program` and `grid_type` run: the program holds the
+program), `grid_program` and `grid_type` run, and from CLAUDE 1.9 the file
+and GPIB tools too (not where DOS is busy under the program: its own
+disk-error handler, or Lodestone's tasks' key wait); `grid_command`,
+`grid_info`, `grid_screen` and the pictures don't: the program holds the
 GRiD. Outside it, those two say no program is paused. Once the user has
 gone back to the program (CODE-\ again), every GRiD tool says so at once
 until the console is up again.

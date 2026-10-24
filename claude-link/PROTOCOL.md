@@ -233,8 +233,8 @@ DOS errors come back as the DOS error code (83 = a disk error the critical
 error handler failed, e.g. drive not ready). Other statuses: F0h request
 too large, F1h no memory, F3h command line too long, F5h no snapshot,
 F6h a DOS program is paused (resident Claude's console answers so every
-request it doesn't list in HELLO's `ops=`, and RUN, INFO, SETTIME and
-snapshots), F7h DOS busy (resident Claude's console, a file request: the
+request but SCREEN, TYPE and those its HELLO's `ops=` lists: RUN, INFO,
+SETTIME), F7h DOS busy (resident Claude's console, a file request: the
 paused program is inside a DOS call other than the kernel's key wait,
 such as its own INT 24h handler, or the key wait of Lodestone's tasks
 with MULTITASK=1; GPIB requests still run), FFh unknown request.

@@ -453,6 +453,9 @@ def test_resident_tools():
         w = why(new, tool)
         assert w and 'grid_files, grid_change_files, gpib_read, gpib_measure, gpib_send work' in w, (tool, w)
     assert why({'app': 'term'}, 'grid_files') is None and why({'app': 'term'}, 'grid_type')
+    from gridlink.grid import is_device                 # (Lodestone's GPIBnn devices too)
+    assert is_device('A:\\GPIB7') and is_device('A:\\X\\GPIB07.TXT') and is_device('A:\\X\\CON.TXT')
+    assert not is_device('A:\\GPIB123') and not is_device('A:\\GPIBX') and not is_device('A:\\GPIB.TXT')
 
 
 if __name__ == '__main__':

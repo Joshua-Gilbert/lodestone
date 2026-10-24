@@ -85,6 +85,10 @@ op_read:
         PROF    0
         jc      .err
         mov     bx, ax
+%ifdef RCON
+        call    ops_nodev
+        jc      .err
+%endif
         mov     dx, [reqbuf+2]
         mov     cx, [reqbuf+4]
         mov     ax, 4200h
@@ -169,7 +173,12 @@ op_write:
         int     21h
         PROF    0
         jc      op_read.errc
-.wr:    mov     cx, [wr_len]
+.wr:
+%ifdef RCON
+        call    ops_nodev
+        jc      op_read.err
+%endif
+        mov     cx, [wr_len]
         mov     dx, [wr_data]
         mov     ah, 40h
         PROF    8
@@ -181,6 +190,7 @@ op_write:
         PROF    9
         int     21h
         PROF    0
+        jc      op_read.err             ; (the close's flush failed)
         push    es
         mov     es, [ioseg]
         mov     ax, [wr_done]

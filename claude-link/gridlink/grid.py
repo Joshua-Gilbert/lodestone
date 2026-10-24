@@ -1,5 +1,5 @@
 """Remote procedure calls to the GRiD (REQUEST/REPLY messages)."""
-import struct, threading, time
+import re, struct, threading, time
 from . import glp
 
 DOS_ERRORS = {
@@ -16,7 +16,7 @@ DOS_ERRORS = {
     0xF5: 'no snapshot taken', 0xF6: 'a DOS program is paused on the GRiD (resident Claude)',
     0xF7: ('DOS is busy under the program resident Claude\'s console is popped up over (it is inside a DOS '
            'call other than the kernel\'s key wait, e.g. its own disk-error handler, or in the key wait of '
-           'Lodestone\'s tasks, MULTITASK=1): the '
+           'Lodestone\'s tasks, MULTITASK=1, or it is DEFRAG, which writes the disk itself): the '
            'GRiD\'s files can\'t be used from this pop-up. They can once the user goes back to the program '
            '(CODE-\\) and brings the console up again at another of its key waits'),
     0xFF: 'unknown request',
@@ -257,7 +257,8 @@ def is_device(path):
     forever."""
     base = path.replace('/', '\\').rpartition('\\')[2]
     if len(base) >= 2 and base[1] == ':': base = base[2:]          # (A:NUL)
-    return base.split('.')[0].strip().rstrip(':').strip().upper() in DEVICES    # (AUX: and COM1.TXT too)
+    name = base.split('.')[0].strip().rstrip(':').strip().upper()
+    return name in DEVICES or re.fullmatch(r'GPIB\d{1,2}', name) is not None    # (AUX: and COM1.TXT; Lodestone's GPIBnn)
 
 
 def no_device(path):
