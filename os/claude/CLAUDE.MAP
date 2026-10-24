@@ -51,9 +51,12 @@ Value     Name
 0000004B  P_CELLS
 00000001  HF_TERM
 00000004  HF_FCS
+00000001  GF_TERM
 00000004  GF_FCS
 00000008  GF_WAKE
 00000010  GF_QUAD
+00000020  GF_BG
+00000008  HF_BG
 00000011  OP_SCREEN
 00000012  OP_TYPE
 00000004  R_PAGES
@@ -64,13 +67,14 @@ Value     Name
 00000180  R_STACK
 00000002  RC_NANO
 00000005  RC_FEED
+00000004  R_BGT
 00000018  TROWS
 00000040  KEYMAX
 00001000  K_QUIT
 00001300  K_PAINT
 0000260C  K_CTRLL
-00000155  HELLO_MAX
-00000039  R_PARAS
+00000156  HELLO_MAX
+0000003F  R_PARAS
 
 
 ---- Section .text ------------------------------------------------------------
@@ -657,104 +661,104 @@ Real              Virtual           Name
             25E1              25E1  kv_addr
             25E8              25E8  kv_date
             25EF              25EF  kv_grid
-            2601              2601  kv_appterm
-            260B              260B  kv_appchat
-            2615              2615  kv_appweb
-            261E              261E  kv_rx
-            2627              2627  kv_req
-            2632              2632  kv_rd
-            263C              263C  s_tkeys
-            265A              265A  evrepaint
-            265B              265B  evmouse
-            2660              2660  s_onint
-            2669              2669  s_none2
-            266E              266E  s_pages
-            267A              267A  s_helptitle
-            2691              2691  helptext
-            27FF              27FF  spinseq
-            2809              2809  evint
-            280A              280A  fcb1
-            281A              281A  fcb2
-            282A              282A  font
+            2602              2602  kv_appterm
+            260C              260C  kv_appchat
+            2616              2616  kv_appweb
+            261F              261F  kv_rx
+            2628              2628  kv_req
+            2633              2633  kv_rd
+            263D              263D  s_tkeys
+            265B              265B  evrepaint
+            265C              265C  evmouse
+            2661              2661  s_onint
+            266A              266A  s_none2
+            266F              266F  s_pages
+            267B              267B  s_helptitle
+            2692              2692  helptext
+            2800              2800  spinseq
+            280A              280A  evint
+            280B              280B  fcb1
+            281B              281B  fcb2
+            282C              282C  font
             3120              3120  bss
             3120              3120  boot
-            3154              3154  boot.nr
-            3163              3163  boot.gg
-            316D              316D  boot.mem
-            3196              3196  boot.tm
-            319B              319B  boot.nt
-            31B9              31B9  fatal
-            31C5              31C5  res_args
-            31CE              31CE  res_args.l
-            31EA              31EA  res_args.x
-            31ED              31ED  parse_args
-            31F9              31F9  parse_args.scan
-            321F              321F  parse_args.num
-            3221              3221  parse_args.dig
-            3233              3233  parse_args.setn
-            3244              3244  parse_args.app
-            3249              3249  parse_args.done
-            324A              324A  find_gpib
-            324C              324C  find_gpib.v
-            3265              3265  find_gpib.next
-            326F              326F  find_gpib.found
-            3296              3296  find_gpib.ok
-            3298              3298  find_gpib.bad
-            329A              329A  alloc_bufs
-            32C3              32C3  alloc_bufs.x
-            32C4              32C4  sys_probe
-            32C9              32C9  sys_probe.d
-            32D7              32D7  sys_probe.have
-            32E0              32E0  sys_probe.nod
-            3313              3313  sys_probe.x
-            3314              3314  vec_save
-            3331              3331  sig_gg
-            3339              3339  s_emm
-            3341              3341  msg_nogg
-            3383              3383  msg_nomem
-            33A3              33A3  s_title0
-            33B5              33B5  st_connecting
-            33E3              33E3  boot_end
-            33E3              33E3  res_load
-            33F8              33F8  res_load.ag
-            3400              3400  res_load.new
-            3416              3416  res_load.t0
-            351D              351D  res_load.pg
-            3578              3578  res_load.nomt
-            3590              3590  res_load.nopages
-            359D              359D  res_load.notr
-            359E              359E  res_load.back
-            35A2              35A2  res_load.nomem
-            35A9              35A9  res_load.noems
-            35B0              35B0  r_far
-            35B4              35B4  res_old16
-            35B8              35B8  res_indos
-            35BC              35BC  res_quit
-            35C6              35C6  res_unload
-            35D2              35D2  res_unload.f
-            35EC              35EC  res_unload.one
-            362F              362F  res_unload.over
-            3636              3636  res_peek
-            3645              3645  res_peek.no
-            3647              3647  res_peek.x
-            3648              3648  res_find
-            3650              3650  res_find.l
-            3681              3681  res_find.p
-            3682              3682  res_find.n
-            3692              3692  res_find.none
-            3694              3694  s_r_ok
-            36F9              36F9  s_r_again
-            3720              3720  s_r_noems
-            3755              3755  s_r_nopages
-            3781              3781  s_r_nomem
-            37A1              37A1  s_mcbname
-            37A9              37A9  s_r_task
-            3819              3819  s_u_done
-            3839              3839  s_u_none
-            3852              3852  s_u_tasks
-            38BA              38BA  s_u_over
-            391C              391C  rcon_img
-            58B2              58B2  rcon_end
+            3162              3162  boot.nr
+            3171              3171  boot.gg
+            317B              317B  boot.mem
+            31A4              31A4  boot.tm
+            31A9              31A9  boot.nt
+            31C7              31C7  fatal
+            31D3              31D3  res_args
+            31DC              31DC  res_args.l
+            31F8              31F8  res_args.x
+            31FB              31FB  parse_args
+            3207              3207  parse_args.scan
+            322D              322D  parse_args.num
+            322F              322F  parse_args.dig
+            3241              3241  parse_args.setn
+            3252              3252  parse_args.app
+            3257              3257  parse_args.done
+            3258              3258  find_gpib
+            325A              325A  find_gpib.v
+            3273              3273  find_gpib.next
+            327D              327D  find_gpib.found
+            32A4              32A4  find_gpib.ok
+            32A6              32A6  find_gpib.bad
+            32A8              32A8  alloc_bufs
+            32D1              32D1  alloc_bufs.x
+            32D2              32D2  sys_probe
+            32D7              32D7  sys_probe.d
+            32E5              32E5  sys_probe.have
+            32EE              32EE  sys_probe.nod
+            3321              3321  sys_probe.x
+            3322              3322  vec_save
+            333F              333F  sig_gg
+            3347              3347  s_emm
+            334F              334F  msg_nogg
+            3391              3391  msg_nomem
+            33B1              33B1  s_title0
+            33C3              33C3  st_connecting
+            33F1              33F1  boot_end
+            33F1              33F1  res_load
+            3406              3406  res_load.ag
+            340E              340E  res_load.new
+            3424              3424  res_load.t0
+            352B              352B  res_load.pg
+            3586              3586  res_load.nomt
+            359E              359E  res_load.nopages
+            35AB              35AB  res_load.notr
+            35AC              35AC  res_load.back
+            35B0              35B0  res_load.nomem
+            35B7              35B7  res_load.noems
+            35BE              35BE  r_far
+            35C2              35C2  res_old16
+            35C6              35C6  res_indos
+            35CA              35CA  res_quit
+            35D4              35D4  res_unload
+            35E0              35E0  res_unload.f
+            35FA              35FA  res_unload.one
+            363D              363D  res_unload.over
+            3644              3644  res_peek
+            3653              3653  res_peek.no
+            3655              3655  res_peek.x
+            3656              3656  res_find
+            365E              365E  res_find.l
+            368F              368F  res_find.p
+            3690              3690  res_find.n
+            36A0              36A0  res_find.none
+            36A2              36A2  s_r_ok
+            3707              3707  s_r_again
+            372E              372E  s_r_noems
+            3763              3763  s_r_nopages
+            378F              378F  s_r_nomem
+            37AF              37AF  s_mcbname
+            37B7              37B7  s_r_task
+            3827              3827  s_u_done
+            3847              3847  s_u_none
+            3860              3860  s_u_tasks
+            38C8              38C8  s_u_over
+            392A              392A  rcon_img
+            5AD4              5AD4  rcon_end
             3120              3120  inbuf
             3508              3508  res_cs
             350A              350A  ggint
@@ -860,115 +864,122 @@ Real              Virtual           Name
             5FAC              5FAC  rq_id
             5FAE              5FAE  reqbuf
             A0EE              A0EE  hellobuf
-            A243              A243  evans
-            A247              A247  crctab
-            A447              A447  term
-            A448              A448  t_active
-            A44A              A44A  tmouse
-            A44B              A44B  keybuf
-            A4CB              A4CB  keysend
-            A54B              A54B  shadseg
-            A54D              A54D  cur_on
-            A54E              A54E  cur_di
-            A550              A550  t_flags
-            A551              A551  t_cur
-            A553              A553  ask_open
-            A554              A554  help_open
-            A555              A555  ask_id
-            A556              A556  ask_kind
-            A557              A557  ask_sel
-            A558              A558  ask_q
-            A55A              A55A  ask_d
-            A55C              A55C  ask_a
-            A55E              A55E  askbuf
-            A8E2              A8E2  optbuf
-            A91A              A91A  dta
-            A946              A946  cwdbuf
-            A98A              A98A  old_tmo
-            A98C              A98C  gp_dlen
-            A98E              A98E  gp_max
-            A990              A990  wr_data
-            A992              A992  wr_len
-            A994              A994  wr_done
-            A996              A996  run_flags
-            A997              A997  run_cmd
-            A999              A999  run_rest
-            A99B              A99B  run_exit
-            A99D              A99D  run_err
-            A99F              A99F  ext_at
-            A9A1              A9A1  exec_path
-            A9F1              A9F1  outname
-            AA41              AA41  tail
-            AAC3              AAC3  epb
-            AAD1              AAD1  exec_ss
-            AAD3              AAD3  exec_sp
-            AAD5              AAD5  ks_active
-            AAD6              AAD6  ks_len
-            AAD8              AAD8  ks_ptr
-            AADA              AADA  ks_pos
-            AADC              AADC  ks_wait
-            AADD              AADD  ks_until
-            AADF              AADF  snap_taken
-            AAE0              AAE0  snap_len
-            AAE2              AAE2  stack_bottom
-            AEE2              AEE2  stack_top
-            AEE2              AEE2  bss_end
+            A244              A244  evans
+            A248              A248  crctab
+            A448              A448  term
+            A449              A449  t_active
+            A44B              A44B  tmouse
+            A44C              A44C  keybuf
+            A4CC              A4CC  keysend
+            A54C              A54C  shadseg
+            A54E              A54E  cur_on
+            A54F              A54F  cur_di
+            A551              A551  t_flags
+            A552              A552  t_cur
+            A554              A554  ask_open
+            A555              A555  help_open
+            A556              A556  ask_id
+            A557              A557  ask_kind
+            A558              A558  ask_sel
+            A559              A559  ask_q
+            A55B              A55B  ask_d
+            A55D              A55D  ask_a
+            A55F              A55F  askbuf
+            A8E3              A8E3  optbuf
+            A91B              A91B  dta
+            A947              A947  cwdbuf
+            A98B              A98B  old_tmo
+            A98D              A98D  gp_dlen
+            A98F              A98F  gp_max
+            A991              A991  wr_data
+            A993              A993  wr_len
+            A995              A995  wr_done
+            A997              A997  run_flags
+            A998              A998  run_cmd
+            A99A              A99A  run_rest
+            A99C              A99C  run_exit
+            A99E              A99E  run_err
+            A9A0              A9A0  ext_at
+            A9A2              A9A2  exec_path
+            A9F2              A9F2  outname
+            AA42              AA42  tail
+            AAC4              AAC4  epb
+            AAD2              AAD2  exec_ss
+            AAD4              AAD4  exec_sp
+            AAD6              AAD6  ks_active
+            AAD7              AAD7  ks_len
+            AAD9              AAD9  ks_ptr
+            AADB              AADB  ks_pos
+            AADD              AADD  ks_wait
+            AADE              AADE  ks_until
+            AAE0              AAE0  snap_taken
+            AAE1              AAE1  snap_len
+            AAE4              AAE4  stack_bottom
+            AEE4              AEE4  stack_top
+            AEE4              AEE4  bss_end
 
 ---- Section rstub ------------------------------------------------------------
 
 Real              Virtual           Name
-            58B2               100  r_sig
-            58B6               104  r_ver
-            58B7               105  r_hook
-            58B9               107  r_old16
-            58BD               10B  r_handle
-            58BF               10D  r_inpop
-            58C0               10E  r_off
-            58C1               10F  r_entry
-            58C5               113  r_hw
-            58C9               117  r_saved
-            58CD               11B  r_params
-            58CD               11B  r_pold16
-            58D1               11F  r_indos
-            58D5               123  r_ss
-            58D7               125  r_sp
-            58D9               127  r_ks
-            58DA               128  r_pend
-            58DB               129  r_mt
-            58DF               12D  r_int16
-            58FB               149  r_int16.ch
-            5900               14E  r_int16.up
-            590A               158  r_int16.nk
-            5910               15E  r_int16.pk
-            591E               16C  r_int16.rd
-            591F               16D  r_int16.w
-            5931               17F  r_int16.pf
-            593B               189  ..@r_idle
-            593D               18B  r_int16.ky
-            593E               18C  r_front
-            5955               1A3  r_front.x
-            5956               1A4  r_feed
-            5980               1CE  r_feed.wk
-            5995               1E3  r_feed.no
-            5996               1E4  r_feed.x
-            5997               1E5  r_hot
-            59AB               1F9  r_hot.s
-            59C2               210  r_hot.m
-            59C8               216  r_hot.mv
-            59D9               227  r_hot.e
-            59DD               22B  r_hot.p
-            5A11               25F  r_hot.pp
-            5A18               266  r_hot.no
-            5A1D               26B  r_hot.x
-            5A1E               26C  r_hot.df
-            5A37               285  r_hot.nx
-            5A43               291  r_hot.n
-            5A44               292  r_popup
-            5A68               2B6  r_popup.s
-            5A7C               2CA  r_popup.m
-            5A9A               2E8  r_popup.r
-            5ABB               309  r_int67
-            5ABE               30C  r_code_end
-            5C3E               48C  r_stack_top
-            5C3E               48C  r_end
+            5AD4               100  r_sig
+            5AD8               104  r_ver
+            5AD9               105  r_hook
+            5ADB               107  r_old16
+            5ADF               10B  r_handle
+            5AE1               10D  r_inpop
+            5AE2               10E  r_off
+            5AE3               10F  r_bgon
+            5AE4               110  r_entry
+            5AE8               114  r_hw
+            5AEC               118  r_saved
+            5AF0               11C  r_params
+            5AF0               11C  r_pold16
+            5AF4               120  r_indos
+            5AF8               124  r_ss
+            5AFA               126  r_sp
+            5AFC               128  r_ks
+            5AFD               129  r_pend
+            5AFE               12A  r_mt
+            5B02               12E  r_bgt
+            5B04               130  r_int16
+            5B20               14C  r_int16.ch
+            5B25               151  r_int16.up
+            5B2F               15B  r_int16.nk
+            5B35               161  r_int16.pk
+            5B46               172  r_int16.rd
+            5B47               173  r_int16.w
+            5B5C               188  r_int16.pf
+            5B66               192  ..@r_idle
+            5B68               194  r_int16.ky
+            5B69               195  r_front
+            5B80               1AC  r_front.x
+            5B81               1AD  r_feed
+            5BAB               1D7  r_feed.wk
+            5BC0               1EC  r_feed.no
+            5BC1               1ED  r_feed.x
+            5BC2               1EE  r_hot
+            5BD6               202  r_hot.s
+            5BED               219  r_hot.m
+            5BF3               21F  r_hot.mv
+            5C04               230  r_hot.e
+            5C08               234  r_hot.p
+            5C31               25D  r_hot.pp
+            5C38               264  r_hot.no
+            5C3D               269  r_hot.x
+            5C3E               26A  r_hot.df
+            5C57               283  r_hot.nx
+            5C63               28F  r_hot.n
+            5C64               290  r_bg
+            5CA9               2D5  r_bg.n
+            5CAB               2D7  r_bg.x
+            5CAC               2D8  r_popup
+            5CD0               2FC  r_popup.s
+            5CE4               310  r_popup.m
+            5CF9               325  ..@r_back
+            5D02               32E  r_popup.r
+            5D23               34F  r_isr
+            5D32               35E  r_int67
+            5D36               362  r_code_end
+            5EB6               4E2  r_stack_top
+            5EB6               4E2  r_end
 

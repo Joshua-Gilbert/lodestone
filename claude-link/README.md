@@ -69,8 +69,12 @@ and GPIB tools too (files not where DOS is busy under the program: its
 own disk-error handler, Lodestone's tasks' key wait, or DEFRAG); `grid_command`,
 `grid_info`, `grid_screen` and the pictures don't: the program holds the
 GRiD. Outside it, those two say no program is paused. Once the user has
-gone back to the program (CODE-\ again), every GRiD tool says so at once
-until the console is up again.
+gone back to the program (CODE-\ again), the file and GPIB tools go on in
+the background, between the program's key calls (CLAUDE 1.10), where the
+bridge can be quiet: the Pico 2 with firmware 2026-10-24 or later, which
+then raises no SRQ for the program to see. The rest, and every tool with
+an older bridge, say at once that the user has gone back, until the
+console is up again.
 
 GPIB queries ask too: a query is a command, and some (`MEAS?` and `READ?`
 on a Keithley source-meter) switch a source's output on.

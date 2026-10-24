@@ -1,4 +1,4 @@
-"""Behavioural model of the GPIB-Pico2 bridge (bridge fw 2026-10-16d) for the emulator tests.
+"""Behavioural model of the GPIB-Pico2 bridge (bridge fw 2026-10-16d; 2026-10-23d and 2026-10-24 asked) for the emulator tests.
 
 It speaks the bridge's USB protocol (COBS frames, PROTOCOL.md in GPIB Pico Board/firmware/bridge) to the real
 gridlink PicoProto, and is a GPIB device to the 7210 model, as the firmware is:
@@ -9,7 +9,8 @@ gridlink PicoProto, and is a GPIB device to the 7210 model, as the firmware is:
   service request mode the bridge then raises SRQ with status 60h, keeps READY (20h) until the reply has been
   read, and drops a reply a newer message or an SDC has made stale;
 * a TX frame bigger than the firmware's 600-byte input buffer is lost (counted in `violations`), so the Pi
-  must split big replies into several TX frames.
+  must split big replies into several TX frames;
+* quiet (CONFIG bit 2, fw 2026-10-24, with `quiet=True`): the status byte as ever, the SRQ line never driven.
 
 It subclasses AR488Model only so the 7210 model treats it as the bridge device; it shares none of its logic.
 Time is in microseconds from the harness's clock.
@@ -19,7 +20,7 @@ import collections, os, struct, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from gridlink.pico import (cobs_encode, cobs_decode, F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_WAKE, F_HELLO,
-                           F_DATA, F_EVENT, F_PONG, F_CREDIT, CF_ONLINE, CF_AUTO_RSV, TXF_EOI, DF_EOI, F_HOLD,
+                           F_DATA, F_EVENT, F_PONG, F_CREDIT, CF_ONLINE, CF_AUTO_RSV, CF_QUIET, TXF_EOI, DF_EOI, F_HOLD,
                            TXF_HELD, DF_HELD, F_HOLD_GLP)
 from gridlink.glp import fletcher16
 from ar488_model import AR488Model
@@ -30,11 +31,12 @@ TX_RING = 16383
 
 
 class PicoModel(AR488Model):
-    def __init__(s, clock, addr=7, to_pi=None, usb_us=500, holds=False):
+    def __init__(s, clock, addr=7, to_pi=None, usb_us=500, holds=False, quiet=False):
         super().__init__(clock, addr=addr, patched=True, to_pi=to_pi)
         # holds: the model says it is fw 2026-10-23c and takes F_HOLD (a reply held for the next message, sent
         # if that message is the one expected).  (gridlink then also sends EARLY frames: here only partial ones.)
-        s.holds = holds
+        # quiet: it says fw 2026-10-24 (holds too) and takes CONFIG's quiet: no SRQ line, the byte as ever.
+        s.holds = holds or quiet; s.can_quiet = quiet; s.quiet = False
         s.hold = None; s.cmp = None          # the hold out (gen, expected bytes); the one this message is compared to
         s.held = collections.deque()         # [gen, bytearray, complete] held replies
         s.n_held = 0
@@ -80,11 +82,13 @@ class PicoModel(AR488Model):
         if t == F_HELLO_REQ:
             s.online = False
             s._send(struct.pack('<BBHHIH', F_HELLO, 1, TX_RING, DATA_CHUNK, s.consumed, 0)
-                    + (b'bridge fw 2026-10-23d (model)' if s.holds else b'bridge model'))
+                    + (b'bridge fw 2026-10-24 (model)' if s.can_quiet else
+                       b'bridge fw 2026-10-23d (model)' if s.holds else b'bridge model'))
         elif t == F_CONFIG:
             was = s.online
             s.addr, fl = f[1], f[2]
             s.online = bool(fl & CF_ONLINE); s.auto = bool(fl & CF_AUTO_RSV)
+            s.quiet = bool(fl & CF_QUIET) and s.can_quiet
             if s.online and not was: s.gen += 1; s.ring.clear()
         elif t == F_PING:
             s._send(bytes([F_PONG, 1 if s.online else 0]) + bytes(46))
@@ -135,7 +139,8 @@ class PicoModel(AR488Model):
     @property
     def srq(s):
         s.service()
-        return s.online and s.auto and ((s._ready() and s.announced < s.completed) or s._bell())
+        return (s.online and s.auto and not s.quiet
+                and ((s._ready() and s.announced < s.completed) or s._bell()))
 
     @srq.setter
     def srq(s, v):
@@ -235,6 +240,13 @@ class PicoModelTransport:
 
     def unring(s):
         s.proto.unring()
+
+    def set_quiet(s, on):
+        return s.proto.set_quiet(on)
+
+    @property
+    def can_quiet(s):
+        return s.proto.can_quiet
 
     @property
     def delivered_at(s):

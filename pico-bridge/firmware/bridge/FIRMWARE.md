@@ -1,4 +1,4 @@
-# GPIB-Pico2 bridge firmware (`bridge fw 2026-10-22b`)
+# GPIB-Pico2 bridge firmware (`bridge fw 2026-10-24`)
 
 This is the production firmware: the Pico is the 1520's GPIB device, and everything the 1520 sends to it
 goes to the Raspberry Pi over USB.
@@ -118,6 +118,12 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   Core 1 keeps the sum as the bytes come (two adds a byte, `hold_glp_byte`). The J tests add a good frame, an
   empty one, and a wrong sequence number, a bad sum, a changed byte, one too short, one too long and one with
   the CRC: 99 checks.
+- **2026-10-24.** Quiet (CONFIG flags bit 2; PROTOCOL.md). The status byte as ever, but the SRQ line is never
+  driven: gridlink sets it while resident Claude's console works in the background under a DOS program
+  (Lodestone's M4), so the program's SRQ latch sees none of the link's answers. Three lines in `set_srq` and
+  `apply_requests`. The J tests add an answer and a ring with quiet on (no SRQ, the byte as ever) and quiet
+  turned off with RQS waiting (SRQ then). **`bridge_pico2.uf2` is not rebuilt with this yet**: build it (Build,
+  below) before flashing; until then gridlink sees the older firmware and resident Claude has no background.
 
 ## Build
 

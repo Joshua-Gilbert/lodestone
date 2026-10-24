@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define FW_TAG "bridge fw 2026-10-23d"
+#define FW_TAG "bridge fw 2026-10-24"
 #define PROTO_VERSION 1
 
 // ---- pins ----------------------------------------------------------------------------------------------------
@@ -107,6 +107,10 @@ typedef struct {
   // (status 60h: RQS + READY) once for every complete reply (an EOI byte) queued, keeps READY (20h) until that
   // reply has been sent, and drops it all if the reply goes stale -- as the AR488 +GRiD1 patch does.
   volatile uint8_t auto_rsv;
+  // Quiet (CONFIG flags bit 2, 2026-10-24): RQS and READY in the status byte as ever, but the SRQ line is never
+  // driven, so a controller's SRQ latch (a DOS program's, under resident Claude) sees nothing of ours.  The
+  // 1520 finds the answers by serial-polling.
+  volatile uint8_t quiet;
   volatile uint32_t tx_eoi_pushed;      // complete replies queued by core 0 (EOI entries), ever
   // A held reply (F_HOLD, 2026-10-23c): the Pi expects the 1520's next message to be exactly hold_exp (its next
   // POLL) and has queued the answer to it ahead, as TXE_HELD entries of the next generation.  If the message is
