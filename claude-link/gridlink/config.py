@@ -10,7 +10,7 @@ PATHS = ['~/.config/gridlink/config.toml', '/etc/gridlink/config.toml']
 # Joshua's bus (see the GPIB driver notes); edit [bus] in the config file.
 DEFAULT_BUS = {
     1: 'Tek 4662 pen plotter (HP-GL, through its Nano; grid_plotter)', 2: 'Tek 11403 digitizing scope',
-    3: 'Tek 7854 oscilloscope', 6: 'Tek FG5010 function generator',
+    3: 'Tek 7854 oscilloscope', 5: 'Tek AFG5101 arbitrary function generator', 6: 'Tek FG5010 function generator',
     11: 'Tek SI5020 switch', 13: 'Tek PS5004 power supply', 16: 'Tek DM5120 DMM',
     17: 'HP 4275A multi-frequency LCR meter',
     18: 'HP 8753D network analyzer', 19: 'HP 8753D, its second address (reserved: not another instrument)',
