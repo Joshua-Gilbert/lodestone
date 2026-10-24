@@ -42,7 +42,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 **The Executive and its programs.** These run on one shared UI core, in GRiD's system font (other 8×16 fonts load from `.FNT` files).
 - **The Executive:** GRiD's File form (Device, Subject, Title). CODE-C copies, CODE-M moves, CODE-R renames and CODE-D deletes, with wildcards, Replace and Only newer, on files or whole subjects.
 - **System:** memory, disks, clock, devices (and PrtSc's printer driver), GPIB, display, screen saver, the temporary disk M:, and where the settings come from.
-- **Write:** a GRiDWrite-style text editor. A mouse drag selects text, and a right click gives a menu of its commands.
+- **Write:** a GRiDWrite-style text editor. A mouse drag selects text, and a right click gives a menu of its commands; Cut, Copy and Paste (CODE-Z, CODE-C, CODE-V) through a clipboard every program on the UI core shares.
 - **The calculator** uses the 80287 or 287XL when one is fitted, and works with whole numbers when not. It runs as a window over the Executive (CODE-K) that you can drag by its title (or move with CODE-F7) and close with its x, and as `CALC` at the prompt, for batch files.
 - **The screen saver:** runs DEFRAG on every disk in turn, then darkens the screen.
 - **A start-up picture**¹, drawn from vectors (`LODE.PIC`, 2.5 KB).
@@ -157,7 +157,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,879 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,890 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os

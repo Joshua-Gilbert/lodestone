@@ -433,7 +433,9 @@ def t_write():
     k.key('x')
     k.key(ktest.F1)
     shot(k, 'write_help')
-    check('help: GRiDWrite\'s command summary', has(k, 'Begin       CODE-B    Restart the selection') and has(k, 'Cancel      CODE-ESC'), screen(k))
+    check('help: GRiDWrite\'s command summary, Cut, Copy and Paste among them, all 18 lines shown',
+          has(k, 'Begin       CODE-B    Restart the selection') and has(k, 'Cancel      CODE-ESC') and has(k, 'Copy        CODE-C')
+          and has(k, 'Cut         CODE-Z') and has(k, 'Paste       CODE-V') and has(k, 'Any key closes'), screen(k))
     k.key('x')
     k.key(CODE['Q'])
     check('Quit asks', k.band()[0] == 'Quit: Confirm to save and exit', k.band())
@@ -694,6 +696,100 @@ def t_write_mouse():
     tl2, cl2 = wv('topline'), wv('curline')
     check('... a drag held above it: the view scrolls back (line %d at the top, from %d), the cursor on its first row, a new selection'
           % (tl2, tl), tl2 <= tl - 4 and cl2 == tl2 and wb('mode') == 1 and wv('gap_s') < wv('anchor'), (tl2, cl2, wb('mode')))
+
+def t_write_clip():
+    """Write's Cut, Copy and Paste (CODE-Z, CODE-C, CODE-V) through the
+    clipboard every .RUN shares (UI_CLIP), and in its right click's menu."""
+    print('== Write: Cut, Copy and Paste (the clipboard, UI_CLIP)')
+    ws = run_syms('apps/WRITE.ASM')
+    T = TEXT.replace(b'\r\n', b'\n')
+    at = lambda c, r: (c * 8 + 2, 24 + r * 16 + 8)
+    def wb(n): return k.pc.rd(k.useg, k.u16('run_base') + ws[n], 1)[0]
+    def rpress(x, y):
+        point(k, x, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+    clip = lambda: (k.u16('clip_len'), disk_file(k, 'CLIP.$$$'))
+    k = write_open(mouse=True)
+    rpress(*at(4, 2))
+    m0 = has(k, 'Erase          CODE-E') and not has(k, 'Paste') and not has(k, 'Cut ') and not has(k, 'Copy ')
+    k.key(ktest.ESC)
+    k.key(CODE['C'], CODE['Z'], CODE['V'])
+    check('the clipboard empty, nothing selected: the menu has no Cut, Copy or Paste; CODE-C, CODE-Z, CODE-V do nothing (not even "Changed")',
+          m0 and wtext(k, ws) == T and clip() == (0, None) and wb('mode') == 0 and not has(k, 'Changed'), (m0, wtext(k, ws), clip()))
+    drag(k, *at(9, 0), *at(4, 0)); k.key(CODE['C'])           # (from right to left: the selection past the cursor, the gap)
+    c1 = (wb('mode'), clip())
+    bd = k.band()[-1]
+    click(k, *at(30, 1)); k.key(CODE['V'])
+    t1 = T.replace(b'jumps over', b'jumps overquick')
+    check('a drag over "quick" (from its end), CODE-C: in the clipboard (CLIP.$$$, no EMS here), still selected; a click after "over", CODE-V: pasted there',
+          c1 == (1, (5, b'quick')) and bd.startswith('CODE-Z cuts   CODE-C copies') and wtext(k, ws) == t1 and has(k, 'Changed') and has(k, 'Line 2 of 5   Column 16'), (c1, bd, wtext(k, ws)))
+    drag(k, *at(10, 0), *at(15, 0)); k.key(CODE['Z'])
+    t2 = t1.replace(b'brown', b'', 1)
+    c2 = (wb('mode'), clip())
+    drag(k, *at(4, 2), *at(8, 2)); k.key(CODE['V'])
+    t3 = t2.replace(b'lazy', b'brown')
+    check('a drag over "brown", CODE-Z: cut (in the clipboard, out of the text); a drag over "lazy", CODE-V: replaced by it',
+          c2 == (0, (5, b'brown')) and wtext(k, ws) == t3 and wb('mode') == 0 and clip() == (5, b'brown'), (c2, wtext(k, ws), clip()))
+    rpress(*at(0, 4))
+    m1 = has(k, 'Paste          CODE-V') and not has(k, 'Cut ') and not has(k, 'Copy ')
+    k.key(ktest.ENTER)
+    t4 = t3.replace(b'last line', b'brownlast line')
+    check('nothing selected, something to paste: the menu has Paste (first), no Cut or Copy; Return: pasted where it was clicked',
+          m1 and wtext(k, ws) == t4, (m1, wtext(k, ws)))
+    drag(k, *at(8, 3), *at(14, 3))
+    rpress(*at(20, 3))
+    m2 = has(k, 'Cut            CODE-Z') and has(k, 'Copy           CODE-C') and has(k, 'Paste          CODE-V')
+    k.key(ktest.ENTER)
+    t5 = t4.replace(b'Tabbed', b'', 1)
+    check('a drag over "Tabbed", a right click: Cut, Copy and Paste first; Return: cut', m2 and wtext(k, ws) == t5
+          and clip() == (6, b'Tabbed') and wb('mode') == 0, (m2, wtext(k, ws), clip()))
+    drag(k, *at(4, 0), *at(9, 0))
+    rpress(*at(2, 0)); k.key(ktest.DOWN, ktest.ENTER)
+    mc = (wtext(k, ws) == t5, clip(), wb('mode'))
+    drag(k, *at(11, 0), *at(14, 0))
+    rpress(*at(12, 0)); k.key(ktest.DOWN, ktest.DOWN, ktest.ENTER)
+    t5 = t5.replace(b'fox', b'quick', 1)
+    check('a drag over "quick", a right click, Down, Return (Copy): copied, the text as it was, still selected; a drag over '
+          '"fox", the menu\'s Paste (third): replaced by it', mc == (True, (5, b'quick'), 1) and wtext(k, ws) == t5 and wb('mode') == 0,
+          (mc, wtext(k, ws)))
+    drag(k, *at(0, 1), *at(0, 2)); k.key(CODE['C'], ktest.ESC, K_CEND, CODE['V'])
+    t6 = t5 + b'jumps overquick\n'
+    check('a drag over a whole line (its end too), CODE-C, ESC, Ctrl-End, CODE-V: a line more (6), the cursor on the new last one',
+          wtext(k, ws) == t6 and clip()[1] == b'jumps overquick\n' and has(k, 'Line 6 of 6   Column 1'), (wtext(k, ws), clip(), screen(k)))
+    k.key(CODE['Q'], ktest.ENTER)
+    saved = disk_file(k, 'NOTES.TXT')
+    k.select('NOTES.TXT'); k.key(ktest.ENTER); k.key(CODE['V'])
+    check('saved (CR LF), quit; Write again: CODE-V pastes what the last one copied (the core keeps it)',
+          saved == t6.replace(b'\n', b'\r\n') and wtext(k, ws) == b'jumps overquick\n' + t6, (saved, wtext(k, ws)))
+    big = b''.join(b'%05d ' % i + b'x' * 58 + b'\r\n' for i in range(300))     # (19,500 bytes in Write: lines end in LF)
+    k = write_open('BIG.TXT', big, mouse=True)
+    drag(k, *at(0, 0), *at(3, 0)); k.key(CODE['C'])
+    c0 = clip()
+    k.key(K_CEND, CODE['C'])
+    b1 = k.band()[0]
+    k.key(ktest.ENTER)
+    c8 = clip()
+    k.key(CODE['Z'])
+    b2 = k.band()[0]
+    k.key(ktest.ENTER)
+    z8 = wtext(k, ws) == big.replace(b'\r\n', b'\n')
+    k.key(K_CHOME, ktest.DOWN, ktest.DOWN, K_END)     # (extended to line 3's end)
+    k.key(CODE['C'])
+    check('"000" copied; a selection of 19,500 bytes, CODE-C: "%s", the clipboard as it was ("000"); CODE-Z: the same, nothing '
+          'erased; then the first 3 lines: copied' % b1,
+          b1 == 'The clipboard holds 16 KB at most' and c0 == (3, b'000') and c8 == c0 and b2 == b1 and z8
+          and clip()[0] == 3 * 65 - 1 and wb('mode') == 1, (b1, c0, c8, b2, z8, clip()))
+    # past the cursor (after the gap), and emptied
+    k = write_open(mouse=True)
+    k.key('XY', K_CHOME)
+    drag(k, *at(5, 0), *at(0, 0)); k.key(CODE['C'])
+    c7 = clip()
+    k.key(CODE['B'], CODE['C'])
+    check('"XY" typed, Ctrl-Home, a drag from right to left over "XYThe", CODE-C: those; CODE-B (empty), '
+          'CODE-C: a beep, the clipboard as it was', c7 == (5, b'XYThe') and clip() == (5, b'XYThe') and wb('mode') == 1, (c7, clip()))
+    k.key(ktest.ESC)
+    drag(k, *at(0, 0), *at(2, 0)); k.key(CODE['V'])
+    check('a drag over "XY" (at the start), CODE-V: replaced by the 5 bytes (the room the gap\'s and the selection\'s, not where it ends)',
+          wtext(k, ws) == b'XYThe' + T and k.band()[0].startswith('Type, or choose a command'), (wtext(k, ws)[:20], k.band()))
 
 # ---------------------------------------------------------------------
 def t_memory():
@@ -2669,7 +2765,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
