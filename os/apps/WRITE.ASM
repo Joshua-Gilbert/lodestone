@@ -27,7 +27,7 @@
 ;  redraws only the rows that changed.
 ;
 ;  The mouse: a click puts the cursor there; a drag selects, and then a
-;  command (CODE-E, CODE-M, CODE-D, or Backspace) works on what it
+;  command (CODE-E, CODE-M, CODE-D, Backspace or Delete) works on what it
 ;  selected; a right click in the text gives a menu of the commands.
 ;
 ;  With MULTITASK=1 it is a window .RUN (M8b): a window that moves,
@@ -1474,12 +1474,18 @@ k_begin:                                ; (CODE-B: the selection starts here)
 
 ; a drag's selection: Erase it now, or Move or Duplicate it (where to?)
 k_serase:
-        mov     byte [cmd], 'E'
-        jmp     short k_confirm
+        mov     dl, 'E'
+        jmp     short k_sverb
 k_smove:
-        mov     byte [cmd], 'M'
-        jmp     short k_confirm
-k_sdup: mov     byte [cmd], 'D'
+        mov     dl, 'M'
+        jmp     short k_sverb
+k_sdup: mov     dl, 'D'
+k_sverb:
+        mov     ax, [anchor]            ; (empty: a beep, and still a drag's,
+        cmp     ax, [gap_s]             ;  cmd 0, not a command's selection)
+        jne     .v
+        jmp     UI_BEEP
+.v:     mov     [cmd], dl
 
 ; Return while selecting or pointing
 k_confirm:
