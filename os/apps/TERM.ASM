@@ -236,8 +236,10 @@ tick:   mov     ax, 0F000h + MT_EXIT    ; ended (free, or its number given
         ret
 
 ; its screen, as MT keeps it, in the window: the view following its
-; cursor, only the cells that changed drawn (not while it is in front, or
-; in a graphics mode: T3)
+; cursor, only the cells that changed drawn.  Nothing while it is in front
+; (full screen), or with its pages gone; a note instead when it is in a
+; graphics mode or frozen (it writes the screen itself): a key then brings
+; it to the front (T3)
 show:   push    es
         mov     es, [fseg]
         mov     di, BUF
@@ -249,9 +251,24 @@ show:   push    es
         int     21h
         pop     es
         jc      .x
-        test    dl, 8 | 2               ; (in front, or nothing copied)
-        jnz     .x
-        mov     [cur], bx
+        test    dl, 8 | 4               ; (in front, or its pages gone)
+        jnz     .no
+        mov     si, s_ngfx
+        test    dl, 2                   ; (nothing copied: a graphics mode)
+        jz      .f
+        cmp     ch, 4
+        jae     .nt
+.no:    mov     byte [note], 0          ; (a key then is its own again)
+        jmp     .x
+.f:     mov     si, s_nfz
+        test    dl, 1                   ; (VF_DIRECT: not run behind)
+        jnz     .nt
+        mov     byte [note], 0
+        jmp     short .s
+.nt:    call    mknote
+        xor     bx, bx
+        mov     cx, 80
+.s:     mov     [cur], bx
         xor     ch, ch
         mov     [ncols], cx
         ; the view: as little moved as keeps the cursor in it
@@ -404,7 +421,9 @@ attr:   push    bx
 
 ; the cursor's mark (its cell's bottom two rows inverted), where it is
 ; when it is in the window
-cursor: mov     al, [cur + 1]           ; its row in the view?
+cursor: cmp     byte [note], 0          ; (none on a note)
+        jne     .x
+        mov     al, [cur + 1]           ; its row in the view?
         xor     ah, ah
         sub     ax, [top]
         jb      .x
@@ -443,8 +462,17 @@ cursor: mov     al, [cur + 1]           ; its row in the view?
 .x:     ret
 
 ; a key typed in the window: to the task (MT_TKEY), after those kept; kept
-; while its ring is full (QLEN at most: a beep past them)
-key:    cmp     byte [qn], 0
+; while its ring is full (QLEN at most: a beep past them).  With a note up,
+; the task to the front instead (full screen)
+key:    cmp     byte [note], 0
+        je      .t
+        mov     byte [note], 0          ; (TERM doesn't run while it's in
+        mov     ax, 0F000h + MT_FRONT   ;  front: a key after it's back is its)
+        mov     bl, [task]
+        stc
+        int     21h
+        ret
+.t:     cmp     byte [qn], 0
         jne     .q
         call    send
         jnc     .x
@@ -457,6 +485,23 @@ key:    cmp     byte [qn], 0
         mov     [q + bx], ax
         inc     byte [qn]
 .x:     ret
+
+; the note SI in place of its screen: BUF blank, the note on its first row
+mknote: mov     byte [note], 1
+        push    es
+        mov     es, [fseg]
+        mov     di, BUF
+        mov     ax, 0720h
+        mov     cx, 25 * 80
+        rep     stosw
+        mov     di, BUF + 2
+.c:     lodsb
+        or      al, al
+        jz      .x
+        stosw                           ; (AH: 07h still)
+        jmp     .c
+.x:     pop     es
+        ret
 
 ; the keys kept, in turn, while the ring takes them
 flush:  cmp     byte [qn], 0
@@ -495,6 +540,8 @@ send:   push    ax
 %include "../claude/CELL.INC"
 
 s_fnt       db 'TERM.FNT', 0
+s_ngfx      db 'In a graphics mode: a key here shows it (or CODE-Tab)', 0
+s_nfz       db 'It writes the screen itself: a key here shows it (FULL= for it)', 0
 win:        dw 0, SCR_TOP, 80, SCR_BAND_Y - SCR_TOP
             dw title, w_draw, WF_MOVE | WF_SIZE
 top         dw 0                        ; the view: its screen's first row and
@@ -503,6 +550,7 @@ left        dw 0                        ;  column in the window
 section .bss
 task        resb 1
 gen         resb 1
+note        resb 1                      ; 1: a note shown, not its screen
 curon       resb 1                      ; 1: the cursor's mark is drawn, at
 curat       resw 1                      ;  this shadow cell
 qn          resb 1

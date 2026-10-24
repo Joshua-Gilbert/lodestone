@@ -4209,6 +4209,131 @@ def t_term():
                   'Shift-CODE-P is)', st[1] != 0 and (st[1], 1, 'LCMD.COM') in st[0] and k.pc.mode() == 3
                   and k.pc.rd(seg, k.Y['mw_n'], 1)[0] == 0, (st, k.pc.mode()))
 
+def t_tgfx():
+    print('== terminal windows (T3): a windowed program\'s graphics full screen, and back to its window with a text mode')
+    k = boot('mt_tg.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTSC)
+    seg, Y, WG = mt_seg(k), k.Y, equ('TX_WGFX')
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    scr = lambda: '\n'.join(l for y, l in k.ocr())
+    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+    tx = lambda n: k.pc.u16(seg, task_ent(k, n) + TE_TX)
+    wg = lambda n: k.pc.rd(tx(n), WG, 1)[0]
+    patok = lambda: bytes(k.pc.rd(0xB800, 0, 256)) == bytes((((i * 5) ^ (i >> 8)) & 0xFF) for i in range(256))
+    def typ2(text, t=1.0):
+        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+    def key(t=2.0):
+        k.key('x', settle=False); k.run_for(t)
+    def to0():
+        for _ in range(8):
+            if tstate(k)[1] == 0: break
+            hot(k); k.run_for(1.0)
+    au = Audit(k)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n = tnum('LCMD.COM')
+    # a graphics mode asked for in the window: the task in front by itself, full screen
+    typ2('mtmode 40 g.txt t', 3.0)
+    st = tstate(k)
+    check('MTMODE 40 run at the windowed prompt (task %d): in front by itself (front %d), mode 40h, its pattern on the '
+          'screen, its TX_WGFX 1 (in front for graphics); its window still a session (behind)' % (n, st[1]),
+          st[1] == n and k.pc.mode() == 0x40 and patok() and wg(n) == 1 and mb('mw_n') == 1, (st, k.pc.mode(), wg(n)))
+    # CODE-Tab away: the window shows a note; a key in it: the task in front again
+    to0()
+    o = scr()
+    key()
+    st = tstate(k)
+    check('CODE-Tab to task 0: the window\'s note ("In a graphics mode: a key here shows it"); a key typed in the window: '
+          'the task in front again (front %d), its pattern as it was' % st[1], 'In a graphics mode' in o and st[1] == n
+          and k.pc.mode() == 0x40 and patok(), (o[-400:], st))
+    # a key: MTMODE sets mode 3 and prints: back to its window
+    key(3.0)
+    st, o = tstate(k), scr()
+    check('a key: MTMODE sets mode 3, prints "MTMODE: text": back behind (front %d, the UI in 40h), its window showing it, '
+          'TX_WGFX 0' % st[1], st[1] == 0 and k.pc.mode() == 0x40 and 'MTMODE: text' in o and wg(n) == 0, (st, o[-400:], wg(n)))
+    key(2.0)
+    check('a key typed in the window: MTMODE ends; its pattern was there throughout the switches (G.TXT "ok"); the '
+          'prompt in the window (front 0, the UI in 40h)', A.disk_file(k, 'G.TXT') == b'ok' and tstate(k)[1] == 0
+          and k.pc.mode() == 0x40 and 'A:\\>' in scr().split('MTMODE: text')[-1], (A.disk_file(k, 'G.TXT'), scr()[-300:]))
+    # ending in graphics: a text mode set for it, the prompt back in its window
+    typ2('mtmode 40 h.txt', 3.0)
+    f1 = tstate(k)[1]
+    key(3.0)
+    st, o = tstate(k), scr()
+    check('MTMODE 40 without T (front %d): a key, it ends still in graphics: mode 3 set for it (its screen\'s mode %d), '
+          'back to its window, the prompt there (H.TXT "ok")' % (f1, k.pc.rd(tx(n), TX_VID, 1)[0]), f1 == n and st[1] == 0
+          and k.pc.rd(tx(n), TX_VID, 1)[0] == 3 and A.disk_file(k, 'H.TXT') == b'ok' and 'A:\\>' in o
+          and 'mtmode 40 h.txt' not in o and wg(n) == 0,
+          (f1, st, o[-300:]))
+    # mode 3 and at once graphics again (before the switch): still in front, not frozen behind
+    typ2('mtmode 40 b.txt b', 3.0)
+    f1 = tstate(k)[1]
+    key(3.0)
+    st, w1, vf = tstate(k), wg(n), k.pc.rd(seg, task_ent(k, n) + TE_VF, 1)[0]
+    key(3.0)
+    check('MTMODE 40 B (front %d): a key, mode 3 and at once 40h again: still in front (%d), TX_WGFX %d (in front for '
+          'graphics), not frozen (TE_VF %d); a key, it ends in graphics: back to its window (B.TXT "ok")' % (f1, st[1], w1, vf),
+          f1 == n and st[1] == n and k.pc.mode() == 0x40 and w1 == 1 and not vf & VF_DIRECT and tstate(k)[1] == 0
+          and A.disk_file(k, 'B.TXT') == b'ok' and wg(n) == 0, (f1, st, w1, vf, tstate(k)))
+    # CODE-Tab full screen in text: a mode 3 set there doesn't send it back (no TX_WGFX)
+    hot(k); k.run_for(1.0)
+    f1 = tstate(k)[1]
+    typ2('mtmode 03 x.txt', 2.0)
+    f2 = tstate(k)[1]
+    key(2.0)
+    check('CODE-Tab: LCMD full screen in text (front %d); MTMODE 03 there sets mode 3: still in front (%d, %d after its '
+          'end), no TX_WGFX: a full screen asked for stays' % (f1, f2, tstate(k)[1]), f1 == n and f2 == n
+          and tstate(k)[1] == n and A.disk_file(k, 'X.TXT') == b'ok' and wg(n) == 0, (f1, f2, tstate(k), wg(n)))
+    # it writes the screen itself (MTSCR W, in front), back behind: frozen, a note; a key: in front
+    typ2('mtscr w w.txt', 1.0)
+    key(1.0)
+    to0()
+    o, st, vf = scr(), tstate(k), k.pc.rd(seg, task_ent(k, n) + TE_VF, 1)[0]
+    key(2.0)
+    f1 = tstate(k)[1]
+    check('MTSCR W, the screen written itself in front, CODE-Tab to task 0: the task frozen behind (TE_VF %d), its '
+          'window\'s note ("It writes the screen itself"); a key in the window: in front (%d)' % (vf, f1),
+          'It writes the screen itself' in o and st[1] == 0 and vf & VF_DIRECT and f1 == n, (o[-400:], st, vf, f1))
+    key(1.0)
+    typ2('exit', 2.0)
+    check('... EXIT in front: the task ends, its window closes, the Executive in front', tnum('LCMD.COM') == 7
+          and mb('mw_n') == 0 and tstate(k)[1] == 0 and k.pc.mode() == 0x40, (tstate(k), mb('mw_n')))
+    # Return on a graphics program: its window opens, it is full screen at once; at its end the Executive again
+    k.select('MTMODE.COM'); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+    st, n2, w1 = tstate(k), tnum('MTMODE.COM'), mb('mw_n')
+    w2, pt = (wg(n2), patok()) if n2 != 7 else (0, False)
+    key(3.0)
+    check('Return on MTMODE.COM (no arguments: mode 40h): a terminal window opened (%d), the task full screen at once '
+          '(front %d, TX_WGFX %d, its pattern); a key: it ends, its window closes, the Executive in front' % (w1, st[1], w2),
+          w1 == 1 and st[1] == n2 and n2 != 7 and w2 == 1 and pt and tnum('MTMODE.COM') == 7 and mb('mw_n') == 0
+          and tstate(k)[1] == 0 and k.pc.mode() == 0x40, (st, w1, w2, pt, tstate(k), mb('mw_n')))
+    check('... every switch at a safe point (the audit)', not au.bad(), au.bad()[:3])
+    # the end of a program other than the one that asked for graphics: no text mode for it (TX_WPSP)
+    k = boot('mt_tg2.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT)
+    seg = mt_seg(k)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n = tnum('LCMD.COM')
+    typ2('mtmode 40 p.txt', 3.0)
+    f1, wp = tstate(k)[1], k.pc.u16(tx(n), equ('TX_WPSP'))
+    k.pc.wr(tx(n), equ('TX_WPSP'), struct.pack('<H', wp ^ 0xFFFF))              # (as if another program had asked)
+    key(3.0)
+    check('MTMODE 40 in front (front %d, TX_WPSP %04Xh: its PSP), TX_WPSP made another program\'s: its end in graphics '
+          'leaves the task in front, in graphics (no mode 3 for it)' % (f1, wp), f1 == n and wp != 0 and tstate(k)[1] == n
+          and k.pc.mode() == 0x40 and A.disk_file(k, 'P.TXT') == b'ok', (f1, wp, tstate(k), k.pc.mode()))
+    # ... ended there (TX_WGFX still 1: MTLAUNCH /K, its own number); a new task in its place: its TX_WGFX 0
+    t1, w1 = tx(n), wg(n)
+    typ2('mtlaunch /k:%d' % n, 3.0)
+    gone, w0 = tnum('LCMD.COM') == 7 and mb('mw_n') == 0, mb('mw_n')
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n3 = tnum('LCMD.COM')
+    t3, w3 = (tx(n3), wg(n3)) if n3 != 7 else (0, 9)
+    hot(k); k.run_for(1.0)
+    f1 = tstate(k)[1]
+    typ2('mtmode 03 y.txt', 2.0)
+    key(2.0)
+    check('... ended in front there, its TX_WGFX %d (MTLAUNCH /K, its own number: its window closed, %d); a new LCMD in '
+          'its place (task %d, the same TX: %04Xh, %04Xh): its TX_WGFX 0; CODE-Tab full screen (front %d), MTMODE 03 '
+          'there: still in front' % (w1, w0, n3, t1, t3, f1), w1 == 1 and gone and n3 == n and t3 == t1 and w3 == 0
+          and f1 == n3 and tstate(k)[1] == n3 and A.disk_file(k, 'Y.TXT') == b'ok', (w1, gone, n3, t1, t3, w3, f1, tstate(k)))
+
 MTTM = os.path.join(HERE, 'MTTERM.COM')
 
 def t_tcore():
@@ -4510,7 +4635,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
