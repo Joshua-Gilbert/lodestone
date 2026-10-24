@@ -58,19 +58,14 @@ SE_BASE     equ 2                       ; its slot: from (offset in the UI segme
 SE_END      equ 4                       ;  to (paragraph-aligned)
 SE_SP       equ 6                       ; its SP while another runs (SS: the UI's)
 SE_NAME     equ 8                       ; its file name (12 + 0)
-SE_CTX      equ 22                      ; mw_ctx's ranges, while another runs
+SE_TASK     equ 21                      ; a terminal window's (MT_TOPEN, T2): its
+SE_TGEN     equ 22                      ;  task (0: none), that task's count, and
+SE_TCHG     equ 23                      ;  as mw_poll last saw them: its screen's
+SE_TST      equ 25                      ;  changes (TX_CHG), its state, the BIOS
+SE_TTK      equ 26                      ;  tick count at its last EV_TICK
+SE_CTX      equ 28                      ; mw_ctx's ranges, while another runs
 MW_CTXLEN   equ 100
 SE_SIZE     equ SE_CTX + MW_CTXLEN
-
-%macro UCALL 1                          ; CALL a near routine of the UI (DS = it)
-        push    cs
-        push    word %%r
-        push    word ..@ui_retf         ;  (its RET goes to a RETF there)
-        push    ds
-        push    word %1
-        retf
-%%r:
-%endmacro
 
 mw_ctx:     dw      title_on,  held2 + 2 - title_on
             dw      redraw_fn, 2
@@ -126,6 +121,10 @@ mw_patch:
         jne     .x
         cmp     byte [es:ui_event.got + 3], 72h
         jne     .x
+        cmp     byte [es:ui_event.l], 0E8h      ; CALL poll_once / JNC .got
+        jne     .x
+        cmp     word [es:ui_event.l + 3], 73h + (ui_event.got - ui_event.l - 5) * 100h
+        jne     .x
         cmp     word [es:run_cleanup], 0660h    ; PUSHA / PUSH ES / MOV SI,alloc_tab
         jne     .x
         cmp     byte [es:run_cleanup + 2], 0BEh
@@ -156,6 +155,9 @@ mw_patch:
         mov     byte [es:ui_event.got], 9Ah     ; CALL FAR mw_got
         mov     word [es:ui_event.got + 1], mw_got
         mov     [es:ui_event.got + 3], cs
+        mov     byte [es:ui_event.l], 9Ah       ; CALL FAR mw_poll
+        mov     word [es:ui_event.l + 1], mw_poll
+        mov     [es:ui_event.l + 3], cs
         mov     byte [es:run_cleanup], 0EAh     ; JMP FAR mw_clean
         mov     word [es:run_cleanup + 1], mw_clean
         mov     [es:run_cleanup + 3], cs
@@ -351,6 +353,7 @@ mw_start:
         mov     [cs:bp+SE_END], dx
         call    mw_name                 ; its name, from SI
         mov     byte [cs:bp+SE_USE], 1
+        mov     byte [cs:bp+SE_TASK], 0 ; (a terminal window's: MT_TOPEN)
         ; its stack: the trampoline at the slot's end, then a frame for
         ; mw_park's way out (mw_go): SI = its argument, BP = its entry
         mov     si, sp
@@ -614,6 +617,84 @@ mw_got: cmp     byte [cs:mw_n], 0
         mov     word [bp+2], ui_event.on
         pop     bp
         retf
+
+; ui_event's look for an event (CALL FAR over its CALL poll_once / JNC
+; .got; DS = the UI): poll_once's, else EV_TICK for a terminal window in
+; front (T2: mw_tick); else back to ui_event's HLT, as before
+mw_poll:
+        UCALL   poll_once
+        jnc     .ev
+        cmp     byte [cs:mw_n], 0
+        je      .x
+        call    mw_tick
+        jnc     .x
+        mov     ax, EV_TICK
+.ev:    push    bp                      ; (an event: to ui_event.got)
+        mov     bp, sp
+        mov     word [bp+2], ui_event.got
+        pop     bp
+.x:     retf
+
+; CF: EV_TICK is due for the session in front, a terminal window (MT_TOPEN
+; gave it its task): its task's screen (TX_CHG) or state changed, it ended
+; (another count, or its end's count this one: mt_ui's test), or 9 ticks
+; went by (about 0.5 s).  Not while a help or form window, or mw_say's
+; message, waits (as mw_got: it would be read as a key).  All kept
+mw_tick:
+        push    ax
+        push    bx
+        push    bp
+        push    es
+        mov     al, [cs:mw_cur]
+        or      al, al
+        jz      .no
+        call    mw_rec
+        mov     al, [cs:bp+SE_TASK]
+        or      al, al
+        jz      .no
+        cmp     byte [cs:mw_msg], 0
+        jne     .no
+        push    ds
+        pop     es
+        call    mw_modal
+        jc      .no
+        call    mt_ent
+        mov     ah, [cs:bp+SE_TGEN]
+        cmp     ah, [cs:bx+TE_GEN]      ; (its number given again: it ended)
+        jne     .yes
+        cmp     ah, [cs:bx+TE_EGEN]
+        je      .yes
+        mov     al, [cs:bx+TE_STATE]
+        cmp     al, [cs:bp+SE_TST]
+        mov     [cs:bp+SE_TST], al
+        jne     .yes
+        cmp     al, TS_PARKED           ; (parked: its TX in EMS)
+        je      .t
+        mov     es, [cs:bx+TE_TX]
+        mov     ax, [es:TX_CHG]
+        cmp     ax, [cs:bp+SE_TCHG]
+        mov     [cs:bp+SE_TCHG], ax
+        jne     .yes
+.t:     call    .now
+        sub     ax, [cs:bp+SE_TTK]
+        cmp     ax, 9
+        jb      .no
+.yes:   call    .now
+        mov     [cs:bp+SE_TTK], ax
+        stc
+        jmp     short .x
+.no:    clc
+.x:     pop     es
+        pop     bp
+        pop     bx
+        pop     ax
+        ret
+.now:   push    es                      ; AX = the BIOS's tick count
+        xor     ax, ax
+        mov     es, ax
+        mov     ax, [es:46Ch]
+        pop     es
+        ret
 
 ; SI = a window .RUN's name: in front if it runs, else started -> CF
 ; (AX = error) if it can't be; CF, AX = 0FFFFh: it runs in front already
