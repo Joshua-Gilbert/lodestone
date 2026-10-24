@@ -93,7 +93,11 @@ TOOLS = [
          "controller at address 21; the Pi's bridge is on the bus too). Nothing is sent, but a serial "
          "poll clears the instrument's service request (and, on some, latched status bits). Actions: "
          "scan (serial-polls every address, lists the ones that answer), poll (one status byte), read "
-         "(the instrument's pending output). To send anything, queries included, use gpib_send."),
+         "(the instrument's pending output). To send anything, queries included, use gpib_send. When "
+         "resident Claude's console is popped up over a program that uses the bus (TM5000G, which "
+         "watches for service requests), scan and poll take the status bytes it was waiting to read: "
+         "an instrument's request is then gone when the program looks, so use them there only when "
+         "the user asks."),
      'inputSchema': {'type': 'object', 'properties': dict(
          {'action': {'type': 'string', 'enum': ['scan', 'poll', 'read']}}, **GPIB_PROPS),
          'required': ['action']},

@@ -1,6 +1,6 @@
 #!/bin/sh
 # CLAUDE.COM (with RCON.BIN, resident Claude's console, inside), their
-# symbol maps (for the emulator tests), and TESTKEY.COM
+# symbol maps (for the emulator tests), TESTKEY.COM and CRITKEY.COM
 set -e
 cd "$(dirname "$0")"
 nasm -f bin -i ../src/ -o RCON.BIN RCON.ASM
@@ -17,4 +17,5 @@ nasm -f bin -i ../src/ -dPROFILE -o _map.bin _map.asm
 cmp -s _map.bin CLAUDEP.COM
 rm -f _map.asm _map.bin
 nasm -f bin -o TESTKEY.COM TESTKEY.ASM
-ls -l CLAUDE.COM CLAUDEP.COM TESTKEY.COM
+nasm -f bin -o CRITKEY.COM CRITKEY.ASM     # (test_resident_term: an INT 24h handler that waits for a key)
+ls -l CLAUDE.COM CLAUDEP.COM TESTKEY.COM CRITKEY.COM

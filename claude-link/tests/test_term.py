@@ -427,6 +427,34 @@ def test_echo_latency():
     assert out[True][0] < 150 and out[False][0] < 150, out
 
 
+def test_resident_tools():
+    """Resident Claude's console: grid_program and grid_type, then the tools
+    for what its HELLO's ops= lists (files, gpib); the rest say why not."""
+    from types import SimpleNamespace
+    from gridlink.term import TermSession as T
+    link = SimpleNamespace(last_rx=time.monotonic())
+    def why(hello, tool):
+        s = SimpleNamespace(link=link, hello=hello, away=False, PAUSED_TOOLS=T.PAUSED_TOOLS, OPS_TOOLS=T.OPS_TOOLS,
+                            RESIDENT=T.RESIDENT, AWAY=T.AWAY, NOT_PAUSED=T.NOT_PAUSED)
+        link.source = s
+        s.resident = lambda: T.resident(s)
+        s.paused_tools = lambda: T.paused_tools(s)
+        return T.why_not(s, tool)
+    old = {'app': 'resident', 'prog': 'TM5000G.EXE'}                 # (CLAUDE 1.8's console: no ops=)
+    new = dict(old, ops='files,gpib')
+    for tool in ('grid_program', 'grid_type'):
+        assert why(old, tool) is None and why(new, tool) is None, tool
+    for tool in ('grid_files', 'grid_change_files', 'gpib_read', 'gpib_measure', 'gpib_send'):
+        w = why(old, tool)
+        assert w and 'TM5000G.EXE' in w and 'grid_program, grid_type work' in w, (tool, w)
+        assert why(new, tool) is None, tool
+    assert why(dict(old, ops='gpib'), 'gpib_send') is None and why(dict(old, ops='gpib'), 'grid_files')
+    for tool in ('grid_command', 'grid_info', 'grid_screen', 'grid_plot'):
+        w = why(new, tool)
+        assert w and 'grid_files, grid_change_files, gpib_read, gpib_measure, gpib_send work' in w, (tool, w)
+    assert why({'app': 'term'}, 'grid_files') is None and why({'app': 'term'}, 'grid_type')
+
+
 if __name__ == '__main__':
     import traceback
     names = [n for n in sorted(globals()) if n.startswith('test_')]

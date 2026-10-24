@@ -89,12 +89,13 @@ class TermSession:
                 s.log('term: no MCP socket at %s: %s' % (s.sock, e))
 
     RESIDENT = ('Claude Code is popped up over a DOS program on the GRiD (%s; resident Claude, CLAUDE /R): '
-                'grid_program and grid_type work on that program, but the GRiD\'s files, other programs and '
-                'instruments can\'t be used while it is paused. Leave that program and start CLAUDE /T on '
-                'the GRiD for them.')
+                '%s work, but not this one while it is paused. Leave that program and start CLAUDE /T on '
+                'the GRiD for it.')
     NOT_PAUSED = ('No DOS program is paused under resident Claude: grid_program and grid_type work in its '
                   'console (CLAUDE /R on the GRiD, then CODE-\\ over a program).')
     PAUSED_TOOLS = ('grid_program', 'grid_type')    # the ones the console answers
+    OPS_TOOLS = {'files': ('grid_files', 'grid_change_files'),          # and as its HELLO's ops= says
+                 'gpib': ('gpib_read', 'gpib_measure', 'gpib_send')}
     AWAY = ('The user has gone back from resident Claude\'s console to the DOS program on the GRiD (%s), which '
             'is running again: no GRiD tool works until they bring the console up over it again (CODE-\\).')
     AWAY_CALL = 'the user went back to the program (CODE-\\) before it answered'
@@ -112,9 +113,16 @@ class TermSession:
         if not s.hello or time.monotonic() - s.link.last_rx > 10:
             return 'The GRiD is not connected (start CLAUDE /T on it).'
         if s.resident():
-            if tool in s.PAUSED_TOOLS: return None
-            return s.RESIDENT % prog
+            tools = s.paused_tools()
+            if tool in tools: return None
+            return s.RESIDENT % (prog, ', '.join(tools))
         return s.NOT_PAUSED if tool in s.PAUSED_TOOLS else None
+
+    def paused_tools(s):
+        """The GRiD tools resident Claude's console answers: grid_program and
+        grid_type, then files and GPIB as its HELLO's ops= says (CLAUDE 1.9)."""
+        ops = s.hello.get('ops', '').lower().split(',')
+        return s.PAUSED_TOOLS + tuple(t for o in ops for t in s.OPS_TOOLS.get(o.strip(), ()))
 
     def may_ring(s):
         """The Link may ring the GRiD (an SRQ for a POLL): not while resident
