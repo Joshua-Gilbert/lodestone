@@ -943,7 +943,9 @@ def t_ops():
         rd = threading.Thread(target=call, args=('read', glp.OP_READ, struct.pack('<IH', 0, 8192) + b'A:\\BIG.TXT\0', 30))
         wr = threading.Thread(target=call, args=('write', glp.OP_WRITE, struct.pack('<BI', 0, 0) + b'A:\\X.DAT\0'
                                                  + b'\xAA' * 6000, 4))      # (longer than the reply's first frame)
-        rd.start(); wr.start()
+        rd.start()                      # (the write once the read's reply is on its way)
+        h.pi_wait(lambda: h.rv('reply_busy') == 1, 20)
+        wr.start()
         h.pi_wait(lambda: len(out) == 2, 40)
         check('a request while a read\'s reply goes: the reply whole (8 KB of BIG.TXT), the second (a 6 KB write) '
               'dropped', out.get('read') == (0, BIG[:8192]) and isinstance(out.get('write'), Exception),

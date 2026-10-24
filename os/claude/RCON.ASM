@@ -878,11 +878,12 @@ rf_title:
 rf_request:
         cmp     byte [rq_more], 0
         jne     .c
-        mov     word [rq_len], 0
-        mov     byte [rq_over], 0
         mov     al, [reply_busy]
         or      al, [req_ready]
         mov     [rq_skip], al
+        jnz     .m                      ; (the waiting one's rq_len kept)
+        mov     word [rq_len], 0
+        mov     byte [rq_over], 0
 .c:     cmp     byte [rq_skip], 0
         jne     .m
         mov     di, [rq_len]
