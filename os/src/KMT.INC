@@ -128,11 +128,17 @@ TX_VEC      equ TX_M33 + M33_ST         ; its own vectors (mt_vrun's), while
                                         ;  another runs
 TX_FVEC     equ TX_VEC + MT_NVEC * 4    ; its INT 09h and 1Bh (mt_vfr's), while
                                         ;  another is in front
-TX0_PARAS   equ (TX_FVEC + MT_NFV * 4 + 15) / 16    ; (task 0's TX ends here)
+TX_CHG      equ TX_FVEC + MT_NFV * 4    ; its screen's changes in the background,
+                                        ;  counted (T1: MT_TROWS gives it)
+TX0_PARAS   equ (TX_CHG + 2 + 15) / 16  ; (task 0's TX ends here)
 TX_GSN      equ TX0_PARAS * 16          ; the vector table at its spawn (a
                                         ;  task's: the ones left pointing into
                                         ;  its region at its end put back)
-TX_PARAS    equ TX0_PARAS + 1024 / 16
+TX_KN       equ TX_GSN + 1024           ; keys typed to it with MT_TKEY (T1), for
+TX_KH       equ TX_KN + 1               ;  its INT 16h: how many, the first's
+TX_KR       equ TX_KN + 2               ;  place, then KRING of them
+KRING       equ 32
+TX_PARAS    equ (TX_KR + KRING * 2 + 15) / 16
 %if TX_PARAS * 16 > 4000h
 %error "TX: in a parked region's first EMS page (mt_pmap)"
 %endif
@@ -775,7 +781,12 @@ mt_kwait:
         call    mt_can                  ;  a key: INT 16h AH=01h drops it.)  A
         jc      .f                      ;  task to bring to the front?  (Only
         call    mt_swkw                 ;  where it could run: else later.)
-.f:     mov     al, [cs:mt_cur]
+.f:     push    dx                      ; keys typed to it (MT_TKEY): read as
+        mov     dx, 1                   ;  any (kbd_get's INT 16h: mt_i16)
+        call    mt_ring
+        pop     dx
+        jnc     .have
+        mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .bg
 .k:     mov     ah, 1                   ; in front: a key?
@@ -1731,6 +1742,10 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_tsrc
         cmp     al, MT_WIN
         je      mt_winc
+        cmp     al, MT_TROWS
+        je      mt_trows
+        cmp     al, MT_TKEY
+        je      mt_tkey
         cmp     al, 1
         je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
@@ -1738,6 +1753,27 @@ mt_f0:  mov     al, [bp+F_AX]
 mt_bad: mov     ax, 1
 mt_fail:
         jmp     KSEG:fail
+
+; the caller's task BL, not a free one: AL = it, BX = its entry.  CF if
+; there is no such task, or it is free (mt_bad's)
+mt_targ:
+        mov     al, [bp+F_BX]
+        cmp     al, MT_TASKS
+        jae     .no
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_FREE  ; (CF clear: TS_FREE is 0)
+        jne     .x
+.no:    stc
+.x:     ret
+; and not task 0 nor a parked one: CF if it is (AX = 5 to come)
+mt_t5:  or      al, al
+        jz      .no
+        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        jne     .x
+.no:    stc
+        ret
+.x:     clc
+        ret
 
 ; F0h AL=1 (files open on drive DL: DEFRAG and System ask before writing
 ; a disk's FAT and directories themselves): with another task there, at
@@ -1777,14 +1813,10 @@ mt_xcode:
 ; MT_FLAGS: task BL's SPF_BG and SPF_FREEZE, CL's cleared, then CH's set
 ; -> AL = them, and MTF_DIRECT (VF_DIRECT) as the detector last found it
 mt_flagsc:
-        mov     al, [bp+F_BX]
-        cmp     al, MT_TASKS
-        jae     mt_bad
+        call    mt_targ
+        jc      mt_bad
         or      al, al
         jz      .t0
-        call    mt_ent
-        cmp     byte [cs:bx+TE_STATE], TS_FREE
-        je      mt_bad
         mov     cx, [bp+F_CX]
         and     cx, (SPF_BG | SPF_FREEZE) * 101h
         not     cl
@@ -1810,6 +1842,191 @@ mt_winc:
         cmp     byte [cs:mw_cur], 0
         je      mt_bad
         jmp     KSEG:ok
+
+; MT_TROWS (T1): task BL's screen as its pages hold it, CX rows from row DX
+; of the page shown, to ES:DI (inside INT 21h: none of its writes can come
+; in the middle) -> AX = TX_CHG, BX = the cursor there, CL = columns, CH =
+; the mode, DL = VF_DIRECT, 2 if nothing copied (not a text mode of 80
+; columns or fewer, or past its 32 KB), 4 its pages gone (2 too), 8 in front
+; (its pages not what is shown), DH = its state (TS_FROZEN for one ready
+; but frozen behind, as MT_LIST says)
+mt_trows:
+        call    mt_targ
+        jc      mt_bad
+        call    mt_t5
+        jc      mt_park.r5
+        mov     cx, [bp+F_CX]
+        mov     dx, [bp+F_DX]
+        jcxz    .bad
+        add     dx, cx                  ; (rows 0-24)
+        jc      .bad
+        cmp     dx, 25
+        ja      .bad
+        mov     ax, [bp+F_DI]           ; (not where the pages go: windows 0
+        cmp     ax, 10000h - 25 * 160   ;  and 1; no round to the segment's
+        ja      .bad                    ;  start either)
+        shr     ax, 4
+        add     ax, [bp+F_ES]
+        jc      .bad
+        cmp     ax, EMS_FRAME + 800h
+        jae     .in
+        add     ax, 25 * 160 / 16 + 1
+        cmp     ax, EMS_FRAME
+        jbe     .in
+.bad:   jmp     mt_bad
+.in:    cld
+        mov     byte [cs:mt_vbusy], 1
+        call    mt_vin
+        push    cs
+        pop     ds
+        mov     dl, 6
+        jc      .gone
+        push    bx
+        mov     dl, 2
+        cmp     byte [VS_MODE], 3
+        ja      .nt
+        cmp     byte [VS_COLS], 80      ; (4000 bytes at most: the room)
+        ja      .nt
+        mov     bl, [VS_PAGE]
+        mov     dh, [bp+F_DX]
+        xor     dl, dl
+        call    mt_vaddr
+        mov     si, di
+        mov     al, [VS_COLS]
+        mul     byte [bp+F_CX]
+        mov     cx, ax
+        shl     ax, 1
+        add     ax, si
+        mov     dl, 2
+        jc      .nt
+        cmp     ax, 8000h               ; (all in the 32 KB)
+        ja      .nt
+        mov     es, [bp+F_ES]
+        mov     di, [bp+F_DI]
+        push    EMS_FRAME
+        pop     ds
+        rep     movsw
+        push    cs
+        pop     ds
+        xor     dl, dl
+.nt:    pop     bx
+        push    dx
+        call    mt_wrest
+        pop     dx
+.gone:  mov     byte [cs:mt_vbusy], 0
+        mov     al, [cs:bx+TE_VF]
+        and     al, VF_DIRECT
+        or      dl, al
+        mov     al, [bp+F_BX]
+        cmp     al, [cs:mt_front]
+        jne     .nf
+        or      dl, 8
+.nf:    mov     dh, [cs:bx+TE_STATE]
+        cmp     dh, TS_RUN
+        jne     .st
+        call    mt_frz
+        jz      .st
+        mov     dh, TS_FROZEN
+.st:    mov     [bp+F_DX], dx
+        mov     es, [cs:bx+TE_TX]
+        mov     ax, [es:TX_CHG]
+        mov     [bp+F_AX], ax
+        mov     cl, [VS_COLS]
+        mov     ch, [VS_MODE]
+        mov     [bp+F_CX], cx
+        mov     bl, [VS_PAGE]
+        and     bx, 7
+        shl     bx, 1
+        mov     ax, [VS_CUR + bx]
+        mov     [bp+F_BX], ax
+        push    KSEG
+        pop     ds
+        jmp     KSEG:ok
+
+; MT_TKEY (T1): key CX typed to task BL: into its TX's ring (KRING), for
+; its INT 16h (mt_ring), and it is ready to run if it waited for one.  CF:
+; AX = 1 (no such task), 5 (task 0, parked), 8 (KRING waiting already)
+mt_tkey:
+        call    mt_targ
+        jc      mt_bad
+        call    mt_t5
+        jc      mt_park.r5
+        mov     es, [cs:bx+TE_TX]
+        pushf
+        cli
+        mov     al, [es:TX_KN]
+        cmp     al, KRING
+        jae     .full
+        add     al, [es:TX_KH]
+        and     ax, KRING - 1
+        mov     di, ax
+        shl     di, 1
+        mov     ax, [bp+F_CX]
+        mov     [es:TX_KR + di], ax
+        inc     byte [es:TX_KN]
+        cmp     byte [cs:bx+TE_STATE], TS_WAITK
+        jne     .ok
+        mov     byte [cs:bx+TE_STATE], TS_RUN
+        mov     byte [cs:mt_pend], 1    ; (its turn soon: from this call's way
+.ok:    popf                            ;  out, as MT_KILL's)
+        jmp     KSEG:ok
+.full:  popf
+        mov     ax, 8
+        jmp     mt_fail
+
+; the running task's keys from MT_TKEY (its TX's ring; task 0 has none),
+; but none while the kernel's INT 24h prompt, a call MT passed on to the
+; BIOS, an INT 13h call or an interrupt is under way, as mt_i16 tells
+; them: the keyboard's then.  CF if none;
+; else AX = the first, taken out if DH is not 0; DL not 0: first those
+; INT 16h AH=00h and 01h don't give are dropped (mt_kgive).  AX changed
+mt_ring:
+        push    es
+        push    bx
+        mov     al, [cs:mt_cur]
+        or      al, al
+        jz      .no
+        cmp     byte [cs:mt_crit], 0
+        jne     .no
+        cmp     byte [cs:mt_inb], 0
+        jne     .no
+        cmp     word [cs:mt_in13], 0
+        jne     .no
+        pushf
+        cli
+        push    ax
+        call    mt_isr                  ; (the PIC asked with interrupts off)
+        pop     ax
+        jnz     .none
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+.l:     cmp     byte [es:TX_KN], 0
+        je      .none
+        mov     bl, [es:TX_KH]
+        xor     bh, bh
+        shl     bx, 1
+        mov     ax, [es:TX_KR + bx]
+        or      dl, dl
+        jz      .got
+        call    mt_kgive
+        jnc     .got
+        call    .out
+        jmp     short .l
+.got:   or      dh, dh
+        jz      .k
+        call    .out
+.k:     popf
+        clc
+        jmp     short .x
+.none:  popf
+.no:    stc
+.x:     pop     bx
+        pop     es
+        ret
+.out:   inc     byte [es:TX_KH]
+        and     byte [es:TX_KH], KRING - 1
+        dec     byte [es:TX_KN]
+        ret
 
 ; MT_TSR: Resident Claude's key wait, where it may be switched from
 ; (mt_safe), and where it finds whose call it is (mt_front, mt_cur)
@@ -1866,12 +2083,8 @@ mt_list:
 ; MT_FRONT: task BL to the front, where tasks can next switch (the tick
 ; or a key wait: mt_swnow)
 mt_frontc:
-        mov     al, [bp+F_BX]
-        cmp     al, MT_TASKS
-        jae     mt_bad
-        call    mt_ent
-        cmp     byte [cs:bx+TE_STATE], TS_FREE
-        je      mt_bad
+        call    mt_targ
+        jc      mt_bad
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
         je      mt_park.r5
         mov     [cs:mt_swreq], al
@@ -1883,14 +2096,10 @@ mt_frontc:
 ; frozen behind it runs all the same (mt_pick).  The caller's own: now, or
 ; from its next safe point
 mt_kill:
-        mov     al, [bp+F_BX]
-        cmp     al, MT_TASKS
-        jae     mt_bad
+        call    mt_targ
+        jc      mt_bad
         or      al, al
         jz      .ex
-        call    mt_ent
-        cmp     byte [cs:bx+TE_STATE], TS_FREE
-        je      mt_bad
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
         jne     .k
         call    mt_up                   ; (parked: back first, then as any)
@@ -1933,12 +2142,8 @@ mt_kok: call    mt_can
 
 ; MT_PARK: task BL's region to EMS, given back (mt_pk)
 mt_park:
-        mov     al, [bp+F_BX]
-        cmp     al, MT_TASKS
-        jae     mt_bad
-        call    mt_ent
-        cmp     byte [cs:bx+TE_STATE], TS_FREE
-        je      mt_bad
+        call    mt_targ
+        jc      mt_bad
         call    mt_pk
         jc      mt_fail
         jmp     KSEG:ok
@@ -1947,10 +2152,8 @@ mt_park:
 
 ; MT_UNPARK: parked task BL's region back where it was (mt_up)
 mt_unpark:
-        mov     al, [bp+F_BX]
-        cmp     al, MT_TASKS
-        jae     mt_bad
-        call    mt_ent
+        call    mt_targ                 ; (a free one: not parked either)
+        jc      mt_bad
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
         jne     mt_bad
         call    mt_up
@@ -2996,6 +3199,7 @@ mt_spawn:
         mov     word [es:V_DTA + 0], 80h
         mov     [es:V_DTA + 2], ax
         mov     word [es:TX_KLEN], 0
+        mov     word [es:TX_KN], 0      ; (no keys typed to it: T1)
         mov     byte [es:TX_FPV], 0     ; (its coprocessor: FNINIT's, first)
         call    mt_m33new               ; (its INT 33h state)
         call    mt_33hk
@@ -3632,7 +3836,18 @@ mt_i16:
         mov     byte [cs:mt_pend], 1    ;  at the turn's end)
 .f:     test    byte [bp+I16_AH], 0EEh
         jnz     .pas
-        mov     ax, ss                  ; whose?  The kernel's or MT's key wait
+        mov     dh, [bp+I16_AH]         ; keys typed to it (MT_TKEY), for any
+        mov     dl, dh                  ;  caller in it: a peek's, or a read's
+        not     dl                      ;  (AH=00h and 01h: those they don't
+        and     dx, 0110h               ;  give dropped first)
+        xor     dh, 1
+        call    mt_ring
+        jc      .nr
+        mov     [bp+I16_AH-1], ax       ; (the caller's AX, back at .ret)
+        and     word [bp+6], ~40h       ; (ZF clear: a key; interrupts on)
+        or      word [bp+6], 200h
+        jmp     .ret
+.nr:    mov     ax, ss                  ; whose?  The kernel's or MT's key wait
         cmp     ax, KSEG                ;  (on the kernel's stack, through a
         jne     .own                    ;  TSR's hook too, but not a pop-up's
         cmp     byte [cs:mt_idle], 0    ;  from the kernel's INT 28h), or the
@@ -3726,15 +3941,9 @@ mt_drop:
         je      .h
         cmp     ax, [cs:mt_hotk + 2]
         je      .h
-        cmp     ah, 0E0h                ; (as mt_hot tells them: kept)
-        je      .k
-        cmp     ah, 85h
-        jae     .d
-        cmp     al, 0F0h
-        jne     .k
-        or      ah, ah
-        jz      .k
-.d:     inc     bx                      ; dropped, as the BIOS would
+        call    mt_kgive
+        jnc     .k
+        inc     bx                      ; dropped, as the BIOS would
         inc     bx
         cmp     bx, [82h]
         jb      .s
@@ -3751,6 +3960,23 @@ mt_drop:
 .k:     or      sp, sp                  ; (ZF clear: a key)
 .x:     pop     cx
         pop     ds
+        ret
+
+; CF if key AX is one INT 16h AH=00h and 01h don't give (the 1520's BIOS
+; drops it: scan codes 85h and up but E0h's, as mt_hot tells them, and
+; CODE keys, xxF0h with a scan code).  All kept
+mt_kgive:
+        cmp     ah, 0E0h
+        je      .y
+        cmp     ah, 85h
+        jae     .n
+        cmp     al, 0F0h
+        jne     .y
+        or      ah, ah
+        jz      .y
+.n:     stc
+        ret
+.y:     clc
         ret
 
 ; the running task waits for a key (from mt_i16, where the caller is at a
@@ -4327,7 +4553,8 @@ mt_scrsv:
         je      .cl                     ;  it may be writing the screen: frozen
 .dir:   or      byte [cs:bx+TE_VF], VF_DIRECT   ;  behind, to be safe
 .cl:    mov     byte [cs:mt_shd], 0
-        mov     es, [cs:bx+TE_TX]       ; its BIOS data
+        mov     es, [cs:bx+TE_TX]       ; its BIOS data (and its screen changed,
+        inc     word [es:TX_CHG]        ;  for a window showing it: T1)
         push    40h
         pop     ds
         mov     si, 49h
@@ -4553,6 +4780,16 @@ mt_wrest:
         mov     al, [cs:mt_wsv + 1]
         out     dx, al
         ret
+; the entry at BX's BIOS data (TX_VID) into mt_vs, then its pages mapped
+; (mt_smap: CF if gone).  CX, SI, DI, DS, ES changed
+mt_vin: push    cs
+        pop     es
+        mov     ds, [cs:bx+TE_TX]
+        mov     si, TX_VID
+        mov     di, mt_vs
+        mov     cx, VIDLEN
+        rep     movsb
+        jmp     mt_smap
 
 ; ---------------------------------------------------------------------
 ;  INT 10h (M4a).  A background task's calls are done in its own screen
@@ -4690,6 +4927,8 @@ mt_v10:
         mov     es, [ui_seg]            ;  real screen
         cmp     byte [es:m33_busy], 0
         jne     .real
+        mov     es, [cs:bx+TE_TX]       ; (its screen may change: counted, for
+        inc     word [es:TX_CHG]        ;  a window showing it, T1)
         cmp     byte [bp+VF_AX+1], 0Eh  ; the teletype, not at a line's end:
         jne     .bl                     ;  the short way
         mov     ds, [cs:bx+TE_TX]
@@ -4697,15 +4936,9 @@ mt_v10:
         mov     cl, 1
         call    mt_vfast
         jnc     .ret
-.bl:    push    cs                      ; its BIOS data, worked on in mt_vs
-        pop     es
-        mov     ds, [cs:bx+TE_TX]
-        mov     si, TX_VID
-        mov     di, mt_vs
-        mov     cx, VIDLEN
-        rep     movsb
-        call    mt_smap                 ; its screen (its pages gone: the call
-        jc      .ret                    ;  goes nowhere)
+.bl:    call    mt_vin                  ; its BIOS data, worked on in mt_vs, and
+        jc      .ret                    ;  its screen (its pages gone: the call
+                                        ;  goes nowhere)
         push    cs
         pop     ds
         push    EMS_FRAME

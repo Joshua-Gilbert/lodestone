@@ -21,7 +21,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-10,240 bytes (20 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1. CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
+9,728 bytes (19 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one). CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
 
 ## ROM 2
 
