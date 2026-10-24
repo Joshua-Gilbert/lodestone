@@ -56,7 +56,7 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
 | `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
 | `gpib_send` | every time | query, write, clear, trigger, local/remote; a query's reply can go to a new Pi file (`save_to`) |
-| `grid_plotter` | every time | HP-GL (text, or a Pi file) to the Tek 4662 pen plotter through its Nano at `[plotter] address` (3), in parts split between commands |
+| `grid_plotter` | every time | HP-GL (text, or a Pi file) to the Tek 4662 pen plotter through its Nano at `[plotter] address` (1), in parts split between commands |
 | `grid_plot` | until allowed | a line or scatter plot on the GRiD's screen, from data or a Pi file (a trace saved with `save_to`); drawn in one bit with the GRiD's own font |
 | `grid_image` | until allowed | a picture file from `~/grid` (a matplotlib PNG), dithered to the GRiD's screen |
 | `grid_pick` | until allowed | asks the user to click points on the plot or picture, and returns them (data coordinates, the nearest point) |
@@ -103,14 +103,14 @@ Limits the tools keep, whatever Claude asks for:
 
 **The pen plotter** (`grid_plotter`): the Tek 4662 is not on the bus
 itself. It is on RS-232 behind a Nano (`gpib_hpgl_tek4662.ino`) that is a
-GPIB listener at address 3, takes HP-GL (IN, SP, PU, PD, PA, LB) and sends
+GPIB listener at address 1, takes HP-GL (IN, SP, PU, PD, PA, LB) and sends
 it to the plotter as Tek commands at 1200 baud. The tool checks the HP-GL
 (printable ASCII, line ends and ETX; no ESC, which would switch the Nano to
 raw pass-through) and sends it in parts of up to 1 KB that end between
 commands, never inside an LB label. The Nano holds NRFD while its buffer
 drains, so each part keeps the GRiD busy for a few seconds; a part that
 stops (a timeout) is reported with how much had already gone. The Nano must
-run addressed (`LISTEN_ONLY false`, `GPIB_ADDRESS 3`): in listen-only mode it
+run addressed (`LISTEN_ONLY false`, `GPIB_ADDRESS 1`): in listen-only mode it
 would take every byte on the bus, the link's included.
 
 A Claude Code older than `requiresUserInteraction` asks for the five until

@@ -35,12 +35,12 @@ dir = "~/grid"               # where it starts: put CLAUDE.md here; .mcp.json is
 mode = "ask"                 # ask, edits (accept file edits), auto (ask nothing)
 
 [plotter]                    # grid_plotter: the Tek 4662, through the Nano that translates HP-GL
-address = 3                  # the Nano's GPIB address (GPIB_ADDRESS in gpib_hpgl_tek4662.ino, addressed mode)
+address = 1                  # the Nano's GPIB address (GPIB_ADDRESS in gpib_hpgl_tek4662.ino, addressed mode)
 
 [bus]                        # GPIB address = what is there (Claude sees this list)
-1 = "Tek 7854 oscilloscope"
+1 = "Tek 4662 pen plotter (HP-GL, through its Nano; grid_plotter)"
 2 = "Tek 11403 digitizing scope"
-3 = "Tek 4662 pen plotter (HP-GL, through its Nano; grid_plotter)"
+3 = "Tek 7854 oscilloscope"
 6 = "Tek FG5010 function generator"
 11 = "Tek SI5020 switch"
 13 = "Tek PS5004 power supply"

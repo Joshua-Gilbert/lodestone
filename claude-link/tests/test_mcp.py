@@ -465,9 +465,9 @@ def test_plotter():
     try:
         square = 'IN;SP1;PU1000,1000;PD3000,1000,3000,3000,1000,3000,1000,1000;LBTEST;1\x03;PU;'
         r = c.call('grid_plotter', hpgl=square)
-        assert not r['isError'] and 'plotter at 3' in body(r), r
+        assert not r['isError'] and 'plotter at 1' in body(r), r
         assert h.grid.plot_parts == [square.encode()], h.grid.plot_parts
-        assert all(op == mcp.glp.GP_WRITE for op, a, d in h.grid.gpib_log if a == 3)
+        assert all(op == mcp.glp.GP_WRITE for op, a, d in h.grid.gpib_log if a == 1)
         big = ''.join('PD%d,%d;' % (i, i) for i in range(600))          # several parts, in order
         open(os.path.join(h.cfg.term_dir, 'big.plt'), 'w').write(big)
         h.grid.plot_parts = []
@@ -501,7 +501,7 @@ def test_plotter_bad_arguments_never_reach_the_grid():
 def test_plotter_config():
     import tempfile
     from gridlink.config import Config
-    assert Config().plotter == 3 and 3 in Config().bus and 1 in Config().bus
+    assert Config().plotter == 1 and 'plotter' in Config().bus[1] and '7854' in Config().bus[3]
     for toml, ok in (('[plotter]\naddress = 5\n', 5), ('[plotter]\naddress = 21\n', None),
                      ('[plotter]\naddress = 7\n', None), ('[plotter]\naddress = "3"\n', None),
                      ('[plotter]\naddress = 31\n', None)):

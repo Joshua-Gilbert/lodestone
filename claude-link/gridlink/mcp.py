@@ -174,7 +174,7 @@ TOOLS = [
     {'name': 'grid_plotter', 'title': 'GPIB: draw on the pen plotter',
      'description': (
          "Draw on the Tektronix 4662 pen plotter, on paper. It is on the bus at the address in gridlink's "
-         "config ([plotter] address, default 3) through a Nano that takes HP-GL and translates it. The user "
+         "config ([plotter] address, default 1) through a Nano that takes HP-GL and translates it. The user "
          "approves every call. Send HP-GL as text (hpgl) or from a Pi file in this directory (file, e.g. "
          "a .plt you wrote). The Nano knows IN, SP, PU, PD, PA and LB (end a label with ETX, \\x03); "
          "coordinates are HP-GL units, 0-10365 x 0-7962. Start a drawing with IN;SP1; and end it with "
@@ -654,7 +654,7 @@ class GridTools:
         return [text('Sent to %d' % addr)], False
 
     def t_grid_plotter(s, a):
-        addr = getattr(s.cfg, 'plotter', 3)
+        addr = getattr(s.cfg, 'plotter', 1)
         if addr in (21, s.bridge): raise ValueError('the plotter address %d is the GRiD or the bridge' % addr)
         tmo = arg_int(a, 'timeout_ms', HPGL_TIMEOUT, 1000, 65535)
         src = arg_str(a, 'hpgl', most=MAX_HPGL); f = arg_str(a, 'file')
