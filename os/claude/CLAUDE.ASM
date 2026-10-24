@@ -79,7 +79,7 @@ BOXW     equ 70
 ;  growing back, wherever it was loaded from (from the prompt, a stub left
 ;  after LCMD would make the Executive's block move past it, and a
 ;  program would lose about 43 KB).  Its console (RCON.ASM) sits in the
-;  first of its three EMS pages.
+;  first of its four EMS pages.
 ;  It is an INT 16h hook.  Every call first looks for CODE-\ in the BIOS's
 ;  keyboard buffer, anywhere in it (the raw word 2BF0h, or 2B00h), takes
 ;  it out and brings the console up over the program, which is waiting
@@ -3264,7 +3264,7 @@ st_connecting db 'Connecting to the Pi through the GPIB bridge', 82h, 0
 boot_end:
         times   -(boot_end - bss > MAXIN) db 0
 
-; CLAUDE /R: three EMS pages (the frame at E000h), the console into the
+; CLAUDE /R: four EMS pages (the frame at E000h), the console into the
 ; first, the stub into a block of the system's at the top of memory, INT
 ; 16h hooked; CLAUDE.COM then ends as any program does
 res_load:

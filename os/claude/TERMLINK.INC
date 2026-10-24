@@ -313,8 +313,14 @@ link_wait:
         mov     byte [spoll_errs], 0
         test    al, 40h
         jz      .x
-        mov     ah, [tlook]             ; the answer there at a tick's look, no
-        or      [srq_held], ah          ;  SRQ interrupt for it: the line held
+        cmp     byte [tlook], 0         ; the answer there at a tick's look, and
+        je      .r                      ;  still no SRQ interrupt for it now (it
+        push    ax                      ;  may have come since that look): the
+        call    srq_new                 ;  line held by another device
+        pop     ax
+        jnz     .r
+        mov     byte [srq_held], 1
+.r:
         test    al, 20h                 ; patched bridge: the line is complete
         jnz     .read
         and     ax, 1Fh                 ; stock bridge: wait as the Pi asked
