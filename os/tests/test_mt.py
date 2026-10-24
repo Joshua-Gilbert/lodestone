@@ -4353,19 +4353,28 @@ def t_rom():
     R.to_prompt(k)
     o = R.prompt(k, 'tasks')
     check('... TASKS lists the Executive', re.search(r'0\s+Executive \(in front\)', o), o)
-    for tag, roms in (('ROM 1 alone (no TERM.FNT)', None), ('with ROM 2 (TERM.FNT on it)', {0: R.rom2(), 1: R.rom()})):
-        k = R.boot(roms=roms, ata=R.sysinfo_hd(('LODE.INI', b'MULTITASK=1\r\n')), ems_pages=88)
+    r2, memsz, kb = {0: R.rom2(), 1: R.rom()}, open(A.MEMSZ, 'rb').read(), {}
+    for tag, roms, more in (('ROM 1 alone (no TERM.FNT)', None, b''), ('with ROM 2 (TERM.FNT on it)', r2, b''),
+                            ('with ROM 2, C:\\LODE.INI MTMEM=LCMD.COM:128', r2, b'MTMEM=LCMD.COM:128\r\n')):
+        k = R.boot(roms=roms, ata=R.sysinfo_hd(('LODE.INI', b'MULTITASK=1\r\n' + more), ('MEMSZ.COM', memsz)), ems_pages=88)
         k.mcb0 = k.u16('first_mcb')     # (the whole arena's start: first_mcb is per task)
         k.key(ktest.CODE_P, settle=False); k.run_for(4.0)
         st, n = tstate(k), k.pc.rd(mt_seg(k), k.Y['mw_n'], 1)[0]
         if roms is None:
             check('... %s: CODE-P: LCMD a task in front, full screen (as without windows)' % tag,
                   st[1] != 0 and k.pc.mode() == 3 and n == 0, (st, k.pc.mode(), n))
-        else:
-            o = '\n'.join(l for y, l in k.ocr())
-            check('... %s: CODE-P: LCMD in a terminal window (TERM.RUN from ROM 1, TERM.FNT from ROM 2, by PATH), task 0 '
-                  'in front' % tag, st[1] == 0 and k.pc.mode() == 0x40 and n == 1 and 'LCMD.COM' in o and 'C:\\>' in o,
-                  (st, k.pc.mode(), n, o[-300:]))
+            continue
+        o = '\n'.join(l for y, l in k.ocr())
+        check('... %s: CODE-P: LCMD in a terminal window (TERM.RUN from ROM 1, TERM.FNT from ROM 2, by PATH), task 0 '
+              'in front' % tag, st[1] == 0 and k.pc.mode() == 0x40 and n == 1 and 'LCMD.COM' in o and 'C:\\>' in o,
+              (st, k.pc.mode(), n, o[-300:]))
+        k.key('memsz', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+        m = re.search(r'([\d.]+) KB for programs', '\n'.join(l for y, l in k.ocr()))
+        kb[more] = m and float(m.group(1))
+    k64, k128 = kb.get(b''), kb.get(b'MTMEM=LCMD.COM:128\r\n')
+    check('... MEMSZ at that prompt: %s KB (the ROM\'s LODE.INI MTMEM=LCMD.COM:64: the task\'s 64 KB less LCMD); with '
+          'C:\\LODE.INI\'s MTMEM=LCMD.COM:128 in place of the ROM\'s line, %s KB (64 KB more)' % (k64, k128),
+          k64 and k128 and k64 < 64 and 60 <= k128 - k64 <= 68, kb)
     k = R.boot(ata=R.sysinfo_hd(), ems_pages=88)
     check('started from the ROM, no C:\\LODE.INI (the ROM\'s settings): off', mt_seg(k) is None and vec(k, 8) == INT08, show(mcbs(k)))
 
