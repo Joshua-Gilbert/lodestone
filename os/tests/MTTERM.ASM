@@ -5,6 +5,8 @@
 ;      (words), then the 4000 bytes of room it copied to (00h before)
 ;   MTTERM F n FILE [row rows]   the same with the room at E000h:buf (the
 ;      EMS frame's window 0, where MT maps the task's pages: refused)
+;   MTTERM W n FILE [row rows]   the same with the room at DS:F100h (4000
+;      bytes would run round the segment's end: refused)
 ;   MTTERM K n FILE kkkk ...     MT_TKEY of task n, each key (hex) in turn:
 ;      FILE gets "cccc eeee", the keys it took and the first refusal's AX
 ;      (0000: none)
@@ -50,7 +52,10 @@ org 100h
         push    0E000h                  ; F: the room in the EMS frame
         pop     es
 .c:     mov     di, buf
-        stc
+        cmp     byte [mode], 'W'
+        jne     .c2
+        mov     di, 0F100h              ; W: the room round the segment's end
+.c2:    stc
         int     21h
         mov     [h_ax], ax
         mov     [h_bx], bx
