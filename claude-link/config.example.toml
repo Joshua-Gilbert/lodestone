@@ -41,6 +41,7 @@ address = 1                  # the Nano's GPIB address (GPIB_ADDRESS in gpib_hpg
 1 = "Tek 4662 pen plotter (HP-GL, through its Nano; grid_plotter)"
 2 = "Tek 11403 digitizing scope"
 3 = "Tek 7854 oscilloscope"
+5 = "Tek AFG5101 arbitrary function generator"
 6 = "Tek FG5010 function generator"
 11 = "Tek SI5020 switch"
 13 = "Tek PS5004 power supply"
