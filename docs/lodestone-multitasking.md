@@ -34,7 +34,7 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M8c | The Executive live under the windows: in front by a click or CODE-F6, its drawing clipped around them | PR #82. |
 | M9 | On the 1520, and release 0.7 | |
 | T1 | Terminal windows' kernel core: a task's screen read (`MT_TROWS`), keys typed to it (`MT_TKEY`) | PR #98, merged. Terminal windows are a series of their own (T0: ROM 2, PR #96). |
-| T2 | The terminal window: TERM.RUN, text programs (CODE-P's prompt too) started in a window, `FULL=`, `EV_TICK`, `MT_TOPEN` | This PR. T3: graphics full screen and back; T4: select, copy, paste; T5: CLAUDE.COM's window mode. |
+| T2 | The terminal window: TERM.RUN, text programs (CODE-P's prompt too) started in a window, `FULL=`, `EV_TICK`, `MT_TOPEN` | PR #101. T3: graphics full screen and back; T4: select, copy, paste; T5: CLAUDE.COM's window mode. |
 
 Each milestone's PR adds its section below, describing what was built and any departure from the plan.
 
