@@ -488,6 +488,11 @@ def test_resident_background():
     for tool in ('grid_program', 'grid_type', 'grid_command'):
         w = why(tool, True)
         assert w and 'in the background' in w and 'grid_files, grid_change_files, gpib_read' in w, (tool, w)
+    # CLAUDE 1.11 (ops=...,bgscreen): grid_program in the background too; grid_type still not
+    s = term(True); s.hello = dict(s.hello, ops='files,gpib,bgscreen')
+    assert T.why_not(s, 'grid_program') is None, T.why_not(s, 'grid_program')
+    w = T.why_not(s, 'grid_type')
+    assert w and 'grid_program, grid_files' in w, w
     # the console stopped (an SDC to the bridge since it went): the calls kept end, the tools say so
     s = term(True)
     link.t.sdcs = 4

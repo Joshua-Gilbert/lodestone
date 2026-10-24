@@ -85,7 +85,8 @@ class TermSession:
             # the GRiD's abilities for Claude Code (mcp.py), one request at a time
             try:
                 s.tools = mcp.ToolServer(s.sock, mcp.GridTools(s.grid, s.cfg, getattr(s.cfg, 'address', 7), root=s.cwd,
-                                                               hello=lambda: s.hello, viewer=plotview.Viewer(s)),
+                                                               hello=lambda: s.hello, viewer=plotview.Viewer(s),
+                                                               away=lambda: s.away and s.resident()),
                                          available=s.why_not, log=s.log).start()
             except OSError as e:
                 s.log('term: no MCP socket at %s: %s' % (s.sock, e))
@@ -138,8 +139,11 @@ class TermSession:
         return s.PAUSED_TOOLS + tuple(t for o in ops for t in s.OPS_TOOLS.get(o.strip(), ()))
 
     def bg_tools(s):
-        """The tools the console serves in the background (M4): files and GPIB, as its HELLO's ops= says."""
-        return tuple(t for t in s.paused_tools() if t not in s.PAUSED_TOOLS)
+        """The tools the console serves in the background (M4): files and GPIB as its HELLO's ops= says, and
+        grid_program where it lists bgscreen (CLAUDE 1.11: the program's screen as it is then)."""
+        ops = [o.strip() for o in s.hello.get('ops', '').lower().split(',')]
+        return (('grid_program',) if 'bgscreen' in ops else ()) + \
+            tuple(t for t in s.paused_tools() if t not in s.PAUSED_TOOLS)
 
     def background(s):
         """Resident Claude's console is working in the background (M4): its bridge quiet, the stub
@@ -207,7 +211,8 @@ class TermSession:
                 if s.bg:
                     s.bg_sdc = s.link.t.sdcs        # (an SDC from the GRiD from now on: it has stopped)
                     s.link.hold = 0
-                    s.grid.end_calls(s.AWAY_CALL, keep=OPS_BG)
+                    keep = OPS_BG | ({glp.OP_SCREEN} if 'grid_program' in s.bg_tools() else set())
+                    s.grid.end_calls(s.AWAY_CALL, keep=keep)
                 else:
                     s.grid.end_calls(s.AWAY_CALL)
         elif t == glp.G_REPLY:

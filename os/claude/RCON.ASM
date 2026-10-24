@@ -82,7 +82,9 @@
 ;  the link runs as in the console, polled by the PIT, until the Pi answers
 ;  a POLL with a NOP: a request taken is run and its REPLY sent in the same
 ;  pass.  Files as dos_ok allows (settled again each pass), GPIB always;
-;  SCREEN and TYPE F6h (they need the console up).  Only when the Pi's HELLO
+;  SCREEN (CLAUDE 1.11, ops=bgscreen) from the screen as it is now: copied
+;  to windows 1-2 for the reply, as a pop-up keeps it, nothing drawn; TYPE
+;  F6h (it needs the console up).  Only when the Pi's HELLO
 ;  said it works so (HF_BG: its bridge can be quiet), and while the link is
 ;  as the pop-down left it: a failure, or no bridge, stops the looks until
 ;  the next pop-up.  The band then says how many requests ran meanwhile.
@@ -1129,7 +1131,9 @@ rf_request:
         jne     .o
         mov     ah, 0F6h
         jmp     reply2
-.op:    cmp     ah, 20h                 ; (GPIB: no DOS)
+.op:    cmp     ah, 20h                 ; (GPIB, and SCREEN in the background:
+        je      .go                     ;  no DOS)
+        cmp     ah, OP_SCREEN
         je      .go
         cmp     byte [dos_ok], 0
         mov     ah, 0F7h
@@ -1163,6 +1167,8 @@ rc_optab:
         dw op_free
         db 20h
         dw op_gpib
+        db OP_SCREEN                    ; (in the background, and kept on the way
+        dw op_bgscreen                  ;  out: the console's own is screen_msg)
         db 0
 
 ; the request rf_request took, once its REPLY can be queued (txq_put would
@@ -1175,9 +1181,11 @@ req_service:
         jae     .x
         mov     byte [req_ready], 0
         mov     si, [rq_op]
-        cmp     byte [si], 20h
+        cmp     byte [si], 20h          ; (GPIB and SCREEN: no DOS)
+        je      .nd
+        cmp     byte [si], OP_SCREEN
         jne     .d
-        call    bg_count
+.nd:    call    bg_count
         jmp     [si + 1]
 .d:     cmp     byte [dos_ok], 0        ; (settled again for each pass: one
         jne     .dk                     ;  kept from the pop-down runs in the
@@ -1270,6 +1278,32 @@ type_start:
         pop     es
         mov     byte [quit], 1
         ret
+
+; SCREEN in the background (or kept from the way out): the program's screen
+; as it is now, and the BIOS's video data, copied where a pop-up keeps them
+; (windows 1-2, bios: the next pop-up keeps its own), then as at a pop-up
+op_bgscreen:
+        push    ds
+        push    VSEG
+        pop     ds
+        push    SAVESEG
+        pop     es
+        xor     si, si
+        xor     di, di
+        mov     cx, 4000h
+        rep     movsw
+        push    40h
+        pop     ds
+        mov     si, 49h
+        push    cs
+        pop     es
+        mov     di, bios
+        mov     cx, 66h - 49h + 1
+        rep     movsb
+        pop     ds
+        mov     al, [rq_id]
+        xor     cl, cl                  ; (no flags)
+        jmp     screen_msg
 
 type_reply:                             ; TYPE's answer: flags, the screen
         mov     al, [type_id]
@@ -1467,8 +1501,8 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.10', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
-            db 'ops=files,gpib', 10, 'addr=', 0
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.11', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
+            db 'ops=files,gpib,bgscreen', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
 s_sep       db '  ', 86h, '  ', 0
