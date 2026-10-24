@@ -62,7 +62,7 @@ def test_protocol():
     tools = {t['name']: t for t in r['result']['tools']}
     look = ['grid_info', 'grid_files', 'grid_screen', 'gpib_read', 'gpib_measure', 'grid_program', 'grid_plot',
             'grid_image', 'grid_pick']
-    ask = ['grid_command', 'grid_change_files', 'gpib_send', 'grid_type']
+    ask = ['grid_command', 'grid_change_files', 'gpib_send', 'grid_type', 'grid_plotter']
     assert sorted(tools) == sorted(look + ask), list(tools)
     for n in look:                       # can be allowed for good: they only look
         assert tools[n]['annotations']['readOnlyHint'] is True and '_meta' not in tools[n], n
@@ -113,7 +113,7 @@ def test_files():
         r = c.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 't'}})
         assert r['result']['serverInfo']['name'] == 'gridlink'
         c.rpc('notifications/initialized', notify=True)
-        assert len(c.rpc('tools/list')['result']['tools']) == 13
+        assert len(c.rpc('tools/list')['result']['tools']) == 14
         r = c.call('grid_files', action='list', path='A:\\')
         assert 'CFG.C' in body(r) and not r['isError'], r
         r = c.call('grid_files', action='info', path='A:\\NOPE.TXT')     # (STAT's 18: not there)
@@ -432,6 +432,87 @@ def test_launch_ignores_the_working_directory():
                          stderr=subprocess.PIPE, cwd=d, env=dict(os.environ, **entry['env']))
     out, err = p.communicate(b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n', timeout=20)
     assert p.returncode == 0 and json.loads(out) == {'jsonrpc': '2.0', 'id': 1, 'result': {}}, (out, err)
+
+
+def test_hpgl_parts():
+    P = mcp.hpgl_parts
+    d = b'IN;SP1;PU0,0;PD100,0;'
+    assert P(d, 1024) == [d]
+    parts = P(d, 8)                                    # parts end after a ';'
+    assert b''.join(parts) == d and all(p.endswith(b';') for p in parts), parts
+    assert all(len(p) <= 8 for p in parts), parts
+    lb = b'PU10,10;LBVOLTS; AMPS;\x03;PD20,20;'           # a label's ';' is not a command's end
+    for most in range(4, 40):
+        parts = P(lb, most)
+        assert b''.join(parts) == lb, (most, parts)
+        for p in parts[:-1]:                           # a part that ends in the label is one cut by size
+            assert p.endswith((b';', b'\x03')) or len(p) == most, (most, parts)
+    assert P(lb, 24) == [b'PU10,10;LBVOLTS; AMPS;\x03;', b'PD20,20;'], P(lb, 24)
+    assert P(b'LBno end', 3) == [b'LBn', b'o e', b'nd']    # an unterminated label: still all of it
+    assert P(b'PA1,2', 100) == [b'PA1,2']                   # no final ';'
+    big = b';'.join(b'PD%d,%d' % (i, i) for i in range(3000)) + b';'
+    parts = P(big, mcp.HPGL_PART)
+    assert b''.join(parts) == big and max(map(len, parts)) <= mcp.HPGL_PART
+    assert all(p.endswith(b';') for p in parts)
+    for bad in (b'', b' ;\r\n', b'IN;\x1b.T', b'IN;\x00', b'LB\xe9\x03'):
+        try: mcp.hpgl_check(bad); assert False, bad
+        except ValueError: pass
+    assert mcp.hpgl_check(b'IN;\r\nLBHI\x03;\tPU;') == b'IN;\r\nLBHI\x03;\tPU;'
+
+
+def test_plotter():
+    h, c = start()
+    try:
+        square = 'IN;SP1;PU1000,1000;PD3000,1000,3000,3000,1000,3000,1000,1000;LBTEST;1\x03;PU;'
+        r = c.call('grid_plotter', hpgl=square)
+        assert not r['isError'] and 'plotter at 3' in body(r), r
+        assert h.grid.plot_parts == [square.encode()], h.grid.plot_parts
+        assert all(op == mcp.glp.GP_WRITE for op, a, d in h.grid.gpib_log if a == 3)
+        big = ''.join('PD%d,%d;' % (i, i) for i in range(600))          # several parts, in order
+        open(os.path.join(h.cfg.term_dir, 'big.plt'), 'w').write(big)
+        h.grid.plot_parts = []
+        r = c.call('grid_plotter', file='big.plt')
+        assert not r['isError'] and len(h.grid.plot_parts) > 1 and '%d parts' % len(h.grid.plot_parts) in body(r), r
+        assert b''.join(h.grid.plot_parts) == big.encode()
+        h.grid.plot_parts = []; h.grid.plot_fail_after = 2                # the Nano stops mid-drawing
+        r = c.call('grid_plotter', file='big.plt')
+        assert r['isError'] and 'part of the drawing may be on the paper' in body(r) and '2 of' in body(r), r
+        h.grid.plot_parts = []; h.grid.plot_fail_after = 0
+        r = c.call('grid_plotter', hpgl='IN;')
+        assert r['isError'] and 'nothing was sent' in body(r), r
+        r = c.call('gpib_read', action='scan')                 # a listener only: no answer to a poll
+        assert '6, 16, 29' in body(r), r
+    finally:
+        c.close(); h.close()
+
+
+def test_plotter_bad_arguments_never_reach_the_grid():
+    t = mcp.GridTools(NoGrid(), root='/nonexistent')
+    for a in ({}, {'hpgl': ''}, {'hpgl': 'IN;', 'file': 'x.plt'}, {'hpgl': 'IN;\x1b.T'}, {'hpgl': 'PA☃;'},
+              {'hpgl': 'x' * (mcp.MAX_HPGL + 1)}, {'hpgl': 'IN;', 'timeout_ms': 10}, {'file': '../etc/passwd'},
+              {'file': '.mcp.json'}, {'hpgl': 5}):
+        res, err = t.call('grid_plotter', a)
+        assert err, a
+    class Cfg: plotter = 7
+    res, err = mcp.GridTools(NoGrid(), cfg=Cfg(), root='/nonexistent').call('grid_plotter', {'hpgl': 'IN;'})
+    assert err and 'bridge' in body({'content': res}), res
+
+
+def test_plotter_config():
+    import tempfile
+    from gridlink.config import Config
+    assert Config().plotter == 3 and 3 in Config().bus and 1 in Config().bus
+    for toml, ok in (('[plotter]\naddress = 5\n', 5), ('[plotter]\naddress = 21\n', None),
+                     ('[plotter]\naddress = 7\n', None), ('[plotter]\naddress = "3"\n', None),
+                     ('[plotter]\naddress = 31\n', None)):
+        with tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False) as f: f.write(toml)
+        try:
+            cfg = Config().load(f.name)
+            assert ok == cfg.plotter, toml
+        except SystemExit:
+            assert ok is None, toml
+        finally:
+            os.unlink(f.name)
 
 
 def test_socket_requests_checked():

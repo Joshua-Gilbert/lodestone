@@ -9,7 +9,8 @@ PATHS = ['~/.config/gridlink/config.toml', '/etc/gridlink/config.toml']
 
 # Joshua's bus (see the GPIB driver notes); edit [bus] in the config file.
 DEFAULT_BUS = {
-    2: 'Tek 11403 digitizing scope', 6: 'Tek FG5010 function generator',
+    1: 'Tek 7854 oscilloscope', 2: 'Tek 11403 digitizing scope',
+    3: 'Tek 4662 pen plotter (HP-GL, through its Nano; grid_plotter)', 6: 'Tek FG5010 function generator',
     11: 'Tek SI5020 switch', 13: 'Tek PS5004 power supply', 16: 'Tek DM5120 DMM',
     18: 'HP 8753D network analyzer', 28: 'Tek DM5010 DMM', 29: 'Tek DC5009 counter',
     30: 'Tek PS5010 power supply',
@@ -32,6 +33,7 @@ class Config:
         s.set_clock = True; s.mode = 'ask'
         s.auto_mode = []                        # tools Claude Code's own mode decides on (no forced prompt)
         s.measure = []                          # GPIB addresses gpib_measure may query without asking
+        s.plotter = 3                           # GPIB address of the 4662's HP-GL Nano (grid_plotter)
         s.workdir = os.path.expanduser('~/gridlink/work')
         s.memory_dir = os.path.expanduser('~/gridlink/memories')
         s.sessions_dir = os.path.expanduser('~/gridlink/sessions')
@@ -94,12 +96,18 @@ class Config:
                 raise SystemExit('[permissions] measure must be a list of GPIB addresses (0-30)')
             s.measure = sorted(set(m))
         if 'auto_mode' in pm:
-            m = pm['auto_mode']; ok = ('gpib_send', 'grid_command', 'grid_change_files', 'grid_type')
+            m = pm['auto_mode']; ok = ('gpib_send', 'grid_command', 'grid_change_files', 'grid_type', 'grid_plotter')
             if not isinstance(m, list) or not all(x in ok for x in m):
                 raise SystemExit('[permissions] auto_mode must list some of: %s' % ', '.join(ok))
             s.auto_mode = sorted(set(m))
         if 'bus' in d:
             s.bus = {int(k): str(v) for k, v in d['bus'].items()}
+        if 'address' in d.get('plotter', {}):
+            a = d['plotter']['address']
+            if not isinstance(a, int) or isinstance(a, bool) or not 0 <= a <= 30 or a in (21, s.address):
+                raise SystemExit('[plotter] address must be a GPIB address (0-30), not 21 (the GRiD) or '
+                                 'the bridge\'s (%d)' % s.address)
+            s.plotter = a
 
     def env_key(s):
         return bool(os.environ.get('ANTHROPIC_API_KEY'))

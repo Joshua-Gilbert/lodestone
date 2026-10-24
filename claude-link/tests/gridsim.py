@@ -319,6 +319,12 @@ class GridSim:
             devs = {29: 'ID TEK/DC5009,V79.1,F1.2', 6: 'ID TEK/FG5010,V79.1,F04', 16: 'ID TEK/DM5120,V81.1,FV1.0'}
             s.gpib_log = getattr(s, 'gpib_log', []) + [(gop, addr, data)]
             if gop == glp.GP_SCAN: return s.reply(rid, 0, bytes(sorted(devs)))
+            if addr == 3:                   # the 4662's HP-GL Nano: a listener only
+                if gop != glp.GP_WRITE: return s.reply(rid, 1)        # it never talks: timeout
+                fail = getattr(s, 'plot_fail_after', None)            # a test: the Nano stops taking bytes
+                if fail is not None and len(getattr(s, 'plot_parts', [])) >= fail: return s.reply(rid, 1)
+                s.plot_parts = getattr(s, 'plot_parts', []) + [bytes(data)]
+                return s.reply(rid, 0)
             if addr not in devs: return s.reply(rid, 2)
             if gop == glp.GP_QUERY: return s.reply(rid, 0, (devs[addr] + '\r\n').encode())
             if gop == glp.GP_SPOLL: return s.reply(rid, 0, b'\x00')
