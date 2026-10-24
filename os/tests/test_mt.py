@@ -4353,9 +4353,12 @@ def t_rom():
     R.to_prompt(k)
     o = R.prompt(k, 'tasks')
     check('... TASKS lists the Executive', re.search(r'0\s+Executive \(in front\)', o), o)
-    r2, memsz, kb = {0: R.rom2(), 1: R.rom()}, open(A.MEMSZ, 'rb').read(), {}
-    for tag, roms, more in (('ROM 1 alone (no TERM.FNT)', None, b''), ('with ROM 2 (TERM.FNT on it)', r2, b''),
-                            ('with ROM 2, C:\\LODE.INI MTMEM=LCMD.COM:128', r2, b'MTMEM=LCMD.COM:128\r\n')):
+    r1, memsz, kb = R.rom(), open(A.MEMSZ, 'rb').read(), {}
+    r96 = r1.replace(b'MTMEM=LCMD.COM:64', b'MTMEM=LCMD.COM:96')       # (the ROM's line, another size: seen)
+    for tag, roms, more in (('ROM 1 alone (no TERM.FNT)', None, b''),
+                            ('with ROM 2 (TERM.FNT on it)', {0: R.rom2(), 1: r1}, b''),
+                            ('with ROM 2, the ROM\'s line made MTMEM=LCMD.COM:96', {0: R.rom2(), 1: r96}, b''),
+                            ('... and C:\\LODE.INI MTMEM=FOO.COM:200', {0: R.rom2(), 1: r96}, b'MTMEM=FOO.COM:200\r\n')):
         k = R.boot(roms=roms, ata=R.sysinfo_hd(('LODE.INI', b'MULTITASK=1\r\n' + more), ('MEMSZ.COM', memsz)), ems_pages=88)
         k.mcb0 = k.u16('first_mcb')     # (the whole arena's start: first_mcb is per task)
         k.key(ktest.CODE_P, settle=False); k.run_for(4.0)
@@ -4370,11 +4373,12 @@ def t_rom():
               (st, k.pc.mode(), n, o[-300:]))
         k.key('memsz', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
         m = re.search(r'([\d.]+) KB for programs', '\n'.join(l for y, l in k.ocr()))
-        kb[more] = m and float(m.group(1))
-    k64, k128 = kb.get(b''), kb.get(b'MTMEM=LCMD.COM:128\r\n')
-    check('... MEMSZ at that prompt: %s KB (the ROM\'s LODE.INI MTMEM=LCMD.COM:64: the task\'s 64 KB less LCMD); with '
-          'C:\\LODE.INI\'s MTMEM=LCMD.COM:128 in place of the ROM\'s line, %s KB (64 KB more)' % (k64, k128),
-          k64 and k128 and k64 < 64 and 60 <= k128 - k64 <= 68, kb)
+        kb[(roms[1] is r96, more)] = m and float(m.group(1))
+    k64, k96, kfoo = kb.get((False, b'')), kb.get((True, b'')), kb.get((True, b'MTMEM=FOO.COM:200\r\n'))
+    check('... MEMSZ at that prompt: %s KB with the ROM as built (MTMEM=LCMD.COM:64: the task\'s 64 KB less LCMD); %s KB '
+          'with the ROM\'s line made :96 (32 KB more: it is read); %s KB with that and C:\\LODE.INI\'s MTMEM=FOO.COM:200 '
+          '(64 again: C:\'s line replaces the ROM\'s whole)' % (k64, k96, kfoo), r96 != r1 and k64 and k96 and kfoo
+          and k64 < 64 and 28 <= k96 - k64 <= 36 and abs(kfoo - k64) < 1, kb)
     k = R.boot(ata=R.sysinfo_hd(), ems_pages=88)
     check('started from the ROM, no C:\\LODE.INI (the ROM\'s settings): off', mt_seg(k) is None and vec(k, 8) == INT08, show(mcbs(k)))
 
