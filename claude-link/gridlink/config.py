@@ -12,6 +12,7 @@ DEFAULT_BUS = {
     1: 'Tek 4662 pen plotter (HP-GL, through its Nano; grid_plotter)', 2: 'Tek 11403 digitizing scope',
     3: 'Tek 7854 oscilloscope', 6: 'Tek FG5010 function generator',
     11: 'Tek SI5020 switch', 13: 'Tek PS5004 power supply', 16: 'Tek DM5120 DMM',
+    17: 'HP 4275A multi-frequency LCR meter',
     18: 'HP 8753D network analyzer', 28: 'Tek DM5010 DMM', 29: 'Tek DC5009 counter',
     30: 'Tek PS5010 power supply',
 }
