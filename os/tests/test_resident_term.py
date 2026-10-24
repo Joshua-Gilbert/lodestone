@@ -42,6 +42,7 @@ class Res(CK.KernelHarness):
         s.rsym = G.symbols(os.path.join(CL, 'RCON.MAP'))
         rcon = open(os.path.join(CL, 'RCON.BIN'), 'rb').read()
         s.font_img = rcon[s.rsym['font']:s.rsym['font'] + 0x81 * 16]
+        s.glyph_end = 0xA1                      # (the console has no 2x2 block elements: CLAUDE 1.8's GF_QUAD)
         s.srq_calls = 0                         # the driver's SRQ check (AH=0Bh) while the console is up
         s.spolls = 0                            # and its serial polls (AH=05h)
         s.pit_dues = 0                          # the console's look at the PIT for its next poll (pit_due)
