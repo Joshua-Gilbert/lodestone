@@ -1,7 +1,8 @@
 ; MTPROBE.COM - INT 21h AH=F0h with AL = 00h, 11h (not from a task's
 ; stub), 12h (no room: CX = 0), 13h (BL = 0, the Executive; 8, none such;
 ; 7, a free one), 14h, 1Bh, 1Ch, FFh, then 1Fh and 20h (T1) and 1Eh (T2:
-; BL = 0, 7, 8; CX = 1234h, ES:DI = buf), for test_mt.py: one line each,
+; BL = 0, 7, 8, then 1 with CL = 1, task 1's first count: from a task,
+; refused; CX = 1234h, ES:DI = buf), for test_mt.py: one line each,
 ;   "F0xx CF=c AX=xxxx BX=xxxx CX=xxxx"
 ; (CF set and BX = CX = 1234h before each call, so what changed shows)
 ; nasm -f bin -o MTPROBE.COM MTPROBE.ASM
@@ -14,7 +15,12 @@ org 100h
         mov     ah, [si]                ; (its BL, for 13h)
         inc     si
         mov     [cbl], ah
-        push    si
+        cmp     al, 1Eh                 ; (MT_TOPEN: its CL, a count, next)
+        jne     .k
+        mov     ah, [si]
+        inc     si
+        mov     [ccl], ah
+.k:     push    si
         mov     [cur], al
         mov     ah, 0F0h
         mov     bx, 1234h
@@ -35,6 +41,9 @@ org 100h
         jne     .c1
 .cb:    mov     bl, [cbl]               ; MT_FRONT, MT_TOPEN, MT_TROWS, MT_TKEY: BL
         xor     bh, bh
+        cmp     byte [cur], 1Eh
+        jne     .c1
+        mov     cl, [ccl]
 .c1:    stc
         int     21h
         pushf
@@ -101,8 +110,9 @@ chr:    push    dx
 
 als     db      00h, 0, 11h, 0, 12h, 0, 13h, 0, 13h, 8, 13h, 7, 14h, 0, 1Bh, 0
         db      1Ch, 0, 0FFh, 0, 1Fh, 0, 1Fh, 7, 1Fh, 8, 20h, 0, 20h, 7, 20h, 8
-        db      1Eh, 0, 1Eh, 7, 1Eh, 8, 0EEh
+        db      1Eh, 0, 34h, 1Eh, 7, 34h, 1Eh, 8, 34h, 1Eh, 1, 1, 0EEh
 cbl     db      0
+ccl     db      0
 s_f0    db      'F0$'
 s_cf    db      ' CF=$'
 s_ax    db      ' AX=$'

@@ -39,6 +39,7 @@
 ;  whole screen, as always.
 ; =====================================================================
 %include "UIAPI.INC"
+%include "WINPOS.INC"
 RUN_API equ 8                           ; (UI_MENU, UI_MOUSE, UI_CLIP; EV_RCLICK.  RF_WIN
                                         ;  gives its window W_FLAGS with MULTITASK=1)
 RUN_FLAGS equ RF_WIN                    ; (with MULTITASK=1, one of several windows)
@@ -66,23 +67,7 @@ start:  mov     di, fname               ; the argument: the file to open
         mov     byte [wmode], 1         ; a window: CODE-T is the tasks'
         mov     word [kt_xfer], K_CODE_X
         mov     byte [h10x], 'X'
-        call    UI_VERSION              ; (CX: the core's paragraphs, where the
-        shl     cx, 4                   ;  windows' slots start) one higher up
-        mov     ax, start               ;  the segment than the first opens a
-        sub     ax, cx                  ;  little lower and to the right, so
-        jb      .shd                    ;  a second Write isn't right over it
-        mov     cl, 12
-        shr     ax, cl                  ; (4 KB steps, two at most)
-        cmp     ax, 2
-        jbe     .c
-        mov     ax, 2
-.c:     mov     bx, ax
-        shl     bx, 1
-        add     [win+W_COL], bx
-        sub     [win+W_W], bx
-        shl     ax, 4
-        add     [win+W_Y], ax
-        sub     [win+W_H], ax
+        WIN_STAGGER                     ; (a second Write not right over it)
         jmp     short .shd
 .full:  mov     si, redraw
         call    UI_SETREDRAW
