@@ -197,8 +197,8 @@ FFFFFFFFFFFFFFE0  M_BACK
 000001FF  R2_SECS
 00000103  R_END1
 0000F000  INI_BUF
-0000031E  R_TLEN
-000001F8  R_TLEN1
+00000320  R_TLEN
+000001FA  R_TLEN1
 00004000  RM_SEG
 00000008  UI_API
 00000000  UI_VERSION
@@ -2189,42 +2189,42 @@ Real              Virtual           Name
             66B0               190  r_dio.map
             66B8               198  ..@r_rp3
             66BD               19D  ..@r_rp4
-            66D9               1B9  ..@r_rp5
-            66DC               1BC  r_dio.m0
-            66DE               1BE  r_dio.m1
-            66E1               1C1  ..@r_rp6
-            66E3               1C3  r_dio.mm
-            66E5               1C5  r_dio.piece
-            66EE               1CE  ..@r_rp7
-            66F2               1D2  ..@r_rp8
-            6718               1F8  ..@r_made
-            6718               1F8  r_dio.made
-            6732               212  ..@r_rp9
-            673D               21D  ..@r_rp10
-            673D               21D  r_dio.rt
-            6740               220  ..@r_rp11
-            6749               229  r_dio.e
-            675B               23B  r_dio.e2
-            6770               250  r_dio.ec
-            677D               25D  r_dio.en
-            6786               266  r_dio.fat
-            6789               269  ..@r_rp12
-            678C               26C  ..@r_rp13
-            67A7               287  ..@r_rp14
-            67AB               28B  ..@r_rp15
-            67B3               293  r_dio.f2
-            67C3               2A3  r_dio.f
-            67CB               2AB  r_dio.fl
-            67F7               2D7  r_dio.fv
-            680A               2EA  r_dio.fw
-            681F               2FF  r_dio.fo
-            682D               30D  r_dio.f3
-            6837               317  r_dio.fn
-            683A               31A  r_dio.fd
-            683E               31E  r_tend
-            683E               31E  r_relp
-            6860               340  r_relm
-            686C               34C  r_hooks
+            66DC               1BC  ..@r_rp5
+            66DE               1BE  r_dio.m0
+            66E0               1C0  r_dio.m1
+            66E3               1C3  ..@r_rp6
+            66E5               1C5  r_dio.mm
+            66E7               1C7  r_dio.piece
+            66F0               1D0  ..@r_rp7
+            66F4               1D4  ..@r_rp8
+            671A               1FA  ..@r_made
+            671A               1FA  r_dio.made
+            6734               214  ..@r_rp9
+            673F               21F  ..@r_rp10
+            673F               21F  r_dio.rt
+            6742               222  ..@r_rp11
+            674B               22B  r_dio.e
+            675D               23D  r_dio.e2
+            6772               252  r_dio.ec
+            677F               25F  r_dio.en
+            6788               268  r_dio.fat
+            678B               26B  ..@r_rp12
+            678E               26E  ..@r_rp13
+            67A9               289  ..@r_rp14
+            67AD               28D  ..@r_rp15
+            67B5               295  r_dio.f2
+            67C5               2A5  r_dio.f
+            67CD               2AD  r_dio.fl
+            67F9               2D9  r_dio.fv
+            680C               2EC  r_dio.fw
+            6821               301  r_dio.fo
+            682F               30F  r_dio.f3
+            6839               319  r_dio.fn
+            683C               31C  r_dio.fd
+            6840               320  r_tend
+            6840               320  r_relp
+            6862               342  r_relm
+            686E               34E  r_hooks
 
 ---- Section ovl --------------------------------------------------------------
 

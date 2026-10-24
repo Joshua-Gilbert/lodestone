@@ -56,7 +56,7 @@ So Lodestone goes in the second socket, where the GRiD MS-DOS EPROM has been. Th
   - 128 KB at 3 wait states;
   - the directory and data selectors;
   - ROM id `LO`.
-  - ROM 2 will be system type 2, id `L2` (`mkrom.py --data`).
+  - ROM 2 is system type 2, id `L2` (`mkrom.py --data`).
 - **The boot sector is `ROMBOOT.ASM`.** The BIOS copies the whole image to 8000:0000 and jumps there with DL = 'r'. ROMBOOT finds LODE.SYS in the root and copies it to 1000:0000. It starts it as the floppy boot sector does, with DS:SI pointing at its BPB and DL = 17 (R:).
 
 ## R:, the ROM drive
@@ -109,7 +109,7 @@ The BIOS's own `f` at its boot prompt still boots the floppy as well.
 
 Measured in pcemu by `tests/test_rom.py t_memory`: a DOS program's KB.
 
-**Without the ROM, 0.6 costs 0.1 KB against 0.4.5 (562.2 / 578.3 KB, was 562.3 / 578.4).** That is the PATH search in the Executive and the two-file settings reader. With the ROM in, R:'s module adds 446 bytes (526 since ROM 2's support: 80 more; 814 with ROM 2 in).
+**Without the ROM, 0.6 costs 0.1 KB against 0.4.5 (562.2 / 578.3 KB, was 562.3 / 578.4).** That is the PATH search in the Executive and the two-file settings reader. With the ROM in, R:'s module added 446 bytes in 0.6 (432 after the 2026-10-20 audit's PR #55; 512 since ROM 2's support, 800 with ROM 2 in).
 
 ## Review (2026-10-18)
 
@@ -137,6 +137,6 @@ Also from the review:
   - System's Settings topic and saving;
   - PATH;
   - memory;
-  - ROM 2 (t_rom2, 9 checks): LODE2.BIN a data ROM; with ROM 1, in either socket, DIR R: both ROMs' files (one label, 0 bytes free), DEFRAG.COM, a 60 KB file whose chain crosses both FAT sectors R: makes, and ROM 1's last file copied as built; the FAT (fatbuf) and the root sectors in the buffers byte for byte against what R: should make; ROM 2 alone; ROM 1 alone without DEFRAG.COM. Twelve of thirteen mutations each fail a check (the FAT, root and data mapping, the joined drive table, ROM 2 alone, the module kept short or not); one is equivalent here: the entry split over the two FAT sectors writing its first half before a lone sector 2, which the kernel only ever reads after sector 1 into the same buffer.
+  - ROM 2 (t_rom2, 13 checks): LODE2.BIN a data ROM; a test ROM 2 with 20 files (its root past 16 entries, R:'s sector 6) and a 60 KB file whose chain crosses both FAT sectors R: makes; with ROM 1, in either socket (with EMS; with C:), what DOS programs get (0.2-0.4 KB less than ROM 1 alone), DIR R: both ROMs' files (one label, 32 files, 0 bytes free) and DEFRAG.COM, the 60 KB file, ROM 1's last file and ROM 2's 21st entry copied as built, after a program has run; the FAT (fatbuf) and the root sectors in the buffers byte for byte against what R: should make; ROM 2 alone as the second image (another ROM the first), DEFRAG.COM read as built; ROM 1 alone without DEFRAG.COM; the screen saver from the ROM running R:\DEFRAG.COM with ROM 2 in, the dark clock without it. Twelve of thirteen mutations each fail a check (the FAT, root and data mapping, the joined drive table, ROM 2 alone, the module kept short or not); one is equivalent here: the entry split over the two FAT sectors writing its first half before a lone sector 2, which the kernel only ever reads after sector 1 into the same buffer.
 - **pcemu** models the sockets (`roms=`) and the BIOS's boot (`boot_rom`).
 - **The real-BIOS checks** need `rom/ROM_F000.BIN` and the GRiD MS-DOS EPROM image. These are not in the repo.
