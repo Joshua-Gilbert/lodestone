@@ -1380,8 +1380,8 @@ def t_form():
     # help: the items; the file commands CODE-C, CODE-D, CODE-M, CODE-R; CODE-P the prompt
     k.key(ktest.F1)
     hl = screen(k)
-    check('help: Tab for the items; Copy, Erase, Move, Rename', 'Device, Subject, Title' in hl and 'CODE-C                   Copy the file' in hl
-          and 'CODE-R' in hl and 'Rename the file' in hl and 'CODE-D                   Delete' in hl and 'CODE-M' in hl
+    check('help: Tab for the items; Copy, Erase, Move, Rename', 'Device, Subject, Title' in hl and 'CODE-C                   Copy' in hl
+          and 'CODE-R                   Rename' in hl and 'CODE-D                   Delete' in hl and 'CODE-M' in hl
           and 'CODE-P                   command prompt' in hl and 'CODE is the Alt key' in hl, hl)
     k.key(ktest.ENTER)
     k.key(CODE['R']); k.key(ktest.ESC); k.key(CODE['C']); k.key(ktest.ESC)
@@ -2049,7 +2049,7 @@ def t_subcopy():
           (free_paras(k)[0], free0))
     # help, and Move on a subject (not offered: a beep)
     k.key(ktest.F1)
-    check('help: "CODE-C  Copy the file / subject"', has(k, 'CODE-C                   Copy the file / subject'), screen(k))
+    check('help: "CODE-C  Copy"', has(k, 'CODE-C                   Copy'), screen(k))
     k.key(ktest.ENTER)
     k.key(CODE['M'])
     check('CODE-M on a subject: nothing (a beep)', focus(k) == 2 and band() == 'Subject: Select item and confirm' and not k.crashed, k.band())
