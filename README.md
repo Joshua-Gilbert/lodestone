@@ -157,7 +157,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,890 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,926 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -191,7 +191,7 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
 **Next:**
-- **Resident Claude:** files and GPIB instruments in the pop-up. Then Claude working in the background between a program's keystrokes.
+- **Resident Claude:** Claude working in the background between a program's keystrokes (files and GPIB instruments in the pop-up are done: CLAUDE 1.9).
 - **ROM 2:** a second, data-only ROM for CLAUDE.COM and heavier programs.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.

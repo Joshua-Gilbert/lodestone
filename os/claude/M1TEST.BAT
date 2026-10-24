@@ -37,14 +37,14 @@ cls
 echo Step 3 of 7: screens under the console, in three video modes.
 for %%m in (4 6 40) do call %0 GFX %%m
 cls
-echo Step 4 of 7: DOS busy.  Type a line into COPY CON: hi, then CODE-\
-echo (the console's band should say DOS busy), CODE-\ again, then Enter,
-echo then Ctrl-Z and Enter.
+echo Step 4 of 7: over DOS.  Type a line into COPY CON: hi, then CODE-\
+echo (CLAUDE 1.9: the band should NOT say DOS busy, as files work there;
+echo with MULTITASK=1 it should), CODE-\ again, then Enter, Ctrl-Z, Enter.
 copy con m1test.tmp
 type m1test.tmp
-choice /c:yn Did the band say DOS busy, and the file hold your line
-if errorlevel 2 echo 4 DOS busy: NO >> m1test.txt
-if not errorlevel 2 echo 4 DOS busy: yes >> m1test.txt
+choice /c:yn Was the band as above, and did the file hold your line
+if errorlevel 2 echo 4 over DOS: NO >> m1test.txt
+if not errorlevel 2 echo 4 over DOS: yes >> m1test.txt
 del m1test.tmp
 cls
 echo Step 5 of 7: keys you type straight after CODE-\ comes back.
