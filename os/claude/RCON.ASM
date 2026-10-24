@@ -68,6 +68,7 @@ org 0
 
 VSEG    equ 0B800h
 SAVESEG equ 0E400h              ; windows 1-2: the program's screen
+SHADSEG equ 0EC00h              ; window 3: Term's shadow (the stub's fourth page)
 P_OLD16 equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
 P_INDOS equ 4
 P_KS    equ 12                  ;  r_ks, then r_pend
@@ -508,10 +509,8 @@ session:
         call    gg_call
 .x:     ret
 
-shadow_seg:                             ; Term's shadow, in this page
-        mov     ax, cs
-        add     ax, (shadow - $$) >> 4
-        mov     [shadseg], ax
+shadow_seg:                             ; Term's shadow, in window 3
+        mov     word [shadseg], SHADSEG
         ret
 
 ; HLT when nothing is due: no frame on its way or to send, no keys, and
@@ -522,6 +521,8 @@ idle:   cmp     byte [lstate], LS_WAIT
         jne     .i
         cmp     word [irq_ptr + 2], 0
         je      .x
+        cmp     byte [srq_held], 0      ; (the line held by another device:
+        jne     .x                      ;  no edge would wake us)
         mov     ah, 11h
         kbd
         jnz     .x
@@ -651,10 +652,14 @@ build_hello:                            ; -> CX = length of hellobuf
 ; row), then the cursor's row, column and hidden (0 or 1): the Pi's
 ; termscreen.screen_crc
 screen_crc:
-        mov     si, shadow
+        push    es                      ; (TERMLINK's crc16 reads ES:SI in RCON)
+        push    SHADSEG
+        pop     es
+        xor     si, si
         mov     cx, TROWS * 160
         mov     ax, 0FFFFh
         call    crc16
+        pop     es
         mov     si, t_cur
         mov     cx, 2
         call    crc16
@@ -1128,9 +1133,7 @@ crc_hid     resb 1
 ptitle      resb TITLEN + 1
 title_text  resb NAMEMAX + 5 + TITLEN + 16
 status_text resb 72
-            alignb 16
-shadow      resb TROWS * 160            ; Term's rows: glyph, attribute
-rc_top:
+rc_top:                                 ; (Term's shadow: SHADSEG, window 3)
 
 section .text
         times   -((rc_top - $$) > 4000h - TAIL) db 0    ; (one EMS page, 16 KB,

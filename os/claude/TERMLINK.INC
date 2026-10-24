@@ -37,6 +37,10 @@ rep_q       resb 1
 use_fl      resb 1                      ; 1: frames carry a Fletcher sum, not CRC-16
 wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driver latches SRQ;
                                         ;  RCON: it counts SRQ interrupts)
+tlook       resb 1                      ; 1: link_wait's serial poll is a tick's look, no SRQ seen
+srq_held    resb 1                      ; 1: an answer was there at a tick's look, its SRQ no
+                                        ;  edge (another device holds the line): the PIT's
+                                        ;  polls, and no sleeping for the SRQ, till the next HELLO
 lr_end:
 %endmacro
 
@@ -274,13 +278,17 @@ link_wait:
         cmp     ax, 40                  ; ~2 s without an answer
         jbe     .t
         jmp     link_fail
-.t:     cmp     word [irq_ptr+2], 0
+.t:     mov     byte [tlook], 0
+        cmp     word [irq_ptr+2], 0
         je      .t0
         call    srq_new                 ; the SRQ interrupt came: poll now
         jnz     .poll                   ;  (maybe_idle, RCON's idle, sleep till it)
+        cmp     byte [srq_held], 0      ; (no edges for us: the PIT's polls)
+        jne     .t0
         mov     ax, [now]               ; else once a tick, should one go astray
         cmp     ax, [pit_tick]
         je      .x
+        inc     byte [tlook]
         jmp     short .poll
 .t0:
 %ifndef RCON                            ; (resident: never AH=0Bh, which clears
@@ -305,6 +313,8 @@ link_wait:
         mov     byte [spoll_errs], 0
         test    al, 40h
         jz      .x
+        mov     ah, [tlook]             ; the answer there at a tick's look, no
+        or      [srq_held], ah          ;  SRQ interrupt for it: the line held
         test    al, 20h                 ; patched bridge: the line is complete
         jnz     .read
         and     ax, 1Fh                 ; stock bridge: wait as the Pi asked
@@ -655,10 +665,15 @@ fl16:   push    dx
         pop     dx
         ret
 
-; CRC-16/CCITT-FALSE.  AX = crc, DS:SI -> data, CX = count.  Destroys BX SI CX.
+; CRC-16/CCITT-FALSE.  AX = crc, DS:SI -> data (RCON: ES:SI, ES = CS but for
+; the shadow's), CX = count.  Destroys BX SI CX.
 crc16:  jcxz    .x
 .l:     mov     bl, ah
+%ifdef RCON
+        xor     bl, [es:si]
+%else
         xor     bl, [si]
+%endif
         inc     si
         xor     bh, bh
         shl     bx, 1

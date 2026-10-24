@@ -118,9 +118,10 @@ class TermSession:
 
     def may_ring(s):
         """The Link may ring the GRiD (an SRQ for a POLL): not while resident
-        Claude's console is down, its program running (the user went back, or
-        TYPE's keys play): that SRQ would be the program's."""
-        return not (s.resident() and (s.away or s.grid.typing))
+        Claude's console is down, its program running (the user went back,
+        TYPE's keys play, or a TYPE was given up on and the console hasn't
+        been heard from since): that SRQ would be the program's."""
+        return not (s.resident() and (s.away or s.grid.typing or s.grid.type_out))
 
     def detach(s):
         if s.link is not None and s.link.source is s: s.link.source = None
