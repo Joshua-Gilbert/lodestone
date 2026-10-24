@@ -1860,6 +1860,8 @@ mt_winc:
 ; now on when there is something to show (mw_poll).  CF: AX = 1 (no such
 ; task, another count, not a window .RUN's call), 5 (task 0, parked)
 mt_topen:
+        cmp     byte [cs:mt_cur], 0     ; (the UI's call, not a task's)
+        jne     mt_bad
         call    mt_targ
         jc      mt_bad
         call    mt_t5
@@ -3649,6 +3651,8 @@ mt_urun:
 mt_uwin:
         push    es
         push    ax
+        cmp     byte [cs:mw_on], 0      ; (the UI not patched: no windows)
+        je      .no
         push    ds
         pop     es
         mov     di, msgbuf              ; (the Executive's: free while it waits;
@@ -3670,7 +3674,10 @@ mt_uwin:
         UCALL   ui_findapp              ; SI = its path
         jc      .no
         mov     di, msgbuf + 16
-        UCALL   run_app
+        UCALL   run_app                 ; (mw_run: CF clear whether or not
+        pop     ax                      ;  the window opened: a TERM.RUN not
+        push    ax                      ;  ours, or one that ended at once)
+        call    mw_owns
         jnc     .x
 .no:    pop     ax
         push    ax

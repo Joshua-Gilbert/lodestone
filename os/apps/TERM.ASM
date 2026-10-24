@@ -18,6 +18,7 @@
 ; =====================================================================
 %include "UIAPI.INC"
 %include "MTAPI.INC"
+%include "WINPOS.INC"
 RUN_API equ 8
 RUN_FLAGS equ RF_WIN                    ; (a window beside others)
         org     RUN_ORG
@@ -55,6 +56,7 @@ start:  mov     di, arg                 ; "task count"
         call    font                    ; TERM.FNT
         jc      .front
         call    name                    ; the title: its program's name
+        WIN_STAGGER                     ; (a second one not right over it)
         call    geom
         mov     si, win
         call    UI_WOPEN                ; (w_draw draws the rest)
@@ -113,7 +115,7 @@ font:   mov     si, s_fnt
         push    ds
         mov     ds, [fseg]
         mov     dx, FONT
-        mov     cx, 4096
+        mov     cx, 4097                ; (one more: a longer file isn't it)
         mov     ah, 3Fh
         int     21h
         pop     ds
@@ -372,9 +374,11 @@ cells:  push    ds
         pop     ds
         ret
 
-; AH = a cell's colours -> cell's attribute: inverse (1) when its background
-; is brighter than its foreground (70h, 71h: as a monochrome screen shows
-; them), underlined (2) for 01h and 09h (the monochrome adapter's)
+; AX = a cell -> AH = its attribute for cell: inverse (1) when its
+; background is brighter than its foreground (70h, 71h: as a monochrome
+; screen shows them), underlined (2) for x1h and x9h with a black
+; background (the monochrome adapter's); both colours the same (00h, 77h):
+; hidden, AL a blank of the background's
 attr:   push    bx
         mov     bx, ax                  ; (BH: the colours)
         mov     bl, bh
@@ -382,9 +386,13 @@ attr:   push    bx
         and     bx, 0707h               ; BL background, BH foreground
         cmp     bl, bh
         mov     bl, 0
-        jbe     .u
-        mov     bl, 1
-.u:     and     ah, 0F7h
+        jb      .u
+        ja      .i
+        mov     al, ' '                 ; (hidden)
+        or      bh, bh
+        jz      .u
+.i:     mov     bl, 1
+.u:     and     ah, 77h                 ; (bright and blink aside)
         cmp     ah, 1
         jne     .x
         or      bl, 2

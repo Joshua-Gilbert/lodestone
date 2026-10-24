@@ -167,6 +167,11 @@ def t_rom2():
     check('LODE2.BIN: a data ROM (system type 2, not bootable, id L2); ROM 1 has no DEFRAG.COM now',
           t[2] == 2 and t[3] == 0 and struct.unpack_from('<H', t, 19)[0] == mkrom.ROM_ID_DATA
           and b'DEFRAG  COM' in img[1024:2048] and b'DEFRAG  COM' not in rom()[1024:2048], t[:24].hex())
+    fnt = open(os.path.join(GOS, 'fonts', 'TERM.FNT'), 'rb').read()
+    e = img[1024:2048].find(b'TERM    FNT')
+    c = struct.unpack_from('<H', img, 1024 + e + 26)[0] if e >= 0 else 0
+    check('LODE2.BIN: TERM.FNT (the terminal window\'s font) on it as built (4,096 bytes, one-sector clusters from sector 4)',
+          e >= 0 and struct.unpack_from('<I', img, 1024 + e + 28)[0] == 4096 and img[(c + 2) * 512:(c + 10) * 512] == fnt, (e, c))
     big = bytes((i * 7 + i // 512) & 0xFF for i in range(60000))
     small = [('F%02d.TXT' % i, b'file %d\r\n' % i) for i in range(18)]    # (ROM 2's root past 16 entries: R:'s sector 6)
     r2 = mkrom.volume([('DEFRAG.COM', defrag), ('BIG.BIN', big)] + small, data=True)[0]

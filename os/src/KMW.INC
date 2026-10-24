@@ -911,6 +911,24 @@ mw_rec: push    ax
         pop     ax
         ret
 
+; task AL, its count AH: shown in a session's terminal window (MT_TOPEN
+; gave it the task)?  CF if not.  All kept
+mw_owns:
+        pusha
+        mov     dx, ax
+        mov     al, 1
+.l:     call    mw_rec
+        cmp     byte [cs:bp+SE_USE], 0
+        je      .n
+        cmp     dx, [cs:bp+SE_TASK]     ; (SE_TASK, SE_TGEN)
+        je      .y
+.n:     inc     al
+        cmp     al, MW_MAX
+        jbe     .l
+        stc
+.y:     popa
+        ret
+
 ; -> AL = an unused session, BP = its record (there is one: mw_n < MW_MAX)
 mw_free:
         mov     al, 1

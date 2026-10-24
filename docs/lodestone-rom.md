@@ -26,7 +26,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 
 ## ROM 2
 
-`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `L2`), in the same layout as ROM 1. It holds **DEFRAG.COM** and **TERM.FNT** (the terminal window's font: without ROM 2 a text program starts full screen, as without windows) now; what doesn't fit in ROM 1 goes there.
+`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `L2`), in the same layout as ROM 1. It holds **DEFRAG.COM** and **TERM.FNT** (the terminal window's font: without ROM 2 a text program, and CODE-P's prompt, starts full screen as a task in front, as without windows) now; what doesn't fit in ROM 1 goes there.
 
 - **R: is both ROMs' files** (`KROM.INC`), whichever socket each is in:
   - with ROM 2 in, R: is one volume the read routine makes of the two: its FAT two sectors (ROM 1's entries, then ROM 2's, their clusters numbered on past ROM 1's: ROM 2's cluster n is R:'s n + 252), its root 64 entries (ROM 1's 32, then ROM 2's), then ROM 1's clusters and ROM 2's. Nothing is copied or kept: each FAT and root sector is made as it is read, from the two ROMs' own (ROM 1's empty entries read as deleted ones, so that a search goes on to ROM 2's; ROM 2's volume label is left out);
