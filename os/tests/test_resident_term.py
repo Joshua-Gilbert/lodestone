@@ -80,7 +80,8 @@ class Res(CK.KernelHarness):
         return int.from_bytes(b, 'little') if n <= 2 else b
 
     def term_cells(s):
-        raw = s.m.ems_read(s.page(), s.rsym['shadow'], 24 * 160)
+        sh = s.m.ems_page(s.m.rd(s.stub(), s.sym['r_hw'] + 3, 1)[0])       # (the fourth page, window 3)
+        raw = s.m.ems_read(sh, 0, 24 * 160)
         return ([bytes(raw[r * 160:(r + 1) * 160:2]) for r in range(24)],
                 [bytes(raw[r * 160 + 1:(r + 1) * 160:2]) for r in range(24)])
 
@@ -738,17 +739,18 @@ def t_driver():
                   and abs(kok - st['tx_frames']) <= 1           # (the two counts read a frame apart at most)
                   and h.rv('n_bad', 2) == 0, (ok, h.rv('ksum'), kok, st))
             check('[%s] ... and its own go with the check the driver adds (02h AL=3), every one good at the Pi'
-                  % what, st.get('rx_fletcher') == st.get('rx_frames') > 5 and not st.get('rx_bad'), st)
+                  % what, h.rv('ksum') == 1 and h.rv('use_fl') == 1 and st.get('rx_fletcher') == st.get('rx_frames') > 5
+                  and not st.get('rx_bad'), st)
             if irq:
                 check('the SRQ interrupt\'s count found (AH=0Eh, the kernel\'s) and GF_WAKE offered',
                       seg == b'\x60\x00' and h.rv('wake_ok') == 1 and h.link.grid_wake, (seg, h.rv('wake_ok')))
                 check('... each answer taken at its SRQ, the PIT never asked: %d serial polls for %d frames'
-                      % (polls, st['rx_frames']), polls <= st['rx_frames'] * 1.2 + 2 and dues == 0, (polls, dues, st))
+                      % (polls, st.get('rx_frames', 0)), polls <= st['rx_frames'] * 1.2 + 2 and dues == 0, (polls, dues, st))
                 check('... asleep (HLT) till the SRQ while an answer is due: %d times' % naps, naps > 0, naps)
             else:
                 check('GPIBIRQ=0: never asleep while an answer is due', naps == 0, naps)
                 check('GPIBIRQ=0: no count, no GF_WAKE, polled by the PIT (%d looks; %d serial polls for %d frames)'
-                      % (dues, polls, st['rx_frames']), seg == b'\x00\x00' and h.rv('wake_ok') == 0
+                      % (dues, polls, st.get('rx_frames', 0)), seg == b'\x00\x00' and h.rv('wake_ok') == 0
                       and not h.link.grid_wake and dues > 0, (seg, h.rv('wake_ok'), polls, dues))
             check('[%s] ... never the driver\'s SRQ check (AH=0Bh)' % what, h.srq_calls == 0, h.srq_calls)
             # the Pi has something for the console once it is quiet (polling once a second): with the
@@ -760,7 +762,7 @@ def t_driver():
             ms, rang = (h.m.us - t0) / 1000, h.link.stats.get('rang', 0) - r0
             if irq:
                 check('a title from the Pi while the console is quiet: it rings, the band has it in %.0f ms' % ms,
-                      ok and rang > 0 and ms < 300, (ok, rang, ms, h.band()))
+                      ok and rang > 0 and ms < 100, (ok, rang, ms, h.band()))
                 # the console down while TYPE's keys wait: nothing rings
                 res = {}
                 th = threading.Thread(target=lambda: res.update(v=h.router.term.tools.request(
@@ -775,6 +777,24 @@ def t_driver():
                 res = res.get('v')
                 check('... while TYPE\'s keys wait (the console down): no ring, the bridge holds no SRQ',
                       down and not quiet and res and not res[1], (down, quiet, h.link.stats, res))
+                # a TYPE the Pi gives up on while its keys still wait (the console still down): no ring
+                # after it either, until the console is heard from again
+                h.run_until(lambda: in_step(h, 0.1), 10)
+                g, res = h.router.term.grid, {}
+                def give_up():
+                    try: res['v'] = g.type_keys(b'\xff\xff\xc8', timeout=1)        # (an 11 s wait; 1 s for it)
+                    except Exception as e: res['e'] = str(e)
+                th = threading.Thread(target=give_up); th.start()
+                down = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 20)
+                h.pi_wait(lambda: not th.is_alive(), 10); th.join(10)
+                r1 = h.link.stats.get('rang', 0)
+                h.link.send(glp.P_TITLE, b'Given up on')
+                rings = h.run_until(lambda: h.up() or not bridge_quiet(h) or h.link.stats.get('rang', 0) != r1, 2)
+                gated = not h.router.term.may_ring()
+                back = h.wait(lambda: h.up(), 20) and h.pi_wait(lambda: not g.type_out, 10)
+                check('... a TYPE given up on while its keys wait: no ring while the console is down, and rings '
+                      'again once it is back', down and 'did not answer' in res.get('e', '') and not rings and gated
+                      and back and h.router.term.may_ring(), (down, res, rings, gated, back, h.link.stats))
                 # the user goes back: nothing rings while EMSUSE runs, whatever the Pi has
                 h.run_until(lambda: in_step(h, 0.1), 10)
                 h.press(HOT)
@@ -794,6 +814,31 @@ def t_driver():
             check('[%s] no link failure, nothing wrong in gridlink\'s log' % what, ok, why)
         finally:
             h.close()
+    # an instrument of the paused program holding SRQ: the bridge's SRQ makes no edge, so no interrupt;
+    # an answer found at a tick's look says so, and the console polls by the PIT (a boot of its own)
+    h = Res(pico=True); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        h.press(HOT)
+        up = h.has('Welcome to Claude Code', 30) and in_step(h)
+        h.m.chip.int_line = lambda: bool(h.m.chip.imr2 & 0x40)
+        d1, f1 = h.pit_dues, h.link.stats['rx_frames']
+        h.term_type('diff'); h.press(ENTER)
+        ok = h.has('int rate = 5', 60) and in_step(h)
+        check('the SRQ line held by another device: the console finds it out (%d frames) and polls by the PIT '
+              '(%d looks)' % (h.link.stats['rx_frames'] - f1, h.pit_dues - d1),
+              up and ok and h.rv('srq_held') == 1 and h.pit_dues > d1, (up, ok, h.rv('srq_held'), h.screen()))
+        n2, f2 = h.naps, h.link.stats['rx_frames']
+        h.term_type('big'); h.press(ENTER)
+        ok = h.has('line 59', 60) and in_step(h)
+        check('... and from then on never asleep waiting for an SRQ that can\'t come (%d frames)'
+              % (h.link.stats['rx_frames'] - f2), ok and h.naps == n2 and h.link.stats['rx_frames'] - f2 > 3,
+              (ok, h.naps - n2))
+        ok, why = clean(h)
+        check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
 
 
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver]

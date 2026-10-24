@@ -356,7 +356,36 @@ CLAUDE.COM took up the kernel driver's new calls in 1.21 and 1.23; the console n
 - **GF_WAKE**: with the interrupt, the console's HELLO offers it, so the Pi rings (an SRQ) when it has something for a quiet console, and the console POLLs at once rather than at its next idle POLL, once a second. In the emulator a title from the Pi reached the band in 9 ms, against 837 ms polled.
 - **Never a ring for the program.** gridlink rings only while the console is up: not once the user has gone back (EVENT away), and not while TYPE's keys play (the console is down then without saying so: `Grid.typing`). `Term.may_ring` says so, and `Link.ring_check` takes back any ring it gave meanwhile.
 - **The next frame straight after an answer** (`LINK_CHAIN`), as CLAUDE.COM; not while the console is going back, when only what is queued goes.
-- **Cost:** RCON.BIN 6,822 bytes (+340), CLAUDE.COM 21,438. The console's page is full: 4 bytes spare before the 12 the reply's first bytes need. Conventional memory: the stub is unchanged (816 bytes with its MCB).
-- **Not changed:** the program's SRQ latch still gets the bridge's SRQs while the console is up: the driver ORs every SRQ it sees into it (the interrupt, and its polled reads of ISR2 before 1.21 too). TM5000G may see one SRQ after a pop-up and serial-poll its instruments for nothing. Taking those out would need a driver call to put the latch back.
-- **Tests** (`test_resident_term.py`, `t_driver`, 18 checks, on the Pico bridge's model, which can ring): every frame from the Pi passed by the driver's sum and every frame of the console's good at the Pi; the count found, GF_WAKE offered and taken up by gridlink; one serial poll an answer and the PIT never asked; the console asleep while answers are due; a title from the Pi rings a quiet console; no ring and no SRQ held by the bridge while TYPE's keys wait, nor once the user has gone back; never AH=0Bh. With `GPIBIRQ=0`: no count, no GF_WAKE, polled by the PIT, never asleep while an answer is due, the title at the next idle POLL, no ring.
-- **Controls**, each run against the change it guards and failing a check: gridlink ringing whatever the console's state (both no-ring checks), TYPE not counted (the TYPE one), the user's going back not counted (the going-back one); the console without the driver's check (its frames counted by its own scan), without GF_WAKE or without the count (no ring, the title at the next idle POLL), waiting by the PIT (it is asked), not sleeping while an answer is due. AH=0Bh put back into the console doesn't fit in its page, so it can't be built: that one is to run again once the page has room.
+- **A fourth EMS page.** Term's shadow (3,840 bytes) moves out of the console's page into a page of its own in window 3 (EC00h). The stub maps all four of its pages and, as before, saves and puts back all four of the program's windows. `CLAUDE /R` now asks for 4 free pages (64 KB); the stub is version 4. TERMLINK's CRC reads ES:SI in RCON (ES = CS but for the shadow's CRC in HELLO). The console's page has 3,811 bytes free (it had 4), which files and GPIB in the pop-up can use next.
+- **An SRQ line held by another device.** When an instrument of the program's holds SRQ (asking for service), the bridge's SRQ makes no edge and no interrupt, so each answer would wait for the next tick (~55 ms, against 2-4 ms polled). An answer found at a tick's look with no interrupt for it sets `srq_held`: from then on, until the next HELLO, the link polls by the PIT and doesn't sleep for an SRQ. This is in TERMLINK, so CLAUDE.COM does it too.
+- **A TYPE given up on.** If the Pi's call times out while the program isn't yet back at a key call (a busy program, or keys it never reads), `Grid.type_out` keeps the rings off until the console is heard from (TYPE's reply comes first) or says HELLO.
+- **Cost:** RCON.BIN 6,858 bytes (+376), CLAUDE.COM 21,506 (+408); EMS 64 KB (+16 KB). Conventional memory is unchanged: the stub is still 816 bytes with its MCB, as `r_hw`'s fourth byte fits in its paragraphs.
+- **Not changed:**
+  - While the console is up, the program's SRQ latch still gets the bridge's SRQs. The driver ORs every SRQ it sees into the latch: from the interrupt, and from its polled reads of ISR2 before 1.21 too. So TM5000G may see one SRQ after a pop-up and serial-poll its instruments for nothing. Taking those out would need a driver call to put the latch back.
+  - A TYPE's own REQUEST isn't rung for: the rings are off from the moment it is queued, so the console fetches it at its next idle POLL (up to a second).
+  - A ring that comes just after the idle console's last look can wait a tick.
+- **Tests** (`test_resident_term.py`, `t_driver`, 22 checks, on the Pico bridge's model, which can ring):
+  - every frame from the Pi passed by the driver's sum, and every frame of the console's was good at the Pi;
+  - the count was found, GF_WAKE offered and taken up by gridlink;
+  - one serial poll an answer, and the PIT never asked;
+  - the console asleep while answers are due;
+  - a title from the Pi rings a quiet console;
+  - no ring, and no SRQ held by the bridge, while TYPE's keys wait, after a TYPE given up on (until the console is back), or once the user has gone back;
+  - never AH=0Bh;
+  - with `GPIBIRQ=0`: no count, no GF_WAKE, polled by the PIT, never asleep while an answer is due, the title at the next idle POLL, no ring;
+  - in a boot of its own, the SRQ line held: the console finds that out, polls by the PIT and never sleeps for an SRQ again.
+- **Controls**, each run against the change it guards, and each failed a check:
+  - gridlink ringing whatever the console's state (both no-ring checks);
+  - TYPE not counted, or a TYPE given up on not counted (their checks);
+  - the user's going back not counted;
+  - the console without the driver's check (its frames counted by its own scan);
+  - without GF_WAKE, or without the count (no ring; the title at the next idle POLL);
+  - waiting by the PIT (it is asked);
+  - not sleeping while an answer is due;
+  - AH=0Bh put back (47 calls);
+  - no held-line fallback (the PIT never asked);
+  - sleeping with the line held.
+- **Review** (three reviewers, then the fixes re-reviewed). It found:
+  - the TYPE given up on, which reopened the rings while the console was still down;
+  - the held line's tick-per-answer;
+  - a few test checks that proved less than they said: the driver's check tied to `ksum`, and the ring's time bound tightened from 300 to 100 ms.

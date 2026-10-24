@@ -45,11 +45,14 @@ class Grid:
         s.info = {}
         s.after_run = None                     # called when a RUN ends (Term: a picture is gone)
         s.typing = 0                           # TYPEs waiting: resident Claude's console is down meanwhile
+        s.type_out = False                     # one given up on (timed out): the console may be down still,
+                                               #  until we hear from it (a REPLY: TYPE's own comes first)
 
     # ---- plumbing ------------------------------------------------------
     def on_reply(s, body):
         if len(body) < 2: return
         with s.cv:
+            s.type_out = False
             if body[0] in s.waiting:
                 s.replies[body[0]] = (body[1], bytes(body[2:]))
                 s.cv.notify_all()
@@ -61,7 +64,7 @@ class Grid:
         """The calls waiting now fail with this: the GRiD restarted the link,
         or the user went back from resident Claude's console to the program."""
         with s.cv:
-            if restart: s.generation += 1
+            if restart: s.generation += 1; s.type_out = False
             s.ended += 1; s.why = why
             s.cv.notify_all()
 
@@ -203,11 +206,14 @@ class Grid:
         resident Claude's console.  The answer comes once they have played,
         or CODE-\\ stopped them: (all played?, the screen then as SCREEN
         gives it, or None if its mode isn't one the console keeps)."""
-        with s.cv: s.typing += 1
+        with s.cv: s.typing += 1; ended = s.ended
+        done = False
         try:
-            st, r = s.call(glp.OP_TYPE, bytes(keys), timeout=timeout)
+            st, r = s.call(glp.OP_TYPE, bytes(keys), timeout=timeout); done = True
         finally:
-            with s.cv: s.typing -= 1
+            with s.cv:
+                s.typing -= 1
+                if not done and s.ended == ended: s.type_out = True    # (not ended by a HELLO or EVENT away)
         if st not in (0, 0xF5) or not r: raise GridError(errtext(st), st)
         return bool(r[0] & 1), (r[1:] if st == 0 else None)
 
