@@ -60,7 +60,7 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_plot` | until allowed | a line or scatter plot on the GRiD's screen, from data or a Pi file (a trace saved with `save_to`); drawn in one bit with the GRiD's own font |
 | `grid_image` | until allowed | a picture file from `~/grid` (a matplotlib PNG), dithered to the GRiD's screen |
 | `grid_pick` | until allowed | asks the user to click points on the plot or picture, and returns them (data coordinates, the nearest point) |
-| `grid_program` | until allowed | resident Claude only: the DOS program its console is popped up over (its name and screen) |
+| `grid_program` | until allowed | resident Claude only: the DOS program its console is popped up over (its name and screen); from CLAUDE 1.11 also once the user is back in it, its screen as it is then |
 | `grid_type` | every time | resident Claude only: keys into that program (`1A{WAIT 30}`); the console goes while they play and comes back with the program's screen |
 
 While Claude Code is in resident Claude's console (CLAUDE /R, CODE-\ over a
@@ -70,7 +70,8 @@ own disk-error handler, Lodestone's tasks' key wait, or DEFRAG); `grid_command`,
 `grid_info`, `grid_screen` and the pictures don't: the program holds the
 GRiD. Outside it, those two say no program is paused. Once the user has
 gone back to the program (CODE-\ again), the file and GPIB tools go on in
-the background, between the program's key calls (CLAUDE 1.10), where the
+the background, between the program's key calls (CLAUDE 1.10; and
+`grid_program`, the screen as it is then, from CLAUDE 1.11), where the
 bridge can be quiet: the Pico 2 with firmware 2026-10-24 or later, which
 then raises no SRQ for the program to see. The rest, and every tool with
 an older bridge, say at once that the user has gone back, until the
