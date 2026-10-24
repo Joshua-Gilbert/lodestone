@@ -29,6 +29,8 @@
 ;  The mouse: a click puts the cursor there; a drag selects, and then a
 ;  command (CODE-E, CODE-M, CODE-D, Backspace or Delete) works on what it
 ;  selected; a right click in the text gives a menu of the commands.
+;  CODE-Z cuts and CODE-C copies a drag's selection to the clipboard every
+;  .RUN shares (UI_CLIP); CODE-V pastes it (over a drag's selection).
 ;
 ;  With MULTITASK=1 it is a window .RUN (M8b): a window that moves,
 ;  closes and is resized, with the text, its rule and the status line
@@ -47,6 +49,7 @@ TEXT_Y  equ 24
 HSTEP   equ 20                          ; horizontal scroll step (columns)
 ROWB    equ 160                         ; a row in the shadow: 80 chars, 80 marks
 IOB     equ 1024                        ; file I/O chunk
+IOOFF   equ NROWS * ROWB                ; where it is in the shadow's block
 M_EDIT  equ 0                           ; modes
 M_SEL   equ 1                           ; making a selection (cmd 0: a drag's,
                                         ;  the command still to come)
@@ -84,7 +87,10 @@ start:  mov     di, fname               ; the argument: the file to open
 .full:  mov     si, redraw
         call    UI_SETREDRAW
 .shd:   call    geom
-        mov     bx, (NROWS * ROWB + 15) / 16    ; the shadow copy
+        mov     bx, (IOOFF + IOB + 15) / 16     ; the shadow copy, then the I/O
+                                                ;  buffer (outside the UI
+                                                ;  segment: with MULTITASK=1 its
+                                                ;  slots are tight)
         call    UI_ALLOC
         jc      .nomem
         mov     [sseg], ax
@@ -1409,13 +1415,39 @@ rclick: cmp     byte [mode], M_POINT
         call    update                  ; (the cursor there under the menu)
         pop     cx
         pop     bx
-.m:     mov     si, menu
-        mov     ax, NMENU
+.m:     push    bx                      ; the menu: Cut and Copy with a drag's
+        push    cx                      ;  selection, Paste with something to
+        mov     al, 2                   ;  paste, then the rest
+        call    UI_CLIP
+        mov     dx, cx                  ; DX = what the clipboard holds
+        xor     bx, bx                  ; BX = the item, DI = the menu's
+        xor     di, di
+.i:     cmp     bx, 2 * 2
+        jae     .np
+        call    drag_sel
+        jne     .s
+        jmp     short .t
+.np:    jne     .t
+        or      dx, dx
+        jz      .s
+.t:     mov     ax, [items + bx]
+        mov     [mbuf + di], ax
+        mov     ax, [items_do + bx]
+        mov     [mdo + di], ax
+        add     di, 2
+.s:     add     bx, 2
+        cmp     bx, NITEMS * 2
+        jb      .i
+        xchg    ax, di
+        shr     ax, 1                   ; AL = how many (AH 0: the first lit)
+        pop     cx
+        pop     bx
+        mov     si, mbuf
         call    UI_MENU
         jc      .x
         mov     bx, ax
         add     bx, bx
-        jmp     [menu_do + bx]
+        jmp     [mdo + bx]
 .x:     ret
 
 ; the menu's commands: Erase, Move and Duplicate on a drag's selection,
@@ -1445,6 +1477,86 @@ m_ed:   call    drag_sel
         call    k_cancel_cmd
         pop     di
 .k:     jmp     di
+
+; ---- the clipboard (UI_CLIP, every .RUN's): Cut, Copy, Paste ----------
+; Cut and Copy: a drag's selection into it (it stays selected, for
+; Copy); else a beep.  More than it holds (16 KB): said, nothing changes
+k_scut: call    k_scopy
+        jc      .x
+        jmp     k_serase
+.x:     ret
+
+k_scopy:
+        call    sel_range
+        mov     cx, [sel_b]
+        sub     cx, [sel_a]
+        jcxz    .b
+        mov     di, [sel_a]             ; (in one piece: the cursor, the gap,
+        cmp     di, [gap_s]             ;  is one of its ends)
+        jb      .c
+        add     di, [gap_e]
+        sub     di, [gap_s]
+.c:     push    es
+        mov     es, [bseg]
+        xor     al, al
+        call    UI_CLIP
+        pop     es
+        jnc     .x
+        cmp     ax, 8
+        jne     io_error
+        mov     si, s_clipbig
+        call    UI_MSG
+        stc
+.x:     ret
+.b:     call    UI_BEEP
+        stc
+        ret
+
+; Paste: what it holds at the cursor, over a drag's selection (that goes
+; first); no room for it: said, nothing changes
+k_paste:
+        mov     al, 2
+        call    UI_CLIP                 ; CX = what it holds
+        jcxz    .b
+        mov     ax, [gap_e]             ; AX = the room: the gap's, and the
+        sub     ax, [gap_s]             ;  selection's it replaces
+        call    drag_sel
+        jne     .r
+        call    sel_range
+        add     ax, [sel_b]
+        sub     ax, [sel_a]
+.r:     cmp     cx, ax
+        ja      full
+        call    drag_sel
+        jne     .p
+        mov     ax, [sel_a]
+        mov     [fix_a], ax
+        mov     ax, [sel_b]
+        mov     [fix_b], ax
+        push    cx
+        call    erase_range
+        call    k_cancel_cmd
+        pop     cx
+.p:     push    es
+        mov     es, [bseg]
+        mov     di, [gap_s]             ; into the gap
+        mov     al, 1
+        call    UI_CLIP                 ; -> CX = how many
+        jc      .e
+        push    cx
+        call    count_lf
+        pop     cx
+        pop     es
+        add     [curline], dx
+        add     [nlines], dx
+        add     [gap_s], cx
+        mov     byte [changed], 1
+        mov     byte [dirty], 2
+        mov     word [goal], 0FFFFh
+        ret
+.e:     pop     es
+        jmp     io_error
+.b:     jmp     UI_BEEP
 
 ; ---------------------------------------------------------------------
 ;  the commands
@@ -2013,7 +2125,12 @@ ask_name:                               ; -> fname, CF if cancelled
 ; read the file SI into the text at the cursor (CR LF -> LF, stops at ^Z).
 ; CF: AX = DOS error (8: it doesn't fit; what fitted stays)
 load_file:
-        call    UI_CRITERR
+        push    es
+        mov     es, [sseg]              ; (ES: the I/O buffer's block)
+        call    .do
+        pop     es
+        ret
+.do:    call    UI_CRITERR
         mov     dx, si
         mov     ax, 3D00h
         int     21h
@@ -2021,16 +2138,21 @@ load_file:
         mov     [hnd], ax
         mov     byte [pend_cr], 0
 .chunk: mov     bx, [hnd]
-        mov     dx, iobuf
         mov     cx, IOB
         mov     ah, 3Fh
+        push    ds
+        mov     dx, IOOFF
+        push    es
+        pop     ds
         int     21h
+        pop     ds
         jc      .err
         or      ax, ax
         jz      .eof
         mov     cx, ax
-        mov     si, iobuf
-.b:     lodsb
+        mov     si, IOOFF
+.b:     mov     al, [es:si]
+        inc     si
         cmp     al, 1Ah                 ; ^Z: the end
         je      .eof
         cmp     byte [pend_cr], 0       ; a CR waits: dropped before LF
@@ -2104,7 +2226,9 @@ save_as:
         int     21h
         jc      io_error
         mov     [hnd], ax
-        mov     di, iobuf               ; the text, a chunk at a time
+        push    es
+        mov     es, [sseg]              ; (ES: the I/O buffer's block)
+        mov     di, IOOFF               ; the text, a chunk at a time
         xor     bx, bx
         call    textlen
         mov     [tlen], ax
@@ -2114,16 +2238,17 @@ save_as:
         inc     bx
         cmp     al, 10
         jne     .s
-        mov     byte [di], 13
+        mov     byte [es:di], 13
         inc     di
-.s:     mov     [di], al
+.s:     mov     [es:di], al
         inc     di
-        cmp     di, iobuf + IOB - 2
+        cmp     di, IOOFF + IOB - 2
         jb      .c
         call    flush
-        jc      .werr
-        jmp     .c
+        jnc     .c
+        jmp     short .we
 .last:  call    flush
+.we:    pop     es
         jc      .werr
         mov     bx, [hnd]
         mov     ah, 3Eh
@@ -2154,20 +2279,24 @@ save_as:
         pop     ax
         jmp     io_error
 
-flush:  mov     cx, di                  ; iobuf .. DI to the file
-        sub     cx, iobuf
+flush:  mov     cx, di                  ; the I/O buffer (ES:IOOFF) .. DI to
+        sub     cx, IOOFF               ;  the file
         jcxz    .x
         push    bx
         mov     bx, [hnd]
-        mov     dx, iobuf
+        mov     dx, IOOFF
         mov     ah, 40h
+        push    ds
+        push    es
+        pop     ds
         int     21h
+        pop     ds
         pop     bx
         jc      .e
         cmp     ax, cx
         mov     ax, 39                  ; (short write: the disk is full)
         jne     .e
-.x:     mov     di, iobuf
+.x:     mov     di, IOOFF
         clc
         ret
 .e:     stc
@@ -2213,6 +2342,9 @@ sel_keys:
         dw 0
 
 drag_keys:                              ; (a drag's selection: cmd 0)
+        KEY(K_CODE_Z,     k_scut,       0)
+        KEY(K_CODE_C,     k_scopy,      0)
+        KEY(K_CODE_V,     k_paste,      0)
         KEY(K_CODE_E,     k_serase,     0)
         KEY(K_BKSP,       k_serase,     0)
         KEY(K_DEL,        k_serase,     0)
@@ -2229,6 +2361,9 @@ edit_keys:
         KEY(K_BKSP,     k_bksp,     0)
         KEY(K_DEL,      k_del,      0)
         KEY(K_INS,      k_ins,      0)
+        KEY(K_CODE_V,   k_paste,    0)
+        KEY(K_CODE_Z,   UI_BEEP,    0)  ; (Cut, Copy: a drag's selection first)
+        KEY(K_CODE_C,   UI_BEEP,    0)
         KEY(K_CODE_E,   k_erase,    0)
         KEY(K_CODE_M,   k_move,     0)
         KEY(K_CODE_D,   k_dup,      0)
@@ -2245,14 +2380,17 @@ kt_xfer equ $                           ; (with MULTITASK=1: K_CODE_X)
         KEY(K_ESC,      k_cancel,   0)
         dw 0
 
-help_keys:                              ; (only for the help window)
-        KEY(K_NONE, 0, h1)
+help_keys:                              ; (only for the help window: 18
+        KEY(K_NONE, 0, h1)              ;  lines, as many as it shows)
+        KEY(K_NONE, 0, hcp)
+        KEY(K_NONE, 0, hct)
         KEY(K_NONE, 0, h2)
         KEY(K_NONE, 0, h3)
         KEY(K_NONE, 0, h4)
         KEY(K_NONE, 0, h5)
         KEY(K_NONE, 0, h6)
         KEY(K_NONE, 0, h7)
+        KEY(K_NONE, 0, hps)
         KEY(K_NONE, 0, h8)
         KEY(K_NONE, 0, h9)
         KEY(K_NONE, 0, h10)
@@ -2300,10 +2438,14 @@ s_movesel   db 'Move: Make a selection and confirm',0
 s_dupsel    db 'Duplicate: Make a selection and confirm',0
 s_selband   db 'Cursor keys or the mouse select   CODE-B begins again   ESC cancels',0
 s_drag1     db 'Selected: CODE-E erases   CODE-M moves   CODE-D duplicates',0
-s_drag2     db 'Right click: the commands   ESC cancels',0
-NMENU       equ 6
-menu        dw mi1, mi2, mi3, mi4, mi5, mi6
-menu_do     dw m_erase, m_move, m_dup, m_find, m_subst, m_jump
+s_drag2     db 'CODE-Z cuts   CODE-C copies   Right click: menu   ESC cancels',0
+s_clipbig   db 'The clipboard holds 16 KB at most',0
+NITEMS      equ 9                       ; (the menu takes what applies)
+items       dw mic, mio, mip, mi1, mi2, mi3, mi4, mi5, mi6
+items_do    dw k_scut, k_scopy, k_paste, m_erase, m_move, m_dup, m_find, m_subst, m_jump
+mic         db 'Cut            CODE-Z',0
+mio         db 'Copy           CODE-C',0
+mip         db 'Paste          CODE-V',0
 mi1         db 'Erase          CODE-E',0
 mi2         db 'Move           CODE-M',0
 mi3         db 'Duplicate      CODE-D',0
@@ -2368,6 +2510,9 @@ o_tabs      db '8',0,'4',0,'2',0,0
 o_xfer      db 'Save',0,'Write to a file',0,'Include a file',0,0
 tabws       db 8, 4, 2
 h1          db 'Begin       CODE-B    Restart the selection',0
+hcp         db 'Copy        CODE-C    Copy the selection',0
+hct         db 'Cut         CODE-Z    Cut the selection',0
+hps         db 'Paste       CODE-V    Paste (over a selection)',0
 h2          db 'Duplicate   CODE-D    Duplicate selected text',0
 h3          db 'Erase       CODE-E    Erase selected text',0
 h4          db 'Find        CODE-F    Find specified text',0
@@ -2415,6 +2560,8 @@ cmd         resb 1
 anchor      resw 1
 press       resw 1                      ; where the left button went down
 dragged     resb 1                      ; 1: it has moved since
+mbuf        resw NITEMS                 ; the right click's menu: its items
+mdo         resw NITEMS                 ;  and what each does
 sel_a       resw 1
 sel_b       resw 1
 fix_a       resw 1
@@ -2458,11 +2605,11 @@ r_text      resb 42
 j_text      resb 8
 t_name      resb 72
 stat_last   resb 80
-iobuf       resb IOB                    ; a file read or written in one go:
-rowbuf      equ iobuf                   ;  these three are never live then
-stat_new    equ iobuf + ROWB            ;  (an I/O error is said in line
-line        equ iobuf + ROWB + 80       ;  once the file is closed)
-        times   -(ROWB + 80 + 96 > IOB) resb 1  ; (line is drawn from after
-                                        ;  redraw, which builds rowbuf and
-                                        ;  stat_new: it stays past them)
+rowbuf      resb ROWB                   ; a row as drawn,
+stat_new    resb 80                     ;  the status line as built,
+line        resb 96                     ;  and a message (drawn from after
+                                        ;  redraw, which builds the two
+                                        ;  before it: it stays past them).
+                                        ;  (The file I/O buffer is in the
+                                        ;  shadow's block, at IOOFF)
 run_bss_end:

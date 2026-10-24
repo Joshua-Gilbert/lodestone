@@ -956,7 +956,7 @@ The third of the four steps toward right-click editing in Write. Write asks for 
   - Editing, the cursor goes where the click was first; with a drag's selection, the selection is kept and the menu's Erase, Move and Duplicate work on it. Without one they start as their keys do (then make a selection and confirm). Find, Substitute and Jump end a drag's selection first.
   - After Find has shown what it found, a right click in the text (like a left one) is editing again.
   - Outside the text area (its window's frame, the rule, the status line, the band), and while pointing or making a selection for a command, a right click does nothing.
-  - Cut, Copy and Paste come in step 4, at the top of this menu.
+  - Cut, Copy and Paste came in step 4, at the top of this menu (below).
 - **With `MULTITASK=1`** the same in Write's window: the text area is the window's (`x0`, `y0`, `cols`, `rows`), and a drag lets the tasks behind run (`UI_MOUSE`'s wait, PR #85).
 - **Help:** two lines say it (the help window stays at 15 lines, so step 4's three fit in its 18): "Command, select, confirm (Return); or drag first" and "Ins: overtype.  Right click: menu.  Any key closes".
 - **Cost:** WRITE.RUN is 9,526 bytes (8,679 before; the core is unchanged). ROM 1 has 512 bytes left (1,536 before).
@@ -965,6 +965,24 @@ The third of the four steps toward right-click editing in Write. Write asks for 
   - `t_write` in test_mt (1 check more): in Write's window, moved, a drag selects (0 to 6), a right click gives its menu, Erase erases; a right click with none puts the cursor where it was in the window's text area.
   - `t_calc` in test_apps: SYSTEM.RUN and UITEST.RUN still declare API 4, WRITE.RUN 8.
   - Nineteen mutations each fail a check: no drag (the button's state not followed), no anchor where the button went down, no command cleared for a drag's own selection, a click not ending one, a drag back to its start leaving an empty one, no scroll below the text area, no keys of its own for a drag's selection, Backspace not erasing it, the selection not kept for a right click, a menu while pointing, a menu outside the text area, the menu's Erase not on the selection, Jump from the menu not ending it, a right click not ending Found, the cursor not moved to a right click, an emptied selection taking the command, Delete not erasing one, Return not beeping (it ended one), ESC leaving Write. Untested: a drag left of a window's text area while it is scrolled sideways (the whole screen has no room left of its text; with no sideways scroll, a column to the left is column 0 either way).
+
+## Write's Cut, Copy and Paste (the clipboard, 2026-10-23)
+The last of the four steps toward right-click editing in Write: Cut, Copy and Paste through the clipboard every `.RUN` shares (`UI_CLIP`).
+- **Keys:**
+  - With a drag's selection up, **CODE-Z** cuts it (into the clipboard, out of the text) and **CODE-C** copies it (still selected). Without one, both beep. A selection of more than 16 KB is refused: "The clipboard holds 16 KB at most", and the clipboard keeps what it held.
+  - **CODE-V** pastes what the clipboard holds at the cursor, or over a drag's selection, which goes first. The cursor ends after it, and lines and the status line count it. An empty clipboard: a beep. No room in the text for it: "Out of memory", and nothing changes.
+  - The bytes go as Write holds them, lines ending in LF. Another `.RUN`, or Write again after it has ended (the core keeps the clipboard), pastes them; with `MULTITASK=1` so does another Write's window.
+- **The right click's menu** takes what applies: Cut and Copy with a drag's selection, Paste with something to paste, then Erase, Move, Duplicate, Find..., Substitute... and Jump.... Left out, not greyed.
+- **The band** for a drag's selection says "CODE-Z cuts   CODE-C copies   Right click: menu   ESC cancels" on its second line. **Help** has the three, in their places: 18 lines, all the help window shows.
+- **Room, with `MULTITASK=1`:** two Writes and the calculator still fit in the UI segment together. That took two changes, as Write grew 685 bytes:
+  - **Write's file I/O buffer** (1 KB) is in its shadow's block now (`IOOFF`, outside the UI segment), not its BSS; the row, the status line and a message that shared it have their own 336 bytes.
+  - **MT reads a window `.RUN`'s fixups into its stack's room** (`mw_load`): past its BSS, unused until it runs, not on top of the BSS. A slot was its image, the larger of its BSS and its fixups, and its stack; now it is its image, its BSS and the larger of its stack (2,560 bytes) and its fixups. Write's slot is 12,080 bytes, 688 fewer than before. LODEMT.SYS grows by 22 bytes.
+- **Cost:** WRITE.RUN is 10,211 bytes (9,526 before). ROM 1 is full: no sector left (512 bytes before). LODEMT.SYS 17,506 bytes (17,484).
+- **Tests:**
+  - `t_write_clip` in test_apps (9 checks): with the clipboard empty and nothing selected, no Cut, Copy or Paste in the menu, and CODE-C, CODE-Z, CODE-V do nothing (the text not even marked changed); a drag from right to left (the selection past the cursor), CODE-C: in the clipboard (CLIP.$$$ here, no EMS), still selected; CODE-V after a click; CODE-Z; CODE-V over a drag's selection; the menu's Paste with nothing selected, and Cut, Copy and Paste with a selection (Cut chosen); a whole line copied and pasted at the end (a line more); saved, quit, and Write again pastes it; 19,500 bytes refused, then 194 copied; text typed at the start, then copied from right to left (after the gap); an emptied selection copied: a beep, the clipboard as it was.
+  - `t_write` in test_mt: what the first Write's window copied, CODE-V in a second Write's, saved in its file; two Writes and the calculator side by side as before.
+  - Eleven mutations each fail a check: Cut not erasing, an empty selection copied (the clipboard emptied), error 8 not said as such, Paste not over the selection, its lines not counted, Cut and Copy in the menu with nothing selected, Paste in it with nothing to paste, an empty clipboard pasted (the text marked changed), MT applying the fixups from where they no longer are (`kmwsi`: every window .RUN broken) or the slot sized by the fixups alone (`kmwslot`: TASKS.RUN then fits beside two Writes and the calculator), and the file written from the wrong segment. One is equivalent: the copy of a selection past the cursor read from before the gap. The gap only gets there by moving back over that text, which leaves an exact copy of it, and any edit ends the selection first.
+  - Untested: Paste with no room in the text (a 64 KB buffer).
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
