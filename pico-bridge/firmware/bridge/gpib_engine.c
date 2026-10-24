@@ -44,7 +44,6 @@ static uint8_t addr, stb;
 static uint16_t gen;
 static uint32_t req_seen, last_ifc_ren, rsv_seq_seen, rsv_served, session_seen;
 static bool auto_rsv, reply_ready;
-static bool quiet;                                      // CONFIG bit 2: never drive SRQ (the byte as ever)
 static uint32_t eoi_consumed, auto_served;              // auto mode: replies taken off the ring / announced
 static bool bell;                                       // auto mode: the Pi rang (F_WAKE) for generation bell_gen
 static uint16_t bell_gen;
@@ -135,8 +134,8 @@ INL void cfg_talk(void) {
 }
 
 static bool srq_on;
-INL void set_srq(void) {
-  if (rsv && online && !quiet) { hal_clr(SRQ_M); if (!srq_on) { srq_on = true; EV(E_SRQ); } }
+INL void set_srq(void) {                               // (quiet read as it is now: no window after a CONFIG)
+  if (rsv && online && !SH.quiet) { hal_clr(SRQ_M); if (!srq_on) { srq_on = true; EV(E_SRQ); } }
   else { hal_set(SRQ_M); srq_on = false; }
 }
 
@@ -496,7 +495,6 @@ static void RAMFUNC(apply_requests)(void) {
   stb = SH.stb;
   rsv_seq_seen = SH.rsv_seq;
   auto_rsv = SH.auto_rsv;
-  quiet = SH.quiet;                                     // (set_srq below lets SRQ go, or raises a waiting one)
   // A service request is asserted once per STB-with-rsv from the Pi, and stays served after the poll.
   rsv = SH.rsv && rsv_seq_seen != rsv_served;
   if (SH.session_seq != session_seen) {                 // the Pi started a new session: start clean

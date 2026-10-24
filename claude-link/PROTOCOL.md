@@ -253,8 +253,8 @@ flags byte).
 
 When the user goes back to the program (CODE-\ in the console; not when
 it goes for TYPE's keys), the console sends EVENT 04h (away), before the
-keys typed so far. The Pi ends the calls waiting for the GRiD and refuses new
-ones until the next HELLO, instead of waiting for an answer that can't
+keys typed so far. Without the background (below), the Pi ends the calls
+waiting for the GRiD and refuses new ones until the next HELLO, instead of waiting for an answer that can't
 come while the program runs. A REQUEST that reaches the console on its
 way out gets no answer: the EVENT has ended it on the Pi.
 
@@ -272,10 +272,13 @@ has something it rings (WAKE: 40h, quietly), and the console POLLs, takes
 the REQUEST, runs it and sends its REPLY, polled by the PIT, until the Pi
 answers a POLL with a NOP. It draws nothing (the Pi sends no CELLS or
 TITLE meanwhile, and answers POLLs at once). A REQUEST taken on the way
-out runs in the first of these passes. File requests are refused there
-as at a pop-up (F7h, settled again each pass); SCREEN and TYPE get F6h. A
-failure, or a bridge that doesn't answer the serial poll, stops the passes
-until the next pop-up. Any HELLO from the GRiD makes the bridge loud
+out runs in the first of these passes (not one on the way out to TYPE's
+keys). Work left over from a pass that ran out of time (5 s) goes on at
+the next look. File requests where DOS is busy are refused as at a pop-up
+(F7h, settled again each pass); SCREEN and TYPE get F6h. A link failure
+in a pass stops the passes with an SDC to the bridge, which tells the
+Pi: it ends the calls it kept. A bridge that doesn't answer the serial
+poll stops them too. Either way, until the next pop-up. Any HELLO from the GRiD makes the bridge loud
 again. A call the GRiD hasn't taken when it times out (the program busy,
 not at a key call) is withdrawn on the Pi, so it can't run after it was
 said to fail.

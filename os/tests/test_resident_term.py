@@ -909,6 +909,9 @@ def t_bg():
         kinds = []                              # what the Pi sends the console while the user is away
         answer = h.link._answer
         h.link._answer = lambda k, p: (t.away and kinds.append(k), answer(k, p))
+        statuses = []                           # and the REPLYs' statuses from it meanwhile
+        on_reply = t.grid.on_reply
+        t.grid.on_reply = lambda b: (t.away and len(b) >= 2 and statuses.append(b[1]), on_reply(b))
         # a call on its way as the user goes back: not ended (as without the background), it runs there,
         # whether the console takes it on its way out (then the first look runs it) or the Pi rings later
         h.run_until(lambda: False, 3)           # (quiet: then the console polls once a second)
@@ -933,17 +936,20 @@ def t_bg():
               and looks['kept'] == 1, (quiet, back, res, looks['kept']))
         away = h.pi_wait(lambda: t.away and h.transport.proto.quiet, 10)
         vram0, bios0 = h.m.rd(0xB800, 0, 4000), h.m.rd(0x40, 0x49, 0x1E)
+        Y = h.m.Y                               # (the latch cleared, as after the program's AH=0Bh: any SRQ
+        h.m.wr(0x60, Y['gp_shadow2'], bytes([h.m.rd(0x60, Y['gp_shadow2'], 1)[0] & ~0x40 & 0xFF]))   #  shows)
         srq0 = srq_state(h)
         f0 = h.link.stats['rx_frames']
         check('back to EMSUSE: the stub looks at its key calls (r_bgon 1), the bridge made quiet',
               back and away and r_bgon(h) == 1, (back, away, r_bgon(h)))
-        n0, w0 = looks['n'], looks['work']
+        n0, w0, p0 = looks['n'], looks['work'], h.spolls
         h.run_until(lambda: False, 3)
         idle = [us for us, wk in looks['held'][-(looks['n'] - n0):] if not wk]
-        check('idle: a look every ~220 ms (%d in 3 s), a serial poll each, at most %d µs, nothing sent to the Pi'
-              % (looks['n'] - n0, max(idle or [0])), 10 <= looks['n'] - n0 <= 16 and looks['work'] == w0
+        check('idle: a look every ~220 ms (%d in 3 s), a serial poll each (%d), at most %d µs, nothing sent to the Pi'
+              % (looks['n'] - n0, h.spolls - p0, max(idle or [0])), 10 <= looks['n'] - n0 <= 16
+              and h.spolls - p0 == looks['n'] - n0 and looks['work'] == w0
               and idle and max(idle) < 3000 and h.link.stats['rx_frames'] == f0,
-              (looks['n'] - n0, looks['work'] - w0, idle[:5], h.link.stats['rx_frames'] - f0))
+              (looks['n'] - n0, h.spolls - p0, looks['work'] - w0, idle[:5], h.link.stats['rx_frames'] - f0))
         h.paint_stack()
         t.feed(b'\r\nWritten on the Pi meanwhile\r\n')        # (Claude Code's screen changes while away)
         r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
@@ -964,6 +970,14 @@ def t_bg():
         check('... gpib_read scan and gpib_send query (the DC5009\'s ID?)',
               r and not r[1] and r[0][0]['text'] == 'Responding addresses: 6, 14, 29' and r2 and not r2[1]
               and 'TEK/DC5009' in r2[0][0]['text'], (r, r2))
+        G, out = t.grid, {}
+        def scr():
+            try: out['s'] = G.call(glp.OP_SCREEN, b'\0', timeout=20)
+            except Exception as e: out['s'] = e
+        th = threading.Thread(target=scr); th.start()
+        h.run_until(lambda: not th.is_alive(), 20); th.join(10)
+        check('... a SCREEN sent anyway: the console answers F6h in the pass (it needs the console up)',
+              out.get('s') == (0xF6, b''), out)
         r = tool(h, 'grid_program', {})
         check('... grid_program needs the console: refused, the tools that work named',
               r and r[1] and 'in the background' in r[0][0]['text'] and 'grid_files' in r[0][0]['text'], r)
@@ -992,14 +1006,15 @@ def t_bg():
         check('the Pi sent the console nothing but REQUESTs and NOPs meanwhile (no CELLS, no TITLE: %d frames)'
               % len(kinds), kinds and set(kinds) <= {glp.P_REQUEST, glp.P_REQUEST | glp.MORE, glp.P_NOP},
               sorted(set(kinds)))
+        nreq = sum(1 for st in statuses if st != 0xF6)  # (the requests run: all but the SCREEN)
         h.k.key('a'); h.k.key('b')
         # the next pop-up: the count in the band, the bridge rings again
         gen = generation(h)
         h.press(HOT)
         up = popped(h, gen) and in_step(h)
-        check('the next pop-up: the band says how many requests ran meanwhile; what Claude Code wrote meanwhile '
-              'there; the bridge not quiet',
-              up and ' in background' in h.band() and 'Written on the Pi meanwhile' in h.screen() and not h.transport.proto.quiet and h.rv('srq_held') == 0,
+        check('the next pop-up: the band says how many requests ran meanwhile (%d); what Claude Code wrote '
+              'meanwhile there; the bridge not quiet' % nreq,
+              up and ('%d in background' % nreq) in h.band() and 'Written on the Pi meanwhile' in h.screen() and not h.transport.proto.quiet and h.rv('srq_held') == 0,
               (up, h.band(), h.transport.proto.quiet))
         h.press(HOT)
         h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
@@ -1317,11 +1332,13 @@ def t_bg_tm():
               and bridge_quiet(h), (h.srq_calls, h.nano.srq, h.nano.lnrdy))
         h.k.key('1'); h.k.key('A', settle=False)
         r = tool(h, 'gpib_send', {'action': 'query', 'address': 6, 'command': 'ID?'})      # (during auto-detect)
+        mid = h.m.text_screen()
         h.k.settle(60)
         scr = h.m.text_screen()
-        check('a query while TM5000G\'s auto-detect polls the bus: answered, and auto-detect finds FG5010, 8753D, '
-              'DC5009', r and not r[1] and 'TEK/FG5010' in r[0][0]['text']
-              and all(x in scr for x in ('FG5010', '8753D', 'DC5009')), (r, scr))
+        found = ('FG5010', '8753D', 'DC5009')
+        check('a query while TM5000G\'s auto-detect polls the bus: answered before it was done, and auto-detect '
+              'finds FG5010, 8753D, DC5009', r and not r[1] and 'TEK/FG5010' in r[0][0]['text']
+              and not all(x in mid for x in found) and all(x in scr for x in found), (r, mid, scr))
         ok, why = clean(h)
         check('no link failure, nothing wrong in gridlink\'s log', ok, why)
     finally:
@@ -1355,8 +1372,40 @@ def t_bg_mt():
         h.k.key('hi'); h.k.key(0x2C1A); h.k.key(ENTER)
         o = h.cmd('type hi.txt')
         check('... COPY CON goes on (the file has what was typed)', 'hi' in [l.strip() for l in o.split('\n')], o)
-        ok, why = clean(h)
-        check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
+        # a link failure in a pass (the Pi answers nothing): the console clears the bridge (SDC) and stops
+        # looking; the Pi, told of the SDC, ends the call at once and the tools say so
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        h.press(HOT)
+        h.wait(lambda: h.inpop() == 0, 5)
+        t = h.router.term
+        h.pi_wait(lambda: t.away, 10)
+        handle = h.link.handle
+        h.link.handle = lambda f: None
+        t0 = time.time()
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'}, 20, 40)
+        h.link.handle = handle
+        w = t.why_not('grid_files')
+        check('a link failure in a pass: no more looks (r_bgon 0), the call ended at the SDC (%.0f s), the tools '
+              'say the user has gone back' % (time.time() - t0), r_bgon(h) == 0 and r and r[1]
+              and 'stopped working in the background' in r[0][0]['text'] and w and 'no GRiD tool works' in w,
+              (r_bgon(h), r, w))
+        # the bridge gone (the next pop-up's background on again): one serial poll that fails, then no looks
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        h.press(HOT)
+        h.wait(lambda: h.inpop() == 0, 5)
+        on = r_bgon(h)
+        del h.m.chip.devices[7]
+        h.run_until(lambda: False, 2)
+        h.k.key('a'); h.k.key(ESC)
+        check('the bridge gone while away: the looks stop (r_bgon %d, then 0), the program goes on' % on,
+              on == 1 and r_bgon(h) == 0 and 'EMSUSE: 1 keys, 0 bad' in h.m.text_screen(), (on, r_bgon(h), h.m.text_screen()))
+        errs = [l for l in h.log if 'Traceback' in str(l)]
+        check('... nothing wrong in gridlink\'s log', not h.m.crash and not errs, (h.m.crash, errs))
     finally:
         h.close()
 

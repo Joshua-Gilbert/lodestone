@@ -272,7 +272,7 @@ rc_main:
 
 ; dos_ok: 1 if the file requests may call DOS (the header), after prog.
 ; The INT 16h call's frame on the stack the stub came on: the stub's pushes
-; (ES, DS, PUSHA), r_hot's return, then IP, CS.  -> ES = CS
+; (ES, DS, PUSHA, FLAGS), r_hot's or r_bg's return, then IP, CS.  -> ES = CS
 dos_check:
         mov     byte [dos_ok], 0
         les     bx, [parms]
@@ -281,7 +281,7 @@ dos_check:
         mov     ax, [es:bx + P_SS]      ; (SS, then SP)
         mov     bx, [es:bx + P_SS + 2]
         mov     es, ax
-        mov     ax, [es:bx + 2 + 2 + 16 + 2 + 2]        ; the INT 16h call's CS
+        mov     ax, [es:bx + 2 + 2 + 16 + 2 + 2 + 2]    ; the INT 16h call's CS
         push    cs
         pop     es
         jcxz    .m
@@ -359,10 +359,18 @@ bg_pass:
         mov     bx, 1                   ;  comes from a quiet bridge)
         mov     ah, 0Ah
         call    gg_call
+        jc      .z                      ; (the driver busy: not now)
         mov     [old_tmo], ax           ; (the program's)
         call    get_ticks
         mov     [now], ax
-        cmp     byte [req_ready], 0     ; (taken on the way down: run it now)
+        mov     al, [req_ready]         ; work left from the way down or from
+        or      al, [txq_n]             ;  a pass that ran out of time (a
+        or      al, [reply_busy]        ;  REPLY queued or under way, a NAK or
+        or      al, [nak_pending]       ;  a frame to send again, a frame in
+        or      al, [resend]            ;  flight): the Pi may have nothing to
+        or      al, [rq_more]           ;  ring for, so on with it now
+        jnz     .w
+        cmp     byte [lstate], LS_IDLE
         jne     .w
         mov     bl, [nano]
         mov     ah, 05h
@@ -372,7 +380,11 @@ bg_pass:
         test    al, 40h
         jz      .e
 .w:     mov     byte [bg_keep], 0
-        mov     bx, 2000                ; (the console's timeout for the work)
+        cmp     byte [lstate], LS_WAIT  ; (an answer due since an earlier pass:
+        jne     .wt                     ;  the bridge keeps it till it is read,
+        mov     ax, [now]               ;  so its 2 s from now, not from then)
+        mov     [t_sent], ax
+.wt:    mov     bx, 2000                ; (the console's timeout for the work)
         mov     ah, 0Ah
         call    gg_call
         les     bx, [parms]             ; DOS: as at a pop-up, for this call
@@ -1080,7 +1092,9 @@ rf_request:
         cmp     byte [quit], 0          ; (going back: the Pi has the EVENT;
         je      .q                      ;  with HF_BG the files' and GPIB's
         cmp     byte [bg_ok], 0         ;  wait for the first background
-        je      .x                      ;  look, the rest are F6h)
+        je      .x                      ;  look, the rest are F6h; not when
+        cmp     byte [type_due], 0      ;  the console goes for TYPE's keys:
+        jne     .x                      ;  no looks then)
 .q:     cmp     byte [reply_busy], 0    ; (one at a time, as CLAUDE.COM)
         jne     .x
         cmp     byte [txq_n], TXQN
@@ -1114,12 +1128,6 @@ rf_request:
 .go:    mov     [rq_id], al
         mov     [rq_op], si
         mov     byte [req_ready], 1
-        mov     cl, [bgmode]            ; (counted for the band)
-        or      cl, [quit]
-        jz      .x
-        cmp     byte [bg_n], 99
-        jae     .x
-        inc     byte [bg_n]
         ret
 .sc:    xor     cl, cl                  ; (no flags)
         jmp     screen_msg
@@ -1160,13 +1168,15 @@ req_service:
         mov     si, [rq_op]
         cmp     byte [si], 20h
         jne     .d
+        call    bg_count
         jmp     [si + 1]
 .d:     cmp     byte [dos_ok], 0        ; (settled again for each pass: one
         jne     .dk                     ;  kept from the pop-down runs in the
         mov     al, [rq_id]             ;  first)
         mov     ah, 0F7h
         jmp     reply2
-.dk:    push    si
+.dk:    call    bg_count
+        push    si
         mov     ah, 2Fh
         int     21h
         mov     [sv_dta], bx
@@ -1204,6 +1214,14 @@ req_service:
         mov     ah, 1Ah
         int     21h
         pop     ds
+.x:     ret
+
+bg_count:                               ; a request run in the background (the
+        cmp     byte [bgmode], 0        ;  next pop-up's band says how many)
+        je      .x
+        cmp     byte [bg_n], 99
+        jae     .x
+        inc     byte [bg_n]
 .x:     ret
 
 rc_i24: mov     al, 3                   ; a critical error: fail the call

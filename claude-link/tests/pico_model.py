@@ -201,6 +201,7 @@ class PicoModel(AR488Model):
 
     def sdc(s):
         s.gen += 1; s.partial = False; s.cmp = None; s._drop_stale()
+        s._send(struct.pack('<BBHBI', F_EVENT, 0x16, s.gen & 0xFFFF, 0, 0))    # (the Pi is told, as the firmware's)
 
 
 def _glp_ok(m, head):
@@ -247,6 +248,10 @@ class PicoModelTransport:
     @property
     def can_quiet(s):
         return s.proto.can_quiet
+
+    @property
+    def sdcs(s):
+        return s.proto.sdcs
 
     @property
     def delivered_at(s):

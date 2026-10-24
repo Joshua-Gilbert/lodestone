@@ -74,6 +74,7 @@ class PicoProto:
         s.write, s.addr, s.log = write, addr, log
         s.buf = bytearray(); s.firmware = ''; s.early = False; s.holds = s.holds_glp = False
         s.can_quiet = False; s.quiet = False    # (CONFIG bit 2: SRQ never driven, the status byte as ever)
+        s.sdcs = 0                              # SDCs from the GRiD (resident Claude's background: it stopped)
         s.connected = False; s.online = False
         s.gen = 0; s.tx_ring = 16383; s.sent = 0; s.consumed = 0
         s.pending = collections.deque()     # (gen, frame, expect): expect is a held reply's hold, else None
@@ -143,6 +144,7 @@ class PicoProto:
                 s.trace.append((time.monotonic(), name) if len(f) < 13 else
                                (time.monotonic(), name, struct.unpack_from('<I', f, 9)[0]))
             if name == 'TX_DONE': s.tx_done_at = s.clock()
+            elif name == 'SDC': s.sdcs += 1
             if name == 'ONLINE': s.online = True
             elif name == 'OFFLINE':
                 s.online = False
@@ -435,6 +437,10 @@ class PicoBridge:
     @property
     def can_quiet(s):
         return s.proto.can_quiet
+
+    @property
+    def sdcs(s):
+        return s.proto.sdcs
 
     @property
     def delivered_at(s):

@@ -65,6 +65,7 @@ class TermSession:
         s.hello = {}; s.exited = None
         s.away = False                  # resident Claude: the user went back to the program
         s.bg = False                    #  and its console goes on in the background (M4, HF_BG)
+        s.bg_sdc = 0                    #  (the bridge's count of SDCs then: the console's stop)
         s.stats = dict(keys=0, pty_in=0, pty_out=0)
         s.tools = None; s.sock = mcp.socket_path(cfg)
         # A picture over the text (picture.py): while one is up it is the
@@ -104,6 +105,8 @@ class TermSession:
                'program to look for a key; a floppy access pauses it briefly); this one needs the console up '
                'over it again (CODE-\\).')
     AWAY_CALL = 'the user went back to the program (CODE-\\) before it answered'
+    BG_STOPPED = ('resident Claude\'s console stopped working in the background (the link failed under the '
+                  'program); the GRiD tools work again once the user brings the console up (CODE-\\)')
 
     def resident(s):
         """The GRiD is CLAUDE /R's console, over a DOS program it paused."""
@@ -115,7 +118,7 @@ class TermSession:
             return 'The GRiD is not in Term mode (CLAUDE /T on the GRiD).'
         prog = s.hello.get('prog') or 'its name unknown'
         if s.away and s.resident():
-            if not s.bg: return s.AWAY % prog
+            if not s.background(): return s.AWAY % prog
             tools = s.bg_tools()
             if tool in tools: return None       # (no 10-s check: the background talks only when it has work)
             return s.AWAY_BG % (prog, ', '.join(tools))
@@ -139,8 +142,15 @@ class TermSession:
 
     def background(s):
         """Resident Claude's console is working in the background (M4): its bridge quiet, the stub
-        serial-polling at the program's key calls, so the Link rings (quietly) whenever it has a request."""
-        return s.bg and s.away and s.resident()
+        serial-polling at the program's key calls, so the Link rings (quietly) whenever it has a request.
+        The console stops (a link failure in a pass, or the link not idle as it went) with an SDC to the
+        bridge: then the calls kept end, and the tools say the user has gone back, as without it."""
+        if not (s.bg and s.away and s.resident()): return False
+        if getattr(s.link.t, 'sdcs', s.bg_sdc) != s.bg_sdc:
+            s.bg = False
+            s.grid.end_calls(s.BG_STOPPED)
+            return False
+        return True
 
     def may_ring(s):
         """The Link may ring the GRiD (an SRQ for a POLL): not while resident
@@ -189,9 +199,13 @@ class TermSession:
                 s.click_at(body[1] * 8 + 4, body[2] * 16 + 8)
             elif body[0] == glp.EV_AWAY:        # (resident Claude's console, going: never for TYPE's keys)
                 s.away = True
-                if s.bg:                        # M4: on in the background, the bridge quiet (from the
-                    s.link.t.set_quiet(True)    #  answer to this EVENT on), POLLs answered at once (the
-                    s.link.hold = 0             #  program waits meanwhile); files and GPIB go on
+                # M4: on in the background, the bridge quiet (from the answer to this EVENT on: if it can't
+                # be now, a bridge reconnected with older firmware, no background), POLLs answered at once
+                # (the program waits meanwhile); files and GPIB go on
+                s.bg = s.bg and bool(s.link.t.set_quiet(True))
+                if s.bg:
+                    s.bg_sdc = s.link.t.sdcs        # (an SDC from the GRiD from now on: it has stopped)
+                    s.link.hold = 0
                     s.grid.end_calls(s.AWAY_CALL, keep=OPS_BG)
                 else:
                     s.grid.end_calls(s.AWAY_CALL)
