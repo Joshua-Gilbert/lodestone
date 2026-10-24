@@ -45,6 +45,10 @@ MAX_TYPE_WAIT = 600             # seconds the Pi waits for those keys to play
 MAX_PLOT_FILE = 8 * 1024 * 1024 # a data file for grid_plot
 MAX_IMAGE_FILE = 20 * 1024 * 1024
 MAX_PICK_WAIT = 600             # seconds grid_pick waits for clicks
+MAX_HPGL = 256 * 1024           # HP-GL for the plotter in one call (the Nano trickles it out at 1200 baud)
+HPGL_PART = 1024                # bytes per GPIB write to the plotter: each one holds the GRiD while the
+                                #  Nano's ring buffer back-pressures it (about 4-8 s at 1200 baud)
+HPGL_TIMEOUT = 15000            # per-byte ms: the Nano holds NRFD while its buffer drains
 PICTURE_TOOLS = ('grid_plot', 'grid_image', 'grid_pick')     # no GRiD request: not one at a time
 
 GPIB_PROPS = {
@@ -166,6 +170,25 @@ TOOLS = [
           'terminator': {'type': 'string', 'enum': ['crlf', 'lf', 'none']}}, **GPIB_PROPS, **SAVE_TO),
          'required': ['action', 'address']},
      'annotations': {'readOnlyHint': False, 'destructiveHint': True, 'title': 'GPIB: send to an instrument'},
+     '_meta': ASK},
+    {'name': 'grid_plotter', 'title': 'GPIB: draw on the pen plotter',
+     'description': (
+         "Draw on the Tektronix 4662 pen plotter, on paper. It is on the bus at the address in gridlink's "
+         "config ([plotter] address, default 3) through a Nano that takes HP-GL and translates it. The user "
+         "approves every call. Send HP-GL as text (hpgl) or from a Pi file in this directory (file, e.g. "
+         "a .plt you wrote). The Nano knows IN, SP, PU, PD, PA and LB (end a label with ETX, \\x03); "
+         "coordinates are HP-GL units, 0-10365 x 0-7962. Start a drawing with IN;SP1; and end it with "
+         "PU;. It is sent in parts split between commands; the plotter draws at its own pace (about 120 "
+         "characters a second) and the GRiD is busy while each part goes. Paper and pens are the user's: "
+         "say what you will draw before you draw it."),
+     'inputSchema': {'type': 'object', 'properties': {
+         'hpgl': {'type': 'string', 'maxLength': MAX_HPGL,
+                  'description': 'HP-GL, e.g. "IN;SP1;PU1000,1000;PD3000,1000,3000,3000;PU;"'},
+         'file': {'type': 'string', 'description': 'A Pi file of HP-GL instead of hpgl.'},
+         'timeout_ms': {'type': 'integer', 'minimum': 1000, 'maximum': 65535,
+                        'description': 'Per-byte timeout (default %d: the Nano holds the bus while it '
+                                       'catches up).' % HPGL_TIMEOUT}}},
+     'annotations': {'readOnlyHint': False, 'destructiveHint': True, 'title': 'GPIB: draw on the pen plotter'},
      '_meta': ASK},
     # pictures on the GRiD's screen (CLAUDE.COM 1.2, Term): plotview.py
     {'name': 'grid_plot', 'title': 'GRiD: show a plot',
@@ -630,6 +653,32 @@ class GridTools:
         G.gpib(glp.GP_WRITE, addr, data, flags=1, timeout_ms=tmo)
         return [text('Sent to %d' % addr)], False
 
+    def t_grid_plotter(s, a):
+        addr = getattr(s.cfg, 'plotter', 3)
+        if addr in (21, s.bridge): raise ValueError('the plotter address %d is the GRiD or the bridge' % addr)
+        tmo = arg_int(a, 'timeout_ms', HPGL_TIMEOUT, 1000, 65535)
+        src = arg_str(a, 'hpgl', most=MAX_HPGL); f = arg_str(a, 'file')
+        if bool(src) == bool(f): raise ValueError('give hpgl or file, not both or neither')
+        if f:
+            raw = read_pi(pi_path(s.root, f), MAX_HPGL)
+        else:
+            try: raw = src.encode('ascii')
+            except UnicodeEncodeError: raise ValueError('HP-GL must be ASCII')
+        data = hpgl_check(raw)
+        parts = hpgl_parts(data, HPGL_PART)
+        sent = 0
+        for n, p in enumerate(parts):
+            try:
+                s.G.gpib(glp.GP_WRITE, addr, p, flags=1, timeout_ms=tmo)
+            except GridError as e:
+                done = ('nothing was sent' if not sent else
+                        '%d of %d bytes went (%d of %d parts), so part of the drawing may be on the paper'
+                        % (sent, len(data), n, len(parts)))
+                return [text('GRiD: %s; %s' % (e, done))], True
+            sent += len(p)
+        return [text('Sent %d bytes of HP-GL to the plotter at %d in %d part%s. It goes on drawing until '
+                     'the Nano has passed it all on.' % (sent, addr, len(parts), '' if len(parts) == 1 else 's'))], False
+
 
     # ---- pictures on the GRiD's screen: no GRiD request, not one at a time --
     def picture_args(s, a):
@@ -700,6 +749,50 @@ class GridTools:
         head = ('%d click%s' % (len(got), '' if len(got) == 1 else 's')) if got else 'No clicks'
         if why: head += ' (%s)' % why
         return [text(head + ('.\n' + '\n'.join(lines) if lines else '.'))], not got
+
+
+# ---- HP-GL for the plotter's Nano (grid_plotter) -------------------------
+HPGL_CTRL = b'\r\n\t\x03'           # line ends, tabs, and ETX (the end of an LB label)
+
+
+def hpgl_check(raw):
+    """HP-GL as the Nano will take it: printable ASCII, line ends and ETX.
+    No ESC: an escape sequence switches the Nano to raw Tek pass-through."""
+    if not raw.strip(b' \r\n\t;'): raise ValueError('there is no HP-GL to send')
+    for i, c in enumerate(raw):
+        if (c < 32 and c not in HPGL_CTRL) or c > 126:
+            raise ValueError('HP-GL may hold printable ASCII, line ends and ETX (\\x03) only: byte %02Xh '
+                             'at %d' % (c, i))
+    return raw
+
+
+def hpgl_parts(data, most):
+    """Split HP-GL into parts of at most `most` bytes, each ending after a
+    command's ';' (or a label's ETX), never inside an LB label, whose text
+    may hold ';'.  A command longer than `most` becomes a part of its own,
+    split where it must be: the Nano reads a stream, so that still works."""
+    ends = []                           # where each command ends (index after it)
+    i, n = 0, len(data)
+    while i < n:
+        j = i
+        while j < n and data[j] in b' \r\n\t;': j += 1
+        if data[j:j + 2].upper() == b'LB':
+            k = data.find(b'\x03', j + 2)
+            i = n if k < 0 else k + 1
+            if i < n and data[i:i + 1] == b';': i += 1
+        else:
+            k = data.find(b';', j)
+            i = n if k < 0 else k + 1
+        ends.append(i)
+    parts, start, last = [], 0, 0
+    for e in ends:
+        if e - start > most and last > start:          # close the part at the last command end
+            parts.append(data[start:last]); start = last
+        while e - start > most:                         # one command over `most`
+            parts.append(data[start:start + most]); start += most
+        last = e
+    if start < n: parts.append(data[start:])
+    return parts
 
 
 def picture_block(bits):
