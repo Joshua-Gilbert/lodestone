@@ -30,12 +30,14 @@ class Res(CK.KernelHarness):
     """The floppy with CLAUDE.COM and the resident tests' programs, EMS,
     gridlink's router with the stand-in Claude Code; the console's state
     read from its EMS page (RCON.MAP)."""
-    def __init__(s, tm=False, bridge=True, ini=None, pico=False, **kw):
-        files = {'A:\\' + n: open(os.path.join(CL, n), 'rb').read() for n in ('EMSUSE.COM', 'GFXUSE.COM', 'PAGE1.COM')}
+    def __init__(s, tm=False, bridge=True, ini=None, pico=False, more=None, **kw):
+        files = {'A:\\' + n: open(os.path.join(CL, n), 'rb').read()
+                 for n in ('EMSUSE.COM', 'GFXUSE.COM', 'PAGE1.COM', 'CRITKEY.COM')}
         # (TESTKEY.COM is on the harness's disk already)
         files['A:\\MEMSZ.COM'] = open(os.path.join(HERE, 'MEMSZ.COM'), 'rb').read()
         if tm: files['A:\\TM5000G.EXE'] = open(TR.TM5000G, 'rb').read()
         if ini: files['A:\\LODE.INI'] = ini
+        if more: files.update(more)
         if pico: kw['bridge'] = 'pico'            # (the Pico 2 bridge's model: it can ring, GF_WAKE)
         super().__init__(files=files, term=FAKE, ems_pages=88, **kw)
         if not bridge: del s.m.chip.devices[7]
@@ -688,6 +690,9 @@ def t_tm5000g():
         h.term_type('hello'); h.press(ENTER)
         ok = ok and h.has('You said: hello') and in_step(h)
         check('CODE-\\ over TM5000G: Claude Code, typing reaches it', ok, h.screen())
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        check('... the GRiD\'s files over TM5000G (it reads its keys through DOS: the kernel\'s key wait)',
+              r and not r[1] and 'TM5000G.EXE' in r[0][0]['text'] and 'DOS busy' not in h.band(), (r, h.band()))
         for _ in range(2): h.m.mouse_move(16, 16); h.run_until(lambda: False, 0.05)
         h.press(HOT)
         h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
@@ -855,8 +860,195 @@ def t_driver():
     finally:
         h.close()
 
+BIG = b''.join(b'line %05d of BIG.TXT, read from the pop-up\r\n' % i for i in range(500))    # 21,500 bytes
+ZZ = b'ZZ.DAT: its sectors are made bad\r\n' * 62                                            # 2,108 bytes
 
-TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver]
+def kvars(h):
+    """The kernel's DTA and INT 23h/24h: the program's, before and after."""
+    return h.m.rd(0x60, h.m.Y['dta'], 4), h.m.rd(0, 0x23 * 4, 8)
+
+def make_bad(h, data):
+    """The floppy's sectors holding data: they don't read any more."""
+    img = bytes(h.m.drives[0].img)
+    at = img.find(data[:512])
+    assert at >= 0 and at % 512 == 0, at
+    h.m.drives[0].bad.update(range(at // 512, (at + len(data) + 511) // 512))
+
+def astack(h, paint=False):
+    """The kernel's stack for a call made inside another (512 bytes under
+    astack_top): painted, or how deep it went."""
+    lo, n = h.m.Y['kstack_top'], h.m.Y['astack_top'] - h.m.Y['kstack_top']
+    if paint: h.m.wr(0x60, lo, b'\xA5' * n); return n
+    d = h.m.rd(0x60, lo, n)
+    return n - next((i for i, b in enumerate(d) if b != 0xA5), n)
+
+def files_work(h, what):
+    """The file tools through the console: list, read (three 8 KB reads),
+    write (through NAME.$$$, 8 KB requests), info, rename, mkdir, rmdir,
+    delete, free; a disk error a failed call, no prompt."""
+    r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+    check('%s: grid_files list' % what, r and not r[1] and 'BIG.TXT' in r[0][0]['text'], r)
+    r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
+    check('... read: BIG.TXT whole (%d bytes, three reads)' % len(BIG),
+          r and not r[1] and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n'), r and r[0][0]['text'][-200:])
+    note = 'written from resident Claude\'s pop-up\n' * 600                                # 23,400 bytes
+    r = tool(h, 'grid_change_files', {'action': 'write', 'path': 'A:\\NOTE.TXT', 'content': note})
+    r2 = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\NOTE.TXT'})
+    check('... write (%d bytes) and read back' % len(note), r and not r[1] and r2 and r2[0][0]['text'] == note,
+          (r, r2 and r2[0][0]['text'][-100:]))
+    steps = [('grid_change_files', {'action': 'mkdir', 'path': 'A:\\SUB'}),
+             ('grid_change_files', {'action': 'rename', 'path': 'A:\\NOTE.TXT', 'to': 'A:\\SUB\\NOTE2.TXT'}),
+             ('grid_files', {'action': 'info', 'path': 'A:\\SUB\\NOTE2.TXT'}),
+             ('grid_change_files', {'action': 'delete', 'path': 'A:\\SUB\\NOTE2.TXT'}),
+             ('grid_change_files', {'action': 'rmdir', 'path': 'A:\\SUB'}),
+             ('grid_files', {'action': 'free', 'path': 'A:'})]
+    rs = [tool(h, n, a) for n, a in steps]
+    check('... mkdir, rename, info, delete, rmdir, free',
+          all(r and not r[1] for r in rs) and '%d bytes' % len(note.replace('\n', '\r\n')) in rs[2][0][0]['text']
+          and 'bytes free of' in rs[5][0][0]['text'], rs)
+    r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\ZZ.DAT'})
+    check('... a disk error (ZZ.DAT\'s sectors bad): the call fails (CRC), no prompt, the console still up',
+          r and r[1] and 'data error (CRC)' in r[0][0]['text'] and h.up() and in_step(h), (r, h.screen()))
+
+def t_ops():
+    """Files and GPIB from the pop-up (OPS.INC): over a program at its own
+    INT 16h call (DOS not busy) and over COPY CON (the kernel's key wait,
+    DOS one call deep: ours runs on the kernel's second stack); DOS busy
+    (F7h, the band says so) over a program's INT 24h handler waiting for a
+    key; GPIB everywhere.  The program's DTA, INT 23h and 24h as they were."""
+    h = Res(more={'A:\\BIG.TXT': BIG, 'A:\\ZZ.DAT': ZZ}); h.boot()
+    try:
+        make_bad(h, ZZ)
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        kv0 = kvars(h)
+        h.paint_stack()
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
+        hello = h.router.term.hello
+        check('HELLO offers files and GPIB (ops=files,gpib; req=8700: 8 KB writes); the band doesn\'t say DOS busy',
+              up and hello.get('ops') == 'files,gpib' and hello.get('req') == '8700' and 'DOS busy' not in h.band(),
+              (up, hello, h.band()))
+        check('(the disk cache on: its pages in EMS, the kernel\'s copies through windows clear of the buffer)',
+              h.m.u16(0x60, h.m.Y['ems_tcpg']) != 0)
+        files_work(h, 'over EMSUSE (DOS not busy)')
+        r = tool(h, 'gpib_read', {'action': 'scan'})
+        check('gpib_read scan: the instruments (6, 14, 29), not the bridge', r and not r[1]
+              and r[0][0]['text'] == 'Responding addresses: 6, 14, 29', r)
+        r = tool(h, 'gpib_send', {'action': 'query', 'address': 29, 'command': 'ID?'})
+        check('gpib_send query: the DC5009 answers ID?', r and not r[1] and 'TEK/DC5009' in r[0][0]['text'], r)
+        check('the program\'s DTA, INT 23h and INT 24h as they were', kvars(h) == kv0, (kvars(h), kv0))
+        used = h.stack_used()
+        check('the stub\'s stack: %d of %d bytes used (files and GPIB too), 96 or more spare'
+              % (used, h.rstack()), h.rstack() - used >= 96, used)
+        check('... the console in step with the Pi', in_step(h), h.screen())
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        check('EMSUSE afterwards', 'EMSUSE: 0 keys, 0 bad' in h.m.text_screen(), h.m.text_screen())
+
+        # COPY CON: the kernel reading the keyboard, DOS one call deep
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('copy con hi.txt'); h.k.key(ENTER); h.k.key('hi')
+        text0 = h.m.text_screen()
+        kv0 = kvars(h)
+        astack(h, paint=True)
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and in_step(h)
+        check('over COPY CON: the band doesn\'t say DOS busy', up and 'DOS busy' not in h.band(), h.band())
+        files_work(h, 'over COPY CON (DOS one call deep, the kernel\'s key wait)')
+        used = astack(h)
+        check('... the kernel\'s second stack: %d of 512 bytes used (a disk error\'s INT 24h too), 96 or more spare'
+              % used, 512 - used >= 96, used)
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'M:\\'})
+        r2 = tool(h, 'grid_change_files', {'action': 'write', 'path': 'M:\\BIG.TXT', 'content': BIG.decode().replace('\r\n', '\n')})
+        r3 = tool(h, 'grid_files', {'action': 'read', 'path': 'M:\\BIG.TXT'})
+        check('... M: (its pages through a window the buffer isn\'t in): write and read back',
+              r and not r[1] and r2 and not r2[1] and r3 and r3[0][0]['text'] == BIG.decode().replace('\r\n', '\n'),
+              (r, r2, r3 and r3[0][0]['text'][-100:]))
+        check('... the program\'s DTA, INT 23h and INT 24h as they were', kvars(h) == kv0, (kvars(h), kv0))
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5) and h.m.text_screen() == text0
+        h.k.key(ENTER); h.k.key(0x2C1A); h.k.key(ENTER)
+        o = h.cmd('type hi.txt')
+        check('... back: COPY CON goes on (the file has what was typed)',
+              back and 'hi' in [l.strip() for l in o.split('\n')], (back, o))
+
+        # a program's own INT 24h handler waiting for a key: DOS busy
+        h.m.drives[0].bad.clear(); make_bad(h, ZZ)
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('critkey'); h.k.key(ENTER, settle=False); h.k.settle(10)
+        waits = 'CRITKEY waits' in h.m.text_screen()
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and in_step(h)
+        check('over a program\'s INT 24h handler waiting for a key: the band says DOS busy',
+              waits and up and 'DOS busy' in h.band(), (waits, up, h.band()))
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        check('... a file request answered F7h, DOS busy: the tool says why',
+              r and r[1] and 'DOS is busy' in r[0][0]['text'], r)
+        r = tool(h, 'gpib_send', {'action': 'query', 'address': 6, 'command': 'ID?'})
+        check('... GPIB still works there (the FG5010 answers ID?)', r and not r[1] and 'TEK/FG5010' in r[0][0]['text'], r)
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key('x'); h.k.settle(10)
+        check('... back: the handler gets its key, the read fails, CRITKEY goes on (one INT 24h)',
+              'CRITKEY: 1' in h.m.text_screen(), h.m.text_screen())
+        # its handler still in INT 24h, CRITKEY at its own key wait (DOS not busy)
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and in_step(h)
+        r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\ZZ.DAT'})
+        n24 = h.m.rd(h.m.u16(0, 0x24 * 4 + 2), 0x100 + open(os.path.join(CL, 'CRITKEY.COM'), 'rb').read().index(b'CRITKEY: ') + 13, 1)[0]   # (n24, after s_done and s_n)
+        check('... over CRITKEY waiting for Esc (its INT 24h handler still in): a disk error fails our call, '
+              'its handler not called', up and r and r[1] and 'data error (CRC)' in r[0][0]['text'] and n24 == 1
+              and 'CRITKEY waits' not in h.screen(), (up, r, n24, h.screen()))
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+def t_ops_mt():
+    """With Lodestone's tasks (MULTITASK=1): files over a program at its own
+    INT 16h call; DOS busy over COPY CON (MT's key wait calls INT 16h from
+    MT's segment, as its INT 24h prompt does: not the kernel's)."""
+    mt = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
+    h = Res(ini=b'MULTITASK=1\r\n', more={'A:\\BIG.TXT': BIG, 'A:\\LODEMT.SYS': mt}); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        mt_on = h.m.u16(h.stub(), h.sym['r_mt'] + 2) != 0
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and in_step(h)
+        r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
+        check('MULTITASK=1 (the stub has MT\'s address), over EMSUSE: files work (BIG.TXT read)',
+              mt_on and up and r and not r[1] and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n'),
+              (mt_on, up, r and r[0][0]['text'][-100:]))
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('copy con hi.txt'); h.k.key(ENTER)
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and in_step(h)
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        check('... over COPY CON: the band says DOS busy, a file request F7h',
+              up and 'DOS busy' in h.band() and r and r[1] and 'DOS is busy' in r[0][0]['text'], (up, h.band(), r))
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(0x2C1A); h.k.key(ENTER)
+        ok, why = clean(h)
+        check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
+TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
+         t_ops, t_ops_mt]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

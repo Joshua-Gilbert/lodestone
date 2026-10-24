@@ -14,6 +14,11 @@ DOS_ERRORS = {
     0xF0: 'request too large for the GRiD', 0xF1: 'not enough memory on the GRiD',
     0xF2: 'GPIB driver not found', 0xF3: 'command line too long for DOS', 0xF4: 'disk full',
     0xF5: 'no snapshot taken', 0xF6: 'a DOS program is paused on the GRiD (resident Claude)',
+    0xF7: ('DOS is busy under the program resident Claude\'s console is popped up over (it is inside a DOS '
+           'call other than the kernel\'s key wait, e.g. its own disk-error handler, or in the key wait of '
+           'Lodestone\'s tasks, MULTITASK=1): the '
+           'GRiD\'s files can\'t be used from this pop-up. They can once the user goes back to the program '
+           '(CODE-\\) and brings the console up again at another of its key waits'),
     0xFF: 'unknown request',
 }
 GPIB_ERRORS = {1: 'timeout', 2: 'no listener at that address', 3: 'GRiD is not the controller',

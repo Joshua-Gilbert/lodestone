@@ -151,7 +151,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid` and `addr` (it makes no other DOS calls), `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6) |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9) |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
@@ -233,7 +233,11 @@ DOS errors come back as the DOS error code (83 = a disk error the critical
 error handler failed, e.g. drive not ready). Other statuses: F0h request
 too large, F1h no memory, F3h command line too long, F5h no snapshot,
 F6h a DOS program is paused (resident Claude's console answers so every
-request but SCREEN and TYPE), FFh unknown request.
+request it doesn't list in HELLO's `ops=`, and RUN, INFO, SETTIME and
+snapshots), F7h DOS busy (resident Claude's console, a file request: the
+paused program is inside a DOS call other than the kernel's key wait,
+such as its own INT 24h handler, or the key wait of Lodestone's tasks
+with MULTITASK=1; GPIB requests still run), FFh unknown request.
 
 Resident Claude's console (`app=resident`) answers SCREEN with the paused
 program's screen as it keeps it (`which` doesn't matter: there is one),
@@ -296,7 +300,9 @@ title from TITLE, the link, the keys).
   names the paused program (its file name, when the console could ask DOS:
   not when DOS is more than one call deep, nor from an environment the
   program no longer owns). While the GRiD is resident only
-  grid_program (SCREEN) and grid_type (TYPE) run; the GRiD's other tools
+  grid_program (SCREEN) and grid_type (TYPE) run, and the tools for what
+  its HELLO's `ops=` lists (`files`: grid_files, grid_change_files;
+  `gpib`: gpib_read, gpib_measure, gpib_send); the GRiD's other tools
   answer that they can't (the program holds the GRiD), and anything sent
   anyway gets status F6h. The console keeps
   its screen between pop-ups and draws it at once; its HELLO's `screen=`
