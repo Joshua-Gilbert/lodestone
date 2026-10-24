@@ -82,7 +82,9 @@
 ;  the link runs as in the console, polled by the PIT, until the Pi answers
 ;  a POLL with a NOP: a request taken is run and its REPLY sent in the same
 ;  pass.  Files as dos_ok allows (settled again each pass), GPIB always;
-;  SCREEN and TYPE F6h (they need the console up).  Only when the Pi's HELLO
+;  SCREEN (CLAUDE 1.11, ops=bgscreen) from the screen as it is now: copied
+;  to windows 1-2 for the reply, as a pop-up keeps it, nothing drawn; TYPE
+;  F6h (it needs the console up).  Only when the Pi's HELLO
 ;  said it works so (HF_BG: its bridge can be quiet), and while the link is
 ;  as the pop-down left it: a failure, or no bridge, stops the looks until
 ;  the next pop-up.  The band then says how many requests ran meanwhile.
@@ -209,6 +211,8 @@ rc_main:
         sti
         pop     ds
         mov     [nkeys], cx
+        call    unborrow                ; (a background SCREEN's reply cut short:
+                                        ;  its bytes back on the old copy first)
         push    ds                      ; the screen, to windows 1-2
         push    VSEG
         pop     ds
@@ -1065,8 +1069,9 @@ rf_title:
 ; takes each frame from there as it goes) or a request waits to run: then
 ; it is dropped whole (the Pi gave up on the last call, and this one's
 ; times out too; gridlink makes one call at a time).  SCREEN:
-; the program's screen; TYPE: Claude's keys for it (the answer when they
-; are done); files and GPIB: req_service, from the session's loop (F7h,
+; the program's screen (in a background pass, or kept on the way out: the
+; screen as it is then, op_bgscreen); TYPE: Claude's keys for it (the
+; answer when they are done); files and GPIB: req_service, from the session's loop (F7h,
 ; DOS busy, for a file's when DOS can't be called); anything else F6h, a
 ; DOS program is paused (RUN, INFO, SETTIME, snapshots)
 rf_request:
@@ -1099,9 +1104,9 @@ rf_request:
         cmp     word [rq_len], 2        ; (an id and an op)
         jb      .x
         cmp     byte [quit], 0          ; (going back: the Pi has the EVENT;
-        je      .q                      ;  with HF_BG the files' and GPIB's
+        je      .q                      ;  with HF_BG files, GPIB and SCREEN
         cmp     byte [bg_ok], 0         ;  wait for the first background
-        je      .x                      ;  look, the rest are F6h; not when
+        je      .x                      ;  look, TYPE is F6h; not when
         cmp     byte [type_due], 0      ;  the console goes for TYPE's keys:
         jne     .x                      ;  no looks then)
 .q:     cmp     byte [reply_busy], 0    ; (one at a time, as CLAUDE.COM)
@@ -1114,7 +1119,7 @@ rf_request:
         jne     reply2
         mov     ah, [reqbuf + 1]
         cmp     byte [quit], 0          ; (the console going, or a background
-        jne     .t                      ;  pass: no SCREEN or TYPE)
+        jne     .t                      ;  pass: SCREEN by rc_optab, no TYPE)
         cmp     byte [bgmode], 0
         jne     .t
         cmp     ah, OP_TYPE
@@ -1129,7 +1134,9 @@ rf_request:
         jne     .o
         mov     ah, 0F6h
         jmp     reply2
-.op:    cmp     ah, 20h                 ; (GPIB: no DOS)
+.op:    cmp     ah, 20h                 ; (GPIB, and SCREEN in the background:
+        je      .go                     ;  no DOS)
+        cmp     ah, OP_SCREEN
         je      .go
         cmp     byte [dos_ok], 0
         mov     ah, 0F7h
@@ -1163,6 +1170,8 @@ rc_optab:
         dw op_free
         db 20h
         dw op_gpib
+        db OP_SCREEN                    ; (in the background, and kept on the way
+        dw op_bgscreen                  ;  out: the console's own is screen_msg)
         db 0
 
 ; the request rf_request took, once its REPLY can be queued (txq_put would
@@ -1175,9 +1184,11 @@ req_service:
         jae     .x
         mov     byte [req_ready], 0
         mov     si, [rq_op]
-        cmp     byte [si], 20h
+        cmp     byte [si], 20h          ; (GPIB and SCREEN: no DOS)
+        je      .nd
+        cmp     byte [si], OP_SCREEN
         jne     .d
-        call    bg_count
+.nd:    call    bg_count
         jmp     [si + 1]
 .d:     cmp     byte [dos_ok], 0        ; (settled again for each pass: one
         jne     .dk                     ;  kept from the pop-down runs in the
@@ -1270,6 +1281,32 @@ type_start:
         pop     es
         mov     byte [quit], 1
         ret
+
+; SCREEN in the background (or kept from the way out): the program's screen
+; as it is now, and the BIOS's video data, copied where a pop-up keeps them
+; (windows 1-2, bios: the next pop-up keeps its own), then as at a pop-up
+op_bgscreen:
+        push    ds
+        push    VSEG
+        pop     ds
+        push    SAVESEG
+        pop     es
+        xor     si, si
+        xor     di, di
+        mov     cx, 4000h
+        rep     movsw
+        push    40h
+        pop     ds
+        mov     si, 49h
+        push    cs
+        pop     es
+        mov     di, bios
+        mov     cx, 66h - 49h + 1
+        rep     movsb
+        pop     ds
+        mov     al, [rq_id]
+        xor     cl, cl                  ; (no flags)
+        jmp     screen_msg
 
 type_reply:                             ; TYPE's answer: flags, the screen
         mov     al, [type_id]
@@ -1467,8 +1504,8 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.10', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
-            db 'ops=files,gpib', 10, 'addr=', 0
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.11', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
+            db 'ops=files,gpib,bgscreen', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
 s_sep       db '  ', 86h, '  ', 0

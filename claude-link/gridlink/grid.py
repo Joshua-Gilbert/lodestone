@@ -21,7 +21,8 @@ DOS_ERRORS = {
            '(CODE-\\) and brings the console up again at another of its key waits'),
     0xFF: 'unknown request',
 }
-# what resident Claude's console serves in the background (M4): files and GPIB, not SCREEN or TYPE
+# what resident Claude's console serves in the background (M4): files and GPIB (SCREEN too where its HELLO
+# says bgscreen, CLAUDE 1.11: Term adds it); never TYPE
 OPS_BG = frozenset(range(glp.OP_DIR, glp.OP_FREE + 1)) | {glp.OP_GPIB}
 
 GPIB_ERRORS = {1: 'timeout', 2: 'no listener at that address', 3: 'GRiD is not the controller',
