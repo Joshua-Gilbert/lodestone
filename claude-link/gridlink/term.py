@@ -125,6 +125,7 @@ class TermSession:
             if len(body) >= 6: info.update(glp.kv_lines(body[6:]))
             s.hello = info; s.away = False
             s.gflags = body[1] if len(body) >= 2 else 0
+            s.screen.quads = bool(s.gflags & glp.GF_QUAD) and not s.resident()   # (CLAUDE 1.8's block elements)
             s.grid.on_restart()
             with s.lock:
                 # CLAUDE /R's console kept its screen: go on from it if we sent it
