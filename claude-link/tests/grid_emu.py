@@ -55,6 +55,7 @@ GLYPH_NAMES = {0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x83: '\u2192', 0
                0x93: '\u00b1', 0x94: '\u00d7', 0x95: '\u2248', 0x96: '\u2264', 0x97: '\u2265', 0x7F: '\u2588',
                0x98: '\u2514', 0x99: '\u2518', 0x9A: '\u250c', 0x9B: '\u2510', 0x9C: '\u251c', 0x9D: '\u2524',
                0x9E: '\u252c', 0x9F: '\u2534', 0xA0: '\u253c'}
+GLYPH_NAMES.update({0xA1 + i: ch for i, ch in enumerate('▘▝▖▗▌▐▀▄▛▜▙▟▚▞')})   # (CLAUDE 1.8)
 
 
 class Chip(S.NEC7210):
@@ -835,9 +836,9 @@ class Machine:
 class Font:
     """Reads CLAUDE's own font out of its image, to turn the mode 40h screen
     back into text (cells are 8x16; inverse = all bits flipped)."""
-    def __init__(s, image, font_off):
+    def __init__(s, image, font_off, n=0x81):
         s.map = {}; s.ul = {}
-        for i in range(0x81):
+        for i in range(n):
             g = image[font_off + i * 16:font_off + i * 16 + 16]
             ch = chr(0x20 + i) if 0x20 + i < 0x7F else GLYPH_NAMES.get(0x20 + i, '?')
             inv = bytes(b ^ 0xFF for b in g)
@@ -925,8 +926,10 @@ class EmuHarness:
         m.fs['A:\\COMMAND.COM'] = bytearray(b'\xcd\x20' + bytes(100))
         for k, v in (files or {}).items(): m.fs[m.norm(k)] = bytearray(v)
         s.sym = symbols(mapfile or os.path.splitext(claude_com)[0] + '.MAP')
-        s.font = Font(img, s.sym['font'] - 0x100)
-        s.font_img = img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + 0x81 * 16]
+        mp = mapfile or os.path.splitext(claude_com)[0] + '.MAP'     # (CLAUDE 1.8 draws the block elements A1h-AEh)
+        s.glyph_end = 0xAF if 'GF_QUAD' in open(mp, errors='replace').read() else 0xA1
+        s.font = Font(img, s.sym['font'] - 0x100, s.glyph_end - 0x20)
+        s.font_img = img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + (s.glyph_end - 0x20) * 16]
         s.answer = answer
         s.args = args
         s.shots = []
@@ -1024,7 +1027,7 @@ class EmuHarness:
         for r in range(24):
             for c in range(80):
                 g = chs[r][c]; a = ats[r][c]
-                g = 0x20 if g < 0x20 else ('?' if g > 0xA0 else g)
+                g = 0x20 if g < 0x20 else ('?' if g >= s.glyph_end else g)
                 g = ord(g) if isinstance(g, str) else g
                 want = bytearray(s.font_img[(g - 0x20) * 16:(g - 0x1F) * 16])
                 if a & 1: want = bytearray(b ^ 0xFF for b in want)

@@ -1,4 +1,4 @@
-; Extra 8x16 glyphs for CLAUDE, codes 80h-A0h, appended after FONT.INC
+; Extra 8x16 glyphs for CLAUDE, codes 80h-A0h (and A1h-AEh: QUAD_GLYPHS), appended after FONT.INC
 ; (which ends with 7Fh).  Drawn to match Terminus Bold weight.
 ; 80h bullet
         db 000h,000h,000h,000h,000h,03Ch,07Eh,07Eh,07Eh,07Eh,03Ch,000h,000h,000h,000h,000h
@@ -62,3 +62,36 @@
         db 018h,018h,018h,018h,018h,018h,018h,0FFh,0FFh,000h,000h,000h,000h,000h,000h,000h
 ; A0h cross (┼)
         db 018h,018h,018h,018h,018h,018h,018h,0FFh,0FFh,018h,018h,018h,018h,018h,018h,018h
+%ifdef QUAD_GLYPHS
+; A1h-AEh block elements, 2x2 (CLAUDE 1.8; not in RCON): the halves and the
+; quarters of the cell, so Claude Code's mascot and block graphics keep
+; their shape.  The left half is the high nibble, the top half rows 0-7.
+; A1h ▘ quadrant upper left
+        db 0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,000h,000h,000h,000h,000h,000h,000h,000h
+; A2h ▝ quadrant upper right
+        db 00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,000h,000h,000h,000h,000h,000h,000h,000h
+; A3h ▖ quadrant lower left
+        db 000h,000h,000h,000h,000h,000h,000h,000h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h
+; A4h ▗ quadrant lower right
+        db 000h,000h,000h,000h,000h,000h,000h,000h,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh
+; A5h ▌ left half
+        db 0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h
+; A6h ▐ right half
+        db 00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh
+; A7h ▀ upper half
+        db 0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,000h,000h,000h,000h,000h,000h,000h,000h
+; A8h ▄ lower half
+        db 000h,000h,000h,000h,000h,000h,000h,000h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
+; A9h ▛ all but lower right
+        db 0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h
+; AAh ▜ all but lower left
+        db 0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh
+; ABh ▙ all but upper right
+        db 0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
+; ACh ▟ all but upper left
+        db 00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
+; ADh ▚ upper left and lower right
+        db 0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh
+; AEh ▞ upper right and lower left
+        db 00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,00Fh,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h,0F0h
+%endif
