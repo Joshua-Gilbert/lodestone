@@ -161,8 +161,10 @@ def t_term_to_chat_hides_the_pointer():
     h.m.mouse = True
     try:
         h.boot()
-        check('Term: connected, the pointer on', h.run_until(lambda: h.var('term') and h.var('tmouse') == 0xFF, 20) and
-              h.k.u16('m33_cnt') == 0, (h.var('term'), h.var('tmouse'), h.k.u16('m33_cnt'), h.log[-3:]))
+        # (both together: Term turns the pointer off and on again as it starts, so tmouse alone can be seen first)
+        check('Term: connected, the pointer on', h.run_until(lambda: h.var('term') and h.var('tmouse') == 0xFF
+                                                             and h.k.u16('m33_cnt') == 0, 20),
+              (h.var('term'), h.var('tmouse'), h.k.u16('m33_cnt'), h.log[-3:]))
         h.cfg.app = 'chat'                      # the Pi's choice at the next HELLO
         real = h.transport.answer
         h.transport.answer = lambda f: None     # the Pi goes quiet

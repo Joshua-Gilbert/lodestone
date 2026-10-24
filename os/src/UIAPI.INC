@@ -201,8 +201,14 @@ EV_RCLICK   equ 0FF03h                  ; a right-button press (API 7: only to a
                                         ;  CF, not a list key.  A right press on a
                                         ;  window's title strip or close box neither
                                         ;  moves nor closes it: the program gets it
+EV_TICK     equ 0FF12h                  ; (MULTITASK=1, T2: a terminal window's,
+                                        ;  after MT_TOPEN) its task has something
+                                        ;  to show, or ended, or 9 ticks went by
+                                        ;  (never the Executive's: its loop takes
+                                        ;  any code from EV_TASK up as its own)
 ; UI_DISPATCH matches a key table's ASCII entries by AL alone, so an EV_*
-; code would run an entry for its low byte (01h-04h: Ctrl-A to Ctrl-D):
+; code would run an entry for its low byte (01h-04h: Ctrl-A to Ctrl-D;
+; EV_TICK's 12h: Ctrl-R):
 ; a table that has one should test for the events first
 
 ; ---- keys (BIOS INT 16h codes; CODE is the Alt key) -------------------
