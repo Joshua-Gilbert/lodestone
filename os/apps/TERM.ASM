@@ -60,7 +60,6 @@ start:  mov     di, arg                 ; "task count"
         call    geom
         mov     si, win
         call    UI_WOPEN                ; (w_draw draws the rest)
-        mov     byte [wopen], 1
 .loop:  call    UI_EVENT
         cmp     ax, EV_TICK             ; (the events first: UI_DISPATCH would
         je      .tick                   ;  take 12h for Ctrl-R)
@@ -377,8 +376,9 @@ cells:  push    ds
 ; AX = a cell -> AH = its attribute for cell: inverse (1) when its
 ; background is brighter than its foreground (70h, 71h: as a monochrome
 ; screen shows them), underlined (2) for x1h and x9h with a black
-; background (the monochrome adapter's); both colours the same (00h, 77h):
-; hidden, AL a blank of the background's
+; background (the monochrome adapter's); both colours the same, the
+; foreground not bright (00h, 77h; not 08h, dark grey): hidden, AL a blank
+; of the background's
 attr:   push    bx
         mov     bx, ax                  ; (BH: the colours)
         mov     bl, bh
@@ -388,6 +388,8 @@ attr:   push    bx
         mov     bl, 0
         jb      .u
         ja      .i
+        test    ah, 08h                 ; (bright: not hidden)
+        jnz     .u
         mov     al, ' '                 ; (hidden)
         or      bh, bh
         jz      .u
@@ -501,7 +503,6 @@ left        dw 0                        ;  column in the window
 section .bss
 task        resb 1
 gen         resb 1
-wopen       resb 1
 curon       resb 1                      ; 1: the cursor's mark is drawn, at
 curat       resw 1                      ;  this shadow cell
 qn          resb 1
