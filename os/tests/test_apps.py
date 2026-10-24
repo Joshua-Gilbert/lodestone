@@ -554,6 +554,114 @@ def t_write():
     check('a click in the text after Find: back to editing (the band and the highlight went on)',
           k.band()[0].startswith('Type, or choose a command'), k.band())
 
+def wtext(k, ws):
+    """Write's text as it holds it (the gap buffer, lines ending in LF)."""
+    v = lambda n: k.pc.u16(k.useg, k.u16('run_base') + ws[n])
+    seg, gs, ge, cap = v('bseg'), v('gap_s'), v('gap_e'), v('cap')
+    return bytes(k.pc.rd(seg, 0, gs)) + bytes(k.pc.rd(seg, ge, cap - ge))
+
+def t_write_mouse():
+    """Write with the mouse (UI API 8): a drag selects, then a command works
+    on it; a right click in the text gives a menu of the commands."""
+    print('== Write with the mouse: drags and its menu (UI API 8)')
+    ws = run_syms('apps/WRITE.ASM')
+    T = TEXT.replace(b'\r\n', b'\n')
+    at = lambda c, r: (c * 8 + 2, 24 + r * 16 + 8)          # (column, row) of the whole-screen text area
+    def wv(n): return k.pc.u16(k.useg, k.u16('run_base') + ws[n])
+    def wb(n): return k.pc.rd(k.useg, k.u16('run_base') + ws[n], 1)[0]
+    def rpress(x, y):
+        point(k, x, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+    def hold(x0, y0, path, t=0.0):
+        """The left button down at (x0, y0), moved by each (dx, dy) of path, held t s more, let go."""
+        point(k, x0, y0); k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05)
+        for dx, dy in path: k.pc.mouse_move(dx & 0xFF, dy & 0xFF, 1); k.pc.run_for(0.05)
+        if t: k.pc.run_for(t)
+        k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+    hdr = open(WRITE, 'rb').read(6)
+    check('WRITE.RUN asks for UI API 8', hdr == b'GRUN\x08\x00', hdr)
+    k = write_open(mouse=True)
+    drag(k, *at(4, 0), *at(9, 0))
+    check('a drag over "quick": a selection of its own (no command yet), from where it began to where it ended; the band says what to do',
+          wb('mode') == 1 and wb('cmd') == 0 and wv('anchor') == 4 and wv('gap_s') == 9
+          and k.band()[0].startswith('Selected: CODE-E erases'), (wb('mode'), wb('cmd'), wv('anchor'), wv('gap_s'), k.band()))
+    k.key(CODE['E'])
+    t1 = T.replace(b'quick', b'', 1)
+    check('... CODE-E: erased at once; editing again', wtext(k, ws) == t1 and wb('mode') == 0
+          and k.band()[0].startswith('Type, or choose a command'), (wtext(k, ws), wb('mode'), k.band()))
+    drag(k, *at(0, 1), *at(5, 1))
+    k.key(CODE['M'])
+    pt = k.band()[0]
+    click(k, *at(30, 2)); k.key(ktest.ENTER)
+    t2 = t1.replace(b'jumps over', b' over').replace(b'dog.', b'dog.jumps')
+    check('a drag over "jumps", CODE-M: where to?; a click after "dog.", Return: moved there', pt == 'Move: Point to destination and confirm'
+          and wtext(k, ws) == t2 and wb('mode') == 0, (pt, wtext(k, ws)))
+    drag(k, *at(0, 4), *at(5, 4))
+    k.key(ktest.BKSP)
+    t3 = t2.replace(b'last line', b'line')
+    check('a drag over "last ", Backspace: erased', wtext(k, ws) == t3 and wb('mode') == 0, wtext(k, ws))
+    drag(k, *at(0, 0), *at(3, 0))
+    k.key('X')
+    check('a drag, then a character: the selection goes, the character is typed at the cursor (nothing erased)',
+          wtext(k, ws) == b'TheX' + t3[3:] and wb('mode') == 0, wtext(k, ws))
+    drag(k, *at(0, 2), *at(6, 2))
+    click(k, *at(8, 3))
+    check('a drag, then a click: the selection goes, the cursor where it was clicked (line 4, after the tab: column 9 shown)',
+          wb('mode') == 0 and has(k, 'Line 4 of 5   Column 9'), (wb('mode'), k.band(), screen(k)))
+    hold(*at(2, 1), [(40, 0), (-40, 0)])
+    check('a drag back where it began: no selection (editing, the cursor there)', wb('mode') == 0 and has(k, 'Line 2 of 5   Column 3'),
+          (wb('mode'), screen(k)))
+    k.key(K_CHOME, CODE['E'])
+    drag(k, *at(5, 0), *at(11, 0))
+    k.key(ktest.ENTER)
+    check('CODE-E first, then a drag: the drag is the selection (from where it began), Return erases it',
+          wtext(k, ws) == b'TheX ' + t3[10:] and wb('mode') == 0, wtext(k, ws))
+    k.key(ktest.ESC, ktest.ENTER)
+    # the menu: the cursor goes where the right click was; Find from it
+    k = write_open(mouse=True)
+    rpress(*at(4, 2))
+    shown = has(k, 'Erase          CODE-E') and has(k, 'Substitute...  CODE-S') and has(k, 'Jump...        CODE-J')
+    k.key(ktest.DOWN, ktest.DOWN, ktest.DOWN, ktest.ENTER)
+    check('a right click on line 3: the menu there (Erase ... Jump); Down 3 times, Return: Find\'s form, the cursor where it was clicked',
+          shown and k.band()[0] == 'Find: Fill in form and confirm' and wv('gap_s') == 35, (shown, k.band(), wv('gap_s')))
+    k.key(ktest.ESC)
+    drag(k, *at(4, 0), *at(10, 0))
+    rpress(*at(15, 0))
+    k.key(ktest.ENTER)
+    check('a drag over "quick ", a right click (elsewhere on the line), Erase: the selection kept for it, erased',
+          wtext(k, ws) == T.replace(b'quick ', b'', 1) and wb('mode') == 0, wtext(k, ws))
+    drag(k, *at(0, 1), *at(5, 1))
+    rpress(*at(2, 3))
+    k.key('M', ktest.ENTER)
+    check('... a drag, a right click, M (the letter), Return: Move, where to?', k.band()[0] == 'Move: Point to destination and confirm'
+          and wb('mode') == 2, k.band())
+    rpress(*at(2, 3))
+    check('pointing: a right click gives no menu', not has(k, 'Substitute...') and wb('mode') == 2, screen(k))
+    k.key(ktest.ESC)
+    g = wv('gap_s')
+    rpress(300, 345)
+    check('a right click on the status line: no menu, the cursor stays', not has(k, 'Substitute...') and wv('gap_s') == g, screen(k))
+    rpress(*at(3, 4))
+    k.key(ktest.ESC)
+    check('a right click, ESC: no command, the cursor where it was clicked', k.band()[0].startswith('Type, or choose a command')
+          and has(k, 'Line 5 of 5   Column 4'), (k.band(), screen(k)))
+    k.key(K_CHOME, CODE['F']); k.key('lazy'); k.key(ktest.ENTER, ktest.ENTER, ktest.ENTER)
+    f = k.band()[0]
+    rpress(*at(1, 0)); k.key(ktest.ESC)
+    check('Find (found), then a right click: back to editing, the cursor where it was clicked', f == 'Find: Confirm for next occurrence'
+          and wb('mode') == 0 and k.band()[0].startswith('Type, or choose a command') and wv('gap_s') == 1, (f, wb('mode'), k.band(), wv('gap_s')))
+    drag(k, *at(0, 1), *at(3, 1))
+    rpress(*at(1, 1)); k.key('J', ktest.ENTER); k.key('1'); k.key(ktest.ENTER)
+    check('a drag, a right click, Jump: the selection ends first; line 1', wb('mode') == 0 and has(k, 'Line 1 of 5')
+          and k.band()[0].startswith('Type, or choose a command'), (wb('mode'), k.band(), screen(k)))
+    # a drag past the bottom of the text area: the view scrolls with it
+    long = b''.join(b'Line %d\r\n' % i for i in range(60))
+    k = write_open('LONG.TXT', long, mouse=True)
+    hold(*at(2, 5), [(0, 40)] * 7, 1.0)
+    tl, gs = wv('topline'), wv('gap_s')
+    check('a drag held below the text area: the view scrolls on (line %d at the top), the selection from where it began to the cursor (%d)'
+          % (tl, gs), tl >= 5 and wb('mode') == 1 and wv('anchor') == len(b''.join(b'Line %d\n' % i for i in range(5))) + 2
+          and gs > wv('anchor') + 100, (tl, wb('mode'), wv('anchor'), gs))
+
 # ---------------------------------------------------------------------
 def t_memory():
     print('== memory')
@@ -1844,8 +1952,8 @@ def t_calc():
     hdr = open(CALCRUN, 'rb').read(6)
     check('CALC.RUN needs API 6 (its window moves and closes; API 5: the caller\'s redraw stays, exit code 0FFFFh)', hdr == b'GRUN\x06\x00', hdr)
     hdrs = [open(f, 'rb').read(6) for f in (SYSTEM, WRITE, UITEST)]
-    check('SYSTEM, WRITE and UITEST declare RUN_API 4 (a floppy with an older LODE.SYS still runs them)',
-          hdrs == [b'GRUN\x04\x00'] * 3, hdrs)
+    check('SYSTEM and UITEST declare RUN_API 4 (a floppy with an older LODE.SYS still runs them); WRITE 8 (its drags and menu)',
+          hdrs == [b'GRUN\x04\x00', b'GRUN\x08\x00', b'GRUN\x04\x00'], hdrs)
     # the lamp: pcemu's coprocessor is 387-class, so a 287XL
     k = ktest.KPC(image('lamp.img', SYSTEM)); infos = watch_info(k); k.start()
     info = infos[-1] if infos else ''
@@ -2528,7 +2636,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
