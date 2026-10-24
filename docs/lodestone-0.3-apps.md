@@ -943,6 +943,29 @@ The second of the four steps toward right-click editing in Write: a clipboard ev
   - `t_clip` in test_mt (1 check): put from a window session; the session ended; a task with an EMS page of its own (MTKILL F) started, parked, back and killed from LCMD, its page freed; the clipboard and its handle as they were.
   - Eight mutations each fail a check: no 16 KB limit, the size not kept, a get not cut to what it holds, a new page at every put, no fall-back to the file, both copies in the same direction, the error not in AX, and emptying not done at once (it took a page, or wrote the file). Untested: the settings drive over the start-up one (a floppy start has both as A:), and a short write to the file (a full disk).
 
+## Write with the mouse: drags and a menu (UI API 8, 2026-10-23)
+The third of the four steps toward right-click editing in Write. Write asks for UI API 8 now (`RUN_API`; an older LODE.SYS refuses it) and uses `UI_MOUSE` and `UI_MENU`. Its keys are as they were.
+- **A drag selects.** A press in the text puts the cursor there, as a click always did. While the left button is held, `UI_MOUSE` follows the pointer, and the cursor with it, until the button is up:
+  - **editing,** the first move makes a selection of its own: from where the button went down to the cursor (`M_SEL` with no command yet, `cmd` 0). The band says what can follow: "Selected: CODE-E erases   CODE-M moves   CODE-D duplicates" / "Right click: the commands   ESC cancels";
+  - **making a selection** (CODE-E, CODE-M or CODE-D first, as GRiDWrite does it), the drag is the selection, from where it began; Return confirms as before;
+  - **pointing** (Move's and Duplicate's destination), the cursor follows;
+  - past the top or the bottom of the text area the cursor goes a line beyond it at each look (18 a second at least), so the view scrolls while the button is held; past a side of a window's text area, a column beyond, so a long line scrolls sideways (the whole screen's has no room beside it); below the text's end, its end;
+  - a drag back to where it began, or a click, ends a drag's selection (editing again, the cursor where it was let go or clicked).
+- **Then the command.** With a drag's selection up: CODE-E, Backspace or Delete erase it at once; CODE-M and CODE-D take it and ask where to (as after Return in GRiDWrite's order); CODE-B starts it again at the cursor; ESC ends it; the cursor keys extend it. Return beeps (the command first). Any other key ends it and is an ordinary key: a character is typed at the cursor, not over the selection.
+- **A right click in the text: a menu** (`UI_MENU`, at the click) of Write's commands: Erase, Move, Duplicate, Find..., Substitute..., Jump..., each with its key.
+  - Editing, the cursor goes where the click was first; with a drag's selection, the selection is kept and the menu's Erase, Move and Duplicate work on it. Without one they start as their keys do (then make a selection and confirm). Find, Substitute and Jump end a drag's selection first.
+  - After Find has shown what it found, a right click (like a left one) is editing again.
+  - Outside the text area (its window's frame, the rule, the status line, the band), and while pointing or making a selection for a command, a right click does nothing.
+  - Cut, Copy and Paste come in step 4, at the top of this menu.
+- **With `MULTITASK=1`** the same in Write's window: the text area is the window's (`x0`, `y0`, `cols`, `rows`), and a drag lets the tasks behind run (`UI_MOUSE`'s wait, PR #85).
+- **Help:** two lines say it (the help window stays at 15 lines, so step 4's three fit in its 18): "Command, select, confirm (Return); or drag first" and "Ins: overtype.  Right click: menu.  Any key closes".
+- **Cost:** WRITE.RUN is 9,517 bytes (8,679 before; the core is unchanged). ROM 1 has 512 bytes left (1,536 before).
+- **Tests:**
+  - `t_write_mouse` in test_apps (18 checks): WRITE.RUN's header asks for API 8; a drag over a word (a selection of its own, the band); CODE-E erases it; a drag, CODE-M, a click, Return moves it; Backspace erases one; a character after a drag is typed, nothing erased; a click ends one; a drag back to where it began makes none; CODE-E first, then a drag, Return; a right click: the menu with its items, the cursor there, Find's form from it; a drag kept for the menu's Erase, and its Move by its letter; no menu while pointing, on the status line; ESC; after Find, a right click is editing; Jump from the menu ends a drag's selection; a drag held below the text area scrolls the view (a 60-line file).
+  - `t_write` in test_mt (1 check more): in Write's window, moved, a drag selects (0 to 6), a right click gives its menu, Erase erases.
+  - `t_calc` in test_apps: SYSTEM.RUN and UITEST.RUN still declare API 4, WRITE.RUN 8.
+  - Fifteen mutations each fail a check: no drag (the button's state not followed), no anchor where the button went down, no command cleared for a drag's own selection, a click not ending one, a drag back to its start leaving an empty one, no scroll below the text area, no keys of its own for a drag's selection, Backspace not erasing it, the selection not kept for a right click, a menu while pointing, a menu outside the text area, the menu's Erase not on the selection, Jump from the menu not ending it, a right click not ending Found, the cursor not moved to a right click. Untested: a drag left of a window's text area while it is scrolled sideways (the whole screen has no room left of its text; with no sideways scroll, a column to the left is column 0 either way).
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.

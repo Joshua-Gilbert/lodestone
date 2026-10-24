@@ -3652,9 +3652,9 @@ def t_write():
     k.select('NOTES.TXT'); k.key(ktest.ENTER); k.run_for(1.0)
     w1, t1, s1 = win(1), at('jumps over'), at('Line 1 of 5')
     check('Return on NOTES.TXT with MULTITASK=1: Write in a window (%s), a session, its text inside it (%s) and its status '
-          'line (%s), not the whole screen\'s; WRITE.RUN still asks for API 4, with RF_WIN in its header' % (w1, t1, s1),
+          'line (%s), not the whole screen\'s; WRITE.RUN asks for API 8 (its menu and drags), with RF_WIN in its header' % (w1, t1, s1),
           mb('mw_n') == 1 and w1 == (2, 32, 76, 296) and t1 == (3, 72) and s1 == (4, 308) and A.has(k, 'Write: NOTES.TXT')
-          and struct.unpack('<H', hdr[4:6])[0] == 4 and struct.unpack('<H', hdr[14:16])[0] == 1, (w1, t1, s1, A.screen(k)))
+          and struct.unpack('<H', hdr[4:6])[0] == 8 and struct.unpack('<H', hdr[14:16])[0] == 1, (w1, t1, s1, A.screen(k)))
     k.key('Hello. ')
     k.key(A.CODE['K']); k.run_for(0.5)
     n2 = mb('mw_n')
@@ -3715,6 +3715,22 @@ def t_write():
     k.hooks.remove(evh)
     check('CODE-F7, Right x2, Down x2, Return: moved (%s), the text with it (%s); Write given EV_MOVED' % (w4, t4),
           w4 == (4, 40, 74, 280) and t4 == (5, 64) and ev4 == [0xFF02], (w4, t4, [hex(e) for e in ev4], A.screen(k)))
+    b1 = rec(1, SE_BASE)
+    wv1 = lambda n: k.pc.u16(k.useg, b1 + WS[n])
+    def wtx():
+        seg, gs, ge, cap = wv1('bseg'), wv1('gap_s'), wv1('gap_e'), wv1('cap')
+        return bytes(k.pc.rd(seg, 0, gs)) + bytes(k.pc.rd(seg, ge, cap - ge))
+    A.drag(k, 5 * 8 + 2, 64 + 8, 11 * 8 + 2, 64 + 8); k.run_for(0.3)
+    sel = (k.pc.rd(k.useg, b1 + WS['mode'], 1)[0], wv1('anchor'), wv1('gap_s'))
+    A.point(k, 20 * 8, 64 + 16 + 8); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.run_for(0.5)
+    mn = A.has(k, 'Substitute...  CODE-S')
+    k.key(ktest.ENTER); k.run_for(0.3)
+    er = wtx()
+    k.key('Hello.'); k.run_for(0.3)
+    check('in its window, moved: a drag over "Hello." selects it (%s: a selection of its own, from 0 to 6); a right click '
+          'in its text: its menu; Return (Erase): erased; typed again' % (sel,), sel == (1, 0, 6) and mn
+          and er.startswith(b' Hi The quick') and wtx().startswith(b'Hello. Hi The quick') and mb('mw_cur') == 1,
+          (sel, mn, er[:20], wtx()[:20], A.screen(k)))
     k.key(A.CODE['W']); k.run_for(1.0)
     n5, c5 = mb('mw_n'), mb('mw_cur')
     w5 = win(c5)
