@@ -359,7 +359,10 @@ bg_pass:
         mov     bx, 1                   ;  comes from a quiet bridge)
         mov     ah, 0Ah
         call    gg_call
-        jc      .z                      ; (the driver busy: not now)
+        jnc     .tm                     ; (the driver busy: not now, but at
+        inc     byte [bg_keep]          ;  the next look)
+        jmp     .z
+.tm:
         mov     [old_tmo], ax           ; (the program's)
         call    get_ticks
         mov     [now], ax
@@ -375,7 +378,7 @@ bg_pass:
         mov     bl, [nano]
         mov     ah, 05h
         call    gg_call
-        jc      .e                      ; (no answer: no more looks)
+        jc      .ef                     ; (no answer: no more looks)
         inc     byte [bg_keep]
         test    al, 40h
         jz      .e
@@ -444,6 +447,10 @@ bg_pass:
         call    handler_back
         push    cs
         pop     es
+        jmp     short .e
+.ef:    mov     bl, [nano]              ; (an SDC tells the Pi so, should the
+        mov     ah, 06h                 ;  bridge hear it: the calls it keeps
+        call    gg_call                 ;  for the background end)
 .e:     mov     bx, [old_tmo]           ; the program's timeout back
         mov     ah, 0Ah
         call    gg_call
@@ -1005,7 +1012,9 @@ pi_frame:                               ; BX = frame offset in rxbuf
         cmp     al, P_NOP
         jne     .h
         mov     byte [pi_active], 0
-        ret
+        mov     byte [rq_more], 0       ; (no fragment of a REQUEST to come: the
+        ret                             ;  Pi gave it up, else a background
+                                        ;  look would wait for the rest each time)
 .h:     cmp     al, P_HELLO
         je      rf_hello
         cmp     byte [bgmode], 0        ; (a background pass: nothing drawn; the

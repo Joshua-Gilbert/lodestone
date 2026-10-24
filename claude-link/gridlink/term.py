@@ -105,8 +105,9 @@ class TermSession:
                'program to look for a key; a floppy access pauses it briefly); this one needs the console up '
                'over it again (CODE-\\).')
     AWAY_CALL = 'the user went back to the program (CODE-\\) before it answered'
-    BG_STOPPED = ('resident Claude\'s console stopped working in the background (the link failed under the '
-                  'program); the GRiD tools work again once the user brings the console up (CODE-\\)')
+    BG_STOPPED = ('resident Claude\'s console stopped working in the background (the GRiD cleared the link: '
+                  'a failure under the program, the bridge not answering, or the console coming up or CLAUDE '
+                  'starting); the GRiD tools work again once the console is up (CODE-\\)')
 
     def resident(s):
         """The GRiD is CLAUDE /R's console, over a DOS program it paused."""
