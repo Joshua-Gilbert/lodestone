@@ -67,8 +67,8 @@ BOXW     equ 70
 %define TERM_PIXELS              ; (TERMCELL.INC: pictures, CELLS op FDh; not in RCON)
 %define QUAD_GLYPHS              ; (GLYPHS.INC: the 2x2 block elements A1h-AEh; not in RCON)
 %define GLYPH_END 0AFh
-%define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23; not in RCON)
-%define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer; not in RCON)
+%define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23)
+%define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer)
 %define KBD_EVERY 6000           ; (TERMKEYS.INC: keys every ~2.5 ms while the link is busy; not in RCON)
 
 ; =====================================================================
@@ -79,7 +79,7 @@ BOXW     equ 70
 ;  growing back, wherever it was loaded from (from the prompt, a stub left
 ;  after LCMD would make the Executive's block move past it, and a
 ;  program would lose about 43 KB).  Its console (RCON.ASM) sits in the
-;  first of its three EMS pages.
+;  first of its four EMS pages.
 ;  It is an INT 16h hook.  Every call first looks for CODE-\ in the BIOS's
 ;  keyboard buffer, anywhere in it (the raw word 2BF0h, or 2B00h), takes
 ;  it out and brings the console up over the program, which is waiting
@@ -96,7 +96,8 @@ BOXW     equ 70
 ;  (r_feed: its page in window 0 for that moment), and when they are done
 ;  the console comes back up, as at CODE-\, with the program's screen.
 ; =====================================================================
-R_PAGES  equ 3                  ; the console, then the program's screen (2)
+R_PAGES  equ 4                  ; the console, the program's screen (2), Term's
+                                ;  shadow (RCON's SHADSEG, window 3)
 R_HOT    equ 2B00h              ; CODE-\ as AH=10h gives it
 R_HOTRAW equ 2BF0h              ;  and as the 1520's BIOS keeps it
 R_FRAME  equ 0E000h
@@ -1356,6 +1357,8 @@ maybe_idle:                             ; HLT when nothing is due
         mov     ah, 11h                 ;  or a key), unless it came already or
         int     16h                     ;  a key is waiting (11h: as Term's)
         jnz     .x
+        cmp     byte [srq_held], 0      ; (not while another device holds the
+        jne     .x                      ;  line: no edge would come)
         push    es
         push    bx
         les     bx, [irq_ptr]
@@ -3261,7 +3264,7 @@ st_connecting db 'Connecting to the Pi through the GPIB bridge', 82h, 0
 boot_end:
         times   -(boot_end - bss > MAXIN) db 0
 
-; CLAUDE /R: three EMS pages (the frame at E000h), the console into the
+; CLAUDE /R: four EMS pages (the frame at E000h), the console into the
 ; first, the stub into a block of the system's at the top of memory, INT
 ; 16h hooked; CLAUDE.COM then ends as any program does
 res_load:
@@ -3562,7 +3565,7 @@ s_r_ok      db 'Claude is resident: CODE-\ brings it up over a program waiting f
             db 'CLAUDE /U takes it out.', 13, 10, '$'
 s_r_again   db 'Claude is resident already (CODE-\).', 13, 10, '$'
 s_r_noems   db 'CLAUDE /R needs EMS, with its page frame at E000h.', 13, 10, '$'
-s_r_nopages db 'CLAUDE /R needs 3 free EMS pages (48 KB).', 13, 10, '$'
+s_r_nopages db 'CLAUDE /R needs 4 free EMS pages (64 KB).', 13, 10, '$'
 s_r_nomem   db 'CLAUDE /R: not enough memory.', 13, 10, '$'
 s_mcbname   db 'CLAUDE', 0, 0
 s_r_task    db 'CLAUDE /R from inside a task: its memory would go with the task.', 13, 10
@@ -3590,8 +3593,9 @@ r_sig    db     'CLRS'          ; 100h
 %ifdef STUB_VER                 ; (the tests: an older version's stub)
 r_ver    db     STUB_VER
 %else
-r_ver    db     3               ; 104h: the stub's version (2: r_off; 3:
-                                ;  Lodestone's multitasking asked, r_mt)
+r_ver    db     4               ; 104h: the stub's version (2: r_off; 3:
+                                ;  Lodestone's multitasking asked, r_mt; 4:
+                                ;  a fourth page, window 3)
 %endif
 r_hook   dw     r_int16         ; 105h: INT 16h points at CS:this
 r_old16  dd     0               ; 107h: and went on to this
@@ -3606,7 +3610,7 @@ r_off    db     0               ; 10Eh: not 0, no pop-up (CLAUDE.COM runs)
         times   STUB_PAD db 0   ;  out otherwise, as another version's)
 %endif
 r_entry  dd     R_FRAME << 16   ; the console: E000:0000
-r_hw     db     0, 0, 0         ; our pages' register values
+r_hw     db     0, 0, 0, 0      ; our pages' register values
 r_saved  db     0, 0, 0, 0      ; the program's windows meanwhile
 r_params:                       ; the console's, ES:BX (RCON.ASM P_*)
 r_pold16 dd     0               ;  the BIOS's INT 16h
