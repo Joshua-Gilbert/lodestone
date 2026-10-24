@@ -615,7 +615,36 @@ def t_write_mouse():
     k.key(ktest.ENTER)
     check('CODE-E first, then a drag: the drag is the selection (from where it began), Return erases it',
           wtext(k, ws) == b'TheX ' + t3[10:] and wb('mode') == 0, wtext(k, ws))
-    k.key(ktest.ESC, ktest.ENTER)
+    # a drag's selection: its other keys; a drag while pointing; no menu making one for a command
+    k = write_open(mouse=True)
+    drag(k, *at(4, 0), *at(9, 0))                       # ("quick")
+    k.key(ktest.RIGHT, ktest.RIGHT)
+    ext = (wb('mode'), wv('anchor'), wv('gap_s'))
+    k.key(ktest.ENTER)
+    ent = (wb('mode'), wtext(k, ws) == T)
+    k.key(ktest.ESC)
+    check('a drag\'s selection: Right x2 extends it (4 to 11); Return beeps, nothing changes; ESC ends it, nothing erased, still in Write',
+          ext == (1, 4, 11) and ent == (1, True) and wb('mode') == 0 and wtext(k, ws) == T
+          and k.band()[0].startswith('Type, or choose a command'), (ext, ent, wb('mode'), k.band()))
+    drag(k, *at(4, 0), *at(9, 0))
+    k.key(CODE['B'], CODE['E'])
+    eb = (wb('mode'), wb('cmd'), wv('anchor'), wv('gap_s'))
+    k.key('Y')
+    check('a drag, CODE-B (it begins again at the cursor: empty), CODE-E: a beep, still a drag\'s selection (no command); a '
+          'character then ends it and is typed', eb == (1, 0, 9, 9) and wb('mode') == 0 and wtext(k, ws) == T.replace(b'quick', b'quickY', 1),
+          (eb, wb('mode'), wtext(k, ws)))
+    k.key(ktest.BKSP)
+    drag(k, *at(4, 0), *at(10, 0)); k.key(K_DEL)
+    d1 = wtext(k, ws)
+    drag(k, *at(0, 1), *at(5, 1)); k.key(CODE['D'])
+    drag(k, *at(0, 2), *at(30, 2)); k.key(ktest.ENTER)
+    check('Delete erases one ("quick "); CODE-D takes one ("jumps"), a drag while pointing puts the cursor where it ends (after "dog."), Return: duplicated there',
+          d1 == T.replace(b'quick ', b'', 1) and wtext(k, ws) == d1.replace(b'dog.', b'dog.jumps'), (d1, wtext(k, ws)))
+    k.key(CODE['E'])
+    rpress(*at(2, 2))
+    check('making a selection for a command (CODE-E): a right click gives no menu', not has(k, 'Substitute...')
+          and k.band()[0] == 'Erase: Make a selection and confirm', (k.band(), screen(k)))
+    k.key(ktest.ESC)
     # the menu: the cursor goes where the right click was; Find from it
     k = write_open(mouse=True)
     rpress(*at(4, 2))
@@ -657,10 +686,14 @@ def t_write_mouse():
     long = b''.join(b'Line %d\r\n' % i for i in range(60))
     k = write_open('LONG.TXT', long, mouse=True)
     hold(*at(2, 5), [(0, 40)] * 7, 1.0)
-    tl, gs = wv('topline'), wv('gap_s')
-    check('a drag held below the text area: the view scrolls on (line %d at the top), the selection from where it began to the cursor (%d)'
-          % (tl, gs), tl >= 5 and wb('mode') == 1 and wv('anchor') == len(b''.join(b'Line %d\n' % i for i in range(5))) + 2
-          and gs > wv('anchor') + 100, (tl, wb('mode'), wv('anchor'), gs))
+    tl, gs, cl = wv('topline'), wv('gap_s'), wv('curline')
+    check('a drag held below the text area: the view scrolls on (line %d at the top), the cursor on its last row, the selection from '
+          'where it began to it (%d)' % (tl, gs), tl >= 9 and cl == tl + 18 and wb('mode') == 1
+          and wv('anchor') == len(b''.join(b'Line %d\n' % i for i in range(5))) + 2 and gs == len(b''.join(b'Line %d\n' % i for i in range(cl))) + 2, (tl, cl, wb('mode'), wv('anchor'), gs))
+    hold(*at(2, 3), [(0, -40)] * 3, 0.5)
+    tl2, cl2 = wv('topline'), wv('curline')
+    check('... a drag held above it: the view scrolls back (line %d at the top, from %d), the cursor on its first row, a new selection'
+          % (tl2, tl), tl2 <= tl - 4 and cl2 == tl2 and wb('mode') == 1 and wv('gap_s') < wv('anchor'), (tl2, cl2, wb('mode')))
 
 # ---------------------------------------------------------------------
 def t_memory():

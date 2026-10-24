@@ -3727,10 +3727,15 @@ def t_write():
     k.key(ktest.ENTER); k.run_for(0.3)
     er = wtx()
     k.key('Hello.'); k.run_for(0.3)
+    A.point(k, 13 * 8 + 2, 64 + 16 + 8); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.run_for(0.5)
+    k.key(ktest.ESC); k.run_for(0.3)
+    rg = wv1('gap_s')
     check('in its window, moved: a drag over "Hello." selects it (%s: a selection of its own, from 0 to 6); a right click '
-          'in its text: its menu; Return (Erase): erased; typed again' % (sel,), sel == (1, 0, 6) and mn
-          and er.startswith(b' Hi The quick') and wtx().startswith(b'Hello. Hi The quick') and mb('mw_cur') == 1,
-          (sel, mn, er[:20], wtx()[:20], A.screen(k)))
+          'in its text: its menu; Return (Erase): erased; typed again; a right click on its second row\'s 9th column, ESC: '
+          'the cursor there (%d), the window\'s text area, not the screen\'s' % (sel, rg), sel == (1, 0, 6) and mn
+          and er.startswith(b' Hi The quick') and wtx().startswith(b'Hello. Hi The quick') and mb('mw_cur') == 1 and rg == 30 + 8,
+          (sel, mn, er[:20], wtx()[:20], rg, A.screen(k)))
+    k.key(0x7700, *([ktest.RIGHT] * 6)); k.run_for(0.3)    # (Ctrl-Home, Right x6: where it was)
     k.key(A.CODE['W']); k.run_for(1.0)
     n5, c5 = mb('mw_n'), mb('mw_cur')
     w5 = win(c5)
