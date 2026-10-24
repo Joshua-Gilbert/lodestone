@@ -2328,8 +2328,8 @@ s_band_md   db 'RETURN: the next size    ESC: back',0
 s_band_set  db "RETURN: back to the ROM's settings    ESC: back",0
 s_band_mt   db 'SPACE: on or off from the next start-up    ESC: back',0
 h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
-h_enter     db 'Return                       change it (the band says how)',0
-h_space     db 'Space                        switch it on or off (the same)',0
+h_enter     db 'Return                       what the band says',0
+h_space     db 'Space                        on or off (see the band)',0
 h_f5        db 'F5                           look again',0
 h_help      db 'CODE-?  or  F1               this help',0
 h_quit      db 'ESC  or  CODE-Q              back to the Executive',0

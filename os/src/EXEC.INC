@@ -2965,13 +2965,13 @@ h_usage     db 'CODE-U                   System',0
 h_write     db 'CODE-W                   Write (a new file)',0
 h_claude    db 'CODE-A                   Claude',0
 h_calc      db 'CODE-K                   Calculator',0
-h_shell     db 'CODE-P                   command prompt',0
+h_shell     db 'CODE-P                   Command prompt',0
 h_tasks     db 'CODE-T                   Tasks',0
-h_copy      db 'CODE-C                   Copy',0
-h_erase     db 'CODE-D                   Delete',0
-h_move      db 'CODE-M                   Move',0
-h_rename    db 'CODE-R                   Rename',0
-h_f5        db 'F5                       look again (a new disk)',0
+h_copy      db 'CODE-C                   Copy (a file or subject)',0
+h_erase     db 'CODE-D                   Delete (a file or subject)',0
+h_move      db 'CODE-M                   Move (a file)',0
+h_rename    db 'CODE-R                   Rename (a file)',0
+h_f5        db 'F5                       read the disk again',0
 h_code      db 'CODE is the Alt key.  Any key closes.',0
 
 ; ---------------------------------------------------------------------

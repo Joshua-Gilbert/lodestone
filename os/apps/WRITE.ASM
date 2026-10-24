@@ -2525,9 +2525,9 @@ h9          db 'Substitute  CODE-S    Replace text',0
 h10         db 'Transfer    CODE-'
 h10x        db 'T    Save, write or include files',0
 h11         db 'Usage       CODE-U    Size and room left',0
-h12         db 'Cancel      CODE-ESC  Exit, not saving (or ESC)',0
-h13         db 'Command, select, Return; or drag first',0
-h14         db 'Arrows, PgUp/PgDn, Ctrl-arrows, Ctrl-Home/End',0
+h12         db 'Cancel      CODE-ESC  Exit without saving (or ESC)',0
+h13         db 'A command, then select, then Return (or drag first)',0
+h14         db 'Move: arrows, PgUp/PgDn, Ctrl-arrows, Ctrl-Home/End',0
 h15         db 'Ins: overtype.  Right click: menu.  Any key closes',0
 f_match     db 0
 f_dir       db 0
