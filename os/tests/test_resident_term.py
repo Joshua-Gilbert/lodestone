@@ -5,7 +5,7 @@ real gridlink with a stand-in Claude Code in a pty (claude-link/tests).
 
     python3 tests/test_resident_term.py [name ...]
 """
-import json, os, sys, threading, time, traceback
+import json, os, struct, sys, threading, time, traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
 sys.path.insert(0, GOS); sys.path.insert(0, HERE)
@@ -916,7 +916,8 @@ def t_ops():
     DOS one call deep: ours runs on the kernel's second stack); DOS busy
     (F7h, the band says so) over a program's INT 24h handler waiting for a
     key; GPIB everywhere.  The program's DTA, INT 23h and 24h as they were."""
-    h = Res(more={'A:\\BIG.TXT': BIG, 'A:\\ZZ.DAT': ZZ}); h.boot()
+    h = Res(more={'A:\\BIG.TXT': BIG, 'A:\\ZZ.DAT': ZZ,                # (DEFRAG.COM: EMSUSE under DEFRAG's name)
+                  'A:\\DEFRAG.COM': open(os.path.join(CL, 'EMSUSE.COM'), 'rb').read()}); h.boot()
     try:
         make_bad(h, ZZ)
         h.cmd('claude /r')
@@ -933,6 +934,25 @@ def t_ops():
         check('(the disk cache on: its pages in EMS, the kernel\'s copies through windows clear of the buffer)',
               h.m.u16(0x60, h.m.Y['ems_tcpg']) != 0)
         files_work(h, 'over EMSUSE (DOS not busy)')
+        # a request while another's reply is on its way (gridlink gave up on that call): dropped, not
+        # gathered over the reply's bytes (the same buffer) or run with the waiting request's op
+        G, out = h.router.term.grid, {}
+        def call(k, op, args, tmo):
+            try: out[k] = G.call(op, args, timeout=tmo)
+            except Exception as e: out[k] = e
+        rd = threading.Thread(target=call, args=('read', glp.OP_READ, struct.pack('<IH', 0, 8192) + b'A:\\BIG.TXT\0', 30))
+        wr = threading.Thread(target=call, args=('write', glp.OP_WRITE, struct.pack('<BI', 0, 0) + b'A:\\X.DAT\0'
+                                                 + b'\xAA' * 6000, 4))      # (longer than the reply's first frame)
+        rd.start(); wr.start()
+        h.pi_wait(lambda: len(out) == 2, 40)
+        check('a request while a read\'s reply goes: the reply whole (8 KB of BIG.TXT), the second (a 6 KB write) '
+              'dropped', out.get('read') == (0, BIG[:8192]) and isinstance(out.get('write'), Exception),
+              {k: str(v)[:80] for k, v in out.items()})
+        out.clear()                     # a device's name past gridlink's own check: refused, not opened
+        th = threading.Thread(target=call, args=('con', glp.OP_READ, struct.pack('<IH', 0, 100) + b'A:\\CON.TXT\0', 20))
+        th.start(); h.pi_wait(lambda: 'con' in out, 30)
+        check('a READ of A:\\CON.TXT (the CON device): status 5 at once, no wait for a key',
+              out.get('con') == (5, b'') and h.up() and in_step(h), (out, h.screen()))
         r = tool(h, 'gpib_read', {'action': 'scan'})
         check('gpib_read scan: the instruments (6, 14, 29), not the bridge', r and not r[1]
               and r[0][0]['text'] == 'Responding addresses: 6, 14, 29', r)
@@ -976,7 +996,6 @@ def t_ops():
               back and 'hi' in [l.strip() for l in o.split('\n')], (back, o))
 
         # a program's own INT 24h handler waiting for a key: DOS busy
-        h.m.drives[0].bad.clear(); make_bad(h, ZZ)
         h.k.key('cls'); h.k.key(ENTER); h.k.key('critkey'); h.k.key(ENTER, settle=False); h.k.settle(10)
         waits = 'CRITKEY waits' in h.m.text_screen()
         gen = generation(h)
@@ -1003,6 +1022,17 @@ def t_ops():
         check('... over CRITKEY waiting for Esc (its INT 24h handler still in): a disk error fails our call, '
               'its handler not called', up and r and r[1] and 'data error (CRC)' in r[0][0]['text'] and n24 == 1
               and 'CRITKEY waits' not in h.screen(), (up, r, n24, h.screen()))
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        # DEFRAG (the screen saver's too) writes the disk itself: no file requests over it
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('defrag'); h.k.key(ENTER, settle=False); h.k.settle(10)
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and in_step(h)
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        check('over DEFRAG.COM (DOS not busy): the band says DOS busy, a file request F7h',
+              up and 'DOS busy' in h.band() and r and r[1] and 'DOS is busy' in r[0][0]['text'], (up, h.band(), r))
         h.press(HOT)
         h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
         h.k.key(ESC)
