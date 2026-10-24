@@ -107,11 +107,11 @@ The full tables, the method and every run on the 1520 are in `os/bench/RESULTS.T
 
 ### From an EPROM
 
-`os/build.sh` builds ROM 1, a 128 KB GRiD application ROM (a FAT12 volume in GRiD's own format). It holds the kernel, the command prompt, System, Write, the calculator, a second font and the default settings. ROM 2 (`os/LODE2_EPROM.BIN`, a data ROM in the other socket) holds DEFRAG; its files show in R: beside ROM 1's.
+`os/build.sh` builds ROM 1, a 128 KB GRiD application ROM (a FAT12 volume in GRiD's own format). It holds the kernel, the command prompt, System, Write, the calculator, a second font and the default settings. ROM 2 (`os/LODE2_EPROM.BIN`, a data ROM in the other socket) holds DEFRAG and the terminal window's font; its files show in R: beside ROM 1's.
 
 1. Burn **`os/LODE1_EPROM.BIN`** to a 27C010 (the 1520's original part is a TMS27C010A). Don't burn `LODE1.BIN`: the 1520 inverts address line A16 to its ROM sockets, so the file to burn has its two halves swapped. The two have the same programmer checksum, so check the bytes: address 10000h starts `EB 3C 90` then `LODE ROM`.
 2. Fit it in the **second** socket, where GRiD MS-DOS's EPROM sits. The BIOS boots the last bootable ROM it finds. GRiD MS-DOS can move to the first socket, if ROM 2 isn't there.
-3. Burn **`os/LODE2_EPROM.BIN`** (ROM 2: DEFRAG.COM) the same way and fit it in the **first** socket: a data ROM is never booted. GRiD MS-DOS then has no socket. Without ROM 2 everything works but DEFRAG, and the screen saver shows only the dark clock.
+3. Burn **`os/LODE2_EPROM.BIN`** (ROM 2: DEFRAG.COM, TERM.FNT) the same way and fit it in the **first** socket: a data ROM is never booted. GRiD MS-DOS then has no socket. Without ROM 2 everything works but DEFRAG and terminal windows: the screen saver shows only the dark clock, and text programs start full screen.
 4. Hold **Shift** while the 1520 starts for the boot menu: Lodestone, Lodestone with the ROM's own settings, GRiD MS-DOS (from the other socket, without ROM 2), or the floppy.
 
 From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C:\LODE;R:\`. So a newer program copied to `C:\LODE` is used before the ROM's copy, and an update needs no new ROM. CLAUDE.COM isn't in ROM 1 yet: copy it to `C:\LODE`. See `docs/lodestone-rom.md`.
@@ -193,7 +193,8 @@ Release notes are in `os/releases/`, and each part's design and history is in `d
 
 **Next:**
 - **Resident Claude:** Claude working in the background between a program's keystrokes (files and GPIB instruments in the pop-up are done: CLAUDE 1.9).
-- **ROM 2:** the second, data-only ROM is there (DEFRAG.COM, joined to R:); CLAUDE.COM and heavier programs are to follow onto it.
+- **ROM 2:** the second, data-only ROM is there (DEFRAG.COM and TERM.FNT, joined to R:); CLAUDE.COM and heavier programs are to follow onto it.
+- **Terminal windows** (multitasking, `docs/lodestone-multitasking.md` T1-T6): with `MULTITASK=1`, a text program started from the Executive, and CODE-P's command prompt, runs in a window of its own (Shift-Return and Shift-CODE-P: full screen, as before). Graphics programs, select/copy/paste and CLAUDE.COM's window mode are to follow.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.
 - **The FreeDOS kernel calls:** INT 21h 60h/6Ch and IOCTL 440Dh, so FreeDOS's FORMAT, LABEL, XCOPY and the like run.

@@ -593,7 +593,7 @@ sel_path:
         mov     si, runpath
         jmp     sb_dirname
 
-; CODE-P: the command prompt (COMSPEC)
+; CODE-P: the command prompt (COMSPEC), as Return on a program (run_prog)
 run_shell:
         push    es
         mov     si, s_comspec
@@ -612,15 +612,15 @@ run_shell:
         jb      .c
         mov     byte [di], 0
 .go:    pop     es
-        jmp     run_wait
-.def:   pop     es
+        jmp     run_prog                ; (MULTITASK=1: a task, in a terminal
+.def:   pop     es                      ;  window; Shift-CODE-P: as before)
         mov     si, s_defshell
         mov     di, runpath
 .d:     lodsb
         stosb
         or      al, al
         jnz     .d
-        jmp     run_wait
+        jmp     run_prog
 
 ; CODE-A: Claude (CLAUDE.COM here, else in the root)
 run_claude:
@@ -928,8 +928,8 @@ run_prog:
         call    far [ui_mtx]
         jc      show_msg
         ret
-; run it, in the Executive's own task, and wait for it (CODE-P's prompt
-; and CODE-A's Claude always, Shift-Return: all the memory, and a program
+; run it, in the Executive's own task, and wait for it (CODE-A's Claude
+; always, Shift-Return and Shift-CODE-P: all the memory, and a program
 ; loaded resident from there is everyone's); afterwards a fresh list and
 ; a message
 run_wait:

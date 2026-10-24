@@ -17,15 +17,16 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | LODE.PIC | the start-up picture |
 | LCMD.COM | the command prompt (COMSPEC) |
 | SYSTEM.RUN, WRITE.RUN, CALC.RUN, TASKS.RUN | the programs |
+| TERM.RUN | the terminal window (with `MULTITASK=1`: a text program in a window; its font, TERM.FNT, is on ROM 2) |
 | CALC.COM | the calculator at the prompt |
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-9,728 bytes (19 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one). CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
+7,680 bytes (15 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one, the window, T2, four: TERM.RUN and LODEMT.SYS's growth). CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
 
 ## ROM 2
 
-`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `L2`), in the same layout as ROM 1. It holds **DEFRAG.COM** now; what doesn't fit in ROM 1 goes there.
+`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `L2`), in the same layout as ROM 1. It holds **DEFRAG.COM** and **TERM.FNT** (the terminal window's font: without ROM 2 a text program starts full screen, as without windows) now; what doesn't fit in ROM 1 goes there.
 
 - **R: is both ROMs' files** (`KROM.INC`), whichever socket each is in:
   - with ROM 2 in, R: is one volume the read routine makes of the two: its FAT two sectors (ROM 1's entries, then ROM 2's, their clusters numbered on past ROM 1's: ROM 2's cluster n is R:'s n + 252), its root 64 entries (ROM 1's 32, then ROM 2's), then ROM 1's clusters and ROM 2's. Nothing is copied or kept: each FAT and root sector is made as it is read, from the two ROMs' own (ROM 1's empty entries read as deleted ones, so that a search goes on to ROM 2's; ROM 2's volume label is left out);
@@ -137,6 +138,6 @@ Also from the review:
   - System's Settings topic and saving;
   - PATH;
   - memory;
-  - ROM 2 (t_rom2, 13 checks): LODE2.BIN a data ROM; a test ROM 2 with 20 files (its root past 16 entries, R:'s sector 6) and a 60 KB file whose chain crosses both FAT sectors R: makes; with ROM 1, in either socket (with EMS; with C:), what DOS programs get (0.2-0.4 KB less than ROM 1 alone), DIR R: both ROMs' files (one label, 32 files, 0 bytes free) and DEFRAG.COM, the 60 KB file, ROM 1's last file and ROM 2's 21st entry copied as built, after a program has run; the FAT (fatbuf) and the root sectors in the buffers byte for byte against what R: should make; ROM 2 alone as the second image (another ROM the first), DEFRAG.COM read as built; ROM 1 alone without DEFRAG.COM; the screen saver from the ROM running R:\DEFRAG.COM with ROM 2 in, the dark clock without it. Twelve of thirteen mutations each fail a check (the FAT, root and data mapping, the joined drive table, ROM 2 alone, the module kept short or not); one is equivalent here: the entry split over the two FAT sectors writing its first half before a lone sector 2, which the kernel only ever reads after sector 1 into the same buffer.
+  - ROM 2 (t_rom2, 13 checks): LODE2.BIN a data ROM; a test ROM 2 with 20 files (its root past 16 entries, R:'s sector 6) and a 60 KB file whose chain crosses both FAT sectors R: makes; with ROM 1, in either socket (with EMS; with C:), what DOS programs get (0.2-0.4 KB less than ROM 1 alone), DIR R: both ROMs' files (one label, 33 files, 0 bytes free) and DEFRAG.COM, the 60 KB file, ROM 1's last file and ROM 2's 21st entry copied as built, after a program has run; the FAT (fatbuf) and the root sectors in the buffers byte for byte against what R: should make; ROM 2 alone as the second image (another ROM the first), DEFRAG.COM read as built; ROM 1 alone without DEFRAG.COM; the screen saver from the ROM running R:\DEFRAG.COM with ROM 2 in, the dark clock without it. Twelve of thirteen mutations each fail a check (the FAT, root and data mapping, the joined drive table, ROM 2 alone, the module kept short or not); one is equivalent here: the entry split over the two FAT sectors writing its first half before a lone sector 2, which the kernel only ever reads after sector 1 into the same buffer.
 - **pcemu** models the sockets (`roms=`) and the BIOS's boot (`boot_rom`).
 - **The real-BIOS checks** need `rom/ROM_F000.BIN` and the GRiD MS-DOS EPROM image. These are not in the repo.

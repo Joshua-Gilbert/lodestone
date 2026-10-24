@@ -67,7 +67,7 @@ class Res(CK.KernelHarness):
         k.pc = s.m; k.Y = s.m.Y; k.dos = []; k.pending = {}; k.trace = False; k.hooks = []
         s.k = k
         s.m.boot(0); k.settle(8)
-        k.key(ktest.CODE_P)
+        k.code_p()
 
     def cmd(s, text, sim_s=6):
         s.k.key('cls'); s.k.key(ENTER); s.k.key(text); s.k.key(ENTER, settle=False); s.k.settle(sim_s)

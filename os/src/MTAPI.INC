@@ -102,6 +102,15 @@ MT_SCREEN   equ 1Ch                    ; the caller's screen, which it wrote
                                         ;  after a screen saver): not counted
                                         ;  against it as writing the screen
                                         ;  itself (M4a; only the front task's)
+MT_TOPEN    equ 1Eh                     ; (T2: TERM.RUN, at its start) BL = a
+                                        ;  task, CL = its count (TE_GEN: MT_EXIT's
+                                        ;  AH): shown by the window .RUN that
+                                        ;  calls, whose UI_EVENT gives EV_TICK
+                                        ;  from now on when the task's screen or
+                                        ;  state changed, it ended, or 9 ticks
+                                        ;  went by.  CF: AX = 1 (no such task,
+                                        ;  another count, not a window .RUN's
+                                        ;  call), 5 (task 0; parked)
 MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
                                         ;  task, ES:DI = room, DX = a row, CX =
                                         ;  rows (to row 24): those rows of its
