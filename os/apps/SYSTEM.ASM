@@ -2283,14 +2283,7 @@ k_f5:   jmp     show_topic
 
 keys:   KEY(K_NONE,      0,       h_topic)
         KEY(K_ENTER,     k_enter, h_enter)
-        KEY(K_NONE,      0,       h_enter2)
-        KEY(K_NONE,      0,       h_enter3)
-        KEY(K_NONE,      0,       h_enter4)
-        KEY(K_NONE,      0,       h_enter5)
-        KEY(K_NONE,      0,       h_enter6)
         KEY(K_SPACE,     k_space, h_space)
-        KEY(K_NONE,      0,       h_space2)
-        KEY(K_NONE,      0,       h_space3)
         KEY(K_F5,        k_f5,    h_f5)
         KEY(K_F1,        k_help,  h_help)
         KEY(K_CODE_HELP, k_help,  0)
@@ -2335,15 +2328,8 @@ s_band_md   db 'RETURN: the next size    ESC: back',0
 s_band_set  db "RETURN: back to the ROM's settings    ESC: back",0
 s_band_mt   db 'SPACE: on or off from the next start-up    ESC: back',0
 h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
-h_enter     db 'Return on Clock              set the date and time',0
-h_enter2    db 'Return on GPIB               scan the bus',0
-h_enter3    db 'Return on Display            the next font',0
-h_enter4    db 'Return on Temporary disk M:  the next size',0
-h_enter5    db "Return on Settings           back to the ROM's",0
-h_enter6    db 'Return on Devices            PrtSc: the next printer driver',0
-h_space     db 'Space on Display             the start-up picture or not',0
-h_space2    db 'Space on Screen saver        tidy the disks or not',0
-h_space3    db 'Space on Multitasking        on or off (next start-up)',0
+h_enter     db 'Return                       what the band says',0
+h_space     db 'Space                        on or off (see the band)',0
 h_f5        db 'F5                           look again',0
 h_help      db 'CODE-?  or  F1               this help',0
 h_quit      db 'ESC  or  CODE-Q              back to the Executive',0
@@ -2420,7 +2406,7 @@ s_scanhint  db 'Return: scan the bus (serial poll 0-30)',0
 s_scanask   db 'GPIB: Confirm to scan the bus',0
 s_scanning  db 'Scanning the GPIB bus...',0
 s_lodestone    db 'Lodestone ',0
-s_about1    db 'for the GRiDCase 1520 (working name Lodestone)',0
+s_about1    db 'for the GRiDCase 1520',0
 l_dos       db 'DOS version',0
 s_compat    db ' compatible',0
 l_api       db 'UI core API',0

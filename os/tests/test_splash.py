@@ -245,7 +245,7 @@ def t_system():
     # the help says so
     A.to_display(k)
     k.key(A.K_CODE_HELP)
-    check('CODE-? lists Space on Display', has(k, 'Space on Display') and has(k, 'Space on Screen saver'), screen(k))
+    check('CODE-? lists Space (the picture, as the band says)', has(k, 'Space                        on or off (see the band)'), screen(k))
 
 
 # What a DOS program gets in 0.4.4 (MEMSZ, from the Executive): 0.2 KB less

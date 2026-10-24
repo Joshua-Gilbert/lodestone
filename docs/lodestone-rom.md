@@ -21,7 +21,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-No sector is left (with multitasking's LODEMT.SYS and TASKS.RUN, UI API 8's pop-up menus and clipboard, and Write's drags, menu, Cut, Copy and Paste): what comes next goes on ROM 2. CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
+One sector (512 bytes) is left (with multitasking's LODEMT.SYS and TASKS.RUN, UI API 8's pop-up menus and clipboard, and Write's drags, menu, Cut, Copy and Paste): what comes next goes on ROM 2. CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
 
 ## Which socket
 
