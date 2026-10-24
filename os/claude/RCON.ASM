@@ -211,6 +211,8 @@ rc_main:
         sti
         pop     ds
         mov     [nkeys], cx
+        call    unborrow                ; (a background SCREEN's reply cut short:
+                                        ;  its bytes back on the old copy first)
         push    ds                      ; the screen, to windows 1-2
         push    VSEG
         pop     ds
@@ -1067,8 +1069,9 @@ rf_title:
 ; takes each frame from there as it goes) or a request waits to run: then
 ; it is dropped whole (the Pi gave up on the last call, and this one's
 ; times out too; gridlink makes one call at a time).  SCREEN:
-; the program's screen; TYPE: Claude's keys for it (the answer when they
-; are done); files and GPIB: req_service, from the session's loop (F7h,
+; the program's screen (in a background pass, or kept on the way out: the
+; screen as it is then, op_bgscreen); TYPE: Claude's keys for it (the
+; answer when they are done); files and GPIB: req_service, from the session's loop (F7h,
 ; DOS busy, for a file's when DOS can't be called); anything else F6h, a
 ; DOS program is paused (RUN, INFO, SETTIME, snapshots)
 rf_request:
@@ -1101,9 +1104,9 @@ rf_request:
         cmp     word [rq_len], 2        ; (an id and an op)
         jb      .x
         cmp     byte [quit], 0          ; (going back: the Pi has the EVENT;
-        je      .q                      ;  with HF_BG the files' and GPIB's
+        je      .q                      ;  with HF_BG files, GPIB and SCREEN
         cmp     byte [bg_ok], 0         ;  wait for the first background
-        je      .x                      ;  look, the rest are F6h; not when
+        je      .x                      ;  look, TYPE is F6h; not when
         cmp     byte [type_due], 0      ;  the console goes for TYPE's keys:
         jne     .x                      ;  no looks then)
 .q:     cmp     byte [reply_busy], 0    ; (one at a time, as CLAUDE.COM)
@@ -1116,7 +1119,7 @@ rf_request:
         jne     reply2
         mov     ah, [reqbuf + 1]
         cmp     byte [quit], 0          ; (the console going, or a background
-        jne     .t                      ;  pass: no SCREEN or TYPE)
+        jne     .t                      ;  pass: SCREEN by rc_optab, no TYPE)
         cmp     byte [bgmode], 0
         jne     .t
         cmp     ah, OP_TYPE

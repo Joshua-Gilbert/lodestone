@@ -192,7 +192,7 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
 **Next:**
-- **Resident Claude:** the program's screen read in the background (CLAUDE 1.11) on the 1520.
+- **Resident Claude:** the program's screen read in the background (CLAUDE 1.11) on the 1520, with the bridge's quiet firmware flashed.
 - **ROM 2:** the second, data-only ROM is there (DEFRAG.COM, joined to R:); CLAUDE.COM and heavier programs are to follow onto it.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.

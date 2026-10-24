@@ -891,7 +891,8 @@ def t_bg():
     """M4 (CLAUDE 1.10): Claude works in the background while the user is back in the program.  A quiet
     bridge (fw 2026-10-24: the status byte, no SRQ line); the stub calls the console every ~220 ms at the
     program's key calls; it serial-polls the bridge and, when the Pi has rung, runs the link without drawing:
-    files and GPIB, not SCREEN or TYPE.  The program's screen, keys, EMS windows and SRQ latch untouched."""
+    files and GPIB, and (CLAUDE 1.11) SCREEN; not TYPE.  The program's screen, keys, EMS windows and SRQ latch
+    untouched."""
     h = Res(pico='quiet', more={'A:\\BIG.TXT': BIG, 'A:\\CRITKEY.COM': open(os.path.join(CL, 'CRITKEY.COM'), 'rb').read(),
                                 'A:\\ZZ.DAT': ZZ}); h.boot()
     try:
@@ -1037,9 +1038,12 @@ def t_bg():
         waits = 'CRITKEY waits' in h.m.text_screen()
         r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
         r2 = tool(h, 'gpib_send', {'action': 'query', 'address': 6, 'command': 'ID?'})
-        check('over a program\'s INT 24h handler waiting for a key: files F7h (DOS busy), GPIB works',
+        r3 = tool(h, 'grid_program', {})
+        check('over a program\'s INT 24h handler waiting for a key: files F7h (DOS busy), GPIB works, and the '
+              'screen too (no DOS: "CRITKEY waits")',
               waits and r and r[1] and 'DOS is busy' in r[0][0]['text'] and r2 and not r2[1]
-              and 'TEK/FG5010' in r2[0][0]['text'], (waits, r, r2))
+              and 'TEK/FG5010' in r2[0][0]['text'] and r3 and not r3[1] and 'CRITKEY waits' in r3[0][1]['text'],
+              (waits, r, r2, r3))
         h.k.key('x'); h.k.settle(10)
         h.k.key(ESC); h.k.settle(2)
         # CLAUDE.COM takes the link: no more looks till the next pop-up; its HELLO makes the bridge loud again
@@ -1436,30 +1440,28 @@ def t_bg_screen():
               'console went), read in a background pass',
               back and r and not r[1] and 'back in the DOS program' in r[0][0]['text']
               and 'TESTKEY ready: abc' in r[0][1]['text'] and looks['work'] > w0 and h.inpop() == 0, r)
-        check('... TESTKEY\'s screen untouched by the read, and it is still TESTKEY\'s turn (no console drawn)',
+        check('... TESTKEY\'s video memory untouched by the read, still mode 3',
               h.m.rd(0xB800, 0, 4000) == vram0 and h.m.mode() == 3, h.m.text_screen())
         r = tool(h, 'grid_type', {'keys': 'x'})
         check('... grid_type still needs the console: refused, grid_program among the tools that work',
               r and r[1] and 'in the background' in r[0][0]['text'] and 'grid_program' in r[0][0]['text'], r)
         h.k.key(ESC)
-        # a graphics screen: GFXUSE in mode 6, its 16 KB byte for byte
+        # a graphics screen, of a program started after the console went (no pop-up over it: the mode and the
+        # BIOS's data are read then, not the last pop-up's mode 3): GFXUSE in mode 6, its 16 KB byte for byte
         h.cmd('gfxuse 6')
-        gen = generation(h)
-        h.press(HOT)
-        popped(h, gen)
-        h.press(HOT)
-        h.wait(lambda: h.m.mode() == 6 and h.inpop() == 0, 5)
-        h.pi_wait(lambda: t.away, 10)
+        mode6 = h.m.mode() == 6 and h.inpop() == 0 and t.away
         vram = h.m.rd(0xB800, 0, 0x4000)
         res = tool(h, 'grid_program', {})
         raw = raw_screen(h)
-        check('over GFXUSE in mode 6, away: grid_program\'s image, SCREEN\'s bytes its 640x200 as they are',
-              res and not res[1] and res[0][-1]['type'] == 'image' and raw is not None
-              and raw[:9] == bytes([6, 2, 1, 128, 2, 200, 0, 80, 0]) and raw[9:] == vram,
-              (res and res[0][0].get('text'), raw and raw[:9]))
+        check('GFXUSE in mode 6, started after the console went: grid_program\'s image (named as the last '
+              'pop-up\'s program, "another may run now"), SCREEN\'s bytes its 640x200 as they are',
+              mode6 and res and not res[1] and res[0][-1]['type'] == 'image' and 'another may run now' in
+              res[0][0]['text'] and raw is not None and raw[:9] == bytes([6, 2, 1, 128, 2, 200, 0, 80, 0])
+              and raw[9:] == vram, (mode6, res and res[0][0].get('text'), raw and raw[:9]))
+        still6 = h.m.mode() == 6
         h.k.key('x'); h.k.key(ESC)
-        check('... GFXUSE afterwards: its screen and data kept (0 bad), mode 6 throughout',
-              '0 bad' in h.m.text_screen(), h.m.text_screen())
+        check('... GFXUSE afterwards: mode 6 through the reads, its screen and data kept (0 bad)',
+              still6 and '0 bad' in h.m.text_screen(), (still6, h.m.text_screen()))
         ok, why = clean(h)
         check('no link failure, nothing wrong in gridlink\'s log', ok, why)
     finally:
