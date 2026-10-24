@@ -112,12 +112,17 @@ MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
                                         ;  INT 10h call of it behind, and its
                                         ;  leaving the front), BX = its cursor
                                         ;  there (row, column), CL = columns, CH
-                                        ;  = its mode, DL = MTF_DIRECT, and 2
-                                        ;  not a text mode (nothing copied), DH
-                                        ;  = its state (TS_*).  CF: AX = 1 (no
-                                        ;  such task, rows past 24 or none, room
-                                        ;  in the EMS frame's windows 0-1), 5
-                                        ;  (task 0, the Executive; parked)
+                                        ;  = its mode, DL = MTF_DIRECT, 2 if
+                                        ;  nothing was copied (not a text mode
+                                        ;  of 80 columns or fewer, or rows past
+                                        ;  its 32 KB), 4 its pages gone (2 too),
+                                        ;  8 in front (its screen the real one,
+                                        ;  not its pages), DH = its state (TS_*;
+                                        ;  TS_FROZEN as MT_LIST).  CF: AX = 1
+                                        ;  (no such task, rows past 24 or none,
+                                        ;  room in the EMS frame's windows 0-1
+                                        ;  or past its segment's end), 5 (task
+                                        ;  0, the Executive; parked)
 MT_TKEY     equ 20h                     ; (T1) BL = a task, CX = a key (as INT
                                         ;  16h gives them): typed to it, for its
                                         ;  INT 16h and DOS's key reads (before

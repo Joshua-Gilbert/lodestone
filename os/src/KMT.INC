@@ -1846,8 +1846,10 @@ mt_winc:
 ; MT_TROWS (T1): task BL's screen as its pages hold it, CX rows from row DX
 ; of the page shown, to ES:DI (inside INT 21h: none of its writes can come
 ; in the middle) -> AX = TX_CHG, BX = the cursor there, CL = columns, CH =
-; the mode, DL = VF_DIRECT, and 2 if not a text mode (nothing copied), DH
-; = its state
+; the mode, DL = VF_DIRECT, 2 if nothing copied (not a text mode of 80
+; columns or fewer, or past its 32 KB), 4 its pages gone (2 too), 8 in front
+; (its pages not what is shown), DH = its state (TS_FROZEN for one ready
+; but frozen behind, as MT_LIST says)
 mt_trows:
         call    mt_targ
         jc      mt_bad
@@ -1861,7 +1863,9 @@ mt_trows:
         cmp     dx, 25
         ja      .bad
         mov     ax, [bp+F_DI]           ; (not where the pages go: windows 0
-        shr     ax, 4                   ;  and 1)
+        cmp     ax, 10000h - 25 * 160   ;  and 1; no round to the segment's
+        ja      .bad                    ;  start either)
+        shr     ax, 4
         add     ax, [bp+F_ES]
         jc      .bad
         cmp     ax, EMS_FRAME + 800h
@@ -1873,12 +1877,15 @@ mt_trows:
 .in:    cld
         mov     byte [cs:mt_vbusy], 1
         call    mt_vin
-        jc      .gone
         push    cs
         pop     ds
+        mov     dl, 6
+        jc      .gone
         push    bx
         mov     dl, 2
         cmp     byte [VS_MODE], 3
+        ja      .nt
+        cmp     byte [VS_COLS], 80      ; (4000 bytes at most: the room)
         ja      .nt
         mov     bl, [VS_PAGE]
         mov     dh, [bp+F_DX]
@@ -1906,12 +1913,21 @@ mt_trows:
         push    dx
         call    mt_wrest
         pop     dx
-        mov     byte [cs:mt_vbusy], 0
+.gone:  mov     byte [cs:mt_vbusy], 0
         mov     al, [cs:bx+TE_VF]
         and     al, VF_DIRECT
         or      dl, al
-        mov     dh, [cs:bx+TE_STATE]
-        mov     [bp+F_DX], dx
+        mov     al, [bp+F_BX]
+        cmp     al, [cs:mt_front]
+        jne     .nf
+        or      dl, 8
+.nf:    mov     dh, [cs:bx+TE_STATE]
+        cmp     dh, TS_RUN
+        jne     .st
+        call    mt_frz
+        jz      .st
+        mov     dh, TS_FROZEN
+.st:    mov     [bp+F_DX], dx
         mov     es, [cs:bx+TE_TX]
         mov     ax, [es:TX_CHG]
         mov     [bp+F_AX], ax
@@ -1926,10 +1942,6 @@ mt_trows:
         push    KSEG
         pop     ds
         jmp     KSEG:ok
-.gone:  mov     byte [cs:mt_vbusy], 0
-        push    KSEG
-        pop     ds
-        jmp     mt_bad
 
 ; MT_TKEY (T1): key CX typed to task BL: into its TX's ring (KRING), for
 ; its INT 16h (mt_ring), and it is ready to run if it waited for one.  CF:
@@ -1955,7 +1967,8 @@ mt_tkey:
         cmp     byte [cs:bx+TE_STATE], TS_WAITK
         jne     .ok
         mov     byte [cs:bx+TE_STATE], TS_RUN
-.ok:    popf
+        mov     byte [cs:mt_pend], 1    ; (its turn soon: from this call's way
+.ok:    popf                            ;  out, as MT_KILL's)
         jmp     KSEG:ok
 .full:  popf
         mov     ax, 8
@@ -1963,7 +1976,8 @@ mt_tkey:
 
 ; the running task's keys from MT_TKEY (its TX's ring; task 0 has none),
 ; but none while the kernel's INT 24h prompt, a call MT passed on to the
-; BIOS or an INT 13h call is under way: the keyboard's then.  CF if none;
+; BIOS, an INT 13h call or an interrupt is under way, as mt_i16 tells
+; them: the keyboard's then.  CF if none;
 ; else AX = the first, taken out if DH is not 0; DL not 0: first those
 ; INT 16h AH=00h and 01h don't give are dropped (mt_kgive).  AX changed
 mt_ring:
@@ -1978,6 +1992,10 @@ mt_ring:
         jne     .no
         cmp     word [cs:mt_in13], 0
         jne     .no
+        push    ax
+        call    mt_isr
+        pop     ax
+        jnz     .no
         call    mt_ent
         mov     es, [cs:bx+TE_TX]
         pushf

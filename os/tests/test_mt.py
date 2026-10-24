@@ -4021,7 +4021,7 @@ def t_tcore():
     k = boot('mt_tc.img', b'MULTITASK=1\r\n', 88, MTK, MTTM, MTSC)
     sh = Shell(k)
     sh.run('ver')
-    tnum = lambda name: next((i for i, s, n in tstate(k)[0] if n == name), None)
+    tnum = lambda name: next((i for i, s, n in tstate(k)[0] if n == name), 7)     # (7: none such, a free one)
     def rows(n, f, *a):                     # MTTERM R: (CF, AX, BX, CX, DX, the 4000 bytes)
         sh.run('mtterm r %d %s %s' % (n, f, ' '.join(map(str, a))))
         b = A.disk_file(k, f.upper()) or bytes(4009)
@@ -4037,12 +4037,15 @@ def t_tcore():
     r0 = A.disk_file(k, 'TK.TXT')
     got = keys(n, 'k1.txt', 0x8500, 0x2D78)
     w = waitfile(k, 'TK.TXT', 3.0)
+    k.run_for(0.5)
+    o2 = sh.run('ver')                      # (a key left in the BIOS's buffer would come first: "xver")
     check('MTKEY R behind (task %s) waiting in its INT 16h read; VER typed in front still the front task\'s; MT_TKEY '
           'F11 (8500h: AH=00h doesn\'t give it) and "x" (2D78h): both taken (0002 0000), its read gets "x", as typed '
           '(2D78; F11 dropped, as the BIOS would), the BIOS\'s buffer never had them, and it ends' % n,
           n and (n, TS_WAITK, 'MTKEY.COM') in st0[0] and 'Lodestone version' in o and r0 is None
-          and got == b'0002 0000' and w is not None and A.disk_file(k, 'TK.TXT') == b'2D78' and tnum('MTKEY.COM') is None,
-          (st0, o[-80:], r0, got, A.disk_file(k, 'TK.TXT'), tstate(k)))
+          and got == b'0002 0000' and w is not None and A.disk_file(k, 'TK.TXT') == b'2D78' and tnum('MTKEY.COM') == 7
+          and 'Lodestone version' in o2 and 'Bad command' not in o2,
+          (st0, o[-80:], r0, got, A.disk_file(k, 'TK.TXT'), tstate(k), o2[-80:]))
     # MTLINE behind, its DOS line read waiting in kbd_get (MT's key wait): the keys echoed in its own screen, its
     # changes counted; then Return, its line
     typ(k, 'start /w mtline.com tl.txt', 1.0)
@@ -4063,9 +4066,9 @@ def t_tcore():
     check('... and the rest: BX its cursor (%04X), CL 80 columns, CH mode 3, DL 0 (a text mode, not found writing the '
           'screen itself), DH TS_WAITK' % c[2], c[2] == struct.unpack_from('<H', tv, 0x50 - 0x49 + 2 * tv[0x62 - 0x49])[0]
           and c[3] == 0x0350 and c[4] == TS_WAITK << 8, (c[:5], tv.hex()))
-    p = rows(n, 'r4.txt', 3, 1)
-    check('MT_TROWS of one row (row 3): its 160 bytes only, the room past them as it was', p[0] == 0
-          and p[5][:160] == sl[3 * 160:4 * 160] and p[5][160:] == bytes(3840), p[:5])
+    p = rows(n, 'r4.txt', 1, 1)
+    check('MT_TROWS of one row (row 1, the prompt\'s, not blank): its 160 bytes only, the room past them as it was',
+          p[0] == 0 and p[5][:160] == sl[160:320] and sl[160:320] != b' \7' * 80 and p[5][160:] == bytes(3840), p[:5])
     bads = [rows(n, 'rb%d.txt' % i, *a_) for i, a_ in enumerate(((20, 6), (0, 0), (25, 1)))]
     check('MT_TROWS of rows past 24, or none: CF, AX = 1', all(r[:2] == (1, 1) for r in bads), [r[:5] for r in bads])
     fr = rows(n, 'rf.txt')
@@ -4076,20 +4079,23 @@ def t_tcore():
     d = rows(n, 'r5.txt')
     check('... brought to the front and back (nothing written meanwhile): its count up (%d, %d before: mt_scrsv)'
           % (d[1], fr[1]), tstate(k)[1] == 0 and d[1] > fr[1], (d[:5], fr[:5], tstate(k)))
-    got = [keys(n, 'k%d.txt' % (6 + j), *([0x1E61 + j * 0x1001] * 20)) for j in (0, 1)]    # (20 "a", then 20 "b")
+    got = [keys(n, 'k%d.txt' % (6 + j), *([0x1E61 + j * 0x1201] * 20)) for j in (0, 1)]    # (20 "a", then 20 "b")
     k.run_for(1.0)
     got.append(keys(n, 'k3.txt', 0x1C0D))
     w = waitfile(k, 'TL.TXT', 3.0)
+    k.run_for(0.5)
     check('... 20 "a", 20 "b" (the ring round its end: 2 before), then Return (1C0Dh) typed to it: its line "hi" and '
           'them; it ends', got == [b'0014 0000', b'0014 0000', b'0001 0000'] and w is not None
-          and A.disk_file(k, 'TL.TXT') == b'hi' + b'a' * 20 + b'b' * 20 and tnum('MTLINE.COM') is None, (got, A.disk_file(k, 'TL.TXT'), tstate(k)))
-    # a task reading no keys (MTSPIN computing): 32 taken, the 33rd refused; it stays as it was (ready, not waiting)
-    typ(k, 'start /w mtspin.com 30000 sp.txt', 0.5)   # (till killed: the typing below is slow beside it)
+          and A.disk_file(k, 'TL.TXT') == b'hi' + b'a' * 20 + b'b' * 20 and tnum('MTLINE.COM') == 7, (got, A.disk_file(k, 'TL.TXT'), tstate(k)))
+    # a task reading no keys (MTSPIN, frozen behind: START /D): 32 taken, the 33rd refused; MT_TROWS says frozen
+    typ(k, 'start /w /d mtspin.com 30000 sp.txt', 0.5)   # (till killed)
     n = tnum('MTSPIN.COM')
     got = (keys(n, 'k4.txt', *([0x1E61] * 20)), keys(n, 'k5.txt', *([0x1E61] * 13)))   # (a command line: 127 at most)
-    st = [s for i, s, nm in tstate(k)[0] if i == n]
-    check('MT_TKEY to MTSPIN (task %s), reading none: 20, then 12 of 13 taken, the 33rd refused (AX = 8: %s), its state '
-          'as it was (TS_RUN)' % (n, got), got == (b'0014 0000', b'000C 0008') and st == [1], (got, st))
+    fz = rows(n, 'rz.txt')
+    check('MT_TKEY to MTSPIN (task %s, frozen behind: START /D), reading none: 20, then 12 of 13 taken, the 33rd refused '
+          '(AX = 8: %s); MT_TROWS\'s DH TS_FROZEN, as MT_LIST says (ready, TS_RUN in MT\'s table)' % (n, got),
+          got == (b'0014 0000', b'000C 0008') and fz[0] == 0 and fz[4] >> 8 == TS_FROZEN
+          and [s_ for i, s_, nm in tstate(k)[0] if i == n] == [1], (got, fz[:5], tstate(k)))
     sh.run('kill %d' % n)
     # parked: both refused (AX = 5)
     typ(k, 'start /w mtscr.com p', 3.0)
