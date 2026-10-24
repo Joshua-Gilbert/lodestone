@@ -154,8 +154,8 @@ def t_off():
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
-            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch and FFh fail with AX = 1' % tag,
-                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF)),
+            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh, 1Fh and 20h fail with AX = 1' % tag,
+                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220)),
                   out[-400:])
             sh = Shell(k)
             o = sh.run('mtlaunch mtline.com x.txt')
@@ -208,6 +208,9 @@ def t_on():
           and got.get(0x1C, (1,))[0] == 0, out[-400:])
     check('F0h AL=13h with BL = 8 (no such task) and BL = 7 (a free one): CF, AX = 1',
           bad(got.get(0x113, (0, 0))) and bad(got.get(0x213, (0, 0))), out[-400:])
+    check('F0h AL=1Fh (MT_TROWS) and 20h (MT_TKEY), T1: task 0 refused (AX = 5); 7 (a free one) and 8 (none such): AX = 1',
+          all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x1F, 0x20)) and all(bad(got.get(a, (0, 0))) for a in (0x11F, 0x21F, 0x120, 0x220)),
+          out[-500:])
     check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, AH = 0 the caller, nothing written',
           got.get(0x12, (1,))[:2] == (0, 0x0000)
           and got[0x12][3] == 1, out[-400:])
@@ -4011,6 +4014,92 @@ def t_rclaude():
     check('CLAUDE /U: out, and MT has no key wait of its any more (0:0)', 'no longer resident' in o and tsr() == (0, 0),
           (o, tsr()))
 
+MTTM = os.path.join(HERE, 'MTTERM.COM')
+
+def t_tcore():
+    print('== a terminal window\'s calls (T1): MT_TROWS, a task\'s screen as MT keeps it; MT_TKEY, keys typed to it')
+    k = boot('mt_tc.img', b'MULTITASK=1\r\n', 88, MTK, MTTM, MTSC)
+    sh = Shell(k)
+    sh.run('ver')
+    tnum = lambda name: next((i for i, s, n in tstate(k)[0] if n == name), None)
+    def rows(n, f, *a):                     # MTTERM R: (CF, AX, BX, CX, DX, the 4000 bytes)
+        sh.run('mtterm r %d %s %s' % (n, f, ' '.join(map(str, a))))
+        b = A.disk_file(k, f.upper()) or bytes(4009)
+        return (b[0],) + struct.unpack_from('<4H', b, 1) + (b[9:],)
+    def keys(n, f, *kk):                    # MTTERM K: "cccc eeee"
+        sh.run('mtterm k %d %s %s' % (n, f, ' '.join('%04X' % x for x in kk)))
+        return A.disk_file(k, f.upper())
+    # MTKEY R behind, its INT 16h read waiting (TS_WAITK); the front task's own keys still its (LCMD's prompt)
+    typ(k, 'start /w mtkey.com r tk.txt', 1.0)
+    n = tnum('MTKEY.COM')
+    st0 = tstate(k)
+    o = sh.run('ver')
+    r0 = A.disk_file(k, 'TK.TXT')
+    got = keys(n, 'k1.txt', 0x8500, 0x2D78)
+    w = waitfile(k, 'TK.TXT', 3.0)
+    check('MTKEY R behind (task %s) waiting in its INT 16h read; VER typed in front still the front task\'s; MT_TKEY '
+          'F11 (8500h: AH=00h doesn\'t give it) and "x" (2D78h): both taken (0002 0000), its read gets "x", as typed '
+          '(2D78; F11 dropped, as the BIOS would), the BIOS\'s buffer never had them, and it ends' % n,
+          n and (n, TS_WAITK, 'MTKEY.COM') in st0[0] and 'Lodestone version' in o and r0 is None
+          and got == b'0002 0000' and w is not None and A.disk_file(k, 'TK.TXT') == b'2D78' and tnum('MTKEY.COM') is None,
+          (st0, o[-80:], r0, got, A.disk_file(k, 'TK.TXT'), tstate(k)))
+    # MTLINE behind, its DOS line read waiting in kbd_get (MT's key wait): the keys echoed in its own screen, its
+    # changes counted; then Return, its line
+    typ(k, 'start /w mtline.com tl.txt', 1.0)
+    n = tnum('MTLINE.COM')
+    a = rows(n, 'r1.txt')
+    got = keys(n, 'k2.txt', 0x2368, 0x1769)
+    k.run_for(1.0)
+    b = rows(n, 'r2.txt')
+    k.run_for(1.0)
+    c = rows(n, 'r3.txt')
+    sl = slot(k, n, 4000)
+    txt = '\n'.join(''.join(chr(c[5][(r * 80 + i) * 2]) for i in range(80)).rstrip() for r in range(25))
+    check('MTLINE behind (task %s) waiting for its line (DOS, in kbd_get: MT\'s key wait): "h", "i" with MT_TKEY taken '
+          '(%s); echoed in its own screen (MT_TROWS: "MTLINE> hi", byte for byte its pages\' first 4000 bytes); its '
+          'changes counted (%d, %d, then idle %d)' % (n, got, a[1], b[1], c[1]), n and a[0] == 0 and got == b'0002 0000'
+          and 'MTLINE> hi' in txt and c[5] == sl and b[1] > a[1] and c[1] == b[1], (a[:5], b[:5], c[:5], txt[-200:]))
+    tv = tvid(k, n)
+    check('... and the rest: BX its cursor (%04X), CL 80 columns, CH mode 3, DL 0 (a text mode, not found writing the '
+          'screen itself), DH TS_WAITK' % c[2], c[2] == struct.unpack_from('<H', tv, 0x50 - 0x49 + 2 * tv[0x62 - 0x49])[0]
+          and c[3] == 0x0350 and c[4] == TS_WAITK << 8, (c[:5], tv.hex()))
+    p = rows(n, 'r4.txt', 3, 1)
+    check('MT_TROWS of one row (row 3): its 160 bytes only, the room past them as it was', p[0] == 0
+          and p[5][:160] == sl[3 * 160:4 * 160] and p[5][160:] == bytes(3840), p[:5])
+    bads = [rows(n, 'rb%d.txt' % i, *a_) for i, a_ in enumerate(((20, 6), (0, 0), (25, 1)))]
+    check('MT_TROWS of rows past 24, or none: CF, AX = 1', all(r[:2] == (1, 1) for r in bads), [r[:5] for r in bads])
+    fr = rows(n, 'rf.txt')
+    sh.run('mtterm f %d rg.txt' % n)
+    g = A.disk_file(k, 'RG.TXT') or bytes(9)
+    check('MT_TROWS with its room in the EMS frame\'s window 0, where the pages go: CF, AX = 1', g[:3] == b'\1\1\0', g[:9])
+    front(k, n); front(k, 0)
+    d = rows(n, 'r5.txt')
+    check('... brought to the front and back (nothing written meanwhile): its count up (%d, %d before: mt_scrsv)'
+          % (d[1], fr[1]), tstate(k)[1] == 0 and d[1] > fr[1], (d[:5], fr[:5], tstate(k)))
+    got = [keys(n, 'k%d.txt' % (6 + j), *([0x1E61 + j * 0x1001] * 20)) for j in (0, 1)]    # (20 "a", then 20 "b")
+    k.run_for(1.0)
+    got.append(keys(n, 'k3.txt', 0x1C0D))
+    w = waitfile(k, 'TL.TXT', 3.0)
+    check('... 20 "a", 20 "b" (the ring round its end: 2 before), then Return (1C0Dh) typed to it: its line "hi" and '
+          'them; it ends', got == [b'0014 0000', b'0014 0000', b'0001 0000'] and w is not None
+          and A.disk_file(k, 'TL.TXT') == b'hi' + b'a' * 20 + b'b' * 20 and tnum('MTLINE.COM') is None, (got, A.disk_file(k, 'TL.TXT'), tstate(k)))
+    # a task reading no keys (MTSPIN computing): 32 taken, the 33rd refused; it stays as it was (ready, not waiting)
+    typ(k, 'start /w mtspin.com 30000 sp.txt', 0.5)   # (till killed: the typing below is slow beside it)
+    n = tnum('MTSPIN.COM')
+    got = (keys(n, 'k4.txt', *([0x1E61] * 20)), keys(n, 'k5.txt', *([0x1E61] * 13)))   # (a command line: 127 at most)
+    st = [s for i, s, nm in tstate(k)[0] if i == n]
+    check('MT_TKEY to MTSPIN (task %s), reading none: 20, then 12 of 13 taken, the 33rd refused (AX = 8: %s), its state '
+          'as it was (TS_RUN)' % (n, got), got == (b'0014 0000', b'000C 0008') and st == [1], (got, st))
+    sh.run('kill %d' % n)
+    # parked: both refused (AX = 5)
+    typ(k, 'start /w mtscr.com p', 3.0)
+    n = tnum('MTSCR.COM')
+    sh.run('park %d' % n)
+    st = [s for i, s, nm in tstate(k)[0] if i == n]
+    pr, got = rows(n, 'rp.txt'), keys(n, 'kp.txt', 0x1E61)
+    check('a parked task (MTSCR, task %s, %s): MT_TROWS and MT_TKEY refused, AX = 5' % (n, st), st == [5]
+          and pr[:2] == (1, 5) and got == b'0000 0005', (st, pr[:5], got))
+
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
     k0 = boot('mt_mem0.img', b'MULTITASK=0\r\n')
@@ -4161,12 +4250,12 @@ if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

@@ -102,6 +102,35 @@ MT_SCREEN   equ 1Ch                    ; the caller's screen, which it wrote
                                         ;  after a screen saver): not counted
                                         ;  against it as writing the screen
                                         ;  itself (M4a; only the front task's)
+MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
+                                        ;  task, ES:DI = room, DX = a row, CX =
+                                        ;  rows (to row 24): those rows of its
+                                        ;  screen as MT keeps it (its pages; the
+                                        ;  page shown), cols x 2 bytes a row,
+                                        ;  copied there -> AX = its changes'
+                                        ;  count (it went up: look again; any
+                                        ;  INT 10h call of it behind, and its
+                                        ;  leaving the front), BX = its cursor
+                                        ;  there (row, column), CL = columns, CH
+                                        ;  = its mode, DL = MTF_DIRECT, and 2
+                                        ;  not a text mode (nothing copied), DH
+                                        ;  = its state (TS_*).  CF: AX = 1 (no
+                                        ;  such task, rows past 24 or none, room
+                                        ;  in the EMS frame's windows 0-1), 5
+                                        ;  (task 0, the Executive; parked)
+MT_TKEY     equ 20h                     ; (T1) BL = a task, CX = a key (as INT
+                                        ;  16h gives them): typed to it, for its
+                                        ;  INT 16h and DOS's key reads (before
+                                        ;  the keyboard's; for AH=00h and 01h,
+                                        ;  and DOS's, those they don't give
+                                        ;  dropped), 32 waiting at most; ready
+                                        ;  to run if it waited for one.  Not
+                                        ;  while a critical error's prompt, a
+                                        ;  call MT passed on to the BIOS or an
+                                        ;  INT 13h call is under way: the
+                                        ;  keyboard's then.  CF: AX = 1 (no such
+                                        ;  task), 5 (task 0; parked), 8 (32
+                                        ;  waiting already)
 MT_TASKS    equ 8                       ; most tasks at once (0 is the Executive)
 MT_DEFARENA equ 1000h                   ; a task's memory if SP_PARAS is 0: 64 KB
 
