@@ -1014,7 +1014,7 @@ def t_bg():
         up = popped(h, gen) and in_step(h)
         check('the next pop-up: the band says how many requests ran meanwhile (%d); what Claude Code wrote '
               'meanwhile there; the bridge not quiet' % nreq,
-              up and ('%d in background' % nreq) in h.band() and 'Written on the Pi meanwhile' in h.screen() and not h.transport.proto.quiet and h.rv('srq_held') == 0,
+              up and ('  %d in background' % nreq) in h.band() and 'Written on the Pi meanwhile' in h.screen() and not h.transport.proto.quiet and h.rv('srq_held') == 0,
               (up, h.band(), h.transport.proto.quiet))
         h.press(HOT)
         h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)

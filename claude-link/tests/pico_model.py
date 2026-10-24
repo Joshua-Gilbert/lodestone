@@ -199,9 +199,12 @@ class PicoModel(AR488Model):
         """The reply's last byte went (the chip model calls it): TX_DONE, as the firmware's."""
         s._send(struct.pack('<BBHBI', F_EVENT, 0x1D, s.gen & 0xFFFF, 0, 0))
 
-    def sdc(s):
+    def sdc(s, code=0x16):
         s.gen += 1; s.partial = False; s.cmp = None; s._drop_stale()
-        s._send(struct.pack('<BBHBI', F_EVENT, 0x16, s.gen & 0xFFFF, 0, 0))    # (the Pi is told, as the firmware's)
+        s._send(struct.pack('<BBHBI', F_EVENT, code, s.gen & 0xFFFF, 0, 0))    # (the Pi is told, as the firmware's)
+
+    def dcl(s):
+        s.sdc(0x15)                         # (DCL: the same clear, reported as DCL)
 
 
 def _glp_ok(m, head):
