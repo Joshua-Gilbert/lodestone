@@ -130,7 +130,10 @@ TX_FVEC     equ TX_VEC + MT_NVEC * 4    ; its INT 09h and 1Bh (mt_vfr's), while
                                         ;  another is in front
 TX_CHG      equ TX_FVEC + MT_NFV * 4    ; its screen's changes in the background,
                                         ;  counted (T1: MT_TROWS gives it)
-TX0_PARAS   equ (TX_CHG + 2 + 15) / 16  ; (task 0's TX ends here)
+TX_WGFX     equ TX_CHG + 2              ; 1: a terminal window's task, brought
+                                        ;  to the front for graphics (T3:
+                                        ;  mt_wfront), till a text mode
+TX0_PARAS   equ (TX_WGFX + 1 + 15) / 16 ; (task 0's TX ends here)
 TX_GSN      equ TX0_PARAS * 16          ; the vector table at its spawn (a
                                         ;  task's: the ones left pointing into
                                         ;  its region at its end put back)
@@ -3238,6 +3241,7 @@ mt_spawn:
         mov     [es:V_DTA + 2], ax
         mov     word [es:TX_KLEN], 0
         mov     word [es:TX_KN], 0      ; (no keys typed to it: T1)
+        mov     byte [es:TX_WGFX], 0    ; (not in front for graphics: T3)
         mov     byte [es:TX_FPV], 0     ; (its coprocessor: FNINIT's, first)
         call    mt_m33new               ; (its INT 33h state)
         call    mt_33hk
@@ -4608,10 +4612,33 @@ mt_pgend:
         mov     word [es:TX_M33 + m33_cnt - m33_st], -1
 .e:     pop     es
         pop     bx
-.k:     pop     ax
+        jmp     short .a
+.k:     call    mt_gtext
+.a:     pop     ax
         mov     ax, [ui_seg]
         or      ax, ax
         jmp     KSEG:ui_progend + 5
+
+; T3: the program ending in front leaves its task in graphics, in front
+; for them (TX_WGFX): a text mode for it, as if it set one itself, so that
+; the task goes back to its window (mt_vshad).  All kept
+mt_gtext:
+        pusha
+        push    es
+        mov     al, [cs:mt_front]
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+        cmp     byte [es:TX_WGFX], 0
+        je      .x
+        push    0
+        pop     es
+        cmp     byte [es:449h], 4       ; (still in graphics)
+        jb      .x
+        mov     ax, 3
+        int     10h
+.x:     pop     es
+        popa
+        ret
 
 ; the screen (B800:0000, 32 KB: any mode) and its BIOS data to task AL's
 ; pages and TX (with none, nothing; with its pages gone, say a program
@@ -5178,7 +5205,17 @@ mt_wfront:
         je      .x                      ;  its handler: the call again, now
         call    mt_ent                  ;  the front one's)
         mov     byte [cs:bx+TE_STATE], TS_WAITF
-        call    mt_pick
+        or      al, al                  ; a terminal window's task (T3): in
+        jz      .p                      ;  front at the next switch, for its
+        mov     ah, [cs:bx+TE_GEN]      ;  graphics, full screen; back with a
+        call    mw_owns                 ;  text mode (mt_vshad)
+        jc      .p
+        mov     [cs:mt_swreq], al
+        push    es
+        mov     es, [cs:bx+TE_TX]
+        mov     byte [es:TX_WGFX], 1
+        pop     es
+.p:     call    mt_pick
         jnc     .go
         mov     bl, [cs:mt_front]
 .go:    jmp     mt_switch
@@ -5275,6 +5312,13 @@ mt_vshad:
         mov     byte [cs:mt_shd], 0
         call    mt_tmode
         jc      .x
+        push    es                      ; a text mode, from a terminal window's
+        mov     es, [cs:bx+TE_TX]       ;  task in front for its graphics (T3):
+        cmp     byte [es:TX_WGFX], 0    ;  back to its window (task 0 in front
+        je      .tw                     ;  at the next switch)
+        mov     byte [es:TX_WGFX], 0
+        mov     byte [cs:mt_swreq], 0
+.tw:    pop     es
         call    mt_others
         jc      .x
         jmp     short .go
