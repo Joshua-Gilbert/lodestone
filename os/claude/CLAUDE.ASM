@@ -3361,7 +3361,7 @@ r_hot:  cmp     byte [cs:r_off], 0
 r_bg:   cmp     byte [cs:r_bgon], 1
         jne     .x
         cmp     byte [cs:r_off], 0      ; (a CLAUDE.COM has the link: one before
-        jne     .x                      ;  1.10 doesn't know to clear r_bgon)
+        jne     .o                      ;  1.10 doesn't know to clear r_bgon)
         cmp     byte [cs:r_ks], 0
         jne     .x
         call    r_front
@@ -3385,9 +3385,12 @@ r_bg:   cmp     byte [cs:r_bgon], 1
 .n:     pop     ds
         pop     ax
 .x:     ret
+.o:     mov     byte [cs:r_bgon], 0     ;  (so it clears it for that one)
+        ret
 
 r_popup:
         mov     byte [cs:r_inpop], 1
+        pushf                           ; (the caller's DF: the console CLDs)
         pusha
         push    ds
         push    es
@@ -3435,6 +3438,7 @@ r_popup:
         pop     es
         pop     ds
         popa
+        popf
         mov     byte [cs:r_inpop], 0
         ret
 

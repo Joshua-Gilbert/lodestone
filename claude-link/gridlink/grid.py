@@ -92,7 +92,9 @@ class Grid:
             try:
                 while rid not in s.replies:
                     left = deadline - time.monotonic()
-                    if rid in s.dead: raise GridError(s.dead[rid])
+                    if rid in s.dead:
+                        s.link.withdraw(glp.P_REQUEST, msg)    # (queued after the HELLO that ended it: not to run)
+                        raise GridError(s.dead[rid])
                     if left <= 0:
                         # (not yet on its way: taken back, so it can't run later, after we have said it failed;
                         # resident Claude's background waits for its program's key calls, M4)

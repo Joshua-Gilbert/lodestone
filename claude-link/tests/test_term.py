@@ -468,22 +468,32 @@ def test_resident_background():
     from gridlink.term import TermSession as T
     from gridlink.grid import Grid, GridError, OPS_BG
     from gridlink.link import Link
-    link = SimpleNamespace(last_rx=time.monotonic() - 3600)
-    def why(tool, bg):
+    link = SimpleNamespace(last_rx=time.monotonic() - 3600, t=SimpleNamespace(sdcs=3))
+    ended = []
+    def term(bg):
         s = SimpleNamespace(link=link, hello={'app': 'resident', 'prog': 'TM5000G.EXE', 'ops': 'files,gpib'},
-                            away=True, bg=bg, PAUSED_TOOLS=T.PAUSED_TOOLS, OPS_TOOLS=T.OPS_TOOLS,
-                            RESIDENT=T.RESIDENT, AWAY=T.AWAY, AWAY_BG=T.AWAY_BG, NOT_PAUSED=T.NOT_PAUSED)
+                            away=True, bg=bg, bg_sdc=3, PAUSED_TOOLS=T.PAUSED_TOOLS, OPS_TOOLS=T.OPS_TOOLS,
+                            RESIDENT=T.RESIDENT, AWAY=T.AWAY, AWAY_BG=T.AWAY_BG, NOT_PAUSED=T.NOT_PAUSED,
+                            BG_STOPPED=T.BG_STOPPED, grid=SimpleNamespace(end_calls=ended.append))
         link.source = s
         s.resident = lambda: T.resident(s)
         s.paused_tools = lambda: T.paused_tools(s)
         s.bg_tools = lambda: T.bg_tools(s)
-        return T.why_not(s, tool)
+        s.background = lambda: T.background(s)
+        return s
+    def why(tool, bg): return T.why_not(term(bg), tool)
     for tool in ('grid_files', 'grid_change_files', 'gpib_read', 'gpib_measure', 'gpib_send'):
         assert why(tool, True) is None, tool
         assert 'no GRiD tool works' in why(tool, False), tool
     for tool in ('grid_program', 'grid_type', 'grid_command'):
         w = why(tool, True)
         assert w and 'in the background' in w and 'grid_files, grid_change_files, gpib_read' in w, (tool, w)
+    # the console stopped (an SDC to the bridge since it went): the calls kept end, the tools say so
+    s = term(True)
+    link.t.sdcs = 4
+    w = T.why_not(s, 'grid_files')
+    assert 'no GRiD tool works' in w and ended == [T.BG_STOPPED] and not s.bg and not T.background(s), (w, ended)
+    link.t.sdcs = 3
     # going back: a SCREEN's call ends, a DIR's waits for the background's REPLY
     sent = []
     g = Grid(SimpleNamespace(send=lambda t, b: sent.append(b), withdraw=lambda t, b: False))
@@ -519,7 +529,7 @@ def test_resident_background():
         now[0] += L.RING_AGAIN + 0.01; L.ring_check()
     assert rings == ['ring'] * (L.RING_TRIES + 3), rings
     L.source = SimpleNamespace(background=lambda: False, may_ring=lambda: True, ready=lambda: False)
-    rings.clear(); L.ring_check()
+    rings.clear(); now[0] += L.RING_AGAIN + 0.01; L.ring_check()
     assert rings == [], rings                   # (no GF_WAKE, not in the background: no ring)
 
 
