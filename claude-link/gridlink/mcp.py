@@ -456,14 +456,15 @@ class GridTools:
 
     def t_grid_program(s, a):
         name = (s.hello() or {}).get('prog')
+        shot = s.snapshot()
         if s.away():                        # (CLAUDE 1.11: read in the background, the program running)
-            head = ('The user is back in the DOS program (%s when resident Claude\'s console was last up over '
-                    'it; another may run now); its screen as it is now, read in the background.'
-                    % (name or 'its name unknown'))
+            head = ('The user is back in the DOS program (%s); its screen as it was read just now, in the '
+                    'background.' % ('%s when resident Claude\'s console was last up over it; another may run '
+                                     'now' % name if name else 'its name isn\'t known'))
         else:
             head = ('%s is paused under resident Claude\'s console.' % name if name else
                     'A DOS program is paused under resident Claude\'s console (its name isn\'t known).')
-        return [text(head)] + s.snapshot(), False
+        return [text(head)] + shot, False
 
     def t_grid_type(s, a):
         timeout = arg_int(a, 'timeout', 60, 1, MAX_TYPE_WAIT)

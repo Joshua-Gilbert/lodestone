@@ -206,7 +206,8 @@ class TermSession:
                 s.away = True
                 # M4: on in the background, the bridge quiet (from the answer to this EVENT on: if it can't
                 # be now, a bridge reconnected with older firmware, no background), POLLs answered at once
-                # (the program waits meanwhile); files and GPIB go on
+                # (the program waits meanwhile); files and GPIB go on, and SCREEN for a console that says
+                # bgscreen (CLAUDE 1.11)
                 s.bg = s.bg and bool(s.link.t.set_quiet(True))
                 if s.bg:
                     s.bg_sdc = s.link.t.sdcs        # (an SDC from the GRiD from now on: it has stopped)

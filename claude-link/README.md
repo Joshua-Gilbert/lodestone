@@ -60,7 +60,7 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_plot` | until allowed | a line or scatter plot on the GRiD's screen, from data or a Pi file (a trace saved with `save_to`); drawn in one bit with the GRiD's own font |
 | `grid_image` | until allowed | a picture file from `~/grid` (a matplotlib PNG), dithered to the GRiD's screen |
 | `grid_pick` | until allowed | asks the user to click points on the plot or picture, and returns them (data coordinates, the nearest point) |
-| `grid_program` | until allowed | resident Claude only: the DOS program its console is popped up over (its name and screen) |
+| `grid_program` | until allowed | resident Claude only: the DOS program its console is popped up over (its name and screen); from CLAUDE 1.11 also once the user is back in it, its screen as it is then |
 | `grid_type` | every time | resident Claude only: keys into that program (`1A{WAIT 30}`); the console goes while they play and comes back with the program's screen |
 
 While Claude Code is in resident Claude's console (CLAUDE /R, CODE-\ over a

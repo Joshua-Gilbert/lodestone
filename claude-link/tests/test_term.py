@@ -493,6 +493,16 @@ def test_resident_background():
     assert T.why_not(s, 'grid_program') is None, T.why_not(s, 'grid_program')
     w = T.why_not(s, 'grid_type')
     assert w and 'grid_program, grid_files' in w, w
+    # EVENT away with a bgscreen console: its SCREEN call goes on too; a 1.10 console's (no bgscreen) ends
+    for ops, kept in (('files,gpib,bgscreen', True), ('files,gpib', False)):
+        keeps = []
+        s = term(True)
+        s.hello = dict(s.hello, ops=ops); s.away = False; s.AWAY_CALL = T.AWAY_CALL
+        s.link = SimpleNamespace(t=SimpleNamespace(set_quiet=lambda on: True, sdcs=3), hold=1)
+        s.grid = SimpleNamespace(end_calls=lambda why, keep=(): keeps.append(set(keep)))
+        T.on_message(s, glp.G_EVENT, bytes([glp.EV_AWAY]))
+        assert s.away and s.bg and keeps and (glp.OP_SCREEN in keeps[0]) == kept and glp.OP_TYPE not in keeps[0] \
+            and OPS_BG <= keeps[0], (ops, keeps)
     # the console stopped (an SDC to the bridge since it went): the calls kept end, the tools say so
     s = term(True)
     link.t.sdcs = 4

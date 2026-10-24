@@ -241,7 +241,8 @@ MULTITASK=1, its key wait and its INT 24h prompt; or the program is
 DEFRAG, which writes the disk itself; GPIB requests still run), FFh unknown request.
 
 Resident Claude's console (`app=resident`) answers SCREEN with the paused
-program's screen as it keeps it (`which` doesn't matter: there is one),
+program's screen as it keeps it (`which` doesn't matter: there is one; in
+the background, with `bgscreen`, the program's screen as it is then),
 and TYPE: the console goes back to the program, the key script plays into
 it (keys and waits as RUN's; a snapshot mark ends it), and when it is done
 the console comes back by itself and answers, with the screen then. CODE-\
@@ -333,8 +334,8 @@ title from TITLE, the link, the keys).
   `gpib`: gpib_read, gpib_measure, gpib_send); the GRiD's other tools
   answer that they can't (the program holds the GRiD), and anything sent
   anyway gets status F6h. Once the user has gone back to the program,
-  files and GPIB go on in the background where the bridge can be quiet
-  (section 4). The console keeps
+  files and GPIB go on in the background where the bridge can be quiet,
+  and grid_program where `ops=` lists `bgscreen` (section 4). The console keeps
   its screen between pop-ups and draws it at once; its HELLO's `screen=`
   is the CRC-16 (as the frames') of its 24 rows (glyph, attribute for each
   cell, row by row), then the cursor's row, column and hidden flag (0 or
