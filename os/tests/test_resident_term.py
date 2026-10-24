@@ -805,6 +805,20 @@ def t_driver():
                 rings = h.run_until(lambda: not bridge_quiet(h) or h.link.stats.get('rang', 0) != r1, 2)
                 check('... gone back to the program: no ring, the bridge holds no SRQ for it',
                       away and not rings, (away, h.link.stats, h.nano.srq))
+                # a second session in the same boot: the answers at their SRQ as in the first (keys typed only
+                # once the link is up again: before its HELLO the console drops them)
+                h.press(HOT)
+                up = h.wait(lambda: h.up() and h.rv('connected') == 1 and h.rv('lstate') == 1, 10)
+                h.run_until(lambda: in_step(h, 0.1), 10)
+                d2, n2, f2 = h.pit_dues, h.naps, h.link.stats['rx_frames']
+                h.term_type('diff'); h.press(ENTER)
+                ok = h.has('int rate = 5', 60) and in_step(h)
+                check('a second session in the same boot: each answer at its SRQ (%d frames, %d sleeps), the PIT '
+                      'never asked' % (h.link.stats['rx_frames'] - f2, h.naps - n2),
+                      up and ok and h.rv('srq_held') == 0 and h.pit_dues == d2 and h.naps > n2,
+                      (up, ok, h.rv('srq_held'), h.pit_dues - d2, h.m.irqs5, h.m.u16(0x60, h.m.Y['gp_nsrq'])))
+                h.press(HOT)
+                h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
                 h.k.key(ESC)
                 check('EMSUSE afterwards', 'EMSUSE: 0 keys, 0 bad' in h.m.text_screen(), h.m.text_screen())
             else:

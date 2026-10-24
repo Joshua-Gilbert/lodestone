@@ -364,13 +364,15 @@ CLAUDE.COM took up the kernel driver's new calls in 1.21 and 1.23; the console n
   - While the console is up, the program's SRQ latch still gets the bridge's SRQs. The driver ORs every SRQ it sees into the latch: from the interrupt, and from its polled reads of ISR2 before 1.21 too. So TM5000G may see one SRQ after a pop-up and serial-poll its instruments for nothing. Taking those out would need a driver call to put the latch back.
   - A TYPE's own REQUEST isn't rung for: the rings are off from the moment it is queued, so the console fetches it at its next idle POLL (up to a second).
   - A ring that comes just after the idle console's last look can wait a tick.
-- **Tests** (`test_resident_term.py`, `t_driver`, 22 checks, on the Pico bridge's model, which can ring):
+  - `srq_held` can still latch when two SRQ edges merge into one interrupt (as the PIC's request register does if the first isn't serviced in time; seen in the emulator after seconds of back-to-back polling). The link then polls by the PIT until the next HELLO, as it did before this change.
+- **Tests** (`test_resident_term.py`, `t_driver`, 23 checks, on the Pico bridge's model, which can ring):
   - every frame from the Pi passed by the driver's sum, and every frame of the console's was good at the Pi;
   - the count was found, GF_WAKE offered and taken up by gridlink;
   - one serial poll an answer, and the PIT never asked;
   - the console asleep while answers are due;
   - a title from the Pi rings a quiet console;
   - no ring, and no SRQ held by the bridge, while TYPE's keys wait, after a TYPE given up on (until the console is back), or once the user has gone back;
+  - a second session in the same boot takes its answers at their SRQ as the first did;
   - never AH=0Bh;
   - with `GPIBIRQ=0`: no count, no GF_WAKE, polled by the PIT, never asleep while an answer is due, the title at the next idle POLL, no ring;
   - in a boot of its own, the SRQ line held: the console finds that out, polls by the PIT and never sleeps for an SRQ again.
