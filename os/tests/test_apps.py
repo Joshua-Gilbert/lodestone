@@ -433,7 +433,9 @@ def t_write():
     k.key('x')
     k.key(ktest.F1)
     shot(k, 'write_help')
-    check('help: GRiDWrite\'s command summary', has(k, 'Begin       CODE-B    Restart the selection') and has(k, 'Cancel      CODE-ESC'), screen(k))
+    check('help: GRiDWrite\'s command summary, Cut, Copy and Paste among them, all 18 lines shown',
+          has(k, 'Begin       CODE-B    Restart the selection') and has(k, 'Cancel      CODE-ESC') and has(k, 'Copy        CODE-C')
+          and has(k, 'Cut         CODE-Z') and has(k, 'Paste       CODE-V') and has(k, 'Any key closes'), screen(k))
     k.key('x')
     k.key(CODE['Q'])
     check('Quit asks', k.band()[0] == 'Quit: Confirm to save and exit', k.band())
@@ -715,10 +717,11 @@ def t_write_clip():
           m0 and wtext(k, ws) == T and clip() == (0, None) and wb('mode') == 0 and not has(k, 'Changed'), (m0, wtext(k, ws), clip()))
     drag(k, *at(9, 0), *at(4, 0)); k.key(CODE['C'])           # (from right to left: the selection past the cursor, the gap)
     c1 = (wb('mode'), clip())
+    bd = k.band()[-1]
     click(k, *at(30, 1)); k.key(CODE['V'])
     t1 = T.replace(b'jumps over', b'jumps overquick')
     check('a drag over "quick" (from its end), CODE-C: in the clipboard (CLIP.$$$, no EMS here), still selected; a click after "over", CODE-V: pasted there',
-          c1 == (1, (5, b'quick')) and wtext(k, ws) == t1 and has(k, 'Changed') and has(k, 'Line 2 of 5   Column 16'), (c1, wtext(k, ws), screen(k)))
+          c1 == (1, (5, b'quick')) and bd.startswith('CODE-Z cuts   CODE-C copies') and wtext(k, ws) == t1 and has(k, 'Changed') and has(k, 'Line 2 of 5   Column 16'), (c1, bd, wtext(k, ws)))
     drag(k, *at(10, 0), *at(15, 0)); k.key(CODE['Z'])
     t2 = t1.replace(b'brown', b'', 1)
     c2 = (wb('mode'), clip())
@@ -739,6 +742,15 @@ def t_write_clip():
     t5 = t4.replace(b'Tabbed', b'', 1)
     check('a drag over "Tabbed", a right click: Cut, Copy and Paste first; Return: cut', m2 and wtext(k, ws) == t5
           and clip() == (6, b'Tabbed') and wb('mode') == 0, (m2, wtext(k, ws), clip()))
+    drag(k, *at(4, 0), *at(9, 0))
+    rpress(*at(2, 0)); k.key(ktest.DOWN, ktest.ENTER)
+    mc = (wtext(k, ws) == t5, clip(), wb('mode'))
+    drag(k, *at(11, 0), *at(14, 0))
+    rpress(*at(12, 0)); k.key(ktest.DOWN, ktest.DOWN, ktest.ENTER)
+    t5 = t5.replace(b'fox', b'quick', 1)
+    check('a drag over "quick", a right click, Down, Return (Copy): copied, the text as it was, still selected; a drag over '
+          '"fox", the menu\'s Paste (third): replaced by it', mc == (True, (5, b'quick'), 1) and wtext(k, ws) == t5 and wb('mode') == 0,
+          (mc, wtext(k, ws)))
     drag(k, *at(0, 1), *at(0, 2)); k.key(CODE['C'], ktest.ESC, K_CEND, CODE['V'])
     t6 = t5 + b'jumps overquick\n'
     check('a drag over a whole line (its end too), CODE-C, ESC, Ctrl-End, CODE-V: a line more (6), the cursor on the new last one',
@@ -750,13 +762,22 @@ def t_write_clip():
           saved == t6.replace(b'\n', b'\r\n') and wtext(k, ws) == b'jumps overquick\n' + t6, (saved, wtext(k, ws)))
     big = b''.join(b'%05d ' % i + b'x' * 58 + b'\r\n' for i in range(300))     # (19,500 bytes in Write: lines end in LF)
     k = write_open('BIG.TXT', big, mouse=True)
-    drag(k, *at(0, 0), *at(3, 0)); k.key(K_CEND, CODE['C'])
+    drag(k, *at(0, 0), *at(3, 0)); k.key(CODE['C'])
+    c0 = clip()
+    k.key(K_CEND, CODE['C'])
     b1 = k.band()[0]
     k.key(ktest.ENTER)
+    c8 = clip()
+    k.key(CODE['Z'])
+    b2 = k.band()[0]
+    k.key(ktest.ENTER)
+    z8 = wtext(k, ws) == big.replace(b'\r\n', b'\n')
     k.key(K_CHOME, ktest.DOWN, ktest.DOWN, K_END)     # (extended to line 3's end)
     k.key(CODE['C'])
-    check('a selection of 19,500 bytes, CODE-C: "%s", the clipboard as it was; then the first 3 lines: copied' % b1,
-          b1 == 'The clipboard holds 16 KB at most' and clip()[0] == 3 * 65 - 1 and wb('mode') == 1, (b1, clip()))
+    check('"000" copied; a selection of 19,500 bytes, CODE-C: "%s", the clipboard as it was ("000"); CODE-Z: the same, nothing '
+          'erased; then the first 3 lines: copied' % b1,
+          b1 == 'The clipboard holds 16 KB at most' and c0 == (3, b'000') and c8 == c0 and b2 == b1 and z8
+          and clip()[0] == 3 * 65 - 1 and wb('mode') == 1, (b1, c0, c8, b2, z8, clip()))
     # past the cursor (after the gap), and emptied
     k = write_open(mouse=True)
     k.key('XY', K_CHOME)
@@ -765,6 +786,10 @@ def t_write_clip():
     k.key(CODE['B'], CODE['C'])
     check('"XY" typed, Ctrl-Home, a drag from right to left over "XYThe", CODE-C: those; CODE-B (empty), '
           'CODE-C: a beep, the clipboard as it was', c7 == (5, b'XYThe') and clip() == (5, b'XYThe') and wb('mode') == 1, (c7, clip()))
+    k.key(ktest.ESC)
+    drag(k, *at(0, 0), *at(2, 0)); k.key(CODE['V'])
+    check('a drag over "XY" (at the start), CODE-V: replaced by the 5 bytes (the room the gap\'s and the selection\'s, not where it ends)',
+          wtext(k, ws) == b'XYThe' + T and k.band()[0].startswith('Type, or choose a command'), (wtext(k, ws)[:20], k.band()))
 
 # ---------------------------------------------------------------------
 def t_memory():
