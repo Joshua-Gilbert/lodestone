@@ -45,6 +45,7 @@ class Grid:
         s.info = {}
         s.after_run = None                     # called when a RUN ends (Term: a picture is gone)
         s.typing = 0                           # TYPEs waiting: resident Claude's console is down meanwhile
+        s.n_replies = 0                        # REPLYs from the GRiD, counted
         s.type_out = False                     # one given up on (timed out): the console may be down still,
                                                #  until we hear from it (a REPLY: TYPE's own comes first)
 
@@ -52,7 +53,7 @@ class Grid:
     def on_reply(s, body):
         if len(body) < 2: return
         with s.cv:
-            s.type_out = False
+            s.type_out = False; s.n_replies += 1
             if body[0] in s.waiting:
                 s.replies[body[0]] = (body[1], bytes(body[2:]))
                 s.cv.notify_all()
@@ -206,14 +207,15 @@ class Grid:
         resident Claude's console.  The answer comes once they have played,
         or CODE-\\ stopped them: (all played?, the screen then as SCREEN
         gives it, or None if its mode isn't one the console keeps)."""
-        with s.cv: s.typing += 1; ended = s.ended
+        with s.cv: s.typing += 1; ended, seen = s.ended, s.n_replies
         done = False
         try:
             st, r = s.call(glp.OP_TYPE, bytes(keys), timeout=timeout); done = True
         finally:
             with s.cv:
                 s.typing -= 1
-                if not done and s.ended == ended: s.type_out = True    # (not ended by a HELLO or EVENT away)
+                if not done and s.ended == ended and s.n_replies == seen:    # (not ended by a HELLO or
+                    s.type_out = True                                      #  EVENT away; no REPLY since)
         if st not in (0, 0xF5) or not r: raise GridError(errtext(st), st)
         return bool(r[0] & 1), (r[1:] if st == 0 else None)
 
