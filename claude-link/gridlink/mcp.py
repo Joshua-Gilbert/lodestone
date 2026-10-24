@@ -93,7 +93,11 @@ TOOLS = [
          "controller at address 21; the Pi's bridge is on the bus too). Nothing is sent, but a serial "
          "poll clears the instrument's service request (and, on some, latched status bits). Actions: "
          "scan (serial-polls every address, lists the ones that answer), poll (one status byte), read "
-         "(the instrument's pending output). To send anything, queries included, use gpib_send."),
+         "(the instrument's pending output). To send anything, queries included, use gpib_send. When "
+         "resident Claude's console is popped up over a program that uses the bus (TM5000G, which "
+         "watches for service requests), scan and poll take the status bytes it was waiting to read, "
+         "and read takes output it was waiting for: it is then gone when the program looks, so use "
+         "them there only when the user asks. max_bytes is at most 8192 there."),
      'inputSchema': {'type': 'object', 'properties': dict(
          {'action': {'type': 'string', 'enum': ['scan', 'poll', 'read']}}, **GPIB_PROPS),
          'required': ['action']},
@@ -531,7 +535,8 @@ class GridTools:
         addr = arg_int(a, 'address', None, 0, 30)
         if addr is None and need_addr: raise ValueError('address is required')
         if addr in (21, s.bridge): raise ValueError('%d is the GRiD or the bridge, not an instrument' % addr)
-        return addr, arg_int(a, 'timeout_ms', 2000, 1, 65535), arg_int(a, 'max_bytes', 4096, 1, 15000)
+        most = 8192 if (s.hello() or {}).get('app', '').lower() == 'resident' else 15000   # (the pop-up's buffer)
+        return addr, arg_int(a, 'timeout_ms', 2000, 1, 65535), arg_int(a, 'max_bytes', 4096, 1, most)
 
     # ---- the user approves every call ------------------------------------
     def t_grid_command(s, a):
