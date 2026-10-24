@@ -1,4 +1,4 @@
-# GPIB-Pico2 bridge firmware (`bridge fw 2026-10-22b`)
+# GPIB-Pico2 bridge firmware (`bridge fw 2026-10-24`)
 
 This is the production firmware: the Pico is the 1520's GPIB device, and everything the 1520 sends to it
 goes to the Raspberry Pi over USB.
@@ -10,7 +10,7 @@ goes to the Raspberry Pi over USB.
 | | |
 |---|---|
 | Files | `bridge.ino` (glue, pin init, USB, LED, watchdog) · `gpib_engine.c/.h` (core 1: the bus) · `host_link.c/.h` (core 0: the protocol) · `PROTOCOL.md` |
-| Ready-built | `bridge_pico2.uf2` (157 kB, fw 2026-10-22b) |
+| Ready-built | `bridge_pico2.uf2` (165 kB, fw 2026-10-24) |
 | USB | VID 2E8A / PID 000F (the arduino-pico Pico 2 IDs), product **"GPIB-Pico2 Bridge"**, max power 500 mA in the descriptor |
 | GPIB subsets | SH1 AH1 T6 L4 SR1 RL1 PP0 DC1 DT1 C0. No secondary addresses, no parallel poll, never a controller |
 | Address | set by the Pi (0–30), from `address =` in `/etc/gpib-bridge/bridge.toml` |
@@ -29,7 +29,8 @@ goes to the Raspberry Pi over USB.
   - it takes part in every command handshake (ATN);
   - it listens when sent its MLA, and passes the message to the Pi;
   - it talks when sent its MTA, sending the Pi's reply with EOI on the last byte;
-  - it answers serial polls with the Pi's status byte, and asserts SRQ when the Pi requests service;
+  - it answers serial polls with the Pi's status byte, and asserts SRQ when the Pi requests service (unless
+    the Pi has made it quiet, CONFIG bit 2);
   - it reports DCL, SDC, GET, GTL, LLO, REN and IFC to the Pi.
 - **Messages end** at EOI, or when the 1520 unaddresses it mid-message (UNL, or its own MTA). A message
   half-received when IFC arrives or the bridge goes offline is thrown away.
@@ -118,6 +119,12 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   Core 1 keeps the sum as the bytes come (two adds a byte, `hold_glp_byte`). The J tests add a good frame, an
   empty one, and a wrong sequence number, a bad sum, a changed byte, one too short, one too long and one with
   the CRC: 99 checks.
+- **2026-10-24.** Quiet (CONFIG flags bit 2; PROTOCOL.md). The status byte as ever, but the SRQ line is never
+  driven: gridlink sets it while resident Claude's console works in the background under a DOS program
+  (Lodestone's M4), so the program's SRQ latch sees none of the link's answers. `set_srq` reads it each time
+  (`SH.quiet`), so no SRQ slips out between a CONFIG and core 1's next look at it. The J tests add an answer and a ring with quiet on (no SRQ, the byte as ever) and quiet
+  turned off with RQS waiting (SRQ then): 103 checks. `bridge_pico2.uf2` built with arduino-cli 1.5.1 and
+  `rp2040:rp2040` 6.3.0, as below.
 
 ## Build
 

@@ -538,6 +538,34 @@ def gridlink_auto_srq(sim):
     br.proto.write(pico.cobs_encode(struct.pack("<BH", pico.F_WAKE, old_gen)))
     time.sleep(0.1)
     check("a ring for an older message is void", sim.cmd("srq")[0] == "0")
+    # quiet (fw 2026-10-24): the status byte as ever, the SRQ line never driven (resident Claude's background)
+    check("the firmware can be quiet", br.set_quiet(True) and br.proto.quiet)
+    time.sleep(0.1)
+    sim.write(7, b"GLP quiet 1\n")
+    pi_answers(b"answer to ")
+    time.sleep(0.2)
+    srq_q = sim.cmd("srq")[0]
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 255)
+    check("quiet: an answer in raises no SRQ, and the poll says 60h as ever",
+          srq_q == "0" and int(st) == 0x60 and data == b"answer to GLP quiet 1\n", f"srq={srq_q} s={st} {data!r}")
+    br.ring()
+    time.sleep(0.1)
+    srq_q = sim.cmd("srq")[0]
+    r, st = sim.cmd("spoll 7")
+    check("quiet: a ring raises no SRQ, its poll says 40h", srq_q == "0" and int(st) == 0x40, f"srq={srq_q} s={st}")
+    sim.write(7, b"GLP quiet 2\n")
+    pi_answers(b"answer to ")
+    time.sleep(0.2)
+    srq_q = sim.cmd("srq")[0]
+    br.set_quiet(False)
+    time.sleep(0.1)
+    srq_n = sim.cmd("srq")[0]
+    r, st = sim.cmd("spoll 7")
+    r, data, end = sim.read(7, 255)
+    check("quiet off with an answer's RQS waiting: SRQ then, served by the poll (60h)",
+          srq_q == "0" and srq_n == "1" and int(st) == 0x60 and sim.cmd("srq")[0] == "0"
+          and data == b"answer to GLP quiet 2\n", f"srq {srq_q}->{srq_n} s={st} {data!r}")
     br.stop.set()
     br._drop()
     time.sleep(6.5)                        # the bridge sees the PINGs stop and goes offline

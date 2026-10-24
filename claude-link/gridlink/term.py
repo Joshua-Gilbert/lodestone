@@ -11,7 +11,7 @@ talks to this process over a Unix socket.
 import fcntl, os, select, shlex, shutil, struct, subprocess, termios, threading, time
 import pyte
 from . import glp
-from .grid import Grid
+from .grid import Grid, OPS_BG
 from .keys import term_keys
 from .termscreen import TermScreen, PreFilter, Encoder, fold_title
 from . import mcp
@@ -64,6 +64,8 @@ class TermSession:
         s.title = ''; s.title_sent = None; s.title_t = 0.0
         s.hello = {}; s.exited = None
         s.away = False                  # resident Claude: the user went back to the program
+        s.bg = False                    #  and its console goes on in the background (M4, HF_BG)
+        s.bg_sdc = 0                    #  (the bridge's count of SDCs then: the console's stop)
         s.stats = dict(keys=0, pty_in=0, pty_out=0)
         s.tools = None; s.sock = mcp.socket_path(cfg)
         # A picture over the text (picture.py): while one is up it is the
@@ -98,7 +100,14 @@ class TermSession:
                  'gpib': ('gpib_read', 'gpib_measure', 'gpib_send')}
     AWAY = ('The user has gone back from resident Claude\'s console to the DOS program on the GRiD (%s), which '
             'is running again: no GRiD tool works until they bring the console up over it again (CODE-\\).')
+    AWAY_BG = ('The user has gone back from resident Claude\'s console to the DOS program on the GRiD (%s), which '
+               'is running again. %s still work, in the background between its key calls (each waits for the '
+               'program to look for a key; a floppy access pauses it briefly); this one needs the console up '
+               'over it again (CODE-\\).')
     AWAY_CALL = 'the user went back to the program (CODE-\\) before it answered'
+    BG_STOPPED = ('resident Claude\'s console stopped working in the background (the GRiD cleared the link: '
+                  'a failure under the program, the bridge not answering, or the console coming up or CLAUDE '
+                  'starting); the GRiD tools work again once the console is up (CODE-\\)')
 
     def resident(s):
         """The GRiD is CLAUDE /R's console, over a DOS program it paused."""
@@ -109,7 +118,11 @@ class TermSession:
         if s.link is None or s.link.source is not s:
             return 'The GRiD is not in Term mode (CLAUDE /T on the GRiD).'
         prog = s.hello.get('prog') or 'its name unknown'
-        if s.away and s.resident(): return s.AWAY % prog
+        if s.away and s.resident():
+            if not s.background(): return s.AWAY % prog
+            tools = s.bg_tools()
+            if tool in tools: return None       # (no 10-s check: the background talks only when it has work)
+            return s.AWAY_BG % (prog, ', '.join(tools))
         if not s.hello or time.monotonic() - s.link.last_rx > 10:
             return 'The GRiD is not connected (start CLAUDE /T on it).'
         if s.resident():
@@ -124,11 +137,28 @@ class TermSession:
         ops = s.hello.get('ops', '').lower().split(',')
         return s.PAUSED_TOOLS + tuple(t for o in ops for t in s.OPS_TOOLS.get(o.strip(), ()))
 
+    def bg_tools(s):
+        """The tools the console serves in the background (M4): files and GPIB, as its HELLO's ops= says."""
+        return tuple(t for t in s.paused_tools() if t not in s.PAUSED_TOOLS)
+
+    def background(s):
+        """Resident Claude's console is working in the background (M4): its bridge quiet, the stub
+        serial-polling at the program's key calls, so the Link rings (quietly) whenever it has a request.
+        The console stops (a link failure in a pass, or the link not idle as it went) with an SDC to the
+        bridge: then the calls kept end, and the tools say the user has gone back, as without it."""
+        if not (s.bg and s.away and s.resident()): return False
+        if getattr(s.link.t, 'sdcs', s.bg_sdc) != s.bg_sdc:
+            s.bg = False
+            s.grid.end_calls(s.BG_STOPPED)
+            return False
+        return True
+
     def may_ring(s):
         """The Link may ring the GRiD (an SRQ for a POLL): not while resident
         Claude's console is down, its program running (the user went back,
         TYPE's keys play, or a TYPE was given up on and the console hasn't
         been heard from since): that SRQ would be the program's."""
+        if s.background(): return True          # (quiet: no SRQ line, the program's latch sees nothing)
         return not (s.resident() and (s.away or s.grid.typing or s.grid.type_out))
 
     def detach(s):
@@ -140,6 +170,9 @@ class TermSession:
             if len(body) >= 6: info.update(glp.kv_lines(body[6:]))
             s.hello = info; s.away = False
             s.gflags = body[1] if len(body) >= 2 else 0
+            # (the Link has made the bridge loud again for this HELLO's answer: Link.handle)
+            s.bg = bool(s.resident() and s.gflags & glp.GF_BG and getattr(s.link.t, 'can_quiet', False))
+            s.link.hold = TERM_HOLD
             s.screen.quads = bool(s.gflags & glp.GF_QUAD) and not s.resident()   # (CLAUDE 1.8's block elements)
             s.grid.on_restart()
             with s.lock:
@@ -148,7 +181,8 @@ class TermSession:
                 s.penc.reset()                    # (a picture: the GRiD's screen is unknown)
                 if s.pic is not None and not s.can_picture(): s._drop_picture()
                 s._mark()
-            s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, glp.HF_TERM]) + s.name.encode())
+            s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, glp.HF_TERM | (glp.HF_BG if s.bg else 0)])
+                              + s.name.encode())
             s.title_sent = None
             if s.child is None and s.exited is None: s.start()
             s._send_title(force=True)
@@ -166,13 +200,24 @@ class TermSession:
                 s.click_at(body[1] * 8 + 4, body[2] * 16 + 8)
             elif body[0] == glp.EV_AWAY:        # (resident Claude's console, going: never for TYPE's keys)
                 s.away = True
-                s.grid.end_calls(s.AWAY_CALL)
+                # M4: on in the background, the bridge quiet (from the answer to this EVENT on: if it can't
+                # be now, a bridge reconnected with older firmware, no background), POLLs answered at once
+                # (the program waits meanwhile); files and GPIB go on
+                s.bg = s.bg and bool(s.link.t.set_quiet(True))
+                if s.bg:
+                    s.bg_sdc = s.link.t.sdcs        # (an SDC from the GRiD from now on: it has stopped)
+                    s.link.hold = 0
+                    s.grid.end_calls(s.AWAY_CALL, keep=OPS_BG)
+                else:
+                    s.grid.end_calls(s.AWAY_CALL)
         elif t == glp.G_REPLY:
             s.grid.on_reply(body)
 
     # Link source: called with the link's lock held
     def ready(s):
         with s.lock:
+            if s.away: return False             # (resident Claude's console is down: nothing to draw on;
+                                                #  the next HELLO goes on from the screen it kept)
             if s.pic is not None: return s.penc.dirty(s.pic['bits'])
             if not s.dirty: return False
             now = time.monotonic()
@@ -477,7 +522,7 @@ class TermSession:
             s._write(b'\x1b[M' + bytes([32, 32 + x, 32 + y]) + b'\x1b[M' + bytes([35, 32 + x, 32 + y]))
 
     def _send_title(s, force=False):
-        if s.link is None or s.link.source is not s: return
+        if s.link is None or s.link.source is not s or s.away: return
         t = (s.pic or {}).get('title') or fold_title(s.title) or s.name
         now = time.monotonic()
         if t != s.title_sent and (force or now - s.title_t >= TITLE_EVERY):

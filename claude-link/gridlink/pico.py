@@ -27,7 +27,7 @@ PROTO_VERSION = 1
 F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_BOOTSEL, F_WAKE, F_HOLD = 0x01, 0x02, 0x03, 0x04, 0x05, 0x07, 0x08, 0x09
 F_HOLD_GLP = 0x0A
 F_HELLO, F_DATA, F_EVENT, F_LOG, F_PONG, F_CREDIT = 0x81, 0x82, 0x83, 0x84, 0x85, 0x87
-CF_ONLINE, CF_AUTO_RSV = 0x01, 0x02
+CF_ONLINE, CF_AUTO_RSV, CF_QUIET = 0x01, 0x02, 0x04
 DF_EOI, DF_END, DF_HELD = 0x01, 0x02, 0x04
 TXF_EOI, TXF_EARLY, TXF_ANN, TXF_HELD = 0x01, 0x02, 0x04, 0x08
 TX_CHUNK = 512          # data bytes per TX frame: 4 + 512 + COBS's 3 fit the firmware's 600-byte input buffer
@@ -35,6 +35,7 @@ TX_FIRST = 128          # an EARLY reply's first TX frame: small, so the bridge 
 EARLY_FW = 'bridge fw 2026-10-23'   # firmware from this date on takes TXF_EARLY (PROTOCOL.md)
 HOLD_FW = 'bridge fw 2026-10-23c'   # and from this one F_HOLD: a reply held for the GRiD's next message
 HOLD_GLP_FW = 'bridge fw 2026-10-23d'   # and F_HOLD_GLP: held for its next frame, checked by the bridge
+QUIET_FW = 'bridge fw 2026-10-24'       # and CONFIG's quiet: no SRQ line (resident Claude in the background)
 FRAME_MAX = 4104        # GLP frames to the GRiD: 4096 payload + 8 (what the GRiD takes is its HELLO's rx=)
 EVENTS = {0x10: 'LISTEN', 0x11: 'UNLISTEN', 0x12: 'TALK', 0x13: 'UNTALK', 0x14: 'TALK_WAIT', 0x15: 'DCL',
           0x16: 'SDC', 0x17: 'GET', 0x18: 'GTL', 0x19: 'LLO', 0x1A: 'IFC', 0x1B: 'REN', 0x1C: 'SPOLL',
@@ -72,6 +73,8 @@ class PicoProto:
     def __init__(s, write, addr=7, log=print):
         s.write, s.addr, s.log = write, addr, log
         s.buf = bytearray(); s.firmware = ''; s.early = False; s.holds = s.holds_glp = False
+        s.can_quiet = False; s.quiet = False    # (CONFIG bit 2: SRQ never driven, the status byte as ever)
+        s.sdcs = 0                              # SDCs from the GRiD (resident Claude's background: it stopped)
         s.connected = False; s.online = False
         s.gen = 0; s.tx_ring = 16383; s.sent = 0; s.consumed = 0
         s.pending = collections.deque()     # (gen, frame, expect): expect is a held reply's hold, else None
@@ -112,6 +115,7 @@ class PicoProto:
             s.early = s.firmware[:len(EARLY_FW)] >= EARLY_FW and s.firmware.startswith('bridge fw ')
             s.holds = s.firmware[:len(HOLD_FW)] >= HOLD_FW and s.firmware.startswith('bridge fw ')
             s.holds_glp = s.firmware[:len(HOLD_GLP_FW)] >= HOLD_GLP_FW and s.firmware.startswith('bridge fw ')
+            s.can_quiet = s.firmware[:len(QUIET_FW)] >= QUIET_FW and s.firmware.startswith('bridge fw ')
             s.hold_gen = None
             if proto != PROTO_VERSION:
                 s.log('bridge: firmware protocol %d, gridlink speaks %d: update one of them' % (proto, PROTO_VERSION))
@@ -119,7 +123,7 @@ class PicoProto:
             s.tx_ring = ring; s.consumed = consumed; s.sent = (consumed + queued) & 0xFFFFFFFF
             s.pending.clear(); s.connected = True; s.last_pong = time.monotonic()
             s.write(cobs_encode(bytes([F_STB, 0, 0])))
-            s.write(cobs_encode(bytes([F_CONFIG, s.addr, CF_ONLINE | CF_AUTO_RSV])))
+            s._config()
             s.log('bridge: %s, GPIB address %d, auto service request' % (s.firmware, s.addr))
             return b''
         if not s.connected: return b''
@@ -140,10 +144,11 @@ class PicoProto:
                 s.trace.append((time.monotonic(), name) if len(f) < 13 else
                                (time.monotonic(), name, struct.unpack_from('<I', f, 9)[0]))
             if name == 'TX_DONE': s.tx_done_at = s.clock()
+            elif name == 'SDC': s.sdcs += 1
             if name == 'ONLINE': s.online = True
             elif name == 'OFFLINE':
                 s.online = False
-                s.write(cobs_encode(bytes([F_CONFIG, s.addr, CF_ONLINE | CF_AUTO_RSV])))   # we still want it
+                s._config()                   # we still want it
             return b''
         if t == F_CREDIT:
             s.consumed = struct.unpack_from('<I', f, 1)[0]; s._pump(); return b''
@@ -151,7 +156,7 @@ class PicoProto:
             s.last_pong = time.monotonic(); s.pongs += 1
             s.pong = dict(zip(('online', 'address', 'listener', 'talker', 'ren', 'llo', 'spms', 'rsv'), f[1:9]))
             if not f[1]:
-                s.write(cobs_encode(bytes([F_CONFIG, s.addr, CF_ONLINE | CF_AUTO_RSV])))
+                s._config()
             return b''
         if t == F_LOG:
             s.log('bridge: ' + f[1:].decode('ascii', 'replace'))
@@ -226,6 +231,20 @@ class PicoProto:
             s.write(b''.join(out))
             s.sent = (s.sent + len(data)) & 0xFFFFFFFF
             s.pending.popleft()
+
+    def _config(s):
+        s.write(cobs_encode(bytes([F_CONFIG, s.addr, CF_ONLINE | CF_AUTO_RSV | (CF_QUIET if s.quiet else 0)])))
+
+    def set_quiet(s, on):
+        """Quiet (bridge fw 2026-10-24): the SRQ line never driven, the status byte as ever, while resident
+        Claude's console works in the background (its program has the 1520's SRQ latch).  -> whether the
+        bridge can (older firmware can't: no background then)."""
+        with s.lock:
+            on = bool(on) and s.can_quiet
+            if on != s.quiet:
+                s.quiet = on
+                if s.connected: s._config()
+            return s.can_quiet
 
     def hello(s):
         s.connected = False; s.hello_at = time.monotonic()
@@ -411,6 +430,17 @@ class PicoBridge:
 
     def unring(s):
         s.proto.unring()
+
+    def set_quiet(s, on):
+        return s.proto.set_quiet(on)
+
+    @property
+    def can_quiet(s):
+        return s.proto.can_quiet
+
+    @property
+    def sdcs(s):
+        return s.proto.sdcs
 
     @property
     def delivered_at(s):

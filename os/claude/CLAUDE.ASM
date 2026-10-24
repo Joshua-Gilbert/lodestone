@@ -95,6 +95,10 @@ BOXW     equ 70
 ;  keys and sets r_ks; then every key call first asks the console for one
 ;  (r_feed: its page in window 0 for that moment), and when they are done
 ;  the console comes back up, as at CODE-\, with the program's screen.
+;  M4: while the user is back in the program, every R_BGT ticks a key call
+;  (a peek or a read's wait) of the front task's, with nothing in service,
+;  calls the console for a background look (r_bgon 2): it serial-polls the
+;  bridge and does any work Claude has for the GRiD there, drawing nothing.
 ; =====================================================================
 R_PAGES  equ 4                  ; the console, the program's screen (2), Term's
                                 ;  shadow (RCON's SHADSEG, window 3)
@@ -105,6 +109,7 @@ R_EPORT  equ 0258h              ; window 0's page register (+4000h a window)
 R_STACK  equ 384
 RC_NANO  equ 2                  ; the console's `nano` (RCON.ASM): /A:nn
 RC_FEED  equ 5                  ;  and its feeder of Claude's keys (TYPE)
+R_BGT    equ 4                  ; M4: ticks between background looks (~220 ms)
 
 
 ; =====================================================================
@@ -2495,7 +2500,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.9', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.10', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
@@ -2573,6 +2578,9 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         mov     [res_cs], bp            ;  the link)
         mov     es, bp
         mov     byte [es:r_off], 1
+        cmp     byte [es:r_ver], 5      ; (version 5 on: no background looks
+        jb      .nr                     ;  till its next pop-up: the link is
+        mov     byte [es:r_bgon], 0     ;  ours now, the Pi's state another's)
 .nr:    push    cs
         pop     es
         call    parse_args
@@ -3139,18 +3147,21 @@ r_sig    db     'CLRS'          ; 100h
 %ifdef STUB_VER                 ; (the tests: an older version's stub)
 r_ver    db     STUB_VER
 %else
-r_ver    db     4               ; 104h: the stub's version (2: r_off; 3:
+r_ver    db     5               ; 104h: the stub's version (2: r_off; 3:
                                 ;  Lodestone's multitasking asked, r_mt; 4:
-                                ;  a fourth page, window 3)
+                                ;  a fourth page, window 3; 5: r_bgon)
 %endif
 r_hook   dw     r_int16         ; 105h: INT 16h points at CS:this
 r_old16  dd     0               ; 107h: and went on to this
 r_handle dw     0               ; 10Bh: its EMS pages (CLAUDE /U frees them)
 r_inpop  db     0               ; 10Dh: not 0, the console is up
 r_off    db     0               ; 10Eh: not 0, no pop-up (CLAUDE.COM runs)
+r_bgon   db     0               ; 10Fh (version 5): 1 background looks at key
+                                ;  calls (the console's to say), 2 in one
         r_at    r_sig, 100h
         r_at    r_inpop, 10Dh
         r_at    r_off, 10Eh
+        r_at    r_bgon, 10Fh
 ; (this version's own from here)
 %ifdef STUB_PAD                 ; (the tests: a CLAUDE.COM whose stub is laid
         times   STUB_PAD db 0   ;  out otherwise, as another version's)
@@ -3169,6 +3180,7 @@ r_mt     dd     0               ; Lodestone's multitasking (MT_TSR): its bytes,
                                 ;  the front task's number, the running one's,
                                 ;  and ours: 1 while the pop-up waits for the
                                 ;  front task (0:0: none)
+r_bgt    dw     0               ;  the tick of the last background look
 r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         jne     .up                     ;  else (a TSR, from an interrupt)
         cmp     ah, 0                   ;  sees no key, as the BIOS's AH=01h
@@ -3188,6 +3200,7 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         sti                             ;  the BIOS's AH=01h returns)
         retf    2
 .pk:    call    r_hot
+        call    r_bg
         call    r_feed                  ; (Claude's keys first)
         jc      .ch
         or      sp, sp                  ; (not ZF: a key)
@@ -3195,6 +3208,7 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         retf    2
 .rd:    sti                             ; a read: wait here, CODE-\ seen
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
+        call    r_bg
         call    r_feed
         jnc     .ky
         push    ax
@@ -3306,13 +3320,7 @@ r_hot:  cmp     byte [cs:r_off], 0
         je      .no
         call    r_front                 ; (a background task's call: at the
         jne     .df                     ;  front one's, over its screen)
-        mov     al, 0Bh                 ; the PIC's in-service register,
-        out     20h, al                 ;  then back to the request one (as
-        in      al, 20h                 ;  the kernel's screen capture does)
-        mov     ah, al
-        mov     al, 0Ah
-        out     20h, al
-        or      ah, ah
+        call    r_isr
         jnz     .no
         mov     byte [cs:r_pend], 0
         cmp     word [cs:r_mt + 2], 0   ; (no longer waiting, for MT)
@@ -3344,8 +3352,45 @@ r_hot:  cmp     byte [cs:r_off], 0
         mov     bx, [80h]
 .n:     ret
 
+; M4: a background look, if the console asked for them (r_bgon 1: the user
+; went back to the program with the link up), none was made for R_BGT
+; ticks, no CLAUDE.COM runs, Claude's keys aren't under way, the call is the front task's and
+; nothing is in service (as for the pop-up).  The console comes as at a
+; pop-up, with r_bgon 2, and says in it whether to go on looking.
+; Registers kept.
+r_bg:   cmp     byte [cs:r_bgon], 1
+        jne     .x
+        cmp     byte [cs:r_off], 0      ; (a CLAUDE.COM has the link: one before
+        jne     .o                      ;  1.10 doesn't know to clear r_bgon)
+        cmp     byte [cs:r_ks], 0
+        jne     .x
+        call    r_front
+        jne     .x
+        push    ax
+        push    ds
+        push    40h
+        pop     ds
+        mov     ax, [6Ch]
+        sub     ax, [cs:r_bgt]
+        cmp     ax, R_BGT
+        jb      .n
+        call    r_isr
+        jnz     .n
+        mov     ax, [6Ch]
+        mov     [cs:r_bgt], ax
+        mov     byte [cs:r_bgon], 2
+        pop     ds
+        pop     ax
+        jmp     short r_popup
+.n:     pop     ds
+        pop     ax
+.x:     ret
+.o:     mov     byte [cs:r_bgon], 0     ;  (so it clears it for that one)
+        ret
+
 r_popup:
         mov     byte [cs:r_inpop], 1
+        pushf                           ; (the caller's DF: the console CLDs)
         pusha
         push    ds
         push    es
@@ -3377,6 +3422,7 @@ r_popup:
         pop     es
         mov     bx, r_params
         call    far [cs:r_entry]
+..@r_back:                              ; (the tests: the console has returned)
         mov     dx, R_EPORT             ; the program's windows back
         mov     si, r_saved
         mov     cx, 4
@@ -3392,7 +3438,19 @@ r_popup:
         pop     es
         pop     ds
         popa
+        popf
         mov     byte [cs:r_inpop], 0
+        ret
+
+; the PIC's in-service register, then back to the request one (as the
+; kernel's screen capture does): AH, and ZF if nothing is in service
+r_isr:  mov     al, 0Bh
+        out     20h, al
+        in      al, 20h
+        mov     ah, al
+        mov     al, 0Ah
+        out     20h, al
+        or      ah, ah
         ret
 
 ; CLAUDE /R allocates the EMS pages through here, far: the kernel gives
