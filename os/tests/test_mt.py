@@ -3727,6 +3727,7 @@ def t_write():
     k.key(ktest.ENTER); k.run_for(0.3)
     er = wtx()
     k.key('Hello.'); k.run_for(0.3)
+    A.drag(k, 5 * 8 + 2, 64 + 8, 11 * 8 + 2, 64 + 8); k.key(A.CODE['C'], ktest.ESC); k.run_for(0.3)    # (Hello. to the clipboard)
     A.point(k, 13 * 8 + 2, 64 + 16 + 8); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.run_for(0.5)
     k.key(ktest.ESC); k.run_for(0.3)
     rg = wv1('gap_s')
@@ -3751,11 +3752,11 @@ def t_write():
     check('CODE-X: Write\'s Transfer (with MULTITASK=1); CODE-T: the tasks\', which don\'t fit beside two Writes and the '
           'calculator: "%s" (the segment\'s room, really out)' % bt[:1], xf and bt[:1] == ["TASKS.RUN doesn't fit: close a window first"]
           and mb('mw_n') == 3, (xf, bt, A.screen(k)))
-    k.key('abc'); k.key(A.CODE['Q']); k.run_for(0.3); k.key(ktest.ENTER); k.run_for(0.3)
+    k.key(A.CODE['V'], 'abc'); k.key(A.CODE['Q']); k.run_for(0.3); k.key(ktest.ENTER); k.run_for(0.3)
     k.key('W2.TXT'); k.key(ktest.ENTER); k.run_for(1.0)
     n6, c6, d6 = mb('mw_n'), mb('mw_cur'), A.disk_file(k, 'W2.TXT')
-    check('in the new Write, "abc", CODE-Q, Return, a name, Return: saved (%r), its window gone, the first Write in '
-          'front (%d running, session %d)' % (d6, n6, c6), d6 == b'abc' and n6 == 2 and c6 == 1
+    check('in the new Write, CODE-V (what the first Write copied, through the clipboard), "abc", CODE-Q, Return, a name, Return: saved (%r), its window gone, the first Write in '
+          'front (%d running, session %d)' % (d6, n6, c6), d6 == b'Hello.abc' and n6 == 2 and c6 == 1
           and not A.has(k, 'Write: (new)') and A.has(k, 'Write: NOTES.TXT'), (d6, n6, c6, A.screen(k)))
     k.key(A.CODE['T']); k.run_for(0.5)
     nt, tk = mb('mw_n'), A.has(k, 'Tasks')

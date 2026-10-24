@@ -318,13 +318,15 @@ mw_start:
         cmp     ax, 4000h
         jae     .bad
         shl     ax, 1
-        mov     [cs:mw_hdr+14], ax      ; (the fixups' bytes)
-        cmp     ax, [cs:mw_hdr+8]
-        jae     .fx
-        mov     ax, [cs:mw_hdr+8]
-.fx:    add     ax, [cs:mw_hdr+6]
+        mov     [cs:mw_hdr+14], ax      ; (the fixups' bytes: mw_load reads
+        cmp     ax, MW_STK              ;  them past the BSS, into the
+        jae     .fx                     ;  stack's room, unused till it runs)
+        mov     ax, MW_STK
+.fx:    add     ax, [cs:mw_hdr+8]
         jc      .room
-        add     ax, MW_STK + MW_TRAMP + 15
+        add     ax, [cs:mw_hdr+6]
+        jc      .room
+        add     ax, MW_TRAMP + 15
         jc      .room
         and     al, 0F0h
         mov     cx, ax                  ; CX = the slot's size
@@ -1014,8 +1016,15 @@ mw_load:
         jc      .cl
         mov     bp, sp
         mov     dx, [bp+8]              ; (pusha's BX: where)
-        mov     cx, [cs:mw_hdr+6]
-        add     cx, [cs:mw_hdr+14]
+        mov     cx, [cs:mw_hdr+6]       ; its image there, then its fixups
+        mov     ah, 3Fh                 ;  past its BSS (in the stack's room:
+        int     21h                     ;  mw_new's slot), so that they
+        jc      .cl                     ;  aren't on top of a small BSS
+        cmp     ax, cx
+        jne     .bad
+        add     dx, cx
+        add     dx, [cs:mw_hdr+8]
+        mov     cx, [cs:mw_hdr+14]
         mov     ah, 3Fh
         int     21h
         jc      .cl
@@ -1028,6 +1037,7 @@ mw_load:
         mov     bp, [bp+8]              ; BP = where
         mov     si, bp
         add     si, [cs:mw_hdr+6]
+        add     si, [cs:mw_hdr+8]
         mov     dx, [cs:mw_hdr+6]
         sub     dx, 2
         jb      .badf
@@ -1052,11 +1062,7 @@ mw_load:
 .bss:   mov     di, bp
         add     di, [cs:mw_hdr+6]
         mov     cx, [cs:mw_hdr+8]
-        mov     ax, [cs:mw_hdr+14]
-        cmp     cx, ax
-        jae     .z
-        mov     cx, ax
-.z:     xor     al, al
+        xor     al, al
         rep     stosb
         popa
         clc
