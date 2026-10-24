@@ -53,7 +53,11 @@
 cpu 286
 org 0
 
-%define NO_SRQ                          ; TERMLINK: no INT 60h AH=0Bh
+%define RCON                            ; TERMLINK: no INT 60h AH=0Bh (the
+                                        ;  driver's SRQ count instead)
+%define KSUM                            ; TERMLINK: the driver's frame check (1.23)
+%define LINK_CHAIN                      ; TERMLINK: the next frame straight after
+                                        ;  an answer
 %define K_QUIT 2B00h                    ; TERMKEYS: CODE-\ back to the program,
 %define K_QUIT2 1000h                   ;  CODE-Q too
 %define KBD_OWN                         ;  and the BIOS's INT 16h, past the stub
@@ -64,6 +68,7 @@ org 0
 
 VSEG    equ 0B800h
 SAVESEG equ 0E400h              ; windows 1-2: the program's screen
+SHADSEG equ 0EC00h              ; window 3: Term's shadow (the stub's fourth page)
 P_OLD16 equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
 P_INDOS equ 4
 P_KS    equ 12                  ;  r_ks, then r_pend
@@ -423,6 +428,14 @@ session:
         mov     [gp_ok], al
         mov     si, st_nogpib
         jz      .nl
+        mov     ax, 0EFFh               ; the driver's SRQ interrupt (IRQ 5,
+        call    gg_call                 ;  Lodestone's 1.21 on): DX:CX = its
+        jc      .ni                     ;  count, which we only read (never
+        or      ax, ax                  ;  AH=0Bh: the program's latch)
+        jnz     .ii
+.ni:    xor     dx, dx
+.ii:    mov     [irq_ptr], cx
+        mov     [irq_ptr + 2], dx
         mov     bx, 2000                ; our own timeout, 2 s: the driver's
         mov     ah, 0Ah                 ;  is the program's too (TM5000G's
         call    gg_call                 ;  TIME OUT n: up to 60 s a byte, with
@@ -496,17 +509,36 @@ session:
         call    gg_call
 .x:     ret
 
-shadow_seg:                             ; Term's shadow, in this page
-        mov     ax, cs
-        add     ax, (shadow - $$) >> 4
-        mov     [shadseg], ax
+shadow_seg:                             ; Term's shadow, in window 3
+        mov     word [shadseg], SHADSEG
         ret
 
 ; HLT when nothing is due: no frame on its way or to send, no keys, and
-; quiet for 2 s (TERMLINK polls back to back until then)
+; quiet for 2 s (TERMLINK polls back to back until then).  Waiting for an
+; answer, with the driver's SRQ interrupt: HLT till it (or a tick, or a
+; key), unless it came already or a key is waiting
 idle:   cmp     byte [lstate], LS_WAIT
+        jne     .i
+        cmp     word [irq_ptr + 2], 0
         je      .x
-        mov     al, [txq_n]
+        cmp     byte [srq_held], 0      ; (the line held by another device:
+        jne     .x                      ;  no edge would wake us)
+        mov     ah, 11h
+        kbd
+        jnz     .x
+        push    es
+        les     bx, [irq_ptr]
+        cli
+        mov     ax, [es:bx]
+        pop     es
+        cmp     ax, [srq_seen]
+        jne     .s
+        sti                             ; (STI's shadow covers the HLT)
+        hlt
+.z:     ret                             ; (the tests count wakes here)
+.s:     sti
+        ret
+.i:     mov     al, [txq_n]
         or      al, [nak_pending]
         or      al, [resend]
         or      al, [pi_active]
@@ -558,7 +590,13 @@ find_gpib:
         je      .ok
         stc
         ret
-.ok:    clc
+.ok:    mov     byte [ksum], 0          ; Lodestone's driver 1.23 and up keeps
+        cmp     cx, 0123h               ;  the frame check as it moves the bytes
+        jb      .k
+        cmp     cx, 0200h
+        jae     .k
+        inc     byte [ksum]
+.k:     clc
         ret
 
 gg_call:                                ; INT 60h-66h, the driver's
@@ -573,8 +611,12 @@ gg_call:                                ; INT 60h-66h, the driver's
 
 build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
-        mov     ax, 0501h               ; GLP 1; flags: Term, the Fletcher sum
-        stosw
+        mov     ax, 0501h               ; GLP 1; flags: Term, the Fletcher sum,
+        cmp     word [irq_ptr + 2], 0   ;  and with the driver's SRQ interrupt
+        je      .w                      ;  GF_WAKE: the Pi rings while we are
+        mov     byte [wake_ok], 1       ;  idle (its count: no AH=0Bh)
+        or      ah, GF_WAKE
+.w:     stosw
         mov     ax, TXMAX
         stosw
         mov     ax, 24 * 256 + 80       ; 80 columns, 24 rows
@@ -610,10 +652,14 @@ build_hello:                            ; -> CX = length of hellobuf
 ; row), then the cursor's row, column and hidden (0 or 1): the Pi's
 ; termscreen.screen_crc
 screen_crc:
-        mov     si, shadow
+        push    es                      ; (TERMLINK's crc16 reads ES:SI in RCON)
+        push    SHADSEG
+        pop     es
+        xor     si, si
         mov     cx, TROWS * 160
         mov     ax, 0FFFFh
         call    crc16
+        pop     es
         mov     si, t_cur
         mov     cx, 2
         call    crc16
@@ -1022,6 +1068,12 @@ gp_ok       resb 1                      ; the GPIB driver found
 gpib        resd 1                      ;  at
 old_tmo     resw 1                      ;  the program's timeout (ms) meanwhile
 sdc_due     resb 1                      ; the link failed: SDC to the bridge
+irq_ptr     resw 2                      ; the driver's SRQ count (AH=0Eh), seg 0: none
+srq_seen    resw 1                      ;  as it was at the last look
+ksum        resb 1                      ; 1: INT 60h 02h AL=3, 03h AL=2 (KSUM)
+tx_app      resb 1                      ; 1: txframe's check is the driver's to add
+lw_eoi      resb 1                      ; lw_go's AL for INT 60h 02h: 1, or 3
+n_kok       resw 1                      ; frames ks_check passed (the tests)
 now         resw 1
 ; the link (TERMLINK.INC)
 connected   resb 1
@@ -1081,9 +1133,7 @@ crc_hid     resb 1
 ptitle      resb TITLEN + 1
 title_text  resb NAMEMAX + 5 + TITLEN + 16
 status_text resb 72
-            alignb 16
-shadow      resb TROWS * 160            ; Term's rows: glyph, attribute
-rc_top:
+rc_top:                                 ; (Term's shadow: SHADSEG, window 3)
 
 section .text
         times   -((rc_top - $$) > 4000h - TAIL) db 0    ; (one EMS page, 16 KB,
