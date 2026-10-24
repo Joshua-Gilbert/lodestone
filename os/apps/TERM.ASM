@@ -237,9 +237,9 @@ tick:   mov     ax, 0F000h + MT_EXIT    ; ended (free, or its number given
 
 ; its screen, as MT keeps it, in the window: the view following its
 ; cursor, only the cells that changed drawn.  Nothing while it is in front
-; (full screen); a note instead when its screen can't be shown here (a
-; graphics mode, more than 80 columns) or it is frozen (it writes the
-; screen itself): a key then brings it to the front (T3)
+; (full screen), or with its pages gone; a note instead when it is in a
+; graphics mode or frozen (it writes the screen itself): a key then brings
+; it to the front (T3)
 show:   push    es
         mov     es, [fseg]
         mov     di, BUF
@@ -251,15 +251,15 @@ show:   push    es
         int     21h
         pop     es
         jc      .x
-        test    dl, 8                   ; (in front)
-        jnz     .x
+        test    dl, 8 | 4               ; (in front, or its pages gone)
+        jnz     .no
         mov     si, s_ngfx
-        test    dl, 2                   ; (nothing copied: a graphics mode,
-        jz      .f                      ;  or more than 80 columns)
+        test    dl, 2                   ; (nothing copied: a graphics mode)
+        jz      .f
         cmp     ch, 4
         jae     .nt
-        mov     si, s_nwide
-        jmp     short .nt
+.no:    mov     byte [note], 0          ; (a key then is its own again)
+        jmp     .x
 .f:     mov     si, s_nfz
         test    dl, 1                   ; (VF_DIRECT: not run behind)
         jnz     .nt
@@ -466,7 +466,8 @@ cursor: cmp     byte [note], 0          ; (none on a note)
 ; the task to the front instead (full screen)
 key:    cmp     byte [note], 0
         je      .t
-        mov     ax, 0F000h + MT_FRONT
+        mov     byte [note], 0          ; (TERM doesn't run while it's in
+        mov     ax, 0F000h + MT_FRONT   ;  front: a key after it's back is its)
         mov     bl, [task]
         stc
         int     21h
@@ -540,7 +541,6 @@ send:   push    ax
 
 s_fnt       db 'TERM.FNT', 0
 s_ngfx      db 'In a graphics mode: a key here shows it (or CODE-Tab)', 0
-s_nwide     db 'More than 80 columns: a key here shows it (or CODE-Tab)', 0
 s_nfz       db 'It writes the screen itself: a key here shows it (FULL= for it)', 0
 win:        dw 0, SCR_TOP, 80, SCR_BAND_Y - SCR_TOP
             dw title, w_draw, WF_MOVE | WF_SIZE

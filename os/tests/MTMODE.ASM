@@ -3,7 +3,8 @@
 ; with a pattern; then it waits for a key (AH=08h) and writes "ok" to
 ; FILE if the pattern is all still there, else "bad".  T (T3): after that
 ; key, mode 3, "MTMODE: text" printed and another key, before the file.
-; No arguments: mode 40h, no file
+; B (T3): after that key, mode 3 and at once mode MM again, then another
+; key.  No arguments: mode 40h, no file
 ; nasm -f bin -o MTMODE.COM MTMODE.ASM
 cpu 286
 org 100h
@@ -29,11 +30,16 @@ org 100h
         call    blanks
         lodsb
         and     al, 0DFh
-        cmp     al, 'T'
+        sub     al, 'T'
+        je      .t
+        cmp     al, 'B' - 'T'
         jne     .n
-        mov     byte [txt], 1
+        mov     byte [bnc], 1
+        jmp     short .n
+.t:     mov     byte [txt], 1
 .n:     pop     ax
-.m:     int     10h
+.m:     mov     [mode], ax
+        int     10h
         push    0B800h
         pop     es
         xor     di, di
@@ -52,7 +58,15 @@ org 100h
         loop    .c
         jmp     .w
 .bad:   mov     word [res], s_bad
-.w:     cmp     byte [txt], 0
+.w:     cmp     byte [bnc], 0
+        je      .w1
+        mov     ax, 3                   ; B: text, and at once MM again
+        int     10h
+        mov     ax, [mode]
+        int     10h
+        mov     ah, 8
+        int     21h
+.w1:    cmp     byte [txt], 0
         je      .w2
         mov     ax, 3                   ; T: text again, a line, a key
         int     10h
@@ -104,6 +118,8 @@ hexd:   lodsb                           ; a hex digit -> AL
 fn      dw      0
 res     dw      0
 txt     db      0
+bnc     db      0
+mode    dw      0
 s_text  db      'MTMODE: text', 13, 10, '$'
 s_ok    db      'ok'
 s_bad   db      'bad'
