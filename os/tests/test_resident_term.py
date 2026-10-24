@@ -38,7 +38,8 @@ class Res(CK.KernelHarness):
         if tm: files['A:\\TM5000G.EXE'] = open(TR.TM5000G, 'rb').read()
         if ini: files['A:\\LODE.INI'] = ini
         if more: files.update(more)
-        if pico: kw['bridge'] = 'pico'            # (the Pico 2 bridge's model: it can ring, GF_WAKE)
+        if pico: kw['bridge'] = 'pico-quiet' if pico == 'quiet' else 'pico'   # (the Pico 2 bridge's model:
+                                                                          #  it can ring, GF_WAKE; quiet, M4)
         super().__init__(files=files, term=FAKE, ems_pages=88, **kw)
         if not bridge: del s.m.chip.devices[7]
         s.rsym = G.symbols(os.path.join(CL, 'RCON.MAP'))
@@ -861,6 +862,220 @@ def t_driver():
     finally:
         h.close()
 
+def bg_looks(h):
+    """M4's background looks, counted from the console's own code (its page in window 0): how many, how many
+    found work (bg_pass.w), and how long each held the program, in simulated µs: [(µs, found work)]."""
+    st = {'n': 0, 'work': 0, 'held': [], 't0': None, 'wk': False, 'kept': 0}
+    a0, aw = (0xE0000 + h.rsym[n] for n in ('bg_pass', 'bg_pass.w'))
+    watch = h.m.watch
+    def w(addr):
+        stub = h.stub()
+        if stub != 0xF000 and h.m.ems_reg[0] == h.m.rd(stub, h.sym['r_hw'], 1)[0]:
+            if addr == a0:
+                st['n'] += 1; st['t0'] = h.m.us; st['wk'] = False
+                st['kept'] += h.rv('req_ready')        # (a request the console took on its way out)
+            elif addr == aw: st['work'] += 1; st['wk'] = True
+            elif addr == stub * 16 + h.sym['..@r_back'] and st['t0'] is not None:   # (back in the stub)
+                st['held'].append((h.m.us - st['t0'], st['wk'])); st['t0'] = None
+        watch(addr)
+    h.m.watch = w
+    return st
+
+def r_bgon(h): return h.m.rd(h.stub(), 0x10F, 1)[0]
+def srq_state(h):
+    """The program's view of SRQ: the driver's latch (AH=0Bh's) and its interrupt count."""
+    Y = h.m.Y
+    return h.m.rd(0x60, Y['gp_shadow2'], 1)[0] & 0x40, h.m.u16(0x60, Y['gp_nsrq'])
+
+def t_bg():
+    """M4 (CLAUDE 1.10): Claude works in the background while the user is back in the program.  A quiet
+    bridge (fw 2026-10-24: the status byte, no SRQ line); the stub calls the console every ~220 ms at the
+    program's key calls; it serial-polls the bridge and, when the Pi has rung, runs the link without drawing:
+    files and GPIB, not SCREEN or TYPE.  The program's screen, keys, EMS windows and SRQ latch untouched."""
+    h = Res(pico='quiet', more={'A:\\BIG.TXT': BIG, 'A:\\CRITKEY.COM': open(os.path.join(CL, 'CRITKEY.COM'), 'rb').read(),
+                                'A:\\ZZ.DAT': ZZ}); h.boot()
+    try:
+        looks = bg_looks(h)
+        make_bad(h, ZZ)
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
+        t = h.router.term
+        check('a quiet bridge: the console offers the background (GF_BG), the Pi takes it up (HF_BG)',
+              up and t.gflags & glp.GF_BG and t.bg and h.rv('bg_ok') == 1 and not h.transport.proto.quiet,
+              (up, t.gflags, t.bg, h.rv('bg_ok')))
+        kinds = []                              # what the Pi sends the console while the user is away
+        answer = h.link._answer
+        h.link._answer = lambda k, p: (t.away and kinds.append(k), answer(k, p))
+        statuses = []                           # and the REPLYs' statuses from it meanwhile
+        on_reply = t.grid.on_reply
+        t.grid.on_reply = lambda b: (t.away and len(b) >= 2 and statuses.append(b[1]), on_reply(b))
+        # a call on its way as the user goes back: not ended (as without the background), it runs there,
+        # whether the console takes it on its way out (then the first look runs it) or the Pi rings later
+        h.run_until(lambda: False, 3)           # (quiet: then the console polls once a second)
+        t1 = h.rv('t_last', 2)
+        quiet = h.run_until(lambda: h.rv('t_last', 2) != t1 and h.rv('lstate') == 1 and h.rv('pi_active') == 0
+                            and h.rv('txq_n') == 0, 5)
+        r = {}
+        th = threading.Thread(target=lambda: r.update(v=t.tools.request(json.dumps(
+            {'tool': 'grid_files', 'arguments': {'action': 'list', 'path': 'A:\\'}}).encode() + b'\n')))
+        th.start()
+        end = time.time() + 10
+        while not h.link.outq and time.time() < end: time.sleep(0.01)
+        # (srq_held cleared: the pop-up's back-to-back polls can set it, two SRQ edges merged, until the next
+        # HELLO; from here on only a wait for an SRQ that a quiet bridge never sends could set it again)
+        h.m.ems_store[h.page() * 0x4000 + h.rsym['srq_held']] = 0
+        h.press(HOT)                            # (before the console's next poll: its EVENT's answer is the REQUEST)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.wait(lambda: not th.is_alive(), 20); th.join(30)
+        res = r.get('v')
+        check('a grid_files call on its way as the user goes back: taken on the way out, answered at the first '
+              'background look', quiet and back and res and not res[1] and 'BIG.TXT' in res[0][0]['text']
+              and looks['kept'] == 1, (quiet, back, res, looks['kept']))
+        away = h.pi_wait(lambda: t.away and h.transport.proto.quiet, 10)
+        vram0, bios0 = h.m.rd(0xB800, 0, 4000), h.m.rd(0x40, 0x49, 0x1E)
+        Y = h.m.Y                               # (the latch cleared, as after the program's AH=0Bh: any SRQ
+        h.m.wr(0x60, Y['gp_shadow2'], bytes([h.m.rd(0x60, Y['gp_shadow2'], 1)[0] & ~0x40 & 0xFF]))   #  shows)
+        srq0 = srq_state(h)
+        f0 = h.link.stats['rx_frames']
+        check('back to EMSUSE: the stub looks at its key calls (r_bgon 1), the bridge made quiet',
+              back and away and r_bgon(h) == 1, (back, away, r_bgon(h)))
+        n0, w0, p0 = looks['n'], looks['work'], h.spolls
+        h.run_until(lambda: False, 3)
+        idle = [us for us, wk in looks['held'][-(looks['n'] - n0):] if not wk]
+        check('idle: a look every ~220 ms (%d in 3 s), a serial poll each (%d), at most %d µs, nothing sent to the Pi'
+              % (looks['n'] - n0, h.spolls - p0, max(idle or [0])), 10 <= looks['n'] - n0 <= 16
+              and h.spolls - p0 == looks['n'] - n0 and looks['work'] == w0
+              and idle and max(idle) < 3000 and h.link.stats['rx_frames'] == f0,
+              (looks['n'] - n0, h.spolls - p0, looks['work'] - w0, idle[:5], h.link.stats['rx_frames'] - f0))
+        h.paint_stack()
+        t.feed(b'\r\nWritten on the Pi meanwhile\r\n')        # (Claude Code's screen changes while away)
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        check('away: grid_files list, in the background', r and not r[1] and 'BIG.TXT' in r[0][0]['text'], r)
+        r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
+        check('... read: BIG.TXT whole (%d bytes, three reads)' % len(BIG),
+              r and not r[1] and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n'), r and r[0][0]['text'][-200:])
+        note = 'written in the background\n' * 900                                          # 23,400 bytes
+        r = tool(h, 'grid_change_files', {'action': 'write', 'path': 'A:\\NOTE.TXT', 'content': note})
+        r2 = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\NOTE.TXT'})
+        check('... write (%d bytes) and read back' % len(note), r and not r[1] and r2 and r2[0][0]['text'] == note,
+              (r, r2 and r2[0][0]['text'][-100:]))
+        r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\ZZ.DAT'})
+        check('... a disk error: the call fails (CRC), no prompt, EMSUSE\'s screen untouched',
+              r and r[1] and 'data error (CRC)' in r[0][0]['text'] and h.m.rd(0xB800, 0, 4000) == vram0, r)
+        r = tool(h, 'gpib_read', {'action': 'scan'})
+        r2 = tool(h, 'gpib_send', {'action': 'query', 'address': 29, 'command': 'ID?'})
+        check('... gpib_read scan and gpib_send query (the DC5009\'s ID?)',
+              r and not r[1] and r[0][0]['text'] == 'Responding addresses: 6, 14, 29' and r2 and not r2[1]
+              and 'TEK/DC5009' in r2[0][0]['text'], (r, r2))
+        G, out = t.grid, {}
+        def scr():
+            try: out['s'] = G.call(glp.OP_SCREEN, b'\0', timeout=20)
+            except Exception as e: out['s'] = e
+        th = threading.Thread(target=scr); th.start()
+        h.run_until(lambda: not th.is_alive(), 20); th.join(10)
+        check('... a SCREEN sent anyway: the console answers F6h in the pass (it needs the console up)',
+              out.get('s') == (0xF6, b''), out)
+        r = tool(h, 'grid_program', {})
+        check('... grid_program needs the console: refused, the tools that work named',
+              r and r[1] and 'in the background' in r[0][0]['text'] and 'grid_files' in r[0][0]['text'], r)
+        busy = [us for us, wk in looks['held'] if wk]
+        check('EMSUSE\'s screen, the BIOS\'s video data and mode 3 untouched through %d passes with work (the '
+              'longest held it %d ms)' % (len(busy), max(busy or [0]) // 1000),
+              h.m.rd(0xB800, 0, 4000) == vram0 and h.m.rd(0x40, 0x49, 0x1E) == bios0 and h.m.mode() == 3
+              and h.inpop() == 0 and len(busy) >= 6, (len(busy), busy[:8]))
+        check('no SRQ from the bridge all the while: the program\'s SRQ latch and the interrupt count as they were; '
+              'the console never waited for one (srq_held 0: the PIT\'s polls)',
+              srq_state(h) == srq0 and h.rv('srq_held') == 0, (srq_state(h), srq0, h.rv('srq_held')))
+        check('... the console never asked the driver\'s SRQ check (AH=0Bh)', h.srq_calls == 0, h.srq_calls)
+        used = h.stack_used()
+        check('the stub\'s stack: %d of %d bytes used in the background, 96 or more spare' % (used, h.rstack()),
+              h.rstack() - used >= 96, used)
+        # a request the GRiD hasn't taken when its call gives up (the program not at a key call): withdrawn,
+        # so it can't run later, after Claude was told it failed
+        G, out = t.grid, {}
+        def call():
+            try: out['r'] = G.call(glp.OP_WRITE, struct.pack('<BI', 0, 0) + b'A:\\LATE.TXT\0' + b'late', timeout=1)
+            except Exception as e: out['r'] = e
+        th = threading.Thread(target=call); th.start(); th.join(10)        # (the GRiD frozen meanwhile)
+        h.run_until(lambda: False, 2)
+        check('a call given up on before the GRiD took it: withdrawn, never run (no LATE.TXT)',
+              'withdrawn' in str(out.get('r')) and 'A:\\LATE.TXT' not in h.m.fs, (out, sorted(h.m.fs)[:20]))
+        check('the Pi sent the console nothing but REQUESTs and NOPs meanwhile (no CELLS, no TITLE: %d frames)'
+              % len(kinds), kinds and set(kinds) <= {glp.P_REQUEST, glp.P_REQUEST | glp.MORE, glp.P_NOP},
+              sorted(set(kinds)))
+        nreq = sum(1 for st in statuses if st != 0xF6)  # (the requests run: all but the SCREEN)
+        h.k.key('a'); h.k.key('b')
+        # the next pop-up: the count in the band, the bridge rings again
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and in_step(h)
+        check('the next pop-up: the band says how many requests ran meanwhile (%d); what Claude Code wrote '
+              'meanwhile there; the bridge not quiet' % nreq,
+              up and ('  %d in background' % nreq) in h.band() and 'Written on the Pi meanwhile' in h.screen() and not h.transport.proto.quiet and h.rv('srq_held') == 0,
+              (up, h.band(), h.transport.proto.quiet))
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        check('EMSUSE afterwards: the keys typed meanwhile, its four EMS windows whole through every look',
+              'EMSUSE: 2 keys, 0 bad' in h.m.text_screen(), h.m.text_screen())
+        # at the prompt: LCMD reads its keys through DOS (the kernel's key wait): files there too
+        h.k.key('cls'); h.k.key(ENTER); h.k.settle(2)
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and in_step(h)
+        h.press(HOT)
+        h.wait(lambda: h.inpop() == 0, 5)
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        check('away at the prompt (the kernel\'s key wait, DOS one call deep): grid_files list',
+              up and r and not r[1] and 'NOTE.TXT' in r[0][0]['text'], (up, r))
+        # a program's own INT 24h handler waiting for a key: DOS busy, GPIB still
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('critkey'); h.k.key(ENTER, settle=False); h.k.settle(10)
+        waits = 'CRITKEY waits' in h.m.text_screen()
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        r2 = tool(h, 'gpib_send', {'action': 'query', 'address': 6, 'command': 'ID?'})
+        check('over a program\'s INT 24h handler waiting for a key: files F7h (DOS busy), GPIB works',
+              waits and r and r[1] and 'DOS is busy' in r[0][0]['text'] and r2 and not r2[1]
+              and 'TEK/FG5010' in r2[0][0]['text'], (waits, r, r2))
+        h.k.key('x'); h.k.settle(10)
+        h.k.key(ESC); h.k.settle(2)
+        # CLAUDE.COM takes the link: no more looks till the next pop-up; its HELLO makes the bridge loud again
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('claude /t'); h.k.key(ENTER, settle=False)
+        ok = h.has('Welcome to Claude Code', 30)
+        check('CLAUDE /T meanwhile: no background looks (r_bgon 0), the bridge not quiet, the Pi not away',
+              ok and r_bgon(h) == 0 and not h.transport.proto.quiet and not t.away, (ok, r_bgon(h), t.away))
+        h.m.wr(h.stub(), 0x10F, b'\1')         # (as a CLAUDE.COM before 1.10 would leave it)
+        n0 = looks['n']
+        h.term_type('hello'); h.press(ENTER)
+        ok = h.has('You said: hello', 30)
+        h.run_until(lambda: False, 2)
+        check('... and with r_bgon left on (an older CLAUDE.COM): no looks while CLAUDE runs (r_off)',
+              ok and looks['n'] == n0, (ok, looks['n'] - n0))
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+    # a bridge that can't be quiet (older firmware): no background, the tools refused as before
+    h = Res(pico=True); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen)
+        h.press(HOT)
+        h.wait(lambda: h.inpop() == 0, 5)
+        t = h.router.term
+        h.pi_wait(lambda: t.away, 10)
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        check('a bridge that can\'t be quiet: no HF_BG, no looks (r_bgon 0), the tools refused while away',
+              up and not t.bg and h.rv('bg_ok') == 0 and r_bgon(h) == 0 and r and r[1]
+              and 'no GRiD tool works' in r[0][0]['text'], (up, t.bg, h.rv('bg_ok'), r_bgon(h), r))
+    finally:
+        h.close()
+
 BIG = b''.join(b'line %05d of BIG.TXT, read from the pop-up\r\n' % i for i in range(500))    # 21,500 bytes
 ZZ = b'ZZ.DAT: its sectors are made bad\r\n' * 62                                            # 2,108 bytes
 
@@ -1079,9 +1294,124 @@ def t_ops_mt():
     finally:
         h.close()
 
+def t_bg_tm():
+    """M4 over TM5000G, which looks for keys (through DOS) between its bus work: Claude's files and an
+    instrument query in the background, one while its auto-detect runs.  Its screen, its SRQ flag (set as
+    if an instrument had asked), REN and the chip as it left them; auto-detect finds its three."""
+    if not TR.TM5000G:
+        print('(no TM5000G.EXE: skipped)'); return
+    h = Res(tm=True, pico='quiet'); h.m.mouse = True; h.boot()
+    try:
+        looks = bg_looks(h)
+        h.cmd('claude /r')
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('tm5000g'); h.k.key(ENTER, settle=False); h.k.settle(40)
+        h.k.key(ENTER)
+        text0 = h.m.text_screen()
+        Y = h.m.Y
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen)
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5) and h.pi_wait(lambda: h.router.term.away, 10)
+        h.k.settle()
+        h.m.wr(0x60, Y['gp_shadow2'], bytes([h.m.rd(0x60, Y['gp_shadow2'], 1)[0] | 0x40]))
+        ren0, srq0, resets0 = h.m.rd(0x60, Y['gp_renon'], 1)[0], srq_state(h), h.m.chip.log.count('reset')
+        h.srq_calls = 0
+        n0 = looks['n']
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        r2 = tool(h, 'gpib_send', {'action': 'query', 'address': 29, 'command': 'ID?'})
+        check('back in TM5000G (no key pressed): files and a query in the background, at its key looks (%d)'
+              % (looks['n'] - n0), up and back and r and not r[1] and 'TM5000G.EXE' in r[0][0]['text'] and r2
+              and not r2[1] and 'TEK/DC5009' in r2[0][0]['text'] and looks['n'] > n0, (up, back, r, r2))
+        h.k.settle()
+        ren1, srq1 = h.m.rd(0x60, Y['gp_renon'], 1)[0], srq_state(h)
+        check('... TM5000G\'s screen untouched; its SRQ flag still set and no SRQ interrupt; REN, no chip reset',
+              h.m.text_screen() == text0 and srq1 == srq0 and srq0[0] and ren1 == ren0
+              and h.m.chip.log.count('reset') == resets0, (srq0, srq1, ren0, ren1, h.m.text_screen()))
+        check('... never the driver\'s SRQ check (AH=0Bh), the bridge holding nothing', h.srq_calls == 0
+              and bridge_quiet(h), (h.srq_calls, h.nano.srq, h.nano.lnrdy))
+        h.k.key('1'); h.k.key('A', settle=False)
+        r = tool(h, 'gpib_send', {'action': 'query', 'address': 6, 'command': 'ID?'})      # (during auto-detect)
+        mid = h.m.text_screen()
+        h.k.settle(60)
+        scr = h.m.text_screen()
+        found = ('FG5010', '8753D', 'DC5009')
+        check('a query while TM5000G\'s auto-detect polls the bus: answered before it was done, and auto-detect '
+              'finds FG5010, 8753D, DC5009', r and not r[1] and 'TEK/FG5010' in r[0][0]['text']
+              and not all(x in mid for x in found) and all(x in scr for x in found), (r, mid, scr))
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+def t_bg_mt():
+    """M4 with Lodestone's tasks (MULTITASK=1): the background over the front task's EMSUSE; over COPY CON
+    (MT's key wait) files are F7h there as in the pop-up, GPIB works."""
+    mt = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
+    h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more={'A:\\BIG.TXT': BIG, 'A:\\LODEMT.SYS': mt}); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        mt_on = h.m.u16(h.stub(), h.sym['r_mt'] + 2) != 0
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen)
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
+        check('MULTITASK=1, back in EMSUSE: files in the background (BIG.TXT read)',
+              mt_on and up and r and not r[1] and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n'),
+              (mt_on, up, r and r[0][0]['text'][-100:]))
+        h.k.key(ESC)
+        h.k.key('cls'); h.k.key(ENTER); h.k.key('copy con hi.txt'); h.k.key(ENTER)
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'})
+        r2 = tool(h, 'gpib_send', {'action': 'query', 'address': 29, 'command': 'ID?'})
+        check('... over COPY CON (MT\'s key wait): a file request F7h, GPIB works',
+              r and r[1] and 'DOS is busy' in r[0][0]['text'] and r2 and not r2[1] and 'TEK/DC5009' in r2[0][0]['text'],
+              (r, r2))
+        h.k.key('hi'); h.k.key(0x2C1A); h.k.key(ENTER)
+        o = h.cmd('type hi.txt')
+        check('... COPY CON goes on (the file has what was typed)', 'hi' in [l.strip() for l in o.split('\n')], o)
+        # a link failure in a pass (the Pi answers nothing): the console clears the bridge (SDC) and stops
+        # looking; the Pi, told of the SDC, ends the call at once and the tools say so
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        h.press(HOT)
+        h.wait(lambda: h.inpop() == 0, 5)
+        t = h.router.term
+        h.pi_wait(lambda: t.away, 10)
+        handle = h.link.handle
+        h.link.handle = lambda f: None
+        t0 = time.time()
+        r = tool(h, 'grid_files', {'action': 'list', 'path': 'A:\\'}, 20, 40)
+        h.link.handle = handle
+        w = t.why_not('grid_files')
+        check('a link failure in a pass: no more looks (r_bgon 0), the call ended at the SDC (%.0f s), the tools '
+              'say the user has gone back' % (time.time() - t0), r_bgon(h) == 0 and r and r[1]
+              and 'stopped working in the background' in r[0][0]['text'] and w and 'no GRiD tool works' in w,
+              (r_bgon(h), r, w))
+        # the bridge gone (the next pop-up's background on again): one serial poll that fails, then no looks
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        h.press(HOT)
+        h.wait(lambda: h.inpop() == 0, 5)
+        on = r_bgon(h)
+        del h.m.chip.devices[7]
+        h.run_until(lambda: False, 2)
+        h.k.key('a'); h.k.key(ESC)
+        check('the bridge gone while away: the looks stop (r_bgon %d, then 0), the program goes on' % on,
+              on == 1 and r_bgon(h) == 0 and 'EMSUSE: 1 keys, 0 bad' in h.m.text_screen(), (on, r_bgon(h), h.m.text_screen()))
+        errs = [l for l in h.log if 'Traceback' in str(l)]
+        check('... nothing wrong in gridlink\'s log', not h.m.crash and not errs, (h.m.crash, errs))
+    finally:
+        h.close()
+
 
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_mt]
+         t_ops, t_ops_mt, t_bg, t_bg_tm, t_bg_mt]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

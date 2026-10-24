@@ -153,6 +153,13 @@ class Link:
     def busy(s):
         with s.lock: return bool(s.outq or s.cur)
 
+    def withdraw(s, mtype, body):
+        """A message not yet begun taken out of the queue (a call given up on).  -> whether it was."""
+        with s.lock:
+            try: s.outq.remove((mtype, bytes(body)))
+            except ValueError: return False
+            return True
+
     def wake(s):
         """The source has something new."""
         with s.lock: s.lock.notify_all()
@@ -174,7 +181,9 @@ class Link:
         RING_AGAIN until the GRiD sends (a ring can be lost: the GRiD may take its SRQ for the answer it is
         reading), RING_TRIES times; then the SRQ is taken back (unring), so an Executive or a DOS program
         doesn't find it held on the bus, and we wait for the GRiD's next frame."""
-        if not (s.grid_wake and s.connected): return
+        bg = getattr(s.source, 'background', None)
+        bg = bg is not None and bg()              # (resident Claude's background: the bridge is quiet, and the
+        if not ((s.grid_wake or bg) and s.connected): return     #  stub serial-polls for the ring, M4)
         ring = getattr(s.t, 'ring', None)
         if ring is None: return
         may = getattr(s.source, 'may_ring', None)
@@ -182,7 +191,7 @@ class Link:
             s._unring(); return                   #  an SRQ now would be the program's)
         now = s.clock()
         if s.rang is not None and now - s.rang < s.RING_AGAIN: return
-        if s.rings_left <= 0:
+        if s.rings_left <= 0 and not bg:          # (a quiet ring waits for the program's next key call)
             s._unring(); return
         base = s.t_answered
         done = getattr(s.t, 'delivered_at', None)     # (the Pico's TX_DONE: the GRiD has read it)
@@ -297,7 +306,9 @@ class Link:
             else: s._answer(glp.P_NOP, b'')
             return
         if t == glp.G_HELLO:
-            with s.lock:
+            quiet = getattr(s.t, 'set_quiet', None)
+            if quiet is not None: quiet(False)  # (any CLAUDE starting: SRQs for its answers, from this HELLO's;
+            with s.lock:                        #  resident Claude's background had the bridge quiet, M4)
                 s.outq.clear(); s.cur = None
             s.reasm = glp.Reassembler(); s.pi_seq = 0; s.last_g = None; s.connected = True
             s.drop_types.clear()

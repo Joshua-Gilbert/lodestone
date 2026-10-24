@@ -3853,8 +3853,8 @@ def t_rclaude():
     o = sh.run('claude /r')
     stub = R.stub_seg(k)
     rmt = (k.pc.u16(stub, R.csym('r_mt')), k.pc.u16(stub, R.csym('r_mt') + 2))
-    check('CLAUDE /R at CODE-P\'s prompt: resident (stub version 4, r_mt since 3); MT_TSR: MT has its key wait (%04X:%04X), the stub '
-          'MT\'s three bytes (front, running, the pop-up waiting)' % tsr(), 'Claude is resident' in o and k.pc.rd(stub, 0x104, 1) == b'\x04'
+    check('CLAUDE /R at CODE-P\'s prompt: resident (stub version 5, r_mt since 3); MT_TSR: MT has its key wait (%04X:%04X), the stub '
+          'MT\'s three bytes (front, running, the pop-up waiting)' % tsr(), 'Claude is resident' in o and k.pc.rd(stub, 0x104, 1) == b'\x05'
           and tsr() == (stub, R.csym('..@r_idle')) and rmt == (Y['mt_front'], seg), (o, tsr(), rmt))
     # the front task waiting for a key in the stub's own loop: a task behind runs (switched from its HLT), as fast as
     # alone (the waiting task gets no turns: TS_WAITK, as in MT's own wait)

@@ -10,7 +10,7 @@ reference code is `host_link.c` (Pico) and `pi/gpibbridge/protocol.py` (Pi).
 | Type | Name | Fields | What it does |
 |---|---|---|---|
 | 0x01 | HELLO_REQ | — | The Pico answers HELLO |
-| 0x02 | CONFIG | u8 address (0–30), u8 flags (bit 0 online, bit 1 auto service request) | Online: take part in the bus at this address. Offline: release everything. Auto service request: see below |
+| 0x02 | CONFIG | u8 address (0–30), u8 flags (bit 0 online, bit 1 auto service request, bit 2 quiet: fw 2026-10-24) | Online: take part in the bus at this address. Offline: release everything. Auto service request and quiet: see below |
 | 0x03 | TX | u16 gen, u8 flags (bit 0 = EOI on the last byte; bit 1 = EARLY, bit 2 = ANNOUNCED: fw 2026-10-23a; bit 3 = HELD: fw 2026-10-23c, below), data | Reply bytes for the 1520's next read. Dropped if `gen` isn't the current one (HELD: the next one) |
 | 0x04 | STB | u8 status byte, u8 rsv | Serial-poll status byte. rsv = 1 asserts SRQ until the 1520 polls |
 | 0x05 | PING | — | Every second. No PING for 5 s: the Pico goes offline |
@@ -103,3 +103,8 @@ For CLAUDE.COM's link (GLP, `lodestone/claude-link`), the bridge requests servic
   over all but the sync byte (A = 1 + the bytes, B = the sum of the A's, both mod 256, stored A then B):
   the check the Pi itself makes, on the same bytes. A frame checked with the CRC isn't taken.
 - **The STB frame's bits 5 and 6 are ignored in this mode.**
+- **Quiet (CONFIG flags bit 2, fw 2026-10-24): no SRQ line.** The status byte is as ever (60h, 40h for a
+  WAKE, READY until read), and a serial poll serves RQS as ever, but the bridge never asserts SRQ. For a 1520
+  that serial-polls on its own: resident Claude's console working in the background while a DOS program has
+  the 1520, whose GPIB driver would put every SRQ of ours in the program's SRQ latch. Clearing the bit with an
+  RQS still to be served raises SRQ then. It applies in either mode.
