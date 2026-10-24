@@ -220,7 +220,7 @@ def t_tm5000g():
 SEMI = 0x2700                                   # CODE-; : enhanced-only, as CODE-\ (raw 27F0h)
 
 def t_rload():
-    """CLAUDE /R loads (3 EMS pages, the stub), says so when it is there
+    """CLAUDE /R loads (4 EMS pages, the stub), says so when it is there
     already or there is no EMS; CLAUDE /U takes it out, or says why not."""
     def handles():                              # EMS handles in use (the kernel's table; 0 is its own)
         t = k.rd('ems_h', 4 * 32)
@@ -528,7 +528,7 @@ def t_rversion():
     check('CLAUDE over a version 1 stub (no r_off): its 10Dh-10Eh (r_inpop, r_pend) left as they were while it runs',
           during == (0x40, b'\0\0') and after == (3, b'\0\0'), (during, after))
     during, after = claude_run('claude')
-    check('... over its own (version 2): r_off (10Eh) set while CLAUDE runs, cleared when it ends',
+    check('... over its own (version 4; r_off since 2): r_off (10Eh) set while CLAUDE runs, cleared when it ends',
           during == (0x40, b'\0\x01') and after == (3, b'\0\0'), (during, after))
     # under a TSR that hooked INT 16h after CLAUDE /R (HOOK16), CLAUDE.COM finds the stub among the memory
     # blocks all the same (through INT 16h it wouldn't, and CODE-\ in CLAUDE would bring the console up)
