@@ -73,7 +73,7 @@ def prompt(k, cmd, sim_s=8):
     return k.pc.text_screen()
 
 def to_prompt(k):
-    k.key(ktest.CODE_P); k.settle()
+    k.code_p(); k.settle()
 
 def sysinfo_hd(*files):
     """the test hard disk (C:), with files [(path, bytes)]"""
@@ -118,7 +118,7 @@ def t_image():
     check('LODE.SYS is the first file', first.startswith('LODE     SYS'), first)
     srcs = {'LODE.SYS': 'src/LODE.SYS', 'LODEMT.SYS': 'src/LODEMT.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
             'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI',
-            'PS.PRN': 'drivers/PS.PRN', 'TASKS.RUN': 'apps/TASKS.RUN'}
+            'PS.PRN': 'drivers/PS.PRN', 'TASKS.RUN': 'apps/TASKS.RUN', 'TERM.RUN': 'apps/TERM.RUN'}
     bad = []
     for n, s in srcs.items():
         o = os.path.join(OUT, 'rom_x')
@@ -167,6 +167,11 @@ def t_rom2():
     check('LODE2.BIN: a data ROM (system type 2, not bootable, id L2); ROM 1 has no DEFRAG.COM now',
           t[2] == 2 and t[3] == 0 and struct.unpack_from('<H', t, 19)[0] == mkrom.ROM_ID_DATA
           and b'DEFRAG  COM' in img[1024:2048] and b'DEFRAG  COM' not in rom()[1024:2048], t[:24].hex())
+    fnt = open(os.path.join(GOS, 'fonts', 'TERM.FNT'), 'rb').read()
+    e = img[1024:2048].find(b'TERM    FNT')
+    c = struct.unpack_from('<H', img, 1024 + e + 26)[0] if e >= 0 else 0
+    check('LODE2.BIN: TERM.FNT (the terminal window\'s font) on it as built (4,096 bytes, one-sector clusters from sector 4)',
+          e >= 0 and struct.unpack_from('<I', img, 1024 + e + 28)[0] == 4096 and img[(c + 2) * 512:(c + 10) * 512] == fnt, (e, c))
     big = bytes((i * 7 + i // 512) & 0xFF for i in range(60000))
     small = [('F%02d.TXT' % i, b'file %d\r\n' % i) for i in range(18)]    # (ROM 2's root past 16 entries: R:'s sector 6)
     r2 = mkrom.volume([('DEFRAG.COM', defrag), ('BIG.BIN', big)] + small, data=True)[0]
@@ -207,9 +212,9 @@ def t_rom2():
               'over the sectors) and its root sectors in the buffers (ROM 2\'s, past 16 entries too; its label gone), byte for byte' % where,
               fat == want[:1024] and 5 in roots and 6 in roots and all(v == want[1024 + 512 * (n - 3):1536 + 512 * (n - 3)] for n, v in roots.items()),
               (fat is not None and next((i for i in range(1024) if fat[i] != want[i]), None), sorted(roots)))
-        check('%s: DIR R: ROM 1\'s files then ROM 2\'s (DEFRAG.COM, BIG.BIN, F00-F17.TXT), one label, 32 files, 0 bytes free' % where,
+        check('%s: DIR R: ROM 1\'s files then ROM 2\'s (DEFRAG.COM, BIG.BIN, F00-F17.TXT), one label, 33 files, 0 bytes free' % where,
               'Volume in drive R is LODESTONE' in oh and 'LODE     SYS' in oh
-              and 'F17      TXT' in o and '32 File(s)' in o and ' 0 bytes free' in o and not k.crashed, o)
+              and 'F17      TXT' in o and '33 File(s)' in o and ' 0 bytes free' in o and not k.crashed, o)
         check('%s: copied from R: as built: DEFRAG.COM, BIG.BIN (its chain over both FAT sectors R: makes), ROM 1\'s last file '
               '(TASKS.RUN) and ROM 2\'s 21st entry (F17.TXT)' % where, got == (True, True, True, True), (got, o2[-300:]))
     fake = bytearray(rom2()); fake[-256 + 19:-256 + 21] = b'XX'                  # (a data ROM, not Lodestone's: its id)
@@ -221,7 +226,7 @@ def t_rom2():
     k = boot(floppy('rom2b.img'))
     to_prompt(k)
     o = prompt(k, 'dir r:')
-    check('ROM 1 alone: R: as before, without DEFRAG.COM (12 files)', 'LODE     SYS' in o and 'DEFRAG' not in o and '12 File(s)' in o, o)
+    check('ROM 1 alone: R: as before, without DEFRAG.COM (13 files)', 'LODE     SYS' in o and 'DEFRAG' not in o and '13 File(s)' in o, o)
     # the saver's round of the disks: DEFRAG.COM from R: (the start-up drive's root) with ROM 2 in; without it, the clock
     seen = []
     for rs in ({0: rom2(), 1: rom()}, {1: rom()}):

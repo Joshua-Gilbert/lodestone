@@ -69,10 +69,11 @@ def t_tm5000g():
     k.shot(os.path.join(OUT, 'tm.png'))
 
 class Shell:
-    """LCMD.COM (the command prompt) started from the Executive with CODE-P."""
+    """LCMD.COM (the command prompt) started from the Executive with
+    Shift-CODE-P: the Executive's own prompt, full screen (ktest's code_p)."""
     def __init__(s, k):
         s.k = k
-        k.key(ktest.CODE_P)
+        k.code_p()
     def run(s, cmd, *answers):
         k = s.k
         k.key('cls'); k.key(ktest.ENTER)

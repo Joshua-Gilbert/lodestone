@@ -172,6 +172,15 @@ ENVMAX      equ 1024                    ; most of an environment kept
         jmp     KSEG:%1
 %%r:
 %endmacro
+%macro UCALL 1                          ; CALL a near routine of the UI (DS = it)
+        push    cs
+        push    word %%r
+        push    word ..@ui_retf         ;  (its RET goes to a RETF there)
+        push    ds
+        push    word %1
+        retf
+%%r:
+%endmacro
 
 ; ---- the resident part (in its own segment, from 0) -----------------
 section mtt
@@ -328,8 +337,9 @@ mt_eord     times MT_TASKS db 0         ; (each task's end: mt_nend then)
 mt_xnm      dw      0                   ; (MT_UI: the program's name)
 mt_xpb      times SP_SIZE db 0          ; (MT_UI's MT_SPAWN block)
 mt_lbg      dw      mt_lnone            ; LODE.INI's lists (mt_lists): BG=,
-mt_lfz      dw      mt_lnone            ;  FREEZE=, MTMEM=; in mt_ini
-mt_lmem     dw      mt_lnone
+mt_lfz      dw      mt_lnone            ;  FREEZE=, MTMEM=, FULL= (T2: started
+mt_lmem     dw      mt_lnone            ;  full screen, not in a terminal
+mt_lfull    dw      mt_lnone            ;  window); in mt_ini
 mt_lnone    db      0
 mt_scant    db      "Can't run ", 0     ; (MT_UI's messages)
 mt_smany    db      ': too many tasks', 0
@@ -1742,6 +1752,8 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_tsrc
         cmp     al, MT_WIN
         je      mt_winc
+        cmp     al, MT_TOPEN
+        je      mt_topen
         cmp     al, MT_TROWS
         je      mt_trows
         cmp     al, MT_TKEY
@@ -1841,6 +1853,32 @@ mt_uic: mov     word [bp+F_AX], mt_ui
 mt_winc:
         cmp     byte [cs:mw_cur], 0
         je      mt_bad
+        jmp     KSEG:ok
+
+; MT_TOPEN (T2): task BL, its count CL, is shown by the window .RUN that
+; calls (its session, mw_cur: TERM.RUN), whose UI_EVENT gives EV_TICK from
+; now on when there is something to show (mw_poll).  CF: AX = 1 (no such
+; task, another count, not a window .RUN's call), 5 (task 0, parked)
+mt_topen:
+        cmp     byte [cs:mt_cur], 0     ; (the UI's call, not a task's)
+        jne     mt_bad
+        call    mt_targ
+        jc      mt_bad
+        call    mt_t5
+        jc      mt_park.r5
+        mov     ah, [bp+F_CX]
+        cmp     ah, [cs:bx+TE_GEN]
+        jne     mt_bad
+        mov     dl, al
+        mov     al, [cs:mw_cur]
+        or      al, al
+        jz      mt_bad
+        push    bp
+        call    mw_rec
+        mov     [cs:bp+SE_TASK], dl
+        mov     [cs:bp+SE_TGEN], ah
+        mov     byte [cs:bp+SE_TST], 0FFh       ; (a tick at the first look)
+        pop     bp
         jmp     KSEG:ok
 
 ; MT_TROWS (T1): task BL's screen as its pages hold it, CX rows from row DX
@@ -3550,7 +3588,21 @@ mt_urun:
         mov     ax, dx
 .w:     mov     [mt_xpb + SP_PARAS], ax
 .spd:   pop     ds
-.sp:    mov     byte [cs:mt_xpb + SP_FLAGS], SPF_FRONT
+.sp:    push    ds                      ; in front, as before, if LODE.INI's
+        pop     es                      ;  FULL=, FREEZE= (it never runs behind)
+        mov     si, [cs:mt_xnm]         ;  or BG= (its INT 10h the real screen's)
+        mov     di, [cs:mt_lfull]       ;  names it; else behind, in a terminal
+        call    mt_lmat                 ;  window (T2: mt_uwin)
+        jc      .fs
+        mov     di, [cs:mt_lfz]
+        call    mt_lmat
+        jc      .fs
+        mov     di, [cs:mt_lbg]
+        call    mt_lmat
+        mov     al, 0
+        jnc     .ff
+.fs:    mov     al, SPF_FRONT
+.ff:    mov     [cs:mt_xpb + SP_FLAGS], al
         mov     dx, bp
         push    cs
         pop     es
@@ -3566,7 +3618,10 @@ mt_urun:
         call    mt_ent
         mov     ah, [cs:bx+TE_GEN]
         mov     [cs:mt_xgen+si], ah
-        jmp     mt_uok
+        test    byte [cs:mt_xpb + SP_FLAGS], SPF_FRONT
+        jnz     .ok
+        call    mt_uwin                 ; (behind: its window)
+.ok:    jmp     mt_uok
 .er:    mov     si, mt_snomem           ; "Can't run X: why"
         cmp     ax, 4
         jne     .em
@@ -3586,6 +3641,50 @@ mt_urun:
         call    mt_ucpy
         mov     byte [es:di], 0
         jmp     mt_uyes
+
+; task AL (its count AH), started behind: its terminal window, TERM.RUN
+; (UI_FINDAPP's) with the argument "task count", as run_app runs it (mw_run:
+; a session, the first or beside others); the Executive waits in here while
+; others are in front.  If it can't open (no TERM.RUN, no room, too many
+; windows): the task in front, as without windows.  (DS = the UI's; AX, BX,
+; CX, SI, DI change)
+mt_uwin:
+        push    es
+        push    ax
+        cmp     byte [cs:mw_on], 0      ; (the UI not patched: no windows)
+        je      .no
+        push    ds
+        pop     es
+        mov     di, msgbuf              ; (the Executive's: free while it waits;
+        mov     si, mt_sterm            ;  TERM copies its argument at once)
+        call    mt_ucpy
+        mov     byte [es:di], 0
+        mov     di, msgbuf + 16
+        pop     ax
+        push    ax
+        call    mt_udec                 ; (AL: the task)
+        mov     al, ' '
+        stosb
+        pop     ax
+        push    ax
+        mov     al, ah
+        call    mt_udec
+        mov     byte [es:di], 0
+        mov     si, msgbuf
+        UCALL   ui_findapp              ; SI = its path
+        jc      .no
+        mov     di, msgbuf + 16
+        UCALL   run_app                 ; (mw_run: CF clear whether or not
+        pop     ax                      ;  the window opened: a TERM.RUN not
+        push    ax                      ;  ours, or one that ended at once)
+        call    mw_owns
+        jnc     .x
+.no:    pop     ax
+        push    ax
+        mov     [cs:mt_swreq], al       ; (in front: at the next switch)
+.x:     pop     ax
+        pop     es
+        ret
 
 ; the ended task at BX: "X ended[, exit code n]", or "X could not be
 ; started: error n" (EXEC's), at ES:DI, ASCIIZ.  (AX, CX, SI change)
@@ -3627,6 +3726,8 @@ mt_ucpy:
         stosb
         jmp     mt_ucpy
 .x:     ret
+
+mt_sterm db     'TERM.RUN', 0
 
 ; AL in decimal at ES:DI (AX, CL change)
 mt_udec:
@@ -6072,6 +6173,9 @@ mt_lists:
         call    .one
         mov     bx, MDB(s_memeq)
         mov     bp, mt_lmem
+        call    .one
+        mov     bx, MDB(s_fulleq)
+        mov     bp, mt_lfull
 .one:   call    ini_read                ; (SI = the text: read already)
         push    di
         mov     di, bx
@@ -6083,8 +6187,8 @@ mt_lists:
         call    .sep
         jc      .end
         je      .e
-        cmp     di, mt_ini + MT_INIL - 18       ; (room: a name, 0, word, and
-        ja      .end                    ;  the lists' three ends)
+        cmp     di, mt_ini + MT_INIL - 19       ; (room: a name, 0, word, and
+        ja      .end                    ;  the lists' four ends)
         mov     dx, di                  ; (the entry, should it go)
         mov     cx, 12
 .n:     cmp     al, 'a'
@@ -6124,7 +6228,8 @@ mt_lists:
         jmp     .kd
 .kn:    dec     si
         xor     ax, ax
-        cmp     bp, mt_lmem             ; (BG=, FREEZE=: a number is nothing)
+        cmp     bp, mt_lmem             ; (BG=, FREEZE=, FULL=: a number is
+                                        ;  nothing)
         jne     .kw
         mov     ax, bx
         or      ax, ax
@@ -6165,4 +6270,5 @@ mt_lists:
 s_bgeq  db      'BG', 1Dh, 0            ; (as "BG=" AND 0DFh)
 s_fzeq  db      'FREEZE', 1Dh, 0
 s_memeq db      'MTMEM', 1Dh, 0
+s_fulleq db     'FULL', 1Dh, 0
 %endif

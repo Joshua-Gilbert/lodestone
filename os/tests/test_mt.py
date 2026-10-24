@@ -154,8 +154,8 @@ def t_off():
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
-            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh, 1Fh and 20h fail with AX = 1' % tag,
-                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220)),
+            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh and 1Eh-20h fail with AX = 1' % tag,
+                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220)),
                   out[-400:])
             sh = Shell(k)
             o = sh.run('mtlaunch mtline.com x.txt')
@@ -208,8 +208,9 @@ def t_on():
           and got.get(0x1C, (1,))[0] == 0, out[-400:])
     check('F0h AL=13h with BL = 8 (no such task) and BL = 7 (a free one): CF, AX = 1',
           bad(got.get(0x113, (0, 0))) and bad(got.get(0x213, (0, 0))), out[-400:])
-    check('F0h AL=1Fh (MT_TROWS) and 20h (MT_TKEY), T1: task 0 refused (AX = 5); 7 (a free one) and 8 (none such): AX = 1',
-          all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x1F, 0x20)) and all(bad(got.get(a, (0, 0))) for a in (0x11F, 0x21F, 0x120, 0x220)),
+    check('F0h AL=1Eh (MT_TOPEN, T2), 1Fh (MT_TROWS) and 20h (MT_TKEY), T1: task 0 refused (AX = 5); 7 (a free one) and 8 '
+          '(none such): AX = 1', all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x1E, 0x1F, 0x20))
+          and all(bad(got.get(a, (0, 0))) for a in (0x11E, 0x21E, 0x31E, 0x11F, 0x21F, 0x120, 0x220)),
           out[-500:])
     check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, AH = 0 the caller, nothing written',
           got.get(0x12, (1,))[:2] == (0, 0x0000)
@@ -2873,7 +2874,8 @@ MKFILE = bytes([0xB4, 0x3C, 0x31, 0xC9, 0xBA, 0x18, 0x01, 0xCD, 0x21, 0x89, 0xC3
                 0xB4, 0x08, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'MADE.TXT\0'
 
 def ret(k, name, wait=1.0):
-    """Return on a program in the Executive (with multitasking on: it starts as a task, in front)."""
+    """Return on a program in the Executive (with multitasking on: it starts as a task, in front: with no
+    TERM.RUN on these floppies, by T2's fallback, mt_uwin's mt_swreq)."""
     k.select(name); k.key(ktest.ENTER, settle=False); k.run_for(wait)
 
 def t_exec():
@@ -3124,7 +3126,8 @@ def t_tasksrun():
           and pz == (1, 5, 'MTLINE.COM') and [n for i, s, n in st[0]] == ['Executive', 'MTLINE.COM'] and st[1] == 1 and rr == 0xFFFF
           and b2[:1] == ['MTLINE.COM ended, exit code 2'] and tstate(k)[0] == [(0, 1, 'Executive')], (b1, r2, pz, st, rr, b2))
 
-SE_SIZE, SE_BASE, SE_END, SE_SP, MW_STK = 122, 2, 4, 6, 2560    # KMW.INC: a session's record
+SE_SIZE, SE_BASE, SE_END, SE_SP, MW_STK = 128, 2, 4, 6, 2560    # KMW.INC: a session's record
+SE_TASK = 21                                                     # (a terminal window's task: T2)
 
 def t_windows():
     print('== several window .RUNs at once: the calculator and the tasks (M8a)')
@@ -4016,6 +4019,196 @@ def t_rclaude():
     check('CLAUDE /U: out, and MT has no key wait of its any more (0:0)', 'no longer resident' in o and tsr() == (0, 0),
           (o, tsr()))
 
+TERMRUN = os.path.join(GOS, 'apps', 'TERM.RUN')
+TERMFNT = os.path.join(GOS, 'fonts', 'TERM.FNT')
+
+def t_term():
+    print('== terminal windows (T2): a text program started as a task behind, shown in TERM.RUN\'s window')
+    box = os.path.join(A.OUT, 'BOX.TXT'); open(box, 'wb').write(b'\xc9\xcd\xbb\r\n')
+    k = boot('mt_tw.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, box, A.CALCRUN)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    TS = A.run_syms('apps/TERM.ASM')
+    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)        # (the first session's slot)
+    tv = lambda n: k.pc.u16(k.useg, base() + TS[n])
+    scr = lambda: '\n'.join(l for y, l in k.ocr())
+    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+    def typ2(text, t=1.0):
+        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+    au = Audit(k)
+    # CODE-P: LCMD in a window, a task behind
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    st, n, o = tstate(k), tnum('LCMD.COM'), scr()
+    tk = k.pc.rd(seg, Y['mw_ses'] + SE_SIZE + SE_TASK, 2)
+    xy1 = (tv('x0'), tv('y0'))
+    check('CODE-P with MULTITASK=1: LCMD.COM a task behind (task %d), task 0 still in front (mode 40h), in a terminal window '
+          '(a session, TERM.RUN: MT_TOPEN gave it the task and its count), titled LCMD.COM, its prompt drawn inside' % n,
+          (n, 1, 'LCMD.COM') in st[0] and st[1] == 0 and k.pc.mode() == 0x40 and mb('mw_n') == 1 and tk[0] == n
+          and tk[1] == k.pc.rd(seg, task_ent(k, n) + 30, 1)[0] and 'LCMD.COM' in o and 'A:\\>' in o, (st, mb('mw_n'), tk, o[-400:]))
+    # typed in the window: to it (MT_TKEY), its answer drawn; idle, the ticks aren't activity (the saver's lastact)
+    typ2('ver')
+    o = scr()
+    la = k.pc.u16(k.useg, Y['lastact'])
+    k.run_for(2.0)
+    check('VER typed in the window: LCMD\'s answer drawn there ("Lodestone version"); 2 s idle with the window up: no '
+          'activity counted (the saver\'s lastact as it was: EV_TICK is not a key)', 'Lodestone version' in o
+          and k.pc.u16(k.useg, Y['lastact']) == la, (o[-300:], la, k.pc.u16(k.useg, Y['lastact'])))
+    # MT_TOPEN from a task (MTPROBE in the window: task 1, its count 1, as the window's): refused, the record kept
+    typ2('mtprobe > pr.txt', 4.0)
+    l4 = [l for l in (A.disk_file(k, 'PR.TXT') or b'').decode('latin-1').split('\n') if l.startswith('F01E')]
+    check('MT_TOPEN called by a task (MTPROBE run in the window, task %d count %d, its own): refused (AX = 1: the UI\'s '
+          'call only), the window\'s record as it was' % (n, tk[1]), n == 1 and tk[1] == 1 and len(l4) == 4
+          and 'CF=1 AX=0001' in l4[3] and k.pc.rd(seg, Y['mw_ses'] + SE_SIZE + SE_TASK, 2) == tk, (l4, tk))
+    # a key's echo drawn at once: the task's change count (TX_CHG) gives the tick, not only the 9 ticks' heartbeat
+    lat = []
+    for ch in 'abcdef':
+        c0 = tv('cur'); k.key(ch, settle=False)
+        for t in range(1, 13):
+            k.run_for(0.055)
+            if tv('cur') != c0: break
+        lat.append(t)
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    check('6 keys typed in the window, one at a time: each one\'s echo drawn within 3 ticks (%s: TX_CHG\'s tick, not the '
+          'heartbeat\'s 9)' % lat, max(lat) <= 3, lat)
+    # mw_say's message (CODE-T: no TASKS.RUN here) waits in the band: no tick is its key
+    k.key(0x1400, settle=False); k.run_for(1.5)
+    b1 = k.band()
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    check('CODE-T in the window (no TASKS.RUN): its message in the band, still there 1.5 s on (no EV_TICK ended it), '
+          'gone after a key', any('TASKS.RUN' in l for l in b1) and not any('TASKS.RUN' in l for l in k.band()),
+          (b1, k.band()))
+    # DIR: past the window's 19 rows, the view follows the cursor
+    typ2('dir', 2.0)
+    o, top, rows, cur = scr(), tv('top'), tv('rows'), tv('cur') >> 8
+    check('DIR in the window (more lines than its %d rows): the view follows the cursor (its screen\'s rows %d on; cursor row '
+          '%d the last shown), the shell\'s banner scrolled out of it, the prompt at its foot' % (rows, top, cur),
+          rows == 19 and top > 0 and cur == top + rows - 1 and 'command shell' not in o and 'A:\\>' in o.split('\n')[-4:][0] + ''.join(o.split('\n')[-4:]),
+          (rows, top, cur, o[-500:]))
+    # a program run from that prompt shows in the same window; its keys from the window
+    typ2('mtline tl.txt')
+    o = scr()
+    typ2('hi')
+    check('MTLINE run from the windowed prompt: in the same window ("MTLINE>"), "hi" typed there its line',
+          'MTLINE>' in o and A.disk_file(k, 'TL.TXT') == b'hi', (o[-300:], A.disk_file(k, 'TL.TXT')))
+    # code page 437: TYPE of 3 box bytes, drawn with TERM.FNT's glyphs
+    typ2('type box.txt')
+    sl, fnt = slot(k, n, 4000), open(TERMFNT, 'rb').read()
+    at = next((i // 2 for i in range(0, 4000, 2) if sl[i:i + 6:2] == b'\xc9\xcd\xbb'), None)
+    top, left, x0, y0 = tv('top'), tv('left'), tv('x0'), tv('y0')
+    def drawn(r, c):
+        d = (y0 + (r - top) * 16) * 20 + x0 + c - left
+        return bytes(k.pc.rd(0xB800, d + (y & 3) * 0x2000 + (y >> 2) * 80, 1)[0] for y in range(16))
+    got = [drawn(at // 80, at % 80 + j) == fnt[ch * 16:ch * 16 + 16] for j, ch in enumerate((0xC9, 0xCD, 0xBB))] if at is not None else None
+    check('TYPE of C9h CDh BBh (code page 437\'s box corners and line) in the window: each drawn with TERM.FNT\'s glyph',
+          got == [True, True, True], (at, got))
+    # a resize (CODE-F8): fewer rows, the view still follows
+    k.key(0x6F00, ktest.UP, ktest.UP, ktest.UP, ktest.ENTER, settle=False); k.run_for(1.0)
+    typ2('ver')
+    rows, top, cur = tv('rows'), tv('top'), tv('cur') >> 8
+    check('CODE-F8, Up x3, Return: 3 rows fewer (%d); after VER the view still has the cursor (its row %d, rows %d-%d)'
+          % (rows, cur, top, top + rows - 1), rows == 16 and top <= cur < top + rows, (rows, top, cur))
+    # CODE-F7: moved down a step by the keys, the same view: all of it drawn again there (w_draw's unshade)
+    yb = tv('y0')
+    k.key(0x6E00, ktest.DOWN, ktest.ENTER, settle=False); k.run_for(1.0)
+    o, ya = scr(), tv('y0')
+    check('CODE-F7, Down, Return: the window moved down (its cells from line %d, %d before), its text drawn again there '
+          '(the prompt, VER\'s answer), nothing typed meanwhile' % (ya, yb), ya > yb and 'A:\\>' in o
+          and 'Lodestone version' in o, (ya, yb, o[-400:]))
+    # CODE-F6: the Executive in front, then the window again, drawn as it was
+    k.key(0x6D00, settle=False); k.run_for(1.0)
+    c6 = mb('mw_cur')
+    k.key(0x6D00, settle=False); k.run_for(1.5)
+    o = scr()
+    check('CODE-F6: the Executive in front (session %d), CODE-F6 again: the window in front, its text there (the prompt)' % c6,
+          c6 == 0 and mb('mw_cur') == 1 and 'A:\\>' in o, (c6, mb('mw_cur'), o[-300:]))
+    # keys typed while the task reads none (MTSPIN computing): the ring's 32, then TERM's 16 kept, all arriving
+    typ2('mtspin 72 sp.txt', 0.3)
+    k.key('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN', settle=False)            # (40)
+    k.run_for(0.5)
+    q = k.pc.rd(k.useg, base() + TS['qn'], 1)[0]
+    w = waitfile(k, 'SP.TXT', 10.0); k.run_for(2.0)
+    check('40 keys typed while MTSPIN computes in the window: 32 in its ring, the rest kept by TERM.RUN (%d), then all of '
+          'them on LCMD\'s line, in order' % q, q == 8 and w is not None
+          and 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN' in slot_text(k, n), (q, w, slot_text(k, n)[-300:]))
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    # EXIT: the window closes, the Executive says so
+    typ2('exit', 2.0)
+    check('EXIT: the task ends, its window closes (no session), the Executive in front ("LCMD.COM ended")',
+          mb('mw_n') == 0 and tnum('LCMD.COM') == 7 and any('LCMD.COM ended' in l for l in k.band()), (mb('mw_n'), tstate(k), k.band()))
+    # Return on MTLINE.COM: its own window
+    k.select('MTLINE.COM'); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+    o, n2 = scr(), tnum('MTLINE.COM')
+    typ2('ab', 2.0)
+    check('Return on MTLINE.COM: a task behind (%d) in a window titled MTLINE.COM, its prompt there; "ab" and Return typed '
+          'there: it ends, and the window with it' % n2, n2 != 7 and 'MTLINE.COM' in o and 'MTLINE>' in o
+          and tnum('MTLINE.COM') == 7 and mb('mw_n') == 0, (o[-300:], mb('mw_n'), tstate(k)))
+    # beside another session: the calculator open, the Executive in front again (CODE-F6), CODE-P: a second session;
+    # CODE-Tab: the task full screen, then back (task 0 in front), its window drawn again
+    k.key(0x2500, settle=False); k.run_for(1.5)                         # (CODE-K: the calculator)
+    k.key(0x6D00, settle=False); k.run_for(1.0)
+    c0 = mb('mw_cur')
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n3, o = tnum('LCMD.COM'), scr()
+    t1 = k.pc.rd(seg, Y['mw_ses'] + SE_SIZE + SE_TASK, 1)[0]
+    b2 = k.pc.u16(seg, Y['mw_ses'] + 2 * SE_SIZE + SE_BASE)
+    xy2 = (k.pc.u16(k.useg, b2 + TS['x0']), k.pc.u16(k.useg, b2 + TS['y0']))
+    check('... that second terminal window opens lower and to the right (its slot higher: WINPOS.INC, as a second '
+          'Write): its cells from %s, the first\'s from %s' % (xy2, xy1), xy2[0] > xy1[0] and xy2[1] > xy1[1], (xy1, xy2))
+    check('CODE-K (the calculator: in the first session\'s record, the terminal window\'s before, its task cleared: %d), '
+          'CODE-F6 (the Executive in front: %d), CODE-P: LCMD in a second session\'s window, beside the calculator\'s '
+          '(2 sessions), its prompt drawn' % (t1, c0), t1 == 0 and c0 == 0 and mb('mw_n') == 2 and n3 != 7 and 'A:\\>' in o,
+          (t1, c0, mb('mw_n'), tstate(k), o[-300:]))
+    hot(k); k.run_for(1.5)
+    fs = (tstate(k)[1], k.pc.mode(), 'A:\\>' in k.pc.text_screen())
+    hot(k); k.run_for(1.5)
+    for _ in range(8):                                                  # (CODE-Tab goes round the tasks)
+        if tstate(k)[1] == 0: break
+        hot(k); k.run_for(1.0)
+    o0 = scr()
+    typ2('ver')
+    check('CODE-Tab: LCMD full screen (front %d, mode %02Xh, its prompt); CODE-Tab round to task 0: its window as it '
+          'was (its prompt, before a key: task 0\'s screen put back by MT), VER\'s answer drawn there' % (fs[0], fs[1]), fs == (n3, 3, True)
+          and k.pc.mode() == 0x40 and 'A:\\>' in o0 and 'Lodestone version' in scr(), (fs, tstate(k), k.pc.mode(), o0[-300:]))
+    typ2('exit', 2.0)
+    k.key(0x6D00, settle=False); k.run_for(1.0)
+    k.key(ktest.ESC, settle=False); k.run_for(1.0)                     # (the calculator closed)
+    # Shift-CODE-P: the Executive's own prompt, full screen, as before
+    sh = Shell(k)
+    o = sh.run('ver')
+    check('Shift-CODE-P: the prompt as before, full screen in the Executive\'s task (mode 3, no task, no window)',
+          k.pc.mode() == 3 and tstate(k)[0] == [(0, 1, 'Executive')] and mb('mw_n') == 0 and 'Lodestone version' in o,
+          (k.pc.mode(), tstate(k), o[-200:]))
+    line(k, 'exit')
+    check('... every switch at a safe point (the audit; ui_event.l now mw_poll\'s)', not au.bad(), au.bad()[:3])
+    # FULL=: in front, as before; and no TERM.RUN: the same
+    for tag, text, files in (('FULL=MTLINE', b'MULTITASK=1\r\nFULL=MTLINE\r\n', (TERMRUN, TERMFNT)),
+                             ('BG=MTLINE.COM', b'MULTITASK=1\r\nBG=MTLINE.COM\r\n', (TERMRUN, TERMFNT)),
+                             ('FREEZE=MTLINE', b'MULTITASK=1\r\nFREEZE=MTLINE\r\n', (TERMRUN, TERMFNT)),
+                             ('no TERM.RUN', b'MULTITASK=1\r\n', (TERMFNT,)), ('no TERM.FNT', b'MULTITASK=1\r\n', (TERMRUN,)),
+                             ('a TERM.RUN not ours', b'MULTITASK=1\r\n', ('TERM.RUN=' + A.CALCRUN, TERMFNT))):
+        k = boot('mt_tf.img', text, 88, *files)
+        seg = mt_seg(k)
+        k.select('MTLINE.COM'); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+        if tag == 'a TERM.RUN not ours':                               # (the calculator's window: no MT_TOPEN; the
+            c = k.pc.rd(seg, k.Y['mw_n'], 1)[0]                         #  Executive in front again, run_app returns)
+            k.key(ktest.ESC, settle=False); k.run_for(3.0)
+            st = tstate(k)
+            check('%s (the calculator\'s, as TERM.RUN): Return on MTLINE.COM: a window, but no session has the task '
+                  '(mw_owns); the window closed, the task in front, full screen' % tag, c == 1 and st[1] != 0
+                  and k.pc.mode() == 3 and 'MTLINE>' in k.pc.text_screen(), (c, st, k.pc.mode()))
+            continue
+        st = tstate(k)
+        check('%s: Return on MTLINE.COM: the task in front, full screen (mode 3, its prompt), no window' % tag,
+              st[1] != 0 and k.pc.mode() == 3 and 'MTLINE>' in k.pc.text_screen()
+              and k.pc.rd(seg, k.Y['mw_n'], 1)[0] == 0, (st, k.pc.mode(), k.pc.text_screen()[-200:]))
+        if tag == 'no TERM.RUN':
+            k.key('x', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+            k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+            st = tstate(k)
+            check('... CODE-P with no TERM.RUN: LCMD a task, in front, full screen (not the Executive\'s own prompt: '
+                  'Shift-CODE-P is)', st[1] != 0 and (st[1], 1, 'LCMD.COM') in st[0] and k.pc.mode() == 3
+                  and k.pc.rd(seg, k.Y['mw_n'], 1)[0] == 0, (st, k.pc.mode()))
+
 MTTM = os.path.join(HERE, 'MTTERM.COM')
 
 def t_tcore():
@@ -4160,6 +4353,32 @@ def t_rom():
     R.to_prompt(k)
     o = R.prompt(k, 'tasks')
     check('... TASKS lists the Executive', re.search(r'0\s+Executive \(in front\)', o), o)
+    r1, memsz, kb = R.rom(), open(A.MEMSZ, 'rb').read(), {}
+    r96 = r1.replace(b'MTMEM=LCMD.COM:64', b'MTMEM=LCMD.COM:96')       # (the ROM's line, another size: seen)
+    for tag, roms, more in (('ROM 1 alone (no TERM.FNT)', None, b''),
+                            ('with ROM 2 (TERM.FNT on it)', {0: R.rom2(), 1: r1}, b''),
+                            ('with ROM 2, the ROM\'s line made MTMEM=LCMD.COM:96', {0: R.rom2(), 1: r96}, b''),
+                            ('... and C:\\LODE.INI MTMEM=FOO.COM:200', {0: R.rom2(), 1: r96}, b'MTMEM=FOO.COM:200\r\n')):
+        k = R.boot(roms=roms, ata=R.sysinfo_hd(('LODE.INI', b'MULTITASK=1\r\n' + more), ('MEMSZ.COM', memsz)), ems_pages=88)
+        k.mcb0 = k.u16('first_mcb')     # (the whole arena's start: first_mcb is per task)
+        k.key(ktest.CODE_P, settle=False); k.run_for(4.0)
+        st, n = tstate(k), k.pc.rd(mt_seg(k), k.Y['mw_n'], 1)[0]
+        if roms is None:
+            check('... %s: CODE-P: LCMD a task in front, full screen (as without windows)' % tag,
+                  st[1] != 0 and k.pc.mode() == 3 and n == 0, (st, k.pc.mode(), n))
+            continue
+        o = '\n'.join(l for y, l in k.ocr())
+        check('... %s: CODE-P: LCMD in a terminal window (TERM.RUN from ROM 1, TERM.FNT from ROM 2, by PATH), task 0 '
+              'in front' % tag, st[1] == 0 and k.pc.mode() == 0x40 and n == 1 and 'LCMD.COM' in o and 'C:\\>' in o,
+              (st, k.pc.mode(), n, o[-300:]))
+        k.key('memsz', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+        m = re.search(r'([\d.]+) KB for programs', '\n'.join(l for y, l in k.ocr()))
+        kb[(roms[1] is r96, more)] = m and float(m.group(1))
+    k64, k96, kfoo = kb.get((False, b'')), kb.get((True, b'')), kb.get((True, b'MTMEM=FOO.COM:200\r\n'))
+    check('... MEMSZ at that prompt: %s KB with the ROM as built (MTMEM=LCMD.COM:64: the task\'s 64 KB less LCMD); %s KB '
+          'with the ROM\'s line made :96 (32 KB more: it is read); %s KB with that and C:\\LODE.INI\'s MTMEM=FOO.COM:200 '
+          '(64 again: C:\'s line replaces the ROM\'s whole)' % (k64, k96, kfoo), r96 != r1 and k64 and k96 and kfoo
+          and k64 < 64 and 28 <= k96 - k64 <= 36 and abs(kfoo - k64) < 1, kb)
     k = R.boot(ata=R.sysinfo_hd(), ems_pages=88)
     check('started from the ROM, no C:\\LODE.INI (the ROM\'s settings): off', mt_seg(k) is None and vec(k, 8) == INT08, show(mcbs(k)))
 
@@ -4268,6 +4487,19 @@ def t_nodisk():
     check('... run from LCMD as a task (LCMD\'s INT 24h, which prompts), the Executive in front: the same, 3 at once, '
           'nothing waiting for an answer nobody can read', A.disk_file(k, 'RES.TXT') == b'03' and crit == 0
           and k.u16('sel') != sel0, (A.disk_file(k, 'RES.TXT'), crit, sel0, k.u16('sel')))
+    # in a terminal window (CODE-P's LCMD, T2): the same, and the window still takes keys
+    k = ktest.KPC(A.image('mt_nd3.img', *(files + [TERMRUN, TERMFNT])), bytes(1474560), ems_pages=88)
+    k.pc.drives[1].empty = True
+    k.start(10)
+    k.mcb0 = k.u16('first_mcb')
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    k.key('nodiskmt', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(4.0)
+    crit = k.pc.rd(mt_seg(k), k.Y['mt_crit'], 1)[0]
+    k.key('ver', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(1.5)
+    o, n = '\n'.join(l for y, l in k.ocr()), k.pc.rd(mt_seg(k), k.Y['mw_n'], 1)[0]
+    check('... run from LCMD in a terminal window: the same, 3 at once, nothing waiting; the window still takes keys '
+          '(VER answered there)', A.disk_file(k, 'RES.TXT') == b'03' and crit == 0 and n == 1 and 'Lodestone version' in o,
+          (A.disk_file(k, 'RES.TXT'), crit, n, o[-300:]))
 
 if __name__ == '__main__':
     t0 = time.time()
@@ -4278,7 +4510,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

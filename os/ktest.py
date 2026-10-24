@@ -134,6 +134,14 @@ class KPC:
                 s.pc.keys.append(k)
             if settle: s.settle()
 
+    def code_p(s):
+        """CODE-P with Shift held (till the prompt runs): the Executive's own
+        prompt, full screen (with MULTITASK=1, CODE-P alone opens it in a
+        terminal window, a task of its own)"""
+        s.pc.wr(0x40, 0x17, bytes([s.pc.rd(0x40, 0x17, 1)[0] | 2]))
+        s.key(CODE_P)
+        s.pc.wr(0x40, 0x17, bytes([s.pc.rd(0x40, 0x17, 1)[0] & 0xFC]))
+
     def run_for(s, sim_s): s.pc.run_for(sim_s)
 
     @property
