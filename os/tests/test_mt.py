@@ -4166,8 +4166,8 @@ def t_term():
         hot(k); k.run_for(1.0)
     o0 = scr()
     typ2('ver')
-    check('CODE-Tab: LCMD full screen (front %d, mode %02Xh, its prompt); CODE-Tab round to task 0: its window drawn '
-          'again (its prompt, before a key), VER\'s answer drawn there' % (fs[0], fs[1]), fs == (n3, 3, True)
+    check('CODE-Tab: LCMD full screen (front %d, mode %02Xh, its prompt); CODE-Tab round to task 0: its window as it '
+          'was (its prompt, before a key: task 0\'s screen put back by MT), VER\'s answer drawn there' % (fs[0], fs[1]), fs == (n3, 3, True)
           and k.pc.mode() == 0x40 and 'A:\\>' in o0 and 'Lodestone version' in scr(), (fs, tstate(k), k.pc.mode(), o0[-300:]))
     typ2('exit', 2.0)
     k.key(0x6D00, settle=False); k.run_for(1.0)
@@ -4359,7 +4359,7 @@ def t_rom():
         k.key(ktest.CODE_P, settle=False); k.run_for(4.0)
         st, n = tstate(k), k.pc.rd(mt_seg(k), k.Y['mw_n'], 1)[0]
         if roms is None:
-            check('... %s: CODE-P: LCMD a task in front, full screen (TERM.RUN from R:, but no font: as without windows)' % tag,
+            check('... %s: CODE-P: LCMD a task in front, full screen (as without windows)' % tag,
                   st[1] != 0 and k.pc.mode() == 3 and n == 0, (st, k.pc.mode(), n))
         else:
             o = '\n'.join(l for y, l in k.ocr())
