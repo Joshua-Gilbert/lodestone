@@ -435,7 +435,9 @@ def t_write():
     shot(k, 'write_help')
     check('help: GRiDWrite\'s command summary, Cut, Copy and Paste among them, all 18 lines shown',
           has(k, 'Begin       CODE-B    Restart the selection') and has(k, 'Cancel      CODE-ESC') and has(k, 'Copy        CODE-C')
-          and has(k, 'Cut         CODE-Z') and has(k, 'Paste       CODE-V') and has(k, 'Any key closes'), screen(k))
+          and has(k, 'Cut         CODE-Z') and has(k, 'Paste       CODE-V') and has(k, 'Any key closes')
+          and has(k, 'Find        CODE-F    Find text') and has(k, 'Quit        CODE-Q    Save and exit')
+          and has(k, 'A command, then select, then Return (or drag first)'), screen(k))
     k.key('x')
     k.key(CODE['Q'])
     check('Quit asks', k.band()[0] == 'Quit: Confirm to save and exit', k.band())
@@ -1380,9 +1382,11 @@ def t_form():
     # help: the items; the file commands CODE-C, CODE-D, CODE-M, CODE-R; CODE-P the prompt
     k.key(ktest.F1)
     hl = screen(k)
-    check('help: Tab for the items; Copy, Erase, Move, Rename', 'Device, Subject, Title' in hl and 'CODE-C                   Copy the file' in hl
-          and 'CODE-R' in hl and 'Rename the file' in hl and 'CODE-D                   Delete' in hl and 'CODE-M' in hl
-          and 'CODE-P                   command prompt' in hl and 'CODE is the Alt key' in hl, hl)
+    check('help: Tab for the items; Copy, Erase, Move, Rename', 'Device, Subject, Title' in hl and 'CODE-C                   Copy (a file or subject)' in hl
+          and 'CODE-R                   Rename (a file)' in hl and 'CODE-D                   Delete (a file or subject)' in hl
+          and 'CODE-M                   Move (a file)' in hl and 'the file' not in hl
+          and 'CODE-W                   Write (a new file)' in hl and 'F5                       read the disk again' in hl and 'CODE-M' in hl
+          and 'CODE-P                   Command prompt' in hl and 'CODE is the Alt key' in hl, hl)
     k.key(ktest.ENTER)
     k.key(CODE['R']); k.key(ktest.ESC); k.key(CODE['C']); k.key(ktest.ESC)
     check('CODE-R, CODE-D open their forms; ESC changes nothing', not k.crashed and k.exec_list() == ['INNER.TXT'] and k.pc.mode() == 0x40, k.where())
@@ -2049,7 +2053,7 @@ def t_subcopy():
           (free_paras(k)[0], free0))
     # help, and Move on a subject (not offered: a beep)
     k.key(ktest.F1)
-    check('help: "CODE-C  Copy the file / subject"', has(k, 'CODE-C                   Copy the file / subject'), screen(k))
+    check('help: "CODE-C  Copy (a file or subject)"', has(k, 'CODE-C                   Copy (a file or subject)'), screen(k))
     k.key(ktest.ENTER)
     k.key(CODE['M'])
     check('CODE-M on a subject: nothing (a beep)', focus(k) == 2 and band() == 'Subject: Select item and confirm' and not k.crashed, k.band())

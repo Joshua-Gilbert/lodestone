@@ -3259,15 +3259,15 @@ Real              Virtual           Name
             ADAA              431A  h_confirm
             ADD7              4347  h_usage
             ADF7              4367  h_write
-            AE27              4397  h_claude
-            AE47              43B7  h_calc
-            AE6B              43DB  h_shell
-            AE93              4403  h_tasks
-            AEB2              4422  h_copy
-            AEE3              4453  h_erase
-            AF16              4486  h_move
-            AF3D              44AD  h_rename
-            AF66              44D6  h_f5
+            AE23              4393  h_claude
+            AE43              43B3  h_calc
+            AE67              43D7  h_shell
+            AE8F              43FF  h_tasks
+            AEAE              441E  h_copy
+            AEE0              4450  h_erase
+            AF14              4484  h_move
+            AF3B              44AB  h_rename
+            AF64              44D4  h_f5
             AF91              4501  h_code
             AFB7              4527  s_brand
             AFC5              4535  s_hlptitle

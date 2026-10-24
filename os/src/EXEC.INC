@@ -2962,16 +2962,16 @@ h_tab       db 'Tab / Shift-Tab          Device, Subject, Title',0
 h_letter    db 'Type its first letter    find a name',0
 h_confirm   db 'Return or click again    open it / next item',0
 h_usage     db 'CODE-U                   System',0
-h_write     db 'CODE-W                   Write: a new text file',0
+h_write     db 'CODE-W                   Write (a new file)',0
 h_claude    db 'CODE-A                   Claude',0
 h_calc      db 'CODE-K                   Calculator',0
-h_shell     db 'CODE-P                   command prompt',0
+h_shell     db 'CODE-P                   Command prompt',0
 h_tasks     db 'CODE-T                   Tasks',0
-h_copy      db 'CODE-C                   Copy the file / subject',0
-h_erase     db 'CODE-D                   Delete the file / subject',0
-h_move      db 'CODE-M                   Move the file',0
-h_rename    db 'CODE-R                   Rename the file',0
-h_f5        db 'F5                       after a disk swap',0
+h_copy      db 'CODE-C                   Copy (a file or subject)',0
+h_erase     db 'CODE-D                   Delete (a file or subject)',0
+h_move      db 'CODE-M                   Move (a file)',0
+h_rename    db 'CODE-R                   Rename (a file)',0
+h_f5        db 'F5                       read the disk again',0
 h_code      db 'CODE is the Alt key.  Any key closes.',0
 
 ; ---------------------------------------------------------------------

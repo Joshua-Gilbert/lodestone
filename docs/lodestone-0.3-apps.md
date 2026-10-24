@@ -984,6 +984,14 @@ The last of the four steps toward right-click editing in Write: Cut, Copy and Pa
   - Fourteen mutations each fail a check: Cut not erasing, a refused Cut erasing all the same, the menu's Copy cutting, the room for a paste over a selection reckoned from its end, an empty selection copied (the clipboard emptied), error 8 not said as such, Paste not over the selection, its lines not counted, Cut and Copy in the menu with nothing selected, Paste in it with nothing to paste, an empty clipboard pasted (the text marked changed), MT applying the fixups from where they no longer are (`kmwsi`: every window .RUN broken) or the slot sized by the fixups alone (`kmwslot`: TASKS.RUN then fits beside two Writes and the calculator), and the file written from the wrong segment. One is equivalent: the copy of a selection past the cursor read from before the gap. The gap only gets there by moving back over that text, which leaves an exact copy of it, and any edit ends the selection first.
   - Untested: Paste with no room in the text (a 64 KB buffer).
 
+## Shorter help (2026-10-23)
+The help windows say less, and System's About no longer calls Lodestone a working name.
+- **System:** 6 lines, not 13. The six "Return on <topic>" lines and the three "Space on <topic>" lines are one each ("Return: what the band says", "Space: on or off (see the band)"): each topic's band already says what Return and Space do there. About: "for the GRiDCase 1520".
+- **The Executive:** the file commands shorter: "Copy (a file or subject)", "Delete (a file or subject)", "Move (a file)", "Rename (a file)"; "CODE-W: Write (a new file)"; "F5: read the disk again"; "Command prompt" capitalised as the rest.
+- **Write:** still 18 lines, the descriptions shorter ("Find text", "Replace text", "Go to a line", "Save and exit", ...).
+- **Cost:** none. The UI core is the same size (`ui_keep_end` 6526h, MEMSZ as before); SYSTEM.RUN 12,393 bytes (12,821), WRITE.RUN 10,162 (10,211). ROM 1 has a sector free again (512 bytes).
+- **Tests:** the Executive's and Write's help checks in test_apps read the new lines (and not the old: no "the file"), test_splash's System help its Space line; the memory figures are unchanged.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
