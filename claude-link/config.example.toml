@@ -47,6 +47,7 @@ address = 1                  # the Nano's GPIB address (GPIB_ADDRESS in gpib_hpg
 16 = "Tek DM5120 DMM"
 17 = "HP 4275A multi-frequency LCR meter"
 18 = "HP 8753D network analyzer"
+19 = "HP 8753D, its second address (reserved: not another instrument)"
 28 = "Tek DM5010 DMM"
 29 = "Tek DC5009 counter"
 30 = "Tek PS5010 power supply"
