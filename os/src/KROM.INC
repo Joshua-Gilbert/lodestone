@@ -48,6 +48,16 @@ R_DATA  equ 4                           ; mkrom.py's layout: the root at 2-3,
 R_ROOT  equ 2                           ;  32 entries; data (cluster 2) at 4;
 R_NROOT equ 32                          ;  clusters 2-253 (253: the trailer's)
 R_NCL   equ R_SECS - R_DATA + 2         ; (the highest cluster + 1: 254)
+; ROM 2 (mkrom.py --data: id 'L2', system type 2, the same layout) joined
+; to R:: one volume, its FAT 2 sectors (1-2), its root ROM 1's 32 entries
+; then ROM 2's (3-6), then ROM 1's clusters 2-253 and ROM 2's as 254-505
+R_ID2   equ 324Ch                       ; 'L2'
+R_OFF   equ R_NCL - 2                   ; ROM 2's cluster n is R:'s n + 252
+R2_ROOT equ 3
+R2_DATA equ 7
+R2_NCL  equ R_NCL + R_OFF               ; 506
+R2_SECS equ R2_DATA + 2 * R_OFF         ; 511
+R_END1  equ R2_DATA + R_OFF             ; 259: R:'s first sector on ROM 2
 INI_BUF equ 0F000h                      ; ini_read: the settings, in the load
                                         ;  image's segment (KSPLASH's SP_BUF)
 
@@ -77,6 +87,8 @@ r_dt:   times DRVSZ db 0                ; R:'s drive table entry
 r_cwd:  times CWDLEN db 0               ; its current directory
 r_tseg  dw      0                       ; r_tbl's segment
 r_img   db      0                       ; R:'s image (E402's ordinal)
+r_img2  db      0FFh                    ; ROM 2's, joined to it (FFh: none)
+r_cur   db      0                       ; the image a piece is read from
 
 ; use_drive: R:'s entry
 r_use:  cmp     al, R_DRV
@@ -121,7 +133,7 @@ r_dio:  cmp     al, R_DRV
         mov     ax, dx
         add     ax, cx
         jc      .bad
-        cmp     ax, R_SECS
+        RADR    cmp ax, [r_dt + D_TOT]
         ja      .bad
         mov     ax, bx                  ; ES:BX with BX < 16
         shr     ax, 4
@@ -129,11 +141,17 @@ r_dio:  cmp     al, R_DRV
         add     ax, si
         mov     es, ax
         and     bx, 15
+        mov     bp, dx                  ; BP = R:'s sector
 .l:     jcxz    .ok
+        call    .map                    ; -> DX = the image's, SI = how many
+        jc      .made                   ;  in a row there
         mov     di, R_PIECE             ; DI = sectors this time
         cmp     cx, di
-        jae     .n
+        jae     .n0
         mov     di, cx
+.n0:    cmp     si, di
+        jae     .n
+        mov     di, si
 .n:     mov     ax, es                  ; under the window (A000-BFFF)?
         cmp     ax, R_WIN + 2000h
         jae     .dir
@@ -162,7 +180,7 @@ r_dio:  cmp     al, R_DRV
         pop     di
         jmp     short .nx
 .dir:   call    .piece
-.nx:    add     dx, di                  ; on: the sectors, the memory
+.nx:    add     bp, di                  ; on: the sectors, the memory
         sub     cx, di
         shl     di, 5
         mov     ax, es
@@ -180,6 +198,34 @@ r_dio:  cmp     al, R_DRV
         mov     ax, 27                  ; sector not found
 .x:     ret
 
+; R:'s sector BP -> DX = the image's sector, [r_cur] = the image, SI = how
+; many go on in a row there.  With ROM 2 joined (r_img2): CF for sectors
+; 1-6, the FAT and the root, which are made up (.made)
+.map:   mov     dx, bp
+        mov     si, 0FFFFh
+        RADR    mov al, [r_img2]        ; (RADR: the address last, so not
+        cmp     al, 0FFh                ;  CMP [mem], imm)
+        RADR    mov al, [r_img]
+        je      .m1
+        or      bp, bp                  ; (the boot sector: ROM 1's)
+        jz      .m1
+        cmp     bp, R2_DATA
+        jb      .mm
+        sub     dx, R2_DATA - R_DATA    ; ROM 1's clusters, then ROM 2's
+        mov     si, R_END1
+        cmp     bp, si
+        jb      .m0
+        sub     dx, R_OFF
+        RADR    mov al, [r_img2]
+        mov     si, 0FFFFh
+.m0:    sub     si, bp
+.m1:    RADR    mov [r_cur], al
+        clc
+        ret
+.mm:    stc
+        ret
+
+
 ; DI sectors from sector DX to ES:BX, the ROM mapped meanwhile and
 ; interrupts off (DS = KSEG; everything kept).  The 1520's BIOS (F000:
 ; D9D6 keeps SI and DI; E403 at DBC4 changes AX, BX, CL and DH, E404 at
@@ -191,7 +237,7 @@ r_dio:  cmp     al, R_DRV
         push    di                      ;  the count,
         push    bx                      ;  the place)
         RADR    mov ax, [r_tseg]
-        RADR    mov dl, [r_img]
+        RADR    mov dl, [r_cur]         ; (the image .map or .made chose)
         cli
         mov     ds, ax
         mov     ax, 0E403h              ; the image into A000-BFFF
@@ -213,9 +259,135 @@ r_dio:  cmp     al, R_DRV
         popa
         popf
         ret
+
+; (from here on, only with ROM 2 joined: without it the module ends here)
+..@r_made:
+; sectors 1-6 of the joined R:, one at a time (into memory below the
+; window: they are the kernel's own buffers'): 1-2 the FAT, ROM 1's then
+; ROM 2's entries past its own (their clusters R_OFF on); 3-4 ROM 1's
+; root, its empty entries deleted ones so that a search goes on; 5-6 ROM
+; 2's, its label gone and its clusters R_OFF on
+.made:  mov     ax, es
+        cmp     ax, R_WIN - 20h
+        jae     .bad
+        mov     di, 1
+        mov     dx, bp
+        cmp     bp, R2_ROOT
+        jb      .fat
+        sub     dx, R2_ROOT - R_ROOT    ; ROM 1's root: 2-3
+        RADR    mov al, [r_img]
+        cmp     bp, R2_ROOT + 2
+        jb      .rt
+        sub     dx, 2                   ; ROM 2's: 2-3
+        RADR    mov al, [r_img2]
+.rt:    RADR    mov [r_cur], al
+        call    .piece
+        push    cx
+        mov     si, bx
+        mov     cx, 16                  ; its 16 entries
+.e:     mov     al, [es:si]
+        cmp     bp, R2_ROOT + 2
+        jae     .e2
+        or      al, al                  ; ROM 1's: empty -> deleted
+        jnz     .en
+        mov     byte [es:si], 0E5h
+        jmp     short .en
+.e2:    or      al, al                  ; ROM 2's: the end, a deleted one,
+        jz      .en                     ;  its label
+        cmp     al, 0E5h
+        je      .en
+        test    byte [es:si+11], 08h
+        jz      .ec
+        mov     byte [es:si], 0E5h
+        jmp     short .en
+.ec:    cmp     word [es:si+26], 2
+        jb      .en
+        add     word [es:si+26], R_OFF
+.en:    add     si, 32
+        loop    .e
+        pop     cx
+        jmp     .nx
+.fat:   RADR    mov al, [r_img2]        ; ROM 2's FAT into the bounce buffer
+        RADR    mov [r_cur], al
+        push    es
+        push    bx
+        push    cs
+        pop     es
+        mov     bx, bounce
+        mov     dx, 1
+        call    .piece
+        pop     bx
+        pop     es
+        mov     ax, R_NCL               ; sector 1: ROM 1's FAT, then ROM 2's
+        cmp     bp, 1                   ;  entries from cluster R_NCL on
+        jne     .f2
+        RADR    mov dl, [r_img]
+        RADR    mov [r_cur], dl
+        mov     dx, 1
+        call    .piece
+        jmp     short .f
+.f2:    push    cx                      ; sector 2: ROM 2's alone, from the
+        push    di                      ;  entry the sector starts in
+        mov     di, bx
+        xor     ax, ax
+        mov     cx, 256
+        rep     stosw
+        pop     di
+        pop     cx
+        mov     ax, 512 * 2 / 3         ; (341: half of it in sector 1)
+.f:     push    cx
+        mov     cx, bp
+        dec     cx
+        xchg    cl, ch
+        shl     cx, 1                   ; CX = the sector's first byte (0, 512)
+.fl:    cmp     ax, R2_NCL
+        jae     .fd
+        mov     si, ax                  ; the entry's byte, in the sector
+        shr     si, 1
+        add     si, ax
+        sub     si, cx
+        cmp     si, 512
+        jge     .fd
+        push    si
+        mov     si, ax                  ; ROM 2's entry (AX - R_OFF)
+        sub     si, R_OFF
+        mov     dx, si
+        shr     si, 1
+        add     si, dx
+        mov     dx, [cs:bounce + si]
+        test    al, 1
+        jz      .fv
+        shr     dx, 4
+.fv:    and     dx, 0FFFh
+        cmp     dx, 2                   ; a cluster of ROM 2's: R_OFF on
+        jb      .fw
+        cmp     dx, 0FF6h
+        ja      .fw
+        add     dx, R_OFF
+.fw:    pop     si                      ; SI = its first byte (-1: in sector 1)
+        test    al, 1
+        jnz     .fo
+        mov     [es:bx+si], dl          ; even: the low 8 bits, then the top
+        mov     dl, dh                  ;  4 (an even entry is never split)
+        and     byte [es:bx+si+1], 0F0h
+        or      [es:bx+si+1], dl
+        jmp     short .fn
+.fo:    shl     dx, 4                   ; odd: the low 4 bits over the top
+        or      si, si                  ;  half of its first byte, then 8
+        js      .f3
+        and     byte [es:bx+si], 0Fh
+        or      [es:bx+si], dl
+.f3:    cmp     si, 511
+        jge     .fn
+        mov     [es:bx+si+1], dh
+.fn:    inc     ax
+        jmp     .fl
+.fd:    pop     cx
+        jmp     .nx
 r_tend:
 R_TLEN  equ r_tend - r_tstart
-        times   -(R_TLEN > 27 * 16) db 0        ; (27 paragraphs: one byte more
+R_TLEN1 equ ..@r_made - r_tstart          ; (without ROM 2: .made not kept)
+        times   -(R_TLEN > 50 * 16) db 0        ; (50 paragraphs: one byte more
                                                 ;  costs DOS programs one more)
 
 ; the words that move with it (from r_tstart), each list ended by FFFFh
@@ -285,29 +457,22 @@ rom_init:
         or      al, al
         jz      .no
         mov     [cs:MDB(r_cnt)], al
-        mov     byte [cs:MDB(r_imgi)], 0
-.img:   mov     dl, [cs:MDB(r_imgi)]
-        push    ds
-        mov     ds, [cs:MDB(r_seg)]
-        mov     ax, 0E402h              ; BX = its id, DH = its system type
-        int     15h
-        pop     ds
-        jc      .no
-        cmp     bx, R_ID
-        jne     .nx
-        cmp     dh, 1
-        je      .got
-.nx:    inc     byte [cs:MDB(r_imgi)]
-        mov     al, [cs:MDB(r_imgi)]
-        cmp     al, [cs:MDB(r_cnt)]
-        jb      .img
-        jmp     .no
-.got:
-        call    rom_check               ; really ours?
-        jc      .no
-        mov     di, [cs:MDB(r_place)]   ; its data
-        mov     al, [cs:MDB(r_imgi)]
-        mov     [di + r_img - r_tstart], al
+        mov     cx, R_ID                ; ROM 1 (system type 1)
+        mov     ah, 1
+        call    r_find
+        mov     [cs:MDB(r_i1)], al
+        mov     cx, R_ID2               ; ROM 2, a data ROM (type 2)
+        mov     ah, 2
+        call    r_find                  ; AL = ROM 2's image (FFh: none)
+        mov     ah, [cs:MDB(r_i1)]      ; AH = R:'s: ROM 1's, else ROM 2's
+        cmp     ah, 0FFh                ;  alone (nothing to join it to)
+        jne     .got
+        cmp     al, 0FFh
+        je      .no
+        xchg    al, ah
+.got:   mov     di, [cs:MDB(r_place)]   ; its data
+        mov     [di + r_img - r_tstart], ah
+        mov     [di + r_img2 - r_tstart], al
         mov     ax, [cs:MDB(r_seg)]
         mov     [di + r_tseg - r_tstart], ax
         mov     byte [di + r_cwd - r_tstart], '\'
@@ -329,6 +494,16 @@ rom_init:
         mov     byte [bx + D_PRES], 1
         mov     byte [bx + D_HINT], 2
         mov     byte [bx + D_MEDIA], 0F8h
+        cmp     byte [di + r_img2 - r_tstart], 0FFh
+        je      .one
+        mov     word [bx + D_TOT], R2_SECS      ; ROM 2 joined: the volume
+        mov     byte [bx + D_SPF], 2            ;  r_dio makes of the two
+        mov     byte [bx + D_ROOT], R2_ROOT
+        mov     byte [bx + D_NROOT], 2 * R_NROOT
+        mov     byte [bx + D_RSEC], 2 * R_NROOT / 16
+        mov     byte [bx + D_DATA], R2_DATA
+        mov     word [bx + D_NCL], R2_NCL
+.one:
         mov     si, RTB(r_relp)         ; its own addresses: + its place
 .rp:    mov     bx, [cs:si]
         cmp     bx, 0FFFFh
@@ -379,9 +554,48 @@ rom_init:
         jmp     .h
 .hd:    mov     byte [lastdrv], R_DRV + 1       ; INT 21h 0Eh: to R:
         mov     ax, [cs:MDB(r_place)]   ; the arena above it
-        add     ax, R_TLEN + 15
+        mov     di, ax
+        mov     cx, R_TLEN + 15
+        cmp     byte [di + r_img2 - r_tstart], 0FFh
+        jne     .kt
+        mov     cx, R_TLEN1 + 15            ; (no ROM 2: what joins it not kept)
+.kt:    add     ax, cx
         mov     [kern_top], ax
 .no:    jmp     sp_hook                 ; (KSPLASH.INC: then KSEG:init)
+
+; CX = an id, AH = a system type -> AL = the first image with both whose
+; boot sector is Lodestone's (rom_check), FFh if none
+r_find: mov     byte [cs:MDB(r_imgi)], 0
+.l:     mov     al, [cs:MDB(r_imgi)]
+        cmp     al, [cs:MDB(r_cnt)]
+        jae     .none
+        push    ax
+        push    cx
+        mov     dl, al
+        push    ds
+        mov     ds, [cs:MDB(r_seg)]
+        mov     ax, 0E402h              ; BX = its id, DH = its system type
+        int     15h
+        pop     ds
+        pop     cx
+        pop     ax
+        jc      .n
+        cmp     bx, cx
+        jne     .n
+        cmp     dh, ah
+        jne     .n
+        push    ax
+        push    cx
+        call    rom_check               ; really ours?
+        pop     cx
+        pop     ax
+        jnc     .y
+.n:     inc     byte [cs:MDB(r_imgi)]
+        jmp     .l
+.y:     mov     al, [cs:MDB(r_imgi)]
+        ret
+.none:  mov     al, 0FFh
+        ret
 
 ; Is image [r_imgi] Lodestone's ROM?  Its boot sector says "LODE ROM" and
 ; has the layout R: assumes.  CF if not.  (Interrupts off while it is in.)
@@ -420,6 +634,7 @@ r_place dw      0                       ; the module's offset in KSEG
 r_seg   dw      0                       ; its BIOS data's segment
 r_imgi  db      0
 r_cnt   db      0
+r_i1    db      0                       ; ROM 1's image (FFh: none)
 r_noov  db      0                       ; 1: the ROM's settings only (the menu)
 ; the boot sector's start as mkrom.py makes it: jump, "LODE ROM", 512
 ; bytes a sector, 1 a cluster, 1 reserved, 1 FAT, 32 root entries, 256

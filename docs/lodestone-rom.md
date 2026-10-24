@@ -17,11 +17,22 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | LODE.PIC | the start-up picture |
 | LCMD.COM | the command prompt (COMSPEC) |
 | SYSTEM.RUN, WRITE.RUN, CALC.RUN, TASKS.RUN | the programs |
-| CALC.COM, DEFRAG.COM | the calculator at the prompt, and DEFRAG (the saver runs it) |
+| CALC.COM | the calculator at the prompt |
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-One sector (512 bytes) is left (with multitasking's LODEMT.SYS and TASKS.RUN, UI API 8's pop-up menus and clipboard, and Write's drags, menu, Cut, Copy and Paste): what comes next goes on ROM 2. CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
+10,240 bytes (20 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1. CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
+
+## ROM 2
+
+`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `L2`), in the same layout as ROM 1. It holds **DEFRAG.COM** now; what doesn't fit in ROM 1 goes there.
+
+- **R: is both ROMs' files** (`KROM.INC`), whichever socket each is in:
+  - with ROM 2 in, R: is one volume the read routine makes of the two: its FAT two sectors (ROM 1's entries, then ROM 2's, their clusters numbered on past ROM 1's: ROM 2's cluster n is R:'s n + 252), its root 64 entries (ROM 1's 32, then ROM 2's), then ROM 1's clusters and ROM 2's. Nothing is copied or kept: each FAT and root sector is made as it is read, from the two ROMs' own (ROM 1's empty entries read as deleted ones, so that a search goes on to ROM 2's; ROM 2's volume label is left out);
+  - either ROM works alone: ROM 1 alone is R: as before; ROM 2 alone (a floppy start) is R: by itself;
+  - so ROM 2 can be changed and burned without ROM 1, and the other way round.
+- **DEFRAG.COM on R:** the screen saver's round of the disks looks for it in the root of the start-up drive, so from the ROM it finds it there with ROM 2 in, as before (without ROM 2: no round, only the dark clock). From a floppy, DEFRAG.COM is on A: as before.
+- **Cost:** R:'s module is 32 paragraphs with ROM 1 alone (27 before: 80 bytes more) and 50 with ROM 2 joined (368 bytes more): what joins them is kept only when ROM 2 is there.
 
 ## Which socket
 
@@ -98,7 +109,7 @@ The BIOS's own `f` at its boot prompt still boots the floppy as well.
 
 Measured in pcemu by `tests/test_rom.py t_memory`: a DOS program's KB.
 
-**Without the ROM, 0.6 costs 0.1 KB against 0.4.5 (562.2 / 578.3 KB, was 562.3 / 578.4).** That is the PATH search in the Executive and the two-file settings reader. With the ROM in, R:'s module adds 446 bytes.
+**Without the ROM, 0.6 costs 0.1 KB against 0.4.5 (562.2 / 578.3 KB, was 562.3 / 578.4).** That is the PATH search in the Executive and the two-file settings reader. With the ROM in, R:'s module adds 446 bytes (526 since ROM 2's support: 80 more; 814 with ROM 2 in).
 
 ## Review (2026-10-18)
 
@@ -125,6 +136,7 @@ Also from the review:
   - the menu, including chaining to GRiD MS-DOS;
   - System's Settings topic and saving;
   - PATH;
-  - memory.
+  - memory;
+  - ROM 2 (t_rom2, 9 checks): LODE2.BIN a data ROM; with ROM 1, in either socket, DIR R: both ROMs' files (one label, 0 bytes free), DEFRAG.COM, a 60 KB file whose chain crosses both FAT sectors R: makes, and ROM 1's last file copied as built; the FAT (fatbuf) and the root sectors in the buffers byte for byte against what R: should make; ROM 2 alone; ROM 1 alone without DEFRAG.COM. Twelve of thirteen mutations each fail a check (the FAT, root and data mapping, the joined drive table, ROM 2 alone, the module kept short or not); one is equivalent here: the entry split over the two FAT sectors writing its first half before a lone sector 2, which the kernel only ever reads after sector 1 into the same buffer.
 - **pcemu** models the sockets (`roms=`) and the BIOS's boot (`boot_rom`).
 - **The real-BIOS checks** need `rom/ROM_F000.BIN` and the GRiD MS-DOS EPROM image. These are not in the repo.
