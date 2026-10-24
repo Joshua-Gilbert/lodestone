@@ -458,6 +458,71 @@ def test_resident_tools():
     assert not is_device('A:\\GPIB123') and not is_device('A:\\GPIBX') and not is_device('A:\\GPIB.TXT')
 
 
+def test_resident_background():
+    """M4: once the user has gone back to the program, with a quiet bridge (HF_BG) the files and GPIB tools
+    go on in the background (whatever the link's last word: the background speaks only when it has work);
+    the rest name them.  Going back ends only the calls the background can't answer; a call given up on
+    before it went is withdrawn; the Link rings (quietly) for an away console whatever GF_WAKE, untiringly."""
+    import threading
+    from types import SimpleNamespace
+    from gridlink.term import TermSession as T
+    from gridlink.grid import Grid, GridError, OPS_BG
+    from gridlink.link import Link
+    link = SimpleNamespace(last_rx=time.monotonic() - 3600)
+    def why(tool, bg):
+        s = SimpleNamespace(link=link, hello={'app': 'resident', 'prog': 'TM5000G.EXE', 'ops': 'files,gpib'},
+                            away=True, bg=bg, PAUSED_TOOLS=T.PAUSED_TOOLS, OPS_TOOLS=T.OPS_TOOLS,
+                            RESIDENT=T.RESIDENT, AWAY=T.AWAY, AWAY_BG=T.AWAY_BG, NOT_PAUSED=T.NOT_PAUSED)
+        link.source = s
+        s.resident = lambda: T.resident(s)
+        s.paused_tools = lambda: T.paused_tools(s)
+        s.bg_tools = lambda: T.bg_tools(s)
+        return T.why_not(s, tool)
+    for tool in ('grid_files', 'grid_change_files', 'gpib_read', 'gpib_measure', 'gpib_send'):
+        assert why(tool, True) is None, tool
+        assert 'no GRiD tool works' in why(tool, False), tool
+    for tool in ('grid_program', 'grid_type', 'grid_command'):
+        w = why(tool, True)
+        assert w and 'in the background' in w and 'grid_files, grid_change_files, gpib_read' in w, (tool, w)
+    # going back: a SCREEN's call ends, a DIR's waits for the background's REPLY
+    sent = []
+    g = Grid(SimpleNamespace(send=lambda t, b: sent.append(b), withdraw=lambda t, b: False))
+    out = {}
+    def call(k, op):
+        try: out[k] = g.call(op, b'', timeout=5)
+        except GridError as e: out[k] = str(e)
+    ths = [threading.Thread(target=call, args=(k, op)) for k, op in (('dir', glp.OP_DIR), ('screen', glp.OP_SCREEN))]
+    for th in ths: th.start()
+    while len(sent) < 2: time.sleep(0.01)
+    g.end_calls('gone back', keep=OPS_BG)
+    ths[1].join(2)
+    assert out.get('screen') == 'gone back' and 'dir' not in out, out
+    rid = next(b[0] for b in sent if b[1] == glp.OP_DIR)
+    g.on_reply(bytes([rid, 0]) + b'listing')
+    ths[0].join(2)
+    assert out['dir'] == (0, b'listing'), out
+    # a call given up on before it went: withdrawn from the queue
+    L = Link(SimpleNamespace(), lambda *a: None)
+    g = Grid(L)
+    try: g.call(glp.OP_WRITE, b'\0\0\0\0\0A:\\LATE.TXT\0late', timeout=0.2); assert False
+    except GridError as e: assert 'withdrawn' in str(e), e
+    assert not L.outq and not L.withdraw(glp.P_REQUEST, b'x')
+    # the rings: for an away console in the background, without GF_WAKE, and past RING_TRIES
+    rings = []
+    tr = SimpleNamespace(ring=lambda: rings.append('ring'), unring=lambda: rings.append('unring'))
+    L = Link(tr, lambda *a: None)
+    L.connected = True; L.grid_wake = False
+    now = [100.0]; L.clock = lambda: now[0]
+    L.source = SimpleNamespace(background=lambda: True, may_ring=lambda: True, ready=lambda: False)
+    L.send(glp.P_REQUEST, b'\x01\x02')
+    for _ in range(L.RING_TRIES + 3):
+        now[0] += L.RING_AGAIN + 0.01; L.ring_check()
+    assert rings == ['ring'] * (L.RING_TRIES + 3), rings
+    L.source = SimpleNamespace(background=lambda: False, may_ring=lambda: True, ready=lambda: False)
+    rings.clear(); L.ring_check()
+    assert rings == [], rings                   # (no GF_WAKE, not in the background: no ring)
+
+
 if __name__ == '__main__':
     import traceback
     names = [n for n in sorted(globals()) if n.startswith('test_')]

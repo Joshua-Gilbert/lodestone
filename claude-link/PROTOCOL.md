@@ -151,7 +151,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9) |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
@@ -163,7 +163,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on), then text: model name (or `Claude Code`) |
+| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on; bit 3 = resident Claude's console may work in the background, below: its bridge can be quiet), then text: model name (or `Claude Code`) |
 | 42h | NOP | — |
 | 43h | TEXT | text to append to the conversation; control codes below |
 | 44h | STATUS | status-line text (empty = clear) |
@@ -258,6 +258,28 @@ ones until the next HELLO, instead of waiting for an answer that can't
 come while the program runs. A REQUEST that reaches the console on its
 way out gets no answer: the EVENT has ended it on the Pi.
 
+**The background** (CLAUDE 1.10, the console's HELLO flags bit 5 and the
+Pi's bit 3). The Pi offers it when its bridge can be quiet (GPIB-Pico2
+firmware 2026-10-24: CONFIG bit 2, the status byte as ever but the SRQ
+line never driven), so nothing of the link's reaches the program's SRQ
+latch. Then at EVENT 04h the Pi makes the bridge quiet and goes on: the
+calls for files and GPIB (`ops=`) wait instead of ending, and new ones are
+sent; SCREEN and TYPE are refused as before. While the user is in the
+program its stub calls the console at the program's key calls (a peek or
+a read's wait) every 4 ticks, in the front task's calls and with no
+interrupt in service. The console serial-polls the bridge; when the Pi
+has something it rings (WAKE: 40h, quietly), and the console POLLs, takes
+the REQUEST, runs it and sends its REPLY, polled by the PIT, until the Pi
+answers a POLL with a NOP. It draws nothing (the Pi sends no CELLS or
+TITLE meanwhile, and answers POLLs at once). A REQUEST taken on the way
+out runs in the first of these passes. File requests are refused there
+as at a pop-up (F7h, settled again each pass); SCREEN and TYPE get F6h. A
+failure, or a bridge that doesn't answer the serial poll, stops the passes
+until the next pop-up. Any HELLO from the GRiD makes the bridge loud
+again. A call the GRiD hasn't taken when it times out (the program busy,
+not at a key call) is withdrawn on the Pi, so it can't run after it was
+said to fail.
+
 ## 5. Session flow
 
 ```
@@ -305,7 +327,9 @@ title from TITLE, the link, the keys).
   its HELLO's `ops=` lists (`files`: grid_files, grid_change_files;
   `gpib`: gpib_read, gpib_measure, gpib_send); the GRiD's other tools
   answer that they can't (the program holds the GRiD), and anything sent
-  anyway gets status F6h. The console keeps
+  anyway gets status F6h. Once the user has gone back to the program,
+  files and GPIB go on in the background where the bridge can be quiet
+  (section 4). The console keeps
   its screen between pop-ups and draws it at once; its HELLO's `screen=`
   is the CRC-16 (as the frames') of its 24 rows (glyph, attribute for each
   cell, row by row), then the cursor's row, column and hidden flag (0 or

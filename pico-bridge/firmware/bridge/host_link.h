@@ -11,7 +11,8 @@ extern "C" {
 
 // frame types, Pi -> Pico
 #define F_HELLO_REQ 0x01
-#define F_CONFIG    0x02   // u8 address 0..30, u8 flags: bit 0 online, bit 1 auto service request (GLP)
+#define F_CONFIG    0x02   // u8 address 0..30, u8 flags: bit 0 online, bit 1 auto service request (GLP),
+                           //  bit 2 quiet: the status byte as ever, the SRQ line never driven (2026-10-24)
 #define F_TX        0x03   // u16 gen, u8 flags (bit 0: EOI with the last byte; bit 1 EARLY, bit 2 ANNOUNCED), data
 #define TXF_EARLY   0x02   // (TX flags, 2026-10-23a) the first frame of a reply: count it ready now, the rest follows
 #define TXF_ANN     0x04   //  the last frame (EOI) of a reply an EARLY frame announced: not counted again
