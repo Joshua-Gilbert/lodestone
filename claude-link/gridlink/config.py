@@ -13,7 +13,8 @@ DEFAULT_BUS = {
     3: 'Tek 7854 oscilloscope', 6: 'Tek FG5010 function generator',
     11: 'Tek SI5020 switch', 13: 'Tek PS5004 power supply', 16: 'Tek DM5120 DMM',
     17: 'HP 4275A multi-frequency LCR meter',
-    18: 'HP 8753D network analyzer', 28: 'Tek DM5010 DMM', 29: 'Tek DC5009 counter',
+    18: 'HP 8753D network analyzer', 19: 'HP 8753D, its second address (reserved: not another instrument)',
+    28: 'Tek DM5010 DMM', 29: 'Tek DC5009 counter',
     30: 'Tek PS5010 power supply',
 }
 
