@@ -29,6 +29,7 @@ from test_apps import check, results, has, CODE
 
 OUT = A.OUT
 ROM1 = os.path.join(GOS, 'LODE1.BIN')
+ROM2 = os.path.join(GOS, 'LODE2.BIN')
 MSDOS = os.environ.get('GRID_ROM') or os.path.join(ROOT, 'rom', 'GRID_MSDOS330_ROM_300909-00.BIN')
 BIOS = os.path.join(ROOT, 'rom', 'ROM_F000.BIN')
 ROMVID = os.path.join(HERE, 'ROMVID.COM')
@@ -44,6 +45,7 @@ def build():
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(HERE, n + '.COM'), os.path.join(HERE, n + '.ASM')], check=True)
 
 def rom(): return open(ROM1, 'rb').read()
+def rom2(): return open(ROM2, 'rb').read()
 
 def floppy(name, *files):
     return mkimg.build(os.path.join(OUT, name), list(files))
@@ -115,7 +117,7 @@ def t_image():
     first = d.split('Directory for ::/')[1].strip().split('\n')[0]
     check('LODE.SYS is the first file', first.startswith('LODE     SYS'), first)
     srcs = {'LODE.SYS': 'src/LODE.SYS', 'LODEMT.SYS': 'src/LODEMT.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
-            'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI', 'DEFRAG.COM': 'src/DEFRAG.COM',
+            'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI',
             'PS.PRN': 'drivers/PS.PRN', 'TASKS.RUN': 'apps/TASKS.RUN'}
     bad = []
     for n, s in srcs.items():
@@ -131,6 +133,108 @@ def t_image():
         check('a ROM that would overflow is refused', False)
     except ValueError as x:
         check('a ROM that would overflow is refused', 'ROM full' in str(x), x)
+
+
+def joined(r1, r2):
+    """R:'s sectors 1-6 as KROM.INC makes them of ROM 1 and ROM 2: the FAT
+    (ROM 1's sector, ROM 2's entries from 254 on, clusters + 252) and the
+    root (ROM 1's empty entries deleted; ROM 2's label gone, clusters + 252)."""
+    def get(f, n):
+        o = n * 3 // 2; w = f[o] | f[o + 1] << 8
+        return w >> 4 if n & 1 else w & 0xFFF
+    fb = bytearray(1024); fb[0:512] = r1[512:1024]
+    for n in range(254, 506):
+        v = get(r2[512:1024], n - 252)
+        if 2 <= v <= 0xFF6: v += 252
+        o = n * 3 // 2
+        if n & 1: fb[o] = (fb[o] & 0x0F) | ((v & 0x0F) << 4); fb[o + 1] = v >> 4
+        else: fb[o] = v & 0xFF; fb[o + 1] = (fb[o + 1] & 0xF0) | (v >> 8)
+    a = bytearray(r1[1024:2048]); b = bytearray(r2[1024:2048])
+    for e in range(0, 1024, 32):
+        if a[e] == 0: a[e] = 0xE5
+        if b[e] in (0, 0xE5): continue
+        if b[e + 11] & 0x08: b[e] = 0xE5
+        elif struct.unpack_from('<H', b, e + 26)[0] >= 2: struct.pack_into('<H', b, e + 26, struct.unpack_from('<H', b, e + 26)[0] + 252)
+    return bytes(fb) + bytes(a) + bytes(b)
+
+def t_rom2():
+    """ROM 2 (LODE2.BIN: mkrom.py --data, DEFRAG.COM on it) joined to R:
+    beside ROM 1's files, in either socket; either ROM alone; the saver's
+    DEFRAG from it; what it costs."""
+    print('== ROM 2, joined to R:')
+    img = rom2(); t = img[-256:]
+    defrag = open(os.path.join(GOS, 'src', 'DEFRAG.COM'), 'rb').read()
+    check('LODE2.BIN: a data ROM (system type 2, not bootable, id L2); ROM 1 has no DEFRAG.COM now',
+          t[2] == 2 and t[3] == 0 and struct.unpack_from('<H', t, 19)[0] == mkrom.ROM_ID_DATA
+          and b'DEFRAG  COM' in img[1024:2048] and b'DEFRAG  COM' not in rom()[1024:2048], t[:24].hex())
+    big = bytes((i * 7 + i // 512) & 0xFF for i in range(60000))
+    small = [('F%02d.TXT' % i, b'file %d\r\n' % i) for i in range(18)]    # (ROM 2's root past 16 entries: R:'s sector 6)
+    r2 = mkrom.volume([('DEFRAG.COM', defrag), ('BIG.BIN', big)] + small, data=True)[0]
+    e = r2[1024:2048].index(b'BIG     BIN')
+    c0 = struct.unpack_from('<H', r2, 1024 + e + 26)[0]
+    c1 = c0 + (len(big) + 511) // 512 - 1
+    check('the test ROM 2: BIG.BIN\'s clusters on R: (%d-%d) span the FAT entry split over its two sectors (341)' % (c0 + 252, c1 + 252),
+          c0 + 252 < 341 < c1 + 252)
+    for sockets, kw in (({0: r2, 1: rom()}, {'ems_pages': 88}), ({1: r2, 0: rom()}, {'ata': 1})):
+        sock1 = [s for s, v in sockets.items() if v is not r2][0]
+        where = 'ROM 2 in socket %d (%s)' % (1 - sock1, 'EMS' if 'ems_pages' in kw else 'C:')
+        mem = []
+        for rs in (sockets, {sock1: rom()}):
+            kk = dict(kw)
+            if 'ata' in kk: kk['ata'] = TS.hd()
+            k = boot(floppy('rom2.img', A.MEMSZ), sock=sock1, roms=rs, **kk)
+            to_prompt(k)
+            m = re.search(r'([\d.]+) KB for programs', prompt(k, 'a:memsz'))
+            mem.append(m and float(m.group(1)))
+        k = boot(floppy('rom2.img', A.MEMSZ), sock=sock1, roms=sockets, **dict(kw, **({'ata': TS.hd()} if 'ata' in kw else {})))
+        to_prompt(k)
+        prompt(k, 'a:memsz')                                            # (a program first: the module stays whole)
+        oh = prompt(k, 'dir r:\\lode.sys')
+        o = prompt(k, 'dir r:')                                        # (the end of it: 32 lines scroll)
+        o2 = ''.join(prompt(k, 'copy r:\\%s a:\\' % n) for n in ('defrag.com', 'big.bin', 'tasks.run', 'f17.txt'))
+        got = (A.disk_file(k, 'DEFRAG.COM') == defrag, A.disk_file(k, 'BIG.BIN') == big,
+               A.disk_file(k, 'TASKS.RUN') == open(os.path.join(GOS, 'apps', 'TASKS.RUN'), 'rb').read(),
+               A.disk_file(k, 'F17.TXT') == b'file 17\r\n')
+        want = joined(rom(), r2)
+        fat = bytes(k.rd('fatbuf', 1024)) if k.rd('fat_drv', 1)[0] == 17 else None
+        roots = {}
+        for i in range(5):                                              # (KDISK.INC: NBUF buffers)
+            if k.rd('buf_drv', 1, i)[0] == 17 and 3 <= k.u16('buf_lba', 2 * i) <= 6:
+                roots[k.u16('buf_lba', 2 * i)] = bytes(k.rd('bufs', 512, 512 * i))
+        check('%s: what DOS programs get: %.1f KB, ROM 1 alone %.1f KB (R:\'s module 18 paragraphs more, what joins the two)'
+              % (where, mem[0] or 0, mem[1] or 0), mem[0] and mem[1] and 0.2 <= round(mem[1] - mem[0], 1) <= 0.4, mem)
+        check('%s: the FAT R: made of the two (fatbuf, both sectors: ROM 2\'s entries from 254, clusters + 252, the one split '
+              'over the sectors) and its root sectors in the buffers (ROM 2\'s, past 16 entries too; its label gone), byte for byte' % where,
+              fat == want[:1024] and 5 in roots and 6 in roots and all(v == want[1024 + 512 * (n - 3):1536 + 512 * (n - 3)] for n, v in roots.items()),
+              (fat is not None and next((i for i in range(1024) if fat[i] != want[i]), None), sorted(roots)))
+        check('%s: DIR R: ROM 1\'s files then ROM 2\'s (DEFRAG.COM, BIG.BIN, F00-F17.TXT), one label, 32 files, 0 bytes free' % where,
+              'Volume in drive R is LODESTONE' in oh and 'LODE     SYS' in oh
+              and 'F17      TXT' in o and '32 File(s)' in o and ' 0 bytes free' in o and not k.crashed, o)
+        check('%s: copied from R: as built: DEFRAG.COM, BIG.BIN (its chain over both FAT sectors R: makes), ROM 1\'s last file '
+              '(TASKS.RUN) and ROM 2\'s 21st entry (F17.TXT)' % where, got == (True, True, True, True), (got, o2[-300:]))
+    fake = bytearray(rom2()); fake[-256 + 19:-256 + 21] = b'XX'                  # (a data ROM, not Lodestone's: its id)
+    k = boot(floppy('rom2a.img', A.SYS, LCMD), sock=None, roms={0: bytes(fake), 1: rom2()})
+    to_prompt(k)
+    o = prompt(k, 'dir r:') + prompt(k, 'copy r:\\defrag.com a:\\')
+    check('a floppy start with ROM 2 alone (its image the second, another ROM the first): R: is it (DEFRAG.COM, 1 file), '
+          'read as built', 'DEFRAG   COM' in o and '1 File(s)' in o and 'LODE     SYS' not in o and A.disk_file(k, 'DEFRAG.COM') == defrag, o)
+    k = boot(floppy('rom2b.img'))
+    to_prompt(k)
+    o = prompt(k, 'dir r:')
+    check('ROM 1 alone: R: as before, without DEFRAG.COM (12 files)', 'LODE     SYS' in o and 'DEFRAG' not in o and '12 File(s)' in o, o)
+    # the saver's round of the disks: DEFRAG.COM from R: (the start-up drive's root) with ROM 2 in; without it, the clock
+    seen = []
+    for rs in ({0: rom2(), 1: rom()}, {1: rom()}):
+        k = boot(floppy('rom2s.img'), sock=1, roms=rs)
+        tk = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
+        k.wr('lastact', struct.pack('<H', (tk - 5462 + 18) & 0xFFFF))
+        d = False
+        for _ in range(60):
+            k.pc.run_for(0.1)
+            if has(k, 'Drive A:'): d = True; break
+        seen.append((d, not has(k, 'Select a file and confirm')))
+    check('the screen saver from the ROM: DEFRAG.COM from R: with ROM 2 in (its map: "Drive A:"); with ROM 1 alone, the '
+          'dark clock without it', seen == [(True, True), (False, True)], seen)
 
 
 def masked(b):
@@ -213,7 +317,7 @@ def t_read():
     o = prompt(k, 'copy r:\\*.* a:')
     check('COPY R:\\*.* A:', '11 File(s) copied' in o or 'File(s) copied' in o, o)
     bad = [n for n, s in (('LODE.SYS', 'src/LODE.SYS'), ('SYSTEM.RUN', 'apps/SYSTEM.RUN'), ('LCMD.COM', 'src/LCMD.COM'),
-                          ('LODE.INI', 'rom/LODE.INI'), ('DEFRAG.COM', 'src/DEFRAG.COM'))
+                          ('LODE.INI', 'rom/LODE.INI'))
            if A.disk_file(k, n) != open(os.path.join(GOS, s), 'rb').read()]
     check('the copies are the files as built', not bad, bad)
     o = prompt(k, 'a:romvid')
@@ -380,7 +484,7 @@ def t_paths():
 def rom_ini(ini):
     """ROM 1 as build.sh makes it, with another LODE.INI"""
     names = ['src/LODE.SYS', 'src/LODE.PIC', 'src/LCMD.COM', 'apps/SYSTEM.RUN', 'apps/WRITE.RUN', 'apps/CALC.RUN',
-             'src/CALC.COM', 'src/DEFRAG.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN']
+             'src/CALC.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN']
     files = [(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names] + [('LODE.INI', ini)]
     return mkrom.volume(files, boot=open(os.path.join(GOS, 'src', 'ROMBOOT.BIN'), 'rb').read())[0]
 
@@ -451,7 +555,7 @@ if __name__ == '__main__':
     t0 = time.time()
     if 'nobuild' not in sys.argv: build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_memory):
+    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_memory, t_rom2):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

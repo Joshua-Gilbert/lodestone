@@ -26,7 +26,9 @@ for a in SYSTEM WRITE CALC TASKS; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; d
 python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
 # ROM 1, the boot ROM (tools/mkrom.py): the kernel first, then the core set
 python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODEMT.SYS src/LODE.PIC src/LCMD.COM \
-    apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN apps/TASKS.RUN src/CALC.COM src/DEFRAG.COM fonts/TERMINUS.FNT drivers/PS.PRN rom/LODE.INI
+    apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN apps/TASKS.RUN src/CALC.COM fonts/TERMINUS.FNT drivers/PS.PRN rom/LODE.INI
+# ROM 2, a data ROM joined to R: (KROM.INC): what ROM 1 has no room for
+python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM
 cd tests
 nasm -f bin -o TESTDOS.COM TESTDOS.ASM
 nasm -f bin -o UPPER.COM UPPER.ASM
@@ -40,4 +42,4 @@ cd ../bench
 nasm -f bin -o BENCH.COM BENCH.ASM
 nasm -f bin -o DISKMAP.COM DISKMAP.ASM
 cd ..
-ls -l LODE1.BIN LODE1_EPROM.BIN apps/*.RUN fonts/*.FNT src/BOOT.BIN src/LODEBOOT.COM src/LODE.SYS src/LODE.PIC src/LCMD.COM src/DEFRAG.COM src/HEADCLN.COM src/CALC.COM tests/TESTDOS.COM tests/UPPER.COM tests/CACHETST.COM tests/EMSTEST.COM tests/CAPTEST.COM tests/HDFLUSH.COM tests/HDABS.COM bench/BENCH.COM bench/DISKMAP.COM
+ls -l LODE1.BIN LODE1_EPROM.BIN LODE2.BIN LODE2_EPROM.BIN apps/*.RUN fonts/*.FNT src/BOOT.BIN src/LODEBOOT.COM src/LODE.SYS src/LODE.PIC src/LCMD.COM src/DEFRAG.COM src/HEADCLN.COM src/CALC.COM tests/TESTDOS.COM tests/UPPER.COM tests/CACHETST.COM tests/EMSTEST.COM tests/CAPTEST.COM tests/HDFLUSH.COM tests/HDABS.COM bench/BENCH.COM bench/DISKMAP.COM
