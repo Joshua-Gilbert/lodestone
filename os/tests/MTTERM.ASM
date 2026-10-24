@@ -66,7 +66,10 @@ org 100h
 keys:   call    blanks
         cmp     byte [si], ' '
         jbe     .d
+        mov     di, si
         call    hex_
+        cmp     si, di                  ; (not a hex digit: the end)
+        je      .d
         mov     cx, ax
         mov     ax, 0F000h + 20h
         mov     bl, [task]
