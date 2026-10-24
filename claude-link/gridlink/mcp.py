@@ -255,8 +255,11 @@ TOOLS = [
      'description': (
          "The DOS program that resident Claude's console (CLAUDE /R, CODE-\\) is popped up over, e.g. "
          "TM5000G: its name and its screen as the user left it (text for text modes, an image for "
-         "graphics). Only while Claude Code is in that console; the other GRiD tools wait until the "
-         "user leaves the program."),
+         "graphics). Only while Claude Code is in that console, or once the user has gone back to the "
+         "program, where the console says it can (CLAUDE 1.11): then it is the screen as it is at that "
+         "moment, read in the background between the program's key calls, so you can follow what it "
+         "shows while the user works; a graphics screen holds the program a moment while it goes. The "
+         "other GRiD tools wait until the user leaves the program."),
      'inputSchema': {'type': 'object', 'properties': {}},
      'annotations': dict(LOOK, title='GRiD: the paused program')},
     {'name': 'grid_type', 'title': 'GRiD: type into the paused program',
@@ -414,8 +417,9 @@ def grid_path(a, k='path', wild=False):
 class GridTools:
     """The tools, on gridlink's side of the socket (a Grid to call).  Pi
     paths are kept inside root, the Term directory."""
-    def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}, viewer=None):
+    def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}, viewer=None, away=lambda: False):
         s.G = grid; s.cfg = cfg; s.bridge = bridge
+        s.away = away                       # the user is back in the program (resident Claude's background)
         s.root = root or getattr(cfg, 'term_dir', None) or '~/grid'
         s.hello = hello                     # the GRiD's last HELLO (the paused program's name)
         s.viewer = viewer                   # plotview.Viewer: pictures on the GRiD's screen
@@ -452,8 +456,13 @@ class GridTools:
 
     def t_grid_program(s, a):
         name = (s.hello() or {}).get('prog')
-        head = ('%s is paused under resident Claude\'s console.' % name if name else
-                'A DOS program is paused under resident Claude\'s console (its name isn\'t known).')
+        if s.away():                        # (CLAUDE 1.11: read in the background, the program running)
+            head = ('The user is back in the DOS program (%s when resident Claude\'s console was last up over '
+                    'it; another may run now); its screen as it is now, read in the background.'
+                    % (name or 'its name unknown'))
+        else:
+            head = ('%s is paused under resident Claude\'s console.' % name if name else
+                    'A DOS program is paused under resident Claude\'s console (its name isn\'t known).')
         return [text(head)] + s.snapshot(), False
 
     def t_grid_type(s, a):

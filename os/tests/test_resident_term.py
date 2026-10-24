@@ -976,10 +976,11 @@ def t_bg():
             except Exception as e: out['s'] = e
         th = threading.Thread(target=scr); th.start()
         h.run_until(lambda: not th.is_alive(), 20); th.join(10)
-        check('... a SCREEN sent anyway: the console answers F6h in the pass (it needs the console up)',
-              out.get('s') == (0xF6, b''), out)
-        r = tool(h, 'grid_program', {})
-        check('... grid_program needs the console: refused, the tools that work named',
+        s = out.get('s')
+        check('... SCREEN in a pass (CLAUDE 1.11): EMSUSE\'s text page as it is, byte for byte',
+              isinstance(s, tuple) and s[0] == 0 and s[1][9:] == h.m.rd(0xB800, 0, 4000), str(s)[:200])
+        r = tool(h, 'grid_type', {'keys': 'x'})
+        check('... grid_type needs the console: refused, the tools that work named',
               r and r[1] and 'in the background' in r[0][0]['text'] and 'grid_files' in r[0][0]['text'], r)
         busy = [us for us, wk in looks['held'] if wk]
         check('EMSUSE\'s screen, the BIOS\'s video data and mode 3 untouched through %d passes with work (the '
@@ -1006,7 +1007,7 @@ def t_bg():
         check('the Pi sent the console nothing but REQUESTs and NOPs meanwhile (no CELLS, no TITLE: %d frames)'
               % len(kinds), kinds and set(kinds) <= {glp.P_REQUEST, glp.P_REQUEST | glp.MORE, glp.P_NOP},
               sorted(set(kinds)))
-        nreq = sum(1 for st in statuses if st != 0xF6)  # (the requests run: all but the SCREEN)
+        nreq = sum(1 for st in statuses if st != 0xF6)  # (the requests run, the SCREEN among them)
         h.k.key('a'); h.k.key('b')
         # the next pop-up: the count in the band, the bridge rings again
         gen = generation(h)
@@ -1144,8 +1145,8 @@ def t_ops():
         h.press(HOT)
         up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
         hello = h.router.term.hello
-        check('HELLO offers files and GPIB (ops=files,gpib; req=8700: 8 KB writes); the band doesn\'t say DOS busy',
-              up and hello.get('ops') == 'files,gpib' and hello.get('req') == '8700' and 'DOS busy' not in h.band(),
+        check('HELLO offers files and GPIB (ops=files,gpib,bgscreen; req=8700: 8 KB writes); the band doesn\'t say DOS busy',
+              up and hello.get('ops') == 'files,gpib,bgscreen' and hello.get('req') == '8700' and 'DOS busy' not in h.band(),
               (up, hello, h.band()))
         check('(the disk cache on: its pages in EMS, the kernel\'s copies through windows clear of the buffer)',
               h.m.u16(0x60, h.m.Y['ems_tcpg']) != 0)
@@ -1410,8 +1411,63 @@ def t_bg_mt():
         h.close()
 
 
+def t_bg_screen():
+    """CLAUDE 1.11: grid_program in the background.  Back in the program, Claude reads its screen as it is
+    then (copied to the console's windows for the reply, nothing drawn): text with what the user typed since
+    the console went, and a graphics screen byte for byte.  grid_type still needs the console."""
+    h = Res(pico='quiet'); h.boot()
+    try:
+        looks = bg_looks(h)
+        h.cmd('claude /r')
+        h.cmd('testkey')
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen)
+        t = h.router.term
+        check('HELLO says the console reads the screen in the background (ops=files,gpib,bgscreen)',
+              up and t.hello.get('ops') == 'files,gpib,bgscreen', (up, t.hello))
+        h.press(HOT)
+        back = h.wait(lambda: h.inpop() == 0, 5) and h.pi_wait(lambda: t.away and h.transport.proto.quiet, 10)
+        for k in 'abc': h.k.key(k)              # (the user types into TESTKEY meanwhile)
+        vram0 = h.m.rd(0xB800, 0, 4000)
+        w0 = looks['work']
+        r = tool(h, 'grid_program', {})
+        check('away: grid_program has TESTKEY\'s screen as it is now ("TESTKEY ready: abc", typed after the '
+              'console went), read in a background pass',
+              back and r and not r[1] and 'back in the DOS program' in r[0][0]['text']
+              and 'TESTKEY ready: abc' in r[0][1]['text'] and looks['work'] > w0 and h.inpop() == 0, r)
+        check('... TESTKEY\'s screen untouched by the read, and it is still TESTKEY\'s turn (no console drawn)',
+              h.m.rd(0xB800, 0, 4000) == vram0 and h.m.mode() == 3, h.m.text_screen())
+        r = tool(h, 'grid_type', {'keys': 'x'})
+        check('... grid_type still needs the console: refused, grid_program among the tools that work',
+              r and r[1] and 'in the background' in r[0][0]['text'] and 'grid_program' in r[0][0]['text'], r)
+        h.k.key(ESC)
+        # a graphics screen: GFXUSE in mode 6, its 16 KB byte for byte
+        h.cmd('gfxuse 6')
+        gen = generation(h)
+        h.press(HOT)
+        popped(h, gen)
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 6 and h.inpop() == 0, 5)
+        h.pi_wait(lambda: t.away, 10)
+        vram = h.m.rd(0xB800, 0, 0x4000)
+        res = tool(h, 'grid_program', {})
+        raw = raw_screen(h)
+        check('over GFXUSE in mode 6, away: grid_program\'s image, SCREEN\'s bytes its 640x200 as they are',
+              res and not res[1] and res[0][-1]['type'] == 'image' and raw is not None
+              and raw[:9] == bytes([6, 2, 1, 128, 2, 200, 0, 80, 0]) and raw[9:] == vram,
+              (res and res[0][0].get('text'), raw and raw[:9]))
+        h.k.key('x'); h.k.key(ESC)
+        check('... GFXUSE afterwards: its screen and data kept (0 bad), mode 6 throughout',
+              '0 bad' in h.m.text_screen(), h.m.text_screen())
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_mt, t_bg, t_bg_tm, t_bg_mt]
+         t_ops, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]
