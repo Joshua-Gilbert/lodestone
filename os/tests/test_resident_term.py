@@ -293,8 +293,9 @@ def t_session():
 
 
 def t_requests():
-    """The GRiD's tools while the console is up: the MCP tools say why not;
-    a request that comes anyway is answered F6h at once."""
+    """The GRiD's tools while the console is up: those it can't do there
+    (grid_info among them) say why not; such a request that comes anyway is answered
+    F6h at once (files and GPIB are done in the pop-up since 1.9)."""
     h = Res(); h.boot()
     try:
         h.cmd('claude /r')
