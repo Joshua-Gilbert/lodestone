@@ -107,7 +107,7 @@ The full tables, the method and every run on the 1520 are in `os/bench/RESULTS.T
 
 ### From an EPROM
 
-`os/build.sh` builds ROM 1, a 128 KB GRiD application ROM (a FAT12 volume in GRiD's own format). It holds the kernel, the command prompt, System, Write, the calculator, DEFRAG, a second font and the default settings.
+`os/build.sh` builds ROM 1, a 128 KB GRiD application ROM (a FAT12 volume in GRiD's own format). It holds the kernel, the command prompt, System, Write, the calculator, a second font and the default settings. ROM 2 (`os/LODE2_EPROM.BIN`, a data ROM in the other socket) holds DEFRAG; its files show in R: beside ROM 1's.
 
 1. Burn **`os/LODE1_EPROM.BIN`** to a 27C010 (the 1520's original part is a TMS27C010A). Don't burn `LODE1.BIN`: the 1520 inverts address line A16 to its ROM sockets, so the file to burn has its two halves swapped. The two have the same programmer checksum, so check the bytes: address 10000h starts `EB 3C 90` then `LODE ROM`.
 2. Fit it in the **second** socket, where GRiD MS-DOS's EPROM sits. The BIOS boots the last bootable ROM it finds. GRiD MS-DOS can move to the first socket.
@@ -157,7 +157,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,926 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 1,935 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
