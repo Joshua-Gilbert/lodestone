@@ -121,6 +121,28 @@ def test_term_keys():
         h.close()
 
 
+def test_block_elements():
+    # CLAUDE 1.8 (GF_QUAD): the 2x2 block elements drawn as they are, so Claude Code's mascot keeps its eyes
+    h = start()
+    try:
+        assert h.var('term') and h.router.term.screen.quads, h.router.term.gflags
+        t = h.router.term
+        mascot = ' ▐▛███▜▌\r\n▝▜█████▛▘\r\n  ▘▘ ▝▝\r\n'
+        with t.lock:
+            t.stream.feed(('\x1b[2J\x1b[H' + mascot).encode())
+            t._mark()
+        t.link.wake()
+        assert in_step(h), mismatch(h)
+        tc, ta, _ = pi_cells(h)                       # (on the screen too: in_step checked every cell's pixels)
+        assert tc[0][:8] == bytes([0x20, 0xA6, 0xA9, 0x20, 0x20, 0x20, 0xAA, 0xA5]), tc[0][:8]
+        assert [a & 1 for a in ta[0][:8]] == [0, 0, 0, 1, 1, 1, 0, 0], ta[0][:8]     # (█: an inverse blank)
+        assert tc[1][:9] == bytes([0xA2, 0xAA, 0x20, 0x20, 0x20, 0x20, 0x20, 0xA9, 0xA1]), tc[1][:9]
+        assert tc[2][:7] == bytes([0x20, 0x20, 0xA1, 0xA1, 0x20, 0xA2, 0xA2]), tc[2][:7]
+        check(h)
+    finally:
+        h.close()
+
+
 def test_term_repaint_and_run():
     h = start()
     try:

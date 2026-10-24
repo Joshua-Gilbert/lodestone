@@ -36,7 +36,9 @@ through the bridge the chat already uses. GPIB only.
   `?2026`), DECRQM and colour queries (answered: amber on black),
   modifyOtherKeys and kitty keyboard sequences (dropped). Each cell becomes
   one GRiD glyph (`●` `⎿` `✻` `❯`, box drawing and the spinner have glyphs; a
-  full block is an inverse blank); a coloured background or reverse video
+  full block is an inverse blank; from CLAUDE 1.8 the halves and quarters
+  `▌▐▀▄▘▝▖▗▛▜▙▟▚▞` have glyphs too, so Claude Code's mascot keeps its eyes;
+  an older CLAUDE gets blanks); a coloured background or reverse video
   is inverse, underline stays, colours and dim are plain.
 - The encoder keeps what the GRiD shows and sends the difference as runs,
   fills and scrolls, built only when the GRiD asks and the screen has

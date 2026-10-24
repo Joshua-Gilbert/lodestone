@@ -65,6 +65,8 @@ BOXW     equ 70
 %include "GLP.INC"               ; the link's message types and states
 %define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi; not in RCON)
 %define TERM_PIXELS              ; (TERMCELL.INC: pictures, CELLS op FDh; not in RCON)
+%define QUAD_GLYPHS              ; (GLYPHS.INC: the 2x2 block elements A1h-AEh; not in RCON)
+%define GLYPH_END 0AFh
 %define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23; not in RCON)
 %define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer; not in RCON)
 %define KBD_EVERY 6000           ; (TERMKEYS.INC: keys every ~2.5 ms while the link is busy; not in RCON)
@@ -2677,8 +2679,9 @@ build_hello:                            ; -> CX = length of hellobuf
         mov     [irq_ptr+2], dx
         mov     ah, 0Bh                 ; a driver that latches SRQ (CF: one that doesn't)
         call    gg_call                 ;  lets the Pi ring for us while we're idle
-        mov     al, 7                   ; flags: bit 0, Term understood; bit 1, pictures (FDh);
-        jc      .f                      ;  bit 2, the Fletcher sum (FCS); bit 3, GF_WAKE
+        mov     al, 7 | GF_QUAD         ; flags: bit 0, Term understood; bit 1, pictures (FDh);
+        jc      .f                      ;  bit 2, the Fletcher sum (FCS); bit 3, GF_WAKE; bit 4,
+                                        ;  the block elements A1h-AEh (GF_QUAD)
         mov     byte [wake_ok], 1
         or      al, GF_WAKE
 .f:     stosb
@@ -2943,7 +2946,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.7', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.8', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
