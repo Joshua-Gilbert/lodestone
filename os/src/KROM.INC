@@ -207,7 +207,8 @@ r_dio:  cmp     al, R_DRV
         cmp     al, 0FFh                ;  CMP [mem], imm)
         RADR    mov al, [r_img]
         je      .m1
-        or      bp, bp                  ; (the boot sector: ROM 1's)
+        mov     si, 1                   ; (the boot sector: ROM 1's, alone:
+        or      bp, bp                  ;  the next are made up)
         jz      .m1
         cmp     bp, R2_DATA
         jb      .mm
@@ -217,7 +218,7 @@ r_dio:  cmp     al, R_DRV
         jb      .m0
         sub     dx, R_OFF
         RADR    mov al, [r_img2]
-        mov     si, 0FFFFh
+        jmp     short .m1               ; (SI = 259: more than ROM 2's sectors)
 .m0:    sub     si, bp
 .m1:    RADR    mov [r_cur], al
         clc
