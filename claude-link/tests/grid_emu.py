@@ -125,7 +125,7 @@ class Chip(S.NEC7210):
                         if d is not None: d.sdc()
                 elif v == 0x14:
                     for d in s.devices.values():
-                        if isinstance(d, AR488Model): d.sdc()
+                        if isinstance(d, AR488Model): getattr(d, 'dcl', d.sdc)()
             return super().cdor(v)
         if not s.chip_talks(): return
         ars = [s.ar(a) for a in s.listeners if s.ar(a) is not None]

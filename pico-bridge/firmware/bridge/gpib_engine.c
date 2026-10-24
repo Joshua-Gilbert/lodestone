@@ -134,8 +134,8 @@ INL void cfg_talk(void) {
 }
 
 static bool srq_on;
-INL void set_srq(void) {
-  if (rsv && online) { hal_clr(SRQ_M); if (!srq_on) { srq_on = true; EV(E_SRQ); } }
+INL void set_srq(void) {                               // (quiet read as it is now: no window after a CONFIG)
+  if (rsv && online && !SH.quiet) { hal_clr(SRQ_M); if (!srq_on) { srq_on = true; EV(E_SRQ); } }
   else { hal_set(SRQ_M); srq_on = false; }
 }
 

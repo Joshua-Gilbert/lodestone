@@ -21,6 +21,9 @@ DOS_ERRORS = {
            '(CODE-\\) and brings the console up again at another of its key waits'),
     0xFF: 'unknown request',
 }
+# what resident Claude's console serves in the background (M4): files and GPIB, not SCREEN or TYPE
+OPS_BG = frozenset(range(glp.OP_DIR, glp.OP_FREE + 1)) | {glp.OP_GPIB}
+
 GPIB_ERRORS = {1: 'timeout', 2: 'no listener at that address', 3: 'GRiD is not the controller',
                4: 'bad function', 5: 'no data (read timeout)', 6: 'GPIB driver busy'}
 
@@ -44,7 +47,8 @@ class Grid:
     def __init__(s, link):
         s.link = link
         s.cv = threading.Condition()
-        s.replies = {}; s.waiting = set(); s.next_id = 1
+        s.replies = {}; s.waiting = {}; s.next_id = 1    # waiting: id -> op
+        s.dead = {}                            # id -> why: a call ended (end_calls)
         s.generation = 0                       # bumps when the GRiD restarts
         s.ended = 0; s.why = ''                # bumps when the calls waiting end, and why
         s.info = {}
@@ -59,37 +63,49 @@ class Grid:
         if len(body) < 2: return
         with s.cv:
             s.type_out = False; s.n_replies += 1
-            if body[0] in s.waiting:
+            if body[0] in s.waiting and body[0] not in s.dead:
                 s.replies[body[0]] = (body[1], bytes(body[2:]))
                 s.cv.notify_all()
 
     def on_restart(s):
         s.end_calls('the GRiD restarted the link', restart=True)
 
-    def end_calls(s, why, restart=False):
+    def end_calls(s, why, restart=False, keep=()):
         """The calls waiting now fail with this: the GRiD restarted the link,
-        or the user went back from resident Claude's console to the program."""
+        or the user went back from resident Claude's console to the program
+        (keep: the ops the console goes on with in the background, M4)."""
         with s.cv:
             if restart: s.generation += 1; s.type_out = False
             s.ended += 1; s.why = why
+            for rid, op in s.waiting.items():
+                if op not in keep: s.dead[rid] = why
             s.cv.notify_all()
 
     def call(s, op, args=b'', timeout=60.0):
         with s.cv:
             rid = s.next_id; s.next_id = s.next_id % 250 + 1
-            s.waiting.add(rid); s.replies.pop(rid, None); gen = s.ended
-        s.link.send(glp.P_REQUEST, bytes([rid, op]) + bytes(args))
+            s.waiting[rid] = op; s.replies.pop(rid, None); s.dead.pop(rid, None)
+        msg = bytes([rid, op]) + bytes(args)
+        s.link.send(glp.P_REQUEST, msg)
         deadline = time.monotonic() + timeout
         with s.cv:
             try:
                 while rid not in s.replies:
                     left = deadline - time.monotonic()
-                    if s.ended != gen: raise GridError(s.why)
-                    if left <= 0: raise GridError('the GRiD did not answer in %d s' % timeout)
+                    if rid in s.dead:
+                        s.link.withdraw(glp.P_REQUEST, msg)    # (queued after the HELLO that ended it: not to run)
+                        raise GridError(s.dead[rid])
+                    if left <= 0:
+                        # (not yet on its way: taken back, so it can't run later, after we have said it failed;
+                        # resident Claude's background waits for its program's key calls, M4)
+                        if s.link.withdraw(glp.P_REQUEST, msg):
+                            raise GridError('the GRiD did not take the request in %d s (it was withdrawn: '
+                                            'nothing was done)' % timeout)
+                        raise GridError('the GRiD did not answer in %d s' % timeout)
                     s.cv.wait(min(left, 0.5))
                 return s.replies.pop(rid)
             finally:
-                s.waiting.discard(rid)
+                s.waiting.pop(rid, None); s.dead.pop(rid, None)
 
     def ok(s, op, args=b'', timeout=60.0):
         st, data = s.call(op, args, timeout)

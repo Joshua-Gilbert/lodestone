@@ -75,8 +75,8 @@ class KernelHarness(G.EmuHarness):
         s.m = m = KMachine(img, chip, ems_pages=ems_pages)
         chip.clock = m.clock
         s.pending = []
-        if bridge == 'pico':
-            s.nano = G.PicoModel(m.clock, addr=7, to_pi=s._to_pi)
+        if bridge in ('pico', 'pico-quiet'):           # (pico-quiet: fw 2026-10-24's, resident Claude's M4)
+            s.nano = G.PicoModel(m.clock, addr=7, to_pi=s._to_pi, quiet=bridge == 'pico-quiet')
             s.transport = G.PicoModelTransport(s.nano)
         else:
             s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)

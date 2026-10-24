@@ -23,8 +23,11 @@ GF_PIX = 0x02              # GRiD: its CELLS take pictures (op FDh, picture.py);
 GF_FCS = 0x04              # GRiD: it can check frames with the Fletcher sum (fletcher16); CLAUDE 1.3
 GF_WAKE = 0x08             # GRiD: an SRQ while it is idle makes it POLL at once (Link.ring_check); CLAUDE 1.3
 GF_QUAD = 0x10             # GRiD: it draws the 2x2 block elements GL_QUADS (A1h-AEh); CLAUDE 1.8
+GF_BG = 0x20               # GRiD: resident Claude's console works in the background at its program's key
+                           #  calls, serial-polling the bridge (CLAUDE 1.10, M4)
 HF_TERM = 0x01             # Pi: Term: the GRiD is Claude Code's screen and keyboard
 HF_FCS = 0x04              # Pi: frames after this HELLO carry the Fletcher sum, both ways
+HF_BG = 0x08               # Pi: it works with that console in the background (its bridge can be quiet)
 
 # REQUEST ops
 OP_INFO, OP_DIR, OP_READ, OP_WRITE, OP_DELETE, OP_RENAME, OP_MKDIR, OP_RMDIR, OP_STAT, OP_FREE = range(1, 11)

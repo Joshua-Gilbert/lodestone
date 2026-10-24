@@ -71,6 +71,21 @@
 ;  (each request's arguments are used before its reply is written), and so
 ;  does the frame being sent.  RUN, INFO and SETTIME are answered F6h, a
 ;  DOS program is paused.
+;
+;  M4, the background (CLAUDE 1.10): once the user has gone back to the
+;  program, the stub calls us again at its key calls (peeks too: TM5000G
+;  looks for keys between its bus work) every few ticks, R_BGON 2: the
+;  background pass, bg_pass.  Nothing is drawn and the program's screen,
+;  keys and mouse pointer are left alone.  We serial-poll the bridge: RQS
+;  (40h, the WAKE of a bridge the Pi has made quiet, so no SRQ line and
+;  nothing in the program's SRQ latch) means Claude has a request.  Then
+;  the link runs as in the console, polled by the PIT, until the Pi answers
+;  a POLL with a NOP: a request taken is run and its REPLY sent in the same
+;  pass.  Files as dos_ok allows (settled again each pass), GPIB always;
+;  SCREEN and TYPE F6h (they need the console up).  Only when the Pi's HELLO
+;  said it works so (HF_BG: its bridge can be quiet), and while the link is
+;  as the pop-down left it: a failure, or no bridge, stops the looks until
+;  the next pop-up.  The band then says how many requests ran meanwhile.
 ; =====================================================================
 cpu 286
 org 0
@@ -108,6 +123,10 @@ P_INDOS equ 4
 P_SS    equ 8                   ;  the stack the stub came on: the INT 16h call's
 P_KS    equ 12                  ;  r_ks, then r_pend
 P_MT    equ 14                  ;  r_mt: Lodestone's tasks (0:0 none)
+P_BGT   equ 18                  ;  r_bgt: the tick of the stub's last background look
+R_BGON  equ 10Fh                ; the stub's r_bgon (its header): 0 no background,
+                                ;  1 look at key calls, 2 this call is a look
+R_BGT   equ 4                   ; (the stub's: ticks between looks)
 NKEYS   equ 16
 KSMAX   equ 2 + 2048            ; TYPE: id, op, a key script of 2 KB (gridlink's MAX_TYPE)
 TAIL    equ 12                  ; the page's last bytes: a reply's first ones
@@ -142,7 +161,10 @@ rc_main:
         mov     [old16], ax
         mov     ax, [es:bx + P_OLD16 + 2]
         mov     [old16 + 2], ax
-        push    ds
+        cmp     byte [es:R_BGON], 2     ; a background look (M4)
+        jne     .pu
+        jmp     bg_pass
+.pu:    push    ds
         lds     si, [es:bx + P_INDOS]
         lodsb
         pop     ds
@@ -154,30 +176,11 @@ rc_main:
         int     21h                     ;  that stack is an INT 24h handler's)
         call    prog_name
 .pn:    call    dos_check
-        xor     ax, ax                  ; INT 33h there?  The program's
-        mov     es, ax                  ;  pointer off (its own cell back
-        mov     [mouse], al             ;  first, before the screen is kept)
-        mov     [mswap], al
-        mov     ax, [es:33h * 4]
-        or      ax, [es:33h * 4 + 2]
-        jz      .nm
-        inc     byte [mouse]
-        mov     ax, 2
-        int     33h
-        cmp     byte [indos], 0         ; and its event handler off (AX=14h,
-        je      .sw                     ;  no events), else clicks meant for
-        cmp     byte [dos_ok], 0        ;  the console reach the program, on
-        je      .nm                     ;  our stack (or the kernel's second,
-.sw:                                    ;  under our DOS calls).  (14h makes a
-        mov     ax, 14h                 ;  DOS call, AH=62h: with DOS busy
-        xor     cx, cx                  ;  only where ours may be made)
-        xor     dx, dx
-        mov     es, dx
-        int     33h
-        mov     [mh_mask], cx
-        mov     [mh_off], dx
-        mov     [mh_seg], es
-        inc     byte [mswap]
+        call    mouse_find              ; INT 33h there?  The program's
+        jz      .nm                     ;  pointer off (its own cell back
+        mov     ax, 2                   ;  first, before the screen is kept)
+        int     33h                     ;  and its event handler
+        call    handler_out
 .nm:    push    cs
         pop     es
         push    ds                      ; the BIOS's video data, and the keys
@@ -259,14 +262,8 @@ rc_main:
         mov     ah, 2
         int     10h
 .t:     call    keys_back
-        cmp     byte [mswap], 0         ; the program's event handler back
-        je      .ms
-        mov     ax, 14h
-        mov     cx, [mh_mask]
-        mov     dx, [mh_off]
-        mov     es, [mh_seg]
-        int     33h
-.ms:    cmp     byte [mouse], 0         ; and its pointer, where the mouse
+        call    handler_back            ; the program's event handler back
+        cmp     byte [mouse], 0         ; and its pointer, where the mouse
         je      .x                      ;  is now
         mov     ax, 1
         int     33h
@@ -275,7 +272,7 @@ rc_main:
 
 ; dos_ok: 1 if the file requests may call DOS (the header), after prog.
 ; The INT 16h call's frame on the stack the stub came on: the stub's pushes
-; (ES, DS, PUSHA), r_hot's return, then IP, CS.  -> ES = CS
+; (ES, DS, PUSHA, FLAGS), r_hot's or r_bg's return, then IP, CS.  -> ES = CS
 dos_check:
         mov     byte [dos_ok], 0
         les     bx, [parms]
@@ -284,7 +281,7 @@ dos_check:
         mov     ax, [es:bx + P_SS]      ; (SS, then SP)
         mov     bx, [es:bx + P_SS + 2]
         mov     es, ax
-        mov     ax, [es:bx + 2 + 2 + 16 + 2 + 2]        ; the INT 16h call's CS
+        mov     ax, [es:bx + 2 + 2 + 16 + 2 + 2 + 2]    ; the INT 16h call's CS
         push    cs
         pop     es
         jcxz    .m
@@ -302,6 +299,168 @@ dos_check:
         je      .x
         mov     byte [dos_ok], 1
 .x:     ret
+
+; INT 33h there?  ZF if not; [mouse] 1 if so, [mswap] 0.  (ES = 0)
+mouse_find:
+        xor     ax, ax
+        mov     es, ax
+        mov     [mouse], al
+        mov     [mswap], al
+        mov     ax, [es:33h * 4]
+        or      ax, [es:33h * 4 + 2]
+        jz      .x
+        inc     byte [mouse]            ; (not ZF)
+.x:     ret
+
+; the program's INT 33h event handler off (AX=14h, no events), else clicks
+; (the console's, or any in a background pass) reach the program on our
+; stack, or on the kernel's second under our DOS calls.  (14h makes a DOS
+; call, AH=62h: with DOS busy only where ours may be made.)  -> ES changed
+handler_out:
+        cmp     byte [indos], 0
+        je      .sw
+        cmp     byte [dos_ok], 0
+        je      .x
+.sw:    mov     ax, 14h
+        xor     cx, cx
+        xor     dx, dx
+        mov     es, dx
+        int     33h
+        mov     [mh_mask], cx
+        mov     [mh_off], dx
+        mov     [mh_seg], es
+        inc     byte [mswap]
+.x:     ret
+
+handler_back:                           ; and back (ES changed)
+        cmp     byte [mswap], 0
+        je      .x
+        mov     byte [mswap], 0
+        mov     ax, 14h
+        mov     cx, [mh_mask]
+        mov     dx, [mh_off]
+        mov     es, [mh_seg]
+        int     33h
+.x:     ret
+
+; ---- M4: a background look (the stub's r_bg, R_BGON 2; the header) ----
+; Nothing drawn.  The bridge serial-polled with the driver's timeout at its
+; shortest (2 ticks: a bridge gone costs one such wait, then no more looks);
+; RQS, or a request left from the pop-down: the link until the Pi has
+; nothing more, at most 5 s.  ES:BX = the stub's parameters; to rc_main's
+; end.  R_BGON: 1 to look again, 0 not till the next pop-up.
+bg_pass:
+        push    cs
+        pop     es
+        mov     byte [bgmode], 1
+        mov     byte [bg_keep], 0
+        call    find_gpib                ; (the link polls by the PIT, as the
+        jc      .z                      ;  session left it at the EVENT: no SRQ
+        mov     bx, 1                   ;  comes from a quiet bridge)
+        mov     ah, 0Ah
+        call    gg_call
+        jnc     .tm                     ; (the driver busy: not now, but at
+        inc     byte [bg_keep]          ;  the next look)
+        jmp     .z
+.tm:
+        mov     [old_tmo], ax           ; (the program's)
+        call    get_ticks
+        mov     [now], ax
+        mov     al, [req_ready]         ; work left from the way down or from
+        or      al, [txq_n]             ;  a pass that ran out of time (a
+        or      al, [reply_busy]        ;  REPLY queued or under way, a NAK or
+        or      al, [nak_pending]       ;  a frame to send again, a frame in
+        or      al, [resend]            ;  flight): the Pi may have nothing to
+        or      al, [rq_more]           ;  ring for, so on with it now
+        jnz     .w
+        cmp     byte [lstate], LS_IDLE
+        jne     .w
+        mov     bl, [nano]
+        mov     ah, 05h
+        call    gg_call
+        jc      .ef                     ; (no answer: no more looks)
+        inc     byte [bg_keep]
+        test    al, 40h
+        jz      .e
+.w:     mov     byte [bg_keep], 0
+        cmp     byte [lstate], LS_WAIT  ; (an answer due since an earlier pass:
+        jne     .wt                     ;  the bridge keeps it till it is read,
+        mov     ax, [now]               ;  so its 2 s from now, not from then)
+        mov     [t_sent], ax
+.wt:    mov     bx, 2000                ; (the console's timeout for the work)
+        mov     ah, 0Ah
+        call    gg_call
+        les     bx, [parms]             ; DOS: as at a pop-up, for this call
+        push    ds
+        lds     si, [es:bx + P_INDOS]
+        lodsb
+        pop     ds
+        mov     [indos], al
+        mov     byte [prog], 0
+        cmp     al, 1
+        ja      .pn
+        mov     ah, 62h
+        int     21h
+        call    prog_name
+.pn:    call    dos_check
+        call    mouse_find
+        jz      .nm
+        call    handler_out
+.nm:    push    cs
+        pop     es
+        mov     al, 0                   ; (Term's back-to-back POLLs off: the
+        xchg    al, [term]              ;  Pi's NOP ends the pass)
+        mov     [bg_term], al
+        mov     byte [quit], 0
+        mov     byte [pi_active], 1     ; a POLL first
+        mov     ax, [now]
+        mov     [bg_t0], ax
+.l:     call    get_ticks
+        mov     [now], ax
+        call    link_service
+        call    req_service
+        cmp     byte [lstate], LS_RESET ; (the link failed)
+        je      .f
+        mov     al, [txq_n]
+        or      al, [req_ready]
+        or      al, [reply_busy]
+        or      al, [rq_more]
+        or      al, [nak_pending]
+        or      al, [resend]
+        or      al, [pi_active]
+        jnz     .m
+        cmp     byte [lstate], LS_IDLE
+        je      .d
+.m:     mov     ax, [now]
+        sub     ax, [bg_t0]
+        cmp     ax, 91
+        jb      .l
+.d:     inc     byte [bg_keep]
+        jmp     short .r
+.f:     mov     bl, [nano]              ; the bridge's line (and RQS) cleared,
+        mov     ah, 06h                 ;  and the next pop-up says HELLO
+        call    gg_call
+        mov     byte [connected], 0
+        mov     byte [sdc_due], 0
+.r:     mov     al, [bg_term]
+        mov     [term], al
+        call    handler_back
+        push    cs
+        pop     es
+        jmp     short .e
+.ef:    mov     bl, [nano]              ; (an SDC tells the Pi so, should the
+        mov     ah, 06h                 ;  bridge hear it: the calls it keeps
+        call    gg_call                 ;  for the background end)
+.e:     mov     bx, [old_tmo]           ; the program's timeout back
+        mov     ah, 0Ah
+        call    gg_call
+.z:     les     bx, [parms]
+        mov     al, [bg_keep]
+        mov     [es:R_BGON], al
+        push    cs
+        pop     es
+        mov     byte [bgmode], 0
+        jmp     rc_main.x
 
 ; BX = a file just opened (OPS.INC): a device's name (CON, AUX, GPIBnn...)
 ; -> CF, AX = 5 (access denied), the handle closed
@@ -496,13 +655,16 @@ session:
         call    copyz
         mov     byte [inited], 1
 .i:     call    shadow_seg
+        mov     al, 0                   ; the background's count, for this
+        xchg    al, [bg_n]              ;  pop-up's band
+        mov     [bg_shown], al
         call    make_title
         call    get_ticks
         mov     [now], ax
         mov     [t_active], ax
         mov     byte [quit], 0
-        mov     byte [req_ready], 0
-        mov     word [ioseg], IOSEG
+        mov     byte [req_ready], 0     ; (one kept from the way down: gone,
+        mov     word [ioseg], IOSEG     ;  as the HELLO ends the Pi's call)
         mov     byte [n_failrun], 0
         mov     byte [sdc_due], 0
         mov     al, 0                   ; back from Claude's keys (all played,
@@ -566,7 +728,10 @@ session:
         mov     si, evaway              ;  at most.  The user's CODE-\ (not
         mov     cx, 1                   ;  TYPE's keys): an EVENT says so, and the
         call    txq_put_cs              ;  Pi answers Claude Code's calls at once
-                                        ;  until the next HELLO
+                                        ;  until the next HELLO, or (HF_BG) makes
+        cmp     byte [bg_ok], 0         ;  its bridge quiet and goes on in the
+        je      .dt                     ;  background: from the EVENT on, no SRQ
+        mov     word [irq_ptr + 2], 0   ;  for its answers (the PIT's polls)
 .dt:    mov     ax, [now]
         mov     [t_quit], ax
 .d:     call    get_ticks
@@ -598,7 +763,24 @@ session:
 .t:     mov     bx, [old_tmo]           ; the program's timeout back
         mov     ah, 0Ah
         call    gg_call
-.x:     ret
+.x:     xor     al, al                  ; M4: the stub looks at key calls if the
+        cmp     byte [type_due], 0      ;  user went back (not TYPE's keys) with
+        jne     .b                      ;  the link up and idle, and the Pi works
+        cmp     byte [connected], 0     ;  so (HF_BG)
+        je      .b
+        cmp     byte [bg_ok], 0
+        je      .b
+        cmp     byte [lstate], LS_IDLE
+        jne     .b
+        inc     ax
+.b:     les     di, [parms]
+        mov     [es:R_BGON], al
+        call    get_ticks               ; (the first look at the next key call)
+        sub     ax, R_BGT
+        mov     [es:di + P_BGT], ax
+        push    cs
+        pop     es
+        ret
 
 shadow_seg:                             ; Term's shadow, in window 3
         mov     word [shadseg], SHADSEG
@@ -702,7 +884,8 @@ gg_call:                                ; INT 60h-66h, the driver's
 
 build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
-        mov     ax, 0501h               ; GLP 1; flags: Term, the Fletcher sum,
+        mov     ax, (GF_BG | GF_FCS | GF_TERM) << 8 | 1 ; GLP 1; flags: Term, the Fletcher sum,
+                                        ;  the background (M4),
         cmp     word [irq_ptr + 2], 0   ;  and with the driver's SRQ interrupt
         je      .w                      ;  GF_WAKE: the Pi rings while we are
         mov     byte [wake_ok], 1       ;  idle (its count: no AH=0Bh)
@@ -796,7 +979,10 @@ msg_sent:
 link_lost:
         mov     byte [connected], 0
         mov     byte [sdc_due], 1       ; (the bridge may hold a line, and SRQ)
-        mov     si, st_lost
+        cmp     byte [bgmode], 0        ; (a background pass: nothing drawn)
+        je      .c
+        ret
+.c:     mov     si, st_lost
         cmp     byte [n_failrun], 3
         jae     .na
         call    set_status
@@ -826,21 +1012,29 @@ pi_frame:                               ; BX = frame offset in rxbuf
         cmp     al, P_NOP
         jne     .h
         mov     byte [pi_active], 0
-        ret
+        mov     byte [rq_more], 0       ; (no fragment of a REQUEST to come: the
+        ret                             ;  Pi gave it up, else a background
+                                        ;  look would wait for the rest each time)
 .h:     cmp     al, P_HELLO
         je      rf_hello
+        cmp     byte [bgmode], 0        ; (a background pass: nothing drawn; the
+        jne     .b                      ;  Pi sends no CELLS or TITLE meanwhile)
         cmp     al, P_CELLS
         je      rf_cells
         cmp     al, P_TITLE
         je      rf_title
-        cmp     al, P_REQUEST
+.b:     cmp     al, P_REQUEST
         je      rf_request
         ret                             ; (the chat's TEXT, STATUS, ASK... no)
 
 rf_hello:
+        mov     byte [bg_ok], 0
         cmp     cx, 2                   ; the Pi takes the Fletcher sum: every
         jb      .c                      ;  frame from now on
-        test    byte [si+1], HF_FCS
+        test    byte [si+1], HF_BG      ; (and works on in the background, M4)
+        jz      .f
+        inc     byte [bg_ok]
+.f:     test    byte [si+1], HF_FCS
         jz      .c
         mov     byte [use_fl], 1
 .c:     mov     byte [connected], 1
@@ -904,9 +1098,13 @@ rf_request:
         jne     .x
         cmp     word [rq_len], 2        ; (an id and an op)
         jb      .x
-        cmp     byte [quit], 0          ; (going back: the Pi has the EVENT)
-        jne     .x
-        cmp     byte [reply_busy], 0    ; (one at a time, as CLAUDE.COM)
+        cmp     byte [quit], 0          ; (going back: the Pi has the EVENT;
+        je      .q                      ;  with HF_BG the files' and GPIB's
+        cmp     byte [bg_ok], 0         ;  wait for the first background
+        je      .x                      ;  look, the rest are F6h; not when
+        cmp     byte [type_due], 0      ;  the console goes for TYPE's keys:
+        jne     .x                      ;  no looks then)
+.q:     cmp     byte [reply_busy], 0    ; (one at a time, as CLAUDE.COM)
         jne     .x
         cmp     byte [txq_n], TXQN
         jae     .x
@@ -915,11 +1113,15 @@ rf_request:
         cmp     byte [rq_over], 0
         jne     reply2
         mov     ah, [reqbuf + 1]
+        cmp     byte [quit], 0          ; (the console going, or a background
+        jne     .t                      ;  pass: no SCREEN or TYPE)
+        cmp     byte [bgmode], 0
+        jne     .t
         cmp     ah, OP_TYPE
         je      type_start
         cmp     ah, OP_SCREEN
         je      .sc
-        mov     si, rc_optab
+.t:     mov     si, rc_optab
 .o:     cmp     ah, [si]
         je      .op
         add     si, 3
@@ -975,8 +1177,15 @@ req_service:
         mov     si, [rq_op]
         cmp     byte [si], 20h
         jne     .d
+        call    bg_count
         jmp     [si + 1]
-.d:     push    si
+.d:     cmp     byte [dos_ok], 0        ; (settled again for each pass: one
+        jne     .dk                     ;  kept from the pop-down runs in the
+        mov     al, [rq_id]             ;  first)
+        mov     ah, 0F7h
+        jmp     reply2
+.dk:    call    bg_count
+        push    si
         mov     ah, 2Fh
         int     21h
         mov     [sv_dta], bx
@@ -1014,6 +1223,14 @@ req_service:
         mov     ah, 1Ah
         int     21h
         pop     ds
+.x:     ret
+
+bg_count:                               ; a request run in the background (the
+        cmp     byte [bgmode], 0        ;  next pop-up's band says how many)
+        je      .x
+        cmp     byte [bg_n], 99
+        jae     .x
+        inc     byte [bg_n]
 .x:     ret
 
 rc_i24: mov     al, 3                   ; a critical error: fail the call
@@ -1192,7 +1409,15 @@ make_title:
         call    put_str
         mov     si, prog
         call    put_str
-.t:     cmp     byte [dos_ok], 0
+.t:     cmp     byte [bg_shown], 0      ; requests run while the user was back
+        je      .u                      ;  in the program (M4)
+        mov     si, s_sep
+        call    put_str
+        mov     al, [bg_shown]
+        call    put_num
+        mov     si, s_bgn
+        call    put_str
+.u:     cmp     byte [dos_ok], 0
         jne     .z
         mov     si, s_dos
         call    put_str
@@ -1242,13 +1467,14 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.9', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.10', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
             db 'ops=files,gpib', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
 s_sep       db '  ', 86h, '  ', 0
 s_title0    db 'Claude (resident)', 0
 s_dos       db '  ', 86h, '  DOS busy', 0
+s_bgn       db ' in background', 0
 s_defrag    db 'DEFRAG.COM', 0
 s_tkeys     db 'CODE-\ back  CODE-R repaints', 0
 s_back      db '  ', 86h, '  CODE-\ back', 0
@@ -1362,6 +1588,14 @@ crc_hid     resb 1
 ptitle      resb TITLEN + 1
 title_text  resb NAMEMAX + 5 + TITLEN + 16
 status_text resb 72
+; M4: the background
+bgmode      resb 1                      ; 1: a background pass (nothing drawn)
+bg_ok       resb 1                      ; the Pi's HELLO said HF_BG
+bg_keep     resb 1                      ; R_BGON at the pass's end
+bg_n        resb 1                      ; requests taken since the last pop-up
+bg_shown    resb 1                      ;  and before this one (the band)
+bg_term     resb 1                      ; term, meanwhile
+bg_t0       resw 1                      ; when the pass began
 rc_top:                                 ; (Term's shadow: SHADSEG, window 3)
 
 section .text
