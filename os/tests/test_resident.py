@@ -332,7 +332,9 @@ def t_rvideo():
 
 def t_rdos():
     """The console while DOS is busy under the program (the prompt's COPY
-    CON reads the keyboard through INT 21h): it says so, and DOS carries on."""
+    CON reads the keyboard through INT 21h): at the kernel's key wait, where
+    the console may call DOS (files), so its band doesn't say DOS busy; and
+    DOS carries on."""
     k = ktest.KPC(image('rdos.img'), ems_pages=88); k.start()
     k.key(ktest.CODE_P)
     prompt(k, 'claude /r')
@@ -344,7 +346,8 @@ def t_rdos():
     back = k.pc.text_screen() == text0
     k.key('hi'); k.key(ktest.ENTER); k.key(0x2C1A); k.key(ktest.ENTER)
     o = prompt(k, 'type hi.txt')
-    check('the console over COPY CON (DOS reading the keyboard): its band says DOS is busy', up and 'DOS busy' in band, (up, band))
+    check('the console over COPY CON (DOS reading the keyboard, the kernel\'s key wait: files work there): its band '
+          'doesn\'t say DOS is busy', up and 'DOS busy' not in band, (up, band))
     check('... and back: the screen as it was, then COPY CON goes on (the file has what was typed)',
           back and 'hi' in [l.strip() for l in o.split('\n')], (back, o))
 

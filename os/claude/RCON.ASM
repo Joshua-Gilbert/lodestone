@@ -47,8 +47,30 @@
 ;  this page in window 0 meanwhile), and when they are done the console
 ;  comes back with the program's screen as TYPE's answer, the link as it
 ;  was (a HELLO would cancel the Pi's call).  CODE-\ meanwhile stops them.
-;  Other requests (files, RUN, GPIB) are answered F6h, a DOS program is
-;  paused.
+;
+;  Files and GPIB (OPS.INC, CLAUDE.COM's own): DIR, READ, WRITE, DELETE,
+;  RENAME, MKDIR, RMDIR, STAT, FREE and GPIB.  The file requests call DOS
+;  under the paused program, so only where that is safe (dos_ok, at each
+;  pop-up): DOS not busy, or busy one call deep in the kernel's own key
+;  wait (COPY CON, DOS's AH=01h...: the kernel runs our call on a stack of
+;  its own, and nothing of the file system's is in use).  Not two deep,
+;  not from a program's INT 24h handler waiting for a key (one deep, but
+;  the call is its own: the kernel's disk state is the failed call's), and
+;  never from MT's segment (Lodestone's tasks): its key wait and its INT
+;  24h prompt both call INT 16h from there, the prompt even with DOS not
+;  busy (a disk error under INT 25h/26h).  Nor over DEFRAG (the saver's
+;  too), which writes the disk itself with the FAT in its own memory.
+;  Those answer F7h, DOS busy, and the band says so.  Not covered: a
+;  program's own INT 24h handler reading a key during INT 25h/26h (DOS
+;  not busy then), and a program that writes the disk itself, but for
+;  DEFRAG.  A device's name (CON, AUX, GPIBnn...) isn't opened: reading
+;  CON would wait for a key the console never gives.  Each request runs with INT 23h and 24h ours (a critical
+;  error fails the call; ^C does nothing) and our DTA, the program's back
+;  after; its file handle is the program's PSP's, closed before the reply.
+;  The request and its reply share a buffer in window 3 after the shadow
+;  (each request's arguments are used before its reply is written), and so
+;  does the frame being sent.  RUN, INFO and SETTIME are answered F6h, a
+;  DOS program is paused.
 ; =====================================================================
 cpu 286
 org 0
@@ -58,6 +80,9 @@ org 0
 %define KSUM                            ; TERMLINK: the driver's frame check (1.23)
 %define LINK_CHAIN                      ; TERMLINK: the next frame straight after
                                         ;  an answer
+%define GP_OTMO gp_otmo                  ; OPS.INC: the driver's timeout under
+                                        ;  a GPIB request (ours, 2 s: old_tmo is
+                                        ;  the program's)
 %define K_QUIT 2B00h                    ; TERMKEYS: CODE-\ back to the program,
 %define K_QUIT2 1000h                   ;  CODE-Q too
 %define KBD_OWN                         ;  and the BIOS's INT 16h, past the stub
@@ -68,20 +93,33 @@ org 0
 
 VSEG    equ 0B800h
 SAVESEG equ 0E400h              ; windows 1-2: the program's screen
-SHADSEG equ 0EC00h              ; window 3: Term's shadow (the stub's fourth page)
+SHADSEG equ 0EC00h              ; window 3: Term's shadow (the stub's fourth page),
+SHADLEN equ 0F00h               ;  24 x 80 cells
+IOSEG   equ SHADSEG + SHADLEN / 16  ; then a REQUEST, and its REPLY over it
+REQMAX  equ 8700                ; a REQUEST: id, op, then a write of 8 KB and its path
+                                ;  (HELLO's req=: gridlink's 8 KB writes), a TYPE script
+IOSIZE  equ 8192 + 16           ; a REPLY: id, status, an 8 KB read (gridlink's chunk)
+reqbuf  equ (IOSEG - 0E000h) * 16       ; (DS = E000h: windows 0-3 are DS:0-FFFFh)
+TXMAX   equ 3300                ; GRiD -> Pi payload per frame (CLAUDE.COM's: a read's
+                                ;  reply in three frames)
+txframe equ reqbuf + REQMAX     ; the frame being sent, after them
 P_OLD16 equ 0                   ; the stub's parameters (CLAUDE.ASM r_params)
 P_INDOS equ 4
+P_SS    equ 8                   ;  the stack the stub came on: the INT 16h call's
 P_KS    equ 12                  ;  r_ks, then r_pend
+P_MT    equ 14                  ;  r_mt: Lodestone's tasks (0:0 none)
 NKEYS   equ 16
-REQMAX  equ 2 + 2048            ; a REQUEST: id, op, a TYPE script of 2 KB
+KSMAX   equ 2 + 2048            ; TYPE: id, op, a key script of 2 KB (gridlink's MAX_TYPE)
 TAIL    equ 12                  ; the page's last bytes: a reply's first ones
 NAMEMAX equ 12                  ; the program's name (8.3)
-TXMAX   equ 256                 ; GRiD -> Pi payload: HELLO, POLL, KEYS, REPLY
 %ifndef RXPAY
-%assign RXPAY 2048                 ; Pi -> GRiD payload (HELLO's rx=); the EMS page has room for ~2.4 KB
+%assign RXPAY 2048                 ; Pi -> GRiD payload (HELLO's rx=); the EMS page has room for ~2.8 KB
 %endif
 RXMAX   equ RXPAY + 9                 ; a frame and one byte more (see CLAUDE.ASM)
 %defstr RXPAY_S RXPAY
+%if REQMAX != 8700
+%error kv_hello's req= is REQMAX's
+%endif
 TXQN    equ 6
 TITLEN  equ 36                  ; the Pi's title, then DOS busy (48 cells)
 %include "GLP.INC"
@@ -115,7 +153,8 @@ rc_main:
         mov     ah, 62h                 ;  frame there; not two deep, where
         int     21h                     ;  that stack is an INT 24h handler's)
         call    prog_name
-.pn:    xor     ax, ax                  ; INT 33h there?  The program's
+.pn:    call    dos_check
+        xor     ax, ax                  ; INT 33h there?  The program's
         mov     es, ax                  ;  pointer off (its own cell back
         mov     [mouse], al             ;  first, before the screen is kept)
         mov     [mswap], al
@@ -126,10 +165,13 @@ rc_main:
         mov     ax, 2
         int     33h
         cmp     byte [indos], 0         ; and its event handler off (AX=14h,
-        jne     .nm                     ;  no events), else clicks meant for
-        mov     ax, 14h                 ;  the console reach the program, on
-        xor     cx, cx                  ;  our stack.  (14h makes a DOS call,
-        xor     dx, dx                  ;  AH=62h: not while DOS is busy)
+        je      .sw                     ;  no events), else clicks meant for
+        cmp     byte [dos_ok], 0        ;  the console reach the program, on
+        je      .nm                     ;  our stack (or the kernel's second,
+.sw:                                    ;  under our DOS calls).  (14h makes a
+        mov     ax, 14h                 ;  DOS call, AH=62h: with DOS busy
+        xor     cx, cx                  ;  only where ours may be made)
+        xor     dx, dx
         mov     es, dx
         int     33h
         mov     [mh_mask], cx
@@ -231,6 +273,52 @@ rc_main:
 .x:     pop     ds
         retf
 
+; dos_ok: 1 if the file requests may call DOS (the header), after prog.
+; The INT 16h call's frame on the stack the stub came on: the stub's pushes
+; (ES, DS, PUSHA), r_hot's return, then IP, CS.  -> ES = CS
+dos_check:
+        mov     byte [dos_ok], 0
+        les     bx, [parms]
+        mov     cx, [es:bx + P_MT + 2]  ; MT's segment (0: no tasks)
+        mov     dx, [es:bx + P_INDOS + 2]       ; the kernel's
+        mov     ax, [es:bx + P_SS]      ; (SS, then SP)
+        mov     bx, [es:bx + P_SS + 2]
+        mov     es, ax
+        mov     ax, [es:bx + 2 + 2 + 16 + 2 + 2]        ; the INT 16h call's CS
+        push    cs
+        pop     es
+        jcxz    .m
+        cmp     ax, cx                  ; (MT's key wait, its INT 24h prompt)
+        je      .x
+.m:     cmp     byte [indos], 1
+        ja      .x
+        jb      .d
+        cmp     ax, dx                  ; one deep: the kernel's key wait
+        jne     .x
+.d:     mov     si, prog                ; DEFRAG writes the disk itself
+        mov     di, s_defrag
+        mov     cx, 11
+        repe    cmpsb
+        je      .x
+        mov     byte [dos_ok], 1
+.x:     ret
+
+; BX = a file just opened (OPS.INC): a device's name (CON, AUX, GPIBnn...)
+; -> CF, AX = 5 (access denied), the handle closed
+ops_nodev:
+        mov     ax, 4400h
+        int     21h
+        jc      .f
+        test    dl, 80h
+        jz      .f
+        mov     ah, 3Eh
+        int     21h
+        mov     ax, 5
+        stc
+        ret
+.f:     clc
+        ret
+
 ; prog: the name the program was started by, from its PSP (BX): after its
 ; environment's strings come a count and the path (the kernel's EXEC, as
 ; DOS's); the name after its last \ or :, at most NAMEMAX characters, up
@@ -306,7 +394,7 @@ rc_feed:
 .l:     mov     si, [ks_pos]
         cmp     si, [ks_len]
         jae     .end
-        mov     ax, [reqbuf + si]
+        mov     ax, [ksbuf + si]
         cmp     ax, 0FFFFh
         je      .wt
         cmp     ax, 0FEFFh
@@ -325,7 +413,7 @@ rc_feed:
         jne     .w2
         mov     byte [ks_wait], 1
         push    ax
-        mov     al, [reqbuf + si + 2]
+        mov     al, [ksbuf + si + 2]
         xor     ah, ah
         mov     [ks_until], ax
         pop     ax
@@ -413,6 +501,8 @@ session:
         mov     [now], ax
         mov     [t_active], ax
         mov     byte [quit], 0
+        mov     byte [req_ready], 0
+        mov     word [ioseg], IOSEG
         mov     byte [n_failrun], 0
         mov     byte [sdc_due], 0
         mov     al, 0                   ; back from Claude's keys (all played,
@@ -462,6 +552,7 @@ session:
         cmp     byte [gp_ok], 0
         je      .k
         call    link_service
+        call    req_service
 .k:     call    term_kbd
         cmp     byte [quit], 0
         jne     .out
@@ -775,15 +866,27 @@ rf_title:
         call    make_title
         jmp     term_status
 
-; a REQUEST, its frames gathered in reqbuf (id, op, arguments).  SCREEN:
+; a REQUEST, its frames gathered in reqbuf (id, op, arguments), unless a
+; REPLY is on its way (a file's or GPIB's bytes are reqbuf's: frame_next
+; takes each frame from there as it goes) or a request waits to run: then
+; it is dropped whole (the Pi gave up on the last call, and this one's
+; times out too; gridlink makes one call at a time).  SCREEN:
 ; the program's screen; TYPE: Claude's keys for it (the answer when they
-; are done); anything else F6h, a DOS program is paused (files, RUN, GPIB)
+; are done); files and GPIB: req_service, from the session's loop (F7h,
+; DOS busy, for a file's when DOS can't be called); anything else F6h, a
+; DOS program is paused (RUN, INFO, SETTIME, snapshots)
 rf_request:
         cmp     byte [rq_more], 0
         jne     .c
+        mov     al, [reply_busy]
+        or      al, [req_ready]
+        mov     [rq_skip], al
+        jnz     .m                      ; (the waiting one's rq_len kept)
         mov     word [rq_len], 0
         mov     byte [rq_over], 0
-.c:     mov     di, [rq_len]
+.c:     cmp     byte [rq_skip], 0
+        jne     .m
+        mov     di, [rq_len]
         mov     ax, di
         add     ax, cx
         cmp     ax, REQMAX
@@ -797,6 +900,8 @@ rf_request:
         and     al, 80h
         mov     [rq_more], al
         jnz     .x
+        cmp     byte [rq_skip], 0
+        jne     .x
         cmp     word [rq_len], 2        ; (an id and an op)
         jb      .x
         cmp     byte [quit], 0          ; (going back: the Pi has the EVENT)
@@ -813,11 +918,108 @@ rf_request:
         cmp     ah, OP_TYPE
         je      type_start
         cmp     ah, OP_SCREEN
+        je      .sc
+        mov     si, rc_optab
+.o:     cmp     ah, [si]
+        je      .op
+        add     si, 3
+        cmp     byte [si], 0
+        jne     .o
         mov     ah, 0F6h
-        jne     reply2
-        xor     cl, cl                  ; (no flags)
+        jmp     reply2
+.op:    cmp     ah, 20h                 ; (GPIB: no DOS)
+        je      .go
+        cmp     byte [dos_ok], 0
+        mov     ah, 0F7h
+        je      reply2
+.go:    mov     [rq_id], al
+        mov     [rq_op], si
+        mov     byte [req_ready], 1
+        ret
+.sc:    xor     cl, cl                  ; (no flags)
         jmp     screen_msg
 .x:     ret
+
+rc_optab:
+        db 02h
+        dw op_dir
+        db 03h
+        dw op_read
+        db 04h
+        dw op_write
+        db 05h
+        dw op_delete
+        db 06h
+        dw op_rename
+        db 07h
+        dw op_mkdir
+        db 08h
+        dw op_rmdir
+        db 09h
+        dw op_stat
+        db 0Ah
+        dw op_free
+        db 20h
+        dw op_gpib
+        db 0
+
+; the request rf_request took, once its REPLY can be queued (txq_put would
+; drop it).  A file's with DOS ours meanwhile: the program's DTA, INT 23h
+; and INT 24h aside, ours in
+req_service:
+        cmp     byte [req_ready], 0
+        je      .x
+        cmp     byte [txq_n], TXQN
+        jae     .x
+        mov     byte [req_ready], 0
+        mov     si, [rq_op]
+        cmp     byte [si], 20h
+        jne     .d
+        jmp     [si + 1]
+.d:     push    si
+        mov     ah, 2Fh
+        int     21h
+        mov     [sv_dta], bx
+        mov     [sv_dta + 2], es
+        push    ds
+        xor     ax, ax
+        mov     ds, ax
+        mov     si, 23h * 4
+        mov     di, sv_vec
+        push    cs
+        pop     es
+        mov     cx, 4
+        cli
+        rep     movsw
+        mov     word [23h * 4], rc_i23
+        mov     [23h * 4 + 2], cs
+        mov     word [24h * 4], rc_i24
+        mov     [24h * 4 + 2], cs
+        sti
+        pop     ds
+        pop     si
+        call    [si + 1]
+        push    es
+        xor     ax, ax
+        mov     es, ax
+        mov     si, sv_vec
+        mov     di, 23h * 4
+        mov     cx, 4
+        cli
+        rep     movsw
+        sti
+        pop     es
+        push    ds
+        lds     dx, [sv_dta]
+        mov     ah, 1Ah
+        int     21h
+        pop     ds
+.x:     ret
+
+rc_i24: mov     al, 3                   ; a critical error: fail the call
+rc_i23: iret                            ; ^C: nothing (the call goes on)
+
+%include "OPS.INC"
 
 ; a REPLY of its own: AL = id, AH = status, no data (reply_n: CX = 3,
 ; with TYPE's flags already at replybuf + 2)
@@ -832,10 +1034,16 @@ reply_n:
 ; TYPE (AL = its id): the keys go to the program, the console goes back
 ; to it; the answer comes when they are done (the next pop-up: session)
 type_start:
+        mov     cx, [rq_len]
+        cmp     cx, KSMAX
+        mov     ah, 0F0h                ; (too big for ksbuf)
+        ja      reply2
         mov     [type_id], al
         mov     word [ks_pos], 2
-        mov     ax, [rq_len]
-        mov     [ks_len], ax
+        mov     [ks_len], cx
+        mov     si, reqbuf              ; (for the feeder, which has this page
+        mov     di, ksbuf               ;  alone)
+        rep     movsb
         mov     byte [ks_wait], 0
         mov     byte [played], 0
         mov     byte [type_due], 1
@@ -972,8 +1180,8 @@ unborrow:
 
 ; ---- the band ----------------------------------------------------
 ; title_text: the Pi's title (or ours), the program's name, then DOS busy
-; if DOS was (a long status on the right covers the end: the name is in
-; HELLO for Claude anyway)
+; if the file requests can't call it (a long status on the right covers the
+; end: the name is in HELLO for Claude anyway)
 make_title:
         mov     di, title_text
         mov     si, ptitle
@@ -984,8 +1192,8 @@ make_title:
         call    put_str
         mov     si, prog
         call    put_str
-.t:     cmp     byte [indos], 0
-        je      .z
+.t:     cmp     byte [dos_ok], 0
+        jne     .z
         mov     si, s_dos
         call    put_str
 .z:     mov     byte [di], 0
@@ -1009,6 +1217,11 @@ put_str:                                ; DS:SI ASCIIZ -> ES:DI (no NUL)
         jmp     .l
 .x:     ret
 
+skipz:  lodsb                           ; SI past the next NUL (OPS.INC)
+        or      al, al
+        jnz     skipz
+        ret
+
 put_num:                                ; AL (0-99) -> ES:DI, decimal
         aam
         or      ah, ah
@@ -1029,12 +1242,14 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.3', 10, 'rx=', RXPAY_S, 10, 'addr=', 0
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.9', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
+            db 'ops=files,gpib', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
 s_sep       db '  ', 86h, '  ', 0
 s_title0    db 'Claude (resident)', 0
 s_dos       db '  ', 86h, '  DOS busy', 0
+s_defrag    db 'DEFRAG.COM', 0
 s_tkeys     db 'CODE-\ back  CODE-R repaints', 0
 s_back      db '  ', 86h, '  CODE-\ back', 0
 st_connecting db 'Connecting to the Pi', 82h, 0
@@ -1093,15 +1308,15 @@ pit_last    resw 1
 pit_tick    resw 1
 txq         resb TXQN * 10
 txlen       resw 1
-txframe     resb TXMAX + 8
 nakframe    resb 8
 rxn         resw 1
 rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_more     resb 1                      ; a REQUEST's frames still coming
 rq_over     resb 1                      ;  more than REQMAX of them
+rq_skip     resb 1                      ;  dropped (rf_request)
 replybuf    resb 4                      ; a reply of our own: id, status (flags)
-hellobuf    resb 104
+hellobuf    resb 128
 ; M3: the program, its screen, Claude's keys
 parms       resd 1                      ; the stub's parameters (r_ks, r_pend)
 prog        resb NAMEMAX + 1            ; the program's name, or nothing
@@ -1113,11 +1328,25 @@ type_due    resb 1                      ; TYPE's keys out: answer at the pop-up
 type_back   resb 1
 type_id     resb 1
 played      resb 1                      ;  (all of them were)
-ks_pos      resw 1                      ; the next key in reqbuf
+ks_pos      resw 1                      ; the next key in ksbuf
 ks_len      resw 1
 ks_wait     resb 1                      ; a wait under way, until
 ks_until    resw 1
-reqbuf      resb REQMAX                 ; a REQUEST: id, op, its arguments
+; files and GPIB (OPS.INC)
+dos_ok      resb 1                      ; 1: the file requests may call DOS
+rq_id       resb 1                      ; the request req_service runs: its id,
+rq_op       resw 1                      ;  its rc_optab entry
+ioseg       resw 1                      ; IOSEG
+gp_otmo     resw 1                      ; the driver's timeout, ours, meanwhile
+gp_dlen     resw 1
+gp_max      resw 1
+wr_data     resw 1
+wr_len      resw 1
+wr_done     resw 1
+sv_dta      resd 1                      ; the program's DTA, INT 23h and 24h,
+sv_vec      resd 2                      ;  while a file's request runs
+dta         resb 44
+ksbuf       resb KSMAX                  ; TYPE's request, for the feeder
 crctab      resw 256
 ; Term (TERMCELL.INC, TERMKEYS.INC)
 t_active    resw 1
@@ -1138,3 +1367,6 @@ rc_top:                                 ; (Term's shadow: SHADSEG, window 3)
 section .text
         times   -((rc_top - $$) > 4000h - TAIL) db 0    ; (one EMS page, 16 KB,
                                                         ;  its last bytes a reply's)
+        times   -(TROWS * 160 > SHADLEN) db 0           ; window 3: the shadow,
+        times   -(IOSIZE > REQMAX) db 0                 ;  the request and reply,
+        times   -(txframe + TXMAX + 8 > 10000h) db 0    ;  the frame

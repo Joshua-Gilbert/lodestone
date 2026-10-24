@@ -42,7 +42,7 @@ the screen, plus the Pi's own (about 20-25 ms on the simulated link, and
 Claude Code's rendering).
 
 The GRiD's tools (MCP server `grid`, in `~/grid/.mcp.json`). Eight only look,
-and you can allow them for good ("Yes, and don't ask again"). Four change
+and you can allow them for good ("Yes, and don't ask again"). Five change
 something, and Claude Code asks before every call: they carry
 `anthropic/requiresUserInteraction`, so it offers no "don't ask again" for
 them, no allow rule skips the question, and not even bypassPermissions does.
@@ -56,6 +56,7 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_command` | every time | run a DOS command or program; capture its output, or drive it with a key script (`1{ENTER}{WAIT 2}{SNAP}{ESC}`) and take a screenshot |
 | `grid_change_files` | every time | write, delete, rename, mkdir, rmdir; copy_from_grid / copy_to_grid (edit a GRiD file with Claude Code's own tools: copy it over, edit, copy it back) |
 | `gpib_send` | every time | query, write, clear, trigger, local/remote; a query's reply can go to a new Pi file (`save_to`) |
+| `grid_plotter` | every time | HP-GL (text, or a Pi file) to the Tek 4662 pen plotter through its Nano at `[plotter] address` (1), in parts split between commands |
 | `grid_plot` | until allowed | a line or scatter plot on the GRiD's screen, from data or a Pi file (a trace saved with `save_to`); drawn in one bit with the GRiD's own font |
 | `grid_image` | until allowed | a picture file from `~/grid` (a matplotlib PNG), dithered to the GRiD's screen |
 | `grid_pick` | until allowed | asks the user to click points on the plot or picture, and returns them (data coordinates, the nearest point) |
@@ -63,7 +64,10 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 | `grid_type` | every time | resident Claude only: keys into that program (`1A{WAIT 30}`); the console goes while they play and comes back with the program's screen |
 
 While Claude Code is in resident Claude's console (CLAUDE /R, CODE-\ over a
-program), only `grid_program` and `grid_type` run: the program holds the
+program), `grid_program` and `grid_type` run, and from CLAUDE 1.9 the file
+and GPIB tools too (files not where DOS is busy under the program: its
+own disk-error handler, Lodestone's tasks' key wait, or DEFRAG); `grid_command`,
+`grid_info`, `grid_screen` and the pictures don't: the program holds the
 GRiD. Outside it, those two say no program is paused. Once the user has
 gone back to the program (CODE-\ again), every GRiD tool says so at once
 until the console is up again.
@@ -100,11 +104,23 @@ Limits the tools keep, whatever Claude asks for:
 - `.mcp.json` starts Python isolated (`-I`), so nothing in `~/grid` is
   imported in place of gridlink's own code.
 
-A Claude Code older than `requiresUserInteraction` asks for the four until
+**The pen plotter** (`grid_plotter`): the Tek 4662 is not on the bus
+itself. It is on RS-232 behind a Nano (`gpib_hpgl_tek4662.ino`) that is a
+GPIB listener at address 1, takes HP-GL (IN, SP, PU, PD, PA, LB) and sends
+it to the plotter as Tek commands at 1200 baud. The tool checks the HP-GL
+(printable ASCII, line ends and ETX; no ESC, which would switch the Nano to
+raw pass-through) and sends it in parts of up to 1 KB that end between
+commands, never inside an LB label. The Nano holds NRFD while its buffer
+drains, so each part keeps the GRiD busy for a few seconds; a part that
+stops (a timeout) is reported with how much had already gone. The Nano must
+run addressed (`LISTEN_ONLY false`, `GPIB_ADDRESS 1`): in listen-only mode it
+would take every byte on the bus, the link's included.
+
+A Claude Code older than `requiresUserInteraction` asks for the five until
 you allow them; to make it always ask, add to `~/grid/.claude/settings.json`:
 
 ```json
-{"permissions": {"ask": ["mcp__grid__grid_command", "mcp__grid__grid_change_files", "mcp__grid__gpib_send", "mcp__grid__grid_type"]}}
+{"permissions": {"ask": ["mcp__grid__grid_command", "mcp__grid__grid_change_files", "mcp__grid__gpib_send", "mcp__grid__grid_type", "mcp__grid__grid_plotter"]}}
 ```
 
 ### Setting up Term (Pi 5, 4 GB)
