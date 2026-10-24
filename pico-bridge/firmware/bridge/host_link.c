@@ -177,7 +177,8 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
       break;
     case F_CONFIG:
       if (n >= 3 && p[1] <= 30) {
-        SH.addr = p[1]; SH.want_online = (p[2] & 1) ? 1 : 0; SH.auto_rsv = (p[2] & 2) ? 1 : 0; request();
+        SH.addr = p[1]; SH.want_online = (p[2] & 1) ? 1 : 0; SH.auto_rsv = (p[2] & 2) ? 1 : 0;
+        SH.quiet = (p[2] & 4) ? 1 : 0; request();
         host_session = (p[2] & 1) != 0; last_ping_ms = now_ms;
       } else send_log("CONFIG refused: address must be 0..30");
       break;

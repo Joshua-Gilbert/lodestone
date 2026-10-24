@@ -99,9 +99,11 @@ TOOLS = [
          "scan (serial-polls every address, lists the ones that answer), poll (one status byte), read "
          "(the instrument's pending output). To send anything, queries included, use gpib_send. When "
          "resident Claude's console is popped up over a program that uses the bus (TM5000G, which "
-         "watches for service requests), scan and poll take the status bytes it was waiting to read, "
-         "and read takes output it was waiting for: it is then gone when the program looks, so use "
-         "them there only when the user asks. max_bytes is at most 8192 there."),
+         "watches for service requests), or works in the background while the user is back in it, "
+         "scan and poll take the status bytes it was waiting to read, and read takes output it was "
+         "waiting for: it is then gone when the program looks, so use them there only when the user "
+         "asks. max_bytes is at most 8192 there. In the background the program waits while a request "
+         "runs: a scan, which waits at every address that doesn't answer, holds it for seconds."),
      'inputSchema': {'type': 'object', 'properties': dict(
          {'action': {'type': 'string', 'enum': ['scan', 'poll', 'read']}}, **GPIB_PROPS),
          'required': ['action']},
