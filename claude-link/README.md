@@ -64,8 +64,8 @@ them, no allow rule skips the question, and not even bypassPermissions does.
 
 While Claude Code is in resident Claude's console (CLAUDE /R, CODE-\ over a
 program), `grid_program` and `grid_type` run, and from CLAUDE 1.9 the file
-and GPIB tools too (not where DOS is busy under the program: its own
-disk-error handler, or Lodestone's tasks' key wait); `grid_command`,
+and GPIB tools too (files not where DOS is busy under the program: its
+own disk-error handler, Lodestone's tasks' key wait, or DEFRAG); `grid_command`,
 `grid_info`, `grid_screen` and the pictures don't: the program holds the
 GRiD. Outside it, those two say no program is paused. Once the user has
 gone back to the program (CODE-\ again), every GRiD tool says so at once
