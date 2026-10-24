@@ -1,10 +1,16 @@
 ; MTMODE.COM - for test_mt.py: a task's screen kept while another is in
-; front.  MTMODE MM FILE: video mode MM (hex), its 32 KB at B800h filled
+; front.  MTMODE MM FILE [T]: video mode MM (hex), its 32 KB at B800h filled
 ; with a pattern; then it waits for a key (AH=08h) and writes "ok" to
-; FILE if the pattern is all still there, else "bad".
+; FILE if the pattern is all still there, else "bad".  T (T3): after that
+; key, mode 3, "MTMODE: text" printed and another key, before the file.
+; B (T3): after that key, mode 3 and at once mode MM again, then another
+; key.  No arguments: mode 40h, no file
 ; nasm -f bin -o MTMODE.COM MTMODE.ASM
 cpu 286
 org 100h
+        mov     ax, 40h
+        cmp     byte [80h], 0
+        je      .m
         mov     si, 81h
         call    blanks
         call    hexd                    ; the mode
@@ -13,13 +19,27 @@ org 100h
         call    hexd
         or      al, ah
         xor     ah, ah
-        int     10h
+        push    ax
         call    blanks
         mov     [fn], si                ; FILE, to a blank or the end
 .f:     lodsb
         cmp     al, ' '
         ja      .f
         mov     byte [si-1], 0
+        jne     .n                      ; (the end: no T)
+        call    blanks
+        lodsb
+        and     al, 0DFh
+        sub     al, 'T'
+        je      .t
+        cmp     al, 'B' - 'T'
+        jne     .n
+        mov     byte [bnc], 1
+        jmp     short .n
+.t:     mov     byte [txt], 1
+.n:     pop     ax
+.m:     mov     [mode], ax
+        int     10h
         push    0B800h
         pop     es
         xor     di, di
@@ -38,7 +58,26 @@ org 100h
         loop    .c
         jmp     .w
 .bad:   mov     word [res], s_bad
-.w:     mov     ah, 3Ch
+.w:     cmp     byte [bnc], 0
+        je      .w1
+        mov     ax, 3                   ; B: text, and at once MM again
+        int     10h
+        mov     ax, [mode]
+        int     10h
+        mov     ah, 8
+        int     21h
+.w1:    cmp     byte [txt], 0
+        je      .w2
+        mov     ax, 3                   ; T: text again, a line, a key
+        int     10h
+        mov     ah, 9
+        mov     dx, s_text
+        int     21h
+        mov     ah, 8
+        int     21h
+.w2:    cmp     word [fn], 0
+        je      .x
+        mov     ah, 3Ch
         xor     cx, cx
         mov     dx, [fn]
         int     21h
@@ -78,5 +117,9 @@ hexd:   lodsb                           ; a hex digit -> AL
 
 fn      dw      0
 res     dw      0
+txt     db      0
+bnc     db      0
+mode    dw      0
+s_text  db      'MTMODE: text', 13, 10, '$'
 s_ok    db      'ok'
 s_bad   db      'bad'
