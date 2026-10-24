@@ -70,20 +70,21 @@ EMPTY_BLOCKS = set('▌▐▀▄▖▗▘▝▚▞▁▂▃▅▆▋▍▎')
 _cache = {}
 
 
-def glyph(data):
-    """pyte cell text -> (GRiD code, flip inverse)."""
-    r = _cache.get(data)
+def glyph(data, quads=False):
+    """pyte cell text -> (GRiD code, flip inverse).  quads: the GRiD draws the 2x2 block elements (GF_QUAD)."""
+    r = _cache.get((data, quads))
     if r is not None: return r
-    r = _glyph(data)
-    if len(_cache) < 4096: _cache[data] = r
+    r = _glyph(data, quads)
+    if len(_cache) < 4096: _cache[(data, quads)] = r
     return r
 
 
-def _glyph(data):
+def _glyph(data, quads=False):
     if not data: return BLANK, False                  # right half of a wide character
     ch = data[0]
     o = ord(ch)
     if 32 <= o < 127: return o, False
+    if quads and ch in glp.GL_QUADS: return glp.GL_QUADS[ch], False   # (CLAUDE 1.8: the mascot keeps its eyes)
     if ch in FULL_BLOCKS: return BLANK, True
     if ch in EMPTY_BLOCKS: return BLANK, False
     v = CELL_MAP.get(ch)
@@ -119,6 +120,7 @@ class TermScreen(pyte.Screen):
     def __init__(s, cols=COLS, rows=ROWS):
         super().__init__(cols, rows)
         s.sync = False; s.sync_t = 0.0; s.main = None
+        s.quads = False                               # the GRiD draws the 2x2 block elements (GF_QUAD)
 
     def reset(s):
         super().reset()
@@ -164,7 +166,7 @@ class TermScreen(pyte.Screen):
             ch = bytearray(s.columns); at = bytearray(s.columns)
             for x in range(s.columns):
                 c = line[x]
-                g, flip = glyph(c.data)
+                g, flip = glyph(c.data, s.quads)
                 bg = c.bg not in ('default', 'black', '000000')
                 inv = (c.reverse != bg) != flip
                 ch[x] = g

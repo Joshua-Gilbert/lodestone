@@ -22,6 +22,7 @@ GF_TERM = 0x01             # GRiD: this CLAUDE can be a terminal (Term)
 GF_PIX = 0x02              # GRiD: its CELLS take pictures (op FDh, picture.py); CLAUDE 1.2
 GF_FCS = 0x04              # GRiD: it can check frames with the Fletcher sum (fletcher16); CLAUDE 1.3
 GF_WAKE = 0x08             # GRiD: an SRQ while it is idle makes it POLL at once (Link.ring_check); CLAUDE 1.3
+GF_QUAD = 0x10             # GRiD: it draws the 2x2 block elements GL_QUADS (A1h-AEh); CLAUDE 1.8
 HF_TERM = 0x01             # Pi: Term: the GRiD is Claude Code's screen and keyboard
 HF_FCS = 0x04              # Pi: frames after this HELLO carry the Fletcher sum, both ways
 
@@ -59,6 +60,8 @@ GL_SPIN = list(range(0x87, 0x8D))
 GL_RULE, GL_BAR, GL_TRI = 0x8D, 0x8E, 0x8F
 GL_BL, GL_BR, GL_TL, GL_TR, GL_TEE_R, GL_TEE_L, GL_TEE_D, GL_TEE_U, GL_CROSSING = range(0x98, 0xA1)
 GL_LAST = 0xA0
+# the block elements a GF_QUAD GRiD draws as they are (an older one gets blanks and inverse blanks)
+GL_QUADS = {ch: 0xA1 + i for i, ch in enumerate('▘▝▖▗▌▐▀▄▛▜▙▟▚▞')}
 
 
 def _make_table():

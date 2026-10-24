@@ -6,6 +6,10 @@
 ;  Claude's console (RCON.ASM, in EMS) both draw with it.
 ; =====================================================================
 
+%ifndef GLYPH_END
+%define GLYPH_END 0A1h                  ; (the first code with no glyph)
+%endif
+
 ; One character cell.  AL = char, AH = attribute (1 inverse, 2 underline),
 ; DI = row * 320 + column, ES = VSEG.  Destroys AX only.
 cell:   push    bx
@@ -18,7 +22,7 @@ cell:   push    bx
         cmp     al, 20h
         jae     .b
         mov     al, 20h
-.b:     cmp     al, 0A1h
+.b:     cmp     al, GLYPH_END
         jb      .c
         mov     al, '?'
 .c:     sub     al, 20h
