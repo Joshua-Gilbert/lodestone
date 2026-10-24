@@ -984,6 +984,14 @@ The last of the four steps toward right-click editing in Write: Cut, Copy and Pa
   - Fourteen mutations each fail a check: Cut not erasing, a refused Cut erasing all the same, the menu's Copy cutting, the room for a paste over a selection reckoned from its end, an empty selection copied (the clipboard emptied), error 8 not said as such, Paste not over the selection, its lines not counted, Cut and Copy in the menu with nothing selected, Paste in it with nothing to paste, an empty clipboard pasted (the text marked changed), MT applying the fixups from where they no longer are (`kmwsi`: every window .RUN broken) or the slot sized by the fixups alone (`kmwslot`: TASKS.RUN then fits beside two Writes and the calculator), and the file written from the wrong segment. One is equivalent: the copy of a selection past the cursor read from before the gap. The gap only gets there by moving back over that text, which leaves an exact copy of it, and any edit ends the selection first.
   - Untested: Paste with no room in the text (a 64 KB buffer).
 
+## Shorter help (2026-10-23)
+The help windows say less, and System's About no longer calls Lodestone a working name.
+- **System:** 6 lines, not 13. The six "Return on <topic>" lines and the three "Space on <topic>" lines are one each ("Return: change it (the band says how)", "Space: switch it on or off (the same)"): each topic's band already says what Return and Space do there. About: "for the GRiDCase 1520".
+- **The Executive:** the file commands are one word each (Copy, Delete, Move, Rename); "CODE-W: Write (a new file)"; "F5: look again (a new disk)".
+- **Write:** still 18 lines, the descriptions shorter ("Find text", "Replace text", "Go to a line", "Save and exit", ...).
+- **Cost:** none: 64 bytes back in the UI core (`ui_keep_end` 6526h → 64E6h; MEMSZ 564.7 KB without EMS, 580.7 with it), SYSTEM.RUN 12,410 bytes (12,821), WRITE.RUN 10,140 (10,211). ROM 1 has a sector free again (512 bytes).
+- **Tests:** the help checks of System, the Executive and Write in test_apps, and test_splash's System help read the new lines; MEM_044 and test_mt's `ui_keep_end` are the new figures.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.

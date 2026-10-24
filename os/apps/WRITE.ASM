@@ -2516,18 +2516,18 @@ hct         db 'Cut         CODE-Z    Cut the selection',0
 hps         db 'Paste       CODE-V    Paste (over a selection)',0
 h2          db 'Duplicate   CODE-D    Duplicate selected text',0
 h3          db 'Erase       CODE-E    Erase selected text',0
-h4          db 'Find        CODE-F    Find specified text',0
-h5          db 'Jump        CODE-J    Move cursor to a line',0
+h4          db 'Find        CODE-F    Find text',0
+h5          db 'Jump        CODE-J    Go to a line',0
 h6          db 'Move        CODE-M    Move selected text',0
-h7          db 'Options     CODE-O    Set indent and tab stops',0
-h8          db 'Quit        CODE-Q    Exit and save all changes',0
-h9          db 'Substitute  CODE-S    Substitute specified text',0
+h7          db 'Options     CODE-O    Indent and tab stops',0
+h8          db 'Quit        CODE-Q    Save and exit',0
+h9          db 'Substitute  CODE-S    Replace text',0
 h10         db 'Transfer    CODE-'
 h10x        db 'T    Save, write or include files',0
-h11         db 'Usage       CODE-U    Show size and room left',0
-h12         db 'Cancel      CODE-ESC  Exit without saving (or ESC)',0
-h13         db 'Command, select, confirm (Return); or drag first',0
-h14         db 'Arrows, PgUp/PgDn, Ctrl-arrows, Ctrl-Home/End move',0
+h11         db 'Usage       CODE-U    Size and room left',0
+h12         db 'Cancel      CODE-ESC  Exit, not saving (or ESC)',0
+h13         db 'Command, select, Return; or drag first',0
+h14         db 'Arrows, PgUp/PgDn, Ctrl-arrows, Ctrl-Home/End',0
 h15         db 'Ins: overtype.  Right click: menu.  Any key closes',0
 f_match     db 0
 f_dir       db 0
