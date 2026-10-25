@@ -2783,12 +2783,11 @@ def t_grow():
         l9 = g('9')                     # 144 KB at a time, till refused
         if ans(l9)[1]: refused = (l9, regr == ent(n, TE_REG), below(regr)[2]); break
     fb = below(ent(n, TE_REG))[2]
-    nk = max(1, min(9, (fb - 2) // 0x400))          # (the most that would fit in it but for the reserve)
-    ln = g(str(nk))
+    ln = gp(max(fb - GRES, 1))          # (with the free block's MCB, one paragraph more than it can give)
     check('48h 144 KB, again and again, till refused (%s): the block below it (%Xh) can\'t give that and keep MT_GRES '
-          '(%Xh); %d x 16 KB, which it could give: refused too (%s)' % (refused, fb, GRES, nk, ln),
-          refused and refused[1] and fb - 0x2401 < GRES and ans(ln)[1] == 1 and fb >= nk * 0x400 + 2
-          and fb - nk * 0x400 - 1 < GRES and below(ent(n, TE_REG))[2] == fb, (refused, hex(fb), ln))
+          '(%Xh); %Xh paragraphs, which leave MT_GRES but one paragraph: refused too, nothing changed (%s)'
+          % (refused, fb, GRES, fb - GRES, ln), refused and refused[1] and GRES <= fb < 0x2401 + GRES and ans(ln)[:2] == (8, 1)
+          and below(ent(n, TE_REG))[2] == fb, (refused, hex(fb), ln))
     # parked and back: its TX at its pages' start (mt_pmap), the region back byte for byte
     front(k, 0)
     regp, szp = ent(n, TE_REG), rsz(ent(n, TE_REG))
