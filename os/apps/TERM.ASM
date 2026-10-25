@@ -82,10 +82,7 @@ start:  mov     di, arg                 ; "task count"
         call    UI_WCLOSE               ; it ended
         xor     ax, ax
         ret
-.front: mov     ax, 0F000h + MT_FRONT   ; (no window after all: in front)
-        mov     bl, [task]
-        stc
-        int     21h
+.front: call    full                    ; (no window after all: in front)
 .bad:   mov     ax, 1
         ret
 
@@ -270,13 +267,21 @@ show:   push    es
         jnz     .nt
         mov     byte [note], 0
         jmp     short .s
-.nt:    call    selclr                  ; (no selection on a note)
-        call    mknote
+.nt:    call    selclr                  ; (no selection on a note, nor a paste:
+        cmp     word [pseg], 0          ;  not typed into what comes after it)
+        je      .nn
+        push    si
+        call    pfree
+        pop     si
+.nn:    call    mknote
         xor     bx, bx
         mov     cx, 80
 .s:     mov     [cur], bx
         xor     ch, ch
-        mov     [ncols], cx
+        cmp     cx, [ncols]             ; (its columns changed: its positions
+        je      .sc                     ;  no more the selection's)
+        call    selclr
+.sc:    mov     [ncols], cx
         ; the view: as little moved as keeps the cursor in it
         mov     ax, [top]
         mov     dl, bh                  ; (the cursor's row)
@@ -385,6 +390,8 @@ cells:  push    ds
         mov     [bx], ax
         call    attr
         push    dx
+        cmp     dx, [cs:ncols]          ; (past its columns: never selected)
+        jae     .ns
         add     dx, bp
         cmp     dx, [cs:sa]
         jb      .ns
@@ -502,10 +509,14 @@ key:    cmp     byte [note], 0
         pop     ax
         or      cx, cx
         jnz     paste
-.t:     push    ax
-        call    selclr                  ; (typing: the selection gone)
+.t:     mov     bx, [sb]                ; typing: the selection gone, at once
+        cmp     bx, [sa]
+        jbe     .s
+        push    ax
+        call    selclr
+        call    show
         pop     ax
-        cmp     word [pseg], 0
+.s:     cmp     word [pseg], 0
         jne     .q
         cmp     byte [qn], 0
         jne     .q
@@ -587,12 +598,8 @@ send:   push    ax
 ; 16: it reset INT 33h) and Shift isn't held: MT_TMOUSE as the button
 ; goes down, while it's held, as it's let go; else a selection, from the
 ; press to where it's let go (as a drag in Write: UI_MOUSE till then)
-click:  push    bx
-        push    cx
-        call    UI_KEYSHIFT
+click:  call    UI_KEYSHIFT
         mov     [kshf], al
-        pop     cx
-        pop     bx
         xor     si, si
         call    cellat
         jc      .x
@@ -602,12 +609,16 @@ click:  push    bx
         jz      .sel
         mov     al, 1                   ; its program's
 .p:     call    tmouse
+        push    dx
+        call    show                    ; (what it draws meanwhile)
+        pop     dx
         call    UI_MOUSE
         jc      .u
         test    al, 1
         jz      .u
         mov     si, 1
-        call    cellat
+        call    cellat                  ; (CF: a note up now)
+        jc      .u
         mov     al, 1
         jmp     .p
 .u:     xor     al, al                  ; (let go there)
@@ -634,11 +645,7 @@ click:  push    bx
         jne     .n
         cmp     ax, [sb]
         je      .d
-.n:     push    ax
-        push    bx
-        call    selclr
-        pop     bx
-        pop     ax
+.n:     call    selclr
         mov     [sa], bx
         mov     [sb], ax
         call    unrows
@@ -748,8 +755,7 @@ unrows: cmp     ax, bx
         div     cl
         mov     ch, al                  ; CH: the last row
         mov     ax, bx
-        mov     bl, 80
-        div     bl
+        div     cl
         mov     cl, al                  ; CL: the first
 .r:     mov     al, cl
         xor     ah, ah
@@ -827,18 +833,24 @@ copy:   mov     ax, [sb]
 .put:   mov     cx, di
         mov     di, BUF
         sub     cx, di
+        jcxz    .b                      ; (all blank: the clipboard kept)
         mov     al, 0
         call    UI_CLIP
-        pop     es
-        jnc     .x
-        call    UI_BEEP
+        jnc     .y
+.b:     call    UI_BEEP
+.y:     pop     es
 .x:     jmp     show
 
 ; the clipboard typed to the task: into a block of its own (UI_ALLOC, as
 ; it holds 16 KB at most), fed as its ring takes it (feed: at once and at
 ; each tick); the keys typed meanwhile after it.  A beep if one is going
-; on, or with no room
+; on, keys typed before it still wait (they'd come after it), a note is
+; up (it would be typed into what comes after it), or with no room
 paste:  cmp     word [pseg], 0
+        jne     .b
+        cmp     byte [qn], 0
+        jne     .b
+        cmp     byte [note], 0
         jne     .b
         mov     al, 2
         call    UI_CLIP
@@ -866,13 +878,11 @@ paste:  cmp     word [pseg], 0
 .b:     jmp     UI_BEEP
 .x:     ret
 
-; the paste's next keys to the task while its ring takes them (none while
-; a note is up: it goes on when the window shows the task again) -> CF if
-; some are left (the keys typed after it wait)
+; the paste's next keys to the task while its ring takes them (a note
+; going up ends it: show) -> CF if some are left (the keys typed after it
+; wait)
 feed:   cmp     word [pseg], 0
         je      .ok
-        cmp     byte [note], 0
-        jne     .left
 .n:     mov     si, [ppos]
         cmp     si, [plen]
         jae     .end

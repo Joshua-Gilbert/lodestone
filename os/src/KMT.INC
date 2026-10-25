@@ -2037,7 +2037,7 @@ mt_tkey:
 
 ; MT_TMOUSE (T4): a click in task BL's window, as TERM sees it: buttons BH
 ; at CX, DX (INT 33h's units), to its own state (TX_M33) as a packet would
-; leave it (mt_mset), for its AX=3 behind.  A release before it has read
+; leave it (mt_mset), for its calls behind.  A release before it has read
 ; the press is held till it has (mt_33out; mt_m33ld, to the front), so a
 ; short click isn't lost between its turns.  CF: AX = 1 (no such task;
 ; not the Executive's call), 5 (task 0, parked)
@@ -2056,11 +2056,10 @@ mt_tmouse:
         and     al, 3
         mov     cx, [bp+F_CX]
         mov     dx, [bp+F_DX]
-        mov     ah, [es:TX_M33 + m33_btn - m33_st]
+        mov     ah, al
         not     ah
-        or      ah, al                  ; (not 0FFh: one let go)
-        cmp     ah, 0FFh
-        je      .s
+        test    [es:TX_M33 + m33_btn - m33_st], ah      ; (one let go?)
+        jz      .s
         test    byte [es:TX_MREL], 80h  ; and its press not read yet: held
         jz      .s
         or      al, 40h
@@ -4440,8 +4439,14 @@ mt_33out:
         pop     ds
 .cp:    mov     al, [cs:mt_cur]
         call    mt_m33sv
-        cmp     word [cs:mt_33fn], 3    ; (T4: its window's press read: a
-        jne     .fr                     ;  release held, now; BX: its entry)
+        mov     ax, [cs:mt_33fn]        ; (T4: its window's press read, by 03h,
+        cmp     ax, 3                   ;  05h or 06h: a release held, now; BX:
+        je      .rd                     ;  its entry)
+        cmp     ax, 5
+        je      .rd
+        cmp     ax, 6
+        jne     .fr
+.rd:
         push    es
         mov     es, [cs:bx+TE_TX]
         and     byte [es:TX_MREL], 7Fh
@@ -4788,6 +4793,7 @@ mt_mtake:
         mov     es, [cs:bx+TE_TX]
         mov     ax, [cur_psp]
         mov     [es:TX_MPSP], ax
+        mov     byte [es:TX_MREL], 0    ; (a click held from before: gone)
         pop     es
         pop     bx
         pop     ax

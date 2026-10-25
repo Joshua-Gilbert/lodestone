@@ -28,6 +28,8 @@
 ;      polls 03h until the left button is down, then until it is up
 ;      (TM5000G's way, T4): FILE gets "x y x y p r", where it was down,
 ;      where up, and the left button's presses and releases (05h, 06h)
+;   R  as P, but polls 06h (the left button's releases) until one comes:
+;      FILE gets "n x y", how many and where the last was
 ; nasm -f bin -o MTM33.COM MTM33.ASM
 cpu 286
 org 100h
@@ -57,6 +59,8 @@ org 100h
         cmp     byte [mode], 'J'
         je      .j
         cmp     byte [mode], 'P'
+        je      .pp
+        cmp     byte [mode], 'R'
         je      .pp
         cmp     byte [mode], 'G'
         jne     .r0
@@ -136,6 +140,8 @@ org 100h
         int     33h
         call    w18
         call    w18
+        cmp     byte [mode], 'R'
+        je      .r1
         mov     di, pv
 .p1:    mov     ax, 3
         int     33h
@@ -174,6 +180,16 @@ org 100h
         jnz     .pw
         dec     di
         call    wout
+        jmp     .end
+.r1:    mov     ax, 6                   ; R: 06h only, till a release
+        xor     bx, bx
+        int     33h
+        or      bx, bx
+        jz      .r1
+        xchg    ax, bx
+        mov     bx, cx
+        mov     cx, dx
+        call    rec3
         jmp     .end
 .t:     mov     ax, 351Ch               ; T: its INT 1Ch handler
         int     21h

@@ -4484,6 +4484,20 @@ def t_tclip():
           '2 columns right and 16 down: moved (%s, %s); no selection made, nothing to the program (its screen as it was)'
           % (r0, c0, r1, c1, w0, w1), r1 == r0 - 2 and c1 == c0 - 2 and w1 == [w0[0] + 2, w0[1] + 16, w0[2] - 2, w0[3] - 32]
           and tv('sa') == tv('sb') == 0 and slot_text(k, n) == s0, (r0, c0, r1, c1, w0, w1, tv('sa'), tv('sb')))
+    # 40 columns (MTMODE 01): a selection made in 80 gone; one made there not drawn past its 40 columns
+    A.drag(k, *(cxy(tv('top') + 1, 2) + cxy(tv('top') + 2, 8))); k.run_for(0.3)
+    s80 = tv('sb') > tv('sa')
+    typ2('mtmode 01 c.txt', 2.0)
+    s40 = (tv('sa'), tv('sb'), tv('ncols'))
+    A.drag(k, *(cxy(2, 5) + cxy(5, 10))); k.run_for(0.3)
+    mv(4, 4); k.run_for(0.5)
+    sl = slot(k, n, 2000) or bytes(2000)
+    hl = [drawn(3, 20) == inv(g(sl[(3 * 40 + 20) * 2])), drawn(3, 45) == g(32), drawn(4, 60) == g(32)]
+    k.key('x', settle=False); k.run_for(2.0)
+    typ2('mtmode 03 d.txt', 1.5); k.key('x', settle=False); k.run_for(2.0)
+    check('a selection in 80 columns (%s), MTMODE 01: gone (%s: its columns 40 now); a drag there over rows 2-5: its cells '
+          'inverse, the blanks past its 40 columns not (%s); MTMODE 03 back' % (s80, s40, hl), s80 and s40 == (0, 0, 40)
+          and all(hl) and tv('ncols') == 80, (s80, s40, hl, tv('ncols')))
     # the mouse for the program in it: MTM33 P (it reset it, then polls 03h as TM5000G does), a short click given while it waits
     typ2('mtm33 p m.txt', 1.0)
     taken, rr, cc = tb('tdl') & 16, tv('top') + 3, 20
@@ -4498,6 +4512,14 @@ def t_tclip():
     A.drag(k, *(cxy(rr, 2) + cxy(rr, 6))); k.run_for(0.3)
     check('... it ended: the mouse no more its program\'s (TX_MPSP %04Xh, MT_TROWS\'s 16 %d), a drag selects again (%d, %d)'
           % (mp, tb('tdl') & 16, tv('sa'), tv('sb')), mp == 0 and not tb('tdl') & 16 and tv('sb') > tv('sa'), (mp, tv('sa'), tv('sb')))
+    # MTM33 R: the same click, its release read by 06h alone (not 03h): given after its first 06h, not a click late
+    typ2('mtm33 r r.txt', 1.0)
+    mv(*cxy(rr, cc + 5)); btn(1, 0.1)
+    waitfile(k, 'R.TXT', 8.0); k.run_for(0.5)
+    want, m = ('0001 %04X %04X' % ((cc + 5) * 8, rr * 8)).encode(), A.disk_file(k, 'R.TXT')
+    check('MTM33 R (06h only, till a release), a short click while it waits: its release there, one (%r): the release held '
+          'given after its first 06h too' % m, m == want, (m, want))
+    k.run_for(1.0)
     # MTM33 F (reset, never reading 03h): a click's release held; Shift-drag selects over it; CODE-Tab: no button down in front
     typ2('mtm33 f f.txt', 1.5)
     mv(*cxy(rr, cc)); btn(1, 0.3)
