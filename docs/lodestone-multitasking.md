@@ -1927,6 +1927,7 @@ A terminal window now does what a Write window does with the mouse and the clipb
   - Its event handler (0Ch) isn't called behind (TM5000G polls).
   - A right click is always the window's menu (a program's right button: full screen).
   - CODE-C with a selection and CODE-V with something to paste are TERM's, never the program's.
+  - A paste (or keys waiting in TERM's queue) going when the program switches to graphics can still type up to a ring's worth (32 keys) at the next tick, before the note ends it: `tick` feeds before `show` sees the change.
   - `TX_MPSP` is one program deep: a child that resets the mouse and ends leaves its parent's clicks to the selection, even if the parent had reset it before.
   - The selection is of positions, so a program scrolling under it leaves the highlight on the same rows, and Copy takes what is there then.
 

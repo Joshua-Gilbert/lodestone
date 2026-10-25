@@ -1170,7 +1170,10 @@ class PC:
         s.deliver_irqs()
         # irq_exact: interrupts off with one pending, it is delivered as
         # soon as IF is set again (blk stops the run there, a block late at
-        # most), as a real PIC keeps INTR up.  The default is the older
+        # most), as a real PIC keeps INTR up.  (Armed here, at a run's
+        # start: for an IRQ pending then, so for ticks and IRQ 5, which end
+        # the run they come in; one raised mid-run without ending it, the
+        # ATA's, still waits for the run's end.)  The default is the older
         # way, only at a run's start: a program spending nearly all its
         # time under CLI (polling INT 33h AX=3 in a task behind) gets
         # almost no ticks, so a task behind runs longer turns than on the
