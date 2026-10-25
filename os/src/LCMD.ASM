@@ -949,7 +949,7 @@ run_external:
         cmp     byte [crit_seen], 0     ; a disk error while it loaded,
         je      .fe0                    ;  answered Fail or Abort here: said
         mov     byte [failed], 1        ;  already (its code 19-31, or 11
-        ret                             ;  for a short read on C:)
+        ret                             ;  for a short read)
 .fe0:   cmp     ax, 19                  ; else (MT's Fail behind, say) INT
         jb      .fm0                    ;  24h's message for its code
         cmp     ax, 31
