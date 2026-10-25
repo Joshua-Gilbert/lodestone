@@ -158,7 +158,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,064 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,081 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -194,7 +194,7 @@ Release notes are in `os/releases/`, and each part's design and history is in `d
 **Next:**
 - **Resident Claude:** the program's screen read in the background (CLAUDE 1.11) on the 1520, with the bridge's quiet firmware flashed.
 - **ROM 2:** the second, data-only ROM is there (DEFRAG.COM and TERM.FNT, joined to R:); CLAUDE.COM and heavier programs are to follow onto it.
-- **Terminal windows** (multitasking, `docs/lodestone-multitasking.md` T1-T6): with `MULTITASK=1`, a text program started from the Executive, and CODE-P's command prompt, runs in a window of its own (Shift-Return and Shift-CODE-P: full screen, as before); one that goes into a graphics mode is full screen until it comes back to text. Its text is selected with the mouse, copied (CODE-C) and pasted into it as keys (CODE-V), with a right-click menu as Write's, and a program in it that uses the mouse gets its clicks there. CLAUDE.COM's window mode is to follow.
+- **Terminal windows** (multitasking, `docs/lodestone-multitasking.md` T1-T6): with `MULTITASK=1`, a text program started from the Executive, and CODE-P's command prompt, runs in a window of its own (Shift-Return and Shift-CODE-P: full screen, as before); its memory grows as its program asks for more, when there is room below it; one that goes into a graphics mode is full screen until it comes back to text. Its text is selected with the mouse, copied (CODE-C) and pasted into it as keys (CODE-V), with a right-click menu as Write's, and a program in it that uses the mouse gets its clicks there. CLAUDE.COM's window mode is to follow.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.
 - **The FreeDOS kernel calls:** INT 21h 60h/6Ch and IOCTL 440Dh, so FreeDOS's FORMAT, LABEL, XCOPY and the like run.

@@ -6376,6 +6376,10 @@ mt_grow:
         dec     cx
         mov     [es:3], cx
         mov     word [es:8], 'TX'
+        xor     cx, cx
+        mov     [es:10], cx
+        mov     [es:12], cx
+        mov     [es:14], cx
         jmp     short .gx
 .g1:    mov     es, cx                  ; the first block free: it starts AX
         add     ax, [es:3]              ;  lower
@@ -6401,10 +6405,10 @@ mt_48:  mov     bx, [bp+F_BX]
         mov     dx, [cur_psp]
         KCALL   mem_alloc
         jnc     .x
+        cmp     byte [cs:mt_cur], 0     ; (task 0, or not for room: failed, as
+        je      .f                      ;  it was)
         cmp     ax, 8
-        jne     .x
-        cmp     byte [cs:mt_cur], 0
-        je      .x
+        jne     .f
         push    bx
         mov     bx, [bp+F_BX]
         call    mt_grow
@@ -6415,7 +6419,7 @@ mt_48:  mov     bx, [bp+F_BX]
         KCALL   mem_alloc
         jmp     short .x
 .n:     mov     ax, 8
-        stc
+.f:     stc
 .x:     mov     [bp+F_BX], bx
         jmp     KSEG:ret_cfax
 

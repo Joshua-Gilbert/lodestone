@@ -169,7 +169,6 @@ org 100h
         push    cs
         pop     es
         mov     sp, stk_top
-        mov     al, 'X'
         call    putcfax
         jmp     .k
 .k6:    cmp     al, 'r'
@@ -266,10 +265,10 @@ putcf:  pushf
         adc     al, 0
         stosb
         jmp     short wout
-; FILE gets "L c aaaa" (L in AL, CF, AX in BX... AX on entry kept apart)
+; FILE gets "X c aaaa" (CF, AX: EXEC's answer)
 putcfax:
         pushf
-        mov     bx, ax                  ; (AX: EXEC's answer, AL its letter)
+        mov     bx, ax
         mov     di, out_
         mov     al, 'X'
         stosb
