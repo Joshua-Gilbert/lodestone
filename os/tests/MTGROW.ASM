@@ -6,7 +6,9 @@
 ;   FILE (appended):
 ;   1-9  48h of n x 16 KB: "A aaaa c bbbb" (AX: the block or the error,
 ;        CF, BX)
-;   b    48h of KB KB, as 1-9; h  48h FFFFh, as 1-9
+;   b    48h of KB KB, as 1-9; h  48h FFFFh, as 1-9; p and 4 hex digits
+;        (keys): 48h of that many paragraphs, as 1-9
+;   s    48h of 20h paragraphs, kept aside: as 1-9; e  49h of it: "E c"
 ;   f    49h of the last block 1-9, b or m gave: "F c"
 ;   m    the largest block (48h FFFFh, then that): "M aaaa c bbbb"; none
 ;        left: "M 0008 1 0000", not asked
@@ -74,7 +76,7 @@ org 100h
         shl     bx, 6
         jmp     short .al
 .k2:    cmp     al, 'h'
-        jne     .k3
+        jne     .kp
         mov     bx, 0FFFFh
 .al:    mov     ah, 48h
         int     21h
@@ -82,6 +84,45 @@ org 100h
 .rec:   jc      .re
         mov     [last], ax
 .re:    call    rec4
+        jmp     .k
+.kp:    cmp     al, 'p'
+        jne     .ks
+        xor     bx, bx                  ; 4 hex digits, as keys
+        mov     cx, 4
+.ph:    push    cx
+        push    bx
+        mov     ah, 8
+        int     21h
+        pop     bx
+        pop     cx
+        sub     al, '0'
+        cmp     al, 9
+        jbe     .p1
+        and     al, 0DFh
+        sub     al, 'A' - '0' - 10
+.p1:    shl     bx, 4
+        or      bl, al
+        loop    .ph
+        jmp     .al
+.ks:    cmp     al, 's'
+        jne     .ke
+        mov     ah, 48h
+        mov     bx, 20h
+        int     21h
+        jc      .s1
+        mov     [small], ax
+.s1:    mov     cl, 'A'
+        call    rec4
+        jmp     .k
+.ke:    cmp     al, 'e'
+        jne     .k3
+        mov     es, [small]
+        mov     ah, 49h
+        int     21h
+        push    cs
+        pop     es
+        mov     al, 'E'
+        call    putcf
         jmp     .k
 .k3:    cmp     al, 'm'
         jne     .k4
@@ -305,6 +346,7 @@ pblk    dw      0, tail, 0, 5Ch, 0, 6Ch, 0
 mode    db      0
 kb      dw      0
 last    dw      0
+small   dw      0
 rfar    dd      0
 tail    times   100 db 0
 out_    times   32 db 0
