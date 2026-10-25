@@ -126,7 +126,9 @@ MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
                                         ;  of 80 columns or fewer, or rows past
                                         ;  its 32 KB), 4 its pages gone (2 too),
                                         ;  8 in front (its screen the real one,
-                                        ;  not its pages), DH = its state (TS_*;
+                                        ;  not its pages), 16 its program took
+                                        ;  the mouse (INT 33h AX=0 or 21h: T4,
+                                        ;  MT_TMOUSE), DH = its state (TS_*;
                                         ;  TS_FROZEN as MT_LIST).  CF: AX = 1
                                         ;  (no such task, rows past 24 or none,
                                         ;  room in the EMS frame's windows 0-1
@@ -145,7 +147,19 @@ MT_TKEY     equ 20h                     ; (T1) BL = a task, CX = a key (as INT
                                         ;  keyboard's then.  CF: AX = 1 (no such
                                         ;  task), 5 (task 0; parked), 8 (32
                                         ;  waiting already)
-MT_TASKS    equ 8                       ; most tasks at once (0 is the Executive)
+MT_TMOUSE   equ 21h                     ; (T4: TERM.RUN's, a click in its
+                                        ;  window) BL = a task, BH = buttons
+                                        ;  (bit 0 left, 1 right), CX = x, DX = y
+                                        ;  (INT 33h's units): its own mouse
+                                        ;  state, for its INT 33h calls behind,
+                                        ;  as the mouse would leave it (in its
+                                        ;  ranges, presses and releases counted);
+                                        ;  a release before its program has
+                                        ;  read the press (AX=3) held till it
+                                        ;  has.  CF: AX = 1 (no such task, not
+                                        ;  the Executive's call), 5 (task 0;
+                                        ;  parked)
+MT_TASKS    equ 8                      ; most tasks at once (0 is the Executive)
 MT_DEFARENA equ 1000h                   ; a task's memory if SP_PARAS is 0: 64 KB
 
 ; ---- MT_SPAWN's block (EXEC's, then two more fields) -----------------

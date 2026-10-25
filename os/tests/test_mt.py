@@ -67,14 +67,14 @@ OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x6526}  # (63
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
 
-def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False):
+def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chip=None):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
     MTPROBE, `more`, and LODE.INI holding `text`.  nofpu: INT 11h says no
     coprocessor, and the 286's EM bit is set, so any coprocessor instruction
     traps (INT 7, counted in pc.ints).  mouse: a serial mouse on COM1."""
     files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
         + ([ini(text)] if text is not None else [])
-    k = ktest.KPC(A.image(name, *files), ems_pages=ems)
+    k = ktest.KPC(A.image(name, *files), ems_pages=ems, chip=chip)
     k.pc.mouse = mouse
     if nofpu:
         k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))
@@ -154,8 +154,8 @@ def t_off():
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
-            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh and 1Eh-20h fail with AX = 1' % tag,
-                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220)),
+            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh and 1Eh-21h fail with AX = 1' % tag,
+                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220, 0x21, 0x121, 0x221, 0x321)),
                   out[-400:])
             sh = Shell(k)
             o = sh.run('mtlaunch mtline.com x.txt')
@@ -208,9 +208,9 @@ def t_on():
           and got.get(0x1C, (1,))[0] == 0, out[-400:])
     check('F0h AL=13h with BL = 8 (no such task) and BL = 7 (a free one): CF, AX = 1',
           bad(got.get(0x113, (0, 0))) and bad(got.get(0x213, (0, 0))), out[-400:])
-    check('F0h AL=1Eh (MT_TOPEN, T2), 1Fh (MT_TROWS) and 20h (MT_TKEY), T1: task 0 refused (AX = 5); 7 (a free one) and 8 '
-          '(none such): AX = 1', all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x1E, 0x1F, 0x20))
-          and all(bad(got.get(a, (0, 0))) for a in (0x11E, 0x21E, 0x31E, 0x11F, 0x21F, 0x120, 0x220)),
+    check('F0h AL=1Eh (MT_TOPEN, T2), 1Fh (MT_TROWS), 20h (MT_TKEY), T1, and 21h (MT_TMOUSE, T4): task 0 refused (AX = 5); '
+          '7 (a free one) and 8 (none such): AX = 1', all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x1E, 0x1F, 0x20, 0x21))
+          and all(bad(got.get(a, (0, 0))) for a in (0x11E, 0x21E, 0x31E, 0x11F, 0x21F, 0x120, 0x220, 0x121, 0x221, 0x321)),
           out[-500:])
     check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, AH = 0 the caller, nothing written',
           got.get(0x12, (1,))[:2] == (0, 0x0000)
@@ -4334,6 +4334,227 @@ def t_tgfx():
           'there: still in front' % (w1, w0, n3, t1, t3, f1), w1 == 1 and gone and n3 == n and t3 == t1 and w3 == 0
           and f1 == n3 and tstate(k)[1] == n3 and A.disk_file(k, 'Y.TXT') == b'ok', (w1, gone, n3, t1, t3, w3, f1, tstate(k)))
 
+def t_tclip():
+    print('== terminal windows (T4): select, copy and paste, the menu, and the mouse for the program in it')
+    import ctypes
+    sel = os.path.join(A.OUT, 'SEL.TXT'); open(sel, 'wb').write(b'alpha beta   \r\ngamma\r\ndelta epsilon\r\n')
+    big = os.path.join(A.OUT, 'BIG.TXT')
+    open(big, 'wb').write(b''.join(b'line %03d of a long file\r\n' % i for i in range(300)))
+    k = boot('mt_t4.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTK, MTM, sel, big, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    TS = A.run_syms('apps/TERM.ASM')
+    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+    tv = lambda n: k.pc.u16(k.useg, base() + TS[n])
+    tb = lambda n: k.pc.rd(k.useg, base() + TS[n], 1)[0]
+    wv = lambda o: k.pc.u16(k.useg, base() + TS['win'] + o)             # (W_COL 0, W_Y 2, W_W 4, W_H 6)
+    scr = lambda: '\n'.join(l for y, l in k.ocr())
+    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+    tx = lambda n: k.pc.u16(seg, task_ent(k, n) + TE_TX)
+    m33 = lambda n, f: k.pc.u16(tx(n), equ('TX_M33') + Y[f] - Y['m33_st'])  # (task n's own mouse state)
+    fnt = open(TERMFNT, 'rb').read()
+    g = lambda ch: fnt[ch * 16:ch * 16 + 16]
+    inv = lambda b: bytes(255 - x for x in b)
+    def typ2(text, t=1.0):
+        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+    def cxy(r, c):                      # the middle of the task's screen cell (r, c) in the window
+        return (tv('x0') + c - tv('left')) * 8 + 4, tv('y0') + (r - tv('top')) * 16 + 8
+    def drawn(r, c):
+        d = (tv('y0') + (r - tv('top')) * 16) * 20 + tv('x0') + c - tv('left')
+        return bytes(k.pc.rd(0xB800, d + (y & 3) * 0x2000 + (y >> 2) * 80, 1)[0] for y in range(16))
+    def mv(x, y):                       # (A.point without its settle: a task may be busy)
+        dx, dy = x - k.u16('mx'), y - k.u16('my')
+        while dx or dy:
+            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+            dx -= sx; dy -= sy
+    def btn(b, t=0.3):                  # buttons b down a moment (the UI looks at them as it can), then up
+        k.pc.mouse_move(0, 0, b); k.pc.run_for(0.2); k.pc.mouse_move(0, 0, 0); k.pc.run_for(t)
+    def page():                         # the clipboard's EMS page (KEMS's tables)
+        h = k.u16('clip_h')
+        if not h: return None
+        return k.pc.ems_page(k.pc.rd(0x60, Y['ems_ltab'] + k.pc.rd(0x60, Y['ems_h'] + h * 4, 1)[0], 1)[0])
+    def clip():
+        pg = page()
+        return b'' if pg is None else k.pc.ems_read(pg, 0, k.u16('clip_len'))
+    def setclip(data):                  # (written there, as UI_CLIP AL=0 would: a copy gave it its page)
+        ctypes.memmove(ctypes.addressof(k.pc.ems_store) + page() * 0x4000, data, len(data))
+        k.wr('clip_len', struct.pack('<H', len(data)))
+    def to0():
+        for _ in range(8):
+            if tstate(k)[1] == 0: break
+            hot(k); k.run_for(1.0)
+    def row(text):
+        return next((i for i, l in enumerate(slot_text(k, n).split('\n')) if l.startswith(text)), None)
+    au = Audit(k)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n = tnum('LCMD.COM')
+    typ2('type sel.txt', 2.0)
+    r = row('alpha beta')
+    # a drag from "beta" to "delta"'s last letter: lines selected, its cells drawn inverse
+    A.drag(k, *(cxy(r, 6) + cxy(r + 2, 4))); k.run_for(0.5)
+    mv(4, 4); k.run_for(0.3)                         # (the pointer off the cells)
+    sa, sb = tv('sa'), tv('sb')
+    hl = [drawn(r, 6) == inv(g(ord('b'))), drawn(r + 1, 0) == inv(g(ord('g'))), drawn(r + 2, 4) == inv(g(ord('a'))),
+          drawn(r, 5) == g(32), drawn(r + 2, 5) == g(32), drawn(r, 4) == g(ord('a'))]
+    check('LCMD in a window (task %d), TYPE of three lines; a drag from "beta" (row %s, column 6) to "delta"\'s last letter: '
+          'selected by lines (%d to %d), its cells drawn inverse, those around it not (%s)' % (n, r, sa, sb, hl),
+          r is not None and sa == r * 80 + 6 and sb == (r + 2) * 80 + 5 and all(hl), (r, sa, sb, hl))
+    s0 = slot_text(k, n)
+    k.key(A.CODE['C'], settle=False); k.run_for(0.5)
+    check('CODE-C: the clipboard holds them (%r: each row\'s trailing blanks dropped, LF between rows); the program not given '
+          'the key (its screen as it was), the selection still up' % clip(), clip() == b'beta\ngamma\ndelta'
+          and slot_text(k, n) == s0 and tv('sb') > tv('sa'), (clip(), tv('sa'), tv('sb')))
+    A.click(k, *cxy(r + 4, 10)); k.run_for(0.5)
+    mv(4, 4); k.run_for(0.3)
+    check('a click: the selection gone (%d, %d), its cells drawn as they are' % (tv('sa'), tv('sb')),
+          tv('sa') == tv('sb') == 0 and drawn(r, 6) == g(ord('b')) and drawn(r + 2, 4) == g(ord('a')), (tv('sa'), tv('sb')))
+    typ2('mtkey r k1.txt', 1.0)
+    k.key(A.CODE['C'], settle=False); waitfile(k, 'K1.TXT', 3.0)
+    check('... CODE-C with nothing selected: the program\'s (MTKEY R reads %r)' % A.disk_file(k, 'K1.TXT'),
+          A.disk_file(k, 'K1.TXT') == b'2E00', A.disk_file(k, 'K1.TXT'))
+    # the menu: Copy with a selection
+    k.run_for(1.0)
+    r = row('gamma')
+    A.drag(k, *(cxy(r, 0) + cxy(r, 4))); k.run_for(0.3)
+    mv(*cxy(r, 2)); btn(2, 0.5)
+    o = scr()
+    k.key(ktest.ENTER, settle=False); k.run_for(0.5)
+    check('"gamma" selected, a right click: the menu (Copy, Paste, Full screen); Return on Copy, the first: the clipboard '
+          '%r' % clip(), 'Copy           CODE-C' in o and 'Paste          CODE-V' in o and 'Full screen    CODE-Tab' in o
+          and clip() == b'gamma', (o[-600:], clip()))
+    # nothing selected: Paste, Full screen; while it is up, no tick for TERM (the help/form gate: UI_MENU's help_w)
+    show_at, cnt, prev = k.useg * 16 + base() + TS['show'], [0], k.pc.watch
+    def w(a):
+        if prev: prev(a)
+        if a == show_at: cnt[0] += 1
+    k.key('type big.txt', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(0.3)
+    mv(*cxy(tv('top') + 2, 10)); btn(2, 0.2)
+    for _ in range(30):                             # (the menu up: the task busy, the UI slower)
+        if 'Full screen' in scr(): break
+        k.run_for(0.1)
+    k.pc.watch = w
+    k.run_for(1.5)
+    up, o = cnt[0], scr()
+    k.key(ktest.ESC, settle=False); k.run_for(1.5)
+    k.pc.watch = prev
+    for _ in range(20):
+        if 'line 299' in scr(): break
+        k.run_for(1.0)
+    check('TYPE of a long file, a right click with nothing selected: the menu (Paste, Full screen; no Copy); while it is up '
+          '1.5 s, TERM not given a tick (its show entered %d times: the gate), %d times after ESC, the output all drawn' % (up, cnt[0]),
+          'Paste          CODE-V' in o and 'Full screen    CODE-Tab' in o and 'Copy ' not in o and up == 0 and cnt[0] > 0
+          and 'line 299' in scr(), (up, cnt[0], o[-500:]))
+    # paste: 12 command lines (216 bytes: past the ring's 32 and TERM's 16), a line typed meanwhile after them
+    typ2('cls', 1.0)
+    setclip(b''.join(b'echo p%02d >> p.txt\n' % i for i in range(1, 13)))
+    k.key(A.CODE['V'], settle=False); k.run_for(0.1)
+    ps = tv('pseg')
+    typ2('echo zz >>p.txt', 0.1)                   # (15 keys: TERM keeps 16)
+    for _ in range(40):
+        k.run_for(0.5)
+        if tv('pseg') == 0 and b'zz' in (A.disk_file(k, 'P.TXT') or b''): break
+    got = [l.strip() for l in (A.disk_file(k, 'P.TXT') or b'').split(b'\r\n') if l.strip()]
+    check('CODE-V with them on the clipboard: typed to it in its own block (%04Xh, given back after: %04Xh), all 12, in order, '
+          'each answered (P.TXT %s), the line typed meanwhile after them' % (ps, tv('pseg'), got[:3]), ps != 0
+          and tv('pseg') == 0 and got == [b'p%02d' % i for i in range(1, 13)] + [b'zz'], (ps, tv('pseg'), got))
+    # the menu's Full screen; CODE-V with the clipboard empty: the program's
+    mv(*cxy(tv('top') + 2, 10)); btn(2, 0.5)
+    k.key(ktest.DOWN, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    f1 = tstate(k)[1]
+    to0()
+    setclip(b'')
+    typ2('mtkey r k2.txt', 1.0)
+    k.key(A.CODE['V'], settle=False); waitfile(k, 'K2.TXT', 3.0)
+    check('a right click, Down, Return: Full screen (front %d); CODE-V with the clipboard empty: the program\'s (MTKEY R: %r)'
+          % (f1, A.disk_file(k, 'K2.TXT')), f1 == n and A.disk_file(k, 'K2.TXT') == b'2F00', (f1, A.disk_file(k, 'K2.TXT')))
+    # resized by its corner, moved by its title, as a Write window (the core's): neither a selection nor the program's
+    k.run_for(1.0)
+    s0, w0, r0, c0 = slot_text(k, n), [wv(o) for o in (0, 2, 4, 6)], tv('rows'), tv('cols')
+    cx, cy = (wv(0) + wv(4) - 1) * 8 + 4, wv(2) + wv(6) - 4
+    A.drag(k, cx, cy, cx - 16, cy - 32); k.run_for(0.5)
+    r1, c1 = tv('rows'), tv('cols')
+    tx0, ty0 = (wv(0) + 20) * 8, wv(2) + 6
+    A.drag(k, tx0, ty0, tx0 + 16, ty0 + 16); k.run_for(0.5)
+    w1 = [wv(o) for o in (0, 2, 4, 6)]
+    check('its corner dragged 2 columns left, 32 pixels up: 2 rows and columns fewer (%d, %d: %d, %d); its title strip dragged '
+          '2 columns right and 16 down: moved (%s, %s); no selection made, nothing to the program (its screen as it was)'
+          % (r0, c0, r1, c1, w0, w1), r1 == r0 - 2 and c1 == c0 - 2 and w1 == [w0[0] + 2, w0[1] + 16, w0[2] - 2, w0[3] - 32]
+          and tv('sa') == tv('sb') == 0 and slot_text(k, n) == s0, (r0, c0, r1, c1, w0, w1, tv('sa'), tv('sb')))
+    # the mouse for the program in it: MTM33 P (it reset it, then polls 03h as TM5000G does), a short click given while it waits
+    typ2('mtm33 p m.txt', 1.0)
+    taken, rr, cc = tb('tdl') & 16, tv('top') + 3, 20
+    mv(*cxy(rr, cc)); btn(1, 0.1)
+    waitfile(k, 'M.TXT', 8.0); k.run_for(0.5)
+    want, m = ' '.join('%04X' % v for v in (cc * 8, rr * 8, cc * 8, rr * 8, 1, 1)).encode(), A.disk_file(k, 'M.TXT')
+    check('MTM33 P in the window (it reset the mouse: MT_TROWS\'s 16, %d), a short click on row %d, column %d while it waits: '
+          'its 03h reads it down there, then up (the release held till it had read the press), one press and one release (%r)'
+          % (taken, rr, cc, m), taken and m == want, (taken, m, want))
+    k.run_for(1.0)
+    mp = k.pc.u16(tx(n), equ('TX_MPSP'))
+    A.drag(k, *(cxy(rr, 2) + cxy(rr, 6))); k.run_for(0.3)
+    check('... it ended: the mouse no more its program\'s (TX_MPSP %04Xh, MT_TROWS\'s 16 %d), a drag selects again (%d, %d)'
+          % (mp, tb('tdl') & 16, tv('sa'), tv('sb')), mp == 0 and not tb('tdl') & 16 and tv('sb') > tv('sa'), (mp, tv('sa'), tv('sb')))
+    # MTM33 F (reset, never reading 03h): a click's release held; Shift-drag selects over it; CODE-Tab: no button down in front
+    typ2('mtm33 f f.txt', 1.5)
+    mv(*cxy(rr, cc)); btn(1, 0.3)
+    rel, np0 = k.pc.rd(tx(n), equ('TX_MREL'), 1)[0], m33(n, 'm33_np')
+    k.pc.wr(0x40, 0x17, bytes([k.pc.rd(0x40, 0x17, 1)[0] | 2]))
+    A.drag(k, *(cxy(rr, 2) + cxy(rr + 1, 6))); k.run_for(0.3)
+    k.pc.wr(0x40, 0x17, bytes([k.pc.rd(0x40, 0x17, 1)[0] & 0xFC]))
+    ss, np1 = (tv('sa'), tv('sb')), m33(n, 'm33_np')
+    hot(k); k.run_for(1.0)
+    fr, live, rel2 = tstate(k)[1], k.u16('m33_btn') & 3, k.pc.rd(tx(n), equ('TX_MREL'), 1)[0]
+    check('MTM33 F (it reset the mouse, never reads 03h): a click, its press given (%d), the release held (TX_MREL %02Xh); '
+          'Shift held, a drag: a selection (%s), not the program\'s (its presses still %d); CODE-Tab (front %d): the release '
+          'given first, no button down in the driver (%d, TX_MREL %02Xh)' % (np0, rel, ss, np1, fr, live, rel2),
+          np0 == 1 and rel & 0xC0 == 0xC0 and ss[1] > ss[0] and np1 == 1 and fr == n and live == 0 and rel2 == 0,
+          (np0, rel, ss, np1, fr, live, rel2))
+    k.key('q', settle=False); k.run_for(1.0)
+    to0()
+    # MT_TMOUSE from a task: refused
+    typ2('mtprobe > pr.txt', 4.0)
+    l5 = [l for l in (A.disk_file(k, 'PR.TXT') or b'').decode('latin-1').split('\n') if l.startswith('F021')]
+    check('MT_TMOUSE (F0h 21h) called by a task (MTPROBE in the window), for task 0, 7, 8 and itself: refused (AX = 1: the '
+          'UI\'s call only)', len(l5) == 4 and all('CF=1 AX=0001' in l for l in l5), l5)
+    check('... every switch at a safe point (the audit)', not au.bad(), au.bad()[:3])
+    # TM5000G in a window: its mouse works there (Return on it: a text program)
+    if not os.path.exists(A.TM5000G):
+        print('(no TM5000G.EXE: skipped)'); return
+    k = boot('mt_t4g.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, 'TM5000G.EXE=' + A.TM5000G, mouse=True,
+             chip=A.sim7210.NEC7210(A.sim7210.bus()))
+    seg = mt_seg(k)
+    k.select('TM5000G.EXE'); k.key(ktest.ENTER, settle=False)
+    n = 7
+    for _ in range(60):
+        k.run_for(1.0)
+        n = tnum('TM5000G.EXE')
+        if n != 7 and 'Mouse support enabled.' in slot_text(k, n): break
+    t1 = slot_text(k, n) if n != 7 else ''
+    k.key(ktest.ENTER, settle=False)
+    for _ in range(20):
+        k.run_for(0.5)
+        if 'Mouse: ON' in slot_text(k, n): break
+    t2 = slot_text(k, n)
+    mv(*cxy(5, 10)); btn(1, 2.0)
+    t3 = slot_text(k, n)
+    k.key(ktest.ESC, settle=False); k.run_for(2.0)
+    k.key('1', settle=False); k.run_for(2.0)
+    t4 = slot_text(k, n)
+    k.key(ktest.ESC, settle=False); k.run_for(2.0)
+    mv(*cxy(5, 10)); btn(1, 2.0)
+    t5 = slot_text(k, n)
+    check('TM5000G.EXE: Return on it, in a terminal window (task %d, front %d): "Mouse support enabled.", "Mouse: ON"; a click '
+          'on its row 5 in the window: "Module Configuration"; ESC, its key "1" and ESC (its pointer hidden twice): a click '
+          'there again still its own' % (n, tstate(k)[1]), n != 7 and mb('mw_n') == 1 and 'Mouse support enabled.' in t1
+          and 'Mouse: ON' in t2 and 'Module Configuration' in t3 and 'Module Configuration' in t4 and 'Module Configuration' in t5,
+          (n, t2[:300], t3[:300], t5[:300]))
+    k.key(ktest.ESC, settle=False); k.run_for(1.0); k.key('0', settle=False)
+    for _ in range(20):
+        k.run_for(0.5)
+        if tnum('TM5000G.EXE') == 7: break
+    check('... "0": it ends, its window closes', tnum('TM5000G.EXE') == 7 and mb('mw_n') == 0, (tstate(k), mb('mw_n')))
+
 MTTM = os.path.join(HERE, 'MTTERM.COM')
 
 def t_tcore():
@@ -4635,7 +4856,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
