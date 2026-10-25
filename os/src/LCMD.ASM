@@ -376,7 +376,10 @@ crit:   sti
         call    bputs
         pop     ax
         mov     al, ah
-        cmp     byte [child], 0         ; Abort or Fail in our own work:
+        cmp     al, 1
+        je      .an
+        mov     byte [crit_seen], 1     ; (Abort or Fail: why EXEC fails, said)
+.an:    cmp     byte [child], 0         ; Abort or Fail in our own work:
         jne     .x                      ;  Fail, and the rest of this
         cmp     al, 1                   ;  command fails without asking
         je      .x                      ;  again (one question, not one
@@ -912,6 +915,7 @@ run_external:
         mov     bx, epb
         mov     byte [child], 1
         mov     byte [crit_q], 0        ; (a program is asked each time)
+        mov     byte [crit_seen], 0
         mov     [stack_seg], ss
         mov     [main_sp_run], sp
         mov     ax, 4B00h
@@ -942,7 +946,24 @@ run_external:
         mov     byte [failed], 1
 .x:     ret
 .fail:  mov     byte [errlvl], 1
-        mov     si, e_nomem
+        cmp     byte [crit_seen], 0     ; a disk error while it loaded,
+        je      .fe0                    ;  answered Fail or Abort here: said
+        mov     byte [failed], 1        ;  already (its code 19-31, or 11
+        ret                             ;  for a short read)
+.fe0:   cmp     ax, 19                  ; else (MT's Fail behind, say) INT
+        jb      .fm0                    ;  24h's message for its code
+        cmp     ax, 31
+        ja      .fm0
+        mov     cx, ax
+        sub     cx, 19
+        mov     si, ce0
+        jcxz    .fm
+.fs:    lodsb
+        or      al, al
+        jnz     .fs
+        loop    .fs
+        jmp     .fm
+.fm0:   mov     si, e_nomem
         cmp     ax, 8
         je      .fm
         mov     si, e_badcmd
@@ -4697,6 +4718,8 @@ crit_ah     resb 1
 crit_q      resb 1                      ; INT 24h fails (Tab looking; the
                                         ;  saver; a line answered F or A once)
 crit_al     resb 1
+crit_seen   resb 1                      ; crit answered Abort or Fail (since
+                                        ;  this EXEC began)
 ampm        resb 1
 vol_drv     resb 1
 mt_me       resb 1                      ; our task (mt_lst)
