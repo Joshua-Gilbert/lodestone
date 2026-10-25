@@ -942,7 +942,15 @@ run_external:
         mov     byte [failed], 1
 .x:     ret
 .fail:  mov     byte [errlvl], 1
-        mov     si, e_nomem
+        cmp     ax, 19                  ; a disk error (INT 24h's, answered
+        jb      .fm0                    ;  Fail or Abort while it loaded):
+        cmp     ax, 31                  ;  said already, at the prompt
+        jbe     .fd
+        cmp     ax, 83
+        jne     .fm0
+.fd:    mov     byte [failed], 1
+        ret
+.fm0:   mov     si, e_nomem
         cmp     ax, 8
         je      .fm
         mov     si, e_badcmd

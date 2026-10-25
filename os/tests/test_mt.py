@@ -913,14 +913,13 @@ def t_ends():
     st = tstate(k) if not k.crashed else None
     line(k, '')
     v = sh.run('ver')
-    # (EXEC's own entry for the program it reads, which no handle holds, stays taken: the kernel's EXEC doesn't
-    # give it back when it is aborted, with multitasking or without)
+    # (an Abort while EXEC loads fails the EXEC: its own entry for the program it reads goes back too)
     d = [b - a for a, b in zip(used0, sft_used(k))]
     check('a read error while the stub EXECs its program, answered Abort: the prompt on the screen in front, shadowed in '
-          'MTLAUNCH\'s pages too; the stub ends itself (its own parent) and its '
-          'task with it; MTLAUNCH, then the prompt, go on; memory as before, the handles the stub inherited closed',
+          'MTLAUNCH\'s pages too; the stub\'s EXEC fails and it ends its '
+          'task; MTLAUNCH, then the prompt, go on; memory as before, the handles the stub inherited closed',
           'Abort' in scr and sync and not k.crashed and st and st[0] == [(0, 1, 'Executive')] and 'Lodestone version' in v
-          and merged(mcbs(k)) == a0 and sorted(d) == [0] * 23 + [1] and used0[d.index(1)] == 0 and ems_used(k) == e0,
+          and merged(mcbs(k)) == a0 and d == [0] * 24 and ems_used(k) == e0,
           (scr[-300:], st, v, d, ems_used(k), e0))
     k = boot('mt_tsr.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TSR.COM'))
     sh = Shell(k)

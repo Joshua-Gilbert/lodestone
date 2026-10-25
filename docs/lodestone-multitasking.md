@@ -152,7 +152,7 @@ M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the 
   The slice measured 32–42 bytes for every console read; a TX has room for 256, and `mt_kwait` doesn't switch if it would need more.
 - **A task's region** is carved from the top of the highest free block that has room (the arena walked from its first MCB, free neighbours merged, a chain gone bad refused), downward from MT's block. It is a block of its own, owner 8, "T1".."T7", holding:
   - its TX (42 paragraphs);
-  - its stub, a PSP and a few instructions at 100h: EXEC the program, then F0h AL=11h (`MT_END`). `make_psp` (called through `KCALL`) gives it the spawner's handles. The stub is its own parent: its PSP:0Ah points at its `MT_END`, and its PSP:2Eh/30h at its own EXEC call's frame, where INT 21h puts it on the stub's stack (as EXEC itself sets it once the program is loaded). So if it is ended itself (Abort on a disk error while its EXEC reads the program), `terminate` lands on `MT_END`, not on the spawner, which may have no frame to go back to, or may have ended;
+  - its stub, a PSP and a few instructions at 100h: EXEC the program, then F0h AL=11h (`MT_END`). `make_psp` (called through `KCALL`) gives it the spawner's handles. The stub is its own parent: its PSP:0Ah points at its `MT_END`, and its PSP:2Eh/30h at its own EXEC call's frame, where INT 21h puts it on the stub's stack (as EXEC itself sets it once the program is loaded). So if it is ended itself, `terminate` lands on `MT_END` (an Abort on a disk error while its EXEC reads the program ended it once; the kernel now fails that EXEC instead), not on the spawner, which may have no frame to go back to, or may have ended;
   - a copy of the spawner's environment (up to 1 KB), because the spawner may end first;
   - the task's own MCB chain, its `first_mcb`, ended by a 'Z' in the region.
 
@@ -188,7 +188,7 @@ What they check:
 - **Endings:**
   - a program that isn't there: the task starts and ends, and everything is as before;
   - the spawner ends first: its task gets its line later, at another key wait;
-  - a read error while the stub EXECs its program, answered Abort: the stub ends itself, its task with it, and MTLAUNCH and the prompt go on. EXEC's own entry for the file it reads stays taken: the kernel's EXEC doesn't give it back when it is aborted, with multitasking on or off. That is a kernel bug of its own, outside multitasking;
+  - a read error while the stub EXECs its program, answered Abort: the stub's EXEC fails (the kernel fails an EXEC that is aborted while it loads, with multitasking on or off, and gives back what it had taken, EXEC's own entry for the file included), the stub ends its task, and MTLAUNCH and the prompt go on;
   - TSR.COM in a task: its region stays as "TR", and the next task's region goes below it.
 - **Switch off:** MTLAUNCH reports error 1.
 - **The patches:**
