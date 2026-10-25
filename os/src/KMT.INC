@@ -136,7 +136,17 @@ TX_WGFX     equ TX_CHG + 2              ; 1: a terminal window's task, brought
                                         ;  at the next switch (a text mode,
                                         ;  mt_wback; mt_scrsv's 0)
 TX_WPSP     equ TX_WGFX + 1             ; the program that asked (mt_gtext)
-TX0_PARAS   equ (TX_WPSP + 2 + 15) / 16 ; (task 0's TX ends here)
+TX_MREL     equ TX_WPSP + 2             ; T4, its window's clicks (MT_TMOUSE):
+                                        ;  80h a press it hasn't read yet (AX=3
+                                        ;  behind), 40h then a release held
+                                        ;  till it has (the buttons then in bits
+                                        ;  0-1, where: TX_MRX, TX_MRY)
+TX_MPSP     equ TX_MREL + 1             ; the program that took the mouse (its
+                                        ;  reset, AX=0 or 21h), 0 none: MT_TROWS
+                                        ;  says so (a window's clicks its own)
+TX_MRX      equ TX_MPSP + 2
+TX_MRY      equ TX_MRX + 2
+TX0_PARAS   equ (TX_MRY + 2 + 15) / 16  ; (task 0's TX ends here)
 TX_GSN      equ TX0_PARAS * 16          ; the vector table at its spawn (a
                                         ;  task's: the ones left pointing into
                                         ;  its region at its end put back)
@@ -254,7 +264,8 @@ mt_33md     db      0                   ; (mt_i33: 40:49h as it was,
 mt_33dn     dw      0                   ;  m33_dn and m33_dmode,
 mt_33eb     dw      0                   ;  m33_ev and m33_busy,
 mt_33pk     db      0                   ;  the mouse's IRQ bit masked (0Ch,
-mt_33pm     db      0                   ;  14h: 0 else) and the mask before)
+mt_33pm     db      0                   ;  14h: 0 else) and the mask before,
+mt_33fn     dw      0                   ;  the function (T4: AX=3's read)
 mt_33sb     db      0                   ; (mt_scrto: m33_busy as it was)
 mt_33ot     db      0                   ; (mt_m33on: another driver answered)
 ; each task's own vectors (M5a), swapped at every switch: DOS's (22h-24h
@@ -1764,6 +1775,8 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_trows
         cmp     al, MT_TKEY
         je      mt_tkey
+        cmp     al, MT_TMOUSE
+        je      mt_tmouse
         cmp     al, 1
         je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
@@ -1892,7 +1905,8 @@ mt_topen:
 ; in the middle) -> AX = TX_CHG, BX = the cursor there, CL = columns, CH =
 ; the mode, DL = VF_DIRECT, 2 if nothing copied (not a text mode of 80
 ; columns or fewer, or past its 32 KB), 4 its pages gone (2 too), 8 in front
-; (its pages not what is shown), DH = its state (TS_FROZEN for one ready
+; (its pages not what is shown), 16 its program took the mouse (TX_MPSP:
+; T4), DH = its state (TS_FROZEN for one ready
 ; but frozen behind, as MT_LIST says)
 mt_trows:
         call    mt_targ
@@ -1971,8 +1985,11 @@ mt_trows:
         call    mt_frz
         jz      .st
         mov     dh, TS_FROZEN
-.st:    mov     [bp+F_DX], dx
-        mov     es, [cs:bx+TE_TX]
+.st:    mov     es, [cs:bx+TE_TX]
+        cmp     word [es:TX_MPSP], 0    ; (T4: its program took the mouse)
+        je      .mp
+        or      dl, 16
+.mp:    mov     [bp+F_DX], dx
         mov     ax, [es:TX_CHG]
         mov     [bp+F_AX], ax
         mov     cl, [VS_COLS]
@@ -2017,6 +2034,104 @@ mt_tkey:
 .full:  popf
         mov     ax, 8
         jmp     mt_fail
+
+; MT_TMOUSE (T4): a click in task BL's window, as TERM sees it: buttons BH
+; at CX, DX (INT 33h's units), to its own state (TX_M33) as a packet would
+; leave it (mt_mset), for its AX=3 behind.  A release before it has read
+; the press is held till it has (mt_33out; mt_m33ld, to the front), so a
+; short click isn't lost between its turns.  CF: AX = 1 (no such task;
+; not the Executive's call), 5 (task 0, parked)
+mt_tmouse:
+        cmp     byte [cs:mt_cur], 0     ; (the UI's call, not a task's)
+        jne     mt_bad
+        call    mt_targ
+        jc      mt_bad
+        call    mt_t5
+        jc      mt_park.r5
+        mov     es, [cs:bx+TE_TX]
+        pushf
+        cli
+        call    mt_mheld                ; (one held: first)
+        mov     al, [bp+F_BX+1]
+        and     al, 3
+        mov     cx, [bp+F_CX]
+        mov     dx, [bp+F_DX]
+        mov     ah, [es:TX_M33 + m33_btn - m33_st]
+        not     ah
+        or      ah, al                  ; (not 0FFh: one let go)
+        cmp     ah, 0FFh
+        je      .s
+        test    byte [es:TX_MREL], 80h  ; and its press not read yet: held
+        jz      .s
+        or      al, 40h
+        or      [es:TX_MREL], al
+        mov     [es:TX_MRX], cx
+        mov     [es:TX_MRY], dx
+        jmp     short .ok
+.s:     call    mt_mset
+.ok:    popf
+        jmp     KSEG:ok
+
+; a release held (TX_MREL 40h) to the task's state now, its press taken as
+; read (ES = its TX, interrupts off).  All kept
+mt_mheld:
+        test    byte [es:TX_MREL], 40h
+        jz      .x
+        push    ax
+        push    cx
+        push    dx
+        mov     al, [es:TX_MREL]
+        and     al, 3
+        mov     cx, [es:TX_MRX]
+        mov     dx, [es:TX_MRY]
+        mov     byte [es:TX_MREL], 0
+        call    mt_mset
+        pop     dx
+        pop     cx
+        pop     ax
+.x:     ret
+
+; the task's INT 33h state (ES = its TX) as the driver's packet leaves it
+; (m33_pkt): buttons AL at CX, DX, in its ranges; each button's press or
+; release counted, and where (05h, 06h); a press marked not read yet
+; (TX_MREL 80h).  All kept
+%define M3(f) TX_M33 + f - m33_st
+mt_mset:
+        pusha
+        cmp     cx, [es:M3(m33_xmin)]
+        jge     .x1
+        mov     cx, [es:M3(m33_xmin)]
+.x1:    cmp     cx, [es:M3(m33_xmax)]
+        jle     .x2
+        mov     cx, [es:M3(m33_xmax)]
+.x2:    cmp     dx, [es:M3(m33_ymin)]
+        jge     .y1
+        mov     dx, [es:M3(m33_ymin)]
+.y1:    cmp     dx, [es:M3(m33_ymax)]
+        jle     .y2
+        mov     dx, [es:M3(m33_ymax)]
+.y2:    mov     [es:M3(m33_x)], cx
+        mov     [es:M3(m33_y)], dx
+        mov     ah, [es:M3(m33_btn)]
+        mov     [es:M3(m33_btn)], al
+        xor     ah, al                  ; AH = the buttons that changed
+        xor     bx, bx
+.b:     test    ah, 1
+        jz      .nb
+        mov     si, M3(m33_nr)
+        test    al, 1
+        jz      .r
+        mov     si, M3(m33_np)
+        or      byte [es:TX_MREL], 80h
+.r:     inc     word [es:si + bx]
+        mov     [es:si + bx + 4], cx
+        mov     [es:si + bx + 8], dx
+.nb:    shr     ax, 1                   ; next button (AL and AH both)
+        add     bx, 2
+        cmp     bx, 4
+        jb      .b
+        popa
+        ret
 
 ; the running task's keys from MT_TKEY (its TX's ring; task 0 has none),
 ; but none while the kernel's INT 24h prompt, a call MT passed on to the
@@ -3245,6 +3360,8 @@ mt_spawn:
         mov     word [es:TX_KLEN], 0
         mov     word [es:TX_KN], 0      ; (no keys typed to it: T1)
         mov     byte [es:TX_WGFX], 0    ; (not in front for graphics: T3)
+        mov     byte [es:TX_MREL], 0    ; (no click held, nor the mouse taken:
+        mov     word [es:TX_MPSP], 0    ;  T4)
         mov     byte [es:TX_FPV], 0     ; (its coprocessor: FNINIT's, first)
         call    mt_m33new               ; (its INT 33h state)
         call    mt_33hk
@@ -4177,7 +4294,12 @@ mt_i33: cli
         push    dx
         push    KSEG
         pop     ds
-        mov     ax, [ui_seg]            ; (the UI's driver where the UI is
+        or      ax, ax                  ; (T4: a reset, a program taking the
+        jz      .tk                     ;  mouse: its window's clicks its own)
+        cmp     ax, 21h
+        jne     .go
+.tk:    call    mt_mtake
+.go:    mov     ax, [ui_seg]            ; (the UI's driver where the UI is
         mov     [cs:mt_old33 + 2], ax   ;  now: its block can move)
         cmp     byte [cs:mt_in33], 0
         jne     .pas
@@ -4235,6 +4357,7 @@ mt_i33: cli
 ; the segment registers changed
 mt_33in:
         mov     dx, ax
+        mov     [cs:mt_33fn], ax
         push    KSEG
         pop     ds
         mov     es, [ui_seg]
@@ -4317,7 +4440,14 @@ mt_33out:
         pop     ds
 .cp:    mov     al, [cs:mt_cur]
         call    mt_m33sv
-        mov     al, [cs:mt_front]
+        cmp     word [cs:mt_33fn], 3    ; (T4: its window's press read: a
+        jne     .fr                     ;  release held, now; BX: its entry)
+        push    es
+        mov     es, [cs:bx+TE_TX]
+        and     byte [es:TX_MREL], 7Fh
+        call    mt_mheld
+        pop     es
+.fr:    mov     al, [cs:mt_front]
         call    mt_ent
         push    ds
         mov     ds, [cs:bx+TE_TX]
@@ -4484,6 +4614,8 @@ mt_m33ld:
         mov     dx, TX_M33
         pushf
         cli
+        call    mt_mheld                ; (T4: a click's release held: no
+        mov     byte [es:TX_MREL], 0    ;  button left down in front)
         mov     bl, 0FFh
         cmp     byte [cs:mt_33ot], 0
         jne     .md
@@ -4617,10 +4749,49 @@ mt_pgend:
         pop     bx
         jmp     short .a
 .k:     call    mt_gtext
-.a:     pop     ax
+.a:     call    mt_mgone
+        pop     ax
         mov     ax, [ui_seg]
         or      ax, ax
         jmp     KSEG:ui_progend + 5
+
+; T4: the program at BX ends: if it took the mouse (TX_MPSP), its task's
+; window clicks are a selection's again, and none is held.  All kept
+mt_mgone:
+        push    ax
+        push    bx
+        push    es
+        push    bx
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        pop     ax
+        mov     es, [cs:bx+TE_TX]
+        cmp     [es:TX_MPSP], ax
+        jne     .x
+        mov     word [es:TX_MPSP], 0
+        mov     byte [es:TX_MREL], 0
+.x:     pop     es
+        pop     bx
+        pop     ax
+        ret
+
+; T4: the running task's program takes the mouse (its own reset: not
+; MT's), so its window's clicks go to it (TX_MPSP).  All kept (DS = KSEG)
+mt_mtake:
+        cmp     byte [cs:mt_in33], 0
+        jne     .x
+        push    ax
+        push    bx
+        push    es
+        mov     al, [cs:mt_cur]
+        call    mt_ent
+        mov     es, [cs:bx+TE_TX]
+        mov     ax, [cur_psp]
+        mov     [es:TX_MPSP], ax
+        pop     es
+        pop     bx
+        pop     ax
+.x:     ret
 
 ; T3: the program at BX, ending in front, is the one that asked for
 ; graphics (TX_WPSP) and leaves its task in them (TX_WGFX 1): a text mode
