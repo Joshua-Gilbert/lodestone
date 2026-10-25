@@ -24,6 +24,13 @@
 ;      AX=2 calls in the word before that
 ;   J  stays resident as a hook on INT 33h that jumps on (JMP FAR) to the
 ;      one there before
+;   P  reset, the pointer on, 36 ticks (a click given meanwhile, or later,
+;      while it polls), then polls 03h without a pause until the left
+;      button is down, then until it is up (T4; TM5000G polls 03h too, less
+;      hard): FILE gets "x y x y p r", where it was down,
+;      where up, and the left button's presses and releases (05h, 06h)
+;   R  as P, but polls 06h (the left button's releases) until one comes:
+;      FILE gets "n x y", how many and where the last was
 ; nasm -f bin -o MTM33.COM MTM33.ASM
 cpu 286
 org 100h
@@ -52,6 +59,10 @@ org 100h
         je      .d
         cmp     byte [mode], 'J'
         je      .j
+        cmp     byte [mode], 'P'
+        je      .pp
+        cmp     byte [mode], 'R'
+        je      .pp
         cmp     byte [mode], 'G'
         jne     .r0
         mov     ax, 0040h               ; G: mode 40h, a while, then the reset
@@ -124,6 +135,63 @@ org 100h
         pop     es
         mov     word [cnt], 0
         jmp     .k
+.pp:    xor     ax, ax                  ; P: reset, on, a while, then polls
+        int     33h
+        mov     ax, 1
+        int     33h
+        call    w18
+        call    w18
+        cmp     byte [mode], 'R'
+        je      .r1
+        mov     di, pv
+.p1:    mov     ax, 3
+        int     33h
+        test    bl, 1
+        jz      .p1
+        xchg    ax, cx
+        stosw
+        xchg    ax, dx
+        stosw
+.p2:    mov     ax, 3
+        int     33h
+        test    bl, 1
+        jnz     .p2
+        xchg    ax, cx
+        stosw
+        xchg    ax, dx
+        stosw
+        mov     ax, 5
+        xor     bx, bx
+        int     33h
+        xchg    ax, bx
+        stosw
+        mov     ax, 6
+        xor     bx, bx
+        int     33h
+        xchg    ax, bx
+        stosw
+        mov     si, pv
+        mov     di, out_
+        mov     bp, 6
+.pw:    lodsw
+        call    hex4
+        mov     al, ' '
+        stosb
+        dec     bp
+        jnz     .pw
+        dec     di
+        call    wout
+        jmp     .end
+.r1:    mov     ax, 6                   ; R: 06h only, till a release
+        xor     bx, bx
+        int     33h
+        or      bx, bx
+        jz      .r1
+        xchg    ax, bx
+        mov     bx, cx
+        mov     cx, dx
+        call    rec3
+        jmp     .end
 .t:     mov     ax, 351Ch               ; T: its INT 1Ch handler
         int     21h
         mov     [o1c], bx
@@ -165,7 +233,8 @@ rec3:   push    cx
         stosb
         pop     ax
         call    hex4
-        mov     ah, 3Ch
+; FILE: out_ to DI
+wout:   mov     ah, 3Ch
         xor     cx, cx
         mov     dx, fname
         int     21h
@@ -256,7 +325,8 @@ cnt     dw      0
 t_n     dw      0
 t_k     dw      0
 o1c     dd      0
-out_    times   16 db 0
+pv      times   6 dw 0
+out_    times   32 db 0
 fname   times   80 db 0
         times   256 db 0
 stk_top:

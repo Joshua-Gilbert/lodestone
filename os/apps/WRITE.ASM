@@ -1400,40 +1400,15 @@ rclick: cmp     byte [mode], M_POINT
         call    update                  ; (the cursor there under the menu)
         pop     cx
         pop     bx
-.m:     push    bx                      ; the menu: Cut and Copy with a drag's
-        push    cx                      ;  selection, Paste with something to
-        mov     al, 2                   ;  paste, then the rest
-        call    UI_CLIP
-        mov     dx, cx                  ; DX = what the clipboard holds
-        xor     bx, bx                  ; BX = the item, DI = the menu's
-        xor     di, di
-.i:     cmp     bx, 2 * 2
-        jae     .np
-        call    drag_sel
-        jne     .s
-        jmp     short .t
-.np:    jne     .t
-        or      dx, dx
-        jz      .s
-.t:     mov     ax, [items + bx]
-        mov     [mbuf + di], ax
-        mov     ax, [items_do + bx]
-        mov     [mdo + di], ax
-        add     di, 2
-.s:     add     bx, 2
-        cmp     bx, NITEMS * 2
-        jb      .i
-        xchg    ax, di
-        shr     ax, 1                   ; AL = how many (AH 0: the first lit)
-        pop     cx
-        pop     bx
-        mov     si, mbuf
-        call    UI_MENU
-        jc      .x
-        mov     bx, ax
-        add     bx, bx
-        jmp     [mdo + bx]
+.m:     mov     al, 0                   ; the menu: Cut and Copy with a drag's
+        call    drag_sel                ;  selection, Paste with something to
+        jne     .r                      ;  paste, then the rest
+        mov     al, RM_SEL
+.r:     mov     si, items
+        jmp     rmenu
 .x:     ret
+
+%include "RMENU.INC"
 
 ; the menu's commands: Erase, Move and Duplicate on a drag's selection,
 ; else as their keys (verb first); the others end it first
@@ -2427,8 +2402,9 @@ s_drag1     db 'Selected: CODE-E erases   CODE-M moves   CODE-D duplicates',0
 s_drag2     db 'CODE-Z cuts   CODE-C copies   Right click: menu   ESC cancels',0
 s_clipbig   db 'The clipboard holds 16 KB at most',0
 NITEMS      equ 9                       ; (the menu takes what applies)
-items       dw mic, mio, mip, mi1, mi2, mi3, mi4, mi5, mi6
-items_do    dw k_scut, k_scopy, k_paste, m_erase, m_move, m_dup, m_find, m_subst, m_jump
+items       dw mic, k_scut, RM_SEL, mio, k_scopy, RM_SEL, mip, k_paste, RM_CLIP
+            dw mi1, m_erase, 0, mi2, m_move, 0, mi3, m_dup, 0
+            dw mi4, m_find, 0, mi5, m_subst, 0, mi6, m_jump, 0, 0
 mic         db 'Cut            CODE-Z',0
 mio         db 'Copy           CODE-C',0
 mip         db 'Paste          CODE-V',0
@@ -2546,8 +2522,8 @@ cmd         resb 1
 anchor      resw 1
 press       resw 1                      ; where the left button went down
 dragged     resb 1                      ; 1: it has moved since
-mbuf        resw NITEMS                 ; the right click's menu: its items
-mdo         resw NITEMS                 ;  and what each does
+rm_buf      resw NITEMS                 ; the right click's menu: its items
+rm_do       resw NITEMS                 ;  and what each does (RMENU.INC)
 sel_a       resw 1
 sel_b       resw 1
 fix_a       resw 1

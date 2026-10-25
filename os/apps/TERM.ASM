@@ -64,24 +64,25 @@ start:  mov     di, arg                 ; "task count"
         cmp     ax, EV_TICK             ; (the events first: UI_DISPATCH would
         je      .tick                   ;  take 12h for Ctrl-R)
         cmp     ax, EV_CLICK
-        je      .loop
+        je      .clk
         cmp     ax, EV_RCLICK
-        je      .loop
+        je      .rcl
         cmp     ax, EV_MOVED            ; (moved or resized: drawn there
         je      .loop                   ;  already, w_draw)
         cmp     ax, EV_SIZE
         je      .loop
         call    key
         jmp     .loop
+.clk:   call    click
+        jmp     .loop
+.rcl:   call    rclick
+        jmp     .loop
 .tick:  call    tick
         jnc     .loop
         call    UI_WCLOSE               ; it ended
         xor     ax, ax
         ret
-.front: mov     ax, 0F000h + MT_FRONT   ; (no window after all: in front)
-        mov     bl, [task]
-        stc
-        int     21h
+.front: call    full                    ; (no window after all: in front)
 .bad:   mov     ax, 1
         ret
 
@@ -251,6 +252,7 @@ show:   push    es
         int     21h
         pop     es
         jc      .x
+        mov     [tdl], dl               ; (16: its program took the mouse, T4)
         test    dl, 8 | 4               ; (in front, or its pages gone)
         jnz     .no
         mov     si, s_ngfx
@@ -265,12 +267,21 @@ show:   push    es
         jnz     .nt
         mov     byte [note], 0
         jmp     short .s
-.nt:    call    mknote
+.nt:    call    selclr                  ; (no selection on a note, nor a paste:
+        cmp     word [pseg], 0          ;  not typed into what comes after it)
+        je      .nn
+        push    si
+        call    pfree
+        pop     si
+.nn:    call    mknote
         xor     bx, bx
         mov     cx, 80
 .s:     mov     [cur], bx
         xor     ch, ch
-        mov     [ncols], cx
+        cmp     cx, [ncols]             ; (its columns changed: its positions
+        je      .sc                     ;  no more the selection's)
+        call    selclr
+.sc:    mov     [ncols], cx
         ; the view: as little moved as keeps the cursor in it
         mov     ax, [top]
         mov     dl, bh                  ; (the cursor's row)
@@ -333,8 +344,14 @@ show:   push    es
 .x:     ret
 
 ; the window's cells from MT's copy where they differ from the shadow
+; (those selected inverse)
 cells:  push    ds
         push    es
+        push    bp
+        mov     ax, [top]               ; (BP: the row's first position, as
+        mov     dx, 80                  ;  sa and sb count them)
+        mul     dx
+        mov     bp, ax
         mov     ax, VSEG
         mov     es, ax
         mov     ax, [rows]
@@ -372,6 +389,16 @@ cells:  push    ds
         je      .nx
         mov     [bx], ax
         call    attr
+        push    dx
+        cmp     dx, [cs:ncols]          ; (past its columns: never selected)
+        jae     .ns
+        add     dx, bp
+        cmp     dx, [cs:sa]
+        jb      .ns
+        cmp     dx, [cs:sb]
+        jae     .ns
+        xor     ah, 1                   ; (selected)
+.ns:    pop     dx
         call    cell
 .nx:    add     si, 2
         add     bx, 2
@@ -384,8 +411,10 @@ cells:  push    ds
         add     si, [cs:stride]
         add     bx, 160
         add     di, 16 * 20
+        add     bp, 80
         dec     word [cs:r_n]
         jnz     .row
+        pop     bp
         pop     es
         pop     ds
         ret
@@ -461,18 +490,35 @@ cursor: cmp     byte [note], 0          ; (none on a note)
         mov     byte [curon], 1
 .x:     ret
 
-; a key typed in the window: to the task (MT_TKEY), after those kept; kept
-; while its ring is full (QLEN at most: a beep past them).  With a note up,
-; the task to the front instead (full screen)
+; a key typed in the window: to the task (MT_TKEY), after those kept (and
+; a paste's); kept while its ring is full (QLEN at most: a beep past them).
+; With a note up, the task to the front instead (full screen); CODE-C with
+; a selection copies it, CODE-V with something to paste pastes (T4)
 key:    cmp     byte [note], 0
-        je      .t
-        mov     byte [note], 0          ; (TERM doesn't run while it's in
-        mov     ax, 0F000h + MT_FRONT   ;  front: a key after it's back is its)
-        mov     bl, [task]
-        stc
-        int     21h
-        ret
-.t:     cmp     byte [qn], 0
+        jne     full
+        cmp     ax, K_CODE_C
+        jne     .v
+        mov     bx, [sb]
+        cmp     bx, [sa]
+        ja      copy
+.v:     cmp     ax, K_CODE_V
+        jne     .t
+        push    ax
+        mov     al, 2                   ; (what the clipboard holds)
+        call    UI_CLIP
+        pop     ax
+        or      cx, cx
+        jnz     paste
+.t:     mov     bx, [sb]                ; typing: the selection gone, at once
+        cmp     bx, [sa]
+        jbe     .s
+        push    ax
+        call    selclr
+        call    show
+        pop     ax
+.s:     cmp     word [pseg], 0
+        jne     .q
+        cmp     byte [qn], 0
         jne     .q
         call    send
         jnc     .x
@@ -485,6 +531,15 @@ key:    cmp     byte [note], 0
         mov     [q + bx], ax
         inc     byte [qn]
 .x:     ret
+
+; the task to the front, full screen (a key on a note; the menu's Full
+; screen)
+full:   mov     byte [note], 0          ; (TERM doesn't run while it's in
+        mov     ax, 0F000h + MT_FRONT   ;  front: a key after it's back is its)
+        mov     bl, [task]
+        stc
+        int     21h
+        ret
 
 ; the note SI in place of its screen: BUF blank, the note on its first row
 mknote: mov     byte [note], 1
@@ -503,8 +558,10 @@ mknote: mov     byte [note], 1
 .x:     pop     es
         ret
 
-; the keys kept, in turn, while the ring takes them
-flush:  cmp     byte [qn], 0
+; the keys kept, in turn, while the ring takes them: a paste's first
+flush:  call    feed
+        jc      .x
+        cmp     byte [qn], 0
         je      .x
         mov     ax, [q]
         call    send
@@ -531,6 +588,353 @@ send:   push    ax
         pop     ax
         ret
 
+; ---------------------------------------------------------------------
+;  T4: the mouse, select, copy and paste.  A selection is of positions
+;  in its screen (row * 80 + column, sa to sb, sb past the last), not in
+;  the window, so the view moving keeps it
+; ---------------------------------------------------------------------
+
+; a click in the cells: its program's, if it took the mouse (MT_TROWS's
+; 16: it reset INT 33h) and Shift isn't held: MT_TMOUSE as the button
+; goes down, while it's held, as it's let go; else a selection, from the
+; press to where it's let go (as a drag in Write: UI_MOUSE till then)
+click:  call    UI_KEYSHIFT
+        mov     [kshf], al
+        xor     si, si
+        call    cellat
+        jc      .x
+        test    byte [kshf], 3          ; (Shift)
+        jnz     .sel
+        test    byte [tdl], 16
+        jz      .sel
+        mov     al, 1                   ; its program's
+.p:     call    tmouse
+        push    dx
+        call    show                    ; (what it draws meanwhile)
+        pop     dx
+        call    UI_MOUSE
+        jc      .u
+        test    al, 1
+        jz      .u
+        mov     si, 1
+        call    cellat                  ; (CF: a note up now)
+        jc      .u
+        mov     al, 1
+        jmp     .p
+.u:     xor     al, al                  ; (let go there)
+        jmp     tmouse
+.sel:   push    ax
+        call    selclr
+        call    show
+        pop     ax
+        mov     [prs], ax
+.d:     call    UI_MOUSE
+        jc      .x
+        test    al, 1
+        jz      .x                      ; (let go)
+        mov     si, 1
+        call    cellat
+        jc      .x
+        mov     bx, [prs]
+        cmp     ax, bx                  ; (back where it began: none)
+        je      .o
+        jae     .b
+        xchg    ax, bx
+.b:     inc     ax                      ; BX to AX: press and end both in it
+.o:     cmp     bx, [sa]
+        jne     .n
+        cmp     ax, [sb]
+        je      .d
+.n:     call    selclr
+        mov     [sa], bx
+        mov     [sb], ax
+        call    unrows
+        call    show
+        jmp     .d
+.x:     ret
+
+; BX, CX (the mouse's x, y) -> DL its column, DH its row in the task's
+; screen, AX = DH * 80 + DL.  CF if it isn't on a cell shown (or a note is
+; up); with SI 1 the nearest one shown instead (a drag past the edge)
+cellat: cmp     byte [note], 0
+        jne     .no
+        push    di
+        mov     ax, bx
+        shr     ax, 3
+        sub     ax, [x0]
+        mov     di, [cols]
+        call    .in
+        jc      .o
+        add     ax, [left]
+        cmp     ax, [ncols]             ; (40 columns: none past them)
+        jb      .c
+        or      si, si
+        stc
+        jz      .o
+        mov     ax, [ncols]
+        dec     ax
+.c:     mov     dl, al
+        mov     ax, cx
+        sub     ax, [y0]
+        sar     ax, 4
+        mov     di, [rows]
+        call    .in
+        jc      .o
+        add     ax, [top]
+        mov     dh, al
+        mov     al, 80
+        mul     dh
+        add     al, dl
+        adc     ah, 0
+        pop     di
+        clc
+        ret
+.o:     pop     di
+.no:    stc
+        ret
+.in:    or      ax, ax                  ; AX in 0 to DI - 1 (SI 1: made so)
+        jns     .p
+        xor     ax, ax
+        jmp     short .ed
+.p:     cmp     ax, di
+        jb      .ok
+        mov     ax, di
+        dec     ax
+.ed:    or      si, si
+        jnz     .ok
+        stc
+        ret
+.ok:    clc
+        ret
+
+; buttons AL at the cell DL, DH to the task's mouse (MT_TMOUSE: x the
+; column * 8, * 16 in 40 columns; y the row * 8, as INT 33h's text
+; modes).  All kept
+tmouse: pusha
+        mov     bh, al
+        mov     al, dl
+        xor     ah, ah
+        shl     ax, 3
+        cmp     word [ncols], 40
+        ja      .w
+        shl     ax, 1
+.w:     mov     cx, ax
+        mov     al, dh
+        xor     ah, ah
+        shl     ax, 3
+        mov     dx, ax
+        mov     bl, [task]
+        mov     ax, 0F000h + MT_TMOUSE
+        stc
+        int     21h
+        popa
+        ret
+
+; the selection gone (its rows drawn again at the next look).  All kept
+selclr: push    ax
+        push    bx
+        mov     bx, [sa]
+        mov     ax, [sb]
+        call    unrows
+        xor     ax, ax
+        mov     [sa], ax
+        mov     [sb], ax
+        pop     bx
+        pop     ax
+        ret
+
+; the window's rows that show positions BX to AX - 1 drawn again at the
+; next look (their shadow).  All kept
+unrows: cmp     ax, bx
+        jbe     .x
+        pusha
+        push    es
+        mov     es, [fseg]
+        dec     ax
+        mov     cl, 80
+        div     cl
+        mov     ch, al                  ; CH: the last row
+        mov     ax, bx
+        div     cl
+        mov     cl, al                  ; CL: the first
+.r:     mov     al, cl
+        xor     ah, ah
+        sub     ax, [top]
+        jb      .n
+        cmp     ax, [rows]
+        jae     .n
+        mov     bx, 160
+        mul     bx
+        add     ax, SHD
+        mov     di, ax
+        push    cx
+        mov     cx, 80
+        mov     ax, NOCELL
+        rep     stosw
+        pop     cx
+.n:     inc     cl
+        cmp     cl, ch
+        jbe     .r
+        pop     es
+        popa
+.x:     ret
+
+; the selection's text to the clipboard (UI_CLIP): BUF's cells packed in
+; place (a byte each, NUL as a blank, each row's trailing blanks dropped,
+; an LF between rows: never ahead of what's still to read), then BUF
+; fetched again (show)
+copy:   mov     ax, [sb]
+        dec     ax
+        mov     cl, 80
+        div     cl
+        mov     [crow], ax              ; (the last cell: row, column)
+        mov     ax, [sa]
+        div     cl
+        mov     dx, ax                  ; DL the row, DH its first column
+        push    es
+        mov     es, [fseg]
+        mov     di, BUF
+.r:     mov     al, dl
+        mul     byte [ncols]
+        add     al, dh
+        adc     ah, 0
+        shl     ax, 1
+        add     ax, BUF
+        mov     si, ax
+        mov     cx, [ncols]             ; its last column
+        dec     cx
+        cmp     dl, [crow]
+        jne     .l
+        mov     cl, [crow + 1]
+.l:     sub     cl, dh
+        xor     ch, ch
+        inc     cx
+        mov     bp, di                  ; (its blanks back to here)
+.c:     mov     al, [es:si]
+        or      al, al
+        jnz     .s
+        mov     al, ' '
+.s:     stosb
+        add     si, 2
+        loop    .c
+.t:     cmp     di, bp
+        je      .e
+        cmp     byte [es:di - 1], ' '
+        jne     .e
+        dec     di
+        jmp     .t
+.e:     cmp     dl, [crow]
+        je      .put
+        mov     al, 10
+        stosb
+        inc     dl
+        xor     dh, dh
+        jmp     .r
+.put:   mov     cx, di
+        mov     di, BUF
+        sub     cx, di
+        jcxz    .b                      ; (all blank: the clipboard kept)
+        mov     al, 0
+        call    UI_CLIP
+        jnc     .y
+.b:     call    UI_BEEP
+.y:     pop     es
+.x:     jmp     show
+
+; the clipboard typed to the task: into a block of its own (UI_ALLOC, as
+; it holds 16 KB at most), fed as its ring takes it (feed: at once and at
+; each tick); the keys typed meanwhile after it.  A beep if one is going
+; on, keys typed before it still wait (they'd come after it), a note is
+; up (it would be typed into what comes after it), or with no room
+paste:  cmp     word [pseg], 0
+        jne     .b
+        cmp     byte [qn], 0
+        jne     .b
+        cmp     byte [note], 0
+        jne     .b
+        mov     al, 2
+        call    UI_CLIP
+        jcxz    .x
+        mov     [plen], cx
+        mov     bx, cx
+        add     bx, 15
+        shr     bx, 4
+        call    UI_ALLOC
+        jc      .b
+        mov     [pseg], ax
+        push    es
+        mov     es, ax
+        xor     di, di
+        mov     cx, [plen]
+        mov     al, 1
+        call    UI_CLIP
+        pop     es
+        jc      .f
+        mov     [plen], cx
+        mov     word [ppos], 0
+        call    selclr
+        jmp     flush
+.f:     call    pfree
+.b:     jmp     UI_BEEP
+.x:     ret
+
+; the paste's next keys to the task while its ring takes them (a note
+; going up ends it: show) -> CF if some are left (the keys typed after it
+; wait)
+feed:   cmp     word [pseg], 0
+        je      .ok
+.n:     mov     si, [ppos]
+        cmp     si, [plen]
+        jae     .end
+        push    es
+        mov     es, [pseg]
+        mov     al, [es:si]
+        mov     ah, [es:si - 1]         ; (the one before: CR LF one Return)
+        pop     es
+        cmp     al, 10
+        jne     .cr
+        or      si, si
+        jz      .ret
+        cmp     ah, 13
+        je      .sk
+.ret:   mov     ax, 1C0Dh               ; (LF, CR: Return)
+        jmp     short .k
+.cr:    cmp     al, 13
+        je      .ret
+        mov     ah, 0Fh                 ; (Tab: its scan code; the rest none)
+        cmp     al, 9
+        je      .k
+        xor     ah, ah
+.k:     call    send
+        jc      .left
+.sk:    inc     word [ppos]
+        jmp     .n
+.end:   call    pfree
+.ok:    clc
+        ret
+.left:  stc
+        ret
+
+; the paste's block given back.  All kept but AX
+pfree:  push    es
+        mov     es, [pseg]
+        call    UI_FREE
+        pop     es
+        mov     word [pseg], 0
+        ret
+
+; a right click: the menu of what applies (RMENU.INC, Write's): Copy with a
+; selection, Paste with something to paste, Full screen always
+rclick: mov     al, 0
+        mov     dx, [sb]
+        cmp     dx, [sa]
+        jbe     .m
+        mov     al, RM_SEL
+.m:     mov     si, items
+        jmp     rmenu
+
+%include "RMENU.INC"
+
 ; one character cell (CELL.INC): AL, AH = its attribute, DI = row * 320 +
 ; column (here: y * 20 + byte column), ES = VSEG; its glyph from DS:0
 %define CELL_FSEG ds
@@ -542,6 +946,10 @@ send:   push    ax
 s_fnt       db 'TERM.FNT', 0
 s_ngfx      db 'In a graphics mode: a key here shows it (or CODE-Tab)', 0
 s_nfz       db 'It writes the screen itself: a key here shows it (FULL= for it)', 0
+items       dw s_copy, copy, RM_SEL, s_paste, paste, RM_CLIP, s_full, full, 0, 0
+s_copy      db 'Copy           CODE-C', 0
+s_paste     db 'Paste          CODE-V', 0
+s_full      db 'Full screen    CODE-Tab', 0
 win:        dw 0, SCR_TOP, 80, SCR_BAND_Y - SCR_TOP
             dw title, w_draw, WF_MOVE | WF_SIZE
 top         dw 0                        ; the view: its screen's first row and
@@ -566,6 +974,17 @@ c_n         resw 1
 c_at        resw 1
 stride      resw 1
 q           resw QLEN
+tdl         resb 1                      ; MT_TROWS's DL (16: the mouse its)
+kshf        resb 1                      ; (a click's shift state)
+sa          resw 1                      ; the selection: its first position,
+sb          resw 1                      ;  the one past its last (T4)
+prs         resw 1                      ; (a drag's press)
+crow        resw 1                      ; (copy: the last cell's row, column)
+pseg        resw 1                      ; a paste: its block (0: none), the
+ppos        resw 1                      ;  next byte, how many
+plen        resw 1
+rm_buf      resw 3                      ; the right click's menu (RMENU.INC)
+rm_do       resw 3
 arg         resb 16
 title       resb 16
 run_bss_end:
