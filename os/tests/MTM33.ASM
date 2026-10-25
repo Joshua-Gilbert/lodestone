@@ -24,9 +24,10 @@
 ;      AX=2 calls in the word before that
 ;   J  stays resident as a hook on INT 33h that jumps on (JMP FAR) to the
 ;      one there before
-;   P  reset, the pointer on, 36 ticks (a click given meanwhile), then
-;      polls 03h until the left button is down, then until it is up
-;      (TM5000G's way, T4): FILE gets "x y x y p r", where it was down,
+;   P  reset, the pointer on, 36 ticks (a click given meanwhile, or later,
+;      while it polls), then polls 03h without a pause until the left
+;      button is down, then until it is up (T4; TM5000G polls 03h too, less
+;      hard): FILE gets "x y x y p r", where it was down,
 ;      where up, and the left button's presses and releases (05h, 06h)
 ;   R  as P, but polls 06h (the left button's releases) until one comes:
 ;      FILE gets "n x y", how many and where the last was
