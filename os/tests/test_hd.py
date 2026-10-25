@@ -304,6 +304,26 @@ def t_fatread():
     check('Abort while a FAT sector is read: no slot claims it; then DEL FILE1 frees its clusters, FILE2 whole',
           n == 1 and 10 not in lab and n2 == 0 and not probs and list(files) == ['\\FILE2.DAT'] and
           fatw(ata, 2568)[2560:] == [0] * 8, (o, lab, o2, probs))
+    # a .COM whose FAT sector can't be read: file_read stops short with no CF (the window's FFFFh), so EXEC must
+    # count what it got, or the program ran half loaded (HELLO, then not TAIL), Abort and Fail alike
+    f = F.Fat(CYL * HEADS * SPT - PLBA, 4, PLBA, True)
+    code = bytes([0xB4, 0x09, 0xBA, 0x0F, 0x01, 0xCD, 0x21, 0xB4, 0x09, 0xBA]) + struct.pack('<H', 0x100 + 16000) + \
+        bytes([0xCD, 0x21, 0xC3]) + b'HELLO $'
+    body = bytearray(b'\x90' * 8 * 2048); body[:len(code)] = code; body[16000:16005] = b'TAIL$'
+    f.skip_to(2560); cl = f.write(bytes(body))
+    f.finish(f.ent('BIG.COM', 0x20, cl, len(body)))
+    ata = drive(F.disk(CYL, HEADS, SPT, PLBA, f), bad=[PLBA + 1 + 10])
+    k, t = boot('fatcom', ata)
+    sh = Shell(k)
+    sh.run('c:')
+    for key in 'af':
+        n, o = answer(k, 'big', key=key)
+        check('a .COM on C: whose FAT sector can\'t be read, answered %s: not run half loaded, nothing more said, '
+              'the prompt back' % ('Abort' if key == 'a' else 'Fail'), n >= 1 and 'HELLO' not in o and 'Bad command' not in o
+              and o.rstrip().endswith('C:\\>'), (n, o))
+    ata.bad.clear()
+    n, o = answer(k, 'big')
+    check('... then readable: it runs whole (HELLO TAIL)', n == 0 and 'HELLO TAIL' in o, (n, o))
 
 def t_fatwrite():
     """A FAT sector that won't take a write: a DEL through five FAT

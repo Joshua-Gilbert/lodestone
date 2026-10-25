@@ -163,8 +163,9 @@ SW_RET      equ 20                      ; (mt_switch's frame from the SP it
                                         ;  it goes back to: mt_load's RET)
 ST_AFR      equ ST_STK - 26             ; its EXEC call's frame (INT 21h's, on
                                         ;  its stack): terminate's, if it is
-                                        ;  ended itself (no more by an Abort
-                                        ;  while it EXECs: f_4B fails then)
+                                        ;  ended itself (^C at its EXEC, or an
+                                        ;  INT 24h handler's 4Ch meanwhile; no
+                                        ;  longer an Abort: f_4B fails then)
 ST_PARAS    equ ST_STK / 16
 ENVMAX      equ 1024                    ; most of an environment kept
 
