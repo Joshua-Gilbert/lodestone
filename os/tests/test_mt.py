@@ -4520,7 +4520,22 @@ def t_tclip():
     check('MTM33 R (06h only, till a release), a short click while it waits: its release there, one (%r): the release held '
           'given after its first 06h too' % m, m == want, (m, want))
     k.run_for(1.0)
-    # MTM33 F (reset, never reading 03h): a click's release held; Shift-drag selects over it; CODE-Tab: no button down in front
+    # MTM33 P again, the click while it polls 03h (past its 36 ticks, nearly all its time in the driver with interrupts off):
+    # its ticks still come (pcemu: an IRQ held while IF is clear taken when it is set again), so it is switched from and
+    # the UI sees the click
+    typ2('mtm33 p m2.txt', 1.0); k.run_for(2.5)
+    sw, prev, swa = [0], k.pc.watch, seg * 16 + Y['mt_switch']
+    def w(a):
+        if prev: prev(a)
+        if a == swa: sw[0] += 1
+    k.pc.watch = w; k.run_for(1.0); k.pc.watch = prev
+    mv(*cxy(rr, cc)); btn(1, 0.1)
+    waitfile(k, 'M2.TXT', 3.0); k.run_for(0.5)
+    want, m = ' '.join('%04X' % v for v in (cc * 8, rr * 8, cc * 8, rr * 8, 1, 1)).encode(), A.disk_file(k, 'M2.TXT')
+    check('MTM33 P, a short click while it polls 03h: switched from there (%d switches in 1 s), the click its own (%r)'
+          % (sw[0], m), sw[0] >= 12 and m == want, (sw[0], m, want))
+    k.run_for(1.0)
+    # MTM33 F (reset, reading 03h only after "q"): a click's release held; Shift-drag selects over it; CODE-Tab: no button down
     typ2('mtm33 f f.txt', 1.5)
     mv(*cxy(rr, cc)); btn(1, 0.3)
     rel, np0 = k.pc.rd(tx(n), equ('TX_MREL'), 1)[0], m33(n, 'm33_np')
@@ -4530,18 +4545,25 @@ def t_tclip():
     ss, np1 = (tv('sa'), tv('sb')), m33(n, 'm33_np')
     hot(k); k.run_for(1.0)
     fr, live, rel2 = tstate(k)[1], k.u16('m33_btn') & 3, k.pc.rd(tx(n), equ('TX_MREL'), 1)[0]
-    check('MTM33 F (it reset the mouse, never reads 03h): a click, its press given (%d), the release held (TX_MREL %02Xh); '
+    check('MTM33 F (it reset the mouse, not reading 03h while it waits for keys): a click, its press given (%d), the release held (TX_MREL %02Xh); '
           'Shift held, a drag: a selection (%s), not the program\'s (its presses still %d); CODE-Tab (front %d): the release '
           'given first, no button down in the driver (%d, TX_MREL %02Xh)' % (np0, rel, ss, np1, fr, live, rel2),
           np0 == 1 and rel & 0xC0 == 0xC0 and ss[1] > ss[0] and np1 == 1 and fr == n and live == 0 and rel2 == 0,
           (np0, rel, ss, np1, fr, live, rel2))
     k.key('q', settle=False); k.run_for(1.0)
+    fc = (A.disk_file(k, 'F.TXT') or b'')[:4]
+    check('... its event handler (0Ch, every event) not called behind for the click nor the drag (F.TXT: %r)' % fc,
+          fc == b'0000', fc)
     to0()
     # MT_TMOUSE from a task: refused
     typ2('mtprobe > pr.txt', 4.0)
+    for _ in range(30):                 # (its lines once it has got that far: a window behind, its turns shared)
+        if (A.disk_file(k, 'PR.TXT') or b'').count(b'\nF021') >= 4: break
+        k.run_for(1.0)
     l5 = [l for l in (A.disk_file(k, 'PR.TXT') or b'').decode('latin-1').split('\n') if l.startswith('F021')]
     check('MT_TMOUSE (F0h 21h) called by a task (MTPROBE in the window), for task 0, 7, 8 and itself: refused (AX = 1: the '
-          'UI\'s call only)', len(l5) == 4 and all('CF=1 AX=0001' in l for l in l5), l5)
+          'UI\'s call only)', len(l5) == 4 and all('CF=1 AX=0001' in l for l in l5),
+          (l5, tstate(k), (A.disk_file(k, 'PR.TXT') or b'')[-200:], slot_text(k, n)[-300:]))
     check('... every switch at a safe point (the audit)', not au.bad(), au.bad()[:3])
     # TM5000G in a window: its mouse works there (Return on it: a text program)
     if not os.path.exists(A.TM5000G):
@@ -4567,13 +4589,15 @@ def t_tclip():
     k.key('1', settle=False); k.run_for(2.0)
     t4 = slot_text(k, n)
     k.key(ktest.ESC, settle=False); k.run_for(2.0)
+    t4b = slot_text(k, n)
     mv(*cxy(5, 10)); btn(1, 2.0)
-    t5 = slot_text(k, n)
-    check('TM5000G.EXE: Return on it, in a terminal window (task %d, front %d): "Mouse support enabled.", "Mouse: ON"; a click '
-          'on its row 5 in the window: "Module Configuration"; ESC, its key "1" and ESC (its pointer hidden twice): a click '
-          'there again still its own' % (n, tstate(k)[1]), n != 7 and mb('mw_n') == 1 and 'Mouse support enabled.' in t1
-          and 'Mouse: ON' in t2 and 'Module Configuration' in t3 and 'Module Configuration' in t4 and 'Module Configuration' in t5,
-          (n, t2[:300], t3[:300], t5[:300]))
+    t5, fr = slot_text(k, n), tstate(k)[1]
+    check('TM5000G.EXE: Return on it, in a terminal window (task %d, still behind: front %d): "Mouse support enabled.", '
+          '"Mouse: ON"; a click on its row 5 in the window: "Module Configuration" (not there before); ESC, its key "1" and ESC '
+          '(its pointer hidden twice): a click there again still its own' % (n, fr), n != 7 and fr == 0 and mb('mw_n') == 1
+          and 'Mouse support enabled.' in t1 and 'Mouse: ON' in t2 and 'Module Configuration' not in t2
+          and 'Module Configuration' in t3 and 'Module Configuration' in t4 and 'Module Configuration' not in t4b
+          and 'Module Configuration' in t5, (n, fr, t2[:300], t3[:300], t4b[:300], t5[:300]))
     k.key(ktest.ESC, settle=False); k.run_for(1.0); k.key('0', settle=False)
     for _ in range(20):
         k.run_for(0.5)
