@@ -67,14 +67,15 @@ OFF_MAP = {'image_end': 0x4190, 'bss_end': 0x76C0, 'ui_keep_end': 0x6526}  # (41
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
 
-def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chip=None):
+def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chip=None, irq_exact=False):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
     MTPROBE, `more`, and LODE.INI holding `text`.  nofpu: INT 11h says no
     coprocessor, and the 286's EM bit is set, so any coprocessor instruction
-    traps (INT 7, counted in pc.ints).  mouse: a serial mouse on COM1."""
+    traps (INT 7, counted in pc.ints).  mouse: a serial mouse on COM1.  irq_exact: pcemu's (an IRQ held
+    under CLI taken when IF is set again)."""
     files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
         + ([ini(text)] if text is not None else [])
-    k = ktest.KPC(A.image(name, *files), ems_pages=ems, chip=chip)
+    k = ktest.KPC(A.image(name, *files), ems_pages=ems, chip=chip, irq_exact=irq_exact)
     k.pc.mouse = mouse
     if nofpu:
         k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))
@@ -4339,7 +4340,9 @@ def t_tclip():
     sel = os.path.join(A.OUT, 'SEL.TXT'); open(sel, 'wb').write(b'alpha beta   \r\ngamma\r\ndelta epsilon\r\n')
     big = os.path.join(A.OUT, 'BIG.TXT')
     open(big, 'wb').write(b''.join(b'line %03d of a long file\r\n' % i for i in range(300)))
-    k = boot('mt_t4.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTK, MTM, sel, big, mouse=True)
+    # (pcemu's exact IRQ delivery: MTM33 P polls 03h nearly all its time under CLI, and without it gets
+    #  almost no ticks there)
+    k = boot('mt_t4.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTK, MTM, sel, big, mouse=True, irq_exact=True)
     seg, Y = mt_seg(k), k.Y
     mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
     TS = A.run_syms('apps/TERM.ASM')
@@ -4568,7 +4571,7 @@ def t_tclip():
     if not os.path.exists(A.TM5000G):
         print('(no TM5000G.EXE: skipped)'); return
     k = boot('mt_t4g.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, 'TM5000G.EXE=' + A.TM5000G, mouse=True,
-             chip=A.sim7210.NEC7210(A.sim7210.bus()))
+             chip=A.sim7210.NEC7210(A.sim7210.bus()), irq_exact=True)
     seg = mt_seg(k)
     k.select('TM5000G.EXE'); k.key(ktest.ENTER, settle=False)
     n = 7
