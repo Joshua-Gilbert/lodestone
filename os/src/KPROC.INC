@@ -22,6 +22,7 @@ ex_left     resw 2              ; bytes still to load
 ex_min      resw 1
 ex_max      resw 1
 ex_isexe    resb 1
+ex_busy     resb 1              ; 1 while EXEC loads (crit_disk: Abort fails)
             alignb 2
 ex_env      resw 1              ; the EXEC parameter block's copy (f_4B
 ex_tail     resw 2              ;  moves it in one go: keep the order)
@@ -185,7 +186,8 @@ f_4B:   cmp     byte [bp+F_AX], 0
         je      .go
         mov     ax, 1
         jmp     fail
-.go:    call    get_path
+.go:    mov     byte [ex_busy], 1       ; (an Abort meanwhile: the program
+        call    get_path                ;  isn't running yet, the caller is)
         jc      .e0
         push    cs                      ; the parameter block, as it is laid
         pop     es                      ;  out: ex_env, ex_tail, ex_fcb1,
@@ -382,6 +384,9 @@ f_4B:   cmp     byte [bp+F_AX], 0
         push    cs
         pop     es
         jc      .e2
+        cmp     ax, [ex_left]           ; all of it?  (C:'s FAT read failed,
+        jne     .e2s                    ;  Fail or Abort, or a chain shorter
+                                        ;  than the size: a short count, no CF)
         mov     ax, [ex_psp]
         mov     [ex_cs], ax
         mov     [ex_ss], ax
@@ -483,6 +488,7 @@ f_4B:   cmp     byte [bp+F_AX], 0
         mov     [ex_sp], ax
 .close: mov     si, [ex_sft]
         mov     byte [si+S_REF], 0
+        mov     byte [ex_busy], 0
         ; the parent waits: its stack (with this call's frame) in its PSP
         mov     es, [cur_psp]
         mov     ax, [bp+F_USP]
@@ -542,7 +548,8 @@ f_4B:   cmp     byte [bp+F_AX], 0
         jmp     .e0
 .acc:   mov     ax, 5                   ; (nf_last leaves 5 alone)
 .nf:    call    nf_last                 ; (a last part that is no name: 2,
-.e0:    jmp     fail                    ;  as OPEN, as MS-DOS)
+.e0:    mov     byte [ex_busy], 0       ;  as OPEN, as MS-DOS)
+        jmp     fail
 
 section .bss
 ex_srcenv   resw 1
@@ -625,6 +632,8 @@ terminate:
         mov     ah, [term_type]
         mov     [last_exit], ax
         mov     byte [term_type], 0
+        mov     byte [ex_busy], 0       ; (an INT 24h handler that ended
+                                        ;  its program while EXEC loaded)
         mov     bx, [cur_psp]
         cmp     bx, [root_psp]
         je      root_restart            ; the Executive itself: start over
