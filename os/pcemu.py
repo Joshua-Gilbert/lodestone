@@ -330,7 +330,9 @@ class Ata:
 
 class PC:
     def __init__(s, a=None, b=None, chip=None, start=datetime.datetime(2026, 10, 4, 21, 30, 0), mem_kb=640,
-                 disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False, roms=None):
+                 disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False, roms=None,
+                 irq_exact=False):
+        s.irq_exact = irq_exact         # an IRQ held under CLI taken when IF is set again (run())
         s.mu = mu = Uc(UC_ARCH_X86, UC_MODE_16)
         mu.mem_map(0, 0x110000)
         s.ems_pages = ems_pages; s.ems_alias = ems_alias
@@ -351,7 +353,7 @@ class PC:
         s.chip = chip
         s.us = 0.0; s.next_tick = TICK_US; s.next_event = TICK_US
         s.due_at = float('inf'); s.on_due = None
-        s.irq_pending = set(); s.pic_mask = 0xB8
+        s.irq_pending = set(); s.pic_mask = 0xB8; s.irq_wait = False
         s.isr = 0; s.pic_rr = 2         # in service (EOI ends it); OCW3: what port 20h reads
         s.chip_int_was = False; s.irqs5 = 0
         s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
@@ -436,7 +438,7 @@ class PC:
             s.ems_reg = [0, 0, 0, 0]
             for w in range(4): s.ems_map(w)
         s.bios_init()
-        s.irq_pending = set(); s.soft = []; s.isr = 0; s.pic_rr = 2
+        s.irq_pending = set(); s.soft = []; s.isr = 0; s.pic_rr = 2; s.irq_wait = False
         s.pic_mask = 0xB8; s.pic2_mask = 0xFF
         s.keys.clear(); s.blocked = False; s.halted = False
         s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
@@ -472,6 +474,8 @@ class PC:
         else: s.us += BLOCK_US
         s.last_blk = (addr, size)
         if s.watch: s.watch(addr)
+        if s.irq_wait and s.r('flags') & 0x200:
+            s.irq_wait = False; s.mu.emu_stop()     # (IF back with an IRQ waiting: run() delivers it)
         if s.us >= s.next_event: s.on_time()
 
     def rep_us(s, addr, size):
@@ -1164,6 +1168,20 @@ class PC:
         if s.stopped or s.crash: return False
         s.kbd_sync()
         s.deliver_irqs()
+        # irq_exact: interrupts off with one pending, it is delivered as
+        # soon as IF is set again (blk stops the run there, a block late at
+        # most), as a real PIC keeps INTR up.  (Armed here, at a run's
+        # start: for an IRQ pending then, so for ticks and IRQ 5, which end
+        # the run they come in; one raised mid-run without ending it, the
+        # ATA's, still waits for the run's end.)  The default is the older
+        # way, only at a run's start: a program spending nearly all its
+        # time under CLI (polling INT 33h AX=3 in a task behind) gets
+        # almost no ticks, so a task behind runs longer turns than on the
+        # 1520.  Opt-in for now (test_mt's t_tclip, T4): under it
+        # test_resident_term's "a link failure in a pass..." and "the
+        # bridge gone while away..." fail, not yet understood.
+        s.irq_wait = s.irq_exact and not s.r('flags') & 0x200 \
+            and (bool(s.soft) or any(s.unmasked(i) for i in s.irq_pending))
         s.blocked = False
         try:
             s.mu.emu_start(s.lin(), 0xFFFFFFFF, count=n)
