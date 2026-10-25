@@ -302,9 +302,9 @@ f_4B:   cmp     byte [bp+F_AX], 0
         add     bx, di
         add     bx, 2 + 15
         shr     bx, 4
-        mov     dx, [cur_psp]
-        call    mem_alloc
-        jc      .e1
+.xe:    mov     dx, [cur_psp]           ; (KMT.INC: MULTITASK=1 makes these 5
+        call    mem_alloc               ;  bytes a far jump to mt_xenv, which
+.xr:    jc      .e1                     ;  comes back to .xr)
         mov     [ex_env], ax
         mov     es, ax
         xor     di, di
