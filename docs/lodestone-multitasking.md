@@ -77,7 +77,7 @@ With the switch off, `TASKS` says `Multitasking is off (MULTITASK=1 in LODE.INI)
 In M1 the UI goes on lending its directory buffer to DOS programs as before, so with the switch on DOS programs lose only MT's own block. Whether lending can stay on once tasks have regions of their own is for M2 to settle. The plan assumed not (7.5 KB); regions allocated downward from MT's block would let it stay.
 
 **Cost:**
-- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch; 42B0h, 77E0h, 67A8h and 563.7 / 579.7 KB since its UI batch; 3EA0h, 73D0h, 6134h and 566.3 / 582.4 KB since its medium-risk batches; ui_keep_end 6144h since UI-12; 3EF0h, 7420h, 6164h and 566.2 / 582.2 KB since X15/X16 and the right clicks; 3F30h, 7460h, 6164h and 566.1 / 582.2 KB since X18; ui_keep_end 6154h since X22; 3F80h, 74B0h, 6154h and 566.0 / 582.1 KB since X17/X20; 620Ah and 565.9 / 582.0 KB since M7b; 4090h, 75C0h and 565.6 / 581.7 KB since GPIB's SRQ on IRQ 5; 40B0h, 75E0h, 621Ah and 565.5 / 581.6 KB since a drive with no disk raises INT 24h; 40E0h and 7610h since GPIB driver 1.22's fast loops; 4170h, 76A0h and 565.4 / 581.5 KB since 1.23's frame check; ui_keep_end 63D0h and 564.9 / 581.0 KB since UI API 8's pop-up menus and drags; 6526h and 564.6 / 580.7 KB since its clipboard (UI_CLIP); since a drive with no disk raises INT 24h, a task behind a graphics screen gets Fail at once for an INT 24h, its handler not called, since no prompt could be read there; behind a text one its handler runs, as before).
+- **Switch off:** nothing resident, and LODEMT.SYS isn't read. `image_end`, `bss_end`, `ui_keep_end` and MEMSZ from the Executive are main's, unchanged, and `test_mt` pins all of them (44F0h, 7B40h, 6CE4h and 561.5 / 577.6 KB with PrtSc's printing, PR #42; 42B0h, 77E0h, 6CB4h and 562.4 / 578.5 KB since the audit's kernel batch; 42B0h, 77E0h, 67A8h and 563.7 / 579.7 KB since its UI batch; 3EA0h, 73D0h, 6134h and 566.3 / 582.4 KB since its medium-risk batches; ui_keep_end 6144h since UI-12; 3EF0h, 7420h, 6164h and 566.2 / 582.2 KB since X15/X16 and the right clicks; 3F30h, 7460h, 6164h and 566.1 / 582.2 KB since X18; ui_keep_end 6154h since X22; 3F80h, 74B0h, 6154h and 566.0 / 582.1 KB since X17/X20; 620Ah and 565.9 / 582.0 KB since M7b; 4090h, 75C0h and 565.6 / 581.7 KB since GPIB's SRQ on IRQ 5; 40B0h, 75E0h, 621Ah and 565.5 / 581.6 KB since a drive with no disk raises INT 24h; 40E0h and 7610h since GPIB driver 1.22's fast loops; 4170h, 76A0h and 565.4 / 581.5 KB since 1.23's frame check; ui_keep_end 63D0h and 564.9 / 581.0 KB since UI API 8's pop-up menus and drags; 6526h and 564.6 / 580.7 KB since its clipboard (UI_CLIP); 4190h and 76C0h since an Abort while EXEC loads fails the EXEC; since a drive with no disk raises INT 24h, a task behind a graphics screen gets Fail at once for an INT 24h, its handler not called, since no prompt could be read there; behind a text one its handler runs, as before).
 - **One exception: LCMD.** It is 173 bytes bigger (`TASKS`). It keeps 11 paragraphs (176 bytes) more while a program runs from its prompt, so such programs get that much less, switch on or off.
 - **Switch on:** MT's block is 14 paragraphs plus its MCB, 240 bytes. A DOS program gets 577.4 KB instead of 577.6. `test_mt` checks the free paragraphs exactly.
 - **Files:**
@@ -153,7 +153,7 @@ M2 was split in two: **M2a**, tasks and switching (this part), and **M2b**, the 
   The slice measured 32–42 bytes for every console read; a TX has room for 256, and `mt_kwait` doesn't switch if it would need more.
 - **A task's region** is carved from the top of the highest free block that has room (the arena walked from its first MCB, free neighbours merged, a chain gone bad refused), downward from MT's block. It is a block of its own, owner 8, "T1".."T7", holding:
   - its TX (42 paragraphs);
-  - its stub, a PSP and a few instructions at 100h: EXEC the program, then F0h AL=11h (`MT_END`). `make_psp` (called through `KCALL`) gives it the spawner's handles. The stub is its own parent: its PSP:0Ah points at its `MT_END`, and its PSP:2Eh/30h at its own EXEC call's frame, where INT 21h puts it on the stub's stack (as EXEC itself sets it once the program is loaded). So if it is ended itself (Abort on a disk error while its EXEC reads the program), `terminate` lands on `MT_END`, not on the spawner, which may have no frame to go back to, or may have ended;
+  - its stub, a PSP and a few instructions at 100h: EXEC the program, then F0h AL=11h (`MT_END`). `make_psp` (called through `KCALL`) gives it the spawner's handles. The stub is its own parent: its PSP:0Ah points at its `MT_END`, and its PSP:2Eh/30h at its own EXEC call's frame, where INT 21h puts it on the stub's stack (as EXEC itself sets it once the program is loaded). So if it is ended itself (^C at its EXEC, or an INT 24h handler that ends with 4Ch while its EXEC reads the program), `terminate` lands on `MT_END`, not on the spawner, which may have no frame to go back to, or may have ended (an Abort there ended it too, once; the kernel now fails that EXEC instead);
   - a copy of the spawner's environment (up to 1 KB), because the spawner may end first;
   - the task's own MCB chain, its `first_mcb`, ended by a 'Z' in the region.
 
@@ -189,7 +189,7 @@ What they check:
 - **Endings:**
   - a program that isn't there: the task starts and ends, and everything is as before;
   - the spawner ends first: its task gets its line later, at another key wait;
-  - a read error while the stub EXECs its program, answered Abort: the stub ends itself, its task with it, and MTLAUNCH and the prompt go on. EXEC's own entry for the file it reads stays taken: the kernel's EXEC doesn't give it back when it is aborted, with multitasking on or off. That is a kernel bug of its own, outside multitasking;
+  - a read error while the stub EXECs its program, answered Abort: the stub's EXEC fails (the kernel fails an EXEC that is aborted while it loads, with multitasking on or off, and gives back what it had taken, EXEC's own entry for the file included), the stub ends its task, and MTLAUNCH and the prompt go on;
   - TSR.COM in a task: its region stays as "TR", and the next task's region goes below it.
 - **Switch off:** MTLAUNCH reports error 1.
 - **The patches:**
@@ -281,7 +281,7 @@ The checks:
     - when the number is then given to a new task, task 0 keeps none, and the new task's screen isn't written over;
   - with no EMS left for a task's screen, MTLAUNCH gets error 8, and memory, files and EMS are as before;
   - with `MDISK=` taking all of EMS, multitasking stays off;
-  - the abort and TSR endings give their pages back.
+  - a task whose EXEC is aborted (the stub's EXEC fails, so the stub ends it), and one that stays resident, give their pages back.
 - **The checks can fail:** each of these, broken on purpose, fails its check:
   - the screen copy in `mt_scrld`;
   - the key's order, and each of its exceptions (Ctrl-Up's range, the F0h character);
@@ -601,7 +601,7 @@ The checks:
   - G waits as `TS_WAITF`, switched from at a safe point (the audit's third way in, `mt_wfront`, checked against every rule). Its line is in its own screen, and the front screen is untouched. Brought to the front, it gets mode 6.
   - Q's mode set, with interrupts off, is dropped, and Q is frozen; brought to the front, it carries on in mode 3.
 - **A critical error behind:**
-  - MTLAUNCH's task aborted while its stub EXECs (`t_ends`): the prompt, printed through the BIOS, is on the front screen, and Abort works;
+  - a read error while MTLAUNCH's stub EXECs (`t_ends`): the prompt, printed through the BIOS, is on the front screen, and Abort fails the EXEC, so the stub ends its task;
   - MTCRIT's prompt, printed through DOS or (B) through the BIOS, is on the front screen, not in its own, and the key typed answers it.
 - **Interrupts on at the way in:** MTNEST's EMS page stays where it was through 3000 calls with ticks landing (at least 3).
 - **The shadow lost:** I behind inside an INT 13h call; R behind (its 'R' on the real screen); MTNEST S, E and I (inside an INT 13h call) brought to the front by MTLAUNCH /F. Each loses the shadow, and its front task isn't frozen; MTNEST N, the same way, keeps it.

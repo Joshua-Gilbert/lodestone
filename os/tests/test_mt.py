@@ -59,7 +59,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x4170, 'bss_end': 0x76A0, 'ui_keep_end': 0x6526}  # (63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP = {'image_end': 0x4190, 'bss_end': 0x76C0, 'ui_keep_end': 0x6526}  # (4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -913,14 +913,13 @@ def t_ends():
     st = tstate(k) if not k.crashed else None
     line(k, '')
     v = sh.run('ver')
-    # (EXEC's own entry for the program it reads, which no handle holds, stays taken: the kernel's EXEC doesn't
-    # give it back when it is aborted, with multitasking or without)
+    # (an Abort while EXEC loads fails the EXEC: its own entry for the program it reads goes back too)
     d = [b - a for a, b in zip(used0, sft_used(k))]
     check('a read error while the stub EXECs its program, answered Abort: the prompt on the screen in front, shadowed in '
-          'MTLAUNCH\'s pages too; the stub ends itself (its own parent) and its '
-          'task with it; MTLAUNCH, then the prompt, go on; memory as before, the handles the stub inherited closed',
+          'MTLAUNCH\'s pages too; the stub\'s EXEC fails and it ends its '
+          'task; MTLAUNCH, then the prompt, go on; memory as before, the handles the stub inherited closed',
           'Abort' in scr and sync and not k.crashed and st and st[0] == [(0, 1, 'Executive')] and 'Lodestone version' in v
-          and merged(mcbs(k)) == a0 and sorted(d) == [0] * 23 + [1] and used0[d.index(1)] == 0 and ems_used(k) == e0,
+          and merged(mcbs(k)) == a0 and d == [0] * 24 and ems_used(k) == e0,
           (scr[-300:], st, v, d, ems_used(k), e0))
     k = boot('mt_tsr.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TSR.COM'))
     sh = Shell(k)
@@ -4883,7 +4882,9 @@ def t_nodisk():
           'nothing waiting for an answer nobody can read', A.disk_file(k, 'RES.TXT') == b'03' and crit == 0
           and k.u16('sel') != sel0, (A.disk_file(k, 'RES.TXT'), crit, sel0, k.u16('sel')))
     # in a terminal window (CODE-P's LCMD, T2): the same, and the window still takes keys
-    k = ktest.KPC(A.image('mt_nd3.img', *(files + [TERMRUN, TERMFNT])), bytes(1474560), ems_pages=88)
+    big = os.path.join(A.OUT, 'BIG.COM')
+    open(big, 'wb').write(bytes([0xB4, 0x09, 0xBA, 0x08, 0x01, 0xCD, 0x21, 0xC3]) + b'HELLO$' + b'Q' * 4082)
+    k = ktest.KPC(A.image('mt_nd3.img', *(files + [TERMRUN, TERMFNT, big])), bytes(1474560), ems_pages=88)
     k.pc.drives[1].empty = True
     k.start(10)
     k.mcb0 = k.u16('first_mcb')
@@ -4895,6 +4896,16 @@ def t_nodisk():
     check('... run from LCMD in a terminal window: the same, 3 at once, nothing waiting; the window still takes keys '
           '(VER answered there)', A.disk_file(k, 'RES.TXT') == b'03' and crit == 0 and n == 1 and 'Lodestone version' in o,
           (A.disk_file(k, 'RES.TXT'), crit, n, o[-300:]))
+    # a program there that can't be read: EXEC fails at once (no prompt) and LCMD says why, since nothing else did
+    k.key('cls', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    k.pc.drives[0].bad = {file_lbas(os.path.join(A.OUT, 'mt_nd3.img'), b'BIG     COM')[1]}
+    k.key('big', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(4.0)
+    crit = k.pc.rd(mt_seg(k), k.Y['mt_crit'], 1)[0]
+    k.pc.drives[0].bad = set()
+    o = '\n'.join(l for y, l in k.ocr())
+    check('... a program there with a bad sector: EXEC fails, no prompt waiting; LCMD says "Data error" (none was '
+          'asked), not "Bad command or file name"', crit == 0 and 'Data error' in o and 'Bad command' not in o
+          and 'HELLO' not in o, (crit, o[-300:]))
 
 if __name__ == '__main__':
     t0 = time.time()
