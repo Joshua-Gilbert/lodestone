@@ -155,7 +155,7 @@ MT_TMOUSE   equ 21h                     ; (T4: TERM.RUN's, a click in its
                                         ;  as the mouse would leave it (in its
                                         ;  ranges, presses and releases counted);
                                         ;  a release before its program has
-                                        ;  read the press (AX=3) held till it
+                                        ;  read the press (AX=3, 5, 6) held till it
                                         ;  has.  CF: AX = 1 (no such task, not
                                         ;  the Executive's call), 5 (task 0;
                                         ;  parked)
