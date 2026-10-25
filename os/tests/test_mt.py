@@ -2647,13 +2647,14 @@ def t_grow():
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
     sh.run('ver')
+    k.pc.wr(0, 0x62 * 4, struct.pack('<HH', 0x5678, 0x1234))   # (INT 62h: a known vector, in each spawn's TX_GSN)
     m0, s0, e0, v62 = merged(mcbs(k)), sft_used(k), ems_used(k), vec(k, 0x62)
     au = Audit(k)
     TXP, STP, GRES, TE_REG, TE_PSP, TE_PH = equ('TX_PARAS'), equ('ST_PARAS'), equ('MT_GRES'), 4, 2, equ('TE_PH')
     ent = lambda n, f: k.pc.u16(seg, task_ent(k, n) + f)
     rsz = lambda reg: k.pc.u16(reg - 1, 3)
-    def below(reg):                     # the block just below a region: (its MCB, owner, paragraphs)
-        return next(((s, own, sz) for s, t, own, sz, nm in mcbs(k) if s + sz + 1 == reg - 1), None)
+    def below(reg):                     # the block just below a region: (its MCB, owner, paragraphs); none: zeros
+        return next(((s, own, sz) for s, t, own, sz, nm in mcbs(k) if s + sz + 1 == reg - 1), (0, 0, 0))
     def chain(reg):                     # the task's own chain, from its region's start (grown: its first block)
         out, s = [], reg
         while len(out) < 40:
@@ -2707,7 +2708,7 @@ def t_grow():
     lr = g('r', t=1.5)                  # code run in that block (grown), switched from meanwhile (MTSPIN beside)
     check('a routine copied into that block runs there 9 ticks (%s), the task switched from and back meanwhile' % lr,
           lr.startswith('R ') and int(lr[2:], 16) > 0, lr)
-    big = max(sz for s, t, own, sz, nm in chain(ent(n, TE_REG)) if own == 0)
+    big = max((sz for s, t, own, sz, nm in chain(ent(n, TE_REG)) if own == 0), default=0)
     lh = g('h')
     check('48h FFFFh (a question, not a need): not grown, AX 8 and BX the arena\'s own largest (%s, %Xh)' % (lh, big),
           ans(lh) == (8, 1, big) and ent(n, TE_REG) == reg3, (lh, hex(big)))
@@ -2718,9 +2719,20 @@ def t_grow():
     regm = ent(n, TE_REG)
     lx = g('x', t=2.0)
     lines = [x for x in A.disk_file(k, 'G.TXT').decode('latin-1').split('\r\n') if x]
-    check('every free block taken (%s), then EXEC of a child (MTGROW C): its region grown for it (%Xh lower), it ran '
-          '(its line "C") and ended (%s)' % (ms, regm - ent(n, TE_REG), lx), lines[-2] == 'C' and lines[-1][:3] == 'X 0'
-          and ent(n, TE_REG) < regm, (ms, lines[-3:], hex(regm), hex(ent(n, TE_REG))))
+    check('every free block taken (%s), then EXEC of a child (MTGROW C): its region grown for it (%Xh lower: its '
+          'environment\'s block), it ran (its line "C") and ended (%s)' % (ms, regm - ent(n, TE_REG), lx),
+          lines[-2] == 'C' and lines[-1][:3] == 'X 0' and ent(n, TE_REG) < regm, (ms, lines[-3:], hex(regm), hex(ent(n, TE_REG))))
+    ls = g('s')                         # a hole of 20h paragraphs: room for the environment, not the program
+    for _ in range(8):
+        if ans(g('m'))[1]: break
+    le = g('e')
+    rege = ent(n, TE_REG)
+    lx2 = g('x', t=2.0)
+    lines = [x for x in A.disk_file(k, 'G.TXT').decode('latin-1').split('\r\n') if x]
+    check('a hole of 20h paragraphs left (%s, %s), the rest taken, then EXEC again: its environment there, its program '
+          'not: the region grown for the program (%Xh lower; mt_largest), it ran and ended (%s)'
+          % (ls, le, rege - ent(n, TE_REG), lx2), ans(ls)[1] == 0 and le == 'E 0' and lines[-2] == 'C'
+          and lines[-1][:3] == 'X 0' and ent(n, TE_REG) < rege, (ls, le, lines[-3:]))
     # boxed in: a task started now has its region just below this one
     front(k, 0)
     sh.run('start /w mtline.com bx.txt')
@@ -2768,16 +2780,22 @@ def t_grow():
     check('INT 62h hooked into a grown block (%s, %04X:%04X), then KILL 2: put back as it was, its region freed'
           % (lv, hooked[0], hooked[1]), lv == 'V' and ent(n, TE_REG) <= hooked[0] < ent(n, TE_TX) and 'KILLED' in ok
           and vec(k, 0x62) == v62 and b'T2' not in [b[4] for b in mcbs(k) if b[2]], (lv, hooked, ok[-200:], vec(k, 0x62)))
-    # K: a .COM that keeps all it was given, then 48h
+    # K: a .COM that keeps all it was given, then a 48h of exactly what the block below can give but MT_GRES
     sh.run('start /m:16 mtgrow.com k 0 k.txt')
     n2 = tstate(k)[0][-1][0]
     r0 = ent(n2, TE_REG)
-    lk = g('1', 'K.TXT')
+    fk = below(r0)[2]
+    w = fk - GRES - 2                   # (the first growth: the block, its MCB and the TX's)
+    for c in 'p%04X' % w: k.key(c, settle=False); k.run_for(0.1)
+    k.run_for(1.0)
+    lk = [x for x in (A.disk_file(k, 'K.TXT') or b'').decode('latin-1').split('\r\n') if x][-1:]
+    lk = lk[0] if lk else ''
     r1 = ent(n2, TE_REG)
     lq = g('q', 'K.TXT')
-    check('MTGROW K (keeps its whole arena), 48h 16 KB: served from a grown region (%s, %Xh lower); "q": it ends, the '
-          'grown region freed' % (lk, r0 - r1), ans(lk)[:2] == (r1 + 1, 0) and r0 - r1 == 0x500 and lq == 'Q'
-          and b'T%d' % n2 not in [b[4] for b in mcbs(k) if b[2]], (lk, lq, hex(r0), hex(r1)))
+    check('MTGROW K (keeps its whole arena) asks 48h for exactly what the block below it (%Xh) can give and keep MT_GRES '
+          '(%Xh, %s): its region %Xh lower (not rounded: that wouldn\'t fit), MT_GRES left; "q": it ends, the grown region '
+          'freed' % (fk, w, lk, r0 - r1), ans(lk)[:2] == (r1 + 1, 0) and r0 - r1 == w + 2 and below(r1)[2] == GRES
+          and lq == 'Q' and b'T%d' % n2 not in [b[4] for b in mcbs(k) if b[2]], (lk, lq, hex(r0), hex(r1), hex(fk)))
     front(k, 0)
     sh.run('kill 1')
     k.run_for(1.0)
