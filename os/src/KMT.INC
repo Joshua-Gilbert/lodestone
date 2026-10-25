@@ -1386,8 +1386,8 @@ mt_vfix:
         mov     ax, [es:3]
         add     ax, [cs:mt_vr]
         mov     [cs:mt_ve], ax
-        mov     ds, [cs:mt_vr]          ; (its TX)
-        mov     word [cs:mt_vsb], TX_GSN
+        mov     ds, [cs:bx+TE_TX]       ; (its TX: not the region's start once
+        mov     word [cs:mt_vsb], TX_GSN ;  it has grown, T5a)
         mov     byte [cs:mt_vtab], 1
         cld
         mov     si, TX_GSN + 09h * 4
@@ -2592,51 +2592,72 @@ mt_take:
 
 ; the region of the entry at BX to its pages (AL = 0) or back (AL = 1),
 ; INT 67h AH=57h (interrupts on as it copies; meanwhile an interrupt's INT
-; 10h goes to the BIOS: mt_vbusy).  CF if it failed.  All kept but the
-; flags
+; 10h goes to the BIOS: mt_vbusy).  Its TX at their start (mt_pmap reads
+; it there): a region that has grown (T5a) goes from its TX to its end,
+; then what is below the TX after that.  CF if it failed.  All kept but
+; the flags
 mt_move:
+        pusha
         push    ds
-        push    si
-        push    ax
-        push    dx
         push    cs
         pop     ds
-        mov     dx, [bx+TE_PSZ]         ; the length: its paragraphs * 16
-        mov     si, dx
+        mov     dx, [bx+TE_REG]         ; from the TX to the end, to page 0
+        add     dx, [bx+TE_PSZ]
+        mov     cx, [bx+TE_TX]
+        sub     dx, cx
+        xor     di, di
+        call    .one
+        jc      .x
+        mov     dx, [bx+TE_TX]          ; then below it (grown), after that
+        mov     di, [bx+TE_REG]
+        sub     dx, di
+        jz      .x                      ; (CF clear)
+        mov     cx, di
+        mov     di, [bx+TE_PSZ]
+        sub     di, dx
+        call    .one
+.x:     pop     ds
+        popa
+        ret
+; DX paragraphs at segment CX, to (AL = 0) or from (1) paragraph DI of
+; its pages.  CF if it failed.  AH, DX, SI changed
+.one:   push    di
+        mov     si, dx                  ; the length: paragraphs * 16
         shl     si, 4
         mov     [mt_mv], si
         shr     dx, 12
         mov     [mt_mv + 2], dx
-        push    di
-        mov     si, mt_mvs              ; the region: the source (to its
-        mov     di, mt_mvd              ;  pages) or the destination
+        mov     si, mt_mvs              ; conventional memory: the source (to
+        mov     di, mt_mvd              ;  its pages) or the destination
         or      al, al
         jz      .c
         xchg    si, di
-.c:     mov     byte [si], 0            ; (conventional, at its start)
+.c:     mov     byte [si], 0
         mov     word [si + 1], 0
         mov     word [si + 3], 0
-        mov     dx, [bx+TE_REG]
-        mov     [si + 5], dx
-        mov     si, di                  ; its pages: the other side, page 0
-        pop     di
+        mov     [si + 5], cx
+        mov     si, di                  ; its pages: the other side, page
+        pop     di                      ;  DI / 1,024, its offset the rest
         mov     byte [si], 1
         mov     dl, [bx+TE_PH]
         xor     dh, dh
         mov     [si + 1], dx
-        mov     word [si + 3], 0
-        mov     word [si + 5], 0
+        mov     dx, di
+        and     dx, 3FFh
+        shl     dx, 4
+        mov     [si + 3], dx
+        mov     dx, di
+        shr     dx, 10
+        mov     [si + 5], dx
         mov     si, mt_mv
         mov     dl, 1
         xchg    dl, [mt_vbusy]
+        push    ax
         mov     ax, 5700h
         int     67h
         mov     [mt_vbusy], dl
         neg     ah                      ; (CF if AH isn't 0)
-        pop     dx
         pop     ax
-        pop     si
-        pop     ds
         ret
 
 ; task AL (its entry at BX) parked: the EMS handles whose owner is a PSP
@@ -3702,7 +3723,7 @@ mt_urun:
         mov     bx, 0FFFFh              ;  less this task's region's own and
         int     21h                     ;  another's, with its 64 KB, and the
         pop     ax                      ;  Executive's room for a .RUN
-        sub     bx, 2 * (TX_PARAS + ST_PARAS + ENVMAX / 16 + 2) + MT_DEFARENA + RUN_ROOM
+        sub     bx, TX_PARAS + ST_PARAS + ENVMAX / 16 + 2 + MT_GRES
         jnc     .cap
         xor     bx, bx
 .cap:   cmp     ax, bx                  ; its maximum, if that fits; else what
@@ -6223,6 +6244,226 @@ mt_carve:
         pop     es
         ret
 
+; ---------------------------------------------------------------------
+;  T5a: a task's region grows on demand.  A 48h or an EXEC its arena
+;  can't meet (mt_48, mt_largest) takes room from the free block just
+;  below the region, MT_GRES left in it.  Nothing moves: the region's
+;  MCB is rewritten lower, and the room is the first block of the task's
+;  own chain (first_mcb), in front of its TX, stub and environment (an
+;  owner-8 block, "TX", from the first growth on; TE_TX stays, TE_REG
+;  moves down).  Only 48h and EXEC: 4Ah grows a block into what follows
+;  it, never into what is in front.
+; ---------------------------------------------------------------------
+MT_GROW     equ 100h                    ; (in steps of 4 KB, or what fits)
+MT_GRES     equ TX_PARAS + ST_PARAS + ENVMAX / 16 + 2 + MT_DEFARENA + RUN_ROOM
+                                        ; (left: a task of 64 KB, and the
+                                        ;  Executive's room for a .RUN; as
+                                        ;  mt_urun leaves for an .EXE)
+
+; the running task (not task 0) given room for a block of BX paragraphs at
+; its chain's start.  CF if it can't (BX F000h or more: 48h FFFFh asks, it
+; doesn't need; no free block just below its region, or not MT_GRES left
+; in it): nothing changed.  DS = KSEG; all kept but the flags
+mt_grow:
+        pusha
+        push    es
+        cmp     bx, 0F000h
+        jae     .no
+        mov     di, bx                  ; DI: paragraphs wanted
+        mov     al, [cs:mt_cur]
+        call    mt_ent                  ; BX: its entry
+        mov     si, [cs:bx+TE_REG]
+        dec     si                      ; SI: the region's MCB
+        push    ds                      ; the free block just below it (the
+        mov     ax, [cs:mt_mcb0]        ;  arena walked, free neighbours merged
+.w:     mov     es, ax                  ;  as in mt_carve)
+        cmp     byte [es:0], 'M'        ; (the end, or a chain gone bad: none)
+        jne     .nf
+        cmp     word [es:1], 0
+        jne     .nx
+.mg:    cmp     byte [es:0], 'M'
+        jne     .nx
+        mov     cx, ax
+        add     cx, [es:3]
+        inc     cx
+        mov     ds, cx
+        cmp     word [ds:1], 0
+        jne     .nx
+        mov     cl, [ds:0]
+        mov     [es:0], cl
+        mov     cx, [ds:3]
+        inc     cx
+        add     [es:3], cx
+        jmp     .mg
+.nx:    mov     cx, ax                  ; the next one the region's MCB?
+        add     cx, [es:3]
+        inc     cx
+        cmp     cx, si
+        je      .f
+        ja      .nf                     ; (past it: can't be)
+        mov     ax, cx
+        jmp     .w
+.nf:    pop     ds
+        jmp     .no
+.f:     pop     ds
+        cmp     word [es:1], 0          ; (ES: that block) free?
+        jne     .no
+        mov     ax, di                  ; AX: d, the paragraphs it gives; BP:
+        xor     bp, bp                  ;  0 the first growth, 1 the chain's
+        mov     dx, [cs:bx+TE_TX]       ;  first block free, 2 a program's
+        cmp     dx, [cs:bx+TE_REG]
+        jne     .ag
+        add     ax, 2                   ; (a free block's MCB, and the TX's)
+        jmp     short .rd
+.ag:    inc     bp
+        push    es
+        mov     es, [first_mcb]
+        cmp     word [es:1], 0
+        jne     .ow
+        sub     ax, [es:3]              ; (free: by what it lacks)
+        pop     es
+        jbe     .no
+        jmp     short .rd
+.ow:    pop     es
+        inc     bp
+        inc     ax                      ; (a program's: a free block's MCB)
+.rd:    mov     cx, [es:3]              ; CX: what the block below can give
+        sub     cx, MT_GRES
+        jb      .no
+        cmp     ax, cx
+        ja      .no
+        mov     dx, ax                  ; (in steps of 4 KB, if that fits too)
+        add     dx, MT_GROW - 1
+        jc      .g
+        and     dx, -MT_GROW
+        cmp     dx, cx
+        ja      .g
+        mov     ax, dx
+.g:     pushf
+        cli
+        sub     [es:3], ax              ; given: AX paragraphs
+        mov     es, si                  ; the region's MCB, AX lower: its size
+        mov     cx, [es:3]              ;  and name ("Tn")
+        add     cx, ax
+        mov     dx, [es:8]
+        push    dx
+        mov     dx, si
+        sub     dx, ax
+        mov     es, dx
+        mov     byte [es:0], 'M'
+        mov     word [es:1], 8
+        mov     [es:3], cx
+        pop     word [es:8]
+        xor     cx, cx
+        mov     [es:10], cx
+        mov     [es:12], cx
+        mov     [es:14], cx
+        inc     dx                      ; DX: the region's start, the chain's
+        mov     cx, [first_mcb]         ;  new first block (CX: the old one)
+        mov     [cs:bx+TE_REG], dx
+        mov     [first_mcb], dx
+        mov     es, dx
+        mov     byte [es:0], 'M'
+        mov     word [es:1], 0
+        dec     bp
+        jz      .g1
+        jns     .g2
+        sub     ax, 2                   ; the first growth: a free block, then
+        mov     [es:3], ax              ;  the old MCB's paragraph the TX's,
+        mov     es, si                  ;  the stub's and the environment's
+        mov     word [es:1], 8          ;  block (owner 8, "TX") to the old
+        sub     cx, si                  ;  first block
+        dec     cx
+        mov     [es:3], cx
+        mov     word [es:8], 'TX'
+        jmp     short .gx
+.g1:    mov     es, cx                  ; the first block free: it starts AX
+        add     ax, [es:3]              ;  lower
+        mov     es, dx
+        mov     [es:3], ax
+        jmp     short .gx
+.g2:    dec     ax                      ; a program's: a free block in front
+        mov     [es:3], ax
+.gx:    popf
+        pop     es
+        popa
+        clc
+        ret
+.no:    pop     es
+        popa
+        stc
+        ret
+
+; INT 21h 48h with MT on (f_48: JMP FAR): as f_48; in a task, a block its
+; arena hasn't room for grows the region (mt_grow) and is asked again.  On
+; failure BX is the arena's own largest, as before.  DS = KSEG
+mt_48:  mov     bx, [bp+F_BX]
+        mov     dx, [cur_psp]
+        KCALL   mem_alloc
+        jnc     .x
+        cmp     ax, 8
+        jne     .x
+        cmp     byte [cs:mt_cur], 0
+        je      .x
+        push    bx
+        mov     bx, [bp+F_BX]
+        call    mt_grow
+        pop     bx
+        jc      .n
+        mov     bx, [bp+F_BX]
+        mov     dx, [cur_psp]
+        KCALL   mem_alloc
+        jmp     short .x
+.n:     mov     ax, 8
+        stc
+.x:     mov     [bp+F_BX], bx
+        jmp     KSEG:ret_cfax
+
+; EXEC's block for the environment with MT on (f_4B.xe: JMP FAR over its
+; MOV DX,[cur_psp] / CALL mem_alloc): as there; in a task, one its arena
+; hasn't room for grows the region (mt_grow) and is asked again.  Back to
+; f_4B.xr (its JC), CF and AX as mem_alloc gives them.  DS = KSEG
+mt_xenv:
+        push    bx
+        mov     dx, [cur_psp]
+        KCALL   mem_alloc
+        pop     bx
+        jnc     .x
+        cmp     ax, 8
+        jne     .n
+        cmp     byte [cs:mt_cur], 0
+        je      .n
+        call    mt_grow
+        jc      .n
+        mov     dx, [cur_psp]
+        KCALL   mem_alloc
+        jmp     short .x
+.n:     stc
+.x:     jmp     KSEG:f_4B.xr
+
+; EXEC's largest block with MT on (mem_largest: JMP FAR; EXEC its only
+; caller): in a task, one below the program's minimum (ex_min) grows the
+; region to it (mt_grow) and is asked again.  -> BX; DS = KSEG
+mt_largest:
+        push    ax
+        push    dx
+        mov     bx, 0FFFFh
+        xor     dx, dx
+        KCALL   mem_alloc               ; (fails with BX = largest)
+        cmp     byte [cs:mt_cur], 0
+        je      .x
+        cmp     bx, [ex_min]
+        jae     .x
+        push    bx
+        mov     bx, [ex_min]
+        call    mt_grow
+        pop     bx
+        jc      .x
+        mov     bx, 0FFFFh
+        xor     dx, dx
+        KCALL   mem_alloc
+.x:     jmp     KSEG:mem_largest.x
+
 %include "KMW.INC"                      ; (several window .RUNs at once, M8a)
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
@@ -6407,6 +6648,15 @@ mt_boot:
         mov     byte [ui_progend], 0EAh ; a program's end: JMP FAR mt_pgend
         mov     word [ui_progend + 1], mt_pgend
         mov     [ui_progend + 3], es
+        mov     byte [f_48], 0EAh       ; AH=48h, EXEC's largest block: JMP FAR
+        mov     word [f_48 + 1], mt_48  ;  mt_48, mt_largest (a task's region
+        mov     [f_48 + 3], es          ;  grows: T5a)
+        mov     byte [mem_largest], 0EAh
+        mov     word [mem_largest + 1], mt_largest
+        mov     [mem_largest + 3], es
+        mov     byte [f_4B.xe], 0EAh    ; (and EXEC's environment's block)
+        mov     word [f_4B.xe + 1], mt_xenv
+        mov     [f_4B.xe + 3], es
         sti
         push    cs
         pop     ds
