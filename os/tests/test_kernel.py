@@ -2587,7 +2587,10 @@ def t_execabort():
     com = os.path.join(OUT, 'BIG.COM')
     code = bytes([0xB4, 0x09, 0xBA, 0x08, 0x01, 0xCD, 0x21, 0xC3]) + b'HELLO$'
     open(com, 'wb').write(code + b'Q' * (4096 - len(code)))
-    k = ktest.KPC(image('exabort.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, os.path.join(HERE, 'UPPER.COM'))); k.start()
+    badx = os.path.join(OUT, 'BADX.EXE')            # a header bigger than the file: EXEC says 11 (bad format)
+    open(badx, 'wb').write((b'MZ' + struct.pack('<4H', 88, 2, 0, 0x40)).ljust(600, b'\0'))
+    k = ktest.KPC(image('exabort.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, os.path.join(HERE, 'UPPER.COM'), badx))
+    k.start()
     pc, d = k.pc, k.pc.drives[0]
     def lbas(name):                     # the file's sectors (1.44 MB FAT12)
         img, out = bytes(d.img), []
@@ -2614,6 +2617,17 @@ def t_execabort():
     k.code_p()
     k.key('ver'); k.key(ktest.ENTER)
     a0, r0 = arena(), refs()
+    # Retry is no answer that says why EXEC fails: BADX's header unreadable, then read on Retry, then bad: said
+    d.bad = {lbas(b'BADX    EXE')[0]}
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('badx'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Fail?' in pc.text_screen() or pc.crash, 10)
+    o1 = pc.text_screen()
+    d.bad = set()
+    pc.keys.append(ord('r')); k.settle()
+    o = pc.text_screen()
+    check('a read error in BADX.EXE\'s header answered Retry, then the header bad: "Bad command or file name" all the same',
+          'Fail?' in o1 and 'Bad command or file name' in o, (o1[-200:], o))
     # (the header first: once read, a sector buffer keeps it, and the image's read from 0 hits it instead)
     for what, bad, key in (('its header', sec[0], 'a'), ('its image', sec[1], 'a'), ('its image', sec[1], 'f')):
         d.bad = {bad}
@@ -2630,7 +2644,12 @@ def t_execabort():
         check('a read error in %s while LCMD runs BIG.COM, answered %s: LCMD\'s prompt again, nothing more said, '
               'memory and the files as before' % (what, 'Abort' if key == 'a' else 'Fail'),
               'Data error reading drive A' in o1 and pc.mode() == 3 and o.endswith('A:\\>') and 'Bad command' not in o
-              and 'HELLO' not in o and arena() == a0 and refs() == r0 and not k.crashed, (o1[-200:], o, arena(), a0, refs(), r0))
+              and o.count('Data error') == 1 and 'HELLO' not in o and arena() == a0 and refs() == r0 and not k.crashed,
+              (o1[-200:], o, arena(), a0, refs(), r0))
+    # the next EXEC that fails otherwise says why (nothing kept from the answer before)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('badx'); k.key(ktest.ENTER)
+    check('... then BADX.EXE: "Bad command or file name"', 'Bad command or file name' in pc.text_screen(), pc.text_screen())
     # once a program runs, Abort ends it again (EXEC's flag not left set): UPPER reading BIG.COM's bad sector
     d.bad = {sec[1]}
     k.key('cls'); k.key(ktest.ENTER)

@@ -411,8 +411,9 @@ wanted, .. in the root, RMDIR of the current directory and the like
 A disk error while a program is being read, answered Abort, no longer
 ends the prompt and keeps the memory the program was given (the
 Executive then had no room to list the disk): the program just
-doesn't start.  On C:, one that can't be read whole doesn't start
-half loaded.
+doesn't start.  A .COM that can't be read whole (a FAT sector on C:
+that can't be read, a file shorter than its directory says) doesn't
+start half loaded.
 
 Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free; System, Multitasking sets it) turns it on:

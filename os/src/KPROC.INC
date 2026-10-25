@@ -385,7 +385,8 @@ f_4B:   cmp     byte [bp+F_AX], 0
         pop     es
         jc      .e2
         cmp     ax, [ex_left]           ; all of it?  (C:'s FAT read failed,
-        jne     .e2s                    ;  Fail or Abort: a short count, no CF)
+        jne     .e2s                    ;  Fail or Abort, or a chain shorter
+                                        ;  than the size: a short count, no CF)
         mov     ax, [ex_psp]
         mov     [ex_cs], ax
         mov     [ex_ss], ax
