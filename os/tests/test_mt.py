@@ -4448,6 +4448,8 @@ def t_tclip():
     # paste: 12 command lines (216 bytes: past the ring's 32 and TERM's 16), a line typed meanwhile after them
     typ2('cls', 1.0)
     setclip(b''.join(b'echo p%02d >> p.txt\n' % i for i in range(1, 13)))
+    free = lambda: sum(sz for s_, t_, o_, sz, nm in mcbs(k) if o_ == 0)
+    f0 = free()
     k.key(A.CODE['V'], settle=False); k.run_for(0.1)
     ps = tv('pseg')
     typ2('echo zz >>p.txt', 0.1)                   # (15 keys: TERM keeps 16)
@@ -4455,9 +4457,10 @@ def t_tclip():
         k.run_for(0.5)
         if tv('pseg') == 0 and b'zz' in (A.disk_file(k, 'P.TXT') or b''): break
     got = [l.strip() for l in (A.disk_file(k, 'P.TXT') or b'').split(b'\r\n') if l.strip()]
-    check('CODE-V with them on the clipboard: typed to it in its own block (%04Xh, given back after: %04Xh), all 12, in order, '
-          'each answered (P.TXT %s), the line typed meanwhile after them' % (ps, tv('pseg'), got[:3]), ps != 0
-          and tv('pseg') == 0 and got == [b'p%02d' % i for i in range(1, 13)] + [b'zz'], (ps, tv('pseg'), got))
+    check('CODE-V with them on the clipboard: typed to it in its own block (%04Xh, given back after: %04Xh, the free memory '
+          'as before, %d paragraphs), all 12, in order, each answered (P.TXT %s), the line typed meanwhile after them'
+          % (ps, tv('pseg'), f0, got[:3]), ps != 0 and tv('pseg') == 0 and free() == f0
+          and got == [b'p%02d' % i for i in range(1, 13)] + [b'zz'], (ps, tv('pseg'), f0, free(), got))
     # the menu's Full screen; CODE-V with the clipboard empty: the program's
     mv(*cxy(tv('top') + 2, 10)); btn(2, 0.5)
     k.key(ktest.DOWN, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
