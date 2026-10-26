@@ -38,6 +38,7 @@ def send_all(enc, bits, maxpay, screen, pix_only=True):
         p, more = enc.make(bits, maxpay)
         if p is None: return n, tot
         assert len(p) <= maxpay, (len(p), maxpay)
+        assert p[0] & PIC.F_PIC, p[:3]                  # (every picture frame says so)
         if pix_only: assert PIC.apply_pixels(p, screen) is True
         else:
             chs, ats = TS._blank_rows(); TS.apply(p, chs, ats, screen)
@@ -213,8 +214,11 @@ def test_picture_layer():
         assert t.can_picture()
         page = a_page()
         got = []
+        flags = []
+        h.grid.on_cells = lambda: flags.append(h.grid.last_flags)
         t.show_picture(page, 'test', on_click=lambda x, y: got.append((x, y)), title='A test picture')
         assert shows(h, page), 'the picture never arrived'
+        assert flags and all(f & PIC.F_PIC for f in flags), flags
         assert all(bytes(r).strip() == b'' for r in h.grid.cells), 'the text is still there'
         assert h.run_until(lambda: h.grid.title == b'A test picture', wall=5), h.grid.title
         # a change: only the difference
@@ -234,8 +238,12 @@ def test_picture_layer():
         # Claude Code went on underneath: back to it, with what it drew meanwhile
         h.grid.type('hello'); h.grid.press(0x0D, 0x1C)
         time.sleep(0.5)
+        n = len(flags)
+        assert all(f & PIC.F_PIC for f in flags), flags
         assert t.hide_picture('test')
         assert h.wait_text('You said: hello', wall=10), h.grid.screen_text()
+        assert flags[n:] and not any(f & PIC.F_PIC for f in flags[n:]), flags[n:]   # (text: never)
+        h.grid.on_cells = None
         assert not any(h.grid.pix[:23 * 16 * 80]) or True
         assert t.pic is None and not t.hide_picture('test')
     finally:
