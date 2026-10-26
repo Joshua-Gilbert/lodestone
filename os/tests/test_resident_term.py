@@ -164,7 +164,7 @@ def t_popup():
         check('... the band: how to go back', 'CODE-\\ back' in h.band(), h.band())
         # 1.12: the block elements drawn as in CLAUDE.COM, so Claude Code's mascot keeps its eyes
         t = h.router.term
-        mascot = ' ▐▛███▜▌\r\n▝▜█████▛▘\r\n  ▘▘ ▝▝\r\n'
+        mascot = ' ▐▛███▜▌\r\n▝▜█████▛▘\r\n  ▘▘ ▝▝\r\n▘▝▖▗▌▐▀▄▛▜▙▟▚▞\r\n'
         with t.lock:
             t.stream.feed(('\x1b[2J\x1b[H' + mascot).encode())
             t._mark()
@@ -174,9 +174,16 @@ def t_popup():
         Q = glp.GL_QUADS
         want = [bytes([0x20, Q['▐'], Q['▛'], 0x20, 0x20, 0x20, Q['▜'], Q['▌']]),
                 bytes([Q['▝'], Q['▜'], 0x20, 0x20, 0x20, 0x20, 0x20, Q['▛'], Q['▘']])]
-        check('... Claude Code\'s mascot: its HELLO says GF_QUAD and the block elements are drawn with the '
-              'console\'s own glyphs (A1h-AEh), byte for byte', ok and t.screen.quads and t.gflags & glp.GF_QUAD
-              and [gc[0][:8], gc[1][:9]] == want, (t.gflags, gc[:2], ga[:2]))
+        inv = ga[0][3:6] + ga[1][2:7]                   # (the full blocks: inverse blanks)
+        cl = open(os.path.join(CL, 'CLAUDE.COM'), 'rb').read()
+        cf = G.symbols(os.path.join(CL, 'CLAUDE.MAP'))['font'] - 0x100
+        quads = h.font_img[0x81 * 16:]                  # (A1h-AEh: the console's, then CLAUDE.COM's)
+        check('... Claude Code\'s mascot: its HELLO says GF_QUAD and the block elements come as A1h-AEh, all 14, '
+              'the full blocks inverse blanks, drawn with the console\'s glyphs byte for byte, CLAUDE.COM\'s own',
+              ok and t.screen.quads and t.gflags & glp.GF_QUAD and [gc[0][:8], gc[1][:9]] == want
+              and gc[3][:14] == bytes(range(0xA1, 0xAF)) and inv == bytes([1]) * 8
+              and len(quads) == 14 * 16 and quads == cl[cf + 0x81 * 16:cf + 0x8F * 16],
+              (t.gflags, gc[:4], ga[:2], len(quads)))
         h.term_type('hello'); h.press(ENTER)
         check('typing in the console reaches Claude Code ("You said: hello")', h.has('You said: hello') and in_step(h),
               h.screen())

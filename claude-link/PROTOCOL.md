@@ -186,7 +186,9 @@ are extra glyphs: 80h ● bullet, 81h ⎿ result corner, 82h … ellipsis,
 (· ✢ ✳ ✶ ✻ ✽), 8Dh ─ rule, 8Eh │ bar, 8Fh ▸, 90h °, 91h µ, 92h Ω,
 93h ±, 94h ×, 95h ≈, 96h ≤, 97h ≥, and box drawing on the same lines as
 8Dh/8Eh: 98h └, 99h ┘, 9Ah ┌, 9Bh ┐, 9Ch ├, 9Dh ┤, 9Eh ┬, 9Fh ┴, A0h ┼.
-Codes above A0h show as '?'.
+A GRiD whose HELLO says flags bit 4 (CLAUDE 1.8, and resident Claude's
+console from 1.12) also draws A1h-AEh, the 2x2 block elements
+▘▝▖▗▌▐▀▄▛▜▙▟▚▞. Codes above those show as '?'.
 
 ### REQUEST operations (executed on the GRiD)
 
@@ -385,13 +387,15 @@ CELLS payload:
 
 `len` bit 7 means an attribute byte follows (bit 0 inverse, bit 1
 underline); without it the cells are plain. Glyphs are the GRiD's codes
-(20h-7Eh and 80h-A0h, as in TEXT). An operation that does not fit the
+(20h-7Eh and 80h-A0h, as in TEXT, and A1h-AEh for a GRiD whose HELLO
+says flags bit 4). An operation that does not fit the
 screen or the payload ends the frame. The cursor is drawn as an inverted
 underline (glyph rows 14-15).
 
 What the Pi does with Claude Code's output: Unicode is folded to one GRiD
 glyph per cell (box drawing, ● ⎿ ✻ ❯ and the spinner have glyphs; a full
-block is an inverse blank; wide characters are `?` and a blank); a
+block is an inverse blank; the halves and quarters are A1h-AEh for a
+GRiD that says flags bit 4, else blanks or inverse blanks; wide characters are `?` and a blank); a
 non-default background or reverse video is inverse; underline stays;
 colours, bold and dim are plain. The alternate screen (`?1049`) and
 synchronised output (`?2026`) are handled before pyte; DA and cursor
