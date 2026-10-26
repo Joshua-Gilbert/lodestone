@@ -1917,7 +1917,7 @@ mt_topen:
 ; (its pages not what is shown), 16 its program took the mouse (TX_MPSP:
 ; T4), DH = its state (TS_FROZEN for one ready
 ; but frozen behind, as MT_LIST says).  T5b: with DH bit 7, a screen
-; published and shown its cells instead (mt_tpub)
+; published and shown: its cells instead (mt_tpub)
 mt_trows:
         call    mt_targ
         jc      mt_bad
@@ -2030,10 +2030,12 @@ mt_trows:
 ; PBA_* attributes, not a colour's) -> DL 32, CH = its rows, CL = its
 ; columns, BX = PB_CUR (FFFFh: PBF_NOCUR)
 mt_tpub:
+        mov     ax, [si+PB_CUR]
+        test    byte [si+PB_FLAGS], PBF_NOCUR
+        jz      .k
+        mov     ax, 0FFFFh
+.k:     push    ax                      ; (BX's, to come)
         push    bx
-        push    es
-        push    ds
-        push    si
         mov     bl, [si+PB_COLS]        ; BL its columns, BH its rows
         cmp     bl, 80
         jbe     .c
@@ -2063,35 +2065,30 @@ mt_tpub:
         dec     dh
         jnz     .row
         mov     cx, bx
-        pop     si
-        pop     ds
-        pop     es
         pop     bx
-        mov     ax, [si+PB_CUR]
-        test    byte [si+PB_FLAGS], PBF_NOCUR
-        jz      .k
-        mov     ax, 0FFFFh
-.k:     push    cx
-        push    ax
-        push    cs
+        push    cx
+        push    KSEG
         pop     ds
         mov     dl, 32
         call    mt_trows.dl
         call    mt_tchg
         mov     [bp+F_AX], ax
-        pop     word [bp+F_BX]
         pop     word [bp+F_CX]
-        push    KSEG
-        pop     ds
+        pop     word [bp+F_BX]
         jmp     KSEG:ok
 
-; T5b: task AL (its entry BX) has a screen published (MT_PUB) and shown
-; (PBF_SHOWN), and is behind in a text mode -> DS:SI = its descriptor, ES
-; = its TX.  CF if not (ES, and DS and SI, changed)
+; T5b: task AL (its entry BX) has a screen published and shown, and is
+; behind (mt_pss) -> DS:SI = its descriptor, ES = its TX.  CF if not (ES,
+; and DS and SI, changed)
 mt_pshow:
-        mov     es, [cs:bx+TE_TX]
         cmp     al, [cs:mt_front]
-        je      .no
+        jne     mt_pss
+        stc
+        ret
+; task BX has a screen published (MT_PUB) and shown (PBF_SHOWN), in a text
+; mode (its BIOS data's in its TX: not the front task's own) -> DS:SI = its
+; descriptor, ES = its TX.  CF if not (ES, and DS and SI, changed)
+mt_pss: mov     es, [cs:bx+TE_TX]
         cmp     byte [es:TX_VID], 3     ; (its mode: 40:49h's)
         ja      .no
         cmp     word [es:TX_PUB + 2], 0
@@ -2120,32 +2117,34 @@ mt_tchg:
 .x:     ret
 
 ; T5b: task AL (its entry BX; not task 0, nor parked) has a screen
-; published (MT_PUB), is in a text mode and is shown in a terminal window
-; (mw_owns): its window is its screen, so CODE-Tab passes over it and
+; published and shown, in a text mode (mt_pss), and a terminal window shows
+; it (mw_owns): its window is its screen, so CODE-Tab passes over it and
 ; MT_FRONT refuses it.  CF if so.  All kept
 mt_ispub:
         push    es
+        push    ds
+        push    si
         push    ax
-        mov     es, [cs:bx+TE_TX]
-        cmp     word [es:TX_PUB + 2], 0
-        je      .n
-        cmp     byte [es:TX_VID], 3     ; (its mode: 40:49h's)
-        ja      .n
+        call    mt_pss
+        cmc                             ; (not so: CF clear)
+        jnc     .x
         mov     ah, [cs:bx+TE_GEN]
         call    mw_owns                 ; (CF: no window shows it)
         cmc
-        jmp     short .x
-.n:     clc
 .x:     pop     ax
+        pop     si
+        pop     ds
         pop     es
         ret
 
 ; MT_PUB (T5b).  CL = 0, the running task's program: ES:DI its screen's
 ; descriptor (0:0 withdraws one), it and its cells, font and table all in
 ; the task's memory (mt_pin) and its fields in range; another than it
-; gave before counted as a change (TX_CHG: its window looks again) -> AL =
-; 1 if a terminal window shows the task (mw_owns), AH = the task.  CL = 1
-; (the UI's call): task BL's descriptor -> ES:DI
+; gave before counted as a change (TX_CHG: one more than a window saw) ->
+; AL = 1 if a terminal window shows the task (mw_owns), AH = the task; one
+; in front then with its screen shown, in a text mode, goes back to its
+; window (CODE-Tab took it there while its pages were shown).  CL = 1
+; (task 0's call): task BL's descriptor -> ES:DI
 mt_pub: mov     cl, [bp+F_CX]
         cmp     cl, 1
         je      .get
@@ -2205,13 +2204,21 @@ mt_pub: mov     cl, [bp+F_CX]
         jc      .bd
 .set:   mov     al, [cs:mt_cur]
         call    mt_ent
-        mov     dx, es
-        mov     es, [cs:bx+TE_TX]
+        mov     dx, es                  ; (DX:DI the new one)
+        call    mt_tchg                 ; (AX: its count as a window saw it)
         cmp     di, [es:TX_PUB]
         jne     .ch
         cmp     dx, [es:TX_PUB + 2]
         je      .s
-.ch:    inc     word [es:TX_CHG]        ; (another: its window looks again)
+.ch:    inc     ax                      ; another: its count one up from what
+        mov     cx, dx                  ;  a window saw, whatever the new
+        or      cx, di                  ;  one's PB_CHG (TX_CHG less it)
+        jz      .c0
+        push    ds
+        mov     ds, dx
+        sub     ax, [di+PB_CHG]
+        pop     ds
+.c0:    mov     [es:TX_CHG], ax
 .s:     mov     [es:TX_PUB], di
         mov     [es:TX_PUB + 2], dx
         or      dx, di
@@ -2224,7 +2231,18 @@ mt_pub: mov     cl, [bp+F_CX]
         mov     ah, al
         mov     al, 0
         jc      .r
-        inc     ax
+        inc     ax                      ; (a window shows it)
+        cmp     ah, [cs:mt_front]       ; in front (CODE-Tab took it there while
+        jne     .r                      ;  its pages were shown), its screen
+        xchg    al, ah                  ;  shown, in a text mode (the BIOS's:
+        call    mt_ispub                ;  40:49h): back to its window, task 0
+        xchg    al, ah                  ;  in front again
+        jnc     .r
+        push    40h
+        pop     es
+        cmp     byte [es:49h], 3
+        ja      .r
+        mov     byte [cs:mt_swreq], 0
 .r:     mov     [bp+F_AX], ax
         jmp     KSEG:ok
 .bd:    mov     ax, 0Dh
@@ -2237,35 +2255,31 @@ mt_pub: mov     cl, [bp+F_CX]
         call    mt_t5
         jc      mt_park.r5
         mov     es, [cs:bx+TE_TX]
-        mov     ax, [es:TX_PUB]
-        mov     [bp+F_DI], ax
-        mov     ax, [es:TX_PUB + 2]
-        mov     [bp+F_ES], ax
+        les     di, [es:TX_PUB]
+        mov     [bp+F_DI], di
+        mov     [bp+F_ES], es
         jmp     KSEG:ok
 
 ; T5b: CX bytes (1 or more) at DX:AX all in the running task's memory
 ; (mt_mine: its region; its first and last byte's paragraphs)?  CF if not.
 ; DS = KSEG; AX, BX, DX changed
 mt_pin:
-        push    ax
-        shr     ax, 4
-        add     ax, dx
-        jc      .no
-        push    dx
-        call    mt_mine
-        pop     dx
-        jc      .no
-        pop     ax
+        mov     bx, ax
         dec     cx                      ; (its last byte: no wrap past the
         add     ax, cx                  ;  segment's end)
         inc     cx                      ; (CF kept)
-        jc      .no1
+        jc      .no
         shr     ax, 4
         add     ax, dx
-        jc      .no1
+        jc      .no
+        shr     bx, 4                   ; (its first byte's: no carry, as the
+        add     bx, dx                  ;  last's had none)
+        push    bx
+        call    mt_mine
+        pop     ax
+        jc      .no
         jmp     mt_mine
-.no:    pop     ax
-.no1:   stc
+.no:    stc
         ret
 
 ; MT_TKEY (T1): key CX typed to task BL: into its TX's ring (KRING), for
@@ -5077,11 +5091,13 @@ mt_mgone:
         je      .x
         cmp     [es:TX_PPSP], ax
         jne     .x
+        call    mt_tchg                 ; (its count one up from what a window
+        inc     ax                      ;  saw: its PB_CHG kept in TX_CHG)
+        mov     [es:TX_CHG], ax
         xor     ax, ax
         mov     [es:TX_PUB], ax
         mov     [es:TX_PUB + 2], ax
         mov     [es:TX_PPSP], ax
-        inc     word [es:TX_CHG]
 .x:     pop     es
         pop     bx
         pop     ax

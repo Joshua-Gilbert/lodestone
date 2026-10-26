@@ -12,15 +12,26 @@
 ;   w  withdrawn (0:0): "W c aaaa"; p  published again: "P c aaaa"
 ;   b  refused ones, then one taken: "B c aaaa ..." for ES:DI 0:400h,
 ;      PB_VER 0, PB_COLS 0, 81, PB_ROWS 0, 26, PB_FIRST 21h, PB_GEND 3Fh,
-;      PB_CELLS 0:0, PB_FONT 0:0, PB_XLAT at FFC0h (past its segment's
-;      end), PB_XLAT across the end of its task's memory, CL 1 (a task's
-;      call), CL 2; then PB_XLAT the 128 bytes at that end's last 8
-;      paragraphs (taken); then its own descriptor again: "c aaaa" (all
-;      on one line, each a copy of its descriptor with one field changed)
+;      PB_CELLS 0:0, PB_FONT 0:0, PB_FONT at E-27h:0 and PB_CELLS at
+;      E-F9h:0 (E: the paragraph past its task's memory; 640 and 4,000
+;      bytes: their last paragraph E), PB_XLAT at E-1000h:FFC0h (past its
+;      segment's end), PB_XLAT across E, CL 1 (a task's call), CL 2; then
+;      PB_XLAT the 128 bytes before E (taken); then its own descriptor
+;      again: "c aaaa" (all on one line, each a copy of its descriptor
+;      with one field changed)
+;   o  ES:DI = the far pointer just before its descriptor (the test puts
+;      a copy of the descriptor outside its memory, and its address
+;      there): "O c aaaa"
+;   e  a copy of its descriptor with PB_XLAT that far pointer (the test
+;      puts one there starting below its task's memory and ending in
+;      it): "E c aaaa"
+;   h  as g, but PBF_SHOWN left on: "G"
 ;   x  EXEC of MTPUB C FILE (a child: "Y", ends): "X c aaaa"
 ;   y  EXEC of MTPUB D FILE (a child that publishes its own: "Z c aaaa",
 ;      ends): "X c aaaa"
-;   r  PB_ROWS 20, or 25 again: "R rr"
+;   r  PB_ROWS 20, or 25 again, published again: "R rr"
+;   v  PB_COLS 40 (its cells read 40 a row), or 80 again, published
+;      again: "V cc"
 ;   t  36 ticks computing (no call made: it never waits), row 22's cell 0
 ;      the next glyph (21h-2Fh, round) at each: "T"
 ;   q  "Q", and ends (its screen still published: its end withdraws it)
@@ -116,6 +127,14 @@ keys    db      'c'
         dw      k_r
         db      't'
         dw      k_t
+        db      'v'
+        dw      k_v
+        db      'o'
+        dw      k_o
+        db      'e'
+        dw      k_e
+        db      'h'
+        dw      k_h
         db      'q'
         dw      k_q
         db      0
@@ -147,15 +166,41 @@ k_k:    xor     byte [desc + PB_FLAGS], PBF_NOCUR
         call    hex2
         jmp     wout
 k_r:    xor     byte [desc + PB_ROWS], 25 ^ 20
-        call    chg
-        mov     di, out_
+        mov     bx, PB_ROWS
         mov     al, 'R'
+        jmp     short repub
+k_v:    xor     byte [desc + PB_COLS], 80 ^ 40
+        mov     bx, PB_COLS
+        mov     al, 'V'
+; a field (BX) changed: counted, published again: "L ff" (L in AL)
+repub:  push    ax
+        call    chg
+        mov     di, desc
+        call    mtpub
+        pop     ax
+        mov     di, out_
         stosb
         mov     al, ' '
         stosb
-        mov     al, [desc + PB_ROWS]
+        mov     al, [desc + bx]
         call    hex2
         jmp     wout
+k_e:    call    copy
+        les     di, [ofar]
+        mov     [bad + PB_XLAT], di
+        mov     [bad + PB_XLAT + 2], es
+        push    ds
+        pop     es
+        mov     di, bad
+        call    mtpub
+        mov     al, 'E'
+        jmp     res1
+k_o:    les     di, [ofar]
+        call    mtpub
+        push    ds
+        pop     es
+        mov     al, 'O'
+        jmp     res1
 k_t:    push    es
         push    40h
         pop     es
@@ -191,7 +236,7 @@ k_s:    or      byte [desc + PB_FLAGS], PBF_SHOWN
 chg1:   call    chg
         jmp     put1
 k_g:    and     byte [desc + PB_FLAGS], ~PBF_SHOWN
-        call    chg
+k_h:    call    chg
         mov     ax, 40h
         int     10h
         push    es
@@ -220,7 +265,7 @@ k_w:    xor     di, di
         push    ds
         pop     es
         mov     al, 'W'
-        jmp     short res1
+        jmp     res1
 k_p:    mov     al, 'P'
         jmp     pub
 k_q:    mov     al, 'Q'
@@ -302,9 +347,23 @@ k_b:    mov     di, out_
         mov     [bad + PB_FONT], ax
         mov     [bad + PB_FONT + 2], ax
         call    badp
-        call    copy                    ; PB_XLAT at FFC0h
+        call    rend                    ; PB_FONT, its 640 bytes up to E
+        sub     ax, (GEND - FIRST) * 16 / 16 - 1
+        call    copy
+        mov     word [bad + PB_FONT], 0
+        mov     [bad + PB_FONT + 2], ax
+        call    badp
+        call    rend                    ; PB_CELLS, its 4,000 bytes up to E
+        sub     ax, NCOL * NROW * 2 / 16 - 1
+        call    copy
+        mov     word [bad + PB_CELLS], 0
+        mov     [bad + PB_CELLS + 2], ax
+        call    badp
+        call    rend                    ; PB_XLAT at E-1000h:FFC0h
+        sub     ax, 1000h
+        call    copy
         mov     word [bad + PB_XLAT], 0FFC0h
-        mov     [bad + PB_XLAT + 2], cs
+        mov     [bad + PB_XLAT + 2], ax
         call    badp
         call    rend                    ; PB_XLAT across its memory's end
         sub     ax, 8
@@ -539,6 +598,7 @@ mode    db      0
 rfl     dw      0
 r_ax    dw      0
 optr    dw      0
+ofar    dd      0                       ; (o: the test's; just before desc)
 desc    times   PB_SIZE db 0
 bad     times   PB_SIZE db 0
 tail    times   100 db 0
