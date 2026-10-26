@@ -1,10 +1,11 @@
 ; MTSRQ.COM - for test_mt.py (T5c): a program woken by the GPIB driver's
 ; SRQ interrupt.
-;   MTSRQ N [O | K]
-; Asks MT_WAKE (INT 21h F0h AL=23h, BL=1; its AL kept at wres), takes the
+;   MTSRQ N [O | K | F | G | T]
+; Asks MT_WAKE (INT 21h F0h AL=23h, BL=1; its AX kept at wres), takes the
 ; driver's SRQ count (INT 60h AH=0Eh), then sleeps (CLI, the count looked
 ; at, STI / HLT) until the count moves: at `seen` (offset 10Dh, which
-; test_mt watches, finding it by `sig`) it counts one (nseen) and sleeps again; after N it ends.
+; test_mt watches, finding it by `sig`) it counts one (nseen) and sleeps
+; again; after N it ends.
 ;   O  no MT_WAKE (it waits its turn)
 ;   K  a key read (INT 16h AH=00h) first: waiting for it, its task isn't
 ;      ready to run, so an SRQ wakes nothing

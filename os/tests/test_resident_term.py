@@ -1354,7 +1354,7 @@ def t_bg_mt():
     (MT's key wait) files are F7h there as in the pop-up, GPIB works."""
     mt = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
     h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more={'A:\\BIG.TXT': BIG, 'A:\\LODEMT.SYS': mt},
-            irq_exact=True); h.boot()           # (ticks on time: the read's 2 s timeout is then 40 ticks, T5c)
+            irq_exact=True); h.boot()           # (ticks on time: the read then lasts 40 ticks, T5c)
     try:
         h.cmd('claude /r')
         h.cmd('emsuse')

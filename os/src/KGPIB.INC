@@ -1007,8 +1007,9 @@ gp_isr:    push    ax
         cmp     byte [gp_irqn], 32
         jb      .e
         call    gp_irq_mask
-.e:     mov     al, 20h                 ; EOI
-        out     20h, al
+.e:     mov     al, 20h                 ; EOI  (KMT.INC: MULTITASK=1 makes
+        out     20h, al                 ;  these 5 bytes, to POP DS, a far
+                                        ;  jump to mt_srqi: a task woken)
         pop     ds
         pop     dx
         pop     ax

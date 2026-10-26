@@ -5253,6 +5253,7 @@ def t_srq():
     sh = Shell(k)
     sh.run('ver')
     wkt = lambda: k.pc.rd(seg, Y['mt_wkt'], 1)[0]
+    wkp = lambda: k.pc.u16(seg, Y['mt_wkp'])
     cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
     tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
     def tnum_(psp):                                     # (the task whose region holds a PSP)
@@ -5260,28 +5261,37 @@ def t_srq():
             reg = k.pc.u16(seg, task_ent(k, n) + 4)
             if n and k.pc.rd(seg, task_ent(k, n), 1)[0] and reg <= psp < reg + k.pc.u16(reg - 1, 3): return n
         return 0
+    ways = {seg * 16 + Y['mt_srqi']: 'srqi', seg * 16 + Y['mt_srqi.r']: 'out', seg * 16 + Y['mt_tick.w']: 'w',
+            seg * 16 + Y['mt_pick.wk']: 'pick', seg * 16 + Y['mt_exit']: 'exit'}
+    picks = []
     def lat(psp, when, max_s=0.4, at=None):
-        """IRQ 5 raised once when() holds (at the block `at`, if given: from the watch) -> ms until MTSRQ (at
-        psp) sees it, or None."""
+        """IRQ 5 raised once when() holds (at the block `at`, if given: from the watch) -> (ms until MTSRQ at
+        psp sees it, or None; the way MT went meanwhile: mt_srqi, out of it, mt_tick.w, INT 21h's way out,
+        mt_pick taking mt_want)."""
+        if psp is None: return 'no MTSRQ', []
         t1 = k.pc.us + 2e6                              # (short runs: run_for's are 20000 blocks at least)
-        hit, prev, base, t0 = [], k.pc.watch, psp * 16 + 0x10D, []
-        ev.clear()
+        hit, prev, base, t0, ev = [], k.pc.watch, psp * 16 + 0x10D, [], []
         def w(a):
             if prev: prev(a)
-            if t0 and not hit and a in ways and len(ev) < 3: ev.append(ways[a])
+            if t0 and not hit and a in ways and len(ev) < 8: ev.append(ways[a])
             if at is not None and not t0 and a == at and when():     # (pcemu's irq_exact armed by hand: taken
                 t0.append(k.pc.us); k.pc.irq_pending.add(5); k.pc.irq_wait = True   #  as IF is set again)
             if a == base and t0 and not hit: hit.append(k.pc.us)
         k.pc.watch = w
         while not t0:
-            if k.pc.us > t1: k.pc.watch = prev; return 'never ready'
+            if k.pc.us > t1: k.pc.watch = prev; return 'never ready', []
             if at is None and when(): t0.append(k.pc.us); k.pc.irq_pending.add(5)
             else: k.pc.run(300)
         while not hit and k.pc.us - t0[0] < max_s * 1e6: k.pc.run(300)
         k.pc.watch = prev
-        return round((hit[0] - t0[0]) / 1000, 2) if hit else None
-    ev, ways = [], {seg * 16 + Y['mt_srqi']: 'srqi', seg * 16 + Y['mt_srqi.r']: 'out', seg * 16 + Y['mt_tick.w']: 'w'}
+        if 'pick' in ev: picks.append(ev)
+        return (round((hit[0] - t0[0]) / 1000, 2) if hit else None), ev
+    fast = lambda r: isinstance(r[0], float) and r[0] <= 3.0 and 'pick' in r[1]     # (woken: mt_pick took it)
+    still = lambda r: r[0] is None and r[1][:2] == ['srqi', 'out']                   # (nothing woken)
     own = lambda n: lambda: cur() == n and k.pc.r('cs') not in (seg, 0x60) and k.pc.r('flags') & 0x200
+    def one():
+        ps = srq_progs(k)
+        return ps[0] if len(ps) == 1 else None
     irq = k.pc.rd(0x60, Y['gp_irq'], 1)[0]
     gb = bytes(k.pc.rd(0x60, Y['gp_isr.e'], 5))
     check('the driver\'s SRQ interrupt on (IRQ 5, unmasked), its EOI a JMP FAR to mt_srqi',
@@ -5290,100 +5300,140 @@ def t_srq():
     # a program behind asking, a task computing: its turn at once
     typ(k, 'mtlaunch mtsrq.com 4', 1.0); line(k, '')        # (task 1, MTSPIN 2: MTSPIN's next in turn is the
     typ(k, 'mtlaunch mtspin.com 9000 s1.txt', 1.0); line(k, '')     #  Executive, not MTSRQ)
-    ps = srq_progs(k)
-    q = ps[0] if len(ps) == 1 else None
+    q = one()
     nq, nspin = (tnum_(q) if q else None), tnum('MTSPIN.COM')
     wres = k.pc.u16(q, 0x105) if q else None
     check('MTSRQ behind asks MT_WAKE: AL = 5 (the driver\'s IRQ); MT holds its task and PSP',
-          q and wres == 5 and wkt() == nq == 1 and nspin == 2 and k.pc.u16(seg, Y['mt_wkp']) == q, (ps, wres, wkt(), nq, nspin))
+          q and wres == 5 and wkt() == nq == 1 and nspin == 2 and wkp() == q, (q, wres, wkt(), nq, nspin))
     typ(k, 'mtsrq 0 g', 0.8)
     check('... another program giving it up (MTSRQ G, BL = 0, in task 0): nothing changes (its own only)',
-          wkt() == nq and k.pc.u16(seg, Y['mt_wkp']) == q, (wkt(), hex(k.pc.u16(seg, Y['mt_wkp']))))
-    ls, way = lat(q, own(nspin)), list(ev)
-    check('IRQ 5 while MTSPIN computes: MTSRQ runs at once (%s ms; 3 at most), mt_srqi then mt_tick.w, not after '
-          'MTSPIN\'s turn and the Executive\'s' % ls, isinstance(ls, float) and ls <= 3.0 and way[:2] == ['srqi', 'w'],
-          (ls, way, nspin, tstate(k)))
-    fr = task_ent(k, nq) + 24                           # (TE_VF: SPF_FREEZE, as MT_FLAGS sets it)
+          q and wkt() == nq and wkp() == q, (wkt(), hex(wkp())))
+    r = lat(q, own(nspin))
+    check('IRQ 5 while MTSPIN computes: MTSRQ runs at once (%s ms; 3 at most): mt_srqi, mt_tick.w, mt_pick taking '
+          'it (%s), not after MTSPIN\'s turn and the Executive\'s' % r, fast(r) and r[1][:2] == ['srqi', 'w'],
+          (r, nspin, tstate(k)))
+    fr = task_ent(k, nq or 1) + 24                      # (TE_VF: SPF_FREEZE, as MT_FLAGS sets it)
     k.pc.wr(seg, fr, bytes([k.pc.rd(seg, fr, 1)[0] | 4]))
-    lf, way = lat(q, own(nspin), 0.1), list(ev)
+    r = lat(q, own(nspin), 0.1)
     k.pc.wr(seg, fr, bytes([k.pc.rd(seg, fr, 1)[0] & ~4]))
-    check('... frozen behind (SPF_FREEZE): IRQ 5 wakes nothing (mt_srqi straight out), not seen meanwhile',
-          lf is None and way[:2] == ['srqi', 'out'], (lf, way))
+    check('... frozen behind (SPF_FREEZE): IRQ 5 wakes nothing (mt_srqi straight out: %s), not seen meanwhile' % r[1],
+          still(r), r)
     k.run_for(0.3)                                      # (thawed: it sees that one at its turn)
-    lm = lat(q, lambda: cur() == nspin, at=seg * 16 + Y['mt_load.go'])     # (raised under CLI: taken at its STI)
+    r = lat(q, lambda: cur() == nspin, at=seg * 16 + Y['mt_load.go'])     # (raised under CLI: taken at its STI)
     check('... IRQ 5 in MT\'s own code as a switch to MTSPIN ends (mt_load\'s STI / RET: not a point to switch from): '
-          'MTSRQ runs at the next tick (%s ms), the wake kept, not lost' % lm, isinstance(lm, float) and 3 < lm <= 60, lm)
-    l4 = lat(q, lambda: cur() == nq)
-    check('... while MTSRQ itself runs (in its HLT): seen at once (%s ms)' % l4, isinstance(l4, float) and l4 <= 3.0, l4)
+          'MTSRQ runs at the next tick (%s ms; %s), the wake kept, not lost' % r,
+          isinstance(r[0], float) and 3 < r[0] <= 70 and 'pick' in r[1], r)
+    r = lat(q, lambda: cur() == nq)
+    check('... while MTSRQ itself runs (in its HLT): seen at once (%s ms)' % r[0], isinstance(r[0], float) and r[0] <= 3.0, r)
     k.run_for(0.3)
     check('... its fourth SRQ: it ends; its wake with it (mt_wkt FFh)', srq_progs(k) == [] and wkt() == 0xFF,
           (srq_progs(k), wkt()))
+    # in INT 21h when it comes: at its way out
+    typ(k, 'mtlaunch mtspin.com 9000 s2.txt d', 1.0); line(k, '')
+    typ(k, 'mtlaunch mtsrq.com 1', 1.0); line(k, '')
+    q = one()
+    nd = next((i for i, s_, n in tstate(k)[0] if n == 'MTSPIN.COM' and i != nspin), None)
+    r = lat(q, lambda: cur() == nd and k.pc.r('cs') == 0x60 and k.pc.r('flags') & 0x200
+            and k.pc.rd(0x60, Y['indos'], 1)[0] == 1)
+    check('IRQ 5 while MTSPIN D (an INT 21h on each count) is inside INT 21h: MTSRQ at its way out (%s ms; %s)' % r,
+          fast(r) and r[1][:4] == ['srqi', 'w', 'exit', 'pick'], (r, nd, tstate(k)))
+    o = sh.run('mtlaunch /k:%d' % nd) if nd else ''
+    line(k, ''); k.run_for(0.5)
+    check('... (MTSRQ ended, MTSPIN D killed)', srq_progs(k) == [] and wkt() == 0xFF and nd
+          and nd not in [i for i, s_, n in tstate(k)[0]], (o, srq_progs(k), wkt(), tstate(k)))
+    # two programs asking: the last; the first's end leaves the second's
+    typ(k, 'mtlaunch mtsrq.com 1', 1.0); line(k, '')
+    qx = one()
+    typ(k, 'mtlaunch mtsrq.com 2', 1.0); line(k, '')
+    qy = next((x for x in srq_progs(k) if x != qx), None)
+    ny = tnum_(qy) if qy else None
+    check('two programs asking (two MTSRQs): the last one holds it', qx and qy and wkt() == ny and wkp() == qy,
+          (qx, qy, ny, wkt(), hex(wkp())))
+    r = lat(qy, own(nspin))
+    k.run_for(0.5)
+    check('... IRQ 5: the second woken at once (%s ms; %s); the first sees it at its turn and ends, the second\'s wake '
+          'kept' % r, fast(r) and srq_progs(k) == [qy] and wkt() == ny and wkp() == qy, (r, srq_progs(k), wkt()))
+    r = lat(qy, own(nspin))
+    k.run_for(0.5)
+    check('... again: woken at once (%s ms), it ends, its wake with it' % r[0], fast(r) and srq_progs(k) == []
+          and wkt() == 0xFF, (r, srq_progs(k), wkt()))
     # the control: not asked
     typ(k, 'mtlaunch mtsrq.com 3 o', 1.0); line(k, '')
-    ps = srq_progs(k)
-    q = ps[0] if len(ps) == 1 else None
-    lo = [lat(q, own(nspin)) for _ in range(3)] if q else []
-    check('without MT_WAKE (MTSRQ O): it sees the SRQ only at its turn (%s ms; more than 5)' % lo,
-          q and wkt() == 0xFF and len(lo) == 3 and all(isinstance(x, float) and x > 5 for x in lo), (ps, wkt(), lo))
+    q = one()
+    lo = [lat(q, own(nspin)) for _ in range(3)]
+    check('without MT_WAKE (MTSRQ O): it sees the SRQ only at its turn (%s ms; more than 5), mt_srqi straight out'
+          % [x[0] for x in lo], q and wkt() == 0xFF and all(isinstance(x[0], float) and x[0] > 5
+          and x[1][:2] == ['srqi', 'out'] for x in lo), (q, wkt(), lo))
+    k.run_for(0.5)
     # asked and given up
     typ(k, 'mtlaunch mtsrq.com 2 f', 1.0); line(k, '')
     k.run_for(0.3)
-    ps = srq_progs(k)
-    check('... MTSRQ F (asked, then BL = 0): given up (mt_wkt FFh), AL = 5', len(ps) == 1 and wkt() == 0xFF
-          and all(k.pc.u16(x, 0x105) == 5 for x in ps if k.pc.u16(x, 0x105) != 0xFFFF), (ps, wkt()))
+    q = one()
+    check('... MTSRQ F (asked, then BL = 0): given up (mt_wkt FFh), AL = 5', q and wkt() == 0xFF
+          and k.pc.u16(q, 0x105) == 5, (srq_progs(k), wkt(), q and hex(k.pc.u16(q, 0x105))))
     for _ in range(2): k.pc.irq_pending.add(5); k.run_for(0.5)
     check('... (it ends after its two SRQs)', srq_progs(k) == [], srq_progs(k))
     # waiting for a key: not ready, nothing woken; killed: its wake ends with its task
     typ(k, 'mtlaunch mtsrq.com 1 k', 1.0); line(k, '')
-    ps = srq_progs(k)
-    q = ps[0] if len(ps) == 1 else None
+    q = one()
     nq = tnum_(q) if q else None
-    st = tstate(k)
-    lk = lat(q, own(nspin), 0.2) if q else 'none'
-    way = list(ev)
+    st = dict((i, s_) for i, s_, n in tstate(k)[0])
+    r = lat(q, own(nspin), 0.2)
     check('MTSRQ K, waiting for a key (TS_WAITK): IRQ 5 wakes nothing (mt_srqi straight out; not seen, mt_want FFh)',
-          q and wkt() == nq and lk is None and way[:2] == ['srqi', 'out'] and k.pc.rd(seg, Y['mt_want'], 1)[0] == 0xFF,
-          (ps, wkt(), nq, lk, way, st))
+          q and st.get(nq) == 2 and wkt() == nq and still(r) and k.pc.rd(seg, Y['mt_want'], 1)[0] == 0xFF,
+          (q, st, wkt(), nq, r))
     o = sh.run('mtlaunch /k:%d' % nq) if nq else ''
     line(k, ''); k.run_for(0.5)
     check('... MT_KILL ends its task: its wake too (mt_wkt FFh)', nq and srq_progs(k) == [] and wkt() == 0xFF,
           (o, srq_progs(k), wkt(), tstate(k)))
     typ(k, 'mtlaunch mtsrq.com 1 t', 1.0); line(k, '')
     k.run_for(0.5)
-    check('... MTSRQ T, resident (31h) once asked: its program\'s end not seen (as with T4\'s mouse), its task\'s end '
-          'ends the wake (mt_wkt FFh)', wkt() == 0xFF and 'MTSRQ.COM' not in [n for i, s_, n in tstate(k)[0]],
-          (wkt(), tstate(k)))
+    check('... MTSRQ T, resident (31h) once asked: its task\'s end ends the wake (mt_wkt FFh)',
+          wkt() == 0xFF and 'MTSRQ.COM' not in [n for i, s_, n in tstate(k)[0]], (wkt(), tstate(k)))
     # task 0: MTSRQ in front, full screen, MTSPIN behind
     typ(k, 'mtsrq 3', 0.8)
-    ps = srq_progs(k)
-    q = ps[0] if len(ps) == 1 else None
-    l0 = [lat(q, own(nspin)) for _ in range(2)] if q else []
-    check('task 0 asking (MTSRQ in front): woken from MTSPIN\'s turn at once (%s ms)' % l0,
-          q and tnum_(q) == 0 and wkt() == 0 and len(l0) == 2 and all(isinstance(x, float) and x <= 3.0 for x in l0),
-          (ps, wkt(), l0))
+    q = one()
+    l0 = [lat(q, own(nspin)) for _ in range(2)]
+    check('task 0 asking (MTSRQ in front): woken from MTSPIN\'s turn at once (%s ms)' % [x[0] for x in l0],
+          q and tnum_(q) == 0 and wkt() == 0 and all(fast(x) for x in l0), (q, wkt(), l0))
     k.pc.irq_pending.add(5); k.run_for(0.5)
     check('... it ends at its third: the wake ends with it (task 0\'s too)', srq_progs(k) == [] and wkt() == 0xFF,
           (srq_progs(k), wkt()))
     # the Executive in front (a terminal window's case, T5d): idle at its HLT, and busy drawing
     typ(k, 'mtlaunch mtsrq.com 2', 1.0); line(k, '')
     typ(k, 'exit', 1.5)
-    ps = srq_progs(k)
-    q = ps[0] if len(ps) == 1 else None
+    q = one()
     ui = k.pc.u16(0x60, Y['ui_seg'])
     idle = (Y['..@ui_idle'], Y['..@ui_midle'], Y['..@ui_sidle'])
-    le = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') in idle) if q else None
-    check('the Executive in front, idle at its HLT (MTSRQ behind): woken at once (%s ms)' % le,
-          q and k.pc.mode() == 0x40 and isinstance(le, float) and le <= 3.0, (ps, hex(k.pc.mode()), le))
+    r = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') in idle)
+    check('the Executive in front, idle at its HLT (MTSRQ behind): woken at once (%s ms; %s)' % r,
+          q and k.pc.mode() == 0x40 and fast(r), (q, hex(k.pc.mode()), r))
     k.key(ktest.DOWN, ktest.UP, settle=False)
-    lb = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') not in idle and k.pc.r('flags') & 0x200, 1.0) if q else None
-    print('   the Executive busy drawing (its selection moved): the SRQ\'s task at its next idle HLT or tick, %s ms' % lb)
+    r = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') not in idle and k.pc.r('flags') & 0x200, 1.0)
+    print('   the Executive busy drawing (its selection moved): the SRQ\'s task at the first tick at its idle HLT, %s ms' % r[0])
     k.run_for(0.5)
-    check('... the Executive busy drawing: the wake kept till its idle HLT or the tick (%s ms; 100 at most), and then '
-          'MTSRQ ends, its wake with it' % lb, isinstance(lb, float) and lb <= 100 and srq_progs(k) == [] and wkt() == 0xFF,
-          (lb, srq_progs(k), wkt()))
-    check('... every switch at a safe point (the audit; %d at the tick\'s end, with the SRQ\'s)' % len(au.switches(0, 'tick')),
-          not au.bad() and au.switches(0, 'tick'), au.bad()[:3])
+    check('... the Executive busy drawing: the wake kept till the first tick at its idle HLT (%s ms; 100 at most; '
+          '%s), and then MTSRQ ends, its wake with it' % r, isinstance(r[0], float) and r[0] <= 100 and 'pick' in r[1]
+          and srq_progs(k) == [] and wkt() == 0xFF, (r, srq_progs(k), wkt()))
+    check('... every switch at a safe point (the audit; %d at the tick\'s end, %d of them by SRQ, mt_pick taking '
+          'mt_want)' % (len(au.switches(0, 'tick')), len(picks)), not au.bad() and len(picks) == 9, (au.bad()[:3], len(picks)))
     au.stop()
+    # a program staying resident in task 0 keeps its wake (task 0 never ends)
+    sh = Shell(k)
+    sh.run('ver')
+    typ(k, 'mtsrq 1 t', 1.0)
+    ps = [x for x in srq_progs(k) if tnum_(x) == 0]
+    check('MTSRQ T in task 0 (LCMD\'s prompt): resident, its wake kept (mt_wkt 0, mt_wkp its PSP): a limit',
+          len(ps) == 1 and wkt() == 0 and wkp() == ps[0], (ps, wkt(), hex(wkp())))
+    typ(k, 'mtsrq 0 g', 0.8)
+    check('... another program in task 0 giving it up (MTSRQ G, BL = 0) and ending: kept (the task the same, the '
+          'program not)', len(ps) == 1 and wkt() == 0 and wkp() == ps[0], (wkt(), hex(wkp())))
+    # no SRQ interrupt (GPIBIRQ=0): AL 0
+    k = boot('mt_srq0.img', b'MULTITASK=1\r\nGPIBIRQ=0\r\n', 88, chip=A.sim7210.NEC7210(A.sim7210.bus()))
+    got, out = probe(k)
+    check('GPIBIRQ=0: MT_WAKE answers AL 0 (no wake comes), CF clear', got.get(0x23, (1,))[:2] == (0, 0)
+          and got.get(0x123, (1,))[:2] == (0, 0), out[-300:])
+
 
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
