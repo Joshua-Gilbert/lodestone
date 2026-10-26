@@ -12,8 +12,10 @@
  *      !b 1    after a label: a BS (back one character space, pen up: p. 4-22)
  *              before the move, so the long move starts with the pen clear
  *      !w ms   the same wait and pause before each space inside a label
- *    !a and !w are on (150 ms) by default: v3, whose timed pacing happened to
- *    leave the 4662 idle after each label, drew text with no tails. !b is off.
+ *    All off by default, with v6's !r: the drag turned out to be the pen
+ *    adapter pressing the pen too hard on the paper, and with a corrected
+ *    adapter the plots are clean without them. They stay for a pen that
+ *    needs them (a slow-lifting pen: try !r 22, !a 150, !w 150).
  *
  * v6: no drag when the pen lifts. The 4662's pen leaves the paper about 1 mm
  *    into a pen-up move (Claude's detour test: the same ~1 mm tick whatever
@@ -90,10 +92,10 @@
 #define STATUS_MARGIN   48      // bytes kept free in the 4662's buffer, below what it reports
 #define QUERY_AT        600     // ask again when this little room is left
 #define QUERY_GAP_MS    400     // at most one status request in this time
-#define RETRACE_ADU     22      // pen-up move back along the last stroke before a move (~2 mm)
-#define LABEL_SETTLE_MS 150     // !a: after a label, wait for the plotter, then this pause
+#define RETRACE_ADU     0       // !r: pen-up move back along the last stroke before a move (22: ~2 mm)
+#define LABEL_SETTLE_MS 0       // !a: after a label, wait for the plotter, then this pause (e.g. 150)
 #define LABEL_BS        0       // !b: after a label, a BS before the move
-#define SPACE_SETTLE_MS 150     // !w: before a space in a label, wait for the plotter, then this
+#define SPACE_SETTLE_MS 0       // !w: before a space in a label, wait for the plotter, then this (e.g. 150)
 #define STATUS_TIMEOUT  180000UL // ms to wait for a status reply (it may wait for the pen)
 #define PROBE_MS        1500    // ms to wait for a reply when finding out if the plotter answers
 
@@ -869,7 +871,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.1"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));

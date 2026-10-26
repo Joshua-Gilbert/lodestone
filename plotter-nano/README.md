@@ -14,17 +14,23 @@ the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
 1200 baud, address A). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
 
+**Defaults (v7.1):** `!r`, `!a`, `!w` and `!b` are all off. The drag that v6
+and v7 worked around turned out to be the pen adapter pressing the pen too
+hard on the paper; with the adapter corrected, plots are clean without them.
+They stay on the console for a pen that lifts slowly (`!r 22`, `!a 150`,
+`!w 150`).
+
 **v7:** labels. The 4662's own characters left a ~1 cm tail on the move
 after a label and small marks at the spaces in one (TESTPAT5); v3, whose
 timed pacing happened to leave the plotter idle after each label, had none.
-So after a label (`!a`) and before a space in one (`!w`), the Nano waits
+So after a label (`!a`) and before a space in one (`!w`), the Nano can wait
 until a status reply shows the 4662's buffer empty, then pauses 150 ms, before
 sending more. `!b 1` adds a BS after a label (a short pen-up move back one
 character space) as another cure to try; off by default.
 
 **v6:** the pen leaves the paper about 1 mm into a pen-up move (Claude's
 detour test on the GRiD), which bridged short gaps and put a tail on every
-move. Before a move, the Nano now lifts the pen with a pen-up move of 22 ADU
+move. Before a move, the Nano can lift the pen with a pen-up move of 22 ADU
 (about 2 mm) back along the stroke just drawn, so the drag lands on ink that
 is already there. `!r n` on the console sets it (0 turns it off).
 
