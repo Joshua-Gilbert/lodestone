@@ -72,6 +72,7 @@ class GridSim:
         s.cells, s.attrs = TS._blank_rows(); s.cursor = (0, 0, True)
         s.pix = bytearray(PIC.SIZE)                 # pictures (CLAUDE.COM 1.2: hello_flags GF_PIX)
         s.on_cells = None
+        s.last_flags = 0                # (the last CELLS frame's flags)
 
     # ---- outgoing ----------------------------------------------------------
     def queue(s, t, body):
@@ -213,6 +214,7 @@ class GridSim:
             s.busy = not s.term                                     # chat: until the Pi's READY
         elif t == glp.P_CELLS:
             if p[0] & TS.F_CLEAR: s.stats['clears'] += 1
+            s.last_flags = p[0]
             s.cursor = TS.apply(p, s.cells, s.attrs, s.pix if s.hello_flags & glp.GF_PIX else None)
             s.t_active = s.clock()
             s.stats['cells_frames'] += 1; s.stats['cells_bytes'] += len(p)
