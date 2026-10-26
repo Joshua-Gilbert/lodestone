@@ -4893,7 +4893,9 @@ def t_tpub():
           '20h\'s glyph), F0h, 80h, 81h (past its end: \'?\'), 47h (its last), 20h (its first): %s' % sp,
           rowok(10) and rowok(23, (0,)) and rowok(24) and drawn(23, 0) == glyph(*cellc(23, 0), mark=True) and all(sp),
           (rowok(10), rowok(23, (0,)), sp, drawn(23, 0).hex()))
-    lat, g = [], 0x2B
+    pcg = lambda: k.pc.u16(pd[1], pd[0] + 16)                      # (its PB_CHG, TX_CHG)
+    txc = lambda: k.pc.u16(tx(n), equ('TX_CHG'))
+    lat, g, pc0 = [], 0x2B, pcg()
     for _ in range(6):
         g = 0x21 if g == 0x2F else g + 1
         k.key('c', settle=False)
@@ -4902,8 +4904,8 @@ def t_tpub():
             if drawn(23, 10) == glyph(g, 1): break
         lat.append(t)
     k.run_for(0.5)
-    check('"c" x 6, its cell (23, 10) changed and PB_CHG counted each time: drawn within 3 ticks (%s)'
-          % lat, max(lat) <= 3 and lines()[-1] == 'C %02X' % g, (lat, lines()[-2:]))
+    check('"c" x 6, its cell (23, 10) changed and PB_CHG counted each time (%d to %d): drawn within 3 ticks (%s)'
+          % (pc0, pcg(), lat), max(lat) <= 3 and lines()[-1] == 'C %02X' % g and pcg() == pc0 + 6, (lat, lines()[-2:], pc0, pcg()))
     k.key('t', settle=False)
     seen, prev_ = [], None
     for _ in range(44):                 # (36 ticks of its, and some)
@@ -4939,6 +4941,13 @@ def t_tpub():
     check('"r": PB_ROWS 20: TERM\'s rows %d, MT_TROWS\'s rows 20-24 blank (0020h: %s), the view in its 20 (rows %d on); "r": '
           '25 again, rows %d on' % (r20 + (tv('top'),)), r20 == (20, True, 1) and tb('nrows') == 25 and tv('top') == 6,
           (r20, tv('top'), lines()[-2:]))
+    key('v')
+    v40 = (tv('ncols'), all(drawn(10, c) == glyph(*cellc((400 + c) // 80, (400 + c) % 80)) for c in range(40)),
+           all(drawn(10, c) == glyph(0x20, 0) for c in range(40, tv('cols'))))
+    key('v')
+    check('"v": PB_COLS 40, published again: TERM\'s columns %d; row 10 drawn from its cells read 40 a row (%s), blank past '
+          'them (%s); "v": 80 again, row 10 as before' % v40, v40 == (40, True, True) and tv('ncols') == 80 and rowok(10)
+          and lines()[-2:] == ['V 28', 'V 50'], (v40, tv('ncols'), lines()[-2:]))
     # Copy through its table; the menu: no Full screen, no menu with nothing that applies
     A.drag(k, *(cxy(24, 0) + cxy(24, 5))); k.run_for(0.3)
     mv(4, 4); k.run_for(0.3)
@@ -4957,7 +4966,7 @@ def t_tpub():
           'empty: no menu at all' % cl, cl == b' ?A?G' and 'Paste          CODE-V' in o1 and 'Full screen' not in o1
           and 'Copy ' not in o1 and 'Paste' not in o2 and 'Full screen' not in o2, (cl, o1[-400:], o2[-400:]))
     # CODE-Tab passes over it, MT_FRONT refuses it; another task's window beside it
-    hot(k); k.run_for(0.6)
+    hot(k); k.run_for(1.0)
     f0 = tstate(k)[1]
     k.key(0x6D00, settle=False); k.run_for(1.0)
     k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
@@ -4991,31 +5000,71 @@ def t_tpub():
         k.key(0x6D00, settle=False); k.run_for(1.0)
     # its pages while PBF_SHOWN is off; an old TERM (DX 0) given the pages always
     key('n')
-    pg = (tb('tdl') & 32, 'MTPUB: pages' in scr())
+    pg = (tb('tdl') & 32, 'MTPUB: pages' in scr(), tv('top'))
     key('s')
     sh = (tb('tdl') & 32, rowok(10))
-    check('"n" (PBF_SHOWN off): its pages in the window ("MTPUB: pages", DL %02Xh; the view afresh: rows 0 on); "s": its '
-          'cells again (DL %02Xh)' % (pg[0], sh[0]), pg == (0, True) and sh == (32, True), (pg, sh))
+    check('"n" (PBF_SHOWN off): its pages in the window ("MTPUB: pages", DL %02Xh; the view afresh: rows %d on); "s": its '
+          'cells again (DL %02Xh)' % (pg[0], pg[2], sh[0]), pg == (0, True, 0) and sh == (32, True), (pg, sh))
+    key('n')
+    hot(k); k.run_for(1.0)
+    fn = tstate(k)[1]
+    k.key('s', settle=False); k.run_for(1.0)          # (in front: typed to it)
+    fs_ = tstate(k)[1]
+    k.key('p', settle=False); k.run_for(1.5)
+    check('"n" again, CODE-Tab: in front (front %d: its pages shown, not passed over); "s" there: still in front (%d); "p" '
+          '(published again, shown, in a text mode): back to its window (front %d), its cells drawn there'
+          % (fn, fs_, tstate(k)[1]), fn == n and fs_ == n and tstate(k)[1] == 0 and tb('tdl') & 32 and rowok(10)
+          and lines()[-1] == ok1, (fn, fs_, tstate(k), tb('tdl'), lines()[-3:]))
     # a picture: full screen (T3), CODE-Tab away from it and back, then back to its window
     key('g', 2.0)
     gf = (tstate(k)[1], k.pc.mode(), bytes(k.pc.rd(0xB800, 0, 256)) == bytes((((i_ * 5) ^ (i_ >> 8)) & 0xFF) for i_ in range(256)),
           k.pc.rd(tx(n), equ('TX_WGFX'), 1)[0])
     to0()
+    hot(k); k.run_for(1.0)
+    fg = tstate(k)[1]
+    to0()
     o = scr()
-    key('x', 2.0)
+    key('j', 2.0)
     f1 = tstate(k)[1]
-    key('x', 2.0)
+    key('j', 2.0)
     check('"g": PBF_SHOWN off, mode 40h: in front by itself (front %d, mode %02Xh, its pattern %s, TX_WGFX %d); CODE-Tab to '
-          'task 0 (not passed over: a graphics mode), its window\'s note; a key there: in front again (%d); a key: mode 3, back '
-          'to its window, its cells there' % (gf[0], gf[1], gf[2], gf[3], f1), gf == (n, 0x40, True, 1)
+          'task 0, and from there onto it (front %d: in a graphics mode, not passed over); to task 0 again, its window\'s '
+          'note; a key there: in front again (%d); a key: mode 3, back to its window, its cells there'
+          % (gf[0], gf[1], gf[2], gf[3], fg, f1), gf == (n, 0x40, True, 1) and fg == n
           and 'In a graphics mode' in o and f1 == n and tstate(k)[1] == 0 and k.pc.mode() == 0x40 and tb('tdl') & 32
-          and rowok(10) and lines()[-1] == 'G', (gf, o[-300:], f1, tstate(k), lines()[-2:]))
+          and rowok(10) and lines()[-1] == 'G', (gf, fg, o[-300:], f1, tstate(k), lines()[-2:]))
+    key('h', 2.0)
+    h1 = tstate(k)[1]
+    to0()
+    o, hd = scr(), tb('tdl')
+    hot(k); k.run_for(1.0)
+    h2 = tstate(k)[1]
+    key('j', 2.0)
+    check('"h": mode 40h with PBF_SHOWN left on: in front by itself (front %d); CODE-Tab to task 0: the window\'s note, not '
+          'its cells (DL %02Xh: in a graphics mode); CODE-Tab onto it (front %d: not passed over); a key: mode 3, back to its '
+          'window' % (h1, hd, h2), h1 == n and 'In a graphics mode' in o and not hd & 32 and h2 == n
+          and tstate(k)[1] == 0 and tb('tdl') & 32 and lines()[-2:] == ['G', 'G'], (h1, hd, h2, o[-300:], tstate(k), lines()[-2:]))
     # refused descriptors; a call it may not make
     key('b', 1.5)
-    want = 'B' + ' 1 000D' * 12 + ' 1 0001' * 2 + (' 0 %02X01' % n) * 2
+    want = 'B' + ' 1 000D' * 14 + ' 1 0001' * 2 + (' 0 %02X01' % n) * 2
     check('"b": MT_PUB refused (0Dh) for ES:DI 0:400h, PB_VER 0, PB_COLS 0 and 81, PB_ROWS 0 and 26, PB_FIRST 21h, PB_GEND '
-          '3Fh, PB_CELLS and PB_FONT 0:0, PB_XLAT past its segment\'s end and across its memory\'s end; CL 1 and 2 from a task '
-          '(1); PB_XLAT its memory\'s last 128 bytes, and its own again: taken', lines()[-1] == want, (lines()[-1], want))
+          '3Fh, PB_CELLS and PB_FONT 0:0, PB_FONT and PB_CELLS ending in the paragraph past its memory (by their sizes, 640 '
+          'and 4,000 bytes), PB_XLAT past its segment\'s end (its start in its memory) and across its memory\'s end; CL 1 '
+          'and 2 from a task (1); PB_XLAT its memory\'s last 128 bytes, and its own again: taken', lines()[-1] == want,
+          (lines()[-1], want))
+    fb = next((s_ for s_, t_, o_, sz, nm in mcbs(k) if o_ == 0 and sz >= 4), None)
+    if fb:
+        k.pc.wr(fb + 1, 0, bytes(k.pc.rd(pd[1], pd[0], 22)))
+        k.pc.wr(pd[1], pd[0] - 4, struct.pack('<HH', 0, fb + 1))
+    key('o')
+    lo_ = lines()[-1:]
+    reg = k.pc.u16(seg, task_ent(k, n) + 4)                 # (TE_REG)
+    k.pc.wr(pd[1], pd[0] - 4, struct.pack('<HH', 0x70, reg - 8))
+    key('e')
+    check('"o": a copy of its descriptor, valid but in a free block outside its memory (%s): refused (%s); "e": its table '
+          'starting in the paragraph below its memory and ending in it (%04X:0070h): refused (%s); its own still published'
+          % (fb and '%04X:0000' % (fb + 1), lo_, reg - 8, lines()[-1:]), fb and lo_ == ['O 1 000D']
+          and lines()[-1] == 'E 1 000D' and pubd(n) == pd, (fb, lo_, lines()[-1:], pubd(n)))
     # a child: its end doesn't withdraw it; a child that publishes: its end withdraws that
     key('x', 2.0)
     px = pubd(n)
@@ -5027,9 +5076,13 @@ def t_tpub():
           % (lines()[-5:-3], px == pd, lines()[-3:-2], py, dy), lines()[-5] == 'Y' and lines()[-4].startswith('X 0')
           and px == pd and lines()[-3] == 'Z 0 %02X01' % n and lines()[-2].startswith('X 0') and py == (0, 0, 0)
           and dy == 0 and lines()[-1] == ok1 and tb('tdl') & 32, (lines()[-7:], px, pd, py, dy))
+    s0 = (txc() + pcg()) & 0xFFFF
     key('w')
-    pw = (pubd(n), tb('tdl') & 32)
+    pw, s1 = (pubd(n), tb('tdl') & 32), txc()
     key('p')
+    s2 = (txc() + pcg()) & 0xFFFF
+    check('"w", "p": the count a window sees (TX_CHG with PB_CHG while published) one up at each (%04Xh, %04Xh, %04Xh): PB_CHG '
+          'kept in TX_CHG as it went' % (s0, s1, s2), s1 == (s0 + 1) & 0xFFFF and s2 == (s1 + 1) & 0xFFFF, (s0, s1, s2))
     key('q', 1.5)
     check('"w": withdrawn (%s: TX_PUB 0:0, DL %02Xh: its pages); "p": again; "q": it ends published: its end withdraws it '
           '(%s), the window LCMD\'s prompt again' % (lines()[-3], pw[1], pubd(n)), lines()[-3:] == ['W 0 %02X01' % n, ok1, 'Q']
