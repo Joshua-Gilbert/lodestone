@@ -262,7 +262,10 @@ lw_go:
         mov     byte [spoll_errs], 0
         jmp     pit_mark
 
-; NAK the Pi's last answer (it was damaged); our pending fragment stays
+; NAK the Pi's last answer (it was damaged, or none came); our pending
+; fragment stays, and so does t_sent: link_wait's ~2 s run from the frame
+; the answer is for, so only good answers keep the link up (a read that
+; timed out, 2 s, and then another, NAK after NAK, would never fail it)
 link_write_nak:
 %ifdef KSUM
         mov     byte [lw_eoi], 1
@@ -270,7 +273,10 @@ link_write_nak:
         mov     di, nakframe
         mov     ah, G_NAK
         call    frame_short
-        jmp     lw_go
+        push    word [t_sent]
+        call    lw_go
+        pop     word [t_sent]
+        ret
 
 link_wait:
         mov     ax, [now]
