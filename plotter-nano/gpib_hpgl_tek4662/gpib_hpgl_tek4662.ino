@@ -1,8 +1,23 @@
 /*
- * gpib_hpgl_tek4662.ino  (v4, for Lodestone's shared bus)
+ * gpib_hpgl_tek4662.ino  (v5, for Lodestone's shared bus)
  *
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
+ *
+ * v5: faster, and quiet.
+ *  - No bell: GS BEL ("the first coordinate is a draw") rings the 4662's bell
+ *    (070-4164-00 p. 3-6), and v4 sent it at every pen-down run that didn't
+ *    start with a move, and after every status request. v5 sends GS and the
+ *    pen's own position (a move to where it is) instead.
+ *  - Compressed coordinates (Table 3-3, p. 3-10): only the bytes that changed
+ *    from the last point, so a short stroke costs 1-3 bytes instead of 5. At
+ *    1200 baud that's what limits small detail. A coordinate after a label or
+ *    a status request is sent in full, as the manual asks.
+ *  - Status requests overlap the drawing: the Nano asks when the room left
+ *    drops below QUERY_AT and goes on sending what it already has room for;
+ *    the reply resets the limit (the free bytes it reports, counted from the
+ *    bytes on the line when it came). The serial line stays busy and the
+ *    4662's buffer never runs dry while there is plot to send.
  *
  * v4: flow control by asking, not guessing.
  *  - Toward the plotter: the Nano asks the 4662 how much room its input
@@ -53,6 +68,8 @@
 
 #define PLOTTER_ADDR    'A'     // the 4662's serial address character (rear-panel switches)
 #define STATUS_MARGIN   48      // bytes kept free in the 4662's buffer, below what it reports
+#define QUERY_AT        600     // ask again when this little room is left
+#define QUERY_GAP_MS    400     // at most one status request in this time
 #define STATUS_TIMEOUT  180000UL // ms to wait for a status reply (it may wait for the pen)
 #define PROBE_MS        1500    // ms to wait for a reply when finding out if the plotter answers
 
@@ -123,6 +140,8 @@ volatile uint8_t tekHead = 0, tekTail = 0;
 #define RXQ_SIZE 32                     // power of two
 volatile uint8_t rxQ[RXQ_SIZE];
 volatile uint8_t rxHead = 0, rxTail = 0;
+volatile uint32_t txCount = 0;          // bytes put on the line to the plotter
+uint32_t queuedCount = 0;               // bytes queued for it (tekRaw)
 
 void gpibService();
 
@@ -148,7 +167,7 @@ ISR(TIMER2_COMPA_vect) {                // 3623 Hz: three ticks a bit (1207.7 ba
     phase = 0;
     if (bit == 0) {
         if (tekHead == tekTail) return; // idle: the line stays high
-        cur = tekQ[tekTail]; tekTail++;
+        cur = tekQ[tekTail]; tekTail++; txCount++;
         PORTD &= ~D_TEKTX;              // start bit
         bit = 1;
     } else if (bit <= 8) {
@@ -164,8 +183,10 @@ static inline uint8_t tekQueued() { return (uint8_t)(tekHead - tekTail); }
 
 void tekRaw(uint8_t b) {                // into the UART queue (no flow control)
     while ((uint8_t)(tekHead + 1) == tekTail) gpibService();
-    tekQ[tekHead] = b; tekHead++;
+    tekQ[tekHead] = b; tekHead++; queuedCount++;
 }
+
+static inline uint32_t txNow() { uint8_t s = SREG; cli(); uint32_t t = txCount; SREG = s; return t; }
 
 int rxRead() {
     if (rxHead == rxTail) return -1;
@@ -330,12 +351,17 @@ void gpibBegin() {
 
 bool statusMode = false;                // the plotter answers READ STATUS
 bool queryPending = false;
-unsigned long querySentAt = 0, lastProbeAt = 0, noQueryBefore = 0;
-long budget = 0;                        // bytes we may still send before asking again
+unsigned long querySentAt = 0, lastProbeAt = 0;
+uint32_t limitCount = 0;                // queuedCount may grow to this (from the last reply)
+uint32_t txAtReply = 0;                 // txCount when the reply began to arrive
 long lastFree = -1;                     // what the plotter last said
 unsigned long nQueries = 0, nReplies = 0;
-bool needsMove = true;                  // the next DRAW must re-enter graph mode (GS BEL)
+unsigned long queryGap = QUERY_GAP_MS;  // longer if the plotter answers at once
+bool needsMove = true;                  // the next DRAW must re-enter graph mode (GS + a move)
 bool inAlpha = false;
+bool coordKnown = false;                // the plotter's graphic memory = what we last sent
+uint8_t lastHiY, lastEB, lastLoY, lastHiX;
+static inline long roomLeft() { return (long)(limitCount - queuedCount); }
 
 // The reply: 7 characters (070-4164-00 Figure 3-9 B): 1-6 are 0x20-0x3F with
 // five bits each, 7 is 0x40-0x5F with the two LSBs and the block type.
@@ -344,12 +370,15 @@ uint8_t rxBlock[7]; uint8_t rxLen = 0;
 void takeReply(uint16_t v1, uint16_t v2) {
     if (v1 != 1) return;                // not status word 1
     lastFree = v2 & 0x7FF;
-    budget = lastFree - STATUS_MARGIN;
+    // what it reports leaves out the bytes still on their way: those sent
+    // since it answered (txAtReply) and those queued here
+    long lim = (long)txAtReply + lastFree - STATUS_MARGIN;
+    limitCount = lim > (long)queuedCount ? (uint32_t)lim : queuedCount;
     nReplies++;
-    if (queryPending) {
-        queryPending = false;
-        if (budget < 64) noQueryBefore = millis() + 300;  // nearly full: let the pen work a little
-    }
+    // a reply that comes at once (not when the pen gets to it) is exact:
+    // asking less often costs nothing, and the line isn't spent on requests
+    if (queryPending) queryGap = (millis() - querySentAt < 300) ? 2000 : QUERY_GAP_MS;
+    queryPending = false;
 }
 
 void pollRx() {
@@ -357,6 +386,7 @@ void pollRx() {
     while ((c = rxRead()) >= 0) {
         c &= 0x7F;
         if (c >= 0x20 && c <= 0x3F) {
+            if (rxLen == 0) txAtReply = txNow();       // (the reply began: its count is from here)
             if (rxLen < 6) rxBlock[rxLen++] = c;
             else { for (uint8_t i = 0; i < 5; i++) rxBlock[i] = rxBlock[i + 1]; rxBlock[5] = c; }
         } else if (c >= 0x40 && c <= 0x5F) {
@@ -375,7 +405,8 @@ void pollRx() {
 void sendQuery() {
     tekRaw(0x1B); tekRaw(PLOTTER_ADDR); tekRaw('O'); tekRaw('1'); tekRaw(0x1A);   // ESC A O 1 SUB
     queryPending = true; querySentAt = millis(); nQueries++;
-    needsMove = true; inAlpha = false;  // the next element re-enters its mode
+    needsMove = true; inAlpha = false;  // the next element re-enters its mode (asked only between
+                                        //  coordinates, so the plotter's graphic memory still holds)
 }
 
 // Does the plotter answer? Ask once and wait a little (serving the bus).
@@ -386,6 +417,7 @@ void probePlotter() {
     while (queryPending && millis() - querySentAt < PROBE_MS) { pollRx(); gpibService(); }
     bool was = statusMode;
     statusMode = !queryPending;
+    if (!statusMode) limitCount = queuedCount;
     queryPending = false;
     if (DEBUG_ENABLED && statusMode != was) {
         if (statusMode) { Serial.print(F("[4662] status mode: buffer free ")); Serial.println(lastFree); }
@@ -418,7 +450,8 @@ unsigned long travelMs(int x, int y) {
 }
 
 // Room for n more bytes in the plotter, by asking it (status mode) or by
-// the clock (timed mode, cost ms). Serves the bus while it waits.
+// the clock (timed mode, cost ms). Serves the bus while it waits. In status
+// mode it asks ahead of need, so the line rarely waits for a reply.
 void plotterRoom(uint8_t n, unsigned long cost) {
     if (!statusMode) {
         if (millis() - lastProbeAt > 60000UL && tekQueued() == 0) probePlotter();   // plotter on now?
@@ -426,8 +459,11 @@ void plotterRoom(uint8_t n, unsigned long cost) {
     }
     for (;;) {
         pollRx();
-        if (!queryPending && budget >= n) { budget -= n; return; }
-        if (!queryPending && (long)(millis() - noQueryBefore) >= 0) sendQuery();
+        if (!queryPending && roomLeft() < QUERY_AT && millis() - querySentAt >= queryGap) {
+            sendQuery();                // (5 bytes; no room check: the margin is for it)
+            continue;
+        }
+        if (roomLeft() >= (long)n) return;
         if (queryPending && millis() - querySentAt > STATUS_TIMEOUT) {
             queryPending = false; statusMode = false; lastProbeAt = millis();
             if (DEBUG_ENABLED) Serial.println(F("[4662] status reply lost: timed pacing"));
@@ -446,12 +482,25 @@ void plotterRoom(uint8_t n, unsigned long cost) {
 #define TEK_MAX_X 4095L
 #define TEK_MAX_Y 2731L
 
+// One coordinate, 12-bit, with only the bytes Table 3-3 says must go:
+// HIY if it changed; EB and LOY if EB changed; LOY if it or HIX changed;
+// HIX if it changed; LOX always. In full when the plotter's graphic memory
+// may differ from what we last sent.
 void tekSendCoord12(int x, int y) {
-    tekRaw((uint8_t)(0x20 | ((y >> 7) & 0x1F)));
-    tekRaw((uint8_t)(0x60 | ((y & 0x03) << 2) | (x & 0x03)));
-    tekRaw((uint8_t)(0x60 | ((y >> 2) & 0x1F)));
-    tekRaw((uint8_t)(0x20 | ((x >> 7) & 0x1F)));
-    tekRaw((uint8_t)(0x40 | ((x >> 2) & 0x1F)));
+    uint8_t hiy = 0x20 | ((y >> 7) & 0x1F);
+    uint8_t eb  = 0x60 | ((y & 0x03) << 2) | (x & 0x03);
+    uint8_t loy = 0x60 | ((y >> 2) & 0x1F);
+    uint8_t hix = 0x20 | ((x >> 7) & 0x1F);
+    uint8_t lox = 0x40 | ((x >> 2) & 0x1F);
+    bool full = !coordKnown;
+    bool sEB = full || eb != lastEB, sHiX = full || hix != lastHiX;
+    if (full || hiy != lastHiY) tekRaw(hiy);
+    if (sEB) tekRaw(eb);
+    if (sEB || sHiX || loy != lastLoY) tekRaw(loy);
+    if (sHiX) tekRaw(hix);
+    tekRaw(lox);
+    lastHiY = hiy; lastEB = eb; lastLoY = loy; lastHiX = hix;
+    coordKnown = true;
 }
 
 void tekMoveTo(int x, int y) {
@@ -465,10 +514,10 @@ void tekMoveTo(int x, int y) {
 
 void tekDrawTo(int x, int y) {
     x = constrain(x, 0, (int)TEK_MAX_X); y = constrain(y, 0, (int)TEK_MAX_Y);
-    plotterRoom(7, travelMs(x, y) + (penIsDown ? 0 : pacePen));   // (may ask: then needsMove)
-    if (needsMove) {
-        tekRaw(TEK_GS);
-        tekRaw(0x07);                   // BEL: the first coordinate is a DRAW
+    plotterRoom(11, travelMs(x, y) + (penIsDown ? 0 : pacePen));  // (may ask: then needsMove)
+    if (needsMove) {                    // back into graph mode without the bell:
+        tekRaw(TEK_GS);                 //  GS and a move to where the pen is (p. 3-6)
+        tekSendCoord12(penX, penY);
         needsMove = false;
     }
     tekSendCoord12(x, y);
@@ -483,6 +532,7 @@ void tekText(const char* s) {
         tekRaw((uint8_t)*s++);
     }
     needsMove = true;
+    coordKnown = false;                 // printing moves the pen: the next coordinate in full
 }
 
 // ============================================================================
@@ -544,7 +594,7 @@ void processCommand(const char* cmd, uint8_t len) {
     const char* args = cmd + 2;
 
     if (c1 == 'I' && c2 == 'N') {
-        penDown = false; needsMove = true;
+        penDown = false; needsMove = true; coordKnown = false;
         tekMoveTo(0, 0);
         if (DEBUG_ENABLED) Serial.println(F("  IN"));
     } else if (c1 == 'S' && c2 == 'P') {
@@ -571,7 +621,26 @@ void processCommand(const char* cmd, uint8_t len) {
     }
 }
 
+// PU, PD and PA take their coordinates as they come, a pair at a time, so a
+// command of any length draws all of it (v1-v4 kept a whole command in
+// cmdBuf and cut anything past 255 characters).
+bool inCoords = false;
+char numBuf[16]; uint8_t numLen = 0;
+bool haveX = false; long coordX = 0;
+
+void flushNumber() {
+    if (numLen == 0) return;
+    numBuf[numLen] = '\0'; numLen = 0;
+    const char* p = numBuf; long v;
+    if (!parseNumber(&p, &v)) return;
+    if (!haveX) { coordX = v; haveX = true; return; }
+    haveX = false;
+    int tx = hpglToTekX(coordX), ty = hpglToTekY(v);
+    if (penDown) tekDrawTo(tx, ty); else tekMoveTo(tx, ty);
+}
+
 void endCommand() {
+    if (inCoords) { flushNumber(); inCoords = false; haveX = false; cmdLen = 0; return; }
     if (cmdLen >= 2) { cmdBuf[cmdLen] = '\0'; processCommand(cmdBuf, cmdLen); }
     cmdLen = 0; inLabel = false;
 }
@@ -584,11 +653,25 @@ void feedChar(char c) {
         return;
     }
     if (c == ';') { endCommand(); return; }
+    if (inCoords) {                     // PU/PD/PA coordinates
+        if ((c >= '0' && c <= '9') || c == '.' || ((c == '-' || c == '+') && numLen == 0)) {
+            if (numLen < sizeof(numBuf) - 1) numBuf[numLen++] = c;
+        } else if (c == '-' || c == '+') {      // a sign after a number starts the next one
+            flushNumber(); numBuf[numLen++] = c;
+        } else flushNumber();           // a separator (comma, space, line end)
+        return;
+    }
     if (c == '\r' || c == '\n' || (c == ' ' && cmdLen == 0)) return;
     if (c == ETX) return;
     if (cmdLen < CMD_BUF_SIZE - 1) cmdBuf[cmdLen++] = c;
-    if (cmdLen == 2 && (cmdBuf[0] == 'L' || cmdBuf[0] == 'l') && (cmdBuf[1] == 'B' || cmdBuf[1] == 'b'))
-        inLabel = true;
+    if (cmdLen == 2) {
+        char c1 = cmdBuf[0] & ~0x20, c2 = cmdBuf[1] & ~0x20;      // (upper case)
+        if (c1 == 'L' && c2 == 'B') inLabel = true;
+        else if (c1 == 'P' && (c2 == 'U' || c2 == 'D' || c2 == 'A')) {
+            cmdBuf[2] = '\0'; processCommand(cmdBuf, 2);        // the pen state, no coordinates yet
+            inCoords = true; numLen = 0; haveX = false;
+        }
+    }
 }
 
 // ============================================================================
@@ -623,7 +706,8 @@ void printPace() {
 void printFlow() {
     Serial.print(F("plotter: ")); Serial.print(statusMode ? F("status mode") : F("timed pacing"));
     Serial.print(F(", last free ")); Serial.print(lastFree);
-    Serial.print(F(", budget ")); Serial.print(budget);
+    Serial.print(F(", room ")); Serial.print(roomLeft());
+    Serial.print(F(", sent ")); Serial.print(txNow());
     Serial.print(F(", queries ")); Serial.print(nQueries);
     Serial.print(F(", replies ")); Serial.print(nReplies);
     Serial.println(queryPending ? F(", waiting for a reply") : F(""));
@@ -676,7 +760,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v4"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v5"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));

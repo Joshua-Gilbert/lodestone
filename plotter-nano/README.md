@@ -14,11 +14,18 @@ the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
 1200 baud, address A). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
 
+**v5:** no bell (GS and a move to the pen's own position, instead of GS BEL,
+which rings it: p. 3-6); coordinates compressed to the bytes that changed
+(Table 3-3, p. 3-10); status requests overlap the drawing, so the line stays
+busy; and PU/PD/PA coordinates are read as they come, so a long point list
+isn't cut at 255 characters (v1-v4 did).
+
 **Flow control:**
 - To the plotter: the 4662 has no XON/XOFF here, so the Nano asks it for the
   room in its input buffer (READ STATUS 1, `ESC A O 1 SUB`; the free bytes
   are bits 0-10 of the second value of the 7-character reply; 070-4164-00
-  p. 3-13, 4-13, 4-14) and sends that much, less 48 bytes, then asks again.
+  p. 3-13, 4-13, 4-14), counting the bytes still on the line since it
+  answered, and asks again before the room runs out.
   A plotter that doesn't answer gets v3's timed pacing (tunable with `!`).
 - From the bus: a serial poll answers bit 7 = idle, bits 0-5 = room in its
   buffer in 4-byte units. A controller that sends more is held off with
