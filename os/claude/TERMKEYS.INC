@@ -115,6 +115,12 @@ term_mouse:
         or      bx, bx
         jz      .x
         mov     [evmouse + 1], cx       ; x 0-639, y 0-399
+%ifdef TERM_WIN
+        cmp     byte [win], 0           ; (a terminal window's click: rows of
+        je      .y                      ;  8, as INT 33h's text units)
+        shl     dx, 1
+.y:
+%endif
         mov     [evmouse + 3], dx
         mov     byte [rep_q], 1
         mov     al, G_EVENT
