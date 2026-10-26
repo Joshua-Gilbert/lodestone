@@ -636,7 +636,8 @@ mw_poll:
 .x:     retf
 
 ; CF: EV_TICK is due for the session in front, a terminal window (MT_TOPEN
-; gave it its task): its task's screen (TX_CHG) or state changed, it ended
+; gave it its task): its task's screen (TX_CHG, and a published screen's
+; PB_CHG: mt_tchg) or state changed, it ended
 ; (another count, or its end's count this one: mt_ui's test), or 9 ticks
 ; went by (about 0.5 s).  Not while a help or form window, or mw_say's
 ; message, waits (as mw_got: it would be read as a key).  All kept
@@ -670,8 +671,7 @@ mw_tick:
         jne     .yes
         cmp     al, TS_PARKED           ; (parked: its TX in EMS)
         je      .t
-        mov     es, [cs:bx+TE_TX]
-        mov     ax, [es:TX_CHG]
+        call    mt_tchg                 ; (T5b: a published screen's too)
         cmp     ax, [cs:bp+SE_TCHG]
         mov     [cs:bp+SE_TCHG], ax
         jne     .yes

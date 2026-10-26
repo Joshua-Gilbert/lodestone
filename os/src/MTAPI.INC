@@ -22,7 +22,8 @@ MT_LIST     equ 12h                     ; the tasks: ES:DI = room for CX records
                                         ;  AH = the caller's
 MT_FRONT    equ 13h                     ; BL = a task: it comes to the front at
                                         ;  the next key wait.  CF: AX = 1 (none),
-                                        ;  5 (parked).
+                                        ;  5 (parked; T5b: its window is its
+                                        ;  screen, MT_PUB).
                                         ;  (When the front task ends, task 0
                                         ;  comes to the front.)
 MT_KILL     equ 14h                     ; BL = a task: it ends, whatever runs in
@@ -119,9 +120,19 @@ MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
                                         ;  copied there -> AX = its changes'
                                         ;  count (it went up: look again; any
                                         ;  INT 10h call of it behind, and its
-                                        ;  leaving the front), BX = its cursor
-                                        ;  there (row, column), CL = columns, CH
-                                        ;  = its mode, DL = MTF_DIRECT, 2 if
+                                        ;  leaving the front; with a screen
+                                        ;  published, MT_PUB's and its PB_CHG
+                                        ;  too), BX = its cursor there (row,
+                                        ;  column), CL = columns, CH = its
+                                        ;  mode.  T5b: with DH bit 7 set (the
+                                        ;  row in DL), a screen published
+                                        ;  (MT_PUB) and shown (PBF_SHOWN), the
+                                        ;  task behind in a text mode: the rows
+                                        ;  of its cells instead (glyph, PBA_*;
+                                        ;  rows past PB_ROWS blank, 0020h), DL
+                                        ;  32 (1 and 16 too, as below), CH =
+                                        ;  its rows, BX = PB_CUR (FFFFh with
+                                        ;  PBF_NOCUR).  DL = MTF_DIRECT, 2 if
                                         ;  nothing was copied (not a text mode
                                         ;  of 80 columns or fewer, or rows past
                                         ;  its 32 KB), 4 its pages gone (2 too),
@@ -159,6 +170,43 @@ MT_TMOUSE   equ 21h                     ; (T4: TERM.RUN's, a click in its
                                         ;  has.  CF: AX = 1 (no such task, not
                                         ;  the Executive's call), 5 (task 0;
                                         ;  parked)
+MT_PUB      equ 22h                     ; (T5b) a screen published for a
+                                        ;  terminal window: drawn there from
+                                        ;  its cells with its own font, not
+                                        ;  from MT's pages.  CL = 0, a task's
+                                        ;  program: ES:DI = its descriptor
+                                        ;  (PB_* below: read, never written;
+                                        ;  it, its cells, font and table all in
+                                        ;  the task's memory, and kept there
+                                        ;  while published), 0:0 to withdraw
+                                        ;  it -> AL = 1 if a terminal window
+                                        ;  shows the task, else 0 (then it
+                                        ;  should withdraw it and draw its
+                                        ;  screen itself; started behind, ask
+                                        ;  again: its window may not be open
+                                        ;  yet); AH = the task.  Withdrawn when
+                                        ;  that program ends (not as a TSR); a
+                                        ;  child's replaces its parent's.
+                                        ;  While one is published and shown
+                                        ;  (PBF_SHOWN), the task in a text mode
+                                        ;  and a window showing it, CODE-Tab
+                                        ;  passes over the task and MT_FRONT
+                                        ;  refuses it: its window is its screen
+                                        ;  (a graphics mode's goes full screen,
+                                        ;  T3).  Publish again after setting
+                                        ;  PBF_SHOWN and after an EXEC: if the
+                                        ;  task was brought to the front while
+                                        ;  its pages were shown, it goes back
+                                        ;  to its window.  CL = 1, from task 0
+                                        ;  (TERM.RUN's): BL = a task -> ES:DI =
+                                        ;  its descriptor, 0:0 none.  CF: AX =
+                                        ;  1 (no such task; CL not 0 or 1; CL
+                                        ;  = 1 from a task), 5 (CL = 0 from
+                                        ;  task 0; CL = 1 for task 0, or a
+                                        ;  parked one), 0Dh (a descriptor not
+                                        ;  all in the task's memory, or its
+                                        ;  cells, font or table; a field out
+                                        ;  of range)
 MT_TASKS    equ 8                      ; most tasks at once (0 is the Executive)
 MT_DEFARENA equ 1000h                   ; a task's memory if SP_PARAS is 0: 64 KB
 
@@ -180,6 +228,36 @@ SPF_FREEZE  equ 4                       ; it never runs in the background
 MTF_DIRECT  equ 1                       ; (MT_FLAGS: found writing the screen
                                         ;  itself, so frozen behind without
                                         ;  SPF_BG)
+
+; ---- a published screen's descriptor (MT_PUB, T5b) -------------------
+PB_VER      equ 0                       ; byte: 1 (or more)
+PB_FLAGS    equ 1                       ; byte: PBF_*
+PB_COLS     equ 2                       ; byte: columns, 1-80
+PB_ROWS     equ 3                       ; byte: rows, 1-25
+PB_CELLS    equ 4                       ; far: rows of PB_COLS words: a glyph
+                                        ;  (low byte), PBA_* (high)
+PB_FONT     equ 8                       ; far: 16 bytes a glyph (8x16, its
+                                        ;  top row first, bit 7 leftmost),
+                                        ;  codes PB_FIRST to PB_GEND - 1
+PB_FIRST    equ 12                      ; byte: the first code with a glyph,
+                                        ;  20h at most (one below it: 20h's)
+PB_GEND     equ 13                      ; byte: the code past the last, 40h
+                                        ;  at least (one from it on: '?')
+PB_CUR      equ 14                      ; word: the cursor (BH's row, BL's
+                                        ;  column, as the BIOS's)
+PB_CHG      equ 16                      ; word: a count the program adds 1 to
+                                        ;  when its cells, PB_FLAGS or PB_CUR
+                                        ;  change: the window looks again (the
+                                        ;  other fields: publish again)
+PB_XLAT     equ 18                      ; far: 128 bytes, code page 437's
+                                        ;  text for codes 80h-FFh (a window's
+                                        ;  Copy); 0:0: none (they are '?')
+PB_SIZE     equ 22
+PBF_SHOWN   equ 1                       ; its cells shown (else MT's pages, as
+                                        ;  any task's: a program it runs)
+PBF_NOCUR   equ 2                       ; no cursor shown
+PBA_INV     equ 1                       ; (a cell's attribute) inverse
+PBA_UND     equ 2                       ;  underlined
 
 ; ---- a task's record (MT_LIST) ----------------------------------------
 TR_ID       equ 0                       ; byte: its number
