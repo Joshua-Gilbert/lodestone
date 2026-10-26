@@ -14,6 +14,12 @@ the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
 1200 baud, address A). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
 
+**v6:** the pen leaves the paper about 1 mm into a pen-up move (Claude's
+detour test on the GRiD), which bridged short gaps and put a tail on every
+move. Before a move, the Nano now lifts the pen with a pen-up move of 22 ADU
+(about 2 mm) back along the stroke just drawn, so the drag lands on ink that
+is already there. `!r n` on the console sets it (0 turns it off).
+
 **v5:** no bell (GS and a move to the pen's own position, instead of GS BEL,
 which rings it: p. 3-6); coordinates compressed to the bytes that changed
 (Table 3-3, p. 3-10); status requests overlap the drawing, so the line stays
@@ -32,7 +38,7 @@ isn't cut at 255 characters (v1-v4 did).
   NRFD.
 
 **Console** (USB, 9600): HP-GL for testing; `?` the bus lines, counters and
-flow state; `#` ask the plotter now; `!` the timed pacing.
+flow state; `#` ask the plotter now; `!` the timed pacing and the lift (`!r`).
 
 **Flashing from the Pi:**
 ```
