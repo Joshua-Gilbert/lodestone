@@ -262,6 +262,7 @@ def measure(shift=False, spin=False, wake=True, sim_s=6.0):
              'A:\\LODE.INI': INI + b'MDISK=256\r\n'}
     kw = {} if wake else {'claude_com': no_wake(G.CLAUDE_COM)}
     h = Win(irq_exact=True, more=files, bridge='pico', **kw)            # (the 1520's: frames of 3,340 bytes)
+    h.cfg.set_clock = False                         # (the clock set at the HELLO would end MTSPIN's count)
     try:
         h.boot_exec()
         if spin:
@@ -277,6 +278,9 @@ def measure(shift=False, spin=False, wake=True, sim_s=6.0):
         b0, f0, us0 = t.enc.stats['bytes'], t.enc.stats['frames'], h.m.us
         h.run_until(lambda: h.m.crash, sim_s)
         s = (h.m.us - us0) / 1e6
+        if spin:                                        # (MTSPIN still there, ready to run)
+            ents = [h.m.rd(h.mt_seg(), h.m.Y['mt_tab'] + n * 32, 22) for n in range(8)]
+            assert any(e[0] == 1 and e[10:20] == b'MTSPIN.COM' for e in ents), [(e[0], e[10:22]) for e in ents]
         return to_grid, to_pi, (t.enc.stats['bytes'] - b0) / s, (t.enc.stats['frames'] - f0) / s, h.mb('mt_wkt')
     finally:
         h.close()
@@ -297,6 +301,9 @@ def t_speed():
     full, win = r['full screen, task 0'][2], r['window, MT_WAKE'][2]
     check('the flood in a window with MT_WAKE: %.0f bytes/s, within 10%% of full screen\'s %.0f (%.0f%%)'
           % (win, full, 100.0 * win / full), win >= 0.9 * full, r)
+    a, b = r['window, MT_WAKE, MTSPIN behind'], r['window, no MT_WAKE, MTSPIN behind']
+    check('MTSPIN computing behind: copies in a window with MT_WAKE faster both ways than without (%.1f, %.1f KB/s '
+          'against %.1f, %.1f)' % (a[0], a[1], b[0], b[1]), a[0] > b[0] and a[1] > b[1] * 1.2, r)
 
 
 TESTS = [t_window, t_shift, t_speed]
