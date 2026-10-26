@@ -318,11 +318,21 @@ class GridSim:
             gop, addr, flags, tmo, mx = struct.unpack_from('<BBBHH', a); data = a[7:]
             devs = {29: 'ID TEK/DC5009,V79.1,F1.2', 6: 'ID TEK/FG5010,V79.1,F04', 16: 'ID TEK/DM5120,V81.1,FV1.0'}
             s.gpib_log = getattr(s, 'gpib_log', []) + [(gop, addr, data)]
-            if gop == glp.GP_SCAN: return s.reply(rid, 0, bytes(sorted(devs)))
-            if addr == 1:                   # the 4662's HP-GL Nano: a listener only
-                if gop != glp.GP_WRITE: return s.reply(rid, 1)        # it never talks: timeout
+            old_nano = getattr(s, 'plot_nopoll', False)               # a Nano before v4: no serial poll
+            if gop == glp.GP_SCAN: return s.reply(rid, 0, bytes(sorted(set(devs) | ({1} if not old_nano else set()))))
+            if addr == 1:                   # the 4662's HP-GL Nano (v4): a listener, and a serial poll
+                held = getattr(s, 'plot_held', 0)                     # bytes in its buffer
+                if gop == glp.GP_SPOLL:
+                    if old_nano: return s.reply(rid, 1)
+                    held = max(0, held - getattr(s, 'plot_drain', 60))  # the pen works between polls
+                    s.plot_held = held
+                    room = min(63, max(0, 240 - held) // 4)
+                    return s.reply(rid, 0, bytes([(0x80 if held == 0 else 0) | room]))
+                if gop != glp.GP_WRITE: return s.reply(rid, 1)
                 fail = getattr(s, 'plot_fail_after', None)            # a test: the Nano stops taking bytes
                 if fail is not None and len(getattr(s, 'plot_parts', [])) >= fail: return s.reply(rid, 1)
+                if held + len(data) > 240: s.plot_overrun = True        # more than its poll said: it'd hold the bus
+                s.plot_held = held + len(data)
                 s.plot_parts = getattr(s, 'plot_parts', []) + [bytes(data)]
                 return s.reply(rid, 0)
             if addr not in devs: return s.reply(rid, 2)

@@ -46,9 +46,11 @@ MAX_PLOT_FILE = 8 * 1024 * 1024 # a data file for grid_plot
 MAX_IMAGE_FILE = 20 * 1024 * 1024
 MAX_PICK_WAIT = 600             # seconds grid_pick waits for clicks
 MAX_HPGL = 256 * 1024           # HP-GL for the plotter in one call (the Nano trickles it out at 1200 baud)
-HPGL_PART = 1024                # bytes per GPIB write to the plotter: each one holds the GRiD while the
-                                #  Nano's ring buffer back-pressures it (about 4-8 s at 1200 baud)
-HPGL_TIMEOUT = 15000            # per-byte ms: the Nano holds NRFD while its buffer drains
+HPGL_TIMEOUT = 15000            # per-byte ms for a write to the plotter's Nano (it shouldn't hold the bus:
+                                #  it is sent only what its serial poll says fits)
+PLOT_WAIT = 0.5                 # s between polls while the Nano's buffer is full (the GRiD is free then)
+PLOT_MIN = 64                   # bytes worth a write (less is sent only as the drawing's end)
+PLOT_STALL = 180                # s with no progress before a background plot gives up
 PICTURE_TOOLS = ('grid_plot', 'grid_image', 'grid_pick')     # no GRiD request: not one at a time
 
 GPIB_PROPS = {
@@ -184,16 +186,19 @@ TOOLS = [
          "approves every call. Send HP-GL as text (hpgl) or from a Pi file in this directory (file, e.g. "
          "a .plt you wrote). The Nano knows IN, SP, PU, PD, PA and LB (end a label with ETX, \\x03); "
          "coordinates are HP-GL units, 0-10365 x 0-7962. Start a drawing with IN;SP1; and end it with "
-         "PU;. It is sent in parts split between commands; the plotter draws at its own pace (about 120 "
-         "characters a second) and the GRiD is busy while each part goes. Paper and pens are the user's: "
-         "say what you will draw before you draw it."),
+         "PU;. action draw (the default) checks that the Nano answers, then plots in the background and "
+         "returns at once: it serial-polls the Nano and sends only what its buffer has room for, so the "
+         "GRiD and your other tools stay free while the pen draws (a long plot takes minutes). action "
+         "status says how far a plot has got; cancel stops sending (what the Nano and the plotter hold "
+         "still draws). One plot at a time. Paper and pens are the user's: say what you will draw before "
+         "you draw it."),
      'inputSchema': {'type': 'object', 'properties': {
+         'action': {'type': 'string', 'enum': ['draw', 'status', 'cancel']},
          'hpgl': {'type': 'string', 'maxLength': MAX_HPGL,
                   'description': 'HP-GL, e.g. "IN;SP1;PU1000,1000;PD3000,1000,3000,3000;PU;"'},
          'file': {'type': 'string', 'description': 'A Pi file of HP-GL instead of hpgl.'},
          'timeout_ms': {'type': 'integer', 'minimum': 1000, 'maximum': 65535,
-                        'description': 'Per-byte timeout (default %d: the Nano holds the bus while it '
-                                       'catches up).' % HPGL_TIMEOUT}}},
+                        'description': 'Per-byte timeout of each write (default %d).' % HPGL_TIMEOUT}}},
      'annotations': {'readOnlyHint': False, 'destructiveHint': True, 'title': 'GPIB: draw on the pen plotter'},
      '_meta': ASK},
     # pictures on the GRiD's screen (CLAUDE.COM 1.2, Term): plotview.py
@@ -423,6 +428,8 @@ class GridTools:
         s.root = root or getattr(cfg, 'term_dir', None) or '~/grid'
         s.hello = hello                     # the GRiD's last HELLO (the paused program's name)
         s.viewer = viewer                   # plotview.Viewer: pictures on the GRiD's screen
+        s.lock = threading.Lock()           # one GRiD request at a time (ToolServer takes it too)
+        s.plot = None                       # the background plot (PlotJob)
 
     def call(s, name, a):
         try:
@@ -671,6 +678,17 @@ class GridTools:
         return [text('Sent to %d' % addr)], False
 
     def t_grid_plotter(s, a):
+        act = a.get('action', 'draw')
+        if act not in ('draw', 'status', 'cancel'): raise ValueError('action is draw, status or cancel')
+        job = s.plot
+        if act == 'status':
+            return [text(job.report() if job else 'No plot has been started.')], False
+        if act == 'cancel':
+            if not job or not job.running(): return [text('No plot is running.')], False
+            job.cancel = True; job.join(10)
+            return [text(job.report())], False
+        if job and job.running():
+            return [text('A plot is running: %s Wait for it, or cancel it.' % job.report())], True
         addr = getattr(s.cfg, 'plotter', 1)
         if addr in (21, s.bridge): raise ValueError('the plotter address %d is the GRiD or the bridge' % addr)
         tmo = arg_int(a, 'timeout_ms', HPGL_TIMEOUT, 1000, 65535)
@@ -682,20 +700,16 @@ class GridTools:
             try: raw = src.encode('ascii')
             except UnicodeEncodeError: raise ValueError('HP-GL must be ASCII')
         data = hpgl_check(raw)
-        parts = hpgl_parts(data, HPGL_PART)
-        sent = 0
-        for n, p in enumerate(parts):
-            try:
-                s.G.gpib(glp.GP_WRITE, addr, p, flags=1, timeout_ms=tmo)
-            except GridError as e:
-                done = ('nothing was sent' if not sent else
-                        '%d of %d bytes went (%d of %d parts), so part of the drawing may be on the paper'
-                        % (sent, len(data), n, len(parts)))
-                return [text('GRiD: %s; %s' % (e, done))], True
-            sent += len(p)
-        return [text('Sent %d bytes of HP-GL to the plotter at %d in %d part%s. It goes on drawing until '
-                     'the Nano has passed it all on.' % (sent, addr, len(parts), '' if len(parts) == 1 else 's'))], False
-
+        try:                                # (the caller holds the lock: the first poll is ours)
+            st = s.G.gpib(glp.GP_SPOLL, addr, timeout_ms=1000)
+        except GridError as e:
+            return [text('GRiD: %s. The plotter\'s Nano at %d does not answer a serial poll: is it powered, '
+                         'and running firmware v4 or later? Nothing was sent.' % (e, addr))], True
+        if not st: return [text('The Nano at %d gave an empty serial poll. Nothing was sent.' % addr)], True
+        s.plot = PlotJob(s, addr, data, tmo); s.plot.start()
+        return [text('Plotting %d bytes of HP-GL on the 4662 (GPIB %d) in the background. The Nano is '
+                     'sent what its buffer has room for, and the GRiD is free between parts. '
+                     'grid_plotter action status shows how far it has got.' % (len(data), addr))], False
 
     # ---- pictures on the GRiD's screen: no GRiD request, not one at a time --
     def picture_args(s, a):
@@ -783,6 +797,99 @@ def hpgl_check(raw):
     return raw
 
 
+def hpgl_ends(data):
+    """Where each HP-GL command ends (the index after its ';', or after an
+    LB label's ETX and the ';' after it), never inside a label."""
+    ends, i, n = [], 0, len(data)
+    while i < n:
+        j = i
+        while j < n and data[j] in b' \r\n\t;': j += 1
+        if data[j:j + 2].upper() == b'LB':
+            k = data.find(b'\x03', j + 2)
+            i = n if k < 0 else k + 1
+            if i < n and data[i:i + 1] == b';': i += 1
+        else:
+            k = data.find(b';', j)
+            i = n if k < 0 else k + 1
+        ends.append(i)
+    return ends
+
+
+class PlotJob(threading.Thread):
+    """A plot sent in the background: poll the Nano, send what fits (whole
+    commands), wait on the Pi when it's full. Each GRiD request takes the
+    tools' lock, so Claude's other calls go between them."""
+    def __init__(s, tools, addr, data, tmo):
+        threading.Thread.__init__(s, daemon=True, name='grid-plotter')
+        s.tools, s.addr, s.data, s.tmo = tools, addr, data, tmo
+        s.ends = hpgl_ends(data)
+        s.sent = 0; s.writes = 0; s.polls = 0
+        s.state = 'sending'; s.error = None; s.cancel = False
+        s.t0 = time.monotonic(); s.t1 = None
+
+    def running(s): return s.is_alive() and s.state in ('sending', 'drawing')
+
+    def report(s):
+        n = len(s.data); t = (s.t1 or time.monotonic()) - s.t0
+        head = {'sending': 'sending', 'drawing': 'all sent; the pen is finishing',
+                'done': 'done', 'failed': 'stopped', 'cancelled': 'cancelled'}[s.state]
+        r = 'Plot at GPIB %d: %s. %d of %d bytes sent (%d%%) in %d writes, %d polls, %d s.' % (
+            s.addr, head, s.sent, n, 100 * s.sent // max(n, 1), s.writes, s.polls, t)
+        if s.error: r += ' ' + s.error
+        return r
+
+    def gpib(s, op, data=b'', flags=0):
+        with s.tools.lock:
+            if s.tools.away(): raise GridError('the GRiD is back in its program')
+            return s.tools.G.gpib(op, s.addr, data, flags=flags, timeout_ms=s.tmo if op == glp.GP_WRITE else 1000)
+
+    def poll(s):
+        s.polls += 1
+        r = s.gpib(glp.GP_SPOLL)
+        return r[0] if r else None
+
+    def run(s):
+        import bisect
+        n = len(s.data); last = time.monotonic()
+        try:
+            while s.sent < n:
+                if s.cancel: s.state = 'cancelled'; return
+                try:
+                    st = s.poll()
+                except GridError as e:          # (busy with a program, or the link is down: try again)
+                    if time.monotonic() - last > PLOT_STALL:
+                        s.state = 'failed'; s.error = 'The GRiD stopped answering: %s.' % e; return
+                    time.sleep(1); continue
+                room = ((st or 0) & 0x3F) * 4
+                left = n - s.sent
+                k = bisect.bisect_right(s.ends, s.sent + room) - 1
+                end = s.ends[k] if k >= 0 and s.ends[k] > s.sent else s.sent
+                if end - s.sent < min(PLOT_MIN, left):
+                    nxt = s.ends[bisect.bisect_right(s.ends, s.sent)] if s.sent < s.ends[-1] else n
+                    if room >= 200 and nxt - s.sent > room:  # one command bigger than the Nano's room
+                        end = s.sent + room
+                    elif end - s.sent < left:           # wait for room (the GRiD is free meanwhile)
+                        if time.monotonic() - last > PLOT_STALL:
+                            s.state = 'failed'; s.error = 'The Nano had no room for %d s.' % PLOT_STALL; return
+                        time.sleep(PLOT_WAIT); continue
+                try:
+                    s.gpib(glp.GP_WRITE, s.data[s.sent:end], flags=1)
+                except GridError as e:
+                    s.state = 'failed'
+                    s.error = 'A write failed (%s): part of the drawing may be on the paper.' % e
+                    return
+                s.sent = end; s.writes += 1; last = time.monotonic()
+            s.state = 'drawing'
+            while not s.cancel and time.monotonic() - last < PLOT_STALL:
+                try:
+                    if (s.poll() or 0) & 0x80: break  # idle: all passed on to the plotter
+                except GridError: pass
+                time.sleep(1)
+            s.state = 'done'
+        finally:
+            s.t1 = time.monotonic()
+
+
 def hpgl_parts(data, most):
     """Split HP-GL into parts of at most `most` bytes, each ending after a
     command's ';' (or a label's ETX), never inside an LB label, whose text
@@ -844,7 +951,8 @@ class ToolServer:
     time (CLAUDE.COM runs one REQUEST at a time)."""
     def __init__(s, path, tools, available=lambda tool: None, log=print):
         s.path, s.tools, s.available, s.log = path, tools, available, log
-        s.lock = threading.Lock(); s.sock = None
+        s.lock = getattr(tools, 'lock', None) or threading.Lock()  # (shared with a background plot)
+        s.sock = None
 
     def start(s):
         os.makedirs(os.path.dirname(s.path), mode=0o700, exist_ok=True)
@@ -887,6 +995,8 @@ class ToolServer:
             if not isinstance(tool, str) or not isinstance(args, dict):
                 return [text('gridlink: a request needs a tool name and an arguments object')], True
             if tool == '_link': return s.link_request(args)
+            if tool == 'grid_plotter' and args.get('action') in ('status', 'cancel'):
+                return s.tools.call(tool, args)   # (no GRiD request: not behind a running plot's)
             with s.lock:                          # (a RUN going on keeps the GRiD from polling:
                 why = s.available(tool)           # wait for it, don't call that "not connected")
                 if why: return [text(why)], True
