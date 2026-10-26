@@ -6829,7 +6829,11 @@ mt_xenv:
 
 ; EXEC's largest block with MT on (mem_largest: JMP FAR; EXEC its only
 ; caller): in a task, one below the program's minimum (ex_min) grows the
-; region to it (mt_grow) and is asked again.  -> BX; DS = KSEG
+; region to it (mt_grow) and is asked again.  A .COM's is its whole
+; segment, 64 KB (T5d): it may use all of it without asking (DOS gives
+; it the largest block; LCMD clears its BSS first), and the room grown
+; lies under the task's TX.  If that can't be had, ex_min.  -> BX; DS =
+; KSEG
 mt_largest:
         push    ax
         push    dx
@@ -6838,13 +6842,27 @@ mt_largest:
         KCALL   mem_alloc               ; (fails with BX = largest)
         cmp     byte [cs:mt_cur], 0
         je      .x
-        cmp     bx, [ex_min]
+        mov     ax, [ex_min]
+        cmp     byte [ex_isexe], 0
+        jne     .m
+        cmp     ax, 1000h
+        jae     .m
+        mov     ax, 1000h
+.m:     cmp     bx, ax
+        jae     .x
+        push    bx
+        mov     bx, ax
+        call    mt_grow
+        pop     bx
+        jnc     .a
+        cmp     bx, [ex_min]            ; (64 KB not there: its minimum)
         jae     .x
         push    bx
         mov     bx, [ex_min]
         call    mt_grow
         pop     bx
         jc      .x
+.a:
         mov     bx, 0FFFFh
         xor     dx, dx
         KCALL   mem_alloc
