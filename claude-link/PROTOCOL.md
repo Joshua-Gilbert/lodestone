@@ -188,7 +188,7 @@ are extra glyphs: 80h ● bullet, 81h ⎿ result corner, 82h … ellipsis,
 8Dh/8Eh: 98h └, 99h ┘, 9Ah ┌, 9Bh ┐, 9Ch ├, 9Dh ┤, 9Eh ┬, 9Fh ┴, A0h ┼.
 A GRiD whose HELLO says flags bit 4 (CLAUDE 1.8, and resident Claude's
 console from 1.12) also draws A1h-AEh, the 2x2 block elements
-▘▝▖▗▌▐▀▄▛▜▙▟▚▞. Codes above those show as '?'.
+▘▝▖▗▌▐▀▄▛▜▙▟▚▞. Codes above A0h (AEh with bit 4) show as '?'.
 
 ### REQUEST operations (executed on the GRiD)
 
