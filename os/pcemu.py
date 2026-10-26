@@ -1177,7 +1177,8 @@ class PC:
         # way, only at a run's start: a program spending nearly all its
         # time under CLI (polling INT 33h AX=3 in a task behind) gets
         # almost no ticks, so a task behind runs longer turns than on the
-        # 1520.  Opt-in for now (test_mt's t_tclip, T4): under it
+        # 1520.  Opt-in (test_mt's t_tclip, T4, and t_srq; test_resident_term's
+        # t_bg_mt, T5c): under it
         # test_resident_term's "a link failure in a pass..." and "the
         # bridge gone while away..." failed: a link bug, fixed in T5c.
         s.irq_wait = s.irq_exact and not s.r('flags') & 0x200 \
