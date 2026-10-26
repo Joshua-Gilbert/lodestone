@@ -5446,10 +5446,14 @@ def t_srq():
     k.pc.irq_pending.add(5); k.run_for(0.5)
     check('... it ends at its third: the wake ends with it (task 0\'s too)', srq_progs(k) == [] and wkt() == 0xFF,
           (srq_progs(k), wkt()))
-    # the Executive in front (a terminal window's case, T5d): idle at its HLT, and busy drawing
+    # the Executive in front (a terminal window's case, T5d): idle, and busy drawing.  Another MTSPIN first: a task
+    # ready ahead of MTSRQ in the round (so the woken one is taken because it was woken, not as the next in turn)
+    typ(k, 'mtlaunch mtspin.com 600 s3.txt', 1.0); line(k, '')
     typ(k, 'mtlaunch mtsrq.com 2', 1.0); line(k, '')
     typ(k, 'exit', 1.5)
+    nsp3 = next((i for i, s_, n in tstate(k)[0] if n == 'MTSPIN.COM' and i != nspin), None)
     q = one()
+    nq3 = tnum_(q) if q else None
     ui = k.pc.u16(0x60, Y['ui_seg'])
     ys, y0, s0 = [], seg * 16 + Y['mw_poll.y'], seg * 16 + Y['mt_switch']
     prev = k.pc.watch
@@ -5471,8 +5475,9 @@ def t_srq():
         while k.pc.keys and k.pc.us - t0 < 0.5e6: k.pc.run(300)
         kl.append(round((k.pc.us - t0) / 1000, 1))
         k.pc.run_for(0.3)
-    check('... a key for it meanwhile: taken by the next tick (%s ms; 70 at most: it comes back for it, as for the mouse, '
-          'mt_mwant), not at its turn in the round' % kl, max(kl) <= 70, kl)
+    check('... a key for it meanwhile: taken at the next tick (%s ms; each typed just before one: 30 at most; it comes '
+          'back for it, as for the mouse, mt_mwant; without that, at its turn in the round: 81 in the run recorded)' % kl,
+          max(kl) <= 30, kl)
     idle = (Y['..@ui_idle'], Y['..@ui_midle'], Y['..@ui_sidle'])
     r = lat(q, lambda: cur() == 0, at=seg * 16 + Y['mw_poll'])     # (its poll: the little it runs, idle)
     check('... IRQ 5 while it runs, idle (in its poll): woken at once (%s ms; %s)' % r, fast(r), r)
@@ -5480,9 +5485,11 @@ def t_srq():
     r = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') not in idle and k.pc.r('flags') & 0x200, 1.0)
     print('   the Executive busy drawing (its selection moved): the SRQ\'s task at its next idle, %s ms' % r[0])
     k.run_for(0.5)
-    check('... the Executive busy drawing: the wake kept till its idle, where it gives way (mw_poll.y, not the tick: '
-          '%s ms; 100 at most; %s), and then MTSRQ ends, its wake with it' % r, isinstance(r[0], float) and r[0] <= 100
-          and 'pick' in r[1] and 'y' in r[1] and srq_progs(k) == [] and wkt() == 0xFF, (r, srq_progs(k), wkt()))
+    check('... the Executive busy drawing: the wake kept till its idle, where it gives way to it (mw_poll.y; not the '
+          'tick, nor the other MTSPIN, task %s, ahead of it, task %s, in the round: %s ms; 40 at most; %s), and then MTSRQ '
+          'ends, its wake with it' % ((nsp3, nq3) + r), isinstance(r[0], float) and r[0] <= 40
+          and nsp3 is not None and nq3 and nsp3 < nq3 and 'pick' in r[1] and 'y' in r[1] and srq_progs(k) == []
+          and wkt() == 0xFF, (r, nsp3, srq_progs(k), wkt()))
     check('... every switch at a safe point (the audit; %d at the tick\'s end, %d of them by SRQ, mt_pick taking '
           'mt_want)' % (len(au.switches(0, 'tick')), len(picks)), not au.bad() and len(picks) == 9, (au.bad()[:3], len(picks)))
     au.stop()
