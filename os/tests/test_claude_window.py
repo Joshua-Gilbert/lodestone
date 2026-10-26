@@ -33,13 +33,14 @@ class Win(CK.KernelHarness):
     """The floppy with LODEMT.SYS, TERM.RUN, TERM.FNT and LODE.INI, EMS, the
     router with the stand-in Claude Code.  CLAUDE's PSP found by its image
     (it runs in a task: cur_psp is the running task's)."""
-    def __init__(s, **kw):
+    def __init__(s, more=None, claude_com=G.CLAUDE_COM, **kw):
         files = {'A:\\LODEMT.SYS': open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read(),
                  'A:\\TERM.RUN': open(os.path.join(GOS, 'apps', 'TERM.RUN'), 'rb').read(),
                  'A:\\TERM.FNT': open(os.path.join(GOS, 'fonts', 'TERM.FNT'), 'rb').read(),
                  'A:\\LODE.INI': INI}
-        super().__init__(files=files, term=FAKE, ems_pages=88, **kw)
-        s.img = open(G.CLAUDE_COM, 'rb').read()
+        files.update(more or {})
+        super().__init__(files=files, term=FAKE, ems_pages=88, claude_com=claude_com, **kw)
+        s.img = open(claude_com, 'rb').read()
         s.font_img = s.img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + (0xAF - 0x20) * 16]
         s.claude_psp = None
         s.probe = []                             # (win_probe: was MT_PUB's first AL 0? win_front_task called)
@@ -209,7 +210,96 @@ def t_shift():
         h.close()
 
 
-TESTS = [t_window, t_shift]
+def flood(t):
+    """The Pi's screen always changed, whole, at once: every frame the GRiD
+    asks for is a full one (the encoder's own; its making costs the GRiD
+    no time in the emulation)."""
+    import random
+    rnd = random.Random(5150); take = t.take
+    def take2(maxpay):
+        with t.lock:
+            t.stream.feed(('\x1b[H' + '\r\n'.join(''.join(rnd.choice('abcdefghij klmnop') for _ in range(79))
+                                                    for _ in range(23))).encode())
+        return take(maxpay)
+    t.take = take2
+    t.ready = lambda: True
+
+
+def no_wake(src):
+    """A copy of CLAUDE.COM (and its map) that asks MT_WAKE with BL = 0."""
+    import shutil, tempfile
+    d = tempfile.mkdtemp(prefix='nowake-')
+    img = bytearray(open(src, 'rb').read())
+    o = G.symbols(os.path.splitext(src)[0] + '.MAP')['win_probe'] - 0x100
+    assert img[o:o + 5] == bytes([0xB8, 0x23, 0xF0, 0xB3, 0x01]), img[o:o + 5].hex()
+    img[o + 4] = 0
+    p = os.path.join(d, 'CLAUDE.COM'); open(p, 'wb').write(img)
+    shutil.copy(os.path.splitext(src)[0] + '.MAP', os.path.join(d, 'CLAUDE.MAP'))
+    return p
+
+
+def copy_rates(h, kb=64):
+    """KB a simulated second each way, a file of kb KB through M: (the RAM
+    disk, as gridlink.bench copies: the link, not the floppy)."""
+    g = h.router.term.grid
+    data = bytes((i * 7) & 0xFF for i in range(kb * 1024))
+    out = []
+    for f in (lambda: g.write_file('M:\\BENCH.BIN', data), lambda: g.read_file('M:\\BENCH.BIN')):
+        res = {}; us0 = h.m.us
+        th = threading.Thread(target=lambda: res.update(r=f())); th.start()
+        assert h.run_until(lambda: not th.is_alive(), 60), 'the copy did not finish'
+        out.append(kb / ((h.m.us - us0) / 1e6))
+    assert res['r'][:len(data)] == data or res['r'] == data, 'the copy back differs'
+    return out
+
+
+def measure(shift=False, spin=False, wake=True, sim_s=6.0):
+    """KB a simulated second each way through M: (copy_rates), then CELLS
+    bytes a simulated second through a flood: full screen in task 0 (shift)
+    or in a window; MTSPIN computing behind (spin); MT_WAKE asked or not."""
+    files = {'A:\\MTSPIN.COM': open(os.path.join(HERE, 'MTSPIN.COM'), 'rb').read(),
+             'A:\\MTLAUNCH.COM': open(os.path.join(HERE, 'MTLAUNCH.COM'), 'rb').read(),
+             'A:\\LODE.INI': INI + b'MDISK=256\r\n'}
+    kw = {} if wake else {'claude_com': no_wake(G.CLAUDE_COM)}
+    h = Win(irq_exact=True, more=files, bridge='pico', **kw)            # (the 1520's: frames of 3,340 bytes)
+    try:
+        h.boot_exec()
+        if spin:
+            h.k.code_p()
+            for line in ('mtlaunch mtspin.com 30000 x.txt', '', 'exit'):
+                h.k.key(line, settle=False); h.m.keys.append(ENTER); h.k.settle(3)
+            assert h.m.mode() == 0x40, 'not back in the Executive'
+        assert h.code_a(shift=shift) and h.wait_text('Welcome to Claude Code', 30), h.text()[-300:]
+        t = h.router.term
+        to_grid, to_pi = copy_rates(h)
+        flood(t)
+        h.run_until(lambda: False, 1.0)                 # (under way)
+        b0, f0, us0 = t.enc.stats['bytes'], t.enc.stats['frames'], h.m.us
+        h.run_until(lambda: h.m.crash, sim_s)
+        s = (h.m.us - us0) / 1e6
+        return to_grid, to_pi, (t.enc.stats['bytes'] - b0) / s, (t.enc.stats['frames'] - f0) / s, h.mb('mt_wkt')
+    finally:
+        h.close()
+
+
+def t_speed():
+    """The link through a flood ("no speed for space"): windowed with the
+    wake within 10% of full screen's bytes a second, nothing behind."""
+    r = {}
+    for name, kw in (('full screen, task 0', dict(shift=True)), ('window, MT_WAKE', {}),
+                     ('window, no MT_WAKE', dict(wake=False)),
+                     ('full screen, MTSPIN behind', dict(shift=True, spin=True)),
+                     ('window, MT_WAKE, MTSPIN behind', dict(spin=True)),
+                     ('window, no MT_WAKE, MTSPIN behind', dict(wake=False, spin=True))):
+        r[name] = measure(**kw)
+        print('     %-36s copies %5.1f KB/s to the GRiD, %5.1f to the Pi; flood %7.0f bytes/s %5.1f frames/s  (mt_wkt %02X)'
+              % ((name,) + r[name]), flush=True)
+    full, win = r['full screen, task 0'][2], r['window, MT_WAKE'][2]
+    check('the flood in a window with MT_WAKE: %.0f bytes/s, within 10%% of full screen\'s %.0f (%.0f%%)'
+          % (win, full, 100.0 * win / full), win >= 0.9 * full, r)
+
+
+TESTS = [t_window, t_shift, t_speed]
 if __name__ == '__main__':
     want = sys.argv[1:]
     for t in TESTS:
