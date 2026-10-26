@@ -451,8 +451,8 @@ def test_hpgl_parts():
     assert P(b'LBno end', 3) == [b'LBn', b'o e', b'nd']    # an unterminated label: still all of it
     assert P(b'PA1,2', 100) == [b'PA1,2']                   # no final ';'
     big = b';'.join(b'PD%d,%d' % (i, i) for i in range(3000)) + b';'
-    parts = P(big, mcp.HPGL_PART)
-    assert b''.join(parts) == big and max(map(len, parts)) <= mcp.HPGL_PART
+    parts = P(big, 1024)
+    assert b''.join(parts) == big and max(map(len, parts)) <= 1024
     assert all(p.endswith(b';') for p in parts)
     for bad in (b'', b' ;\r\n', b'IN;\x1b.T', b'IN;\x00', b'LB\xe9\x03'):
         try: mcp.hpgl_check(bad); assert False, bad
@@ -460,37 +460,79 @@ def test_hpgl_parts():
     assert mcp.hpgl_check(b'IN;\r\nLBHI\x03;\tPU;') == b'IN;\r\nLBHI\x03;\tPU;'
 
 
+def plot_to_end(h, c, wall=30):
+    """Run the GRiD while the background plot goes; its last status."""
+    end = time.time() + wall
+    while time.time() < end:
+        h.run_for(0.2)
+        r = body(c.call('grid_plotter', action='status'))
+        if any(w in r for w in (': done', ': stopped', ': cancelled')): return r
+    raise AssertionError('the plot did not finish: %s' % r)
+
+
 def test_plotter():
     h, c = start()
     try:
         square = 'IN;SP1;PU1000,1000;PD3000,1000,3000,3000,1000,3000,1000,1000;LBTEST;1\x03;PU;'
         r = c.call('grid_plotter', hpgl=square)
-        assert not r['isError'] and 'plotter at 1' in body(r), r
+        assert not r['isError'] and 'background' in body(r) and 'GPIB 1' in body(r), r
+        r = plot_to_end(h, c)
+        assert ': done' in r and '%d of %d bytes' % (len(square), len(square)) in r, r
         assert h.grid.plot_parts == [square.encode()], h.grid.plot_parts
-        assert all(op == mcp.glp.GP_WRITE for op, a, d in h.grid.gpib_log if a == 1)
-        big = ''.join('PD%d,%d;' % (i, i) for i in range(600))          # several parts, in order
+        assert not getattr(h.grid, 'plot_overrun', False)
+        # a long plot: sent in parts that fit, polled in between, whole commands
+        big = ''.join('PD%d,%d;' % (i, i) for i in range(600)) + 'LBA;B;C\x03;PU;'
         open(os.path.join(h.cfg.term_dir, 'big.plt'), 'w').write(big)
-        h.grid.plot_parts = []
+        h.grid.plot_parts = []; h.grid.plot_held = 0
         r = c.call('grid_plotter', file='big.plt')
-        assert not r['isError'] and len(h.grid.plot_parts) > 1 and '%d parts' % len(h.grid.plot_parts) in body(r), r
+        assert not r['isError'], r
+        r2 = c.call('grid_plotter', file='big.plt')                    # one at a time
+        assert r2['isError'] and 'A plot is running' in body(r2), r2
+        r3 = c.call('grid_info')                                        # the GRiD stays usable meanwhile
+        assert not r3['isError'], r3
+        r = plot_to_end(h, c)
+        assert ': done' in r, r
         assert b''.join(h.grid.plot_parts) == big.encode()
-        h.grid.plot_parts = []; h.grid.plot_fail_after = 2                # the Nano stops mid-drawing
-        r = c.call('grid_plotter', file='big.plt')
-        assert r['isError'] and 'part of the drawing may be on the paper' in body(r) and '2 of' in body(r), r
-        h.grid.plot_parts = []; h.grid.plot_fail_after = 0
+        assert len(h.grid.plot_parts) > 4 and all(len(p) <= 240 for p in h.grid.plot_parts)
+        assert all(p.endswith((b';', b'\x03')) for p in h.grid.plot_parts), h.grid.plot_parts
+        assert not getattr(h.grid, 'plot_overrun', False), 'sent more than the Nano had room for'
+        assert sum(1 for op, a, d in h.grid.gpib_log if a == 1 and op == mcp.glp.GP_SPOLL) > len(h.grid.plot_parts)
+        # the Nano stops taking bytes part way
+        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_fail_after = 2
+        c.call('grid_plotter', file='big.plt')
+        r = plot_to_end(h, c)
+        assert ': stopped' in r and 'part of the drawing may be on the paper' in r, r
+        h.grid.plot_fail_after = None
+        # cancel
+        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 1    # a slow pen
+        c.call('grid_plotter', file='big.plt')
+        h.run_for(0.5)
+        r = body(c.call('grid_plotter', action='cancel'))
+        assert 'cancelled' in r, r
+        h.grid.plot_drain = 60
+        # a Nano without serial poll (before v4): an error, nothing sent
+        h.grid.plot_parts = []; h.grid.plot_nopoll = True
         r = c.call('grid_plotter', hpgl='IN;')
-        assert r['isError'] and 'nothing was sent' in body(r), r
-        r = c.call('gpib_read', action='scan')                 # a listener only: no answer to a poll
-        assert '6, 16, 29' in body(r), r
+        assert r['isError'] and 'does not answer a serial poll' in body(r) and 'Nothing was sent' in body(r), r
+        assert h.grid.plot_parts == []
+        h.grid.plot_nopoll = False
+        r = c.call('gpib_read', action='scan')                 # v4 answers a poll: on the scan
+        assert '1, 6, 16, 29' in body(r), r
     finally:
         c.close(); h.close()
+
+
+def test_hpgl_ends():
+    d = b'IN;SP1;LBA;B\x03;PU1,2;LBno end'
+    assert mcp.hpgl_ends(d) == [3, 7, 14, 20, len(d)], mcp.hpgl_ends(d)
+    assert mcp.hpgl_ends(b'PA1,2') == [5]
 
 
 def test_plotter_bad_arguments_never_reach_the_grid():
     t = mcp.GridTools(NoGrid(), root='/nonexistent')
     for a in ({}, {'hpgl': ''}, {'hpgl': 'IN;', 'file': 'x.plt'}, {'hpgl': 'IN;\x1b.T'}, {'hpgl': 'PA☃;'},
               {'hpgl': 'x' * (mcp.MAX_HPGL + 1)}, {'hpgl': 'IN;', 'timeout_ms': 10}, {'file': '../etc/passwd'},
-              {'file': '.mcp.json'}, {'hpgl': 5}):
+              {'file': '.mcp.json'}, {'hpgl': 5}, {'action': 'bogus', 'hpgl': 'IN;'}):
         res, err = t.call('grid_plotter', a)
         assert err, a
     class Cfg: plotter = 7
