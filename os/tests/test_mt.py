@@ -5046,19 +5046,23 @@ def t_tpub():
           and tstate(k)[1] == 0 and tb('tdl') & 32 and lines()[-2:] == ['G', 'G'], (h1, hd, h2, o[-300:], tstate(k), lines()[-2:]))
     # refused descriptors; a call it may not make
     key('b', 1.5)
+    reg = k.pc.u16(seg, task_ent(k, n) + equ('TE_REG'))
+    rsz = k.pc.u16(reg - 1, 3)                  # (its region: 1000h paragraphs at least, so the table at E-1000h:FFC0h
+                                                #  starts in it and only the wrap past FFFFh refuses it)
     want = 'B' + ' 1 000D' * 14 + ' 1 0001' * 2 + (' 0 %02X01' % n) * 2
     check('"b": MT_PUB refused (0Dh) for ES:DI 0:400h, PB_VER 0, PB_COLS 0 and 81, PB_ROWS 0 and 26, PB_FIRST 21h, PB_GEND '
           '3Fh, PB_CELLS and PB_FONT 0:0, PB_FONT and PB_CELLS ending in the paragraph past its memory (by their sizes, 640 '
           'and 4,000 bytes), PB_XLAT past its segment\'s end (its start in its memory) and across its memory\'s end; CL 1 '
-          'and 2 from a task (1); PB_XLAT its memory\'s last 128 bytes, and its own again: taken', lines()[-1] == want,
-          (lines()[-1], want))
+          'and 2 from a task (1); PB_XLAT its memory\'s last 128 bytes, and its own again: taken (its region %Xh '
+          'paragraphs)' % rsz, lines()[-1] == want and rsz >= 0x1000, (lines()[-1], want, hex(rsz)))
     fb = next((s_ for s_, t_, o_, sz, nm in mcbs(k) if o_ == 0 and sz >= 4), None)
-    if fb:
+    if fb:                                      # (22 bytes in a free block: nothing's yet)
         k.pc.wr(fb + 1, 0, bytes(k.pc.rd(pd[1], pd[0], 22)))
         k.pc.wr(pd[1], pd[0] - 4, struct.pack('<HH', 0, fb + 1))
+    else:
+        k.pc.wr(pd[1], pd[0] - 4, struct.pack('<HH', 0x400, 0))    # (none: 0:400h, refused too, not 0:0)
     key('o')
     lo_ = lines()[-1:]
-    reg = k.pc.u16(seg, task_ent(k, n) + 4)                 # (TE_REG)
     k.pc.wr(pd[1], pd[0] - 4, struct.pack('<HH', 0x70, reg - 8))
     key('e')
     check('"o": a copy of its descriptor, valid but in a free block outside its memory (%s): refused (%s); "e": its table '
