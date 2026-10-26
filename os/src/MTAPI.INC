@@ -207,6 +207,23 @@ MT_PUB      equ 22h                     ; (T5b) a screen published for a
                                         ;  all in the task's memory, or its
                                         ;  cells, font or table; a field out
                                         ;  of range)
+MT_WAKE     equ 23h                     ; (T5c) BL bit 0: the calling program
+                                        ;  woken by the GPIB driver's SRQ
+                                        ;  interrupt (IRQ 5): its task runs
+                                        ;  next, at once if what it interrupts
+                                        ;  may be switched from (else at that
+                                        ;  task's next INT 21h or tick), not
+                                        ;  after the others' turns.  One
+                                        ;  program at a time, the last to ask;
+                                        ;  BL bit 0 clear: no more (its own
+                                        ;  only).  Ended when it ends (not as a
+                                        ;  TSR) or its task does; any task, 0
+                                        ;  too.  Only while its task is ready
+                                        ;  to run (not waiting for a key, and
+                                        ;  not frozen behind) -> AL = the
+                                        ;  driver's IRQ, 0 if it has none
+                                        ;  (GPIBIRQ=0, or masked after a
+                                        ;  flood: no wake then)
 MT_TASKS    equ 8                      ; most tasks at once (0 is the Executive)
 MT_DEFARENA equ 1000h                   ; a task's memory if SP_PARAS is 0: 64 KB
 
