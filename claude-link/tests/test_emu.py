@@ -24,12 +24,12 @@ def results(h, i):
             if isinstance(b, dict) and b.get('type') == 'tool_result']
 
 
-def check(h):
+def check(h, fails=0):
     assert not h.m.crash, h.m.crash
     assert not h.nano.violations, h.nano.violations
     errs = [l for l in h.log if 'Traceback' in str(l) or 'error' in str(l).lower()]
     assert not errs, errs
-    assert h.var('n_fail', 2) == 0, ('link failures', h.var('n_fail', 2))
+    assert h.var('n_fail', 2) == fails, ('link failures', h.var('n_fail', 2))
     if hasattr(h, 'stk'):                       # CLAUDE.COM's stack: under a quarter of it used
         lo, top = h.stk
         b = h.m.mu.mem_read(h.claude_psp * 16 + lo, top - lo)
@@ -176,6 +176,25 @@ def test_damaged_frames():
     assert h.link.stats['rx_nak'] > 0, h.link.stats         # (the GRiD's NAKs reach the Pi as NAKs)
     h.transport.corrupt_every = 0
     assert h.m.crash is None
+
+
+def test_damaged_answers_fail_the_link():
+    # T5c: a NAK keeps link_wait's ~2 s from the frame the answer is for, so a Pi whose every answer comes
+    # damaged fails the link (a HELLO again) within about 2 s, not NAK after NAK for ever; good answers again,
+    # it goes on
+    h = start([reply(('text', 'Back after the noise.'))])
+    assert h.run_until(h.idle, 20), h.screen()
+    f0, b0 = h.var('n_fail', 2), h.var('n_bad', 2)
+    h.transport.corrupt_every = 1
+    t0 = h.m.us
+    failed = h.run_until(lambda: h.var('n_fail', 2) > f0, 6)
+    dt, nb = (h.m.us - t0) / 1e6, h.var('n_bad', 2) - b0
+    h.transport.corrupt_every = 0
+    assert failed and nb > 3 and dt < 5, (failed, dt, nb, h.link.stats)
+    assert h.run_until(lambda: 'Reconnected' in h.screen(), 20) and h.run_until(h.idle, 20), h.screen()
+    assert h.turn('hello again', sim_s=60), h.screen()
+    assert 'noise.' in h.screen(), h.screen()
+    check(h, fails=1)                               # (the one it was meant to have)
 
 
 def test_help_and_slash():

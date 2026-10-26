@@ -54,6 +54,11 @@
 ;      task's call is done on its own state.  And ui_progend (MOV AX,
 ;      [ui_seg] / OR AX,AX: 5 bytes) becomes a far jump to mt_pgend,
 ;      which forgets a background program's event handler as it ends.
+;    - f_48, mem_largest and f_4B.xe (5 bytes each) become far jumps to
+;      mt_48, mt_largest and mt_xenv: a task's region grows (T5a).
+;    - gp_isr.e, the GPIB driver's EOI (MOV AL,20h / OUT 20h,AL / POP DS)
+;      becomes a far jump to mt_srqi: a task woken by SRQ (MT_WAKE, T5c)
+;      switched to at once, as at a tick's end.
 ;
 ;  A task (1 to 7; task 0 is the Executive and whatever it runs) is a
 ;  region, a block of its own (owner 8, "T1".."T7") carved from the top of
@@ -71,7 +76,8 @@
 ;    arena  the task's own MCB chain: its first_mcb, ended by a 'Z' here
 ;  Task 0's TX is in MT's block (section mttbss).  Switching happens inside
 ;  INT 21h (indos 1) at mt_kwait or when a task ends, and outside it at
-;  the tick or on INT 21h's way out, where it is safe (mt_safe).
+;  the tick, on INT 21h's way out or at the GPIB driver's SRQ interrupt
+;  (T5c), where it is safe (mt_safe).
 ;  The calls: MTAPI.INC.
 ; =====================================================================
 %ifndef NOTC
@@ -238,7 +244,10 @@ mt_hotk     dw      0A500h, 0A5F0h      ; the hot key, CODE-Tab, as AH=10h
                                         ;  and as a BIOS keeping CODE keys with
                                         ;  F0h would
 mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
-mt_wsv      db      0, 0                ; (mt_smap: windows 0 and 1 as they were)
+mt_wkt      db      0FFh                ; T5c: the task MT_WAKE's program is in
+mt_wkp      dw      0                   ;  (FFh: none), and its PSP
+mt_want     db      0FFh                ; the task an SRQ woke: mt_pick's next
+mt_wsv      db      0, 0               ; (mt_smap: windows 0 and 1 as they were)
 mt_old10    dd      0                   ; INT 10h as it was
 mt_shd      db      0                   ; 1: the front task's pages shadow
                                         ;  B800h's first 16 KB (a text mode,
@@ -466,6 +475,39 @@ mt_tick:
         pop     bx
         pop     ax
         iret
+
+; T5c: the GPIB driver's SRQ interrupt (gp_isr.e, its EOI: JMP FAR here, by
+; mt_boot), on gp_isr's AX, DX, DS (DS = KSEG).  The EOI and out, as
+; there; but with a program asking (MT_WAKE) in another task, ready to run,
+; that task is the next (mt_want) and its turn comes now, as at a tick's
+; end (mt_tick.w: what was interrupted vetted by mt_safe; else at the
+; running task's next INT 21h or tick)
+mt_srqi:
+        mov     al, 20h                 ; (gp_isr's EOI: before mt_safe, which
+        out     20h, al                 ;  wants none in service)
+        pop     ds
+        pop     dx
+        push    bx                      ; mt_tick's frame: AX, BX, DX, DS, BP
+        push    dx
+        push    ds
+        push    bp
+        mov     bp, sp
+        push    KSEG
+        pop     ds
+        mov     al, [cs:mt_wkt]
+        cmp     al, 0FFh                ; (none)
+        je      .r
+        cmp     al, [cs:mt_cur]         ; (its own: running, or woken from its
+        je      .r                      ;  HLT by this interrupt)
+        call    mt_ent
+        cmp     byte [cs:bx+TE_STATE], TS_RUN
+        jne     .r
+        call    mt_frz
+        jnz     .r
+        mov     [cs:mt_want], al
+        mov     byte [cs:mt_pend], 1
+        jmp     mt_tick.w
+.r:     jmp     mt_tick.r
 
 ; INT 21h's way out (done's MOV SS,AX / MOV SP,BX / POPA: interrupts off,
 ; DS = KSEG, AX:BX = the caller's stack with its frame): another task's
@@ -910,14 +952,20 @@ mt_can: cmp     byte [indos], 1
 
 ; a task other than the running one that is ready to run (TS_RUN) and
 ; not frozen in the background (mt_frz), the next after it in turn -> BL;
-; CF if none
+; CF if none.  (One an SRQ woke, mt_want, first: T5c)
 mt_pick:
         push    ax
         push    cx
+        mov     al, 0FFh
+        xchg    al, [cs:mt_want]
+        cmp     al, 0FFh
+        jne     .wk
         mov     al, [cs:mt_cur]
         or      al, al                  ; (task 0 after a mouse boost: on
         jnz     .go                     ;  from the task it took the turn
         xchg    al, [cs:mt_mrot]        ;  from, not task 1 again; once)
+        jmp     short .go
+.wk:    dec     al                      ; (the turn from just before it)
 .go:    mov     cx, MT_TASKS
 .l:     inc     al
         and     al, MT_TASKS - 1
@@ -1786,6 +1834,8 @@ mt_f0:  mov     al, [bp+F_AX]
         je      mt_tmouse
         cmp     al, MT_PUB
         je      mt_pub
+        cmp     al, MT_WAKE
+        je      mt_wake
         cmp     al, 1
         je      mt_open
         or      al, al                  ; (f_F0's own two, then on there)
@@ -2136,6 +2186,32 @@ mt_ispub:
         pop     ds
         pop     es
         ret
+
+; MT_WAKE (T5c): BL bit 0, the calling program woken by SRQ (MTAPI.INC)
+mt_wake:
+        mov     al, [cs:mt_cur]
+        mov     dx, [cur_psp]
+        test    byte [bp+F_BX], 1
+        jz      .off
+        mov     [cs:mt_wkp], dx         ; (the PSP first: mt_srqi reads only
+        mov     [cs:mt_wkt], al         ;  the task)
+        jmp     short .r
+.off:   call    mt_wkme                 ; (its own only)
+.r:     mov     al, [gp_irq]
+        xor     ah, ah
+        jmp     KSEG:ok_ax
+
+; the wake (MT_WAKE) ended if it is the program at DX's in the running
+; task (the task too: a PSP in a parked task's old place may be another's
+; now).  AL changed
+mt_wkme:
+        mov     al, [cs:mt_cur]
+        cmp     al, [cs:mt_wkt]
+        jne     .x
+        cmp     dx, [cs:mt_wkp]
+        jne     .x
+        mov     byte [cs:mt_wkt], 0FFh
+.x:     ret
 
 ; MT_PUB (T5b).  CL = 0, the running task's program: ES:DI its screen's
 ; descriptor (0:0 withdraws one), it and its cells, font and table all in
@@ -5073,7 +5149,7 @@ mt_pgend:
 ; T4: the program at BX ends: if it took the mouse (TX_MPSP), its task's
 ; window clicks are a selection's again, and none is held.  T5b: if it
 ; published its screen (TX_PPSP), that is withdrawn (a change: its window
-; looks again).  All kept
+; looks again).  T5c: its SRQ wake ends.  All kept
 mt_mgone:
         push    ax
         push    bx
@@ -5087,7 +5163,13 @@ mt_mgone:
         jne     .p
         mov     word [es:TX_MPSP], 0
         mov     byte [es:TX_MREL], 0
-.p:     cmp     byte [cs:mt_cur], 0     ; (task 0's TX: none of T5b's)
+.p:     push    ax                      ; T5c: its SRQ wake (MT_WAKE) ended (a
+        push    dx                      ;  kill, or its task's end for a TSR,
+        mov     dx, ax                  ;  comes here too: mt_owners)
+        call    mt_wkme
+        pop     dx
+        pop     ax
+        cmp     byte [cs:mt_cur], 0     ; (task 0's TX: none of T5b's)
         je      .x
         cmp     [es:TX_PPSP], ax
         jne     .x
@@ -6961,6 +7043,9 @@ mt_boot:
         mov     byte [f_4B.xe], 0EAh    ; (and EXEC's environment's block)
         mov     word [f_4B.xe + 1], mt_xenv
         mov     [f_4B.xe + 3], es
+        mov     byte [gp_isr.e], 0EAh   ; the GPIB driver's SRQ interrupt, at
+        mov     word [gp_isr.e + 1], mt_srqi ;  its EOI: a task woken (T5c)
+        mov     [gp_isr.e + 3], es
         sti
         push    cs
         pop     ds

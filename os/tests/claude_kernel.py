@@ -60,9 +60,11 @@ class KMachine(pcemu.PC):
 class KernelHarness(G.EmuHarness):
     """term: a command for Claude Code (a stand-in, in a pty): gridlink's
     router then, Term or chat as the GRiD's HELLO asks.  ems_pages: the
-    1520's expanded memory (resident Claude needs it)."""
+    1520's expanded memory (resident Claude needs it).  irq_exact: pcemu's
+    (an IRQ held under CLI taken as soon as IF is set again)."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y',
-                 claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0, bridge='ar488', frame_cap=None):
+                 claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0, bridge='ar488', frame_cap=None,
+                 irq_exact=False):
         s.tmp = tempfile.mkdtemp(prefix='gridk-')
         disk = [LODE_SYS, LCMD_COM, 'CLAUDE.COM=' + claude_com, 'TESTKEY.COM=' + G.TESTKEY_COM]
         for k, v in (files or {}).items():
@@ -72,7 +74,7 @@ class KernelHarness(G.EmuHarness):
             disk.append(name + '=' + p)
         img = mkimg.build(os.path.join(s.tmp, 'a.img'), disk)
         chip = G.Chip(S.bus())
-        s.m = m = KMachine(img, chip, ems_pages=ems_pages)
+        s.m = m = KMachine(img, chip, ems_pages=ems_pages, irq_exact=irq_exact)
         chip.clock = m.clock
         s.pending = []
         if bridge in ('pico', 'pico-quiet'):           # (pico-quiet: fw 2026-10-24's, resident Claude's M4)
