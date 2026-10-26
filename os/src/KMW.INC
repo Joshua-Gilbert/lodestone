@@ -625,15 +625,39 @@ mw_poll:
         UCALL   poll_once
         jnc     .ev
         cmp     byte [cs:mw_n], 0
-        je      .x
+        je      .y
         call    mw_tick
-        jnc     .x
+        jnc     .y
         mov     ax, EV_TICK
 .ev:    push    bp                      ; (an event: to ui_event.got)
         mov     bp, sp
         mov     word [bp+2], ui_event.got
         pop     bp
 .x:     retf
+; T5d: nothing, and a task ready to run: its turn now, not at the next tick
+; (the HLT after this would hold the CPU till then).  An interrupt's frame,
+; as if the HLT had ended (..@ui_idle, interrupts on), and on as a tick's
+; end (mt_tick.w: mt_safe vets it); back at ..@ui_idle, the loop's
+.y:     mov     ah, [cs:mt_want]
+        call    mt_pick                 ; (AX kept)
+        mov     [cs:mt_want], ah
+        jc      .x
+        cli
+        pop     ax                      ; (its return: the HLT)
+        pop     bx
+        push    0202h
+        push    bx
+        push    word ..@ui_idle
+        push    ax                      ; mt_tick's frame: AX, BX, DX, DS, BP
+        push    bx
+        push    dx
+        push    ds
+        push    bp
+        mov     bp, sp
+        push    KSEG
+        pop     ds
+        mov     byte [cs:mt_pend], 1
+        jmp     mt_tick.w
 
 ; CF: EV_TICK is due for the session in front, a terminal window (MT_TOPEN
 ; gave it its task): its task's screen (TX_CHG, and a published screen's
