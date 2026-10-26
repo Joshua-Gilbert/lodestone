@@ -151,7 +151,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9), and `bgscreen`: SCREEN in the background too (CLAUDE 1.11). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3; bit 4 = it draws the 2x2 block elements `▘▝▖▗▌▐▀▄▛▜▙▟▚▞` as codes A1h-AEh, CLAUDE 1.8, and resident Claude's console from 1.12; without it they are blanks and inverse blanks), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9), and `bgscreen`: SCREEN in the background too (CLAUDE 1.11). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
@@ -186,7 +186,9 @@ are extra glyphs: 80h ● bullet, 81h ⎿ result corner, 82h … ellipsis,
 (· ✢ ✳ ✶ ✻ ✽), 8Dh ─ rule, 8Eh │ bar, 8Fh ▸, 90h °, 91h µ, 92h Ω,
 93h ±, 94h ×, 95h ≈, 96h ≤, 97h ≥, and box drawing on the same lines as
 8Dh/8Eh: 98h └, 99h ┘, 9Ah ┌, 9Bh ┐, 9Ch ├, 9Dh ┤, 9Eh ┬, 9Fh ┴, A0h ┼.
-Codes above A0h show as '?'.
+A GRiD whose HELLO says flags bit 4 (CLAUDE 1.8, and resident Claude's
+console from 1.12) also draws A1h-AEh, the 2x2 block elements
+▘▝▖▗▌▐▀▄▛▜▙▟▚▞. Codes above A0h (AEh with bit 4) show as '?'.
 
 ### REQUEST operations (executed on the GRiD)
 
@@ -385,13 +387,15 @@ CELLS payload:
 
 `len` bit 7 means an attribute byte follows (bit 0 inverse, bit 1
 underline); without it the cells are plain. Glyphs are the GRiD's codes
-(20h-7Eh and 80h-A0h, as in TEXT). An operation that does not fit the
+(20h-7Eh and 80h-A0h, as in TEXT, and A1h-AEh for a GRiD whose HELLO
+says flags bit 4). An operation that does not fit the
 screen or the payload ends the frame. The cursor is drawn as an inverted
 underline (glyph rows 14-15).
 
 What the Pi does with Claude Code's output: Unicode is folded to one GRiD
 glyph per cell (box drawing, ● ⎿ ✻ ❯ and the spinner have glyphs; a full
-block is an inverse blank; wide characters are `?` and a blank); a
+block is an inverse blank; the halves and quarters are A1h-AEh for a
+GRiD that says flags bit 4, else blanks or inverse blanks; wide characters are `?` and a blank); a
 non-default background or reverse video is inverse; underline stays;
 colours, bold and dim are plain. The alternate screen (`?1049`) and
 synchronised output (`?2026`) are handled before pyte; DA and cursor

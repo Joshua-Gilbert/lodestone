@@ -30,7 +30,7 @@ HF_FCS    equ 04h                ; the Pi's HELLO: frames carry the Fletcher sum
 GF_TERM   equ 01h                ; our HELLO: we can be a terminal (Term)
 GF_FCS    equ 04h                ; our HELLO: we can check frames with the Fletcher sum
 GF_WAKE   equ 08h                ; our HELLO: an SRQ while we are idle makes us POLL at once
-GF_QUAD   equ 10h                ; our HELLO: we draw the block elements A1h-AEh (CLAUDE 1.8)
+GF_QUAD   equ 10h                ; our HELLO: we draw the block elements A1h-AEh (CLAUDE 1.8; RCON 1.12)
 GF_BG     equ 20h                ; our HELLO: resident Claude's console works in the background
                                  ;  at the program's key calls, by serial polls (CLAUDE 1.10)
 HF_BG     equ 08h                ; the Pi's HELLO: it does (its bridge can be quiet: no SRQ line)

@@ -65,7 +65,7 @@ BOXW     equ 70
 %include "GLP.INC"               ; the link's message types and states
 %define TERM_MOUSE               ; (TERMKEYS.INC: clicks to the Pi; not in RCON)
 %define TERM_PIXELS              ; (TERMCELL.INC: pictures, CELLS op FDh; not in RCON)
-%define QUAD_GLYPHS              ; (GLYPHS.INC: the 2x2 block elements A1h-AEh; not in RCON)
+%define QUAD_GLYPHS              ; (GLYPHS.INC: the 2x2 block elements A1h-AEh; RCON too, 1.12)
 %define GLYPH_END 0AFh
 %define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23)
 %define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer)
@@ -2500,7 +2500,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.11', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.12', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
