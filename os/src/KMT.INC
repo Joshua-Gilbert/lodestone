@@ -54,6 +54,11 @@
 ;      task's call is done on its own state.  And ui_progend (MOV AX,
 ;      [ui_seg] / OR AX,AX: 5 bytes) becomes a far jump to mt_pgend,
 ;      which forgets a background program's event handler as it ends.
+;    - f_48, mem_largest and f_4B.xe (5 bytes each) become far jumps to
+;      mt_48, mt_largest and mt_xenv: a task's region grows (T5a).
+;    - gp_isr.e, the GPIB driver's EOI (MOV AL,20h / OUT 20h,AL / POP DS)
+;      becomes a far jump to mt_srqi: a task woken by SRQ (MT_WAKE, T5c)
+;      switched to at once, as at a tick's end.
 ;
 ;  A task (1 to 7; task 0 is the Executive and whatever it runs) is a
 ;  region, a block of its own (owner 8, "T1".."T7") carved from the top of
@@ -71,7 +76,8 @@
 ;    arena  the task's own MCB chain: its first_mcb, ended by a 'Z' here
 ;  Task 0's TX is in MT's block (section mttbss).  Switching happens inside
 ;  INT 21h (indos 1) at mt_kwait or when a task ends, and outside it at
-;  the tick or on INT 21h's way out, where it is safe (mt_safe).
+;  the tick, on INT 21h's way out or at the GPIB driver's SRQ interrupt
+;  (T5c), where it is safe (mt_safe).
 ;  The calls: MTAPI.INC.
 ; =====================================================================
 %ifndef NOTC
@@ -241,7 +247,7 @@ mt_swreq    db      0FFh                ; a task to bring to the front (FFh: non
 mt_wkt      db      0FFh                ; T5c: the task MT_WAKE's program is in
 mt_wkp      dw      0                   ;  (FFh: none), and its PSP
 mt_want     db      0FFh                ; the task an SRQ woke: mt_pick's next
-mt_wsv     db      0, 0                ; (mt_smap: windows 0 and 1 as they were)
+mt_wsv      db      0, 0               ; (mt_smap: windows 0 and 1 as they were)
 mt_old10    dd      0                   ; INT 10h as it was
 mt_shd      db      0                   ; 1: the front task's pages shadow
                                         ;  B800h's first 16 KB (a text mode,
@@ -2181,14 +2187,6 @@ mt_ispub:
         pop     es
         ret
 
-; MT_PUB (T5b).  CL = 0, the running task's program: ES:DI its screen's
-; descriptor (0:0 withdraws one), it and its cells, font and table all in
-; the task's memory (mt_pin) and its fields in range; another than it
-; gave before counted as a change (TX_CHG: one more than a window saw) ->
-; AL = 1 if a terminal window shows the task (mw_owns), AH = the task; one
-; in front then with its screen shown, in a text mode, goes back to its
-; window (CODE-Tab took it there while its pages were shown).  CL = 1
-; (task 0's call): task BL's descriptor -> ES:DI
 ; MT_WAKE (T5c): BL bit 0, the calling program woken by SRQ (MTAPI.INC)
 mt_wake:
         mov     al, [cs:mt_cur]
@@ -2198,14 +2196,31 @@ mt_wake:
         mov     [cs:mt_wkp], dx         ; (the PSP first: mt_srqi reads only
         mov     [cs:mt_wkt], al         ;  the task)
         jmp     short .r
-.off:   cmp     dx, [cs:mt_wkp]         ; (its own only)
-        jne     .r
-        mov     byte [cs:mt_wkt], 0FFh
+.off:   call    mt_wkme                 ; (its own only)
 .r:     mov     al, [gp_irq]
         xor     ah, ah
-        mov     [bp+F_AX], ax
-        jmp     KSEG:ok
+        jmp     KSEG:ok_ax
 
+; the wake (MT_WAKE) ended if it is the program at DX's in the running
+; task (the task too: a PSP in a parked task's old place may be another's
+; now).  AL changed
+mt_wkme:
+        mov     al, [cs:mt_cur]
+        cmp     al, [cs:mt_wkt]
+        jne     .x
+        cmp     dx, [cs:mt_wkp]
+        jne     .x
+        mov     byte [cs:mt_wkt], 0FFh
+.x:     ret
+
+; MT_PUB (T5b).  CL = 0, the running task's program: ES:DI its screen's
+; descriptor (0:0 withdraws one), it and its cells, font and table all in
+; the task's memory (mt_pin) and its fields in range; another than it
+; gave before counted as a change (TX_CHG: one more than a window saw) ->
+; AL = 1 if a terminal window shows the task (mw_owns), AH = the task; one
+; in front then with its screen shown, in a text mode, goes back to its
+; window (CODE-Tab took it there while its pages were shown).  CL = 1
+; (task 0's call): task BL's descriptor -> ES:DI
 mt_pub: mov     cl, [bp+F_CX]
         cmp     cl, 1
         je      .get
@@ -5134,7 +5149,7 @@ mt_pgend:
 ; T4: the program at BX ends: if it took the mouse (TX_MPSP), its task's
 ; window clicks are a selection's again, and none is held.  T5b: if it
 ; published its screen (TX_PPSP), that is withdrawn (a change: its window
-; looks again).  All kept
+; looks again).  T5c: its SRQ wake ends.  All kept
 mt_mgone:
         push    ax
         push    bx
@@ -5148,11 +5163,13 @@ mt_mgone:
         jne     .p
         mov     word [es:TX_MPSP], 0
         mov     byte [es:TX_MREL], 0
-.p:     cmp     [cs:mt_wkp], ax         ; T5c: its SRQ wake (MT_WAKE) ended (a
-        jne     .q                      ;  kill, or its task's end for a TSR,
-                                        ;  comes here too: mt_owners)
-        mov     byte [cs:mt_wkt], 0FFh
-.q:     cmp     byte [cs:mt_cur], 0     ; (task 0's TX: none of T5b's)
+.p:     push    ax                      ; T5c: its SRQ wake (MT_WAKE) ended (a
+        push    dx                      ;  kill, or its task's end for a TSR,
+        mov     dx, ax                  ;  comes here too: mt_owners)
+        call    mt_wkme
+        pop     dx
+        pop     ax
+        cmp     byte [cs:mt_cur], 0     ; (task 0's TX: none of T5b's)
         je      .x
         cmp     [es:TX_PPSP], ax
         jne     .x

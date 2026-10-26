@@ -1179,7 +1179,7 @@ class PC:
         # almost no ticks, so a task behind runs longer turns than on the
         # 1520.  Opt-in for now (test_mt's t_tclip, T4): under it
         # test_resident_term's "a link failure in a pass..." and "the
-        # bridge gone while away..." fail, not yet understood.
+        # bridge gone while away..." failed: a link bug, fixed in T5c.
         s.irq_wait = s.irq_exact and not s.r('flags') & 0x200 \
             and (bool(s.soft) or any(s.unmasked(i) for i in s.irq_pending))
         s.blocked = False
