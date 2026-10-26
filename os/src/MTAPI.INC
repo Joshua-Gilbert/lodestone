@@ -227,7 +227,8 @@ MT_WAKE     equ 23h                     ; (T5c) BL bit 0: the calling program
                                         ;  no more (its own only).  Not from a
                                         ;  hook's or pop-up's code (it is the
                                         ;  interrupted program's).  Ended when
-                                        ;  it ends or its task does; a program
+                                        ;  it ends (not by 31h) or its task
+                                        ;  does; a program
                                         ;  staying resident (31h) gives it up
                                         ;  first (in task 0, which never ends,
                                         ;  each SRQ would switch there).  Any

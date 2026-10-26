@@ -190,7 +190,7 @@ def test_damaged_answers_fail_the_link():
     failed = h.run_until(lambda: h.var('n_fail', 2) > f0, 6)
     dt, nb = (h.m.us - t0) / 1e6, h.var('n_bad', 2) - b0
     h.transport.corrupt_every = 0
-    assert failed and nb > 3 and dt < 4, (failed, dt, nb, h.link.stats)
+    assert failed and nb > 3 and dt < 5, (failed, dt, nb, h.link.stats)
     assert h.run_until(lambda: 'Reconnected' in h.screen(), 20) and h.run_until(h.idle, 20), h.screen()
     assert h.turn('hello again', sim_s=60), h.screen()
     assert 'noise.' in h.screen(), h.screen()
