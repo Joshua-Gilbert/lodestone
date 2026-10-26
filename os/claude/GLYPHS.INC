@@ -63,7 +63,7 @@
 ; A0h cross (┼)
         db 018h,018h,018h,018h,018h,018h,018h,0FFh,0FFh,018h,018h,018h,018h,018h,018h,018h
 %ifdef QUAD_GLYPHS
-; A1h-AEh block elements, 2x2 (CLAUDE 1.8; not in RCON): the halves and the
+; A1h-AEh block elements, 2x2 (CLAUDE 1.8; RCON from 1.12): the halves and the
 ; quarters of the cell, so Claude Code's mascot and block graphics keep
 ; their shape.  The left half is the high nibble, the top half rows 0-7.
 ; A1h ▘ quadrant upper left

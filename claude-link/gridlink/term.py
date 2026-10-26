@@ -177,7 +177,7 @@ class TermSession:
             # (the Link has made the bridge loud again for this HELLO's answer: Link.handle)
             s.bg = bool(s.resident() and s.gflags & glp.GF_BG and getattr(s.link.t, 'can_quiet', False))
             s.link.hold = TERM_HOLD
-            s.screen.quads = bool(s.gflags & glp.GF_QUAD) and not s.resident()   # (CLAUDE 1.8's block elements)
+            s.screen.quads = bool(s.gflags & glp.GF_QUAD)    # (block elements: CLAUDE 1.8, its console from 1.12)
             s.grid.on_restart()
             with s.lock:
                 # CLAUDE /R's console kept its screen: go on from it if we sent it

@@ -22,7 +22,8 @@ GF_TERM = 0x01             # GRiD: this CLAUDE can be a terminal (Term)
 GF_PIX = 0x02              # GRiD: its CELLS take pictures (op FDh, picture.py); CLAUDE 1.2
 GF_FCS = 0x04              # GRiD: it can check frames with the Fletcher sum (fletcher16); CLAUDE 1.3
 GF_WAKE = 0x08             # GRiD: an SRQ while it is idle makes it POLL at once (Link.ring_check); CLAUDE 1.3
-GF_QUAD = 0x10             # GRiD: it draws the 2x2 block elements GL_QUADS (A1h-AEh); CLAUDE 1.8
+GF_QUAD = 0x10             # GRiD: it draws the 2x2 block elements GL_QUADS (A1h-AEh); CLAUDE 1.8,
+                           #  resident Claude's console from 1.12
 GF_BG = 0x20               # GRiD: resident Claude's console works in the background at its program's key
                            #  calls, serial-polling the bridge (CLAUDE 1.10, M4)
 HF_TERM = 0x01             # Pi: Term: the GRiD is Claude Code's screen and keyboard

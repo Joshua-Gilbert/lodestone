@@ -44,8 +44,8 @@ class Res(CK.KernelHarness):
         if not bridge: del s.m.chip.devices[7]
         s.rsym = G.symbols(os.path.join(CL, 'RCON.MAP'))
         rcon = open(os.path.join(CL, 'RCON.BIN'), 'rb').read()
-        s.font_img = rcon[s.rsym['font']:s.rsym['font'] + 0x81 * 16]
-        s.glyph_end = 0xA1                      # (the console has no 2x2 block elements: CLAUDE 1.8's GF_QUAD)
+        s.font_img = rcon[s.rsym['font']:s.rsym['font'] + 0x8F * 16]
+        s.glyph_end = 0xAF                      # (the console's 2x2 block elements, as CLAUDE.COM's: 1.12)
         s.srq_calls = 0                         # the driver's SRQ check (AH=0Bh) while the console is up
         s.spolls = 0                            # and its serial polls (AH=05h)
         s.pit_dues = 0                          # the console's look at the PIT for its next poll (pit_due)
@@ -162,6 +162,21 @@ def t_popup():
               and h.router.app == 'term', (h.router.term.hello, h.router.app))
         check('... the console\'s shadow and screen are pyte\'s on the Pi', in_step(h), h.screen())
         check('... the band: how to go back', 'CODE-\\ back' in h.band(), h.band())
+        # 1.12: the block elements drawn as in CLAUDE.COM, so Claude Code's mascot keeps its eyes
+        t = h.router.term
+        mascot = ' ▐▛███▜▌\r\n▝▜█████▛▘\r\n  ▘▘ ▝▝\r\n'
+        with t.lock:
+            t.stream.feed(('\x1b[2J\x1b[H' + mascot).encode())
+            t._mark()
+        t.link.wake()
+        ok = in_step(h)
+        gc, ga = h.term_cells()
+        Q = glp.GL_QUADS
+        want = [bytes([0x20, Q['▐'], Q['▛'], 0x20, 0x20, 0x20, Q['▜'], Q['▌']]),
+                bytes([Q['▝'], Q['▜'], 0x20, 0x20, 0x20, 0x20, 0x20, Q['▛'], Q['▘']])]
+        check('... Claude Code\'s mascot: its HELLO says GF_QUAD and the block elements are drawn with the '
+              'console\'s own glyphs (A1h-AEh), byte for byte', ok and t.screen.quads and t.gflags & glp.GF_QUAD
+              and [gc[0][:8], gc[1][:9]] == want, (t.gflags, gc[:2], ga[:2]))
         h.term_type('hello'); h.press(ENTER)
         check('typing in the console reaches Claude Code ("You said: hello")', h.has('You said: hello') and in_step(h),
               h.screen())
