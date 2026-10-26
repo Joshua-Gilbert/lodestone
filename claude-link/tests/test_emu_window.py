@@ -75,6 +75,20 @@ def pixels_on_screen(h):
     return b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:(y & 3) * 0x2000 + (y >> 2) * 80 + 80] for y in range(PIC.H))
 
 
+def test_window_second():
+    """Another task runs CLAUDE.COM already (MT_LIST: a second CODE-A): this
+    one says so and ends, publishing nothing, the link not touched."""
+    h = EmuHarness(term=TT.FAKE, args='/A:7')
+    h.mt = FakeMT(); h.mt.others = [(2, 'CLAUDE.COM')]; h.mt.attach(h.m)
+    try:
+        h.boot()
+        assert h.run_until(lambda: h.m.stopped, 10), (h.mt.log, ''.join(h.m.tty)[-200:])
+        assert 'running already' in ''.join(h.m.tty), ''.join(h.m.tty)[-200:]
+        assert h.mt.desc is None and 'pub' not in h.mt.log and not h.var('connected'), h.mt.log
+    finally:
+        h.close()
+
+
 def test_window_term():
     """Published, never drawn on the screen: the descriptor, the shadow in
     step with Claude Code's screen, its cursor and the status band."""

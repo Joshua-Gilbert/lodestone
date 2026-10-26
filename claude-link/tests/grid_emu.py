@@ -899,7 +899,8 @@ class FakeMT:
     """Lodestone's multitasking as CLAUDE.COM 1.13 sees it (T5d, a terminal
     window): CLAUDE in task 1, behind with a window (window) or in front
     (front).  MT_PUB (F0h 22h) keeps the descriptor's address, MT_WAKE (23h)
-    the program's BL, MT_LIST (12h) gives the front task.  A graphics mode
+    the program's BL, MT_LIST (12h) gives the front task and the tasks'
+    records (the Executive, CLAUDE.COM, and others: (task, name)).  A graphics mode
     set behind brings a window's task to the front (T3's mt_wfront; with no
     window it would wait for the front: 'waitf'), a text mode set in front
     after that sends it back (mt_wback).  A screen published and shown,
@@ -909,7 +910,7 @@ class FakeMT:
     def __init__(s, window=True, front=False):
         s.window, s.front = window, front
         s.desc = None; s.pubs = 0; s.wake = None; s.wgfx = False
-        s.vwrites = 0; s.log = []
+        s.vwrites = 0; s.log = []; s.others = []
 
     def attach(s, m):
         m.mt = s
@@ -933,8 +934,12 @@ class FakeMT:
         elif al == 0x23:                                # MT_WAKE
             s.wake = bx & 1; s.log.append('wake %d' % s.wake)
             m.w('ax', 5); m.cf(0)
-        elif al == 0x12:                                # MT_LIST
-            m.w('ax', 0x0100 | (1 if s.front else 0)); m.w('cx', 2); m.cf(0)
+        elif al == 0x12:                                # MT_LIST: CX records at most to ES:DI
+            recs = [(0, 'Executive'), (1, 'CLAUDE.COM')] + s.others
+            es, di = m.r('es'), m.r('di')
+            for i, (n, name) in enumerate(recs[:cx]):
+                m.wr(es, di + 16 * i, bytes([n, 1, 0, 0]) + name.encode().ljust(12, b'\0')[:12])
+            m.w('ax', 0x0100 | (1 if s.front else 0)); m.w('cx', len(recs)); m.cf(0)
         else:
             m.err(1)
 

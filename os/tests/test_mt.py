@@ -4949,13 +4949,13 @@ def t_tpub():
     key('k')
     c1 = (drawn(23, 0) == glyph(*cellc(23, 0)), tb('nocur'), tv('top'))
     key('u')
-    t1 = tv('top')
+    t1 = (tv('top'), drawn(5, 3) == glyph(*cellc(5, 3)))
     key('k')
     c2 = (drawn(5, 3) == glyph(*cellc(5, 3), mark=True), tv('top'))
     key('d')
     check('"k": PBF_NOCUR: no mark at (23, 0) (%s), the view as it was (%d); "u" (to row 5, column 3) while hidden: the view '
-          'still there (%d); "k": its mark at (5, 3), the view from its row (%d); "d": back to row 23, the view rows %d on'
-          % (c1[0], c1[2], t1, c2[1], tv('top')), c1 == (True, 1, 6) and t1 == 6 and c2 == (True, 5) and tv('top') == 6
+          'following it all the same, with no mark (T5d: MT_TROWS gives its row with bit 7; %d); "k": its mark at (5, 3), the view from its row (%d); "d": back to row 23, the view rows %d on'
+          % (c1[0], c1[2], t1[0], c2[1], tv('top')), c1 == (True, 1, 6) and t1 == (5, True) and c2 == (True, 5) and tv('top') == 6
           and drawn(23, 0) == glyph(*cellc(23, 0), mark=True) and lines()[-4:] == ['K 03', 'U', 'K 01', 'D'],
           (c1, t1, c2, tv('top'), lines()[-4:]))
     key('r')
@@ -5478,6 +5478,18 @@ def t_srq():
     check('... a key for it meanwhile: taken at the next tick (%s ms; each typed just before one: 30 at most; it comes '
           'back for it, as for the mouse, mt_mwant; without that, at its turn in the round: 81 in the run recorded)' % kl,
           max(kl) <= 30, kl)
+    seen = collections.Counter()
+    for i in range(30):                                 # (keys all the while: the boost at every tick)
+        k.pc.keys.append(ktest.DOWN if i % 2 == 0 else ktest.UP)
+        for _ in range(25):
+            e_ = k.pc.us + 1200
+            while k.pc.us < e_ and k.pc.run(300): pass
+            seen[cur()] += 1
+    k.run_for(0.3)
+    check('... a key every 30 ms or so for a second: the tasks behind still take turns, each MTSPIN (%d and %d samples '
+          'of %d; the turn the boost took from one given back where it was, mt_mrot, the yield\'s look leaving it)'
+          % (seen[nsp3], seen[nspin], sum(seen.values())), nsp3 is not None and seen[nsp3] > 20 and seen[nspin] > 20,
+          dict(seen))
     idle = (Y['..@ui_idle'], Y['..@ui_midle'], Y['..@ui_sidle'])
     r = lat(q, lambda: cur() == 0, at=seg * 16 + Y['mw_poll'])     # (its poll: the little it runs, idle)
     check('... IRQ 5 while it runs, idle (in its poll): woken at once (%s ms; %s)' % r, fast(r), r)

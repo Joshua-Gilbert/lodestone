@@ -1370,6 +1370,15 @@ win_probe:
         mov     bl, 1
         stc
         int     21h
+        mov     ax, 0F000h + MT_LIST    ; (a task's, not task 0's: its screen
+        xor     cx, cx                  ;  read through INT 10h, take_snapshot;
+        stc                             ;  in a window or not)
+        int     21h
+        jc      .t
+        or      ah, ah
+        jz      .t
+        mov     byte [intask], 1
+.t:
         cmp     byte [app_want], 'C'    ; (chat: full screen)
         je      .x
         mov     byte [wdesc + PB_VER], 1
@@ -1394,6 +1403,50 @@ win_probe:
         mov     byte [term], 1          ; (Term's look till the Pi's HELLO)
         mov     byte [t_flags], 2       ; (no cursor yet)
 .x:     ret
+
+; CF if another task runs CLAUDE.COM (MT_LIST: its program's name), as
+; a second CODE-A would start (T5d)
+win_dup:
+        push    bp
+        push    es
+        mov     bp, sp
+        sub     sp, 8 * MT_REC
+        mov     di, sp
+        push    ss
+        pop     es
+        mov     cx, 8
+        mov     ax, 0F000h + MT_LIST
+        stc
+        int     21h
+        jc      .no
+        cmp     cx, 8
+        jbe     .c
+        mov     cx, 8
+.c:     mov     bx, di
+.l:     jcxz    .no
+        cmp     [es:bx+TR_ID], ah       ; (ours)
+        je      .n
+        push    cx
+        mov     si, s_ccom
+        lea     di, [bx+TR_NAME]
+        mov     cx, 11
+        repe    cmpsb
+        pop     cx
+        je      .x                      ; (CF clear: set below)
+.n:     add     bx, MT_REC
+        dec     cx
+        jmp     .l
+.no:    mov     sp, bp
+        pop     es
+        pop     bp
+        clc
+        ret
+.x:     mov     sp, bp
+        pop     es
+        pop     bp
+        stc
+        ret
+s_ccom      db 'CLAUDE.COM', 0
 
 ; ZF if we are the front task (MT_LIST)
 win_front_task:
@@ -1515,8 +1568,8 @@ win_front:
         mov     byte [win], 0
         mov     byte [pic], 1
         mov     byte [cur_on], 0
+        call    term_redraw             ; (drawn, then the pointer on it)
         call    mouse_on
-        call    term_redraw
         popa
         ret
 .no:    call    win_show                ; (not set: still its window)
@@ -1830,6 +1883,9 @@ pf_hello:
 .crc:   and     bl, HF_TERM
 .f:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
+%ifdef TERM_WIN
+        mov     byte [fpic_seen], 0             ; (this Pi's F_PIC yet to be seen)
+%endif
         mov     ax, [now]
         mov     [turn_t0], ax
         mov     [t_active], ax
@@ -2075,12 +2131,13 @@ take_snapshot:
         jmp     .x
 .go:    mov     es, ax
 %ifdef TERM_WIN
-        cmp     byte [cs:wmode], 0      ; a terminal window's task: the mode,
+        cmp     byte [cs:intask], 0     ; a task's (not task 0's): the mode,
         je      .bd                     ;  columns and page from INT 10h (behind,
         mov     ah, 0Fh                 ;  40:49h is the front task's), a text
         int     10h                     ;  screen through it (its pages; B800h
-        cmp     al, 3                   ;  is the Executive's).  Graphics: in
-        jbe     .rt                     ;  front (MT's front for a mode set)
+        and     al, 7Fh                 ;  is the Executive's).  Graphics: in
+        cmp     al, 3                   ;  front (MT's front for a mode set)
+        jbe     .rt
         cmp     al, 7
         je      .rt
 .bd:
@@ -2989,7 +3046,15 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         jnc     .gg
         mov     dx, msg_nogg
         jmp     fatal
-.gg:    call    alloc_bufs
+.gg:
+%ifdef TERM_WIN
+        call    win_dup                 ; (two on one link: no)
+        jnc     .g2
+        mov     dx, msg_dup
+        jmp     fatal
+.g2:
+%endif
+        call    alloc_bufs
         jnc     .mem
         mov     dx, msg_nomem
         jmp     fatal
@@ -3217,6 +3282,9 @@ sig_gg      db 'GRIDGPIB'
 s_emm       db 'EMMXXXX0'
 msg_nogg    db 'CLAUDE needs GRIDGPIB loaded first (run GRIDGPIB, then CLAUDE).', 13, 10, '$'
 msg_nomem   db 'Not enough memory for CLAUDE.', 13, 10, '$'
+%ifdef TERM_WIN
+msg_dup     db 'Claude is running already, in another task.', 13, 10, '$'
+%endif
 s_title0    db 8Bh, ' Claude for GRiD', 0
 st_connecting db 'Connecting to the Pi through the GPIB bridge', 82h, 0
 boot_end:
@@ -3978,6 +4046,7 @@ wmode       resb 1                      ; 1: a terminal window's (MT_PUB), a
 win         resb 1                      ; 1: drawn in its window: the shadow alone
 pic         resb 1                      ; 1: full screen for a picture (back after)
 fpic_seen   resb 1                      ; 1: the Pi marks pictures' frames (F_PIC)
+intask      resb 1                      ; 1: a task's, not task 0's (MT_LIST)
 t_pix       resb 1                      ; 1: this frame had pixels (FDh)
 t_wtick     resw 1                      ; (win_tick: the last look)
 wdesc       resb PB_SIZE                ; the descriptor (MTAPI.INC's PB_*)

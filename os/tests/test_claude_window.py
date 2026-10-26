@@ -125,7 +125,8 @@ def pixels(h):
 
 
 def t_window():
-    h = Win(irq_exact=True)
+    h = Win(irq_exact=True, more={'A:\\MTMODE.COM': open(os.path.join(HERE, 'MTMODE.COM'), 'rb').read(),
+                                  'A:\\KEYIN.COM': open(os.path.join(HERE, 'KEYIN.COM'), 'rb').read()})
     try:
         h.boot_exec()
         conn = h.code_a()
@@ -185,6 +186,42 @@ def t_window():
         ok = h.run_until(lambda: h.mb('mt_front') == 0 and h.desc()['flags'] & PBF_SHOWN and in_step(h), 20)
         check('... afterwards its screen in the window again (published, shown), its shadow Claude Code\'s screen',
               ok, (h.m.crash, h.text()[-300:]))
+        # a RUN with a key script, its program reading through DOS behind in the window: the kernel's wait there
+        # (mt_kwait) asks the task's own INT 16h, CLAUDE's script; a timed wait first (no key wakes it: it stays ready)
+        res = {}
+        t0 = h.m.us
+        th = threading.Thread(target=lambda: res.update(r=g.run('KEYIN', capture=False,
+                                                                  keys=b'\xff\xff\x09' + struct.pack('<H', 0x2D78))))
+        th.start()
+        h.run_until(lambda: not th.is_alive(), 30)
+        check('a RUN of KEYIN (a key read through DOS, INT 21h AH=08h, behind in the window) with a script, a wait of 9 '
+              'ticks then "x": the key its (exit code 78h; MT\'s wait behind asks the task\'s own INT 16h, %.0f ms)'
+              % ((h.m.us - t0) / 1000), res.get('r', {}).get('exit') == 0x78 and h.mb('mt_front') == 0,
+              (res, h.mb('mt_front')))
+        # a RUN of a graphics program: in front while it runs (its mode set), its snapshot its picture (MT leaves a
+        # published task's mode to it at the program's end, mt_gtext), then back in the window
+        res, snap = {}, {}
+        th = threading.Thread(target=lambda: res.update(r=g.run('MTMODE 40 A:MM.TXT', capture=False, snapshot=True,
+                                                                  keys=struct.pack('<H', 0x2D78))))
+        th.start()
+        h.run_until(lambda: not th.is_alive(), 60)
+        th = threading.Thread(target=lambda: snap.update(r=g.screen(0)))
+        th.start()
+        h.run_until(lambda: not th.is_alive(), 30)
+        s = snap.get('r') or b''
+        pat = lambda d: ((d * 5) & 0xFF) ^ ((d >> 8) & 0xFF)          # (MTMODE's pattern at B800h's byte d)
+        want = bytes(pat(d) for d in range(0x8000))                     # (SCREEN: its video memory as it is)
+        ok = h.run_until(lambda: h.mb('mt_front') == 0 and h.desc()['flags'] & PBF_SHOWN and in_step(h), 20)
+        check('a RUN of MTMODE (mode 40h, a pattern, a key from the script): its snapshot its picture (mode 40h, its '
+              '32 KB its pattern), not a blank text screen; then back in its window', res.get('r', {}).get('exit') == 0
+              and s[:1] == b'\x40' and s[9:] == want and ok,
+              (res, s[:9], len(s), [i for i in range(min(len(s) - 9, 0x8000)) if s[9 + i] != want[i]][:8], ok, h.mb('mt_front')))
+        # Claude Code's cursor hidden (as the real one's): the window's view follows where it is all the same
+        h.k.key('big', settle=False); h.m.keys.append(ENTER); h.m.halted = False
+        ok = h.run_until(lambda: 'line 59' in h.text() and 'CODE-Q quits' in h.text(), 30)
+        check('"big" (60 lines; Claude Code\'s cursor hidden: PBF_NOCUR): the window\'s view follows it (MT_TROWS: its '
+              'row with bit 7), its last line and CLAUDE\'s status band in view', ok and 'CODE-Q quits' in h.text()
+              and h.desc()['flags'] & 2, (h.desc(), h.text()[-500:]))
         # CODE-Q: it ends, the window closes
         h.m.keys.append(CODE_Q); h.m.halted = False
         ok = h.run_until(lambda: h.mb('mw_n') == 0 and any('CLAUDE.COM ended' in l for l in h.k.band()), 20)

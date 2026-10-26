@@ -290,8 +290,10 @@ draws them, the mascot, boxes and spinner included. The Pi's frames wake
 it at once (`MT_WAKE`). A picture takes the whole screen (the Pi marks
 its frames, F_PIC) and the window comes back after it; a RUN shows the
 program's own text in the window. The window shows 19 of the 25 rows and
-follows the cursor, with the status band kept in view. The chat (`/C`)
-stays full screen. Design, limits and the link's figures are in
+follows Claude Code's cursor (hidden, as it is), with the status band
+under it in view once the conversation reaches the foot. The chat (`/C`)
+stays full screen, and a second CODE-A says Claude is running already.
+Design, limits and the link's figures are in
 `lodestone-multitasking.md`, T5d.
 
 ## Phase 2: resident Claude (the original sketch)

@@ -911,8 +911,69 @@ mt_kwait:
         mov     [cs:mt_swreq], al       ; (this task, as mt_swnow does it: the
         call    mt_swnow                ;  one in front may be in its run)
         jmp     .k
-.bgp:
-        call    mt_pick                 ; one ready to run, or the front one
+; T5d: an INT 16h hook of the running program's, or of a program it
+; runs under (a RUN's key script, CLAUDE's, in a window; not a TSR's,
+; Resident Claude's, ended though resident): asked, as in front (mt_i16
+; has none for it behind); none: it stays ready, another runs, and it
+; asks again at its next turn (a script's wait is timed: no key would
+; wake it).  Its code in the block of cur_psp or of a parent's, each
+; a PSP in the task's region, up to its stub (task 0: as before)
+.bgp:   push    cx
+        push    si
+        push    di
+        push    es
+        push    dx
+        mov     al, [cs:mt_cur]
+        or      al, al
+        jz      .hn
+        call    mt_ent
+        mov     dx, [cs:bx+TE_PSP]      ; (the walk's end: its stub)
+        mov     si, [cs:bx+TE_REG]
+        lea     di, [si-1]
+        mov     es, di
+        mov     di, si
+        add     di, [es:3]              ; its region: SI up to DI
+        xor     bx, bx
+        mov     es, bx
+        mov     ax, [es:16h * 4]        ; its INT 16h's code's paragraph
+        shr     ax, 4                   ;  (Resident Claude's segment is
+        add     ax, [es:16h * 4 + 2]    ;  below its block: 130h in)
+        mov     bx, [cur_psp]
+        mov     cx, 8
+.hp:    cmp     bx, dx
+        je      .hn
+        cmp     bx, si
+        jbe     .hn
+        cmp     bx, di
+        jae     .hn
+        dec     bx
+        mov     es, bx                  ; (the PSP's block)
+        inc     bx
+        cmp     ax, bx
+        jb      .hu
+        add     bx, [es:3]
+        cmp     ax, bx
+        jb      .hz                     ; (CF: in it)
+        sub     bx, [es:3]
+.hu:    mov     es, bx
+        mov     bx, [es:16h]            ; its parent
+        loop    .hp
+.hn:    clc
+.hz:    pop     dx
+        pop     es
+        pop     di
+        pop     si
+        pop     cx
+        jnc     .bgw
+        mov     ah, 1
+        int     16h
+        jnz     .have
+        call    mt_pick
+        jc      .idle
+        call    mt_fdrain
+        call    mt_switch
+        jmp     .top
+.bgw:   call    mt_pick                 ; one ready to run, or the front one
         jnc     .bgs
         mov     bl, [cs:mt_front]
         mov     al, bl
@@ -2084,12 +2145,13 @@ mt_trows:
 ; descriptor, ES = its TX, BX = its entry): rows of its cells to the
 ; caller's room (80 x 25 at most), rows past its PB_ROWS blank (0020h:
 ; PBA_* attributes, not a colour's) -> DL 32, CH = its rows, CL = its
-; columns, BX = PB_CUR (FFFFh: PBF_NOCUR)
+; columns, BX = PB_CUR (PBF_NOCUR: its row's bit 7 set, T5d: TERM's
+; view follows it, with no mark)
 mt_tpub:
         mov     ax, [si+PB_CUR]
         test    byte [si+PB_FLAGS], PBF_NOCUR
         jz      .k
-        mov     ax, 0FFFFh
+        or      ah, 80h
 .k:     push    ax                      ; (BX's, to come)
         push    bx
         mov     bl, [si+PB_COLS]        ; BL its columns, BH its rows
@@ -5225,6 +5287,9 @@ mt_gtext:
         jne     .x
         cmp     dx, [es:TX_WPSP]
         jne     .x
+        mov     ax, [es:TX_PUB]         ; (T5d: a screen published, its
+        or      ax, [es:TX_PUB + 2]     ;  program's: it sets the mode itself,
+        jnz     .x                      ;  after its snapshot of this one)
         push    0
         pop     es
         cmp     byte [es:449h], 4       ; (still in graphics)
