@@ -458,6 +458,35 @@ def test_resident_tools():
     assert not is_device('A:\\GPIB123') and not is_device('A:\\GPIBX') and not is_device('A:\\GPIB.TXT')
 
 
+def test_resident_quads():
+    # CLAUDE 1.12: resident Claude's console says GF_QUAD too, and gets the block elements as CLAUDE.COM does
+    from gridlink.router import Router
+    from gridlink.link import Link
+    from gridlink.config import Config
+    from gridlink.termscreen import glyph
+
+    class T:
+        frame_limit = 254
+        def answer(s, f): pass
+    cfg = Config(); cfg.api_key = 'k'; cfg.env_key = lambda: False
+    import tempfile; cfg.term_dir = tempfile.mkdtemp(); cfg.term_command = 'true'
+    cfg.term_socket = os.path.join(cfg.term_dir, 's.sock')
+    R = Router(cfg, log=lambda *a: None)
+    L = Link(T(), R.on_message, log=lambda *a: None); R.attach(L)
+    hello = lambda fl, app: bytes([1, glp.GF_TERM | fl, 0, 4, 80, 24]) + ('app=%s\n' % app).encode()
+    eyes = (glp.GL_QUADS['▛'], False)
+    try:
+        R.on_message(glp.G_HELLO, hello(glp.GF_QUAD, 'resident'))
+        assert R.app == 'term' and R.term.resident() and R.term.screen.quads
+        assert glyph('▛', R.term.screen.quads) == eyes
+        R.on_message(glp.G_HELLO, hello(0, 'resident'))             # (an older console, 1.11: blanks)
+        assert not R.term.screen.quads and glyph('▛', R.term.screen.quads) != eyes
+        R.on_message(glp.G_HELLO, hello(glp.GF_QUAD, 'term'))       # (CLAUDE /T, 1.8 on)
+        assert not R.term.resident() and R.term.screen.quads
+    finally:
+        R.term.stop()
+
+
 def test_resident_background():
     """M4: once the user has gone back to the program, with a quiet bridge (HF_BG) the files and GPIB tools
     go on in the background (whatever the link's last word: the background speaks only when it has work);
