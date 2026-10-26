@@ -296,8 +296,12 @@ show:   push    es
 .s:     mov     byte [nocur], 1         ; (T5b: FFFFh, no cursor: the view
         cmp     bx, 0FFFFh              ;  where it was)
         je      .h
-        mov     byte [nocur], 0
-        mov     [cur], bx
+        test    bh, 80h                 ; (T5d: hidden, where it is told: the
+        jz      .v                      ;  view follows it, no mark; Claude
+        and     bh, 7Fh                 ;  Code's is hidden)
+        jmp     short .w
+.v:     mov     byte [nocur], 0
+.w:     mov     [cur], bx
 .h:     mov     bx, [cur]
         xor     ch, ch
         cmp     cx, [ncols]             ; (its columns changed: its positions
@@ -356,8 +360,13 @@ show:   push    es
         mov     ax, bx
 .l4:    cmp     ax, [left]
         jne     .new
-        mov     [top], cx               ; (only the rows: what is drawn moves
-        jmp     short .same             ;  with them, scrl; T5d)
+        cmp     cx, [top]
+        je      .same
+        mov     dx, [sa]                ; (only the rows: what is drawn moves
+        cmp     dx, [sb]                ;  with them, scrl; T5d.  Not with a
+        jb      .new                    ;  selection: its highlight goes by
+        mov     [top], cx               ;  its positions)
+        jmp     short .same
 .new:   mov     [left], ax
         mov     [top], cx
         call    unshade                 ; (moved: all of it again)
