@@ -4,6 +4,12 @@
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
  *
+ * v7.2: no bumps. A status request no longer re-enters graph mode with GS and
+ *    a move to the pen's position, which lifted the pen in the middle of a
+ *    stroke every ~600 bytes. The 4662 returns to the mode it was in after a
+ *    Style I command (Figure 3-3), so the stroke just carries on. !g 1 puts
+ *    the re-entry back.
+ *
  * v7: settling after labels. The 4662's own characters leave a ~1 cm tail on
  *    the move after a label and small marks at the spaces inside one
  *    (TESTPAT5). Three console switches, to find which cure works:
@@ -92,6 +98,7 @@
 #define STATUS_MARGIN   48      // bytes kept free in the 4662's buffer, below what it reports
 #define QUERY_AT        600     // ask again when this little room is left
 #define QUERY_GAP_MS    400     // at most one status request in this time
+#define QUERY_REENTER   0       // !g: re-enter graph/alpha mode after a status request (v5-v7 did)
 #define RETRACE_ADU     0       // !r: pen-up move back along the last stroke before a move (22: ~2 mm)
 #define LABEL_SETTLE_MS 0       // !a: after a label, wait for the plotter, then this pause (e.g. 150)
 #define LABEL_BS        0       // !b: after a label, a BS before the move
@@ -379,6 +386,7 @@ uint16_t labelSettle = LABEL_SETTLE_MS, spaceSettle = SPACE_SETTLE_MS;
 uint8_t labelBs = LABEL_BS;
 bool afterLabel = false;                // a label was the last thing sent
 long emptyFree = -1;                    // what the plotter reports with nothing to do (at the probe)
+uint8_t queryReenter = QUERY_REENTER;
 bool statusMode = false;                // the plotter answers READ STATUS
 bool queryPending = false;
 unsigned long querySentAt = 0, lastProbeAt = 0;
@@ -435,8 +443,12 @@ void pollRx() {
 void sendQuery() {
     tekRaw(0x1B); tekRaw(PLOTTER_ADDR); tekRaw('O'); tekRaw('1'); tekRaw(0x1A);   // ESC A O 1 SUB
     queryPending = true; querySentAt = millis(); nQueries++;
-    needsMove = true; inAlpha = false;  // the next element re-enters its mode (asked only between
-                                        //  coordinates, so the plotter's graphic memory still holds)
+    // The 4662 goes back to the mode it was in once the command is processed
+    // (Figure 3-3, p. 3-5: Graph -> ESC -> graph attention -> Graph), and a
+    // request goes only between coordinates: a polyline carries on, with no
+    // GS and no move (which lifted the pen mid-stroke: a bump every ~600
+    // bytes). !g 1 brings back v5-v7's re-entry, should a plotter need it.
+    if (queryReenter) { needsMove = true; inAlpha = false; }
 }
 
 // Does the plotter answer? Ask once and wait a little (serving the bus).
@@ -802,6 +814,8 @@ void printPace() {
     Serial.print(F("labels: !a ")); Serial.print(labelSettle); Serial.print(F(" ms settle after, !b "));
     Serial.print(labelBs); Serial.print(F(" BS after, !w ")); Serial.print(spaceSettle);
     Serial.print(F(" ms settle before spaces (empty buffer reads ")); Serial.print(emptyFree); Serial.println(F(")"));
+    Serial.print(F("status requests: !g ")); Serial.print(queryReenter);
+    Serial.println(queryReenter ? F(" (re-enter the mode after each: lifts the pen)") : F(" (the stroke carries on)"));
     Serial.print(F("timed pacing: !s ")); Serial.print(paceSpeed);
     Serial.print(F(" ADU/s  !v ")); Serial.print(paceVector);
     Serial.print(F(" ms/vector  !p ")); Serial.print(pacePen);
@@ -858,6 +872,7 @@ void paceCommand() {
     if (k == 'a' && paceLen > 1 && v >= 0 && v <= 5000) labelSettle = v;
     if (k == 'w' && paceLen > 1 && v >= 0 && v <= 5000) spaceSettle = v;
     if (k == 'b' && paceLen > 1) labelBs = v ? 1 : 0;
+    if (k == 'g' && paceLen > 1) queryReenter = v ? 1 : 0;
     printPace();
     paceLen = 0; inPace = false;
 }
@@ -871,7 +886,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.1"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.2"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));
