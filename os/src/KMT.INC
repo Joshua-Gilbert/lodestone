@@ -968,9 +968,16 @@ mt_kwait:
         mov     ah, 1
         int     16h
         jnz     .have
-        call    mt_pick
-        jc      .idle
-        call    mt_fdrain
+        call    mt_pick                 ; one ready to run; or the front one
+        jnc     .hs                     ;  waiting for a key typed now (it
+        mov     al, [cs:mt_front]       ;  wouldn't get it while this one
+        call    mt_ent                  ;  stays in INT 21h); else the
+        cmp     byte [cs:bx+TE_STATE], TS_WAITK ; kernel's HLT
+        jne     .idle
+        call    mt_kin
+        je      .idle
+        mov     bl, al
+.hs:    call    mt_fdrain
         call    mt_switch
         jmp     .top
 .bgw:   call    mt_pick                 ; one ready to run, or the front one

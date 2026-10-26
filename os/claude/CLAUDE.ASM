@@ -1570,7 +1570,11 @@ win_front:
         mov     byte [cur_on], 0
         call    term_redraw             ; (drawn, then the pointer on it)
         call    mouse_on
-        popa
+        cmp     byte [tmouse], 0        ; (and off again while this frame's
+        je      .p                      ;  picture is drawn: from inside
+        mov     ax, 2                   ;  pf_cells, whose hide the window
+        int     33h                     ;  skipped and whose AX=1 at the end
+.p:     popa                            ;  puts it on top)
         ret
 .no:    call    win_show                ; (not set: still its window)
         popa
@@ -2655,6 +2659,22 @@ ks_ready:
         add     word [cs:ks_pos], 3
         jmp     .again
 .end:   mov     byte [cs:ks_active], 0
+        push    ds                      ; (and out of INT 16h's chain if still
+        xor     bx, bx                  ;  its head: behind in a window, MT
+        mov     ds, bx                  ;  asks a hook at every turn of a
+        pushf                           ;  program waiting for keys, T5d;
+        cli                             ;  unhook16 sets it so again)
+        cmp     word [16h * 4], int16
+        jne     .u
+        mov     bx, cs
+        cmp     [16h * 4 + 2], bx
+        jne     .u
+        mov     bx, [cs:old16]
+        mov     [16h * 4], bx
+        mov     bx, [cs:old16 + 2]
+        mov     [16h * 4 + 2], bx
+.u:     popf
+        pop     ds
 .none:  pop     si
         pop     bx
         pop     ax

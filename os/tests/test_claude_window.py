@@ -357,8 +357,9 @@ def t_speed():
     check('the flood in a window with MT_WAKE: %.0f bytes/s, within 10%% of full screen\'s %.0f (%.0f%%)'
           % (win, full, 100.0 * win / full), win >= 0.9 * full, r)
     fs, ws = r['full screen, scrolling'], r['window, MT_WAKE, scrolling']
-    check('... scrolling (3 new lines a frame): %.0f bytes/s in the window, %.0f full screen (%.0f%%); TERM moving what '
-          'scrolled (scrl, %.1f times a second)' % (ws[2], fs[2], 100.0 * ws[2] / fs[2], ws[5]), ws[5] > 0, r)
+    check('... scrolling (3 new lines a frame): %.0f bytes/s in the window, %.0f full screen (%.0f%%: 90%% at least); TERM '
+          'moving what scrolled (scrl, %.1f times a second)' % (ws[2], fs[2], 100.0 * ws[2] / fs[2], ws[5]),
+          ws[5] > 0 and ws[2] >= 0.9 * fs[2], r)
     a, b = r['window, MT_WAKE, MTSPIN behind'], r['window, no MT_WAKE, MTSPIN behind']
     check('MTSPIN computing behind: copies in a window with MT_WAKE faster both ways than without (%.1f, %.1f KB/s '
           'against %.1f, %.1f)' % (a[0], a[1], b[0], b[1]), a[0] > b[0] and a[1] > b[1] * 1.2, r)

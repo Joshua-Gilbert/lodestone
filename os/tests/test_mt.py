@@ -1753,7 +1753,7 @@ def t_keys():
     au.stop()
     # a TSR's INT 16h hook loaded after MT, waiting in its own loop (as Resident Claude's does): its peeks are its
     # code's, not the task's, so they find the key; then it passes the read on, the program's own, which waits
-    k = boot('mt_kh.img', b'MULTITASK=1\r\n', 88, MTK)
+    k = boot('mt_kh.img', b'MULTITASK=1\r\n', 88, MTK, os.path.join(HERE, 'KEYIN.COM'))
     sh = Shell(k)
     sh.run('mtkey h x')
     typ(k, 'mtlaunch /f mtspin.com 60 sh.txt;mtkey.com d dh.txt;mtkey.com p ph.txt', 0.3)
@@ -1780,6 +1780,24 @@ def t_keys():
           'key left to MTLAUNCH; brought to the front, it gets "z"; the machine goes on', st[0][1:] == [(1, TS_WAITK,
           'MTKEY.COM')] and rh is None and rh2 == b'007A' and 'Lodestone version' in v and not k.crashed,
           (st, rh, rh2, v[-60:]))
+    # T5d: a program's own INT 16h hook (KEYIN with an argument hooks it, then reads a key through DOS) behind: MT's
+    # wait there asks the hook at each of its turns, the task staying ready (TS_RUN, not TS_WAITK); the prompt in
+    # front waiting for keys, nothing else ready, still gets them (switched to when one is typed for it)
+    typ(k, 'mtlaunch keyin.com h', 1.0); line(k, '')
+    k.run_for(1.0)
+    st = tstate(k)
+    nk = next((i for i, s_, n in st[0] if n == 'KEYIN.COM'), None)
+    t0 = k.pc.us
+    v = sh.run('ver')
+    dt = (k.pc.us - t0) / 1e6
+    if nk: front(k, nk)
+    k.key('x', settle=False); k.run_for(1.0)
+    st2 = tstate(k)
+    check('KEYIN H behind (its own INT 16h hook, a read through DOS): ready, asked at its turns (TS_RUN); VER typed at '
+          'the prompt in front answered (%.1f s; 3 at most: the front task switched to for its keys, where without that '
+          'it waited 24 in the run recorded); brought to the front, "x" ends it' % dt,
+          nk is not None and (nk, 1, 'KEYIN.COM') in st[0] and 'Lodestone version' in v and dt < 3
+          and not any(n == 'KEYIN.COM' for i, s_, n in st2[0]) and not k.crashed, (st, v[-80:], st2))
 
 def three(v):
     """MTM33's FILE: (calls, x, y), or None."""
