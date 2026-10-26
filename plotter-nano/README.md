@@ -14,6 +14,14 @@ the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
 1200 baud, address A). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
 
+**v7:** labels. The 4662's own characters left a ~1 cm tail on the move
+after a label and small marks at the spaces in one (TESTPAT5); v3, whose
+timed pacing happened to leave the plotter idle after each label, had none.
+So after a label (`!a`) and before a space in one (`!w`), the Nano waits
+until a status reply shows the 4662's buffer empty, then pauses 150 ms, before
+sending more. `!b 1` adds a BS after a label (a short pen-up move back one
+character space) as another cure to try; off by default.
+
 **v6:** the pen leaves the paper about 1 mm into a pen-up move (Claude's
 detour test on the GRiD), which bridged short gaps and put a tail on every
 move. Before a move, the Nano now lifts the pen with a pen-up move of 22 ADU
@@ -38,7 +46,8 @@ isn't cut at 255 characters (v1-v4 did).
   NRFD.
 
 **Console** (USB, 9600): HP-GL for testing; `?` the bus lines, counters and
-flow state; `#` ask the plotter now; `!` the timed pacing and the lift (`!r`).
+flow state; `#` ask the plotter now; `!` the timed pacing, the lift (`!r`) and the label
+settles (`!a`, `!w`, `!b`).
 
 **Flashing from the Pi:**
 ```
