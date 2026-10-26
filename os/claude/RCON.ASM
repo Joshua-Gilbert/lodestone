@@ -100,6 +100,8 @@ org 0
 %define GP_OTMO gp_otmo                  ; OPS.INC: the driver's timeout under
                                         ;  a GPIB request (ours, 2 s: old_tmo is
                                         ;  the program's)
+%define QUAD_GLYPHS                     ; GLYPHS.INC: the 2x2 block elements A1h-AEh,
+%define GLYPH_END 0AFh                  ;  as CLAUDE.COM's (1.12: the mascot's eyes)
 %define K_QUIT 2B00h                    ; TERMKEYS: CODE-\ back to the program,
 %define K_QUIT2 1000h                   ;  CODE-Q too
 %define KBD_OWN                         ;  and the BIOS's INT 16h, past the stub
@@ -888,8 +890,9 @@ gg_call:                                ; INT 60h-66h, the driver's
 
 build_hello:                            ; -> CX = length of hellobuf
         mov     di, hellobuf
-        mov     ax, (GF_BG | GF_FCS | GF_TERM) << 8 | 1 ; GLP 1; flags: Term, the Fletcher sum,
-                                        ;  the background (M4),
+        mov     ax, (GF_BG | GF_QUAD | GF_FCS | GF_TERM) << 8 | 1 ; GLP 1; flags: Term, the
+                                        ;  Fletcher sum, the background (M4),
+                                        ;  the block elements (1.12),
         cmp     word [irq_ptr + 2], 0   ;  and with the driver's SRQ interrupt
         je      .w                      ;  GF_WAKE: the Pi rings while we are
         mov     byte [wake_ok], 1       ;  idle (its count: no AH=0Bh)
@@ -1504,7 +1507,7 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.11', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.12', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
             db 'ops=files,gpib,bgscreen', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
