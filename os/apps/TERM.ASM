@@ -15,6 +15,11 @@
 ;  Drawn with TERM.FNT (all of code page 437) straight to the screen, by
 ;  CLAUDE.COM's cell (claude/CELL.INC).  Without TERM.FNT, or with no room
 ;  for it, the task comes to the front instead, as without windows.
+;
+;  T5b: a program that publishes its screen (MT_PUB: its own cells and
+;  font) is drawn from those instead, with its font, the view following
+;  its cursor as if it were a row lower (a status line under it stays in
+;  view); no Full screen for it (its window is its screen).
 ; =====================================================================
 %include "UIAPI.INC"
 %include "MTAPI.INC"
@@ -246,14 +251,21 @@ show:   push    es
         mov     di, BUF
         mov     ax, 0F000h + MT_TROWS
         mov     bl, [task]
-        xor     dx, dx
+        mov     dx, 8000h               ; (T5b: a published screen's cells)
         mov     cx, 25
         stc
         int     21h
         pop     es
         jc      .x
         mov     [tdl], dl               ; (16: its program took the mouse, T4)
-        test    dl, 8 | 4               ; (in front, or its pages gone)
+        call    pubset
+        mov     byte [nrows], 25
+        test    dl, 32                  ; (T5b: its cells, its rows in CH)
+        jz      .pg
+        mov     [nrows], ch
+        mov     byte [note], 0
+        jmp     short .s
+.pg:    test    dl, 8 | 4               ; (in front, or its pages gone)
         jnz     .no
         mov     si, s_ngfx
         test    dl, 2                   ; (nothing copied: a graphics mode)
@@ -276,19 +288,31 @@ show:   push    es
 .nn:    call    mknote
         xor     bx, bx
         mov     cx, 80
-.s:     mov     [cur], bx
+.s:     mov     byte [nocur], 1         ; (T5b: FFFFh, no cursor: the view
+        cmp     bx, 0FFFFh              ;  where it was)
+        je      .h
+        mov     byte [nocur], 0
+        mov     [cur], bx
+.h:     mov     bx, [cur]
         xor     ch, ch
         cmp     cx, [ncols]             ; (its columns changed: its positions
         je      .sc                     ;  no more the selection's)
         call    selclr
 .sc:    mov     [ncols], cx
-        ; the view: as little moved as keeps the cursor in it
+        ; the view: as little moved as keeps the cursor in it (a published
+        ; screen's: the row under it too, T5b)
         mov     ax, [top]
         mov     dl, bh                  ; (the cursor's row)
         xor     dh, dh
         cmp     dx, ax
-        jae     .t1
+        jae     .t0
         mov     ax, dx
+.t0:    test    byte [tdl], 32
+        jz      .t1
+        inc     dx
+        cmp     dl, [nrows]
+        jb      .t1
+        dec     dx
 .t1:    mov     cx, [rows]
         add     cx, ax
         cmp     dx, cx
@@ -296,9 +320,12 @@ show:   push    es
         mov     ax, dx
         sub     ax, [rows]
         inc     ax
-.t2:    mov     cx, 25                  ; (and none past row 24)
+.t2:    mov     cl, [nrows]             ; (and none past its last row)
+        xor     ch, ch
         sub     cx, [rows]
-        cmp     ax, cx
+        jae     .t2a
+        xor     cx, cx
+.t2a:   cmp     ax, cx
         jbe     .t3
         mov     ax, cx
 .t3:    mov     cx, ax
@@ -375,20 +402,26 @@ cells:  push    ds
         mov     di, ax
         mov     ax, [left]
         mov     [cs:c_at], ax
-        mov     ds, [cs:fseg]
+        mov     word [cs:cblank], 0720h ; (past its columns: a blank)
+        mov     word [cs:cfn], attr
+        test    byte [cs:tdl], 32       ; (T5b: a published screen's cells)
+        jz      .k
+        mov     word [cs:cblank], 0020h
+        mov     word [cs:cfn], cattr
+.k:     mov     ds, [cs:fseg]
 .row:   push    si
         push    bx
         push    di
         mov     cx, [cs:c_n]
         mov     dx, [cs:c_at]           ; (DX: the column in its screen)
-.cell:  mov     ax, 0720h               ; (past its columns: blank)
+.cell:  mov     ax, [cs:cblank]         ; (past its columns: blank)
         cmp     dx, [cs:ncols]
         jae     .v
         mov     ax, [si]
 .v:     cmp     ax, [bx]
         je      .nx
         mov     [bx], ax
-        call    attr
+        call    word [cs:cfn]
         push    dx
         cmp     dx, [cs:ncols]          ; (past its columns: never selected)
         jae     .ns
@@ -399,7 +432,10 @@ cells:  push    ds
         jae     .ns
         xor     ah, 1                   ; (selected)
 .ns:    pop     dx
+        push    ds                      ; (its font's segment: TERM.FNT's, or
+        mov     ds, [cs:cfseg]          ;  a published screen's, T5b)
         call    cell
+        pop     ds
 .nx:    add     si, 2
         add     bx, 2
         inc     di
@@ -448,9 +484,74 @@ attr:   push    bx
         pop     bx
         ret
 
+; T5b: AX = a published screen's cell -> AL its code as its font has it
+; (one below its first: a blank; from its end on: '?'), AH its attribute
+; (PBA_*: cell's)
+cattr:  and     ah, PBA_INV | PBA_UND
+        cmp     al, [cs:pfg]
+        jae     .e
+        mov     al, ' '
+.e:     cmp     al, [cs:pfg + 1]
+        jb      .x
+        mov     al, '?'
+.x:     ret
+
+; T5b: the font for what MT_TROWS gave (DL 32: a published screen's cells,
+; its own font from its descriptor, MT_PUB's; else TERM.FNT): when that
+; changes, all of it drawn again, the view from row 0 (then following the
+; cursor).  All kept but AX, SI, DI
+pubset: push    bx
+        push    cx
+        push    es
+        mov     ax, [fseg]              ; AX:SI the font, as cell finds its
+        mov     si, FONT                ;  glyphs (code x 16 on), CL its first
+        xor     cx, cx                  ;  code, CH its end (TERM.FNT: all)
+        test    dl, 32
+        jz      .f
+        push    dx
+        mov     ax, 0F000h + MT_PUB
+        mov     cl, 1
+        mov     bl, [task]
+        stc
+        int     21h
+        pop     dx
+        mov     ax, [fseg]
+        mov     si, FONT
+        mov     cx, 0
+        jc      .f
+        mov     cx, [es:di + PB_FIRST]  ; (PB_FIRST, PB_GEND)
+        mov     ax, [es:di + PB_XLAT]
+        mov     [pxl], ax
+        mov     ax, [es:di + PB_XLAT + 2]
+        mov     [pxl + 2], ax
+        mov     si, [es:di + PB_FONT]
+        mov     ax, [es:di + PB_FONT + 2]
+        mov     bl, cl
+        xor     bh, bh
+        shl     bx, 4
+        sub     si, bx                  ; (its first code's glyph first)
+.f:     cmp     ax, [cfseg]
+        jne     .n
+        cmp     si, [cfont]
+        jne     .n
+        cmp     cx, [pfg]
+        je      .x
+.n:     mov     [cfseg], ax
+        mov     [cfont], si
+        mov     [pfg], cx
+        mov     word [top], 0           ; (another screen: its view afresh)
+        call    unshade
+        mov     byte [curon], 0
+.x:     pop     es
+        pop     cx
+        pop     bx
+        ret
+
 ; the cursor's mark (its cell's bottom two rows inverted), where it is
 ; when it is in the window
-cursor: cmp     byte [note], 0          ; (none on a note)
+cursor: cmp     byte [note], 0          ; (none on a note, nor hidden: T5b)
+        jne     .x
+        cmp     byte [nocur], 0
         jne     .x
         mov     al, [cur + 1]           ; its row in the view?
         xor     ah, ah
@@ -539,7 +640,9 @@ full:   mov     byte [note], 0          ; (TERM doesn't run while it's in
         mov     bl, [task]
         stc
         int     21h
-        ret
+        jnc     .x
+        jmp     UI_BEEP                 ; (refused: its window is its screen,
+.x:     ret                             ;  T5b)
 
 ; the note SI in place of its screen: BUF blank, the note on its first row
 mknote: mov     byte [note], 1
@@ -811,7 +914,10 @@ copy:   mov     ax, [sb]
         inc     cx
         mov     bp, di                  ; (its blanks back to here)
 .c:     mov     al, [es:si]
-        or      al, al
+        test    byte [tdl], 32          ; (T5b: a published screen's code)
+        jz      .z
+        call    ptext
+.z:     or      al, al
         jnz     .s
         mov     al, ' '
 .s:     stosb
@@ -840,6 +946,36 @@ copy:   mov     ax, [sb]
 .b:     call    UI_BEEP
 .y:     pop     es
 .x:     jmp     show
+
+; T5b: AL = a published screen's code -> its text: one below its first a
+; blank, 80h and up its table's (PB_XLAT; none, or 0 there: '?'), one from
+; its end on '?'.  All kept but AL
+ptext:  cmp     al, [pfg]
+        jae     .h
+        mov     al, ' '
+        ret
+.h:     cmp     al, 80h
+        jb      .l
+        push    es
+        push    bx
+        les     bx, [pxl]
+        push    ax
+        mov     ax, es
+        or      ax, bx
+        pop     ax
+        jz      .q
+        sub     al, 80h
+        es xlatb
+        or      al, al
+        jnz     .y
+.q:     mov     al, '?'
+.y:     pop     bx
+        pop     es
+        ret
+.l:     cmp     al, [pfg + 1]
+        jb      .x
+        mov     al, '?'
+.x:     ret
 
 ; the clipboard typed to the task: into a block of its own (UI_ALLOC, as
 ; it holds 16 KB at most), fed as its ring takes it (feed: at once and at
@@ -924,21 +1060,37 @@ pfree:  push    es
         ret
 
 ; a right click: the menu of what applies (RMENU.INC, Write's): Copy with a
-; selection, Paste with something to paste, Full screen always
+; selection, Paste with something to paste, Full screen but for a published
+; screen (T5b: none, with neither of the others: no menu)
+RM_TXT      equ 4
 rclick: mov     al, 0
         mov     dx, [sb]
         cmp     dx, [sa]
         jbe     .m
         mov     al, RM_SEL
-.m:     mov     si, items
+.m:     test    byte [tdl], 32
+        jnz     .p
+        or      al, RM_TXT
+        jmp     short .r
+.p:     or      al, al
+        jnz     .r
+        pusha
+        mov     al, 2                   ; (what the clipboard holds)
+        call    UI_CLIP
+        or      cx, cx
+        popa
+        jz      .x
+.r:     mov     si, items
         jmp     rmenu
+.x:     ret
 
 %include "RMENU.INC"
 
 ; one character cell (CELL.INC): AL, AH = its attribute, DI = row * 320 +
 ; column (here: y * 20 + byte column), ES = VSEG; its glyph from DS:0
 %define CELL_FSEG ds
-%define CELL_FONT FONT
+%define CELL_FONT [cs:cfont]            ; (TERM.FNT's, or a published screen's
+                                        ;  less its first code's 16 x n: T5b)
 %define CELL_FIRST 0
 %define GLYPH_END 100h
 %include "../claude/CELL.INC"
@@ -946,7 +1098,7 @@ rclick: mov     al, 0
 s_fnt       db 'TERM.FNT', 0
 s_ngfx      db 'In a graphics mode: a key here shows it (or CODE-Tab)', 0
 s_nfz       db 'It writes the screen itself: a key here shows it (FULL= for it)', 0
-items       dw s_copy, copy, RM_SEL, s_paste, paste, RM_CLIP, s_full, full, 0, 0
+items       dw s_copy, copy, RM_SEL, s_paste, paste, RM_CLIP, s_full, full, RM_TXT, 0
 s_copy      db 'Copy           CODE-C', 0
 s_paste     db 'Paste          CODE-V', 0
 s_full      db 'Full screen    CODE-Tab', 0
@@ -976,6 +1128,14 @@ stride      resw 1
 q           resw QLEN
 tdl         resb 1                      ; MT_TROWS's DL (16: the mouse its)
 kshf        resb 1                      ; (a click's shift state)
+nrows       resb 1                      ; its screen's rows (25; a published
+nocur       resb 1                      ;  one's PB_ROWS), 1: no cursor (T5b)
+cfseg       resw 1                      ; the font cell draws with: segment,
+cfont       resw 1                      ;  offset (TERM.FNT's; T5b: a
+pfg         resw 1                      ;  published one's), its first code,
+pxl         resd 1                      ;  its end; its table (PB_XLAT)
+cblank      resw 1                      ; (cells: past its columns, the
+cfn         resw 1                      ;  attribute's routine)
 sa          resw 1                      ; the selection: its first position,
 sb          resw 1                      ;  the one past its last (T4)
 prs         resw 1                      ; (a drag's press)

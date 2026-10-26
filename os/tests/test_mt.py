@@ -156,8 +156,8 @@ def t_off():
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
-            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh and 1Eh-21h fail with AX = 1' % tag,
-                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220, 0x21, 0x121, 0x221, 0x321)),
+            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh and 1Eh-22h fail with AX = 1' % tag,
+                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220, 0x21, 0x121, 0x221, 0x321, 0x22, 0x122, 0x222, 0x322)),
                   out[-400:])
             sh = Shell(k)
             o = sh.run('mtlaunch mtline.com x.txt')
@@ -219,6 +219,9 @@ def t_on():
           '7 (a free one) and 8 (none such): AX = 1', all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x1E, 0x1F, 0x20, 0x21))
           and all(bad(got.get(a, (0, 0))) for a in (0x11E, 0x21E, 0x31E, 0x11F, 0x21F, 0x120, 0x220, 0x121, 0x221, 0x321)),
           out[-500:])
+    check('F0h AL=22h (MT_PUB, T5b): CL = 0 from task 0 and CL = 1 for task 0 refused (AX = 5); CL = 1 for 7 (a free one) '
+          'and CL = 2: AX = 1', all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x22, 0x122))
+          and all(bad(got.get(a, (0, 0))) for a in (0x222, 0x322)), out[-500:])
     check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, AH = 0 the caller, nothing written',
           got.get(0x12, (1,))[:2] == (0, 0x0000)
           and got[0x12][3] == 1, out[-400:])
@@ -4811,6 +4814,313 @@ def t_tclip():
 
 MTTM = os.path.join(HERE, 'MTTERM.COM')
 
+MTPB = os.path.join(HERE, 'MTPUB.COM')
+
+def t_tpub():
+    print('== terminal windows (T5b): a screen a program publishes (MT_PUB), drawn in its window with its own font')
+    import ctypes
+    k = boot('mt_t5b.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTPB, MTTM, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    TS = A.run_syms('apps/TERM.ASM')
+    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+    tv = lambda n: k.pc.u16(k.useg, base() + TS[n])
+    tb = lambda n: k.pc.rd(k.useg, base() + TS[n], 1)[0]
+    scr = lambda: '\n'.join(l for y, l in k.ocr())
+    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+    tx = lambda n: k.pc.u16(seg, task_ent(k, n) + TE_TX)
+    TXP, TXPP, BUF = equ('TX_PUB'), equ('TX_PPSP'), TS['BUF']
+    pubd = lambda n: (k.pc.u16(tx(n), TXP), k.pc.u16(tx(n), TXP + 2), k.pc.u16(tx(n), TXPP))
+    def glyph(c, a, mark=False):        # MTPUB's glyph for code c, drawn with cell's attribute a, as TERM maps it
+        c = 0x20 if c < 0x20 else 0x3F if c >= 0x48 else c
+        b = [(c * 13 + r * 29) & 0xFF for r in range(16)]
+        if a & 1: b = [x ^ 0xFF for x in b]
+        if a & 2: b[14] = 0 if a & 1 else 0xFF
+        if mark: b[14] ^= 0xFF; b[15] ^= 0xFF
+        return bytes(b)
+    def cellc(r, c):                    # MTPUB's cell (r, c): code, attribute
+        if r == 24 and c < 6: return (0x05, 0xF0, 0x80, 0x81, 0x47, 0x20)[c], 0
+        return 0x20 + (r * 7 + c) % 40, (c >> 3) & 3
+    def drawn(r, c):
+        d = (tv('y0') + (r - tv('top')) * 16) * 20 + tv('x0') + c - tv('left')
+        return bytes(k.pc.rd(0xB800, d + (y & 3) * 0x2000 + (y >> 2) * 80, 1)[0] for y in range(16))
+    def rowok(r, skip=()):
+        return all(drawn(r, c) == glyph(*cellc(r, c)) for c in range(tv('cols')) if c not in skip)
+    def cxy(r, c):
+        return (tv('x0') + c - tv('left')) * 8 + 4, tv('y0') + (r - tv('top')) * 16 + 8
+    def mv(x, y):
+        dx, dy = x - k.u16('mx'), y - k.u16('my')
+        while dx or dy:
+            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+            dx -= sx; dy -= sy
+    def btn(b, t=0.3):
+        k.pc.mouse_move(0, 0, b); k.pc.run_for(0.2); k.pc.mouse_move(0, 0, 0); k.pc.run_for(t)
+    def page():
+        h = k.u16('clip_h')
+        if not h: return None
+        return k.pc.ems_page(k.pc.rd(0x60, Y['ems_ltab'] + k.pc.rd(0x60, Y['ems_h'] + h * 4, 1)[0], 1)[0])
+    def clip():
+        pg = page()
+        return b'' if pg is None else k.pc.ems_read(pg, 0, k.u16('clip_len'))
+    def setclip(data):                  # (no page: no copy made, the clipboard empty already)
+        if page() is None: return
+        ctypes.memmove(ctypes.addressof(k.pc.ems_store) + page() * 0x4000, data, len(data))
+        k.wr('clip_len', struct.pack('<H', len(data)))
+    def lines(f='PB.TXT'):
+        return [l for l in (A.disk_file(k, f) or b'').decode('latin-1').split('\r\n') if l]
+    def key(ch, t=0.8):
+        k.key(ch, settle=False); k.run_for(t)
+    def typ2(text, t=1.0):
+        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+    def to0():
+        for _ in range(8):
+            if tstate(k)[1] == 0: break
+            hot(k); k.run_for(1.0)
+    au = Audit(k)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n = tnum('LCMD.COM')
+    typ2('mtpub pb.txt', 2.0)
+    pd, ok1 = pubd(n), 'P 0 %02X01' % n
+    check('MTPUB run in a windowed LCMD (task %d): MT_PUB taken (%s: AL 1, a window shows it; AH its task), TX_PUB %04X:%04Xh '
+          'in its memory, TX_PPSP its PSP (%04Xh); TERM given its cells (MT_TROWS\'s DL 32: %02Xh), its 25 rows; the view as '
+          'if the cursor (row 23) were a row lower: rows %d on' % (n, lines()[:1], pd[1], pd[0], pd[2], tb('tdl'), tv('top')),
+          lines()[:1] == [ok1] and pd[1] == pd[2] != 0 and tb('tdl') & 32 and tb('nrows') == 25 and tv('top') == 25 - tv('rows')
+          and tv('cur') == 0x1700 and tb('nocur') == 0, (lines(), pd, tb('tdl'), tb('nrows'), tv('top'), hex(tv('cur'))))
+    sp = [drawn(24, c) == glyph(*cellc(24, c)) for c in range(6)]
+    check('its cells drawn with its own font, byte for byte, by its attributes (inverse, underlined, both): rows 10 and 24, '
+          'and 23 but the cursor\'s cell, which has its mark (rows 14-15 inverted); row 24\'s codes 05h (below its first: '
+          '20h\'s glyph), F0h, 80h, 81h (past its end: \'?\'), 47h (its last), 20h (its first): %s' % sp,
+          rowok(10) and rowok(23, (0,)) and rowok(24) and drawn(23, 0) == glyph(*cellc(23, 0), mark=True) and all(sp),
+          (rowok(10), rowok(23, (0,)), sp, drawn(23, 0).hex()))
+    pcg = lambda: k.pc.u16(pd[1], pd[0] + 16)                      # (its PB_CHG, TX_CHG)
+    txc = lambda: k.pc.u16(tx(n), equ('TX_CHG'))
+    lat, g, pc0 = [], 0x2B, pcg()
+    for _ in range(6):
+        g = 0x21 if g == 0x2F else g + 1
+        k.key('c', settle=False)
+        for t in range(1, 13):
+            k.run_for(0.055)
+            if drawn(23, 10) == glyph(g, 1): break
+        lat.append(t)
+    k.run_for(0.5)
+    check('"c" x 6, its cell (23, 10) changed and PB_CHG counted each time (%d to %d): drawn within 3 ticks (%s)'
+          % (pc0, pcg(), lat), max(lat) <= 3 and lines()[-1] == 'C %02X' % g and pcg() == pc0 + 6, (lat, lines()[-2:], pc0, pcg()))
+    k.key('t', settle=False)
+    seen, prev_ = [], None
+    for _ in range(44):                 # (36 ticks of its, and some)
+        k.run_for(0.055)
+        d = drawn(22, 0)
+        if d != prev_: seen.append(d); prev_ = d
+    for _ in range(40):
+        if lines()[-1:] == ['T']: break
+        k.run_for(0.1)
+    t22 = 0x42
+    for _ in range(36): t22 = 0x21 if t22 >= 0x2F else t22 + 1
+    check('"t": 36 ticks computing (never waiting: its state TS_RUN throughout), its cell (22, 0) the next glyph at each '
+          'and PB_CHG counted: drawn again %d times in 44 ticks (mw_tick sees PB_CHG: not only the 9 ticks\' heartbeat), '
+          'each its glyph' % (len(seen) - 1), len(seen) - 1 >= 10 and lines()[-1] == 'T'
+          and all(x in [glyph(c_, 0) for c_ in range(0x21, 0x30)] for x in seen[1:]), (len(seen), lines()[-2:]))
+    # the cursor: hidden (no mark, the view where it was), moved, shown again
+    key('k')
+    c1 = (drawn(23, 0) == glyph(*cellc(23, 0)), tb('nocur'), tv('top'))
+    key('u')
+    t1 = tv('top')
+    key('k')
+    c2 = (drawn(5, 3) == glyph(*cellc(5, 3), mark=True), tv('top'))
+    key('d')
+    check('"k": PBF_NOCUR: no mark at (23, 0) (%s), the view as it was (%d); "u" (to row 5, column 3) while hidden: the view '
+          'still there (%d); "k": its mark at (5, 3), the view from its row (%d); "d": back to row 23, the view rows %d on'
+          % (c1[0], c1[2], t1, c2[1], tv('top')), c1 == (True, 1, 6) and t1 == 6 and c2 == (True, 5) and tv('top') == 6
+          and drawn(23, 0) == glyph(*cellc(23, 0), mark=True) and lines()[-4:] == ['K 03', 'U', 'K 01', 'D'],
+          (c1, t1, c2, tv('top'), lines()[-4:]))
+    key('r')
+    fs = tv('fseg')
+    r20 = (tb('nrows'), bytes(k.pc.rd(fs, BUF + 20 * 160, 5 * 160)) == b'\x20\x00' * 400, tv('top'))
+    key('r')
+    check('"r": PB_ROWS 20: TERM\'s rows %d, MT_TROWS\'s rows 20-24 blank (0020h: %s), the view in its 20 (rows %d on); "r": '
+          '25 again, rows %d on' % (r20 + (tv('top'),)), r20 == (20, True, 1) and tb('nrows') == 25 and tv('top') == 6,
+          (r20, tv('top'), lines()[-2:]))
+    key('v')
+    v40 = (tv('ncols'), all(drawn(10, c) == glyph(*cellc((400 + c) // 80, (400 + c) % 80)) for c in range(40)),
+           all(drawn(10, c) == glyph(0x20, 0) for c in range(40, tv('cols'))))
+    key('v')
+    check('"v": PB_COLS 40, published again: TERM\'s columns %d; row 10 drawn from its cells read 40 a row (%s), blank past '
+          'them (%s); "v": 80 again, row 10 as before' % v40, v40 == (40, True, True) and tv('ncols') == 80 and rowok(10)
+          and lines()[-2:] == ['V 28', 'V 50'], (v40, tv('ncols'), lines()[-2:]))
+    # Copy through its table; the menu: no Full screen, no menu with nothing that applies
+    A.drag(k, *(cxy(24, 0) + cxy(24, 5))); k.run_for(0.3)
+    mv(4, 4); k.run_for(0.3)
+    k.key(A.CODE['C'], settle=False); k.run_for(0.5)
+    cl = clip()
+    A.click(k, *cxy(15, 40)); k.run_for(0.5)
+    mv(*cxy(15, 40)); btn(2, 0.8)
+    o1 = scr()
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    setclip(b'')
+    mv(*cxy(15, 40)); btn(2, 0.8)
+    o2 = scr()
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    check('row 24\'s six cells selected, CODE-C: the clipboard %r (05h a blank, F0h and 81h \'?\' (0 in its table), 80h its '
+          'table\'s \'A\', 47h \'G\', 20h a blank, dropped); a right click: only Paste (no Full screen); with the clipboard '
+          'empty: no menu at all' % cl, cl == b' ?A?G' and 'Paste          CODE-V' in o1 and 'Full screen' not in o1
+          and 'Copy ' not in o1 and 'Paste' not in o2 and 'Full screen' not in o2, (cl, o1[-400:], o2[-400:]))
+    # CODE-Tab passes over it, MT_FRONT refuses it; another task's window beside it
+    hot(k); k.run_for(1.0)
+    f0 = tstate(k)[1]
+    k.key(0x6D00, settle=False); k.run_for(1.0)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    m = next((i for i, s_, nm in tstate(k)[0] if nm == 'LCMD.COM' and i != n), 7)
+    typ2('mtlaunch /g:%d' % n, 2.0)
+    o = scr()
+    typ2('', 1.0)
+    def trows(f, *a):                   # MTTERM R from this window: (CF, AX, BX, CX, DX, the 4000 bytes)
+        typ2('mtterm r %d %s %s' % (n, f, ' '.join(map(str, a))), 2.0)
+        b = A.disk_file(k, f.upper()) or bytes(4009)
+        return (b[0],) + struct.unpack_from('<4H', b, 1) + (b[9:],)
+    r0, r1, r2 = trows('t0.txt'), trows('t1.txt', 32768, 25), trows('t2.txt', 32768 + 5, 3)
+    c1 = b''.join(struct.pack('<BB', *((g, 1) if (r, c) == (23, 10) else (t22, 0) if (r, c) == (22, 0) else cellc(r, c)))
+                  for r in range(25) for c in range(80))
+    check('MTTERM R (MT_TROWS from that window) for its task, as before T5b (DX 0): its pages (DL %02Xh, CX %04Xh, LCMD\'s '
+          '"mtpub pb.txt" there); with DH 80h: its cells, all 2,000 as MTPUB has them (DL %02Xh, CL 80, CH its 25 rows: '
+          '%04Xh, BX its cursor %04Xh); DX 8005h, 3 rows: its rows 5-7' % (r0[4] & 0xFF, r0[3], r1[4] & 0xFF, r1[3], r1[2]),
+          r0[0] == 0 and r0[4] & 32 == 0 and r0[3] == 0x0350 and b'mtpub pb.txt' in r0[5][::2] and r1[0] == 0
+          and r1[4] & 0xFF == 32 and r1[3] == 0x1950 and r1[2] == 0x1700 and r1[5] == c1 and r2[0] == 0
+          and r2[5][:480] == c1[800:1280], (r0[:5], r1[:5], r2[:5], r0[5][:200:2], r1[5][:40].hex(), r2[5][:40].hex()))
+    fr = []
+    for _ in range(3):
+        hot(k); k.run_for(1.0); fr.append(tstate(k)[1])
+    to0()
+    check('CODE-Tab with it the only other task: nothing (front %d); a second LCMD window (task %d): MTLAUNCH /G:%d there: '
+          'MT_FRONT refused (error 5); CODE-Tab x 3: fronts %s (it passed over)' % (f0, m, n, fr), f0 == 0 and m != 7
+          and 'MTLAUNCH: error 5' in o and fr == [m, 0, m], (f0, m, o[-300:], fr))
+    typ2('exit', 2.0)
+    for _ in range(3):
+        if mb('mw_cur') == 1: break
+        k.key(0x6D00, settle=False); k.run_for(1.0)
+    # its pages while PBF_SHOWN is off; an old TERM (DX 0) given the pages always
+    key('n')
+    pg = (tb('tdl') & 32, 'MTPUB: pages' in scr(), tv('top'))
+    key('s')
+    sh = (tb('tdl') & 32, rowok(10))
+    check('"n" (PBF_SHOWN off): its pages in the window ("MTPUB: pages", DL %02Xh; the view afresh: rows %d on); "s": its '
+          'cells again (DL %02Xh)' % (pg[0], pg[2], sh[0]), pg == (0, True, 0) and sh == (32, True), (pg, sh))
+    key('n')
+    hot(k); k.run_for(1.0)
+    fn = tstate(k)[1]
+    k.key('s', settle=False); k.run_for(1.0)          # (in front: typed to it)
+    fs_ = tstate(k)[1]
+    k.key('p', settle=False); k.run_for(1.5)
+    check('"n" again, CODE-Tab: in front (front %d: its pages shown, not passed over); "s" there: still in front (%d); "p" '
+          '(published again, shown, in a text mode): back to its window (front %d), its cells drawn there'
+          % (fn, fs_, tstate(k)[1]), fn == n and fs_ == n and tstate(k)[1] == 0 and tb('tdl') & 32 and rowok(10)
+          and lines()[-1] == ok1, (fn, fs_, tstate(k), tb('tdl'), lines()[-3:]))
+    # a picture: full screen (T3), CODE-Tab away from it and back, then back to its window
+    key('g', 2.0)
+    gf = (tstate(k)[1], k.pc.mode(), bytes(k.pc.rd(0xB800, 0, 256)) == bytes((((i_ * 5) ^ (i_ >> 8)) & 0xFF) for i_ in range(256)),
+          k.pc.rd(tx(n), equ('TX_WGFX'), 1)[0])
+    to0()
+    hot(k); k.run_for(1.0)
+    fg = tstate(k)[1]
+    to0()
+    o = scr()
+    key('j', 2.0)
+    f1 = tstate(k)[1]
+    key('j', 2.0)
+    check('"g": PBF_SHOWN off, mode 40h: in front by itself (front %d, mode %02Xh, its pattern %s, TX_WGFX %d); CODE-Tab to '
+          'task 0, and from there onto it (front %d: in a graphics mode, not passed over); to task 0 again, its window\'s '
+          'note; a key there: in front again (%d); a key: mode 3, back to its window, its cells there'
+          % (gf[0], gf[1], gf[2], gf[3], fg, f1), gf == (n, 0x40, True, 1) and fg == n
+          and 'In a graphics mode' in o and f1 == n and tstate(k)[1] == 0 and k.pc.mode() == 0x40 and tb('tdl') & 32
+          and rowok(10) and lines()[-1] == 'G', (gf, fg, o[-300:], f1, tstate(k), lines()[-2:]))
+    key('h', 2.0)
+    h1 = tstate(k)[1]
+    to0()
+    o, hd = scr(), tb('tdl')
+    hot(k); k.run_for(1.0)
+    h2 = tstate(k)[1]
+    key('j', 2.0)
+    check('"h": mode 40h with PBF_SHOWN left on: in front by itself (front %d); CODE-Tab to task 0: the window\'s note, not '
+          'its cells (DL %02Xh: in a graphics mode); CODE-Tab onto it (front %d: not passed over); a key: mode 3, back to its '
+          'window' % (h1, hd, h2), h1 == n and 'In a graphics mode' in o and not hd & 32 and h2 == n
+          and tstate(k)[1] == 0 and tb('tdl') & 32 and lines()[-2:] == ['G', 'G'], (h1, hd, h2, o[-300:], tstate(k), lines()[-2:]))
+    # refused descriptors; a call it may not make
+    key('b', 1.5)
+    reg = k.pc.u16(seg, task_ent(k, n) + equ('TE_REG'))
+    rsz = k.pc.u16(reg - 1, 3)                  # (its region: 1000h paragraphs at least, so the table at E-1000h:FFC0h
+                                                #  starts in it and only the wrap past FFFFh refuses it)
+    want = 'B' + ' 1 000D' * 14 + ' 1 0001' * 2 + (' 0 %02X01' % n) * 2
+    check('"b": MT_PUB refused (0Dh) for ES:DI 0:400h, PB_VER 0, PB_COLS 0 and 81, PB_ROWS 0 and 26, PB_FIRST 21h, PB_GEND '
+          '3Fh, PB_CELLS and PB_FONT 0:0, PB_FONT and PB_CELLS ending in the paragraph past its memory (by their sizes, 640 '
+          'and 4,000 bytes), PB_XLAT past its segment\'s end (its start in its memory) and across its memory\'s end; CL 1 '
+          'and 2 from a task (1); PB_XLAT its memory\'s last 128 bytes, and its own again: taken (its region %Xh '
+          'paragraphs)' % rsz, lines()[-1] == want and rsz >= 0x1000, (lines()[-1], want, hex(rsz)))
+    fb = next((s_ for s_, t_, o_, sz, nm in mcbs(k) if o_ == 0 and sz >= 4), None)
+    if fb:                                      # (22 bytes in a free block: nothing's yet)
+        k.pc.wr(fb + 1, 0, bytes(k.pc.rd(pd[1], pd[0], 22)))
+        k.pc.wr(pd[1], pd[0] - 4, struct.pack('<HH', 0, fb + 1))
+    else:
+        k.pc.wr(pd[1], pd[0] - 4, struct.pack('<HH', 0x400, 0))    # (none: 0:400h, refused too, not 0:0)
+    key('o')
+    lo_ = lines()[-1:]
+    k.pc.wr(pd[1], pd[0] - 4, struct.pack('<HH', 0x70, reg - 8))
+    key('e')
+    check('"o": a copy of its descriptor, valid but in a free block outside its memory (%s): refused (%s); "e": its table '
+          'starting in the paragraph below its memory and ending in it (%04X:0070h): refused (%s); its own still published'
+          % (fb and '%04X:0000' % (fb + 1), lo_, reg - 8, lines()[-1:]), fb and lo_ == ['O 1 000D']
+          and lines()[-1] == 'E 1 000D' and pubd(n) == pd, (fb, lo_, lines()[-1:], pubd(n)))
+    # a child: its end doesn't withdraw it; a child that publishes: its end withdraws that
+    key('x', 2.0)
+    px = pubd(n)
+    key('y', 2.0)
+    py, dy = pubd(n), tb('tdl') & 32
+    key('p', 1.0)
+    check('"x": a child MTPUB that publishes nothing ends (%s): MTPUB\'s still published (%s); "y": a child that publishes '
+          'its own (%s) ends: withdrawn (TX_PUB, TX_PPSP %s), the window its pages (DL %02Xh); "p": published again'
+          % (lines()[-5:-3], px == pd, lines()[-3:-2], py, dy), lines()[-5] == 'Y' and lines()[-4].startswith('X 0')
+          and px == pd and lines()[-3] == 'Z 0 %02X01' % n and lines()[-2].startswith('X 0') and py == (0, 0, 0)
+          and dy == 0 and lines()[-1] == ok1 and tb('tdl') & 32, (lines()[-7:], px, pd, py, dy))
+    s0 = (txc() + pcg()) & 0xFFFF
+    key('w')
+    pw, s1 = (pubd(n), tb('tdl') & 32), txc()
+    key('p')
+    s2 = (txc() + pcg()) & 0xFFFF
+    check('"w", "p": the count a window sees (TX_CHG with PB_CHG while published) one up at each (%04Xh, %04Xh, %04Xh): PB_CHG '
+          'kept in TX_CHG as it went' % (s0, s1, s2), s1 == (s0 + 1) & 0xFFFF and s2 == (s1 + 1) & 0xFFFF, (s0, s1, s2))
+    key('q', 1.5)
+    check('"w": withdrawn (%s: TX_PUB 0:0, DL %02Xh: its pages); "p": again; "q": it ends published: its end withdraws it '
+          '(%s), the window LCMD\'s prompt again' % (lines()[-3], pw[1], pubd(n)), lines()[-3:] == ['W 0 %02X01' % n, ok1, 'Q']
+          and pw == ((0, 0, 0), 0) and pubd(n) == (0, 0, 0) and not tb('tdl') & 32 and 'A:\\>' in scr(),
+          (lines()[-3:], pw, pubd(n), scr()[-300:]))
+    check('... every switch at a safe point (the audit)', not au.bad(), au.bad()[:3])
+    typ2('exit', 2.0)
+    # task 0 (the Executive's own prompt); no window (no TERM.RUN: in front); multitasking off
+    sh_ = Shell(k)
+    k.key('mtpub p0.txt', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+    k.key('q', settle=False); k.run_for(1.0)
+    l0 = lines('P0.TXT')
+    line(k, 'exit')
+    k = boot('mt_t5b2.img', b'MULTITASK=1\r\n', 88, TERMFNT, MTPB)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n2 = tstate(k)[1]
+    typ2('mtpub pf.txt', 2.0)
+    hot(k); k.run_for(1.0)
+    f2 = tstate(k)[1]
+    hot(k); k.run_for(1.0)
+    f3 = tstate(k)[1]
+    key('q', 1.0)
+    lf = lines('PF.TXT')
+    k = boot('mt_t5b3.img', None, 88, MTPB)
+    sh_ = Shell(k)
+    k.key('mtpub po.txt', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+    k.key('q', settle=False); k.run_for(1.0)
+    lo = lines('PO.TXT')
+    check('MT_PUB refused from task 0 (the Executive\'s own prompt: %s, AX 5); from a task in front with no window (no '
+          'TERM.RUN: task %d) taken, AL 0 (%s), and CODE-Tab from it to task 0 (%d) and back to it (%d: no window shows '
+          'it, so not passed over); with multitasking off: refused, AX 1 (%s)' % (l0[:1], n2, lf[:1], f2, f3, lo[:1]),
+          l0[:1] == ['P 1 0005'] and n2 != 0 and lf[:2] == ['P 0 %02X00' % n2, 'Q'] and f2 == 0 and f3 == n2
+          and lo[:1] == ['P 1 0001'], (l0, n2, lf, f2, f3, lo))
+
 def t_tcore():
     print('== a terminal window\'s calls (T1): MT_TROWS, a task\'s screen as MT keeps it; MT_TKEY, keys typed to it')
     k = boot('mt_tc.img', b'MULTITASK=1\r\n', 88, MTK, MTTM, MTSC)
@@ -5117,12 +5427,12 @@ if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_tpub, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
