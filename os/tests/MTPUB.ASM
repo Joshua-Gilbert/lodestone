@@ -34,6 +34,7 @@
 ;      again: "V cc"
 ;   t  36 ticks computing (no call made: it never waits), row 22's cell 0
 ;      the next glyph (21h-2Fh, round) at each: "T"
+;   l  rows 1-23 moved up one (row 23 as it was; row 24 stays): "L"
 ;   q  "Q", and ends (its screen still published: its end withdraws it)
 ; Each change adds 1 to PB_CHG.  Cell (r, c): glyph 20h + (r * 7 + c) mod
 ; 40, attribute (c / 8) and 3; row 24's first six 05h, F0h, 80h, 81h, 47h,
@@ -137,6 +138,8 @@ keys    db      'c'
         dw      k_h
         db      'q'
         dw      k_q
+        db      'l'
+        dw      k_l
         db      0
 
 k_c:    mov     al, [cells + (23 * NCOL + 10) * 2]
@@ -235,6 +238,17 @@ k_s:    or      byte [desc + PB_FLAGS], PBF_SHOWN
         mov     al, 'S'
 chg1:   call    chg
         jmp     put1
+k_l:    push    es
+        push    ds
+        pop     es
+        cld
+        mov     si, cells + NCOL * 2
+        mov     di, cells
+        mov     cx, 23 * NCOL
+        rep     movsw
+        pop     es
+        mov     al, 'L'
+        jmp     short chg1
 k_g:    and     byte [desc + PB_FLAGS], ~PBF_SHOWN
 k_h:    call    chg
         mov     ax, 40h

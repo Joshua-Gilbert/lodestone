@@ -129,7 +129,7 @@ def t_window():
     try:
         h.boot_exec()
         conn = h.code_a()
-        task = h.m.rd(h.mt_seg(), h.m.Y['mt_cur'], 1)[0]
+        task = h.mb('mt_wkt')                   # (CLAUDE's task: its wake's, MT_WAKE)
         ok = h.wait_text('Welcome to Claude Code', 30)
         check('CODE-A with MULTITASK=1: CLAUDE.COM a task behind (task 0 still in front, mode 40h), in a terminal window '
               '(a session showing its task), connected in Term, the login screen drawn in the window',
@@ -162,7 +162,9 @@ def t_window():
         t.show_picture(page, 'test', title='A picture')
         ok = h.run_until(lambda: h.mb('mt_front') == task and pixels(h) == page, 30)
         check('a picture: CLAUDE full screen (its task in front, mode 40h), the picture bit for bit (%.0f ms)'
-              % ((h.m.us - t0) / 1000), ok and h.var('pic') and not h.desc()['flags'] & PBF_SHOWN, (h.mb('mt_front'), h.var('pic')))
+              % ((h.m.us - t0) / 1000), ok and h.var('pic') and not h.desc()['flags'] & PBF_SHOWN,
+              (h.mb('mt_front'), h.var('pic'), [i for i, (a, b) in enumerate(zip(pixels(h), page)) if a != b][:12],
+               sum(a != b for a, b in zip(pixels(h), page))))
         t.hide_picture('test')
         ok = h.run_until(lambda: h.mb('mt_front') == 0 and h.var('win') and 'You said: hello' in h.text(), 30)
         check('... the picture gone: back to its window (task 0 in front), its text drawn there again',
@@ -210,16 +212,18 @@ def t_shift():
         h.close()
 
 
-def flood(t):
+def flood(t, scroll=False):
     """The Pi's screen always changed, whole, at once: every frame the GRiD
     asks for is a full one (the encoder's own; its making costs the GRiD
-    no time in the emulation)."""
+    no time in the emulation).  scroll: instead 3 new lines at its foot a
+    frame, the rest scrolled up (the encoder's scroll op, FEh)."""
     import random
     rnd = random.Random(5150); take = t.take
+    line = lambda: ''.join(rnd.choice('abcdefghij klmnop') for _ in range(79))
     def take2(maxpay):
         with t.lock:
-            t.stream.feed(('\x1b[H' + '\r\n'.join(''.join(rnd.choice('abcdefghij klmnop') for _ in range(79))
-                                                    for _ in range(23))).encode())
+            if scroll: t.stream.feed(('\x1b[24;1H' + ''.join('\r\n' + line() for _ in range(3))).encode())
+            else: t.stream.feed(('\x1b[H' + '\r\n'.join(line() for _ in range(23))).encode())
         return take(maxpay)
     t.take = take2
     t.ready = lambda: True
@@ -253,7 +257,7 @@ def copy_rates(h, kb=64):
     return out
 
 
-def measure(shift=False, spin=False, wake=True, sim_s=6.0):
+def measure(shift=False, spin=False, wake=True, scroll=False, sim_s=6.0):
     """KB a simulated second each way through M: (copy_rates), then CELLS
     bytes a simulated second through a flood: full screen in task 0 (shift)
     or in a window; MTSPIN computing behind (spin); MT_WAKE asked or not."""
@@ -273,15 +277,27 @@ def measure(shift=False, spin=False, wake=True, sim_s=6.0):
         assert h.code_a(shift=shift) and h.wait_text('Welcome to Claude Code', 30), h.text()[-300:]
         t = h.router.term
         to_grid, to_pi = copy_rates(h)
-        flood(t)
+        flood(t, scroll)
         h.run_until(lambda: False, 1.0)                 # (under way)
         b0, f0, us0 = t.enc.stats['bytes'], t.enc.stats['frames'], h.m.us
+        moves, watch = [0], h.m.watch                   # (TERM's scrl moving what scrolled: T5d)
+        if not shift:
+            import test_apps as A
+            Y = h.m.Y
+            base = h.m.u16(h.mt_seg(), Y['mw_ses'] + 128 + 2)      # (KMW.INC: SE_SIZE, SE_BASE; the first window's)
+            at = h.m.u16(0x60, Y['ui_seg']) * 16 + base + A.run_syms('apps/TERM.ASM')['scrl.m']
+            def w(a):
+                watch(a)
+                if a == at: moves[0] += 1
+            h.m.watch = w
         h.run_until(lambda: h.m.crash, sim_s)
+        h.m.watch = watch
         s = (h.m.us - us0) / 1e6
         if spin:                                        # (MTSPIN still there, ready to run)
             ents = [h.m.rd(h.mt_seg(), h.m.Y['mt_tab'] + n * 32, 22) for n in range(8)]
             assert any(e[0] == 1 and e[10:20] == b'MTSPIN.COM' for e in ents), [(e[0], e[10:22]) for e in ents]
-        return to_grid, to_pi, (t.enc.stats['bytes'] - b0) / s, (t.enc.stats['frames'] - f0) / s, h.mb('mt_wkt')
+        return to_grid, to_pi, (t.enc.stats['bytes'] - b0) / s, (t.enc.stats['frames'] - f0) / s, h.mb('mt_wkt'), \
+            moves[0] / s
     finally:
         h.close()
 
@@ -294,13 +310,18 @@ def t_speed():
                      ('window, no MT_WAKE', dict(wake=False)),
                      ('full screen, MTSPIN behind', dict(shift=True, spin=True)),
                      ('window, MT_WAKE, MTSPIN behind', dict(spin=True)),
-                     ('window, no MT_WAKE, MTSPIN behind', dict(wake=False, spin=True))):
+                     ('window, no MT_WAKE, MTSPIN behind', dict(wake=False, spin=True)),
+                     ('full screen, scrolling', dict(shift=True, scroll=True)),
+                     ('window, MT_WAKE, scrolling', dict(scroll=True))):
         r[name] = measure(**kw)
-        print('     %-36s copies %5.1f KB/s to the GRiD, %5.1f to the Pi; flood %7.0f bytes/s %5.1f frames/s  (mt_wkt %02X)'
-              % ((name,) + r[name]), flush=True)
+        print('     %-36s copies %5.1f KB/s to the GRiD, %5.1f to the Pi; flood %7.0f bytes/s %5.1f frames/s  (mt_wkt %02X; '
+              'TERM moved rows %.1f times a second)' % ((name,) + r[name]), flush=True)
     full, win = r['full screen, task 0'][2], r['window, MT_WAKE'][2]
     check('the flood in a window with MT_WAKE: %.0f bytes/s, within 10%% of full screen\'s %.0f (%.0f%%)'
           % (win, full, 100.0 * win / full), win >= 0.9 * full, r)
+    fs, ws = r['full screen, scrolling'], r['window, MT_WAKE, scrolling']
+    check('... scrolling (3 new lines a frame): %.0f bytes/s in the window, %.0f full screen (%.0f%%); TERM moving what '
+          'scrolled (scrl, %.1f times a second)' % (ws[2], fs[2], 100.0 * ws[2] / fs[2], ws[5]), ws[5] > 0, r)
     a, b = r['window, MT_WAKE, MTSPIN behind'], r['window, no MT_WAKE, MTSPIN behind']
     check('MTSPIN computing behind: copies in a window with MT_WAKE faster both ways than without (%.1f, %.1f KB/s '
           'against %.1f, %.1f)' % (a[0], a[1], b[0], b[1]), a[0] > b[0] and a[1] > b[1] * 1.2, r)

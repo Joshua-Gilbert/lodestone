@@ -634,10 +634,13 @@ mw_poll:
         mov     word [bp+2], ui_event.got
         pop     bp
 .x:     retf
-; T5d: nothing, and a task ready to run: its turn now, not at the next tick
-; (the HLT after this would hold the CPU till then).  An interrupt's frame,
-; as if the HLT had ended (..@ui_idle, interrupts on), and on as a tick's
-; end (mt_tick.w: mt_safe vets it); back at ..@ui_idle, the loop's
+; T5d: nothing, and a task ready to run (one an SRQ woke while the UI was
+; busy first, mt_want): its turn now, not at the next tick (the HLT after
+; this would hold the CPU till then).  The mouse or a key brings the
+; Executive back at the next tick (mt_mdset, mt_mwant: as from a drag's
+; wait).  An interrupt's frame, as if the HLT had ended (..@ui_idle,
+; interrupts on), and on as a tick's end (mt_tick.w: mt_safe vets it);
+; back at ..@ui_idle, the loop's
 .y:     mov     ah, [cs:mt_want]
         call    mt_pick                 ; (AX kept)
         mov     [cs:mt_want], ah

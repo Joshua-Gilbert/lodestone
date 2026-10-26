@@ -279,6 +279,21 @@ raced only by a program running as you, which could read the files itself.
    returns its screen. If the echo feels slow, raise the bridge to 500,000
    baud (claude-link/README.md, Speed).
 
+## In a terminal window (CLAUDE 1.13, 2026-10-26)
+
+With multitasking on (`MULTITASK=1`), CODE-A starts CLAUDE.COM as a task
+in a terminal window beside the Executive; Shift-CODE-A, and CODE-A with
+multitasking off, are full screen as before. In the window CLAUDE draws
+nothing itself: it publishes its shadow (25 rows: the Pi's 24 and its
+status band) and its own font to the window (`MT_PUB`), and TERM.RUN
+draws them, the mascot, boxes and spinner included. The Pi's frames wake
+it at once (`MT_WAKE`). A picture takes the whole screen (the Pi marks
+its frames, F_PIC) and the window comes back after it; a RUN shows the
+program's own text in the window. The window shows 19 of the 25 rows and
+follows the cursor, with the status band kept in view. The chat (`/C`)
+stays full screen. Design, limits and the link's figures are in
+`lodestone-multitasking.md`, T5d.
+
 ## Phase 2: resident Claude (the original sketch)
 
 Being built: the plan, its spikes, M1 (`CLAUDE /R` and `/U`, 0.8 KB resident) and M2 (this Term, in the pop-up: the same session, its code in EMS) are in `lodestone-resident-claude.md`.
