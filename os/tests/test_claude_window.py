@@ -187,7 +187,8 @@ def t_window():
         check('... afterwards its screen in the window again (published, shown), its shadow Claude Code\'s screen',
               ok, (h.m.crash, h.text()[-300:]))
         # a RUN with a key script, its program reading through DOS behind in the window: the kernel's wait there
-        # (mt_kwait) asks the task's own INT 16h, CLAUDE's script; a timed wait first (no key wakes it: it stays ready)
+        # (mt_kwait) asks the INT 16h hook of the program KEYIN runs under, CLAUDE's script (KEYIN, with no argument,
+        # hooks none); a timed wait first (no key wakes it: it stays ready)
         res = {}
         t0 = h.m.us
         th = threading.Thread(target=lambda: res.update(r=g.run('KEYIN', capture=False,
@@ -195,7 +196,8 @@ def t_window():
         th.start()
         h.run_until(lambda: not th.is_alive(), 30)
         check('a RUN of KEYIN (a key read through DOS, INT 21h AH=08h, behind in the window) with a script, a wait of 9 '
-              'ticks then "x": the key its (exit code 78h; MT\'s wait behind asks the task\'s own INT 16h, %.0f ms)'
+              'ticks then "x": the key its (exit code 78h; MT\'s wait behind asks the hook of the program it runs under, '
+              'CLAUDE\'s, %.0f ms)'
               % ((h.m.us - t0) / 1000), res.get('r', {}).get('exit') == 0x78 and h.mb('mt_front') == 0,
               (res, h.mb('mt_front')))
         # a RUN of a graphics program: in front while it runs (its mode set), its snapshot its picture (MT leaves a
