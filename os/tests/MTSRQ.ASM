@@ -9,6 +9,10 @@
 ;   K  a key read (INT 16h AH=00h) first: waiting for it, its task isn't
 ;      ready to run, so an SRQ wakes nothing
 ;   F  MT_WAKE asked, then given up (BL=1, then BL=0): as O
+;   G  only BL=0 (giving up what another program asked: nothing), then
+;      it ends at once
+;   T  asked, then it stays resident (31h): its program's end isn't
+;      seen, its task's is
 ; nasm -f bin -o MTSRQ.COM MTSRQ.ASM
 cpu 286
 org 100h
@@ -36,7 +40,10 @@ start:  mov     si, 81h
         mov     [opt], al
         cmp     al, 'O'
         je      .gp
-        mov     bl, 1
+        xor     bl, bl
+        cmp     al, 'G'
+        je      .w
+        inc     bl
         cmp     al, 'F'
         jne     .w
         mov     ax, 0F023h
@@ -45,6 +52,15 @@ start:  mov     si, 81h
 .w:     mov     ax, 0F023h
         int     21h
         mov     [wres], ax
+        cmp     byte [opt], 'G'
+        jne     .t
+        mov     ax, 4C00h
+        int     21h
+.t:     cmp     byte [opt], 'T'
+        jne     .gp
+        mov     ax, 3100h
+        mov     dx, (pend - $$ + 100h + 15) / 16
+        int     21h
 .gp:    mov     ax, 0E02h               ; the driver's SRQ count (AL=2: ask)
         int     60h
         mov     es, dx
@@ -72,4 +88,5 @@ blanks: cmp     byte [si], ' '
 last    dw      0
 want    dw      0
 opt     db      0
+pend:
         times   -((seen - $$) != 0Dh) db 0  ; (seen at 10Dh)

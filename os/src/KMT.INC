@@ -3479,10 +3479,7 @@ mt_end: cmp     byte [cs:mt_swing], 0   ; (a change of the front its handler
         jnc     .o
         mov     byte [cs:mt_shd], 0
 .o:     mov     al, [cs:mt_cur]
-        cmp     al, [cs:mt_wkt]         ; (T5c: its SRQ wake ended)
-        jne     .o2
-        mov     byte [cs:mt_wkt], 0FFh
-.o2:    cmp     al, [cs:mt_front]
+        cmp     al, [cs:mt_front]
         jne     .f
         push    ax                      ; it was in front: the Executive's
         mov     ax, 2                   ;  task is, with its screen (the
@@ -5151,8 +5148,9 @@ mt_mgone:
         jne     .p
         mov     word [es:TX_MPSP], 0
         mov     byte [es:TX_MREL], 0
-.p:     cmp     [cs:mt_wkp], ax         ; T5c: its SRQ wake (MT_WAKE) ended
-        jne     .q
+.p:     cmp     [cs:mt_wkp], ax         ; T5c: its SRQ wake (MT_WAKE) ended (a
+        jne     .q                      ;  kill, or its task's end for a TSR,
+                                        ;  comes here too: mt_owners)
         mov     byte [cs:mt_wkt], 0FFh
 .q:     cmp     byte [cs:mt_cur], 0     ; (task 0's TX: none of T5b's)
         je      .x
