@@ -1,8 +1,17 @@
 /*
- * gpib_hpgl_tek4662.ino  (v5, for Lodestone's shared bus)
+ * gpib_hpgl_tek4662.ino  (v6, for Lodestone's shared bus)
  *
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
+ *
+ * v6: no drag when the pen lifts. The 4662's pen leaves the paper about 1 mm
+ *    into a pen-up move (Claude's detour test: the same ~1 mm tick whatever
+ *    the detour), so short gaps were bridged and every move started with a
+ *    tail. A pause in the Nano can't help (the plotter runs from its own
+ *    buffer), so the plotter is given a move to do while the pen lifts: a
+ *    pen-up move of RETRACE_ADU back along the stroke just drawn. The drag
+ *    lands on ink that is already there, and the real move starts with the
+ *    pen clear. '!r n' sets it (ADU, 273 = 1 inch; 0 turns it off).
  *
  * v5: faster, and quiet.
  *  - No bell: GS BEL ("the first coordinate is a draw") rings the 4662's bell
@@ -70,6 +79,7 @@
 #define STATUS_MARGIN   48      // bytes kept free in the 4662's buffer, below what it reports
 #define QUERY_AT        600     // ask again when this little room is left
 #define QUERY_GAP_MS    400     // at most one status request in this time
+#define RETRACE_ADU     22      // pen-up move back along the last stroke before a move (~2 mm)
 #define STATUS_TIMEOUT  180000UL // ms to wait for a status reply (it may wait for the pen)
 #define PROBE_MS        1500    // ms to wait for a reply when finding out if the plotter answers
 
@@ -442,6 +452,8 @@ void timedWork(unsigned long cost) {
 
 int penX = 0, penY = 0;
 bool penIsDown = false;
+int segFromX = 0, segFromY = 0;         // where the last stroke started (it ends at penX, penY)
+uint16_t retraceAdu = RETRACE_ADU;
 
 unsigned long travelMs(int x, int y) {
     long dx = labs((long)x - penX), dy = labs((long)y - penY);
@@ -503,8 +515,25 @@ void tekSendCoord12(int x, int y) {
     coordKnown = true;
 }
 
+// Lift the pen with a short pen-up move back along the stroke just drawn,
+// so the ~1 mm the pen drags while it lifts lands on that stroke's ink.
+void liftAlongStroke() {
+    if (!penIsDown) return;
+    long dx = (long)segFromX - penX, dy = (long)segFromY - penY;
+    float len = sqrt((float)dx * dx + (float)dy * dy);
+    if (retraceAdu == 0 || len < 1.0f) return;          // (no stroke to go back along: lift in place)
+    float d = len < retraceAdu ? len : (float)retraceAdu;
+    int rx = penX + (int)lround(dx * d / len), ry = penY + (int)lround(dy * d / len);
+    plotterRoom(6, travelMs(rx, ry) + pacePen);
+    tekRaw(TEK_GS);                     // the first coordinate after GS is a pen-up move
+    tekSendCoord12(rx, ry);
+    penX = rx; penY = ry; penIsDown = false;
+    needsMove = false; inAlpha = false;
+}
+
 void tekMoveTo(int x, int y) {
     x = constrain(x, 0, (int)TEK_MAX_X); y = constrain(y, 0, (int)TEK_MAX_Y);
+    liftAlongStroke();
     plotterRoom(6, travelMs(x, y) + (penIsDown ? pacePen : 0));
     tekRaw(TEK_GS);
     tekSendCoord12(x, y);
@@ -521,10 +550,16 @@ void tekDrawTo(int x, int y) {
         needsMove = false;
     }
     tekSendCoord12(x, y);
+    segFromX = penX; segFromY = penY;
     penX = x; penY = y; penIsDown = true; inAlpha = false;
 }
 
 void tekText(const char* s) {
+    if (penIsDown && *s) {              // a label right after a stroke: lift along it, then back
+        int px = penX, py = penY;
+        liftAlongStroke();
+        if (penX != px || penY != py) tekMoveTo(px, py);
+    }
     while (*s) {
         plotterRoom(2, paceChar + (penIsDown ? pacePen : 0));
         penIsDown = false;
@@ -695,6 +730,7 @@ void printLine(const __FlashStringHelper* name, bool high) {
 }
 
 void printPace() {
+    Serial.print(F("pen lift: !r ")); Serial.print(retraceAdu); Serial.println(F(" ADU back along the stroke"));
     Serial.print(F("timed pacing: !s ")); Serial.print(paceSpeed);
     Serial.print(F(" ADU/s  !v ")); Serial.print(paceVector);
     Serial.print(F(" ms/vector  !p ")); Serial.print(pacePen);
@@ -747,6 +783,7 @@ void paceCommand() {
         else if (k == 'p') pacePen = v; else if (k == 'c') paceChar = v;
         else if (k == 'l') paceLead = v;
     }
+    if (k == 'r' && paceLen > 1 && v >= 0 && v <= 400) retraceAdu = v;     // (0 allowed: off)
     printPace();
     paceLen = 0; inPace = false;
 }
@@ -760,7 +797,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v5"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v6"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));
