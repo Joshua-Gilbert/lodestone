@@ -2,7 +2,8 @@
 ; stub), 12h (no room: CX = 0), 13h (BL = 0, the Executive; 8, none such;
 ; 7, a free one), 14h, 1Bh, 1Ch, FFh, then 1Fh and 20h (T1) and 1Eh (T2:
 ; BL = 0, 7, 8, then 1 with CL = 1, task 1's first count: from a task,
-; refused; CX = 1234h, ES:DI = buf) and 21h (T4: BL = 0, 7, 8, 1), for
+; refused; CX = 1234h, ES:DI = buf), 21h (T4: BL = 0, 7, 8, 1) and 22h
+; (T5b: CL = 0 from here, then CL = 1 with BL = 0, 7, then CL = 2), for
 ; test_mt.py: one line each,
 ;   "F0xx CF=c AX=xxxx BX=xxxx CX=xxxx"
 ; (CF set and BX = CX = 1234h before each call, so what changed shows)
@@ -16,8 +17,11 @@ org 100h
         mov     ah, [si]                ; (its BL, for 13h)
         inc     si
         mov     [cbl], ah
-        cmp     al, 1Eh                 ; (MT_TOPEN: its CL, a count, next)
+        cmp     al, 1Eh                 ; (MT_TOPEN: its CL, a count, next;
+        je      .cl                     ;  MT_PUB's too)
+        cmp     al, 22h
         jne     .k
+.cl:
         mov     ah, [si]
         inc     si
         mov     [ccl], ah
@@ -41,13 +45,17 @@ org 100h
         cmp     al, 20h
         je      .cb
         cmp     al, 21h
+        je      .cb
+        cmp     al, 22h
         jne     .c1
 .cb:    mov     bl, [cbl]               ; MT_FRONT, MT_TOPEN, MT_TROWS, MT_TKEY,
                                         ;  MT_TMOUSE: BL (BH 0: no buttons)
         xor     bh, bh
         cmp     byte [cur], 1Eh
+        je      .cc
+        cmp     byte [cur], 22h
         jne     .c1
-        mov     cl, [ccl]
+.cc:    mov     cl, [ccl]
 .c1:    stc
         int     21h
         pushf
@@ -115,7 +123,8 @@ chr:    push    dx
 als     db      00h, 0, 11h, 0, 12h, 0, 13h, 0, 13h, 8, 13h, 7, 14h, 0, 1Bh, 0
         db      1Ch, 0, 0FFh, 0, 1Fh, 0, 1Fh, 7, 1Fh, 8, 20h, 0, 20h, 7, 20h, 8
         db      1Eh, 0, 34h, 1Eh, 7, 34h, 1Eh, 8, 34h, 1Eh, 1, 1
-        db      21h, 0, 21h, 7, 21h, 8, 21h, 1, 0EEh
+        db      21h, 0, 21h, 7, 21h, 8, 21h, 1
+        db      22h, 0, 0, 22h, 0, 1, 22h, 7, 1, 22h, 0, 2, 0EEh
 cbl     db      0
 ccl     db      0
 s_f0    db      'F0$'
