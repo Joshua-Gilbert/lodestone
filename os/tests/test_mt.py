@@ -148,10 +148,11 @@ def t_off():
                            ('MULTITASK=One', b'MULTITASK=One\r\n', 88), ('MULTITASK= (empty)', b'MULTITASK=\r\n', 88),
                            ('MULTITASK=1 but no EMS', b'MULTITASK=1\r\n', 0)):
         k = boot('mt_off.img', text, ems)
-        check('%s: no MT block, INT 08h, 10h and 16h the BIOS\'s, f_F0, kbd_get.k and done.sw as assembled' % tag,
-              mt_seg(k) is None and vec(k, 8) == INT08 and vec(k, 0x10) == INT10 and vec(k, 0x16) == INT16
+        check('%s: no MT block, INT 08h, 10h and 16h the BIOS\'s, f_F0, kbd_get.k, done.sw, f_48, mem_largest and f_4B.xe as '
+              'assembled' % tag, mt_seg(k) is None and vec(k, 8) == INT08 and vec(k, 0x10) == INT10 and vec(k, 0x16) == INT16
               and f0_bytes(k) == sysb[k.Y['f_F0']:k.Y['f_F0'] + 5]
-              and kw_bytes(k) == sysb[k.Y['kbd_get.k']:k.Y['kbd_get.k'] + 6] and dx_bytes(k) == EXIT5,
+              and kw_bytes(k) == sysb[k.Y['kbd_get.k']:k.Y['kbd_get.k'] + 6] and dx_bytes(k) == EXIT5
+              and all(bytes(k.pc.rd(0x60, k.Y[s], 5)) == sysb[k.Y[s]:k.Y[s] + 5] for s in ('f_48', 'mem_largest', 'f_4B.xe')),
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
@@ -195,6 +196,11 @@ def t_on():
           dx[0] == 0xEA and dx[1] | dx[2] << 8 == Y['mt_exit'] and dx[3] | dx[4] << 8 == seg, dx.hex())
     check('... ctrlc\'s copy of those bytes untouched', bytes(k.pc.rd(0x60, Y['ctrlc.sw'], 5)) == EXIT5,
           bytes(k.pc.rd(0x60, Y['ctrlc.sw'], 5)).hex())
+    gb = [bytes(k.pc.rd(0x60, Y[s], 5)) for s in ('f_48', 'mem_largest', 'f_4B.xe')]
+    check('48h, EXEC\'s largest block and its environment\'s go through mt_48, mt_largest and mt_xenv (JMP FAR over '
+          'f_48\'s, mem_largest\'s and f_4B.xe\'s first 5 bytes: a task\'s region grows, T5a)',
+          [(b[0], b[1] | b[2] << 8, b[3] | b[4] << 8) for b in gb]
+          == [(0xEA, Y['mt_48'], seg), (0xEA, Y['mt_largest'], seg), (0xEA, Y['mt_xenv'], seg)], [b.hex() for b in gb])
     check('task 0 is the Executive: its PSP the root process\'s',
           k.pc.u16(seg, Y['mt_tab'] + 2) == k.u16('root_psp'), (hex(k.pc.u16(seg, Y['mt_tab'] + 2)), hex(k.u16('root_psp'))))
     t0, b0 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
@@ -2633,6 +2639,200 @@ def t_park():
           and r1 <= gv[1] < r1 + k.pc.u16(r1 - 1, 3) and 'MTLAUNCH: error 5' in o1 and s1 == TS_WAITK
           and vec(k, 0x62) == v62 and back(), (r1, r2, va, gv, o1, s1, now()))
 
+MTGR = os.path.join(HERE, 'MTGROW.COM')
+
+def t_grow():
+    print('== a task\'s region grows on demand (T5a)')
+    k = boot('mt_grow.img', b'MULTITASK=1\r\n', 88, MTGR)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    k.pc.wr(0, 0x62 * 4, struct.pack('<HH', 0x5678, 0x1234))   # (INT 62h: a known vector, in each spawn's TX_GSN)
+    m0, s0, e0, v62 = merged(mcbs(k)), sft_used(k), ems_used(k), vec(k, 0x62)
+    au = Audit(k)
+    TXP, STP, GRES, TE_REG, TE_PSP, TE_PH = equ('TX_PARAS'), equ('ST_PARAS'), equ('MT_GRES'), 4, 2, equ('TE_PH')
+    ent = lambda n, f: k.pc.u16(seg, task_ent(k, n) + f)
+    rsz = lambda reg: k.pc.u16(reg - 1, 3)
+    def below(reg):                     # the block just below a region: (its MCB, owner, paragraphs); none: zeros
+        return next(((s, own, sz) for s, t, own, sz, nm in mcbs(k) if s + sz + 1 == reg - 1), (0, 0, 0))
+    def chain(reg):                     # the task's own chain, from its region's start (grown: its first block)
+        out, s = [], reg
+        while len(out) < 40:
+            t, own, sz, nm = chr(k.pc.rd(s, 0, 1)[0]), k.pc.u16(s, 1), k.pc.u16(s, 3), bytes(k.pc.rd(s, 8, 2))
+            out.append((s, t, own, sz, nm))
+            if t != 'M': break
+            s += sz + 1
+        return out
+    def lines_of(f): return [x for x in (A.disk_file(k, f) or b'').decode('latin-1').split('\r\n') if x]
+    def g(key, f='G.TXT', t=0.6):       # a key to MTGROW (in front): the line it wrote ('' if none came)
+        n0 = len(lines_of(f))
+        k.key(key, settle=False); k.run_for(t)
+        l = lines_of(f)
+        return l[-1] if len(l) > n0 else ''
+    def gp(w, f='G.TXT'):               # "p" and w's 4 hex digits: 48h of w paragraphs
+        n0 = len(lines_of(f))
+        for c in 'p%04X' % w: k.key(c, settle=False); k.run_for(0.1)
+        k.run_for(1.0)
+        l = lines_of(f)
+        return l[-1] if len(l) > n0 else ''
+    def emsr(ph, para, n):              # n bytes from paragraph para of EMS handle ph's pages
+        st, out, off = k.pc.rd(0x60, Y['ems_h'] + ph * 4, 1)[0], b'', para * 16
+        while len(out) < n:
+            o, c = off % 0x4000, min(n - len(out), 0x4000 - off % 0x4000)
+            out += k.pc.ems_read(k.pc.ems_page(k.pc.rd(0x60, Y['ems_ltab'] + st + off // 0x4000, 1)[0]), o, c)
+            off += c
+        return out
+    def ans(l):                         # "A aaaa c bbbb" -> (AX, CF, BX)
+        p = l.split()
+        return (int(p[1], 16), int(p[2]), int(p[3], 16)) if len(p) == 4 else (None, None, None)
+    # in task 0 (LCMD's own prompt, full screen): nothing grows, a 48h that fails fails (CF), as with the switch off
+    sh.run('mtgrow.com k 0 z.txt')
+    a0 = merged(mcbs(k))
+    lz, lzh = gp(0xE000, 'Z.TXT'), g('h', 'Z.TXT')
+    a1 = merged(mcbs(k))
+    lzq = g('q', 'Z.TXT')
+    check('MTGROW K in task 0 (LCMD\'s own prompt): 48h E000h paragraphs fails, CF set and AX 8 (%s); 48h FFFFh too (%s); '
+          'the arena as it was; "q" (%s)' % (lz, lzh, lzq), ans(lz)[:2] == (8, 1) and ans(lzh)[:2] == (8, 1) and a1 == a0
+          and lzq == 'Q', (lz, lzh, show(a0), show(a1)))
+    # MTSPIN first (T1: the top region; it computes beside), then MTGROW S with 16 KB (T2, below it)
+    typ(k, 'start /w mtspin.com 60000 sp.txt', 0.5)
+    sh.run('start /m:16 mtgrow.com s 600 g.txt')
+    n = 2
+    st = tstate(k)
+    reg0, tx0, stp = ent(n, TE_REG), ent(n, TE_TX), ent(n, TE_PSP)
+    rs0, b0, stub0 = rsz(reg0), below(reg0), bytes(k.pc.rd(stp, 0, STP * 16))
+    l1 = g('2')                         # 32 KB: its 16 KB arena has no room
+    a1, reg1 = ans(l1), ent(n, TE_REG)
+    b1, c1, d1 = below(reg1), chain(reg1), reg0 - reg1
+    check('MTGROW (16 KB, shrunk to its size) asks 48h for 32 KB: served (%s) at its region\'s new start; the region\'s '
+          'MCB %Xh lower (802h: the block, its MCB and the TX\'s, in steps of 4 KB) and as much bigger, still "T2"; the '
+          'block below %Xh smaller; TE_TX and the stub kept' % (l1, d1, b0[2] - b1[2]),
+          st[0][-1][0] == n and a1[:2] == (reg1 + 1, 0) and d1 == 0x900 and rsz(reg1) == rs0 + d1
+          and b1[2] == b0[2] - d1 and ent(n, TE_TX) == tx0 and bytes(k.pc.rd(stp, 0, STP * 16)) == stub0
+          and k.pc.u16(reg1 - 1, 1) == 8 and bytes(k.pc.rd(reg1 - 1, 8, 2)) == b'T2', (st, l1, hex(reg0), hex(reg1), b0, b1))
+    owner = c1[0][2]
+    check('... the task\'s own chain: the block (800h, MTGROW\'s), the rest free (FDh), then the TX, stub and environment '
+          'a block of the system\'s ("TX", owner 8) up to its old arena, the last block ending at the region\'s end',
+          c1[0][1:4] == ('M', owner, 0x800) and owner not in (0, 8) and c1[1][1:4] == ('M', 0, 0xFD)
+          and c1[2][0] == tx0 - 1 and c1[2][2] == 8 and c1[2][4] == b'TX' and c1[2][3] > TXP + STP
+          and c1[-1][1] == 'Z' and c1[-1][0] + c1[-1][3] + 1 == reg1 + rsz(reg1), c1)
+    l2 = g('2')                         # again: the chain's first block MTGROW's
+    a2, reg2 = ans(l2), ent(n, TE_REG)
+    c2 = chain(reg2)
+    check('48h 32 KB again (the first block a program\'s): a free block in front of it, %Xh lower (801h, rounded), the '
+          'block served from it (%s)' % (reg1 - reg2, l2), a2[:2] == (reg2 + 1, 0) and reg1 - reg2 == 0x900
+          and c2[0][1:4] == ('M', owner, 0x800) and c2[1][1:4] == ('M', 0, 0xFE) and c2[2][0] == reg1, (l2, c2[:4]))
+    l3 = g('f')
+    l4 = g('3')                         # 48 KB: the first block free (8FFh, merged), too small
+    a4, reg3 = ans(l4), ent(n, TE_REG)
+    c3 = chain(reg3)
+    check('49h of that block (%s), then 48h 48 KB: the free first block grown by what it lacks (C00h - 8FFh, in steps '
+          'of 4 KB: %Xh lower) and served (%s)' % (l3, reg2 - reg3, l4), l3 == 'F 0' and a4[:2] == (reg3 + 1, 0)
+          and reg2 - reg3 == 0x400 and c3[0][1:4] == ('M', owner, 0xC00), (l3, l4, c3[:3]))
+    sw, prev, swa = [0], k.pc.watch, seg * 16 + Y['mt_switch']
+    def w(a):
+        if prev: prev(a)
+        if a == swa and k.pc.rd(seg, Y['mt_cur'], 1)[0] == n: sw[0] += 1
+    k.pc.watch = w
+    lr = g('r', t=1.5)                  # code run in that block (grown), switched from meanwhile (MTSPIN beside)
+    k.pc.watch = prev
+    check('a routine copied into that block runs there 9 ticks (%s), the task switched from there and back meanwhile '
+          '(%d times)' % (lr, sw[0]), lr.startswith('R ') and int(lr[2:], 16) > 0 and sw[0] >= 2, (lr, sw[0]))
+    big = max((sz for s, t, own, sz, nm in chain(ent(n, TE_REG)) if own == 0), default=0)
+    lh = g('h')
+    check('48h FFFFh (a question, not a need): not grown, AX 8 and BX the arena\'s own largest (%s, %Xh)' % (lh, big),
+          ans(lh) == (8, 1, big) and ent(n, TE_REG) == reg3, (lh, hex(big)))
+    ms = []                             # the arena full (the largest block taken till none is left); then
+    for _ in range(8):                  #  EXEC: the child grows it
+        ms.append(g('m'))
+        if ans(ms[-1])[1] or ans(ms[-1])[2] == 0: break
+    regm = ent(n, TE_REG)
+    lx = g('x', t=2.0)
+    lines = [x for x in A.disk_file(k, 'G.TXT').decode('latin-1').split('\r\n') if x]
+    check('every free block taken (%s), then EXEC of a child (MTGROW C): its region grown for it (%Xh lower: its '
+          'environment\'s block), it ran (its line "C") and ended (%s)' % (ms, regm - ent(n, TE_REG), lx),
+          ans(ms[-1])[:2] == (8, 1) and lines[-2] == 'C' and lines[-1][:3] == 'X 0' and ent(n, TE_REG) < regm,
+          (ms, lines[-3:], hex(regm), hex(ent(n, TE_REG))))
+    ls = g('s')                         # a hole of 20h paragraphs: room for the environment, not the program
+    for _ in range(8):
+        if ans(g('m'))[1]: break
+    le = g('e')
+    rege = ent(n, TE_REG)
+    lx2 = g('x', t=2.0)
+    lines = [x for x in A.disk_file(k, 'G.TXT').decode('latin-1').split('\r\n') if x]
+    check('a hole of 20h paragraphs left (%s, %s), the rest taken, then EXEC again: its environment there, its program '
+          'not: the region grown for the program (%Xh lower; mt_largest), it ran and ended (%s)'
+          % (ls, le, rege - ent(n, TE_REG), lx2), ans(ls)[1] == 0 and le == 'E 0' and lines[-2] == 'C'
+          and lines[-1][:3] == 'X 0' and ent(n, TE_REG) < rege, (ls, le, lines[-3:]))
+    # boxed in: a task started now has its region just below this one
+    front(k, 0)
+    sh.run('start /w mtline.com bx.txt')
+    front(k, n)
+    regb = ent(n, TE_REG)
+    lb = g('1')
+    regb1 = ent(n, TE_REG)
+    front(k, 3); line(k, ''); front(k, n)
+    lb2 = g('1')
+    check('a task started below it (MTLINE, task 3): 48h 16 KB refused, nothing changed (%s); it ends, its place free: '
+          'served (%s)' % (lb, lb2), ans(lb)[:2] == (8, 1) and regb1 == regb and ans(lb2)[1] == 0
+          and ent(n, TE_REG) < regb, (lb, lb2, hex(regb), hex(regb1)))
+    # MT_GRES: the block below keeps room for a task of 64 KB and a .RUN
+    refused = None
+    for _ in range(8):
+        regr = ent(n, TE_REG)
+        l9 = g('9')                     # 144 KB at a time, till refused
+        if ans(l9)[1]: refused = (l9, regr == ent(n, TE_REG), below(regr)[2]); break
+    fb = below(ent(n, TE_REG))[2]
+    ln = gp(max(fb - GRES, 1))          # (with the free block's MCB, one paragraph more than it can give)
+    check('48h 144 KB, again and again, till refused (%s): the block below it (%Xh) can\'t give that and keep MT_GRES '
+          '(%Xh); %Xh paragraphs, which leave MT_GRES but one paragraph: refused too, nothing changed (%s)'
+          % (refused, fb, GRES, fb - GRES, ln), refused and refused[1] and GRES <= fb < 0x2401 + GRES and ans(ln)[:2] == (8, 1)
+          and below(ent(n, TE_REG))[2] == fb, (refused, hex(fb), ln))
+    # parked and back: its TX at its pages' start (mt_pmap), the region back byte for byte
+    front(k, 0)
+    regp, szp = ent(n, TE_REG), rsz(ent(n, TE_REG))
+    img = bytes(k.pc.rd(regp, 0, szp * 16))
+    txb = bytes(k.pc.rd(tx0, 0, TXP * 16))
+    op = sh.run('park 2 && echo PARKED')
+    ph, ga = k.pc.rd(seg, task_ent(k, n) + TE_PH, 1)[0], tx0 - regp
+    inems = bool(ph) and emsr(ph, 0, TXP * 16) == txb and emsr(ph, 0, (szp - ga) * 16) == img[ga * 16:] \
+        and emsr(ph, szp - ga, ga * 16) == img[:ga * 16]
+    free = k.pc.u16(regp - 1, 1) == 0
+    k.pc.wr(regp, 0, b'\x5A' * (szp * 16))       # (its place, free meanwhile, written over)
+    ou = sh.run('unpark 2 && echo BACK')
+    check('PARK 2 (grown by %Xh): its pages hold its TX first, then the rest to its end, then what is below its TX '
+          '(%s); its place free (%s); UNPARK 2: in its place, every byte back' % (reg0 - regp, inems, free),
+          'PARKED' in op and inems and free and 'BACK' in ou and ent(n, TE_REG) == regp
+          and bytes(k.pc.rd(regp, 0, szp * 16)) == img, (op[-200:], inems, free, ou[-200:]))
+    # a hook left in a grown block: KILL puts it back (mt_vfix: the TX's table)
+    front(k, n)
+    lv = g('v')
+    hooked = vec(k, 0x62)
+    front(k, 0)
+    ok = sh.run('kill 2 && echo KILLED')
+    check('INT 62h hooked into a grown block (%s, %04X:%04X), then KILL 2: put back as it was, its region freed'
+          % (lv, hooked[0], hooked[1]), lv == 'V' and ent(n, TE_REG) <= hooked[0] < ent(n, TE_TX) and 'KILLED' in ok
+          and vec(k, 0x62) == v62 and b'T2' not in [b[4] for b in mcbs(k) if b[2]], (lv, hooked, ok[-200:], vec(k, 0x62)))
+    # K: a .COM that keeps all it was given, then a 48h of exactly what the block below can give but MT_GRES
+    sh.run('start /m:16 mtgrow.com k 0 k.txt')
+    n2 = tstate(k)[0][-1][0]
+    r0 = ent(n2, TE_REG)
+    fk = below(r0)[2]
+    w = fk - GRES - 2                   # (the first growth: the block, its MCB and the TX's)
+    lk = gp(w, 'K.TXT')
+    r1 = ent(n2, TE_REG)
+    lq = g('q', 'K.TXT')
+    check('MTGROW K (keeps its whole arena) asks 48h for exactly what the block below it (%Xh) can give and keep MT_GRES '
+          '(%Xh, %s): its region %Xh lower (not rounded: that wouldn\'t fit), MT_GRES left; "q": it ends, the grown region '
+          'freed' % (fk, w, lk, r0 - r1), ans(lk)[:2] == (r1 + 1, 0) and r0 - r1 == w + 2 and below(r1)[2] == GRES
+          and lq == 'Q' and b'T%d' % n2 not in [b[4] for b in mcbs(k) if b[2]], (lk, lq, hex(r0), hex(r1), hex(fk)))
+    front(k, 0)
+    sh.run('kill 1')
+    k.run_for(1.0)
+    check('... MTSPIN killed too: memory, files and EMS as before', tstate(k)[0] == [(0, 1, 'Executive')]
+          and merged(mcbs(k)) == m0 and sft_used(k) == s0 and ems_used(k) == e0, (tstate(k), show(mcbs(k))))
+    check('... every switch at a safe point (the audit)', not au.bad(), au.bad()[:3])
+
 def t_lcmd():
     print('== LCMD\'s START, FG, KILL, PARK, UNPARK and WAIT (M7a)')
     cmds = ('start mtline.com x.txt', 'fg 1', 'kill 1', 'park 1', 'unpark 1', 'wait 1')
@@ -2651,7 +2851,8 @@ def t_lcmd():
                          b'if errorlevel 7 echo LEVEL7\r\necho DONE\r\n')
     sg = os.path.join(A.OUT, 'SG.BAT'); open(sg, 'wb').write(b'@echo off\r\nstart /w mtline.com sg.txt\r\necho BATDONE\r\n')
     cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
-    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, cl,
+    huge = mz(os.path.join(A.OUT, 'HUGE.EXE'), 0xA000, 0xA000)     # (more than any free block: no region grows to it)
+    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, cl, huge,
              os.path.join(HERE, 'UPPER.COM'))
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
@@ -2782,14 +2983,15 @@ def t_lcmd():
     o2 = sh.run('kill 1 && kill 2 && kill 3 && kill 4 && kill 5 && kill 6 && kill 7 && echo KILLED')
     check('seven tasks and the Executive\'s: the next START says "Too many tasks" and fails',
           n == 8 and 'Too many tasks' in o1 and 'FAILED' in o1 and 'KILLED' in o2 and back(), (n, o1, o2))
-    # a program that can't be started (LCMD.COM in 1 KB): the task ends at once, its code FF08h; WAIT says so
+    # a program that can't be started (HUGE.EXE in 1 KB, asking 640 KB: not even a region that grows, T5a, has room
+    # for it): the task ends at once, its code FF08h; WAIT says so
     sh.run('set task=1')                # (both environments copied alike: the next one in the same place)
-    o1 = sh.run('start /w /m:1 lcmd.com')
+    o1 = sh.run('start /w /m:1 huge.exe')
     k.run_for(0.5)
     x1 = xc(1)
     o2 = sh.run('wait 1 || echo FAILED')
     o3 = sh.run('if errorlevel 8 echo LEVEL8')
-    check('START /M:1 LCMD.COM: started, but its program can\'t be (EXEC: no memory): MT_EXIT\'s code FF08h; WAIT says it '
+    check('START /M:1 HUGE.EXE: started, but its program can\'t be (EXEC: no memory): MT_EXIT\'s code FF08h; WAIT says it '
           'couldn\'t be started, fails, ERRORLEVEL 8', 'error' not in o1.lower() and x1 and x1.group(3) == 'FF08'
           and 'could not be started' in o2 and 'FAILED' in o2 and 'LEVEL8' in o3 and back(),
           (o1, x1 and x1.groups(), o2, o3))
@@ -3030,11 +3232,12 @@ def t_exec():
 def t_lists():
     print('== LODE.INI\'s BG=, FREEZE= and MTMEM= (M7b)')
     k = boot('mt_li.img', b'MULTITASK=1\r\nbg=mtspin, upper;X MTLIN\r\nFREEZE=MTLINE.EXE MTCWD.COM\r\n'
-             b'MTMEM=MTLINE:100;LCMD.COM:1 BAD BIG:5000 MTCWD:0 ,\r\n', 88, os.path.join(HERE, 'UPPER.COM'))
+             b'MTMEM=MTLINE:100;HUGE.EXE:1 BAD BIG:5000 MTCWD:0 ,\r\n', 88, os.path.join(HERE, 'UPPER.COM'),
+             mz(os.path.join(A.OUT, 'HUGE.EXE'), 0xA000, 0xA000))
     seg, Y = mt_seg(k), k.Y
     bg = b'MTSPIN\0\0\0UPPER\0\0\0X\0\0\0MTLIN\0\0\0\0'
     fz = b'MTLINE.EXE\0\0\0MTCWD.COM\0\0\0\0'
-    mm = b'MTLINE\0' + struct.pack('<H', 100) + b'LCMD.COM\0' + struct.pack('<H', 1) + b'\0'
+    mm = b'MTLINE\0' + struct.pack('<H', 100) + b'HUGE.EXE\0' + struct.pack('<H', 1) + b'\0'
     got = bytes(k.pc.rd(seg, Y['mt_ini'], len(bg + fz + mm)))
     ptr = [k.pc.u16(seg, Y[n]) for n in ('mt_lbg', 'mt_lfz', 'mt_lmem')]
     i0 = Y['mt_ini']
@@ -3065,11 +3268,11 @@ def t_lists():
     a1 = k.pc.u16(seg, Y['mt_arena'])
     line(k, '=0'); k.run_for(1.0); k.settle()
     b1 = k.band()
-    ret(k, 'LCMD.COM', 1.5); k.settle()
+    ret(k, 'HUGE.EXE', 1.5); k.settle()
     b2 = k.band()
-    check('Return: MTMEM= too (MTLINE.COM: 1900h paragraphs, not a .COM\'s 64 KB); LCMD.COM with 1 KB: "LCMD.COM could '
-          'not be started: error 8"', a1 == 0x1900 and b1[:1] == ['MTLINE.COM ended'] and
-          b2[:1] == ['LCMD.COM could not be started: error 8'] and tstate(k)[0] == [(0, 1, 'Executive')], (a1, b1, b2))
+    check('Return: MTMEM= too (MTLINE.COM: 1900h paragraphs, not a .COM\'s 64 KB); HUGE.EXE with 1 KB (it asks 640 KB: no '
+          'growth has room for it): "HUGE.EXE could not be started: error 8"', a1 == 0x1900 and b1[:1] == ['MTLINE.COM ended']
+          and b2[:1] == ['HUGE.EXE could not be started: error 8'] and tstate(k)[0] == [(0, 1, 'Executive')], (a1, b1, b2))
 
 def t_tasksrun():
     print('== TASKS.RUN: the tasks, CODE-T (M7b)')
@@ -4914,12 +5117,12 @@ if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

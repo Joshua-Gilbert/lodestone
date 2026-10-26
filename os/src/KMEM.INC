@@ -232,18 +232,20 @@ mem_free_owner:
         pop     bx
         ret
 
-; largest free block -> BX
+; largest free block -> BX.  (KMT.INC: MULTITASK=1 makes its first 5
+; bytes a far jump to mt_largest, which comes back to .x)
 mem_largest:
         push    ax
         push    dx
         mov     bx, 0FFFFh
         xor     dx, dx
         call    mem_alloc               ; fails with BX = largest
-        pop     dx
+.x:     pop     dx
         pop     ax
         ret
 
-; INT 21h 48h, 49h, 4Ah
+; INT 21h 48h, 49h, 4Ah.  (KMT.INC: MULTITASK=1 makes f_48's first 5
+; bytes a far jump to mt_48)
 f_48:   mov     bx, [bp+F_BX]
         mov     dx, [cur_psp]
         call    mem_alloc
