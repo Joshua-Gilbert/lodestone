@@ -2965,7 +2965,7 @@ h_letter    db 'Type its first letter    find a name',0
 h_confirm   db 'Return or click again    open it / next item',0
 h_usage     db 'CODE-U                   System',0
 h_write     db 'CODE-W                   Write (a new file)',0
-h_claude    db 'CODE-A                   Claude (Shift: full screen)',0
+h_claude    db 'CODE-A                   Claude',0
 h_calc      db 'CODE-K                   Calculator',0
 h_shell     db 'CODE-P                   Command prompt',0
 h_tasks     db 'CODE-T                   Tasks',0

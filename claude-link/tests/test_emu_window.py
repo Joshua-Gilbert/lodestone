@@ -102,6 +102,16 @@ def test_window_term():
         assert wait_wtext(h, 'You said: hello'), wtext(h)
         assert win_in_step(h), wtext(h)
         assert desc(h)['chg'] > chg + 3, (chg, desc(h)['chg'])
+        t = h.router.term                                       # (a cursor shown: BH its row, BL its column)
+        with t.lock:
+            t.stream.feed(b'\x1b[?25h\x1b[5;12H'); t._mark()
+        t.link.wake()
+        assert win_in_step(h), (wtext(h), hex(desc(h)['cur']))
+        assert desc(h)['cur'] == 0x040B and not desc(h)['flags'] & PBF_NOCUR, (hex(desc(h)['cur']), desc(h)['flags'])
+        with t.lock:
+            t.stream.feed(b'\x1b[?25l'); t._mark()
+        t.link.wake()
+        assert win_in_step(h) and desc(h)['flags'] & PBF_NOCUR, desc(h)['flags']
         h.term_type('big'); h.press(0x1C0D)
         assert wait_wtext(h, 'line 59'), wtext(h)
         assert win_in_step(h), wtext(h)

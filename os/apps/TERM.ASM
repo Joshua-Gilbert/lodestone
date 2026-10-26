@@ -378,8 +378,10 @@ show:   push    es
 
 ; T5d: the window's rows as drawn moved up k (the task scrolled, or the
 ; view moved down): the shadow's row k (1 to rows - 1) the view's new row
-; 0, and its last the new row rows - 1 - k.  Those rows moved up on the
-; screen and in the shadow, the k below them left for cells to draw.  Not
+; 0, and of the new rows 1 to rows - 1 - k at least half the shadow's k
+; lower (not all: a status line under them may stay, as CLAUDE's).  Those
+; rows moved up on the screen and in the shadow, the k below them left
+; for cells to draw (as any that differ: cells compares).  Not
 ; with a selection (it stays on its positions), nor with the window's
 ; columns past the task's (40)
 scrl:   mov     ax, [sa]
@@ -422,39 +424,50 @@ scrl:   mov     ax, [sa]
         cmp     bp, [cs:rows]
         jb      .k
         jmp     .n
-.v:     mov     ax, [cs:rows]           ; (and the last row moved)
+.v:     mov     ax, [cs:rows]           ; (the rows below it)
         dec     ax
+        sub     ax, bp
+        jz      .m
+        mov     [cs:r_n], ax
+        mov     ax, [cs:ncols]
+        shl     ax, 1
+        mov     [cs:stride], ax         ; (cells sets it again)
+        mov     ax, bp
         mov     dx, 160
         mul     dx
-        add     ax, SHD
+        add     ax, SHD                 ; (AX: the shadow's row i + k, BX:
+        mov     bx, [cs:c_at]           ;  the new row i, DX: those alike)
+        xor     dx, dx
+.vl:    add     ax, 160
+        add     bx, [cs:stride]
+        mov     si, bx
         mov     di, ax
+        mov     cx, [cs:cols]
+        repe    cmpsw
+        jne     .vn
+        inc     dx
+.vn:    dec     word [cs:r_n]
+        jnz     .vl
         mov     ax, [cs:rows]
         dec     ax
         sub     ax, bp
-        mul     word [cs:ncols]
-        shl     ax, 1
-        add     ax, [cs:c_at]
-        mov     si, ax
-        mov     cx, [cs:cols]
-        repe    cmpsw
-        jne     .nk
-        mov     ax, bp                  ; the shadow: rows k on to 0 on, the
-        mov     dx, 160                 ;  k below drawn again
-        mul     dx
-        mov     dx, ax                  ; (DX: k x 160)
+        shr     ax, 1
+        cmp     dx, ax
+        jb      .nk
+.m:     mov     ax, bp                  ; the shadow: rows k on to 0 on (the
+        mov     dx, 160                 ;  k below left as they were, as on
+        mul     dx                      ;  the screen)
+        push    ax                      ; (k x 160)
         mov     si, ax
         add     si, SHD
         mov     di, SHD
-        mov     cx, [cs:rows]
-        sub     cx, bp
-        mov     ax, 80
+        mov     ax, [cs:rows]
+        sub     ax, bp
+        mov     cx, 80
         mul     cx
         mov     cx, ax
         rep     movsw
-        mov     cx, dx
-        shr     cx, 1
-        mov     ax, NOCELL
-        rep     stosw
+        pop     dx                      ; (DX: k x 160)
         mov     ax, VSEG                ; the screen: in each bank, its lines
         mov     ds, ax                  ;  ((rows - k) x 4 of them) from k x 4
         mov     es, ax                  ;  lines below, the window's columns

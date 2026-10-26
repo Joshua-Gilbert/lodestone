@@ -553,12 +553,16 @@ mt_kwant:
 
 ; front task AL: task 0 switched from at a drag's wait, and the mouse
 ; moved (or a button) since?  ZF clear if so: it runs next, so a drag
-; follows the mouse while tasks behind take the pauses.  Registers kept
+; follows the mouse while tasks behind take the pauses.  T5d: from its
+; idle too (it gives the rest of its turn away there, mw_poll), and a key
+; waiting as well.  Registers kept
 mt_mwant:
         or      al, al
         jnz     .no
         cmp     byte [cs:mt_mdrag], 0
         je      .x
+        call    mt_kin
+        jnz     .x
         push    ds
         push    es
         push    bx
@@ -598,8 +602,10 @@ mt_mdset:
         cmp     bx, [ui_seg]
         jne     .s
         cmp     word [cs:mt_lip], ..@ui_midle
+        je      .m
+        cmp     word [cs:mt_lip], ..@ui_idle    ; (T5d: its idle's too)
         jne     .s
-        inc     ax
+.m:     inc     ax
         mov     bx, [es:mx]
         mov     [cs:mt_mx], bx
         mov     bx, [es:my]
@@ -6829,11 +6835,12 @@ mt_xenv:
 
 ; EXEC's largest block with MT on (mem_largest: JMP FAR; EXEC its only
 ; caller): in a task, one below the program's minimum (ex_min) grows the
-; region to it (mt_grow) and is asked again.  A .COM's is its whole
-; segment, 64 KB (T5d): it may use all of it without asking (DOS gives
-; it the largest block; LCMD clears its BSS first), and the room grown
-; lies under the task's TX.  If that can't be had, ex_min.  -> BX; DS =
-; KSEG
+; region to it (mt_grow) and is asked again.  T5d: a .COM may use its
+; whole segment without asking (DOS gives it the largest block; LCMD
+; clears its BSS first), and in a grown region its block can end at the
+; TX: one short of its minimum, or in a grown region (TE_TX not TE_REG)
+; with less than 64 KB, has the region grown to 64 KB for it (else to
+; its minimum, as an .EXE).  -> BX; DS = KSEG
 mt_largest:
         push    ax
         push    dx
@@ -6842,28 +6849,34 @@ mt_largest:
         KCALL   mem_alloc               ; (fails with BX = largest)
         cmp     byte [cs:mt_cur], 0
         je      .x
-        mov     ax, [ex_min]
         cmp     byte [ex_isexe], 0
-        jne     .m
-        cmp     ax, 1000h
-        jae     .m
-        mov     ax, 1000h
-.m:     cmp     bx, ax
+        jne     .n
+        cmp     word [ex_min], 1000h
+        jae     .n
+        cmp     bx, 1000h               ; a .COM: 64 KB there?
         jae     .x
-        push    bx
-        mov     bx, ax
+        cmp     bx, [ex_min]
+        jb      .c
+        push    bx                      ; (enough for its minimum: in a grown
+        mov     al, [cs:mt_cur]         ;  region, 64 KB if it can grow)
+        call    mt_ent
+        mov     ax, [cs:bx+TE_TX]
+        cmp     ax, [cs:bx+TE_REG]
+        pop     bx
+        je      .x
+.c:     push    bx
+        mov     bx, 1000h
         call    mt_grow
         pop     bx
         jnc     .a
-        cmp     bx, [ex_min]            ; (64 KB not there: its minimum)
-        jae     .x
+.n:     cmp     bx, [ex_min]            ; (64 KB not there, or an .EXE: its
+        jae     .x                      ;  minimum)
         push    bx
         mov     bx, [ex_min]
         call    mt_grow
         pop     bx
         jc      .x
-.a:
-        mov     bx, 0FFFFh
+.a:     mov     bx, 0FFFFh
         xor     dx, dx
         KCALL   mem_alloc
 .x:     jmp     KSEG:mem_largest.x
