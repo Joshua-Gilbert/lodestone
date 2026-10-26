@@ -192,7 +192,7 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
 **Next:**
-- **Resident Claude:** the program's screen read in the background (CLAUDE 1.11) on the 1520, with the bridge's quiet firmware flashed.
+- **Resident Claude:** the program's screen read in the background (CLAUDE 1.11) on the 1520, with the bridge's quiet firmware flashed, and the mascot in the console (1.12).
 - **ROM 2:** the second, data-only ROM is there (DEFRAG.COM and TERM.FNT, joined to R:); CLAUDE.COM and heavier programs are to follow onto it.
 - **Terminal windows** (multitasking, `docs/lodestone-multitasking.md` T1-T6): with `MULTITASK=1`, a text program started from the Executive, and CODE-P's command prompt, runs in a window of its own (Shift-Return and Shift-CODE-P: full screen, as before); its memory grows as its program asks for more, when there is room below it; one that goes into a graphics mode is full screen until it comes back to text. Its text is selected with the mouse, copied (CODE-C) and pasted into it as keys (CODE-V), with a right-click menu as Write's, and a program in it that uses the mouse gets its clicks there. A program can publish its screen, its cells and its own font, for its window to draw. CLAUDE.COM's window mode is to follow.
 - **Voice on the Pi:** push-to-talk and spoken answers.
