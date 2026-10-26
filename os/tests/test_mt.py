@@ -148,16 +148,16 @@ def t_off():
                            ('MULTITASK=One', b'MULTITASK=One\r\n', 88), ('MULTITASK= (empty)', b'MULTITASK=\r\n', 88),
                            ('MULTITASK=1 but no EMS', b'MULTITASK=1\r\n', 0)):
         k = boot('mt_off.img', text, ems)
-        check('%s: no MT block, INT 08h, 10h and 16h the BIOS\'s, f_F0, kbd_get.k, done.sw, f_48, mem_largest and f_4B.xe as '
-              'assembled' % tag, mt_seg(k) is None and vec(k, 8) == INT08 and vec(k, 0x10) == INT10 and vec(k, 0x16) == INT16
+        check('%s: no MT block, INT 08h, 10h and 16h the BIOS\'s, f_F0, kbd_get.k, done.sw, f_48, mem_largest, f_4B.xe and gp_isr.e '
+              'as assembled' % tag, mt_seg(k) is None and vec(k, 8) == INT08 and vec(k, 0x10) == INT10 and vec(k, 0x16) == INT16
               and f0_bytes(k) == sysb[k.Y['f_F0']:k.Y['f_F0'] + 5]
               and kw_bytes(k) == sysb[k.Y['kbd_get.k']:k.Y['kbd_get.k'] + 6] and dx_bytes(k) == EXIT5
-              and all(bytes(k.pc.rd(0x60, k.Y[s], 5)) == sysb[k.Y[s]:k.Y[s] + 5] for s in ('f_48', 'mem_largest', 'f_4B.xe')),
+              and all(bytes(k.pc.rd(0x60, k.Y[s], 5)) == sysb[k.Y[s]:k.Y[s] + 5] for s in ('f_48', 'mem_largest', 'f_4B.xe', 'gp_isr.e')),
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
-            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh and 1Eh-22h fail with AX = 1' % tag,
-                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220, 0x21, 0x121, 0x221, 0x321, 0x22, 0x122, 0x222, 0x322)),
+            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh and 1Eh-23h fail with AX = 1' % tag,
+                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220, 0x21, 0x121, 0x221, 0x321, 0x22, 0x122, 0x222, 0x322, 0x23, 0x123)),
                   out[-400:])
             sh = Shell(k)
             o = sh.run('mtlaunch mtline.com x.txt')
@@ -201,6 +201,9 @@ def t_on():
           'f_48\'s, mem_largest\'s and f_4B.xe\'s first 5 bytes: a task\'s region grows, T5a)',
           [(b[0], b[1] | b[2] << 8, b[3] | b[4] << 8) for b in gb]
           == [(0xEA, Y['mt_48'], seg), (0xEA, Y['mt_largest'], seg), (0xEA, Y['mt_xenv'], seg)], [b.hex() for b in gb])
+    gb = bytes(k.pc.rd(0x60, Y['gp_isr.e'], 5))
+    check('the GPIB driver\'s SRQ interrupt goes through mt_srqi at its EOI (JMP FAR over gp_isr.e\'s MOV AL,20h / OUT 20h,AL / '
+          'POP DS: T5c)', (gb[0], gb[1] | gb[2] << 8, gb[3] | gb[4] << 8) == (0xEA, Y['mt_srqi'], seg), gb.hex())
     check('task 0 is the Executive: its PSP the root process\'s',
           k.pc.u16(seg, Y['mt_tab'] + 2) == k.u16('root_psp'), (hex(k.pc.u16(seg, Y['mt_tab'] + 2)), hex(k.u16('root_psp'))))
     t0, b0 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
@@ -222,6 +225,10 @@ def t_on():
     check('F0h AL=22h (MT_PUB, T5b): CL = 0 from task 0 and CL = 1 for task 0 refused (AX = 5); CL = 1 for 7 (a free one) '
           'and CL = 2: AX = 1', all(got.get(a, (0, 0))[:2] == (1, 5) for a in (0x22, 0x122))
           and all(bad(got.get(a, (0, 0))) for a in (0x222, 0x322)), out[-500:])
+    gi = k.pc.rd(0x60, Y['gp_irq'], 1)[0]
+    check('F0h AL=23h (MT_WAKE, T5c) from task 0: BL = 1, then 0, both CF clear, AX = the driver\'s IRQ (%d); none '
+          'left afterwards (mt_wkt FFh)' % gi, got.get(0x23, (1,))[:2] == (0, gi) and got.get(0x123, (1,))[:2] == (0, gi)
+          and k.pc.rd(seg, Y['mt_wkt'], 1)[0] == 0xFF, out[-300:])
     check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, AH = 0 the caller, nothing written',
           got.get(0x12, (1,))[:2] == (0, 0x0000)
           and got[0x12][3] == 1, out[-400:])
@@ -5226,6 +5233,137 @@ def t_tcore():
     check('a parked task (MTSCR, task %s, %s): MT_TROWS and MT_TKEY refused, AX = 5' % (n, st), st == [5]
           and pr[:2] == (1, 5) and got == b'0000 0005', (st, pr[:5], got))
 
+MTSQ = os.path.join(HERE, 'MTSRQ.COM')
+
+def srq_progs(k):
+    """MTSRQ's PSPs: its signature at PSP:107h, an INT 20h at PSP:0, its MCB its own."""
+    mem = bytes(k.pc.rd(0, 0, 0xA0000))
+    out, i = [], mem.find(b'MTSRQ*')
+    while i >= 0:
+        p = (i - 0x107) // 16                           # (and its block still its own: not ended)
+        if (i - 0x107) % 16 == 0 and mem[i - 0x107:i - 0x105] == b'\xcd\x20' and k.pc.u16(p - 1, 1) == p: out.append(p)
+        i = mem.find(b'MTSRQ*', i + 1)
+    return out
+
+def t_srq():
+    print('== T5c: a program woken by SRQ (MT_WAKE)')
+    k = boot('mt_srq.img', b'MULTITASK=1\r\n', 88, MTSQ, chip=A.sim7210.NEC7210(A.sim7210.bus()), irq_exact=True)
+    Y, seg = k.Y, mt_seg(k)
+    au = Audit(k)
+    sh = Shell(k)
+    sh.run('ver')
+    wkt = lambda: k.pc.rd(seg, Y['mt_wkt'], 1)[0]
+    cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+    def tnum_(psp):                                     # (the task whose region holds a PSP)
+        for n in range(8):
+            reg = k.pc.u16(seg, task_ent(k, n) + 4)
+            if n and k.pc.rd(seg, task_ent(k, n), 1)[0] and reg <= psp < reg + k.pc.u16(reg - 1, 3): return n
+        return 0
+    def lat(psp, when, max_s=0.4, at=None):
+        """IRQ 5 raised once when() holds (at the block `at`, if given: from the watch) -> ms until MTSRQ (at
+        psp) sees it, or None."""
+        t1 = k.pc.us + 2e6                              # (short runs: run_for's are 20000 blocks at least)
+        hit, prev, base, t0 = [], k.pc.watch, psp * 16 + 0x10D, []
+        def w(a):
+            if prev: prev(a)
+            if at is not None and not t0 and a == at and when():     # (pcemu's irq_exact armed by hand: taken
+                t0.append(k.pc.us); k.pc.irq_pending.add(5); k.pc.irq_wait = True   #  as IF is set again)
+            if a == base and t0 and not hit: hit.append(k.pc.us)
+        k.pc.watch = w
+        while not t0:
+            if k.pc.us > t1: k.pc.watch = prev; return 'never ready'
+            if at is None and when(): t0.append(k.pc.us); k.pc.irq_pending.add(5)
+            else: k.pc.run(300)
+        while not hit and k.pc.us - t0[0] < max_s * 1e6: k.pc.run(300)
+        k.pc.watch = prev
+        return round((hit[0] - t0[0]) / 1000, 2) if hit else None
+    own = lambda n: lambda: cur() == n and k.pc.r('cs') not in (seg, 0x60) and k.pc.r('flags') & 0x200
+    irq = k.pc.rd(0x60, Y['gp_irq'], 1)[0]
+    gb = bytes(k.pc.rd(0x60, Y['gp_isr.e'], 5))
+    check('the driver\'s SRQ interrupt on (IRQ 5, unmasked), its EOI a JMP FAR to mt_srqi',
+          irq == 5 and not k.pc.pic_mask & 0x20 and (gb[0], gb[1] | gb[2] << 8, gb[3] | gb[4] << 8) == (0xEA, Y['mt_srqi'], seg),
+          (irq, hex(k.pc.pic_mask), gb.hex()))
+    # a program behind asking, a task computing: its turn at once
+    typ(k, 'mtlaunch mtspin.com 9000 s1.txt', 1.0); line(k, '')
+    typ(k, 'mtlaunch mtsrq.com 4', 1.0); line(k, '')
+    ps = srq_progs(k)
+    q = ps[0] if len(ps) == 1 else None
+    nq, nspin = (tnum_(q) if q else None), tnum('MTSPIN.COM')
+    wres = k.pc.u16(q, 0x105) if q else None
+    check('MTSRQ behind asks MT_WAKE: AL = 5 (the driver\'s IRQ); MT holds its task and PSP',
+          q and wres == 5 and wkt() == nq and k.pc.u16(seg, Y['mt_wkp']) == q, (ps, wres, wkt(), nq))
+    ls = [lat(q, own(nspin)) for _ in range(2)]
+    check('IRQ 5 while MTSPIN computes: MTSRQ runs at once, not after MTSPIN\'s turn (%s ms; 3 at most)' % ls,
+          all(isinstance(x, float) and x <= 3.0 for x in ls), (ls, nspin, tstate(k)))
+    lm = lat(q, lambda: cur() == nspin, at=seg * 16 + Y['mt_load.go'])     # (raised under CLI: taken at its STI)
+    check('... IRQ 5 in MT\'s own code as a switch to MTSPIN ends (mt_load\'s STI / RET: not a point to switch from): '
+          'MTSRQ runs at the next tick (%s ms), the wake kept, not lost' % lm, isinstance(lm, float) and 3 < lm <= 60, lm)
+    l4 = lat(q, lambda: cur() == nq)
+    check('... while MTSRQ itself runs (in its HLT): seen at once (%s ms)' % l4, isinstance(l4, float) and l4 <= 3.0, l4)
+    k.run_for(0.3)
+    check('... its fourth SRQ: it ends; its wake with it (mt_wkt FFh)', srq_progs(k) == [] and wkt() == 0xFF,
+          (srq_progs(k), wkt()))
+    # the control: not asked
+    typ(k, 'mtlaunch mtsrq.com 3 o', 1.0); line(k, '')
+    ps = srq_progs(k)
+    q = ps[0] if len(ps) == 1 else None
+    lo = [lat(q, own(nspin)) for _ in range(3)] if q else []
+    check('without MT_WAKE (MTSRQ O): it sees the SRQ only at its turn (%s ms; more than 5)' % lo,
+          q and wkt() == 0xFF and len(lo) == 3 and all(isinstance(x, float) and x > 5 for x in lo), (ps, wkt(), lo))
+    # asked and given up
+    typ(k, 'mtlaunch mtsrq.com 2 f', 1.0); line(k, '')
+    k.run_for(0.3)
+    ps = srq_progs(k)
+    check('... MTSRQ F (asked, then BL = 0): given up (mt_wkt FFh), AL = 5', len(ps) == 1 and wkt() == 0xFF
+          and all(k.pc.u16(x, 0x105) == 5 for x in ps if k.pc.u16(x, 0x105) != 0xFFFF), (ps, wkt()))
+    for _ in range(2): k.pc.irq_pending.add(5); k.run_for(0.5)
+    check('... (it ends after its two SRQs)', srq_progs(k) == [], srq_progs(k))
+    # waiting for a key: not ready, nothing woken; killed: its wake ends with its task
+    typ(k, 'mtlaunch mtsrq.com 1 k', 1.0); line(k, '')
+    ps = srq_progs(k)
+    q = ps[0] if len(ps) == 1 else None
+    nq = tnum_(q) if q else None
+    st = tstate(k)
+    lk = lat(q, own(nspin), 0.2) if q else 'none'
+    check('MTSRQ K, waiting for a key (TS_WAITK): IRQ 5 wakes nothing (not seen; mt_want FFh), MTSPIN goes on',
+          q and wkt() == nq and lk is None and k.pc.rd(seg, Y['mt_want'], 1)[0] == 0xFF, (ps, wkt(), nq, lk, st))
+    o = sh.run('mtlaunch /k:%d' % nq) if nq else ''
+    line(k, ''); k.run_for(0.5)
+    check('... MT_KILL ends its task: its wake too (mt_wkt FFh)', nq and srq_progs(k) == [] and wkt() == 0xFF,
+          (o, srq_progs(k), wkt(), tstate(k)))
+    # task 0: MTSRQ in front, full screen, MTSPIN behind
+    typ(k, 'mtsrq 3', 0.8)
+    ps = srq_progs(k)
+    q = ps[0] if len(ps) == 1 else None
+    l0 = [lat(q, own(nspin)) for _ in range(2)] if q else []
+    check('task 0 asking (MTSRQ in front): woken from MTSPIN\'s turn at once (%s ms)' % l0,
+          q and tnum_(q) == 0 and wkt() == 0 and len(l0) == 2 and all(isinstance(x, float) and x <= 3.0 for x in l0),
+          (ps, wkt(), l0))
+    k.pc.irq_pending.add(5); k.run_for(0.5)
+    check('... it ends at its third: the wake ends with it (task 0\'s too)', srq_progs(k) == [] and wkt() == 0xFF,
+          (srq_progs(k), wkt()))
+    # the Executive in front (a terminal window's case, T5d): idle at its HLT, and busy drawing
+    typ(k, 'mtlaunch mtsrq.com 2', 1.0); line(k, '')
+    typ(k, 'exit', 1.5)
+    ps = srq_progs(k)
+    q = ps[0] if len(ps) == 1 else None
+    ui = k.pc.u16(0x60, Y['ui_seg'])
+    idle = (Y['..@ui_idle'], Y['..@ui_midle'], Y['..@ui_sidle'])
+    le = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') in idle) if q else None
+    check('the Executive in front, idle at its HLT (MTSRQ behind): woken at once (%s ms)' % le,
+          q and k.pc.mode() == 0x40 and isinstance(le, float) and le <= 3.0, (ps, hex(k.pc.mode()), le))
+    k.key(ktest.DOWN, ktest.UP, settle=False)
+    lb = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') not in idle and k.pc.r('flags') & 0x200, 1.0) if q else None
+    print('   the Executive busy drawing (its selection moved): the SRQ\'s task at its next idle HLT or tick, %s ms' % lb)
+    k.run_for(0.5)
+    check('... the Executive busy drawing: the wake kept till its idle HLT or the tick (%s ms; 100 at most), and then '
+          'MTSRQ ends, its wake with it' % lb, isinstance(lb, float) and lb <= 100 and srq_progs(k) == [] and wkt() == 0xFF,
+          (lb, srq_progs(k), wkt()))
+    check('... every switch at a safe point (the audit; %d at the tick\'s end, with the SRQ\'s)' % len(au.switches(0, 'tick')),
+          not au.bad() and au.switches(0, 'tick'), au.bad()[:3])
+    au.stop()
+
 def t_progs():
     print('== MULTITASK=1: DOS programs as before')
     k0 = boot('mt_mem0.img', b'MULTITASK=0\r\n')
@@ -5323,6 +5461,9 @@ def t_image():
     fs = [sysb[Y[f]:Y[f] + 7] for f in ('f_25', 'f_35')]
     check('f_25 and f_35 in LODE.SYS start XOR BX,BX / MOV ES,BX / MOV BL,[BP+F_AX] (31 DB 8E C3 8A 5E 0E: what mt_boot '
           'patches, mt_25 and mt_35 redo)', fs[0] == fs[1] == bytes([0x31, 0xDB, 0x8E, 0xC3, 0x8A, 0x5E, 0x0E]), [f.hex() for f in fs])
+    gi = sysb[Y['gp_isr.e']:Y['gp_isr.e'] + 8]
+    check('gp_isr.e in LODE.SYS is MOV AL,20h / OUT 20h,AL / POP DS, then POP DX / POP AX / IRET (B0 20 E6 20 1F 5A 58 CF: '
+          'what mt_boot patches, mt_srqi redoes)', gi == bytes([0xB0, 0x20, 0xE6, 0x20, 0x1F, 0x5A, 0x58, 0xCF]), gi.hex())
     boot_end = min(r for r, v, n in secs['mdt'])      # (section boot ends where mdt starts)
     check('the start-ups (section boot) end at %04Xh, below 1000:F000, where LODE.INI is read (INI_BUF); LODE.SYS %d bytes, '
           'under the ROM loader\'s 64 KB' % (boot_end, len(sysb)), boot_end < 0xF000 and len(sysb) < 0x10000, (hex(boot_end), len(sysb)))
@@ -5427,12 +5568,12 @@ if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_tpub, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
