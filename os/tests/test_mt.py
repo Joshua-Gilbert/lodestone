@@ -5265,8 +5265,10 @@ def t_srq():
         psp) sees it, or None."""
         t1 = k.pc.us + 2e6                              # (short runs: run_for's are 20000 blocks at least)
         hit, prev, base, t0 = [], k.pc.watch, psp * 16 + 0x10D, []
+        ev.clear()
         def w(a):
             if prev: prev(a)
+            if t0 and not hit and a in ways and len(ev) < 3: ev.append(ways[a])
             if at is not None and not t0 and a == at and when():     # (pcemu's irq_exact armed by hand: taken
                 t0.append(k.pc.us); k.pc.irq_pending.add(5); k.pc.irq_wait = True   #  as IF is set again)
             if a == base and t0 and not hit: hit.append(k.pc.us)
@@ -5278,6 +5280,7 @@ def t_srq():
         while not hit and k.pc.us - t0[0] < max_s * 1e6: k.pc.run(300)
         k.pc.watch = prev
         return round((hit[0] - t0[0]) / 1000, 2) if hit else None
+    ev, ways = [], {seg * 16 + Y['mt_srqi']: 'srqi', seg * 16 + Y['mt_srqi.r']: 'out', seg * 16 + Y['mt_tick.w']: 'w'}
     own = lambda n: lambda: cur() == n and k.pc.r('cs') not in (seg, 0x60) and k.pc.r('flags') & 0x200
     irq = k.pc.rd(0x60, Y['gp_irq'], 1)[0]
     gb = bytes(k.pc.rd(0x60, Y['gp_isr.e'], 5))
@@ -5285,17 +5288,28 @@ def t_srq():
           irq == 5 and not k.pc.pic_mask & 0x20 and (gb[0], gb[1] | gb[2] << 8, gb[3] | gb[4] << 8) == (0xEA, Y['mt_srqi'], seg),
           (irq, hex(k.pc.pic_mask), gb.hex()))
     # a program behind asking, a task computing: its turn at once
-    typ(k, 'mtlaunch mtspin.com 9000 s1.txt', 1.0); line(k, '')
-    typ(k, 'mtlaunch mtsrq.com 4', 1.0); line(k, '')
+    typ(k, 'mtlaunch mtsrq.com 4', 1.0); line(k, '')        # (task 1, MTSPIN 2: MTSPIN's next in turn is the
+    typ(k, 'mtlaunch mtspin.com 9000 s1.txt', 1.0); line(k, '')     #  Executive, not MTSRQ)
     ps = srq_progs(k)
     q = ps[0] if len(ps) == 1 else None
     nq, nspin = (tnum_(q) if q else None), tnum('MTSPIN.COM')
     wres = k.pc.u16(q, 0x105) if q else None
     check('MTSRQ behind asks MT_WAKE: AL = 5 (the driver\'s IRQ); MT holds its task and PSP',
-          q and wres == 5 and wkt() == nq and k.pc.u16(seg, Y['mt_wkp']) == q, (ps, wres, wkt(), nq))
-    ls = [lat(q, own(nspin)) for _ in range(2)]
-    check('IRQ 5 while MTSPIN computes: MTSRQ runs at once, not after MTSPIN\'s turn (%s ms; 3 at most)' % ls,
-          all(isinstance(x, float) and x <= 3.0 for x in ls), (ls, nspin, tstate(k)))
+          q and wres == 5 and wkt() == nq == 1 and nspin == 2 and k.pc.u16(seg, Y['mt_wkp']) == q, (ps, wres, wkt(), nq, nspin))
+    typ(k, 'mtsrq 0 g', 0.8)
+    check('... another program giving it up (MTSRQ G, BL = 0, in task 0): nothing changes (its own only)',
+          wkt() == nq and k.pc.u16(seg, Y['mt_wkp']) == q, (wkt(), hex(k.pc.u16(seg, Y['mt_wkp']))))
+    ls, way = lat(q, own(nspin)), list(ev)
+    check('IRQ 5 while MTSPIN computes: MTSRQ runs at once (%s ms; 3 at most), mt_srqi then mt_tick.w, not after '
+          'MTSPIN\'s turn and the Executive\'s' % ls, isinstance(ls, float) and ls <= 3.0 and way[:2] == ['srqi', 'w'],
+          (ls, way, nspin, tstate(k)))
+    fr = task_ent(k, nq) + 24                           # (TE_VF: SPF_FREEZE, as MT_FLAGS sets it)
+    k.pc.wr(seg, fr, bytes([k.pc.rd(seg, fr, 1)[0] | 4]))
+    lf, way = lat(q, own(nspin), 0.1), list(ev)
+    k.pc.wr(seg, fr, bytes([k.pc.rd(seg, fr, 1)[0] & ~4]))
+    check('... frozen behind (SPF_FREEZE): IRQ 5 wakes nothing (mt_srqi straight out), not seen meanwhile',
+          lf is None and way[:2] == ['srqi', 'out'], (lf, way))
+    k.run_for(0.3)                                      # (thawed: it sees that one at its turn)
     lm = lat(q, lambda: cur() == nspin, at=seg * 16 + Y['mt_load.go'])     # (raised under CLI: taken at its STI)
     check('... IRQ 5 in MT\'s own code as a switch to MTSPIN ends (mt_load\'s STI / RET: not a point to switch from): '
           'MTSRQ runs at the next tick (%s ms), the wake kept, not lost' % lm, isinstance(lm, float) and 3 < lm <= 60, lm)
@@ -5326,12 +5340,19 @@ def t_srq():
     nq = tnum_(q) if q else None
     st = tstate(k)
     lk = lat(q, own(nspin), 0.2) if q else 'none'
-    check('MTSRQ K, waiting for a key (TS_WAITK): IRQ 5 wakes nothing (not seen; mt_want FFh), MTSPIN goes on',
-          q and wkt() == nq and lk is None and k.pc.rd(seg, Y['mt_want'], 1)[0] == 0xFF, (ps, wkt(), nq, lk, st))
+    way = list(ev)
+    check('MTSRQ K, waiting for a key (TS_WAITK): IRQ 5 wakes nothing (mt_srqi straight out; not seen, mt_want FFh)',
+          q and wkt() == nq and lk is None and way[:2] == ['srqi', 'out'] and k.pc.rd(seg, Y['mt_want'], 1)[0] == 0xFF,
+          (ps, wkt(), nq, lk, way, st))
     o = sh.run('mtlaunch /k:%d' % nq) if nq else ''
     line(k, ''); k.run_for(0.5)
     check('... MT_KILL ends its task: its wake too (mt_wkt FFh)', nq and srq_progs(k) == [] and wkt() == 0xFF,
           (o, srq_progs(k), wkt(), tstate(k)))
+    typ(k, 'mtlaunch mtsrq.com 1 t', 1.0); line(k, '')
+    k.run_for(0.5)
+    check('... MTSRQ T, resident (31h) once asked: its program\'s end not seen (as with T4\'s mouse), its task\'s end '
+          'ends the wake (mt_wkt FFh)', wkt() == 0xFF and 'MTSRQ.COM' not in [n for i, s_, n in tstate(k)[0]],
+          (wkt(), tstate(k)))
     # task 0: MTSRQ in front, full screen, MTSPIN behind
     typ(k, 'mtsrq 3', 0.8)
     ps = srq_progs(k)
