@@ -207,6 +207,35 @@ MT_PUB      equ 22h                     ; (T5b) a screen published for a
                                         ;  all in the task's memory, or its
                                         ;  cells, font or table; a field out
                                         ;  of range)
+MT_WAKE     equ 23h                     ; (T5c) BL bit 0: the calling program
+                                        ;  woken by the GPIB driver's SRQ
+                                        ;  interrupt (IRQ 5, any device's
+                                        ;  SRQ): its task runs next, at once
+                                        ;  if what is interrupted may be
+                                        ;  switched from (else at the running
+                                        ;  task's next INT 21h or tick), not
+                                        ;  after the others' turns.  Only if
+                                        ;  its task is ready to run then (not
+                                        ;  waiting for a key or to be in
+                                        ;  front, not parked or frozen): it
+                                        ;  isn't kept for later, so a program
+                                        ;  sleeps on the driver's SRQ count
+                                        ;  (INT 60h AH=0Eh), looked at under
+                                        ;  CLI before STI / HLT.  One program
+                                        ;  at a time, the last to ask (the one
+                                        ;  before isn't told); BL bit 0 clear:
+                                        ;  no more (its own only).  Not from a
+                                        ;  hook's or pop-up's code (it is the
+                                        ;  interrupted program's).  Ended when
+                                        ;  it ends (not by 31h) or its task
+                                        ;  does; a program
+                                        ;  staying resident (31h) gives it up
+                                        ;  first (in task 0, which never ends,
+                                        ;  each SRQ would switch there).  Any
+                                        ;  task, 0 too.  CF clear: AL = the
+                                        ;  driver's IRQ, 0 if it has none
+                                        ;  (GPIBIRQ=0, AH=0Eh AL=0, or masked
+                                        ;  after a flood: no wake then)
 MT_TASKS    equ 8                      ; most tasks at once (0 is the Executive)
 MT_DEFARENA equ 1000h                   ; a task's memory if SP_PARAS is 0: 64 KB
 
