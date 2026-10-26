@@ -1,8 +1,30 @@
 /*
- * gpib_hpgl_tek4662.ino  (v5, for Lodestone's shared bus)
+ * gpib_hpgl_tek4662.ino  (v7, for Lodestone's shared bus)
  *
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
+ *
+ * v7: settling after labels. The 4662's own characters leave a ~1 cm tail on
+ *    the move after a label and small marks at the spaces inside one
+ *    (TESTPAT5). Three console switches, to find which cure works:
+ *      !a ms   after a label: wait until the 4662 has drawn it (a status
+ *              reply showing its buffer empty), pause ms, then the move
+ *      !b 1    after a label: a BS (back one character space, pen up: p. 4-22)
+ *              before the move, so the long move starts with the pen clear
+ *      !w ms   the same wait and pause before each space inside a label
+ *    All off by default, with v6's !r: the drag turned out to be the pen
+ *    adapter pressing the pen too hard on the paper, and with a corrected
+ *    adapter the plots are clean without them. They stay for a pen that
+ *    needs them (a slow-lifting pen: try !r 22, !a 150, !w 150).
+ *
+ * v6: no drag when the pen lifts. The 4662's pen leaves the paper about 1 mm
+ *    into a pen-up move (Claude's detour test: the same ~1 mm tick whatever
+ *    the detour), so short gaps were bridged and every move started with a
+ *    tail. A pause in the Nano can't help (the plotter runs from its own
+ *    buffer), so the plotter is given a move to do while the pen lifts: a
+ *    pen-up move of RETRACE_ADU back along the stroke just drawn. The drag
+ *    lands on ink that is already there, and the real move starts with the
+ *    pen clear. '!r n' sets it (ADU, 273 = 1 inch; 0 turns it off).
  *
  * v5: faster, and quiet.
  *  - No bell: GS BEL ("the first coordinate is a draw") rings the 4662's bell
@@ -70,6 +92,10 @@
 #define STATUS_MARGIN   48      // bytes kept free in the 4662's buffer, below what it reports
 #define QUERY_AT        600     // ask again when this little room is left
 #define QUERY_GAP_MS    400     // at most one status request in this time
+#define RETRACE_ADU     0       // !r: pen-up move back along the last stroke before a move (22: ~2 mm)
+#define LABEL_SETTLE_MS 0       // !a: after a label, wait for the plotter, then this pause (e.g. 150)
+#define LABEL_BS        0       // !b: after a label, a BS before the move
+#define SPACE_SETTLE_MS 0       // !w: before a space in a label, wait for the plotter, then this (e.g. 150)
 #define STATUS_TIMEOUT  180000UL // ms to wait for a status reply (it may wait for the pen)
 #define PROBE_MS        1500    // ms to wait for a reply when finding out if the plotter answers
 
@@ -349,6 +375,10 @@ void gpibBegin() {
 // FLOW TO THE PLOTTER
 // ============================================================================
 
+uint16_t labelSettle = LABEL_SETTLE_MS, spaceSettle = SPACE_SETTLE_MS;
+uint8_t labelBs = LABEL_BS;
+bool afterLabel = false;                // a label was the last thing sent
+long emptyFree = -1;                    // what the plotter reports with nothing to do (at the probe)
 bool statusMode = false;                // the plotter answers READ STATUS
 bool queryPending = false;
 unsigned long querySentAt = 0, lastProbeAt = 0;
@@ -419,6 +449,7 @@ void probePlotter() {
     statusMode = !queryPending;
     if (!statusMode) limitCount = queuedCount;
     queryPending = false;
+    if (statusMode && (lastFree > emptyFree)) emptyFree = lastFree;   // (idle at the probe)
     if (DEBUG_ENABLED && statusMode != was) {
         if (statusMode) { Serial.print(F("[4662] status mode: buffer free ")); Serial.println(lastFree); }
         else Serial.println(F("[4662] no status reply: timed pacing (check D13 <- MAX3232 RXD)"));
@@ -442,11 +473,41 @@ void timedWork(unsigned long cost) {
 
 int penX = 0, penY = 0;
 bool penIsDown = false;
+int segFromX = 0, segFromY = 0;         // where the last stroke started (it ends at penX, penY)
+uint16_t retraceAdu = RETRACE_ADU;
 
 unsigned long travelMs(int x, int y) {
     long dx = labs((long)x - penX), dy = labs((long)y - penY);
     long d = dx > dy ? dx + dy / 2 : dy + dx / 2;
     return (unsigned long)(d * 1000L / (paceSpeed ? paceSpeed : 1)) + paceVector;
+}
+
+// Wait until the 4662 has done everything sent so far (a reply showing its
+// buffer empty: a reply comes when the pen reaches the request, or at once),
+// then pause ms more. Serves the bus while it waits. Timed mode: the clock.
+void settle(uint16_t ms) {
+    if (statusMode && emptyFree > 0) {
+        unsigned long t0 = millis(), lastAsk = 0, seen = nReplies;
+        long freeEst = lastFree;            // its free bytes: from each reply, less our requests since
+        for (;;) {
+            // ask (queued behind the label: a reply comes after it), but a
+            // request is 5 bytes in its buffer: only with room for it, or
+            // after 8 s (a long stroke takes ~4 s: it has eaten some)
+            if (!queryPending && (freeEst >= 13 || millis() - lastAsk >= 8000)) {
+                sendQuery(); lastAsk = millis(); freeEst -= 5;
+            }
+            while (queryPending && millis() - querySentAt < STATUS_TIMEOUT) { pollRx(); gpibService(); }
+            if (nReplies != seen) { seen = nReplies; freeEst = lastFree; }
+            if (queryPending) { queryPending = false; break; }     // (no reply: just pause)
+            if (lastFree >= emptyFree - 8) break;
+            if (millis() - t0 > 120000UL) break;
+            unsigned long t = millis(); while (millis() - t < 250) gpibService();
+        }
+    } else {
+        while ((long)(penFreeAt - millis()) > 0) gpibService();
+    }
+    unsigned long t = millis();
+    while (millis() - t < ms) gpibService();
 }
 
 // Room for n more bytes in the plotter, by asking it (status mode) or by
@@ -503,8 +564,38 @@ void tekSendCoord12(int x, int y) {
     coordKnown = true;
 }
 
+// After a label, before anything else goes: the switches above.
+void leaveLabel() {
+    if (!afterLabel) return;
+    afterLabel = false;
+    if (labelBs) {
+        plotterRoom(2, paceChar);
+        if (!inAlpha) { tekRaw(TEK_US); inAlpha = true; }
+        tekRaw(0x08);                   // BS: back one character space, pen up
+    }
+    if (labelSettle) settle(labelSettle);
+}
+
+// Lift the pen with a short pen-up move back along the stroke just drawn,
+// so the ~1 mm the pen drags while it lifts lands on that stroke's ink.
+void liftAlongStroke() {
+    if (!penIsDown) return;
+    long dx = (long)segFromX - penX, dy = (long)segFromY - penY;
+    float len = sqrt((float)dx * dx + (float)dy * dy);
+    if (retraceAdu == 0 || len < 1.0f) return;          // (no stroke to go back along: lift in place)
+    float d = len < retraceAdu ? len : (float)retraceAdu;
+    int rx = penX + (int)lround(dx * d / len), ry = penY + (int)lround(dy * d / len);
+    plotterRoom(6, travelMs(rx, ry) + pacePen);
+    tekRaw(TEK_GS);                     // the first coordinate after GS is a pen-up move
+    tekSendCoord12(rx, ry);
+    penX = rx; penY = ry; penIsDown = false;
+    needsMove = false; inAlpha = false;
+}
+
 void tekMoveTo(int x, int y) {
     x = constrain(x, 0, (int)TEK_MAX_X); y = constrain(y, 0, (int)TEK_MAX_Y);
+    leaveLabel();
+    liftAlongStroke();
     plotterRoom(6, travelMs(x, y) + (penIsDown ? pacePen : 0));
     tekRaw(TEK_GS);
     tekSendCoord12(x, y);
@@ -514,6 +605,7 @@ void tekMoveTo(int x, int y) {
 
 void tekDrawTo(int x, int y) {
     x = constrain(x, 0, (int)TEK_MAX_X); y = constrain(y, 0, (int)TEK_MAX_Y);
+    leaveLabel();
     plotterRoom(11, travelMs(x, y) + (penIsDown ? 0 : pacePen));  // (may ask: then needsMove)
     if (needsMove) {                    // back into graph mode without the bell:
         tekRaw(TEK_GS);                 //  GS and a move to where the pen is (p. 3-6)
@@ -521,18 +613,29 @@ void tekDrawTo(int x, int y) {
         needsMove = false;
     }
     tekSendCoord12(x, y);
+    segFromX = penX; segFromY = penY;
     penX = x; penY = y; penIsDown = true; inAlpha = false;
 }
 
 void tekText(const char* s) {
+    if (penIsDown && *s) {              // a label right after a stroke: lift along it, then back
+        int px = penX, py = penY;
+        liftAlongStroke();
+        if (penX != px || penY != py) tekMoveTo(px, py);
+    }
+    leaveLabel();                       // (two labels in a row: settle between them too)
+    char prev = 0;
     while (*s) {
+        if (*s == ' ' && prev && prev != ' ' && spaceSettle) settle(spaceSettle);
         plotterRoom(2, paceChar + (penIsDown ? pacePen : 0));
         penIsDown = false;
         if (!inAlpha) { tekRaw(TEK_US); inAlpha = true; }
+        prev = *s;
         tekRaw((uint8_t)*s++);
     }
     needsMove = true;
     coordKnown = false;                 // printing moves the pen: the next coordinate in full
+    afterLabel = true;
 }
 
 // ============================================================================
@@ -695,6 +798,10 @@ void printLine(const __FlashStringHelper* name, bool high) {
 }
 
 void printPace() {
+    Serial.print(F("pen lift: !r ")); Serial.print(retraceAdu); Serial.println(F(" ADU back along the stroke"));
+    Serial.print(F("labels: !a ")); Serial.print(labelSettle); Serial.print(F(" ms settle after, !b "));
+    Serial.print(labelBs); Serial.print(F(" BS after, !w ")); Serial.print(spaceSettle);
+    Serial.print(F(" ms settle before spaces (empty buffer reads ")); Serial.print(emptyFree); Serial.println(F(")"));
     Serial.print(F("timed pacing: !s ")); Serial.print(paceSpeed);
     Serial.print(F(" ADU/s  !v ")); Serial.print(paceVector);
     Serial.print(F(" ms/vector  !p ")); Serial.print(pacePen);
@@ -747,6 +854,10 @@ void paceCommand() {
         else if (k == 'p') pacePen = v; else if (k == 'c') paceChar = v;
         else if (k == 'l') paceLead = v;
     }
+    if (k == 'r' && paceLen > 1 && v >= 0 && v <= 400) retraceAdu = v;     // (0 allowed: off)
+    if (k == 'a' && paceLen > 1 && v >= 0 && v <= 5000) labelSettle = v;
+    if (k == 'w' && paceLen > 1 && v >= 0 && v <= 5000) spaceSettle = v;
+    if (k == 'b' && paceLen > 1) labelBs = v ? 1 : 0;
     printPace();
     paceLen = 0; inPace = false;
 }
@@ -760,7 +871,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v5"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.1"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));
