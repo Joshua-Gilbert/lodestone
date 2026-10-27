@@ -2288,12 +2288,13 @@ mt_wake:
 
 ; the wake (MT_WAKE) ended if it is the program at DX's in the running
 ; task (the task too: a PSP in a parked task's old place may be another's
-; now).  AL changed
+; now).  AL changed.  .t: task AL's, whatever program (mt_kill: a parked
+; task whose pages are gone); all kept
 mt_wkme:
         mov     al, [cs:mt_cur]
-        cmp     al, [cs:mt_wkt]
-        jne     .x
         cmp     dx, [cs:mt_wkp]
+        jne     .x
+.t:     cmp     al, [cs:mt_wkt]
         jne     .x
         mov     byte [cs:mt_wkt], 0FFh
 .x:     ret
@@ -2732,14 +2733,16 @@ mt_kill:
         jmp     mt_fail
 .gone:  stc                             ; parked, its pages gone (a program
         call    mt_hshow.f              ;  freed or resized MT's handle): no
-        mov     ax, cs                  ;  more of it to run.  Its programs'
-        cmp     [ems_h + si + 2], ax    ;  EMS freed (mt_hhide's), and the
-        jne     .g                      ;  handle DX, still MT's (resized);
-        mov     ah, 45h                 ;  the entry free, as mt_end leaves
-        int     67h                     ;  it
+        call    mt_wkme.t               ;  more of it to run.  Its programs'
+        or      dl, dl                  ;  EMS freed (mt_hhide's), its wake
+        jz      .g                      ;  (MT_WAKE) ended, and the handle
+        mov     ax, cs                  ;  DX, still MT's (resized: not 0,
+        cmp     [ems_h + si + 2], ax    ;  which mt_hnew leaves when it gave
+        jne     .g                      ;  the number out again); the entry
+        call    mt_hfree                ;  free, as mt_end leaves it
 .g:     mov     ax, 0100h               ; (MT_KILL's: ^C's)
         call    mt_ended
-        mov     byte [cs:bx+TE_STATE], TS_FREE
+        call    mt_tfree
         jmp     short .ok
 
 ; ZF if the running task can end here, at mt_kdie: not from an interrupt's
@@ -3184,9 +3187,7 @@ mt_hshow:
         cmp     word [ems_h + si + 2], 0FFFFh
         jne     .l
         jcxz    .o
-        mov     dx, di
-        mov     ah, 45h
-        int     67h
+        call    mt_hfree
         jmp     .l
 .o:     shl     di, 1
         mov     bp, [cs:mt_hown + di]
@@ -3534,7 +3535,9 @@ mt_fvx: mov     al, [bp+F_AX]
 
 ; the task at entry BX ended (mt_end; mt_kill, its parked pages gone),
 ; exit code AX: MT_EXIT's record, MT_UI's count, its screen's pages
-; freed.  AX, DX changed
+; freed if they are still MT's (mt_shm: a program may have freed them by
+; number, and the number been given out again).  DS = KSEG; AX, DX
+; changed
 mt_ended:
         mov     [cs:bx+TE_EXIT], ax
         mov     al, [cs:bx+TE_GEN]      ; (MT_EXIT: this one's, ended)
@@ -3546,13 +3549,35 @@ mt_ended:
         shr     bx, 5
         mov     [cs:mt_eord+bx], al
         pop     bx
-        mov     dl, [cs:bx+TE_SH]       ; its screen's pages
-        xor     dh, dh
-        or      dl, dl
-        jz      .x
-        mov     ah, 45h
-        int     67h
+        push    si
+        call    mt_shm                  ; its screen's pages
+        jc      .z
+        call    mt_hfree
+.z:     pop     si
         mov     byte [cs:bx+TE_SH], 0
+        ret
+
+; the EMS handle whose record is at KSEG:ems_h + SI freed as a program's
+; end frees it (ems_free: a context it saved with 47h goes too, where INT
+; 67h AH=45h refuses, 86h).  DS = KSEG; all kept
+mt_hfree:
+        pusha
+        pushf
+        cli
+        add     si, ems_h
+        KCALL   ems_free
+        popf
+        popa
+        ret
+
+; the entry at BX free, as a task's end leaves it; the last one but the
+; Executive's: no shadow (alone).  All kept
+mt_tfree:
+        mov     byte [cs:bx+TE_STATE], TS_FREE
+        mov     byte [cs:bx+TE_KILL], 0
+        call    mt_others
+        jnc     .x
+        mov     byte [cs:mt_shd], 0
 .x:     ret
 
 ; MT_END: from a task's stub, its program done.  Its handles (the
@@ -3603,12 +3628,8 @@ mt_end: mov     al, [cs:mt_cur]         ; (first: a call refused changes
         dec     cx                      ;  stayed resident too: its hooks are
         mov     es, cx                  ;  gone, so is it)
         mov     word [es:1], 0
-        mov     byte [cs:bx+TE_STATE], TS_FREE
-        mov     byte [cs:bx+TE_KILL], 0
-        call    mt_others               ; (the last one: no shadow, alone)
-        jnc     .o
-        mov     byte [cs:mt_shd], 0
-.o:     mov     al, [cs:mt_cur]
+        call    mt_tfree
+        mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .f
         push    ax                      ; it was in front: the Executive's
@@ -5579,20 +5600,8 @@ mt_smap:
         push    si
         push    ax
         push    dx
-        xor     ax, ax
-        mov     al, [cs:bx+TE_SH]
-        or      al, al
-        jz      .no
-        mov     si, ax
-        shl     si, 2
-        push    KSEG
-        pop     ds
-        mov     dx, [ems_h + si + 2]    ; (owner 0, 2 pages)
-        or      dl, dh
-        mov     dh, [ems_h + si + 1]
-        xor     dh, 2
-        or      dl, dh
-        jnz     .no
+        call    mt_shm
+        jc      .no
         mov     al, [ems_h + si]        ; (its run's start)
         mov     si, ax
         mov     dx, EMS_PORT
@@ -5613,6 +5622,27 @@ mt_smap:
         ret
 .no:    stc
         jmp     .x
+; the entry at BX's screen handle (TE_SH) still MT's: owner 0, 2 pages (a
+; program's has its PSP) -> SI = its record (at KSEG:ems_h + SI), AH 0;
+; CF if not (none; closed, which has no pages; given out again).  DS =
+; KSEG; AX, DX changed
+mt_shm: xor     ax, ax
+        mov     al, [cs:bx+TE_SH]
+        or      al, al
+        jz      .no
+        mov     si, ax
+        shl     si, 2
+        push    KSEG
+        pop     ds
+        mov     dx, [ems_h + si + 2]    ; (owner 0, 2 pages)
+        or      dl, dh
+        mov     dh, [ems_h + si + 1]
+        xor     dh, 2
+        or      dl, dh
+        jnz     .no
+        ret                             ; (CF clear: OR's)
+.no:    stc
+        ret
 mt_wrest:
         mov     dx, EMS_PORT
         mov     al, [cs:mt_wsv]
