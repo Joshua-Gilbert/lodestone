@@ -1877,49 +1877,25 @@ mt_inr: mov     ax, [es:di]
 ; ---------------------------------------------------------------------
 ;  INT 21h AH=F0h, from f_F0's first bytes: DS = SS = KSEG, BP = the frame
 ; ---------------------------------------------------------------------
-mt_f0:  mov     al, [bp+F_AX]
-        cmp     al, MT_LIST
-        je      mt_list
-        cmp     al, MT_SPAWN
-        je      mt_spawn
-        cmp     al, MT_END
-        je      mt_end
-        cmp     al, MT_FRONT
-        je      mt_frontc
-        cmp     al, MT_KILL
-        je      mt_kill
-        cmp     al, MT_PARK
-        je      mt_park
-        cmp     al, MT_UNPARK
-        je      mt_unpark
-        cmp     al, MT_SCREEN
-        je      mt_screen
-        cmp     al, MT_EXIT
-        je      mt_xcode
-        cmp     al, MT_FLAGS
-        je      mt_flagsc
-        cmp     al, MT_UI
-        je      mt_uic
-        cmp     al, MT_TSR
-        je      mt_tsrc
-        cmp     al, MT_WIN
-        je      mt_winc
-        cmp     al, MT_TOPEN
-        je      mt_topen
-        cmp     al, MT_TROWS
-        je      mt_trows
-        cmp     al, MT_TKEY
-        je      mt_tkey
-        cmp     al, MT_TMOUSE
-        je      mt_tmouse
-        cmp     al, MT_PUB
-        je      mt_pub
-        cmp     al, MT_WAKE
-        je      mt_wake
-        cmp     al, 1
+mt_f0:  mov     al, [bp+F_AX]           ; (each handler with AL, its BX its own)
+        mov     bl, al
+        sub     bl, MT_SPAWN
+        cmp     bl, MT_WAKE - MT_SPAWN
+        ja      .own
+        xor     bh, bh
+        shl     bx, 1
+        jmp     [cs:bx+.tab]
+.own:   cmp     al, 1
         je      mt_open
-        or      al, al                  ; (f_F0's own two, then on there)
+.k:     or      al, al                  ; (f_F0's own two, then on there)
         jmp     KSEG:f_F0 + 5
+.tab:   dw      mt_spawn, mt_end, mt_list, mt_frontc, mt_kill, mt_park
+        dw      mt_unpark, mt_xcode, mt_flagsc, mt_uic, mt_tsrc, mt_bad
+        dw      mt_screen, mt_winc, mt_topen, mt_trows, mt_tkey, mt_tmouse
+        dw      mt_pub, mt_wake         ; (10h-23h: a new MT_* goes here too)
+%if $ - .tab != 2 * (MT_WAKE - MT_SPAWN + 1)
+%error "mt_f0.tab: one word a function, MT_SPAWN to MT_WAKE"
+%endif
 mt_bad: mov     ax, 1
 mt_fail:
         jmp     KSEG:fail
@@ -1954,8 +1930,7 @@ mt_open:
         call    mt_others
         jnc     .y
         mov     al, 1                   ; (none: f_F0's own answer)
-        or      al, al
-        jmp     KSEG:f_F0 + 5
+        jmp     short mt_f0.k
 .y:     mov     word [bp+F_CX], 1
         jmp     KSEG:ok
 
