@@ -1678,8 +1678,8 @@ f_4F:   call    find_next
         jmp     ret_cf
 
 find_next:
-        les     di, [dta]
-        mov     al, [es:di]
+        les     di, [dta]               ; (kept by drv_present and fat_load,
+        mov     al, [es:di]             ;  their M:, R: and C: hooks too)
         dec     al
         call    drv_present
         jc      .nomore
@@ -1688,7 +1688,6 @@ find_next:
         call    fat_load
         jc      .x
         mov     word [it_dir], 0
-        les     di, [dta]
         push    ds                      ; the pattern
         push    es
         pop     ds
@@ -1701,7 +1700,7 @@ find_next:
         rep     movsb
         pop     di
         pop     ds
-        les     di, [dta]
+        les     di, [dta]               ; ES again (a clock faster than PUSH/POP)
         mov     ax, [es:di+13]
         call    dir_lim
         mov     bx, [es:di+15]
@@ -1739,17 +1738,17 @@ find_next:
         ; found: fill the DTA
         inc     bx
         mov     [es:di+15], bx
-        mov     al, [si+11]
-        mov     [es:di+21], al
-        mov     ax, [si+22]
-        mov     [es:di+22], ax
-        mov     ax, [si+24]
-        mov     [es:di+24], ax
-        mov     ax, [si+28]
-        mov     [es:di+26], ax
-        mov     ax, [si+30]
-        mov     [es:di+28], ax
-        add     di, 30
+        mov     al, [si+11]             ; attribute, time, date, size
+        add     di, 21
+        stosb
+        add     si, 22
+        movsw
+        movsw
+        inc     si                      ; (past the cluster)
+        inc     si
+        movsw
+        movsw
+        sub     si, 32                  ; SI the entry again, DI at +30
         call    name_out
         push    cs
         pop     es
