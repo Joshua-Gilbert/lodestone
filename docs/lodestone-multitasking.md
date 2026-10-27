@@ -2082,7 +2082,7 @@ M9 was to check on the 1520 what MT assumes of its BIOS. Most of that can be rea
 
 So the one thing read wrong is the NMI's. Two things follow for MT, and neither changes it:
 - **A half-written INT 02h:** a switch writes INT 02h with two MOVSWs (`mt_vld`; `mt_vrep` at a task's end), so an NMI between them would jump through half a vector. That is one instruction's gap, and only when the two tasks' INT 02h differ (one has a 287 error handler of its own).
-- **Under MT the prompt works too:** its INT 10h and INT 16h calls come from the ROM, so MT passes them to the BIOS (`mt_v10`, `mt_i16`): the real screen, whichever task is in front (its shadow lost), and the real keys. The tick can't switch away from code in the ROM (`mt_safe`), so the machine waits there, every task with it, until a key answers.
+- **Under MT the prompt works too:** its INT 10h and INT 16h calls come from the ROM, so MT passes them to the BIOS (`mt_v10`, `mt_i16`): the real screen, whichever task is in front (its shadow lost), and the real keys. The tick can't switch away from code in the ROM (`mt_safe`), so the machine waits there, every task with it, until a key answers. Two rare exceptions: an NMI inside a call MT passed on to the BIOS (`mt_inb`) doesn't mark the shadow lost, so the front task may be frozen at its next switch away; and in a task whose window types keys to it (`MT_TKEY`), the prompt takes a key waiting there first.
 
 Such errors are rare.
 
