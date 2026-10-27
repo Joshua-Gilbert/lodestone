@@ -197,6 +197,42 @@ def test_key_script_peeks():
 
 T.test_key_script_peeks = test_key_script_peeks
 
+
+def test_key_script_snap_peek():
+    """audit3 (X42's panel): a tick, and a TSR's INT 16h peek from its INT 1Ch, as ks_ready's {SNAP} copies the
+    screen on the read path (interrupts on): the peek finds ks_pos past the mark, so one snapshot, and every
+    key typed.  With the copy first and ks_pos moved after, the peek took the snapshot again and ks_pos went
+    on by 6, into the middle of the next key."""
+    import test_resident_term as RT
+    from unicorn import UC_HOOK_CODE
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TESTKEY', 'capture': False,
+                                                   'keys': 'a{WAIT 0.3}b{SNAP}cd{ESC}'})),
+                 T.reply(('text', 'Done.'))], mode='auto')
+    ts = h.claude_psp * 16 + h.sym['take_snapshot']
+    st = {'n': 0, 'at': None}
+    def snap(uc, addr, size, ud):               # (take_snapshot, while the script runs)
+        if not h.var('ks_active'): return
+        if h.m.r('sp') == st.get('sp'):         # (the same call again, after the tick's IRET)
+            st['sp'] = None; return
+        st['n'] += 1
+        if st['at'] is None:
+            st['at'] = (h.var('ks_pos', 2), bool(h.m.r('flags') & 0x200))
+            st['sp'] = h.m.r('sp')
+            RT.tick_before(h.m, addr)
+    old = RT.tsr_1ch(h.m)
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, snap, None, ts, ts)
+    h.m.mu.ctl_remove_cache(ts, ts + 1)
+    try: ok = h.turn('run testkey', sim_s=60)
+    finally:
+        h.m.mu.hook_del(hk); h.m.wr(0, 0x1C * 4, old)
+    text = ok and str(T.results(h, 1)[0]['content'])
+    assert st['at'] and st['at'][1] and st['n'] == 1 and text and 'Exit code: 4' in text and \
+        'TESTKEY ready: ab' in text and 'abc' not in text, (st, text)
+    T.check(h)
+
+
+T.test_key_script_snap_peek = test_key_script_snap_peek
+
 if __name__ == '__main__':
     names = [n for n in sorted(vars(T)) if n.startswith('test_')]
     want = [a for a in sys.argv[1:] if a.startswith('test')]
