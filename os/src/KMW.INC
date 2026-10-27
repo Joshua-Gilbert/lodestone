@@ -1660,7 +1660,6 @@ MK_TEXT     equ     3
 MK_XOR      equ     4
 mw_val      db      0                   ; MK_FILL's byte, MK_VL's bit
 mw_tm       db      0                   ; MK_TEXT's mask
-mw_xh       db      0                   ; (MK_XOR: 1 on its top or bottom row)
 mw_tx       dw      0                   ; MK_TEXT's text (from column mw_r)
 mw_p0       dw      0                   ; MK_XOR's pixels across
 mw_p1       dw      0
@@ -2201,17 +2200,13 @@ mw_span:
 .x:     popa
         ret
 .4:     mov     si, ax                  ; MK_XOR: SI = the column
-        mov     bp, cx
-        mov     byte [cs:mw_xh], 1      ; its top or bottom row: pixels p0..p1;
+        mov     bp, cx                  ; its top or bottom row: pixels p0..p1;
         cmp     dx, [cs:mw_r+4]         ;  any other: p0 and p1
         je      .xl
         mov     ax, dx
         inc     ax
         cmp     ax, [cs:mw_r+6]
-        je      .xl
-        mov     byte [cs:mw_xh], 0
-        cmp     byte [cs:mw_xh], 0
-        je      .xs
+        jne     .xs
 .xl:    mov     ax, [cs:mw_p0]          ; top or bottom: each column's p0..p1
         mov     bx, [cs:mw_p1]
         call    mw_pmask
