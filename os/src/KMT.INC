@@ -2835,13 +2835,9 @@ mt_up:  push    cx
         pop     ax
         push    ax
         add     al, '0'
-        mov     ah, al
-        mov     al, 'T'
-        mov     [es:8], ax
-        xor     ax, ax
-        mov     [es:10], ax
-        mov     [es:12], ax
-        mov     [es:14], ax
+        mov     ch, al
+        mov     cl, 'T'
+        call    mt_mcbnm
         pop     ax                      ; its programs' EMS theirs again
         push    ax
         call    mt_hshow
@@ -2870,6 +2866,15 @@ mt_up:  push    cx
         pop     dx
         pop     cx
         stc
+        ret
+
+; the MCB at ES named CX, the rest of its name cleared.  CX = 0 after
+mt_mcbnm:
+        mov     [es:8], cx
+        xor     cx, cx
+        mov     [es:10], cx
+        mov     [es:12], cx
+        mov     [es:14], cx
         ret
 
 ; the region of the entry at BX (TE_REG, TE_PSZ) taken where it was: the
@@ -6753,12 +6758,9 @@ mt_grow:
         mov     byte [es:0], 'M'
         mov     word [es:1], 8
         mov     [es:3], cx
-        pop     word [es:8]
-        xor     cx, cx
-        mov     [es:10], cx
-        mov     [es:12], cx
-        mov     [es:14], cx
-        inc     dx                      ; DX: the region's start, the chain's
+        pop     cx
+        call    mt_mcbnm
+        inc     dx                     ; DX: the region's start, the chain's
         mov     cx, [first_mcb]         ;  new first block (CX: the old one)
         mov     [cs:bx+TE_REG], dx
         mov     [first_mcb], dx
@@ -6775,11 +6777,8 @@ mt_grow:
         sub     cx, si                  ;  first block
         dec     cx
         mov     [es:3], cx
-        mov     word [es:8], 'TX'
-        xor     cx, cx
-        mov     [es:10], cx
-        mov     [es:12], cx
-        mov     [es:14], cx
+        mov     cx, 'TX'
+        call    mt_mcbnm
         jmp     short .gx
 .g1:    mov     es, cx                  ; the first block free: it starts AX
         add     ax, [es:3]              ;  lower
