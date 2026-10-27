@@ -123,9 +123,9 @@ run_both:
 .r:     push    cx
         call    spoil
         call    msg_out
-        jc      .rf_o
+        jc      .fo2
         call    msg_in
-.rf_o:  pop     cx
+        pop     cx
         jc      .fail_i
         loop    .r
         call    d_tick
@@ -139,6 +139,8 @@ run_both:
         mov     ax, [tin]
         call    rate
         jmp     short .cmp
+.fo2:   pop     cx                      ; (a pair's write that failed)
+        jmp     .fail_o
 .dmachk: call   spoil                   ; the last DMA message's echo, by the CPU
         mov     byte [usedma], 0
         call    msg_in
