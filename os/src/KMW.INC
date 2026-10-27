@@ -472,18 +472,7 @@ mw_end: cld                             ; (its exit code isn't wanted: the
         push    ss
         pop     es
         mov     si, alloc_tab           ; its UI_ALLOC blocks
-.f:     mov     ax, [si]
-        or      ax, ax
-        jz      .fn
-        push    es
-        mov     es, ax
-        mov     ah, 49h
-        int     21h
-        pop     es
-        mov     word [si], 0
-.fn:    add     si, 2
-        cmp     si, alloc_tab + 2 * NALLOC
-        jb      .f
+        call    mw_frees
         mov     al, [cs:mw_cur]
         call    mw_unwin                ; its windows off the stack (CF: some)
         jnc     .nw
@@ -529,6 +518,25 @@ mw_end: cld                             ; (its exit code isn't wanted: the
         jne     .bk                     ;  own, still waiting), if the screen
         mov     byte [cs:mw_rd], 2      ;  isn't drawn again anyway
 .bk:    jmp     mw_back
+
+; UI_ALLOC's blocks, NALLOC words at DS:SI: each freed, and 0.  All kept
+mw_frees:
+        pusha
+        push    es
+        mov     cx, NALLOC
+.f:     xor     ax, ax
+        xchg    ax, [si]
+        or      ax, ax
+        jz      .n
+        mov     es, ax
+        mov     ah, 49h
+        int     21h                     ; (CX kept: done restores it)
+.n:     inc     si
+        inc     si
+        loop    .f
+        pop     es
+        popa
+        ret
 
 ; ---------------------------------------------------------------------
 ;  ui_event.got (CALL FAR): AX = the event (BX, CX for a click), DS = the
@@ -2284,25 +2292,18 @@ mw_clean:
         push    ax
         push    si
         push    bp
-        push    es
         mov     al, 1
 .s:     call    mw_rec
         cmp     al, [cs:mw_cur]         ; (the running one's: run_cleanup's)
         je      .n
         cmp     byte [cs:bp+SE_USE], 0
         je      .n
-        mov     si, SE_CTX + MW_CALLOC
-.f:     push    ax
-        mov     ax, [cs:bp+si]          ; (its alloc_tab)
-        or      ax, ax
-        jz      .fn
-        mov     es, ax
-        mov     ah, 49h
-        int     21h
-.fn:    pop     ax
-        add     si, 2
-        cmp     si, SE_CTX + MW_CALLOC + 2 * NALLOC
-        jb      .f
+        push    ds
+        push    cs
+        pop     ds
+        lea     si, [bp+SE_CTX+MW_CALLOC]       ; (its alloc_tab)
+        call    mw_frees
+        pop     ds
 .n:     mov     byte [cs:bp+SE_USE], 0
         inc     al
         cmp     al, MW_MAX
@@ -2313,7 +2314,6 @@ mw_clean:
         mov     byte [cs:mw_msg], 0
         call    mw_clipoff
         mov     byte [run_active], 1    ; (so run_cleanup shrinks the block)
-        pop     es
         pop     bp
         pop     si
         pop     ax
