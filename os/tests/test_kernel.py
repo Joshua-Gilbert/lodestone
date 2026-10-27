@@ -1650,6 +1650,84 @@ def t_nul():
     check("... and LCMD (its IF EXIST looks at the directory itself): IF EXIST NOSUCH\\NUL no, A.B\\NUL yes; TYPE NUL",
           'nosuch' not in o.replace('nosuch\\nul', '') and 'dir\n' in o + '\n', o)
 
+def t_devname():
+    """Device names by dev_look_ax: DEVNAME.COM's 88 calls (OPEN, then CREATE, of each name) answer as the
+    kernel did before its table walk became a length-prefixed table and REPE CMPSB, and its GPIBnn parse AAD;
+    each device opened is the same one, with the same GPIB address.  EMMXXXX0 only with EMS."""
+    com = os.path.join(OUT, 'DEVNAME.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'DEVNAME.ASM')], check=True)
+    for ems in (0, 88):
+        k = ktest.KPC(image('devname.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'DEVNAME.COM=' + com, 'A.B\\'),
+                      ems_pages=ems)
+        at, devs = 0x600 + k.Y['dev_open'], []
+        k.hooks.append(lambda pc: devs.append(pc.r('ax')) if pc.r('cs') * 16 + pc.r('ip') == at else None)
+        k.start()
+        sh = Shell(k)
+        assert run_long(k, 'devname > out.txt')
+        f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+        got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+        devs = ['%d/%d' % (a & 0xFF, a >> 8) for a in devs]
+        want, wdevs = [], []
+        for l in DEVNAME_ANS.strip().split('\n'):
+            n, o, c, d = l.split()
+            if ems and n in DEVNAME_EMS: o, c, d = DEVNAME_EMS[n]
+            want += ['fn 3D %s -> %s' % (n, o.replace('e', 'err ')), 'fn 3C %s -> %s' % (n, c.replace('e', 'err '))]
+            wdevs += [d] * ((o == 'ok') + (c == 'ok')) if d != '-' else []
+        tag = ' (with EMS)' if ems else ''
+        check('DEVNAME.COM%s: all %d calls answer as before (CON.X and NUL. a device, NUL.. and NUL.X.Y 2, CONX and '
+              'CLOCK$$ files; GPIB00-GPIB30, GPIBn and GPIBnn.X a device, GPIB31, GPIB1Z and GPIB123 files)' % (tag, len(want)),
+              got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+        check('... each device opened is the one named, GPIBnn at address nn (%d opens)' % len(wdevs), devs == wdevs, devs)
+
+# DEVNAME.COM's names: OPEN's answer, CREATE's, the device opened (number/GPIB address; '-' none)
+DEVNAME_ANS = r'''
+CON ok ok 0/0
+NUL ok ok 1/0
+AUX ok ok 2/0
+COM1 ok ok 2/0
+COM2 ok ok 4/0
+PRN ok ok 3/0
+LPT1 ok ok 3/0
+CLOCK$ ok ok 1/0
+NUL.TXT ok ok 1/0
+COM e02 ok -
+CONX e02 ok -
+NU e02 ok -
+CON.X ok ok 0/0
+NUL. ok ok 1/0
+NUL.. e02 e02 -
+NUL.X. e02 e02 -
+NUL.X.Y e02 e02 -
+LPT1.PRN ok ok 3/0
+CLOCK e02 ok -
+CLOCK$$ e02 ok -
+A.B\CLOCK$ ok ok 1/0
+A.B\EMMXXXX0 e02 ok -
+EMMXXXX0 e02 ok -
+EMMXXXX e02 ok -
+EMMXXXX0.X e02 ok -
+\DEV\\NUL e03 e03 -
+GPIB5 ok ok 5/5
+GPIB05 ok ok 5/5
+GPIB30 ok ok 5/30
+GPIB31 e02 ok -
+GPIB e02 ok -
+GPIBX e02 ok -
+GPIB5.X ok ok 5/5
+GPIB5.X.Y ok ok 5/5
+GPIB1Z e02 ok -
+NOSUCH\GPIB5 e03 e03 -
+\DEV\GPIB9 ok ok 5/9
+A:GPIB12 ok ok 5/12
+GPIB99 e02 ok -
+GPIB5\ e03 e03 -
+GPIB0 ok ok 5/0
+GPIB123 e02 ok -
+GPIB/5 e03 e03 -
+GPIB:5 e02 e02 -
+'''
+DEVNAME_EMS = {'A.B\\EMMXXXX0': ('ok', 'ok', '6/0'), 'EMMXXXX0': ('ok', 'ok', '6/0'), 'EMMXXXX0.X': ('ok', 'ok', '6/0')}
+
 # NOMATCH.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
 MS_NOMATCH = [('fn 4E NOSUCH.TXT', 'err 12'),
               ('fn 4E Z*.*', 'err 12'),
@@ -2788,7 +2866,7 @@ def t_execabort():
           k.exec_list())
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_devname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

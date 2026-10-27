@@ -219,7 +219,7 @@ sft_fill:
 ;  devices by name
 ; ---------------------------------------------------------------------
 ; is the last component of path_buf (or of the path at AX) a device?
-; -> AL = device, AH = GPIB address.  CF if not.
+; -> AL = device, AH = GPIB address.  CF if not.  DX changes
 dev_lookup:
         mov     ax, path_buf
 dev_look_ax:
@@ -238,20 +238,14 @@ dev_look_ax:
         jne     .f
 .cut:   mov     bx, si
         jmp     .f
-.fe:    mov     dx, dev_names           ; BX = the base name
+.fe:    mov     si, dev_names           ; BX = the base name
         xor     cx, cx
-.t:     mov     si, dx
-        cmp     byte [si], 0
-        je      .gpib
-        mov     di, bx
-.c:     mov     al, [si]
-        or      al, al
-        je      .end
-        cmp     al, [di]
-        jne     .skip
+.t:     mov     cl, [si]                ; (ES = DS, DF clear: int21's)
         inc     si
-        inc     di
-        jmp     .c
+        jcxz    .gpib
+        mov     di, bx
+        repe    cmpsb
+        jne     .skip
 .end:   mov     al, [di]                ; the name must end here
         or      al, al
         jz      .hit
@@ -263,14 +257,10 @@ dev_look_ax:
         jz      .hit
         cmp     al, '.'
         jne     .e2
-.skip:  lodsb                           ; on past this name's 0
-        or      al, al
-        jnz     .skip
-        mov     dx, si
-        inc     cx
+.skip:  add     si, cx                  ; on past this name and its device
+        inc     si
         jmp     .t
-.hit:   mov     si, cx
-        mov     al, [dev_nums+si]
+.hit:   mov     al, [si]                ; (SI: past the name, CX = 0)
         xor     ah, ah
         clc
         jmp     .x
@@ -311,11 +301,11 @@ dev_look_ax:
         pop     cx
         pop     bx
         ret
-dev_names   db 'CON', 0, 'NUL', 0, 'AUX', 0, 'COM1', 0, 'COM2', 0
-            db 'PRN', 0, 'LPT1', 0, 'CLOCK$', 0
-.emm        db 0, 'MMXXXX0', 0, 0       ; (KEMS.INC: 'E' here, with EMS)
-dev_nums    db DEV_CON, DEV_NUL, DEV_AUX, DEV_AUX, DEV_COM2, DEV_PRN, DEV_PRN, DEV_NUL
-            db DEV_EMM
+; each: its length, the name, the device; a length of 0 ends them
+dev_names   db 3, 'CON', DEV_CON, 3, 'NUL', DEV_NUL, 3, 'AUX', DEV_AUX
+            db 4, 'COM1', DEV_AUX, 4, 'COM2', DEV_COM2, 3, 'PRN', DEV_PRN
+            db 4, 'LPT1', DEV_PRN, 6, 'CLOCK$', DEV_NUL
+.emm        db 0, 'EMMXXXX0', DEV_EMM, 0        ; (KEMS.INC: 8 here, with EMS)
 
 ; device AL (AH = GPIB address) into a new SFT entry -> SI, AL = number
 dev_open:
