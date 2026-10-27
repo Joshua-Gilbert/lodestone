@@ -955,16 +955,14 @@ mw_back:
 ;  sessions, slots, windows
 ; ---------------------------------------------------------------------
 ; AL = a session -> BP = its record (in MT's segment)
-mw_rec: push    ax
-        push    dx
-        xor     ah, ah
-        mov     dx, SE_SIZE
-        mul     dx
-        add     ax, mw_ses
-        mov     bp, ax
-        pop     dx
-        pop     ax
+mw_rec: mov     bp, ax
+        shl     bp, 8                   ; (AL * 128: SE_SIZE)
+        shr     bp, 1
+        add     bp, mw_ses
         ret
+%if SE_SIZE != 128
+%error "KMW: mw_rec takes SE_SIZE as 128"
+%endif
 
 ; task AL, its count AH: shown in a session's terminal window (MT_TOPEN
 ; gave it the task)?  CF if not.  All kept
