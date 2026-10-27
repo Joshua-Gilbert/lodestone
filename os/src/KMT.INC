@@ -2321,7 +2321,7 @@ mt_pub: mov     cl, [bp+F_CX]
         call    mt_pin
         jc      .bd
 .set:   call    mt_cent
-        mov     dx, es                 ; (DX:DI the new one)
+        mov     dx, es                  ; (DX:DI the new one)
         call    mt_tchg                 ; (AX: its count as a window saw it)
         cmp     di, [es:TX_PUB]
         jne     .ch
@@ -6576,7 +6576,7 @@ mt_vset:
 ; -> AX = its segment; CF if none
 mt_carve:
         push    es
-        xor     bx, bx                 ; (the best so far: its MCB)
+        xor     bx, bx                  ; (the best so far: its MCB)
         mov     dx, [cs:mt_size]
         mov     ax, [cs:mt_mcb0]
 .w:     mov     es, ax
@@ -6715,7 +6715,7 @@ mt_grow:
         mov     [es:3], cx
         pop     cx
         call    mt_mcbnm
-        inc     dx                     ; DX: the region's start, the chain's
+        inc     dx                      ; DX: the region's start, the chain's
         mov     cx, [first_mcb]         ;  new first block (CX: the old one)
         mov     [cs:bx+TE_REG], dx
         mov     [first_mcb], dx
