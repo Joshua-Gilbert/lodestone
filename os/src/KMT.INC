@@ -2687,15 +2687,8 @@ mt_kill:
 ; handler (one in service, the mouse's event handler), an INT 24h handler
 ; or a call MT passed on (mt_can).  DS = KSEG; AX changed
 mt_kok: call    mt_can
-        jc      .no
-        call    mt_isr
-        jnz     .x
-        push    es
-        mov     es, [ui_seg]
-        cmp     byte [es:m33_busy], 0
-        pop     es
-.x:     ret
-.no:    or      sp, sp                  ; (NZ)
+        jnc     mt_b33                  ; (its flag tests mt_can's again)
+        or      sp, sp                  ; (NZ)
         ret
 
 ; MT_PARK: task BL's region to EMS, given back (mt_pk)
@@ -4731,13 +4724,8 @@ mt_i33: cli
         mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         je      .pas
-        call    mt_busy                 ; (the kernel's INT 24h's prompt, raised
+        call    mt_b33                  ; (the kernel's INT 24h's prompt, raised
         jnz     .pas                    ;  inside INT 21h or not: as it is)
-.b:     push    es
-        mov     es, [ui_seg]
-        cmp     byte [es:m33_busy], 0
-        pop     es
-        jne     .pas
         mov     ax, [bp+4]              ; (the caller's CS)
         call    mt_mine
         jnc     .bg
@@ -4918,19 +4906,15 @@ mt_m33nb:
         push    ax
         mov     al, [cs:mt_33sb]
         mov     ah, 0
-.x:     push    ds
-        push    es
+.x:     push    es
         push    KSEG
-        pop     ds
-        cmp     word [ui_seg], 0
-        je      .r
-        mov     es, [ui_seg]
+        pop     es
+        mov     es, [es:ui_seg]
         xchg    al, [es:m33_busy]
         or      ah, ah
         jz      .r
         mov     [cs:mt_33sb], al
 .r:     pop     es
-        pop     ds
         pop     ax
         ret
 
@@ -4945,25 +4929,20 @@ mt_m33on:
         call    mt_m33us
         je      .x
         pusha
-        push    ds
         push    es
         push    KSEG
-        pop     ds
-        mov     cx, [ui_seg]
+        pop     es
+        mov     es, [es:ui_seg]
         pushf                           ; (no interrupt's own call between)
         cli
-        jcxz    .on                     ; (no UI: none to tell apart)
-        mov     es, cx
         mov     dx, [es:m33_cnt]
-.on:    mov     ax, 1
+        mov     ax, 1
         call    mt_m33
-        jcxz    .p
         cmp     dx, [es:m33_cnt]        ; (after the change's AX=2, the UI's
         jne     .p                      ;  count is below 0, so AX=1 moves it;
         mov     byte [cs:mt_33ot], 1    ;  not so in mt_end inside a change)
 .p:     popf
         pop     es
-        pop     ds
         popa
 .x:     ret
 
@@ -4991,22 +4970,18 @@ mt_m33us:
         pop     ax
         ret
 
-; the driver's state to task AL's TX (none without the UI).  All kept
+; the driver's state to task AL's TX.  All kept
 mt_m33to:
         pusha
-        push    ds
         push    es
         push    KSEG
-        pop     ds
-        mov     cx, [ui_seg]
-        jcxz    .x
-        mov     es, cx
+        pop     es
+        mov     es, [es:ui_seg]
         pushf
         cli
         call    mt_m33sv
         popf
-.x:     pop     es
-        pop     ds
+        pop     es
         popa
         ret
 
@@ -5023,7 +4998,6 @@ mt_m33ld:
         push    KSEG
         pop     ds
         mov     cx, [ui_seg]
-        jcxz    .x
         call    mt_ent
         mov     es, [cs:bx+TE_TX]
         mov     dx, TX_M33
@@ -5054,7 +5028,7 @@ mt_m33ld:
         pop     ds
         mov     [49h], bl
         popf
-.x:     pop     es
+        pop     es
         pop     ds
         popa
         ret
@@ -5065,9 +5039,7 @@ mt_m33ld:
 mt_m33new:
         pusha
         push    ds
-        mov     cx, [ui_seg]
-        jcxz    .x
-        mov     ds, cx
+        mov     ds, [ui_seg]
         pushf
         cli
         mov     si, m33_st
@@ -5087,7 +5059,7 @@ mt_m33new:
         mov     [es:TX_M33 + m33_hoff - m33_st], ax
         mov     [es:TX_M33 + m33_hseg - m33_st], ax
         mov     [es:TX_M33 + m33_hpsp - m33_st], ax
-.x:     pop     ds
+        pop     ds
         popa
         ret
 
@@ -5101,8 +5073,6 @@ mt_33hk:
         push    KSEG
         pop     ds
         mov     ax, [ui_seg]
-        or      ax, ax
-        jz      .x
         push    0
         pop     es
         pushf
@@ -5121,7 +5091,7 @@ mt_33hk:
         call    mt_m33sv                ;  a change of the front saved it
         popa
 .p:     popf
-.x:     pop     es
+        pop     es
         pop     ds
         pop     ax
         ret
@@ -5856,6 +5826,12 @@ mt_vlose:
         mov     byte [cs:mt_vlost], 1
         ret
 
+; NZ if an INT 33h event handler runs (m33_busy; DS = KSEG); else mt_busy's
+mt_b33: push    es
+        mov     es, [ui_seg]
+        cmp     byte [es:m33_busy], 0
+        pop     es
+        jne     mt_isr.x
 ; NZ if MT is inside a call it passed on to the BIOS, an INT 13h call or
 ; a change of the front, or the kernel's INT 24h runs; else mt_isr's
 mt_busy:
