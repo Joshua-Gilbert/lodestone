@@ -4,6 +4,10 @@
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
  *
+ * v7.3: a mnemonic right after coordinates, with no ';' between them (HP-GL's
+ *    terminator is optional), ends them: PD100,200PU300,400 lifts the pen for
+ *    300,400. It used to be taken as a separator and lost.
+ *
  * v7.2: no bumps. A status request no longer re-enters graph mode with GS and
  *    a move to the pen's position, which lifted the pen in the middle of a
  *    stroke every ~600 bytes. The 4662 returns to the mode it was in after a
@@ -768,6 +772,7 @@ void feedChar(char c) {
         return;
     }
     if (c == ';') { endCommand(); return; }
+    if (inCoords && (uint8_t)((c | 0x20) - 'a') < 26) endCommand();    // a letter: the next mnemonic (';' is optional)
     if (inCoords) {                     // PU/PD/PA coordinates
         if ((c >= '0' && c <= '9') || c == '.' || ((c == '-' || c == '+') && numLen == 0)) {
             if (numLen < sizeof(numBuf) - 1) numBuf[numLen++] = c;
@@ -886,7 +891,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.2"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.3"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));
