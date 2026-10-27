@@ -895,6 +895,7 @@ file_read:
         xor     ah, ah
         add     [rw_run], ax
         jmp     .ext
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .go:    mov     ax, [rw_cl]             ; the next lookup starts from here
         mov     [si+S_CCL], ax
         mov     ax, [rw_cix]
@@ -964,6 +965,7 @@ sec_of: shr     ax, 9
         shl     dx, 7
         or      ax, dx
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; AX = the sector of the file the position of SFT SI is in
 pos_sec:
         push    dx
@@ -1010,6 +1012,7 @@ file_write:
         or      cx, cx
         jnz     .loop
         jmp     .setsz
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .loop:  cmp     word [rw_left], 0
         je      .done
         call    rw_where

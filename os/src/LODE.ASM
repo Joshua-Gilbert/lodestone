@@ -226,11 +226,13 @@ k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 %endmacro
 section .text
         EVEN    capture, int21, int21.stk, ret_cf, ok, done, done.sw, fail, ret_cfax, ok_ax
-        EVEN    f_02, tty_out, con_out, con_out.x, dev_write.cl
+        EVEN    f_02, tty_out, con_out, con_out.x
         EVEN    h2sft, sft_of, jft_alloc.l, sft_busy.l, sft_busy.n, f_3F, f_40, sft_read
         EVEN    rw_start, rw_step, use_drive_si, sft_cluster, sft_cluster.w, sft_cluster.got
-        EVEN    rw_where.one, file_read.loop, file_read.ext, file_read.done, pos_sec, rw_setra
-        EVEN    use_drive, fat_load, fat_get, fat_get.e, fat_flush.k, fat_set.one, clu2lba
+        EVEN    rw_where.one, file_read.loop, file_read.ext, file_read.go, file_read.part
+        EVEN    sec_of, pos_sec, rw_setra, file_write.loop
+        EVEN    use_drive, fat_load, fat_get, fat_get.e, fat_flush.k, fat_flush.run, fat_flush.dirty
+        EVEN    fat_set.one, clu2lba
         EVEN    buf_getd, buf_get, buf_get.s, buf_get.f, buf_get.n, buf_get.hit
         EVEN    disk_io, dio.more, dio.ok, tc_piece, tc_mine
         EVEN    gpath.n, gpath.s, parse_comp.fl, parse_comp.chk, f_36.l
@@ -238,6 +240,7 @@ section .text
         EVEN    dir_find.e, dir_find.n, name_match.l, name_match.n, name_match.x
         EVEN    dev_look_ax.f, dev_look_ax.t, dev_look_ax.skip
         EVEN    gp_cmd_begin, gp_send_cmd, gp_wait_co, gp_wait_co.ok, gp_tick, gp_tmo_start, gp_wait_tick.w
+        EVEN    gp_handler.go, gp_isr
 
 section ovl
 bootbpb     times 64 db 0
@@ -254,8 +257,8 @@ lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
                                         ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
                                         ;  18 with R: (KROM.INC)
             align 16                    ; (free: the BSS starts on a paragraph;
-                                        ;  7 B at lastdrv 40E8h.  The EVEN pads
-                                        ;  make a change before gp_clear_in move
+                                        ;  none at lastdrv 40EFh.  The EVEN pads
+                                        ;  make a change before gp_isr's move
                                         ;  this by its size +-1, so in steps of 2)
 image_end:                              ; everything above is copied low;
                                         ; the EMS section starts right here
