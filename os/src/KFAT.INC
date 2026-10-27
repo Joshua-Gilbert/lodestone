@@ -22,8 +22,7 @@ r_wild      resb 1              ;   it has wildcards
 d_lba       resw 1              ; the directory entry found: sector,
 d_off       resw 1              ;   offset in it (bits 9+: the sector
                                 ;   number's high part: dent_buf),
-d_index     resw 1              ;   index in its directory
-de          resb 32             ; a copy of it
+de          resb 32             ; a copy of it (RENAME copies the three)
 de_idx      resw 1              ; dir_entry's last root sector: an entry
 de_lba      resw 1              ;   in it, its LBA,
 de_bix      resw 1              ;   its buffer,
@@ -285,7 +284,6 @@ dir_entry:
         push    cx
         push    dx
         push    di
-        mov     [d_index], bx
         mov     di, [actp]
         xor     ch, ch                  ; (the sector number's high part)
         or      ax, ax
@@ -470,8 +468,7 @@ dir_find:
         jnz     .n
         call    name_match
         jne     .n
-        mov     [d_index], bx           ; (found further into the sector)
-        mov     dx, bx
+        mov     dx, bx                  ; (found further into the sector)
         and     dx, 15
         shl     dx, 5
         and     word [d_off], 0FE00h
@@ -1057,13 +1054,9 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         jc      .acc
         mov     al, [r_drv]
         mov     [ren_drv], al
-        mov     ax, [d_lba]
-        mov     [ren_lba], ax
-        mov     ax, [d_off]
-        mov     [ren_off], ax
-        mov     si, de
-        mov     di, ren_de
-        mov     cx, 16
+        mov     si, d_lba               ; d_lba, d_off, de
+        mov     di, ren_lba
+        mov     cx, 18
         rep     movsw
         mov     si, path2_buf
         call    resolve_si              ; the new name
@@ -1110,6 +1103,7 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         jmp     .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
+        times   -(de != d_off + 2 || ren_off != ren_lba + 2 || ren_de != ren_off + 2) db 0
 
 section .bss
 ren_drv     resb 1
