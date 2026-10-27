@@ -318,17 +318,17 @@ f_stats:
 
 f_unload:
         cli
-        call    irq_mask
-        cmp     byte [hooked], 0
+        cmp     byte [hooked], 0        ; (never hooked: IRQ 5 never on)
         je      .v
         push    es
         push    0
         pop     es
         cmp     word [es:IRQVEC*4], isr ; INT 0Dh back as we found it - if
-        jne     .taken                  ;  it is still ours
-        mov     ax, cs
+        jne     .taken                  ;  it is still ours (else the driver
+        mov     ax, cs                  ;  stays as it is, SRQ on IRQ 5)
         cmp     [es:IRQVEC*4+2], ax
         jne     .taken
+        call    irq_mask
         mov     ax, [oldirq]
         mov     [es:IRQVEC*4], ax
         mov     ax, [oldirq+2]
