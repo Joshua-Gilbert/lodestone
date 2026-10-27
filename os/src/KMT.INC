@@ -3542,19 +3542,20 @@ mt_end: call    mt_cent                 ; (first: a call refused changes
         sti
         pop     es
         pop     bx
-        mov     cx, [cs:bx+TE_REG]      ; the region freed (a program that
-        dec     cx                      ;  stayed resident too: its hooks are
-        mov     es, cx                  ;  gone, so is it)
-        mov     word [es:1], 0
-        call    mt_tfree
         mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .f
         push    ax                      ; it was in front: the Executive's
         xor     al, al                  ;  task is, with its screen and its
         call    mt_scrto                ;  INT 33h state (this one's pages
-        pop     ax                      ;  are gone: its screen not kept)
-.f:     cmp     al, [cs:mt_swreq]
+        pop     ax                      ;  are gone: its screen not kept; its
+                                        ;  TX, written, still its own)
+.f:     mov     cx, [cs:bx+TE_REG]      ; the region freed (a program that
+        dec     cx                      ;  stayed resident too: its hooks are
+        mov     es, cx                  ;  gone, so is it)
+        mov     word [es:1], 0
+        call    mt_tfree
+        cmp     al, [cs:mt_swreq]
         jne     .s
         mov     byte [cs:mt_swreq], 0FFh
 .s:     call    mt_pick                 ; another ready one, or the front one
