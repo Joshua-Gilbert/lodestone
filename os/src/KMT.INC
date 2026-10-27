@@ -1952,13 +1952,8 @@ mt_t5:  or      al, al
 mt_open:
         cmp     byte [cs:mt_cur], 0     ; (a task's: the Executive is another)
         jne     .y
-        mov     al, 1
-.l:     call    mt_ent
-        cmp     byte [cs:bx+TE_STATE], TS_FREE
-        jne     .y
-        inc     al
-        cmp     al, MT_TASKS
-        jb      .l
+        call    mt_others
+        jnc     .y
         mov     al, 1                   ; (none: f_F0's own answer)
         or      al, al
         jmp     KSEG:f_F0 + 5
