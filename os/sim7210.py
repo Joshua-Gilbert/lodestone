@@ -27,12 +27,13 @@ class NEC7210:
     def __init__(s, devices, stale=None):
         s.devices = devices; s.my = 0; s.log = []; s.ren = False
         s.full_reset(); s.stray = os.environ.get('STRAY') == '1'; s.spe_count = 0
+        s.slow_start = 0; s.n_slow = 0                 # a slow listener: DO that many ISR1 reads after GTS
         if stale is not None: s.dir = stale            # left over from a previous run
     def full_reset(s):
         s.cic = False; s.atn = False; s.listeners = set(); s.talker = None
         s.spe = False; s.dir = 0; s.dir_full = False; s.isr1 = 0; s.seoi = False
         s.holdoff_all = False; s.holdoff_end = False; s.reos = False; s.held = False; s.tcs_pending = False; s.msgpos = 0
-        s.errlatch = False; s.co = False; s.do = False
+        s.errlatch = False; s.co = False; s.do = False; s.do_hold = 0
     def chip_talks(s): return s.talker == s.my
     def chip_listens(s): return s.my in s.listeners
     def source(s):
@@ -68,6 +69,9 @@ class NEC7210:
                 if not s.held: s.handshake_done()
             s.pump(); return v
         if reg == 1:
+            if s.do_hold:
+                s.do_hold -= 1
+                if not s.do_hold: s.do = True
             v = s.isr1
             if s.do: v |= 0x02; s.do = False
             if s.errlatch: v |= 0x04; s.errlatch = False
@@ -104,7 +108,8 @@ class NEC7210:
         elif v == 0x10:
             if s.cic and not s.tcs_pending:
                 s.atn = False; s.co = False
-                if s.chip_talks(): s.do = True
+                if s.chip_talks() and s.slow_start: s.do_hold = s.slow_start; s.n_slow += 1
+                elif s.chip_talks(): s.do = True
         s.pump()
     def cdor(s, v):
         if s.atn:
