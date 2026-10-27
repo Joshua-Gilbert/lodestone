@@ -959,11 +959,25 @@ def t_driver():
               '(%d looks)' % (h.link.stats['rx_frames'] - f1, h.pit_dues - d1),
               up and ok and h.rv('srq_held') == 1 and h.pit_dues > d1, (up, ok, h.rv('srq_held'), h.screen()))
         n2, f2 = h.naps, h.link.stats['rx_frames']
+        # meanwhile another device's SRQ edge (it lets go and asks again: the driver's count bumped once) at a
+        # link_wait just after a frame went (its answer can't be there yet): no edge for our answers, the line
+        # still held
+        from unicorn import UC_HOOK_CODE
+        lw, bumped, sent = 0xE0000 + h.rsym['link_wait'], [], [h.rv('t_sent', 2)]
+        def foreign(uc, addr, size, ud):
+            if bumped or h.m.ems_reg[0] != h.m.rd(h.stub(), h.sym['r_hw'], 1)[0]: return
+            t, sent[0] = sent[0], h.rv('t_sent', 2)
+            if t != sent[0] and h.rv('srq_held') == 1 and not h.nano.srq:
+                bumped.append(h.m.us)
+                h.m.wr(0x60, h.m.Y['gp_nsrq'], struct.pack('<H', (h.m.u16(0x60, h.m.Y['gp_nsrq']) + 1) & 0xFFFF))
+        hk = h.m.mu.hook_add(UC_HOOK_CODE, foreign, None, lw, lw); h.m.mu.ctl_remove_cache(lw, lw + 1)
         h.term_type('big'); h.press(ENTER)
         ok = h.has('line 59', 60) and in_step(h)
-        check('... and from then on never asleep waiting for an SRQ that can\'t come (%d frames)'
-              % (h.link.stats['rx_frames'] - f2), ok and h.naps == n2 and h.link.stats['rx_frames'] - f2 > 3,
-              (ok, h.naps - n2))
+        h.m.mu.hook_del(hk)
+        check('... and from then on never asleep waiting for an SRQ that can\'t come (%d frames), another '
+              'device\'s SRQ edge meanwhile too' % (h.link.stats['rx_frames'] - f2),
+              ok and bumped and h.naps == n2 and h.rv('srq_held') == 1 and h.link.stats['rx_frames'] - f2 > 3,
+              (ok, bumped, h.naps - n2, h.rv('srq_held')))
         # the line let go (the instrument served): the answers' SRQs are edges again, and the first clears
         # srq_held (audit3 X49: it was kept till the next HELLO, the console never asleep till then)
         del h.m.chip.int_line
