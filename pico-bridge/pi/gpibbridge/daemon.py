@@ -138,8 +138,10 @@ class Bridge(handlers.Context):
             with self.wlock:
                 ser.write(frame)
         except Exception as e:
-            # Any exception: a port the main loop closes under the ping thread's write makes pyserial 3.5 raise
-            # TypeError (its fd is None by then), not SerialException.
+            # A port the main loop closes under the ping thread's write makes pyserial 3.5 raise TypeError (its fd
+            # is None by then), not SerialException. On a port still open, only those two mean the port.
+            if ser.is_open and not isinstance(e, (serial.SerialException, OSError)):
+                raise
             log.warning("write to %s failed: %r", self.port, e)
             # Not closed here: this may be the ping thread, and a port closed under the main loop's read raises
             # what nothing catches (pyserial's in_waiting: TypeError); close() also tells the control clients.
@@ -458,7 +460,7 @@ def main(argv=None):
                         else "%(asctime)s %(levelname)s %(message)s", stream=sys.stderr)
     b = Bridge(cfg)
     b.reopen_after = 0.0
-    threading.Thread(target=b.ping_thread, daemon=True).start()
+    threading.Thread(target=b.ping_thread, name="ping", daemon=True).start()
 
     sel = selectors.DefaultSelector()
     path = cfg["control_socket"]

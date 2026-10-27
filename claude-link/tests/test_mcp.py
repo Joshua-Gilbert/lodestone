@@ -454,7 +454,8 @@ def test_hpgl_parts():
     parts = P(big, 1024)
     assert b''.join(parts) == big and max(map(len, parts)) <= 1024
     assert all(p.endswith(b';') for p in parts)
-    for bad in (b'', b' ;\r\n', b'IN;\x1b.T', b'IN;\x00', b'LB\xe9\x03'):
+    for bad in (b'', b' ;\r\n', b'IN;\x1b.T', b'IN;\x00', b'LB\xe9\x03',
+                b'IN;LBHI', b'LBA\x03;PU;BLabc', b'wdNO END'):        # a label left open
         try: mcp.hpgl_check(bad); assert False, bad
         except ValueError: pass
     assert mcp.hpgl_check(b'IN;\r\nLBHI\x03;\tPU;') == b'IN;\r\nLBHI\x03;\tPU;'
