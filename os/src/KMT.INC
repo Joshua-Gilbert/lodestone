@@ -3559,14 +3559,18 @@ mt_ended:
 
 ; the EMS handle whose record is at KSEG:ems_h + SI freed as a program's
 ; end frees it (ems_free: a context it saved with 47h goes too, where INT
-; 67h AH=45h refuses, 86h).  DS = KSEG; all kept
+; 67h AH=45h refuses, 86h); one closed already left as it is (ems_free
+; leaves a closed record's owner: an owner test alone can't tell).  DS =
+; KSEG; all kept
 mt_hfree:
         pusha
         pushf
         cli
         add     si, ems_h
+        cmp     byte [si], 0FFh         ; (closed)
+        je      .x
         KCALL   ems_free
-        popf
+.x:     popf
         popa
         ret
 
