@@ -22,7 +22,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-3,584 bytes (7 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one, the window, T2, four: TERM.RUN and LODEMT.SYS's growth, graphics, T3, one: TERM.RUN's notes, select and paste, T4, three: TERM.RUN two, LODEMT.SYS one, regions that grow, T5a, one: LODEMT.SYS, a screen a program publishes, T5b, two: LODEMT.SYS one, TERM.RUN one, and a program woken by SRQ, T5c, one: LODEMT.SYS). CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
+3,584 bytes (7 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one, the window, T2, four: TERM.RUN and LODEMT.SYS's growth, graphics, T3, one: TERM.RUN's notes, select and paste, T4, three: TERM.RUN two, LODEMT.SYS one, regions that grow, T5a, one: LODEMT.SYS, a screen a program publishes, T5b, two: LODEMT.SYS one, TERM.RUN one, a program woken by SRQ, T5c, one: LODEMT.SYS, CLAUDE.COM in a window, T5d, one: TERM.RUN, and the 2026-10-26 audit's bug fixes, one: LODEMT.SYS; its MT space batch gave two back). CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
 
 ## ROM 2
 
