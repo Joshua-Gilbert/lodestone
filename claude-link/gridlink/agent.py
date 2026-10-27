@@ -84,7 +84,8 @@ class Session:
         s.grid.on_restart()
         if s.busy: s.interrupt.set()
         with s.ask_cv: s.ask_cv.notify_all()
-        s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, 0]) + s.model.encode())
+        s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, s.link.saver_flag()]) + s.model.encode())   # (EV_SAVER:
+                                                                                        #  nothing to do; it rings)
         s.link.send(glp.P_TITLE, to_bytes(s.title()))
         s.inbox.put(('hello', None))
 

@@ -296,6 +296,29 @@ stays full screen, and a second CODE-A says Claude is running already.
 Design, limits and the link's figures are in
 `lodestone-multitasking.md`, T5d.
 
+## The screen saver (CLAUDE 1.14, 2026-10-27)
+
+Full screen, CLAUDE.COM now lets the Executive's screen saver come on
+after System's delay (`SAVER=`, minutes) with no key, no mouse movement
+and no change from Claude Code (a screen update, or a GRiD tool call).
+It is the same saver as everywhere: DEFRAG on each disk unless `TIDY=0`,
+then the dark screen. A key or the mouse ends it, and so does anything
+from the Pi: the bridge raises SRQ, and CLAUDE gives the saver an Esc,
+which stops DEFRAG too. The key that ends it is swallowed, as in the
+Executive (a CODE-Q typed then doesn't quit). The screen is then drawn
+again; in Term that is a CODE-R repaint, one full screen over the link.
+
+CLAUDE tells the Pi first (EVENT 07h), so Term keeps taking tool calls
+while the GRiD is quiet: a call rings the bridge, the saver ends, and
+the call is answered (in the emulator, 0.08 s from the dark screen,
+0.7 s from inside DEFRAG). It is full screen only: in a window CLAUDE
+leaves the screen to the Executive's own saver, which knows nothing of
+Claude Code (its activity doesn't hold it off, and the Pi isn't told; the
+tools work behind it as ever).
+
+Limits: no saver inside CLAUDE with an AR488 bridge (it can't ring), a
+gridlink without it (its HELLO lacks bit 4), or `GPIBIRQ=0`.
+
 ## Phase 2: resident Claude (the original sketch)
 
 Being built: the plan, its spikes, M1 (`CLAUDE /R` and `/U`, 0.8 KB resident) and M2 (this Term, in the pop-up: the same session, its code in EMS) are in `lodestone-resident-claude.md`.

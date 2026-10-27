@@ -161,6 +161,7 @@ class Machine:
         s.last_blk = (0, 0); s.halted = False; s.blocked = False
         s.ints = collections.Counter()
         s.mt = None; s.mouse = None; s.reads08 = 0     # (FakeMT; INT 33h's presses; INT 10h AH=08h)
+        s.saver = None                                  # (FakeSaver: INT 21h F0h AL=5)
         # the PIC as far as IRQ 5 goes (the 7210's INT through the GPIB cartridge's E1 jumper; GRIDGPIB 1.2)
         s.pic_mask = 0xB8; s.in5 = False; s.pic_rr = 2; s.irq5 = False; s.chip_int_was = False; s.irqs5 = 0
         for n in range(256):
@@ -371,6 +372,9 @@ class Machine:
         if s.mouse is None:
             s.log.append('[int 33h AX=%04X ignored]' % ax); return
         if ax == 0: s.w('ax', 0xFFFF); s.w('bx', 2); s.mouse['presses'] = []
+        elif ax == 3:                                   # (its buttons and place: s.mouse's 'btn', 'pos')
+            x, y = s.mouse.get('pos', (0, 0))
+            s.w('bx', s.mouse.get('btn', 0)); s.w('cx', x); s.w('dx', y)
         elif ax == 5:
             p = s.mouse['presses']; s.w('ax', 0)
             if p: s.w('bx', len(p)); s.w('cx', p[-1][0]); s.w('dx', p[-1][1]); p.clear()
@@ -622,6 +626,7 @@ class Machine:
         s.w('es', s.MEMBASE - 1); s.w('bx', 2)
     def d59(s, *a): s.w('ax', getattr(s, 'last_err', 0)); s.w('bx', 0x0101)
     def df0(s, ah, al, ds, dx, bx, cx):
+        if al == 5 and s.saver is not None: s.saver.call(s); return
         if s.mt is None: s.log.append('[21h/F0h not emulated]'); s.err(1); return    # (another DOS)
         s.mt.call(s, al, bx, cx)
     def d29(s, *a): s.w('al', 0)
@@ -950,6 +955,37 @@ class FakeMT:
             else: s.log.append('waitf')
         elif mode < 4 and s.front and s.wgfx:
             s.front = s.wgfx = False; s.log.append('back')
+
+
+class FakeSaver:
+    """The Executive's screen saver as a program sees it (INT 21h F0h AL=5,
+    Lodestone's): AX = its delay in ticks, ES:BX = its far entry.  The entry
+    is a stub at E000:0000 that counts its calls (E000:0040), says it is up
+    (E000:0041), blanks B800h, then waits as the real one does, INT 16h
+    AH=11h and HLT, until a key, which it reads (AH=10h) and returns."""
+    SEG = 0xE000
+    CODE = bytes([0x2E, 0xFE, 0x06, 0x40, 0x00,             # inc byte [cs:40h]
+                  0x2E, 0xC6, 0x06, 0x41, 0x00, 0x01,       # mov byte [cs:41h], 1
+                  0x06, 0x68, 0x00, 0xB8, 0x07,             # push es / push 0B800h / pop es
+                  0x31, 0xFF, 0x31, 0xC0, 0xB9, 0x00, 0x40, 0xF3, 0xAB, 0x07,     # rep stosw 4000h zeros
+                  0xB4, 0x11, 0xCD, 0x16, 0x75, 0x04,       # .l: mov ah,11h / int 16h / jnz .k
+                  0xFB, 0xF4, 0xEB, 0xF6,                   # sti / hlt / jmp .l
+                  0xB4, 0x10, 0xCD, 0x16,                   # .k: mov ah,10h / int 16h
+                  0x2E, 0xC6, 0x06, 0x41, 0x00, 0x00, 0xCB])    # mov byte [cs:41h], 0 / retf
+
+    def __init__(s, delay=36):
+        s.delay = delay
+
+    def attach(s, m):
+        m.saver = s; s.m = m
+        m.wr(s.SEG, 0, s.CODE)
+        m.wr(s.SEG, 0x40, b'\0\0')
+
+    def call(s, m):
+        m.w('ax', s.delay); m.w('es', s.SEG); m.w('bx', 0); m.cf(0)
+
+    def entries(s): return s.m.rd(s.SEG, 0x40, 1)[0]
+    def up(s): return s.m.rd(s.SEG, 0x41, 1)[0] == 1
 
 
 class EmuHarness:
