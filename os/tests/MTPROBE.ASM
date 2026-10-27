@@ -4,7 +4,7 @@
 ; BL = 0, 7, 8, then 1 with CL = 1, task 1's first count: from a task,
 ; refused; CX = 1234h, ES:DI = buf), 21h (T4: BL = 0, 7, 8, 1) and 22h
 ; (T5b: CL = 0 from here, then CL = 1 with BL = 0, 7, then CL = 2) and 23h
-; (T5c: BL = 1, then 0), for
+; (T5c: BL = 1, then 0) and 18h (BL = 0, then 8), for
 ; test_mt.py: one line each,
 ;   "F0xx CF=c AX=xxxx BX=xxxx CX=xxxx"
 ; (CF set and BX = CX = 1234h before each call, so what changed shows)
@@ -48,6 +48,8 @@ org 100h
         cmp     al, 21h
         je      .cb
         cmp     al, 23h
+        je      .cb
+        cmp     al, 18h
         je      .cb
         cmp     al, 22h
         jne     .c1
@@ -127,7 +129,8 @@ als     db      00h, 0, 11h, 0, 12h, 0, 13h, 0, 13h, 8, 13h, 7, 14h, 0, 1Bh, 0
         db      1Ch, 0, 0FFh, 0, 1Fh, 0, 1Fh, 7, 1Fh, 8, 20h, 0, 20h, 7, 20h, 8
         db      1Eh, 0, 34h, 1Eh, 7, 34h, 1Eh, 8, 34h, 1Eh, 1, 1
         db      21h, 0, 21h, 7, 21h, 8, 21h, 1
-        db      22h, 0, 0, 22h, 0, 1, 22h, 7, 1, 22h, 0, 2, 23h, 1, 23h, 0, 0EEh
+        db      22h, 0, 0, 22h, 0, 1, 22h, 7, 1, 22h, 0, 2, 23h, 1, 23h, 0
+        db      18h, 0, 18h, 8, 0EEh
 cbl     db      0
 ccl     db      0
 s_f0    db      'F0$'
