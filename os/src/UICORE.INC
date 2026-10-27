@@ -261,10 +261,8 @@ api_font:
         ret
 
 section uiboot
-; at start-up: UI_CLIP's file without EMS (s_clip) named, once: on the
-; settings drive (3305h's DH), else the start-up one; from the ROM with
-; neither, C: if there, else A: (as SYSTEM, and the kernel's capdrv: R:
-; takes no writes).  Neither answer changes until the next start-up
+; at start-up: UI_CLIP's file without EMS (s_clip) on the settings drive
+; (3305h's DH), else the start-up one; from the ROM, C: if there, else A:
 clip_name:
         mov     ax, 3305h
         int     21h

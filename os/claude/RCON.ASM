@@ -548,10 +548,9 @@ prog_name:
 ; now (AX kept); else AX = the next key, taken if AH is a read (00h, 10h).
 ; A wait (FF FF n) holds them n ticks; at the end (or a {SNAP}: TYPE's
 ; screen comes at the end anyway) the stub's r_ks goes 0 and r_pend 1:
-; the console comes back, and answers TYPE.  Interrupts off throughout, then
-; as the caller had them (POPF: the stub's peek runs with IF clear): an INT
-; 16h peek from an interrupt (a TSR's INT 1Ch) must never find ks_pos,
-; ks_wait and ks_until half moved.
+; the console comes back, and answers TYPE.  Interrupts off, then the
+; caller's IF: a nested peek (a TSR's INT 1Ch) must not see the state half
+; moved.
 rc_feed:
         push    ds
         push    si
@@ -1443,10 +1442,9 @@ unborrow:
 ; ---- the band ----------------------------------------------------
 ; title_text: the Pi's title (or ours), the program's name, then DOS busy
 ; if the file requests can't call it (a long status on the right covers the
-; end: the name is in HELLO for Claude anyway).  After the program's name,
-; each string goes on only while the band's 48 cells aren't full (the count's
-; two digits regardless, past cell 48 if its separator was left out): at most
-; 47 + 14 (s_bgn) bytes and the NUL, in title_text's 69
+; end: the name is in HELLO for Claude anyway).  After the name, a string
+; goes on only while the band's 48 cells aren't full: at most 47 + 14 bytes
+; and the NUL, in title_text's 69
 make_title:
         mov     di, title_text
         mov     si, ptitle

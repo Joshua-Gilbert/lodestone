@@ -3102,8 +3102,8 @@ do_copy:
         call    err
         jmp     cbuf_free
 .one:   call    src_found               ; dir part of path1 + found name
-        cmp     di, src + 79            ; (79 characters at most, dst next:
-        ja      .nx                     ;  a longer one, from a pattern, skipped)
+        cmp     di, src + 79            ; (longer: skipped)
+        ja      .nx
         mov     [srcname], bx
         call    copy_one
         jc      .tot
@@ -3390,8 +3390,7 @@ dir_of: push    di
         mov     di, si
         ret
 ; src = path1's directory part + the name found (the DTA's); BX -> its name,
-; DI -> its NUL (past src + 79: it ran on into dst, so COPY skips it and REN
-; refuses it)
+; DI -> its NUL (past src + 79: run into dst)
 src_found:
         mov     di, src
         call    dir_of
@@ -3800,8 +3799,8 @@ do_start:
         inc     di
         or      al, al                  ; (CF clear)
         jz      .nc
-        cmp     di, prog2 + 79          ; (79 characters at most: CF set
-        jbe     .cc                     ;  past them)
+        cmp     di, prog2 + 79          ; (79 characters at most)
+        jbe     .cc
         stc
 .nc:    pop     es
         mov     si, e_badcmd

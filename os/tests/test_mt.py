@@ -1532,10 +1532,8 @@ def t_keys():
     # a program that only polls in front: its peeks give the others their turns (mt_preempt from there, at a safe
     # point), which on the 1520 a tick, landing in MT or the BIOS, seldom can; here (MTKEY Y) the tick can't at all,
     # its own INT 08h hook being ahead of MT's
-    # Y's turn is made due once its hook is in: pcemu takes a tick only where its run loop starts again with
-    # interrupts on, and Y's loop spends nearly all its time in mt_i16, interrupts off, so hardly a tick reaches
-    # mt_tick there (1 in 18 in the run recorded; on the 1520 it waits till the IRET), and Y's turn may never
-    # end by itself.  (Not X21: none of those lands in MT's own code; X21's check is below, at MTKEY R's wait.)
+    # Y's turn is made due: pcemu takes ticks only where its run loop restarts with interrupts on, and Y's
+    # loop is nearly all in mt_i16 with them off (not X21's case; that check is at MTKEY R's wait below)
     n0 = len(au.ev)
     typ(k, 'mtlaunch /f mtkey.com y pp.txt;mtspin.com 15 sp.txt', 0.3)
     k.pc.run_until(lambda: vec(k, 8) != (seg, Y['mt_tick']), 3)
@@ -1593,8 +1591,7 @@ def t_keys():
           and st2[1] == 1 and r2 == b'0071' and sw and not au.bad(), (st0, st1, r1, st2, r2, len(sw), au.bad()[:2]))
     line(k, '')
     # a read in front with nothing typed: it waits in MT, not the BIOS, the others running meanwhile
-    # (audit3 X21: once MTSPIN has ended, MTKEY R waits at mt_i16's own STI / HLT: a tick there, in MT's own code,
-    # counts against its turn like any other, the HLT before it ending it: mt_tick.p)
+    # (X21: a tick in MT's own code, at mt_i16's HLT, counts against the turn)
     n0 = len(au.ev)
     tk, prev = [], k.pc.watch
     def w(a):
@@ -1841,9 +1838,8 @@ def t_keys():
           'it waited 24 in the run recorded); brought to the front, "x" ends it' % dt,
           nk is not None and (nk, 1, 'KEYIN.COM') in st[0] and 'Lodestone version' in v and dt < 3
           and not any(n == 'KEYIN.COM' for i, s_, n in st2[0]) and not k.crashed, (st, v[-80:], st2))
-    # audit3 X40: CODE-Tab at the head of a buffer whose tail the ring never reaches (40:1Ch odd, past 40:82h: a
-    # program that moved the bounds, a scribbled BDA): mt_hot's compaction stops after 16 words, as its look does,
-    # instead of going round for ever with interrupts off
+    # X40: CODE-Tab with a tail the ring never reaches (40:1Ch odd, past 40:82h): mt_hot's compaction
+    # stops after 16 words instead of looping with interrupts off
     k.run_for(0.5)
     st0 = tstate(k)
     k.pc.wr(0x40, 0x1E, struct.pack('<H', HOT) * 16)
@@ -2739,14 +2735,10 @@ def t_park():
           'is the other\'s own): pinned (error 5); both end, INT 62h as before', r2 <= va[0] < r2 + k.pc.u16(r2 - 1, 3)
           and r1 <= gv[1] < r1 + k.pc.u16(r1 - 1, 3) and 'MTLAUNCH: error 5' in o1 and s1 == TS_WAITK
           and vec(k, 0x62) == v62 and back(), (r1, r2, va, gv, o1, s1, now()))
-    # audit3 X35: a parked task whose pages are gone (FREEH frees MT's handle by number; or, as if a program had
-    # resized it, the size MT expects changed by the test): it can't come back (error 8), but MT_KILL ends it: the
-    # entry free, its programs' EMS (MTKILL F's page, kept from them by mt_hhide), its screen's and MT's handle, if
-    # still MT's, freed; MT_EXIT says it ended (^C's code).  (Its file stays open: its handle table went with the
-    # pages.)  Freed: its program's page also has a context saved (47h, written by the test), which INT 67h's 45h
-    # refuses to free (86h), and its task is the one MT_WAKE names; shadowed meanwhile, it was the last task but the
-    # Executive.  Shared: its screen's handle, freed by a program and given out again, is another program's now
-    # (its owner a PSP, written by the test): not freed with it
+    # X35: a parked task whose pages are gone (FREEH frees MT's handle; or its size changed) can't come
+    # back (error 8), but MT_KILL ends it: its programs' EMS (incl. a 47h context), its wake, its screen's
+    # and MT's handles if still MT's freed, the shadow off, MT_EXIT ^C's.  Shared: a screen handle given
+    # to another program is left alone
     hrec = lambda h: (k.pc.rd(0x60, Y['ems_h'] + h * 4, 2), k.pc.u16(0x60, Y['ems_h'] + h * 4 + 2))
     for how in ('freed', 'resized', 'shared'):
         e0, mg0 = ems_used(k), merged(mcbs(k))
@@ -5022,8 +5014,7 @@ def t_wwait():
           'mouse still, MTSPIN runs on (%s of 100), every switch at a safe point; ESC or the release: as it was'
           % (n, r0, got), n != 7 and r0 > 50 and all(v > 30 for v in got.values()) and w1 == w0 and not au.bad(),
           (n, r0, got, w0, w1, au.bad()[:3]))
-    # a window .RUN that can't start (CALC.RUN isn't on the disk: CODE-K), said in the band; the saver comes (its clock
-    # written in the UI's tmp) and a key ends it: the band says it again, not the clock
+    # X38: a window .RUN that can't start (CODE-K, no CALC.RUN): the band keeps its message through the saver
     k.key(A.CODE['K'], settle=False); k.run_for(1.0)
     b1 = k.band()
     st0 = k.u16('saver_t')
@@ -5588,8 +5579,7 @@ def t_srq():
     line(k, ''); k.run_for(0.5)
     check('... (MTSRQ ended, MTSPIN D killed)', srq_progs(k) == [] and wkt() == 0xFF and nd
           and nd not in [i for i, s_, n in tstate(k)[0]], (o, srq_progs(k), wkt(), tstate(k)))
-    # audit3 X33: the task computing has its own INT 08h hook ahead of mt_tick (MTSPIN T writes the vector itself):
-    # the tick can't switch from it, but the SRQ's interrupt is IRQ 5's, still the driver's, so the wake is at once
+    # X33: the task computing hooks INT 08h itself; the SRQ (IRQ 5, still the driver's) wakes at once
     typ(k, 'mtlaunch mtsrq.com 1', 1.0); line(k, '')
     q = one()
     typ(k, 'mtlaunch mtspin.com 50 s4.txt t', 0.2)

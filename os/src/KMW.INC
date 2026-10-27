@@ -1515,8 +1515,8 @@ mw_size:
         or      bp, bp
         jz      .k
         mov     byte [ptr_on], 0        ; (mouse_event leaves the pointer off)
-.w:     UCALL   mwait                   ; (win_mv's wait: there, not here, the
-        cmp     byte [mflag], 0         ;  tasks behind have their turns)
+.w:     UCALL   mwait                   ; (where the tasks behind get turns)
+        cmp     byte [mflag], 0
         je      .w
         UCALL   mouse_event             ; AX = x, BX = y (as win_mv takes them)
         jnc     .xy
