@@ -6814,9 +6814,7 @@ mt_48:  mov     bx, [bp+F_BX]
         call    mt_grow
         pop     bx
         jc      .n
-        mov     bx, [bp+F_BX]
-        mov     dx, [cur_psp]
-        KCALL   mem_alloc
+        call    mt_alloc
         jmp     short .x
 .n:     mov     ax, 8
 .f:     stc
@@ -6829,8 +6827,7 @@ mt_48:  mov     bx, [bp+F_BX]
 ; f_4B.xr (its JC), CF and AX as mem_alloc gives them.  DS = KSEG
 mt_xenv:
         push    bx
-        mov     dx, [cur_psp]
-        KCALL   mem_alloc
+        call    mt_kalloc
         pop     bx
         jnc     .x
         cmp     ax, 8
@@ -6839,8 +6836,7 @@ mt_xenv:
         je      .n
         call    mt_grow
         jc      .n
-        mov     dx, [cur_psp]
-        KCALL   mem_alloc
+        call    mt_kalloc
         jmp     short .x
 .n:     stc
 .x:     jmp     KSEG:f_4B.xr
@@ -6856,9 +6852,7 @@ mt_xenv:
 mt_largest:
         push    ax
         push    dx
-        mov     bx, 0FFFFh
-        xor     dx, dx
-        KCALL   mem_alloc               ; (fails with BX = largest)
+        call    mt_lrg
         cmp     byte [cs:mt_cur], 0
         je      .x
         cmp     byte [ex_isexe], 0
@@ -6887,10 +6881,21 @@ mt_largest:
         call    mt_grow
         pop     bx
         jc      .x
-.a:     mov     bx, 0FFFFh
-        xor     dx, dx
-        KCALL   mem_alloc
+.a:     call    mt_lrg
 .x:     jmp     KSEG:mem_largest.x
+
+; mem_alloc (DS = KSEG): for 48h's BX (mt_alloc), for BX (mt_kalloc), both
+; the running program's; or none, BX = the largest block (mt_lrg).  As
+; mem_alloc, DX changed
+mt_lrg: mov     bx, 0FFFFh
+        xor     dx, dx
+        jmp     short mt_kalloc.k
+mt_alloc:
+        mov     bx, [bp+F_BX]
+mt_kalloc:
+        mov     dx, [cur_psp]
+.k:     KCALL   mem_alloc
+        ret
 
 %include "KMW.INC"                      ; (several window .RUNs at once, M8a)
 mt_tend:
