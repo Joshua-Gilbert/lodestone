@@ -1161,7 +1161,7 @@ clip_file:
         pop     bx
         ret
 
-; sleep until the next interrupt (win_mv, UI_MOUSE)
+; sleep until the next interrupt (win_mv's drag and keys, UI_MOUSE, KMW's mw_size)
 mwait:  sti
         hlt
 ..@ui_midle:                            ; (KMT.INC: a task may be switched
