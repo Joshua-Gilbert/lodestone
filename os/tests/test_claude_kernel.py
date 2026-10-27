@@ -153,7 +153,26 @@ def test_driver_frame_check():
     T.check(h)
 
 
+def test_driver_frame_check_slow_start():
+    """A listener slow to take the first byte of a write (DO later than the fast loop polls for, 256 x 64): the
+    whole frame goes through the careful loop, and the check the driver adds (02h AL=3) is still good at the Pi
+    (audit3 X30: the fast loop kept its start for the first byte's add, the careful loop left that byte out too,
+    so every such frame went out with a bad check)."""
+    h = T.start([T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\NOTES.TXT'})),
+                 T.reply(('text', 'Read it.'))], mode='edits', bridge='pico',
+                files={'A:\\NOTES.TXT': b''.join(b'note %03d: a slow start\r\n' % i for i in range(60))})
+    assert h.var('ksum', 1) == 1, h.var('ksum', 1)
+    st0 = dict(h.link.stats)
+    h.m.chip.slow_start = 20000                    # (ISR1 reads after GTS: more than the fast loop's 16384)
+    assert h.turn('read the notes', sim_s=60), (h.m.chip.n_slow, {k: v - st0.get(k, 0) for k, v in h.link.stats.items()})
+    st = {k: v - st0.get(k, 0) for k, v in h.link.stats.items()}
+    assert h.m.chip.n_slow >= 2 and st['rx_frames'] >= 2, (h.m.chip.n_slow, st)
+    assert not st.get('rx_nak') and not st.get('rx_bad') and st['rx_fletcher'] == st['rx_frames'], st
+    T.check(h)
+
+
 T.test_driver_frame_check = test_driver_frame_check
+T.test_driver_frame_check_slow_start = test_driver_frame_check_slow_start
 T.test_srq_on_irq5 = test_srq_on_irq5
 T.test_gpibirq_0_turns_it_off = test_gpibirq_0_turns_it_off
 T.test_irq5_storm_masks_it = test_irq5_storm_masks_it
