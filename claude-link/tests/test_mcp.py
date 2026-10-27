@@ -458,6 +458,9 @@ def test_hpgl_parts():
         try: mcp.hpgl_check(bad); assert False, bad
         except ValueError: pass
     assert mcp.hpgl_check(b'IN;\r\nLBHI\x03;\tPU;') == b'IN;\r\nLBHI\x03;\tPU;'
+    assert mcp.hpgl_check(b'PU;\r\n') == b'PU;\r\n'
+    assert mcp.hpgl_check(b'IN;PA1,2') == b'IN;PA1,2;'      # the Nano would hold the last point
+    assert mcp.hpgl_check(b'LBHI\x03') == b'LBHI\x03;'
 
 
 def plot_to_end(h, c, wall=30):
@@ -480,6 +483,12 @@ def test_plotter():
         assert ': done' in r and '%d of %d bytes' % (len(square), len(square)) in r, r
         assert h.grid.plot_parts == [square.encode()], h.grid.plot_parts
         assert not getattr(h.grid, 'plot_overrun', False)
+        # no ';' at the end: one is added, so the Nano ends the last command
+        h.grid.plot_parts = []
+        r = c.call('grid_plotter', hpgl='IN;PU1,2PD3,4')
+        assert not r['isError'], r
+        r = plot_to_end(h, c)
+        assert ': done' in r and h.grid.plot_parts == [b'IN;PU1,2PD3,4;'], (r, h.grid.plot_parts)
         # a long plot: sent in parts that fit, polled in between, whole commands
         big = ''.join('PD%d,%d;' % (i, i) for i in range(600)) + 'LBA;B;C\x03;PU;'
         open(os.path.join(h.cfg.term_dir, 'big.plt'), 'w').write(big)
