@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define FW_TAG "bridge fw 2026-10-24"
+#define FW_TAG "bridge fw 2026-10-26"
 #define PROTO_VERSION 1
 
 // ---- pins ----------------------------------------------------------------------------------------------------
@@ -57,6 +57,7 @@ enum {
   // events: arg as noted
   E_LISTEN = 0x10, E_UNLISTEN, E_TALK, E_UNTALK,
   E_TALK_WAIT,       // addressed to talk, ATN released, nothing to send.  arg = tx_consumed at that moment
+                     //   (core 0 adds tx_dropped0 as it sends it on: CREDIT's scale, as the Pi counts)
   E_DCL, E_SDC, E_GET, E_GTL, E_LLO, E_IFC,
   E_REN,             // arg 1 = REN asserted, 0 = released
   E_SPOLL,           // serially polled; b = the status byte sent

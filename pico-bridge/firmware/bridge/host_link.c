@@ -323,6 +323,7 @@ void link_poll(uint32_t now_ms, bool host_open) {
       f[0] = F_DATA; put16(f + 1, r.gen); f[3] = DF_END;
       flen = 4;
     } else {
+      if (r.code == E_TALK_WAIT) r.arg += SH.tx_dropped0;   // core 1's count, put on CREDIT's scale (PROTOCOL.md)
       ev_fill(f, r.code, r.gen, r.b, r.arg, r.t);
       flen = 13;
     }

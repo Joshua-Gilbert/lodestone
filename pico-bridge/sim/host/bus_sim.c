@@ -345,9 +345,9 @@ int main(void) {
     else if (!strcmp(cmd, "dev")) { printf("ok "); hexout(dev_last, dev_last_len); printf(" %d\n", (int)dev_cmds); }
     else if (!strcmp(cmd, "stats")) {
       printf("ok online=%d addr=%d L=%d T=%d gen=%u cmds=%u rx=%u tx=%u polls=%u lost=%u holds=%u fights=%u late=%d "
-             "held=%u held_void=%u\n",
+             "held=%u held_void=%u dropped0=%u\n",
              SH.online, SH.addr, SH.listener, SH.talker, SH.gen, SH.n_cmd, SH.n_rx, SH.n_tx, SH.n_polls, SH.ev_lost,
-             SH.rx_holds, (unsigned)contention, (int)late_engage, SH.n_held, SH.n_held_void);
+             SH.rx_holds, (unsigned)contention, (int)late_engage, SH.n_held, SH.n_held_void, SH.tx_dropped0);
     } else if (cmd[0]) printf("err unknown command\n");
   }
   sim_stop = 1; SH.req_seq++;
