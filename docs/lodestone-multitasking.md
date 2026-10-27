@@ -481,14 +481,14 @@ The checks:
   - calls made while the kernel's INT 24h runs (a critical error's "Abort, Retry, Fail", which everything waits for; MT counts it, `mt_c24`), whether the handler prints through the BIOS or through DOS, shadowed. Everything else inside INT 21h is the task's own, whatever hook it comes through: the kernel's console output goes in its screen.
 
   The shadowed ones count as the front task's own calls (below), so they don't count against it.
-- **A stack in the EMS frame's windows 0 and 1,** where MT maps a task's pages, can't be used while they are mapped: such a caller's calls go to the BIOS as they are, not shadowed. A 13h string there isn't done in the background, nor shadowed in front. Either loses the shadow (below).
+- **A stack in the EMS frame's windows 0 and 1,** where MT maps a task's pages, can't be used while they are mapped: such a caller's calls go to the BIOS as they are, not shadowed. A 13h string there isn't done in the background: it is dropped, and the front task's shadow is kept (before the 2026-10-26 audit's X36 it was lost). Nor is it shadowed in front, which loses the shadow (below), as does such a stack.
 
 **The detector:** a task that writes B800h itself can't run behind another, since what it writes would land on the front screen.
 - **Shadowed:** while another task exists, every call that writes the real screen in a text mode (00h, 06h, 07h, 09h, 0Ah, 0Eh, 13h) is also done in the front task's own pages (`mt_shd`), before the BIOS does it. The pages then hold what the screen would hold if only INT 10h wrote it.
   - The shadow starts in step with the screen: in `mt_scrld` (its pages were just copied to the screen), at a text mode set, or when the first other task is spawned (`mt_sync` copies B800h's first 16 KB into the front task's pages, with the INT 33h pointer hidden).
   - It stops with a graphics mode, and when the last other task ends.
   - **It is lost** (`mt_vlose`) when a call writes the real screen without being shadowed. It stops, and the next compare is skipped: not known, so the task runs. That happens:
-    - for a stack or 13h string in windows 0 and 1;
+    - for a stack in windows 0 and 1, or a front task's 13h string there;
     - for a call from code at A000h or above that isn't inside a call MT passed on to the BIOS (a ROM's, Resident Claude's console);
     - for a call inside an INT 13h call;
     - for an interrupt's call while MT has pages mapped itself (`mt_vbusy`), or inside a call MT passed on to the BIOS. MT notes the interrupts in service when it passes a call on (`mt_vcall`), so an interrupt-time call it shadowed doesn't lose the shadow through the BIOS's own nested calls.
