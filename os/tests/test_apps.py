@@ -2754,6 +2754,17 @@ def t_clip():
     r2 = c.put(CLIPPAT[5:105])
     check('... the program started again: still them; 100 others put: the file just those',
           g == CLIPPAT[:3000] and r2 == 0 and disk_file(k, 'CLIP.$$$') == CLIPPAT[5:105] and c.size() == 100, (len(g), r2))
+    k.pc.drives[0].wp = True
+    r3, n3 = c.put(CLIPPAT[:50]), c.size()
+    k.pc.drives[0].wp = False
+    g, _ = c.get(200)
+    check('... A: write-protected, 50 others put: refused (CF), and the 100 still held (size 100, got back whole: the file '
+          'was never made anew, so it isn\'t "empty")', r3 != 0 and n3 == 100 and g == CLIPPAT[5:105]
+          and disk_file(k, 'CLIP.$$$') == CLIPPAT[5:105], (r3, n3, g if not isinstance(g, bytes) else len(g)))
+    k.key('T')                          # CLIP.$$$ cut behind the core's back
+    r4, _ = c.get(200)
+    check('... the file cut since: a get comes up short, error 30 (Disk error (read)), not 29 (a write\'s)',
+          r4 == (0xFFFF, 30) and c.size() == 100, (r4, c.size()))
     k.key(ktest.ESC)
     # EMS, every page M:'s (MDISK=ALL): none to be had, so the file
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'MDISK=ALL\r\n')
@@ -2777,6 +2788,31 @@ def rom1(*extra):
     files = [(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names]
     files += [(os.path.basename(p), open(p, 'rb').read()) for p in extra]
     return mkrom.volume(files, boot=open(os.path.join(GOS, 'src', 'ROMBOOT.BIN'), 'rb').read())[0]
+
+def t_clip_rom():
+    """UI_CLIP's file from the ROM with no settings drive (the menu's 2, or
+    no C: and no A:\\LODE.INI): not R:, which takes no writes, but C: if
+    there, else A: (as System and the kernel's capdrv)."""
+    print('== the clipboard\'s file from the ROM (no settings drive, no EMS)')
+    import test_rom as R
+    rom = rom1(CLIPTEST)
+    k = R.boot(roms={1: rom})
+    c = Clip(k)
+    r = c.put(CLIPPAT[:700])
+    g, _ = c.get(1000)
+    check('no C:, no A:\\LODE.INI: A:\\CLIP.$$$ (not R:\\, refused), got back whole', R.u8(k, 'setdrv') == 0
+          and k.rd('s_clip', 1) == b'A' and r == 0 and disk_file(k, 'CLIP.$$$') == CLIPPAT[:700] and g == CLIPPAT[:700],
+          (R.u8(k, 'setdrv'), k.rd('s_clip', 1), r))
+    k.key(ktest.ESC)
+    k = R.boot(roms={1: rom}, ata=R.sysinfo_hd(('CLIPTEST.RUN', open(CLIPTEST, 'rb').read()), ('LODE.INI', b'SAVER=10\r\n')),
+               shift=True, keys=[ord('2')])
+    c = Clip(k)
+    r = c.put(CLIPPAT[:600])
+    g, _ = c.get(1000)
+    check('the menu\'s 2 (the ROM\'s own settings) with C:: C:\\CLIP.$$$, got back whole', R.u8(k, 'setdrv') == 0
+          and k.rd('s_clip', 1) == b'C' and r == 0 and R.hd_file(k, 'CLIP.$$$') == CLIPPAT[:600] and g == CLIPPAT[:600],
+          (R.u8(k, 'setdrv'), k.rd('s_clip', 1), r))
+    k.key(ktest.ESC)
 
 def t_sys_back():
     """System's Settings, Return (back to the ROM's): SPLASH= is forgotten
@@ -2827,7 +2863,7 @@ if __name__ == '__main__':
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
     for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
-              t_sys_back, t_system_lists):
+              t_clip_rom, t_sys_back, t_system_lists):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
