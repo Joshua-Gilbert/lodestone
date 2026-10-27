@@ -20,6 +20,8 @@
 ;              3 other tasks run (Lodestone's multitasking: end them first)
 ;
 ;  Runs under MS-DOS 3.x with GRIDGPIB loaded (and later on Lodestone).
+;  Under Lodestone's multitasking, as a task behind (CODE-A), Term runs in
+;  a terminal window (1.13: TERM_WIN below; a picture goes full screen).
 ;  Screen: 640x400 mode 40h, Terminus Bold 8x16, 80 x 25 cells:
 ;    chat: row 0 title band, rows 1-20 conversation, row 21 status line,
 ;    row 22 rule, rows 23-24 the prompt;
@@ -70,6 +72,8 @@ BOXW     equ 70
 %define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23)
 %define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer)
 %define KBD_EVERY 6000           ; (TERMKEYS.INC: keys every ~2.5 ms while the link is busy; not in RCON)
+%define TERM_WIN                 ; (TERMCELL.INC, TERMKEYS.INC: a terminal window, 1.13; not in RCON)
+%include "MTAPI.INC"             ; (MT_PUB, MT_WAKE, MT_LIST)
 
 ; =====================================================================
 ;  resident Claude (CLAUDE /R): this stub is copied into a block of its
@@ -136,7 +140,14 @@ main:   call    get_ticks
         call    maybe_idle
         jmp     main
 
-leave:  mov     al, [oldmode]           ; (the pointer: the kernel takes the mouse
+leave:
+%ifdef TERM_WIN
+        cmp     byte [wmode], 0         ; (withdrawn: its window shows the
+        je      .w                      ;  task's pages till it ends)
+        call    win_none
+.w:
+%endif
+        mov     al, [oldmode]           ; (the pointer: the kernel takes the mouse
                                         ;  back when CLAUDE ends; a mode set hides
                                         ;  a Microsoft driver's)
         cmp     al, 40h
@@ -235,7 +246,22 @@ video_on:
         int     10h
         mov     [oldmode], al
         mov     byte [vid_saved], 1
-.s:     mov     ax, 0040h
+.s:
+%ifdef TERM_WIN
+        cmp     byte [win], 0           ; in its window: a text mode (mode 3
+        je      .g                      ;  after a program that left another),
+        mov     ah, 0Fh                 ;  the shadow, published again
+        int     10h
+        cmp     al, 3
+        je      .t
+        mov     ax, 0003h
+        int     10h
+.t:     call    redraw_all
+        call    mouse_on
+        jmp     win_show
+.g:
+%endif
+        mov     ax, 0040h
         int     10h
         call    redraw_all
 ; the mouse, in Term only (chat draws without the pointer): INT 33h there?
@@ -1324,11 +1350,362 @@ send_text:
 
 %include "TERMKEYS.INC"
 
+%ifdef TERM_WIN
+; =====================================================================
+;  a terminal window (Lodestone's multitasking, T5d): run as a task behind
+;  (CODE-A), CLAUDE draws Term's screen in its shadow alone, 25 rows with
+;  the status band, and publishes it (MT_PUB): the window draws it with
+;  our font.  A picture goes full screen (a mode 40h set: MT brings the
+;  task to the front, T3) and back to the window (mode 3).  Chat goes full
+;  screen for good, as does a task with no window, in front.  The bridge's
+;  SRQ wakes us (MT_WAKE), full screen or not.
+; =====================================================================
+F_PIC   equ 4                           ; CELLS flags: a picture's frame
+
+; at the start, before video_on: MT_WAKE, and MT_PUB if a task's (CF:
+; not one).  No window and in front (FULL=, no TERM.RUN): full screen;
+; behind, its window may open yet (win_tick asks again)
+win_probe:
+        mov     ax, 0F000h + MT_WAKE
+        mov     bl, 1
+        stc
+        int     21h
+        mov     ax, 0F000h + MT_LIST    ; (a task's, not task 0's: its screen
+        xor     cx, cx                  ;  read through INT 10h, take_snapshot;
+        stc                             ;  in a window or not)
+        int     21h
+        jc      .t
+        or      ah, ah
+        jz      .t
+        mov     byte [intask], 1
+.t:
+        cmp     byte [app_want], 'C'    ; (chat: full screen)
+        je      .x
+        mov     byte [wdesc + PB_VER], 1
+        mov     word [wdesc + PB_FLAGS], PBF_SHOWN | PBF_NOCUR | 80 << 8
+        mov     byte [wdesc + PB_ROWS], 25
+        mov     ax, [shadseg]
+        mov     [wdesc + PB_CELLS + 2], ax
+        mov     word [wdesc + PB_FONT], font
+        mov     [wdesc + PB_FONT + 2], cs
+        mov     word [wdesc + PB_FIRST], 20h | GLYPH_END << 8
+        mov     word [wdesc + PB_XLAT], t437
+        mov     [wdesc + PB_XLAT + 2], cs
+        call    win_pub
+        jc      .x
+        or      al, al
+        jnz     .w
+        call    win_front_task
+        jne     .w
+        jmp     win_none
+.w:     mov     byte [wmode], 1
+        mov     byte [win], 1
+        mov     byte [term], 1          ; (Term's look till the Pi's HELLO)
+        mov     byte [t_flags], 2       ; (no cursor yet)
+.x:     ret
+
+; CF if another task runs CLAUDE.COM (MT_LIST: its program's name), as
+; a second CODE-A would start (T5d)
+win_dup:
+        push    bp
+        push    es
+        mov     bp, sp
+        sub     sp, 8 * MT_REC
+        mov     di, sp
+        push    ss
+        pop     es
+        mov     cx, 8
+        mov     ax, 0F000h + MT_LIST
+        stc
+        int     21h
+        jc      .no
+        cmp     cx, 8
+        jbe     .c
+        mov     cx, 8
+.c:     mov     bx, di
+.l:     jcxz    .no
+        cmp     [es:bx+TR_ID], ah       ; (ours)
+        je      .n
+        push    cx
+        mov     si, s_ccom
+        lea     di, [bx+TR_NAME]
+        mov     cx, 11
+        repe    cmpsb
+        pop     cx
+        je      .x                      ; (CF clear: set below)
+.n:     add     bx, MT_REC
+        dec     cx
+        jmp     .l
+.no:    mov     sp, bp
+        pop     es
+        pop     bp
+        clc
+        ret
+.x:     mov     sp, bp
+        pop     es
+        pop     bp
+        stc
+        ret
+s_ccom      db 'CLAUDE.COM', 0
+
+; ZF if we are the front task (MT_LIST)
+win_front_task:
+        mov     ax, 0F000h + MT_LIST
+        xor     cx, cx
+        stc
+        int     21h
+        cmp     al, ah
+        ret
+
+; its cells shown again, published again (from the front, sent back to its
+; window: T5b)
+win_show:
+        or      byte [wdesc + PB_FLAGS], PBF_SHOWN
+        call    win_chg
+; MT_PUB with the descriptor -> CF, AL 1 if a window shows it
+win_pub:
+        push    es
+        push    di
+        push    cx
+        push    ds
+        pop     es
+        mov     di, wdesc
+        jmp     short win_none.p
+; withdrawn
+win_none:
+        push    es
+        push    di
+        push    cx
+        xor     di, di
+        mov     es, di
+.p:     xor     cl, cl
+        mov     ax, 0F000h + MT_PUB
+        stc
+        int     21h
+        pop     cx
+        pop     di
+        pop     es
+        ret
+
+; at a tick: every 9, still a window's?  (Nothing tells a program its
+; window closed or opened: MT_PUB again.)  None, and in front: full screen
+win_tick:
+        cmp     byte [wmode], 0
+        je      .x
+        cmp     byte [pic], 0
+        jne     .x
+        mov     ax, [now]
+        sub     ax, [t_wtick]
+        cmp     ax, 9
+        jb      .x
+        add     [t_wtick], ax
+        call    win_pub
+        jc      win_drop
+        or      al, al
+        jnz     .x
+        call    win_front_task
+        je      win_drop
+.x:     ret
+
+; full screen for good (chat; no window, in front): withdrawn, mode 40h
+; (a window's task: MT brings it to the front, T3)
+win_drop:
+        call    win_none
+        xor     ax, ax
+        mov     [wmode], al
+        mov     [win], al
+        mov     [pic], al
+        mov     [cur_on], al
+        jmp     video_on.s
+
+; a CELLS frame's start (its flags read): a picture's frame (F_PIC) in the
+; window: full screen
+win_frame:
+        mov     byte [t_pix], 0
+        test    byte [t_flags], F_PIC
+        jz      .x
+        mov     byte [fpic_seen], 1
+        cmp     byte [win], 0
+        jne     win_front
+.x:     ret
+
+; the frame's end: a picture gone (a frame without F_PIC; from a Pi that
+; doesn't mark them, one that clears and has no pixels): back to the
+; window.  In the window: the cursor for the descriptor, and CF.  All kept
+win_done:
+        pusha
+        cmp     byte [pic], 0
+        je      .w
+        mov     al, [t_flags]
+        test    al, F_PIC
+        jnz     .w
+        cmp     byte [fpic_seen], 0
+        jne     .b
+        test    al, 1
+        jz      .w
+        cmp     byte [t_pix], 0
+        jne     .w
+.b:     call    win_back
+.w:     cmp     byte [win], 0           ; (0: CF clear)
+        je      .x
+        call    win_cur
+        stc
+.x:     popa
+        ret
+
+; a picture: full screen.  The mode set waits for the front (mt_wfront),
+; then the screen is drawn from the shadow.  All kept
+win_front:
+        pusha
+        and     byte [wdesc + PB_FLAGS], ~PBF_SHOWN
+        call    win_chg
+        mov     ax, 0040h
+        int     10h
+        mov     ah, 0Fh
+        int     10h
+        cmp     al, 40h
+        jne     .no
+        mov     byte [win], 0
+        mov     byte [pic], 1
+        mov     byte [cur_on], 0
+        call    term_redraw             ; (drawn, then the pointer on it)
+        call    mouse_on
+        cmp     byte [tmouse], 0        ; (and off again while this frame's
+        je      .p                      ;  picture is drawn: from inside
+        mov     ax, 2                   ;  pf_cells, whose hide the window
+        int     33h                     ;  skipped and whose AX=1 at the end
+.p:     popa                            ;  puts it on top)
+        ret
+.no:    call    win_show                ; (not set: still its window)
+        popa
+        ret
+
+; back to the window: mode 3 (the task goes behind, to its window, T3),
+; the shadow shown there.  All kept
+win_back:
+        pusha
+        push    es
+        mov     ax, 0003h
+        int     10h
+        mov     byte [win], 1
+        mov     byte [pic], 0
+        mov     byte [cur_on], 0
+        call    win_show
+        call    mouse_on
+        call    term_redraw
+        pop     es
+        popa
+        ret
+
+; a RUN: the program's screen in the window (the task's pages), not ours
+win_run:
+        cmp     byte [wmode], 0
+        je      .x
+        mov     byte [pic], 0           ; (its mode 3 leaves a picture's front)
+        mov     byte [win], 1
+        and     byte [wdesc + PB_FLAGS], ~PBF_SHOWN
+        jmp     short win_chg
+.x:     ret
+
+; the cursor (Term's t_cur: AL row, AH column) for the descriptor (BH row,
+; BL column), hidden as Term's; and a change
+win_cur:
+        push    ax
+        mov     ax, [t_cur]
+        and     byte [wdesc + PB_FLAGS], ~PBF_NOCUR
+        test    byte [t_flags], 2
+        jnz     .h
+        cmp     al, TROWS
+        jae     .h
+        cmp     ah, 80
+        jb      .s
+.h:     or      byte [wdesc + PB_FLAGS], PBF_NOCUR
+.s:     xchg    al, ah
+        mov     [wdesc + PB_CUR], ax
+        pop     ax
+win_chg:
+        inc     word [wdesc + PB_CHG]
+        ret
+
+; row 24 into the shadow (term_status's, in the window)
+win_status:
+        pusha
+        push    es
+        mov     es, [shadseg]
+        mov     di, TROWS * 160
+        mov     ax, 0120h               ; (inverse blanks)
+        mov     cx, 80
+        rep     stosw
+        mov     di, TROWS * 160 + 2
+        mov     si, title_text
+        mov     cx, 48                  ; (the keys take columns 50-78)
+        call    .str
+        mov     si, s_tkeys
+        cmp     byte [connected], 0
+        jne     .r
+        mov     si, status_text
+.r:     call    strlen
+        cmp     cx, 70
+        jbe     .w
+        mov     cx, 70
+.w:     mov     di, 79
+        sub     di, cx
+        shl     di, 1
+        add     di, TROWS * 160
+        call    .str
+        pop     es
+        popa
+        jmp     win_chg
+.str:   jcxz    .z                      ; DS:SI, CX cells at most, inverse
+        mov     ah, 1
+.l:     lodsb
+        or      al, al
+        jz      .z
+        stosw
+        loop    .l
+.z:     ret
+
+; SCREEN in the window: our screen from the shadow (B800h is the
+; Executive's), as take_snapshot gives mode 40h's
+snap_shadow:
+        pusha
+        push    es
+        mov     es, [snapseg]
+        mov     word [es:2], 0440h      ; mode 40h, 4 banks
+        mov     byte [es:4], 1
+        mov     word [es:5], 640
+        mov     word [es:7], 400
+        mov     word [es:9], 80
+        mov     word [snap_len], 8000h + 9
+        xor     si, si
+        mov     di, 11
+        mov     bx, TROWS + 1
+.row:   mov     cx, 80
+.c:     push    ds
+        mov     ds, [shadseg]
+        lodsw
+        pop     ds
+        call    cell
+        inc     di
+        loop    .c
+        add     di, 320 - 80
+        dec     bx
+        jnz     .row
+        mov     byte [snap_taken], 1
+        pop     es
+        popa
+        ret
+%endif
+
 tick_service:
         mov     ax, [now]
         cmp     ax, [last_tick]
         je      .x
         mov     [last_tick], ax
+%ifdef TERM_WIN
+        call    win_tick
+        mov     ax, [now]
+%endif
         cmp     byte [busy], 0
         je      .c
         test    al, 1
@@ -1510,6 +1887,9 @@ pf_hello:
 .crc:   and     bl, HF_TERM
 .f:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
+%ifdef TERM_WIN
+        mov     byte [fpic_seen], 0             ; (this Pi's F_PIC yet to be seen)
+%endif
         mov     ax, [now]
         mov     [turn_t0], ax
         mov     [t_active], ax
@@ -1525,7 +1905,14 @@ pf_hello:
         call    shadow_clear                    ; (the conversation's memory)
         call    mouse_on                        ; (Term: the pointer)
         jmp     .same
-.toch:  mov     ax, 2                           ; Term's pointer off (if it
+.toch:
+%ifdef TERM_WIN
+        cmp     byte [wmode], 0                 ; (chat in a window: full
+        je      .tc                             ;  screen, as a picture's)
+        call    win_drop
+.tc:
+%endif
+        mov     ax, 2                           ; Term's pointer off (if it
         call    pf_cells.m                      ;  had one); mouse_on turns
         mov     byte [tmouse], 0                ;  it on again for Term
         call    conv_clear                      ; (it held Term's screen)
@@ -1549,6 +1936,10 @@ pf_cells:
         mov     ax, 1
 .m:     cmp     byte [tmouse], 0
         je      .x
+%ifdef TERM_WIN
+        cmp     byte [win], 0           ; (in its window: no pointer to hide)
+        jne     .x
+%endif
         int     33h
 .x:     ret
 
@@ -1699,6 +2090,13 @@ op_screen:
         jne     .last
         call    snap_alloc
         jc      .nomem
+%ifdef TERM_WIN
+        cmp     byte [win], 0
+        je      .ts
+        call    snap_shadow
+        jmp     short .last
+.ts:
+%endif
         call    take_snapshot
 .last:  cmp     byte [snap_taken], 0
         jne     .send
@@ -1736,6 +2134,18 @@ take_snapshot:
         jnz     .go
         jmp     .x
 .go:    mov     es, ax
+%ifdef TERM_WIN
+        cmp     byte [cs:intask], 0     ; a task's (not task 0's): the mode,
+        je      .bd                     ;  columns and page from INT 10h (behind,
+        mov     ah, 0Fh                 ;  40:49h is the front task's), a text
+        int     10h                     ;  screen through it (its pages; B800h
+        and     al, 7Fh                 ;  is the Executive's).  Graphics: in
+        cmp     al, 3                   ;  front (MT's front for a mode set)
+        jbe     .rt
+        cmp     al, 7
+        je      .rt
+.bd:
+%endif
         mov     ax, 40h
         mov     ds, ax
         mov     al, [49h]
@@ -1800,6 +2210,41 @@ take_snapshot:
         pop     ds
         popa
         ret
+%ifdef TERM_WIN
+.rt:    mov     [es:2], al              ; (AL its mode, AH its columns, BH its
+        mov     word [es:3], 1          ;  page: AH=0Fh's.  Inside DOS too: no
+        mov     bl, ah                  ;  INT 21h)
+        mov     al, ah
+        xor     ah, ah
+        mov     [es:5], ax
+        mov     word [es:7], 25
+        shl     ax, 1
+        mov     [es:9], ax
+        imul    ax, ax, 25
+        add     ax, 9
+        mov     [cs:snap_len], ax
+        mov     di, 11
+        mov     ah, 3
+        int     10h
+        push    dx                      ; (its cursor, put back after)
+        xor     dx, dx
+.rr:    mov     ah, 2
+        int     10h
+        mov     ah, 8
+        int     10h
+        stosw
+        inc     dx                      ; (DL: the column)
+        cmp     dl, bl
+        jb      .rr
+        mov     dl, 0
+        inc     dh
+        cmp     dh, 25
+        jb      .rr
+        pop     dx
+        mov     ah, 2
+        int     10h
+        jmp     .done
+%endif
 
 ; ---- running DOS programs -----------------------------------------
 ; flags (1: bit0 capture, bit1 snapshot at exit), timeout (2),
@@ -1827,7 +2272,11 @@ op_run: mov     si, reqbuf+2
 .ns:    call    build_exec
         jnc     .go
         jmp     reply0
-.go:    mov     ax, 0003h               ; a plain text screen for the program
+.go:
+%ifdef TERM_WIN
+        call    win_run
+%endif
+        mov     ax, 0003h               ; a plain text screen for the program
         int     10h
         call    vec_dos
         cmp     word [ks_len], 0
@@ -2210,6 +2659,22 @@ ks_ready:
         add     word [cs:ks_pos], 3
         jmp     .again
 .end:   mov     byte [cs:ks_active], 0
+        push    ds                      ; (and out of INT 16h's chain if still
+        xor     bx, bx                  ;  its head: behind in a window, MT
+        mov     ds, bx                  ;  asks a hook at every turn of a
+        pushf                           ;  program waiting for keys, T5d;
+        cli                             ;  unhook16 sets it so again)
+        cmp     word [16h * 4], int16
+        jne     .u
+        mov     bx, cs
+        cmp     [16h * 4 + 2], bx
+        jne     .u
+        mov     bx, [cs:old16]
+        mov     [16h * 4], bx
+        mov     bx, [cs:old16 + 2]
+        mov     [16h * 4 + 2], bx
+.u:     popf
+        pop     ds
 .none:  pop     si
         pop     bx
         pop     ax
@@ -2500,7 +2965,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.12', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.13', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
@@ -2544,6 +3009,19 @@ spinseq     db 87h, 88h, 89h, 8Ah, 8Bh, 8Ch, 8Bh, 8Ah, 89h, 88h
 evint       db 01h
 fcb1        db 0, '           ', 0, 0, 0, 0
 fcb2        db 0, '           ', 0, 0, 0, 0
+%ifdef TERM_WIN
+; code page 437's text for codes 80h-FFh (a terminal window's Copy), ours
+; to AEh as their look-alikes; past them none (0: '?')
+t437        db '*', 0C0h, '.', '>', 0FBh, 'x', 0FAh                 ; 80h-86h
+            db 0FAh, '+', '*', '*', '*', '*'                        ; 87h-8Ch spinner
+            db 0C4h, 0B3h, '>', 0F8h, 0E6h, 0EAh, 0F1h, 'x', 0F7h   ; 8Dh-95h
+            db 0F3h, 0F2h                                           ; 96h-97h
+            db 0C0h, 0D9h, 0DAh, 0BFh, 0C3h, 0B4h, 0C2h, 0C1h, 0C5h ; 98h-A0h
+            db 0DFh, 0DFh, 0DCh, 0DCh, 0DDh, 0DEh, 0DFh, 0DCh       ; A1h-A8h
+            db 0DBh, 0DBh, 0DBh, 0DBh, 0B1h, 0B1h                   ; A9h-AEh
+            times 100h - GLYPH_END db 0
+            times -($ - t437 != 128) db 0
+%endif
 
             align 2                     ; (the glyphs are read a word at a time)
 %include "TERMINUS.INC"
@@ -2588,7 +3066,15 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         jnc     .gg
         mov     dx, msg_nogg
         jmp     fatal
-.gg:    call    alloc_bufs
+.gg:
+%ifdef TERM_WIN
+        call    win_dup                 ; (two on one link: no)
+        jnc     .g2
+        mov     dx, msg_dup
+        jmp     fatal
+.g2:
+%endif
+        call    alloc_bufs
         jnc     .mem
         mov     dx, msg_nomem
         jmp     fatal
@@ -2613,6 +3099,9 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         mov     [t_reset], ax           ; first connection attempt right away
         mov     si, st_connecting
         call    set_status_quiet
+%ifdef TERM_WIN
+        call    win_probe
+%endif
         call    video_on
 %ifdef PROFILE
         call    prof_start
@@ -2813,6 +3302,9 @@ sig_gg      db 'GRIDGPIB'
 s_emm       db 'EMMXXXX0'
 msg_nogg    db 'CLAUDE needs GRIDGPIB loaded first (run GRIDGPIB, then CLAUDE).', 13, 10, '$'
 msg_nomem   db 'Not enough memory for CLAUDE.', 13, 10, '$'
+%ifdef TERM_WIN
+msg_dup     db 'Claude is running already, in another task.', 13, 10, '$'
+%endif
 s_title0    db 8Bh, ' Claude for GRiD', 0
 st_connecting db 'Connecting to the Pi through the GPIB bridge', 82h, 0
 boot_end:
@@ -3568,6 +4060,17 @@ cur_on      resb 1
 cur_di      resw 1
 t_flags     resb 1
 t_cur       resw 1
+%ifdef TERM_WIN
+wmode       resb 1                      ; 1: a terminal window's (MT_PUB), a
+                                        ;  picture's full screen too
+win         resb 1                      ; 1: drawn in its window: the shadow alone
+pic         resb 1                      ; 1: full screen for a picture (back after)
+fpic_seen   resb 1                      ; 1: the Pi marks pictures' frames (F_PIC)
+intask      resb 1                      ; 1: a task's, not task 0's (MT_LIST)
+t_pix       resb 1                      ; 1: this frame had pixels (FDh)
+t_wtick     resw 1                      ; (win_tick: the last look)
+wdesc       resb PB_SIZE                ; the descriptor (MTAPI.INC's PB_*)
+%endif
 ; dialogs
 ask_open    resb 1
 help_open   resb 1

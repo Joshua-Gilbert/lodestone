@@ -18,6 +18,9 @@
 ;    pixels FDh, y (word), x, w (bytes), h (lines), then each line as
 ;           PackBits (CLAUDE.COM only: TERM_PIXELS; a picture)
 ;  A malformed operation ends the frame (the Pi's next ones repaint).
+;  TERM_WIN (CLAUDE.COM 1.13, not RCON): in a terminal window (`win`), the
+;  shadow alone is drawn, 25 rows with the status band, and a terminal
+;  window draws it from there (MT_PUB); a picture goes full screen.
 ; =====================================================================
 TROWS   equ 24
 
@@ -35,6 +38,9 @@ term_cells:
         mov     [t_flags], al
         lodsw
         mov     [t_cur], ax             ; AL = row, AH = column
+%ifdef TERM_WIN
+        call    win_frame               ; (a picture's frame: full screen)
+%endif
         test    byte [t_flags], 1
         jz      .op
         call    term_clear
@@ -105,7 +111,12 @@ term_cells:
         lodsb
         call    term_scroll
         jmp     .op
-.done:  mov     ax, [t_cur]
+.done:
+%ifdef TERM_WIN
+        call    win_done                ; (CF: in its window, the cursor there)
+        jc      .nc
+%endif
+        mov     ax, [t_cur]
         test    byte [t_flags], 2
         jnz     .nc
         cmp     al, TROWS
@@ -127,7 +138,18 @@ term_cells:
 ; h lines (y + h <= 384, h > 0), then each line's w bytes as PackBits:
 ; n < 80h, n + 1 bytes follow; else one byte, 257 - n times.  A line's
 ; codes end with it.  Line y is in bank y mod 4, at (y div 4) * 80.
-.pix:   lea     ax, [si+5]
+.pix:
+%ifdef TERM_WIN
+        mov     byte [t_pix], 1
+        cmp     byte [win], 0
+        je      .pw
+        call    win_front               ; (from a Pi that doesn't mark them)
+        cmp     byte [win], 0
+        je      .pw
+        jmp     .done                   ; (still in its window: no pixels there)
+.pw:
+%endif
+        lea     ax, [si+5]
         cmp     ax, bx
         ja      .pb0
         lodsw                           ; AX = y
@@ -210,13 +232,17 @@ put_cell:
         mov     es, [shadseg]
         mov     [es:di], ax
         pop     es
+%ifdef TERM_WIN
+        cmp     byte [win], 0
+        jne     .x
+%endif
         mov     bl, dl
         xor     bh, bh
         imul    di, bx, 320
         mov     bl, dh
         add     di, bx
         call    cell
-        pop     di
+.x:     pop     di
         pop     bx
         pop     ax
         ret
@@ -244,6 +270,10 @@ term_scroll:
         mov     al, dl
         xor     ah, ah
         mov     bp, ax                  ; BP = top
+%ifdef TERM_WIN
+        cmp     byte [win], 0
+        jne     .sh
+%endif
         ; the screen: in each bank, rows of 320 bytes
         mov     ax, VSEG
         mov     ds, ax
@@ -264,7 +294,7 @@ term_scroll:
         add     dx, 2000h
         cmp     dx, 8000h
         jb      .bank
-        pop     ds
+.sh:    pop     ds
         ; the shadow: rows of 160 bytes
         push    ds
         mov     es, [shadseg]
@@ -287,6 +317,10 @@ term_scroll:
 ; rows 0-23 blank, on the screen and in the shadow.  ES = VSEG.
 term_clear:
         pusha
+%ifdef TERM_WIN
+        cmp     byte [win], 0
+        jne     .sh
+%endif
         xor     dx, dx
 .b:     mov     di, dx
         mov     cx, TROWS * 320 / 2
@@ -295,7 +329,7 @@ term_clear:
         add     dx, 2000h
         cmp     dx, 8000h
         jb      .b
-        call    shadow_clear
+.sh:    call    shadow_clear
         popa
         ret
 
@@ -333,6 +367,13 @@ cur_off:
 
 ; the whole Term screen again from the shadow, the cursor and row 24
 term_redraw:
+%ifdef TERM_WIN
+        cmp     byte [win], 0
+        je      .d
+        call    term_status             ; (in its window: row 24 into the
+        jmp     win_cur                 ;  shadow, the cursor its descriptor's)
+.d:
+%endif
         pusha
         push    es
         mov     ax, VSEG
@@ -365,6 +406,10 @@ term_redraw:
 
 ; row 24: the title on the left, the link or the keys on the right
 term_status:
+%ifdef TERM_WIN
+        cmp     byte [win], 0
+        jne     win_status
+%endif
         pusha
         push    es
         mov     ax, VSEG

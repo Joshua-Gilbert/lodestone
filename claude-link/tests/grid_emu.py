@@ -17,7 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
-from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INTR, UC_HOOK_INSN, UC_HOOK_BLOCK
+from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INTR, UC_HOOK_INSN, UC_HOOK_BLOCK, UC_HOOK_MEM_WRITE
 from unicorn import x86_const as X
 import sim7210 as S
 from ar488_model import AR488Model
@@ -160,6 +160,7 @@ class Machine:
         s.pit_latch = None; s.pit_hi = False
         s.last_blk = (0, 0); s.halted = False; s.blocked = False
         s.ints = collections.Counter()
+        s.mt = None; s.mouse = None; s.reads08 = 0     # (FakeMT; INT 33h's presses; INT 10h AH=08h)
         # the PIC as far as IRQ 5 goes (the 7210's INT through the GPIB cartridge's E1 jumper; GRIDGPIB 1.2)
         s.pic_mask = 0xB8; s.in5 = False; s.pic_rr = 2; s.irq5 = False; s.chip_int_was = False; s.irqs5 = 0
         for n in range(256):
@@ -296,6 +297,7 @@ class Machine:
         ah, al = s.r('ah'), s.r('al')
         if ah == 0x00:
             mode = al & 0x7F
+            if s.mt is not None: s.mt.mode_set(s, mode)
             s.wr(0, 0x449, [mode]); s.wr(0, 0x450, b'\0\0')
             if mode == 0x40:
                 s.wr(0xB800, 0, bytes(0x8000))
@@ -310,6 +312,9 @@ class Machine:
             c, r_ = s.rd(0, 0x450, 2); s.w('dx', (r_ << 8) | c); s.w('cx', 0x0607)
         elif ah == 0x0E:
             s.tty_put(al)
+        elif ah == 0x08:
+            c, r_ = s.rd(0, 0x450, 2); s.reads08 += 1
+            s.w('ax', s.u16(0xB800, (r_ * 80 + c) * 2) if s.rd(0, 0x449, 1)[0] < 4 else 0)
         elif ah in (0x09, 0x0A):
             c, r_ = s.rd(0, 0x450, 2)
             for i in range(s.r('cx')):
@@ -359,6 +364,17 @@ class Machine:
             s.w('cx', (bcd(n.year // 100) << 8) | bcd(n.year % 100)); s.w('dx', (bcd(n.month) << 8) | bcd(n.day)); s.cf(0)
         elif ah in (0x03, 0x05):
             s.rtc_set.append((ah, s.r('cx'), s.r('dx'))); s.cf(0)
+
+    def int33(s):
+        """A mouse (s.mouse: {'presses': [(x, y)...]}), else none as before."""
+        ax = s.r('ax')
+        if s.mouse is None:
+            s.log.append('[int 33h AX=%04X ignored]' % ax); return
+        if ax == 0: s.w('ax', 0xFFFF); s.w('bx', 2); s.mouse['presses'] = []
+        elif ax == 5:
+            p = s.mouse['presses']; s.w('ax', 0)
+            if p: s.w('bx', len(p)); s.w('cx', p[-1][0]); s.w('dx', p[-1][1]); p.clear()
+            else: s.w('bx', 0)
 
     def int11(s): s.w('ax', 0x4423)
     def int12(s): s.w('ax', 640)
@@ -605,6 +621,9 @@ class Machine:
         s.wr(s.MEMBASE - 1, 0, struct.pack('<H', s.MEMBASE))
         s.w('es', s.MEMBASE - 1); s.w('bx', 2)
     def d59(s, *a): s.w('ax', getattr(s, 'last_err', 0)); s.w('bx', 0x0101)
+    def df0(s, ah, al, ds, dx, bx, cx):
+        if s.mt is None: s.log.append('[21h/F0h not emulated]'); s.err(1); return    # (another DOS)
+        s.mt.call(s, al, bx, cx)
     def d29(s, *a): s.w('al', 0)
 
     # ---- memory -----------------------------------------------------------
@@ -874,6 +893,63 @@ def symbols(mapfile):
             try: syms[p[2]] = int(p[1], 16)
             except ValueError: pass
     return syms
+
+
+class FakeMT:
+    """Lodestone's multitasking as CLAUDE.COM 1.13 sees it (T5d, a terminal
+    window): CLAUDE in task 1, behind with a window (window) or in front
+    (front).  MT_PUB (F0h 22h) keeps the descriptor's address, MT_WAKE (23h)
+    the program's BL, MT_LIST (12h) gives the front task and the tasks'
+    records (the Executive, CLAUDE.COM, and others: (task, name)).  A graphics mode
+    set behind brings a window's task to the front (T3's mt_wfront; with no
+    window it would wait for the front: 'waitf'), a text mode set in front
+    after that sends it back (mt_wback).  A screen published and shown,
+    published again in front in a text mode, goes back too (T5b).  The
+    program's own writes to B800h while behind are counted: the Executive's
+    screen is there."""
+    def __init__(s, window=True, front=False):
+        s.window, s.front = window, front
+        s.desc = None; s.pubs = 0; s.wake = None; s.wgfx = False
+        s.vwrites = 0; s.log = []; s.others = []
+
+    def attach(s, m):
+        m.mt = s
+        m.mu.hook_add(UC_HOOK_MEM_WRITE, s._vw, None, 0xB8000, 0xBFFFF)
+
+    def _vw(s, uc, access, addr, size, value, ud):
+        if not s.front: s.vwrites += 1
+
+    def flags(s, m):
+        return m.rd(*s.desc, 2)[1] if s.desc else None
+
+    def call(s, m, al, bx, cx):
+        if al == 0x22:                                  # MT_PUB
+            if cx & 0xFF: m.err(1); return
+            es, di = m.r('es'), m.r('di')
+            s.desc = None if (es, di) == (0, 0) else (es, di)
+            s.pubs += 1; s.log.append('pub' if s.desc else 'withdrawn')
+            if s.desc and s.window and s.front and m.mode() <= 3 and s.flags(m) & 1:
+                s.front = False; s.log.append('back (published)')
+            m.w('ax', 0x0100 | (1 if s.window else 0)); m.cf(0)
+        elif al == 0x23:                                # MT_WAKE
+            s.wake = bx & 1; s.log.append('wake %d' % s.wake)
+            m.w('ax', 5); m.cf(0)
+        elif al == 0x12:                                # MT_LIST: CX records at most to ES:DI
+            recs = [(0, 'Executive'), (1, 'CLAUDE.COM')] + s.others
+            es, di = m.r('es'), m.r('di')
+            for i, (n, name) in enumerate(recs[:cx]):
+                m.wr(es, di + 16 * i, bytes([n, 1, 0, 0]) + name.encode().ljust(12, b'\0')[:12])
+            m.w('ax', 0x0100 | (1 if s.front else 0)); m.w('cx', len(recs)); m.cf(0)
+        else:
+            m.err(1)
+
+    def mode_set(s, m, mode):
+        s.log.append('mode %02X%s' % (mode, ' shown' if s.desc and s.flags(m) & 1 else ''))
+        if mode >= 4 and not s.front:
+            if s.window: s.front = s.wgfx = True; s.log.append('front')
+            else: s.log.append('waitf')
+        elif mode < 4 and s.front and s.wgfx:
+            s.front = s.wgfx = False; s.log.append('back')
 
 
 class EmuHarness:

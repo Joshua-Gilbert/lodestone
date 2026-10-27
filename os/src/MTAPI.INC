@@ -131,8 +131,10 @@ MT_TROWS    equ 1Fh                     ; (T1: a terminal window's look) BL = a
                                         ;  of its cells instead (glyph, PBA_*;
                                         ;  rows past PB_ROWS blank, 0020h), DL
                                         ;  32 (1 and 16 too, as below), CH =
-                                        ;  its rows, BX = PB_CUR (FFFFh with
-                                        ;  PBF_NOCUR).  DL = MTF_DIRECT, 2 if
+                                        ;  its rows, BX = PB_CUR (with
+                                        ;  PBF_NOCUR its row's bit 7 set, T5d:
+                                        ;  where it is, not shown; FFFFh then
+                                        ;  none).  DL = MTF_DIRECT, 2 if
                                         ;  nothing was copied (not a text mode
                                         ;  of 80 columns or fewer, or rows past
                                         ;  its 32 KB), 4 its pages gone (2 too),

@@ -374,7 +374,7 @@ CELLS payload:
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 1 | flags: bit 0 clear rows 0-23 first; bit 1 cursor hidden |
+| 0 | 1 | flags: bit 0 clear rows 0-23 first; bit 1 cursor hidden; bit 2 a picture's frame (every frame of a picture has it, a text frame never: CLAUDE 1.13 in a terminal window goes full screen for a picture and back to its window at the first frame without it) |
 | 1 | 1 | cursor row |
 | 2 | 1 | cursor column |
 | 3 | ... | operations to the end of the payload |
