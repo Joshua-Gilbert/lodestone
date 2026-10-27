@@ -3609,14 +3609,9 @@ mt_end: mov     al, [cs:mt_cur]         ; (first: a call refused changes
         cmp     al, [cs:mt_front]
         jne     .f
         push    ax                      ; it was in front: the Executive's
-        mov     ax, 2                   ;  task is, with its screen (the
-        call    mt_m33                  ;  INT 33h pointer off meanwhile)
-        xor     al, al                  ;  and its INT 33h state
-        call    mt_scrld
-        call    mt_m33on
-        xor     al, al
-        call    mt_m33ld
-        pop     ax
+        xor     al, al                  ;  task is, with its screen and its
+        call    mt_scrto                ;  INT 33h state (this one's pages
+        pop     ax                      ;  are gone: its screen not kept)
 .f:     cmp     al, [cs:mt_swreq]
         jne     .s
         mov     byte [cs:mt_swreq], 0FFh
