@@ -964,6 +964,14 @@ def t_driver():
         check('... and from then on never asleep waiting for an SRQ that can\'t come (%d frames)'
               % (h.link.stats['rx_frames'] - f2), ok and h.naps == n2 and h.link.stats['rx_frames'] - f2 > 3,
               (ok, h.naps - n2))
+        # the line let go (the instrument served): the answers' SRQs are edges again, and the first clears
+        # srq_held (audit3 X49: it was kept till the next HELLO, the console never asleep till then)
+        del h.m.chip.int_line
+        n3 = h.naps
+        h.term_type('freed'); h.press(ENTER)
+        ok = h.has('You said: freed', 60) and in_step(h)
+        check('... the line let go: an SRQ edge again ends it, the console asleep till the SRQ again (%d times)'
+              % (h.naps - n3), ok and h.rv('srq_held') == 0 and h.naps > n3, (ok, h.rv('srq_held'), h.naps - n3))
         ok, why = clean(h)
         check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
     finally:
@@ -1033,7 +1041,8 @@ def t_bg():
         end = time.time() + 10
         while not h.link.outq and time.time() < end: time.sleep(0.01)
         # (srq_held cleared: the pop-up's back-to-back polls can set it, two SRQ edges merged, until the next
-        # HELLO; from here on only a wait for an SRQ that a quiet bridge never sends could set it again)
+        # edge, which a quiet bridge never makes, or HELLO; from here on only a wait for an SRQ that a quiet
+        # bridge never sends could set it again)
         h.m.ems_store[h.page() * 0x4000 + h.rsym['srq_held']] = 0
         h.press(HOT)                            # (before the console's next poll: its EVENT's answer is the REQUEST)
         back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)

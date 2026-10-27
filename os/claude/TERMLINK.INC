@@ -40,7 +40,8 @@ wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driv
 tlook       resb 1                      ; 1: link_wait's serial poll is a tick's look, no SRQ seen
 srq_held    resb 1                      ; 1: an answer was there at a tick's look, its SRQ no
                                         ;  edge (another device holds the line): the PIT's
-                                        ;  polls, and no sleeping for the SRQ, till the next HELLO
+                                        ;  polls, and no sleeping for the SRQ, till an edge comes
+                                        ;  again (link_wait) or the next HELLO
 lr_end:
 %endmacro
 
@@ -288,14 +289,15 @@ link_wait:
         cmp     word [irq_ptr+2], 0
         je      .t0
         call    srq_new                 ; the SRQ interrupt came: poll now
-        jnz     .poll                   ;  (maybe_idle, RCON's idle, sleep till it)
+        jnz     .edge                   ;  (maybe_idle, RCON's idle, sleep till it)
         cmp     byte [srq_held], 0      ; (no edges for us: the PIT's polls)
         jne     .t0
         mov     ax, [now]               ; else once a tick, should one go astray
         cmp     ax, [pit_tick]
         je      .x
         inc     byte [tlook]
-        jmp     short .poll
+.edge:  mov     byte [srq_held], 0      ; (an edge: the line held no more, or two
+        jmp     short .poll             ;  merged at the last look; 0 here already)
 .t0:
 %ifndef RCON                            ; (resident: never AH=0Bh, which clears
         mov     ah, 0Bh                 ;  the program's SRQ latch)
