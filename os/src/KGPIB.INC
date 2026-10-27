@@ -67,6 +67,7 @@ gp_handler:
         mov     ax, gp_E_BUSY
         stc
         retf    2
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .go:    mov     byte [cs:gp_busy], 1
         sti
         cld
@@ -970,6 +971,7 @@ gp_wait_co:
         pop     ax
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; =====================================================================
 ;  LODESTONE: SRQ on IRQ 5 (INT 0Dh).  The 7210 interrupts on SRQ only
 ;  (IMR2 SRQI).  GPIBIRQ 1.0 on the 1520: one IRQ 5 an SRQ, at once, and it

@@ -518,6 +518,7 @@ fat_flush:
         jnz     .run
         inc     bx
         jmp     .k
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .run:   mov     di, bx                  ; [BX, DI) changed
 .r:     inc     di
         cmp     di, [si+D_SPF]
@@ -602,6 +603,7 @@ fat_flush_drv:
         clc
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; AX = cluster -> AX = its FAT entry, as FAT16's (FF0h-FFFh: FFF0h-FFFFh)
 fat_get:
         push    bx
