@@ -84,6 +84,8 @@ MW_CALLOC   equ (held2 + 2 - title_on) + 2 + (ed_keep + 1 - lv_cur) + (fm_b2 + 2
 mw_on       db      0                   ; 1: the UI is patched
 mw_n        db      0                   ; window .RUNs running
 mw_cur      db      0                   ; the session running (0: the Executive)
+mw_nc       db      0                   ; (win_paint, the saver: unclipped)
+            times   -(mw_nc - mw_cur != 1) db 0     ; (the gates' word test)
 mw_rd       db      0                   ; once switched: 1 the screen again, 2
                                         ;  the band, 3 the session's windows
                                         ;  (on top now) and the band (mw_back)
@@ -109,63 +111,49 @@ MW_BSS      equ     (MW_MAX + 1) * SE_SIZE + NWIN * 4   ; (mw_ses, mw_tmp: in
 mw_patch:
         cmp     byte [cs:mw_on], 0
         jne     .x
-        cmp     byte [es:run_app], 80h          ; CMP BYTE [run_active],0
+        mov     si, mw_ptab
+        call    mw_cpchk
         jne     .x
-        cmp     byte [es:run_app + 1], 3Eh
+        mov     si, mw_cpt              ; (the clipping's: made only while
+        call    mw_cpchk                ;  window .RUNs run)
         jne     .x
-        cmp     word [es:run_app + 2], run_active
+        cmp     byte [es:..@ui_rdfn + 5], 0F6h  ; (OR SI,SI's second byte)
         jne     .x
-        cmp     byte [es:run_app + 4], 0
+        cmp     byte [es:fill_band + 5], fill_band.none - (fill_band + 6)
+        jne     .x                      ; (the JZs' targets past the 5 bytes)
+        cmp     byte [es:vline + 5], vline.none - (vline + 6)
         jne     .x
-        cmp     byte [es:ui_event.got], 0E8h    ; CALL win_ev / JC .on
+        cmp     word [es:win_paint + 5], 4Ch + W_H * 256
         jne     .x
-        cmp     byte [es:ui_event.got + 3], 72h
-        jne     .x
-        cmp     byte [es:ui_event.l], 0E8h      ; CALL poll_once / JNC .got
-        jne     .x
-        cmp     word [es:ui_event.l + 3], 73h + (ui_event.got - ui_event.l - 5) * 100h
-        jne     .x
-        cmp     word [es:run_cleanup], 0660h    ; PUSHA / PUSH ES / MOV SI,alloc_tab
-        jne     .x
-        cmp     byte [es:run_cleanup + 2], 0BEh
-        jne     .x
-        cmp     word [es:run_cleanup + 3], alloc_tab
-        jne     .x
-        cmp     word [es:..@ui_wlend], 02B8h    ; MOV AX,0F002h / INT 21h
-        jne     .x
-        cmp     word [es:..@ui_wlend + 2], 0CDF0h
-        jne     .x
-        cmp     byte [es:..@ui_wlend + 4], 21h
-        jne     .x
-        cmp     word [es:..@ui_rdfn], 368Bh     ; MOV SI,[redraw_fn] / OR SI,SI
-        jne     .x
-        cmp     word [es:..@ui_rdfn + 2], redraw_fn
-        jne     .x
-        cmp     word [es:..@ui_rdfn + 4], 0F609h
-        jne     .x
-        call    mw_cpchk                ; (the clipping's: made only while
-        jne     .x                      ;  window .RUNs run)
-        mov     byte [es:..@ui_rdfn], 9Ah       ; CALL FAR mw_rdfn, NOP
-        mov     word [es:..@ui_rdfn + 1], mw_rdfn
-        mov     [es:..@ui_rdfn + 3], cs
-        mov     byte [es:..@ui_rdfn + 5], 90h
-        mov     byte [es:run_app], 0EAh         ; JMP FAR mw_run
-        mov     word [es:run_app + 1], mw_run
-        mov     [es:run_app + 3], cs
-        mov     byte [es:ui_event.got], 9Ah     ; CALL FAR mw_got
-        mov     word [es:ui_event.got + 1], mw_got
-        mov     [es:ui_event.got + 3], cs
-        mov     byte [es:ui_event.l], 9Ah       ; CALL FAR mw_poll
-        mov     word [es:ui_event.l + 1], mw_poll
-        mov     [es:ui_event.l + 3], cs
-        mov     byte [es:run_cleanup], 0EAh     ; JMP FAR mw_clean
-        mov     word [es:run_cleanup + 1], mw_clean
-        mov     [es:run_cleanup + 3], cs
-        mov     byte [es:..@ui_wlend], 9Ah      ; CALL FAR mw_lend
-        mov     word [es:..@ui_wlend + 1], mw_lend
-        mov     [es:..@ui_wlend + 3], cs
+        mov     si, mw_ptab
+        call    mw_pin
+        mov     byte [es:..@ui_rdfn + 5], 90h   ; (NOP)
         mov     byte [cs:mw_on], 1
 .x:     ret
+; (as mw_cpt: where, to, the opcode, the site's own 5 bytes)
+mw_ptab:
+        dw      run_app, mw_run         ; CMP BYTE [run_active],0: JMP FAR
+        db      0EAh, 80h, 3Eh
+        dw      run_active
+        db      0
+        dw      ui_event.got, mw_got    ; CALL win_ev / JC .on: CALL FAR
+        db      9Ah, 0E8h
+        dw      win_ev - (ui_event.got + 3)
+        db      72h, (ui_event.on - (ui_event.got + 5)) & 0FFh
+        dw      ui_event.l, mw_poll     ; CALL poll_once / JNC .got: CALL FAR
+        db      9Ah, 0E8h
+        dw      poll_once - (ui_event.l + 3)
+        db      73h, ui_event.got - (ui_event.l + 5)
+        dw      run_cleanup, mw_clean   ; PUSHA / PUSH ES / MOV SI,alloc_tab:
+        db      0EAh, 60h, 06h, 0BEh    ;  JMP FAR
+        dw      alloc_tab
+        dw      ..@ui_wlend, mw_lend    ; MOV AX,0F002h / INT 21h: CALL FAR
+        db      9Ah, 0B8h, 02h, 0F0h, 0CDh, 21h
+        dw      ..@ui_rdfn, mw_rdfn     ; MOV SI,[redraw_fn] / OR SI,SI: CALL
+        db      9Ah, 8Bh, 36h           ;  FAR, NOP (its sixth byte: mw_patch)
+        dw      redraw_fn
+        db      09h
+        dw      0
 
 ; ---------------------------------------------------------------------
 ;  run_app (DS = ES = the UI): SI = path, DI = argument; its caller's
@@ -470,18 +458,7 @@ mw_end: cld                             ; (its exit code isn't wanted: the
         push    ss
         pop     es
         mov     si, alloc_tab           ; its UI_ALLOC blocks
-.f:     mov     ax, [si]
-        or      ax, ax
-        jz      .fn
-        push    es
-        mov     es, ax
-        mov     ah, 49h
-        int     21h
-        pop     es
-        mov     word [si], 0
-.fn:    add     si, 2
-        cmp     si, alloc_tab + 2 * NALLOC
-        jb      .f
+        call    mw_frees
         mov     al, [cs:mw_cur]
         call    mw_unwin                ; its windows off the stack (CF: some)
         jnc     .nw
@@ -510,11 +487,8 @@ mw_end: cld                             ; (its exit code isn't wanted: the
         call    mw_clipoff
         UCALL   run_cleanup
         jmp     short .b
-.top:   mov     bx, [wdepth]            ; its windows on top, if they aren't
-        or      bx, bx
-        jz      .sw
-        shl     bx, 2
-        mov     si, [wstack+bx-4]
+.top:   call    mw_topw                 ; its windows on top, if they aren't
+        jc      .sw
         mov     ah, al
         call    mw_own                  ; (AL = whose the top one is)
         cmp     al, ah
@@ -527,6 +501,25 @@ mw_end: cld                             ; (its exit code isn't wanted: the
         jne     .bk                     ;  own, still waiting), if the screen
         mov     byte [cs:mw_rd], 2      ;  isn't drawn again anyway
 .bk:    jmp     mw_back
+
+; UI_ALLOC's blocks, NALLOC words at DS:SI: each freed, and 0.  All kept
+mw_frees:
+        pusha
+        push    es
+        mov     cx, NALLOC
+.f:     xor     ax, ax
+        xchg    ax, [si]
+        or      ax, ax
+        jz      .n
+        mov     es, ax
+        mov     ah, 49h
+        int     21h                     ; (CX kept: done restores it)
+.n:     inc     si
+        inc     si
+        loop    .f
+        pop     es
+        popa
+        ret
 
 ; ---------------------------------------------------------------------
 ;  ui_event.got (CALL FAR): AX = the event (BX, CX for a click), DS = the
@@ -750,10 +743,9 @@ mw_tick:
 ; (AX = error) if it can't be; CF, AX = 0FFFFh: it runs in front already
 mw_open:
         push    bp
-        mov     al, 1
-.s:     call    mw_rec
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
+        xor     al, al
+.s:     call    mw_next
+        jc      .n
         push    si
         push    di
         lea     di, [bp+SE_NAME]
@@ -766,7 +758,7 @@ mw_open:
         jnz     .c
 .ne:    pop     di
         pop     si
-        jne     .n
+        jne     .s
         pop     bp
         cmp     al, [cs:mw_cur]
         je      .y
@@ -776,10 +768,7 @@ mw_open:
 .y:     mov     ax, 0FFFFh
         stc
         ret
-.n:     inc     al
-        cmp     al, MW_MAX
-        jbe     .s
-        pop     bp
+.n:     pop     bp
 .new:   push    bp                      ; (.new: started, even if one runs:
         mov     bp, sp                  ;  CODE-W's Write)
         sub     sp, 2 * MW_PATH
@@ -822,16 +811,7 @@ mw_say: pusha
         push    es
         sub     sp, MW_SAYB
         mov     dx, ax                  ; (DX: why)
-        mov     bx, si                  ; (a path: its last part)
-.p:     lodsb
-        cmp     al, '\'
-        je      .pn
-        cmp     al, ':'
-        jne     .pe
-.pn:    mov     bx, si
-.pe:    or      al, al
-        jnz     .p
-        mov     si, bx
+        call    mt_lname                ; (a path: its last part)
         mov     di, sp
         mov     cx, 13
 .n:     lodsb
@@ -955,34 +935,39 @@ mw_back:
 ;  sessions, slots, windows
 ; ---------------------------------------------------------------------
 ; AL = a session -> BP = its record (in MT's segment)
-mw_rec: push    ax
-        push    dx
-        xor     ah, ah
-        mov     dx, SE_SIZE
-        mul     dx
-        add     ax, mw_ses
-        mov     bp, ax
-        pop     dx
-        pop     ax
+mw_rec: mov     bp, ax
+        shl     bp, 8                   ; (AL * 128: SE_SIZE)
+        shr     bp, 1
+        add     bp, mw_ses
         ret
+%if SE_SIZE != 128
+%error "KMW: mw_rec takes SE_SIZE as 128"
+%endif
 
 ; task AL, its count AH: shown in a session's terminal window (MT_TOPEN
 ; gave it the task)?  CF if not.  All kept
 mw_owns:
         pusha
         mov     dx, ax
-        mov     al, 1
-.l:     call    mw_rec
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
-        cmp     dx, [cs:bp+SE_TASK]     ; (SE_TASK, SE_TGEN)
-        je      .y
-.n:     inc     al
-        cmp     al, MW_MAX
-        jbe     .l
-        stc
-.y:     popa
+        xor     al, al
+.l:     call    mw_next
+        jc      .x
+        cmp     dx, [cs:bp+SE_TASK]     ; (SE_TASK, SE_TGEN; equal: CF clear)
+        jne     .l
+.x:     popa
         ret
+
+; AL = a session (0: from the first) -> AL = the next one used after it,
+; BP = its record; CF if there is none
+mw_next:
+        inc     al
+        cmp     al, MW_MAX + 1
+        cmc
+        jc      .x
+        call    mw_rec
+        cmp     byte [cs:bp+SE_USE], 0  ; (not 0: CF clear)
+        je      mw_next
+.x:     ret
 
 ; -> AL = an unused session, BP = its record (there is one: mw_n < MW_MAX)
 mw_free:
@@ -1042,17 +1027,11 @@ mw_load_ctx:
 ; its name: SI's last part (after any \ or :), 12 characters at most
 mw_name:
         pusha
-        mov     bx, si
-.f:     lodsb
-        or      al, al
-        jz      .e
-        cmp     al, '\'
-        je      .p
-        cmp     al, ':'
-        jne     .f
-.p:     mov     bx, si
-        jmp     .f
-.e:     mov     si, bx
+        push    es
+        push    ds
+        pop     es
+        call    mt_lname
+        pop     es
         lea     di, [bp+SE_NAME]
         mov     cx, 12
 .c:     lodsb
@@ -1076,22 +1055,18 @@ mw_slot:
         push    ax
         push    bp
         mov     bx, [run_base]
-.again: mov     al, 1
-.l:     call    mw_rec
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
+.again: xor     al, al
+.l:     call    mw_next
+        jc      .e
         mov     dx, bx                  ; [BX, BX+CX) against [base, end)
         add     dx, cx
         cmp     dx, [cs:bp+SE_BASE]
-        jbe     .n
+        jbe     .l
         cmp     bx, [cs:bp+SE_END]
-        jae     .n
+        jae     .l
         mov     bx, [cs:bp+SE_END]      ; past it, and look again
         jmp     .again
-.n:     inc     al
-        cmp     al, MW_MAX
-        jbe     .l
-        mov     ax, bx
+.e:     mov     ax, bx
         add     ax, cx
         jc      .no
         cmp     ax, 0FFF0h
@@ -1136,19 +1111,15 @@ mw_grow:
 ; -> AX = the highest end of a session's slot (run_base if none)
 mw_top: push    bp
         push    cx
-        mov     ax, [run_base]
-        mov     cl, 1
-.l:     xchg    al, cl
-        call    mw_rec
-        xchg    al, cl
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
-        cmp     ax, [cs:bp+SE_END]
-        jae     .n
-        mov     ax, [cs:bp+SE_END]
-.n:     inc     cl
-        cmp     cl, MW_MAX
-        jbe     .l
+        mov     cx, [run_base]          ; (CX: the highest yet)
+        xor     al, al
+.l:     call    mw_next
+        jc      .x
+        cmp     cx, [cs:bp+SE_END]
+        jae     .l
+        mov     cx, [cs:bp+SE_END]
+        jmp     .l
+.x:     xchg    ax, cx
         pop     cx
         pop     bp
         ret
@@ -1451,13 +1422,10 @@ mw_modal:
 ; the top window, if the session running may resize it -> SI; CF if not
 mw_szwin:
         push    ax
-        mov     si, [wdepth]
-        or      si, si
-        jz      .no
         cmp     word [wover], 0         ; (windows past NWIN: the top isn't drawn)
         jne     .no
-        shl     si, 2
-        mov     si, [wstack+si-4]
+        call    mw_topw
+        jc      .no
         UCALL   win_flags               ; AL = its W_FLAGS (0 before API 6)
         test    al, WF_SIZE
         jz      .no
@@ -1626,33 +1594,33 @@ mw_szto:
 ;  with nothing in the way, the primitive itself runs on (its first
 ;  instructions done here)
 ; ---------------------------------------------------------------------
-mw_cpt: dw      clear_screen, mw_c_cls  ; where, to; its own first 5 bytes
+mw_cpt: dw      clear_screen, mw_c_cls  ; where, to; the opcode (JMP FAR); its
+        db      0EAh                    ;  own first 5 bytes
         db      51h, 57h, 50h, 06h, 68h ; PUSH CX/DI/AX/ES, PUSH VSEG
         dw      fill_band, mw_c_fill
-        db      60h, 0E8h               ; PUSHA, CALL clip_rows, JZ .none
+        db      0EAh, 60h, 0E8h         ; PUSHA, CALL clip_rows, JZ .none
         dw      clip_rows - (fill_band + 4)
         db      74h
         dw      invert_band, mw_c_inv
-        db      60h, 85h, 0EDh, 74h     ; PUSHA, TEST BP,BP, JZ .none
+        db      0EAh, 60h, 85h, 0EDh, 74h       ; PUSHA, TEST BP,BP, JZ .none
         db      invert_band.none - (invert_band + 5)
         dw      vline, mw_c_vl
-        db      60h, 0E8h               ; PUSHA, CALL clip_rows, JZ .none
+        db      0EAh, 60h, 0E8h         ; PUSHA, CALL clip_rows, JZ .none
         dw      clip_rows - (vline + 4)
         db      74h
         dw      putsn, mw_c_text
-        db      60h, 06h, 0BDh, 80, 0   ; PUSHA, PUSH ES, MOV BP,80
+        db      0EAh, 60h, 06h, 0BDh, 80, 0     ; PUSHA, PUSH ES, MOV BP,80
         dw      xor_rect, mw_c_xor
-        db      60h, 06h, 68h, VSEG & 0FFh, VSEG >> 8   ; PUSHA, PUSH ES, PUSH VSEG
+        db      0EAh, 60h, 06h, 68h, VSEG & 0FFh, VSEG >> 8     ; PUSHA, PUSH ES, PUSH VSEG
         dw      win_paint, mw_c_wp
-        db      60h, 8Bh, 54h, W_Y, 8Bh ; PUSHA, MOV DX,[SI+W_Y], MOV CX,[SI+W_H]
+        db      0EAh, 60h, 8Bh, 54h, W_Y, 8Bh   ; PUSHA, MOV DX,[SI+W_Y], MOV CX,[SI+W_H]
         dw      saver, mw_c_sv
-        db      60h, 0E8h               ; PUSHA, CALL hide_cursor, CLI
+        db      0EAh, 60h, 0E8h         ; PUSHA, CALL hide_cursor, CLI
         dw      hide_cursor - (saver + 4)
         db      0FAh
         dw      0
-MW_CPE      equ     9
+MW_CPE      equ     10
 mw_cp       db      0                   ; 1: the patches are in
-mw_nc       db      0                   ; (win_paint, the saver: unclipped)
 mw_useg     dw      0                   ; the UI's segment (mw_clipon)
 mw_kind     db      0                   ; the primitive (MK_*)
 MK_FILL     equ     0
@@ -1662,7 +1630,6 @@ MK_TEXT     equ     3
 MK_XOR      equ     4
 mw_val      db      0                   ; MK_FILL's byte, MK_VL's bit
 mw_tm       db      0                   ; MK_TEXT's mask
-mw_xh       db      0                   ; (MK_XOR: 1 on its top or bottom row)
 mw_tx       dw      0                   ; MK_TEXT's text (from column mw_r)
 mw_p0       dw      0                   ; MK_XOR's pixels across
 mw_p1       dw      0
@@ -1674,36 +1641,39 @@ mw_r        dw      0, 0, 0, 0          ; what is drawn: columns, rows (to: past
 mw_cln      dw      0                   ; the sessions' windows across it:
 mw_cl       times NWIN * 4 dw 0         ;  columns, rows each (to: past)
 
-; the patches' bytes as they should be (mw_patch: ES = the UI) -> ZF
+; table CS:SI's sites (mw_cpt's form) hold their own 5 bytes?  ES = the
+; UI -> ZF (SI, DI, CX lost)
 mw_cpchk:
-        push    si
-        push    di
-        push    cx
         push    ds
         push    cs
         pop     ds
-        mov     si, mw_cpt
 .l:     mov     di, [si]
         or      di, di
-        jz      .ok
+        jz      .x
         push    si
-        add     si, 4
+        add     si, 5
         mov     cx, 5
         repe    cmpsb
         pop     si
         jne     .x
         add     si, MW_CPE
         jmp     .l
-.ok:    cmp     byte [es:fill_band + 5], fill_band.none - (fill_band + 6)
-        jne     .x                      ; (the JZs' targets past the 5 bytes)
-        cmp     byte [es:vline + 5], vline.none - (vline + 6)
-        jne     .x
-        cmp     word [es:win_paint + 5], 4Ch + W_H * 256
 .x:     pop     ds
-        pop     cx
-        pop     di
-        pop     si
         ret
+
+; table CS:SI's patches in: at each site its opcode, then to, CS (ES = the
+; UI; SI, DI, AX lost)
+mw_pin: mov     di, [cs:si]
+        or      di, di
+        jz      .x
+        mov     al, [cs:si+4]
+        mov     [es:di], al
+        mov     ax, [cs:si+2]
+        mov     [es:di+1], ax
+        mov     [es:di+3], cs
+        add     si, MW_CPE
+        jmp     mw_pin
+.x:     ret
 
 ; the patches in, the first window .RUN starting / out, the last ended or
 ; all forgotten (DS = the UI)
@@ -1713,17 +1683,13 @@ mw_clipon:
         mov     byte [cs:mw_nc], 0
         mov     [cs:mw_useg], ds        ; (the UI's: its stack is in it)
         pusha
+        push    es
+        push    ds
+        pop     es
         mov     si, mw_cpt
-.l:     mov     di, [cs:si]
-        or      di, di
-        jz      .e
-        mov     byte [di], 0EAh         ; JMP FAR
-        mov     ax, [cs:si+2]
-        mov     [di+1], ax
-        mov     [di+3], cs
-        add     si, MW_CPE
-        jmp     .l
-.e:     mov     byte [cs:mw_cp], 1
+        call    mw_pin
+        pop     es
+        mov     byte [cs:mw_cp], 1
         popa
 .x:     ret
 mw_clipoff:
@@ -1735,7 +1701,7 @@ mw_clipoff:
 .l:     mov     di, [cs:bx]
         or      di, di
         jz      .e
-        lea     si, [bx+4]
+        lea     si, [bx+5]
         mov     cx, 5
 .c:     mov     al, [cs:si]
         mov     [di], al
@@ -1752,27 +1718,30 @@ mw_clipoff:
 mw_topses:
         push    si
         push    ax
-        mov     si, [wdepth]
-        or      si, si
-        jz      .no
-        shl     si, 2
-        mov     si, [wstack+si-4]
+        call    mw_topw
+        cmc                             ; (none: CF clear)
+        jnc     .x
         call    mw_own
-        or      al, al
-        jz      .no
-        stc
-        jmp     short .x
-.no:    clc
+        cmp     al, 1
+        cmc                             ; (CF: AL isn't 0)
 .x:     pop     ax
         pop     si
+        ret
+
+; the top window -> SI; CF if there is none
+mw_topw:
+        mov     si, [wdepth]
+        shl     si, 2                   ; (CF clear: wdepth is small)
+        jz      .no
+        mov     si, [wstack+si-4]
+        ret
+.no:    stc
         ret
 
 ; the primitives' entries (JMP FAR from them; DS = the UI, the caller's
 ; near return on the stack)
 mw_c_cls:                               ; clear_screen
-        cmp     byte [cs:mw_cur], 0
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ; (a session's, or unclipped: mw_nc)
         jne     .o
         pusha
         mov     byte [cs:mw_kind], MK_FILL
@@ -1796,9 +1765,7 @@ mw_c_cls:                               ; clear_screen
         retf
 
 mw_c_fill:                              ; fill_band: DX = y, CX = rows,
-        cmp     byte [cs:mw_cur], 0     ;  BX = column, BP = width, AL = value
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ;  BX = column, BP = width, AL = value
         jne     .o
         pusha
         mov     byte [cs:mw_kind], MK_FILL
@@ -1819,9 +1786,7 @@ mw_c_fill:                              ; fill_band: DX = y, CX = rows,
         retf
 
 mw_c_inv:                               ; invert_band: as fill_band's
-        cmp     byte [cs:mw_cur], 0
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0
         jne     .o
         test    bp, bp
         jz      .o
@@ -1843,9 +1808,7 @@ mw_c_inv:                               ; invert_band: as fill_band's
         retf
 
 mw_c_vl:                                ; vline: AX = pixel x, DX = y0,
-        cmp     byte [cs:mw_cur], 0     ;  CX = height
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ;  CX = height
         jne     .o
         pusha
         mov     byte [cs:mw_kind], MK_VL
@@ -1876,9 +1839,7 @@ mw_c_vl:                                ; vline: AX = pixel x, DX = y0,
         retf
 
 mw_c_text:                              ; putsn: SI = text, CX = count,
-        cmp     byte [cs:mw_cur], 0     ;  BX = column, DX = y, AH = mask
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ;  BX = column, DX = y, AH = mask
         jne     .o
         pusha
         cmp     bx, 80                  ; (as putsn cuts it at the right edge)
@@ -1908,9 +1869,7 @@ mw_c_text:                              ; putsn: SI = text, CX = count,
         retf
 
 mw_c_xor:                               ; xor_rect: pixels AX..DI across,
-        cmp     byte [cs:mw_cur], 0     ;  rows DX..DX+CX-1
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ;  rows DX..DX+CX-1
         jne     .o
         pusha
         mov     byte [cs:mw_kind], MK_XOR
@@ -1955,25 +1914,17 @@ mw_c_sv:                                ; the saver: unclipped (in a DOS task,
         mov     ax, ss                  ;  counted, its drawing never clipped
         cmp     ax, [cs:mw_useg]        ;  there: mw_clipq)
         pop     ax
-        je      .ui
-        pusha
-        UCALL   hide_cursor
-        cli
-        push    ds
-        push    word saver + 5
-        retf
-.ui:    inc     byte [cs:mw_nc]
+        jne     .go
+        inc     byte [cs:mw_nc]         ; (the UI's: back as win_paint's)
         push    cs
-        push    word .back
+        push    word mw_c_wp.back
         push    word ..@ui_retf
-        pusha
+.go:    pusha
         UCALL   hide_cursor
         cli
         push    ds
         push    word saver + 5
         retf
-.back:  dec     byte [cs:mw_nc]
-        jmp     mw_uret
 
 ; columns BX (BP of them), rows DX (CX of them), for mw_kind: drawn around
 ; the sessions' windows (CF set) if any is across it; else CF clear and
@@ -2203,17 +2154,13 @@ mw_span:
 .x:     popa
         ret
 .4:     mov     si, ax                  ; MK_XOR: SI = the column
-        mov     bp, cx
-        mov     byte [cs:mw_xh], 1      ; its top or bottom row: pixels p0..p1;
+        mov     bp, cx                  ; its top or bottom row: pixels p0..p1;
         cmp     dx, [cs:mw_r+4]         ;  any other: p0 and p1
         je      .xl
         mov     ax, dx
         inc     ax
         cmp     ax, [cs:mw_r+6]
-        je      .xl
-        mov     byte [cs:mw_xh], 0
-        cmp     byte [cs:mw_xh], 0
-        je      .xs
+        jne     .xs
 .xl:    mov     ax, [cs:mw_p0]          ; top or bottom: each column's p0..p1
         mov     bx, [cs:mw_p1]
         call    mw_pmask
@@ -2302,36 +2249,25 @@ mw_clean:
         push    ax
         push    si
         push    bp
-        push    es
-        mov     al, 1
-.s:     call    mw_rec
+        xor     al, al
+.s:     call    mw_next
+        jc      .e
         cmp     al, [cs:mw_cur]         ; (the running one's: run_cleanup's)
         je      .n
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
-        mov     si, SE_CTX + MW_CALLOC
-.f:     push    ax
-        mov     ax, [cs:bp+si]          ; (its alloc_tab)
-        or      ax, ax
-        jz      .fn
-        mov     es, ax
-        mov     ah, 49h
-        int     21h
-.fn:    pop     ax
-        add     si, 2
-        cmp     si, SE_CTX + MW_CALLOC + 2 * NALLOC
-        jb      .f
+        push    ds
+        push    cs
+        pop     ds
+        lea     si, [bp+SE_CTX+MW_CALLOC]       ; (its alloc_tab)
+        call    mw_frees
+        pop     ds
 .n:     mov     byte [cs:bp+SE_USE], 0
-        inc     al
-        cmp     al, MW_MAX
-        jbe     .s
-        mov     byte [cs:mw_n], 0
+        jmp     .s
+.e:     mov     byte [cs:mw_n], 0
         mov     byte [cs:mw_cur], 0
         mov     byte [cs:mw_rd], 0
         mov     byte [cs:mw_msg], 0
         call    mw_clipoff
         mov     byte [run_active], 1    ; (so run_cleanup shrinks the block)
-        pop     es
         pop     bp
         pop     si
         pop     ax
