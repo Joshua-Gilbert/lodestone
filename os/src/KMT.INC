@@ -4663,12 +4663,8 @@ mt_drop:
         je      .h
         call    mt_kgive
         jnc     .k
-        inc     bx                      ; dropped, as the BIOS would
-        inc     bx
-        cmp     bx, [82h]
-        jb      .s
-        mov     bx, [80h]
-.s:     mov     [1Ah], bx
+        call    mt_hot.nx               ; dropped, as the BIOS would
+        mov     [1Ah], bx
         loop    .l
         jmp     short .k
 .h:     call    mt_hot                  ; (out, its task asked for: on the
