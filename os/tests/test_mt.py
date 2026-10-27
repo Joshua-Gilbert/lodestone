@@ -2743,24 +2743,58 @@ def t_park():
     # resized it, the size MT expects changed by the test): it can't come back (error 8), but MT_KILL ends it: the
     # entry free, its programs' EMS (MTKILL F's page, kept from them by mt_hhide), its screen's and MT's handle, if
     # still MT's, freed; MT_EXIT says it ended (^C's code).  (Its file stays open: its handle table went with the
-    # pages.)
-    for how in ('freed', 'resized'):
+    # pages.)  Freed: its program's page also has a context saved (47h, written by the test), which INT 67h's 45h
+    # refuses to free (86h), and its task is the one MT_WAKE names; shadowed meanwhile, it was the last task but the
+    # Executive.  Shared: its screen's handle, freed by a program and given out again, is another program's now
+    # (its owner a PSP, written by the test): not freed with it
+    hrec = lambda h: (k.pc.rd(0x60, Y['ems_h'] + h * 4, 2), k.pc.u16(0x60, Y['ems_h'] + h * 4 + 2))
+    for how in ('freed', 'resized', 'shared'):
         e0, mg0 = ems_used(k), merged(mcbs(k))
         mt('mtkill.com f 10 k%s.txt' % how[0])
         o1 = mt('/p:1')
-        ph, sz = k.pc.rd(seg, Y['mt_tab'] + MT_ENT + 27, 1)[0], ent(1, 28)
+        ph, hs = (k.pc.rd(seg, Y['mt_tab'] + MT_ENT + o, 1)[0] for o in (27, TE_SH))
+        sz = ent(1, 28)
+        hid = [h for h in range(1, 32) if hrec(h)[0][0] != 0xFF and hrec(h)[1] == 0xFFFF
+               and k.pc.rd(seg, Y['mt_hold'] + h, 1)[0] == 1]
         if how == 'freed':
             sh.run('freeh %d' % ph); line(k, ''); k.run_for(0.3)
+            sv0 = k.pc.rd(0x60, Y['ems_sv'], 1)[0]
+            k.pc.wr(0x60, Y['ems_sv'], bytes([hid[0] if hid else 0xFF, 0, 0, 0, 0]))
+            k.pc.wr(seg, Y['mt_wkt'], b'\1'); k.pc.wr(seg, Y['mt_wkp'], struct.pack('<H', 0x1234))
+            k.pc.wr(seg, Y['mt_shd'], b'\1')
         else:
             k.pc.wr(seg, Y['mt_tab'] + MT_ENT + 28, struct.pack('<H', sz + 1024))
-        o2, o3 = mt('/u:1'), mt('/k:1')
+        if how == 'shared':
+            k.pc.wr(0x60, Y['ems_h'] + hs * 4 + 2, struct.pack('<H', 0x1234))
+        o2 = mt('/u:1')
+        sds, prev = [], k.pc.watch                      # (mt_shd as MT_KILL is done: the shell may draw after)
+        def w(a):
+            if prev: prev(a)
+            if a == seg * 16 + Y['mt_kill.ok']: sds.append(shd(k))
+        k.pc.watch = w
+        o3 = mt('/k:1')
+        k.pc.watch = prev
         s1, e1, xr = st(1), ems_used(k), re.search(r'exit: (\w\w) (\w\w) (\w{4}) (\w\w)', mt('/x:1'))
+        more, ok = '', True
+        if how == 'freed':
+            sv1, wk, sd = k.pc.rd(0x60, Y['ems_sv'], 1)[0], k.pc.rd(seg, Y['mt_wkt'], 1)[0], sds[:1] == [0]
+            more = ('; its program\'s handle (%s) freed though a context was saved for it (the slot %02Xh, then %02Xh); '
+                    'MT_WAKE\'s task none now (%02Xh); the shadow off, alone (mt_shd %s as MT_KILL is done)'
+                    % (hid, sv0, sv1, wk, sds))
+            ok = sv0 == 0xFF and hid and hrec(hid[0])[0][0] == 0xFF and sv1 == 0xFF and wk == 0xFF and sd
+        if how == 'shared':
+            r = hrec(hs)
+            more = '; the screen\'s handle %d, another program\'s now, kept (%s, owner %04X)' % (hs, r[0].hex(), r[1])
+            ok = r[0][0] != 0xFF and r[0][1] == 2 and r[1] == 0x1234
+            e1 -= 2
+            sh.run('freeh %d' % hs); line(k, ''); k.run_for(0.3)
         check('a parked task, MT\'s handle (%d) %s meanwhile: not back (error 8); MT_KILL ends it (state %d, MT_EXIT %s), '
-              'every EMS page it had given back (%d in use, %d before it), its memory as before'
-              % (ph, how, s1, xr and xr.groups(), e1, e0), 'error' not in o1 and ph and 'MTLAUNCH: error 8' in o2
+              'every EMS page it had given back (%d in use, %d before it), its memory as before%s'
+              % (ph, how, s1, xr and xr.groups(), e1, e0, more), 'error' not in o1 and ph and 'MTLAUNCH: error 8' in o2
               and 'error' not in o3 and s1 == 0 and e1 == e0 and alone() and merged(mcbs(k)) == mg0 and xr
-              and xr.group(1) == '00' and xr.group(3) == '0100' and xr.group(2) == xr.group(4) and not k.crashed,
-              (how, ph, sz, o1, o2, o3, s1, e0, e1, xr and xr.groups(), now()))
+              and xr.group(1) == '00' and xr.group(3) == '0100' and xr.group(2) == xr.group(4) and ok
+              and ems_used(k) == e0 and not k.crashed, (how, ph, hs, hid, sz, o1, o2, o3, s1, e0, e1, xr and xr.groups(),
+                                                         ems_used(k), more, now()))
 
 MTGR = os.path.join(HERE, 'MTGROW.COM')
 
