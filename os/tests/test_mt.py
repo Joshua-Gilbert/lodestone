@@ -156,8 +156,8 @@ def t_off():
               (show(mcbs(k)), vec(k, 8), f0_bytes(k).hex()))
         if tag in ('no LODE.INI', 'MULTITASK=1 but no EMS'):
             got, out = probe(k)
-            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 1Bh, 1Ch, FFh and 1Eh-23h fail with AX = 1' % tag,
-                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220, 0x21, 0x121, 0x221, 0x321, 0x22, 0x122, 0x222, 0x322, 0x23, 0x123)),
+            check('%s: F0h AL=00h answers (4F47h, 0201h); 11h-14h, 18h, 1Bh, 1Ch, FFh and 1Eh-23h fail with AX = 1' % tag,
+                  got.get(0) == (0, 0x4F47, 0x0201, 0x1234) and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0xFF, 0x1E, 0x11E, 0x21E, 0x31E, 0x1F, 0x11F, 0x21F, 0x20, 0x120, 0x220, 0x21, 0x121, 0x221, 0x321, 0x22, 0x122, 0x222, 0x322, 0x23, 0x123, 0x18, 0x118)),
                   out[-400:])
             sh = Shell(k)
             o = sh.run('mtlaunch mtline.com x.txt')
@@ -243,6 +243,8 @@ def t_on():
     check('F0h AL=23h (MT_WAKE, T5c) from task 0: BL = 1, then 0, both CF clear, AX = the driver\'s IRQ (%d); none '
           'left afterwards (mt_wkt FFh)' % gi, got.get(0x23, (1,))[:2] == (0, gi) and got.get(0x123, (1,))[:2] == (0, gi)
           and k.pc.rd(seg, Y['mt_wkt'], 1)[0] == 0xFF, out[-300:])
+    check('F0h AL=18h (MT_FLAGS): BL = 0 (the Executive) refused, AX = 5; BL = 8 (none such: mt_targ\'s own failure, '
+          'its return dropped) AX = 1', got.get(0x18, (0, 0))[:2] == (1, 5) and bad(got.get(0x118, (0, 0))), out[-300:])
     check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, AH = 0 the caller, nothing written',
           got.get(0x12, (1,))[:2] == (0, 0x0000)
           and got[0x12][3] == 1, out[-400:])
