@@ -202,8 +202,27 @@ def test_executive_saver():
     T.check(h)
 
 
+def test_driver_frame_check_slow_start():
+    """A listener slow to take the first byte of a write (DO later than the fast loop polls for, 256 x 64): the
+    whole frame goes through the careful loop, and the check the driver adds (02h AL=3) is still good at the Pi
+    (audit3 X30: the fast loop kept its start for the first byte's add, the careful loop left that byte out too,
+    so every such frame went out with a bad check)."""
+    h = T.start([T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\NOTES.TXT'})),
+                 T.reply(('text', 'Read it.'))], mode='edits', bridge='pico',
+                files={'A:\\NOTES.TXT': b''.join(b'note %03d: a slow start\r\n' % i for i in range(60))})
+    assert h.var('ksum', 1) == 1, h.var('ksum', 1)
+    st0 = dict(h.link.stats)
+    h.m.chip.slow_start = 20000                    # (ISR1 reads after GTS: more than the fast loop's 16384)
+    assert h.turn('read the notes', sim_s=60), (h.m.chip.n_slow, {k: v - st0.get(k, 0) for k, v in h.link.stats.items()})
+    st = {k: v - st0.get(k, 0) for k, v in h.link.stats.items()}
+    assert h.m.chip.n_slow >= 2 and st['rx_frames'] >= 2, (h.m.chip.n_slow, st)
+    assert not st.get('rx_nak') and not st.get('rx_bad') and st['rx_fletcher'] == st['rx_frames'], st
+    T.check(h)
+
+
 T.test_executive_saver = test_executive_saver
 T.test_driver_frame_check = test_driver_frame_check
+T.test_driver_frame_check_slow_start = test_driver_frame_check_slow_start
 T.test_srq_on_irq5 = test_srq_on_irq5
 T.test_gpibirq_0_turns_it_off = test_gpibirq_0_turns_it_off
 T.test_irq5_storm_masks_it = test_irq5_storm_masks_it
@@ -211,6 +230,77 @@ T.test_quit_to_dos = test_quit_to_dos
 T.test_write_no_name_leaves_no_temp = test_write_no_name_leaves_no_temp
 T.test_write_safe_keeps_the_only_copy = test_write_safe_keeps_the_only_copy
 T.test_run_tm5000g_from_claude = test_run_tm5000g_from_claude
+
+
+def test_key_script_peeks():
+    """audit3 (X42's panel): a TSR's INT 16h peek from its INT 1Ch while CLAUDE's ks_ready moves a RUN's
+    {WAIT} on (test_resident_term's t_type_peek, for CLAUDE.COM's own feeder): the waits and keys play as
+    typed.  ks_ready runs with interrupts off (the peek comes after it)."""
+    import test_resident_term as RT
+    script = RT.PEEK_SCRIPT + '{SNAP}{ESC}'
+    turns = []
+    for _ in RT.PEEK_AT:
+        turns += [T.reply(('tool', 'grid_command', {'command': 'TESTKEY', 'capture': False, 'keys': script})),
+                  T.reply(('text', 'Done.'))]
+    h = T.start(turns, mode='auto')
+    base, sym = h.claude_psp * 16, h.sym
+    lo, hi = base + sym['ks_ready'], base + sym['build_hello']
+    code = bytes(h.m.mu.mem_read(lo, hi - lo))
+    kw, kp = struct.pack('<H', sym['ks_wait']), struct.pack('<H', sym['ks_pos'])
+    e0 = code.find(b'\x2E\xC6\x06' + kw + b'\0')
+    assert code.count(b'\x2E\xC6\x06' + kw + b'\0') == 1 and code[e0 + 6:e0 + 12] == b'\x2E\x83\x06' + kp + b'\3', code.hex()
+    at = {'look': lo + code.index(b'\x2E\x80\x3E' + kw + b'\0'), 'end0': lo + e0, 'end1': lo + e0 + 6}
+    bad = []
+    for i, where in enumerate(RT.PEEK_AT):
+        def run():
+            ok = h.turn('run testkey', sim_s=60)
+            return ok and str(T.results(h, 2 * i + 1)[0]['content'])
+        d, after, text = RT.peek_race(h.m, lo, hi, h.var, lambda: True, at, where, run, RT.peek_waits(script, 0))
+        if not (None not in d and d[0] > 0.15 and d[1] > 0.85 and text and 'Exit code: 3' in text and
+                'TESTKEY ready: abc' in text and 'bye' not in text and isinstance(after, tuple)
+                and (where != 'start' or after == (1, RT.peek_waits(script, 0)[1], 0x40))):
+            bad.append((where, d, after, text))
+    assert not bad, bad
+    T.check(h)
+
+
+T.test_key_script_peeks = test_key_script_peeks
+
+
+def test_key_script_snap_peek():
+    """audit3 (X42's panel): a tick, and a TSR's INT 16h peek from its INT 1Ch, as ks_ready's {SNAP} copies the
+    screen on the read path (interrupts on): the peek finds ks_pos past the mark, so one snapshot, and every
+    key typed.  With the copy first and ks_pos moved after, the peek took the snapshot again and ks_pos went
+    on by 6, into the middle of the next key."""
+    import test_resident_term as RT
+    from unicorn import UC_HOOK_CODE
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TESTKEY', 'capture': False,
+                                                   'keys': 'a{WAIT 0.3}b{SNAP}cd{ESC}'})),
+                 T.reply(('text', 'Done.'))], mode='auto')
+    ts = h.claude_psp * 16 + h.sym['take_snapshot']
+    st = {'n': 0, 'at': None}
+    def snap(uc, addr, size, ud):               # (take_snapshot, while the script runs)
+        if not h.var('ks_active'): return
+        if h.m.r('sp') == st.get('sp'):         # (the same call again, after the tick's IRET)
+            st['sp'] = None; return
+        st['n'] += 1
+        if st['at'] is None:
+            st['at'] = (h.var('ks_pos', 2), bool(h.m.r('flags') & 0x200))
+            st['sp'] = h.m.r('sp')
+            RT.tick_before(h.m, addr)
+    old = RT.tsr_1ch(h.m)
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, snap, None, ts, ts)
+    h.m.mu.ctl_remove_cache(ts, ts + 1)
+    try: ok = h.turn('run testkey', sim_s=60)
+    finally:
+        h.m.mu.hook_del(hk); h.m.wr(0, 0x1C * 4, old)
+    text = ok and str(T.results(h, 1)[0]['content'])
+    assert st['at'] and st['at'][1] and st['n'] == 1 and text and 'Exit code: 4' in text and \
+        'TESTKEY ready: ab' in text and 'abc' not in text, (st, text)
+    T.check(h)
+
+
+T.test_key_script_snap_peek = test_key_script_snap_peek
 
 if __name__ == '__main__':
     names = [n for n in sorted(vars(T)) if n.startswith('test_')]

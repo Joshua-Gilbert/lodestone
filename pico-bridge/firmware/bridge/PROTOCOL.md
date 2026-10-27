@@ -58,7 +58,9 @@ sees nothing new.
 ## Talking with nothing queued
 
 When the 1520 addresses the bridge to talk and the ring holds nothing for the current gen, the Pico sends
-TALK_WAIT once and waits, without driving the bus. The arg is the consumed count at that moment.
+TALK_WAIT once and waits, without driving the bus. The arg is the consumed count at that moment, on the
+scale of CREDIT and HELLO: entries taken off the ring plus bytes dropped as stale on arrival (before fw
+2026-10-26 it left out the dropped ones, so after any drop a reply already sent looked still on its way).
 
 - If the Pi has already sent reply bytes the Pico hasn't consumed, they are on their way, and the Pi ignores
   the TALK_WAIT.

@@ -10,7 +10,7 @@ goes to the Raspberry Pi over USB.
 | | |
 |---|---|
 | Files | `bridge.ino` (glue, pin init, USB, LED, watchdog) · `gpib_engine.c/.h` (core 1: the bus) · `host_link.c/.h` (core 0: the protocol) · `PROTOCOL.md` |
-| Ready-built | `bridge_pico2.uf2` (165 kB, fw 2026-10-24) |
+| Ready-built | `bridge_pico2.uf2` (165 kB, fw 2026-10-26) |
 | USB | VID 2E8A / PID 000F (the arduino-pico Pico 2 IDs), product **"GPIB-Pico2 Bridge"**, max power 500 mA in the descriptor |
 | GPIB subsets | SH1 AH1 T6 L4 SR1 RL1 PP0 DC1 DT1 C0. No secondary addresses, no parallel poll, never a controller |
 | Address | set by the Pi (0–30), from `address =` in `/etc/gpib-bridge/bridge.toml` |
@@ -125,6 +125,13 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   (`SH.quiet`), so no SRQ slips out between a CONFIG and core 1's next look at it. The J tests add an answer and a ring with quiet on (no SRQ, the byte as ever) and quiet
   turned off with RQS waiting (SRQ then): 103 checks. `bridge_pico2.uf2` built with arduino-cli 1.5.1 and
   `rp2040:rp2040` 6.3.0, as below.
+- **2026-10-26.** TALK_WAIT's arg on CREDIT's scale (audit 2026-10-26 X59). Core 1 records its own
+  `tx_consumed`; core 0 now adds `tx_dropped0` as it sends the event on, as CREDIT and HELLO count. Before,
+  once any reply had been dropped as stale on arrival, the Pi took a reply it had already sent for one still
+  on its way when the 1520 read again before the next CREDIT (≤ 5 ms): it skipped `on_talk` and the read
+  timed out. gridlink ignores TALK_WAIT. The bus simulation's K tests read 20 replies twice at once after
+  such drops (about half the second reads timed out before). With the Pi daemon's L tests (audit X60, no
+  firmware change): 111 checks. `bridge_pico2.uf2` built as above.
 
 ## Build
 
@@ -165,7 +172,7 @@ To go back to the bench firmware, use BOOTSEL and `firmware/bench_test/bench_tes
 | Steady on | Online |
 | Flicker | Bytes moving to or from the bridge |
 
-## Tested (no hardware): `sim/host/run_sim_tests.py`, 65 / 65
+## Tested (no hardware): `sim/host/run_sim_tests.py`, 111 / 111
 
 `sim/host/bus_sim.c` compiles this same `gpib_engine.c` and `host_link.c` for Linux, with a model of the
 board:
@@ -182,6 +189,7 @@ The real Pi daemon connects through a pseudo-terminal.
 What it covers:
 
 - THRUTEST's 9 steps, including every byte value both ways.
+- A reply read twice at once, after replies dropped as stale on arrival.
 - Traffic to the other instrument: the bridge stays out of it.
 - SRQ and serial poll, including SRQ staying served after later traffic.
 - Messages of 241–20000 bytes.
@@ -189,6 +197,9 @@ What it covers:
 - The Pi stalled 2.5 s, and the Pico's USB output stalled 2.5 s: NRFD held, nothing lost.
 - The daemon stalled past the 5 s PING timeout: it recovers by itself.
 - Daemon stopped: the bridge goes offline and the bus still works.
+- The daemon on a fake port whose write fails in the ping thread while the main loop reads it: it lives,
+  closes the port in the main loop and reconnects. And the other order: the main loop closes the port while a
+  PING write is in flight: the ping thread lives on.
 - The scpi handler.
 - Address changes.
 

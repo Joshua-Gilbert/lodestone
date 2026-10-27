@@ -1098,6 +1098,22 @@ def t_gridgpib():
     check('... the bus left alone (REN still on: it sent everyone to local first)', ren and chip.ren, (ren, chip.ren))
     check('... and GRIDGPIB still finds the driver', 'Already installed' in sh.run('gridgpib'))
 
+def t_gpcheck0():
+    """02h AL=3 (the frame check appended) with no bytes: the check of nothing, 01 00, whatever ES:SI points at; and
+    of two bytes, the second's from 1, 0.  (The start for the first byte's add, set at the write's entry since
+    audit3 X30, came from the byte at ES:SI even when there were none.)"""
+    com = os.path.join(OUT, 'GPCHK0.COM')
+    open(com, 'wb').write(bytes([0xBE, 0x1A, 0x01,          # mov si, ab
+                                 0x31, 0xC9, 0xBB, 0x06, 0x00, 0xB8, 0x03, 0x02, 0xCD, 0x60,   # CX = 0 to 6, AL = 3
+                                 0xB9, 0x02, 0x00, 0xB8, 0x03, 0x02, 0xCD, 0x60,               # CX = 2
+                                 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'AB')
+    chip = sim7210.NEC7210(sim7210.bus())
+    got, dev = [], chip.devices[6]
+    dev.message = lambda m, f=dev.message: (got.append(bytes(m)), f(m))
+    k = ktest.KPC(image('gpchk0.img', com), chip=chip); k.start()
+    k.run_file('GPCHK0.COM', 10)
+    check('02h AL=3 of no bytes sends the check 01 00; of "AB", AB 43 43', got == [b'\x01\x00', b'AB\x43\x43'], got)
+
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (ex_rel shares path_buf, so they would
@@ -1419,6 +1435,44 @@ MS_NAMES = [('fn 3D A.TXT.X', 'err 02'),
             ('fn 4B A|B', 'err 02'),
             ('fn 5B N.A.B', 'err 02'),
             ('fn 5B A|B', 'err 02')]
+
+def t_renfull():
+    """RENAME in a subdirectory full to its last entry: dir_slot gives the directory a cluster more, in the FAT kept
+    in memory.  That cluster is linked on the disk before the old entry is deleted there (audit3 X31); the FAT was
+    written last, so power lost between the two left the file with no entry at all, its clusters lost."""
+    one = os.path.join(OUT, 'ONE.TXT')
+    open(one, 'wb').write(b'x\r\n')
+    k = ktest.KPC(image('renfull.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'SUB\\',
+                        *['SUB\\F%02d.TXT=%s' % (i, one) for i in range(14)]))   # (with . and .., 16: one sector)
+    k.start()
+    pc, d = k.pc, k.pc.drives[0]
+    def fat(img, cl):                   # (1.44 MB FAT12: FAT 1 at LBA 1, cluster 2 at LBA 33)
+        v = img[512 + cl * 3 // 2] | img[512 + cl * 3 // 2 + 1] << 8
+        return v >> 4 if cl & 1 else v & 0xFFF
+    def ents(img, cl): return [bytes(img[(31 + cl) * 512 + i * 32:(31 + cl) * 512 + i * 32 + 32]) for i in range(16)]
+    img = bytes(d.img)
+    sub = next(e[26] | e[27] << 8 for e in (img[19 * 512 + i * 32:19 * 512 + i * 32 + 32] for i in range(224))
+               if e[:11] == b'SUB        ')
+    old = [e[:11] for e in ents(img, sub)].index(b'F00     TXT')
+    check('SUB is full: 16 entries in its one cluster', fat(img, sub) >= 0xFF8
+          and all(e[0] not in (0, 0xE5) for e in ents(img, sub)), [e[:11] for e in ents(img, sub)])
+    seen = []                           # the disk as the old entry's E5 reaches it
+    int13 = pc.int13
+    def hook():
+        ah = pc.r('ah')
+        int13()
+        if ah == 3 and not seen and d.img[(31 + sub) * 512 + old * 32] == 0xE5:
+            new = fat(d.img, sub)
+            seen.append((new, 2 <= new < 0xFF8 and b'G00     TXT' in [e[:11] for e in ents(d.img, new)]))
+    pc.int13 = hook
+    k.code_p()
+    k.key('ren sub\\f00.txt g00.txt'); k.key(ktest.ENTER)
+    del pc.int13
+    check('RENAME in a full SUB: when the old entry is deleted on the disk, the FAT there already links SUB\'s new '
+          'cluster, which holds the new entry', seen and seen[0][1], (seen, hex(fat(d.img, sub))))
+    probs, files = fatcheck.check(bytes(d.img))
+    check('... and the disk is consistent afterwards, G00.TXT in SUB, F00.TXT gone', not probs
+          and '\\SUB\\G00.TXT' in files and '\\SUB\\F00.TXT' not in files, (probs, sorted(files)))
 
 def t_names():
     """Names that are no names (a second dot, a bad character), device names,
@@ -2321,10 +2375,50 @@ def t_cmdshare():
           all(('A:\\SUB\\%s.%s' % (b, e)) in f for b in 'AB' for e in ('BBK', 'CCK'))
           and 'A:\\Q\\A.DDK' in f and 'A:\\Q\\B.DDK' in f
           and all('2 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith(('A:\\SUB', 'A:\\Q')))))
+    # X29: a name found by a pattern in a 68- or 69-character directory runs past src's 79 characters;
+    # COPY hung.  Now such a name is skipped and the rest copied (LONGNAME.TXT, 80, before LONGNAME.TX, 79)
+    pre68, pre69 = 'A:' + deep[:-3] + '\\H\\', 'A:' + deep + '\\'
+    sh.run('md ' + pre68[2:-1]); sh.run('cd ' + pre68[2:-1]); sh.run('echo hi > longname.txt'); sh.run('echo hi > longname.tx')
+    sh.run('cd ' + deep); sh.run('echo hi > abcdef.ghi'); sh.run('cd \\')
+    for pre, pat, got in ((pre68, 'longname.*', ['LONGNAME.TX']), (pre68, '*.txt', []), (pre69, '*.tx', []), (pre69, 'l*.txt', [])):
+        f = fs()
+        back = run_long(k, 'copy %s%s \\q' % (pre, pat), 6)      # (a hang: no prompt in 6 s)
+        o = k.pc.text_screen()
+        check('COPY %s%s to a directory: %s (directory part %d, names over %d characters skipped), the total, the prompt back'
+              % (pre, pat, ', '.join(got) or 'nothing copied', len(pre), 79 - len(pre)), back and not k.crashed
+              and set(fs()) - set(f) == {'A:\\Q\\' + n for n in got} and '%d File(s) copied' % len(got) in o
+              and 'File not found' not in o, (back, k.where(), o))
+        if not back: return
+    k.trace = True; k.dos.clear()
+    o = sh.run('ren %sl*.txt x.y' % pre69)
+    r1 = [e[5] for e in k.dos if e[0] == 0x56]; k.dos.clear()
+    o2 = sh.run('ren %sa*.* l.y' % pre69)
+    r2 = [e[5] for e in k.dos if e[0] == 0x56]; k.trace = False
+    f = fs()
+    check('... REN %sl*.txt (LONGNAME.TXT: 81 characters): "Duplicate file name", no rename asked of DOS; a*.* (ABCDEF.GHI: '
+          '79): renamed' % pre69, 'Duplicate file name' in o and not r1 and len(r2) == 1 and 'A:' + deep + '\\L.Y' in f
+          and 'A:' + deep + '\\LONGNAME.TXT' in f and 'A:' + deep + '\\X.Y' not in f, (o, r1, o2, r2))
     k.key('exit'); k.key(ktest.ENTER)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
     check('back in the Executive, disk consistent', k.pc.mode() == 0x40 and not probs, probs)
+    # X43: a COMSPEC of 80 characters lost its NUL in prog2, and MT_SPAWN got it and the tail as its path
+    k = ktest.KPC(ini_image('sharemt.img', b'MULTITASK=1\r\n', os.path.join(GOS, 'src', 'LCMD.COM'),
+                            'LODEMT.SYS=' + os.path.join(GOS, 'src', 'LODEMT.SYS'), bat('TB.BAT', '@echo off', 'echo ran > tb.txt')),
+                  ems_pages=88)
+    k.start(10)
+    sh = Shell(k)
+    ds = [c * 8 for c in 'ABCDEF'] + ['GGGG', 'HHHH']                  # (63 characters)
+    for i in range(len(ds)): sh.run('md \\' + '\\'.join(ds[:i + 1]))
+    sh.run('md \\' + '\\'.join(ds) + 'H')
+    outs = []
+    for h in ('HHHHH', 'HHHH'):
+        c = 'A:\\' + '\\'.join(ds[:-1] + [h]) + '\\LCMDLCMD.COM'
+        sh.run('copy lcmd.com ' + c); sh.run('set comspec=' + c)
+        o = sh.run('start /w tb.bat'); k.run_for(2)
+        outs.append((len(c), 'Bad command or file name' in o, 'A:\\TB.TXT' in fs(), o))
+    check('START of a batch file with a COMSPEC of 80 characters: "Bad command or file name", nothing started; of 79: '
+          'it runs', [x[:3] for x in outs] == [(80, True, False), (79, False, True)] and not k.crashed, outs)
 
 def t_cmdsaver():
     """The Executive's screen saver at the prompt (and in PAUSE): DEFRAG,
@@ -2669,7 +2763,7 @@ def t_execabort():
           k.exec_list())
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
