@@ -4,7 +4,7 @@
 ; Hooks IRQ 7 (INT 0Fh) and unmasks it, then waits (HLT) for its handler
 ; to have run: STI, a key read through DOS (AH=08h) before its EOI, as a
 ; handler that prompts the user would.  Then FILE gets the key (its
-; character, one byte), IRQ 7 is masked and its vector given back.  The
+; character, one byte), IRQ 7's mask bit and its vector put back.  The
 ; test raises the IRQ itself, in front or while a task behind runs.
 ; nasm -f bin -o MTIRQK.COM MTIRQK.ASM
 cpu 286
@@ -29,14 +29,18 @@ org 100h
         mov     dx, irq7
         int     21h
         in      al, 21h
+        mov     [mask], al
         and     al, 7Fh
         out     21h, al
 .w:     sti
         hlt
         cmp     byte [done], 0
         je      .w
+        mov     ah, [mask]              ; (IRQ 7's mask bit as it was)
+        and     ah, 80h
         in      al, 21h
-        or      al, 80h
+        and     al, 7Fh
+        or      al, ah
         out     21h, al
         push    ds
         lds     dx, [old]
@@ -75,5 +79,6 @@ irq7:   sti
 
 old     dd      0
 done    db      0
+mask    db      0
 key     db      0
 fname   times   70 db 0

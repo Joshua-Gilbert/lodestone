@@ -866,7 +866,7 @@ The checks:
   - Its hook is in its own vectors only. In other tasks' turns, or while it is frozen behind, the BIOS's INT 08h runs at the fast rate.
   - Then the clock (40:6Ch) races, the hard disk's and GPIB's timeouts expire early, and every turn is a fast tick long.
   - Before M5a its hook was the machine's and kept the rate right.
-  - A fix (keeping such a task's INT 08h hook in place for all tasks while counter 0 runs fast) is left for M9. **M9b:** fixed another way: in the other tasks' turns MT divides itself (M9b).
+  - A fix (keeping such a task's INT 08h hook in place for all tasks while counter 0 runs fast) is left for M9. **M9b:** fixed another way: in the other tasks' turns MT divides the ticks itself (M9b's section).
 - **A TSR's hooks in the 29 belong to the task it was loaded in and the tasks started from that task after it,** and only to them. A TSR loaded inside a task is gone with the task.
 - **A TSR unloaded with AH=49h while tasks exist** (CLAUDE /U after CLAUDE /R, with tasks started after it) leaves its hooks in those tasks' vectors, pointing at freed memory. Only a program's end is caught (`mt_vpg`). Unload such TSRs before starting tasks, or end those tasks first. M7 makes CLAUDE /U refuse while tasks exist (done in M7a: exit code 3).
 - **Copies inside programs aren't fixed:**
@@ -2103,45 +2103,51 @@ Such errors are rare.
 
 ## M9b: the code fixes M9a left (2026-10-27)
 
-Two of M9a's three open fixes are made; the third stays a limit, for good (Joshua's choice).
+Two of M9a's three open fixes are made; the third stays a limit, for good (Joshua's choice). `mt_drop`'s comment now says what the BIOS does: STI at INT 16h's entry, then the look with interrupts off.
 
-**A key read through DOS from an interrupt's handler, its IRQ in service** (M4a's limit, kept open at M5b). `mt_can` now ends with `mt_busy`, so it reads the PIC too (the audit's R14: its tests were written out there again). So that read waits as in DOS:
+**A key read through DOS from an interrupt's handler, its IRQ in service** (M4a's limit, kept open at M5b). `mt_can` now asks `mt_busy` first (before InDOS: a task's own INT 24h handler reads its key at InDOS 2, inside the kernel's INT 24h), so it reads the PIC too, with interrupts off (as `mt_ring` does: a tick between OCW3's two writes could leave the PIC giving its IRR), and tells that case apart (CF with NZ) from its others (the 2026-10-26 audit's R14: `mt_can` had its own copy of `mt_busy`'s flag tests). So that read waits as in DOS:
 - **in front,** in the kernel's idle (HLT), until the key comes (the keyboard's IRQ 1 ranks above IRQ 3-7, so it still comes);
 - **behind,** it reads the keys as it is (`mt_kwait.bg`, as for an INT 24h prompt: `mt_i16` passes the call to the BIOS), not M5b's forced front, whose screen copy was never meant to run inside an interrupt's handler. No task is switched to meanwhile: `mt_safe` refuses at the tick with an IRQ in service, as ever.
 
 Before, the task parked as any key wait does, and another ran with the IRQ in service: its INT 10h calls went to the real screen, and a task behind lost the key for good. An INT 1Ch hook reading a key is the same case: the BIOS calls INT 1Ch before its EOI (M9a). On the 1520 that blocks the keyboard's IRQ too, so the read never ends, as in DOS; pcemu doesn't model the PIC's priorities, so the tests can't show that hang.
 
 **A program that runs the timer fast** (M5a's regression). A game's music sets counter 0 to N < 65536 and hooks INT 08h, calling the BIOS's handler every 65536 / N times. That hook is in its own vectors only, so in the other tasks' turns the BIOS's handler ran at the fast rate: the clock raced, timeouts ran short. Now `mt_tick`, when entered straight (INT 08h is `mt_tick` itself: no hook ahead of it in the running task's vectors), latches counter 0 first:
-- just after the interrupt the count is about the period (mode 2 or 3: the chip reloads there), less a few clocks: `MT_FALW`, 20;
-- a count below 8000h twice running means fast (once could be a tick held late under a long CLI);
-- then MT does as the program does: it adds count + `MT_FALW` to `mt_facc` and calls the BIOS's handler (and the rest of `mt_tick`) only when that passes 65536, else it ends the interrupt (EOI) and returns.
+- just after the interrupt the count is about the period (mode 2 or 3: the chip reloads there), less what has counted down meanwhile (`MT_FALW`, 20), and so the same each time;
+- a tick at the BIOS's rate held late under a long CLI (13.7 to 27.5 ms, in mode 3) reads below 8000h too, but not the same twice running. So a low read goes to `mt_tfast`, where `mt_fast` counts how sure MT is (0-3): a low read the same as the last (within `MT_FTOL`, 80h) one surer, another one less, and below 2 that read becomes the one to match. A read of 8000h and up clears it;
+- from 2 MT does as the program does: it adds count + `MT_FALW` to `mt_facc` and calls the BIOS's handler (and the rest of `mt_tick`) only when that passes 65536, else it ends the interrupt (EOI) and returns. A late tick at the fast rate (sure: 3) is still divided, and costs only one "sure" back;
+- **not in the turns of a program with an INT 1Ch hook of its own** (the running task's INT 1Ch in its own memory, `mt_mine`, asked on the dividing ticks only): a simpler program that runs the counter fast and hooks INT 1Ch alone lets the clock race in DOS, and gets its INT 1Ch at the fast rate here too. A TSR's INT 1Ch hook (outside the task's memory) doesn't count.
 
 So the clock, the turns (`mt_ticks`, 55 ms each) and every timeout keep their rate in every task's turn, and in the program's own its hook divides, as before. With a hook ahead MT trusts it and never divides. A program that ends leaving the counter fast is handled better than in DOS: MT goes on dividing for every task.
 
-The cost: one OUT and two INs at each tick entered straight (18 a second); at a fast rate each extra tick is that, an EOI and an IRET.
+**Cost:** at each tick entered straight (18 a second), one OUT, two INs, a compare and a byte written, with no jump taken; `mt_tfast` is ahead of `mt_tick` so that its jumps are short. At a fast rate each extra tick is that, `mt_tfast`'s test, `mt_mine` and an EOI and an IRET. `mt_tick` is now even (it was odd); every other hot label of MT's has the parity it had, asserted at build time (`mt_par`).
 
-**Its limits:**
-- **The count read is late by the interrupt's latency.** Ticks held under a long CLI, or by an IRQ in service above IRQ 0, read low: the clock runs a little slow, by the clocks held (twice them in mode 3) less `MT_FALW`, over N.
-- **Another task with a chaining INT 08h hook of its own** (a TSR clock, say), while the counter runs fast: its turns still race, since MT trusts any hook ahead.
-- **Counter 0 set to LSB-only or MSB-only access** (its control word's bits 5-4 01 or 10): MT's two-byte read of the latch is then wrong. The BIOS's mode and every game's known here use both bytes.
-- **A rate between 50% and 100% of the BIOS's** (N of 8000h and up) isn't divided: the clock gains up to 2× in the others' turns. Such rates are rare (music runs at 2× and more).
+**The limits, plainly:**
+- **The count read is late by the interrupt's latency.** Ticks held under a long CLI (another interrupt's handler, or IRQ 0's own handler not yet at its EOI) read low: the clock runs a little slow, by the clocks held (twice them in mode 3) less `MT_FALW`, over N.
+- **A chaining INT 08h hook ahead of MT's** (a TSR clock, say), while the counter runs fast: MT trusts any hook ahead, so the turns of every task that has it still race. A TSR that hooks INT 08h before tasks start is in every task's vectors (M5a), so then nothing is divided anywhere, as before M9b.
+- **A tick held late by the same time every tick** (a program that waits for the tick, then works with interrupts off over the next one, the same length each time) reads the same low count each time, and is taken for a fast counter: the clock and the turns then run slow. With the hold varying by more than about 0.05 ms (`MT_FTOL`'s 80h, in mode 3) it isn't (`t_pitcli`).
+- **Counter 0 set to LSB-only or MSB-only access** (its control word's bits 5-4 01 or 10): MT's two-byte read of the latch is then wrong; read low and the same twice running, MT would divide a counter running at the BIOS's rate, and the clock and the turns would run slow. The BIOS's mode and every game's known here use both bytes.
+- **A program that reads counter 0 with interrupts on** shares the chip's one latch and its LSB/MSB flip-flop with MT's read at the tick: either can read a wrong count. A program's single stray `IN` from port 40h leaves the flip-flop on the MSB, and MT's reads byte-swapped until the next control word; at the BIOS's rate those vary with the interrupt's latency, so they are seldom the same twice. Every reader in Lodestone does it under CLI.
+- **A program with its own INT 1Ch hook, in another task than the one that runs the counter fast**, isn't divided in its turns either: MT can't tell whose the counter's rate is.
+- **A rate between 50% and 100% of the BIOS's** (N a little above 8000h and up) isn't divided: the clock gains up to 2× in the others' turns. Such rates are rare (music runs at 2× and more).
 
-**A task's own timer hook that calls DOS stays a limit, for good** (M3's, at line 367). It harms only when three things meet:
-- a task's own INT 08h hook calls INT 21h;
+**A task's own timer hook that calls DOS stays a limit, for good** (M3's limits). It harms only when three things meet:
+- a task's own INT 08h hook calls INT 21h after chaining on (its EOI sent: before it, `mt_safe`'s look at the PIC refuses);
 - the tick it handles landed in code that isn't the task's (the BIOS's, a TSR's);
 - another task enters that same code before the hook returns.
 
-MT can't see the hook's start or its IRET without owning INT 08h in front of it, and M3's attempt at that was taken out after four ways to hang the machine. A check on the stack's depth at the way out would refuse a task's ordinary DOS calls too, and since the tick never switches a task with a hook ahead (M5a), that would starve the others. A hook that calls DOS from INT 08h is rare (a TSR's pop-up does it, usually loaded before tasks start, so in task 0).
+MT can't see the hook's start or its IRET without owning INT 08h in front of it, and M3's attempt at that was taken out after four ways to hang the machine. A check on the stack's depth at the way out would refuse a task's ordinary DOS calls too (one made deep in the task's own stack looks the same as one from inside the hook, and MT can't see the hook's IRET), and since the tick never switches a task with a hook ahead (M5a), that would starve the others. A program's own INT 08h hook that chains on and then calls DOS is rare; a TSR's is refused already (its CS isn't the task's).
 
 **pcemu** gains counter 0's period:
 - a control word for counter 0 keeps its access mode, and writes to port 40h set N; IRQ 0 comes every N × 0.838 µs from the next one;
 - a latch then reads from the last IRQ 0 (as the chip reloads there), also once N is 65536 again, as the ticks are then off the BIOS's grid;
-- a tick lost while one is still pending counts in 40:6Ch (pcemu's stand-in for a long BIOS wait) only at the BIOS's rate.
+- a tick lost while one is still pending counts in 40:6Ch (pcemu's stand-in for a long BIOS wait) only at the BIOS's rate;
+- unlike the chip, a new period starts after the IRQ 0 already due (up to 55 ms late), so a latch read before that is meaningless; `mt_tick` only reads just after an IRQ.
 
 With N never set, everything is as before.
 
-**Tests:** test_mt 523 checks (518 before):
+**Tests:** test_mt 525 checks (518 before):
 - **`t_irqk`:** MTIRQK (new: its IRQ 7 handler reads a key through DOS before its EOI), raised while the front task runs and while MTSPIN behind runs. No task is switched to while IRQ 7 is in service, and the key typed reaches the handler. With M9a's `mt_can` the front case switches with IRQ 7 in service, and the case behind parks for good, its key lost.
-- **`t_pitfast`:** MTFAST (new: counter 0 at 4000h, its INT 08h hook calling the BIOS's every 4th time, a DOS call in its wait). Behind with MTSPIN, in front, and after it ends leaving the counter fast: the BIOS's clock and `mt_ticks` within 6% of 18.2 a second. Without M9b: 36.4 behind, 72.8 after it.
+- **`t_pitfast`:** MTFAST (new: counter 0 at 4000h, its INT 08h hook calling the BIOS's every 4th time, a DOS call in its wait). Behind with MTSPIN, in front, and after it ends leaving the counter fast: the BIOS's clock and `mt_ticks` within 6% of 18.2 a second. Without M9b: 36.4 behind, 72.8 after it. With C (its own INT 1Ch hook only), in front alone: its INT 1Ch, the clock and the turns at 4 × 18.2, as in DOS.
+- **`t_pitcli`:** MTCLI (new: behind, interrupts off from each tick to 15-22 ms after it, a different time each), under pcemu's `irq_exact`. Most ticks read low, yet the clock and the turns stay within 6% of 18.2.
 
-**Figures:** LODEMT.SYS 20,083 bytes (20,035 before: still 40 sectors, 397 bytes left in its last; one byte is a pad keeping the code after `mt_kwait.bg` at the parity it had, and `mt_fast` sits in an old `align 2` pad, so no word variable moved to an odd address; no ROM sector taken, ROM 1 has 3,584 bytes left as before); `mt_bend` 5A00h (59D0h before). With the switch off nothing moves (`image_end`, `bss_end`, `ui_keep_end` as they were; MEMSZ off 580.7 KB); LODE.SYS is the same size, 51 of its bytes different (LODEMT.SYS's checksum and `mt_boot`'s patch addresses, in its discarded start-up). MEMSZ with the switch on 558.2 KB, as before.
+**Figures:** LODEMT.SYS 20,157 bytes (20,035 before: still 40 sectors, 323 bytes left in its last; no ROM sector taken, ROM 1 has 3,584 bytes left as before). `mt_bend` 5A40h (59D0h before): MT's block 7 paragraphs bigger. `mt_fast` sits in an old `align 2` pad, so no word variable moved to an odd address; two self-adjusting pads keep the code after `mt_kwait.bg` and after `mt_can` at the parity it had. With the switch off nothing moves (`image_end`, `bss_end`, `ui_keep_end` as they were; MEMSZ off 580.7 KB); LODE.SYS is the same size, 53 of its bytes different (LODEMT.SYS's checksum and `mt_boot`'s patch addresses, in its discarded start-up). MEMSZ with the switch on 558.1 KB (558.2 before).
