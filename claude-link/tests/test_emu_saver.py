@@ -50,8 +50,8 @@ def test_saver_on_and_ended_by_the_pi():
         assert t.saver_on(), 'the Pi was not told (EVENT 07h)'
         assert not any(h.m.rd(0xB800, 0, 0x8000)), 'the stub blanked the screen'
         h.run_until(lambda: False, 12)
-        t.link.last_rx -= 11; t.saver_at = t.link.last_rx   # (past the Pi's 10 s: its clock, which the emulator
-                                                            #  outruns; nothing half-read for idle_check meanwhile)
+        t.link.last_rx -= 11                        # (past the Pi's 10 s: its clock, which the emulator outruns;
+                                                    #  nothing half-read for idle_check meanwhile)
         assert sv.up() and t.saver_on() and t.why_not() is None, (sv.up(), t.saver_on(), t.why_not())
         feed(h, '\x1b[5;3HNews from Claude Code')
         t1 = h.m.us
@@ -61,6 +61,27 @@ def test_saver_on_and_ended_by_the_pi():
         assert T.in_step(h), T.mismatch(h)
         assert not t.saver_on() and sv.entries() == 1, (t.saver_on(), sv.entries())
         print('     on after %.1f s idle; the Pi\'s change ended it in %.0f ms' % (dt, lat))
+        T.check(h)
+    finally:
+        h.close()
+
+
+def test_saver_rings_unanswered():
+    h, sv = start()
+    try:
+        t, L = h.router.term, h.router.term.link
+        assert h.run_until(sv.up, 10), 'no saver'
+        ring = L.t.ring
+        L.t.ring = lambda: None                     # (the rings lost: as a GRiD reset or off meanwhile)
+        feed(h, '\x1b[5;3HNews')
+        h.run_until(lambda: L.gave_up(), 5)
+        L.last_rx -= 11
+        assert sv.up() and L.gave_up() and not t.saver_on() and t.why_not(), (sv.up(), L.rings_left, t.why_not())
+        L.t.ring = ring
+        h.key(0x1E61)                               # someone at the GRiD: it ends, and the news comes
+        assert h.run_until(lambda: not sv.up(), 5), 'a key did not end it'
+        assert h.run_until(lambda: 'News' in h.screen(), 10), h.screen()
+        assert not L.gave_up() and t.why_not() is None, (L.rings_left, t.why_not())
         T.check(h)
     finally:
         h.close()
@@ -144,6 +165,21 @@ def test_no_saver_with_an_older_pi():
             h.close()
     finally:
         glp.HF_SAVER = old
+
+
+def test_no_saver_with_an_older_bridge():
+    import gridlink.pico as P
+    old = P.RING_FW
+    P.RING_FW = 'bridge fw 2099'                # (a Pico whose firmware predates WAKE: it can't ring)
+    try:
+        h, sv = start()
+        try:
+            h.run_until(lambda: False, 6)
+            assert sv.entries() == 0 and not h.router.term.saver_on(), sv.entries()
+        finally:
+            h.close()
+    finally:
+        P.RING_FW = old
 
 
 def test_saver_in_chat():
