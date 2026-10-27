@@ -362,6 +362,9 @@ class PC:
         s.calls13 = []; s.ints = collections.Counter(); s.t13 = []
         s.stopped = None; s.crash = None; s.halted = False; s.blocked = False
         s.last_blk = (0, 0); s.pit_latch = None; s.pit_hi = False; s.pit_mode = 3
+        s.pit_n = 65536; s.tick_us = TICK_US    # channel 0's period, its clocks (a program may run it fast)
+        s.pit_rw = 3; s.pit_lo = None           # (its control word's read/write: 1 LSB, 2 MSB, 3 both)
+        s.pit_set = False                       # (a period set, other than at the start: pit_read)
         s.clock0 = start
         s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
         s.moves = []
@@ -488,9 +491,10 @@ class PC:
     def on_time(s):
         late = 0
         while s.us >= s.next_tick:
-            if 0 in s.irq_pending: late += 1    # (a long BIOS wait: the BIOS
-            s.irq_pending.add(0)                #  clock counts every tick)
-            s.next_tick += TICK_US
+            if 0 in s.irq_pending and s.pit_n == 65536:
+                late += 1                       # (a long BIOS wait: the BIOS clock counts every tick; not a
+            s.irq_pending.add(0)                #  fast counter's, whose handler would divide: just lost)
+            s.next_tick += s.tick_us
             s.mu.emu_stop()
         if late:
             t = struct.unpack('<I', s.rd(0, 0x46C, 4))[0] + late
@@ -515,8 +519,14 @@ class PC:
     def pit_read(s):
         """Latch channel 0.  Mode 3 (the BIOS's) counts down by 2, twice a
         tick; mode 2 (pit_init in tools/timing.inc) once, by 1, from the
-        tick."""
-        if s.pit_mode == 2:
+        tick.  With a period of its own (pit_n), or once a program has set
+        one (its ticks then no longer on the BIOS's grid), from the last
+        IRQ 0, either way, as the chip reloads there."""
+        if s.pit_n != 65536 or s.pit_set:
+            n = int((s.us - (s.next_tick - s.tick_us)) * 1.193182)
+            s.pit_latch = (s.pit_n - n % s.pit_n if s.pit_mode == 2 else
+                           s.pit_n - 2 * (n % max(1, s.pit_n // 2))) & 0xFFFF
+        elif s.pit_mode == 2:
             n = int((s.us - (s.next_tick - TICK_US)) * 1.193182) % 65536
             s.pit_latch = (65536 - n) & 0xFFFF
         else:
@@ -685,7 +695,17 @@ class PC:
             return
         if port == 0x43:
             if (val & 0xF0) == 0: s.pit_read()
-            elif (val & 0xF0) == 0x30: s.pit_mode = (val >> 1) & 3     # (channel 0: 2 or 3)
+            elif (val & 0xC0) == 0:                                     # channel 0's mode: 2 or 3
+                s.pit_rw = (val >> 4) & 3; s.pit_lo = None
+                if s.pit_rw == 3: s.pit_mode = (val >> 1) & 3
+            return
+        if port == 0x40:                    # channel 0's count: its period from the next IRQ 0 on
+            if s.pit_rw == 3 and s.pit_lo is None: s.pit_lo = val; return
+            n = (s.pit_lo | val << 8) if s.pit_rw == 3 else val if s.pit_rw == 1 else val << 8
+            s.pit_lo = None
+            s.pit_n = n or 65536
+            s.pit_set = s.pit_set or s.pit_n != 65536
+            s.tick_us = TICK_US if s.pit_n == 65536 else s.pit_n * 1e6 / 1193182
             return
         if port == 0x21: s.pic_mask = val; return
         if port == 0xA1: s.pic2_mask = val; return
