@@ -1019,28 +1019,16 @@ gp_isr:    push    ax
 .not:   pop     ax
         jmp     far [cs:gp_oldirq]
 
-; IRQ 5 on: our vector (once; the one we found is kept for INT 0Dh's
-; exception), SRQI in IMR2, IRQ 5 unmasked.  An SRQI already latched goes
-; into the shadow first, so it doesn't fire at once.
+; IRQ 5 on (the vector is ours from gpib_init): SRQI in IMR2, IRQ 5
+; unmasked.  An SRQI already latched goes into the shadow first, so it
+; doesn't fire at once.
 gp_irq_on:
         cmp     byte [gp_irq], 0
         jne     .x
         push    ax
         push    dx
-        push    es
-        push    0
-        pop     es
         cli
-        cmp     byte [gp_hooked], 0
-        jne     .h
-        mov     byte [gp_hooked], 1
-        mov     ax, [es:gp_IRQVEC*4]
-        mov     [gp_oldirq], ax
-        mov     ax, [es:gp_IRQVEC*4+2]
-        mov     [gp_oldirq+2], ax
-        mov     word [es:gp_IRQVEC*4], gp_isr
-        mov     [es:gp_IRQVEC*4+2], cs
-.h:     mov     byte [gp_irq], 5
+        mov     byte [gp_irq], 5
         mov     byte [gp_imr2], gp_ISR2_SRQ
         mov     byte [gp_irqn], 0
         mov     dx, gp_R_ISR2
@@ -1052,7 +1040,6 @@ gp_irq_on:
         and     al, ~gp_IRQBIT
         out     21h, al
         sti
-        pop     es
         pop     dx
         pop     ax
 .x:     ret
@@ -1088,7 +1075,6 @@ gp_c_al    db 0
 gp_irq     db 0                     ; LODESTONE: 5 while SRQ comes on IRQ 5
 gp_imr2    db 0                     ;  IMR2 for gp_chip_init (SRQI, or 0)
 gp_irqn    db 0                     ;  interrupts in tick gp_irqt
-gp_hooked  db 0                     ;  INT 0Dh is ours
 gp_irqt    dw 0
 gp_nsrq    dw 0                     ;  +1 every interrupt (AH=0Eh's DX:CX)
 gp_oldirq  dw 0, 0                  ;  INT 0Dh as we found it
