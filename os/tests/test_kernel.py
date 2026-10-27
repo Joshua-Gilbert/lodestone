@@ -2936,8 +2936,10 @@ def t_execabort():
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
          t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
+    want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
+    if set(want) - {t.__name__[2:] for t in TESTS}:
+        sys.exit('no such test: %s' % ' '.join(sorted(set(want) - {t.__name__[2:] for t in TESTS})))
     build()
-    want = sys.argv[1:]
     for t in TESTS:
         if want and t.__name__[2:] not in want: continue
         print('==', t.__name__[2:])
