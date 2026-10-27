@@ -84,6 +84,8 @@ MW_CALLOC   equ (held2 + 2 - title_on) + 2 + (ed_keep + 1 - lv_cur) + (fm_b2 + 2
 mw_on       db      0                   ; 1: the UI is patched
 mw_n        db      0                   ; window .RUNs running
 mw_cur      db      0                   ; the session running (0: the Executive)
+mw_nc       db      0                   ; (win_paint, the saver: unclipped)
+            times   -(mw_nc - mw_cur != 1) db 0     ; (the gates' word test)
 mw_rd       db      0                   ; once switched: 1 the screen again, 2
                                         ;  the band, 3 the session's windows
                                         ;  (on top now) and the band (mw_back)
@@ -1650,7 +1652,6 @@ mw_cpt: dw      clear_screen, mw_c_cls  ; where, to; its own first 5 bytes
         dw      0
 MW_CPE      equ     9
 mw_cp       db      0                   ; 1: the patches are in
-mw_nc       db      0                   ; (win_paint, the saver: unclipped)
 mw_useg     dw      0                   ; the UI's segment (mw_clipon)
 mw_kind     db      0                   ; the primitive (MK_*)
 MK_FILL     equ     0
@@ -1767,9 +1768,7 @@ mw_topses:
 ; the primitives' entries (JMP FAR from them; DS = the UI, the caller's
 ; near return on the stack)
 mw_c_cls:                               ; clear_screen
-        cmp     byte [cs:mw_cur], 0
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ; (a session's, or unclipped: mw_nc)
         jne     .o
         pusha
         mov     byte [cs:mw_kind], MK_FILL
@@ -1793,9 +1792,7 @@ mw_c_cls:                               ; clear_screen
         retf
 
 mw_c_fill:                              ; fill_band: DX = y, CX = rows,
-        cmp     byte [cs:mw_cur], 0     ;  BX = column, BP = width, AL = value
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ;  BX = column, BP = width, AL = value
         jne     .o
         pusha
         mov     byte [cs:mw_kind], MK_FILL
@@ -1816,9 +1813,7 @@ mw_c_fill:                              ; fill_band: DX = y, CX = rows,
         retf
 
 mw_c_inv:                               ; invert_band: as fill_band's
-        cmp     byte [cs:mw_cur], 0
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0
         jne     .o
         test    bp, bp
         jz      .o
@@ -1840,9 +1835,7 @@ mw_c_inv:                               ; invert_band: as fill_band's
         retf
 
 mw_c_vl:                                ; vline: AX = pixel x, DX = y0,
-        cmp     byte [cs:mw_cur], 0     ;  CX = height
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ;  CX = height
         jne     .o
         pusha
         mov     byte [cs:mw_kind], MK_VL
@@ -1873,9 +1866,7 @@ mw_c_vl:                                ; vline: AX = pixel x, DX = y0,
         retf
 
 mw_c_text:                              ; putsn: SI = text, CX = count,
-        cmp     byte [cs:mw_cur], 0     ;  BX = column, DX = y, AH = mask
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ;  BX = column, DX = y, AH = mask
         jne     .o
         pusha
         cmp     bx, 80                  ; (as putsn cuts it at the right edge)
@@ -1905,9 +1896,7 @@ mw_c_text:                              ; putsn: SI = text, CX = count,
         retf
 
 mw_c_xor:                               ; xor_rect: pixels AX..DI across,
-        cmp     byte [cs:mw_cur], 0     ;  rows DX..DX+CX-1
-        jne     .o
-        cmp     byte [cs:mw_nc], 0
+        cmp     word [cs:mw_cur], 0     ;  rows DX..DX+CX-1
         jne     .o
         pusha
         mov     byte [cs:mw_kind], MK_XOR
