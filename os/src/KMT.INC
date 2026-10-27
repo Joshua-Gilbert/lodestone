@@ -4906,37 +4906,28 @@ mt_m33sv:
 
 ; m33_busy set while the front changes (mt_scrto): no event handler runs
 ; meanwhile, whose calls would act on the state being swapped (and the
-; tick doesn't switch); mt_m33nb gives it back as it was.  All kept
+; tick doesn't switch); mt_m33nb gives it back as it was.  All kept but
+; the flags
 mt_m33bz:
         push    ax
-        push    ds
-        push    es
-        push    KSEG
-        pop     ds
-        mov     ax, [ui_seg]
-        or      ax, ax
-        jz      .x
-        mov     es, ax
-        mov     al, 1
-        xchg    al, [es:m33_busy]
-        mov     [cs:mt_33sb], al
-.x:     pop     es
-        pop     ds
-        pop     ax
-        ret
+        mov     ax, 0101h               ; (AH 1: the old one to mt_33sb)
+        jmp     short mt_m33nb.x
 mt_m33nb:
         push    ax
-        push    ds
+        mov     al, [cs:mt_33sb]
+        mov     ah, 0
+.x:     push    ds
         push    es
         push    KSEG
         pop     ds
-        mov     ax, [ui_seg]
-        or      ax, ax
-        jz      .x
-        mov     es, ax
-        mov     al, [cs:mt_33sb]
-        mov     [es:m33_busy], al
-.x:     pop     es
+        cmp     word [ui_seg], 0
+        je      .r
+        mov     es, [ui_seg]
+        xchg    al, [es:m33_busy]
+        or      ah, ah
+        jz      .r
+        mov     [cs:mt_33sb], al
+.r:     pop     es
         pop     ds
         pop     ax
         ret
