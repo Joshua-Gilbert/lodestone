@@ -3934,21 +3934,11 @@ mt_spawn:
 ; the program's name (its path's last part) into its entry (BX = mt_new),
 ; upper case, NUL-padded.  ES:ST_PATH = the path.
 mt_name:
+        mov     si, ST_PATH
+        call    mt_lname
         push    ds
         push    es
         pop     ds
-        mov     si, ST_PATH
-        mov     dx, si
-.s:     lodsb                           ; (after the last \ or :)
-        or      al, al
-        jz      .c
-        cmp     al, '\'
-        je      .m
-        cmp     al, ':'
-        jne     .s
-.m:     mov     dx, si
-        jmp     .s
-.c:     mov     si, dx
         mov     bx, [cs:mt_new]
         lea     di, [bx+TE_NAME]
         mov     cx, TR_NAMELEN
