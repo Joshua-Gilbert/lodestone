@@ -583,24 +583,14 @@ s_ctrlc db '^C', 13, 10, 0
 ; =====================================================================
 ; AL -> the screen through the BIOS (tabs expanded).  Keeps registers.
 tty_out:
-        push    ax
-        push    bx
         cmp     al, 9
-        jne     .one
-.tab:   mov     al, ' '
-        call    .put
-        test    byte [cs:con_col], 7
-        jnz     .tab
-        jmp     .x
-.one:   call    .put
-.x:     pop     bx
-        pop     ax
-        ret
-        times ($ - $$) & 1 db 90h       ; (hot: even)
+        je      .tab                    ; (anything else falls through)
 .put:   push    ax
+        push    bx
         mov     ah, 0Eh
         mov     bx, 0007h
         int     10h
+        pop     bx
         pop     ax
         cmp     al, 13
         je      .cr
@@ -617,6 +607,13 @@ tty_out:
 .bs:    cmp     byte [cs:con_col], 0
         je      .r
         dec     byte [cs:con_col]
+        ret
+.tab:   push    ax
+.sp:    mov     al, ' '
+        call    .put
+        test    byte [cs:con_col], 7
+        jnz     .sp
+        pop     ax
         ret
 
 ; AL -> standard output (handle 1, possibly redirected).  Keeps registers.

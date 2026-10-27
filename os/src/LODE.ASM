@@ -226,7 +226,7 @@ k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 %endmacro
 section .text
         EVEN    capture, int21, int21.stk, ret_cf, ok, done, done.sw, fail, ret_cfax, ok_ax
-        EVEN    tty_out, tty_out.x, tty_out.put, con_out, con_out.x, dev_write.cl
+        EVEN    f_02, tty_out, con_out, con_out.x, dev_write.cl
         EVEN    h2sft, sft_of, jft_alloc.l, sft_busy.l, sft_busy.n, f_3F, f_40, sft_read
         EVEN    rw_start, rw_step, use_drive_si, sft_cluster, sft_cluster.w, sft_cluster.got
         EVEN    rw_where.one, file_read.loop, file_read.ext, file_read.done, pos_sec, rw_setra
