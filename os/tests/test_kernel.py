@@ -1098,6 +1098,22 @@ def t_gridgpib():
     check('... the bus left alone (REN still on: it sent everyone to local first)', ren and chip.ren, (ren, chip.ren))
     check('... and GRIDGPIB still finds the driver', 'Already installed' in sh.run('gridgpib'))
 
+def t_gpcheck0():
+    """02h AL=3 (the frame check appended) with no bytes: the check of nothing, 01 00, whatever ES:SI points at; and
+    of two bytes, the second's from 1, 0.  (The start for the first byte's add, set at the write's entry since
+    audit3 X30, came from the byte at ES:SI even when there were none.)"""
+    com = os.path.join(OUT, 'GPCHK0.COM')
+    open(com, 'wb').write(bytes([0xBE, 0x1A, 0x01,          # mov si, ab
+                                 0x31, 0xC9, 0xBB, 0x06, 0x00, 0xB8, 0x03, 0x02, 0xCD, 0x60,   # CX = 0 to 6, AL = 3
+                                 0xB9, 0x02, 0x00, 0xB8, 0x03, 0x02, 0xCD, 0x60,               # CX = 2
+                                 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'AB')
+    chip = sim7210.NEC7210(sim7210.bus())
+    got, dev = [], chip.devices[6]
+    dev.message = lambda m, f=dev.message: (got.append(bytes(m)), f(m))
+    k = ktest.KPC(image('gpchk0.img', com), chip=chip); k.start()
+    k.run_file('GPCHK0.COM', 10)
+    check('02h AL=3 of no bytes sends the check 01 00; of "AB", AB 43 43', got == [b'\x01\x00', b'AB\x43\x43'], got)
+
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (ex_rel shares path_buf, so they would
@@ -2751,7 +2767,7 @@ def t_execabort():
           k.exec_list())
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
