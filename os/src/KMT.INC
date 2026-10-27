@@ -6010,16 +6010,14 @@ mt_tmode:
         cmp     al, 6
         jbe     .t
         cmp     al, 40h
-        je      .g
+        je      .t
         cmp     al, 48h
-        je      .g
+        je      .t
         cmp     al, 74h
-        je      .g
+        je      .t
         mov     al, 2
 .t:     cmp     al, 4
         cmc
-        ret
-.g:     stc
         ret
 
 ; mt_v10's call (its frame at BP) done as the 1520's BIOS does it in a
@@ -6046,8 +6044,10 @@ mt_emu:
         dw      .mC, .mE, .mF, .ok, .ok, .ok, .m13
 .wt:    stc
         ret
-.ok:    clc
-        ret
+.ok:    clc                             ; (every handler ends with CF known, 1
+        ret                             ;  the wait: 0 as each starts, after
+                                        ;  SHL BX, and at a bare RET from the
+                                        ;  last AND, OR, TEST, XOR or .pg)
 ; 00h: a text mode (VidSetMode): the BIOS data, the screen 16 KB of blanks;
 ; AX back as 00h and Mode Control
 .m0:    call    mt_tmode
@@ -6083,31 +6083,27 @@ mt_emu:
         mov     ax, 0720h
         mov     cx, 2000h
         rep     stosw
-        clc
         ret
 ; 01h: the cursor's shape
 .m1:    mov     ax, [bp+VF_CX]
         mov     [VS_SHAPE], ax
-        clc
         ret
 ; 02h, 03h: page BH's cursor
 .m2:    call    .pg
         jc      .ok
         mov     ax, [bp+VF_DX]
         mov     [VS_CUR + bx], ax
-        clc
+.m2x:   clc
         ret
 .m3:    mov     ax, [VS_SHAPE]          ; (the shape, whatever the page)
         mov     [bp+VF_CX], ax
         call    .pg
-        jc      .ok
+        jc      .m2x
         mov     ax, [VS_CUR + bx]
         mov     [bp+VF_DX], ax
-        clc
         ret
 ; 04h: the light pen, not triggered
 .m4:    mov     byte [bp+VF_AX+1], 0
-        clc
         ret
 ; 05h: the page shown (only noted: the CRTC is the front task's); AX back
 ; as 0, as the BIOS's multiplying leaves it
@@ -6130,7 +6126,7 @@ mt_emu:
         ret
 ; 08h: the character and attribute at page BH's cursor
 .m8:    call    .pg
-        jc      .ok
+        jc      .m8x                    ; (AX back as it came)
         mov     dx, [VS_CUR + bx]
         shr     bx, 1
         call    mt_vaddr
@@ -6147,15 +6143,14 @@ mt_emu:
 .mA:    xor     dl, dl
 .wc:    mov     cx, [bp+VF_CX]
         jcxz    .wz
-        push    dx
         call    .pg
-        jc      .wp
+        jc      .wz
+        push    dx
         mov     dx, [VS_CUR + bx]
         shr     bx, 1
         call    mt_vaddr
         pop     dx
-        mov     al, [bp+VF_AX]
-        mov     ah, [bp+VF_BX]
+        mov     ah, [bp+VF_BX]          ; (AL the caller's still)
 .wl:    cmp     di, 8000h - 1           ; (past the 32 KB: not written, but
         jae     .ws                     ;  on round 16 bits, as the BIOS's DI,
         stosb                           ;  to page 0)
@@ -6168,9 +6163,6 @@ mt_emu:
         ret
 .ws:    inc     di
         jmp     short .wn
-.wp:    pop     dx
-        clc
-        ret
 ; 0Bh: the colour select (put in 3D9h when the task is shown); AL back as
 ; the new one
 .mB:    mov     al, [VS_PAL]
@@ -6187,25 +6179,23 @@ mt_emu:
         or      al, 20h
 .pw:    mov     [VS_PAL], al
         mov     [bp+VF_AX], al
-        clc
         ret
 ; 0Ch, 0Dh in a text mode: nothing (VidGrapPelMask's CF), AH back as the
 ; mode
 .mC:    mov     al, [VS_MODE]
         mov     [bp+VF_AX+1], al
-        clc
-        ret
+.mCx:   ret
 ; 0Eh: the teletype, on the page shown whatever BH says
 .mE:    mov     bl, [VS_PAGE]
         cmp     bl, 10
-        ja      .ok
+        ja      .mCx
         xor     bh, bh
         mov     si, bx
         shl     si, 1
         mov     bh, bl
         mov     dx, [VS_CUR + si]
-        mov     al, [bp+VF_AX]
-        xor     cl, cl                  ; (the character only, as 0Ah)
+        xor     cl, cl                  ; (the character only, as 0Ah; AL the
+                                        ;  caller's still)
         call    mt_vtty
         mov     [VS_CUR + si], dx
         clc
@@ -6216,7 +6206,6 @@ mt_emu:
         mov     [bp+VF_AX], ax
         mov     al, [VS_PAGE]
         mov     [bp+VF_BX+1], al
-        clc
         ret
 ; 13h: CX characters from ES:BP on page BH from DX (AL bit 1: each with its
 ; attribute, but BEL, BS, LF and CR; bit 0: the cursor left after them),
@@ -6262,8 +6251,7 @@ mt_emu:
         xor     bh, bh
         shl     bx, 1
         mov     [VS_CUR + bx], dx
-.sz:    clc
-        ret
+.sz:    ret
 .s13:   mov     bx, sp                  ; (in front: the shadow lost.  Behind,
         cmp     word [ss:bx], mt_v10.ble ;  mt_v10.bl's: dropped, the shadow
         je      .sz                     ;  kept)
@@ -6273,12 +6261,9 @@ mt_emu:
 ; BX = 2 * the page in the caller's BH; CF if past page 10
 .pg:    mov     bl, [bp+VF_BX+1]
         xor     bh, bh
-        cmp     bl, 10
-        ja      .pn
         shl     bx, 1
-        clc
-        ret
-.pn:    stc
+        cmp     bx, 2 * 11
+        cmc
         ret
 
 ; the teletype's character AL at DX (row, column; page BH's cursor) on
