@@ -210,6 +210,33 @@ k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 %include "KPROC.INC"
 %include "KGPIB.INC"
 
+; The routines and loop targets most often reached by a taken jump, call or
+; return (measured in pcemu: BENCH, LCMD's DIR/TYPE/COPY, the Executive, a
+; CLAUDE link turn) start on even offsets: the 286 fetches words, so a jump
+; to an odd one costs a fetch.  The pads that put them there ("hot" in the
+; comment) are never executed.  A TIMES value of -1 here: that label went
+; odd, so re-pad (KSEG is a paragraph, so the offset's parity is the address's)
+%macro EVEN 1-*
+%rep %0
+        times -((%1 - $$) & 1) db 0
+%rotate 1
+%endrep
+%endmacro
+section .text
+        EVEN    capture, int21, int21.stk, ret_cf, ok, done, done.sw, fail, ret_cfax, ok_ax
+        EVEN    tty_out, tty_out.x, tty_out.put, con_out, con_out.x, dev_write.cl
+        EVEN    h2sft, sft_of, jft_alloc.l, sft_busy.l, sft_busy.n, f_3F, f_40, sft_read
+        EVEN    rw_start, rw_step, use_drive_si, sft_cluster, sft_cluster.w, sft_cluster.got
+        EVEN    rw_where.one, file_read.loop, file_read.ext, file_read.done, pos_sec, rw_setra
+        EVEN    use_drive, fat_load, fat_get, fat_get.e, fat_flush.k, fat_set.one, clu2lba
+        EVEN    buf_getd, buf_get, buf_get.s, buf_get.f, buf_get.n, buf_get.hit
+        EVEN    disk_io, dio.more, dio.ok, tc_piece, tc_mine
+        EVEN    gpath.n, gpath.s, parse_comp.fl, parse_comp.chk, f_36.l
+        EVEN    dir_entry, dir_entry.sub, dir_entry.walk, dir_entry.there, dir_entry.x
+        EVEN    dir_find.e, dir_find.n, name_match.l, name_match.n, name_match.x
+        EVEN    dev_look_ax.f, dev_look_ax.t, dev_look_ax.skip
+        EVEN    gp_cmd_begin, gp_send_cmd, gp_wait_co, gp_wait_co.ok, gp_tick, gp_tmo_start, gp_wait_tick.w
+
 section ovl
 bootbpb     times 64 db 0
             align 2

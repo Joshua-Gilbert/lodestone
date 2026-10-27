@@ -132,6 +132,7 @@ parse_comp:
         jne     .chk
         mov     ah, 1
         jmp     .put
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .chk:   push    di
         push    cx
         mov     di, badchars
@@ -341,6 +342,7 @@ dir_entry:
         mov     ax, [it_cl]
         mov     cx, [it_ci]
         jmp     .walk
+        times ($ + 5 - $$) & 1 db 90h   ; (hot: .walk and what follows even)
 .walk0: mov     [it_dir], ax
         xor     cx, cx
 .walk:  cmp     cx, dx

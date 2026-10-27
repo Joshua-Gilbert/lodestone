@@ -474,6 +474,7 @@ int21:  sti
         shl     bx, 1
         jmp     [ftab+bx]
 
+        times ($ - $$) & 1 db 90h       ; (hot: the exits even, LODE.ASM)
 ; CF: fail (AX = the error), else ok
 ret_cf: jc      fail
 ; return to the caller with CF clear
@@ -595,6 +596,7 @@ tty_out:
 .x:     pop     bx
         pop     ax
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .put:   push    ax
         mov     ah, 0Eh
         mov     bx, 0007h

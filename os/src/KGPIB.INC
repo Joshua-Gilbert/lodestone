@@ -742,6 +742,7 @@ gp_spoll:  call    gp_ensure_ctrl
         call    gp_spoll_end
         stc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .got:   mov     dx, gp_R_DIR
         in      al, dx                  ; status byte (handshake held)
         push    ax
@@ -891,6 +892,7 @@ gp_ensure_ctrl:
         pop     ax
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 gp_clear_in:
         push    ax
         push    dx

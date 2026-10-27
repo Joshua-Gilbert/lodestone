@@ -157,6 +157,7 @@ drv_present:
         cmp     byte [si+D_PRES], 1     ; (CF if 0)
 .no:    ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; AL = drive -> DI = its current directory ("\DIR\SUB").  AH changed
 ; (KMDISK.INC: M:'s)
 cwd_of: xor     ah, ah
@@ -653,6 +654,7 @@ fat_set:
         pop     ax
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; cluster AX -> LBA AX of its first sector (KHD.INC: [lba_hi] the high
 ; part of C:'s)
 clu2lba:
@@ -789,6 +791,7 @@ buf_getd:
         mov     cx, 1
 .hk:
         jmp     short buf_get.s
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 buf_get:
         push    bx
         push    cx
@@ -975,6 +978,7 @@ tc_room:
 .all:   mov     ax, 128
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; ---------------------------------------------------------------------
 ;  transfers.  AL = drive, AH = 2 read / 3 write, DX = LBA, CX = sectors,
 ;  ES:BX = memory.  Split at track ends and 64 KB DMA boundaries; a
@@ -1330,6 +1334,7 @@ tc_piece:
         mov     al, 1
         clc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .not:   pop     cx
 .no:    xor     al, al
         clc
