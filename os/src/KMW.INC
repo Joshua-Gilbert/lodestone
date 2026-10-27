@@ -1948,25 +1948,17 @@ mw_c_sv:                                ; the saver: unclipped (in a DOS task,
         mov     ax, ss                  ;  counted, its drawing never clipped
         cmp     ax, [cs:mw_useg]        ;  there: mw_clipq)
         pop     ax
-        je      .ui
-        pusha
-        UCALL   hide_cursor
-        cli
-        push    ds
-        push    word saver + 5
-        retf
-.ui:    inc     byte [cs:mw_nc]
+        jne     .go
+        inc     byte [cs:mw_nc]         ; (the UI's: back as win_paint's)
         push    cs
-        push    word .back
+        push    word mw_c_wp.back
         push    word ..@ui_retf
-        pusha
+.go:    pusha
         UCALL   hide_cursor
         cli
         push    ds
         push    word saver + 5
         retf
-.back:  dec     byte [cs:mw_nc]
-        jmp     mw_uret
 
 ; columns BX (BP of them), rows DX (CX of them), for mw_kind: drawn around
 ; the sessions' windows (CF set) if any is across it; else CF clear and
