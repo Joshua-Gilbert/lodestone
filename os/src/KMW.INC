@@ -816,9 +816,11 @@ mw_open:
 MW_PATH     equ     84                  ; (dstpath's size, EXEC.INC)
 
 ; window .RUN SI (its name) couldn't start, AX = why: said in the band
-; (UI_MSG: till a key or a click), the name first
+; (UI_MSG: till a key or a click), the name first.  Made on the stack (SS
+; = DS = ES, the UI): tmp is draw_clock's and the saver's meanwhile
 mw_say: pusha
         push    es
+        sub     sp, MW_SAYB
         mov     dx, ax                  ; (DX: why)
         mov     bx, si                  ; (a path: its last part)
 .p:     lodsb
@@ -830,7 +832,7 @@ mw_say: pusha
 .pe:    or      al, al
         jnz     .p
         mov     si, bx
-        mov     di, tmp
+        mov     di, sp
         mov     cx, 13
 .n:     lodsb
         or      al, al
@@ -855,7 +857,7 @@ mw_say: pusha
         or      al, al
         jnz     .m
         pop     ds
-        mov     si, tmp
+        mov     si, sp
         mov     byte [cs:mw_msg], 1
         mov     al, [ex_mtw]            ; (a task's end meanwhile isn't the
         push    ax                      ;  message's key: the Executive's, later)
@@ -864,13 +866,16 @@ mw_say: pusha
         pop     ax
         mov     [ex_mtw], al
         mov     byte [cs:mw_msg], 0
+        add     sp, MW_SAYB
         pop     es
         popa
         ret
+MW_SAYB     equ     64                  ; (the name's 13 and the longest, mw_s9)
 mw_s8   db      " doesn't fit: close a window first", 0
 mw_s2   db      " is not on this disk", 0
 mw_sx   db      " can't start", 0
 mw_s9   db      " needs the whole screen: close the windows first", 0
+            times   -(13 + $ - mw_s9 > MW_SAYB) db 0
 
 ; CODE-F6: the one in front goes last, the next comes to the front
 mw_cycle:
@@ -1510,9 +1515,8 @@ mw_size:
         or      bp, bp
         jz      .k
         mov     byte [ptr_on], 0        ; (mouse_event leaves the pointer off)
-.w:     sti
-        hlt
-        cmp     byte [mflag], 0
+.w:     UCALL   mwait                   ; (win_mv's wait: there, not here, the
+        cmp     byte [mflag], 0         ;  tasks behind have their turns)
         je      .w
         UCALL   mouse_event             ; AX = x, BX = y (as win_mv takes them)
         jnc     .xy
@@ -1531,8 +1535,7 @@ mw_size:
 .k:     mov     ah, 11h
         int     16h
         jnz     .key
-        sti
-        hlt
+        UCALL   mwait
         jmp     .k
 .key:   UCALL   read_key
         mov     bx, [si+W_W]
