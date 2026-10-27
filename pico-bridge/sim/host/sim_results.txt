@@ -1,4 +1,4 @@
-bus_sim on /dev/pts/4
+bus_sim on /dev/pts/3
 A  THRUTEST's steps, thrutest handler, address 10
   PASS  1 bus init (IFC, REN)
   PASS  2 empty address 30: nobody listens
@@ -116,7 +116,12 @@ J  gridlink's Pico transport, auto service request (CLAUDE.COM's way of reading)
   PASS  quiet: an answer in raises no SRQ, and the poll says 60h as ever
   PASS  quiet: a ring raises no SRQ, its poll says 40h
   PASS  quiet off with an answer's RQS waiting: SRQ then, served by the poll (60h)
-final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '214', 'cmds': '3036', 'rx': '124280', 'tx': '193748', 'polls': '143', 'lost': '0', 'holds': '2', 'fights': '0', 'late': '0', 'held': '15', 'held_void': '9', 'dropped0': '534'}
+L  the port fails the ping thread's write while the main loop reads it (a fake port)
+  PASS  the daemon connects to the fake port
+  PASS  the daemon lives through it (nothing raised out of its main loop)
+  PASS  ... closes the port, reopens and is connected again
+  PASS  only the main loop closed the port and told the control clients
+final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '214', 'cmds': '3036', 'rx': '124280', 'tx': '193748', 'polls': '143', 'lost': '0', 'holds': '2', 'fights': '0', 'late': '0', 'held': '15', 'held_void': '9', 'dropped0': '546'}
   PASS  no events lost in the Pico
 
-105 of 105 checks passed
+109 of 109 checks passed
