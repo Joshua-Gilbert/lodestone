@@ -739,8 +739,7 @@ mt_mine:
         mov     bx, [ui_seg]            ; (the Executive)
         jmp     .b
 .t:     push    ax                      ; (a task)
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         pop     ax
         mov     bx, [cs:bx+TE_REG]
 .b:     dec     bx                      ; in the block at BX
@@ -800,11 +799,11 @@ mt_preempt:
         jmp     short .sw
 .p:     call    mt_pick
         jnc     .sw
-        mov     al, [cs:mt_cur]         ; none: this one goes on, a new turn;
-        call    mt_ent                  ;  unless it ended itself (now), or it
-        cmp     byte [cs:bx+TE_KILL], 0 ;  is frozen here: then the front one
-        jne     mt_kdie                 ;  (waiting for a key, or it would
-        call    mt_frz                  ;  have been picked)
+        call    mt_cent                 ; none: this one goes on, a new turn;
+        cmp     byte [cs:bx+TE_KILL], 0 ;  unless it ended itself (now), or it
+        jne     mt_kdie                 ;  is frozen here: then the front one
+        call    mt_frz                  ;  (waiting for a key, or it would
+                                        ;  have been picked)
         jnz     .fz
         mov     byte [cs:mt_slice], 2
         ret
@@ -826,8 +825,7 @@ mt_tsrw:
         cmp     ax, [cs:mt_tsro]
         jne     .x
         push    bx
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         mov     byte [cs:bx+TE_STATE], TS_WAITK
         pop     bx
 .x:     pop     ax
@@ -887,10 +885,9 @@ mt_kwait:
         jc      .idle
         call    .park                   ; (it runs; then back here)
         jmp     .top
-.idle:  mov     al, [cs:mt_cur]         ; (it ended itself: now, if it can be
-        call    mt_ent                  ;  here: this wait may be in its INT
-        cmp     byte [cs:bx+TE_KILL], 0 ;  24h handler, or its mouse's)
-        je      .wt
+.idle:  call    mt_cent                 ; (it ended itself: now, if it can be
+        cmp     byte [cs:bx+TE_KILL], 0 ;  here: this wait may be in its INT
+        je      .wt                     ;  24h handler, or its mouse's)
         call    mt_kok
         je      mt_kdie
 .wt:    pop     bx                      ; the kernel's own wait: PrtSc,
@@ -1000,8 +997,7 @@ mt_kwait:
 ; this task waits (TS_WAITK) while task BL runs
 .park:  call    mt_fdrain               ; (inside INT 21h: nothing switches
         push    bx                      ;  meanwhile, BL stays the one)
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         mov     byte [cs:bx+TE_STATE], TS_WAITK
         pop     bx
         jmp     mt_switch
@@ -1087,6 +1083,9 @@ mt_frz: push    ax
 .x:     pop     ax
         ret
 
+; AL = the running task -> BX = its entry (mt_ent's)
+mt_cent:
+        mov     al, [cs:mt_cur]
 ; AL = a task -> BX = its entry in mt_tab
 mt_ent: push    ax
         xor     ah, ah
@@ -1112,9 +1111,8 @@ mt_switch:
         and     ah, 0FEh
         push    ax
         popf
-        mov     al, [cs:mt_cur]
         push    bx
-        call    mt_ent
+        call    mt_cent
         mov     es, [cs:bx+TE_TX]
         cmp     byte [cs:bx+TE_KILL], 0 ; (it ended itself where that couldn't
         je      .nk                     ;  be at once: it goes on at mt_kdie,
@@ -1343,8 +1341,7 @@ mt_fvsync:
         cmp     ax, [cs:di+2]
         je      .n
 .d:     push    bx                      ; (that one only: to its TX)
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         mov     es, [cs:bx+TE_TX]
         pop     bx
         sub     di, mt_fv - TX_FVEC
@@ -2325,9 +2322,8 @@ mt_pub: mov     cl, [bp+F_CX]
         mov     cx, 128
         call    mt_pin
         jc      .bd
-.set:   mov     al, [cs:mt_cur]
-        call    mt_ent
-        mov     dx, es                  ; (DX:DI the new one)
+.set:   call    mt_cent
+        mov     dx, es                 ; (DX:DI the new one)
         call    mt_tchg                 ; (AX: its count as a window saw it)
         cmp     di, [es:TX_PUB]
         jne     .ch
@@ -3374,8 +3370,7 @@ mt_kdie:
         cli
         push    KSEG
         pop     ds
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         mov     ax, [cs:bx+TE_PSP]
         mov     [cur_psp], ax
         mov     word [last_exit], 0100h
@@ -3457,8 +3452,7 @@ mt_fvx: mov     al, [bp+F_AX]
         call    mt_fvsync
         call    mt_fvset
         popf
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         mov     es, [cs:bx+TE_TX]
         mov     di, TX_FVEC
         cmp     byte [bp+F_AX], 09h
@@ -3518,10 +3512,9 @@ mt_tfree:
 
 ; MT_END: from a task's stub, its program done.  Its handles (the
 ; inherited ones) closed, its region freed, and another task runs.
-mt_end: mov     al, [cs:mt_cur]         ; (first: a call refused changes
+mt_end: call    mt_cent                 ; (first: a call refused changes
         or      al, al                  ;  nothing)
         jz      mt_bad                  ; (not the Executive)
-        call    mt_ent
         mov     ax, [cs:bx+TE_PSP]
         cmp     ax, [cur_psp]
         jne     mt_bad                  ; (only its stub)
@@ -4555,10 +4548,9 @@ mt_i16:
         jnz     .pas
 .w:     call    mt_wkey
 .wk:    jnc     .top
-        mov     al, [cs:mt_cur]         ; (no other task ready: until the
-        call    mt_ent                  ;  next interrupt; unless it ended
-        cmp     byte [cs:bx+TE_KILL], 0 ;  itself: now)
-        jne     mt_kdie
+        call    mt_cent                 ; (no other task ready: until the
+        cmp     byte [cs:bx+TE_KILL], 0 ;  next interrupt; unless it ended
+        jne     mt_kdie                 ;  itself: now)
         sti
         hlt
         jmp     .top
@@ -4658,8 +4650,7 @@ mt_wkey:
         stc
         je      .x
 .go:    push    bx
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         mov     byte [cs:bx+TE_STATE], TS_WAITK
         pop     bx
         call    mt_switch
@@ -4810,8 +4801,7 @@ mt_33in:
         mov     ah, [es:m33_busy]
         mov     [cs:mt_33eb], ax
         mov     byte [es:m33_busy], 1
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         push    ds
         mov     ds, [cs:bx+TE_TX]
         mov     si, TX_M33
@@ -5210,8 +5200,7 @@ mt_mgone:
         push    bx
         push    es
         push    bx
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         pop     ax
         mov     es, [cs:bx+TE_TX]
         cmp     [es:TX_MPSP], ax
@@ -5248,8 +5237,7 @@ mt_mtake:
         push    ax
         push    bx
         push    es
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         mov     es, [cs:bx+TE_TX]
         mov     ax, [cur_psp]
         mov     [es:TX_MPSP], ax
@@ -5699,8 +5687,7 @@ mt_v10:
         jb      .lost
         cmp     byte [cs:mt_in13], 0
         jne     .lost
-        mov     al, [cs:mt_cur]
-        call    mt_ent
+        call    mt_cent
         test    byte [cs:bx+TE_VF], SPF_BG
         jnz     .real
         push    KSEG                    ; a critical error's prompt (inside the
@@ -5762,10 +5749,10 @@ mt_v10:
         pop     ds
         popa
         jmp     .top
-.dr:    mov     al, [cs:mt_cur]         ; (dropped: it may go on to write the
-        call    mt_ent                  ;  screen itself, so it is frozen behind
-        or      byte [cs:bx+TE_VF], VF_DIRECT   ;  from its next safe point, as
-        jmp     .ret                    ;  one that does)
+.dr:    call    mt_cent                 ; (dropped: it may go on to write the
+        or      byte [cs:bx+TE_VF], VF_DIRECT   ;  screen itself, so it is frozen
+        jmp     .ret                    ;  behind from its next safe point,
+                                        ;  as one that does)
 
 ; the teletype's character in mt_v10's frame (AL there) on the page shown,
 ; the cursor on a line of the screen, when it can't scroll: a character
@@ -6706,8 +6693,7 @@ mt_grow:
         cmp     bx, 0F000h
         jae     .no
         mov     di, bx                  ; DI: paragraphs wanted
-        mov     al, [cs:mt_cur]
-        call    mt_ent                  ; BX: its entry
+        call    mt_cent                 ; BX: its entry
         mov     si, [cs:bx+TE_REG]
         dec     si                      ; SI: the region's MCB
         mov     ax, [cs:mt_mcb0]        ; the free block just below it (the
@@ -6889,8 +6875,7 @@ mt_largest:
         cmp     bx, [ex_min]
         jb      .c
         push    bx                      ; (enough for its minimum: in a grown
-        mov     al, [cs:mt_cur]         ;  region, 64 KB if it can grow)
-        call    mt_ent
+        call    mt_cent                 ;  region, 64 KB if it can grow)
         mov     ax, [cs:bx+TE_TX]
         cmp     ax, [cs:bx+TE_REG]
         pop     bx
