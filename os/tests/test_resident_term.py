@@ -576,57 +576,111 @@ def t_type():
         h.close()
 
 
-def t_type_peek():
-    """audit3 X42: a TSR's INT 16h peek from its INT 1Ch (a tick: the PIC's ISR set, so only the stub's feeder
-    runs) just as the console's feeder has said a {WAIT} is under way: the peek sees the wait whole and no
-    key, and the keys after it wait.  Before the fix the end was stored after ks_wait, in two parts: the peek
-    saw the wait before's end (passed), took this one as over, and the keys after it went at once."""
+PEEK_SCRIPT = 'a{WAIT 0.3}b{WAIT 1}c'
+PEEK_AT = {'start': 'just after it says the second {WAIT} is under way',
+           'look': 'between its read of ks_pos and its look at ks_wait, as the first {WAIT} ends',
+           'end0': 'as the first {WAIT} ends, before ks_wait goes 0',
+           'end1': 'as the first {WAIT} ends, ks_wait 0, before ks_pos moves on'}
+
+def tsr_1ch(m):
+    """A TSR on INT 1Ch at F000:1300 (the BIOS stub's spare RAM): an INT 16h AH=01h peek when F000:1320h is
+    set, then the INT 1Ch before.  -> the vector to put back."""
+    old = m.rd(0, 0x1C * 4, 4)
+    m.wr(0xF000, 0x1300, bytes([0x2E, 0x80, 0x3E, 0x20, 0x13, 0x00,      # cmp byte [cs:1320h], 0
+                                0x74, 0x0C,                              # je .chain
+                                0x2E, 0xC6, 0x06, 0x20, 0x13, 0x00,      # mov byte [cs:1320h], 0
+                                0x50, 0xB4, 0x01, 0xCD, 0x16, 0x58,      # push ax / mov ah,1 / int 16h / pop ax
+                                0xEA]) + old)                            # .chain: jmp far
+    m.wr(0xF000, 0x1320, b'\0')
+    m.wr(0, 0x1C * 4, struct.pack('<HH', 0x1300, 0xF000))
+    return old
+
+def tick_before(m, addr):
+    """IRQ 0, the TSR's peek armed, before the instruction at addr, as deliver_irqs gives it (an emu_stop in
+    a code hook ends only the block); with interrupts off, held till they are on (as the PIC holds it)."""
+    m.wr(0xF000, 0x1320, b'\1')
+    fl, cs = m.r('flags'), m.r('cs')
+    if not fl & 0x200:
+        m.irq_pending.add(0); return
+    m.push(fl); m.push(cs); m.push(addr - cs * 16); m.isr |= 1
+    off, seg = struct.unpack('<HH', m.rd(0, 8 * 4, 4))
+    m.w('flags', fl & ~0x300); m.w('cs', seg); m.w('ip', off)
+
+def peek_race(m, lo, hi, var, here, at, where, run, waits):
+    """A key-script feeder's code at lo..hi (linear), its state var(name, size), in place when here(); at:
+    its instructions 'look' (CMP ks_wait, 0), 'end0' (MOV ks_wait, 0) and 'end1' (the ADD to ks_pos after).
+    A TSR's INT 1Ch peek, PEEK_AT[where], while run() types PEEK_SCRIPT (its two waits at ks_pos `waits`).
+    -> (the waits' simulated seconds (None: never at or past one), the state the peek left
+    (ks_wait, ks_pos, ZF: no key), run()'s result)"""
     from unicorn import UC_HOOK_CODE
+    w1, w2 = waits
+    st = {'t': {}, 'done': False, 'prev': var('ks_wait', 1), 'after': None}
+    def feeder(uc, addr, size, ud):
+        if not here(): return
+        w, pos = var('ks_wait', 1), var('ks_pos', 2)
+        st['t'].setdefault(pos, m.us)
+        start = st['prev'] == 0 and w == 1 and pos == w2
+        st['prev'] = w
+        if st['done'] or not (where == 'start' and start or addr == at.get(where) and pos == w1 and (
+                where != 'look' or w == 1 and m.u16(0, 0x46C) == (var('ks_until', 2) - 1) & 0xFFFF)):
+            return
+        st['done'] = True
+        tick_before(m, addr)                    # (look: the tick that ends the wait)
+    def peeked(uc, addr, size, ud):             # (the TSR's pop ax: its peek back)
+        if st['after'] is None: st['after'] = (var('ks_wait', 1), var('ks_pos', 2), m.r('flags') & 0x40)
+    old = tsr_1ch(m)
+    hk = [m.mu.hook_add(UC_HOOK_CODE, feeder, None, lo, hi - 1),
+          m.mu.hook_add(UC_HOOK_CODE, peeked, None, 0xF1313, 0xF1313)]
+    m.mu.ctl_remove_cache(lo, hi); m.mu.ctl_remove_cache(0xF1300, 0xF1320)
+    try: res = run()
+    finally:
+        for x in hk: m.mu.hook_del(x)
+        m.wr(0, 0x1C * 4, old)
+    t = st['t']
+    d = [(t[w + 3] - t[w]) / 1e6 if w in t and w + 3 in t else None for w in (w1, w2)]
+    return d, st['after'] if st['done'] else 'no race', res
+
+def peek_waits(script, base):
+    """ks_pos of each {WAIT} in the compiled script, from base."""
+    from gridlink import keys as K
+    b, i, out = K.compile_script(script), 0, []
+    while i < len(b):
+        if b[i:i + 2] == b'\xff\xff': out.append(base + i)
+        i += 3 if b[i] == 0xFF else 2
+    return out
+
+def t_type_peek():
+    """audit3 X42 and its panel: a TSR's INT 16h peek from its INT 1Ch (a tick: the PIC's ISR set, so only the
+    stub's feeder runs) while the console's feeder moves a {WAIT} on: the peek sees the wait whole, and the
+    waits and keys play as typed.  rc_feed runs with interrupts off (the peek comes after it).  Before X42 a
+    wait's end was stored after ks_wait, in two parts: the peek saw the last wait's end (passed) and the keys
+    after went at once.  Before the panel's fix, as a wait ended: a peek before ks_wait went 0 moved ks_pos on
+    by 3 twice ('b' lost), one before ks_pos moved on, or between .l and the look at ks_wait, began the wait
+    again and left ks_wait 1 for the next, cut short."""
     h = Res(); h.boot()
     try:
         h.cmd('claude /r')
         h.cmd('testkey')
         h.press(HOT)
         up = h.has('Welcome to Claude Code', 30)
-        # the TSR: F000:1300 (the BIOS stub's spare RAM), a peek when 1320h is set, then the INT 1Ch before
-        old = h.m.rd(0, 0x1C * 4, 4)
-        h.m.wr(0xF000, 0x1300, bytes([0x2E, 0x80, 0x3E, 0x20, 0x13, 0x00,     # cmp byte [cs:1320h], 0
-                                      0x74, 0x0C,                             # je .chain
-                                      0x2E, 0xC6, 0x06, 0x20, 0x13, 0x00,     # mov byte [cs:1320h], 0
-                                      0x50, 0xB4, 0x01, 0xCD, 0x16, 0x58,     # push ax / mov ah,1 / int 16h / pop ax
-                                      0xEA]) + old)                           # .chain: jmp far
-        h.m.wr(0xF000, 0x1320, b'\0')
-        h.m.wr(0, 0x1C * 4, struct.pack('<HH', 0x1300, 0xF000))
-        st = {'prev': h.rv('ks_wait'), 'n': 0, 't_in': None, 'at': None, 'after': None, 't_past': None}
-        a0, a1 = 0xE0000 + h.rsym['rc_feed'], 0xE0000 + h.rsym['keys_back']
-        def feeder(uc, addr, size, ud):         # (each instruction of rc_feed, the console's page in window 0)
-            if h.m.ems_reg[0] != h.m.rd(h.stub(), h.sym['r_hw'], 1)[0]: return
-            w, pos = h.rv('ks_wait'), h.rv('ks_pos', 2)
-            if st['t_in'] is not None and st['t_past'] is None and pos > st['at']: st['t_past'] = h.m.us
-            m = h.m
-            if st['prev'] == 0 and w == 1 and m.r('flags') & 0x200: st['n'] += 1
-            if st['n'] == 2 and st['t_in'] is None:                         # the second wait (the first's end,
-                st['t_in'], st['at'] = m.us, pos                            #  passed, in ks_until): a tick now,
-                m.wr(0xF000, 0x1320, b'\1')                              #  before this instruction, as
-                fl, cs = m.r('flags'), m.r('cs')                           #  deliver_irqs gives it (an emu_stop
-                m.push(fl); m.push(cs); m.push(addr - cs * 16); m.isr |= 1  #  here would end only the block)
-                off, seg = struct.unpack('<HH', m.rd(0, 8 * 4, 4))
-                m.w('flags', fl & ~0x300); m.w('cs', seg); m.w('ip', off)
-            st['prev'] = w
-        def peeked(uc, addr, size, ud):         # (the TSR's pop ax: its peek back)
-            if st['after'] is None: st['after'] = (h.rv('ks_wait'), h.rv('ks_pos', 2), h.m.r('flags') & 0x40)
-        hk = [h.m.mu.hook_add(UC_HOOK_CODE, feeder, None, a0, a1 - 1),
-              h.m.mu.hook_add(UC_HOOK_CODE, peeked, None, 0xF1313, 0xF1313)]
-        h.m.mu.ctl_remove_cache(a0, a1); h.m.mu.ctl_remove_cache(0xF1300, 0xF1320)
-        res = tool(h, 'grid_type', {'keys': 'a{WAIT 0.3}b{WAIT 1}c'}, 60)
-        for x in hk: h.m.mu.hook_del(x)
-        h.m.wr(0, 0x1C * 4, old)
-        held = st['t_past'] is not None and st['t_in'] is not None and (st['t_past'] - st['t_in']) / 1e6
-        check('a TSR\'s INT 16h peek from INT 1Ch as the feeder starts a second {WAIT}: the wait under way and whole '
-              '(ks_wait 1, ks_pos at it), no key', up and st['after'] is not None and st['after'][:2] == (1, st['at'])
-              and st['after'][2], (up, st))
-        check('... the keys after it wait for it (%s s simulated), and play' % held,
-              held and held > 0.8 and res and not res[1] and 'TESTKEY ready: abc' in res[0][1]['text'], (st, res))
+        lo, hi = 0xE0000 + h.rsym['rc_feed'], 0xE0000 + h.rsym['keys_back']
+        code = h.m.ems_read(h.page(), h.rsym['rc_feed'], hi - lo)
+        kw, kp = struct.pack('<H', h.rsym['ks_wait']), struct.pack('<H', h.rsym['ks_pos'])
+        e0 = code.find(b'\xC6\x06' + kw + b'\0')
+        assert code.count(b'\xC6\x06' + kw + b'\0') == 1 and code[e0 + 5:e0 + 10] == b'\x83\x06' + kp + b'\3', code.hex()
+        at = {'look': lo + code.index(b'\x80\x3E' + kw + b'\0'), 'end0': lo + e0, 'end1': lo + e0 + 5}
+        here = lambda: h.m.ems_reg[0] == h.m.rd(h.stub(), h.sym['r_hw'], 1)[0]
+        waits = peek_waits(PEEK_SCRIPT, 2)
+        line = 'TESTKEY ready: '
+        for where in PEEK_AT:
+            d, after, res = peek_race(h.m, lo, hi, lambda n, k: h.rv(n, k), here, at, where,
+                                      lambda: tool(h, 'grid_type', {'keys': PEEK_SCRIPT}, 60), waits)
+            text = res[0][1]['text'] if res and not res[1] else ''
+            line += 'abc'
+            check('a TSR\'s peek %s: the waits held (%s s), the keys as typed%s' % (
+                  PEEK_AT[where], d, '; the peek no key, the wait under way and whole' if where == 'start' else ''),
+                  up and None not in d and d[0] > 0.15 and d[1] > 0.85 and line in text and isinstance(after, tuple)
+                  and (where != 'start' or after == (1, waits[1], 0x40)), (d, after, res))
         ok, why = clean(h)
         check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
     finally:
