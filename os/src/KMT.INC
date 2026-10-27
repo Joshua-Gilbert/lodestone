@@ -2784,11 +2784,7 @@ mt_pk:  push    cx
         pop     cx
         clc
         ret
-.fr:    mov     dl, [cs:bx+TE_PH]       ; (the copy failed: its pages back)
-        xor     dh, dh
-        mov     ah, 45h
-        int     67h
-        mov     byte [cs:bx+TE_PH], 0
+.fr:    call    mt_phfree               ; (the copy failed: its pages back)
 .no:    pop     ax
         mov     ax, cx
         pop     es
@@ -2836,11 +2832,7 @@ mt_up:  push    cx
         pop     ax                      ; its programs' EMS theirs again
         push    ax
         call    mt_hshow
-        mov     dl, [cs:bx+TE_PH]       ; its pages given back
-        xor     dh, dh
-        mov     ah, 45h
-        int     67h
-        mov     byte [cs:bx+TE_PH], 0
+        call    mt_phfree               ; its pages given back
         mov     al, [cs:bx+TE_PST]
         mov     [cs:bx+TE_STATE], al
         pop     ax
@@ -2861,6 +2853,16 @@ mt_up:  push    cx
         pop     dx
         pop     cx
         stc
+        ret
+
+; the pages of the parked region at entry BX (TE_PH) given back.  AX, DX
+; changed
+mt_phfree:
+        mov     dl, [cs:bx+TE_PH]
+        xor     dh, dh
+        mov     ah, 45h
+        int     67h
+        mov     byte [cs:bx+TE_PH], 0
         ret
 
 ; the MCB at ES named CX, the rest of its name cleared.  CX = 0 after
