@@ -112,6 +112,7 @@ class Link:
         s.pi_seq = 0; s.last_g = None; s.last_answer = None
         s.stats = collections.Counter(); s.connected = False
         s.last_rx = time.monotonic()
+        s.rx_new = 0                          # the GRiD's new frames, counted (no NAK, no resend)
         s.grid_maxpay = 1024
         s.grid_rx = glp.GRID_RX_DEFAULT       # payload the GRiD reads (its HELLO's rx=)
         s.grid_req = glp.GRID_REQ_DEFAULT     # the biggest REQUEST it takes (its HELLO's req=)
@@ -208,8 +209,12 @@ class Link:
 
     def saver_flag(s):
         """HELLO's HF_SAVER: the GRiD may run its screen saver (CLAUDE 1.14, EV_SAVER) only if we can end it,
-        with a ring: a bridge that raises SRQ for us (the Pico's; not an AR488)."""
-        return glp.HF_SAVER if getattr(s.t, 'ring', None) is not None else 0
+        with a ring: a bridge that raises SRQ for us (the Pico's, fw 2026-10-22b on; not an AR488)."""
+        return glp.HF_SAVER if getattr(s.t, 'can_ring', False) else 0
+
+    def gave_up(s):
+        """The rings since the GRiD's last frame all went unanswered (RING_TRIES): it may be gone."""
+        return s.rings_left <= 0
 
     def _unring(s):
         """The bridge's SRQ taken back, if we rang since the GRiD's last frame."""
@@ -323,6 +328,7 @@ class Link:
             return
         elif s.source is not None:
             s.source.delivered()            # a new frame: our last answer arrived
+        s.rx_new += 1                       # (new frames: not a NAK, a resend; TermSession.saver_on)
         s.last_g = f.seq
         msg = s.reasm.add(f)
         if msg and msg[0] in s.drop_types:

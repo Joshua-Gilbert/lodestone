@@ -64,7 +64,7 @@ class TermSession:
         s.title = ''; s.title_sent = None; s.title_t = 0.0
         s.hello = {}; s.exited = None
         s.away = False                  # resident Claude: the user went back to the program
-        s.saver_at = None               # the GRiD's screen saver: link.last_rx at its EVENT (no frame since: on)
+        s.saver_at = None               # the GRiD's screen saver: link.rx_new at its EVENT (no new frame since: on)
         s.bg = False                    #  and its console goes on in the background (M4, HF_BG)
         s.bg_sdc = 0                    #  (the bridge's count of SDCs then: the console's stop)
         s.stats = dict(keys=0, pty_in=0, pty_out=0)
@@ -134,9 +134,11 @@ class TermSession:
         return s.NOT_PAUSED if tool in s.PAUSED_TOOLS else None
 
     def saver_on(s):
-        """The GRiD's screen saver is up (CLAUDE 1.14: EV_SAVER, no frame since): the GRiD is there, quiet till
-        the ring (Link.ring_check) ends it."""
-        return s.saver_at is not None and s.link is not None and s.link.last_rx == s.saver_at
+        """The GRiD's screen saver is up (CLAUDE 1.14: EV_SAVER, no new frame since): the GRiD is there, quiet
+        till the ring (Link.ring_check) ends it.  Not once the rings have gone unanswered (the GRiD reset or
+        off meanwhile): the 10-s rule again."""
+        L = s.link
+        return s.saver_at is not None and L is not None and L.rx_new == s.saver_at and not L.gave_up()
 
     def paused_tools(s):
         """The GRiD tools resident Claude's console answers: grid_program and
@@ -208,8 +210,8 @@ class TermSession:
                 s.click_at(body[1] | body[2] << 8, body[3] | body[4] << 8)
             elif body[0] == glp.EV_CLICK and len(body) >= 3:       # a cell (#32's CLAUDE)
                 s.click_at(body[1] * 8 + 4, body[2] * 16 + 8)
-            elif body[0] == glp.EV_SAVER:       # (CLAUDE 1.14: quiet till rung; feed set last_rx before this)
-                s.saver_at = s.link.last_rx
+            elif body[0] == glp.EV_SAVER:       # (CLAUDE 1.14: quiet till rung, which takes its GF_WAKE and ours)
+                if s.link.grid_wake and s.link.saver_flag(): s.saver_at = s.link.rx_new
             elif body[0] == glp.EV_AWAY:        # (resident Claude's console, going: never for TYPE's keys)
                 s.away = True
                 # M4: on in the background, the bridge quiet (from the answer to this EVENT on: if it can't

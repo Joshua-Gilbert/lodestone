@@ -1043,12 +1043,7 @@ draw_help:
 ;  keyboard
 ; =====================================================================
 kbd_service:
-        mov     ah, 11h                 ; (a key: the saver waits)
-        int     16h
-        jz      .nk
-        mov     ax, [now]
-        mov     [sv_last], ax
-.nk:    cmp     byte [term], 0
+        cmp     byte [term], 0
         je      .chat
         jmp     term_kbd
 .chat:  mov     ah, 1
@@ -1056,6 +1051,8 @@ kbd_service:
         jz      .x
         xor     ah, ah
         int     16h
+        mov     dx, [now]               ; (a key: the saver waits; Term's:
+        mov     [sv_last], dx           ;  t_active)
         cmp     byte [help_open], 0
         jne     .help
         cmp     byte [ask_open], 0
@@ -1540,7 +1537,13 @@ win_frame:
 ; window.  In the window: the cursor for the descriptor, and CF.  All kept
 win_done:
         pusha
-        cmp     byte [pic], 0
+        mov     al, [t_pix]             ; (for the saver's end, sv_run: pixels
+        or      al, al                  ;  drawn, a picture up till a frame
+        jnz     .sp                     ;  clears without them)
+        test    byte [t_flags], 1
+        jz      .s0
+.sp:    mov     [sv_pic], al
+.s0:    cmp     byte [pic], 0
         je      .w
         mov     al, [t_flags]
         test    al, F_PIC
@@ -1803,24 +1806,34 @@ maybe_idle:                             ; HLT when nothing is due
 ;  saver), a Pi that keeps the GRiD's tools on meanwhile (HF_SAVER) and
 ;  rings it (GF_WAKE, the driver's SRQ count).  The Pi is told first
 ;  (EVENT saver); with its answer in and nothing new, the saver runs
-;  (sv_run).  CF if it did something (no HLT now)
+;  (sv_run).  CF if it did something (no HLT now).  Not looked for over
+;  2 s (a RUN, a long call, frozen behind under MT), or in a window: as
+;  a key, counted from then
 ; ---------------------------------------------------------------------
 sv_check:
+        mov     ax, [now]
+        mov     bx, ax
+        sub     bx, [sv_prev]
+        mov     [sv_prev], ax
+        cmp     bx, 36
+        ja      .act
         cmp     word [sv_t], 0FFFFh
-        je      .no
+        je      .rs
         cmp     byte [connected], 0
-        je      .no
+        je      .rs
         cmp     byte [lstate], LS_IDLE
-        jne     .no
+        jne     .rs
         test    byte [pi_hf], HF_SAVER
-        jz      .no
+        jz      .rs
         cmp     byte [wake_ok], 0
-        je      .no
+        je      .rs
         cmp     word [irq_ptr+2], 0
-        je      .no
+        je      .rs
+        cmp     byte [srq_held], 0      ; (another device holds the line: a
+        jne     .rs                     ;  ring would make no edge)
 %ifdef TERM_WIN
         cmp     byte [win], 0
-        jne     .no
+        jne     .act
 %endif
         cmp     byte [tmouse], 0        ; the mouse moved, or a button: not
         je      .t                      ;  idle
@@ -1836,9 +1849,16 @@ sv_check:
         mov     [sv_my], dx
         mov     [sv_mb], bx
         jmp     short .act
-.t:     mov     bx, [now]
+.t:     mov     ax, [now]
+        mov     bx, ax
         sub     bx, [sv_last]
-        cmp     bx, 8000h               ; (the clock back at midnight)
+        cmp     byte [term], 0
+        je      .d
+        sub     ax, [t_active]          ; Term: its keys and screen changes
+        cmp     ax, bx                  ;  (TERMKEYS, CELLS) too
+        jae     .d
+        mov     bx, ax
+.d:     cmp     bx, 0F000h              ; (the clock back at midnight)
         jae     .act
         cmp     bx, [sv_t]
         jb      .rs
@@ -1847,6 +1867,7 @@ sv_check:
         call    sv_front
         jc      .act
         mov     byte [sv_st], 1
+        mov     byte [rep_q], 1         ; (one EVENT at a time: msg_sent)
         mov     al, G_EVENT
         mov     si, evsaver
         mov     cx, 1
@@ -1859,7 +1880,7 @@ sv_check:
 .act:   mov     ax, [now]
         mov     [sv_last], ax
 .rs:    mov     byte [sv_st], 0
-.no:    clc
+        clc
         ret
 
 ; in front?  CF if not (with multitasking, another task's screen)
@@ -1879,7 +1900,8 @@ sv_front:
 ; the saver: the pointer off, INT 16h hooked (sv_i16: the Pi's ring or the
 ; mouse ends it as a key would), the far call (DS = ES = the UI's, as
 ; LCMD's), then as it was: redrawn, and in Term the screen asked of the Pi
-; again (CODE-R's: a picture isn't kept), the pointer on
+; again if a picture was up (CODE-R's: the shadow has only text), the
+; pointer on
 sv_run:
         pusha
         push    es
@@ -1906,6 +1928,7 @@ sv_run:
         mov     ax, 2516h
         int     21h
         pop     ds
+        call    vec_ours                ; (INT 24h ours again: the UI set its own)
         push    cs
         pop     es
         call    get_ticks
@@ -1915,7 +1938,11 @@ sv_run:
         mov     byte [cur_on], 0
         cmp     byte [term], 0
         je      .c
+        cmp     byte [sv_pic], 0
+        je      .s
         call    term_repaint
+        jmp     short .p
+.s:     call    term_redraw             ; (text only: the shadow has it all)
         jmp     short .p
 .c:     call    redraw_all
 .p:     cmp     byte [tmouse], 0
@@ -1933,9 +1960,9 @@ sv_run:
 
 ; INT 16h while the saver runs: the Pi's ring (the driver's SRQ count) or
 ; the mouse (moved, a button) is a key for it, Esc, once, so it ends as at
-; a key (DEFRAG with it, reading it through DOS: not a 0 that DOS takes
-; for an extended key's first half); the rest goes on.  Also inside DOS
-; (DEFRAG's key looks): a count read and INT 33h AX=3 alone
+; a key (DEFRAG's key looks too: any key stops it; Esc, not a 0, for a
+; reader that would take a 0 for an extended key's first half); the rest
+; goes on.  Also inside DOS: a count read and INT 33h AX=3 alone
 SV_KEY  equ 011Bh
 sv_i16: sti
         cmp     ah, 1
@@ -2091,6 +2118,7 @@ pf_nop: ret
 pf_hello:
         xor     bl, bl                          ; BL = Term (the Pi's flags)
         mov     [pi_hf], bl
+        mov     [sv_st], bl                     ; (a new Pi: not told of the saver)
         cmp     cx, 2
         jb      .f
         mov     bl, [si+1]
@@ -4294,6 +4322,8 @@ sv_old16    resd 1                      ; INT 16h under sv_i16
 sv_mx       resw 1                      ; the mouse at the last look (INT 33h AX=3)
 sv_my       resw 1
 sv_mb       resw 1
+sv_prev     resw 1                      ; sv_check's last look (a gap: activity)
+sv_pic      resb 1                      ; 1: a picture may be up (Term: asked again after)
 pi_hf       resb 1                      ; the Pi's HELLO flags (HF_SAVER)
 cur_di      resw 1
 t_flags     resb 1
