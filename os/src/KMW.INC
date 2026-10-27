@@ -811,16 +811,7 @@ mw_say: pusha
         push    es
         sub     sp, MW_SAYB
         mov     dx, ax                  ; (DX: why)
-        mov     bx, si                  ; (a path: its last part)
-.p:     lodsb
-        cmp     al, '\'
-        je      .pn
-        cmp     al, ':'
-        jne     .pe
-.pn:    mov     bx, si
-.pe:    or      al, al
-        jnz     .p
-        mov     si, bx
+        call    mt_lname                ; (a path: its last part)
         mov     di, sp
         mov     cx, 13
 .n:     lodsb
@@ -1036,17 +1027,11 @@ mw_load_ctx:
 ; its name: SI's last part (after any \ or :), 12 characters at most
 mw_name:
         pusha
-        mov     bx, si
-.f:     lodsb
-        or      al, al
-        jz      .e
-        cmp     al, '\'
-        je      .p
-        cmp     al, ':'
-        jne     .f
-.p:     mov     bx, si
-        jmp     .f
-.e:     mov     si, bx
+        push    es
+        push    ds
+        pop     es
+        call    mt_lname
+        pop     es
         lea     di, [bp+SE_NAME]
         mov     cx, 12
 .c:     lodsb
