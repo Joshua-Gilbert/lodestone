@@ -16,6 +16,7 @@ pseudo-terminal, and runs:
   I  the daemon stalls past the Pico's 5 s PING timeout and must recover on its own
   J  gridlink's own Pico transport in auto service request mode, the way CLAUDE.COM reads (when the
      lodestone repo's claude-link is at $LODESTONE_LINK)
+  K  a reply read twice at once, after replies dropped as stale on arrival (TALK_WAIT on CREDIT's scale)
 
 usage: run_sim_tests.py          (writes sim/host/sim_results.txt)
 """
@@ -158,6 +159,32 @@ def thrutest(sim):
     check("9 REN off/on, GTL, GET, IFC reach the Pi",
           st.get("REN", 0) >= 2 and st.get("GTL", 0) >= 1 and st.get("GET", 0) >= 1 and st.get("IFC", 0) >= 1,
           str(st))
+
+
+def reread(sim, d):
+    say("K  a reply read twice at once, after replies dropped as stale on arrival")
+    import signal
+    drop0 = int(sim.stats()["dropped0"])
+    for i in range(3):                           # the Pi answers a message only after the SDC that made it stale:
+        d.p.send_signal(signal.SIGSTOP)          #  the Pico drops the reply as it arrives (tx_dropped0)
+        sim.write(10, b"stale %d\n" % i)
+        sim.cmd("sdc 10")
+        d.p.send_signal(signal.SIGCONT)
+        time.sleep(0.3)
+    drops = int(sim.stats()["dropped0"]) - drop0
+    check("replies made stale by an SDC are dropped on arrival", drops > 0, f"dropped0 +{drops}")
+    sim.cmd("tmo 500")
+    bad = 0
+    for i in range(20):                          # (a race with the CREDIT: before the fix, about half of these
+        msg = b"again %d\n" % i                  #  second reads timed out in the simulation)
+        sim.write(10, msg)
+        r, got, end = sim.read(10)
+        r, got2, end2 = sim.read(10)             # at once, within the CREDIT's 5 ms: TALK_WAIT's arg must count the
+        if got != msg or got2 != msg:            #  drops as CREDIT does, or the reply looks still on its way
+            bad += 1
+            say(f"     {msg!r}: read {got!r}, read again {got2!r}")
+    sim.cmd("tmo 2000")
+    check("20 replies read twice at once: the second read answered too (on_talk)", bad == 0, f"{bad} wrong")
 
 
 def other_device(sim):
@@ -745,6 +772,7 @@ def main():
     d = Daemon(sim.pty)
     try:
         thrutest(sim)
+        reread(sim, d)
         other_device(sim)
         srq(sim)
         big(sim)

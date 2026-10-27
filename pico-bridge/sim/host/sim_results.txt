@@ -9,6 +9,9 @@ A  THRUTEST's steps, thrutest handler, address 10
   PASS  7 SDC clears it (ID, not the old message)
   PASS  8 DCL clears it
   PASS  9 REN off/on, GTL, GET, IFC reach the Pi
+K  a reply read twice at once, after replies dropped as stale on arrival
+  PASS  replies made stale by an SDC are dropped on arrival
+  PASS  20 replies read twice at once: the second read answered too (on_talk)
 B  the other instrument (address 5) with the bridge online
   PASS  20 writes/reads to address 5 all correct
   PASS  the bridge passed none of that traffic to the Pi
@@ -113,7 +116,7 @@ J  gridlink's Pico transport, auto service request (CLAUDE.COM's way of reading)
   PASS  quiet: an answer in raises no SRQ, and the poll says 60h as ever
   PASS  quiet: a ring raises no SRQ, its poll says 40h
   PASS  quiet off with an answer's RQS waiting: SRQ then, served by the poll (60h)
-final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '188', 'cmds': '2709', 'rx': '124086', 'tx': '193408', 'polls': '143', 'lost': '0', 'holds': '2', 'fights': '0', 'late': '0', 'held': '15', 'held_void': '9'}
+final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '214', 'cmds': '3036', 'rx': '124280', 'tx': '193748', 'polls': '143', 'lost': '0', 'holds': '2', 'fights': '0', 'late': '0', 'held': '15', 'held_void': '9', 'dropped0': '534'}
   PASS  no events lost in the Pico
 
-103 of 103 checks passed
+105 of 105 checks passed

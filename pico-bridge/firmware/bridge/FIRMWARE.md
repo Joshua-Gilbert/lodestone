@@ -125,6 +125,12 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   (`SH.quiet`), so no SRQ slips out between a CONFIG and core 1's next look at it. The J tests add an answer and a ring with quiet on (no SRQ, the byte as ever) and quiet
   turned off with RQS waiting (SRQ then): 103 checks. `bridge_pico2.uf2` built with arduino-cli 1.5.1 and
   `rp2040:rp2040` 6.3.0, as below.
+- **2026-10-26.** TALK_WAIT's arg on CREDIT's scale (audit 2026-10-26 X59). Core 1 records its own
+  `tx_consumed`; core 0 now adds `tx_dropped0` as it sends the event on, as CREDIT and HELLO count. Before,
+  once any reply had been dropped as stale on arrival, the Pi took a reply it had already sent for one still
+  on its way when the 1520 read again before the next CREDIT (≤ 5 ms): it skipped `on_talk` and the read
+  timed out. gridlink ignores TALK_WAIT. The bus simulation's K tests read 20 replies twice at once after
+  such drops (about half the second reads timed out before): 105 checks. Not yet in `bridge_pico2.uf2`.
 
 ## Build
 
@@ -165,7 +171,7 @@ To go back to the bench firmware, use BOOTSEL and `firmware/bench_test/bench_tes
 | Steady on | Online |
 | Flicker | Bytes moving to or from the bridge |
 
-## Tested (no hardware): `sim/host/run_sim_tests.py`, 65 / 65
+## Tested (no hardware): `sim/host/run_sim_tests.py`, 105 / 105
 
 `sim/host/bus_sim.c` compiles this same `gpib_engine.c` and `host_link.c` for Linux, with a model of the
 board:
@@ -182,6 +188,7 @@ The real Pi daemon connects through a pseudo-terminal.
 What it covers:
 
 - THRUTEST's 9 steps, including every byte value both ways.
+- A reply read twice at once, after replies dropped as stale on arrival.
 - Traffic to the other instrument: the bridge stays out of it.
 - SRQ and serial poll, including SRQ staying served after later traffic.
 - Messages of 241–20000 bytes.
