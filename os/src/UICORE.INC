@@ -2478,8 +2478,7 @@ win_mv: pusha
 .k:     mov     ah, 11h
         int     16h
         jnz     .key
-        sti
-        hlt
+        call    mwait                   ; (as the drag's: tasks run meanwhile)
         jmp     .k
 .key:   call    read_key
         mov     bx, [mv_c]

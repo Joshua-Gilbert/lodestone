@@ -38,8 +38,11 @@ MT_KILL     equ 14h                     ; BL = a task: it ends, whatever runs in
                                         ;  24h handler or a mouse event
                                         ;  handler: at its next safe point).
                                         ;  A parked task: brought back first
-                                        ;  (MT_UNPARK).  CF: AX = 1 (no such
-                                        ;  task), 5 (task 0, the Executive), 8
+                                        ;  (MT_UNPARK); its EMS gone, ended
+                                        ;  where it is (its files stay open:
+                                        ;  their handles went with it).  CF:
+                                        ;  AX = 1 (no such task), 5 (task 0,
+                                        ;  the Executive), 8
                                         ;  (parked, and it can't be brought back)
 MT_PARK     equ 15h                     ; BL = a task: its memory (its region)
                                         ;  copied to EMS and given back; it
