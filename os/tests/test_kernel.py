@@ -2351,6 +2351,24 @@ def t_cmdshare():
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
     check('back in the Executive, disk consistent', k.pc.mode() == 0x40 and not probs, probs)
+    # START of a batch file: COMSPEC copied to prog2 (80 B); one of 80 characters lost its NUL to the command tail
+    # built after it, and MT_SPAWN got both as its path (2026-10-26 audit X43).  Both name LCMD.COM, copied there
+    k = ktest.KPC(ini_image('sharemt.img', b'MULTITASK=1\r\n', os.path.join(GOS, 'src', 'LCMD.COM'),
+                            'LODEMT.SYS=' + os.path.join(GOS, 'src', 'LODEMT.SYS'), bat('TB.BAT', '@echo off', 'echo ran > tb.txt')),
+                  ems_pages=88)
+    k.start(10)
+    sh = Shell(k)
+    ds = [c * 8 for c in 'ABCDEF'] + ['GGGG', 'HHHH']                  # (63 characters)
+    for i in range(len(ds)): sh.run('md \\' + '\\'.join(ds[:i + 1]))
+    sh.run('md \\' + '\\'.join(ds) + 'H')
+    outs = []
+    for h in ('HHHHH', 'HHHH'):
+        c = 'A:\\' + '\\'.join(ds[:-1] + [h]) + '\\LCMDLCMD.COM'
+        sh.run('copy lcmd.com ' + c); sh.run('set comspec=' + c)
+        o = sh.run('start /w tb.bat'); k.run_for(2)
+        outs.append((len(c), 'Bad command or file name' in o, 'A:\\TB.TXT' in fs(), o))
+    check('START of a batch file with a COMSPEC of 80 characters: "Bad command or file name", nothing started; of 79: '
+          'it runs', [x[:3] for x in outs] == [(80, True, False), (79, False, True)] and not k.crashed, outs)
 
 def t_cmdsaver():
     """The Executive's screen saver at the prompt (and in PAUSE): DEFRAG,
