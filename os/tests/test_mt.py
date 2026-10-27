@@ -5031,6 +5031,88 @@ def t_wwait():
           '(tmp then %r), and a key ends it: the band says it again (%s)' % (b1[:1], tm, b2[:1]), say(b1) and say(b2)
           and not k.crashed, (b1, tm, b2))
 
+def t_wxor():
+    print('== the Executive\'s XOR outlines cut around a window .RUN\'s window (M8c: mw_span\'s top, bottom and side rows)')
+    k = boot('mt_wx.img', b'MULTITASK=1\r\n', 88, A.CALCRUN, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    CS = A.run_syms('apps/CALC.ASM')
+    k.key(A.CODE['K']); k.run_for(0.5)
+    c, y, w, h = (k.pc.u16(k.useg, k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE) + CS['win'] + o) for o in (0, 2, 4, 6))
+    A.click(k, 4, 72); k.run_for(0.3)               # (the Executive in front, the calculator on top)
+    A.point(k, 639, 399); k.run_for(0.3)
+    rects = (((c - 4) * 8 + 3, (c + 4) * 8 + 2, y + 10, 30),        # x0, x1 (pixels), y0, rows: its left side out,
+             ((c - 2) * 8 + 1, (c + w - 3) * 8 + 4, y - 6, h + 12),  #  its right in; across its top and bottom;
+             ((c - 9) * 8 + 2, 638, y + 30, 50),                      #  across all of it; its left side and bottom
+             ((c + 2) * 8 + 5, 637, y + 5, h),                        #  in; its top above, its bottom in; wholly in
+             ((c - 6) * 8 + 7, (c + 1) * 8 + 6, y - 20, 40),
+             ((c + 3) * 8 + 1, (c + 5) * 8 + 4, y + 8, 12))
+    REGS = ('ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'ds', 'es', 'flags')
+    scr = lambda: bytes(k.pc.rd(0xB800, 0, 0x8000))
+    st, got, rows = {'i': 0, 'go': False}, [], [0, 0]
+    def xh(pc):                         # xor_rect called from the Executive's idle point, one rectangle a time
+        if pc.r('cs') == seg and pc.r('ip') in (Y['mw_span.xl'], Y['mw_span.xs']):
+            rows[pc.r('ip') == Y['mw_span.xs']] += 1
+        if pc.r('cs') != k.useg or pc.r('ip') != Y['..@ui_idle'] or st['i'] >= len(rects): return
+        if not st['go']:
+            if pc.rd(seg, Y['mw_cur'], 1)[0]: return
+            st['regs'], st['s0'] = {r: pc.r(r) for r in REGS}, scr()
+            x0, x1, y0, n = rects[st['i']]
+            pc.push(Y['..@ui_idle'])
+            pc.w('ax', x0); pc.w('di', x1); pc.w('dx', y0); pc.w('cx', n); pc.w('ip', Y['xor_rect'])
+            st['go'] = True; pc.mu.emu_stop()
+        else:
+            s0, s1 = st['s0'], scr()
+            got.append({(xb * 8 + b, r) for r in range(400) for xb in range(80) for b in range(8)
+                        if (s0[(r & 3) * 0x2000 + (r >> 2) * 80 + xb] ^ s1[(r & 3) * 0x2000 + (r >> 2) * 80 + xb]) & (0x80 >> b)})
+            for r, v in st['regs'].items(): pc.w(r, v)
+            st['go'] = False; st['i'] += 1
+    k.hooks.append(xh)
+    for _ in range(40):
+        k.run_for(0.1)
+        if st['i'] >= len(rects): break
+    k.hooks.remove(xh)
+    want = []
+    for x0, x1, y0, n in rects:         # the outline unclipped, less the calculator's box
+        p = {(x, r) for r in (y0, y0 + n - 1) for x in range(x0, x1 + 1)} | {(x, r) for r in range(y0, y0 + n) for x in (x0, x1)}
+        want.append({(x, r) for x, r in p if not (c * 8 <= x < (c + w) * 8 and y <= r < y + h)})
+    check('six outlines XORed by the Executive (xor_rect) with the calculator on top (column %d, row %d, %dx%d): each '
+          'drawn exactly but where the calculator is (%s pixels), its rows cut a row at a time (%d top or bottom, %d '
+          'side rows)' % (c, y, w, h, [len(g) for g in got], rows[0], rows[1]), len(got) == len(rects) and got == want
+          and rows[0] > 0 and rows[1] > 0 and not want[-1] and all(want[:-1]) and not k.crashed,
+          ([(len(g), len(v), len(g - v), len(v - g)) for g, v in zip(got, want)], rows, k.crashed))
+
+QUITRUN = os.path.join(HERE, 'QUITRUN.RUN')
+
+def t_wroot():
+    print('== the root starting over with window .RUNs open (one\'s INT 21h 4Ch): every session forgotten, the blocks '
+          'freed (mw_clean)')
+    k = boot('mt_wr.img', b'MULTITASK=1\r\n', 88, QUITRUN, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    free0 = A.free_paras(k)
+    for i in (1, 2):                    # (two of it, each with blocks of 64 and 32 paragraphs)
+        if mb('mw_cur'): A.click(k, 8, 100); k.run_for(0.3)
+        k.select('QUITRUN.RUN'); k.key(ktest.ENTER); k.run_for(1.0)
+    n2, c2, f2 = mb('mw_n'), mb('mw_cur'), A.free_paras(k)
+    nc = [0]
+    def ch(pc):
+        if pc.r('cs') == seg and pc.r('ip') == Y['mw_clean'] and pc.rd(seg, Y['mw_n'], 1)[0]: nc[0] += 1
+    k.hooks.append(ch)
+    k.key('Q'); k.run_for(2.0); k.settle()
+    k.hooks.remove(ch)
+    uses = [k.pc.rd(seg, Y['mw_ses'] + i * SE_SIZE, 1)[0] for i in range(1, 5)]
+    check('two QUITRUN.RUNs open (%d, the second in front), Q in it: INT 21h 4Ch, the Executive starts over (mw_clean '
+          'with sessions: %d); none left (%s), no clipping, its blocks and the first\'s freed: the memory as before (%s)'
+          % (n2, nc[0], uses, A.free_paras(k)), n2 == 2 and c2 == 2 and f2 != free0 and nc[0] == 1 and mb('mw_n') == 0
+          and mb('mw_cur') == 0 and mb('mw_cp') == 0 and uses == [0] * 4 and k.rd('run_active', 1) == b'\x00'
+          and A.free_paras(k) == free0 and A.has(k, 'Select a file and confirm') and not k.crashed,
+          (n2, c2, nc, uses, mb('mw_n'), mb('mw_cp'), A.free_paras(k), free0, f2, k.band(), k.crashed))
+    k.select('QUITRUN.RUN'); k.key(ktest.ENTER); k.run_for(1.0)
+    up = (mb('mw_n'), A.has(k, 'Quit test'))
+    k.key(ktest.ESC); k.run_for(1.0)
+    check('... then QUITRUN.RUN again: it opens (%s), ESC: it ends, the memory as before' % (up,), up == (1, True)
+          and mb('mw_n') == 0 and A.free_paras(k) == free0 and not k.crashed, (up, mb('mw_n'), A.free_paras(k), free0))
+
 MTPB = os.path.join(HERE, 'MTPUB.COM')
 
 def t_tpub():
@@ -5933,8 +6015,9 @@ if __name__ == '__main__':
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
+    A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
