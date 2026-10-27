@@ -895,7 +895,7 @@ def port_gone_under_read():
     ok = wait(lambda: len(ports) > 2 and b.connected and b.ser is ports[-1], 5)
     check("a PING write in flight when the main loop closes the port: the daemon reconnects",
           in_write and ok and not errors, f"in_write={in_write} {len(ports)} ports {errors!r}")
-    pinger = [t for t in threading.enumerate() if "ping_thread" in t.name]
+    pinger = [t for t in threading.enumerate() if t.name == "ping"]
     wait(lambda: ports[-1].pings >= 2, 3)
     check("... and its ping thread lives on and PINGs the new port",
           pinger and pinger[0].is_alive() and ports[-1].pings >= 2,
