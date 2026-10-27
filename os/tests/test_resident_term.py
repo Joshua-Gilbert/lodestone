@@ -633,6 +633,34 @@ def t_type_peek():
         h.close()
 
 
+def t_title_room():
+    """audit3 X41: the band's title at its longest (the Pi's 36, a 12-character program name, 99 requests in
+    the background, DOS busy: 87 bytes and the NUL) stays in title_text's 69 bytes, status_text after it
+    untouched; what the band shows (48 cells) as before."""
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('testkey')
+        h.press(HOT)
+        up = h.has('Welcome to Claude Code', 30) and in_step(h)
+        base = h.page() * 0x4000
+        def poke(name, data): h.m.ems_store[base + h.rsym[name]:base + h.rsym[name] + len(data)] = data
+        poke('prog', b'LONGNAME.COM\0'); poke('bg_shown', b'\x63'); poke('dos_ok', b'\0')
+        st0 = h.rv('status_text', 72)
+        h.link.send(glp.P_TITLE, b'T' * 40)
+        shown = h.run_until(lambda: 'T' * 36 in h.band(), 5)
+        title = h.rv('title_text', 69)
+        check('the longest title: in title_text (its NUL by byte 68), status_text untouched',
+              up and shown and 0 in title and h.rv('status_text', 72) == st0, (up, shown, title, st0, h.rv('status_text', 72)))
+        check('... the band shows the Pi\'s title and the program\'s name, as far as its 48 cells go',
+              title.startswith(b'T' * 36 + b'  \x86  LONGNAME.COM') and 'LONGNA' in h.band().split('T' * 36)[-1],
+              (title, h.band()))
+        ok, why = clean(h)
+        check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
 def t_noscreen():
     """A program in a mode the console keeps no copy of (mono, mode 7):
     SCREEN's REPLY is F5h and nothing after it; TYPE's is F5h and its
@@ -1548,7 +1576,7 @@ def t_bg_screen():
         h.close()
 
 
-TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
+TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
          t_ops, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen]
 if __name__ == '__main__':
     TR.build()
