@@ -1596,6 +1596,7 @@ mt_owners:
 mt_vpg: pusha
         push    ds
         push    es
+        cld
         mov     dx, bx
         pushf                           ; (behind: its writes to the table's
         cli                             ;  09h, 1Bh to its TX, the table the
@@ -1654,14 +1655,12 @@ mt_vpg: pusha
         add     si, 4
         loop    .o
         mov     di, TX_FVEC
-.s:     mov     ax, [es:di]
-        mov     [cs:mt_vfs], ax
-        mov     ax, [es:di+2]
-        mov     [cs:mt_vfs+2], ax
-        mov     ax, [es:di+4]
-        mov     [cs:mt_vfs+4], ax
-        mov     ax, [es:di+6]
-        mov     [cs:mt_vfs+6], ax
+.s:     push    es
+        pop     ds
+        mov     si, di
+        mov     di, mt_vfs
+        call    mt_vfix.cp
+        call    mt_vfix.cp
         xor     ax, ax
         mov     ds, ax                  ; (the table)
         mov     [cs:mt_vsb], ax
