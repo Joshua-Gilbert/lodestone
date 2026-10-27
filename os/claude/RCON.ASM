@@ -1443,9 +1443,10 @@ unborrow:
 ; ---- the band ----------------------------------------------------
 ; title_text: the Pi's title (or ours), the program's name, then DOS busy
 ; if the file requests can't call it (a long status on the right covers the
-; end: the name is in HELLO for Claude anyway).  After the program's name, a
-; field goes on only while the band's 48 cells aren't full: at most 47 + 14
-; (s_bgn) bytes and the NUL, in title_text's 69
+; end: the name is in HELLO for Claude anyway).  After the program's name,
+; each string goes on only while the band's 48 cells aren't full (the count's
+; two digits regardless, past cell 48 if its separator was left out): at most
+; 47 + 14 (s_bgn) bytes and the NUL, in title_text's 69
 make_title:
         mov     di, title_text
         mov     si, ptitle
