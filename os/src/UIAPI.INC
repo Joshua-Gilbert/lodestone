@@ -182,7 +182,8 @@ UI_CLIP     equ 49 * 3  ; the clipboard every .RUN shares (API 8), kept when
                         ;  or DOS's: UI_SBERR).  Bytes as they are: text in a
                         ;  program's own form (Write's lines end in LF).  In an
                         ;  EMS page of its own; with none to be had, in
-                        ;  CLIP.$$$ on the settings drive (INT 21h 3305h)
+                        ;  CLIP.$$$ on the settings drive (INT 21h 3305h),
+                        ;  else the start-up one (from the ROM: C:, else A:)
 UI_LAST     equ 49 * 3
 FONT_BYTES  equ 96 * 16                 ; a font file (.FNT): exactly this long
 
