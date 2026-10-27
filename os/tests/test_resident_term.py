@@ -576,6 +576,91 @@ def t_type():
         h.close()
 
 
+def t_type_peek():
+    """audit3 X42: a TSR's INT 16h peek from its INT 1Ch (a tick: the PIC's ISR set, so only the stub's feeder
+    runs) just as the console's feeder has said a {WAIT} is under way: the peek sees the wait whole and no
+    key, and the keys after it wait.  Before the fix the end was stored after ks_wait, in two parts: the peek
+    saw the wait before's end (passed), took this one as over, and the keys after it went at once."""
+    from unicorn import UC_HOOK_CODE
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('testkey')
+        h.press(HOT)
+        up = h.has('Welcome to Claude Code', 30)
+        # the TSR: F000:1300 (the BIOS stub's spare RAM), a peek when 1320h is set, then the INT 1Ch before
+        old = h.m.rd(0, 0x1C * 4, 4)
+        h.m.wr(0xF000, 0x1300, bytes([0x2E, 0x80, 0x3E, 0x20, 0x13, 0x00,     # cmp byte [cs:1320h], 0
+                                      0x74, 0x0C,                             # je .chain
+                                      0x2E, 0xC6, 0x06, 0x20, 0x13, 0x00,     # mov byte [cs:1320h], 0
+                                      0x50, 0xB4, 0x01, 0xCD, 0x16, 0x58,     # push ax / mov ah,1 / int 16h / pop ax
+                                      0xEA]) + old)                           # .chain: jmp far
+        h.m.wr(0xF000, 0x1320, b'\0')
+        h.m.wr(0, 0x1C * 4, struct.pack('<HH', 0x1300, 0xF000))
+        st = {'prev': h.rv('ks_wait'), 'n': 0, 't_in': None, 'at': None, 'after': None, 't_past': None}
+        a0, a1 = 0xE0000 + h.rsym['rc_feed'], 0xE0000 + h.rsym['keys_back']
+        def feeder(uc, addr, size, ud):         # (each instruction of rc_feed, the console's page in window 0)
+            if h.m.ems_reg[0] != h.m.rd(h.stub(), h.sym['r_hw'], 1)[0]: return
+            w, pos = h.rv('ks_wait'), h.rv('ks_pos', 2)
+            if st['t_in'] is not None and st['t_past'] is None and pos > st['at']: st['t_past'] = h.m.us
+            m = h.m
+            if st['prev'] == 0 and w == 1 and m.r('flags') & 0x200: st['n'] += 1
+            if st['n'] == 2 and st['t_in'] is None:                         # the second wait (the first's end,
+                st['t_in'], st['at'] = m.us, pos                            #  passed, in ks_until): a tick now,
+                m.wr(0xF000, 0x1320, b'\1')                              #  before this instruction, as
+                fl, cs = m.r('flags'), m.r('cs')                           #  deliver_irqs gives it (an emu_stop
+                m.push(fl); m.push(cs); m.push(addr - cs * 16); m.isr |= 1  #  here would end only the block)
+                off, seg = struct.unpack('<HH', m.rd(0, 8 * 4, 4))
+                m.w('flags', fl & ~0x300); m.w('cs', seg); m.w('ip', off)
+            st['prev'] = w
+        def peeked(uc, addr, size, ud):         # (the TSR's pop ax: its peek back)
+            if st['after'] is None: st['after'] = (h.rv('ks_wait'), h.rv('ks_pos', 2), h.m.r('flags') & 0x40)
+        hk = [h.m.mu.hook_add(UC_HOOK_CODE, feeder, None, a0, a1 - 1),
+              h.m.mu.hook_add(UC_HOOK_CODE, peeked, None, 0xF1313, 0xF1313)]
+        h.m.mu.ctl_remove_cache(a0, a1); h.m.mu.ctl_remove_cache(0xF1300, 0xF1320)
+        res = tool(h, 'grid_type', {'keys': 'a{WAIT 0.3}b{WAIT 1}c'}, 60)
+        for x in hk: h.m.mu.hook_del(x)
+        h.m.wr(0, 0x1C * 4, old)
+        held = st['t_past'] is not None and st['t_in'] is not None and (st['t_past'] - st['t_in']) / 1e6
+        check('a TSR\'s INT 16h peek from INT 1Ch as the feeder starts a second {WAIT}: the wait under way and whole '
+              '(ks_wait 1, ks_pos at it), no key', up and st['after'] is not None and st['after'][:2] == (1, st['at'])
+              and st['after'][2], (up, st))
+        check('... the keys after it wait for it (%s s simulated), and play' % held,
+              held and held > 0.8 and res and not res[1] and 'TESTKEY ready: abc' in res[0][1]['text'], (st, res))
+        ok, why = clean(h)
+        check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
+def t_title_room():
+    """audit3 X41: the band's title at its longest (the Pi's 36, a 12-character program name, 99 requests in
+    the background, DOS busy: 87 bytes and the NUL) stays in title_text's 69 bytes, status_text after it
+    untouched; what the band shows (48 cells) as before."""
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('testkey')
+        h.press(HOT)
+        up = h.has('Welcome to Claude Code', 30) and in_step(h)
+        base = h.page() * 0x4000
+        def poke(name, data): h.m.ems_store[base + h.rsym[name]:base + h.rsym[name] + len(data)] = data
+        poke('prog', b'LONGNAME.COM\0'); poke('bg_shown', b'\x63'); poke('dos_ok', b'\0')
+        st0 = h.rv('status_text', 72)
+        h.link.send(glp.P_TITLE, b'T' * 40)
+        shown = h.run_until(lambda: 'T' * 36 in h.band(), 5)
+        title = h.rv('title_text', 69)
+        check('the longest title: in title_text (its NUL by byte 68), status_text untouched',
+              up and shown and 0 in title and h.rv('status_text', 72) == st0, (up, shown, title, st0, h.rv('status_text', 72)))
+        check('... the band shows the Pi\'s title and the program\'s name, as far as its 48 cells go',
+              title.startswith(b'T' * 36 + b'  \x86  LONGNAME.COM') and 'LONGNA' in h.band().split('T' * 36)[-1],
+              (title, h.band()))
+        ok, why = clean(h)
+        check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
 def t_noscreen():
     """A program in a mode the console keeps no copy of (mono, mode 7):
     SCREEN's REPLY is F5h and nothing after it; TYPE's is F5h and its
@@ -879,6 +964,14 @@ def t_driver():
         check('... and from then on never asleep waiting for an SRQ that can\'t come (%d frames)'
               % (h.link.stats['rx_frames'] - f2), ok and h.naps == n2 and h.link.stats['rx_frames'] - f2 > 3,
               (ok, h.naps - n2))
+        # the line let go (the instrument served): the answers' SRQs are edges again, and the first clears
+        # srq_held (audit3 X49: it was kept till the next HELLO, the console never asleep till then)
+        del h.m.chip.int_line
+        n3 = h.naps
+        h.term_type('freed'); h.press(ENTER)
+        ok = h.has('You said: freed', 60) and in_step(h)
+        check('... the line let go: an SRQ edge again ends it, the console asleep till the SRQ again (%d times)'
+              % (h.naps - n3), ok and h.rv('srq_held') == 0 and h.naps > n3, (ok, h.rv('srq_held'), h.naps - n3))
         ok, why = clean(h)
         check('... no link failure, nothing wrong in gridlink\'s log', ok, why)
     finally:
@@ -948,7 +1041,8 @@ def t_bg():
         end = time.time() + 10
         while not h.link.outq and time.time() < end: time.sleep(0.01)
         # (srq_held cleared: the pop-up's back-to-back polls can set it, two SRQ edges merged, until the next
-        # HELLO; from here on only a wait for an SRQ that a quiet bridge never sends could set it again)
+        # edge, which a quiet bridge never makes, or HELLO; from here on only a wait for an SRQ that a quiet
+        # bridge never sends could set it again)
         h.m.ems_store[h.page() * 0x4000 + h.rsym['srq_held']] = 0
         h.press(HOT)                            # (before the console's next poll: its EVENT's answer is the REQUEST)
         back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
@@ -1491,7 +1585,7 @@ def t_bg_screen():
         h.close()
 
 
-TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
+TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
          t_ops, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen]
 if __name__ == '__main__':
     TR.build()

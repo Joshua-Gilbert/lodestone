@@ -2297,6 +2297,8 @@ op_run: mov     si, reqbuf+2
         mov     [run_exit], ax
         test    byte [run_flags], 2
         jz      .back
+        cmp     byte [snap_taken], 0    ; (the key script's {SNAP} wins)
+        jne     .back
         call    take_snapshot
 .back:  call    video_on
         push    es
