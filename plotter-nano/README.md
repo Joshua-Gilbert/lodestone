@@ -14,6 +14,14 @@ the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
 1200 baud, address A). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
 
+**v7.3:** a mnemonic straight after coordinates, with no `;` between them
+(HP-GL's terminator is optional), ends them: `PD100,200PU300,400` now lifts
+the pen for 300,400. v5-v7.2 took the letters for separators, so 300,400 was
+drawn. `tests/test_nano.cpp` checks it on the PC: the sketch compiled with g++
+against stub Arduino headers, fed HP-GL (the command line is at its top).
+And the serial-poll byte now settles on the bus for a `gpibService()` pass
+before DAV; it used to get ~1.7 us, under IEEE-488.1's 2 us (T1).
+
 **v7.2:** no bumps in long lines. After a status request, v5-v7 re-entered
 graph mode with GS and a move to the pen's position, which lifted the pen in
 the middle of a stroke every ~600 bytes. The 4662 goes back to the mode it was
