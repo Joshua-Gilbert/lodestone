@@ -219,7 +219,7 @@ sft_fill:
 ;  devices by name
 ; ---------------------------------------------------------------------
 ; is the last component of path_buf (or of the path at AX) a device?
-; -> AL = device, AH = GPIB address.  CF if not.  DX changes
+; -> AL = device, AH = GPIB address.  CF if not
 dev_lookup:
         mov     ax, path_buf
 dev_look_ax:
@@ -270,28 +270,25 @@ dev_look_ax:
         cmp     word [di+2], 'IB'
         jne     .no
         add     di, 4
-        xor     ax, ax
+        xor     ax, ax                  ; AH = the address
         mov     cx, 2
-.g:     mov     dl, [di]
-        sub     dl, '0'
-        jb      .gx
-        cmp     dl, 9
+.g:     mov     al, [di]
+        sub     al, '0'
+        cmp     al, 9                   ; (below '0' too)
         ja      .gx
-        mov     dh, 10
-        mul     dh
-        add     al, dl
+        aad                             ; AL = AH * 10 + AL
+        mov     ah, al
         inc     di
         loop    .g
 .gx:    cmp     cx, 2
         je      .no
-        mov     dl, [di]
-        or      dl, dl
+        mov     al, [di]
+        or      al, al
         jz      .gok
-        cmp     dl, '.'
+        cmp     al, '.'
         jne     .no
-.gok:   cmp     al, 30
+.gok:   cmp     ah, 30
         ja      .no
-        mov     ah, al
         mov     al, DEV_GPIB
         clc
         jmp     .x
