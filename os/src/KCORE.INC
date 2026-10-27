@@ -44,11 +44,13 @@ cur_mon     resb 1
 cur_day     resb 1
             alignb 2
 kstack_end  resb 1536           ; INT 21h stack (a screen capture may use
-kstack_top:                     ;  its bottom 1 KB as a buffer)
+kstack_top:                     ;  its bottom 1 KB as a buffer: CAP_SEG)
             resb 512
 astack_top:                     ; nested INT 21h (from INT 24h handlers)
 ui_seg      resw 1              ; the UI segment (core + Executive), see LODE.ASM
 section .text
+; that 1 KB as a segment, folded (bss_start is image_end: LODE.ASM)
+CAP_SEG equ KSEG + (((image_end - start) + (kstack_end - bss_start) + 15) >> 4)
 
 ; ---------------------------------------------------------------------
 ;  interrupt vectors
@@ -249,9 +251,7 @@ capture:
 .nol:   sbb     ax, ax
         push    ax                      ; (FFFFh: not lent)
         jnc     .buf
-        mov     ax, kstack_end + 15
-        shr     ax, 4
-        add     ax, KSEG
+        mov     ax, CAP_SEG
         mov     es, ax
         mov     cx, 1024
 .buf:   mov     [cap_lim], cx
@@ -370,9 +370,7 @@ capture:
         cwd
         int     21h
         pop     cx
-        mov     ax, kstack_end + 15
-        shr     ax, 4
-        add     ax, KSEG
+        mov     ax, CAP_SEG
         mov     es, ax
         mov     [prn_call+2], ax
         mov     word [prn_call], 0

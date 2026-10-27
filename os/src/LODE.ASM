@@ -49,7 +49,7 @@ KSEG    equ 0060h               ; where the kernel lives
 VERSION equ 0006h               ; Lodestone 0.6
 
 section .bss nobits align=16 follows=.text
-bss_start:
+bss_start:                      ; = image_end (KCORE.INC's CAP_SEG counts on it)
 ; KEMS.INC: in the file right after the kernel image (at image_end), in
 ; memory right after the BSS (where ems_init copies it), its data after it
 ; in memory only (emsbss); KHD.INC's module after it; then both start-ups
