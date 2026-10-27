@@ -1951,8 +1951,8 @@ mt_xcode:
 ; -> AL = them, and MTF_DIRECT (VF_DIRECT) as the detector last found it
 mt_flagsc:
         call    mt_targ
-        or      al, al
-        jz      .t0
+        or      al, al                  ; (the Executive: frozen behind always,
+        jz      mt_park.r5              ;  it draws in a graphics mode)
         mov     cx, [bp+F_CX]
         and     cx, (SPF_BG | SPF_FREEZE) * 101h
         not     cl
@@ -1961,8 +1961,6 @@ mt_flagsc:
         mov     al, [cs:bx+TE_VF]
         mov     [bp+F_AX], al
         jmp     KSEG:ok
-.t0:    mov     ax, 5                   ; (the Executive: frozen behind always,
-        jmp     mt_fail                 ;  it draws in a graphics mode)
 
 ; MT_UI: the Executive's entry (mt_ui), far
 mt_uic: mov     word [bp+F_AX], mt_ui
@@ -2425,8 +2423,7 @@ mt_tkey:
 .ok:    popf                            ;  out, as MT_KILL's)
         jmp     KSEG:ok
 .full:  popf
-        mov     ax, 8
-        jmp     mt_fail
+        jmp     mt_spawn.room           ; (AX = 8)
 
 ; MT_TMOUSE (T4): a click in task BL's window, as TERM sees it: buttons BH
 ; at CX, DX (INT 33h's units), to its own state (TX_M33) as a packet would
@@ -2645,7 +2642,7 @@ mt_frontc:
 mt_kill:
         call    mt_targ
         or      al, al
-        jz      .ex
+        jz      mt_park.r5
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
         jne     .k
         push    ax
@@ -2659,8 +2656,8 @@ mt_kill:
         jne     .o
         call    mt_kok                  ; its own: now, unless the call came
         je      mt_kdie                 ;  from where it can't end (mt_kok):
-.df:    mov     byte [cs:mt_pend], 1    ;  then where it next can be (mt_switch,
-        jmp     KSEG:ok                 ;  mt_preempt, a wait with none other)
+.df:    jmp     short .p                ;  then where it next can be (mt_switch,
+                                        ;  mt_preempt, a wait with none other)
 .o:     mov     byte [cs:bx+TE_STATE], TS_RUN
         mov     es, [cs:bx+TE_TX]
         cmp     word [es:TX_KLEN], 0    ; (switched from inside INT 21h: the
@@ -2672,8 +2669,6 @@ mt_kill:
         mov     word [es:di + SW_RET], mt_kdie
 .p:     mov     byte [cs:mt_pend], 1    ; (its turn soon: from this call's way
 .ok:    jmp     KSEG:ok                 ;  out, if the caller is at a safe point)
-.ex:    mov     ax, 5
-        jmp     mt_fail
 .gone:  stc                             ; parked, its pages gone: its programs'
         call    mt_hshow.f              ;  EMS and its wake freed, then the
         call    mt_wkme.t               ;  handle DX if still MT's
