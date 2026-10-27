@@ -4856,6 +4856,66 @@ def t_tclip():
 
 MTTM = os.path.join(HERE, 'MTTERM.COM')
 
+def t_wwait():
+    print('== a window moved or resized with a task computing behind (audit3 X32); a window .RUN\'s message in the '
+          'band through the saver (X38)')
+    k = boot('mt_ww.img', b'MULTITASK=1\r\nTIDY=0\r\n', 88, TERMRUN, TERMFNT, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+    TS = A.run_syms('apps/TERM.ASM')
+    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+    wv = lambda o: k.pc.u16(k.useg, base() + TS['win'] + o)             # (W_COL 0, W_Y 2, W_W 4, W_H 6)
+    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+    def mv(x, y):                       # (A.point without its settle: a task is busy)
+        dx, dy = x - k.u16('mx'), y - k.u16('my')
+        while dx or dy:
+            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+            dx -= sx; dy -= sy
+    def turns(t=1.0):                   # in how many of t s's 10 ms looks task n is the one running
+        c = 0
+        for i in range(int(t * 100)):
+            k.pc.run_for(0.01); c += cur() == n
+        return c
+    au = Audit(k)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n = tnum('LCMD.COM')
+    k.key('mtspin 250 sw.txt', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    r0, w0 = turns(), [wv(o) for o in (0, 2, 4, 6)]
+    got = {}
+    for what, start, end in (('CODE-F8', 0x6F00, ktest.ESC), ('CODE-F7', 0x6E00, ktest.ESC),
+                             ('corner', (wv(0) + wv(4) - 1) * 8 + 4, wv(2) + wv(6) - 4),
+                             ('title', (wv(0) + 20) * 8, wv(2) + 6)):
+        if what.startswith('CODE'):     # (waiting for a key: mw_size's loop, and win_mv's)
+            k.key(start, settle=False); k.run_for(0.3)
+            got[what] = turns()
+            k.key(end, settle=False); k.run_for(0.5)
+        else:                           # (held down, the mouse still: mw_size's drag, and win_mv's)
+            mv(start, end); k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.3)
+            got[what] = turns()
+            k.pc.mouse_move(0, 0, 0); k.run_for(0.5)
+    w1 = [wv(o) for o in (0, 2, 4, 6)]
+    check('MTSPIN computing in a terminal window (task %d: %d of 100 looks alone): while its window waits for a key to '
+          'resize it (CODE-F8, mw_size) or move it (CODE-F7, win_mv), or its corner or title strip is held down with the '
+          'mouse still, MTSPIN runs on (%s of 100), every switch at a safe point; ESC or the release: as it was'
+          % (n, r0, got), n != 7 and r0 > 50 and all(v > 30 for v in got.values()) and w1 == w0 and not au.bad(),
+          (n, r0, got, w0, w1, au.bad()[:3]))
+    # a window .RUN that can't start (CALC.RUN isn't on the disk: CODE-K), said in the band; the saver comes (its clock
+    # written in the UI's tmp) and a key ends it: the band says it again, not the clock
+    k.key(A.CODE['K'], settle=False); k.run_for(1.0)
+    b1 = k.band()
+    st0 = k.u16('saver_t')
+    k.wr('saver_t', struct.pack('<H', 18)); k.run_for(3.0)
+    tm = bytes(k.rd('tmp', 8))
+    k.key(ktest.DOWN, settle=False); k.run_for(1.0)
+    b2 = k.band()
+    k.wr('saver_t', struct.pack('<H', st0))
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    say = lambda b: any('CALC.RUN is not on this disk' in l for l in b)
+    check('CODE-K with no CALC.RUN on the disk: "CALC.RUN is not on this disk" in the band (%s); the saver meanwhile '
+          '(tmp then %r), and a key ends it: the band says it again (%s)' % (b1[:1], tm, b2[:1]), say(b1) and say(b2)
+          and not k.crashed, (b1, tm, b2))
+
 MTPB = os.path.join(HERE, 'MTPUB.COM')
 
 def t_tpub():
@@ -5749,7 +5809,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
