@@ -2858,12 +2858,60 @@ def t_system_lists():
           m and m.group(1).strip() == ', '.join(str(a) for a in range(5, 15)), m and m.group(1))
     k.key(ktest.ESC)
 
+def t_gpib_tools():
+    """tools/GRIDGPIB.COM, the standalone driver (here under Lodestone, the
+    kernel's driver moved out of INT 60h's way), and tools/GPIBXFER.COM (in
+    sim7210's own machine), both assembled from tools/ now."""
+    print('== GRIDGPIB /U and GPIBXFER (tools/)')
+    tools = os.path.join(os.path.dirname(GOS), 'tools')
+    gg, gx = os.path.join(OUT, 'GRIDGPIB.COM'), os.path.join(OUT, 'GPIBXFER.COM')
+    for src, dst in (('GRIDGPIB.ASM', gg), ('GPIBXFER.ASM', gx)):
+        subprocess.run(['nasm', '-f', 'bin', '-i', tools + '/', '-o', dst, os.path.join(tools, src)], check=True)
+    k = ktest.KPC(image('ggu.img', LCMD, gg), chip=sim7210.NEC7210(sim7210.bus())); k.start()
+    k.code_p()
+    def run(cmd):
+        k.key('cls'); k.key(ktest.ENTER); k.key(cmd); k.key(ktest.ENTER)
+        return k.pc.text_screen()
+    i0d = k.pc.rd(0, 0x0D * 4, 4)                               # (the kernel's)
+    k.pc.wr(0, 0x60 * 4, bytes(4))                              # (INT 60h free for GRIDGPIB)
+    o1 = run('gridgpib')
+    seg, m1 = k.pc.u16(0, 0x60 * 4 + 2), k.pc.pic_mask
+    k.pc.wr(0, 0x0D * 4, i0d)                                   # INT 0Dh someone else's since
+    o2 = run('gridgpib /u')
+    m2, seg2 = k.pc.pic_mask, k.pc.u16(0, 0x60 * 4 + 2)
+    check('GRIDGPIB /U while another program has INT 0Dh: refused, and the driver left as it was (IRQ 5 still unmasked)',
+          'SRQ on IRQ 5' in o1 and seg not in (0, 0x60) and not m1 & 0x20 and 'took INT 0Dh after GRIDGPIB' in o2
+          and seg2 == seg and not m2 & 0x20, (o1, o2, hex(m1), hex(m2)))
+    import sim7210 as S
+    class Echo(S.Device):
+        """the Pico bridge's thrutest: each 4096-byte message sent back; gone
+        (no listener) once it has echoed the first pair's"""
+        def __init__(s, devs, gone):
+            S.Device.__init__(s, 7, 0, {}); s.devs, s.acc, s.n, s.gone = devs, b'', 0, gone
+        def message(s, msg):
+            s.acc += msg
+            if len(s.acc) >= 4096: s.out, s.acc = s.acc[:4096], s.acc[4096:]; s.n += 1
+        def on_sent(s):
+            if s.gone and s.n > 16: s.devs.pop(7, None)
+    bus, outs = S.bus, []
+    try:
+        for gone in (False, True):
+            devs = {}; devs[7] = Echo(devs, gone)
+            S.bus = lambda: devs
+            outs.append(S.run(gx, maxins=100_000_000)[0].split('DMA, channel 3:')[0])
+    finally:
+        S.bus = bus
+    check('GPIBXFER, its CPU loop with an echoing device: both ways, every byte right', 'device -> GRiD:' in outs[0]
+          and 'the echo is every byte right' in outs[0] and 'failed' not in outs[0], outs[0])
+    check('... the device gone after the first pair: the second pair\'s write fails, said as "sending failed" (not "receiving")',
+          'sending failed, step 03h' in outs[1] and 'receiving' not in outs[1], outs[1])
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
     for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
-              t_clip_rom, t_sys_back, t_system_lists):
+              t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
