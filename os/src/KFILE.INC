@@ -692,6 +692,7 @@ rw_start:
         mov     al, [si+S_DRV]          ; its drive, and that drive's FAT
         call    use_drive_si
         jmp     fat_load
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; advance by AX bytes
 rw_step:
         add     [rw_done], ax
@@ -734,6 +735,7 @@ sft_cluster:
         clc
         pop     cx
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .no:    stc
         pop     cx
         ret
