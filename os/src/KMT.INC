@@ -3779,20 +3779,25 @@ mt_spawn:
         mov     word [es:V_BRK + cc_sp - brkflag], 0
         mov     word [es:V_DTA + con_lpos - dta], 0     ; (no line half read)
         mov     word [es:V_DTA + con_llen - dta], 0
+        xor     ax, ax                  ; (not in front for graphics: T3; no
+        mov     di, TX_WGFX             ;  click held, nor the mouse taken: T4)
+        mov     cx, (TX_MRY + 2 - TX_WGFX) / 2
+        rep     stosw
+        mov     di, TX_PUB              ; (no screen published: T5b)
+        mov     cl, (TX_PPSP + 2 - TX_PUB) / 2
+        rep     stosw
+        mov     [es:TX_KLEN], ax
+        mov     [es:TX_KN], ax          ; (no keys typed to it: T1)
+        mov     [es:TX_FPV], al         ; (its coprocessor: FNINIT's, first)
+%if (TX_MRY + 2 - TX_WGFX) & 1 || (TX_PPSP + 2 - TX_PUB) & 1
+%error "mt_spawn: TX_WGFX..TX_MRY, TX_PUB..TX_PPSP in words"
+%endif
         mov     bx, [cs:mt_new]
         mov     ax, [cs:bx+TE_PSP]
         mov     [es:V_PSP + cur_psp - cur_psp], ax
         mov     word [es:V_PSP + last_exit - cur_psp], 0
         mov     word [es:V_DTA + 0], 80h
         mov     [es:V_DTA + 2], ax
-        mov     word [es:TX_KLEN], 0
-        mov     word [es:TX_KN], 0      ; (no keys typed to it: T1)
-        mov     byte [es:TX_WGFX], 0    ; (not in front for graphics: T3)
-        mov     byte [es:TX_MREL], 0    ; (no click held, nor the mouse taken:
-        mov     word [es:TX_MPSP], 0    ;  T4)
-        mov     word [es:TX_PUB + 2], 0 ; (no screen published: T5b)
-        mov     word [es:TX_PPSP], 0
-        mov     byte [es:TX_FPV], 0    ; (its coprocessor: FNINIT's, first)
         call    mt_m33new               ; (its INT 33h state)
         call    mt_33hk
         push    ax
