@@ -1480,6 +1480,92 @@ def kclear(k):
     """Nothing typed left (keys the test put there for no one)."""
     k.pc.keys.clear(); k.pc.wr(0x40, 0x1A, bytes(k.pc.rd(0x40, 0x1C, 2))); k.pc.kbd_mirror = []; k.run_for(0.1)
 
+MTIK = os.path.join(HERE, 'MTIRQK.COM')
+
+def t_irqk():
+    print('== M9b: a key read through DOS from an interrupt\'s handler, its IRQ still in service')
+    k = boot('mt_ik.img', b'MULTITASK=1\r\n', 88, MTIK)
+    Y, seg = k.Y, mt_seg(k)
+    sh = Shell(k)
+    sh.run('ver')
+    cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+    swa, sw, prev = seg * 16 + Y['mt_switch'], [], k.pc.watch
+    got = {}
+    for case, when in (('front', lambda: cur() == 0), ('behind', lambda: cur() != 0)):
+        typ(k, 'mtlaunch mtspin.com 300 s%s.txt' % case[0], 0.5); line(k, '')    # (counting behind, 16 s)
+        f = 'K%s.TXT' % case[0].upper()
+        v0 = vec(k, 0x0F)
+        typ(k, 'mtirqk %s' % f, 0.1)
+        t1 = k.pc.us + 3e6                              # (hooked and unmasked, then the task wanted running)
+        while (vec(k, 0x0F) == v0 or k.pc.pic_mask & 0x80) and k.pc.us < t1: k.pc.run(300)
+        h7 = vec(k, 0x0F)
+        h7 = h7[0] * 16 + h7[1]
+        while not when() and k.pc.us < t1: k.pc.run(300)
+        n, at = len(sw), []
+        def w(a):
+            if prev: prev(a)
+            if a == swa: sw.append(k.pc.isr)
+            if a == h7 and not at: at.append(cur())     # (the task the handler runs in)
+        k.pc.watch = w
+        k.pc.irq_pending.add(7)
+        k.run_for(0.5)
+        held = k.pc.isr & 0x80
+        k.key('x' if case == 'front' else 'y', settle=False)
+        dt = waitfile(k, f, 3.0)
+        k.pc.watch = prev
+        got[case] = (A.disk_file(k, f), held, [i for i in sw[n:] if i & 0x80], dt is not None, at)
+        line(k, '')
+    check('a key read through DOS (AH=08h) from an IRQ 7 handler before its EOI, raised while the task in front runs: '
+          'no task switched to while IRQ 7 is in service; it waits in front for the key, as in DOS, and gets it (%s)'
+          % (got['front'],), got['front'][0] == b'x' and got['front'][1] and not got['front'][2]
+          and got['front'][4] == [0], got['front'])
+    check('... raised while a task behind runs (MTSPIN), so the handler\'s read is that task\'s: read as it is (no '
+          'park, no switch while IRQ 7 is in service, M5b\'s forced front not taken), the key typed reaching it (%s)'
+          % (got['behind'],), got['behind'][0] == b'y' and got['behind'][1] and not got['behind'][2]
+          and got['behind'][4] and got['behind'][4][0] != 0, got['behind'])
+    waitfile(k, 'SB.TXT', 30.0)
+    check('MTSPIN behind ended as usual after each (its counts %d and %d)' % (spun(k, 'SF.TXT'), spun(k, 'SB.TXT')),
+          spun(k, 'SF.TXT') > 0 and spun(k, 'SB.TXT') > 0 and not k.crashed)
+
+MTFS = os.path.join(HERE, 'MTFAST.COM')
+
+def t_pitfast():
+    print('== M9b: a program that runs the timer fast (counter 0 four times, its own INT 08h hook)')
+    k = boot('mt_pf.img', b'MULTITASK=1\r\n', 88, MTFS)
+    Y, seg = k.Y, mt_seg(k)
+    sh = Shell(k)
+    sh.run('ver')
+    def rate(s=2.0):
+        """The BIOS's ticks (40:6Ch) and MT's (mt_ticks: the turns' length) a simulated second, over s."""
+        b0, m0, u0 = k.pc.u16(0x40, 0x6C), k.pc.u16(seg, Y['mt_ticks']), k.pc.us
+        k.run_for(s)
+        du = (k.pc.us - u0) / 1e6
+        return (round(((k.pc.u16(0x40, 0x6C) - b0) & 0xFFFF) / du, 1),
+                round(((k.pc.u16(seg, Y['mt_ticks']) - m0) & 0xFFFF) / du, 1))
+    ref = rate()
+    near = lambda r: all(abs(v - ref[0]) < 0.06 * ref[0] for v in r)
+    typ(k, 'mtlaunch mtfast.com 120 fb.txt;mtspin.com 120 sb.txt', 0.5); line(k, '')
+    t1 = k.pc.us + 3e6
+    while k.pc.pit_n != 0x4000 and k.pc.us < t1: k.run_for(0.05)
+    fast = k.pc.pit_n
+    beh = rate()
+    waitfile(k, 'FB.TXT', 20.0); waitfile(k, 'SB.TXT', 20.0)
+    fb = spun(k, 'FB.TXT')
+    check('MTFAST behind (counter 0 at 4000h, its hook calling the BIOS\'s every 4th tick) with MTSPIN: the BIOS\'s '
+          'clock and the turns at their rate meanwhile (%s a second, %s alone): MT divides in the others\' turns, '
+          'its hook in its own (its calls %d)' % (beh, ref, fb), fast == 0x4000 and near(beh) and fb > 120, (fast, beh, ref, fb))
+    typ(k, 'mtlaunch mtspin.com 120 sf.txt', 0.5); line(k, '')
+    typ(k, 'mtfast 80 ff.txt k', 0.5)
+    fr = rate()
+    waitfile(k, 'FF.TXT', 20.0)
+    left = k.pc.pit_n
+    after = rate()
+    waitfile(k, 'SF.TXT', 20.0)
+    check('... in front (task 0), MTSPIN behind: at their rate too (%s); and once it has ended leaving the counter '
+          'fast (K: %04Xh), still (%s: MT divides for every task)' % (fr, left, after),
+          near(fr) and left == 0x4000 and near(after) and spun(k, 'FF.TXT') > 80 and not k.crashed,
+          (fr, left, after, spun(k, 'FF.TXT')))
+
 def t_keys():
     print('== keys: the front task\'s only (INT 16h through MT), its waits switched from, CODE-Tab wherever it is typed')
     k = boot('mt_k.img', b'MULTITASK=1\r\n', 88, MTK)
@@ -6011,13 +6097,13 @@ if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

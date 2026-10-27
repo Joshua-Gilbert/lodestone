@@ -216,6 +216,9 @@ section mtt
 mt_tstart:
 mt_old08    dd      0                   ; INT 08h as it was
 mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
+mt_facc     dw      0                   ; M9b: counter 0 run fast, its clocks since
+                                        ;  the BIOS's last tick (mod 65536)
+mt_fast     db      0                   ;  and 1 once seen fast (twice: divided)
 mt_slice    db      2                   ; ticks left in the running task's turn
 mt_pend     db      0                   ; 1: another task's turn (its turn over,
                                         ;  or a key for the front one waiting)
@@ -418,8 +421,49 @@ ST_END      equ     100h + st_code.e - st_code
             times   -(100h + st_len > ST_PATH) db 0     ; (it fits below ST_PATH)
 
 ; INT 08h: the BIOS's handler first (the tick count, INT 1Ch, the end of
-; the interrupt), then ours
+; the interrupt), then ours.  M9b: a program that runs counter 0 fast (a
+; game's music, its own INT 08h hook calling the BIOS's every Nth time)
+; has that hook in its own turns only; in the others, entered straight
+; (INT 08h mt_tick itself), MT does as it does: the BIOS's handler once
+; 65536 of the counter's clocks have gone by, else only the interrupt's
+; end.  The count read just after the interrupt is about its period
+; (mode 2 or 3); fast twice running before it divides (one late tick
+; under a long CLI reads low too)
+MT_FALW     equ     20                  ; (clocks counted down since the IRQ)
 mt_tick:
+        push    ax
+        push    ds
+        xor     ax, ax
+        mov     ds, ax
+        cmp     word [8 * 4], mt_tick   ; entered straight?  (A hook ahead:
+        jne     .n                      ;  it divides, if it ran it fast)
+        mov     ax, cs
+        cmp     [8 * 4 + 2], ax
+        jne     .n
+        xor     al, al                  ; counter 0, latched
+        out     43h, al
+        in      al, 40h
+        mov     ah, al
+        in      al, 40h
+        xchg    al, ah
+        dec     ax                      ; (0: 65536)
+        cmp     ax, 7FFFh
+        jae     .s                      ; at the BIOS's rate: as ever
+        cmp     byte [cs:mt_fast], 0
+        je      .f1
+        add     ax, MT_FALW + 1
+        add     [cs:mt_facc], ax
+        jc      .n                      ; a whole tick of the BIOS's gone by
+        mov     al, 20h                 ; else the interrupt's end only
+        out     20h, al
+        pop     ds
+        pop     ax
+        iret
+.f1:    inc     byte [cs:mt_fast]
+        jmp     short .n
+.s:     mov     byte [cs:mt_fast], 0
+.n:     pop     ds
+        pop     ax
         pushf
         call    far [cs:mt_old08]       ; (back with the EOI sent; interrupts
         cli                             ;  off, whatever a hook there did)
@@ -902,16 +946,17 @@ mt_kwait:
 ; in the background: it waits without reading keys, while another runs.
 ; Unless it can't be switched from: then it comes to the front for them
 ; (INT 16h gives keys to the front task only), or for a critical error's
-; prompt reads them as it is (mt_i16 lets them through: everything waits
-; for the answer, the prompt on the real screen)
+; prompt, or from an interrupt's handler (its IRQ in service: M9b), reads
+; them as it is (mt_i16 lets them through: everything waits for the
+; answer, the prompt on the real screen, as in DOS)
 .bg:    call    mt_can
         jnc     .bgp
-        cmp     byte [cs:mt_crit], 0
-        jne     .k
-        cmp     byte [cs:mt_inb], 0     ; (inside a call MT passed on to the
-        jne     .k                      ;  BIOS, an INT 13h call, or a change
-        cmp     word [cs:mt_in13], 0    ;  of the front: as it is, mt_i16
-        jne     .k                      ;  letting it read them)
+        push    ax
+        call    mt_busy                 ; (inside a call MT passed on to the
+        pop     ax                      ;  BIOS, an INT 13h call, a change of
+        jnz     .k                      ;  the front, an INT 24h, an IRQ's
+                                        ;  handler: as it is, mt_i16 letting
+                                        ;  it read them)
         mov     [cs:mt_swreq], al       ; (this task, as mt_swnow does it: the
         call    mt_swnow                ;  one in front may be in its run)
         jmp     .k
@@ -1007,23 +1052,21 @@ mt_kwait:
 ; a call MT passed on to the BIOS or an INT 13h call; while mt_swnow
 ; changes the front (an interrupt handler's DOS call meanwhile); inside
 ; the kernel's INT 24h (raised by C:'s INT 25h/26h, outside INT 21h: its
-; handler's own DOS call)
+; handler's own DOS call); from an interrupt's handler, its IRQ still in
+; service (M9b: another task would run with it so).  AX kept
 mt_can: cmp     byte [indos], 1
-        jne     .no
-        cmp     byte [cs:mt_inb], 0
-        jne     .no
-        cmp     byte [cs:mt_crit], 0
-        jne     .no
-        cmp     word [cs:mt_in13], 0    ; (and mt_swing)
         jne     .no
         push    ax
         mov     ax, kstack_top          ; (and room for mt_switch's own
         sub     ax, sp                  ;  pushes)
         cmp     ax, KSLICE - 48
+        jae     .na
+        call    mt_busy
         pop     ax
-        jae     .no
+        jnz     .no
         clc
         ret
+.na:    pop     ax
 .no:    stc
         ret
 
@@ -4575,9 +4618,10 @@ mt_i16:
         iret
 
 ; the 1520's BIOS drops the keys AH=00h and 01h can't give (scan codes 85h
-; and up but E0h's, and CODE keys: xxF0h with a scan code) as it looks, with
-; interrupts on: CODE-Tab typed after mt_hot looked and before the BIOS
-; does would go.  So MT drops them first, with interrupts off, taking
+; and up but E0h's, and CODE keys: xxF0h with a scan code) as it looks.
+; Its INT 16h turns interrupts on first (STI, F000:A02E; the look itself
+; with them off, M9a): CODE-Tab typed after mt_hot looked and before the
+; BIOS does would go.  So MT drops them first, with interrupts off, taking
 ; CODE-Tab (mt_hot) as it comes to it.  ZF if no key is left; else the one
 ; at the head is one AH=00h and 01h give.  (At most 16 looked at: a buffer
 ; gone bad is left to the BIOS.)  AX, BX changed
