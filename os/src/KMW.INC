@@ -111,63 +111,49 @@ MW_BSS      equ     (MW_MAX + 1) * SE_SIZE + NWIN * 4   ; (mw_ses, mw_tmp: in
 mw_patch:
         cmp     byte [cs:mw_on], 0
         jne     .x
-        cmp     byte [es:run_app], 80h          ; CMP BYTE [run_active],0
+        mov     si, mw_ptab
+        call    mw_cpchk
         jne     .x
-        cmp     byte [es:run_app + 1], 3Eh
+        mov     si, mw_cpt              ; (the clipping's: made only while
+        call    mw_cpchk                ;  window .RUNs run)
         jne     .x
-        cmp     word [es:run_app + 2], run_active
+        cmp     byte [es:..@ui_rdfn + 5], 0F6h  ; (OR SI,SI's second byte)
         jne     .x
-        cmp     byte [es:run_app + 4], 0
+        cmp     byte [es:fill_band + 5], fill_band.none - (fill_band + 6)
+        jne     .x                      ; (the JZs' targets past the 5 bytes)
+        cmp     byte [es:vline + 5], vline.none - (vline + 6)
         jne     .x
-        cmp     byte [es:ui_event.got], 0E8h    ; CALL win_ev / JC .on
+        cmp     word [es:win_paint + 5], 4Ch + W_H * 256
         jne     .x
-        cmp     byte [es:ui_event.got + 3], 72h
-        jne     .x
-        cmp     byte [es:ui_event.l], 0E8h      ; CALL poll_once / JNC .got
-        jne     .x
-        cmp     word [es:ui_event.l + 3], 73h + (ui_event.got - ui_event.l - 5) * 100h
-        jne     .x
-        cmp     word [es:run_cleanup], 0660h    ; PUSHA / PUSH ES / MOV SI,alloc_tab
-        jne     .x
-        cmp     byte [es:run_cleanup + 2], 0BEh
-        jne     .x
-        cmp     word [es:run_cleanup + 3], alloc_tab
-        jne     .x
-        cmp     word [es:..@ui_wlend], 02B8h    ; MOV AX,0F002h / INT 21h
-        jne     .x
-        cmp     word [es:..@ui_wlend + 2], 0CDF0h
-        jne     .x
-        cmp     byte [es:..@ui_wlend + 4], 21h
-        jne     .x
-        cmp     word [es:..@ui_rdfn], 368Bh     ; MOV SI,[redraw_fn] / OR SI,SI
-        jne     .x
-        cmp     word [es:..@ui_rdfn + 2], redraw_fn
-        jne     .x
-        cmp     word [es:..@ui_rdfn + 4], 0F609h
-        jne     .x
-        call    mw_cpchk                ; (the clipping's: made only while
-        jne     .x                      ;  window .RUNs run)
-        mov     byte [es:..@ui_rdfn], 9Ah       ; CALL FAR mw_rdfn, NOP
-        mov     word [es:..@ui_rdfn + 1], mw_rdfn
-        mov     [es:..@ui_rdfn + 3], cs
-        mov     byte [es:..@ui_rdfn + 5], 90h
-        mov     byte [es:run_app], 0EAh         ; JMP FAR mw_run
-        mov     word [es:run_app + 1], mw_run
-        mov     [es:run_app + 3], cs
-        mov     byte [es:ui_event.got], 9Ah     ; CALL FAR mw_got
-        mov     word [es:ui_event.got + 1], mw_got
-        mov     [es:ui_event.got + 3], cs
-        mov     byte [es:ui_event.l], 9Ah       ; CALL FAR mw_poll
-        mov     word [es:ui_event.l + 1], mw_poll
-        mov     [es:ui_event.l + 3], cs
-        mov     byte [es:run_cleanup], 0EAh     ; JMP FAR mw_clean
-        mov     word [es:run_cleanup + 1], mw_clean
-        mov     [es:run_cleanup + 3], cs
-        mov     byte [es:..@ui_wlend], 9Ah      ; CALL FAR mw_lend
-        mov     word [es:..@ui_wlend + 1], mw_lend
-        mov     [es:..@ui_wlend + 3], cs
+        mov     si, mw_ptab
+        call    mw_pin
+        mov     byte [es:..@ui_rdfn + 5], 90h   ; (NOP)
         mov     byte [cs:mw_on], 1
 .x:     ret
+; (as mw_cpt: where, to, the opcode, the site's own 5 bytes)
+mw_ptab:
+        dw      run_app, mw_run         ; CMP BYTE [run_active],0: JMP FAR
+        db      0EAh, 80h, 3Eh
+        dw      run_active
+        db      0
+        dw      ui_event.got, mw_got    ; CALL win_ev / JC .on: CALL FAR
+        db      9Ah, 0E8h
+        dw      win_ev - (ui_event.got + 3)
+        db      72h, (ui_event.on - (ui_event.got + 5)) & 0FFh
+        dw      ui_event.l, mw_poll     ; CALL poll_once / JNC .got: CALL FAR
+        db      9Ah, 0E8h
+        dw      poll_once - (ui_event.l + 3)
+        db      73h, ui_event.got - (ui_event.l + 5)
+        dw      run_cleanup, mw_clean   ; PUSHA / PUSH ES / MOV SI,alloc_tab:
+        db      0EAh, 60h, 06h, 0BEh    ;  JMP FAR
+        dw      alloc_tab
+        dw      ..@ui_wlend, mw_lend    ; MOV AX,0F002h / INT 21h: CALL FAR
+        db      9Ah, 0B8h, 02h, 0F0h, 0CDh, 21h
+        dw      ..@ui_rdfn, mw_rdfn     ; MOV SI,[redraw_fn] / OR SI,SI: CALL
+        db      9Ah, 8Bh, 36h           ;  FAR, NOP (its sixth byte: mw_patch)
+        dw      redraw_fn
+        db      09h
+        dw      0
 
 ; ---------------------------------------------------------------------
 ;  run_app (DS = ES = the UI): SI = path, DI = argument; its caller's
@@ -1623,31 +1609,32 @@ mw_szto:
 ;  with nothing in the way, the primitive itself runs on (its first
 ;  instructions done here)
 ; ---------------------------------------------------------------------
-mw_cpt: dw      clear_screen, mw_c_cls  ; where, to; its own first 5 bytes
+mw_cpt: dw      clear_screen, mw_c_cls  ; where, to; the opcode (JMP FAR); its
+        db      0EAh                    ;  own first 5 bytes
         db      51h, 57h, 50h, 06h, 68h ; PUSH CX/DI/AX/ES, PUSH VSEG
         dw      fill_band, mw_c_fill
-        db      60h, 0E8h               ; PUSHA, CALL clip_rows, JZ .none
+        db      0EAh, 60h, 0E8h         ; PUSHA, CALL clip_rows, JZ .none
         dw      clip_rows - (fill_band + 4)
         db      74h
         dw      invert_band, mw_c_inv
-        db      60h, 85h, 0EDh, 74h     ; PUSHA, TEST BP,BP, JZ .none
+        db      0EAh, 60h, 85h, 0EDh, 74h       ; PUSHA, TEST BP,BP, JZ .none
         db      invert_band.none - (invert_band + 5)
         dw      vline, mw_c_vl
-        db      60h, 0E8h               ; PUSHA, CALL clip_rows, JZ .none
+        db      0EAh, 60h, 0E8h         ; PUSHA, CALL clip_rows, JZ .none
         dw      clip_rows - (vline + 4)
         db      74h
         dw      putsn, mw_c_text
-        db      60h, 06h, 0BDh, 80, 0   ; PUSHA, PUSH ES, MOV BP,80
+        db      0EAh, 60h, 06h, 0BDh, 80, 0     ; PUSHA, PUSH ES, MOV BP,80
         dw      xor_rect, mw_c_xor
-        db      60h, 06h, 68h, VSEG & 0FFh, VSEG >> 8   ; PUSHA, PUSH ES, PUSH VSEG
+        db      0EAh, 60h, 06h, 68h, VSEG & 0FFh, VSEG >> 8     ; PUSHA, PUSH ES, PUSH VSEG
         dw      win_paint, mw_c_wp
-        db      60h, 8Bh, 54h, W_Y, 8Bh ; PUSHA, MOV DX,[SI+W_Y], MOV CX,[SI+W_H]
+        db      0EAh, 60h, 8Bh, 54h, W_Y, 8Bh   ; PUSHA, MOV DX,[SI+W_Y], MOV CX,[SI+W_H]
         dw      saver, mw_c_sv
-        db      60h, 0E8h               ; PUSHA, CALL hide_cursor, CLI
+        db      0EAh, 60h, 0E8h         ; PUSHA, CALL hide_cursor, CLI
         dw      hide_cursor - (saver + 4)
         db      0FAh
         dw      0
-MW_CPE      equ     9
+MW_CPE      equ     10
 mw_cp       db      0                   ; 1: the patches are in
 mw_useg     dw      0                   ; the UI's segment (mw_clipon)
 mw_kind     db      0                   ; the primitive (MK_*)
@@ -1669,36 +1656,39 @@ mw_r        dw      0, 0, 0, 0          ; what is drawn: columns, rows (to: past
 mw_cln      dw      0                   ; the sessions' windows across it:
 mw_cl       times NWIN * 4 dw 0         ;  columns, rows each (to: past)
 
-; the patches' bytes as they should be (mw_patch: ES = the UI) -> ZF
+; table CS:SI's sites (mw_cpt's form) hold their own 5 bytes?  ES = the
+; UI -> ZF (SI, DI, CX lost)
 mw_cpchk:
-        push    si
-        push    di
-        push    cx
         push    ds
         push    cs
         pop     ds
-        mov     si, mw_cpt
 .l:     mov     di, [si]
         or      di, di
-        jz      .ok
+        jz      .x
         push    si
-        add     si, 4
+        add     si, 5
         mov     cx, 5
         repe    cmpsb
         pop     si
         jne     .x
         add     si, MW_CPE
         jmp     .l
-.ok:    cmp     byte [es:fill_band + 5], fill_band.none - (fill_band + 6)
-        jne     .x                      ; (the JZs' targets past the 5 bytes)
-        cmp     byte [es:vline + 5], vline.none - (vline + 6)
-        jne     .x
-        cmp     word [es:win_paint + 5], 4Ch + W_H * 256
 .x:     pop     ds
-        pop     cx
-        pop     di
-        pop     si
         ret
+
+; table CS:SI's patches in: at each site its opcode, then to, CS (ES = the
+; UI; SI, DI, AX lost)
+mw_pin: mov     di, [cs:si]
+        or      di, di
+        jz      .x
+        mov     al, [cs:si+4]
+        mov     [es:di], al
+        mov     ax, [cs:si+2]
+        mov     [es:di+1], ax
+        mov     [es:di+3], cs
+        add     si, MW_CPE
+        jmp     mw_pin
+.x:     ret
 
 ; the patches in, the first window .RUN starting / out, the last ended or
 ; all forgotten (DS = the UI)
@@ -1708,17 +1698,13 @@ mw_clipon:
         mov     byte [cs:mw_nc], 0
         mov     [cs:mw_useg], ds        ; (the UI's: its stack is in it)
         pusha
+        push    es
+        push    ds
+        pop     es
         mov     si, mw_cpt
-.l:     mov     di, [cs:si]
-        or      di, di
-        jz      .e
-        mov     byte [di], 0EAh         ; JMP FAR
-        mov     ax, [cs:si+2]
-        mov     [di+1], ax
-        mov     [di+3], cs
-        add     si, MW_CPE
-        jmp     .l
-.e:     mov     byte [cs:mw_cp], 1
+        call    mw_pin
+        pop     es
+        mov     byte [cs:mw_cp], 1
         popa
 .x:     ret
 mw_clipoff:
@@ -1730,7 +1716,7 @@ mw_clipoff:
 .l:     mov     di, [cs:bx]
         or      di, di
         jz      .e
-        lea     si, [bx+4]
+        lea     si, [bx+5]
         mov     cx, 5
 .c:     mov     al, [cs:si]
         mov     [di], al
