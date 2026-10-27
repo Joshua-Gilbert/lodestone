@@ -2665,8 +2665,10 @@ ks_ready:
         jmp     .again
 .snap:  add     word [cs:ks_pos], 3     ; (first: a peek in the copy goes on past it)
         popf                            ; the copy with interrupts as the caller
-        pushf                           ;  had them (32 KB; INT 10h in a window)
-        call    take_snapshot
+        pushf                           ;  had them (32 KB; INT 10h in a window):
+        call    take_snapshot           ;  for a peek (AH=01h/11h) off, as its INT
+                                        ;  left them (a tick or IRQ 5 held back
+                                        ;  for the copy, once a {SNAP}), as before
         cli
         jmp     .again
 .end:   mov     byte [cs:ks_active], 0
