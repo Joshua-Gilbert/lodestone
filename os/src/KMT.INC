@@ -464,10 +464,13 @@ mt_tfast:
         jb      .b                      ; not sure yet: the BIOS's, as ever
         push    ax
         mov     ax, [1Ch * 4 + 2]       ; the running program's own INT 1Ch?
+        cmp     ax, 0A000h              ; (the BIOS's, in ROM, as most often:
+        cmc                             ;  not a program's, CF, without the
+        jc      .r                      ;  walk of the arena)
         push    KSEG
         pop     ds
         call    mt_mine
-        pop     ax
+.r:     pop     ax
         jnc     .b                      ; (then fast in its turns, as in DOS)
         pop     dx
         pop     bx
