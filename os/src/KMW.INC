@@ -757,10 +757,9 @@ mw_tick:
 ; (AX = error) if it can't be; CF, AX = 0FFFFh: it runs in front already
 mw_open:
         push    bp
-        mov     al, 1
-.s:     call    mw_rec
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
+        xor     al, al
+.s:     call    mw_next
+        jc      .n
         push    si
         push    di
         lea     di, [bp+SE_NAME]
@@ -773,7 +772,7 @@ mw_open:
         jnz     .c
 .ne:    pop     di
         pop     si
-        jne     .n
+        jne     .s
         pop     bp
         cmp     al, [cs:mw_cur]
         je      .y
@@ -783,10 +782,7 @@ mw_open:
 .y:     mov     ax, 0FFFFh
         stc
         ret
-.n:     inc     al
-        cmp     al, MW_MAX
-        jbe     .s
-        pop     bp
+.n:     pop     bp
 .new:   push    bp                      ; (.new: started, even if one runs:
         mov     bp, sp                  ;  CODE-W's Write)
         sub     sp, 2 * MW_PATH
@@ -976,18 +972,25 @@ mw_rec: mov     bp, ax
 mw_owns:
         pusha
         mov     dx, ax
-        mov     al, 1
-.l:     call    mw_rec
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
-        cmp     dx, [cs:bp+SE_TASK]     ; (SE_TASK, SE_TGEN)
-        je      .y
-.n:     inc     al
-        cmp     al, MW_MAX
-        jbe     .l
-        stc
-.y:     popa
+        xor     al, al
+.l:     call    mw_next
+        jc      .x
+        cmp     dx, [cs:bp+SE_TASK]     ; (SE_TASK, SE_TGEN; equal: CF clear)
+        jne     .l
+.x:     popa
         ret
+
+; AL = a session (0: from the first) -> AL = the next one used after it,
+; BP = its record; CF if there is none
+mw_next:
+        inc     al
+        cmp     al, MW_MAX + 1
+        cmc
+        jc      .x
+        call    mw_rec
+        cmp     byte [cs:bp+SE_USE], 0  ; (not 0: CF clear)
+        je      mw_next
+.x:     ret
 
 ; -> AL = an unused session, BP = its record (there is one: mw_n < MW_MAX)
 mw_free:
@@ -1081,22 +1084,18 @@ mw_slot:
         push    ax
         push    bp
         mov     bx, [run_base]
-.again: mov     al, 1
-.l:     call    mw_rec
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
+.again: xor     al, al
+.l:     call    mw_next
+        jc      .e
         mov     dx, bx                  ; [BX, BX+CX) against [base, end)
         add     dx, cx
         cmp     dx, [cs:bp+SE_BASE]
-        jbe     .n
+        jbe     .l
         cmp     bx, [cs:bp+SE_END]
-        jae     .n
+        jae     .l
         mov     bx, [cs:bp+SE_END]      ; past it, and look again
         jmp     .again
-.n:     inc     al
-        cmp     al, MW_MAX
-        jbe     .l
-        mov     ax, bx
+.e:     mov     ax, bx
         add     ax, cx
         jc      .no
         cmp     ax, 0FFF0h
@@ -1141,19 +1140,15 @@ mw_grow:
 ; -> AX = the highest end of a session's slot (run_base if none)
 mw_top: push    bp
         push    cx
-        mov     ax, [run_base]
-        mov     cl, 1
-.l:     xchg    al, cl
-        call    mw_rec
-        xchg    al, cl
-        cmp     byte [cs:bp+SE_USE], 0
-        je      .n
-        cmp     ax, [cs:bp+SE_END]
-        jae     .n
-        mov     ax, [cs:bp+SE_END]
-.n:     inc     cl
-        cmp     cl, MW_MAX
-        jbe     .l
+        mov     cx, [run_base]          ; (CX: the highest yet)
+        xor     al, al
+.l:     call    mw_next
+        jc      .x
+        cmp     cx, [cs:bp+SE_END]
+        jae     .l
+        mov     cx, [cs:bp+SE_END]
+        jmp     .l
+.x:     xchg    ax, cx
         pop     cx
         pop     bp
         ret
@@ -2283,11 +2278,10 @@ mw_clean:
         push    ax
         push    si
         push    bp
-        mov     al, 1
-.s:     call    mw_rec
+        xor     al, al
+.s:     call    mw_next
+        jc      .e
         cmp     al, [cs:mw_cur]         ; (the running one's: run_cleanup's)
-        je      .n
-        cmp     byte [cs:bp+SE_USE], 0
         je      .n
         push    ds
         push    cs
@@ -2296,10 +2290,8 @@ mw_clean:
         call    mw_frees
         pop     ds
 .n:     mov     byte [cs:bp+SE_USE], 0
-        inc     al
-        cmp     al, MW_MAX
-        jbe     .s
-        mov     byte [cs:mw_n], 0
+        jmp     .s
+.e:     mov     byte [cs:mw_n], 0
         mov     byte [cs:mw_cur], 0
         mov     byte [cs:mw_rd], 0
         mov     byte [cs:mw_msg], 0
