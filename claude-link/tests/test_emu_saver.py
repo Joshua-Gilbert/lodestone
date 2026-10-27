@@ -84,7 +84,9 @@ def test_saver_rings_unanswered():
         ring = L.t.ring
         L.t.ring = lambda: None                     # (the rings lost: as a GRiD reset or off meanwhile)
         feed(h, '\x1b[5;3HNews')
-        h.run_until(lambda: L.gave_up(), 5)
+        assert h.run_until(lambda: L.rings_left <= 0, 5), L.rings_left
+        assert t.saver_on() and not L.gave_up(), 'gone at once (a DEFRAG between key looks is slower)'
+        assert h.run_until(lambda: L.gave_up(), 15), 'never gone'
         L.last_rx -= 11
         assert sv.up() and L.gave_up() and not t.saver_on() and t.why_not(), (sv.up(), L.rings_left, t.why_not())
         L.t.ring = ring
