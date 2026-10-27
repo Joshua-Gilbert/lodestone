@@ -1,11 +1,13 @@
 ; MTFAST.COM - for test_mt.py: a program that runs the timer fast (M9b).
-;   MTFAST T FILE [K]
+;   MTFAST T FILE [K][C]
 ; Runs counter 0 four times as fast (mode 3, 4000h) and hooks INT 08h
 ; (AH=35h/25h) with a handler that counts its calls and goes on to the
 ; one it found every 4th time (JMP FAR), else only ends the interrupt,
-; as a game's music does.  Waits (HLT, then a DOS call) for T ticks of
-; the BIOS's clock (40:6Ch), then puts INT 08h back and, unless K, the
-; counter's rate; FILE gets its handler's calls (8 hex digits).
+; as a game's music does.  With C it hooks INT 1Ch instead, counting its
+; calls (IRET), as a simpler program does that lets the clock race.
+; Waits (HLT, then a DOS call) for T ticks of the BIOS's clock (40:6Ch),
+; then puts the vector back and, unless K, the counter's rate; FILE gets
+; its handler's calls (8 hex digits).
 ; nasm -f bin -o MTFAST.COM MTFAST.ASM
 cpu 286
 org 100h
@@ -14,17 +16,27 @@ org 100h
         mov     [ticks], ax
         mov     di, fname
         call    word_
-        call    blanks
+.o:     call    blanks
         and     al, 0DFh
+        cmp     al, 'K'
+        jne     .o1
         mov     [keep], al
-        mov     ax, 3508h
+        jmp     .o
+.o1:    cmp     al, 'C'
+        jne     .o2
+        mov     byte [vec], 1Ch
+        mov     word [hnd], t1c
+        jmp     .o
+.o2:    mov     ah, 35h
+        mov     al, [vec]
         int     21h
         mov     [old], bx
         mov     [old+2], es
         push    cs
         pop     es
-        mov     ax, 2508h
-        mov     dx, tick
+        mov     ah, 25h
+        mov     al, [vec]
+        mov     dx, [hnd]
         int     21h
         cli
         mov     al, 36h                 ; counter 0: mode 3, LSB then MSB
@@ -55,9 +67,10 @@ org 100h
         xor     al, al
         out     40h, al
         out     40h, al
-.k:     push    ds
+.k:     mov     ah, 25h
+        mov     al, [vec]
+        push    ds
         lds     dx, [old]
-        mov     ax, 2508h
         int     21h
         pop     ds
         sti
@@ -80,6 +93,10 @@ org 100h
         int     21h
 .x:     mov     ax, 4C00h
         int     21h
+
+t1c:    add     word [cs:calls], 1
+        adc     word [cs:calls+2], 0
+        iret
 
 tick:   add     word [cs:calls], 1
         adc     word [cs:calls+2], 0
@@ -139,5 +156,7 @@ calls   dd      0
 ticks   dw      0
 div4    db      0
 keep    db      0
+vec     db      08h
+hnd     dw      tick
 hex     times   8 db 0
 fname   times   70 db 0

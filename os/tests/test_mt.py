@@ -1528,6 +1528,20 @@ def t_irqk():
           spun(k, 'SF.TXT') > 0 and spun(k, 'SB.TXT') > 0 and not k.crashed)
 
 MTFS = os.path.join(HERE, 'MTFAST.COM')
+MTCL = os.path.join(HERE, 'MTCLI.COM')
+def tick_rate(k, s=2.0):
+    """The BIOS's ticks (40:6Ch) and MT's (mt_ticks: the turns' length) a simulated second, over s."""
+    seg, Y = mt_seg(k), k.Y
+    b0, m0, u0 = k.pc.u16(0x40, 0x6C), k.pc.u16(seg, Y['mt_ticks']), k.pc.us
+    k.run_for(s)
+    du = (k.pc.us - u0) / 1e6
+    return (round(((k.pc.u16(0x40, 0x6C) - b0) & 0xFFFF) / du, 1),
+            round(((k.pc.u16(seg, Y['mt_ticks']) - m0) & 0xFFFF) / du, 1))
+
+def wait_pit(k, n, s=3.0):
+    t1 = k.pc.us + s * 1e6
+    while k.pc.pit_n != n and k.pc.us < t1: k.run_for(0.05)
+    return k.pc.pit_n
 
 def t_pitfast():
     print('== M9b: a program that runs the timer fast (counter 0 four times, its own INT 08h hook)')
@@ -1535,19 +1549,11 @@ def t_pitfast():
     Y, seg = k.Y, mt_seg(k)
     sh = Shell(k)
     sh.run('ver')
-    def rate(s=2.0):
-        """The BIOS's ticks (40:6Ch) and MT's (mt_ticks: the turns' length) a simulated second, over s."""
-        b0, m0, u0 = k.pc.u16(0x40, 0x6C), k.pc.u16(seg, Y['mt_ticks']), k.pc.us
-        k.run_for(s)
-        du = (k.pc.us - u0) / 1e6
-        return (round(((k.pc.u16(0x40, 0x6C) - b0) & 0xFFFF) / du, 1),
-                round(((k.pc.u16(seg, Y['mt_ticks']) - m0) & 0xFFFF) / du, 1))
+    rate = lambda: tick_rate(k)
     ref = rate()
-    near = lambda r: all(abs(v - ref[0]) < 0.06 * ref[0] for v in r)
+    near = lambda r, x=1: all(abs(v - x * ref[0]) < 0.06 * x * ref[0] for v in r)
     typ(k, 'mtlaunch mtfast.com 120 fb.txt;mtspin.com 120 sb.txt', 0.5); line(k, '')
-    t1 = k.pc.us + 3e6
-    while k.pc.pit_n != 0x4000 and k.pc.us < t1: k.run_for(0.05)
-    fast = k.pc.pit_n
+    fast = wait_pit(k, 0x4000)
     beh = rate()
     waitfile(k, 'FB.TXT', 20.0); waitfile(k, 'SB.TXT', 20.0)
     fb = spun(k, 'FB.TXT')
@@ -1556,6 +1562,7 @@ def t_pitfast():
           'its hook in its own (its calls %d)' % (beh, ref, fb), fast == 0x4000 and near(beh) and fb > 120, (fast, beh, ref, fb))
     typ(k, 'mtlaunch mtspin.com 120 sf.txt', 0.5); line(k, '')
     typ(k, 'mtfast 80 ff.txt k', 0.5)
+    fast = wait_pit(k, 0x4000)
     fr = rate()
     waitfile(k, 'FF.TXT', 20.0)
     left = k.pc.pit_n
@@ -1563,8 +1570,44 @@ def t_pitfast():
     waitfile(k, 'SF.TXT', 20.0)
     check('... in front (task 0), MTSPIN behind: at their rate too (%s); and once it has ended leaving the counter '
           'fast (K: %04Xh), still (%s: MT divides for every task)' % (fr, left, after),
-          near(fr) and left == 0x4000 and near(after) and spun(k, 'FF.TXT') > 80 and not k.crashed,
-          (fr, left, after, spun(k, 'FF.TXT')))
+          fast == 0x4000 and near(fr) and left == 0x4000 and near(after) and spun(k, 'FF.TXT') > 80
+          and not k.crashed, (fast, fr, left, after, spun(k, 'FF.TXT')))
+    # its own INT 1Ch hook only (no INT 08h one), the clock let race: in its own turns as in DOS
+    typ(k, 'mtfast 300 fc.txt c', 0.5)
+    k.run_for(0.3)
+    own = rate()
+    waitfile(k, 'FC.TXT', 20.0)
+    calls = spun(k, 'FC.TXT')
+    check('... C (an INT 1Ch hook of its own, none on INT 08h), in front alone: MT doesn\'t divide in its turns, '
+          'its INT 1Ch, the clock and the turns at the fast rate (%s a second), as in DOS; its calls %d'
+          % (own, calls), near(own, 4) and 290 <= calls <= 310 and k.pc.pit_n == 65536 and not k.crashed,
+          (own, calls, k.pc.pit_n))
+
+def t_pitcli():
+    print('== M9b: the timer\'s interrupt held late under CLI, by a different time each tick: not a fast counter')
+    k = boot('mt_pc.img', b'MULTITASK=1\r\n', 88, MTCL, irq_exact=True)
+    Y, seg = k.Y, mt_seg(k)
+    sh = Shell(k)
+    sh.run('ver')
+    ref = tick_rate(k)
+    reads, pr = [], k.pc.pit_read
+    def latch():                        # (MT's reads of counter 0, at its ticks)
+        pr()
+        if k.pc.r('cs') == seg: reads.append(k.pc.pit_latch)
+    k.pc.pit_read = latch
+    b0, m0, u0 = k.pc.u16(0x40, 0x6C), k.pc.u16(seg, Y['mt_ticks']), k.pc.us
+    typ(k, 'mtlaunch mtcli.com 100 cl.txt', 0.5); line(k, '')
+    waitfile(k, 'CL.TXT', 60.0)
+    du = (k.pc.us - u0) / 1e6
+    got = (round(((k.pc.u16(0x40, 0x6C) - b0) & 0xFFFF) / du, 1),
+           round(((k.pc.u16(seg, Y['mt_ticks']) - m0) & 0xFFFF) / du, 1))
+    k.pc.pit_read = pr
+    low = sum(r < 0x8000 for r in reads)
+    check('MTCLI behind (interrupts off from each tick to 15-22 ms after it, a different time each): most ticks read '
+          'low (%d of %d), yet the clock and the turns keep their rate over its run (%s a second, %s alone): two '
+          'reads not the same, so not a fast counter' % (low, len(reads), got, ref),
+          low > len(reads) // 2 and all(abs(v - ref[0]) < 0.06 * ref[0] for v in got)
+          and A.disk_file(k, 'CL.TXT') == b'ok' and not k.crashed, (low, len(reads), got, ref))
 
 def t_keys():
     print('== keys: the front task\'s only (INT 16h through MT), its waits switched from, CODE-Tab wherever it is typed')
@@ -6097,13 +6140,13 @@ if __name__ == '__main__':
     t0 = time.time()
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
-              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST'):
+              'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST', 'MTCLI'):
         subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
