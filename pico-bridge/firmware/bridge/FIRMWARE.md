@@ -171,7 +171,7 @@ To go back to the bench firmware, use BOOTSEL and `firmware/bench_test/bench_tes
 | Steady on | Online |
 | Flicker | Bytes moving to or from the bridge |
 
-## Tested (no hardware): `sim/host/run_sim_tests.py`, 105 / 105
+## Tested (no hardware): `sim/host/run_sim_tests.py`, 109 / 109
 
 `sim/host/bus_sim.c` compiles this same `gpib_engine.c` and `host_link.c` for Linux, with a model of the
 board:
@@ -196,6 +196,8 @@ What it covers:
 - The Pi stalled 2.5 s, and the Pico's USB output stalled 2.5 s: NRFD held, nothing lost.
 - The daemon stalled past the 5 s PING timeout: it recovers by itself.
 - Daemon stopped: the bridge goes offline and the bus still works.
+- The daemon on a fake port whose write fails in the ping thread while the main loop reads it: it lives,
+  closes the port in the main loop and reconnects.
 - The scpi handler.
 - Address changes.
 
