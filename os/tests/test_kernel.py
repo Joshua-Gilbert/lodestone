@@ -1499,6 +1499,38 @@ def t_renfull():
     check('... and the disk is consistent afterwards, G00.TXT in SUB, F00.TXT gone', not probs
           and '\\SUB\\G00.TXT' in files and '\\SUB\\F00.TXT' not in files, (probs, sorted(files)))
 
+def t_fatstraddle():
+    """fat_set: a FAT12 entry across two sectors (1.44 MB: 341 at bytes 511-512, 682 at 1023-1024) marks both
+    changed; deleting a file whose chain ends there writes the second sector too, though nothing else changed in it."""
+    com = os.path.join(OUT, 'DELF.COM')     # DELF.COM: delete the file named in its command tail (PSP 82h, CR-ended)
+    open(com, 'wb').write(bytes([0xBE, 0x82, 0x00, 0x89, 0xF2, 0xAC, 0x3C, 0x0D, 0x75, 0xFB, 0xC6, 0x44, 0xFF, 0x00,
+                                 0xB4, 0x41, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]))
+    def mk(n1, n2):
+        b1 = os.path.join(OUT, 'BIG1.DAT'); open(b1, 'wb').write(b'\x11' * (n1 * 512))
+        b2 = os.path.join(OUT, 'BIG2.DAT'); open(b2, 'wb').write(b'\x22' * (n2 * 512))
+        return image('straddle.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, b1, b2)
+    def ent(img, n, copy=0):            # (FAT 1 at LBA 1, FAT 2 at LBA 10)
+        v = struct.unpack_from('<H', img, 512 + copy * 9 * 512 + n * 3 // 2)[0]
+        return v >> 4 if n & 1 else v & 0xFFF
+    raw = open(mk(10, 10), 'rb').read()     # where BIG1 starts, from its entry
+    s1 = next(struct.unpack_from('<H', raw, 19 * 512 + i * 32 + 26)[0] for i in range(224)
+              if raw[19 * 512 + i * 32:19 * 512 + i * 32 + 11] == b'BIG1    DAT')
+    img = mk(341 - s1 + 1, 682 - 342 + 1)
+    raw = open(img, 'rb').read()
+    check('the image: BIG1 ends at cluster 341, BIG2 is 342-682', ent(raw, 341) == 0xFFF and ent(raw, 342) == 343
+          and ent(raw, 682) == 0xFFF, (ent(raw, 341), ent(raw, 342), ent(raw, 682)))
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    assert run_long(k, 'delf big2.dat')
+    d = bytes(k.pc.drives[0].img)
+    check('BIG2 deleted: entry 682 (bytes 1023-1024, sectors 1 and 2) free on the disk in both copies, no lost clusters',
+          ent(d, 682) == 0 and ent(d, 682, 1) == 0 and ent(d, 342) == 0 and not fatcheck.check(d)[0],
+          (ent(d, 682), ent(d, 682, 1), fatcheck.check(d)[0]))
+    assert run_long(k, 'delf big1.dat')
+    d = bytes(k.pc.drives[0].img)
+    check('BIG1 deleted: entry 341 (bytes 511-512, sectors 0 and 1) free on the disk in both copies, no lost clusters',
+          ent(d, 341) == 0 and ent(d, 341, 1) == 0 and not fatcheck.check(d)[0], (ent(d, 341), ent(d, 341, 1), fatcheck.check(d)[0]))
+
 def t_names():
     """Names that are no names (a second dot, a bad character), device names,
     CREATE over hidden and system files: NAMES.COM's 58 calls answer as GRiD
@@ -1678,6 +1710,34 @@ def t_devname():
               'CLOCK$$ files; GPIB00-GPIB30, GPIBn and GPIBnn.X a device, GPIB31, GPIB1Z and GPIB123 files)' % (tag, len(want)),
               got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
         check('... each device opened is the one named, GPIBnn at address nn (%d opens)' % len(wdevs), devs == wdevs, devs)
+
+def t_newname():
+    """new_name: CREATE, CREATE NEW, MKDIR and RENAME onto a name with no last part (A:\\, \\, A:, ., A.B\\.: 5;
+    A.B\\ and the empty name: 3) make nothing, and the disk stays consistent."""
+    com = os.path.join(OUT, 'NEWNAME.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NEWNAME.ASM')], check=True)
+    x = os.path.join(OUT, 'NN_X.TXT'); open(x, 'wb').write(b'hello')
+    k = ktest.KPC(image('newname.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NEWNAME.COM=' + com, 'X.TXT=' + x, 'A.B\\'))
+    k.start()
+    sh = Shell(k)
+    assert run_long(k, 'newname > out.txt')
+    d = bytes(k.pc.drives[0].img)
+    got = [l.strip() for l in fatcheck.read_files(d).get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n')
+           if l.startswith('fn ')]
+    want = ['fn %s -> err %s' % (c, a) for c, a in MS_NEWNAME]
+    check('NEWNAME.COM: all %d calls answer as before (no last part: 5; A.B\\ and the empty name: 3)' % len(want),
+          got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    dl = []; f = fatcheck.read_files(d, dirs=dl)
+    probs, _ = fatcheck.check(d)
+    check('... nothing made, X.TXT as it was, the disk consistent',
+          set(f) == {'A:\\LODE.SYS', 'A:\\LCMD.COM', 'A:\\NEWNAME.COM', 'A:\\X.TXT', 'A:\\OUT.TXT'} and dl == ['A:\\A.B']
+          and f['A:\\X.TXT'] == b'hello' and not probs, (sorted(f), dl, probs))
+
+# NEWNAME.COM's calls and their errors (the kernel's before new_name tested r_wild first)
+MS_NEWNAME = [('3C A:\\', '05'), ('3C \\', '05'), ('3C A:', '05'), ('3C A.B\\', '03'), ('3C .', '05'), ('3C A.B\\.', '05'),
+              ('3C ', '03'), ('5B A:\\', '05'), ('5B A:', '05'), ('5B .', '05'),
+              ('39 A:\\', '05'), ('39 \\', '05'), ('39 A:', '05'), ('39 A.B\\', '03'), ('39 .', '05'), ('39 A.B\\.', '05'),
+              ('56 A:\\', '05'), ('56 \\', '05'), ('56 A:', '05'), ('56 .', '05'), ('56 A.B\\.', '05')]
 
 # DEVNAME.COM's names: OPEN's answer, CREATE's, the device opened (number/GPIB address; '-' none)
 DEVNAME_ANS = r'''
@@ -2866,7 +2926,7 @@ def t_execabort():
           k.exec_list())
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_devname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
