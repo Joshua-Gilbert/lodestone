@@ -14,6 +14,12 @@ the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
 1200 baud, address A). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
 
+**v7.2:** no bumps in long lines. After a status request, v5-v7 re-entered
+graph mode with GS and a move to the pen's position, which lifted the pen in
+the middle of a stroke every ~600 bytes. The 4662 goes back to the mode it was
+in once a Style I command is processed (Figure 3-3, p. 3-5), so the stroke now
+just carries on. `!g 1` puts the old re-entry back.
+
 **Defaults (v7.1):** `!r`, `!a`, `!w` and `!b` are all off. The drag that v6
 and v7 worked around turned out to be the pen adapter pressing the pen too
 hard on the paper; with the adapter corrected, plots are clean without them.
@@ -53,7 +59,7 @@ isn't cut at 255 characters (v1-v4 did).
 
 **Console** (USB, 9600): HP-GL for testing; `?` the bus lines, counters and
 flow state; `#` ask the plotter now; `!` the timed pacing, the lift (`!r`) and the label
-settles (`!a`, `!w`, `!b`).
+settles (`!a`, `!w`, `!b`), and the mode re-entry after status requests (`!g`).
 
 **Flashing from the Pi:**
 ```
