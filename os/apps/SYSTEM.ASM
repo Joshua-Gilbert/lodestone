@@ -1138,6 +1138,8 @@ t_gpib: call    vstart
         xor     bx, bx
 .f:     cmp     bl, [gp_nfound]
         jae     .fx
+        cmp     di, vbuf + 80 - VCOL - 4        ; (room for ", nn"?)
+        ja      .fx
         or      bx, bx
         jz      .f1
         mov     ax, ', '
@@ -1283,8 +1285,8 @@ t_display:
         mov     ah, 4Eh
         int     21h
         jc      .d
-.f:     cmp     di, vbuf + 128 - 16     ; (room for one more)
-        jae     .d
+.f:     cmp     di, vbuf + 80 - LCOL - 2 - 14   ; (room for ", NAME.EXT"?)
+        ja      .d
         mov     ax, ', '
         stosw
         mov     si, dta + 30
@@ -2198,8 +2200,7 @@ set_back:
         mov     ah, 41h
         int     21h
         jc      .err
-        mov     byte [mt_known], 0      ; (MULTITASK= read again: the file is
-                                        ;  gone, and the ROM's has none: off)
+        mov     word [splash_known], 0  ; (and mt_known: both read again)
         mov     si, s_setdone
         call    UI_MSG
         jmp     redraw
@@ -2396,7 +2397,7 @@ s_d144      db '1.44 MB',0
 l_driver    db 'Driver',0
 l_myaddr    db 'Our address',0
 l_srq       db 'SRQ',0
-s_srqirq    db 'on IRQ 5 (GPIBIRQ=0 in LODE.INI: polled)',0
+s_srqirq    db 'on IRQ 5 (GPIBIRQ=0: polled)',0
 s_srqpoll   db 'polled',0
 l_found     db 'Instruments at',0
 s_nogpib    db 'no GPIB controller found',0
@@ -2437,6 +2438,8 @@ months3     db 'JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'
 quit        db 0
 splash_off  db 0                        ; SPLASH=0: no start-up picture
 splash_known db 0                       ;  (1: LODE.INI read for it)
+mt_known    db 0                        ; the same for MULTITASK= (set_back
+                                        ;  clears both as a word)
 gp_scanned  db 0
 l_font      db 'Font',0
 l_fonts     db 'Fonts on the start-up disk:',0
@@ -2481,8 +2484,7 @@ s_mtwhy2    db '32 KB of it free, and LODEMT.SYS beside LODE.SYS.',0
 s_mt1t      db 'Programs started from the Executive run as tasks.',0
 s_mt2t      db 'CODE-Tab: the next task.  CODE-T in the',0
 s_mt3t      db 'Executive: the tasks.  LCMD: START, TASKS, WAIT.',0
-mt_want     db 0                        ; MULTITASK=1 in \LODE.INI
-mt_known    db 0                        ;  (1: read for it)
+mt_want     db 0                        ; MULTITASK=1 in \LODE.INI (mt_known)
 mt_now      db 0                        ; (on now)
 s_printeq   db 'PRINTER=',0
 s_romini    db 'R:\LODE.INI',0

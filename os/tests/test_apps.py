@@ -2754,6 +2754,17 @@ def t_clip():
     r2 = c.put(CLIPPAT[5:105])
     check('... the program started again: still them; 100 others put: the file just those',
           g == CLIPPAT[:3000] and r2 == 0 and disk_file(k, 'CLIP.$$$') == CLIPPAT[5:105] and c.size() == 100, (len(g), r2))
+    k.pc.drives[0].wp = True
+    r3, n3 = c.put(CLIPPAT[:50]), c.size()
+    k.pc.drives[0].wp = False
+    g, _ = c.get(200)
+    check('... A: write-protected, 50 others put: refused (CF), and the 100 still held (size 100, got back whole: the file '
+          'was never made anew, so it isn\'t "empty")', r3 != 0 and n3 == 100 and g == CLIPPAT[5:105]
+          and disk_file(k, 'CLIP.$$$') == CLIPPAT[5:105], (r3, n3, g if not isinstance(g, bytes) else len(g)))
+    k.key('T')                          # CLIP.$$$ cut behind the core's back
+    r4, _ = c.get(200)
+    check('... the file cut since: a get comes up short, error 30 (Disk error (read)), not 29 (a write\'s)',
+          r4 == (0xFFFF, 30) and c.size() == 100, (r4, c.size()))
     k.key(ktest.ESC)
     # EMS, every page M:'s (MDISK=ALL): none to be had, so the file
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'MDISK=ALL\r\n')
@@ -2765,11 +2776,142 @@ def t_clip():
           and k.rd('clip_f', 1) == b'\x01' and disk_file(k, 'CLIP.$$$') == CLIPPAT[:500] and g == CLIPPAT[:500], (r, k.u16('clip_h')))
     k.key(ktest.ESC)
 
+# ---------------------------------------------------------------------
+def rom1(*extra):
+    """ROM 1 of the files built now (build.sh's, less LODEMT.SYS, TASKS.RUN
+    and TERM.RUN, as test_rom's rom_ini), with the ROM's LODE.INI and extra
+    files: booted with test_rom's boot(roms={1: ...})"""
+    sys.path.insert(0, os.path.join(os.path.dirname(GOS), 'tools'))
+    import mkrom
+    names = ['src/LODE.SYS', 'src/LODE.PIC', 'src/LCMD.COM', 'apps/SYSTEM.RUN', 'apps/WRITE.RUN', 'apps/CALC.RUN',
+             'src/CALC.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN', 'rom/LODE.INI']
+    files = [(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names]
+    files += [(os.path.basename(p), open(p, 'rb').read()) for p in extra]
+    return mkrom.volume(files, boot=open(os.path.join(GOS, 'src', 'ROMBOOT.BIN'), 'rb').read())[0]
+
+def t_clip_rom():
+    """UI_CLIP's file from the ROM with no settings drive (the menu's 2, or
+    no C: and no A:\\LODE.INI): not R:, which takes no writes, but C: if
+    there, else A: (as System and the kernel's capdrv)."""
+    print('== the clipboard\'s file from the ROM (no settings drive, no EMS)')
+    import test_rom as R
+    rom = rom1(CLIPTEST)
+    k = R.boot(roms={1: rom})
+    c = Clip(k)
+    r = c.put(CLIPPAT[:700])
+    g, _ = c.get(1000)
+    check('no C:, no A:\\LODE.INI: A:\\CLIP.$$$ (not R:\\, refused), got back whole', R.u8(k, 'setdrv') == 0
+          and k.rd('s_clip', 1) == b'A' and r == 0 and disk_file(k, 'CLIP.$$$') == CLIPPAT[:700] and g == CLIPPAT[:700],
+          (R.u8(k, 'setdrv'), k.rd('s_clip', 1), r))
+    k.key(ktest.ESC)
+    k = R.boot(roms={1: rom}, ata=R.sysinfo_hd(('CLIPTEST.RUN', open(CLIPTEST, 'rb').read()), ('LODE.INI', b'SAVER=10\r\n')),
+               shift=True, keys=[ord('2')])
+    c = Clip(k)
+    r = c.put(CLIPPAT[:600])
+    g, _ = c.get(1000)
+    check('the menu\'s 2 (the ROM\'s own settings) with C:: C:\\CLIP.$$$, got back whole', R.u8(k, 'setdrv') == 0
+          and k.rd('s_clip', 1) == b'C' and r == 0 and R.hd_file(k, 'CLIP.$$$') == CLIPPAT[:600] and g == CLIPPAT[:600],
+          (R.u8(k, 'setdrv'), k.rd('s_clip', 1), r))
+    k.key(ktest.ESC)
+
+def t_sys_back():
+    """System's Settings, Return (back to the ROM's): SPLASH= is forgotten
+    with the file, as MULTITASK= is, so Display and the next save don't
+    bring the deleted SPLASH=0 back."""
+    print('== System: back to the ROM\'s settings forgets SPLASH= too')
+    import test_rom as R
+    k = R.boot(roms={1: rom1()}, ata=R.sysinfo_hd(('LODE.INI', b'SPLASH=0\r\n')))
+    to_display(k)
+    no = re.search(r'Start-up picture\s+no', screen(k))
+    for _ in range(3): k.key(ktest.DOWN)                        # Settings
+    k.key(ktest.ENTER); k.key(ktest.ENTER)                      # back to the ROM's: asked, confirmed
+    gone = R.hd_file(k, 'LODE.INI') is None
+    k.key(ktest.ESC)                                            # (the message read)
+    for _ in range(3): k.key(ktest.UP)                          # Display
+    yes = re.search(r'Start-up picture\s+yes', screen(k))
+    k.key(ktest.ENTER)                                          # the next font, saved
+    ini = R.hd_file(k, 'LODE.INI')
+    check('C:\\LODE.INI with SPLASH=0: Display says no; back to the ROM\'s (the file gone): Display says yes, and the next '
+          'font goes in a new C:\\LODE.INI without SPLASH=0', no and gone and yes and ini == b'FONT=TERMINUS.FNT\r\n',
+          (bool(no), gone, bool(yes), ini, screen(k)))
+
+def t_system_lists():
+    """System's values clipped at the screen's edge: GPIB's SRQ line whole;
+    the fonts on the start-up disk and GPIB's instruments cut at an entry's
+    end (they used to end in half a name, or half an address)."""
+    print('== System: lines that reach the screen\'s edge')
+    fonts = []
+    for c in 'BCDEFG':
+        p = os.path.join(OUT, 'FONT%s123.FNT' % c); open(p, 'wb').write(bytes(1536)); fonts.append(p)
+    devs = {a: sim7210.Device(a, 0, {}) for a in range(5, 31) if a != 21}
+    k = ktest.KPC(image('lists.img', SYSTEM, *fonts), chip=sim7210.NEC7210(devs)); k.start()
+    to_display(k)
+    m = re.search(r'GRiD \(built in\),.*$', screen(k), re.M)
+    fl = m.group(0).strip() if m else screen(k)
+    check('Display: as many fonts as fit, the last one whole ("GRiD (built in)" and three NAME.FNT)',
+          fl == 'GRiD (built in), FONTB123.FNT, FONTC123.FNT, FONTD123.FNT', fl)
+    k.key('G')
+    check('GPIB: "on IRQ 5 (GPIBIRQ=0: polled)", whole', re.search(r'SRQ\s+on IRQ 5 \(GPIBIRQ=0: polled\)$', screen(k), re.M), screen(k))
+    k.key(ktest.ENTER); k.key(ktest.ENTER, settle=False); k.settle(30)
+    m = re.search(r'Instruments at\s+(.*)$', screen(k), re.M)
+    check('... 25 instruments found: as many as fit, the last address whole (5 to 14; 15 would end past the edge)',
+          m and m.group(1).strip() == ', '.join(str(a) for a in range(5, 15)), m and m.group(1))
+    k.key(ktest.ESC)
+
+def t_gpib_tools():
+    """tools/GRIDGPIB.COM, the standalone driver (here under Lodestone, the
+    kernel's driver moved out of INT 60h's way), and tools/GPIBXFER.COM (in
+    sim7210's own machine), both assembled from tools/ now."""
+    print('== GRIDGPIB /U and GPIBXFER (tools/)')
+    tools = os.path.join(os.path.dirname(GOS), 'tools')
+    gg, gx = os.path.join(OUT, 'GRIDGPIB.COM'), os.path.join(OUT, 'GPIBXFER.COM')
+    for src, dst in (('GRIDGPIB.ASM', gg), ('GPIBXFER.ASM', gx)):
+        subprocess.run(['nasm', '-f', 'bin', '-i', tools + '/', '-o', dst, os.path.join(tools, src)], check=True)
+    k = ktest.KPC(image('ggu.img', LCMD, gg), chip=sim7210.NEC7210(sim7210.bus())); k.start()
+    k.code_p()
+    def run(cmd):
+        k.key('cls'); k.key(ktest.ENTER); k.key(cmd); k.key(ktest.ENTER)
+        return k.pc.text_screen()
+    i0d = k.pc.rd(0, 0x0D * 4, 4)                               # (the kernel's)
+    k.pc.wr(0, 0x60 * 4, bytes(4))                              # (INT 60h free for GRIDGPIB)
+    o1 = run('gridgpib')
+    seg, m1 = k.pc.u16(0, 0x60 * 4 + 2), k.pc.pic_mask
+    k.pc.wr(0, 0x0D * 4, i0d)                                   # INT 0Dh someone else's since
+    o2 = run('gridgpib /u')
+    m2, seg2 = k.pc.pic_mask, k.pc.u16(0, 0x60 * 4 + 2)
+    check('GRIDGPIB /U while another program has INT 0Dh: refused, and the driver left as it was (IRQ 5 still unmasked)',
+          'SRQ on IRQ 5' in o1 and seg not in (0, 0x60) and not m1 & 0x20 and 'took INT 0Dh after GRIDGPIB' in o2
+          and seg2 == seg and not m2 & 0x20, (o1, o2, hex(m1), hex(m2)))
+    import sim7210 as S
+    class Echo(S.Device):
+        """the Pico bridge's thrutest: each 4096-byte message sent back; gone
+        (no listener) once it has echoed the first pair's"""
+        def __init__(s, devs, gone):
+            S.Device.__init__(s, 7, 0, {}); s.devs, s.acc, s.n, s.gone = devs, b'', 0, gone
+        def message(s, msg):
+            s.acc += msg
+            if len(s.acc) >= 4096: s.out, s.acc = s.acc[:4096], s.acc[4096:]; s.n += 1
+        def on_sent(s):
+            if s.gone and s.n > 16: s.devs.pop(7, None)
+    bus, outs = S.bus, []
+    try:
+        for gone in (False, True):
+            devs = {}; devs[7] = Echo(devs, gone)
+            S.bus = lambda: devs
+            outs.append(S.run(gx, maxins=100_000_000)[0].split('DMA, channel 3:')[0])
+    finally:
+        S.bus = bus
+    check('GPIBXFER, its CPU loop with an echoing device: both ways, every byte right', 'device -> GRiD:' in outs[0]
+          and 'the echo is every byte right' in outs[0] and 'failed' not in outs[0], outs[0])
+    check('... the device gone after the first pair: the second pair\'s write fails, said as "sending failed" (not "receiving")',
+          'sending failed, step 03h' in outs[1] and 'receiving' not in outs[1], outs[1])
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
+              t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

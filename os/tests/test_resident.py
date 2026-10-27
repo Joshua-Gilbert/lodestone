@@ -19,6 +19,8 @@ TM5000G = next((p for p in (os.environ.get('TM5000G', ''), os.path.join(GOS, '..
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
+    for d, n in ((os.path.join(GOS, 'src'), 'LCMD'), (HERE, 'MEMSZ')):     # (on every disk here and test_resident_term's)
+        subprocess.run(['nasm', '-f', 'bin', '-i', d + '/', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
     for n in ('RSPIKE', 'EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE', 'HOOK16', 'PAGE1'):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(CL, n + '.COM'), os.path.join(CL, n + '.ASM')], check=True)
     subprocess.run(['sh', os.path.join(CL, 'build.sh')], check=True, stdout=subprocess.DEVNULL)  # RCON.BIN in CLAUDE.COM, its map
@@ -48,8 +50,6 @@ def mcbs(k):
         out.append((seg, k.pc.u16(seg, 1), k.pc.u16(seg, 3), k.pc.rd(seg, 8, 8).split(b'\0')[0].decode('latin1')))
         if t != ord('M'): return out
         seg += k.pc.u16(seg, 3) + 1
-    for d, n in ((os.path.join(GOS, 'src'), 'LCMD'), (HERE, 'MEMSZ')):
-        subprocess.run(['nasm', '-f', 'bin', '-o', n + '.COM', n + '.ASM'], check=True, cwd=d)   # (its includes)
 
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [os.path.join(GOS, 'src', 'LODE.SYS'), os.path.join(GOS, 'src', 'LCMD.COM'),

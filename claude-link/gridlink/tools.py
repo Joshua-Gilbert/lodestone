@@ -94,7 +94,8 @@ class Tools:
                      'for a key then). When the script ends the real keyboard takes over, so end with the '
                      "keys that quit the program unless the user will.")},
                  'capture': {'type': 'boolean', 'description': 'Return the text output (default true).'},
-                 'screenshot': {'type': 'boolean', 'description': 'Also capture the screen when the program exits (default false).'},
+                 'screenshot': {'type': 'boolean', 'description': 'Also capture the screen when the program exits '
+                                                            '(unless a {SNAP} in keys took one; default false).'},
                  'timeout': {'type': 'integer', 'description': 'Seconds to wait for the program (default 900).'},
              }, 'required': ['command']}},
             {'name': 'grid_files',

@@ -548,11 +548,15 @@ prog_name:
 ; now (AX kept); else AX = the next key, taken if AH is a read (00h, 10h).
 ; A wait (FF FF n) holds them n ticks; at the end (or a {SNAP}: TYPE's
 ; screen comes at the end anyway) the stub's r_ks goes 0 and r_pend 1:
-; the console comes back, and answers TYPE.
+; the console comes back, and answers TYPE.  Interrupts off, then the
+; caller's IF: a nested peek (a TSR's INT 1Ch) must not see the state half
+; moved.
 rc_feed:
         push    ds
         push    si
         push    bx
+        pushf
+        cli
         push    cs
         pop     ds
         mov     bx, ax
@@ -567,7 +571,8 @@ rc_feed:
         test    bh, 1                   ; (a peek leaves it)
         jnz     .k
         add     word [ks_pos], 2
-.k:     clc
+.k:     popf
+        clc
         jmp     short .x
 .wt:    push    ds
         push    40h
@@ -576,13 +581,11 @@ rc_feed:
         pop     ds
         cmp     byte [ks_wait], 0
         jne     .w2
-        mov     byte [ks_wait], 1
-        push    ax
-        mov     al, [ksbuf + si + 2]
-        xor     ah, ah
+        add     al, [ksbuf + si + 2]    ; its end, then ks_wait
+        adc     ah, 0
         mov     [ks_until], ax
-        pop     ax
-        add     [ks_until], ax
+        mov     byte [ks_wait], 1
+        jmp     short .l                ; (the tick again; FF FF 00 ends at once)
 .w2:    sub     ax, [ks_until]
         js      .no
         mov     byte [ks_wait], 0
@@ -595,7 +598,8 @@ rc_feed:
         mov     word [es:di + P_KS], 0100h      ; r_ks 0, r_pend 1
         pop     di
         pop     es
-.no:    mov     ax, bx
+.no:    popf
+        mov     ax, bx
         stc
 .x:     pop     bx
         pop     si
@@ -1438,31 +1442,35 @@ unborrow:
 ; ---- the band ----------------------------------------------------
 ; title_text: the Pi's title (or ours), the program's name, then DOS busy
 ; if the file requests can't call it (a long status on the right covers the
-; end: the name is in HELLO for Claude anyway)
+; end: the name is in HELLO for Claude anyway).  After the name, a string
+; goes on only while the band's 48 cells aren't full: at most 47 + 14 bytes
+; and the NUL, in title_text's 69
 make_title:
         mov     di, title_text
         mov     si, ptitle
         call    put_str
         cmp     byte [prog], 0
         je      .t
-        mov     si, s_sep
-        call    put_str
+        call    .sep
         mov     si, prog
         call    put_str
-.t:     cmp     byte [bg_shown], 0      ; requests run while the user was back
-        je      .u                      ;  in the program (M4)
-        mov     si, s_sep
-        call    put_str
-        mov     al, [bg_shown]
+.t:     mov     al, [bg_shown]          ; requests run while the user was back
+        or      al, al                  ;  in the program (M4)
+        jz      .u
+        push    ax
+        call    .sep
+        pop     ax
         call    put_num
         mov     si, s_bgn
-        call    put_str
+        call    .app
 .u:     cmp     byte [dos_ok], 0
-        jne     .z
+        jne     copyz.z
         mov     si, s_dos
-        call    put_str
-.z:     mov     byte [di], 0
-        ret
+.app:   cmp     di, title_text + 48     ; SI if the band has room (with NUL)
+        jae     copyz.z
+        jmp     short copyz
+.sep:   mov     si, s_sep
+        jmp     short .app
 
 ; status_text: SI, then how to go back
 set_status:
@@ -1471,7 +1479,7 @@ set_status:
         mov     si, s_back
         ; (falls through)
 copyz:  call    put_str                 ; DS:SI ASCIIZ -> ES:DI (with NUL)
-        mov     byte [di], 0
+.z:     mov     byte [di], 0
         ret
 
 put_str:                                ; DS:SI ASCIIZ -> ES:DI (no NUL)

@@ -141,7 +141,8 @@ TOOLS = [
              'them together less than timeout); {SNAP} takes a screenshot then. At most about 2,000 keys. When the script ends the real keyboard '
              'takes over, so end with the keys that quit the program unless the user will.')},
          'capture': {'type': 'boolean', 'description': 'Return the text output (default true).'},
-         'screenshot': {'type': 'boolean', 'description': 'Also capture the screen when the program exits.'},
+         'screenshot': {'type': 'boolean', 'description': 'Also capture the screen when the program exits '
+                                                    '(unless a {SNAP} in keys took one).'},
          'timeout': {'type': 'integer', 'minimum': 1, 'maximum': MAX_RUN,
                      'description': ('Seconds to wait for the program (default 900, at most 3600). The '
                                      'program itself goes on until it exits.')},
