@@ -501,11 +501,8 @@ mw_end: cld                             ; (its exit code isn't wanted: the
         call    mw_clipoff
         UCALL   run_cleanup
         jmp     short .b
-.top:   mov     bx, [wdepth]            ; its windows on top, if they aren't
-        or      bx, bx
-        jz      .sw
-        shl     bx, 2
-        mov     si, [wstack+bx-4]
+.top:   call    mw_topw                 ; its windows on top, if they aren't
+        jc      .sw
         mov     ah, al
         call    mw_own                  ; (AL = whose the top one is)
         cmp     al, ah
@@ -1459,13 +1456,10 @@ mw_modal:
 ; the top window, if the session running may resize it -> SI; CF if not
 mw_szwin:
         push    ax
-        mov     si, [wdepth]
-        or      si, si
-        jz      .no
         cmp     word [wover], 0         ; (windows past NWIN: the top isn't drawn)
         jne     .no
-        shl     si, 2
-        mov     si, [wstack+si-4]
+        call    mw_topw
+        jc      .no
         UCALL   win_flags               ; AL = its W_FLAGS (0 before API 6)
         test    al, WF_SIZE
         jz      .no
@@ -1758,19 +1752,24 @@ mw_clipoff:
 mw_topses:
         push    si
         push    ax
-        mov     si, [wdepth]
-        or      si, si
-        jz      .no
-        shl     si, 2
-        mov     si, [wstack+si-4]
+        call    mw_topw
+        cmc                             ; (none: CF clear)
+        jnc     .x
         call    mw_own
-        or      al, al
-        jz      .no
-        stc
-        jmp     short .x
-.no:    clc
+        cmp     al, 1
+        cmc                             ; (CF: AL isn't 0)
 .x:     pop     ax
         pop     si
+        ret
+
+; the top window -> SI; CF if there is none
+mw_topw:
+        mov     si, [wdepth]
+        shl     si, 2                   ; (CF clear: wdepth is small)
+        jz      .no
+        mov     si, [wstack+si-4]
+        ret
+.no:    stc
         ret
 
 ; the primitives' entries (JMP FAR from them; DS = the UI, the caller's
