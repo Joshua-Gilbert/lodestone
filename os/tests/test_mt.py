@@ -2767,10 +2767,12 @@ def t_park():
         if how == 'shared':
             k.pc.wr(0x60, Y['ems_h'] + hs * 4 + 2, struct.pack('<H', 0x1234))
         o2 = mt('/u:1')
-        sds, prev = [], k.pc.watch                      # (mt_shd as MT_KILL is done: the shell may draw after)
-        def w(a):
+        sds, efc, prev = [], [], k.pc.watch             # (mt_shd as MT_KILL is done: the shell may draw after;
+        def w(a):                                       #  and the records ems_free is given: (handle, open))
             if prev: prev(a)
             if a == seg * 16 + Y['mt_kill.ok']: sds.append(shd(k))
+            if a == 0x600 + Y['ems_free']:
+                efc.append(((k.pc.r('si') - Y['ems_h']) // 4, k.pc.rd(0x60, k.pc.r('si'), 1)[0] != 0xFF))
         k.pc.watch = w
         o3 = mt('/k:1')
         k.pc.watch = prev
@@ -2779,9 +2781,11 @@ def t_park():
         if how == 'freed':
             sv1, wk, sd = k.pc.rd(0x60, Y['ems_sv'], 1)[0], k.pc.rd(seg, Y['mt_wkt'], 1)[0], sds[:1] == [0]
             more = ('; its program\'s handle (%s) freed though a context was saved for it (the slot %02Xh, then %02Xh); '
-                    'MT_WAKE\'s task none now (%02Xh); the shadow off, alone (mt_shd %s as MT_KILL is done)'
-                    % (hid, sv0, sv1, wk, sds))
-            ok = sv0 == 0xFF and hid and hrec(hid[0])[0][0] == 0xFF and sv1 == 0xFF and wk == 0xFF and sd
+                    'MT_WAKE\'s task none now (%02Xh); the shadow off, alone (mt_shd %s as MT_KILL is done); MT\'s '
+                    'handle, closed by FREEH (its owner still MT\'s), not freed again (ems_free given %s)'
+                    % (hid, sv0, sv1, wk, sds, efc))
+            ok = sv0 == 0xFF and hid and hrec(hid[0])[0][0] == 0xFF and sv1 == 0xFF and wk == 0xFF and sd \
+                and efc and all(o for h, o in efc) and ph not in [h for h, o in efc]
         if how == 'shared':
             r = hrec(hs)
             more = '; the screen\'s handle %d, another program\'s now, kept (%s, owner %04X)' % (hs, r[0].hex(), r[1])
