@@ -576,13 +576,11 @@ rc_feed:
         pop     ds
         cmp     byte [ks_wait], 0
         jne     .w2
-        mov     byte [ks_wait], 1
-        push    ax
-        mov     al, [ksbuf + si + 2]
-        xor     ah, ah
-        mov     [ks_until], ax
-        pop     ax
-        add     [ks_until], ax
+        add     al, [ksbuf + si + 2]    ; its end stored whole, then ks_wait
+        adc     ah, 0                   ;  (a peek from an interrupt may come
+        mov     [ks_until], ax          ;  between: it must not see a wait
+        mov     byte [ks_wait], 1       ;  under way and its end not yet set)
+        jmp     short .l                ; (the tick again; FF FF 00 ends at once)
 .w2:    sub     ax, [ks_until]
         js      .no
         mov     byte [ks_wait], 0
