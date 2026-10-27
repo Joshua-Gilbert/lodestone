@@ -1138,6 +1138,8 @@ t_gpib: call    vstart
         xor     bx, bx
 .f:     cmp     bl, [gp_nfound]
         jae     .fx
+        cmp     di, vbuf + 80 - VCOL - 4        ; (room for ", nn" before the
+        ja      .fx                             ;  screen's edge: else cut there)
         or      bx, bx
         jz      .f1
         mov     ax, ', '
@@ -1283,8 +1285,8 @@ t_display:
         mov     ah, 4Eh
         int     21h
         jc      .d
-.f:     cmp     di, vbuf + 128 - 16     ; (room for one more)
-        jae     .d
+.f:     cmp     di, vbuf + 80 - LCOL - 2 - 14   ; (room for one more, ", NAME.EXT",
+        ja      .d                              ;  before the screen's edge)
         mov     ax, ', '
         stosw
         mov     si, dta + 30
@@ -2397,7 +2399,7 @@ s_d144      db '1.44 MB',0
 l_driver    db 'Driver',0
 l_myaddr    db 'Our address',0
 l_srq       db 'SRQ',0
-s_srqirq    db 'on IRQ 5 (GPIBIRQ=0 in LODE.INI: polled)',0
+s_srqirq    db 'on IRQ 5 (GPIBIRQ=0: polled)',0
 s_srqpoll   db 'polled',0
 l_found     db 'Instruments at',0
 s_nogpib    db 'no GPIB controller found',0

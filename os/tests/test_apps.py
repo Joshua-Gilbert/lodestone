@@ -2799,12 +2799,35 @@ def t_sys_back():
           'font goes in a new C:\\LODE.INI without SPLASH=0', no and gone and yes and ini == b'FONT=TERMINUS.FNT\r\n',
           (bool(no), gone, bool(yes), ini, screen(k)))
 
+def t_system_lists():
+    """System's values clipped at the screen's edge: GPIB's SRQ line whole;
+    the fonts on the start-up disk and GPIB's instruments cut at an entry's
+    end (they used to end in half a name, or half an address)."""
+    print('== System: lines that reach the screen\'s edge')
+    fonts = []
+    for c in 'BCDEFG':
+        p = os.path.join(OUT, 'FONT%s123.FNT' % c); open(p, 'wb').write(bytes(1536)); fonts.append(p)
+    devs = {a: sim7210.Device(a, 0, {}) for a in range(5, 31) if a != 21}
+    k = ktest.KPC(image('lists.img', SYSTEM, *fonts), chip=sim7210.NEC7210(devs)); k.start()
+    to_display(k)
+    m = re.search(r'GRiD \(built in\),.*$', screen(k), re.M)
+    fl = m.group(0).strip() if m else screen(k)
+    check('Display: as many fonts as fit, the last one whole ("GRiD (built in)" and three NAME.FNT)',
+          fl == 'GRiD (built in), FONTB123.FNT, FONTC123.FNT, FONTD123.FNT', fl)
+    k.key('G')
+    check('GPIB: "on IRQ 5 (GPIBIRQ=0: polled)", whole', re.search(r'SRQ\s+on IRQ 5 \(GPIBIRQ=0: polled\)$', screen(k), re.M), screen(k))
+    k.key(ktest.ENTER); k.key(ktest.ENTER, settle=False); k.settle(30)
+    m = re.search(r'Instruments at\s+(.*)$', screen(k), re.M)
+    check('... 25 instruments found: as many as fit, the last address whole (5 to 14; 15 would end past the edge)',
+          m and m.group(1).strip() == ', '.join(str(a) for a in range(5, 15)), m and m.group(1))
+    k.key(ktest.ESC)
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
     for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
-              t_sys_back):
+              t_sys_back, t_system_lists):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
