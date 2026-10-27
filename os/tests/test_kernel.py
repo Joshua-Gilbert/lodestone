@@ -2378,19 +2378,19 @@ def t_cmdshare():
     # a source found with a pattern (the pattern's own name short: a whole name of 80 characters is the kernel's to
     # refuse) in a directory of 68 characters (MS-DOS's longest) or 69 (the 65-character current directory above):
     # the directory part and the name found, past src's 79 characters, ran on into dst, and COPY to a directory
-    # hung (2026-10-26 audit X29)
+    # hung (2026-10-26 audit X29).  Such a name is skipped, and the files after it copied (LONGNAME.TXT, 80 characters
+    # here, comes before LONGNAME.TX, 79)
     pre68, pre69 = 'A:' + deep[:-3] + '\\H\\', 'A:' + deep + '\\'
     sh.run('md ' + pre68[2:-1]); sh.run('cd ' + pre68[2:-1]); sh.run('echo hi > longname.txt'); sh.run('echo hi > longname.tx')
     sh.run('cd ' + deep); sh.run('echo hi > abcdef.ghi'); sh.run('cd \\')
-    for pre, pat, n, ok in ((pre68, '*.tx', 'LONGNAME.TX', True), (pre68, '*.txt', 'LONGNAME.TXT', False),
-                            (pre69, '*.tx', 'LONGNAME.TX', False), (pre69, 'l*.txt', 'LONGNAME.TXT', False)):
+    for pre, pat, got in ((pre68, 'longname.*', ['LONGNAME.TX']), (pre68, '*.txt', []), (pre69, '*.tx', []), (pre69, 'l*.txt', [])):
         f = fs()
         back = run_long(k, 'copy %s%s \\q' % (pre, pat), 6)      # (a hang: no prompt in 6 s)
         o = k.pc.text_screen()
-        check('COPY %s%s to a directory (%s: %d characters): %s' % (pre, pat, n, len(pre + n), 'copied' if ok else
-              '"File not found", nothing copied, the prompt back'), back and not k.crashed
-              and set(fs()) - set(f) == ({'A:\\Q\\' + n} if ok else set())
-              and (('1 File(s) copied' in o) if ok else ('File not found' in o and 'copied' not in o)), (back, k.where(), o))
+        check('COPY %s%s to a directory: %s (directory part %d, names over %d characters skipped), the total, the prompt back'
+              % (pre, pat, ', '.join(got) or 'nothing copied', len(pre), 79 - len(pre)), back and not k.crashed
+              and set(fs()) - set(f) == {'A:\\Q\\' + n for n in got} and '%d File(s) copied' % len(got) in o
+              and 'File not found' not in o, (back, k.where(), o))
         if not back: return
     k.trace = True; k.dos.clear()
     o = sh.run('ren %sl*.txt x.y' % pre69)
