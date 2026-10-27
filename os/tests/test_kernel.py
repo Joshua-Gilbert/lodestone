@@ -2375,11 +2375,8 @@ def t_cmdshare():
           all(('A:\\SUB\\%s.%s' % (b, e)) in f for b in 'AB' for e in ('BBK', 'CCK'))
           and 'A:\\Q\\A.DDK' in f and 'A:\\Q\\B.DDK' in f
           and all('2 File(s) copied' in o for o in outs), (outs, sorted(n for n in f if n.startswith(('A:\\SUB', 'A:\\Q')))))
-    # a source found with a pattern (the pattern's own name short: a whole name of 80 characters is the kernel's to
-    # refuse) in a directory of 68 characters (MS-DOS's longest) or 69 (the 65-character current directory above):
-    # the directory part and the name found, past src's 79 characters, ran on into dst, and COPY to a directory
-    # hung (2026-10-26 audit X29).  Such a name is skipped, and the files after it copied (LONGNAME.TXT, 80 characters
-    # here, comes before LONGNAME.TX, 79)
+    # X29: a name found by a pattern in a 68- or 69-character directory runs past src's 79 characters;
+    # COPY hung.  Now such a name is skipped and the rest copied (LONGNAME.TXT, 80, before LONGNAME.TX, 79)
     pre68, pre69 = 'A:' + deep[:-3] + '\\H\\', 'A:' + deep + '\\'
     sh.run('md ' + pre68[2:-1]); sh.run('cd ' + pre68[2:-1]); sh.run('echo hi > longname.txt'); sh.run('echo hi > longname.tx')
     sh.run('cd ' + deep); sh.run('echo hi > abcdef.ghi'); sh.run('cd \\')
@@ -2405,8 +2402,7 @@ def t_cmdshare():
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
     check('back in the Executive, disk consistent', k.pc.mode() == 0x40 and not probs, probs)
-    # START of a batch file: COMSPEC copied to prog2 (80 B); one of 80 characters lost its NUL to the command tail
-    # built after it, and MT_SPAWN got both as its path (2026-10-26 audit X43).  Both name LCMD.COM, copied there
+    # X43: a COMSPEC of 80 characters lost its NUL in prog2, and MT_SPAWN got it and the tail as its path
     k = ktest.KPC(ini_image('sharemt.img', b'MULTITASK=1\r\n', os.path.join(GOS, 'src', 'LCMD.COM'),
                             'LODEMT.SYS=' + os.path.join(GOS, 'src', 'LODEMT.SYS'), bat('TB.BAT', '@echo off', 'echo ran > tb.txt')),
                   ems_pages=88)

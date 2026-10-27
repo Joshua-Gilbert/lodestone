@@ -1138,8 +1138,8 @@ t_gpib: call    vstart
         xor     bx, bx
 .f:     cmp     bl, [gp_nfound]
         jae     .fx
-        cmp     di, vbuf + 80 - VCOL - 4        ; (room for ", nn" before the
-        ja      .fx                             ;  screen's edge: else cut there)
+        cmp     di, vbuf + 80 - VCOL - 4        ; (room for ", nn"?)
+        ja      .fx
         or      bx, bx
         jz      .f1
         mov     ax, ', '
@@ -1285,8 +1285,8 @@ t_display:
         mov     ah, 4Eh
         int     21h
         jc      .d
-.f:     cmp     di, vbuf + 80 - LCOL - 2 - 14   ; (room for one more, ", NAME.EXT",
-        ja      .d                              ;  before the screen's edge)
+.f:     cmp     di, vbuf + 80 - LCOL - 2 - 14   ; (room for ", NAME.EXT"?)
+        ja      .d
         mov     ax, ', '
         stosw
         mov     si, dta + 30
@@ -2200,9 +2200,7 @@ set_back:
         mov     ah, 41h
         int     21h
         jc      .err
-        mov     word [splash_known], 0  ; (and mt_known: SPLASH= and MULTITASK=
-                                        ;  read again; the file is gone, so
-                                        ;  the picture on, multitasking off)
+        mov     word [splash_known], 0  ; (and mt_known: both read again)
         mov     si, s_setdone
         call    UI_MSG
         jmp     redraw
@@ -2440,8 +2438,8 @@ months3     db 'JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'
 quit        db 0
 splash_off  db 0                        ; SPLASH=0: no start-up picture
 splash_known db 0                       ;  (1: LODE.INI read for it)
-mt_known    db 0                        ; the same for MULTITASK= (right after
-                                        ;  it: set_back clears both as a word)
+mt_known    db 0                        ; the same for MULTITASK= (set_back
+                                        ;  clears both as a word)
 gp_scanned  db 0
 l_font      db 'Font',0
 l_fonts     db 'Fonts on the start-up disk:',0

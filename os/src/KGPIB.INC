@@ -346,10 +346,10 @@ gp_do_write:
         mov     [gp_count], cx
         xor     ax, ax
         mov     [gp_done_n], ax
-        inc     ax                      ; the frame check leaves out the first
-        jcxz    .f0                     ;  byte: A and B start where its add
-        sub     al, [es:si]             ;  leaves them at 1 and 0 (no bytes:
-        dec     ah                      ;  1 and 0 as they are)
+        inc     ax                      ; A, B so the first byte's add makes
+        jcxz    .f0                     ;  1, 0 (no bytes: 1, 0)
+        sub     al, [es:si]
+        dec     ah
 .f0:    mov     [gp_fa], ax
         cmp     byte [gp_renon], 0         ; auto-remote after LOCAL ALL
         jne     .r

@@ -1013,9 +1013,7 @@ def t_driver():
               '(%d looks)' % (h.link.stats['rx_frames'] - f1, h.pit_dues - d1),
               up and ok and h.rv('srq_held') == 1 and h.pit_dues > d1, (up, ok, h.rv('srq_held'), h.screen()))
         n2, f2 = h.naps, h.link.stats['rx_frames']
-        # meanwhile another device's SRQ edge (it lets go and asks again: the driver's count bumped once) at a
-        # link_wait just after a frame went (its answer can't be there yet): no edge for our answers, the line
-        # still held
+        # another device's SRQ edge meanwhile (the driver's count bumped just after a frame went): the line still held
         from unicorn import UC_HOOK_CODE
         lw, bumped, sent = 0xE0000 + h.rsym['link_wait'], [], [h.rv('t_sent', 2)]
         def foreign(uc, addr, size, ud):
@@ -1032,8 +1030,7 @@ def t_driver():
               'device\'s SRQ edge meanwhile too' % (h.link.stats['rx_frames'] - f2),
               ok and bumped and h.naps == n2 and h.rv('srq_held') == 1 and h.link.stats['rx_frames'] - f2 > 3,
               (ok, bumped, h.naps - n2, h.rv('srq_held')))
-        # the line let go (the instrument served): the answers' SRQs are edges again, and the first clears
-        # srq_held (audit3 X49: it was kept till the next HELLO, the console never asleep till then)
+        # the line let go: the first answer's SRQ edge clears srq_held (X49; it was kept till HELLO)
         del h.m.chip.int_line
         n3 = h.naps
         h.term_type('freed'); h.press(ENTER)

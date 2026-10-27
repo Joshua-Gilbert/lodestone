@@ -39,10 +39,8 @@ wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driv
                                         ;  RCON: it counts SRQ interrupts)
 tlook       resb 1                      ; link_wait's serial poll: 2 a tick's look, no SRQ seen;
                                         ;  1 at an SRQ edge; 0 the PIT's
-srq_held    resb 1                      ; 1: an answer was there at a tick's look, its SRQ no
-                                        ;  edge (another device holds the line): the PIT's
-                                        ;  polls, and no sleeping for the SRQ, till an edge finds
-                                        ;  an answer (link_wait) or the next HELLO
+srq_held    resb 1                      ; 1: another device holds SRQ: the PIT's polls, no
+                                        ;  sleeping for it, till an edge finds our answer
 lr_end:
 %endmacro
 
@@ -322,14 +320,14 @@ link_wait:
         mov     byte [spoll_errs], 0
         test    al, 40h
         jz      .x
-        mov     ah, [tlook]             ; the answer there at a tick's look, and
-        dec     ah                      ;  still no SRQ interrupt for it now (it
-        js      .r                      ;  may have come since that look): the
-        jz      .h                      ;  line held by another device.  Found
-        push    ax                      ;  at an edge: the line ours again
-        call    srq_new                 ;  (srq_held 0; an edge that finds no
-        pop     ax                      ;  answer may be another device's, as
-        jnz     .r                      ;  it lets go and asks again)
+        mov     ah, [tlook]             ; found at a tick's look with no SRQ
+        dec     ah                      ;  for it since: the line held (1).
+        js      .r                      ;  Found at an edge: ours, the line
+        jz      .h                      ;  free (0); an edge alone may be
+        push    ax                      ;  another device's
+        call    srq_new
+        pop     ax
+        jnz     .r
 .h:     mov     [srq_held], ah
 .r:
         test    al, 20h                 ; patched bridge: the line is complete

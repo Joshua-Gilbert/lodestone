@@ -442,12 +442,9 @@ mt_tick:
         dec     byte [cs:mt_slice]
         jnz     .m
 .p:     mov     byte [cs:mt_pend], 1
-.m:     mov     ax, cs                  ; (MT's own code interrupted, at its
-        cmp     [bp+12], ax             ;  STI / HLTs or in an F0h call: its
-        je      .r                      ;  turn counted all the same, but no
-                                        ;  further: a task just resumed in
-                                        ;  mt_load, mt_fdrain; elsewhere
-                                        ;  indos is 1)
+.m:     mov     ax, cs                  ; (MT's own code: the turn counted,
+        cmp     [bp+12], ax             ;  no switch here)
+        je      .r
 .w:     call    mt_kwant                ; (or a key for the front task)
         cmp     byte [cs:mt_pend], 0
         je      .r
@@ -509,10 +506,10 @@ mt_srqi:
         mov     [cs:mt_want], al
         mov     byte [cs:mt_pend], 1
         push    es                      ; IRQ 5 still gp_isr's?  (Else a hook
-        xor     ax, ax                  ;  ahead of it is what this interrupted,
-        mov     es, ax                  ;  as at mt_tick.w; INT 08h's vector,
-        cmp     word [es:gp_IRQVEC * 4], gp_isr ; a task's own, says nothing
-        jne     .h                      ;  here.)
+        xor     ax, ax                  ;  ahead of it was interrupted)
+        mov     es, ax
+        cmp     word [es:gp_IRQVEC * 4], gp_isr
+        jne     .h
         cmp     word [es:gp_IRQVEC * 4 + 2], KSEG
 .h:     pop     es
         jne     .r
@@ -2731,15 +2728,15 @@ mt_kill:
 .ok:    jmp     KSEG:ok                 ;  out, if the caller is at a safe point)
 .ex:    mov     ax, 5
         jmp     mt_fail
-.gone:  stc                             ; parked, its pages gone (a program
-        call    mt_hshow.f              ;  freed or resized MT's handle): no
-        call    mt_wkme.t               ;  more of it to run.  Its programs'
-        or      dl, dl                  ;  EMS freed (mt_hhide's), its wake
-        jz      .g                      ;  (MT_WAKE) ended, and the handle
-        mov     ax, cs                  ;  DX, still MT's (resized: not 0,
-        cmp     [ems_h + si + 2], ax    ;  which mt_hnew leaves when it gave
-        jne     .g                      ;  the number out again); the entry
-        call    mt_hfree                ;  free, as mt_end leaves it
+.gone:  stc                             ; parked, its pages gone: its programs'
+        call    mt_hshow.f              ;  EMS and its wake freed, then the
+        call    mt_wkme.t               ;  handle DX if still MT's
+        or      dl, dl
+        jz      .g
+        mov     ax, cs
+        cmp     [ems_h + si + 2], ax
+        jne     .g
+        call    mt_hfree
 .g:     mov     ax, 0100h               ; (MT_KILL's: ^C's)
         call    mt_ended
         call    mt_tfree
@@ -3533,11 +3530,9 @@ mt_fvx: mov     al, [bp+F_AX]
 .no:    stc
         ret
 
-; the task at entry BX ended (mt_end; mt_kill, its parked pages gone),
-; exit code AX: MT_EXIT's record, MT_UI's count, its screen's pages
-; freed if they are still MT's (mt_shm: a program may have freed them by
-; number, and the number been given out again).  DS = KSEG; AX, DX
-; changed
+; the task at entry BX ended (mt_end, mt_kill), exit code AX: MT_EXIT's
+; record, MT_UI's count, its screen's pages freed if still MT's.  DS =
+; KSEG; AX, DX changed
 mt_ended:
         mov     [cs:bx+TE_EXIT], ax
         mov     al, [cs:bx+TE_GEN]      ; (MT_EXIT: this one's, ended)
@@ -3557,10 +3552,8 @@ mt_ended:
         mov     byte [cs:bx+TE_SH], 0
         ret
 
-; the EMS handle whose record is at KSEG:ems_h + SI freed as a program's
-; end frees it (ems_free: a context it saved with 47h goes too, where INT
-; 67h AH=45h refuses, 86h); one closed already left as it is (ems_free
-; leaves a closed record's owner: an owner test alone can't tell).  DS =
+; the EMS handle at KSEG:ems_h + SI freed as a program's end frees it
+; (a 47h context too, which 45h refuses); a closed one left alone.  DS =
 ; KSEG; all kept
 mt_hfree:
         pusha
@@ -4429,8 +4422,8 @@ mt_hot: pushf
         call    .nx
         cmp     bx, [1Ch]
         je      .e
-        dec     cx                      ; (16 in all: a tail the ring never
-        jz      .e                      ;  reaches isn't followed round either)
+        dec     cx                      ; (16 at most)
+        jz      .e
         mov     ax, [bx]
         mov     [si], ax
         jmp     .m
@@ -5626,10 +5619,9 @@ mt_smap:
         ret
 .no:    stc
         jmp     .x
-; the entry at BX's screen handle (TE_SH) still MT's: owner 0, 2 pages (a
-; program's has its PSP) -> SI = its record (at KSEG:ems_h + SI), AH 0;
-; CF if not (none; closed, which has no pages; given out again).  DS =
-; KSEG; AX, DX changed
+; the entry at BX's screen handle (TE_SH) still MT's (owner 0, 2 pages)
+; -> SI = its record (at KSEG:ems_h + SI), AH 0; else CF.  DS = KSEG;
+; AX, DX changed
 mt_shm: xor     ax, ax
         mov     al, [cs:bx+TE_SH]
         or      al, al
@@ -6396,11 +6388,11 @@ mt_emu:
         mov     [VS_CUR + bx], dx
 .sz:    clc
         ret
-.s13:   mov     bx, sp                  ; (in front, mt_vshad's: the BIOS's
-        cmp     word [ss:bx], mt_v10.ble ;  alone, the shadow lost.  Behind,
-        je      .sz                     ;  mt_v10.bl's: not done, nothing on
-        call    mt_vlose                ;  the screen, the front one's shadow
-        clc                             ;  kept)
+.s13:   mov     bx, sp                  ; (in front: the shadow lost.  Behind,
+        cmp     word [ss:bx], mt_v10.ble ;  mt_v10.bl's: dropped, the shadow
+        je      .sz                     ;  kept)
+        call    mt_vlose
+        clc
         ret
 ; BX = 2 * the page in the caller's BH; CF if past page 10
 .pg:    mov     bl, [bp+VF_BX+1]

@@ -2616,10 +2616,9 @@ int16:  cmp     byte [cs:ks_active], 0
         iret
 
 ; ZF = 0 and AX = key if a scripted key is ready now; else ZF = 1, AX kept.
-; Runs waits and snapshot marks as it meets them.  Interrupts off throughout,
-; then as the caller had them (POPF: the peek runs with IF clear): an INT 16h
-; peek from an interrupt (a TSR's INT 1Ch) must never find ks_pos, ks_wait
-; and ks_until half moved.
+; Runs waits and snapshot marks as it meets them.  Interrupts off, then the
+; caller's IF: a nested peek (a TSR's INT 1Ch) must not see the state half
+; moved.
 ks_ready:
         push    ax
         push    bx
@@ -2663,12 +2662,10 @@ ks_ready:
         mov     byte [cs:ks_wait], 0
         add     word [cs:ks_pos], 3
         jmp     .again
-.snap:  add     word [cs:ks_pos], 3     ; (first: a peek in the copy goes on past it)
-        popf                            ; the copy with interrupts as the caller
-        pushf                           ;  had them (32 KB; INT 10h in a window):
-        call    take_snapshot           ;  for a peek (AH=01h/11h) off, as its INT
-                                        ;  left them (a tick or IRQ 5 held back
-                                        ;  for the copy, once a {SNAP}), as before
+.snap:  add     word [cs:ks_pos], 3     ; (first: a nested peek goes past it)
+        popf                            ; the copy with the caller's IF (a
+        pushf                           ;  peek's is clear: a tick waits for
+        call    take_snapshot           ;  it, as before)
         cli
         jmp     .again
 .end:   mov     byte [cs:ks_active], 0
