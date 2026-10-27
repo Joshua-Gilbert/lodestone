@@ -224,6 +224,7 @@ ui_boot:
         mov     bl, 5                   ; the saver after 5 minutes, unless
         call    saver_set               ;  LODE.INI says otherwise
         call    font_boot               ; LODE.INI's font and saver delay
+        call    clip_name               ; (UI_CLIP's file)
         call    sysinfo                 ; (the machine, once: EXEC.INC)
         mov     ax, 0F019h              ; MULTITASK=1 (MTAPI.INC's MT_UI): the
         stc                             ;  entry that starts a program as a
@@ -260,6 +261,29 @@ api_font:
         ret
 
 section uiboot
+; at start-up: UI_CLIP's file without EMS (s_clip) named, once: on the
+; settings drive (3305h's DH), else the start-up one; from the ROM with
+; neither, C: if there, else A: (as SYSTEM, and the kernel's capdrv: R:
+; takes no writes).  Neither answer changes until the next start-up
+clip_name:
+        mov     ax, 3305h
+        int     21h
+        add     dl, 'A' - 1
+        mov     al, dh
+        add     al, 'A' - 1
+        or      dh, dh
+        jnz     .s
+        mov     al, dl
+        cmp     al, 'R'
+        jne     .s
+        mov     bl, 3                   ; (C: there?)
+        call    has_drv
+        mov     al, 'C'
+        jnc     .s
+        mov     al, 'A'
+.s:     mov     [s_clip], al
+        ret
+
 ; at start-up: "FONT=NAME.FNT" in LODE.INI (a line of its own, any case)
 ; makes that file, on the drive started from, the font.  No file, no line,
 ; "FONT=", or a file that isn't exactly FONT_BYTES long: GRiD's font stays.
@@ -989,7 +1013,8 @@ api_mouse:
 ; AL = 2: -> CX = how many it holds (0: empty).  CF, AX = the error (an
 ; EMS one, 80h and up, or DOS's).  In an EMS page of its own (its handle
 ; nobody's: no program's end takes it), else in CLIP.$$$ on the settings
-; drive (3305h's DH; else the start-up one)
+; drive (3305h's DH; else the start-up one, or from the ROM C:, else A:;
+; clip_name)
 CLIP_MAX    equ 16384
 api_clip:
         cmp     al, 2
@@ -1022,9 +1047,7 @@ api_clip:
         jmp     short .err
 .nf:    inc     byte [clip_f]
 .f:     call    clip_file
-        jnc     .set
-        mov     word [clip_len], 0      ; (3Ch cut the file: what it held is gone)
-        jmp     short .err
+        jc      .err
 .set:   mov     [clip_len], cx
         jmp     short .ok
 .get:   cmp     cx, [clip_len]          ; at most what it holds
@@ -1090,19 +1113,12 @@ clip_ems:
         ret
 
 ; the same through CLIP.$$$ (BL = 0: written, 1: read) -> CF, AX = the
-; error.  AX, DX change
+; error.  AX, DX, SI change
 clip_file:
         push    bx
         push    cx
         push    ds
-        mov     ax, 3305h               ; the settings drive, else the
-        int     21h                     ;  start-up one
-        or      dh, dh
-        jz      .d
-        mov     dl, dh
-.d:     add     dl, 'A' - 1
-        mov     [s_clip], dl
-        mov     dx, s_clip
+        mov     dx, s_clip              ; (its drive: clip_name)
         mov     ax, 3D00h
         or      bl, bl
         jnz     .o
@@ -1111,14 +1127,18 @@ clip_file:
         xor     cx, cx
         int     21h
         pop     cx
+        jc      .x
+        mov     word [clip_len], 0      ; (3Ch cut the file: what it held is gone)
         jmp     short .h
 .o:     int     21h
-.h:     jc      .x
-        xchg    bx, ax                  ; (BX: the handle; AL: what to do)
+        jc      .x
+.h:     xchg    bx, ax                  ; (BX: the handle; AL: what to do)
+        mov     si, 29                  ; (short: error 29, write fault ...
         mov     ah, 40h
         or      al, al
         jz      .rw
         mov     ah, 3Fh
+        inc     si                      ;  ... or 30, read fault)
 .rw:    push    es                      ; (DS:DX = ES:DI for 3Fh and 40h)
         pop     ds
         mov     dx, di
@@ -1127,7 +1147,7 @@ clip_file:
         pop     ds
         jc      .c
         cmp     ax, cx                  ; (short: the disk full, or the file
-        mov     ax, 29                  ;  cut since: error 29, write fault)
+        xchg    ax, si                  ;  cut since)
         jb      .c
         clc
 .c:     pushf
@@ -4410,7 +4430,7 @@ s_svfont    db ' F=', 0
 section uiboot
 s_ini       db '@:\LODE.INI', 0
 section ui
-s_clip      db '@:\CLIP.$$$', 0     ; UI_CLIP's file without EMS (named at each use)
+s_clip      db '@:\CLIP.$$$', 0     ; UI_CLIP's file without EMS (named at start-up)
 s_pathv     db 'PATH='
 section uiboot
 font_path   db '@:\'                ; "X:\NAME.FNT": on the drive started from
