@@ -2321,7 +2321,7 @@ mt_pub: mov     cl, [bp+F_CX]
         call    mt_pin
         jc      .bd
 .set:   call    mt_cent
-        mov     dx, es                 ; (DX:DI the new one)
+        mov     dx, es                  ; (DX:DI the new one)
         call    mt_tchg                 ; (AX: its count as a window saw it)
         cmp     di, [es:TX_PUB]
         jne     .ch
@@ -3542,19 +3542,20 @@ mt_end: call    mt_cent                 ; (first: a call refused changes
         sti
         pop     es
         pop     bx
-        mov     cx, [cs:bx+TE_REG]      ; the region freed (a program that
-        dec     cx                      ;  stayed resident too: its hooks are
-        mov     es, cx                  ;  gone, so is it)
-        mov     word [es:1], 0
-        call    mt_tfree
         mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .f
         push    ax                      ; it was in front: the Executive's
         xor     al, al                  ;  task is, with its screen and its
         call    mt_scrto                ;  INT 33h state (this one's pages
-        pop     ax                      ;  are gone: its screen not kept)
-.f:     cmp     al, [cs:mt_swreq]
+        pop     ax                      ;  are gone: its screen not kept; its
+                                        ;  TX, written, still its own)
+.f:     mov     cx, [cs:bx+TE_REG]      ; the region freed (a program that
+        dec     cx                      ;  stayed resident too: its hooks are
+        mov     es, cx                  ;  gone, so is it)
+        mov     word [es:1], 0
+        call    mt_tfree
+        cmp     al, [cs:mt_swreq]
         jne     .s
         mov     byte [cs:mt_swreq], 0FFh
 .s:     call    mt_pick                 ; another ready one, or the front one
@@ -6575,7 +6576,7 @@ mt_vset:
 ; -> AX = its segment; CF if none
 mt_carve:
         push    es
-        xor     bx, bx                 ; (the best so far: its MCB)
+        xor     bx, bx                  ; (the best so far: its MCB)
         mov     dx, [cs:mt_size]
         mov     ax, [cs:mt_mcb0]
 .w:     mov     es, ax
@@ -6714,7 +6715,7 @@ mt_grow:
         mov     [es:3], cx
         pop     cx
         call    mt_mcbnm
-        inc     dx                     ; DX: the region's start, the chain's
+        inc     dx                      ; DX: the region's start, the chain's
         mov     cx, [first_mcb]         ;  new first block (CX: the old one)
         mov     [cs:bx+TE_REG], dx
         mov     [first_mcb], dx
