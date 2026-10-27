@@ -2198,8 +2198,9 @@ set_back:
         mov     ah, 41h
         int     21h
         jc      .err
-        mov     byte [mt_known], 0      ; (MULTITASK= read again: the file is
-                                        ;  gone, and the ROM's has none: off)
+        mov     word [splash_known], 0  ; (and mt_known: SPLASH= and MULTITASK=
+                                        ;  read again; the file is gone, so
+                                        ;  the picture on, multitasking off)
         mov     si, s_setdone
         call    UI_MSG
         jmp     redraw
@@ -2437,6 +2438,8 @@ months3     db 'JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'
 quit        db 0
 splash_off  db 0                        ; SPLASH=0: no start-up picture
 splash_known db 0                       ;  (1: LODE.INI read for it)
+mt_known    db 0                        ; the same for MULTITASK= (right after
+                                        ;  it: set_back clears both as a word)
 gp_scanned  db 0
 l_font      db 'Font',0
 l_fonts     db 'Fonts on the start-up disk:',0
@@ -2481,8 +2484,7 @@ s_mtwhy2    db '32 KB of it free, and LODEMT.SYS beside LODE.SYS.',0
 s_mt1t      db 'Programs started from the Executive run as tasks.',0
 s_mt2t      db 'CODE-Tab: the next task.  CODE-T in the',0
 s_mt3t      db 'Executive: the tasks.  LCMD: START, TASKS, WAIT.',0
-mt_want     db 0                        ; MULTITASK=1 in \LODE.INI
-mt_known    db 0                        ;  (1: read for it)
+mt_want     db 0                        ; MULTITASK=1 in \LODE.INI (mt_known)
 mt_now      db 0                        ; (on now)
 s_printeq   db 'PRINTER=',0
 s_romini    db 'R:\LODE.INI',0

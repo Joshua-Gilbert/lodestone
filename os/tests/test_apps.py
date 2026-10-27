@@ -2765,11 +2765,46 @@ def t_clip():
           and k.rd('clip_f', 1) == b'\x01' and disk_file(k, 'CLIP.$$$') == CLIPPAT[:500] and g == CLIPPAT[:500], (r, k.u16('clip_h')))
     k.key(ktest.ESC)
 
+# ---------------------------------------------------------------------
+def rom1(*extra):
+    """ROM 1 of the files built now (build.sh's, less LODEMT.SYS, TASKS.RUN
+    and TERM.RUN, as test_rom's rom_ini), with the ROM's LODE.INI and extra
+    files: booted with test_rom's boot(roms={1: ...})"""
+    sys.path.insert(0, os.path.join(os.path.dirname(GOS), 'tools'))
+    import mkrom
+    names = ['src/LODE.SYS', 'src/LODE.PIC', 'src/LCMD.COM', 'apps/SYSTEM.RUN', 'apps/WRITE.RUN', 'apps/CALC.RUN',
+             'src/CALC.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN', 'rom/LODE.INI']
+    files = [(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names]
+    files += [(os.path.basename(p), open(p, 'rb').read()) for p in extra]
+    return mkrom.volume(files, boot=open(os.path.join(GOS, 'src', 'ROMBOOT.BIN'), 'rb').read())[0]
+
+def t_sys_back():
+    """System's Settings, Return (back to the ROM's): SPLASH= is forgotten
+    with the file, as MULTITASK= is, so Display and the next save don't
+    bring the deleted SPLASH=0 back."""
+    print('== System: back to the ROM\'s settings forgets SPLASH= too')
+    import test_rom as R
+    k = R.boot(roms={1: rom1()}, ata=R.sysinfo_hd(('LODE.INI', b'SPLASH=0\r\n')))
+    to_display(k)
+    no = re.search(r'Start-up picture\s+no', screen(k))
+    for _ in range(3): k.key(ktest.DOWN)                        # Settings
+    k.key(ktest.ENTER); k.key(ktest.ENTER)                      # back to the ROM's: asked, confirmed
+    gone = R.hd_file(k, 'LODE.INI') is None
+    k.key(ktest.ESC)                                            # (the message read)
+    for _ in range(3): k.key(ktest.UP)                          # Display
+    yes = re.search(r'Start-up picture\s+yes', screen(k))
+    k.key(ktest.ENTER)                                          # the next font, saved
+    ini = R.hd_file(k, 'LODE.INI')
+    check('C:\\LODE.INI with SPLASH=0: Display says no; back to the ROM\'s (the file gone): Display says yes, and the next '
+          'font goes in a new C:\\LODE.INI without SPLASH=0', no and gone and yes and ini == b'FONT=TERMINUS.FNT\r\n',
+          (bool(no), gone, bool(yes), ini, screen(k)))
+
 if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip):
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
+              t_sys_back):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
