@@ -83,6 +83,36 @@ static void expect(const char* name, const char* hpgl, std::vector<Ev> want) {
     if (!ok) printf("     want%s\n     got %s\n", show(want).c_str(), show(got).c_str());
 }
 
+static void check(const char* name, bool ok) {
+    if (!ok) failures++;
+    printf("%s %s\n", ok ? "ok  " : "FAIL", name);
+}
+
+// X62: a serial poll. The byte goes on DIO in one gpibService() pass and DAV
+// only in a later one, so the byte has settled for T1 (2 us) before DAV.
+static void testPoll() {
+    resetSketch();
+    ringTail = ringHead; cmdLen = 0;
+    DDRB = DDRC = 0; DDRD = D_TEKTX;
+    PINB = B_ATN | B_IFC | B_NRFD;      // ATN, IFC high; the controller ready: NRFD high, NDAC low
+    PINC = PIND = 0xFF;
+    isListener = false; isTalker = true; spollMode = true; spollSent = false; talkState = 0;
+    hsState = IDLE;
+    uint8_t v = statusByte();
+    uint8_t dio = (uint8_t)((v & 0x0F) << 2);
+    gpibService();
+    check("poll: the byte on DIO", (DDRD & D_DIO) == dio && (DDRC & C_DIO) == (v >> 4) && talkState == 1);
+    check("poll: no DAV in the same pass", !(DDRD & D_DAV));
+    gpibService();
+    check("poll: DAV on the next pass", (DDRD & D_DAV) && (DDRD & D_DIO) == dio && talkState == 2);
+    PINB |= B_NDAC;                     // the controller has taken it
+    gpibService();
+    check("poll: released after", !(DDRD & (D_DAV | D_DIO)) && !(DDRC & C_DIO) && spollSent && talkState == 0);
+    gpibService();
+    check("poll: one byte per poll", !(DDRD & D_DAV) && talkState == 0);
+    isTalker = spollMode = false;
+}
+
 int main() {
     // X61: a mnemonic straight after coordinates ends them (';' is optional)
     expect("PD..PU without ';'", "PD100,200PU300,400;",
@@ -103,6 +133,7 @@ int main() {
            {P('D', 100, 200), P('L', 100, 200), P('U', 300, 400)});
     expect("PU with no coordinates", "IN;PU100,200PD300,400PU;PD500,600;",
            {P('U', 0, 0), P('U', 100, 200), P('D', 300, 400), P('D', 500, 600)});
+    testPoll();
 
     printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

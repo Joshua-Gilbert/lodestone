@@ -6,7 +6,8 @@
  *
  * v7.3: a mnemonic right after coordinates, with no ';' between them (HP-GL's
  *    terminator is optional), ends them: PD100,200PU300,400 lifts the pen for
- *    300,400. It used to be taken as a separator and lost.
+ *    300,400. It used to be taken as a separator and lost. The serial-poll
+ *    byte goes on DIO a pass before DAV, not ~1.7 us before (T1 is 2 us).
  *
  * v7.2: no bumps. A status request no longer re-enters graph mode with GS and
  *    a move to the pen's position, which lifted the pen in the middle of a
@@ -315,7 +316,7 @@ void talkService() {
         }
         nPolls++;
         talkState = 1;
-        // fall through
+        return;                         // DAV on the next pass: the byte settles first (T1, 2 us)
     case 1:                             // wait for the listeners: NRFD released, NDAC held
         if (nrfdLow() || !ndacLow()) return;
         { uint8_t s = SREG; cli(); if (!atnLow()) DDRD |= D_DAV; SREG = s; }
