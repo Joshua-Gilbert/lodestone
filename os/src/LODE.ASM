@@ -253,7 +253,10 @@ setdrv      db 0                        ; INT 21h 3305h's DH: the drive (1 = A:)
 lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
                                         ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
                                         ;  18 with R: (KROM.INC)
-            align 16                    ; (free: the BSS starts on a paragraph)
+            align 16                    ; (free: the BSS starts on a paragraph;
+                                        ;  7 B at lastdrv 40E8h.  The EVEN pads
+                                        ;  make a change before gp_clear_in move
+                                        ;  this by its size +-1, so in steps of 2)
 image_end:                              ; everything above is copied low;
                                         ; the EMS section starts right here
 section .bss
