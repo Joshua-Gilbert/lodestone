@@ -1402,7 +1402,7 @@ mt_fvto:
         call    mt_fvsync
         mov     al, [cs:mt_front]
         call    mt_ent
-        cmp     byte [cs:bx+TE_STATE], TS_FREE  ; (ended: its region freed)
+        cmp     byte [cs:bx+TE_STATE], TS_FREE  ; (a guard: mt_end hands over first)
         je      .ld
         mov     es, [cs:bx+TE_TX]
         push    cs

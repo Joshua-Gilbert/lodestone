@@ -243,8 +243,8 @@ def t_on():
     check('F0h AL=23h (MT_WAKE, T5c) from task 0: BL = 1, then 0, both CF clear, AX = the driver\'s IRQ (%d); none '
           'left afterwards (mt_wkt FFh)' % gi, got.get(0x23, (1,))[:2] == (0, gi) and got.get(0x123, (1,))[:2] == (0, gi)
           and k.pc.rd(seg, Y['mt_wkt'], 1)[0] == 0xFF, out[-300:])
-    check('F0h AL=18h (MT_FLAGS): BL = 0 (the Executive) refused, AX = 5; BL = 8 (none such: mt_targ\'s own failure, '
-          'its return dropped) AX = 1', got.get(0x18, (0, 0))[:2] == (1, 5) and bad(got.get(0x118, (0, 0))), out[-300:])
+    check('F0h AL=18h (MT_FLAGS): BL = 0 (the Executive) refused, AX = 5; BL = 8 (none such: mt_targ\'s own failure) '
+          'AX = 1', got.get(0x18, (0, 0))[:2] == (1, 5) and bad(got.get(0x118, (0, 0))), out[-300:])
     check('F0h AL=12h with no room: CF clear, CX = 1 task, AL = 0 in front, AH = 0 the caller, nothing written',
           got.get(0x12, (1,))[:2] == (0, 0x0000)
           and got[0x12][3] == 1, out[-400:])
