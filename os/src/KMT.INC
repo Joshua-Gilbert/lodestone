@@ -442,12 +442,12 @@ mt_tick:
         dec     byte [cs:mt_slice]
         jnz     .m
 .p:     mov     byte [cs:mt_pend], 1
-.m:     mov     ax, cs                  ; (MT's own code interrupted: its turn
-        cmp     [bp+12], ax             ;  counted all the same, so a program
-        je      .r                      ;  polling INT 16h gives way at
-                                        ;  mt_i16's peek; but no further: a
-                                        ;  task just resumed in mt_load,
-                                        ;  mt_fdrain; elsewhere indos is 1)
+.m:     mov     ax, cs                  ; (MT's own code interrupted, at its
+        cmp     [bp+12], ax             ;  STI / HLTs or in an F0h call: its
+        je      .r                      ;  turn counted all the same, but no
+                                        ;  further: a task just resumed in
+                                        ;  mt_load, mt_fdrain; elsewhere
+                                        ;  indos is 1)
 .w:     call    mt_kwant                ; (or a key for the front task)
         cmp     byte [cs:mt_pend], 0
         je      .r
