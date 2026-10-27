@@ -344,11 +344,13 @@ gp_ren_on: push    ax
 ; write CX bytes from ES:SI to device BL.  AX = error, CX = bytes sent
 gp_do_write:
         mov     [gp_count], cx
-        mov     word [gp_done_n], 0
-        mov     al, [es:si]             ; the frame check leaves out the first
-        mov     cx, 0FF01h              ;  byte: A and B start where its add
-        sub     cl, al                  ;  leaves them at 1 and 0
-        mov     [gp_fa], cx
+        xor     ax, ax
+        mov     [gp_done_n], ax
+        inc     ax                      ; the frame check leaves out the first
+        jcxz    .f0                     ;  byte: A and B start where its add
+        sub     al, [es:si]             ;  leaves them at 1 and 0 (no bytes:
+        dec     ah                      ;  1 and 0 as they are)
+.f0:    mov     [gp_fa], ax
         cmp     byte [gp_renon], 0         ; auto-remote after LOCAL ALL
         jne     .r
         call    gp_ren_on
