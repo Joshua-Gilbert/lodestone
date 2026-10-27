@@ -87,7 +87,6 @@ gp_handler:
         mov     [gp_c_bx], bx
         mov     [gp_c_al], al
         mov     byte [gp_err], 0
-        mov     word [gp_fa], 1         ; (the frame check: A = 1, B = 0)
         mov     bl, ah
         cmp     bl, gp_NFUNC
         jb      .ok
@@ -346,6 +345,10 @@ gp_ren_on: push    ax
 gp_do_write:
         mov     [gp_count], cx
         mov     word [gp_done_n], 0
+        mov     al, [es:si]             ; the frame check leaves out the first
+        mov     cx, 0FF01h              ;  byte: A and B start where its add
+        sub     cl, al                  ;  leaves them at 1 and 0
+        mov     [gp_fa], cx
         cmp     byte [gp_renon], 0         ; auto-remote after LOCAL ALL
         jne     .r
         call    gp_ren_on
@@ -397,10 +400,8 @@ gp_do_write:
         inc     si
         mov     dx, gp_R_CDOR
         out     dx, al
-        cmp     word [gp_done_n], 0     ; the check: the bytes after the first
-        je      .n1
-        call    gp_fsum
-.n1:    inc     word [gp_done_n]
+        call    gp_fsum                 ; (the first from the start above)
+        inc     word [gp_done_n]
         jmp     .wb
 .sent:  cmp     byte [gp_eoiflag], 3    ; AL = 3: then the frame check, A and
         jne     .last                   ;  B, as two more bytes, EOI with B
@@ -465,10 +466,9 @@ gp_fast_write:
         mov     bp, cx
         mov     dx, gp_R_ISR1
         mov     bh, [gp_shadow1]
-        es lodsb                        ; (always the first byte: it is not in
-        mov     ah, al                  ;  the frame check, so CL = A and CH = B
-        mov     cx, 0FF01h              ;  start where its add leaves them at
-        sub     cl, al                  ;  1 and 0)
+        es lodsb
+        mov     ah, al
+        mov     cx, [gp_fa]             ; CL = A, CH = B (the frame check)
         mov     di, 64
         xor     bl, bl                  ; 256 waits of 64 polls
         test    bh, gp_ISR1_DO
