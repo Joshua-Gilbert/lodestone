@@ -357,15 +357,15 @@ CLAUDE.COM took up the kernel driver's new calls in 1.21 and 1.23; the console n
 - **Never a ring for the program.** gridlink rings only while the console is up: not once the user has gone back (EVENT away), and not while TYPE's keys play (the console is down then without saying so: `Grid.typing`). `Term.may_ring` says so, and `Link.ring_check` takes back any ring it gave meanwhile. (M4: while away with a quiet bridge it rings, quietly, for the background: below.)
 - **The next frame straight after an answer** (`LINK_CHAIN`), as CLAUDE.COM; not while the console is going back, when only what is queued goes.
 - **A fourth EMS page.** Term's shadow (3,840 bytes) moves out of the console's page into a page of its own in window 3 (EC00h). The stub maps all four of its pages and, as before, saves and puts back all four of the program's windows. `CLAUDE /R` now asks for 4 free pages (64 KB); the stub is version 4. TERMLINK's CRC reads ES:SI in RCON (ES = CS but for the shadow's CRC in HELLO). The console's page has 3,801 bytes free (it had 4), which files and GPIB in the pop-up can use next.
-- **An SRQ line held by another device.** When an instrument of the program's holds SRQ (asking for service), the bridge's SRQ makes no edge and no interrupt, so each answer would wait for the next tick (~55 ms, against 2-4 ms polled). An answer found at a tick's look with no interrupt for it sets `srq_held`: from then on, until the next HELLO, the link polls by the PIT and doesn't sleep for an SRQ. This is in TERMLINK, so CLAUDE.COM does it too.
+- **An SRQ line held by another device.** When an instrument of the program's holds SRQ (asking for service), the bridge's SRQ makes no edge and no interrupt, so each answer would wait for the next tick (~55 ms, against 2-4 ms polled). An answer found at a tick's look with no interrupt for it sets `srq_held`: from then on the link polls by the PIT and doesn't sleep for an SRQ, until an answer comes with its interrupt again (the line has been let go). Before the 2026-10-26 audit's X49 it stayed set until the next HELLO. This is in TERMLINK, so CLAUDE.COM does it too.
 - **A TYPE given up on.** If the Pi's call times out while the program isn't yet back at a key call (a busy program, or keys it never reads), `Grid.type_out` keeps the rings off until the console is heard from (TYPE's reply comes first) or says HELLO.
 - **Cost:** RCON.BIN 6,868 bytes (+386), CLAUDE.COM 21,756 (+434, with CLAUDE 1.8); EMS 64 KB (+16 KB). Conventional memory is unchanged: the stub is still 816 bytes with its MCB, as `r_hw`'s fourth byte fits in its paragraphs.
 - **Not changed:**
   - While the console is up, the program's SRQ latch still gets the bridge's SRQs. The driver ORs every SRQ it sees into the latch: from the interrupt, and from its polled reads of ISR2 before 1.21 too. So TM5000G may see one SRQ after a pop-up and serial-poll its instruments for nothing. Taking those out would need a driver call to put the latch back.
   - A TYPE's own REQUEST isn't rung for: the rings are off from the moment it is queued, so the console fetches it at its next idle POLL (up to a second).
   - A ring that comes just after the idle console's last look can wait a tick.
-  - `srq_held` can still latch when two SRQ edges merge into one interrupt (as the PIC's request register does if the first isn't serviced in time; seen in the emulator after seconds of back-to-back polling). The link then polls by the PIT until the next HELLO, as it did before this change.
-- **Tests** (`test_resident_term.py`, `t_driver`, 23 checks, on the Pico bridge's model, which can ring):
+  - `srq_held` can still latch when two SRQ edges merge into one interrupt (as the PIC's request register does if the first isn't serviced in time; seen in the emulator after seconds of back-to-back polling). The link then polls by the PIT until an answer comes with its interrupt again (X49).
+- **Tests** (`test_resident_term.py`, `t_driver`, 24 checks, on the Pico bridge's model, which can ring):
   - every frame from the Pi passed by the driver's sum, and every frame of the console's was good at the Pi;
   - the count was found, GF_WAKE offered and taken up by gridlink;
   - one serial poll an answer, and the PIT never asked;
@@ -375,7 +375,7 @@ CLAUDE.COM took up the kernel driver's new calls in 1.21 and 1.23; the console n
   - a second session in the same boot takes its answers at their SRQ as the first did;
   - never AH=0Bh;
   - with `GPIBIRQ=0`: no count, no GF_WAKE, polled by the PIT, never asleep while an answer is due, the title at the next idle POLL, no ring;
-  - in a boot of its own, the SRQ line held: the console finds that out, polls by the PIT and never sleeps for an SRQ again.
+  - in a boot of its own, the SRQ line held: the console finds that out and polls by the PIT; another device's edge meanwhile doesn't make it sleep for an SRQ; once the line is let go, an answer with its interrupt puts it back to sleeping till the SRQ (X49).
 - **Controls**, each run against the change it guards, and each failed a check:
   - gridlink ringing whatever the console's state (both no-ring checks);
   - TYPE not counted, or a TYPE given up on not counted (their checks);

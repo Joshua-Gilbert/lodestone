@@ -59,7 +59,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs
-OFF_MAP = {'image_end': 0x4190, 'bss_end': 0x76C0, 'ui_keep_end': 0x6526}  # (4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP = {'image_end': 0x4190, 'bss_end': 0x76C0, 'ui_keep_end': 0x6516}  # (6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -211,7 +211,21 @@ def t_on():
     t1, b1 = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x6C)
     check('2 s: mt_tick ran %d times, the BIOS counted %d ticks (18.2 a second)' % (t1 - t0, b1 - b0),
           t1 - t0 == b1 - b0 and 34 <= b1 - b0 <= 38, (t1 - t0, b1 - b0))
+    guards, prev = [], k.pc.watch       # (MTPROBE's MT_END: MT's guards set as it comes in, read as it is refused)
+    gv = ('mt_crit', 'mt_in13', 'mt_inb')
+    def w(a):
+        if prev: prev(a)
+        if a == seg * 16 + Y['mt_end'] and not guards:
+            for v in gv: k.pc.wr(seg, Y[v], b'\1')
+            guards.append(None)
+        elif a == seg * 16 + Y['mt_bad'] and len(guards) == 1:
+            guards.append(tuple(k.pc.rd(seg, Y[v], 1)[0] for v in gv))
+            for v in gv: k.pc.wr(seg, Y[v], b'\0')
+    k.pc.watch = w
     got, out = probe(k)
+    k.pc.watch = prev
+    check('MT_END not from a stub (MTPROBE\'s, task 0\'s), MT\'s guards set as it comes in (mt_crit, mt_in13, mt_inb): '
+          'refused before it touches them (%s; audit3 X39)' % (guards[1:],), guards[1:] == [(1, 1, 1)], guards)
     check('F0h through mt_f0: AL=00h still answers (4F47h, 0201h: its OR AL,AL redone); 11h (not from a stub), 14h, 1Bh, FFh fail '
           'with AX = 1; 13h with task 0 works, and 1Ch (MT_SCREEN; alone, nothing to do)', got.get(0) == (0, 0x4F47, 0x0201, 0x1234)
           and all(bad(got.get(a, (0, 0, 0, 0))) for a in (0x11, 0x14, 0x1B, 0xFF)) and got.get(0x13, (1,))[0] == 0
@@ -630,6 +644,7 @@ class Audit:
         s.depth, s.only = {'tick': 0, 'exit': 0, 'v10': 0, 'i16': 0, 'peek': 0}, collections.Counter()
         s.seg = seg = mt_seg(k)
         s.at, s.sa, s.swa, s.ex = (seg * 16 + k.Y[n] for n in ('mt_preempt', 'mt_safe', 'mt_switch', 'mt_exit'))
+        s.srqi, s.tick, s.srq = seg * 16 + k.Y['mt_srqi'], seg * 16 + k.Y['mt_tick'], False
         s.wf = seg * 16 + k.Y['mt_wfront']   # (a background task waiting at INT 10h to be in front)
         s.wk = seg * 16 + k.Y['mt_wkey']     # (a task waiting at INT 16h for a key)
         s.pss = None
@@ -687,6 +702,8 @@ class Audit:
             pc.irq_pending.add(13); s.injected += 1; pc.mu.emu_stop()
         elif a == s.ex:
             if s.force and pc.rd(s.seg, k.Y['mt_pend'], 1)[0] == 0: pc.wr(s.seg, k.Y['mt_pend'], b'\1')
+        elif a in (s.srqi, s.tick):
+            s.srq = a == s.srqi                             # (mt_tick's tail reached from the SRQ's interrupt)
         elif a == s.sa:
             r, cur = s.rules(pc.r('ax'), pc.r('bx'), pc.r('dx'), pc.r('ss'))
             no = [n for n, ok in r.items() if not ok]
@@ -703,7 +720,8 @@ class Audit:
             if path in ('v10', 'i16', 'peek'): f = pc.r('bp') + 2    # (mt_v10's or mt_i16's BP: the INT frame after it)
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
             r, cur = s.rules(cs, ip, fl, ss)
-            if path == 'tick': r['ivt'] = vec(k, 8) == (s.seg, k.Y['mt_tick'])   # (else a hook ahead was interrupted)
+            if path == 'tick':          # (else a hook ahead was interrupted: INT 08h's, or from mt_srqi IRQ 5's)
+                r['ivt'] = (vec(k, 0x0D) == (0x60, k.Y['gp_isr']) if s.srq else vec(k, 8) == (s.seg, k.Y['mt_tick']))
             s.ev.append(dict(path=path, cs=cs, ip=ip, fl=fl, task=cur, ss=ss, csp=f + 6, r=r, sw=False,
                              ok=path != '?' and all(r.values())))
             s.track = (ss, f + 6, path, cur, (s.seg, 0x60, pc.u16(0x60, k.Y['ui_seg'])))   # (the caller's SP:
@@ -1372,6 +1390,17 @@ def t_screens():
               'found not to write the screen itself' if s_e else 'not known to write the screen itself, so not frozen'),
               st[1] == 2 and r.startswith(b'OK ') and s_o == s_e and v_o & VF_DIRECT == 0 and not k.crashed,
               (st, r, s_o, v_o))
+    # audit3 X36: MTNEST E behind (its 13h string from its own page in window 0, where its screen's pages are mapped
+    # for the call): not done, and nothing reached the real screen, so the front one's shadow is kept
+    typ(k, 'mtlaunch mtline.com x.txt;mtnest.com rb.txt e', 1.0)
+    s_b0 = shd(k)
+    waitfile(k, 'RB.TXT', 60)
+    r, s_b, lo, st = (A.disk_file(k, 'RB.TXT') or b'', shd(k), k.pc.rd(mt_seg(k), k.Y['mt_vlost'], 1)[0], tstate(k))
+    front(k, 1); line(k, 'x'); line(k, '')
+    check('MTNEST E behind (a 13h string from its own EMS page in window 0, in its own turns: not done there): the front '
+          'one\'s shadow kept (mt_shd %d, then %d; mt_vlost %d); its page intact (%s)' % (s_b0, s_b, lo,
+          r.decode(errors='replace')), s_b0 == s_b == 1 and lo == 0 and r.startswith(b'OK ') and st[1] == 0
+          and not k.crashed, (s_b0, s_b, lo, r, st))
     # a driver's INT 10h hook loaded after MT (VHOOK: below A000h, chaining with PUSHF / CALL FAR): the BIOS's nested calls
     # come through it, still known as the BIOS's (MT's own calls marked, mt_inb)
     k = boot('mt_sc6.img', b'MULTITASK=1\r\n', 88, MTSC, VHK)
@@ -1503,9 +1532,8 @@ def t_keys():
     # a program that only polls in front: its peeks give the others their turns (mt_preempt from there, at a safe
     # point), which on the 1520 a tick, landing in MT or the BIOS, seldom can; here (MTKEY Y) the tick can't at all,
     # its own INT 08h hook being ahead of MT's
-    # Y's turn is made due once its hook is in: a tick that lands in MT's own code (mt_i16, where Y's loop spends
-    # most of its time) leaves the slice as it is, so with the emulator's tick in step with that loop Y's turn
-    # may never end by itself (X21)
+    # Y's turn is made due: pcemu takes ticks only where its run loop restarts with interrupts on, and Y's
+    # loop is nearly all in mt_i16 with them off (not X21's case; that check is at MTKEY R's wait below)
     n0 = len(au.ev)
     typ(k, 'mtlaunch /f mtkey.com y pp.txt;mtspin.com 15 sp.txt', 0.3)
     k.pc.run_until(lambda: vec(k, 8) != (seg, Y['mt_tick']), 3)
@@ -1563,10 +1591,22 @@ def t_keys():
           and st2[1] == 1 and r2 == b'0071' and sw and not au.bad(), (st0, st1, r1, st2, r2, len(sw), au.bad()[:2]))
     line(k, '')
     # a read in front with nothing typed: it waits in MT, not the BIOS, the others running meanwhile
+    # (X21: a tick in MT's own code, at mt_i16's HLT, counts against the turn)
     n0 = len(au.ev)
+    tk, prev = [], k.pc.watch
+    def w(a):
+        if prev: prev(a)
+        if a == seg * 16 + Y['mt_tick']:
+            tk.append([k.pc.u16(k.pc.r('ss'), k.pc.r('sp') + 2) == seg, False])
+        elif a == seg * 16 + Y['mt_tick.p'] and tk: tk[-1][1] = True
+    k.pc.watch = w
     typ(k, 'mtlaunch /f mtkey.com r r2.txt;mtspin.com 20 s2.txt', 1.0)
     st = tstate(k)
     k.run_for(1.5)
+    k.pc.watch = prev
+    inmt = [p for c, p in tk if c]
+    check('ticks landing in MT\'s own code (%d of %d: MTKEY R\'s wait in front at mt_i16\'s HLT) counted: its turn over '
+          '(%d of them; audit3 X21)' % (len(inmt), len(tk), sum(inmt)), sum(inmt) >= 3, tk)
     s2, r2 = spun(k, 'S2.TXT'), A.disk_file(k, 'R2.TXT')
     k.key('q', settle=False); k.run_for(0.3)
     r3 = A.disk_file(k, 'R2.TXT')
@@ -1798,6 +1838,24 @@ def t_keys():
           'it waited 24 in the run recorded); brought to the front, "x" ends it' % dt,
           nk is not None and (nk, 1, 'KEYIN.COM') in st[0] and 'Lodestone version' in v and dt < 3
           and not any(n == 'KEYIN.COM' for i, s_, n in st2[0]) and not k.crashed, (st, v[-80:], st2))
+    # X40: CODE-Tab with a tail the ring never reaches (40:1Ch odd, past 40:82h): mt_hot's compaction
+    # stops after 16 words instead of looping with interrupts off
+    k.run_for(0.5)
+    st0 = tstate(k)
+    k.pc.wr(0x40, 0x1E, struct.pack('<H', HOT) * 16)
+    k.pc.wr(0x40, 0x1A, struct.pack('<HH', 0x1E, 0x41))
+    t0 = k.pc.u16(seg, Y['mt_ticks'])
+    k.pc.run_for(1.0)
+    t1, tl = k.pc.u16(seg, Y['mt_ticks']), k.pc.u16(0x40, 0x1C)
+    k.pc.run_for(1.0)
+    ring = k.pc.kbd_ring()
+    k.pc.wr(0x40, 0x1A, struct.pack('<HH', 0x1E, 0x1E))
+    v = sh.run('ver')
+    check('CODE-Tab ahead of a tail outside the ring (40:1Ch = 41h): taken out, the words after it moved 16 at most, the '
+          'tail put in the ring (%02Xh); the machine goes on (%d ticks in 1 s), the rest taken a CODE-Tab at a time (%d '
+          'left)' % (tl, t1 - t0, len(ring)), st0[0] == [(0, 1, 'Executive')] and t1 - t0 >= 15
+          and 0x1E <= tl < 0x3E and not tl & 1 and ring == [] and 'Lodestone version' in v and not k.crashed,
+          (st0, t1 - t0, hex(tl), ring, v[-60:]))
 
 def three(v):
     """MTM33's FILE: (calls, x, y), or None."""
@@ -2677,6 +2735,62 @@ def t_park():
           'is the other\'s own): pinned (error 5); both end, INT 62h as before', r2 <= va[0] < r2 + k.pc.u16(r2 - 1, 3)
           and r1 <= gv[1] < r1 + k.pc.u16(r1 - 1, 3) and 'MTLAUNCH: error 5' in o1 and s1 == TS_WAITK
           and vec(k, 0x62) == v62 and back(), (r1, r2, va, gv, o1, s1, now()))
+    # X35: a parked task whose pages are gone (FREEH frees MT's handle; or its size changed) can't come
+    # back (error 8), but MT_KILL ends it: its programs' EMS (incl. a 47h context), its wake, its screen's
+    # and MT's handles if still MT's freed, the shadow off, MT_EXIT ^C's.  Shared: a screen handle given
+    # to another program is left alone
+    hrec = lambda h: (k.pc.rd(0x60, Y['ems_h'] + h * 4, 2), k.pc.u16(0x60, Y['ems_h'] + h * 4 + 2))
+    for how in ('freed', 'resized', 'shared'):
+        e0, mg0 = ems_used(k), merged(mcbs(k))
+        mt('mtkill.com f 10 k%s.txt' % how[0])
+        o1 = mt('/p:1')
+        ph, hs = (k.pc.rd(seg, Y['mt_tab'] + MT_ENT + o, 1)[0] for o in (27, TE_SH))
+        sz = ent(1, 28)
+        hid = [h for h in range(1, 32) if hrec(h)[0][0] != 0xFF and hrec(h)[1] == 0xFFFF
+               and k.pc.rd(seg, Y['mt_hold'] + h, 1)[0] == 1]
+        if how == 'freed':
+            sh.run('freeh %d' % ph); line(k, ''); k.run_for(0.3)
+            sv0 = k.pc.rd(0x60, Y['ems_sv'], 1)[0]
+            k.pc.wr(0x60, Y['ems_sv'], bytes([hid[0] if hid else 0xFF, 0, 0, 0, 0]))
+            k.pc.wr(seg, Y['mt_wkt'], b'\1'); k.pc.wr(seg, Y['mt_wkp'], struct.pack('<H', 0x1234))
+            k.pc.wr(seg, Y['mt_shd'], b'\1')
+        else:
+            k.pc.wr(seg, Y['mt_tab'] + MT_ENT + 28, struct.pack('<H', sz + 1024))
+        if how == 'shared':
+            k.pc.wr(0x60, Y['ems_h'] + hs * 4 + 2, struct.pack('<H', 0x1234))
+        o2 = mt('/u:1')
+        sds, efc, prev = [], [], k.pc.watch             # (mt_shd as MT_KILL is done: the shell may draw after;
+        def w(a):                                       #  and the records ems_free is given: (handle, open))
+            if prev: prev(a)
+            if a == seg * 16 + Y['mt_kill.ok']: sds.append(shd(k))
+            if a == 0x600 + Y['ems_free']:
+                efc.append(((k.pc.r('si') - Y['ems_h']) // 4, k.pc.rd(0x60, k.pc.r('si'), 1)[0] != 0xFF))
+        k.pc.watch = w
+        o3 = mt('/k:1')
+        k.pc.watch = prev
+        s1, e1, xr = st(1), ems_used(k), re.search(r'exit: (\w\w) (\w\w) (\w{4}) (\w\w)', mt('/x:1'))
+        more, ok = '', True
+        if how == 'freed':
+            sv1, wk, sd = k.pc.rd(0x60, Y['ems_sv'], 1)[0], k.pc.rd(seg, Y['mt_wkt'], 1)[0], sds[:1] == [0]
+            more = ('; its program\'s handle (%s) freed though a context was saved for it (the slot %02Xh, then %02Xh); '
+                    'MT_WAKE\'s task none now (%02Xh); the shadow off, alone (mt_shd %s as MT_KILL is done); MT\'s '
+                    'handle, closed by FREEH (its owner still MT\'s), not freed again (ems_free given %s)'
+                    % (hid, sv0, sv1, wk, sds, efc))
+            ok = sv0 == 0xFF and hid and hrec(hid[0])[0][0] == 0xFF and sv1 == 0xFF and wk == 0xFF and sd \
+                and efc and all(o for h, o in efc) and ph not in [h for h, o in efc]
+        if how == 'shared':
+            r = hrec(hs)
+            more = '; the screen\'s handle %d, another program\'s now, kept (%s, owner %04X)' % (hs, r[0].hex(), r[1])
+            ok = r[0][0] != 0xFF and r[0][1] == 2 and r[1] == 0x1234
+            e1 -= 2
+            sh.run('freeh %d' % hs); line(k, ''); k.run_for(0.3)
+        check('a parked task, MT\'s handle (%d) %s meanwhile: not back (error 8); MT_KILL ends it (state %d, MT_EXIT %s), '
+              'every EMS page it had given back (%d in use, %d before it), its memory as before%s'
+              % (ph, how, s1, xr and xr.groups(), e1, e0, more), 'error' not in o1 and ph and 'MTLAUNCH: error 8' in o2
+              and 'error' not in o3 and s1 == 0 and e1 == e0 and alone() and merged(mcbs(k)) == mg0 and xr
+              and xr.group(1) == '00' and xr.group(3) == '0100' and xr.group(2) == xr.group(4) and ok
+              and ems_used(k) == e0 and not k.crashed, (how, ph, hs, hid, sz, o1, o2, o3, s1, e0, e1, xr and xr.groups(),
+                                                         ems_used(k), more, now()))
 
 MTGR = os.path.join(HERE, 'MTGROW.COM')
 
@@ -3512,10 +3626,10 @@ def t_windows():
     ss = [e for e in sw if e['task'] == 0 and e['ss'] == k.useg and e['csp'] >= k.u16('run_base')]
     check('ESC, ESC: both closed (%d, then %d), the Executive back: its list, nothing loaded (run_active 0), the UI block '
           'as before; every switch meanwhile by the rules (%d, %d of them from a session\'s own stack, at the UI\'s idle HLTs: its loop\'s or the saver\'s'
-          ')' % (n10, mb('mw_n'), len(sw), len(ss)),
+          ', or a move\'s or resize\'s wait, mwait: audit3 X32)' % (n10, mb('mw_n'), len(sw), len(ss)),
           n10 == 1 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and uip()[1] == free0[1]
           and A.has(k, 'Select a file and confirm') and not au.bad() and ss and not k.crashed
-          and all(e['ip'] in (Y['..@ui_idle'], Y['..@ui_sidle']) for e in ss), (n10, uip(), free0, au.bad()[:3], len(sw), len(ss), k.crashed, k.band(), sorted(set(hex(e['ip']) for e in ss if e['ip'] != Y['..@ui_idle']))))
+          and all(e['ip'] in (Y['..@ui_idle'], Y['..@ui_sidle'], Y['..@ui_midle']) for e in ss), (n10, uip(), free0, au.bad()[:3], len(sw), len(ss), k.crashed, k.band(), sorted(set(hex(e['ip']) for e in ss if e['ip'] != Y['..@ui_idle']))))
     # started from a window while its question waits: the Executive's band, not a pointer into the starter's slot
     k.key(A.CODE['T']); k.run_for(0.5)
     k.key(A.CODE['D']); k.run_for(0.3)
@@ -4856,6 +4970,65 @@ def t_tclip():
 
 MTTM = os.path.join(HERE, 'MTTERM.COM')
 
+def t_wwait():
+    print('== a window moved or resized with a task computing behind (audit3 X32); a window .RUN\'s message in the '
+          'band through the saver (X38)')
+    k = boot('mt_ww.img', b'MULTITASK=1\r\nTIDY=0\r\n', 88, TERMRUN, TERMFNT, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+    TS = A.run_syms('apps/TERM.ASM')
+    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+    wv = lambda o: k.pc.u16(k.useg, base() + TS['win'] + o)             # (W_COL 0, W_Y 2, W_W 4, W_H 6)
+    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+    def mv(x, y):                       # (A.point without its settle: a task is busy)
+        dx, dy = x - k.u16('mx'), y - k.u16('my')
+        while dx or dy:
+            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+            dx -= sx; dy -= sy
+    def turns(t=1.0):                   # in how many of t s's 10 ms looks task n is the one running
+        c = 0
+        for i in range(int(t * 100)):
+            k.pc.run_for(0.01); c += cur() == n
+        return c
+    au = Audit(k)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n = tnum('LCMD.COM')
+    k.key('mtspin 250 sw.txt', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    r0, w0 = turns(), [wv(o) for o in (0, 2, 4, 6)]
+    got = {}
+    for what, start, end in (('CODE-F8', 0x6F00, ktest.ESC), ('CODE-F7', 0x6E00, ktest.ESC),
+                             ('corner', (wv(0) + wv(4) - 1) * 8 + 4, wv(2) + wv(6) - 4),
+                             ('title', (wv(0) + 20) * 8, wv(2) + 6)):
+        if what.startswith('CODE'):     # (waiting for a key: mw_size's loop, and win_mv's)
+            k.key(start, settle=False); k.run_for(0.3)
+            got[what] = turns()
+            k.key(end, settle=False); k.run_for(0.5)
+        else:                           # (held down, the mouse still: mw_size's drag, and win_mv's)
+            mv(start, end); k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.3)
+            got[what] = turns()
+            k.pc.mouse_move(0, 0, 0); k.run_for(0.5)
+    w1 = [wv(o) for o in (0, 2, 4, 6)]
+    check('MTSPIN computing in a terminal window (task %d: %d of 100 looks alone): while its window waits for a key to '
+          'resize it (CODE-F8, mw_size) or move it (CODE-F7, win_mv), or its corner or title strip is held down with the '
+          'mouse still, MTSPIN runs on (%s of 100), every switch at a safe point; ESC or the release: as it was'
+          % (n, r0, got), n != 7 and r0 > 50 and all(v > 30 for v in got.values()) and w1 == w0 and not au.bad(),
+          (n, r0, got, w0, w1, au.bad()[:3]))
+    # X38: a window .RUN that can't start (CODE-K, no CALC.RUN): the band keeps its message through the saver
+    k.key(A.CODE['K'], settle=False); k.run_for(1.0)
+    b1 = k.band()
+    st0 = k.u16('saver_t')
+    k.wr('saver_t', struct.pack('<H', 18)); k.run_for(3.0)
+    tm = bytes(k.rd('tmp', 8))
+    k.key(ktest.DOWN, settle=False); k.run_for(1.0)
+    b2 = k.band()
+    k.wr('saver_t', struct.pack('<H', st0))
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    say = lambda b: any('CALC.RUN is not on this disk' in l for l in b)
+    check('CODE-K with no CALC.RUN on the disk: "CALC.RUN is not on this disk" in the band (%s); the saver meanwhile '
+          '(tmp then %r), and a key ends it: the band says it again (%s)' % (b1[:1], tm, b2[:1]), say(b1) and say(b2)
+          and not k.crashed, (b1, tm, b2))
+
 MTPB = os.path.join(HERE, 'MTPUB.COM')
 
 def t_tpub():
@@ -5326,12 +5499,12 @@ def t_srq():
             reg = k.pc.u16(seg, task_ent(k, n) + 4)
             if n and k.pc.rd(seg, task_ent(k, n), 1)[0] and reg <= psp < reg + k.pc.u16(reg - 1, 3): return n
         return 0
-    ways = {seg * 16 + Y['mt_srqi']: 'srqi', seg * 16 + Y['mt_srqi.r']: 'out', seg * 16 + Y['mt_tick.w']: 'w',
+    ways = {seg * 16 + Y['mt_srqi']: 'srqi', seg * 16 + Y['mt_srqi.r']: 'out', seg * 16 + Y['mt_tick.v']: 'v',
             seg * 16 + Y['mt_pick.wk']: 'pick', seg * 16 + Y['mt_exit']: 'exit', seg * 16 + Y['mw_poll.y']: 'y'}
     picks = []
     def lat(psp, when, max_s=0.4, at=None):
         """IRQ 5 raised once when() holds (at the block `at`, if given: from the watch) -> (ms until MTSRQ at
-        psp sees it, or None; the way MT went meanwhile: mt_srqi, out of it, mt_tick.w, INT 21h's way out,
+        psp sees it, or None; the way MT went meanwhile: mt_srqi, out of it, mt_tick.v, INT 21h's way out,
         mt_pick taking mt_want; T5d: the Executive giving way at its idle, mw_poll.y)."""
         if psp is None: return 'no MTSRQ', []
         t1 = k.pc.us + 2e6                              # (short runs: run_for's are 20000 blocks at least)
@@ -5374,8 +5547,8 @@ def t_srq():
     check('... another program giving it up (MTSRQ G, BL = 0, in task 0): nothing changes (its own only)',
           q and wkt() == nq and wkp() == q, (wkt(), hex(wkp())))
     r = lat(q, own(nspin))
-    check('IRQ 5 while MTSPIN computes: MTSRQ runs at once (%s ms; 3 at most): mt_srqi, mt_tick.w, mt_pick taking '
-          'it (%s), not after MTSPIN\'s turn and the Executive\'s' % r, fast(r) and r[1][:2] == ['srqi', 'w'],
+    check('IRQ 5 while MTSPIN computes: MTSRQ runs at once (%s ms; 3 at most): mt_srqi, mt_tick.v, mt_pick taking '
+          'it (%s), not after MTSPIN\'s turn and the Executive\'s' % r, fast(r) and r[1][:2] == ['srqi', 'v'],
           (r, nspin, tstate(k)))
     fr = task_ent(k, nq or 1) + 24                      # (TE_VF: SPF_FREEZE, as MT_FLAGS sets it)
     k.pc.wr(seg, fr, bytes([k.pc.rd(seg, fr, 1)[0] | 4]))
@@ -5401,11 +5574,21 @@ def t_srq():
     r = lat(q, lambda: cur() == nd and k.pc.r('cs') == 0x60 and k.pc.r('flags') & 0x200
             and k.pc.rd(0x60, Y['indos'], 1)[0] == 1)
     check('IRQ 5 while MTSPIN D (an INT 21h on each count) is inside INT 21h: MTSRQ at its way out (%s ms; %s)' % r,
-          fast(r) and r[1][:4] == ['srqi', 'w', 'exit', 'pick'], (r, nd, tstate(k)))
+          fast(r) and r[1][:4] == ['srqi', 'v', 'exit', 'pick'], (r, nd, tstate(k)))
     o = sh.run('mtlaunch /k:%d' % nd) if nd else ''
     line(k, ''); k.run_for(0.5)
     check('... (MTSRQ ended, MTSPIN D killed)', srq_progs(k) == [] and wkt() == 0xFF and nd
           and nd not in [i for i, s_, n in tstate(k)[0]], (o, srq_progs(k), wkt(), tstate(k)))
+    # X33: the task computing hooks INT 08h itself; the SRQ (IRQ 5, still the driver's) wakes at once
+    typ(k, 'mtlaunch mtsrq.com 1', 1.0); line(k, '')
+    q = one()
+    typ(k, 'mtlaunch mtspin.com 50 s4.txt t', 0.2)
+    nt = lambda: next((i for i, s_, n in tstate(k)[0] if n == 'MTSPIN.COM' and i != nspin), None)
+    r = lat(q, lambda: nt() is not None and own(nt())() and vec(k, 8) != (seg, Y['mt_tick']))
+    waitfile(k, 'S4.TXT', 8.0); line(k, ''); k.run_for(0.5)
+    check('IRQ 5 while MTSPIN T computes, its own INT 08h hook ahead of mt_tick: MTSRQ runs at once all the same (%s '
+          'ms; %s), IRQ 5\'s vector the driver\'s; MTSPIN T counts on, then ends' % r, fast(r) and r[1][:2] == ['srqi', 'v']
+          and spun(k, 'S4.TXT') > 0 and srq_progs(k) == [] and wkt() == 0xFF, (r, spun(k, 'S4.TXT'), srq_progs(k), tstate(k)))
     # two programs asking: the last; the first's end leaves the second's
     typ(k, 'mtlaunch mtsrq.com 1', 1.0); line(k, '')
     qx = one()
@@ -5521,7 +5704,7 @@ def t_srq():
           and nsp3 is not None and nq3 and nsp3 < nq3 and 'pick' in r[1] and 'y' in r[1] and srq_progs(k) == []
           and wkt() == 0xFF, (r, nsp3, srq_progs(k), wkt()))
     check('... every switch at a safe point (the audit; %d at the tick\'s end, %d of them by SRQ, mt_pick taking '
-          'mt_want)' % (len(au.switches(0, 'tick')), len(picks)), not au.bad() and len(picks) == 9, (au.bad()[:3], len(picks)))
+          'mt_want)' % (len(au.switches(0, 'tick')), len(picks)), not au.bad() and len(picks) == 10, (au.bad()[:3], len(picks)))
     au.stop()
     # a program staying resident in task 0 keeps its wake (task 0 never ends)
     sh = Shell(k)
@@ -5749,7 +5932,7 @@ if __name__ == '__main__':
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

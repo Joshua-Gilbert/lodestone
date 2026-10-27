@@ -2297,6 +2297,8 @@ op_run: mov     si, reqbuf+2
         mov     [run_exit], ax
         test    byte [run_flags], 2
         jz      .back
+        cmp     byte [snap_taken], 0    ; (the key script's {SNAP} wins)
+        jne     .back
         call    take_snapshot
 .back:  call    video_on
         push    es
@@ -2614,11 +2616,15 @@ int16:  cmp     byte [cs:ks_active], 0
         iret
 
 ; ZF = 0 and AX = key if a scripted key is ready now; else ZF = 1, AX kept.
-; Runs waits and snapshot marks as it meets them.
+; Runs waits and snapshot marks as it meets them.  Interrupts off, then the
+; caller's IF: a nested peek (a TSR's INT 1Ch) must not see the state half
+; moved.
 ks_ready:
         push    ax
         push    bx
         push    si
+        pushf
+        cli
 .again: mov     si, [cs:ks_pos]
         cmp     si, [cs:ks_len]
         jae     .end
@@ -2628,6 +2634,7 @@ ks_ready:
         je      .wait
         cmp     ax, 0FEFFh
         je      .snap
+        popf
         pop     si
         pop     bx
         add     sp, 2                   ; drop the caller's AX; ZF = 0
@@ -2655,8 +2662,11 @@ ks_ready:
         mov     byte [cs:ks_wait], 0
         add     word [cs:ks_pos], 3
         jmp     .again
-.snap:  call    take_snapshot
-        add     word [cs:ks_pos], 3
+.snap:  add     word [cs:ks_pos], 3     ; (first: a nested peek goes past it)
+        popf                            ; the copy with the caller's IF (a
+        pushf                           ;  peek's is clear: a tick waits for
+        call    take_snapshot           ;  it, as before)
+        cli
         jmp     .again
 .end:   mov     byte [cs:ks_active], 0
         push    ds                      ; (and out of INT 16h's chain if still
@@ -2675,7 +2685,8 @@ ks_ready:
         mov     [16h * 4 + 2], bx
 .u:     popf
         pop     ds
-.none:  pop     si
+.none:  popf
+        pop     si
         pop     bx
         pop     ax
         cmp     ax, ax                  ; ZF = 1
