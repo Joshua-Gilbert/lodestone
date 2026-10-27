@@ -2939,7 +2939,6 @@ mt_take:
         push    si
         push    di
         push    es
-        push    ds
         mov     si, [cs:bx+TE_REG]
         dec     si                      ; SI: its MCB's place
         mov     di, si
@@ -2954,20 +2953,7 @@ mt_take:
         jne     .oth
 .w1:    cmp     word [es:1], 0
         jne     .e
-.mg:    cmp     byte [es:0], 'M'        ; free: the free ones after it merged
-        jne     .e
-        mov     cx, ax
-        add     cx, [es:3]
-        inc     cx
-        mov     ds, cx
-        cmp     word [ds:1], 0
-        jne     .e
-        mov     cl, [ds:0]
-        mov     [es:0], cl
-        mov     cx, [ds:3]
-        inc     cx
-        add     [es:3], cx
-        jmp     .mg
+        KCALL   mem_merge               ; free: the free ones after it merged
 .e:     mov     cx, ax
         add     cx, [es:3]
         inc     cx                      ; CX: just past this block
@@ -3039,8 +3025,7 @@ mt_take:
 .ob:    pop     bx
 .oth:   mov     al, 0FFh
         stc
-.x:     pop     ds
-        pop     es
+.x:     pop     es
         pop     di
         pop     si
         pop     dx
@@ -6714,8 +6699,7 @@ mt_vset:
 ; -> AX = its segment; CF if none
 mt_carve:
         push    es
-        push    ds
-        xor     bx, bx                  ; (the best so far: its MCB)
+        xor     bx, bx                 ; (the best so far: its MCB)
         mov     dx, [cs:mt_size]
         mov     ax, [cs:mt_mcb0]
 .w:     mov     es, ax
@@ -6726,21 +6710,8 @@ mt_carve:
         jne     .no
 .w1:    cmp     word [es:1], 0
         jne     .nx
-.mg:    cmp     byte [es:0], 'M'        ; free: merge the free ones after it
-        jne     .fit
-        mov     cx, ax
-        add     cx, [es:3]
-        inc     cx
-        mov     ds, cx
-        cmp     word [ds:1], 0
-        jne     .fit
-        mov     cl, [ds:0]
-        mov     [es:0], cl
-        mov     cx, [ds:3]
-        inc     cx
-        add     [es:3], cx
-        jmp     .mg
-.fit:   cmp     [es:3], dx
+        KCALL   mem_merge               ; free: merge the free ones after it
+        cmp     [es:3], dx
         jb      .nx
         mov     bx, ax                  ; (the highest one that fits)
 .nx:    cmp     byte [es:0], 'Z'
@@ -6771,8 +6742,7 @@ mt_carve:
         clc
         jmp     short .x
 .no:    stc
-.x:     pop     ds
-        pop     es
+.x:     pop     es
         ret
 
 ; ---------------------------------------------------------------------
@@ -6805,39 +6775,22 @@ mt_grow:
         call    mt_ent                  ; BX: its entry
         mov     si, [cs:bx+TE_REG]
         dec     si                      ; SI: the region's MCB
-        push    ds                      ; the free block just below it (the
-        mov     ax, [cs:mt_mcb0]        ;  arena walked, free neighbours merged
-.w:     mov     es, ax                  ;  as in mt_carve)
-        cmp     byte [es:0], 'M'        ; (the end, or a chain gone bad: none)
-        jne     .nf
+        mov     ax, [cs:mt_mcb0]        ; the free block just below it (the
+.w:     mov     es, ax                  ;  arena walked, free neighbours merged
+        cmp     byte [es:0], 'M'        ;  as in mt_carve; the end, or a chain
+        jne     .no                     ;  gone bad: none)
         cmp     word [es:1], 0
         jne     .nx
-.mg:    cmp     byte [es:0], 'M'
-        jne     .nx
-        mov     cx, ax
-        add     cx, [es:3]
-        inc     cx
-        mov     ds, cx
-        cmp     word [ds:1], 0
-        jne     .nx
-        mov     cl, [ds:0]
-        mov     [es:0], cl
-        mov     cx, [ds:3]
-        inc     cx
-        add     [es:3], cx
-        jmp     .mg
+        KCALL   mem_merge
 .nx:    mov     cx, ax                  ; the next one the region's MCB?
         add     cx, [es:3]
         inc     cx
         cmp     cx, si
         je      .f
-        ja      .nf                     ; (past it: can't be)
+        ja      .no                     ; (past it: can't be)
         mov     ax, cx
         jmp     .w
-.nf:    pop     ds
-        jmp     .no
-.f:     pop     ds
-        cmp     word [es:1], 0          ; (ES: that block) free?
+.f:     cmp     word [es:1], 0          ; (ES: that block) free?
         jne     .no
         mov     ax, di                  ; AX: d, the paragraphs it gives; BP:
         xor     bp, bp                  ;  0 the first growth, 1 the chain's
