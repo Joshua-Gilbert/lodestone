@@ -1900,26 +1900,26 @@ mt_bad: mov     ax, 1
 mt_fail:
         jmp     KSEG:fail
 
-; the caller's task BL, not a free one: AL = it, BX = its entry.  CF if
-; there is no such task, or it is free (mt_bad's)
+; the caller's task BL, not a free one: AL = it, BX = its entry.  None
+; such, or a free one: not back, the call fails (mt_bad).  Called first
+; thing in a handler, nothing pushed: its return is what it drops
 mt_targ:
         mov     al, [bp+F_BX]
         cmp     al, MT_TASKS
         jae     .no
         call    mt_ent
-        cmp     byte [cs:bx+TE_STATE], TS_FREE  ; (CF clear: TS_FREE is 0)
+        cmp     byte [cs:bx+TE_STATE], TS_FREE
         jne     .x
-.no:    stc
+.no:    pop     ax
+        jmp     short mt_bad
 .x:     ret
-; and not task 0 nor a parked one: CF if it is (AX = 5 to come)
+; and not task 0 nor a parked one: else not back, AX = 5 (as mt_targ)
 mt_t5:  or      al, al
         jz      .no
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
-        jne     .x
-.no:    stc
-        ret
-.x:     clc
-        ret
+        jne     mt_targ.x
+.no:    pop     ax
+        jmp     mt_park.r5
 
 ; F0h AL=1 (files open on drive DL: DEFRAG and System ask before writing
 ; a disk's FAT and directories themselves): with another task there, at
@@ -1954,7 +1954,6 @@ mt_xcode:
 ; -> AL = them, and MTF_DIRECT (VF_DIRECT) as the detector last found it
 mt_flagsc:
         call    mt_targ
-        jc      mt_bad
         or      al, al
         jz      .t0
         mov     cx, [bp+F_CX]
@@ -1991,9 +1990,7 @@ mt_topen:
         cmp     byte [cs:mt_cur], 0     ; (the UI's call, not a task's)
         jne     mt_bad
         call    mt_targ
-        jc      mt_bad
         call    mt_t5
-        jc      mt_park.r5
         mov     ah, [bp+F_CX]
         cmp     ah, [cs:bx+TE_GEN]
         jne     mt_bad
@@ -2020,9 +2017,7 @@ mt_topen:
 ; published and shown: its cells instead (mt_tpub)
 mt_trows:
         call    mt_targ
-        jc      mt_bad
         call    mt_t5
-        jc      mt_park.r5
         mov     cx, [bp+F_CX]
         mov     dx, [bp+F_DX]
         and     dh, 7Fh                 ; (T5b's bit: the row in DL)
@@ -2379,9 +2374,7 @@ mt_pub: mov     cl, [bp+F_CX]
 .get:   cmp     byte [cs:mt_cur], 0     ; (the UI's call, not a task's)
         jne     .bad
         call    mt_targ
-        jc      .bad
         call    mt_t5
-        jc      mt_park.r5
         mov     es, [cs:bx+TE_TX]
         les     di, [es:TX_PUB]
         mov     [bp+F_DI], di
@@ -2415,9 +2408,7 @@ mt_pin:
 ; AX = 1 (no such task), 5 (task 0, parked), 8 (KRING waiting already)
 mt_tkey:
         call    mt_targ
-        jc      mt_bad
         call    mt_t5
-        jc      mt_park.r5
         mov     es, [cs:bx+TE_TX]
         pushf
         cli
@@ -2451,9 +2442,7 @@ mt_tmouse:
         cmp     byte [cs:mt_cur], 0     ; (the UI's call, not a task's)
         jne     mt_bad
         call    mt_targ
-        jc      mt_bad
         call    mt_t5
-        jc      mt_park.r5
         mov     es, [cs:bx+TE_TX]
         pushf
         cli
@@ -2649,7 +2638,6 @@ mt_list:
 ; mt_ispub)
 mt_frontc:
         call    mt_targ
-        jc      mt_bad
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
         je      mt_park.r5
         or      al, al
@@ -2666,7 +2654,6 @@ mt_frontc:
 ; from its next safe point
 mt_kill:
         call    mt_targ
-        jc      mt_bad
         or      al, al
         jz      .ex
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
@@ -2729,7 +2716,6 @@ mt_kok: call    mt_can
 ; MT_PARK: task BL's region to EMS, given back (mt_pk)
 mt_park:
         call    mt_targ
-        jc      mt_bad
         call    mt_pk
         jc      mt_fail
         jmp     KSEG:ok
@@ -2739,7 +2725,6 @@ mt_park:
 ; MT_UNPARK: parked task BL's region back where it was (mt_up)
 mt_unpark:
         call    mt_targ                 ; (a free one: not parked either)
-        jc      mt_bad
         cmp     byte [cs:bx+TE_STATE], TS_PARKED
         jne     mt_bad
         call    mt_up
