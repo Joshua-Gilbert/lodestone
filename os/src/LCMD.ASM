@@ -3798,7 +3798,10 @@ do_start:
         mov     [di], al
         inc     di
         or      al, al                  ; (CF clear)
-        jnz     .cc
+        jz      .nc
+        cmp     di, prog2 + 79          ; (79 characters at most: CF set
+        jbe     .cc                     ;  past them)
+        stc
 .nc:    pop     es
         mov     si, e_badcmd
         jc      .er
