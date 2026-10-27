@@ -641,13 +641,11 @@ fat_set:
         mov     cl, bh
         shr     cl, 1
         mov     dx, 1
-        shl     dx, cl
-        or      [fat_dmask], dx
         inc     bx
-        mov     cl, bh
-        shr     cl, 1
-        mov     dx, 1
-        shl     dx, cl
+        test    bx, 511
+        jnz     .one
+        mov     dl, 3                   ; (BX+1 starts the next sector)
+.one:   shl     dx, cl
         or      [fat_dmask], dx
         pop     cx
         pop     dx

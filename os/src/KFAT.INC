@@ -135,11 +135,9 @@ parse_comp:
         jmp     .put
 .chk:   push    di
         push    cx
-        push    ax
         mov     di, badchars
         mov     cx, NBADC
         repne   scasb
-        pop     ax
         pop     cx
         pop     di
         je      .err
@@ -169,18 +167,18 @@ NBADC   equ NSEP - 2                    ;  separators past '.' and '\')
 resolve_new:
         call    resolve
         jc      new_name.x
-new_name:                               ; (the same after a resolve)
-        mov     ax, 5
-        cmp     byte [r_name], 0
-        je      .f
-        mov     al, 3
+new_name:                               ; (the same after a resolve; one that
+        mov     ax, 3                   ;  worked sets r_wild only with r_name)
         cmp     byte [r_wild], 0
         jne     .f
-        mov     al, 5
-        cmp     byte [r_name], '.'
-        je      .f
+        mov     al, [r_name]
+        cmp     al, '.'
+        je      .f5
+        or      al, al
+        jz      .f5
         clc
 .x:     ret
+.f5:    mov     al, 5
 .f:     stc
         ret
 
@@ -206,9 +204,8 @@ resolve_si:
         jc      .dr                     ; (invalid, or not ready: 3, MS-DOS's)
         mov     al, [act]
         mov     [r_drv], al
-        call    fat_load
+        call    fat_load                ; (keeps BX: the drive's entry)
         jc      .x
-        mov     bx, [actp]
         mov     ax, [bx+D_CWD]
         cmp     byte [si], '\'
         jne     .c

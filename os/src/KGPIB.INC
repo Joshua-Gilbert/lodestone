@@ -90,7 +90,7 @@ gp_handler:
         mov     bl, ah
         cmp     bl, gp_NFUNC
         jb      .ok
-        mov     byte [gp_err], gp_E_FUNC
+.bad:   mov     byte [gp_err], gp_E_FUNC     ; (also function 0Dh: the same pushes)
         mov     ax, gp_E_FUNC
         jmp     .out
 .ok:    xor     bh, bh
@@ -115,7 +115,7 @@ gp_done    equ     gp_handler.out
 
 gp_functab dw gp_f_present, gp_f_init, gp_f_write, gp_f_read, gp_f_query, gp_f_spoll
         dw gp_f_clear, gp_f_trigger, gp_f_remote, gp_f_local, gp_f_timeout, gp_f_srq
-        dw gp_f_stats, gp_f_bad, gp_f_irq ; (0Dh, the standalone's unload: the
+        dw gp_f_stats, gp_handler.bad, gp_f_irq ; (0Dh, the standalone's unload: the
 gp_NFUNC   equ ($-gp_functab)/2         ;  bad-function answer, as it is built in)
 
 ; ---- function bodies: return AX (and CX/DX where documented) -------
@@ -286,10 +286,6 @@ gp_f_irq:
         mov     cx, gp_nsrq
         mov     dx, cs
         jmp     gp_done
-
-gp_f_bad:
-        mov     ax, gp_E_FUNC
-        jmp     gp_fin_ax
 
 gp_f_stats:
         mov     ax, [gp_recov]
