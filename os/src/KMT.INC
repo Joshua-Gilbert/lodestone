@@ -553,12 +553,16 @@ mt_kwant:
 
 ; front task AL: task 0 switched from at a drag's wait, and the mouse
 ; moved (or a button) since?  ZF clear if so: it runs next, so a drag
-; follows the mouse while tasks behind take the pauses.  Registers kept
+; follows the mouse while tasks behind take the pauses.  T5d: from its
+; idle too (it gives the rest of its turn away there, mw_poll), and a key
+; waiting as well.  Registers kept
 mt_mwant:
         or      al, al
         jnz     .no
         cmp     byte [cs:mt_mdrag], 0
         je      .x
+        call    mt_kin
+        jnz     .x
         push    ds
         push    es
         push    bx
@@ -598,8 +602,10 @@ mt_mdset:
         cmp     bx, [ui_seg]
         jne     .s
         cmp     word [cs:mt_lip], ..@ui_midle
+        je      .m
+        cmp     word [cs:mt_lip], ..@ui_idle    ; (T5d: its idle's too)
         jne     .s
-        inc     ax
+.m:     inc     ax
         mov     bx, [es:mx]
         mov     [cs:mt_mx], bx
         mov     bx, [es:my]
@@ -905,8 +911,76 @@ mt_kwait:
         mov     [cs:mt_swreq], al       ; (this task, as mt_swnow does it: the
         call    mt_swnow                ;  one in front may be in its run)
         jmp     .k
-.bgp:
-        call    mt_pick                 ; one ready to run, or the front one
+; T5d: an INT 16h hook of the running program's, or of a program it
+; runs under (a RUN's key script, CLAUDE's, in a window; not a TSR's,
+; Resident Claude's, ended though resident): asked, as in front (mt_i16
+; has none for it behind); none: it stays ready, another runs, and it
+; asks again at its next turn (a script's wait is timed: no key would
+; wake it).  Its code in the block of cur_psp or of a parent's, each
+; a PSP in the task's region, up to its stub (task 0: as before)
+.bgp:   push    cx
+        push    si
+        push    di
+        push    es
+        push    dx
+        mov     al, [cs:mt_cur]
+        or      al, al
+        jz      .hn
+        call    mt_ent
+        mov     dx, [cs:bx+TE_PSP]      ; (the walk's end: its stub)
+        mov     si, [cs:bx+TE_REG]
+        lea     di, [si-1]
+        mov     es, di
+        mov     di, si
+        add     di, [es:3]              ; its region: SI up to DI
+        xor     bx, bx
+        mov     es, bx
+        mov     ax, [es:16h * 4]        ; its INT 16h's code's paragraph
+        shr     ax, 4                   ;  (Resident Claude's segment is
+        add     ax, [es:16h * 4 + 2]    ;  below its block: 130h in)
+        mov     bx, [cur_psp]
+        mov     cx, 8
+.hp:    cmp     bx, dx
+        je      .hn
+        cmp     bx, si
+        jbe     .hn
+        cmp     bx, di
+        jae     .hn
+        dec     bx
+        mov     es, bx                  ; (the PSP's block)
+        inc     bx
+        cmp     ax, bx
+        jb      .hu
+        add     bx, [es:3]
+        cmp     ax, bx
+        jb      .hz                     ; (CF: in it)
+        sub     bx, [es:3]
+.hu:    mov     es, bx
+        mov     bx, [es:16h]            ; its parent
+        loop    .hp
+.hn:    clc
+.hz:    pop     dx
+        pop     es
+        pop     di
+        pop     si
+        pop     cx
+        jnc     .bgw
+        mov     ah, 1
+        int     16h
+        jnz     .have
+        call    mt_pick                 ; one ready to run; or the front one
+        jnc     .hs                     ;  waiting for a key typed now (it
+        mov     al, [cs:mt_front]       ;  wouldn't get it while this one
+        call    mt_ent                  ;  stays in INT 21h); else the
+        cmp     byte [cs:bx+TE_STATE], TS_WAITK ; kernel's HLT
+        jne     .idle
+        call    mt_kin
+        je      .idle
+        mov     bl, al
+.hs:    call    mt_fdrain
+        call    mt_switch
+        jmp     .top
+.bgw:   call    mt_pick                 ; one ready to run, or the front one
         jnc     .bgs
         mov     bl, [cs:mt_front]
         mov     al, bl
@@ -2078,12 +2152,13 @@ mt_trows:
 ; descriptor, ES = its TX, BX = its entry): rows of its cells to the
 ; caller's room (80 x 25 at most), rows past its PB_ROWS blank (0020h:
 ; PBA_* attributes, not a colour's) -> DL 32, CH = its rows, CL = its
-; columns, BX = PB_CUR (FFFFh: PBF_NOCUR)
+; columns, BX = PB_CUR (PBF_NOCUR: its row's bit 7 set, T5d: TERM's
+; view follows it, with no mark)
 mt_tpub:
         mov     ax, [si+PB_CUR]
         test    byte [si+PB_FLAGS], PBF_NOCUR
         jz      .k
-        mov     ax, 0FFFFh
+        or      ah, 80h
 .k:     push    ax                      ; (BX's, to come)
         push    bx
         mov     bl, [si+PB_COLS]        ; BL its columns, BH its rows
@@ -5219,6 +5294,9 @@ mt_gtext:
         jne     .x
         cmp     dx, [es:TX_WPSP]
         jne     .x
+        mov     ax, [es:TX_PUB]         ; (T5d: a screen published, its
+        or      ax, [es:TX_PUB + 2]     ;  program's: it sets the mode itself,
+        jnz     .x                      ;  after its snapshot of this one)
         push    0
         pop     es
         cmp     byte [es:449h], 4       ; (still in graphics)
@@ -6829,7 +6907,12 @@ mt_xenv:
 
 ; EXEC's largest block with MT on (mem_largest: JMP FAR; EXEC its only
 ; caller): in a task, one below the program's minimum (ex_min) grows the
-; region to it (mt_grow) and is asked again.  -> BX; DS = KSEG
+; region to it (mt_grow) and is asked again.  T5d: a .COM may use its
+; whole segment without asking (DOS gives it the largest block; LCMD
+; clears its BSS first), and in a grown region its block can end at the
+; TX: one short of its minimum, or in a grown region (TE_TX not TE_REG)
+; with less than 64 KB, has the region grown to 64 KB for it (else to
+; its minimum, as an .EXE).  -> BX; DS = KSEG
 mt_largest:
         push    ax
         push    dx
@@ -6838,14 +6921,34 @@ mt_largest:
         KCALL   mem_alloc               ; (fails with BX = largest)
         cmp     byte [cs:mt_cur], 0
         je      .x
-        cmp     bx, [ex_min]
+        cmp     byte [ex_isexe], 0
+        jne     .n
+        cmp     word [ex_min], 1000h
+        jae     .n
+        cmp     bx, 1000h               ; a .COM: 64 KB there?
         jae     .x
+        cmp     bx, [ex_min]
+        jb      .c
+        push    bx                      ; (enough for its minimum: in a grown
+        mov     al, [cs:mt_cur]         ;  region, 64 KB if it can grow)
+        call    mt_ent
+        mov     ax, [cs:bx+TE_TX]
+        cmp     ax, [cs:bx+TE_REG]
+        pop     bx
+        je      .x
+.c:     push    bx
+        mov     bx, 1000h
+        call    mt_grow
+        pop     bx
+        jnc     .a
+.n:     cmp     bx, [ex_min]            ; (64 KB not there, or an .EXE: its
+        jae     .x                      ;  minimum)
         push    bx
         mov     bx, [ex_min]
         call    mt_grow
         pop     bx
         jc      .x
-        mov     bx, 0FFFFh
+.a:     mov     bx, 0FFFFh
         xor     dx, dx
         KCALL   mem_alloc
 .x:     jmp     KSEG:mem_largest.x

@@ -622,14 +622,16 @@ run_shell:
         jnz     .d
         jmp     run_prog
 
-; CODE-A: Claude (CLAUDE.COM here, else in the root)
+; CODE-A: Claude (CLAUDE.COM here, else in the root).  MULTITASK=1: a
+; task, in a terminal window (T5d: CLAUDE 1.13 publishes its screen);
+; Shift-CODE-A, and without the switch: full screen, as before
 run_claude:
         mov     si, s_claude
         call    ui_findapp
         jc      .no
         mov     di, runpath
         call    sb_strz
-        jmp     run_wait
+        jmp     run_prog
 .no:    jmp     run_named.nf            ; (SI = the name: ui_findapp's answer)
 
 ; CODE-K: the calculator, a window over the list
@@ -928,10 +930,10 @@ run_prog:
         call    far [ui_mtx]
         jc      show_msg
         ret
-; run it, in the Executive's own task, and wait for it (CODE-A's Claude
-; always, Shift-Return and Shift-CODE-P: all the memory, and a program
-; loaded resident from there is everyone's); afterwards a fresh list and
-; a message
+; run it, in the Executive's own task, and wait for it (Shift-Return,
+; Shift-CODE-P and Shift-CODE-A: all the memory, and a program loaded
+; resident from there is everyone's); afterwards a fresh list and a
+; message
 run_wait:
         mov     si, runpath
         mov     di, s_empty

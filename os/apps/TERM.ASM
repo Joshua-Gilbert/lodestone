@@ -20,6 +20,10 @@
 ;  font) is drawn from those instead, with its font, the view following
 ;  its cursor as if it were a row lower (a status line under it stays in
 ;  view); no Full screen for it (its window is its screen).
+;
+;  T5d: what scrolled (the task's screen, or the view) is moved on the
+;  screen, not drawn again (scrl); a published screen's font is copied
+;  in, every code with a glyph, and drawn the short way (cells .fast).
 ; =====================================================================
 %include "UIAPI.INC"
 %include "MTAPI.INC"
@@ -31,8 +35,9 @@ RUN_FLAGS equ RF_WIN                    ; (a window beside others)
 VSEG    equ 0B800h
 FONT    equ 0                           ; the block (fseg): TERM.FNT's 4,096
 SHD     equ 4096                        ;  bytes, the shadow (each cell on the
-BUF     equ SHD + 25 * 80 * 2           ;  window as drawn), MT_TROWS's copy
-BLKLEN  equ BUF + 25 * 80 * 2
+BUF     equ SHD + 25 * 80 * 2           ;  window as drawn), MT_TROWS's copy,
+PFONT   equ BUF + 25 * 80 * 2           ;  a published screen's font (T5d:
+BLKLEN  equ PFONT + 256 * 16            ;  all 256 codes, pubset)
 NOCELL  equ 0FFFFh                      ; (a shadow cell to draw again)
 QLEN    equ 16                          ; keys kept while the task's ring is full
 
@@ -291,8 +296,12 @@ show:   push    es
 .s:     mov     byte [nocur], 1         ; (T5b: FFFFh, no cursor: the view
         cmp     bx, 0FFFFh              ;  where it was)
         je      .h
-        mov     byte [nocur], 0
-        mov     [cur], bx
+        test    bh, 80h                 ; (T5d: hidden, where it is told: the
+        jz      .v                      ;  view follows it, no mark; Claude
+        and     bh, 7Fh                 ;  Code's is hidden)
+        jmp     short .w
+.v:     mov     byte [nocur], 0
+.w:     mov     [cur], bx
 .h:     mov     bx, [cur]
         xor     ch, ch
         cmp     cx, [ncols]             ; (its columns changed: its positions
@@ -353,6 +362,11 @@ show:   push    es
         jne     .new
         cmp     cx, [top]
         je      .same
+        mov     dx, [sa]                ; (only the rows: what is drawn moves
+        cmp     dx, [sb]                ;  with them, scrl; T5d.  Not with a
+        jb      .new                    ;  selection: its highlight goes by
+        mov     [top], cx               ;  its positions)
+        jmp     short .same
 .new:   mov     [left], ax
         mov     [top], cx
         call    unshade                 ; (moved: all of it again)
@@ -366,8 +380,139 @@ show:   push    es
         mov     word [es:di], NOCELL
         pop     es
         mov     byte [curon], 0
-.d:     call    cells
+.d:     call    scrl
+        call    cells
         call    cursor
+.x:     ret
+
+; T5d: the window's rows as drawn moved up k (the task scrolled, or the
+; view moved down): the shadow's row k (1 to rows - 1) the view's new row
+; 0, and of the new rows 1 to rows - 1 - k at least half the shadow's k
+; lower (not all: a status line under them may stay, as CLAUDE's).  Those
+; rows moved up on the screen and in the shadow, the k below them left
+; for cells to draw (as any that differ: cells compares).  Not
+; with a selection (it stays on its positions), nor with the window's
+; columns past the task's (40)
+scrl:   mov     ax, [sa]
+        cmp     ax, [sb]
+        jb      .x
+        mov     ax, [left]
+        add     ax, [cols]
+        cmp     ax, [ncols]
+        ja      .x
+        cmp     word [rows], 2
+        jb      .x
+        mov     ax, [top]               ; (the view's row 0 in MT's copy)
+        mul     word [ncols]
+        add     ax, [left]
+        shl     ax, 1
+        add     ax, BUF
+        push    ds
+        push    es
+        push    bp
+        mov     [cs:c_at], ax
+        mov     ax, [fseg]
+        mov     ds, ax
+        mov     es, ax
+        mov     si, [cs:c_at]           ; (row 0 as drawn: nothing moved)
+        mov     di, SHD
+        mov     cx, [cs:cols]
+        repe    cmpsw
+        je      .n
+        mov     bp, 1                   ; BP: k
+.k:     mov     si, [cs:c_at]
+        mov     ax, bp
+        mov     dx, 160
+        mul     dx
+        add     ax, SHD
+        mov     di, ax
+        mov     cx, [cs:cols]
+        repe    cmpsw
+        je      .v
+.nk:    inc     bp
+        cmp     bp, [cs:rows]
+        jb      .k
+        jmp     .n
+.v:     mov     ax, [cs:rows]           ; (the rows below it)
+        dec     ax
+        sub     ax, bp
+        jz      .m
+        mov     [cs:r_n], ax
+        mov     ax, [cs:ncols]
+        shl     ax, 1
+        mov     [cs:stride], ax         ; (cells sets it again)
+        mov     ax, bp
+        mov     dx, 160
+        mul     dx
+        add     ax, SHD                 ; (AX: the shadow's row i + k, BX:
+        mov     bx, [cs:c_at]           ;  the new row i, DX: those alike)
+        xor     dx, dx
+.vl:    add     ax, 160
+        add     bx, [cs:stride]
+        mov     si, bx
+        mov     di, ax
+        mov     cx, [cs:cols]
+        repe    cmpsw
+        jne     .vn
+        inc     dx
+.vn:    dec     word [cs:r_n]
+        jnz     .vl
+        mov     ax, [cs:rows]
+        dec     ax
+        sub     ax, bp
+        shr     ax, 1
+        cmp     dx, ax
+        jb      .nk
+.m:     mov     ax, bp                  ; the shadow: rows k on to 0 on (the
+        mov     dx, 160                 ;  k below left as they were, as on
+        mul     dx                      ;  the screen)
+        push    ax                      ; (k x 160)
+        mov     si, ax
+        add     si, SHD
+        mov     di, SHD
+        mov     ax, [cs:rows]
+        sub     ax, bp
+        mov     cx, 80
+        mul     cx
+        mov     cx, ax
+        rep     movsw
+        pop     dx                      ; (DX: k x 160)
+        mov     ax, VSEG                ; the screen: in each bank, its lines
+        mov     ds, ax                  ;  ((rows - k) x 4 of them) from k x 4
+        mov     es, ax                  ;  lines below, the window's columns
+        shl     dx, 1                   ; (DX: k x 320, the source's offset)
+        mov     ax, [cs:rows]
+        sub     ax, bp
+        shl     ax, 2
+        mov     [cs:r_n], ax
+        mov     ax, [cs:y0]
+        mov     bx, 20
+        push    dx
+        mul     bx
+        pop     dx
+        add     ax, [cs:x0]
+        mov     bx, ax                  ; (BX: the window's first cell)
+        mov     bp, 4
+.b:     mov     di, bx
+        mov     ax, [cs:r_n]
+.l:     mov     si, di
+        add     si, dx
+        push    di
+        mov     cx, [cs:cols]
+        shr     cx, 1
+        rep     movsw
+        adc     cx, cx
+        rep     movsb
+        pop     di
+        add     di, 80
+        dec     ax
+        jnz     .l
+        add     bx, 2000h
+        dec     bp
+        jnz     .b
+.n:     pop     bp
+        pop     es
+        pop     ds
 .x:     ret
 
 ; the window's cells from MT's copy where they differ from the shadow
@@ -407,7 +552,37 @@ cells:  push    ds
         test    byte [cs:tdl], 32       ; (T5b: a published screen's cells)
         jz      .k
         mov     word [cs:cblank], 0020h
-        mov     word [cs:cfn], cattr
+        mov     word [cs:cfn], cnone    ; (its font has every code: pubset)
+        mov     ax, [sa]                ; T5d: the short way, with no
+        cmp     ax, [sb]                ;  selection and none of the window's
+        jb      .k                      ;  columns past its own
+        mov     ax, [left]
+        add     ax, [cols]
+        cmp     ax, [ncols]
+        ja      .k
+        mov     ds, [cs:fseg]
+.frow:  push    si
+        push    bx
+        push    di
+        mov     cx, [cs:c_n]
+.fc:    mov     ax, [si]
+        cmp     ax, [bx]
+        je      .fn
+        mov     [bx], ax
+        call    cell
+.fn:    add     si, 2
+        add     bx, 2
+        inc     di
+        loop    .fc
+        pop     di
+        pop     bx
+        pop     si
+        add     si, [cs:stride]
+        add     bx, 160
+        add     di, 16 * 20
+        dec     word [cs:r_n]
+        jnz     .frow
+        jmp     short .end
 .k:     mov     ds, [cs:fseg]
 .row:   push    si
         push    bx
@@ -432,10 +607,7 @@ cells:  push    ds
         jae     .ns
         xor     ah, 1                   ; (selected)
 .ns:    pop     dx
-        push    ds                      ; (its font's segment: TERM.FNT's, or
-        mov     ds, [cs:cfseg]          ;  a published screen's, T5b)
-        call    cell
-        pop     ds
+        call    cell                    ; (its font in the block: DS)
 .nx:    add     si, 2
         add     bx, 2
         inc     di
@@ -450,10 +622,10 @@ cells:  push    ds
         add     bp, 80
         dec     word [cs:r_n]
         jnz     .row
-        pop     bp
+.end:   pop     bp
         pop     es
         pop     ds
-        ret
+cnone:  ret
 
 ; AX = a cell -> AH = its attribute for cell: inverse (1) when its
 ; background is brighter than its foreground (70h, 71h: as a monochrome
@@ -484,22 +656,11 @@ attr:   push    bx
         pop     bx
         ret
 
-; T5b: AX = a published screen's cell -> AL its code as its font has it
-; (one below its first: a blank; from its end on: '?'), AH its attribute
-; (PBA_*: cell's)
-cattr:  and     ah, PBA_INV | PBA_UND
-        cmp     al, [cs:pfg]
-        jae     .e
-        mov     al, ' '
-.e:     cmp     al, [cs:pfg + 1]
-        jb      .x
-        mov     al, '?'
-.x:     ret
-
 ; T5b: the font for what MT_TROWS gave (DL 32: a published screen's cells,
 ; its own font from its descriptor, MT_PUB's; else TERM.FNT): when that
 ; changes, all of it drawn again, the view from row 0 (then following the
-; cursor).  All kept but AX, SI, DI
+; cursor).  T5d: a published one copied into PFONT (pcopy), so cell finds
+; it in the block as TERM.FNT.  All kept but AX, SI, DI
 pubset: push    bx
         push    cx
         push    es
@@ -530,21 +691,58 @@ pubset: push    bx
         xor     bh, bh
         shl     bx, 4
         sub     si, bx                  ; (its first code's glyph first)
-.f:     cmp     ax, [cfseg]
+.f:     cmp     ax, [pfs + 2]
         jne     .n
-        cmp     si, [cfont]
+        cmp     si, [pfs]
         jne     .n
         cmp     cx, [pfg]
         je      .x
-.n:     mov     [cfseg], ax
-        mov     [cfont], si
+.n:     mov     [pfs + 2], ax
+        mov     [pfs], si
         mov     [pfg], cx
-        mov     word [top], 0           ; (another screen: its view afresh)
+        mov     word [cfont], FONT
+        jcxz    .t                      ; (TERM.FNT)
+        call    pcopy
+        mov     word [cfont], PFONT
+.t:     mov     word [top], 0           ; (another screen: its view afresh)
         call    unshade
         mov     byte [curon], 0
 .x:     pop     es
         pop     cx
         pop     bx
+        ret
+
+; T5d: the published font (AX:SI less its first code CL's 16 x CL; CH its
+; end) into PFONT, all 256 codes: below its first its blank's (20h), from
+; its end on its '?' (as T5b's drawing had them).  All kept
+pcopy:  pusha
+        push    ds
+        push    es
+        mov     es, [fseg]
+        mov     ds, ax
+        mov     di, PFONT
+        xor     bx, bx                  ; (BL: the code)
+.c:     mov     al, bl
+        cmp     al, cl
+        jae     .g
+        mov     al, 20h
+.g:     cmp     al, ch
+        jb      .h
+        mov     al, '?'
+.h:     xor     ah, ah
+        shl     ax, 4
+        push    si
+        push    cx
+        add     si, ax
+        mov     cx, 8
+        rep     movsw
+        pop     cx
+        pop     si
+        inc     bl
+        jnz     .c
+        pop     es
+        pop     ds
+        popa
         ret
 
 ; the cursor's mark (its cell's bottom two rows inverted), where it is
@@ -1090,7 +1288,7 @@ rclick: mov     al, 0
 ; column (here: y * 20 + byte column), ES = VSEG; its glyph from DS:0
 %define CELL_FSEG ds
 %define CELL_FONT [cs:cfont]            ; (TERM.FNT's, or a published screen's
-                                        ;  less its first code's 16 x n: T5b)
+                                        ;  copied: PFONT, T5d)
 %define CELL_FIRST 0
 %define GLYPH_END 100h
 %include "../claude/CELL.INC"
@@ -1130,10 +1328,10 @@ tdl         resb 1                      ; MT_TROWS's DL (16: the mouse its)
 kshf        resb 1                      ; (a click's shift state)
 nrows       resb 1                      ; its screen's rows (25; a published
 nocur       resb 1                      ;  one's PB_ROWS), 1: no cursor (T5b)
-cfseg       resw 1                      ; the font cell draws with: segment,
-cfont       resw 1                      ;  offset (TERM.FNT's; T5b: a
-pfg         resw 1                      ;  published one's), its first code,
-pxl         resd 1                      ;  its end; its table (PB_XLAT)
+pfs         resd 1                      ; the font's: where (TERM.FNT's; T5b:
+cfont       resw 1                      ;  a published one's), where cell
+pfg         resw 1                      ;  finds it (T5d: PFONT for that), its
+pxl         resd 1                      ;  first code, its end; PB_XLAT
 cblank      resw 1                      ; (cells: past its columns, the
 cfn         resw 1                      ;  attribute's routine)
 sa          resw 1                      ; the selection: its first position,

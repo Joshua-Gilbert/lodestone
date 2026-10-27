@@ -385,11 +385,14 @@ Real              Virtual           Name
             1666              1666  term_cells.nc
             1667              1667  term_cells.r
             1668              1668  put_cell
+            1691              1691  put_cell.x
             1695              1695  term_scroll
             16C3              16C3  term_scroll.bank
+            16ED              16ED  term_scroll.sh
             1717              1717  term_scroll.x
             1718              1718  term_clear
             171B              171B  term_clear.b
+            172E              172E  term_clear.sh
             1733              1733  shadow_clear
             174A              174A  cur_xor
             175B              175B  cur_off

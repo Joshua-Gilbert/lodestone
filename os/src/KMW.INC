@@ -625,15 +625,65 @@ mw_poll:
         UCALL   poll_once
         jnc     .ev
         cmp     byte [cs:mw_n], 0
-        je      .x
+        je      .y
         call    mw_tick
-        jnc     .x
+        jnc     .y
         mov     ax, EV_TICK
 .ev:    push    bp                      ; (an event: to ui_event.got)
         mov     bp, sp
         mov     word [bp+2], ui_event.got
         pop     bp
 .x:     retf
+; T5d: nothing, and a task ready to run (one an SRQ woke while the UI was
+; busy first, mt_want): its turn now, not at the next tick (the HLT after
+; this would hold the CPU till then).  The mouse or a key brings the
+; Executive back at the next tick (mt_mdset, mt_mwant: as from a drag's
+; wait).  An interrupt's frame, as if the HLT had ended (..@ui_idle,
+; interrupts on), and on as a tick's end (mt_tick.w: mt_safe vets it);
+; back at ..@ui_idle, the loop's.  Not with INT 08h hooked ahead of MT
+; (mt_tick.w would refuse each time: the HLT, not a spin).  mt_pick's
+; look leaves mt_want and mt_mrot as they were (mt_preempt picks).  All
+; kept (UI_EVENT's)
+.y:     cli
+        push    ax
+        push    bx
+        mov     ah, [cs:mt_want]
+        mov     al, [cs:mt_mrot]
+        call    mt_pick                 ; (AX kept; BL its pick)
+        mov     [cs:mt_want], ah
+        mov     [cs:mt_mrot], al
+        jc      .z
+        push    ds
+        xor     bx, bx
+        mov     ds, bx
+        cmp     word [8 * 4], mt_tick
+        jne     .q
+        mov     bx, cs
+        cmp     [8 * 4 + 2], bx
+.q:     pop     ds
+        jne     .z
+        pop     bx
+        pop     ax
+        push    bp                      ; (its return, the HLT's: on at
+        mov     bp, sp                  ;  ..@ui_idle instead, flags 0202h)
+        push    word [bp+4]
+        mov     word [bp+4], 0202h
+        pop     word [bp+2]
+        pop     bp
+        push    word ..@ui_idle
+        push    ax                      ; mt_tick's frame: AX, BX, DX, DS, BP
+        push    bx
+        push    dx
+        push    ds
+        push    bp
+        mov     bp, sp
+        push    KSEG
+        pop     ds
+        mov     byte [cs:mt_pend], 1
+        jmp     mt_tick.w
+.z:     pop     bx
+        pop     ax
+        retf                            ; (interrupts off: the HLT's STI next)
 
 ; CF: EV_TICK is due for the session in front, a terminal window (MT_TOPEN
 ; gave it its task): its task's screen (TX_CHG, and a published screen's

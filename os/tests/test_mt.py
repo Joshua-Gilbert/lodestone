@@ -602,6 +602,17 @@ def typ(k, s, t=0.5):
     """Type a command without waiting for the machine to go idle (a task may be computing)."""
     k.key(s, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
 
+def tclick(k, x, y):
+    """A.click with the button held 60 ms, over a tick: with tasks computing behind, the Executive idle gives its
+    turn away (T5d) and the mouse brings it back at the next tick (mt_mwant); the UI reads the buttons' state, so a
+    shorter click between two ticks is missed."""
+    dx, dy = x - k.u16('mx'), y - k.u16('my')
+    while dx or dy:
+        sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+        k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+        dx -= sx; dy -= sy
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.06); k.pc.mouse_move(0, 0, 0); k.settle()
+
 def spun(k, name):
     v = A.disk_file(k, name)
     return int(v, 16) if v else 0
@@ -1742,7 +1753,7 @@ def t_keys():
     au.stop()
     # a TSR's INT 16h hook loaded after MT, waiting in its own loop (as Resident Claude's does): its peeks are its
     # code's, not the task's, so they find the key; then it passes the read on, the program's own, which waits
-    k = boot('mt_kh.img', b'MULTITASK=1\r\n', 88, MTK)
+    k = boot('mt_kh.img', b'MULTITASK=1\r\n', 88, MTK, os.path.join(HERE, 'KEYIN.COM'))
     sh = Shell(k)
     sh.run('mtkey h x')
     typ(k, 'mtlaunch /f mtspin.com 60 sh.txt;mtkey.com d dh.txt;mtkey.com p ph.txt', 0.3)
@@ -1769,6 +1780,24 @@ def t_keys():
           'key left to MTLAUNCH; brought to the front, it gets "z"; the machine goes on', st[0][1:] == [(1, TS_WAITK,
           'MTKEY.COM')] and rh is None and rh2 == b'007A' and 'Lodestone version' in v and not k.crashed,
           (st, rh, rh2, v[-60:]))
+    # T5d: a program's own INT 16h hook (KEYIN with an argument hooks it, then reads a key through DOS) behind: MT's
+    # wait there asks the hook at each of its turns, the task staying ready (TS_RUN, not TS_WAITK); the prompt in
+    # front waiting for keys, nothing else ready, still gets them (switched to when one is typed for it)
+    typ(k, 'mtlaunch keyin.com h', 1.0); line(k, '')
+    k.run_for(1.0)
+    st = tstate(k)
+    nk = next((i for i, s_, n in st[0] if n == 'KEYIN.COM'), None)
+    t0 = k.pc.us
+    v = sh.run('ver')
+    dt = (k.pc.us - t0) / 1e6
+    if nk: front(k, nk)
+    k.key('x', settle=False); k.run_for(1.0)
+    st2 = tstate(k)
+    check('KEYIN H behind (its own INT 16h hook, a read through DOS): ready, asked at its turns (TS_RUN); VER typed at '
+          'the prompt in front answered (%.1f s; 3 at most: the front task switched to for its keys, where without that '
+          'it waited 24 in the run recorded); brought to the front, "x" ends it' % dt,
+          nk is not None and (nk, 1, 'KEYIN.COM') in st[0] and 'Lodestone version' in v and dt < 3
+          and not any(n == 'KEYIN.COM' for i, s_, n in st2[0]) and not k.crashed, (st, v[-80:], st2))
 
 def three(v):
     """MTM33's FILE: (calls, x, y), or None."""
@@ -2759,9 +2788,12 @@ def t_grow():
     regm = ent(n, TE_REG)
     lx = g('x', t=2.0)
     lines = [x for x in A.disk_file(k, 'G.TXT').decode('latin-1').split('\r\n') if x]
-    check('every free block taken (%s), then EXEC of a child (MTGROW C): its region grown for it (%Xh lower: its '
-          'environment\'s block), it ran (its line "C") and ended (%s)' % (ms, regm - ent(n, TE_REG), lx),
-          ans(ms[-1])[:2] == (8, 1) and lines[-2] == 'C' and lines[-1][:3] == 'X 0' and ent(n, TE_REG) < regm,
+    cp = lines[-2].split() if len(lines) > 1 else []
+    cp = (int(cp[1], 16), int(cp[2], 16)) if len(cp) == 3 and cp[0] == 'C' else (0, 0)
+    check('every free block taken (%s), then EXEC of a child (MTGROW C): its region grown for it (%Xh lower), it ran '
+          '(its line "%s": a .COM grown for its whole segment, 64 KB, under the TX at %04X: T5d) and ended (%s)'
+          % (ms, regm - ent(n, TE_REG), lines[-2] if len(lines) > 1 else '', tx0, lx), ans(ms[-1])[:2] == (8, 1)
+          and cp[1] >= 0x1000 and cp[0] + cp[1] < tx0 and lines[-1][:3] == 'X 0' and ent(n, TE_REG) < regm,
           (ms, lines[-3:], hex(regm), hex(ent(n, TE_REG))))
     ls = g('s')                         # a hole of 20h paragraphs: room for the environment, not the program
     for _ in range(8):
@@ -2771,9 +2803,12 @@ def t_grow():
     lx2 = g('x', t=2.0)
     lines = [x for x in A.disk_file(k, 'G.TXT').decode('latin-1').split('\r\n') if x]
     check('a hole of 20h paragraphs left (%s, %s), the rest taken, then EXEC again: its environment there, its program '
-          'not: the region grown for the program (%Xh lower; mt_largest), it ran and ended (%s)'
-          % (ls, le, rege - ent(n, TE_REG), lx2), ans(ls)[1] == 0 and le == 'E 0' and lines[-2] == 'C'
+          'not: the region grown for the program (%Xh lower; mt_largest), it ran (%s) and ended (%s)'
+          % (ls, le, rege - ent(n, TE_REG), lines[-2] if len(lines) > 1 else '', lx2), ans(ls)[1] == 0 and le == 'E 0'
+          and lines[-2][:2] == 'C ' and int(lines[-2].split()[2], 16) >= 0x1000
           and lines[-1][:3] == 'X 0' and ent(n, TE_REG) < rege, (ls, le, lines[-3:]))
+    for _ in range(8):                  # (the arena full again: the children's room free)
+        if ans(g('m'))[1]: break
     # boxed in: a task started now has its region just below this one
     front(k, 0)
     sh.run('start /w mtline.com bx.txt')
@@ -3655,7 +3690,7 @@ def t_base():
         if pc.r('ip') == dk and pc.r('cs') == k.useg: ev.append(pc.r('ax'))
     k.hooks.append(evh)
     w2 = win(2)
-    A.click(k, (w2[0] + 40) * 8, w2[1] + w2[3] - 12); k.run_for(0.3)    # (the second Write's status line)
+    tclick(k, (w2[0] + 40) * 8, w2[1] + w2[3] - 12); k.run_for(0.3)     # (the second Write's status line)
     cw, tb0, lw0 = mb('mw_cur'), A.disk_file(k, 'TB.TXT'), 'TB.TXT' in k.exec_list()
     for _ in range(120):
         k.run_for(0.25)
@@ -3663,7 +3698,7 @@ def t_base():
     k.run_for(0.5)
     k.hooks.remove(evh)
     tb, bw, lw = A.disk_file(k, 'TB.TXT'), k.band(), 'TB.TXT' in k.exec_list()
-    A.click(k, 4, 340); k.run_for(0.5)
+    tclick(k, 4, 340); k.run_for(0.5)
     lx = 'TB.TXT' in k.exec_list()
     A.click(k, 4, 340); k.run_for(0.3)             # ("LCMD.COM ended" still waits: a click reads it)
     check('CODE-P with windows open, START /W MTSPIN.COM, EXIT: both Writes back (%s); the second Write in front while '
@@ -3772,8 +3807,8 @@ def t_menu():
     k.key(A.CODE['P']); k.run_for(1.0)
     typ(k, 'start /w mtspin.com 2000 tb.txt', 0.3); typ(k, 'start /w mtspin.com 2000 tc.txt', 0.3)
     typ(k, 'exit', 1.0); k.settle()
-    A.click(k, 4, 340); k.run_for(0.3)              # ("LCMD.COM ended" waits in the Executive: a click reads it)
-    A.click(k, 300, 300); k.run_for(0.3)            # (MENUTEST's window: it in front again)
+    tclick(k, 4, 340); k.run_for(0.3)               # ("LCMD.COM ended" waits in the Executive: a click reads it)
+    tclick(k, 300, 300); k.run_for(0.3)             # (MENUTEST's window: it in front again)
     cm, n0, d0 = mb('mw_cur'), len(au.ev), v16('dn')
     k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05)
     for i in range(10):
@@ -4932,13 +4967,13 @@ def t_tpub():
     key('k')
     c1 = (drawn(23, 0) == glyph(*cellc(23, 0)), tb('nocur'), tv('top'))
     key('u')
-    t1 = tv('top')
+    t1 = (tv('top'), drawn(5, 3) == glyph(*cellc(5, 3)))
     key('k')
     c2 = (drawn(5, 3) == glyph(*cellc(5, 3), mark=True), tv('top'))
     key('d')
     check('"k": PBF_NOCUR: no mark at (23, 0) (%s), the view as it was (%d); "u" (to row 5, column 3) while hidden: the view '
-          'still there (%d); "k": its mark at (5, 3), the view from its row (%d); "d": back to row 23, the view rows %d on'
-          % (c1[0], c1[2], t1, c2[1], tv('top')), c1 == (True, 1, 6) and t1 == 6 and c2 == (True, 5) and tv('top') == 6
+          'following it all the same, with no mark (T5d: MT_TROWS gives its row with bit 7; %d); "k": its mark at (5, 3), the view from its row (%d); "d": back to row 23, the view rows %d on'
+          % (c1[0], c1[2], t1[0], c2[1], tv('top')), c1 == (True, 1, 6) and t1 == (5, True) and c2 == (True, 5) and tv('top') == 6
           and drawn(23, 0) == glyph(*cellc(23, 0), mark=True) and lines()[-4:] == ['K 03', 'U', 'K 01', 'D'],
           (c1, t1, c2, tv('top'), lines()[-4:]))
     key('r')
@@ -5087,6 +5122,36 @@ def t_tpub():
           % (lines()[-5:-3], px == pd, lines()[-3:-2], py, dy), lines()[-5] == 'Y' and lines()[-4].startswith('X 0')
           and px == pd and lines()[-3] == 'Z 0 %02X01' % n and lines()[-2].startswith('X 0') and py == (0, 0, 0)
           and dy == 0 and lines()[-1] == ok1 and tb('tdl') & 32, (lines()[-7:], px, pd, py, dy))
+    # T5d: its rows scrolled, its status row (24) staying: TERM moves what is drawn (scrl), the rest as cells finds it
+    def allok():                        # the cells in view not drawn as its cells say (but the cursor's)
+        co, cs_ = k.pc.u16(pd[1], pd[0] + 4), k.pc.u16(pd[1], pd[0] + 6)
+        bad = []
+        for r in range(tv('top'), tv('top') + tv('rows')):
+            for c in range(tv('left'), tv('left') + tv('cols')):
+                w = k.pc.u16(cs_, co + (r * 80 + c) * 2)
+                if (r, c) != (23, 0) and drawn(r, c) != glyph(w & 0xFF, (w >> 8) & 3): bad.append((r, c))
+        return bad
+    sb, hits, prev = k.useg * 16 + base() + TS['scrl.m'], [0], k.pc.watch
+    def ws(a):
+        if prev: prev(a)
+        if a == sb: hits[0] += 1
+    k.pc.watch = ws
+    b0 = allok()                        # (the pointer's cells: the UI's, over them)
+    key('l')
+    h1, b1 = hits[0], allok()
+    k.key('lll', settle=False); k.run_for(1.0)
+    k.pc.watch = prev
+    b3 = allok()
+    co, cs_ = k.pc.u16(pd[1], pd[0] + 4), k.pc.u16(pd[1], pd[0] + 6)
+    sbad = [(r, c) for r in range(tv('rows')) for c in range(tv('cols')) if (tv('top') + r, tv('left') + c) != (23, 0)
+            and k.pc.u16(tv('fseg'), TS['SHD'] + r * 160 + c * 2)
+            != k.pc.u16(cs_, co + ((tv('top') + r) * 80 + tv('left') + c) * 2)]
+    check('"l": its rows 1-23 moved up one, row 24 (its status) staying: TERM moves what is drawn (scrl: %d moves), every '
+          'cell in view then as its cells say, byte for byte (%d not); "l" x 3 at once: so again (scrl: %d moves; %d not), '
+          'TERM\'s shadow its cells (%d not; the mouse pointer\'s %d cells, the UI\'s, left out)'
+          % (h1, len(b1), hits[0] - h1, len(b3), len(sbad), len(b0)), h1 >= 1 and hits[0] - h1 >= 1 and len(b0) <= 4
+          and set(b1) <= set(b0) and set(b3) <= set(b0) and not sbad and lines()[-4:] == ['L'] * 4,
+          (h1, hits[0], b0, b1[:5], b3[:5], sbad[:5], lines()[-4:]))
     s0 = (txc() + pcg()) & 0xFFFF
     key('w')
     pw, s1 = (pubd(n), tb('tdl') & 32), txc()
@@ -5262,12 +5327,12 @@ def t_srq():
             if n and k.pc.rd(seg, task_ent(k, n), 1)[0] and reg <= psp < reg + k.pc.u16(reg - 1, 3): return n
         return 0
     ways = {seg * 16 + Y['mt_srqi']: 'srqi', seg * 16 + Y['mt_srqi.r']: 'out', seg * 16 + Y['mt_tick.w']: 'w',
-            seg * 16 + Y['mt_pick.wk']: 'pick', seg * 16 + Y['mt_exit']: 'exit'}
+            seg * 16 + Y['mt_pick.wk']: 'pick', seg * 16 + Y['mt_exit']: 'exit', seg * 16 + Y['mw_poll.y']: 'y'}
     picks = []
     def lat(psp, when, max_s=0.4, at=None):
         """IRQ 5 raised once when() holds (at the block `at`, if given: from the watch) -> (ms until MTSRQ at
         psp sees it, or None; the way MT went meanwhile: mt_srqi, out of it, mt_tick.w, INT 21h's way out,
-        mt_pick taking mt_want)."""
+        mt_pick taking mt_want; T5d: the Executive giving way at its idle, mw_poll.y)."""
         if psp is None: return 'no MTSRQ', []
         t1 = k.pc.us + 2e6                              # (short runs: run_for's are 20000 blocks at least)
         hit, prev, base, t0, ev = [], k.pc.watch, psp * 16 + 0x10D, [], []
@@ -5399,22 +5464,62 @@ def t_srq():
     k.pc.irq_pending.add(5); k.run_for(0.5)
     check('... it ends at its third: the wake ends with it (task 0\'s too)', srq_progs(k) == [] and wkt() == 0xFF,
           (srq_progs(k), wkt()))
-    # the Executive in front (a terminal window's case, T5d): idle at its HLT, and busy drawing
+    # the Executive in front (a terminal window's case, T5d): idle, and busy drawing.  Another MTSPIN first: a task
+    # ready ahead of MTSRQ in the round (so the woken one is taken because it was woken, not as the next in turn)
+    typ(k, 'mtlaunch mtspin.com 600 s3.txt', 1.0); line(k, '')
     typ(k, 'mtlaunch mtsrq.com 2', 1.0); line(k, '')
     typ(k, 'exit', 1.5)
+    nsp3 = next((i for i, s_, n in tstate(k)[0] if n == 'MTSPIN.COM' and i != nspin), None)
     q = one()
+    nq3 = tnum_(q) if q else None
     ui = k.pc.u16(0x60, Y['ui_seg'])
+    ys, y0, s0 = [], seg * 16 + Y['mw_poll.y'], seg * 16 + Y['mt_switch']
+    prev = k.pc.watch
+    def wy(a):                                          # (mw_poll.y, then a switch before the next tick)
+        if prev: prev(a)
+        if a == y0: ys.append([k.pc.u16(seg, Y['mt_ticks']), 0])
+        if a == s0 and ys and ys[-1][0] == k.pc.u16(seg, Y['mt_ticks']) and cur() == 0: ys[-1][1] = 1
+    k.pc.watch = wy
+    k.pc.run_for(0.5)
+    k.pc.watch = prev
+    check('the Executive in front and idle (MTSPIN and MTSRQ behind): it gives the rest of its turn away at its idle '
+          '(mw_poll.y %d times, a switch from task 0 before the next tick %d times: not its HLT till then)'
+          % (len(ys), sum(y[1] for y in ys)), q and k.pc.mode() == 0x40 and len(ys) >= 3 and sum(y[1] for y in ys) >= 3,
+          (q, hex(k.pc.mode()), ys))
+    kl = []
+    for kk in (ktest.DOWN, ktest.UP, ktest.DOWN, ktest.UP):     # (keys meanwhile: back at the next tick, mt_mwant)
+        k.pc.run_for(0.07)
+        t0 = k.pc.us; k.pc.keys.append(kk)
+        while k.pc.keys and k.pc.us - t0 < 0.5e6: k.pc.run(300)
+        kl.append(round((k.pc.us - t0) / 1000, 1))
+        k.pc.run_for(0.3)
+    check('... a key for it meanwhile: taken at the next tick (%s ms; each typed just before one: 30 at most; it comes '
+          'back for it, as for the mouse, mt_mwant; without that, at its turn in the round: 81 in the run recorded)' % kl,
+          max(kl) <= 30, kl)
+    seen = collections.Counter()
+    for i in range(30):                                 # (keys all the while: the boost at every tick)
+        k.pc.keys.append(ktest.DOWN if i % 2 == 0 else ktest.UP)
+        for _ in range(25):
+            e_ = k.pc.us + 1200
+            while k.pc.us < e_ and k.pc.run(300): pass
+            seen[cur()] += 1
+    k.run_for(0.3)
+    check('... a key every 30 ms or so for a second: the tasks behind still take turns, each MTSPIN (%d and %d samples '
+          'of %d; the turn the boost took from one given back where it was, mt_mrot, the yield\'s look leaving it)'
+          % (seen[nsp3], seen[nspin], sum(seen.values())), nsp3 is not None and seen[nsp3] > 20 and seen[nspin] > 20,
+          dict(seen))
     idle = (Y['..@ui_idle'], Y['..@ui_midle'], Y['..@ui_sidle'])
-    r = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') in idle)
-    check('the Executive in front, idle at its HLT (MTSRQ behind): woken at once (%s ms; %s)' % r,
-          q and k.pc.mode() == 0x40 and fast(r), (q, hex(k.pc.mode()), r))
+    r = lat(q, lambda: cur() == 0, at=seg * 16 + Y['mw_poll'])     # (its poll: the little it runs, idle)
+    check('... IRQ 5 while it runs, idle (in its poll): woken at once (%s ms; %s)' % r, fast(r), r)
     k.key(ktest.DOWN, ktest.UP, settle=False)
     r = lat(q, lambda: cur() == 0 and k.pc.r('cs') == ui and k.pc.r('ip') not in idle and k.pc.r('flags') & 0x200, 1.0)
-    print('   the Executive busy drawing (its selection moved): the SRQ\'s task at the first tick at its idle HLT, %s ms' % r[0])
+    print('   the Executive busy drawing (its selection moved): the SRQ\'s task at its next idle, %s ms' % r[0])
     k.run_for(0.5)
-    check('... the Executive busy drawing: the wake kept till the first tick at its idle HLT (%s ms; 100 at most; '
-          '%s), and then MTSRQ ends, its wake with it' % r, isinstance(r[0], float) and r[0] <= 100 and 'pick' in r[1]
-          and srq_progs(k) == [] and wkt() == 0xFF, (r, srq_progs(k), wkt()))
+    check('... the Executive busy drawing: the wake kept till its idle, where it gives way to it (mw_poll.y; not the '
+          'tick, nor the other MTSPIN, task %s, ahead of it, task %s, in the round: %s ms; 40 at most; %s), and then MTSRQ '
+          'ends, its wake with it' % ((nsp3, nq3) + r), isinstance(r[0], float) and r[0] <= 40
+          and nsp3 is not None and nq3 and nsp3 < nq3 and 'pick' in r[1] and 'y' in r[1] and srq_progs(k) == []
+          and wkt() == 0xFF, (r, nsp3, srq_progs(k), wkt()))
     check('... every switch at a safe point (the audit; %d at the tick\'s end, %d of them by SRQ, mt_pick taking '
           'mt_want)' % (len(au.switches(0, 'tick')), len(picks)), not au.bad() and len(picks) == 9, (au.bad()[:3], len(picks)))
     au.stop()

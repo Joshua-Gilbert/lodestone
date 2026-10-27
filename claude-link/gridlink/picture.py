@@ -9,6 +9,9 @@ FDh, a rectangle of pixels:
 and Term's scroll (FEh) moves rows of 16 lines.  The Picture encoder keeps
 what the GRiD shows and sends only the difference, the latest picture only:
 a slow link means fewer pictures, never a queue (as Term's text encoder).
+Every frame of a picture says so in its flags (F_PIC); a text frame never
+does, so the GRiD knows when the picture has gone (CLAUDE 1.13 in a
+terminal window: full screen for a picture, back to the window after).
 
 A picture is 384 lines of 80 bytes (`bytes`, 30,720), bit 7 of a byte the
 leftmost pixel, 1 lit.  `to_bits` makes one from a Pillow image; `dither`
@@ -18,7 +21,7 @@ W, H = 640, 384                 # rows 0-23 of the GRiD's screen; row 24 is CLAU
 BPL = W // 8                    # bytes a line
 SIZE = BPL * H
 LINES = 16                      # a text row: what the scroll op moves
-F_CLEAR, F_HIDDEN = 0x01, 0x02
+F_CLEAR, F_HIDDEN, F_PIC = 0x01, 0x02, 0x04
 OP_PIX, OP_SCROLL = 0xFD, 0xFE
 OP_HEAD = 6                     # FDh, y (2), x, w, h
 
@@ -150,7 +153,7 @@ class Encoder:
         if s.shown is not None and s.shown == bits: return None, False
         clear = s.shown is None
         base = bytearray(BLANK if clear else s.shown)
-        out = bytearray([F_HIDDEN | (F_CLEAR if clear else 0), 0, 0])
+        out = bytearray([F_HIDDEN | F_PIC | (F_CLEAR if clear else 0), 0, 0])
         start = 3
         if not clear and bits != s.target:              # a new picture: did it scroll?
             k = shift_of(base, bits)

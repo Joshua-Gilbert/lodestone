@@ -1,8 +1,9 @@
 ; MTGROW.COM - for test_mt.py: a task's region growing on demand (T5a).
 ;   MTGROW MODE KB FILE
 ;   MODE S: shrinks itself to its own size first (4Ah), as most .COMs do;
-;   K: keeps all it was given; C: a child (EXEC'd by "x"): its line, then
-;   ends.  Then keys through DOS (AH=08h) till "q", each writing a line to
+;   K: keeps all it was given; C: a child (EXEC'd by "x"): its line, "C
+;   pppp ssss" (its PSP, its block's paragraphs), then ends.  Then keys
+;   through DOS (AH=08h) till "q", each writing a line to
 ;   FILE (appended):
 ;   1-9  48h of n x 16 KB: "A aaaa c bbbb" (AX: the block or the error,
 ;        CF, BX)
@@ -48,8 +49,20 @@ org 100h
 .ne:    mov     byte [di], 0
         cmp     byte [mode], 'C'
         jne     .nc
-        mov     al, 'C'                 ; C: its line, and ends
-        call    put1
+        mov     di, out_                ; C: its line, and ends
+        mov     al, 'C'
+        stosb
+        mov     al, ' '
+        stosb
+        mov     ax, cs
+        call    hex4
+        mov     al, ' '
+        stosb
+        mov     ax, [2]
+        mov     bx, cs
+        sub     ax, bx
+        call    hex4
+        call    wout
         mov     ax, 4C00h
         int     21h
 .nc:    cmp     byte [mode], 'S'
