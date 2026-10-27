@@ -4,9 +4,12 @@
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
  *
- * v7.3: a mnemonic right after coordinates, with no ';' between them (HP-GL's
- *    terminator is optional), ends them: PD100,200PU300,400 lifts the pen for
- *    300,400. It used to be taken as a separator and lost. The serial-poll
+ * v7.3: ';' is optional, as in HP-GL: a letter after a mnemonic and its
+ *    arguments starts the next mnemonic. PD100,200PU300,400 lifts the pen for
+ *    300,400 (the PU was taken for separators), and INPU100,200 or
+ *    SP2PD100,200 no longer lose all that follows IN or SP up to a ';'. SM
+ *    and DT keep the one character they take; BL and WD, like LB, take text
+ *    up to ETX (the Nano ignores all four; it draws LB). The serial-poll
  *    byte goes on DIO a pass before DAV, not ~1.7 us before (T1 is 2 us).
  *
  * v7.2: no bumps. A status request no longer re-enters graph mode with GS and
@@ -668,6 +671,7 @@ bool penDown = false;
 char cmdBuf[CMD_BUF_SIZE];
 uint8_t cmdLen = 0;
 bool inLabel = false;
+bool charArg = false;                   // SM, DT: the character after the mnemonic is theirs
 
 int hpglToTekX(long hx) { return (int)((hx * TEK_MAX_X) / HPGL_MAX_X); }
 int hpglToTekY(long hy) { return (int)((hy * TEK_MAX_Y) / HPGL_MAX_Y); }
@@ -766,14 +770,16 @@ void endCommand() {
 }
 
 void feedChar(char c) {
-    if (inLabel) {                      // LB text, up to ETX (';' is text here)
+    if (inLabel) {                      // LB (BL, WD) text, up to ETX (';' is text here)
         if (c == ETX) { endCommand(); return; }
         if (c == '\r' || c == '\n') return;
         if (cmdLen < CMD_BUF_SIZE - 1) cmdBuf[cmdLen++] = c;
         return;
     }
     if (c == ';') { endCommand(); return; }
-    if (inCoords && (uint8_t)((c | 0x20) - 'a') < 26) endCommand();    // a letter: the next mnemonic (';' is optional)
+    // ';' is optional in HP-GL: a letter after a mnemonic (and its numbers)
+    // starts the next one. SM and DT take one character, which may be a letter.
+    if ((uint8_t)((c | 0x20) - 'a') < 26 && cmdLen >= 2 + charArg) endCommand();
     if (inCoords) {                     // PU/PD/PA coordinates
         if ((c >= '0' && c <= '9') || c == '.' || ((c == '-' || c == '+') && numLen == 0)) {
             if (numLen < sizeof(numBuf) - 1) numBuf[numLen++] = c;
@@ -787,7 +793,8 @@ void feedChar(char c) {
     if (cmdLen < CMD_BUF_SIZE - 1) cmdBuf[cmdLen++] = c;
     if (cmdLen == 2) {
         char c1 = cmdBuf[0] & ~0x20, c2 = cmdBuf[1] & ~0x20;      // (upper case)
-        if (c1 == 'L' && c2 == 'B') inLabel = true;
+        charArg = (c1 == 'S' && c2 == 'M') || (c1 == 'D' && c2 == 'T');
+        if ((c1 == 'L' && c2 == 'B') || (c1 == 'B' && c2 == 'L') || (c1 == 'W' && c2 == 'D')) inLabel = true;
         else if (c1 == 'P' && (c2 == 'U' || c2 == 'D' || c2 == 'A')) {
             cmdBuf[2] = '\0'; processCommand(cmdBuf, 2);        // the pen state, no coordinates yet
             inCoords = true; numLen = 0; haveX = false;
