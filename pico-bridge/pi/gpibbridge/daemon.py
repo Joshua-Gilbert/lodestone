@@ -137,8 +137,10 @@ class Bridge(handlers.Context):
         try:
             with self.wlock:
                 ser.write(frame)
-        except (serial.SerialException, OSError) as e:
-            log.warning("write to %s failed: %s", self.port, e)
+        except Exception as e:
+            # Any exception: a port the main loop closes under the ping thread's write makes pyserial 3.5 raise
+            # TypeError (its fd is None by then), not SerialException.
+            log.warning("write to %s failed: %r", self.port, e)
             # Not closed here: this may be the ping thread, and a port closed under the main loop's read raises
             # what nothing catches (pyserial's in_waiting: TypeError); close() also tells the control clients.
             self.dead = ser
@@ -147,8 +149,11 @@ class Bridge(handlers.Context):
         """PINGs from a thread, so a slow handler can't make the Pico think the Pi is gone."""
         while True:
             time.sleep(1.0)
-            if self.ser is not None and self.connected:
-                self.write(P.ping())
+            try:
+                if self.ser is not None and self.connected:
+                    self.write(P.ping())
+            except Exception:                # nothing may end this thread: without PINGs the bridge goes offline
+                log.exception("ping thread")
 
     def try_open(self):
         for p in candidate_ports(self.cfg["port"]):

@@ -130,8 +130,8 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   once any reply had been dropped as stale on arrival, the Pi took a reply it had already sent for one still
   on its way when the 1520 read again before the next CREDIT (≤ 5 ms): it skipped `on_talk` and the read
   timed out. gridlink ignores TALK_WAIT. The bus simulation's K tests read 20 replies twice at once after
-  such drops (about half the second reads timed out before): 105 checks. `bridge_pico2.uf2` built
-  as above (56,140 B of flash).
+  such drops (about half the second reads timed out before). With the Pi daemon's L tests (audit X60, no
+  firmware change): 111 checks. `bridge_pico2.uf2` built as above.
 
 ## Build
 
@@ -172,7 +172,7 @@ To go back to the bench firmware, use BOOTSEL and `firmware/bench_test/bench_tes
 | Steady on | Online |
 | Flicker | Bytes moving to or from the bridge |
 
-## Tested (no hardware): `sim/host/run_sim_tests.py`, 109 / 109
+## Tested (no hardware): `sim/host/run_sim_tests.py`, 111 / 111
 
 `sim/host/bus_sim.c` compiles this same `gpib_engine.c` and `host_link.c` for Linux, with a model of the
 board:
@@ -198,7 +198,8 @@ What it covers:
 - The daemon stalled past the 5 s PING timeout: it recovers by itself.
 - Daemon stopped: the bridge goes offline and the bus still works.
 - The daemon on a fake port whose write fails in the ping thread while the main loop reads it: it lives,
-  closes the port in the main loop and reconnects.
+  closes the port in the main loop and reconnects. And the other order: the main loop closes the port while a
+  PING write is in flight: the ping thread lives on.
 - The scpi handler.
 - Address changes.
 
