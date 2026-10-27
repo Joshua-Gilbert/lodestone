@@ -132,8 +132,8 @@ It sends EVENT 07h first; only if the answer is a NOP does the saver start
 (anything else is news, and it waits again). The GRiD then sends nothing,
 no idle POLLs either, until a key, the mouse or an SRQ ends it: the Pi
 counts it as there meanwhile (its tools stay on), and rings for anything it
-has. The rings stop after 5 unanswered (100 ms apart, as above); then the
-Pi takes the GRiD to be gone, until its next frame.
+has. The rings stop after 5 unanswered (100 ms apart, as above); 10 s
+later the Pi takes the GRiD to be gone, until its next frame.
 
 ### Sequencing and retransmission
 

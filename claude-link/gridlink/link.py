@@ -99,6 +99,7 @@ class Link:
     RING_AGAIN = 0.1                          # ring again this long after a ring the GRiD didn't answer
     RING_IDLE = 0.05                          # the GRiD is idle once our last answer is this old
     RING_TRIES = 5                            # then give up (CLAUDE gone: Executive, a DOS program, TM5000)
+    GONE_AFTER = 10.0                         # the rings out and this long since: gave_up (its screen saver, CLAUDE 1.14)
     KEYS_HOLD = 0.03
 
     def __init__(s, transport, on_message, log=print, hold=HOLD):
@@ -121,7 +122,7 @@ class Link:
         s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
         s.grid_wake = False                   # the GRiD's HELLO said it POLLs when the bridge rings (GF_WAKE)
         s.rang = None                         # when we last rang, since the GRiD's last frame
-        s.rings_left = s.RING_TRIES; s.unrung = True
+        s.rings_left = s.RING_TRIES; s.unrung = True; s.rung_out = 0.0
         s.t_answered = 0.0                    # when our last answer went to the bridge
         s.clock = time.monotonic              # (the emulator tests give theirs: the rings' timing is the GRiD's)
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
@@ -203,6 +204,7 @@ class Link:
         with s.lock:
             if not s._has_output(): return
         s.rang = now; s.rings_left -= 1; s.unrung = False
+        if s.rings_left <= 0: s.rung_out = now
         s.stats['rang'] += 1
         if s.trace is not None: s.trace.append((time.monotonic(), 'ring'))
         ring()
@@ -213,8 +215,9 @@ class Link:
         return glp.HF_SAVER if getattr(s.t, 'can_ring', False) else 0
 
     def gave_up(s):
-        """The rings since the GRiD's last frame all went unanswered (RING_TRIES): it may be gone."""
-        return s.rings_left <= 0
+        """The rings since the GRiD's last frame all went unanswered (RING_TRIES), and GONE_AFTER since:
+        it may be gone (the time: a GRiD in its screen saver's DEFRAG looks for its key between reads)."""
+        return s.rings_left <= 0 and s.clock() - s.rung_out > s.GONE_AFTER
 
     def _unring(s):
         """The bridge's SRQ taken back, if we rang since the GRiD's last frame."""

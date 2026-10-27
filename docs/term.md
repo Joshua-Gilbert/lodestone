@@ -304,9 +304,9 @@ here too) with no key, no mouse movement (Term) and no change from
 Claude Code: a screen update, or a GRiD tool call. While Claude Code
 works its spinner is a change, so the saver waits. It is the same saver
 as everywhere: DEFRAG on each disk unless `TIDY=0`, then the dark screen.
-A key ends it (in Term the mouse too), and so does anything from the Pi:
-the bridge raises SRQ, and CLAUDE gives the saver an Esc, which stops
-DEFRAG too. (So does an SRQ from another GPIB device.)
+A key or the mouse ends it, and so does anything from the Pi: the bridge
+raises SRQ, and CLAUDE gives the saver an Esc, which stops DEFRAG too.
+(So does an SRQ from another GPIB device.)
 The key that ends it is swallowed, as in the Executive (a CODE-Q typed
 then doesn't quit). The screen is then drawn again from CLAUDE's own
 copy; in Term, if a picture was up, the Pi is asked for it again (a
@@ -317,8 +317,8 @@ while the GRiD is quiet: a call rings the bridge, the saver ends, and
 the call is answered. In the emulator that took 0.08 s from the dark
 screen and 0.7 s from inside DEFRAG; on the 1520 DEFRAG may finish
 reading a stretch of the disk first, a few seconds. Not yet tried on the
-1520. If the rings go unanswered (the GRiD reset or switched off
-meanwhile), the Pi stops counting it as there, and the tools say it
+1520. If the rings go unanswered for 10 s (the GRiD reset or switched
+off meanwhile), the Pi stops counting it as there, and the tools say it
 isn't connected again.
 
 It is full screen only: in a window CLAUDE leaves the screen to the
