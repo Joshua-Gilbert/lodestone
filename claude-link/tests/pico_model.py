@@ -83,7 +83,7 @@ class PicoModel(AR488Model):
             s.online = False
             s._send(struct.pack('<BBHHIH', F_HELLO, 1, TX_RING, DATA_CHUNK, s.consumed, 0)
                     + (b'bridge fw 2026-10-24 (model)' if s.can_quiet else
-                       b'bridge fw 2026-10-23d (model)' if s.holds else b'bridge model'))
+                       b'bridge fw 2026-10-23d (model)' if s.holds else b'bridge fw 2026-10-22b (model)'))   # (WAKE)
         elif t == F_CONFIG:
             was = s.online
             s.addr, fl = f[1], f[2]
@@ -251,6 +251,10 @@ class PicoModelTransport:
     @property
     def can_quiet(s):
         return s.proto.can_quiet
+
+    @property
+    def can_ring(s):
+        return s.proto.can_ring
 
     @property
     def sdcs(s):

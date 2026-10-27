@@ -36,6 +36,7 @@ EARLY_FW = 'bridge fw 2026-10-23'   # firmware from this date on takes TXF_EARLY
 HOLD_FW = 'bridge fw 2026-10-23c'   # and from this one F_HOLD: a reply held for the GRiD's next message
 HOLD_GLP_FW = 'bridge fw 2026-10-23d'   # and F_HOLD_GLP: held for its next frame, checked by the bridge
 QUIET_FW = 'bridge fw 2026-10-24'       # and CONFIG's quiet: no SRQ line (resident Claude in the background)
+RING_FW = 'bridge fw 2026-10-22b'       # WAKE (ring) from this one: older firmware ignores it
 FRAME_MAX = 4104        # GLP frames to the GRiD: 4096 payload + 8 (what the GRiD takes is its HELLO's rx=)
 EVENTS = {0x10: 'LISTEN', 0x11: 'UNLISTEN', 0x12: 'TALK', 0x13: 'UNTALK', 0x14: 'TALK_WAIT', 0x15: 'DCL',
           0x16: 'SDC', 0x17: 'GET', 0x18: 'GTL', 0x19: 'LLO', 0x1A: 'IFC', 0x1B: 'REN', 0x1C: 'SPOLL',
@@ -74,7 +75,8 @@ class PicoProto:
         s.write, s.addr, s.log = write, addr, log
         s.buf = bytearray(); s.firmware = ''; s.early = False; s.holds = s.holds_glp = False
         s.can_quiet = False; s.quiet = False    # (CONFIG bit 2: SRQ never driven, the status byte as ever)
-        s.sdcs = 0                              # SDCs from the GRiD (resident Claude's background: it stopped)
+        s.can_ring = False                      # (WAKE: the GRiD's screen saver ended by a ring, CLAUDE 1.14)
+        s.sdcs = 0                             # SDCs from the GRiD (resident Claude's background: it stopped)
         s.connected = False; s.online = False
         s.gen = 0; s.tx_ring = 16383; s.sent = 0; s.consumed = 0
         s.pending = collections.deque()     # (gen, frame, expect): expect is a held reply's hold, else None
@@ -116,6 +118,7 @@ class PicoProto:
             s.holds = s.firmware[:len(HOLD_FW)] >= HOLD_FW and s.firmware.startswith('bridge fw ')
             s.holds_glp = s.firmware[:len(HOLD_GLP_FW)] >= HOLD_GLP_FW and s.firmware.startswith('bridge fw ')
             s.can_quiet = s.firmware[:len(QUIET_FW)] >= QUIET_FW and s.firmware.startswith('bridge fw ')
+            s.can_ring = s.firmware[:len(RING_FW)] >= RING_FW and s.firmware.startswith('bridge fw ')
             s.hold_gen = None
             if proto != PROTO_VERSION:
                 s.log('bridge: firmware protocol %d, gridlink speaks %d: update one of them' % (proto, PROTO_VERSION))
@@ -437,6 +440,10 @@ class PicoBridge:
     @property
     def can_quiet(s):
         return s.proto.can_quiet
+
+    @property
+    def can_ring(s):
+        return s.proto.can_ring
 
     @property
     def sdcs(s):

@@ -99,6 +99,7 @@ class Link:
     RING_AGAIN = 0.1                          # ring again this long after a ring the GRiD didn't answer
     RING_IDLE = 0.05                          # the GRiD is idle once our last answer is this old
     RING_TRIES = 5                            # then give up (CLAUDE gone: Executive, a DOS program, TM5000)
+    GONE_AFTER = 10.0                         # the rings out and this long since: gave_up (its screen saver, CLAUDE 1.14)
     KEYS_HOLD = 0.03
 
     def __init__(s, transport, on_message, log=print, hold=HOLD):
@@ -112,6 +113,7 @@ class Link:
         s.pi_seq = 0; s.last_g = None; s.last_answer = None
         s.stats = collections.Counter(); s.connected = False
         s.last_rx = time.monotonic()
+        s.rx_new = 0                          # the GRiD's new frames, counted (no NAK, no resend)
         s.grid_maxpay = 1024
         s.grid_rx = glp.GRID_RX_DEFAULT       # payload the GRiD reads (its HELLO's rx=)
         s.grid_req = glp.GRID_REQ_DEFAULT     # the biggest REQUEST it takes (its HELLO's req=)
@@ -120,7 +122,7 @@ class Link:
         s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
         s.grid_wake = False                   # the GRiD's HELLO said it POLLs when the bridge rings (GF_WAKE)
         s.rang = None                         # when we last rang, since the GRiD's last frame
-        s.rings_left = s.RING_TRIES; s.unrung = True
+        s.rings_left = s.RING_TRIES; s.unrung = True; s.rung_out = 0.0
         s.t_answered = 0.0                    # when our last answer went to the bridge
         s.clock = time.monotonic              # (the emulator tests give theirs: the rings' timing is the GRiD's)
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
@@ -202,9 +204,20 @@ class Link:
         with s.lock:
             if not s._has_output(): return
         s.rang = now; s.rings_left -= 1; s.unrung = False
+        if s.rings_left <= 0: s.rung_out = now
         s.stats['rang'] += 1
         if s.trace is not None: s.trace.append((time.monotonic(), 'ring'))
         ring()
+
+    def saver_flag(s):
+        """HELLO's HF_SAVER: the GRiD may run its screen saver (CLAUDE 1.14, EV_SAVER) only if we can end it,
+        with a ring: a bridge that raises SRQ for us (the Pico's, fw 2026-10-22b on; not an AR488)."""
+        return glp.HF_SAVER if getattr(s.t, 'can_ring', False) else 0
+
+    def gave_up(s):
+        """The rings since the GRiD's last frame all went unanswered (RING_TRIES), and GONE_AFTER since:
+        it may be gone (the time: a GRiD in its screen saver's DEFRAG looks for its key between reads)."""
+        return s.rings_left <= 0 and s.clock() - s.rung_out > s.GONE_AFTER
 
     def _unring(s):
         """The bridge's SRQ taken back, if we rang since the GRiD's last frame."""
@@ -318,6 +331,7 @@ class Link:
             return
         elif s.source is not None:
             s.source.delivered()            # a new frame: our last answer arrived
+        s.rx_new += 1                       # (new frames: not a NAK, a resend; TermSession.saver_on)
         s.last_g = f.seq
         msg = s.reasm.add(f)
         if msg and msg[0] in s.drop_types:

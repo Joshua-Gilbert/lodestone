@@ -153,6 +153,55 @@ def test_driver_frame_check():
     T.check(h)
 
 
+def test_executive_saver():
+    """CLAUDE 1.14: idle for the saver's delay (SAVER=1: a minute), the Executive's screen saver comes on inside
+    it (INT 21h F0h AL=5, as at LCMD's prompt): DEFRAG first on A: (on the disk), then the dark screen.  A GRiD
+    tool call from the Pi more than 10 s in rings, which ends it (DEFRAG stopped by it too, through CLAUDE's INT
+    16h hook inside DOS), and is answered; the chat drawn again.  Idle again, it comes on again; a key ends it,
+    taken (not typed into the prompt)."""
+    defrag = open(os.path.join(os.path.dirname(HERE), 'src', 'DEFRAG.COM'), 'rb').read()
+    h = T.start([T.reply(('text', 'Hi from the Pi.'))], bridge='pico',
+                files={'A:\\LODE.INI': b'SAVER=1\r\n', 'A:\\DEFRAG.COM': defrag})
+    sv, hits, w0 = h.k.useg * 16 + h.k.Y['saver'], [], h.m.watch
+    def w(a):
+        if a == sv: hits.append(h.m.us)
+        if w0: w0(a)
+    h.m.watch = w
+    assert h.turn('hello', sim_s=30)
+    assert 'Hi from the Pi.' in h.screen(), h.screen()
+    t0 = h.m.us
+    assert h.run_until(lambda: hits, 120), ('no saver', h.var('sv_st'), h.var('sv_t', 2))
+    on = (hits[0] - t0) / 1e6
+    assert 58 <= on <= 70, on                              # (SAVER=1: 1,092 ticks, from the turn's last frame)
+    h.run_until(lambda: False, 15)                          # (DEFRAG, then the dark screen; past the Pi's 10 s)
+    assert h.m.r('cs') != h.claude_psp and 'Hi from the Pi.' not in h.screen(), h.screen()
+    def call(when):
+        res = {}
+        th = __import__('threading').Thread(target=lambda: res.update(r=h.session.grid.get_info()))
+        th.start()
+        t1 = h.m.us
+        assert h.run_until(lambda: not th.is_alive(), 30), ('the call never came back', when, h.k.ocr()[:6])
+        assert 'CLAUDE 1.14' in res.get('r', {}).get('grid', ''), res
+        assert h.run_until(lambda: 'Hi from the Pi.' in h.screen(), 10), h.screen()
+        return (h.m.us - t1) / 1e6
+    ended = call('dark')                                    # (in the dark screen)
+    assert h.run_until(lambda: len(hits) == 2, 90), 'not on again'
+    h.run_until(lambda: False, 0.3)
+    df = any('Lodestone Defrag' in x[1] for x in h.k.ocr())
+    assert df, h.k.ocr()
+    ended2 = call('defrag')                                 # (DEFRAG reading the disk: stopped by the ring)
+    assert h.run_until(lambda: len(hits) == 3, 90), 'not on a third time'
+    h.run_until(lambda: False, 5)
+    h.key(0x1E61)                                           # "a"
+    assert h.run_until(lambda: 'Hi from the Pi.' in h.screen(), 10), h.screen()
+    h.run_until(lambda: False, 1)
+    assert h.var('inlen', 2) == 0, ('the waking key typed', h.var('inlen', 2))
+    assert len(hits) == 3
+    print('     on after %.1f s idle; a tool call ended it, answered in %.2f s (in DEFRAG: %.2f s)'
+          % (on, ended, ended2))
+    T.check(h)
+
+
 def test_driver_frame_check_slow_start():
     """A listener slow to take the first byte of a write (DO later than the fast loop polls for, 256 x 64): the
     whole frame goes through the careful loop, and the check the driver adds (02h AL=3) is still good at the Pi
@@ -171,6 +220,7 @@ def test_driver_frame_check_slow_start():
     T.check(h)
 
 
+T.test_executive_saver = test_executive_saver
 T.test_driver_frame_check = test_driver_frame_check
 T.test_driver_frame_check_slow_start = test_driver_frame_check_slow_start
 T.test_srq_on_irq5 = test_srq_on_irq5
