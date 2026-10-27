@@ -10,7 +10,7 @@ goes to the Raspberry Pi over USB.
 | | |
 |---|---|
 | Files | `bridge.ino` (glue, pin init, USB, LED, watchdog) · `gpib_engine.c/.h` (core 1: the bus) · `host_link.c/.h` (core 0: the protocol) · `PROTOCOL.md` |
-| Ready-built | `bridge_pico2.uf2` (165 kB, fw 2026-10-24) |
+| Ready-built | `bridge_pico2.uf2` (165 kB, fw 2026-10-26) |
 | USB | VID 2E8A / PID 000F (the arduino-pico Pico 2 IDs), product **"GPIB-Pico2 Bridge"**, max power 500 mA in the descriptor |
 | GPIB subsets | SH1 AH1 T6 L4 SR1 RL1 PP0 DC1 DT1 C0. No secondary addresses, no parallel poll, never a controller |
 | Address | set by the Pi (0–30), from `address =` in `/etc/gpib-bridge/bridge.toml` |
@@ -130,7 +130,8 @@ Measured on the 1520 with gridlink.bench (claude-link/gridlink/bench.py), 128 KB
   once any reply had been dropped as stale on arrival, the Pi took a reply it had already sent for one still
   on its way when the 1520 read again before the next CREDIT (≤ 5 ms): it skipped `on_talk` and the read
   timed out. gridlink ignores TALK_WAIT. The bus simulation's K tests read 20 replies twice at once after
-  such drops (about half the second reads timed out before): 105 checks. Not yet in `bridge_pico2.uf2`.
+  such drops (about half the second reads timed out before): 105 checks. `bridge_pico2.uf2` built
+  as above (56,140 B of flash).
 
 ## Build
 
