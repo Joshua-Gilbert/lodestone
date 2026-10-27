@@ -16,6 +16,9 @@ pseudo-terminal, and runs:
   I  the daemon stalls past the Pico's 5 s PING timeout and must recover on its own
   J  gridlink's own Pico transport in auto service request mode, the way CLAUDE.COM reads (when the
      lodestone repo's claude-link is at $LODESTONE_LINK)
+  K  a reply read twice at once, after replies dropped as stale on arrival (TALK_WAIT on CREDIT's scale)
+  L  the daemon on a fake port whose write fails in the ping thread while the main loop reads it, and one the
+     main loop closes while a PING write is in flight
 
 usage: run_sim_tests.py          (writes sim/host/sim_results.txt)
 """
@@ -158,6 +161,32 @@ def thrutest(sim):
     check("9 REN off/on, GTL, GET, IFC reach the Pi",
           st.get("REN", 0) >= 2 and st.get("GTL", 0) >= 1 and st.get("GET", 0) >= 1 and st.get("IFC", 0) >= 1,
           str(st))
+
+
+def reread(sim, d):
+    say("K  a reply read twice at once, after replies dropped as stale on arrival")
+    import signal
+    drop0 = int(sim.stats()["dropped0"])
+    for i in range(3):                           # the Pi answers a message only after the SDC that made it stale:
+        d.p.send_signal(signal.SIGSTOP)          #  the Pico drops the reply as it arrives (tx_dropped0)
+        sim.write(10, b"stale %d\n" % i)
+        sim.cmd("sdc 10")
+        d.p.send_signal(signal.SIGCONT)
+        time.sleep(0.3)
+    drops = int(sim.stats()["dropped0"]) - drop0
+    check("replies made stale by an SDC are dropped on arrival", drops > 0, f"dropped0 +{drops}")
+    sim.cmd("tmo 500")
+    bad = 0
+    for i in range(20):                          # (a race with the CREDIT: before the fix, about half of these
+        msg = b"again %d\n" % i                  #  second reads timed out in the simulation)
+        sim.write(10, msg)
+        r, got, end = sim.read(10)
+        r, got2, end2 = sim.read(10)             # at once, within the CREDIT's 5 ms: TALK_WAIT's arg must count the
+        if got != msg or got2 != msg:            #  drops as CREDIT does, or the reply looks still on its way
+            bad += 1
+            say(f"     {msg!r}: read {got!r}, read again {got2!r}")
+    sim.cmd("tmo 2000")
+    check("20 replies read twice at once: the second read answered too (on_talk)", bad == 0, f"{bad} wrong")
 
 
 def other_device(sim):
@@ -739,12 +768,147 @@ def held_glp(sim, br, pico, wait_srq, drain):
               f"used={used} srq={srq} s={st} {data[:20]!r} {len(got)}/{len(msg)}")
 
 
+def port_gone_under_read():
+    """The daemon in this process on a fake port (no simulation): its ping thread's write fails while the main
+    loop is reading the port.  pyserial 3.5's in_waiting on a closed port raises TypeError, which nothing in the
+    main loop catches, so the port must be closed only by the main loop.  The other order: the main loop closes
+    the port while a PING write is in flight on it (pyserial raises TypeError there too), and the ping thread must
+    live on.  (The threads are left running.)"""
+    say("L  the port fails the ping thread's write while the main loop reads it (a fake port)")
+    import logging
+    import threading
+    import types
+    import serial
+    sys.path.insert(0, PI)
+    from gpibbridge import daemon, protocol as P
+    logging.getLogger("gpib-bridge").setLevel(logging.CRITICAL)
+    ports, bridges, closers, talkers, errors = [], [], [], [], []
+    ping_failed, closed = threading.Event(), threading.Event()
+
+    class FakePort:
+        """What the daemon uses of serial.Serial; the far end of a socket pair is the bridge."""
+
+        def __init__(self, port, *a, **kw):
+            self.mine, self.far = socket.socketpair()
+            self.mine.setblocking(False)
+            self.dtr, self.is_open, self.trap = False, True, False
+            self.hang, self.gone, self.pings = False, False, 0
+            self.in_write, self.closed = threading.Event(), threading.Event()
+            ports.append(self)
+
+        def fileno(self):
+            return self.mine.fileno()
+
+        def write(self, frame):
+            if not self.is_open:
+                raise serial.PortNotOpenError()
+            if self.trap and frame == P.ping():  # the bridge is gone (unplugged, reset)
+                ping_failed.set()
+                raise serial.SerialException("write failed: [Errno 5] Input/output error")
+            if self.hang and frame == P.ping():  # a PING write in flight (up to write_timeout) when the main loop
+                self.in_write.set()              #  closes the port: pyserial 3.5's select() on its fd, None by
+                self.closed.wait(3)              #  then, raises TypeError
+                raise TypeError("'NoneType' object cannot be interpreted as an integer")
+            if frame == P.ping():
+                self.pings += 1
+            if frame == P.hello_req():
+                self.far.send(P.cobs_encode(struct.pack("<BBHHIH", P.F_HELLO, P.PROTO_VERSION, 1023, P.DATA_CHUNK,
+                                                        0, 0) + b"bridge fw fake"))
+            return len(frame)
+
+        @property
+        def in_waiting(self):
+            if self.trap:                        # the race, made certain: the main loop reads while the ping
+                ping_failed.wait(3)              #  thread's write fails, and (unfixed) closes the port
+                closed.wait(0.5)
+            if not self.is_open:
+                raise TypeError("argument must be an int, or have a fileno() method.")   # pyserial 3.5's
+            try:
+                return len(self.mine.recv(4096, socket.MSG_PEEK))
+            except BlockingIOError:
+                return 0
+
+        def read(self, n=1):
+            if not self.is_open:
+                raise serial.PortNotOpenError()
+            if self.gone:
+                raise serial.SerialException("device reports readiness to read but returned no data")
+            try:
+                return self.mine.recv(n)
+            except BlockingIOError:
+                return b""
+
+        def close(self):
+            if self.is_open:
+                self.is_open = False
+                closers.append(threading.current_thread().name)
+                self.mine.close()
+                closed.set()
+                self.closed.set()
+
+    class Bridge(daemon.Bridge):
+        def __init__(self, cfg):
+            super().__init__(cfg)
+            bridges.append(self)
+
+        def broadcast(self, ev):
+            talkers.append(threading.current_thread().name)
+            super().broadcast(ev)
+
+    daemon.serial = types.SimpleNamespace(Serial=FakePort, SerialException=serial.SerialException,
+                                          tools=serial.tools)
+    daemon.Bridge = Bridge
+
+    def run():
+        try:
+            daemon.main(["-c", "/nonexistent", "--port", "fake", "--ctl", "/tmp/gpib_sim_fake_ctl.sock"])
+        except BaseException as e:               # (main() never returns)
+            errors.append(e)
+
+    threading.Thread(target=run, name="main loop", daemon=True).start()
+
+    def wait(cond, t):
+        t0 = time.time()
+        while not cond() and not errors and time.time() - t0 < t:
+            time.sleep(0.02)
+        return cond()
+    up = wait(lambda: bridges and bridges[0].connected, 3)
+    check("the daemon connects to the fake port", up, repr(errors))
+    if not up:
+        return
+    b = bridges[0]
+    ports[0].trap = True
+    ports[0].far.send(b"\x00")                   # something to read: the main loop goes to read it
+    ok = wait(lambda: len(ports) > 1 and b.connected and b.ser is ports[-1], 5)
+    check("the daemon lives through it (nothing raised out of its main loop)", not errors, repr(errors))
+    check("... closes the port, reopens and is connected again", ok, f"{len(ports)} ports")
+    check("only the main loop closed the port and told the control clients",
+          closers == ["main loop"] and set(talkers) == {"main loop"}, f"closed by {closers}, events from {set(talkers)}")
+    if not ok:
+        return
+    # The other order: the main loop closes the port (a read fails) while a PING write is in flight on it
+    p = ports[-1]
+    p.hang = True
+    in_write = p.in_write.wait(3)                # (the ping thread writes every second)
+    p.gone = True
+    p.far.send(b"\x00")                          # the main loop reads, the read fails, it closes the port
+    ok = wait(lambda: len(ports) > 2 and b.connected and b.ser is ports[-1], 5)
+    check("a PING write in flight when the main loop closes the port: the daemon reconnects",
+          in_write and ok and not errors, f"in_write={in_write} {len(ports)} ports {errors!r}")
+    pinger = [t for t in threading.enumerate() if t.name == "ping"]
+    wait(lambda: ports[-1].pings >= 2, 3)
+    check("... and its ping thread lives on and PINGs the new port",
+          pinger and pinger[0].is_alive() and ports[-1].pings >= 2,
+          f"threads {[t.name for t in pinger]}, {ports[-1].pings} PINGs")
+
+
 def main():
     sim = Sim()
     say(f"bus_sim on {sim.pty}")
     d = Daemon(sim.pty)
     try:
         thrutest(sim)
+        reread(sim, d)
         other_device(sim)
         srq(sim)
         big(sim)
@@ -756,6 +920,7 @@ def main():
         address_change(sim)
         if os.path.isdir(LODESTONE_LINK):
             gridlink_auto_srq(sim)
+        port_gone_under_read()
     finally:
         try:
             d.stop()

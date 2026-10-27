@@ -9,7 +9,7 @@ only ever ones inside ~/grid.
 
     python3 -I -c '...from gridlink.mcp import main; main()'   (what .mcp.json runs)
 """
-import collections, json, os, socket, stat, sys, tempfile, threading, time
+import collections, json, os, re, socket, stat, sys, tempfile, threading, time
 from . import glp, keys as K, screen
 from .grid import READ_CHUNK, GridError, is_device, is_grid_path, norm
 
@@ -141,7 +141,8 @@ TOOLS = [
              'them together less than timeout); {SNAP} takes a screenshot then. At most about 2,000 keys. When the script ends the real keyboard '
              'takes over, so end with the keys that quit the program unless the user will.')},
          'capture': {'type': 'boolean', 'description': 'Return the text output (default true).'},
-         'screenshot': {'type': 'boolean', 'description': 'Also capture the screen when the program exits.'},
+         'screenshot': {'type': 'boolean', 'description': 'Also capture the screen when the program exits '
+                                                    '(unless a {SNAP} in keys took one).'},
          'timeout': {'type': 'integer', 'minimum': 1, 'maximum': MAX_RUN,
                      'description': ('Seconds to wait for the program (default 900, at most 3600). The '
                                      'program itself goes on until it exits.')},
@@ -788,13 +789,19 @@ HPGL_CTRL = b'\r\n\t\x03'           # line ends, tabs, and ETX (the end of an LB
 
 def hpgl_check(raw):
     """HP-GL as the Nano will take it: printable ASCII, line ends and ETX.
-    No ESC: an escape sequence switches the Nano to raw Tek pass-through."""
+    No ESC: an escape sequence switches the Nano to raw Tek pass-through.
+    A ';' goes on the end if there isn't one: like a plotter, the Nano ends a
+    command only at the next mnemonic or ';', so it would hold the last point
+    (and never poll idle). A label left open (LB, BL or WD with no ETX after
+    it) would keep the Nano busy for ever, so it is refused."""
     if not raw.strip(b' \r\n\t;'): raise ValueError('there is no HP-GL to send')
     for i, c in enumerate(raw):
         if (c < 32 and c not in HPGL_CTRL) or c > 126:
             raise ValueError('HP-GL may hold printable ASCII, line ends and ETX (\\x03) only: byte %02Xh '
                              'at %d' % (c, i))
-    return raw
+    if re.search(rb'(?i)LB|BL|WD', raw[raw.rfind(b'\x03') + 1:]):
+        raise ValueError('a label (LB, BL or WD) has no ETX (\\x03) at its end')
+    return raw if raw.rstrip(b' \r\n\t').endswith(b';') else raw + b';'
 
 
 def hpgl_ends(data):

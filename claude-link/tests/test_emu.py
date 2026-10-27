@@ -111,14 +111,16 @@ def test_edit_rejected():
 
 
 def test_run_program_with_keys():
+    # (keys after the {SNAP}, and TESTKEY's "bye" at Esc: the screen returned is the {SNAP}'s, not the exit's)
     h = start([reply(('tool', 'grid_command', {'command': 'TESTKEY', 'capture': False,
-                                               'keys': 'hello{WAIT 0.2}{SNAP}{ESC}'})),
-               reply(('text', 'TESTKEY read five keys.'))], mode='auto')
+                                               'keys': 'hello{WAIT 0.2}{SNAP}abc{ESC}'})),
+               reply(('text', 'TESTKEY read eight keys.'))], mode='auto')
     assert h.turn('run testkey', sim_s=30)
     res = results(h, 1)[0]
     text = str(res['content'])
-    assert 'Exit code: 5' in text, text
+    assert 'Exit code: 8' in text, text
     assert 'TESTKEY ready: hello' in text, text
+    assert 'helloabc' not in text and 'bye' not in text, text
     assert any('[EXEC A:\\TESTKEY.COM' in l for l in h.m.log), h.m.log
     assert h.m.mode() == 0x40
     shot(h, 'run')

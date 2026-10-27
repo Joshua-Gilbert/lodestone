@@ -40,6 +40,14 @@ def feed(h, text):
     t.link.wake()
 
 
+def repaints(h):
+    """EVENT 03h (repaint) from the GRiD from now on, listed."""
+    t, out = h.router.term, []
+    r0 = t.enc.reset
+    t.enc.reset = lambda: (out.append(1), r0())
+    return out
+
+
 def test_saver_on_and_ended_by_the_pi():
     h, sv = start()
     try:
@@ -53,12 +61,14 @@ def test_saver_on_and_ended_by_the_pi():
         t.link.last_rx -= 11                        # (past the Pi's 10 s: its clock, which the emulator outruns;
                                                     #  nothing half-read for idle_check meanwhile)
         assert sv.up() and t.saver_on() and t.why_not() is None, (sv.up(), t.saver_on(), t.why_not())
+        rp = repaints(h)
         feed(h, '\x1b[5;3HNews from Claude Code')
         t1 = h.m.us
         assert h.run_until(lambda: not sv.up(), 5), 'the ring did not end it'
         lat = (h.m.us - t1) / 1000
         assert h.run_until(lambda: 'News from Claude Code' in h.screen(), 10), h.screen()
         assert T.in_step(h), T.mismatch(h)
+        assert not rp, 'text only: the screen asked for again over the link (EVENT 03h)'
         assert not t.saver_on() and sv.entries() == 1, (t.saver_on(), sv.entries())
         print('     on after %.1f s idle; the Pi\'s change ended it in %.0f ms' % (dt, lat))
         T.check(h)
@@ -120,12 +130,75 @@ def test_saver_key_and_mouse():
         h.run_until(lambda: False, 1)
         assert not got, ('the waking key reached the Pi', got)
         assert T.in_step(h), T.mismatch(h)
+        rp = repaints(h)
         assert h.run_until(lambda: sv.entries() == 2 and sv.up(), 10), ('not on again', sv.entries())
+        h.m.mu.mem_write(h.claude_psp * 16 + h.sym['sv_pic'], b'\x01')     # (a picture up: its pixels the Pi's)
         h.m.mouse['pos'] = (300, 120)               # the mouse moved
         assert h.run_until(lambda: not sv.up(), 5), 'the mouse did not end it'
+        assert h.run_until(lambda: rp, 5), 'a picture was up: not asked for again (EVENT 03h)'
         assert T.in_step(h), T.mismatch(h)
         h.run_until(lambda: False, 1)
         assert sv.entries() == 2 and not sv.up(), 'it came on again at once'
+        T.check(h)
+    finally:
+        h.close()
+
+
+def test_saver_and_a_picture():
+    import test_emu_picture as EP, test_picture as TP
+    h, sv = start()
+    try:
+        t = h.router.term
+        assert t.can_picture(), t.gflags
+        page = TP.a_page()
+        t.show_picture(page, 'test', title='page')
+        assert EP.shows(h, page), EP.first_bad_line(h, page)
+        rp = repaints(h)
+        assert h.run_until(sv.up, 10), 'no saver over the picture'
+        h.key(0x1E61)
+        assert h.run_until(lambda: not sv.up(), 5), 'a key did not end it'
+        assert h.run_until(lambda: rp, 5), 'the picture not asked for again (EVENT 03h)'
+        assert EP.shows(h, page), ('the picture not back', EP.first_bad_line(h, page))
+        assert t.hide_picture('test')               # text again: from the shadow only, after the next
+        assert T.in_step(h), T.mismatch(h)
+        del rp[:]
+        assert h.run_until(lambda: sv.entries() == 2 and sv.up(), 10), 'not on again'
+        h.key(0x1E61)
+        assert h.run_until(lambda: not sv.up(), 5), 'a key did not end it'
+        h.run_until(lambda: False, 1)
+        assert not rp and T.in_step(h), (rp, T.mismatch(h))
+        T.check(h)
+    finally:
+        h.close()
+
+
+def test_no_saver_while_tools_run():
+    h, sv = start()
+    try:
+        g = h.router.term.grid
+        for i in range(6):                          # a call every 1.5 s, the screen as it was: under the delay
+            t0 = h.m.us
+            th = threading.Thread(target=g.get_info); th.start()
+            assert h.run_until(lambda: not th.is_alive(), 20), 'the call never came back'
+            h.run_until(lambda: sv.entries() > 0, max(0.1, 1.5 - (h.m.us - t0) / 1e6))
+        assert sv.entries() == 0, 'on while the tools ran'
+        assert h.run_until(sv.up, 10), 'never on after them'
+        T.check(h)
+    finally:
+        h.close()
+
+
+def test_no_saver_at_once_after_a_gap():
+    h, sv = start()
+    try:
+        h.run_until(lambda: False, 0.5)
+        now, a = h.var('now', 2), h.claude_psp * 16
+        put = lambda n, v: h.m.mu.mem_write(a + h.sym[n], (v & 0xFFFF).to_bytes(2, 'little'))
+        put('sv_last', now - 1000); put('t_active', now - 1000)     # (CLAUDE away a while: a RUN, frozen behind
+        put('sv_prev', now - 100)                                   #  under MT; its loop's last look long ago)
+        h.run_until(lambda: sv.entries() > 0, 1.5)
+        assert sv.entries() == 0, 'on at once after the gap'
+        assert h.run_until(sv.up, 5), 'never on after it'
         T.check(h)
     finally:
         h.close()

@@ -3102,10 +3102,12 @@ do_copy:
         call    err
         jmp     cbuf_free
 .one:   call    src_found               ; dir part of path1 + found name
+        cmp     di, src + 79            ; (longer: skipped)
+        ja      .nx
         mov     [srcname], bx
         call    copy_one
         jc      .tot
-        mov     ah, 4Fh
+.nx:    mov     ah, 4Fh
         int     21h
         jnc     .one
 .tot:   mov     ax, [copied]
@@ -3387,7 +3389,8 @@ dir_of: push    di
         call    name_part               ; (SI = BX)
         mov     di, si
         ret
-; src = path1's directory part + the name found (the DTA's); BX -> its name
+; src = path1's directory part + the name found (the DTA's); BX -> its name,
+; DI -> its NUL (past src + 79: run into dst)
 src_found:
         mov     di, src
         call    dir_of
@@ -3425,6 +3428,8 @@ do_ren: mov     di, path1
         int     21h
         jc      .bad
 .r:     call    src_found               ; old: dir part + found name
+        cmp     di, src + 79            ; (79 characters at most)
+        ja      .bad
         mov     di, dst                 ; new: same dir, name mapped
         call    dir_of
         push    di
@@ -3793,7 +3798,10 @@ do_start:
         mov     [di], al
         inc     di
         or      al, al                  ; (CF clear)
-        jnz     .cc
+        jz      .nc
+        cmp     di, prog2 + 79          ; (79 characters at most)
+        jbe     .cc
+        stc
 .nc:    pop     es
         mov     si, e_badcmd
         jc      .er
@@ -4780,7 +4788,7 @@ tail        equ pat                 ; (130 bytes: a program's command tail
                                     ;  and TASKS's list; DIR and Tab: never
                                     ;  together)
             resb 16                 ; (for canon2)
-src         resb 80
+src         resb 80                 ; (a name found: 79 characters, checked)
 ; COPY's two names checked, in prog..src, which COPY doesn't use otherwise.
 ; Neither getarg nor canon has a bound: path2 (a line's last word, up to
 ; LBUF-6 characters) runs on into prog, so canon1 starts past that, with

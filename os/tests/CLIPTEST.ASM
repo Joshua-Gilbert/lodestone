@@ -2,7 +2,8 @@
 ; t_clip, tests/test_mt.py).  A window .RUN with a block of its own (bseg:
 ; 0 is what P puts, 16400 where G gets).  P: UI_CLIP AL=0 with plen bytes;
 ; G: AL=1 with gmax room (CX after it in gcx); S: AL=2 (CX in scx).  Each
-; leaves its CF in rcf (FFFFh: set) and AX in rret.  ESC: the end.
+; leaves its CF in rcf (FFFFh: set) and AX in rret.  T: A:\CLIP.$$$ made
+; empty behind the core's back.  ESC: the end.
 ;   python3 mkrun.py tests/CLIPTEST.ASM tests/CLIPTEST.RUN
 %include "UIAPI.INC"
 RUN_API equ 8
@@ -34,7 +35,18 @@ start:  mov     bx, 2 * GOFF / 16 + 1
         je      .call
         inc     ax                      ; S: its size
         cmp     dl, 'S'
-        jne     .es
+        je      .call
+        cmp     dl, 'T'                 ; T: A:\CLIP.$$$ cut to nothing (as a
+        jne     .es                     ;  disk swapped since might have it)
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, s_cut
+        int     21h
+        jc      .es
+        xchg    bx, ax
+        mov     ah, 3Eh
+        int     21h
+        jmp     short .es
 .call:  call    UI_CLIP
         sbb     dx, dx
         mov     [rcf], dx
@@ -50,6 +62,7 @@ start:  mov     bx, 2 * GOFF / 16 + 1
 
 win     dw 30, 100, 20, 60, s_win, 0, 0
 s_win   db 'Clip test',0
+s_cut   db 'A:\CLIP.$$$',0
 
 section .bss
 bseg    resw 1

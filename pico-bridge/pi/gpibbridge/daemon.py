@@ -2,7 +2,7 @@
 
 Owns the Pico's USB serial port, keeps the bridge online at the configured GPIB address, turns what the 1520
 sends into messages for a handler (handlers/), sends the handler's replies back, and serves a control socket for
-gpibctl.  One thread, one select loop.
+gpibctl.  One select loop, and a thread that only writes PINGs (the select loop alone closes the port).
 
     python3 -m gpibbridge.daemon [-c /etc/gpib-bridge/bridge.toml] [--port /dev/ttyACM0] [--ctl PATH] [-v]
 """
@@ -99,6 +99,7 @@ class Bridge(handlers.Context):
         self.sent = collections.deque()      # (gen, sent_total after it) for bytes the Pico hasn't consumed yet
         self.want_online = True
         self.wlock = threading.Lock()        # the ping thread writes too
+        self.dead = None                     # a port a write failed on: the main loop closes it (see write())
         self.status = 0
         self.rsv = False
         self.ren = False
@@ -131,21 +132,30 @@ class Bridge(handlers.Context):
     # ---- serial ---------------------------------------------------------------------------------------------
     def write(self, frame):
         ser = self.ser
-        if not ser:
+        if not ser or ser is self.dead:
             return
         try:
             with self.wlock:
                 ser.write(frame)
-        except (serial.SerialException, OSError) as e:
-            log.warning("write to %s failed: %s", self.port, e)
-            self.close()
+        except Exception as e:
+            # A port the main loop closes under the ping thread's write makes pyserial 3.5 raise TypeError (its fd
+            # is None by then), not SerialException. On a port still open, only those two mean the port.
+            if ser.is_open and not isinstance(e, (serial.SerialException, OSError)):
+                raise
+            log.warning("write to %s failed: %r", self.port, e)
+            # Not closed here: this may be the ping thread, and a port closed under the main loop's read raises
+            # what nothing catches (pyserial's in_waiting: TypeError); close() also tells the control clients.
+            self.dead = ser
 
     def ping_thread(self):
         """PINGs from a thread, so a slow handler can't make the Pico think the Pi is gone."""
         while True:
             time.sleep(1.0)
-            if self.ser is not None and self.connected:
-                self.write(P.ping())
+            try:
+                if self.ser is not None and self.connected:
+                    self.write(P.ping())
+            except Exception:                # nothing may end this thread: without PINGs the bridge goes offline
+                log.exception("ping thread")
 
     def try_open(self):
         for p in candidate_ports(self.cfg["port"]):
@@ -176,6 +186,7 @@ class Bridge(handlers.Context):
         if self.connected:
             self.broadcast({"event": "DISCONNECTED"})
         self.ser = None
+        self.dead = None
         self.connected = False
 
     def on_connected(self, hello):
@@ -449,7 +460,7 @@ def main(argv=None):
                         else "%(asctime)s %(levelname)s %(message)s", stream=sys.stderr)
     b = Bridge(cfg)
     b.reopen_after = 0.0
-    threading.Thread(target=b.ping_thread, daemon=True).start()
+    threading.Thread(target=b.ping_thread, name="ping", daemon=True).start()
 
     sel = selectors.DefaultSelector()
     path = cfg["control_socket"]
@@ -472,6 +483,8 @@ def main(argv=None):
              cfg["address"], cfg["handler"], path)
     while True:
         now = time.monotonic()
+        if b.ser is not None and b.dead is b.ser:
+            b.close()                        # a write failed on it (maybe the ping thread's): closed in this thread
         if b.ser is None and now >= max(next_open, b.reopen_after):
             if not b.try_open():
                 if not warned:
