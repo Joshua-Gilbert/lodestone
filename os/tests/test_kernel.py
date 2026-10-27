@@ -1114,6 +1114,31 @@ def t_gpcheck0():
     k.run_file('GPCHK0.COM', 10)
     check('02h AL=3 of no bytes sends the check 01 00; of "AB", AB 43 43', got == [b'\x01\x00', b'AB\x43\x43'], got)
 
+def t_gpirq():
+    """SRQ on IRQ 5: the start-up hooks INT 0Dh (keeping the BIOS's vector for the exception) with GPIBIRQ=0 too;
+    INT 60h AH=0Eh AL=1 turns the interrupt on again with that vector, AL=0 off."""
+    com = os.path.join(OUT, 'GPIRQ.COM')
+    open(com, 'wb').write(bytes([0xB8, 0x01, 0x0E, 0xCD, 0x60,              # mov ax, 0E01h / int 60h
+                                 0xB8, 0x00, 0x4C, 0xCD, 0x21]))            # mov ax, 4C00h / int 21h
+    com0 = os.path.join(OUT, 'GPIRQ0.COM')
+    open(com0, 'wb').write(bytes([0xB8, 0x00, 0x0E, 0xCD, 0x60, 0xB8, 0x00, 0x4C, 0xCD, 0x21]))
+    for ini in (b'', b'GPIBIRQ=0\r\n'):
+        files = (com, com0)
+        k = ktest.KPC(ini_image('gpirq.img', ini, *files) if ini else image('gpirq.img', *files),
+                      chip=sim7210.NEC7210(sim7210.bus()))
+        bios = k.pc.rd(0, 0x0D * 4, 4)
+        k.start()
+        on = lambda: (k.rd('gp_irq', 1)[0], k.pc.pic_mask & 0x20, k.rd('gp_imr2', 1)[0],
+                      k.pc.u16(0, 0x0D * 4), k.pc.u16(0, 0x0D * 4 + 2), k.rd('gp_oldirq', 4) == bios)
+        isr = (k.Y['gp_isr'], 0x60, True)
+        tag = 'GPIBIRQ=0' if ini else 'at start-up'
+        check('%s: INT 0Dh ours, the BIOS\'s vector kept; IRQ 5 %s' % (tag, 'masked' if ini else 'on, SRQI in IMR2'),
+              on() == ((0, 0x20, 0) if ini else (5, 0, 0x40)) + isr, on())
+        k.run_file('GPIRQ0.COM', 10)
+        check('... AH=0Eh AL=0: off, the vector stays', on() == (0, 0x20, 0) + isr, on())
+        k.run_file('GPIRQ.COM', 10)
+        check('... AH=0Eh AL=1: on again, the same vector, the BIOS\'s still kept', on() == (5, 0, 0x40) + isr, on())
+
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (ex_rel shares path_buf, so they would
@@ -2763,7 +2788,7 @@ def t_execabort():
           k.exec_list())
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]
