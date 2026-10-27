@@ -1420,6 +1420,44 @@ MS_NAMES = [('fn 3D A.TXT.X', 'err 02'),
             ('fn 5B N.A.B', 'err 02'),
             ('fn 5B A|B', 'err 02')]
 
+def t_renfull():
+    """RENAME in a subdirectory full to its last entry: dir_slot gives the directory a cluster more, in the FAT kept
+    in memory.  That cluster is linked on the disk before the old entry is deleted there (audit3 X31); the FAT was
+    written last, so power lost between the two left the file with no entry at all, its clusters lost."""
+    one = os.path.join(OUT, 'ONE.TXT')
+    open(one, 'wb').write(b'x\r\n')
+    k = ktest.KPC(image('renfull.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'SUB\\',
+                        *['SUB\\F%02d.TXT=%s' % (i, one) for i in range(14)]))   # (with . and .., 16: one sector)
+    k.start()
+    pc, d = k.pc, k.pc.drives[0]
+    def fat(img, cl):                   # (1.44 MB FAT12: FAT 1 at LBA 1, cluster 2 at LBA 33)
+        v = img[512 + cl * 3 // 2] | img[512 + cl * 3 // 2 + 1] << 8
+        return v >> 4 if cl & 1 else v & 0xFFF
+    def ents(img, cl): return [bytes(img[(31 + cl) * 512 + i * 32:(31 + cl) * 512 + i * 32 + 32]) for i in range(16)]
+    img = bytes(d.img)
+    sub = next(e[26] | e[27] << 8 for e in (img[19 * 512 + i * 32:19 * 512 + i * 32 + 32] for i in range(224))
+               if e[:11] == b'SUB        ')
+    old = [e[:11] for e in ents(img, sub)].index(b'F00     TXT')
+    check('SUB is full: 16 entries in its one cluster', fat(img, sub) >= 0xFF8
+          and all(e[0] not in (0, 0xE5) for e in ents(img, sub)), [e[:11] for e in ents(img, sub)])
+    seen = []                           # the disk as the old entry's E5 reaches it
+    int13 = pc.int13
+    def hook():
+        ah = pc.r('ah')
+        int13()
+        if ah == 3 and not seen and d.img[(31 + sub) * 512 + old * 32] == 0xE5:
+            new = fat(d.img, sub)
+            seen.append((new, 2 <= new < 0xFF8 and b'G00     TXT' in [e[:11] for e in ents(d.img, new)]))
+    pc.int13 = hook
+    k.code_p()
+    k.key('ren sub\\f00.txt g00.txt'); k.key(ktest.ENTER)
+    del pc.int13
+    check('RENAME in a full SUB: when the old entry is deleted on the disk, the FAT there already links SUB\'s new '
+          'cluster, which holds the new entry', seen and seen[0][1], (seen, hex(fat(d.img, sub))))
+    probs, files = fatcheck.check(bytes(d.img))
+    check('... and the disk is consistent afterwards, G00.TXT in SUB, F00.TXT gone', not probs
+          and '\\SUB\\G00.TXT' in files and '\\SUB\\F00.TXT' not in files, (probs, sorted(files)))
+
 def t_names():
     """Names that are no names (a second dot, a bad character), device names,
     CREATE over hidden and system files: NAMES.COM's 58 calls answer as GRiD
@@ -2669,7 +2707,7 @@ def t_execabort():
           k.exec_list())
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     build()
     want = sys.argv[1:]

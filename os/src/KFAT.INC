@@ -1086,6 +1086,8 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         mov     ax, [r_dir]
         call    dir_slot
         jc      .e
+        call    fat_flush               ; a grown target linked before it is named
+        jc      .e
         mov     di, si                  ; the old entry, renamed, in the slot
         push    si
         mov     si, ren_de
@@ -1106,8 +1108,6 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         jc      .e
         mov     byte [si], 0E5h
         call    buf_put
-        jc      .e
-        call    fat_flush               ; (the target may have grown)
         jmp     ret_cf
 .dev:   mov     ax, 17                  ; not the same device
         jmp     .e
