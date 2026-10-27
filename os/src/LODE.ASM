@@ -216,6 +216,8 @@ k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 ; to an odd one costs a fetch.  The pads that put them there ("hot" in the
 ; comment) are never executed.  A TIMES value of -1 here: that label went
 ; odd, so re-pad (KSEG is a paragraph, so the offset's parity is the address's)
+; To measure and place them again: bench/hot.py (the counts), bench/plan.py
+; (where the pads go), bench/evalpar.py (one build against another)
 %macro EVEN 1-*
 %rep %0
         times -((%1 - $$) & 1) db 0
