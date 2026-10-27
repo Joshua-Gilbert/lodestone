@@ -206,6 +206,11 @@ class Link:
         if s.trace is not None: s.trace.append((time.monotonic(), 'ring'))
         ring()
 
+    def saver_flag(s):
+        """HELLO's HF_SAVER: the GRiD may run its screen saver (CLAUDE 1.14, EV_SAVER) only if we can end it,
+        with a ring: a bridge that raises SRQ for us (the Pico's; not an AR488)."""
+        return glp.HF_SAVER if getattr(s.t, 'ring', None) is not None else 0
+
     def _unring(s):
         """The bridge's SRQ taken back, if we rang since the GRiD's last frame."""
         if s.unrung: return

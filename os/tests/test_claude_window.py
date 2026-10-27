@@ -251,6 +251,55 @@ def t_shift():
         h.close()
 
 
+def t_saver_mt():
+    """CLAUDE 1.14 full screen under MT (Shift-CODE-A, task 0, in front: sv_front), with the Pico bridge
+    and SAVER=1: the Executive's screen saver comes on inside it, DEFRAG first; a GRiD tool call from the
+    Pi rings it (CLAUDE's INT 16h hook, over MT's own), and is answered; Term's screen asked again. On
+    again, a key ends it, taken (not sent to the Pi)."""
+    defrag = open(os.path.join(GOS, 'src', 'DEFRAG.COM'), 'rb').read()
+    h = Win(more={'A:\\LODE.INI': INI + b'SAVER=1\r\n', 'A:\\DEFRAG.COM': defrag}, bridge='pico')
+    try:
+        h.boot_exec()
+        sv, hits, w0 = h.k.useg * 16 + h.m.Y['saver'], [], h.m.watch
+        def w(a):
+            if a == sv: hits.append(h.m.us)
+            if w0: w0(a)
+        h.m.watch = w
+        conn = h.code_a(shift=True)
+        ok = h.run_until(lambda: 'Welcome to Claude Code' in h.text(), 30)
+        t0 = h.m.us
+        on = h.run_until(lambda: hits, 120)
+        check('Saver under MT, Shift-CODE-A: on inside CLAUDE after SAVER=1\'s minute',
+              conn and ok and on and 55 <= (hits[0] - t0) / 1e6 <= 70,
+              (conn, ok, on, hits and (hits[0] - t0) / 1e6, h.var('sv_st'), h.var('sv_t', 2)))
+        h.run_until(lambda: False, 1)
+        df = any('Lodestone Defrag' in x[1] for x in h.k.ocr())
+        h.run_until(lambda: False, 14)
+        check('... DEFRAG first (TIDY), then the dark screen: CLAUDE\'s screen gone',
+              df and 'Welcome to Claude Code' not in h.text(), (df, h.text()[:200]))
+        t = h.router.term
+        res = {}
+        th = threading.Thread(target=lambda: res.update(r=t.grid.get_info()))
+        th.start(); t1 = h.m.us
+        came = h.run_until(lambda: not th.is_alive(), 30)
+        back = h.run_until(lambda: 'Welcome to Claude Code' in h.text(), 10)
+        check('... a GRiD tool call ends it (the ring) and is answered; Term\'s screen back',
+              came and 'CLAUDE 1.14' in res.get('r', {}).get('grid', '') and back,
+              (came, res, back, (h.m.us - t1) / 1e6, h.k.where()))
+        got = []; keys = t.keys
+        t.keys = lambda body: (got.append(bytes(body)), keys(body))
+        again = h.run_until(lambda: len(hits) == 2, 90)
+        h.run_until(lambda: False, 3)
+        h.m.keys.append(0x1E61); h.m.halted = False             # "a"
+        back = h.run_until(lambda: 'Welcome to Claude Code' in h.text(), 10)
+        h.run_until(lambda: False, 1)
+        check('... on again; a key ends it, taken (not sent to the Pi); still task 0\'s, no window',
+              again and back and not got and len(hits) == 2 and h.mb('mw_n') == 0,
+              (again, back, got, len(hits), h.mb('mw_n')))
+    finally:
+        h.close()
+
+
 def flood(t, scroll=False):
     """The Pi's screen always changed, whole, at once: every frame the GRiD
     asks for is a full one (the encoder's own; its making costs the GRiD
@@ -367,7 +416,7 @@ def t_speed():
           'against %.1f, %.1f)' % (a[0], a[1], b[0], b[1]), a[0] > b[0] and a[1] > b[1] * 1.2, r)
 
 
-TESTS = [t_window, t_shift, t_speed]
+TESTS = [t_window, t_shift, t_saver_mt, t_speed]
 if __name__ == '__main__':
     want = sys.argv[1:]
     for t in TESTS:

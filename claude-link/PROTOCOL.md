@@ -154,7 +154,7 @@ the MORE bit set on all but the last.
 | 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3; bit 4 = it draws the 2x2 block elements `▘▝▖▗▌▐▀▄▛▜▙▟▚▞` as codes A1h-AEh, CLAUDE 1.8, and resident Claude's console from 1.12; without it they are blanks and inverse blanks), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9), and `bgscreen`: SCREEN in the background too (CLAUDE 1.11). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
-| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program) |
+| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 07h saver (CLAUDE 1.14, to a Pi whose HELLO says bit 4: the Executive's screen saver comes on, and the GRiD sends nothing more until it ends; the Pi counts it as there until its next frame, and rings it for anything it has, which ends the saver) |
 | 05h | REPLY | id (1), status (1: 0 = OK, else DOS error code or 0FFh), data |
 | 06h | NAK | — |
 | 07h | KEYS | Term: key words as INT 16h AH=10h returns them (AL, AH; 2 bytes each) |
@@ -163,7 +163,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on; bit 3 = resident Claude's console may work in the background, below: its bridge can be quiet), then text: model name (or `Claude Code`) |
+| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on; bit 3 = resident Claude's console may work in the background, below: its bridge can be quiet; bit 4 = EVENT 07h, the saver, understood, and the bridge can ring: the Pico's), then text: model name (or `Claude Code`) |
 | 42h | NOP | — |
 | 43h | TEXT | text to append to the conversation; control codes below |
 | 44h | STATUS | status-line text (empty = clear) |
