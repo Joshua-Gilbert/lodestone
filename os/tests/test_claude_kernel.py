@@ -181,6 +181,41 @@ T.test_write_no_name_leaves_no_temp = test_write_no_name_leaves_no_temp
 T.test_write_safe_keeps_the_only_copy = test_write_safe_keeps_the_only_copy
 T.test_run_tm5000g_from_claude = test_run_tm5000g_from_claude
 
+
+def test_key_script_peeks():
+    """audit3 (X42's panel): a TSR's INT 16h peek from its INT 1Ch while CLAUDE's ks_ready moves a RUN's
+    {WAIT} on (test_resident_term's t_type_peek, for CLAUDE.COM's own feeder): the waits and keys play as
+    typed.  ks_ready runs with interrupts off (the peek comes after it)."""
+    import test_resident_term as RT
+    script = RT.PEEK_SCRIPT + '{SNAP}{ESC}'
+    turns = []
+    for _ in RT.PEEK_AT:
+        turns += [T.reply(('tool', 'grid_command', {'command': 'TESTKEY', 'capture': False, 'keys': script})),
+                  T.reply(('text', 'Done.'))]
+    h = T.start(turns, mode='auto')
+    base, sym = h.claude_psp * 16, h.sym
+    lo, hi = base + sym['ks_ready'], base + sym['build_hello']
+    code = bytes(h.m.mu.mem_read(lo, hi - lo))
+    kw, kp = struct.pack('<H', sym['ks_wait']), struct.pack('<H', sym['ks_pos'])
+    e0 = code.find(b'\x2E\xC6\x06' + kw + b'\0')
+    assert code.count(b'\x2E\xC6\x06' + kw + b'\0') == 1 and code[e0 + 6:e0 + 12] == b'\x2E\x83\x06' + kp + b'\3', code.hex()
+    at = {'look': lo + code.index(b'\x2E\x80\x3E' + kw + b'\0'), 'end0': lo + e0, 'end1': lo + e0 + 6}
+    bad = []
+    for i, where in enumerate(RT.PEEK_AT):
+        def run():
+            ok = h.turn('run testkey', sim_s=60)
+            return ok and str(T.results(h, 2 * i + 1)[0]['content'])
+        d, after, text = RT.peek_race(h.m, lo, hi, h.var, lambda: True, at, where, run, RT.peek_waits(script, 0))
+        if not (None not in d and d[0] > 0.15 and d[1] > 0.85 and text and 'Exit code: 3' in text and
+                'TESTKEY ready: abc' in text and 'bye' not in text and isinstance(after, tuple)
+                and (where != 'start' or after == (1, RT.peek_waits(script, 0)[1], 0x40))):
+            bad.append((where, d, after, text))
+    assert not bad, bad
+    T.check(h)
+
+
+T.test_key_script_peeks = test_key_script_peeks
+
 if __name__ == '__main__':
     names = [n for n in sorted(vars(T)) if n.startswith('test_')]
     want = [a for a in sys.argv[1:] if a.startswith('test')]

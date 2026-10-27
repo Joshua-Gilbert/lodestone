@@ -548,11 +548,16 @@ prog_name:
 ; now (AX kept); else AX = the next key, taken if AH is a read (00h, 10h).
 ; A wait (FF FF n) holds them n ticks; at the end (or a {SNAP}: TYPE's
 ; screen comes at the end anyway) the stub's r_ks goes 0 and r_pend 1:
-; the console comes back, and answers TYPE.
+; the console comes back, and answers TYPE.  Interrupts off throughout, then
+; as the caller had them (POPF: the stub's peek runs with IF clear): an INT
+; 16h peek from an interrupt (a TSR's INT 1Ch) must never find ks_pos,
+; ks_wait and ks_until half moved.
 rc_feed:
         push    ds
         push    si
         push    bx
+        pushf
+        cli
         push    cs
         pop     ds
         mov     bx, ax
@@ -567,7 +572,8 @@ rc_feed:
         test    bh, 1                   ; (a peek leaves it)
         jnz     .k
         add     word [ks_pos], 2
-.k:     clc
+.k:     popf
+        clc
         jmp     short .x
 .wt:    push    ds
         push    40h
@@ -576,10 +582,10 @@ rc_feed:
         pop     ds
         cmp     byte [ks_wait], 0
         jne     .w2
-        add     al, [ksbuf + si + 2]    ; its end stored whole, then ks_wait
-        adc     ah, 0                   ;  (a peek from an interrupt may come
-        mov     [ks_until], ax          ;  between: it must not see a wait
-        mov     byte [ks_wait], 1       ;  under way and its end not yet set)
+        add     al, [ksbuf + si + 2]    ; its end, then ks_wait
+        adc     ah, 0
+        mov     [ks_until], ax
+        mov     byte [ks_wait], 1
         jmp     short .l                ; (the tick again; FF FF 00 ends at once)
 .w2:    sub     ax, [ks_until]
         js      .no
@@ -593,7 +599,8 @@ rc_feed:
         mov     word [es:di + P_KS], 0100h      ; r_ks 0, r_pend 1
         pop     di
         pop     es
-.no:    mov     ax, bx
+.no:    popf
+        mov     ax, bx
         stc
 .x:     pop     bx
         pop     si
@@ -1436,9 +1443,10 @@ unborrow:
 ; ---- the band ----------------------------------------------------
 ; title_text: the Pi's title (or ours), the program's name, then DOS busy
 ; if the file requests can't call it (a long status on the right covers the
-; end: the name is in HELLO for Claude anyway).  After the program's name, a
-; field goes on only while the band's 48 cells aren't full: at most 47 + 14
-; (s_bgn) bytes and the NUL, in title_text's 69
+; end: the name is in HELLO for Claude anyway).  After the program's name,
+; each string goes on only while the band's 48 cells aren't full (the count's
+; two digits regardless, past cell 48 if its separator was left out): at most
+; 47 + 14 (s_bgn) bytes and the NUL, in title_text's 69
 make_title:
         mov     di, title_text
         mov     si, ptitle

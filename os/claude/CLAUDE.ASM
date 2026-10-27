@@ -2616,11 +2616,16 @@ int16:  cmp     byte [cs:ks_active], 0
         iret
 
 ; ZF = 0 and AX = key if a scripted key is ready now; else ZF = 1, AX kept.
-; Runs waits and snapshot marks as it meets them.
+; Runs waits and snapshot marks as it meets them.  Interrupts off throughout,
+; then as the caller had them (POPF: the peek runs with IF clear): an INT 16h
+; peek from an interrupt (a TSR's INT 1Ch) must never find ks_pos, ks_wait
+; and ks_until half moved.
 ks_ready:
         push    ax
         push    bx
         push    si
+        pushf
+        cli
 .again: mov     si, [cs:ks_pos]
         cmp     si, [cs:ks_len]
         jae     .end
@@ -2630,6 +2635,7 @@ ks_ready:
         je      .wait
         cmp     ax, 0FEFFh
         je      .snap
+        popf
         pop     si
         pop     bx
         add     sp, 2                   ; drop the caller's AX; ZF = 0
@@ -2657,8 +2663,11 @@ ks_ready:
         mov     byte [cs:ks_wait], 0
         add     word [cs:ks_pos], 3
         jmp     .again
-.snap:  call    take_snapshot
-        add     word [cs:ks_pos], 3
+.snap:  add     word [cs:ks_pos], 3     ; (first: a peek in the copy goes on past it)
+        popf                            ; the copy with interrupts as the caller
+        pushf                           ;  had them (32 KB; INT 10h in a window)
+        call    take_snapshot
+        cli
         jmp     .again
 .end:   mov     byte [cs:ks_active], 0
         push    ds                      ; (and out of INT 16h's chain if still
@@ -2677,7 +2686,8 @@ ks_ready:
         mov     [16h * 4 + 2], bx
 .u:     popf
         pop     ds
-.none:  pop     si
+.none:  popf
+        pop     si
         pop     bx
         pop     ax
         cmp     ax, ax                  ; ZF = 1

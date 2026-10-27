@@ -37,11 +37,12 @@ rep_q       resb 1
 use_fl      resb 1                      ; 1: frames carry a Fletcher sum, not CRC-16
 wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driver latches SRQ;
                                         ;  RCON: it counts SRQ interrupts)
-tlook       resb 1                      ; 1: link_wait's serial poll is a tick's look, no SRQ seen
+tlook       resb 1                      ; link_wait's serial poll: 2 a tick's look, no SRQ seen;
+                                        ;  1 at an SRQ edge; 0 the PIT's
 srq_held    resb 1                      ; 1: an answer was there at a tick's look, its SRQ no
                                         ;  edge (another device holds the line): the PIT's
-                                        ;  polls, and no sleeping for the SRQ, till an edge comes
-                                        ;  again (link_wait) or the next HELLO
+                                        ;  polls, and no sleeping for the SRQ, till an edge finds
+                                        ;  an answer (link_wait) or the next HELLO
 lr_end:
 %endmacro
 
@@ -295,9 +296,9 @@ link_wait:
         mov     ax, [now]               ; else once a tick, should one go astray
         cmp     ax, [pit_tick]
         je      .x
-        inc     byte [tlook]
-.edge:  mov     byte [srq_held], 0      ; (an edge: the line held no more, or two
-        jmp     short .poll             ;  merged at the last look; 0 here already)
+        inc     byte [tlook]            ; (tlook 2: a tick's look; 1: an edge)
+.edge:  inc     byte [tlook]
+        jmp     short .poll
 .t0:
 %ifndef RCON                            ; (resident: never AH=0Bh, which clears
         mov     ah, 0Bh                 ;  the program's SRQ latch)
@@ -321,13 +322,15 @@ link_wait:
         mov     byte [spoll_errs], 0
         test    al, 40h
         jz      .x
-        cmp     byte [tlook], 0         ; the answer there at a tick's look, and
-        je      .r                      ;  still no SRQ interrupt for it now (it
-        push    ax                      ;  may have come since that look): the
-        call    srq_new                 ;  line held by another device
-        pop     ax
-        jnz     .r
-        mov     byte [srq_held], 1
+        mov     ah, [tlook]             ; the answer there at a tick's look, and
+        dec     ah                      ;  still no SRQ interrupt for it now (it
+        js      .r                      ;  may have come since that look): the
+        jz      .h                      ;  line held by another device.  Found
+        push    ax                      ;  at an edge: the line ours again
+        call    srq_new                 ;  (srq_held 0; an edge that finds no
+        pop     ax                      ;  answer may be another device's, as
+        jnz     .r                      ;  it lets go and asks again)
+.h:     mov     [srq_held], ah
 .r:
         test    al, 20h                 ; patched bridge: the line is complete
         jnz     .read
