@@ -218,7 +218,6 @@ mt_old08    dd      0                   ; INT 08h as it was
 mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
 mt_facc     dw      0                   ; M9b: counter 0 run fast, its clocks since
                                         ;  the BIOS's last tick (mod 65536)
-mt_fast     db      0                   ;  and 1 once seen fast (twice: divided)
 mt_slice    db      2                   ; ticks left in the running task's turn
 mt_pend     db      0                   ; 1: another task's turn (its turn over,
                                         ;  or a key for the front one waiting)
@@ -383,6 +382,8 @@ mt_snomem   db      ': not enough memory or EMS; park or end a task', 0
 mt_sended   db      ' ended', 0
 mt_scode    db      ', exit code ', 0
 mt_snost    db      ' could not be started: error ', 0
+mt_fast     db      0                   ; M9b: 1 once counter 0 seen fast (twice:
+                                        ;  divided: mt_tick).  Here, the align's pad
             align   2
 ; the kernel's per-task variables: (offset, bytes), as V_* lays them out
 mt_ranges:  dw      indos, 1
@@ -960,6 +961,8 @@ mt_kwait:
         mov     [cs:mt_swreq], al       ; (this task, as mt_swnow does it: the
         call    mt_swnow                ;  one in front may be in its run)
         jmp     .k
+        times   ($ - $$) & 1 db 90h     ; (M9b: what follows at the parity
+                                        ;  it had, mt_i21 and mt_i16 with it)
 ; T5d: an INT 16h hook of the running program's, or of a program it
 ; runs under (a RUN's key script, CLAUDE's, in a window; not a TSR's,
 ; Resident Claude's, ended though resident): asked, as in front (mt_i16
