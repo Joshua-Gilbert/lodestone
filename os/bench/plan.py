@@ -2,7 +2,8 @@
 counts.  The resident .text splits into runs between points no path falls
 through (after a JMP, RET or data); a pad byte at a run's head moves that run
 and everything after it, up to the next self-correcting pad (KGPIB's fast
-loops', `times ($ - $$) & 1`).  A DP finds, for each byte budget, the run
+loops', `times ($ - $$) & 1`; one emitting 0 bytes now would emit 1 if what
+comes before moved by one).  A DP finds, for each byte budget, the run
 heads that put the fewest taken entries on odd addresses.
     python3 bench/plan.py B HOT.json...              (from os/, on the build
                                                        HOT.json was made on)
@@ -29,14 +30,20 @@ def parse(lst, mp):
         ms = re.match(r'(?i)^\[?section\s+(\S+?)\]?(\s|$)', code)
         if ms: sec = ms.group(1); continue
         if re.match(r'(?i)^\[?absolute', code): sec = 'abs'; continue
-        if sec != '.text' or not addr: continue
+        if sec != '.text': continue
+        if not addr:                            # a self-correcting pad of 0 bytes has no address
+            if '$$) & 1 db 90h' in code and items:
+                items.append((items[-1][0] + items[-1][1], 0, 'data', code))
+            continue
         n = len(re.sub(r'[\[\]\(\)]', '', hexb)) // 2
         if cont == '-' and not code:            # (a long line's next bytes)
             if items: items[-1] = items[-1][:1] + (items[-1][1] + n,) + items[-1][2:]
             continue
         op = re.sub(r'^[\w.$@?]+:\s*', '', code)
-        w = op.split()[0].lower() if op.split() else ''
-        kind = 'data' if w in ('db', 'dw', 'dd', 'times', 'incbin') else 'xfer' if w in ('jmp', 'ret', 'retf', 'iret') else 'code'
+        ws = [x.lower() for x in op.split()]
+        DATA = ('db', 'dw', 'dd', 'times', 'incbin')
+        kind = 'data' if ws and (ws[0] in DATA or ws[1:2] and ws[1] in DATA) else \
+               'xfer' if ws and ws[0] in ('jmp', 'ret', 'retf', 'iret') else 'code'
         items.append((int(addr, 16), n, kind, code))
     syms, s = {}, None
     for l in open(mp, encoding='latin-1'):
@@ -57,40 +64,46 @@ def main():
             s = sum(c.values()); c = {k: v * 250000 // s for k, v in c.items()}
         tot.update(c)
     after = {a + n: (k, t) for a, n, k, t in items if n}
-    heads = sorted(set([0] + [a for a, (k, t) in after.items() if k in ('xfer', 'data')]))
+    SC = {a + n: n for a, n, k, t in items if k == 'data' and '$$) & 1 db 90h' in t}
+    heads = sorted(set([0] + [a for a, (k, t) in after.items() if k in ('xfer', 'data')] + list(SC)))
     runs = []
     for i, s in enumerate(heads):
         e = heads[i + 1] if i + 1 < len(heads) else 1 << 20
         runs.append((s, sum(v for a, v in tot.items() if s <= a < e and not a & 1),
                         sum(v for a, v in tot.items() if s <= a < e and a & 1)))
-    SC = {a + n: n for a, n, k, t in items if k == 'data' and '$$) & 1' in t}
     NOPAD = [tuple(int(x, 16) for x in r.split('-')) for r in os.environ.get('NOPAD', '').split(',') if r]
     total = sum(tot.values())
-    best = {(0, 0): (0, [])}                    # (flipped, bytes) -> (entries even, run heads padded)
+    data_at = {a for a, n, k, t in items if k == 'data' and n}     # (no pad in front of data)
+    print('as built: %.2f%% of taken entries odd' % (100.0 * sum(r[2] for r in runs) / total))
+    best = {(0, 0): (0, [])}                   # (flipped, bytes) -> (entries even, run heads padded)
+    rank = lambda vp: (vp[0], -len(vp[1]))      # (a tie: fewer pads)
     for s, E, O in runs:
         if s in SC:                             # a self-correcting pad: parity as built again
             b2 = {}
             for (d, b), vp in best.items():
                 key = (0, b + (d and (1 if SC[s] == 0 else -1)))
-                if key not in b2 or b2[key][0] < vp[0]: b2[key] = vp
+                if key not in b2 or rank(b2[key]) < rank(vp): b2[key] = vp
             best = b2
         nb = {}
         for (d, b), (val, path) in best.items():
             for nd in (0, 1):
-                if nd != d and (s in SC or any(lo <= s < hi for lo, hi in NOPAD)): continue
+                if nd != d and (s in SC or s in data_at or any(lo <= s < hi for lo, hi in NOPAD)): continue
                 key = (nd, b + (nd != d))
                 if key[1] > B: continue
-                v = val + (O if nd else E)
-                if key not in nb or nb[key][0] < v: nb[key] = (v, path + ([s] if nd != d else []))
+                vp = (val + (O if nd else E), path + ([s] if nd != d else []))
+                if key not in nb or rank(nb[key]) < rank(vp): nb[key] = vp
         best = nb
     name = lambda a: '/'.join(syms.get(a, ['?']))
-    for b in range(B + 1):
+    last = -1
+    for b in range(min(k[1] for k in best), B + 1):
         c = [vp for (d, bb), vp in best.items() if bb == b]
         if c:
-            v, p = max(c)
-            print('%2d B: %.1f%% of taken entries odd   %s' % (b, 100.0 * (total - v) / total, ' '.join('%04X:%s' % (x, name(x)[:20]) for x in p)))
+            v, p = max(c, key=rank)
+            if v <= last: continue              # (a byte more that buys nothing)
+            last = v
+            print('%2d B: %.2f%% of taken entries odd   %s' % (b, 100.0 * (total - v) / total, ' '.join('%04X:%s' % (x, name(x)[:20]) for x in p)))
     NB = int(os.environ.get('SHOW', B))
-    v, p = max(vp for (d, bb), vp in best.items() if bb == NB)
+    v, p = max((vp for (d, bb), vp in best.items() if bb == NB), key=rank)
     ev = sorted([(x, 'T') for x in p] + [(x, 'S') for x in SC])
     def shift(a):
         sh = 0
