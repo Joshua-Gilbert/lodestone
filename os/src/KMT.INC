@@ -2535,16 +2535,10 @@ mt_ring:
         mov     al, [cs:mt_cur]
         or      al, al
         jz      .no
-        cmp     byte [cs:mt_crit], 0
-        jne     .no
-        cmp     byte [cs:mt_inb], 0
-        jne     .no
-        cmp     word [cs:mt_in13], 0
-        jne     .no
         pushf
         cli
         push    ax
-        call    mt_isr                  ; (the PIC asked with interrupts off)
+        call    mt_busy                 ; (the PIC asked with interrupts off)
         pop     ax
         jnz     .none
         call    mt_ent
@@ -4470,14 +4464,12 @@ mt_i16:
         push    dx
         push    KSEG
         pop     ds
-        call    mt_isr
-        jnz     .pas
-        cmp     byte [cs:mt_inb], 0     ; (inside a call MT passed on to the
-        jne     .pas                    ;  BIOS, an INT 13h call, or a change
-        cmp     word [cs:mt_in13], 0    ;  of the front: an interrupt's, as M4a
-        jne     .pas                    ;  takes INT 10h's there)
-        cmp     byte [cs:mt_crit], 0    ; (the kernel's INT 24h's prompt, raised
-        jne     .pas                    ;  inside INT 21h or not: as it is)
+        call    mt_busy                 ; (inside a call MT passed on to the
+        jnz     .pas                    ;  BIOS, an INT 13h call, or a change
+                                        ;  of the front: an interrupt's, as M4a
+                                        ;  takes INT 10h's there; the kernel's
+                                        ;  INT 24h's prompt, raised inside INT
+                                        ;  21h or not: as it is)
 .top:   cmp     word [bp+4], 0A000h     ; (Resident Claude's console, at E000h,
         jb      .h                      ;  up: its keys its own, CODE-Tab too;
         cmp     word [cs:mt_tsrs], 0    ;  r_inpop, at 10Dh in its stub's
@@ -4737,14 +4729,8 @@ mt_i33: cli
         mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         je      .pas
-        call    mt_isr
-        jnz     .pas
-        cmp     byte [cs:mt_inb], 0
-        jne     .pas
-        cmp     word [cs:mt_in13], 0
-        jne     .pas
-        cmp     byte [cs:mt_crit], 0    ; (the kernel's INT 24h's prompt, raised
-        jne     .pas                    ;  inside INT 21h or not: as it is)
+        call    mt_busy                 ; (the kernel's INT 24h's prompt, raised
+        jnz     .pas                    ;  inside INT 21h or not: as it is)
 .b:     push    es
         mov     es, [ui_seg]
         cmp     byte [es:m33_busy], 0
@@ -5877,6 +5863,15 @@ mt_vlose:
         mov     byte [cs:mt_vlost], 1
         ret
 
+; NZ if MT is inside a call it passed on to the BIOS, an INT 13h call or
+; a change of the front, or the kernel's INT 24h runs; else mt_isr's
+mt_busy:
+        cmp     byte [cs:mt_inb], 0
+        jne     mt_isr.x
+        cmp     word [cs:mt_in13], 0    ; (and mt_swing)
+        jne     mt_isr.x
+        cmp     byte [cs:mt_crit], 0
+        jne     mt_isr.x
 ; the PIC's in-service register -> AH; ZF if no interrupt is in service.
 ; AL changed
 mt_isr: mov     al, 0Bh
@@ -5886,7 +5881,7 @@ mt_isr: mov     al, 0Bh
         mov     al, 0Ah
         out     20h, al
         or      ah, ah
-        ret
+.x:     ret
 
 ; INT 10h with the caller's registers, the BIOS's (not mt_v10's): MT's own
 ; call, marked (mt_inb) so the BIOS's nested calls are known whatever hook
