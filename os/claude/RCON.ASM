@@ -168,18 +168,7 @@ rc_main:
         cmp     byte [es:R_BGON], 2     ; a background look (M4)
         jne     .pu
         jmp     bg_pass
-.pu:    push    ds
-        lds     si, [es:bx + P_INDOS]
-        lodsb
-        pop     ds
-        mov     [indos], al
-        mov     byte [prog], 0          ; the program's name (AH=62h, its PSP:
-        cmp     al, 1                   ;  the kernel runs a call made inside
-        ja      .pn                     ;  another on a stack of its own, its
-        mov     ah, 62h                 ;  frame there; not two deep, where
-        int     21h                     ;  that stack is an INT 24h handler's)
-        call    prog_name
-.pn:    call    dos_check
+.pu:    call    dos_probe
         call    mouse_find              ; INT 33h there?  The program's
         jz      .nm                     ;  pointer off (its own cell back
         mov     ax, 2                   ;  first, before the screen is kept)
@@ -187,13 +176,9 @@ rc_main:
         call    handler_out
 .nm:    push    cs
         pop     es
-        push    ds                      ; the BIOS's video data, and the keys
-        push    40h                     ;  typed ahead: out of its buffer
+        push    ds                      ; the keys typed ahead: out of its
+        push    40h                     ;  buffer
         pop     ds
-        mov     si, 49h
-        mov     di, bios
-        mov     cx, 66h - 49h + 1
-        rep     movsb
         cli
         mov     si, [1Ah]
         mov     di, keys
@@ -213,18 +198,7 @@ rc_main:
         sti
         pop     ds
         mov     [nkeys], cx
-        call    unborrow                ; (a background SCREEN's reply cut short:
-                                        ;  its bytes back on the old copy first)
-        push    ds                      ; the screen, to windows 1-2
-        push    VSEG
-        pop     ds
-        push    SAVESEG
-        pop     es
-        xor     si, si
-        xor     di, di
-        mov     cx, 4000h
-        rep     movsw
-        pop     ds
+        call    keep_screen             ; the screen, the BIOS's video data
         mov     ax, 0040h               ; the console
         int     10h
         push    cs
@@ -275,6 +249,25 @@ rc_main:
         int     33h
 .x:     pop     ds
         retf
+
+; DOS under the program, at a pop-up or a background look: indos; prog, the
+; program's name (AH=62h, its PSP: the kernel runs a call made inside
+; another on a stack of its own, its frame there; not two deep, where that
+; stack is an INT 24h handler's); then dos_check.  -> ES = CS
+dos_probe:
+        les     bx, [parms]
+        push    ds
+        lds     si, [es:bx + P_INDOS]
+        lodsb
+        pop     ds
+        mov     [indos], al
+        mov     byte [prog], 0
+        cmp     al, 1
+        ja      dos_check
+        mov     ah, 62h
+        int     21h
+        call    prog_name
+        ; (falls through)
 
 ; dos_ok: 1 if the file requests may call DOS (the header), after prog.
 ; The INT 16h call's frame on the stack the stub came on: the stub's pushes
@@ -355,6 +348,7 @@ handler_back:                           ; and back (ES changed)
 ; RQS, or a request left from the pop-down: the link until the Pi has
 ; nothing more, at most 5 s.  ES:BX = the stub's parameters; to rc_main's
 ; end.  R_BGON: 1 to look again, 0 not till the next pop-up.
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 bg_pass:
         push    cs
         pop     es
@@ -368,6 +362,7 @@ bg_pass:
         jnc     .tm                     ; (the driver busy: not now, but at
         inc     byte [bg_keep]          ;  the next look)
         jmp     .z
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .tm:
         mov     [old_tmo], ax           ; (the program's)
         call    get_ticks
@@ -396,19 +391,7 @@ bg_pass:
 .wt:    mov     bx, 2000                ; (the console's timeout for the work)
         mov     ah, 0Ah
         call    gg_call
-        les     bx, [parms]             ; DOS: as at a pop-up, for this call
-        push    ds
-        lds     si, [es:bx + P_INDOS]
-        lodsb
-        pop     ds
-        mov     [indos], al
-        mov     byte [prog], 0
-        cmp     al, 1
-        ja      .pn
-        mov     ah, 62h
-        int     21h
-        call    prog_name
-.pn:    call    dos_check
+        call    dos_probe               ; DOS: as at a pop-up, for this call
         call    mouse_find
         jz      .nm
         call    handler_out
@@ -489,6 +472,7 @@ ops_nodev:
 ; DOS's); the name after its last \ or :, at most NAMEMAX characters, up
 ; to a control character.  Only from an environment the program owns
 ; still (EXEC gives it the block): one it freed may hold anything now.
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 prog_name:
         mov     es, bx
         mov     ax, [es:2Ch]
@@ -508,6 +492,7 @@ prog_name:
         repne   scasb                   ; past this one
         je      .s
         jmp     short .x                ; (no end in 32 KB)
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .e:     inc     di
         cmp     word [es:di], 0         ; (no path after)
         je      .x
@@ -658,14 +643,12 @@ session:
         cmp     byte [inited], 0        ; the first time: the CRC table, Term's
         jne     .i                      ;  screen blank, our title
         call    crc_init
-        call    shadow_seg
         call    shadow_clear
         mov     si, s_title0
         mov     di, ptitle
         call    copyz
         mov     byte [inited], 1
-.i:     call    shadow_seg
-        mov     al, 0                   ; the background's count, for this
+.i:     mov     al, 0                   ; the background's count, for this
         xchg    al, [bg_n]              ;  pop-up's band
         mov     [bg_shown], al
         call    make_title
@@ -674,7 +657,7 @@ session:
         mov     [t_active], ax
         mov     byte [quit], 0
         mov     byte [req_ready], 0     ; (one kept from the way down: gone,
-        mov     word [ioseg], IOSEG     ;  as the HELLO ends the Pi's call)
+                                        ;  as the HELLO ends the Pi's call)
         mov     byte [n_failrun], 0
         mov     byte [sdc_due], 0
         mov     al, 0                   ; back from Claude's keys (all played,
@@ -712,6 +695,7 @@ session:
         call    type_reply
         mov     si, st_connecting       ; (type_reply leaves SI on the reply)
         jmp     short .st
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .h:     mov     byte [lstate], LS_RESET ; HELLO at once
         mov     ax, [now]
         sub     ax, 18
@@ -751,6 +735,7 @@ session:
         jbe     .w
         mov     byte [sdc_due], 1
         jmp     short .f
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .w:     cmp     byte [lstate], LS_WAIT
         jne     .s
         call    link_wait
@@ -792,14 +777,11 @@ session:
         pop     es
         ret
 
-shadow_seg:                             ; Term's shadow, in window 3
-        mov     word [shadseg], SHADSEG
-        ret
-
 ; HLT when nothing is due: no frame on its way or to send, no keys, and
 ; quiet for 2 s (TERMLINK polls back to back until then).  Waiting for an
 ; answer, with the driver's SRQ interrupt: HLT till it (or a tick, or a
 ; key), unless it came already or a key is waiting
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 idle:   cmp     byte [lstate], LS_WAIT
         jne     .i
         cmp     word [irq_ptr + 2], 0
@@ -821,6 +803,7 @@ idle:   cmp     byte [lstate], LS_WAIT
 .z:     ret                             ; (the tests count wakes here)
 .s:     sti
         ret
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .i:     mov     al, [txq_n]
         or      al, [nak_pending]
         or      al, [resend]
@@ -970,6 +953,7 @@ put_hex16:                              ; AX -> ES:DI, 4 hex digits
         loop    .d
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 msg_sent:
         mov     al, [done_type]
         cmp     al, G_KEYS
@@ -1008,6 +992,7 @@ link_lost:
         jmp     term_status
 
 ; ---- frames from the Pi ------------------------------------------
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 pi_frame:                               ; BX = frame offset in rxbuf
         mov     al, [rxbuf + bx + 1]
         mov     [pf_kind], al
@@ -1019,6 +1004,7 @@ pi_frame:                               ; BX = frame offset in rxbuf
         cmp     al, P_HELLO
         je      .c
         jmp     link_fail
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .c:     mov     byte [pi_active], 1
         cmp     al, P_NOP
         jne     .h
@@ -1047,7 +1033,9 @@ rf_hello:
         inc     byte [bg_ok]
 .f:     test    byte [si+1], HF_FCS
         jz      .c
-        mov     byte [use_fl], 1
+        mov     al, [ksum]              ; (2: the driver keeps it, TERMLINK)
+        inc     ax
+        mov     [use_fl], al
 .c:     mov     byte [connected], 1
         mov     byte [n_failrun], 0
         mov     byte [rq_more], 0
@@ -1081,6 +1069,7 @@ rf_title:
 ; answer when they are done); files and GPIB: req_service, from the session's loop (F7h,
 ; DOS busy, for a file's when DOS can't be called); anything else F6h, a
 ; DOS program is paused (RUN, INFO, SETTIME, snapshots)
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 rf_request:
         cmp     byte [rq_more], 0
         jne     .c
@@ -1099,6 +1088,7 @@ rf_request:
         jbe     .p
         mov     byte [rq_over], 1
         jmp     short .m
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .p:     add     di, reqbuf
         rep     movsb
         mov     [rq_len], ax
@@ -1141,10 +1131,9 @@ rf_request:
         jne     .o
         mov     ah, 0F6h
         jmp     reply2
-.op:    cmp     ah, 20h                 ; (GPIB, and SCREEN in the background:
-        je      .go                     ;  no DOS)
-        cmp     ah, OP_SCREEN
-        je      .go
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
+.op:    cmp     si, rc_optab_dos        ; (GPIB, and SCREEN in the background:
+        jb      .go                     ;  no DOS)
         cmp     byte [dos_ok], 0
         mov     ah, 0F7h
         je      reply2
@@ -1154,9 +1143,16 @@ rf_request:
         ret
 .sc:    xor     cl, cl                  ; (no flags)
         jmp     screen_msg
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .x:     ret
 
-rc_optab:
+rc_optab:                               ; no DOS: those before rc_optab_dos (a
+                                        ;  new op that needs none goes here too)
+        db 20h
+        dw op_gpib
+        db OP_SCREEN                    ; (in the background, and kept on the way
+        dw op_bgscreen                  ;  out: the console's own is screen_msg)
+rc_optab_dos:                           ; DOS's (dos_ok)
         db 02h
         dw op_dir
         db 03h
@@ -1175,15 +1171,12 @@ rc_optab:
         dw op_stat
         db 0Ah
         dw op_free
-        db 20h
-        dw op_gpib
-        db OP_SCREEN                    ; (in the background, and kept on the way
-        dw op_bgscreen                  ;  out: the console's own is screen_msg)
         db 0
 
 ; the request rf_request took, once its REPLY can be queued (txq_put would
 ; drop it).  A file's with DOS ours meanwhile: the program's DTA, INT 23h
 ; and INT 24h aside, ours in
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 req_service:
         cmp     byte [req_ready], 0
         je      .x
@@ -1191,17 +1184,16 @@ req_service:
         jae     .x
         mov     byte [req_ready], 0
         mov     si, [rq_op]
-        cmp     byte [si], 20h          ; (GPIB and SCREEN: no DOS)
-        je      .nd
-        cmp     byte [si], OP_SCREEN
-        jne     .d
-.nd:    call    bg_count
+        cmp     si, rc_optab_dos        ; (GPIB and SCREEN: no DOS)
+        jae     .d
+        call    bg_count
         jmp     [si + 1]
 .d:     cmp     byte [dos_ok], 0        ; (settled again for each pass: one
         jne     .dk                     ;  kept from the pop-down runs in the
         mov     al, [rq_id]             ;  first)
         mov     ah, 0F7h
         jmp     reply2
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .dk:    call    bg_count
         push    si
         mov     ah, 2Fh
@@ -1290,9 +1282,19 @@ type_start:
         ret
 
 ; SCREEN in the background (or kept from the way out): the program's screen
-; as it is now, and the BIOS's video data, copied where a pop-up keeps them
-; (windows 1-2, bios: the next pop-up keeps its own), then as at a pop-up
+; as it is now, kept as at a pop-up (the next pop-up keeps its own), then as
+; at a pop-up
 op_bgscreen:
+        call    keep_screen
+        mov     al, [rq_id]
+        xor     cl, cl                  ; (no flags)
+        jmp     screen_msg
+
+; the program's screen to windows 1-2 and the BIOS's video data to bios.
+; First unborrow: a reply's bytes cut short (a link failure) go back on the
+; old copy, not on this one.  -> ES = CS
+keep_screen:
+        call    unborrow
         push    ds
         push    VSEG
         pop     ds
@@ -1311,9 +1313,7 @@ op_bgscreen:
         mov     cx, 66h - 49h + 1
         rep     movsb
         pop     ds
-        mov     al, [rq_id]
-        xor     cl, cl                  ; (no flags)
-        jmp     screen_msg
+        ret
 
 type_reply:                             ; TYPE's answer: flags, the screen
         mov     al, [type_id]
@@ -1425,6 +1425,7 @@ screen_msg:
         jmp     reply_n
 
 ; a reply's first bytes gone: the bytes they stood on back
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 unborrow:
         cmp     byte [borrow_on], 0
         je      .x
@@ -1482,6 +1483,7 @@ copyz:  call    put_str                 ; DS:SI ASCIIZ -> ES:DI (with NUL)
 .z:     mov     byte [di], 0
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 put_str:                                ; DS:SI ASCIIZ -> ES:DI (no NUL)
 .l:     lodsb
         or      al, al
@@ -1510,6 +1512,7 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 ; =====================================================================
 ;  Term's screen and keys: CLAUDE.COM's
 ; =====================================================================
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 %include "TERMCELL.INC"
 %include "CELLTEXT.INC"
 %include "TERMKEYS.INC"
@@ -1537,6 +1540,8 @@ evaway      db 04h                      ; (the user went back to the program)
 %include "GLYPHS.INC"
 
         align   2
+ioseg       dw IOSEG                    ; (OPS.INC's) the reply's segment
+shadseg     dw SHADSEG                  ; (TERMCELL's) Term's shadow, in window 3
 rc_image_end:                           ; (CLAUDE /R clears the rest of the page)
 
 absolute rc_image_end
@@ -1559,9 +1564,8 @@ old_tmo     resw 1                      ;  the program's timeout (ms) meanwhile
 sdc_due     resb 1                      ; the link failed: SDC to the bridge
 irq_ptr     resw 2                      ; the driver's SRQ count (AH=0Eh), seg 0: none
 srq_seen    resw 1                      ;  as it was at the last look
-ksum        resb 1                      ; 1: INT 60h 02h AL=3, 03h AL=2 (KSUM)
-tx_app      resb 1                      ; 1: txframe's check is the driver's to add
-lw_eoi      resb 1                      ; lw_go's AL for INT 60h 02h: 1, or 3
+ksum        resb 1                      ; 1: the driver's frame check (1.23; KSUM)
+lw_eoi      resb 1                      ; the frame's AL for INT 60h 02h: 1, or 3
 n_kok       resw 1                      ; frames ks_check passed (the tests)
 now         resw 1
 ; the link (TERMLINK.INC)
@@ -1610,7 +1614,6 @@ ks_until    resw 1
 dos_ok      resb 1                      ; 1: the file requests may call DOS
 rq_id       resb 1                      ; the request req_service runs: its id,
 rq_op       resw 1                      ;  its rc_optab entry
-ioseg       resw 1                      ; IOSEG
 gp_otmo     resw 1                      ; the driver's timeout, ours, meanwhile
 gp_dlen     resw 1
 gp_max      resw 1
@@ -1626,7 +1629,6 @@ crctab      resw 256
 t_active    resw 1
 keybuf      resw KEYMAX
 keysend     resw KEYMAX
-shadseg     resw 1
 cur_on      resb 1
 cur_di      resw 1
 t_flags     resb 1
@@ -1652,3 +1654,8 @@ section .text
         times   -(TROWS * 160 > SHADLEN) db 0           ; window 3: the shadow,
         times   -(IOSIZE > REQMAX) db 0                 ;  the request and reply,
         times   -(txframe + TXMAX + 8 > 10000h) db 0    ;  the frame
+; the hot labels even (their pads; EVEN is TERMLINK.INC's): cell and
+; term_redraw's by the pad before TERMCELL.INC
+        EVEN    bg_pass.m, prog_name.n, prog_name.l, session.loop, session.w, idle
+        EVEN    idle.z, idle.i, idle.x, pi_frame, pi_frame.c, rf_request.o, req_service
+        EVEN    req_service.x, put_str, put_str.l, cell, term_redraw.s, term_redraw.c

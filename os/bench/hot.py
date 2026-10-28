@@ -20,10 +20,17 @@ WORKLOAD: bench   BENCH.COM's ten tests (the real-drive timing model; minutes)
    CLAUDE.COM's (after claude/build.sh; mostly for "cl_taken", "st_taken"):
           cchat   CLAUDE.COM on the kernel: chat turns over the Pico link model
           cfiles  ... file requests: reads, writes, a listing, info
+          cops    ... a 22 KB file written and read back, then OPS_PROBE (every
+                  file and GPIB request, their errors too)
           crun    ... RUNs: TESTKEY with a key script (waits, a snapshot), DIR captured
           cstub   CLAUDE /R's stub under programs that ask INT 16h: the
                   Executive (AH=11h), the prompt, EMSUSE (00h, 10h), TM5000G's
                   kbhit (01h) if tools/TM5000G.EXE is there
+   resident Claude's console's (RCON over EMSUSE; "rc_taken"):
+          rterm   Term: typing, a 60-line answer; a second pop-up
+          rfiles  list, read, an 8 KB write, OPS_PROBE
+          rbg     the background passes (a quiet bridge): idle looks, a read,
+                  a write, SCREEN, a GPIB query
 OUT.json: {"taken": {offset: count}, "falls": {offset: count}}, kernel .text
 offsets (KSEG:offset) as in src/LODE.MAP, and "ui_taken", "ui_falls": section
 ui's offsets (the UI segment, ui_seg, wherever it is: it is a block of its own,
@@ -32,8 +39,10 @@ which only waits, not counted); "cl_taken", "cl_falls": CLAUDE.COM's .text
 offsets (from its PSP, up to bss: the start-up code not counted) and
 "st_taken", "st_falls": the stub's (section rstub, from its CS), both as in
 claude/CLAUDE.MAP's second column (each on a paragraph, so an offset's parity
-is the address's); all the workloads named add up.  Save src/LODE.MAP and
-claude/CLAUDE.MAP with it: the offsets are that build's."""
+is the address's); "rc_taken", "rc_falls": RCON's (claude/RCON.MAP), at
+E000:0 while its page is in window 0; all the workloads named add up.  Save
+src/LODE.MAP, claude/CLAUDE.MAP and RCON.MAP with it: the offsets are that
+build's."""
 import sys, os, re, json, struct, collections
 GOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for d in (GOS, os.path.join(GOS, 'tests'), os.path.join(GOS, 'bench')): sys.path.insert(0, d)
@@ -47,6 +56,7 @@ taken, falls = collections.Counter(), collections.Counter()
 ui_taken, ui_falls = collections.Counter(), collections.Counter()
 cl_taken, cl_falls = collections.Counter(), collections.Counter()
 st_taken, st_falls = collections.Counter(), collections.Counter()
+rc_taken, rc_falls = collections.Counter(), collections.Counter()
 
 def csyms():
     """claude/CLAUDE.MAP: {section: {label: offset}} (the second column: where it runs)"""
@@ -62,6 +72,8 @@ CL = [-1, -1, 0]                                # CLAUDE.COM's code, linear (fro
 ST = [-1, -1, 0]                                # the stub's
 def cl_at(psp): CL[:] = [psp * 16 + 0x100, psp * 16 + CY['.text']['bss'], psp * 16]
 def st_at(seg): ST[:] = [seg * 16 + 0x100, seg * 16 + CY['rstub']['r_code_end'], seg * 16]
+RC = [-1, -1, 0, None]                          # RCON's, and its page register (window 0)
+def rc_at(reg, end): RC[:] = [0xE0000, 0xE0000 + end, 0xE0000, reg]
 
 prev = [0, 0]
 ui = [0, -1, -1, None]                          # (blocks to the next look at ui_seg, its base and end, linear; the PC)
@@ -75,6 +87,8 @@ def blk(s, uc, addr, size, ud):
             (cl_falls if addr == pa + ps else cl_taken)[addr - CL[2]] += 1
         elif ST[0] <= addr < ST[1]:
             (st_falls if addr == pa + ps else st_taken)[addr - ST[2]] += 1
+        elif RC[0] <= addr < RC[1] and s.ems_reg[0] == RC[3]:
+            (rc_falls if addr == pa + ps else rc_taken)[addr - RC[2]] += 1
         else:
             if ui[0] <= 0 or ui[3] is not s:    # (it moves only at the Executive's ui_room)
                 seg = struct.unpack('<H', uc.mem_read(USEG, 2))[0]
@@ -147,6 +161,15 @@ def w_cfiles():
                  reply(('tool', E, {'command': 'view', 'path': 'A:\\NEW.TXT'})),
                  reply(('text', 'Done.'))], files={'A:\\NOTES.TXT': notes})
     assert h.turn('look at the notes', sim_s=240)
+
+def w_cops():
+    import claude_kernel as CK; from fake_anthropic import reply
+    big = ''.join('line %05d: the quick brown fox jumps over the lazy dog\n' % i for i in range(400))
+    E = 'str_replace_based_edit_tool'
+    h = c_start([reply(('tool', E, {'command': 'create', 'path': 'A:\\BIG.TXT', 'file_text': big})),
+                 reply(('tool', E, {'command': 'view', 'path': 'A:\\BIG.TXT'})), reply(('text', 'Written and read.'))])
+    assert h.turn('write a big file', sim_s=120)
+    CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60))
 
 def w_crun():
     import claude_kernel; from fake_anthropic import reply
@@ -273,12 +296,70 @@ def w_term():
 def ini(t):
     p = os.path.join(TMP, 'hot_ini.txt'); open(p, 'wb').write(t); return p
 
+# ---- resident Claude's console (RCON) -----------------------------------
+def rc_harness(**kw):
+    import test_resident_term as RT
+    h = RT.Res(more={'A:\\BIG.TXT': RT.BIG}, **kw); h.boot()
+    h.cmd('claude /r')
+    h.cmd('emsuse')
+    rc_at(h.m.rd(h.stub(), h.sym['r_hw'], 1)[0], h.rsym['rc_image_end'])
+    return RT, h
+
+def rc_up(RT, h):
+    gen = RT.generation(h)
+    h.press(RT.HOT)
+    assert RT.popped(h, gen) and h.has('Welcome to Claude Code', 30)
+
+def w_rterm():
+    RT, h = rc_harness()
+    try:
+        rc_up(RT, h)
+        for s in ('hello', 'big', 'again'):
+            h.term_type(s); h.press(RT.ENTER); RT.in_step(h)
+        h.press(RT.HOT); h.wait(lambda: h.inpop() == 0, 5)
+        rc_up(RT, h)
+        h.term_type('big'); h.press(RT.ENTER); RT.in_step(h)
+        h.press(RT.HOT); h.wait(lambda: h.inpop() == 0, 5)
+    finally:
+        h.close()
+
+def w_rfiles():
+    import claude_kernel as CK
+    RT, h = rc_harness()
+    try:
+        rc_up(RT, h)
+        for a in ({'action': 'list', 'path': 'A:\\'}, {'action': 'read', 'path': 'A:\\BIG.TXT'}):
+            RT.tool(h, 'grid_files', a)
+        RT.tool(h, 'grid_change_files', {'action': 'write', 'path': 'A:\\NOTE.TXT', 'content': 'from the pop-up\n' * 900})
+        CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40))
+        h.press(RT.HOT); h.wait(lambda: h.inpop() == 0, 5)
+    finally:
+        h.close()
+
+def w_rbg():
+    import claude_kernel as CK
+    RT, h = rc_harness(pico='quiet')
+    try:
+        rc_up(RT, h)
+        t = h.router.term
+        h.press(RT.HOT)
+        h.wait(lambda: h.inpop() == 0, 5) and h.pi_wait(lambda: t.away and h.transport.proto.quiet, 10)
+        h.run_until(lambda: False, 2)                  # (idle looks)
+        RT.tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
+        RT.tool(h, 'grid_change_files', {'action': 'write', 'path': 'A:\\NOTE.TXT', 'content': 'in the background\n' * 900})
+        RT.tool(h, 'grid_program', {})
+        RT.tool(h, 'gpib_send', {'action': 'query', 'address': 29, 'command': 'ID?'})
+        h.run_until(lambda: False, 2)
+    finally:
+        h.close()
+
 if __name__ == '__main__':
     if len(sys.argv) < 3: sys.exit(__doc__)
     for w in sys.argv[2:]:
-        print('== workload', w); CL[:] = ST[:] = [-1, -1, 0]; globals()['w_' + w]()
+        print('== workload', w); CL[:] = ST[:] = [-1, -1, 0]; RC[:] = [-1, -1, 0, None]; globals()['w_' + w]()
     json.dump({'taken': taken, 'falls': falls, 'ui_taken': ui_taken, 'ui_falls': ui_falls,
-               'cl_taken': cl_taken, 'cl_falls': cl_falls, 'st_taken': st_taken, 'st_falls': st_falls}, open(sys.argv[1], 'w'))
-    for n, c in (('kernel', taken), ('UI', ui_taken), ('CLAUDE.COM', cl_taken), ('the stub', st_taken)):
+               'cl_taken': cl_taken, 'cl_falls': cl_falls, 'st_taken': st_taken, 'st_falls': st_falls,
+               'rc_taken': rc_taken, 'rc_falls': rc_falls}, open(sys.argv[1], 'w'))
+    for n, c in (('kernel', taken), ('UI', ui_taken), ('CLAUDE.COM', cl_taken), ('the stub', st_taken), ('RCON', rc_taken)):
         t = sum(c.values())
         print('%s: %d taken entries, %.1f%% at odd addresses' % (n, t, 100.0 * sum(v for a, v in c.items() if a & 1) / max(t, 1)))

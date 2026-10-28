@@ -135,3 +135,79 @@ class KernelHarness(G.EmuHarness):
 
     def back_in_executive(s, sim_s=5):
         return s.run_until(lambda: s.m.mode() == 0x40 and s.m.u16(0x60, s.m.Y['cur_psp']) == s.m.u16(0x60, s.m.Y['root_psp']), sim_s)
+
+
+def _gp(op, addr, data=b'', tmo=100, mx=200):
+    return struct.pack('<BBBHH', op, addr, 1, tmo, mx) + data
+
+def _z(*paths): return b''.join(p.encode() + b'\0' for p in paths)
+
+# OPS.INC's requests, each with the status and reply the kernel gives: the
+# same table for CLAUDE.COM and for resident Claude's console (RCON), which
+# build the same source.  (name, op, arguments, status, the reply: its bytes,
+# or only its length)
+OPS_PROBE = [
+    ('mkdir', 7, _z('A:\\PRB'), 0, 0),
+    ('mkdir, there', 7, _z('A:\\PRB'), 5, 0),
+    ('mkdir, no path', 7, _z('A:\\NOPE\\SUB'), 3, 0),
+    ('write', 4, b'\0' + struct.pack('<I', 0) + _z('A:\\PRB\\F.TXT') + b'probe\r\n', 0, b'\x07\x00'),
+    ('rmdir, not empty', 8, _z('A:\\PRB'), 5, 0),
+    ('rename to another dir', 6, _z('A:\\PRB\\F.TXT', 'A:\\G.TXT'), 0, 0),
+    ('rename, none', 6, _z('A:\\PRB\\F.TXT', 'A:\\H.TXT'), 2, 0),
+    ('rename, no path', 6, _z('A:\\G.TXT', 'A:\\NOPE\\G.TXT'), 3, 0),
+    ('rename over a file', 6, _z('A:\\G.TXT', 'A:\\LCMD.COM'), 5, 0),
+    ('stat', 9, _z('A:\\G.TXT'), 0, 9),
+    ('stat, none', 9, _z('A:\\NONE.TXT'), 18, 0),
+    ('stat, no path', 9, _z('A:\\NOPE\\X'), 3, 0),
+    ('stat, no drive', 9, _z('Q:\\X'), 3, 0),
+    ('dir', 2, _z('A:\\PRB\\*.*'), 0, 44),
+    ('dir, none', 2, _z('A:\\NONE*.*'), 0, 0),
+    ('dir, no path', 2, _z('A:\\NOPE\\*.*'), 3, 0),
+    ('dir, no drive', 2, _z('Q:\\*.*'), 3, 0),
+    ('read', 3, struct.pack('<IH', 0, 100) + _z('A:\\G.TXT'), 0, b'probe\r\n'),
+    ('read, none', 3, struct.pack('<IH', 0, 100) + _z('A:\\NONE.TXT'), 2, 0),
+    ('delete', 5, _z('A:\\G.TXT'), 0, 0),
+    ('delete, none', 5, _z('A:\\G.TXT'), 2, 0),
+    ('delete, no path', 5, _z('A:\\NOPE\\X'), 3, 0),
+    ('rmdir', 8, _z('A:\\PRB'), 0, 0),
+    ('rmdir, none', 8, _z('A:\\PRB'), 3, 0),
+    ('free, no drive', 10, b'\x11', 15, 0),
+    ('gpib clear', 0x20, _gp(5, 29), 0, b''),
+    ('gpib remote', 0x20, _gp(8, 29), 0, b''),
+    ('gpib local', 0x20, _gp(7, 29), 0, b''),
+    ('gpib trigger', 0x20, _gp(6, 29), 0, b''),
+    ('gpib write', 0x20, _gp(1, 29, b'ID?'), 0, b''),
+    ('gpib read', 0x20, _gp(2, 29), 0, b'ID TEK/DC5009,V79.1,F2.1\r\n'),
+    ('gpib query', 0x20, _gp(3, 29, b'ID?'), 0, b'ID TEK/DC5009,V79.1,F2.1\r\n'),
+    ('gpib query, short', 0x20, _gp(3, 29, b'ID?', mx=6), 0, b'ID TEK'),
+    ('gpib spoll', 0x20, _gp(4, 29), 0, b'A'),
+    ('gpib scan', 0x20, _gp(9, 0), 0, b'\x06\x0e\x1d'),
+    ('gpib write, none', 0x20, _gp(1, 20, b'ID?'), 2, b''),
+    ('gpib read, none', 0x20, _gp(2, 20), 5, b''),
+    ('gpib query, none', 0x20, _gp(3, 20, b'ID?'), 2, b''),
+    ('gpib spoll, none', 0x20, _gp(4, 20), 1, b''),
+    ('gpib clear, none', 0x20, _gp(5, 20), 0, b''),
+    ('gpib trigger, none', 0x20, _gp(6, 20), 0, b''),
+    ('gpib local, none', 0x20, _gp(7, 20), 0, b''),
+    ('gpib remote, none', 0x20, _gp(8, 20), 0, b''),
+    ('gpib op 10', 0x20, _gp(10, 29), 4, b''),
+]
+
+OPS_WANT = [(n, st, r) for n, op, a, st, r in OPS_PROBE]
+
+def ops_probe(grid, run):
+    """OPS_PROBE through gridlink's Grid (run(cond): the machine until cond):
+    [(name, status, reply)], the reply its bytes or its length as OPS_PROBE
+    has it."""
+    out = []
+    for name, op, args, st0, r0 in OPS_PROBE:
+        r = {}
+        def call():
+            try: r['v'] = grid.call(op, args, timeout=60)
+            except Exception as e: r['v'] = (None, str(e))
+        th = threading.Thread(target=call); th.start()
+        run(lambda: not th.is_alive())
+        th.join(5)
+        st, data = r.get('v', (None, b''))
+        out.append((name, st, data if st is None else bytes(data) if isinstance(r0, bytes) else len(data)))
+    return out
