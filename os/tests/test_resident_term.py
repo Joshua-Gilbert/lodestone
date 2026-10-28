@@ -82,6 +82,9 @@ class Res(CK.KernelHarness):
     def rv(s, name, n=1):
         b = s.m.ems_read(s.page(), s.rsym[name], n)
         return int.from_bytes(b, 'little') if n <= 2 else b
+    def rw(s, name, data):                      # (the console's variables, as it would leave them)
+        a = s.page() * 0x4000 + s.rsym[name]
+        s.m.ems_store[a:a + len(data)] = data
 
     def term_cells(s):
         sh = s.m.ems_page(s.m.rd(s.stub(), s.sym['r_hw'] + 3, 1)[0])       # (the fourth page, window 3)
@@ -196,6 +199,10 @@ def t_popup():
               back and h.m.rd(0xB800, 0, 0x8000) == text0 and h.m.rd(0x40, 0x49, 30) == bios0, h.m.text_screen())
         check('... and the bridge holds no answer and no SRQ while EMSUSE runs', bridge_quiet(h),
               (h.nano.srq, h.nano.lnrdy, bytes(h.nano.pbuf)))
+        # a reply's first bytes still out on the kept screen (a background SCREEN's cut short by a link
+        # failure; here on its row 3): they go back on that copy before the screen is kept again
+        h.rw('borrowed', b'\xEE' * 12); h.rw('borrow_at', struct.pack('<H', 0x10 + 3 * 160 + 20))
+        h.rw('borrow_on', b'\1')
         # the second time: Term's screen from the shadow at once, then the Pi again
         seen = []
         b0, r0 = enc.stats['bytes'], enc.stats.get('resumes', 0)
@@ -215,7 +222,10 @@ def t_popup():
         check('the stub\'s stack: %d of %d bytes used, 96 or more spare' % (used, h.rstack()),
               h.rstack() - used >= 96, used)
         h.press(HOT)
-        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        check('... back: EMSUSE\'s screen byte for byte, the bytes a reply had borrowed put back on the old '
+              'copy before this pop-up kept the screen (unborrow before keep_screen)',
+              back and h.m.rd(0xB800, 0, 0x8000) == text0 and h.rv('borrow_on') == 0, h.m.text_screen())
         h.k.key('b'); h.k.key(ESC)
         o = h.m.text_screen()
         check('EMSUSE afterwards: its keys, and its four EMS pages whole', 'EMSUSE: 2 keys, 0 bad' in o, o)
@@ -905,11 +915,11 @@ def t_driver():
             seg = h.rv('irq_ptr', 4)[2:]
             check('[%s] the console checks the Pi\'s frames by the driver\'s sum (1.23): all %d of them'
                   % (what, st.get('tx_frames', 0)),
-                  ok and h.rv('ksum') == 1 and h.rv('use_fl') == 1 and st.get('tx_frames', 0) > 5
+                  ok and h.rv('ksum') == 1 and h.rv('use_fl') == 2 and st.get('tx_frames', 0) > 5   # (use_fl 1 before audit3 R55)
                   and abs(kok - st['tx_frames']) <= 1           # (the two counts read a frame apart at most)
                   and h.rv('n_bad', 2) == 0, (ok, h.rv('ksum'), kok, st))
             check('[%s] ... and its own go with the check the driver adds (02h AL=3), every one good at the Pi'
-                  % what, h.rv('ksum') == 1 and h.rv('use_fl') == 1 and st.get('rx_fletcher') == st.get('rx_frames') > 5
+                  % what, h.rv('ksum') == 1 and h.rv('use_fl') == 2 and st.get('rx_fletcher') == st.get('rx_frames') > 5
                   and not st.get('rx_bad'), st)
             if irq:
                 check('the SRQ interrupt\'s count found (AH=0Eh, the kernel\'s) and GF_WAKE offered',
@@ -1446,6 +1456,30 @@ def t_ops():
     finally:
         h.close()
 
+def t_ops_codes():
+    """audit3 R51: OPS.INC's file and GPIB requests from the pop-up, each one's status and reply (DOS's
+    error codes, the driver's) as claude_kernel's OPS_WANT: the table test_claude_kernel's test_ops_codes
+    holds CLAUDE.COM to (the same source in both binaries)."""
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
+        got = CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40))
+        bad = [(g, w) for g, w in zip(got, CK.OPS_WANT) if g != w]
+        check('the file and GPIB requests\' statuses and replies: %d as CLAUDE.COM\'s' % len(CK.OPS_WANT),
+              up and len(got) == len(CK.OPS_WANT) and not bad, (up, bad or got))
+        check('... the console still up, in step', h.up() and in_step(h), h.screen())
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
 def t_ops_mt():
     """With Lodestone's tasks (MULTITASK=1): files over a program at its own
     INT 16h call; DOS busy over COPY CON (MT's key wait calls INT 16h from
@@ -1652,7 +1686,7 @@ def t_bg_screen():
 
 
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen]
+         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]
