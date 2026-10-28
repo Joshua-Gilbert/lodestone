@@ -1638,8 +1638,11 @@ def t_keys():
         if prev: prev(a)
         if a == i16 and k.pc.isr and k.pc.rd(seg, Y['mt_cur'], 1)[0] == 3 and k.pc.rd(seg, Y['mt_front'], 1)[0] != 3 \
                 and k.pc.kbd_ring(): own.append(1)
+    # (Q polls with interrupts off nearly all the time: pcemu, taking a tick only where its run loop restarts
+    # with them on, held most of T's 18 for Q's whole turn, and when one got through, so how many turns T had,
+    # moved with the kernel's code; here a held tick is taken as soon as IF is set, as the PIC gives it)
     for ms in ('pd', 'qt'):
-        if ms == 'qt': k.pc.watch = w
+        if ms == 'qt': k.pc.watch, k.pc.irq_exact = w, True
         typ(k, 'mtlaunch /f mtspin.com 60 s%s.txt;mtkey.com %s %s1.txt;mtkey.com %s %s1.txt'
             % (ms, ms[0], ms[0], ms[1], ms[1]), 0.3)
         k.key('abc', settle=False)
@@ -1650,6 +1653,7 @@ def t_keys():
         kclear(k)
         waitfile(k, 'S%s.TXT' % ms.upper(), 6.0)
         line(k, '')
+    k.pc.irq_exact = False
     check('behind MTSPIN (in front, reading no keys), "abc" typed: MTKEY\'s INT 16h peeks find none (P %s), and Q\'s '
           'with interrupts off none either (%s, counting those back with interrupts on, as the BIOS\'s are: whose code '
           'it is that counts); nor DOS\'s key status, AH=06h or the flush '
