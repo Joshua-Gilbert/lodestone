@@ -82,6 +82,9 @@ class Res(CK.KernelHarness):
     def rv(s, name, n=1):
         b = s.m.ems_read(s.page(), s.rsym[name], n)
         return int.from_bytes(b, 'little') if n <= 2 else b
+    def rw(s, name, data):                      # (the console's variables, as it would leave them)
+        a = s.page() * 0x4000 + s.rsym[name]
+        s.m.ems_store[a:a + len(data)] = data
 
     def term_cells(s):
         sh = s.m.ems_page(s.m.rd(s.stub(), s.sym['r_hw'] + 3, 1)[0])       # (the fourth page, window 3)
@@ -195,6 +198,10 @@ def t_popup():
               back and h.m.rd(0xB800, 0, 0x8000) == text0 and h.m.rd(0x40, 0x49, 30) == bios0, h.m.text_screen())
         check('... and the bridge holds no answer and no SRQ while EMSUSE runs', bridge_quiet(h),
               (h.nano.srq, h.nano.lnrdy, bytes(h.nano.pbuf)))
+        # a reply's first bytes still out on the kept screen (a background SCREEN's cut short by a link
+        # failure; here on its row 3): they go back on that copy before the screen is kept again
+        h.rw('borrowed', b'\xEE' * 12); h.rw('borrow_at', struct.pack('<H', 0x10 + 3 * 160 + 20))
+        h.rw('borrow_on', b'\1')
         # the second time: Term's screen from the shadow at once, then the Pi again
         seen = []
         b0, r0 = enc.stats['bytes'], enc.stats.get('resumes', 0)
@@ -214,7 +221,10 @@ def t_popup():
         check('the stub\'s stack: %d of %d bytes used, 96 or more spare' % (used, h.rstack()),
               h.rstack() - used >= 96, used)
         h.press(HOT)
-        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        check('... back: EMSUSE\'s screen byte for byte, the bytes a reply had borrowed put back on the old '
+              'copy before this pop-up kept the screen (unborrow before keep_screen)',
+              back and h.m.rd(0xB800, 0, 0x8000) == text0 and h.rv('borrow_on') == 0, h.m.text_screen())
         h.k.key('b'); h.k.key(ESC)
         o = h.m.text_screen()
         check('EMSUSE afterwards: its keys, and its four EMS pages whole', 'EMSUSE: 2 keys, 0 bad' in o, o)
