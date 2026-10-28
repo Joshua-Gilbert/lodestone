@@ -168,18 +168,7 @@ rc_main:
         cmp     byte [es:R_BGON], 2     ; a background look (M4)
         jne     .pu
         jmp     bg_pass
-.pu:    push    ds
-        lds     si, [es:bx + P_INDOS]
-        lodsb
-        pop     ds
-        mov     [indos], al
-        mov     byte [prog], 0          ; the program's name (AH=62h, its PSP:
-        cmp     al, 1                   ;  the kernel runs a call made inside
-        ja      .pn                     ;  another on a stack of its own, its
-        mov     ah, 62h                 ;  frame there; not two deep, where
-        int     21h                     ;  that stack is an INT 24h handler's)
-        call    prog_name
-.pn:    call    dos_check
+.pu:    call    dos_probe
         call    mouse_find              ; INT 33h there?  The program's
         jz      .nm                     ;  pointer off (its own cell back
         mov     ax, 2                   ;  first, before the screen is kept)
@@ -187,13 +176,9 @@ rc_main:
         call    handler_out
 .nm:    push    cs
         pop     es
-        push    ds                      ; the BIOS's video data, and the keys
-        push    40h                     ;  typed ahead: out of its buffer
+        push    ds                      ; the keys typed ahead: out of its
+        push    40h                     ;  buffer
         pop     ds
-        mov     si, 49h
-        mov     di, bios
-        mov     cx, 66h - 49h + 1
-        rep     movsb
         cli
         mov     si, [1Ah]
         mov     di, keys
@@ -213,18 +198,7 @@ rc_main:
         sti
         pop     ds
         mov     [nkeys], cx
-        call    unborrow                ; (a background SCREEN's reply cut short:
-                                        ;  its bytes back on the old copy first)
-        push    ds                      ; the screen, to windows 1-2
-        push    VSEG
-        pop     ds
-        push    SAVESEG
-        pop     es
-        xor     si, si
-        xor     di, di
-        mov     cx, 4000h
-        rep     movsw
-        pop     ds
+        call    keep_screen             ; the screen, the BIOS's video data
         mov     ax, 0040h               ; the console
         int     10h
         push    cs
@@ -275,6 +249,25 @@ rc_main:
         int     33h
 .x:     pop     ds
         retf
+
+; DOS under the program, at a pop-up or a background look: indos; prog, the
+; program's name (AH=62h, its PSP: the kernel runs a call made inside
+; another on a stack of its own, its frame there; not two deep, where that
+; stack is an INT 24h handler's); then dos_check.  -> ES = CS
+dos_probe:
+        les     bx, [parms]
+        push    ds
+        lds     si, [es:bx + P_INDOS]
+        lodsb
+        pop     ds
+        mov     [indos], al
+        mov     byte [prog], 0
+        cmp     al, 1
+        ja      dos_check
+        mov     ah, 62h
+        int     21h
+        call    prog_name
+        ; (falls through)
 
 ; dos_ok: 1 if the file requests may call DOS (the header), after prog.
 ; The INT 16h call's frame on the stack the stub came on: the stub's pushes
@@ -396,19 +389,7 @@ bg_pass:
 .wt:    mov     bx, 2000                ; (the console's timeout for the work)
         mov     ah, 0Ah
         call    gg_call
-        les     bx, [parms]             ; DOS: as at a pop-up, for this call
-        push    ds
-        lds     si, [es:bx + P_INDOS]
-        lodsb
-        pop     ds
-        mov     [indos], al
-        mov     byte [prog], 0
-        cmp     al, 1
-        ja      .pn
-        mov     ah, 62h
-        int     21h
-        call    prog_name
-.pn:    call    dos_check
+        call    dos_probe               ; DOS: as at a pop-up, for this call
         call    mouse_find
         jz      .nm
         call    handler_out
@@ -1290,9 +1271,19 @@ type_start:
         ret
 
 ; SCREEN in the background (or kept from the way out): the program's screen
-; as it is now, and the BIOS's video data, copied where a pop-up keeps them
-; (windows 1-2, bios: the next pop-up keeps its own), then as at a pop-up
+; as it is now, kept as at a pop-up (the next pop-up keeps its own), then as
+; at a pop-up
 op_bgscreen:
+        call    keep_screen
+        mov     al, [rq_id]
+        xor     cl, cl                  ; (no flags)
+        jmp     screen_msg
+
+; the program's screen to windows 1-2 and the BIOS's video data to bios.
+; First unborrow: a reply's bytes cut short (a link failure) go back on the
+; old copy, not on this one.  -> ES = CS
+keep_screen:
+        call    unborrow
         push    ds
         push    VSEG
         pop     ds
@@ -1311,9 +1302,7 @@ op_bgscreen:
         mov     cx, 66h - 49h + 1
         rep     movsb
         pop     ds
-        mov     al, [rq_id]
-        xor     cl, cl                  ; (no flags)
-        jmp     screen_msg
+        ret
 
 type_reply:                             ; TYPE's answer: flags, the screen
         mov     al, [type_id]
