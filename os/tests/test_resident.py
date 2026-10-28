@@ -295,6 +295,9 @@ def t_rload():
     o, el = run_el(k, 'claude /r')
     m1 = memsz(k)
     check('CLAUDE /R: resident, exit code 0', 'Claude is resident: CODE-\\' in o and el == 0, (el, o))
+    blk = [b[2] for b in mcbs(k) if b[1] == 8 and b[3] == 'CLAUDE']
+    check('... the stub\'s block: 61 paragraphs and its MCB, 992 bytes (63 till the 2026-10-26 audit\'s R44 and R45)',
+          blk == [61] == [(csym('r_stack_top') - 0x100 + 15) // 16], blk)
     check('... its EMS handle kept after CLAUDE.COM ended (asked for from the stub: no program\'s)', handles() == h0 + 1,
           (h0, handles()))
     check('... at the prompt it costs DOS programs %.1f KB (the plan\'s target: 1.2 KB)' % ((m0 or 0) - (m1 or 0)),
