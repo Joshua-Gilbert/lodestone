@@ -2665,16 +2665,13 @@ resolve_direct:
         call    exists
         jc      .no
         jmp     .yes
-.try:   mov     di, [ext_at]
-        mov     si, s_dotcom
+.try:   mov     si, s_dotcom
+.t2:    mov     di, [ext_at]
         call    copyz
         call    exists
         jnc     .yes
-        mov     di, [ext_at]
-        mov     si, s_dotexe
-        call    copyz
-        call    exists
-        jnc     .yes
+        cmp     si, s_dotexe            ; (copyz leaves SI past the NUL: on
+        je      .t2                     ;  '.EXE' after '.COM')
 .no:    stc
         ret
 .yes:   mov     si, [run_rest]
@@ -2686,7 +2683,8 @@ exists: mov     dx, exec_path           ; exec_path -> CF if no such file or
         int     21h                     ;  fails with DOS's error).  SI kept
         ret
 
-; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ).  CF if not in the environment.
+; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ).  CF if not in the environment
+; (DI as it was: the callers count on it).
 env_get:
         push    ds
         push    bx
@@ -2732,7 +2730,6 @@ get_comspec:
         call    env_get
         jnc     .x
         mov     si, s_defcomspec
-        mov     di, exec_path
         call    copyz
 .x:     ret
 
@@ -2743,13 +2740,11 @@ make_outname:
         call    env_get
         jnc     .have
         mov     si, s_tmp
-        mov     di, outname
         call    env_get
         jnc     .have
         mov     ah, 19h
         int     21h
         add     al, 'A'
-        mov     di, outname
         stosb
         mov     al, ':'
         stosb
@@ -2852,24 +2847,19 @@ ks_ready:
         pop     bx
         add     sp, 2                   ; drop the caller's AX; ZF = 0
         ret
-.wait:  cmp     byte [cs:ks_wait], 0
-        jne     .waiting
-        push    ds
-        push    40h
+.wait:  push    ds                      ; (the tick, for both: interrupts are
+        push    40h                     ;  off)
         pop     ds
         mov     bx, [6Ch]
         pop     ds
+        cmp     byte [cs:ks_wait], 0
+        jne     .waiting
         mov     al, [cs:si+2]
         xor     ah, ah
-        add     bx, ax
-        mov     [cs:ks_until], bx
+        add     ax, bx
+        mov     [cs:ks_until], ax
         mov     byte [cs:ks_wait], 1
 .waiting:
-        push    ds
-        push    40h
-        pop     ds
-        mov     bx, [6Ch]
-        pop     ds
         sub     bx, [cs:ks_until]
         js      .none
         mov     byte [cs:ks_wait], 0
@@ -2979,9 +2969,8 @@ build_kv:
         stosw
         mov     si, cwdbuf
         mov     dl, 0
-        mov     ah, 47h
+        mov     ah, 47h                 ; (SI kept)
         int     21h
-        mov     si, cwdbuf
         call    put_str
         mov     si, kv_drives
         call    put_str
@@ -3173,14 +3162,15 @@ s_opt_no    db '[N] No', 0
 s_exit      db '/EXIT', 0
 s_quit      db '/QUIT', 0
 s_comspec   db 'COMSPEC=', 0
-s_defcomspec db 'A:\COMMAND.COM', 0
+s_defcomspec db 'A:\COMMAND'                ; (its .COM, 0: s_dotcom's)
+s_dotcom    db '.COM', 0
+s_dotexe    db '.EXE', 0                    ; (after s_dotcom: resolve_direct's .try)
+        times   -(s_dotcom != s_defcomspec + 10 || s_dotexe != s_dotcom + 5) db 0
 s_temp      db 'TEMP=', 0
 s_tmp       db 'TMP=', 0
 s_outfile   db 'CLAUDE.OUT', 0
 s_slashc    db ' /C ', 0
 s_redir     db ' >', 0
-s_dotcom    db '.COM', 0
-s_dotexe    db '.EXE', 0
 kv_os       db 'os=MS-DOS ', 0
 kv_cwd      db 10, 'cwd=', 0
 kv_drives   db 10, 'drives=', 0

@@ -130,6 +130,19 @@ def test_run_program_with_keys():
     check(h)
 
 
+def test_run_exe_found():
+    """A first word without a dot is looked for as NAME.COM, then NAME.EXE (TESTKEY's bytes as KEYS.EXE:
+    no MZ, so DOS loads it as a .COM), and that is run directly."""
+    import grid_emu
+    h = start([reply(('tool', 'grid_command', {'command': 'KEYS', 'capture': False, 'keys': 'ab{ESC}'})),
+               reply(('text', 'Done.'))], mode='auto', files={'A:\\KEYS.EXE': open(grid_emu.TESTKEY_COM, 'rb').read()})
+    assert h.turn('run keys', sim_s=30)
+    text = str(results(h, 1)[0]['content'])
+    assert 'Exit code: 2' in text and any('[EXEC A:\\KEYS.EXE' in str(l) for l in h.m.log) \
+        and not any('/C KEYS' in str(l) for l in h.m.log), (text, h.m.log)        # (not through the shell)
+    check(h)
+
+
 def test_dos_command_capture():
     h = start([reply(('tool', 'grid_command', {'command': 'DIR'})),
                reply(('text', 'There are a few files.'))], mode='auto', files={'A:\\CFG.C': CFG_C})
@@ -138,6 +151,29 @@ def test_dos_command_capture():
     text = str(res['content'])
     assert 'CFG' in text and 'CLAUDE' in text, text
     assert 'A:\\CLAUDE.OUT' not in h.m.fs            # read, then deleted
+    check(h)
+
+
+def test_run_defaults():
+    """COMSPEC, TEMP and TMP not in CLAUDE's environment: the shell is A:\\COMMAND.COM and the capture
+    goes to the current drive's root.  (The stand-in DOS: started in A:\\WORK, which the HELLO's cwd says.)"""
+    emu = EmuHarness.__name__ == 'EmuHarness'   # (not test_claude_kernel.py's Lodestone kernel)
+    h = EmuHarness([reply(('tool', 'grid_command', {'command': 'DIR'})), reply(('text', 'Done.'))], mode='auto',
+                   files={'A:\\WORK\\CFG.C': CFG_C} if emu else {})
+    if emu: h.m.dirs.add('A:\\WORK\\'); h.m.cwd = 'A:\\WORK\\'
+    h.boot()
+    env = h.m.u16(h.claude_psp, 0x2C)
+    raw = bytearray(h.m.rd(env, 0, 512))
+    for v in (b'\0COMSPEC=', b'\0TEMP=', b'\0TMP='):
+        i = (b'\0' + raw).find(v)
+        if i >= 0: raw[i] = ord('X')
+    h.m.wr(env, 0, bytes(raw))
+    assert h.connect(), ('no connection', h.m.crash)
+    assert not emu or h.session.hello.get('cwd') == 'A:\\WORK', h.session.hello
+    assert h.turn('what is on the disk?')
+    assert any('[EXEC A:\\COMMAND.COM /C DIR >A:\\CLAUDE.OUT]' in str(l) for l in h.m.log), h.m.log
+    text = str(results(h, 1)[0]['content'])
+    assert not emu or ('CFG' in text and 'A:\\CLAUDE.OUT' not in h.m.fs), text
     check(h)
 
 
