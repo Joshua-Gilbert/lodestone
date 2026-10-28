@@ -1,0 +1,124 @@
+"""Where to put the kernel's parity pads (LODE.ASM's EVEN list), from hot.py's
+counts.  The resident .text splits into runs between points no path falls
+through (after a JMP, RET or data); a pad byte at a run's head moves that run
+and everything after it, up to the next self-correcting pad (KGPIB's fast
+loops', `times ($ - $$) & 1`; one emitting 0 bytes now would emit 1 if what
+comes before moved by one).  A DP finds, for each byte budget, the run
+heads that put the fewest taken entries on odd addresses.
+    python3 bench/plan.py B HOT.json...              (from os/, on the build
+                                                       HOT.json was made on)
+B: the most pad bytes (the slack: image_end - lastdrv - 1).  Each HOT.json
+weighs the same (NORM=0: raw counts).  NOPAD=lo-hi,... (hex): no pads there
+(the GPIB fast loops: gp_fast_write up to after gp_fast_read).  SHOW=n: the
+plan for n bytes (default B).
+Output: per budget the share of taken entries left odd and the run heads;
+then, for the plan shown, its sites (pad each with `times ($ - $$) & 1 db
+90h` before the label marked E, or `($ + 1 - $$)` for O), and the hot labels
+(THR: the count) even and odd after it: the even ones go in the EVEN list."""
+import os, re, sys, json, collections
+GOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(GOS, 'src')
+
+def parse(lst, mp):
+    """.text from the listing: (offset, size, code/xfer/data, source); the map's .text labels by offset"""
+    sec, items = '.text', []
+    for l in open(lst, encoding='latin-1'):
+        m = re.match(r'^\s*\d+\s+(?:([0-9A-F]{8})\s+([0-9A-F\[\]\(\)]+)(-?)\s+)?(?:<\d+>\s?)?(.*)$', l.rstrip('\n'))
+        if not m: continue
+        addr, hexb, cont, src = m.groups()
+        code = src.split(';')[0].strip()
+        ms = re.match(r'(?i)^\[?section\s+(\S+?)\]?(\s|$)', code)
+        if ms: sec = ms.group(1); continue
+        if re.match(r'(?i)^\[?absolute', code): sec = 'abs'; continue
+        if sec != '.text': continue
+        if not addr:                            # a self-correcting pad of 0 bytes has no address
+            if '$$) & 1 db 90h' in code and items:
+                items.append((items[-1][0] + items[-1][1], 0, 'data', code))
+            continue
+        n = len(re.sub(r'[\[\]\(\)]', '', hexb)) // 2
+        if cont == '-' and not code:            # (a long line's next bytes)
+            if items: items[-1] = items[-1][:1] + (items[-1][1] + n,) + items[-1][2:]
+            continue
+        op = re.sub(r'^[\w.$@?]+:\s*', '', code)
+        ws = [x.lower() for x in op.split()]
+        DATA = ('db', 'dw', 'dd', 'times', 'incbin')
+        kind = 'data' if ws and (ws[0] in DATA or ws[1:2] and ws[1] in DATA) else \
+               'xfer' if ws and ws[0] in ('jmp', 'ret', 'retf', 'iret') else 'code'
+        items.append((int(addr, 16), n, kind, code))
+    syms, s = {}, None
+    for l in open(mp, encoding='latin-1'):
+        m = re.match(r'---- Section (\S+)', l)
+        if m: s = m.group(1); continue
+        m = re.match(r'\s+([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$', l)
+        if m and s == '.text': syms.setdefault(int(m.group(2), 16), []).append(m.group(3))
+    return items, syms
+
+def main():
+    if len(sys.argv) < 3: sys.exit(__doc__)
+    B = int(sys.argv[1])
+    items, syms = parse(os.path.join(SRC, 'LODE.LST'), os.path.join(SRC, 'LODE.MAP'))
+    tot = collections.Counter()
+    for f in sys.argv[2:]:
+        c = {int(k): v for k, v in json.load(open(f))['taken'].items()}
+        if os.environ.get('NORM', '1') != '0':
+            s = sum(c.values()); c = {k: v * 250000 // s for k, v in c.items()}
+        tot.update(c)
+    after = {a + n: (k, t) for a, n, k, t in items if n}
+    SC = {a + n: n for a, n, k, t in items if k == 'data' and '$$) & 1 db 90h' in t}
+    heads = sorted(set([0] + [a for a, (k, t) in after.items() if k in ('xfer', 'data')] + list(SC)))
+    runs = []
+    for i, s in enumerate(heads):
+        e = heads[i + 1] if i + 1 < len(heads) else 1 << 20
+        runs.append((s, sum(v for a, v in tot.items() if s <= a < e and not a & 1),
+                        sum(v for a, v in tot.items() if s <= a < e and a & 1)))
+    NOPAD = [tuple(int(x, 16) for x in r.split('-')) for r in os.environ.get('NOPAD', '').split(',') if r]
+    total = sum(tot.values())
+    data_at = {a for a, n, k, t in items if k == 'data' and n}     # (no pad in front of data)
+    print('as built: %.2f%% of taken entries odd' % (100.0 * sum(r[2] for r in runs) / total))
+    best = {(0, 0): (0, [])}                   # (flipped, bytes) -> (entries even, run heads padded)
+    rank = lambda vp: (vp[0], -len(vp[1]))      # (a tie: fewer pads)
+    for s, E, O in runs:
+        if s in SC:                             # a self-correcting pad: parity as built again
+            b2 = {}
+            for (d, b), vp in best.items():
+                key = (0, b + (d and (1 if SC[s] == 0 else -1)))
+                if key not in b2 or rank(b2[key]) < rank(vp): b2[key] = vp
+            best = b2
+        nb = {}
+        for (d, b), (val, path) in best.items():
+            for nd in (0, 1):
+                if nd != d and (s in SC or s in data_at or any(lo <= s < hi for lo, hi in NOPAD)): continue
+                key = (nd, b + (nd != d))
+                if key[1] > B: continue
+                vp = (val + (O if nd else E), path + ([s] if nd != d else []))
+                if key not in nb or rank(nb[key]) < rank(vp): nb[key] = vp
+        best = nb
+    name = lambda a: '/'.join(syms.get(a, ['?']))
+    last = -1
+    for b in range(min(k[1] for k in best), B + 1):
+        c = [vp for (d, bb), vp in best.items() if bb == b]
+        if c:
+            v, p = max(c, key=rank)
+            if v <= last: continue              # (a byte more that buys nothing)
+            last = v
+            print('%2d B: %.2f%% of taken entries odd   %s' % (b, 100.0 * (total - v) / total, ' '.join('%04X:%s' % (x, name(x)[:20]) for x in p)))
+    NB = int(os.environ.get('SHOW', B))
+    v, p = max((vp for (d, bb), vp in best.items() if bb == NB), key=rank)
+    ev = sorted([(x, 'T') for x in p] + [(x, 'S') for x in SC])
+    def shift(a):
+        sh = 0
+        for x, k in ev:
+            if x > a: break
+            if k == 'T': sh += 1
+            elif sh & 1: sh += 1 if SC[x] == 0 else -1
+        return sh
+    print('\nplan for %d B (net %d):' % (NB, shift(1 << 20)))
+    for x in p:
+        print('  pad before %04X %-26s -> %s   (after: %s)' % (x, name(x)[:26], 'O' if (x + shift(x)) & 1 else 'E', after.get(x, ('', ''))[1][:40]))
+    thr = int(os.environ.get('THR', 1500))
+    lab = [(a, n) for a, n in sorted(tot.items()) if a in syms and n >= thr]
+    print('\neven after (>= %d):' % thr, ' '.join(name(a) for a, n in lab if not (a + shift(a)) & 1))
+    print('\nodd after (>= %d):' % thr, ' '.join('%s:%d' % (name(a), n) for a, n in lab if (a + shift(a)) & 1))
+
+if __name__ == '__main__':
+    main()

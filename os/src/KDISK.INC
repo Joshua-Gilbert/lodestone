@@ -157,6 +157,7 @@ drv_present:
         cmp     byte [si+D_PRES], 1     ; (CF if 0)
 .no:    ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; AL = drive -> DI = its current directory ("\DIR\SUB").  AH changed
 ; (KMDISK.INC: M:'s)
 cwd_of: xor     ah, ah
@@ -517,6 +518,7 @@ fat_flush:
         jnz     .run
         inc     bx
         jmp     .k
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .run:   mov     di, bx                  ; [BX, DI) changed
 .r:     inc     di
         cmp     di, [si+D_SPF]
@@ -601,6 +603,7 @@ fat_flush_drv:
         clc
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; AX = cluster -> AX = its FAT entry, as FAT16's (FF0h-FFFh: FFF0h-FFFFh)
 fat_get:
         push    bx
@@ -641,13 +644,11 @@ fat_set:
         mov     cl, bh
         shr     cl, 1
         mov     dx, 1
-        shl     dx, cl
-        or      [fat_dmask], dx
         inc     bx
-        mov     cl, bh
-        shr     cl, 1
-        mov     dx, 1
-        shl     dx, cl
+        test    bx, 511
+        jnz     .one
+        mov     dl, 3                   ; (BX+1 starts the next sector)
+.one:   shl     dx, cl
         or      [fat_dmask], dx
         pop     cx
         pop     dx
@@ -655,6 +656,7 @@ fat_set:
         pop     ax
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; cluster AX -> LBA AX of its first sector (KHD.INC: [lba_hi] the high
 ; part of C:'s)
 clu2lba:
@@ -791,6 +793,7 @@ buf_getd:
         mov     cx, 1
 .hk:
         jmp     short buf_get.s
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 buf_get:
         push    bx
         push    cx
@@ -977,6 +980,7 @@ tc_room:
 .all:   mov     ax, 128
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; ---------------------------------------------------------------------
 ;  transfers.  AL = drive, AH = 2 read / 3 write, DX = LBA, CX = sectors,
 ;  ES:BX = memory.  Split at track ends and 64 KB DMA boundaries; a
@@ -1332,6 +1336,7 @@ tc_piece:
         mov     al, 1
         clc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .not:   pop     cx
 .no:    xor     al, al
         clc

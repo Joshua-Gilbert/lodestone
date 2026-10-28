@@ -44,11 +44,13 @@ cur_mon     resb 1
 cur_day     resb 1
             alignb 2
 kstack_end  resb 1536           ; INT 21h stack (a screen capture may use
-kstack_top:                     ;  its bottom 1 KB as a buffer)
+kstack_top:                     ;  its bottom 1 KB as a buffer: CAP_SEG)
             resb 512
 astack_top:                     ; nested INT 21h (from INT 24h handlers)
 ui_seg      resw 1              ; the UI segment (core + Executive), see LODE.ASM
 section .text
+; that 1 KB as a segment, folded (bss_start is image_end: LODE.ASM)
+CAP_SEG equ KSEG + (((image_end - start) + (kstack_end - bss_start) + 15) >> 4)
 
 ; ---------------------------------------------------------------------
 ;  interrupt vectors
@@ -249,9 +251,7 @@ capture:
 .nol:   sbb     ax, ax
         push    ax                      ; (FFFFh: not lent)
         jnc     .buf
-        mov     ax, kstack_end + 15
-        shr     ax, 4
-        add     ax, KSEG
+        mov     ax, CAP_SEG
         mov     es, ax
         mov     cx, 1024
 .buf:   mov     [cap_lim], cx
@@ -370,9 +370,7 @@ capture:
         cwd
         int     21h
         pop     cx
-        mov     ax, kstack_end + 15
-        shr     ax, 4
-        add     ax, KSEG
+        mov     ax, CAP_SEG
         mov     es, ax
         mov     [prn_call+2], ax
         mov     word [prn_call], 0
@@ -476,6 +474,7 @@ int21:  sti
         shl     bx, 1
         jmp     [ftab+bx]
 
+        times ($ - $$) & 1 db 90h       ; (hot: the exits even, LODE.ASM)
 ; CF: fail (AX = the error), else ok
 ret_cf: jc      fail
 ; return to the caller with CF clear
@@ -584,23 +583,14 @@ s_ctrlc db '^C', 13, 10, 0
 ; =====================================================================
 ; AL -> the screen through the BIOS (tabs expanded).  Keeps registers.
 tty_out:
-        push    ax
-        push    bx
         cmp     al, 9
-        jne     .one
-.tab:   mov     al, ' '
-        call    .put
-        test    byte [cs:con_col], 7
-        jnz     .tab
-        jmp     .x
-.one:   call    .put
-.x:     pop     bx
-        pop     ax
-        ret
+        je      .tab                    ; (anything else falls through)
 .put:   push    ax
+        push    bx
         mov     ah, 0Eh
         mov     bx, 0007h
         int     10h
+        pop     bx
         pop     ax
         cmp     al, 13
         je      .cr
@@ -617,6 +607,13 @@ tty_out:
 .bs:    cmp     byte [cs:con_col], 0
         je      .r
         dec     byte [cs:con_col]
+        ret
+.tab:   push    ax
+.sp:    mov     al, ' '
+        call    .put
+        test    byte [cs:con_col], 7
+        jnz     .sp
+        pop     ax
         ret
 
 ; AL -> standard output (handle 1, possibly redirected).  Keeps registers.

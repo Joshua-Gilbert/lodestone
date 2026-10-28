@@ -742,6 +742,12 @@ gpib_init:
         cli
         mov     word [es:60h*4], gp_entry
         mov     [es:60h*4+2], cs
+        mov     ax, [es:gp_IRQVEC*4]    ; INT 0Dh: ours from here on (the one
+        mov     [gp_oldirq], ax         ;  found is kept for INT 0Dh's exception)
+        mov     ax, [es:gp_IRQVEC*4+2]
+        mov     [gp_oldirq+2], ax
+        mov     word [es:gp_IRQVEC*4], gp_isr
+        mov     [es:gp_IRQVEC*4+2], cs
         sti
         pop     es
         mov     byte [gp_ok], 1

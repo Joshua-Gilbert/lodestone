@@ -67,6 +67,7 @@ gp_handler:
         mov     ax, gp_E_BUSY
         stc
         retf    2
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .go:    mov     byte [cs:gp_busy], 1
         sti
         cld
@@ -90,7 +91,7 @@ gp_handler:
         mov     bl, ah
         cmp     bl, gp_NFUNC
         jb      .ok
-        mov     byte [gp_err], gp_E_FUNC
+.bad:   mov     byte [gp_err], gp_E_FUNC     ; (also function 0Dh: the same pushes)
         mov     ax, gp_E_FUNC
         jmp     .out
 .ok:    xor     bh, bh
@@ -115,7 +116,7 @@ gp_done    equ     gp_handler.out
 
 gp_functab dw gp_f_present, gp_f_init, gp_f_write, gp_f_read, gp_f_query, gp_f_spoll
         dw gp_f_clear, gp_f_trigger, gp_f_remote, gp_f_local, gp_f_timeout, gp_f_srq
-        dw gp_f_stats, gp_f_bad, gp_f_irq ; (0Dh, the standalone's unload: the
+        dw gp_f_stats, gp_handler.bad, gp_f_irq ; (0Dh, the standalone's unload: the
 gp_NFUNC   equ ($-gp_functab)/2         ;  bad-function answer, as it is built in)
 
 ; ---- function bodies: return AX (and CX/DX where documented) -------
@@ -286,10 +287,6 @@ gp_f_irq:
         mov     cx, gp_nsrq
         mov     dx, cs
         jmp     gp_done
-
-gp_f_bad:
-        mov     ax, gp_E_FUNC
-        jmp     gp_fin_ax
 
 gp_f_stats:
         mov     ax, [gp_recov]
@@ -746,6 +743,7 @@ gp_spoll:  call    gp_ensure_ctrl
         call    gp_spoll_end
         stc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .got:   mov     dx, gp_R_DIR
         in      al, dx                  ; status byte (handshake held)
         push    ax
@@ -895,6 +893,7 @@ gp_ensure_ctrl:
         pop     ax
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 gp_clear_in:
         push    ax
         push    dx
@@ -972,6 +971,7 @@ gp_wait_co:
         pop     ax
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; =====================================================================
 ;  LODESTONE: SRQ on IRQ 5 (INT 0Dh).  The 7210 interrupts on SRQ only
 ;  (IMR2 SRQI).  GPIBIRQ 1.0 on the 1520: one IRQ 5 an SRQ, at once, and it
@@ -1019,28 +1019,16 @@ gp_isr:    push    ax
 .not:   pop     ax
         jmp     far [cs:gp_oldirq]
 
-; IRQ 5 on: our vector (once; the one we found is kept for INT 0Dh's
-; exception), SRQI in IMR2, IRQ 5 unmasked.  An SRQI already latched goes
-; into the shadow first, so it doesn't fire at once.
+; IRQ 5 on (the vector is ours from gpib_init): SRQI in IMR2, IRQ 5
+; unmasked.  An SRQI already latched goes into the shadow first, so it
+; doesn't fire at once.
 gp_irq_on:
         cmp     byte [gp_irq], 0
         jne     .x
         push    ax
         push    dx
-        push    es
-        push    0
-        pop     es
         cli
-        cmp     byte [gp_hooked], 0
-        jne     .h
-        mov     byte [gp_hooked], 1
-        mov     ax, [es:gp_IRQVEC*4]
-        mov     [gp_oldirq], ax
-        mov     ax, [es:gp_IRQVEC*4+2]
-        mov     [gp_oldirq+2], ax
-        mov     word [es:gp_IRQVEC*4], gp_isr
-        mov     [es:gp_IRQVEC*4+2], cs
-.h:     mov     byte [gp_irq], 5
+        mov     byte [gp_irq], 5
         mov     byte [gp_imr2], gp_ISR2_SRQ
         mov     byte [gp_irqn], 0
         mov     dx, gp_R_ISR2
@@ -1052,7 +1040,6 @@ gp_irq_on:
         and     al, ~gp_IRQBIT
         out     21h, al
         sti
-        pop     es
         pop     dx
         pop     ax
 .x:     ret
@@ -1088,7 +1075,6 @@ gp_c_al    db 0
 gp_irq     db 0                     ; LODESTONE: 5 while SRQ comes on IRQ 5
 gp_imr2    db 0                     ;  IMR2 for gp_chip_init (SRQI, or 0)
 gp_irqn    db 0                     ;  interrupts in tick gp_irqt
-gp_hooked  db 0                     ;  INT 0Dh is ours
 gp_irqt    dw 0
 gp_nsrq    dw 0                     ;  +1 every interrupt (AH=0Eh's DX:CX)
 gp_oldirq  dw 0, 0                  ;  INT 0Dh as we found it
