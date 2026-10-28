@@ -4610,7 +4610,7 @@ mt_i16:
         je      .k                      ;  program's own code (not a TSR's
 .own:   mov     ax, [bp+4]              ;  hook's, the ROM's, the frame's)?
         call    mt_mine
-        jc      .pas
+        jc      .fd
         lea     bx, [bp+8]              ; where it may be switched from?
         mov     [cs:mt_lsp], bx
         mov     bx, [bp+2]
@@ -4648,10 +4648,17 @@ mt_i16:
         sti
         hlt
         jmp     .top
+.fd:    mov     al, [cs:mt_cur]         ; (a hook's call, a TSR chaining on
+        cmp     al, [cs:mt_front]       ;  with PUSHF / CALL FAR: no switch
+        jne     .pas                    ;  there, but in front the keys AH=00h
+        jmp     short .kf               ;  and 01h skip dropped by MT all the
+        nop                             ;  same, Resident Claude's CODE-\ kept.
+                                        ;  The NOP: what follows keeps its
+                                        ;  parity)
 .k:     mov     al, [cs:mt_cur]
         cmp     al, [cs:mt_front]
         jne     .kb
-        test    byte [bp+I16_AH], 0FEh  ; in front, AH=00h or 01h: the keys
+.kf:    test    byte [bp+I16_AH], 0FEh  ; in front, AH=00h or 01h: the keys
         jnz     .pas                    ;  they skip dropped by MT first, so
         call    mt_drop                 ;  the BIOS's own drops none (a key
         jnz     .pas                    ;  typed after MT looked: seen at the
