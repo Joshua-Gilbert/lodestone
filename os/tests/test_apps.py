@@ -2697,10 +2697,15 @@ def t_menu():
     base = k.u16('run_base')
     k.key('U')
     dcf = k.pc.u16(k.useg, base + sy['dcf'])
-    k.key('W'); gw = struct.unpack('<4H', k.rd('help_w', 8)); k.key(ktest.ESC)
+    s0 = k.pc.rd(0xB800, 0, 0x8000)
+    k.key('W'); gw = struct.unpack('<4H', k.rd('help_w', 8)); hl = dict(k.ocr()).get(192, ''); k.key(ktest.ESC)
+    back = k.pc.rd(0xB800, 0, 0x8000) == s0
     k.key(ktest.ESC, ktest.ESC)
     check('no mouse: UI_MOUSE says so (CF)', dcf == 0xFFFF and k.rd('run_active', 1) == b'\x00' and not k.crashed, dcf)
-    check('UI_HELP, a line of 90 characters: 78 wide, the most, centred (column 1, row 164, 52 high)', gw == (1, 164, 78, 52), gw)
+    s_long = 'A very long item, longer than a line of the screen: ninety characters, and then some more.'
+    check('UI_HELP, a line of 90 characters: 78 wide, the most, centred (column 1, row 164, 52 high); the line cut at the '
+          'inner edge (its first 72 characters, columns 4-75, two blank before the frame); ESC: the screen exactly as it was',
+          gw == (1, 164, 78, 52) and hl[4:76] == s_long[:72] and hl[76:].strip() == '' and back, (gw, hl, back))
 
 CLIPTEST = os.path.join(HERE, 'CLIPTEST.RUN')
 CLIPPAT = bytes((i * 7 + 3) & 0xFF for i in range(16385))
