@@ -3738,6 +3738,7 @@ res_load:
         jc      .nomt
         mov     [es:r_mt], ax
         mov     [es:r_mt + 2], dx
+        mov     byte [es:r_int16.mp], 0EBh      ; (JMP SHORT: see .mp)
 .nomt:  mov     dx, s_r_ok
         mov     ah, 9
         int     21h
@@ -3957,9 +3958,12 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         call    r_bg                    ;  puts .pk odd and the calls' returns
         call    r_feed                  ;  even.  Claude's keys first: not
         jnc     .rt                     ;  ZF, a key)
-        test    ah, 10h                 ; (AH=11h drops none: on to the BIOS)
-        jnz     .ch
-        call    r_look                  ; none, or the hot key next: ZF; else
+        test    ah, 10h                 ; (AH=11h drops none: on to the BIOS.
+.mp:    jnz     .ch                     ;  Under Lodestone's MT CLAUDE /R makes
+        call    r_look                  ;  this a JMP: MT then sees the program's
+                                        ;  own peek, and its mt_drop keeps the
+                                        ;  hot key as r_look does.)  None, or
+                                        ;  the hot key next: ZF; else
         jnz     .ch                     ;  the caller's AH=01h on (interrupts
 .rt:    retf    2                       ;  on: the BIOS's)
         times   ($ - $$) & 1 db 90h     ; (.ch even)
