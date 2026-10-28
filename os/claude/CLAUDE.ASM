@@ -116,6 +116,20 @@ RC_NANO  equ 2                  ; the console's `nano` (RCON.ASM): /A:nn
 RC_FEED  equ 5                  ;  and its feeder of Claude's keys (TYPE)
 R_BGT    equ 4                  ; M4: ticks between background looks (~220 ms)
 
+; Hot code on even offsets (a taken jump to an odd one costs the 286 a
+; fetch): os/bench/hot.py's counts over chat, file and RUN turns, and the
+; stub's under programs asking INT 16h; plan.py placed the pads (each
+; `times ($ - $$) & 1`, after a JMP or RET).  These labels must stay even,
+; or no build (both the copy and the address: CLAUDE.COM's PSP and the
+; stub's block are paragraphs).  The lists are at the code's end, before
+; bss and the stub's r_code_end.
+%macro EVEN 1-*
+%rep %0
+        times   -((%1 - $$) & 1) db 0
+%rotate 1
+%endrep
+%endmacro
+
 
 ; =====================================================================
 ;  start-up
@@ -323,6 +337,7 @@ redraw_body:
 
 %include "TERMCELL.INC"
 
+        times   ($ - $$) & 1 db 90h     ; (draw_line.l and CELLTEXT's loops even)
 ; DS:SI -> 80 (char, attribute) pairs, DX = screen row, ES = VSEG
 draw_line:
         pusha
@@ -3240,9 +3255,14 @@ t437        db '*', 0C0h, '.', '>', 0FBh, 'x', 0FAh                 ; 80h-86h
             align 2                     ; (the glyphs are read a word at a time)
 %include "TERMINUS.INC"
 %include "GLYPHS.INC"
+%ifndef PROFILE                         ; (CLAUDEP.COM: its own layout)
+        EVEN    cell.a, cell.b, cell.c, cell.d, draw_line.l, draw_strn.l, blank_row.l
+        EVEN    prow78.l, prow78.c, prow78.d, line_off, line_off.a, put_str.l
+        EVEN    conv_putc, conv_putc.a, conv_putc.b, conv_putc.c, conv_text.n
+%endif
 
             align 16
-bss:                                    ; from here, in the file only, what
+bss:                                   ; from here, in the file only, what
                                         ;  CLAUDE /R and /U use, and the
                                         ;  console (RCON.ASM): BSS overlays
                                         ;  it all, so chat and Term runs
@@ -3964,8 +3984,10 @@ r_front:
 ; console's feeder runs with its page in window 0 and the program's back
 ; after; when the keys are done it sets r_pend, and the console comes.
 r_feed: cmp     byte [cs:r_ks], 0
-        je      .no
-        call    r_front                 ; (the front task's alone: a call from
+        jne     .k
+.no:    stc
+.x:     ret
+.k:     call    r_front                 ; (the front task's alone: a call from
         jne     .wk                     ;  behind, after a CODE-Tab, tells MT)
         push    dx
         push    bx
@@ -3988,8 +4010,8 @@ r_feed: cmp     byte [cs:r_ks], 0
         mov     al, 1                   ;  or just done (r_pend: the console
         call    r_tell                  ;  to come): MT told (mt_tsrk), or a
         pop     ax                      ;  wait at our HLT would never end
-.no:    stc
-.x:     ret
+        stc
+        ret
 
 ; MT's byte of ours (mt_tsrk) = AL, if Lodestone's multitasking asked.
 ; Registers kept
@@ -4024,9 +4046,17 @@ r_hot:  cmp     byte [cs:r_off], 0
         pop     ds
         cli
         mov     bx, [1Ah]               ; from the head
-.s:     cmp     bx, [1Ch]
-        je      .p
-        mov     ax, [bx]
+.s:     cmp     bx, [1Ch]               ; (none, and none taken: straight
+        jne     .k                      ;  through)
+        cmp     byte [cs:r_pend], 0
+        jne     .p
+.no:    sti
+        pop     ds
+        pop     si
+        pop     bx
+        pop     ax
+.x:     ret
+.k:     mov     ax, [bx]
         cmp     ax, R_HOTRAW
         je      .m
         cmp     ax, R_HOT
@@ -4042,9 +4072,7 @@ r_hot:  cmp     byte [cs:r_off], 0
         mov     [si], ax
         jmp     .mv
 .e:     mov     [1Ch], si               ; the tail one back
-.p:     cmp     byte [cs:r_pend], 0
-        je      .no
-        call    r_front                 ; (a background task's call: at the
+.p:     call    r_front                 ; (a background task's call: at the
         jne     .df                     ;  front one's, over its screen)
         call    r_isr
         jnz     .no
@@ -4062,18 +4090,24 @@ r_hot:  cmp     byte [cs:r_off], 0
         inc     byte [cs:r_pend]        ;  so its call does; MT clears it as
         mov     al, 1                   ;  it gives it)
         call    r_tell
-.no:    sti
-        pop     ds
-        pop     si
-        pop     bx
-        pop     ax
-.x:     ret
+        jmp     .no
 .nx:    inc     bx                      ; the next word, round the buffer
         inc     bx
         cmp     bx, [82h]
         jb      .n
         mov     bx, [80h]
 .n:     ret
+
+; the PIC's in-service register, then back to the request one (as the
+; kernel's screen capture does): AH, and ZF if nothing is in service
+r_isr:  mov     al, 0Bh
+        out     20h, al
+        in      al, 20h
+        mov     ah, al
+        mov     al, 0Ah
+        out     20h, al
+        or      ah, ah
+        ret
 
 ; M4: a background look, if the console asked for them (r_bgon 1: the user
 ; went back to the program with the link up), none was made for R_BGT
@@ -4098,18 +4132,17 @@ r_bg:   cmp     byte [cs:r_bgon], 1
         cmp     ax, R_BGT
         jb      .n
         call    r_isr
-        jnz     .n
-        mov     ax, [6Ch]
-        mov     [cs:r_bgt], ax
-        mov     byte [cs:r_bgon], 2
-        pop     ds
-        pop     ax
-        jmp     short r_popup
+        jz      .go
 .n:     pop     ds
         pop     ax
 .x:     ret
 .o:     mov     byte [cs:r_bgon], 0     ;  (so it clears it for that one)
         ret
+.go:    mov     ax, [6Ch]
+        mov     [cs:r_bgt], ax
+        mov     byte [cs:r_bgon], 2
+        pop     ds
+        pop     ax                      ; (falls into r_popup)
 
 r_popup:
         mov     byte [cs:r_inpop], 1
@@ -4164,17 +4197,6 @@ r_outw: mov     dx, R_EPORT
         ret
         times   -(R_PAGES != 4) db 0
 
-; the PIC's in-service register, then back to the request one (as the
-; kernel's screen capture does): AH, and ZF if nothing is in service
-r_isr:  mov     al, 0Bh
-        out     20h, al
-        in      al, 20h
-        mov     ah, al
-        mov     al, 0Ah
-        out     20h, al
-        or      ah, ah
-        ret
-
 ; CLAUDE /R allocates the EMS pages through here, far: the kernel gives
 ; pages asked for from outside a program's memory to no program (KEMS.INC),
 ; so they aren't taken back when CLAUDE.COM ends
@@ -4185,6 +4207,11 @@ r_code_end:                             ; (the stack follows the code in the
 r_stack_top equ r_code_end + R_STACK    ;  stub's block, not in CLAUDE.COM)
 r_end   equ     r_stack_top
 R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
+; the stub's hot code even, by its order (r_isr between r_hot and r_bg), no
+; pads; a peek's r_hot and r_feed go straight through
+%ifndef STUB_PAD                        ; (the tests: another version's layout)
+        EVEN    r_int16, r_int16.ch, r_feed, r_hot, r_hot.s, r_hot.k, r_hot.nx, r_hot.n, r_bg, r_bg.x
+%endif
 
 section .text
 absolute bss
