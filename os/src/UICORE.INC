@@ -2530,9 +2530,9 @@ mv_frame:
         popa
         ret
 
-; the outline to AX = column, DX = row (signed; kept on the screen,
-; between the title rule and the band, the row a multiple of 4)
-mv_to:  pusha
+; window SI at AX = column, DX = row (signed) -> both kept on the screen,
+; between the title rule and the band, the row a multiple of 4 (BX lost)
+win_clamp:
         or      ax, ax
         jns     .c1
         xor     ax, ax
@@ -2550,6 +2550,11 @@ mv_to:  pusha
         jge     .r2
         mov     dx, SCR_TOP
 .r2:    and     dx, 0FFFCh
+        ret
+
+; the outline to AX = column, DX = row (win_clamp's)
+mv_to:  pusha
+        call    win_clamp
         cmp     ax, [mv_c]
         jne     .mv
         cmp     dx, [mv_y]
@@ -2724,36 +2729,24 @@ ui_menu:
         jbe     .w
         mov     bp, 80
 .w:     mov     [help_w+W_W], bp
-        pop     cx
-        pop     bx
-        shr     bx, 3                   ; the click's column, kept on the screen
-        mov     ax, 80
-        sub     ax, bp
-        cmp     bx, ax
-        jbe     .c1
-        xchg    bx, ax
-.c1:    mov     [help_w+W_COL], bx
-        inc     bx
-        mov     [mn_lv+LV_COL], bx
-        dec     bp
-        dec     bp
-        mov     [mn_lv+LV_W], bp
         mov     ax, [mn_lv+LV_N]
         shl     ax, 4
         add     ax, 8
         mov     [help_w+W_H], ax
-        mov     dx, BAND_Y              ; the row: between the title rule and
-        sub     dx, ax                  ;  the band, a multiple of 4
-        and     cx, 0FFFCh
-        cmp     cx, dx
-        jbe     .r1
-        mov     cx, dx
-.r1:    cmp     cx, SCR_TOP
-        jae     .r2
-        mov     cx, SCR_TOP
-.r2:    mov     [help_w+W_Y], cx
-        add     cx, 4
-        mov     [mn_lv+LV_Y], cx
+        pop     dx
+        pop     ax
+        shr     ax, 3                   ; the click's place, kept on the screen
+        mov     si, help_w
+        call    win_clamp
+        mov     [help_w+W_COL], ax
+        inc     ax
+        mov     [mn_lv+LV_COL], ax
+        dec     bp
+        dec     bp
+        mov     [mn_lv+LV_W], bp
+        mov     [help_w+W_Y], dx
+        add     dx, 4
+        mov     [mn_lv+LV_Y], dx
         xor     ax, ax
         mov     [help_w+W_TITLE], ax
         mov     [help_w+W_FLAGS], ax
@@ -2777,8 +2770,7 @@ ui_menu:
         inc     byte [mn_lent]
 .nl:    pop     es
 %endif
-.open:  mov     si, help_w
-        call    ui_wopen
+.open:  call    ui_wopen                ; (SI = help_w: F002h keeps it)
 .l:     call    ui_event
         cmp     ah, 1                   ; ESC, CODE-ESC
         je      .no
