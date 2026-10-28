@@ -800,7 +800,7 @@ Joshua's aim: Lodestone's own programs as GUI-style windows, the calculator firs
   - `UI_EVENT` handles the top window's title strip itself:
     - a press drags a `WF_MOVE` window: a 1-pixel XOR outline follows the pointer, snapped to byte columns and to rows in fours (the glyph blitter's rule), kept between the title rule (row 24) and the band (360);
     - CODE-F7 (6E00h) moves it with the arrow keys, a column or 4 rows a press; Return puts it there, ESC leaves it;
-    - a click on the close box (a dark cell with an x, the strip's last cell but one) gives K_ESC, which every program already treats as "close".
+    - a click on the close box (a dark cell with an x, the strip's last cell but one) gives K_ESC, which every program already treats as "close" (with `MULTITASK=1`, a `.RUN` for API 9 gets `EV_CLOSE` instead: UI API 9 below).
   - After a move, `UI_EVENT` returns `EV_MOVED` (0FF02h).
   - `UI_EDIT` in a moved window carries on: the core shifts the field with the window, and the cursor stays where it was in the line. (`UI_EDIT` sets the field's place on every call, so shifting it when no editor waits does no harm.)
 - **The move itself** (`win_move`):
@@ -991,6 +991,9 @@ The help windows say less, and System's About no longer calls Lodestone a workin
 - **Write:** still 18 lines, the descriptions shorter ("Find text", "Replace text", "Go to a line", "Save and exit", ...).
 - **Cost:** none. The UI core is the same size (`ui_keep_end` 6526h, MEMSZ as before); SYSTEM.RUN 12,393 bytes (12,821), WRITE.RUN 10,162 (10,211). ROM 1 has a sector free again (512 bytes).
 - **Tests:** the Executive's and Write's help checks in test_apps read the new lines (and not the old: no "the file"), test_splash's System help its Space line; the memory figures are unchanged.
+
+## Close boxes for programs that need ESC (UI API 9, 2026-10-27)
+With `MULTITASK=1`, a `.RUN` that asks for API 9 gets `EV_CLOSE` (0FF05h) from `UI_EVENT` for a click on its window's close box, not K_ESC, so that ESC can mean something else to it. The terminal window (TERM.RUN) is the one: its ESC goes to the program in it, and its close box asks, then ends that program. KMW's `mw_got` gives it (the UI core only says API 9 now); with the switch off the close box gives ESC, even to an API 9 `.RUN`. Older `.RUN`s get ESC as before. Design and tests: `lodestone-multitasking.md`, M9c.
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
