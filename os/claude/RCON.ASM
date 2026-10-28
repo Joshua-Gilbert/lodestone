@@ -856,13 +856,18 @@ find_gpib:
         je      .ok
         stc
         ret
-.ok:    mov     byte [ksum], 0          ; Lodestone's driver 1.23 and up keeps
+.ok:    xor     al, al                  ; Lodestone's driver 1.23 and up keeps
         cmp     cx, 0123h               ;  the frame check as it moves the bytes
         jb      .k
         cmp     cx, 0200h
         jae     .k
-        inc     byte [ksum]
-.k:     clc
+        inc     ax
+.k:     mov     [ksum], al
+        cmp     byte [use_fl], 0        ; (the link goes on with no HELLO, at a
+        je      .c                      ;  background look or TYPE's answer: the
+        inc     ax                      ;  driver's check only if this driver
+        mov     [use_fl], al            ;  has it)
+.c:     clc
         ret
 
 gg_call:                                ; INT 60h-66h, the driver's

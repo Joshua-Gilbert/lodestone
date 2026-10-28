@@ -344,12 +344,13 @@ T.test_key_script_snap_peek = test_key_script_snap_peek
 
 def test_ops_codes():
     """audit3 R51: OPS.INC's file and GPIB requests, each one's status and reply (DOS's error codes, the
-    driver's) as claude_kernel's OPS_WANT: the table test_resident_term's t_ops_codes holds RCON to (the same
+    driver's) as claude_kernel's OPS_PROBE has them: the table test_resident_term's t_ops_codes holds RCON to (the same
     source in both binaries)."""
     h = T.start([], bridge='pico')
-    got = CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60))
-    bad = [(g, w) for g, w in zip(got, CK.OPS_WANT) if g != w]
-    assert len(got) == len(CK.OPS_WANT) and not bad, bad or got
+    got = CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60), h.m.chip.devices)
+    want = CK.ops_want('claude')
+    bad = [(g, w) for g, w in zip(got, want) if g != w]
+    assert len(got) == len(want) and not bad, bad or got
     T.check(h)
 
 
