@@ -3947,13 +3947,12 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         call    r_feed                  ; (Claude's keys first)
         jc      .ch
         or      sp, sp                  ; (not ZF: a key)
-        sti
+.rt:    sti
         retf    2
 .up:    test    ah, 1
         jz      .ch
         cmp     ax, ax                  ; (ZF: no key; interrupts on, as
-        sti                             ;  the BIOS's AH=01h returns)
-        retf    2
+        jmp     .rt                     ;  the BIOS's AH=01h returns)
 .ch:    jmp     far [cs:r_old16]
 .rd:    sti                             ; a read: wait here, CODE-\ seen
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
@@ -4015,15 +4014,23 @@ r_feed: cmp     byte [cs:r_ks], 0
         pop     bx
         pop     dx
         jnc     .x
-.wk:    cmp     word [cs:r_mt + 2], 0   ; none now, the keys not done (a wait)
-        je      .no                     ;  or just done (r_pend: the console
-        push    ds                      ;  to come): MT told (mt_tsrk), or a
-        push    si                      ;  wait at our HLT would never end
+.wk:    push    ax                      ; none now, the keys not done (a wait)
+        mov     al, 1                   ;  or just done (r_pend: the console
+        call    r_tell                  ;  to come): MT told (mt_tsrk), or a
+        pop     ax                      ;  wait at our HLT would never end
+.no:    stc
+.x:     ret
+
+; MT's byte of ours (mt_tsrk) = AL, if Lodestone's multitasking asked.
+; Registers kept
+r_tell: cmp     word [cs:r_mt + 2], 0
+        je      .x
+        push    ds
+        push    si
         lds     si, [cs:r_mt]
-        mov     byte [si + 2], 1
+        mov     [si + 2], al
         pop     si
         pop     ds
-.no:    stc
 .x:     ret
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
@@ -4071,29 +4078,26 @@ r_hot:  cmp     byte [cs:r_off], 0
         jne     .df                     ;  front one's, over its screen)
         call    r_isr
         jnz     .no
-        mov     byte [cs:r_pend], 0
-        cmp     word [cs:r_mt + 2], 0   ; (no longer waiting, for MT)
-        je      .pp
-        lds     si, [cs:r_mt]
-        mov     byte [si + 2], 0
-.pp:    sti
+        xor     al, al
+        mov     [cs:r_pend], al
+        call    r_tell                  ; (no longer waiting, for MT)
+        sti
         pop     ds
         pop     si
         pop     bx
         pop     ax
         jmp     short r_popup
+.df:    cmp     byte [cs:r_pend], 1     ; (MT told once, r_pend 2: the front
+        jne     .no                     ;  task's turn to come, as for a key,
+        inc     byte [cs:r_pend]        ;  so its call does; MT clears it as
+        mov     al, 1                   ;  it gives it)
+        call    r_tell
 .no:    sti
         pop     ds
         pop     si
         pop     bx
         pop     ax
 .x:     ret
-.df:    cmp     byte [cs:r_pend], 1     ; (MT told once, r_pend 2: the front
-        jne     .no                     ;  task's turn to come, as for a key,
-        mov     byte [cs:r_pend], 2     ;  so its call does; MT clears it as
-        lds     si, [cs:r_mt]           ;  it gives it)
-        mov     byte [si + 2], 1
-        jmp     .no
 .nx:    inc     bx                      ; the next word, round the buffer
         inc     bx
         cmp     bx, [82h]
@@ -4159,27 +4163,15 @@ r_popup:
         inc     si
         add     dx, 4000h
         loop    .s
-        mov     dx, R_EPORT
         mov     si, r_hw
-        mov     cx, R_PAGES
-.m:     mov     al, [cs:si]
-        out     dx, al
-        inc     si
-        add     dx, 4000h
-        loop    .m
+        call    r_outw
         push    cs
         pop     es
         mov     bx, r_params
         call    far [cs:r_entry]
 ..@r_back:                              ; (the tests: the console has returned)
-        mov     dx, R_EPORT             ; the program's windows back
-        mov     si, r_saved
-        mov     cx, 4
-.r:     mov     al, [cs:si]
-        out     dx, al
-        inc     si
-        add     dx, 4000h
-        loop    .r
+        mov     si, r_saved             ; the program's windows back
+        call    r_outw
         cli
         mov     ss, [cs:r_ss]
         mov     sp, [cs:r_sp]
@@ -4190,6 +4182,17 @@ r_popup:
         popf
         mov     byte [cs:r_inpop], 0
         ret
+
+; the four windows' page registers from CS:SI (R_PAGES: ours fill all four)
+r_outw: mov     dx, R_EPORT
+        mov     cx, 4
+.m:     mov     al, [cs:si]
+        out     dx, al
+        inc     si
+        add     dx, 4000h
+        loop    .m
+        ret
+        times   -(R_PAGES != 4) db 0
 
 ; the PIC's in-service register, then back to the request one (as the
 ; kernel's screen capture does): AH, and ZF if nothing is in service
