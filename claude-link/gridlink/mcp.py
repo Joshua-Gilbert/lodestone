@@ -185,9 +185,16 @@ TOOLS = [
          "Draw on the Tektronix 4662 pen plotter, on paper. It is on the bus at the address in gridlink's "
          "config ([plotter] address, default 1) through a Nano that takes HP-GL and translates it. The user "
          "approves every call. Send HP-GL as text (hpgl) or from a Pi file in this directory (file, e.g. "
-         "a .plt you wrote). The Nano knows IN, SP, PU, PD, PA and LB (end a label with ETX, \\x03); "
-         "coordinates are HP-GL units, 0-10365 x 0-7962. Start a drawing with IN;SP1; and end it with "
-         "PU;. action draw (the default) checks that the Nano answers, then plots in the background and "
+         "a .plt you wrote). The Nano knows IN, DF, SP, PU, PD, PA and LB (end a label with ETX, \\x03; "
+         "CR LF in a label start a new line under its start), and for labels SI/SR (size), ES, DI/DR "
+         "(direction), CS/CA with SS/SA or SO/SI in the text (character sets: 2 German, 3 or 30 Swedish, 4 "
+         "Spanish, 35 UK, 32 Danish/Norwegian; CS100-CS109 pick the 4662's own fonts 0-9); others are "
+         "skipped. Coordinates are HP-GL units, 0-10365 x 0-7962, scaled to the 4662's page (label sizes "
+         "too). The 4662's own commands (070-4164-00 Appendix A) go through as they are: ESC, its address "
+         "A, the code and its numbers, ended by ';' or SUB (\\x1a), e.g. \\x1bAJ30; (alpha rotation 30 "
+         "degrees), \\x1bABP2; (pen 2, Option 31). Native alpha commands (I, J, T, V) set what the next "
+         "labels use; after any, HP-GL carries on from its own pen position. Start a drawing with "
+         "IN;SP1; and end it with PU;. action draw (the default) checks that the Nano answers, then plots in the background and "
          "returns at once: it serial-polls the Nano and sends only what its buffer has room for, so the "
          "GRiD and your other tools stay free while the pen draws (a long plot takes minutes). action "
          "status says how far a plot has got; cancel stops sending (what the Nano and the plotter hold "
@@ -784,12 +791,14 @@ class GridTools:
 
 
 # ---- HP-GL for the plotter's Nano (grid_plotter) -------------------------
-HPGL_CTRL = b'\r\n\t\x03'           # line ends, tabs, and ETX (the end of an LB label)
+HPGL_CTRL = b'\r\n\t\x03\x08\x0e\x0f\x1a\x1b'   # line ends, tabs, ETX (an LB label's end); in labels BS,
+                                    # SO and SI (the alternate and standard sets); ESC and SUB: the 4662's own commands
 
 
 def hpgl_check(raw):
-    """HP-GL as the Nano will take it: printable ASCII, line ends and ETX.
-    No ESC: an escape sequence switches the Nano to raw Tek pass-through.
+    """HP-GL as the Nano will take it: printable ASCII, line ends, ETX, BS,
+    SO and SI, and the 4662's own commands (ESC ..., ended by ';' or SUB),
+    which the Nano passes to the plotter as they are.
     A ';' goes on the end if there isn't one: like a plotter, the Nano ends a
     command only at the next mnemonic or ';', so it would hold the last point
     (and never poll idle). A label left open (LB, BL or WD with no ETX after
@@ -797,7 +806,8 @@ def hpgl_check(raw):
     if not raw.strip(b' \r\n\t;'): raise ValueError('there is no HP-GL to send')
     for i, c in enumerate(raw):
         if (c < 32 and c not in HPGL_CTRL) or c > 126:
-            raise ValueError('HP-GL may hold printable ASCII, line ends and ETX (\\x03) only: byte %02Xh '
+            raise ValueError('HP-GL may hold printable ASCII, line ends, ETX (\\x03), BS, SO, SI, and ESC and SUB '
+                             'for the 4662\'s own commands, only: byte %02Xh '
                              'at %d' % (c, i))
     if re.search(rb'(?i)LB|BL|WD', raw[raw.rfind(b'\x03') + 1:]):
         raise ValueError('a label (LB, BL or WD) has no ETX (\\x03) at its end')
