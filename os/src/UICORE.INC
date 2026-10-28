@@ -235,6 +235,7 @@ ui_boot:
         mov     byte [ex_mtw], 1
         jmp     exec_main.go
 section ui
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, LODE.ASM)
 
 ; UI_FONT: AL = 0 -> SI = the font's name; AL = 1: SI = glyphs, DI = name
 api_font:
@@ -574,6 +575,7 @@ poll_once:
         add     sp, 6
         clc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .nomouse:
         mov     ah, 11h
         int     16h
@@ -585,6 +587,7 @@ poll_once:
         add     sp, 2
         clc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .nokey: mov     ah, 19h                 ; (the kernel takes a screen capture
         int     21h                     ;  asked for with Shift-PrtSc)
         call    tick
@@ -600,6 +603,7 @@ poll_once:
         jb      .sv
         mov     [lastact], ax
         jmp     .ck
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .sv:    cmp     bx, [saver_t]
         jb      .ck
         call    saver                   ; then the screen as it was
@@ -630,11 +634,13 @@ poll_once:
         mov     ah, EV_TASK >> 8        ; (AL = 0: EV_TASK; 1: EV_TASKM)
         add     al, EV_TASK & 0FFh
         jmp     .ev
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .none:  pop     cx
         pop     bx
         pop     ax
         stc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 act_now:                                ; a key or the mouse: not idle
         push    ax
@@ -1536,6 +1542,7 @@ fill_band:
         pop     es
 .none:  popa
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; DX = y, CX = rows: CX cut to the screen's 400 rows (ZF: none left).
 ; (A count of 0 would make LOOP run 65,536 times.)
@@ -1553,6 +1560,7 @@ clip_rows:
         ret
 .none:  xor     cx, cx                  ; (ZF set)
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; DX = y, CX = rows, BX = byte column, BP = width: invert
 invert_band:
@@ -1710,6 +1718,7 @@ putsn:  pusha
         dec     cx
         jz      .x
         jmp     .l
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 strlen: push    si                      ; SI -> CX = length
         push    ax
@@ -1817,6 +1826,7 @@ sb_2d:  aam                             ; AL (0..99) as two digits
         add     ax, '00'
         stosw
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; AX = DOS date -> "4-Oct-26" (internal: AX, CX change)
 sb_date:
@@ -2237,6 +2247,7 @@ ui_wopen:
         call    win_paint
 .x:     popa
         ret
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: win_save.r even)
 
 ; copy the screen under window SI to wseg:DI
 win_save:
@@ -3778,6 +3789,7 @@ ui_findapp:
         mov     ax, 4300h
         int     21h
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; SI = "NAME=", CX = its length -> ES:DI = its value in the environment
 ; (the root's: the master environment).  CF if it isn't there.  AX changed
@@ -4309,6 +4321,7 @@ sv_move:
         add     dx, 20
         xor     ah, ah
         jmp     puts
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; DEFRAG.COM /S from the root of the start-up disk, for each disk in turn:
 ; A:, B: (if the BIOS has a second floppy) and C: (if Lodestone has the hard
@@ -4379,6 +4392,7 @@ tick:   push    ds
         mov     ax, [46Ch]
         pop     ds
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, EXEC.INC's)
 
 wait_ticks:
         push    ax
