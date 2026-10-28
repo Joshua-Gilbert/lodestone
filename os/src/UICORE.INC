@@ -1723,6 +1723,15 @@ strlen: push    si                      ; SI -> CX = length
         pop     si
         ret
 
+maxlen: push    si                      ; AX -> text: CX = its length, BP the
+        xchg    si, ax                  ;  larger of BP and CX (AX lost)
+        call    strlen
+        pop     si
+        cmp     cx, bp
+        jbe     .x
+        mov     bp, cx
+.x:     ret
+
 ; SI = text, DX = y, AH = mask: centred
 api_center:
         push    bx
@@ -2610,23 +2619,12 @@ ui_help:
         or      ax, ax
         jz      .n
         inc     dx
-        push    si
-        mov     si, ax
-        call    strlen
-        pop     si
-        cmp     cx, bp
-        jbe     .n
-        mov     bp, cx
+        call    maxlen
 .n:     add     si, 6
         jmp     .c
-.sized: push    si
-        mov     si, di                  ; the title is a line too, of sorts
-        call    strlen
-        pop     si
-        cmp     cx, bp
-        jbe     .t
-        mov     bp, cx
-.t:     add     bp, 6
+.sized: mov     ax, di                  ; the title is a line too, of sorts
+        call    maxlen
+        add     bp, 6
         cmp     bp, 78
         jbe     .w
         mov     bp, 78
@@ -2715,14 +2713,8 @@ ui_menu:
         mov     word [mn_lv+LV_TOP], 0
         xor     bp, bp                  ; the longest item
 .c:     lodsw
-        push    si
-        xchg    si, ax
-        call    strlen
-        pop     si
-        cmp     cx, bp
-        jbe     .n
-        mov     bp, cx
-.n:     dec     di
+        call    maxlen
+        dec     di
         jnz     .c
         add     bp, 4                   ; (a column either side of the lit band)
         cmp     bp, 80                  ; (longer items cut at the right edge)
