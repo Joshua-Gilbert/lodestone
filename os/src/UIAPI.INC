@@ -203,10 +203,11 @@ EV_RCLICK   equ 0FF03h                  ; a right-button press (API 7: only to a
                                         ;  CF, not a list key.  A right press on a
                                         ;  window's title strip or close box neither
                                         ;  moves nor closes it: the program gets it
-EV_CLOSE    equ 0FF05h                  ; (MULTITASK=1: a window .RUN's, API 9) a
-                                        ;  click on its window's close box, which
-                                        ;  older ones get as ESC (so a program
-                                        ;  shown there keeps its ESC key: TERM)
+EV_CLOSE    equ 0FF05h                  ; (MULTITASK=1, API 9: KMW's mw_got) a
+                                        ;  click on a window's close box, which
+                                        ;  older .RUNs, and any with the switch
+                                        ;  off, get as ESC (so a program shown
+                                        ;  in it keeps its ESC key: TERM)
 EV_TICK     equ 0FF12h                  ; (MULTITASK=1, T2: a terminal window's,
                                         ;  after MT_TOPEN) its task has something
                                         ;  to show, or ended, or 9 ticks went by
