@@ -1458,7 +1458,7 @@ def t_ops():
 
 def t_ops_codes():
     """audit3 R51: OPS.INC's file and GPIB requests from the pop-up, each one's status and reply (DOS's
-    error codes, the driver's) as claude_kernel's OPS_WANT: the table test_claude_kernel's test_ops_codes
+    error codes, the driver's) as claude_kernel's OPS_PROBE has them: the table test_claude_kernel's test_ops_codes
     holds CLAUDE.COM to (the same source in both binaries)."""
     h = Res(); h.boot()
     try:
@@ -1467,10 +1467,11 @@ def t_ops_codes():
         gen = generation(h)
         h.press(HOT)
         up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
-        got = CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40))
-        bad = [(g, w) for g, w in zip(got, CK.OPS_WANT) if g != w]
-        check('the file and GPIB requests\' statuses and replies: %d as CLAUDE.COM\'s' % len(CK.OPS_WANT),
-              up and len(got) == len(CK.OPS_WANT) and not bad, (up, bad or got))
+        got = CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40), h.m.chip.devices)
+        want = CK.ops_want('rcon')
+        bad = [(g, w) for g, w in zip(got, want) if g != w]
+        check('the file and GPIB requests\' statuses and replies: %d as CLAUDE.COM\'s' % len(want),
+              up and len(got) == len(want) and not bad, (up, bad or got))
         check('... the console still up, in step', h.up() and in_step(h), h.screen())
         h.press(HOT)
         h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
@@ -1662,6 +1663,16 @@ def t_bg_screen():
         r = tool(h, 'grid_type', {'keys': 'x'})
         check('... grid_type still needs the console: refused, grid_program among the tools that work',
               r and r[1] and 'in the background' in r[0][0]['text'] and 'grid_program' in r[0][0]['text'], r)
+        # a reply's first bytes still out on the kept screen (a SCREEN's reply cut short by a link failure; here
+        # on its row 3): op_bgscreen puts them back on that copy before it keeps the screen again (R50), so
+        # they are not in this SCREEN's bytes
+        h.rw('borrowed', b'\xEE' * 12); h.rw('borrow_at', struct.pack('<H', 0x10 + 3 * 160 + 20))
+        h.rw('borrow_on', b'\1')
+        raw = raw_screen(h)
+        check('... a background SCREEN with a reply\'s bytes left borrowed: TESTKEY\'s text page byte for byte '
+              '(unborrow before the screen is kept)',
+              raw is not None and raw[:3] == bytes([3, 1, 0]) and raw[9:] == h.m.rd(0xB800, 0, 4000)
+              and h.wait(lambda: h.rv('borrow_on') == 0, 5), raw and (raw[:9], raw[9 + 480:9 + 520]))
         h.k.key(ESC)
         # a graphics screen, of a program started after the console went (no pop-up over it: the mode and the
         # BIOS's data are read then, not the last pop-up's mode 3): GFXUSE in mode 6, its 16 KB byte for byte
@@ -1685,8 +1696,61 @@ def t_bg_screen():
         h.close()
 
 
+def t_bg_ksum():
+    """audit3 R55's panel: use_fl is set at the Pi's HELLO (2: the driver keeps the check), but the link goes
+    on without one in the background.  A driver found there without the frame check (older than 1.23; here
+    the kernel's, made to say 1.22) gets no 02h AL=3 or 03h AL=2: use_fl 1, the sum by software, and the
+    request answered; the next pop-up's HELLO with 1.23 again: use_fl 2."""
+    h = Res(pico='quiet', more={'A:\\BIG.TXT': BIG}); h.boot()
+    try:
+        Y, m = h.m.Y, h.m
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
+        t = h.router.term
+        check('a pop-up with driver 1.23: use_fl 2 from the HELLO', up and h.rv('ksum') == 1 and h.rv('use_fl') == 2,
+              (up, h.rv('ksum'), h.rv('use_fl')))
+        h.press(HOT)
+        back = h.wait(lambda: h.inpop() == 0, 5) and h.pi_wait(lambda: t.away and h.transport.proto.quiet, 10)
+        ver = 0x600 + Y['gp_f_present']                 # (mov ax,4747h / mov cx,0123h)
+        code = bytes(m.mu.mem_read(ver, 6))
+        def say(v):
+            m.mu.mem_write(ver + 4, bytes([v])); m.mu.ctl_remove_cache(ver, ver + 6)
+        say(0x22)
+        als, w0 = [], m.watch
+        fw, fr = 0x600 + Y['gp_f_write'], 0x600 + Y['gp_f_read']
+        def w(a):
+            if a in (fw, fr): als.append(('w' if a == fw else 'r', m.rd(0x60, Y['gp_c_al'], 1)[0]))
+            w0(a)
+        m.watch = w
+        r = tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
+        m.watch = w0
+        check('away, the driver now 1.22: a background read answered (three 8 KB replies), use_fl 1 (ksum 0), no '
+              '02h AL=3 and no 03h AL=2 to it',
+              back and code == b'\xB8\x47\x47\xB9\x23\x01' and r and not r[1]
+              and r[0][0]['text'] == BIG.decode().replace('\r\n', '\n') and h.rv('ksum') == 0 and h.rv('use_fl') == 1
+              and als and ('w', 3) not in als and ('r', 2) not in als,
+              (back, code.hex(), r and str(r)[:100], h.rv('ksum'), h.rv('use_fl'), sorted(set(als))))
+        say(0x23)
+        h.run_until(lambda: False, 1)
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen); st = in_step(h)
+        check('... 1.23 again, the next pop-up\'s HELLO: use_fl 2', up and st and h.rv('ksum') == 1 and h.rv('use_fl') == 2,
+              (up, st, generation(h), gen, h.rv('connected'), h.up(), h.rv('ksum'), h.rv('use_fl'), h.screen()[-300:]))
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen]
+         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen, t_bg_ksum]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]

@@ -169,7 +169,7 @@ def w_cops():
     h = c_start([reply(('tool', E, {'command': 'create', 'path': 'A:\\BIG.TXT', 'file_text': big})),
                  reply(('tool', E, {'command': 'view', 'path': 'A:\\BIG.TXT'})), reply(('text', 'Written and read.'))])
     assert h.turn('write a big file', sim_s=120)
-    CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60))
+    CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60), h.m.chip.devices)
 
 def w_crun():
     import claude_kernel; from fake_anthropic import reply
@@ -331,7 +331,7 @@ def w_rfiles():
         for a in ({'action': 'list', 'path': 'A:\\'}, {'action': 'read', 'path': 'A:\\BIG.TXT'}):
             RT.tool(h, 'grid_files', a)
         RT.tool(h, 'grid_change_files', {'action': 'write', 'path': 'A:\\NOTE.TXT', 'content': 'from the pop-up\n' * 900})
-        CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40))
+        CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40), h.m.chip.devices)
         h.press(RT.HOT); h.wait(lambda: h.inpop() == 0, 5)
     finally:
         h.close()
