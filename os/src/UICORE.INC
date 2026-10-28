@@ -2628,11 +2628,7 @@ ui_help:
         cmp     bp, 78
         jbe     .w
         mov     bp, 78
-.w:     mov     [help_w+W_W], bp
-        mov     ax, 80
-        sub     ax, bp
-        shr     ax, 1
-        mov     [help_w+W_COL], ax
+.w:     call    w_size
         cmp     dx, 18                  ; (18 lines fill SCR_TOP..BAND_Y)
         jbe     .h
         mov     dx, 18
@@ -2651,6 +2647,13 @@ ui_help:
         call    ui_event
         call    ui_wclose
         popa
+        ret
+
+w_size: mov     [help_w+W_W], bp        ; help_w (form_w) BP wide, centred
+        mov     ax, 80                  ;  across (AX lost)
+        sub     ax, bp
+        shr     ax, 1
+        mov     [help_w+W_COL], ax
         ret
 
 help_draw:
@@ -2693,9 +2696,7 @@ ui_menu:
         jne     .full                   ;  none, as if cancelled (not drawn,
         cmp     word [wdepth], NWIN     ;  it would be no window: not modal,
         jb      .room                   ;  and a borrow nobody gives back)
-.full:  call    ui_beep
-        stc
-        ret
+.full:  jmp     ui_form.beep
 .room:  pusha
         push    bx
         push    cx
@@ -3273,7 +3274,7 @@ ed_cursor:                              ; invert the cell at the cursor
 ui_form:
         cmp     word [wdepth], NWIN     ; (no room for its window: it would
         jb      .go                     ;  draw over the others unsaved, so
-        call    ui_beep                 ;  it counts as cancelled)
+.beep:  call    ui_beep                 ;  it counts as cancelled; ui_menu's too)
         stc
         ret
 .go:    pusha
@@ -3286,12 +3287,8 @@ ui_form:
         mov     [fm_b2], ax
         mov     ax, [si+F_TITLE]
         mov     [form_w+W_TITLE], ax
-        mov     ax, [si+F_W]
-        mov     [form_w+W_W], ax
-        mov     bx, 80
-        sub     bx, ax
-        shr     bx, 1
-        mov     [form_w+W_COL], bx
+        mov     bp, [si+F_W]
+        call    w_size
         mov     ax, [si+F_N]
         imul    ax, ax, 20
         add     ax, W_TOP + 16
