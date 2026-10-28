@@ -639,14 +639,12 @@ session:
         cmp     byte [inited], 0        ; the first time: the CRC table, Term's
         jne     .i                      ;  screen blank, our title
         call    crc_init
-        call    shadow_seg
         call    shadow_clear
         mov     si, s_title0
         mov     di, ptitle
         call    copyz
         mov     byte [inited], 1
-.i:     call    shadow_seg
-        mov     al, 0                   ; the background's count, for this
+.i:     mov     al, 0                   ; the background's count, for this
         xchg    al, [bg_n]              ;  pop-up's band
         mov     [bg_shown], al
         call    make_title
@@ -655,7 +653,7 @@ session:
         mov     [t_active], ax
         mov     byte [quit], 0
         mov     byte [req_ready], 0     ; (one kept from the way down: gone,
-        mov     word [ioseg], IOSEG     ;  as the HELLO ends the Pi's call)
+                                        ;  as the HELLO ends the Pi's call)
         mov     byte [n_failrun], 0
         mov     byte [sdc_due], 0
         mov     al, 0                   ; back from Claude's keys (all played,
@@ -771,10 +769,6 @@ session:
         mov     [es:di + P_BGT], ax
         push    cs
         pop     es
-        ret
-
-shadow_seg:                             ; Term's shadow, in window 3
-        mov     word [shadseg], SHADSEG
         ret
 
 ; HLT when nothing is due: no frame on its way or to send, no keys, and
@@ -1122,10 +1116,8 @@ rf_request:
         jne     .o
         mov     ah, 0F6h
         jmp     reply2
-.op:    cmp     ah, 20h                 ; (GPIB, and SCREEN in the background:
-        je      .go                     ;  no DOS)
-        cmp     ah, OP_SCREEN
-        je      .go
+.op:    cmp     si, rc_optab_dos        ; (GPIB, and SCREEN in the background:
+        jb      .go                     ;  no DOS)
         cmp     byte [dos_ok], 0
         mov     ah, 0F7h
         je      reply2
@@ -1137,7 +1129,13 @@ rf_request:
         jmp     screen_msg
 .x:     ret
 
-rc_optab:
+rc_optab:                               ; no DOS: those before rc_optab_dos (a
+                                        ;  new op that needs none goes here too)
+        db 20h
+        dw op_gpib
+        db OP_SCREEN                    ; (in the background, and kept on the way
+        dw op_bgscreen                  ;  out: the console's own is screen_msg)
+rc_optab_dos:                           ; DOS's (dos_ok)
         db 02h
         dw op_dir
         db 03h
@@ -1156,10 +1154,6 @@ rc_optab:
         dw op_stat
         db 0Ah
         dw op_free
-        db 20h
-        dw op_gpib
-        db OP_SCREEN                    ; (in the background, and kept on the way
-        dw op_bgscreen                  ;  out: the console's own is screen_msg)
         db 0
 
 ; the request rf_request took, once its REPLY can be queued (txq_put would
@@ -1172,11 +1166,9 @@ req_service:
         jae     .x
         mov     byte [req_ready], 0
         mov     si, [rq_op]
-        cmp     byte [si], 20h          ; (GPIB and SCREEN: no DOS)
-        je      .nd
-        cmp     byte [si], OP_SCREEN
-        jne     .d
-.nd:    call    bg_count
+        cmp     si, rc_optab_dos        ; (GPIB and SCREEN: no DOS)
+        jae     .d
+        call    bg_count
         jmp     [si + 1]
 .d:     cmp     byte [dos_ok], 0        ; (settled again for each pass: one
         jne     .dk                     ;  kept from the pop-down runs in the
@@ -1526,6 +1518,8 @@ evaway      db 04h                      ; (the user went back to the program)
 %include "GLYPHS.INC"
 
         align   2
+ioseg       dw IOSEG                    ; (OPS.INC's) the reply's segment
+shadseg     dw SHADSEG                  ; (TERMCELL's) Term's shadow, in window 3
 rc_image_end:                           ; (CLAUDE /R clears the rest of the page)
 
 absolute rc_image_end
@@ -1599,7 +1593,6 @@ ks_until    resw 1
 dos_ok      resb 1                      ; 1: the file requests may call DOS
 rq_id       resb 1                      ; the request req_service runs: its id,
 rq_op       resw 1                      ;  its rc_optab entry
-ioseg       resw 1                      ; IOSEG
 gp_otmo     resw 1                      ; the driver's timeout, ours, meanwhile
 gp_dlen     resw 1
 gp_max      resw 1
@@ -1615,7 +1608,6 @@ crctab      resw 256
 t_active    resw 1
 keybuf      resw KEYMAX
 keysend     resw KEYMAX
-shadseg     resw 1
 cur_on      resb 1
 cur_di      resw 1
 t_flags     resb 1
