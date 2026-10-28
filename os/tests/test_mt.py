@@ -4394,6 +4394,7 @@ def t_rclaude():
     # waits for the front task's call
     typ(k, 'start /w mtline.com cl.txt', 0.3)           # (a task for CODE-Tab to switch to, below)
     typ(k, 'mtlaunch /f mtspin.com 36 fs.txt;mtkey.com p bp.txt', 0.3)
+    k.pc.run_until(lambda: any(n == 'MTKEY.COM' for i, s, n in tstate(k)[0]), 1)     # (MTKEY P started: about then)
     kp = [i for i, s, n in tstate(k)[0] if n == 'MTKEY.COM']
     r16, put = stub * 16 + R.csym('r_int16'), []
     def w(a):
@@ -4538,16 +4539,19 @@ def t_rpoll():
           'for CODE-\\ itself, 0.079 with that look under MT, whose peek MT took for the stub\'s, not the program\'s)'
           % (rs, r0, rs / max(r0, 1)), 'resident' in o and r0 > 0 and rs >= 0.15 * r0, (o[-120:], rs, r0))
     # CODE-\ under KEYPK at many moments of its loop: MT's mt_drop keeps it (2B00h) for the stub's next look
-    typ(k, 'keypk', 0.5)
-    missed = []
-    for i in range(16):
-        k.pc.run_for(0.0013 * i + 0.0005)
-        k.key(R.HOT, settle=False)
-        if not k.pc.run_until(lambda: R.console(k), 3):
-            missed.append(i)
-            continue
-        k.key(R.HOT, settle=False)
-        k.pc.run_until(lambda: k.pc.mode() == 3, 3)
+    def hot16(k):
+        typ(k, 'keypk', 0.5)
+        missed = []
+        for i in range(16):
+            k.pc.run_for(0.0013 * i + 0.0005)
+            k.key(R.HOT, settle=False)
+            if not k.pc.run_until(lambda: R.console(k), 3):
+                missed.append(i)
+                continue
+            k.key(R.HOT, settle=False)
+            k.pc.run_until(lambda: k.pc.mode() == 3, 3)
+        return missed
+    missed = hot16(k)
     check('CODE-\\ under KEYPK at 16 moments of its peek loop: the console came each time, and back', not missed, missed)
     # CODE-Tab under it, a task behind: the switch at its next peek, not at a tick in its own code
     k.key(ktest.ESC, settle=False); k.run_for(0.5)
@@ -4560,6 +4564,18 @@ def t_rpoll():
     dt = (us() - t0) / 1000.0
     check('CODE-Tab under KEYPK (task %d in front), MTSPIN behind: the front task changes %.1f ms later' % (f0, dt),
           tstate(k)[1] != f0 and dt < 100, (f0, tstate(k), dt))     # (21 ms on main; none in 500 when MT took the peeks for the stub's)
+    # KEYPK's peeks through a TSR's INT 16h hook loaded after CLAUDE /R (MTKEY H, on with PUSHF / CALL FAR: the frame
+    # MT sees is the hook's, not the program's): in front MT drops the keys AH=01h skips all the same, CODE-\ kept
+    k = boot('mt_rp2.img', b'MULTITASK=1\r\n', 88, cl, MTK, 'KEYPK.COM=' + R.asm('KEYPK', R.KEYPK))
+    sh = Shell(k)
+    sh.run('ver')
+    o = sh.run('claude /r') + sh.run('mtkey h x')
+    m1 = hot16(k)
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    typ(k, 'start /w mtspin.com 200 rh.txt', 0.3)
+    m2 = hot16(k)
+    check('KEYPK through MTKEY H\'s hook (loaded after CLAUDE /R), CODE-\\ at 16 moments, alone and with MTSPIN behind: '
+          'the console every time', 'resident' in o and not m1 and not m2, (o[-160:], m1, m2))
 
 TERMRUN = os.path.join(GOS, 'apps', 'TERM.RUN')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERM.FNT')
