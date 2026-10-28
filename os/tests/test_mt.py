@@ -5065,6 +5065,28 @@ def t_tclip():
           'UI\'s call only)', len(l5) == 4 and all('CF=1 AX=0001' in l for l in l5),
           (l5, tstate(k), (A.disk_file(k, 'PR.TXT') or b'')[-200:], slot_text(k, n)[-300:]))
     check('... every switch at a safe point (the audit)', not au.bad(), au.bad()[:3])
+    # its close box (EV_CLOSE: TERM.RUN asks for API 9): asked; ESC keeps it all, nothing typed to the task; Return ends it
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n4 = tnum('LCMD.COM')
+    cx, cy = (wv(0) + wv(4) - 2) * 8 + 4, wv(2) + 8                    # (its title strip's last cell but one)
+    kn = equ('TX_KN')
+    put = lambda: (k.pc.rd(tx(n4), kn, 1)[0] + k.pc.rd(tx(n4), kn + 1, 1)[0]) % 32   # (keys ever put in its ring)
+    p0 = put()
+    A.click(k, cx, cy); k.run_for(0.5)
+    b1 = k.band()
+    k.key(ktest.ESC, settle=False); k.run_for(1.0)
+    p1, alive = put(), (tnum('LCMD.COM'), mb('mw_n'))
+    check('CODE-P: a terminal window with a close box (W_FLAGS %d): a click there asks in the band (%s); ESC: the window '
+          'and its task (%d) as they were, the ESC not typed to it' % (wv(12), b1, n4), wv(12) & 2 and n4 != 7
+          and any('Confirm to end LCMD.COM' in l for l in b1) and alive == (n4, 1) and p1 == p0, (wv(12), b1, alive, p0, p1))
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    p2 = put()
+    A.click(k, cx, cy); k.run_for(0.5)
+    k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+    check('... an ESC typed in the window still goes to the task (%d key); the close box again, Return: the task ended '
+          '(MT_KILL), its window closed, the Executive in front (%s)' % ((p2 - p1) % 32, k.band()),
+          (p2 - p1) % 32 == 1 and mb('mw_n') == 0 and tnum('LCMD.COM') == 7 and any('LCMD.COM ended' in l for l in k.band()),
+          ((p2 - p1) % 32, mb('mw_n'), tstate(k), k.band()))
     # TM5000G in a window: its mouse works there (Return on it: a text program)
     if not os.path.exists(A.TM5000G):
         print('(no TM5000G.EXE: skipped)'); return

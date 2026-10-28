@@ -38,11 +38,12 @@
 ; =====================================================================
 
         cpu     286
-UI_API      equ 8                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
+UI_API      equ 9                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
                                         ;  4: UI_SAVER's tidying, 5: the caller's redraw
                                         ;  routine stays, exit code 0FFFFh, 6: W_FLAGS,
                                         ;  windows that move and close, EV_MOVED,
-                                        ;  7: EV_RCLICK, 8: UI_MENU, UI_MOUSE, UI_CLIP)
+                                        ;  7: EV_RCLICK, 8: UI_MENU, UI_MOUSE, UI_CLIP,
+                                        ;  9: EV_CLOSE)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Lodestone version (BH major, BL minor
@@ -202,6 +203,11 @@ EV_RCLICK   equ 0FF03h                  ; a right-button press (API 7: only to a
                                         ;  CF, not a list key.  A right press on a
                                         ;  window's title strip or close box neither
                                         ;  moves nor closes it: the program gets it
+EV_CLOSE    equ 0FF05h                  ; (MULTITASK=1, API 9: KMW's mw_got) a
+                                        ;  click on a window's close box, which
+                                        ;  older .RUNs, and any with the switch
+                                        ;  off, get as ESC (so a program shown
+                                        ;  in it keeps its ESC key: TERM)
 EV_TICK     equ 0FF12h                  ; (MULTITASK=1, T2: a terminal window's,
                                         ;  after MT_TOPEN) its task has something
                                         ;  to show, or ended, or 9 ticks went by

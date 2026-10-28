@@ -2595,7 +2595,7 @@ def t_menu():
     hw = lambda: struct.unpack('<4H', k.rd('help_w', 8))
     def rpress(x, y):
         point(k, x, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
-    check('UI_VERSION: API 8', v16('ver') == 8, v16('ver'))
+    check('UI_VERSION: API 9 (M9c: EV_CLOSE)', v16('ver') == 9, v16('ver'))
     point(k, 100, 100); v0 = body(k)
     rpress(100, 100)
     shown = hw(), has(k, 'Cut') and has(k, 'Paste') and has(k, 'Find...')

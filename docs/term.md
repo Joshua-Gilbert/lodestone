@@ -293,6 +293,8 @@ program's own text in the window. The window shows 19 of the 25 rows and
 follows Claude Code's cursor (hidden, as it is), with the status band
 under it in view once the conversation reaches the foot. The chat (`/C`)
 stays full screen, and a second CODE-A says Claude is running already.
+The window's close box asks first ("Close: Confirm to end CLAUDE.COM"),
+then ends CLAUDE.COM, as KILL does (M9c).
 Design, limits and the link's figures are in
 `lodestone-multitasking.md`, T5d.
 
