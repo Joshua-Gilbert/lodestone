@@ -454,7 +454,7 @@ def test_hpgl_parts():
     parts = P(big, 1024)
     assert b''.join(parts) == big and max(map(len, parts)) <= 1024
     assert all(p.endswith(b';') for p in parts)
-    for bad in (b'', b' ;\r\n', b'IN;\x1b.T', b'IN;\x00', b'LB\xe9\x03',
+    for bad in (b'', b' ;\r\n', b'IN;\x07', b'IN;\x00', b'LB\xe9\x03',
                 b'IN;LBHI', b'LBA\x03;PU;BLabc', b'wdNO END'):        # a label left open
         try: mcp.hpgl_check(bad); assert False, bad
         except ValueError: pass
@@ -462,6 +462,7 @@ def test_hpgl_parts():
     assert mcp.hpgl_check(b'PU;\r\n') == b'PU;\r\n'
     assert mcp.hpgl_check(b'IN;PA1,2') == b'IN;PA1,2;'      # the Nano would hold the last point
     assert mcp.hpgl_check(b'LBHI\x03') == b'LBHI\x03;'
+    assert mcp.hpgl_check(b'IN;\x1bAJ30;LBa\x0eb\x0fc\x03;') == b'IN;\x1bAJ30;LBa\x0eb\x0fc\x03;'  # 4662 commands, SO/SI
 
 
 def plot_to_end(h, c, wall=30):
@@ -540,7 +541,7 @@ def test_hpgl_ends():
 
 def test_plotter_bad_arguments_never_reach_the_grid():
     t = mcp.GridTools(NoGrid(), root='/nonexistent')
-    for a in ({}, {'hpgl': ''}, {'hpgl': 'IN;', 'file': 'x.plt'}, {'hpgl': 'IN;\x1b.T'}, {'hpgl': 'PA☃;'},
+    for a in ({}, {'hpgl': ''}, {'hpgl': 'IN;', 'file': 'x.plt'}, {'hpgl': 'IN;\x07'}, {'hpgl': 'PA☃;'},
               {'hpgl': 'x' * (mcp.MAX_HPGL + 1)}, {'hpgl': 'IN;', 'timeout_ms': 10}, {'file': '../etc/passwd'},
               {'file': '.mcp.json'}, {'hpgl': 5}, {'action': 'bogus', 'hpgl': 'IN;'}):
         res, err = t.call('grid_plotter', a)
