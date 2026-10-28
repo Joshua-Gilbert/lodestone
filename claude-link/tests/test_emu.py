@@ -55,6 +55,9 @@ def test_connect_and_chat(patched=True, name='chat'):
     t = h.screen()
     assert 'Welcome to Claude for GRiD' in t and 'Hello from the Pi.' in t, t
     assert '> hi' in t, t
+    rows = t.split('\n')                        # (the bands' right-hand texts end in columns 78 and 79)
+    assert 'GPIB link  ' in rows[0] and len(rows[0]) == 79 and rows[21].endswith(' F1 help') and len(rows[21]) == 80, \
+        (rows[0], rows[21])
     assert h.m.clock_set is not None and h.m.rtc_set, 'clock not set'
     shot(h, name + '_1_reply')
     check(h)

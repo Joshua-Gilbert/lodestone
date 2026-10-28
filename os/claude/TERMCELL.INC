@@ -425,13 +425,8 @@ term_status:
         cmp     byte [connected], 0
         jne     .r
         mov     si, status_text
-.r:     call    strlen
-        cmp     cx, 70
-        jbe     .w
-        mov     cx, 70
-.w:     mov     di, TROWS * 320 + 79
-        sub     di, cx
-        call    draw_strn
+.r:     mov     di, TROWS * 320 + 79
+        call    draw_rstr
         pop     es
         popa
         ret

@@ -3,6 +3,16 @@
 ;  band in CLAUDE.COM and in resident Claude's console (RCON.ASM)
 ; =====================================================================
 
+; DS:SI -> ASCIIZ, ES:DI = the cell after its last, AH = attribute: the
+; text right-aligned there, 70 cells at most.  Returns CX = its cells, DI
+; after the text.
+draw_rstr:
+        call    strlen
+        cmp     cx, 70
+        jbe     .w
+        mov     cx, 70
+.w:     sub     di, cx                  ; (falls into draw_strn)
+
 ; DS:SI -> ASCIIZ, ES:DI = cell, AH = attribute, CX = most cells.
 ; Returns DI after the text.
 draw_strn:

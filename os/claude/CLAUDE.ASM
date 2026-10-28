@@ -335,7 +335,7 @@ draw_line:
         popa
         ret
 
-%include "CELLTEXT.INC"                 ; draw_strn, blank_row, strlen
+%include "CELLTEXT.INC"                 ; draw_rstr, draw_strn, blank_row, strlen
 
 ; title band: " <title>              GPIB link  5:31 pm"
 draw_title:
@@ -364,12 +364,9 @@ draw_title:
         mov     ah, 1
         mov     cx, 56
         call    draw_strn
-        mov     si, rbuf
-        call    strlen
+        mov     si, rbuf                ; (AH = 1 still)
         mov     di, 79
-        sub     di, cx
-        mov     ah, 1
-        call    draw_strn
+        call    draw_rstr
         pop     es
         popa
         ret
@@ -443,19 +440,13 @@ draw_status:
         mov     dx, SROW
         xor     ah, ah
         call    blank_row
-        mov     si, rbuf
-        call    strlen
-        mov     bx, cx                  ; right part's width
+        mov     si, rbuf                ; the right part, then the left one
+        mov     di, SROW * 320 + 80     ;  in what it leaves (79 - its width)
+        call    draw_rstr
+        neg     cx
+        add     cx, 79
         mov     di, SROW * 320
         mov     si, sline
-        mov     cx, 79
-        sub     cx, bx
-        xor     ah, ah
-        call    draw_strn
-        mov     di, SROW * 320 + 80
-        sub     di, bx
-        mov     si, rbuf
-        mov     cx, bx
         call    draw_strn
         pop     es
         popa
