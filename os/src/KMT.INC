@@ -4680,9 +4680,10 @@ mt_i16:
 ; Its INT 16h turns interrupts on first (STI, F000:A02E; the look itself
 ; with them off, M9a): CODE-Tab typed after mt_hot looked and before the
 ; BIOS does would go.  So MT drops them first, with interrupts off, taking
-; CODE-Tab (mt_hot) as it comes to it.  ZF if no key is left; else the one
-; at the head is one AH=00h and 01h give.  (At most 16 looked at: a buffer
-; gone bad is left to the BIOS.)  AX, BX changed
+; CODE-Tab (mt_hot) as it comes to it, and keeping Resident Claude's
+; CODE-\ for its stub (made 2B00h: none now).  ZF if no key is left; else
+; the one at the head is one AH=00h and 01h give.  (At most 16 looked at: a
+; buffer gone bad is left to the BIOS.)  AX, BX changed
 mt_drop:
         push    ds
         push    cx
@@ -4697,9 +4698,12 @@ mt_drop:
         je      .h
         cmp     ax, [cs:mt_hotk + 2]
         je      .h
+        db      81h, 0F8h               ; cmp ax, 2BF0h: Resident Claude's
+        dw      2BF0h                   ;  CODE-\ (the 4-byte form: what
+        je      .c                      ;  follows keeps its parity)
         call    mt_kgive
         jnc     .k
-        call    mt_hot.nx               ; dropped, as the BIOS would
+.d:     call    mt_hot.nx               ; dropped, as the BIOS would
         mov     [1Ah], bx
         loop    .l
         jmp     short .k
@@ -4712,6 +4716,26 @@ mt_drop:
 .k:     or      sp, sp                  ; (ZF clear: a key)
 .x:     pop     cx
         pop     ds
+        ret
+.c:     call    mt_rhot                 ; its stub there, the hot key on: made
+        jne     .d                      ;  2B00h, which AH=00h and 01h give, so
+        mov     byte [bx], 0            ;  nothing drops it and the stub's next
+        jmp     short .x                ;  look takes it; none now (ZF)
+
+; Resident Claude's stub there (MT_TSR; its header still there, as an
+; older CLAUDE /U leaves the address) with its hot key on (r_off, at 10Eh,
+; 0: no CLAUDE.COM runs): ZF.  Registers kept
+mt_rhot:
+        cmp     word [cs:mt_tsrs], 0
+        je      .n
+        push    ds
+        mov     ds, [cs:mt_tsrs]
+        cmp     word [100h], 'CL'
+        jne     .p
+        cmp     byte [10Eh], 0
+.p:     pop     ds
+        ret
+.n:     or      sp, sp                  ; (none: not ZF)
         ret
 
 ; CF if key AX is one INT 16h AH=00h and 01h don't give (the 1520's BIOS
