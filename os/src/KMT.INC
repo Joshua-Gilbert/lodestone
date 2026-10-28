@@ -216,6 +216,9 @@ section mtt
 mt_tstart:
 mt_old08    dd      0                   ; INT 08h as it was
 mt_ticks    dw      0                   ; ticks seen (mt_tick runs)
+mt_facc     dw      0                   ; M9b: counter 0 run fast, its clocks since
+                                        ;  the BIOS's last tick (mod 65536)
+mt_flast    dw      0                   ;  and the count read to match (mt_fast)
 mt_slice    db      2                   ; ticks left in the running task's turn
 mt_pend     db      0                   ; 1: another task's turn (its turn over,
                                         ;  or a key for the front one waiting)
@@ -380,6 +383,8 @@ mt_snomem   db      ': not enough memory or EMS; park or end a task', 0
 mt_sended   db      ' ended', 0
 mt_scode    db      ', exit code ', 0
 mt_snost    db      ' could not be started: error ', 0
+mt_fast     db      0                   ; M9b: how sure counter 0 runs fast, 0-3
+                                        ;  (mt_tick).  Here, the align's pad
             align   2
 ; the kernel's per-task variables: (offset, bytes), as V_* lays them out
 mt_ranges:  dw      indos, 1
@@ -418,8 +423,90 @@ ST_END      equ     100h + st_code.e - st_code
             times   -(100h + st_len > ST_PATH) db 0     ; (it fits below ST_PATH)
 
 ; INT 08h: the BIOS's handler first (the tick count, INT 1Ch, the end of
-; the interrupt), then ours
+; the interrupt), then ours.  M9b: a program that runs counter 0 fast (a
+; game's music, its own INT 08h hook calling the BIOS's every Nth time)
+; has that hook in its own turns only; in the others, entered straight
+; (INT 08h mt_tick itself), MT does as it does: the BIOS's handler once
+; 65536 of the counter's clocks have gone by, else only the interrupt's
+; end.  The count read just after the interrupt is about its period
+; (mode 2 or 3), the same each time; a tick held late under a long CLI
+; reads low too, but not the same twice running.  So mt_fast counts how
+; sure MT is (0-3): a low read the same as the last (within MT_FTOL) one
+; surer, another one less (and the one to match, below 2); it divides
+; from 2.  Not in the turns of a program whose own INT 1Ch hook is there
+; (it gets it fast, as in DOS)
+MT_FALW     equ     20                  ; (counted down since the IRQ)
+MT_FTOL     equ     80h                 ; (two reads the same: within this)
+; (mt_tick's own, on a low read, AX: here, ahead of it, so that its jumps
+; are short and a tick at the BIOS's rate takes none)
+mt_tfast:
+        push    bx
+        push    dx
+        mov     bx, ax
+        sub     bx, [cs:mt_flast]       ; the same as the last?
+        jns     .a
+        neg     bx
+.a:     cmp     bx, MT_FTOL
+        mov     bl, [cs:mt_fast]
+        jae     .o
+        or      bl, bl
+        jz      .o                      ; (none to match)
+        cmp     bl, 3                   ; the same: surer, up to 3
+        adc     bl, 0
+        jmp     short .c
+.o:     dec     bl                      ; another: less sure
+        cmp     bl, 2
+        jge     .c
+        mov     [cs:mt_flast], ax       ;  (below 2: this one to match)
+        mov     bl, 1
+.c:     mov     [cs:mt_fast], bl
+        cmp     bl, 2
+        jb      .b                      ; not sure yet: the BIOS's, as ever
+        push    ax
+        mov     ax, [1Ch * 4 + 2]       ; the running program's own INT 1Ch?
+        cmp     ax, 0A000h              ; (the BIOS's, in ROM, as most often:
+        cmc                             ;  not a program's, CF, without the
+        jc      .r                      ;  walk of the arena)
+        push    KSEG
+        pop     ds
+        call    mt_mine
+.r:     pop     ax
+        jnc     .b                      ; (then fast in its turns, as in DOS)
+        pop     dx
+        pop     bx
+        add     ax, MT_FALW + 1
+        add     [cs:mt_facc], ax
+        jc      mt_tick.n               ; a whole tick of the BIOS's gone by
+        mov     al, 20h                 ; else the interrupt's end only
+        out     20h, al
+        pop     ds
+        pop     ax
+        iret
+.b:     pop     dx
+        pop     bx
+        jmp     short mt_tick.n
 mt_tick:
+        push    ax
+        push    ds
+        xor     ax, ax
+        mov     ds, ax
+        cmp     word [8 * 4], mt_tick   ; entered straight?  (A hook ahead:
+        jne     .n                      ;  it divides, if it ran it fast)
+        mov     ax, cs
+        cmp     [8 * 4 + 2], ax
+        jne     .n
+        xor     al, al                  ; counter 0, latched
+        out     43h, al
+        in      al, 40h
+        mov     ah, al
+        in      al, 40h
+        xchg    al, ah
+        dec     ax                      ; (0: 65536)
+        cmp     ax, 7FFFh
+        jb      mt_tfast                ; low: maybe fast
+        mov     byte [cs:mt_fast], 0    ; at the BIOS's rate: as ever
+.n:     pop     ds
+        pop     ax
         pushf
         call    far [cs:mt_old08]       ; (back with the EOI sent; interrupts
         cli                             ;  off, whatever a hook there did)
@@ -902,19 +989,21 @@ mt_kwait:
 ; in the background: it waits without reading keys, while another runs.
 ; Unless it can't be switched from: then it comes to the front for them
 ; (INT 16h gives keys to the front task only), or for a critical error's
-; prompt reads them as it is (mt_i16 lets them through: everything waits
-; for the answer, the prompt on the real screen)
+; prompt, or from an interrupt's handler (its IRQ in service: M9b), reads
+; them as it is (mt_i16 lets them through: everything waits for the
+; answer, the prompt on the real screen, as in DOS)
 .bg:    call    mt_can
         jnc     .bgp
-        cmp     byte [cs:mt_crit], 0
-        jne     .k
-        cmp     byte [cs:mt_inb], 0     ; (inside a call MT passed on to the
-        jne     .k                      ;  BIOS, an INT 13h call, or a change
-        cmp     word [cs:mt_in13], 0    ;  of the front: as it is, mt_i16
-        jne     .k                      ;  letting it read them)
+        jnz     .k                      ; (inside a call MT passed on to the
+                                        ;  BIOS, an INT 13h call, a change of
+                                        ;  the front, an INT 24h, an IRQ's
+                                        ;  handler: as it is, mt_i16 letting
+                                        ;  it read them)
         mov     [cs:mt_swreq], al       ; (this task, as mt_swnow does it: the
         call    mt_swnow                ;  one in front may be in its run)
         jmp     .k
+        times   ($ - $$) & 1 db 90h     ; (M9b: what follows at the parity
+                                        ;  it had, mt_i21 and mt_i16 with it)
 ; T5d: an INT 16h hook of the running program's, or of a program it
 ; runs under (a RUN's key script, CLAUDE's, in a window; not a TSR's,
 ; Resident Claude's, ended though resident): asked, as in front (mt_i16
@@ -1007,24 +1096,35 @@ mt_kwait:
 ; a call MT passed on to the BIOS or an INT 13h call; while mt_swnow
 ; changes the front (an interrupt handler's DOS call meanwhile); inside
 ; the kernel's INT 24h (raised by C:'s INT 25h/26h, outside INT 21h: its
-; handler's own DOS call)
-mt_can: cmp     byte [indos], 1
+; handler's own DOS call); from an interrupt's handler, its IRQ still in
+; service (M9b: another task would run with it so).  With CF, NZ for
+; these last four (mt_busy, asked first: a task's own INT 24h handler's
+; read is inside the kernel's INT 24h at InDOS 2), ZF for the first two.
+; AX kept
+mt_can: push    ax
+        pushf
+        cli                             ; (the PIC asked with interrupts off)
+        call    mt_busy
+        jnz     .nb
+        popf
+        cmp     byte [indos], 1
         jne     .no
-        cmp     byte [cs:mt_inb], 0
-        jne     .no
-        cmp     byte [cs:mt_crit], 0
-        jne     .no
-        cmp     word [cs:mt_in13], 0    ; (and mt_swing)
-        jne     .no
-        push    ax
         mov     ax, kstack_top          ; (and room for mt_switch's own
         sub     ax, sp                  ;  pushes)
         cmp     ax, KSLICE - 48
-        pop     ax
         jae     .no
+        pop     ax
         clc
         ret
-.no:    stc
+.nb:    popf
+        pop     ax
+        or      sp, sp                  ; (NZ)
+        stc
+        ret
+        times   ($ - $$) & 1 db 90h     ; (mt_pick at its parity)
+.no:    pop     ax
+        cmp     sp, sp                  ; (ZF)
+        stc
         ret
 
 ; a task other than the running one that is ready to run (TS_RUN) and
@@ -2687,7 +2787,8 @@ mt_kill:
 ; handler (one in service, the mouse's event handler), an INT 24h handler
 ; or a call MT passed on (mt_can).  DS = KSEG; AX changed
 mt_kok: call    mt_can
-        jnc     mt_b33                  ; (its flag tests mt_can's again)
+        jnc     mt_b33                  ; (m33_busy; then mt_busy's tests, which
+                                        ;  mt_can ran: a rare path)
         or      sp, sp                  ; (NZ)
         ret
 
@@ -4575,9 +4676,10 @@ mt_i16:
         iret
 
 ; the 1520's BIOS drops the keys AH=00h and 01h can't give (scan codes 85h
-; and up but E0h's, and CODE keys: xxF0h with a scan code) as it looks, with
-; interrupts on: CODE-Tab typed after mt_hot looked and before the BIOS
-; does would go.  So MT drops them first, with interrupts off, taking
+; and up but E0h's, and CODE keys: xxF0h with a scan code) as it looks.
+; Its INT 16h turns interrupts on first (STI, F000:A02E; the look itself
+; with them off, M9a): CODE-Tab typed after mt_hot looked and before the
+; BIOS does would go.  So MT drops them first, with interrupts off, taking
 ; CODE-Tab (mt_hot) as it comes to it.  ZF if no key is left; else the one
 ; at the head is one AH=00h and 01h give.  (At most 16 looked at: a buffer
 ; gone bad is left to the BIOS.)  AX, BX changed
@@ -6852,6 +6954,25 @@ mt_kalloc:
         ret
 
 %include "KMW.INC"                      ; (several window .RUNs at once, M8a)
+; the hot labels at the parity they had (M9b): a shift that flips one
+; stops the build here (0 even, 1 odd)
+%macro  mt_par 2
+            times   -(((%1 - mt_tstart) & 1) != %2) db 0
+%endmacro
+            mt_par  mt_tick, 0
+            mt_par  mt_tick.p, 0
+            mt_par  mt_exit, 1
+            mt_par  mt_safe, 0
+            mt_par  mt_kwait, 1
+            mt_par  mt_kwait.bgp, 0
+            mt_par  mt_can, 0
+            mt_par  mt_pick, 1
+            mt_par  mt_ent, 0
+            mt_par  mt_switch, 0
+            mt_par  mt_i16, 1
+            mt_par  mt_v10, 0
+            mt_par  mt_busy, 0
+            mt_par  mt_isr, 0
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 

@@ -31,8 +31,8 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | M7c | Resident Claude with tasks: its pop-up and TYPE's keys the front task's, its key wait a place to switch from, CODE-Tab in the console its own, `/R` not inside a task (`MT_TSR`) | PR #73, merged. |
 | M8a | Several window `.RUN`s at once, each a session in the UI task; the Executive waits meanwhile | PR #77, merged. |
 | M8b | Write as a window, several at once; windows resized by the mouse or CODE-F8; window `.RUN`s marked in their header | PR #79, merged. |
-| M8c | The Executive live under the windows: in front by a click or CODE-F6, its drawing clipped around them | PR #82. |
-| M9 | On the 1520, and release 0.7 | |
+| M8c | The Executive live under the windows: in front by a click or CODE-F6, its drawing clipped around them | PR #82, merged. |
+| M9 | On the 1520, and release 0.7 | M9a: what the BIOS says, read (PR #118, merged). M9b: the code fixes it left (this PR). The rest on the machine. |
 | T1 | Terminal windows' kernel core: a task's screen read (`MT_TROWS`), keys typed to it (`MT_TKEY`) | PR #98, merged. Terminal windows are a series of their own (T0: ROM 2, PR #96). |
 | T2 | The terminal window: TERM.RUN, text programs (CODE-P's prompt too) started in a window, `FULL=`, `EV_TICK`, `MT_TOPEN` | PR #101, merged. |
 | T3 | Graphics full screen and back: a windowed program in front for its graphics, back to its window with a text mode; TERM's notes | PR #102, merged. |
@@ -40,7 +40,7 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | T5a | A task's region grows on demand (48h, EXEC) | PR #105, merged. T5 is a series: T5a-T5d. |
 | T5b | A screen a program publishes for its window (`MT_PUB`: its cells and its own font), drawn by TERM.RUN | PR #108, merged. |
 | T5c | A program woken by the bridge's SRQ (`MT_WAKE`); test_resident_term's `irq_exact` failures explained (a link bug, fixed) | PR #111, merged. |
-| T5d | CLAUDE.COM in a terminal window (CODE-A); the Pi marks picture frames (F_PIC); the Executive gives its idle away; TERM.RUN draws faster; T5a's growth fixed for a .COM | This PR. T5 done. |
+| T5d | CLAUDE.COM in a terminal window (CODE-A); the Pi marks picture frames (F_PIC); the Executive gives its idle away; TERM.RUN draws faster; T5a's growth fixed for a .COM | PR #113, merged. T5 done. |
 
 Each milestone's PR adds its section below, describing what was built and any departure from the plan.
 
@@ -360,11 +360,11 @@ A turn that ends anywhere else waits, as `mt_pend`, for the next safe tick or IN
 - **The idle test is a guess:** the byte before the interrupted instruction is F4h. Any instruction ending in that byte (`ADD SP,-12` is 83 C4 F4) ends that turn early. That costs the task some of its share, never safety.
 - **The idle front task** sleeps out the rest of the tick it is given (it HLTs; MT only notices at the next tick). With the Executive or the prompt idle in front, a background task gets 55–65% of the processor in pcemu, not all of it.
 - **Index and data port pairs** (the CRTC's 3D4h/3D5h, the PIT's latch and its two reads): a task switched from between the two can find the index changed by another. `mt_safe` itself leaves the PIC reading its request register, as the BIOS does. M4a's screen virtualisation, for the CRTC (see M4a).
-- **The EOI's order:** the in-service test assumes the BIOS's INT 08h sends the EOI before it returns. pcemu's does, and so does the 1520's (read in its ROM); M9 checks it on the machine.
+- **The EOI's order:** the in-service test assumes the BIOS's INT 08h sends the EOI before it returns. pcemu's does, and so does the 1520's: INT 1Ch first, then the EOI, then IRET (M9a).
 - **A timer hook stops the tick switching.** While any program or TSR has INT 08h hooked (a clock, a spooler, a game), only INT 21h's way out switches. So a task that computes without calling DOS keeps the machine until the hook goes, or until it calls DOS. A hook that doesn't chain on stops `mt_tick` altogether, as it stops the BIOS's tick in DOS. M5's per-task vectors lift this: each task's own hooks run only while it does, inside `mt_tick`. **M5a:** only a hook in the running task's own vectors does now (INT 08h is one of them): its own, or a TSR's loaded in its task or before it started. Another task's doesn't.
 
   M3 first tried keeping INT 08h MT's by catching AH=25h and 35h for it, so a hook set that way would run inside `mt_tick`. That one global chain, mixed with programs that read or write the vector table themselves, gave two re-reviews four ways to hang the machine or lose `mt_tick` for good. So it was taken out again, and the job is left to M5's per-task vectors.
-- **A task's own timer hook that calls DOS** can be switched from on that INT 21h's way out. The rules are checked against the hook, the INT 21h caller (its own code, its stack), not against what the hook interrupted underneath. That could be a TSR's code or, on the 1520, the BIOS's, which another task could then enter again. It needs a program whose own INT 08h handler chains on and then calls INT 21h. A TSR's hook doing so is refused (its CS isn't the task's). M5 runs a task's hooks inside `mt_tick`, where what was interrupted is known. **M5a:** a task's hook stays ahead of `mt_tick` (M5a's departures), so this limit stands.
+- **A task's own timer hook that calls DOS** can be switched from on that INT 21h's way out. The rules are checked against the hook, the INT 21h caller (its own code, its stack), not against what the hook interrupted underneath. That could be a TSR's code or, on the 1520, the BIOS's, which another task could then enter again. It needs a program whose own INT 08h handler chains on and then calls INT 21h. A TSR's hook doing so is refused (its CS isn't the task's). M5 runs a task's hooks inside `mt_tick`, where what was interrupted is known. **M5a:** a task's hook stays ahead of `mt_tick` (M5a's departures), so this limit stands. **M9b:** it stays, for good (M9b's section says why).
 - **Vectors are global until M5:** two tasks that hook the same vector and end out of order (the first to hook ends first and puts back what it found) leave it pointing into the other's freed memory. For INT 08h that hangs the machine once the memory is used again. DOS, running one program at a time, never sees that order. Load programs that hook vectors one at a time, or as TSRs before starting tasks. **M5a:** for the vectors each task has its own of (INT 08h among them), this is gone; the machine's (the other IRQs, 13h, 33h, ...) are as in DOS, but those left pointing into an ended task's region are put back.
 - **C:'s INT 25h/26h** run kernel code outside INT 21h. An INT 24h handler raised from inside them (a disk error) could be preempted with that code's state half used. That needs a disk error on C: during INT 25h/26h. M5. **M5b:** no switch from a task while the kernel's INT 24h runs outside INT 21h (`mt_crit`, checked at the tick, on INT 21h's way out and at a key wait).
 - **Resident Claude's console** runs at E000h, so it is never preempted. But CLAUDE /R doesn't yet hold switching while it is up (the plan's `mt_hold`, M7c). **M7c:** no hold is needed: a switch due meanwhile comes once the console has closed, and CODE-Tab typed in the console is now the console's.
@@ -551,7 +551,7 @@ Every other suite passes unchanged with it. MT's emulation and pcemu's were writ
 - **In a background task's screen:** a TSR's call made after its EOI (a clock hooked on INT 08h that chains first), landing while a background task runs, goes in that task's screen, not on the real one: MT can't tell that code from the task's own, since a driver's INT 10h hook loaded after MT hides every caller's CS. So does a TSR's INT 28h popup, which then shows when that task comes to the front.
 - **Inside an INT 13h call** every INT 10h call is taken as an interrupt's, unshadowed: an interrupt's that lands during a transfer, or an INT 15h (AH=90h) or INT 40h hook the BIOS calls out to, loses the front task's shadow, or from a background task goes on the real screen. (A driver's INT 13h hook loaded after MT runs outside the count: its drawing is its task's own.)
 - **An interrupt handler's data in windows 0 and 1** (a terminal program's receive buffer in its own page there, say) is under MT's pages for the 10-30 ms a switch takes to copy screens, as it is during KEMS's cache fills. Bytes it writes meanwhile land in a screen page.
-- **A handler that never sends its EOI and then reads a key through DOS** lets another task run with its IRQ in service (`mt_can` doesn't read the PIC). That task's INT 10h calls then go to the real screen. M5 looks at it. **M5b:** left open for M9: a check in `mt_can` would change how a background task's key wait behaves.
+- **A handler that never sends its EOI and then reads a key through DOS** lets another task run with its IRQ in service (`mt_can` doesn't read the PIC). That task's INT 10h calls then go to the real screen. M5 looks at it. **M5b:** left open for M9: a check in `mt_can` would change how a background task's key wait behaves. **M9b:** fixed: `mt_can` reads the PIC, and such a read waits as in DOS.
 - **A graphics call's wait trusts its caller,** as M3's INT 21h way out does: a task's own interrupt handler that sends its EOI, turns interrupts on and then asks for graphics is switched from inside that handler.
 - **Resident Claude,** popped up from a background task's own INT 16h call, shows and types into the front screen while it names that task's program. M4b's INT 16h hook can't change that, Resident Claude's hook being loaded after it: M7c does (M4b's limits). **M7c:** the pop-up waits for the front task's call (`MT_TSR`).
 - **No beep** for a background task's BEL.
@@ -657,7 +657,7 @@ The checks:
 - **Whose code:** task 0's own memory is the running program's blocks (`cur_psp`'s), so a child's call through its parent's INT 16h hook counts as not task 0's own there, as it is (in tasks 1-7 the whole region is the task's). Code running in the EMS frame is never a task's own (`mt_safe` refuses A000h up): its reads go to the BIOS.
 - **The front changes mid-run now:** the index and data port pairs (M3's limit: 3D4h/3D5h, the PIT) can be split by the new front's mode set too.
 - **Programs that read the keyboard themselves** (port 60h, 40:1Ah-1Ch, their own INT 09h or INT 1Bh hooks) see the front task's keys, as before; INT 09h/1Bh are global until M5. A background task's AH=05h (a key put in the buffer) goes to the front task. **M5a:** INT 09h and 1Bh are the front task's now, swapped at a change of the front.
-- **Not tried on the 1520 yet** (M9). The 1520's INT 16h is taken to turn interrupts on, as the AT's does; pcemu's now does too.
+- **Not tried on the 1520 yet** (M9). The 1520's INT 16h is taken to turn interrupts on, as the AT's does (M9a: it does); pcemu's now does too.
 
 **How:**
 - **`mt_i16`** sorts the call:
@@ -713,7 +713,7 @@ The checks:
   - **Changing the front:** `mt_swnow` not called from `mt_preempt` or `mt_kwait`; not on its own stack; a second change not refused meanwhile (in `mt_swnow`, or `mt_can` testing `mt_in13` alone); `mt_mid` not tested, or not set, the detector freezing nothing, or a task at its key wait taken as mid-run.
   - **A background task that can't be switched from:** not brought to the front; brought there inside a critical error's prompt, an INT 13h call or MT's call to the BIOS; `mt_can` not testing the INT 13h count.
 
-  **Not tested here:** the M2b race and the key latency (both timing); a real interrupt landing in `mt_swnow`'s window (the tests set `mt_swing` themselves), so neither `mt_safe`'s test of `mt_swing` (a handler on its own stack there), `mt_swnow`'s first drain (an error pending as it starts), nor a task ending there (`mt_end` clearing `mt_swing`); a TSR popping up from the kernel's INT 28h in a background task's idle (`mt_idle`: reached only when nothing can run and the front task waits for something other than a key); the 1520's INT 16h turning interrupts on (M9); AH=05h from a background task.
+  **Not tested here:** the M2b race and the key latency (both timing); a real interrupt landing in `mt_swnow`'s window (the tests set `mt_swing` themselves), so neither `mt_safe`'s test of `mt_swing` (a handler on its own stack there), `mt_swnow`'s first drain (an error pending as it starts), nor a task ending there (`mt_end` clearing `mt_swing`); a TSR popping up from the kernel's INT 28h in a background task's idle (`mt_idle`: reached only when nothing can run and the front task waits for something other than a key); the 1520's INT 16h turning interrupts on (M9a: it does); AH=05h from a background task.
 
 ## M4c: each task's own mouse (2026-10-21)
 
@@ -866,7 +866,7 @@ The checks:
   - Its hook is in its own vectors only. In other tasks' turns, or while it is frozen behind, the BIOS's INT 08h runs at the fast rate.
   - Then the clock (40:6Ch) races, the hard disk's and GPIB's timeouts expire early, and every turn is a fast tick long.
   - Before M5a its hook was the machine's and kept the rate right.
-  - A fix (keeping such a task's INT 08h hook in place for all tasks while counter 0 runs fast) is left for M9.
+  - A fix (keeping such a task's INT 08h hook in place for all tasks while counter 0 runs fast) is left for M9. **M9b:** fixed another way: in the other tasks' turns MT divides the ticks itself (M9b's section).
 - **A TSR's hooks in the 29 belong to the task it was loaded in and the tasks started from that task after it,** and only to them. A TSR loaded inside a task is gone with the task.
 - **A TSR unloaded with AH=49h while tasks exist** (CLAUDE /U after CLAUDE /R, with tasks started after it) leaves its hooks in those tasks' vectors, pointing at freed memory. Only a program's end is caught (`mt_vpg`). Unload such TSRs before starting tasks, or end those tasks first. M7 makes CLAUDE /U refuse while tasks exist (done in M7a: exit code 3).
 - **Copies inside programs aren't fixed:**
@@ -884,10 +884,10 @@ The checks:
 - **The front task's INT 09h and 1Bh hooks run on top of whichever task is running** (its EMS windows, its INT 21h state, its own 29 vectors), as the mouse's event handler does (M4c).
 - **Keys at a change of the front:** CODE-Tab changes the front at Tab's make code. CODE's and Tab's break codes then reach the new front task's INT 09h, so a program with a key table of its own may think them still held.
 - **Ctrl-Break** calls the front task's INT 1Bh (the BIOS's IRET unless a program hooked it) whichever task runs. The kernel has no INT 1Bh handler of its own; ^C is a key, seen by the task that reads it.
-- **INT 02h is also the NMI's:** an NMI during the two word writes of a switch's copy would land on a half-written vector. On the 1520 an NMI is a parity or channel check, fatal anyway (M9 confirms).
+- **INT 02h is also the NMI's:** an NMI between the two word writes of a switch's copy would land on a half-written vector (one instruction's gap, and only when the two tasks' INT 02h differ). On the 1520 an NMI is a RAM parity or I/O channel error, not fatal: the BIOS lets the user go on, under MT too (M9a).
 - **A breakpoint (CCh) or divide error in code run from an interrupt** (the debugged program's IRQ or mouse handler, its INT 09h hook while in front) goes to whichever task's INT 03h or 00h is in the table then.
 - **A debugger single-stepping into INT 21h:** MT clears the trap flag in its own flags at a switch, so it doesn't single-step MT's copies. The task's frame keeps the flag.
-- **Found while testing M5a (M4b's): a CODE-Tab can be lost** while the front task waits for or polls keys: any of its INT 16h calls that reach the BIOS's AH=01h (DOS's key reads and key status, a program's own AH=00h/01h). If the key arrives after `mt_hot` has looked at the buffer and before the BIOS's AH=01h does, the BIOS drops it (on the 1520, if its INT 16h lets interrupts in before it looks: M9 confirms), as it does every key AH=01h can't give (scan code 85h and up). Pressing it again works. In pcemu it showed when a change of about 40 cycles per switch moved where a test's run stopped (`t_keys`'s MTKEY X check). The fix, MT doing AH=01h's drop itself with the hot key first, is for M5b. **M5b:** fixed for the BIOS's look (`mt_drop`); still lost while a front program's read waits inside the BIOS (M5b's limits).
+- **Found while testing M5a (M4b's): a CODE-Tab can be lost** while the front task waits for or polls keys: any of its INT 16h calls that reach the BIOS's AH=01h (DOS's key reads and key status, a program's own AH=00h/01h). If the key arrives after `mt_hot` has looked at the buffer and before the BIOS's AH=01h does, the BIOS drops it (on the 1520, as its INT 16h lets interrupts in before it looks: M9a), as it does every key AH=01h can't give (scan code 85h and up). Pressing it again works. In pcemu it showed when a change of about 40 cycles per switch moved where a test's run stopped (`t_keys`'s MTKEY X check). The fix, MT doing AH=01h's drop itself with the hot key first, is for M5b. **M5b:** fixed for the BIOS's look (`mt_drop`); still lost while a front program's read waits inside the BIOS (M5b's limits).
 - **Still open, for M5b or later:** INT 24h raised inside C:'s INT 25h/26h (M3); a handler that never sends its EOI and then reads a key through DOS (M4a); a task's own timer hook calling DOS, switched on that call's way out (M3). **M5b:** the first is fixed; the other two are left for M9.
 - **Not tried on the 1520 yet** (M9).
 
@@ -1030,8 +1030,8 @@ The checks:
 - **A mouse event handler running on another task's stack:** the front task's handler runs in whichever task the mouse's interrupt finds. If it waits for a key there and that task is ended, the handler's own program doesn't end, so `m33_busy` stays set and the tick stops switching until the driver is reset.
 - **An INT 24h handler that goes back into its program without answering** (Turbo C's `hardretn`, say): the kernel's `indos` stays set (the INT 21h call never comes back out), so that task is never switched from again until it ends. For one raised by C:'s INT 25h/26h, `mt_crit` stays set the same way, until that program ends: the task isn't switched from, and its INT 10h, 16h and 33h calls go to the real screen, keys and mouse even when it is behind. That was already so for `indos` before M5b.
 - **What a program changed outside DOS stays as it set it:** the PIT's rate, the PIC's mask, a UART it turned on (as at any task's end: M5a's limits).
-- **A timer speed-up** (M5a's regression) is left for M9.
-- **Still open, for M9:** a handler that never sends its EOI and then reads a key through DOS (M4a; a check in `mt_can` would change how a background task's key wait behaves); a task's own timer hook calling DOS, switched on that call's way out (M3).
+- **A timer speed-up** (M5a's regression) is left for M9. **M9b:** fixed.
+- **Still open, for M9:** a handler that never sends its EOI and then reads a key through DOS (M4a; a check in `mt_can` would change how a background task's key wait behaves); a task's own timer hook calling DOS, switched on that call's way out (M3). **M9b:** the first fixed; the second a limit for good.
 - **Not tried on the 1520 yet** (M9).
 
 **Cost:**
@@ -1094,7 +1094,7 @@ The checks:
     - a task ended after it was last switched from at an INT 16h peek (`mt_i16`'s `.pk`).
   - **A real disk error on C: during INT 25h/26h:** the test sets `mt_crit` itself.
   - **A task ended while it is in front in a graphics mode.**
-  - **The 1520's own BIOS:** whether its INT 16h lets interrupts in before it looks (the race `mt_drop` closes), M9.
+  - **The 1520's own BIOS:** whether its INT 16h lets interrupts in before it looks (the race `mt_drop` closes): it does (M9a).
 
 ## M6: parking tasks in EMS (2026-10-22)
 
@@ -1252,7 +1252,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
 - **CLAUDE /U** with another task refused (exit code 3); with none, taken out; memory, files and EMS as before.
 - **The checks can fail:** each of these, broken on purpose, fails a check (28 in all): `TE_EGEN` not set at the end; `TE_EXIT` cleared at spawn; the stub not keeping EXEC's error; `mt_spawn` not clearing it; a name matched by its first letters; WAIT not refusing LCMD's own task; WAIT not failing on a nonzero code; WAIT's errors not setting ERRORLEVEL 1; WAIT's ^C not acted on, looked for only at the head of the keys, the keys up to it left in the buffer, or every key taken (type-ahead lost); WAIT not seeing a code lost; TASKS without "(parked)" or "(frozen)"; a batch file started directly, or without its arguments; a batch file opened inherited; `TASK=` not set, set to 1 whatever the number, or kept after a START that failed; FG doing KILL's work; "Too many tasks" and "Not enough memory" swapped; no task named not refused; `/B` lost; `/M` not turned into paragraphs, or not limited; CLAUDE /U not refusing.
 
-  **Not tested here:** the count wrapping round at 255; a WAIT that is itself parked or frozen while its task's number is reused (the lost code is tested by setting the counts); `START /D`'s freezing itself and `/B`'s running behind (M4a's tests cover the flags); START along PATH, of an `.EXE`, with no COMSPEC; WAIT in an LCMD that is itself a task; a task that stays resident (0300h: not failed); a Ctrl-Break (0000h) or a ^C with input redirected ending WAIT; WAIT's look through the keys where the BIOS's buffer wraps round; the pipe files' task number, and START inside a pipe; any of it on the 1520. (WAIT, like `mt_drop`, takes the buffer's bounds from 40:80h and 40:82h; M9 confirms the 1520's BIOS sets them.)
+  **Not tested here:** the count wrapping round at 255; a WAIT that is itself parked or frozen while its task's number is reused (the lost code is tested by setting the counts); `START /D`'s freezing itself and `/B`'s running behind (M4a's tests cover the flags); START along PATH, of an `.EXE`, with no COMSPEC; WAIT in an LCMD that is itself a task; a task that stays resident (0300h: not failed); a Ctrl-Break (0000h) or a ^C with input redirected ending WAIT; WAIT's look through the keys where the BIOS's buffer wraps round; the pipe files' task number, and START inside a pipe; any of it on the 1520. (WAIT, like `mt_drop`, takes the buffer's bounds from 40:80h and 40:82h; the 1520's BIOS sets them, M9a.)
 
 ## M7b: the Executive's side: programs as tasks, the Tasks window, System's switch, LODE.INI's lists (2026-10-22)
 
@@ -2061,3 +2061,94 @@ The audit's MT-only, low-risk rows (its §10 step 2), each a commit of its own; 
 - **Left:** the rows that would cost cycles on a hot path: R19 (+14-16 clocks on every clipped primitive), R3's `mt_kgive` half and R15's first 48h ask (a call on every INT 16h / 48h), and the speed trades R4, R9, R12, R28, R29.
 - **Tests:** test_mt 518 checks (514 before): F0h 18h refused in `t_on`; new groups `t_wxor` (the Executive's XOR outline clipped by a window, pixel for pixel) and `t_wroot` (the root started over with sessions open: `mw_clean`, with the new QUITRUN.RUN). Full suite 2,220 checks.
 - **Figures:** LODEMT.SYS 20,035 bytes (21,117 before: 40 sectors, two fewer); `mt_bend` 59D0h (5E00h before): MT's block 67 paragraphs smaller. MEMSZ with the switch on 558.2 KB (557.3 at T5d); off 580.7 KB, and `image_end`, `bss_end`, `ui_keep_end` as they were. ROM 1 has 3,584 bytes left (2,560 before).
+
+## M9a: what the 1520's BIOS says (2026-10-27)
+
+M9 was to check on the 1520 what MT assumes of its BIOS. Most of that can be read instead. The ROM is GRiD's Phoenix 286 BIOS of 10/25/89 (`rom/GRID1520_BIOS_891025.map`; the image is on Joshua's desktop, not in the repo). Its source is reconstructed in github.com/philip-searle/gridcase-bios, with the 10/25/89 build among its versions.
+
+**The source is this ROM.** The teletype (INT 10h 0Eh) at F000:B867 in the dump is `int10.asm`'s VidTeletype and VidTeletypeChar instruction for instruction, nested calls and all; so are INT 08h, INT 16h, INT 75h, the NMI's handler and POST's coprocessor probe. So M4a's screen emulation was written from the right code. Whether it was read right shows only on the machine (below).
+
+**Settled by reading it:**
+
+| What MT assumes | What the BIOS does | |
+|---|---|---|
+| INT 08h sends the EOI before it returns (M3's in-service test) | INT 1Ch first, then the EOI, then IRET (F000:C303-C30C, `rtc.asm`): the AT's order. A task's INT 1Ch hook runs with IRQ 0 in service, and with interrupts off (the BIOS never does STI there; IBM's AT does) | Holds |
+| INT 16h lets interrupts in before it looks (M5a's lost CODE-Tab) | Its first instruction is STI (F000:A02E). AH=01h then looks at the buffer with interrupts off, and drops as it goes | The race is real; `mt_drop` (M5b) closes it for the BIOS's look. A read waiting inside the BIOS is still M5b's limit |
+| AH=01h drops scan codes 85h and up but E0h's, and CODE keys (AL F0h with a scan code) | `KbCheckChar` does exactly that. Scan code E0h (keypad Enter and /) is translated and given; AL E0h with a scan code (the grey keys) comes back with AL 00h | Holds: CODE-Tab (A500h) is dropped there, so MT must see it first, as it does |
+| The key buffer's bounds are at 40:80h and 40:82h (WAIT, `mt_drop`) | Set at start-up (`08_bdainit`), and again by INT 19h | Holds |
+| A 287 error: IRQ 13, BUSY held till an OUT to F0h, then INT 02h (M3b) | INT 75h: OUT F0h, EOI to both PICs, INT 2, IRET (`int75.asm`). The BIOS's own INT 02h ignores it (not a parity error) | Holds |
+| INT 11h's coprocessor bit is POST's probe (M3b) | FNINIT, then the control word must read 033Fh and the status word (masked with 98FFh) 0; only then the bit is set and IRQ 13 unmasked (`reset.asm`) | Holds |
+| An NMI is a parity or channel check, fatal anyway (M5a) | **Not fatal.** On a RAM parity or I/O channel error (port 61h bits 7 and 6) the BIOS prints where it happened and asks: R reboots, any other key goes on (IRET); S also turns both checks off, and after an I/O channel error that check stays off either way. Any other NMI is ignored | Corrected (M5a's limits) |
+
+So the one thing read wrong is the NMI's. Two things follow for MT, and neither changes it:
+- **A half-written INT 02h:** a switch writes INT 02h with two MOVSWs (`mt_vld`; `mt_vrep` at a task's end), so an NMI between them would jump through half a vector. That is one instruction's gap, and only when the two tasks' INT 02h differ (one has a 287 error handler of its own).
+- **Under MT the prompt works too:** its INT 10h and INT 16h calls come from the ROM, so MT passes them to the BIOS (`mt_v10`, `mt_i16`): the real screen, whichever task is in front (its shadow lost), and the real keys. The tick can't switch away from code in the ROM (`mt_safe`), so the machine waits there, every task with it, until a key answers. Two rare exceptions: an NMI inside a call MT passed on to the BIOS (`mt_inb`) doesn't mark the shadow lost, so the front task may be frozen at its next switch away; and in a task whose window types keys to it (`MT_TKEY`), the prompt takes a key waiting there first.
+
+Such errors are rare.
+
+**Still for the machine:** a checklist for the next session at the 1520, with `MULTITASK=1`. Copy these to the floppy first: MTSPIN, MTSCR, MTMODE, MTKEY, MTM33 and FPUPROBE (`os/tests`), KEYCODE (`os/claude`). None is on a ROM.
+1. **The screen, first.** At CODE-P's prompt (a window): `START /W MTSPIN 20000 C.TXT` (about 18 minutes of counting, behind), then `START MTSCR P` (full screen, in front). CODE-Tab to the Executive, then CODE-T: MTSCR shows "waiting for a key" (for a moment perhaps "running"), not "frozen behind". If it is frozen, MT's emulation disagrees with the BIOS somewhere: narrow it down with `START MTSCR L L.TXT` (DOS's lines only), then `C` and `M`. If L runs and P is frozen, one of P's odd cases was misread; finding which needs a dump of B800h and the task's pages, a program not yet written. Then T3's way back from graphics: `MTMODE 40 M.TXT T` at CODE-P's prompt, in its window. It goes full screen in graphics; after a key it sets mode 3 and is back in its window, not frozen; after another key M.TXT says ok.
+2. **Keys:** `START MTKEY R K.TXT` (it reads one key with INT 16h AH=00h, in the BIOS), CODE-Tab away and back several times, then a key: K.TXT holds that key, not A500. CODE-Tab from the prompt and from Write too: never lost, never typed in. CODE-F6 goes round the windows and the Executive, each in turn getting the keys (M8a, M8c); CODE-F8 resizes a window (M8b). With `MULTITASK=0`, KEYCODE shows CODE-Tab as A500h (with MT on, MT takes it first).
+3. **The mouse** (M4c): `START MTM33 F M1.TXT` and `START MTM33 F M2.TXT`; move the pointer in each, then `q` in each: the two files' positions differ.
+4. **The coprocessor:** `FPUPROBE` says 80287. Each task's own state (M3b): `START /W MTSPIN 400 P1.TXT P` and the same with P2.TXT: both counts non-zero (0: one saw the other's values). An error with a task behind needs a program not yet written: an unmasked exception (a divide by zero) with an INT 02h handler that prints, while MTSPIN runs behind. The machine must neither hang nor deliver it twice.
+5. **Vectors** (M5a): `START /W MTSPIN 400 H.TXT H`, then the same with `T`: timer hooks inside a task, no hang, and TIME still right.
+6. **Timings:** at Shift-CODE-P's prompt with no tasks, `MTSCR L L.TXT` timed; then the same with a task waiting behind (`START /W MTKEY R K.TXT`). pcemu: 934 ms and 1,648 ms (M4a). Also parking and unparking a task (M6); the Executive's drawing under windows (M8c); the link with CLAUDE windowed (T5d).
+7. **The rest, run as a user would:** the Executive with START, TASKS, KILL and PARK; Write and CALC as windows; a terminal window; CLAUDE in one, its window following Claude Code's input box (T5d); Resident Claude's pop-up over a task.
+
+**Code fixes still open.** These aren't BIOS questions; they get a PR of their own before 0.7 (**M9b:** done, below; the third a limit for good):
+- M5a's timer speed-up (a task's INT 08h hook while counter 0 runs fast).
+- M4a's handler that never sends its EOI and then reads a key through DOS. That includes any INT 1Ch hook, which the BIOS runs before its EOI: a pop-up TSR reading a key from there lets another task run with IRQ 0 in service (`mt_can` doesn't read the PIC; `mt_safe` does, on INT 21h's way out).
+- M3's case: a task's own timer hook that calls DOS, which MT may switch away from as that call returns.
+- `mt_drop`'s comment (KMT.INC) says the BIOS drops keys "with interrupts on": it is STI at INT 16h's entry, then the look with them off.
+
+## M9b: the code fixes M9a left (2026-10-27)
+
+Two of M9a's three open fixes are made; the third stays a limit, for good (Joshua's choice). `mt_drop`'s comment now says what the BIOS does: STI at INT 16h's entry, then the look with interrupts off.
+
+**A key read through DOS from an interrupt's handler, its IRQ in service** (M4a's limit, kept open at M5b). `mt_can` now asks `mt_busy` first, so it reads the PIC too, with interrupts off, as `mt_ring` does: a tick between `mt_isr`'s OUT 0Bh and its IN could otherwise make it read the IRR. It asks before it looks at InDOS, since a task's own INT 24h handler reads its key at InDOS 2, inside the kernel's INT 24h, and it tells that case apart (CF with NZ) from its others (the 2026-10-26 audit's R14: `mt_can` had its own copy of `mt_busy`'s flag tests). So that read waits as in DOS:
+- **in front,** in the kernel's idle (HLT), until the key comes (the keyboard's IRQ 1 ranks above IRQ 3-7, so it still comes);
+- **behind,** it reads the keys as it is (`mt_kwait.bg`, as for an INT 24h prompt: `mt_i16` passes the call to the BIOS), not M5b's forced front, whose screen copy was never meant to run inside an interrupt's handler. No task is switched to meanwhile: `mt_safe` refuses at the tick with an IRQ in service, as ever.
+
+Before, the task parked as any key wait does, and another ran with the IRQ in service: its INT 10h calls went to the real screen, and a task behind lost the key for good. An INT 1Ch hook reading a key is the same case: the BIOS calls INT 1Ch before its EOI (M9a). On the 1520 that blocks the keyboard's IRQ too, so the read never ends, as in DOS; pcemu doesn't model the PIC's priorities, so the tests can't show that hang.
+
+**A program that runs the timer fast** (M5a's regression). A game's music sets counter 0 to N < 65536 and hooks INT 08h, calling the BIOS's handler every 65536 / N times. That hook is in its own vectors only, so in the other tasks' turns the BIOS's handler ran at the fast rate: the clock raced, timeouts ran short. Now `mt_tick`, when entered straight (INT 08h is `mt_tick` itself: no hook ahead of it in the running task's vectors), latches counter 0 first:
+- just after the interrupt the count is about the period (mode 2 or 3: the chip reloads there), less what has counted down meanwhile (`MT_FALW`, 20), and so the same each time;
+- a tick at the BIOS's rate held late under a long CLI (13.7 to 27.5 ms, in mode 3) reads below 8000h too, but not the same twice running. So a low read goes to `mt_tfast`, where `mt_fast` counts how sure MT is (0-3): a low read the same as the last (within `MT_FTOL`, 80h) one surer, another one less, and below 2 that read becomes the one to match. A read of 8000h and up clears it;
+- from 2 MT does as the program does: it adds count + `MT_FALW` to `mt_facc` and calls the BIOS's handler (and the rest of `mt_tick`) only when that passes 65536, else it ends the interrupt (EOI) and returns. A late tick at the fast rate (sure: 3) is still divided, and costs only one "sure" back;
+- **not in the turns of a program with an INT 1Ch hook of its own** (the running task's INT 1Ch in its own memory, `mt_mine`, asked on the dividing ticks only, and not for one at A000h and up: the BIOS's ROM, mostly, as `mt_safe` draws that line): a simpler program that runs the counter fast and hooks INT 1Ch alone lets the clock race in DOS, and gets its INT 1Ch at the fast rate here too. A TSR's INT 1Ch hook (outside the task's memory) doesn't count.
+
+So the clock, the turns (`mt_ticks`, 55 ms each) and every timeout keep their rate in every task's turn, and in the program's own its hook divides, as before. With a hook ahead MT trusts it and never divides. A program that ends leaving the counter fast is handled better than in DOS: MT goes on dividing for every task.
+
+**Cost:** at each tick entered straight (18 a second), one OUT, two INs, three compares and a byte written, with no jump taken; `mt_tfast` is ahead of `mt_tick` so that its jumps are short. At a fast rate each extra tick is that, `mt_tfast`'s test, `mt_mine` and an EOI and an IRET. `mt_tick` is now even (it was odd); every other hot label of MT's has the parity it had, asserted at build time (`mt_par`).
+
+**The limits, plainly:**
+- **The count read is late by the interrupt's latency.** Ticks held under a long CLI (another interrupt's handler, or IRQ 0's own handler not yet at its EOI) read low: the clock runs a little slow, by the clocks held (twice them in mode 3) less `MT_FALW`, over N.
+- **A chaining INT 08h hook ahead of MT's** (a TSR clock, say), while the counter runs fast: MT trusts any hook ahead, so the turns of every task that has it still race. A TSR that hooks INT 08h before tasks start is in every task's vectors (M5a), so then nothing is divided anywhere, as before M9b.
+- **A tick held late by the same time every tick** (a program that waits for the tick, then works with interrupts off over the next one, the same length each time) reads the same low count each time, and is taken for a fast counter: the clock and the turns then run slow. With the hold varying by more than about 0.05 ms (`MT_FTOL`'s 80h, in mode 3) it isn't (`t_pitcli`).
+- **Counter 0 set to LSB-only or MSB-only access** (its control word's bits 5-4 01 or 10): MT's two-byte read of the latch is then wrong; read low and the same twice running, MT would divide a counter running at the BIOS's rate, and the clock and the turns would run slow. The BIOS's mode and every game's known here use both bytes.
+- **A program that reads counter 0 with interrupts on** shares the chip's one latch and its LSB/MSB flip-flop with MT's read at the tick: either can read a wrong count. A program's single stray `IN` from port 40h leaves the flip-flop on the MSB, and MT's reads byte-swapped until the next control word that sets a mode (by the 8254's data sheet a latch command, MT's own, leaves the flip-flop as it is; not tried on the 1520); at the BIOS's rate those vary with the interrupt's latency, so they are seldom the same twice. Every reader in Lodestone does it under CLI.
+- **A fast counter's reads held late by more than `MT_FTOL`** (another task working long with interrupts off, say) and not the same twice running pause the dividing (from 3 down to 1) until two agree again: the clock gains a little meanwhile, as before M9b.
+- **A program with its own INT 1Ch hook, in another task than the one that runs the counter fast**, isn't divided in its turns either: MT can't tell whose the counter's rate is.
+- **A rate between 50% and 100% of the BIOS's** (N a little above 8000h and up) isn't divided: the clock gains up to 2× in the others' turns. Such rates are rare (music runs at 2× and more).
+
+**A task's own timer hook that calls DOS stays a limit, for good** (M3's limits). It harms only when three things meet:
+- a task's own INT 08h hook calls INT 21h after chaining on (its EOI sent: before it, `mt_safe`'s look at the PIC refuses);
+- the tick it handles landed in code that isn't the task's (the BIOS's, a TSR's);
+- another task enters that same code before the hook returns.
+
+MT can't see the hook's start or its IRET without owning INT 08h in front of it, and M3's attempt at that was taken out after four ways to hang the machine. A check on the stack's depth at the way out would refuse a task's ordinary DOS calls too (one made deep in the task's own stack looks the same as one from inside the hook, and MT can't see the hook's IRET), and since the tick never switches a task with a hook ahead (M5a), that would starve the others. A program's own INT 08h hook that chains on and then calls DOS is rare; a TSR's is refused already (its CS isn't the task's).
+
+**pcemu** gains counter 0's period:
+- a control word for counter 0 keeps its access mode, and writes to port 40h set N; IRQ 0 comes every N × 0.838 µs from the next one;
+- a latch then reads from the last IRQ 0 (as the chip reloads there), also once N is 65536 again, as the ticks are then off the BIOS's grid;
+- a tick lost while one is still pending counts in 40:6Ch (pcemu's stand-in for a long BIOS wait) only at the BIOS's rate;
+- unlike the chip, a new period starts after the IRQ 0 already due (up to 55 ms late), so a latch read before that is meaningless; `mt_tick` only reads just after an IRQ.
+
+With N never set, everything is as before.
+
+**Tests:** test_mt 525 checks (518 before):
+- **`t_irqk`:** MTIRQK (new: its IRQ 7 handler reads a key through DOS before its EOI), raised while the front task runs and while MTSPIN behind runs. No task is switched to while IRQ 7 is in service, and the key typed reaches the handler. With M9a's `mt_can` the front case switches with IRQ 7 in service, and the case behind parks for good, its key lost.
+- **`t_pitfast`:** MTFAST (new: counter 0 at 4000h, its INT 08h hook calling the BIOS's every 4th time, a DOS call in its wait). Behind with MTSPIN, in front, and after it ends leaving the counter fast: the BIOS's clock and `mt_ticks` within 6% of 18.2 a second. Without M9b: 36.4 behind, 72.8 after it. With C (its own INT 1Ch hook only), in front alone: its INT 1Ch, the clock and the turns at 4 × 18.2, as in DOS.
+- **`t_pitcli`:** MTCLI (new: behind, interrupts off from each tick to 15-22 ms after it, a different time each), under pcemu's `irq_exact`. Most ticks read low, yet the clock and the turns stay within 6% of 18.2.
+
+**Figures:** LODEMT.SYS 20,163 bytes (20,035 before: still 40 sectors, 317 bytes left in its last; no ROM sector taken, ROM 1 has 3,584 bytes left as before). `mt_bend` 5A50h (59D0h before): MT's block 8 paragraphs bigger. `mt_fast` sits in an old `align 2` pad, so no word variable moved to an odd address; two self-adjusting pads keep the code after `mt_kwait.bg` and after `mt_can` at the parity it had. With the switch off nothing moves (`image_end`, `bss_end`, `ui_keep_end` as they were; MEMSZ off 580.7 KB); LODE.SYS is the same size, 54 of its bytes different (LODEMT.SYS's checksum and `mt_boot`'s patch addresses, in its discarded start-up). MEMSZ with the switch on 558.1 KB (558.2 before).
