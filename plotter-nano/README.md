@@ -11,8 +11,68 @@ NRFD D8, NDAC D9, ATN D10, IFC D11, SRQ D12, EOI A4, REN A5; the GPIB
 cable's ground returns (pins 18-24) and shield (12) to GND. Plotter: D6 to
 the MAX3232 breakout's TXD and its RXD to D13, then the AT925MF adapter to
 the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
-1200 baud, address A). Power the Nano before the plotter; on the Pi's USB it
+1200 baud, address A); switch A without its Copy bit for standard mode, which
+uses the whole page (v7.5). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
+
+**v7.6: labels, and the 4662's own commands.** HP-GL's label commands now
+reach the plotter as its own alpha commands (070-4164-00 p. 4-16 to 4-23),
+sent just before the label that needs them and only when they change:
+
+| HP-GL | 4662 |
+|---|---|
+| `SI w,h` (cm), `SR w,h` (% of the page), `ES` | SET ALPHA DIMENSION `ESC A I cs,ls` |
+| `DI run,rise`, `DR run,rise` | SET ALPHA ROTATION `ESC A J deg` |
+| `CS n`, `CA n`, `SS`/`SA`, SO/SI in a label | SELECT ALPHA FONT `ESC A T n` |
+| `IN`, `DF` | RESET ALPHA PARAMETERS `ESC A V` |
+
+Sizes scale with the drawing (HP-GL's page is enlarged to the 4662's), so a
+label keeps its place in a plot. The 4662's fonts (Figure 4-2) differ only in
+a few characters: 1 Swedish/Finnish (CS3, CS30, CS31), 2 German (CS2, CS33),
+3 UK (CS35), 4 Spanish (CS4, CS37), 9 Danish/Norwegian (CS32, CS39); 5, 6 and 8
+are symbol variants, and other sets get font 0. `CS100`-`CS109` pick fonts 0-9
+directly (not HP-GL). Firmware level 3 or older has different fonts 1-6
+(Figure 4-3). CR and LF in a label now reach the plotter: a new line under the
+label's start (the Nano sets the left margin there). If the 4662's rear-panel
+"CR implies CR+LF" is set, CR LF gives two lines.
+
+Any of the 4662's own commands (Appendix A) can be sent too: an ESC outside a
+label starts one, and the Nano passes it to the plotter as it is.
+- `ESC A <code> <numbers>` ends at `;` or SUB (both go as SUB), or at the first
+  character that can't be part of its numbers, which is then HP-GL again; end
+  them with `;` to be sure (an HP-GL `E..` mnemonic straight after a number
+  would read as an exponent). `\x1bAJ30;` rotates labels 30 degrees, `\x1bAI112,176;`
+  doubles their size, `\x1bABP2;` takes pen 2 and `\x1bABY100;` sets the pen
+  speed (Option 31).
+- Codes without arguments end with the code (`E F ( N Q V M K L`), those with
+  one character after it (`U S R`); `ESC` and any other character (e.g. `ESC FF`,
+  MOVE-TO-HOME) is a Style II escape.
+- The 4662 goes back to the mode it was in after one (Figure 3-3), and the Nano
+  re-enters graph mode at its own pen position before the next stroke, so
+  HP-GL carries on where it was even after a command that moves the pen.
+- Native `I`, `J`, `T`, `V` and `N` (DEVICE RESET) also set what the next labels
+  use, as `SI`, `DI` and `CS` do.
+- Replies the plotter sends (SIZE, DIGITIZE) aren't passed back to GPIB; the Nano
+  reads only its own status replies. Commands that change the plotter's units
+  or page (Option 31's `ESC A B V`, the front-panel page) change where HP-GL
+  lands, and BLOCK START needs a host that sends blocks: the Nano doesn't.
+
+gridlink's `grid_plotter` lets ESC, SUB, BS, SO and SI through for these.
+
+**v7.5: the page.** Copy Mode addresses 0-4096 x 0-3124 ADUs and leaves
+the right-most 13% of the page unreachable; standard mode addresses
+0-4096 x 0-2731 over the whole 15 x 10 in page (070-4164-00 p. 1-3). The
+4662 reports its COPY MODE switch in bit 14 of READ STATUS 1 (Table 4-3,
+p. 4-14), the reply the Nano already reads for flow control, so the Nano maps
+HP-GL onto whichever page the switch selects, at its probe and at each `IN`
+(never in the middle of a plot). Outside Copy Mode the 4662 powers up
+logically off and ignores everything but PLOTTER ON (p. 4-2), so the Nano
+sends PLOTTER ON (`ESC A E`) before its probe and at every `IN`; in Copy Mode
+it is already on and the command changes nothing. `!m 0` forces standard
+mode, `!m 1` Copy Mode, `!m 2` (the default) follows the switch. v7.4 had
+already mapped Copy Mode's full height (v1-v7.3 used standard mode's 2731
+there: the top 13% of the page unused, plots 15% too wide). `tests/test_nano.cpp`
+checks the switch bit, the mapping, `!m` and PLOTTER ON.
 
 **v7.3:** `;` is optional, as in HP-GL: a letter after a mnemonic and its
 arguments starts the next mnemonic. `PD100,200PU300,400` now lifts the pen for
@@ -71,8 +131,8 @@ isn't cut at 255 characters (v1-v4 did).
   NRFD.
 
 **Console** (USB, 9600): HP-GL for testing; `?` the bus lines, counters and
-flow state; `#` ask the plotter now; `!` the timed pacing, the lift (`!r`) and the label
-settles (`!a`, `!w`, `!b`), and the mode re-entry after status requests (`!g`).
+flow state; HP-GL and ESC commands typed on the console go to the plotter too; `#` ask the plotter now; `!` the page (`!m`), the timed pacing, the lift (`!r`)
+and the label settles (`!a`, `!w`, `!b`), and the mode re-entry after status requests (`!g`).
 
 **Flashing from the Pi:**
 ```
