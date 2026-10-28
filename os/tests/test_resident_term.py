@@ -161,7 +161,8 @@ def t_popup():
         check('... its HELLO says app=resident, and gridlink gives it Term', h.router.term.hello.get('app') == 'resident'
               and h.router.app == 'term', (h.router.term.hello, h.router.app))
         check('... the console\'s shadow and screen are pyte\'s on the Pi', in_step(h), h.screen())
-        check('... the band: how to go back', 'CODE-\\ back' in h.band(), h.band())
+        check('... the band: how to go back, its last letter in column 78', 'CODE-\\ back' in h.band()
+              and len(h.band()) == 79, h.band())
         # 1.12: the block elements drawn as in CLAUDE.COM, so Claude Code's mascot keeps its eyes
         t = h.router.term
         mascot = ' ▐▛███▜▌\r\n▝▜█████▛▘\r\n  ▘▘ ▝▝\r\n▘▝▖▗▌▐▀▄▛▜▙▟▚▞\r\n'
