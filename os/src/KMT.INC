@@ -4550,8 +4550,9 @@ mt_swnow:
 ;      it is in front and a key comes, in front while nothing is typed,
 ;      other tasks running meanwhile (mt_wkey: the key brings it back);
 ;    - any other (through a TSR's hook loaded after MT, from the ROM or
-;      the EMS frame; a read where the task can't be switched from): as
-;      they are.
+;      the EMS frame; a read where the task can't be switched from): in
+;      front AH=00h/01h through mt_drop, no switch (.fd); behind, and
+;      AH=10h/11h, as they are.
 ;  Other functions as they are (AH=05h's key goes to the front task).
 ; ---------------------------------------------------------------------
 I16_AH      equ -3                      ; (the caller's AH, from mt_i16's BP;
