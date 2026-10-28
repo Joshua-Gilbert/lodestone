@@ -22,8 +22,7 @@ r_wild      resb 1              ;   it has wildcards
 d_lba       resw 1              ; the directory entry found: sector,
 d_off       resw 1              ;   offset in it (bits 9+: the sector
                                 ;   number's high part: dent_buf),
-d_index     resw 1              ;   index in its directory
-de          resb 32             ; a copy of it
+de          resb 32             ; a copy of it (RENAME copies the three)
 de_idx      resw 1              ; dir_entry's last root sector: an entry
 de_lba      resw 1              ;   in it, its LBA,
 de_bix      resw 1              ;   its buffer,
@@ -133,13 +132,12 @@ parse_comp:
         jne     .chk
         mov     ah, 1
         jmp     .put
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .chk:   push    di
         push    cx
-        push    ax
         mov     di, badchars
         mov     cx, NBADC
         repne   scasb
-        pop     ax
         pop     cx
         pop     di
         je      .err
@@ -169,18 +167,18 @@ NBADC   equ NSEP - 2                    ;  separators past '.' and '\')
 resolve_new:
         call    resolve
         jc      new_name.x
-new_name:                               ; (the same after a resolve)
-        mov     ax, 5
-        cmp     byte [r_name], 0
-        je      .f
-        mov     al, 3
+new_name:                               ; (the same after a resolve; one that
+        mov     ax, 3                   ;  worked sets r_wild only with r_name)
         cmp     byte [r_wild], 0
         jne     .f
-        mov     al, 5
-        cmp     byte [r_name], '.'
-        je      .f
+        mov     al, [r_name]
+        cmp     al, '.'
+        je      .f5
+        or      al, al
+        jz      .f5
         clc
 .x:     ret
+.f5:    mov     al, 5
 .f:     stc
         ret
 
@@ -206,9 +204,8 @@ resolve_si:
         jc      .dr                     ; (invalid, or not ready: 3, MS-DOS's)
         mov     al, [act]
         mov     [r_drv], al
-        call    fat_load
+        call    fat_load                ; (keeps BX: the drive's entry)
         jc      .x
-        mov     bx, [actp]
         mov     ax, [bx+D_CWD]
         cmp     byte [si], '\'
         jne     .c
@@ -288,7 +285,6 @@ dir_entry:
         push    cx
         push    dx
         push    di
-        mov     [d_index], bx
         mov     di, [actp]
         xor     ch, ch                  ; (the sector number's high part)
         or      ax, ax
@@ -346,6 +342,7 @@ dir_entry:
         mov     ax, [it_cl]
         mov     cx, [it_ci]
         jmp     .walk
+        times ($ + 5 - $$) & 1 db 90h   ; (hot: .walk and what follows even)
 .walk0: mov     [it_dir], ax
         xor     cx, cx
 .walk:  cmp     cx, dx
@@ -473,8 +470,7 @@ dir_find:
         jnz     .n
         call    name_match
         jne     .n
-        mov     [d_index], bx           ; (found further into the sector)
-        mov     dx, bx
+        mov     dx, bx                  ; (found further into the sector)
         and     dx, 15
         shl     dx, 5
         and     word [d_off], 0FE00h
@@ -1060,13 +1056,9 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         jc      .acc
         mov     al, [r_drv]
         mov     [ren_drv], al
-        mov     ax, [d_lba]
-        mov     [ren_lba], ax
-        mov     ax, [d_off]
-        mov     [ren_off], ax
-        mov     si, de
-        mov     di, ren_de
-        mov     cx, 16
+        mov     si, d_lba               ; d_lba, d_off, de
+        mov     di, ren_lba
+        mov     cx, 18
         rep     movsw
         mov     si, path2_buf
         call    resolve_si              ; the new name
@@ -1113,6 +1105,7 @@ f_56:   call    get_path                ; RENAME (files; same drive)
         jmp     .e
 .acc:   mov     ax, 5
 .e:     jmp     fail
+        times   -(de != d_off + 2 || ren_off != ren_lba + 2 || ren_de != ren_off + 2) db 0
 
 section .bss
 ren_drv     resb 1

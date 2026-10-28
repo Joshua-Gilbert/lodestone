@@ -49,7 +49,7 @@ KSEG    equ 0060h               ; where the kernel lives
 VERSION equ 0006h               ; Lodestone 0.6
 
 section .bss nobits align=16 follows=.text
-bss_start:
+bss_start:                      ; = image_end (KCORE.INC's CAP_SEG counts on it)
 ; KEMS.INC: in the file right after the kernel image (at image_end), in
 ; memory right after the BSS (where ems_init copies it), its data after it
 ; in memory only (emsbss); KHD.INC's module after it; then both start-ups
@@ -210,6 +210,40 @@ k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 %include "KPROC.INC"
 %include "KGPIB.INC"
 
+; The routines and loop targets most often reached by a taken jump, call or
+; return (measured in pcemu: BENCH, LCMD's DIR/TYPE/COPY, the Executive, a
+; CLAUDE link turn) start on even offsets: the 286 fetches words, so a jump
+; to an odd one costs a fetch.  The pads that put them there ("hot" in the
+; comment) are never executed.  A TIMES value of -1 here: that label went
+; odd, so re-pad (KSEG is a paragraph, so the offset's parity is the address's)
+; To measure and place them again: bench/hot.py (the counts), bench/plan.py
+; (where the pads go), bench/evalpar.py (one build against another)
+%macro EVEN 1-*
+%rep %0
+        times -((%1 - $$) & 1) db 0
+%rotate 1
+%endrep
+%endmacro
+section .text
+%ifndef NOTC                            ; (the test build without the cache: its own layout)
+        EVEN    capture, int21, int21.stk, ret_cf, ok, done, done.sw, fail, ret_cfax, ok_ax
+        EVEN    f_02, tty_out, con_out, con_out.x
+        EVEN    h2sft, sft_of, jft_alloc.l, sft_busy.l, sft_busy.n, f_3F, f_40, sft_read
+        EVEN    rw_start, rw_step, use_drive_si, sft_cluster, sft_cluster.w, sft_cluster.got
+        EVEN    rw_where.one, file_read.loop, file_read.ext, file_read.go, file_read.part
+        EVEN    sec_of, pos_sec, rw_setra, file_write.loop
+        EVEN    use_drive, fat_load, fat_get, fat_get.e, fat_flush.k, fat_flush.run, fat_flush.dirty
+        EVEN    fat_set.one, clu2lba
+        EVEN    buf_getd, buf_get, buf_get.s, buf_get.f, buf_get.n, buf_get.hit
+        EVEN    disk_io, dio.more, dio.ok, tc_piece, tc_mine
+        EVEN    gpath.n, gpath.s, parse_comp.fl, parse_comp.chk, f_36.l
+        EVEN    dir_entry, dir_entry.sub, dir_entry.walk, dir_entry.there, dir_entry.x
+        EVEN    dir_find.e, dir_find.n, name_match.l, name_match.n, name_match.x
+        EVEN    dev_look_ax.f, dev_look_ax.t, dev_look_ax.skip
+        EVEN    gp_cmd_begin, gp_send_cmd, gp_wait_co, gp_wait_co.ok, gp_tick, gp_tmo_start, gp_wait_tick.w
+        EVEN    gp_handler.go, gp_isr
+%endif
+
 section ovl
 bootbpb     times 64 db 0
             align 2
@@ -224,7 +258,10 @@ setdrv      db 0                        ; INT 21h 3305h's DH: the drive (1 = A:)
 lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
                                         ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
                                         ;  18 with R: (KROM.INC)
-            align 16                    ; (free: the BSS starts on a paragraph)
+            align 16                    ; (free: the BSS starts on a paragraph;
+                                        ;  none at lastdrv 40EFh.  The EVEN pads
+                                        ;  make a change before gp_isr's move
+                                        ;  this by its size +-1, so in steps of 2)
 image_end:                              ; everything above is copied low;
                                         ; the EMS section starts right here
 section .bss

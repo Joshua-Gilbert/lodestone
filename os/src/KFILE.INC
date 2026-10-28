@@ -219,7 +219,7 @@ sft_fill:
 ;  devices by name
 ; ---------------------------------------------------------------------
 ; is the last component of path_buf (or of the path at AX) a device?
-; -> AL = device, AH = GPIB address.  CF if not.
+; -> AL = device, AH = GPIB address.  CF if not
 dev_lookup:
         mov     ax, path_buf
 dev_look_ax:
@@ -238,20 +238,14 @@ dev_look_ax:
         jne     .f
 .cut:   mov     bx, si
         jmp     .f
-.fe:    mov     dx, dev_names           ; BX = the base name
+.fe:    mov     si, dev_names           ; BX = the base name
         xor     cx, cx
-.t:     mov     si, dx
-        cmp     byte [si], 0
-        je      .gpib
-        mov     di, bx
-.c:     mov     al, [si]
-        or      al, al
-        je      .end
-        cmp     al, [di]
-        jne     .skip
+.t:     mov     cl, [si]                ; (ES = DS, DF clear: int21's)
         inc     si
-        inc     di
-        jmp     .c
+        jcxz    .gpib
+        mov     di, bx
+        repe    cmpsb
+        jne     .skip
 .end:   mov     al, [di]                ; the name must end here
         or      al, al
         jz      .hit
@@ -263,14 +257,10 @@ dev_look_ax:
         jz      .hit
         cmp     al, '.'
         jne     .e2
-.skip:  lodsb                           ; on past this name's 0
-        or      al, al
-        jnz     .skip
-        mov     dx, si
-        inc     cx
+.skip:  add     si, cx                  ; on past this name and its device
+        inc     si
         jmp     .t
-.hit:   mov     si, cx
-        mov     al, [dev_nums+si]
+.hit:   mov     al, [si]                ; (SI: past the name, CX = 0)
         xor     ah, ah
         clc
         jmp     .x
@@ -280,28 +270,25 @@ dev_look_ax:
         cmp     word [di+2], 'IB'
         jne     .no
         add     di, 4
-        xor     ax, ax
+        xor     ax, ax                  ; AH = the address
         mov     cx, 2
-.g:     mov     dl, [di]
-        sub     dl, '0'
-        jb      .gx
-        cmp     dl, 9
+.g:     mov     al, [di]
+        sub     al, '0'
+        cmp     al, 9                   ; (below '0' too)
         ja      .gx
-        mov     dh, 10
-        mul     dh
-        add     al, dl
+        aad                             ; AL = AH * 10 + AL
+        mov     ah, al
         inc     di
         loop    .g
 .gx:    cmp     cx, 2
         je      .no
-        mov     dl, [di]
-        or      dl, dl
+        mov     al, [di]
+        or      al, al
         jz      .gok
-        cmp     dl, '.'
+        cmp     al, '.'
         jne     .no
-.gok:   cmp     al, 30
+.gok:   cmp     ah, 30
         ja      .no
-        mov     ah, al
         mov     al, DEV_GPIB
         clc
         jmp     .x
@@ -311,11 +298,11 @@ dev_look_ax:
         pop     cx
         pop     bx
         ret
-dev_names   db 'CON', 0, 'NUL', 0, 'AUX', 0, 'COM1', 0, 'COM2', 0
-            db 'PRN', 0, 'LPT1', 0, 'CLOCK$', 0
-.emm        db 0, 'MMXXXX0', 0, 0       ; (KEMS.INC: 'E' here, with EMS)
-dev_nums    db DEV_CON, DEV_NUL, DEV_AUX, DEV_AUX, DEV_COM2, DEV_PRN, DEV_PRN, DEV_NUL
-            db DEV_EMM
+; each: its length, the name, the device; a length of 0 ends them
+dev_names   db 3, 'CON', DEV_CON, 3, 'NUL', DEV_NUL, 3, 'AUX', DEV_AUX
+            db 4, 'COM1', DEV_AUX, 4, 'COM2', DEV_COM2, 3, 'PRN', DEV_PRN
+            db 4, 'LPT1', DEV_PRN, 6, 'CLOCK$', DEV_NUL
+.emm        db 0, 'EMMXXXX0', DEV_EMM, 0        ; (KEMS.INC: 8 here, with EMS)
 
 ; device AL (AH = GPIB address) into a new SFT entry -> SI, AL = number
 dev_open:
@@ -705,6 +692,7 @@ rw_start:
         mov     al, [si+S_DRV]          ; its drive, and that drive's FAT
         call    use_drive_si
         jmp     fat_load
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; advance by AX bytes
 rw_step:
         add     [rw_done], ax
@@ -747,6 +735,7 @@ sft_cluster:
         clc
         pop     cx
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .no:    stc
         pop     cx
         ret
@@ -906,6 +895,7 @@ file_read:
         xor     ah, ah
         add     [rw_run], ax
         jmp     .ext
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .go:    mov     ax, [rw_cl]             ; the next lookup starts from here
         mov     [si+S_CCL], ax
         mov     ax, [rw_cix]
@@ -975,6 +965,7 @@ sec_of: shr     ax, 9
         shl     dx, 7
         or      ax, dx
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ; AX = the sector of the file the position of SFT SI is in
 pos_sec:
         push    dx
@@ -1021,6 +1012,7 @@ file_write:
         or      cx, cx
         jnz     .loop
         jmp     .setsz
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .loop:  cmp     word [rw_left], 0
         je      .done
         call    rw_where
@@ -1688,8 +1680,8 @@ f_4F:   call    find_next
         jmp     ret_cf
 
 find_next:
-        les     di, [dta]
-        mov     al, [es:di]
+        les     di, [dta]               ; (kept by drv_present and fat_load,
+        mov     al, [es:di]             ;  their M:, R: and C: hooks too)
         dec     al
         call    drv_present
         jc      .nomore
@@ -1698,7 +1690,6 @@ find_next:
         call    fat_load
         jc      .x
         mov     word [it_dir], 0
-        les     di, [dta]
         push    ds                      ; the pattern
         push    es
         pop     ds
@@ -1711,7 +1702,7 @@ find_next:
         rep     movsb
         pop     di
         pop     ds
-        les     di, [dta]
+        les     di, [dta]               ; ES again (a clock faster than PUSH/POP)
         mov     ax, [es:di+13]
         call    dir_lim
         mov     bx, [es:di+15]
@@ -1749,17 +1740,17 @@ find_next:
         ; found: fill the DTA
         inc     bx
         mov     [es:di+15], bx
-        mov     al, [si+11]
-        mov     [es:di+21], al
-        mov     ax, [si+22]
-        mov     [es:di+22], ax
-        mov     ax, [si+24]
-        mov     [es:di+24], ax
-        mov     ax, [si+28]
-        mov     [es:di+26], ax
-        mov     ax, [si+30]
-        mov     [es:di+28], ax
-        add     di, 30
+        mov     al, [si+11]             ; attribute, time, date, size
+        add     di, 21
+        stosb
+        add     si, 22
+        movsw
+        movsw
+        inc     si                      ; (past the cluster)
+        inc     si
+        movsw
+        movsw
+        sub     si, 32                  ; SI the entry again, DI at +30
         call    name_out
         push    cs
         pop     es
