@@ -28,7 +28,7 @@
 %include "UIAPI.INC"
 %include "MTAPI.INC"
 %include "WINPOS.INC"
-RUN_API equ 8
+RUN_API equ 9                           ; (EV_CLOSE: its close box)
 RUN_FLAGS equ RF_WIN                    ; (a window beside others)
         org     RUN_ORG
 
@@ -75,6 +75,8 @@ start:  mov     di, arg                 ; "task count"
         je      .tick                   ;  take 12h for Ctrl-R)
         cmp     ax, EV_CLICK
         je      .clk
+        cmp     ax, EV_CLOSE
+        je      .cls
         cmp     ax, EV_RCLICK
         je      .rcl
         cmp     ax, EV_MOVED            ; (moved or resized: drawn there
@@ -87,6 +89,8 @@ start:  mov     di, arg                 ; "task count"
         jmp     .loop
 .rcl:   call    rclick
         jmp     .loop
+.cls:   call    close
+        jmp     .loop
 .tick:  call    tick
         jnc     .loop
         call    UI_WCLOSE               ; it ended
@@ -95,6 +99,26 @@ start:  mov     di, arg                 ; "task count"
 .front: call    full                    ; (no window after all: in front)
 .bad:   mov     ax, 1
         ret
+
+; its close box (EV_CLOSE): asked in the band, then its task ended
+; (MT_KILL, as TASKS.RUN's); the window closes at the tick that sees it
+; gone, as at EXIT.  ESC there: as it was, nothing sent to the task
+close:  mov     di, askb
+        mov     si, s_end
+        call    UI_SBSTR
+        mov     si, title
+        call    UI_SBSTR
+        mov     byte [di], 0
+        mov     si, askb
+        call    UI_ASK
+        jc      .x
+        call    gone                    ; (ended meanwhile, its number maybe
+        jc      .x                      ;  another's now: not that one)
+        mov     ax, 0F000h + MT_KILL
+        mov     bl, [task]
+        stc
+        int     21h
+.x:     ret
 
 ; a decimal number at SI (blanks before it skipped) -> AL
 num:    xor     ax, ax
@@ -228,22 +252,28 @@ unshade:
         ret
 
 ; EV_TICK: the task ended (CF), or its screen to show
-tick:   mov     ax, 0F000h + MT_EXIT    ; ended (free, or its number given
-        mov     bl, [task]              ;  again)?
-        stc
-        int     21h
+tick:   call    gone
         jc      .end
-        or      al, al
-        jz      .end
-        cmp     ah, [gen]
-        jne     .end
-        cmp     cl, [gen]
-        je      .end
         call    flush                   ; the keys kept, if there is room now
         call    show
         clc
+.end:   ret
+
+; its task ended (free, or its number given again)?  CF if so
+gone:   mov     ax, 0F000h + MT_EXIT
+        mov     bl, [task]
+        stc
+        int     21h
+        jc      .y
+        or      al, al
+        jz      .y
+        cmp     ah, [gen]
+        jne     .y
+        cmp     cl, [gen]
+        je      .y
+        clc
         ret
-.end:   stc
+.y:     stc
         ret
 
 ; its screen, as MT keeps it, in the window: the view following its
@@ -1294,6 +1324,7 @@ rclick: mov     al, 0
 %include "../claude/CELL.INC"
 
 s_fnt       db 'TERM.FNT', 0
+s_end       db 'Close: Confirm to end ', 0
 s_ngfx      db 'In a graphics mode: a key here shows it (or CODE-Tab)', 0
 s_nfz       db 'It writes the screen itself: a key here shows it (FULL= for it)', 0
 items       dw s_copy, copy, RM_SEL, s_paste, paste, RM_CLIP, s_full, full, RM_TXT, 0
@@ -1301,7 +1332,7 @@ s_copy      db 'Copy           CODE-C', 0
 s_paste     db 'Paste          CODE-V', 0
 s_full      db 'Full screen    CODE-Tab', 0
 win:        dw 0, SCR_TOP, 80, SCR_BAND_Y - SCR_TOP
-            dw title, w_draw, WF_MOVE | WF_SIZE
+            dw title, w_draw, WF_MOVE | WF_SIZE | WF_CLOSE
 top         dw 0                        ; the view: its screen's first row and
 left        dw 0                        ;  column in the window
 
@@ -1345,4 +1376,5 @@ rm_buf      resw 3                      ; the right click's menu (RMENU.INC)
 rm_do       resw 3
 arg         resb 16
 title       resb 16
+askb        resb 40                     ; (close's question)
 run_bss_end:

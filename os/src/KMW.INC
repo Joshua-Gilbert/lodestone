@@ -602,14 +602,25 @@ mw_got: cmp     byte [cs:mw_n], 0
         jne     .win                    ;  window, a session's, isn't its to
         call    mw_topses               ;  move or close (CODE-F7, its strip)
         jc      .ret
-.win:   UCALL   win_ev
-        jc      .wait
+.win:   cmp     ax, EV_CLICK            ; (a click win_ev makes ESC: on the
+        pushf                           ;  close box)
+        UCALL   win_ev
+        jc      .wt
+        popf
+        jne     .ret
+        cmp     ax, K_ESC               ; EV_CLOSE for it, to a .RUN for API
+        jne     .ret                    ;  9 (a terminal window's: its ESC is
+        cmp     word [run_hdr+4], 9     ;  its program's)
+        jb      .ret
+        mov     ax, EV_CLOSE
 .ret:   retf                            ; (ui_event.got + 5: the event)
+.wt:    popf
 .wait:  push    bp
         mov     bp, sp
         mov     word [bp+2], ui_event.on
         pop     bp
         retf
+        db      90h                     ; (a pad: mw_poll at its parity, asserted)
 
 ; ui_event's look for an event (CALL FAR over its CALL poll_once / JNC
 ; .got; DS = the UI): poll_once's, else EV_TICK for a terminal window in
