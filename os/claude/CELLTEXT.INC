@@ -50,11 +50,10 @@ blank_row:
         ret
 
 strlen: push    si                      ; DS:SI -> CX
-        xor     cx, cx
-.l:     lodsb
+        mov     cx, -1
+.l:     inc     cx
+        lodsb
         or      al, al
-        jz      .x
-        inc     cx
-        jmp     .l
-.x:     pop     si
+        jnz     .l
+        pop     si
         ret
