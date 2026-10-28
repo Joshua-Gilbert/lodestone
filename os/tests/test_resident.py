@@ -157,12 +157,36 @@ s_ok    db      'K16: ok', 13, 10, '$'
 s_bad   db      'K16: bad', 13, 10, '$'
 '''
 
-def k16():
-    """K16.COM, assembled here (OUT): see K16"""
-    src, com = os.path.join(OUT, 'K16.ASM'), os.path.join(OUT, 'K16.COM')
-    open(src, 'w').write(K16)
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+KEYPK = r'''; KEYPK.COM: every key through an INT 16h AH=01h peek first, then read
+; (AH=00h) and shown; Esc ends.
+cpu 286
+org 100h
+        mov     dx, msg
+        mov     ah, 9
+        int     21h
+.l:     mov     ah, 1
+        int     16h
+        jz      .l
+        xor     ah, ah
+        int     16h
+        cmp     al, 1Bh
+        je      .x
+        mov     ah, 0Eh
+        int     10h
+        jmp     .l
+.x:     mov     ax, 4C00h
+        int     21h
+msg     db      'KEYPK ready: $'
+'''
+
+def asm(name, src):
+    """NAME.COM, assembled here (OUT) from src"""
+    s, com = os.path.join(OUT, name + '.ASM'), os.path.join(OUT, name + '.COM')
+    open(s, 'w').write(src)
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, s], check=True)
     return com
+
+def k16(): return asm('K16', K16)
 
 def run_el(k, cmd):
     """A command at the prompt -> (its screen, its exit code: 0, 1 or 2 and more)."""
@@ -373,6 +397,28 @@ def t_rother():
     o = k.pc.text_screen()
     check('K16 under the stub: AH=02h and 12h give the shift state, 04h-80h come back as asked, then two keys read',
           'K16: ok' in o, o)
+
+def t_rpoll():
+    """CODE-\\ under a program that polls (KEYPK: AH=01h, then AH=00h), typed
+    at many moments of its loop: the console always comes.  (The BIOS's
+    AH=01h drops CODE-\\ at the head of the buffer; one typed after the
+    stub's look, before the BIOS's, went.)"""
+    k = ktest.KPC(image('rpoll.img', 'KEYPK.COM=' + asm('KEYPK', KEYPK)), ems_pages=88); k.start()
+    k.key(ktest.CODE_P)
+    prompt(k, 'claude /r')
+    k.key('cls'); k.key(ktest.ENTER); k.key('keypk'); k.key(ktest.ENTER, settle=False); k.settle(3)
+    missed = []
+    for i in range(24):
+        k.pc.run_for(0.0013 * i + 0.0005)
+        k.key(HOT, settle=False)
+        if not k.pc.run_until(lambda: console(k), 3):
+            missed.append(i)
+            continue
+        k.key(HOT, settle=False)
+        k.pc.run_until(lambda: k.pc.mode() == 3, 3)
+    k.key('a'); k.key(ktest.ESC)
+    check('CODE-\\ under KEYPK at 24 moments of its peek loop: the console came each time, and back', not missed
+          and 'KEYPK ready: a' in k.pc.text_screen(), (missed, k.pc.text_screen()[:200]))
 
 def t_rvideo():
     """The console over CGA graphics, the 640x400 mode and text: the screen
@@ -631,7 +677,7 @@ def t_rhole():
           i is not None and all(b[1] == 0 for b in blocks[i + 1:]) and holes,
           [(hex(s), o_, n, nm) for s, o_, n, nm in blocks])
 
-TESTS = [t_ems, t_video, t_exec, t_tm5000g, t_rload, t_rems, t_rother, t_rvideo, t_rdos, t_rexec, t_rtm5000g,
+TESTS = [t_ems, t_video, t_exec, t_tm5000g, t_rload, t_rems, t_rother, t_rpoll, t_rvideo, t_rdos, t_rexec, t_rtm5000g,
          t_rirq, t_rmouse, t_rversion, t_rhole]
 if __name__ == '__main__':
     build()

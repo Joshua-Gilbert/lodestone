@@ -3913,7 +3913,6 @@ r_bgon   db     0               ; 10Fh (version 5): 1 background looks at key
 %ifdef STUB_PAD                 ; (the tests: a CLAUDE.COM whose stub is laid
         times   STUB_PAD db 0   ;  out otherwise, as another version's)
 %endif
-r_entry  dd     R_FRAME << 16   ; the console: E000:0000
 r_hw     db     0, 0, 0, 0      ; our pages' register values
 r_saved  db     0, 0, 0, 0      ; the program's windows meanwhile
 r_params:                       ; the console's, ES:BX (RCON.ASM P_*)
@@ -3930,23 +3929,37 @@ r_mt     dd     0               ; Lodestone's multitasking (MT_TSR): its bytes,
 r_bgt    dw     0               ;  the tick of the last background look
 r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         jnz     .ch                     ;  peek; the rest go on to the BIOS)
-        cmp     byte [cs:r_inpop], 0    ; the console up: a peek from anyone
-        jne     .up                     ;  else (a TSR, from an interrupt)
-        test    ah, 1                   ;  sees no key, as the BIOS's AH=01h
-        jz      .rd                     ;  would drop CODE-\, the console's
+        cmp     word [cs:r_inpop], 0    ; (the console up, or CLAUDE.COM runs,
+        jne     .up                     ;  r_off: .up)
+        test    ah, 1
+        jz      .rd
         sti                             ; (a peek returns with interrupts on,
 .pk:    call    r_hot                   ;  as the BIOS's AH=01h; the STI here
         call    r_bg                    ;  puts .pk odd and the calls' returns
-        call    r_feed                  ;  even.  Claude's keys first)
-        jc      .ch
-        or      sp, sp                  ; (not ZF: a key)
-        retf    2
-.up:    test    ah, 1
-        jz      .ch
-        cmp     ax, ax                  ; (ZF: no key; interrupts on, as
-        sti                             ;  the BIOS's AH=01h returns)
-        retf    2
-.ch:    jmp     far [cs:r_old16]
+        call    r_feed                  ;  even.  Claude's keys first: not
+        jnc     .rt                     ;  ZF, a key)
+        test    ah, 10h                 ; (AH=11h drops none: on to the BIOS)
+        jnz     .ch
+        push    ax                      ; The BIOS's AH=01h drops the hot key,
+        mov     ah, 11h                 ;  as the other keys it doesn't give,
+        pushf                           ;  at the head: one typed since r_hot
+        call    far [cs:r_old16]        ;  looked would go.  So a look that
+.lr:    jz      .z                      ;  drops none first: no key, or the hot
+        db      81h, 0F8h               ;  key next (2BF0h's AH=11h form too;
+        dw      R_HOT                   ;  taken at the next call): ZF.  Else
+.z:     pop     ax                      ;  the caller's AH=01h on: the head key
+        jnz     .ch                     ;  is one it gives.  (CMP AX,R_HOT in
+.rt:    retf    2                       ;  its 4-byte form: .z even.  Interrupts
+        times   ($ - $$) & 1 db 90h     ;  on: the BIOS's.  The pad: .ch even)
+.up:    cmp     byte [cs:r_inpop], 0    ; the console up: a peek from anyone
+        jne     .u                      ;  else (a TSR, from an interrupt) sees
+        mov     byte [cs:r_bgon], 0     ;  no key, as the BIOS's AH=01h would
+.ch:    jmp     far [cs:r_old16]        ;  drop CODE-\, the console's.  While
+.u:     test    ah, 1                   ;  CLAUDE.COM runs (r_off) all go on to
+        jz      .ch                     ;  the BIOS, and no background looks
+        cmp     ax, ax                  ;  (one before 1.10 left r_bgon set)
+        sti
+        jmp     .rt
 .rd:    sti                             ; a read: wait here, CODE-\ seen
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
         call    r_bg
@@ -3962,8 +3975,8 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         pop     ax                      ;  it can't switch: an INT 24h prompt's)
         jnz     .ch
         hlt
-..@r_idle:                              ; (MT_TSR: another task may run here)
-        jmp     .w
+..@r_idle:                              ; (MT_TSR: another task may run here;
+        jmp     r_int16                 ;  then r_inpop and r_off looked at again)
 .ky:    iret
         times   ($ - $$) & 1 db 90h     ; (r_feed, r_hot, r_bg even)
 
@@ -3984,7 +3997,7 @@ r_front:
 .x:     ret
 
 ; Claude's keys for the program (TYPE, M3), from the console's page: CF if
-; none now (AX kept), else AX = the key, taken if AH is a read.  The
+; none now (AX kept), else AX = the key (not ZF), taken if AH is a read.  The
 ; console's feeder runs with its page in window 0 and the program's back
 ; after; when the keys are done it sets r_pend, and the console comes.
 r_feed: cmp     byte [cs:r_ks], 0
@@ -4009,25 +4022,15 @@ r_feed: cmp     byte [cs:r_ks], 0
         xchg    ax, bx
         pop     bx
         pop     dx
-        jnc     .x
+        jc      .wk
+        or      sp, sp                  ; (not ZF: a key)
+        ret
 .wk:    push    ax                      ; none now, the keys not done (a wait)
         mov     al, 1                   ;  or just done (r_pend: the console
         call    r_tell                  ;  to come): MT told (mt_tsrk), or a
         pop     ax                      ;  wait at our HLT would never end
         stc
         ret
-
-; MT's byte of ours (mt_tsrk) = AL, if Lodestone's multitasking asked.
-; Registers kept
-r_tell: cmp     word [cs:r_mt + 2], 0
-        je      .x
-        push    ds
-        push    si
-        lds     si, [cs:r_mt]
-        mov     [si + 2], al
-        pop     si
-        pop     ds
-.x:     ret
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
 ; move back one), and the console runs, unless a hardware interrupt is in
@@ -4040,9 +4043,7 @@ r_tell: cmp     word [cs:r_mt + 2], 0
 ; gives the front task a turn as for a key.  Registers kept.  (Never called with the
 ; console up: r_int16 answers itself then, and r_popup clears r_inpop
 ; before it returns here.)
-r_hot:  cmp     byte [cs:r_off], 0
-        jne     .x
-        push    ax
+r_hot:  push    ax
         push    bx
         push    si
         push    ds
@@ -4102,16 +4103,17 @@ r_hot:  cmp     byte [cs:r_off], 0
         mov     bx, [80h]
 .n:     ret
 
-; the PIC's in-service register, then back to the request one (as the
-; kernel's screen capture does): AH, and ZF if nothing is in service
-r_isr:  mov     al, 0Bh
-        out     20h, al
-        in      al, 20h
-        mov     ah, al
-        mov     al, 0Ah
-        out     20h, al
-        or      ah, ah
-        ret
+; MT's byte of ours (mt_tsrk) = AL, if Lodestone's multitasking asked.
+; Registers kept
+r_tell: cmp     word [cs:r_mt + 2], 0
+        je      .x
+        push    ds
+        push    si
+        lds     si, [cs:r_mt]
+        mov     [si + 2], al
+        pop     si
+        pop     ds
+.x:     ret
 
 ; M4: a background look, if the console asked for them (r_bgon 1: the user
 ; went back to the program with the link up), none was made for R_BGT
@@ -4121,8 +4123,6 @@ r_isr:  mov     al, 0Bh
 ; Registers kept.
 r_bg:   cmp     byte [cs:r_bgon], 1
         jne     .x
-        cmp     byte [cs:r_off], 0      ; (a CLAUDE.COM has the link: one before
-        jne     .o                      ;  1.10 doesn't know to clear r_bgon)
         cmp     byte [cs:r_ks], 0
         jne     .x
         call    r_front
@@ -4140,8 +4140,6 @@ r_bg:   cmp     byte [cs:r_bgon], 1
 .n:     pop     ds
         pop     ax
 .x:     ret
-.o:     mov     byte [cs:r_bgon], 0     ;  (so it clears it for that one)
-        ret
 .go:    mov     ax, [6Ch]
         mov     [cs:r_bgt], ax
         mov     byte [cs:r_bgon], 2
@@ -4162,23 +4160,29 @@ r_popup:
         mov     sp, r_stack_top
         sti
         cld
-        mov     dx, R_EPORT             ; the program's windows, then ours
-        mov     si, r_saved
+        mov     dx, R_EPORT             ; the program's windows kept, ours in
+        mov     si, r_hw                ;  (R_PAGES: ours fill all four)
         mov     cx, 4
 .s:     in      al, dx
-        mov     [cs:si], al
+        mov     [cs:si + 4], al         ; (r_saved)
+        mov     al, [cs:si]
+        out     dx, al
         inc     si
         add     dx, 4000h
         loop    .s
-        mov     si, r_hw
-        call    r_outw
         push    cs
         pop     es
         mov     bx, r_params
-        call    far [cs:r_entry]
+        call    R_FRAME:0               ; the console
 ..@r_back:                              ; (the tests: the console has returned)
-        mov     si, r_saved             ; the program's windows back
-        call    r_outw
+        mov     dx, R_EPORT             ; the program's windows back
+        mov     si, r_saved
+        mov     cx, 4
+.r:     mov     al, [cs:si]
+        out     dx, al
+        inc     si
+        add     dx, 4000h
+        loop    .r
         cli
         mov     ss, [cs:r_ss]
         mov     sp, [cs:r_sp]
@@ -4190,16 +4194,18 @@ r_popup:
         mov     byte [cs:r_inpop], 0
         ret
 
-; the four windows' page registers from CS:SI (R_PAGES: ours fill all four)
-r_outw: mov     dx, R_EPORT
-        mov     cx, 4
-.m:     mov     al, [cs:si]
-        out     dx, al
-        inc     si
-        add     dx, 4000h
-        loop    .m
+        times   -(R_PAGES != 4 || r_saved != r_hw + 4) db 0
+
+; the PIC's in-service register, then back to the request one (as the
+; kernel's screen capture does): AH, and ZF if nothing is in service
+r_isr:  mov     al, 0Bh
+        out     20h, al
+        in      al, 20h
+        mov     ah, al
+        mov     al, 0Ah
+        out     20h, al
+        or      ah, ah
         ret
-        times   -(R_PAGES != 4) db 0
 
 ; CLAUDE /R allocates the EMS pages through here, far: the kernel gives
 ; pages asked for from outside a program's memory to no program (KEMS.INC),
@@ -4211,12 +4217,13 @@ r_code_end:                             ; (the stack follows the code in the
 r_stack_top equ r_code_end + R_STACK    ;  stub's block, not in CLAUDE.COM)
 r_end   equ     r_stack_top
 R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
-; the stub's hot code even, by its order (r_isr between r_hot and r_bg) and
-; r_int16's STI before .pk, no pads; a peek's r_hot and r_feed go straight
-; through
+; the stub's hot code even, by its order (r_tell between r_hot and r_bg),
+; r_int16's STI before .pk and two self-correcting pads, never run (after
+; .rt and .ky); a peek's r_hot and r_feed go straight through
 %ifndef STUB_PAD                        ; (the tests: another version's layout)
         EVEN    r_int16, r_int16.ch, r_feed, r_hot, r_hot.s, r_hot.k, r_hot.nx, r_hot.n, r_bg, r_bg.x
         EVEN    r_int16.pk + 3, r_int16.pk + 9  ; (a peek's returns from r_hot and r_feed)
+        EVEN    r_int16.lr, r_int16.z           ; (and the AH=01h look's)
 %endif
 
 section .text
