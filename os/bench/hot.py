@@ -86,10 +86,9 @@ def w_claude():
     assert h.turn('hello', sim_s=60)
 
 # ---- the UI's ----------------------------------------------------------
+from test_apps import CODE, K_PGDN, K_PGUP, K_HOME, K_END, press, drag     # (its keys and mouse)
 APP = lambda n: os.path.join(GOS, 'apps', n + '.RUN')
-CODE = lambda c: (0x1E00, 0x3000, 0x2E00, 0x2000, 0x1200, 0x2100, 0x2200, 0x2300, 0x1700, 0x2400, 0x2500, 0x2600, 0x3200,
-                  0x3100, 0x1800, 0x1900, 0x1000, 0x1300, 0x1F00, 0x1400, 0x1600, 0x2F00, 0x1100, 0x2D00, 0x1500, 0x2C00)[ord(c) - 65]
-K_PGDN, K_PGUP, K_HOME, K_END, K_CODE_F7 = 0x5100, 0x4900, 0x4700, 0x4F00, 0x6E00
+K_CODE_F7 = 0x6E00
 D, U, L, R, RET, ESC = ktest.DOWN, ktest.UP, ktest.LEFT, ktest.RIGHT, ktest.ENTER, ktest.ESC
 
 def text(name, n):
@@ -104,20 +103,6 @@ def ui_pc(name, *files, mouse=True, **kw):
                   + ['F%02d.TXT=%s' % (i, t) for i in range(24)]), **kw)
     k.pc.mouse = mouse; k.start()
     return k
-
-def point(k, x, y, b=0):
-    dx, dy = x - k.u16('mx'), y - k.u16('my')
-    while dx or dy:
-        sx, sy = max(-40, min(40, dx)), max(-40, min(40, dy))
-        k.pc.mouse_move(sx & 0xFF, sy & 0xFF, b); k.pc.run_for(0.05)
-        dx -= sx; dy -= sy
-
-def press(k, x, y, b=1):
-    point(k, x, y); k.pc.mouse_move(0, 0, b); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
-
-def drag(k, x0, y0, x1, y1):
-    point(k, x0, y0); k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05)
-    point(k, x1, y1, 1); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
 
 def w_idle():
     k = ui_pc('hot_idle.img')
@@ -143,13 +128,13 @@ def w_form():
     k = ui_pc('hot_form.img', APP('SYSTEM'))
     k.select('F03.TXT')
     for c in 'RDRD':
-        k.key(CODE(c)); k.key('NEWNAME'); k.key(ktest.TAB, ktest.TAB, D, U); k.key(ESC)
+        k.key(CODE[c]); k.key('NEWNAME'); k.key(ktest.TAB, ktest.TAB, D, U); k.key(ESC)
     for _ in range(3): k.key(ktest.TAB, ktest.TAB, ktest.TAB, D, D, U, ESC)
-    k.key(CODE('U')); k.key('C'); k.key(RET); k.key(ktest.TAB, ktest.TAB, D, U, ESC); k.key(ESC)
+    k.key(CODE['U']); k.key('C'); k.key(RET); k.key(ktest.TAB, ktest.TAB, D, U, ESC); k.key(ESC)
 
 def w_drag():
     k = ui_pc('hot_drag.img', APP('CALC'))
-    k.key(CODE('K'))
+    k.key(CODE['K'])
     for i in range(4):
         drag(k, 50 * 8 + 3, 36, (30 - 6 * i) * 8 + 3, 76 + 40 * i)
         drag(k, (30 - 6 * i) * 8 + 3, 76 + 40 * i, 50 * 8 + 3, 36)
@@ -165,16 +150,16 @@ def w_write():
 
 def w_calc():
     k = ui_pc('hot_calc.img', APP('CALC'))
-    k.key(CODE('K'))
+    k.key(CODE['K'])
     for s in ('12+34*5', '1/7', '2^10-1', 'sqrt(2)*3.5', '100/3'):
         k.key(s); k.key(RET)
     ky = 28 + 80
     for r, c in ((0, 0), (1, 3), (1, 2), (4, 3), (2, 1), (3, 0), (4, 3)):
-        press(k, (42 + 6 * c + 3) * 8, ky + 24 * r + 12)
+        press(k, (42 + 6 * c + 3) * 8, ky + 24 * r + 12, 1)
 
 def w_system():
     k = ui_pc('hot_sys.img', APP('SYSTEM'))
-    k.key(CODE('U'))
+    k.key(CODE['U'])
     for _ in range(2):
         k.key(*[D] * 6); k.key(*[U] * 6)
     for c in 'DCMD': k.key(c)
@@ -189,7 +174,7 @@ def w_term():
         k.key(s, settle=False); k.key(RET, settle=False); k.run_for(t)
     for s, t in (('dir', 3), ('type long.txt', 8), ('dir /w', 3)): typ(s, t)
     typ('type long.txt', 0.2)
-    k.key(CODE('K'), settle=False); k.run_for(8)       # (the calculator in front, the TYPE drawn behind it: clipped)
+    k.key(CODE['K'], settle=False); k.run_for(8)       # (the calculator in front, the TYPE drawn behind it: clipped)
     k.key('12+34', settle=False); k.key(RET, settle=False); k.run_for(1)
     k.key(ESC, settle=False); k.run_for(1)             # (the calculator closed)
     for s, t in (('type long.txt', 8), ('dir', 3)): typ(s, t)
