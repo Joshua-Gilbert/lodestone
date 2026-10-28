@@ -4,10 +4,21 @@
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
  *
+ * v7.5: the page mode follows the plotter. The 4662 reports its rear-panel
+ *    COPY MODE switch in bit 14 of its interface status (READ STATUS 1,
+ *    Table 4-3, p. 4-14), the reply the Nano already reads for flow
+ *    control, so the Nano maps HP-GL onto Copy Mode's 0-3123 or standard
+ *    mode's 0-2730 by itself (applied at the probe and at IN, never in the
+ *    middle of a plot). Standard mode (switch A without Copy) uses the whole
+ *    15 x 10 in page; Copy Mode loses its right 13%. Outside Copy Mode the
+ *    4662 powers up logically off and ignores everything but PLOTTER ON
+ *    (p. 4-2), so the Nano sends PLOTTER ON (ESC A E) before its probe and
+ *    at every IN; in Copy Mode it is already on and the command does nothing.
+ *    !m 0 / !m 1 forces standard / Copy Mode, !m 2 follows the plotter.
+ *
  * v7.4: the whole page height. In Copy Mode (switch A=3) the page is 0-3124
  *    ADUs high, not 0-2731 (p. 1-3); HP-GL's height now maps onto all of it,
- *    which also makes the X and Y scales equal (circles round). Set
- *    COPY_MODE 0 for a 4662 run in standard mode.
+ *    which also makes the X and Y scales equal (circles round).
  *
  * v7.3: ';' is optional, as in HP-GL: a letter after a mnemonic and its
  *    arguments starts the next mnemonic. PD100,200PU300,400 lifts the pen for
@@ -118,6 +129,7 @@
 #define SPACE_SETTLE_MS 0       // !w: before a space in a label, wait for the plotter, then this (e.g. 150)
 #define STATUS_TIMEOUT  180000UL // ms to wait for a status reply (it may wait for the pen)
 #define PROBE_MS        1500    // ms to wait for a reply when finding out if the plotter answers
+#define PAGE_MODE       2       // !m: 0 standard mode, 1 Copy Mode, 2 as the plotter's COPY MODE switch
 
 // Fallback pacing, when the plotter doesn't answer status requests (as v3)
 #define PACE_SPEED_ADU_S  820
@@ -392,6 +404,36 @@ void gpibBegin() {
 }
 
 // ============================================================================
+// THE PAGE
+// ============================================================================
+
+// The page in ADUs (070-4164-00 p. 1-3): standard mode 0-4096 x 0-2731, the
+// whole default 15 x 10 in page; Copy Mode (switch A=3) 0-4096 x 0-3124, with
+// the right-most 13% of the page not addressable (the ADU is smaller, so 4096
+// of them span 13.1 in). Either way HP-GL's 10365 x 7962 maps at about one
+// scale on both axes. (v1-v7.3 used 2731 in Copy Mode: the top 13% of the
+// page unused, and plots 15% too wide for their height.)
+#define TEK_MAX_X 4095L
+#define TEK_MAX_Y ((long)tekMaxY)
+uint8_t pageMode = PAGE_MODE;           // !m
+int8_t copySwitch = -1;                 // the plotter's COPY MODE switch, from its last status (-1: not heard)
+bool copyMode = true;                   // what the Nano maps onto
+int tekMaxY = 3123;
+
+// Copy Mode or not, from !m or the plotter. Called where a change can't land
+// in the middle of a plot: the probe and IN.
+void applyPage() {
+    bool cm = pageMode == 0 ? false : pageMode == 1 ? true : copySwitch < 0 ? copyMode : copySwitch;
+    if (cm == copyMode) return;
+    copyMode = cm; tekMaxY = cm ? 3123 : 2730;
+    if (DEBUG_ENABLED) { Serial.print(F("[4662] page: ")); Serial.println(cm ? F("Copy Mode, 0-3123 high") : F("standard mode, 0-2730 high")); }
+}
+
+// PLOTTER ON (ESC A E, p. 4-2): needed outside Copy Mode, where the 4662
+// powers up logically off; already on in Copy Mode.
+void plotterOn() { tekRaw(0x1B); tekRaw(PLOTTER_ADDR); tekRaw('E'); }
+
+// ============================================================================
 // FLOW TO THE PLOTTER
 // ============================================================================
 
@@ -421,6 +463,7 @@ uint8_t rxBlock[7]; uint8_t rxLen = 0;
 void takeReply(uint16_t v1, uint16_t v2) {
     if (v1 != 1) return;                // not status word 1
     lastFree = v2 & 0x7FF;
+    copySwitch = (v2 >> 14) & 1;        // the COPY MODE switch (Table 4-3)
     // what it reports leaves out the bytes still on their way: those sent
     // since it answered (txAtReply) and those queued here
     long lim = (long)txAtReply + lastFree - STATUS_MARGIN;
@@ -468,6 +511,7 @@ void sendQuery() {
 void probePlotter() {
     lastProbeAt = millis();
     while (tekQueued()) gpibService();
+    plotterOn();                        // (outside Copy Mode it answers nothing until this)
     sendQuery();
     while (queryPending && millis() - querySentAt < PROBE_MS) { pollRx(); gpibService(); }
     bool was = statusMode;
@@ -475,6 +519,7 @@ void probePlotter() {
     if (!statusMode) limitCount = queuedCount;
     queryPending = false;
     if (statusMode && (lastFree > emptyFree)) emptyFree = lastFree;   // (idle at the probe)
+    applyPage();
     if (DEBUG_ENABLED && statusMode != was) {
         if (statusMode) { Serial.print(F("[4662] status mode: buffer free ")); Serial.println(lastFree); }
         else Serial.println(F("[4662] no status reply: timed pacing (check D13 <- MAX3232 RXD)"));
@@ -565,16 +610,6 @@ void plotterRoom(uint8_t n, unsigned long cost) {
 
 #define TEK_GS  0x1D
 #define TEK_US  0x1F
-// The page in ADUs (070-4164-00 p. 1-3): standard mode 0-4096 x 0-2731;
-// Copy Mode (switch A=3) 0-4096 x 0-3124, with the right-most 13% of the
-// page not addressable. Copy Mode's addressable area, 87% of the page's
-// width by all of its height (331 x 254 mm on the default 15 x 10 in page),
-// has HP-GL's own 1.30 aspect ratio, so HP-GL maps onto it at one scale on
-// both axes. (v1-v7.3 used 2731 in Copy Mode: the top 13% of the page
-// unused, and plots 15% too wide for their height.)
-#define COPY_MODE 1
-#define TEK_MAX_X 4095L
-#define TEK_MAX_Y (COPY_MODE ? 3123L : 2730L)
 
 // One coordinate, 12-bit, with only the bytes Table 3-3 says must go:
 // HIY if it changed; EB and LOY if EB changed; LOY if it or HIX changed;
@@ -732,6 +767,8 @@ void processCommand(const char* cmd, uint8_t len) {
 
     if (c1 == 'I' && c2 == 'N') {
         penDown = false; needsMove = true; coordKnown = false;
+        plotterRoom(3, 0); plotterOn();  // (a 4662 powered up after the Nano, outside Copy Mode)
+        applyPage();
         tekMoveTo(0, 0);
         if (DEBUG_ENABLED) Serial.println(F("  IN"));
     } else if (c1 == 'S' && c2 == 'P') {
@@ -835,7 +872,15 @@ void printLine(const __FlashStringHelper* name, bool high) {
     Serial.print(name); Serial.print(high ? F("hi ") : F("LO "));
 }
 
+void printPage() {
+    Serial.print(F("page: !m ")); Serial.print(pageMode);
+    Serial.print(pageMode == 0 ? F(" (standard mode)") : pageMode == 1 ? F(" (Copy Mode)") : F(" (as the plotter's switch: "));
+    if (pageMode == 2) Serial.print(copySwitch < 0 ? F("not heard yet)") : copySwitch ? F("Copy Mode)") : F("standard)"));
+    Serial.print(F(", mapping onto 0-4095 x 0-")); Serial.println(tekMaxY);
+}
+
 void printPace() {
+    printPage();
     Serial.print(F("pen lift: !r ")); Serial.print(retraceAdu); Serial.println(F(" ADU back along the stroke"));
     Serial.print(F("labels: !a ")); Serial.print(labelSettle); Serial.print(F(" ms settle after, !b "));
     Serial.print(labelBs); Serial.print(F(" BS after, !w ")); Serial.print(spaceSettle);
@@ -899,6 +944,7 @@ void paceCommand() {
     if (k == 'w' && paceLen > 1 && v >= 0 && v <= 5000) spaceSettle = v;
     if (k == 'b' && paceLen > 1) labelBs = v ? 1 : 0;
     if (k == 'g' && paceLen > 1) queryReenter = v ? 1 : 0;
+    if (k == 'm' && paceLen > 1 && v >= 0 && v <= 2) { pageMode = v; applyPage(); }
     printPace();
     paceLen = 0; inPace = false;
 }
@@ -912,12 +958,13 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.4"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.5"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));
     probePlotter();
     if (!statusMode && DEBUG_ENABLED) Serial.println(F("[4662] no status reply: timed pacing for now"));
+    if (DEBUG_ENABLED) printPage();
     Serial.println();
     Serial.println(F("Ready. Waiting for GPIB data..."));
 }

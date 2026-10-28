@@ -11,8 +11,24 @@ NRFD D8, NDAC D9, ATN D10, IFC D11, SRQ D12, EOI A4, REN A5; the GPIB
 cable's ground returns (pins 18-24) and shield (12) to GND. Plotter: D6 to
 the MAX3232 breakout's TXD and its RXD to D13, then the AT925MF adapter to
 the 4662's MODEM port. 4662 switches A=3, B=2, C=2, D=3 (Copy Mode,
-1200 baud, address A). Power the Nano before the plotter; on the Pi's USB it
+1200 baud, address A); switch A without its Copy bit for standard mode, which
+uses the whole page (v7.5). Power the Nano before the plotter; on the Pi's USB it
 shares the bus's ground and its console is a `miniterm` away.
+
+**v7.5: the page.** Copy Mode addresses 0-4096 x 0-3124 ADUs and leaves
+the right-most 13% of the page unreachable; standard mode addresses
+0-4096 x 0-2731 over the whole 15 x 10 in page (070-4164-00 p. 1-3). The
+4662 reports its COPY MODE switch in bit 14 of READ STATUS 1 (Table 4-3,
+p. 4-14), the reply the Nano already reads for flow control, so the Nano maps
+HP-GL onto whichever page the switch selects, at its probe and at each `IN`
+(never in the middle of a plot). Outside Copy Mode the 4662 powers up
+logically off and ignores everything but PLOTTER ON (p. 4-2), so the Nano
+sends PLOTTER ON (`ESC A E`) before its probe and at every `IN`; in Copy Mode
+it is already on and the command changes nothing. `!m 0` forces standard
+mode, `!m 1` Copy Mode, `!m 2` (the default) follows the switch. v7.4 had
+already mapped Copy Mode's full height (v1-v7.3 used standard mode's 2731
+there: the top 13% of the page unused, plots 15% too wide). `tests/test_nano.cpp`
+checks the switch bit, the mapping, `!m` and PLOTTER ON.
 
 **v7.3:** `;` is optional, as in HP-GL: a letter after a mnemonic and its
 arguments starts the next mnemonic. `PD100,200PU300,400` now lifts the pen for
@@ -71,8 +87,8 @@ isn't cut at 255 characters (v1-v4 did).
   NRFD.
 
 **Console** (USB, 9600): HP-GL for testing; `?` the bus lines, counters and
-flow state; `#` ask the plotter now; `!` the timed pacing, the lift (`!r`) and the label
-settles (`!a`, `!w`, `!b`), and the mode re-entry after status requests (`!g`).
+flow state; `#` ask the plotter now; `!` the page (`!m`), the timed pacing, the lift (`!r`)
+and the label settles (`!a`, `!w`, `!b`), and the mode re-entry after status requests (`!g`).
 
 **Flashing from the Pi:**
 ```
