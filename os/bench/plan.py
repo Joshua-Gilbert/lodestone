@@ -13,7 +13,11 @@ weighs the same (NORM=0: raw counts).  NOPAD=lo-hi,... (hex): no pads there
 plan for n bytes (default B).  SECTION=ui: the UI's pads instead (section ui,
 hot.py's "ui_taken"; B the slack to the paragraph: uibss's start -
 ui_image_end; NOPAD there: the jump table, and the code test_apps assembles
-on its own, row_di's and xor_rect's).
+on its own, row_di's and xor_rect's).  SECTION=claude: CLAUDE.COM's
+(claude/CLAUDE.LST and .MAP, hot.py's "cl_taken"; B the slack to bss's
+paragraph); SECTION=rstub: the CLAUDE /R stub's ("st_taken"; B the slack to
+R_PARAS's paragraph).  There no pad goes inside an included file's code (the
+ones RCON.ASM shares, and TERMLINK.INC), only in front of its %include.
 Output: per budget the share of taken entries left odd and the run heads;
 then, for the plan shown, its sites (pad each with `times ($ - $$) & 1 db
 90h` before the label marked E, or `($ + 1 - $$)` for O), and the hot labels
@@ -22,20 +26,26 @@ import os, re, sys, json, collections
 GOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(GOS, 'src')
 SEC = os.environ.get('SECTION', '.text')
-KEY = 'ui_taken' if SEC == 'ui' else 'taken'
+KEY = {'ui': 'ui_taken', 'claude': 'cl_taken', 'rstub': 'st_taken'}.get(SEC, 'taken')
+CLAUDE = SEC in ('claude', 'rstub')
+if CLAUDE: SRC = os.path.join(GOS, 'claude')
+LSEC = '.text' if SEC == 'claude' else SEC      # (the section's name in the listing and the map)
+ORG = 0x100 if CLAUDE else 0                    # (CLAUDE's listing counts from the section's start, 100h)
+INC = set()                                     # (offsets of code from an included file)
 
 def parse(lst, mp):
     """SEC from the listing: (offset, size, code/xfer/data, source); the map's SEC labels by offset"""
     sec, items = '.text', []
     for l in open(lst, encoding='latin-1'):
-        m = re.match(r'^\s*\d+\s+(?:([0-9A-F]{8})\s+([0-9A-F\[\]\(\)]+)(-?)\s+)?(?:<\d+>\s?)?(.*)$', l.rstrip('\n'))
+        m = re.match(r'^\s*\d+\s+(?:([0-9A-F]{8})\s+([0-9A-F\[\]\(\)]+)(-?)\s+)?(<\d+>\s?)?(.*)$', l.rstrip('\n'))
         if not m: continue
-        addr, hexb, cont, src = m.groups()
+        addr, hexb, cont, inc, src = m.groups()
+        if addr: addr = '%X' % (int(addr, 16) + ORG)
         code = src.split(';')[0].strip()
         ms = re.match(r'(?i)^\[?section\s+(\S+?)\]?(\s|$)', code)
         if ms: sec = ms.group(1); continue
         if re.match(r'(?i)^\[?absolute', code): sec = 'abs'; continue
-        if sec != SEC: continue
+        if sec != LSEC: continue
         if not addr:                            # a self-correcting pad of 0 bytes has no address
             if '$$) & 1 db 90h' in code and items:
                 items.append((items[-1][0] + items[-1][1], 0, 'data', code))
@@ -50,18 +60,19 @@ def parse(lst, mp):
         kind = 'data' if ws and (ws[0] in DATA or ws[1:2] and ws[1] in DATA) else \
                'xfer' if ws and ws[0] in ('jmp', 'ret', 'retf', 'iret') else 'code'
         items.append((int(addr, 16), n, kind, code))
+        if inc: INC.add(int(addr, 16))
     syms, s = {}, None
     for l in open(mp, encoding='latin-1'):
         m = re.match(r'---- Section (\S+)', l)
         if m: s = m.group(1); continue
         m = re.match(r'\s+([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$', l)
-        if m and s == SEC: syms.setdefault(int(m.group(2), 16), []).append(m.group(3))
+        if m and s == LSEC: syms.setdefault(int(m.group(2), 16), []).append(m.group(3))
     return items, syms
 
 def main():
     if len(sys.argv) < 3: sys.exit(__doc__)
     B = int(sys.argv[1])
-    items, syms = parse(os.path.join(SRC, 'LODE.LST'), os.path.join(SRC, 'LODE.MAP'))
+    items, syms = parse(*(os.path.join(SRC, n) for n in (('CLAUDE.LST', 'CLAUDE.MAP') if CLAUDE else ('LODE.LST', 'LODE.MAP'))))
     tot = collections.Counter()
     for f in sys.argv[2:]:
         c = {int(k): v for k, v in json.load(open(f))[KEY].items()}
@@ -82,6 +93,9 @@ def main():
         NOPAD = [(0, at['exec_main']), (at['row_di'], at['hires']), (at['xor_rect'], at['fm_value'])]
     total = sum(tot.values())
     data_at = {a for a, n, k, t in items if k == 'data' and n}     # (no pad in front of data)
+    if CLAUDE:                                  # (nor inside an included file: in front of its %include only)
+        before = {a + n: a for a, n, k, t in items if n}
+        data_at |= {s for s in heads if s in INC and before.get(s) in INC}
     print('as built: %.2f%% of taken entries odd' % (100.0 * sum(r[2] for r in runs) / total))
     best = {(0, 0): (0, [])}                   # (flipped, bytes) -> (entries even, run heads padded)
     rank = lambda vp: (vp[0], -len(vp[1]))      # (a tie: fewer pads)

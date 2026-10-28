@@ -6,12 +6,14 @@ build, the padded one) gets each counted address carried as label + offset
 (exact for the labels, approximate inside code that changed).  Name the
 HOT.json files <anything>_<workload>.json.  TOP=n labels (default 40, by
 count with the workloads weighed the same).  SECTION=ui: the UI's (section
-ui, hot.py's "ui_taken").
+ui, hot.py's "ui_taken"); SECTION=claude: CLAUDE.COM's (CLAUDE.MAPs,
+"cl_taken"); SECTION=rstub: the CLAUDE /R stub's ("st_taken").
 Output: a table per workload, then label, count (weighed, raw) and its parity
 (E/O) in each map."""
 import re, sys, json, collections, bisect, os
 SEC = os.environ.get('SECTION', '.text')
-KEY = 'ui_taken' if SEC == 'ui' else 'taken'
+KEY = {'ui': 'ui_taken', 'claude': 'cl_taken', 'rstub': 'st_taken'}.get(SEC, 'taken')
+if SEC == 'claude': SEC = '.text'               # (its section in CLAUDE.MAP)
 
 def load(p):
     syms, sec = [], None
