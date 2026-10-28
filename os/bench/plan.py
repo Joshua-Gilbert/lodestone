@@ -10,7 +10,10 @@ heads that put the fewest taken entries on odd addresses.
 B: the most pad bytes (the slack: image_end - lastdrv - 1).  Each HOT.json
 weighs the same (NORM=0: raw counts).  NOPAD=lo-hi,... (hex): no pads there
 (the GPIB fast loops: gp_fast_write up to after gp_fast_read).  SHOW=n: the
-plan for n bytes (default B).
+plan for n bytes (default B).  SECTION=ui: the UI's pads instead (section ui,
+hot.py's "ui_taken"; B the slack to the paragraph: uibss's start -
+ui_image_end; NOPAD there: the jump table, and the code test_apps assembles
+on its own, row_di's and xor_rect's).
 Output: per budget the share of taken entries left odd and the run heads;
 then, for the plan shown, its sites (pad each with `times ($ - $$) & 1 db
 90h` before the label marked E, or `($ + 1 - $$)` for O), and the hot labels
@@ -18,9 +21,11 @@ then, for the plan shown, its sites (pad each with `times ($ - $$) & 1 db
 import os, re, sys, json, collections
 GOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(GOS, 'src')
+SEC = os.environ.get('SECTION', '.text')
+KEY = 'ui_taken' if SEC == 'ui' else 'taken'
 
 def parse(lst, mp):
-    """.text from the listing: (offset, size, code/xfer/data, source); the map's .text labels by offset"""
+    """SEC from the listing: (offset, size, code/xfer/data, source); the map's SEC labels by offset"""
     sec, items = '.text', []
     for l in open(lst, encoding='latin-1'):
         m = re.match(r'^\s*\d+\s+(?:([0-9A-F]{8})\s+([0-9A-F\[\]\(\)]+)(-?)\s+)?(?:<\d+>\s?)?(.*)$', l.rstrip('\n'))
@@ -30,13 +35,13 @@ def parse(lst, mp):
         ms = re.match(r'(?i)^\[?section\s+(\S+?)\]?(\s|$)', code)
         if ms: sec = ms.group(1); continue
         if re.match(r'(?i)^\[?absolute', code): sec = 'abs'; continue
-        if sec != '.text': continue
+        if sec != SEC: continue
         if not addr:                            # a self-correcting pad of 0 bytes has no address
             if '$$) & 1 db 90h' in code and items:
                 items.append((items[-1][0] + items[-1][1], 0, 'data', code))
             continue
         n = len(re.sub(r'[\[\]\(\)]', '', hexb)) // 2
-        if cont == '-' and not code:            # (a long line's next bytes)
+        if not code:                            # (a long line's next bytes; its last has no '-')
             if items: items[-1] = items[-1][:1] + (items[-1][1] + n,) + items[-1][2:]
             continue
         op = re.sub(r'^[\w.$@?]+:\s*', '', code)
@@ -50,7 +55,7 @@ def parse(lst, mp):
         m = re.match(r'---- Section (\S+)', l)
         if m: s = m.group(1); continue
         m = re.match(r'\s+([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$', l)
-        if m and s == '.text': syms.setdefault(int(m.group(2), 16), []).append(m.group(3))
+        if m and s == SEC: syms.setdefault(int(m.group(2), 16), []).append(m.group(3))
     return items, syms
 
 def main():
@@ -59,7 +64,7 @@ def main():
     items, syms = parse(os.path.join(SRC, 'LODE.LST'), os.path.join(SRC, 'LODE.MAP'))
     tot = collections.Counter()
     for f in sys.argv[2:]:
-        c = {int(k): v for k, v in json.load(open(f))['taken'].items()}
+        c = {int(k): v for k, v in json.load(open(f))[KEY].items()}
         if os.environ.get('NORM', '1') != '0':
             s = sum(c.values()); c = {k: v * 250000 // s for k, v in c.items()}
         tot.update(c)
@@ -72,6 +77,9 @@ def main():
         runs.append((s, sum(v for a, v in tot.items() if s <= a < e and not a & 1),
                         sum(v for a, v in tot.items() if s <= a < e and a & 1)))
     NOPAD = [tuple(int(x, 16) for x in r.split('-')) for r in os.environ.get('NOPAD', '').split(',') if r]
+    if SEC == 'ui' and 'NOPAD' not in os.environ:   # (the jump table; test_apps' xor_rect_unit: row_di, xor_rect)
+        at = {n: a for a, ns in syms.items() for n in ns}
+        NOPAD = [(0, at['exec_main']), (at['row_di'], at['hires']), (at['xor_rect'], at['fm_value'])]
     total = sum(tot.values())
     data_at = {a for a, n, k, t in items if k == 'data' and n}     # (no pad in front of data)
     print('as built: %.2f%% of taken entries odd' % (100.0 * sum(r[2] for r in runs) / total))
