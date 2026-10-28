@@ -1022,7 +1022,9 @@ rf_hello:
         inc     byte [bg_ok]
 .f:     test    byte [si+1], HF_FCS
         jz      .c
-        mov     byte [use_fl], 1
+        mov     al, [ksum]              ; (2: the driver keeps it, TERMLINK)
+        inc     ax
+        mov     [use_fl], al
 .c:     mov     byte [connected], 1
         mov     byte [n_failrun], 0
         mov     byte [rq_more], 0
@@ -1542,9 +1544,8 @@ old_tmo     resw 1                      ;  the program's timeout (ms) meanwhile
 sdc_due     resb 1                      ; the link failed: SDC to the bridge
 irq_ptr     resw 2                      ; the driver's SRQ count (AH=0Eh), seg 0: none
 srq_seen    resw 1                      ;  as it was at the last look
-ksum        resb 1                      ; 1: INT 60h 02h AL=3, 03h AL=2 (KSUM)
-tx_app      resb 1                      ; 1: txframe's check is the driver's to add
-lw_eoi      resb 1                      ; lw_go's AL for INT 60h 02h: 1, or 3
+ksum        resb 1                      ; 1: the driver's frame check (1.23; KSUM)
+lw_eoi      resb 1                      ; the frame's AL for INT 60h 02h: 1, or 3
 n_kok       resw 1                      ; frames ks_check passed (the tests)
 now         resw 1
 ; the link (TERMLINK.INC)

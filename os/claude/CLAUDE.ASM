@@ -2125,7 +2125,9 @@ pf_hello:
         mov     [pi_hf], bl                     ; (HF_SAVER: sv_check)
         test    bl, HF_FCS                      ; the Pi takes the Fletcher sum:
         jz      .crc                            ;  every frame from now on
-        mov     byte [use_fl], 1
+        mov     al, [ksum]                      ; (2: the driver keeps it, TERMLINK)
+        inc     ax
+        mov     [use_fl], al
 .crc:   and     bl, HF_TERM
 .f:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it

@@ -34,7 +34,8 @@ snap_reply  resb 1
 keyn        resb 1
 keys_q      resb 1
 rep_q       resb 1
-use_fl      resb 1                      ; 1: frames carry a Fletcher sum, not CRC-16
+use_fl      resb 1                      ; frames carry a Fletcher sum, not CRC-16: 1 ours,
+                                        ;  2 the driver's (KSUM: ksum + 1 at the Pi's HELLO)
 wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driver latches SRQ;
                                         ;  RCON: it counts SRQ interrupts)
 tlook       resb 1                      ; link_wait's serial poll: 2 a tick's look, no SRQ seen;
@@ -134,7 +135,7 @@ link_idle:
 ; POLL frame (no payload) with a new sequence number
 frame_poll:
 %ifdef KSUM
-        mov     byte [tx_app], 0
+        mov     byte [lw_eoi], 1
 %endif
         mov     byte [pend_msg], 0
         inc     byte [g_seq]
@@ -208,9 +209,11 @@ frame_next:
         pop     cx
         pop     ds
 %ifdef KSUM
-        mov     al, [ksum]              ; the driver adds the check as it sends
-        and     al, [use_fl]            ;  (1.23: 02h AL=3)
-        mov     [tx_app], al
+        mov     al, [use_fl]            ; 2: the driver adds the check as it
+        and     al, 2                   ;  sends, 02h AL=3 (1.23); else ours,
+        or      al, 1                   ;  AL=1 (EOI), whichever path this
+        mov     [lw_eoi], al            ;  frame takes
+        shr     al, 1
         jz      .fc
         add     cx, 6
         mov     [txlen], cx
@@ -234,19 +237,16 @@ link_write:
         mov     si, txframe
         mov     cx, [txlen]
 %ifdef KSUM
-        mov     al, [tx_app]            ; 3: EOI, after the driver's check
-        shl     al, 1
-        or      al, 1
-        mov     [lw_eoi], al
+        mov     dl, [lw_eoi]            ; (frame_next's, frame_poll's)
 %endif
-lw_go:
+lw_go:                                  ; (KSUM: DL = the driver's AL)
         cmp     word [irq_ptr+2], 0     ; (SRQs before our frame aren't its
         je      .w                      ;  answer's)
         call    srq_new
 .w:
         mov     bl, [nano]
 %ifdef KSUM
-        mov     al, [lw_eoi]
+        mov     al, dl
 %else
         mov     al, 1                   ; EOI with the last byte
 %endif
@@ -267,12 +267,12 @@ lw_go:
 ; the answer is for, so only good answers keep the link up (a read that
 ; timed out, 2 s, and then another, NAK after NAK, would never fail it)
 link_write_nak:
-%ifdef KSUM
-        mov     byte [lw_eoi], 1
-%endif
         mov     di, nakframe
         mov     ah, G_NAK
         call    frame_short
+%ifdef KSUM
+        mov     dl, 1                   ; (EOI: its own check; lw_eoi stays
+%endif                                  ;  the pending frame's, for a resend)
         push    word [t_sent]
         call    lw_go
         pop     word [t_sent]
@@ -357,11 +357,11 @@ link_read:
         mov     di, rxbuf
         mov     cx, RXMAX
         mov     bl, [nano]
-        xor     al, al                  ; binary: stop at EOI only
 %ifdef KSUM
-        mov     al, [ksum]              ; 2: and BX = the driver's check of
-        and     al, [use_fl]            ;  every byte (1.23)
-        shl     al, 1
+        mov     al, [use_fl]            ; binary: stop at EOI only; 2: and BX =
+        and     al, 2                   ;  the driver's check of every byte (1.23)
+%else
+        xor     al, al                  ; binary: stop at EOI only
 %endif
         mov     ah, 03h
         PROF    2
@@ -370,8 +370,7 @@ link_read:
         jc      .bad
         mov     [rxn], cx
 %ifdef KSUM
-        mov     al, [ksum]
-        and     al, [use_fl]
+        test    byte [use_fl], 2
         jz      .scan
         call    ks_check
         jnc     .ok
