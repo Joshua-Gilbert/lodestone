@@ -45,6 +45,7 @@ srq_held    resb 1                      ; 1: another device holds SRQ: the PIT's
 lr_end:
 %endmacro
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 link_service:
         mov     bl, [lstate]
         xor     bh, bh
@@ -75,6 +76,7 @@ link_reset:
         mov     byte [lstate], LS_IDLE
 .x:     ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 link_idle:
         cmp     byte [nak_pending], 0
         jne     .nak
@@ -106,6 +108,7 @@ link_idle:
         jz      .t1
 %ifndef RCON
         jmp     short .ts
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .t2:    mov     ah, 0Bh
         call    gg_call
         jc      .t1
@@ -130,9 +133,11 @@ link_idle:
         jmp     link_write
 .msg:   call    frame_next
         jmp     link_write
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .x:     ret
 
 ; POLL frame (no payload) with a new sequence number
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 frame_poll:
 %ifdef KSUM
         mov     byte [lw_eoi], 1
@@ -147,6 +152,7 @@ frame_poll:
 
 ; a frame with no payload at DI: AH = type, the sequence number g_seq.
 ; Returns SI = DI, CX = 8 (its length).  Destroys AX BX.
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 frame_short:
         mov     al, [g_seq]
         xor     cx, cx
@@ -162,6 +168,7 @@ frame_short:
 
 ; a frame's header at DI: AH = type, AL = sequence number, CX = length.
 ; Destroys AL.
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 frame_hdr:
         mov     byte [di], 47h
         mov     [di+1], ah
@@ -172,6 +179,7 @@ frame_hdr:
         ret
 
 ; next fragment of the message at the head of the queue
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 frame_next:
         mov     bl, [txq_head]
         xor     bh, bh
@@ -233,6 +241,7 @@ frame_next:
         mov     [txlen], cx
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 link_write:
         mov     si, txframe
         mov     cx, [txlen]
@@ -256,6 +265,7 @@ lw_go:                                  ; (KSUM: DL = the driver's AL)
         PROF    0
         jnc     .ok
         jmp     link_fail
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .ok:    mov     ax, [now]
         mov     [t_sent], ax
         mov     byte [lstate], LS_WAIT
@@ -278,12 +288,14 @@ link_write_nak:
         pop     word [t_sent]
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 link_wait:
         mov     ax, [now]
         sub     ax, [t_sent]
         cmp     ax, 40                  ; ~2 s without an answer
         jbe     .t
         jmp     link_fail
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .t:     mov     byte [tlook], 0
         cmp     word [irq_ptr+2], 0
         je      .t0
@@ -297,6 +309,7 @@ link_wait:
         inc     byte [tlook]            ; (tlook 2: a tick's look; 1: an edge)
 .edge:  inc     byte [tlook]
         jmp     short .poll
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .t0:
 %ifndef RCON                            ; (resident: never AH=0Bh, which clears
         mov     ah, 0Bh                 ;  the program's SRQ latch)
@@ -347,12 +360,14 @@ link_wait:
 %endif
         jmp     link_idle
 %endif
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .x:     ret
 .perr:  inc     byte [spoll_errs]
         cmp     byte [spoll_errs], 8
         jb      .x
         jmp     link_fail
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 link_read:
         mov     di, rxbuf
         mov     cx, RXMAX
@@ -391,6 +406,7 @@ link_read:
 ; two, A then B), so:  A1 = A - 47h, B1 = B - 1 - n * 47h, then
 ; A2 = A1 - a - b and B2 = B1 - 2 A1 + b must be the a and b sent.
 ; -> BX = 0, CF clear if it is good.  (find_frame scans for anything else.)
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ks_check:
         cmp     cx, 8
         jb      .no
@@ -463,6 +479,7 @@ find_frame:
         ret
 
 ; a good answer at rxbuf+BX
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 took_answer:
         mov     byte [lstate], LS_IDLE
         mov     ax, [now]
@@ -481,10 +498,12 @@ took_answer:
         cmp     al, [p_ack]
         jne     .new
         ret                             ; an answer we already handled
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .new:   mov     [p_ack], al
         mov     byte [have_pi], 1
         jmp     pi_frame
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 commit_fragment:
         cmp     byte [pend_msg], 0
         je      .x
@@ -547,6 +566,7 @@ txq_put:
         ret
 
 ; ---- timing ---------------------------------------------------------
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 get_ticks:
         push    ds
         push    40h
@@ -555,6 +575,7 @@ get_ticks:
         pop     ds
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 pit_read:                               ; AX = PIT channel 0 count
         pushf
         cli
@@ -569,6 +590,7 @@ pit_read:                               ; AX = PIT channel 0 count
 
 ; ZF clear: an SRQ interrupt since the last look (the GPIB driver's count,
 ; INT 60h AH=0Eh: irq_ptr; Lodestone's built-in driver, IRQ 5)
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 srq_new:
         push    es
         push    bx
@@ -580,6 +602,7 @@ srq_new:
         mov     [srq_seen], ax          ; (MOV keeps the flags)
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 pit_mark:
         push    ax
         call    pit_read
@@ -589,6 +612,7 @@ pit_mark:
         pop     ax
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 pit_due:                                ; CF = 1 once ~2-4 ms have passed
         push    ax
         push    dx
@@ -602,6 +626,7 @@ pit_due:                                ; CF = 1 once ~2-4 ms have passed
         jae     .yes
         clc
         jmp     .x
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .yes:   stc
 .x:     pop     dx
         pop     ax
@@ -636,6 +661,7 @@ delay_ms:
 ; A frame's check over DS:SI, CX bytes -> AX: CRC-16 until the Pi's HELLO
 ; agrees to the Fletcher sum (use_fl; link_reset clears it, so HELLO and its
 ; answer always go with the CRC).  Destroys BX SI CX.
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 %ifdef PROFILE
 fcs:    PROF    4
         call    fcs_
@@ -697,6 +723,7 @@ crc16:  jcxz    .x
         loop    .l
 .x:     ret
 
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 crc_init:
         xor     bx, bx
 .i:     mov     ah, bl
@@ -713,3 +740,25 @@ crc_init:
         cmp     bx, 256
         jb      .i
         ret
+        times   ($ - $$) & 1 db 90h       ; (the includer's code after: its parity as before these pads)
+
+; The hot labels: even in CLAUDE.COM and in RCON (their pads above, each
+; making what follows it even, or odd, wherever the includer puts this);
+; the build stops if one goes odd
+%ifnmacro EVEN 1-*
+%macro EVEN 1-*
+%rep %0
+        times   -((%1 - $$) & 1) db 0
+%rotate 1
+%endrep
+%endmacro
+%endif
+%ifndef PROFILE                         ; (CLAUDEP: PROF's code moves them)
+        EVEN    link_service, link_idle, link_idle.x, frame_poll, frame_short, frame_hdr
+        EVEN    link_write, lw_go.ok, link_wait, link_wait.t, link_wait.x, link_read
+        EVEN    took_answer, took_answer.ok, took_answer.new, commit_fragment
+        EVEN    get_ticks, pit_read, srq_new, pit_mark, pit_due, pit_due.x, fcs, crc_init.b
+%ifdef KSUM
+        EVEN    ks_check
+%endif
+%endif

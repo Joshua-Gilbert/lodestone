@@ -14,6 +14,9 @@ plan for n bytes (default B).  SECTION=ui: the UI's pads instead (section ui,
 hot.py's "ui_taken"; B the slack to the paragraph: uibss's start -
 ui_image_end; NOPAD there: the jump table, and the code test_apps assembles
 on its own, row_di's and xor_rect's).
+PROG=claude or PROG=rcon: CLAUDE.COM's or RCON's pads instead, self-correcting
+ones only, B the most pads (sc_main; the listing claude/<PROG>.LST, which
+claude/build.sh makes for CLAUDE.COM: nasm -l for RCON's).
 Output: per budget the share of taken entries left odd and the run heads;
 then, for the plan shown, its sites (pad each with `times ($ - $$) & 1 db
 90h` before the label marked E, or `($ + 1 - $$)` for O), and the hot labels
@@ -128,5 +131,77 @@ def main():
     print('\neven after (>= %d):' % thr, ' '.join(name(a) for a, n in lab if not (a + shift(a)) & 1))
     print('\nodd after (>= %d):' % thr, ' '.join('%s:%d' % (name(a), n) for a, n in lab if (a + shift(a)) & 1))
 
+def sc_main():
+    """PROG=claude or rcon: CLAUDE.COM's or RCON's pads (claude/<PROG>.LST,
+    .MAP; hot.py's "<PROG>_taken"), all self-correcting: TERMLINK.INC and
+    OPS.INC sit at other offsets in each binary, and such a pad makes the
+    label after it even (E) or odd (O) in both.  A new pad at a run head
+    makes the parity from there on the listing's offset from it, or that
+    plus one; B is the most new pads."""
+    B = int(sys.argv[1])
+    cl = os.path.join(GOS, 'claude')
+    items, syms = parse(os.path.join(cl, PROG.upper() + '.LST'), os.path.join(cl, PROG.upper() + '.MAP'))
+    org = int(os.environ.get('ORG', '100' if PROG == 'claude' else '0'), 16)     # (the listing counts from 0)
+    items = [(a + org, n, k, t) for a, n, k, t in items]
+    tot = collections.Counter()
+    for f in sys.argv[2:]:
+        c = {int(k): v for k, v in json.load(open(f))[KEY].items()}
+        if os.environ.get('NORM', '1') != '0':
+            s = sum(c.values()); c = {k: v * 250000 // s for k, v in c.items()}
+        tot.update(c)
+    after = {a + n: (k, t) for a, n, k, t in items if n}
+    SC = {a + n for a, n, k, t in items if k == 'data' and '$$) & 1 db 90h' in t}
+    heads = sorted(set([org] + [a for a, (k, t) in after.items() if k in ('xfer', 'data')] + list(SC)))
+    data_at = {a for a, n, k, t in items if k == 'data' and n}
+    NOPAD = [tuple(int(x, 16) for x in r.split('-')) for r in os.environ.get('NOPAD', '').split(',') if r]
+    if PROG == 'rcon': NOPAD.append((0, 8))     # (the header: CLAUDE.ASM reads nano, term, busy, feed_e there)
+    total = sum(tot.values())
+    runs = []
+    for i, s in enumerate(heads):
+        e = heads[i + 1] if i + 1 < len(heads) else 1 << 20
+        runs.append((s, [(a, v) for a, v in tot.items() if s <= a < e]))
+    print('as built: %.2f%% of taken entries odd' % (100.0 * sum(v for a, v in tot.items() if a & 1) / total))
+    # d: the parity of the shift so far (an existing pad: 0 after it; a new E one at s: s & 1, O: the other)
+    best = {(0, 0): (0, [])}
+    rank = lambda vp: (vp[0], -len(vp[1]))
+    for s, ent in runs:
+        nb = {}
+        for (d, b), (val, path) in best.items():
+            opts = [(0 if s in SC else d, b, path)]
+            if not (s in SC or s in data_at or any(lo <= s < hi for lo, hi in NOPAD)) and b < B:
+                opts += [(s & 1, b + 1, path + [(s, 'E')]), (~s & 1, b + 1, path + [(s, 'O')])]
+            for nd, nb_, np in opts:
+                vp = (val + sum(v for a, v in ent if not (a + nd) & 1), np)
+                if (nd, nb_) not in nb or rank(nb[(nd, nb_)]) < rank(vp): nb[(nd, nb_)] = vp
+        best = nb
+    name = lambda a: '/'.join(syms.get(a, ['?']))
+    last = -1
+    for b in range(B + 1):
+        c = [vp for (d, bb), vp in best.items() if bb == b]
+        if c:
+            v, p = max(c, key=rank)
+            if v <= last: continue
+            last = v
+            print('%2d pads: %.2f%% of taken entries odd   %s' % (b, 100.0 * (total - v) / total, ' '.join('%04X:%s:%s' % (x, name(x)[:20], k) for x, k in p)))
+    NB = int(os.environ.get('SHOW', B))
+    v, p = max((vp for (d, bb), vp in best.items() if bb <= NB), key=rank)
+    kind = dict(p)
+    def par(a):                                 # the parity a ends up with
+        d = 0
+        for s in sorted(set(kind) | SC):
+            if s > a: break
+            d = (s if kind.get(s) == 'E' else s + 1) & 1 if s in kind else 0
+        return (a + d) & 1
+    print('\nplan for %d pads:' % len(p))
+    for x, k in p:
+        print('  pad before %04X %-26s %s  (after: %s)' % (x, name(x)[:26], k, after.get(x, ('', ''))[1][:40]))
+    thr = int(os.environ.get('THR', 1500))
+    lab = [(a, n) for a, n in sorted(tot.items()) if a in syms and n >= thr]
+    print('\neven after (>= %d):' % thr, ' '.join(name(a) for a, n in lab if not par(a)))
+    print('\nodd after (>= %d):' % thr, ' '.join('%s:%d' % (name(a), n) for a, n in lab if par(a)))
+
+PROG = os.environ.get('PROG')
+if PROG: KEY = PROG + '_taken'
+
 if __name__ == '__main__':
-    main()
+    sc_main() if PROG else main()

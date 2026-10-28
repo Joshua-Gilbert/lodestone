@@ -17,6 +17,14 @@ WORKLOAD: bench   BENCH.COM's ten tests (the real-drive timing model; minutes)
           system  System's screens
           term    MULTITASK=1: LCMD in a terminal window (DIR, TYPE), the
                   calculator over it (KMW's clipping gates)
+   the link's (CLAUDE.COM, RCON: "claude_taken", "rcon_taken"; after claude/build.sh):
+          cl_chat   CLAUDE.COM: two chat turns over the Pico model
+          cl_files  CLAUDE.COM: a 22 KB file written and read back, OPS_PROBE
+          rc_term   resident Claude's console: Term, typing, a 60-line answer;
+                    a second pop-up
+          rc_files  the console: list, read, an 8 KB write, OPS_PROBE
+          rc_bg     the background passes (a quiet bridge): idle looks, a read,
+                    a write, SCREEN, a GPIB query
 OUT.json: {"taken": {offset: count}, "falls": {offset: count}}, kernel .text
 offsets (KSEG:offset) as in src/LODE.MAP, and "ui_taken", "ui_falls": section
 ui's offsets (the UI segment, ui_seg, wherever it is: it is a block of its own,
@@ -182,11 +190,116 @@ def w_term():
 def ini(t):
     p = os.path.join(TMP, 'hot_ini.txt'); open(p, 'wb').write(t); return p
 
+# ---- the link's programs: CLAUDE.COM and resident Claude's console ------
+# "claude_taken"/"claude_falls": CLAUDE.COM's offsets (org 100h, as in
+# claude/CLAUDE.MAP: its PSP is on a paragraph, so an offset's parity is the
+# address's), its code up to rcon_img.  "rcon_taken"/"rcon_falls": RCON's
+# (claude/RCON.MAP), at E000:0 while its page is in window 0.
+LINK = {}                                       # name -> (linear base, end, its page register or None)
+link_taken = {'claude': collections.Counter(), 'rcon': collections.Counter()}
+link_falls = {'claude': collections.Counter(), 'rcon': collections.Counter()}
+lprev = [0, 0]
+lb = pcemu.PC.blk
+def link_blk(s, uc, addr, size, ud):
+    pa, ps = lprev
+    if addr != pa:
+        for n, (lo, hi, pg) in LINK.items():
+            if lo <= addr < hi and (pg is None or s.ems_reg[0] == pg):
+                (link_falls if addr == pa + ps else link_taken)[n][addr - lo] += 1
+    lprev[0], lprev[1] = addr, size
+    return lb(s, uc, addr, size, ud)
+pcemu.PC.blk = link_blk
+
+def cl_harness(replies, **kw):
+    import test_claude_kernel as TC
+    h = TC.T.start(replies, bridge='pico', **kw)
+    LINK['claude'] = (h.claude_psp * 16, h.claude_psp * 16 + h.sym['rcon_img'], None)
+    return h
+
+def w_cl_chat():
+    import test_claude_kernel as TC
+    h = cl_harness([TC.T.reply(('text', 'A reply over the link, long enough to fill a few frames. ' * 60)),
+                    TC.T.reply(('text', 'And a second one, shorter. ' * 10))])
+    assert h.turn('hello', sim_s=60) and h.turn('again', sim_s=60)
+    del LINK['claude']
+
+def w_cl_files():
+    import test_claude_kernel as TC, claude_kernel as CK
+    big = ''.join('line %05d: the quick brown fox jumps over the lazy dog\n' % i for i in range(400))
+    h = cl_harness([TC.T.reply(('tool', 'str_replace_based_edit_tool',
+                                {'command': 'create', 'path': 'A:\\BIG.TXT', 'file_text': big})),
+                    TC.T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\BIG.TXT'})),
+                    TC.T.reply(('text', 'Written and read.'))], mode='edits')
+    assert h.turn('write a big file', sim_s=120)
+    CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60))
+    del LINK['claude']
+
+def rc_harness(**kw):
+    import test_resident_term as RT
+    h = RT.Res(more={'A:\\BIG.TXT': RT.BIG}, **kw); h.boot()
+    h.cmd('claude /r')
+    h.cmd('emsuse')
+    LINK['rcon'] = (0xE0000, 0xE0000 + h.rsym['rc_image_end'], h.m.rd(h.stub(), h.sym['r_hw'], 1)[0])
+    return RT, h
+
+def rc_up(RT, h):
+    gen = RT.generation(h)
+    h.press(RT.HOT)
+    assert RT.popped(h, gen) and h.has('Welcome to Claude Code', 30)
+
+def w_rc_term():
+    RT, h = rc_harness()
+    try:
+        rc_up(RT, h)
+        for s in ('hello', 'big', 'again'):
+            h.term_type(s); h.press(RT.ENTER); RT.in_step(h)
+        h.press(RT.HOT); h.wait(lambda: h.inpop() == 0, 5)
+        rc_up(RT, h)
+        h.term_type('big'); h.press(RT.ENTER); RT.in_step(h)
+        h.press(RT.HOT); h.wait(lambda: h.inpop() == 0, 5)
+    finally:
+        del LINK['rcon']; h.close()
+
+def w_rc_files():
+    import claude_kernel as CK
+    RT, h = rc_harness()
+    try:
+        rc_up(RT, h)
+        for a in ({'action': 'list', 'path': 'A:\\'}, {'action': 'read', 'path': 'A:\\BIG.TXT'}):
+            RT.tool(h, 'grid_files', a)
+        RT.tool(h, 'grid_change_files', {'action': 'write', 'path': 'A:\\NOTE.TXT', 'content': 'from the pop-up\n' * 900})
+        CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40))
+        h.press(RT.HOT); h.wait(lambda: h.inpop() == 0, 5)
+    finally:
+        del LINK['rcon']; h.close()
+
+def w_rc_bg():
+    import claude_kernel as CK
+    RT, h = rc_harness(pico='quiet')
+    try:
+        rc_up(RT, h)
+        t = h.router.term
+        h.press(RT.HOT)
+        h.wait(lambda: h.inpop() == 0, 5) and h.pi_wait(lambda: t.away and h.transport.proto.quiet, 10)
+        h.run_until(lambda: False, 2)                  # (idle looks)
+        RT.tool(h, 'grid_files', {'action': 'read', 'path': 'A:\\BIG.TXT'})
+        RT.tool(h, 'grid_change_files', {'action': 'write', 'path': 'A:\\NOTE.TXT', 'content': 'in the background\n' * 900})
+        RT.tool(h, 'grid_program', {})
+        RT.tool(h, 'gpib_send', {'action': 'query', 'address': 29, 'command': 'ID?'})
+        h.run_until(lambda: False, 2)
+    finally:
+        del LINK['rcon']; h.close()
+
 if __name__ == '__main__':
     if len(sys.argv) < 3: sys.exit(__doc__)
     for w in sys.argv[2:]:
         print('== workload', w); globals()['w_' + w]()
-    json.dump({'taken': taken, 'falls': falls, 'ui_taken': ui_taken, 'ui_falls': ui_falls}, open(sys.argv[1], 'w'))
+    json.dump({'taken': taken, 'falls': falls, 'ui_taken': ui_taken, 'ui_falls': ui_falls,
+               'claude_taken': link_taken['claude'], 'claude_falls': link_falls['claude'],
+               'rcon_taken': link_taken['rcon'], 'rcon_falls': link_falls['rcon']}, open(sys.argv[1], 'w'))
+    for n, c in (('CLAUDE.COM', link_taken['claude']), ('RCON', link_taken['rcon'])):
+        t = sum(c.values())
+        if t: print('%s: %d taken entries, %.1f%% at odd addresses' % (n, t, 100.0 * sum(v for a, v in c.items() if a & 1) / t))
     for n, c in (('kernel', taken), ('UI', ui_taken)):
         t = sum(c.values())
         print('%s: %d taken entries, %.1f%% at odd addresses' % (n, t, 100.0 * sum(v for a, v in c.items() if a & 1) / max(t, 1)))
