@@ -137,15 +137,15 @@ class KernelHarness(G.EmuHarness):
         return s.run_until(lambda: s.m.mode() == 0x40 and s.m.u16(0x60, s.m.Y['cur_psp']) == s.m.u16(0x60, s.m.Y['root_psp']), sim_s)
 
 
-def _gp(op, addr, data=b'', tmo=100, mx=200):
-    return struct.pack('<BBBHH', op, addr, 1, tmo, mx) + data
+def _gp(op, addr, data=b'', tmo=100, mx=200, fl=1):
+    return struct.pack('<BBBHH', op, addr, fl, tmo, mx) + data
 
 def _z(*paths): return b''.join(p.encode() + b'\0' for p in paths)
 
 # OPS.INC's requests, each with the status and reply the kernel gives: the
 # same table for CLAUDE.COM and for resident Claude's console (RCON), which
 # build the same source.  (name, op, arguments, status, the reply: its bytes,
-# or only its length)
+# or only its length; a status that differs: {'claude': .., 'rcon': ..})
 OPS_PROBE = [
     ('mkdir', 7, _z('A:\\PRB'), 0, 0),
     ('mkdir, there', 7, _z('A:\\PRB'), 5, 0),
@@ -180,6 +180,12 @@ OPS_PROBE = [
     ('gpib read', 0x20, _gp(2, 29), 0, b'ID TEK/DC5009,V79.1,F2.1\r\n'),
     ('gpib query', 0x20, _gp(3, 29, b'ID?'), 0, b'ID TEK/DC5009,V79.1,F2.1\r\n'),
     ('gpib query, short', 0x20, _gp(3, 29, b'ID?', mx=6), 0, b'ID TEK'),
+    ('gpib query, flags 0: all', 0x20, _gp(3, 29, b'TWO?', fl=0), 0, b'line one\nline two\r\n'),     # (TWO?: two lines, ops_probe's)
+    ('gpib query, flags 1: a line', 0x20, _gp(3, 29, b'TWO?'), 0, b'line one\n'),
+    ('gpib write TWO?', 0x20, _gp(1, 29, b'TWO?'), 0, b''),
+    ('gpib read, flags 0: all', 0x20, _gp(2, 29, fl=0), 0, b'line one\nline two\r\n'),
+    ('gpib write TWO? again', 0x20, _gp(1, 29, b'TWO?'), 0, b''),
+    ('gpib read, flags 1: a line', 0x20, _gp(2, 29), 0, b'line one\n'),
     ('gpib spoll', 0x20, _gp(4, 29), 0, b'A'),
     ('gpib scan', 0x20, _gp(9, 0), 0, b'\x06\x0e\x1d'),
     ('gpib write, none', 0x20, _gp(1, 20, b'ID?'), 2, b''),
@@ -191,14 +197,19 @@ OPS_PROBE = [
     ('gpib local, none', 0x20, _gp(7, 20), 0, b''),
     ('gpib remote, none', 0x20, _gp(8, 20), 0, b''),
     ('gpib op 10', 0x20, _gp(10, 29), 4, b''),
+    ('op 0Bh, none such', 0x0B, b'', {'claude': 0xFF, 'rcon': 0xF6}, b''),
 ]
 
-OPS_WANT = [(n, st, r) for n, op, a, st, r in OPS_PROBE]
+def ops_want(prog):
+    """OPS_PROBE's statuses and replies for 'claude' (CLAUDE.COM) or 'rcon'"""
+    return [(n, st[prog] if isinstance(st, dict) else st, r) for n, op, a, st, r in OPS_PROBE]
 
-def ops_probe(grid, run):
-    """OPS_PROBE through gridlink's Grid (run(cond): the machine until cond):
-    [(name, status, reply)], the reply its bytes or its length as OPS_PROBE
-    has it."""
+def ops_probe(grid, run, devices):
+    """OPS_PROBE through gridlink's Grid (run(cond): the machine until cond),
+    the bus's devices given an answer of two lines (TWO?: the read's flags
+    bit 0, stop at LF, tells): [(name, status, reply)], the reply its bytes or
+    its length as OPS_PROBE has it."""
+    devices[29].answers['TWO?'] = 'line one\nline two'
     out = []
     for name, op, args, st0, r0 in OPS_PROBE:
         r = {}

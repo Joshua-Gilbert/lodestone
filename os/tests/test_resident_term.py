@@ -1458,7 +1458,7 @@ def t_ops():
 
 def t_ops_codes():
     """audit3 R51: OPS.INC's file and GPIB requests from the pop-up, each one's status and reply (DOS's
-    error codes, the driver's) as claude_kernel's OPS_WANT: the table test_claude_kernel's test_ops_codes
+    error codes, the driver's) as claude_kernel's OPS_PROBE has them: the table test_claude_kernel's test_ops_codes
     holds CLAUDE.COM to (the same source in both binaries)."""
     h = Res(); h.boot()
     try:
@@ -1467,10 +1467,11 @@ def t_ops_codes():
         gen = generation(h)
         h.press(HOT)
         up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
-        got = CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40))
-        bad = [(g, w) for g, w in zip(got, CK.OPS_WANT) if g != w]
-        check('the file and GPIB requests\' statuses and replies: %d as CLAUDE.COM\'s' % len(CK.OPS_WANT),
-              up and len(got) == len(CK.OPS_WANT) and not bad, (up, bad or got))
+        got = CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40), h.m.chip.devices)
+        want = CK.ops_want('rcon')
+        bad = [(g, w) for g, w in zip(got, want) if g != w]
+        check('the file and GPIB requests\' statuses and replies: %d as CLAUDE.COM\'s' % len(want),
+              up and len(got) == len(want) and not bad, (up, bad or got))
         check('... the console still up, in step', h.up() and in_step(h), h.screen())
         h.press(HOT)
         h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
