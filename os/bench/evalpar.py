@@ -5,10 +5,13 @@ PROF.MAP: the LODE.MAP of the build hot.py ran on; each OTHER.MAP (an older
 build, the padded one) gets each counted address carried as label + offset
 (exact for the labels, approximate inside code that changed).  Name the
 HOT.json files <anything>_<workload>.json.  TOP=n labels (default 40, by
-count with the workloads weighed the same).
+count with the workloads weighed the same).  SECTION=ui: the UI's (section
+ui, hot.py's "ui_taken").
 Output: a table per workload, then label, count (weighed, raw) and its parity
 (E/O) in each map."""
 import re, sys, json, collections, bisect, os
+SEC = os.environ.get('SECTION', '.text')
+KEY = 'ui_taken' if SEC == 'ui' else 'taken'
 
 def load(p):
     syms, sec = [], None
@@ -16,7 +19,7 @@ def load(p):
         m = re.match(r'---- Section (\S+)', l)
         if m: sec = m.group(1); continue
         m = re.match(r'\s+([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$', l)
-        if m and sec == '.text': syms.append((int(m.group(2), 16), m.group(3)))
+        if m and sec == SEC: syms.append((int(m.group(2), 16), m.group(3)))
     return sorted(syms)
 
 def main():
@@ -31,7 +34,7 @@ def main():
             if prof[j][1] in m: return m[prof[j][1]] + a - prof[j][0]
             j -= 1
     per = {os.path.basename(f).rsplit('_', 1)[-1].split('.')[0]:
-           collections.Counter({int(k): v for k, v in json.load(open(f))['taken'].items()}) for f in hots}
+           collections.Counter({int(k): v for k, v in json.load(open(f))[KEY].items()}) for f in hots}
     cols = [os.path.basename(maps[0])] + [n for n, _ in others]
     print('%-8s' % 'odd' + ''.join('%14s' % c[:13] for c in cols))
     for w, c in per.items():

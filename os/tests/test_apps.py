@@ -166,7 +166,8 @@ def t_core():
     check('the map: uibss on the paragraph after ui_image_end (UI_PARAS, UIBOOT_ORG and the rest count on it; NASM can\'t check it)',
           k.Y['ui_bss_start'] == (k.Y['ui_image_end'] + 15) & ~15, (hex(k.Y['ui_bss_start']), hex(k.Y['ui_image_end'])))
     shot(k, 'executive')
-    k.key(ktest.F1); shot(k, 'executive_help'); k.key(ktest.ENTER)
+    hw = lambda: struct.unpack('<4H', k.rd('help_w', 8))   # (W_COL, W_Y, W_W, W_H)
+    k.key(ktest.F1); shot(k, 'executive_help'); geo = [hw()]; k.key(ktest.ENTER)
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
     # INT 16h AH=10h; pcemu now models that
     k.key(K_CODE_HELP)
@@ -181,7 +182,7 @@ def t_core():
     k.key(K_PGDN)
     check('list: Down, PgDn move and scroll', lines(k)[1].strip().startswith('Item 4'), lines(k)[:3])
     k.key(CODE['F'])
-    shot(k, 'core_form')
+    shot(k, 'core_form'); geo.append(hw())
     check('form: a window with text and choice fields', has(k, 'Find       hello') and has(k, 'Independent of case') and has(k, 'Fill in form'), screen(k))
     k.key('world'); k.key(ktest.ENTER); k.key(ktest.RIGHT); k.key(ktest.ENTER); k.key(' '); k.key(ktest.ENTER)
     check('form: typing replaces the old text, Right and Space change choices, Return confirms', has(k, 'Find: world 1 1'), screen(k))
@@ -234,8 +235,11 @@ def t_core():
     check("error text: an INT 24h error (83) says the disk's (1-13), or its number; DOS's 20/22/24/28 say theirs",
           got == want, [(c, got[c]) for c in want if got[c] != want[c]])
     before = k.pc.rd(0xB800, 0, 0x8000)
-    k.key(ktest.F1)
+    k.key(ktest.F1); geo.append(hw())
     check('help window from the key table', has(k, 'CODE-F     the form') and has(k, 'ESC        leave'), screen(k))
+    check('help and form windows centred across, help\'s as wide as its longest line or title + 6, between the title rule '
+          'and the band (the Executive\'s help, the form, UITEST\'s help: column, row, width, height)',
+          geo == [(11, 44, 57, 292), (15, 96, 50, 100), (27, 140, 26, 100)], geo)
     k.key('x')
     check('help: any key closes it, the screen as it was', k.pc.rd(0xB800, 0, 0x8000) == before)
     lst = k.u16('run_base') + run_syms('tests/UITEST.ASM')['lst']
@@ -804,8 +808,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit): the directory buffer is lent while it runs' % kb,
-          kb >= 564.7, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch): the directory buffer is lent while it runs' % kb,
+          kb >= 564.8, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -2627,6 +2631,24 @@ def t_menu():
     k.key('L'); at3 = hw(); k.key(ktest.ESC)
     check('an item of 90 characters: the menu the screen\'s width (80 columns, from column 0), the item cut at its edge',
           at3[0] == 0 and at3[2] == 80 and body(k) == v0, at3)
+    rpress(100, 103); g103 = hw(); k.key(ktest.ESC); point(k, 100, 100); b1 = body(k) == v0
+    rpress(100, 270); g270 = hw(); k.key(ktest.ESC); point(k, 100, 100); b2 = body(k) == v0
+    check('right clicks at (100, 103) and (100, 270): rows 100 and 268 (multiples of 4, rounded down; 272 the lowest), '
+          'the screen as it was after each', g103 == (12, 100, 20, 88) and g270 == (12, 268, 20, 88) and b1 and b2, (g103, g270, b1, b2))
+    k.key('H'); gh = hw(); k.key(ktest.ESC); point(k, 100, 100)
+    check('UI_HELP, a title of 38 characters over a line of 16: the title\'s width + 6, centred (column 18, row 164, 44 wide, '
+          '52 high); the screen as it was after', gh == (18, 164, 44, 52) and body(k) == v0, gh)
+    beeps, wd, nm = [], k.u16('wdepth'), v16('nmenu')
+    def beep(pc):
+        if pc.r('ip') == k.Y['ui_beep'] and pc.r('cs') == k.useg: beeps.append(1)
+    k.hooks.append(beep)
+    got = []
+    for key in 'ZV':
+        k.pc.wr(k.useg, base + sy['mres'], struct.pack('<H', 1234)); k.key(key); got.append(v16('mres'))
+    k.hooks.remove(beep)
+    check('UI_MENU with 0 items and with 21: refused at once (CF: none, FFFFh, each), a beep each, no window, the screen as it was',
+          got == [0xFFFF, 0xFFFF] and v16('nmenu') - nm == 2 and len(beeps) == 2 and k.u16('wdepth') == wd and body(k) == v0,
+          (got, v16('nmenu') - nm, len(beeps), k.u16('wdepth'), wd))
     k.key('O', 'O', 'O'); nm, dp = v16('nmenu'), k.u16('wdepth')
     rpress(100, 100)
     full = v16('nmenu') - nm, v16('mres'), k.u16('wdepth'), k.u16('wover'), has(k, 'Paste')
@@ -2675,8 +2697,15 @@ def t_menu():
     base = k.u16('run_base')
     k.key('U')
     dcf = k.pc.u16(k.useg, base + sy['dcf'])
+    s0 = k.pc.rd(0xB800, 0, 0x8000)
+    k.key('W'); gw = struct.unpack('<4H', k.rd('help_w', 8)); hl = dict(k.ocr()).get(192, ''); k.key(ktest.ESC)
+    back = k.pc.rd(0xB800, 0, 0x8000) == s0
     k.key(ktest.ESC, ktest.ESC)
     check('no mouse: UI_MOUSE says so (CF)', dcf == 0xFFFF and k.rd('run_active', 1) == b'\x00' and not k.crashed, dcf)
+    s_long = 'A very long item, longer than a line of the screen: ninety characters, and then some more.'
+    check('UI_HELP, a line of 90 characters: 78 wide, the most, centred (column 1, row 164, 52 high); the line cut at the '
+          'inner edge (its first 72 characters, columns 4-75, two blank before the frame); ESC: the screen exactly as it was',
+          gw == (1, 164, 78, 52) and hl[4:76] == s_long[:72] and hl[76:].strip() == '' and back, (gw, hl, back))
 
 CLIPTEST = os.path.join(HERE, 'CLIPTEST.RUN')
 CLIPPAT = bytes((i * 7 + 3) & 0xFF for i in range(16385))

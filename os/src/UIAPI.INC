@@ -103,7 +103,8 @@ UI_WOPEN    equ 28 * 3  ; SI = window (W_* below): save what is underneath,
                         ;  draw the frame and title, call its draw routine
 UI_WCLOSE   equ 29 * 3  ; close the top window, restoring the screen under it
 UI_HELP     equ 30 * 3  ; SI = key table, DI = title: a window with the table's
-                        ;  help lines; any key or click closes it
+                        ;  help lines; any key or click closes it.  The title
+                        ;  at most 74 characters (longer runs past the frame)
 UI_DISPATCH equ 31 * 3  ; SI = key table, AX = key: call its handler (AX = key)
                         ;  and return CF clear (registers as the handler left
                         ;  them); CF set if the key isn't in the table

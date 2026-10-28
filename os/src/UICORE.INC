@@ -235,6 +235,7 @@ ui_boot:
         mov     byte [ex_mtw], 1
         jmp     exec_main.go
 section ui
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, LODE.ASM)
 
 ; UI_FONT: AL = 0 -> SI = the font's name; AL = 1: SI = glyphs, DI = name
 api_font:
@@ -574,6 +575,7 @@ poll_once:
         add     sp, 6
         clc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .nomouse:
         mov     ah, 11h
         int     16h
@@ -585,6 +587,7 @@ poll_once:
         add     sp, 2
         clc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .nokey: mov     ah, 19h                 ; (the kernel takes a screen capture
         int     21h                     ;  asked for with Shift-PrtSc)
         call    tick
@@ -600,6 +603,7 @@ poll_once:
         jb      .sv
         mov     [lastact], ax
         jmp     .ck
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .sv:    cmp     bx, [saver_t]
         jb      .ck
         call    saver                   ; then the screen as it was
@@ -630,11 +634,13 @@ poll_once:
         mov     ah, EV_TASK >> 8        ; (AL = 0: EV_TASK; 1: EV_TASKM)
         add     al, EV_TASK & 0FFh
         jmp     .ev
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .none:  pop     cx
         pop     bx
         pop     ax
         stc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 act_now:                                ; a key or the mouse: not idle
         push    ax
@@ -1536,6 +1542,7 @@ fill_band:
         pop     es
 .none:  popa
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; DX = y, CX = rows: CX cut to the screen's 400 rows (ZF: none left).
 ; (A count of 0 would make LOOP run 65,536 times.)
@@ -1553,6 +1560,7 @@ clip_rows:
         ret
 .none:  xor     cx, cx                  ; (ZF set)
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; DX = y, CX = rows, BX = byte column, BP = width: invert
 invert_band:
@@ -1710,6 +1718,7 @@ putsn:  pusha
         dec     cx
         jz      .x
         jmp     .l
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 strlen: push    si                      ; SI -> CX = length
         push    ax
@@ -1722,6 +1731,15 @@ strlen: push    si                      ; SI -> CX = length
 .x:     pop     ax
         pop     si
         ret
+
+maxlen: push    si                      ; AX -> text: CX = its length, BP the
+        xchg    si, ax                  ;  larger of BP and CX (AX lost)
+        call    strlen
+        pop     si
+        cmp     cx, bp
+        jbe     .x
+        mov     bp, cx
+.x:     ret
 
 ; SI = text, DX = y, AH = mask: centred
 api_center:
@@ -1808,6 +1826,7 @@ sb_2d:  aam                             ; AL (0..99) as two digits
         add     ax, '00'
         stosw
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; AX = DOS date -> "4-Oct-26" (internal: AX, CX change)
 sb_date:
@@ -2228,6 +2247,7 @@ ui_wopen:
         call    win_paint
 .x:     popa
         ret
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: win_save.r even)
 
 ; copy the screen under window SI to wseg:DI
 win_save:
@@ -2437,6 +2457,7 @@ win_ev: push    si
         jc      .pass                   ; (moved)
         stc                             ; (put back where it was)
         jmp     short .x
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: .pass even)
 .click: mov     ax, EV_CLICK
 .pass:  clc
 .x:     pop     dx
@@ -2530,9 +2551,9 @@ mv_frame:
         popa
         ret
 
-; the outline to AX = column, DX = row (signed; kept on the screen,
-; between the title rule and the band, the row a multiple of 4)
-mv_to:  pusha
+; window SI at AX = column, DX = row (signed) -> both kept on the screen,
+; between the title rule and the band, the row a multiple of 4 (BX lost)
+win_clamp:
         or      ax, ax
         jns     .c1
         xor     ax, ax
@@ -2550,6 +2571,11 @@ mv_to:  pusha
         jge     .r2
         mov     dx, SCR_TOP
 .r2:    and     dx, 0FFFCh
+        ret
+
+; the outline to AX = column, DX = row (win_clamp's)
+mv_to:  pusha
+        call    win_clamp
         cmp     ax, [mv_c]
         jne     .mv
         cmp     dx, [mv_y]
@@ -2605,31 +2631,16 @@ ui_help:
         or      ax, ax
         jz      .n
         inc     dx
-        push    si
-        mov     si, ax
-        call    strlen
-        pop     si
-        cmp     cx, bp
-        jbe     .n
-        mov     bp, cx
+        call    maxlen
 .n:     add     si, 6
         jmp     .c
-.sized: push    si
-        mov     si, di                  ; the title is a line too, of sorts
-        call    strlen
-        pop     si
-        cmp     cx, bp
-        jbe     .t
-        mov     bp, cx
-.t:     add     bp, 6
+.sized: mov     ax, di                  ; the title is a line too, of sorts
+        call    maxlen
+        add     bp, 6
         cmp     bp, 78
         jbe     .w
         mov     bp, 78
-.w:     mov     [help_w+W_W], bp
-        mov     ax, 80
-        sub     ax, bp
-        shr     ax, 1
-        mov     [help_w+W_COL], ax
+.w:     call    w_size
         cmp     dx, 18                  ; (18 lines fill SCR_TOP..BAND_Y)
         jbe     .h
         mov     dx, 18
@@ -2650,18 +2661,27 @@ ui_help:
         popa
         ret
 
+w_size: mov     [help_w+W_W], bp        ; help_w (form_w) BP wide, centred
+        mov     ax, 80                  ;  across (AX lost)
+        sub     ax, bp
+        shr     ax, 1
+        mov     [help_w+W_COL], ax
+        ret
+
 help_draw:
         mov     si, [help_tab]
         mov     dx, [bx+W_Y]
         add     dx, W_TOP + 4
-        mov     cx, [bx+W_H]
-        add     cx, [bx+W_Y]
-        sub     cx, 16
+        mov     bp, [bx+W_H]
+        add     bp, [bx+W_Y]
+        sub     bp, 16
+        mov     di, [bx+W_W]            ; (a line cut at the inner edge: the
+        sub     di, 6                   ;  window less its margins)
         mov     bx, [bx+W_COL]
         add     bx, 3
 .l:     cmp     word [si], 0
         je      .x
-        cmp     dx, cx
+        cmp     dx, bp
         ja      .x
         mov     ax, [si+4]
         add     si, 6
@@ -2670,7 +2690,11 @@ help_draw:
         push    si
         mov     si, ax
         xor     ah, ah
-        call    puts
+        call    strlen
+        cmp     cx, di
+        jbe     .p
+        mov     cx, di
+.p:     call    putsn
         pop     si
         add     dx, 16
         jmp     .l
@@ -2690,9 +2714,7 @@ ui_menu:
         jne     .full                   ;  none, as if cancelled (not drawn,
         cmp     word [wdepth], NWIN     ;  it would be no window: not modal,
         jb      .room                   ;  and a borrow nobody gives back)
-.full:  call    ui_beep
-        stc
-        ret
+.full:  jmp     ui_form.beep
 .room:  pusha
         push    bx
         push    cx
@@ -2710,50 +2732,32 @@ ui_menu:
         mov     word [mn_lv+LV_TOP], 0
         xor     bp, bp                  ; the longest item
 .c:     lodsw
-        push    si
-        xchg    si, ax
-        call    strlen
-        pop     si
-        cmp     cx, bp
-        jbe     .n
-        mov     bp, cx
-.n:     dec     di
+        call    maxlen
+        dec     di
         jnz     .c
         add     bp, 4                   ; (a column either side of the lit band)
         cmp     bp, 80                  ; (longer items cut at the right edge)
         jbe     .w
         mov     bp, 80
 .w:     mov     [help_w+W_W], bp
-        pop     cx
-        pop     bx
-        shr     bx, 3                   ; the click's column, kept on the screen
-        mov     ax, 80
-        sub     ax, bp
-        cmp     bx, ax
-        jbe     .c1
-        xchg    bx, ax
-.c1:    mov     [help_w+W_COL], bx
-        inc     bx
-        mov     [mn_lv+LV_COL], bx
-        dec     bp
-        dec     bp
-        mov     [mn_lv+LV_W], bp
         mov     ax, [mn_lv+LV_N]
         shl     ax, 4
         add     ax, 8
         mov     [help_w+W_H], ax
-        mov     dx, BAND_Y              ; the row: between the title rule and
-        sub     dx, ax                  ;  the band, a multiple of 4
-        and     cx, 0FFFCh
-        cmp     cx, dx
-        jbe     .r1
-        mov     cx, dx
-.r1:    cmp     cx, SCR_TOP
-        jae     .r2
-        mov     cx, SCR_TOP
-.r2:    mov     [help_w+W_Y], cx
-        add     cx, 4
-        mov     [mn_lv+LV_Y], cx
+        pop     dx
+        pop     ax
+        shr     ax, 3                   ; the click's place, kept on the screen
+        mov     si, help_w
+        call    win_clamp
+        mov     [help_w+W_COL], ax
+        inc     ax
+        mov     [mn_lv+LV_COL], ax
+        dec     bp
+        dec     bp
+        mov     [mn_lv+LV_W], bp
+        mov     [help_w+W_Y], dx
+        add     dx, 4
+        mov     [mn_lv+LV_Y], dx
         xor     ax, ax
         mov     [help_w+W_TITLE], ax
         mov     [help_w+W_FLAGS], ax
@@ -2777,8 +2781,7 @@ ui_menu:
         inc     byte [mn_lent]
 .nl:    pop     es
 %endif
-.open:  mov     si, help_w
-        call    ui_wopen
+.open:  call    ui_wopen                ; (SI = help_w: F002h keeps it)
 .l:     call    ui_event
         cmp     ah, 1                   ; ESC, CODE-ESC
         je      .no
@@ -3289,7 +3292,7 @@ ed_cursor:                              ; invert the cell at the cursor
 ui_form:
         cmp     word [wdepth], NWIN     ; (no room for its window: it would
         jb      .go                     ;  draw over the others unsaved, so
-        call    ui_beep                 ;  it counts as cancelled)
+.beep:  call    ui_beep                 ;  it counts as cancelled; ui_menu's too)
         stc
         ret
 .go:    pusha
@@ -3302,12 +3305,8 @@ ui_form:
         mov     [fm_b2], ax
         mov     ax, [si+F_TITLE]
         mov     [form_w+W_TITLE], ax
-        mov     ax, [si+F_W]
-        mov     [form_w+W_W], ax
-        mov     bx, 80
-        sub     bx, ax
-        shr     bx, 1
-        mov     [form_w+W_COL], bx
+        mov     bp, [si+F_W]
+        call    w_size
         mov     ax, [si+F_N]
         imul    ax, ax, 20
         add     ax, W_TOP + 16
@@ -3797,6 +3796,7 @@ ui_findapp:
         mov     ax, 4300h
         int     21h
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; SI = "NAME=", CX = its length -> ES:DI = its value in the environment
 ; (the root's: the master environment).  CF if it isn't there.  AX changed
@@ -4328,6 +4328,7 @@ sv_move:
         add     dx, 20
         xor     ah, ah
         jmp     puts
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 
 ; DEFRAG.COM /S from the root of the start-up disk, for each disk in turn:
 ; A:, B: (if the BIOS has a second floppy) and C: (if Lodestone has the hard
@@ -4398,6 +4399,7 @@ tick:   push    ds
         mov     ax, [46Ch]
         pop     ds
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, EXEC.INC's)
 
 wait_ticks:
         push    ax
