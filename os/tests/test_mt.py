@@ -58,8 +58,9 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
-# kept while a DOS program runs
-OFF_MAP = {'image_end': 0x4190, 'bss_end': 0x76C0, 'ui_keep_end': 0x6516}  # (6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+# kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
+# before gp_isr; no code slack at lastdrv 40EFh: any change netting +1 moves image_end and bss_end)
+OFF_MAP ={'image_end': 0x40F0, 'bss_end': 0x7620, 'ui_keep_end': 0x6516}  # (4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -1637,8 +1638,11 @@ def t_keys():
         if prev: prev(a)
         if a == i16 and k.pc.isr and k.pc.rd(seg, Y['mt_cur'], 1)[0] == 3 and k.pc.rd(seg, Y['mt_front'], 1)[0] != 3 \
                 and k.pc.kbd_ring(): own.append(1)
+    # (Q polls with interrupts off nearly all the time: pcemu, taking a tick only where its run loop restarts
+    # with them on, held most of T's 18 for Q's whole turn, and when one got through, so how many turns T had,
+    # moved with the kernel's code; here a held tick is taken as soon as IF is set, as the PIC gives it)
     for ms in ('pd', 'qt'):
-        if ms == 'qt': k.pc.watch = w
+        if ms == 'qt': k.pc.watch, k.pc.irq_exact = w, True
         typ(k, 'mtlaunch /f mtspin.com 60 s%s.txt;mtkey.com %s %s1.txt;mtkey.com %s %s1.txt'
             % (ms, ms[0], ms[0], ms[1], ms[1]), 0.3)
         k.key('abc', settle=False)
@@ -1649,6 +1653,7 @@ def t_keys():
         kclear(k)
         waitfile(k, 'S%s.TXT' % ms.upper(), 6.0)
         line(k, '')
+    k.pc.irq_exact = False
     check('behind MTSPIN (in front, reading no keys), "abc" typed: MTKEY\'s INT 16h peeks find none (P %s), and Q\'s '
           'with interrupts off none either (%s, counting those back with interrupts on, as the BIOS\'s are: whose code '
           'it is that counts); nor DOS\'s key status, AH=06h or the flush '
@@ -5969,7 +5974,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 580.7 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.7', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 580.8 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.8', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)

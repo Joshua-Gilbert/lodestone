@@ -167,6 +167,14 @@ def t_shell():
     check('disk consistent after the shell', not probs, '; '.join(probs))
     check('shell files cleaned up', set(files) == {'\\LODE.SYS', '\\LCMD.COM', '\\UPPER.COM', '\\GAMES\\'}, sorted(files))
 
+def t_tabs():
+    """tty_out: a tab is spaces to the next multiple of 8, from the line's start (TYPE writes through it)."""
+    t = os.path.join(OUT, 'TAB.TXT'); open(t, 'wb').write(b'A\tB\r\nABCDEFGH\tC\r\n\tD\r\nABCDEFG\tE\r\n')
+    k = ktest.KPC(image('tabs.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'TAB.TXT=' + t)); k.start()
+    o = Shell(k).run('type tab.txt').split('\n')
+    check('TYPE of tabs: "A" then B at column 8, "ABCDEFGH" then C at 16, D at 8, "ABCDEFG" then E at 8',
+          [l.rstrip() for l in o[:4]] == ['A       B', 'ABCDEFGH        C', '        D', 'ABCDEFG E'], o[:5])
+
 def t_disks():
     """Write protect (Retry, Fail), changing floppies, a drive with no
     change line."""
@@ -1114,6 +1122,31 @@ def t_gpcheck0():
     k.run_file('GPCHK0.COM', 10)
     check('02h AL=3 of no bytes sends the check 01 00; of "AB", AB 43 43', got == [b'\x01\x00', b'AB\x43\x43'], got)
 
+def t_gpirq():
+    """SRQ on IRQ 5: the start-up hooks INT 0Dh (keeping the BIOS's vector for the exception) with GPIBIRQ=0 too;
+    INT 60h AH=0Eh AL=1 turns the interrupt on again with that vector, AL=0 off."""
+    com = os.path.join(OUT, 'GPIRQ.COM')
+    open(com, 'wb').write(bytes([0xB8, 0x01, 0x0E, 0xCD, 0x60,              # mov ax, 0E01h / int 60h
+                                 0xB8, 0x00, 0x4C, 0xCD, 0x21]))            # mov ax, 4C00h / int 21h
+    com0 = os.path.join(OUT, 'GPIRQ0.COM')
+    open(com0, 'wb').write(bytes([0xB8, 0x00, 0x0E, 0xCD, 0x60, 0xB8, 0x00, 0x4C, 0xCD, 0x21]))
+    for ini in (b'', b'GPIBIRQ=0\r\n'):
+        files = (com, com0)
+        k = ktest.KPC(ini_image('gpirq.img', ini, *files) if ini else image('gpirq.img', *files),
+                      chip=sim7210.NEC7210(sim7210.bus()))
+        bios = k.pc.rd(0, 0x0D * 4, 4)
+        k.start()
+        on = lambda: (k.rd('gp_irq', 1)[0], k.pc.pic_mask & 0x20, k.rd('gp_imr2', 1)[0],
+                      k.pc.u16(0, 0x0D * 4), k.pc.u16(0, 0x0D * 4 + 2), k.rd('gp_oldirq', 4) == bios)
+        isr = (k.Y['gp_isr'], 0x60, True)
+        tag = 'GPIBIRQ=0' if ini else 'at start-up'
+        check('%s: INT 0Dh ours, the BIOS\'s vector kept; IRQ 5 %s' % (tag, 'masked' if ini else 'on, SRQI in IMR2'),
+              on() == ((0, 0x20, 0) if ini else (5, 0, 0x40)) + isr, on())
+        k.run_file('GPIRQ0.COM', 10)
+        check('... AH=0Eh AL=0: off, the vector stays', on() == (0, 0x20, 0) + isr, on())
+        k.run_file('GPIRQ.COM', 10)
+        check('... AH=0Eh AL=1: on again, the same vector, the BIOS\'s still kept', on() == (5, 0, 0x40) + isr, on())
+
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
     than applying entries nobody read (ex_rel shares path_buf, so they would
@@ -1474,6 +1507,38 @@ def t_renfull():
     check('... and the disk is consistent afterwards, G00.TXT in SUB, F00.TXT gone', not probs
           and '\\SUB\\G00.TXT' in files and '\\SUB\\F00.TXT' not in files, (probs, sorted(files)))
 
+def t_fatstraddle():
+    """fat_set: a FAT12 entry across two sectors (1.44 MB: 341 at bytes 511-512, 682 at 1023-1024) marks both
+    changed; deleting a file whose chain ends there writes the second sector too, though nothing else changed in it."""
+    com = os.path.join(OUT, 'DELF.COM')     # DELF.COM: delete the file named in its command tail (PSP 82h, CR-ended)
+    open(com, 'wb').write(bytes([0xBE, 0x82, 0x00, 0x89, 0xF2, 0xAC, 0x3C, 0x0D, 0x75, 0xFB, 0xC6, 0x44, 0xFF, 0x00,
+                                 0xB4, 0x41, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]))
+    def mk(n1, n2):
+        b1 = os.path.join(OUT, 'BIG1.DAT'); open(b1, 'wb').write(b'\x11' * (n1 * 512))
+        b2 = os.path.join(OUT, 'BIG2.DAT'); open(b2, 'wb').write(b'\x22' * (n2 * 512))
+        return image('straddle.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, b1, b2)
+    def ent(img, n, copy=0):            # (FAT 1 at LBA 1, FAT 2 at LBA 10)
+        v = struct.unpack_from('<H', img, 512 + copy * 9 * 512 + n * 3 // 2)[0]
+        return v >> 4 if n & 1 else v & 0xFFF
+    raw = open(mk(10, 10), 'rb').read()     # where BIG1 starts, from its entry
+    s1 = next(struct.unpack_from('<H', raw, 19 * 512 + i * 32 + 26)[0] for i in range(224)
+              if raw[19 * 512 + i * 32:19 * 512 + i * 32 + 11] == b'BIG1    DAT')
+    img = mk(341 - s1 + 1, 682 - 342 + 1)
+    raw = open(img, 'rb').read()
+    check('the image: BIG1 ends at cluster 341, BIG2 is 342-682', ent(raw, 341) == 0xFFF and ent(raw, 342) == 343
+          and ent(raw, 682) == 0xFFF, (ent(raw, 341), ent(raw, 342), ent(raw, 682)))
+    k = ktest.KPC(img); k.start()
+    sh = Shell(k)
+    assert run_long(k, 'delf big2.dat')
+    d = bytes(k.pc.drives[0].img)
+    check('BIG2 deleted: entry 682 (bytes 1023-1024, sectors 1 and 2) free on the disk in both copies, no lost clusters',
+          ent(d, 682) == 0 and ent(d, 682, 1) == 0 and ent(d, 342) == 0 and not fatcheck.check(d)[0],
+          (ent(d, 682), ent(d, 682, 1), fatcheck.check(d)[0]))
+    assert run_long(k, 'delf big1.dat')
+    d = bytes(k.pc.drives[0].img)
+    check('BIG1 deleted: entry 341 (bytes 511-512, sectors 0 and 1) free on the disk in both copies, no lost clusters',
+          ent(d, 341) == 0 and ent(d, 341, 1) == 0 and not fatcheck.check(d)[0], (ent(d, 341), ent(d, 341, 1), fatcheck.check(d)[0]))
+
 def t_names():
     """Names that are no names (a second dot, a bad character), device names,
     CREATE over hidden and system files: NAMES.COM's 58 calls answer as GRiD
@@ -1624,6 +1689,112 @@ def t_nul():
     o = sh.run('if exist nosuch\\nul echo nosuch') + sh.run('if exist a.b\\nul echo dir') + sh.run('type nul')
     check("... and LCMD (its IF EXIST looks at the directory itself): IF EXIST NOSUCH\\NUL no, A.B\\NUL yes; TYPE NUL",
           'nosuch' not in o.replace('nosuch\\nul', '') and 'dir\n' in o + '\n', o)
+
+def t_devname():
+    """Device names by dev_look_ax: DEVNAME.COM's 88 calls (OPEN, then CREATE, of each name) answer as the
+    kernel did before its table walk became a length-prefixed table and REPE CMPSB, and its GPIBnn parse AAD;
+    each device opened is the same one, with the same GPIB address.  EMMXXXX0 only with EMS."""
+    com = os.path.join(OUT, 'DEVNAME.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'DEVNAME.ASM')], check=True)
+    for ems in (0, 88):
+        k = ktest.KPC(image('devname.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'DEVNAME.COM=' + com, 'A.B\\'),
+                      ems_pages=ems)
+        at, devs = 0x600 + k.Y['dev_open'], []
+        k.hooks.append(lambda pc: devs.append(pc.r('ax')) if pc.r('cs') * 16 + pc.r('ip') == at else None)
+        k.start()
+        sh = Shell(k)
+        assert run_long(k, 'devname > out.txt')
+        f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+        got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+        devs = ['%d/%d' % (a & 0xFF, a >> 8) for a in devs]
+        want, wdevs = [], []
+        for l in DEVNAME_ANS.strip().split('\n'):
+            n, o, c, d = l.split()
+            if ems and n in DEVNAME_EMS: o, c, d = DEVNAME_EMS[n]
+            want += ['fn 3D %s -> %s' % (n, o.replace('e', 'err ')), 'fn 3C %s -> %s' % (n, c.replace('e', 'err '))]
+            wdevs += [d] * ((o == 'ok') + (c == 'ok')) if d != '-' else []
+        tag = ' (with EMS)' if ems else ''
+        check('DEVNAME.COM%s: all %d calls answer as before (CON.X and NUL. a device, NUL.. and NUL.X.Y 2, CONX and '
+              'CLOCK$$ files; GPIB00-GPIB30, GPIBn and GPIBnn.X a device, GPIB31, GPIB1Z and GPIB123 files)' % (tag, len(want)),
+              got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+        check('... each device opened is the one named, GPIBnn at address nn (%d opens)' % len(wdevs), devs == wdevs, devs)
+
+def t_newname():
+    """new_name: CREATE, CREATE NEW, MKDIR and RENAME onto a name with no last part (A:\\, \\, A:, ., A.B\\.: 5;
+    A.B\\ and the empty name: 3) make nothing, and the disk stays consistent."""
+    com = os.path.join(OUT, 'NEWNAME.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NEWNAME.ASM')], check=True)
+    x = os.path.join(OUT, 'NN_X.TXT'); open(x, 'wb').write(b'hello')
+    k = ktest.KPC(image('newname.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NEWNAME.COM=' + com, 'X.TXT=' + x, 'A.B\\'))
+    k.start()
+    sh = Shell(k)
+    assert run_long(k, 'newname > out.txt')
+    d = bytes(k.pc.drives[0].img)
+    got = [l.strip() for l in fatcheck.read_files(d).get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n')
+           if l.startswith('fn ')]
+    want = ['fn %s -> err %s' % (c, a) for c, a in MS_NEWNAME]
+    check('NEWNAME.COM: all %d calls answer as before (no last part: 5; A.B\\ and the empty name: 3)' % len(want),
+          got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    dl = []; f = fatcheck.read_files(d, dirs=dl)
+    probs, _ = fatcheck.check(d)
+    check('... nothing made, X.TXT as it was, the disk consistent',
+          set(f) == {'A:\\LODE.SYS', 'A:\\LCMD.COM', 'A:\\NEWNAME.COM', 'A:\\X.TXT', 'A:\\OUT.TXT'} and dl == ['A:\\A.B']
+          and f['A:\\X.TXT'] == b'hello' and not probs, (sorted(f), dl, probs))
+
+# NEWNAME.COM's calls and their errors (the kernel's before new_name tested r_wild first)
+MS_NEWNAME = [('3C A:\\', '05'), ('3C \\', '05'), ('3C A:', '05'), ('3C A.B\\', '03'), ('3C .', '05'), ('3C A.B\\.', '05'),
+              ('3C ', '03'), ('5B A:\\', '05'), ('5B A:', '05'), ('5B .', '05'),
+              ('39 A:\\', '05'), ('39 \\', '05'), ('39 A:', '05'), ('39 A.B\\', '03'), ('39 .', '05'), ('39 A.B\\.', '05'),
+              ('56 A:\\', '05'), ('56 \\', '05'), ('56 A:', '05'), ('56 .', '05'), ('56 A.B\\.', '05')]
+
+# DEVNAME.COM's names: OPEN's answer, CREATE's, the device opened (number/GPIB address; '-' none)
+DEVNAME_ANS = r'''
+CON ok ok 0/0
+NUL ok ok 1/0
+AUX ok ok 2/0
+COM1 ok ok 2/0
+COM2 ok ok 4/0
+PRN ok ok 3/0
+LPT1 ok ok 3/0
+CLOCK$ ok ok 1/0
+NUL.TXT ok ok 1/0
+COM e02 ok -
+CONX e02 ok -
+NU e02 ok -
+CON.X ok ok 0/0
+NUL. ok ok 1/0
+NUL.. e02 e02 -
+NUL.X. e02 e02 -
+NUL.X.Y e02 e02 -
+LPT1.PRN ok ok 3/0
+CLOCK e02 ok -
+CLOCK$$ e02 ok -
+A.B\CLOCK$ ok ok 1/0
+A.B\EMMXXXX0 e02 ok -
+EMMXXXX0 e02 ok -
+EMMXXXX e02 ok -
+EMMXXXX0.X e02 ok -
+\DEV\\NUL e03 e03 -
+GPIB5 ok ok 5/5
+GPIB05 ok ok 5/5
+GPIB30 ok ok 5/30
+GPIB31 e02 ok -
+GPIB e02 ok -
+GPIBX e02 ok -
+GPIB5.X ok ok 5/5
+GPIB5.X.Y ok ok 5/5
+GPIB1Z e02 ok -
+NOSUCH\GPIB5 e03 e03 -
+\DEV\GPIB9 ok ok 5/9
+A:GPIB12 ok ok 5/12
+GPIB99 e02 ok -
+GPIB5\ e03 e03 -
+GPIB0 ok ok 5/0
+GPIB123 e02 ok -
+GPIB/5 e03 e03 -
+GPIB:5 e02 e02 -
+'''
+DEVNAME_EMS = {'A.B\\EMMXXXX0': ('ok', 'ok', '6/0'), 'EMMXXXX0': ('ok', 'ok', '6/0'), 'EMMXXXX0.X': ('ok', 'ok', '6/0')}
 
 # NOMATCH.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
 MS_NOMATCH = [('fn 4E NOSUCH.TXT', 'err 12'),
@@ -2762,11 +2933,13 @@ def t_execabort():
     check('... and the Executive lists the disk once LCMD ends', 'BIG.COM' in k.exec_list() and 'LCMD.COM' in k.exec_list(),
           k.exec_list())
 
-TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_exerel, t_trunc, t_kmedium, t_renfull, t_names, t_nul, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
+    want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
+    if set(want) - {t.__name__[2:] for t in TESTS}:
+        sys.exit('no such test: %s' % ' '.join(sorted(set(want) - {t.__name__[2:] for t in TESTS})))
     build()
-    want = sys.argv[1:]
     for t in TESTS:
         if want and t.__name__[2:] not in want: continue
         print('==', t.__name__[2:])

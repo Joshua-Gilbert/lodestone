@@ -1162,7 +1162,7 @@ ems_init:
         mov     ax, ems_free_owner
         sub     ax, terminate.fcall + 3
         mov     [terminate.fcall + 1], ax
-        mov     byte [dev_names.emm], 'E'
+        mov     byte [dev_names.emm], 8
         mov     word [0Ah], 'EM'        ; the name at INT 67h's segment:000Ah
         mov     word [0Ch], 'MX'        ;  (`start' was there: done with)
         mov     word [0Eh], 'XX'
