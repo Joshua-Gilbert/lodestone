@@ -4,6 +4,11 @@
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
  *
+ * v7.4: the whole page height. In Copy Mode (switch A=3) the page is 0-3124
+ *    ADUs high, not 0-2731 (p. 1-3); HP-GL's height now maps onto all of it,
+ *    which also makes the X and Y scales equal (circles round). Set
+ *    COPY_MODE 0 for a 4662 run in standard mode.
+ *
  * v7.3: ';' is optional, as in HP-GL: a letter after a mnemonic and its
  *    arguments starts the next mnemonic. PD100,200PU300,400 lifts the pen for
  *    300,400 (the PU was taken for separators), and INPU100,200 or
@@ -560,8 +565,16 @@ void plotterRoom(uint8_t n, unsigned long cost) {
 
 #define TEK_GS  0x1D
 #define TEK_US  0x1F
+// The page in ADUs (070-4164-00 p. 1-3): standard mode 0-4096 x 0-2731;
+// Copy Mode (switch A=3) 0-4096 x 0-3124, with the right-most 13% of the
+// page not addressable. Copy Mode's addressable area, 87% of the page's
+// width by all of its height (331 x 254 mm on the default 15 x 10 in page),
+// has HP-GL's own 1.30 aspect ratio, so HP-GL maps onto it at one scale on
+// both axes. (v1-v7.3 used 2731 in Copy Mode: the top 13% of the page
+// unused, and plots 15% too wide for their height.)
+#define COPY_MODE 1
 #define TEK_MAX_X 4095L
-#define TEK_MAX_Y 2731L
+#define TEK_MAX_Y (COPY_MODE ? 3123L : 2730L)
 
 // One coordinate, 12-bit, with only the bytes Table 3-3 says must go:
 // HIY if it changed; EB and LOY if EB changed; LOY if it or HIX changed;
@@ -899,7 +912,7 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.3"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.4"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
     Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));
