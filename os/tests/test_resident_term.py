@@ -1455,6 +1455,30 @@ def t_ops():
     finally:
         h.close()
 
+def t_ops_codes():
+    """audit3 R51: OPS.INC's file and GPIB requests from the pop-up, each one's status and reply (DOS's
+    error codes, the driver's) as claude_kernel's OPS_WANT: the table test_claude_kernel's test_ops_codes
+    holds CLAUDE.COM to (the same source in both binaries)."""
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
+        got = CK.ops_probe(h.router.term.grid, lambda c: h.pi_wait(c, 40))
+        bad = [(g, w) for g, w in zip(got, CK.OPS_WANT) if g != w]
+        check('the file and GPIB requests\' statuses and replies: %d as CLAUDE.COM\'s' % len(CK.OPS_WANT),
+              up and len(got) == len(CK.OPS_WANT) and not bad, (up, bad or got))
+        check('... the console still up, in step', h.up() and in_step(h), h.screen())
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
 def t_ops_mt():
     """With Lodestone's tasks (MULTITASK=1): files over a program at its own
     INT 16h call; DOS busy over COPY CON (MT's key wait calls INT 16h from
@@ -1661,7 +1685,7 @@ def t_bg_screen():
 
 
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen]
+         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]
