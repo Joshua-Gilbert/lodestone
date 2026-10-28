@@ -44,6 +44,7 @@ static struct {
     int before;                         // the mode an ESC command interrupted (it goes back to it: Figure 3-3)
     std::string esc;
     int ons;                            // PLOTTER ONs (ESC A E)
+    std::vector<std::string> cmds;      // every ESC command, as "AJ30" (SUB left off)
     uint8_t hiy, eb, loy, hix;
     bool lastLo, loySeen;
     std::string text;
@@ -57,10 +58,21 @@ static void endText(Evs& out) {
 }
 
 static void tekByte(uint8_t b, Evs& out) {
-    if (tk.mode == 4) {                 // ESC A <command>: E, PLOTTER ON, ends at E; others at SUB
-        tk.esc += (char)b;
-        if (tk.esc == "AE") { tk.ons++; tk.mode = tk.before; }
-        else if (b == 0x1A) tk.mode = tk.before;
+    if (tk.mode == 4) {                 // as p. 3-3: no arguments, one character, or numbers to SUB
+        bool end = false;
+        size_t n = tk.esc.size();
+        if (b == 0x1A) end = true;
+        else {
+            tk.esc += (char)b;
+            if (n == 0) end = !(b >= 'A' && b <= 'D');                 // a Style II escape
+            else if (n == 1) end = strchr("EF(NQVMKL", b) != NULL;
+            else if (n == 2) end = strchr("USR", tk.esc[1]) != NULL;
+        }
+        if (end) {
+            if (tk.esc == "AE") tk.ons++;
+            if (tk.esc != "AO1") tk.cmds.push_back(tk.esc);   // (not the Nano's status requests)
+            tk.mode = tk.before;
+        }
         return;
     }
     if (b == 0x1B) { endText(out); tk.before = tk.mode; tk.esc.clear(); tk.mode = 4; return; }
@@ -96,7 +108,8 @@ static void resetSketch() {
     penX = penY = 0; retraceAdu = 0;
     statusMode = true; queryPending = false;   // room enough, and no waiting
     limitCount = queuedCount + 1000000UL;
-    tk.mode = 0; tk.text.clear(); tk.ons = 0;
+    tk.mode = 0; tk.text.clear(); tk.ons = 0; tk.cmds.clear(); inAlpha = false;
+    alphaDefaults(); tekTail = tekHead; tk.cmds.clear(); natState = 0;
     pageMode = 2; copySwitch = -1; copyMode = true; tekMaxY = 3123;
 }
 
@@ -199,6 +212,87 @@ static void testPage() {
     check("page: the change at IN", out.size() == 5 && out[4] == pt('U', 0, 2730) && tk.ons == 2);
 }
 
+// the native commands the 4662 got, as "AI119,257 AJ90" (ESC and SUB left off)
+static std::string cmds() {
+    std::string r;
+    for (const std::string& c : tk.cmds) {
+        if (!r.empty()) r += ' ';
+        for (char ch : c) { if ((uint8_t)ch < 0x20) { r += '^'; r += (char)(ch + 0x40); } else r += ch; }
+    }
+    return r;
+}
+
+static void expectCmds(const char* name, const char* hpgl, const char* want, Evs* evs = nullptr) {
+    Evs got = run(hpgl);
+    if (evs) *evs = got;
+    std::string c = cmds();
+    bool ok = c == want;
+    check(name, ok);
+    if (!ok) printf("     want %s\n     got  %s\n", want, c.c_str());
+}
+
+// X64: HP-GL's label size, direction and character sets as the 4662's alpha
+// commands, sent before the label that needs them, only when they change.
+static void testAlpha() {
+    // SI 0.5,1 cm: 0.5*400*1.5*4095/10365 = 118.5 -> 119; 1*400*18/11*3123/7962 = 256.7 -> 257
+    expectCmds("SI: ESC A I in ADUs, Copy Mode", "IN;SI0.5,1;PU100,100;LBhi\x03", "AE AV AI119,257");
+    expectCmds("SR: % of the page", "SR2,3;LBx\x03", "AI123,153");          // 0.02*1.5*4095, 0.03*18/11*3123
+    expectCmds("SR with no numbers: 0.75,1.5", "SR;LBx\x03", "AI46,77");
+    expectCmds("SI with no numbers: the plotter's own", "SI0.5,1;LBx\x03SI;LBy\x03", "AI119,257 AI56,88");
+    expectCmds("ES: extra space and lines", "SI0.5,1;ES1,0.5;LBx\x03", "AI237,385");
+    expectCmds("sent once for labels of one size", "SI0.5,1;LBx\x03LBy\x03", "AI119,257");
+    expectCmds("DI 0,1: 90 degrees", "DI0,1;LBx\x03", "AJ90");
+    expectCmds("DI -1,0: 180", "DI-1,0;LBx\x03" "DI;LBy\x03", "AJ180 AJ0");
+    expectCmds("DR 0,1: 90", "DR0,1;LBx\x03", "AJ90");
+    expectCmds("DI 1,1: 45 on the page", "DI1,1;LBx\x03", "AJ45");
+    expectCmds("nothing set, nothing sent", "LBplain\x03", "");
+    {
+        Evs e;
+        expectCmds("CS, CA, SO and SI", "CS33;CA35;LBa\x0e" "b\x0f" "c\x03", "AT2 AT3 AT2", &e);
+        check("  ... the text between, a font each", e == Evs({"L(a)", "L(b)", "L(c)"}));
+    }
+    expectCmds("SA, SS", "CA30;SA;LBx\x03SS;LBy\x03", "AT1 AT0");
+    expectCmds("CS100-109: the 4662's fonts", "CS109;LBx\x03", "AT9");
+    expectCmds("a set it hasn't: font 0", "CS34;LBx\x03", "");
+    {
+        Evs e;
+        expectCmds("CR in a label: the margin at its start", "PU100,100;LBab\r\ncd\x03", "AJ0", &e);
+        check("  ... CR and LF go to the plotter", e.size() == 2 && e[1] == "L(ab\r\ncd)");
+    }
+    expectCmds("IN resets the 4662's alpha", "SI0.5,1;LBx\x03IN;LBy\x03", "AI119,257 AE AV");
+    expectCmds("DF resets it too", "DI0,1;LBx\x03" "DF;LBy\x03", "AJ90 AV");
+}
+
+// X65: the 4662's own commands, from an ESC, as they are.
+static void testNative() {
+    expectCmds("a command with numbers, to ';'", "\x1b" "AJ30;", "AJ30");
+    expectCmds("... to SUB", "\x1b" "AJ30\x1a", "AJ30");
+    {
+        Evs e;
+        expectCmds("... to a letter, which is HP-GL", "\x1b" "AT5PU100,200;", "AT5", &e);
+        check("  ... the PU drawn", e.size() == 1 && e[0] == U(100, 200));
+    }
+    expectCmds("two numbers", "\x1b" "AI100,150;", "AI100,150");
+    expectCmds("no arguments: ends at its code", "\x1b" "AEPU1,1;", "AE");
+    expectCmds("a character argument", "\x1b" "ARZPU1,1;", "ARZ");
+    expectCmds("Option 31: two-letter codes", "\x1b" "ABP2;" "\x1b" "ABY100;", "ABP2 ABY100");
+    expectCmds("a Style II escape (ESC FF)", "\x1b\x0c", "^L");
+    expectCmds("an exponent", "\x1b" "AJ0.3E+02;", "AJ0.3E+02");
+    expectCmds("an ESC ends an HP-GL command", "PU100,200\x1b" "AL", "AL");
+    {
+        Evs e;
+        expectCmds("in a stroke: back to the pen before drawing on", "PD100,200\x1b" "AK;PD300,400;", "AK", &e);
+        check("  ... GS and a move to the pen, then the draw",
+              e.size() == 4 && e[2] == U(100, 200) && e[3] == D(300, 400));
+    }
+    expectCmds("ESC A J sets labels' direction", "\x1b" "AJ45;LBx\x03" "DI1,0;LBy\x03", "AJ45 AJ0");
+    expectCmds("ESC A T sets labels' font", "\x1b" "AT9;LBx\x03" "CS0;LBy\x03", "AT9 AT0");
+    expectCmds("ESC A I sets labels' size", "\x1b" "AI80,120;LBx\x03SI;LBy\x03", "AI80,120 AI56,88");
+    expectCmds("ESC A V: the plotter at its defaults", "SI0.5,1;LBx\x03\x1b" "AV" "LBy\x03SI0.5,1;LBz\x03",
+               "AI119,257 AV AI119,257");
+    expectCmds("an ESC in a label is not a command", "LBa\x1b" "AEb\x03", "");
+}
+
 int main() {
     std::string home = pt('U', 0, 0);   // (the first draw goes back into graph mode with a move to the pen)
 
@@ -247,6 +341,8 @@ int main() {
     }
     testPoll();
     testPage();
+    testAlpha();
+    testNative();
 
     printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

@@ -4,6 +4,18 @@
  * GPIB HP-GL to Tektronix 4662 translator. A GPIB listener at GPIB_ADDRESS
  * that takes HP-GL and sends it to the 4662 as Tek commands at 1200 baud.
  *
+ * v7.6: labels and the 4662's own commands.
+ *    - HP-GL's SI/SR (size), ES (extra space), DI/DR (direction), CS/CA with
+ *      SS/SA or SO/SI in a label (character sets) and DF become the 4662's
+ *      SET ALPHA DIMENSION, SET ALPHA ROTATION and SELECT ALPHA FONT (p. 4-19
+ *      to 4-21), sent before the label that needs them, only on a change. IN
+ *      and DF send RESET ALPHA PARAMETERS. CS100-CS109 pick the 4662's fonts
+ *      0-9 directly. CR and LF in a label now go to the plotter (a new line
+ *      under the label's start; v1-v7.5 dropped them).
+ *    - An ESC outside a label passes one of the 4662's own commands through
+ *      as it is (Appendix A): ESC A <code> [args], ended by ';' or SUB, or
+ *      ESC and one character (Style II). See "the 4662's own commands".
+ *
  * v7.5: the page mode follows the plotter. The 4662 reports its rear-panel
  *    COPY MODE switch in bit 14 of its interface status (READ STATUS 1,
  *    Table 4-3, p. 4-14), the reply the Nano already reads for flow
@@ -109,6 +121,8 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <string.h>
+#include <math.h>
 
 // ============================================================================
 // CONFIGURATION
@@ -415,6 +429,8 @@ void gpibBegin() {
 // page unused, and plots 15% too wide for their height.)
 #define TEK_MAX_X 4095L
 #define TEK_MAX_Y ((long)tekMaxY)
+#define HPGL_MAX_X 10365L               // HP-GL's page (A4 on an HP 7475), mapped onto the 4662's
+#define HPGL_MAX_Y  7962L
 uint8_t pageMode = PAGE_MODE;           // !m
 int8_t copySwitch = -1;                 // the plotter's COPY MODE switch, from its last status (-1: not heard)
 bool copyMode = true;                   // what the Nano maps onto
@@ -685,6 +701,81 @@ void tekDrawTo(int x, int y) {
     penX = x; penY = y; penIsDown = true; inAlpha = false;
 }
 
+// ============================================================================
+// LABELS: HP-GL's size, direction and character set as the 4662's own
+// ============================================================================
+// SET ALPHA DIMENSION ESC A I cs,ls (character and line space in ADUs: a
+// character is 2/3 cs wide and 11/18 ls high; 56,88 by default, Table 4-6),
+// SET ALPHA ROTATION ESC A J deg (counterclockwise; it also puts the left
+// margin, where CR goes, through the pen), SELECT ALPHA FONT ESC A T n and
+// RESET ALPHA PARAMETERS ESC A V (p. 4-19 to 4-23). Each goes just before the
+// label that needs it, only when it changes. Sizes scale with the drawing (as
+// if the HP plot were enlarged to the 4662's page), so labels keep their
+// place in it.
+#define ALPHA_CS 56
+#define ALPHA_LS 88
+uint8_t sizeKind = 0;                   // 0 the plotter's default, 1 SI (cm), 2 SR (% of the page), 3 native (ADUs)
+float sizeW = 0, sizeH = 0, esSpaces = 0, esLines = 0;
+int alphaAngle = 0;                     // DI/DR: degrees counterclockwise
+uint8_t stdFont = 0, altFont = 0; bool useAlt = false;     // CS, CA; SS/SA and SO/SI choose
+int sentCs = ALPHA_CS, sentLs = ALPHA_LS, sentAngle = 0, sentFont = 0;   // what the 4662 has
+
+void tekNum(long v) {
+    if (v < 0) { tekRaw('-'); v = -v; }
+    char d[10]; uint8_t n = 0;
+    do { d[n++] = '0' + v % 10; v /= 10; } while (v);
+    while (n) tekRaw(d[--n]);
+}
+
+void alphaCmd(char code, long a, long b, bool two) {   // ESC A <code> a[,b] SUB
+    plotterRoom(16, paceVector);
+    tekRaw(0x1B); tekRaw(PLOTTER_ADDR); tekRaw(code); tekNum(a);
+    if (two) { tekRaw(','); tekNum(b); }
+    tekRaw(0x1A);
+}
+
+void alphaSetup(bool margin) {
+    float w = ALPHA_CS, h = ALPHA_LS;
+    if (sizeKind == 1) {                // SI: character width and height in cm (400 HP-GL units each)
+        w = sizeW * 400.0f * 1.5f * TEK_MAX_X / HPGL_MAX_X;
+        h = sizeH * 400.0f * (18.0f / 11) * TEK_MAX_Y / HPGL_MAX_Y;
+    } else if (sizeKind == 2) {         // SR: % of the page's width and height
+        w = sizeW / 100 * 1.5f * TEK_MAX_X;
+        h = sizeH / 100 * (18.0f / 11) * TEK_MAX_Y;
+    } else if (sizeKind == 3) { w = sizeW; h = sizeH; }
+    if (sizeKind != 3) { w *= 1 + esSpaces; h *= 1 + esLines; }
+    int cs = constrain((int)lround(fabs(w)), 1, 4095), ls = constrain((int)lround(fabs(h)), 1, 4095);
+    if (cs != sentCs || ls != sentLs) { alphaCmd('I', cs, ls, true); sentCs = cs; sentLs = ls; }
+    if (alphaAngle != sentAngle || margin) { alphaCmd('J', alphaAngle, 0, false); sentAngle = alphaAngle; }
+    int f = useAlt ? altFont : stdFont;
+    if (f != sentFont) { alphaCmd('T', f, 0, false); sentFont = f; }
+}
+
+void alphaForget() { sentCs = ALPHA_CS; sentLs = ALPHA_LS; sentAngle = 0; sentFont = 0; }   // the 4662 at its defaults
+
+void alphaDefaults() {                  // IN, DF: HP-GL's defaults, and the 4662's
+    sizeKind = 0; esSpaces = esLines = 0; alphaAngle = 0;
+    stdFont = altFont = 0; useAlt = false;
+    plotterRoom(3, 0);
+    tekRaw(0x1B); tekRaw(PLOTTER_ADDR); tekRaw('V');      // RESET ALPHA PARAMETERS
+    alphaForget();
+}
+
+// HP-GL character sets as the 4662's fonts (Figure 4-2): 1 Swedish/Finnish,
+// 2 German, 3 UK, 4 Spanish, 9 Danish/Norwegian; 5, 6 and 8 are symbol
+// variants. CS100-CS109 pick the 4662's font 0-9 directly (not HP-GL).
+uint8_t setToFont(long n) {
+    if (n >= 100 && n <= 109) return (uint8_t)(n - 100);
+    switch (n) {
+    case 3: case 30: case 31: return 1;  // Scandinavian, ISO Swedish
+    case 2: case 33: return 2;           // French/German, ISO German
+    case 35: return 3;                   // ISO UK
+    case 4: case 37: return 4;           // Spanish/Latin American, ISO Spanish
+    case 32: case 39: return 9;          // ISO Norwegian
+    default: return 0;                   // ASCII, and sets the 4662 doesn't have
+    }
+}
+
 void tekText(const char* s) {
     if (penIsDown && *s) {              // a label right after a stroke: lift along it, then back
         int px = penX, py = penY;
@@ -692,14 +783,21 @@ void tekText(const char* s) {
         if (penX != px || penY != py) tekMoveTo(px, py);
     }
     leaveLabel();                       // (two labels in a row: settle between them too)
+    alphaSetup(strchr(s, '\r') != NULL); // (a CR: the left margin at the label's start)
     char prev = 0;
     while (*s) {
-        if (*s == ' ' && prev && prev != ' ' && spaceSettle) settle(spaceSettle);
+        uint8_t c = (uint8_t)*s++;
+        if (c == 0x0E || c == 0x0F) {   // SO, SI: the alternate or the standard set
+            useAlt = c == 0x0E; alphaSetup(false); continue;
+        }
+        if (c < 0x20 && c != '\b' && c != '\t' && c != '\n' && c != '\r') continue;
+        if (c >= 0x7F) continue;
+        if (c == ' ' && prev && prev != ' ' && spaceSettle) settle(spaceSettle);
         plotterRoom(2, paceChar + (penIsDown ? pacePen : 0));
         penIsDown = false;
         if (!inAlpha) { tekRaw(TEK_US); inAlpha = true; }
-        prev = *s;
-        tekRaw((uint8_t)*s++);
+        prev = c;
+        tekRaw(c);
     }
     needsMove = true;
     coordKnown = false;                 // printing moves the pen: the next coordinate in full
@@ -710,8 +808,6 @@ void tekText(const char* s) {
 // HP-GL PARSER
 // ============================================================================
 
-#define HPGL_MAX_X 10365L
-#define HPGL_MAX_Y  7962L
 #define ETX 0x03
 
 bool penDown = false;
@@ -745,6 +841,26 @@ bool parseNumber(const char** pp, long* value) {
     return true;
 }
 
+// A number with a fraction (SI 0.19,0.27), or false if there is none.
+bool parseFloat(const char** pp, float* v) {
+    const char* p = skipSep(*pp);
+    bool neg = false;
+    if (*p == '-' || *p == '+') { neg = *p == '-'; p++; }
+    if (!((*p >= '0' && *p <= '9') || (*p == '.' && p[1] >= '0' && p[1] <= '9'))) return false;
+    float x = 0;
+    while (*p >= '0' && *p <= '9') x = x * 10 + (*p++ - '0');
+    if (*p == '.') { p++; float f = 0.1f; while (*p >= '0' && *p <= '9') { x += f * (*p++ - '0'); f *= 0.1f; } }
+    *v = neg ? -x : x; *pp = p;
+    return true;
+}
+
+// Degrees counterclockwise, 0-359, of a direction run,rise.
+int angleOf(float run, float rise) {
+    if (run == 0 && rise == 0) return 0;
+    int a = (int)lround(atan2(rise, run) * (180.0 / M_PI));
+    return a < 0 ? a + 360 : a;
+}
+
 void parseCoordinates(const char* args) {
     const char* p = args;
     long x, y;
@@ -769,8 +885,36 @@ void processCommand(const char* cmd, uint8_t len) {
         penDown = false; needsMove = true; coordKnown = false;
         plotterRoom(3, 0); plotterOn();  // (a 4662 powered up after the Nano, outside Copy Mode)
         applyPage();
+        alphaDefaults();
         tekMoveTo(0, 0);
         if (DEBUG_ENABLED) Serial.println(F("  IN"));
+    } else if (c1 == 'D' && c2 == 'F') {
+        alphaDefaults();
+        if (DEBUG_ENABLED) Serial.println(F("  DF"));
+    } else if (c1 == 'S' && (c2 == 'I' || c2 == 'R')) {     // label size: absolute cm, or % of the page
+        float w, h;
+        if (parseFloat(&args, &w) && parseFloat(&args, &h)) { sizeKind = c2 == 'I' ? 1 : 2; sizeW = w; sizeH = h; }
+        else if (c2 == 'R') { sizeKind = 2; sizeW = 0.75f; sizeH = 1.5f; }       // SR's default
+        else sizeKind = 0;                                   // SI's: the plotter's own size
+        if (DEBUG_ENABLED) { Serial.print(F("  S")); Serial.write(c2); Serial.print(' '); Serial.print(sizeW);
+                             Serial.print(','); Serial.println(sizeH); }
+    } else if (c1 == 'E' && c2 == 'S') {                     // extra space between characters, lines
+        esSpaces = esLines = 0;
+        if (parseFloat(&args, &esSpaces)) parseFloat(&args, &esLines);
+    } else if (c1 == 'D' && (c2 == 'I' || c2 == 'R')) {     // label direction: run,rise (DR: in % of the page)
+        float run, rise;
+        if (parseFloat(&args, &run) && parseFloat(&args, &rise))
+            alphaAngle = c2 == 'I' ? angleOf(run, rise) : angleOf(run * HPGL_MAX_X, rise * HPGL_MAX_Y);
+        else alphaAngle = 0;
+        if (DEBUG_ENABLED) { Serial.print(F("  D")); Serial.write(c2); Serial.print(F(": ")); Serial.println(alphaAngle); }
+    } else if ((c1 == 'C' && (c2 == 'S' || c2 == 'A'))) {   // character set: standard, alternate
+        long n = 0;
+        parseNumber(&args, &n);
+        if (c2 == 'S') stdFont = setToFont(n); else altFont = setToFont(n);
+        if (DEBUG_ENABLED) { Serial.print(F("  C")); Serial.write(c2); Serial.print(n); Serial.print(F(": font "));
+                             Serial.println(c2 == 'S' ? stdFont : altFont); }
+    } else if (c1 == 'S' && (c2 == 'S' || c2 == 'A')) {
+        useAlt = c2 == 'A';
     } else if (c1 == 'S' && c2 == 'P') {
         long pen = 0;
         parseNumber(&args, &pen);
@@ -819,13 +963,96 @@ void endCommand() {
     cmdLen = 0; inLabel = false;
 }
 
+// ---- the 4662's own commands, passed through ------------------------------
+// An ESC outside a label starts one of the 4662's own commands, which goes to
+// the plotter as it is (070-4164-00 Appendix A):
+//   ESC A-D code [args]   a Style I command: ESC A E, ESC A J 30, ESC A B P 2
+//   ESC c                 a Style II escape: ESC FF (MOVE-TO-HOME), ...
+// A command without arguments ends with its code (E F ( N Q V M K L), one
+// with a character argument with that character (U S R), one with numbers
+// at SUB or ';' (both sent as SUB) or at the first character that can't be
+// part of its numbers (the Nano sends SUB, then reads that character as
+// HP-GL). Option 31's codes are two letters (B then P, Y or V). The 4662 goes
+// back to the mode it was in (Figure 3-3); the Nano then re-enters graph mode
+// at its pen position before the next stroke, so HP-GL carries on where it
+// was even after a command that moves the pen. Native alpha commands
+// (I, J, T, V; N, DEVICE RESET) also set what labels use, as SI, DI and CS do.
+#define NAT_MAX 32                      // a longer command is cut (with SUB)
+uint8_t natState = 0;                   // 0 none, 1 after ESC, 2 the code next, 3 Option 31's second code, 4 a character, 5 numbers
+char natBuf[NAT_MAX + 1]; uint8_t natLen = 0;
+unsigned long nNative = 0;
+
+void natPut(char c) { tekRaw((uint8_t)c); if (natLen < NAT_MAX) natBuf[natLen++] = c; }
+
+void natEnd(bool sub) {
+    if (sub) tekRaw(0x1A);
+    natBuf[natLen] = 0; natState = 0; nNative++;
+    needsMove = true; inAlpha = false; coordKnown = false; afterLabel = false;   // (it may have moved the pen)
+    // the alpha state, as the plotter now has it
+    if (natLen >= 3 && natBuf[1] >= 'A' && natBuf[1] <= 'D') {
+        const char* a = natBuf + 3; float x, y; long n;
+        switch (natBuf[2]) {
+        case 'N': case 'V':             // DEVICE RESET, RESET ALPHA PARAMETERS
+            sizeKind = 0; alphaAngle = 0; stdFont = altFont = 0; useAlt = false; alphaForget(); break;
+        case 'I': if (parseFloat(&a, &x) && parseFloat(&a, &y)) {
+                      sizeKind = 3; sizeW = x; sizeH = y; sentCs = lround(x); sentLs = lround(y); } break;
+        case 'J': if (parseFloat(&a, &x)) { alphaAngle = sentAngle = (int)lround(x); } break;
+        case 'T': if (parseNumber(&a, &n)) { if (useAlt) altFont = n; else stdFont = n; sentFont = n; } break;
+        }
+    }
+    if (DEBUG_ENABLED) {
+        Serial.print(F("  4662: ESC "));
+        for (uint8_t i = 1; i < natLen; i++) {
+            uint8_t c = natBuf[i];
+            if (c < 0x20) { Serial.print('^'); Serial.write(c + 0x40); } else Serial.write(c);
+        }
+        Serial.println(sub ? F(" SUB") : F(""));
+    }
+}
+
+// true: c was the native command's
+bool natChar(char c) {
+    uint8_t u = (uint8_t)c;
+    switch (natState) {
+    case 1:                             // the address, or a Style II escape
+        natPut(c);
+        if (c >= 'A' && c <= 'D') natState = 2; else natEnd(false);
+        return true;
+    case 2:                             // the command code
+        natPut(c);
+        if (c == 'B') natState = 3;
+        else if (strchr("EF(NQVMKL", c)) natEnd(false);
+        else if (c == 'U' || c == 'S' || c == 'R') natState = 4;
+        else natState = 5;
+        return true;
+    case 3: natPut(c); natState = 5; return true;
+    case 4: natPut(c); natEnd(false); return true;
+    case 5: {                           // numbers: digits, signs, '.', E (exponent), spaces and commas
+        char p = natLen ? natBuf[natLen - 1] : 0;
+        bool num = (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.' || c == ' ' || c == ',' ||
+                   ((c == 'E' || c == 'e') && p >= '0' && p <= '9');
+        if (num && natLen < NAT_MAX) { natPut(c); return true; }
+        natEnd(true);
+        return u == 0x1A || c == ';';   // SUB or ';' ended it; anything else is HP-GL again
+    }
+    }
+    return false;
+}
+
 void feedChar(char c) {
+    if (natState && natChar(c)) return;
     if (inLabel) {                      // LB (BL, WD) text, up to ETX (';' is text here)
         if (c == ETX) { endCommand(); return; }
-        if (c == '\r' || c == '\n') return;
         if (cmdLen < CMD_BUF_SIZE - 1) cmdBuf[cmdLen++] = c;
         return;
     }
+    if (c == 0x1B) {                    // one of the 4662's own commands
+        if (cmdLen > 0 || inCoords) endCommand();
+        plotterRoom(NAT_MAX + 4, paceVector);
+        natLen = 0; natState = 1; natPut(c);
+        return;
+    }
+    if ((uint8_t)c == 0x1A) return;     // (a SUB with no command)
     if (c == ';') { endCommand(); return; }
     // ';' is optional in HP-GL: a letter after a mnemonic (and its numbers)
     // starts the next one. SM and DT take one character, which may be a letter.
@@ -838,8 +1065,7 @@ void feedChar(char c) {
         } else flushNumber();           // a separator (comma, space, line end)
         return;
     }
-    if (c == '\r' || c == '\n' || (c == ' ' && cmdLen == 0)) return;
-    if (c == ETX) return;
+    if ((uint8_t)c < 0x20 || (uint8_t)c >= 0x7F || (c == ' ' && cmdLen == 0)) return;   // (line ends, ETX, ...)
     if (cmdLen < CMD_BUF_SIZE - 1) cmdBuf[cmdLen++] = c;
     if (cmdLen == 2) {
         char c1 = cmdBuf[0] & ~0x20, c2 = cmdBuf[1] & ~0x20;      // (upper case)
@@ -924,7 +1150,8 @@ void printStatus() {
     Serial.print(F(", polls ")); Serial.print(nPolls);
     Serial.print(F(", ring ")); Serial.print(ringCount());
     Serial.print(F(", to plotter ")); Serial.print(tekQueued());
-    Serial.print(F(", poll byte 0x")); Serial.println(statusByte(), HEX);
+    Serial.print(F(", poll byte 0x")); Serial.print(statusByte(), HEX);
+    Serial.print(F(", 4662 commands passed ")); Serial.println(nNative);
     printFlow();
     printPace();
 }
@@ -958,10 +1185,10 @@ void setup() {
     Serial.begin(9600);
     uartBegin();
     sei();
-    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.5"));
+    Serial.println(F("GPIB HP-GL to Tek 4662 Translator v7.6"));
     Serial.print(F("GPIB address: ")); Serial.println(GPIB_ADDRESS);
     Serial.print(F("Listen Only: ")); Serial.println(LISTEN_ONLY ? F("YES") : F("NO"));
-    Serial.println(F("USB: HP-GL for testing; '?' bus and flow, '#' ask the plotter, '!' timed pacing"));
+    Serial.println(F("USB: HP-GL (and ESC 4662 commands) for testing; '?' bus and flow, '#' ask the plotter, '!' settings"));
     probePlotter();
     if (!statusMode && DEBUG_ENABLED) Serial.println(F("[4662] no status reply: timed pacing for now"));
     if (DEBUG_ENABLED) printPage();

@@ -111,8 +111,11 @@ Limits the tools keep, whatever Claude asks for:
 
 **The pen plotter** (`grid_plotter`): the Tek 4662 is not on the bus
 itself. It is on RS-232 behind a Nano (`plotter-nano/` in the Lodestone tree,
-firmware v4) that is a GPIB device at address 1, takes HP-GL (IN, SP, PU, PD,
-PA, LB) and sends it to the plotter as Tek commands at 1200 baud.
+firmware v4) that is a GPIB device at address 1, takes HP-GL (IN, DF, SP, PU,
+PD, PA, LB, and for labels SI, SR, ES, DI, DR, CS, CA, SS, SA) and sends it to
+the plotter as Tek commands at 1200 baud. From v7.6 it also passes the 4662's
+own commands through as they are: ESC, the address A, the code and its
+numbers, ended by `;` or SUB (`plotter-nano/README.md`).
 
 - **The Nano and the plotter:** the 4662 has no XON/XOFF in this mode and
   draws slower than 1200 baud, so the Nano asks it how much room its 2 KB
@@ -126,8 +129,8 @@ PA, LB) and sends it to the plotter as Tek commands at 1200 baud.
   while the pen draws. `action: status` shows how far it is, `cancel` stops
   sending. A Nano that doesn't answer a serial poll (firmware before v4) is an
   error before anything is sent.
-- The HP-GL is checked first: printable ASCII, line ends and ETX, no ESC
-  (which would switch the Nano to raw pass-through).
+- The HP-GL is checked first: printable ASCII, line ends, ETX, BS, SO and SI
+  (in labels), and ESC and SUB (the 4662's own commands); nothing else.
 - The Nano must run addressed (`LISTEN_ONLY false`, `GPIB_ADDRESS 1`): in
   listen-only mode it would take every byte on the bus, the link's included.
 
