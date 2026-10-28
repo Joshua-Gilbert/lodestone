@@ -4225,9 +4225,9 @@ inbuf       resb MAXIN                  ; (first: the start-up code is there)
 res_cs      resw 1                      ; resident Claude's stub, if loaded
 ggint       resb 1
 ggver       resw 1
-ksum        resb 1                      ; 1: INT 60h 02h AL=3, 03h AL=2 (KSUM)
-tx_app      resb 1                      ; 1: txframe's check is the driver's to add
-lw_eoi      resb 1                      ; lw_go's AL for INT 60h 02h: 1, or 3
+ksum        resb 1                      ; 1: the driver's frame check (1.23; KSUM)
+rq_id       resb 1                      ; (here, not by reqbuf: the words after stay even)
+lw_eoi      resb 1                      ; the frame's AL for INT 60h 02h: 1, or 3
 n_kok       resw 1                      ; frames ks_check passed (the tests)
 convseg     resw 1
 ioseg       resw 1
@@ -4306,7 +4306,6 @@ rxn         resw 1
 rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_over     resb 1
-rq_id       resb 1
             alignb 2                    ; (frames are copied in with REP MOVSW: an odd
 reqbuf      resb REQMAX + 4             ;  destination costs the 286 a bus cycle a word)
 hellobuf    resb HELLO_MAX
