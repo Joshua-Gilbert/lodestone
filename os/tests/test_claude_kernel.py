@@ -282,6 +282,30 @@ def test_key_script_other_int16():
 T.test_key_script_other_int16 = test_key_script_other_int16
 
 
+def test_run_exec_block():
+    """A RUN's EXEC block (filled once at CLAUDE's start): the child gets CLAUDE's environment, the command's
+    tail and two blank FCBs in its PSP."""
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TESTKEY one two', 'capture': False,
+                                                   'keys': '{WAIT 1}x{ESC}'})),
+                 T.reply(('text', 'Done.'))], mode='auto')
+    h.type('run testkey')
+    cur = lambda: h.m.u16(0x60, h.m.Y['cur_psp'])
+    root = h.m.u16(0x60, h.m.Y['root_psp'])
+    assert h.run_until(lambda: cur() not in (root, h.claude_psp) or h.m.crash, 20), h.m.crash
+    psp = cur()
+    fcbs, tail = h.m.rd(psp, 0x5C, 32), h.m.rd(psp, 0x80, 10)
+    env = h.m.rd(h.m.u16(psp, 0x2C), 0, 256)
+    assert h.run_until(h.idle, 30)
+    text = str(T.results(h, 1)[0]['content'])
+    blank = b'\0' + b' ' * 11 + b'\0' * 4
+    assert fcbs == blank * 2 and tail == b'\x08 one two\r' and b'COMSPEC=' in env and 'Exit code: 1' in text, \
+        (fcbs, tail, env, text)
+    T.check(h)
+
+
+T.test_run_exec_block = test_run_exec_block
+
+
 def test_key_script_snap_peek():
     """audit3 (X42's panel): a tick, and a TSR's INT 16h peek from its INT 1Ch, as ks_ready's {SNAP} copies the
     screen on the read path (interrupts on): the peek finds ks_pos past the mark, so one snapshot, and every

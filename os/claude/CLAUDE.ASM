@@ -2769,15 +2769,8 @@ make_outname:
 do_exec:
         mov     [exec_ss], ss
         mov     [exec_sp], sp
-        mov     word [epb], 0           ; our environment
-        mov     word [epb+2], tail
-        mov     [epb+4], cs
-        mov     word [epb+6], fcb1
-        mov     [epb+8], cs
-        mov     word [epb+10], fcb2
-        mov     [epb+12], cs
         mov     dx, exec_path
-        mov     bx, epb
+        mov     bx, epb                 ; (filled at the start)
         mov     ax, 4B00h
         int     21h
         cli                             ; DOS 3 keeps only CS:IP
@@ -3243,8 +3236,7 @@ helptext    db 'Enter         send the prompt', 0
             db 0FFh
 spinseq     db 87h, 88h, 89h, 8Ah, 8Bh, 8Ch, 8Bh, 8Ah, 89h, 88h
 evint       db 01h
-fcb1        db 0, '           ', 0, 0, 0, 0
-fcb2        db 0, '           ', 0, 0, 0, 0
+fcb1        db 0, '           ', 0, 0, 0, 0         ; (a RUN's two FCBs: DOS copies them)
 %ifdef TERM_WIN
 ; code page 437's text for codes 80h-FFh (a terminal window's Copy), ours
 ; to AEh as their look-alikes; past them none (0: '?')
@@ -3320,6 +3312,12 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         mov     di, title_text
         call    copyz
         mov     word [c_dirty_col], 0FFFFh
+        mov     word [epb + 2], tail    ; a RUN's EXEC block: our environment
+        mov     [epb + 4], cs           ;  (0, from the BSS), the tail and
+        mov     word [epb + 6], fcb1    ;  two blank FCBs
+        mov     [epb + 8], cs
+        mov     word [epb + 10], fcb1
+        mov     [epb + 12], cs
         mov     ax, [convseg]           ; Term's shadow: the conversation's memory
         mov     [shadseg], ax
         cmp     byte [app_want], 'T'
@@ -4370,6 +4368,7 @@ ks_until    resw 1
 snap_taken  resb 1
 snap_len    resw 1
         times   -(ems_ok - drvstr != 80 || old_tmo - cwdbuf != 68) resb 1  ; (HELLO_MAX)
+        times   -(epb < inbuf + MAXIN) resb 1   ; (its environment word: 0 from the BSS clear)
         times   -(kv_cwd < kv_os || kv_drives < kv_cwd || kv_mem < kv_drives || kv_ems < kv_mem \
                   || kv_gpib < kv_ems || kv_addr < kv_gpib || kv_date < kv_addr || kv_grid < kv_date \
                   || kv_appterm < kv_grid || kv_appchat < kv_appterm || s_none2 < s_onint \
