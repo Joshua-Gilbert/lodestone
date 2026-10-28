@@ -41,6 +41,9 @@ struct FakeSerial {
 typedef std::vector<std::string> Evs;
 static struct {
     int mode;                           // 0 nothing yet, 1 GS (a move next), 2 drawing, 3 text, 4 ESC..SUB
+    int before;                         // the mode an ESC command interrupted (it goes back to it: Figure 3-3)
+    std::string esc;
+    int ons;                            // PLOTTER ONs (ESC A E)
     uint8_t hiy, eb, loy, hix;
     bool lastLo, loySeen;
     std::string text;
@@ -54,8 +57,13 @@ static void endText(Evs& out) {
 }
 
 static void tekByte(uint8_t b, Evs& out) {
-    if (tk.mode == 4) { if (b == 0x1A) tk.mode = 2; return; }   // a status request
-    if (b == 0x1B) { endText(out); tk.mode = 4; return; }
+    if (tk.mode == 4) {                 // ESC A <command>: E, PLOTTER ON, ends at E; others at SUB
+        tk.esc += (char)b;
+        if (tk.esc == "AE") { tk.ons++; tk.mode = tk.before; }
+        else if (b == 0x1A) tk.mode = tk.before;
+        return;
+    }
+    if (b == 0x1B) { endText(out); tk.before = tk.mode; tk.esc.clear(); tk.mode = 4; return; }
     if (b == TEK_GS) { endText(out); tk.mode = 1; tk.lastLo = tk.loySeen = false; return; }
     if (b == TEK_US) { tk.mode = 3; return; }
     if (tk.mode == 3) { tk.text += (char)b; return; }
@@ -88,7 +96,8 @@ static void resetSketch() {
     penX = penY = 0; retraceAdu = 0;
     statusMode = true; queryPending = false;   // room enough, and no waiting
     limitCount = queuedCount + 1000000UL;
-    tk.mode = 0; tk.text.clear();
+    tk.mode = 0; tk.text.clear(); tk.ons = 0;
+    pageMode = 2; copySwitch = -1; copyMode = true; tekMaxY = 3123;
 }
 
 static Evs run(const char* hpgl, uint16_t retrace = 0) {
@@ -145,6 +154,51 @@ static void testPoll() {
     busIdle();
 }
 
+// X63: the page follows the 4662's COPY MODE switch (status bit 14), at IN
+// only; !m forces it; PLOTTER ON goes at every IN.
+static void testPage() {
+    run("IN;");
+    check("page: PLOTTER ON at IN", tk.ons == 1);
+    resetSketch();
+    takeReply(1, 0x4000 | 500);
+    check("page: status bit 14 is the Copy switch", copySwitch == 1 && lastFree == 500);
+    takeReply(1, 700);
+    check("page: bit 14 clear, standard", copySwitch == 0 && lastFree == 700);
+
+    // (run() resets the page, so set it inside: feed by hand)
+    struct Case { const char* name; uint8_t mode; int8_t sw; int top; };
+    Case cases[] = {
+        {"page: switch Copy -> 0-3123", 2, 1, 3123},
+        {"page: switch standard -> 0-2730", 2, 0, 2730},
+        {"page: not heard -> Copy (as before)", 2, -1, 3123},
+        {"page: !m 0 over a Copy switch", 0, 1, 2730},
+        {"page: !m 1 over a standard switch", 1, 0, 3123},
+    };
+    for (const Case& c : cases) {
+        resetSketch(); pageMode = c.mode; copySwitch = c.sw;
+        Evs out;
+        for (const char* p = "IN;PU10365,7962;"; *p; p++) {
+            feedChar(*p);
+            while (tekTail != tekHead) { tekByte(tekQ[tekTail], out); tekTail++; }
+        }
+        Evs want = {pt('U', 0, 0), pt('U', 4095, c.top)};
+        bool ok = out == want;
+        check(c.name, ok);
+        if (!ok) printf("     want%s\n     got %s\n", show(want).c_str(), show(out).c_str());
+    }
+    // a switch heard in the middle of a plot waits for the next IN
+    resetSketch(); copySwitch = 1;
+    Evs out;
+    auto feed = [&](const char* h) { for (const char* p = h; *p; p++) {
+        feedChar(*p); while (tekTail != tekHead) { tekByte(tekQ[tekTail], out); tekTail++; } } };
+    feed("IN;PU0,7962;");
+    copySwitch = 0;
+    feed("PU10,7962;");
+    check("page: no change until IN", out.size() == 3 && out[2] == pt('U', 3, 3123));
+    feed("IN;PU0,7962;");
+    check("page: the change at IN", out.size() == 5 && out[4] == pt('U', 0, 2730) && tk.ons == 2);
+}
+
 int main() {
     std::string home = pt('U', 0, 0);   // (the first draw goes back into graph mode with a move to the pen)
 
@@ -192,6 +246,7 @@ int main() {
                {home, D(1000, 0), pt('U', rx, y1), U(2000, 0)}, 22);
     }
     testPoll();
+    testPage();
 
     printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;
