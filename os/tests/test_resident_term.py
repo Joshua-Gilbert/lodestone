@@ -1662,6 +1662,16 @@ def t_bg_screen():
         r = tool(h, 'grid_type', {'keys': 'x'})
         check('... grid_type still needs the console: refused, grid_program among the tools that work',
               r and r[1] and 'in the background' in r[0][0]['text'] and 'grid_program' in r[0][0]['text'], r)
+        # a reply's first bytes still out on the kept screen (a SCREEN's reply cut short by a link failure; here
+        # on its row 3): op_bgscreen puts them back on that copy before it keeps the screen again (R50), so
+        # they are not in this SCREEN's bytes
+        h.rw('borrowed', b'\xEE' * 12); h.rw('borrow_at', struct.pack('<H', 0x10 + 3 * 160 + 20))
+        h.rw('borrow_on', b'\1')
+        raw = raw_screen(h)
+        check('... a background SCREEN with a reply\'s bytes left borrowed: TESTKEY\'s text page byte for byte '
+              '(unborrow before the screen is kept)',
+              raw is not None and raw[:3] == bytes([3, 1, 0]) and raw[9:] == h.m.rd(0xB800, 0, 4000)
+              and h.wait(lambda: h.rv('borrow_on') == 0, 5), raw and (raw[:9], raw[9 + 480:9 + 520]))
         h.k.key(ESC)
         # a graphics screen, of a program started after the console went (no pop-up over it: the mode and the
         # BIOS's data are read then, not the last pop-up's mode 3): GFXUSE in mode 6, its 16 KB byte for byte
