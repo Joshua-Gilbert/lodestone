@@ -2631,6 +2631,24 @@ def t_menu():
     k.key('L'); at3 = hw(); k.key(ktest.ESC)
     check('an item of 90 characters: the menu the screen\'s width (80 columns, from column 0), the item cut at its edge',
           at3[0] == 0 and at3[2] == 80 and body(k) == v0, at3)
+    rpress(100, 103); g103 = hw(); k.key(ktest.ESC); point(k, 100, 100); b1 = body(k) == v0
+    rpress(100, 270); g270 = hw(); k.key(ktest.ESC); point(k, 100, 100); b2 = body(k) == v0
+    check('right clicks at (100, 103) and (100, 270): rows 100 and 268 (multiples of 4, rounded down; 272 the lowest), '
+          'the screen as it was after each', g103 == (12, 100, 20, 88) and g270 == (12, 268, 20, 88) and b1 and b2, (g103, g270, b1, b2))
+    k.key('H'); gh = hw(); k.key(ktest.ESC); point(k, 100, 100)
+    check('UI_HELP, a title of 38 characters over a line of 16: the title\'s width + 6, centred (column 18, row 164, 44 wide, '
+          '52 high); the screen as it was after', gh == (18, 164, 44, 52) and body(k) == v0, gh)
+    beeps, wd, nm = [], k.u16('wdepth'), v16('nmenu')
+    def beep(pc):
+        if pc.r('ip') == k.Y['ui_beep'] and pc.r('cs') == k.useg: beeps.append(1)
+    k.hooks.append(beep)
+    got = []
+    for key in 'ZV':
+        k.pc.wr(k.useg, base + sy['mres'], struct.pack('<H', 1234)); k.key(key); got.append(v16('mres'))
+    k.hooks.remove(beep)
+    check('UI_MENU with 0 items and with 21: refused at once (CF: none, FFFFh, each), a beep each, no window, the screen as it was',
+          got == [0xFFFF, 0xFFFF] and v16('nmenu') - nm == 2 and len(beeps) == 2 and k.u16('wdepth') == wd and body(k) == v0,
+          (got, v16('nmenu') - nm, len(beeps), k.u16('wdepth'), wd))
     k.key('O', 'O', 'O'); nm, dp = v16('nmenu'), k.u16('wdepth')
     rpress(100, 100)
     full = v16('nmenu') - nm, v16('mres'), k.u16('wdepth'), k.u16('wover'), has(k, 'Paste')
@@ -2679,8 +2697,10 @@ def t_menu():
     base = k.u16('run_base')
     k.key('U')
     dcf = k.pc.u16(k.useg, base + sy['dcf'])
+    k.key('W'); gw = struct.unpack('<4H', k.rd('help_w', 8)); k.key(ktest.ESC)
     k.key(ktest.ESC, ktest.ESC)
     check('no mouse: UI_MOUSE says so (CF)', dcf == 0xFFFF and k.rd('run_active', 1) == b'\x00' and not k.crashed, dcf)
+    check('UI_HELP, a line of 90 characters: 78 wide, the most, centred (column 1, row 164, 52 high)', gw == (1, 164, 78, 52), gw)
 
 CLIPTEST = os.path.join(HERE, 'CLIPTEST.RUN')
 CLIPPAT = bytes((i * 7 + 3) & 0xFF for i in range(16385))

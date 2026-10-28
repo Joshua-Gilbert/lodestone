@@ -5,7 +5,9 @@
 ; 0FFFFh for none; nmenu counts them).  M and N: the menu at (639, 399)
 ; and at (0, 0) (M with the fourth item lit first, N with AH past the
 ; last); T: 20 items at (100, 399); L: one item longer than a line; O:
-; one more window (ESC closes those first); U: UI_MOUSE once (dcf).  A left click: UI_MOUSE until the left button is up
+; one more window (ESC closes those first); U: UI_MOUSE once (dcf); Z and
+; V: UI_MENU with 0 and 21 items (refused); H: UI_HELP, its title longer
+; than its line; W: UI_HELP, a line longer than the screen.  A left click: UI_MOUSE until the left button is up
 ; (dn samples, the first and the last in d0 and d1, dcf its CF).  Every
 ; event UI_EVENT gives goes into evs (AX; nevs of them).
 ;   python3 mkrun.py tests/MENUTEST.ASM tests/MENUTEST.RUN
@@ -45,6 +47,23 @@ start:  call    UI_VERSION
         xchg    dx, ax                  ; (DL: the key)
         cmp     dl, 'U'                 ; U: UI_MOUSE once (its CF in dcf)
         je      .mouse
+        mov     si, hkeys
+        mov     di, s_htitle
+        cmp     dl, 'H'                 ; H: help, the title its longest line
+        je      .help
+        mov     si, wkeys
+        mov     di, s_win2
+        cmp     dl, 'W'                 ; W: help, a line wider than the screen
+        je      .help
+        mov     bx, 100
+        mov     cx, 100
+        mov     si, many
+        xor     ax, ax                  ; Z: no items
+        cmp     dl, 'Z'
+        je      .call
+        mov     al, 21                  ; V: one item too many
+        cmp     dl, 'V'
+        je      .call
         mov     bx, 639
         mov     cx, 399
         mov     si, items
@@ -70,6 +89,8 @@ start:  call    UI_VERSION
         mov     ax, (9 << 8) | NITEMS   ; N: AH past the last item
         cmp     dl, 'N'
         je      .call
+        jmp     .l
+.help:  call    UI_HELP
         jmp     .l
 .mouse: call    UI_MOUSE
         sbb     dx, dx
@@ -129,6 +150,11 @@ s_erase db 'Erase     CODE-E',0
 s_find  db 'Find...   CODE-F',0
 longi   dw s_long
 s_long  db 'A very long item, longer than a line of the screen: ninety characters, and then some more.',0
+hkeys   KEY(K_NONE, 0, s_cut)
+        dw 0
+wkeys   KEY(K_NONE, 0, s_long)
+        dw 0
+s_htitle db 'Help with a title longer than any line',0
 win2    dw 50, 200, 20, 60, s_win2, 0, 0
 s_win2  db 'More',0
 win     dw 4, 48, 72, 280, s_win, paint, WF_MOVE | WF_CLOSE
