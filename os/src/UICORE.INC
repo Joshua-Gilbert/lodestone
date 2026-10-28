@@ -2457,6 +2457,7 @@ win_ev: push    si
         jc      .pass                   ; (moved)
         stc                             ; (put back where it was)
         jmp     short .x
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: .pass even)
 .click: mov     ax, EV_CLICK
 .pass:  clc
 .x:     pop     dx
@@ -2671,14 +2672,16 @@ help_draw:
         mov     si, [help_tab]
         mov     dx, [bx+W_Y]
         add     dx, W_TOP + 4
-        mov     cx, [bx+W_H]
-        add     cx, [bx+W_Y]
-        sub     cx, 16
+        mov     bp, [bx+W_H]
+        add     bp, [bx+W_Y]
+        sub     bp, 16
+        mov     di, [bx+W_W]            ; (a line cut at the inner edge: the
+        sub     di, 6                   ;  window less its margins)
         mov     bx, [bx+W_COL]
         add     bx, 3
 .l:     cmp     word [si], 0
         je      .x
-        cmp     dx, cx
+        cmp     dx, bp
         ja      .x
         mov     ax, [si+4]
         add     si, 6
@@ -2687,7 +2690,11 @@ help_draw:
         push    si
         mov     si, ax
         xor     ah, ah
-        call    puts
+        call    strlen
+        cmp     cx, di
+        jbe     .p
+        mov     cx, di
+.p:     call    putsn
         pop     si
         add     dx, 16
         jmp     .l
