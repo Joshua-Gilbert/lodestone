@@ -3959,17 +3959,10 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         jnc     .rt                     ;  ZF, a key)
         test    ah, 10h                 ; (AH=11h drops none: on to the BIOS)
         jnz     .ch
-        push    ax                      ; The BIOS's AH=01h drops the hot key,
-        mov     ah, 11h                 ;  as the other keys it doesn't give,
-        pushf                           ;  at the head: one typed since r_hot
-        call    far [cs:r_old16]        ;  looked would go.  So a look that
-.lr:    jz      .z                      ;  drops none first: no key, or the hot
-        db      81h, 0F8h               ;  key next (2BF0h's AH=11h form too;
-        dw      R_HOT                   ;  taken at the next call): ZF.  Else
-.z:     pop     ax                      ;  the caller's AH=01h on: the head key
-        jnz     .ch                     ;  is one it gives.  (CMP AX,R_HOT in
-.rt:    retf    2                       ;  its 4-byte form: .z even.  Interrupts
-        times   ($ - $$) & 1 db 90h     ;  on: the BIOS's.  The pad: .ch even)
+        call    r_look                  ; none, or the hot key next: ZF; else
+        jnz     .ch                     ;  the caller's AH=01h on (interrupts
+.rt:    retf    2                       ;  on: the BIOS's)
+        times   ($ - $$) & 1 db 90h     ; (.ch even)
 .up:    cmp     byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         jne     .u                      ;  else (a TSR, from an interrupt) sees
         mov     byte [cs:r_bgon], 0     ;  no key, as the BIOS's AH=01h would
@@ -3984,6 +3977,8 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         call    r_bg
         call    r_feed
         jnc     .ky
+        call    r_look                  ; (none, or CODE-\ next: wait)
+        jz      .h
         push    ax
         inc     ah                      ; (a peek of the caller's kind; for a
         call    r_front                 ;  background task's, AH=11h: the
@@ -3993,11 +3988,26 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         call    far [cs:r_old16]        ;  it behind, or lets it through where
         pop     ax                      ;  it can't switch: an INT 24h prompt's)
         jnz     .ch
-        hlt
+.h:     hlt
 ..@r_idle:                              ; (MT_TSR: another task may run here;
         jmp     r_int16                 ;  then r_inpop and r_off looked at again)
 .ky:    iret
         times   ($ - $$) & 1 db 90h     ; (r_feed, r_hot, r_bg even)
+
+; The BIOS's AH=00h and 01h drop the hot key, as the other keys they don't
+; give, at the head of the buffer: one typed since r_hot looked would go.
+; So a look that drops none (AH=11h) first: ZF if no key, or the hot key is
+; next (2BF0h's AH=11h form too; r_hot takes it at the next call), and the
+; caller waits; else the head key is one they give.  AX kept
+r_look: push    ax
+        mov     ax, 1100h               ; (AH=11h.  This 3-byte MOV and CMP's
+        pushf                           ;  4-byte form put the BIOS's return
+        call    far [cs:r_old16]        ;  and .x on even offsets)
+.lr:    jz      .x
+        db      81h, 0F8h               ; cmp ax, R_HOT
+        dw      R_HOT
+.x:     pop     ax
+        ret
 
 ; the call is the front task's (Lodestone's multitasking), or there are no
 ; tasks: ZF.  Registers kept
@@ -4027,13 +4037,13 @@ r_feed: cmp     byte [cs:r_ks], 0
         jne     .wk                     ;  behind, after a CODE-Tab, tells MT)
         push    dx
         push    bx
-        mov     bx, ax
+        xchg    ax, bx                  ; (AX kept in BX)
         mov     dx, R_EPORT
         in      al, dx
         push    ax
         mov     al, [cs:r_hw]
         out     dx, al
-        mov     ax, bx
+        xchg    ax, bx
         call    R_FRAME:RC_FEED
         pop     bx                      ; (BL: the program's window 0; the
         xchg    ax, bx                  ;  flags kept)
@@ -4161,12 +4171,12 @@ r_bg:   cmp     byte [cs:r_bgon], 1
 .x:     ret
 .go:    mov     ax, [6Ch]
         mov     [cs:r_bgt], ax
-        mov     byte [cs:r_bgon], 2
+        inc     byte [cs:r_bgon]        ; (1 here: 2)
         pop     ds
         pop     ax                      ; (falls into r_popup)
 
 r_popup:
-        mov     byte [cs:r_inpop], 1
+        inc     byte [cs:r_inpop]       ; (0 here: 1)
         pushf                           ; (the caller's DF: the console CLDs)
         pusha
         push    ds
@@ -4178,7 +4188,6 @@ r_popup:
         pop     ss
         mov     sp, r_stack_top
         sti
-        cld
         mov     dx, R_EPORT             ; the program's windows kept, ours in
         mov     si, r_hw                ;  (R_PAGES: ours fill all four)
         mov     cx, 4
@@ -4210,7 +4219,7 @@ r_popup:
         pop     ds
         popa
         popf
-        mov     byte [cs:r_inpop], 0
+        dec     byte [cs:r_inpop]
         ret
 
         times   -(R_PAGES != 4 || r_saved != r_hw + 4) db 0
@@ -4242,7 +4251,7 @@ R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
 %ifndef STUB_PAD                        ; (the tests: another version's layout)
         EVEN    r_int16, r_int16.ch, r_feed, r_hot, r_hot.s, r_hot.k, r_hot.nx, r_hot.n, r_bg, r_bg.x
         EVEN    r_int16.pk + 3, r_int16.pk + 9  ; (a peek's returns from r_hot and r_feed)
-        EVEN    r_int16.lr, r_int16.z           ; (and the AH=01h look's)
+        EVEN    r_look, r_look.lr, r_look.x     ; (and r_look's)
 %endif
 
 section .text
