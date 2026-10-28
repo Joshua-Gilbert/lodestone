@@ -2658,15 +2658,23 @@ resolve_direct:
         inc     si
         jmp     .sp
 .tok:   mov     di, exec_path
-        xor     bx, bx
+        xor     bx, bx                  ; (BX: the last name's dot, or 0)
 .c:     lodsb
         cmp     al, ' '
         je      .end
         or      al, al
         je      .end
-        cmp     al, '.'
+        cmp     al, 'a'                 ; (upper case: its extension compared
+        jb      .u                      ;  below)
+        cmp     al, 'z'
+        ja      .u
+        and     al, 0DFh
+.u:     cmp     al, '\'
+        jne     .d
+        xor     bx, bx
+.d:     cmp     al, '.'
         jne     .s
-        mov     bx, 1
+        mov     bx, di
 .s:     stosb
         cmp     di, exec_path + 70
         jb      .c
@@ -2677,11 +2685,21 @@ resolve_direct:
         mov     [ext_at], di
         or      bx, bx
         jz      .try
-        xor     al, al
-        stosb
-        call    exists
+        xor     al, al                  ; NAME.EXT runs directly only as a
+        stosb                           ;  .COM or .EXE (else the shell's:
+        mov     si, s_dotcom            ;  a .BAT, a .TXT)
+        call    .ext
+        je      .x
+        mov     si, s_dotexe
+        call    .ext
+        jne     .no
+.x:     call    exists
         jc      .no
         jmp     .yes
+.ext:   mov     di, bx                  ; [BX] '.EXT', 0 as SI's?
+        mov     cx, 5
+        repe    cmpsb
+        ret
 .try:   mov     si, s_dotcom
 .t2:    mov     di, [ext_at]
         call    copyz
@@ -3066,6 +3084,7 @@ build_kv:
         call    put_dec2
         mov     si, kv_grid
         jmp     put_str
+        times   ($ - $$) & 1 db 90h     ; (put_str's loop even)
 
 ; ---- small helpers -----------------------------------------------
 put_str:                                ; DS:SI ASCIIZ -> ES:DI (no NUL)
