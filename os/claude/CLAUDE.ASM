@@ -2681,13 +2681,9 @@ resolve_direct:
         clc
         ret
 
-exists: mov     dx, dta                 ; exec_path -> CF if no such file
-        mov     ah, 1Ah
-        int     21h
-        mov     dx, exec_path
-        mov     cx, 07h
-        mov     ah, 4Eh
-        int     21h
+exists: mov     dx, exec_path           ; exec_path -> CF if no such file or
+        mov     ax, 4300h               ;  directory (a directory's EXEC then
+        int     21h                     ;  fails with DOS's error).  SI kept
         ret
 
 ; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ).  CF if not in the environment.
