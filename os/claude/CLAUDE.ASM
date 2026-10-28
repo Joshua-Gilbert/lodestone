@@ -3932,17 +3932,18 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
         jne     .up                     ;  else (a TSR, from an interrupt)
         test    ah, 1                   ;  sees no key, as the BIOS's AH=01h
         jz      .rd                     ;  would drop CODE-\, the console's
-.pk:    call    r_hot
-        call    r_bg
-        call    r_feed                  ; (Claude's keys first)
+        sti                             ; (a peek returns with interrupts on,
+.pk:    call    r_hot                   ;  as the BIOS's AH=01h; the STI here
+        call    r_bg                    ;  puts .pk odd and the calls' returns
+        call    r_feed                  ;  even.  Claude's keys first)
         jc      .ch
         or      sp, sp                  ; (not ZF: a key)
-.rt:    sti
         retf    2
 .up:    test    ah, 1
         jz      .ch
         cmp     ax, ax                  ; (ZF: no key; interrupts on, as
-        jmp     .rt                     ;  the BIOS's AH=01h returns)
+        sti                             ;  the BIOS's AH=01h returns)
+        retf    2
 .ch:    jmp     far [cs:r_old16]
 .rd:    sti                             ; a read: wait here, CODE-\ seen
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
@@ -3962,6 +3963,7 @@ r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
 ..@r_idle:                              ; (MT_TSR: another task may run here)
         jmp     .w
 .ky:    iret
+        times   ($ - $$) & 1 db 90h     ; (r_feed, r_hot, r_bg even)
 
 ; the call is the front task's (Lodestone's multitasking), or there are no
 ; tasks: ZF.  Registers kept
@@ -4207,10 +4209,12 @@ r_code_end:                             ; (the stack follows the code in the
 r_stack_top equ r_code_end + R_STACK    ;  stub's block, not in CLAUDE.COM)
 r_end   equ     r_stack_top
 R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
-; the stub's hot code even, by its order (r_isr between r_hot and r_bg), no
-; pads; a peek's r_hot and r_feed go straight through
+; the stub's hot code even, by its order (r_isr between r_hot and r_bg) and
+; r_int16's STI before .pk, no pads; a peek's r_hot and r_feed go straight
+; through
 %ifndef STUB_PAD                        ; (the tests: another version's layout)
         EVEN    r_int16, r_int16.ch, r_feed, r_hot, r_hot.s, r_hot.k, r_hot.nx, r_hot.n, r_bg, r_bg.x
+        EVEN    r_int16.pk + 3, r_int16.pk + 9  ; (a peek's returns from r_hot and r_feed)
 %endif
 
 section .text
