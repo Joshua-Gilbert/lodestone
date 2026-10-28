@@ -6973,6 +6973,8 @@ mt_kalloc:
             mt_par  mt_v10, 0
             mt_par  mt_busy, 0
             mt_par  mt_isr, 0
+            mt_par  mw_got, 1
+            mt_par  mw_poll, 1
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 
