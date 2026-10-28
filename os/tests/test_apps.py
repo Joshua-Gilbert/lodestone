@@ -166,7 +166,8 @@ def t_core():
     check('the map: uibss on the paragraph after ui_image_end (UI_PARAS, UIBOOT_ORG and the rest count on it; NASM can\'t check it)',
           k.Y['ui_bss_start'] == (k.Y['ui_image_end'] + 15) & ~15, (hex(k.Y['ui_bss_start']), hex(k.Y['ui_image_end'])))
     shot(k, 'executive')
-    k.key(ktest.F1); shot(k, 'executive_help'); k.key(ktest.ENTER)
+    hw = lambda: struct.unpack('<4H', k.rd('help_w', 8))   # (W_COL, W_Y, W_W, W_H)
+    k.key(ktest.F1); shot(k, 'executive_help'); geo = [hw()]; k.key(ktest.ENTER)
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
     # INT 16h AH=10h; pcemu now models that
     k.key(K_CODE_HELP)
@@ -181,7 +182,7 @@ def t_core():
     k.key(K_PGDN)
     check('list: Down, PgDn move and scroll', lines(k)[1].strip().startswith('Item 4'), lines(k)[:3])
     k.key(CODE['F'])
-    shot(k, 'core_form')
+    shot(k, 'core_form'); geo.append(hw())
     check('form: a window with text and choice fields', has(k, 'Find       hello') and has(k, 'Independent of case') and has(k, 'Fill in form'), screen(k))
     k.key('world'); k.key(ktest.ENTER); k.key(ktest.RIGHT); k.key(ktest.ENTER); k.key(' '); k.key(ktest.ENTER)
     check('form: typing replaces the old text, Right and Space change choices, Return confirms', has(k, 'Find: world 1 1'), screen(k))
@@ -234,8 +235,11 @@ def t_core():
     check("error text: an INT 24h error (83) says the disk's (1-13), or its number; DOS's 20/22/24/28 say theirs",
           got == want, [(c, got[c]) for c in want if got[c] != want[c]])
     before = k.pc.rd(0xB800, 0, 0x8000)
-    k.key(ktest.F1)
+    k.key(ktest.F1); geo.append(hw())
     check('help window from the key table', has(k, 'CODE-F     the form') and has(k, 'ESC        leave'), screen(k))
+    check('help and form windows centred across, help\'s as wide as its longest line or title + 6, between the title rule '
+          'and the band (the Executive\'s help, the form, UITEST\'s help: column, row, width, height)',
+          geo == [(11, 44, 57, 292), (15, 96, 50, 100), (27, 140, 26, 100)], geo)
     k.key('x')
     check('help: any key closes it, the screen as it was', k.pc.rd(0xB800, 0, 0x8000) == before)
     lst = k.u16('run_base') + run_syms('tests/UITEST.ASM')['lst']
