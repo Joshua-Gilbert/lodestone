@@ -1734,7 +1734,6 @@ def t_bg_ksum():
               and als and ('w', 3) not in als and ('r', 2) not in als,
               (back, code.hex(), r and str(r)[:100], h.rv('ksum'), h.rv('use_fl'), sorted(set(als))))
         say(0x23)
-        h.run_until(lambda: False, 1)
         gen = generation(h)
         h.press(HOT)
         up = popped(h, gen); st = in_step(h)
