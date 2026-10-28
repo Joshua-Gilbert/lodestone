@@ -377,6 +377,25 @@ def test_missing_program():
     check(h)
 
 
+def test_run_directory_name():
+    """A program run directly (no capture): a first word that is a directory's name (with its dot: a
+    name without one is looked for as .COM and .EXE) is found by GET ATTRIBUTES, so EXEC fails and its
+    DOS error is the answer; one that is nothing's goes to the shell (COMSPEC /C), which runs."""
+    h = start([reply(('tool', 'grid_files', {'action': 'mkdir', 'path': 'A:\\SUB.D'})),
+               reply(('tool', 'grid_command', {'command': 'SUB.D', 'capture': False})),
+               reply(('tool', 'grid_command', {'command': 'NOSUCH', 'capture': False})),
+               reply(('text', 'Done.'))], mode='auto')
+    g, replies = h.session.grid, []
+    on_reply = g.on_reply
+    g.on_reply = lambda b: (replies.append(bytes(b)), on_reply(b))
+    assert h.turn('run them', sim_s=60)
+    sub, nosuch = replies[-2:]
+    assert len(sub) == 2 and sub[1] in (2, 3, 5) and results(h, 2)[0].get('is_error'), (sub, results(h, 2))
+    assert not any('/C SUB.D' in str(l) for l in h.m.log), h.m.log
+    assert nosuch[1] == 0 and any('/C NOSUCH' in str(l) for l in h.m.log), (nosuch, h.m.log)
+    check(h)
+
+
 def dta_dt(h):
     """The emulator's clock as DIR and STAT give it ('2026-10-21 12:21'),
     or None under the Lodestone kernel (test_claude_kernel.py)."""
