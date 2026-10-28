@@ -177,6 +177,7 @@ def test_run_defaults():
     check(h)
 
 
+
 def test_gpib_query():
     h = start([reply(('tool', 'gpib', {'action': 'query', 'address': 29, 'command': 'ID?'})),
                reply(('tool', 'gpib', {'action': 'write', 'address': 6, 'command': 'FREQ 1E6'})),
@@ -414,10 +415,13 @@ def test_missing_program():
 
 
 def test_run_directory_name():
-    """A program run directly (no capture): a first word that is a directory's name (with its dot: a
-    name without one is looked for as .COM and .EXE) is found by GET ATTRIBUTES, so EXEC fails and its
-    DOS error is the answer; one that is nothing's goes to the shell (COMSPEC /C), which runs."""
-    h = start([reply(('tool', 'grid_files', {'action': 'mkdir', 'path': 'A:\\SUB.D'})),
+    """A program run directly (no capture): a first word that is a directory's name, ending .COM or
+    .EXE (a name without a dot is looked for as both), is found by GET ATTRIBUTES, so EXEC fails and its
+    DOS error is the answer; a dotted directory's name with another extension, and one that is nothing's,
+    go to the shell (COMSPEC /C), which runs."""
+    h = start([reply(('tool', 'grid_files', {'action': 'mkdir', 'path': 'A:\\SUB.COM'})),
+               reply(('tool', 'grid_files', {'action': 'mkdir', 'path': 'A:\\SUB.D'})),
+               reply(('tool', 'grid_command', {'command': 'SUB.COM', 'capture': False})),
                reply(('tool', 'grid_command', {'command': 'SUB.D', 'capture': False})),
                reply(('tool', 'grid_command', {'command': 'NOSUCH', 'capture': False})),
                reply(('text', 'Done.'))], mode='auto')
@@ -425,10 +429,34 @@ def test_run_directory_name():
     on_reply = g.on_reply
     g.on_reply = lambda b: (replies.append(bytes(b)), on_reply(b))
     assert h.turn('run them', sim_s=60)
-    sub, nosuch = replies[-2:]
-    assert len(sub) == 2 and sub[1] in (2, 3, 5) and results(h, 2)[0].get('is_error'), (sub, results(h, 2))
-    assert not any('/C SUB.D' in str(l) for l in h.m.log), h.m.log
+    sub, subd, nosuch = replies[-3:]
+    assert len(sub) == 2 and sub[1] in (2, 3, 5) and results(h, 3)[0].get('is_error'), (sub, results(h, 3))
+    assert not any('/C SUB.COM' in str(l) for l in h.m.log), h.m.log
+    assert subd[1] == 0 and any('/C SUB.D' in str(l) for l in h.m.log), (subd, h.m.log)
     assert nosuch[1] == 0 and any('/C NOSUCH' in str(l) for l in h.m.log), (nosuch, h.m.log)
+    check(h)
+
+
+def test_run_dotted_names():
+    """A program run directly (no capture), named with its extension: only a .COM or .EXE (any case) is
+    EXECed itself; FOO.BAT and README.TXT go to the shell (COMSPEC /C), not loaded as a program."""
+    import grid_emu
+    tk = open(grid_emu.TESTKEY_COM, 'rb').read()
+    G = lambda c, keys='': reply(('tool', 'grid_command', {'command': c, 'capture': False, 'keys': keys}))
+    emu = EmuHarness.__name__ == 'EmuHarness'   # (a dot in a directory's name: the stand-in DOS's subdirectory)
+    files = {'A:\\FOO.BAT': b'@echo off\r\n', 'A:\\README.TXT': b'Read me.\r\n', 'A:\\KEYS.EXE': tk}
+    if emu: files['A:\\SUB.D\\KEYS.COM'] = tk
+    h = start([G('FOO.BAT'), G('README.TXT'), G('keys.exe', 'ab{ESC}'), G('TESTKEY.COM', 'a{ESC}')]
+              + ([G('sub.d\\keys', 'b{ESC}')] if emu else []) + [reply(('text', 'Done.'))], mode='auto', files=files)
+    if emu: h.m.dirs.add('A:\\SUB.D\\')
+    assert h.turn('run them', sim_s=90)
+    log = [str(l) for l in h.m.log]
+    assert not emu or any(l.startswith('[EXEC A:\\SUB.D\\KEYS.COM') for l in log), log
+    assert any('/C FOO.BAT' in l for l in log) and any('/C README.TXT' in l for l in log), log
+    assert not any(l.startswith('[EXEC A:\\FOO.BAT') or l.startswith('[EXEC A:\\README.TXT') for l in log), log
+    assert any(l.startswith('[EXEC A:\\KEYS.EXE') for l in log) and 'Exit code: 2' in str(results(h, 3)[0]['content']), \
+        (log, results(h, 3))
+    assert any(l.startswith('[EXEC A:\\TESTKEY.COM') for l in log) and not any('/C KEYS' in l.upper() for l in log), log
     check(h)
 
 
