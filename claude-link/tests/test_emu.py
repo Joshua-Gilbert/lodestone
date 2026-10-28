@@ -177,6 +177,31 @@ def test_run_defaults():
     check(h)
 
 
+def test_run_tmp_only():
+    """TMP in CLAUDE's environment and not TEMP: the capture goes there (A:\\WORK under the stand-in DOS,
+    a '\\' put between; A:\\ under the kernel, which ends in one)."""
+    emu = EmuHarness.__name__ == 'EmuHarness'
+    h = EmuHarness([reply(('tool', 'grid_command', {'command': 'DIR'})), reply(('text', 'Done.'))], mode='auto',
+                   files={'A:\\CFG.C': CFG_C})
+    if emu: h.m.dirs.add('A:\\WORK\\')
+    h.boot()
+    env = h.m.u16(h.claude_psp, 0x2C)
+    raw = bytes(h.m.rd(env, 0, 1024))
+    end = raw.find(b'\0\0')                     # (the variables; then a count word and the program's name)
+    keep = [v for v in raw[:end].split(b'\0') if v.upper().startswith(b'COMSPEC=')]     # (and TMP: no more room)
+    tmp = b'A:\\WORK' if emu else b'A:\\'
+    new = b'\0'.join(keep + [b'TMP=' + tmp]) + b'\0\0' + raw[end + 2:raw.index(b'\0', end + 4) + 1]
+    paras = h.m.block(env)[1] if emu else h.m.u16(env - 1, 3)
+    assert len(new) <= paras * 16, (len(new), paras)                # (its block holds it)
+    h.m.wr(env, 0, new)
+    assert h.connect(), ('no connection', h.m.crash)
+    assert h.turn('what is on the disk?')
+    out = tmp.decode() + ('\\' if emu else '') + 'CLAUDE.OUT'
+    assert any(('/C DIR >' + out + ']') in str(l) for l in h.m.log), (out, h.m.log)
+    text = str(results(h, 1)[0]['content'])
+    assert 'CFG' in text and out.upper() not in h.m.fs, text
+    check(h)
+
 
 def test_gpib_query():
     h = start([reply(('tool', 'gpib', {'action': 'query', 'address': 29, 'command': 'ID?'})),
