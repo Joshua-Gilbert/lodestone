@@ -243,7 +243,8 @@ def test_queued_prompt():
     h.type('second')
     assert h.run_until(lambda: h.var('queued'), 5), h.screen()
     # (the flag is set just before the status line is drawn: give the drawing a moment)
-    assert h.run_until(lambda: 'queued' in h.screen().split('\n')[21], 0.5), h.screen()
+    assert h.run_until(lambda: 'Prompt queued; it goes when Claude finishes (' in h.screen().split('\n')[21], 0.5), \
+        h.screen()
     assert h.run_until(lambda: not h.var('queued') and h.idle(), 30), h.screen()
     t = h.screen()
     assert '> second' in t and 'Second answer.' in t, t
@@ -293,7 +294,7 @@ def test_link_loss_and_reconnect():
     h.transport.answer = lambda f: None            # the Pi goes quiet
     assert h.run_until(lambda: not h.var('connected'), 10), 'no link loss noticed'
     h.settle()
-    assert 'lost' in h.screen().split('\n')[21], h.screen()
+    assert 'Link to the Pi lost, reconnecting' in h.screen().split('\n')[21], h.screen()
     shot(h, 'link_lost')
     # link_reset clears the link's state (TERMLINK_RESET_VARS, first to last): set it while a HELLO
     # waits for no answer, and look at it when the next reset builds its HELLO

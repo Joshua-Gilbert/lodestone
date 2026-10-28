@@ -461,14 +461,9 @@ set_status_quiet:
         push    di
         push    cx
         mov     di, status_text
-        mov     cx, 70
-.l:     lodsb
-        stosb
-        or      al, al
-        jz      .x
-        loop    .l
-        mov     byte [di], 0
-.x:     pop     cx
+        call    strlen
+        call    copy70
+        pop     cx
         pop     di
         pop     si
         ret
