@@ -267,6 +267,21 @@ def test_key_script_peeks():
 T.test_key_script_peeks = test_key_script_peeks
 
 
+def test_key_script_other_int16():
+    """Under CLAUDE's key-script hook, INT 16h's other functions (K16: 02h, 12h, 04h-80h) go on to the
+    BIOS and leave the script's keys alone; its reads (00h, 10h) take them."""
+    import test_resident as R
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'K16', 'capture': False, 'keys': 'ab'})),
+                 T.reply(('text', 'Done.'))], mode='auto', files={'A:\\K16.COM': open(R.k16(), 'rb').read()})
+    assert h.turn('run k16', sim_s=60)
+    text = str(T.results(h, 1)[0]['content'])
+    assert 'Exit code: 0' in text, text                # (K16's count of calls that came back otherwise)
+    T.check(h)
+
+
+T.test_key_script_other_int16 = test_key_script_other_int16
+
+
 def test_key_script_snap_peek():
     """audit3 (X42's panel): a tick, and a TSR's INT 16h peek from its INT 1Ch, as ks_ready's {SNAP} copies the
     screen on the read path (interrupts on): the peek finds ks_pos past the mark, so one snapshot, and every

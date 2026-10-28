@@ -2827,17 +2827,12 @@ unhook16:
         ret
 
 ; INT 16h while a program runs: scripted keys first, then the keyboard.
-int16:  cmp     byte [cs:ks_active], 0
+int16:  test    ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
+        jnz     .chain                  ;  peek; the rest go on to the BIOS)
+        cmp     byte [cs:ks_active], 0
         je      .chain
-        cmp     ah, 0
-        je      .read
-        cmp     ah, 10h
-        je      .read
-        cmp     ah, 1
-        je      .peek
-        cmp     ah, 11h
-        je      .peek
-.chain: jmp     far [cs:old16]
+        test    ah, 1
+        jz      .read
 .peek:  call    ks_ready
         jz      .chain                  ; nothing scripted now: real keyboard
         retf    2                       ; AX = key, ZF = 0
@@ -2856,6 +2851,7 @@ int16:  cmp     byte [cs:ks_active], 0
         jmp     .rl
 .take:  add     word [cs:ks_pos], 2
         iret
+.chain: jmp     far [cs:old16]
 
 ; ZF = 0 and AX = key if a scripted key is ready now; else ZF = 1, AX kept.
 ; Runs waits and snapshot marks as it meets them.  Interrupts off, then the
@@ -3940,24 +3936,12 @@ r_mt     dd     0               ; Lodestone's multitasking (MT_TSR): its bytes,
                                 ;  and ours: 1 while the pop-up waits for the
                                 ;  front task (0:0: none)
 r_bgt    dw     0               ;  the tick of the last background look
-r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
+r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
+        jnz     .ch                     ;  peek; the rest go on to the BIOS)
+        cmp     byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         jne     .up                     ;  else (a TSR, from an interrupt)
-        cmp     ah, 0                   ;  sees no key, as the BIOS's AH=01h
-        je      .rd                     ;  would drop CODE-\, the console's
-        cmp     ah, 10h
-        je      .rd
-        cmp     ah, 1
-        je      .pk
-        cmp     ah, 11h
-        je      .pk
-.ch:    jmp     far [cs:r_old16]
-.up:    cmp     ah, 1
-        je      .nk
-        cmp     ah, 11h
-        jne     .ch
-.nk:    cmp     ax, ax                  ; (ZF: no key; interrupts on, as
-        sti                             ;  the BIOS's AH=01h returns)
-        retf    2
+        test    ah, 1                   ;  sees no key, as the BIOS's AH=01h
+        jz      .rd                     ;  would drop CODE-\, the console's
 .pk:    call    r_hot
         call    r_bg
         call    r_feed                  ; (Claude's keys first)
@@ -3965,6 +3949,12 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         or      sp, sp                  ; (not ZF: a key)
         sti
         retf    2
+.up:    test    ah, 1
+        jz      .ch
+        cmp     ax, ax                  ; (ZF: no key; interrupts on, as
+        sti                             ;  the BIOS's AH=01h returns)
+        retf    2
+.ch:    jmp     far [cs:r_old16]
 .rd:    sti                             ; a read: wait here, CODE-\ seen
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
         call    r_bg

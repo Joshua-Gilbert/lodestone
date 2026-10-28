@@ -109,6 +109,61 @@ def console(k):
     blank = all(not any(v[b * 0x2000 + (y >> 2) * 80:b * 0x2000 + (y >> 2) * 80 + 80]) for y in range(0, 384, 4) for b in range(4))
     return blank and 'Claude (resident)' in con_row(k, 24)
 
+K16 = r'''; K16.COM: INT 16h's other functions go on to the BIOS (resident Claude's
+; stub and CLAUDE's key-script hook take 00h, 01h, 10h and 11h only): 02h and
+; 12h give the shift state (40:17h), 04h-80h come back as they were asked;
+; then two keys, read with AH=00h and 10h.  Exit code: the calls that came
+; back otherwise.
+cpu 286
+org 100h
+        mov     si, fns
+.f:     lodsb
+        or      al, al
+        jz      .k
+        mov     ah, al
+        mov     al, 0A5h
+        mov     bx, ax
+        int     16h
+        cmp     ah, bh
+        jne     .bad
+        mov     cl, 0A5h
+        test    bh, 0EDh                ; (02h, 12h: the shift state)
+        jnz     .c
+        push    es
+        push    40h
+        pop     es
+        mov     cl, [es:17h]
+        pop     es
+.c:     cmp     al, cl
+        je      .f
+.bad:   inc     byte [bad]
+        jmp     .f
+.k:     xor     ah, ah
+        int     16h
+        mov     ah, 10h
+        int     16h
+        mov     dx, s_ok
+        cmp     byte [bad], 0
+        je      .p
+        mov     dx, s_bad
+.p:     mov     ah, 9
+        int     21h
+        mov     al, [bad]
+        mov     ah, 4Ch
+        int     21h
+fns     db      02h, 12h, 04h, 08h, 20h, 40h, 80h, 0
+bad     db      0
+s_ok    db      'K16: ok', 13, 10, '$'
+s_bad   db      'K16: bad', 13, 10, '$'
+'''
+
+def k16():
+    """K16.COM, assembled here (OUT): see K16"""
+    src, com = os.path.join(OUT, 'K16.ASM'), os.path.join(OUT, 'K16.COM')
+    open(src, 'w').write(K16)
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, src], check=True)
+    return com
+
 def run_el(k, cmd):
     """A command at the prompt -> (its screen, its exit code: 0, 1 or 2 and more)."""
     o = prompt(k, cmd + ' && echo EL0 || if errorlevel 2 echo EL2')
@@ -303,6 +358,18 @@ def t_rems():
     k.key(HOT); k.key(ktest.ESC)
     check('CODE-\\ behind another enhanced-only key (CODE-;) under an AH=00h reader: still seen (the BIOS would drop both)',
           up and 'EMSUSE: 0 keys, 0 bad' in k.pc.text_screen(), (up, k.pc.text_screen()))
+
+def t_rother():
+    """INT 16h's other functions (02h, 12h, 04h-80h) go through the stub to
+    the BIOS, and come back at once; its reads still give the keys."""
+    k = ktest.KPC(image('roth.img', 'K16.COM=' + k16()), ems_pages=88); k.start()
+    k.key(ktest.CODE_P)
+    prompt(k, 'claude /r')
+    k.key('cls'); k.key(ktest.ENTER); k.key('k16'); k.key(ktest.ENTER, settle=False); k.settle(3)
+    k.key('ab'); k.settle(3)
+    o = k.pc.text_screen()
+    check('K16 under the stub: AH=02h and 12h give the shift state, 04h-80h come back as asked, then two keys read',
+          'K16: ok' in o, o)
 
 def t_rvideo():
     """The console over CGA graphics, the 640x400 mode and text: the screen
@@ -561,7 +628,7 @@ def t_rhole():
           i is not None and all(b[1] == 0 for b in blocks[i + 1:]) and holes,
           [(hex(s), o_, n, nm) for s, o_, n, nm in blocks])
 
-TESTS = [t_ems, t_video, t_exec, t_tm5000g, t_rload, t_rems, t_rvideo, t_rdos, t_rexec, t_rtm5000g,
+TESTS = [t_ems, t_video, t_exec, t_tm5000g, t_rload, t_rems, t_rother, t_rvideo, t_rdos, t_rexec, t_rtm5000g,
          t_rirq, t_rmouse, t_rversion, t_rhole]
 if __name__ == '__main__':
     build()
