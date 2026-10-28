@@ -914,11 +914,11 @@ def t_driver():
             seg = h.rv('irq_ptr', 4)[2:]
             check('[%s] the console checks the Pi\'s frames by the driver\'s sum (1.23): all %d of them'
                   % (what, st.get('tx_frames', 0)),
-                  ok and h.rv('ksum') == 1 and h.rv('use_fl') == 1 and st.get('tx_frames', 0) > 5
+                  ok and h.rv('ksum') == 1 and h.rv('use_fl') == 2 and st.get('tx_frames', 0) > 5   # (use_fl 1 before audit3 R55)
                   and abs(kok - st['tx_frames']) <= 1           # (the two counts read a frame apart at most)
                   and h.rv('n_bad', 2) == 0, (ok, h.rv('ksum'), kok, st))
             check('[%s] ... and its own go with the check the driver adds (02h AL=3), every one good at the Pi'
-                  % what, h.rv('ksum') == 1 and h.rv('use_fl') == 1 and st.get('rx_fletcher') == st.get('rx_frames') > 5
+                  % what, h.rv('ksum') == 1 and h.rv('use_fl') == 2 and st.get('rx_fletcher') == st.get('rx_frames') > 5
                   and not st.get('rx_bad'), st)
             if irq:
                 check('the SRQ interrupt\'s count found (AH=0Eh, the kernel\'s) and GF_WAKE offered',
