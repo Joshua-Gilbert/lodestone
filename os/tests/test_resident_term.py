@@ -1749,8 +1749,41 @@ def t_bg_ksum():
         h.close()
 
 
+def t_bg_hot():
+    """CODE-\\ typed while a background look runs, under a program that reads (EMSUSE, AH=00h): the console
+    comes after the look.  (The stub's read loop peeks with the BIOS's AH=01h, which drops CODE-\\ at the
+    head of the buffer: it now looks for CODE-\\ after the background look, not before it.)"""
+    h = Res(pico='quiet'); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
+        h.press(HOT)
+        back = h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        a0, st, watch = 0xE0000 + h.rsym['bg_pass'], {'at': None}, h.m.watch
+        def w(addr):                            # (CODE-\ typed as a look starts)
+            if addr == a0 and st['at'] is None and h.m.ems_reg[0] == h.m.rd(h.stub(), h.sym['r_hw'], 1)[0]:
+                st['at'] = h.m.us; h.m.keys.append(HOT)
+            watch(addr)
+        h.m.watch = w
+        gen = generation(h)
+        came = h.wait(lambda: st['at'] is not None, 5) and popped(h, gen)
+        h.m.watch = watch
+        check('CODE-\\ typed as a background look starts, EMSUSE reading: the console comes after it',
+              up and back and came, (up, back, st, h.m.mode(), h.inpop(), r_bgon(h)))
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+    finally:
+        h.close()
+
+
 TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
-         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen, t_bg_ksum]
+         t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen, t_bg_ksum, t_bg_hot]
 if __name__ == '__main__':
     TR.build()
     want = sys.argv[1:]
