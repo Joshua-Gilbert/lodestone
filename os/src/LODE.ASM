@@ -225,6 +225,7 @@ k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 %endrep
 %endmacro
 section .text
+%ifndef NOTC                            ; (the test build without the cache: its own layout)
         EVEN    capture, int21, int21.stk, ret_cf, ok, done, done.sw, fail, ret_cfax, ok_ax
         EVEN    f_02, tty_out, con_out, con_out.x
         EVEN    h2sft, sft_of, jft_alloc.l, sft_busy.l, sft_busy.n, f_3F, f_40, sft_read
@@ -241,6 +242,7 @@ section .text
         EVEN    dev_look_ax.f, dev_look_ax.t, dev_look_ax.skip
         EVEN    gp_cmd_begin, gp_send_cmd, gp_wait_co, gp_wait_co.ok, gp_tick, gp_tmo_start, gp_wait_tick.w
         EVEN    gp_handler.go, gp_isr
+%endif
 
 section ovl
 bootbpb     times 64 db 0
