@@ -348,6 +348,7 @@ handler_back:                           ; and back (ES changed)
 ; RQS, or a request left from the pop-down: the link until the Pi has
 ; nothing more, at most 5 s.  ES:BX = the stub's parameters; to rc_main's
 ; end.  R_BGON: 1 to look again, 0 not till the next pop-up.
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 bg_pass:
         push    cs
         pop     es
@@ -361,6 +362,7 @@ bg_pass:
         jnc     .tm                     ; (the driver busy: not now, but at
         inc     byte [bg_keep]          ;  the next look)
         jmp     .z
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .tm:
         mov     [old_tmo], ax           ; (the program's)
         call    get_ticks
@@ -470,6 +472,7 @@ ops_nodev:
 ; DOS's); the name after its last \ or :, at most NAMEMAX characters, up
 ; to a control character.  Only from an environment the program owns
 ; still (EXEC gives it the block): one it freed may hold anything now.
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 prog_name:
         mov     es, bx
         mov     ax, [es:2Ch]
@@ -489,6 +492,7 @@ prog_name:
         repne   scasb                   ; past this one
         je      .s
         jmp     short .x                ; (no end in 32 KB)
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .e:     inc     di
         cmp     word [es:di], 0         ; (no path after)
         je      .x
@@ -691,6 +695,7 @@ session:
         call    type_reply
         mov     si, st_connecting       ; (type_reply leaves SI on the reply)
         jmp     short .st
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .h:     mov     byte [lstate], LS_RESET ; HELLO at once
         mov     ax, [now]
         sub     ax, 18
@@ -730,6 +735,7 @@ session:
         jbe     .w
         mov     byte [sdc_due], 1
         jmp     short .f
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .w:     cmp     byte [lstate], LS_WAIT
         jne     .s
         call    link_wait
@@ -775,6 +781,7 @@ session:
 ; quiet for 2 s (TERMLINK polls back to back until then).  Waiting for an
 ; answer, with the driver's SRQ interrupt: HLT till it (or a tick, or a
 ; key), unless it came already or a key is waiting
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 idle:   cmp     byte [lstate], LS_WAIT
         jne     .i
         cmp     word [irq_ptr + 2], 0
@@ -796,6 +803,7 @@ idle:   cmp     byte [lstate], LS_WAIT
 .z:     ret                             ; (the tests count wakes here)
 .s:     sti
         ret
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .i:     mov     al, [txq_n]
         or      al, [nak_pending]
         or      al, [resend]
@@ -945,6 +953,7 @@ put_hex16:                              ; AX -> ES:DI, 4 hex digits
         loop    .d
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 msg_sent:
         mov     al, [done_type]
         cmp     al, G_KEYS
@@ -983,6 +992,7 @@ link_lost:
         jmp     term_status
 
 ; ---- frames from the Pi ------------------------------------------
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 pi_frame:                               ; BX = frame offset in rxbuf
         mov     al, [rxbuf + bx + 1]
         mov     [pf_kind], al
@@ -994,6 +1004,7 @@ pi_frame:                               ; BX = frame offset in rxbuf
         cmp     al, P_HELLO
         je      .c
         jmp     link_fail
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .c:     mov     byte [pi_active], 1
         cmp     al, P_NOP
         jne     .h
@@ -1058,6 +1069,7 @@ rf_title:
 ; answer when they are done); files and GPIB: req_service, from the session's loop (F7h,
 ; DOS busy, for a file's when DOS can't be called); anything else F6h, a
 ; DOS program is paused (RUN, INFO, SETTIME, snapshots)
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 rf_request:
         cmp     byte [rq_more], 0
         jne     .c
@@ -1076,6 +1088,7 @@ rf_request:
         jbe     .p
         mov     byte [rq_over], 1
         jmp     short .m
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .p:     add     di, reqbuf
         rep     movsb
         mov     [rq_len], ax
@@ -1118,6 +1131,7 @@ rf_request:
         jne     .o
         mov     ah, 0F6h
         jmp     reply2
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .op:    cmp     si, rc_optab_dos        ; (GPIB, and SCREEN in the background:
         jb      .go                     ;  no DOS)
         cmp     byte [dos_ok], 0
@@ -1129,6 +1143,7 @@ rf_request:
         ret
 .sc:    xor     cl, cl                  ; (no flags)
         jmp     screen_msg
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .x:     ret
 
 rc_optab:                               ; no DOS: those before rc_optab_dos (a
@@ -1161,6 +1176,7 @@ rc_optab_dos:                           ; DOS's (dos_ok)
 ; the request rf_request took, once its REPLY can be queued (txq_put would
 ; drop it).  A file's with DOS ours meanwhile: the program's DTA, INT 23h
 ; and INT 24h aside, ours in
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 req_service:
         cmp     byte [req_ready], 0
         je      .x
@@ -1177,6 +1193,7 @@ req_service:
         mov     al, [rq_id]             ;  first)
         mov     ah, 0F7h
         jmp     reply2
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .dk:    call    bg_count
         push    si
         mov     ah, 2Fh
@@ -1408,6 +1425,7 @@ screen_msg:
         jmp     reply_n
 
 ; a reply's first bytes gone: the bytes they stood on back
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 unborrow:
         cmp     byte [borrow_on], 0
         je      .x
@@ -1465,6 +1483,7 @@ copyz:  call    put_str                 ; DS:SI ASCIIZ -> ES:DI (with NUL)
 .z:     mov     byte [di], 0
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 put_str:                                ; DS:SI ASCIIZ -> ES:DI (no NUL)
 .l:     lodsb
         or      al, al
@@ -1493,6 +1512,7 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 ; =====================================================================
 ;  Term's screen and keys: CLAUDE.COM's
 ; =====================================================================
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 %include "TERMCELL.INC"
 %include "CELLTEXT.INC"
 %include "TERMKEYS.INC"
@@ -1634,3 +1654,8 @@ section .text
         times   -(TROWS * 160 > SHADLEN) db 0           ; window 3: the shadow,
         times   -(IOSIZE > REQMAX) db 0                 ;  the request and reply,
         times   -(txframe + TXMAX + 8 > 10000h) db 0    ;  the frame
+; the hot labels even (their pads; EVEN is TERMLINK.INC's): cell and
+; term_redraw's by the pad before TERMCELL.INC
+        EVEN    bg_pass.m, prog_name.n, prog_name.l, session.loop, session.w, idle
+        EVEN    idle.z, idle.i, idle.x, pi_frame, pi_frame.c, rf_request.o, req_service
+        EVEN    req_service.x, put_str, put_str.l, cell, term_redraw.s, term_redraw.c
