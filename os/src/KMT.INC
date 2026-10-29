@@ -6549,10 +6549,10 @@ mt_vscr:
         jc      .lit
         cmp     bp, 8000h
         ja      .lit
-        cmp     al, ah
-        jb      .rn
-        xor     al, al
-.rn:    mul     byte [VS_COLS]          ; (AX: the words AL lines hold)
+        cmp     al, ah                  ; (AL 0 unless below the rows: no
+        sbb     cl, cl                  ;  branch; CL, 0 here, free from
+        and     al, cl                  ;  this test on)
+        mul     byte [VS_COLS]          ; (AX: the words AL lines hold)
         mov     cx, si
         or      ax, ax
         jz      .fa
