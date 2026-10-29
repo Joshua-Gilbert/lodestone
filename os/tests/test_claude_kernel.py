@@ -307,12 +307,13 @@ T.test_run_exec_block = test_run_exec_block
 
 
 def test_run_memory_and_reconnect():
-    """audit3 O11: a RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  While MEMSZ runs,
-    CLAUDE keeps its bss_end's paragraphs, 2,894 at most (2,904 before, 2,881 with it; P7 +13), and MEMSZ gets
-    all the rest.  Then
-    the link is lost and comes back: the HELLO built over the RUN's buffers says what the first one said,
-    and a second RUN gets the same memory.  Each RUN's REPLY names its outname (X:\\...\\CLAUDE.OUT): a HELLO
-    built during a RUN would be under it."""
+    """audit3 O11: a RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  O17: while MEMSZ
+    runs, CLAUDE's block is cut back to reqbuf's start (the key script's end; 2,894 paragraphs before O17),
+    and MEMSZ, loaded in what was CLAUDE's tail (the conversation and the replies at the top: alloc_top),
+    gets all the rest; after it CLAUDE's block is whole again (run_back).  Then the link is lost and comes
+    back: the HELLO built over the RUN's buffers says what the first one said, and a second RUN gets the
+    same memory.  Each RUN's REPLY names its outname (X:\\...\\CLAUDE.OUT): a HELLO built during a RUN would
+    be under it."""
     import re
     from unicorn import UC_HOOK_CODE
     G = lambda: T.reply(('tool', 'grid_command', {'command': 'MEMSZ', 'capture': False, 'screenshot': True}))
@@ -321,11 +322,14 @@ def test_run_memory_and_reconnect():
     hello = dict(h.session.hello)
     runs, grun = [], h.session.grid.run            # (each RUN's REPLY: outname, read back from under hellobuf)
     h.session.grid.run = lambda *a, **k: runs.append(grun(*a, **k)) or runs[-1]
+    keep = (h.sym['reqbuf'] + 7 + 15) // 16         # (no key script: up to ks_ptr)
+    full = (h.sym['bss_end'] + 15) // 16
     def run(i, prompt):
-        mine = h.m.u16(h.claude_psp - 1, 3)                 # CLAUDE's block
-        lo, st = (h.claude_psp + mine) * 16, {}
+        lo, st = (h.claude_psp + keep) * 16, {}
         def at(uc, addr, size, ud):                         # (MEMSZ's first instruction: CS its PSP)
-            if 'got' not in st: p = h.m.r('cs'); st['got'] = h.m.u16(p, 2) - p
+            if 'got' not in st:
+                p = h.m.r('cs'); st['got'], st['psp'] = h.m.u16(p, 2) - p, p
+                st['mine'] = h.m.u16(h.claude_psp - 1, 3)   # (CLAUDE's block meanwhile)
         hk = h.m.mu.hook_add(UC_HOOK_CODE, at, None, lo, 0x9FFFF)
         h.m.mu.ctl_remove_cache(lo, 0xA0000)
         h.type(prompt)
@@ -336,9 +340,11 @@ def test_run_memory_and_reconnect():
         out = runs[-1]['outfile']
         assert 'Exit code: 0' in text and kb in text and re.fullmatch(r'[A-Z]:\\(\S+\\)?CLAUDE\.OUT', out), \
             (kb, out, text)
-        return st['got'], mine, out
+        assert st['mine'] == keep and st['psp'] < h.claude_psp + full and h.m.u16(h.claude_psp - 1, 3) == full, \
+            (st, keep, full, hex(h.claude_psp), h.m.u16(h.claude_psp - 1, 3))
+        return st['got'], st['mine'], out
     got, mine, out = run(1, 'how much memory')
-    assert mine == (h.sym['bss_end'] + 15) // 16 <= 2894, (mine, hex(h.sym['bss_end']), got)
+    print('     MEMSZ got %d paragraphs (%.1f KB); CLAUDE kept %d of its %d meanwhile' % (got, got / 64, mine, full))
     real = h.transport.answer
     h.transport.answer = lambda f: None            # the Pi goes quiet: a HELLO over the RUN's buffers
     assert h.run_until(lambda: not h.var('connected'), 10), 'no link loss noticed'
@@ -352,6 +358,114 @@ def test_run_memory_and_reconnect():
 
 
 T.test_run_memory_and_reconnect = test_run_memory_and_reconnect
+
+
+def mcbs(h):
+    """The kernel's MCB chain: [(segment, owner, paragraphs)]"""
+    seg, out = h.m.u16(0x60, h.m.Y['first_mcb']), []
+    while len(out) < 200:
+        kind, owner, n = struct.unpack('<BHH', h.m.rd(seg, 0, 5))
+        out.append((seg, owner, n))
+        if kind == 0x5A: return out
+        seg += n + 1
+    raise AssertionError(out)
+
+
+def test_run_tsr_moves_claude():
+    """audit3 O17: a RUN's program that stays resident (TSRK: 64 paragraphs and its environment) where CLAUDE's
+    tail was: CLAUDE's block can't grow back, so CLAUDE moves, whole, to a block of its own (run_back), its
+    PSP's block keeping the PSP alone.  The memory it left is scribbled over at once (as the next program would
+    do): the RUN is answered; a message queued before the RUN from CLAUDE's own memory still arrives whole;
+    a second RUN gets its tail and FCBs (the EXEC block's segments); a 31 KB file is written and read back
+    (the link's buffers); CODE-Q ends CLAUDE, none of its blocks left, TSRK's still there."""
+    from unicorn import UC_HOOK_CODE
+    from gridlink import glp
+    text = P7_DATA.decode().replace('\r\n', '\n')
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TSRK', 'capture': False})),
+                 T.reply(('text', 'It stays.')),
+                 T.reply(('tool', 'grid_command', {'command': 'TESTKEY one two', 'capture': False,
+                                                   'keys': '{WAIT 1}x{ESC}'})),
+                 T.reply(('text', 'Ran.')),
+                 T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'create', 'path': 'A:\\P7.TXT',
+                                                                   'file_text': text})),
+                 T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\P7.TXT'})),
+                 T.reply(('text', 'Written and read.'))], mode='auto',
+                files={'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
+    old, Y = h.claude_psp, h.sym
+    keep = (Y['reqbuf'] + 7 + 15) // 16
+    full = (Y['bss_end'] + 15) // 16
+    ev = bytes(h.m.rd(old, Y['msg_bye'], 12))
+    st, events = {}, []
+    onm = h.link.on_message
+    def om(mt, body):
+        if mt == glp.G_EVENT: events.append(bytes(body))
+        return onm(mt, body)
+    h.link.on_message = om
+    def at_run(uc, addr, size, ud):                 # (a message queued from our memory as the RUN starts)
+        if 'ev' in st: return
+        st['ev'] = 1
+        n, hd = h.var('txq_n'), h.var('txq_head')
+        e = old * 16 + Y['txq'] + (hd + n) % 6 * 10
+        h.m.mu.mem_write(e, struct.pack('<BBHHHH', glp.G_EVENT, 0, old, Y['msg_bye'], len(ev), 0))
+        h.m.mu.mem_write(old * 16 + Y['txq_n'], bytes([n + 1]))
+    def high(uc, addr, size, ud):                   # (past what CLAUDE keeps: TSRK's first instruction, then
+        cs = h.m.r('cs')                            #  run_back's first in the block it moved to, where the
+        if 'tsr' not in st: st['tsr'] = cs          #  memory it left is scribbled over)
+        elif 'new' not in st and cs != st['tsr'] and addr - cs * 16 == Y['run_back.there']:
+            st['new'] = h.claude_psp = cs           # (its data, its stack: the harness looks there now)
+            h.m.mu.mem_write(old * 16 + 0x100, b'\xCC' * ((keep - 0x10) * 16))
+    hks = [h.m.mu.hook_add(UC_HOOK_CODE, at_run, None, old * 16 + Y['op_run'], old * 16 + Y['op_run']),
+           h.m.mu.hook_add(UC_HOOK_CODE, high, None, (old + keep) * 16, 0x9FFFF)]
+    h.m.mu.ctl_remove_cache(old * 16, 0xA0000)
+    h.type('run tsrk')
+    try: assert h.run_until(lambda: h.idle() and 'new' in st, 60), (st, h.screen())
+    finally:
+        for k in hks: h.m.mu.hook_del(k)
+    new = st['new']
+    assert 'Exit code: 0' in str(T.results(h, 1)) and events == [ev], (T.results(h, 1), events, ev)
+    blocks = {s + 1: (o, n) for s, o, n in mcbs(h)}
+    assert blocks[old] == (old, 0x10) and blocks[new] == (old, full) and blocks[st['tsr']] == (st['tsr'], 64) \
+        and old < st['tsr'] < new, (hex(old), hex(new), hex(st['tsr']), blocks.get(old), blocks.get(new))
+    h.type('run testkey')
+    cur = lambda: h.m.u16(0x60, h.m.Y['cur_psp'])
+    root = h.m.u16(0x60, h.m.Y['root_psp'])
+    assert h.run_until(lambda: cur() not in (root, old) or h.m.crash, 20), h.m.crash
+    psp = cur()
+    fcbs, tail = h.m.rd(psp, 0x5C, 32), h.m.rd(psp, 0x80, 10)
+    assert h.run_until(h.idle, 30)
+    blank = b'\0' + b' ' * 11 + b'\0' * 4
+    assert fcbs == blank * 2 and tail == b'\x08 one two\r' and 'Exit code: 1' in str(T.results(h, 3)), \
+        (fcbs, tail, T.results(h, 3))
+    assert h.turn('write the file and read it back', sim_s=200)
+    assert bytes(h.m.fs['A:\\P7.TXT']) == P7_DATA and 'p7 line 00200' in str(T.results(h, 6)[0]['content'])
+    assert h.m.u16(new - 1, 3) == full             # (whole again after the second RUN)
+    T.check(h)
+    h.key(0x1000)                                   # CODE-Q
+    assert h.back_in_executive(10), (h.m.crash, h.k.where())
+    left = [(hex(s), hex(o), n) for s, o, n in mcbs(h) if o in (old, new)]
+    assert not left and (st['tsr'] - 1, st['tsr'], 64) in mcbs(h), (left, mcbs(h))
+
+
+def test_run_tsr_no_room():
+    """audit3 O17: a RUN's program that stays resident with all it got but 160 paragraphs: no block for CLAUDE
+    to move to, so CLAUDE ends, as CODE-Q does, saying so; the Executive is back, the vectors CLAUDE took
+    given back, and none of its blocks left."""
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TSRK B', 'capture': False})),
+                 T.reply(('text', 'It stays.'))], mode='auto',
+                files={'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
+    old = h.claude_psp
+    h.type('run tsrk b')
+    assert h.back_in_executive(30), (h.m.crash, h.k.where(), h.screen())
+    assert 'Not enough memory for CLAUDE.' in ''.join(h.m.tty), ''.join(h.m.tty)[-300:]
+    off, seg = struct.unpack('<HH', h.m.rd(0, 0x16 * 4, 4))
+    assert (seg, off) == (0xF000, 0x16 * 8), (hex(seg), hex(off))
+    off, seg = struct.unpack('<HH', h.m.rd(0, 0x23 * 4, 4))
+    assert seg == 0x60, (hex(seg), hex(off))
+    assert not [b for b in mcbs(h) if b[1] == old], mcbs(h)
+
+
+T.test_run_tsr_moves_claude = test_run_tsr_moves_claude
+T.test_run_tsr_no_room = test_run_tsr_no_room
 
 
 def test_key_script_snap_peek():

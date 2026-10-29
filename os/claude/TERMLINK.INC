@@ -129,10 +129,8 @@ link_idle:
         jmp     link_write
 .nak:   mov     byte [nak_pending], 0
         jmp     link_write_nak
+%ifndef TX_INPL
 .again: mov     byte [resend], 0
-%ifdef TX_INPL
-        jmp     short .tx
-%else
         jmp     link_write
 %endif
 .msg:   call    frame_next
@@ -143,6 +141,10 @@ link_idle:
         jmp     link_write
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .x:     ret
+%ifdef TX_INPL
+.again: mov     byte [resend], 0        ; (here: .msg stays even)
+        jmp     short .tx
+%endif
 
 ; POLL frame (no payload) with a new sequence number
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
