@@ -4726,7 +4726,7 @@ save_in     dw 0FFFFh
 save_out    dw 0FFFFh
 padw        dw 0
 
-        EVEN    do_line.n, do_pipe.cp, parse_redir.l, redir_undo.x, run_cmd.b2, run_cmd.bl, run_cmd.bs
+        EVEN    do_line.n, do_pipe.cp, do_pipe.cut, parse_redir.l, redir_undo.x, run_cmd.b2, run_cmd.bl, run_cmd.bs
         EVEN    get_word.c, find_prog.pc, find_ext.d, bat_read.f, bat_next.s, bat_next.s0, for_run.s, for_run.put
         EVEN    edit_line.key, hist_back.b, ed_room, ed_show.s, ed_at, ed_rc, wait_key, wait_key.k, wait_key.r, con_in
         EVEN    do_dir.e, do_dir.n, put_83, put_83.n, put_83.pn, put_83.pl, do_type.l, env_find.c, show_prompt.l
