@@ -300,6 +300,7 @@ dos_check:
 .x:     ret
 
 ; INT 33h there?  ZF if not; [mouse] 1 if so, [mswap] 0.  (ES = 0)
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 mouse_find:
         xor     ax, ax
         mov     es, ax
@@ -510,6 +511,7 @@ prog_name:
 .b:     mov     si, di
 .l:     loop    .n
         jmp     short .x
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .c:     push    ds
         push    es
         pop     ds
@@ -740,6 +742,7 @@ session:
         jne     .s
         call    link_wait
         jmp     .d
+        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
 .s:     cmp     byte [lstate], LS_IDLE  ; (the link failed: nothing to send)
         jne     .f
         cmp     byte [connected], 0
@@ -870,6 +873,7 @@ find_gpib:
 .c:     clc
         ret
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 gg_call:                                ; INT 60h-66h, the driver's
         pushf
         call    far [gpib]
@@ -1048,6 +1052,7 @@ rf_hello:
         mov     [t_active], ax
         jmp     term_status
 
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 rf_cells:
         mov     ax, [now]
         mov     [t_active], ax
@@ -1650,4 +1655,4 @@ section .text
 ; term_redraw's by the pad before TERMCELL.INC
         EVEN    bg_pass.m, prog_name.n, prog_name.l, session.loop, session.w, idle
         EVEN    idle.z, idle.i, idle.x, pi_frame, pi_frame.c, rf_request.o, req_service
-        EVEN    req_service.x, put_str, put_str.l, cell, term_redraw.s, term_redraw.c
+        EVEN    req_service.x, put_str, put_str.l, cell, term_redraw.s, term_redraw.c, gg_call
