@@ -9,13 +9,16 @@ count with the workloads weighed the same).  SECTION=ui: the UI's (section
 ui, hot.py's "ui_taken"); SECTION=claude: CLAUDE.COM's (CLAUDE.MAPs,
 "cl_taken"); SECTION=rstub: the CLAUDE /R stub's ("st_taken"); SECTION=rcon:
 resident Claude's console's (RCON.MAPs, "rc_taken"); SECTION=lcmd: LCMD.COM's
-(src/LCMD.MAPs, "lc_taken").
+(src/LCMD.MAPs, "lc_taken"); SECTION=app APP=NAME: a .RUN's (its .MAPs from
+mkrun.py -l, "ap_taken"[NAME]).
 Output: a table per workload, then label, count (weighed, raw) and its parity
 (E/O) in each map."""
 import re, sys, json, collections, bisect, os
 SEC = os.environ.get('SECTION', '.text')
-KEY = {'ui': 'ui_taken', 'claude': 'cl_taken', 'rstub': 'st_taken', 'rcon': 'rc_taken', 'lcmd': 'lc_taken'}.get(SEC, 'taken')
-if SEC in ('claude', 'rcon', 'lcmd'): SEC = '.text'     # (its section in CLAUDE.MAP, RCON.MAP, LCMD.MAP)
+KEY = {'ui': 'ui_taken', 'claude': 'cl_taken', 'rstub': 'st_taken', 'rcon': 'rc_taken', 'lcmd': 'lc_taken',
+       'app': 'ap_taken'}.get(SEC, 'taken')
+APP = os.environ.get('APP') if SEC == 'app' else None
+if SEC in ('claude', 'rcon', 'lcmd', 'app'): SEC = '.text'      # (its section in CLAUDE.MAP, RCON.MAP, LCMD.MAP, a .RUN's)
 
 def load(p):
     syms, sec = [], None
@@ -38,7 +41,9 @@ def main():
             if prof[j][1] in m: return m[prof[j][1]] + a - prof[j][0]
             j -= 1
     per = {os.path.basename(f).rsplit('_', 1)[-1].split('.')[0]:
-           collections.Counter({int(k): v for k, v in json.load(open(f))[KEY].items()}) for f in hots}
+           collections.Counter({int(k): v for k, v in (json.load(open(f))[KEY].get(APP, {}) if APP else
+                                                        json.load(open(f))[KEY]).items()}) for f in hots}
+    per = {w: c for w, c in per.items() if c}   # (a .RUN a workload doesn't run)
     cols = [os.path.basename(maps[0])] + [n for n, _ in others]
     print('%-8s' % 'odd' + ''.join('%14s' % c[:13] for c in cols))
     for w, c in per.items():

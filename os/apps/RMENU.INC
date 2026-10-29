@@ -1,10 +1,11 @@
 ; RMENU.INC - a right click's menu (UI_MENU) of the items that apply now:
 ; Write's and TERM's (T4).  SI = the items, a record each (dw its text,
-; the routine it runs, what it needs: RM_SEL a selection, RM_CLIP
-; something to paste; a 0 word after the last); AL = RM_SEL with a
-; selection; BX, CX = where (EV_RCLICK's).  Jumps to the routine of the
-; item chosen; returns with none (ESC, a click outside).  At least one
-; item must need nothing.  The caller's BSS: rm_buf, rm_do (a word an item)
+; its key, what it needs: RM_SEL a selection, RM_CLIP something to
+; paste; a 0 word after the last); AL = RM_SEL with a selection; BX, CX =
+; where (EV_RCLICK's).  -> AX = the key of the item chosen, for the
+; caller to take as typed; CF with none (ESC, a click outside; no menu at
+; all, and no beep, with no item that applies).  The caller's BSS:
+; rm_buf, rm_key (a word an item)
 RM_SEL      equ 1
 RM_CLIP     equ 2
 rmenu:  push    bx
@@ -27,17 +28,19 @@ rmenu:  push    bx
         test    al, dl
         jnz     .i
         mov     [rm_buf + di], bx
-        mov     [rm_do + di], cx
+        mov     [rm_key + di], cx
         add     di, 2
         jmp     .i
 .m:     xchg    ax, di
         shr     ax, 1                   ; AL = how many (AH 0: the first lit)
         pop     cx
         pop     bx
+        cmp     al, 1                   ; (none: CF)
+        jb      .x
         mov     si, rm_buf
         call    UI_MENU
         jc      .x
         mov     bx, ax
-        add     bx, bx
-        jmp     [rm_do + bx]
+        add     bx, bx                  ; (CF clear)
+        mov     ax, [rm_key + bx]
 .x:     ret
