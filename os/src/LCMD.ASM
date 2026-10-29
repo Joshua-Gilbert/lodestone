@@ -43,12 +43,7 @@ CMAX    equ 8                           ; CALLs inside CALLs
 ; the pads ("hot": each `times ($ - $$) & 1`, after a JMP or RET, so never
 ; run).  The labels in the EVEN list at the code's end must stay even, or
 ; no build (the PSP is a paragraph, so the offset's parity is the address's)
-%macro EVEN 1-*
-%rep %0
-        times   -((%1 - $$) & 1) db 0
-%rotate 1
-%endrep
-%endmacro
+%include "EVEN.INC"
 
 start:  mov     sp, stack_top
         cld
@@ -798,7 +793,8 @@ do_drive:                               ; "B:"
 .x:     ret
 
 ; the word at SI, upper case, into cword (70 characters at most): DI on its
-; NUL, SI and [argp] just past it.  ES = CS (is_wordend)
+; NUL, SI and [argp] just past it (past the 70th of a longer one).  ES = CS
+; (is_wordend)
 get_word:
         mov     di, cword
         mov     cx, 70
@@ -808,6 +804,7 @@ get_word:
         call    upcase
         stosb
         loop    .c
+        inc     si                      ; (70 kept: SI stays on what follows)
 .e:     dec     si
         mov     byte [di], 0
         mov     [argp], si
@@ -1004,6 +1001,7 @@ tcopy:  lodsb
         inc     cx
         jmp     tcopy
 .x:     ret
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 
 ; the program cword names, here or on the PATH -> prog (its path), is_bat;
 ; CF if there's none
@@ -3580,7 +3578,6 @@ do_echo:
 
 do_ver: mov     si, s_ver
         jmp     puts
-        times   ($ - $$) & 1 db 90h     ; (hot: even)
 
 ; the tasks' records (multitasking, MTAPI.INC) in tail -> CX of them, AL =
 ; the front one, AH = ours (mt_me too); CF, SI = the message, if it's off
@@ -4210,7 +4207,6 @@ env_find:
         jne     .n
         inc     di
         jmp     .c
-        times   ($ - $$) & 1 db 90h     ; (hot: even)
 .hit:   add     sp, 2
         pop     si
         clc
@@ -4707,7 +4703,7 @@ e_time      db 'Invalid time', 0
 e_label     db 'Label not found', 0
 e_deep      db 'Nested too deep', 0
 
-; INT 24h's messages, in the order of its error codes (crit counts NULs
+; INT 24h's messages, in the order of its error codes (ce_msg counts NULs
 ; from the one that ends e_deep)
 ce0         db 'Write protect error', 0
 ce1         db 'Unknown unit error', 0
@@ -4731,10 +4727,10 @@ save_in     dw 0FFFFh
 save_out    dw 0FFFFh
 padw        dw 0
 
-        EVEN    do_line.n, do_pipe.cp, parse_redir.l, redir_undo.x, run_cmd.b2, run_cmd.bl, run_cmd.bs
-        EVEN    get_word.c, find_prog.pc, find_ext.d, bat_read.f, bat_next.s, bat_next.s0, for_run.s, for_run.put
+        EVEN    do_line.n, do_pipe.cp, do_pipe.cut, parse_redir.l, redir_undo.x, run_cmd.b2, run_cmd.bl, run_cmd.bs
+        EVEN    get_word.c, is_wordend, find_prog.pc, find_ext.d, bat_read.f, bat_next.s, bat_next.s0, for_run.s, for_run.put
         EVEN    edit_line.key, hist_back.b, ed_room, ed_show.s, ed_at, ed_rc, wait_key, wait_key.k, wait_key.r, con_in
-        EVEN    do_dir.e, do_dir.n, put_83, put_83.n, put_83.pn, put_83.pl, do_type.l, env_find.c, show_prompt.l
+        EVEN    do_dir.e, do_dir.n, put_83, put_83.n, put_83.pn, put_83.pl, do_type.l, show_prompt.l
         EVEN    putc, puts, crlf, strlen.l, strlen.x, strcpy, strend.l, streq, streq.l, streq.x, upcase, upcase.x
         EVEN    skipsp.x, getarg.l, pu2sp
 

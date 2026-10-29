@@ -123,12 +123,7 @@ R_BGT    equ 4                  ; M4: ticks between background looks (~220 ms)
 ; or no build (both the copy and the address: CLAUDE.COM's PSP and the
 ; stub's block are paragraphs).  The lists are at the code's end, before
 ; bss and the stub's r_code_end.
-%macro EVEN 1-*
-%rep %0
-        times   -((%1 - $$) & 1) db 0
-%rotate 1
-%endrep
-%endmacro
+%include "EVEN.INC"
 
 
 ; =====================================================================
