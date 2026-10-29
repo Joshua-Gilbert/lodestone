@@ -188,8 +188,9 @@ class TermSession:
             s.screen.quads = bool(s.gflags & glp.GF_QUAD)    # (block elements: CLAUDE 1.8, its console from 1.12)
             s.grid.on_restart()
             with s.lock:
-                # CLAUDE /R's console kept its screen: go on from it if we sent it
-                if not s.enc.resume(info.get('screen')): s.enc.reset()
+                # CLAUDE /R's console kept its screen: go on from it if we sent it (its sum the HELLO's
+                #  check's kind: the Fletcher sum, a CRC from a console before audit3 R56)
+                if not s.enc.resume(info.get('screen'), getattr(s.link, 'rx_fl', True)): s.enc.reset()
                 s.penc.reset()                    # (a picture: the GRiD's screen is unknown)
                 if s.pic is not None and not s.can_picture(): s._drop_picture()
                 s._mark()
