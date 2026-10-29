@@ -67,6 +67,7 @@ start:  call    refresh
         jmp     .next
 
 ; the tasks again (MT_LIST), each one's SPF_BG and SPF_FREEZE (MT_FLAGS)
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, EVEN.INC)
 refresh:
         mov     di, recs
         mov     cx, MT_TASKS
@@ -125,7 +126,7 @@ redo:   call    refresh
         mov     bx, lst
         jmp     UI_LVDRAW
 
-; the selected task -> AL = its number, SI = its record; CF if none
+; the selected task -> BL = its number, SI = its record; CF if none
 sel_task:
         mov     ax, [lst+LV_SEL]
         cmp     ax, [lst+LV_N]
@@ -133,7 +134,7 @@ sel_task:
         shl     ax, 4
         add     ax, recs
         mov     si, ax
-        mov     al, [si+TR_ID]
+        mov     bl, [si+TR_ID]
         clc
         ret
 .no:    stc
@@ -143,7 +144,6 @@ sel_task:
 k_front:
         call    sel_task
         jc      .x
-        mov     bl, al
         cmp     byte [si+TR_STATE], TS_PARKED
         jne     .f
         mov     ax, 0F000h + MT_UNPARK
@@ -160,7 +160,6 @@ k_front:
 ; CODE-Z: park it, or bring it back
 k_park: call    sel_task
         jc      k_front.x
-        mov     bl, al
         mov     ax, 0F000h + MT_PARK
         cmp     byte [si+TR_STATE], TS_PARKED
         jne     .p
@@ -174,7 +173,6 @@ k_park: call    sel_task
 k_behind:
         call    sel_task
         jc      k_front.x
-        mov     bl, al
         mov     di, [lst+LV_SEL]
         mov     al, [flags+di]
         mov     cl, SPF_BG | SPF_FREEZE ; (both cleared, then the next set)
@@ -194,7 +192,6 @@ k_behind:
 ; CODE-D: end it, after a question
 k_end:  call    sel_task
         jc      k_front.x
-        push    ax
         push    si
         mov     di, qline               ; "End MTLINE.COM: Confirm to end the task"
         mov     si, s_endq
@@ -205,8 +202,7 @@ k_end:  call    sel_task
         call    UI_SBSTR
         mov     byte [di], 0
         mov     si, qline
-        call    UI_ASK
-        pop     bx
+        call    UI_ASK                  ; (BX kept: BL the task)
         jc      .x
         mov     ax, 0F000h + MT_KILL
         stc
@@ -248,6 +244,7 @@ k_help: mov     si, keys
         mov     di, s_help
         jmp     UI_HELP
 
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 k_quit: inc     byte [quit]
         ret
 
@@ -420,6 +417,11 @@ e_tmem  db 'Not enough memory or EMS',0
 e_notask db 'No such task',0
 ending  db 0FFh                         ; the task asked to end (FFh: none),
 endgen  db 0                            ;  and its count then (MT_EXIT)
+
+; the hot labels even (EVEN.INC: bench/hot.py's tasks)
+%include "EVEN.INC"
+        EVEN    start.next, refresh, refresh.f, refresh.nf, refresh.x, put_name.c, put_name.x
+        EVEN    row.p, row.st, row.w, row.q, row.bg, row.b
 
 section .bss
 quit    resb 1
