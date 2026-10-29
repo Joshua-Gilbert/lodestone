@@ -5870,8 +5870,8 @@ mt_vfast:
         mov     bl, [si + 62h - 49h]    ; the page shown (MT keeps the cursors of
         xor     bh, bh                  ;  pages 0-10: 40:50h to 40:65h)
         cmp     bl, 10
-        ja      .nb
-        mov     di, bx
+        ja      .nb                     ; (in a byte: asserted at the end)
+.pg:    mov     di, bx
         shl     di, 1
         add     di, si                  ; (its cursor at [DI + 50h - 49h])
         mov     dx, [di + 50h - 49h]
@@ -7022,9 +7022,13 @@ mt_kalloc:
             mt_par  mt_vfast.set, 0     ; (after a fixed NOP)
             mt_par  mt_vaddr, 0
             mt_par  mt_vscr, 0
-; mt_vscr's first JA .lit in a byte (4 bytes on from .c2): a byte more in
-; the fast way and NASM makes it, and JNZ .lit, JNA over a near JMP
+; jumps that must stay in a byte, else NASM (cpu 286) makes each a JNA
+; or the like over a near JMP, 4 clocks more where it isn't taken:
+; mt_vscr's first JA .lit (4 bytes on from .c2), with JNZ .lit after it
+; (two bytes more in the fast way: the pad before .lit takes the first),
+; and mt_vfast's JA .nb for the page (3 bytes of room)
             times   -((mt_vscr.lit - mt_vscr.c2) > 4 + 127) db 0
+            times   -((mt_vfast.nb - mt_vfast.pg) > 127) db 0
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 
