@@ -3394,9 +3394,11 @@ def t_exec():
     k.run_for(0.5)
     line(k, '=4'); k.settle()
     b0 = k.band()
-    check('off: no MT_UI entry (ui_mtx 0:0, ex_mtw 1 while the Executive waits, as it adds its own 1); Return on '
-          'MTLINE.COM runs it and waits: "MTLINE.COM ended, exit code 4"', k.u16('ui_mtx') == 0 and k.u16('ui_mtx', 2) == 0
-          and k.rd('ex_mtw', 1) == b'\x01' and b0[:1] == ['MTLINE.COM ended, exit code 4'], (k.rd('ex_mtw', 1), b0))
+    rp0 = bytes(k.rd('run_prog', 5))
+    check('off: run_prog not patched (its CMP BYTE [ex_mtw],0), ex_mtw 1 while the Executive waits (as it adds its own '
+          '1); Return on MTLINE.COM runs it and waits: "MTLINE.COM ended, exit code 4"',
+          rp0 == b'\x80\x3e' + struct.pack('<H', k.Y['ex_mtw']) + b'\x00'
+          and k.rd('ex_mtw', 1) == b'\x01' and b0[:1] == ['MTLINE.COM ended, exit code 4'], (rp0.hex(), k.rd('ex_mtw', 1), b0))
     mk = os.path.join(A.OUT, 'MKFILE.COM'); open(mk, 'wb').write(MKFILE)
     xs, xa, xb, xm, xl = (mz(os.path.join(A.OUT, n + '.EXE'), mi, ma) for n, mi, ma in
                           (('EXS', 0x20, 0x300), ('EXA', 0x20, 0xFFFF), ('EXB', 0xA000, 0xFFFF), ('EXM', 0x20, 0x20),
@@ -3409,13 +3411,34 @@ def t_exec():
     back = lambda: tstate(k)[:2] == ([(0, 1, 'Executive')], 0) and merged(mcbs(k)) == m0 and sft_used(k) == s0 \
         and ems_used(k) == e0 and k.pc.mode() == 0x40 and not k.crashed
     lists = [k.pc.u16(seg, Y[n]) for n in ('mt_lbg', 'mt_lfz', 'mt_lmem')]
-    check('on: the Executive has MT_UI\'s entry (mt_ui in MT\'s block), ex_mtw 2 while it waits; no lists in LODE.INI: '
-          'each list empty (mt_lnone)', (k.u16('ui_mtx'), k.u16('ui_mtx', 2)) == (Y['mt_ui'], seg)
-          and k.rd('ex_mtw', 1) == b'\x02' and lists == [Y['mt_lnone']] * 3, (k.u16('ui_mtx'), k.rd('ex_mtw', 1), lists))
+    rp = bytes(k.rd('run_prog', 5))
+    check('on: run_prog patched (MT_UI: a JMP FAR to KMW\'s mw_prog in MT\'s block), ex_mtw 2 while it waits; no lists '
+          'in LODE.INI: each list empty (mt_lnone)', rp == b'\xea' + struct.pack('<HH', Y['mw_prog'], seg)
+          and k.rd('ex_mtw', 1) == b'\x02' and lists == [Y['mt_lnone']] * 3, (rp.hex(), k.rd('ex_mtw', 1), lists))
+    # the look for a task's end (mt_ui AL = 1) rides poll_once's clock: every 9 ticks while idle, not at each wake
+    from unicorn import UC_HOOK_CODE
+    lin, nui = seg * 16 + Y['mt_ui'], [0]
+    hk = k.pc.mu.hook_add(UC_HOOK_CODE, lambda *a: nui.__setitem__(0, nui[0] + 1), None, lin, lin)
+    k.pc.mu.ctl_remove_cache(lin, lin + 1)
+    u0 = k.pc.us; k.run_for(2.0); nt = (k.pc.us - u0) / 54925.4
+    check('2 s idle (%.0f ticks): the look for a task\'s end made %d times (every 9 ticks, poll_once\'s clock; not at '
+          'each tick\'s wake)' % (nt, nui[0]), 1 <= nui[0] <= nt / 9 + 1, (nt, nui[0]))
     # Return: a task in front; its end: the Executive in front, its list again, "X ended, exit code n"
     ret(k, 'MTLINE.COM')
     st1, ar1, scr = tstate(k), arena(), k.pc.text_screen()
-    line(k, '=5'); k.run_for(1.0); k.settle()
+    nend = lambda: k.pc.rd(seg, Y['mt_nend'], 1)[0]
+    n0, te, tl = nend(), None, None
+    k.key('=5', settle=False); k.key(ktest.ENTER, settle=False)
+    e = k.pc.us + 3000000
+    while k.pc.us < e and tl is None:
+        k.pc.run(300)
+        if te is None and nend() != n0: te = k.pc.us
+        if te is not None and k.pc.rd(seg, Y['mt_send'], 1)[0] == nend(): tl = k.pc.us
+    k.pc.mu.hook_del(hk)
+    lt = (tl - te) / 54925.4 if tl else None
+    check('... and a task\'s end noticed within 9 ticks of it (%s ticks; mt_ui called %d times in all)'
+          % ('%.1f' % lt if lt is not None else None, nui[0]), lt is not None and lt <= 9.5, (te, tl, nui[0]))
+    k.run_for(1.0); k.settle()
     st2, b2 = tstate(k), k.band()
     check('Return on MTLINE.COM: a task in front (%s), its prompt there; 64 KB, a .COM\'s (%04Xh paragraphs); its line '
           '"=5": it ends, the Executive in front, "MTLINE.COM ended, exit code 5"' % (st1[:2], ar1),
