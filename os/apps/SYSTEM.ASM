@@ -151,6 +151,7 @@ pline_r:                                ; the same, the value right-aligned
         add     bx, vbuf
         jmp     pline_at
 
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, EVEN.INC)
 ptext:  mov     dx, [py]                ; SI = a line of its own
         mov     bx, LCOL
         xor     ah, ah
@@ -216,6 +217,7 @@ sb_kb:  push    ax
 ; ---------------------------------------------------------------------
 ;  Memory: the MCB chain, read the way the kernel keeps it
 ; ---------------------------------------------------------------------
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: t_memory odd, its loops even)
 t_memory:
         call    UI_VERSION              ; CX = the UI block's own size, SI =
         mov     [ui_base], cx           ;  what it keeps while DOS programs run
@@ -438,6 +440,7 @@ has_drv:
         int     21h
         ret
 
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 disk_lines:
         mov     al, [drv]
         add     al, 'A'
@@ -506,6 +509,7 @@ clus_line:
         shl     ax, 1
         rcl     dx, 1
         jmp     .m
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: .h odd, what follows even)
 .h:     shr     dx, 1                   ; two of them make a KB
         rcr     ax, 1
         mov     cx, dx
@@ -1027,6 +1031,7 @@ drive_kind:
 ; ---------------------------------------------------------------------
 ;  GPIB: the GRIDGPIB API (built into Lodestone on INT 60h)
 ; ---------------------------------------------------------------------
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 find_gpib:                              ; -> [gp_vec] = 0 or the vector
         mov     word [gp_vec+2], 0
         mov     bl, 60h
@@ -1897,6 +1902,7 @@ ini_find:
         cmp     al, 10
         jne     .n
         jmp     .l
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .no:    stc
 .x:     ret
 
@@ -2506,6 +2512,13 @@ s_sample2   db '0123456789  ([{<>}])  .,;:!?  @#$%&*+-=/',0
 %include "FPU.INC"                      ; (Devices: which coprocessor)
 grid_font:                              ; GRiD's font, to switch back to
 %include "FONT.INC"
+
+; the hot labels even (EVEN.INC: bench/hot.py's system and form)
+%include "EVEN.INC"
+        EVEN    topic_name, vstart, pline, pline_r, ptext, pgap, ems_mgr, kb_line, sb_kb, sb_kb.s
+        EVEN    t_memory.ok, t_memory.used, t_memory.notui, t_memory.notsys, t_memory.next, t_memory.cl
+        EVEN    t_memory.noother, t_memory.bios, t_memory.noems, t_memory.close, t_disks.x, disk_lines.lab
+        EVEN    clus_line, t_clock, now_time, t_devices.com, t_devices.nc, find_gpib.v, find_gpib.n
 
 section .bss
 py          resw 1

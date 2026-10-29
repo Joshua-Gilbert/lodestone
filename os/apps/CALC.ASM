@@ -87,6 +87,7 @@ evaluate:
 .x:     ret
 
 ; a click on a key: BX = x, CX = y
+        times ($ - $$) & 1 db 90h       ; (hot: even, EVEN.INC)
 click:  sub     cx, [ky]
         jb      .x
         mov     ax, cx
@@ -145,6 +146,7 @@ click:  sub     cx, [ky]
         jz      .z
         dec     bx
         jmp     short .z
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .clear: xor     bx, bx
 .z:     mov     byte [ebuf+bx], 0
         mov     byte [lastx], 0FFh      ; (edited: no longer the answer's)
@@ -210,6 +212,7 @@ k_quit: inc     byte [quit]
         ret
 
 ; SI, DI: the same ASCIIZ text?  ZF
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 streq:  lodsb
         scasb
         jne     .x
@@ -359,6 +362,15 @@ h_move  db 'CODE-F7, arrows, Return  move (or drag its title)',0
 h_fns   db '\ whole part  % remainder  sqrt sin cos tan',0
 s_title db 'Calculator',0
 s_help  db 'Calculator Help',0
+
+; the hot labels even (EVEN.INC: bench/hot.py's calc, drag and term; no pads
+; inside CALC.INC, CALC.COM's too)
+%include "EVEN.INC"
+        EVEN    evaluate, evaluate.ok, evaluate.x, click, click.c, click.n, keep_line, keep_line.x
+        EVEN    streq, streq.x, w_draw.geo, w_draw.l, w_draw.v, w_draw.k, draw_ans, draw_ans.p
+        EVEN    c_skip, c_check, c_check.x, c_expr.x, c_term.l, c_unary, c_power, c_power.x, c_prim.n
+        EVEN    c_push.ok, c_bin.h, c_num, c_num.e, calc_fmt.f, calc_fmt.nz, calc_fmt.hi, calc_fmt.lo
+        EVEN    calc_fmt.rnd, calc_fmt.bcd, calc_fmt.d, calc_fmt.dh, calc_fmt.ze, calc_fmt.end, c_copy
 
 section .bss
 icol    resw 1                          ; inside the window, where it is now:

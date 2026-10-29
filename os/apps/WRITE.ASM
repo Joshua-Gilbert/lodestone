@@ -140,6 +140,7 @@ start:  mov     di, fname               ; the argument: the file to open
 ;  the gap buffer (ES = [bseg] inside these)
 ; ---------------------------------------------------------------------
 ; -> AX = length of the text
+        times ($ - $$) & 1 db 90h       ; (hot: even, EVEN.INC)
 textlen:
         mov     ax, [cap]
         sub     ax, [gap_e]
@@ -781,6 +782,7 @@ build_row:
         mov     bx, [cs:cap]
         mov     byte [cs:seg2], 1
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .put:   push    di                      ; AL, mark AH at column CX - hs
         mov     di, cx
         sub     di, [cs:hs]
@@ -835,8 +837,10 @@ put_row:
         call    UI_INVERT
         pop     bx
         jmp     .r
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .n:     inc     bx
         jmp     .r
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .x:     pop     bp
         ret
 
@@ -2469,6 +2473,11 @@ changed     dw 0
 WIN_ROWS    equ 15                      ; (its text rows when it opens)
 win:        dw 2, SCR_TOP + 8, 76, W_TOP + WIN_ROWS * 16 + 12 + 16 + 4
             dw title, w_draw, WF_MOVE | WF_CLOSE | WF_SIZE
+
+; the hot labels even (EVEN.INC: bench/hot.py's write, menu and wclip)
+%include "EVEN.INC"
+        EVEN    textlen, getc, getc.l, ins_char.ok, mark_dirty, disp_col.l
+        EVEN    build_row.ns, build_row.put, put_row.r, put_row.n, put_row.x, status.pad, load_file.nc
 
 section .bss
 bseg        resw 1
