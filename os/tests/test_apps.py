@@ -466,6 +466,25 @@ def t_write():
           lines(k)[:4])
     k.key(K_INS, ktest.ESC, ktest.ENTER)
 
+    # the goal column: Up, Down, PgUp and PgDn keep it over a short line;
+    # any other key drops it, even one that moves nothing (Ins)
+    long = b'0123456789' * 4 + b'\r\n'
+    k = write_open('GOAL.TXT', long + b'short\r\n' + long + long)
+    col = lambda: next((l.split('Column')[1].split()[0] for l in lines(k) if 'Column' in l), '')
+    k.key(*[ktest.RIGHT] * 30, ktest.DOWN)
+    c1 = col()
+    k.key(ktest.DOWN)
+    c2 = col()
+    k.key(K_PGUP, ktest.DOWN, ktest.DOWN)
+    c3 = col()
+    k.key(ktest.UP, K_INS, K_INS, ktest.UP)
+    c4 = col()
+    k.key(K_HOME, ktest.DOWN, ktest.DOWN)
+    c5 = col()
+    check('the goal column: from column 31, Down onto "short" (column 6), Down: 31 again; PgUp, Down, Down: 31; Up, '
+          'Ins twice, Up: 6 (dropped by a key that moves nothing); Home, Down, Down: 1', (c1, c2, c3, c4, c5)
+          == ('6', '31', '31', '6', '1'), (c1, c2, c3, c4, c5))
+
     # Substitute backward doesn't run into its own replacements
     k = write_open('BACK.TXT', b'xaaab yaab')
     k.key(K_CEND, CODE['S']); k.key('ab'); k.key(ktest.ENTER); k.key('b')
