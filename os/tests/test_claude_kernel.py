@@ -183,7 +183,7 @@ def test_executive_saver():
         th.start()
         t1 = h.m.us
         assert h.run_until(lambda: not th.is_alive(), 30), ('the call never came back', when, h.k.ocr()[:6])
-        assert 'CLAUDE 1.14' in res.get('r', {}).get('grid', ''), res
+        assert 'CLAUDE 1.15' in res.get('r', {}).get('grid', ''), res
         assert h.run_until(lambda: 'Hi from the Pi.' in h.screen(), 10), h.screen()
         return (h.m.us - t1) / 1e6
     ended = call('dark')                                    # (in the dark screen)

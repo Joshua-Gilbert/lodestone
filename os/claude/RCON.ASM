@@ -1517,7 +1517,7 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.12', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.13', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
             db 'ops=files,gpib,bgscreen', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
