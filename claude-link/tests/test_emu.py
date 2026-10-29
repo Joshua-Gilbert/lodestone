@@ -55,6 +55,9 @@ def test_connect_and_chat(patched=True, name='chat'):
     t = h.screen()
     assert 'Welcome to Claude for GRiD' in t and 'Hello from the Pi.' in t, t
     assert '> hi' in t, t
+    rows = t.split('\n')                        # (the bands' right-hand texts end in columns 78 and 79)
+    assert 'GPIB link  ' in rows[0] and len(rows[0]) == 79 and rows[21].endswith(' F1 help') and len(rows[21]) == 80, \
+        (rows[0], rows[21])
     assert h.m.clock_set is not None and h.m.rtc_set, 'clock not set'
     shot(h, name + '_1_reply')
     check(h)
@@ -127,6 +130,19 @@ def test_run_program_with_keys():
     check(h)
 
 
+def test_run_exe_found():
+    """A first word without a dot is looked for as NAME.COM, then NAME.EXE (TESTKEY's bytes as KEYS.EXE:
+    no MZ, so DOS loads it as a .COM), and that is run directly."""
+    import grid_emu
+    h = start([reply(('tool', 'grid_command', {'command': 'KEYS', 'capture': False, 'keys': 'ab{ESC}'})),
+               reply(('text', 'Done.'))], mode='auto', files={'A:\\KEYS.EXE': open(grid_emu.TESTKEY_COM, 'rb').read()})
+    assert h.turn('run keys', sim_s=30)
+    text = str(results(h, 1)[0]['content'])
+    assert 'Exit code: 2' in text and any('[EXEC A:\\KEYS.EXE' in str(l) for l in h.m.log) \
+        and not any('/C KEYS' in str(l) for l in h.m.log), (text, h.m.log)        # (not through the shell)
+    check(h)
+
+
 def test_dos_command_capture():
     h = start([reply(('tool', 'grid_command', {'command': 'DIR'})),
                reply(('text', 'There are a few files.'))], mode='auto', files={'A:\\CFG.C': CFG_C})
@@ -135,6 +151,55 @@ def test_dos_command_capture():
     text = str(res['content'])
     assert 'CFG' in text and 'CLAUDE' in text, text
     assert 'A:\\CLAUDE.OUT' not in h.m.fs            # read, then deleted
+    check(h)
+
+
+def test_run_defaults():
+    """COMSPEC, TEMP and TMP not in CLAUDE's environment: the shell is A:\\COMMAND.COM and the capture
+    goes to the current drive's root.  (The stand-in DOS: started in A:\\WORK, which the HELLO's cwd says.)"""
+    emu = EmuHarness.__name__ == 'EmuHarness'   # (not test_claude_kernel.py's Lodestone kernel)
+    h = EmuHarness([reply(('tool', 'grid_command', {'command': 'DIR'})), reply(('text', 'Done.'))], mode='auto',
+                   files={'A:\\WORK\\CFG.C': CFG_C} if emu else {})
+    if emu: h.m.dirs.add('A:\\WORK\\'); h.m.cwd = 'A:\\WORK\\'
+    h.boot()
+    env = h.m.u16(h.claude_psp, 0x2C)
+    raw = bytearray(h.m.rd(env, 0, 512))
+    for v in (b'\0COMSPEC=', b'\0TEMP=', b'\0TMP='):
+        i = (b'\0' + raw).find(v)
+        if i >= 0: raw[i] = ord('X')
+    h.m.wr(env, 0, bytes(raw))
+    assert h.connect(), ('no connection', h.m.crash)
+    assert not emu or h.session.hello.get('cwd') == 'A:\\WORK', h.session.hello
+    assert h.turn('what is on the disk?')
+    assert any('[EXEC A:\\COMMAND.COM /C DIR >A:\\CLAUDE.OUT]' in str(l) for l in h.m.log), h.m.log
+    text = str(results(h, 1)[0]['content'])
+    assert not emu or ('CFG' in text and 'A:\\CLAUDE.OUT' not in h.m.fs), text
+    check(h)
+
+
+def test_run_tmp_only():
+    """TMP in CLAUDE's environment and not TEMP: the capture goes there (A:\\WORK under the stand-in DOS,
+    a '\\' put between; A:\\ under the kernel, which ends in one)."""
+    emu = EmuHarness.__name__ == 'EmuHarness'
+    h = EmuHarness([reply(('tool', 'grid_command', {'command': 'DIR'})), reply(('text', 'Done.'))], mode='auto',
+                   files={'A:\\CFG.C': CFG_C})
+    if emu: h.m.dirs.add('A:\\WORK\\')
+    h.boot()
+    env = h.m.u16(h.claude_psp, 0x2C)
+    raw = bytes(h.m.rd(env, 0, 1024))
+    end = raw.find(b'\0\0')                     # (the variables; then a count word and the program's name)
+    keep = [v for v in raw[:end].split(b'\0') if v.upper().startswith(b'COMSPEC=')]     # (and TMP: no more room)
+    tmp = b'A:\\WORK' if emu else b'A:\\'
+    new = b'\0'.join(keep + [b'TMP=' + tmp]) + b'\0\0' + raw[end + 2:raw.index(b'\0', end + 4) + 1]
+    paras = h.m.block(env)[1] if emu else h.m.u16(env - 1, 3)
+    assert len(new) <= paras * 16, (len(new), paras)                # (its block holds it)
+    h.m.wr(env, 0, new)
+    assert h.connect(), ('no connection', h.m.crash)
+    assert h.turn('what is on the disk?')
+    out = tmp.decode() + ('\\' if emu else '') + 'CLAUDE.OUT'
+    assert any(('/C DIR >' + out + ']') in str(l) for l in h.m.log), (out, h.m.log)
+    text = str(results(h, 1)[0]['content'])
+    assert 'CFG' in text and out.upper() not in h.m.fs, text
     check(h)
 
 
@@ -240,7 +305,8 @@ def test_queued_prompt():
     h.type('second')
     assert h.run_until(lambda: h.var('queued'), 5), h.screen()
     # (the flag is set just before the status line is drawn: give the drawing a moment)
-    assert h.run_until(lambda: 'queued' in h.screen().split('\n')[21], 0.5), h.screen()
+    assert h.run_until(lambda: 'Prompt queued; it goes when Claude finishes (' in h.screen().split('\n')[21], 0.5), \
+        h.screen()
     assert h.run_until(lambda: not h.var('queued') and h.idle(), 30), h.screen()
     t = h.screen()
     assert '> second' in t and 'Second answer.' in t, t
@@ -290,7 +356,7 @@ def test_link_loss_and_reconnect():
     h.transport.answer = lambda f: None            # the Pi goes quiet
     assert h.run_until(lambda: not h.var('connected'), 10), 'no link loss noticed'
     h.settle()
-    assert 'lost' in h.screen().split('\n')[21], h.screen()
+    assert 'Link to the Pi lost, reconnecting' in h.screen().split('\n')[21], h.screen()
     shot(h, 'link_lost')
     # link_reset clears the link's state (TERMLINK_RESET_VARS, first to last): set it while a HELLO
     # waits for no answer, and look at it when the next reset builds its HELLO
@@ -370,6 +436,52 @@ def test_missing_program():
     assert h.turn('run nosuch')
     r = results(h, 1)[0]
     assert 'Bad command' in str(r['content']), r
+    check(h)
+
+
+def test_run_directory_name():
+    """A program run directly (no capture): a first word that is a directory's name, ending .COM or
+    .EXE (a name without a dot is looked for as both), is found by GET ATTRIBUTES, so EXEC fails and its
+    DOS error is the answer; a dotted directory's name with another extension, and one that is nothing's,
+    go to the shell (COMSPEC /C), which runs."""
+    h = start([reply(('tool', 'grid_files', {'action': 'mkdir', 'path': 'A:\\SUB.COM'})),
+               reply(('tool', 'grid_files', {'action': 'mkdir', 'path': 'A:\\SUB.D'})),
+               reply(('tool', 'grid_command', {'command': 'SUB.COM', 'capture': False})),
+               reply(('tool', 'grid_command', {'command': 'SUB.D', 'capture': False})),
+               reply(('tool', 'grid_command', {'command': 'NOSUCH', 'capture': False})),
+               reply(('text', 'Done.'))], mode='auto')
+    g, replies = h.session.grid, []
+    on_reply = g.on_reply
+    g.on_reply = lambda b: (replies.append(bytes(b)), on_reply(b))
+    assert h.turn('run them', sim_s=60)
+    sub, subd, nosuch = replies[-3:]
+    assert len(sub) == 2 and sub[1] in (2, 3, 5) and results(h, 3)[0].get('is_error'), (sub, results(h, 3))
+    assert not any('/C SUB.COM' in str(l) for l in h.m.log), h.m.log
+    assert subd[1] == 0 and any('/C SUB.D' in str(l) for l in h.m.log), (subd, h.m.log)
+    assert nosuch[1] == 0 and any('/C NOSUCH' in str(l) for l in h.m.log), (nosuch, h.m.log)
+    check(h)
+
+
+def test_run_dotted_names():
+    """A program run directly (no capture), named with its extension: only a .COM or .EXE (any case) is
+    EXECed itself; FOO.BAT and README.TXT go to the shell (COMSPEC /C), not loaded as a program."""
+    import grid_emu
+    tk = open(grid_emu.TESTKEY_COM, 'rb').read()
+    G = lambda c, keys='': reply(('tool', 'grid_command', {'command': c, 'capture': False, 'keys': keys}))
+    emu = EmuHarness.__name__ == 'EmuHarness'   # (a dot in a directory's name: the stand-in DOS's subdirectory)
+    files = {'A:\\FOO.BAT': b'@echo off\r\n', 'A:\\README.TXT': b'Read me.\r\n', 'A:\\KEYS.EXE': tk}
+    if emu: files['A:\\SUB.D\\KEYS.COM'] = tk
+    h = start([G('FOO.BAT'), G('README.TXT'), G('keys.exe', 'ab{ESC}'), G('TESTKEY.COM', 'a{ESC}')]
+              + ([G('sub.d\\keys', 'b{ESC}')] if emu else []) + [reply(('text', 'Done.'))], mode='auto', files=files)
+    if emu: h.m.dirs.add('A:\\SUB.D\\')
+    assert h.turn('run them', sim_s=90)
+    log = [str(l) for l in h.m.log]
+    assert not emu or any(l.startswith('[EXEC A:\\SUB.D\\KEYS.COM') for l in log), log
+    assert any('/C FOO.BAT' in l for l in log) and any('/C README.TXT' in l for l in log), log
+    assert not any(l.startswith('[EXEC A:\\FOO.BAT') or l.startswith('[EXEC A:\\README.TXT') for l in log), log
+    assert any(l.startswith('[EXEC A:\\KEYS.EXE') for l in log) and 'Exit code: 2' in str(results(h, 3)[0]['content']), \
+        (log, results(h, 3))
+    assert any(l.startswith('[EXEC A:\\TESTKEY.COM') for l in log) and not any('/C KEYS' in l.upper() for l in log), log
     check(h)
 
 

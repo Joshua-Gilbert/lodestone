@@ -83,6 +83,8 @@ def test_term_connect_and_type():
     try:
         h.settle()          # (start holds when rows 0-23 match: row 24 may still be drawing)
         assert 'CODE-Q quits' in h.screen().split('\n')[24], h.screen()
+        assert h.screen().split('\n')[24].endswith('CODE-Q quits  CODE-R repaints') and \
+            len(h.screen().split('\n')[24]) == 79, h.screen().split('\n')[24]       # (its last letter in column 78)
         assert 'DA ok' in h.screen()
         h.term_type('hello'); h.press(0x1C0D)
         assert wait_screen(h, 'You said: hello'), h.screen()

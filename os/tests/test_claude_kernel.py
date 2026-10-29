@@ -141,7 +141,7 @@ def test_driver_frame_check():
                  T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\BIG.TXT',
                                                                    'view_range': [395, 400]})),
                  T.reply(('text', 'Written and checked.'))], mode='edits', bridge='pico')
-    assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 1, (h.var('ksum', 1), h.var('use_fl', 1))
+    assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 2, (h.var('ksum', 1), h.var('use_fl', 1))   # (1 before audit3 R55)
     assert h.link.grid_req == 16700, h.link.grid_req     # (CLAUDE 1.6's HELLO: req=, so 16 KB write requests)
     k0, st0 = h.var('n_kok', 2), dict(h.link.stats)
     assert h.turn('write a big file', sim_s=120)
@@ -267,6 +267,45 @@ def test_key_script_peeks():
 T.test_key_script_peeks = test_key_script_peeks
 
 
+def test_key_script_other_int16():
+    """Under CLAUDE's key-script hook, INT 16h's other functions (K16: 02h, 12h, 04h-80h) go on to the
+    BIOS and leave the script's keys alone; its reads (00h, 10h) take them."""
+    import test_resident as R
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'K16', 'capture': False, 'keys': 'ab'})),
+                 T.reply(('text', 'Done.'))], mode='auto', files={'A:\\K16.COM': open(R.k16(), 'rb').read()})
+    assert h.turn('run k16', sim_s=60)
+    text = str(T.results(h, 1)[0]['content'])
+    assert 'Exit code: 0' in text, text                # (K16's count of calls that came back otherwise)
+    T.check(h)
+
+
+T.test_key_script_other_int16 = test_key_script_other_int16
+
+
+def test_run_exec_block():
+    """A RUN's EXEC block (filled once at CLAUDE's start): the child gets CLAUDE's environment, the command's
+    tail and two blank FCBs in its PSP."""
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TESTKEY one two', 'capture': False,
+                                                   'keys': '{WAIT 1}x{ESC}'})),
+                 T.reply(('text', 'Done.'))], mode='auto')
+    h.type('run testkey')
+    cur = lambda: h.m.u16(0x60, h.m.Y['cur_psp'])
+    root = h.m.u16(0x60, h.m.Y['root_psp'])
+    assert h.run_until(lambda: cur() not in (root, h.claude_psp) or h.m.crash, 20), h.m.crash
+    psp = cur()
+    fcbs, tail = h.m.rd(psp, 0x5C, 32), h.m.rd(psp, 0x80, 10)
+    env = h.m.rd(h.m.u16(psp, 0x2C), 0, 256)
+    assert h.run_until(h.idle, 30)
+    text = str(T.results(h, 1)[0]['content'])
+    blank = b'\0' + b' ' * 11 + b'\0' * 4
+    assert fcbs == blank * 2 and tail == b'\x08 one two\r' and b'COMSPEC=' in env and 'Exit code: 1' in text, \
+        (fcbs, tail, env, text)
+    T.check(h)
+
+
+T.test_run_exec_block = test_run_exec_block
+
+
 def test_key_script_snap_peek():
     """audit3 (X42's panel): a tick, and a TSR's INT 16h peek from its INT 1Ch, as ks_ready's {SNAP} copies the
     screen on the read path (interrupts on): the peek finds ks_pos past the mark, so one snapshot, and every
@@ -301,6 +340,55 @@ def test_key_script_snap_peek():
 
 
 T.test_key_script_snap_peek = test_key_script_snap_peek
+
+
+def test_ops_codes():
+    """audit3 R51: OPS.INC's file and GPIB requests, each one's status and reply (DOS's error codes, the
+    driver's) as claude_kernel's OPS_PROBE has them: the table test_resident_term's t_ops_codes holds RCON to (the same
+    source in both binaries)."""
+    h = T.start([], bridge='pico')
+    got = CK.ops_probe(h.session.grid, lambda c: h.run_until(c, 60), h.m.chip.devices)
+    want = CK.ops_want('claude')
+    bad = [(g, w) for g, w in zip(got, want) if g != w]
+    assert len(got) == len(want) and not bad, bad or got
+    T.check(h)
+
+
+T.test_ops_codes = test_ops_codes
+
+
+def test_nak_resend_keeps_the_check():
+    """audit3 R55: driver 1.23 (use_fl 2): the Pi's answer to the prompt's frame damaged, and the GRiD's NAK
+    for it lost too, so the Pi NAKs and the GRiD sends its frame again: byte for byte as the first time,
+    the driver's check after it (02h AL=3); the NAK's own mode (AL=1) doesn't stick.  The turn goes on."""
+    from gridlink import glp
+    h = T.start([T.reply(('text', 'After two faults. ' * 20))])
+    st = {'arm': 0, 'resent': []}
+    answer, to_pi = h.transport.answer, h.nano.to_pi
+    def ans(frame):
+        if st['arm'] == 1 and frame[1] & 0x7F != glp.P_NAK:        # (the answer to the prompt)
+            f = bytearray(frame); f[len(f) // 2] ^= 0x10; frame = bytes(f); st['arm'] = 2
+        return answer(frame)
+    def tp(data, t):
+        k = data[1] & 0x7F if len(data) > 1 else 0
+        if st['arm'] == 0 and k == glp.G_PROMPT:
+            st['first'] = bytes(data); st['arm'] = 1
+        elif st['arm'] == 2 and k == glp.G_NAK:            # (lost: the Pi asks again, as its idle_check
+            st['arm'] = 3                                   #  would after 0.15 s of damaged bytes)
+            h.link._answer_nak()
+            return
+        elif st['arm'] == 3 and k == glp.G_PROMPT:
+            st['resent'].append(bytes(data))
+        return to_pi(data, t)
+    h.transport.answer, h.nano.to_pi = ans, tp
+    s0 = dict(h.link.stats)
+    assert h.turn('hello', sim_s=60), (st['arm'], len(st['resent']), h.screen())
+    assert st['arm'] == 3 and st['resent'] == [st['first']], (st['arm'], st.get('first'), st['resent'])
+    assert h.var('use_fl', 1) == 2 and h.link.stats.get('rx_dup', 0) > s0.get('rx_dup', 0), (h.var('use_fl', 1), h.link.stats)
+    T.check(h)
+
+
+T.test_nak_resend_keeps_the_check = test_nak_resend_keeps_the_check
 
 if __name__ == '__main__':
     names = [n for n in sorted(vars(T)) if n.startswith('test_')]

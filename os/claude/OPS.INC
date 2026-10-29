@@ -45,13 +45,7 @@ op_info:
         jmp     reply
 
 %endif
-op_dir: mov     dx, dta
-        mov     ah, 1Ah
-        int     21h
-        mov     dx, reqbuf+2
-        mov     cx, 16h                 ; directories, hidden, system too
-        mov     ah, 4Eh
-        int     21h
+op_dir: call    find_first
         push    es
         mov     es, [ioseg]
         mov     di, 2
@@ -75,6 +69,18 @@ op_dir: mov     dx, dta
         pop     es
         xor     al, al
         jmp     reply
+
+; DIR's and STAT's: FIND FIRST of the path (reqbuf+2) into our DTA ->
+; CF/AX as DOS's
+find_first:
+        mov     dx, dta
+        mov     ah, 1Ah
+        int     21h
+        mov     dx, reqbuf+2
+        mov     cx, 16h                 ; directories, hidden, system too
+        mov     ah, 4Eh
+        int     21h
+        ret
 
 ; offset (4), length (2), path
 op_read:
@@ -201,40 +207,28 @@ op_write:
         jmp     reply
 
 op_delete:
-        mov     dx, reqbuf+2
         mov     ah, 41h
-        int     21h
-        jmp     dos_result
-
-op_rename:
+        jmp     short op_path
+op_rename:                              ; (the new name after the old one's NUL)
         mov     si, reqbuf+2
         call    skipz
         mov     di, si
-        mov     dx, reqbuf+2
         mov     ah, 56h
-        int     21h
-        jmp     dos_result
-
+        jmp     short op_path
 op_mkdir:
-        mov     dx, reqbuf+2
         mov     ah, 39h
-        int     21h
-        jmp     dos_result
-
+        jmp     short op_path
 op_rmdir:
-        mov     dx, reqbuf+2
         mov     ah, 3Ah
+        ; (falls through)
+; AH = DOS's call on the path, DS:DX = reqbuf+2 (RENAME: and ES:DI) -> no data
+op_path:
+        mov     dx, reqbuf+2
         int     21h
         jmp     dos_result
 
 op_stat:
-        mov     dx, dta
-        mov     ah, 1Ah
-        int     21h
-        mov     dx, reqbuf+2
-        mov     cx, 16h
-        mov     ah, 4Eh
-        int     21h
+        call    find_first
         jc      .err
         push    es
         mov     es, [ioseg]
@@ -379,40 +373,54 @@ op_gpib:
 gp_tab: dw gp_write, gp_read, gp_query, gp_spoll, gp_clear, gp_trigger
         dw gp_local, gp_remote, gp_scan
 
+; each: BL = the address; the driver's AH, then gp_go (no data) or gp_in
+; (a read into ioseg:2, AL = EOI from the flags)
 gp_write:
         mov     si, reqbuf+9
         mov     cx, [gp_dlen]
         mov     al, [reqbuf+4]
         and     al, 1
         mov     ah, 02h
-        call    gg_call
-        jmp     gp_res0
+gp_go:  call    gg_call
+gp_res0:                                ; driver CF/AX, no data
+        jc      .e
+        xor     al, al
+.e:     xor     cx, cx
+        ret
+
+gp_clear:
+        mov     ah, 06h
+        jmp     short gp_go
+gp_trigger:
+        mov     ah, 07h
+        jmp     short gp_go
+gp_local:
+        mov     ah, 09h
+        jmp     short gp_go
+gp_remote:
+        mov     ah, 08h
+        jmp     short gp_go
 
 gp_read:
-        push    es
-        mov     es, [ioseg]
-        mov     di, 2
         mov     cx, [gp_max]
-        mov     al, [reqbuf+4]
-        and     al, 1
         mov     ah, 03h
-        call    gg_call
-        pop     es
-        jmp     gp_resc
-
+        jmp     short gp_in
 gp_query:
-        push    es
-        mov     es, [ioseg]
-        mov     di, 2
         mov     si, reqbuf+9
         mov     cx, [gp_dlen]
         mov     dx, [gp_max]
+        mov     ah, 04h
+gp_in:  push    es
+        mov     es, [ioseg]
+        mov     di, 2
         mov     al, [reqbuf+4]
         and     al, 1
-        mov     ah, 04h
         call    gg_call
         pop     es
-        jmp     gp_resc
+gp_resc:                                ; driver CF/AX, CX = bytes read
+        jc      gp_res0.e
+        xor     al, al
+        ret
 
 gp_spoll:
         mov     ah, 05h
@@ -426,25 +434,7 @@ gp_spoll:
         xor     al, al
         ret
 .e:     mov     al, ah
-        xor     cx, cx
-        ret
-
-gp_clear:
-        mov     ah, 06h
-        call    gg_call
-        jmp     gp_res0
-gp_trigger:
-        mov     ah, 07h
-        call    gg_call
-        jmp     gp_res0
-gp_local:
-        mov     ah, 09h
-        call    gg_call
-        jmp     gp_res0
-gp_remote:
-        mov     ah, 08h
-        call    gg_call
-        jmp     gp_res0
+        jmp     short gp_res0.e
 
 gp_scan:
         push    es
@@ -467,17 +457,4 @@ gp_scan:
         sub     cx, 2
         pop     es
         xor     al, al
-        ret
-
-gp_res0:                                ; driver CF/AX, no data
-        jc      .e
-        xor     al, al
-.e:     xor     cx, cx
-        ret
-
-gp_resc:                                ; driver CF/AX, CX = bytes read
-        jc      .e
-        xor     al, al
-        ret
-.e:     xor     cx, cx
         ret
