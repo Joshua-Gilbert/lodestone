@@ -2307,12 +2307,14 @@ pf_reasm:
         je      .ask
         mov     byte [req_ready], 1     ; the main loop runs it
         ret
-.ask:   call    open_ask
+.ask:   call    rq_back                 ; (P7: its last fragment's 6 bytes back
+        call    open_ask                ;  before the copy)
 .x:     ret
 
 ; =====================================================================
 ;  requests from Claude
 ; =====================================================================
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 req_service:
         cmp     byte [req_ready], 0
         je      .x
@@ -2551,6 +2553,11 @@ op_run: mov     si, reqbuf+2
         mov     [run_flags], al
         lodsw
         lodsw
+        mov     bx, ax                  ; the script and the command's NUL in
+        add     bx, 8                   ;  the request (F0h: a longer length
+        jc      .big                    ;  would have do_exec cut our block
+        cmp     bx, [rq_len]            ;  short, O17)
+        ja      .big
         mov     [ks_len], ax
         mov     [ks_ptr], si
         add     si, ax
@@ -2563,6 +2570,8 @@ op_run: mov     si, reqbuf+2
         call    snap_top
         jnc     .ns
         mov     al, 0F1h
+        jmp     reply0
+.big:   mov     al, 0F0h
         jmp     reply0
 .ns:    call    build_exec
         jnc     .go
@@ -2917,17 +2926,25 @@ run_back:
         push    word .there
         retf
 .there: mov     ds, ax
-        mov     es, dx                  ; the old block: the PSP alone
-        mov     bx, 10h
-        mov     ah, 4Ah
-        int     21h
-        push    cs
-        pop     es
 %ifdef TERM_WIN
         cmp     byte [wmode], 0         ; (MT: the window's descriptor where
-        je      .x                      ;  it is now)
+        je      .o                      ;  it is now, before the old block's
+        push    dx                      ;  font and table go)
         call    win_pub
+        pop     dx
+.o:
 %endif
+        mov     es, dx                  ; the old block: the PSP alone if it
+        mov     ah, 62h                 ;  is the PSP's, else (a move before
+        int     21h                     ;  this one's) freed
+        mov     ah, 49h
+        cmp     bx, dx
+        jne     .f
+        mov     bx, 10h
+        mov     ah, 4Ah
+.f:     int     21h
+        push    cs
+        pop     es
 .x:     ret
 .none:  mov     dx, msg_nomem
         jmp     leave_dx

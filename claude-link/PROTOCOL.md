@@ -255,7 +255,8 @@ throughout, and takes over once the script is used up.
 
 DOS errors come back as the DOS error code (83 = a disk error the critical
 error handler failed, e.g. drive not ready). Other statuses: F0h request
-too large, F1h no memory, F3h command line too long, F5h no snapshot,
+too large (or a RUN whose key script length runs past the request's end),
+F1h no memory, F3h command line too long, F5h no snapshot,
 F6h a DOS program is paused (resident Claude's console answers so every
 request but SCREEN, TYPE and those its HELLO's `ops=` lists, e.g. RUN,
 INFO and SETTIME), F7h DOS busy (resident Claude's console, a file request: the
