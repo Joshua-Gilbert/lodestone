@@ -398,7 +398,7 @@ every byte checked.
   (Marionette over jsdom; Node, and `npm ci` in `tests/`) serving
   `tests/web/`.
   `python3 tests/test_emu.py shots/` also saves every screen as PNG + text.
-  Needs `unicorn` and `pillow`; `bin/GRIDGPIB.COM` is the driver it loads.
+  Needs `unicorn` and `pillow`; `../tools/GRIDGPIB.COM` is the driver it loads.
 
 ## Status
 
