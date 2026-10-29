@@ -1191,8 +1191,9 @@ def t_screens():
     diff = [hex(i) for i in range(0, 0x8000, 2) if sl[i:i + 2] != real[i:i + 2]][:8]
     check('MTSCR B in front, another task there, page 7 shown from 7A80h (40:4Ch 1180h): its pages as the BIOS drew the '
           'screen, page 0 and 7A80h-7FFFh byte for byte (the page scrolled up and down, a window partly past the 32 KB '
-          'blanked, rows 3-5 moved at once, the teletype and its scroll); switched from, VF_DIRECT clear',
-          f1 == 2 and b_ == b'B' and sl[0x7A80:] == w and sl[:0x4000] == real[:0x4000] and c_b & VF_DIRECT == 0
+          'blanked, rows 3-5 moved at once, the teletype and its scroll); nothing written past the 32 KB (its own EMS '
+          'page in window 2 signed still: B+); switched from, VF_DIRECT clear',
+          f1 == 2 and b_ == b'B+' and sl[0x7A80:] == w and sl[:0x4000] == real[:0x4000] and c_b & VF_DIRECT == 0
           and 'bbbbbfastbb' in wt and 'd' * 80 in wt and {0x2E, 0x4E, 0x5B} <= set(w[1::2]), (f1, b_, c_b, diff, wt))
     for mode, why in (('d', 'a word written into B800h itself'), ('g', 'in a graphics mode (6)')):
         typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com %s %s.txt' % (mode, mode), 3.0)
