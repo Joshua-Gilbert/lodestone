@@ -1330,7 +1330,9 @@ mt_emsget:
         jnc     .l
         ret
 
-; the kernel's variables (DS = KSEG) to the TX at ES, or back
+; the kernel's variables (DS = KSEG) to the TX at ES, or back.  .r: the
+; ranges at CS:BX, DS:x to ES:DI (mw_save's too), or ES:x from DS:SI with
+; DS and ES swapped back after (mw_load_ctx's)
 mt_vsave:
         mov     bx, mt_ranges
         mov     di, V_INDOS
