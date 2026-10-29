@@ -1,7 +1,8 @@
 ; =====================================================================
 ;  CALC.INC - the calculator's engine: an expression, a number, its text.
 ;  CALC.COM (the command prompt) and CALC.RUN (the window over the
-;  Executive) are the two hosts.
+;  Executive) are the two hosts.  CALC.ASM's EVEN list names its labels:
+;  code that moves them stops CALC.RUN's build.
 ;
 ;  calc_init  which coprocessor (FPU.INC) -> c_fpu: 0 none, 1 an 80287,
 ;             2 a 287XL.  Built with -DCALC_287, a 287XL is used as an
