@@ -61,7 +61,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
 # before gp_isr; no code slack at lastdrv 40CFh: any change netting +1 moves image_end and bss_end.  The UI's
 # pads, UICORE.INC's, likewise: ui_image_end 5220h, no slack before uibss's paragraph)
-OFF_MAP ={'image_end': 0x40D0, 'bss_end': 0x7600, 'ui_keep_end': 0x64F6}  # (40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP ={'image_end': 0x40D0, 'bss_end': 0x7600, 'ui_keep_end': 0x64C2}  # (40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -3394,9 +3394,11 @@ def t_exec():
     k.run_for(0.5)
     line(k, '=4'); k.settle()
     b0 = k.band()
-    check('off: no MT_UI entry (ui_mtx 0:0, ex_mtw 1 while the Executive waits, as it adds its own 1); Return on '
-          'MTLINE.COM runs it and waits: "MTLINE.COM ended, exit code 4"', k.u16('ui_mtx') == 0 and k.u16('ui_mtx', 2) == 0
-          and k.rd('ex_mtw', 1) == b'\x01' and b0[:1] == ['MTLINE.COM ended, exit code 4'], (k.rd('ex_mtw', 1), b0))
+    rp0 = bytes(k.rd('run_prog', 5))
+    check('off: run_prog not patched (its CMP BYTE [ex_mtw],0), ex_mtw 1 while the Executive waits (as it adds its own '
+          '1); Return on MTLINE.COM runs it and waits: "MTLINE.COM ended, exit code 4"',
+          rp0 == b'\x80\x3e' + struct.pack('<H', k.Y['ex_mtw']) + b'\x00'
+          and k.rd('ex_mtw', 1) == b'\x01' and b0[:1] == ['MTLINE.COM ended, exit code 4'], (rp0.hex(), k.rd('ex_mtw', 1), b0))
     mk = os.path.join(A.OUT, 'MKFILE.COM'); open(mk, 'wb').write(MKFILE)
     xs, xa, xb, xm, xl = (mz(os.path.join(A.OUT, n + '.EXE'), mi, ma) for n, mi, ma in
                           (('EXS', 0x20, 0x300), ('EXA', 0x20, 0xFFFF), ('EXB', 0xA000, 0xFFFF), ('EXM', 0x20, 0x20),
@@ -3409,13 +3411,34 @@ def t_exec():
     back = lambda: tstate(k)[:2] == ([(0, 1, 'Executive')], 0) and merged(mcbs(k)) == m0 and sft_used(k) == s0 \
         and ems_used(k) == e0 and k.pc.mode() == 0x40 and not k.crashed
     lists = [k.pc.u16(seg, Y[n]) for n in ('mt_lbg', 'mt_lfz', 'mt_lmem')]
-    check('on: the Executive has MT_UI\'s entry (mt_ui in MT\'s block), ex_mtw 2 while it waits; no lists in LODE.INI: '
-          'each list empty (mt_lnone)', (k.u16('ui_mtx'), k.u16('ui_mtx', 2)) == (Y['mt_ui'], seg)
-          and k.rd('ex_mtw', 1) == b'\x02' and lists == [Y['mt_lnone']] * 3, (k.u16('ui_mtx'), k.rd('ex_mtw', 1), lists))
+    rp = bytes(k.rd('run_prog', 5))
+    check('on: run_prog patched (MT_UI: a JMP FAR to KMW\'s mw_prog in MT\'s block), ex_mtw 2 while it waits; no lists '
+          'in LODE.INI: each list empty (mt_lnone)', rp == b'\xea' + struct.pack('<HH', Y['mw_prog'], seg)
+          and k.rd('ex_mtw', 1) == b'\x02' and lists == [Y['mt_lnone']] * 3, (rp.hex(), k.rd('ex_mtw', 1), lists))
+    # the look for a task's end (mt_ui AL = 1) rides poll_once's clock: every 9 ticks while idle, not at each wake
+    from unicorn import UC_HOOK_CODE
+    lin, nui = seg * 16 + Y['mt_ui'], [0]
+    hk = k.pc.mu.hook_add(UC_HOOK_CODE, lambda *a: nui.__setitem__(0, nui[0] + 1), None, lin, lin)
+    k.pc.mu.ctl_remove_cache(lin, lin + 1)
+    u0 = k.pc.us; k.run_for(2.0); nt = (k.pc.us - u0) / 54925.4
+    check('2 s idle (%.0f ticks): the look for a task\'s end made %d times (every 9 ticks, poll_once\'s clock; not at '
+          'each tick\'s wake)' % (nt, nui[0]), 1 <= nui[0] <= nt / 9 + 1, (nt, nui[0]))
     # Return: a task in front; its end: the Executive in front, its list again, "X ended, exit code n"
     ret(k, 'MTLINE.COM')
     st1, ar1, scr = tstate(k), arena(), k.pc.text_screen()
-    line(k, '=5'); k.run_for(1.0); k.settle()
+    nend = lambda: k.pc.rd(seg, Y['mt_nend'], 1)[0]
+    n0, te, tl = nend(), None, None
+    k.key('=5', settle=False); k.key(ktest.ENTER, settle=False)
+    e = k.pc.us + 3000000
+    while k.pc.us < e and tl is None:
+        k.pc.run(300)
+        if te is None and nend() != n0: te = k.pc.us
+        if te is not None and k.pc.rd(seg, Y['mt_send'], 1)[0] == nend(): tl = k.pc.us
+    k.pc.mu.hook_del(hk)
+    lt = (tl - te) / 54925.4 if tl else None
+    check('... and a task\'s end noticed within 9 ticks of it (%s ticks; mt_ui called %d times in all)'
+          % ('%.1f' % lt if lt is not None else None, nui[0]), lt is not None and lt <= 9.5, (te, tl, nui[0]))
+    k.run_for(1.0); k.settle()
     st2, b2 = tstate(k), k.band()
     check('Return on MTLINE.COM: a task in front (%s), its prompt there; 64 KB, a .COM\'s (%04Xh paragraphs); its line '
           '"=5": it ends, the Executive in front, "MTLINE.COM ended, exit code 5"' % (st1[:2], ar1),
@@ -5337,6 +5360,107 @@ def t_wxor():
           and rows[0] > 0 and rows[1] > 0 and not want[-1] and all(want[:-1]) and not k.crashed,
           ([(len(g), len(v), len(g - v), len(v - g)) for g, v in zip(got, want)], rows, k.crashed))
 
+def t_peek():
+    print('== a window .RUN\'s file read from one open (R43): every way it can\'t start closes it')
+    hdr = lambda api, img, bss, na, nr, fl: b'GRUN' + struct.pack('<6H', api, img, bss, na, nr, fl)
+    fakes = (('NOWIN.RUN', hdr(5, 0x100, 0, 0, 0, 0)),          # not a window .RUN (cut short: run_app says so)
+             ('WBAD.RUN', hdr(6, 0x10, 0, 0x2000, 0x2000, 1)),  # its fixups past 4000h words: mw_start's .bad
+             ('WROOM.RUN', hdr(6, 0x10, 0xFF00, 0, 0, 1)),      # no slot that big: .room
+             ('WCUT.RUN', hdr(6, 0x200, 0, 0, 0, 1)))           # its image cut short: mw_load's
+    for n, b in fakes: open(os.path.join(A.OUT, n), 'wb').write(b)
+    k = boot('mt_peek.img', b'MULTITASK=1\r\n', 88, A.CALCRUN, *(os.path.join(A.OUT, n) for n, b in fakes), mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    fh = lambda: k.pc.u16(seg, Y['mw_fh'])
+    s0, MW_MAX = sft_used(k), 4                     # (KMW.INC's)
+    def tries(name, n):
+        """Return on it n times: [the band's first line each time], every handle back each time."""
+        out, ok = [], True
+        for _ in range(n):
+            k.select(name); k.key(ktest.ENTER, settle=False); k.run_for(0.4)
+            out.append((k.band() or [''])[0])
+            ok = ok and fh() == 0 and sft_used(k) == s0
+            k.key(ktest.ENTER, settle=False); k.run_for(0.3)    # (the message gone)
+        return sorted(set(out)), ok and fh() == 0 and sft_used(k) == s0
+    # no window open: run_app's (mw_run's .orig) 22 times, past the root's 20 handles; mw_start's refusals
+    r = [tries('NOWIN.RUN', 22)] + [tries(n, 3) for n in ('WBAD.RUN', 'WROOM.RUN', 'WCUT.RUN')]
+    check('no window open: Return on NOWIN.RUN (not a window .RUN, cut short) 22 times, and 3 times each on WBAD.RUN, '
+          'WROOM.RUN, WCUT.RUN (window .RUNs that can\'t start: their header, no room, cut short): each refused (%s), '
+          'mw_peek\'s file closed each time (mw_fh 0, the SFT as it was), nothing running' % [x[0] for x in r],
+          all(ok for x, ok in r) and all(x[0] and x[0][0] for x in r) and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00',
+          (r, mb('mw_n'), fh(), sft_used(k), s0))
+    # a window open (the calculator), the Executive in front: mw_run's .ses, and mw_start's refusals from there
+    k.key(A.CODE['K']); k.run_for(0.5)
+    A.click(k, 4, 340); k.run_for(0.3)              # (the Executive's information line)
+    c0 = mb('mw_cur')
+    r = [tries(n, 3) for n in ('NOWIN.RUN', 'WBAD.RUN', 'WCUT.RUN')]
+    check('the calculator open, the Executive in front (%d): Return on NOWIN.RUN ("%s"), WBAD.RUN and WCUT.RUN 3 times '
+          'each: refused, the file closed each time; the calculator alone still' % (c0, r[0][0][0]),
+          c0 == 0 and all(ok for x, ok in r) and r[0][0] == ['NOWIN.RUN needs the whole screen: close the windows first']
+          and mb('mw_n') == 1, (r, c0, mb('mw_n'), fh(), sft_used(k), s0))
+    # CALC.RUN till too many (MW_MAX): the last ones refused with their file closed; then each opened is a calculator
+    nn = []
+    for _ in range(MW_MAX + 1):
+        A.click(k, 4, 340); k.run_for(0.3)
+        k.select('CALC.RUN'); k.key(ktest.ENTER, settle=False); k.run_for(0.6)
+        nn.append((mb('mw_n'), fh(), sft_used(k) == s0))
+        k.key(ktest.ENTER, settle=False); k.run_for(0.3)
+    check('Return on CALC.RUN %d times with the Executive in front: sessions %s (the last refused, too many), '
+          'mw_peek\'s file closed each time, the SFT as it was' % (MW_MAX + 1, [n for n, f, s in nn]),
+          [n for n, f, s in nn] == [2, 3, 4, 4, 4] and all(f == 0 and s for n, f, s in nn) and not k.crashed, (nn, A.screen(k)))
+
+def t_tname():
+    print('== a terminal window\'s title: its program\'s name in TERM.RUN\'s argument, from MT (R65)')
+    k = boot('mt_tn.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, 'X.COM=' + MTLN, 'ABCDEFGH.EXE=' + MTLN, 'SUB\\',
+             'SUB\\INSUB.COM=' + MTLN, mouse=True)
+    seg, Y, TS = mt_seg(k), k.Y, A.run_syms('apps/TERM.ASM')
+    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+    wv = lambda o: k.pc.u16(k.useg, base() + TS['win'] + o)
+    cstr = lambda off: bytes(k.pc.rd(k.useg, off, 40)).split(b'\0')[0].decode('latin-1')
+    scr = lambda: '\n'.join(l for y, l in k.ocr())
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    def opened(name, close=False):
+        """Return on it: (its window's title, TERM's argument as MT gave it, as it should be, the title on the screen,
+        the close box's question); then a line typed ends it, and the window with it."""
+        if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)       # (the last one's "ended" cleared)
+        k.select(name); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+        n, c = k.pc.rd(seg, Y['mw_ses'] + SE_SIZE + SE_TASK, 2)
+        nm = bytes(k.pc.rd(seg, task_ent(k, n) + 10, 12)).split(b'\0')[0].decode('latin-1')     # (TE_NAME)
+        title, arg = cstr(wv(8)), cstr(base() + TS['arg'])
+        got = (title, arg, '%d %d %s' % (n, c, nm), title in scr() if title else None, None)
+        if close:
+            A.click(k, (wv(0) + wv(4) - 2) * 8 + 4, wv(2) + 8); k.run_for(0.5)
+            got = got[:4] + ((k.band() or [''])[0],)
+            k.key(ktest.ESC, settle=False); k.run_for(0.5)
+        k.key('q', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+        return got + (mb('mw_n'),)
+    r1 = opened('X.COM')
+    r12 = opened('ABCDEFGH.EXE', close=True)
+    check('Return on X.COM and on ABCDEFGH.EXE (a whole 8.3 name: TE_NAME without its NUL): each in a window titled with '
+          'its name (%r, %r), from TERM\'s argument "task count name" (%r, %r), drawn in its strip; the close box asks '
+          'with it (%r); each window gone with its task' % (r1[0], r12[0], r1[1], r12[1], r12[4]),
+          r1[:4] == ('X.COM', r1[2], r1[2], True) and r1[1].endswith(' X.COM') and r12[:4] == ('ABCDEFGH.EXE', r12[2], r12[2], True)
+          and r12[4] == 'Close: Confirm to end ABCDEFGH.EXE' and r1[5] == r12[5] == 0, (r1, r12))
+    # in a subject: the path's last part
+    if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)
+    A.pick_subject(k, 'SUB'); k.key(ktest.TAB); k.run_for(0.3)
+    rs = opened('INSUB.COM')
+    check('Return on INSUB.COM in subject SUB (its path A:\\SUB\\INSUB.COM): the title its name only (%r), argument %r'
+          % (rs[0], rs[1]), rs[:4] == ('INSUB.COM', rs[2], rs[2], True) and rs[5] == 0, rs)
+    # a task with no name (TE_NAME emptied as mt_uwin asks for it): no title, the strip still there
+    from unicorn import UC_HOOK_CODE, x86_const as X
+    lin = seg * 16 + Y['mt_uname']
+    def blank(mu, a, sz, u):
+        k.pc.wr(seg, mu.reg_read(X.UC_X86_REG_BX) + 10, b'\0' * 12)
+    hk = k.pc.mu.hook_add(UC_HOOK_CODE, blank, None, lin, lin); k.pc.mu.ctl_remove_cache(lin, lin + 1)
+    if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)
+    A.pick_subject(k, 'Root'); k.key(ktest.TAB); k.run_for(0.3)
+    rn = opened('X.COM', close=True)
+    k.pc.mu.hook_del(hk)
+    check('a task with no name: its window opens untitled (%r; the argument %r ends with the blank), the close box asks '
+          '"%s"; it ends, the window with it' % (rn[0], rn[1], rn[4]), rn[0] == '' and rn[1] == rn[2] and rn[1].endswith(' ')
+          and rn[4].rstrip() == 'Close: Confirm to end' and rn[5] == 0 and not k.crashed, rn)
+
 QUITRUN = os.path.join(HERE, 'QUITRUN.RUN')
 
 def t_wroot():
@@ -6280,7 +6404,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

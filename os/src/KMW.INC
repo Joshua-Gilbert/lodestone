@@ -20,6 +20,10 @@
 ;    - run_app's first instruction (CMP BYTE [run_active],0) becomes a far
 ;      jump to mw_run: a window .RUN starts as a session; any other as
 ;      before (back to run_app past it);
+;    - run_prog's (CMP BYTE [ex_mtw],0) a far jump to mw_prog: Return on a
+;      DOS program starts it as a task (mt_ui);
+;    - ui_event.l (CALL poll_once / JNC .got) a far call to mw_poll: a
+;      task's end looked for, and a terminal window's EV_TICK;
 ;    - ui_event.got (CALL win_ev / JC .on) becomes a far call to mw_got:
 ;      with sessions, CODE-K and CODE-T open (or bring to the front) the
 ;      calculator and the tasks, CODE-F6 brings the next session to the
@@ -102,6 +106,8 @@ mw_mru      times MW_MAX + 1 db 0FFh    ; the sessions, the Executive's (0) too,
                                         ;  the focus first (0FFh after them)
 mw_new      db      0                   ; (mw_start: the one starting)
 mw_hdr      times 16 db 0               ; a .RUN's header, read
+mw_lt       dw      0                   ; (mw_poll: poll_once's lasttick, as last seen)
+mw_fh       dw      0                   ; mw_peek's .RUN, open (0: none)
 MW_BSS      equ     (MW_MAX + 1) * SE_SIZE + NWIN * 4   ; (mw_ses, mw_tmp: in
                                         ;  mttbss, KMT.INC)
 
@@ -135,6 +141,10 @@ mw_ptab:
         dw      run_app, mw_run         ; CMP BYTE [run_active],0: JMP FAR
         db      0EAh, 80h, 3Eh
         dw      run_active
+        db      0
+        dw      run_prog, mw_prog       ; CMP BYTE [ex_mtw],0: JMP FAR
+        db      0EAh, 80h, 3Eh
+        dw      ex_mtw
         db      0
         dw      ui_event.got, mw_got    ; CALL win_ev / JC .on: CALL FAR
         db      9Ah, 0E8h
@@ -190,12 +200,14 @@ mw_run: cmp     byte [cs:mw_n], 0
         jc      .f2                     ;  opens beside them (Return on a text:
         test    byte [cs:mw_hdr+14], RF_WIN     ;  a Write); any other needs the
         jnz     .go                     ;  whole screen
+        call    mw_shut
         mov     ax, 9
         call    mw_say
         mov     ax, 0FFFFh              ; (said: nothing more, no list again)
         clc
         jmp     .ret
-.orig:  cmp     byte [run_active], 0    ; run_app as it was (ZF: its JE .free)
+.orig:  call    mw_shut                 ; (run_app reads it itself)
+        cmp     byte [run_active], 0    ; run_app as it was (ZF: its JE .free)
         push    ds
         push    word run_app + 5
         retf
@@ -237,7 +249,9 @@ mw_lend:
 .no:    stc
         retf
 
-; the header of .RUN SI into mw_hdr -> CF (AX = error, 11: not a .RUN)
+; the header of .RUN SI into mw_hdr -> CF (AX = error, 11: not a .RUN).
+; Without CF its file stays open, past the header (mw_fh): mw_load reads
+; on from there, and every other way on closes it (mw_shut)
 mw_peek:
         push    bx
         push    cx
@@ -246,6 +260,7 @@ mw_peek:
         mov     ax, 3D00h
         int     21h
         jc      .x
+        mov     [cs:mw_fh], ax
         mov     bx, ax
         push    ds
         push    cs
@@ -255,13 +270,7 @@ mw_peek:
         mov     ah, 3Fh
         int     21h
         pop     ds
-        pushf
-        push    ax
-        mov     ah, 3Eh
-        int     21h
-        pop     ax
-        popf
-        jc      .x
+        jc      .cl
         cmp     ax, 16
         jne     .bad
         cmp     word [cs:mw_hdr], 'GR'
@@ -273,10 +282,25 @@ mw_peek:
         clc
         jmp     short .x
 .bad:   mov     ax, 11
+.cl:    call    mw_shut
         stc
 .x:     pop     dx
         pop     cx
         pop     bx
+        ret
+
+; mw_peek's file closed, if it is open (all kept but the flags)
+mw_shut:
+        push    ax
+        push    bx
+        xor     bx, bx
+        xchg    bx, [cs:mw_fh]
+        or      bx, bx
+        jz      .x
+        mov     ah, 3Eh
+        int     21h
+.x:     pop     bx
+        pop     ax
         ret
 
 ; ---------------------------------------------------------------------
@@ -284,7 +308,8 @@ mw_peek:
 ;  running one waits, and this returns when it runs again (the Executive:
 ;  when the last has ended, AX = its exit code).  CF before that if it
 ;  can't start: AX = error (8: no room, too many; 11: not a window .RUN).
-;  mw_hdr: its header (mw_peek)
+;  mw_hdr: its header (mw_peek's: mw_run's, its file open still; else
+;  read here)
 ; ---------------------------------------------------------------------
 mw_start:
         pusha
@@ -293,9 +318,11 @@ mw_start:
         jae     .no
         cmp     word [wdepth], NWIN     ; (each has a window)
         jae     .no
+        cmp     word [cs:mw_fh], 0      ; (mw_run's peek: open, read)
+        jne     .pk
         call    mw_peek
         jc      .no
-        mov     ax, 11
+.pk:    mov     ax, 11
         test    byte [cs:mw_hdr+14], RF_WIN
         jz      .no
         cmp     word [cs:mw_hdr+4], 6   ; (a window .RUN's windows have W_FLAGS,
@@ -326,7 +353,7 @@ mw_start:
         add     dx, cx                  ; DX = its end
         call    mw_grow                 ; the UI block to the highest end
         jc      .room
-        call    mw_load                 ; read and fix it at BX (SI = path)
+        call    mw_load                 ; read and fix it at BX (mw_fh closed)
         jc      .lf
         cmp     byte [cs:mw_n], 0       ; the first: the Executive alone in the
         jne     .fr                     ;  focus order, its list as it is
@@ -421,7 +448,8 @@ mw_start:
 .bad:   mov     ax, 11
         jmp     short .no
 .room:  mov     ax, 8
-.no:    mov     bp, sp
+.no:    call    mw_shut                 ; (mw_run's peek's file, if still open)
+        mov     bp, sp
         mov     [bp+14], ax             ; (pusha's AX)
         popa
         stc
@@ -623,12 +651,18 @@ mw_got: cmp     byte [cs:mw_n], 0
         db      90h                     ; (a pad: mw_poll at its parity, asserted)
 
 ; ui_event's look for an event (CALL FAR over its CALL poll_once / JNC
-; .got; DS = the UI): poll_once's, else EV_TICK for a terminal window in
-; front (T2: mw_tick); else back to ui_event's HLT, as before
+; .got; DS = the UI): poll_once's; else, each time its clock goes on (~0.5
+; s), in the Executive's own wait: a task ended (mt_ui: EV_TASK, or
+; EV_TASKM with its message in msgbuf); else EV_TICK for a terminal window
+; in front (T2: mw_tick); else back to ui_event's HLT, as before.  (AX
+; isn't kept: ui_event's loop has nothing in it)
 mw_poll:
         UCALL   poll_once
         jnc     .ev
-        cmp     byte [cs:mw_n], 0
+        mov     ax, [lasttick]
+        cmp     ax, [cs:mw_lt]
+        jne     .lk
+.t:     cmp     byte [cs:mw_n], 0
         je      .y
         call    mw_tick
         jnc     .y
@@ -688,6 +722,44 @@ mw_poll:
 .z:     pop     bx
         pop     ax
         retf                            ; (interrupts off: the HLT's STI next)
+.lk:    mov     [cs:mw_lt], ax
+        cmp     byte [ex_mtw], 2        ; (2: the Executive's own wait)
+        jb      .t
+        push    es
+        push    di
+        push    ds
+        pop     es
+        mov     di, msgbuf
+        mov     al, 1
+        push    cs
+        call    mt_ui
+        pop     di
+        pop     es
+        jnc     .t
+        mov     ah, EV_TASK >> 8        ; (AL = 0: EV_TASK; 1: EV_TASKM)
+        add     al, EV_TASK & 0FFh
+        jmp     .ev
+
+; run_prog (JMP FAR over its CMP BYTE [ex_mtw],0; DS = ES = the UI): the
+; program at runpath a task, in front (mt_ui: its memory, and why not in
+; msgbuf, for show_msg); with Shift held, run_wait as before
+mw_prog:
+        mov     ah, 2                   ; (Shift held?)
+        int     16h
+        test    al, 3
+        mov     ax, run_wait
+        jnz     .x
+        mov     si, runpath
+        mov     di, msgbuf
+        xor     al, al
+        push    cs
+        call    mt_ui
+        mov     ax, show_msg
+        jc      .x
+        mov     ax, ..@ui_ret           ; (a RET: to run_prog's caller)
+.x:     push    ds
+        push    ax
+        retf
 
 ; CF: EV_TICK is due for the session in front, a terminal window (MT_TOPEN
 ; gave it its task): its task's screen (TX_CHG, and a published screen's
@@ -1135,21 +1207,14 @@ mw_top: push    bp
         pop     bp
         ret
 
-; read .RUN SI's image and fixups to BX, fix it there, its BSS zeroes
-; (mw_hdr) -> CF, AX = error
+; read the .RUN mw_peek left open (mw_fh, past its header; closed here):
+; its image and fixups to BX, fixed there, its BSS zeroes (mw_hdr) -> CF,
+; AX = error
 mw_load:
         pusha
-        mov     dx, si
-        mov     ax, 3D00h
-        int     21h
-        jc      .no
-        mov     di, ax                  ; DI = the handle
-        mov     bx, ax
-        mov     ax, 4200h               ; past the header
-        xor     cx, cx
-        mov     dx, 16
-        int     21h
-        jc      .cl
+        xor     di, di
+        xchg    di, [cs:mw_fh]          ; DI = the handle
+        mov     bx, di
         mov     bp, sp
         mov     dx, [bp+8]              ; (pusha's BX: where)
         mov     cx, [cs:mw_hdr+6]       ; its image there, then its fixups

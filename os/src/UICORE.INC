@@ -158,10 +158,8 @@ run_active  resb 1
 lent        resb 1              ; the directory's memory is out (ui_lend):
                                 ;  how many times over (2: a program's saver)
 need_room   resb 1              ; ui_room has a look at the next chance
-ui_mtx      resw 2              ; MULTITASK=1: LODEMT.SYS's far entry for
-                                ;  the Executive (MT_UI; 0:0 off)
 ex_mtw      resb 1              ; 1 with MULTITASK=1; 2 while the Executive's
-                                ;  own loop waits (poll_once: a task ended?)
+                                ;  own loop waits (KMW's mw_poll: a task ended?)
 run_base    resw 1              ; where a .RUN loads (offset)
 ui_paras    resw 1              ; the UI block's own size
 ent_max     resw 1              ; directory entries that fit (EXEC.INC)
@@ -227,11 +225,9 @@ ui_boot:
         call    clip_name               ; (UI_CLIP's file)
         call    sysinfo                 ; (the machine, once: EXEC.INC)
         mov     ax, 0F019h              ; MULTITASK=1 (MTAPI.INC's MT_UI): the
-        stc                             ;  entry that starts a program as a
-        int     21h                     ;  task, and tells a task's end
+        stc                             ;  UI patched to start a program as a
+        int     21h                     ;  task and tell a task's end (KMW)
         jc      exec_main.go
-        mov     [ui_mtx], ax
-        mov     [ui_mtx + 2], dx
         mov     byte [ex_mtw], 1
         jmp     exec_main.go
 section ui
@@ -535,6 +531,7 @@ ui_event:
         jc      .on                     ; (taken, nothing to say: wait on)
         mov     byte [ptr_on], 0
         jmp     hide_cursor
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; UI_POLL (poll_once): the same without waiting (CF set: nothing)
 
@@ -560,6 +557,7 @@ read_key:
         jz      .x                      ; (Alt-224 typed on the keypad)
         mov     al, 0
 .x:     ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; one look at the mouse, the keyboard and the clock.  CF clear with an
 ; event in AX (BX, CX for a click); CF set if none (BX, CX unchanged)
@@ -615,26 +613,10 @@ poll_once:
         jmp     .none
 .ck:    mov     bx, ax
         sub     bx, [lasttick]
-        cmp     bx, 9                   ; ~0.5 s
+        cmp     bx, strict word 9       ; ~0.5 s (strict: .none even)
         jb      .none
-        mov     [lasttick], ax
-        call    clock_tick
-        cmp     byte [ex_mtw], 2        ; (MULTITASK=1, the Executive's own
-        jb      .none                   ;  wait: a task ended?  EV_TASK, or
-        push    es                      ;  EV_TASKM: a message in msgbuf)
-        push    di
-        push    cs
-        pop     es
-        mov     di, msgbuf
-        mov     al, 1
-        call    far [ui_mtx]
-        pop     di
-        pop     es
-        jnc     .none
-        mov     ah, EV_TASK >> 8        ; (AL = 0: EV_TASK; 1: EV_TASKM)
-        add     al, EV_TASK & 0FFh
-        jmp     .ev
-        times ($ - $$) & 1 db 90h       ; (hot: even)
+        mov     [lasttick], ax          ; (MULTITASK=1: KMW's mw_poll looks
+        call    clock_tick              ;  for a task's end when it changes)
 .none:  pop     cx
         pop     bx
         pop     ax
@@ -2865,6 +2847,7 @@ ui_dispatch:
 .scan:  cmp     dh, ah
         je      .hit
         jmp     .n
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .ascii: cmp     dl, al
         je      .hit
 .n:     add     si, 6
@@ -2898,6 +2881,7 @@ lv_draw:
         loop    .l
         popa
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; draw item AX of list [lv_cur] if it is showing
 lv_row: mov     bx, [lv_cur]

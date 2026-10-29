@@ -2062,11 +2062,10 @@ mt_flagsc:
         mov     [bp+F_AX], al
         jmp     KSEG:ok
 
-; MT_UI: the Executive's entry (mt_ui), far
-mt_uic: mov     word [bp+F_AX], mt_ui
-        mov     [bp+F_DX], cs
-        push    es                      ; (and the UI patched for several
-        mov     es, [ui_seg]            ;  window .RUNs at once: KMW.INC)
+; MT_UI: the UI patched (KMW.INC: Return starts a task, mt_ui, and several
+; window .RUNs at once)
+mt_uic: push    es
+        mov     es, [ui_seg]
         call    mw_patch
         pop     es
         jmp     KSEG:ok
@@ -4066,9 +4065,9 @@ mt_lmat:
         ret
 
 ; ---------------------------------------------------------------------
-;  MT_UI's entry: the Executive's, called far in its own task (task 0),
-;  not inside INT 21h, so it may call DOS; with CS here no switch comes
-;  meanwhile (mt_safe).  DS = ES = the UI's segment.
+;  The Executive's entry: called far by KMW's patches (mw_prog, mw_poll) in
+;  its own task (task 0), not inside INT 21h, so it may call DOS; with CS
+;  here no switch comes meanwhile (mt_safe).  DS = ES = the UI's segment.
 ;  AL = 0: Return on a program: start the program at DS:SI (its path, as
 ;   the Executive has it) as a task, in front.  Its memory: MTMEM='s (at
 ;   the spawn); else a .COM's 64 KB; an .EXE's as its header asks: at
@@ -4293,12 +4292,12 @@ mt_urun:
         mov     byte [es:di], 0
         jmp     mt_uyes
 
-; task AL (its count AH), started behind: its terminal window, TERM.RUN
-; (UI_FINDAPP's) with the argument "task count", as run_app runs it (mw_run:
-; a session, the first or beside others); the Executive waits in here while
-; others are in front.  If it can't open (no TERM.RUN, no room, too many
-; windows): the task in front, as without windows.  (DS = the UI's; AX, BX,
-; CX, SI, DI change)
+; task AL (its count AH, its entry BX), started behind: its terminal
+; window, TERM.RUN (UI_FINDAPP's) with the argument "task count name", as
+; run_app runs it (mw_run: a session, the first or beside others); the
+; Executive waits in here while others are in front.  If it can't open (no
+; TERM.RUN, no room, too many windows): the task in front, as without
+; windows.  (DS = the UI's; AX, BX, CX, SI, DI change)
 mt_uwin:
         push    es
         push    ax
@@ -4320,6 +4319,9 @@ mt_uwin:
         push    ax
         mov     al, ah
         call    mt_udec
+        mov     al, ' '                 ; (its name: TERM's title)
+        stosb
+        call    mt_uname
         mov     byte [es:di], 0
         mov     si, msgbuf
         UCALL   ui_findapp              ; SI = its path
@@ -4340,15 +4342,8 @@ mt_uwin:
 ; the ended task at BX: "X ended[, exit code n]", or "X could not be
 ; started: error n" (EXEC's), at ES:DI, ASCIIZ.  (AX, CX, SI change)
 mt_uend:
-        lea     si, [bx+TE_NAME]
-        mov     cx, TR_NAMELEN
-.n:     mov     al, [cs:si]
-        or      al, al
-        jz      .e
-        stosb
-        inc     si
-        loop    .n
-.e:     mov     ax, [cs:bx+TE_EXIT]
+        call    mt_uname
+        mov     ax, [cs:bx+TE_EXIT]
         push    ax
         mov     si, mt_snost
         cmp     ah, 0FFh
@@ -4367,6 +4362,19 @@ mt_uend:
 .x:     pop     ax
         mov     byte [es:di], 0
         ret
+
+; the name of the task at BX (TE_NAME: TR_NAMELEN at most) at ES:DI, DI
+; past it, no NUL (AL, CX, SI change)
+mt_uname:
+        lea     si, [bx+TE_NAME]
+        mov     cx, TR_NAMELEN
+.n:     mov     al, [cs:si]
+        or      al, al
+        jz      .x
+        stosb
+        inc     si
+        loop    .n
+.x:     ret
 
 ; the text at CS:SI (ASCIIZ) at ES:DI, DI and SI past it (AL changes)
 mt_ucpy:
