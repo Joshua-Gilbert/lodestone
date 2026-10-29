@@ -107,6 +107,7 @@ mw_mru      times MW_MAX + 1 db 0FFh    ; the sessions, the Executive's (0) too,
 mw_new      db      0                   ; (mw_start: the one starting)
 mw_hdr      times 16 db 0               ; a .RUN's header, read
 mw_lt       dw      0                   ; (mw_poll: poll_once's lasttick, as last seen)
+mw_fh       dw      0                   ; mw_peek's .RUN, open (0: none)
 MW_BSS      equ     (MW_MAX + 1) * SE_SIZE + NWIN * 4   ; (mw_ses, mw_tmp: in
                                         ;  mttbss, KMT.INC)
 
@@ -199,12 +200,14 @@ mw_run: cmp     byte [cs:mw_n], 0
         jc      .f2                     ;  opens beside them (Return on a text:
         test    byte [cs:mw_hdr+14], RF_WIN     ;  a Write); any other needs the
         jnz     .go                     ;  whole screen
+        call    mw_shut
         mov     ax, 9
         call    mw_say
         mov     ax, 0FFFFh              ; (said: nothing more, no list again)
         clc
         jmp     .ret
-.orig:  cmp     byte [run_active], 0    ; run_app as it was (ZF: its JE .free)
+.orig:  call    mw_shut                 ; (run_app reads it itself)
+        cmp     byte [run_active], 0    ; run_app as it was (ZF: its JE .free)
         push    ds
         push    word run_app + 5
         retf
@@ -246,7 +249,9 @@ mw_lend:
 .no:    stc
         retf
 
-; the header of .RUN SI into mw_hdr -> CF (AX = error, 11: not a .RUN)
+; the header of .RUN SI into mw_hdr -> CF (AX = error, 11: not a .RUN).
+; Without CF its file stays open, past the header (mw_fh): mw_load reads
+; on from there, and every other way on closes it (mw_shut)
 mw_peek:
         push    bx
         push    cx
@@ -255,6 +260,7 @@ mw_peek:
         mov     ax, 3D00h
         int     21h
         jc      .x
+        mov     [cs:mw_fh], ax
         mov     bx, ax
         push    ds
         push    cs
@@ -264,13 +270,7 @@ mw_peek:
         mov     ah, 3Fh
         int     21h
         pop     ds
-        pushf
-        push    ax
-        mov     ah, 3Eh
-        int     21h
-        pop     ax
-        popf
-        jc      .x
+        jc      .cl
         cmp     ax, 16
         jne     .bad
         cmp     word [cs:mw_hdr], 'GR'
@@ -282,10 +282,25 @@ mw_peek:
         clc
         jmp     short .x
 .bad:   mov     ax, 11
+.cl:    call    mw_shut
         stc
 .x:     pop     dx
         pop     cx
         pop     bx
+        ret
+
+; mw_peek's file closed, if it is open (all kept but the flags)
+mw_shut:
+        push    ax
+        push    bx
+        xor     bx, bx
+        xchg    bx, [cs:mw_fh]
+        or      bx, bx
+        jz      .x
+        mov     ah, 3Eh
+        int     21h
+.x:     pop     bx
+        pop     ax
         ret
 
 ; ---------------------------------------------------------------------
@@ -293,7 +308,8 @@ mw_peek:
 ;  running one waits, and this returns when it runs again (the Executive:
 ;  when the last has ended, AX = its exit code).  CF before that if it
 ;  can't start: AX = error (8: no room, too many; 11: not a window .RUN).
-;  mw_hdr: its header (mw_peek)
+;  mw_hdr: its header (mw_peek's: mw_run's, its file open still; else
+;  read here)
 ; ---------------------------------------------------------------------
 mw_start:
         pusha
@@ -302,9 +318,11 @@ mw_start:
         jae     .no
         cmp     word [wdepth], NWIN     ; (each has a window)
         jae     .no
+        cmp     word [cs:mw_fh], 0      ; (mw_run's peek: open, read)
+        jne     .pk
         call    mw_peek
         jc      .no
-        mov     ax, 11
+.pk:    mov     ax, 11
         test    byte [cs:mw_hdr+14], RF_WIN
         jz      .no
         cmp     word [cs:mw_hdr+4], 6   ; (a window .RUN's windows have W_FLAGS,
@@ -335,7 +353,7 @@ mw_start:
         add     dx, cx                  ; DX = its end
         call    mw_grow                 ; the UI block to the highest end
         jc      .room
-        call    mw_load                 ; read and fix it at BX (SI = path)
+        call    mw_load                 ; read and fix it at BX (mw_fh closed)
         jc      .lf
         cmp     byte [cs:mw_n], 0       ; the first: the Executive alone in the
         jne     .fr                     ;  focus order, its list as it is
@@ -430,7 +448,8 @@ mw_start:
 .bad:   mov     ax, 11
         jmp     short .no
 .room:  mov     ax, 8
-.no:    mov     bp, sp
+.no:    call    mw_shut                 ; (mw_run's peek's file, if still open)
+        mov     bp, sp
         mov     [bp+14], ax             ; (pusha's AX)
         popa
         stc
@@ -1188,21 +1207,14 @@ mw_top: push    bp
         pop     bp
         ret
 
-; read .RUN SI's image and fixups to BX, fix it there, its BSS zeroes
-; (mw_hdr) -> CF, AX = error
+; read the .RUN mw_peek left open (mw_fh, past its header; closed here):
+; its image and fixups to BX, fixed there, its BSS zeroes (mw_hdr) -> CF,
+; AX = error
 mw_load:
         pusha
-        mov     dx, si
-        mov     ax, 3D00h
-        int     21h
-        jc      .no
-        mov     di, ax                  ; DI = the handle
-        mov     bx, ax
-        mov     ax, 4200h               ; past the header
-        xor     cx, cx
-        mov     dx, 16
-        int     21h
-        jc      .cl
+        xor     di, di
+        xchg    di, [cs:mw_fh]          ; DI = the handle
+        mov     bx, di
         mov     bp, sp
         mov     dx, [bp+8]              ; (pusha's BX: where)
         mov     cx, [cs:mw_hdr+6]       ; its image there, then its fixups
