@@ -217,7 +217,7 @@ Joshua: "the same operation just using the internal drive", with as much code re
     - `/T` marking exactly the bad sectors;
     - no C:, and a key part way.
   - **`defrag_cut.py N hd`:** pcemu's drive loses power half way through each of DEFRAG C:'s write commands. After every cut no file is damaged; another system then adds a file, and a second run must leave everything whole and in one piece. **137 cut points, 0 failures.** The floppy cut test still passes, 204 of 204.
-  - **`test_hd.py t_abs`:** INT 25h/26h itself. A read past sector 65,535, A: and the old form refused, a bad sector's error, interrupts on afterwards, and the kernel reading new data after a write (it fails with the cache-dropping removed).
+  - **`test_hd.py t_abs`:** INT 25h/26h itself. A read past sector 65,535, A: and the old form refused, a bad sector's error, interrupts on afterwards, and the kernel reading new data after a write (it fails with the cache-dropping removed). And Abort on the FAT write INT 25h does first (C:'s FAT left to write): the program ends, as on any Abort outside an EXEC's load, whether INT 25h is its first call (its parent's EXEC still the last INT 21h call) or comes after one of its own (`HDABS R`, `HDABS D`).
 
 ## Files
 - **Source:** `src\DEFRAG.ASM` (its header describes all of the above). The saver is in `src\UICORE.INC` (`saver`, `sv_move`, `sv_defrag`).

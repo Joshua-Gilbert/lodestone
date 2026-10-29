@@ -620,13 +620,14 @@ f_4D:   mov     ax, [last_exit]
 
 ; end the current program with exit code AL (how: [term_type]).  Can be
 ; called from anywhere in the kernel; returns to the parent's EXEC call.
+; .ah: AH = how, DS = KSEG (ES needn't be)
 terminate:
         push    cs
         pop     ds
         push    cs
         pop     es
         mov     ah, [term_type]
-        mov     [last_exit], ax
+.ah:    mov     [last_exit], ax
         mov     byte [term_type], 0
         mov     bx, [cur_psp]
         cmp     bx, [root_psp]
