@@ -34,6 +34,7 @@ MSDOS = os.environ.get('GRID_ROM') or os.path.join(ROOT, 'rom', 'GRID_MSDOS330_R
 BIOS = os.path.join(ROOT, 'rom', 'ROM_F000.BIN')
 ROMVID = os.path.join(HERE, 'ROMVID.COM')
 ROMT = os.path.join(HERE, 'ROMT.COM')
+FREE36 = os.path.join(HERE, 'FREE36.COM')
 LCMD = os.path.join(GOS, 'src', 'LCMD.COM')
 SHIFT = 0x02
 
@@ -41,7 +42,7 @@ SHIFT = 0x02
 def build():
     A.build()
     subprocess.run([os.path.join(GOS, 'build.sh')], check=True, stdout=subprocess.DEVNULL)
-    for n in ('ROMVID', 'ROMT'):
+    for n in ('ROMVID', 'ROMT', 'FREE36'):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(HERE, n + '.COM'), os.path.join(HERE, n + '.ASM')], check=True)
 
 def rom(): return open(ROM1, 'rb').read()
@@ -224,8 +225,8 @@ def t_rom2():
                                          k.pc.rd(0x60, b + k.Y['r_cur'], 1) == k.pc.rd(0x60, b + k.Y['r_img'], 1)))
         rel = lp[0] and lp[0][0][0] == 0xE8 and (k.Y['r_dio.lp'] + 3 + struct.unpack_from('<h', lp[0][0], 1)[0]) & 0xFFFF
         check('%s: r_dio.lp calls .map with ROM 2 joined; ROM 1 alone, rom_init made it r_patch (MOV DX,BP; MOV SI,FFFFh) '
-              'with r_cur R:\'s image, and .map isn\'t kept: the module 7 paragraphs shorter' % where,
-              rel == k.Y['r_dio.map'] and lp[1] and lp[1] == (bytes.fromhex('89EABEFFFF'), True) and mcb[0] - mcb[1] == 7,
+              'with r_cur R:\'s image, and .map isn\'t kept: the module 10 paragraphs shorter' % where,
+              rel == k.Y['r_dio.map'] and lp[1] and lp[1] == (bytes.fromhex('89EABEFFFF'), True) and mcb[0] - mcb[1] == 10,
               (rel, lp, mcb))
         k = boot(floppy('rom2.img', A.MEMSZ), sock=sock1, roms=sockets, **dict(kw, **({'ata': TS.hd()} if 'ata' in kw else {})))
         to_prompt(k)
@@ -242,7 +243,7 @@ def t_rom2():
         for i in range(5):                                              # (KDISK.INC: NBUF buffers)
             if k.rd('buf_drv', 1, i)[0] == 17 and 3 <= k.u16('buf_lba', 2 * i) <= 6:
                 roots[k.u16('buf_lba', 2 * i)] = bytes(k.rd('bufs', 512, 512 * i))
-        check('%s: what DOS programs get: %.1f KB, ROM 1 alone %.1f KB (R:\'s module 7 paragraphs more, what joins the two)'
+        check('%s: what DOS programs get: %.1f KB, ROM 1 alone %.1f KB (R:\'s module 10 paragraphs more, what joins the two)'
               % (where, mem[0] or 0, mem[1] or 0), mem[0] and mem[1] and 0.1 <= round(mem[1] - mem[0], 1) <= 0.2, mem)
         check('%s: the FAT R: reads of the two (fatbuf, both sectors: ROM 1\'s then ROM 2\'s, as burned) and its root sectors '
               'in the buffers (ROM 2\'s, past 16 entries too), byte for byte' % where,
@@ -283,6 +284,24 @@ def t_rom2():
     to_prompt(k)
     o = prompt(k, 'dir r:')
     check('ROM 1 alone: R: as before, without DEFRAG.COM (13 files)', 'LODE     SYS' in o and 'DEFRAG' not in o and '13 File(s)' in o, o)
+    # INT 21h 36h for R: (FREE36: DL = 18, then 0, the current drive): nothing
+    # free, the clusters the ROMs have (the gap left out); with ROM 2, r_f36's
+    # answer (the FAT not walked: f_36's loop not run)
+    got = {}
+    for tag, sock, rs in (('with ROM 2', 1, {0: rom2(), 1: rom()}), ('ROM 1 alone', 1, {1: rom()}), ('ROM 2 alone', None, {1: rom2()})):
+        k = boot(floppy('rom2f.img', *((A.SYS, LCMD) if sock is None else ()), FREE36), sock=sock, roms=rs)
+        to_prompt(k)
+        loop = [0]; at = 0x600 + k.Y['f_36.l']
+        def hk(uc, a, sz, ud):
+            if a == at: loop[0] += 1
+        from unicorn import UC_HOOK_CODE
+        k.pc.mu.hook_add(UC_HOOK_CODE, hk, None, at, at); k.pc.mu.ctl_flush_tb()
+        o = prompt(k, 'a:free36')
+        got[tag] = (re.findall(r'F36 ax=(\w+) bx=(\w+) cx=(\w+) dx=(\w+)', o), loop[0])
+    r1, r2 = ('0001', '0000', '0200', '01F8'), ('0001', '0000', '0200', '00FC')
+    check('INT 21h 36h for R: 0 free of 504 clusters with ROM 2 (the gap\'s 88 left out), its FAT not walked; of 252 for '
+          'ROM 1 alone (walked, as before) and ROM 2 alone', got['with ROM 2'] == ([r1, r1], 0) and got['ROM 1 alone'][0] == [r2, r2]
+          and got['ROM 1 alone'][1] >= 2 * 252 and got['ROM 2 alone'][0][:1] == [r2] and got['ROM 2 alone'][1] > 0, got)
     # the saver's round of the disks: DEFRAG.COM from R: (the start-up drive's root) with ROM 2 in; without it, the clock
     seen = []
     for rs in ({0: rom2(), 1: rom()}, {1: rom()}):

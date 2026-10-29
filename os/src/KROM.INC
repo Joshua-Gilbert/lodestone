@@ -22,7 +22,8 @@
 ;  whatever modules the start-up kept (EMS's, C:'s) and relocated there:
 ;  the BIOS's 5 paragraphs of ROM data (E401's), R:'s drive table entry
 ;  and current directory, and the hooks into use_drive, drv_present,
-;  cwd_of and dio, as M:'s (KMDISK.INC), which chains after them.
+;  cwd_of and dio, as M:'s (KMDISK.INC), which chains after them; with
+;  ROM 2, f_36's too (INT 21h 36h: R:'s answer, not walking the gap).
 ;
 ;  Booted from the ROM (in the load image, never kept):
 ;    - rom_menu, before anything else: with a Shift key held, a menu:
@@ -293,12 +294,34 @@ r_dio:  cmp     al, R_DRV
         loop    .e
         pop     cx
         jmp     .nx
+
+; f_36 (INT 21h 36h, only with ROM 2): R:'s answer without walking its FAT:
+; nothing free, and the clusters the ROMs have (r_tot: the gap left out)
+        times   ($ - r_tstart) & 1 db 90h       ; (r_f36 even)
+r_f36:  mov     al, [bp+F_DX]
+        or      al, al
+        jnz     .d
+        mov     al, [cur_drv]
+        inc     al
+.d:     cmp     al, R_DRV + 1
+        je      .r
+.t:     times f_36.hk - f_36 db 90h
+        RKJMP   f_36.hk
+.r:     xor     ax, ax
+        mov     [bp+F_BX], ax           ; 0 free
+        inc     ax
+        mov     [bp+F_AX], ax           ; a sector a cluster, of 512 bytes
+        mov     word [bp+F_CX], 512
+        RADR    mov ax, [r_tot]
+        mov     [bp+F_DX], ax
+        RKJMP   done
+r_tot   dw      0                       ; (rom_init: 504, ROM 2 alone 252)
 r_lo:   times 7 dw 0                    ; R:'s sectors 0-6: the image, its sector
                                         ;  (rom_init)
 r_tend:
 R_TLEN  equ r_tend - r_tstart
 R_TLEN1 equ ..@r_made - r_tstart          ; (without ROM 2: .map not kept)
-        times   -(R_TLEN > 36 * 16) db 0        ; (36 paragraphs, 29 alone: one
+        times   -(R_TLEN > 39 * 16) db 0        ; (39 paragraphs, 29 alone: one
         times   -(R_TLEN1 > 29 * 16) db 0       ;  byte more costs DOS programs
                                                 ;  one more)
         times   -(((r_dio.n0 - r_tstart) | (r_dio.n - r_tstart) | (r_dio.dir - r_tstart) \
@@ -326,6 +349,9 @@ r_hooks:
         dw      drv_present, drv_present.hk, r_pres, r_pres.t
         dw      cwd_of, cwd_of.hk, r_cwdh, r_cwdh.t
         dw      dio, dio.hk, r_dio, r_dio.t
+        dw      0
+r_hooks2:                               ; (only with ROM 2)
+        dw      f_36, f_36.hk, r_f36, r_f36.t
         dw      0
 %define RTB(x) (section.rmt.start + ((x) - section.rmt.vstart))   ; (in the load image)
 
@@ -449,8 +475,10 @@ rom_init:
 .lw:    stosw
         loop    .lf
         pop     di
+        mov     word [di + r_tot - r_tstart], 2 * (R_NCL - 2)   ; (36h's total)
         cmp     byte [cs:MDB(r_i1)], 0FFh
         jne     .one
+        mov     word [di + r_tot - r_tstart], R_NCL - 2
         mov     byte [di + r_lo - r_tstart + 3], R2_P1  ; ROM 2 alone: R:'s
         lea     bx, [di + r_dt - r_tstart]      ;  FAT sector 1 its spare, its
         mov     byte [bx + D_ROOT], R2_ROOT + 2 ;  root ROM 2's half alone
@@ -505,7 +533,14 @@ rom_init:
         mov     [di+1], ax
         add     si, 8
         jmp     .h
-.hd:    mov     byte [lastdrv], R_DRV + 1       ; INT 21h 0Eh: to R:
+.hd:    cmp     si, RTB(r_hooks2)       ; then, with ROM 2, r_hooks2 (f_36)
+        jae     .hn
+        mov     di, [cs:MDB(r_place)]
+        cmp     byte [di + r_img2 - r_tstart], 0FFh
+        je      .hn
+        mov     si, RTB(r_hooks2)
+        jmp     .h
+.hn:    mov     byte [lastdrv], R_DRV + 1       ; INT 21h 0Eh: to R:
         mov     ax, [cs:MDB(r_place)]   ; the arena above it
         mov     di, ax
         mov     cx, R_TLEN + 15
