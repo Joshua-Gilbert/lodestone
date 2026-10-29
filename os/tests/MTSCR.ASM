@@ -41,9 +41,11 @@
 ;   E  for the 1520: 40:4Eh (the page shown's start, which KMT's INT 10h
 ;      trusts) against 40:62h x 40:4Ch after a mode set (3, 1, then 3, each
 ;      with page 8 shown before it) and after 05h for pages 1-8 and 0: a line
-;      each (mode, page, the two, '=' or '!'), 21, then 4E+ (all the same)
-;      or 4E-; FILE "E+" or "E-"; waits for a key.  Full screen, in front
-;      (in a terminal window its calls never reach the BIOS: a false 4E+)
+;      each (40:49h, 62h, the two; '=', '!' if they differ, '?' if 49h or
+;      62h isn't the mode or page asked for), 21, then 4E+ (all '='), 4E-
+;      (a '!') or 4E? (a '?': the calls never reached the BIOS, as in a
+;      terminal window or behind; run it full screen, in front); FILE "E+",
+;      "E-" or "E?"; waits for a key
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
@@ -486,18 +488,28 @@ m_e:    mov     di, tab
         mov     ax, 0001h
         call    epages
         mov     ax, 0003h
+        mov     [emode], al
         int     10h
+        xor     bl, bl
         call    erec
         mov     si, s_e
         call    ttys
         mov     si, tab
 .p:     cmp     si, di
         jae     .v
-        lodsb                           ; the mode, the page
+        lodsw                           ; the mode and page asked for
+        xchg    ax, dx
+        lodsw                           ; the mode and page noted
+        mov     cl, '='
+        cmp     ax, dx
+        je      .m
+        mov     cl, '?'                 ; (not as asked: the BIOS never had
+.m:     push    ax                      ;  the call, as in a terminal window)
         call    hexb2
         mov     al, ' '
         call    tty1
-        lodsb
+        pop     ax
+        mov     al, ah
         call    hexb2
         mov     al, ' '
         call    tty1
@@ -507,12 +519,21 @@ m_e:    mov     di, tab
         push    ax
         call    hexw
         pop     ax
-        mov     cl, '='
+        cmp     cl, '='
+        jne     .q
         cmp     ax, [si - 4]
         je      .q
         mov     cl, '!'
-        mov     byte [eok], '-'
-.q:     mov     al, cl
+.q:     cmp     cl, '='                 ; (4E? for any '?', else 4E- for any
+        je      .w                      ;  '!')
+        mov     al, '?'
+        cmp     cl, al
+        je      .s
+        cmp     [eok], al
+        je      .w
+        mov     al, '-'
+.s:     mov     [eok], al
+.w:     mov     al, cl
         call    tty1
         mov     al, 13
         call    tty1
@@ -534,16 +555,20 @@ m_e:    mov     di, tab
         call    wbuf
         jmp     key
 
-epages: int     10h                     ; mode AX, then 05h for pages 1-8 and
-        call    erec                    ;  0, each noted at DI; page 8 shown
-        mov     cx, 1                   ;  again at the end
+epages: mov     [emode], al             ; mode AX, then 05h for pages 1-8 and
+        int     10h                     ;  0, each noted at DI; page 8 shown
+        xor     bl, bl                  ;  again at the end
+        call    erec
+        mov     cx, 1
 .n:     push    cx
-        mov     ah, 5
         mov     al, cl
         cmp     al, 9
         jb      .p
         xor     al, al
-.p:     int     10h
+.p:     push    ax
+        mov     ah, 5
+        int     10h
+        pop     bx
         call    erec
         pop     cx
         inc     cx
@@ -552,19 +577,22 @@ epages: int     10h                     ; mode AX, then 05h for pages 1-8 and
         mov     ax, 0508h
         int     10h
         ret
-erec:   push    es                      ; 40:49h, 62h, 4Eh, 62h x 4Ch at DI
-        push    40h
-        pop     es
+erec:   push    es                      ; at DI: the mode and page asked for
+        push    40h                     ;  ([emode], BL), 40:49h, 62h, 4Eh,
+        pop     es                      ;  and 62h x 4Ch
+        mov     al, [emode]
+        mov     ah, bl
+        mov     [di], ax
         mov     al, [es:49h]
         mov     ah, [es:62h]
-        mov     [di], ax
-        mov     ax, [es:4Eh]
         mov     [di + 2], ax
+        mov     ax, [es:4Eh]
+        mov     [di + 4], ax
         mov     al, [es:62h]
         xor     ah, ah
         mul     word [es:4Ch]
-        mov     [di + 4], ax
-        add     di, 6
+        mov     [di + 6], ax
+        add     di, 8
         pop     es
         ret
 
@@ -752,7 +780,8 @@ s_b2    db      'fast', 0
 s_b3    db      'tty', 13, 10, 0
 s_e     db      'md pg 4Eh  62h*4Ch', 13, 10, 0
 eok     db      '+'
-tab     times   21 * 6 db 0
+emode   db      0
+tab     times   21 * 8 db 0
 romv    dw      0, 0D800h
 mode    db      0
 pmode   dw      0003h

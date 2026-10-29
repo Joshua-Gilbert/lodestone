@@ -1145,8 +1145,16 @@ def t_screens():
     line(k, '')
     check('MTSCR E alone: 40:4Eh is 40:62h x 40:4Ch after every mode set (3, 1, 3, page 8 shown before each) and 05h '
           '(pages 1-8 and 0): 21 lines with "=", none with "!", 4E+', e_ == b'E+' and '4E+' in et
-          and et.count(' =') == 21 and '!' not in et,
+          and et.count(' =') == 21 and '!' not in et and '?' not in et,
           (e_, et[-400:]))
+    # ... and where its calls never reach the BIOS (behind MTLAUNCH: they go into its pages, and it reads the front
+    # task's 40:49h-4Eh, as in a terminal window): not a pass but 4E?
+    typ(k, 'mtlaunch mtscr.com e e2.txt', 3.0)
+    e2, est = A.disk_file(k, 'E2.TXT'), slot_text(k, 1)
+    front(k, 1); line(k, ''); line(k, '')
+    check('MTSCR E behind MTLAUNCH (its mode sets and 05h never reach the BIOS): lines marked "?" (40:49h, 62h not the '
+          'mode and page asked for), 4E? and E?, not a false 4E+', e2 == b'E?' and '4E?' in est and ' ?' in est
+          and '4E+' not in est, (e2, est[-500:]))
     ref = refs['p']
     # SPF_BG: its output on the real screen, shadowed as the front task's
     sh.run('cls')
