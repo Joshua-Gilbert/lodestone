@@ -774,6 +774,62 @@ def t_noscreen():
         h.close()
 
 
+def t_replies():
+    """audit3 R52: the console's own REPLYs (no data, or TYPE's flags) on the wire, byte for byte: the
+    request's id and the status, from each place that makes one -- a request over REQMAX (F0h), a TYPE over
+    KSMAX (F0h), an op it doesn't do (F6h), a file's with DOS busy as it comes (F7h) and as it is to run
+    (F7h, req_service: dos_ok gone meanwhile), SCREEN with no screen kept (F5h)."""
+    h = Res(); h.boot()
+    try:
+        h.cmd('claude /r')
+        h.cmd('emsuse')
+        gen = generation(h)
+        h.press(HOT)
+        up = popped(h, gen) and h.has('Welcome to Claude Code', 30)
+        g = h.router.term.grid
+        replies, on_reply = [], g.on_reply
+        g.on_reply = lambda b: (replies.append(bytes(b)), on_reply(b))
+        def call(op, args=b''):
+            del replies[:]
+            rid, r = g.next_id, {}
+            th = threading.Thread(target=lambda: r.update(v=g.call(op, args, timeout=60)))
+            th.start(); h.wait(lambda: not th.is_alive(), 30); th.join(30)
+            one = len(replies) == 1 and len(replies[0]) == 2 and replies[0][0] == rid
+            return one and r.get('v') == (replies[0][1], b''), list(replies)
+        stat = glp.asciiz('A:\\EMSUSE.COM')
+        got = {'big': call(glp.OP_WRITE, struct.pack('<BI', 0, 0) + b'A:\\BIG.DAT\0' + b'x' * 9000),
+               'type': call(glp.OP_TYPE, b'\0' * 2100),
+               'op': call(glp.OP_INFO)}
+        h.rw('dos_ok', b'\0')
+        got['dos'] = call(glp.OP_STAT, stat)
+        h.rw('dos_ok', b'\1')
+        a0, st, watch = 0xE0000 + h.rsym['req_service'], {'n': 0}, h.m.watch
+        def w(addr):                            # (DOS gone busy after rf_request took the request)
+            if addr == a0 and h.m.ems_reg[0] == h.m.rd(h.stub(), h.sym['r_hw'], 1)[0] and h.rv('req_ready'):
+                h.rw('dos_ok', b'\0'); st['n'] += 1
+            watch(addr)
+        h.m.watch = w
+        got['dos2'] = call(glp.OP_STAT, stat)
+        h.m.watch = watch
+        h.rw('dos_ok', b'\1')
+        mode = h.page() * 0x4000 + h.rsym['bios']
+        h.m.ems_store[mode] = 7
+        got['screen'] = call(glp.OP_SCREEN, b'\0')
+        h.m.ems_store[mode] = 3
+        g.on_reply = on_reply
+        want = {'big': 0xF0, 'type': 0xF0, 'op': 0xF6, 'dos': 0xF7, 'dos2': 0xF7, 'screen': 0xF5}
+        check('each of the console\'s own REPLYs: the request\'s id and the status, nothing more',
+              up and st['n'] == 1 and all(got[k][0] and got[k][1][0][1] == v for k, v in want.items()), (up, st, got))
+        check('... the console still up, in step', h.up() and in_step(h), h.screen())
+        ok, why = clean(h)
+        check('no link failure, nothing wrong in gridlink\'s log', ok, why)
+        h.press(HOT)
+        h.wait(lambda: h.m.mode() == 3 and h.inpop() == 0, 5)
+        h.k.key(ESC)
+    finally:
+        h.close()
+
+
 def t_drive():
     """M3's aim: Claude drives TM5000G, the console popped up over it (its
     module auto-detect through grid_type, the screen of what it found)."""
@@ -1781,7 +1837,7 @@ def t_bg_hot():
         h.close()
 
 
-TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
+TESTS = [t_popup, t_midstream, t_session, t_requests, t_type, t_type_peek, t_title_room, t_noscreen, t_replies, t_nopi, t_timeout, t_tm5000g, t_drive, t_driver,
          t_ops, t_ops_codes, t_ops_mt, t_bg, t_bg_tm, t_bg_mt, t_bg_screen, t_bg_ksum, t_bg_hot]
 if __name__ == '__main__':
     TR.build()
