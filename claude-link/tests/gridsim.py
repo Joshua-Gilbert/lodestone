@@ -67,6 +67,7 @@ class GridSim:
         s.snapshot = None; s.time_set = None
         s.stats = collections.Counter()
         s.corrupt_rx_every = 0
+        s.damage_hellos = 0             # (HELLOs sent damaged, first)
         # Term (CLAUDE /T)
         s.app = None; s.term = False; s.keybuf = bytearray(); s.t_active = -10e6
         s.cells, s.attrs = TS._blank_rows(); s.cursor = (0, 0, True)
@@ -150,7 +151,10 @@ class GridSim:
                 else: s.g_seq = (s.g_seq + 1) & 0xFF; seq = s.g_seq
                 s.pend = len(chunk)
                 s.lastframe = glp.encode(kind, seq, s.p_ack, chunk)
-                s._write(s.lastframe)
+                if t == glp.G_HELLO and s.damage_hellos:   # (damaged on the bus; a resend goes whole)
+                    s.damage_hellos -= 1
+                    d = bytearray(s.lastframe); d[8] ^= 0x55; s._write(bytes(d))
+                else: s._write(s.lastframe)
             elif s.connected and (s.busy or s.pi_active or s.clock() - s.t_last > 1e6
                                   or (s.term and s.clock() - s.t_active < 2e6)):
                 s.pend = None
@@ -181,6 +185,7 @@ class GridSim:
                 if s.stats['rx_n'] % s.corrupt_rx_every == 0 and data:
                     d = bytearray(data); d[len(d) // 2] ^= 0x04; data = bytes(d)
             f, _ = glp.decode(data, s.rx)
+            if f and f.fl and not s.connected: f = None     # (CLAUDE before 1.15: CRC till its HELLO's answer)
             s.state = 'idle'
             if not f:
                 s.nak = True; s.stats['bad_rx'] += 1; return
