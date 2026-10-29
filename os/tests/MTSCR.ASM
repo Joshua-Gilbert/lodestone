@@ -32,6 +32,16 @@
 ;   R  an 'R' in 70h at row 0, column 60, through INT 10h 13h called from
 ;      D800:0000 (test_mt puts INT 10h / RETF there: a ROM's code), FILE
 ;      "R"; waits for a key
+;   B  mode 3, then page 7 shown with pages 1180h long (40:4Ch set so): from
+;      7A80h, its rows 9 on past the 32 KB.  Rows 0-11 written with 09h; the
+;      whole page scrolled up 1 and down 2 and a window partly past the end
+;      blanked (KMT's bound test: the BIOS's way, a cell at a time); rows
+;      3-5 up 1 (at once); the teletype on rows 2 and 24, its scroll; then
+;      page 0 and 1000h back, FILE "B"; waits for a key
+;   E  for the 1520: 40:4Eh (the page shown's start, which KMT's INT 10h
+;      trusts) against 40:62h x 40:4Ch after 05h for pages 0-8 and 0 again,
+;      in modes 3 and 1: a line each (mode, page, the two, '=' or '!'), then
+;      4E+ (all the same) or 4E-; FILE "E+" or "E-"; waits for a key
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
@@ -72,6 +82,10 @@ org 100h
         je      m_k
         cmp     al, 'R'
         je      m_r
+        cmp     al, 'B'
+        je      m_b
+        cmp     al, 'E'
+        je      m_e
         jmp     fin
 
 ; ---- P: the script ----
@@ -396,6 +410,154 @@ m_r:    push    cs
         call    wfile
         jmp     key
 
+; ---- B: a page across the 32 KB's end ----
+m_b:    mov     ax, 0003h
+        int     10h
+        mov     si, s_b
+        call    ttys
+        push    40h
+        pop     es
+        mov     word [es:4Ch], 1180h    ; (05h multiplies by it: 7A80h)
+        mov     ax, 0507h
+        int     10h
+        xor     dx, dx                  ; rows 0-11: 80 of 'a' on, in 10h on
+.r:     mov     ah, 2
+        mov     bh, 7
+        int     10h
+        mov     al, dh
+        add     al, 'a'
+        mov     ah, 9
+        mov     bl, dh
+        add     bl, 10h
+        mov     cx, 80
+        int     10h
+        inc     dh
+        cmp     dh, 12
+        jb      .r
+        mov     ax, 0601h               ; the page up 1, 1Fh
+        mov     bh, 1Fh
+        xor     cx, cx
+        mov     dx, 184Fh
+        int     10h
+        mov     ax, 0702h               ; down 2, 2Eh
+        mov     bh, 2Eh
+        xor     cx, cx
+        mov     dx, 184Fh
+        int     10h
+        mov     ax, 0600h               ; rows 6-10 blank, 4Eh
+        mov     bh, 4Eh
+        mov     cx, 0600h
+        mov     dx, 0A4Fh
+        int     10h
+        mov     ax, 0601h               ; rows 3-5 up 1, 5Bh (inside: at once)
+        mov     bh, 5Bh
+        mov     cx, 0300h
+        mov     dx, 054Fh
+        int     10h
+        mov     ah, 2                   ; the teletype on row 2, and on 24
+        mov     bh, 7                   ;  (past the end) with its scroll
+        mov     dx, 0205h
+        int     10h
+        mov     si, s_b2
+        call    ttys
+        mov     ah, 2
+        mov     bh, 7
+        mov     dx, 1800h
+        int     10h
+        mov     si, s_b3
+        call    ttys
+        mov     ax, 0500h
+        int     10h
+        push    40h
+        pop     es
+        mov     word [es:4Ch], 1000h
+        mov     al, 'B'
+        call    wfile
+        jmp     key
+
+; ---- E: 40:4Eh against 40:62h x 40:4Ch ----
+m_e:    mov     di, tab
+        mov     ax, 0003h
+        call    epages
+        mov     ax, 0001h
+        call    epages
+        mov     ax, 0003h
+        int     10h
+        mov     si, s_e
+        call    ttys
+        mov     si, tab
+.p:     cmp     si, di
+        jae     .v
+        lodsb                           ; the mode, the page
+        call    hexb2
+        mov     al, ' '
+        call    tty1
+        lodsb
+        call    hexb2
+        mov     al, ' '
+        call    tty1
+        lodsw                           ; 40:4Eh, then 40:62h x 40:4Ch
+        call    hexw
+        lodsw
+        push    ax
+        call    hexw
+        pop     ax
+        mov     cl, '='
+        cmp     ax, [si - 4]
+        je      .q
+        mov     cl, '!'
+        mov     byte [eok], '-'
+.q:     mov     al, cl
+        call    tty1
+        mov     al, 13
+        call    tty1
+        mov     al, 10
+        call    tty1
+        jmp     .p
+.v:     mov     al, '4'
+        call    tty1
+        mov     al, 'E'
+        call    tty1
+        mov     al, [eok]
+        call    tty1
+        mov     di, out_
+        mov     al, 'E'
+        stosb
+        mov     al, [eok]
+        stosb
+        mov     cx, 2
+        call    wbuf
+        jmp     key
+
+epages: int     10h                     ; mode AX; 05h for pages 0-8, then 0;
+        xor     cx, cx                  ;  each noted at DI
+.n:     push    cx
+        mov     ah, 5
+        mov     al, cl
+        int     10h
+        call    erec
+        pop     cx
+        inc     cx
+        cmp     cx, 9
+        jb      .n
+        mov     ax, 0500h
+        int     10h
+erec:   push    es                      ; 40:49h, 62h, 4Eh, 62h x 4Ch at DI
+        push    40h
+        pop     es
+        mov     al, [es:49h]
+        mov     ah, [es:62h]
+        mov     [di], ax
+        mov     ax, [es:4Eh]
+        mov     [di + 2], ax
+        mov     al, [es:62h]
+        xor     ah, ah
+        mul     word [es:4Ch]
+        mov     [di + 4], ax
+        add     di, 6
+        pop     es
+        ret
+
 ; ---- G, Q: graphics asked for ----
 m_g:    mov     si, s_g
         call    ttys
@@ -575,6 +737,12 @@ s_d     db      'writes the screen itself', 13, 10, 0
 s_g     db      'asks for graphics', 13, 10, 0
 s_end   db      'end', 0
 s_r     db      'R'
+s_b     db      'a page across the 32 KB', 39, 's end', 0
+s_b2    db      'fast', 0
+s_b3    db      'tty', 13, 10, 0
+s_e     db      'md pg 4Eh  62h*4Ch', 13, 10, 0
+eok     db      '+'
+tab     times   20 * 6 db 0
 romv    dw      0, 0D800h
 mode    db      0
 pmode   dw      0003h
