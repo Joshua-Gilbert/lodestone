@@ -231,7 +231,7 @@ section .text
         EVEN    fat_set.one, clu2lba
         EVEN    buf_getd, buf_get, buf_get.s, buf_get.f, buf_get.n, buf_get.hit
         EVEN    disk_io, dio.more, dio.ok, tc_piece, tc_mine
-        EVEN    gpath.n, gpath.s, parse_comp.fl, parse_comp.chk, f_36.l
+        EVEN    gpath.n, gpath.s, gpath.end, parse_comp.field, parse_comp.fl, parse_comp.chk, f_36.l
         EVEN    dir_entry, dir_entry.sub, dir_entry.walk, dir_entry.there, dir_entry.x
         EVEN    dir_find.e, dir_find.n, name_match.l, name_match.n, name_match.x
         EVEN    dev_look_ax.f, dev_look_ax.t, dev_look_ax.skip
@@ -254,7 +254,7 @@ lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
                                         ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
                                         ;  18 with R: (KROM.INC)
             align 16                    ; (free: the BSS starts on a paragraph;
-                                        ;  none at lastdrv 40EFh.  The EVEN pads
+                                        ;  none at lastdrv 40CFh.  The EVEN pads
                                         ;  make a change before gp_isr's move
                                         ;  this by its size +-1, so in steps of 2)
 image_end:                              ; everything above is copied low;

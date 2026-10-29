@@ -60,6 +60,7 @@ gpath:  push    ds
         loop    .l
         pop     ds
         jmp     .bad
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .end:   pop     ds
         cmp     byte [path_buf], 0
         je      .bad
@@ -117,6 +118,7 @@ parse_comp:
 .x:     pop     di
         pop     cx
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; up to CX characters into DI; stops at '.', '\' or NUL
 .field: mov     dx, cx
 .fl:    mov     al, [si]
