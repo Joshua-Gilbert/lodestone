@@ -1070,14 +1070,8 @@ mw_save:
         pop     es
         lea     di, [bp+SE_CTX]
         mov     bx, mw_ctx
-.r:     mov     si, [cs:bx]
-        or      si, si
-        jz      .x
-        mov     cx, [cs:bx+2]
-        rep     movsb
-        add     bx, 4
-        jmp     .r
-.x:     pop     es
+        call    mt_vsave.r              ; (mt_ranges' loop, mw_ctx's here)
+        pop     es
         popa
         ret
 mw_load_ctx:
@@ -1087,21 +1081,13 @@ mw_load_ctx:
         pop     di
         ret
 .di:    pusha                           ; (record DI)
-        push    ds
         lea     si, [di+SE_CTX]
         push    ds
         pop     es
         push    cs
         pop     ds
         mov     bx, mw_ctx
-.r:     mov     di, [bx]
-        or      di, di
-        jz      .x
-        mov     cx, [bx+2]
-        rep     movsb
-        add     bx, 4
-        jmp     .r
-.x:     pop     ds
+        call    mt_vload.r              ; (its tail: DS as it came, ES = CS)
         push    ds
         pop     es
         popa

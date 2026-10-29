@@ -126,9 +126,9 @@ def pixels(h):
 
 
 def t_window():
-    h = Win(irq_exact=True, more={'A:\\MTMODE.COM': open(os.path.join(HERE, 'MTMODE.COM'), 'rb').read(),
-                                  'A:\\KEYIN.COM': open(os.path.join(HERE, 'KEYIN.COM'), 'rb').read(),
-                                  'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
+    h = Win(more={'A:\\MTMODE.COM': open(os.path.join(HERE, 'MTMODE.COM'), 'rb').read(),
+                  'A:\\KEYIN.COM': open(os.path.join(HERE, 'KEYIN.COM'), 'rb').read(),
+                  'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
     try:
         h.boot_exec()
         conn = h.code_a()
@@ -331,7 +331,7 @@ def t_saver_mt():
         came = h.run_until(lambda: not th.is_alive(), 30)
         back = h.run_until(lambda: 'Welcome to Claude Code' in h.text(), 10)
         check('... a GRiD tool call ends it (the ring) and is answered; Term\'s screen back',
-              came and 'CLAUDE 1.14' in res.get('r', {}).get('grid', '') and back,
+              came and 'CLAUDE 1.15' in res.get('r', {}).get('grid', '') and back,
               (came, res, back, (h.m.us - t1) / 1e6, h.k.where()))
         got = []; keys = t.keys
         t.keys = lambda body: (got.append(bytes(body)), keys(body))
@@ -400,7 +400,7 @@ def measure(shift=False, spin=False, wake=True, scroll=False, sim_s=6.0):
              'A:\\MTLAUNCH.COM': open(os.path.join(HERE, 'MTLAUNCH.COM'), 'rb').read(),
              'A:\\LODE.INI': INI + b'MDISK=256\r\n'}
     kw = {} if wake else {'claude_com': no_wake(G.CLAUDE_COM)}
-    h = Win(irq_exact=True, more=files, bridge='pico', **kw)            # (the 1520's: frames of 3,340 bytes)
+    h = Win(more=files, bridge='pico', **kw)            # (the 1520's: frames of 3,340 bytes)
     h.cfg.set_clock = False                         # (the clock set at the HELLO would end MTSPIN's count)
     try:
         h.boot_exec()

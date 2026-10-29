@@ -81,12 +81,14 @@ program (TM5000G) ── INT 16h ──► CLAUDE /R stub (conventional, ~1.2 KB
 3. **Graphics state round trip.** Byte-compare video memory and 40:49-66h before and after a pop-up over a graphics program, then GRIDPROBE on the 1520 for the V6366's registers.
 
 ## Spike results (2026-10-09)
-The spike programs are in `os/claude`:
-- **RSPIKE.COM** — the TSR. It keeps 0.9 KB of conventional memory and uses 3 EMS pages: its code, plus the program's screen.
-- **EMSUSE**, **GFXUSE** and **KEYCODE** — test programs.
-- **SPIKES.BAT** — runs the steps on the 1520.
+The spike programs were in `os/claude`:
+- **RSPIKE.COM** — the TSR. It kept 0.9 KB of conventional memory and used 3 EMS pages: its code, plus the program's screen.
+- **EMSUSE**, **GFXUSE** and **KEYCODE** — test programs (still there: test_resident uses the first two, and KEYCODE shows a key's code on the 1520).
+- **SPIKES.BAT** — ran the steps on the 1520.
 
-The emulator tests are in `os/tests/test_resident.py` (21 checks).
+The emulator tests were in `os/tests/test_resident.py` (21 checks).
+
+RSPIKE.COM, SPIKES.BAT and those 21 checks were removed in the 2026-10-26 audit's step 8 (H12): `CLAUDE /R` superseded the spike, and test_resident's `CLAUDE /R` tests mirror each of its checks.
 
 On the 1520 (SPIKES.TXT; run without a GPIB address):
 
@@ -107,7 +109,7 @@ On the 1520 (SPIKES.TXT; run without a GPIB address):
 - **Effect:**
   - TM5000G's `kbhit()` blocked until a key. It calls `kbhit()` between mouse reads and before each GPIB probe, which explains both symptoms.
   - The Executive's AH=11h key checks blocked the same way, and so would LCMD's prompt screen saver.
-- **Fixed:** RSPIKE.COM is now 1,693 bytes and is on the floppy, verified.
+- **Fixed:** RSPIKE.COM was then 1,693 bytes and on the floppy, verified.
 - **Why the tests missed it:** they always pressed keys, and a key unblocks the wait.
 - **New checks, with no key pressed:**
   - a TM5000G mouse click opens Configure Modules;
@@ -153,7 +155,7 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - The console is its own assembly, `RCON.ASM` (org 0, 2,946 bytes). `/R` copies it into the first of three EMS pages.
   - Everything only `/R` and `/U` use (their code and messages, the stub as it will run, assembled for offset 100h with `vstart`, and the console) is where CLAUDE.COM's BSS goes, so chat and Term runs don't carry it in memory; only `res_args` (32 bytes), which looks for `/R` and `/U`, stays. (PR #27's review: before, a chat or Term run carried 1,248 bytes of it.)
   - It draws with `cell` from `CELL.INC`, split out of `TERMCELL.INC` (CLAUDE.COM is byte for byte the same after the split), and the Terminus font. This is the shape M2 needs: the console code CS-relative in EMS.
-- **The stub: in a block of its own at the top of memory, with no PSP.** This changed from the plan (and from RSPIKE, which keeps its PSP with INT 21h AH=31h).
+- **The stub: in a block of its own at the top of memory, with no PSP.** This changed from the plan (and from RSPIKE, which kept its PSP with INT 21h AH=31h).
   - **Why:** measured with the stub kept that way and loaded at the prompt, a program the Executive started afterwards got 534.8 KB instead of 578.4: 43.6 KB less. When LCMD ended, the Executive's block couldn't grow back past the stub (`ui_room`), so it moved above it, leaving everything below unused. Any TSR loaded at the prompt does this today.
   - **How:**
     1. `/R` takes the largest free block and cuts it to its size less the stub's paragraphs (`R_PARAS`: 47 then, 57 since M7c) and an MCB. The kernel leaves the rest, at that block's top, as a free block of exactly the stub's size.
@@ -196,8 +198,8 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - **Resident:** 768 bytes of conventional memory: 360 of code and data, the 384-byte stack, and the block's MCB (704 before the review's fixes: the header, the in-service check, the no-key answer). DOS programs get 0.8 KB less, at the prompt and from the Executive alike (the plan's target was 1.2 KB). `/U` gives all of it back.
   - **EMS:** 3 pages (48 KB).
   - **CLAUDE.COM:** 16,646 bytes on disk (+4,326). It takes 32 bytes more in memory when it runs as chat or Term (`res_args`).
-- **Tests** (`test_resident.py`, 43 new checks; the spike's 21 stay as they were):
-  - `/R`, `/R` again, `/U`, `/U` again, `/U` under RSPIKE, no EMS: messages and exit codes;
+- **Tests** (`test_resident.py`, 43 new checks; the spike's 21 stayed as they were, until step 8 removed them):
+  - `/R`, `/R` again, `/U`, `/U` again, `/U` under RSPIKE (under HOOK16 since step 8), no EMS: messages and exit codes;
   - memory at the prompt, from the Executive, and after `/U`; the EMS handle kept after CLAUDE.COM ends, and freed by `/U`;
   - the console over EMSUSE (AH=00h and AH=10h readers, all four EMS windows), over GFXUSE in modes 4, 6, 40h and 3 (video memory and 40:49h-66h byte for byte), over COPY CON ("DOS busy"), over the Executive (the mouse meanwhile), and over TM5000G (its keyboard, mouse and bus polling with no key pressed, auto-detect, and the mouse meanwhile);
   - type-ahead kept;
@@ -253,7 +255,7 @@ CODE-\ over a program now brings up Claude Code itself: Term, the same `claude` 
 - **Its data stays in its EMS page between pop-ups:** Term's 24-row shadow, the link's state, the title. `CLAUDE /R` clears the page after the code: 5.6 KB of code and font, 11.1 KB of the 16 KB with the data and the shadow (checked when it is assembled). `CLAUDE /R /A:nn` sets the bridge's address (7 if not given).
 - **Each pop-up:**
   1. Term's screen is drawn from the shadow at once, then the console says HELLO.
-  2. The HELLO carries a CRC-16 of the shadow and the cursor (`screen=`). If that is the screen of the Pi's last frame, or of the one before, gridlink goes on from it and sends only what changed while the program ran (0 bytes in the test, where nothing had; the first paint and an echo had taken 409). Otherwise, when CLAUDE /T had the link meanwhile, the Pi draws the screen again from a clear one.
+  2. The HELLO carries a sum of the shadow and the cursor (`screen=`): the Fletcher sum, as the frames' check, since audit3 R56 (2026-10-29; a CRC-16 before, ~16 ms on the 1520 against ~4). If that is the screen of the Pi's last frame, or of the one before, gridlink goes on from it and sends only what changed while the program ran (0 bytes in the test, where nothing had; the first paint and an echo had taken 409). Otherwise, when CLAUDE /T had the link meanwhile, the Pi draws the screen again from a clear one.
   3. Keys go to Claude Code and frames come back, as in CLAUDE /T.
 - **Going back:** the keys typed before CODE-\ go to Claude Code first, then the last frame gets its answer, so the bridge never holds an answer (and SRQ) while the program has the bus; 3 s at most. If the link failed meanwhile, the bridge gets SDC. The program's screen, BIOS data, keys and mouse pointer come back as in M1.
 - **Its own GPIB timeout:** the driver's timeout is global, so the console would run under the paused program's. That is 2 s by default, but TM5000G sets it for each call, and its TIME OUT n can leave up to 60 s, which each byte to a stuck bridge would wait (the console sluggish, the 3 s of going back stretched). The console sets 2 s with AH=0Ah at each pop-up, and puts the program's back when it goes (PR #28's review).
@@ -274,7 +276,7 @@ CODE-\ over a program now brings up Claude Code itself: Term, the same `claude` 
   - the program's GPIB timeout at 60 s: the console's own 2 s while it is up, and the program's back after; then a stuck bridge (on the bus, taking no byte): CODE-\ still goes back in 1.8 s;
   - over TM5000G: Claude Code and typing, the mouse moved meanwhile; afterwards its screen as it was, REN as it was, no chip reset or IFC, its SRQ flag still set, no AH=0Bh from the console, the bridge quiet, and auto-detect still finds the three instruments;
   - the stub's stack, painted before and read after;
-  - claude-link's `test_term.py`: the encoder's resume (the last frame's screen, the one before, a wrong CRC, none).
+  - claude-link's `test_term.py`: the encoder's resume (the last frame's screen, the one before, a wrong sum, none; an older console's CRC, by its HELLO's check).
 
   `test_resident.py`: CLAUDE.COM over a stub of version 1 (built `-DSTUB_VER=1`) leaves its byte 10Eh alone while it runs (in PR #27's stub that is `r_pend`, and writing it would bring the console up over CLAUDE), and over its own sets and clears `r_off`; without the version check, 10Eh is written. Under HOOK16, a TSR that hooks INT 16h after `CLAUDE /R` and passes every call on, CLAUDE.COM still finds the stub and sets `r_off`, and CODE-\ in CLAUDE brings no console. claude-link's `grid_emu` now answers INT 21h AH=52h (its blocks as an MCB chain), as CLAUDE.COM walks the memory blocks at its start. M1's other 64 checks pass with the new console: they have no bridge on the bus, and the band says so. The console keeps the review's fixes to M1's (the program's event handler swapped out, `keys_back`'s room), and its tests (MHAND, T1C and BUSY) run with it.
 - **Controls**, each run against the change it guards and failing a check:
@@ -334,7 +336,7 @@ In the console, Claude Code can now look at the program it is popped up over and
 ## Open points, after M3
 - **Programs that hook INT 16h themselves**, and programs that read the keyboard through INT 09h only (not covered: Phase 2 left INT 09h hooks out). `/U` refuses while one sits above the stub. (CLAUDE.COM finds the stub under such a program too, and turns its hot key off.) Claude's keys (TYPE) go in through the stub's INT 16h too, so such a program doesn't get them either.
 - **An empty bus** (no instrument, no bridge): what the 1520's 7210 and the driver do with the console's commands to the bridge, and how long CODE-\ then takes, is to be seen on the 1520.
-- **A CRC that matches by chance** (1 in 65,536) would leave a wrong Term screen until those cells change; CODE-R draws it all again.
+- **A sum that matches by chance** would leave a wrong Term screen until those cells change; CODE-R draws it all again. The Fletcher sum (audit3 R56) is 1 in 65,536 for a random screen, as the CRC was, but weaker against a structured change: it misses, for one, a cell's byte gone up by n and another's 128 cells on gone down by n. The Pi compares it only with the screens of its own last two frames.
 - **Files and GPIB while a program is paused** (the plan's READ, DIR, WRITE..., GPIB queries): done in CLAUDE 1.9, below. The kernel already runs a call made inside another on a stack of its own, so no kernel change was needed. Then M4 (0.5b), Claude working between keys: done in CLAUDE 1.10, below.
 - **The mouse during a pop-up:** the INT 33h pointer is hidden meanwhile, and its event handler swapped out unless DOS is busy (M1). The console itself ignores the mouse. M3's name lookup showed that AH=62h (which AX=14h makes) is safe while DOS is one call deep: the kernel runs a call made inside another on a stack of its own. So the swap could happen then too (TM5000G reads its keys through DOS: always one deep); not done in M3, as it needs its own test. If the kernel's INT 33h noted a handler's owner without a DOS call (reading the current PSP itself), AX=0Ch and 14h would be safe from anywhere.
 - **Keys that quit the program:** the rest of a TYPE's keys go to whatever calls INT 16h next (the prompt, the Executive), as RUN's do, and the console comes back over that. `grid_type` says so.
@@ -503,6 +505,14 @@ The audit's medium-risk rows for CLAUDE.COM and RCON: O11 and R52, and a faster 
 - **The reply's tail:** OPS.INC's `reply` sets `reply_busy` first and ends in a jump to `txq_put` (which neither reads it nor needs `reply` after it), with ioseg loaded once. Every reply through it, CLAUDE.COM's (files, GPIB, INFO, RUN) and the console's (files, GPIB), is 14 clocks and one transfer faster; a request the console takes, 8 clocks and a transfer. The console's own error replies are 12 to 30 clocks slower than before (the worst, a request over REQMAX, which gridlink never sends), ahead of a GPIB frame. A pad after `reply` keeps the code after it where it was, even or odd.
 - **Cost:** CLAUDE.COM 25,588 bytes (25,620 before); CLAUDE's block while a RUN's program runs 2,881 paragraphs (2,904 before: 368 bytes more for the program); RCON.BIN 8,850 (8,882), the console's page has 1,986 bytes left (1,949). Taken entries landing odd as before (CLAUDE.COM 17-21 %, the stub 14 %, RCON 27-40 %).
 - **Tests:** test_claude_kernel `test_run_memory_and_reconnect` (MEMSZ via RUN gets all but CLAUDE's 2,881 paragraphs; each RUN's REPLY names X:\...\CLAUDE.OUT; the link lost after it, the HELLO built over the RUN's buffers is the first one's; a second RUN the same); test_resident_term `t_replies` (each of the console's own replies byte for byte: the request's id and the status, the same as before R52).
+- **Not covered:** on the 1520.
+
+## The 2026-10-26 audit, step 8: R56 and S5 (2026-10-29)
+- **R56, no CRC on the GRiD:** CLAUDE.COM and the console check every frame with the Fletcher sum, the HELLO and its answer too; `crc16`, `crc_init` and the 512-byte table are gone from both. `fcs` sets the sums and falls into `fl16`, which goes on from BX's, so the console's `screen_sum` (the HELLO's `screen=`) is one pass over the shadow and two short ones over the cursor: 3.9 ms by the emulator's blocks, against the CRC's 15.4. The Pi's HELLO answer sets `use_fl` to ksum + 1 whatever it says (every gridlink that can read the HELLO says HF_FCS). **CLAUDE 1.15 / console 1.13 need gridlink from 2026-10-22 (8db568c, PR #60) on** (their HELLOs' `grid=CLAUDE 1.15` and `grid=CLAUDE 1.13`; 1.14 and 1.12 before): an older one never answers the HELLO. gridlink still takes the CRC from older CLAUDEs: their frames, and their console's `screen=` (it goes by the HELLO frame's check); it tries the sum first, and a NAK has its last answer sent again in the NAK's check (a frame both checks pass, 1 in 65,536). The Fletcher sum is a weaker screen check than the CRC (above, under the risks).
+- **S5:** the console draws a cell's 16 glyph rows with no CS: prefix (`CELL_FDS`: DS = CS wherever it draws), 16 bytes and 16 prefixes a cell fewer. CLAUDE.COM can't: `draw_line` runs `cell` with DS = convseg. NASM writes a prefix even for `ds:`, so TERM.RUN's `CELL_FSEG ds` still carries 16 (left as it was).
+- **Hot code:** `fl16`'s loop even (two SHR 1s, 3 clocks faster than SHR 2, and in TERMLINK's EVEN list); every other hot label's parity as before. Taken entries landing odd: CLAUDE.COM 20.6/17.4/17.0 % → 20.4/17.2/16.7 % (chat, files, RUN), the stub 14.0 % as before, RCON 38.6/27.0/28.0 % → 38.5/26.4/26.5 % (Term, files, background).
+- **Cost:** CLAUDE.COM 25,408 bytes (25,588 before); CLAUDE's block while a RUN's program runs 2,844 paragraphs (2,881); RCON.BIN 8,752 (8,850), the console's page has 2,596 bytes left (1,986); the stub 61 paragraphs as before.
+- **Tests:** test_resident_term `t_popup` (every frame of the console's with the sum, HELLOs too; the Pi goes on from the kept screen by its sum; the sum's time); test_claude_kernel `test_driver_frame_check` (the HELLO and its answer with the sum); claude-link's `test_term.py` `test_encoder_resume` (the sum, an older console's CRC by its HELLO's check) and `test_e2e.py` `test_either_check` (a HELLO both checks pass, NAKs in either). Mutants caught: `screen_sum` restarting the sums for the cursor, a wrong segment for the font, `resume` ignoring the HELLO's check, no recheck at a NAK, the CRC tried first.
 - **Not covered:** on the 1520.
 
 ## The 2026-10-26 audit, step 8: the link's buffers (2026-10-29)

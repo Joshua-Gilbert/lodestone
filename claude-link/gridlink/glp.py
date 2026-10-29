@@ -1,4 +1,4 @@
-"""GLP 1 - GRiD Link Protocol: frames, CRC, AR488 escaping, message codec.
+"""GLP 1 - GRiD Link Protocol: frames, their checks, AR488 escaping, message codec.
 
 See PROTOCOL.md.  Shared by the Pi service and the test models.
 """
@@ -58,7 +58,7 @@ HEADER = 6
 GRID_RX_DEFAULT = 246      # Pi -> GRiD payload a CLAUDE without rx= in its HELLO reads (255-byte buffer)
 GRID_RX_MAX = 8192
 GRID_REQ_DEFAULT = 4700     # the biggest REQUEST a CLAUDE without HELLO's req= takes (its REQMAX)
-OVERHEAD = 8               # header + CRC
+OVERHEAD = 8               # header + check
 
 # TEXT control codes
 T_NL, T_INV_ON, T_INV_OFF, T_UL_ON, T_UL_OFF = 0x0A, 0x0E, 0x0F, 0x10, 0x11
@@ -101,9 +101,14 @@ def fletcher16(data):
     return ((sum(itertools.accumulate(data, initial=1)) - 1) & 0xFF) << 8 | (1 + sum(data)) & 0xFF
 
 
+def encode_check(body, fl):
+    """A frame's last two bytes: the check over body (bytes 1 .. 5+len)."""
+    return struct.pack('<H', fletcher16(body) if fl else crc16(body))
+
+
 def encode(kind, seq, ack, payload=b'', fl=False):
     body = struct.pack('<BBBH', kind & 0xFF, seq & 0xFF, ack & 0xFF, len(payload)) + bytes(payload)
-    return bytes([SYNC]) + body + struct.pack('<H', fletcher16(body) if fl else crc16(body))
+    return bytes([SYNC]) + body + encode_check(body, fl)
 
 
 class Frame:
@@ -120,9 +125,10 @@ class Frame:
 
 
 def decode(buf, max_len=4096, fl_first=False):
-    """Find the first complete frame with a good check (CRC-16, or the
-    Fletcher sum when HELLO agreed to it: Frame.fl) at any sync position;
-    fl_first tries the Fletcher sum first (one check fewer a frame).
+    """Find the first complete frame with a good check (the Fletcher sum,
+    Frame.fl, or the CRC-16 of a CLAUDE before audit3 R56's HELLO and of
+    one before 1.3) at any sync position; fl_first tries the Fletcher sum
+    first (one check fewer a frame, and the one taken if both pass).
     Returns (frame, end) or (None, keep) where keep is the index of the first
     sync byte (bytes before it are garbage)."""
     buf = bytes(buf)
@@ -136,8 +142,8 @@ def decode(buf, max_len=4096, fl_first=False):
             if n <= max_len and end <= len(buf):
                 (crc,) = struct.unpack_from('<H', buf, i + HEADER + n)
                 body = buf[i + 1:i + HEADER + n]
-                for fl in ((True, False) if fl_first else (False, True)):   # (the Fletcher sum once HELLO
-                    if (fletcher16(body) if fl else crc16(body)) == crc:    #  has agreed to it)
+                for fl in ((True, False) if fl_first else (False, True)):
+                    if (fletcher16(body) if fl else crc16(body)) == crc:
                         return Frame(kind, seq, ack, buf[i + HEADER:i + HEADER + n], fl=fl), end
         i = buf.find(bytes([SYNC]), i + 1)
     return None, first
@@ -147,8 +153,9 @@ class StreamParser:
     """Accumulates bytes from the serial side and yields frames.  Garbage
     before a good frame is dropped.  When the line goes quiet with bytes
     still pending, call idle(): they can never become a frame, so the
-    caller should NAK."""
-    def __init__(s, max_len=4096): s.buf = bytearray(); s.max_len = max_len; s.fl = False
+    caller should NAK.  The Fletcher sum is tried first till a frame comes
+    with the CRC (every frame of a CLAUDE from audit3 R56 has the sum)."""
+    def __init__(s, max_len=4096): s.buf = bytearray(); s.max_len = max_len; s.fl = True
     def pending(s): return len(s.buf)
     def idle(s):
         had = bool(s.buf)

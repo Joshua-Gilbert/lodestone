@@ -296,10 +296,12 @@ def _sgr_colons(params):
 
 
 # ---- the diff encoder -------------------------------------------------------
-def screen_crc(cells, cursor):
-    """CRC-16 (GLP's) of a GRiD screen as resident Claude's console keeps it
-    (RCON.ASM screen_crc): glyph and attribute of each cell, row by row,
-    then the cursor's row, column and hidden flag."""
+def screen_sum(cells, cursor, fl=True):
+    """The Fletcher sum (the frames', glp.fletcher16) of a GRiD screen as
+    resident Claude's console keeps it (RCON.ASM screen_sum): glyph and
+    attribute of each cell, row by row, then the cursor's row, column and
+    hidden flag.  fl=False: the CRC-16 a console before audit3 R56 sent
+    (its HELLO came with the CRC too)."""
     bc, ba = cells
     data = bytearray()
     for r in range(ROWS):
@@ -307,7 +309,7 @@ def screen_crc(cells, cursor):
         data += row
     crow, ccol, hidden = cursor
     data += bytes([crow & 0xFF, ccol & 0xFF, 1 if hidden else 0])
-    return glp.crc16(data)
+    return glp.fletcher16(data) if fl else glp.crc16(data)
 
 
 def _blank_rows():
@@ -344,15 +346,16 @@ class Encoder:
             s.shown, s.cursor = s.pending[0], s.pending[1]
             s.pending = None
 
-    def resume(s, crc):
-        """A GRiD that kept its screen says HELLO with its CRC (CLAUDE /R's
-        console, from one pop-up to the next): if it is one we sent, the
+    def resume(s, sig, fl=True):
+        """A GRiD that kept its screen says HELLO with its sum (CLAUDE /R's
+        console, from one pop-up to the next; fl: the HELLO frame's check,
+        which is the sum's kind: screen_sum): if it is one we sent, the
         last frame or the one before it, go on from it.  False: unknown
         (reset() then)."""
-        try: want = int(crc, 16)
+        try: want = int(sig, 16)
         except (TypeError, ValueError): return False
         for state, cursor in (s.pending or (None, None), (s.shown, s.cursor)):
-            if state is not None and screen_crc(state, cursor) == want:
+            if state is not None and screen_sum(state, cursor, fl) == want:
                 s.shown, s.cursor, s.pending = state, cursor, None
                 s.stats['resumes'] = s.stats.get('resumes', 0) + 1
                 return True
