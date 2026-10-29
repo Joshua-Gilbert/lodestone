@@ -1195,6 +1195,25 @@ def t_screens():
           'page in window 2 signed still: B+); switched from, VF_DIRECT clear',
           f1 == 2 and b_ == b'B+' and sl[0x7A80:] == w and sl[:0x4000] == real[:0x4000] and c_b & VF_DIRECT == 0
           and 'bbbbbfastbb' in wt and 'd' * 80 in wt and {0x2E, 0x4E, 0x5B} <= set(w[1::2]), (f1, b_, c_b, diff, wt))
+    # a program that sets 40:62h and 40:4Ch itself (no 05h, 40:4Eh left 0: MTSCR J), switched from, then writing
+    # behind: mt_scrsv puts its saved 4Eh at 62h x 4Ch, where the BIOS writes, so its pages are as the BIOS drew it
+    typ(k, 'mtscr j j0.txt', 4.0)
+    j0, refj = A.disk_file(k, 'J0.TXT'), bytes(k.pc.rd(0xB800, 0, 0x4000))
+    line(k, '')
+    typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com j j.txt', 0.8)
+    f1, jn = tstate(k)[1], A.disk_file(k, 'J.TXT')
+    front(k, 0)
+    j_ = waitfile(k, 'J.TXT', 5.0)
+    slj, tvj, c_j = slot(k, 2) or bytes(0x4000), tvid(k, 2), vflags(k, 2)
+    front(k, 2); line(k, '')
+    front(k, 1); line(k, 'x'); line(k, '')
+    r1 = ''.join(chr(refj[0xF00 + i * 2]) for i in range(2000))
+    diff = [hex(i) for i in range(0, 0x4000, 2) if slj[i:i + 2] != refj[i:i + 2]][:8]
+    check('MTSCR J (40:62h 1, 40:4Ch 0F00h set itself, no 05h) switched from in its wait, then 30 lines behind: its '
+          'saved 40:4Eh made 62h x 4Ch at the switch (0F00h), so its characters and scrolls land on page 1 as the BIOS '
+          'drew them alone (16 KB byte for byte)', j0 == b'J' and f1 == 2 and jn is None and j_ is not None
+          and c_j & VF_DIRECT == 0 and slj == refj and 'line A' in r1 and tvj[0x4E - 0x49:0x50 - 0x49] == b'\x00\x0f',
+          (j0, f1, jn, j_, c_j, diff, tvj.hex()))
     for mode, why in (('d', 'a word written into B800h itself'), ('g', 'in a graphics mode (6)')):
         typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com %s %s.txt' % (mode, mode), 3.0)
         f1 = tstate(k)[1]
