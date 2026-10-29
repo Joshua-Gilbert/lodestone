@@ -335,17 +335,12 @@ crit:   sti
         mov     [crit_al], al
         mov     si, s_crlf
         call    bputs
-        mov     cx, di                  ; the message: CX + 1 NULs on from
-        xor     ch, ch                  ;  the one before ce0
+        mov     cx, di                  ; the message
+        xor     ch, ch
         cmp     cl, 0Ch
         jbe     .k
         mov     cl, 0Ch
-.k:     inc     cx
-        mov     si, ce0 - 1
-.s:     lodsb
-        or      al, al
-        jnz     .s
-        loop    .s
+.k:     call    ce_msg
         call    bputs
         mov     si, s_reading
         test    byte [crit_ah], 1
@@ -406,6 +401,16 @@ bputc:  push    ax
         int     10h
         pop     bx
         pop     ax
+        ret
+
+; INT 24h's message for code CX (0-12) -> SI: CX + 1 NULs on from the one
+; before ce0
+ce_msg: inc     cx
+        mov     si, ce0 - 1
+.s:     lodsb
+        or      al, al
+        jnz     .s
+        loop    .s
         ret
 
 ; ---------------------------------------------------------------------
@@ -955,14 +960,9 @@ run_external:
         jb      .fm0                    ;  24h's message for its code
         cmp     ax, 31
         ja      .fm0
-        mov     cx, ax
+        xchg    ax, cx
         sub     cx, 19
-        mov     si, ce0
-        jcxz    .fm
-.fs:    lodsb
-        or      al, al
-        jnz     .fs
-        loop    .fs
+        call    ce_msg
         jmp     .fm
 .fm0:   mov     si, e_nomem
         cmp     ax, 8
