@@ -3586,9 +3586,15 @@ def t_tasksrun():
     k = boot('mt_tr0.img', None, 88, TR)
     k.key(A.CODE['T']); k.run_for(0.3)
     t0 = k.text()
+    k.key(A.CODE['D']); k.run_for(0.2)
+    bd = k.band()
+    k.key(A.CODE['Z'], A.CODE['B'], ktest.ENTER); k.run_for(0.3)
+    t1 = k.text()
     k.key(ktest.ESC); k.run_for(0.3)
-    check('off: CODE-T opens Tasks, which says multitasking is off; ESC closes it (exit code 0FFFFh)',
-          'Multitasking is off.' in t0 and A.run_ret(k) == 0xFFFF, t0[-600:])
+    check('off: CODE-T opens Tasks, which says multitasking is off; CODE-D, CODE-Z, CODE-B, Return: nothing (no task '
+          'selected: no question); ESC closes it (exit code 0FFFFh)', 'Multitasking is off.' in t0
+          and not any(b.startswith('End') for b in bd) and 'Multitasking is off.' in t1 and A.run_ret(k) == 0xFFFF,
+          (t0[-600:], bd))
     k = boot('mt_tr.img', b'MULTITASK=1\r\n', 88, TR)
     seg, Y = mt_seg(k), k.Y
     vf = lambda t: k.pc.rd(seg, Y['mt_tab'] + t * MT_ENT + TE_VF, 1)[0]
@@ -3618,6 +3624,14 @@ def t_tasksrun():
     check('CODE-Z: task 1 parked (its row "parked"), CODE-Z again: back; on the Executive\'s row, CODE-Z and CODE-B: '
           '"Not possible for that task"', p1[1] == (1, 5, 'MTLINE.COM') and 'parked' in r1[1] and p2[1][1] != 5
           and [b for b in b0 if b.startswith('Not')] == ['Not possible for that task'] * 2, (p1, r1, p2, b0))
+    k.key(ktest.DOWN); k.key(A.CODE['D']); k.run_for(0.2)
+    be = k.band()
+    k.key(ktest.ESC); k.run_for(0.3)
+    re1, se = rows(), tstate(k)[0]
+    k.key(ktest.UP)
+    check('CODE-D on task 1: asked ("%s"); ESC: nothing ended, its row as it was, both tasks there (%s)' % (be[:1], se),
+          be[:1] == ['End MTLINE.COM: Confirm to end the task'] and len(re1) == 3 and 'being ended' not in re1[1]
+          and [n for i, s, n in se] == ['Executive', 'MTLINE.COM', 'MTLINE.COM'], (be, re1, se))
     k.key(ktest.DOWN); k.key(ktest.DOWN); k.key(A.CODE['D']); k.run_for(0.2)
     b1 = k.band()
     k.key(ktest.ENTER); k.run_for(0.2)
