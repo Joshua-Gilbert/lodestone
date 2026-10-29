@@ -914,22 +914,11 @@ sub_path:
 .r:     pop     bx
         ret
 
-; Return on the DOS program at runpath.  With MULTITASK=1 it starts as a
-; task, in front (LODEMT.SYS's MT_UI: its memory, and the message if it
-; can't); its end is EV_TASK's.  Else, and Shift-Return, as run_wait
+; Return on the DOS program at runpath.  With MULTITASK=1 the CMP is a far
+; jump to KMW's mw_prog: it starts as a task (its end is EV_TASK's), but
+; with Shift as run_wait
 run_prog:
         cmp     byte [ex_mtw], 0
-        je      run_wait
-        mov     ah, 2                   ; (Shift held?)
-        int     16h
-        test    al, 3
-        jnz     run_wait
-        mov     si, runpath
-        mov     di, msgbuf
-        xor     al, al
-        call    far [ui_mtx]
-        jc      show_msg
-        ret
 ; run it, in the Executive's own task, and wait for it (Shift-Return,
 ; Shift-CODE-P and Shift-CODE-A: all the memory, and a program loaded
 ; resident from there is everyone's); afterwards a fresh list and a

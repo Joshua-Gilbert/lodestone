@@ -2062,11 +2062,10 @@ mt_flagsc:
         mov     [bp+F_AX], al
         jmp     KSEG:ok
 
-; MT_UI: the Executive's entry (mt_ui), far
-mt_uic: mov     word [bp+F_AX], mt_ui
-        mov     [bp+F_DX], cs
-        push    es                      ; (and the UI patched for several
-        mov     es, [ui_seg]            ;  window .RUNs at once: KMW.INC)
+; MT_UI: the UI patched (KMW.INC: Return starts a task, mt_ui, and several
+; window .RUNs at once)
+mt_uic: push    es
+        mov     es, [ui_seg]
         call    mw_patch
         pop     es
         jmp     KSEG:ok
@@ -4066,9 +4065,9 @@ mt_lmat:
         ret
 
 ; ---------------------------------------------------------------------
-;  MT_UI's entry: the Executive's, called far in its own task (task 0),
-;  not inside INT 21h, so it may call DOS; with CS here no switch comes
-;  meanwhile (mt_safe).  DS = ES = the UI's segment.
+;  The Executive's entry: called far by KMW's patches (mw_prog, mw_poll) in
+;  its own task (task 0), not inside INT 21h, so it may call DOS; with CS
+;  here no switch comes meanwhile (mt_safe).  DS = ES = the UI's segment.
 ;  AL = 0: Return on a program: start the program at DS:SI (its path, as
 ;   the Executive has it) as a task, in front.  Its memory: MTMEM='s (at
 ;   the spawn); else a .COM's 64 KB; an .EXE's as its header asks: at

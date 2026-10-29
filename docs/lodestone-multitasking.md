@@ -1309,6 +1309,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
 
 **How:**
 - **The Executive's entry.** `MT_UI` gives the Executive a far entry into LODEMT.SYS (`mt_ui`). The Executive gets it once, at its start (in `ui_boot`, which is discarded), and keeps only its 4 bytes, and a byte for its wait (`ex_mtw`). The Executive calls it in its own task, not inside INT 21h, so the entry may call DOS: it reads an `.EXE`'s header itself, and asks for the largest block with AH=48h. With CS in MT's block, no switch comes meanwhile (`mt_safe`).
+  - Since the 2026-10-26 audit's R42 the Executive keeps no entry: `MT_UI` only patches the UI (KMW's `mw_ptab`), and the calls are KMW's. `run_prog`'s `CMP BYTE [ex_mtw],0` is a far jump to `mw_prog` (Shift: `run_wait`, as before), and `mw_poll` makes the look below. Off, `run_prog` falls into `run_wait`. The resident UI has 59 bytes less code (three paragraphs), LODEMT.SYS 86 bytes more.
 - **Sizing an `.EXE`:**
   - its pages less its header and the last page's unused part, plus its PSP, plus `MT_XENV` (74 paragraphs: EXEC's copy of the stub's environment, `ENVMAX` at most, and the name, with its MCB);
   - plus its minimum (`DX`), or up to its maximum (`AX`, at least `DX`), capped as above;
@@ -1316,7 +1317,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
 - **Starting it:** the entry spawns the task with its own `MT_SPAWN` block and notes the task's count (`TE_GEN`) in `mt_xgen`.
 - **Telling an end:**
   - `mt_end` counts the tasks ended (`mt_nend`) and notes each one's place in that count (`mt_eord`).
-  - `poll_once`, every half second, asks the entry whether anything has ended since the last look. It asks only while the Executive's own loop waits: `ex_mtw` is 2 between `ex_loop`'s INC and DEC, so a `.RUN` and the core's dialogues never see it.
+  - `poll_once`, every half second, asks the entry whether anything has ended since the last look. It asks only while the Executive's own loop waits: `ex_mtw` is 2 between `ex_loop`'s INC and DEC, so a `.RUN` and the core's dialogues never see it. (R42: `mw_poll` asks, when `poll_once`'s half-second clock, `lasttick`, has moved on since it last saw it: the same times, a compare at each wake.)
   - The answer is `EV_TASK` (the list only) or `EV_TASKM` (a message for one the Executive started, in `msgbuf`). Both go through `ex_loop`'s "the list again, the message shown kept" path.
   - There is one message a look, the first ended first, so the band ends with the last one's.
 - **LODE.INI's lists** (and T2's `FULL=`) are read in `mt_boot` (`mt_lists`, start-up code, discarded) into 160 bytes of MT's BSS. Each name is stored upper case with its NUL and a word (`MTMEM=`'s KB). `mt_spawn` matches the name part of the path it is given (`mt_lname`, `mt_lmat`) before it sizes the region.

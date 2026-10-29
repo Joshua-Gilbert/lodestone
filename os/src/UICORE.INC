@@ -158,10 +158,8 @@ run_active  resb 1
 lent        resb 1              ; the directory's memory is out (ui_lend):
                                 ;  how many times over (2: a program's saver)
 need_room   resb 1              ; ui_room has a look at the next chance
-ui_mtx      resw 2              ; MULTITASK=1: LODEMT.SYS's far entry for
-                                ;  the Executive (MT_UI; 0:0 off)
 ex_mtw      resb 1              ; 1 with MULTITASK=1; 2 while the Executive's
-                                ;  own loop waits (poll_once: a task ended?)
+                                ;  own loop waits (KMW's mw_poll: a task ended?)
 run_base    resw 1              ; where a .RUN loads (offset)
 ui_paras    resw 1              ; the UI block's own size
 ent_max     resw 1              ; directory entries that fit (EXEC.INC)
@@ -227,11 +225,9 @@ ui_boot:
         call    clip_name               ; (UI_CLIP's file)
         call    sysinfo                 ; (the machine, once: EXEC.INC)
         mov     ax, 0F019h              ; MULTITASK=1 (MTAPI.INC's MT_UI): the
-        stc                             ;  entry that starts a program as a
-        int     21h                     ;  task, and tells a task's end
+        stc                             ;  UI patched to start a program as a
+        int     21h                     ;  task and tell a task's end (KMW)
         jc      exec_main.go
-        mov     [ui_mtx], ax
-        mov     [ui_mtx + 2], dx
         mov     byte [ex_mtw], 1
         jmp     exec_main.go
 section ui
@@ -615,26 +611,10 @@ poll_once:
         jmp     .none
 .ck:    mov     bx, ax
         sub     bx, [lasttick]
-        cmp     bx, 9                   ; ~0.5 s
+        cmp     bx, strict word 9       ; ~0.5 s (strict: .none even)
         jb      .none
-        mov     [lasttick], ax
-        call    clock_tick
-        cmp     byte [ex_mtw], 2        ; (MULTITASK=1, the Executive's own
-        jb      .none                   ;  wait: a task ended?  EV_TASK, or
-        push    es                      ;  EV_TASKM: a message in msgbuf)
-        push    di
-        push    cs
-        pop     es
-        mov     di, msgbuf
-        mov     al, 1
-        call    far [ui_mtx]
-        pop     di
-        pop     es
-        jnc     .none
-        mov     ah, EV_TASK >> 8        ; (AL = 0: EV_TASK; 1: EV_TASKM)
-        add     al, EV_TASK & 0FFh
-        jmp     .ev
-        times ($ - $$) & 1 db 90h       ; (hot: even)
+        mov     [lasttick], ax          ; (MULTITASK=1: KMW's mw_poll looks
+        call    clock_tick              ;  for a task's end when it changes)
 .none:  pop     cx
         pop     bx
         pop     ax
