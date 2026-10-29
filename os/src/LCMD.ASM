@@ -709,17 +709,7 @@ run_cmd:
         jne     .w
         ret
 .w:     mov     byte [failed], 0
-        mov     di, cword               ; the first word, upper case
-        mov     cx, 70
-.c:     lodsb
-        call    is_wordend
-        je      .e
-        call    upcase
-        stosb
-        loop    .c
-.e:     dec     si
-        mov     byte [di], 0
-        mov     [argp], si
+        call    get_word
         ; drive change "B:"
         cmp     byte [cword+1], ':'
         jne     .bi
@@ -788,6 +778,22 @@ do_drive:                               ; "B:"
         mov     si, e_drive
         jmp     err
 .x:     ret
+
+; the word at SI, upper case, into cword (70 characters at most): DI on its
+; NUL, SI and [argp] just past it.  ES = CS (is_wordend)
+get_word:
+        mov     di, cword
+        mov     cx, 70
+.c:     lodsb
+        call    is_wordend
+        je      .e
+        call    upcase
+        stosb
+        loop    .c
+.e:     dec     si
+        mov     byte [di], 0
+        mov     [argp], si
+        ret
 
 is_wordend:                             ; ZF if AL ends a command word
         push    cx                      ;  (ES = CS)
@@ -891,12 +897,7 @@ run_external:
         je      .run
         jmp     bat_start
 .run:   ; command tail: " args", FCBs from the first two
-        mov     di, tail + 1
-        xor     cx, cx
-        mov     si, [argp]
-        call    tcopy
-        mov     [tail], cl
-        mov     byte [di], 13
+        call    mk_tail
         mov     si, tail + 1
         mov     di, fcb1
         mov     ax, 2901h
@@ -968,6 +969,17 @@ run_external:
         je      .fm
         mov     si, e_badcmd
 .fm:    jmp     err
+
+; a program's command tail: [argp]'s line (.t: after the CX characters
+; already at DI), its count, CR
+mk_tail:
+        mov     di, tail + 1
+        xor     cx, cx
+.t:     mov     si, [argp]
+        call    tcopy
+        mov     [tail], cl
+        mov     byte [di], 13
+        ret
 
 ; the ASCIIZ at SI added to the tail at DI (CX characters so far, 126 kept)
 tcopy:  lodsb
@@ -3768,17 +3780,7 @@ do_start:
         pop     es
         pop     si
         jmp     err
-.pg:    mov     di, cword               ; the program's name, upper case
-        mov     cx, 70
-.c:     lodsb
-        call    is_wordend
-        je      .ce
-        call    upcase
-        stosb
-        loop    .c
-.ce:    dec     si
-        mov     byte [di], 0
-        mov     [argp], si
+.pg:    call    get_word                ; the program's name
         mov     si, e_param
         cmp     di, cword
         je      .er
@@ -3811,16 +3813,12 @@ do_start:
         call    tcopy
         mov     si, prog
         call    tcopy
+        call    mk_tail.t
         mov     dx, prog2
         jmp     short .t
-.t0:    mov     dx, prog
-        mov     di, tail + 1
-        xor     cx, cx
-.t:     mov     si, [argp]
-        call    tcopy
-        mov     [tail], cl
-        mov     byte [di], 13
-        mov     word [spb + SP_ENV], 0
+.t0:    call    mk_tail
+        mov     dx, prog
+.t:     mov     word [spb + SP_ENV], 0
         mov     word [spb + SP_TAIL], tail
         mov     [spb + SP_TAIL + 2], cs
         mov     bx, spb
