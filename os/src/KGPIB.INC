@@ -1,13 +1,14 @@
 ; =====================================================================
-;  KGPIB.INC - the GRIDGPIB 1.1 driver, built into the Lodestone kernel.
-;  Generated from TM5000 driver/gridgpib/GRIDGPIB.ASM (resident part) with
-;  every global name prefixed gp_; then edited by hand where marked LODESTONE.
-;  INT 60h, same API and 'GRIDGPIB' signature at entry+2, so TM5000G,
-;  CLAUDE.COM and GGTEST use it unchanged.
-;  tools/GRIDGPIB.ASM, the driver for GRiD MS-DOS, is this file too: it
-;  defines GPIB_STANDALONE, and its differences are the islands under it
+;  KGPIB.INC - the GRIDGPIB driver 1.23: the one source of both the
+;  Lodestone kernel's built-in driver (INT 60h) and tools/GRIDGPIB.COM, the
+;  driver for GRiD MS-DOS.  GRIDGPIB.ASM includes this file with
+;  GPIB_STANDALONE defined; its differences are the islands under it
 ;  (f_present's DH, function 0Dh, f_stats' DX, INT 0Dh hooked by irq_on,
-;  the data they use).  The kernel's bytes are the same without them.
+;  the data they use), and the kernel's bytes are the same without them.
+;  First made from TM5000 driver/gridgpib/GRIDGPIB.ASM 1.1's resident part,
+;  every global name prefixed gp_, then edited where marked LODESTONE.
+;  Same API and 'GRIDGPIB' signature at entry+2 as ever, so TM5000G,
+;  CLAUDE.COM and GGTEST use it unchanged.
 ; =====================================================================
 gp_BASE    equ 02E1h
 gp_R_DIR   equ gp_BASE+0000h
