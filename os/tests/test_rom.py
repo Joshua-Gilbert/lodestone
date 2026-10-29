@@ -302,6 +302,22 @@ def t_rom2():
     check('INT 21h 36h for R: 0 free of 504 clusters with ROM 2 (the gap\'s 88 left out), its FAT not walked; of 252 for '
           'ROM 1 alone (walked, as before) and ROM 2 alone', got['with ROM 2'] == ([r1, r1], 0) and got['ROM 1 alone'][0] == [r2, r2]
           and got['ROM 1 alone'][1] >= 2 * 252 and got['ROM 2 alone'][0][:1] == [r2] and got['ROM 2 alone'][1] > 0, got)
+    # 0.6's ROM 1 (before O10: mkrom left its FAT past entry 253 zero, the
+    # gap's entries free; 338d1ae's LODE1.BIN differs from it there only)
+    # beside the new ROM 2, this kernel from a floppy: joined all the same
+    old = bytearray(rom()); old[512 + 381:1024] = bytes(1024 - 512 - 381)
+    k = boot(floppy('rom2o6.img', A.SYS, LCMD, FREE36), sock=None, roms={0: rom2(), 1: bytes(old)})
+    to_prompt(k)
+    o = prompt(k, 'dir r:')
+    ow = prompt(k, 'copy a:\\free36.com r:')
+    of = prompt(k, 'a:free36')
+    for n in ('defrag.com', 'term.fnt', 'tasks.run', 'lode.ini'): prompt(k, 'copy r:\\%s a:\\' % n)
+    got = [A.disk_file(k, n) == open(os.path.join(GOS, s), 'rb').read() for n, s in (('DEFRAG.COM', 'src/DEFRAG.COM'),
+           ('TERM.FNT', 'fonts/TERM.FNT'), ('TASKS.RUN', 'apps/TASKS.RUN'), ('LODE.INI', 'rom/LODE.INI'))]
+    check('0.6\'s ROM 1 (its gap entries free) beside the new ROM 2, from a floppy: joined (15 files, 0 bytes free), ROM 1\'s '
+          'and ROM 2\'s files read as built, a write to R: refused, 36h for R: 0 free of 504',
+          '15 File(s)' in o and ' 0 bytes free' in o and all(got) and ('0 File(s) copied' in ow or 'File(s) copied' not in ow)
+          and re.findall(r'F36 ax=(\w+) bx=(\w+) cx=(\w+) dx=(\w+)', of)[:1] == [r1] and not k.crashed, (o, ow, of, got))
     # the saver's round of the disks: DEFRAG.COM from R: (the start-up drive's root) with ROM 2 in; without it, the clock
     seen = []
     for rs in ({0: rom2(), 1: rom()}, {1: rom()}):
