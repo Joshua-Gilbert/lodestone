@@ -7,7 +7,8 @@
 ;  window (apps/TERM.ASM) too, with its own font: CELL_FSEG the font's
 ;  segment register, CELL_FONT its offset, CELL_FIRST its first code (none
 ;  below it drawn: a space), GLYPH_END the first code with no glyph ('?';
-;  100h: every code has one).
+;  100h: every code has one).  CLAUDE.ASM's, RCON.ASM's and TERM.ASM's
+;  EVEN lists name its labels: code that moves them stops those builds.
 ; =====================================================================
 
 %ifndef GLYPH_END
