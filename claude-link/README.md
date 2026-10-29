@@ -282,7 +282,9 @@ every byte checked.
   every message. A REPLY was answered NOP at once, so the next request waited
   for the GRiD's 1 s idle POLL. The bridge read USB a byte at a time
   (106 KB/s; now 510 KB/s). The table CRC cost the 286 about 34 clocks a
-  byte; the Fletcher sum costs 8.5.
+  byte; the Fletcher sum costs 8.5. Since the 2026-10-29 CLAUDE.COM (audit3
+  R56) the GRiD has no CRC at all, its HELLO too goes with the sum: it needs
+  a gridlink from 2026-10-22 on (8db568c, PR #60).
 - **The first call after idle:** CLAUDE POLLs once a second between
   messages. The bridge now raises SRQ when gridlink has news for an idle GRiD
   (WAKE, PROTOCOL.md), and CLAUDE POLLs at once. That left 51 ms: CLAUDE's

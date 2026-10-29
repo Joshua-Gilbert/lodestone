@@ -143,6 +143,8 @@ def test_driver_frame_check():
                  T.reply(('text', 'Written and checked.'))], mode='edits', bridge='pico')
     assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 2, (h.var('ksum', 1), h.var('use_fl', 1))   # (1 before audit3 R55)
     assert h.link.grid_req == 16700, h.link.grid_req     # (CLAUDE 1.6's HELLO: req=, so 16 KB write requests)
+    st = h.link.stats                                    # (audit3 R56: the HELLO too, and its answer)
+    assert st['rx_fletcher'] == st['rx_frames'] >= 2 and h.var('n_bad', 2) == 0, (dict(st), h.var('n_bad', 2))
     k0, st0 = h.var('n_kok', 2), dict(h.link.stats)
     assert h.turn('write a big file', sim_s=120)
     assert bytes(h.m.fs['A:\\BIG.TXT']) == big.replace('\n', '\r\n').encode()
@@ -308,7 +310,8 @@ T.test_run_exec_block = test_run_exec_block
 
 def test_run_memory_and_reconnect():
     """audit3 O11: a RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  While MEMSZ runs,
-    CLAUDE keeps its bss_end's paragraphs, 2,881 at most (2,904 before), and MEMSZ gets all the rest.  Then
+    CLAUDE keeps its bss_end's paragraphs, 2,844 at most (2,881 before audit3 R56's CRC table went, 2,904
+    before O11), and MEMSZ gets all the rest.  Then
     the link is lost and comes back: the HELLO built over the RUN's buffers says what the first one said,
     and a second RUN gets the same memory.  Each RUN's REPLY names its outname (X:\\...\\CLAUDE.OUT): a HELLO
     built during a RUN would be under it."""
@@ -337,7 +340,7 @@ def test_run_memory_and_reconnect():
             (kb, out, text)
         return st['got'], mine, out
     got, mine, out = run(1, 'how much memory')
-    assert mine == (h.sym['bss_end'] + 15) // 16 <= 2881, (mine, hex(h.sym['bss_end']), got)
+    assert mine == (h.sym['bss_end'] + 15) // 16 <= 2844, (mine, hex(h.sym['bss_end']), got)
     real = h.transport.answer
     h.transport.answer = lambda f: None            # the Pi goes quiet: a HELLO over the RUN's buffers
     assert h.run_until(lambda: not h.var('connected'), 10), 'no link loss noticed'

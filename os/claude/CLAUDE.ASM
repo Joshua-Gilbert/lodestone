@@ -2119,12 +2119,10 @@ pf_hello:
         jb      .f
         mov     bl, [si+1]
         mov     [pi_hf], bl                     ; (HF_SAVER: sv_check)
-        test    bl, HF_FCS                      ; the Pi takes the Fletcher sum:
-        jz      .crc                            ;  every frame from now on
-        mov     al, [ksum]                      ; (2: the driver keeps it, TERMLINK)
-        inc     ax
-        mov     [use_fl], al
-.crc:   and     bl, HF_TERM
+        mov     al, [ksum]                      ; the Fletcher sum, as every gridlink
+        inc     ax                              ;  that reads our HELLO says (HF_FCS):
+        mov     [use_fl], al                    ;  2, the driver keeps it (TERMLINK)
+        and     bl, HF_TERM
 .f:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
 %ifdef TERM_WIN
@@ -3328,8 +3326,7 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         jnc     .mem
         mov     dx, msg_nomem
         jmp     fatal
-.mem:   call    crc_init
-        call    sys_probe
+.mem:   call    sys_probe
         mov     si, s_title0
         mov     di, title_text
         call    copyz
@@ -4357,7 +4354,6 @@ exec_ss     resw 1
 exec_sp     resw 1
             resb HELLO_MAX - ($ - hellobuf)
 evans       resb 4
-crctab      resw 256
 ; Term
 term        resb 1                      ; 1: the GRiD is Claude Code's terminal
 t_active    resw 1                      ; tick of the last key or screen change
