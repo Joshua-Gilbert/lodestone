@@ -100,6 +100,9 @@ org 0
 %define GP_OTMO gp_otmo                  ; OPS.INC: the driver's timeout under
                                         ;  a GPIB request (ours, 2 s: old_tmo is
                                         ;  the program's)
+%define CELL_FDS                        ; CELL.INC: the font at DS (= CS wherever
+                                        ;  a cell is drawn here): no CS: prefix on
+                                        ;  a cell's 16 loads
 %define QUAD_GLYPHS                     ; GLYPHS.INC: the 2x2 block elements A1h-AEh,
 %define GLYPH_END 0AFh                  ;  as CLAUDE.COM's (1.12: the mascot's eyes)
 %define K_QUIT 2B00h                    ; TERMKEYS: CODE-\ back to the program,
