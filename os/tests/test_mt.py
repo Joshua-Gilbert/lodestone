@@ -1465,6 +1465,46 @@ def t_screens():
     check('the front task\'s output shadowed only while another task is there: 120 lines through DOS cost %.1f us more a '
           'character (in pcemu\'s time)' % ((u1 - u0) / (120 * 54)), u0 and u1 and s_ == 1 and u1 > u0, (u0, u1, s_))
 
+def t_kslice():
+    print('== audit3 S1: a task\'s slice of the kernel stack (switched from inside INT 21h) saved and put back in words')
+    from unicorn import UC_HOOK_CODE
+    k = boot('mt_ks.img', b'MULTITASK=1\r\n', 88)
+    seg, Y, pc = mt_seg(k), k.Y, k.pc
+    Shell(k).run('ver')
+    top, KL, TKS, KS = Y['kstack_top'], equ('TX_KLEN'), equ('TX_KSTK'), equ('KSLICE')
+    saved, lens, above, got = {}, collections.Counter(), {}, []
+    def sv(uc, a, n, u):                # mt_switch.k: the running task's CX bytes at SS:SP, as it saves them
+        cx = pc.r('cx')
+        if cx:
+            saved[pc.rd(seg, Y['mt_cur'], 1)[0]] = (pc.r('ss'), pc.r('sp'), bytes(pc.rd(pc.r('ss'), pc.r('sp'), cx)))
+            lens[cx] += 1
+    def ld(uc, a, n, u):                # mt_load: the TX of task BL marked past its slice; past kstack_top as it starts
+        tx = pc.u16(seg, task_ent(k, pc.r('bl')) + TE_TX)
+        n_ = pc.u16(tx, KL)
+        pc.wr(tx, TKS + n_, bytes([0xA5]) * (KS - n_))
+        above['b'] = bytes(pc.rd(0x60, top, 128))
+    def go(uc, a, n, u):                # mt_load.go: the slice back, nothing past it written
+        cur = pc.rd(seg, Y['mt_cur'], 1)[0]
+        n_ = pc.u16(pc.u16(seg, task_ent(k, cur) + TE_TX), KL)
+        if n_ and cur in saved:
+            got.append((saved.pop(cur) == (pc.r('ss'), pc.r('sp'), bytes(pc.rd(pc.r('ss'), pc.r('sp'), n_))),
+                        bytes(pc.rd(0x60, top, 128)) == above.get('b'), n_))
+    hks = [pc.mu.hook_add(UC_HOOK_CODE, f, None, seg * 16 + Y[l], seg * 16 + Y[l])
+           for f, l in ((sv, 'mt_switch.k'), (ld, 'mt_load'), (go, 'mt_load.go'))]
+    for l in ('mt_switch.k', 'mt_load', 'mt_load.go'): pc.mu.ctl_remove_cache(seg * 16 + Y[l], seg * 16 + Y[l] + 1)
+    typ(k, 'mtlaunch mtspin.com 60 ks1.txt d;/f mtline.com ks.txt', 0.5)
+    for c in 'switched in DOS':         # (MTLINE in front, MTSPIN behind: MTLINE's line read waits for each key in
+        k.key(c, settle=False); k.run_for(0.06)     #  kbd_get, giving MTSPIN its turn)
+    k.key(ktest.ENTER, settle=False); k.run_for(0.3)
+    for h in hks: pc.mu.hook_del(h)
+    print('   slices (bytes: switches): %s' % sorted(lens.items()))
+    check('a task switched from inside INT 21h (MTLINE, in front, waiting for each key of its line, MTSPIN D behind '
+          'it): its slice of the kernel stack back byte for byte where it was (ending at kstack_top), nothing past '
+          'kstack_top written (%d times, %d to %d bytes); its line read whole' % (len(got), min(lens) if lens else 0,
+                                                                                 max(lens) if lens else 0),
+          len(got) >= 12 and all(a and b for a, b, n in got) and A.disk_file(k, 'KS.TXT') == b'switched in DOS',
+          ([g for g in got if not (g[0] and g[1])][:4], len(got), A.disk_file(k, 'KS.TXT')))
+
 def two(v):
     """MTKEY's "nnnn kkkk" -> (n, k), or None."""
     return tuple(int(x, 16) for x in v.split()) if v and re.fullmatch(rb'[0-9A-F]{4} [0-9A-F]{4}', v) else None
@@ -6404,7 +6444,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_kslice, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

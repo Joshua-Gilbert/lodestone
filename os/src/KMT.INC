@@ -1247,6 +1247,9 @@ mt_switch:
 .k:     mov     [es:TX_KLEN], cx
         mov     si, sp
         mov     di, TX_KSTK
+        shr     cx, 1                   ; (in words, then an odd byte if any)
+        rep     movsw
+        adc     cx, cx
         rep     movsb
         push    bx
         call    mt_vsave                ; the kernel's variables
@@ -1306,6 +1309,9 @@ mt_load:
         push    ss
         pop     es
         mov     di, sp
+        shr     cx, 1
+        rep     movsw
+        adc     cx, cx
         rep     movsb
 .go:    pop     es
         pop     ds
