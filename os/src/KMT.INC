@@ -328,11 +328,9 @@ mt_xe       dw      0                   ;  while its TX is looked at: its own
 mt_vs       times   VIDLEN db 0         ; (mt_v10: the BIOS data worked on)
 mt_vp0      dw      0                   ; (mt_vtty: where it was)
 mt_vw       db      0                   ; (mt_vscr: the window's width, its
-mt_vn       db      0                   ;  lines, attribute, rows moved and
-mt_va       db      0                   ;  blanked, down or up)
-mt_vt       db      0
+mt_vn       db      0                   ;  lines, attribute, rows blanked)
+mt_va       db      0
 mt_vb       db      0
-mt_vd       db      0
 ; a text mode as the 1520's BIOS sets it (int10.asm VidSetMode; the
 ; tables in at_compat.asm): columns and Mode Control by mode, then the
 ; BIOS data of mode 3, a new task's
@@ -6499,12 +6497,21 @@ mt_vaddr:
 ; lines than the window has blanking all of it, and their counts bytes,
 ; unchecked, so a window upside down or right to left after that runs on
 ; as on the 1520 (within the 32 KB).  A whole-width window the right way up
-; (every teletype scroll) is moved at once.  All kept
+; (every teletype scroll) is moved at once, from the page shown's start
+; as the BIOS keeps it (40:4Eh).  All kept
+        times   ($ - $$) & 1 db 90h     ; (mt_vscr even)
 mt_vscr:
         pusha
-        mov     bp, sp                  ; ([BP+14], 12, 10, 8: AX, CX, DX, BX)
-        call    .clamp
-        cmp     ch, dh
+        cmp     dh, 25                  ; (the clamps)
+        jb      .c1
+        mov     dh, 24
+.c1:    cmp     dl, [VS_COLS]
+        jb      .c2
+        mov     dl, [VS_COLS]
+        dec     dl
+; up to its bound test the fast way keeps AL, BX, CX and DX as clamped
+; (AX in BP across the multiplying): .lit takes them so, from any jump
+.c2:    cmp     ch, dh
         ja      .lit
         or      cl, cl
         jnz     .lit
@@ -6515,38 +6522,37 @@ mt_vscr:
         mov     ah, dh
         sub     ah, ch
         inc     ah                      ; (the rows)
-        cmp     al, ah
-        jb      .rn
-        xor     al, al
-.rn:    mov     [mt_vn], al
-        mov     [mt_va], bh
-        mov     [mt_vd], bl
+        mov     bp, ax
         mov     al, ah
         mul     byte [VS_COLS]
         mov     si, ax                  ; (SI: the words in all the rows)
-        mov     dh, ch
-        xor     dl, dl
-        mov     bl, [VS_PAGE]
-        call    mt_vaddr                ; (DI: the top row's start)
+        mov     al, ch
+        mul     byte [VS_COLS]
+        shl     ax, 1
+        add     ax, [VS_START]
+        mov     di, ax                  ; (DI: the top row's start)
         mov     ax, si
         shl     ax, 1
         add     ax, di
+        xchg    ax, bp                  ; (AX back, the flags kept)
         jc      .lit
-        cmp     ax, 8000h
+        cmp     bp, 8000h
         ja      .lit
+        cmp     al, ah
+        jb      .rn
+        xor     al, al
+.rn:    mul     byte [VS_COLS]          ; (AX: the words AL lines hold)
         mov     cx, si
-        mov     al, [mt_vn]
-        mul     byte [VS_COLS]          ; (AX: the words AL lines hold)
         or      ax, ax
         jz      .fa
-        sub     cx, ax                  ; (CX: the words moved, BX: blanked)
-        mov     bx, ax
+        sub     cx, ax                  ; (CX: the words moved, DX: blanked)
+        mov     dx, ax
         shl     ax, 1
         push    ds
         push    es
         pop     ds
-        cmp     byte [cs:mt_vd], 0
-        jne     .fd
+        or      bl, bl
+        jnz     .fd
         mov     si, di                  ; up: from AL lines below, forward
         add     si, ax
         rep     movsw
@@ -6564,18 +6570,15 @@ mt_vscr:
         cld
         pop     di
 .fb:    pop     ds
-        mov     cx, bx
+        mov     cx, dx
 .fa:    mov     al, ' '
-        mov     ah, [mt_va]
+        mov     ah, bh
         rep     stosw
-        jmp     .x
-; the BIOS's own way, register for register
-.lit:   mov     ax, [bp+14]
-        mov     cx, [bp+12]
-        mov     dx, [bp+10]
-        mov     bx, [bp+8]
-        call    .clamp
-        mov     [mt_va], bh
+        popa
+        ret
+        times   ($ - $$) & 1 db 90h     ; (.lit even)
+; the BIOS's own way, register for register (AH the rows moved to .lc)
+.lit:   mov     [mt_va], bh
         sub     dl, cl
         mov     ah, dh
         sub     ah, ch
@@ -6588,13 +6591,12 @@ mt_vscr:
         jnz     .l2
         mov     ah, -1
 .l2:    inc     ah
-        mov     [mt_vn], al             ; the lines
-        mov     [mt_vt], ah             ; the rows moved (0: 256)
-        mov     ah, dh
-        inc     ah
-        sub     ah, ch
-        sub     ah, [mt_vt]
-        mov     [mt_vb], ah             ; the rows blanked (0: 256)
+        mov     [mt_vn], al             ; the lines; AH the rows moved (0: 256)
+        mov     al, dh
+        inc     al
+        sub     al, ch
+        sub     al, ah
+        mov     [mt_vb], al             ; the rows blanked (0: 256)
         or      bl, bl
         jnz     .ld
         mov     dh, ch                  ; (up: from the top row, down: the
@@ -6622,7 +6624,6 @@ mt_vscr:
 .ls:    add     si, dx
         dec     al
         jnz     .ls
-        mov     ah, [mt_vt]
 .lc:    mov     cl, [mt_vw]
         xor     ch, ch
         call    mt_vmov
@@ -6637,16 +6638,9 @@ mt_vscr:
         add     di, bp
         dec     ah
         jnz     .lb
-.x:     popa
+        popa
         ret
-.clamp: cmp     dh, 25
-        jb      .c1
-        mov     dh, 24
-.c1:    cmp     dl, [VS_COLS]
-        jb      .c2
-        mov     dl, [VS_COLS]
-        dec     dl
-.c2:    ret
+        times   ($ - $$) & 1 db 90h     ; (mt_vmov even)
 
 ; CX words from ES:SI to ES:DI, each only where both are in the 32 KB;
 ; SI, DI on past them.  All else kept

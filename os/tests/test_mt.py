@@ -1138,6 +1138,14 @@ def t_screens():
         if m == 'p':
             check('... all ended, the prompt alone again: nothing shadowed (mt_shd 0)', shd(k) == 0 and len(tstate(k)[0]) == 1,
                   (shd(k), tstate(k)))
+    # the page shown's start as the BIOS keeps it (40:4Eh), which KMT's scrolls and mt_vfast trust (O23, O25): MTSCR E,
+    # the 1520's check, in the model
+    typ(k, 'mtscr e e.txt', 3.0)
+    e_, et = A.disk_file(k, 'E.TXT'), k.pc.text_screen()
+    line(k, '')
+    check('MTSCR E alone: 40:4Eh is 40:62h x 40:4Ch after every 05h (pages 0-8 and 0 again, modes 3 and 1): 20 lines '
+          'with "=", none with "!", 4E+', e_ == b'E+' and '4E+' in et and et.count(' =') == 20 and '!' not in et,
+          (e_, et[-400:]))
     ref = refs['p']
     # SPF_BG: its output on the real screen, shadowed as the front task's
     sh.run('cls')
@@ -1159,6 +1167,24 @@ def t_screens():
           f1 == 2 and s_on == 1 and c_p & VF_DIRECT == 0 and slot(k, 2) == ref, (f1, s_on, c_p, tstate(k)))
     front(k, 2); line(k, '')
     front(k, 1); line(k, 'x'); line(k, '')
+    # a page across the 32 KB's end (MTSCR B: page 7 from 7A80h), shadowed in front: whole-page scrolls that mt_vscr's
+    # bound test sends the BIOS's way (O23: AL, BX, CX, DX kept to that test, no frame), one inside at once, the
+    # teletype; its pages read before the switch (which copies the screen into them)
+    typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com b b.txt', 3.0)
+    f1, b_ = tstate(k)[1], A.disk_file(k, 'B.TXT')
+    real, sl = bytes(k.pc.rd(0xB800, 0, 0x8000)), slot(k, 2, 0x8000) or bytes(0x8000)
+    front(k, 0)
+    c_b = vflags(k, 2)
+    front(k, 2); line(k, '')
+    front(k, 1); line(k, 'x'); line(k, '')
+    w = real[0x7A80:]
+    wt = ''.join(chr(c) for c in w[::2])
+    diff = [hex(i) for i in range(0, 0x8000, 2) if sl[i:i + 2] != real[i:i + 2]][:8]
+    check('MTSCR B in front, another task there, page 7 shown from 7A80h (40:4Ch 1180h): its pages as the BIOS drew the '
+          'screen, page 0 and 7A80h-7FFFh byte for byte (the page scrolled up and down, a window partly past the 32 KB '
+          'blanked, rows 3-5 moved at once, the teletype and its scroll); switched from, VF_DIRECT clear',
+          f1 == 2 and b_ == b'B' and sl[0x7A80:] == w and sl[:0x4000] == real[:0x4000] and c_b & VF_DIRECT == 0
+          and 'bbbbbfastbb' in wt and 'd' * 80 in wt and {0x2E, 0x4E, 0x5B} <= set(w[1::2]), (f1, b_, c_b, diff, wt))
     for mode, why in (('d', 'a word written into B800h itself'), ('g', 'in a graphics mode (6)')):
         typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com %s %s.txt' % (mode, mode), 3.0)
         f1 = tstate(k)[1]
