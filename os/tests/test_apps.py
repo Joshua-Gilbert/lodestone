@@ -484,6 +484,25 @@ def t_write():
     check('the goal column: from column 31, Down onto "short" (column 6), Down: 31 again; PgUp, Down, Down: 31; Up, '
           'Ins twice, Up: 6 (dropped by a key that moves nothing); Home, Down, Down: 1', (c1, c2, c3, c4, c5)
           == ('6', '31', '31', '6', '1'), (c1, c2, c3, c4, c5))
+    k = write_open('GOAL.TXT', long + b'short\r\n' + long + long)
+    k.key(*[ktest.RIGHT] * 30, ktest.DOWN)
+    p1 = col()
+    k.key(K_PGDN)
+    p2 = col()
+    k.key(ktest.UP, ktest.UP)
+    p3 = col()
+    k.key(K_PGUP)
+    p4 = col()
+    check('... PgDn and PgUp keep it too: Down onto "short" (column 6), PgDn past the end (column 1), Up, Up: 31; PgUp: 31',
+          (p1, p2, p3, p4) == ('6', '1', '31', '31'), (p1, p2, p3, p4))
+    got = []
+    for name, ks in (('GOALL.TXT', [ktest.LEFT]), ('GOALW.TXT', [K_CLEFT]), ('GOALD.TXT', [K_DEL])):
+        k = write_open(name, long + b'short\r\n' + long + long)
+        k.key(*[ktest.RIGHT] * 30, ktest.DOWN, *ks, ktest.DOWN)
+        got.append(col())
+    joined = 'short0123456789' in '\n'.join(lines(k))
+    check('... Left, CODE-Left and Delete drop it: from column 31, Down onto "short", then each, then Down: column 5, 1 and '
+          '6; Delete joined "short" to the next line', got == ['5', '1', '6'] and joined, (got, joined))
 
     # Substitute backward doesn't run into its own replacements
     k = write_open('BACK.TXT', b'xaaab yaab')
