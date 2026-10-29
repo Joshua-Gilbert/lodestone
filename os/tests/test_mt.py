@@ -1138,6 +1138,23 @@ def t_screens():
         if m == 'p':
             check('... all ended, the prompt alone again: nothing shadowed (mt_shd 0)', shd(k) == 0 and len(tstate(k)[0]) == 1,
                   (shd(k), tstate(k)))
+    # the page shown's start as the BIOS keeps it (40:4Eh), which KMT's scrolls and mt_vfast trust (O23, O25): MTSCR E,
+    # the 1520's check, in the model
+    typ(k, 'mtscr e e.txt', 3.0)
+    e_, et = A.disk_file(k, 'E.TXT'), k.pc.text_screen()
+    line(k, '')
+    check('MTSCR E alone: 40:4Eh is 40:62h x 40:4Ch after every mode set (3, 1, 3, page 8 shown before each) and 05h '
+          '(pages 1-8 and 0): 21 lines with "=", none with "!", 4E+', e_ == b'E+' and '4E+' in et
+          and et.count(' =') == 21 and '!' not in et and '?' not in et,
+          (e_, et[-400:]))
+    # ... and where its calls never reach the BIOS (behind MTLAUNCH: they go into its pages, and it reads the front
+    # task's 40:49h-4Eh, as in a terminal window): not a pass but 4E?
+    typ(k, 'mtlaunch mtscr.com e e2.txt', 3.0)
+    e2, est = A.disk_file(k, 'E2.TXT'), slot_text(k, 1)
+    front(k, 1); line(k, ''); line(k, '')
+    check('MTSCR E behind MTLAUNCH (its mode sets and 05h never reach the BIOS): lines marked "?" (40:49h, 62h not the '
+          'mode and page asked for), 4E? and E?, not a false 4E+', e2 == b'E?' and '4E?' in est and ' ?' in est
+          and '4E+' not in est, (e2, est[-500:]))
     ref = refs['p']
     # SPF_BG: its output on the real screen, shadowed as the front task's
     sh.run('cls')
@@ -1159,6 +1176,44 @@ def t_screens():
           f1 == 2 and s_on == 1 and c_p & VF_DIRECT == 0 and slot(k, 2) == ref, (f1, s_on, c_p, tstate(k)))
     front(k, 2); line(k, '')
     front(k, 1); line(k, 'x'); line(k, '')
+    # a page across the 32 KB's end (MTSCR B: page 7 from 7A80h), shadowed in front: whole-page scrolls that mt_vscr's
+    # bound test sends the BIOS's way (O23: AL, BX, CX, DX kept to that test, no frame), one inside at once, the
+    # teletype; its pages read before the switch (which copies the screen into them)
+    typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com b b.txt', 3.0)
+    f1, b_ = tstate(k)[1], A.disk_file(k, 'B.TXT')
+    real, sl = bytes(k.pc.rd(0xB800, 0, 0x8000)), slot(k, 2, 0x8000) or bytes(0x8000)
+    front(k, 0)
+    c_b = vflags(k, 2)
+    front(k, 2); line(k, '')
+    front(k, 1); line(k, 'x'); line(k, '')
+    w = real[0x7A80:]
+    wt = ''.join(chr(c) for c in w[::2])
+    diff = [hex(i) for i in range(0, 0x8000, 2) if sl[i:i + 2] != real[i:i + 2]][:8]
+    check('MTSCR B in front, another task there, page 7 shown from 7A80h (40:4Ch 1180h): its pages as the BIOS drew the '
+          'screen, page 0 and 7A80h-7FFFh byte for byte (the page scrolled up and down, a window partly past the 32 KB '
+          'blanked, rows 3-5 moved at once, the teletype and its scroll); nothing written past the 32 KB (its own EMS '
+          'page in window 2 signed still: B+); switched from, VF_DIRECT clear',
+          f1 == 2 and b_ == b'B+' and sl[0x7A80:] == w and sl[:0x4000] == real[:0x4000] and c_b & VF_DIRECT == 0
+          and 'bbbbbfastbb' in wt and 'd' * 80 in wt and {0x2E, 0x4E, 0x5B} <= set(w[1::2]), (f1, b_, c_b, diff, wt))
+    # a program that sets 40:62h and 40:4Ch itself (no 05h, 40:4Eh left 0: MTSCR J), switched from, then writing
+    # behind: mt_scrsv puts its saved 4Eh at 62h x 4Ch, where the BIOS writes, so its pages are as the BIOS drew it
+    typ(k, 'mtscr j j0.txt', 4.0)
+    j0, refj = A.disk_file(k, 'J0.TXT'), bytes(k.pc.rd(0xB800, 0, 0x4000))
+    line(k, '')
+    typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com j j.txt', 0.8)
+    f1, jn = tstate(k)[1], A.disk_file(k, 'J.TXT')
+    front(k, 0)
+    j_ = waitfile(k, 'J.TXT', 5.0)
+    slj, tvj, c_j = slot(k, 2) or bytes(0x4000), tvid(k, 2), vflags(k, 2)
+    front(k, 2); line(k, '')
+    front(k, 1); line(k, 'x'); line(k, '')
+    r1 = ''.join(chr(refj[0xF00 + i * 2]) for i in range(2000))
+    diff = [hex(i) for i in range(0, 0x4000, 2) if slj[i:i + 2] != refj[i:i + 2]][:8]
+    check('MTSCR J (40:62h 1, 40:4Ch 0F00h set itself, no 05h) switched from in its wait, then 30 lines behind: its '
+          'saved 40:4Eh made 62h x 4Ch at the switch (0F00h), so its characters and scrolls land on page 1 as the BIOS '
+          'drew them alone (16 KB byte for byte)', j0 == b'J' and f1 == 2 and jn is None and j_ is not None
+          and c_j & VF_DIRECT == 0 and slj == refj and 'line A' in r1 and tvj[0x4E - 0x49:0x50 - 0x49] == b'\x00\x0f',
+          (j0, f1, jn, j_, c_j, diff, tvj.hex()))
     for mode, why in (('d', 'a word written into B800h itself'), ('g', 'in a graphics mode (6)')):
         typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com %s %s.txt' % (mode, mode), 3.0)
         f1 = tstate(k)[1]
