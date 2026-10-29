@@ -1193,14 +1193,15 @@ class PC:
         # most), as a real PIC keeps INTR up.  (Armed here, at a run's
         # start: for an IRQ pending then, so for ticks and IRQ 5, which end
         # the run they come in; one raised mid-run without ending it, the
-        # ATA's, still waits for the run's end.)  The default is the older
+        # ATA's, still waits for the run's end.)  PC's default is the older
         # way, only at a run's start: a program spending nearly all its
         # time under CLI (polling INT 33h AX=3 in a task behind) gets
         # almost no ticks, so a task behind runs longer turns than on the
-        # 1520.  Opt-in (test_mt's t_tclip, T4, and t_srq; test_resident_term's
-        # t_bg_mt, T5c): under it
-        # test_resident_term's "a link failure in a pass..." and "the
-        # bridge gone while away..." failed: a link bug, fixed in T5c.
+        # 1520.  Lodestone's harnesses (ktest.KPC, so test_mt's boot(), and
+        # claude_kernel's KernelHarness) turn it on by default since the
+        # 2026-10-26 audit's H10; under it test_resident_term's "a link
+        # failure in a pass..." and "the bridge gone while away..." had
+        # failed: a link bug, fixed in T5c.
         s.irq_wait = s.irq_exact and not s.r('flags') & 0x200 \
             and (bool(s.soft) or any(s.unmasked(i) for i in s.irq_pending))
         s.blocked = False

@@ -125,7 +125,7 @@ def pixels(h):
 
 
 def t_window():
-    h = Win(irq_exact=True, more={'A:\\MTMODE.COM': open(os.path.join(HERE, 'MTMODE.COM'), 'rb').read(),
+    h = Win(more={'A:\\MTMODE.COM': open(os.path.join(HERE, 'MTMODE.COM'), 'rb').read(),
                                   'A:\\KEYIN.COM': open(os.path.join(HERE, 'KEYIN.COM'), 'rb').read()})
     try:
         h.boot_exec()
@@ -354,7 +354,7 @@ def measure(shift=False, spin=False, wake=True, scroll=False, sim_s=6.0):
              'A:\\MTLAUNCH.COM': open(os.path.join(HERE, 'MTLAUNCH.COM'), 'rb').read(),
              'A:\\LODE.INI': INI + b'MDISK=256\r\n'}
     kw = {} if wake else {'claude_com': no_wake(G.CLAUDE_COM)}
-    h = Win(irq_exact=True, more=files, bridge='pico', **kw)            # (the 1520's: frames of 3,340 bytes)
+    h = Win(more=files, bridge='pico', **kw)            # (the 1520's: frames of 3,340 bytes)
     h.cfg.set_clock = False                         # (the clock set at the HELLO would end MTSPIN's count)
     try:
         h.boot_exec()
