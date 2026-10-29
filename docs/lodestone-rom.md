@@ -33,7 +33,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
   - either ROM works alone: ROM 1 alone is R: as before; ROM 2 alone (a floppy start) is R: by itself;
   - so ROM 2 can be changed and burned without ROM 1, and the other way round.
 - **DEFRAG.COM on R:** the screen saver's round of the disks looks for it in the root of the start-up drive, so from the ROM it finds it there with ROM 2 in, as before (without ROM 2: no round, only the dark clock). From a floppy, DEFRAG.COM is on A: as before.
-- **Cost:** R:'s module is 32 paragraphs with ROM 1 alone (27 before: 80 bytes more) and 50 with ROM 2 joined (368 bytes more): what joins them is kept only when ROM 2 is there.
+- **Cost:** R:'s module is 29 paragraphs with ROM 1 alone (27 before ROM 2's support; 32 until the start-up patched `r_dio`'s call of `.map` out, audit O9) and 50 with ROM 2 joined (368 bytes more): what joins them, `.map` with it, is kept only when ROM 2 is there.
 
 ## Which socket
 

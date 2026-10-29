@@ -20,7 +20,7 @@ FOC_DEV equ 1           ;  Device (the drives),
 FOC_SUB equ 2           ;  Subject (the subjects of this drive)
 SUBJ    equ 14          ; a subject in the list: depth, NAME    EXT, date
 SUBMAX  equ 66          ; a subject's path, "\" and all (the kernel's CWDLEN - 2)
-EV_TASK equ 0FF10h      ; (poll_once, MULTITASK=1, only to ex_loop: a task ended;
+EV_TASK equ 0FF10h      ; (KMW's mw_poll, MULTITASK=1, only to ex_loop: a task ended;
 EV_TASKM equ 0FF11h     ;  one the Executive started: its message in msgbuf)
 
 section uibss
@@ -361,6 +361,7 @@ get_subject:
         jnc     .x
         mov     byte [subject + 1], 0
 .x:     ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; the list again, keeping the place in it (the core's redraw routine:
 ; after the screen saver, DEFRAG or a program the disk may differ)
@@ -467,6 +468,7 @@ ex_lvname:                                ; (type-to-find) AX = item -> SI
 .dev:   imul    si, bx, 3               ; ("A:", ...)
         add     si, o_drives
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; append the entry's title (name without trailing spaces) at DI
 sb_title:
@@ -479,6 +481,7 @@ sb_title:
         loop    .c
 .x:     pop     si
         ret
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: .k even)
 
 ; SI = entry -> SI = kind string, AL = what opens it (0 nothing, 1 it's a
 ; DOS program, 2 a .RUN, 3 Write).  (Entry pointer lost; callers re-fetch.)
@@ -500,6 +503,7 @@ kind_of:
         xchg    si, ax
         mov     al, [bx+4]
         jmp     .x
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .n:     add     bx, 5
         jmp     .k
 .raw:   mov     si, kindbuf             ; unknown extension: show it
@@ -914,22 +918,11 @@ sub_path:
 .r:     pop     bx
         ret
 
-; Return on the DOS program at runpath.  With MULTITASK=1 it starts as a
-; task, in front (LODEMT.SYS's MT_UI: its memory, and the message if it
-; can't); its end is EV_TASK's.  Else, and Shift-Return, as run_wait
+; Return on the DOS program at runpath.  With MULTITASK=1 the CMP is a far
+; jump to KMW's mw_prog: it starts as a task (its end is EV_TASK's), but
+; with Shift as run_wait
 run_prog:
         cmp     byte [ex_mtw], 0
-        je      run_wait
-        mov     ah, 2                   ; (Shift held?)
-        int     16h
-        test    al, 3
-        jnz     run_wait
-        mov     si, runpath
-        mov     di, msgbuf
-        xor     al, al
-        call    far [ui_mtx]
-        jc      show_msg
-        ret
 ; run it, in the Executive's own task, and wait for it (Shift-Return,
 ; Shift-CODE-P and Shift-CODE-A: all the memory, and a program loaded
 ; resident from there is everyone's); afterwards a fresh list and a
@@ -2529,6 +2522,7 @@ to_fcb: push    di
         stosb
         dec     cx
         jmp     .n
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .e:     lea     di, [bx+8]
         mov     cx, 3
 .el:    lodsb
@@ -2704,6 +2698,7 @@ ex_row: mov     [rowmask], cl
         call    sb_fcb
         dec     si
         jmp     short .sp
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .root:  push    si
         mov     si, s_root
         call    sb_str

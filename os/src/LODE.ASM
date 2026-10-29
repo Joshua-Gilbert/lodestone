@@ -231,7 +231,7 @@ section .text
         EVEN    fat_set.one, clu2lba
         EVEN    buf_getd, buf_get, buf_get.s, buf_get.f, buf_get.n, buf_get.hit
         EVEN    disk_io, dio.more, dio.ok, tc_piece, tc_mine
-        EVEN    gpath.n, gpath.s, parse_comp.fl, parse_comp.chk, f_36.l
+        EVEN    gpath.n, gpath.s, gpath.end, parse_comp.field, parse_comp.fl, parse_comp.chk, f_36.l
         EVEN    dir_entry, dir_entry.sub, dir_entry.walk, dir_entry.there, dir_entry.x
         EVEN    dir_find.e, dir_find.n, name_match.l, name_match.n, name_match.x
         EVEN    dev_look_ax.f, dev_look_ax.t, dev_look_ax.skip
@@ -254,7 +254,7 @@ lastdrv     db 2                        ; INT 21h 0Eh's count: A: and B:, 3 with
                                         ;  C: (KHD.INC), 13 with M: (KMDISK.INC),
                                         ;  18 with R: (KROM.INC)
             align 16                    ; (free: the BSS starts on a paragraph;
-                                        ;  none at lastdrv 40EFh.  The EVEN pads
+                                        ;  none at lastdrv 40CFh.  The EVEN pads
                                         ;  make a change before gp_isr's move
                                         ;  this by its size +-1, so in steps of 2)
 image_end:                              ; everything above is copied low;
@@ -342,15 +342,17 @@ section ui                              ; (UI_PARAS: ui_image_end ends it)
 ; menus, help, forms, drags, Write, the calculator, System, a terminal
 ; window), then bench/plan.py and evalpar.py with SECTION=ui
 %ifndef NOTC
-        EVEN    ui_event.got, ..@ui_idle, poll_once, poll_once.nomouse, poll_once.nokey, poll_once.idle
+        EVEN    ui_event.got, ..@ui_idle, read_key, read_key.grey, read_key.x, read_clock
+        EVEN    poll_once, poll_once.nomouse, poll_once.nokey, poll_once.idle
         EVEN    poll_once.sv, poll_once.ck, poll_once.none, act_now, show_cursor, move_cursor.done
         EVEN    compose.r1, compose.r2, compose.noold, compose.r3, compose.r4, compose.old1
         EVEN    hide_cursor, hide_cursor.row, fill_band, fill_band.r, clip_rows, clip_rows.ok
         EVEN    invert_band, invert_band.r, vline.r, puts, putsn, putsn.x, putsn.ok, strlen, strlen.l, strlen.x
         EVEN    sb_str, sb_str.x, sb_u32.p, sb_u32.x, sb_2d, sb_date, sb_date.m, bcd, sb_title, sb_title.c, sb_title.x
-        EVEN    win_save.r, win_restore.r, win_ev, win_ev.pass, ui_dispatch.l, lv_draw.l, lv_row, lv_row.f, xor_rect.vl
+        EVEN    win_save.r, win_restore.r, win_ev, win_ev.pass, ui_dispatch.l, ui_dispatch.n, lv_row, lv_row.f, xor_rect.vl
         EVEN    ..@ui_retf, run_app.abs, saver.l, saver.z, ..@ui_sidle, tick
-        EVEN    sort_dir.j, sort_dir.put, kind_of, kind_of.n, to_fcb, to_fcb.n, ex_row.tit, puts_tmp
+        EVEN    dta2ent, ent_cmp, ent_ptr, kind_of.k, kind_of.n, to_fcb, to_fcb.n, to_fcb.e, to_fcb.el
+        EVEN    ex_row, ex_row.tit, puts_tmp
 %endif
 
 ; section ovl inside the disk buffers (bss_start is image_end; init comes
