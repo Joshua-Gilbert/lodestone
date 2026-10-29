@@ -815,17 +815,8 @@ rclick: mov     al, 0
         jbe     .m
         mov     al, RM_SEL
 .m:     test    byte [tdl], 32
-        jnz     .p
-        or      al, RM_TXT
-        jmp     short .r
-.p:     or      al, al
         jnz     .r
-        pusha
-        mov     al, 2                   ; (what the clipboard holds)
-        call    UI_CLIP
-        or      cx, cx
-        popa
-        jz      cursor.x
+        or      al, RM_TXT
 .r:     mov     si, items
         call    rmenu
         jc      cursor.x
