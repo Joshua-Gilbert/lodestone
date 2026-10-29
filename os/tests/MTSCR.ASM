@@ -49,6 +49,10 @@
 ;      (a '!') or 4E? (a '?': the calls never reached the BIOS, as in a
 ;      terminal window or behind; run it full screen, in front); FILE "E+",
 ;      "E-" or "E?"; waits for a key
+;   J  mode 3, then 40:62h 1 and 40:4Ch 0F00h set itself (no 05h: 40:4Eh
+;      left 0), so page 1 from 0F00h as the BIOS writes; 2 s (test_mt
+;      switches from it meanwhile), then 30 lines through the teletype
+;      (scrolled), FILE "J"; after a key, 62h and 4Ch as they were
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
@@ -93,6 +97,8 @@ org 100h
         je      m_b
         cmp     al, 'E'
         je      m_e
+        cmp     al, 'J'
+        je      m_j
         jmp     fin
 
 ; ---- P: the script ----
@@ -527,6 +533,37 @@ echk:   mov     al, '?'
         int     67h
         pop     ax
 .x:     ret
+
+; ---- J: the page shown set in the BIOS data itself, no 05h ----
+m_j:    mov     ax, 0003h
+        int     10h
+        push    40h
+        pop     es
+        mov     byte [es:62h], 1        ; (40:4Eh left 0: the BIOS writes at
+        mov     word [es:4Ch], 0F00h    ;  62h x 4Ch, 0F00h)
+        mov     ax, [es:6Ch]
+.w:     mov     dx, [es:6Ch]            ; 2 s
+        sub     dx, ax
+        cmp     dx, 36
+        jb      .w
+        mov     cx, 30
+.l:     push    cx
+        mov     al, cl
+        add     al, '@'
+        mov     [s_ln + 5], al
+        mov     si, s_ln
+        call    ttys
+        pop     cx
+        loop    .l
+        mov     al, 'J'
+        call    wfile
+        mov     ah, 8
+        int     21h
+        push    40h
+        pop     es
+        mov     byte [es:62h], 0
+        mov     word [es:4Ch], 1000h
+        jmp     fin
 
 ; ---- E: 40:4Eh against 40:62h x 40:4Ch ----
 m_e:    mov     di, tab

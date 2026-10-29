@@ -5423,7 +5423,11 @@ mt_scrsv:
         mov     di, TX_VID
         mov     cx, VIDLEN
         rep     movsb
-        push    0B800h
+        mov     al, [62h]               ; its page's start as 62h x 4Ch, as the
+        xor     ah, ah                  ;  BIOS writes: a program may have set
+        mul     word [4Ch]              ;  them itself, not with 05h, and MT
+        mov     [es:TX_VID + 4Eh - 49h], ax ;  trusts 4Eh behind (in graphics
+        push    0B800h                  ;  modes 62h is 0, and so 4Eh)
         pop     ds
         push    EMS_FRAME
         pop     es
@@ -5440,6 +5444,7 @@ mt_scrsv:
 .gone:  mov     word [cs:bx+TE_SH], 0   ; (TE_SH, TE_SF: none kept, nor freed at
         mov     byte [cs:mt_shd], 0     ;  its end: the number may be someone
         jmp     .x                      ;  else's now)
+        nop                             ; (what follows at its parity)
 
 ; task AL's screen shown, and AL in front (a task waiting to be: ready
 ; now): its mode, 3D9h (CGA's modes, before the screen, as RCON does), the
