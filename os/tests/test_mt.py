@@ -5360,6 +5360,55 @@ def t_wxor():
           and rows[0] > 0 and rows[1] > 0 and not want[-1] and all(want[:-1]) and not k.crashed,
           ([(len(g), len(v), len(g - v), len(v - g)) for g, v in zip(got, want)], rows, k.crashed))
 
+def t_peek():
+    print('== a window .RUN\'s file read from one open (R43): every way it can\'t start closes it')
+    hdr = lambda api, img, bss, na, nr, fl: b'GRUN' + struct.pack('<6H', api, img, bss, na, nr, fl)
+    fakes = (('NOWIN.RUN', hdr(5, 0x100, 0, 0, 0, 0)),          # not a window .RUN (cut short: run_app says so)
+             ('WBAD.RUN', hdr(6, 0x10, 0, 0x2000, 0x2000, 1)),  # its fixups past 4000h words: mw_start's .bad
+             ('WROOM.RUN', hdr(6, 0x10, 0xFF00, 0, 0, 1)),      # no slot that big: .room
+             ('WCUT.RUN', hdr(6, 0x200, 0, 0, 0, 1)))           # its image cut short: mw_load's
+    for n, b in fakes: open(os.path.join(A.OUT, n), 'wb').write(b)
+    k = boot('mt_peek.img', b'MULTITASK=1\r\n', 88, A.CALCRUN, *(os.path.join(A.OUT, n) for n, b in fakes), mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    fh = lambda: k.pc.u16(seg, Y['mw_fh'])
+    s0, MW_MAX = sft_used(k), 4                     # (KMW.INC's)
+    def tries(name, n):
+        """Return on it n times: [the band's first line each time], every handle back each time."""
+        out, ok = [], True
+        for _ in range(n):
+            k.select(name); k.key(ktest.ENTER, settle=False); k.run_for(0.4)
+            out.append((k.band() or [''])[0])
+            ok = ok and fh() == 0 and sft_used(k) == s0
+            k.key(ktest.ENTER, settle=False); k.run_for(0.3)    # (the message gone)
+        return sorted(set(out)), ok and fh() == 0 and sft_used(k) == s0
+    # no window open: run_app's (mw_run's .orig) 22 times, past the root's 20 handles; mw_start's refusals
+    r = [tries('NOWIN.RUN', 22)] + [tries(n, 3) for n in ('WBAD.RUN', 'WROOM.RUN', 'WCUT.RUN')]
+    check('no window open: Return on NOWIN.RUN (not a window .RUN, cut short) 22 times, and 3 times each on WBAD.RUN, '
+          'WROOM.RUN, WCUT.RUN (window .RUNs that can\'t start: their header, no room, cut short): each refused (%s), '
+          'mw_peek\'s file closed each time (mw_fh 0, the SFT as it was), nothing running' % [x[0] for x in r],
+          all(ok for x, ok in r) and all(x[0] and x[0][0] for x in r) and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00',
+          (r, mb('mw_n'), fh(), sft_used(k), s0))
+    # a window open (the calculator), the Executive in front: mw_run's .ses, and mw_start's refusals from there
+    k.key(A.CODE['K']); k.run_for(0.5)
+    A.click(k, 4, 340); k.run_for(0.3)              # (the Executive's information line)
+    c0 = mb('mw_cur')
+    r = [tries(n, 3) for n in ('NOWIN.RUN', 'WBAD.RUN', 'WCUT.RUN')]
+    check('the calculator open, the Executive in front (%d): Return on NOWIN.RUN ("%s"), WBAD.RUN and WCUT.RUN 3 times '
+          'each: refused, the file closed each time; the calculator alone still' % (c0, r[0][0][0]),
+          c0 == 0 and all(ok for x, ok in r) and r[0][0] == ['NOWIN.RUN needs the whole screen: close the windows first']
+          and mb('mw_n') == 1, (r, c0, mb('mw_n'), fh(), sft_used(k), s0))
+    # CALC.RUN till too many (MW_MAX): the last ones refused with their file closed; then each opened is a calculator
+    nn = []
+    for _ in range(MW_MAX + 1):
+        A.click(k, 4, 340); k.run_for(0.3)
+        k.select('CALC.RUN'); k.key(ktest.ENTER, settle=False); k.run_for(0.6)
+        nn.append((mb('mw_n'), fh(), sft_used(k) == s0))
+        k.key(ktest.ENTER, settle=False); k.run_for(0.3)
+    check('Return on CALC.RUN %d times with the Executive in front: sessions %s (the last refused, too many), '
+          'mw_peek\'s file closed each time, the SFT as it was' % (MW_MAX + 1, [n for n, f, s in nn]),
+          [n for n, f, s in nn] == [2, 3, 4, 4, 4] and all(f == 0 and s for n, f, s in nn) and not k.crashed, (nn, A.screen(k)))
+
 QUITRUN = os.path.join(HERE, 'QUITRUN.RUN')
 
 def t_wroot():
@@ -6303,7 +6352,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
