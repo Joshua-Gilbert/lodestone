@@ -1040,6 +1040,24 @@ def t_saver_delay():
           (k.rd('saver_min', 1), k.rd('sv_notidy', 1)))
 
 
+def t_ini_keys():
+    """System's save_ini drops each of its keys' old lines (any case) and
+    keeps the others; SPLASH= and MULTITASK= read back first (ini_find)"""
+    print('== LODE.INI rewritten by System: every key of its own replaced, the other lines kept')
+    ini = os.path.join(OUT, 'LODE.INI')
+    open(ini, 'wb').write(b'KEYS=1\r\nfont=TERMINUS.FNT\r\nSaver=2\r\ntidy=0\r\nsplash=0\r\nprinter=\r\nmultitask=on\r\n'
+                          b'mdisk=512\r\nLAST=2')
+    k = ktest.KPC(image('inik.img', SYSTEM, TERMFNT, ini)); k.start()
+    k.key(CODE['U'])
+    for _ in range(6): k.key(ktest.DOWN, settle=False)
+    k.settle()
+    k.key(ktest.ENTER)
+    got = disk_file(k, 'LODE.INI')
+    check('Return (the saver\'s delay, 2 -> 5 minutes: no SAVER= line): FONT=, SAVER=, TIDY=, SPLASH=, PRINTER= and MULTITASK= '
+          'lines replaced, MDISK= (no EMS) and the others kept, the last given a line end',
+          got == b'KEYS=1\r\nmdisk=512\r\nLAST=2\r\nFONT=TERMINUS.FNT\r\nTIDY=0\r\nSPLASH=0\r\nMULTITASK=1\r\n', got)
+
+
 def t_saver_tidy():
     print('== the saver tidies the disks, or not (System, Screen saver, Space; LODE.INI TIDY=0)')
     SPACE = 0x3920
@@ -2939,7 +2957,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
               t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
