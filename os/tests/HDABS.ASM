@@ -4,6 +4,8 @@
 ;                     C: in the old form (both refused: error 0207h)
 ;   HDABS R ssssssss  read sector ssssssss (hex) of C:, print its first 8 bytes
 ;   HDABS W ssssssss  write 512 'Z's there
+;   HDABS D ssssssss  as R, after a DOS call (INT 21h 30h): R's INT 25h is
+;                     its first, D's not (crit_disk's Abort, test_hd t_abs)
 ; Errors print as "error hhhh" (AX).
 cpu 286
 org 100h
@@ -37,7 +39,11 @@ org 100h
         mov     [pkt+2], bx
         cmp     byte [op], 'W'
         je      .w
-        call    rd
+        cmp     byte [op], 'D'
+        jne     .r
+        mov     ah, 30h
+        int     21h
+.r:     call    rd
         jc      fail
         mov     si, buf                 ; its first 8 bytes
         mov     di, line
