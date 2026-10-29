@@ -970,7 +970,7 @@ Real              Virtual           Name
             450B              450B  s_u_tasks
             4573              4573  s_u_over
             45D5              45D5  rcon_img
-            6887              6887  rcon_end
+            6869              6869  rcon_end
             3D40              3D40  inbuf
             4128              4128  res_cs
             412A              412A  ggint
@@ -1025,6 +1025,7 @@ Real              Virtual           Name
             4FDC              4FDC  status_text
             5024              5024  title_text
             506C              506C  sline
+            506C              506C  cwdbuf
             510C              510C  rbuf
             514C              514C  lstate
             514D              514D  lr_first
@@ -1075,6 +1076,11 @@ Real              Virtual           Name
             6BCB              6BCB  rq_over
             6BCC              6BCC  reqbuf
             AD0C              AD0C  hellobuf
+            AD0C              AD0C  exec_path
+            AD5C              AD5C  outname
+            ADAC              ADAC  tail
+            AE2E              AE2E  exec_ss
+            AE30              AE30  exec_sp
             AE62              AE62  evans
             AE66              AE66  crctab
             B066              B066  term
@@ -1118,115 +1124,109 @@ Real              Virtual           Name
             B1B3              B1B3  askbuf
             B537              B537  optbuf
             B56F              B56F  dta
-            B59B              B59B  cwdbuf
-            B5DF              B5DF  old_tmo
-            B5E1              B5E1  gp_dlen
-            B5E3              B5E3  gp_max
-            B5E5              B5E5  wr_data
-            B5E7              B5E7  wr_len
-            B5E9              B5E9  wr_done
-            B5EB              B5EB  run_flags
-            B5EC              B5EC  run_cmd
-            B5EE              B5EE  run_rest
-            B5F0              B5F0  run_exit
-            B5F2              B5F2  run_err
-            B5F4              B5F4  ext_at
-            B5F6              B5F6  exec_path
-            B646              B646  outname
-            B696              B696  tail
-            B718              B718  epb
-            B726              B726  exec_ss
-            B728              B728  exec_sp
-            B72A              B72A  ks_active
-            B72B              B72B  ks_len
-            B72D              B72D  ks_ptr
-            B72F              B72F  ks_pos
-            B731              B731  ks_wait
-            B732              B732  ks_until
-            B734              B734  snap_taken
-            B735              B735  snap_len
-            B737              B737  prof_acc
-            B777              B777  prof_cnt
-            B797              B797  prof_t0
-            B79B              B79B  prof_cur
-            B79C              B79C  prof_kept
-            B79D              B79D  prof_sp
-            B79E              B79E  prof_stk
-            B7A6              B7A6  prof_txt
-            BBA6              BBA6  stack_bottom
-            BFA6              BFA6  stack_top
-            BFA6              BFA6  bss_end
+            B59B              B59B  old_tmo
+            B59D              B59D  gp_dlen
+            B59F              B59F  gp_max
+            B5A1              B5A1  wr_data
+            B5A3              B5A3  wr_len
+            B5A5              B5A5  wr_done
+            B5A7              B5A7  run_flags
+            B5A8              B5A8  run_cmd
+            B5AA              B5AA  run_rest
+            B5AC              B5AC  run_exit
+            B5AE              B5AE  run_err
+            B5B0              B5B0  ext_at
+            B5B2              B5B2  epb
+            B5C0              B5C0  ks_active
+            B5C1              B5C1  ks_len
+            B5C3              B5C3  ks_ptr
+            B5C5              B5C5  ks_pos
+            B5C7              B5C7  ks_wait
+            B5C8              B5C8  ks_until
+            B5CA              B5CA  snap_taken
+            B5CB              B5CB  snap_len
+            B5CD              B5CD  prof_acc
+            B60D              B60D  prof_cnt
+            B62D              B62D  prof_t0
+            B631              B631  prof_cur
+            B632              B632  prof_kept
+            B633              B633  prof_sp
+            B634              B634  prof_stk
+            B63C              B63C  prof_txt
+            BA3C              BA3C  stack_bottom
+            BE3C              BE3C  stack_top
+            BE3C              BE3C  bss_end
 
 ---- Section rstub ------------------------------------------------------------
 
 Real              Virtual           Name
-            6888               100  r_sig
-            688C               104  r_ver
-            688D               105  r_hook
-            688F               107  r_old16
-            6893               10B  r_handle
-            6895               10D  r_inpop
-            6896               10E  r_off
-            6897               10F  r_bgon
-            6898               110  r_hw
-            689C               114  r_saved
-            68A0               118  r_params
-            68A0               118  r_pold16
-            68A4               11C  r_indos
-            68A8               120  r_ss
-            68AA               122  r_sp
-            68AC               124  r_ks
-            68AD               125  r_pend
-            68AE               126  r_mt
-            68B2               12A  r_bgt
-            68B4               12C  r_int16
-            68C7               13F  r_int16.pk
-            68D5               14D  r_int16.mp
-            68DC               154  r_int16.rt
-            68E0               158  r_int16.up
-            68EE               166  r_int16.ch
-            68F3               16B  r_int16.u
-            68FD               175  r_int16.rd
-            68FE               176  r_int16.w
-            6918               190  r_int16.pf
-            6921               199  r_int16.h
-            6922               19A  ..@r_idle
-            6924               19C  r_int16.ky
-            6926               19E  r_look
-            6930               1A8  r_look.lr
-            6936               1AE  r_look.x
-            6938               1B0  r_front
-            694F               1C7  r_front.x
-            6950               1C8  r_feed
-            6958               1D0  r_feed.no
-            6959               1D1  r_feed.x
-            695A               1D2  r_feed.k
-            697D               1F5  r_feed.wk
-            6986               1FE  r_hot
-            6992               20A  r_hot.s
-            69A0               218  r_hot.no
-            69A5               21D  r_hot.x
-            69A6               21E  r_hot.k
-            69B7               22F  r_hot.m
-            69BD               235  r_hot.mv
-            69CE               246  r_hot.e
-            69D2               24A  r_hot.p
-            69EC               264  r_hot.df
-            6A00               278  r_hot.nx
-            6A0C               284  r_hot.n
-            6A0D               285  r_tell
-            6A21               299  r_tell.x
-            6A22               29A  r_bg
-            6A4E               2C6  r_bg.n
-            6A50               2C8  r_bg.x
-            6A51               2C9  r_bg.go
-            6A5F               2D7  r_popup
-            6A82               2FA  r_popup.s
-            6A9C               314  ..@r_back
-            6AA5               31D  r_popup.r
-            6AC6               33E  r_isr
-            6AD5               34D  r_int67
-            6AD8               350  r_code_end
-            6C58               4D0  r_stack_top
-            6C58               4D0  r_end
+            686A               100  r_sig
+            686E               104  r_ver
+            686F               105  r_hook
+            6871               107  r_old16
+            6875               10B  r_handle
+            6877               10D  r_inpop
+            6878               10E  r_off
+            6879               10F  r_bgon
+            687A               110  r_hw
+            687E               114  r_saved
+            6882               118  r_params
+            6882               118  r_pold16
+            6886               11C  r_indos
+            688A               120  r_ss
+            688C               122  r_sp
+            688E               124  r_ks
+            688F               125  r_pend
+            6890               126  r_mt
+            6894               12A  r_bgt
+            6896               12C  r_int16
+            68A9               13F  r_int16.pk
+            68B7               14D  r_int16.mp
+            68BE               154  r_int16.rt
+            68C2               158  r_int16.up
+            68D0               166  r_int16.ch
+            68D5               16B  r_int16.u
+            68DF               175  r_int16.rd
+            68E0               176  r_int16.w
+            68FA               190  r_int16.pf
+            6903               199  r_int16.h
+            6904               19A  ..@r_idle
+            6906               19C  r_int16.ky
+            6908               19E  r_look
+            6912               1A8  r_look.lr
+            6918               1AE  r_look.x
+            691A               1B0  r_front
+            6931               1C7  r_front.x
+            6932               1C8  r_feed
+            693A               1D0  r_feed.no
+            693B               1D1  r_feed.x
+            693C               1D2  r_feed.k
+            695F               1F5  r_feed.wk
+            6968               1FE  r_hot
+            6974               20A  r_hot.s
+            6982               218  r_hot.no
+            6987               21D  r_hot.x
+            6988               21E  r_hot.k
+            6999               22F  r_hot.m
+            699F               235  r_hot.mv
+            69B0               246  r_hot.e
+            69B4               24A  r_hot.p
+            69CE               264  r_hot.df
+            69E2               278  r_hot.nx
+            69EE               284  r_hot.n
+            69EF               285  r_tell
+            6A03               299  r_tell.x
+            6A04               29A  r_bg
+            6A30               2C6  r_bg.n
+            6A32               2C8  r_bg.x
+            6A33               2C9  r_bg.go
+            6A41               2D7  r_popup
+            6A64               2FA  r_popup.s
+            6A7E               314  ..@r_back
+            6A87               31D  r_popup.r
+            6AA8               33E  r_isr
+            6AB7               34D  r_int67
+            6ABA               350  r_code_end
+            6C3A               4D0  r_stack_top
+            6C3A               4D0  r_end
 
