@@ -398,9 +398,9 @@ def t_abs():
     check('INT 26h: written; the kernel then reads the new data (README.TXT all Z) and counts free space again',
           'Hello' in o1 and o2.count('written') == 2 and 'Z' * 21 in o3 and m0 and m1 and
           int(m0.group(1)) - int(m1.group(1)) == 256 * 2048, (o1, o2, o3, free0[-80:], free1[-80:]))
-    # Abort on the FAT write INT 25h does first (outside INT 21h): crit_disk reads "EXEC loads" from the outer
-    # INT 21h frame's place, which still holds the last call's.  HDABS R's INT 25h is its first call (LCMD's EXEC
-    # there): the read fails; D's comes after its own call (30h): HDABS ends, as an Abort ends a program
+    # Abort on the FAT write INT 25h does first (outside INT 21h, InDOS 0): HDABS ends, as an Abort ends a
+    # program, whatever the outer INT 21h frame's place still holds: R's INT 25h is its first call (LCMD's EXEC
+    # there, AH 4Bh), D's comes after one of its own (30h)
     d, f = std()
     first = fatw(drive(d), f.clusters + 2).index(0, 2)
     ata = drive(d)
@@ -413,8 +413,10 @@ def t_abs():
         return n0, n, o, k.u16('last_exit')
     n0, n1, o1, x1 = abort('c:\\hdabs r 0')
     m0, n2, o2, x2 = abort('c:\\hdabs d 0')
-    check('INT 25h first, its FAT write answered Abort: the read fails ("error"); after a DOS call: HDABS ends (exit AH 2)',
-          n0 >= 1 and m0 >= 1 and n1 == 1 and 'writing drive C' in o1 and 'error' in o1 and x1 >> 8 == 0 and
+    check('INT 25h\'s FAT write answered Abort, as the program\'s first call (after its parent\'s EXEC) and after a DOS '
+          'call: HDABS ends (exit AH 2) both times, the read not made',
+          n0 >= 1 and m0 >= 1 and n1 == 1 and 'writing drive C' in o1 and 'error' not in o1 and x1 >> 8 == 2 and
+          o1.rstrip().endswith('>') and
           n2 == 1 and 'error' not in o2 and x2 >> 8 == 2 and o2.rstrip().endswith('>') and not k.crashed,
           (n0, n1, o1[-160:], hex(x1), n2, o2[-160:], hex(x2)))
 
