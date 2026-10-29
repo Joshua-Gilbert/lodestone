@@ -54,10 +54,8 @@ start:  mov     di, arg                 ; "task count"
         int     21h                     ;  by hand)
         jc      .bad
         mov     ax, 0F000h + MT_TOPEN   ; its EV_TICKs
-        mov     bl, [task]
         mov     cl, [gen]
-        stc
-        int     21h
+        call    mtc
         jc      .bad
         mov     bx, (BLKLEN + 15) / 16
         call    UI_ALLOC
@@ -115,9 +113,7 @@ close:  mov     di, askb
         call    gone                    ; (ended meanwhile, its number maybe
         jc      .x                      ;  another's now: not that one)
         mov     ax, 0F000h + MT_KILL
-        mov     bl, [task]
-        stc
-        int     21h
+        call    mtc
 .x:     ret
 
 ; a decimal number at SI (blanks before it skipped) -> AL
@@ -261,9 +257,7 @@ tick:   call    gone
 
 ; its task ended (free, or its number given again)?  CF if so
 gone:   mov     ax, 0F000h + MT_EXIT
-        mov     bl, [task]
-        stc
-        int     21h
+        call    mtc
         jc      .y
         or      al, al
         jz      .y
@@ -285,11 +279,9 @@ show:   push    es
         mov     es, [fseg]
         mov     di, BUF
         mov     ax, 0F000h + MT_TROWS
-        mov     bl, [task]
         mov     dx, 8000h               ; (T5b: a published screen's cells)
         mov     cx, 25
-        stc
-        int     21h
+        call    mtc
         pop     es
         jc      .x
         mov     [tdl], dl               ; (16: its program took the mouse, T4)
@@ -702,9 +694,7 @@ pubset: push    bx
         push    dx
         mov     ax, 0F000h + MT_PUB
         mov     cl, 1
-        mov     bl, [task]
-        stc
-        int     21h
+        call    mtc
         pop     dx
         mov     ax, [fseg]
         mov     si, FONT
@@ -865,9 +855,7 @@ key:    cmp     byte [note], 0
 ; screen)
 full:   mov     byte [note], 0          ; (TERM doesn't run while it's in
         mov     ax, 0F000h + MT_FRONT   ;  front: a key after it's back is its)
-        mov     bl, [task]
-        stc
-        int     21h
+        call    mtc
         jnc     .x
         jmp     UI_BEEP                 ; (refused: its window is its screen,
 .x:     ret                             ;  T5b)
@@ -913,10 +901,14 @@ flush:  call    feed
 send:   push    ax
         mov     cx, ax
         mov     ax, 0F000h + MT_TKEY
-        mov     bl, [task]
+        call    mtc
+        pop     ax
+        ret
+
+; MT call AX (AH F0h) for its task: BL = it, CF set first (MTAPI.INC)
+mtc:    mov     bl, [task]
         stc
         int     21h
-        pop     ax
         ret
 
 ; ---------------------------------------------------------------------
@@ -1054,10 +1046,8 @@ tmouse: pusha
         xor     ah, ah
         shl     ax, 3
         mov     dx, ax
-        mov     bl, [task]
         mov     ax, 0F000h + MT_TMOUSE
-        stc
-        int     21h
+        call    mtc
         popa
         ret
 
