@@ -824,6 +824,7 @@ rclick: mov     al, 0
 .r:     mov     si, items
         call    rmenu
         jc      cursor.x
+        ; (on into key)
 
 ; a key typed in the window: to the task (MT_TKEY), after those kept (and
 ; a paste's); kept while its ring is full (QLEN at most: a beep past them).
