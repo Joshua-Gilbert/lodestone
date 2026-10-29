@@ -388,7 +388,8 @@ def test_run_tsr_moves_claude():
     PSP's block keeping the PSP alone.  The memory it left is scribbled over at once (as the next program would
     do): the RUN is answered; a message queued before the RUN from CLAUDE's own memory still arrives whole;
     a second RUN gets its tail and FCBs (the EXEC block's segments); a 31 KB file is written and read back
-    (the link's buffers); CODE-Q ends CLAUDE, none of its blocks left, TSRK's still there."""
+    (the link's buffers).  TSRK again: CLAUDE moves a second time, and the block it left (not the PSP's) is
+    freed, not kept as a 256-byte orphan.  CODE-Q ends CLAUDE, none of its blocks left, both TSRKs there."""
     from unicorn import UC_HOOK_CODE
     from gridlink import glp
     text = P7_DATA.decode().replace('\r\n', '\n')
@@ -400,7 +401,9 @@ def test_run_tsr_moves_claude():
                  T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'create', 'path': 'A:\\P7.TXT',
                                                                    'file_text': text})),
                  T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\P7.TXT'})),
-                 T.reply(('text', 'Written and read.'))], mode='auto',
+                 T.reply(('text', 'Written and read.')),
+                 T.reply(('tool', 'grid_command', {'command': 'TSRK', 'capture': False})),
+                 T.reply(('text', 'Another.'))], mode='auto',
                 files={'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
     old, Y = h.claude_psp, h.sym
     keep = (Y['reqbuf'] + 7 + 15) // 16
@@ -450,11 +453,26 @@ def test_run_tsr_moves_claude():
     assert h.turn('write the file and read it back', sim_s=200)
     assert bytes(h.m.fs['A:\\P7.TXT']) == P7_DATA and 'p7 line 00200' in str(T.results(h, 6)[0]['content'])
     assert h.m.u16(new - 1, 3) == full             # (whole again after the second RUN)
+    st2 = {}
+    def again(uc, addr, size, ud):                  # (the second move's run_back, in the block it moved to)
+        cs = h.m.r('cs')
+        if 'new' not in st2 and cs != new and addr - cs * 16 == Y['run_back.there']:
+            st2['new'] = h.claude_psp = cs
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, again, None, (new + keep) * 16, 0x9FFFF)
+    h.m.mu.ctl_remove_cache((new + keep) * 16, 0xA0000)
+    h.type('run tsrk again')
+    try: assert h.run_until(lambda: h.idle() and 'new' in st2, 60), (st2, h.screen())
+    finally: h.m.mu.hook_del(hk)
+    mine = [(s + 1, n) for s, o, n in mcbs(h) if o == old]
+    assert 'Exit code: 0' in str(T.results(h, 8)) and (old, 0x10) in mine and (st2['new'], full) in mine \
+        and not [b for b in mine if b[1] == 0x10 and b[0] != old] and not [b for b in mine if b[0] == new], \
+        ([(hex(s), n) for s, n in mine], hex(new), hex(st2['new']))
     T.check(h)
     h.key(0x1000)                                   # CODE-Q
     assert h.back_in_executive(10), (h.m.crash, h.k.where())
-    left = [(hex(s), hex(o), n) for s, o, n in mcbs(h) if o in (old, new)]
-    assert not left and (st['tsr'] - 1, st['tsr'], 64) in mcbs(h), (left, mcbs(h))
+    left = [(hex(s), hex(o), n) for s, o, n in mcbs(h) if o in (old, new, st2['new'])]
+    tsrs = [b for b in mcbs(h) if b[1] == b[0] + 1 and b[2] == 64]
+    assert not left and (st['tsr'] - 1, st['tsr'], 64) in mcbs(h) and len(tsrs) == 2, (left, mcbs(h))
 
 
 def test_run_tsr_no_room():
@@ -477,6 +495,47 @@ def test_run_tsr_no_room():
 
 T.test_run_tsr_moves_claude = test_run_tsr_moves_claude
 T.test_run_tsr_no_room = test_run_tsr_no_room
+
+
+def test_run_script_length_checked():
+    """audit3 O17's panel: a RUN whose key script length runs past the request (the script and the command's
+    NUL must be in it) is refused with F0h before anything is cut (do_exec cuts CLAUDE's block at the script's
+    end); one that fits runs, and CLAUDE's block is whole after each."""
+    import threading
+    from gridlink import glp
+    h = T.start([], mode='auto')
+    g = h.session.grid
+    full = (h.sym['bss_end'] + 15) // 16
+    def call(args):
+        res = {}
+        th = threading.Thread(target=lambda: res.update(r=g.call(glp.OP_RUN, args, timeout=30)))
+        th.start()
+        assert h.run_until(lambda: not th.is_alive(), 60), 'no answer'
+        return res.get('r')
+    keys = struct.pack('<H', 0x011B)                # (Esc: TESTKEY ends)
+    cmd = b'TESTKEY\0'                              # (the request: 7 + 2 + 8 bytes; a script of 10 leaves no NUL)
+    for n, want in ((10, 0xF0), (0xFFF9, 0xF0), (0xFFFF, 0xF0), (len(keys), 0)):
+        st, r = call(struct.pack('<BHH', 0, 10, n) + keys + cmd)
+        assert st == want and h.m.u16(h.claude_psp - 1, 3) == full, (n, st, r)
+    T.check(h)
+
+
+def test_in_place_ask():
+    """audit3 P7's panel: an ASK in fragments (Pi frames of 448 bytes; gridlink's own ASKs are one frame), its
+    last read in place after the first: the 6 bytes its header went over are put back before open_ask copies
+    the ASK (they lie within the 896 bytes it keeps)."""
+    from gridlink import glp
+    h = T.start([], frame_cap=448)
+    body = bytes([0x55, 0]) + b'May I?' + b'\0' + bytes(range(65, 91)) * 20 + b'\0' + b'always\0'
+    h.link.send(glp.P_ASK, body)
+    assert h.run_until(lambda: h.var('ask_open'), 30), h.screen()
+    got = bytes(h.m.rd(h.claude_psp, h.sym['askbuf'], len(body)))
+    assert got == body, [i for i in range(len(body)) if got[i] != body[i]]
+    assert h.var('n_kok', 2) and h.var('rq_at', 2) == 0
+
+
+T.test_run_script_length_checked = test_run_script_length_checked
+T.test_in_place_ask = test_in_place_ask
 
 
 def test_key_script_snap_peek():
