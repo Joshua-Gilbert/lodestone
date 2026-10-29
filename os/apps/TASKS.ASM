@@ -67,6 +67,7 @@ start:  call    refresh
         jmp     .next
 
 ; the tasks again (MT_LIST), each one's SPF_BG and SPF_FREEZE (MT_FLAGS)
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, EVEN.INC)
 refresh:
         mov     di, recs
         mov     cx, MT_TASKS
@@ -243,6 +244,7 @@ k_help: mov     si, keys
         mov     di, s_help
         jmp     UI_HELP
 
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even)
 k_quit: inc     byte [quit]
         ret
 
@@ -415,6 +417,11 @@ e_tmem  db 'Not enough memory or EMS',0
 e_notask db 'No such task',0
 ending  db 0FFh                         ; the task asked to end (FFh: none),
 endgen  db 0                            ;  and its count then (MT_EXIT)
+
+; the hot labels even (EVEN.INC: bench/hot.py's tasks)
+%include "EVEN.INC"
+        EVEN    start.next, refresh, refresh.f, refresh.nf, refresh.x, put_name.c, put_name.x
+        EVEN    row.p, row.st, row.w, row.q, row.bg, row.b
 
 section .bss
 quit    resb 1

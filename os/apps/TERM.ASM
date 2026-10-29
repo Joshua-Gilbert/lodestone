@@ -251,6 +251,7 @@ tick:   call    gone
 .end:   ret
 
 ; its task ended (free, or its number given again)?  CF if so
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, EVEN.INC)
 gone:   mov     ax, 0F000h + MT_EXIT
         call    mtc
         jc      .y
@@ -1304,6 +1305,7 @@ pfree:  push    es
                                         ;  copied: PFONT, T5d)
 %define CELL_FIRST 0
 %define GLYPH_END 100h
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: cell odd, so cell.a and .d even)
 %include "../claude/CELL.INC"
 
 s_fnt       db 'TERM.FNT', 0
@@ -1318,6 +1320,10 @@ win:        dw 0, SCR_TOP, 80, SCR_BAND_Y - SCR_TOP
             dw title, w_draw, WF_MOVE | WF_SIZE | WF_CLOSE
 top         dw 0                        ; the view: its screen's first row and
 left        dw 0                        ;  column in the window
+
+; the hot labels even (EVEN.INC: bench/hot.py's term)
+%include "EVEN.INC"
+        EVEN    gone, mtc, scrl.l, cells.cell, cells.d, cells.ns, attr, attr.x, cell.a, cell.d
 
 section .bss
 task        resb 1
