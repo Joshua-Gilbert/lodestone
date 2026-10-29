@@ -54,10 +54,8 @@ start:  mov     di, arg                 ; "task count"
         int     21h                     ;  by hand)
         jc      .bad
         mov     ax, 0F000h + MT_TOPEN   ; its EV_TICKs
-        mov     bl, [task]
         mov     cl, [gen]
-        stc
-        int     21h
+        call    mtc
         jc      .bad
         mov     bx, (BLKLEN + 15) / 16
         call    UI_ALLOC
@@ -115,9 +113,7 @@ close:  mov     di, askb
         call    gone                    ; (ended meanwhile, its number maybe
         jc      .x                      ;  another's now: not that one)
         mov     ax, 0F000h + MT_KILL
-        mov     bl, [task]
-        stc
-        int     21h
+        call    mtc
 .x:     ret
 
 ; a decimal number at SI (blanks before it skipped) -> AL
@@ -198,16 +194,14 @@ name:   push    es
         ret
 
 ; where the cells go, inside the window as it is now: x0 = the first byte
-; column, cols of them, y0 = the first row's pixel row, rows of them
+; column, cols of them, y0 = the first row's pixel row, rows of them (78
+; and 19 at most: the core keeps a window on the screen, above the band)
 geom:   mov     ax, [win+W_COL]
         inc     ax
         mov     [x0], ax
         mov     ax, [win+W_W]
         sub     ax, 2
-        cmp     ax, 80
-        jbe     .c
-        mov     ax, 80
-.c:     mov     [cols], ax
+        mov     [cols], ax
         mov     ax, [win+W_Y]
         add     ax, W_TOP
         mov     [y0], ax
@@ -216,11 +210,8 @@ geom:   mov     ax, [win+W_COL]
         jns     .h
         xor     ax, ax
 .h:     shr     ax, 4
-        jnz     .h1
+        jnz     .r
         inc     ax
-.h1:    cmp     ax, 25
-        jbe     .r
-        mov     ax, 25
 .r:     mov     [rows], ax
         ret
 
@@ -260,10 +251,9 @@ tick:   call    gone
 .end:   ret
 
 ; its task ended (free, or its number given again)?  CF if so
+        times ($ - $$) & 1 db 90h       ; (hot: what follows even, EVEN.INC)
 gone:   mov     ax, 0F000h + MT_EXIT
-        mov     bl, [task]
-        stc
-        int     21h
+        call    mtc
         jc      .y
         or      al, al
         jz      .y
@@ -285,11 +275,9 @@ show:   push    es
         mov     es, [fseg]
         mov     di, BUF
         mov     ax, 0F000h + MT_TROWS
-        mov     bl, [task]
         mov     dx, 8000h               ; (T5b: a published screen's cells)
         mov     cx, 25
-        stc
-        int     21h
+        call    mtc
         pop     es
         jc      .x
         mov     [tdl], dl               ; (16: its program took the mouse, T4)
@@ -546,7 +534,8 @@ scrl:   mov     ax, [sa]
 .x:     ret
 
 ; the window's cells from MT's copy where they differ from the shadow
-; (those selected inverse)
+; (those selected inverse).  A cell as it was falls through; one that
+; changed is drawn out of the loop
 cells:  push    ds
         push    es
         push    bp
@@ -582,7 +571,7 @@ cells:  push    ds
         test    byte [cs:tdl], 32       ; (T5b: a published screen's cells)
         jz      .k
         mov     word [cs:cblank], 0020h
-        mov     word [cs:cfn], cnone    ; (its font has every code: pubset)
+        mov     word [cs:cfn], .none    ; (its font has every code: pubset)
         mov     ax, [sa]                ; T5d: the short way, with no
         cmp     ax, [sb]                ;  selection and none of the window's
         jb      .k                      ;  columns past its own
@@ -597,9 +586,7 @@ cells:  push    ds
         mov     cx, [cs:c_n]
 .fc:    mov     ax, [si]
         cmp     ax, [bx]
-        je      .fn
-        mov     [bx], ax
-        call    cell
+        jne     .fd
 .fn:    add     si, 2
         add     bx, 2
         inc     di
@@ -624,20 +611,7 @@ cells:  push    ds
         jae     .v
         mov     ax, [si]
 .v:     cmp     ax, [bx]
-        je      .nx
-        mov     [bx], ax
-        call    word [cs:cfn]
-        push    dx
-        cmp     dx, [cs:ncols]          ; (past its columns: never selected)
-        jae     .ns
-        add     dx, bp
-        cmp     dx, [cs:sa]
-        jb      .ns
-        cmp     dx, [cs:sb]
-        jae     .ns
-        xor     ah, 1                   ; (selected)
-.ns:    pop     dx
-        call    cell                    ; (its font in the block: DS)
+        jne     .d
 .nx:    add     si, 2
         add     bx, 2
         inc     di
@@ -655,7 +629,24 @@ cells:  push    ds
 .end:   pop     bp
         pop     es
         pop     ds
-cnone:  ret
+.none:  ret
+.fd:    mov     [bx], ax                ; (changed, the short way)
+        call    cell
+        jmp     .fn
+.d:     mov     [bx], ax                ; (changed)
+        call    word [cs:cfn]
+        push    dx
+        cmp     dx, [cs:ncols]          ; (past its columns: never selected)
+        jae     .ns
+        add     dx, bp
+        cmp     dx, [cs:sa]
+        jb      .ns
+        cmp     dx, [cs:sb]
+        jae     .ns
+        xor     ah, 1                   ; (selected)
+.ns:    pop     dx
+        call    cell                    ; (its font in the block: DS)
+        jmp     .nx
 
 ; AX = a cell -> AH = its attribute for cell: inverse (1) when its
 ; background is brighter than its foreground (70h, 71h: as a monochrome
@@ -702,9 +693,7 @@ pubset: push    bx
         push    dx
         mov     ax, 0F000h + MT_PUB
         mov     cl, 1
-        mov     bl, [task]
-        stc
-        int     21h
+        call    mtc
         pop     dx
         mov     ax, [fseg]
         mov     si, FONT
@@ -819,12 +808,33 @@ cursor: cmp     byte [note], 0          ; (none on a note, nor hidden: T5b)
         mov     byte [curon], 1
 .x:     ret
 
+; a right click: the menu of what applies (RMENU.INC, Write's): Copy with a
+; selection, Paste with something to paste, Full screen but for a published
+; screen (T5b: none, with neither of the others: no menu).  The item
+; chosen is taken as its key (Full screen's K_NONE)
+RM_TXT      equ 4
+rclick: mov     al, 0
+        mov     dx, [sb]
+        cmp     dx, [sa]
+        jbe     .m
+        mov     al, RM_SEL
+.m:     test    byte [tdl], 32
+        jnz     .r
+        or      al, RM_TXT
+.r:     mov     si, items
+        call    rmenu
+        jc      cursor.x
+        ; (on into key)
+
 ; a key typed in the window: to the task (MT_TKEY), after those kept (and
 ; a paste's); kept while its ring is full (QLEN at most: a beep past them).
-; With a note up, the task to the front instead (full screen); CODE-C with
-; a selection copies it, CODE-V with something to paste pastes (T4)
+; With a note up, or K_NONE (the menu's Full screen), the task to the front
+; instead (full screen); CODE-C with a selection copies it, CODE-V with
+; something to paste pastes (T4)
 key:    cmp     byte [note], 0
         jne     full
+        cmp     ax, K_NONE
+        je      full
         cmp     ax, K_CODE_C
         jne     .v
         mov     bx, [sb]
@@ -865,9 +875,7 @@ key:    cmp     byte [note], 0
 ; screen)
 full:   mov     byte [note], 0          ; (TERM doesn't run while it's in
         mov     ax, 0F000h + MT_FRONT   ;  front: a key after it's back is its)
-        mov     bl, [task]
-        stc
-        int     21h
+        call    mtc
         jnc     .x
         jmp     UI_BEEP                 ; (refused: its window is its screen,
 .x:     ret                             ;  T5b)
@@ -913,10 +921,14 @@ flush:  call    feed
 send:   push    ax
         mov     cx, ax
         mov     ax, 0F000h + MT_TKEY
-        mov     bl, [task]
+        call    mtc
+        pop     ax
+        ret
+
+; MT call AX (AH F0h) for its task: BL = it, CF set first (MTAPI.INC)
+mtc:    mov     bl, [task]
         stc
         int     21h
-        pop     ax
         ret
 
 ; ---------------------------------------------------------------------
@@ -1054,10 +1066,8 @@ tmouse: pusha
         xor     ah, ah
         shl     ax, 3
         mov     dx, ax
-        mov     bl, [task]
         mov     ax, 0F000h + MT_TMOUSE
-        stc
-        int     21h
+        call    mtc
         popa
         ret
 
@@ -1287,31 +1297,6 @@ pfree:  push    es
         mov     word [pseg], 0
         ret
 
-; a right click: the menu of what applies (RMENU.INC, Write's): Copy with a
-; selection, Paste with something to paste, Full screen but for a published
-; screen (T5b: none, with neither of the others: no menu)
-RM_TXT      equ 4
-rclick: mov     al, 0
-        mov     dx, [sb]
-        cmp     dx, [sa]
-        jbe     .m
-        mov     al, RM_SEL
-.m:     test    byte [tdl], 32
-        jnz     .p
-        or      al, RM_TXT
-        jmp     short .r
-.p:     or      al, al
-        jnz     .r
-        pusha
-        mov     al, 2                   ; (what the clipboard holds)
-        call    UI_CLIP
-        or      cx, cx
-        popa
-        jz      .x
-.r:     mov     si, items
-        jmp     rmenu
-.x:     ret
-
 %include "RMENU.INC"
 
 ; one character cell (CELL.INC): AL, AH = its attribute, DI = row * 320 +
@@ -1321,13 +1306,14 @@ rclick: mov     al, 0
                                         ;  copied: PFONT, T5d)
 %define CELL_FIRST 0
 %define GLYPH_END 100h
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: cell odd, so cell.a and .d even)
 %include "../claude/CELL.INC"
 
 s_fnt       db 'TERM.FNT', 0
 s_end       db 'Close: Confirm to end ', 0
 s_ngfx      db 'In a graphics mode: a key here shows it (or CODE-Tab)', 0
 s_nfz       db 'It writes the screen itself: a key here shows it (FULL= for it)', 0
-items       dw s_copy, copy, RM_SEL, s_paste, paste, RM_CLIP, s_full, full, RM_TXT, 0
+items       dw s_copy, K_CODE_C, RM_SEL, s_paste, K_CODE_V, RM_CLIP, s_full, K_NONE, RM_TXT, 0
 s_copy      db 'Copy           CODE-C', 0
 s_paste     db 'Paste          CODE-V', 0
 s_full      db 'Full screen    CODE-Tab', 0
@@ -1335,6 +1321,10 @@ win:        dw 0, SCR_TOP, 80, SCR_BAND_Y - SCR_TOP
             dw title, w_draw, WF_MOVE | WF_SIZE | WF_CLOSE
 top         dw 0                        ; the view: its screen's first row and
 left        dw 0                        ;  column in the window
+
+; the hot labels even (EVEN.INC: bench/hot.py's term)
+%include "EVEN.INC"
+        EVEN    gone, mtc, scrl.l, cells.cell, cells.d, cells.ns, attr, attr.x, cell.a, cell.d
 
 section .bss
 task        resb 1
@@ -1373,7 +1363,7 @@ pseg        resw 1                      ; a paste: its block (0: none), the
 ppos        resw 1                      ;  next byte, how many
 plen        resw 1
 rm_buf      resw 3                      ; the right click's menu (RMENU.INC)
-rm_do       resw 3
+rm_key      resw 3
 arg         resb 16
 title       resb 16
 askb        resb 40                     ; (close's question)

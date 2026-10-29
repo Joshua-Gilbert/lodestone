@@ -466,6 +466,44 @@ def t_write():
           lines(k)[:4])
     k.key(K_INS, ktest.ESC, ktest.ENTER)
 
+    # the goal column: Up, Down, PgUp and PgDn keep it over a short line;
+    # any other key drops it, even one that moves nothing (Ins)
+    long = b'0123456789' * 4 + b'\r\n'
+    k = write_open('GOAL.TXT', long + b'short\r\n' + long + long)
+    col = lambda: next((l.split('Column')[1].split()[0] for l in lines(k) if 'Column' in l), '')
+    k.key(*[ktest.RIGHT] * 30, ktest.DOWN)
+    c1 = col()
+    k.key(ktest.DOWN)
+    c2 = col()
+    k.key(K_PGUP, ktest.DOWN, ktest.DOWN)
+    c3 = col()
+    k.key(ktest.UP, K_INS, K_INS, ktest.UP)
+    c4 = col()
+    k.key(K_HOME, ktest.DOWN, ktest.DOWN)
+    c5 = col()
+    check('the goal column: from column 31, Down onto "short" (column 6), Down: 31 again; PgUp, Down, Down: 31; Up, '
+          'Ins twice, Up: 6 (dropped by a key that moves nothing); Home, Down, Down: 1', (c1, c2, c3, c4, c5)
+          == ('6', '31', '31', '6', '1'), (c1, c2, c3, c4, c5))
+    k = write_open('GOAL.TXT', long + b'short\r\n' + long + long)
+    k.key(*[ktest.RIGHT] * 30, ktest.DOWN)
+    p1 = col()
+    k.key(K_PGDN)
+    p2 = col()
+    k.key(ktest.UP, ktest.UP)
+    p3 = col()
+    k.key(K_PGUP)
+    p4 = col()
+    check('... PgDn and PgUp keep it too: Down onto "short" (column 6), PgDn past the end (column 1), Up, Up: 31; PgUp: 31',
+          (p1, p2, p3, p4) == ('6', '1', '31', '31'), (p1, p2, p3, p4))
+    got = []
+    for name, ks in (('GOALL.TXT', [ktest.LEFT]), ('GOALW.TXT', [K_CLEFT]), ('GOALD.TXT', [K_DEL])):
+        k = write_open(name, long + b'short\r\n' + long + long)
+        k.key(*[ktest.RIGHT] * 30, ktest.DOWN, *ks, ktest.DOWN)
+        got.append(col())
+    joined = 'short0123456789' in '\n'.join(lines(k))
+    check('... Left, CODE-Left and Delete drop it: from column 31, Down onto "short", then each, then Down: column 5, 1 and '
+          '6; Delete joined "short" to the next line', got == ['5', '1', '6'] and joined, (got, joined))
+
     # Substitute backward doesn't run into its own replacements
     k = write_open('BACK.TXT', b'xaaab yaab')
     k.key(K_CEND, CODE['S']); k.key('ab'); k.key(ktest.ENTER); k.key('b')
@@ -690,6 +728,24 @@ def t_write_mouse():
     rpress(*at(1, 1)); k.key('J', ktest.ENTER); k.key('1'); k.key(ktest.ENTER)
     check('a drag, a right click, Jump: the selection ends first; line 1', wb('mode') == 0 and has(k, 'Line 1 of 5')
           and k.band()[0].startswith('Type, or choose a command'), (wb('mode'), k.band(), screen(k)))
+    # each item as its key: with nothing selected, the command starts (a
+    # selection to make, or its form); with a drag's, Move and Duplicate
+    # take it, Find, Substitute and Jump end it first
+    k = write_open(mouse=True)
+    got = []
+    for c in 'EMDFSJ':
+        rpress(*at(4, 2)); k.key(c, ktest.ENTER)
+        got.append((k.band()[0], wb('mode'))); k.key(ktest.ESC)
+    for c in 'MDFSJ':
+        drag(k, *at(4, 0), *at(9, 0)); rpress(*at(15, 0)); k.key(c, ktest.ENTER)
+        got.append((k.band()[0], wb('mode'))); k.key(ktest.ESC)
+    want = [('Erase: Make a selection and confirm', 1), ('Move: Make a selection and confirm', 1),
+            ('Duplicate: Make a selection and confirm', 1), ('Find: Fill in form and confirm', 0),
+            ('Substitute: Fill in form and confirm', 0), ('Jump: Fill in form and confirm', 0),
+            ('Move: Point to destination and confirm', 2), ('Duplicate: Point to destination and confirm', 2),
+            ('Find: Fill in form and confirm', 0), ('Substitute: Fill in form and confirm', 0), ('Jump: Fill in form and confirm', 0)]
+    check('the menu\'s Erase, Move, Duplicate, Find..., Substitute..., Jump...: each as its key, with nothing selected and '
+          'after a drag; the text as it was', got == want and wtext(k, ws) == T and wb('mode') == 0, (got, wtext(k, ws), wb('mode')))
     # a drag past the bottom of the text area: the view scrolls with it
     long = b''.join(b'Line %d\r\n' % i for i in range(60))
     k = write_open('LONG.TXT', long, mouse=True)
@@ -1038,6 +1094,24 @@ def t_saver_delay():
     check('SAVER=, FONT= and TIDY=0 after 960 bytes of other lines: all three taken at start-up (%d bytes)' % os.path.getsize(ini),
           k.rd('saver_min', 1) == b'\x02' and core_font(k) == open(TERMFNT, 'rb').read() and k.rd('sv_notidy', 1) == b'\x01',
           (k.rd('saver_min', 1), k.rd('sv_notidy', 1)))
+
+
+def t_ini_keys():
+    """System's save_ini drops each of its keys' old lines (any case) and
+    keeps the others; SPLASH= and MULTITASK= read back first (ini_find)"""
+    print('== LODE.INI rewritten by System: every key of its own replaced, the other lines kept')
+    ini = os.path.join(OUT, 'LODE.INI')
+    open(ini, 'wb').write(b'KEYS=1\r\nfont=TERMINUS.FNT\r\nSaver=2\r\ntidy=0\r\nsplash=0\r\nprinter=\r\nmultitask=on\r\n'
+                          b'mdisk=512\r\nLAST=2')
+    k = ktest.KPC(image('inik.img', SYSTEM, TERMFNT, ini)); k.start()
+    k.key(CODE['U'])
+    for _ in range(6): k.key(ktest.DOWN, settle=False)
+    k.settle()
+    k.key(ktest.ENTER)
+    got = disk_file(k, 'LODE.INI')
+    check('Return (the saver\'s delay, 2 -> 5 minutes: no SAVER= line): FONT=, SAVER=, TIDY=, SPLASH=, PRINTER= and MULTITASK= '
+          'lines replaced, MDISK= (no EMS) and the others kept, the last given a line end',
+          got == b'KEYS=1\r\nmdisk=512\r\nLAST=2\r\nFONT=TERMINUS.FNT\r\nTIDY=0\r\nSPLASH=0\r\nMULTITASK=1\r\n', got)
 
 
 def t_saver_tidy():
@@ -2939,7 +3013,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
               t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]

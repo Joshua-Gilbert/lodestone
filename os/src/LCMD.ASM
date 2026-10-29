@@ -37,6 +37,14 @@ HIST    equ 512                         ; the prompt's history
 RMAX    equ 12                          ; lines run inside lines (FOR, CALL)
 CMAX    equ 8                           ; CALLs inside CALLs
 
+; Hot code on even offsets (a taken jump to an odd one costs the 286 a
+; fetch): os/bench/hot.py's counts over the prompt's work (DIR, TYPE, COPY,
+; a batch file's loop, the PATH, pipes, the task commands), plan.py placed
+; the pads ("hot": each `times ($ - $$) & 1`, after a JMP or RET, so never
+; run).  The labels in the EVEN list at the code's end must stay even, or
+; no build (the PSP is a paragraph, so the offset's parity is the address's)
+%include "EVEN.INC"
+
 start:  mov     sp, stack_top
         cld
         mov     di, bss_start           ; DOS doesn't clear memory for us
@@ -335,17 +343,12 @@ crit:   sti
         mov     [crit_al], al
         mov     si, s_crlf
         call    bputs
-        mov     cx, di                  ; the message: CX + 1 NULs on from
-        xor     ch, ch                  ;  the one before ce0
+        mov     cx, di                  ; the message
+        xor     ch, ch
         cmp     cl, 0Ch
         jbe     .k
         mov     cl, 0Ch
-.k:     inc     cx
-        mov     si, ce0 - 1
-.s:     lodsb
-        or      al, al
-        jnz     .s
-        loop    .s
+.k:     call    ce_msg
         call    bputs
         mov     si, s_reading
         test    byte [crit_ah], 1
@@ -406,6 +409,16 @@ bputc:  push    ax
         int     10h
         pop     bx
         pop     ax
+        ret
+
+; INT 24h's message for code CX (0-12) -> SI: CX + 1 NULs on from the one
+; before ce0
+ce_msg: inc     cx
+        mov     si, ce0 - 1
+.s:     lodsb
+        or      al, al
+        jnz     .s
+        loop    .s
         ret
 
 ; ---------------------------------------------------------------------
@@ -493,6 +506,7 @@ do_pipe:
         jnz     .cp
         mov     word [pipe_rest], 0
         jmp     .cut
+        times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so .cut on even)
 .bar:   mov     byte [di], 0
         mov     [pipe_rest], si
 .cut:   ; the pipe's files: in from the last, out to the next
@@ -549,15 +563,13 @@ pipe_names:
         add     al, 'A' - 1
         mov     [pipe_a + 5], al
         mov     [pipe_b + 5], al
-        push    si
-        call    mt_lst
+        call    mt_mine
         mov     al, '$'
         jc      .n
-        mov     al, [mt_me]
+        mov     al, ah
         add     al, '0'
 .n:     mov     [pipe_a + 10], al
         mov     [pipe_b + 10], al
-        pop     si
         ret
 
 ; one level of redirection done: the one around it again
@@ -709,17 +721,7 @@ run_cmd:
         jne     .w
         ret
 .w:     mov     byte [failed], 0
-        mov     di, cword               ; the first word, upper case
-        mov     cx, 70
-.c:     lodsb
-        call    is_wordend
-        je      .e
-        call    upcase
-        stosb
-        loop    .c
-.e:     dec     si
-        mov     byte [di], 0
-        mov     [argp], si
+        call    get_word
         ; drive change "B:"
         cmp     byte [cword+1], ':'
         jne     .bi
@@ -727,6 +729,7 @@ run_cmd:
         jne     .bi
         mov     ax, do_drive
         jmp     .set
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 .bi:    ; a built-in?  The name may run into '\' or '.' ("CD\", "CD..")
         mov     si, cword
         mov     di, cword2
@@ -788,6 +791,24 @@ do_drive:                               ; "B:"
         mov     si, e_drive
         jmp     err
 .x:     ret
+
+; the word at SI, upper case, into cword (70 characters at most): DI on its
+; NUL, SI and [argp] just past it (past the 70th of a longer one).  ES = CS
+; (is_wordend)
+get_word:
+        mov     di, cword
+        mov     cx, 70
+.c:     lodsb
+        call    is_wordend
+        je      .e
+        call    upcase
+        stosb
+        loop    .c
+        inc     si                      ; (70 kept: SI stays on what follows)
+.e:     dec     si
+        mov     byte [di], 0
+        mov     [argp], si
+        ret
 
 is_wordend:                             ; ZF if AL ends a command word
         push    cx                      ;  (ES = CS)
@@ -891,12 +912,7 @@ run_external:
         je      .run
         jmp     bat_start
 .run:   ; command tail: " args", FCBs from the first two
-        mov     di, tail + 1
-        xor     cx, cx
-        mov     si, [argp]
-        call    tcopy
-        mov     [tail], cl
-        mov     byte [di], 13
+        call    mk_tail
         mov     si, tail + 1
         mov     di, fcb1
         mov     ax, 2901h
@@ -954,20 +970,26 @@ run_external:
         jb      .fm0                    ;  24h's message for its code
         cmp     ax, 31
         ja      .fm0
-        mov     cx, ax
+        xchg    ax, cx
         sub     cx, 19
-        mov     si, ce0
-        jcxz    .fm
-.fs:    lodsb
-        or      al, al
-        jnz     .fs
-        loop    .fs
+        call    ce_msg
         jmp     .fm
 .fm0:   mov     si, e_nomem
         cmp     ax, 8
         je      .fm
         mov     si, e_badcmd
 .fm:    jmp     err
+
+; a program's command tail: [argp]'s line (.t: after the CX characters
+; already at DI), its count, CR
+mk_tail:
+        mov     di, tail + 1
+        xor     cx, cx
+.t:     mov     si, [argp]
+        call    tcopy
+        mov     [tail], cl
+        mov     byte [di], 13
+        ret
 
 ; the ASCIIZ at SI added to the tail at DI (CX characters so far, 126 kept)
 tcopy:  lodsb
@@ -979,6 +1001,7 @@ tcopy:  lodsb
         inc     cx
         jmp     tcopy
 .x:     ret
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 
 ; the program cword names, here or on the PATH -> prog (its path), is_bat;
 ; CF if there's none
@@ -2202,6 +2225,7 @@ edit_line:
         mov     [ed_pos], al
         mov     byte [ed_tab], 1
         jmp     .show
+        times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so .b on even)
 
 ; SI -> the start of the history line that ends just before it
 hist_back:
@@ -2355,6 +2379,7 @@ wait_key:
 .z:     sti
         hlt
         jmp     .w
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 .k:     mov     ah, 7
         int     21h
         xor     ah, ah
@@ -2392,11 +2417,8 @@ tick:   push    ds
 run_saver:
         pusha
         push    es
-        mov     ax, 0F000h + MT_LIST    ; (with multitasking, only in front:
-        xor     cx, cx                  ;  behind, the screen isn't ours)
-        stc                             ; (another DOS may leave CF as it was)
-        int     21h
-        jc      .on
+        call    mt_mine                 ; (with multitasking, only in front:
+        jc      .on                     ;  behind, the screen isn't ours)
         cmp     al, ah
         jne     .x
 .on:    mov     ah, 0Fh
@@ -3576,6 +3598,14 @@ mt_lst: push    ds
 .off:   mov     si, e_mtoff
         ret
 
+; multitasking's front task (AL) and ours (AH), no records; CF if it's off
+mt_mine:
+        mov     ax, 0F000h + MT_LIST
+        xor     cx, cx
+        stc                             ; (another DOS may leave CF as it was)
+        int     21h
+        ret
+
 ; TASKS: the tasks there are, the front one marked, and the parked and
 ; frozen ones
 do_tasks:
@@ -3768,17 +3798,7 @@ do_start:
         pop     es
         pop     si
         jmp     err
-.pg:    mov     di, cword               ; the program's name, upper case
-        mov     cx, 70
-.c:     lodsb
-        call    is_wordend
-        je      .ce
-        call    upcase
-        stosb
-        loop    .c
-.ce:    dec     si
-        mov     byte [di], 0
-        mov     [argp], si
+.pg:    call    get_word                ; the program's name
         mov     si, e_param
         cmp     di, cword
         je      .er
@@ -3811,16 +3831,12 @@ do_start:
         call    tcopy
         mov     si, prog
         call    tcopy
+        call    mk_tail.t
         mov     dx, prog2
         jmp     short .t
-.t0:    mov     dx, prog
-        mov     di, tail + 1
-        xor     cx, cx
-.t:     mov     si, [argp]
-        call    tcopy
-        mov     [tail], cl
-        mov     byte [di], 13
-        mov     word [spb + SP_ENV], 0
+.t0:    call    mk_tail
+        mov     dx, prog
+.t:     mov     word [spb + SP_ENV], 0
         mov     word [spb + SP_TAIL], tail
         mov     [spb + SP_TAIL + 2], cs
         mov     bx, spb
@@ -4430,6 +4446,7 @@ putc:   push    ax
         pop     dx
         pop     ax
         ret
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 puts:   pusha
         mov     dx, si
         call    strlen
@@ -4467,6 +4484,7 @@ strend: mov     di, si                  ; DI -> the NUL of SI
         inc     di
         jmp     .l
 .x:     ret
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 streq:  push    si                      ; ZF if SI = DI
         push    di
 .l:     lodsb
@@ -4685,7 +4703,7 @@ e_time      db 'Invalid time', 0
 e_label     db 'Label not found', 0
 e_deep      db 'Nested too deep', 0
 
-; INT 24h's messages, in the order of its error codes (crit counts NULs
+; INT 24h's messages, in the order of its error codes (ce_msg counts NULs
 ; from the one that ends e_deep)
 ce0         db 'Write protect error', 0
 ce1         db 'Unknown unit error', 0
@@ -4709,6 +4727,13 @@ save_in     dw 0FFFFh
 save_out    dw 0FFFFh
 padw        dw 0
 
+        EVEN    do_line.n, do_pipe.cp, do_pipe.cut, parse_redir.l, redir_undo.x, run_cmd.b2, run_cmd.bl, run_cmd.bs
+        EVEN    get_word.c, is_wordend, find_prog.pc, find_ext.d, bat_read.f, bat_next.s, bat_next.s0, for_run.s, for_run.put
+        EVEN    edit_line.key, hist_back.b, ed_room, ed_show.s, ed_at, ed_rc, wait_key, wait_key.k, wait_key.r, con_in
+        EVEN    do_dir.e, do_dir.n, put_83, put_83.n, put_83.pn, put_83.pl, do_type.l, show_prompt.l
+        EVEN    putc, puts, crlf, strlen.l, strlen.x, strcpy, strend.l, streq, streq.l, streq.x, upcase, upcase.x
+        EVEN    skipsp.x, getarg.l, pu2sp
+
 section .bss
 bss_start:
 mypsp       resw 1
@@ -4730,7 +4755,7 @@ crit_seen   resb 1                      ; crit answered Abort or Fail (since
                                         ;  this EXEC began)
 ampm        resb 1
 vol_drv     resb 1
-mt_me       resb 1                      ; our task (mt_lst)
+mt_me       resb 1                      ; our task (set only by mt_lst)
 wtask       resb 1                      ; WAIT's task, and the count it has
 wgen        resb 1                      ;  (MT_EXIT's AH) while it runs
 spb         resb SP_SIZE                ; START's block (MT_SPAWN)

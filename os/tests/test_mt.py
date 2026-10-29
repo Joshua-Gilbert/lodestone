@@ -3146,9 +3146,10 @@ def t_lcmd():
     open(tw, 'wb').write(b'@echo off\r\nstart /w mtline.com tw.txt\r\nwait %TASK%\r\nif errorlevel 6 echo LEVEL6\r\n'
                          b'if errorlevel 7 echo LEVEL7\r\necho DONE\r\n')
     sg = os.path.join(A.OUT, 'SG.BAT'); open(sg, 'wb').write(b'@echo off\r\nstart /w mtline.com sg.txt\r\necho BATDONE\r\n')
+    sp = os.path.join(A.OUT, 'SP.BAT'); open(sp, 'wb').write(b'@echo off\r\nmtline.com sp.txt | upper > spo.txt\r\n')
     cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
     huge = mz(os.path.join(A.OUT, 'HUGE.EXE'), 0xA000, 0xA000)     # (more than any free block: no region grows to it)
-    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, cl, huge,
+    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, 'SP.BAT=' + sp, cl, huge,
              os.path.join(HERE, 'UPPER.COM'))
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
@@ -3346,6 +3347,15 @@ def t_lcmd():
     left = [n for n in ('PIPEA1.$$0', 'PIPEA2.$$0', 'PIPEA1.$$$', 'PIPEA2.$$$') if A.disk_file(k, n) is not None]
     check('a pipe (ECHO | UPPER | UPPER) with multitasking on: HELLO THERE, its files gone', re.search(r'^HELLO THERE\s*$', o, re.M)
           and not left and back(), (o, left))
+    # ... in a task behind (LCMD /C SP.BAT as task 1): its files named by that task, not the one in front
+    sh.run('start /w sp.bat')
+    n1 = [n for n in ('PIPEA1.$$1', 'PIPEA1.$$0', 'PIPEA1.$$$') if A.disk_file(k, n) is not None]
+    front(k, 1); line(k, '=0'); k.run_for(0.5)
+    sh.run('wait 1')
+    left = [n for n in ('PIPEA1.$$1', 'PIPEA2.$$1') if A.disk_file(k, n) is not None]
+    check('... a pipe in a task behind (START /W SP.BAT: MTLINE | UPPER > SPO.TXT), MTLINE waiting: its file \\PIPEA1.$$1 '
+          '(task 1\'s; %s); then UPPER\'s output, the files gone' % (n1,), n1 == ['PIPEA1.$$1']
+          and b'MTLINE>' in (A.disk_file(k, 'SPO.TXT') or b'') and not left and back(), (n1, A.disk_file(k, 'SPO.TXT'), left))
     # CLAUDE /U refuses while other tasks run
     o1 = sh.run('claude /r')
     sh.run('start /w mtline.com sc.txt')
@@ -3576,9 +3586,15 @@ def t_tasksrun():
     k = boot('mt_tr0.img', None, 88, TR)
     k.key(A.CODE['T']); k.run_for(0.3)
     t0 = k.text()
+    k.key(A.CODE['D']); k.run_for(0.2)
+    bd = k.band()
+    k.key(A.CODE['Z'], A.CODE['B'], ktest.ENTER); k.run_for(0.3)
+    t1 = k.text()
     k.key(ktest.ESC); k.run_for(0.3)
-    check('off: CODE-T opens Tasks, which says multitasking is off; ESC closes it (exit code 0FFFFh)',
-          'Multitasking is off.' in t0 and A.run_ret(k) == 0xFFFF, t0[-600:])
+    check('off: CODE-T opens Tasks, which says multitasking is off; CODE-D, CODE-Z, CODE-B, Return: nothing (no task '
+          'selected: no question); ESC closes it (exit code 0FFFFh)', 'Multitasking is off.' in t0
+          and not any(b.startswith('End') for b in bd) and 'Multitasking is off.' in t1 and A.run_ret(k) == 0xFFFF,
+          (t0[-600:], bd))
     k = boot('mt_tr.img', b'MULTITASK=1\r\n', 88, TR)
     seg, Y = mt_seg(k), k.Y
     vf = lambda t: k.pc.rd(seg, Y['mt_tab'] + t * MT_ENT + TE_VF, 1)[0]
@@ -3608,6 +3624,14 @@ def t_tasksrun():
     check('CODE-Z: task 1 parked (its row "parked"), CODE-Z again: back; on the Executive\'s row, CODE-Z and CODE-B: '
           '"Not possible for that task"', p1[1] == (1, 5, 'MTLINE.COM') and 'parked' in r1[1] and p2[1][1] != 5
           and [b for b in b0 if b.startswith('Not')] == ['Not possible for that task'] * 2, (p1, r1, p2, b0))
+    k.key(ktest.DOWN); k.key(A.CODE['D']); k.run_for(0.2)
+    be = k.band()
+    k.key(ktest.ESC); k.run_for(0.3)
+    re1, se = rows(), tstate(k)[0]
+    k.key(ktest.UP)
+    check('CODE-D on task 1: asked ("%s"); ESC: nothing ended, its row as it was, both tasks there (%s)' % (be[:1], se),
+          be[:1] == ['End MTLINE.COM: Confirm to end the task'] and len(re1) == 3 and 'being ended' not in re1[1]
+          and [n for i, s, n in se] == ['Executive', 'MTLINE.COM', 'MTLINE.COM'], (be, re1, se))
     k.key(ktest.DOWN); k.key(ktest.DOWN); k.key(A.CODE['D']); k.run_for(0.2)
     b1 = k.band()
     k.key(ktest.ENTER); k.run_for(0.2)
@@ -5147,6 +5171,22 @@ def t_tclip():
           '(MT_KILL), its window closed, the Executive in front (%s)' % ((p2 - p1) % 32, k.band()),
           (p2 - p1) % 32 == 1 and mb('mw_n') == 0 and tnum('LCMD.COM') == 7 and any('LCMD.COM ended' in l for l in k.band()),
           ((p2 - p1) % 32, mb('mw_n'), tstate(k), k.band()))
+    # the menu's items are their keys: Paste on a note (a key there brings the task to the front) does that, as CODE-V would
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n5 = tnum('LCMD.COM')
+    setclip(b'echo q\n')
+    typ2('mtmode 40 n.txt t', 3.0)
+    f0 = tstate(k)[1]
+    to0()
+    mv(*cxy(tv('top') + 2, 10)); btn(2, 0.5)
+    o, nt = scr(), tb('note')
+    k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    f1, ps = tstate(k)[1], tv('pseg')
+    k.key('x', settle=False); k.run_for(2.0); k.key('x', settle=False); k.run_for(2.0)
+    check('MTMODE 40 T in a window (task %d, in front: %d), CODE-Tab away: its note (%d); a right click: the menu (Paste, '
+          'Full screen); Return on Paste: the task in front (%d), as a key typed there, nothing pasted' % (n5, f0, nt, f1),
+          f0 == n5 and nt == 1 and 'Paste          CODE-V' in o and 'Full screen    CODE-Tab' in o and f1 == n5 and ps == 0
+          and A.disk_file(k, 'N.TXT') == b'ok', (f0, nt, o[-400:], f1, ps, A.disk_file(k, 'N.TXT')))
     # TM5000G in a window: its mouse works there (Return on it: a text program)
     if not os.path.exists(A.TM5000G):
         print('(no TM5000G.EXE: skipped)'); return
@@ -5473,13 +5513,20 @@ def t_tpub():
     o1 = scr()
     k.key(ktest.ESC, settle=False); k.run_for(0.5)
     setclip(b'')
+    beeps, prev, bp = [0], k.pc.watch, k.useg * 16 + k.Y['ui_beep']
+    def w(a):
+        if prev: prev(a)
+        if a == bp: beeps[0] += 1
+    k.pc.watch = w
     mv(*cxy(15, 40)); btn(2, 0.8)
+    k.pc.watch = prev
     o2 = scr()
     k.key(ktest.ESC, settle=False); k.run_for(0.5)
     check('row 24\'s six cells selected, CODE-C: the clipboard %r (05h a blank, F0h and 81h \'?\' (0 in its table), 80h its '
           'table\'s \'A\', 47h \'G\', 20h a blank, dropped); a right click: only Paste (no Full screen); with the clipboard '
-          'empty: no menu at all' % cl, cl == b' ?A?G' and 'Paste          CODE-V' in o1 and 'Full screen' not in o1
-          and 'Copy ' not in o1 and 'Paste' not in o2 and 'Full screen' not in o2, (cl, o1[-400:], o2[-400:]))
+          'empty: no menu at all, and no beep (%d)' % (cl, beeps[0]), cl == b' ?A?G' and 'Paste          CODE-V' in o1
+          and 'Full screen' not in o1 and 'Copy ' not in o1 and 'Paste' not in o2 and 'Full screen' not in o2 and beeps[0] == 0,
+          (cl, o1[-400:], o2[-400:], beeps[0]))
     # CODE-Tab passes over it, MT_FRONT refuses it; another task's window beside it
     hot(k); k.run_for(1.0)
     f0 = tstate(k)[1]

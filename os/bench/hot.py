@@ -17,6 +17,9 @@ WORKLOAD: bench   BENCH.COM's ten tests (the real-drive timing model; minutes)
           system  System's screens
           term    MULTITASK=1: LCMD in a terminal window (DIR, TYPE), the
                   calculator over it (KMW's clipping gates)
+          wclip   Write: drags, CODE-C, CODE-V, the menu's Cut, Paste, Erase
+          tasks   MULTITASK=1: TASKS.RUN over three tasks (moves, CODE-B,
+                  CODE-Z, F5)
    CLAUDE.COM's (after claude/build.sh; mostly for "cl_taken", "st_taken"):
           cchat   CLAUDE.COM on the kernel: chat turns over the Pico link model
           cfiles  ... file requests: reads, writes, a listing, info
@@ -31,6 +34,14 @@ WORKLOAD: bench   BENCH.COM's ten tests (the real-drive timing model; minutes)
           rfiles  list, read, an 8 KB write, OPS_PROBE
           rbg     the background passes (a quiet bridge): idle looks, a read,
                   a write, SCREEN, a GPIB query
+   LCMD.COM's (the prompt; "lc_taken"; shell above counts it too):
+          lbatch  a batch file's loop: IF, GOTO, SHIFT, FOR over a set and
+                  over files, CALL
+          lpath   programs and a batch file found through the PATH, a name
+                  found nowhere, a path given
+          lpipe   pipes and redirection: < > >>, && and ||
+          ltasks  MULTITASK=1: START, TASKS, WAIT, KILL, a pipe, START of a
+                  batch file (an LCMD /C as a task)
 OUT.json: {"taken": {offset: count}, "falls": {offset: count}}, kernel .text
 offsets (KSEG:offset) as in src/LODE.MAP, and "ui_taken", "ui_falls": section
 ui's offsets (the UI segment, ui_seg, wherever it is: it is a block of its own,
@@ -40,10 +51,17 @@ offsets (from its PSP, up to bss: the start-up code not counted) and
 "st_taken", "st_falls": the stub's (section rstub, from its CS), both as in
 claude/CLAUDE.MAP's second column (each on a paragraph, so an offset's parity
 is the address's); "rc_taken", "rc_falls": RCON's (claude/RCON.MAP), at
-E000:0 while its page is in window 0; all the workloads named add up.  Save
-src/LODE.MAP, claude/CLAUDE.MAP and RCON.MAP with it: the offsets are that
-build's."""
-import sys, os, re, json, struct, collections
+E000:0 while its page is in window 0; "lc_taken", "lc_falls": LCMD.COM's
+(src/LCMD.MAP, which build.sh doesn't make: the LCMD workloads assemble
+LCMD.ASM again with it and src/LCMD.LST, for plan.py, and check it is
+src/LCMD.COM), from each copy's PSP up to bss_start, in every LCMD found in
+memory (a block owned by itself, prompt_loop's code in it); wait_key's
+polling and tick, which only wait, not counted; "ap_taken", "ap_falls":
+{name: {offset: count}}, each .RUN's (apps/*.RUN), offsets in its image (as
+in its listing: mkrun.py -l; the UI's workloads run them); all the workloads
+named add up.  Save src/LODE.MAP, claude/CLAUDE.MAP, RCON.MAP, src/LCMD.MAP
+and the .RUNs' listings with it: the offsets are that build's."""
+import sys, os, re, json, struct, collections, subprocess
 GOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for d in (GOS, os.path.join(GOS, 'tests'), os.path.join(GOS, 'bench')): sys.path.insert(0, d)
 import pcemu, ktest, mkimg
@@ -57,11 +75,13 @@ ui_taken, ui_falls = collections.Counter(), collections.Counter()
 cl_taken, cl_falls = collections.Counter(), collections.Counter()
 st_taken, st_falls = collections.Counter(), collections.Counter()
 rc_taken, rc_falls = collections.Counter(), collections.Counter()
+lc_taken, lc_falls = collections.Counter(), collections.Counter()
+TMP = os.environ.get('TMPDIR', '/tmp')
 
-def csyms():
+def csyms(path=os.path.join(GOS, 'claude', 'CLAUDE.MAP')):
     """claude/CLAUDE.MAP: {section: {label: offset}} (the second column: where it runs)"""
     out, sec = collections.defaultdict(dict), None
-    for l in open(os.path.join(GOS, 'claude', 'CLAUDE.MAP'), encoding='latin-1'):
+    for l in open(path, encoding='latin-1'):
         m = re.match(r'---- Section (\S+)', l)
         if m: sec = m.group(1); continue
         m = re.match(r'\s+([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$', l)
@@ -74,6 +94,30 @@ def cl_at(psp): CL[:] = [psp * 16 + 0x100, psp * 16 + CY['.text']['bss'], psp * 
 def st_at(seg): ST[:] = [seg * 16 + 0x100, seg * 16 + CY['rstub']['r_code_end'], seg * 16]
 RC = [-1, -1, 0, None]                          # RCON's, and its page register (window 0)
 def rc_at(reg, end): RC[:] = [0xE0000, 0xE0000 + end, 0xE0000, reg]
+LY, LCOM = {}, [b'']                            # LCMD.MAP's .text labels, LCMD.COM (lc_find)
+LC = []                                         # LCMD's copies, linear: (from, to, its PSP's base)
+LSPIN = []                                      # (offsets: wait_key's polling loop and tick, not counted)
+
+def lc_find(k):
+    """LCMD's copies in memory -> LC (another one for an LCMD /C, as a task too)"""
+    src = os.path.join(GOS, 'src')
+    if not LY:                                  # (src/LCMD.LST and .MAP: LCMD.ASM assembled again)
+        inc, out = os.path.join(TMP, 'hot_lcmd.inc'), os.path.join(TMP, 'hot_lcmd.com')
+        open(inc, 'w').write('[map all %s]\n' % os.path.join(src, 'LCMD.MAP'))
+        subprocess.run(['nasm', '-f', 'bin', '-o', out, '-l', 'LCMD.LST', '-P' + inc, 'LCMD.ASM'], cwd=src, check=True)
+        LCOM[0] = open(os.path.join(src, 'LCMD.COM'), 'rb').read()
+        if open(out, 'rb').read() != LCOM[0]: sys.exit('src/LCMD.COM is not src/LCMD.ASM: build.sh first')
+        m = csyms(os.path.join(src, 'LCMD.MAP'))
+        LY.update(m['.text']); LY['bss_start'] = m['.bss']['bss_start']
+        LSPIN[:] = [(LY['wait_key.w'], LY['wait_key.k']), (LY['tick'], LY['run_saver'])]
+    p = LY['prompt_loop']                       # (past the history's overlay: as in LCMD.COM)
+    mem = k.pc.rd(0, 0, 0xA0000)
+    LC[:] = []
+    for m in re.finditer(re.escape(LCOM[0][p - 0x100:p - 0x100 + 32]), mem):
+        b = m.start() - p                       # (a block of its own, owned by its PSP)
+        if b >= 16 and not b & 15 and mem[b - 16] in b'MZ' and struct.unpack('<H', mem[b - 15:b - 13])[0] == b >> 4:
+            LC.append((b + 0x100, b + LY['bss_start'], b))
+    return len(LC)
 
 prev = [0, 0]
 ui = [0, -1, -1, None]                          # (blocks to the next look at ui_seg, its base and end, linear; the PC)
@@ -89,17 +133,81 @@ def blk(s, uc, addr, size, ud):
             (st_falls if addr == pa + ps else st_taken)[addr - ST[2]] += 1
         elif RC[0] <= addr < RC[1] and s.ems_reg[0] == RC[3]:
             (rc_falls if addr == pa + ps else rc_taken)[addr - RC[2]] += 1
+        elif any(lo <= addr < hi for lo, hi, b in LC):
+            o = next(addr - b for lo, hi, b in LC if lo <= addr < hi)
+            if not any(x <= o < y for x, y in LSPIN):
+                (lc_falls if addr == pa + ps else lc_taken)[o] += 1
         else:
             if ui[0] <= 0 or ui[3] is not s:    # (it moves only at the Executive's ui_room)
                 seg = struct.unpack('<H', uc.mem_read(USEG, 2))[0]
                 ui[:] = [4096, seg * 16 if seg else -1, seg * 16 + UEND if seg else -1, s]
             ui[0] -= 1
-            if ui[1] <= addr < ui[2] and not (SPIN0 <= pa - ui[1] < SPIN1 or SPIN0 <= addr - ui[1] < SPIN1):
-                (ui_falls if addr == pa + ps else ui_taken)[addr - ui[1]] += 1
+            if ui[1] <= addr < ui[2]:
+                if not (SPIN0 <= pa - ui[1] < SPIN1 or SPIN0 <= addr - ui[1] < SPIN1):
+                    (ui_falls if addr == pa + ps else ui_taken)[addr - ui[1]] += 1
+            elif ui[1] > 0 and ui[2] <= addr < ui[1] + 0x10000:     # (past the UI's image: a .RUN's slot?)
+                r = app_at(s, uc, addr)
+                if r: (ap_falls if addr == pa + ps else ap_taken)[r[2]][addr - r[0]] += 1
     prev[0], prev[1] = addr, size
     return ob(s, uc, addr, size, ud)
+
+# ---- the .RUNs' (apps/*.RUN; "ap_taken", "ap_falls": {name: {offset: count}}) ----
+# A .RUN runs in the UI segment, at run_base (run_app) or, a window .RUN with
+# MULTITASK=1, in its session's slot (KMW's mw_ses: SE_BASE, SE_NAME); both on
+# a paragraph, so an offset in its image has the address's parity.  The
+# regions are looked at again whenever a block lands outside them or on one's
+# first byte (a .RUN started), so a slot used again is a new region
+ap_taken, ap_falls = collections.defaultdict(collections.Counter), collections.defaultdict(collections.Counter)
+RUNS = {}                                       # (image, BSS) -> name; name -> image
+for _n in ('SYSTEM', 'WRITE', 'CALC', 'TASKS', 'TERM'):
+    try: _h = open(os.path.join(GOS, 'apps', _n + '.RUN'), 'rb').read(16)
+    except OSError: continue
+    RUNS[struct.unpack_from('<HH', _h, 6)] = _n; RUNS[_n] = struct.unpack_from('<H', _h, 6)[0]
+def _equ(name):
+    for l in open(os.path.join(GOS, 'src', 'LODE.MAP')):
+        m = re.match(r'([0-9A-F]{8})\s+(\S+)\s*$', l)
+        if m and m.group(2) == name: return int(m.group(1), 16)
+SE_USE, SE_BASE, SE_NAME, SE_SIZE, MW_MAX = (_equ(n) for n in ('SE_USE', 'SE_BASE', 'SE_NAME', 'SE_SIZE', 'MW_MAX'))
+AREG = [None, []]                               # (the PC they are for; [(base, end, name)], linear)
+MTSEG = {}                                      # PC -> MT's block (its segment), once found
+
+def mt_seg(s, uc):
+    if s not in MTSEG:
+        seg = struct.unpack('<H', uc.mem_read(0x600 + SY['first_mcb'], 2))[0]
+        for _ in range(200):
+            t, own, sz = struct.unpack('<BHH', uc.mem_read(seg * 16, 5))
+            if uc.mem_read(seg * 16 + 8, 2) == b'MT' and own == 8: MTSEG[s] = seg + 1; break
+            if t != 0x4D: break
+            seg += sz + 1
+        else: return None
+    return MTSEG.get(s)
+
+def app_regions(s, uc):
+    u, out = ui[1], []
+    rd = lambda a, n: bytes(uc.mem_read(a, n))
+    if rd(u + SY['run_active'], 1)[0]:
+        im, bss = struct.unpack('<HH', rd(u + SY['run_hdr'] + 6, 4))
+        b = u + struct.unpack('<H', rd(u + SY['run_base'], 2))[0]
+        if (im, bss) in RUNS: out.append((b, b + im, RUNS[(im, bss)]))
+    ms = mt_seg(s, uc) if SE_SIZE else None
+    if ms:
+        for i in range(1, MW_MAX + 1):
+            r = ms * 16 + SY['mw_ses'] + i * SE_SIZE
+            if rd(r + SE_USE, 1)[0]:
+                n = rd(r + SE_NAME, 12).split(b'\0')[0].decode('latin-1').upper()
+                n = n[:-4] if n.endswith('.RUN') else n
+                b = u + struct.unpack('<H', rd(r + SE_BASE, 2))[0]
+                if n in RUNS: out.append((b, b + RUNS[n], n))
+    AREG[:] = [s, out]
+
+def app_at(s, uc, addr):
+    if AREG[0] is s:
+        for r in AREG[1]:
+            if r[0] < addr < r[1]: return r
+    app_regions(s, uc)
+    for r in AREG[1]:
+        if r[0] <= addr < r[1]: return r
 pcemu.PC.blk = blk
-TMP = os.environ.get('TMPDIR', '/tmp')
 
 def w_bench():
     import run_bench
@@ -112,11 +220,64 @@ def w_shell():
     files = [os.path.join(GOS, 'src', 'LCMD.COM'), 'TEXT.TXT=' + txt, 'BIG.BIN=' + big] + \
             ['F%02d.TXT=%s' % (i, txt) for i in range(20)]
     k = ktest.KPC(mkimg.build(os.path.join(TMP, 'hot_shell.img'), [os.path.join(GOS, 'src', 'LODE.SYS')] + files))
-    k.start(); k.code_p()
+    k.start(); k.code_p(); lc_find(k)
     for cmd in ('dir', 'dir *.txt', 'type text.txt', 'copy big.bin big2.bin', 'copy text.txt t2.txt',
                 'type t2.txt', 'dir /w', 'del big2.bin', 'del t2.txt', 'type text.txt'):
         k.key('cls'); k.key(ktest.ENTER)
         k.key(cmd); k.key(ktest.ENTER, settle=False); k.settle(60)
+
+# ---- LCMD.COM's --------------------------------------------------------
+def lc_pc(name, *files, **kw):
+    """LODE.SYS, LCMD.COM, TEXT.TXT (300 lines), F00-F19.TXT and `files`; LCMD started (Shift-CODE-P)"""
+    t = text('hot_lt.txt', 300)
+    k = ktest.KPC(mkimg.build(os.path.join(TMP, name), [os.path.join(GOS, 'src', n) for n in ('LODE.SYS', 'LCMD.COM')]
+                  + ['TEXT.TXT=' + t] + ['F%02d.TXT=%s' % (i, text('hot_t.txt', 40)) for i in range(20)] + list(files)), **kw)
+    k.start(); k.code_p()
+    assert lc_find(k), 'no LCMD'
+    return k
+
+def lc_cmd(k, c, t=60):
+    k.key(c); k.key(ktest.ENTER, settle=False); k.settle(t)
+    lc_find(k)
+
+def bat(name, *lines):
+    p = os.path.join(TMP, 'hot_' + name); open(p, 'wb').write(b''.join(l.encode() + b'\r\n' for l in lines))
+    return name + '=' + p
+
+TESTS = lambda n: os.path.join(GOS, 'tests', n)
+
+def w_lbatch():
+    k = lc_pc('hot_lbat.img', bat('LOOP.BAT', '@echo off', ':top', 'if "%1"=="" goto done', 'echo arg %1',
+                                  'for %%f in (f0*.txt) do if exist %%f echo %%f', 'for %%x in (a b c d) do if not %%x==%1 rem %%x',
+                                  'call sub.bat %1', 'if errorlevel 1 echo bad', 'shift', 'goto top', ':done', 'echo finished'),
+              bat('SUB.BAT', '@echo off', 'rem in sub %1', 'set V=%1', 'if "%V%"=="x" echo never', 'set V='))
+    for _ in range(2): lc_cmd(k, 'loop a b c d e f g h i j k l', 120)
+
+def w_lpath():
+    k = lc_pc('hot_lpath.img', 'BIN\\', 'TOOLS\\', 'TOOLS\\UP.COM=' + TESTS('UPPER.COM'), 'TOOLS\\MZ.COM=' + TESTS('MEMSZ.COM'),
+              'TOOLS\\' + bat('HI.BAT', '@echo off', 'echo hi'))
+    lc_cmd(k, 'path a:\\bin;a:\\tools')
+    for c in ('mz', 'up < text.txt > nul', 'hi', 'nosuch', 'a:\\tools\\mz', 'up < f01.txt > nul', 'nosuch.com', 'mz', 'hi'):
+        lc_cmd(k, c)
+
+def w_lpipe():
+    k = lc_pc('hot_lpipe.img', 'UPPER.COM=' + TESTS('UPPER.COM'))
+    for c in ('type text.txt | upper > o1.txt', 'dir | upper', 'echo hello there | upper | upper', 'upper < text.txt > o2.txt',
+              'type f01.txt >> o3.txt', 'type f02.txt >> o3.txt', 'dir /w > d.txt', 'type d.txt | upper',
+              'echo a > e.txt && type e.txt || echo no', 'type nosuch.txt && echo yes || echo no'):
+        lc_cmd(k, c)
+
+def w_ltasks():
+    import test_mt as M
+    k = lc_pc('hot_ltasks.img', 'UPPER.COM=' + TESTS('UPPER.COM'), 'MTLINE.COM=' + TESTS('MTLINE.COM'),
+              'LODEMT.SYS=' + os.path.join(GOS, 'src', 'LODEMT.SYS'), 'LODE.INI=' + ini(b'MULTITASK=1\r\n'),
+              bat('SP.BAT', '@echo off', 'mtline.com sp.txt | upper > spo.txt'), ems_pages=88)
+    for c in ('start /w mtline.com a.txt', 'tasks', 'start /w mtline.com b.txt', 'tasks', 'dir', 'echo hi | upper'):
+        lc_cmd(k, c)
+    M.front(k, 1); M.line(k, '=3')
+    for c in ('wait 1', 'kill 2', 'tasks', 'start /w sp.bat'): lc_cmd(k, c)
+    M.front(k, 1); M.line(k, '=0')
+    for c in ('wait 1', 'tasks', 'type text.txt', 'dir /w'): lc_cmd(k, c)
 
 def w_exec():
     k = ktest.KPC(mkimg.build(os.path.join(TMP, 'hot_exec.img'), [os.path.join(GOS, 'src', 'LODE.SYS'),
@@ -293,6 +454,27 @@ def w_term():
     k.key(ESC, settle=False); k.run_for(1)             # (the calculator closed)
     for s, t in (('type long.txt', 8), ('dir', 3)): typ(s, t)
 
+def w_wclip():
+    k = ui_pc('hot_wclip.img', APP('WRITE'), 'LONG.TXT=' + text('hot_long.txt', 300))
+    k.select('LONG.TXT'); k.key(RET)
+    at = lambda c, r: (c * 8 + 2, 24 + r * 16 + 8)     # (column, row) of the whole-screen text area
+    for i in range(4):
+        drag(k, *at(4, i), *at(30, i + 1)); k.key(CODE['C'])           # a drag, CODE-C; CODE-V further down
+        k.key(*[D] * 3, K_END); k.key(CODE['V'])
+        drag(k, *at(0, 2 + i), *at(12, 2 + i)); press(k, *at(20, 2 + i), 2); k.key(RET)    # the menu's Cut
+        press(k, *at(8, 8 + i), 2); k.key(RET)                          # ... and its Paste
+        drag(k, *at(2, 3), *at(20, 3)); press(k, *at(4, 3), 2); k.key('E', RET)            # ... and its Erase
+    k.key(K_PGDN, CODE['C'], CODE['V'], *[U] * 6)
+
+def w_tasks():
+    import test_mt as M
+    k = M.boot('hot_tasks.img', b'MULTITASK=1\r\n', 88, APP('TASKS'))
+    for i in range(3): M.ret(k, 'MTLINE.COM'); M.hot(k)
+    for _ in range(3):
+        k.key(CODE['T']); k.run_for(0.3)
+        k.key(D, CODE['B'], CODE['B'], CODE['B'], D, CODE['Z'], CODE['Z'], U, U, D, D, D, 0x3F00, U)
+        k.key(ESC); k.run_for(0.3)
+
 def ini(t):
     p = os.path.join(TMP, 'hot_ini.txt'); open(p, 'wb').write(t); return p
 
@@ -356,10 +538,12 @@ def w_rbg():
 if __name__ == '__main__':
     if len(sys.argv) < 3: sys.exit(__doc__)
     for w in sys.argv[2:]:
-        print('== workload', w); CL[:] = ST[:] = [-1, -1, 0]; RC[:] = [-1, -1, 0, None]; globals()['w_' + w]()
+        print('== workload', w); CL[:] = ST[:] = [-1, -1, 0]; RC[:] = [-1, -1, 0, None]; LC[:] = []; globals()['w_' + w]()
     json.dump({'taken': taken, 'falls': falls, 'ui_taken': ui_taken, 'ui_falls': ui_falls,
                'cl_taken': cl_taken, 'cl_falls': cl_falls, 'st_taken': st_taken, 'st_falls': st_falls,
-               'rc_taken': rc_taken, 'rc_falls': rc_falls}, open(sys.argv[1], 'w'))
-    for n, c in (('kernel', taken), ('UI', ui_taken), ('CLAUDE.COM', cl_taken), ('the stub', st_taken), ('RCON', rc_taken)):
+               'rc_taken': rc_taken, 'rc_falls': rc_falls, 'lc_taken': lc_taken, 'lc_falls': lc_falls,
+               'ap_taken': ap_taken, 'ap_falls': ap_falls}, open(sys.argv[1], 'w'))
+    for n, c in ((('kernel', taken), ('UI', ui_taken), ('CLAUDE.COM', cl_taken), ('the stub', st_taken), ('RCON', rc_taken),
+                  ('LCMD.COM', lc_taken)) + tuple((n + '.RUN', c) for n, c in sorted(ap_taken.items()))):
         t = sum(c.values())
         print('%s: %d taken entries, %.1f%% at odd addresses' % (n, t, 100.0 * sum(v for a, v in c.items() if a & 1) / max(t, 1)))
