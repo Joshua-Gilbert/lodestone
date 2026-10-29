@@ -8,13 +8,14 @@ HOT.json files <anything>_<workload>.json.  TOP=n labels (default 40, by
 count with the workloads weighed the same).  SECTION=ui: the UI's (section
 ui, hot.py's "ui_taken"); SECTION=claude: CLAUDE.COM's (CLAUDE.MAPs,
 "cl_taken"); SECTION=rstub: the CLAUDE /R stub's ("st_taken"); SECTION=rcon:
-resident Claude's console's (RCON.MAPs, "rc_taken").
+resident Claude's console's (RCON.MAPs, "rc_taken"); SECTION=lcmd: LCMD.COM's
+(src/LCMD.MAPs, "lc_taken").
 Output: a table per workload, then label, count (weighed, raw) and its parity
 (E/O) in each map."""
 import re, sys, json, collections, bisect, os
 SEC = os.environ.get('SECTION', '.text')
-KEY = {'ui': 'ui_taken', 'claude': 'cl_taken', 'rstub': 'st_taken', 'rcon': 'rc_taken'}.get(SEC, 'taken')
-if SEC in ('claude', 'rcon'): SEC = '.text'     # (its section in CLAUDE.MAP, RCON.MAP)
+KEY = {'ui': 'ui_taken', 'claude': 'cl_taken', 'rstub': 'st_taken', 'rcon': 'rc_taken', 'lcmd': 'lc_taken'}.get(SEC, 'taken')
+if SEC in ('claude', 'rcon', 'lcmd'): SEC = '.text'     # (its section in CLAUDE.MAP, RCON.MAP, LCMD.MAP)
 
 def load(p):
     syms, sec = [], None
