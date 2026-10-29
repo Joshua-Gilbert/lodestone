@@ -1015,9 +1015,10 @@ Real              Virtual           Name
             1A47              1A47  crit_disk.m
             1A51              1A51  crit_disk.r
             1A56              1A56  crit_disk.c24
+            1A6B              1A6B  crit_disk.fail
             1A6D              1A6D  crit_disk.x
             1A6E              1A6E  crit_disk.abort
-            1A88              1A88  crit_disk.fail
+            1A7C              1A7C  crit_disk.t
             1A8B              1A8B  crit_dev
             1A9D              1A9D  drv_dflt
             1AA6              1AA6  drv_dflt.d
@@ -1453,6 +1454,7 @@ Real              Virtual           Name
             3795              3795  f_31.k
             37A2              37A2  f_4D
             37A8              37A8  terminate
+            37B0              37B0  terminate.ah
             37D1              37D1  terminate.kf
             37FA              37FA  terminate.free
             37FF              37FF  terminate.fcall
