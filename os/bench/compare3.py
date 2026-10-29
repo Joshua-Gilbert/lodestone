@@ -40,7 +40,7 @@ def lodestone(prog, ems, limit=900):
 def msdos(prog, ems, limit=900):
     cfg = b'DEVICE=EMM.SYS\r\n' if ems else None
     img = dosimg.build(os.path.join(TMP, 'm3.img'), ROM, [prog] + ([EMM] if ems else []), config=cfg)
-    pc = pcemu.PC(img, disk_model='real', ems_pages=ems)
+    pc = pcemu.PC(img, disk_model='real', ems_pages=ems, irq_exact=True)  # (IRQs as ktest.KPC delivers Lodestone's: H10)
     raw = open(img, 'rb').read()
     pc.mu.mem_write(0x7C00, raw[:512])
     data = 1 + 2 * 9 + 14
@@ -64,7 +64,7 @@ def freedos(prog, ems, limit=900):
     name = os.path.splitext(os.path.basename(prog))[0].upper()
     img = fdimg.build(os.path.join(TMP, 'f3.img'), [prog] + ([EMM] if ems else []), config=cfg,
                       autoexec=b'@ECHO OFF\r\n' + name.encode() + b'\r\n')
-    pc = pcemu.PC(img, disk_model='real', ems_pages=ems)
+    pc = pcemu.PC(img, disk_model='real', ems_pages=ems, irq_exact=True)  # (as msdos())
     pc.boot(0)
     tty = lambda: ''.join(pc.tty)
     ktest.run_answering(pc, lambda: 'FreeCom' in tty() and tty().rstrip().endswith('>'), limit)
