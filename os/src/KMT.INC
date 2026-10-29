@@ -5426,8 +5426,8 @@ mt_scrsv:
         mov     al, [62h]               ; its page's start as 62h x 4Ch, as the
         xor     ah, ah                  ;  BIOS writes: a program may have set
         mul     word [4Ch]              ;  them itself, not with 05h, and MT
-        mov     [es:TX_VID + 4Eh - 49h], ax ;  trusts 4Eh behind (in graphics
-        push    0B800h                  ;  modes 62h is 0, and so 4Eh)
+        mov     [es:TX_VID + 4Eh - 49h], ax ;  trusts 4Eh behind (whatever the
+        push    0B800h                  ;  mode, as the BIOS's 05h works it out)
         pop     ds
         push    EMS_FRAME
         pop     es
