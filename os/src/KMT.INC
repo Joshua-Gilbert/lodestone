@@ -4292,12 +4292,12 @@ mt_urun:
         mov     byte [es:di], 0
         jmp     mt_uyes
 
-; task AL (its count AH), started behind: its terminal window, TERM.RUN
-; (UI_FINDAPP's) with the argument "task count", as run_app runs it (mw_run:
-; a session, the first or beside others); the Executive waits in here while
-; others are in front.  If it can't open (no TERM.RUN, no room, too many
-; windows): the task in front, as without windows.  (DS = the UI's; AX, BX,
-; CX, SI, DI change)
+; task AL (its count AH, its entry BX), started behind: its terminal
+; window, TERM.RUN (UI_FINDAPP's) with the argument "task count name", as
+; run_app runs it (mw_run: a session, the first or beside others); the
+; Executive waits in here while others are in front.  If it can't open (no
+; TERM.RUN, no room, too many windows): the task in front, as without
+; windows.  (DS = the UI's; AX, BX, CX, SI, DI change)
 mt_uwin:
         push    es
         push    ax
@@ -4319,6 +4319,9 @@ mt_uwin:
         push    ax
         mov     al, ah
         call    mt_udec
+        mov     al, ' '                 ; (its name: TERM's title)
+        stosb
+        call    mt_uname
         mov     byte [es:di], 0
         mov     si, msgbuf
         UCALL   ui_findapp              ; SI = its path
@@ -4339,15 +4342,8 @@ mt_uwin:
 ; the ended task at BX: "X ended[, exit code n]", or "X could not be
 ; started: error n" (EXEC's), at ES:DI, ASCIIZ.  (AX, CX, SI change)
 mt_uend:
-        lea     si, [bx+TE_NAME]
-        mov     cx, TR_NAMELEN
-.n:     mov     al, [cs:si]
-        or      al, al
-        jz      .e
-        stosb
-        inc     si
-        loop    .n
-.e:     mov     ax, [cs:bx+TE_EXIT]
+        call    mt_uname
+        mov     ax, [cs:bx+TE_EXIT]
         push    ax
         mov     si, mt_snost
         cmp     ah, 0FFh
@@ -4366,6 +4362,19 @@ mt_uend:
 .x:     pop     ax
         mov     byte [es:di], 0
         ret
+
+; the name of the task at BX (TE_NAME: TR_NAMELEN at most) at ES:DI, DI
+; past it, no NUL (AL, CX, SI change)
+mt_uname:
+        lea     si, [bx+TE_NAME]
+        mov     cx, TR_NAMELEN
+.n:     mov     al, [cs:si]
+        or      al, al
+        jz      .x
+        stosb
+        inc     si
+        loop    .n
+.x:     ret
 
 ; the text at CS:SI (ASCIIZ) at ES:DI, DI and SI past it (AL changes)
 mt_ucpy:

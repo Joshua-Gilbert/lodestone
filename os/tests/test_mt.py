@@ -5409,6 +5409,58 @@ def t_peek():
           'mw_peek\'s file closed each time, the SFT as it was' % (MW_MAX + 1, [n for n, f, s in nn]),
           [n for n, f, s in nn] == [2, 3, 4, 4, 4] and all(f == 0 and s for n, f, s in nn) and not k.crashed, (nn, A.screen(k)))
 
+def t_tname():
+    print('== a terminal window\'s title: its program\'s name in TERM.RUN\'s argument, from MT (R65)')
+    k = boot('mt_tn.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, 'X.COM=' + MTLN, 'ABCDEFGH.EXE=' + MTLN, 'SUB\\',
+             'SUB\\INSUB.COM=' + MTLN, mouse=True)
+    seg, Y, TS = mt_seg(k), k.Y, A.run_syms('apps/TERM.ASM')
+    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+    wv = lambda o: k.pc.u16(k.useg, base() + TS['win'] + o)
+    cstr = lambda off: bytes(k.pc.rd(k.useg, off, 40)).split(b'\0')[0].decode('latin-1')
+    scr = lambda: '\n'.join(l for y, l in k.ocr())
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    def opened(name, close=False):
+        """Return on it: (its window's title, TERM's argument as MT gave it, as it should be, the title on the screen,
+        the close box's question); then a line typed ends it, and the window with it."""
+        if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)       # (the last one's "ended" cleared)
+        k.select(name); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+        n, c = k.pc.rd(seg, Y['mw_ses'] + SE_SIZE + SE_TASK, 2)
+        nm = bytes(k.pc.rd(seg, task_ent(k, n) + 10, 12)).split(b'\0')[0].decode('latin-1')     # (TE_NAME)
+        title, arg = cstr(wv(8)), cstr(base() + TS['arg'])
+        got = (title, arg, '%d %d %s' % (n, c, nm), title in scr() if title else None, None)
+        if close:
+            A.click(k, (wv(0) + wv(4) - 2) * 8 + 4, wv(2) + 8); k.run_for(0.5)
+            got = got[:4] + ((k.band() or [''])[0],)
+            k.key(ktest.ESC, settle=False); k.run_for(0.5)
+        k.key('q', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+        return got + (mb('mw_n'),)
+    r1 = opened('X.COM')
+    r12 = opened('ABCDEFGH.EXE', close=True)
+    check('Return on X.COM and on ABCDEFGH.EXE (a whole 8.3 name: TE_NAME without its NUL): each in a window titled with '
+          'its name (%r, %r), from TERM\'s argument "task count name" (%r, %r), drawn in its strip; the close box asks '
+          'with it (%r); each window gone with its task' % (r1[0], r12[0], r1[1], r12[1], r12[4]),
+          r1[:4] == ('X.COM', r1[2], r1[2], True) and r1[1].endswith(' X.COM') and r12[:4] == ('ABCDEFGH.EXE', r12[2], r12[2], True)
+          and r12[4] == 'Close: Confirm to end ABCDEFGH.EXE' and r1[5] == r12[5] == 0, (r1, r12))
+    # in a subject: the path's last part
+    if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)
+    A.pick_subject(k, 'SUB'); k.key(ktest.TAB); k.run_for(0.3)
+    rs = opened('INSUB.COM')
+    check('Return on INSUB.COM in subject SUB (its path A:\\SUB\\INSUB.COM): the title its name only (%r), argument %r'
+          % (rs[0], rs[1]), rs[:4] == ('INSUB.COM', rs[2], rs[2], True) and rs[5] == 0, rs)
+    # a task with no name (TE_NAME emptied as mt_uwin asks for it): no title, the strip still there
+    from unicorn import UC_HOOK_CODE, x86_const as X
+    lin = seg * 16 + Y['mt_uname']
+    def blank(mu, a, sz, u):
+        k.pc.wr(seg, mu.reg_read(X.UC_X86_REG_BX) + 10, b'\0' * 12)
+    hk = k.pc.mu.hook_add(UC_HOOK_CODE, blank, None, lin, lin); k.pc.mu.ctl_remove_cache(lin, lin + 1)
+    if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)
+    A.pick_subject(k, 'Root'); k.key(ktest.TAB); k.run_for(0.3)
+    rn = opened('X.COM', close=True)
+    k.pc.mu.hook_del(hk)
+    check('a task with no name: its window opens untitled (%r; the argument %r ends with the blank), the close box asks '
+          '"%s"; it ends, the window with it' % (rn[0], rn[1], rn[4]), rn[0] == '' and rn[1] == rn[2] and rn[1].endswith(' ')
+          and rn[4].rstrip() == 'Close: Confirm to end' and rn[5] == 0 and not k.crashed, rn)
+
 QUITRUN = os.path.join(HERE, 'QUITRUN.RUN')
 
 def t_wroot():
@@ -6352,7 +6404,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
