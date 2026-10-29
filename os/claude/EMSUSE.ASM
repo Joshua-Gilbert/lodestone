@@ -1,6 +1,6 @@
 ; EMSUSE.COM - a program that keeps four EMS pages of its own in all four
 ; windows while it waits for keys, and checks after every key that they
-; are still there, whole (for RSPIKE: its pop-up must give them back).
+; are still there, whole (resident Claude's console must give them back).
 ;   EMSUSE      reads keys with INT 16h AH=00h      EMSUSE /X   with AH=10h
 ; Esc ends: "EMSUSE: n keys, k bad", exit code k (at most 255).
 cpu 286
