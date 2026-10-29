@@ -1308,8 +1308,9 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
   - **`MT_UI` (AL=19h):** the Executive's entry, below.
 
 **How:**
-- **The Executive's entry.** `MT_UI` gives the Executive a far entry into LODEMT.SYS (`mt_ui`). The Executive gets it once, at its start (in `ui_boot`, which is discarded), and keeps only its 4 bytes, and a byte for its wait (`ex_mtw`). The Executive calls it in its own task, not inside INT 21h, so the entry may call DOS: it reads an `.EXE`'s header itself, and asks for the largest block with AH=48h. With CS in MT's block, no switch comes meanwhile (`mt_safe`).
-  - Since the 2026-10-26 audit's R42 the Executive keeps no entry: `MT_UI` only patches the UI (KMW's `mw_ptab`), and the calls are KMW's. `run_prog`'s `CMP BYTE [ex_mtw],0` is a far jump to `mw_prog` (Shift: `run_wait`, as before), and `mw_poll` makes the look below. Off, `run_prog` falls into `run_wait`. The resident UI has 59 bytes less code (three paragraphs), LODEMT.SYS 86 bytes more.
+- **The Executive's entry (`mt_ui`, in LODEMT.SYS).** `MT_UI`, asked once at the Executive's start (in `ui_boot`, which is discarded), patches the UI (KMW's `mw_ptab`) and sets the Executive's one byte for its wait (`ex_mtw`); it gives no entry back. KMW's patches call `mt_ui`: `run_prog`'s `CMP BYTE [ex_mtw],0` is a far jump to `mw_prog`, which starts the program through it (Shift: `run_wait`, as before), and `mw_poll` makes the look below. With the switch off `run_prog` falls into `run_wait`. They call it in the Executive's own task, not inside INT 21h, so it may call DOS: it reads an `.EXE`'s header itself, and asks for the largest block with AH=48h. With CS in MT's block, no switch comes meanwhile (`mt_safe`).
+  - Before the 2026-10-26 audit's R42, `MT_UI` gave the Executive a far entry, which it kept (4 bytes) and called from `run_prog` and `poll_once` itself. R42 moved those calls into KMW: the resident UI has 59 bytes less code (three paragraphs), LODEMT.SYS 86 bytes more.
+  - So Return as a task and the notices of a task's end now depend on KMW's patches being made, which needs every one of `mw_ptab`'s checks to pass. `MT_UI` succeeds even when `mw_patch` refuses, so a UI whose patched sites don't hold the bytes KMW expects (a UICORE or EXEC edit KMW wasn't changed for; a LODEMT.SYS from another build is kept off altogether, `t_file`) would leave Return running the program in the Executive's own task, and no end said, with no message. Before, both worked without the patches. `test_mt`'s `t_exec` pins `run_prog`'s patch (a `JMP FAR mw_prog` with the switch on, the `CMP` with it off).
 - **Sizing an `.EXE`:**
   - its pages less its header and the last page's unused part, plus its PSP, plus `MT_XENV` (74 paragraphs: EXEC's copy of the stub's environment, `ENVMAX` at most, and the name, with its MCB);
   - plus its minimum (`DX`), or up to its maximum (`AX`, at least `DX`), capped as above;
@@ -1342,7 +1343,7 @@ The plan's M7 is split in three: M7a (this) is LCMD's commands and what they nee
 - **A task found writing the screen itself** still shows "auto", with "frozen behind" as what it is doing.
 - **A `.RUN` may not find room.** An `.EXE` from Return leaves 16 KB for one, but a task started otherwise (START, `MTMEM=`), or an `.EXE` whose minimum alone is more than the cap, can take memory right after the UI block; a `.RUN` that doesn't fit then gets "not enough memory".
 - **A TSR loaded from the Executive's own task while other tasks are there** (with Shift-Return, or at CODE-P's prompt) leaves the Executive's list empty, and its `.RUN`s unable to load, until the last task has ended and the block has moved past it. Load TSRs before starting tasks (M5a). Meanwhile the tasks can still be ended: CODE-Tab to each and quit it, or CODE-P's prompt with KILL (and UNPARK for a parked one).
-- **`MT_UI`'s entry is the Executive's alone.**
+- **`MT_UI` is the Executive's alone:** it patches the UI and gives no entry (since R42); `mt_ui` is called only from KMW's patches.
 
 **Cost:**
 - **Switch off:**
