@@ -745,14 +745,7 @@ crc_init:
 ; The hot labels: even in CLAUDE.COM and in RCON (their pads above, each
 ; making what follows it even, or odd, wherever the includer puts this);
 ; the build stops if one goes odd
-%ifnmacro EVEN 1-*
-%macro EVEN 1-*
-%rep %0
-        times   -((%1 - $$) & 1) db 0
-%rotate 1
-%endrep
-%endmacro
-%endif
+%include "EVEN.INC"
 %ifndef PROFILE                         ; (CLAUDEP: PROF's code moves them)
         EVEN    link_service, link_idle, link_idle.x, frame_poll, frame_short, frame_hdr
         EVEN    link_write, lw_go.ok, link_wait, link_wait.t, link_wait.x, link_read
