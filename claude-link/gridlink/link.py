@@ -325,7 +325,12 @@ class Link:
                     s.last_answer = s.last_answer[:-2] + chk
                     s.stats['rx_recheck'] += 1
                 s._to_grid(s.last_answer)
-            else: s._answer(glp.P_NOP, b'')
+            else:
+                # Nothing answered yet: our NAK for its damaged first frame went in the other check (rx_fl
+                # starts as the sum, for CLAUDE 1.15; an older CLAUDE reads only CRC before its HELLO's
+                # answer).  NAK again in the kind its NAK came in, so it sends that frame again; a NOP
+                # would pass for the HELLO's answer, and it would wait for one till it timed out.
+                s._answer_nak()
             return
         if t == glp.G_HELLO:
             quiet = getattr(s.t, 'set_quiet', None)

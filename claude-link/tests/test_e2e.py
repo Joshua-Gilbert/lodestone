@@ -170,6 +170,23 @@ def test_slash_commands():
     check(h)
 
 
+def test_damaged_first_hello_crc():
+    """A CLAUDE before 1.15 (CRC only till its HELLO's answer) whose first HELLO arrives damaged: gridlink's
+    NAK, in the sum (rx_fl starts so, for CLAUDE 1.15), goes unread; the GRiD NAKs in CRC, and gridlink, with
+    nothing answered yet, NAKs again in CRC (not a NOP, which would pass for the HELLO's answer and leave the
+    GRiD waiting for one): the GRiD sends its HELLO again and connects, with no reset of its link."""
+    h = Harness([reply(('text', 'Hello after a damaged HELLO.'))])
+    h.grid.damage_hellos = 1
+    assert h.run_until(lambda: h.link.parser.pending(), wall=5), 'no damaged HELLO'
+    h.link.last_rx -= 1; h.link.idle_check()                    # (its 0.15 s of damaged bytes)
+    assert h.connect(), (h.grid.stats, h.link.stats)
+    assert h.grid.stats['fail'] == 0 and h.grid.stats['bad_rx'] == 1 and h.grid.stats['resend'] == 1 \
+        and h.link.stats['tx_nak'] == 2 and not h.link.rx_fl, (h.grid.stats, h.link.stats)
+    h.turn('hi')
+    assert 'Hello after a damaged HELLO.' in h.text(), h.text()
+    check(h)
+
+
 if __name__ == '__main__':
     import time, traceback
     names = [n for n in sorted(globals()) if n.startswith('test_')]
