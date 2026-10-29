@@ -970,7 +970,13 @@ do_key: cmp     ax, EV_MOVED            ; the window moved or resized: drawn
         cmp     ax, EV_RCLICK
         je      rclick
         mov     [lastkey], ax
-        cmp     byte [mode], M_FOUND    ; after Find: Return finds the next one,
+        push    ax                      ; Up, Down, PgUp and PgDn keep the
+        sub     ah, 48h                 ;  goal column (AH 48h, 50h, 49h,
+        test    ax, 0F6FFh              ;  51h; AL 0): any other key drops it
+        pop     ax
+        jz      .g
+        mov     word [goal], 0FFFFh
+.g:     cmp     byte [mode], M_FOUND    ; after Find: Return finds the next one,
         jne     .m                      ;  anything else is ordinary again
         cmp     ax, K_ENTER
         je      find_next
@@ -1011,7 +1017,6 @@ do_key: cmp     ax, EV_MOVED            ; the window moved or resized: drawn
 
 ; a printable character (or a tab) at the cursor
 type_char:
-        mov     word [goal], 0FFFFh
         cmp     byte [ovr], 0
         je      .ins
         push    ax                      ; overtype: replace (not a line end)
@@ -1033,7 +1038,6 @@ full:   mov     si, s_full
         ret
 
 k_enter:
-        mov     word [goal], 0FFFFh
         mov     al, 10
         call    ins_char
         jc      full
@@ -1056,17 +1060,12 @@ k_enter:
         jmp     .l
 .x:     ret
 
-k_bksp: mov     word [goal], 0FFFFh
-        jmp     del_back
-k_del:  mov     word [goal], 0FFFFh
-        jmp     del_fwd
 k_ins:  call    cursor_off              ; (the old shape off first)
         xor     byte [ovr], 1
         ret
 
-; ---- moving ----------------------------------------------------------
-k_left: mov     word [goal], 0FFFFh
-        mov     ax, [gap_s]
+; ---- moving (do_key drops the goal column but for Up, Down, PgUp, PgDn) --
+k_left: mov     ax, [gap_s]
         or      ax, ax
         jz      .x
         dec     ax
@@ -1074,7 +1073,6 @@ k_left: mov     word [goal], 0FFFFh
 .x:     ret
 
 k_right:
-        mov     word [goal], 0FFFFh
         call    textlen
         cmp     [gap_s], ax
         jae     .x
@@ -1083,13 +1081,11 @@ k_right:
         jmp     gap_to
 .x:     ret
 
-k_home: mov     word [goal], 0FFFFh
-        mov     ax, [gap_s]
+k_home: mov     ax, [gap_s]
         call    line_start
         jmp     gap_to
 
-k_end:  mov     word [goal], 0FFFFh
-        mov     ax, [gap_s]
+k_end:  mov     ax, [gap_s]
         call    line_end
         jmp     gap_to
 
@@ -1172,16 +1168,13 @@ page:   mov     cx, [rows]              ; -> CX = a page's lines: the rows but
         inc     cx
 .x:     ret
 
-k_ctop: mov     word [goal], 0FFFFh
-        xor     ax, ax
+k_ctop: xor     ax, ax
         jmp     gap_to
 
-k_cend: mov     word [goal], 0FFFFh
-        call    textlen
+k_cend: call    textlen
         jmp     gap_to
 
 k_wleft:                                ; to the start of the word before
-        mov     word [goal], 0FFFFh
         mov     bx, [gap_s]
 .sp:    or      bx, bx
         jz      .go
@@ -1200,7 +1193,6 @@ k_wleft:                                ; to the start of the word before
         jmp     gap_to
 
 k_wright:                               ; to the start of the next word
-        mov     word [goal], 0FFFFh
         call    textlen
         mov     cx, ax
         mov     bx, [gap_s]
@@ -1488,7 +1480,6 @@ k_paste:
         add     [gap_s], cx
         mov     byte [changed], 1
         mov     byte [dirty], 2
-        mov     word [goal], 0FFFFh
         ret
 .e:     pop     es
         jmp     io_error
@@ -1916,7 +1907,6 @@ k_jump: mov     byte [j_text], 0
         jne     .f
         loop    .f
 .at:    mov     ax, bx
-        mov     word [goal], 0FFFFh
         call    gap_to
         jmp     center_view
 .x:     ret
@@ -2294,8 +2284,8 @@ drag_keys:                              ; (a drag's selection: cmd 0)
 
 edit_keys:
         KEY(K_ENTER,    k_enter,    0)
-        KEY(K_BKSP,     k_bksp,     0)
-        KEY(K_DEL,      k_del,      0)
+        KEY(K_BKSP,     del_back,   0)
+        KEY(K_DEL,      del_fwd,    0)
         KEY(K_INS,      k_ins,      0)
         KEY(K_CODE_V,   k_paste,    0)
         KEY(K_CODE_Z,   UI_BEEP,    0)  ; (Cut, Copy: a drag's selection first)
