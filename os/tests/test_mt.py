@@ -1143,8 +1143,9 @@ def t_screens():
     typ(k, 'mtscr e e.txt', 3.0)
     e_, et = A.disk_file(k, 'E.TXT'), k.pc.text_screen()
     line(k, '')
-    check('MTSCR E alone: 40:4Eh is 40:62h x 40:4Ch after every 05h (pages 0-8 and 0 again, modes 3 and 1): 20 lines '
-          'with "=", none with "!", 4E+', e_ == b'E+' and '4E+' in et and et.count(' =') == 20 and '!' not in et,
+    check('MTSCR E alone: 40:4Eh is 40:62h x 40:4Ch after every mode set (3, 1, 3, page 8 shown before each) and 05h '
+          '(pages 1-8 and 0): 21 lines with "=", none with "!", 4E+', e_ == b'E+' and '4E+' in et
+          and et.count(' =') == 21 and '!' not in et,
           (e_, et[-400:]))
     ref = refs['p']
     # SPF_BG: its output on the real screen, shadowed as the front task's

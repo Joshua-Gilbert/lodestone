@@ -578,7 +578,7 @@ Every other suite passes unchanged with it. MT's emulation and pcemu's were writ
   - K calls MT_SCREEN;
   - R calls INT 10h from code at D800h, which the test puts there (a ROM's);
   - B shows page 7 with pages 1180h long (40:4Ch set so), from 7A80h, its rows 9 on past the 32 KB, and scrolls it (the whole page through `mt_vscr`'s bound test, a window inside at once) and the teletype on it (O23, O25);
-  - E lists 40:4Eh against 40:62h × 40:4Ch after 05h for pages 0-8 in modes 3 and 1, `4E+` if they all agree (the 1520 check for O23 and O25).
+  - E lists 40:4Eh against 40:62h × 40:4Ch after mode sets (3, 1, 3, each with page 8 shown before it) and after 05h for pages 1-8 and 0, 21 lines, `4E+` if they all agree (the 1520 check for O23 and O25).
 - `VNEST.BIN`: a teletype as the 1520's, calling INT 10h again for each step. The test puts it at D000h, behind MT, as the BIOS would be.
 - `MTCRIT`: its own INT 24h handler prompting through DOS (from the panel's review); with B, through the BIOS's teletype.
 - `MTNEST`: INT 10h called with interrupts on (PUSHF / CALL FAR), an INT 1Ch handler calling INT 10h meanwhile, its own EMS page in window 0 checked after every call (from the panel's review). With S its stack is in that page; with E it prints a 13h string from there; N and I run as they are (the test sets `mt_in13` under I).

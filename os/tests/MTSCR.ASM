@@ -39,9 +39,10 @@
 ;      3-5 up 1 (at once); the teletype on rows 2 and 24, its scroll; then
 ;      page 0 and 1000h back, FILE "B"; waits for a key
 ;   E  for the 1520: 40:4Eh (the page shown's start, which KMT's INT 10h
-;      trusts) against 40:62h x 40:4Ch after 05h for pages 0-8 and 0 again,
-;      in modes 3 and 1: a line each (mode, page, the two, '=' or '!'), then
-;      4E+ (all the same) or 4E-; FILE "E+" or "E-"; waits for a key
+;      trusts) against 40:62h x 40:4Ch after a mode set (3, 1, then 3, each
+;      with page 8 shown before it) and after 05h for pages 1-8 and 0: a line
+;      each (mode, page, the two, '=' or '!'), 21, then 4E+ (all the same)
+;      or 4E-; FILE "E+" or "E-"; waits for a key
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
@@ -477,12 +478,15 @@ m_b:    mov     ax, 0003h
 
 ; ---- E: 40:4Eh against 40:62h x 40:4Ch ----
 m_e:    mov     di, tab
+        mov     ax, 0508h               ; (page 8 shown before each mode set:
+        int     10h                     ;  40:4Eh 0 after it all the same)
         mov     ax, 0003h
         call    epages
         mov     ax, 0001h
         call    epages
         mov     ax, 0003h
         int     10h
+        call    erec
         mov     si, s_e
         call    ttys
         mov     si, tab
@@ -529,19 +533,24 @@ m_e:    mov     di, tab
         call    wbuf
         jmp     key
 
-epages: int     10h                     ; mode AX; 05h for pages 0-8, then 0;
-        xor     cx, cx                  ;  each noted at DI
+epages: int     10h                     ; mode AX, then 05h for pages 1-8 and
+        call    erec                    ;  0, each noted at DI; page 8 shown
+        mov     cx, 1                   ;  again at the end
 .n:     push    cx
         mov     ah, 5
         mov     al, cl
-        int     10h
+        cmp     al, 9
+        jb      .p
+        xor     al, al
+.p:     int     10h
         call    erec
         pop     cx
         inc     cx
-        cmp     cx, 9
+        cmp     cx, 10
         jb      .n
-        mov     ax, 0500h
+        mov     ax, 0508h
         int     10h
+        ret
 erec:   push    es                      ; 40:49h, 62h, 4Eh, 62h x 4Ch at DI
         push    40h
         pop     es
@@ -742,7 +751,7 @@ s_b2    db      'fast', 0
 s_b3    db      'tty', 13, 10, 0
 s_e     db      'md pg 4Eh  62h*4Ch', 13, 10, 0
 eok     db      '+'
-tab     times   20 * 6 db 0
+tab     times   21 * 6 db 0
 romv    dw      0, 0D800h
 mode    db      0
 pmode   dw      0003h
