@@ -18,19 +18,20 @@ dos_result:
         xor     al, al
 reply0: xor     cx, cx                  ; AL = status, no data
 ; AL = status, CX = data bytes already at ioseg:2 -> queue the REPLY
+; (reply_busy first: txq_put doesn't read it, and returns to our caller)
 reply:  push    es
-        mov     es, [ioseg]
+        mov     dx, [ioseg]
+        mov     es, dx
         mov     ah, al
         mov     al, [rq_id]
         mov     [es:0], ax
         pop     es
         add     cx, 2
         mov     al, G_REPLY
-        mov     dx, [ioseg]
         xor     si, si
-        call    txq_put
         mov     byte [reply_busy], 1
-        ret
+        jmp     txq_put
+        times   ($ - $$) & 1 db 90h       ; (what follows even, as before)
 
 %ifndef RCON
 op_info:

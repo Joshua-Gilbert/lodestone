@@ -2933,6 +2933,49 @@ def t_execabort():
     check('... and the Executive lists the disk once LCMD ends', 'BIG.COM' in k.exec_list() and 'LCMD.COM' in k.exec_list(),
           k.exec_list())
 
+def t_execnest():
+    """An INT 24h handler's own DOS call while EXEC loads (NEST24.COM): its read's error, answered Abort, fails, as
+    BIG.COM's then does: "EXEC loads" is the outer call's (4Bh), not the nested call's (3Fh) whose frame BP holds.
+    NEST24 goes on and says both errors; memory as before."""
+    com = os.path.join(OUT, 'NEST24.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NEST24.ASM')], check=True)
+    big = os.path.join(OUT, 'NBIG.COM')
+    code = bytes([0xB4, 0x09, 0xBA, 0x08, 0x01, 0xCD, 0x21, 0xC3]) + b'HELLO$'
+    open(big, 'wb').write(code + b'Q' * (4096 - len(code)))
+    x = os.path.join(OUT, 'NX.DAT'); open(x, 'wb').write(b'x' * 1024)
+    k = ktest.KPC(image('exnest.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NEST24.COM=' + com, 'BIG.COM=' + big,
+                        'X.DAT=' + x))
+    k.start()
+    pc, d = k.pc, k.pc.drives[0]
+    def first(name):                    # a file's first sector (1.44 MB FAT12)
+        img = bytes(d.img)
+        for i in range(224):
+            e = img[19 * 512 + i * 32:19 * 512 + i * 32 + 32]
+            if e[:11] == name: return 33 + (e[26] | e[27] << 8) - 2
+    def arena():                        # the MCBs, free neighbours merged
+        seg, out = k.u16('first_mcb'), []
+        while len(out) < 200:
+            t, own, sz = chr(pc.rd(seg, 0, 1)[0]), pc.u16(seg, 1), pc.u16(seg, 3)
+            if out and own == 0 and out[-1][1] == 0: out[-1] = (out[-1][0], 0, out[-1][2] + sz + 1)
+            else: out.append((seg, own, sz))
+            if t != 'M': break
+            seg += sz + 1
+        return out
+    k.code_p()
+    k.key('ver'); k.key(ktest.ENTER)
+    a0 = arena()
+    d.bad = {first(b'BIG     COM') + 1, first(b'X       DAT')}
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('nest24'); k.key(ktest.ENTER)
+    o = pc.text_screen()
+    m = re.search(r'exec ([0-9A-F]{4}) read ([0-9A-F]{4})', o)
+    d.bad = set()
+    check('NEST24: the nested read\'s Abort fails (an error back), BIG.COM\'s fails the EXEC; NEST24 ends itself '
+          '(exit 0), memory as before',
+          m and m.group(1) not in ('FFFF', '0000') and m.group(2) not in ('FFFF', '0000') and k.u16('last_exit') == 0
+          and 'HELLO' not in o and o.rstrip().endswith('A:\\>') and arena() == a0 and not k.crashed,
+          (o[-200:], hex(k.u16('last_exit')), arena(), a0))
+
 def t_cmdword():
     """LCMD's command word is kept to 70 characters (cword): a program named by a path of exactly 70 gets its
     arguments, not the path's last character in front of them (LCMD took SI back one at the 70th as at a word's
@@ -2952,7 +2995,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

@@ -306,6 +306,53 @@ def test_run_exec_block():
 T.test_run_exec_block = test_run_exec_block
 
 
+def test_run_memory_and_reconnect():
+    """audit3 O11: a RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  While MEMSZ runs,
+    CLAUDE keeps its bss_end's paragraphs, 2,881 at most (2,904 before), and MEMSZ gets all the rest.  Then
+    the link is lost and comes back: the HELLO built over the RUN's buffers says what the first one said,
+    and a second RUN gets the same memory.  Each RUN's REPLY names its outname (X:\\...\\CLAUDE.OUT): a HELLO
+    built during a RUN would be under it."""
+    import re
+    from unicorn import UC_HOOK_CODE
+    G = lambda: T.reply(('tool', 'grid_command', {'command': 'MEMSZ', 'capture': False, 'screenshot': True}))
+    h = T.start([G(), T.reply(('text', 'Done.')), G(), T.reply(('text', 'Again.'))], mode='auto',
+                files={'A:\\MEMSZ.COM': open(os.path.join(HERE, 'MEMSZ.COM'), 'rb').read()})
+    hello = dict(h.session.hello)
+    runs, grun = [], h.session.grid.run            # (each RUN's REPLY: outname, read back from under hellobuf)
+    h.session.grid.run = lambda *a, **k: runs.append(grun(*a, **k)) or runs[-1]
+    def run(i, prompt):
+        mine = h.m.u16(h.claude_psp - 1, 3)                 # CLAUDE's block
+        lo, st = (h.claude_psp + mine) * 16, {}
+        def at(uc, addr, size, ud):                         # (MEMSZ's first instruction: CS its PSP)
+            if 'got' not in st: p = h.m.r('cs'); st['got'] = h.m.u16(p, 2) - p
+        hk = h.m.mu.hook_add(UC_HOOK_CODE, at, None, lo, 0x9FFFF)
+        h.m.mu.ctl_remove_cache(lo, 0xA0000)
+        h.type(prompt)
+        try: assert h.run_until(lambda: h.idle() and 'got' in st, 60), (st, h.screen())
+        finally: h.m.mu.hook_del(hk)
+        text = str(T.results(h, i))
+        kb = '%d.%d KB for programs' % divmod(st['got'] * 10 // 64, 10)
+        out = runs[-1]['outfile']
+        assert 'Exit code: 0' in text and kb in text and re.fullmatch(r'[A-Z]:\\(\S+\\)?CLAUDE\.OUT', out), \
+            (kb, out, text)
+        return st['got'], mine, out
+    got, mine, out = run(1, 'how much memory')
+    assert mine == (h.sym['bss_end'] + 15) // 16 <= 2881, (mine, hex(h.sym['bss_end']), got)
+    real = h.transport.answer
+    h.transport.answer = lambda f: None            # the Pi goes quiet: a HELLO over the RUN's buffers
+    assert h.run_until(lambda: not h.var('connected'), 10), 'no link loss noticed'
+    h.session.hello = {}
+    h.transport.answer = real
+    assert h.run_until(lambda: h.idle() and h.session.hello, 15), h.screen()
+    same = lambda d: {k: v for k, v in d.items() if k != 'date'}
+    assert same(h.session.hello) == same(hello) and hello['cwd'] == 'A:\\', (h.session.hello, hello)
+    assert run(3, 'and again') == (got, mine, out)
+    T.check(h, fails=1)
+
+
+T.test_run_memory_and_reconnect = test_run_memory_and_reconnect
+
+
 def test_key_script_snap_peek():
     """audit3 (X42's panel): a tick, and a TSR's INT 16h peek from its INT 1Ch, as ks_ready's {SNAP} copies the
     screen on the read path (interrupts on): the peek finds ks_pos past the mark, so one snapshot, and every

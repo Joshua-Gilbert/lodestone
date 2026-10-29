@@ -13,12 +13,13 @@ A_ARC   equ 20h
 section .bss
 path_buf    resb 130            ; the caller's path, copied here
 path2_buf   resb 130            ; (with path_buf: EXEC's ex_rel, KPROC.INC)
-nm11        resb 11             ; a parsed name component
+nm11        resb 11             ; a parsed name component; resolve's last is
+r_name      equ nm11            ;  r_name (0 = none), so no parse_comp may
+                                ;  come between a resolve and a use of it
 r_drv       resb 1              ; resolved path: drive,
+r_wild      resb 1              ;   its last component has wildcards,
             alignb 2
-r_dir       resw 1              ;   directory cluster (0 = root),
-r_name      resb 11             ;   last component (0 = none)
-r_wild      resb 1              ;   it has wildcards
+r_dir       resw 1              ;   directory cluster (0 = root)
 d_lba       resw 1              ; the directory entry found: sector,
 d_off       resw 1              ;   offset in it (bits 9+: the sector
                                 ;   number's high part: dent_buf),
@@ -59,6 +60,7 @@ gpath:  push    ds
         loop    .l
         pop     ds
         jmp     .bad
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .end:   pop     ds
         cmp     byte [path_buf], 0
         je      .bad
@@ -116,6 +118,7 @@ parse_comp:
 .x:     pop     di
         pop     cx
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 ; up to CX characters into DI; stops at '.', '\' or NUL
 .field: mov     dx, cx
 .fl:    mov     al, [si]
@@ -255,13 +258,7 @@ resolve_si:
         jne     .l1                     ;  MS-DOS)
         cmp     word [r_dir], 0
         je      .np
-.l1:    mov     [r_wild], al
-        push    si
-        mov     si, nm11
-        mov     di, r_name
-        mov     cx, 11
-        rep     movsb
-        pop     si
+.l1:    mov     [r_wild], al            ; (r_name: nm11 as parsed)
 .ok:    clc
         ret
 .bad:   lodsb                           ; no name: if it is the last part,
@@ -271,12 +268,14 @@ resolve_si:
         jnz     .bad
         dec     byte [r_wild]           ; (from 0)
 .np:    mov     ax, 3
+        mov     [r_name], ah            ; (none: f_3A.nd reads it so)
         stc
 .x:     ret
 .dr:    cmp     al, 26                  ; (not a DOS disk: said as such)
         jne     .np
         stc
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; entry BX of directory AX -> SI (in a sector buffer), d_lba, d_off.
 ; CF: past the end of the directory (AX = 18) or a disk error
@@ -715,7 +714,7 @@ find_file:
         je      find_named.nf
         cmp     byte [r_wild], 0
         jne     resolve_si.np           ; (3, as MS-DOS; open's 2: nf_last)
-; r_name in r_dir (resolve left it in nm11 too): dir_find's answer
+; r_name (nm11) in r_dir: dir_find's answer
 find_named:
         mov     ax, [r_dir]
         jmp     dir_find

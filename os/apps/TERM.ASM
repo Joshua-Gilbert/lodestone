@@ -4,9 +4,10 @@
 ;  python3 mkrun.py apps/TERM.ASM apps/TERM.RUN
 ;
 ;  Opened by MT itself (KMT's mt_uwin) when Return or CODE-P starts a text
-;  program as a task: the argument is "task count", the task's number and
-;  how many tasks that number has had (MT_EXIT's AH), so a number given
-;  again isn't taken for it.  The task stays behind (task 0, the UI, is
+;  program as a task: the argument is "task count name", the task's number
+;  and how many tasks that number has had (MT_EXIT's AH), so a number given
+;  again isn't taken for it, then its program's name (the title).  The
+;  task stays behind (task 0, the UI, is
 ;  the front task): its screen is the one MT keeps for it (MT_TROWS), and
 ;  the keys typed here go to it (MT_TKEY).  UI_EVENT gives EV_TICK when
 ;  it has something to show (MT_TOPEN); the window shows 19 rows and 78
@@ -41,7 +42,7 @@ BLKLEN  equ PFONT + 256 * 16            ;  all 256 codes, pubset)
 NOCELL  equ 0FFFFh                      ; (a shadow cell to draw again)
 QLEN    equ 16                          ; keys kept while the task's ring is full
 
-start:  mov     di, arg                 ; "task count"
+start:  mov     di, arg                 ; "task count name"
         call    UI_SBSTR
         mov     byte [di], 0
         mov     si, arg
@@ -49,6 +50,11 @@ start:  mov     di, arg                 ; "task count"
         mov     [task], al
         call    num
         mov     [gen], al
+        lodsb                           ; (the blank before its name)
+        or      al, al
+        jnz     .t
+        dec     si
+.t:     mov     [win+W_TITLE], si       ; the title: its program's name
         mov     ax, 0F000h + MT_WIN     ; (a window .RUN's session: else MT
         stc                             ;  isn't there, or this was started
         int     21h                     ;  by hand)
@@ -63,7 +69,6 @@ start:  mov     di, arg                 ; "task count"
         mov     [fseg], ax
         call    font                    ; TERM.FNT
         jc      .front
-        call    name                    ; the title: its program's name
         WIN_STAGGER                     ; (a second one not right over it)
         call    geom
         mov     si, win
@@ -104,7 +109,7 @@ start:  mov     di, arg                 ; "task count"
 close:  mov     di, askb
         mov     si, s_end
         call    UI_SBSTR
-        mov     si, title
+        mov     si, [win+W_TITLE]
         call    UI_SBSTR
         mov     byte [di], 0
         mov     si, askb
@@ -161,36 +166,6 @@ font:   mov     si, s_fnt
         clc
 .x:     ret
 .no:    stc
-        ret
-
-; the window's title: the task's program's name (MT_LIST's record, read
-; into the shadow's room for a moment)
-name:   push    es
-        mov     es, [fseg]
-        mov     di, SHD
-        mov     cx, MT_TASKS
-        mov     ax, 0F000h + MT_LIST
-        int     21h
-        mov     si, SHD
-        mov     di, title
-.r:     jcxz    .x
-        mov     al, [es:si+TR_ID]
-        cmp     al, [task]
-        je      .n
-        add     si, MT_REC
-        loop    .r
-        jmp     short .x
-.n:     add     si, TR_NAME
-        mov     cx, TR_NAMELEN
-.c:     mov     al, [es:si]
-        or      al, al
-        jz      .x
-        mov     [di], al
-        inc     si
-        inc     di
-        loop    .c
-.x:     mov     byte [di], 0
-        pop     es
         ret
 
 ; where the cells go, inside the window as it is now: x0 = the first byte
@@ -318,6 +293,7 @@ show:   push    es
         jz      .v                      ;  view follows it, no mark; Claude
         and     bh, 7Fh                 ;  Code's is hidden)
         jmp     short .w
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: .w even)
 .v:     mov     byte [nocur], 0
 .w:     mov     [cur], bx
 .h:     mov     bx, [cur]
@@ -451,6 +427,7 @@ scrl:   mov     ax, [sa]
         cmp     bp, [cs:rows]
         jb      .k
         jmp     .n
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .v:     mov     ax, [cs:rows]           ; (the rows below it)
         dec     ax
         sub     ax, bp
@@ -1318,13 +1295,13 @@ s_copy      db 'Copy           CODE-C', 0
 s_paste     db 'Paste          CODE-V', 0
 s_full      db 'Full screen    CODE-Tab', 0
 win:        dw 0, SCR_TOP, 80, SCR_BAND_Y - SCR_TOP
-            dw title, w_draw, WF_MOVE | WF_SIZE | WF_CLOSE
+            dw 0, w_draw, WF_MOVE | WF_SIZE | WF_CLOSE     ; (the title: start)
 top         dw 0                        ; the view: its screen's first row and
 left        dw 0                        ;  column in the window
 
 ; the hot labels even (EVEN.INC: bench/hot.py's term)
 %include "EVEN.INC"
-        EVEN    gone, mtc, scrl.l, cells.cell, cells.d, cells.ns, attr, attr.x, cell.a, cell.d
+        EVEN    gone, mtc, show.w, scrl.v, scrl.l, cells.cell, cells.d, cells.ns, attr, attr.x, cell.a, cell.d
 
 section .bss
 task        resb 1
@@ -1364,7 +1341,6 @@ ppos        resw 1                      ;  next byte, how many
 plen        resw 1
 rm_buf      resw 3                      ; the right click's menu (RMENU.INC)
 rm_key      resw 3
-arg         resb 16
-title       resb 16
+arg         resb 32                     ; (its name in it: the title)
 askb        resb 40                     ; (close's question)
 run_bss_end:

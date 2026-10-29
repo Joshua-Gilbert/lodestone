@@ -4311,7 +4311,9 @@ turn_t0     resw 1
 spin        resb 1
 status_text resb 72
 title_text  resb 72
-sline       resb 160
+sline:                                  ; a status line as it is put together
+cwdbuf      resb 68                     ;  (draw_status, link_lost), and build_kv's
+            resb 160 - 68               ;  cwd= under it: neither calls the other
 rbuf        resb 64
 ; link
 lstate      resb 1
@@ -4342,7 +4344,18 @@ pf_kind     resb 1
 rq_over     resb 1
             alignb 2                    ; (frames are copied in with REP MOVSW: an odd
 reqbuf      resb REQMAX + 4             ;  destination costs the 286 a bus cycle a word)
-hellobuf    resb HELLO_MAX
+; our HELLO, from build_hello till frame_next copies it to txframe (one
+; fragment); a RUN's buffers under it, from build_exec till do_exec is back
+; (op_run: all one call of req_service's, and only connected, so the HELLO
+; long gone).  Nothing may service the link or build a HELLO in between: a
+; RUN's watchdog (X50's) must not poll the link from int16
+hellobuf:
+exec_path   resb 80
+outname     resb 80
+tail        resb 130
+exec_ss     resw 1
+exec_sp     resw 1
+            resb HELLO_MAX - ($ - hellobuf)
 evans       resb 4
 crctab      resw 256
 ; Term
@@ -4392,7 +4405,6 @@ askbuf      resb ASKMAX
 optbuf      resb 56
 ; requests
 dta         resb 44
-cwdbuf      resb 68
 old_tmo     resw 1
 gp_dlen     resw 1
 gp_max      resw 1
@@ -4405,12 +4417,7 @@ run_rest    resw 1
 run_exit    resw 1
 run_err     resw 1
 ext_at      resw 1
-exec_path   resb 80
-outname     resb 80
-tail        resb 130
-epb         resw 7
-exec_ss     resw 1
-exec_sp     resw 1
+epb         resw 7                      ; (filled once at the start: not under hellobuf)
 ks_active   resb 1
 ks_len      resw 1
 ks_ptr      resw 1
@@ -4419,7 +4426,8 @@ ks_wait     resb 1
 ks_until    resw 1
 snap_taken  resb 1
 snap_len    resw 1
-        times   -(ems_ok - drvstr != 80 || old_tmo - cwdbuf != 68) resb 1  ; (HELLO_MAX)
+        times   -(ems_ok - drvstr != 80 || rbuf - cwdbuf < 68) resb 1  ; (HELLO_MAX)
+        times   -(HELLO_MAX > TXMAX || exec_sp + 2 - hellobuf > HELLO_MAX) resb 1  ; (hellobuf's)
         times   -(epb < inbuf + MAXIN) resb 1   ; (its environment word: 0 from the BSS clear)
         times   -(kv_cwd < kv_os || kv_drives < kv_cwd || kv_mem < kv_drives || kv_ems < kv_mem \
                   || kv_gpib < kv_ems || kv_addr < kv_gpib || kv_date < kv_addr || kv_grid < kv_date \

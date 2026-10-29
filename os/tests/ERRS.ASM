@@ -626,6 +626,13 @@ tests   dw 3A00h, p0, 0, 0000h
         dw 4100h, p36, 0, 0000h
         dw 4100h, p7, 0, 0000h
         dw 4100h, p1, 0, 0000h
+%assign i 51                    ; a device's name after a second ':' (R38)
+%rep 6
+        dw 3D00h, p%[i], 0, 0000h
+        dw 3C00h, p%[i], 0, 0000h
+        dw 5B00h, p%[i], 0, 0000h
+%assign i i+1
+%endrep
         dw 0
 p0      db 'NOSUCH', 0
 p1      db 'NOSUCH.TXT', 0
@@ -678,3 +685,9 @@ p47     db 'NUL', 0
 p48     db 'SUB\CON', 0
 p49     db '\SUB', 0
 p50     db '..\SUB', 0
+p51     db 'A:B:NUL', 0
+p52     db 'A:\DEV\C:NUL', 0
+p53     db '\DEV\C:NUL', 0
+p54     db 'AB:NUL', 0
+p55     db ':NUL', 0
+p56     db 'A::NUL', 0

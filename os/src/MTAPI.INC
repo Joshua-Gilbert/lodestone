@@ -81,11 +81,11 @@ MT_FLAGS    equ 18h                     ; BL = a task (not 0): its SPF_BG and
                                         ;  next turn (SPF_BG: its next INT 10h
                                         ;  call).  CF: AX = 1 (no such task),
                                         ;  5 (task 0)
-MT_UI       equ 19h                     ; (the Executive's, at its start: DX:AX
-                                        ;  = LODEMT.SYS's far entry for it.
-                                        ;  AL = 0: start the program DS:SI
-                                        ;  (Return); AL = 1: has a task ended?
-                                        ;  ES:DI = room for a message)
+MT_UI       equ 19h                     ; (the Executive's, at its start: its
+                                        ;  code patched by LODEMT.SYS's KMW,
+                                        ;  so that Return starts a program as
+                                        ;  a task and a task's end is its
+                                        ;  event, mt_ui)
 MT_TSR      equ 1Ah                     ; (Resident Claude's, at CLAUDE /R and
                                         ;  /U: M7c) ES:BX = the instruction
                                         ;  after its key wait's HLT, where the

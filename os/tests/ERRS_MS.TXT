@@ -527,3 +527,21 @@ fn 41 \DEV\NUL.X.Y -> err 03
 fn 41 SUB\NUL.* -> err 03
 fn 41 CON -> err 05
 fn 41 NOSUCH.TXT -> ok
+fn 3D A:B:NUL -> err 02
+fn 3C A:B:NUL -> err 02
+fn 5B A:B:NUL -> err 02
+fn 3D A:\DEV\C:NUL -> err 02
+fn 3C A:\DEV\C:NUL -> err 02
+fn 5B A:\DEV\C:NUL -> err 02
+fn 3D \DEV\C:NUL -> err 02
+fn 3C \DEV\C:NUL -> err 02
+fn 5B \DEV\C:NUL -> err 02
+fn 3D AB:NUL -> err 02
+fn 3C AB:NUL -> err 02
+fn 5B AB:NUL -> err 02
+fn 3D :NUL -> err 02
+fn 3C :NUL -> err 02
+fn 5B :NUL -> err 02
+fn 3D A::NUL -> err 02
+fn 3C A::NUL -> err 02
+fn 5B A::NUL -> err 02
