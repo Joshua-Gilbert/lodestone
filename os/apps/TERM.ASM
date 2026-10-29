@@ -293,6 +293,7 @@ show:   push    es
         jz      .v                      ;  view follows it, no mark; Claude
         and     bh, 7Fh                 ;  Code's is hidden)
         jmp     short .w
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: .w even)
 .v:     mov     byte [nocur], 0
 .w:     mov     [cur], bx
 .h:     mov     bx, [cur]
@@ -426,6 +427,7 @@ scrl:   mov     ax, [sa]
         cmp     bp, [cs:rows]
         jb      .k
         jmp     .n
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .v:     mov     ax, [cs:rows]           ; (the rows below it)
         dec     ax
         sub     ax, bp
@@ -1299,7 +1301,7 @@ left        dw 0                        ;  column in the window
 
 ; the hot labels even (EVEN.INC: bench/hot.py's term)
 %include "EVEN.INC"
-        EVEN    gone, mtc, scrl.l, cells.cell, cells.d, cells.ns, attr, attr.x, cell.a, cell.d
+        EVEN    gone, mtc, show.w, scrl.v, scrl.l, cells.cell, cells.d, cells.ns, attr, attr.x, cell.a, cell.d
 
 section .bss
 task        resb 1

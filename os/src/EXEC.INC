@@ -361,6 +361,7 @@ get_subject:
         jnc     .x
         mov     byte [subject + 1], 0
 .x:     ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; the list again, keeping the place in it (the core's redraw routine:
 ; after the screen saver, DEFRAG or a program the disk may differ)
@@ -467,6 +468,7 @@ ex_lvname:                                ; (type-to-find) AX = item -> SI
 .dev:   imul    si, bx, 3               ; ("A:", ...)
         add     si, o_drives
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; append the entry's title (name without trailing spaces) at DI
 sb_title:
@@ -479,6 +481,7 @@ sb_title:
         loop    .c
 .x:     pop     si
         ret
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: .k even)
 
 ; SI = entry -> SI = kind string, AL = what opens it (0 nothing, 1 it's a
 ; DOS program, 2 a .RUN, 3 Write).  (Entry pointer lost; callers re-fetch.)
@@ -500,6 +503,7 @@ kind_of:
         xchg    si, ax
         mov     al, [bx+4]
         jmp     .x
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .n:     add     bx, 5
         jmp     .k
 .raw:   mov     si, kindbuf             ; unknown extension: show it
@@ -2518,6 +2522,7 @@ to_fcb: push    di
         stosb
         dec     cx
         jmp     .n
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .e:     lea     di, [bx+8]
         mov     cx, 3
 .el:    lodsb
@@ -2693,6 +2698,7 @@ ex_row: mov     [rowmask], cl
         call    sb_fcb
         dec     si
         jmp     short .sp
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .root:  push    si
         mov     si, s_root
         call    sb_str

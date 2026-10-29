@@ -531,6 +531,7 @@ ui_event:
         jc      .on                     ; (taken, nothing to say: wait on)
         mov     byte [ptr_on], 0
         jmp     hide_cursor
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; UI_POLL (poll_once): the same without waiting (CF set: nothing)
 
@@ -556,6 +557,7 @@ read_key:
         jz      .x                      ; (Alt-224 typed on the keypad)
         mov     al, 0
 .x:     ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; one look at the mouse, the keyboard and the clock.  CF clear with an
 ; event in AX (BX, CX for a click); CF set if none (BX, CX unchanged)
@@ -2845,6 +2847,7 @@ ui_dispatch:
 .scan:  cmp     dh, ah
         je      .hit
         jmp     .n
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .ascii: cmp     dl, al
         je      .hit
 .n:     add     si, 6
@@ -2878,6 +2881,7 @@ lv_draw:
         loop    .l
         popa
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 
 ; draw item AX of list [lv_cur] if it is showing
 lv_row: mov     bx, [lv_cur]
