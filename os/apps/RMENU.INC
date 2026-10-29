@@ -3,9 +3,9 @@
 ; its key, what it needs: RM_SEL a selection, RM_CLIP something to
 ; paste; a 0 word after the last); AL = RM_SEL with a selection; BX, CX =
 ; where (EV_RCLICK's).  -> AX = the key of the item chosen, for the
-; caller to take as typed; CF with none (ESC, a click outside).  At least
-; one item must need nothing.  The caller's BSS: rm_buf, rm_key (a word
-; an item)
+; caller to take as typed; CF with none (ESC, a click outside; no menu at
+; all, and no beep, with no item that applies).  The caller's BSS:
+; rm_buf, rm_key (a word an item)
 RM_SEL      equ 1
 RM_CLIP     equ 2
 rmenu:  push    bx
@@ -35,6 +35,8 @@ rmenu:  push    bx
         shr     ax, 1                   ; AL = how many (AH 0: the first lit)
         pop     cx
         pop     bx
+        cmp     al, 1                   ; (none: CF)
+        jb      .x
         mov     si, rm_buf
         call    UI_MENU
         jc      .x

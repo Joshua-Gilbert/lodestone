@@ -5489,13 +5489,20 @@ def t_tpub():
     o1 = scr()
     k.key(ktest.ESC, settle=False); k.run_for(0.5)
     setclip(b'')
+    beeps, prev, bp = [0], k.pc.watch, k.useg * 16 + k.Y['ui_beep']
+    def w(a):
+        if prev: prev(a)
+        if a == bp: beeps[0] += 1
+    k.pc.watch = w
     mv(*cxy(15, 40)); btn(2, 0.8)
+    k.pc.watch = prev
     o2 = scr()
     k.key(ktest.ESC, settle=False); k.run_for(0.5)
     check('row 24\'s six cells selected, CODE-C: the clipboard %r (05h a blank, F0h and 81h \'?\' (0 in its table), 80h its '
           'table\'s \'A\', 47h \'G\', 20h a blank, dropped); a right click: only Paste (no Full screen); with the clipboard '
-          'empty: no menu at all' % cl, cl == b' ?A?G' and 'Paste          CODE-V' in o1 and 'Full screen' not in o1
-          and 'Copy ' not in o1 and 'Paste' not in o2 and 'Full screen' not in o2, (cl, o1[-400:], o2[-400:]))
+          'empty: no menu at all, and no beep (%d)' % (cl, beeps[0]), cl == b' ?A?G' and 'Paste          CODE-V' in o1
+          and 'Full screen' not in o1 and 'Copy ' not in o1 and 'Paste' not in o2 and 'Full screen' not in o2 and beeps[0] == 0,
+          (cl, o1[-400:], o2[-400:], beeps[0]))
     # CODE-Tab passes over it, MT_FRONT refuses it; another task's window beside it
     hot(k); k.run_for(1.0)
     f0 = tstate(k)[1]
