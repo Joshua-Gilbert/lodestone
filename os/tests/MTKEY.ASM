@@ -13,8 +13,8 @@
 ;   D  for 18 ticks, INT 21h AH=0Bh and AH=06h (DL=FFh) in turn, then
 ;      AH=0Ch AL=0 (a flush): FILE gets "aaaa bbbb", AH=0Bh's "a key"
 ;      answers and the characters AH=06h got
-;   X  as D, with INT 08h hooked meanwhile (its handler goes straight on
-;      to the one it found: a timer hook ahead of MT's)
+;   X  as D for 36 ticks, with INT 08h hooked meanwhile (its handler goes
+;      straight on to the one it found: a timer hook ahead of MT's)
 ;   Y  as P, with INT 08h hooked meanwhile, as X
 ;   Q  as P, each call made with interrupts off; only those that came back
 ;      with them on (as the BIOS's do: its STI) counted
@@ -226,13 +226,17 @@ blanks: lodsb
         dec     si
         ret
 
-; the end: 18 ticks from now (AL kept)
+; the end: 18 ticks from now, X's 36 (test_mt's CODE-Tab there comes once
+; MTLINE waits, which may take most of 18) (AL kept)
 t18:    push    es
         push    40h
         pop     es
         mov     dx, [es:6Ch]
         add     dx, 18
-        mov     [tend], dx
+        cmp     al, 'X'
+        jne     .n
+        add     dx, 18
+.n:     mov     [tend], dx
         pop     es
         ret
 
