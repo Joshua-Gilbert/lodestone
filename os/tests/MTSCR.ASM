@@ -46,9 +46,10 @@
 ;      with page 8 shown before it) and after 05h for pages 1-8 and 0: a line
 ;      each (40:49h, 62h, the two; '=', '!' if they differ, '?' if 49h or
 ;      62h isn't the mode or page asked for), 21, then 4E+ (all '='), 4E-
-;      (a '!') or 4E? (a '?': the calls never reached the BIOS, as in a
-;      terminal window or behind; run it full screen, in front); FILE "E+",
-;      "E-" or "E?"; waits for a key
+;      (a '!', whatever else) or 4E? (a '?', no '!': the calls never reached
+;      the BIOS, as in a terminal window or behind, or it refused a page;
+;      run it full screen, in front); FILE "E+", "E-" or "E?"; waits for a
+;      key
 ;   J  mode 3, then 40:62h 1 and 40:4Ch 0F00h set itself (no 05h: 40:4Eh
 ;      left 0), so page 1 from 0F00h as the BIOS writes; 2 s (test_mt
 ;      switches from it meanwhile), then 30 lines through the teletype
@@ -504,7 +505,7 @@ esig:   mov     ah, 43h
         xor     bx, bx
         int     67h
         or      ah, ah
-        jnz     .x
+        jnz     .f
         mov     byte [sig], 1
         push    es
         push    0E800h
@@ -513,6 +514,10 @@ esig:   mov     ah, 43h
         mov     word [es:2], 'G!'
         pop     es
 .x:     ret
+.f:     mov     ah, 45h                 ; (not mapped: the page freed, none)
+        mov     dx, [hnd]
+        int     67h
+        ret
 ; AL: '+' esig's page signed still, '-' not, '?' none; the page freed
 echk:   mov     al, '?'
         cmp     byte [sig], 0
@@ -610,14 +615,14 @@ m_e:    mov     di, tab
         cmp     ax, [si - 4]
         je      .q
         mov     cl, '!'
-.q:     cmp     cl, '='                 ; (4E? for any '?', else 4E- for any
-        je      .w                      ;  '!')
-        mov     al, '?'
-        cmp     cl, al
+.q:     cmp     cl, '='                 ; (4E- for any '!', else 4E? for any
+        je      .w                      ;  '?')
+        mov     al, '-'
+        cmp     cl, '!'
         je      .s
         cmp     [eok], al
         je      .w
-        mov     al, '-'
+        mov     al, '?'
 .s:     mov     [eok], al
 .w:     mov     al, cl
         call    tty1
