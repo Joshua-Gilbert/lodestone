@@ -218,12 +218,7 @@ k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 ; odd, so re-pad (KSEG is a paragraph, so the offset's parity is the address's)
 ; To measure and place them again: bench/hot.py (the counts), bench/plan.py
 ; (where the pads go), bench/evalpar.py (one build against another)
-%macro EVEN 1-*
-%rep %0
-        times -((%1 - $$) & 1) db 0
-%rotate 1
-%endrep
-%endmacro
+%include "EVEN.INC"
 section .text
 %ifndef NOTC                            ; (the test build without the cache: its own layout)
         EVEN    capture, int21, int21.stk, ret_cf, ok, done, done.sw, fail, ret_cfax, ok_ax
