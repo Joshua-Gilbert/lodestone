@@ -1465,6 +1465,118 @@ def t_screens():
     check('the front task\'s output shadowed only while another task is there: 120 lines through DOS cost %.1f us more a '
           'character (in pcemu\'s time)' % ((u1 - u0) / (120 * 54)), u0 and u1 and s_ == 1 and u1 > u0, (u0, u1, s_))
 
+def t_kslice():
+    print('== audit3 S1: a task\'s slice of the kernel stack (switched from inside INT 21h) saved and put back in words')
+    from unicorn import UC_HOOK_CODE
+    k = boot('mt_ks.img', b'MULTITASK=1\r\n', 88)
+    seg, Y, pc = mt_seg(k), k.Y, k.pc
+    Shell(k).run('ver')
+    top, KL, TKS, KS = Y['kstack_top'], equ('TX_KLEN'), equ('TX_KSTK'), equ('KSLICE')
+    saved, lens, above, got = {}, collections.Counter(), {}, []
+    def sv(uc, a, n, u):                # mt_switch.k: the running task's CX bytes at SS:SP, as it saves them
+        cx = pc.r('cx')
+        if cx:
+            saved[pc.rd(seg, Y['mt_cur'], 1)[0]] = (pc.r('ss'), pc.r('sp'), bytes(pc.rd(pc.r('ss'), pc.r('sp'), cx)))
+            lens[cx] += 1
+    def ld(uc, a, n, u):                # mt_load: the TX of task BL marked past its slice; past kstack_top as it starts
+        tx = pc.u16(seg, task_ent(k, pc.r('bl')) + TE_TX)
+        n_ = pc.u16(tx, KL)
+        pc.wr(tx, TKS + n_, bytes([0xA5]) * (KS - n_))
+        above['b'] = bytes(pc.rd(0x60, top, 128))
+    def go(uc, a, n, u):                # mt_load.go: the slice back, nothing past it written
+        cur = pc.rd(seg, Y['mt_cur'], 1)[0]
+        n_ = pc.u16(pc.u16(seg, task_ent(k, cur) + TE_TX), KL)
+        if n_ and cur in saved:
+            got.append((saved.pop(cur) == (pc.r('ss'), pc.r('sp'), bytes(pc.rd(pc.r('ss'), pc.r('sp'), n_))),
+                        bytes(pc.rd(0x60, top, 128)) == above.get('b'), n_))
+    hks = [pc.mu.hook_add(UC_HOOK_CODE, f, None, seg * 16 + Y[l], seg * 16 + Y[l])
+           for f, l in ((sv, 'mt_switch.k'), (ld, 'mt_load'), (go, 'mt_load.go'))]
+    for l in ('mt_switch.k', 'mt_load', 'mt_load.go'): pc.mu.ctl_remove_cache(seg * 16 + Y[l], seg * 16 + Y[l] + 1)
+    typ(k, 'mtlaunch mtspin.com 60 ks1.txt d;/f mtline.com ks.txt', 0.5)
+    for c in 'switched in DOS':         # (MTLINE in front, MTSPIN behind: MTLINE's line read waits for each key in
+        k.key(c, settle=False); k.run_for(0.06)     #  kbd_get, giving MTSPIN its turn)
+    k.key(ktest.ENTER, settle=False); k.run_for(0.3)
+    for h in hks: pc.mu.hook_del(h)
+    print('   slices (bytes: switches): %s' % sorted(lens.items()))
+    check('a task switched from inside INT 21h (MTLINE, in front, waiting for each key of its line, MTSPIN D behind '
+          'it): its slice of the kernel stack back byte for byte where it was (ending at kstack_top), nothing past '
+          'kstack_top written (%d times, %d to %d bytes); its line read whole' % (len(got), min(lens) if lens else 0,
+                                                                                 max(lens) if lens else 0),
+          len(got) >= 12 and all(a and b for a, b, n in got) and A.disk_file(k, 'KS.TXT') == b'switched in DOS',
+          ([g for g in got if not (g[0] and g[1])][:4], len(got), A.disk_file(k, 'KS.TXT')))
+
+class IfOff:
+    """The longest stretch with interrupts off in each INT 10h call through mt_v10 (keyed by its AH, BH and CX
+    there), and the longest the timer's IRQ waited meanwhile (pcemu's us; irq_exact, so it lands as IF comes back)."""
+    def __init__(s, k):
+        s.k, s.v10 = k, mt_seg(k) * 16 + k.Y['mt_v10']
+        s.t0 = s.key = s.tp = None
+        s.off, s.lat = {}, {}
+        s.prev, k.pc.watch = k.pc.watch, s.watch
+    def stop(s): s.k.pc.watch = s.prev
+    def watch(s, a):
+        if s.prev: s.prev(a)
+        pc = s.k.pc
+        if a == s.v10: s.key = (pc.r('ah'), pc.r('bh'), pc.r('cx'))
+        if pc.r('flags') & 0x200:
+            if s.t0 is not None and s.key: s.off[s.key] = max(s.off.get(s.key, 0), pc.us - s.t0)
+            s.t0 = s.key = None
+        elif s.t0 is None: s.t0 = pc.us
+        if 0 in pc.irq_pending:
+            if s.tp is None: s.tp = (pc.us, s.key)
+        elif s.tp is not None:
+            t, key = s.tp
+            if key: s.lat[key] = max(s.lat.get(key, 0), pc.us - t)
+            s.tp = None
+
+def t_vruns():
+    print('== audit3 S2, S3: long runs in a background task\'s screen (09h at once inside the 32 KB; rows of a run-on '
+          'scroll wholly past it skipped), as the BIOS does them, and the time they keep interrupts off')
+    k = boot('mt_vr.img', b'MULTITASK=1\r\n', 88, MTSC, irq_exact=True)
+    sh = Shell(k)
+    sh.run('ver')
+    off = {}
+    for m, what in (('v', '09h of 8001h cells round 16 bits, then 09h of 1000h on page 4 and 2000 on page 0, 09h and 0Ah '
+                     'round 16 bits, 09h across the 32 KB\'s end, 0Ah of 500'),
+                    ('u', '09h of 8001h cells, then "clear below the cursor" on the last line run on from page 0 (a row '
+                     'across the 32 KB\'s end, then past it) and from page 7 (round 16 bits)')):
+        M = m.upper()
+        typ(k, 'mtscr %s %s0.txt' % (m, m), 3.0)    # the reference: alone, from the prompt (the BIOS's own)
+        ref, rbd, r0 = bytes(k.pc.rd(0xB800, 0, 0x8000)), bytes(k.pc.rd(0x40, 0x49, 30)), A.disk_file(k, M + '0.TXT')
+        line(k, '')
+        sh.run('cls')
+        io = IfOff(k)
+        typ(k, 'mtlaunch mtscr.com %s %s1.txt' % (m, m), 0.5)
+        w = waitfile(k, M + '1.TXT', 30)
+        io.stop()
+        off.update(io.off)
+        print('   %s: interrupts off (pcemu\'s us, the longest 6): %s' % (M, sorted(((v, '%02X %02X %04X' % kk)
+                                                                                 for kk, v in io.off.items()), reverse=True)[:6]))
+        st, front_, sl, tv, r1 = tstate(k), k.pc.text_screen(), slot(k, 1, 0x8000), tvid(k, 1), A.disk_file(k, M + '1.TXT')
+        diff = [hex(i) for i in range(0, 0x8000, 2) if not sl or sl[i:i + 2] != ref[i:i + 2]][:8]
+        check('MTSCR %s in the background (MTLAUNCH in front): its 32 KB byte for byte as the BIOS drew it alone (%s), its '
+              'BIOS data too; its EMS page in window 2 untouched ("%s+"); the screen in front untouched' % (M, what, M),
+              r0 == r1 == (M + '+').encode() and w and st[0][1:] == [(1, 2, 'MTSCR.COM')] and 'MTLAUNCH waits>' in front_
+              and sl == ref and tv == rbd, (r0, w, r1, st, diff, tv.hex(), rbd.hex()))
+        front(k, 1); line(k, ''); line(k, '')
+        # shadowed in front, another task there: the same calls done in its pages (mt_vshad), found to match the BIOS's
+        typ(k, 'mtlaunch mtline.com x.txt;/f mtscr.com %s %s2.txt' % (m, m), 0.5)
+        w2 = waitfile(k, M + '2.TXT', 30)
+        s_on, f1 = shd(k), tstate(k)[1]
+        front(k, 0)
+        c_v, sl2 = vflags(k, 2), slot(k, 2, 0x8000)
+        front(k, 2); line(k, '')
+        front(k, 1); line(k, 'x'); line(k, '')
+        check('MTSCR %s in front, another task there: shadowed (mt_shd 1) in its pages, byte for byte as the BIOS drew it; '
+              'switched from, found not to write the screen itself' % M, w2 and A.disk_file(k, M + '2.TXT') == (M + '+').encode()
+              and f1 == 2 and s_on == 1 and c_v & VF_DIRECT == 0 and sl2 == ref, (w2, A.disk_file(k, M + '2.TXT'), f1, s_on,
+                                                                                  c_v))
+    o9, o6 = off.get((9, 0, 2000)), off.get((6, 0x1F, 0x1900))
+    check('interrupts off for 09h\'s 2000 cells on page 0 (V) under 3 ms (%s us: one REP STOSW, not a cell at a time)'
+          % o9, o9 is not None and o9 < 3000, o9)
+    check('... and for page 0\'s "clear below" run on from row 25 (U) under 30 ms (%s us: the 151 rows wholly past the '
+          '32 KB skipped, not walked a cell at a time)' % o6, o6 is not None and o6 < 30000, o6)
+
 def two(v):
     """MTKEY's "nnnn kkkk" -> (n, k), or None."""
     return tuple(int(x, 16) for x in v.split()) if v and re.fullmatch(rb'[0-9A-F]{4} [0-9A-F]{4}', v) else None
@@ -6404,7 +6516,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

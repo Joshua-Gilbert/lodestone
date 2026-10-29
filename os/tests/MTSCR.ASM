@@ -32,6 +32,14 @@
 ;   R  an 'R' in 70h at row 0, column 60, through INT 10h 13h called from
 ;      D800:0000 (test_mt puts INT 10h / RETF there: a ROM's code), FILE
 ;      "R"; waits for a key
+;   V  P's signed EMS page, mode 3, then long runs: 09h of 8001h cells
+;      (round 16 bits), 09h of 1000h on page 4 and of 2000 on page 0
+;      (inside the 32 KB), 09h and 0Ah round 16 bits from page 7's row 12,
+;      09h across the 32 KB's end, 0Ah of 500; FILE "V+" (the page still
+;      signed); waits for a key
+;   U  as V to the 8001h cells, then "clear below the cursor" on the last
+;      line, run on from page 0 (across the 32 KB's end, then past it) and
+;      from page 7 (round 16 bits); FILE "U+"; waits for a key
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
@@ -72,26 +80,16 @@ org 100h
         je      m_k
         cmp     al, 'R'
         je      m_r
+        cmp     al, 'V'
+        je      m_v
+        cmp     al, 'U'
+        je      m_v
         jmp     fin
 
 ; ---- P: the script ----
-m_p:    mov     ah, 43h                 ; an EMS page of its own in window 2,
-        mov     bx, 1                   ;  signed (a window the wrong way round
-        int     67h                     ;  blanks on past the 32 KB on the
-        or      ah, ah                  ;  1520: MT's emulation stops there)
-        jnz     .ne
-        mov     [hnd], dx
-        mov     ax, 4402h
-        xor     bx, bx
-        int     67h
-        or      ah, ah
-        jnz     .ne
-        mov     byte [sig], 1
-        push    0E800h
-        pop     es
-        mov     word [es:0], 'SI'
-        mov     word [es:2], 'G!'
-.ne:    mov     ax, [pmode]
+m_p:    call    sign                    ; (a window the wrong way round blanks
+        mov     ax, [pmode]             ;  on past the 32 KB on the 1520: MT's
+                                        ;  emulation stops there)
         int     10h
         mov     [ax0], ax
         mov     ax, 0600h               ; windows the wrong way round after the
@@ -312,27 +310,87 @@ m_p:    mov     ah, 43h                 ; an EMS page of its own in window 2,
         call    hexw
         mov     al, 'S'
         call    tty1
-        mov     al, '?'
-        cmp     byte [sig], 0
-        je      .sg
-        mov     al, '-'
-        push    0E800h
-        pop     es
-        cmp     word [es:0], 'SI'
-        jne     .sg
-        cmp     word [es:2], 'G!'
-        jne     .sg
-        mov     al, '+'
-.sg:    call    tty1
-        cmp     byte [sig], 0
-        je      .sf
-        mov     ah, 45h
-        mov     dx, [hnd]
-        int     67h
-.sf:    mov     dx, 0246h
+        call    sigchk
+        call    tty1
+        mov     dx, 0246h
         call    curto
         mov     si, s_end
         call    ttys
+        jmp     key
+
+; ---- V: long runs of 09h and 0Ah; U: "clear below" run on ----
+m_v:    call    sign
+        mov     ax, 0003h
+        int     10h
+        mov     bh, 2                   ; 09h, 8001h cells from page 2's 3,7:
+        mov     dx, 0307h               ;  round 16 bits, all of the 32 KB
+        call    curpg
+        mov     ax, 097Ah
+        mov     bx, 023Ch
+        mov     cx, 8001h
+        int     10h
+        cmp     byte [mode], 'U'
+        jne     .r
+        mov     ax, 0600h               ; "clear below the cursor" on the last
+        mov     bh, 1Fh                 ;  line, page 0 shown: from 3E80h, the
+        mov     cx, 1900h               ;  row at 7F80h across the 32 KB's end,
+        mov     dx, 184Fh               ;  the rest past it not written
+        int     10h
+        mov     ax, 0507h               ; ... page 7 shown: from 7FA0h, on past
+        int     10h                     ;  the 32 KB, round 16 bits to page 0
+        mov     ax, 0600h
+        mov     bh, 2Eh
+        mov     cx, 1900h
+        mov     dx, 184Fh
+        int     10h
+        mov     ax, 0500h
+        int     10h
+        jmp     short .e
+.r:     mov     bh, 4                   ; 09h, 1000h cells from page 4's start
+        xor     dx, dx                  ;  (inside the 32 KB)
+        call    curpg
+        mov     ax, 0966h
+        mov     bx, 041Ah
+        mov     cx, 1000h
+        int     10h
+        xor     bh, bh                  ; 2000 from page 0's start (a clear
+        xor     dx, dx                  ;  screen's)
+        call    curpg
+        mov     ax, 0961h
+        mov     bx, 0017h
+        mov     cx, 2000
+        int     10h
+        mov     bh, 7                   ; 09h, 4450h from page 7's row 12
+        mov     dx, 0C00h               ;  (7780h): past the 32 KB not written,
+        call    curpg                   ;  round 16 bits to page 0's first 16
+        mov     ax, 0977h
+        mov     bx, 075Fh
+        mov     cx, 4450h
+        int     10h
+        mov     ax, 0A79h               ; 0Ah the same, 4448h: 8 there, their
+        mov     bx, 0700h               ;  attributes kept
+        mov     cx, 4448h
+        int     10h
+        mov     bh, 7                   ; 09h across the 32 KB's end: page 7's
+        mov     dx, 1828h               ;  24,40 (7F50h), 100 cells, 88 of
+        call    curpg                   ;  them written
+        mov     ax, 0962h
+        mov     bx, 072Bh
+        mov     cx, 100
+        int     10h
+        xor     bh, bh                  ; 0Ah, 500 from page 0's row 5, the
+        mov     dx, 0500h               ;  attributes kept
+        call    curpg
+        mov     ax, 0A63h
+        xor     bx, bx
+        mov     cx, 500
+        int     10h
+.e:     call    sigchk
+        mov     ah, al
+        mov     al, [mode]
+        mov     [out_], ax
+        mov     cx, 2
+        call    wbuf
         jmp     key
 
 ; ---- L: lines through DOS ----
@@ -494,6 +552,47 @@ wbuf:   mov     ah, 3Ch
         int     21h
 .x:     ret
 
+; an EMS page of its own in window 2, signed (sig 1), if there is one
+sign:   mov     ah, 43h
+        mov     bx, 1
+        int     67h
+        or      ah, ah
+        jnz     .x
+        mov     [hnd], dx
+        mov     ax, 4402h
+        xor     bx, bx
+        int     67h
+        or      ah, ah
+        jnz     .x
+        mov     byte [sig], 1
+        push    0E800h
+        pop     es
+        mov     word [es:0], 'SI'
+        mov     word [es:2], 'G!'
+.x:     ret
+; -> AL '+': that page still signed ('-' not, '?' none); the page given
+; back
+sigchk: mov     al, '?'
+        cmp     byte [sig], 0
+        je      .x
+        mov     al, '-'
+        push    0E800h
+        pop     es
+        cmp     word [es:0], 'SI'
+        jne     .f
+        cmp     word [es:2], 'G!'
+        jne     .f
+        mov     al, '+'
+.f:     push    ax
+        mov     ah, 45h
+        mov     dx, [hnd]
+        int     67h
+        pop     ax
+.x:     ret
+
+curpg:  mov     ah, 2                   ; page BH's cursor to DX
+        int     10h
+        ret
 tty1:   mov     ah, 0Eh                 ; AL through the teletype
         mov     bx, 7
         int     10h
