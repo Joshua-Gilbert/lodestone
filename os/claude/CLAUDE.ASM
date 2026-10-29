@@ -194,15 +194,27 @@ gg_call:
         int     60h                     ; (patched)
         ret
 
-snap_alloc:                             ; CF if no memory
-        cmp     word [snapseg], 0
+; The snapshot's block, CF if no memory: one 48h where it fits (SCREEN, and
+; a RUN's at its end, its program gone); snap_top at the top (a RUN whose
+; key script has {SNAP}: its program gets all below, O17)
+snap_alloc:
+        mov     cx, alloc_fit
+        jmp     short snap_a
+snap_top:
+        mov     cx, alloc_top
+snap_a: cmp     word [snapseg], 0
         jne     .ok
         mov     bx, (SNAPMAX + 15) / 16
-        call    alloc_top
+        call    cx
         jc      .x
         mov     [snapseg], ax
 .ok:    clc
 .x:     ret
+
+alloc_fit:                              ; BX paragraphs where they fit (48h) -> AX, CF
+        push    es
+        mov     dx, bx
+        jmp     short alloc_top.p
 
 ; BX paragraphs at the top of the largest free block (as res_load's stub),
 ; so that a RUN's program gets all below, our tail too (O17) -> AX, CF.
@@ -2547,11 +2559,9 @@ op_run: mov     si, reqbuf+2
         mov     word [ks_pos], 0
         mov     byte [ks_wait], 0
         mov     byte [snap_taken], 0
-        test    byte [run_flags], 2
-        jnz     .sb
-        call    script_has_snap
-        jnc     .ns
-.sb:    call    snap_alloc
+        call    script_has_snap         ; ({SNAP} in the script: its block now;
+        jnc     .ns                     ;  one at the end alone after the program)
+        call    snap_top
         jnc     .ns
         mov     al, 0F1h
         jmp     reply0
@@ -2586,6 +2596,8 @@ op_run: mov     si, reqbuf+2
         jz      .back
         cmp     byte [snap_taken], 0    ; (the key script's {SNAP} wins)
         jne     .back
+        call    snap_alloc              ; (no memory now: no snapshot, the RUN
+        jc      .back                   ;  answered all the same)
         call    take_snapshot
 .back:  call    video_on
         push    es

@@ -313,23 +313,28 @@ def test_run_memory_and_reconnect():
     gets all the rest; after it CLAUDE's block is whole again (run_back).  Then the link is lost and comes
     back: the HELLO built over the RUN's buffers says what the first one said, and a second RUN gets the
     same memory.  Each RUN's REPLY names its outname (X:\\...\\CLAUDE.OUT): a HELLO built during a RUN would
-    be under it."""
+    be under it.  The screenshot at a RUN's end goes in a block made after the program (one 48h): none while
+    MEMSZ runs; with {SNAP} in its key script the block is made before, at the top (alloc_top), and MEMSZ gets
+    that much less, all the rest still."""
     import re
     from unicorn import UC_HOOK_CODE
-    G = lambda: T.reply(('tool', 'grid_command', {'command': 'MEMSZ', 'capture': False, 'screenshot': True}))
-    h = T.start([G(), T.reply(('text', 'Done.')), G(), T.reply(('text', 'Again.'))], mode='auto',
+    G = lambda **k: T.reply(('tool', 'grid_command', dict({'command': 'MEMSZ', 'capture': False,
+                                                           'screenshot': True}, **k)))
+    h = T.start([G(), T.reply(('text', 'Done.')), G(), T.reply(('text', 'Again.')), G(keys='{SNAP}'),
+                 T.reply(('text', 'Marked.'))], mode='auto',
                 files={'A:\\MEMSZ.COM': open(os.path.join(HERE, 'MEMSZ.COM'), 'rb').read()})
     hello = dict(h.session.hello)
     runs, grun = [], h.session.grid.run            # (each RUN's REPLY: outname, read back from under hellobuf)
     h.session.grid.run = lambda *a, **k: runs.append(grun(*a, **k)) or runs[-1]
     keep = (h.sym['reqbuf'] + 7 + 15) // 16         # (no key script: up to ks_ptr)
     full = (h.sym['bss_end'] + 15) // 16
-    def run(i, prompt):
+    def run(i, prompt, script=0):
         lo, st = (h.claude_psp + keep) * 16, {}
         def at(uc, addr, size, ud):                         # (MEMSZ's first instruction: CS its PSP)
             if 'got' not in st:
                 p = h.m.r('cs'); st['got'], st['psp'] = h.m.u16(p, 2) - p, p
                 st['mine'] = h.m.u16(h.claude_psp - 1, 3)   # (CLAUDE's block meanwhile)
+                st['snap'] = h.var('snapseg', 2)            #  and the snapshot's
         hk = h.m.mu.hook_add(UC_HOOK_CODE, at, None, lo, 0x9FFFF)
         h.m.mu.ctl_remove_cache(lo, 0xA0000)
         h.type(prompt)
@@ -338,9 +343,10 @@ def test_run_memory_and_reconnect():
         text = str(T.results(h, i))
         kb = '%d.%d KB for programs' % divmod(st['got'] * 10 // 64, 10)
         out = runs[-1]['outfile']
-        assert 'Exit code: 0' in text and kb in text and re.fullmatch(r'[A-Z]:\\(\S+\\)?CLAUDE\.OUT', out), \
-            (kb, out, text)
-        assert st['mine'] == keep and st['psp'] < h.claude_psp + full and h.m.u16(h.claude_psp - 1, 3) == full, \
+        assert 'Exit code: 0' in text and kb in text and 'Screen (text mode 03h' in text and \
+            re.fullmatch(r'[A-Z]:\\(\S+\\)?CLAUDE\.OUT', out), (kb, out, text)
+        assert st['mine'] == (h.sym['reqbuf'] + 7 + script + 15) // 16 and st['psp'] < h.claude_psp + full and \
+            h.m.u16(h.claude_psp - 1, 3) == full and (st['snap'] > st['psp'] if script else st['snap'] == 0), \
             (st, keep, full, hex(h.claude_psp), h.m.u16(h.claude_psp - 1, 3))
         return st['got'], st['mine'], out
     got, mine, out = run(1, 'how much memory')
@@ -354,6 +360,9 @@ def test_run_memory_and_reconnect():
     same = lambda d: {k: v for k, v in d.items() if k != 'date'}
     assert same(h.session.hello) == same(hello) and hello['cwd'] == 'A:\\', (h.session.hello, hello)
     assert run(3, 'and again') == (got, mine, out)
+    g5 = run(5, 'and with a mark', 3)[0]
+    assert g5 == got - (32768 + 11 + 15) // 16 - 1, (g5, got)       # (the snapshot's block and its MCB)
+    print('     with {SNAP} in its script %d paragraphs (%.1f KB)' % (g5, g5 / 64))
     T.check(h, fails=1)
 
 
