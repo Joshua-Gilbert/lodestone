@@ -1,4 +1,4 @@
-; NEST24.COM - for test_kernel's t_execabort: an INT 24h handler's own DOS
+; NEST24.COM - for test_kernel's t_execnest: an INT 24h handler's own DOS
 ; call while EXEC loads.  X.DAT open, then EXEC BIG.COM (the test makes a
 ; sector of each unreadable).  The handler, at its first call (BIG.COM's
 ; read), reads X.DAT (INT 21h 3Fh, nested): that read's error calls it
