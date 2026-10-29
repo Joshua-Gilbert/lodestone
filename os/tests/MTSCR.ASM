@@ -37,7 +37,10 @@
 ;      whole page scrolled up 1 and down 2 and a window partly past the end
 ;      blanked (KMT's bound test: the BIOS's way, a cell at a time); rows
 ;      3-5 up 1 (at once); the teletype on rows 2 and 24, its scroll; then
-;      page 0 and 1000h back, FILE "B"; waits for a key
+;      page 0 and 1000h back.  An EMS page of its own in window 2, signed,
+;      checked at the end (as P's).  FILE "B+" ("B-": its signature gone,
+;      "B?": no page); waits for a key.  In front only (it sets 40:4Ch
+;      itself): with another task there, shadowed, as test_mt runs it
 ;   E  for the 1520: 40:4Eh (the page shown's start, which KMT's INT 10h
 ;      trusts) against 40:62h x 40:4Ch after a mode set (3, 1, then 3, each
 ;      with page 8 shown before it) and after 05h for pages 1-8 and 0: a line
@@ -415,7 +418,8 @@ m_r:    push    cs
         jmp     key
 
 ; ---- B: a page across the 32 KB's end ----
-m_b:    mov     ax, 0003h
+m_b:    call    esig                    ; (an EMS page of its own past the 32 KB)
+        mov     ax, 0003h
         int     10h
         mov     si, s_b
         call    ttys
@@ -475,9 +479,54 @@ m_b:    mov     ax, 0003h
         push    40h
         pop     es
         mov     word [es:4Ch], 1000h
-        mov     al, 'B'
-        call    wfile
+        call    echk
+        mov     byte [out_], 'B'
+        mov     [out_ + 1], al
+        mov     cx, 2
+        call    wbuf
         jmp     key
+
+; an EMS page of its own in window 2 (E800h, just past a task's 32 KB in
+; the frame: MT's emulation must stop short of it), signed
+esig:   mov     ah, 43h
+        mov     bx, 1
+        int     67h
+        or      ah, ah
+        jnz     .x
+        mov     [hnd], dx
+        mov     ax, 4402h
+        xor     bx, bx
+        int     67h
+        or      ah, ah
+        jnz     .x
+        mov     byte [sig], 1
+        push    es
+        push    0E800h
+        pop     es
+        mov     word [es:0], 'SI'
+        mov     word [es:2], 'G!'
+        pop     es
+.x:     ret
+; AL: '+' esig's page signed still, '-' not, '?' none; the page freed
+echk:   mov     al, '?'
+        cmp     byte [sig], 0
+        je      .x
+        mov     al, '-'
+        push    es
+        push    0E800h
+        pop     es
+        cmp     word [es:0], 'SI'
+        jne     .f
+        cmp     word [es:2], 'G!'
+        jne     .f
+        mov     al, '+'
+.f:     pop     es
+        push    ax
+        mov     ah, 45h
+        mov     dx, [hnd]
+        int     67h
+        pop     ax
+.x:     ret
 
 ; ---- E: 40:4Eh against 40:62h x 40:4Ch ----
 m_e:    mov     di, tab
