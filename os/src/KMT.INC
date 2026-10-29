@@ -123,7 +123,8 @@ V_DCWD      equ V_MCB + 2
 V_CWD       equ V_DCWD + 2 * NDRV
 V_DTA       equ V_CWD + (cur_drv + 1 - cwdstr)
 V_PSP       equ V_DTA + (rw_t0 + 1 - dta)
-TX_KSTK     equ V_PSP + (term_keep + 2 - cur_psp)
+TX_KSTK     equ (V_PSP + (term_keep + 2 - cur_psp) + 1) & ~1    ; (even, as
+                                        ;  kstack_top is: its words aligned)
 KSLICE      equ 256                     ; room for the kernel stack's slice
 TX_FPV      equ TX_KSTK + KSLICE        ; 1: its coprocessor state kept (0: FNINIT)
 TX_FPU      equ (TX_FPV + 2) & ~1       ; the state (FNSAVE's 94 bytes, even)
@@ -1247,6 +1248,9 @@ mt_switch:
 .k:     mov     [es:TX_KLEN], cx
         mov     si, sp
         mov     di, TX_KSTK
+        shr     cx, 1                   ; (in words, then an odd byte if any)
+        rep     movsw
+        adc     cx, cx
         rep     movsb
         push    bx
         call    mt_vsave                ; the kernel's variables
@@ -1306,6 +1310,9 @@ mt_load:
         push    ss
         pop     es
         mov     di, sp
+        shr     cx, 1
+        rep     movsw
+        adc     cx, cx
         rep     movsb
 .go:    pop     es
         pop     ds
@@ -1323,7 +1330,9 @@ mt_emsget:
         jnc     .l
         ret
 
-; the kernel's variables (DS = KSEG) to the TX at ES, or back
+; the kernel's variables (DS = KSEG) to the TX at ES, or back.  .r: the
+; ranges at CS:BX, DS:x to ES:DI (mw_save's too), or ES:x from DS:SI with
+; DS and ES swapped back after (mw_load_ctx's)
 mt_vsave:
         mov     bx, mt_ranges
         mov     di, V_INDOS
@@ -6294,6 +6303,18 @@ mt_emu:
         call    mt_vaddr
         pop     dx
         mov     ah, [bp+VF_BX]          ; (AL the caller's still)
+        or      dl, dl                  ; 09h's run inside the 32 KB, not
+        jz      .wl                     ;  round 16 bits: at once
+        mov     bx, cx
+        shl     bx, 1
+        jc      .wl                     ; (CX 8000h or more: round them)
+        add     bx, di
+        jc      .wl
+        cmp     bx, 8000h
+        ja      .wl
+        rep     stosw
+        jmp     short .wz
+            db      0                   ; (pad: .wl even, never run)
 .wl:    cmp     di, 8000h - 1           ; (past the 32 KB: not written, but
         jae     .ws                     ;  on round 16 bits, as the BIOS's DI,
         stosb                           ;  to page 0)
@@ -6306,6 +6327,7 @@ mt_emu:
         ret
 .ws:    inc     di
         jmp     short .wn
+            db      0                   ; (pad: what follows at main's parity)
 ; 0Bh: the colour select (put in 3D9h when the task is shown); AL back as
 ; the new one
 .mB:    mov     al, [VS_PAL]
@@ -6700,8 +6722,12 @@ mt_vset:
         add     dx, di
         jc      .w
         cmp     dx, 8000h
-        ja      .w
+        ja      .p
         rep     stosw
+        jmp     short .y
+.p:     cmp     di, 8000h - 1           ; (all of it past the 32 KB, not round
+        jb      .w                      ;  16 bits: none written)
+        mov     di, dx
         jmp     short .y
 .w:     cmp     di, 8000h - 1
         jae     .s
@@ -7015,6 +7041,8 @@ mt_kalloc:
             mt_par  mt_isr, 0
             mt_par  mw_got, 1
             mt_par  mw_poll, 1
+            mt_par  mt_emu.wl, 0
+            mt_par  mt_vmov.w, 0
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 

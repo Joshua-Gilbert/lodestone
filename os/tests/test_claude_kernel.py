@@ -143,6 +143,8 @@ def test_driver_frame_check():
                  T.reply(('text', 'Written and checked.'))], mode='edits', bridge='pico')
     assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 2, (h.var('ksum', 1), h.var('use_fl', 1))   # (1 before audit3 R55)
     assert h.link.grid_req == 16700, h.link.grid_req     # (CLAUDE 1.6's HELLO: req=, so 16 KB write requests)
+    st = h.link.stats                                    # (audit3 R56: the HELLO too, and its answer)
+    assert st['rx_fletcher'] == st['rx_frames'] >= 2 and h.var('n_bad', 2) == 0, (dict(st), h.var('n_bad', 2))
     k0, st0 = h.var('n_kok', 2), dict(h.link.stats)
     assert h.turn('write a big file', sim_s=120)
     assert bytes(h.m.fs['A:\\BIG.TXT']) == big.replace('\n', '\r\n').encode()
@@ -181,7 +183,7 @@ def test_executive_saver():
         th.start()
         t1 = h.m.us
         assert h.run_until(lambda: not th.is_alive(), 30), ('the call never came back', when, h.k.ocr()[:6])
-        assert 'CLAUDE 1.14' in res.get('r', {}).get('grid', ''), res
+        assert 'CLAUDE 1.15' in res.get('r', {}).get('grid', ''), res
         assert h.run_until(lambda: 'Hi from the Pi.' in h.screen(), 10), h.screen()
         return (h.m.us - t1) / 1e6
     ended = call('dark')                                    # (in the dark screen)
@@ -308,7 +310,7 @@ T.test_run_exec_block = test_run_exec_block
 
 def test_run_memory_and_reconnect():
     """audit3 O11: a RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  O17: while MEMSZ
-    runs, CLAUDE's block is cut back to reqbuf's start (the key script's end; 2,894 paragraphs before O17),
+    runs, CLAUDE's block is cut back to reqbuf's start (the key script's end; 2,844 paragraphs before O17),
     and MEMSZ, loaded in what was CLAUDE's tail (the conversation and the replies at the top: alloc_top),
     gets all the rest; after it CLAUDE's block is whole again (run_back).  Then the link is lost and comes
     back: the HELLO built over the RUN's buffers says what the first one said, and a second RUN gets the

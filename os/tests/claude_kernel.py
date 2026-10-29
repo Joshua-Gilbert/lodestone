@@ -61,10 +61,11 @@ class KernelHarness(G.EmuHarness):
     """term: a command for Claude Code (a stand-in, in a pty): gridlink's
     router then, Term or chat as the GRiD's HELLO asks.  ems_pages: the
     1520's expanded memory (resident Claude needs it).  irq_exact: pcemu's
-    (an IRQ held under CLI taken as soon as IF is set again)."""
+    (an IRQ held under CLI taken as soon as IF is set again, as the 1520's
+    PIC gives it; on by default, as ktest.KPC's)."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y',
                  claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0, bridge='ar488', frame_cap=None,
-                 irq_exact=False):
+                 irq_exact=True):
         s.tmp = tempfile.mkdtemp(prefix='gridk-')
         disk = [LODE_SYS, LCMD_COM, 'CLAUDE.COM=' + claude_com, 'TESTKEY.COM=' + G.TESTKEY_COM]
         for k, v in (files or {}).items():

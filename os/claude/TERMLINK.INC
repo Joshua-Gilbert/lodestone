@@ -34,8 +34,8 @@ snap_reply  resb 1
 keyn        resb 1
 keys_q      resb 1
 rep_q       resb 1
-use_fl      resb 1                      ; frames carry a Fletcher sum, not CRC-16: 1 ours,
-                                        ;  2 the driver's (KSUM: ksum + 1 at the Pi's HELLO)
+use_fl      resb 1                      ; whose Fletcher sum: ours (fcs) till the Pi's HELLO (0),
+                                        ;  then ksum + 1: 1 ours, 2 the driver's (KSUM)
 wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driver latches SRQ;
                                         ;  RCON: it counts SRQ interrupts)
 tlook       resb 1                      ; link_wait's serial poll: 2 a tick's look, no SRQ seen;
@@ -169,7 +169,6 @@ frame_short:
         call    frame_hdr
         lea     si, [di+1]
         mov     cx, 5
-        mov     ax, 0FFFFh
         call    fcs
         mov     [di+6], ax
         mov     si, di
@@ -260,7 +259,6 @@ frame_next:
         push    cx
         mov     si, txframe+1
         add     cx, 5
-        mov     ax, 0FFFFh
         call    fcs
         pop     cx
         mov     di, txframe+6
@@ -575,7 +573,6 @@ find_frame:
         push    cx
         lea     si, [rxbuf+bx+1]
         add     cx, 5
-        mov     ax, 0FFFFh
         call    fcs
         pop     cx
         pop     bx
@@ -770,9 +767,13 @@ delay_ms:
         pop     ax
 .x:     ret
 
-; A frame's check over DS:SI, CX bytes -> AX: CRC-16 until the Pi's HELLO
-; agrees to the Fletcher sum (use_fl; link_reset clears it, so HELLO and its
-; answer always go with the CRC).  Destroys BX SI CX.
+; A frame's check over DS:SI, CX bytes -> AX, every frame, HELLO too (till
+; audit3 R56 the HELLO and its answer went with a CRC-16; a gridlink from
+; 8db568c on takes either).  Fletcher-16 with 8-bit sums: A = 1 + the bytes,
+; B = the sum of the A's, both mod 256 (the registers' own wrap: no modulo
+; step at all, where Fletcher's mod 255 would cost an ADC after every add);
+; AX = B << 8 | A.  Four bytes a pass: about 8.5 clocks a byte on the 286 by
+; the tables.  Destroys BX SI CX.
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 %ifdef PROFILE
 fcs:    PROF    4
@@ -783,17 +784,12 @@ fcs_:
 %else
 fcs:
 %endif
-        cmp     byte [use_fl], 0
-        je      crc16
-; Fletcher-16 with 8-bit sums: A = 1 + the bytes, B = the sum of the A's,
-; both mod 256 (the registers' own wrap: no modulo step at all, where
-; Fletcher's mod 255 would cost an ADC after every add); AX = B << 8 | A.
-; Four bytes a pass: about 8.5 clocks a byte on the 286 by the tables,
-; against about 34 for the table CRC.  Destroys BX SI CX (as crc16).
-fl16:   push    dx
         mov     bx, 1                   ; BL = A, BH = B
+; fl16: the same, going on from BX's sums (RCON's screen_sum)
+fl16:   push    dx
         mov     dx, cx
-        shr     cx, 2
+        shr     cx, 1                   ; (two SHR 1s: 4 clocks against SHR 2's
+        shr     cx, 1                   ;  7, and .l even after fcs's 3 bytes)
         jcxz    .t
 .l:     lodsw
         add     bl, al
@@ -816,42 +812,6 @@ fl16:   push    dx
 .x:     mov     ax, bx
         pop     dx
         ret
-
-; CRC-16/CCITT-FALSE.  AX = crc, DS:SI -> data (RCON: ES:SI, ES = CS but for
-; the shadow's), CX = count.  Destroys BX SI CX.
-crc16:  jcxz    .x
-.l:     mov     bl, ah
-%ifdef RCON
-        xor     bl, [es:si]
-%else
-        xor     bl, [si]
-%endif
-        inc     si
-        xor     bh, bh
-        shl     bx, 1
-        mov     ah, al
-        xor     al, al
-        xor     ax, [crctab + bx]
-        loop    .l
-.x:     ret
-
-        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
-crc_init:
-        xor     bx, bx
-.i:     mov     ah, bl
-        xor     al, al
-        mov     cx, 8
-.b:     shl     ax, 1
-        jnc     .n
-        xor     ax, 1021h
-.n:     loop    .b
-        mov     di, bx
-        shl     di, 1
-        mov     [crctab + di], ax
-        inc     bx
-        cmp     bx, 256
-        jb      .i
-        ret
         times   ($ - $$) & 1 db 90h       ; (the includer's code after: its parity as before these pads)
 
 ; The hot labels: even in CLAUDE.COM and in RCON (their pads above, each
@@ -862,7 +822,7 @@ crc_init:
         EVEN    link_service, link_idle, link_idle.x, frame_poll, frame_short, frame_hdr
         EVEN    link_write, lw_go.ok, link_wait, link_wait.t, link_wait.x, link_read
         EVEN    took_answer, took_answer.ok, took_answer.new, commit_fragment
-        EVEN    get_ticks, pit_read, srq_new, pit_mark, pit_due, pit_due.x, fcs, crc_init.b
+        EVEN    get_ticks, pit_read, srq_new, pit_mark, pit_due, pit_due.x, fcs, fl16.l
 %ifdef KSUM
         EVEN    ks_check
 %endif

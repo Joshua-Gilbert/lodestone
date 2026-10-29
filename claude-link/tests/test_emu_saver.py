@@ -108,7 +108,7 @@ def test_saver_and_a_tool_call():
         th = threading.Thread(target=lambda: res.update(r=h.router.term.grid.get_info()))
         th.start()
         assert h.run_until(lambda: not th.is_alive(), 20), 'the call never came back'
-        assert 'CLAUDE 1.14' in res.get('r', {}).get('grid', ''), res
+        assert 'CLAUDE 1.15' in res.get('r', {}).get('grid', ''), res
         assert not sv.up(), 'still up'
         assert T.in_step(h), T.mismatch(h)
         T.check(h)
