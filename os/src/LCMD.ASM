@@ -37,6 +37,19 @@ HIST    equ 512                         ; the prompt's history
 RMAX    equ 12                          ; lines run inside lines (FOR, CALL)
 CMAX    equ 8                           ; CALLs inside CALLs
 
+; Hot code on even offsets (a taken jump to an odd one costs the 286 a
+; fetch): os/bench/hot.py's counts over the prompt's work (DIR, TYPE, COPY,
+; a batch file's loop, the PATH, pipes, the task commands), plan.py placed
+; the pads ("hot": each `times ($ - $$) & 1`, after a JMP or RET, so never
+; run).  The labels in the EVEN list at the code's end must stay even, or
+; no build (the PSP is a paragraph, so the offset's parity is the address's)
+%macro EVEN 1-*
+%rep %0
+        times   -((%1 - $$) & 1) db 0
+%rotate 1
+%endrep
+%endmacro
+
 start:  mov     sp, stack_top
         cld
         mov     di, bss_start           ; DOS doesn't clear memory for us
@@ -498,6 +511,7 @@ do_pipe:
         jnz     .cp
         mov     word [pipe_rest], 0
         jmp     .cut
+        times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so .cut on even)
 .bar:   mov     byte [di], 0
         mov     [pipe_rest], si
 .cut:   ; the pipe's files: in from the last, out to the next
@@ -720,6 +734,7 @@ run_cmd:
         jne     .bi
         mov     ax, do_drive
         jmp     .set
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 .bi:    ; a built-in?  The name may run into '\' or '.' ("CD\", "CD..")
         mov     si, cword
         mov     di, cword2
@@ -2212,6 +2227,7 @@ edit_line:
         mov     [ed_pos], al
         mov     byte [ed_tab], 1
         jmp     .show
+        times   ($ + 1 - $$) & 1 db 90h ; (hot: odd here, so .b on even)
 
 ; SI -> the start of the history line that ends just before it
 hist_back:
@@ -2365,6 +2381,7 @@ wait_key:
 .z:     sti
         hlt
         jmp     .w
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 .k:     mov     ah, 7
         int     21h
         xor     ah, ah
@@ -3563,6 +3580,7 @@ do_echo:
 
 do_ver: mov     si, s_ver
         jmp     puts
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 
 ; the tasks' records (multitasking, MTAPI.INC) in tail -> CX of them, AL =
 ; the front one, AH = ours (mt_me too); CF, SI = the message, if it's off
@@ -4192,6 +4210,7 @@ env_find:
         jne     .n
         inc     di
         jmp     .c
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 .hit:   add     sp, 2
         pop     si
         clc
@@ -4431,6 +4450,7 @@ putc:   push    ax
         pop     dx
         pop     ax
         ret
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 puts:   pusha
         mov     dx, si
         call    strlen
@@ -4468,6 +4488,7 @@ strend: mov     di, si                  ; DI -> the NUL of SI
         inc     di
         jmp     .l
 .x:     ret
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 streq:  push    si                      ; ZF if SI = DI
         push    di
 .l:     lodsb
@@ -4709,6 +4730,13 @@ s_arf       db 13, 10, 'Abort, Retry, Fail?', 0
 save_in     dw 0FFFFh
 save_out    dw 0FFFFh
 padw        dw 0
+
+        EVEN    do_line.n, do_pipe.cp, parse_redir.l, redir_undo.x, run_cmd.b2, run_cmd.bl, run_cmd.bs
+        EVEN    get_word.c, find_prog.pc, find_ext.d, bat_read.f, bat_next.s, bat_next.s0, for_run.s, for_run.put
+        EVEN    edit_line.key, hist_back.b, ed_room, ed_show.s, ed_at, ed_rc, wait_key, wait_key.k, wait_key.r, con_in
+        EVEN    do_dir.e, do_dir.n, put_83, put_83.n, put_83.pn, put_83.pl, do_type.l, env_find.c, show_prompt.l
+        EVEN    putc, puts, crlf, strlen.l, strlen.x, strcpy, strend.l, streq, streq.l, streq.x, upcase, upcase.x
+        EVEN    skipsp.x, getarg.l, pu2sp
 
 section .bss
 bss_start:
