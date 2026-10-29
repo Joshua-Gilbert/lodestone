@@ -1604,10 +1604,12 @@ bios2dos:
 ; INT 24h for the failed transfer -> AL = 0 ignore, 1 retry, 3 fail
 ; (abort ends the program here and doesn't come back; while EXEC loads one
 ; it fails instead: the caller is cur_psp still, and f_4B gives back what
-; the new program had.  "EXEC loads" is the outer INT 21h call's AH, read
-; from its frame's fixed place (each task's, KMT), not through BP: an INT
-; 24h handler's own call is nested on the other stack, and KMT's close_all
-; may run with BP no frame)
+; the new program had.  Outside INT 21h (InDOS 0: C:'s INT 25h/26h) no
+; EXEC loads: Abort ends the program.  Inside, "EXEC loads" is the outer
+; call's AH, read at its frame's fixed place, not through BP: an INT 24h
+; handler's own call is nested on the other stack, and KMT's close_all may
+; run with BP no frame.  Under MT that place is the running task's own: a
+; task switched inside INT 21h takes its slice of the kernel stack along)
 crit_disk:
         test    byte [cap_req], 2       ; a screen capture: just fail
         jnz     .fail
@@ -1647,18 +1649,17 @@ crit_disk:
         je      .abort
         cmp     al, 3
         jbe     .x
-        mov     al, 3
+.fail:  mov     al, 3
 .x:     ret
-.abort: cmp     byte [kstack_top - F_SIZE + F_AX + 1], 4Bh
+.abort: cmp     byte [indos], 0         ; (outside INT 21h the place holds
+        je      .t                      ;  the last call's, maybe another
+        cmp     byte [kstack_top - F_SIZE + F_AX + 1], 4Bh      ; task's)
         je      .fail
-        mov     ax, [cur_psp]
+.t:     mov     ax, [cur_psp]
         cmp     ax, [root_psp]
         je      .fail
-        mov     byte [term_type], 2
-        xor     al, al
-        jmp     terminate               ; doesn't return
-.fail:  mov     al, 3
-        ret
+        mov     ax, 0200h               ; (a critical error, code 0; DS = KSEG,
+        jmp     terminate.ah            ;  as above).  Doesn't return
 
 crit_dev:                               ; a block device header for INT 24h
         dd 0FFFFFFFFh
