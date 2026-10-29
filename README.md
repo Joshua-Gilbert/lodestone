@@ -98,7 +98,7 @@ Lodestone 0.6 (memory measured with the windows that move, the printer drivers a
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
 - **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 14 KB more.
-- **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.5 KB when ROM 1 is there, 0.8 KB with ROM 2 as well.
+- **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.5 KB when ROM 1 is there, 0.6 KB with ROM 2 as well.
 - **The Executive stays resident on purpose:** Lodestone is meant to become multitasking.
 
 The full tables, the method and every run on the 1520 are in `os/bench/RESULTS.TXT`, `RESULTS3.TXT` and `RESULTS_HD.TXT`, and the `BENCH_1520_*.TXT` logs.
