@@ -7014,9 +7014,12 @@ mt_kalloc:
             mt_par  mw_poll, 1
             mt_par  mt_vfast, 0         ; (O23, O25: INT 10h's per character
             mt_par  mt_vfast.ch, 0      ;  and per scroll)
-            mt_par  mt_vfast.set, 0
+            mt_par  mt_vfast.set, 0     ; (after a fixed NOP)
             mt_par  mt_vaddr, 0
             mt_par  mt_vscr, 0
+; mt_vscr's first JA .lit in a byte (4 bytes on from .c2): a byte more in
+; the fast way and NASM makes it, and JNZ .lit, JNA over a near JMP
+            times   -((mt_vscr.lit - mt_vscr.c2) > 4 + 127) db 0
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 

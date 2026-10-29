@@ -42,7 +42,8 @@
 ;      trusts) against 40:62h x 40:4Ch after a mode set (3, 1, then 3, each
 ;      with page 8 shown before it) and after 05h for pages 1-8 and 0: a line
 ;      each (mode, page, the two, '=' or '!'), 21, then 4E+ (all the same)
-;      or 4E-; FILE "E+" or "E-"; waits for a key
+;      or 4E-; FILE "E+" or "E-"; waits for a key.  Full screen, in front
+;      (in a terminal window its calls never reach the BIOS: a false 4E+)
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
