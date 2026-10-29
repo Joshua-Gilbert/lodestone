@@ -1264,8 +1264,7 @@ rc_i23: iret                            ; ^C: nothing (the call goes on)
 type_start:
         mov     cx, [rq_len]
         cmp     cx, KSMAX
-        mov     al, 0F0h                ; (too big for ksbuf)
-        ja      reply0
+        ja      .big
         mov     word [ks_pos], 2
         mov     [ks_len], cx
         mov     si, reqbuf              ; (for the feeder, which has this page
@@ -1280,6 +1279,8 @@ type_start:
         pop     es
         mov     byte [quit], 1
         ret
+.big:   mov     al, 0F0h                ; too big for ksbuf
+        jmp     reply0
 
 ; SCREEN in the background (or kept from the way out): the program's screen
 ; as it is now, kept as at a pop-up (the next pop-up keeps its own), then as
