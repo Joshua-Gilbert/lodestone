@@ -81,12 +81,14 @@ program (TM5000G) ── INT 16h ──► CLAUDE /R stub (conventional, ~1.2 KB
 3. **Graphics state round trip.** Byte-compare video memory and 40:49-66h before and after a pop-up over a graphics program, then GRIDPROBE on the 1520 for the V6366's registers.
 
 ## Spike results (2026-10-09)
-The spike programs are in `os/claude`:
-- **RSPIKE.COM** — the TSR. It keeps 0.9 KB of conventional memory and uses 3 EMS pages: its code, plus the program's screen.
-- **EMSUSE**, **GFXUSE** and **KEYCODE** — test programs.
-- **SPIKES.BAT** — runs the steps on the 1520.
+The spike programs were in `os/claude`:
+- **RSPIKE.COM** — the TSR. It kept 0.9 KB of conventional memory and used 3 EMS pages: its code, plus the program's screen.
+- **EMSUSE**, **GFXUSE** and **KEYCODE** — test programs (still there: test_resident uses the first two, and KEYCODE shows a key's code on the 1520).
+- **SPIKES.BAT** — ran the steps on the 1520.
 
-The emulator tests are in `os/tests/test_resident.py` (21 checks).
+The emulator tests were in `os/tests/test_resident.py` (21 checks).
+
+RSPIKE.COM, SPIKES.BAT and those 21 checks were removed in the 2026-10-26 audit's step 8 (H12): `CLAUDE /R` superseded the spike, and test_resident's `CLAUDE /R` tests mirror each of its checks.
 
 On the 1520 (SPIKES.TXT; run without a GPIB address):
 
@@ -107,7 +109,7 @@ On the 1520 (SPIKES.TXT; run without a GPIB address):
 - **Effect:**
   - TM5000G's `kbhit()` blocked until a key. It calls `kbhit()` between mouse reads and before each GPIB probe, which explains both symptoms.
   - The Executive's AH=11h key checks blocked the same way, and so would LCMD's prompt screen saver.
-- **Fixed:** RSPIKE.COM is now 1,693 bytes and is on the floppy, verified.
+- **Fixed:** RSPIKE.COM was then 1,693 bytes and on the floppy, verified.
 - **Why the tests missed it:** they always pressed keys, and a key unblocks the wait.
 - **New checks, with no key pressed:**
   - a TM5000G mouse click opens Configure Modules;
@@ -153,7 +155,7 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - The console is its own assembly, `RCON.ASM` (org 0, 2,946 bytes). `/R` copies it into the first of three EMS pages.
   - Everything only `/R` and `/U` use (their code and messages, the stub as it will run, assembled for offset 100h with `vstart`, and the console) is where CLAUDE.COM's BSS goes, so chat and Term runs don't carry it in memory; only `res_args` (32 bytes), which looks for `/R` and `/U`, stays. (PR #27's review: before, a chat or Term run carried 1,248 bytes of it.)
   - It draws with `cell` from `CELL.INC`, split out of `TERMCELL.INC` (CLAUDE.COM is byte for byte the same after the split), and the Terminus font. This is the shape M2 needs: the console code CS-relative in EMS.
-- **The stub: in a block of its own at the top of memory, with no PSP.** This changed from the plan (and from RSPIKE, which keeps its PSP with INT 21h AH=31h).
+- **The stub: in a block of its own at the top of memory, with no PSP.** This changed from the plan (and from RSPIKE, which kept its PSP with INT 21h AH=31h).
   - **Why:** measured with the stub kept that way and loaded at the prompt, a program the Executive started afterwards got 534.8 KB instead of 578.4: 43.6 KB less. When LCMD ended, the Executive's block couldn't grow back past the stub (`ui_room`), so it moved above it, leaving everything below unused. Any TSR loaded at the prompt does this today.
   - **How:**
     1. `/R` takes the largest free block and cuts it to its size less the stub's paragraphs (`R_PARAS`: 47 then, 57 since M7c) and an MCB. The kernel leaves the rest, at that block's top, as a free block of exactly the stub's size.
@@ -196,8 +198,8 @@ Only the spikes and the final check need the 1520. Real use needs the Pi 5 and t
   - **Resident:** 768 bytes of conventional memory: 360 of code and data, the 384-byte stack, and the block's MCB (704 before the review's fixes: the header, the in-service check, the no-key answer). DOS programs get 0.8 KB less, at the prompt and from the Executive alike (the plan's target was 1.2 KB). `/U` gives all of it back.
   - **EMS:** 3 pages (48 KB).
   - **CLAUDE.COM:** 16,646 bytes on disk (+4,326). It takes 32 bytes more in memory when it runs as chat or Term (`res_args`).
-- **Tests** (`test_resident.py`, 43 new checks; the spike's 21 stay as they were):
-  - `/R`, `/R` again, `/U`, `/U` again, `/U` under RSPIKE, no EMS: messages and exit codes;
+- **Tests** (`test_resident.py`, 43 new checks; the spike's 21 stayed as they were, until step 8 removed them):
+  - `/R`, `/R` again, `/U`, `/U` again, `/U` under RSPIKE (under HOOK16 since step 8), no EMS: messages and exit codes;
   - memory at the prompt, from the Executive, and after `/U`; the EMS handle kept after CLAUDE.COM ends, and freed by `/U`;
   - the console over EMSUSE (AH=00h and AH=10h readers, all four EMS windows), over GFXUSE in modes 4, 6, 40h and 3 (video memory and 40:49h-66h byte for byte), over COPY CON ("DOS busy"), over the Executive (the mouse meanwhile), and over TM5000G (its keyboard, mouse and bus polling with no key pressed, auto-detect, and the mouse meanwhile);
   - type-ahead kept;

@@ -1,8 +1,8 @@
 """Resident Claude (CLAUDE /R, os/claude): its console's code runs from
 EMS pages of its own over programs that use all four EMS windows, over
 graphics and text modes, DOS, the Executive and TM5000G while it polls
-the bus.  (The spike's own tests, RSPIKE.COM's, went with the 2026-10-26
-audit's H12: these mirror each of them.)
+the bus.  (The spike, RSPIKE.COM, and its four tests went in the
+2026-10-26 audit's step 8, H12: these mirror each of them.)
 
     python3 tests/test_resident.py [name ...]
 """
@@ -22,7 +22,7 @@ def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
     for d, n in ((os.path.join(GOS, 'src'), 'LCMD'), (HERE, 'MEMSZ')):     # (on every disk here and test_resident_term's)
         subprocess.run(['nasm', '-f', 'bin', '-i', d + '/', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
-    for n in ('RSPIKE', 'EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE', 'HOOK16', 'PAGE1'):
+    for n in ('EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE', 'HOOK16', 'PAGE1'):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(CL, n + '.COM'), os.path.join(CL, n + '.ASM')], check=True)
     subprocess.run(['sh', os.path.join(CL, 'build.sh')], check=True, stdout=subprocess.DEVNULL)  # RCON.BIN in CLAUDE.COM, its map
     # another version's CLAUDE.COM, as far as the stub goes: laid out otherwise after its header
@@ -55,7 +55,7 @@ def mcbs(k):
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [os.path.join(GOS, 'src', 'LODE.SYS'), os.path.join(GOS, 'src', 'LCMD.COM'),
                                                  os.path.join(HERE, 'MEMSZ.COM')] + [os.path.join(CL, f) for f in
-                                                 ('RSPIKE.COM', 'EMSUSE.COM', 'GFXUSE.COM', 'CLAUDE.COM')] + list(files))
+                                                 ('EMSUSE.COM', 'GFXUSE.COM', 'CLAUDE.COM')] + list(files))
 
 results = []
 def check(name, cond, detail=''):
