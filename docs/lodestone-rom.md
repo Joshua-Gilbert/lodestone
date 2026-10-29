@@ -26,14 +26,29 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 
 ## ROM 2
 
-`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `L2`), in the same layout as ROM 1. It holds **DEFRAG.COM** and **TERM.FNT** (the terminal window's font: without ROM 2 a text program, and CODE-P's prompt, starts full screen as a task in front, as without windows) now; what doesn't fit in ROM 1 goes there.
+`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `LJ`), burned as the second half of R: (below). It holds **DEFRAG.COM** and **TERM.FNT** (the terminal window's font: without ROM 2 a text program, and CODE-P's prompt, starts full screen as a task in front, as without windows) now; what doesn't fit in ROM 1 goes there.
 
 - **R: is both ROMs' files** (`KROM.INC`), whichever socket each is in:
-  - with ROM 2 in, R: is one volume the read routine makes of the two: its FAT two sectors (ROM 1's entries, then ROM 2's, their clusters numbered on past ROM 1's: ROM 2's cluster n is R:'s n + 252), its root 64 entries (ROM 1's 32, then ROM 2's), then ROM 1's clusters and ROM 2's. Nothing is copied or kept: each FAT and root sector is made as it is read, from the two ROMs' own (ROM 1's empty entries read as deleted ones, so that a search goes on to ROM 2's; ROM 2's volume label is left out);
-  - either ROM works alone: ROM 1 alone is R: as before; ROM 2 alone (a floppy start) is R: by itself;
-  - so ROM 2 can be changed and burned without ROM 1, and the other way round.
+  - with ROM 2 in, R: is one volume of the two: its FAT two sectors (ROM 1's, then ROM 2's), its root 64 entries (ROM 1's 32, then ROM 2's), then ROM 1's clusters 2-253, a gap (254-341, marked bad, on neither ROM) and ROM 2's as 342-593 (ROM 2's cluster n is R:'s n + 340);
+  - **ROM 2 is burned as that second half** (since the 2026-10-26 audit's O10): its FAT sector is R:'s second, entries from 341 on (so that none of its own is in ROM 1's sector), and its root holds its own entries, numbered as R:'s, without a label. ROM 1's FAT marks the gap bad up to its sector's end. So R:'s sectors are plain copies from the two ROMs. Only ROM 1's root is changed as it is read: its empty entries read as deleted ones, so that a search goes on to ROM 2's. ROM 1 itself keeps them empty, so a search of ROM 1 alone still stops at its end. (Before O10 the read routine made each FAT and root sector up from two volumes that stood alone: 224 bytes more were kept, and every FAT read went through each entry);
+  - either ROM works alone: ROM 1 alone is R: as before. ROM 2 alone (a floppy start) is R: by itself: the same volume with ROM 1's half missing, its FAT sector 1 ROM 2's spare (sector 254, all bad), its root ROM 2's 32 entries alone;
+  - so ROM 2 can be changed and burned without ROM 1, and the other way round, as long as both are in this layout. A ROM 2 burned before O10 (id `L2`) isn't joined: R: is then ROM 1 alone. ROM 2 is no FAT volume by itself any more: `mkrom.joined()` writes R: as an image that mtools reads.
 - **DEFRAG.COM on R:** the screen saver's round of the disks looks for it in the root of the start-up drive, so from the ROM it finds it there with ROM 2 in, as before (without ROM 2: no round, only the dark clock). From a floppy, DEFRAG.COM is on A: as before.
-- **Cost:** R:'s module is 29 paragraphs with ROM 1 alone (27 before ROM 2's support; 32 until the start-up patched `r_dio`'s call of `.map` out, audit O9) and 50 with ROM 2 joined (368 bytes more): what joins them, `.map` with it, is kept only when ROM 2 is there.
+- **Cost:** R:'s module is 29 paragraphs with ROM 1 alone (27 before ROM 2's support; 32 until the start-up patched `r_dio`'s call of `.map` out, audit O9) and 36 with ROM 2 (112 bytes more; 50 before O10): what joins them, `.map` with it, is kept only when ROM 2 is there. ROM 2 alone keeps it too.
+- **Speed (O10, instructions counted in pcemu):**
+  - with ROM 2, reads of R:'s FAT and root are much cheaper. `type r:\f17.txt` with nothing cached takes 45% fewer instructions, a missed command 29% fewer, and COPY of a 60 KB file from ROM 2 22% fewer;
+  - ROM 1 alone is unchanged;
+  - two paths are slower. DIR R: with R:'s FAT already cached takes 0.8% more with ROM 2 in: INT 21h 36h counts free clusters through every FAT entry, the gap's 88 too (592, where it was 504). ROM 2 alone, which now maps its sectors as the joined volume does, takes 4.4% more for DIR R: (592 entries, where it was 252) and 1.2% more for a COPY.
+
+### Re-burning for O10
+
+O10 changed both ROMs' layout. Burn both from one build of this tree (`os/build.sh`):
+- ROM 1: `os/LODE1_EPROM.BIN` (its FAT now marks R:'s gap bad);
+- ROM 2: `os/LODE2_EPROM.BIN` (R:'s second half, id `LJ`).
+
+A mix of old and new is safe, but R: is then ROM 1 alone: no DEFRAG.COM round, and no TERM.FNT, so text programs start full screen:
+- the new ROM 1 doesn't join a ROM 2 burned before (id `L2`);
+- an old ROM 1, or an older kernel started from a floppy, doesn't join the new ROM 2 (`LJ`).
 
 ## Which socket
 
@@ -57,7 +72,7 @@ So Lodestone goes in the second socket, where the GRiD MS-DOS EPROM has been. Th
   - 128 KB at 3 wait states;
   - the directory and data selectors;
   - ROM id `LO`.
-  - ROM 2 is system type 2, id `L2` (`mkrom.py --data`).
+  - ROM 2 is system type 2, id `LJ` (`mkrom.py --data`). Its FAT and root are R:'s second halves (above), and its sector 254 is R:'s first FAT sector when there is no ROM 1. Its BPB is ROM 1's, kept only as the signature R: checks.
 - **The boot sector is `ROMBOOT.ASM`.** The BIOS copies the whole image to 8000:0000 and jumps there with DL = 'r'. ROMBOOT finds LODE.SYS in the root and copies it to 1000:0000. It starts it as the floppy boot sector does, with DS:SI pointing at its BPB and DL = 17 (R:).
 
 ## R:, the ROM drive
@@ -110,7 +125,7 @@ The BIOS's own `f` at its boot prompt still boots the floppy as well.
 
 Measured in pcemu by `tests/test_rom.py t_memory`: a DOS program's KB.
 
-**Without the ROM, 0.6 costs 0.1 KB against 0.4.5 (562.2 / 578.3 KB, was 562.3 / 578.4).** That is the PATH search in the Executive and the two-file settings reader. With the ROM in, R:'s module added 446 bytes in 0.6 (432 after the 2026-10-20 audit's PR #55; 512 since ROM 2's support, 800 with ROM 2 in).
+**Without the ROM, 0.6 costs 0.1 KB against 0.4.5 (562.2 / 578.3 KB, was 562.3 / 578.4).** That is the PATH search in the Executive and the two-file settings reader. With the ROM in, R:'s module added 446 bytes in 0.6 (432 after the 2026-10-20 audit's PR #55; 512 since ROM 2's support, 464 since O9; with ROM 2 in, 800, and 576 since O10).
 
 ## Review (2026-10-18)
 
@@ -138,6 +153,6 @@ Also from the review:
   - System's Settings topic and saving;
   - PATH;
   - memory;
-  - ROM 2 (t_rom2, 13 checks): LODE2.BIN a data ROM; a test ROM 2 with 20 files (its root past 16 entries, R:'s sector 6) and a 60 KB file whose chain crosses both FAT sectors R: makes; with ROM 1, in either socket (with EMS; with C:), what DOS programs get (0.2-0.4 KB less than ROM 1 alone), DIR R: both ROMs' files (one label, 33 files, 0 bytes free) and DEFRAG.COM, the 60 KB file, ROM 1's last file and ROM 2's 21st entry copied as built, after a program has run; the FAT (fatbuf) and the root sectors in the buffers byte for byte against what R: should make; ROM 2 alone as the second image (another ROM the first), DEFRAG.COM read as built; ROM 1 alone without DEFRAG.COM; the screen saver from the ROM running R:\DEFRAG.COM with ROM 2 in, the dark clock without it. Twelve of thirteen mutations each fail a check (the FAT, root and data mapping, the joined drive table, ROM 2 alone, the module kept short or not); one is equivalent here: the entry split over the two FAT sectors writing its first half before a lone sector 2, which the kernel only ever reads after sector 1 into the same buffer.
+  - ROM 2 (t_rom2, 24 checks): LODE2.BIN a data ROM (id `LJ`), TERM.FNT on it; the two FATs as burned (ROM 1's gap bad to its sector's end, ROM 2's sector R:'s second, its spare sector 254); mtools reading R: as `mkrom.joined()` builds it, with ROM 1 and ROM 2 alone; a test ROM 2 with 20 files (its root past 16 entries, R:'s sector 6) and a 60 KB file; with ROM 1, in either socket (with EMS; with C:), what DOS programs get (0.1-0.2 KB less than ROM 1 alone), DIR R: both ROMs' files (one label, 33 files, 0 bytes free) and DEFRAG.COM, the 60 KB file, ROM 1's last file and ROM 2's 21st entry copied as built, after a program has run; the FAT (fatbuf) and the root sectors in the buffers byte for byte against what R: should read; ROM 2 alone as the second image (another ROM the first): its 2 files read as built, 0 bytes free, its drive table and sector map; an `L2` ROM 2 not joined; a file whose cluster is in the gap fails to read; ROM 1 alone without DEFRAG.COM; the screen saver from the ROM running R:\DEFRAG.COM with ROM 2 in, the dark clock without it. Eleven of twelve mutations of O10 each fail a check (the gap, ROM 2 alone's root and FAT sector, the sector map, ROM 1's root not fixed or its fix-up skipped, the id, mkrom's padding, spare sector and cluster numbers); one is equivalent: `jnc .m1` made `jmp short .m1`, as the gap's CF goes through `.m1` anyway. A 3-byte `MOV DI, R_PIECE` fails the build (the module's parity assert).
 - **pcemu** models the sockets (`roms=`) and the BIOS's boot (`boot_rom`).
 - **The real-BIOS checks** need `rom/ROM_F000.BIN` and the GRiD MS-DOS EPROM image. These are not in the repo.
