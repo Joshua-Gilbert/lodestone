@@ -6720,8 +6720,12 @@ mt_vset:
         add     dx, di
         jc      .w
         cmp     dx, 8000h
-        ja      .w
+        ja      .p
         rep     stosw
+        jmp     short .y
+.p:     cmp     di, 8000h - 1           ; (all of it past the 32 KB, not round
+        jb      .w                      ;  16 bits: none written)
+        mov     di, dx
         jmp     short .y
 .w:     cmp     di, 8000h - 1
         jae     .s

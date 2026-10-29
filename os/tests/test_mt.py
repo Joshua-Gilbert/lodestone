@@ -1574,6 +1574,8 @@ def t_vruns():
     o9, o6 = off.get((9, 0, 2000)), off.get((6, 0x1F, 0x1900))
     check('interrupts off for 09h\'s 2000 cells on page 0 (V) under 3 ms (%s us: one REP STOSW, not a cell at a time)'
           % o9, o9 is not None and o9 < 3000, o9)
+    check('... and for page 0\'s "clear below" run on from row 25 (U) under 30 ms (%s us: the 151 rows wholly past the '
+          '32 KB skipped, not walked a cell at a time)' % o6, o6 is not None and o6 < 30000, o6)
 
 def two(v):
     """MTKEY's "nnnn kkkk" -> (n, k), or None."""
