@@ -32,6 +32,28 @@
 ;   R  an 'R' in 70h at row 0, column 60, through INT 10h 13h called from
 ;      D800:0000 (test_mt puts INT 10h / RETF there: a ROM's code), FILE
 ;      "R"; waits for a key
+;   B  mode 3, then page 7 shown with pages 1180h long (40:4Ch set so): from
+;      7A80h, its rows 9 on past the 32 KB.  Rows 0-11 written with 09h; the
+;      whole page scrolled up 1 and down 2 and a window partly past the end
+;      blanked (KMT's bound test: the BIOS's way, a cell at a time); rows
+;      3-5 up 1 (at once); the teletype on rows 2 and 24, its scroll; then
+;      page 0 and 1000h back.  An EMS page of its own in window 2, signed,
+;      checked at the end (as P's).  FILE "B+" ("B-": its signature gone,
+;      "B?": no page); waits for a key.  In front only (it sets 40:4Ch
+;      itself): with another task there, shadowed, as test_mt runs it
+;   E  for the 1520: 40:4Eh (the page shown's start, which KMT's INT 10h
+;      trusts) against 40:62h x 40:4Ch after a mode set (3, 1, then 3, each
+;      with page 8 shown before it) and after 05h for pages 1-8 and 0: a line
+;      each (40:49h, 62h, the two; '=', '!' if they differ, '?' if 49h or
+;      62h isn't the mode or page asked for), 21, then 4E+ (all '='), 4E-
+;      (a '!', whatever else) or 4E? (a '?', no '!': the calls never reached
+;      the BIOS, as in a terminal window or behind, or it refused a page;
+;      run it full screen, in front); FILE "E+", "E-" or "E?"; waits for a
+;      key
+;   J  mode 3, then 40:62h 1 and 40:4Ch 0F00h set itself (no 05h: 40:4Eh
+;      left 0), so page 1 from 0F00h as the BIOS writes; 2 s (test_mt
+;      switches from it meanwhile), then 30 lines through the teletype
+;      (scrolled), FILE "J"; after a key, 62h and 4Ch as they were
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
@@ -72,6 +94,12 @@ org 100h
         je      m_k
         cmp     al, 'R'
         je      m_r
+        cmp     al, 'B'
+        je      m_b
+        cmp     al, 'E'
+        je      m_e
+        cmp     al, 'J'
+        je      m_j
         jmp     fin
 
 ; ---- P: the script ----
@@ -396,6 +424,269 @@ m_r:    push    cs
         call    wfile
         jmp     key
 
+; ---- B: a page across the 32 KB's end ----
+m_b:    call    esig                    ; (an EMS page of its own past the 32 KB)
+        mov     ax, 0003h
+        int     10h
+        mov     si, s_b
+        call    ttys
+        push    40h
+        pop     es
+        mov     word [es:4Ch], 1180h    ; (05h multiplies by it: 7A80h)
+        mov     ax, 0507h
+        int     10h
+        xor     dx, dx                  ; rows 0-11: 80 of 'a' on, in 10h on
+.r:     mov     ah, 2
+        mov     bh, 7
+        int     10h
+        mov     al, dh
+        add     al, 'a'
+        mov     ah, 9
+        mov     bl, dh
+        add     bl, 10h
+        mov     cx, 80
+        int     10h
+        inc     dh
+        cmp     dh, 12
+        jb      .r
+        mov     ax, 0601h               ; the page up 1, 1Fh
+        mov     bh, 1Fh
+        xor     cx, cx
+        mov     dx, 184Fh
+        int     10h
+        mov     ax, 0702h               ; down 2, 2Eh
+        mov     bh, 2Eh
+        xor     cx, cx
+        mov     dx, 184Fh
+        int     10h
+        mov     ax, 0600h               ; rows 6-10 blank, 4Eh
+        mov     bh, 4Eh
+        mov     cx, 0600h
+        mov     dx, 0A4Fh
+        int     10h
+        mov     ax, 0601h               ; rows 3-5 up 1, 5Bh (inside: at once)
+        mov     bh, 5Bh
+        mov     cx, 0300h
+        mov     dx, 054Fh
+        int     10h
+        mov     ah, 2                   ; the teletype on row 2, and on 24
+        mov     bh, 7                   ;  (past the end) with its scroll
+        mov     dx, 0205h
+        int     10h
+        mov     si, s_b2
+        call    ttys
+        mov     ah, 2
+        mov     bh, 7
+        mov     dx, 1800h
+        int     10h
+        mov     si, s_b3
+        call    ttys
+        mov     ax, 0500h
+        int     10h
+        push    40h
+        pop     es
+        mov     word [es:4Ch], 1000h
+        call    echk
+        mov     byte [out_], 'B'
+        mov     [out_ + 1], al
+        mov     cx, 2
+        call    wbuf
+        jmp     key
+
+; an EMS page of its own in window 2 (E800h, just past a task's 32 KB in
+; the frame: MT's emulation must stop short of it), signed
+esig:   mov     ah, 43h
+        mov     bx, 1
+        int     67h
+        or      ah, ah
+        jnz     .x
+        mov     [hnd], dx
+        mov     ax, 4402h
+        xor     bx, bx
+        int     67h
+        or      ah, ah
+        jnz     .f
+        mov     byte [sig], 1
+        push    es
+        push    0E800h
+        pop     es
+        mov     word [es:0], 'SI'
+        mov     word [es:2], 'G!'
+        pop     es
+.x:     ret
+.f:     mov     ah, 45h                 ; (not mapped: the page freed, none)
+        mov     dx, [hnd]
+        int     67h
+        ret
+; AL: '+' esig's page signed still, '-' not, '?' none; the page freed
+echk:   mov     al, '?'
+        cmp     byte [sig], 0
+        je      .x
+        mov     al, '-'
+        push    es
+        push    0E800h
+        pop     es
+        cmp     word [es:0], 'SI'
+        jne     .f
+        cmp     word [es:2], 'G!'
+        jne     .f
+        mov     al, '+'
+.f:     pop     es
+        push    ax
+        mov     ah, 45h
+        mov     dx, [hnd]
+        int     67h
+        pop     ax
+.x:     ret
+
+; ---- J: the page shown set in the BIOS data itself, no 05h ----
+m_j:    mov     ax, 0003h
+        int     10h
+        push    40h
+        pop     es
+        mov     byte [es:62h], 1        ; (40:4Eh left 0: the BIOS writes at
+        mov     word [es:4Ch], 0F00h    ;  62h x 4Ch, 0F00h)
+        mov     ax, [es:6Ch]
+.w:     mov     dx, [es:6Ch]            ; 2 s
+        sub     dx, ax
+        cmp     dx, 36
+        jb      .w
+        mov     cx, 30
+.l:     push    cx
+        mov     al, cl
+        add     al, '@'
+        mov     [s_ln + 5], al
+        mov     si, s_ln
+        call    ttys
+        pop     cx
+        loop    .l
+        mov     al, 'J'
+        call    wfile
+        mov     ah, 8
+        int     21h
+        push    40h
+        pop     es
+        mov     byte [es:62h], 0
+        mov     word [es:4Ch], 1000h
+        jmp     fin
+
+; ---- E: 40:4Eh against 40:62h x 40:4Ch ----
+m_e:    mov     di, tab
+        mov     ax, 0508h               ; (page 8 shown before each mode set:
+        int     10h                     ;  40:4Eh 0 after it all the same)
+        mov     ax, 0003h
+        call    epages
+        mov     ax, 0001h
+        call    epages
+        mov     ax, 0003h
+        mov     [emode], al
+        int     10h
+        xor     bl, bl
+        call    erec
+        mov     si, s_e
+        call    ttys
+        mov     si, tab
+.p:     cmp     si, di
+        jae     .v
+        lodsw                           ; the mode and page asked for
+        xchg    ax, dx
+        lodsw                           ; the mode and page noted
+        mov     cl, '='
+        cmp     ax, dx
+        je      .m
+        mov     cl, '?'                 ; (not as asked: the BIOS never had
+.m:     push    ax                      ;  the call, as in a terminal window)
+        call    hexb2
+        mov     al, ' '
+        call    tty1
+        pop     ax
+        mov     al, ah
+        call    hexb2
+        mov     al, ' '
+        call    tty1
+        lodsw                           ; 40:4Eh, then 40:62h x 40:4Ch
+        call    hexw
+        lodsw
+        push    ax
+        call    hexw
+        pop     ax
+        cmp     cl, '='
+        jne     .q
+        cmp     ax, [si - 4]
+        je      .q
+        mov     cl, '!'
+.q:     cmp     cl, '='                 ; (4E- for any '!', else 4E? for any
+        je      .w                      ;  '?')
+        mov     al, '-'
+        cmp     cl, '!'
+        je      .s
+        cmp     [eok], al
+        je      .w
+        mov     al, '?'
+.s:     mov     [eok], al
+.w:     mov     al, cl
+        call    tty1
+        mov     al, 13
+        call    tty1
+        mov     al, 10
+        call    tty1
+        jmp     .p
+.v:     mov     al, '4'
+        call    tty1
+        mov     al, 'E'
+        call    tty1
+        mov     al, [eok]
+        call    tty1
+        mov     di, out_
+        mov     al, 'E'
+        stosb
+        mov     al, [eok]
+        stosb
+        mov     cx, 2
+        call    wbuf
+        jmp     key
+
+epages: mov     [emode], al             ; mode AX, then 05h for pages 1-8 and
+        int     10h                     ;  0, each noted at DI; page 8 shown
+        xor     bl, bl                  ;  again at the end
+        call    erec
+        mov     cx, 1
+.n:     push    cx
+        mov     al, cl
+        cmp     al, 9
+        jb      .p
+        xor     al, al
+.p:     push    ax
+        mov     ah, 5
+        int     10h
+        pop     bx
+        call    erec
+        pop     cx
+        inc     cx
+        cmp     cx, 10
+        jb      .n
+        mov     ax, 0508h
+        int     10h
+        ret
+erec:   push    es                      ; at DI: the mode and page asked for
+        push    40h                     ;  ([emode], BL), 40:49h, 62h, 4Eh,
+        pop     es                      ;  and 62h x 4Ch
+        mov     al, [emode]
+        mov     ah, bl
+        mov     [di], ax
+        mov     al, [es:49h]
+        mov     ah, [es:62h]
+        mov     [di + 2], ax
+        mov     ax, [es:4Eh]
+        mov     [di + 4], ax
+        mov     al, [es:62h]
+        xor     ah, ah
+        mul     word [es:4Ch]
+        mov     [di + 6], ax
+        add     di, 8
+        pop     es
+        ret
+
 ; ---- G, Q: graphics asked for ----
 m_g:    mov     si, s_g
         call    ttys
@@ -575,6 +866,13 @@ s_d     db      'writes the screen itself', 13, 10, 0
 s_g     db      'asks for graphics', 13, 10, 0
 s_end   db      'end', 0
 s_r     db      'R'
+s_b     db      'a page across the 32 KB', 39, 's end', 0
+s_b2    db      'fast', 0
+s_b3    db      'tty', 13, 10, 0
+s_e     db      'md pg 4Eh  62h*4Ch', 13, 10, 0
+eok     db      '+'
+emode   db      0
+tab     times   21 * 8 db 0
 romv    dw      0, 0D800h
 mode    db      0
 pmode   dw      0003h
