@@ -1,6 +1,9 @@
 """Build a Lodestone .RUN program (UI core API, src/UIAPI.INC).
 
     python3 mkrun.py apps/SYSTEM.ASM apps/SYSTEM.RUN
+    python3 mkrun.py -l apps/SYSTEM apps/SYSTEM.ASM apps/SYSTEM.RUN
+                     (also apps/SYSTEM.LST and .MAP: the build at offset 0,
+                      for bench/plan.py and evalpar.py's SECTION=app)
 
 The source starts with  %include "UIAPI.INC"  and  org RUN_ORG  and ends its
 .bss section with the label  run_bss_end.  Its first byte is the entry.
@@ -27,19 +30,20 @@ File layout (all words little-endian):
   16 the image, then the absolute fixups, then the relative ones (offsets
      into the image)
 """
-import os, re, struct, subprocess, sys, tempfile
+import os, re, shutil, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DELTA = 0x1110
 
 
-def assemble(src, org, tmp, incs):
+def assemble(src, org, tmp, incs, lst=None):
     out = os.path.join(tmp, 'o%X.bin' % org)
     mp = os.path.join(tmp, 'o%X.map' % org)
     wrap = os.path.join(tmp, 'w%X.asm' % org)
     with open(wrap, 'w') as f:
         f.write('[map symbols %s]\n%%define RUN_ORG %d\n%%include "%s"\n' % (mp, org, os.path.abspath(src)))
-    cmd = ['nasm', '-f', 'bin', '-o', out] + sum((['-i', d.rstrip('/') + '/'] for d in incs), []) + [wrap]
+    cmd = ['nasm', '-f', 'bin', '-o', out] + (['-l', lst] if lst else []) \
+        + sum((['-i', d.rstrip('/') + '/'] for d in incs), []) + [wrap]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
         sys.stderr.write(r.stderr.replace(wrap, src)); sys.exit(1)
@@ -52,10 +56,11 @@ def assemble(src, org, tmp, incs):
     return open(out, 'rb').read(), syms
 
 
-def build(src, dst, incs=()):
+def build(src, dst, incs=(), lst=None):
     incs = list(incs) + [os.path.dirname(os.path.abspath(src)), os.path.join(HERE, 'src')]
     with tempfile.TemporaryDirectory() as tmp:
-        a, sa = assemble(src, 0, tmp, incs)
+        a, sa = assemble(src, 0, tmp, incs, lst and lst + '.LST')
+        if lst: shutil.copyfile(os.path.join(tmp, 'o0.map'), lst + '.MAP')
         b, sb = assemble(src, DELTA, tmp, incs)
     if len(a) != len(b):
         raise SystemExit('%s: the two builds differ in length (%d, %d)' % (src, len(a), len(b)))
@@ -85,10 +90,12 @@ def build(src, dst, incs=()):
 
 if __name__ == '__main__':
     args = sys.argv[1:]
-    incs = []
-    while args and args[0] == '-i':
-        incs.append(args[1]); args = args[2:]
+    incs, lst = [], None
+    while args and args[0] in ('-i', '-l'):
+        if args[0] == '-i': incs.append(args[1])
+        else: lst = args[1]
+        args = args[2:]
     if len(args) != 2:
         print(__doc__); sys.exit(2)
-    info = build(args[0], args[1], incs)
+    info = build(args[0], args[1], incs, lst)
     print('%s: %d bytes (image %d, BSS %d, %d + %d fixups)' % (args[1], info['size'], info['image'], info['bss'], info['abs'], info['rel']))
