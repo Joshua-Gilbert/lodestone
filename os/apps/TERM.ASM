@@ -194,16 +194,14 @@ name:   push    es
         ret
 
 ; where the cells go, inside the window as it is now: x0 = the first byte
-; column, cols of them, y0 = the first row's pixel row, rows of them
+; column, cols of them, y0 = the first row's pixel row, rows of them (78
+; and 19 at most: the core keeps a window on the screen, above the band)
 geom:   mov     ax, [win+W_COL]
         inc     ax
         mov     [x0], ax
         mov     ax, [win+W_W]
         sub     ax, 2
-        cmp     ax, 80
-        jbe     .c
-        mov     ax, 80
-.c:     mov     [cols], ax
+        mov     [cols], ax
         mov     ax, [win+W_Y]
         add     ax, W_TOP
         mov     [y0], ax
@@ -212,11 +210,8 @@ geom:   mov     ax, [win+W_COL]
         jns     .h
         xor     ax, ax
 .h:     shr     ax, 4
-        jnz     .h1
+        jnz     .r
         inc     ax
-.h1:    cmp     ax, 25
-        jbe     .r
-        mov     ax, 25
 .r:     mov     [rows], ax
         ret
 
