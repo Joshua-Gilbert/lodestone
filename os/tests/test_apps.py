@@ -690,6 +690,24 @@ def t_write_mouse():
     rpress(*at(1, 1)); k.key('J', ktest.ENTER); k.key('1'); k.key(ktest.ENTER)
     check('a drag, a right click, Jump: the selection ends first; line 1', wb('mode') == 0 and has(k, 'Line 1 of 5')
           and k.band()[0].startswith('Type, or choose a command'), (wb('mode'), k.band(), screen(k)))
+    # each item as its key: with nothing selected, the command starts (a
+    # selection to make, or its form); with a drag's, Move and Duplicate
+    # take it, Find, Substitute and Jump end it first
+    k = write_open(mouse=True)
+    got = []
+    for c in 'EMDFSJ':
+        rpress(*at(4, 2)); k.key(c, ktest.ENTER)
+        got.append((k.band()[0], wb('mode'))); k.key(ktest.ESC)
+    for c in 'MDFSJ':
+        drag(k, *at(4, 0), *at(9, 0)); rpress(*at(15, 0)); k.key(c, ktest.ENTER)
+        got.append((k.band()[0], wb('mode'))); k.key(ktest.ESC)
+    want = [('Erase: Make a selection and confirm', 1), ('Move: Make a selection and confirm', 1),
+            ('Duplicate: Make a selection and confirm', 1), ('Find: Fill in form and confirm', 0),
+            ('Substitute: Fill in form and confirm', 0), ('Jump: Fill in form and confirm', 0),
+            ('Move: Point to destination and confirm', 2), ('Duplicate: Point to destination and confirm', 2),
+            ('Find: Fill in form and confirm', 0), ('Substitute: Fill in form and confirm', 0), ('Jump: Fill in form and confirm', 0)]
+    check('the menu\'s Erase, Move, Duplicate, Find..., Substitute..., Jump...: each as its key, with nothing selected and '
+          'after a drag; the text as it was', got == want and wtext(k, ws) == T and wb('mode') == 0, (got, wtext(k, ws), wb('mode')))
     # a drag past the bottom of the text area: the view scrolls with it
     long = b''.join(b'Line %d\r\n' % i for i in range(60))
     k = write_open('LONG.TXT', long, mouse=True)
