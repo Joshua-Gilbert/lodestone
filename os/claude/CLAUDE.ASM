@@ -72,6 +72,8 @@ BOXW     equ 70
 %define GLYPH_END 0AFh
 %define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23)
 %define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer)
+%define TX_INPL                  ; (TERMLINK.INC: a message's later fragments sent where they lie,
+%define RX_INPL                  ;  a request's later ones read straight into reqbuf: audit3 P7)
 %define KBD_EVERY 6000           ; (TERMKEYS.INC: keys every ~2.5 ms while the link is busy; not in RCON)
 %define TERM_WIN                 ; (TERMCELL.INC, TERMKEYS.INC: a terminal window, 1.13; not in RCON)
 %include "MTAPI.INC"             ; (MT_PUB, MT_WAKE, MT_LIST)
@@ -2217,7 +2219,8 @@ pf_ready:
         call    send_text
 .x:     ret
 
-; REQUEST / ASK: collect the frames of one message in reqbuf
+; REQUEST / ASK: collect the frames of one message in reqbuf (a later
+; fragment may be there already: link_read's P7)
 pf_reasm:
         cmp     byte [req_ready], 0     ; still holding an unrun request
         jne     .x
@@ -2228,6 +2231,8 @@ pf_reasm:
         mov     [rq_type], al
         mov     word [rq_len], 0
         mov     byte [rq_over], 0
+        mov     word [rq_at], 0         ; (P7: the old message's 6 bytes stay
+                                        ;  gone: the copy may go over them)
 .add:   mov     ax, [rq_len]
         add     ax, cx
         cmp     ax, REQMAX
@@ -2235,6 +2240,8 @@ pf_reasm:
         mov     di, reqbuf
         add     di, [rq_len]
         mov     [rq_len], ax
+        cmp     si, di                  ; (read in place: no copy)
+        je      .more
         PROF    5
         shr     cx, 1
         rep     movsw
@@ -4336,6 +4343,10 @@ irq_ptr     resw 2                      ; the GPIB driver's SRQ count (AH=0Eh), 
 srq_seen    resw 1                      ;  as it was at the last look
 txq         resb TXQN * 10
 txlen       resw 1
+tx_at       resw 1                      ; P7: a fragment sent where it lies, from
+tx_seg      resw 1                      ;  its header's place (les: in this order)
+rq_at       resw 1                      ; P7: where an answer's header went in
+rq_save     resb 6                      ;  reqbuf (0: none), and what was there
 txframe     resb TXMAX + 8
 nakframe    resb 8
 rxn         resw 1
