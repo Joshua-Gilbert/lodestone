@@ -20,10 +20,15 @@ R_PARAS's paragraph); SECTION=rcon: resident Claude's console's
 (claude/RCON.LST, which claude/build.sh doesn't make: nasm -l; RCON.MAP;
 "rc_taken"; no pad in its header, which CLAUDE.ASM reads).  There no pad goes
 inside an included file's code (the ones RCON.ASM shares, and TERMLINK.INC),
-only in front of its %include.  SC=1: self-correcting pads only, E or O (any
+only in front of its %include.  SECTION=lcmd: LCMD.COM's (src/LCMD.LST and
+.MAP, which hot.py's LCMD workloads make; "lc_taken"; B the slack to
+prog_end's paragraph, which the pads move with the BSS: prog_end stays
+even, so B is even too).  SC=1: self-correcting pads only, E or O (any
 SECTION; sc_main): such a pad holds wherever its code is put, so it may go
 inside TERMLINK.INC or OPS.INC, which sit at other offsets in CLAUDE.COM and
-RCON; B is then the most pads.
+RCON; B is then the most pads.  SECTION=app APP=NAME: a .RUN's, with SC=1
+(apps/NAME.LST and .MAP: mkrun.py -l apps/NAME; hot.py's "ap_taken"[NAME];
+inside RMENU.INC too, which Write and TERM share).
 Output: per budget the share of taken entries left odd and the run heads;
 then, for the plan shown, its sites (pad each with `times ($ - $$) & 1 db
 90h` before the label marked E, or `($ + 1 - $$)` for O), and the hot labels
@@ -32,13 +37,22 @@ import os, re, sys, json, collections
 GOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(GOS, 'src')
 SEC = os.environ.get('SECTION', '.text')
-KEY = {'ui': 'ui_taken', 'claude': 'cl_taken', 'rstub': 'st_taken', 'rcon': 'rc_taken'}.get(SEC, 'taken')
+KEY = {'ui': 'ui_taken', 'claude': 'cl_taken', 'rstub': 'st_taken', 'rcon': 'rc_taken', 'lcmd': 'lc_taken',
+       'app': 'ap_taken'}.get(SEC, 'taken')
 CLAUDE = SEC in ('claude', 'rstub', 'rcon')
 if CLAUDE: SRC = os.path.join(GOS, 'claude')
-LSEC = '.text' if SEC in ('claude', 'rcon') else SEC    # (the section's name in the listing and the map)
-ORG = 0x100 if SEC in ('claude', 'rstub') else 0        # (CLAUDE's listing counts from the section's start, 100h)
+LSEC = '.text' if SEC in ('claude', 'rcon', 'lcmd', 'app') else SEC     # (the section's name in the listing and the map)
+ORG = 0x100 if SEC in ('claude', 'rstub', 'lcmd') else 0        # (a .COM's listing counts from the section's start, 100h)
 FILES = [os.path.join(SRC, n) for n in (('RCON.LST', 'RCON.MAP') if SEC == 'rcon' else ('CLAUDE.LST', 'CLAUDE.MAP')
-                                        if CLAUDE else ('LODE.LST', 'LODE.MAP'))]
+                                        if CLAUDE else ('LCMD.LST', 'LCMD.MAP') if SEC == 'lcmd' else ('LODE.LST', 'LODE.MAP'))]
+if SEC == 'app':
+    FILES = [os.path.join(GOS, 'apps', os.environ['APP'] + x) for x in ('.LST', '.MAP')]
+
+def counts(f):
+    """HOT.json f's taken entries for SECTION: {offset: count}"""
+    c = json.load(open(f))[KEY]
+    if SEC == 'app': c = c.get(os.environ['APP'], {})
+    return {int(k): v for k, v in c.items()}
 INC = set()                                     # (offsets of code from an included file)
 
 def parse(lst, mp):
@@ -83,7 +97,7 @@ def main():
     items, syms = parse(*FILES)
     tot = collections.Counter()
     for f in sys.argv[2:]:
-        c = {int(k): v for k, v in json.load(open(f))[KEY].items()}
+        c = counts(f)
         if os.environ.get('NORM', '1') != '0':
             s = sum(c.values()); c = {k: v * 250000 // s for k, v in c.items()}
         tot.update(c)
@@ -161,7 +175,7 @@ def sc_main():
     items, syms = parse(*FILES)
     tot = collections.Counter()
     for f in sys.argv[2:]:
-        c = {int(k): v for k, v in json.load(open(f))[KEY].items()}
+        c = counts(f)
         if os.environ.get('NORM', '1') != '0':
             s = sum(c.values()); c = {k: v * 250000 // s for k, v in c.items()}
         tot.update(c)

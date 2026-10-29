@@ -1,6 +1,9 @@
-# build listings and Python caches
+# build listings and Python caches (and the maps the bench tools leave:
+# hot.py's LCMD workloads, mkrun.py -l)
 *.LST
 *.lst
+os/src/LCMD.MAP
+os/apps/*.MAP
 __pycache__/
 *.pyc
 

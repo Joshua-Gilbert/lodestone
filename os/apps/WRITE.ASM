@@ -140,6 +140,7 @@ start:  mov     di, fname               ; the argument: the file to open
 ;  the gap buffer (ES = [bseg] inside these)
 ; ---------------------------------------------------------------------
 ; -> AX = length of the text
+        times ($ - $$) & 1 db 90h       ; (hot: even, EVEN.INC)
 textlen:
         mov     ax, [cap]
         sub     ax, [gap_e]
@@ -781,6 +782,7 @@ build_row:
         mov     bx, [cs:cap]
         mov     byte [cs:seg2], 1
         ret
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .put:   push    di                      ; AL, mark AH at column CX - hs
         mov     di, cx
         sub     di, [cs:hs]
@@ -835,8 +837,10 @@ put_row:
         call    UI_INVERT
         pop     bx
         jmp     .r
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .n:     inc     bx
         jmp     .r
+        times ($ - $$) & 1 db 90h       ; (hot: even)
 .x:     pop     bp
         ret
 
@@ -970,7 +974,13 @@ do_key: cmp     ax, EV_MOVED            ; the window moved or resized: drawn
         cmp     ax, EV_RCLICK
         je      rclick
         mov     [lastkey], ax
-        cmp     byte [mode], M_FOUND    ; after Find: Return finds the next one,
+        push    ax                      ; Up, Down, PgUp and PgDn keep the
+        sub     ah, 48h                 ;  goal column (AH 48h, 50h, 49h,
+        test    ax, 0F6FFh              ;  51h; AL 0): any other key drops it
+        pop     ax
+        jz      .g
+        mov     word [goal], 0FFFFh
+.g:     cmp     byte [mode], M_FOUND    ; after Find: Return finds the next one,
         jne     .m                      ;  anything else is ordinary again
         cmp     ax, K_ENTER
         je      find_next
@@ -1011,7 +1021,6 @@ do_key: cmp     ax, EV_MOVED            ; the window moved or resized: drawn
 
 ; a printable character (or a tab) at the cursor
 type_char:
-        mov     word [goal], 0FFFFh
         cmp     byte [ovr], 0
         je      .ins
         push    ax                      ; overtype: replace (not a line end)
@@ -1033,7 +1042,6 @@ full:   mov     si, s_full
         ret
 
 k_enter:
-        mov     word [goal], 0FFFFh
         mov     al, 10
         call    ins_char
         jc      full
@@ -1056,17 +1064,12 @@ k_enter:
         jmp     .l
 .x:     ret
 
-k_bksp: mov     word [goal], 0FFFFh
-        jmp     del_back
-k_del:  mov     word [goal], 0FFFFh
-        jmp     del_fwd
 k_ins:  call    cursor_off              ; (the old shape off first)
         xor     byte [ovr], 1
         ret
 
-; ---- moving ----------------------------------------------------------
-k_left: mov     word [goal], 0FFFFh
-        mov     ax, [gap_s]
+; ---- moving (do_key drops the goal column but for Up, Down, PgUp, PgDn) --
+k_left: mov     ax, [gap_s]
         or      ax, ax
         jz      .x
         dec     ax
@@ -1074,7 +1077,6 @@ k_left: mov     word [goal], 0FFFFh
 .x:     ret
 
 k_right:
-        mov     word [goal], 0FFFFh
         call    textlen
         cmp     [gap_s], ax
         jae     .x
@@ -1083,13 +1085,11 @@ k_right:
         jmp     gap_to
 .x:     ret
 
-k_home: mov     word [goal], 0FFFFh
-        mov     ax, [gap_s]
+k_home: mov     ax, [gap_s]
         call    line_start
         jmp     gap_to
 
-k_end:  mov     word [goal], 0FFFFh
-        mov     ax, [gap_s]
+k_end:  mov     ax, [gap_s]
         call    line_end
         jmp     gap_to
 
@@ -1172,16 +1172,13 @@ page:   mov     cx, [rows]              ; -> CX = a page's lines: the rows but
         inc     cx
 .x:     ret
 
-k_ctop: mov     word [goal], 0FFFFh
-        xor     ax, ax
+k_ctop: xor     ax, ax
         jmp     gap_to
 
-k_cend: mov     word [goal], 0FFFFh
-        call    textlen
+k_cend: call    textlen
         jmp     gap_to
 
 k_wleft:                                ; to the start of the word before
-        mov     word [goal], 0FFFFh
         mov     bx, [gap_s]
 .sp:    or      bx, bx
         jz      .go
@@ -1200,7 +1197,6 @@ k_wleft:                                ; to the start of the word before
         jmp     gap_to
 
 k_wright:                               ; to the start of the next word
-        mov     word [goal], 0FFFFh
         call    textlen
         mov     cx, ax
         mov     bx, [gap_s]
@@ -1380,7 +1376,8 @@ pos_xy: push    bx
         ret
 
 ; a right click: the menu (UI_MENU), in the text area only, editing or
-; with a drag's selection (kept; editing, the cursor goes there first)
+; with a drag's selection (kept; editing, the cursor goes there first);
+; the item chosen is done as its key
 rclick: cmp     byte [mode], M_POINT
         je      .x
         cmp     byte [mode], M_SEL
@@ -1405,38 +1402,12 @@ rclick: cmp     byte [mode], M_POINT
         jne     .r                      ;  paste, then the rest
         mov     al, RM_SEL
 .r:     mov     si, items
-        jmp     rmenu
+        call    rmenu
+        jc      .x
+        jmp     do_key
 .x:     ret
 
 %include "RMENU.INC"
-
-; the menu's commands: Erase, Move and Duplicate on a drag's selection,
-; else as their keys (verb first); the others end it first
-m_erase:
-        mov     di, k_erase
-        mov     si, k_serase
-        jmp     short m_sel
-m_move: mov     di, k_move
-        mov     si, k_smove
-        jmp     short m_sel
-m_dup:  mov     di, k_dup
-        mov     si, k_sdup
-m_sel:  call    drag_sel
-        jne     .k
-        jmp     si
-.k:     jmp     di
-m_find: mov     di, k_find
-        jmp     short m_ed
-m_subst:
-        mov     di, k_subst
-        jmp     short m_ed
-m_jump: mov     di, k_jump
-m_ed:   call    drag_sel
-        jne     .k
-        push    di
-        call    k_cancel_cmd
-        pop     di
-.k:     jmp     di
 
 ; ---- the clipboard (UI_CLIP, every .RUN's): Cut, Copy, Paste ----------
 ; Cut and Copy: a drag's selection into it (it stays selected, for
@@ -1513,7 +1484,6 @@ k_paste:
         add     [gap_s], cx
         mov     byte [changed], 1
         mov     byte [dirty], 2
-        mov     word [goal], 0FFFFh
         ret
 .e:     pop     es
         jmp     io_error
@@ -1941,7 +1911,6 @@ k_jump: mov     byte [j_text], 0
         jne     .f
         loop    .f
 .at:    mov     ax, bx
-        mov     word [goal], 0FFFFh
         call    gap_to
         jmp     center_view
 .x:     ret
@@ -2319,8 +2288,8 @@ drag_keys:                              ; (a drag's selection: cmd 0)
 
 edit_keys:
         KEY(K_ENTER,    k_enter,    0)
-        KEY(K_BKSP,     k_bksp,     0)
-        KEY(K_DEL,      k_del,      0)
+        KEY(K_BKSP,     del_back,   0)
+        KEY(K_DEL,      del_fwd,    0)
         KEY(K_INS,      k_ins,      0)
         KEY(K_CODE_V,   k_paste,    0)
         KEY(K_CODE_Z,   UI_BEEP,    0)  ; (Cut, Copy: a drag's selection first)
@@ -2402,9 +2371,9 @@ s_drag1     db 'Selected: CODE-E erases   CODE-M moves   CODE-D duplicates',0
 s_drag2     db 'CODE-Z cuts   CODE-C copies   Right click: menu   ESC cancels',0
 s_clipbig   db 'The clipboard holds 16 KB at most',0
 NITEMS      equ 9                       ; (the menu takes what applies)
-items       dw mic, k_scut, RM_SEL, mio, k_scopy, RM_SEL, mip, k_paste, RM_CLIP
-            dw mi1, m_erase, 0, mi2, m_move, 0, mi3, m_dup, 0
-            dw mi4, m_find, 0, mi5, m_subst, 0, mi6, m_jump, 0, 0
+items       dw mic, K_CODE_Z, RM_SEL, mio, K_CODE_C, RM_SEL, mip, K_CODE_V, RM_CLIP
+            dw mi1, K_CODE_E, 0, mi2, K_CODE_M, 0, mi3, K_CODE_D, 0
+            dw mi4, K_CODE_F, 0, mi5, K_CODE_S, 0, mi6, K_CODE_J, 0, 0
 mic         db 'Cut            CODE-Z',0
 mio         db 'Copy           CODE-C',0
 mip         db 'Paste          CODE-V',0
@@ -2505,6 +2474,11 @@ WIN_ROWS    equ 15                      ; (its text rows when it opens)
 win:        dw 2, SCR_TOP + 8, 76, W_TOP + WIN_ROWS * 16 + 12 + 16 + 4
             dw title, w_draw, WF_MOVE | WF_CLOSE | WF_SIZE
 
+; the hot labels even (EVEN.INC: bench/hot.py's write, menu and wclip)
+%include "EVEN.INC"
+        EVEN    textlen, getc, getc.l, ins_char.ok, mark_dirty, disp_col.l
+        EVEN    build_row.ns, build_row.put, put_row.r, put_row.n, put_row.x, status.pad, load_file.nc
+
 section .bss
 bseg        resw 1
 cap         resw 1
@@ -2523,7 +2497,7 @@ anchor      resw 1
 press       resw 1                      ; where the left button went down
 dragged     resb 1                      ; 1: it has moved since
 rm_buf      resw NITEMS                 ; the right click's menu: its items
-rm_do       resw NITEMS                 ;  and what each does (RMENU.INC)
+rm_key      resw NITEMS                 ;  and their keys (RMENU.INC)
 sel_a       resw 1
 sel_b       resw 1
 fix_a       resw 1
