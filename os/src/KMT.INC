@@ -123,7 +123,8 @@ V_DCWD      equ V_MCB + 2
 V_CWD       equ V_DCWD + 2 * NDRV
 V_DTA       equ V_CWD + (cur_drv + 1 - cwdstr)
 V_PSP       equ V_DTA + (rw_t0 + 1 - dta)
-TX_KSTK     equ V_PSP + (term_keep + 2 - cur_psp)
+TX_KSTK     equ (V_PSP + (term_keep + 2 - cur_psp) + 1) & ~1    ; (even, as
+                                        ;  kstack_top is: its words aligned)
 KSLICE      equ 256                     ; room for the kernel stack's slice
 TX_FPV      equ TX_KSTK + KSLICE        ; 1: its coprocessor state kept (0: FNINIT)
 TX_FPU      equ (TX_FPV + 2) & ~1       ; the state (FNSAVE's 94 bytes, even)
