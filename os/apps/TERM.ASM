@@ -533,7 +533,8 @@ scrl:   mov     ax, [sa]
 .x:     ret
 
 ; the window's cells from MT's copy where they differ from the shadow
-; (those selected inverse)
+; (those selected inverse).  A cell as it was falls through; one that
+; changed is drawn out of the loop
 cells:  push    ds
         push    es
         push    bp
@@ -569,7 +570,7 @@ cells:  push    ds
         test    byte [cs:tdl], 32       ; (T5b: a published screen's cells)
         jz      .k
         mov     word [cs:cblank], 0020h
-        mov     word [cs:cfn], cnone    ; (its font has every code: pubset)
+        mov     word [cs:cfn], .none    ; (its font has every code: pubset)
         mov     ax, [sa]                ; T5d: the short way, with no
         cmp     ax, [sb]                ;  selection and none of the window's
         jb      .k                      ;  columns past its own
@@ -584,9 +585,7 @@ cells:  push    ds
         mov     cx, [cs:c_n]
 .fc:    mov     ax, [si]
         cmp     ax, [bx]
-        je      .fn
-        mov     [bx], ax
-        call    cell
+        jne     .fd
 .fn:    add     si, 2
         add     bx, 2
         inc     di
@@ -611,20 +610,7 @@ cells:  push    ds
         jae     .v
         mov     ax, [si]
 .v:     cmp     ax, [bx]
-        je      .nx
-        mov     [bx], ax
-        call    word [cs:cfn]
-        push    dx
-        cmp     dx, [cs:ncols]          ; (past its columns: never selected)
-        jae     .ns
-        add     dx, bp
-        cmp     dx, [cs:sa]
-        jb      .ns
-        cmp     dx, [cs:sb]
-        jae     .ns
-        xor     ah, 1                   ; (selected)
-.ns:    pop     dx
-        call    cell                    ; (its font in the block: DS)
+        jne     .d
 .nx:    add     si, 2
         add     bx, 2
         inc     di
@@ -642,7 +628,24 @@ cells:  push    ds
 .end:   pop     bp
         pop     es
         pop     ds
-cnone:  ret
+.none:  ret
+.fd:    mov     [bx], ax                ; (changed, the short way)
+        call    cell
+        jmp     .fn
+.d:     mov     [bx], ax                ; (changed)
+        call    word [cs:cfn]
+        push    dx
+        cmp     dx, [cs:ncols]          ; (past its columns: never selected)
+        jae     .ns
+        add     dx, bp
+        cmp     dx, [cs:sa]
+        jb      .ns
+        cmp     dx, [cs:sb]
+        jae     .ns
+        xor     ah, 1                   ; (selected)
+.ns:    pop     dx
+        call    cell                    ; (its font in the block: DS)
+        jmp     .nx
 
 ; AX = a cell -> AH = its attribute for cell: inverse (1) when its
 ; background is brighter than its foreground (70h, 71h: as a monochrome
