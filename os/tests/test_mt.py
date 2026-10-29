@@ -5147,6 +5147,22 @@ def t_tclip():
           '(MT_KILL), its window closed, the Executive in front (%s)' % ((p2 - p1) % 32, k.band()),
           (p2 - p1) % 32 == 1 and mb('mw_n') == 0 and tnum('LCMD.COM') == 7 and any('LCMD.COM ended' in l for l in k.band()),
           ((p2 - p1) % 32, mb('mw_n'), tstate(k), k.band()))
+    # the menu's items are their keys: Paste on a note (a key there brings the task to the front) does that, as CODE-V would
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    n5 = tnum('LCMD.COM')
+    setclip(b'echo q\n')
+    typ2('mtmode 40 n.txt t', 3.0)
+    f0 = tstate(k)[1]
+    to0()
+    mv(*cxy(tv('top') + 2, 10)); btn(2, 0.5)
+    o, nt = scr(), tb('note')
+    k.key(ktest.ENTER, settle=False); k.run_for(1.0)
+    f1, ps = tstate(k)[1], tv('pseg')
+    k.key('x', settle=False); k.run_for(2.0); k.key('x', settle=False); k.run_for(2.0)
+    check('MTMODE 40 T in a window (task %d, in front: %d), CODE-Tab away: its note (%d); a right click: the menu (Paste, '
+          'Full screen); Return on Paste: the task in front (%d), as a key typed there, nothing pasted' % (n5, f0, nt, f1),
+          f0 == n5 and nt == 1 and 'Paste          CODE-V' in o and 'Full screen    CODE-Tab' in o and f1 == n5 and ps == 0
+          and A.disk_file(k, 'N.TXT') == b'ok', (f0, nt, o[-400:], f1, ps, A.disk_file(k, 'N.TXT')))
     # TM5000G in a window: its mouse works there (Return on it: a text program)
     if not os.path.exists(A.TM5000G):
         print('(no TM5000G.EXE: skipped)'); return

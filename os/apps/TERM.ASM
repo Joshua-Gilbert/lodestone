@@ -804,12 +804,41 @@ cursor: cmp     byte [note], 0          ; (none on a note, nor hidden: T5b)
         mov     byte [curon], 1
 .x:     ret
 
+; a right click: the menu of what applies (RMENU.INC, Write's): Copy with a
+; selection, Paste with something to paste, Full screen but for a published
+; screen (T5b: none, with neither of the others: no menu).  The item
+; chosen is taken as its key (Full screen's K_NONE)
+RM_TXT      equ 4
+rclick: mov     al, 0
+        mov     dx, [sb]
+        cmp     dx, [sa]
+        jbe     .m
+        mov     al, RM_SEL
+.m:     test    byte [tdl], 32
+        jnz     .p
+        or      al, RM_TXT
+        jmp     short .r
+.p:     or      al, al
+        jnz     .r
+        pusha
+        mov     al, 2                   ; (what the clipboard holds)
+        call    UI_CLIP
+        or      cx, cx
+        popa
+        jz      cursor.x
+.r:     mov     si, items
+        call    rmenu
+        jc      cursor.x
+
 ; a key typed in the window: to the task (MT_TKEY), after those kept (and
 ; a paste's); kept while its ring is full (QLEN at most: a beep past them).
-; With a note up, the task to the front instead (full screen); CODE-C with
-; a selection copies it, CODE-V with something to paste pastes (T4)
+; With a note up, or K_NONE (the menu's Full screen), the task to the front
+; instead (full screen); CODE-C with a selection copies it, CODE-V with
+; something to paste pastes (T4)
 key:    cmp     byte [note], 0
         jne     full
+        cmp     ax, K_NONE
+        je      full
         cmp     ax, K_CODE_C
         jne     .v
         mov     bx, [sb]
@@ -1272,31 +1301,6 @@ pfree:  push    es
         mov     word [pseg], 0
         ret
 
-; a right click: the menu of what applies (RMENU.INC, Write's): Copy with a
-; selection, Paste with something to paste, Full screen but for a published
-; screen (T5b: none, with neither of the others: no menu)
-RM_TXT      equ 4
-rclick: mov     al, 0
-        mov     dx, [sb]
-        cmp     dx, [sa]
-        jbe     .m
-        mov     al, RM_SEL
-.m:     test    byte [tdl], 32
-        jnz     .p
-        or      al, RM_TXT
-        jmp     short .r
-.p:     or      al, al
-        jnz     .r
-        pusha
-        mov     al, 2                   ; (what the clipboard holds)
-        call    UI_CLIP
-        or      cx, cx
-        popa
-        jz      .x
-.r:     mov     si, items
-        jmp     rmenu
-.x:     ret
-
 %include "RMENU.INC"
 
 ; one character cell (CELL.INC): AL, AH = its attribute, DI = row * 320 +
@@ -1312,7 +1316,7 @@ s_fnt       db 'TERM.FNT', 0
 s_end       db 'Close: Confirm to end ', 0
 s_ngfx      db 'In a graphics mode: a key here shows it (or CODE-Tab)', 0
 s_nfz       db 'It writes the screen itself: a key here shows it (FULL= for it)', 0
-items       dw s_copy, copy, RM_SEL, s_paste, paste, RM_CLIP, s_full, full, RM_TXT, 0
+items       dw s_copy, K_CODE_C, RM_SEL, s_paste, K_CODE_V, RM_CLIP, s_full, K_NONE, RM_TXT, 0
 s_copy      db 'Copy           CODE-C', 0
 s_paste     db 'Paste          CODE-V', 0
 s_full      db 'Full screen    CODE-Tab', 0
@@ -1358,7 +1362,7 @@ pseg        resw 1                      ; a paste: its block (0: none), the
 ppos        resw 1                      ;  next byte, how many
 plen        resw 1
 rm_buf      resw 3                      ; the right click's menu (RMENU.INC)
-rm_do       resw 3
+rm_key      resw 3
 arg         resb 16
 title       resb 16
 askb        resb 40                     ; (close's question)
