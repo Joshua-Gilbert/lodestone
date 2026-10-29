@@ -116,6 +116,20 @@ RC_NANO  equ 2                  ; the console's `nano` (RCON.ASM): /A:nn
 RC_FEED  equ 5                  ;  and its feeder of Claude's keys (TYPE)
 R_BGT    equ 4                  ; M4: ticks between background looks (~220 ms)
 
+; Hot code on even offsets (a taken jump to an odd one costs the 286 a
+; fetch): os/bench/hot.py's counts over chat, file and RUN turns, and the
+; stub's under programs asking INT 16h; plan.py placed the pads (each
+; `times ($ - $$) & 1`, after a JMP or RET).  These labels must stay even,
+; or no build (both the copy and the address: CLAUDE.COM's PSP and the
+; stub's block are paragraphs).  The lists are at the code's end, before
+; bss and the stub's r_code_end.
+%macro EVEN 1-*
+%rep %0
+        times   -((%1 - $$) & 1) db 0
+%rotate 1
+%endrep
+%endmacro
+
 
 ; =====================================================================
 ;  start-up
@@ -323,6 +337,7 @@ redraw_body:
 
 %include "TERMCELL.INC"
 
+        times   ($ - $$) & 1 db 90h     ; (draw_line.l and CELLTEXT's loops even)
 ; DS:SI -> 80 (char, attribute) pairs, DX = screen row, ES = VSEG
 draw_line:
         pusha
@@ -335,7 +350,7 @@ draw_line:
         popa
         ret
 
-%include "CELLTEXT.INC"                 ; draw_strn, blank_row, strlen
+%include "CELLTEXT.INC"                 ; draw_rstr, draw_strn, blank_row, strlen
 
 ; title band: " <title>              GPIB link  5:31 pm"
 draw_title:
@@ -364,12 +379,9 @@ draw_title:
         mov     ah, 1
         mov     cx, 56
         call    draw_strn
-        mov     si, rbuf
-        call    strlen
+        mov     si, rbuf                ; (AH = 1 still)
         mov     di, 79
-        sub     di, cx
-        mov     ah, 1
-        call    draw_strn
+        call    draw_rstr
         pop     es
         popa
         ret
@@ -443,19 +455,13 @@ draw_status:
         mov     dx, SROW
         xor     ah, ah
         call    blank_row
-        mov     si, rbuf
-        call    strlen
-        mov     bx, cx                  ; right part's width
+        mov     si, rbuf                ; the right part, then the left one
+        mov     di, SROW * 320 + 80     ;  in what it leaves (79 - its width)
+        call    draw_rstr
+        neg     cx
+        add     cx, 79
         mov     di, SROW * 320
         mov     si, sline
-        mov     cx, 79
-        sub     cx, bx
-        xor     ah, ah
-        call    draw_strn
-        mov     di, SROW * 320 + 80
-        sub     di, bx
-        mov     si, rbuf
-        mov     cx, bx
         call    draw_strn
         pop     es
         popa
@@ -470,14 +476,9 @@ set_status_quiet:
         push    di
         push    cx
         mov     di, status_text
-        mov     cx, 70
-.l:     lodsb
-        stosb
-        or      al, al
-        jz      .x
-        loop    .l
-        mov     byte [di], 0
-.x:     pop     cx
+        call    strlen
+        call    copy70
+        pop     cx
         pop     di
         pop     si
         ret
@@ -2125,7 +2126,9 @@ pf_hello:
         mov     [pi_hf], bl                     ; (HF_SAVER: sv_check)
         test    bl, HF_FCS                      ; the Pi takes the Fletcher sum:
         jz      .crc                            ;  every frame from now on
-        mov     byte [use_fl], 1
+        mov     al, [ksum]                      ; (2: the driver keeps it, TERMLINK)
+        inc     ax
+        mov     [use_fl], al
 .crc:   and     bl, HF_TERM
 .f:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
@@ -2655,15 +2658,23 @@ resolve_direct:
         inc     si
         jmp     .sp
 .tok:   mov     di, exec_path
-        xor     bx, bx
+        xor     bx, bx                  ; (BX: the last name's dot, or 0)
 .c:     lodsb
         cmp     al, ' '
         je      .end
         or      al, al
         je      .end
-        cmp     al, '.'
+        cmp     al, 'a'                 ; (upper case: its extension compared
+        jb      .u                      ;  below)
+        cmp     al, 'z'
+        ja      .u
+        and     al, 0DFh
+.u:     cmp     al, '\'
+        jne     .d
+        xor     bx, bx
+.d:     cmp     al, '.'
         jne     .s
-        mov     bx, 1
+        mov     bx, di
 .s:     stosb
         cmp     di, exec_path + 70
         jb      .c
@@ -2674,37 +2685,41 @@ resolve_direct:
         mov     [ext_at], di
         or      bx, bx
         jz      .try
-        xor     al, al
-        stosb
-        call    exists
+        xor     al, al                  ; NAME.EXT runs directly only as a
+        stosb                           ;  .COM or .EXE (else the shell's:
+        mov     si, s_dotcom            ;  a .BAT, a .TXT)
+        call    .ext
+        je      .x
+        mov     si, s_dotexe
+        call    .ext
+        jne     .no
+.x:     call    exists
         jc      .no
         jmp     .yes
-.try:   mov     di, [ext_at]
-        mov     si, s_dotcom
+.ext:   mov     di, bx                  ; [BX] '.EXT', 0 as SI's?
+        mov     cx, 5
+        repe    cmpsb
+        ret
+.try:   mov     si, s_dotcom
+.t2:    mov     di, [ext_at]
         call    copyz
         call    exists
         jnc     .yes
-        mov     di, [ext_at]
-        mov     si, s_dotexe
-        call    copyz
-        call    exists
-        jnc     .yes
+        cmp     si, s_dotexe            ; (copyz leaves SI past the NUL: on
+        je      .t2                     ;  '.EXE' after '.COM')
 .no:    stc
         ret
 .yes:   mov     si, [run_rest]
         clc
         ret
 
-exists: mov     dx, dta                 ; exec_path -> CF if no such file
-        mov     ah, 1Ah
-        int     21h
-        mov     dx, exec_path
-        mov     cx, 07h
-        mov     ah, 4Eh
-        int     21h
+exists: mov     dx, exec_path           ; exec_path -> CF if no such file or
+        mov     ax, 4300h               ;  directory (a directory's EXEC then
+        int     21h                     ;  fails with DOS's error).  SI kept
         ret
 
-; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ).  CF if not in the environment.
+; SI -> "NAME=" (ours): value to ES:DI (ASCIIZ).  CF if not in the environment
+; (DI as it was: the callers count on it).
 env_get:
         push    ds
         push    bx
@@ -2750,7 +2765,6 @@ get_comspec:
         call    env_get
         jnc     .x
         mov     si, s_defcomspec
-        mov     di, exec_path
         call    copyz
 .x:     ret
 
@@ -2761,13 +2775,11 @@ make_outname:
         call    env_get
         jnc     .have
         mov     si, s_tmp
-        mov     di, outname
         call    env_get
         jnc     .have
         mov     ah, 19h
         int     21h
         add     al, 'A'
-        mov     di, outname
         stosb
         mov     al, ':'
         stosb
@@ -2783,15 +2795,8 @@ make_outname:
 do_exec:
         mov     [exec_ss], ss
         mov     [exec_sp], sp
-        mov     word [epb], 0           ; our environment
-        mov     word [epb+2], tail
-        mov     [epb+4], cs
-        mov     word [epb+6], fcb1
-        mov     [epb+8], cs
-        mov     word [epb+10], fcb2
-        mov     [epb+12], cs
         mov     dx, exec_path
-        mov     bx, epb
+        mov     bx, epb                 ; (filled at the start)
         mov     ax, 4B00h
         int     21h
         cli                             ; DOS 3 keeps only CS:IP
@@ -2827,17 +2832,12 @@ unhook16:
         ret
 
 ; INT 16h while a program runs: scripted keys first, then the keyboard.
-int16:  cmp     byte [cs:ks_active], 0
+int16:  test    ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
+        jnz     .chain                  ;  peek; the rest go on to the BIOS)
+        cmp     byte [cs:ks_active], 0
         je      .chain
-        cmp     ah, 0
-        je      .read
-        cmp     ah, 10h
-        je      .read
-        cmp     ah, 1
-        je      .peek
-        cmp     ah, 11h
-        je      .peek
-.chain: jmp     far [cs:old16]
+        test    ah, 1
+        jz      .read
 .peek:  call    ks_ready
         jz      .chain                  ; nothing scripted now: real keyboard
         retf    2                       ; AX = key, ZF = 0
@@ -2856,6 +2856,7 @@ int16:  cmp     byte [cs:ks_active], 0
         jmp     .rl
 .take:  add     word [cs:ks_pos], 2
         iret
+.chain: jmp     far [cs:old16]
 
 ; ZF = 0 and AX = key if a scripted key is ready now; else ZF = 1, AX kept.
 ; Runs waits and snapshot marks as it meets them.  Interrupts off, then the
@@ -2881,24 +2882,19 @@ ks_ready:
         pop     bx
         add     sp, 2                   ; drop the caller's AX; ZF = 0
         ret
-.wait:  cmp     byte [cs:ks_wait], 0
-        jne     .waiting
-        push    ds
-        push    40h
+.wait:  push    ds                      ; (the tick, for both: interrupts are
+        push    40h                     ;  off)
         pop     ds
         mov     bx, [6Ch]
         pop     ds
+        cmp     byte [cs:ks_wait], 0
+        jne     .waiting
         mov     al, [cs:si+2]
         xor     ah, ah
-        add     bx, ax
-        mov     [cs:ks_until], bx
+        add     ax, bx
+        mov     [cs:ks_until], ax
         mov     byte [cs:ks_wait], 1
 .waiting:
-        push    ds
-        push    40h
-        pop     ds
-        mov     bx, [6Ch]
-        pop     ds
         sub     bx, [cs:ks_until]
         js      .none
         mov     byte [cs:ks_wait], 0
@@ -3008,9 +3004,8 @@ build_kv:
         stosw
         mov     si, cwdbuf
         mov     dl, 0
-        mov     ah, 47h
+        mov     ah, 47h                 ; (SI kept)
         int     21h
-        mov     si, cwdbuf
         call    put_str
         mov     si, kv_drives
         call    put_str
@@ -3089,6 +3084,7 @@ build_kv:
         call    put_dec2
         mov     si, kv_grid
         jmp     put_str
+        times   ($ - $$) & 1 db 90h     ; (put_str's loop even)
 
 ; ---- small helpers -----------------------------------------------
 put_str:                                ; DS:SI ASCIIZ -> ES:DI (no NUL)
@@ -3202,14 +3198,15 @@ s_opt_no    db '[N] No', 0
 s_exit      db '/EXIT', 0
 s_quit      db '/QUIT', 0
 s_comspec   db 'COMSPEC=', 0
-s_defcomspec db 'A:\COMMAND.COM', 0
+s_defcomspec db 'A:\COMMAND'                ; (its .COM, 0: s_dotcom's)
+s_dotcom    db '.COM', 0
+s_dotexe    db '.EXE', 0                    ; (after s_dotcom: resolve_direct's .try)
+        times   -(s_dotcom != s_defcomspec + 10 || s_dotexe != s_dotcom + 5) db 0
 s_temp      db 'TEMP=', 0
 s_tmp       db 'TMP=', 0
 s_outfile   db 'CLAUDE.OUT', 0
 s_slashc    db ' /C ', 0
 s_redir     db ' >', 0
-s_dotcom    db '.COM', 0
-s_dotexe    db '.EXE', 0
 kv_os       db 'os=MS-DOS ', 0
 kv_cwd      db 10, 'cwd=', 0
 kv_drives   db 10, 'drives=', 0
@@ -3261,8 +3258,7 @@ helptext    db 'Enter         send the prompt', 0
             db 0FFh
 spinseq     db 87h, 88h, 89h, 8Ah, 8Bh, 8Ch, 8Bh, 8Ah, 89h, 88h
 evint       db 01h
-fcb1        db 0, '           ', 0, 0, 0, 0
-fcb2        db 0, '           ', 0, 0, 0, 0
+fcb1        db 0, '           ', 0, 0, 0, 0         ; (a RUN's two FCBs: DOS copies them)
 %ifdef TERM_WIN
 ; code page 437's text for codes 80h-FFh (a terminal window's Copy), ours
 ; to AEh as their look-alikes; past them none (0: '?')
@@ -3280,9 +3276,14 @@ t437        db '*', 0C0h, '.', '>', 0FBh, 'x', 0FAh                 ; 80h-86h
             align 2                     ; (the glyphs are read a word at a time)
 %include "TERMINUS.INC"
 %include "GLYPHS.INC"
+%ifndef PROFILE                         ; (CLAUDEP.COM: its own layout)
+        EVEN    cell.a, cell.b, cell.c, cell.d, draw_line.l, draw_strn.l, blank_row.l
+        EVEN    prow78.l, prow78.c, prow78.d, line_off, line_off.a, put_str.l
+        EVEN    conv_putc, conv_putc.a, conv_putc.b, conv_putc.c, conv_text.n
+%endif
 
             align 16
-bss:                                    ; from here, in the file only, what
+bss:                                   ; from here, in the file only, what
                                         ;  CLAUDE /R and /U use, and the
                                         ;  console (RCON.ASM): BSS overlays
                                         ;  it all, so chat and Term runs
@@ -3338,6 +3339,12 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         mov     di, title_text
         call    copyz
         mov     word [c_dirty_col], 0FFFFh
+        mov     word [epb + 2], tail    ; a RUN's EXEC block: our environment
+        mov     [epb + 4], cs           ;  (0, from the BSS), the tail and
+        mov     word [epb + 6], fcb1    ;  two blank FCBs
+        mov     [epb + 8], cs
+        mov     word [epb + 10], fcb1
+        mov     [epb + 12], cs
         mov     ax, [convseg]           ; Term's shadow: the conversation's memory
         mov     [shadseg], ax
         cmp     byte [app_want], 'T'
@@ -3731,6 +3738,7 @@ res_load:
         jc      .nomt
         mov     [es:r_mt], ax
         mov     [es:r_mt + 2], dx
+        mov     byte [es:r_int16.mp], 0EBh      ; (JMP SHORT: see .mp)
 .nomt:  mov     dx, s_r_ok
         mov     ah, 9
         int     21h
@@ -3925,7 +3933,6 @@ r_bgon   db     0               ; 10Fh (version 5): 1 background looks at key
 %ifdef STUB_PAD                 ; (the tests: a CLAUDE.COM whose stub is laid
         times   STUB_PAD db 0   ;  out otherwise, as another version's)
 %endif
-r_entry  dd     R_FRAME << 16   ; the console: E000:0000
 r_hw     db     0, 0, 0, 0      ; our pages' register values
 r_saved  db     0, 0, 0, 0      ; the program's windows meanwhile
 r_params:                       ; the console's, ES:BX (RCON.ASM P_*)
@@ -3940,36 +3947,42 @@ r_mt     dd     0               ; Lodestone's multitasking (MT_TSR): its bytes,
                                 ;  and ours: 1 while the pop-up waits for the
                                 ;  front task (0:0: none)
 r_bgt    dw     0               ;  the tick of the last background look
-r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
-        jne     .up                     ;  else (a TSR, from an interrupt)
-        cmp     ah, 0                   ;  sees no key, as the BIOS's AH=01h
-        je      .rd                     ;  would drop CODE-\, the console's
-        cmp     ah, 10h
-        je      .rd
-        cmp     ah, 1
-        je      .pk
-        cmp     ah, 11h
-        je      .pk
-.ch:    jmp     far [cs:r_old16]
-.up:    cmp     ah, 1
-        je      .nk
-        cmp     ah, 11h
-        jne     .ch
-.nk:    cmp     ax, ax                  ; (ZF: no key; interrupts on, as
-        sti                             ;  the BIOS's AH=01h returns)
-        retf    2
-.pk:    call    r_hot
-        call    r_bg
-        call    r_feed                  ; (Claude's keys first)
-        jc      .ch
-        or      sp, sp                  ; (not ZF: a key)
+r_int16: test   ah, 0EEh                ; (AH 00h, 10h: a read; 01h, 11h: a
+        jnz     .ch                     ;  peek; the rest go on to the BIOS)
+        cmp     word [cs:r_inpop], 0    ; (the console up, or CLAUDE.COM runs,
+        jne     .up                     ;  r_off: .up)
+        test    ah, 1
+        jz      .rd
+        sti                             ; (a peek returns with interrupts on,
+.pk:    call    r_hot                   ;  as the BIOS's AH=01h; the STI here
+        call    r_bg                    ;  puts .pk odd and the calls' returns
+        call    r_feed                  ;  even.  Claude's keys first: not
+        jnc     .rt                     ;  ZF, a key)
+        test    ah, 10h                 ; (AH=11h drops none: on to the BIOS.
+.mp:    jnz     .ch                     ;  Under Lodestone's MT CLAUDE /R makes
+        call    r_look                  ;  this a JMP: MT then sees the program's
+                                        ;  own peek, and its mt_drop keeps the
+                                        ;  hot key as r_look does.)  None, or
+                                        ;  the hot key next: ZF; else
+        jnz     .ch                     ;  the caller's AH=01h on (interrupts
+.rt:    retf    2                       ;  on: the BIOS's)
+        times   ($ - $$) & 1 db 90h     ; (.ch even)
+.up:    cmp     byte [cs:r_inpop], 0    ; the console up: a peek from anyone
+        jne     .u                      ;  else (a TSR, from an interrupt) sees
+        mov     byte [cs:r_bgon], 0     ;  no key, as the BIOS's AH=01h would
+.ch:    jmp     far [cs:r_old16]        ;  drop CODE-\, the console's.  While
+.u:     test    ah, 1                   ;  CLAUDE.COM runs (r_off) all go on to
+        jz      .ch                     ;  the BIOS, and no background looks
+        cmp     ax, ax                  ;  (one before 1.10 left r_bgon set)
         sti
-        retf    2
+        jmp     .rt
 .rd:    sti                             ; a read: wait here, CODE-\ seen
 .w:     call    r_hot                   ;  meanwhile, then the BIOS's
         call    r_bg
         call    r_feed
         jnc     .ky
+        call    r_look                  ; (none, or CODE-\ next: wait)
+        jz      .h
         push    ax
         inc     ah                      ; (a peek of the caller's kind; for a
         call    r_front                 ;  background task's, AH=11h: the
@@ -3979,10 +3992,26 @@ r_int16: cmp    byte [cs:r_inpop], 0    ; the console up: a peek from anyone
         call    far [cs:r_old16]        ;  it behind, or lets it through where
         pop     ax                      ;  it can't switch: an INT 24h prompt's)
         jnz     .ch
-        hlt
-..@r_idle:                              ; (MT_TSR: another task may run here)
-        jmp     .w
+.h:     hlt
+..@r_idle:                              ; (MT_TSR: another task may run here;
+        jmp     r_int16                 ;  then r_inpop and r_off looked at again)
 .ky:    iret
+        times   ($ - $$) & 1 db 90h     ; (r_feed, r_hot, r_bg even)
+
+; The BIOS's AH=00h and 01h drop the hot key, as the other keys they don't
+; give, at the head of the buffer: one typed since r_hot looked would go.
+; So a look that drops none (AH=11h) first: ZF if no key, or the hot key is
+; next (2BF0h's AH=11h form too; r_hot takes it at the next call), and the
+; caller waits; else the head key is one they give.  AX kept
+r_look: push    ax
+        mov     ax, 1100h               ; (AH=11h.  This 3-byte MOV and CMP's
+        pushf                           ;  4-byte form put the BIOS's return
+        call    far [cs:r_old16]        ;  and .x on even offsets)
+.lr:    jz      .x
+        db      81h, 0F8h               ; cmp ax, R_HOT
+        dw      R_HOT
+.x:     pop     ax
+        ret
 
 ; the call is the front task's (Lodestone's multitasking), or there are no
 ; tasks: ZF.  Registers kept
@@ -4001,22 +4030,24 @@ r_front:
 .x:     ret
 
 ; Claude's keys for the program (TYPE, M3), from the console's page: CF if
-; none now (AX kept), else AX = the key, taken if AH is a read.  The
+; none now (AX kept), else AX = the key (not ZF), taken if AH is a read.  The
 ; console's feeder runs with its page in window 0 and the program's back
 ; after; when the keys are done it sets r_pend, and the console comes.
 r_feed: cmp     byte [cs:r_ks], 0
-        je      .no
-        call    r_front                 ; (the front task's alone: a call from
+        jne     .k
+.no:    stc
+.x:     ret
+.k:     call    r_front                 ; (the front task's alone: a call from
         jne     .wk                     ;  behind, after a CODE-Tab, tells MT)
         push    dx
         push    bx
-        mov     bx, ax
+        xchg    ax, bx                  ; (AX kept in BX)
         mov     dx, R_EPORT
         in      al, dx
         push    ax
         mov     al, [cs:r_hw]
         out     dx, al
-        mov     ax, bx
+        xchg    ax, bx
         call    R_FRAME:RC_FEED
         pop     bx                      ; (BL: the program's window 0; the
         xchg    ax, bx                  ;  flags kept)
@@ -4024,17 +4055,15 @@ r_feed: cmp     byte [cs:r_ks], 0
         xchg    ax, bx
         pop     bx
         pop     dx
-        jnc     .x
-.wk:    cmp     word [cs:r_mt + 2], 0   ; none now, the keys not done (a wait)
-        je      .no                     ;  or just done (r_pend: the console
-        push    ds                      ;  to come): MT told (mt_tsrk), or a
-        push    si                      ;  wait at our HLT would never end
-        lds     si, [cs:r_mt]
-        mov     byte [si + 2], 1
-        pop     si
-        pop     ds
-.no:    stc
-.x:     ret
+        jc      .wk
+        or      sp, sp                  ; (not ZF: a key)
+        ret
+.wk:    push    ax                      ; none now, the keys not done (a wait)
+        mov     al, 1                   ;  or just done (r_pend: the console
+        call    r_tell                  ;  to come): MT told (mt_tsrk), or a
+        pop     ax                      ;  wait at our HLT would never end
+        stc
+        ret
 
 ; CODE-\ in the keyboard buffer?  Then it is taken out (the words after it
 ; move back one), and the console runs, unless a hardware interrupt is in
@@ -4047,9 +4076,7 @@ r_feed: cmp     byte [cs:r_ks], 0
 ; gives the front task a turn as for a key.  Registers kept.  (Never called with the
 ; console up: r_int16 answers itself then, and r_popup clears r_inpop
 ; before it returns here.)
-r_hot:  cmp     byte [cs:r_off], 0
-        jne     .x
-        push    ax
+r_hot:  push    ax
         push    bx
         push    si
         push    ds
@@ -4057,9 +4084,17 @@ r_hot:  cmp     byte [cs:r_off], 0
         pop     ds
         cli
         mov     bx, [1Ah]               ; from the head
-.s:     cmp     bx, [1Ch]
-        je      .p
-        mov     ax, [bx]
+.s:     cmp     bx, [1Ch]               ; (none, and none taken: straight
+        jne     .k                      ;  through)
+        cmp     byte [cs:r_pend], 0
+        jne     .p
+.no:    sti
+        pop     ds
+        pop     si
+        pop     bx
+        pop     ax
+.x:     ret
+.k:     mov     ax, [bx]
         cmp     ax, R_HOTRAW
         je      .m
         cmp     ax, R_HOT
@@ -4075,34 +4110,24 @@ r_hot:  cmp     byte [cs:r_off], 0
         mov     [si], ax
         jmp     .mv
 .e:     mov     [1Ch], si               ; the tail one back
-.p:     cmp     byte [cs:r_pend], 0
-        je      .no
-        call    r_front                 ; (a background task's call: at the
+.p:     call    r_front                 ; (a background task's call: at the
         jne     .df                     ;  front one's, over its screen)
         call    r_isr
         jnz     .no
-        mov     byte [cs:r_pend], 0
-        cmp     word [cs:r_mt + 2], 0   ; (no longer waiting, for MT)
-        je      .pp
-        lds     si, [cs:r_mt]
-        mov     byte [si + 2], 0
-.pp:    sti
+        xor     al, al
+        mov     [cs:r_pend], al
+        call    r_tell                  ; (no longer waiting, for MT)
+        sti
         pop     ds
         pop     si
         pop     bx
         pop     ax
         jmp     short r_popup
-.no:    sti
-        pop     ds
-        pop     si
-        pop     bx
-        pop     ax
-.x:     ret
 .df:    cmp     byte [cs:r_pend], 1     ; (MT told once, r_pend 2: the front
         jne     .no                     ;  task's turn to come, as for a key,
-        mov     byte [cs:r_pend], 2     ;  so its call does; MT clears it as
-        lds     si, [cs:r_mt]           ;  it gives it)
-        mov     byte [si + 2], 1
+        inc     byte [cs:r_pend]        ;  so its call does; MT clears it as
+        mov     al, 1                   ;  it gives it)
+        call    r_tell
         jmp     .no
 .nx:    inc     bx                      ; the next word, round the buffer
         inc     bx
@@ -4110,6 +4135,18 @@ r_hot:  cmp     byte [cs:r_off], 0
         jb      .n
         mov     bx, [80h]
 .n:     ret
+
+; MT's byte of ours (mt_tsrk) = AL, if Lodestone's multitasking asked.
+; Registers kept
+r_tell: cmp     word [cs:r_mt + 2], 0
+        je      .x
+        push    ds
+        push    si
+        lds     si, [cs:r_mt]
+        mov     [si + 2], al
+        pop     si
+        pop     ds
+.x:     ret
 
 ; M4: a background look, if the console asked for them (r_bgon 1: the user
 ; went back to the program with the link up), none was made for R_BGT
@@ -4119,8 +4156,6 @@ r_hot:  cmp     byte [cs:r_off], 0
 ; Registers kept.
 r_bg:   cmp     byte [cs:r_bgon], 1
         jne     .x
-        cmp     byte [cs:r_off], 0      ; (a CLAUDE.COM has the link: one before
-        jne     .o                      ;  1.10 doesn't know to clear r_bgon)
         cmp     byte [cs:r_ks], 0
         jne     .x
         call    r_front
@@ -4134,21 +4169,18 @@ r_bg:   cmp     byte [cs:r_bgon], 1
         cmp     ax, R_BGT
         jb      .n
         call    r_isr
-        jnz     .n
-        mov     ax, [6Ch]
-        mov     [cs:r_bgt], ax
-        mov     byte [cs:r_bgon], 2
-        pop     ds
-        pop     ax
-        jmp     short r_popup
+        jz      .go
 .n:     pop     ds
         pop     ax
 .x:     ret
-.o:     mov     byte [cs:r_bgon], 0     ;  (so it clears it for that one)
-        ret
+.go:    mov     ax, [6Ch]
+        mov     [cs:r_bgt], ax
+        inc     byte [cs:r_bgon]        ; (1 here: 2)
+        pop     ds
+        pop     ax                      ; (falls into r_popup)
 
 r_popup:
-        mov     byte [cs:r_inpop], 1
+        inc     byte [cs:r_inpop]       ; (0 here: 1)
         pushf                           ; (the caller's DF: the console CLDs)
         pusha
         push    ds
@@ -4160,27 +4192,20 @@ r_popup:
         pop     ss
         mov     sp, r_stack_top
         sti
-        cld
-        mov     dx, R_EPORT             ; the program's windows, then ours
-        mov     si, r_saved
+        mov     dx, R_EPORT             ; the program's windows kept, ours in
+        mov     si, r_hw                ;  (R_PAGES: ours fill all four)
         mov     cx, 4
 .s:     in      al, dx
-        mov     [cs:si], al
-        inc     si
-        add     dx, 4000h
-        loop    .s
-        mov     dx, R_EPORT
-        mov     si, r_hw
-        mov     cx, R_PAGES
-.m:     mov     al, [cs:si]
+        mov     [cs:si + 4], al         ; (r_saved)
+        mov     al, [cs:si]
         out     dx, al
         inc     si
         add     dx, 4000h
-        loop    .m
+        loop    .s
         push    cs
         pop     es
         mov     bx, r_params
-        call    far [cs:r_entry]
+        call    R_FRAME:0               ; the console
 ..@r_back:                              ; (the tests: the console has returned)
         mov     dx, R_EPORT             ; the program's windows back
         mov     si, r_saved
@@ -4198,8 +4223,10 @@ r_popup:
         pop     ds
         popa
         popf
-        mov     byte [cs:r_inpop], 0
+        dec     byte [cs:r_inpop]
         ret
+
+        times   -(R_PAGES != 4 || r_saved != r_hw + 4) db 0
 
 ; the PIC's in-service register, then back to the request one (as the
 ; kernel's screen capture does): AH, and ZF if nothing is in service
@@ -4222,6 +4249,14 @@ r_code_end:                             ; (the stack follows the code in the
 r_stack_top equ r_code_end + R_STACK    ;  stub's block, not in CLAUDE.COM)
 r_end   equ     r_stack_top
 R_PARAS equ     (r_end - $$ + 15) / 16  ; the block: from offset 100h to r_end
+; the stub's hot code even, by its order (r_tell between r_hot and r_bg),
+; r_int16's STI before .pk and two self-correcting pads, never run (after
+; .rt and .ky); a peek's r_hot and r_feed go straight through
+%ifndef STUB_PAD                        ; (the tests: another version's layout)
+        EVEN    r_int16, r_int16.ch, r_feed, r_hot, r_hot.s, r_hot.k, r_hot.nx, r_hot.n, r_bg, r_bg.x
+        EVEN    r_int16.pk + 3, r_int16.pk + 9  ; (a peek's returns from r_hot and r_feed)
+        EVEN    r_look, r_look.lr, r_look.x     ; (and r_look's)
+%endif
 
 section .text
 absolute bss
@@ -4229,9 +4264,9 @@ inbuf       resb MAXIN                  ; (first: the start-up code is there)
 res_cs      resw 1                      ; resident Claude's stub, if loaded
 ggint       resb 1
 ggver       resw 1
-ksum        resb 1                      ; 1: INT 60h 02h AL=3, 03h AL=2 (KSUM)
-tx_app      resb 1                      ; 1: txframe's check is the driver's to add
-lw_eoi      resb 1                      ; lw_go's AL for INT 60h 02h: 1, or 3
+ksum        resb 1                      ; 1: the driver's frame check (1.23; KSUM)
+rq_id       resb 1                      ; (here, not by reqbuf: the words after stay even)
+lw_eoi      resb 1                      ; the frame's AL for INT 60h 02h: 1, or 3
 n_kok       resw 1                      ; frames ks_check passed (the tests)
 convseg     resw 1
 ioseg       resw 1
@@ -4310,7 +4345,6 @@ rxn         resw 1
 rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_over     resb 1
-rq_id       resb 1
             alignb 2                    ; (frames are copied in with REP MOVSW: an odd
 reqbuf      resb REQMAX + 4             ;  destination costs the 286 a bus cycle a word)
 hellobuf    resb HELLO_MAX
@@ -4391,6 +4425,7 @@ ks_until    resw 1
 snap_taken  resb 1
 snap_len    resw 1
         times   -(ems_ok - drvstr != 80 || old_tmo - cwdbuf != 68) resb 1  ; (HELLO_MAX)
+        times   -(epb < inbuf + MAXIN) resb 1   ; (its environment word: 0 from the BSS clear)
         times   -(kv_cwd < kv_os || kv_drives < kv_cwd || kv_mem < kv_drives || kv_ems < kv_mem \
                   || kv_gpib < kv_ems || kv_addr < kv_gpib || kv_date < kv_addr || kv_grid < kv_date \
                   || kv_appterm < kv_grid || kv_appchat < kv_appterm || s_none2 < s_onint \

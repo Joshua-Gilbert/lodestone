@@ -231,8 +231,11 @@ addresses). The REPLY status is 0 or the GRIDGPIB error code (1 timeout,
 2 no listener, 3 not controller, 4 bad function, 5 no data, 6 busy).
 
 RUN with capture runs `COMSPEC /C command >file`; without capture, a
-command whose first word is a .COM/.EXE file is EXECuted directly (true
-exit code, less memory), anything else through COMSPEC /C. The output file
+command whose first word is a .COM or .EXE file is EXECuted directly (true
+exit code, less memory): NAME.COM or NAME.EXE as given, or a bare NAME
+found as NAME.COM, then NAME.EXE. Anything else goes through COMSPEC /C: a
+.BAT or any other extension, a wildcard, a name not found, a directory
+(one named like NAME.COM gives DOS's error instead). The output file
 is %TEMP%\CLAUDE.OUT (or %TMP%, or X:\CLAUDE.OUT on the current drive);
 the Pi reads it and deletes it.
 
