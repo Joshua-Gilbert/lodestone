@@ -1115,11 +1115,10 @@ rf_request:
         jne     .x
         cmp     byte [txq_n], TXQN
         jae     .x
-        mov     al, [reqbuf]
-        mov     ah, 0F0h                ; too big for us
+        mov     ax, [reqbuf]            ; AL = id, AH = op: the id for every
+        mov     [rq_id], al             ;  reply to it (OPS.INC's reply)
         cmp     byte [rq_over], 0
-        jne     reply2
-        mov     ah, [reqbuf + 1]
+        jne     .big
         cmp     byte [quit], 0          ; (the console going, or a background
         jne     .t                      ;  pass: SCREEN by rc_optab, no TYPE)
         cmp     byte [bgmode], 0
@@ -1134,20 +1133,21 @@ rf_request:
         add     si, 3
         cmp     byte [si], 0
         jne     .o
-        mov     ah, 0F6h
-        jmp     reply2
+        mov     al, 0F6h
+        jmp     reply0
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .op:    cmp     si, rc_optab_dos        ; (GPIB, and SCREEN in the background:
         jb      .go                     ;  no DOS)
         cmp     byte [dos_ok], 0
-        mov     ah, 0F7h
-        je      reply2
-.go:    mov     [rq_id], al
-        mov     [rq_op], si
+        mov     al, 0F7h
+        je      reply0
+.go:    mov     [rq_op], si
         mov     byte [req_ready], 1
         ret
 .sc:    xor     cl, cl                  ; (no flags)
         jmp     screen_msg
+.big:   mov     al, 0F0h                ; too big for us
+        jmp     reply0
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .x:     ret
 
@@ -1195,9 +1195,8 @@ req_service:
         jmp     [si + 1]
 .d:     cmp     byte [dos_ok], 0        ; (settled again for each pass: one
         jne     .dk                     ;  kept from the pop-down runs in the
-        mov     al, [rq_id]             ;  first)
-        mov     ah, 0F7h
-        jmp     reply2
+        mov     al, 0F7h                ;  first)
+        jmp     reply0
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .dk:    call    bg_count
         push    si
@@ -1253,24 +1252,15 @@ rc_i23: iret                            ; ^C: nothing (the call goes on)
 
 %include "OPS.INC"
 
-; a REPLY of its own: AL = id, AH = status, no data (reply_n: CX = 3,
-; with TYPE's flags already at replybuf + 2)
-reply2: mov     cx, 2
-reply_n:
-        mov     [replybuf], ax
-        mov     byte [reply_busy], 1
-        mov     al, G_REPLY
-        mov     si, replybuf
-        jmp     txq_put_cs
-
-; TYPE (AL = its id): the keys go to the program, the console goes back
-; to it; the answer comes when they are done (the next pop-up: session)
+; TYPE: the keys go to the program, the console goes back to it; the
+; answer comes when they are done (the next pop-up: session).  rq_id stays
+; TYPE's till then: rf_request drops every request while type_due is set,
+; no background looks meanwhile, and session answers TYPE first
 type_start:
         mov     cx, [rq_len]
         cmp     cx, KSMAX
-        mov     ah, 0F0h                ; (too big for ksbuf)
-        ja      reply2
-        mov     [type_id], al
+        mov     al, 0F0h                ; (too big for ksbuf)
+        ja      reply0
         mov     word [ks_pos], 2
         mov     [ks_len], cx
         mov     si, reqbuf              ; (for the feeder, which has this page
@@ -1321,14 +1311,14 @@ keep_screen:
         ret
 
 type_reply:                             ; TYPE's answer: flags, the screen
-        mov     al, [type_id]
+        mov     al, [rq_id]
         mov     ah, [played]            ; (bit 0: all the keys were played)
         mov     cl, 1
         ; (falls through)
 
 ; Queue the REPLY with the program's screen as kept (its mode's part of
 ; windows 1-2), as CLAUDE.COM's SCREEN: mode, banks, bpp (0: text cells),
-; width, height, bytes a line, then the screen.  AL = id; CL = 1 with
+; width, height, bytes a line, then the screen.  AL = id (rq_id's); CL = 1 with
 ; TYPE's flags (AH) after the status, 0 without.  The reply's first bytes
 ; go just in front of the screen (the page's tail, or the saved screen
 ; there for a text page further on), the bytes there kept aside until it
@@ -1422,12 +1412,11 @@ screen_msg:
         mov     dx, SAVESEG - 1
         jmp     txq_put
 .no:    pop     cx                      ; no screen we can send: F5h (TYPE: and
-        pop     ax                      ;  its flags)
-        mov     [replybuf + 2], ah
-        mov     ah, 0F5h
-        xor     ch, ch                  ; 2 bytes, 3 with the flags
-        add     cl, 2
-        jmp     reply_n
+        pop     ax                      ;  its flags, after id and status in
+        mov     [reqbuf + 2], ah        ;  window 3, the reply's)
+        mov     al, 0F5h
+        xor     ch, ch
+        jmp     reply
 
 ; a reply's first bytes gone: the bytes they stood on back
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
@@ -1598,7 +1587,6 @@ pf_kind     resb 1
 rq_more     resb 1                      ; a REQUEST's frames still coming
 rq_over     resb 1                      ;  more than REQMAX of them
 rq_skip     resb 1                      ;  dropped (rf_request)
-replybuf    resb 4                      ; a reply of our own: id, status (flags)
 hellobuf    resb 128
 ; M3: the program, its screen, Claude's keys
 parms       resd 1                      ; the stub's parameters (r_ks, r_pend)
@@ -1609,16 +1597,15 @@ borrow_at   resw 1                      ;  E3FF:this, over these
 borrowed    resb TAIL
 type_due    resb 1                      ; TYPE's keys out: answer at the pop-up
 type_back   resb 1
-type_id     resb 1
-played      resb 1                      ;  (all of them were)
+played      resb 1                     ;  (all of them were)
 ks_pos      resw 1                      ; the next key in ksbuf
 ks_len      resw 1
 ks_wait     resb 1                      ; a wait under way, until
 ks_until    resw 1
 ; files and GPIB (OPS.INC)
 dos_ok      resb 1                      ; 1: the file requests may call DOS
-rq_id       resb 1                      ; the request req_service runs: its id,
-rq_op       resw 1                      ;  its rc_optab entry
+rq_id       resb 1                      ; the request taken: its id (its reply's,
+rq_op       resw 1                      ;  TYPE's too), its rc_optab entry
 gp_otmo     resw 1                      ; the driver's timeout, ours, meanwhile
 gp_dlen     resw 1
 gp_max      resw 1
