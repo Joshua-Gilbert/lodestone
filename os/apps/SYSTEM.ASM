@@ -1516,14 +1516,9 @@ rom_prn:
         call    read_file
         jc      .n
         xchg    cx, ax
-        mov     si, di
-        mov     bx, si
-        add     bx, cx                  ; BX = its end
-.l:     cmp     si, bx
-        jae     .n
         mov     di, s_printeq
-        call    ini_is
-        jne     .sk
+        call    ini_find
+        jc      .n
         add     si, 8                   ; (past "PRINTER=")
         cmp     si, bx
         jae     .n
@@ -1532,12 +1527,6 @@ rom_prn:
         popa
         clc
         ret
-.sk:    cmp     si, bx                  ; the next line
-        jae     .n
-        lodsb
-        cmp     al, 10
-        jne     .sk
-        jmp     .l
 .n:     popa
 .no:    stc
         ret
@@ -1833,14 +1822,9 @@ splash_scan:
         pusha
         mov     byte [splash_known], 1
         mov     byte [splash_off], 0
-        mov     si, ini_old
-        mov     bx, si
-        add     bx, cx                  ; BX = its end
-.line:  cmp     si, bx
-        jae     .done
         mov     di, s_splasheq
-        call    ini_is
-        jne     .next
+        call    ini_find
+        jc      .done
         add     si, 7                   ; (past "SPLASH=")
         cmp     si, bx
         jae     .done
@@ -1855,12 +1839,6 @@ splash_scan:
 .off:   mov     byte [splash_off], 1
 .done:  popa
 .x:     ret
-.next:  cmp     si, bx                  ; on to the next line
-        jae     .done
-        lodsb
-        cmp     al, 10
-        jne     .next
-        jmp     .line
 
 ; multitasking at the next start-up?  MULTITASK=1 (or On, or Yes) in
 ; \LODE.INI, as the kernel reads it -> mt_want.  Read once, as splash_get.
@@ -1872,14 +1850,9 @@ mt_scan:
         pusha
         mov     byte [mt_known], 1
         mov     byte [mt_want], 0
-        mov     si, ini_old
-        mov     bx, si
-        add     bx, cx                  ; BX = its end
-.line:  cmp     si, bx
-        jae     .done
         mov     di, s_mteq
-        call    ini_is
-        jne     .next
+        call    ini_find
+        jc      .done
         add     si, 10                  ; (past "MULTITASK=")
         cmp     si, bx
         jae     .done
@@ -1907,12 +1880,25 @@ mt_scan:
 .on:    mov     byte [mt_want], 1
 .done:  popa
 .x:     ret
-.next:  cmp     si, bx
-        jae     .done
+
+; the first line of the file in ini_old (CX bytes) that starts with DI
+; ("FONT=", any case) -> SI there, BX = the text's end; CF if none
+ini_find:
+        mov     si, ini_old
+        mov     bx, si
+        add     bx, cx
+.l:     cmp     si, bx
+        jae     .no
+        call    ini_is
+        je      .x                      ; (CF clear)
+.n:     cmp     si, bx                  ; the next line
+        jae     .no
         lodsb
         cmp     al, 10
-        jne     .next
-        jmp     .line
+        jne     .n
+        jmp     .l
+.no:    stc
+.x:     ret
 
 ; FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRINTER= in \LODE.INI for the
 ; font, saver, temporary disk, start-up picture and PrtSc in use: its other
@@ -1953,31 +1939,19 @@ save_ini:
 .line:  cmp     si, bx
         jae     .end
         push    di                      ; (DI: where the new text goes)
-        mov     di, s_fonteq            ; "FONT=", "SAVER=" or "TIDY="
-        call    ini_is                  ;  (any case)?
+        mov     di, s_fonteq            ; "FONT=", "SAVER=", ... "MULTITASK="
+.k:     call    ini_is                  ;  (any case)?
         je      .ours
-        mov     di, s_savereq
-        call    ini_is
-        je      .ours
-        mov     di, s_tidyeq
-        call    ini_is
-        je      .ours
-        mov     di, s_splasheq
-        call    ini_is
-        je      .ours
-        mov     di, s_printeq
-        call    ini_is
-        je      .ours
-        mov     di, s_mteq
-        call    ini_is
-        je      .ours
-        mov     di, s_mdeq              ; MDISK=: ours only with M: here
-        call    ini_is
+.z:     inc     di                      ; (the next key)
+        cmp     byte [di-1], 0
+        jne     .z
+        cmp     di, s_mdeq
+        jb      .k
+        call    ini_is                  ; MDISK=: ours only with M: here
         jne     .ours
         cmp     byte [md_ok], 0FFh
 .ours:  pop     di
-        je      .skip
-        jmp     short .keep
+        jne     .keep
 .skip:  cmp     si, bx                  ; the old line goes
         jae     .end
         lodsb
@@ -2466,14 +2440,15 @@ s_setask    db "Settings: Confirm to go back to the ROM's",0
 s_setdone   db "The ROM's settings are used from the next start-up",0
 s_setcant   db "Your changes can't be deleted",0
 s_setnosave db "Started with the ROM's own: not saved this time",0
-s_fonteq    db 'FONT=',0
-s_savereq   db 'SAVER=',0
+s_fonteq    db 'FONT=',0                ; (save_ini's keys, one after
+s_savereq   db 'SAVER=',0               ;  another, MDISK= last)
 s_tidyeq    db 'TIDY=',0
-s_tidy0     db 'TIDY=0', 13, 10, 0
 s_splasheq  db 'SPLASH=',0
-s_splash0   db 'SPLASH=0', 13, 10, 0
-s_mdeq      db 'MDISK=',0
+s_printeq   db 'PRINTER=',0
 s_mteq      db 'MULTITASK=',0
+s_mdeq      db 'MDISK=',0
+s_tidy0     db 'TIDY=0', 13, 10, 0
+s_splash0   db 'SPLASH=0', 13, 10, 0
 s_mt1       db 'MULTITASK=1', 13, 10, 0
 l_mtnow     db 'Multitasking now',0
 l_mtnext    db 'From the next start-up',0
@@ -2486,7 +2461,6 @@ s_mt2t      db 'CODE-Tab: the next task.  CODE-T in the',0
 s_mt3t      db 'Executive: the tasks.  LCMD: START, TASKS, WAIT.',0
 mt_want     db 0                        ; MULTITASK=1 in \LODE.INI (mt_known)
 mt_now      db 0                        ; (on now)
-s_printeq   db 'PRINTER=',0
 s_romini    db 'R:\LODE.INI',0
 s_prtfile   db 'saves SCREENnn.BMP / .TXT',0
 s_prtwith   db 'prints with ',0
