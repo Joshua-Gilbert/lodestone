@@ -75,7 +75,8 @@ class Win(CK.KernelHarness):
         if shift: s.m.wr(0x40, 0x17, bytes([s.m.rd(0x40, 0x17, 1)[0] & 0xFC]))
         s.claude_psp = s.find_psp()
         assert s.claude_psp, ('CLAUDE never started', s.m.crash, s.k.where())
-        return s.run_until(lambda: s.var('connected') and s.var('term'), sim_s)
+        return s.run_until(lambda: s.var('connected') == 1 and s.var('term') == 1, sim_s)  # (== 1: found before
+                                                    #  its start-up clears BSS, they may be anything; O17 moved them)
 
     # MT's own (its block, LODE.MAP's offsets in it)
     def mt_seg(s):
@@ -126,7 +127,8 @@ def pixels(h):
 
 def t_window():
     h = Win(irq_exact=True, more={'A:\\MTMODE.COM': open(os.path.join(HERE, 'MTMODE.COM'), 'rb').read(),
-                                  'A:\\KEYIN.COM': open(os.path.join(HERE, 'KEYIN.COM'), 'rb').read()})
+                                  'A:\\KEYIN.COM': open(os.path.join(HERE, 'KEYIN.COM'), 'rb').read(),
+                                  'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
     try:
         h.boot_exec()
         conn = h.code_a()
@@ -219,6 +221,50 @@ def t_window():
               '32 KB its pattern), not a blank text screen; then back in its window', res.get('r', {}).get('exit') == 0
               and s[:1] == b'\x40' and s[9:] == want and ok,
               (res, s[:9], len(s), [i for i in range(min(len(s) - 9, 0x8000)) if s[9 + i] != want[i]][:8], ok, h.mb('mt_front')))
+        # audit3 O17: a RUN of a program that stays resident where CLAUDE's tail was: CLAUDE moves, whole, to a
+        # block of its own (run_back) and publishes its descriptor from there; with the memory it left scribbled
+        # over, its window is still drawn (its font, its cells) and goes on
+        from unicorn import UC_HOOK_CODE
+        old, res, mv = h.claude_psp, {}, {}
+        full, keep = (h.sym['bss_end'] + 15) // 16, (h.sym['reqbuf'] + 7 + 15) // 16
+        def moving(uc, addr, size, ud):             # (run_back's move: MT_PUB again before it returns, in
+            off = addr - h.m.r('cs') * 16           #  the new block)
+            if off == h.sym['run_back.there']: mv['there'] = h.m.r('cs')
+            elif 'there' in mv and 'x' not in mv:
+                if off == h.sym['win_pub']: mv['pub'] = 1
+                elif off == h.sym['run_back.x']: mv['x'] = 1
+        hk = h.m.mu.hook_add(UC_HOOK_CODE, moving, None, (old + keep) * 16, 0x9FFFF)
+        h.m.mu.ctl_remove_cache((old + keep) * 16, 0xA0000)
+        th = threading.Thread(target=lambda: res.update(r=g.run('TSRK', capture=False)))
+        th.start()
+        h.run_until(lambda: not th.is_alive(), 60)
+        h.m.mu.hook_del(hk)
+        seg, new = old - 1, None                    # (from its PSP's block on: the task's region)
+        for _ in range(300):
+            kind, own, sz = struct.unpack('<BHH', h.m.rd(seg, 0, 5))
+            if own == old and sz == full: new = seg + 1
+            if kind != 0x4D: break
+            seg += sz + 1
+        if new:
+            h.m.wr(old, 0x100, b'\xCC' * ((keep - 0x10) * 16))
+            h.claude_psp = new
+        h.k.key('moved', settle=False); h.m.keys.append(ENTER); h.m.halted = False
+        ok = h.run_until(lambda: 'You said: moved' in h.text() and in_step(h), 30)
+        with t.lock:                                # (the mascot again: CLAUDE's own glyphs, its font's new place)
+            t.stream.feed(('\x1b[2J\x1b[H' + ' ▐▛███▜▌\r\n'
+                           '▝▜█████▛▘\r\n').encode())
+            t._mark()
+        t.link.wake()
+        gl = h.run_until(lambda: all(glyph_shown(h, c) for c in (0xA6, 0xA9, 0xAA, 0xA5, 0xA2)), 20)
+        check('a RUN of TSRK (stays resident): CLAUDE moved to a block of its own; its old memory scribbled over, '
+              'its window still drawn from its descriptor where it is now ("moved" answered there, the mascot\'s '
+              'glyphs with its font)',
+              res.get('r', {}).get('exit') == 0 and new and ok and gl and h.desc()['flags'] & PBF_SHOWN,
+              (res, hex(old), new and hex(new), ok, gl, h.text()[-300:]))
+        fs = new and struct.unpack('<HH', h.m.rd(new, h.sym['wdesc'] + 10, 2) + h.m.rd(new, h.sym['wdesc'] + 20, 2))
+        check('... its descriptor\'s font and table where it is now, published again as it moved (MT_PUB before '
+              'run_back returned; the window drew the same without them, and win_tick publishes every 9 ticks)',
+              fs == (new, new) and mv.get('there') == new and mv.get('pub'), (fs, new, mv))
         # Claude Code's cursor hidden (as the real one's): the window's view follows where it is all the same
         h.k.key('big', settle=False); h.m.keys.append(ENTER); h.m.halted = False
         ok = h.run_until(lambda: 'line 59' in h.text() and 'CODE-Q quits' in h.text(), 30)

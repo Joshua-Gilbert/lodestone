@@ -311,8 +311,9 @@ def t_rload():
         try: real[p[2]] = int(p[0], 16)
         except ValueError: pass
     check('CLAUDE.COM: what only /R and /U use (the loader, the console, the stub) is where BSS goes, below '
-          'the stack /R runs on', real['bss'] <= real['res_load'] < real['rcon_img'] < real['r_code_end'] < csym('stack_top') - 2048,
-          [(n, hex(real[n])) for n in ('bss', 'res_load', 'rcon_img', 'r_code_end', 'stack_top')])
+          'the stack /R runs on (from bss_end: audit3 O17 put the link buffers past stack_top)',
+          real['bss'] <= real['res_load'] < real['rcon_img'] < real['r_code_end'] < csym('bss_end') - 2048,
+          [(n, hex(real[n])) for n in ('bss', 'res_load', 'rcon_img', 'r_code_end', 'bss_end')])
     k = ktest.KPC(image('rl.img'), ems_pages=88); k.start()
     k.key(ktest.CODE_P)
     m0, h0 = memsz(k), handles()
