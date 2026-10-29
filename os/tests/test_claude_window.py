@@ -138,7 +138,8 @@ def t_window():
               and h.var('wmode') and h.var('win'), (conn, ok, h.mb('mt_front'), h.mb('mw_n'), h.var('wmode'), h.text()[-600:]))
         check('... its first MT_PUB said a window shows it (AL 1: no wait for one)', not h.probe, h.probe)
         check('... MT_WAKE asked: the wake is its task\'s (mt_wkt)', h.mb('mt_wkt') not in (0, 0xFF), h.mb('mt_wkt'))
-        check('... the status band in its shadow\'s row 24, published with the rest', 'CODE-Q quits' in h.band24(), h.band24())
+        ok = h.run_until(lambda: 'CODE-Q quits' in h.band24(), 1)    # (a tick may switch CLAUDE out mid-band)
+        check('... the status band in its shadow\'s row 24, published with the rest', ok, h.band24())
         # the mascot: CLAUDE's own glyphs, drawn by TERM from its memory
         t = h.router.term
         with t.lock:
