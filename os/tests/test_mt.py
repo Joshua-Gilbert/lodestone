@@ -69,12 +69,12 @@ OFF_MAP ={'image_end': 0x40D0, 'bss_end': 0x7600, 'ui_keep_end': 0x64C2}  # (40E
 def ini(text):
     p = os.path.join(A.OUT, 'LODE.INI'); open(p, 'wb').write(text); return 'LODE.INI=' + p
 
-def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chip=None, irq_exact=False):
+def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chip=None, irq_exact=True):
     """A floppy with LODE.SYS and (unless mt=None) LODEMT.SYS, LCMD, MEMSZ,
     MTPROBE, `more`, and LODE.INI holding `text`.  nofpu: INT 11h says no
     coprocessor, and the 286's EM bit is set, so any coprocessor instruction
     traps (INT 7, counted in pc.ints).  mouse: a serial mouse on COM1.  irq_exact: pcemu's (an IRQ held
-    under CLI taken when IF is set again)."""
+    under CLI taken when IF is set again, as the 1520's PIC gives it; on by default, H10)."""
     files = ([] if mt is None else ['LODEMT.SYS=' + mt]) + [A.LCMD, A.MEMSZ, MTPROBE, MTL, MTLN, MTCW, MTMD, FREEH, MTSP, MTHK] + list(more) \
         + ([ini(text)] if text is not None else [])
     k = ktest.KPC(A.image(name, *files), ems_pages=ems, chip=chip, irq_exact=irq_exact)
@@ -1699,7 +1699,7 @@ def t_pitfast():
 
 def t_pitcli():
     print('== M9b: the timer\'s interrupt held late under CLI, by a different time each tick: not a fast counter')
-    k = boot('mt_pc.img', b'MULTITASK=1\r\n', 88, MTCL, irq_exact=True)
+    k = boot('mt_pc.img', b'MULTITASK=1\r\n', 88, MTCL)
     Y, seg = k.Y, mt_seg(k)
     sh = Shell(k)
     sh.run('ver')
@@ -1753,9 +1753,9 @@ def t_keys():
                 and k.pc.kbd_ring(): own.append(1)
     # (Q polls with interrupts off nearly all the time: pcemu, taking a tick only where its run loop restarts
     # with them on, held most of T's 18 for Q's whole turn, and when one got through, so how many turns T had,
-    # moved with the kernel's code; here a held tick is taken as soon as IF is set, as the PIC gives it)
+    # moved with the kernel's code; boot()'s irq_exact takes a held tick as soon as IF is set, as the PIC gives it)
     for ms in ('pd', 'qt'):
-        if ms == 'qt': k.pc.watch, k.pc.irq_exact = w, True
+        if ms == 'qt': k.pc.watch = w
         typ(k, 'mtlaunch /f mtspin.com 60 s%s.txt;mtkey.com %s %s1.txt;mtkey.com %s %s1.txt'
             % (ms, ms[0], ms[0], ms[1], ms[1]), 0.3)
         k.key('abc', settle=False)
@@ -1766,7 +1766,6 @@ def t_keys():
         kclear(k)
         waitfile(k, 'S%s.TXT' % ms.upper(), 6.0)
         line(k, '')
-    k.pc.irq_exact = False
     check('behind MTSPIN (in front, reading no keys), "abc" typed: MTKEY\'s INT 16h peeks find none (P %s), and Q\'s '
           'with interrupts off none either (%s, counting those back with interrupts on, as the BIOS\'s are: whose code '
           'it is that counts); nor DOS\'s key status, AH=06h or the flush '
@@ -4722,7 +4721,9 @@ def t_rpoll():
     while us() < t0 + 500000 and tstate(k)[1] == f0: k.pc.run(300)
     dt = (us() - t0) / 1000.0
     check('CODE-Tab under KEYPK (task %d in front), MTSPIN behind: the front task changes %.1f ms later' % (f0, dt),
-          tstate(k)[1] != f0 and dt < 100, (f0, tstate(k), dt))     # (21 ms on main; none in 500 when MT took the peeks for the stub's)
+          tstate(k)[1] != f0 and dt < 100, (f0, tstate(k), dt))     # (44 ms with ticks on time, H10; 21 when a tick held
+                                                                    #  under CLI waited for pcemu's next run; none in 500 when MT took
+                                                                    #  the peeks for the stub's)
     # KEYPK's peeks through a TSR's INT 16h hook loaded after CLAUDE /R (MTKEY H, on with PUSHF / CALL FAR: the frame
     # MT sees is the hook's, not the program's): in front MT drops the keys AH=01h skips all the same, CODE-\ kept
     k = boot('mt_rp2.img', b'MULTITASK=1\r\n', 88, cl, MTK, 'KEYPK.COM=' + R.asm('KEYPK', R.KEYPK))
@@ -5057,9 +5058,9 @@ def t_tclip():
     sel = os.path.join(A.OUT, 'SEL.TXT'); open(sel, 'wb').write(b'alpha beta   \r\ngamma\r\ndelta epsilon\r\n')
     big = os.path.join(A.OUT, 'BIG.TXT')
     open(big, 'wb').write(b''.join(b'line %03d of a long file\r\n' % i for i in range(300)))
-    # (pcemu's exact IRQ delivery: MTM33 P polls 03h nearly all its time under CLI, and without it gets
+    # (boot()'s exact IRQ delivery: MTM33 P polls 03h nearly all its time under CLI, and without it gets
     #  almost no ticks there)
-    k = boot('mt_t4.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTK, MTM, sel, big, mouse=True, irq_exact=True)
+    k = boot('mt_t4.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTK, MTM, sel, big, mouse=True)
     seg, Y = mt_seg(k), k.Y
     mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
     TS = A.run_syms('apps/TERM.ASM')
@@ -5326,7 +5327,7 @@ def t_tclip():
     if not os.path.exists(A.TM5000G):
         print('(no TM5000G.EXE: skipped)'); return
     k = boot('mt_t4g.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, 'TM5000G.EXE=' + A.TM5000G, mouse=True,
-             chip=A.sim7210.NEC7210(A.sim7210.bus()), irq_exact=True)
+             chip=A.sim7210.NEC7210(A.sim7210.bus()))
     seg = mt_seg(k)
     k.select('TM5000G.EXE'); k.key(ktest.ENTER, settle=False)
     n = 7
@@ -6068,7 +6069,7 @@ def srq_progs(k):
 
 def t_srq():
     print('== T5c: a program woken by SRQ (MT_WAKE)')
-    k = boot('mt_srq.img', b'MULTITASK=1\r\n', 88, MTSQ, chip=A.sim7210.NEC7210(A.sim7210.bus()), irq_exact=True)
+    k = boot('mt_srq.img', b'MULTITASK=1\r\n', 88, MTSQ, chip=A.sim7210.NEC7210(A.sim7210.bus()))
     Y, seg = k.Y, mt_seg(k)
     au = Audit(k)
     sh = Shell(k)
