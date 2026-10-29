@@ -5886,12 +5886,8 @@ mt_vfast:
         dec     al
         cmp     dl, al                  ; (its last column, or past it: the
         jae     .nb                     ;  long way: it may scroll)
-        mov     ax, bx
-        push    dx
-        mul     word [si + 4Ch - 49h]
-        pop     dx
-        mov     bx, ax                  ; (the page's start)
-        mov     al, dh
+        mov     bx, [si + 4Eh - 49h]    ; (the page's start, as the BIOS keeps
+        mov     al, dh                  ;  it: mt_vaddrs)
         mul     byte [si + 4Ah - 49h]
         add     al, dl
         adc     ah, 0
@@ -5916,6 +5912,7 @@ mt_vfast:
         pop     dx
         inc     dx
         jmp     short .set
+        nop                             ; (.set even, as it was)
 .cr:    xor     dl, dl
         jmp     short .mv
 .lf:    cmp     dh, 24
@@ -5934,6 +5931,7 @@ mt_vfast:
 .nb:    pop     bx
 .no:    stc
         ret
+        times   ($ - $$) & 1 db 90h     ; (what follows at its parity)
 
 ; the running task, in the background, waits to be in front (TS_WAITF;
 ; mt_scrld makes it TS_RUN): the next ready one runs, or the front one if
@@ -6473,7 +6471,15 @@ mt_vtty:
         ret
 
 ; DI = the offset of row DH, column DL on page BL (a text mode), as
-; VidCalcOffsets works it out (16 bits).  All else kept
+; VidCalcOffsets works it out (16 bits); mt_vaddrs: on the page shown,
+; from its start as the BIOS keeps it (40:4Eh: 40:62h x 40:4Ch while the
+; BIOS keeps them in step; MTSCR E checks it does).  All else kept
+        times   ($ - $$) & 1 db 90h     ; (mt_vaddrs even)
+mt_vaddrs:
+        push    ax
+        mov     di, [VS_START]
+        jmp     short mt_vaddr.r        ; (the jump here: mt_vaddr, per
+        times   ($ - $$) & 1 db 90h     ;  character, falls through; even)
 mt_vaddr:
         push    ax
         push    dx
@@ -6482,7 +6488,7 @@ mt_vaddr:
         mul     word [VS_LEN]
         mov     di, ax
         pop     dx
-        mov     al, dh
+.r:     mov     al, dh
         mul     byte [VS_COLS]
         add     al, dl
         adc     ah, 0
@@ -6601,10 +6607,7 @@ mt_vscr:
         jnz     .ld
         mov     dh, ch                  ; (up: from the top row, down: the
 .ld:    mov     dl, cl                  ;  bottom one)
-        push    bx
-        mov     bl, [VS_PAGE]
-        call    mt_vaddr
-        pop     bx
+        call    mt_vaddrs
         mov     dx, [VS_COLS]
         shl     dx, 1                   ; (DX: a row on)
         mov     bp, dx
@@ -7009,6 +7012,11 @@ mt_kalloc:
             mt_par  mt_isr, 0
             mt_par  mw_got, 1
             mt_par  mw_poll, 1
+            mt_par  mt_vfast, 0         ; (O23, O25: INT 10h's per character
+            mt_par  mt_vfast.ch, 0      ;  and per scroll)
+            mt_par  mt_vfast.set, 0
+            mt_par  mt_vaddr, 0
+            mt_par  mt_vscr, 0
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 
