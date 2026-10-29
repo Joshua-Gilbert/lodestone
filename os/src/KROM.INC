@@ -43,6 +43,7 @@ R_DRV   equ 17                          ; R:
 R_ID    equ 4F4Ch                       ; the ROM's id in its trailer: 'LO'
 R_SECS  equ 256                         ; 128 KB
 R_PIECE equ 8                           ; sectors copied with interrupts off
+R_PLEN  equ 8                           ; r_dio.lp's bytes, r_patch without ROM 2
 R_WIN   equ 0A000h                      ; the BIOS's window
 R_DATA  equ 4                           ; mkrom.py's layout: the root at 2-3,
 R_ROOT  equ 2                           ;  32 entries; data (cluster 2) at 4;
@@ -143,8 +144,10 @@ r_dio:  cmp     al, R_DRV
         and     bx, 15
         mov     bp, dx                  ; BP = R:'s sector
 .l:     jcxz    .ok
-        call    .map                    ; -> DX = the image's, SI = how many
-        jc      .made                   ;  in a row there
+.lp:    call    .map                    ; -> DX = the image's, SI = how many
+        jc      .made                   ;  in a row there (without ROM 2, these
+.lpe:                                   ;  8 bytes are r_patch: rom_init)
+        times   -(.lpe - .lp != R_PLEN) db 0
         mov     di, R_PIECE             ; DI = sectors this time
         cmp     cx, di
         jae     .n0
@@ -198,35 +201,6 @@ r_dio:  cmp     al, R_DRV
         mov     ax, 27                  ; sector not found
 .x:     ret
 
-; R:'s sector BP -> DX = the image's sector, [r_cur] = the image, SI = how
-; many go on in a row there.  With ROM 2 joined (r_img2): CF for sectors
-; 1-6, the FAT and the root, which are made up (.made)
-.map:   mov     dx, bp
-        mov     si, 0FFFFh
-        RADR    mov al, [r_img2]        ; (RADR: the address last, so not
-        cmp     al, 0FFh                ;  CMP [mem], imm)
-        RADR    mov al, [r_img]
-        je      .m1
-        mov     si, 1                   ; (the boot sector: ROM 1's, alone:
-        or      bp, bp                  ;  the next are made up)
-        jz      .m1
-        cmp     bp, R2_DATA
-        jb      .mm
-        sub     dx, R2_DATA - R_DATA    ; ROM 1's clusters, then ROM 2's
-        mov     si, R_END1
-        cmp     bp, si
-        jb      .m0
-        sub     dx, R_OFF
-        RADR    mov al, [r_img2]
-        jmp     short .m1               ; (SI = 259: more than ROM 2's sectors)
-.m0:    sub     si, bp
-.m1:    RADR    mov [r_cur], al
-        clc
-        ret
-.mm:    stc
-        ret
-
-
 ; DI sectors from sector DX to ES:BX, the ROM mapped meanwhile and
 ; interrupts off (DS = KSEG; everything kept).  The 1520's BIOS (F000:
 ; D9D6 keeps SI and DI; E403 at DBC4 changes AX, BX, CL and DH, E404 at
@@ -263,6 +237,30 @@ r_dio:  cmp     al, R_DRV
 
 ; (from here on, only with ROM 2 joined: without it the module ends here)
 ..@r_made:
+; R:'s sector BP -> DX = the image's sector, [r_cur] = the image, SI = how
+; many go on in a row there; CF for sectors 1-6, the FAT and the root,
+; which are made up (.made).  Without ROM 2, .lp's call is r_patch instead
+.map:   mov     dx, bp
+        mov     si, 1                   ; (the boot sector: ROM 1's, alone:
+        RADR    mov al, [r_img]         ;  the next are made up)
+        or      bp, bp
+        jz      .m1
+        cmp     bp, R2_DATA
+        jb      .mm
+        sub     dx, R2_DATA - R_DATA    ; ROM 1's clusters, then ROM 2's
+        mov     si, R_END1
+        cmp     bp, si
+        jb      .m0
+        sub     dx, R_OFF
+        RADR    mov al, [r_img2]
+        jmp     short .m1               ; (SI = 259: more than ROM 2's sectors)
+.m0:    sub     si, bp
+.m1:    RADR    mov [r_cur], al
+        clc
+        ret
+.mm:    stc
+        ret
+
 ; sectors 1-6 of the joined R:, one at a time (into memory below the
 ; window: they are the kernel's own buffers'): 1-2 the FAT, ROM 1's then
 ; ROM 2's entries past its own (their clusters R_OFF on); 3-4 ROM 1's
@@ -474,6 +472,7 @@ rom_init:
 .got:   mov     di, [cs:MDB(r_place)]   ; its data
         mov     [di + r_img - r_tstart], ah
         mov     [di + r_img2 - r_tstart], al
+        mov     [di + r_cur - r_tstart], ah     ; (without ROM 2, for good)
         mov     ax, [cs:MDB(r_seg)]
         mov     [di + r_tseg - r_tstart], ax
         mov     byte [di + r_cwd - r_tstart], '\'
@@ -496,8 +495,21 @@ rom_init:
         mov     byte [bx + D_HINT], 2
         mov     byte [bx + D_MEDIA], 0F8h
         cmp     byte [di + r_img2 - r_tstart], 0FFh
-        je      .one
-        mov     word [bx + D_TOT], R2_SECS      ; ROM 2 joined: the volume
+        jne     .two
+        push    di                      ; no ROM 2: r_dio.lp's call of .map
+        add     di, r_dio.lp - r_tstart ;  (not kept) becomes r_patch
+        mov     si, MDB(r_patch)
+        mov     cx, R_PLEN
+        push    ds
+        pop     es                      ; (r_find's E402 left ES A000h)
+        push    cs
+        pop     ds
+        rep     movsb
+        push    es
+        pop     ds
+        pop     di
+        jmp     short .one
+.two:   mov     word [bx + D_TOT], R2_SECS      ; ROM 2 joined: the volume
         mov     byte [bx + D_SPF], 2            ;  r_dio makes of the two
         mov     byte [bx + D_ROOT], R2_ROOT
         mov     byte [bx + D_NROOT], 2 * R_NROOT
@@ -637,6 +649,14 @@ r_imgi  db      0
 r_cnt   db      0
 r_i1    db      0                       ; ROM 1's image (FFh: none)
 r_noov  db      0                       ; 1: the ROM's settings only (the menu)
+; r_dio.lp without ROM 2: .map's answer, DX = R:'s sector, SI = no end to
+; the run (r_cur is R:'s image); then DI as the next instruction sets it
+; (3 bytes in 2 clocks, where NOPs take 9)
+r_patch:
+        mov     dx, bp
+        mov     si, 0FFFFh
+        mov     di, R_PIECE
+        times   -($ - r_patch != R_PLEN) db 0
 ; the boot sector's start as mkrom.py makes it: jump, "LODE ROM", 512
 ; bytes a sector, 1 a cluster, 1 reserved, 1 FAT, 32 root entries, 256
 ; sectors, F8h, 1 sector a FAT

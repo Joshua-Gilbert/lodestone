@@ -75,6 +75,11 @@ def prompt(k, cmd, sim_s=8):
 def to_prompt(k):
     k.code_p(); k.settle()
 
+def r_module(k):
+    """R:'s module in KSEG (its offset, a paragraph's): where r_tseg names its own segment"""
+    for p in range(k.Y['bss_end'] >> 4, k.u16('first_mcb') - 0x60):
+        if k.pc.u16(0x60, p * 16 + k.Y['r_tseg']) == 0x60 + p: return p * 16
+
 def sysinfo_hd(*files):
     """the test hard disk (C:), with files [(path, bytes)]"""
     import fat16img as F
@@ -183,7 +188,7 @@ def t_rom2():
     for sockets, kw in (({0: r2, 1: rom()}, {'ems_pages': 88}), ({1: r2, 0: rom()}, {'ata': 1})):
         sock1 = [s for s, v in sockets.items() if v is not r2][0]
         where = 'ROM 2 in socket %d (%s)' % (1 - sock1, 'EMS' if 'ems_pages' in kw else 'C:')
-        mem = []
+        mem, mcb, lp = [], [], []
         for rs in (sockets, {sock1: rom()}):
             kk = dict(kw)
             if 'ata' in kk: kk['ata'] = TS.hd()
@@ -191,6 +196,15 @@ def t_rom2():
             to_prompt(k)
             m = re.search(r'([\d.]+) KB for programs', prompt(k, 'a:memsz'))
             mem.append(m and float(m.group(1)))
+            b = r_module(k)
+            mcb.append(k.u16('first_mcb'))
+            lp.append(b is not None and (bytes(k.pc.rd(0x60, b + k.Y['r_dio.lp'], 8)),
+                                         k.pc.rd(0x60, b + k.Y['r_cur'], 1) == k.pc.rd(0x60, b + k.Y['r_img'], 1)))
+        rel = lp[0] and lp[0][0][0] == 0xE8 and (k.Y['r_dio.lp'] + 3 + struct.unpack_from('<h', lp[0][0], 1)[0]) & 0xFFFF
+        check('%s: r_dio.lp calls .map with ROM 2 joined; ROM 1 alone, rom_init made it r_patch (MOV DX,BP; MOV SI,FFFFh; '
+              'MOV DI,8) with r_cur R:\'s image, and .map isn\'t kept: the module 21 paragraphs shorter' % where,
+              rel == k.Y['r_dio.map'] and lp[1] and lp[1] == (bytes.fromhex('89EABEFFFFBF0800'), True) and mcb[0] - mcb[1] == 21,
+              (rel, lp, mcb))
         k = boot(floppy('rom2.img', A.MEMSZ), sock=sock1, roms=sockets, **dict(kw, **({'ata': TS.hd()} if 'ata' in kw else {})))
         to_prompt(k)
         prompt(k, 'a:memsz')                                            # (a program first: the module stays whole)
@@ -206,7 +220,7 @@ def t_rom2():
         for i in range(5):                                              # (KDISK.INC: NBUF buffers)
             if k.rd('buf_drv', 1, i)[0] == 17 and 3 <= k.u16('buf_lba', 2 * i) <= 6:
                 roots[k.u16('buf_lba', 2 * i)] = bytes(k.rd('bufs', 512, 512 * i))
-        check('%s: what DOS programs get: %.1f KB, ROM 1 alone %.1f KB (R:\'s module 18 paragraphs more, what joins the two)'
+        check('%s: what DOS programs get: %.1f KB, ROM 1 alone %.1f KB (R:\'s module 21 paragraphs more, what joins the two)'
               % (where, mem[0] or 0, mem[1] or 0), mem[0] and mem[1] and 0.2 <= round(mem[1] - mem[0], 1) <= 0.4, mem)
         check('%s: the FAT R: made of the two (fatbuf, both sectors: ROM 2\'s entries from 254, clusters + 252, the one split '
               'over the sectors) and its root sectors in the buffers (ROM 2\'s, past 16 entries too; its label gone), byte for byte' % where,
