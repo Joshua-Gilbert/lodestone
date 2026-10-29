@@ -244,6 +244,11 @@ The API key (chat only) comes from the Claude Console
 (console.anthropic.com); usage is billed per token. `/cost` shows the
 session's running total. Term needs no key (see above).
 
+CLAUDE 1.15 and resident Claude's console 1.13 need gridlink from
+2026-10-22 (8db568c) on: they check frames only with the Fletcher sum.
+With an older gridlink the GRiD keeps resetting the link, saying "No
+answer from the bridge at GPIB address 7".
+
 ### 3. The GRiD
 
 Copy `CLAUDE.COM` to the floppy, then:
@@ -254,6 +259,8 @@ CLAUDE          chat (CLAUDE /T: Term; CLAUDE /W: Firefox; CLAUDE /A:nn if the b
 ```
 
 It connects, sets the GRiD's clock from the Pi, and shows the welcome.
+It needs gridlink from 2026-10-22 (8db568c) on; with an older one it keeps
+resetting, saying "No answer from the bridge at GPIB address 7".
 
 ## Speed
 
@@ -407,6 +414,11 @@ every byte checked.
   Needs `unicorn` and `pillow`; `../tools/GRIDGPIB.COM` is the driver it loads.
 
 ## Status
+
+CLAUDE 1.15 and resident Claude's console 1.13 (the 2026-10-26 audit's
+step 8: no CRC on the GRiD) need gridlink from 2026-10-22 (8db568c) on. An
+older gridlink shows up as CLAUDE resetting the link with "No answer from
+the bridge at GPIB address 7".
 
 Version 1.1: Term. Tested in emulation (and the MCP server against the real
 Claude Code's `claude mcp list`), not yet on the Pi 5: 18 Term checks with

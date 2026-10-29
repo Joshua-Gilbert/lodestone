@@ -227,11 +227,16 @@ def t_window():
         from unicorn import UC_HOOK_CODE
         old, res, mv = h.claude_psp, {}, {}
         full, keep = (h.sym['bss_end'] + 15) // 16, (h.sym['reqbuf'] + 7 + 15) // 16
-        def moving(uc, addr, size, ud):             # (run_back's move: MT_PUB again before it returns, in
-            off = addr - h.m.r('cs') * 16           #  the new block)
-            if off == h.sym['run_back.there']: mv['there'] = h.m.r('cs')
+        isclaude = {}                               # (CLAUDE's image at a CS's 100h: not MT's code, say)
+        def moving(uc, addr, size, ud):             # (run_back's move: MT_PUB again in the new block, before
+            cs = h.m.r('cs')                        #  the old block is cut or freed, run_back.f)
+            if cs not in isclaude: isclaude[cs] = h.m.rd(cs, 0x100, 32) == h.img[:32]
+            if not isclaude[cs]: return
+            off = addr - cs * 16
+            if off == h.sym['run_back.there']: mv['there'] = cs
             elif 'there' in mv and 'x' not in mv:
-                if off == h.sym['win_pub']: mv['pub'] = 1
+                if off == h.sym['win_pub'] and 'f' not in mv: mv['pub'] = 1
+                elif off == h.sym['run_back.f']: mv['f'] = 1
                 elif off == h.sym['run_back.x']: mv['x'] = 1
         hk = h.m.mu.hook_add(UC_HOOK_CODE, moving, None, (old + keep) * 16, 0x9FFFF)
         h.m.mu.ctl_remove_cache((old + keep) * 16, 0xA0000)
@@ -263,7 +268,8 @@ def t_window():
               (res, hex(old), new and hex(new), ok, gl, h.text()[-300:]))
         fs = new and struct.unpack('<HH', h.m.rd(new, h.sym['wdesc'] + 10, 2) + h.m.rd(new, h.sym['wdesc'] + 20, 2))
         check('... its descriptor\'s font and table where it is now, published again as it moved (MT_PUB before '
-              'run_back returned; the window drew the same without them, and win_tick publishes every 9 ticks)',
+              'the old block, its font and table, went; the window drew the same without them, and win_tick publishes '
+              'every 9 ticks)',
               fs == (new, new) and mv.get('there') == new and mv.get('pub'), (fs, new, mv))
         # Claude Code's cursor hidden (as the real one's): the window's view follows where it is all the same
         h.k.key('big', settle=False); h.m.keys.append(ENTER); h.m.halted = False
