@@ -129,6 +129,28 @@ def test_held_replies():
     assert h2.link.stats['tx_held'] == 0 and h2.nano.n_held == 0
 
 
+def test_nak_before_any_frame():
+    # A damaged first HELLO (no good frame yet): the NAK goes with the Fletcher sum, which CLAUDE 1.15 and the
+    # console 1.13 read (they have no CRC); an older CLAUDE's good CRC HELLO then has its answer in CRC
+    from gridlink.link import Link
+    class T:
+        frame_limit = 4104
+        def __init__(t): t.sent = []
+        def answer(t, f): t.sent.append(f)
+    t = T()
+    k = Link(t, lambda *a: None, log=lambda *a: None, hold=0.0)
+    pay = b'\x01\x07\xf6\x00P\x18app=x\n'
+    bad = bytearray(glp.encode(glp.G_HELLO, 0, 0, pay, fl=True)); bad[8] ^= 0x55
+    k.feed(bytes(bad)); k.last_rx -= 1; k.idle_check()
+    nak = t.sent[-1]
+    assert nak[1] == glp.P_NAK and nak[-2:] == glp.encode_check(nak[1:-2], True), nak.hex()
+    f, _ = glp.decode(nak, fl_first=True)
+    assert f is not None and f.fl, f
+    k.feed(glp.encode(glp.G_HELLO, 0, 0, pay, fl=False))            # (an older CLAUDE: CRC)
+    ans = t.sent[-1]
+    assert len(t.sent) == 2 and ans[-2:] == glp.encode_check(ans[1:-2], False), [f.hex() for f in t.sent]
+
+
 def test_held_reply_bookkeeping():
     # Link alone, on a transport that holds: a used hold answers nothing and moves on as an answer would; a
     # missed one (the GRiD sent something else) is answered as usual, with the same fragment

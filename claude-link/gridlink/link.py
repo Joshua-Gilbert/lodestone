@@ -119,7 +119,9 @@ class Link:
         s.grid_req = glp.GRID_REQ_DEFAULT     # the biggest REQUEST it takes (its HELLO's req=)
         s.grid_rd = 0                         # the biggest read it answers whole (its HELLO's rd=; 0: 8 KB reads)
         s.grid_fcs = False                    # the GRiD's HELLO offered the Fletcher sum
-        s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
+        s.rx_fl = True                        # the GRiD's last good frame had it: answer in kind (the sum
+                                              #  till one comes: a NAK for a damaged first HELLO goes as
+                                              #  CLAUDE 1.15's sum; an older CLAUDE's CRC frame sets it False)
         s.grid_wake = False                   # the GRiD's HELLO said it POLLs when the bridge rings (GF_WAKE)
         s.rang = None                         # when we last rang, since the GRiD's last frame
         s.rings_left = s.RING_TRIES; s.unrung = True; s.rung_out = 0.0
