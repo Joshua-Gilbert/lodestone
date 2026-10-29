@@ -20,7 +20,7 @@ FOC_DEV equ 1           ;  Device (the drives),
 FOC_SUB equ 2           ;  Subject (the subjects of this drive)
 SUBJ    equ 14          ; a subject in the list: depth, NAME    EXT, date
 SUBMAX  equ 66          ; a subject's path, "\" and all (the kernel's CWDLEN - 2)
-EV_TASK equ 0FF10h      ; (poll_once, MULTITASK=1, only to ex_loop: a task ended;
+EV_TASK equ 0FF10h      ; (KMW's mw_poll, MULTITASK=1, only to ex_loop: a task ended;
 EV_TASKM equ 0FF11h     ;  one the Executive started: its message in msgbuf)
 
 section uibss
