@@ -4707,7 +4707,7 @@ e_time      db 'Invalid time', 0
 e_label     db 'Label not found', 0
 e_deep      db 'Nested too deep', 0
 
-; INT 24h's messages, in the order of its error codes (crit counts NULs
+; INT 24h's messages, in the order of its error codes (ce_msg counts NULs
 ; from the one that ends e_deep)
 ce0         db 'Write protect error', 0
 ce1         db 'Unknown unit error', 0
