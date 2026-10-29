@@ -214,16 +214,17 @@ sft_fill:
         times   -(S_DATE != S_TIME + 2 || S_CLU != S_TIME + 4 || S_SIZE != S_TIME + 6) db 0
         times   -(S_DLBA != S_TIME + 10 || S_DOFF != S_DLBA + 2 || S_NAME != S_DLBA + 4) db 0
         times   -(d_off != d_lba + 2) db 0
+        times ($ + 1 - $$) & 1 db 90h   ; (hot: dev_look_ax's loops even)
 
 ; ---------------------------------------------------------------------
 ;  devices by name
 ; ---------------------------------------------------------------------
 ; is the last component of path_buf (or of the path at AX) a device?
-; -> AL = device, AH = GPIB address.  CF if not
+; -> AL = device, AH = GPIB address.  CF if not.  BX = the component (after
+; the last \ or :; dev_where reads it)
 dev_lookup:
         mov     ax, path_buf
 dev_look_ax:
-        push    bx
         push    cx
         push    si
         push    di
@@ -296,7 +297,6 @@ dev_look_ax:
 .x:     pop     di
         pop     si
         pop     cx
-        pop     bx
         ret
 ; each: its length, the name, the device; a length of 0 ends them
 dev_names   db 3, 'CON', DEV_CON, 3, 'NUL', DEV_NUL, 3, 'AUX', DEV_AUX
@@ -379,7 +379,9 @@ create: call    get_path
 ; a device's name with a directory in front: that directory must be there,
 ; as MS-DOS says (NOSUCH\NUL is 3: "IF EXIST DIR\NUL"), and the name no
 ; wildcard or bad name (2).  [X:]\DEV\ in front is the devices' own, as in
-; MS-DOS.  AX kept; CF: AX = the error.  NUL, A:NUL, \DEV\NUL: no disk
+; MS-DOS.  AX kept; CF: AX = the error.  NUL, A:NUL, \DEV\NUL: no disk.
+; BX: dev_lookup's (the name), so a : past the drive's is a bad directory
+; part too (A:B:NUL, \DEV\C:NUL: 2, as MS-DOS)
 dev_where:
         push    ax
         mov     si, path_buf
@@ -394,12 +396,9 @@ dev_where:
         cmp     byte [si+4], '\'
         jne     .f
         add     si, 5
-.f:     lodsb
-        cmp     al, '\'
-        je      .r
-        or      al, al                  ; (CF clear)
-        jnz     .f
-        pop     ax
+.f:     cmp     bx, si                  ; the name right there?
+        jne     .r
+        pop     ax                      ; (CF clear)
         ret
 .r:     call    resolve
         pop     si
