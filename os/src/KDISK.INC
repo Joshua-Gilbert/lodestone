@@ -1604,7 +1604,10 @@ bios2dos:
 ; INT 24h for the failed transfer -> AL = 0 ignore, 1 retry, 3 fail
 ; (abort ends the program here and doesn't come back; while EXEC loads one
 ; it fails instead: the caller is cur_psp still, and f_4B gives back what
-; the new program had)
+; the new program had.  "EXEC loads" is the outer INT 21h call's AH, read
+; from its frame's fixed place (each task's, KMT), not through BP: an INT
+; 24h handler's own call is nested on the other stack, and KMT's close_all
+; may run with BP no frame)
 crit_disk:
         test    byte [cap_req], 2       ; a screen capture: just fail
         jnz     .fail
@@ -1646,8 +1649,8 @@ crit_disk:
         jbe     .x
         mov     al, 3
 .x:     ret
-.abort: cmp     byte [ex_busy], 0
-        jne     .fail
+.abort: cmp     byte [kstack_top - F_SIZE + F_AX + 1], 4Bh
+        je      .fail
         mov     ax, [cur_psp]
         cmp     ax, [root_psp]
         je      .fail
