@@ -145,7 +145,8 @@ later the Pi takes the GRiD to be gone, until its next frame.
   the wire). It costs the 286 about 8.5 clocks a byte against the CRC's 34.
   Since audit3 R56 (2026-10-29) CLAUDE.COM and resident Claude's console
   check every frame with it, HELLO and its answer too, and have no CRC at
-  all: **they need a gridlink from 2026-10-22 on** (8db568c, PR #60), which
+  all: **CLAUDE 1.15 / console 1.13 need gridlink from 2026-10-22
+  (8db568c, PR #60) on**, which
   takes either check on any frame; an older one never answers their HELLO.
   Before R56, from CLAUDE 1.3, the GRiD offered the sum in its HELLO (flags
   bit 2) and switched at the Pi's HELLO answer (flags bit 2); HELLO, its
