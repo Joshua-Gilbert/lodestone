@@ -43,12 +43,7 @@ CMAX    equ 8                           ; CALLs inside CALLs
 ; the pads ("hot": each `times ($ - $$) & 1`, after a JMP or RET, so never
 ; run).  The labels in the EVEN list at the code's end must stay even, or
 ; no build (the PSP is a paragraph, so the offset's parity is the address's)
-%macro EVEN 1-*
-%rep %0
-        times   -((%1 - $$) & 1) db 0
-%rotate 1
-%endrep
-%endmacro
+%include "EVEN.INC"
 
 start:  mov     sp, stack_top
         cld
