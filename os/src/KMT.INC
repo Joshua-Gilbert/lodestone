@@ -6301,6 +6301,18 @@ mt_emu:
         call    mt_vaddr
         pop     dx
         mov     ah, [bp+VF_BX]          ; (AL the caller's still)
+        or      dl, dl                  ; 09h's run inside the 32 KB, not
+        jz      .wl                     ;  round 16 bits: at once
+        mov     bx, cx
+        shl     bx, 1
+        jc      .wl                     ; (CX 8000h or more: round them)
+        add     bx, di
+        jc      .wl
+        cmp     bx, 8000h
+        ja      .wl
+        rep     stosw
+        jmp     short .wz
+            db      0                   ; (pad: .wl even, never run)
 .wl:    cmp     di, 8000h - 1           ; (past the 32 KB: not written, but
         jae     .ws                     ;  on round 16 bits, as the BIOS's DI,
         stosb                           ;  to page 0)
@@ -6313,6 +6325,7 @@ mt_emu:
         ret
 .ws:    inc     di
         jmp     short .wn
+            db      0                   ; (pad: what follows at main's parity)
 ; 0Bh: the colour select (put in 3D9h when the task is shown); AL back as
 ; the new one
 .mB:    mov     al, [VS_PAL]
@@ -7022,6 +7035,8 @@ mt_kalloc:
             mt_par  mt_isr, 0
             mt_par  mw_got, 1
             mt_par  mw_poll, 1
+            mt_par  mt_emu.wl, 0
+            mt_par  mt_vmov.w, 0
 mt_tend:
 MT_LEN      equ     mt_tend - mt_tstart
 
