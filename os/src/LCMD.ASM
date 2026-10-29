@@ -554,15 +554,13 @@ pipe_names:
         add     al, 'A' - 1
         mov     [pipe_a + 5], al
         mov     [pipe_b + 5], al
-        push    si
-        call    mt_lst
+        call    mt_mine
         mov     al, '$'
         jc      .n
-        mov     al, [mt_me]
+        mov     al, ah
         add     al, '0'
 .n:     mov     [pipe_a + 10], al
         mov     [pipe_b + 10], al
-        pop     si
         ret
 
 ; one level of redirection done: the one around it again
@@ -2404,11 +2402,8 @@ tick:   push    ds
 run_saver:
         pusha
         push    es
-        mov     ax, 0F000h + MT_LIST    ; (with multitasking, only in front:
-        xor     cx, cx                  ;  behind, the screen isn't ours)
-        stc                             ; (another DOS may leave CF as it was)
-        int     21h
-        jc      .on
+        call    mt_mine                 ; (with multitasking, only in front:
+        jc      .on                     ;  behind, the screen isn't ours)
         cmp     al, ah
         jne     .x
 .on:    mov     ah, 0Fh
@@ -3588,6 +3583,14 @@ mt_lst: push    ds
 .off:   mov     si, e_mtoff
         ret
 
+; multitasking's front task (AL) and ours (AH), no records; CF if it's off
+mt_mine:
+        mov     ax, 0F000h + MT_LIST
+        xor     cx, cx
+        stc                             ; (another DOS may leave CF as it was)
+        int     21h
+        ret
+
 ; TASKS: the tasks there are, the front one marked, and the parked and
 ; frozen ones
 do_tasks:
@@ -4728,7 +4731,7 @@ crit_seen   resb 1                      ; crit answered Abort or Fail (since
                                         ;  this EXEC began)
 ampm        resb 1
 vol_drv     resb 1
-mt_me       resb 1                      ; our task (mt_lst)
+mt_me       resb 1                      ; our task (set only by mt_lst)
 wtask       resb 1                      ; WAIT's task, and the count it has
 wgen        resb 1                      ;  (MT_EXIT's AH) while it runs
 spb         resb SP_SIZE                ; START's block (MT_SPAWN)

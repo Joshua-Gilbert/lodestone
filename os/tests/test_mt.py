@@ -3146,9 +3146,10 @@ def t_lcmd():
     open(tw, 'wb').write(b'@echo off\r\nstart /w mtline.com tw.txt\r\nwait %TASK%\r\nif errorlevel 6 echo LEVEL6\r\n'
                          b'if errorlevel 7 echo LEVEL7\r\necho DONE\r\n')
     sg = os.path.join(A.OUT, 'SG.BAT'); open(sg, 'wb').write(b'@echo off\r\nstart /w mtline.com sg.txt\r\necho BATDONE\r\n')
+    sp = os.path.join(A.OUT, 'SP.BAT'); open(sp, 'wb').write(b'@echo off\r\nmtline.com sp.txt | upper > spo.txt\r\n')
     cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
     huge = mz(os.path.join(A.OUT, 'HUGE.EXE'), 0xA000, 0xA000)     # (more than any free block: no region grows to it)
-    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, cl, huge,
+    k = boot('mt_lc.img', b'MULTITASK=1\r\n', 88, 'SB.BAT=' + sb, 'TW.BAT=' + tw, 'SG.BAT=' + sg, 'SP.BAT=' + sp, cl, huge,
              os.path.join(HERE, 'UPPER.COM'))
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
@@ -3346,6 +3347,15 @@ def t_lcmd():
     left = [n for n in ('PIPEA1.$$0', 'PIPEA2.$$0', 'PIPEA1.$$$', 'PIPEA2.$$$') if A.disk_file(k, n) is not None]
     check('a pipe (ECHO | UPPER | UPPER) with multitasking on: HELLO THERE, its files gone', re.search(r'^HELLO THERE\s*$', o, re.M)
           and not left and back(), (o, left))
+    # ... in a task behind (LCMD /C SP.BAT as task 1): its files named by that task, not the one in front
+    sh.run('start /w sp.bat')
+    n1 = [n for n in ('PIPEA1.$$1', 'PIPEA1.$$0', 'PIPEA1.$$$') if A.disk_file(k, n) is not None]
+    front(k, 1); line(k, '=0'); k.run_for(0.5)
+    sh.run('wait 1')
+    left = [n for n in ('PIPEA1.$$1', 'PIPEA2.$$1') if A.disk_file(k, n) is not None]
+    check('... a pipe in a task behind (START /W SP.BAT: MTLINE | UPPER > SPO.TXT), MTLINE waiting: its file \\PIPEA1.$$1 '
+          '(task 1\'s; %s); then UPPER\'s output, the files gone' % (n1,), n1 == ['PIPEA1.$$1']
+          and b'MTLINE>' in (A.disk_file(k, 'SPO.TXT') or b'') and not left and back(), (n1, A.disk_file(k, 'SPO.TXT'), left))
     # CLAUDE /U refuses while other tasks run
     o1 = sh.run('claude /r')
     sh.run('start /w mtline.com sc.txt')
