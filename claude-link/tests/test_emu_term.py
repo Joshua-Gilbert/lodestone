@@ -24,7 +24,7 @@ def shot(h, name):
 def start(**kw):
     h = EmuHarness(term=FAKE, args=kw.pop('args', '/A:7 /T'), **kw)
     h.boot()
-    assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), \
+    assert h.run_until(lambda: h.var('term') == 1 and h.var('connected') == 1, 10), \
         ('no Term', h.m.crash, h.log, h.screen())
     assert h.run_until(lambda: 'Welcome to Claude Code' in h.screen(), 20), h.screen()
     assert in_step(h), mismatch(h)
@@ -242,7 +242,7 @@ def test_web_gridfox():
                    args='/A:7 /W')
     try:
         h.boot()
-        assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.screen())
+        assert h.run_until(lambda: h.var('term') == 1 and h.var('connected') == 1, 10), (h.m.crash, h.log, h.screen())
         assert wait_screen(h, 'Tektronix 7854 notes', 30), (h.log, h.screen())
         assert h.router.app == 'web' and h.router.term is None             # HELLO said app=web
         band = lambda: h.screen().split('\n')[24]

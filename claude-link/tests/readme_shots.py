@@ -27,7 +27,7 @@ def shot(h, name):
 h = EmuHarness(term=SCRIPT, args='/A:7 /T')
 try:
     h.boot()
-    assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.screen())
+    assert h.run_until(lambda: h.var('term') == 1 and h.var('connected') == 1, 10), (h.m.crash, h.log, h.screen())
     assert wait_screen(h, 'measure it again', 20), h.screen()
     h.term_type('yes, after the cal kit is on')
     assert in_step(h), mismatch(h)
@@ -43,7 +43,7 @@ h = EmuHarness(term=SCRIPT, web='%s -m gridfox --port %d http://test.local/bench
                args='/A:7 /W')
 try:
     h.boot()
-    assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.screen())
+    assert h.run_until(lambda: h.var('term') == 1 and h.var('connected') == 1, 10), (h.m.crash, h.log, h.screen())
     assert wait_screen(h, 'Getting a trace over GPIB', 30), h.screen()
     assert h.run_until(lambda: h.screen().split('\n')[24].startswith(' Bench notes'), 5)
     assert in_step(h), mismatch(h)
