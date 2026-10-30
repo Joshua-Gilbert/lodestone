@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
 from gridlink import glp, keys as K
+from gridlink.glp import dos_date, dos_time
 from gridlink import termscreen as TS
 from gridlink import picture as PIC
 from gridlink.link import Link, answer_bytes
@@ -44,10 +45,6 @@ class ModelTransport:
         if s.corrupt_every and s.answers % s.corrupt_every == 0:
             f = bytearray(frame); f[len(f) // 2] ^= 0x10; frame = bytes(f)
         s.nano.pi_write(answer_bytes(frame, s.patched, s.baud), latency_us=s.latency)
-
-
-def dos_date(y, mo, d): return ((y - 1980) << 9) | (mo << 5) | d
-def dos_time(h, mi, sec=0): return (h << 11) | (mi << 5) | (sec // 2)
 
 
 class GridSim:
