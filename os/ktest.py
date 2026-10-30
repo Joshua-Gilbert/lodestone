@@ -196,7 +196,6 @@ class KPC:
         out = []
         for y in sorted(hits):
             line = hits[y]
-            if len(line) < 1: continue
             out.append((y, ''.join(line.get(x, ' ') for x in range(80)).rstrip()))
         s._ocr_last = (mode, v, out)
         return list(out)
@@ -245,15 +244,19 @@ class KPC:
         while sel > i: s.key(UP, settle=False); sel -= 1
         s.settle()
 
-    def run_file(s, name, sim_s=60.0):
-        """Select a program, confirm, and run until the Executive is back."""
+    def run_file(s, name, sim_s=60.0, shift=False):
+        """Select a program, confirm, and run until the Executive is back.  shift: Shift held at 40:17h till it
+        runs (Shift-Return: with multitasking on, in the Executive's own task, which waits for it, as with it off;
+        Return alone starts it as a task, M7b)."""
         s.select(name)
-        s.pc.tty.clear() if isinstance(s.pc.tty, list) else None
+        s.pc.tty.clear()
+        if shift: s.pc.wr(0x40, 0x17, b'\x02')
         s.key(ENTER, settle=False)
         s.pc.run_until(lambda: s.pc.mode() != 0x40, 5)
+        if shift: s.pc.wr(0x40, 0x17, b'\x00')
         run_answering(s.pc, lambda: s.pc.mode() == 0x40, sim_s)
         s.settle()
-        return ''.join(s.pc.tty) if isinstance(s.pc.tty, list) else s.pc.tty
+        return ''.join(s.pc.tty)
 
     def band(s):
         """The prompt band's text (messages after a program ends)."""
@@ -263,7 +266,7 @@ class KPC:
 def run_answering(pc, done, sim_s):
     """Run until done(), pressing Enter whenever a program says "Press any
     key" (BENCH and CACHETST wait so their results can be read)."""
-    tty = lambda: ''.join(pc.tty) if isinstance(pc.tty, list) else pc.tty
+    tty = lambda: ''.join(pc.tty)
     seen = tty().count('Press any key')
     t_end = pc.us + sim_s * 1e6
     while True:

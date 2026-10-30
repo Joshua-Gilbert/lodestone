@@ -1,6 +1,6 @@
 """Lodestone 0.3: the UI core and the .RUN programs, in pcemu.
 
-    python3 tests/test_apps.py [t_core t_system t_write t_exec t_font t_memory t_saver t_mouse t_form t_files] [shots]
+    python3 tests/test_apps.py [t_name ...] [shots]   (any of the t_ functions at the end; default all)
 
 UITEST.RUN exercises the core's API (lists, forms, ask, help, errors,
 cleanup); SYSTEM.RUN and WRITE.RUN are driven from the Executive as a user

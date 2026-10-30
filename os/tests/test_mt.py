@@ -18,7 +18,7 @@ it.  Programs start others as tasks (MTLAUNCH), each in a region of its own,
 and they take turns at the timer's tick, where it is safe.  Off (no such
 line, any other value, or no EMS), nothing of it is in memory and everything
 is as before.
-python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_rules t_fpu t_screens t_keys t_mouse t_progs t_rom]"""
+python3 tests/test_mt.py [t_name ...]     (any of the t_ functions at the end, in their order; default all)"""
 import collections, os, re, struct, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
@@ -293,17 +293,9 @@ def line(k, text):
     k.key(text); k.key(ktest.ENTER); k.run_for(0.5)
 
 def run_wait(k, name, sim_s=60.0):
-    """Shift-Return on a program in the Executive (ktest's run_file, Shift held at 40:17h till it runs): in the
-    Executive's own task, which waits for it, as with multitasking off (Return starts it as a task, M7b)."""
-    k.select(name)
-    k.pc.tty.clear() if isinstance(k.pc.tty, list) else None
-    k.pc.wr(0x40, 0x17, b'\x02')
-    k.key(ktest.ENTER, settle=False)
-    k.pc.run_until(lambda: k.pc.mode() != 0x40, 5)
-    k.pc.wr(0x40, 0x17, b'\x00')
-    ktest.run_answering(k.pc, lambda: k.pc.mode() == 0x40, sim_s)
-    k.settle()
-    return ''.join(k.pc.tty) if isinstance(k.pc.tty, list) else k.pc.tty
+    """Shift-Return on a program in the Executive: in the Executive's own task, which waits for it, as with
+    multitasking off (Return starts it as a task, M7b)."""
+    return k.run_file(name, sim_s, shift=True)
 
 def t_tasks():
     print('== tasks: programs started as tasks, switched when one waits for a key')
