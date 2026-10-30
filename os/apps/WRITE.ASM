@@ -1443,32 +1443,37 @@ k_scopy:
         stc
         ret
 
-; Paste: what it holds at the cursor, over a drag's selection (that goes
-; first); no room for it: said, nothing changes.  (Its read failing, an
-; EMS or disk error: said, the selection gone already)
+; Paste: what it holds at the cursor, over a drag's selection; no room
+; for it: said, nothing changes.  Read into the gap first, then the
+; selection erased (X46): a read that fails (an EMS or disk error) is
+; said, the text as it was.  Only when it needs the selection's room too
+; does the selection go first (then a failed read has lost it)
 k_paste:
         mov     al, 2
         call    UI_CLIP                 ; CX = what it holds
         jcxz    .b
         call    sel_range               ; (sel_a = sel_b with no selection)
-        mov     ax, [gap_e]             ; AX = the room: the gap's, and the
-        sub     ax, [gap_s]             ;  selection's it replaces (sel_range
-        call    drag_sel                ;  gives a command's too: only a
-        jne     .r                      ;  drag's counts)
-        add     ax, [sel_b]
-        sub     ax, [sel_a]
-.r:     cmp     cx, ax
-        ja      full
-        call    drag_sel
-        jne     .p
+        mov     ax, [gap_e]             ; AX = the gap's room
+        sub     ax, [gap_s]
+        cmp     cx, ax
+        jbe     .p                      ; (fits: the selection stays till
+        call    drag_sel                ;  it is in)
+        jne     .full                   ; the selection's room too (sel_range
+        add     ax, [sel_b]             ;  gives a command's too: only a
+        sub     ax, [sel_a]             ;  drag's counts)
+        cmp     cx, ax
+        ja      .full
         mov     ax, [sel_a]
         mov     [fix_a], ax
         mov     ax, [sel_b]
         mov     [fix_b], ax
         push    cx
         call    erase_range
-        call    k_cancel_cmd
+        call    k_cancel_cmd            ; (no longer a drag's: nothing after)
         pop     cx
+        jmp     short .p
+.full:  jmp     full
+.b:     jmp     UI_BEEP
 .p:     push    es
         mov     es, [bseg]
         mov     di, [gap_s]             ; into the gap
@@ -1481,13 +1486,30 @@ k_paste:
         pop     es
         add     [curline], dx
         add     [nlines], dx
+        mov     bx, [gap_s]             ; BX = where it went
         add     [gap_s], cx
         mov     byte [changed], 1
         mov     byte [dirty], 2
-        ret
+        call    drag_sel                ; a drag's selection: now it goes
+        jne     .x
+        mov     ax, [sel_a]
+        mov     dx, [sel_b]
+        cmp     ax, bx                  ; (after the cursor: moved on by the
+        jb      .lo                     ;  paste)
+        add     ax, cx
+        add     dx, cx
+.lo:    mov     [fix_a], ax
+        mov     [fix_b], dx
+        add     cx, [sel_a]             ; the cursor: after the paste
+        push    cx
+        call    erase_range
+        call    k_cancel_cmd
+        pop     ax
+        jmp     gap_to
+.x:     ret
 .e:     pop     es
         jmp     io_error
-.b:     jmp     UI_BEEP
+        times   ($ + 1 - $$) & 1 db 90h       ; (the code after it at its parity)
 
 ; ---------------------------------------------------------------------
 ;  the commands
