@@ -531,7 +531,9 @@ class Tools:
         if act == 'query':
             s.head('GPIB', '%s: %s' % (addr, cmd))
             c = cmd.strip()
-            if not (c.endswith('?') and ';' not in c):
+            if not (c.endswith('?') and ';' not in c and not any(ord(ch) < 32 or ord(ch) == 127 for ch in c)):
+                # (a query asks nothing, as gpib_measure's rule: one command, no ';', and no control characters,
+                # since a CR or LF inside would end a command the instrument then takes before the '?')
                 s.allow('gpib', addr, 'Send to GPIB %s?' % who, cmd, "Yes, and don't ask again for address %d" % addr)
             r = G.gpib(glp.GP_QUERY, addr, cmd.encode('latin1') + term, timeout_ms=tmo, maxlen=maxb)
             text = r.decode('latin1').rstrip('\r\n')
