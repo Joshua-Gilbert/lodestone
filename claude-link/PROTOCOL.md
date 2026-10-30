@@ -238,6 +238,12 @@ GRiD's and the bridge's own addresses; reply: list of responding
 addresses). The REPLY status is 0 or the GRIDGPIB error code (1 timeout,
 2 no listener, 3 not controller, 4 bad function, 5 no data, 6 busy).
 
+RUN's timeout is the Pi's own limit, carried for the record: the GRiD
+cannot end a program, so it ignores the field and answers when the
+program exits. A program that loops or waits at a key read holds CLAUDE
+and the link till someone at the GRiD ends it; the Pi has given up by
+then, and the late answer goes to no request.
+
 RUN with capture runs `COMSPEC /C command >file`; without capture, a
 command whose first word is a .COM or .EXE file is EXECuted directly (true
 exit code, less memory): NAME.COM or NAME.EXE as given, or a bare NAME
@@ -245,7 +251,9 @@ found as NAME.COM, then NAME.EXE. Anything else goes through COMSPEC /C: a
 .BAT or any other extension, a wildcard, a name not found, a directory
 (one named like NAME.COM gives DOS's error instead). The output file
 is %TEMP%\CLAUDE.OUT (or %TMP%, or X:\CLAUDE.OUT on the current drive);
-the Pi reads it and deletes it.
+the Pi reads it and deletes it. The GRiD makes the file before the program
+starts: if it can't (R:, a protected floppy, a missing directory), the RUN
+answers that DOS error and nothing runs.
 
 Key scripts for RUN: two bytes per key, ASCII then scan code (the AX word
 INT 16h returns); FFh FFh n = wait n × 55 ms; FFh FEh 00h = take a screen
@@ -263,7 +271,9 @@ INFO and SETTIME), F7h DOS busy (resident Claude's console, a file request: the
 paused program is inside a DOS call other than the kernel's key wait,
 such as its own INT 24h handler; anything from MT's segment with
 MULTITASK=1, its key wait and its INT 24h prompt; or the program is
-DEFRAG, which writes the disk itself; GPIB requests still run), FFh unknown request.
+DEFRAG, which writes the disk itself; under MS-DOS, every DOS key wait,
+whose code is in IO.SYS, not the kernel's segment; GPIB requests still
+run), FFh unknown request.
 
 Resident Claude's console (`app=resident`) answers SCREEN with the paused
 program's screen as it keeps it (`which` doesn't matter: there is one; in

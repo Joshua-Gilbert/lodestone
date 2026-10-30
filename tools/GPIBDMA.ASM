@@ -18,8 +18,8 @@
 ;  it with something this program doesn't set).
 ;
 ;  Chip-level, like GPIBTEST: it resets the 7210 and pulses IFC at the
-;  start and the end.  Reboot before running CLAUDE or TM5000 afterwards
-;  (Lodestone's built-in driver doesn't know what was done to the chip).
+;  start and the end.  Then GRIDGPIB, if loaded, sets the chip up again
+;  (INT 60h AH=01h: rearm.inc), since it doesn't know what was done to it.
 ;  Prints to the screen and appends the same to GPIBDMA.TXT.
 ; =====================================================================
 cpu 286
@@ -169,6 +169,7 @@ start:  cld
 .end:   call    d_recover
         mov     dx, s_reboot
         call    out_str
+        call    d_rearm                 ; (X55: the driver's IMR2, IFC, REN)
         call    save_log
         mov     ax, 4C00h
         int     21h
@@ -443,6 +444,7 @@ save_log:                               ; append logbuf to GPIBDMA.TXT
 .x:     ret
 
 %include "direct.inc"
+%include "rearm.inc"
 
 ; ---- data -------------------------------------------------------------
 s_title  db 13,10,'GPIBDMA 1.0 - the 7210 and the DMA channels.  Instrument at address $'
@@ -462,7 +464,7 @@ s_idq    db 'ID?',0
 s_answer db '  it answers ID?: $'
 s_noans  db '  no answer to ID? at that address: try GPIBDMA n with another instrument',13,10,'$'
 s_nobus  db '  the bus did not take the commands (cable? controller?)',13,10,'$'
-s_reboot db 13,10,'Done.  Reboot before CLAUDE or TM5000.  Also in GPIBDMA.TXT.',13,10,'$'
+s_reboot db 13,10,'Done.  GRIDGPIB, if loaded, set up again.  Also in GPIBDMA.TXT.',13,10,'$'
 s_logname db 'GPIBDMA.TXT',0
 
 RBUFLEN equ 80

@@ -30,6 +30,16 @@ pn14    db 'ticks, the screen$'
 s_prof  db 'CLPROF.TXT', 0
 s_ph    db 'CLAUDE profile (PIT counts of 838 ns)', 13, 10
         db 'bucket                            total ms   times   mean us', 13, 10, '$'
+s_phe:
+PR_ROW  equ 34 + 8 + 8 + 10 + 2         ; one bucket's line in prof_write
+PR_TXT  equ s_phe - 1 - s_ph + PB_N * PR_ROW   ; CLPROF.TXT's length (X53)
+%assign pn_i 0
+%rep PB_N - 1
+%assign pn_j pn_i + 1
+        times -(pn%[pn_j] - pn%[pn_i] > 35) db 0  ; (a name past 34 widens its line)
+%assign pn_i pn_j
+%endrep
+        times -(s_prof - pn%[pn_i] > 35) db 0
 
 prof_start:                             ; PIT channel 0 to mode 2, the clock on
         push    es

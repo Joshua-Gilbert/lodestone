@@ -5661,6 +5661,13 @@ def t_tname():
     check('a task with no name: its window opens untitled (%r; the argument %r ends with the blank), the close box asks '
           '"%s"; it ends, the window with it' % (rn[0], rn[1], rn[4]), rn[0] == '' and rn[1] == rn[2] and rn[1].endswith(' ')
           and rn[4].rstrip() == 'Close: Confirm to end' and rn[5] == 0 and not k.crashed, rn)
+    # TERM.RUN started by hand (X52): no task to show, so it says how it is opened, in the band till a key
+    if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)
+    k.select('TERM.RUN'); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+    b = k.band() or ['']
+    k.key(ktest.ESC, settle=False); k.run_for(0.5)
+    check('TERM.RUN started by hand from the Executive: no window, and the band says how one opens (%r)' % b[0],
+          b[0] == 'Opened by Return or CODE-P on a text program' and mb('mw_n') == 0 and not k.crashed, (b, mb('mw_n')))
 
 QUITRUN = os.path.join(HERE, 'QUITRUN.RUN')
 

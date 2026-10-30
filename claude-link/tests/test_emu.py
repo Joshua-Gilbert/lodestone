@@ -203,6 +203,27 @@ def test_run_tmp_only():
     check(h)
 
 
+def test_run_capture_unwritable():
+    """X51: the capture file made before the program: TEMP naming a directory that is not there answers
+    'path not found', and nothing runs (the shell's redirection would have failed the command, or from a
+    protected floppy waited for a key)."""
+    h = EmuHarness([reply(('tool', 'grid_command', {'command': 'DIR'})), reply(('text', 'Done.'))], mode='auto',
+                   files={'A:\\CFG.C': CFG_C})
+    h.boot()
+    env = h.m.u16(h.claude_psp, 0x2C)
+    raw = bytes(h.m.rd(env, 0, 1024))
+    end = raw.find(b'\0\0')
+    keep = [v for v in raw[:end].split(b'\0') if v.upper().startswith(b'COMSPEC=')]
+    new = b'\0'.join(keep + [b'TEMP=A:\\NOPE']) + b'\0\0' + raw[end + 2:raw.index(b'\0', end + 4) + 1]
+    h.m.wr(env, 0, new)
+    assert h.connect(), ('no connection', h.m.crash)
+    assert h.turn('what is on the disk?')
+    res = results(h, 1)[0]
+    assert res.get('is_error') and 'path not found' in str(res['content']), res
+    assert not any('/C DIR' in str(l) for l in h.m.log), h.m.log      # (the shell never started for it)
+    check(h)
+
+
 def test_gpib_query():
     h = start([reply(('tool', 'gpib', {'action': 'query', 'address': 29, 'command': 'ID?'})),
                reply(('tool', 'gpib', {'action': 'write', 'address': 6, 'command': 'FREQ 1E6'})),

@@ -1,4 +1,4 @@
-bus_sim on /dev/pts/7
+bus_sim on /dev/pts/0
 A  THRUTEST's steps, thrutest handler, address 10
   PASS  1 bus init (IFC, REN)
   PASS  2 empty address 30: nobody listens
@@ -40,6 +40,12 @@ H  a message without EOI (ended by UNL), and NRFD flow control when the Pi stall
   PASS  ...and NRFD was held meanwhile (frames wait, nothing dropped)
 I  the daemon stalls 5.8 s (Pico times out and goes offline), then must bring it back by itself
   PASS  back online without a restart
+M  core 1's liveness guard (the watchdog is petted only while core 1 moves)
+  PASS  idle: core 0's pokes bring core 1 round its loop
+  PASS  core 1 stopped 3 s: still petted
+  PASS  core 1 stopped 6 s: the watchdog no longer petted
+  PASS  core 1 moving again: petted again
+  PASS  and the bridge still answers
 E  the Pi daemon stops
   PASS  bridge offline once the port closes
   PASS  bridge drives no bus line
@@ -123,7 +129,7 @@ L  the port fails the ping thread's write while the main loop reads it (a fake p
   PASS  only the main loop closed the port and told the control clients
   PASS  a PING write in flight when the main loop closes the port: the daemon reconnects
   PASS  ... and its ping thread lives on and PINGs the new port
-final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '214', 'cmds': '3036', 'rx': '124280', 'tx': '193748', 'polls': '143', 'lost': '0', 'holds': '2', 'fights': '0', 'late': '0', 'held': '15', 'held_void': '9', 'dropped0': '534'}
+final Pico counters: {'online': '0', 'addr': '7', 'L': '0', 'T': '0', 'gen': '215', 'cmds': '3056', 'rx': '124292', 'tx': '193811', 'polls': '143', 'lost': '0', 'holds': '2', 'fights': '0', 'late': '0', 'held': '15', 'held_void': '9', 'dropped0': '546'}
   PASS  no events lost in the Pico
 
-111 of 111 checks passed
+116 of 116 checks passed

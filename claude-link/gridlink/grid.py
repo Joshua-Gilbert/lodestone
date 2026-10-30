@@ -241,12 +241,13 @@ class Grid:
         if st not in (0, 0xF5) or not r: raise GridError(errtext(st), st)
         return bool(r[0] & 1), (r[1:] if st == 0 else None)
 
-    def gpib(s, op, addr, data=b'', flags=0, timeout_ms=2000, maxlen=4096):
+    def gpib(s, op, addr, data=b'', flags=0, timeout_ms=2000, maxlen=4096, wait=None):
         """op/addr/flags (1 byte each), per-byte timeout ms (2), largest
-        reply (2), then data to send."""
+        reply (2), then data to send.  `wait`: seconds the Pi waits for the
+        answer (default the GPIB time-out and 30 s for the GRiD)."""
         maxlen = max(1, min(int(maxlen), 15000))
         args = struct.pack('<BBBHH', op, addr, flags, min(timeout_ms, 65535), maxlen) + bytes(data)
-        st, r = s.call(glp.OP_GPIB, args, timeout=timeout_ms / 1000.0 + 30)
+        st, r = s.call(glp.OP_GPIB, args, timeout=wait or timeout_ms / 1000.0 + 30)
         if st == 0xF2: raise GridError(errtext(st), st)
         if st: raise GridError('GPIB: ' + GPIB_ERRORS.get(st, 'error %d' % st), st)
         return r

@@ -336,9 +336,12 @@ release:                                ; hand the instruments back
         out     dx, al
         mov     dx, s_done
         call    puts
-quit:   call    log_close
+quit:   call    d_rearm                 ; (X55: the driver's IMR2, IFC, REN)
+        call    log_close
         mov     ax, 4C00h
         int     21h
+
+%include "rearm.inc"
 
 ; =====================================================================
 ;  uPD7210 primitives
