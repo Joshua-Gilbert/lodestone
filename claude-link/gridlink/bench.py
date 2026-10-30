@@ -33,6 +33,25 @@ def link(sock, **args):
     return json.loads(msg)
 
 
+def undo(fn, *args, **kw):
+    """A finally's clean-up.  If it fails while an earlier error is already on its way out, say so and let the
+    earlier error through: that one is the cause, and the clean-up's would hide it."""
+    first = sys.exc_info()[1]
+    try:
+        fn(*args, **kw)
+    except (Exception, SystemExit) as e:
+        if first is None: raise
+        print('(and the clean-up failed too: %s)' % e, file=sys.stderr)
+
+
+def at_least(lo):
+    def check(v):
+        n = int(v)
+        if n < lo: raise argparse.ArgumentTypeError('%d is below %d' % (n, lo))
+        return n
+    return check
+
+
 def timeline(tr, title, top=14):
     """Where a copy's time went: the gaps between successive events (the Pi's frames, the GRiD's frames as
     gridlink got them, the bridge's GPIB events as they reached the Pi), summed by what came before and after."""
@@ -63,13 +82,16 @@ def copies(sock, a, src, back, data, quiet=False):
     n = len(data)
     held = lambda: link(sock).get('stats', {}).get('tx_held', 0)
     h0 = held()
-    up, _ = traced(sock, a, 'Pi -> GRiD', 'grid_change_files', {'action': 'copy_to_grid', 'path': src, 'to': a.to})
-    h1 = held()
-    down, _ = traced(sock, a, 'GRiD -> Pi', 'grid_change_files',
-                     {'action': 'copy_from_grid', 'path': a.to, 'to': back})
-    h2 = held()
+    try:
+        up, _ = traced(sock, a, 'Pi -> GRiD', 'grid_change_files',
+                       {'action': 'copy_to_grid', 'path': src, 'to': a.to})
+        h1 = held()
+        down, _ = traced(sock, a, 'GRiD -> Pi', 'grid_change_files',
+                         {'action': 'copy_from_grid', 'path': a.to, 'to': back})
+        h2 = held()
+    finally:                                   # a failed copy must not leave the file on the GRiD
+        undo(tool, sock, 'grid_change_files', {'action': 'delete', 'path': a.to})
     with open(back, 'rb') as f: ok = f.read() == data
-    tool(sock, 'grid_change_files', {'action': 'delete', 'path': a.to})
     if quiet: return up, down, ok
     note = lambda k, what: ', %d %s held in the bridge' % (k, what) if k else ''
     print('Pi -> GRiD: %d bytes in %.2f s = %.1f KB/s%s' % (n, up, n / up / 1024, note(h1 - h0, 'frames')))
@@ -80,14 +102,14 @@ def copies(sock, a, src, back, data, quiet=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='gridlink.bench', description=__doc__.split('\n')[0])
-    ap.add_argument('--size', type=int, default=64, help='KB to send each way (default 64)')
+    ap.add_argument('--size', type=at_least(1), default=64, help='KB to send each way (default 64)')
     ap.add_argument('--to', default='M:\\BENCH.BIN', help='the GRiD file (default M:\\BENCH.BIN)')
-    ap.add_argument('--trips', type=int, default=20, help='small requests for the round-trip time (default 20)')
+    ap.add_argument('--trips', type=at_least(1), default=20, help='small requests for the round-trip time (default 20)')
     ap.add_argument('--dir', default='~/grid', help="Claude Code's directory on the Pi (default ~/grid)")
     ap.add_argument('--trace', action='store_true', help='show where each copy spends its time')
-    ap.add_argument('--idle', type=int, default=5, help='calls after the link has gone idle (default 5, 0: none)')
+    ap.add_argument('--idle', type=at_least(0), default=5, help='calls after the link has gone idle (default 5, 0: none)')
     ap.add_argument('--usb', action='store_true', help="time the Pi -> Pico USB with PINGs, before the copies")
-    ap.add_argument('--prof', action='store_true', help="CLAUDEP's CLPROF.TXT for the two copies alone")
+    ap.add_argument('--prof', action='store_true', help="CLAUDEP's CLPROF.TXT for the copies alone (with --sweep, all of the sweep's)")
     ap.add_argument('--nohold', action='store_true', help='no held replies: every answer from the Pi (to compare)')
     ap.add_argument('--sweep', help='Pi -> GRiD payload sizes to try, comma-separated (each capped by what the '
                                     'GRiD and the bridge take); the link goes back to its own size after')
@@ -110,7 +132,7 @@ def main(argv=None):
     try:
         return run(sock, a, src, back, data, n)
     finally:
-        if a.nohold: link(sock, hold=1)
+        if a.nohold: undo(link, sock, hold=1)
 
 
 def run(sock, a, src, back, data, n):
@@ -145,13 +167,15 @@ def run(sock, a, src, back, data, n):
     ok = True
     if not a.sweep:
         if a.prof: link(sock, prof='start')
-        ok = copies(sock, a, src, back, data)
-        if a.prof:
-            link(sock, prof='stop')
-            print('CLPROF.TXT on the GRiD: the two copies alone')
+        try:
+            ok = copies(sock, a, src, back, data)
+        finally:
+            if a.prof: undo(link, sock, prof='stop')
+        if a.prof: print('CLPROF.TXT on the GRiD: the two copies alone')
     else:
         caps = [int(x) for x in a.sweep.split(',') if x.strip()]
         print('%8s %8s %12s %12s' % ('asked', 'frames', 'Pi->GRiD', 'GRiD->Pi'))
+        if a.prof: link(sock, prof='start')
         try:
             for c in caps:
                 got = link(sock, frame_cap=c)['maxpay']
@@ -160,7 +184,9 @@ def run(sock, a, src, back, data, n):
                 print('%8d %8d %9.1f KB/s %9.1f KB/s%s' % (c, got, n / up / 1024, n / down / 1024,
                                                           '' if good else '  COPY DIFFERENT'))
         finally:
-            link(sock, frame_cap=0)
+            undo(link, sock, frame_cap=0)
+            if a.prof: undo(link, sock, prof='stop')
+        if a.prof: print('CLPROF.TXT on the GRiD: the sweep\'s copies alone')
     for p in (src, back):
         try: os.unlink(p)
         except OSError: pass

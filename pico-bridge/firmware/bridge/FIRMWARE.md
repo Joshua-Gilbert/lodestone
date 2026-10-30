@@ -24,7 +24,12 @@ goes to the Raspberry Pi over USB.
   - during IFC;
   - while it reboots, because R1–R6 hold the safe state.
 
-  If core 0 ever hangs, the 2 s hardware watchdog resets the chip into that safe state.
+  If core 0 ever hangs, the 2 s hardware watchdog resets the chip into that safe state. Core 0 pets it only
+  while core 1 moves too (`link_engine_ok`): once a second it pokes core 1 with a request, which brings it
+  round its main loop and bumps `engine_alive`, and after 5 s with no movement it logs that and stops petting.
+  So a core 1 that faults or hangs, its bus lines driven as it left them, is reset within ~7 s. (A handshake
+  the 1520 leaves half done for that long, DAV held with the bridge listening, resets it too: the bus is then
+  released.)
 - **Online**, it is an ordinary device at its address:
   - it takes part in every command handshake (ATN);
   - it listens when sent its MLA, and passes the message to the Pi;

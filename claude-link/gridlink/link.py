@@ -129,7 +129,8 @@ class Link:
         s.clock = time.monotonic              # (the emulator tests give theirs: the rings' timing is the GRiD's)
         s.frame_cap = None                    # a smaller limit for tests and gridlink.bench
         s.trace = None                        # a deque while gridlink.bench --trace runs: (time, event)
-        s.spec = None                         # the reply held in the bridge for the GRiD's next frame (_speculate)
+        s.spec = None                         # the reply held in the bridge for the GRiD's next frame (_speculate),
+                                              #  with that frame's seq
         s.last_kind = None                    # the kind of our last answer
         s.drop_types = set()                  # a held answer went for a frame we never read: drop that message
         s.holding = True                      # (tests and gridlink.bench --nohold switch it off)
@@ -347,6 +348,18 @@ class Link:
             s.source.delivered()            # a new frame: our last answer arrived
         s.rx_new += 1                       # (new frames: not a NAK, a resend; TermSession.saver_on)
         s.last_g = f.seq
+        if spec is not None and f.seq != spec[5] and s.t.hold_used():
+            # The bridge used the hold on the frame it was for, but that frame never reached us whole (a tty
+            # overrun inside its DATA): this is the GRiD's next one.  The held reply did go out, so it is
+            # committed, and this frame is answered as usual below.  A held NOP's fragment we never read
+            # leaves its message with a hole: dropped, as idle_check does.
+            s.stats['held_late'] += 1
+            s.log('link: a held reply was used on a frame that did not reach gridlink: answering this one')
+            if t != glp.G_HELLO:                # (a HELLO has started over: nothing to commit)
+                s._commit(spec)
+                if spec[0] is None:
+                    s.reasm.parts.pop(spec[1], None); s.drop_types.add(spec[1])
+            spec = None
         msg = s.reasm.add(f)
         if msg and msg[0] in s.drop_types:
             s.drop_types.discard(msg[0]); msg = None
@@ -410,7 +423,7 @@ class Link:
                 seq = (f.seq + 1) & 0xFF
                 frame = glp.encode(glp.P_NOP, (s.pi_seq + 1) & 0xFF, seq, b'', fl=True)
                 if hold(bytes([glp.SYNC, f.kind, seq, s.pi_seq]), frame, glp=True):
-                    s.spec = (None, f.type, 0, glp.P_NOP, frame)
+                    s.spec = (None, f.type, 0, glp.P_NOP, frame, seq)
                 return
             if f.more: return                   # (the GRiD's message isn't finished: it doesn't POLL)
             if s.source is not None and s.last_q and s.source.ready(): return   # (the source's turn next)
@@ -421,11 +434,11 @@ class Link:
             expect = glp.encode(glp.G_POLL, seq, s.pi_seq, b'', fl=s.rx_fl)
             frame = glp.encode(kind, (s.pi_seq + 1) & 0xFF, seq, chunk, fl=s.rx_fl)
             if hold(expect, frame):
-                s.spec = (cur, off, len(chunk), kind, frame)
+                s.spec = (cur, off, len(chunk), kind, frame, seq)
 
     def _commit(s, spec):
         """The held reply answered the GRiD's POLL: what _answer would have done."""
-        cur, off, n, kind, frame = spec
+        cur, off, n, kind, frame, _ = spec
         with s.lock:
             if cur is not None and s.cur is cur and cur[2] == off:
                 if off + n >= len(cur[1]): s.cur = None

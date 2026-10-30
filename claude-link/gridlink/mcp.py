@@ -50,7 +50,12 @@ HPGL_TIMEOUT = 15000            # per-byte ms for a write to the plotter's Nano 
                                 #  it is sent only what its serial poll says fits)
 PLOT_WAIT = 0.5                 # s between polls while the Nano's buffer is full (the GRiD is free then)
 PLOT_MIN = 64                   # bytes worth a write (less is sent only as the drawing's end)
-PLOT_STALL = 180                # s with no progress before a background plot gives up
+PLOT_POLL_WAIT = 5              # s a background plot's serial poll waits for the GRiD (its own 1 s GPIB
+                                #  time-out and a frame or two), not the 31 s of a call: it holds the tools'
+                                #  lock meanwhile, and every other tool call waits behind it
+PLOT_STALL = 200                # s with no progress before a background plot gives up: past the Nano's own
+                                #  STATUS_TIMEOUT (180 s), so a lost status reply falls back to timed pacing
+                                #  in the Nano and the plot goes on, not ends here at the same moment
 PICTURE_TOOLS = ('grid_plot', 'grid_image', 'grid_pick')     # no GRiD request: not one at a time
 
 GPIB_PROPS = {
@@ -430,9 +435,11 @@ def grid_path(a, k='path', wild=False):
 class GridTools:
     """The tools, on gridlink's side of the socket (a Grid to call).  Pi
     paths are kept inside root, the Term directory."""
-    def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}, viewer=None, away=lambda: False):
+    def __init__(s, grid, cfg=None, bridge=7, root=None, hello=lambda: {}, viewer=None, away=lambda: False,
+                 available=lambda tool: None):
         s.G = grid; s.cfg = cfg; s.bridge = bridge
         s.away = away                       # the user is back in the program (resident Claude's background)
+        s.available = available             # why a tool can't run now (TermSession.why_not), for a background plot
         s.root = root or getattr(cfg, 'term_dir', None) or '~/grid'
         s.hello = hello                     # the GRiD's last HELLO (the paused program's name)
         s.viewer = viewer                   # plotview.Viewer: pictures on the GRiD's screen
@@ -850,6 +857,8 @@ class PlotJob(threading.Thread):
         n = len(s.data); t = (s.t1 or time.monotonic()) - s.t0
         head = {'sending': 'sending', 'drawing': 'all sent; the pen is finishing',
                 'done': 'done', 'failed': 'stopped', 'cancelled': 'cancelled'}[s.state]
+        if s.cancel and s.state in ('sending', 'drawing'):
+            head = 'cancelling (the request out to the GRiD ends first)'
         r = 'Plot at GPIB %d: %s. %d of %d bytes sent (%d%%) in %d writes, %d polls, %d s.' % (
             s.addr, head, s.sent, n, 100 * s.sent // max(n, 1), s.writes, s.polls, t)
         if s.error: r += ' ' + s.error
@@ -857,8 +866,14 @@ class PlotJob(threading.Thread):
 
     def gpib(s, op, data=b'', flags=0):
         with s.tools.lock:
+            # (asked inside the lock, as ToolServer does: a RUN holding it keeps the GRiD from polling, and
+            #  that is not "not connected")
+            why = s.tools.available('grid_plotter')
+            if why: raise GridError(why)        # not asked: a GRiD that isn't there would hold the lock
             if s.tools.away(): raise GridError('the GRiD is back in its program')
-            return s.tools.G.gpib(op, s.addr, data, flags=flags, timeout_ms=s.tmo if op == glp.GP_WRITE else 1000)
+            if op == glp.GP_WRITE:
+                return s.tools.G.gpib(op, s.addr, data, flags=flags, timeout_ms=s.tmo)
+            return s.tools.G.gpib(op, s.addr, data, flags=flags, timeout_ms=1000, wait=PLOT_POLL_WAIT)
 
     def poll(s):
         s.polls += 1
@@ -902,7 +917,7 @@ class PlotJob(threading.Thread):
                     if (s.poll() or 0) & 0x80: break  # idle: all passed on to the plotter
                 except GridError: pass
                 time.sleep(1)
-            s.state = 'done'
+            s.state = 'cancelled' if s.cancel else 'done'
         finally:
             s.t1 = time.monotonic()
 
