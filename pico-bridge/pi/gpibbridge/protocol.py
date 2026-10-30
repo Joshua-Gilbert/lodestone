@@ -2,14 +2,19 @@
 
 Every frame is COBS-encoded and ends with a 0x00 byte.  Decoded, a frame is one type byte and its fields,
 little-endian.  These constants mirror firmware/bridge/host_link.h and gpib_engine.h.
+
+claude-link's gridlink/pico.py speaks the same protocol (gridlink's own transport).  This copy stays here, kept
+in step with that one by hand, so gpib-bridge installs on its own (/opt/gpib-bridge, gpibctl's PYTHONPATH):
+the constants, the encoder and the port finder are the same as pico.py's.
 """
 import struct
 
 PROTO_VERSION = 1
+PICO_VID = 0x2E8A
 
 # Pi -> Pico
 F_HELLO_REQ = 0x01
-F_CONFIG = 0x02      # u8 address 0..30, u8 online
+F_CONFIG = 0x02      # u8 address 0..30, u8 flags (CF_*): the daemon sets CF_ONLINE alone (it drives STB itself)
 F_TX = 0x03          # u16 gen, u8 flags (bit 0 EOI on the last byte), data
 F_STB = 0x04         # u8 status byte, u8 rsv
 F_PING = 0x05
@@ -22,15 +27,18 @@ F_LOG = 0x84
 F_PONG = 0x85
 F_CREDIT = 0x87      # u32 tx entries consumed
 
+CF_ONLINE = 0x01     # (CF_AUTO_RSV 0x02 and CF_QUIET 0x04 are gridlink's: the bridge raises SRQ itself)
 DF_EOI = 0x01
 DF_END = 0x02
 TXF_EOI = 0x01
-DATA_CHUNK = 240
+DATA_CHUNK = 240     # data bytes per DATA frame from the Pico
+TX_CHUNK = 512       # per TX frame to it: 4 + 512 + COBS's 3 fit the firmware's 600-byte input buffer
 
 EVENTS = {
     0x10: "LISTEN", 0x11: "UNLISTEN", 0x12: "TALK", 0x13: "UNTALK", 0x14: "TALK_WAIT",
     0x15: "DCL", 0x16: "SDC", 0x17: "GET", 0x18: "GTL", 0x19: "LLO", 0x1A: "IFC",
     0x1B: "REN", 0x1C: "SPOLL", 0x1D: "TX_DONE", 0x1E: "ONLINE", 0x1F: "OFFLINE",
+    0x20: "RX_END", 0x21: "TX_IN", 0x22: "SRQ",      # (fw 2026-10-23b: for gridlink's trace)
 }
 
 PONG_FIELDS = ("online", "address", "listener", "talker", "ren", "llo", "spms", "rsv", "gen",
@@ -40,21 +48,16 @@ PONG_FMT = "<8BH9I"
 
 
 def cobs_encode(data: bytes) -> bytes:
-    out = bytearray([0])
-    code_at, code = 0, 1
-    for b in data:
-        if b == 0:
-            out[code_at] = code
-            code_at, code = len(out), 1
-            out.append(0)
-        else:
-            out.append(b)
-            code += 1
-            if code == 0xFF:
-                out[code_at] = code
-                code_at, code = len(out), 1
-                out.append(0)
-    out[code_at] = code
+    """COBS, and the 0x00 that ends the frame: each run between zeros as its length + 1 and the run (254 bytes
+    at most: then FFh, and the run goes on).  By runs, not bytes: ~20 times faster in Python (pico.py's)."""
+    out = bytearray()
+    for run in bytes(data).split(b"\0"):
+        while len(run) >= 254:
+            out.append(255)
+            out += run[:254]
+            run = run[254:]
+        out.append(len(run) + 1)
+        out += run
     out.append(0)
     return bytes(out)
 
@@ -80,22 +83,31 @@ class Deframer:
     def __init__(self):
         self.buf = bytearray()
         self.bad = 0
+        self.skip = False                      # an overlong frame's rest: dropped up to its 0x00
 
     def feed(self, data: bytes):
         frames = []
-        for b in data:
-            if b == 0:
-                if self.buf:
-                    try:
-                        frames.append(cobs_decode(bytes(self.buf)))
-                    except ValueError:
-                        self.bad += 1
+        runs = bytes(data).split(b"\0")          # (by runs, not bytes: each but the last ended by a 0x00)
+        for i, run in enumerate(runs):
+            if self.skip:
+                if i == len(runs) - 1:
+                    break
+                self.skip = False
+                continue
+            self.buf += run
+            if len(self.buf) > 4096:            # no frame is this long: resynchronise at the next 0x00
                 self.buf.clear()
-            else:
-                self.buf.append(b)
-                if len(self.buf) > 4096:     # no frame is this long: resynchronise at the next 0x00
-                    self.buf.clear()
+                self.bad += 1
+                self.skip = i == len(runs) - 1
+                continue
+            if i == len(runs) - 1:
+                break
+            if self.buf:
+                try:
+                    frames.append(cobs_decode(bytes(self.buf)))
+                except ValueError:
                     self.bad += 1
+                self.buf.clear()
         return frames
 
 
@@ -105,7 +117,8 @@ def hello_req():
 
 
 def config(address: int, online: bool):
-    return cobs_encode(bytes([F_CONFIG, address, 1 if online else 0]))
+    """CONFIG's flags byte: CF_ONLINE or 0 (no auto service request, no quiet: the daemon drives STB)."""
+    return cobs_encode(bytes([F_CONFIG, address, CF_ONLINE if online else 0]))
 
 
 def tx(gen: int, data: bytes, eoi: bool):
