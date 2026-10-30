@@ -20,7 +20,8 @@
 ;  cycles, nothing answers them).  Channel 3 is masked again after every
 ;  message and on any error.
 ;
-;  Chip-level like GPIBDMA: reboot before CLAUDE or TM5000 afterwards.
+;  Chip-level like GPIBDMA; at the end GRIDGPIB, if loaded, sets the chip up
+;  again (INT 60h AH=01h: rearm.inc).
 ;  Appends what it prints to GPIBXFER.TXT.
 ; =====================================================================
 cpu 286
@@ -90,6 +91,7 @@ start:  cld
         call    d_recover
         mov     dx, s_done
         call    out_str
+        call    d_rearm                 ; (X55: the driver's IMR2, IFC, REN)
         call    save_log
         mov     ax, 4C00h
         int     21h
@@ -679,6 +681,7 @@ save_log:
 .x:     ret
 
 %include "direct.inc"
+%include "rearm.inc"
 
 s_title db 13,10,'GPIBXFER 1.4 - 16 x 4096-byte messages each way, echoed by the device at $'
 s_pio   db 13,10,'CPU loop:',13,10,'$'
@@ -705,7 +708,7 @@ s_cnt   db '  8237 channel 3: bytes left $'
 s_adr   db ', address $'
 s_st    db 'h, status $'
 s_first db 'h; buffer starts $'
-s_done  db 13,10,'Done.  Reboot before CLAUDE or TM5000.  Also in GPIBXFER.TXT.',13,10,'$'
+s_done  db 13,10,'Done.  GRIDGPIB, if loaded, set up again.  Also in GPIBXFER.TXT.',13,10,'$'
 s_logname db 'GPIBXFER.TXT',0
 
 RBUFLEN equ 80
