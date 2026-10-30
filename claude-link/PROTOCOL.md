@@ -251,7 +251,9 @@ found as NAME.COM, then NAME.EXE. Anything else goes through COMSPEC /C: a
 .BAT or any other extension, a wildcard, a name not found, a directory
 (one named like NAME.COM gives DOS's error instead). The output file
 is %TEMP%\CLAUDE.OUT (or %TMP%, or X:\CLAUDE.OUT on the current drive);
-the Pi reads it and deletes it.
+the Pi reads it and deletes it. The GRiD makes the file before the program
+starts: if it can't (R:, a protected floppy, a missing directory), the RUN
+answers that DOS error and nothing runs.
 
 Key scripts for RUN: two bytes per key, ASCII then scan code (the AX word
 INT 16h returns); FFh FFh n = wait n × 55 ms; FFh FEh 00h = take a screen

@@ -2688,6 +2688,14 @@ build_exec:
         mov     si, outname
         call    copy_tail_str
         jc      .long
+        mov     dx, outname             ; the file made here first (X51): R:,
+        xor     cx, cx                  ;  a protected floppy or a full disk
+        mov     ah, 3Ch                 ;  answers its DOS error (83 through
+        int     21h                     ;  our INT 24h), where the shell's
+        jc      .r                      ;  redirection would fail the command
+        xchg    bx, ax                  ;  or wait for a key
+        mov     ah, 3Eh
+        int     21h
 .fin:   mov     ax, di
         sub     ax, tail+1
         mov     [tail], al
@@ -2697,7 +2705,7 @@ build_exec:
         ret
 .long:  mov     al, 0F3h
         stc
-        ret
+.r:     ret
 
 copy_tail_str:                          ; DS:SI -> ES:DI up to NUL; CF if too long
 .l:     lodsb
