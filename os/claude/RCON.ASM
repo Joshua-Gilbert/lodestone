@@ -1100,7 +1100,10 @@ rf_request:
         mov     byte [rq_over], 1
         jmp     short .m
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
-.p:     add     di, reqbuf
+.p:     add     di, reqbuf              ; (by words, P8: rxbuf even, the
+        shr     cx, 1                   ;  fragments' data at +6 and 2 KB
+        rep     movsw                   ;  each, so both ends even)
+        adc     cx, cx
         rep     movsb
         mov     [rq_len], ax
 .m:     mov     al, [pf_kind]
@@ -1589,6 +1592,7 @@ txq         resb TXQN * 10
 txlen       resw 1
 nakframe    resb 8
 rxn         resw 1
+            alignb  2                   ; (P8: the REQUEST gather goes by words)
 rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_more     resb 1                      ; a REQUEST's frames still coming
