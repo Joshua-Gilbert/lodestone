@@ -271,7 +271,9 @@ INFO and SETTIME), F7h DOS busy (resident Claude's console, a file request: the
 paused program is inside a DOS call other than the kernel's key wait,
 such as its own INT 24h handler; anything from MT's segment with
 MULTITASK=1, its key wait and its INT 24h prompt; or the program is
-DEFRAG, which writes the disk itself; GPIB requests still run), FFh unknown request.
+DEFRAG, which writes the disk itself; under MS-DOS, every DOS key wait,
+whose code is in IO.SYS, not the kernel's segment; GPIB requests still
+run), FFh unknown request.
 
 Resident Claude's console (`app=resident`) answers SCREEN with the paused
 program's screen as it keeps it (`which` doesn't matter: there is one; in
