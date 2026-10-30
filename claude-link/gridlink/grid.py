@@ -40,6 +40,14 @@ class GridError(Exception):
         super().__init__(msg); s.code = code
 
 
+def is_plain_query(cmd):
+    """A GPIB command that only asks: one command ending in '?', no ';', no control characters (a CR or LF inside
+    would end a command the instrument takes on its own).  The chat agent sends these without asking, and
+    gpib_measure takes only these."""
+    c = cmd.strip()
+    return c.endswith('?') and ';' not in c and not any(ord(ch) < 32 or ord(ch) == 127 for ch in c)
+
+
 def errtext(code):
     return DOS_ERRORS.get(code, 'DOS error %d' % code)
 
