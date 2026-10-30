@@ -2,16 +2,15 @@
 # Build Lodestone: boot sector, installer, kernel (with listing and symbol
 # map), the start-up picture LODE.PIC, LCMD.COM (the shell), DEFRAG.COM, HEADCLN.COM, CALC.COM, the .RUN programs
 # (apps/, with mkrun.py), the font files (fonts/), the printer drivers (drivers/), the test programs and BENCH.  Then:
-# python3 tests/test_kernel.py, tests/test_apps.py, and bench/run_bench.py ROM-image
+# python3 tests/test_kernel.py, tests/test_apps.py, and bench/run_bench.py ROM-image.  (On Windows: under
+# WSL.  The BUILD.BAT files were retired by the 2026-10-26 audit's H13: they had fallen behind and made
+# no ROM images)
 set -e
 cd "$(dirname "$0")/src"
 nasm -f bin -o BOOT.BIN BOOT.ASM
 nasm -f bin -o ROMBOOT.BIN ROMBOOT.ASM
 nasm -f bin -o LODEBOOT.COM LODEBOOT.ASM
-printf '[map symbols LODE.MAP]\n%%include "LODE.ASM"\n' > _m.asm
-nasm -f bin -o LODE.SYS _m.asm -l LODE.LST
-rm -f _m.asm
-python3 ../mkmt.py LODE.SYS LODE.MAP LODEMT.SYS      # multitasking's part: LODEMT.SYS
+sh ../kbuild.sh                 # the kernel: LODE.SYS, LODE.MAP, LODE.LST, LODEMT.SYS (multitasking's part)
 nasm -f bin -o LODE.PIC SPLASH.ASM
 nasm -f bin -o LCMD.COM LCMD.ASM
 nasm -f bin -o DEFRAG.COM DEFRAG.ASM

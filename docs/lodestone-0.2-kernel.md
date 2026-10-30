@@ -137,7 +137,7 @@ The full list is in `lodestone-floppy-dev.md`.
 - The boot sector loads any kernel size (it follows the FAT chain), so a new LODE.SYS doesn't need LODEBOOT; only a format does.
 
 ## Source (`os/` in the repo)
-`src\LODE.ASM` includes the modules below. Build everything with `build.sh` / `BUILD.BAT` (NASM). `kbuild.sh` builds the kernel alone, with `LODE.MAP` and `.LST`. A `-dNOTC` build has no cache.
+`src\LODE.ASM` includes the modules below. Build everything with `build.sh` (NASM; on Windows under WSL). `kbuild.sh` builds the kernel alone, with `LODE.MAP` and `.LST`. A `-dNOTC` build has no cache.
 
 | Module | What |
 |---|---|
