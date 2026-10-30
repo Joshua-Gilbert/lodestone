@@ -130,7 +130,8 @@
 
 #define GPIB_ADDRESS    1       // our GPIB address (0-30): Lodestone's [plotter] address
 #define LISTEN_ONLY     false   // true: take every data byte on the bus (never on a shared bus)
-#define DEBUG_ENABLED   true    // USB serial debug output
+#define DEBUG_ENABLED   false   // USB serial debug output: each command echoed (an LB's text at 9600
+                                //  baud holds the bus ~200 ms), status-mode changes; `?` shows the state
 
 #define PLOTTER_ADDR    'A'     // the 4662's serial address character (rear-panel switches)
 #define STATUS_MARGIN   48      // bytes kept free in the 4662's buffer, below what it reports
