@@ -675,6 +675,7 @@ class Audit:
         s.wk = seg * 16 + k.Y['mt_wkey']     # (a task waiting at INT 16h for a key)
         s.pss = None
         s.lo, s.go, s.cur = s.swa, seg * 16 + k.Y['mt_load.go'], None    # (mt_cur, when known: see watch)
+        s.stale = False                                                   # (rules found s.cur wrong: said once)
         s.fd, s.fdw, s.due = seg * 16 + k.Y['mt_fdrain'], seg * 16 + k.Y['mt_fdrain.w'], False
         s.inject, s.injected, s.open, s.nested = None, 0, {}, collections.Counter()
         # (IRQ 13 at mt_fdrain, when inject() says; open drains: SS -> the SP and where its call returns; switches
@@ -693,6 +694,9 @@ class Audit:
     def rules(s, cs, ip, fl, ss):
         pc, Y = s.k.pc, s.k.Y
         cur = pc.rd(s.seg, Y['mt_cur'], 1)[0]
+        if s.cur is not None and s.cur != cur and not s.stale:     # (watch's mt_cur, kept from mt_load.go: wrong
+            s.stale = True                                          #  if mt_cur had another writer, or mt_load
+            check('Audit: mt_cur as kept since mt_load.go (%d), as read (%d)' % (s.cur, cur), False)  # another way out)
         reg = pc.u16(s.seg, Y['mt_tab'] + cur * MT_ENT + 4)
         ui, psp, root = pc.u16(0x60, Y['ui_seg']), pc.u16(0x60, Y['cur_psp']), pc.u16(0x60, Y['root_psp'])
         ts = pc.u16(s.seg, Y['mt_tsrs'])                # (Resident Claude's stub, MT_TSR: only at its HLT, in a
