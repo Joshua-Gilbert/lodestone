@@ -995,17 +995,41 @@ class EmuHarness:
                  claude_com=CLAUDE_COM, mapfile=None, baud=115200, term=None, web=None, bridge='ar488',
                  frame_cap=None):
         s.m = m = Machine()
+        s.tmp = tempfile.mkdtemp(prefix='gridemu-')
+        s.wire(m.chip.devices, bridge, patched, baud, script, mode, term, web, frame_cap)
+        img = open(claude_com, 'rb').read()
+        m.fs['A:\\CLAUDE.COM'] = bytearray(img)
+        m.fs['A:\\GRIDGPIB.COM'] = bytearray(open(GRIDGPIB_COM, 'rb').read())
+        if os.path.exists(TESTKEY_COM): m.fs['A:\\TESTKEY.COM'] = bytearray(open(TESTKEY_COM, 'rb').read())
+        m.fs['A:\\COMMAND.COM'] = bytearray(b'\xcd\x20' + bytes(100))
+        for k, v in (files or {}).items(): m.fs[m.norm(k)] = bytearray(v)
+        s.sym = symbols(mapfile or os.path.splitext(claude_com)[0] + '.MAP')
+        mp = mapfile or os.path.splitext(claude_com)[0] + '.MAP'     # (CLAUDE 1.8 draws the block elements A1h-AEh)
+        s.glyph_end = 0xAF if 'GF_QUAD' in open(mp, errors='replace').read() else 0xA1
+        s.font = Font(img, s.sym['font'] - 0x100, s.glyph_end - 0x20)
+        s.font_img = img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + (s.glyph_end - 0x20) * 16]
+        s.answer = answer
+        s.args = args
+        s.shots = []
+
+    def wire(s, devices, bridge, patched, baud, script, mode, term, web=None, frame_cap=None):
+        """The bridge model at GPIB address 7 on the machine's bus (`devices`), and gridlink on its Pi end: the
+        router with a program in a pty (term: Term, no API key), else chat.  s.m and s.tmp come first.  bridge:
+        'ar488' (the patched Nano or, patched=False, the stock one), 'pico', 'pico-hold' (fw 2026-10-23c's held
+        replies) or 'pico-quiet' (fw 2026-10-24's quiet SRQ, resident Claude's M4).  (EmuHarness's and
+        claude_kernel's KernelHarness's)"""
+        m = s.m
         s.pending = []
-        if bridge in ('pico', 'pico-hold'):
-            s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi, holds=bridge == 'pico-hold')
+        if bridge in ('pico', 'pico-hold', 'pico-quiet'):
+            s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi, holds=bridge == 'pico-hold',
+                               quiet=bridge == 'pico-quiet')
             s.transport = PicoModelTransport(s.nano)
         else:
             s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
             s.transport = ModelTransport(s.nano, patched, baud=baud)
-        m.chip.devices[7] = s.nano
+        devices[7] = s.nano
         s.nano.wake = m.schedule                  # (a HLT ends when the bridge's SRQ can rise: IRQ 5)
         m.on_due = s.pump_pi
-        s.tmp = tempfile.mkdtemp(prefix='gridemu-')
         cfg = Config()
         cfg.workdir = os.path.join(s.tmp, 'work'); cfg.memory_dir = os.path.join(s.tmp, 'mem')
         cfg.sessions_dir = os.path.join(s.tmp, 'sessions'); cfg.mode = mode; cfg.web = False
@@ -1031,20 +1055,6 @@ class EmuHarness:
         s.link.frame_cap = frame_cap
         s.link.clock = lambda: s.m.us / 1e6        # (ring_check's times: the GRiD's, simulated)
         if hasattr(s.transport, 'proto'): s.transport.proto.clock = s.link.clock
-        img = open(claude_com, 'rb').read()
-        m.fs['A:\\CLAUDE.COM'] = bytearray(img)
-        m.fs['A:\\GRIDGPIB.COM'] = bytearray(open(GRIDGPIB_COM, 'rb').read())
-        if os.path.exists(TESTKEY_COM): m.fs['A:\\TESTKEY.COM'] = bytearray(open(TESTKEY_COM, 'rb').read())
-        m.fs['A:\\COMMAND.COM'] = bytearray(b'\xcd\x20' + bytes(100))
-        for k, v in (files or {}).items(): m.fs[m.norm(k)] = bytearray(v)
-        s.sym = symbols(mapfile or os.path.splitext(claude_com)[0] + '.MAP')
-        mp = mapfile or os.path.splitext(claude_com)[0] + '.MAP'     # (CLAUDE 1.8 draws the block elements A1h-AEh)
-        s.glyph_end = 0xAF if 'GF_QUAD' in open(mp, errors='replace').read() else 0xA1
-        s.font = Font(img, s.sym['font'] - 0x100, s.glyph_end - 0x20)
-        s.font_img = img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + (s.glyph_end - 0x20) * 16]
-        s.answer = answer
-        s.args = args
-        s.shots = []
 
     # Pi side plumbing
     def _to_pi(s, data, t):
