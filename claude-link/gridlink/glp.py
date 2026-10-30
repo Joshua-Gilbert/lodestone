@@ -80,26 +80,9 @@ GLYPH_TEXT = {0x7F: '\u2588', 0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x
 GLYPH_TEXT.update({g: ch for ch, g in GL_QUADS.items()})
 
 
-def _make_table():
-    t = []
-    for i in range(256):
-        c = i << 8
-        for _ in range(8):
-            c = ((c << 1) ^ 0x1021) if c & 0x8000 else (c << 1)
-        t.append(c & 0xFFFF)
-    return t
-
-_CRC = _make_table()
-
 def crc16(data, crc=0xFFFF):
-    """CRC-16/CCITT-FALSE: binascii's C crc_hqx (the table loop below cost ~0.3 ms a 2 KB frame)."""
+    """CRC-16/CCITT-FALSE: binascii's C crc_hqx (a table loop in Python cost ~0.3 ms a 2 KB frame)."""
     return binascii.crc_hqx(data, crc)
-
-
-def crc16_table(data, crc=0xFFFF):
-    for b in data:
-        crc = ((crc << 8) & 0xFFFF) ^ _CRC[(crc >> 8) ^ b]
-    return crc
 
 
 def fletcher16(data):
@@ -196,17 +179,6 @@ def line_time_ms(nbytes, baud):
 
 
 # ---- messages ------------------------------------------------------------
-def fragments(mtype, body, maxpay):
-    """Split a message body into (kind, payload) frames of at most maxpay."""
-    body = bytes(body)
-    if not body: return [(mtype, b'')]
-    out = []
-    for i in range(0, len(body), maxpay):
-        last = i + maxpay >= len(body)
-        out.append((mtype | (0 if last else MORE), body[i:i + maxpay]))
-    return out
-
-
 class Reassembler:
     def __init__(s): s.parts = {}
     def add(s, frame):
@@ -226,10 +198,6 @@ def time_text(tm): return '%02d:%02d' % (tm >> 11, (tm >> 5) & 63)              
 def asciiz(s):
     if isinstance(s, str): s = s.encode('cp437', 'replace')
     return bytes(s) + b'\0'
-
-def split_z(data, n=1):
-    parts = bytes(data).split(b'\0', n)
-    return parts
 
 def kv_lines(data):
     d = {}

@@ -922,35 +922,6 @@ class PlotJob(threading.Thread):
             s.t1 = time.monotonic()
 
 
-def hpgl_parts(data, most):
-    """Split HP-GL into parts of at most `most` bytes, each ending after a
-    command's ';' (or a label's ETX), never inside an LB label, whose text
-    may hold ';'.  A command longer than `most` becomes a part of its own,
-    split where it must be: the Nano reads a stream, so that still works."""
-    ends = []                           # where each command ends (index after it)
-    i, n = 0, len(data)
-    while i < n:
-        j = i
-        while j < n and data[j] in b' \r\n\t;': j += 1
-        if data[j:j + 2].upper() == b'LB':
-            k = data.find(b'\x03', j + 2)
-            i = n if k < 0 else k + 1
-            if i < n and data[i:i + 1] == b';': i += 1
-        else:
-            k = data.find(b';', j)
-            i = n if k < 0 else k + 1
-        ends.append(i)
-    parts, start, last = [], 0, 0
-    for e in ends:
-        if e - start > most and last > start:          # close the part at the last command end
-            parts.append(data[start:last]); start = last
-        while e - start > most:                         # one command over `most`
-            parts.append(data[start:start + most]); start += most
-        last = e
-    if start < n: parts.append(data[start:])
-    return parts
-
-
 def picture_block(bits):
     """A picture as the GRiD shows it (lit amber on dark), for Claude."""
     import base64, io
