@@ -174,7 +174,7 @@ def scan(name, ata, sim=400, stop_at=None):
         k.settle()
     else:
         k.run_file('HDSCAN.COM', sim)
-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    files = fatcheck.read_files(k.pc.drives[0].img)
     rep = files.get('A:\\HDSCAN.TXT', b'').decode('latin-1')
     print('   --- %s (%.1f s simulated, %.1f s here) ---' % (name, (k.pc.us - t0) / 1e6, time.time() - w0))
     for l in rep.splitlines(): print('   ' + l)

@@ -4163,7 +4163,7 @@ def t_base():
     k.key(ktest.ESC); k.run_for(0.5)
     bq2 = k.band()
     k.key(ktest.ESC); k.run_for(0.5)
-    sub = A.fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\SUB\\OTHER.TXT')
+    sub = A.fatcheck.read_files(k.pc.drives[0].img).get('A:\\SUB\\OTHER.TXT')
     check('Copy OTHER.TXT to SUB, Replace Ask: the Executive asks (%s; its destination %r); CODE-K meanwhile: the '
           'calculator, its band not the question (%s), the destination kept (%r); ESC: the question back; ESC: SUB\'s '
           'OTHER.TXT as it was' % (bq0[:1], dq0, bq1[:1], dq), bq0[:1] == ['OTHER.TXT is there already: Confirm to replace it']

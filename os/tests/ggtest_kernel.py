@@ -21,7 +21,7 @@ def run(out_img=os.path.join(__import__('tempfile').gettempdir(), 'lodestone-gg.
     t0 = k.pc.us
     out = k.run_file('GGTEST.COM', 600)
     sim_s = (k.pc.us - t0) / 1e6
-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    files = fatcheck.read_files(k.pc.drives[0].img)
     log = files.get('A:\\GGTEST.TXT', b'').decode('cp437')
     return k, out, log, sim_s
 
