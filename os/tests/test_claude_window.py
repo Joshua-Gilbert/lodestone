@@ -46,7 +46,8 @@ class Win(CK.KernelHarness):
         s.probe = []                             # (win_probe: was MT_PUB's first AL 0? win_front_task called)
         wft, watch = s.sym['win_front_task'], s.m.watch
         def w(addr):
-            if s.m.r('ip') == wft and s.m.rd(s.m.r('cs'), 0x100, 32) == s.img[:32]: s.probe.append(s.m.us)
+            if (addr - wft) & 15 == 0 and s.m.r('ip') == wft and s.m.rd(s.m.r('cs'), 0x100, 32) == s.img[:32]:
+                s.probe.append(s.m.us)          # (IP read only on 1 block in 16: the &15 test)
             watch(addr)
         s.m.watch = w
 
