@@ -852,6 +852,49 @@ def t_write_clip():
     drag(k, *at(0, 0), *at(2, 0)); k.key(CODE['V'])
     check('a drag over "XY" (at the start), CODE-V: replaced by the 5 bytes (the room the gap\'s and the selection\'s, not where it ends)',
           wtext(k, ws) == b'XYThe' + T and k.band()[0].startswith('Type, or choose a command'), (wtext(k, ws)[:20], k.band()))
+    # X46: the paste read into the gap first, then the selection erased, from either end; its read failing: nothing lost
+    k = write_open(mouse=True)
+    drag(k, *at(4, 0), *at(9, 0)); k.key(CODE['C'])           # "quick"
+    drag(k, *at(8, 2), *at(4, 2)); k.key(CODE['V'])           # (right to left: the selection after the cursor, the gap)
+    ta = T.replace(b'lazy', b'quick')
+    ra = (wtext(k, ws) == ta, wb('mode'), has(k, 'Line 3 of 5   Column 10'))
+    drag(k, *at(10, 2), *at(15, 2)); k.key(CODE['V'])         # (left to right: before it) "dog."
+    tb = ta.replace(b'dog.', b'quick')
+    rb = (wtext(k, ws) == tb, wb('mode'), has(k, 'Line 3 of 5   Column 16'))
+    check('a drag from right to left over "lazy", CODE-V: replaced by "quick", the cursor after it (column 10); one from left to '
+          'right over "dog.": the same (column 16)', ra == (True, 0, True) and rb == (True, 0, True), (ra, rb, wtext(k, ws)))
+    raw = bytes(k.pc.drives[0].img)
+    ent = [raw[19 * 512 + 32 * i:19 * 512 + 32 * i + 32] for i in range(224)]
+    cl = [struct.unpack_from('<H', e, 26)[0] for e in ent if e[:11] == b'CLIP    $$$'][0]
+    k.pc.drives[0].bad = {33 + cl - 2}; k.pc.drives[0].changed = True     # (its sector unreadable; the cache let go)
+    drag(k, *at(0, 4), *at(4, 4)); k.key(CODE['V'], settle=False)        # "last"
+    k.pc.run_until(lambda: any('rror' in l or 'ail' in l for l in k.band()) or k.pc.crash, 10)
+    bf = list(k.band())
+    for _ in range(4):                                         # (a Retry/Fail question first, if the UI asks one)
+        if not any('?' in l for l in k.band()): break
+        k.key('f' if any('Fail' in l for l in k.band()) else ktest.ESC)
+    k.key(ktest.ESC)
+    k.pc.drives[0].bad = set()
+    check('the clipboard\'s file unreadable (CLIP.$$$, no EMS), a drag over "last", CODE-V: said (%r), and the text as it was'
+          % bf[:1], wtext(k, ws) == tb and not k.crashed, (bf, wtext(k, ws)))
+    # with 3 bytes of gap left: a paste that needs the selection's room too still replaces it (the selection first)
+    k = write_open(mouse=True)
+    cap = k.pc.u16(k.useg, k.u16('run_base') + ws['cap'])
+    full = b''.join(b'%05d ' % i + b'x' * 58 + b'\n' for i in range((cap - 3) // 65)) + b'y' * ((cap - 3) % 65)
+    k = write_open('FULL.TXT', full, mouse=True)
+    def sdrag(c0, c1, r):                                      # (slowly: each move redraws 64 KB's view)
+        point(k, *at(c0, r)); k.pc.mouse_move(0, 0, 1); k.pc.run_for(1.0)
+        k.pc.mouse_move((c1 - c0) * 8 & 0xFF, 0, 1); k.pc.run_for(1.0); k.pc.mouse_move(0, 0, 0); k.pc.run_for(1.0); k.settle()
+    sdrag(0, 5, 0); k.key(CODE['C'])                           # "00000"
+    sdrag(0, 4, 1); k.key(CODE['V'])                           # over "0000" (4 bytes: 3 + 4 >= 5)
+    want = full.replace(b'00001 ', b'000001 ', 1)
+    f1 = wtext(k, ws) == want
+    sdrag(0, 1, 2); k.key(CODE['V'])                           # over one byte: 2 + 1 < 5
+    b2 = k.band()[0]
+    k.key(ktest.ENTER)
+    check('a %d-byte text (3 bytes of gap): "00000" pasted over a 4-byte selection: replaced; over a 1-byte one: "%s", '
+          'nothing changed' % (len(full), b2), f1 and b2 == 'Out of memory: the text is as long as Write can hold'
+          and wtext(k, ws) == want, (f1, b2, len(wtext(k, ws))))
 
 # ---------------------------------------------------------------------
 def t_memory():
