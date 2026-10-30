@@ -1,0 +1,79 @@
+; ATTR.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+fn 3C C0.TXT 0000 -> ok
+fn 43 C0.TXT 0000 -> attr 20
+fn 3C C1.TXT 0001 -> ok
+fn 43 C1.TXT 0000 -> attr 21
+fn 3C C2.TXT 0002 -> ok
+fn 43 C2.TXT 0000 -> attr 22
+fn 3C C4.TXT 0004 -> ok
+fn 43 C4.TXT 0000 -> attr 24
+fn 3C C6.TXT 0006 -> ok
+fn 43 C6.TXT 0000 -> attr 26
+fn 3C C7.TXT 0007 -> ok
+fn 43 C7.TXT 0000 -> attr 27
+fn 3C C10.TXT 0010 -> err 05
+fn 43 C10.TXT 0000 -> err 02
+fn 3C C20.TXT 0020 -> ok
+fn 43 C20.TXT 0000 -> attr 20
+fn 3C C21.TXT 0021 -> ok
+fn 43 C21.TXT 0000 -> attr 21
+fn 3C C27.TXT 0027 -> ok
+fn 43 C27.TXT 0000 -> attr 27
+fn 3C C40.TXT 0040 -> err 05
+fn 43 C40.TXT 0000 -> err 02
+fn 3C C80.TXT 0080 -> err 05
+fn 43 C80.TXT 0000 -> err 02
+fn 3C C100.TXT 0100 -> ok
+fn 43 C100.TXT 0000 -> attr 20
+fn 3C C8000.TXT 8000 -> ok
+fn 43 C8000.TXT 0000 -> attr 20
+fn 5B N0.TXT 0000 -> ok
+fn 43 N0.TXT 0000 -> attr 20
+fn 5B N1.TXT 0001 -> ok
+fn 43 N1.TXT 0000 -> attr 21
+fn 5B N10.TXT 0010 -> err 05
+fn 43 N10.TXT 0000 -> err 02
+fn 5B N20.TXT 0020 -> ok
+fn 43 N20.TXT 0000 -> attr 20
+fn 5B N40.TXT 0040 -> err 05
+fn 43 N40.TXT 0000 -> err 02
+fn 5B N80.TXT 0080 -> err 05
+fn 43 N80.TXT 0000 -> err 02
+fn 43 T0.TXT 0000 -> attr 00
+fn 3C T0.TXT 0000 -> ok
+fn 43 T0.TXT 0000 -> attr 20
+fn 43 T2.TXT 0000 -> attr 00
+fn 3C T2.TXT 0002 -> ok
+fn 43 T2.TXT 0000 -> attr 22
+fn 43 TH.TXT 0000 -> attr 02
+fn 3C TH.TXT 0002 -> ok
+fn 43 TH.TXT 0000 -> attr 22
+fn 43 W.TXT 0000 -> attr 00
+fn 01 W.TXT 0000 -> ok
+fn 43 W.TXT 0000 -> attr 20
+fn 43 O.TXT 0000 -> attr 00
+fn 02 O.TXT 0000 -> ok
+fn 43 O.TXT 0000 -> attr 00
+fn 3C NOSUCH\X.TXT 0010 -> err 05
+fn 5B T0.TXT 0010 -> err 05
+fn 3C A.B 0010 -> err 05
+fn 3C A.B 0000 -> err 05
+fn 5A A.B\ 0000 -> ok
+fn 5A A.B\ 0001 -> ok
+fn 5A A.B\ 0020 -> ok
+fn 5A NOSUCH\ 0000 -> err 03
+fn 5A E.F\ 0000 -> ok
+fn 4E E.F\*.* 0027 -> attr 20
+fn 5A G.H\ 0001 -> ok
+fn 4E G.H\*.* 0027 -> attr 21
+fn 5A A.B\ 0002 -> ok
+fn 5A A.B\ 0004 -> ok
+fn 5A A.B\ 0027 -> ok
+fn 3C A.B\NUL 0010 -> err 05
+fn 3C NUL 0010 -> err 05
+fn 3C NUL 0040 -> err 05
+fn 5B NUL 0010 -> err 05
+fn 3D LPT1 0000 -> ok
+fn 3D COM1 0000 -> ok
+fn 3D PRN 0000 -> ok
+fn 3D AUX 0000 -> ok
