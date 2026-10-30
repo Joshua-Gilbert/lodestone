@@ -331,6 +331,7 @@ class GridSim:
                 held = getattr(s, 'plot_held', 0)                     # bytes in its buffer
                 if gop == glp.GP_SPOLL:
                     if old_nano: return s.reply(rid, 1)
+                    if getattr(s, 'plot_mute', False): return            # a test: the GRiD never answers
                     held = max(0, held - getattr(s, 'plot_drain', 60))  # the pen works between polls
                     s.plot_held = held
                     room = min(63, max(0, 240 - held) // 4)
