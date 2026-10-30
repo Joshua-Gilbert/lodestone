@@ -5015,6 +5015,33 @@ def t_term():
                   'Shift-CODE-P is)', st[1] != 0 and (st[1], 1, 'LCMD.COM') in st[0] and k.pc.mode() == 3
                   and k.pc.rd(seg, k.Y['mw_n'], 1)[0] == 0, (st, k.pc.mode()))
 
+def t_wait_bg():
+    print('== LCMD\'s WAIT behind, in a terminal window: a ^C typed into its window ends it, and one typed to the front '
+          'task stays that task\'s (X34)')
+    k = boot('mt_wb.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT)
+    scr = lambda: '\n'.join(l for y, l in k.ocr())
+    def typ2(text, t=1.0):
+        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+    ring = lambda: [k.pc.u16(0x40, a) for a in range(k.pc.u16(0x40, 0x1A), k.pc.u16(0x40, 0x1C), 2)]
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)                  # LCMD in a window: task 1, behind
+    typ2('start /w mtspin.com 182 wa.txt')                              # task 2 computes, behind too (10 s)
+    typ2('wait 2', 1.0)
+    st0 = tstate(k)
+    k.key(0x2E03, settle=False); k.run_for(1.5)                          # ^C typed into the window
+    o1, st1 = scr(), tstate(k)
+    check('WAIT 2 in LCMD\'s window, behind (%s): a ^C typed into the window ends it (^C, the prompt again), the task '
+          'it waited for still there' % (st0[0],), [n for i, t, n in st0[0]] == ['Executive', 'LCMD.COM', 'MTSPIN.COM']
+          and re.search(r'wait 2\s*\n\s*\^C\s*\n\s*A:\\>', o1) and st1[0] == st0[0], (st0, st1, o1[-300:]))
+    typ2('wait 2', 1.0)
+    k.key('x', settle=False); k.run_for(0.5)                            # a key in its ring (not a ^C)
+    front(k, 2)                                                         # MTSPIN in front, full screen, computing
+    k.key(0x2E03, settle=False); k.run_for(1.5)                          # ^C typed to it: in the BIOS's ring
+    r, st2 = ring(), tstate(k)
+    check('... WAIT 2 again, a key typed into the window, MTSPIN brought to the front: a ^C typed to MTSPIN stays in '
+          'its ring (%s), WAIT behind doesn\'t take it, still waiting' % ['%04X' % w for w in r],
+          0x2E03 in r and st2[1] == 2 and st2[0] == st0[0], (r, st2))
+    k.run_for(10.0)                                                     # MTSPIN ends: WAIT does, at the window
+
 def t_tgfx():
     print('== terminal windows (T3): a windowed program\'s graphics full screen, and back to its window with a text mode')
     k = boot('mt_tg.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTSC)
@@ -6612,7 +6639,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
