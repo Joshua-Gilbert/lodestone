@@ -394,10 +394,20 @@ class Link:
                     left = end - time.monotonic()
                     if left <= 0: break
                     # the source may become ready by time alone (output settling)
-                    s.lock.wait(min(left, 0.005) if s.source is not None else left)
+                    s.lock.wait(s._source_wait(left))
             kind, payload = s._next_payload()
         s._answer(kind, payload)
         s._speculate(f)
+
+    def _source_wait(s, left):
+        """How long a held answer sleeps before it looks again: till the hold's end (`left`), or till the
+        source is due to be ready by time alone (Term's ready_at: its echo settled, 12 ms after the last pty
+        byte, not up to 5 ms after that), else 5 ms, as for a source that can't say."""
+        if s.source is None: return left
+        at = getattr(s.source, 'ready_at', None)
+        at = at() if at is not None else None
+        if at is None: return min(left, 0.005)
+        return min(left, max(at - time.monotonic(), 0.0005))     # (never a busy loop)
 
     # ---- held replies (bridge fw 2026-10-23c) ---------------------------
     # While a message goes to the GRiD in fragments, its next frame is all but certain: having read a MORE
