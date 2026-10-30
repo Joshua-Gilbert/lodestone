@@ -11,6 +11,7 @@
 ; nasm -f bin -o MTFAST.COM MTFAST.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         mov     si, 81h
         call    num
         mov     [ticks], ax
@@ -138,18 +139,7 @@ word_:  call    blanks
 .x:     dec     si
         mov     byte [di], 0
         ret
-hex4:   mov     cx, 4
-.h:     rol     ax, 4
-        push    ax
-        and     al, 0Fh
-        add     al, '0'
-        cmp     al, '9'
-        jbe     .s
-        add     al, 7
-.s:     stosb
-        pop     ax
-        loop    .h
-        ret
+        HEX4
 
 old     dd      0
 calls   dd      0
