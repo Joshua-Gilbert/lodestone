@@ -8,6 +8,7 @@
 ; nasm -f bin -o MTHOOK.COM MTHOOK.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         jmp     init
 old     dd      0
 h:      sti
@@ -36,13 +37,7 @@ init:   mov     si, 81h
         and     al, 0DFh
         cmp     al, 'S'
         je      .s
-        mov     ax, 3508h
-        int     21h
-        mov     [old], bx
-        mov     [old + 2], es
-        mov     ax, 2508h
-        mov     dx, h
-        int     21h
+        HOOK    08h, old, h
         jmp     .t
 .s:     mov     ax, 2562h
         mov     dx, h62

@@ -21,6 +21,7 @@
 ; nasm -f bin -i ../src/ -o MTKILL.COM MTKILL.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
 %include "MTAPI.INC"
         mov     sp, stk_top
         mov     ah, 4Ah                 ; (only its own memory: C runs a child)
@@ -286,40 +287,12 @@ mine_:  call    .ask
         ret
 
 ; AX as 4 hex digits at DI
-hex4:   mov     cx, 4
-.h:     rol     ax, 4
-        push    ax
-        and     al, 0Fh
-        add     al, '0'
-        cmp     al, '9'
-        jbe     .s
-        add     al, 7
-.s:     stosb
-        pop     ax
-        loop    .h
-        ret
+        HEX4
 
 ; AX in decimal at DI
-dec_out:
-        mov     bx, 10
-        xor     cx, cx
-.d:     xor     dx, dx
-        div     bx
-        push    dx
-        inc     cx
-        or      ax, ax
-        jnz     .d
-.o:     pop     ax
-        add     al, '0'
-        stosb
-        loop    .o
-        ret
+        DEC_OUT
 
-blanks: lodsb
-        cmp     al, ' '
-        je      blanks
-        dec     si
-        ret
+        BLANKS
 
 n       dw      0
 fh      dw      0
@@ -333,7 +306,7 @@ s_prog  db      'MTKILL.COM', 0
 ks      times   64 db 'k'
 line    db      40, 0
         times   41 db 0
-pb      dw      0, tail, 0, 5Ch, 0, 6Ch, 0      ; (EXEC's: env, tail, FCBs)
+        EXECBLK pb   ; (EXEC's: env, tail, FCBs)
 tail    times   128 db 0
 recs    times   MT_REC db 0
 fname   times   80 db 0

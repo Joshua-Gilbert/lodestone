@@ -8,6 +8,7 @@
 ; nasm -f bin -o MTMODE.COM MTMODE.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         mov     ax, 40h
         cmp     byte [80h], 0
         je      .m
@@ -101,11 +102,7 @@ pat:    mov     ax, di                  ; DI's byte: (DI * 5) XOR (DI >> 8)
         add     ax, dx
         xor     al, dh
         ret
-blanks: lodsb
-        cmp     al, ' '
-        je      blanks
-        dec     si
-        ret
+        BLANKS
 hexd:   lodsb                           ; a hex digit -> AL
         cmp     al, '9'
         ja      .a

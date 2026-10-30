@@ -9,6 +9,7 @@
 ; nasm -f bin -o MTIRQK.COM MTIRQK.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         mov     si, 81h
 .b:     lodsb
         cmp     al, ' '
@@ -42,11 +43,7 @@ org 100h
         and     al, 7Fh
         or      al, ah
         out     21h, al
-        push    ds
-        lds     dx, [old]
-        mov     ax, 250Fh
-        int     21h
-        pop     ds
+        UNHOOK  0Fh, old
         mov     ah, 3Ch
         xor     cx, cx
         mov     dx, fname
