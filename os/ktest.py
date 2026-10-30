@@ -20,11 +20,15 @@ class Syms:
     UI symbols (sections ui/uibss/uiboot, offsets in the UI segment)."""
     UI = ('ui', 'uibss', 'uiboot')
     def __init__(s, path=os.path.join(HERE, 'src', 'LODE.MAP')):
-        s.by_name, s.sec = {}, {}
+        s.by_name, s.sec, s.equs = {}, {}, {}
         by_addr = {False: {}, True: {}}
         sec = None
         for line in open(path):
             if line.startswith('---- Section'): sec = line.split()[2]
+            if sec is None:                             # (the EQUs come first, "No Section": one value each)
+                m = re.match(r"([0-9A-F]{8})\s+(\S+)\s*$", line)
+                if m: s.equs.setdefault(m.group(2), int(m.group(1), 16))
+                continue
             m = re.match(r"\s*([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$", line)
             if m and sec:
                 a = int(m.group(2), 16); n = m.group(3)
@@ -34,6 +38,9 @@ class Syms:
         s.by_addr = by_addr[False]; s.addrs = sorted(s.by_addr)
         s.ui_by_addr = by_addr[True]; s.ui_addrs = sorted(s.ui_by_addr)
     def __getitem__(s, n): return s.by_name[n]
+    def equ(s, n):
+        """An EQU's value (a table's field offset, a size), so a test reads KMT's layout instead of copying it."""
+        return s.equs[n]
     def is_ui(s, n): return s.sec.get(n) in s.UI
     def lin(s, n, useg=None):
         """n's linear address, as pcemu's block hook passes it: .text's at 0060h; a UI symbol's in the UI
@@ -46,6 +53,15 @@ class Syms:
         addrs, d = (s.ui_addrs, s.ui_by_addr) if ui else (s.addrs, s.by_addr)
         i = bisect.bisect_right(addrs, off) - 1
         return hex(off) if i < 0 else '%s+%x' % (d[addrs[i]], off - addrs[i])
+
+
+_equs = (None, None)
+def equ(name, path=os.path.join(HERE, 'src', 'LODE.MAP')):
+    """An EQU from LODE.MAP, without a machine (read again whenever the map is rebuilt)."""
+    global _equs
+    t = os.path.getmtime(path)
+    if _equs[0] != t: _equs = (t, Syms(path))
+    return _equs[1].equ(name)
 
 
 _font = None
