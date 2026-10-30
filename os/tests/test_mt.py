@@ -652,6 +652,7 @@ class Audit:
         s.wf = seg * 16 + k.Y['mt_wfront']   # (a background task waiting at INT 10h to be in front)
         s.wk = seg * 16 + k.Y['mt_wkey']     # (a task waiting at INT 16h for a key)
         s.pss = None
+        s.lo, s.go, s.cur = s.swa, seg * 16 + k.Y['mt_load.go'], None    # (mt_cur, when known: see watch)
         s.fd, s.fdw, s.due = seg * 16 + k.Y['mt_fdrain'], seg * 16 + k.Y['mt_fdrain.w'], False
         s.inject, s.injected, s.open, s.nested = None, 0, {}, collections.Counter()
         # (IRQ 13 at mt_fdrain, when inject() says; open drains: SS -> the SP and where its call returns; switches
@@ -685,10 +686,14 @@ class Audit:
     def watch(s, a):
         if s.prev: s.prev(a)
         k, pc = s.k, s.k.pc
-        if s.track:
+        if s.lo <= a <= s.go:                           # (mt_cur's one writer is in mt_load: unknown from
+            s.cur = pc.rd(s.seg, k.Y['mt_cur'], 1)[0] if a == s.go else None    # mt_switch on, read again at
+        had = s.track                                   #  mt_load.go, the one way back into a task)
+        if had and (s.cur is None or s.cur == had[3]):  # (another task running: nothing to read)
             ss, sp, cs = pc.r('ss'), pc.r('sp'), pc.r('cs')
             new, s.pss = ss != s.pss, ss
-            if new or ss != s.track[0] or pc.rd(s.seg, k.Y['mt_cur'], 1)[0] != s.track[3]: pass
+            cur = s.cur if s.cur is not None else pc.rd(s.seg, k.Y['mt_cur'], 1)[0]
+            if new or ss != s.track[0] or cur != s.track[3]: pass
             elif sp >= s.track[1]: s.track = None       # (just loaded, between MOV SS and MOV SP; another task's,
             elif cs < 0xA000 and cs not in s.track[4]:  #  or MT's own stack; the frame gone: back in the caller,
                 s.track = None                          #  or in its code)
@@ -697,6 +702,7 @@ class Audit:
             ss = pc.r('ss')                                 #  target, its SP above the return address)
             if ss in s.open and s.open[ss][1] == a and pc.r('sp') == s.open[ss][0] + 2: del s.open[ss]
         if a == s.fd:
+            if s.inject is None: s.due = False; return      # (the drains' bookkeeping: t_fpu's IRQ 13 only)
             ss = pc.r('ss')
             again = ss in s.open                            # (a drain inside this task's: no second IRQ)
             if not again: s.open[ss] = (pc.r('sp'), s.seg * 16 + pc.u16(ss, pc.r('sp')))
@@ -714,6 +720,7 @@ class Audit:
             if len(no) == 1: s.only[no[0]] += 1
         elif a in (s.at, s.wf, s.wk):
             ss, sp = pc.r('ss'), pc.r('sp')
+            if had: s.pss = ss                              # (as each block's read keeps it, the reads skipped or not)
             path = s.ret.get(pc.u16(ss, sp), '?')
             if a == s.wf and path != 'v10': path = '?'
             if a == s.wk and path != 'i16': path = '?'
