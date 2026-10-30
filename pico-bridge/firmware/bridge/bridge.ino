@@ -59,7 +59,8 @@ void setup() {
   memset((void *)&SH, 0, sizeof SH);
   link_init();
   Serial.begin(115200);       // USB CDC: the baud rate is ignored
-  rp2040.wdt_begin(2000);     // if core 0 ever hangs, the chip resets into the safe state (bus released)
+  rp2040.wdt_begin(2000);     // if core 0 ever hangs, or core 1 (link_engine_ok), the chip resets into the safe
+                              // state (bus released)
   engine_go = true;
 }
 
@@ -76,8 +77,8 @@ void loop() {
   static uint8_t buf[CFG_TUD_CDC_RX_BUFSIZE];
   static uint32_t lastActivity, ledAt;
   static uint32_t lastRx, lastTx;
-  rp2040.wdt_reset();
   uint32_t now = millis();
+  if (link_engine_ok(now)) rp2040.wdt_reset();
   bool open = (bool)Serial;            // DTR: the Pi has the port open
   // All the Pi has sent, in one tud_cdc_read.  Serial.readBytes went through read() a byte at a time, and every
   // read() took the USB mutex and ran tud_task.  A 2 KB reply took ~18 ms from the Pi's write to the 1520's

@@ -19,6 +19,8 @@ pseudo-terminal, and runs:
   K  a reply read twice at once, after replies dropped as stale on arrival (TALK_WAIT on CREDIT's scale)
   L  the daemon on a fake port whose write fails in the ping thread while the main loop reads it, and one the
      main loop closes while a PING write is in flight
+  M  core 1's liveness guard: core 1 keeps moving while the bus is idle and while it waits to talk, and when it
+     stops, core 0 stops petting the watchdog
 
 usage: run_sim_tests.py          (writes sim/host/sim_results.txt)
 """
@@ -259,6 +261,24 @@ def stall_recovery(sim, d):
     sim.write(10, b"*IDN?\n")
     r, got, end = sim.read(10)
     check("back online without a restart", got == BENCH_ID, repr(got))
+
+
+def engine_guard(sim):
+    say("M  core 1's liveness guard (the watchdog is petted only while core 1 moves)")
+    sim.write(10, b"*IDN?\n")
+    sim.read(10)                                     # (online, idle: core 1 waits on the bus for a request)
+    a0 = int(sim.cmd("engine")[1]); time.sleep(2.5); ok, a1 = (int(x) for x in sim.cmd("engine"))
+    check("idle: core 0's pokes bring core 1 round its loop", ok == 1 and a1 != a0, f"ok={ok} {a0}->{a1}")
+    sim.cmd("freeze1 7000")
+    time.sleep(3.0)
+    check("core 1 stopped 3 s: still petted", sim.cmd("engine")[0] == "1")
+    time.sleep(3.0)
+    check("core 1 stopped 6 s: the watchdog no longer petted", sim.cmd("engine")[0] == "0")
+    time.sleep(2.0)
+    check("core 1 moving again: petted again", sim.cmd("engine")[0] == "1")
+    sim.write(10, b"*IDN?\n")
+    r, got, end = sim.read(10)
+    check("and the bridge still answers", got == BENCH_ID, repr(got))
 
 
 def offline(sim, d):
@@ -914,6 +934,7 @@ def main():
         big(sim)
         no_eoi_and_flow(sim, d)
         stall_recovery(sim, d)
+        engine_guard(sim)
         d = offline(sim, d)
         d.stop()
         scpi(sim)
