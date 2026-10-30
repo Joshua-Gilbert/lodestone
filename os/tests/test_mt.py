@@ -4307,9 +4307,9 @@ def t_menu():
     bclick(k, 4, 340)               # ("LCMD.COM ended" waits in the Executive: a click reads it)
     bclick(k, 300, 300)             # (MENUTEST's window: it in front again)
     cm, n0, d0 = mb('mw_cur'), len(au.ev), v16('dn')
-    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05)
-    for i in range(10):
-        k.pc.mouse_move((4 if i % 2 else -4) & 0xFF, 0, 1); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.06)      # (held over a tick, and a packet a tick, as below: at any
+    for i in range(10):                               #  phase; 50 ms, under a tick, passed by the phase only)
+        k.pc.mouse_move((4 if i % 2 else -4) & 0xFF, 0, 1); k.pc.run_for(0.06)
     nh = len(au.ev)
     k.pc.run_for(1.5)                               # (held still: the mouse sends nothing)
     hold = sum(1 for e in au.ev[nh:] if e['sw'] and e['task'] == 0)
