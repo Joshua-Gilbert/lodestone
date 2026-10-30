@@ -3007,6 +3007,20 @@ def t_gpib_tools():
           'AH=0Ch the bytes resident it said; /U then gives INT 61h and INT 0Dh back',
           res and m and m.groups() == ('0123', '6115', '%04X' % int(res.group(1))) and 'Unloaded' in o3
           and k.pc.rd(0, 0x61 * 4, 4) == i61 and k.pc.rd(0, 0x0D * 4, 4) == i0d, (o1, o2, o3))
+    # X55: a chip-level tool resets the 7210 (IMR2 0); at its exit it hands the chip back to the driver (AH=01h)
+    gs = os.path.join(OUT, 'GPIBSCAN.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-i', tools + '/', '-o', gs, os.path.join(tools, 'GPIBSCAN.ASM')], check=True)
+    k = ktest.KPC(image('ggs.img', LCMD, gs), chip=sim7210.NEC7210(sim7210.bus())); k.start()
+    k.code_p()
+    wrs, cw = [], k.pc.chip.write
+    def wlog(reg, v): wrs.append((reg, v)); return cw(reg, v)
+    k.pc.chip.write = wlog
+    o = run('gpibscan')
+    resets = [i for i, w in enumerate(wrs) if w == (5, 0x02)]
+    imr2 = [v for r, v in wrs[resets[-1]:] if r == 2] if resets else []
+    check('GPIBSCAN under Lodestone (the kernel\'s driver on INT 60h, SRQ on IRQ 5): it resets the chip, and at its '
+          'exit the driver sets it up again, SRQI back in IMR2 (%s after the last of %d resets)' % (imr2, len(resets)),
+          len(resets) >= 2 and imr2 and imr2[-1] == 0x40 and 'A:\\>' in o, (resets, imr2, o[-300:]))
     import sim7210 as S
     class Echo(S.Device):
         """the Pico bridge's thrutest: each 4096-byte message sent back; gone

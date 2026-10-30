@@ -61,7 +61,8 @@
 ;  parity of its spin loop's label (.w) and of the label it jumps to for a
 ;  byte (.g).  Every echo read is checked against what was sent.
 ;
-;  Chip-level like GPIBXFER: reboot before CLAUDE or TM5000 afterwards.
+;  Chip-level like GPIBXFER; at the end GRIDGPIB, if loaded, sets the chip up
+;  again (INT 60h AH=01h: rearm.inc).
 ;  Appends what it prints to GPIBLOOP.TXT.
 ; =====================================================================
 cpu 286
@@ -203,6 +204,7 @@ done:   call    pit_done
         call    d_recover
         mov     dx, s_done
         call    out_str
+        call    d_rearm                 ; (X55: the driver's IMR2, IFC, REN)
         call    save_log
         mov     ax, 4C00h
         int     21h
@@ -1187,6 +1189,7 @@ save_log:
 .x:     ret
 
 %include "direct.inc"
+%include "rearm.inc"
 
 s_title db 13,10,'GPIBLOOP 1.6 - the GPIB byte loops at both alignments, echo at $'
 s_rhead db 13,10,'Reading 4096 bytes (median of 6; best-worst in ns):',13,10,'$'
@@ -1218,7 +1221,7 @@ s_failed db 'FAILED',13,10,'$'
 s_bad   db 13,10,'echoes that differed from what was sent: $'
 s_fo    db 13,10,'sending failed, step $'
 s_fi    db 13,10,'receiving failed, step $'
-s_done  db 13,10,'Done.  Reboot before CLAUDE or TM5000.  Also in GPIBLOOP.TXT.',13,10,'$'
+s_done  db 13,10,'Done.  GRIDGPIB, if loaded, set up again.  Also in GPIBLOOP.TXT.',13,10,'$'
 s_logname db 'GPIBLOOP.TXT',0
 
 RBUFLEN equ 80

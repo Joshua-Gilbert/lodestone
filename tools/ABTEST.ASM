@@ -106,9 +106,9 @@ start:  cld
         mov     dx, s_ms
         call    puts
         call    crlf
-        mov     ah, 01h                 ; leave the driver in charge
-        call    gint
 quit:   call    pit_done
+        call    d_rearm                 ; leave the driver in charge (X55: on
+                                        ;  the failed paths too)
         call    log_close
         mov     ax, 4C00h
         int     21h
@@ -156,6 +156,7 @@ report: pushf
 %include "direct.inc"
 %include "timing.inc"
 %include "io.inc"
+%include "rearm.inc"
 
 sig     db 'GRIDGPIB'
 q_set   db 'SET?',10,0                  ; direct: ASCIIZ with LF
