@@ -2547,11 +2547,12 @@ take_snapshot:
 
 ; ---- running DOS programs -----------------------------------------
 ; flags (1: bit0 capture, bit1 snapshot at exit), timeout (2),
-; key script length (2), key script, command line
+; key script length (2), key script, command line.  The timeout is the
+; Pi's own wait (X50): we cannot end a program, so it is skipped here
 op_run: mov     si, reqbuf+2
         lodsb
         mov     [run_flags], al
-        lodsw
+        lodsw                           ; (the timeout)
         lodsw
         mov     bx, ax                  ; the script and the command's NUL in
         add     bx, 8                   ;  the request (F0h: a longer length
