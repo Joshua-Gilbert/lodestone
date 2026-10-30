@@ -1409,65 +1409,6 @@ pat     db '*.*', 0
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 
-# NAMES.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
-MS_NAMES = [('fn 3D A.TXT.X', 'err 02'),
-            ('fn 3C N.A.B', 'err 02'),
-            ('fn 39 D.E.F', 'err 03'),
-            ('fn 4E A.TXT.X', 'err 03'),
-            ('fn 4E *.TXT.X', 'err 03'),
-            ('fn 43 A.TXT.X', 'err 03'),
-            ('fn 3B A.B.C', 'err 03'),
-            ('fn 3B \\', 'ok'),
-            ('fn 3D A.B.C\\X.TXT', 'err 03'),
-            ('fn 3D A.TXT.', 'err 02'),
-            ('fn 3D A..TXT', 'err 02'),
-            ('fn 56 A.TXT>C.D.E', 'err 03'),
-            ('fn 56 A.TXT.X>Z.TXT', 'err 03'),
-            ('fn 41 B.TXT.X', 'err 03'),
-            ('fn 3A E.F.G', 'err 03'),
-            ('fn 39 CON', 'err 05'),
-            ('fn 39 NUL', 'err 05'),
-            ('fn 3D HID.TXT', 'ok'),
-            ('fn 3C HID.TXT', 'err 05'),
-            ('fn 3C SYS.TXT', 'err 05'),
-            ('fn 3C RO.TXT', 'err 05'),
-            ('fn 5B HID.TXT', 'err 50'),
-            ('fn 41 SYS.TXT', 'ok'),
-            ('fn 41 HID.TXT', 'ok'),
-            ('fn 41 CON', 'err 05'),
-            ('fn 56 B.TXT>CON', 'err 05'),
-            ('fn 3D A|B', 'err 02'),
-            ('fn 3C A|B', 'err 02'),
-            ('fn 39 A|B', 'err 03'),
-            ('fn 3D A|B\\X.TXT', 'err 03'),
-            ('fn 41 A|B', 'err 03'),
-            ('fn 3C HID2.TXT', 'ok'),
-            ('fn 41 RO.TXT', 'err 05'),
-            ('fn 5B CON', 'ok'),
-            ('fn 3A CON', 'err 05'),
-            ('fn 3B CON', 'err 03'),
-            ('fn 3D CON.TXT', 'ok'),
-            ('fn 3C SYS2.TXT', 'err 05'),
-            ('fn 3C HID3.TXT', 'ok'),
-            ('fn 3C HS.TXT', 'err 05'),
-            ('fn 3C HS2.TXT', 'ok'),
-            ('fn 39 NOSUCH\\CON', 'err 03'),
-            ('fn 3A NOSUCH\\CON', 'err 03'),
-            ('fn 41 NOSUCH\\CON', 'err 03'),
-            ('fn 41 A.B\\CON', 'err 05'),
-            ('fn 39 A.B\\CON', 'err 05'),
-            ('fn 3A A.B\\CON', 'err 05'),
-            ('fn 56 NOSUCH.TXT>CON', 'err 02'),
-            ('fn 56 RO.TXT>NOSUCH\\CON', 'err 03'),
-            ('fn 41 CLOCK.TXT', 'ok'),
-            ('fn 39 CLOCK$', 'err 05'),
-            ('fn 39 CLOCK', 'ok'),
-            ('fn 3A CLOCK', 'ok'),
-            ('fn 4B A.B.C', 'err 02'),
-            ('fn 4B A.TXT.X', 'err 02'),
-            ('fn 4B A|B', 'err 02'),
-            ('fn 5B N.A.B', 'err 02'),
-            ('fn 5B A|B', 'err 02')]
 
 def t_renfull():
     """RENAME in a subdirectory full to its last entry: dir_slot gives the directory a cluster more, in the FAT kept
@@ -1539,14 +1480,30 @@ def t_fatstraddle():
     check('BIG1 deleted: entry 341 (bytes 511-512, sectors 0 and 1) free on the disk in both copies, no lost clusters',
           ent(d, 341) == 0 and ent(d, 341, 1) == 0 and not fatcheck.check(d)[0], (ent(d, 341), ent(d, 341, 1), fatcheck.check(d)[0]))
 
+def ms_build(name, com=None):
+    """tests/NAME.ASM (PROBE.INC's driver, or ATTR's or NODISK's own) -> OUT/com (NAME.COM)."""
+    com = os.path.join(OUT, com or name + '.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-i', HERE + '/', '-o', com, os.path.join(HERE, name + '.ASM')], check=True)
+    return com
+
+def ms_probe(k, name, what, sim_s=30):
+    """Run the probe NAME > OUT.TXT at the prompt, and check its "fn" lines against NAME_MS.TXT's, GRiD MS-DOS
+    3.30's answers (recorded in the emulator from its ROM image): `what` % how many.  -> the disk's files."""
+    assert run_long(k, name.lower() + ' > out.txt', sim_s)
+    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    fn = lambda t: [' '.join(l.split()) for l in t.replace('\r', '').split('\n') if l.startswith('fn ')]   # (spaces as one)
+    got = fn(f.get('A:\\OUT.TXT', b'').decode('latin-1'))
+    want = fn(open(os.path.join(HERE, name + '_MS.TXT'), encoding='latin-1').read())
+    check(what % len(want), got == want, [(w, g) for w, g in zip(want, got) if w != g][:8] or (len(want), len(got)))
+    return f
+
 def t_names():
     """Names that are no names (a second dot, a bad character), device names,
     CREATE over hidden and system files: NAMES.COM's 58 calls answer as GRiD
     MS-DOS 3.30's do, and nothing is deleted, renamed or truncated that MS-DOS
     leaves alone (B.TXT.X deleted B.TXT, E.F.G removed E.F, A.TXT became C.D,
     MKDIR CON made a directory)."""
-    com = os.path.join(OUT, 'NAMES_MS.COM')                # (t_kmedium has a NAMES.COM of its own)
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NAMES.ASM')], check=True)
+    com = ms_build('NAMES', 'NAMES_MS.COM')               # (t_kmedium has a NAMES.COM of its own)
     names = ('a', 'b', 'hid', 'hid2', 'hid3', 'sys', 'sys2', 'hs', 'hs2', 'ro', 'clock', 'x')
     for n in names:
         open(os.path.join(OUT, 'NM_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
@@ -1561,15 +1518,10 @@ def t_names():
         m('mattrib', '-i', img, '+h', '+s', '::%s.TXT' % n)
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    assert run_long(k, 'names > out.txt')
-    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
-    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
-    want = [c + ' -> ' + a for c, a in MS_NAMES]
-    check("NAMES.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a second dot or a bad character: 2 from OPEN, "
-          "CREATE and EXEC on the last part, 3 otherwise; a device's name, where its directory is there: 5 for MKDIR, "
-          "RMDIR, DELETE and RENAME onto it (RENAME's old name looked up first); CREATE over a hidden or system file "
-          "not asking for it: 5)" % len(want), got == want,
-          [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    ms_probe(k, 'NAMES', "NAMES.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a second dot or a bad character: 2 "
+             "from OPEN, CREATE and EXEC on the last part, 3 otherwise; a device's name, where its directory is there: "
+             "5 for MKDIR, RMDIR, DELETE and RENAME onto it (RENAME's old name looked up first); CREATE over a hidden "
+             "or system file not asking for it: 5)")
     dl = []; f = fatcheck.read_files(bytes(k.pc.drives[0].img), dirs=dl)
     keep = {n: (n.lower()[:-4] + '\r\n').encode() for n in ('B.TXT', 'A.TXT', 'HS.TXT', 'SYS2.TXT', 'RO.TXT')}
     check('... and the disk as MS-DOS leaves it: HID, SYS and CLOCK.TXT deleted, HID2, HID3 and HS2 made empty; B, A, '
@@ -1581,85 +1533,6 @@ def t_names():
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 
-# NULDIR.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
-MS_NULDIR = [('fn 3D NOSUCH\\NUL', 'err 03'),
-             ('fn 3D A.B\\NUL', 'ok'),
-             ('fn 3D A.TXT\\NUL', 'err 03'),
-             ('fn 3D \\NUL', 'ok'),
-             ('fn 3D NUL', 'ok'),
-             ('fn 3D A:NUL', 'ok'),
-             ('fn 3D A:\\NUL', 'ok'),
-             ('fn 3D NOSUCH\\CON', 'err 03'),
-             ('fn 3D A.B\\CON', 'ok'),
-             ('fn 3D A.B\\NUL.TXT', 'ok'),
-             ('fn 3D NOSUCH\\NUL.TXT', 'err 03'),
-             ('fn 3D NOSUCH\\SUB\\NUL', 'err 03'),
-             ('fn 3D A.B\\..\\NUL', 'ok'),
-             ('fn 3D A.B\\.\\NUL', 'ok'),
-             ('fn 3D A.B\\NOSUCH\\NUL', 'err 03'),
-             ('fn 3D E.F\\NUL', 'ok'),
-             ('fn 3D \\DEV\\NUL', 'ok'),
-             ('fn 3D \\DEV\\CON', 'ok'),
-             ('fn 3D A:\\DEV\\NUL', 'ok'),
-             ('fn 3D \\DEV\\NUL.TXT', 'ok'),
-             ('fn 3D DEV\\NUL', 'err 03'),
-             ('fn 3D \\DEV\\SUB\\NUL', 'err 03'),
-             ('fn 3D A.B\\NUL.X.Y', 'err 02'),
-             ('fn 3D A.B\\NUL.*', 'err 02'),
-             ('fn 3D Q:NUL', 'ok'),
-             ('fn 3D NUL.*', 'ok'),
-             ('fn 3C NOSUCH\\NUL', 'err 03'),
-             ('fn 3C A.B\\NUL', 'ok'),
-             ('fn 3C A.TXT\\NUL', 'err 03'),
-             ('fn 3C \\NUL', 'ok'),
-             ('fn 3C NUL', 'ok'),
-             ('fn 3C A:NUL', 'ok'),
-             ('fn 3C A:\\NUL', 'ok'),
-             ('fn 3C NOSUCH\\CON', 'err 03'),
-             ('fn 3C A.B\\CON', 'ok'),
-             ('fn 3C A.B\\NUL.TXT', 'ok'),
-             ('fn 3C NOSUCH\\NUL.TXT', 'err 03'),
-             ('fn 3C NOSUCH\\SUB\\NUL', 'err 03'),
-             ('fn 3C A.B\\..\\NUL', 'ok'),
-             ('fn 3C A.B\\.\\NUL', 'ok'),
-             ('fn 3C A.B\\NOSUCH\\NUL', 'err 03'),
-             ('fn 3C E.F\\NUL', 'ok'),
-             ('fn 3C \\DEV\\NUL', 'ok'),
-             ('fn 3C \\DEV\\CON', 'ok'),
-             ('fn 3C A:\\DEV\\NUL', 'ok'),
-             ('fn 3C \\DEV\\NUL.TXT', 'ok'),
-             ('fn 3C DEV\\NUL', 'err 03'),
-             ('fn 3C \\DEV\\SUB\\NUL', 'err 03'),
-             ('fn 3C A.B\\NUL.X.Y', 'err 02'),
-             ('fn 3C A.B\\NUL.*', 'err 02'),
-             ('fn 3C Q:NUL', 'ok'),
-             ('fn 3C NUL.*', 'ok'),
-             ('fn 5B NOSUCH\\NUL', 'err 03'),
-             ('fn 5B A.B\\NUL', 'ok'),
-             ('fn 5B A.TXT\\NUL', 'err 03'),
-             ('fn 5B \\NUL', 'ok'),
-             ('fn 5B NUL', 'ok'),
-             ('fn 5B A:NUL', 'ok'),
-             ('fn 5B A:\\NUL', 'ok'),
-             ('fn 5B NOSUCH\\CON', 'err 03'),
-             ('fn 5B A.B\\CON', 'ok'),
-             ('fn 5B A.B\\NUL.TXT', 'ok'),
-             ('fn 5B NOSUCH\\NUL.TXT', 'err 03'),
-             ('fn 5B NOSUCH\\SUB\\NUL', 'err 03'),
-             ('fn 5B A.B\\..\\NUL', 'ok'),
-             ('fn 5B A.B\\.\\NUL', 'ok'),
-             ('fn 5B A.B\\NOSUCH\\NUL', 'err 03'),
-             ('fn 5B E.F\\NUL', 'ok'),
-             ('fn 5B \\DEV\\NUL', 'ok'),
-             ('fn 5B \\DEV\\CON', 'ok'),
-             ('fn 5B A:\\DEV\\NUL', 'ok'),
-             ('fn 5B \\DEV\\NUL.TXT', 'ok'),
-             ('fn 5B DEV\\NUL', 'err 03'),
-             ('fn 5B \\DEV\\SUB\\NUL', 'err 03'),
-             ('fn 5B A.B\\NUL.X.Y', 'err 02'),
-             ('fn 5B A.B\\NUL.*', 'err 02'),
-             ('fn 5B Q:NUL', 'ok'),
-             ('fn 5B NUL.*', 'ok')]
 
 def run_long(k, cmd, sim_s=30):
     """A command at the prompt that may run past settle()'s 6 s (a probe writing its answers to a file a call at
@@ -1672,20 +1545,14 @@ def t_nul():
     """A device's name after a directory (X18, "IF EXIST DIR\\NUL"): OPEN, CREATE and CREATE NEW find the
     device only where the directory is there, [X:]\\DEV\\ in front is the devices' own, and a wildcard or a
     bad name after the directory is 2, as GRiD MS-DOS 3.30 answers; NUL, A:NUL and Q:NUL need no disk."""
-    com = os.path.join(OUT, 'NULDIR.COM')
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NULDIR.ASM')], check=True)
+    com = ms_build('NULDIR')
     open(os.path.join(OUT, 'NM_a.TXT'), 'wb').write(b'a\r\n')
     img = image('nul.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NULDIR.COM=' + com,
                 'A.TXT=' + os.path.join(OUT, 'NM_a.TXT'), 'A.B\\', 'E.F\\')
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    assert run_long(k, 'nuldir > out.txt')
-    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
-    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
-    want = [c + ' -> ' + a for c, a in MS_NULDIR]
-    check("NULDIR.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a device's name behind a directory that isn't "
-          "there, or is a file: 3; \\DEV\\ the devices' own; a wildcard or bad name after a directory: 2)" % len(want),
-          got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    ms_probe(k, 'NULDIR', "NULDIR.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a device's name behind a directory "
+             "that isn't there, or is a file: 3; \\DEV\\ the devices' own; a wildcard or bad name after a directory: 2)")
     o = sh.run('if exist nosuch\\nul echo nosuch') + sh.run('if exist a.b\\nul echo dir') + sh.run('type nul')
     check("... and LCMD (its IF EXIST looks at the directory itself): IF EXIST NOSUCH\\NUL no, A.B\\NUL yes; TYPE NUL",
           'nosuch' not in o.replace('nosuch\\nul', '') and 'dir\n' in o + '\n', o)
@@ -1796,48 +1663,13 @@ GPIB:5 e02 e02 -
 '''
 DEVNAME_EMS = {'A.B\\EMMXXXX0': ('ok', 'ok', '6/0'), 'EMMXXXX0': ('ok', 'ok', '6/0'), 'EMMXXXX0.X': ('ok', 'ok', '6/0')}
 
-# NOMATCH.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
-MS_NOMATCH = [('fn 4E NOSUCH.TXT', 'err 12'),
-              ('fn 4E Z*.*', 'err 12'),
-              ('fn 4E A.B\\N?L', 'err 12'),
-              ('fn 4E A.B\\X.TXT', 'ok'),
-              ('fn 4E A.B\\NOSUCH', 'err 12'),
-              ('fn 4E E.F\\*.TXT', 'err 12'),
-              ('fn 4E E.F\\*.*', 'err 12'),
-              ('fn 4E E.F\\NOSUCH', 'err 12'),
-              ('fn 4E HID.TXT', 'err 12'),
-              ('fn 4E HS.TXT', 'err 12'),
-              ('fn 4E SYS.TXT', 'err 12'),
-              ('fn 4E A.B', 'err 12'),
-              ('fn 4E *.TXT', 'ok'),
-              ('fn 4E *.*', 'ok'),
-              ('fn 4E NOSUCH\\*.*', 'err 03'),
-              ('fn 4E A.TXT\\*.*', 'err 03'),
-              ('fn 4E A?B\\*.*', 'err 03'),
-              ('fn 4E A.B.C', 'err 03'),
-              ('fn 4E A.B\\X.Y.Z', 'err 03'),
-              ('fn 4E ', 'err 03'),
-              ('fn 4E A:NOSUCH', 'err 12'),
-              ('fn 4E \\A.B\\..\\NOSUCH', 'err 12'),
-              ('fn 4E E.F\\..\\A.TXT', 'ok'),
-              ('fn 4E E.F\\*.*', 'ok'),
-              ('fn 4E E.F\\Z*.*', 'err 12'),
-              ('fn 4E NOSUCH.TXT', 'err 12'),
-              ('fn 4E A.B', 'ok'),
-              ('fn 4E HID.TXT', 'ok'),
-              ('fn 4E HS.TXT', 'ok'),
-              ('fn 4E NOSUCH.TXT', 'err 12'),
-              ('fn 4E Z*.*', 'err 12'),
-              ('fn 4E NOSUCH.TXT', 'err 12'),
-              ('fn 4E E.F\\*.*', 'err 12')]
 
 def t_nomatch():
     """FIND FIRST that finds nothing is 18, "no more files", as in GRiD MS-DOS 3.30 (X22; it was 2): a name
     that isn't there, a pattern that matches nothing, an empty directory, a hidden file without the bit; a
     directory that isn't there is still 3.  (LCMD looks at CF only; the Executive's two that took 2 as "not
     there" are test_apps's: Copy and Move to a new name, a Copy to a subject that isn't there.)"""
-    com = os.path.join(OUT, 'NOMATCH.COM')
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NOMATCH.ASM')], check=True)
+    com = ms_build('NOMATCH')
     names = ('a', 'hid', 'sys', 'hs', 'x')
     for n in names:
         open(os.path.join(OUT, 'NM_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
@@ -1850,12 +1682,8 @@ def t_nomatch():
     m('mattrib', '-i', img, '+h', '+s', '::HS.TXT')
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    assert run_long(k, 'nomatch > out.txt')
-    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
-    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
-    want = [c + ' -> ' + a for c, a in MS_NOMATCH]
-    check("NOMATCH.COM: all %d calls answer as GRiD MS-DOS 3.30's do (nothing found: 18; a directory that isn't "
-          "there, or a bad name: 3)" % len(want), got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    ms_probe(k, 'NOMATCH', "NOMATCH.COM: all %d calls answer as GRiD MS-DOS 3.30's do (nothing found: 18; a directory "
+             "that isn't there, or a bad name: 3)")
     o = sh.run('dir z*.*') + sh.run('dir e.f\\*.txt') + sh.run('del z*.*') + sh.run('if exist nosuch.txt echo yes')
     check('... and LCMD (CF only, as before): DIR and DEL of nothing say "File not found"; IF EXIST of nothing is false',
           o.count('File not found') == 3 and 'yes' not in o.replace('echo yes', ''), o)
@@ -1944,92 +1772,12 @@ def t_dirlong():
           'Directory of  A:\\' + deep.upper() + 'File not found' in o.replace('\n', '') and 'still here' in o
           and not k.crashed, o)
 
-# ATTR.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
-MS_ATTR = [('fn 3C C0.TXT 0000', 'ok'),
-           ('fn 43 C0.TXT 0000', 'attr 20'),
-           ('fn 3C C1.TXT 0001', 'ok'),
-           ('fn 43 C1.TXT 0000', 'attr 21'),
-           ('fn 3C C2.TXT 0002', 'ok'),
-           ('fn 43 C2.TXT 0000', 'attr 22'),
-           ('fn 3C C4.TXT 0004', 'ok'),
-           ('fn 43 C4.TXT 0000', 'attr 24'),
-           ('fn 3C C6.TXT 0006', 'ok'),
-           ('fn 43 C6.TXT 0000', 'attr 26'),
-           ('fn 3C C7.TXT 0007', 'ok'),
-           ('fn 43 C7.TXT 0000', 'attr 27'),
-           ('fn 3C C10.TXT 0010', 'err 05'),
-           ('fn 43 C10.TXT 0000', 'err 02'),
-           ('fn 3C C20.TXT 0020', 'ok'),
-           ('fn 43 C20.TXT 0000', 'attr 20'),
-           ('fn 3C C21.TXT 0021', 'ok'),
-           ('fn 43 C21.TXT 0000', 'attr 21'),
-           ('fn 3C C27.TXT 0027', 'ok'),
-           ('fn 43 C27.TXT 0000', 'attr 27'),
-           ('fn 3C C40.TXT 0040', 'err 05'),
-           ('fn 43 C40.TXT 0000', 'err 02'),
-           ('fn 3C C80.TXT 0080', 'err 05'),
-           ('fn 43 C80.TXT 0000', 'err 02'),
-           ('fn 3C C100.TXT 0100', 'ok'),
-           ('fn 43 C100.TXT 0000', 'attr 20'),
-           ('fn 3C C8000.TXT 8000', 'ok'),
-           ('fn 43 C8000.TXT 0000', 'attr 20'),
-           ('fn 5B N0.TXT 0000', 'ok'),
-           ('fn 43 N0.TXT 0000', 'attr 20'),
-           ('fn 5B N1.TXT 0001', 'ok'),
-           ('fn 43 N1.TXT 0000', 'attr 21'),
-           ('fn 5B N10.TXT 0010', 'err 05'),
-           ('fn 43 N10.TXT 0000', 'err 02'),
-           ('fn 5B N20.TXT 0020', 'ok'),
-           ('fn 43 N20.TXT 0000', 'attr 20'),
-           ('fn 5B N40.TXT 0040', 'err 05'),
-           ('fn 43 N40.TXT 0000', 'err 02'),
-           ('fn 5B N80.TXT 0080', 'err 05'),
-           ('fn 43 N80.TXT 0000', 'err 02'),
-           ('fn 43 T0.TXT 0000', 'attr 00'),
-           ('fn 3C T0.TXT 0000', 'ok'),
-           ('fn 43 T0.TXT 0000', 'attr 20'),
-           ('fn 43 T2.TXT 0000', 'attr 00'),
-           ('fn 3C T2.TXT 0002', 'ok'),
-           ('fn 43 T2.TXT 0000', 'attr 22'),
-           ('fn 43 TH.TXT 0000', 'attr 02'),
-           ('fn 3C TH.TXT 0002', 'ok'),
-           ('fn 43 TH.TXT 0000', 'attr 22'),
-           ('fn 43 W.TXT 0000', 'attr 00'),
-           ('fn 01 W.TXT 0000', 'ok'),
-           ('fn 43 W.TXT 0000', 'attr 20'),
-           ('fn 43 O.TXT 0000', 'attr 00'),
-           ('fn 02 O.TXT 0000', 'ok'),
-           ('fn 43 O.TXT 0000', 'attr 00'),
-           ('fn 3C NOSUCH\\X.TXT 0010', 'err 05'),
-           ('fn 5B T0.TXT 0010', 'err 05'),
-           ('fn 3C A.B 0010', 'err 05'),
-           ('fn 3C A.B 0000', 'err 05'),
-           ('fn 5A A.B\\ 0000', 'ok'),
-           ('fn 5A A.B\\ 0001', 'ok'),
-           ('fn 5A A.B\\ 0020', 'ok'),
-           ('fn 5A NOSUCH\\ 0000', 'err 03'),
-           ('fn 5A E.F\\ 0000', 'ok'),
-           ('fn 4E E.F\\*.* 0027', 'attr 20'),
-           ('fn 5A G.H\\ 0001', 'ok'),
-           ('fn 4E G.H\\*.* 0027', 'attr 21'),
-           ('fn 5A A.B\\ 0002', 'ok'),
-           ('fn 5A A.B\\ 0004', 'ok'),
-           ('fn 5A A.B\\ 0027', 'ok'),
-           ('fn 3C A.B\\NUL 0010', 'err 05'),
-           ('fn 3C NUL 0010', 'err 05'),
-           ('fn 3C NUL 0040', 'err 05'),
-           ('fn 5B NUL 0010', 'err 05'),
-           ('fn 3D LPT1 0000', 'ok'),
-           ('fn 3D COM1 0000', 'ok'),
-           ('fn 3D PRN 0000', 'ok'),
-           ('fn 3D AUX 0000', 'ok')]
 
 def t_attr():
     """CREATE, CREATE NEW and CREATE TEMPORARY give a file the archive bit, new or made anew (X19), as GRiD MS-DOS
     3.30 does; CREATE and CREATE NEW refuse CX with 10h, 40h or 80h (5, before the path is looked at, for a
     device too) and leave CX's high byte alone; a file written gets the archive bit, one only opened doesn't."""
-    com = os.path.join(OUT, 'ATTR.COM')
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'ATTR.ASM')], check=True)
+    com = ms_build('ATTR')
     for n in ('t0', 't2', 'th', 'w', 'o'):
         open(os.path.join(OUT, 'AT_%s.TXT' % n), 'wb').write(n.encode() + b'\r\n')
     img = image('attr.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'ATTR.COM=' + com,
@@ -2042,12 +1790,8 @@ def t_attr():
         m('mmd', '-i', img, '::' + n)
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    assert run_long(k, 'attr > out.txt')
-    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
-    got = [l.strip() for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
-    want = [c + ' -> ' + a for c, a in MS_ATTR]
-    check("ATTR.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a file created gets 20h; 10h, 40h, 80h refused with 5)"
-          % len(want), got == want, [(w, g) for w, g in zip(want, got) if w != g] or (len(want), len(got)))
+    f = ms_probe(k, 'ATTR', "ATTR.COM: all %d calls answer as GRiD MS-DOS 3.30's do (a file created gets 20h; 10h, 40h, "
+                 "80h refused with 5)")
     check('... disk consistent', not fatcheck.check(bytes(k.pc.drives[0].img))[0], fatcheck.check(bytes(k.pc.drives[0].img))[0])
     # CX with a label's bit (8): MS-DOS makes a volume label, leaving a file of that name alone; Lodestone has none
     # to make: 5, the file kept (it was truncated)
@@ -2071,50 +1815,26 @@ def t_errs():
     (3), a device's name with a second dot (no device), RENAME of a device's name (5), RMDIR of the current
     directory or of a wildcard (16) and of a file or a name not there (5).  ERRS_MS.TXT holds MS-DOS's answers;
     what is left as it is (X20's row) is not in ERRS.ASM."""
-    com = os.path.join(OUT, 'ERRS.COM')
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'ERRS.ASM')], check=True)
+    com = ms_build('ERRS')
     open(os.path.join(OUT, 'ER_a.TXT'), 'wb').write(b'a\r\n')
     a = os.path.join(OUT, 'ER_a.TXT')
     img = image('errs.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'ERRS.COM=' + com, 'A.TXT=' + a, 'SUB\\', 'SUB\\X.TXT=' + a)
     k = ktest.KPC(img); k.start()
     Shell(k)
-    assert run_long(k, 'errs > out.txt', 300)
-    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
-    got = [' '.join(l.split()) for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
-    want = [' '.join(l.split()) for l in open(os.path.join(HERE, 'ERRS_MS.TXT'), encoding='latin-1').read().split('\n')
-            if l.startswith('fn ')]
-    check("ERRS.COM: all %d calls answer as GRiD MS-DOS 3.30's do" % len(want), got == want,
-          [(w, g) for w, g in zip(want, got) if w != g][:8] or (len(want), len(got)))
+    ms_probe(k, 'ERRS', "ERRS.COM: all %d calls answer as GRiD MS-DOS 3.30's do", 300)
     check('... disk consistent', not fatcheck.check(bytes(k.pc.drives[0].img))[0], fatcheck.check(bytes(k.pc.drives[0].img))[0])
 
-# NODISK.COM's lines as GRiD MS-DOS 3.30 gives them, drive B with no disk (run in the emulator from its ROM image)
-MS_NODISK = ['fn 3D B:X.TXT -> err 03 crit 1A 02',
-             'fn 3C B:X.TXT -> err 03 crit 1A 02',
-             'fn 43 B:X.TXT -> err 03 crit 1A 02',
-             'fn 4E B:*.* -> err 03 crit 1A 02',
-             'fn 3B B:\\ -> err 03 crit 1A 02',
-             'fn 39 B:\\D -> err 03 crit 1A 02',
-             'fn 3A B:\\D -> err 03 crit 1A 02',
-             'fn 41 B:X.TXT -> err 03 crit 1A 02',
-             'fn 56 B:X.TXT -> err 03 crit 1A 02',
-             'fn 36 -> err FF crit 1A 02',
-             'fn 3D B:X.TXT -> err 03 crit 1A 02']
 
 def t_nodisk():
     """A drive with no disk (B:): each path call raises INT 24h as GRiD MS-DOS 3.30 does (AH 1Ah: Retry or Fail,
     read, the FAT's area; DI 2, not ready), then answers 3 (free space FFFFh) when it is told Fail.  It answered 21
     with no INT 24h: the mount read the boot sector without one.  LCMD asks "Abort, Retry, Fail?" as COMMAND.COM."""
-    com = os.path.join(OUT, 'NODISK.COM')
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NODISK.ASM')], check=True)
+    com = ms_build('NODISK')
     k = ktest.KPC(image('nodisk.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NODISK.COM=' + com), bytes(1474560))
     k.pc.drives[1].empty = True
     k.start()
     sh = Shell(k)
-    assert run_long(k, 'nodisk > out.txt')
-    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
-    got = [' '.join(l.split()) for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
-    check("NODISK.COM: all %d calls answer as GRiD MS-DOS 3.30's do (INT 24h, then 3)" % len(MS_NODISK), got == MS_NODISK,
-          [(w, g) for w, g in zip(MS_NODISK, got) if w != g] or (len(MS_NODISK), len(got)))
+    ms_probe(k, 'NODISK', "NODISK.COM: all %d calls answer as GRiD MS-DOS 3.30's do (INT 24h, then 3)")
     # a handler that answers Ignore, which the mount doesn't offer: Fail, as MS-DOS (it mounted B: from A:'s boot sector)
     ig = os.path.join(OUT, 'NODISKIG.COM')
     subprocess.run(['nasm', '-f', 'bin', '-o', ig, os.path.join(HERE, 'NODISKIG.ASM')], check=True)
