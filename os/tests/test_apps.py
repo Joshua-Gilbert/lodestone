@@ -2303,14 +2303,15 @@ def t_calc():
     check('the Executive\'s help lists CODE-K', has(k, 'CODE-K') and has(k, 'Calculator'), screen(k))
     k.key(ktest.ESC)
 
-def point(k, x, y):
-    """Move the pointer to (x, y), no button."""
+def point(k, x, y, settle=True):
+    """Move the pointer to (x, y), no button.  settle=False: no wait after (with a task computing behind the
+    machine never waits, so a settle would run to its 6 s timeout)."""
     dx, dy = x - k.u16('mx'), y - k.u16('my')
     while dx or dy:
         sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
         k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
         dx -= sx; dy -= sy
-    k.settle()
+    if settle: k.settle()
 
 def drag(k, x0, y0, x1, y1):
     """Press the left button at (x0, y0), move to (x1, y1) holding it, release."""
