@@ -4583,7 +4583,7 @@ prof_cur    resb 1
 prof_kept   resb 1                      ; (1: CLPROF.TXT written by OP 31h, kept)
 prof_sp     resb 1
 prof_stk    resb PS_N
-prof_txt    resb 1024
+prof_txt    resb PR_TXT                 ; (1,031 B: the header and 15 lines)
 %endif
             alignb 2                    ; (an odd stack costs every PUSH and POP)
 stack_bottom:                           ; the stack: claude-link's emulator tests
