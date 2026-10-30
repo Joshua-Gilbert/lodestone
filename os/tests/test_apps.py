@@ -3021,6 +3021,34 @@ def t_gpib_tools():
     check('GPIBSCAN under Lodestone (the kernel\'s driver on INT 60h, SRQ on IRQ 5): it resets the chip, and at its '
           'exit the driver sets it up again, SRQI back in IMR2 (%s after the last of %d resets)' % (imr2, len(resets)),
           len(resets) >= 2 and imr2 and imr2[-1] == 0x40 and 'A:\\>' in o, (resets, imr2, o[-300:]))
+    # X56: ^C while GPIBIRQ has IRQ 5 (INT 0Dh its own): its INT 23h puts the vector and the mask back first.
+    # (Lodestone's AH=02h doesn't check ^C, GRiD MS-DOS's does: the INT 23h is given here as DOS gives it, from
+    # the program's own context, once its code is running)
+    gi = os.path.join(OUT, 'GPIBIRQ.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-i', tools + '/', '-o', gi, os.path.join(tools, 'GPIBIRQ.ASM')], check=True)
+    k = ktest.KPC(image('ggi.img', LCMD, gi), chip=sim7210.NEC7210(sim7210.bus())); k.start()
+    k.code_p()
+    i0d, m0 = k.pc.rd(0, 0x0D * 4, 4), k.pc.pic_mask & 0x20
+    k.key('cls'); k.key(ktest.ENTER); k.key('gpibirq'); k.key(ktest.ENTER, settle=False)
+    for _ in range(60):                                         # (part 1, polled, times out: no Pi here)
+        k.run_for(0.5)
+        if k.pc.rd(0, 0x0D * 4, 4) != i0d: break
+    took = k.pc.rd(0, 0x0D * 4, 4) != i0d
+    from unicorn import x86_const as X
+    mu, pseg = k.pc.mu, k.pc.u16(0, 0x0D * 4 + 2)
+    for _ in range(2000):
+        if mu.reg_read(X.UC_X86_REG_CS) == pseg: break
+        k.run_for(0.002)
+    ss, sp = mu.reg_read(X.UC_X86_REG_SS), mu.reg_read(X.UC_X86_REG_SP) - 6
+    k.pc.wr(ss, sp, struct.pack('<HHH', mu.reg_read(X.UC_X86_REG_IP), pseg, mu.reg_read(X.UC_X86_REG_EFLAGS) & 0xFFFF))
+    mu.reg_write(X.UC_X86_REG_SP, sp)
+    mu.reg_write(X.UC_X86_REG_CS, k.pc.u16(0, 0x23 * 4 + 2)); mu.reg_write(X.UC_X86_REG_IP, k.pc.u16(0, 0x23 * 4))
+    took = took and k.pc.u16(0, 0x23 * 4 + 2) == pseg            # (its own INT 23h)
+    k.run_for(3.0)
+    o = k.pc.text_screen()
+    check('^C while GPIBIRQ has INT 0Dh: it ends (its INT 23h), the kernel\'s INT 0Dh and IRQ 5\'s mask back',
+          took and k.pc.rd(0, 0x0D * 4, 4) == i0d and k.pc.pic_mask & 0x20 == m0 and o.rstrip().endswith('A:\\>'),
+          (took, bytes(k.pc.rd(0, 0x0D * 4, 4)).hex(), bytes(i0d).hex(), hex(k.pc.pic_mask), o[-300:]))
     import sim7210 as S
     class Echo(S.Device):
         """the Pico bridge's thrutest: each 4096-byte message sent back; gone

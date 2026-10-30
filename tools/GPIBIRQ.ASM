@@ -25,6 +25,9 @@
 ;  Times in PIT counts (channel 0 in mode 2 while it runs, 0.1 ms shown).
 ;  Chip-level like GPIBXFER; at the end GRIDGPIB, if loaded, sets the chip up
 ;  again (INT 60h AH=01h: rearm.inc).
+;  ^C ends it as the end does, IRQ 5's vector and mask put back.  Under
+;  MULTITASK=1 don't end it from TASKS.RUN (CODE-D): MT puts back INT
+;  22h-24h only, so INT 0Dh would be left pointing into freed memory.
 ;  Appends what it prints to GPIBIRQ.TXT.
 ; =====================================================================
 cpu 286
@@ -75,6 +78,9 @@ start:  cld
         int     21h
         mov     [oldvec], bx
         mov     [oldvec+2], es
+        mov     dx, brk                 ; (X56: ^C puts IRQ 5 back first;
+        mov     ax, 2523h               ;  DOS takes INT 23h back from the
+        int     21h                     ;  PSP at our end)
         push    ds
         pop     es
         in      al, 21h
@@ -198,6 +204,15 @@ start:  cld
         int     21h
 
 ; IRQ 5 off again, its old vector, the PIT and the bus as they were
+; ^C (INT 23h, at any DOS call: the prints): ended as at the end, but no
+; log, so INT 0Dh never points into this program's freed memory (X56)
+brk:    push    cs
+        pop     ds
+        call    cleanup
+        call    d_rearm
+        mov     ax, 4C01h
+        int     21h
+
 cleanup:
         mov     dx, R_IMR2
         xor     al, al
