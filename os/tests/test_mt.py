@@ -3895,7 +3895,7 @@ def t_windows():
     free0 = uip()
     # something computing behind meanwhile, and every switch checked
     k.key(A.CODE['P']); k.run_for(1.0)
-    typ(k, 'start /w mtspin.com 5000 ws.txt', 0.3); typ(k, 'exit', 1.0); k.settle()
+    typ(k, 'start /w mtspin.com 5000 ws.txt', 0.3); typ(k, 'exit', 1.0); k.run_for(0.5)
     au = Audit(k)
     bkey(k, A.CODE['K'], t=0.5)
     n1, b1, x0 = mb('mw_n'), rec(1, SE_BASE), rec(0, SE_SP)
@@ -4003,7 +4003,7 @@ def t_windows():
           'whole segment still while one runs (%s paragraphs, and %s with both: M8b)' % (ub, hi0), ts and n10 == 1
           and c10 == 0 and c10b == 1 and hi0 == 4096 and ub == 4096 and A.has(k, 'Calculator')
           and not A.has(k, 'Tasks'), (ts, n10, c10, c10b, hi0, ub, hex(rec(1, SE_END))))
-    bkey(k, ktest.ESC, t=0.5); k.settle()
+    bkey(k, ktest.ESC, t=0.5); k.run_for(0.5)
     au.stop()
     sw = au.switches()
     ss = [e for e in sw if e['task'] == 0 and e['ss'] == k.useg and e['csp'] >= k.u16('run_base')]
@@ -4027,7 +4027,7 @@ def t_windows():
     bk2 = k.band()
     bkey(k, ktest.ESC, t=0.5)
     bt3 = k.band()
-    bkey(k, ktest.ESC, t=0.3); bkey(k, ktest.ESC, t=0.5); k.settle()
+    bkey(k, ktest.ESC, t=0.3); bkey(k, ktest.ESC, t=0.5); k.run_for(0.5)
     check('CODE-D in the tasks, then CODE-K while it asks: the calculator\'s band the Executive\'s (%s), after the saver '
           'too (%s), not the tasks\' question; ESC: the tasks\' question again (%s); ESC, ESC: none left'
           % (bk[:1], bk2[:1], bt3[:1]), ck == 2 and bk[:1] == bk2[:1] == ['Select a file and confirm'] and bt3[:1] == [q]
@@ -4180,7 +4180,7 @@ def t_base():
           (bq0, dq0, cq, hq, bq1, dq, bq2, sub, mb('mw_cur')))
     # a task's end is the Executive's event, not a window's (ex_mtw is each one's own)
     k.key(A.CODE['P']); k.run_for(1.0)
-    typ(k, 'start /w mtspin.com 400 tb.txt', 0.3); typ(k, 'exit', 1.0); k.settle()    # (22 s: it ends later)
+    typ(k, 'start /w mtspin.com 400 tb.txt', 0.3); typ(k, 'exit', 1.0); k.run_for(0.5)    # (22 s: it ends later)
     bp = (A.has(k, 'Write: OTHER.TXT'), A.has(k, 'Write: NOTES.TXT'), mb('mw_cur'))
     ev, dk = [], rec(2, SE_BASE) + WS['do_key']
     def evh(pc):
@@ -4298,12 +4298,12 @@ def t_menu():
           'choice (%04Xh), the focus still MENUTEST\'s (%d), the menu gone' % (f6, v16('mres'), mb('mw_cur')),
           f6 == (1, True) and v16('mres') == 0xFFFF and mb('mw_cur') == 1 and not A.has(k, 'Paste'), (f6, v16('mres'), mb('mw_cur')))
     # a drag: UI_MOUSE waits at ..@ui_midle, where MTSPIN behind gets its turns.  (While it computes the
-    # machine is never idle: each settle runs to its 6 s timeout, so MTSPIN gets 2000 ticks, 110 s.)
+    # machine is never idle, so nothing here waits for a settle; 2000 ticks, 110 s, outlast the section.)
     k.hooks.remove(rh)
     A.click(k, 4, 340); k.run_for(0.3)              # (the Executive in front: CODE-P is its key)
     k.key(A.CODE['P']); k.run_for(1.0)
     typ(k, 'start /w mtspin.com 2000 tb.txt', 0.3); typ(k, 'start /w mtspin.com 2000 tc.txt', 0.3)
-    typ(k, 'exit', 1.0); k.settle()
+    typ(k, 'exit', 1.0); k.run_for(0.5)
     bclick(k, 4, 340)               # ("LCMD.COM ended" waits in the Executive: a click reads it)
     bclick(k, 300, 300)             # (MENUTEST's window: it in front again)
     cm, n0, d0 = mb('mw_cur'), len(au.ev), v16('dn')
