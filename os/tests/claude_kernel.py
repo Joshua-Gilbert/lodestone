@@ -33,12 +33,13 @@ class KMachine(pcemu.PC):
     def __init__(s, img, chip, **kw):
         super().__init__(img, chip=chip, **kw)
         s.Y = ktest.Syms()
+        s.f4b = s.Y.lin('f_4B')                 # (as the block hook's addr: CS:IP, linear)
         s.watch = s._watch
         s.exit_code = None
         s.tsr = False
 
     def _watch(s, addr):
-        if s.r('cs') == 0x60 and s.r('ip') == s.Y['f_4B']:
+        if addr == s.f4b and s.r('cs') == 0x60:
             bp = s.r('bp')
             ds, dx = s.u16(0x60, bp + 16), s.u16(0x60, bp + 10)
             p = s.asciiz(ds, dx).decode('cp437').upper()

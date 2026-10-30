@@ -49,15 +49,15 @@ class Res(CK.KernelHarness):
         s.srq_calls = 0                         # the driver's SRQ check (AH=0Bh) while the console is up
         s.spolls = 0                            # and its serial polls (AH=05h)
         s.pit_dues = 0                          # the console's look at the PIT for its next poll (pit_due)
-        srq, spoll, watch = s.m.Y['gp_f_srq'], s.m.Y['gp_f_spoll'], s.m.watch
+        srq, spoll, watch = s.m.Y.lin('gp_f_srq'), s.m.Y.lin('gp_f_spoll'), s.m.watch    # (linear: as addr)
         s.naps = 0                              # and its sleeps till an answer's SRQ (idle's HLT)
         due, nap = 0xE0000 + s.rsym['pit_due'], 0xE0000 + s.rsym['idle.z']
         def w(addr):
-            if (addr in (due, nap) or s.m.r('cs') == 0x60 and s.m.r('ip') in (srq, spoll)) and s.stub() != 0xF000 \
+            if (addr in (due, nap) or addr in (srq, spoll) and s.m.r('cs') == 0x60) and s.stub() != 0xF000 \
                     and s.inpop() == 1 and s.m.ems_reg[0] == s.m.rd(s.stub(), s.sym['r_hw'], 1)[0]:
                 if addr == due: s.pit_dues += 1     # (the console's page in)
                 elif addr == nap: s.naps += 1
-                elif s.m.r('ip') == srq: s.srq_calls += 1
+                elif addr == srq: s.srq_calls += 1
                 else: s.spolls += 1
             watch(addr)
         s.m.watch = w
@@ -1126,15 +1126,17 @@ def bg_looks(h):
     found work (bg_pass.w), and how long each held the program, in simulated µs: [(µs, found work)]."""
     st = {'n': 0, 'work': 0, 'held': [], 't0': None, 'wk': False, 'kept': 0}
     a0, aw = (0xE0000 + h.rsym[n] for n in ('bg_pass', 'bg_pass.w'))
-    watch = h.m.watch
+    watch, rb = h.m.watch, h.sym['..@r_back']
     def w(addr):
+        if addr != a0 and addr != aw and (st['t0'] is None or (addr - rb) & 15):
+            watch(addr); return                 # (none of the three below: r_back's is stub*16 + rb)
         stub = h.stub()
         if stub != 0xF000 and h.m.ems_reg[0] == h.m.rd(stub, h.sym['r_hw'], 1)[0]:
             if addr == a0:
                 st['n'] += 1; st['t0'] = h.m.us; st['wk'] = False
                 st['kept'] += h.rv('req_ready')        # (a request the console took on its way out)
             elif addr == aw: st['work'] += 1; st['wk'] = True
-            elif addr == stub * 16 + h.sym['..@r_back'] and st['t0'] is not None:   # (back in the stub)
+            elif addr == stub * 16 + rb and st['t0'] is not None:   # (back in the stub)
                 st['held'].append((h.m.us - st['t0'], st['wk'])); st['t0'] = None
         watch(addr)
     h.m.watch = w

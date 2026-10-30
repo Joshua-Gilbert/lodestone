@@ -2151,7 +2151,8 @@ def watch_info(k):
     built in tmp just before (infobuf), which other drawing reuses."""
     got, a = [], k.Y['center']
     def h(pc):
-        if pc.r('ip') == a and pc.r('dx') == INFO_Y and pc.r('cs') == k.useg:
+        at = pc.last_blk[0]                     # (the block's CS:IP, linear: center's at 1 in 16; then the UI's segment read)
+        if (at - a) & 15 == 0 and at == k.lin('center') and pc.r('cs') == k.useg and pc.r('dx') == INFO_Y:
             got.append(pc.rd(pc.r('cs'), pc.r('si'), 128).split(b'\0')[0].decode())
     k.hooks.append(h)
     return got
