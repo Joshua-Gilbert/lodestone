@@ -5,9 +5,10 @@
 ;  GLYPHS.INC) is CS-relative.  CLAUDE.COM (TERMCELL.INC) and resident
 ;  Claude's console (RCON.ASM, in EMS) both draw with it; the terminal
 ;  window (apps/TERM.ASM) too, with its own font: CELL_FSEG the font's
-;  segment register, CELL_FONT its offset, CELL_FIRST its first code (none
-;  below it drawn: a space), GLYPH_END the first code with no glyph ('?';
-;  100h: every code has one).  CLAUDE.ASM's, RCON.ASM's and TERM.ASM's
+;  segment register (CELL_FDS defined: DS's, with no prefix, which NASM
+;  writes even for ds:), CELL_FONT its offset, CELL_FIRST its first code
+;  (none below it drawn: a space), GLYPH_END the first code with no glyph
+;  ('?'; 100h: every code has one).  CLAUDE.ASM's, RCON.ASM's and TERM.ASM's
 ;  EVEN lists name its labels: code that moves them stops those builds.
 ; =====================================================================
 
@@ -54,7 +55,11 @@ cell:   push    bx
         mov     bx, ax
 %assign r 0
 %rep 16
+%ifdef CELL_FDS
+        mov     al, [bx + r]
+%else
         mov     al, [CELL_FSEG:bx + r]
+%endif
         xor     al, cl
         mov     [es:di + (r & 3) * 2000h + (r >> 2) * 80], al
 %assign r r + 1

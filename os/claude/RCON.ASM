@@ -29,7 +29,7 @@
 ;  M2: the console is Term, Claude Code on the Pi in the same session as
 ;  CLAUDE /T, through CLAUDE.COM's own TERMLINK, TERMCELL and TERMKEYS.
 ;  Each pop-up draws Term's screen from its shadow at once and says HELLO
-;  (app=resident) with the shadow's CRC: the Pi goes on from that screen
+;  (app=resident) with the shadow's sum: the Pi goes on from that screen
 ;  when it is one it sent (only what changed meanwhile comes), else draws
 ;  it again from a clear screen (CLAUDE /T had the link meanwhile).
 ;  CODE-\ or CODE-Q goes back, once the keys typed before it have gone and
@@ -100,6 +100,9 @@ org 0
 %define GP_OTMO gp_otmo                  ; OPS.INC: the driver's timeout under
                                         ;  a GPIB request (ours, 2 s: old_tmo is
                                         ;  the program's)
+%define CELL_FDS                        ; CELL.INC: the font at DS (= CS wherever
+                                        ;  a cell is drawn here): no CS: prefix on
+                                        ;  a cell's 16 loads
 %define QUAD_GLYPHS                     ; GLYPHS.INC: the 2x2 block elements A1h-AEh,
 %define GLYPH_END 0AFh                  ;  as CLAUDE.COM's (1.12: the mascot's eyes)
 %define K_QUIT 2B00h                    ; TERMKEYS: CODE-\ back to the program,
@@ -642,9 +645,8 @@ keys_back:
 ;  Term over the link until CODE-\ or CODE-Q.  DS = ES = CS.
 ; =====================================================================
 session:
-        cmp     byte [inited], 0        ; the first time: the CRC table, Term's
-        jne     .i                      ;  screen blank, our title
-        call    crc_init
+        cmp     byte [inited], 0        ; the first time: Term's screen blank,
+        jne     .i                      ;  our title
         call    shadow_clear
         mov     si, s_title0
         mov     di, ptitle
@@ -916,7 +918,7 @@ build_hello:                            ; -> CX = length of hellobuf
         je      .n                      ;  on from it if it is one it sent
         mov     si, kv_screen
         call    put_str
-        call    screen_crc
+        call    screen_sum
         call    put_hex16
         mov     al, 10
         stosb
@@ -925,28 +927,27 @@ build_hello:                            ; -> CX = length of hellobuf
         sub     cx, hellobuf
         ret
 
-; AX = CRC-16 (TERMLINK's crc16) of the shadow (glyph, attribute, row by
-; row), then the cursor's row, column and hidden (0 or 1): the Pi's
-; termscreen.screen_crc
-screen_crc:
-        push    es                      ; (TERMLINK's crc16 reads ES:SI in RCON)
+; AX = the Fletcher sum (TERMLINK's fcs, as the frames') of the shadow
+; (glyph, attribute, row by row), then the cursor's row, column and hidden
+; (0 or 1): the Pi's termscreen.screen_sum
+screen_sum:
+        push    ds
         push    SHADSEG
-        pop     es
+        pop     ds
         xor     si, si
         mov     cx, TROWS * 160
-        mov     ax, 0FFFFh
-        call    crc16
-        pop     es
+        call    fcs
+        pop     ds
         mov     si, t_cur
         mov     cx, 2
-        call    crc16
+        call    fl16                    ; (going on from BX's sums)
         mov     dl, [t_flags]
         shr     dl, 1
         and     dl, 1
-        mov     [crc_hid], dl
-        mov     si, crc_hid
+        mov     [sum_hid], dl
+        mov     si, sum_hid
         mov     cx, 1
-        jmp     crc16
+        jmp     fl16
 
 put_hex16:                              ; AX -> ES:DI, 4 hex digits
         mov     cx, 4
@@ -1034,17 +1035,15 @@ pi_frame:                               ; BX = frame offset in rxbuf
         ret                             ; (the chat's TEXT, STATUS, ASK... no)
 
 rf_hello:
+        mov     al, [ksum]              ; the Fletcher sum, as every gridlink that
+        inc     ax                      ;  reads our HELLO says (HF_FCS): 2, the
+        mov     [use_fl], al            ;  driver keeps it (TERMLINK)
         mov     byte [bg_ok], 0
-        cmp     cx, 2                   ; the Pi takes the Fletcher sum: every
-        jb      .c                      ;  frame from now on
-        test    byte [si+1], HF_BG      ; (and works on in the background, M4)
-        jz      .f
-        inc     byte [bg_ok]
-.f:     test    byte [si+1], HF_FCS
+        cmp     cx, 2
+        jb      .c
+        test    byte [si+1], HF_BG      ; (the Pi works on in the background, M4)
         jz      .c
-        mov     al, [ksum]              ; (2: the driver keeps it, TERMLINK)
-        inc     ax
-        mov     [use_fl], al
+        inc     byte [bg_ok]
 .c:     mov     byte [connected], 1
         mov     byte [n_failrun], 0
         mov     byte [rq_more], 0
@@ -1518,7 +1517,7 @@ put_num:                                ; AL (0-99) -> ES:DI, decimal
 %include "TERMKEYS.INC"
 
 sig_gg      db 'GRIDGPIB'
-kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.12', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
+kv_hello    db 'app=resident', 10, 'grid=CLAUDE 1.13', 10, 'rx=', RXPAY_S, 10, 'req=8700', 10
             db 'ops=files,gpib,bgscreen', 10, 'addr=', 0
 kv_screen   db 'screen=', 0
 kv_prog     db 'prog=', 0
@@ -1622,7 +1621,6 @@ sv_dta      resd 1                      ; the program's DTA, INT 23h and 24h,
 sv_vec      resd 2                      ;  while a file's request runs
 dta         resb 44
 ksbuf       resb KSMAX                  ; TYPE's request, for the feeder
-crctab      resw 256
 ; Term (TERMCELL.INC, TERMKEYS.INC)
 t_active    resw 1
 keybuf      resw KEYMAX
@@ -1632,7 +1630,7 @@ cur_di      resw 1
 t_flags     resb 1
 t_cur       resw 1
 have_screen resb 1                      ; the shadow holds what the Pi drew
-crc_hid     resb 1
+sum_hid     resb 1
 ptitle      resb TITLEN + 1
 title_text  resb NAMEMAX + 5 + TITLEN + 16
 status_text resb 72

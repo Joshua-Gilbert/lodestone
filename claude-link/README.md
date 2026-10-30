@@ -244,6 +244,11 @@ The API key (chat only) comes from the Claude Console
 (console.anthropic.com); usage is billed per token. `/cost` shows the
 session's running total. Term needs no key (see above).
 
+CLAUDE 1.15 and resident Claude's console 1.13 need gridlink from
+2026-10-22 (8db568c) on: they check frames only with the Fletcher sum.
+With an older gridlink the GRiD keeps resetting the link, saying "No
+answer from the bridge at GPIB address 7".
+
 ### 3. The GRiD
 
 Copy `CLAUDE.COM` to the floppy, then:
@@ -254,6 +259,8 @@ CLAUDE          chat (CLAUDE /T: Term; CLAUDE /W: Firefox; CLAUDE /A:nn if the b
 ```
 
 It connects, sets the GRiD's clock from the Pi, and shows the welcome.
+It needs gridlink from 2026-10-22 (8db568c) on; with an older one it keeps
+resetting, saying "No answer from the bridge at GPIB address 7".
 
 ## Speed
 
@@ -282,12 +289,14 @@ every byte checked.
   every message. A REPLY was answered NOP at once, so the next request waited
   for the GRiD's 1 s idle POLL. The bridge read USB a byte at a time
   (106 KB/s; now 510 KB/s). The table CRC cost the 286 about 34 clocks a
-  byte; the Fletcher sum costs 8.5.
+  byte; the Fletcher sum costs 8.5. Since CLAUDE 1.15 (and the console's 1.13;
+  audit3 R56) the GRiD has no CRC at all, its HELLO too goes with the sum:
+  they need gridlink from 2026-10-22 (8db568c, PR #60) on.
 - **The first call after idle:** CLAUDE POLLs once a second between
   messages. The bridge now raises SRQ when gridlink has news for an idle GRiD
   (WAKE, PROTOCOL.md), and CLAUDE POLLs at once. That left 51 ms: CLAUDE's
   HLT until the next timer tick. With the GPIB driver's SRQ interrupt (IRQ 5:
-  Lodestone's built-in driver 1.21 and up, or GRIDGPIB 1.2) the SRQ itself wakes it,
+  Lodestone's built-in driver 1.21 and up, or GRIDGPIB 1.2 and up) the SRQ itself wakes it,
   and the first call after idle takes 9 ms: a round trip and about 2 ms.
   gridlink rings only a GRiD that has read its last answer and been quiet
   for 50 ms, five times at most, then takes the SRQ back.
@@ -309,7 +318,11 @@ every byte checked.
   moves the bytes, two ADDs a byte, and CLAUDE checks a frame from it and
   lets the driver append its own (copies are REP MOVSW now). The GRiD's
   time between frames went from 4.9 to 2.8 ms into the GRiD and from 4.8
-  to 1.1 ms out of it.
+  to 1.1 ms out of it. GRIDGPIB.COM for GRiD MS-DOS is the same code since
+  1.23 (`tools/GRIDGPIB.ASM` includes the kernel's KGPIB.INC): the fast
+  loops and the frame check there too, so CLAUDE under GRiD MS-DOS leaves
+  the check to it as well (2,515 bytes resident, 2,177 as 1.2; in the
+  emulator a 22.8 KB turn each way went from 3.81 to 1.25 s).
 - **Where a 2 KB frame's time goes**, on the bridge's own clock (fw 2026-10-23b
   stamps its events; `bench --trace`), so the GRiD is now the limit both ways:
 
@@ -398,9 +411,14 @@ every byte checked.
   (Marionette over jsdom; Node, and `npm ci` in `tests/`) serving
   `tests/web/`.
   `python3 tests/test_emu.py shots/` also saves every screen as PNG + text.
-  Needs `unicorn` and `pillow`; `bin/GRIDGPIB.COM` is the driver it loads.
+  Needs `unicorn` and `pillow`; `../tools/GRIDGPIB.COM` is the driver it loads.
 
 ## Status
+
+CLAUDE 1.15 and resident Claude's console 1.13 (the 2026-10-26 audit's
+step 8: no CRC on the GRiD) need gridlink from 2026-10-22 (8db568c) on. An
+older gridlink shows up as CLAUDE resetting the link with "No answer from
+the bridge at GPIB address 7".
 
 Version 1.1: Term. Tested in emulation (and the MCP server against the real
 Claude Code's `claude mcp list`), not yet on the Pi 5: 18 Term checks with

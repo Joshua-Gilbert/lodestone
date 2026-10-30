@@ -13,6 +13,15 @@
 # uses is marked bad as well, so the volume has nothing free: it is a ROM.
 # image() and trailer() are the old interface (tools/bootsim.py uses them).
 #
+# A data ROM (ROM 2) is written as the second half of R:, the volume KROM.INC
+# joins of the two ROMs, so that R:'s FAT and root sectors are plain copies:
+# its FAT sector is R:'s second (entries from 341 on: its cluster n is R:'s
+# n + R_OFF, 340, the first entry wholly in that sector), its root R:'s last
+# 32 entries (no label, clusters R_OFF on).  A boot ROM's FAT marks R:'s
+# entries 254-341 bad (the gap between the two) up to its sector's end.  With
+# no ROM 1, R:'s first FAT sector is ROM 2's spare P1_AT (all bad).  So ROM 2
+# is no FAT volume by itself; its BPB is only the signature KROM.INC checks.
+#
 # The 1520 inverts A16 to its ROM sockets: the chip's first 64 KB appears in
 # the upper half of the BIOS's window (GRiD's EPROM, read in a programmer, has
 # its trailer at FF00h).  So OUT.BIN is the image as the BIOS sees it (the
@@ -27,7 +36,10 @@ FAT_AT, ROOT_AT = 1, 2
 DATA_AT = ROOT_AT + NROOT * 32 // SECT       # sector 4: cluster 2
 LAST_CLU = NSECT - 1 - DATA_AT + 2           # 253: the trailer's sector
 ROM_ID_BOOT = 0x4F4C                         # 'LO': Lodestone's boot ROM (ROM 1)
-ROM_ID_DATA = 0x324C                         # 'L2': a Lodestone data ROM (ROM 2)
+ROM_ID_DATA = 0x4A4C                         # 'LJ': a Lodestone data ROM (ROM 2), joined
+ROM_ID_DATA_OLD = 0x324C                     # 'L2': ROM 2 before O10, a volume by itself
+R_OFF = 340                                  # ROM 2's cluster n is R:'s n + 340 (KROM.INC)
+P1_AT = NSECT - 2                            # 254: ROM 2's spare, R:'s FAT sector 1 without ROM 1
 
 
 def trailer(sys_type=1, bootable=0x80, boot_seg=0, size_kb=128, rom_id=0x4F53, text=b'Lodestone',
@@ -89,38 +101,38 @@ def volume(files, boot=None, label=b'LODESTONE', when=None, data=False, text=b'L
     bs[0x24:0x3E] = struct.pack('<BBBI', 0x80, 0, 0x29, 0x4F4C) + label[:11].ljust(11) + b'FAT12   '
     bs[510:512] = b'\x55\xAA'
     img[0:SECT] = bs
-    fat = [0xFF8, 0xFFF] + [0xFF7] * (LAST_CLU - 1)        # unused (and the trailer's): bad
+    off = R_OFF if data else 0                             # (a data ROM's clusters as R:'s)
+    top = P1_AT - DATA_AT + 2 if data else LAST_CLU        # (the first cluster no file may use)
+    fat = [0xFF8, 0xFFF] + [0xFF7] * (2 * SECT * 2 // 3)   # unused (the trailer's, the gap): bad
     root = bytearray(NROOT * 32)
     tm, dt = dos_time(when)
     ent = 0
-    if label:
+    if label and not data:
         root[0:11] = label[:11].ljust(11); root[11] = 0x08
         struct.pack_into('<HH', root, 22, tm, dt)
         ent = 1
     clu = 2
     for name, body in files:
         n = (len(body) + SECT - 1) // SECT
-        if clu + max(n, 1) - 1 >= LAST_CLU:
-            raise ValueError('ROM full: %s needs %d sectors, %d left' % (name, n, LAST_CLU - clu))
+        if clu + max(n, 1) - 1 >= top:
+            raise ValueError('ROM full: %s needs %d sectors, %d left' % (name, n, top - clu))
         if ent >= NROOT: raise ValueError('root full')
         e = 32 * ent
         root[e:e + 11] = fat_name(name)
         root[e + 11] = 0x01                                # read-only: it's in ROM
-        struct.pack_into('<HHHI', root, e + 22, tm, dt, clu if n else 0, len(body))
+        struct.pack_into('<HHHI', root, e + 22, tm, dt, clu + off if n else 0, len(body))
         if n:
             a = (DATA_AT + clu - 2) * SECT
             img[a:a + len(body)] = body
             img[a + len(body):a + n * SECT] = bytes(n * SECT - len(body))
-            for i in range(n): fat[clu + i] = clu + i + 1
-            fat[clu + n - 1] = 0xFFF
+            for i in range(n): fat[clu + off + i] = clu + off + i + 1
+            fat[clu + off + n - 1] = 0xFFF
             clu += n
         ent += 1
-    fb = bytearray(SECT)
-    for i, v in enumerate(fat):
-        o = i * 3 // 2
-        if i & 1: fb[o] |= (v << 4) & 0xF0; fb[o + 1] = v >> 4
-        else: fb[o] = v & 0xFF; fb[o + 1] |= (v >> 8) & 0x0F
-    img[FAT_AT * SECT:(FAT_AT + 1) * SECT] = fb
+    fb = fat12(fat)                                        # R:'s two FAT sectors: ROM 1's
+    img[FAT_AT * SECT:(FAT_AT + 1) * SECT] = fb[SECT:] if data else fb[:SECT]     # first, ROM 2's second
+    if data:
+        img[P1_AT * SECT:(P1_AT + 1) * SECT] = fat12([0xFF8, 0xFFF] + [0xFF7] * (2 * SECT * 2 // 3))[:SECT]
     img[ROOT_AT * SECT:DATA_AT * SECT] = root
     nfiles = sum(1 for _ in files)
     layout = (ROOT_AT * SECT // 16, NROOT * 32 // 16, nfiles, DATA_AT * SECT // 16, NSECT - DATA_AT)
@@ -129,7 +141,38 @@ def volume(files, boot=None, label=b'LODESTONE', when=None, data=False, text=b'L
     else:
         t = trailer(sys_type=1, bootable=0x80, rom_id=ROM_ID_BOOT, text=text, part=part, layout=layout, when=when)
     img[-256:] = t
-    return bytes(img), (LAST_CLU - clu) * SECT
+    return bytes(img), (top - clu) * SECT
+
+
+def fat12(fat):
+    """entries -> two sectors of FAT12 (those past them dropped)"""
+    fb = bytearray(2 * SECT + 2)
+    for i, v in enumerate(fat[:2 * SECT * 2 // 3 + 1]):
+        o = i * 3 // 2
+        if i & 1: fb[o] |= (v << 4) & 0xF0; fb[o + 1] = v >> 4
+        else: fb[o] = v & 0xFF; fb[o + 1] |= (v >> 8) & 0x0F
+    return bytes(fb[:2 * SECT])
+
+
+def joined(r1, r2):
+    """R: as KROM.INC maps it, of ROM 1 and ROM 2 images (r1 None: ROM 2
+    alone), as a FAT12 volume another reader can take: a boot sector with
+    its geometry, FAT (ROM 1's sector or ROM 2's P1, then ROM 2's), root
+    (ROM 1's 32 entries, their empties made deleted as KROM.INC's .fix does,
+    then ROM 2's), clusters 2-253 ROM 1's, 254-341 the gap, then ROM 2's."""
+    S = lambda r, n: bytes(r[n * SECT:(n + 1) * SECT])
+    fat = (S(r1, FAT_AT) if r1 else S(r2, P1_AT)) + S(r2, FAT_AT)
+    root1 = bytearray(S(r1, ROOT_AT) + S(r1, ROOT_AT + 1) if r1 else bytes(NROOT * 32))
+    for e in range(0, len(root1), 32):
+        if root1[e] == 0: root1[e] = 0xE5
+    root = bytes(root1) + S(r2, ROOT_AT) + S(r2, ROOT_AT + 1)
+    ncl = LAST_CLU + 1 + R_OFF
+    data_at = 1 + 2 + len(root) // SECT
+    bs = bytearray(r1[:SECT] if r1 else r2[:SECT])
+    struct.pack_into('<HBHBHHBH', bs, 0x0B, SECT, 1, 1, 1, 2 * NROOT, data_at + ncl - 2, 0xF8, 2)
+    img = bytearray(bs) + fat + root
+    img += (r1[DATA_AT * SECT:] if r1 else bytes((NSECT - DATA_AT) * SECT)) + bytes((R_OFF - (NSECT - DATA_AT)) * SECT)
+    return bytes(img + r2[DATA_AT * SECT:])
 
 
 if __name__ == '__main__':

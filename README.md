@@ -98,7 +98,7 @@ Lodestone 0.6 (memory measured with the windows that move, the printer drivers a
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
 - **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 14 KB more.
-- **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.5 KB when ROM 1 is there, 0.8 KB with ROM 2 as well.
+- **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.5 KB when ROM 1 is there, 0.6 KB with ROM 2 as well.
 - **The Executive stays resident on purpose:** Lodestone is meant to become multitasking.
 
 The full tables, the method and every run on the 1520 are in `os/bench/RESULTS.TXT`, `RESULTS3.TXT` and `RESULTS_HD.TXT`, and the `BENCH_1520_*.TXT` logs.
@@ -111,7 +111,7 @@ The full tables, the method and every run on the 1520 are in `os/bench/RESULTS.T
 
 1. Burn **`os/LODE1_EPROM.BIN`** to a 27C010 (the 1520's original part is a TMS27C010A). Don't burn `LODE1.BIN`: the 1520 inverts address line A16 to its ROM sockets, so the file to burn has its two halves swapped. The two have the same programmer checksum, so check the bytes: address 10000h starts `EB 3C 90` then `LODE ROM`.
 2. Fit it in the **second** socket, where GRiD MS-DOS's EPROM sits. The BIOS boots the last bootable ROM it finds. GRiD MS-DOS can move to the first socket, if ROM 2 isn't there.
-3. Burn **`os/LODE2_EPROM.BIN`** (ROM 2: DEFRAG.COM, TERM.FNT) the same way and fit it in the **first** socket: a data ROM is never booted. GRiD MS-DOS then has no socket. Without ROM 2 everything works but DEFRAG and terminal windows: the screen saver shows only the dark clock, and text programs start full screen.
+3. Burn **`os/LODE2_EPROM.BIN`** (ROM 2: DEFRAG.COM, TERM.FNT) the same way and fit it in the **first** socket: a data ROM is never booted. GRiD MS-DOS then has no socket. Without ROM 2 everything works but DEFRAG and terminal windows: the screen saver shows only the dark clock, and text programs start full screen. **Burn both ROMs from one build** (`docs/lodestone-rom.md`, "Re-burning for O10"): a new ROM 1 doesn't join an older ROM 2 (`L2`, as 0.6's images), so it would lose DEFRAG and TERM.FNT.
 4. Hold **Shift** while the 1520 starts for the boot menu: Lodestone, Lodestone with the ROM's own settings, GRiD MS-DOS (from the other socket, without ROM 2), or the floppy.
 
 From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C:\LODE;R:\`. So a newer program copied to `C:\LODE` is used before the ROM's copy, and an update needs no new ROM. CLAUDE.COM isn't in ROM 1 yet: copy it to `C:\LODE`. See `docs/lodestone-rom.md`.
@@ -137,7 +137,7 @@ See `docs/lodestone-floppy-dev.md`.
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in); `TERM.FNT`, code page 437's 256 characters for the terminal window (from Terminus Bold, by `tools/mkfnt437.py`) |
 | `os/tests` | `pcemu`-based tests (see Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN; and for the 1520: CMDTEST.BAT (the batch language), CALCTEST.BAT (the calculator, step by step) and FPUPROBE.COM (what the coprocessor answers after FNINIT) |
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
-| `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys); resident Claude: `CLAUDE /R` (an INT 16h stub at the top of memory, its console `RCON.ASM` in EMS: Term's own code, Claude Code in the pop-up) and `CLAUDE /U`, with `M1TEST.BAT` for the 1520; its spikes: `RSPIKE.COM` (a pop-up TSR on CODE-\\, its code in EMS), `EMSUSE`, `GFXUSE`, `KEYCODE` and `SPIKES.BAT`, which runs them on the 1520; and the test programs `T1C`, `BUSY`, `MHAND`, `HOLE`, `HOOK16` and `PAGE1` |
+| `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys); resident Claude: `CLAUDE /R` (an INT 16h stub at the top of memory, its console `RCON.ASM` in EMS: Term's own code, Claude Code in the pop-up) and `CLAUDE /U`, with `M1TEST.BAT` for the 1520; `KEYCODE` (each key's INT 16h code, for the 1520); and the test programs `EMSUSE`, `GFXUSE`, `T1C`, `BUSY`, `MHAND`, `HOLE`, `HOOK16` and `PAGE1` |
 | `os/releases` | Every release's files, 0.1 to 0.6 (0.6 has the ROM images too) |
 | `os/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `os/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
@@ -158,7 +158,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,311 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,321 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os

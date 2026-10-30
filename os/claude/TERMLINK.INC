@@ -34,8 +34,8 @@ snap_reply  resb 1
 keyn        resb 1
 keys_q      resb 1
 rep_q       resb 1
-use_fl      resb 1                      ; frames carry a Fletcher sum, not CRC-16: 1 ours,
-                                        ;  2 the driver's (KSUM: ksum + 1 at the Pi's HELLO)
+use_fl      resb 1                      ; whose Fletcher sum: ours (fcs) till the Pi's HELLO (0),
+                                        ;  then ksum + 1: 1 ours, 2 the driver's (KSUM)
 wake_ok     resb 1                      ; 1: our HELLO offered GF_WAKE (the driver latches SRQ;
                                         ;  RCON: it counts SRQ interrupts)
 tlook       resb 1                      ; link_wait's serial poll: 2 a tick's look, no SRQ seen;
@@ -129,12 +129,22 @@ link_idle:
         jmp     link_write
 .nak:   mov     byte [nak_pending], 0
         jmp     link_write_nak
+%ifndef TX_INPL
 .again: mov     byte [resend], 0
         jmp     link_write
+%endif
 .msg:   call    frame_next
+%ifdef TX_INPL
+.tx:    cmp     byte [pend_msg], 2      ; (P7: a fragment where it lies)
+        je      lw_inpl
+%endif
         jmp     link_write
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .x:     ret
+%ifdef TX_INPL
+.again: mov     byte [resend], 0        ; (here: .msg stays even)
+        jmp     short .tx
+%endif
 
 ; POLL frame (no payload) with a new sequence number
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
@@ -159,7 +169,6 @@ frame_short:
         call    frame_hdr
         lea     si, [di+1]
         mov     cx, 5
-        mov     ax, 0FFFFh
         call    fcs
         mov     [di+6], ax
         mov     si, di
@@ -202,11 +211,30 @@ frame_next:
 .s:     mov     [g_seq], al
         mov     di, txframe
         call    frame_hdr
+%ifdef TX_INPL
+        mov     si, [bx+4]
+        mov     ax, [bx+8]              ; (sent: 0, or whole fragments)
+        add     si, ax
+        test    ax, ax                  ; P7: a later fragment, when the driver
+        jz      .cp                     ;  adds the check, goes from where it
+        test    byte [use_fl], 2        ;  lies (lw_inpl swaps the header in
+        jz      .cp                     ;  over the 6 bytes before it, and back)
+        sub     si, 6
+        mov     [tx_at], si
+        mov     ax, [bx+2]
+        mov     [tx_seg], ax
+        inc     byte [pend_msg]         ; (2: in place)
+        jmp     short .k
+.cp:    add     di, 6
+        push    ds
+        mov     ds, [bx+2]
+%else
         add     di, 6
         push    ds
         mov     si, [bx+4]
         add     si, [bx+8]
         mov     ds, [bx+2]
+%endif
         push    cx
         PROF    5
         shr     cx, 1
@@ -217,7 +245,7 @@ frame_next:
         pop     cx
         pop     ds
 %ifdef KSUM
-        mov     al, [use_fl]            ; 2: the driver adds the check as it
+.k:     mov     al, [use_fl]            ; 2: the driver adds the check as it
         and     al, 2                   ;  sends, 02h AL=3 (1.23); else ours,
         or      al, 1                   ;  AL=1 (EOI), whichever path this
         mov     [lw_eoi], al            ;  frame takes
@@ -231,7 +259,6 @@ frame_next:
         push    cx
         mov     si, txframe+1
         add     cx, 5
-        mov     ax, 0FFFFh
         call    fcs
         pop     cx
         mov     di, txframe+6
@@ -263,7 +290,7 @@ lw_go:                                  ; (KSUM: DL = the driver's AL)
         PROF    1
         call    gg_call
         PROF    0
-        jnc     .ok
+.r:     jnc     .ok
         jmp     link_fail
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 .ok:    mov     ax, [now]
@@ -287,6 +314,41 @@ link_write_nak:
         call    lw_go
         pop     word [t_sent]
         ret
+
+%ifdef TX_INPL
+; P7: a later fragment sent where it lies (frame_next's pend_msg 2: driver
+; 1.23, which adds the check): txframe's header swapped in over the 6 bytes
+; before it (the fragment before's, or the message's own), and back after
+lw_inpl:
+        call    tx_swap
+        call    .go
+tx_swap:                                ; txframe's 6 <-> the 6 at tx_seg:tx_at
+        push    es
+        les     di, [tx_at]
+        mov     si, txframe
+        mov     cx, 3
+.l:     lodsw
+        xchg    ax, [es:di]
+        mov     [si-2], ax
+        scasw
+        loop    .l
+        pop     es
+        ret
+lw_inpl.go:                             ; (lw_go's, DS:SI the frame there)
+        cmp     word [irq_ptr+2], 0
+        je      .w
+        call    srq_new
+.w:     mov     bl, [nano]
+        mov     cx, [txlen]
+        mov     ax, 0203h
+        PROF    1
+        push    ds
+        lds     si, [tx_at]
+        call    gg_call
+        pop     ds
+        PROF    0
+        jmp     lw_go.r
+%endif
 
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 link_wait:
@@ -370,6 +432,11 @@ link_wait:
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 link_read:
         mov     di, rxbuf
+%ifdef RX_INPL
+        cmp     byte [rq_type], 0       ; (P7: mid-request, maybe in reqbuf)
+        jne     .in
+.r:
+%endif
         mov     cx, RXMAX
         mov     bl, [nano]
 %ifdef KSUM
@@ -393,26 +460,65 @@ link_read:
 %endif
         call    find_frame
         jc      .bad
-.ok:    jmp     took_answer
+.ok:
+%ifdef RX_INPL
+        cmp     di, rxbuf
+        jne     .ok2
+%endif
+        jmp     took_answer
 .bad:   mov     byte [nak_pending], 1
         mov     byte [lstate], LS_IDLE
         inc     word [n_bad]
+%ifdef RX_INPL
+        jmp     short rq_back
+.ok2:   call    took_answer
+        jmp     short rq_back
+; P7: mid-request (a fragment with MORE read), the answer goes straight after
+; what reqbuf holds, if a whole read has room there: its header lands on the
+; last 6 bytes held, kept in rq_save till rq_back.  (Any answer may come:
+; a CELLS frame between the fragments is taken from there too.)
+.in:    mov     ax, [rq_len]
+        sub     ax, 6
+        jb      .r
+        cmp     ax, REQMAX + 4 - RXMAX
+        ja      .r
+        add     ax, reqbuf
+        xchg    si, ax
+        mov     [rq_at], si
+        mov     di, rq_save
+        movsw
+        movsw
+        movsw
+        lea     di, [si-6]
+        jmp     short .r
+rq_back:                                ; the 6 bytes under its header back (a
+        xor     di, di                  ;  new message in pf_reasm: none)
+        xchg    di, [rq_at]
+        test    di, di
+        jz      .x
+        mov     si, rq_save
+        movsw
+        movsw
+        movsw
+.x:
+%endif
         ret
 
 %ifdef KSUM
-; One frame and nothing else, CX = rxn bytes: is it good, by the driver's
-; Fletcher-16 of all of them (BL = A, BH = B; A = 1, B = 0 to start)?  The
-; frame's own check leaves out the first byte (47h) and the check (the last
-; two, A then B), so:  A1 = A - 47h, B1 = B - 1 - n * 47h, then
-; A2 = A1 - a - b and B2 = B1 - 2 A1 + b must be the a and b sent.
-; -> BX = 0, CF clear if it is good.  (find_frame scans for anything else.)
+; One frame and nothing else, CX = rxn bytes at DI: is it good, by the
+; driver's Fletcher-16 of all of them (BL = A, BH = B; A = 1, B = 0 to
+; start)?  The frame's own check leaves out the first byte (47h) and the
+; check (the last two, A then B), so:  A1 = A - 47h, B1 = B - 1 - n * 47h,
+; then A2 = A1 - a - b and B2 = B1 - 2 A1 + b must be the a and b sent.
+; -> BX = DI - rxbuf, CF clear if it is good.  (find_frame scans for anything
+; else.)
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 ks_check:
         cmp     cx, 8
         jb      .no
-        cmp     byte [rxbuf], 47h
+        cmp     byte [di], 47h
         jne     .no
-        mov     ax, [rxbuf+4]
+        mov     ax, [di+4]
         cmp     ax, RXMAX - 9
         ja      .no
         add     ax, 8
@@ -420,7 +526,8 @@ ks_check:
         jne     .no
         PROF    4
         mov     si, cx
-        mov     dx, [rxbuf+si-2]        ; DL = a, DH = b
+        add     si, di
+        mov     dx, [si-2]              ; DL = a, DH = b
         mov     al, cl
         mov     ah, 47h
         mul     ah                      ; AL = n * 47h (mod 256)
@@ -436,16 +543,19 @@ ks_check:
         cmp     bx, dx
         jne     .no
         inc     word [n_kok]            ; (frames the driver's check passed)
-        xor     bx, bx
+        mov     bx, di
+        sub     bx, rxbuf
         clc
         ret
 .no:    stc
         ret
 %endif
 
-; rxbuf[0..rxn) -> BX = offset of the first good frame, CF if none
+; DI[0..rxn) -> BX = offset of the first good frame from rxbuf, CF if none
 find_frame:
-        xor     bx, bx
+        mov     bx, di
+        sub     bx, rxbuf
+        add     [rxn], bx               ; (rxn: the end, from rxbuf)
 .s:     mov     ax, [rxn]
         sub     ax, bx
         cmp     ax, 8
@@ -463,7 +573,6 @@ find_frame:
         push    cx
         lea     si, [rxbuf+bx+1]
         add     cx, 5
-        mov     ax, 0FFFFh
         call    fcs
         pop     cx
         pop     bx
@@ -658,9 +767,13 @@ delay_ms:
         pop     ax
 .x:     ret
 
-; A frame's check over DS:SI, CX bytes -> AX: CRC-16 until the Pi's HELLO
-; agrees to the Fletcher sum (use_fl; link_reset clears it, so HELLO and its
-; answer always go with the CRC).  Destroys BX SI CX.
+; A frame's check over DS:SI, CX bytes -> AX, every frame, HELLO too (till
+; audit3 R56 the HELLO and its answer went with a CRC-16; a gridlink from
+; 8db568c on takes either).  Fletcher-16 with 8-bit sums: A = 1 + the bytes,
+; B = the sum of the A's, both mod 256 (the registers' own wrap: no modulo
+; step at all, where Fletcher's mod 255 would cost an ADC after every add);
+; AX = B << 8 | A.  Four bytes a pass: about 8.5 clocks a byte on the 286 by
+; the tables.  Destroys BX SI CX.
         times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 %ifdef PROFILE
 fcs:    PROF    4
@@ -671,17 +784,12 @@ fcs_:
 %else
 fcs:
 %endif
-        cmp     byte [use_fl], 0
-        je      crc16
-; Fletcher-16 with 8-bit sums: A = 1 + the bytes, B = the sum of the A's,
-; both mod 256 (the registers' own wrap: no modulo step at all, where
-; Fletcher's mod 255 would cost an ADC after every add); AX = B << 8 | A.
-; Four bytes a pass: about 8.5 clocks a byte on the 286 by the tables,
-; against about 34 for the table CRC.  Destroys BX SI CX (as crc16).
-fl16:   push    dx
         mov     bx, 1                   ; BL = A, BH = B
+; fl16: the same, going on from BX's sums (RCON's screen_sum)
+fl16:   push    dx
         mov     dx, cx
-        shr     cx, 2
+        shr     cx, 1                   ; (two SHR 1s: 4 clocks against SHR 2's
+        shr     cx, 1                   ;  7, and .l even after fcs's 3 bytes)
         jcxz    .t
 .l:     lodsw
         add     bl, al
@@ -704,42 +812,6 @@ fl16:   push    dx
 .x:     mov     ax, bx
         pop     dx
         ret
-
-; CRC-16/CCITT-FALSE.  AX = crc, DS:SI -> data (RCON: ES:SI, ES = CS but for
-; the shadow's), CX = count.  Destroys BX SI CX.
-crc16:  jcxz    .x
-.l:     mov     bl, ah
-%ifdef RCON
-        xor     bl, [es:si]
-%else
-        xor     bl, [si]
-%endif
-        inc     si
-        xor     bh, bh
-        shl     bx, 1
-        mov     ah, al
-        xor     al, al
-        xor     ax, [crctab + bx]
-        loop    .l
-.x:     ret
-
-        times   ($ + 1 - $$) & 1 db 90h   ; (hot: what follows odd)
-crc_init:
-        xor     bx, bx
-.i:     mov     ah, bl
-        xor     al, al
-        mov     cx, 8
-.b:     shl     ax, 1
-        jnc     .n
-        xor     ax, 1021h
-.n:     loop    .b
-        mov     di, bx
-        shl     di, 1
-        mov     [crctab + di], ax
-        inc     bx
-        cmp     bx, 256
-        jb      .i
-        ret
         times   ($ - $$) & 1 db 90h       ; (the includer's code after: its parity as before these pads)
 
 ; The hot labels: even in CLAUDE.COM and in RCON (their pads above, each
@@ -750,7 +822,7 @@ crc_init:
         EVEN    link_service, link_idle, link_idle.x, frame_poll, frame_short, frame_hdr
         EVEN    link_write, lw_go.ok, link_wait, link_wait.t, link_wait.x, link_read
         EVEN    took_answer, took_answer.ok, took_answer.new, commit_fragment
-        EVEN    get_ticks, pit_read, srq_new, pit_mark, pit_due, pit_due.x, fcs, crc_init.b
+        EVEN    get_ticks, pit_read, srq_new, pit_mark, pit_due, pit_due.x, fcs, fl16.l
 %ifdef KSUM
         EVEN    ks_check
 %endif

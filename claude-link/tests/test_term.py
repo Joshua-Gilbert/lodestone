@@ -137,8 +137,10 @@ def test_encoder_scroll_and_fill():
 
 def test_encoder_resume():
     """CLAUDE /R's console keeps its screen between pop-ups and says HELLO
-    with its CRC: the encoder goes on from it when it is the screen of the
-    last frame or the one before; anything else starts from a clear screen."""
+    with its sum: the encoder goes on from it when it is the screen of the
+    last frame or the one before; anything else starts from a clear screen.
+    The sum is the Fletcher sum (audit3 R56), or a CRC-16 from an older
+    console, whose HELLO came with the CRC (resume's fl False)."""
     enc = Encoder(); gc, ga = TS._blank_rows()
     scr = TermScreen(); st = pyte.ByteStream(scr)
     grid = {}
@@ -149,7 +151,7 @@ def test_encoder_resume():
             apply(p, gc, ga); grid['cur'] = (p[1], p[2], bool(p[0] & 2))
         if deliver: enc.delivered()
         return p, more
-    def crc(): return '%04X' % TS.screen_crc((gc, ga), grid['cur'])
+    def crc(fl=True): return '%04X' % TS.screen_sum((gc, ga), grid['cur'], fl)
     st.feed(b'\r\n'.join(b'row %02d ' % i + b'x' * 60 for i in range(20)))
     while send()[1]: pass
     assert enc.resume(crc()) and send()[0] is None              # all delivered: nothing to send
@@ -165,6 +167,14 @@ def test_encoder_resume():
     assert [bytes(x) for x in gc] == [bytes(x) for x in tc] and [bytes(x) for x in ga] == [bytes(x) for x in ta]
     for bad in (None, '', 'zz', '%04X' % ((int(crc(), 16) + 1) & 0xFFFF)):
         assert not enc.resume(bad), bad
+    # the bytes RCON.ASM's screen_sum takes, and an older console's CRC-16 of them
+    data = b''.join(bytes(x for p in zip(gc[r], ga[r]) for x in p) for r in range(TS.ROWS))
+    data += bytes([grid['cur'][0], grid['cur'][1], int(grid['cur'][2])])
+    assert int(crc(), 16) == glp.fletcher16(data) and int(crc(False), 16) == glp.crc16(data)
+    assert crc() != crc(False)
+    assert not enc.resume(crc(False)) and not enc.resume(crc(), False)  # (each by its own HELLO's check)
+    assert enc.resume(crc(False), False) and send()[0] is None          # an older console: the CRC
+    assert enc.resume(crc()) and send()[0] is None
     enc.reset()
     assert not enc.resume(crc())                                # nothing sent since: unknown
 

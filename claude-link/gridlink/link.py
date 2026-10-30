@@ -119,7 +119,9 @@ class Link:
         s.grid_req = glp.GRID_REQ_DEFAULT     # the biggest REQUEST it takes (its HELLO's req=)
         s.grid_rd = 0                         # the biggest read it answers whole (its HELLO's rd=; 0: 8 KB reads)
         s.grid_fcs = False                    # the GRiD's HELLO offered the Fletcher sum
-        s.rx_fl = False                       # the GRiD's last good frame had it: answer in kind
+        s.rx_fl = True                        # the GRiD's last good frame had it: answer in kind (the sum
+                                              #  till one comes: a NAK for a damaged first HELLO goes as
+                                              #  CLAUDE 1.15's sum; an older CLAUDE's CRC frame sets it False)
         s.grid_wake = False                   # the GRiD's HELLO said it POLLs when the bridge rings (GF_WAKE)
         s.rang = None                         # when we last rang, since the GRiD's last frame
         s.rings_left = s.RING_TRIES; s.unrung = True; s.rung_out = 0.0
@@ -263,9 +265,9 @@ class Link:
         s.pi_seq = (s.pi_seq + 1) & 0xFF
         if kind == glp.P_HELLO and s.grid_fcs and len(payload) >= 2:   # the GRiD switches on reading it
             payload = bytes(payload[:1]) + bytes([payload[1] | glp.HF_FCS]) + bytes(payload[2:])
-        # Each answer is checked as the frame it answers was: the HELLO (sent
-        # with the CRC, as link_reset leaves the GRiD) gets the CRC, the
-        # frames after it the Fletcher sum once the GRiD has switched.
+        # Each answer is checked as the frame it answers was: the Fletcher sum
+        # (every frame of a CLAUDE from audit3 R56, its HELLO too), or the CRC
+        # (an older CLAUDE's HELLO, and every frame of one before 1.3).
         frame = glp.encode(kind, s.pi_seq, s.last_g if s.last_g is not None else 0, payload, fl=s.rx_fl)
         s.last_answer = frame; s.last_kind = kind
         if s.trace is not None: s.trace.append((time.monotonic(), 'pi ' + _name(kind, len(payload))))
@@ -315,8 +317,20 @@ class Link:
         t = f.type
         if t == glp.G_NAK:
             s.stats['rx_nak'] += 1
-            if s.last_answer: s._to_grid(s.last_answer)
-            else: s._answer(glp.P_NOP, b'')
+            if s.last_answer:
+                chk = glp.encode_check(s.last_answer[1:-2], f.fl)
+                if s.last_answer[-2:] != chk:
+                    # (the frame it answered passed both checks, 1 in 65,536, and we took the other: the
+                    #  NAK's is the one the GRiD reads)
+                    s.last_answer = s.last_answer[:-2] + chk
+                    s.stats['rx_recheck'] += 1
+                s._to_grid(s.last_answer)
+            else:
+                # Nothing answered yet: our NAK for its damaged first frame went in the other check (rx_fl
+                # starts as the sum, for CLAUDE 1.15; an older CLAUDE reads only CRC before its HELLO's
+                # answer).  NAK again in the kind its NAK came in, so it sends that frame again; a NOP
+                # would pass for the HELLO's answer, and it would wait for one till it timed out.
+                s._answer_nak()
             return
         if t == glp.G_HELLO:
             quiet = getattr(s.t, 'set_quiet', None)
