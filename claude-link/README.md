@@ -396,7 +396,7 @@ every byte checked.
   GRiD program, NASM; `TERMLINK.INC` (the link), `TERMCELL.INC` (cells,
   Term's screen), `TERMKEYS.INC` (Term's keys) are shared with resident
   Claude's console (`RCON.ASM`, CLAUDE /R: Claude Code popped up over a
-  DOS program, `app=resident`). `build.sh` / `BUILD.BAT` there make
+  DOS program, `app=resident`). `build.sh` there makes
   CLAUDE.COM (with RCON.BIN inside), CLAUDE.MAP and RCON.MAP (symbols for
   the emulator) and TESTKEY.COM
 - `tests/` - `test_e2e.py` (Python model of the GRiD side, fast) and

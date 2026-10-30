@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the Lodestone 0.2 kernel (with listing and symbol map)
+# Build the Lodestone kernel (with listing and symbol map) and LODEMT.SYS; build.sh runs it too
 set -e
 cd "$(dirname "$0")/src"
 printf '[map symbols LODE.MAP]\n%%include "LODE.ASM"\n' > _m.asm
