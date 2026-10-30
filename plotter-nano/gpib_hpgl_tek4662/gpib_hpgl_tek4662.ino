@@ -862,19 +862,6 @@ int angleOf(float run, float rise) {
     return a < 0 ? a + 360 : a;
 }
 
-void parseCoordinates(const char* args) {
-    const char* p = args;
-    long x, y;
-    while (true) {
-        p = skipSep(p);
-        if (!parseNumber(&p, &x)) break;
-        p = skipSep(p);
-        if (!parseNumber(&p, &y)) break;
-        int tx = hpglToTekX(x), ty = hpglToTekY(y);
-        if (penDown) tekDrawTo(tx, ty); else tekMoveTo(tx, ty);
-    }
-}
-
 void processCommand(const char* cmd, uint8_t len) {
     if (len < 2) return;
     char c1 = cmd[0], c2 = cmd[1];
@@ -921,17 +908,14 @@ void processCommand(const char* cmd, uint8_t len) {
         parseNumber(&args, &pen);
         if (pen == 0) { penDown = false; needsMove = true; }
         if (DEBUG_ENABLED) { Serial.print(F("  SP")); Serial.println(pen); }
-    } else if (c1 == 'P' && c2 == 'U') {
+    } else if (c1 == 'P' && c2 == 'U') {              // (their coordinates: feedChar, flushNumber)
         penDown = false; needsMove = true;
         if (DEBUG_ENABLED) Serial.println(F("  PU"));
-        parseCoordinates(args);
     } else if (c1 == 'P' && c2 == 'D') {
         penDown = true;
         if (DEBUG_ENABLED) Serial.println(F("  PD"));
-        parseCoordinates(args);
     } else if (c1 == 'P' && c2 == 'A') {
         if (DEBUG_ENABLED) Serial.println(F("  PA"));
-        parseCoordinates(args);
     } else if (c1 == 'L' && c2 == 'B') {
         if (DEBUG_ENABLED) { Serial.print(F("  LB: ")); Serial.println(args); }
         tekText(args);
