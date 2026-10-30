@@ -331,6 +331,7 @@ class PicoBridge:
         s.proto = PicoProto(s._write, addr=addr, log=log)
         s.inq = collections.deque(); s.cv = threading.Condition()
         s.stop = threading.Event()
+        s.said = set()                      # what _open_once has logged since the bridge was last up
 
     @property
     def version(s):
@@ -351,15 +352,24 @@ class PicoBridge:
             pass
         s.ser = None; s.proto.connected = False
 
+    def _once(s, msg):
+        """A failure to find or open the bridge, logged once until it is up again: the retries every 2 s
+        would otherwise log it every 2 s, or not at all."""
+        if msg not in s.said:
+            s.said.add(msg); s.log(msg + '; retrying every 2 s')
+
     def _open_once(s):
         import serial
-        for p in find_port(s.spec):
+        ports = find_port(s.spec)
+        if not ports:
+            s._once('bridge: no GPIB-Pico2 bridge found (port %s)' % s.spec)
+        for p in ports:
             try:
                 ser = serial.Serial(p, 115200, timeout=0.02, write_timeout=2)
                 try: ser.dtr = True
                 except Exception: pass
             except Exception as e:
-                s.log('bridge: cannot open %s (%s)' % (p, e)); continue
+                s._once('bridge: cannot open %s (%s)' % (p, e)); continue
             s.ser, s.port = ser, p
             s.proto.buf.clear()
             s.proto.hello()
@@ -368,9 +378,9 @@ class PicoBridge:
                 d = ser.read(256)
                 if d: s._push(s.proto.feed(d))
             if s.proto.connected:
-                s.log('bridge on %s' % p)
+                s.log('bridge on %s' % p); s.said.clear()
                 return True
-            s.log('bridge: %s did not answer (not the bridge firmware? bench firmware?)' % p)
+            s._once('bridge: %s did not answer (not the bridge firmware? bench firmware?)' % p)
             s._drop()
         return False
 

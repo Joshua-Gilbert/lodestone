@@ -229,6 +229,42 @@ def test_held_nop_bookkeeping():
     assert len(got) == 1, got
 
 
+def test_bridge_not_found_said_once():
+    # X66: with no bridge, or a busy port, PicoBridge says so once and that it retries (not every 2 s, and not
+    # nothing); once up, a later failure is said again. A [bridge] kind that is neither pico nor ar488 is refused.
+    import tempfile, types
+    from gridlink import pico
+    from gridlink.config import Config
+    said = []
+    b = pico.PicoBridge('auto', 7, log=said.append)
+    ports = []
+    old = pico.find_port, sys.modules.get('serial')
+    class Busy(Exception): pass
+    def Serial(*a, **k): raise Busy('busy')
+    pico.find_port = lambda spec: list(ports)
+    sys.modules['serial'] = types.SimpleNamespace(Serial=Serial)
+    try:
+        for _ in range(3): assert not b._open_once()
+        assert len(said) == 1 and 'no GPIB-Pico2 bridge found' in said[0] and 'retrying' in said[0], said
+        ports[:] = ['/dev/ttyACM0', '/dev/ttyACM1']
+        for _ in range(3): assert not b._open_once()
+        assert len(said) == 3 and all('cannot open' in m for m in said[1:]), said
+        b.said.clear()                                  # (as a bridge coming up does)
+        assert not b._open_once() and len(said) == 5, said
+    finally:
+        pico.find_port = old[0]
+        if old[1] is None: sys.modules.pop('serial', None)
+        else: sys.modules['serial'] = old[1]
+    for kind, ok in (('pico', True), ('AR488', True), ('pcio', False), ('', False)):
+        with tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False) as f: f.write('[bridge]\nkind = "%s"\n' % kind)
+        try:
+            assert Config().load(f.name).bridge == kind.lower() and ok, kind
+        except SystemExit:
+            assert not ok, kind
+        finally:
+            os.unlink(f.name)
+
+
 def test_old_claude_gets_246():
     body = bytes([1, 3, 0, 4, 80, 20]) + b'os=DOS 3.30\ngrid=CLAUDE 1.2\napp=term\n'
     assert glp.hello_rx(body) == 246
