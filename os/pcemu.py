@@ -368,7 +368,8 @@ class PC:
         s.clock0 = start
         s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
         s.moves = []
-        s.watch = None
+        s.watch = None                  # watch(addr): at each block's start; addr is the block's CS:IP as a linear
+                                        #  address (CS*16 + IP), so a hook compares it instead of reading CS and IP
         s.ccr = 0x30; s.on_ccr = None   # CGA colour select (3D9h), as written; on_ccr(value) at each write
         # CMOS: Joshua's 1520 (CMOS128.BIN) if it's here, else a 1.44 MB A:
         cm = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'CMOS128.BIN')

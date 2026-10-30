@@ -2151,9 +2151,12 @@ def watch_info(k):
     built in tmp just before (infobuf), which other drawing reuses."""
     got, a = [], k.Y['center']
     def h(pc):
-        at = pc.last_blk[0]                     # (the block's CS:IP, linear: center's at 1 in 16; then the UI's segment read)
-        if (at - a) & 15 == 0 and at == k.lin('center') and pc.r('cs') == k.useg and pc.r('dx') == INFO_Y:
-            got.append(pc.rd(pc.r('cs'), pc.r('si'), 128).split(b'\0')[0].decode())
+        # The &15 test skips the read of ui_seg on 15 blocks in 16; center's address is worked out
+        # here, not once, because the UI moves during boot.
+        if (k.addr - a) & 15: return
+        u = k.useg
+        if k.addr == u * 16 + a and pc.r('cs') == u and pc.r('dx') == INFO_Y:
+            got.append(pc.rd(u, pc.r('si'), 128).split(b'\0')[0].decode())
     k.hooks.append(h)
     return got
 
@@ -2548,7 +2551,7 @@ def t_mdisk():
     k = ktest.KPC(img, ems_pages=88); k.pc.mouse = True; k.start()
     seen = []
     a = k.Y['exec_raw']
-    k.hooks.append(lambda pc: seen.append(k.rd('sv_tail', 1)) if pc.r('cs') == k.useg and pc.r('ip') == a else None)
+    k.hooks.append(lambda pc: seen.append(k.rd('sv_tail', 1)) if pc.r('ip') == a and pc.r('cs') == k.useg else None)
     idle(k, 5 * 1092 + 18); k.pc.run_for(30)
     check('the screen saver with M: on (and no C:): DEFRAG on A: only', set(seen) == {b'A'}, seen)
     k.key(ktest.ESC); k.settle(8)
@@ -2581,7 +2584,7 @@ def t_rclick():
     check('RCTEST.RUN needs API 7, RC6.RUN 6 (the same program)', hdr == (b'GRUN\x07\x00', b'GRUN\x06\x00'), hdr)
     k = ktest.KPC(image('rclick.img', RCTEST, RC6)); k.pc.mouse = True; k.start()
     made, ev = [], k.Y['ui_event.got']                  # (every event UI_EVENT gets, a jump target)
-    k.hooks.append(lambda pc: made.append(pc.r('ax')) if pc.r('cs') == k.useg and pc.r('ip') == ev else None)
+    k.hooks.append(lambda pc: made.append(pc.r('ax')) if pc.r('ip') == ev and pc.r('cs') == k.useg else None)
     sel0 = k.u16('sel')
     press(k, 300, 200, 2); press(k, 320, 5, 1)
     check('in the Executive: a right click makes no event at all (the left one does: the hook sees events)',

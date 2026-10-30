@@ -33,7 +33,7 @@ class KMachine(pcemu.PC):
     def __init__(s, img, chip, **kw):
         super().__init__(img, chip=chip, **kw)
         s.Y = ktest.Syms()
-        s.f4b = s.Y.lin('f_4B')                 # (as the block hook's addr: CS:IP, linear)
+        s.f4b = s.Y.lin('f_4B')
         s.watch = s._watch
         s.exit_code = None
         s.tsr = False
