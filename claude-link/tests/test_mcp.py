@@ -434,37 +434,6 @@ def test_launch_ignores_the_working_directory():
     assert p.returncode == 0 and json.loads(out) == {'jsonrpc': '2.0', 'id': 1, 'result': {}}, (out, err)
 
 
-def test_hpgl_parts():
-    P = mcp.hpgl_parts
-    d = b'IN;SP1;PU0,0;PD100,0;'
-    assert P(d, 1024) == [d]
-    parts = P(d, 8)                                    # parts end after a ';'
-    assert b''.join(parts) == d and all(p.endswith(b';') for p in parts), parts
-    assert all(len(p) <= 8 for p in parts), parts
-    lb = b'PU10,10;LBVOLTS; AMPS;\x03;PD20,20;'           # a label's ';' is not a command's end
-    for most in range(4, 40):
-        parts = P(lb, most)
-        assert b''.join(parts) == lb, (most, parts)
-        for p in parts[:-1]:                           # a part that ends in the label is one cut by size
-            assert p.endswith((b';', b'\x03')) or len(p) == most, (most, parts)
-    assert P(lb, 24) == [b'PU10,10;LBVOLTS; AMPS;\x03;', b'PD20,20;'], P(lb, 24)
-    assert P(b'LBno end', 3) == [b'LBn', b'o e', b'nd']    # an unterminated label: still all of it
-    assert P(b'PA1,2', 100) == [b'PA1,2']                   # no final ';'
-    big = b';'.join(b'PD%d,%d' % (i, i) for i in range(3000)) + b';'
-    parts = P(big, 1024)
-    assert b''.join(parts) == big and max(map(len, parts)) <= 1024
-    assert all(p.endswith(b';') for p in parts)
-    for bad in (b'', b' ;\r\n', b'IN;\x07', b'IN;\x00', b'LB\xe9\x03',
-                b'IN;LBHI', b'LBA\x03;PU;BLabc', b'wdNO END'):        # a label left open
-        try: mcp.hpgl_check(bad); assert False, bad
-        except ValueError: pass
-    assert mcp.hpgl_check(b'IN;\r\nLBHI\x03;\tPU;') == b'IN;\r\nLBHI\x03;\tPU;'
-    assert mcp.hpgl_check(b'PU;\r\n') == b'PU;\r\n'
-    assert mcp.hpgl_check(b'IN;PA1,2') == b'IN;PA1,2;'      # the Nano would hold the last point
-    assert mcp.hpgl_check(b'LBHI\x03') == b'LBHI\x03;'
-    assert mcp.hpgl_check(b'IN;\x1bAJ30;LBa\x0eb\x0fc\x03;') == b'IN;\x1bAJ30;LBa\x0eb\x0fc\x03;'  # 4662 commands, SO/SI
-
-
 def plot_to_end(h, c, wall=30):
     """Run the GRiD while the background plot goes; its last status."""
     end = time.time() + wall
@@ -557,7 +526,24 @@ def test_plotter():
 def test_hpgl_ends():
     d = b'IN;SP1;LBA;B\x03;PU1,2;LBno end'
     assert mcp.hpgl_ends(d) == [3, 7, 14, 20, len(d)], mcp.hpgl_ends(d)
-    assert mcp.hpgl_ends(b'PA1,2') == [5]
+    assert mcp.hpgl_ends(b'PA1,2') == [5]                    # no final ';'
+    assert mcp.hpgl_ends(b'IN;SP1;PU0,0;PD100,0;') == [3, 7, 13, 21]
+    lb = b'PU10,10;LBVOLTS; AMPS;\x03;PD20,20;'           # a label's ';' is not a command's end
+    assert mcp.hpgl_ends(lb) == [8, 24, 32], mcp.hpgl_ends(lb)
+    assert mcp.hpgl_ends(b'LBno end') == [8]                 # an unterminated label: all of it
+    big = b';'.join(b'PD%d,%d' % (i, i) for i in range(3000)) + b';'
+    e = mcp.hpgl_ends(big)
+    assert len(e) == 3000 and e[-1] == len(big) and all(big[i - 1:i] == b';' for i in e)
+    # (hpgl_parts went, P6: its hpgl_check cases are here)
+    for bad in (b'', b' ;\r\n', b'IN;\x07', b'IN;\x00', b'LB\xe9\x03',
+                b'IN;LBHI', b'LBA\x03;PU;BLabc', b'wdNO END'):        # a label left open
+        try: mcp.hpgl_check(bad); assert False, bad
+        except ValueError: pass
+    assert mcp.hpgl_check(b'IN;\r\nLBHI\x03;\tPU;') == b'IN;\r\nLBHI\x03;\tPU;'
+    assert mcp.hpgl_check(b'PU;\r\n') == b'PU;\r\n'
+    assert mcp.hpgl_check(b'IN;PA1,2') == b'IN;PA1,2;'      # the Nano would hold the last point
+    assert mcp.hpgl_check(b'LBHI\x03') == b'LBHI\x03;'
+    assert mcp.hpgl_check(b'IN;\x1bAJ30;LBa\x0eb\x0fc\x03;') == b'IN;\x1bAJ30;LBa\x0eb\x0fc\x03;'  # 4662 commands, SO/SI
 
 
 def test_plotter_bad_arguments_never_reach_the_grid():
