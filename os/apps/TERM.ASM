@@ -55,10 +55,12 @@ start:  mov     di, arg                 ; "task count name"
         jnz     .t
         dec     si
 .t:     mov     [win+W_TITLE], si       ; the title: its program's name
+        cmp     byte [task], 0          ; (no task: started by hand, X52)
+        je      .hand
         mov     ax, 0F000h + MT_WIN     ; (a window .RUN's session: else MT
         stc                             ;  isn't there, or this was started
         int     21h                     ;  by hand)
-        jc      .bad
+        jc      .hand
         mov     ax, 0F000h + MT_TOPEN   ; its EV_TICKs
         mov     cl, [gen]
         call    mtc
@@ -100,8 +102,11 @@ start:  mov     di, arg                 ; "task count name"
         xor     ax, ax
         ret
 .front: call    full                    ; (no window after all: in front)
-.bad:   mov     ax, 1
-        ret
+        jmp     short .bad
+.hand:  mov     si, s_hand              ; (by hand: say how it is opened;
+        call    UI_MSG                  ;  else the Executive says nothing)
+.bad:   mov     ax, 1                   ; (MT_TOPEN refused: the task ended
+        ret                             ;  first, nothing to say)
 
 ; its close box (EV_CLOSE): asked in the band, then its task ended
 ; (MT_KILL, as TASKS.RUN's); the window closes at the tick that sees it
@@ -1288,6 +1293,7 @@ pfree:  push    es
 
 s_fnt       db 'TERM.FNT', 0
 s_end       db 'Close: Confirm to end ', 0
+s_hand      db 'Opened by Return or CODE-P on a text program', 0
 s_ngfx      db 'In a graphics mode: a key here shows it (or CODE-Tab)', 0
 s_nfz       db 'It writes the screen itself: a key here shows it (FULL= for it)', 0
 items       dw s_copy, K_CODE_C, RM_SEL, s_paste, K_CODE_V, RM_CLIP, s_full, K_NONE, RM_TXT, 0
