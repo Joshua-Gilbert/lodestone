@@ -8,6 +8,7 @@
 ; nasm -f bin -o VHOOK.COM VHOOK.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         jmp     init
 h10:    pushf
         call    far [cs:o10]
@@ -34,13 +35,7 @@ h08:    pushf
 o10     dd      0
 o08     dd      0
 tch     db      '0'
-init:   mov     ax, 3510h
-        int     21h
-        mov     [o10], bx
-        mov     [o10 + 2], es
-        mov     ax, 2510h
-        mov     dx, h10
-        int     21h
+init:   HOOK    10h, o10, h10
         mov     si, 81h
 .b:     lodsb
         cmp     al, ' '
@@ -48,13 +43,7 @@ init:   mov     ax, 3510h
         and     al, 0DFh
         cmp     al, 'T'
         jne     .k
-        mov     ax, 3508h
-        int     21h
-        mov     [o08], bx
-        mov     [o08 + 2], es
-        mov     ax, 2508h
-        mov     dx, h08
-        int     21h
+        HOOK    08h, o08, h08
 .k:     mov     ax, 3100h
         mov     dx, (init - $$ + 100h + 15) / 16
         int     21h

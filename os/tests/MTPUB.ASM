@@ -43,6 +43,7 @@
 ; nasm -f bin -i ../src/ -o MTPUB.COM MTPUB.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
 %include "MTAPI.INC"
 NCOL    equ 80
 NROW    equ 25
@@ -549,65 +550,23 @@ chg:    inc     word [desc + PB_CHG]
 put1:   mov     di, out_
         stosb
 ; FILE: out_ to DI, a CR LF after it, at its end (made if it isn't there)
-wout:   mov     ax, 0A0Dh
-        stosw
-        mov     ax, 3D02h
-        mov     dx, fname
-        int     21h
-        jnc     .o
-        mov     ah, 3Ch
-        xor     cx, cx
-        int     21h
-        jc      .x
-.o:     xchg    bx, ax
-        mov     ax, 4202h
-        xor     cx, cx
-        xor     dx, dx
-        int     21h
-        mov     ah, 40h
-        mov     cx, di
-        mov     dx, out_
-        sub     cx, dx
-        int     21h
-        mov     ah, 3Eh
-        int     21h
-.x:     ret
+        WOUT
 
 ; the 0-ended string at SI to DI (its 0 not copied)
-cpz:    lodsb
-        or      al, al
-        jz      .x
-        stosb
-        jmp     cpz
-.x:     ret
+        CPZ
 
-blanks: lodsb
-        cmp     al, ' '
-        je      blanks
-        dec     si
-        ret
+        BLANKS
 
 ; AL, AX as 2, 4 hex digits at DI
 hex2:   mov     ah, al
         mov     cx, 2
         jmp     short hex4.h
-hex4:   mov     cx, 4
-.h:     rol     ax, 4
-        push    ax
-        and     al, 0Fh
-        add     al, '0'
-        cmp     al, '9'
-        jbe     .s
-        add     al, 7
-.s:     stosb
-        pop     ax
-        loop    .h
-        ret
+        HEX4
 
 child   db      'MTPUB.COM', 0
 s_pages db      'MTPUB: pages', 13, 10, '$'
 row24   db      05h, 0F0h, 80h, 81h, GEND - 1, FIRST
-pblk    dw      0, tail, 0, 5Ch, 0, 6Ch, 0
+        EXECBLK pblk
 mode    db      0
 rfl     dw      0
 r_ax    dw      0

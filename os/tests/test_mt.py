@@ -6634,7 +6634,7 @@ if __name__ == '__main__':
     A.build()
     for n in ('MTPROBE', 'MTLAUNCH', 'MTLINE', 'MTCWD', 'MTMODE', 'FREEH', 'MTSPIN', 'MTHOOK', 'MTSCR', 'VNEST', 'MTCRIT',
               'MTNEST', 'VHOOK', 'MTKEY', 'MTM33', 'MTVEC', 'MTKILL', 'NODISKMT', 'MTTERM', 'MTGROW', 'MTPUB', 'MTSRQ', 'MTIRQK', 'MTFAST', 'MTCLI'):
-        subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/',
+        subprocess.run(['nasm', '-f', 'bin', '-i', os.path.join(GOS, 'src') + '/', '-i', HERE + '/',     # (MTLIB.INC)
                         '-o', os.path.join(HERE, n + ('.BIN' if n == 'VNEST' else '.COM')),
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)

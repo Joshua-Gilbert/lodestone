@@ -1,0 +1,34 @@
+; NOMATCH.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+fn 4E NOSUCH.TXT -> err 12
+fn 4E Z*.* -> err 12
+fn 4E A.B\N?L -> err 12
+fn 4E A.B\X.TXT -> ok
+fn 4E A.B\NOSUCH -> err 12
+fn 4E E.F\*.TXT -> err 12
+fn 4E E.F\*.* -> err 12
+fn 4E E.F\NOSUCH -> err 12
+fn 4E HID.TXT -> err 12
+fn 4E HS.TXT -> err 12
+fn 4E SYS.TXT -> err 12
+fn 4E A.B -> err 12
+fn 4E *.TXT -> ok
+fn 4E *.* -> ok
+fn 4E NOSUCH\*.* -> err 03
+fn 4E A.TXT\*.* -> err 03
+fn 4E A?B\*.* -> err 03
+fn 4E A.B.C -> err 03
+fn 4E A.B\X.Y.Z -> err 03
+fn 4E  -> err 03
+fn 4E A:NOSUCH -> err 12
+fn 4E \A.B\..\NOSUCH -> err 12
+fn 4E E.F\..\A.TXT -> ok
+fn 4E E.F\*.* -> ok
+fn 4E E.F\Z*.* -> err 12
+fn 4E NOSUCH.TXT -> err 12
+fn 4E A.B -> ok
+fn 4E HID.TXT -> ok
+fn 4E HS.TXT -> ok
+fn 4E NOSUCH.TXT -> err 12
+fn 4E Z*.* -> err 12
+fn 4E NOSUCH.TXT -> err 12
+fn 4E E.F\*.* -> err 12

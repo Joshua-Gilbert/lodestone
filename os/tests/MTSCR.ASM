@@ -65,6 +65,7 @@
 ; nasm -f bin -o MTSCR.COM MTSCR.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         mov     sp, stk_top
         mov     ah, 4Ah                 ; (only its own memory)
         mov     bx, (stk_top - $$ + 100h + 15) / 16
@@ -772,13 +773,7 @@ m_g:    mov     si, s_g
         jmp     key
 
 ; ---- I: INT 1Ch's handler draws ----
-m_i:    mov     ax, 351Ch
-        int     21h
-        mov     [o1c], bx
-        mov     [o1c + 2], es
-        mov     ax, 251Ch
-        mov     dx, h1c
-        int     21h
+m_i:    HOOK    1Ch, o1c, h1c
         push    40h
         pop     es
         mov     ax, [es:6Ch]
@@ -897,11 +892,7 @@ hexb:   push    ax                      ; AL as 2 hex digits at DI
         add     al, 7
 .p:     stosb
         ret
-blanks: lodsb
-        cmp     al, ' '
-        je      blanks
-        dec     si
-        ret
+        BLANKS
 word_:  lodsb                           ; to a blank or the end: NUL there
         cmp     al, ' '
         ja      word_
