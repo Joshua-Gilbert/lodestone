@@ -38,7 +38,7 @@ def probe(name, ata):
     if ata: del ata.cmds[:]                         # (the kernel's own look at it, booting)
     t0 = k.pc.us
     k.run_file('HDPROBE.COM', 120)
-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    files = fatcheck.read_files(k.pc.drives[0].img)
     rep = files.get('A:\\HDPROBE.TXT', b'').decode('latin-1')
     print('   --- %s (%.1f s) ---' % (name, (k.pc.us - t0) / 1e6))
     for l in rep.splitlines(): print('   ' + l)
@@ -61,7 +61,7 @@ def probe_x(name, ata, stop_at=None):
         k.pc.keys.append(0x1071)                        # q
     back = lambda: 'Done.' in tty() and tty().rfind('>') > tty().rfind('Done.')
     ktest.run_answering(k.pc, back, 240)
-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    files = fatcheck.read_files(k.pc.drives[0].img)
     rep = files.get('A:\\HDPROBEX.TXT', b'').decode('latin-1')
     k.plain = files.get('A:\\HDPROBE.TXT')
     sec = (k.pc.us - t0) / 1e6
@@ -83,7 +83,7 @@ def t_floating():
     img = mkimg.build(os.path.join(OUT, 'floating.img'), [os.path.join(GOS, 'src', 'LODE.SYS'), PROBE])
     k = ktest.KPC(img, float_bus=True); k.start()
     k.run_file('HDPROBE.COM', 120)
-    rep = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\HDPROBE.TXT', b'').decode('latin-1')
+    rep = fatcheck.read_files(k.pc.drives[0].img).get('A:\\HDPROBE.TXT', b'').decode('latin-1')
     for l in rep.splitlines(): print('   ' + l)
     check('a floating bus: "no drive answers", nothing past the registers, the next steps',
           'no drive answers' in rep and 'nothing drives the bus' in rep and '[4]' not in rep and

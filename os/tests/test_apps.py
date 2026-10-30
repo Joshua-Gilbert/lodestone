@@ -393,7 +393,7 @@ def busy(k, key):
     return (rec['t'] - t0) / 1e3 if 't' in rec else -1
 
 def disk_file(k, name):
-    return fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\' + name)
+    return fatcheck.read_files(k.pc.drives[0].img).get('A:\\' + name)
 
 def t_write():
     print('== Write (WRITE.RUN)')
@@ -449,7 +449,7 @@ def t_write():
     want = (b'Hello. The brown fox\r\nTHE lazy dog.\r\n\tTabbed LINE\r\nlast LINEjumps over high\r\nHello. The brown fox')
     got = disk_file(k, 'NOTES.TXT')
     check('saved with CR LF: Erase, Move, Duplicate, Substitute all in it', got == want, (got, want))
-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    files = fatcheck.read_files(k.pc.drives[0].img)
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('no NOTES.$$$ left, the disk consistent', 'A:\\NOTES.$$$' not in files and not probs, (sorted(files), probs))
     check('back in the Executive', k.band()[0] == 'Select a file and confirm', k.band())
@@ -1486,7 +1486,7 @@ def t_form():
     check('Display lists the fonts on the start-up disk (A:)', has(k, 'TERMINUS.FNT') and has(k, 'Fonts on the start-up disk:'), screen(k))
     k.key(ktest.ENTER)
     check('... and LODE.INI goes to A:, not B:', disk_file(k, 'LODE.INI') == b'FONT=TERMINUS.FNT\r\n' and
-          fatcheck.read_files(bytes(k.pc.drives[1].img)).get('A:\\LODE.INI') is None, disk_file(k, 'LODE.INI'))
+          fatcheck.read_files(k.pc.drives[1].img).get('A:\\LODE.INI') is None, disk_file(k, 'LODE.INI'))
     k.key(ktest.ENTER); k.key(ktest.ESC)
     check('back in the Executive, still on B:', k.exec_list() == ['NOTES.TXT'] and form(k)[0] == 'Floppy B:', (k.exec_list(), form(k)))
     # the mouse: a click on an item outlines it; a second click on a choice goes on
@@ -1556,8 +1556,8 @@ def t_files():
     open(a, 'wb').write(raw)
     b = mkimg.build(os.path.join(OUT, 'filesb.img'), ['DATA\\'])
     k = ktest.KPC(a, b=b); k.pc.mouse = True; k.start()
-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
-    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
+    B = lambda: fatcheck.read_files(k.pc.drives[1].img)
     sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
     chosen = lambda: k.exec_list()[k.u16('sel')]
     # Copy to the other drive
@@ -1656,8 +1656,8 @@ def t_file_safety():
               '\\'.join(deep) + '\\NAMENAME.EXT=' + notes, big)
     b = mkimg.build(os.path.join(OUT, 'safeb.img'), ['COPY.TXT=' + notes])
     k = ktest.KPC(a, b=b); k.start()
-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
-    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
+    B = lambda: fatcheck.read_files(k.pc.drives[1].img)
     sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
     LN = 'A:\\LONGNAME\\NOTES.TXT'
     # 1. the file itself under another spelling: said so, nothing asked, nothing lost
@@ -1675,7 +1675,7 @@ def t_file_safety():
     # ... and should that check ever miss one: the source is held open while the old destination goes.
     # (same_file switched off on a machine that hasn't run it yet: the emulator keeps code it translated)
     k0 = ktest.KPC(image('safe0.img', 'LONGNAME\\', 'LONGNAME\\NOTES.TXT=' + notes)); k0.start()
-    A0 = lambda: fatcheck.read_files(bytes(k0.pc.drives[0].img))
+    A0 = lambda: fatcheck.read_files(k0.pc.drives[0].img)
     k0.wr('same_file', b'\x0b\xe4\xc3')             # or sp, sp / ret: "not the same file"
     to_subject(k0, 'LONGNAME')
     k0.key(CODE['M']); k0.key(ktest.ENTER, ktest.ENTER, '\\LONGNAME.', K_CODE_ENTER, ktest.ENTER)
@@ -1788,8 +1788,8 @@ def t_wild():
     set_date(b, 'NEW.TXT', 2026, 9)                     # newer on B: Only newer leaves it
     set_date(b, 'B.TXT', 2020)
     k = ktest.KPC(a, b=b); k.start()
-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
-    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
+    B = lambda: fatcheck.read_files(k.pc.drives[1].img)
     sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
     band = lambda: k.band()[0]
     # the form
@@ -1914,7 +1914,7 @@ def t_wild():
         if not any(raw[o:o + 512]): raw[o:o + 512] = b'A' * 512
     open(g, 'wb').write(raw)
     k = ktest.KPC(a, b=g); k.start()
-    G = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    G = lambda: fatcheck.read_files(k.pc.drives[1].img)
     k.pc.drives[1].wp = True
     k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER, settle=False); k.settle(30)
     k.key(ktest.ENTER); k.key(K_BTAB)
@@ -1945,7 +1945,7 @@ def t_subdel():
     for o in dir_entries(raw, 'RO.TXT'): raw[o + 11] |= 1           # read-only inside
     open(a, 'wb').write(raw)
     k = ktest.KPC(a); k.start()
-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
     sound = lambda: fatcheck.check(bytes(k.pc.drives[0].img))[0]
     band = lambda: k.band()[0]
     pick_subject(k, 'Root'); k.key(CODE['D'])
@@ -2029,10 +2029,10 @@ def t_subcopy():
     set_date(b, 'A.TXT', 2026, 9)                       # newer on B: Only newer leaves it
     set_date(b, 'B.TXT', 2020)                          # older on B: Only newer replaces it
     k = ktest.KPC(a, b=b); k.start()
-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
-    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
+    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
+    B = lambda: fatcheck.read_files(k.pc.drives[1].img)
     def D(d):
-        out = []; fatcheck.read_files(bytes(k.pc.drives[d].img), dirs=out); return out
+        out = []; fatcheck.read_files(k.pc.drives[d].img, dirs=out); return out
     sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
     band = lambda: k.band()[0]
     WORK = {n[len('A:\\WORK'):]: v for n, v in A().items() if n.startswith('A:\\WORK\\')}
@@ -2544,7 +2544,7 @@ def t_mdisk():
     k.select('NOTES.TXT'); k.key(CODE['R']); k.key('n2.txt', ktest.ENTER)
     check('CODE-R on M:: renamed', 'M:\\N2.TXT' in md_files(k) and 'M:\\NOTES.TXT' not in md_files(k), (k.band(), sorted(md_files(k))))
     k.select('N2.TXT'); k.key(CODE['M']); k.key(ktest.ENTER, ktest.LEFT, ktest.ENTER, '\\work', K_CODE_ENTER)
-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
     check('CODE-M from M: to A:\\WORK: there, gone from M:', A().get('A:\\WORK\\N2.TXT') == TEXT and 'M:\\N2.TXT' not in md_files(k),
           (k.band(), sorted(md_files(k))))
     k.key(ktest.ENTER)

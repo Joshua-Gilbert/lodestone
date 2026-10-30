@@ -95,7 +95,8 @@ if __name__ == '__main__':
 
 def read_files(img, drive='A', dirs=None):
     """Every file's bytes: {'A:\\DIR\\NAME.EXT': bytes}.  The subjects go in
-    the list dirs, if one is given ('A:\\DIR')."""
+    the list dirs, if one is given ('A:\\DIR').  img may be pcemu's own
+    bytearray: only the root and each file's clusters are copied (H9)."""
     b = bpb(img)
     bps, spc = b['bps'], b['spc']
     fat_off = b['res'] * bps

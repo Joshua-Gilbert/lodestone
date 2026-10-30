@@ -227,7 +227,7 @@ def t_capture():
     from PIL import Image
     pad = os.path.join(OUT, 'PAD.DAT')
     k = ktest.KPC(image('cap.img', os.path.join(HERE, 'CAPTEST.COM'), os.path.join(GOS, 'src', 'LCMD.COM'))); k.start()
-    files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    files = lambda: fatcheck.read_files(k.pc.drives[0].img)
     beeps = lambda: ''.join(k.pc.tty).count('\x07')
     calls21 = []                                # (AX) of the 3Eh, 40h and F0h calls made during a shot
                                                 #  (only the capture's: the Executive is idle then)
@@ -317,7 +317,7 @@ def t_capture():
     k.pc.run_until(lambda: k.pc.mode() == 6, 5); k.settle()
     k.pc.drives[0] = pcemu.Floppy(other); k.pc.drives[0].changed = False
     shot()
-    after = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    after = fatcheck.read_files(k.pc.drives[0].img)
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('a disk changed behind the kernel\'s back: its files kept, the picture on it',
           all(after.get(n) == d for n, d in before.items()) and 'A:\\SCREEN01.BMP' in after and not probs and beeps() == 1,
@@ -341,7 +341,7 @@ def t_print():
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'printer=ps.prn\r\n')
     ps = os.path.join(GOS, 'drivers', 'PS.PRN')
     k = ktest.KPC(image('prn.img', os.path.join(HERE, 'CAPTEST.COM'), ini, ps)); k.start()
-    files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    files = lambda: fatcheck.read_files(k.pc.drives[0].img)
     beeps = lambda: ''.join(k.pc.tty).count('\x07')
     def shot(sim_s=8.0):
         k.pc.tty.clear(); k.pc.lpt.clear(); k.pc.prtsc(); k.settle(sim_s)
@@ -408,8 +408,8 @@ def t_print():
     check('... and the real driver still prints after them', shot2('A:\\HI.PRN') == (b'Hi', 1), shot2('A:\\HI.PRN'))
     k2.wr('prn_path', b'\0')
     out, _ = shot2('')
-    check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(bytes(k2.pc.drives[0].img)),
-          sorted(fatcheck.read_files(bytes(k2.pc.drives[0].img))))
+    check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(k2.pc.drives[0].img),
+          sorted(fatcheck.read_files(k2.pc.drives[0].img)))
     check('still no file on the printing disk', not any('SCREEN' in n for n in files()), sorted(files()))
     # Shift-PrtSc: the file all the same, the driver set
     k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] | 2])); out = shot(); k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] & ~3]))
@@ -453,7 +453,7 @@ def t_cache(ems=0):
               md_info(k)[:2])
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
     check('disk consistent after CACHETST' + tag, not probs and '\\CACHE_A.TST' not in files, '; '.join(probs) or sorted(files))
-    log = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\CACHETST.TXT', b'').decode('latin-1')
+    log = fatcheck.read_files(k.pc.drives[0].img).get('A:\\CACHETST.TXT', b'').decode('latin-1')
     check('CACHETST leaves its results in CACHETST.TXT' + tag, 'on Lodestone' in log and ' 0 errors' in log, log[-300:])
     # the help window's save-under: the cache's memory, lent and given back;
     # with the cache in EMS, a block of its own while it is open (the cache
@@ -863,7 +863,7 @@ def t_mdisk():
     check('a program run from M: (UPPER.COM)', 'HELLO THERE' in o, o)
     o = sh.run('copy m:\\sub\\x.com a:\\back.com')
     check('COPY M: -> A:', '1 File(s) copied' in o, o)
-    fa = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    fa = fatcheck.read_files(k.pc.drives[0].img)
     h, n, mi = md_info(k)
     fm = fatcheck.read_files(mi, 'M')
     gc = open(os.path.join(GOS, 'src', 'LCMD.COM'), 'rb').read()
@@ -1846,7 +1846,7 @@ def t_nodisk():
     k.start()
     sh = Shell(k)
     assert run_long(k, 'nodiskig > out.txt')
-    o = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\OUT.TXT', b'').decode('latin-1')
+    o = fatcheck.read_files(k.pc.drives[0].img).get('A:\\OUT.TXT', b'').decode('latin-1')
     check('... a handler that answers Ignore at the mount: Fail all the same (open and FIND FIRST 3, free space FFFFh), '
           'not B: mounted from what A: left', 'open B:X.TXT err 0003' in o and 'B: free FFFF' in o and 'find B:*.* err 0003' in o, o)
     k.key('cls'); k.key(ktest.ENTER)
@@ -1911,7 +1911,7 @@ def t_nodisk():
         if ''.join(k.pc.tty)[n0:].count('Fail?') > seen: seen += 1; k.key('f', settle=False)
     k.settle()
     o = ''.join(k.pc.tty)[n0:]
-    res = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\RES.TXT')
+    res = fatcheck.read_files(k.pc.drives[0].img).get('A:\\RES.TXT')
     check('... NODISKMT found in A:\\BIN after the PATH\'s B:\\: two questions, the PATH search\'s and the program\'s own '
           '(RES.TXT "03")', o.count('Fail?') == 2 and res == b'03', (o, res))
     # lines read from a file, not the console (lcmd < cmds.txt): each asks again too
@@ -1942,7 +1942,7 @@ def t_nodisk():
     finally:
         type(k.pc).int13 = orig
     m = re.search(r'([\d,]+) bytes free', asks('dir b:'))
-    files = fatcheck.read_files(bytes(k.pc.drives[1].img))
+    files = fatcheck.read_files(k.pc.drives[1].img)
     check('... COPY to B: failing part way: F, then its clean-up asks again; R there: no BIG.DAT left, B:\'s free space as '
           'before', o.count('Fail?') >= 2 and 'B:\\BIG.DAT' not in files and m and m.group(1) == free0,
           (o, sorted(files), free0, m and m.group(1)))
@@ -2184,7 +2184,7 @@ def t_cmdshare():
                 bat('U.BAT', '@echo off', 'echo U is a batch file'))
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
-    fs = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    fs = lambda: fatcheck.read_files(k.pc.drives[0].img)
     sh.run('echo hello > a.txt')
     sh.run('nosuch > e1.txt'); sh.run('call go > e2.txt'); sh.run('path ;'); sh.run('path > e3.txt')
     sh.run('copy a.txt sub > e4.txt'); sh.run('rd sub > e5.txt'); sh.run('dir sub > e6.txt')
@@ -2710,7 +2710,7 @@ def t_cmdword():
     p = 'A:\\' + '\\'.join(dirs) + '\\TAILPRG.COM'
     assert len(p) == 70
     sh.run(p.lower() + ' hello > t.txt')
-    t = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\T.TXT')
+    t = fatcheck.read_files(k.pc.drives[0].img).get('A:\\T.TXT')
     check('a program named by a path of 70 characters ("%s hello"): its tail is " hello" (%r)' % (p, t),
           t is not None and t.strip() == b'hello', t)
 
