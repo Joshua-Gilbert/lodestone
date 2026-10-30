@@ -1,0 +1,843 @@
+diff --git a/os/ktest.py b/os/ktest.py
+index c137212..f2d9f2a 100644
+--- a/os/ktest.py
++++ b/os/ktest.py
+@@ -13,6 +13,33 @@ import pcemu
+ 
+ ENTER, ESC, UP, DOWN, LEFT, RIGHT = 0x1C0D, 0x011B, 0x4800, 0x5000, 0x4B00, 0x4D00
+ TAB, BKSP, F1, CODE_P = 0x0F09, 0x0E08, 0x3B00, 0x1900   # CODE-P: the command prompt
++KB_PROGS = re.compile(r'([\d.]+) KB for programs')       # MEMSZ's (and System's) memory line
++
++
++def checker(results, cut=None, flush=False):
++    """A suite's check(name, cond, detail=''): (name, ok) into that suite's own results, and its line printed,
++    with detail (its first `cut` characters) only when it failed."""
++    def check(name, cond, detail=''):
++        results.append((name, bool(cond)))
++        print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name,
++                            ('  -- ' + str(detail)[:cut]) if detail and not cond else ''), flush=flush)
++    return check
++
++
++def row_off(y):
++    """Mode 40h's pixel row y: its offset in B800h (4 banks of 2000h, 80 bytes a row)."""
++    return (y & 3) * 0x2000 + (y >> 2) * 80
++
++
++def mcb_chain(pc, seg, namelen=2, most=None):
++    """The MCBs from seg: [(segment, type byte, owner, paragraphs, its first namelen name bytes)], up to and with
++    the first not 'M' (or `most` + 1 of them)."""
++    out = []
++    while True:
++        t = pc.rd(seg, 0, 1)[0]
++        out.append((seg, t, pc.u16(seg, 1), pc.u16(seg, 3), pc.rd(seg, 8, namelen)))
++        if t != ord('M') or (most is not None and len(out) > most): return out
++        seg += pc.u16(seg, 3) + 1
+ 
+ 
+ class Syms:
+@@ -94,6 +121,22 @@ class KPC:
+         s.i21 = s.Y.lin('int21')
+         s.pc.watch = s._watch
+ 
++    @classmethod
++    def adopt(cls, pc):
++        """The Executive's helpers on a machine another harness made (pc with its own Y, and maybe its own
++        pc.watch).  k.hooks works there too: the first hook added chains k's watch after the one pc has."""
++        k = cls.__new__(cls)
++        k.pc, k.Y, k.dos, k.pending, k.trace, k.addr = pc, pc.Y, [], {}, False, None
++        k.i21 = k.Y.lin('int21')
++        def wire():
++            prev = pc.watch
++            def w(addr):
++                if prev: prev(addr)
++                k._watch(addr)
++            pc.watch = w
++        k.hooks = _Hooks(wire)
++        return k
++
+     # ---- INT 21h trace ----------------------------------------------------
+     def _watch(s, addr):
+         pc = s.pc
+@@ -171,6 +214,33 @@ class KPC:
+ 
+     def run_for(s, sim_s): s.pc.run_for(sim_s)
+ 
++    def prompt(s, cmd, sim_s=6):
++        """At the command prompt: CLS, then cmd, run till the machine waits -> the text screen."""
++        s.key('cls'); s.key(ENTER); s.key(cmd); s.key(ENTER, settle=False); s.settle(sim_s)
++        return s.pc.text_screen()
++
++    # ---- the mouse (a serial mouse: pcemu's mouse_move, 100 counts at most a packet)
++    def point(s, x, y, settle=True):
++        """Move the pointer to (x, y), no button.  settle=False: no wait after (with a task computing behind the
++        machine never waits, so a settle would run to its 6 s timeout)."""
++        dx, dy = x - s.u16('mx'), y - s.u16('my')
++        while dx or dy:
++            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
++            s.pc.mouse_move(sx & 0xFF, sy & 0xFF); s.pc.run_for(0.05)
++            dx -= sx; dy -= sy
++        if settle: s.settle()
++
++    def click(s, x, y):
++        """Move the pointer to (x, y) and press the left button."""
++        s.point(x, y, settle=False)
++        s.pc.mouse_move(0, 0, 1); s.pc.run_for(0.05); s.pc.mouse_move(0, 0, 0); s.settle()
++
++    def sft_refs(s):
++        """The SFT's reference counts (S_REF, the first byte of each entry): a handle left open shows as a count
++        one higher.  Its size and entries from LODE.MAP (SFT_SZ, NSFT)."""
++        sz, n = s.Y.equ('SFT_SZ'), s.Y.equ('NSFT')
++        return [s.pc.rd(0x60, s.Y['sft'] + i * sz, 1)[0] for i in range(n)]
++
+     @property
+     def crashed(s): return s.pc.crash or s.pc.stopped
+ 
+@@ -201,7 +271,7 @@ class KPC:
+         if last and last[0] == mode and last[1] == v: return list(last[2])
+         # the 400 scan lines in order, then each byte column as one string:
+         # a glyph's 16 bytes are a slice of it
+-        lin = b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:(y & 3) * 0x2000 + (y >> 2) * 80 + 80] for y in range(400))
++        lin = b''.join(v[row_off(y):row_off(y) + 80] for y in range(400))
+         get = font().get
+         hits = {}
+         for x in range(80):
+@@ -279,6 +349,15 @@ class KPC:
+         return [l.strip() for y, l in s.ocr() if y >= 360]
+ 
+ 
++class _Hooks(list):
++    """KPC.adopt's hooks: the watch is chained in only once there is a hook (none: no cost per block)."""
++    def __init__(s, wire):
++        super().__init__(); s.wire = wire
++    def append(s, h):
++        if s.wire: s.wire(); s.wire = None
++        super().append(h)
++
++
+ def run_answering(pc, done, sim_s):
+     """Run until done(), pressing Enter whenever a program says "Press any
+     key" (BENCH and CACHETST wait so their results can be read)."""
+diff --git a/os/tests/fatcheck.py b/os/tests/fatcheck.py
+index 5728517..24384ce 100644
+--- a/os/tests/fatcheck.py
++++ b/os/tests/fatcheck.py
+@@ -7,6 +7,12 @@ chains, no lost clusters, "." and ".." right in every subdirectory.
+ import struct, sys
+ 
+ 
++def fat12(fat, n):
++    """FAT12 entry n."""
++    v = struct.unpack_from('<H', fat, n * 3 // 2)[0]
++    return v >> 4 if n & 1 else v & 0xFFF
++
++
+ def bpb(img):
+     bps, spc, res, nfat, nroot, tot16, media, spf, spt, heads = struct.unpack_from('<HBHBHHBHHH', img, 11)
+     return dict(bps=bps, spc=spc, res=res, nfat=nfat, nroot=nroot, tot=tot16, spf=spf)
+@@ -24,9 +30,7 @@ def check(img):
+     root_secs = (b['nroot'] * 32 + bps - 1) // bps
+     data_sec = b['res'] + b['nfat'] * b['spf'] + root_secs
+     nclu = (b['tot'] - data_sec) // spc + 2
+-    def get(n):
+-        v = struct.unpack_from('<H', fat, n * 3 // 2)[0]
+-        return v >> 4 if n & 1 else v & 0xFFF
++    get = lambda n: fat12(fat, n)
+     def chain(start, what):
+         out = []
+         n = start
+@@ -104,9 +108,7 @@ def read_files(img, drive='A', dirs=None):
+     root_off = fat_off + b['nfat'] * b['spf'] * bps
+     root_secs = (b['nroot'] * 32 + bps - 1) // bps
+     data_sec = b['res'] + b['nfat'] * b['spf'] + root_secs
+-    def get(n):
+-        v = struct.unpack_from('<H', fat, n * 3 // 2)[0]
+-        return v >> 4 if n & 1 else v & 0xFFF
++    get = lambda n: fat12(fat, n)
+     def chain_data(cl):
+         out = bytearray(); seen = 0
+         while 2 <= cl < 0xFF0 and seen < 4096:
+diff --git a/os/tests/test_apps.py b/os/tests/test_apps.py
+index 2954330..74fac63 100644
+--- a/os/tests/test_apps.py
++++ b/os/tests/test_apps.py
+@@ -60,9 +60,7 @@ def run_syms(src):
+     return SYMS[src]
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:600]) if detail and not cond else ''))
++check = ktest.checker(results, 600)
+ 
+ def image(name, *files):
+     return mkimg.build(os.path.join(OUT, name), [SYS] + list(files))
+@@ -88,12 +86,7 @@ def run_ret(k): return k.u16('run_ret')
+ 
+ def click(k, x, y):
+     """Move the pointer to (x, y) and press the left button."""
+-    dx, dy = x - k.u16('mx'), y - k.u16('my')
+-    while dx or dy:
+-        sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+-        k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+-        dx -= sx; dy -= sy
+-    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.settle()
++    k.click(x, y)
+ 
+ # ---------------------------------------------------------------------
+ def xor_rect_unit():
+@@ -144,7 +137,7 @@ def xor_rect_unit():
+             want ^= {(xx, y)}; want ^= {(xx, y + h - 1)}
+         exp = bytearray(screen)
+         for px, py in want:
+-            exp[(py & 3) * 0x2000 + (py >> 2) * 80 + px // 8] ^= 0x80 >> (px & 7)
++            exp[ktest.row_off(py) + px // 8] ^= 0x80 >> (px & 7)
+         kept = [mu.reg_read(r) for r in regs] == list(vals) and mu.reg_read(UC_X86_REG_SP) == 0xFFFE \
+             and mu.reg_read(UC_X86_REG_ES) == 0x2000 and mu.reg_read(UC_X86_REG_DS) == 0x5000 \
+             and bytes(mu.mem_read(0x50000, 0x10000)) == dseg
+@@ -303,7 +296,7 @@ def t_system():
+     chip = sim7210.NEC7210(sim7210.bus())
+     k = ktest.KPC(img, chip=chip); k.pc.mouse = True; k.start()
+     out = k.run_file('MEMSZ.COM', 20)
+-    m = re.search(r'([\d.]+) KB for programs', out)
++    m = ktest.KB_PROGS.search(out)
+     memsz = float(m.group(1)) if m else 0
+     k.key(ktest.ENTER)
+     k.key(CODE['U'])
+@@ -902,7 +895,7 @@ def t_memory():
+     img = image('mem.img', MEMSZ, os.path.join(GOS, 'src', 'LCMD.COM'))
+     k = ktest.KPC(img); k.start()
+     out = k.run_file('MEMSZ.COM', 20)
+-    m = re.search(r'([\d.]+) KB for programs', out)
++    m = ktest.KB_PROGS.search(out)
+     kb = float(m.group(1)) if m else 0
+     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
+           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
+@@ -914,7 +907,7 @@ def t_memory():
+     # (less the EMS manager's 2), and System says where it went
+     k = ktest.KPC(image('mem_ems.img', MEMSZ, SYSTEM), ems_pages=88); k.start()
+     out = k.run_file('MEMSZ.COM', 20)
+-    m = re.search(r'([\d.]+) KB for programs', out)
++    m = ktest.KB_PROGS.search(out)
+     kbe = float(m.group(1)) if m else 0
+     check('with EMS a DOS program gets %.1f KB: the disk cache is in EMS (%.1f KB more)' % (kbe, kbe - kb),
+           kbe - kb > 15.85, out[-200:])      # (16 KB: both figures rounded to 0.1 KB)
+@@ -982,7 +975,7 @@ def core_font(k): return bytes(k.pc.rd(k.useg, k.Y['font'], 1536))
+ 
+ def cell(k, col, y0):
+     """The 16 bytes of the character cell at column col, rows y0..y0+15."""
+-    return bytes(k.pc.rd(0xB800, (y & 3) * 0x2000 + (y >> 2) * 80 + col, 1)[0] for y in range(y0, y0 + 16))
++    return bytes(k.pc.rd(0xB800, ktest.row_off(y) + col, 1)[0] for y in range(y0, y0 + 16))
+ 
+ def reboot(k, name):
+     p = os.path.join(OUT, name); open(p, 'wb').write(bytes(k.pc.drives[0].img))
+@@ -1430,7 +1423,7 @@ def form(k):
+ def outlined(k, item):
+     """The outline's top line is drawn above form item 0..2 (Device, Subject, Title)."""
+     y = FORM_Y - 2 + item * ITEM_H
+-    v = k.pc.rd(0xB800, (y & 3) * 0x2000 + (y >> 2) * 80 + 20, 40)
++    v = k.pc.rd(0xB800, ktest.row_off(y) + 20, 40)
+     return all(b == 0xFF for b in v)
+ def to_subject(k, name):
+     """Outline Subject (Shift-Tab from Title), choose the subject, Return: its titles."""
+@@ -2181,7 +2174,7 @@ def t_subcopy():
+ 
+ INFO_Y = 336
+ def vram(k): return k.pc.rd(0xB800, 0, 0x8000)
+-def vrow(buf, y): b = (y & 3) * 0x2000 + (y >> 2) * 80; return buf[b:b + 80]
++def vrow(buf, y): b = ktest.row_off(y); return buf[b:b + 80]
+ def lit_cells(k, y, cols=range(80)):
+     """Columns whose 16 rows from y are all set: a lit (inverse) space."""
+     buf = vram(k)
+@@ -2350,14 +2343,8 @@ def t_calc():
+     k.key(ktest.ESC)
+ 
+ def point(k, x, y, settle=True):
+-    """Move the pointer to (x, y), no button.  settle=False: no wait after (with a task computing behind the
+-    machine never waits, so a settle would run to its 6 s timeout)."""
+-    dx, dy = x - k.u16('mx'), y - k.u16('my')
+-    while dx or dy:
+-        sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+-        k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+-        dx -= sx; dy -= sy
+-    if settle: k.settle()
++    """Move the pointer to (x, y), no button (ktest's KPC.point)."""
++    k.point(x, y, settle)
+ 
+ def drag(k, x0, y0, x1, y1):
+     """Press the left button at (x0, y0), move to (x1, y1) holding it, release."""
+@@ -2704,7 +2691,7 @@ MENUTEST = os.path.join(HERE, 'MENUTEST.RUN')
+ def body(k):
+     """The screen under the title bar (rows 24-399), row by row."""
+     v = k.pc.rd(0xB800, 0, 0x8000)
+-    return b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:][:80] for y in range(24, 400))
++    return b''.join(v[ktest.row_off(y):][:80] for y in range(24, 400))
+ 
+ def t_menu():
+     """UI_MENU and UI_MOUSE (UI API 8): a pop-up menu at a right click, chosen
+diff --git a/os/tests/test_claude_mouse.py b/os/tests/test_claude_mouse.py
+index d374e0e..ceeb753 100644
+--- a/os/tests/test_claude_mouse.py
++++ b/os/tests/test_claude_mouse.py
+@@ -66,10 +66,7 @@ def wait(h, text, sim_s=30):
+ 
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:1500]) if detail and not cond else ''),
+-          flush=True)
++check = CK.ktest.checker(results, 1500, flush=True)
+ 
+ 
+ def t_click_follows_a_link():
+diff --git a/os/tests/test_claude_window.py b/os/tests/test_claude_window.py
+index 3b6dbd9..47fc821 100644
+--- a/os/tests/test_claude_window.py
++++ b/os/tests/test_claude_window.py
+@@ -23,10 +23,7 @@ INI = b'MULTITASK=1\r\nMTMEM=LCMD.COM:64,CLAUDE.COM:128\r\n'      # (the ROM's l
+ PBF_SHOWN = 1
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:1500]) if detail and not cond else ''),
+-          flush=True)
++check = ktest.checker(results, 1500, flush=True)
+ 
+ 
+ class Win(CK.KernelHarness):
+@@ -52,8 +49,7 @@ class Win(CK.KernelHarness):
+         s.m.watch = w
+ 
+     def boot_exec(s):
+-        k = ktest.KPC.__new__(ktest.KPC)
+-        k.pc = s.m; k.Y = s.m.Y; k.dos = []; k.pending = {}; k.trace = False; k.hooks = []
++        k = ktest.KPC.adopt(s.m)
+         s.k = k
+         s.m.boot(0); k.settle(8)
+         assert s.m.mode() == 0x40, (s.m.crash, k.where())
+@@ -105,7 +101,7 @@ def glyph_shown(h, code):
+     """Code's glyph (CLAUDE's font) drawn somewhere on the screen, byte for
+     byte: 16 lines of one byte column."""
+     v = h.m.rd(0xB800, 0, 0x8000)
+-    lin = b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:(y & 3) * 0x2000 + (y >> 2) * 80 + 80] for y in range(400))
++    lin = b''.join(v[ktest.row_off(y):ktest.row_off(y) + 80] for y in range(400))
+     g = h.font_img[(code - 0x20) * 16:(code - 0x1F) * 16]
+     return any(g in lin[x::80] for x in range(80))
+ 
+@@ -123,7 +119,7 @@ def in_step(h):
+ 
+ def pixels(h):
+     v = h.m.rd(0xB800, 0, 0x8000)
+-    return b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:(y & 3) * 0x2000 + (y >> 2) * 80 + 80] for y in range(PIC.H))
++    return b''.join(v[ktest.row_off(y):ktest.row_off(y) + 80] for y in range(PIC.H))
+ 
+ 
+ def t_window():
+diff --git a/os/tests/test_defrag.py b/os/tests/test_defrag.py
+index 8735631..be78f0d 100644
+--- a/os/tests/test_defrag.py
++++ b/os/tests/test_defrag.py
+@@ -12,9 +12,7 @@ import defrag_util as D, fatcheck, ktest, mkimg, pcemu, fat16img as F
+ 
+ OUT = tempfile.mkdtemp()
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)) if detail and not cond else ''))
++check = ktest.checker(results)
+ 
+ # count DEFRAG's writes, and act after the Nth one (a key, a disk swap)
+ W = {'n': 0, 'at': None, 'do': None}
+@@ -194,7 +192,7 @@ def t_drive_b():
+     k, code = D.run(a, tail=' b: /S /T', b=b, before_start=lambda k: k.pc.drives[1].bad.update(bad))
+     rb = bytes(k.pc.drives[1].img)
+     fat = rb[512:512 + 9 * 512]
+-    get = lambda n: (struct.unpack_from('<H', fat, n * 3 // 2)[0] >> 4) if n & 1 else (struct.unpack_from('<H', fat, n * 3 // 2)[0] & 0xFFF)
++    get = lambda n: fatcheck.fat12(fat, n)
+     marked = sorted(n for n in range(2, 2849) if get(n) == 0xFF7)
+     log = fatcheck.read_files(rb).get('A:\\DEFRAG.TXT', b'').decode('latin-1')
+     st = status(k)
+@@ -376,7 +374,7 @@ def t_bad():
+     raw = bytes(k.pc.drives[0].img)
+     good, probs = ok_disk(raw, files0)
+     fat = raw[512:512 + 9 * 512]
+-    get = lambda n: (struct.unpack_from('<H', fat, n * 3 // 2)[0] >> 4) if n & 1 else (struct.unpack_from('<H', fat, n * 3 // 2)[0] & 0xFFF)
++    get = lambda n: fatcheck.fat12(fat, n)
+     marked = [n for n in range(2, 2849) if get(n) == 0xFF7]
+     want = sorted({l - 33 + 2 for l in bad})
+     st = status(k)
+@@ -418,7 +416,7 @@ def t_bad():
+     raw = bytes(k.pc.drives[0].img)
+     st = status(k)
+     fat = raw[512:512 + 9 * 512]
+-    get = lambda n: (struct.unpack_from('<H', fat, n * 3 // 2)[0] >> 4) if n & 1 else (struct.unpack_from('<H', fat, n * 3 // 2)[0] & 0xFFF)
++    get = lambda n: fatcheck.fat12(fat, n)
+     marked = sorted(n for n in range(2, 2849) if get(n) == 0xFF7)
+     log = fatcheck.read_files(raw).get('A:\\DEFRAG.TXT', b'').decode('latin-1')
+     good, probs = ok_disk(raw, files0)
+diff --git a/os/tests/test_hd.py b/os/tests/test_hd.py
+index a41e084..1927bb4 100644
+--- a/os/tests/test_hd.py
++++ b/os/tests/test_hd.py
+@@ -22,9 +22,7 @@ LCMD = os.path.join(SRC, 'LCMD.COM')
+ TM5000G = next((p for p in (os.path.join(GOS, '..', 'tools', 'TM5000G.EXE'),) if os.path.exists(p)), None)
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:1500]) if detail and not cond else ''))
++check = ktest.checker(results, 1500)
+ 
+ def image(name, *files):
+     return mkimg.build(os.path.join(OUT, name), [os.path.join(SRC, 'LODE.SYS')] + list(files))
+@@ -521,7 +519,7 @@ def t_mem():
+     def kb(name, sysfile, ata=None, **kw):              # (from the shell: any kernel's map)
+         img = mkimg.build(os.path.join(OUT, name + '.img'), ['LODE.SYS=' + sysfile, memsz, LCMD])
+         k = ktest.KPC(img, ata=ata, **kw); k.start()
+-        m = re.search(r'([\d.]+) KB for programs', Shell(k).run('memsz'))
++        m = ktest.KB_PROGS.search(Shell(k).run('memsz'))
+         return float(m.group(1)) if m else None
+     base = os.environ.get('BASE_SYS')
+     new = os.path.join(SRC, 'LODE.SYS')
+@@ -579,7 +577,7 @@ def t_mdisk():
+     def kb(name, files):
+         img = mkimg.build(os.path.join(OUT, name + '.img'), [os.path.join(SRC, 'LODE.SYS'), memsz, LCMD] + files)
+         k = ktest.KPC(img, ata=drive(std()[0]), ems_pages=88); k.start()
+-        m = re.search(r'([\d.]+) KB for programs', Shell(k).run('memsz'))
++        m = ktest.KB_PROGS.search(Shell(k).run('memsz'))
+         return float(m.group(1)) if m else None
+     on, off = kb('md_on', []), kb('md_off', [ini])
+     check('C: and EMS: DOS programs get as much with M: on as off (%.1f KB, %.1f KB)' % (on, off), on == off and on, (on, off))
+diff --git a/os/tests/test_hdprobe.py b/os/tests/test_hdprobe.py
+index e1a54d6..0558928 100644
+--- a/os/tests/test_hdprobe.py
++++ b/os/tests/test_hdprobe.py
+@@ -20,9 +20,7 @@ def build():
+     subprocess.run(['nasm', '-f', 'bin', '-i', TOOLS + '/', '-o', PROBE, os.path.join(TOOLS, 'HDPROBE.ASM')], check=True)
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:900]) if detail and not cond else ''))
++check = ktest.checker(results, 900)
+ 
+ def mbr():
+     """A partition table: one 40 MB DOS partition, as FDISK would make it."""
+diff --git a/os/tests/test_hdscan.py b/os/tests/test_hdscan.py
+index 6cfe623..fa21cb4 100644
+--- a/os/tests/test_hdscan.py
++++ b/os/tests/test_hdscan.py
+@@ -21,9 +21,7 @@ def build():
+     subprocess.run(['nasm', '-f', 'bin', '-i', TOOLS + '/', '-o', SCAN, os.path.join(TOOLS, 'HDSCAN.ASM')], check=True)
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:1500]) if detail and not cond else ''))
++check = ktest.checker(results, 1500)
+ 
+ DATE = ((1991 - 1980) << 9) | (4 << 5) | 9          # 1991-04-09
+ TIME = (5 << 11) | (7 << 5)                        # 05:07
+diff --git a/os/tests/test_headcln.py b/os/tests/test_headcln.py
+index 1392ffe..a25d424 100644
+--- a/os/tests/test_headcln.py
++++ b/os/tests/test_headcln.py
+@@ -13,9 +13,7 @@ import ktest, mkimg, pcemu
+ 
+ OUT = tempfile.mkdtemp()
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)) if detail and not cond else ''))
++check = ktest.checker(results)
+ 
+ # every BIOS disk call: (unit, ah, cylinder, head)
+ CALLS = []
+diff --git a/os/tests/test_kernel.py b/os/tests/test_kernel.py
+index 6385522..49688a8 100644
+--- a/os/tests/test_kernel.py
++++ b/os/tests/test_kernel.py
+@@ -29,9 +29,7 @@ def image(name, *files):
+     return mkimg.build(os.path.join(OUT, name), [os.path.join(GOS, 'src', 'LODE.SYS')] + list(files))
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)) if detail and not cond else ''))
++check = ktest.checker(results)
+ 
+ def t_dosapi():
+     img = image('api.img', os.path.join(HERE, 'TESTDOS.COM'))
+@@ -252,7 +250,7 @@ def t_capture():
+     check('Executive: SCREEN01.BMP, 32062 bytes, one beep', len(f.get('A:\\SCREEN01.BMP', b'')) == 32062 and beeps() == 1,
+           (sorted(f), beeps()))
+     check('Executive: the picture is the screen (mode 40h, 4 banks)',
+-          bmp_ok(f['A:\\SCREEN01.BMP'], lambda y: vram[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]))
++          bmp_ok(f['A:\\SCREEN01.BMP'], lambda y: vram[ktest.row_off(y):][:80]))
+     check('the screen is left as it was', k.pc.rd(0xB800, 0, 0x8000) == vram)
+     check('the disk cache\'s memory (the buffer) given back', k.rd('tc_lock', 1) == b'\0')
+     # the cache's memory lent already (the help window has it): 1 KB at the
+@@ -260,7 +258,7 @@ def t_capture():
+     k.wr('tc_lock', b'\1'); vram = k.pc.rd(0xB800, 0, 0x8000); shot(); lock = k.rd('tc_lock', 1); k.wr('tc_lock', b'\0')
+     f = files()
+     check('the next one: SCREEN02.BMP, through the 1 KB buffer; the cache still lent', 'A:\\SCREEN02.BMP' in f and
+-          bmp_ok(f['A:\\SCREEN02.BMP'], lambda y: vram[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]) and lock == b'\1' and beeps() == 1,
++          bmp_ok(f['A:\\SCREEN02.BMP'], lambda y: vram[ktest.row_off(y):][:80]) and lock == b'\1' and beeps() == 1,
+           (sorted(f), lock, beeps()))
+     # a DOS program: mode 6, text in 80 and 40 columns, then a BIOS wait
+     k.select('CAPTEST.COM'); k.key(ktest.ENTER, settle=False)
+@@ -354,7 +352,7 @@ def t_print():
+     out = shot()
+     head, _, rest = out.partition(b'image\n')
+     rows = rest.split(b'\n')
+-    want = [bytes(255 - v for v in vram[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]) for y in range(399, -1, -1)]
++    want = [bytes(255 - v for v in vram[ktest.row_off(y):][:80]) for y in range(399, -1, -1)]
+     check('Executive: PostScript to LPT1, a 640 x 400 image, one beep, no file',
+           out.startswith(b'%!PS-Adobe-3.0\n') and b'640 400 1[640 0 0 400 0 0]' in head and out.endswith(b'showpage\n\x04')
+           and beeps() == 1 and not any('SCREEN' in n for n in files()), (out[:80], out[-20:], beeps(), sorted(files())))
+@@ -420,12 +418,7 @@ def t_print():
+ 
+ def mcbs(k):
+     """The arena: (segment, type, owner, size, name) of each block."""
+-    seg, out = first_mcb(k), []
+-    while True:
+-        t, own, sz, nm = k.pc.rd(seg, 0, 1)[0], k.pc.u16(seg, 1), k.pc.u16(seg, 3), k.pc.rd(seg, 8, 2)
+-        out.append((seg, chr(t), own, sz, nm))
+-        if t != ord('M'): return out
+-        seg += sz + 1
++    return [(seg, chr(t), own, sz, nm) for seg, t, own, sz, nm in ktest.mcb_chain(k.pc, first_mcb(k))]
+ 
+ def t_cache(ems=0):
+     """The cylinder cache: CACHETST (random and in-order reads, writes into
+@@ -458,7 +451,7 @@ def t_cache(ems=0):
+     # the help window's save-under: the cache's memory, lent and given back;
+     # with the cache in EMS, a block of its own while it is open (the cache
+     # stays as it is)
+-    rows = [(y & 3) * 0x2000 + (y >> 2) * 80 for y in range(64, 64 + 232)]   # (the screen's four banks)
++    rows = [ktest.row_off(y) for y in range(64, 64 + 232)]   # (the screen's four banks)
+     under = lambda: b''.join(k.pc.rd(0xB800, r + 16, 48) for r in rows)
+     sublocks = lambda: [b for b in mcbs(k) if b[2] == 8 and b[3] == TC_PARAS]
+     before, drv0, n0 = under(), k.pc.rd(0x60, k.Y['tc_drv'], 1), len(sublocks())
+@@ -694,7 +687,7 @@ def t_noems():
+           and 'FAIL' not in out, out[-300:])
+ 
+ def memsz(k):
+-    m = re.search(r'([\d.]+) KB for programs', k.run_file('MEMSZ.COM', 30))
++    m = ktest.KB_PROGS.search(k.run_file('MEMSZ.COM', 30))
+     return float(m.group(1)) if m else 0
+ 
+ def t_ems():
+@@ -789,7 +782,7 @@ def md_query(out):
+     return tuple(map(int, m.groups())) if m else None
+ 
+ def shell_memsz(sh):
+-    m = re.search(r'([\d.]+) KB for programs', sh.run('memsz'))
++    m = ktest.KB_PROGS.search(sh.run('memsz'))
+     return float(m.group(1)) if m else 0
+ 
+ def ini_image(name, text, *files):
+@@ -2360,7 +2353,7 @@ def t_command():
+     def largest():
+         k.key('cls'); k.key(ktest.ENTER)
+         k.key('memsz'); k.key(ktest.ENTER)
+-        m = re.search(r'([\d.]+) KB for programs', k.pc.text_screen())
++        m = ktest.KB_PROGS.search(k.pc.text_screen())
+         return m.group(1) if m else None
+     m0 = largest()
+     for _ in range(3):
+@@ -2877,7 +2870,7 @@ def t_execabort():
+             if t != 'M': break
+             seg += sz + 1
+         return out
+-    def refs(): return [pc.rd(0x60, k.Y['sft'] + i * 44, 1)[0] for i in range(24)]
++    refs = k.sft_refs
+     sec = lbas(b'BIG     COM')
+     k.code_p()
+     k.key('ver'); k.key(ktest.ENTER)
+diff --git a/os/tests/test_mt.py b/os/tests/test_mt.py
+index b41cf37..a8ffc8c 100644
+--- a/os/tests/test_mt.py
++++ b/os/tests/test_mt.py
+@@ -30,9 +30,7 @@ from pcemu import STUB
+ from unicorn import x86_const as UX
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:600]) if detail and not cond else ''))
++check = ktest.checker(results, 600)
+ 
+ MTPROBE = os.path.join(HERE, 'MTPROBE.COM')
+ MTSC = os.path.join(HERE, 'MTSCR.COM')
+@@ -92,12 +90,8 @@ def boot(name, text=None, ems=88, *more, mt=MTSYS, nofpu=False, mouse=False, chi
+ 
+ def mcbs(k):
+     """The memory arena: (segment of the MCB, type, owner, paragraphs, name)."""
+-    pc, seg, out = k.pc, getattr(k, 'mcb0', None) or k.u16('first_mcb'), []
+-    while True:
+-        t, own, sz, nm = chr(pc.rd(seg, 0, 1)[0]), pc.u16(seg, 1), pc.u16(seg, 3), pc.rd(seg, 8, 2)
+-        out.append((seg, t, own, sz, nm))
+-        if t != 'M' or len(out) > 200: return out
+-        seg += sz + 1
++    seg = getattr(k, 'mcb0', None) or k.u16('first_mcb')
++    return [(s, chr(t), own, sz, nm) for s, t, own, sz, nm in ktest.mcb_chain(k.pc, seg, most=200)]
+ 
+ def show(arena): return [(hex(s), t, hex(o), sz, n) for s, t, o, sz, n in arena[-4:]]
+ 
+@@ -654,17 +648,11 @@ class TermView:
+     def drawn(s, r, c):                 # the 16 bytes on the screen of the task's cell (r, c) in the window
+         tv = s.tv
+         d = (tv('y0') + (r - tv('top')) * 16) * 20 + tv('x0') + c - tv('left')
+-        return bytes(s.k.pc.rd(0xB800, d + (y & 3) * 0x2000 + (y >> 2) * 80, 1)[0] for y in range(16))
++        return bytes(s.k.pc.rd(0xB800, d + ktest.row_off(y), 1)[0] for y in range(16))
+     def cxy(s, r, c):                   # the middle of the task's screen cell (r, c) in the window
+         tv = s.tv
+         return (tv('x0') + c - tv('left')) * 8 + 4, tv('y0') + (r - tv('top')) * 16 + 8
+-    def mv(s, x, y):                    # (A.point without its settle: a task may be busy)
+-        k = s.k
+-        dx, dy = x - k.u16('mx'), y - k.u16('my')
+-        while dx or dy:
+-            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+-            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+-            dx -= sx; dy -= sy
++    def mv(s, x, y): s.k.point(x, y, settle=False)      # (no settle: a task may be busy)
+     def btn(s, b, t=0.3):               # buttons b down a moment (the UI looks at them as it can), then up
+         k = s.k
+         k.pc.mouse_move(0, 0, b); k.pc.run_for(0.2); k.pc.mouse_move(0, 0, 0); k.pc.run_for(t)
+@@ -3749,7 +3737,7 @@ def t_exec():
+           and st5[:2] == ([(0, 1, 'Executive')], 0) and back(), (b5, st5))
+     # Shift-Return: as with it off, in the Executive's own task, all its memory
+     o = run_wait(k, 'MEMSZ.COM', 30)
+-    m = re.search(r'([\d.]+) KB for programs', o)
++    m = ktest.KB_PROGS.search(o)
+     check('Shift-Return: MEMSZ.COM runs in the Executive\'s own task, which waits: all the memory (%s KB), no task' % (m and m.group(1)),
+           m and float(m.group(1)) > 500 and back(), o[-200:])
+     # CODE-P: LCMD in the Executive's own task (as before: the tests' Shell); seven tasks from it: too many for Return
+@@ -4140,7 +4128,7 @@ def t_base():
+     def pix(c, y, w, h):
+         """The screen's bytes in columns c.., rows y.. (the pointer out of the way)."""
+         A.point(k, 639, 399)
+-        return b''.join(bytes(k.pc.rd(0xB800, (r & 3) * 0x2000 + (r >> 2) * 80 + c, w)) for r in range(y, y + h))
++        return b''.join(bytes(k.pc.rd(0xB800, ktest.row_off(r) + c, w)) for r in range(y, y + h))
+     def strip(t):
+         """The title strip's line holding t, as read."""
+         A.point(k, 639, 399)
+@@ -4276,7 +4264,7 @@ def t_base():
+     A.click(k, 8, 100); k.run_for(0.3)             # (the list: the Executive in front, the click taken)
+     pc0, nt = pix(*c0), [0]
+     for r in range(24, 24 + 13 * 16):               # (the list left of it blanked: F5 must draw it)
+-        k.pc.wr(0xB800, (r & 3) * 0x2000 + (r >> 2) * 80, bytes(c0[0]))
++        k.pc.wr(0xB800, ktest.row_off(r), bytes(c0[0]))
+     def th(pc):
+         if pc.r('cs') == seg and pc.r('ip') == Y['mw_span'] and pc.rd(seg, Y['mw_kind'], 1)[0] == 3: nt[0] += 1
+     k.hooks.append(th)
+@@ -4950,7 +4938,7 @@ def t_term():
+     top, left, x0, y0 = tv('top'), tv('left'), tv('x0'), tv('y0')
+     def drawn(r, c):
+         d = (y0 + (r - top) * 16) * 20 + x0 + c - left
+-        return bytes(k.pc.rd(0xB800, d + (y & 3) * 0x2000 + (y >> 2) * 80, 1)[0] for y in range(16))
++        return bytes(k.pc.rd(0xB800, d + ktest.row_off(y), 1)[0] for y in range(16))
+     got = [drawn(at // 80, at % 80 + j) == fnt[ch * 16:ch * 16 + 16] for j, ch in enumerate((0xC9, 0xCD, 0xBB))] if at is not None else None
+     check('TYPE of C9h CDh BBh (code page 437\'s box corners and line) in the window: each drawn with TERM.FNT\'s glyph',
+           got == [True, True, True], (at, got))
+@@ -5573,7 +5561,7 @@ def t_wxor():
+         else:
+             s0, s1 = st['s0'], scr()
+             got.append({(xb * 8 + b, r) for r in range(400) for xb in range(80) for b in range(8)
+-                        if (s0[(r & 3) * 0x2000 + (r >> 2) * 80 + xb] ^ s1[(r & 3) * 0x2000 + (r >> 2) * 80 + xb]) & (0x80 >> b)})
++                        if (s0[ktest.row_off(r) + xb] ^ s1[ktest.row_off(r) + xb]) & (0x80 >> b)})
+             for r, v in st['regs'].items(): pc.w(r, v)
+             st['go'] = False; st['i'] += 1
+     k.hooks.append(xh)
+@@ -6414,8 +6402,8 @@ def t_progs():
+     paras = (k1.Y['mt_bend'] + 15) // 16
+     check('free memory with it on: exactly MT\'s %d paragraphs and its MCB less (%d bytes)' % (paras, (paras + 1) * 16),
+           a0[-1][2] == 0 and a1[-2][2] == 0 and a1[-2][3] == a0[-1][3] - (paras + 1) and a0[:-1] == a1[:-2], (show(a0), show(a1)))
+-    m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
+-    m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
++    m0 = ktest.KB_PROGS.search(k0.run_file('MEMSZ.COM', 30))
++    m1 = ktest.KB_PROGS.search(run_wait(k1, 'MEMSZ.COM', 30))
+     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
+     check('MEMSZ (from the Executive), off: 580.9 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.9', m0 and m0.group(1))
+     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
+@@ -6462,7 +6450,7 @@ def t_rom():
+               'in front' % tag, st[1] == 0 and k.pc.mode() == 0x40 and n == 1 and 'LCMD.COM' in o and 'C:\\>' in o,
+               (st, k.pc.mode(), n, o[-300:]))
+         k.key('memsz', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+-        m = re.search(r'([\d.]+) KB for programs', '\n'.join(l for y, l in k.ocr()))
++        m = ktest.KB_PROGS.search('\n'.join(l for y, l in k.ocr()))
+         kb[(roms[1] is r96, more)] = m and float(m.group(1))
+     k64, k96, kfoo = kb.get((False, b'')), kb.get((True, b'')), kb.get((True, b'MTMEM=FOO.COM:200\r\n'))
+     check('... MEMSZ at that prompt: %s KB with the ROM as built (MTMEM=LCMD.COM:64: the task\'s 64 KB less LCMD); %s KB '
+@@ -6523,10 +6511,8 @@ def merged(arena):
+     return out
+ 
+ def sft_used(k):
+-    """The SFT's reference counts (S_REF, the first byte of each of 24 x 44):
+-    a handle left open shows as a count one higher."""
+-    base = k.Y['sft']
+-    return [k.pc.rd(0x60, base + i * 44, 1)[0] for i in range(24)]
++    """The SFT's reference counts (ktest's sft_refs): a handle left open shows as a count one higher."""
++    return k.sft_refs()
+ 
+ def t_file():
+     print('== LODEMT.SYS: none, or not this LODE.SYS\'s: it stays off')
+diff --git a/os/tests/test_resident.py b/os/tests/test_resident.py
+index 1cddf56..6abb5a5 100644
+--- a/os/tests/test_resident.py
++++ b/os/tests/test_resident.py
+@@ -45,12 +45,8 @@ def stub_seg(k):
+ 
+ def mcbs(k):
+     """The memory blocks: (MCB segment, owner, paragraphs, name)."""
+-    out, seg = [], k.u16('first_mcb')
+-    while True:
+-        t = k.pc.rd(seg, 0, 1)[0]
+-        out.append((seg, k.pc.u16(seg, 1), k.pc.u16(seg, 3), k.pc.rd(seg, 8, 8).split(b'\0')[0].decode('latin1')))
+-        if t != ord('M'): return out
+-        seg += k.pc.u16(seg, 3) + 1
++    return [(seg, own, sz, nm.split(b'\0')[0].decode('latin1'))
++            for seg, t, own, sz, nm in ktest.mcb_chain(k.pc, k.u16('first_mcb'), 8)]
+ 
+ def image(name, *files):
+     return mkimg.build(os.path.join(OUT, name), [os.path.join(GOS, 'src', 'LODE.SYS'), os.path.join(GOS, 'src', 'LCMD.COM'),
+@@ -58,26 +54,17 @@ def image(name, *files):
+                                                  ('EMSUSE.COM', 'GFXUSE.COM', 'CLAUDE.COM')] + list(files))
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)) if detail and not cond else ''))
++check = ktest.checker(results)
+ 
+-def prompt(k, cmd, sim_s=6):
+-    k.key('cls'); k.key(ktest.ENTER); k.key(cmd); k.key(ktest.ENTER, settle=False); k.settle(sim_s)
+-    return k.pc.text_screen()
++def prompt(k, cmd, sim_s=6): return k.prompt(cmd, sim_s)
+ 
+ def memsz(k):
+-    m = re.search(r'([\d.]+) KB for programs', prompt(k, 'memsz'))
++    m = ktest.KB_PROGS.search(prompt(k, 'memsz'))
+     return float(m.group(1)) if m else None
+ 
+ def click(k, x, y):
+     """Move the pointer to (x, y) in the Executive and press the left button."""
+-    dx, dy = x - k.u16('mx'), y - k.u16('my')
+-    while dx or dy:
+-        sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+-        k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+-        dx -= sx; dy -= sy
+-    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.settle()
++    k.click(x, y)
+ 
+ def glyphs():
+     """The console's font, Terminus then CLAUDE's own glyphs (80h-A0h): {16 bytes: char}."""
+@@ -94,7 +81,7 @@ def con_row(k, r):
+     """Row r of resident Claude's console (8x16 cells, inverse or not), as text."""
+     v = k.pc.rd(0xB800, 0, 0x8000)
+     def ch(c):
+-        g = bytes(v[(i & 3) * 0x2000 + (i >> 2) * 80 + r * 320 + c] for i in range(16))
++        g = bytes(v[ktest.row_off(i) + r * 320 + c] for i in range(16))
+         return GLYPH.get(bytes(b ^ 0xFF for b in g)) or GLYPH.get(g) or '?'
+     return ''.join(ch(c) for c in range(80))
+ 
+@@ -369,7 +356,7 @@ def t_rexec():
+     k = ktest.KPC(image('rex.img'), ems_pages=88); k.pc.mouse = True; k.start()
+     def exec_memsz():
+         if any('Press any key' in l for l in k.band()): k.key(ktest.ESC)     # ("LCMD.COM ended")
+-        m = re.search(r'([\d.]+) KB for programs', k.run_file('MEMSZ.COM', 20))
++        m = ktest.KB_PROGS.search(k.run_file('MEMSZ.COM', 20))
+         return float(m.group(1)) if m else None
+     m0 = exec_memsz()
+     k.key(ktest.CODE_P)
+diff --git a/os/tests/test_resident_term.py b/os/tests/test_resident_term.py
+index ce0e58a..d202575 100644
+--- a/os/tests/test_resident_term.py
++++ b/os/tests/test_resident_term.py
+@@ -20,10 +20,7 @@ FAKE = '%s %s' % (sys.executable, os.path.join(CK.GL_TESTS, 'fake_claude.py'))
+ HOT, CODE_Q, ENTER, ESC = 0x2B00, 0x1000, 0x1C0D, 0x011B
+ 
+ results = []
+-def check(name, cond, detail=''):
+-    results.append((name, bool(cond)))
+-    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:1500]) if detail and not cond else ''),
+-          flush=True)
++check = ktest.checker(results, 1500, flush=True)
+ 
+ 
+ class Res(CK.KernelHarness):
+@@ -64,15 +61,12 @@ class Res(CK.KernelHarness):
+ 
+     def boot(s):
+         """To LCMD's prompt."""
+-        k = ktest.KPC.__new__(ktest.KPC)
+-        k.pc = s.m; k.Y = s.m.Y; k.dos = []; k.pending = {}; k.trace = False; k.hooks = []
++        k = ktest.KPC.adopt(s.m)
+         s.k = k
+         s.m.boot(0); k.settle(8)
+         k.code_p()
+ 
+-    def cmd(s, text, sim_s=6):
+-        s.k.key('cls'); s.k.key(ENTER); s.k.key(text); s.k.key(ENTER, settle=False); s.k.settle(sim_s)
+-        return s.m.text_screen()
++    def cmd(s, text, sim_s=6): return s.k.prompt(text, sim_s)
+ 
+     # the resident stub (INT 16h's, once loaded) and the console's page
+     def stub(s): return s.m.u16(0, 0x16 * 4 + 2)
+diff --git a/os/tests/test_rom.py b/os/tests/test_rom.py
+index 15afa66..6b0aaf5 100644
+--- a/os/tests/test_rom.py
++++ b/os/tests/test_rom.py
+@@ -69,9 +69,7 @@ def env(k):
+     e = k.pc.u16(0x60, k.Y['ex_env'])
+     return k.pc.rd(e, 0, 512).split(b'\0\0')[0].decode('latin-1').split('\0')
+ 
+-def prompt(k, cmd, sim_s=8):
+-    k.key('cls'); k.key(ktest.ENTER); k.key(cmd); k.key(ktest.ENTER, settle=False); k.settle(sim_s)
+-    return k.pc.text_screen()
++def prompt(k, cmd, sim_s=8): return k.prompt(cmd, sim_s)
+ 
+ def to_prompt(k):
+     k.code_p(); k.settle()
+@@ -217,7 +215,7 @@ def t_rom2():
+             if 'ata' in kk: kk['ata'] = TS.hd()
+             k = boot(floppy('rom2.img', A.MEMSZ), sock=sock1, roms=rs, **kk)
+             to_prompt(k)
+-            m = re.search(r'([\d.]+) KB for programs', prompt(k, 'a:memsz'))
++            m = ktest.KB_PROGS.search(prompt(k, 'a:memsz'))
+             mem.append(m and float(m.group(1)))
+             b = r_module(k)
+             mcb.append(k.u16('first_mcb'))
+@@ -637,7 +635,7 @@ def t_memory():
+             else:
+                 k = boot(img, sock=None if how == 'ROM in, from A:' else 1, **kk)
+             to_prompt(k)
+-            m = re.search(r'([\d.]+) KB for programs', prompt(k, 'a:memsz'))
++            m = ktest.KB_PROGS.search(prompt(k, 'a:memsz'))
+             got[tag, how] = m and float(m.group(1))
+         print('   %-8s no ROM %s KB, the ROM in (started from A:) %s KB, started from the ROM %s KB'
+               % (tag, got[tag, 'no ROM'], got[tag, 'ROM in, from A:'], got[tag, 'from the ROM']))
+diff --git a/os/tests/test_splash.py b/os/tests/test_splash.py
+index 130eca8..0541b89 100644
+--- a/os/tests/test_splash.py
++++ b/os/tests/test_splash.py
+@@ -42,7 +42,7 @@ def boot_to_drawn(k):
+ 
+ def screen_bits(k):
+     vram = k.pc.rd(0xB800, 0, 0x8000)
+-    return [[(vram[(y & 3) * 0x2000 + (y >> 2) * 80 + (x >> 3)] >> (7 - (x & 7))) & 1 for x in range(640)] for y in range(400)]
++    return [[(vram[ktest.row_off(y) + (x >> 3)] >> (7 - (x & 7))) & 1 for x in range(640)] for y in range(400)]
+ 
+ REF = None
+ def reference():
+@@ -277,7 +277,7 @@ def t_memory():
+             img = mkimg.build(os.path.join(OUT, 'sp_mem.img'), [os.path.join(GOS, 'src', 'LODE.SYS'), A.MEMSZ, A.LCMD] + more)
+             k = ktest.KPC(img, ems_pages=ems); k.start(10)
+             out = k.run_file('MEMSZ.COM', 20)
+-            m = re.search(r'([\d.]+) KB for programs', out)
++            m = ktest.KB_PROGS.search(out)
+             got[tag, ems] = m and m.group(1)
+     for ems in (0, 88):
+         check('%s: a DOS program gets %s KB after the picture, %s KB without LODE.PIC (UI API 6: %s KB)'

@@ -1,0 +1,143 @@
+From c6662c633c5fbd5e5425d024a1bac5417ddd17fb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 30 Oct 2026 20:45:43 +0000
+Subject: [PATCH 2/5] audit3 H15: the harness's small leftovers
+
+Usage lines that named some of the tests (test_mt 15 of 49, test_apps
+10 of 30) now say any t_ function; the isinstance(tty, list) guards go
+(pcemu's tty is always a list); ocr()'s dead len(line) < 1; test_mt's
+run_wait is ktest.run_file(shift=True); NULDIR and NOMATCH's copied X15
+comment says what their tables are.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GRD5wiUMCniTFB6AGgxU9p
+---
+ os/ktest.py           | 15 +++++++++------
+ os/tests/NOMATCH.ASM  |  3 ++-
+ os/tests/NULDIR.ASM   |  3 ++-
+ os/tests/test_apps.py |  2 +-
+ os/tests/test_mt.py   | 16 ++++------------
+ 5 files changed, 18 insertions(+), 21 deletions(-)
+
+diff --git a/os/ktest.py b/os/ktest.py
+index 9a9a0f3..00fc367 100644
+--- a/os/ktest.py
++++ b/os/ktest.py
+@@ -196,7 +196,6 @@ class KPC:
+         out = []
+         for y in sorted(hits):
+             line = hits[y]
+-            if len(line) < 1: continue
+             out.append((y, ''.join(line.get(x, ' ') for x in range(80)).rstrip()))
+         s._ocr_last = (mode, v, out)
+         return list(out)
+@@ -245,15 +244,19 @@ class KPC:
+         while sel > i: s.key(UP, settle=False); sel -= 1
+         s.settle()
+ 
+-    def run_file(s, name, sim_s=60.0):
+-        """Select a program, confirm, and run until the Executive is back."""
++    def run_file(s, name, sim_s=60.0, shift=False):
++        """Select a program, confirm, and run until the Executive is back.  shift: Shift held at 40:17h till it
++        runs (Shift-Return: with multitasking on, in the Executive's own task, which waits for it, as with it off;
++        Return alone starts it as a task, M7b)."""
+         s.select(name)
+-        s.pc.tty.clear() if isinstance(s.pc.tty, list) else None
++        s.pc.tty.clear()
++        if shift: s.pc.wr(0x40, 0x17, b'\x02')
+         s.key(ENTER, settle=False)
+         s.pc.run_until(lambda: s.pc.mode() != 0x40, 5)
++        if shift: s.pc.wr(0x40, 0x17, b'\x00')
+         run_answering(s.pc, lambda: s.pc.mode() == 0x40, sim_s)
+         s.settle()
+-        return ''.join(s.pc.tty) if isinstance(s.pc.tty, list) else s.pc.tty
++        return ''.join(s.pc.tty)
+ 
+     def band(s):
+         """The prompt band's text (messages after a program ends)."""
+@@ -263,7 +266,7 @@ class KPC:
+ def run_answering(pc, done, sim_s):
+     """Run until done(), pressing Enter whenever a program says "Press any
+     key" (BENCH and CACHETST wait so their results can be read)."""
+-    tty = lambda: ''.join(pc.tty) if isinstance(pc.tty, list) else pc.tty
++    tty = lambda: ''.join(pc.tty)
+     seen = tty().count('Press any key')
+     t_end = pc.us + sim_s * 1e6
+     while True:
+diff --git a/os/tests/NOMATCH.ASM b/os/tests/NOMATCH.ASM
+index b41f26c..21042de 100644
+--- a/os/tests/NOMATCH.ASM
++++ b/os/tests/NOMATCH.ASM
+@@ -99,7 +99,8 @@ s_f     db 'fn $'
+ s_ok    db ' -> ok$'
+ s_err   db ' -> err $'
+ s_nl    db 13, 10, '$'
+-; X15: a second dot (A.TXT, B.TXT, A.B\X.TXT and E.F empty are there)
++; the cases: fn, name 1, name 2, CX (test_kernel t_nomatch makes the files and
++; directories they name)
+ tests   dw 4E00h, p0, 0, 00h
+         dw 4E00h, p1, 0, 00h
+         dw 4E00h, p2, 0, 00h
+diff --git a/os/tests/NULDIR.ASM b/os/tests/NULDIR.ASM
+index 38c1cc4..2c71f40 100644
+--- a/os/tests/NULDIR.ASM
++++ b/os/tests/NULDIR.ASM
+@@ -99,7 +99,8 @@ s_f     db 'fn $'
+ s_ok    db ' -> ok$'
+ s_err   db ' -> err $'
+ s_nl    db 13, 10, '$'
+-; X15: a second dot (A.TXT, B.TXT, A.B\X.TXT and E.F empty are there)
++; the cases: fn, name 1, name 2, CX (test_kernel t_nul makes the files and
++; directories they name)
+ tests   dw 3D00h, p0, 0, 0
+         dw 3D00h, p1, 0, 0
+         dw 3D00h, p2, 0, 0
+diff --git a/os/tests/test_apps.py b/os/tests/test_apps.py
+index d43119f..68c3306 100644
+--- a/os/tests/test_apps.py
++++ b/os/tests/test_apps.py
+@@ -1,6 +1,6 @@
+ """Lodestone 0.3: the UI core and the .RUN programs, in pcemu.
+ 
+-    python3 tests/test_apps.py [t_core t_system t_write t_exec t_font t_memory t_saver t_mouse t_form t_files] [shots]
++    python3 tests/test_apps.py [t_name ...] [shots]   (any of the t_ functions at the end; default all)
+ 
+ UITEST.RUN exercises the core's API (lists, forms, ask, help, errors,
+ cleanup); SYSTEM.RUN and WRITE.RUN are driven from the Executive as a user
+diff --git a/os/tests/test_mt.py b/os/tests/test_mt.py
+index 40363b6..18b1c01 100644
+--- a/os/tests/test_mt.py
++++ b/os/tests/test_mt.py
+@@ -18,7 +18,7 @@ it.  Programs start others as tasks (MTLAUNCH), each in a region of its own,
+ and they take turns at the timer's tick, where it is safe.  Off (no such
+ line, any other value, or no EMS), nothing of it is in memory and everything
+ is as before.
+-python3 tests/test_mt.py [t_image t_off t_on t_file t_tasks t_ends t_front t_preempt t_rules t_fpu t_screens t_keys t_mouse t_progs t_rom]"""
++python3 tests/test_mt.py [t_name ...]     (any of the t_ functions at the end, in their order; default all)"""
+ import collections, os, re, struct, subprocess, sys, time
+ HERE = os.path.dirname(os.path.abspath(__file__))
+ GOS = os.path.dirname(HERE)
+@@ -293,17 +293,9 @@ def line(k, text):
+     k.key(text); k.key(ktest.ENTER); k.run_for(0.5)
+ 
+ def run_wait(k, name, sim_s=60.0):
+-    """Shift-Return on a program in the Executive (ktest's run_file, Shift held at 40:17h till it runs): in the
+-    Executive's own task, which waits for it, as with multitasking off (Return starts it as a task, M7b)."""
+-    k.select(name)
+-    k.pc.tty.clear() if isinstance(k.pc.tty, list) else None
+-    k.pc.wr(0x40, 0x17, b'\x02')
+-    k.key(ktest.ENTER, settle=False)
+-    k.pc.run_until(lambda: k.pc.mode() != 0x40, 5)
+-    k.pc.wr(0x40, 0x17, b'\x00')
+-    ktest.run_answering(k.pc, lambda: k.pc.mode() == 0x40, sim_s)
+-    k.settle()
+-    return ''.join(k.pc.tty) if isinstance(k.pc.tty, list) else k.pc.tty
++    """Shift-Return on a program in the Executive: in the Executive's own task, which waits for it, as with
++    multitasking off (Return starts it as a task, M7b)."""
++    return k.run_file(name, sim_s, shift=True)
+ 
+ def t_tasks():
+     print('== tasks: programs started as tasks, switched when one waits for a key')
+-- 
+2.43.0
+
