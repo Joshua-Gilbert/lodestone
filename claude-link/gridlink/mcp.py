@@ -11,7 +11,7 @@ only ever ones inside ~/grid.
 """
 import collections, json, os, re, socket, stat, sys, tempfile, threading, time
 from . import glp, keys as K, screen
-from .grid import READ_CHUNK, GridError, is_device, is_grid_path, norm
+from .grid import READ_CHUNK, GridError, is_device, is_grid_path, is_plain_query, norm
 
 PROTOCOL = '2025-06-18'
 PROTOCOLS = ('2025-06-18', '2025-03-26', '2024-11-05')    # what the tools here fit; the newest otherwise
@@ -580,7 +580,7 @@ class GridTools:
             return [text('Error: address %d is not one gpib_measure may query (allowed: %s). Use gpib_send, '
                          'which the user approves.' % (addr, ', '.join(map(str, allowed)) or 'none set'))], True
         cmd = arg_str(a, 'command', need=True, most=200).strip()
-        if not cmd.endswith('?') or ';' in cmd or any(ord(c) < 32 or ord(c) == 127 for c in cmd):
+        if not is_plain_query(cmd):
             return [text("Error: gpib_measure sends one query: a command ending in '?', no ';', no control "
                          "characters. Anything else goes through gpib_send.")], True
         try: data = cmd.encode('ascii') + b'\r\n'

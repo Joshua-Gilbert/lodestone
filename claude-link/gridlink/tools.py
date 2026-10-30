@@ -3,7 +3,7 @@ on the GRiD (Claude Code style: "● Read(A:\\FOO.C)" then "  ⎿ Read 40 lines"
 import difflib, os, unicodedata
 from pathlib import Path
 from . import glp, keys as K, screen
-from .grid import GridError, is_grid_path, norm, errtext
+from .grid import GridError, is_grid_path, is_plain_query, norm, errtext
 
 BULLET = chr(glp.GL_BULLET) + ' '
 CORNER = '  ' + chr(glp.GL_CORNER) + '  '
@@ -530,10 +530,7 @@ class Tools:
         if act in ('query', 'write') and not cmd: return 'Error: command is required', True
         if act == 'query':
             s.head('GPIB', '%s: %s' % (addr, cmd))
-            c = cmd.strip()
-            if not (c.endswith('?') and ';' not in c and not any(ord(ch) < 32 or ord(ch) == 127 for ch in c)):
-                # (a query asks nothing, as gpib_measure's rule: one command, no ';', and no control characters,
-                # since a CR or LF inside would end a command the instrument then takes before the '?')
+            if not is_plain_query(cmd):
                 s.allow('gpib', addr, 'Send to GPIB %s?' % who, cmd, "Yes, and don't ask again for address %d" % addr)
             r = G.gpib(glp.GP_QUERY, addr, cmd.encode('latin1') + term, timeout_ms=tmo, maxlen=maxb)
             text = r.decode('latin1').rstrip('\r\n')
