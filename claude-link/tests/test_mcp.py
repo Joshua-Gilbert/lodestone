@@ -576,6 +576,63 @@ def test_socket_requests_checked():
         assert err, line[:40]
 
 
+def test_bench_edges():
+    """X68: gridlink.bench's bounds, --prof under --sweep, no file left on the GRiD, the first error kept."""
+    import contextlib, io, tempfile
+    from gridlink import bench
+    calls = []
+    fail = {}
+
+    def fake(sock, name, args):
+        calls.append((name, dict(args)))
+        if name in fail and fail[name](args):
+            return {'isError': True, 'content': [{'type': 'text', 'text': 'boom %s' % name}]}
+        if name == '_link':
+            return {'content': [{'type': 'text', 'text': json.dumps(
+                {'bridge': 'pico', 'maxpay': 2048, 'grid_rx': 2048, 'grid_maxpay': 2048, 'holds': 1,
+                 'stats': {}})}]}
+        if name == 'grid_change_files' and args['action'] == 'copy_from_grid':
+            with open(args['to'], 'wb') as f: f.write(open(os.path.join(d, 'bench.bin'), 'rb').read())
+        return {'content': [{'type': 'text', 'text': 'ok'}]}
+
+    def run(*argv):
+        del calls[:]
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                r = bench.main(['--dir', d, '--size', '1', '--idle', '0'] + list(argv))
+            except SystemExit as e:
+                r = e
+        return r, out.getvalue(), err.getvalue()
+
+    old = bench.call_gridlink, bench.socket_path
+    with tempfile.TemporaryDirectory() as d:
+        sock = os.path.join(d, 'sock'); open(sock, 'w').close()
+        bench.call_gridlink, bench.socket_path = fake, lambda: sock
+        try:
+            for bad in (['--trips', '0'], ['--idle', '-1'], ['--size', '0']):
+                r, _, err = run(*bad)
+                assert isinstance(r, SystemExit) and r.code == 2 and 'below' in err, bad
+            r, out, _ = run('--trips', '1')
+            assert r == 0 and 'every byte right' in out, out
+            r, out, _ = run('--trips', '1', '--sweep', '512,1024', '--prof')
+            profs = [a['prof'] for n, a in calls if n == '_link' and 'prof' in a]
+            assert r == 0 and profs == ['start', 'stop'], profs
+            assert [a['frame_cap'] for n, a in calls if 'frame_cap' in a] == [512, 1024, 0]
+            # the copy back fails: the GRiD's file is still deleted, and that failure is the one reported
+            fail['grid_change_files'] = lambda a: a['action'] == 'copy_from_grid'
+            r, _, _ = run('--trips', '1')
+            assert isinstance(r, SystemExit) and r.code == 'grid_change_files failed: boom grid_change_files'
+            assert any(a.get('action') == 'delete' for n, a in calls), calls
+            # ...and with --nohold the restore failing too does not hide it
+            fail['_link'] = lambda a: a.get('hold') == 1
+            r, _, err = run('--trips', '1', '--nohold')
+            assert isinstance(r, SystemExit) and r.code == 'grid_change_files failed: boom grid_change_files', r.code
+            assert 'clean-up failed too' in err and any(a.get('action') == 'delete' for n, a in calls)
+        finally:
+            bench.call_gridlink, bench.socket_path = old
+
+
 if __name__ == '__main__':
     import traceback
     names = [n for n in sorted(globals()) if n.startswith('test_')]
