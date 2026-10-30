@@ -35,6 +35,13 @@ class Syms:
         s.ui_by_addr = by_addr[True]; s.ui_addrs = sorted(s.ui_by_addr)
     def __getitem__(s, n): return s.by_name[n]
     def is_ui(s, n): return s.sec.get(n) in s.UI
+    def lin(s, n, useg=None):
+        """n's linear address, as pcemu's block hook passes it: .text's at 0060h; a UI symbol's in the UI
+        segment useg; any other section (MT's, EMS's, the overlays') is loaded elsewhere: an error."""
+        sec = s.sec[n]
+        if sec == '.text': return 0x600 + s.by_name[n]
+        if sec in s.UI and useg is not None: return useg * 16 + s.by_name[n]
+        raise ValueError('%s: section %s, no fixed segment here' % (n, sec))
     def name(s, off, ui=False):
         addrs, d = (s.ui_addrs, s.ui_by_addr) if ui else (s.addrs, s.by_addr)
         i = bisect.bisect_right(addrs, off) - 1
@@ -66,16 +73,18 @@ class KPC:
         s.dos = []          # (function, args, result) of traced INT 21h calls
         s.pending = {}
         s.trace = trace
-        s.hooks = []
+        s.hooks = []        # h(pc) at each block, s.addr the block's address (pcemu's watch)
+        s.addr = None
+        s.i21 = s.Y.lin('int21')
         s.pc.watch = s._watch
 
     # ---- INT 21h trace ----------------------------------------------------
     def _watch(s, addr):
         pc = s.pc
+        s.addr = addr
         for h in s.hooks: h(pc)
         if not s.trace: return
-        cs, ip = pc.r('cs'), pc.r('ip')
-        if cs == 0x60 and ip == s.Y['int21']:
+        if addr == s.i21 and pc.r('cs') == 0x60:
             ss, sp = pc.r('ss'), pc.r('sp')
             ret = (pc.u16(ss, sp + 2) * 16 + pc.u16(ss, sp)) & 0xFFFFF
             ax = pc.r('ax')
@@ -85,7 +94,7 @@ class KPC:
                 arg = pc.asciiz(pc.r('ds'), pc.r('dx')).decode('latin-1')
             s.pending[ret] = (ax, pc.r('bx'), pc.r('cx'), pc.r('dx'), arg)
             return
-        lin = (cs * 16 + ip) & 0xFFFFF
+        lin = addr & 0xFFFFF
         if lin in s.pending:
             ax, bx, cx, dx, arg = s.pending.pop(lin)
             fl = pc.r('flags')

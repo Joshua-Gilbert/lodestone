@@ -620,16 +620,38 @@ def typ(k, s, t=0.5):
     """Type a command without waiting for the machine to go idle (a task may be computing)."""
     k.key(s, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
 
-def tclick(k, x, y):
+def tclick(k, x, y, settle=True):
     """A.click with the button held 60 ms, over a tick: with tasks computing behind, the Executive idle gives its
     turn away (T5d) and the mouse brings it back at the next tick (mt_mwant); the UI reads the buttons' state, so a
-    shorter click between two ticks is missed."""
+    shorter click between two ticks is missed.  settle=False: no wait after the release (see bclick)."""
     dx, dy = x - k.u16('mx'), y - k.u16('my')
     while dx or dy:
         sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
         k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
         dx -= sx; dy -= sy
-    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.06); k.pc.mouse_move(0, 0, 0); k.settle()
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.06); k.pc.mouse_move(0, 0, 0)
+    if settle: k.settle()
+
+def took(k, what, mouse=False, within=1.0):
+    """Run till the keys given (and with mouse, the mouse's packets) are taken: a failure if not within `within` s."""
+    e = k.pc.us + within * 1e6
+    left = lambda: k.pc.keys or (mouse and k.pc.uart['rx'])
+    while left() and k.pc.us < e and k.pc.run(): pass
+    if left():
+        check('%s taken within %.1f s, a task computing behind' % (what, within), False,
+              (list(k.pc.keys), k.pc.uart['rx'], k.crashed))
+
+def bkey(k, *keys, t=0.5):
+    """k.key with a task computing behind: the machine never waits then, so a default settle would run to its 6 s
+    timeout.  Each key (a string: all of it) given alone and taken (took), then t s for what it does (audit3 H2)."""
+    for x in keys:
+        k.key(x, settle=False); took(k, 'the key %r' % (x,))
+    k.run_for(t)
+
+def bclick(k, x, y, t=0.3):
+    """A click as bkey's keys: tclick's, held over a tick (A.click's 50 ms press, with no 6 s wait before it to set
+    the phase, can fall between two ticks and be missed), taken (took), then t s."""
+    tclick(k, x, y, settle=False); took(k, 'a click at (%d, %d)' % (x, y), True); k.run_for(t)
 
 def spun(k, name):
     v = A.disk_file(k, name)
@@ -652,6 +674,8 @@ class Audit:
         s.wf = seg * 16 + k.Y['mt_wfront']   # (a background task waiting at INT 10h to be in front)
         s.wk = seg * 16 + k.Y['mt_wkey']     # (a task waiting at INT 16h for a key)
         s.pss = None
+        s.lo, s.go, s.cur = s.swa, seg * 16 + k.Y['mt_load.go'], None    # (mt_cur, when known: see watch)
+        s.stale = False                                                   # (rules found s.cur wrong: said once)
         s.fd, s.fdw, s.due = seg * 16 + k.Y['mt_fdrain'], seg * 16 + k.Y['mt_fdrain.w'], False
         s.inject, s.injected, s.open, s.nested = None, 0, {}, collections.Counter()
         # (IRQ 13 at mt_fdrain, when inject() says; open drains: SS -> the SP and where its call returns; switches
@@ -670,6 +694,9 @@ class Audit:
     def rules(s, cs, ip, fl, ss):
         pc, Y = s.k.pc, s.k.Y
         cur = pc.rd(s.seg, Y['mt_cur'], 1)[0]
+        if s.cur is not None and s.cur != cur and not s.stale:     # (watch's mt_cur, kept from mt_load.go: wrong
+            s.stale = True                                          #  if mt_cur had another writer, or mt_load
+            check('Audit: mt_cur as kept since mt_load.go (%d), as read (%d)' % (s.cur, cur), False)  # another way out)
         reg = pc.u16(s.seg, Y['mt_tab'] + cur * MT_ENT + 4)
         ui, psp, root = pc.u16(0x60, Y['ui_seg']), pc.u16(0x60, Y['cur_psp']), pc.u16(0x60, Y['root_psp'])
         ts = pc.u16(s.seg, Y['mt_tsrs'])                # (Resident Claude's stub, MT_TSR: only at its HLT, in a
@@ -685,10 +712,14 @@ class Audit:
     def watch(s, a):
         if s.prev: s.prev(a)
         k, pc = s.k, s.k.pc
-        if s.track:
+        if s.lo <= a <= s.go:                           # (mt_cur's one writer is in mt_load: unknown from
+            s.cur = pc.rd(s.seg, k.Y['mt_cur'], 1)[0] if a == s.go else None    # mt_switch on, read again at
+        had = s.track                                   #  mt_load.go, the one way back into a task)
+        if had and (s.cur is None or s.cur == had[3]):  # (another task running: nothing to read)
             ss, sp, cs = pc.r('ss'), pc.r('sp'), pc.r('cs')
             new, s.pss = ss != s.pss, ss
-            if new or ss != s.track[0] or pc.rd(s.seg, k.Y['mt_cur'], 1)[0] != s.track[3]: pass
+            cur = s.cur if s.cur is not None else pc.rd(s.seg, k.Y['mt_cur'], 1)[0]
+            if new or ss != s.track[0] or cur != s.track[3]: pass
             elif sp >= s.track[1]: s.track = None       # (just loaded, between MOV SS and MOV SP; another task's,
             elif cs < 0xA000 and cs not in s.track[4]:  #  or MT's own stack; the frame gone: back in the caller,
                 s.track = None                          #  or in its code)
@@ -697,6 +728,7 @@ class Audit:
             ss = pc.r('ss')                                 #  target, its SP above the return address)
             if ss in s.open and s.open[ss][1] == a and pc.r('sp') == s.open[ss][0] + 2: del s.open[ss]
         if a == s.fd:
+            if s.inject is None: s.due = False; return      # (the drains' bookkeeping: t_fpu's IRQ 13 only)
             ss = pc.r('ss')
             again = ss in s.open                            # (a drain inside this task's: no second IRQ)
             if not again: s.open[ss] = (pc.r('sp'), s.seg * 16 + pc.u16(ss, pc.r('sp')))
@@ -714,6 +746,7 @@ class Audit:
             if len(no) == 1: s.only[no[0]] += 1
         elif a in (s.at, s.wf, s.wk):
             ss, sp = pc.r('ss'), pc.r('sp')
+            if had: s.pss = ss                              # (as each block's read keeps it, the reads skipped or not)
             path = s.ret.get(pc.u16(ss, sp), '?')
             if a == s.wf and path != 'v10': path = '?'
             if a == s.wk and path != 'i16': path = '?'
@@ -3851,7 +3884,7 @@ def t_windows():
     top = lambda: k.pc.u16(k.useg, Y['wstack'] + 4 * (k.u16('wdepth') - 1))
     def col(t):
         """The column where t is drawn (the pointer out of the way)."""
-        A.point(k, 320, 399)
+        A.point(k, 320, 399, settle=False); took(k, 'the pointer moved', True); k.run_for(0.3)
         return next((l.index(t) for y, l in k.ocr() if t in l), None)
     def uip():
         """As A.free_paras, from the whole arena's start (first_mcb is the task's
@@ -3862,11 +3895,11 @@ def t_windows():
     free0 = uip()
     # something computing behind meanwhile, and every switch checked
     k.key(A.CODE['P']); k.run_for(1.0)
-    typ(k, 'start /w mtspin.com 5000 ws.txt', 0.3); typ(k, 'exit', 1.0); k.settle()
+    typ(k, 'start /w mtspin.com 5000 ws.txt', 0.3); typ(k, 'exit', 1.0); k.run_for(0.5)
     au = Audit(k)
-    k.key(A.CODE['K']); k.run_for(0.5)
+    bkey(k, A.CODE['K'], t=0.5)
     n1, b1, x0 = mb('mw_n'), rec(1, SE_BASE), rec(0, SE_SP)
-    k.key(A.CODE['T']); k.run_for(0.5)
+    bkey(k, A.CODE['T'], t=0.5)
     n2, c2, w2 = mb('mw_n'), mb('mw_cur'), k.u16('wdepth')
     check('CODE-K: the calculator, a session (%d) in the first slot (run_base, %04Xh), the Executive waiting on its own '
           'stack (%04Xh); CODE-T inside it: the tasks, in front (session %d), the calculator still there: %d windows'
@@ -3877,11 +3910,11 @@ def t_windows():
     cb = rec(1, SE_END) - 8 - MW_STK
     k.pc.wr(k.useg, cb, b'\xa5' * (rec(1, SE_SP) - cb))
     def ans(): return [m.group(0) for l in A.lines(k) for m in [re.search(r'= -?[\d.]+', l)] if m]
-    k.key('9*9'); k.run_for(0.3)                    # (the tasks: no such keys)
+    bkey(k, '9*9', t=0.3)                    # (the tasks: no such keys)
     a0 = A.has(k, '9*9')
-    k.key(0x6D00); k.run_for(0.5)
+    bkey(k, 0x6D00, t=0.5)
     c3, t3 = mb('mw_cur'), top()
-    k.key('2+2'); k.key(ktest.ENTER); k.run_for(0.3)
+    bkey(k, '2+2', ktest.ENTER, t=0.3)
     a1 = ans()
     check('keys go to the window in front only: "9*9" in the tasks, none for the calculator; CODE-F6: the calculator '
           'in front (session %d, its window on top), "2+2" Return: = 4 (%s)' % (c3, a1),
@@ -3889,59 +3922,59 @@ def t_windows():
           (a0, c3, hex(t3), a1, mb('mw_n')))
     # moved: no save-under, so the screen drawn again under it
     c0 = col('Calculator')
-    k.key(0x6E00, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.ENTER); k.run_for(0.3)
+    bkey(k, 0x6E00, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.ENTER, t=0.3)
     cm = col('Calculator')
     mv = (A.has(k, 'Tasks'), A.has(k, 'LCMD'), A.has(k, '= 4'))
-    k.key(0x6E00, ktest.RIGHT, ktest.RIGHT, ktest.RIGHT, ktest.ENTER); k.run_for(0.3)
+    bkey(k, 0x6E00, ktest.RIGHT, ktest.RIGHT, ktest.RIGHT, ktest.ENTER, t=0.3)
     check('CODE-F7, Left x3, Return in the calculator: 3 columns left (title at %s, from %s), the tasks\' window and the '
           'Executive\'s list drawn again under where it was, its line still there; moved back' % (cm, c0),
           c0 is not None and cm == c0 - 3 and mv == (True, True, True) and col('Calculator') == c0 and mb('mw_cur') == 1,
           (c0, cm, mv, A.screen(k)))
-    k.key(ktest.F1); k.run_for(0.3)
+    bkey(k, ktest.F1, t=0.3)
     hp = A.has(k, 'Calculator Help')
-    k.key(0x6D00); k.run_for(0.3)
+    bkey(k, 0x6D00, t=0.3)
     c4, hp4 = mb('mw_cur'), A.has(k, 'Calculator Help')
-    A.click(k, 20 * 8, 270); k.run_for(0.3)        # (the tasks' window only)
+    bclick(k, 20 * 8, 270)        # (the tasks' window only)
     c5, t5 = mb('mw_cur'), top()
     check('F1 in the calculator: its help; CODE-F6 meanwhile is its key, as any, which closes it: no change of front '
           '(session %d); a click on the tasks\' window: the tasks in front (session %d, on top)' % (c4, c5),
           hp and not hp4 and c4 == 1 and c5 == 2 and rec(2, SE_BASE) <= t5 < rec(2, SE_END), (hp, hp4, c4, c5, hex(t5)))
     # each one's band its own: the tasks' question waiting, the calculator's band meanwhile the Executive's
     q = 'End Executive: Confirm to end the task'
-    k.key(A.CODE['D']); k.run_for(0.3)              # (on the Executive's row: asked, then "not possible")
+    bkey(k, A.CODE['D'], t=0.3)              # (on the Executive's row: asked, then "not possible")
     bt = k.band()
-    A.click(k, 70 * 8, 100); k.run_for(0.3)
+    bclick(k, 70 * 8, 100)
     bc, beh = k.band(), A.has(k, 'Behind')
-    A.click(k, 20 * 8, 270); k.run_for(0.3)
+    bclick(k, 20 * 8, 270)
     bt2, beh2 = k.band(), A.has(k, 'Behind')
-    k.key(ktest.ESC); k.run_for(0.3)
+    bkey(k, ktest.ESC, t=0.3)
     check('the tasks\' question waiting in the band (%s), a click on the calculator: in front, its own band (%s), the '
           'tasks\' columns under it; a click on the tasks: their question again, as it was (TASKS.RUN: its own buffer, '
           'not the rows\'), their window on top; ESC: no' % (bt[:1], bc[:1]), bt[:1] == [q]
           and bc[:1] == ['Select a file and confirm'] and not beh and bt2[:1] == [q] and beh2 and mb('mw_cur') == 2
           and mb('mw_n') == 2, (bt, bc, beh, bt2, beh2))
-    A.click(k, 70 * 8, 100); k.run_for(0.3)        # (the calculator's only)
+    bclick(k, 70 * 8, 100)        # (the calculator's only)
     c6 = mb('mw_cur')
-    A.click(k, 20 * 8, 270); k.run_for(0.3)
-    k.key(A.CODE['K']); k.run_for(0.5)
+    bclick(k, 20 * 8, 270)
+    bkey(k, A.CODE['K'], t=0.5)
     c7, n7 = mb('mw_cur'), mb('mw_n')
     used = MW_STK - next((i for i, b in enumerate(k.pc.rd(k.useg, cb, MW_STK)) if b != 0xA5), MW_STK)
     print('   the calculator\'s stack: %d bytes of %d used' % (used, MW_STK))
     check('a click on the calculator: in front (%d); CODE-K with the tasks in front: the calculator brought there, not '
           'another (session %d, %d running); its stack: %d of %d bytes used' % (c6, c7, n7, used, MW_STK),
           c6 == 1 and c7 == 1 and n7 == 2 and used < MW_STK * 3 // 4, (c6, c7, n7, used))
-    k.key(A.CODE['K']); k.run_for(0.5)
+    bkey(k, A.CODE['K'], t=0.5)
     n8, c8 = mb('mw_n'), mb('mw_cur')
     calc8, tasks8 = A.has(k, 'Calculator'), A.has(k, 'Tasks')
     k.pc.wr(seg, Y['mw_n'], bytes([4]))             # (as many as there may be: poked)
-    k.key(A.CODE['K']); k.run_for(0.5)
+    bkey(k, A.CODE['K'], t=0.5)
     bf = k.band()
-    k.key(ktest.ENTER); k.run_for(0.3)
+    bkey(k, ktest.ENTER, t=0.3)
     k.pc.wr(seg, Y['mw_n'], bytes([1]))
     check('... with as many window .RUNs as there may be, CODE-K: "CALC.RUN doesn\'t fit: close a window first" in the '
           'band (%s), the tasks in front still' % bf[:1], bf[:1] == ["CALC.RUN doesn't fit: close a window first"]
           and mb('mw_cur') == 2 and not A.has(k, 'Calculator'), (bf, mb('mw_cur')))
-    k.key(A.CODE['K']); k.run_for(0.5)
+    bkey(k, A.CODE['K'], t=0.5)
     b9, n9 = rec(1, SE_BASE), mb('mw_n')            # (mw_free: the first record unused, 1 again)
     check('CODE-K in the calculator, in front: its own key, as without tasks: it closes (%d running, the tasks in front, '
           'session %d; its window gone, the tasks\' drawn again); CODE-K: it starts again, in the slot it left (%04Xh)'
@@ -3953,48 +3986,48 @@ def t_windows():
         if not A.has(k, 'Calculator'): break
     dark = not A.has(k, 'Calculator')
     k.wr('saver_t', struct.pack('<H', 5460))
-    k.key(ktest.DOWN); k.run_for(0.5)
+    bkey(k, ktest.DOWN, t=0.5)
     spin = [n for i, s, n in tstate(k)[0]]
     check('the saver with both open, then a key: the Executive and both windows back; MTSPIN computing behind still (%s)'
           % spin, dark and A.has(k, 'Calculator') and A.has(k, 'Tasks') and A.has(k, 'LCMD') and 'MTSPIN.COM' in spin,
           (spin, A.screen(k)))
     ts = [i for i in (1, 2, 3, 4) if rec(i, 0) and rec(i, SE_BASE) > k.u16('run_base')]     # (the tasks' slot: above)
     hi0 = uip()[1]
-    k.key(0x6D00); k.run_for(0.5)                       # (the tasks in front)
-    k.key(ktest.ESC); k.run_for(0.5)
+    bkey(k, 0x6D00, t=0.5)                       # (the tasks in front)
+    bkey(k, ktest.ESC, t=0.5)
     n10, c10, ub = mb('mw_n'), mb('mw_cur'), uip()[1]
-    k.key(0x6D00); k.run_for(0.5)
+    bkey(k, 0x6D00, t=0.5)
     c10b = mb('mw_cur')
     check('the tasks in front (CODE-F6), ESC: they close, the one in front before them next: the Executive (M8c: '
           'CODE-F6 put the calculator last), the calculator still open; CODE-F6: the calculator in front; the UI block the '
           'whole segment still while one runs (%s paragraphs, and %s with both: M8b)' % (ub, hi0), ts and n10 == 1
           and c10 == 0 and c10b == 1 and hi0 == 4096 and ub == 4096 and A.has(k, 'Calculator')
           and not A.has(k, 'Tasks'), (ts, n10, c10, c10b, hi0, ub, hex(rec(1, SE_END))))
-    k.key(ktest.ESC); k.run_for(0.5); k.settle()
+    bkey(k, ktest.ESC, t=0.5); k.run_for(0.5)
     au.stop()
     sw = au.switches()
     ss = [e for e in sw if e['task'] == 0 and e['ss'] == k.useg and e['csp'] >= k.u16('run_base')]
     check('ESC, ESC: both closed (%d, then %d), the Executive back: its list, nothing loaded (run_active 0), the UI block '
           'as before; every switch meanwhile by the rules (%d, %d of them from a session\'s own stack, at the UI\'s idle HLTs: its loop\'s or the saver\'s'
-          ', or a move\'s or resize\'s wait, mwait: audit3 X32)' % (n10, mb('mw_n'), len(sw), len(ss)),
+          ', or a move\'s or resize\'s wait, mwait: audit3 X32; each of the three)' % (n10, mb('mw_n'), len(sw), len(ss)),
           n10 == 1 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and uip()[1] == free0[1]
           and A.has(k, 'Select a file and confirm') and not au.bad() and ss and not k.crashed
-          and all(e['ip'] in (Y['..@ui_idle'], Y['..@ui_sidle'], Y['..@ui_midle']) for e in ss), (n10, uip(), free0, au.bad()[:3], len(sw), len(ss), k.crashed, k.band(), sorted(set(hex(e['ip']) for e in ss if e['ip'] != Y['..@ui_idle']))))
+          and set(e['ip'] for e in ss) == {Y['..@ui_idle'], Y['..@ui_sidle'], Y['..@ui_midle']}, (n10, uip(), free0, au.bad()[:3], len(sw), len(ss), k.crashed, k.band(), sorted(set(hex(e['ip']) for e in ss if e['ip'] != Y['..@ui_idle']))))
     # started from a window while its question waits: the Executive's band, not a pointer into the starter's slot
-    k.key(A.CODE['T']); k.run_for(0.5)
-    k.key(A.CODE['D']); k.run_for(0.3)
-    k.key(A.CODE['K']); k.run_for(0.5)
+    bkey(k, A.CODE['T'], t=0.5)
+    bkey(k, A.CODE['D'], t=0.3)
+    bkey(k, A.CODE['K'], t=0.5)
     bk, ck = k.band(), mb('mw_cur')
     k.wr('saver_t', struct.pack('<H', 36))
     for _ in range(40):
         k.pc.run_for(0.25)
         if not A.has(k, 'Calculator'): break
     k.wr('saver_t', struct.pack('<H', 5460))
-    k.key(ktest.DOWN); k.run_for(0.5)
+    bkey(k, ktest.DOWN, t=0.5)
     bk2 = k.band()
-    k.key(ktest.ESC); k.run_for(0.5)
+    bkey(k, ktest.ESC, t=0.5)
     bt3 = k.band()
-    k.key(ktest.ESC); k.run_for(0.3); k.key(ktest.ESC); k.run_for(0.5); k.settle()
+    bkey(k, ktest.ESC, t=0.3); bkey(k, ktest.ESC, t=0.5); k.run_for(0.5)
     check('CODE-D in the tasks, then CODE-K while it asks: the calculator\'s band the Executive\'s (%s), after the saver '
           'too (%s), not the tasks\' question; ESC: the tasks\' question again (%s); ESC, ESC: none left'
           % (bk[:1], bk2[:1], bt3[:1]), ck == 2 and bk[:1] == bk2[:1] == ['Select a file and confirm'] and bt3[:1] == [q]
@@ -4147,14 +4180,14 @@ def t_base():
           (bq0, dq0, cq, hq, bq1, dq, bq2, sub, mb('mw_cur')))
     # a task's end is the Executive's event, not a window's (ex_mtw is each one's own)
     k.key(A.CODE['P']); k.run_for(1.0)
-    typ(k, 'start /w mtspin.com 400 tb.txt', 0.3); typ(k, 'exit', 1.0); k.settle()    # (22 s: it ends later)
+    typ(k, 'start /w mtspin.com 400 tb.txt', 0.3); typ(k, 'exit', 1.0); k.run_for(0.5)    # (22 s: it ends later)
     bp = (A.has(k, 'Write: OTHER.TXT'), A.has(k, 'Write: NOTES.TXT'), mb('mw_cur'))
     ev, dk = [], rec(2, SE_BASE) + WS['do_key']
     def evh(pc):
         if pc.r('ip') == dk and pc.r('cs') == k.useg: ev.append(pc.r('ax'))
     k.hooks.append(evh)
     w2 = win(2)
-    tclick(k, (w2[0] + 40) * 8, w2[1] + w2[3] - 12); k.run_for(0.3)     # (the second Write's status line)
+    bclick(k, (w2[0] + 40) * 8, w2[1] + w2[3] - 12)     # (the second Write's status line)
     cw, tb0, lw0 = mb('mw_cur'), A.disk_file(k, 'TB.TXT'), 'TB.TXT' in k.exec_list()
     for _ in range(120):
         k.run_for(0.25)
@@ -4247,7 +4280,7 @@ def t_menu():
     v16 = lambda n: k.pc.u16(k.useg, base + sy[n])
     rd = [0]
     def rh(pc):
-        if pc.r('cs') == k.useg and pc.r('ip') == Y['redraw_all']: rd[0] += 1
+        if pc.r('ip') == Y['redraw_all'] and pc.r('cs') == k.useg: rd[0] += 1
     k.hooks.append(rh)
     A.point(k, 100, 100); v0 = A.body(k)
     A.press(k, 100, 100, 2)
@@ -4265,18 +4298,18 @@ def t_menu():
           'choice (%04Xh), the focus still MENUTEST\'s (%d), the menu gone' % (f6, v16('mres'), mb('mw_cur')),
           f6 == (1, True) and v16('mres') == 0xFFFF and mb('mw_cur') == 1 and not A.has(k, 'Paste'), (f6, v16('mres'), mb('mw_cur')))
     # a drag: UI_MOUSE waits at ..@ui_midle, where MTSPIN behind gets its turns.  (While it computes the
-    # machine is never idle: each settle runs to its 6 s timeout, so MTSPIN gets 2000 ticks, 110 s.)
+    # machine is never idle, so nothing here waits for a settle; 2000 ticks, 110 s, outlast the section.)
     k.hooks.remove(rh)
     A.click(k, 4, 340); k.run_for(0.3)              # (the Executive in front: CODE-P is its key)
     k.key(A.CODE['P']); k.run_for(1.0)
     typ(k, 'start /w mtspin.com 2000 tb.txt', 0.3); typ(k, 'start /w mtspin.com 2000 tc.txt', 0.3)
-    typ(k, 'exit', 1.0); k.settle()
-    tclick(k, 4, 340); k.run_for(0.3)               # ("LCMD.COM ended" waits in the Executive: a click reads it)
-    tclick(k, 300, 300); k.run_for(0.3)             # (MENUTEST's window: it in front again)
+    typ(k, 'exit', 1.0); k.run_for(0.5)
+    bclick(k, 4, 340)               # ("LCMD.COM ended" waits in the Executive: a click reads it)
+    bclick(k, 300, 300)             # (MENUTEST's window: it in front again)
     cm, n0, d0 = mb('mw_cur'), len(au.ev), v16('dn')
-    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05)
-    for i in range(10):
-        k.pc.mouse_move((4 if i % 2 else -4) & 0xFF, 0, 1); k.pc.run_for(0.05)
+    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.06)      # (held over a tick, and a packet a tick, as below: at any
+    for i in range(10):                               #  phase; 50 ms, under a tick, passed by the phase only)
+        k.pc.mouse_move((4 if i % 2 else -4) & 0xFF, 0, 1); k.pc.run_for(0.06)
     nh = len(au.ev)
     k.pc.run_for(1.5)                               # (held still: the mouse sends nothing)
     hold = sum(1 for e in au.ev[nh:] if e['sw'] and e['task'] == 0)
@@ -4302,7 +4335,7 @@ def t_menu():
           'one a boost took the turn from)' % (seen, dict(turns)), seen >= 19 and sw1 >= 10 and len(turns) == 2
           and min(turns.values()) >= 4 and not au.bad() and A.disk_file(k, 'TB.TXT') is None and A.disk_file(k, 'TC.TXT') is None,
           (seen, sw1, dict(turns), au.bad()[:2]))
-    k.key(ktest.ESC); k.key(ktest.ESC); k.run_for(0.5)
+    bkey(k, ktest.ESC, ktest.ESC, t=0.5)
     check('ESC, ESC: MENUTEST ended, the Executive in front (MTSPIN still behind)', mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and not k.crashed,
           (mb('mw_n'), k.band()))
 
