@@ -49,7 +49,7 @@ class Res(CK.KernelHarness):
         s.srq_calls = 0                         # the driver's SRQ check (AH=0Bh) while the console is up
         s.spolls = 0                            # and its serial polls (AH=05h)
         s.pit_dues = 0                          # the console's look at the PIT for its next poll (pit_due)
-        srq, spoll, watch = s.m.Y.lin('gp_f_srq'), s.m.Y.lin('gp_f_spoll'), s.m.watch    # (linear: as addr)
+        srq, spoll, watch = s.m.Y.lin('gp_f_srq'), s.m.Y.lin('gp_f_spoll'), s.m.watch
         s.naps = 0                              # and its sleeps till an answer's SRQ (idle's HLT)
         due, nap = 0xE0000 + s.rsym['pit_due'], 0xE0000 + s.rsym['idle.z']
         def w(addr):

@@ -632,23 +632,25 @@ def tclick(k, x, y, settle=True):
     k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.06); k.pc.mouse_move(0, 0, 0)
     if settle: k.settle()
 
-# With a task computing behind, the machine never waits, so a default settle runs to its 6 s timeout: bkey and
-# bclick give each key (a string: all of it) or click alone, run till it is taken (took: a failure if not within
-# 1 s), then t s for what it does (audit3 H2).  bclick's is tclick's, held over a tick: A.click's 50 ms press,
-# with no 6 s wait before it to set the phase, can fall between two ticks and be missed (as tclick says)
 def took(k, what, mouse=False, within=1.0):
+    """Run till the keys given (and with mouse, the mouse's packets) are taken: a failure if not within `within` s."""
     e = k.pc.us + within * 1e6
     left = lambda: k.pc.keys or (mouse and k.pc.uart['rx'])
     while left() and k.pc.us < e and k.pc.run(): pass
     if left():
-        check('%s taken within %.1f s, a task computing behind' % (what, within), False, (list(k.pc.keys), k.pc.uart['rx']))
+        check('%s taken within %.1f s, a task computing behind' % (what, within), False,
+              (list(k.pc.keys), k.pc.uart['rx'], k.crashed))
 
 def bkey(k, *keys, t=0.5):
+    """k.key with a task computing behind: the machine never waits then, so a default settle would run to its 6 s
+    timeout.  Each key (a string: all of it) given alone and taken (took), then t s for what it does (audit3 H2)."""
     for x in keys:
         k.key(x, settle=False); took(k, 'the key %r' % (x,))
     k.run_for(t)
 
 def bclick(k, x, y, t=0.3):
+    """A click as bkey's keys: tclick's, held over a tick (A.click's 50 ms press, with no 6 s wait before it to set
+    the phase, can fall between two ticks and be missed), taken (took), then t s."""
     tclick(k, x, y, settle=False); took(k, 'a click at (%d, %d)' % (x, y), True); k.run_for(t)
 
 def spun(k, name):
@@ -4274,7 +4276,7 @@ def t_menu():
     v16 = lambda n: k.pc.u16(k.useg, base + sy[n])
     rd = [0]
     def rh(pc):
-        if pc.r('cs') == k.useg and pc.r('ip') == Y['redraw_all']: rd[0] += 1
+        if pc.r('ip') == Y['redraw_all'] and pc.r('cs') == k.useg: rd[0] += 1
     k.hooks.append(rh)
     A.point(k, 100, 100); v0 = A.body(k)
     A.press(k, 100, 100, 2)

@@ -47,7 +47,7 @@ class Win(CK.KernelHarness):
         wft, watch = s.sym['win_front_task'], s.m.watch
         def w(addr):
             if (addr - wft) & 15 == 0 and s.m.r('ip') == wft and s.m.rd(s.m.r('cs'), 0x100, 32) == s.img[:32]:
-                s.probe.append(s.m.us)          # (addr: CS*16 + IP, so IP is read 1 block in 16)
+                s.probe.append(s.m.us)          # (IP read only on 1 block in 16: the &15 test)
             watch(addr)
         s.m.watch = w
 

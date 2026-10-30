@@ -73,15 +73,18 @@ class KPC:
         s.dos = []          # (function, args, result) of traced INT 21h calls
         s.pending = {}
         s.trace = trace
-        s.hooks = []
+        s.hooks = []        # h(pc) at each block, s.addr the block's address (pcemu's watch)
+        s.addr = None
+        s.i21 = s.Y.lin('int21')
         s.pc.watch = s._watch
 
     # ---- INT 21h trace ----------------------------------------------------
     def _watch(s, addr):
         pc = s.pc
+        s.addr = addr
         for h in s.hooks: h(pc)
         if not s.trace: return
-        if addr == s.Y.lin('int21') and pc.r('cs') == 0x60:     # (addr: the block's CS:IP, linear)
+        if addr == s.i21 and pc.r('cs') == 0x60:
             ss, sp = pc.r('ss'), pc.r('sp')
             ret = (pc.u16(ss, sp + 2) * 16 + pc.u16(ss, sp)) & 0xFFFFF
             ax = pc.r('ax')
@@ -159,10 +162,6 @@ class KPC:
     @property
     def useg(s): return s.pc.u16(0x60, s.Y['ui_seg'])
     def seg(s, name): return s.useg if s.Y.is_ui(name) else 0x60
-    def lin(s, name):
-        """name's linear address, to compare with what pcemu's block hook (pc.watch) is given, in place of
-        reading CS and IP every block: .text's or (the UI's segment now) the UI's; see Syms.lin."""
-        return s.Y.lin(name, s.useg if s.Y.is_ui(name) else None)
     def u16(s, name, off=0): return s.pc.u16(s.seg(name), s.Y[name] + off)
     def rd(s, name, n, off=0): return s.pc.rd(s.seg(name), s.Y[name] + off, n)
     def wr(s, name, data, off=0): s.pc.wr(s.seg(name), s.Y[name] + off, data)
