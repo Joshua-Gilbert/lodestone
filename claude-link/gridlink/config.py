@@ -68,6 +68,8 @@ class Config:
     def apply(s, d):
         b = d.get('bridge', {}); c = d.get('claude', {}); g = d.get('grid', {}); pm = d.get('permissions', {})
         s.bridge = str(b.get('kind', s.bridge)).lower()
+        if s.bridge not in ('pico', 'ar488'):
+            raise SystemExit('[bridge] kind must be pico or ar488, not %r' % b.get('kind'))
         s.port = b.get('port', s.port); s.baud = int(b.get('baud', s.baud)); s.address = int(b.get('address', s.address))
         s.model = MODELS.get(c.get('model', ''), c.get('model', s.model))
         s.max_tokens = int(c.get('max_tokens', s.max_tokens)); s.web = bool(c.get('web', s.web))
