@@ -35,6 +35,7 @@
 ; nasm -f bin -i ../src/ -o MTVEC.COM MTVEC.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
 %include "MTAPI.INC"
         mov     sp, stk_top
         mov     ah, 4Ah                 ; (only its own memory: P starts a task)
@@ -99,19 +100,9 @@ org 100h
         mov     ax, 4C01h
         int     21h
 
-m_h:    mov     ax, 351Ch
-        int     21h
-        mov     [old1c], bx
-        mov     [old1c + 2], es
-        mov     ax, 251Ch
-        mov     dx, h1c
-        int     21h
+m_h:    HOOK    1Ch, old1c, h1c
         call    wait_n
-        push    ds
-        lds     dx, [old1c]
-        mov     ax, 251Ch
-        int     21h
-        pop     ds
+        UNHOOK  1Ch, old1c
         push    cs                      ; (ES: AH=35h's, still)
         pop     es
         mov     ax, [cnt]
@@ -122,13 +113,7 @@ m_h:    mov     ax, 351Ch
 m_g:    mov     ax, 2562h
         mov     dx, hret
         int     21h
-        mov     ax, 352Fh
-        int     21h
-        mov     [old2f], bx
-        mov     [old2f + 2], es
-        mov     ax, 252Fh
-        mov     dx, h2f
-        int     21h
+        HOOK    2Fh, old2f, h2f
         mov     byte [buf], 'g'
         mov     di, buf + 1
         call    wr_file
@@ -147,19 +132,9 @@ m_g:    mov     ax, 2562h
 .x:     mov     ax, 4C00h
         int     21h
 
-m_i:    mov     ax, 3562h
-        int     21h
-        mov     [old62], bx
-        mov     [old62 + 2], es
-        mov     ax, 2562h
-        mov     dx, hret
-        int     21h
+m_i:    HOOK    62h, old62, hret
         call    rd_line
-        push    ds
-        lds     dx, [old62]
-        mov     ax, 2562h
-        int     21h
-        pop     ds
+        UNHOOK  62h, old62
         mov     ax, 4C00h
         int     21h
 
@@ -182,27 +157,12 @@ m_v:    call    wait_n
         dec     di
         jmp     wr_end
 
-m_t:    mov     ax, 351Ch
-        int     21h
-        mov     [old1c], bx
-        mov     [old1c + 2], es
-        mov     ax, 251Ch
-        mov     dx, h1c
-        int     21h
+m_t:    HOOK    1Ch, old1c, h1c
         mov     dx, (the_end - $$ + 100h + 15) / 16
         mov     ax, 3100h
         int     21h
 
-m_k:    xor     ax, ax
-        mov     es, ax
-        cli
-        mov     ax, [es:9 * 4]
-        mov     [old09], ax
-        mov     ax, [es:9 * 4 + 2]
-        mov     [old09 + 2], ax
-        mov     word [es:9 * 4], k09
-        mov     [es:9 * 4 + 2], cs
-        sti
+m_k:    IVTSET  9, old09, k09
         call    wait_n
         xor     ax, ax
         mov     es, ax
@@ -218,13 +178,7 @@ m_k:    xor     ax, ax
         mov     di, buf + 1
         jmp     wr_end
 
-m_x:    mov     ax, 351Bh               ; X: INT 1Bh set with AH=25h, then K
-        int     21h
-        mov     [old1b], bx
-        mov     [old1b + 2], es
-        mov     ax, 251Bh
-        mov     dx, h1b
-        int     21h
+m_x:    HOOK    1Bh, old1b, h1b   ; X: INT 1Bh set with AH=25h, then K
         jmp     m_k
 m_y:    xor     ax, ax                  ; Y: INT 09h written, put back with
         mov     es, ax                  ;  AH=25h at once, N ticks
@@ -236,42 +190,19 @@ m_y:    xor     ax, ax                  ; Y: INT 09h written, put back with
         mov     word [es:9 * 4], k09
         mov     [es:9 * 4 + 2], cs
         sti
-        push    ds
-        lds     dx, [old09]
-        mov     ax, 2509h
-        int     21h
-        pop     ds
+        UNHOOK  09h, old09
         call    wait_n
         push    cs
         pop     es
         mov     byte [buf], 'k'
         mov     di, buf + 1
         jmp     wr_end
-m_c:    mov     ax, 351Ch
-        int     21h
-        mov     [old1c], bx
-        mov     [old1c + 2], es
-        mov     ax, 251Ch
-        mov     dx, h1c
-        int     21h
+m_c:    HOOK    1Ch, old1c, h1c
         jmp     m_pq
-m_b:    mov     ax, 351Bh
-        int     21h
-        mov     [old1b], bx
-        mov     [old1b + 2], es
-        mov     ax, 251Bh
-        mov     dx, h1b
-        int     21h
-        mov     ax, 351Bh
-        int     21h
-        mov     [got1b], bx
-        mov     [got1b + 2], es
+m_b:    HOOK    1Bh, old1b, h1b
+        SAVEVEC 1Bh, got1b
         call    wait_n
-        push    ds
-        lds     dx, [old1b]
-        mov     ax, 251Bh
-        int     21h
-        pop     ds
+        UNHOOK  1Bh, old1b
         mov     ax, [n]
         imul    ax, ax, 3
         mov     [n], ax
@@ -288,25 +219,10 @@ m_b:    mov     ax, 351Bh
         mov     ax, [got1b]
         call    hex4
         jmp     wr_end
-m_q:    xor     ax, ax
-        mov     es, ax
-        cli
-        mov     ax, [es:9 * 4]
-        mov     [old09], ax
-        mov     ax, [es:9 * 4 + 2]
-        mov     [old09 + 2], ax
-        mov     word [es:9 * 4], k09
-        mov     [es:9 * 4 + 2], cs
-        sti
+m_q:    IVTSET  9, old09, k09
         mov     byte [pb + SP_FLAGS], SPF_FRONT
         jmp     short m_pq
-m_p:    mov     ax, 352Fh
-        int     21h
-        mov     [old2f], bx
-        mov     [old2f + 2], es
-        mov     ax, 252Fh
-        mov     dx, h2f
-        int     21h
+m_p:    HOOK    2Fh, old2f, h2f
 m_pq:   push    cs
         pop     es
         mov     di, tail + 1            ; " v N FILE", CR
@@ -342,11 +258,7 @@ m_pq:   push    cs
         jmp     short .e
 .cq:    cmp     byte [mode], 'C'        ; (C: INT 1Ch back, then the end)
         jne     .q
-        push    ds
-        lds     dx, [old1c]
-        mov     ax, 251Ch
-        int     21h
-        pop     ds
+        UNHOOK  1Ch, old1c
 .q:     cmp     byte [mode], 'Q'       ; (Q: until V is in front, then the end;
         je      .qq                     ;  W: then INT 09h back with AH=25h,
         cmp     byte [mode], 'W'        ;  behind now, 3 ticks, the end)
@@ -355,29 +267,14 @@ m_pq:   push    cs
         call    wait_n
         cmp     byte [mode], 'W'
         jne     .e
-        push    ds
-        lds     dx, [old09]
-        mov     ax, 2509h
-        int     21h
-        pop     ds
+        UNHOOK  09h, old09
         mov     word [n], 3
         call    wait_n
 .e:     mov     ax, 4C00h
         int     21h
 
 ; N ticks, with HLT.  AX, DX changed
-wait_n: push    es
-        push    40h
-        pop     es
-        mov     dx, [es:6Ch]
-        add     dx, [n]
-.w:     sti
-        hlt
-        mov     ax, [es:6Ch]
-        sub     ax, dx
-        js      .w
-        pop     es
-        ret
+        TICKS   wait_n, [n]
 
 ; AH=35h for the vector in AL (AX as given) -> "ssss oooo " at DI
 vec4:   push    es
@@ -416,40 +313,12 @@ wr_file:
 .x:     ret
 
 ; AX as 4 hex digits at DI
-hex4:   mov     cx, 4
-.h:     rol     ax, 4
-        push    ax
-        and     al, 0Fh
-        add     al, '0'
-        cmp     al, '9'
-        jbe     .s
-        add     al, 7
-.s:     stosb
-        pop     ax
-        loop    .h
-        ret
+        HEX4
 
 ; AX in decimal at DI
-dec_out:
-        mov     bx, 10
-        xor     cx, cx
-.d:     xor     dx, dx
-        div     bx
-        push    dx
-        inc     cx
-        or      ax, ax
-        jnz     .d
-.o:     pop     ax
-        add     al, '0'
-        stosb
-        loop    .o
-        ret
+        DEC_OUT
 
-blanks: lodsb
-        cmp     al, ' '
-        je      blanks
-        dec     si
-        ret
+        BLANKS
 
 ; the handlers
         dw      0                       ; (T: read by the test, before h1c)

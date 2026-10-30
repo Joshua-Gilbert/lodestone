@@ -34,6 +34,7 @@
 ; nasm -f bin -o MTM33.COM MTM33.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         mov     sp, stk_top
         mov     si, 81h
         call    blanks
@@ -78,13 +79,7 @@ org 100h
         mov     dx, (the_end - $$ + 100h + 15) / 16
         mov     ax, 3100h
         int     21h
-.j:     mov     ax, 3533h               ; J: a hook on INT 33h, resident
-        int     21h
-        mov     [jold], bx
-        mov     [jold + 2], es
-        mov     ax, 2533h
-        mov     dx, j33
-        int     21h
+.j:     HOOK    33h, jold, j33   ; J: a hook on INT 33h, resident
         mov     dx, (the_end - $$ + 100h + 15) / 16
         mov     ax, 3100h
         int     21h
@@ -192,19 +187,9 @@ org 100h
         mov     cx, dx
         call    rec3
         jmp     .end
-.t:     mov     ax, 351Ch               ; T: its INT 1Ch handler
-        int     21h
-        mov     [o1c], bx
-        mov     [o1c + 2], es
-        mov     ax, 251Ch
-        mov     dx, h1c
-        int     21h
+.t:     HOOK    1Ch, o1c, h1c   ; T: its INT 1Ch handler
         call    w18
-        push    ds
-        lds     dx, [o1c]
-        mov     ax, 251Ch
-        int     21h
-        pop     ds
+        UNHOOK  1Ch, o1c
         push    cs
         pop     es
         mov     ax, 3
@@ -250,18 +235,7 @@ wout:   mov     ah, 3Ch
 .x:     ret
 
 ; 18 ticks, with HLT.  AX, DX changed
-w18:    push    es
-        push    40h
-        pop     es
-        mov     dx, [es:6Ch]
-        add     dx, 18
-.w:     sti
-        hlt
-        mov     ax, [es:6Ch]
-        sub     ax, dx
-        js      .w
-        pop     es
-        ret
+        TICKS   w18, 18
 
 ; D's INT 33h: show count (AX=1 up, AX=2 down), and AX=2's calls
 d2cnt   dw      0
@@ -297,28 +271,13 @@ h1c:    inc     word [cs:t_n]
 .n:     popa
         jmp     far [cs:o1c]
 
-blanks: lodsb
-        cmp     al, ' '
-        je      blanks
-        dec     si
-        ret
+        BLANKS
 
 ; AX as 4 hex digits at DI
-hex4:   mov     cx, 4
-.h:     rol     ax, 4
-        push    ax
-        and     al, 0Fh
-        add     al, '0'
-        cmp     al, '9'
-        jbe     .s
-        add     al, 7
-.s:     stosb
-        pop     ax
-        loop    .h
-        ret
+        HEX4
 
 child   db      'MTM33.COM', 0
-pblk    dw      0, tail, 0, 5Ch, 0, 6Ch, 0
+        EXECBLK pblk
 tail    db      8, ' h h.txt', 0Dh
 mode    db      0
 cnt     dw      0
