@@ -3096,7 +3096,7 @@ do_copy:
         call    cbuf_get
         jc      .x
         mov     dx, path1
-        mov     cx, 0
+        xor     cx, cx
         mov     ah, 4Eh
         int     21h
         jnc     .one
@@ -3105,7 +3105,7 @@ do_copy:
         mov     ax, 3D00h
         int     21h
         jc      .nf
-        mov     bx, ax
+        xchg    bx, ax
         mov     ax, 4400h
         int     21h
         mov     ah, 3Eh
@@ -3211,7 +3211,7 @@ copy_one:
         int     21h
         jc      .new
         mov     [fh2], ax
-        mov     bx, ax
+        xchg    bx, ax
         xor     cx, cx
         xor     dx, dx
         mov     ax, 4202h
@@ -3852,7 +3852,7 @@ do_start:
         call    strcpy
         pop     ax
         add     al, '0'
-        mov     ah, 0
+        cbw                             ; (a task: 1-7)
         stosw
         mov     si, setbuf
         jmp     env_set_line
@@ -3874,13 +3874,25 @@ do_wait:
         or      al, al                  ; (free: the last one there ended)
         jz      .end
         mov     [wgen], ah
-.l:     mov     ah, 1                   ; keys waiting (in front only: behind,
-        int     16h                     ;  MT shows none)?  A ^C or a Ctrl-
-        jz      .h                      ;  Break (0000h) among them: the keys
-        push    ds                      ;  up to it taken, and INT 23h, ours:
-        push    40h                     ;  back to the prompt (Lodestone's
-        pop     ds                      ;  0Bh doesn't look for ^C).  Other
-        cli                             ;  keys stay for the prompt
+.l:     mov     ah, 1                   ; keys waiting?  A ^C or a Ctrl-Break
+        int     16h                     ;  (0000h) among them: the keys up to
+        jz      .h                      ;  it taken, and INT 23h, ours: back
+        push    ax                      ;  to the prompt (Lodestone's 0Bh
+        call    mt_mine                 ;  doesn't look for ^C).  Other keys
+        cmp     al, ah                  ;  stay for the prompt.  In front the
+        pop     ax                      ;  BIOS's ring is ours; behind (X34,
+        je      .fw                     ;  asked at every pass: the front can
+        cmp     al, 3                   ;  change) it is the front task's, and
+        je      .tk                     ;  ours is MT's: the key at its head
+        or      ax, ax                  ;  only, taken when it is ^C (a ^C
+        jnz     .h                      ;  typed into our window).  (WAIT
+.tk:    cbw                             ;  gets here with MT on only)
+        int     16h                     ; (AH = 0: AL is 3 or 0)
+        jmp     short .cc
+.fw:    push    ds
+        push    40h
+        pop     ds
+        cli
         mov     bx, [1Ah]
         mov     cx, 16                  ; (a ring's worth at most, as mt_hot)
 .s:     cmp     bx, [1Ch]
@@ -3900,7 +3912,7 @@ do_wait:
 .c:     mov     [1Ah], bx
         sti
         pop     ds
-        mov     si, s_ctrlc             ; (as every ^C shows)
+.cc:    mov     si, s_ctrlc             ; (as every ^C shows)
         call    puts_nl
         int     23h
         jmp     short .h
@@ -3964,8 +3976,7 @@ do_exit:
         jne     .x
         cmp     byte [perm], 0          ; the first shell can't go
         jne     .x
-        mov     al, 0
-        mov     ah, 4Ch
+        mov     ax, 4C00h
         int     21h
 .x:     ret
 
@@ -4159,8 +4170,7 @@ read_reply:
         xor     bh, bh
         mov     byte [inbuf+2+bx], 0
         mov     si, inbuf+2
-        call    skipsp
-        ret
+        jmp     skipsp
 
 ; decimal at SI -> AX, past one separator
 getnum: push    cx
