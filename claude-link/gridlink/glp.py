@@ -225,32 +225,30 @@ def kv_lines(data):
     return d
 
 
+def hello_int(body, key, default, lo, hi):
+    """A number a GRiD HELLO gives on a `key=` line (the first such line), kept to lo..hi; none, or not a
+    number: default."""
+    key = key.encode() + b'='
+    for line in bytes(body[6:]).split(b'\n'):
+        if line.startswith(key):
+            try: return max(lo, min(int(line[len(key):]), hi))
+            except ValueError: break
+    return default
+
+
 def hello_req(body):
     """The biggest REQUEST a GRiD HELLO says it takes (a `req=` line, CLAUDE 1.5 on), else the 4,700 of
     every CLAUDE before."""
-    for line in bytes(body[6:]).split(b'\n'):
-        if line.startswith(b'req='):
-            try: return max(GRID_REQ_DEFAULT, min(int(line[4:]), 65000))
-            except ValueError: break
-    return GRID_REQ_DEFAULT
+    return hello_int(body, 'req', GRID_REQ_DEFAULT, GRID_REQ_DEFAULT, 65000)
 
 
 def hello_rd(body):
     """The biggest file read a GRiD HELLO says it answers whole (an `rd=` line, CLAUDE 1.7), else 0: every
     CLAUDE before answers at most 16,382 bytes, so a read of 16 KB would look like the end of the file."""
-    for line in bytes(body[6:]).split(b'\n'):
-        if line.startswith(b'rd='):
-            try: return max(0, min(int(line[3:]), 65000))
-            except ValueError: break
-    return 0
+    return hello_int(body, 'rd', 0, 0, 65000)
 
 
 def hello_rx(body):
     """The Pi -> GRiD payload limit a GRiD HELLO announces (an `rx=` line), else
     the 246 every CLAUDE before 1.3 reads."""
-    for line in bytes(body[6:]).split(b'\n'):
-        if line.startswith(b'rx='):
-            try: n = int(line[3:])
-            except ValueError: break
-            return max(GRID_RX_DEFAULT, min(n, GRID_RX_MAX))
-    return GRID_RX_DEFAULT
+    return hello_int(body, 'rx', GRID_RX_DEFAULT, GRID_RX_DEFAULT, GRID_RX_MAX)
