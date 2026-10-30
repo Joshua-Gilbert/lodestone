@@ -1,0 +1,445 @@
+From 2f416963816c4f2c738a28b52e0ac5a145459720 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 30 Oct 2026 21:14:16 +0000
+Subject: [PATCH 5/5] audit3 H5: test_mt's terminal-window helpers in a
+ TermView, the clean-machine checks in a Baseline
+
+Each terminal-window test defined its own typ2, to0, tnum, mb, base, tv,
+tb, wv, scr, tx, drawn, cxy, mv, btn, page and clip (typ2 five times,
+tnum six, page and clip twice...); TermView(k) has them once, bound to
+the same local names so the checks read as before. t_kill, t_park,
+t_lcmd, t_exec and t_lists build back()/alone()/now() on a Baseline(k).
+A test that boots a second machine binds its helpers again there (the
+old lambdas followed the variable k); t_tpub's second machine now uses
+its own MT segment where the lambdas used the first's (the same on
+these boots). t_term's drawn() reads the view once, before: kept.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GRD5wiUMCniTFB6AGgxU9p
+---
+ os/tests/test_mt.py | 234 +++++++++++++++++++++-----------------------
+ 1 file changed, 109 insertions(+), 125 deletions(-)
+
+diff --git a/os/tests/test_mt.py b/os/tests/test_mt.py
+index 678e781..b41cf37 100644
+--- a/os/tests/test_mt.py
++++ b/os/tests/test_mt.py
+@@ -613,6 +613,70 @@ def typ(k, s, t=0.5):
+     """Type a command without waiting for the machine to go idle (a task may be computing)."""
+     k.key(s, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+ 
++class Baseline:
++    """The machine with the Executive alone (H5): the arena (merged), the SFT entries in use and the EMS pages
++    as they are now.  back(): all three as they were, nothing crashed; now(): what to show when not.  A test
++    that takes them again sets m0, s0, e0."""
++    def __init__(s, k):
++        s.k = k
++        s.m0, s.s0, s.e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
++    def alone(s): return tstate(s.k)[0] == [(0, 1, 'Executive')]
++    def back(s):
++        k = s.k
++        return s.alone() and merged(mcbs(k)) == s.m0 and sft_used(k) == s.s0 and ems_used(k) == s.e0 and not k.crashed
++    def now(s): return (tstate(s.k), show(mcbs(s.k)), sft_used(s.k), s.s0, ems_used(s.k), s.e0)
++
++class TermView:
++    """A terminal window's test helpers (H5): MT's bytes, the first session's TERM.RUN (its variables, its window
++    record), the screen, keys typed into the window, the clipboard's EMS page."""
++    def __init__(s, k):
++        s.k, s.seg, s.Y = k, mt_seg(k), k.Y
++        s._ts = None
++    @property
++    def TS(s):
++        if s._ts is None: s._ts = A.run_syms('apps/TERM.ASM')
++        return s._ts
++    def mb(s, n): return s.k.pc.rd(s.seg, s.Y[n], 1)[0]
++    def base(s): return s.k.pc.u16(s.seg, s.Y['mw_ses'] + SE_SIZE + SE_BASE)      # (the first session's slot)
++    def tv(s, n): return s.k.pc.u16(s.k.useg, s.base() + s.TS[n])
++    def tb(s, n): return s.k.pc.rd(s.k.useg, s.base() + s.TS[n], 1)[0]
++    def wv(s, o): return s.k.pc.u16(s.k.useg, s.base() + s.TS['win'] + o)          # (W_COL 0, W_Y 2, W_W 4, W_H 6)
++    def scr(s): return '\n'.join(l for y, l in s.k.ocr())
++    def tnum(s, name): return next((i for i, s_, n in tstate(s.k)[0] if n == name), 7)
++    def tx(s, n): return s.k.pc.u16(s.seg, task_ent(s.k, n) + TE_TX)
++    def typ2(s, text, t=1.0):
++        k = s.k
++        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
++    def to0(s):
++        for _ in range(8):
++            if tstate(s.k)[1] == 0: break
++            hot(s.k); s.k.run_for(1.0)
++    def drawn(s, r, c):                 # the 16 bytes on the screen of the task's cell (r, c) in the window
++        tv = s.tv
++        d = (tv('y0') + (r - tv('top')) * 16) * 20 + tv('x0') + c - tv('left')
++        return bytes(s.k.pc.rd(0xB800, d + (y & 3) * 0x2000 + (y >> 2) * 80, 1)[0] for y in range(16))
++    def cxy(s, r, c):                   # the middle of the task's screen cell (r, c) in the window
++        tv = s.tv
++        return (tv('x0') + c - tv('left')) * 8 + 4, tv('y0') + (r - tv('top')) * 16 + 8
++    def mv(s, x, y):                    # (A.point without its settle: a task may be busy)
++        k = s.k
++        dx, dy = x - k.u16('mx'), y - k.u16('my')
++        while dx or dy:
++            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
++            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
++            dx -= sx; dy -= sy
++    def btn(s, b, t=0.3):               # buttons b down a moment (the UI looks at them as it can), then up
++        k = s.k
++        k.pc.mouse_move(0, 0, b); k.pc.run_for(0.2); k.pc.mouse_move(0, 0, 0); k.pc.run_for(t)
++    def page(s):                        # the clipboard's EMS page (KEMS's tables)
++        k, Y = s.k, s.Y
++        h = k.u16('clip_h')
++        if not h: return None
++        return k.pc.ems_page(k.pc.rd(0x60, Y['ems_ltab'] + k.pc.rd(0x60, Y['ems_h'] + h * 4, 1)[0], 1)[0])
++    def clip(s):
++        pg = s.page()
++        return b'' if pg is None else s.k.pc.ems_read(pg, 0, s.k.u16('clip_len'))
++
+ def tclick(k, x, y, settle=True):
+     """A.click with the button held 60 ms, over a tick: with tasks computing behind, the Executive idle gives its
+     turn away (T5d) and the mouse brings it back at the next tick (mt_mwant); the UI reads the buttons' state, so a
+@@ -2619,10 +2683,8 @@ def t_kill():
+     sh = Shell(k)
+     sh.run('ver')
+     ext = lambda task: k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + TE_EXIT)
+-    alone = lambda: tstate(k)[0] == [(0, 1, 'Executive')]
+-    m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+-    back = lambda: alone() and merged(mcbs(k)) == m0 and sft_used(k) == s0 and ems_used(k) == e0 and not k.crashed
+-    now = lambda: (tstate(k), show(mcbs(k)), sft_used(k), s0, ems_used(k), e0)
++    B = Baseline(k)
++    alone, back, now, m0, s0, e0 = B.alone, B.back, B.now, B.m0, B.s0, B.e0
+     kr = {}
+     def killed(n, cmd, settle=0.6):     # cmd started (MTLAUNCH's), run a while, then MTLAUNCH /K:n
+         sh.run('mtlaunch ' + cmd); line(k, ''); k.run_for(settle)
+@@ -2781,7 +2843,8 @@ def t_kill():
+     seg, Y = mt_seg(k), k.Y
+     sh = Shell(k)
+     sh.run('ver')
+-    m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
++    B = Baseline(k)
++    alone, back, now, m0, s0, e0 = B.alone, B.back, B.now, B.m0, B.s0, B.e0
+     busy = lambda: k.pc.rd(k.useg, Y['m33_busy'], 1)[0]
+     cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+     def both():                         # two tasks computing: both get turns (the tick still switches)
+@@ -2878,10 +2941,8 @@ def t_park():
+     ent = lambda task, o: k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + o)
+     st = lambda task: k.pc.rd(seg, Y['mt_tab'] + task * MT_ENT, 1)[0]
+     cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+-    m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+-    alone = lambda: tstate(k)[0] == [(0, 1, 'Executive')]
+-    back = lambda: alone() and merged(mcbs(k)) == m0 and sft_used(k) == s0 and ems_used(k) == e0 and not k.crashed
+-    now = lambda: (tstate(k), show(mcbs(k)), sft_used(k), s0, ems_used(k), e0)
++    B = Baseline(k)
++    alone, back, now, m0, s0, e0 = B.alone, B.back, B.now, B.m0, B.s0, B.e0
+     def region(task):                   # its region: segment, paragraphs (its MCB's), and its bytes
+         r = ent(task, TE_REG)
+         n = k.pc.u16(r - 1, 3)
+@@ -3071,6 +3132,7 @@ def t_park():
+     hrec = lambda h: (k.pc.rd(0x60, Y['ems_h'] + h * 4, 2), k.pc.u16(0x60, Y['ems_h'] + h * 4 + 2))
+     for how in ('freed', 'resized', 'shared'):
+         e0, mg0 = ems_used(k), merged(mcbs(k))
++        B.e0 = e0                                   # (back() from here on: as e0)
+         mt('mtkill.com f 10 k%s.txt' % how[0])
+         o1 = mt('/p:1')
+         ph, hs = (k.pc.rd(seg, Y['mt_tab'] + MT_ENT + o, 1)[0] for o in (TE_PH, TE_SH))
+@@ -3346,9 +3408,8 @@ def t_lcmd():
+     seg, Y = mt_seg(k), k.Y
+     sh = Shell(k)
+     sh.run('ver')
+-    m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+-    back = lambda: tstate(k)[0] == [(0, 1, 'Executive')] and merged(mcbs(k)) == m0 and sft_used(k) == s0 \
+-        and ems_used(k) == e0 and not k.crashed
++    B = Baseline(k)
++    m0, s0, e0, back = B.m0, B.s0, B.e0, B.back
+     def xc(n):                          # MT_EXIT's answer (MTLAUNCH /X:n), then MTLAUNCH's line
+         o = sh.run('mtlaunch /x:%d' % n); line(k, '')
+         return re.search(r'exit: (\w\w) (\w\w) (\w{4}) (\w\w)', o)
+@@ -3599,9 +3660,9 @@ def t_exec():
+              'EXM.EXE=' + xm, 'EXL.EXE=' + xl, A.CALCRUN, A.TSR, os.path.join(GOS, 'apps', 'TASKS.RUN'))
+     seg, Y = mt_seg(k), k.Y
+     arena = lambda: k.pc.u16(seg, Y['mt_arena'])
+-    m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+-    back = lambda: tstate(k)[:2] == ([(0, 1, 'Executive')], 0) and merged(mcbs(k)) == m0 and sft_used(k) == s0 \
+-        and ems_used(k) == e0 and k.pc.mode() == 0x40 and not k.crashed
++    B = Baseline(k)
++    m0, s0, e0 = B.m0, B.s0, B.e0
++    back = lambda: B.back() and tstate(k)[1] == 0 and k.pc.mode() == 0x40
+     lists = [k.pc.u16(seg, Y[n]) for n in ('mt_lbg', 'mt_lfz', 'mt_lmem')]
+     rp = bytes(k.rd('run_prog', 5))
+     check('on: run_prog patched (MT_UI: a JMP FAR to KMW\'s mw_prog in MT\'s block), ex_mtw 2 while it waits; no lists '
+@@ -3766,9 +3827,8 @@ def t_lists():
+           'or of 1024 KB and more left out)', got == bg + fz + mm and ptr == [i0, i0 + len(bg), i0 + len(bg + fz)], (got, ptr))
+     sh = Shell(k)
+     sh.run('ver')
+-    m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
+-    back = lambda: tstate(k)[0] == [(0, 1, 'Executive')] and merged(mcbs(k)) == m0 and sft_used(k) == s0 \
+-        and ems_used(k) == e0 and not k.crashed
++    B = Baseline(k)
++    m0, s0, e0, back = B.m0, B.s0, B.e0, B.back
+     got = []
+     for c in ('start /w mtspin.com 1 c1.txt', 'start /w a:\\mtspin.com 1 c2.txt', 'start /w mtline.com l1.txt',
+               'start /w /m:32 mtline.com l2.txt', 'start /w mtcwd.com', 'start /w upper.com'):
+@@ -4826,14 +4886,8 @@ def t_term():
+     box = os.path.join(A.OUT, 'BOX.TXT'); open(box, 'wb').write(b'\xc9\xcd\xbb\r\n')
+     k = boot('mt_tw.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, box, A.CALCRUN)
+     seg, Y = mt_seg(k), k.Y
+-    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+-    TS = A.run_syms('apps/TERM.ASM')
+-    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)        # (the first session's slot)
+-    tv = lambda n: k.pc.u16(k.useg, base() + TS[n])
+-    scr = lambda: '\n'.join(l for y, l in k.ocr())
+-    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+-    def typ2(text, t=1.0):
+-        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
++    T = TermView(k)
++    mb, base, tv, scr, tnum, typ2, TS = T.mb, T.base, T.tv, T.scr, T.tnum, T.typ2, T.TS
+     au = Audit(k)
+     # CODE-P: LCMD in a window, a task behind
+     k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+@@ -5012,9 +5066,8 @@ def t_wait_bg():
+     print('== LCMD\'s WAIT behind, in a terminal window: a ^C typed into its window ends it, and one typed to the front '
+           'task stays that task\'s (X34)')
+     k = boot('mt_wb.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT)
+-    scr = lambda: '\n'.join(l for y, l in k.ocr())
+-    def typ2(text, t=1.0):
+-        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
++    T = TermView(k)
++    scr, typ2 = T.scr, T.typ2
+     ring = lambda: [k.pc.u16(0x40, a) for a in range(k.pc.u16(0x40, 0x1A), k.pc.u16(0x40, 0x1C), 2)]
+     k.key(ktest.CODE_P, settle=False); k.run_for(3.0)                  # LCMD in a window: task 1, behind
+     typ2('start /w mtspin.com 182 wa.txt')                              # task 2 computes, behind too (10 s)
+@@ -5039,20 +5092,12 @@ def t_tgfx():
+     print('== terminal windows (T3): a windowed program\'s graphics full screen, and back to its window with a text mode')
+     k = boot('mt_tg.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTSC)
+     seg, Y, WG = mt_seg(k), k.Y, equ('TX_WGFX')
+-    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+-    scr = lambda: '\n'.join(l for y, l in k.ocr())
+-    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+-    tx = lambda n: k.pc.u16(seg, task_ent(k, n) + TE_TX)
++    T = TermView(k)
++    mb, scr, tnum, tx, typ2, to0 = T.mb, T.scr, T.tnum, T.tx, T.typ2, T.to0
+     wg = lambda n: k.pc.rd(tx(n), WG, 1)[0]
+     patok = lambda: bytes(k.pc.rd(0xB800, 0, 256)) == bytes((((i * 5) ^ (i >> 8)) & 0xFF) for i in range(256))
+-    def typ2(text, t=1.0):
+-        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+     def key(t=2.0):
+         k.key('x', settle=False); k.run_for(t)
+-    def to0():
+-        for _ in range(8):
+-            if tstate(k)[1] == 0: break
+-            hot(k); k.run_for(1.0)
+     au = Audit(k)
+     k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+     n = tnum('LCMD.COM')
+@@ -5134,6 +5179,8 @@ def t_tgfx():
+     check('... every switch at a safe point (the audit)', not au.bad(), au.bad()[:3])
+     # the end of a program other than the one that asked for graphics: no text mode for it (TX_WPSP)
+     k = boot('mt_tg2.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT)
++    T = TermView(k)                     # (this machine's)
++    mb, scr, tnum, tx, typ2, to0 = T.mb, T.scr, T.tnum, T.tx, T.typ2, T.to0
+     seg = mt_seg(k)
+     k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+     n = tnum('LCMD.COM')
+@@ -5170,48 +5217,16 @@ def t_tclip():
+     #  almost no ticks there)
+     k = boot('mt_t4.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTK, MTM, sel, big, mouse=True)
+     seg, Y = mt_seg(k), k.Y
+-    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+-    TS = A.run_syms('apps/TERM.ASM')
+-    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+-    tv = lambda n: k.pc.u16(k.useg, base() + TS[n])
+-    tb = lambda n: k.pc.rd(k.useg, base() + TS[n], 1)[0]
+-    wv = lambda o: k.pc.u16(k.useg, base() + TS['win'] + o)             # (W_COL 0, W_Y 2, W_W 4, W_H 6)
+-    scr = lambda: '\n'.join(l for y, l in k.ocr())
+-    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+-    tx = lambda n: k.pc.u16(seg, task_ent(k, n) + TE_TX)
++    T = TermView(k)
++    mb, base, tv, tb, wv, scr, tnum, tx, TS = T.mb, T.base, T.tv, T.tb, T.wv, T.scr, T.tnum, T.tx, T.TS
++    typ2, cxy, drawn, mv, btn, page, clip, to0 = T.typ2, T.cxy, T.drawn, T.mv, T.btn, T.page, T.clip, T.to0
+     m33 = lambda n, f: k.pc.u16(tx(n), equ('TX_M33') + Y[f] - Y['m33_st'])  # (task n's own mouse state)
+     fnt = open(TERMFNT, 'rb').read()
+     g = lambda ch: fnt[ch * 16:ch * 16 + 16]
+     inv = lambda b: bytes(255 - x for x in b)
+-    def typ2(text, t=1.0):
+-        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+-    def cxy(r, c):                      # the middle of the task's screen cell (r, c) in the window
+-        return (tv('x0') + c - tv('left')) * 8 + 4, tv('y0') + (r - tv('top')) * 16 + 8
+-    def drawn(r, c):
+-        d = (tv('y0') + (r - tv('top')) * 16) * 20 + tv('x0') + c - tv('left')
+-        return bytes(k.pc.rd(0xB800, d + (y & 3) * 0x2000 + (y >> 2) * 80, 1)[0] for y in range(16))
+-    def mv(x, y):                       # (A.point without its settle: a task may be busy)
+-        dx, dy = x - k.u16('mx'), y - k.u16('my')
+-        while dx or dy:
+-            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+-            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+-            dx -= sx; dy -= sy
+-    def btn(b, t=0.3):                  # buttons b down a moment (the UI looks at them as it can), then up
+-        k.pc.mouse_move(0, 0, b); k.pc.run_for(0.2); k.pc.mouse_move(0, 0, 0); k.pc.run_for(t)
+-    def page():                         # the clipboard's EMS page (KEMS's tables)
+-        h = k.u16('clip_h')
+-        if not h: return None
+-        return k.pc.ems_page(k.pc.rd(0x60, Y['ems_ltab'] + k.pc.rd(0x60, Y['ems_h'] + h * 4, 1)[0], 1)[0])
+-    def clip():
+-        pg = page()
+-        return b'' if pg is None else k.pc.ems_read(pg, 0, k.u16('clip_len'))
+     def setclip(data):                  # (written there, as UI_CLIP AL=0 would: a copy gave it its page)
+         ctypes.memmove(ctypes.addressof(k.pc.ems_store) + page() * 0x4000, data, len(data))
+         k.wr('clip_len', struct.pack('<H', len(data)))
+-    def to0():
+-        for _ in range(8):
+-            if tstate(k)[1] == 0: break
+-            hot(k); k.run_for(1.0)
+     def row(text):
+         return next((i for i, l in enumerate(slot_text(k, n).split('\n')) if l.startswith(text)), None)
+     au = Audit(k)
+@@ -5436,6 +5451,9 @@ def t_tclip():
+         print('(no TM5000G.EXE: skipped)'); return
+     k = boot('mt_t4g.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, 'TM5000G.EXE=' + A.TM5000G, mouse=True,
+              chip=A.sim7210.NEC7210(A.sim7210.bus()))
++    T = TermView(k)                     # (this machine's)
++    mb, base, tv, tb, wv, scr, tnum, tx, TS = T.mb, T.base, T.tv, T.tb, T.wv, T.scr, T.tnum, T.tx, T.TS
++    typ2, cxy, drawn, mv, btn, page, clip, to0 = T.typ2, T.cxy, T.drawn, T.mv, T.btn, T.page, T.clip, T.to0
+     seg = mt_seg(k)
+     k.select('TM5000G.EXE'); k.key(ktest.ENTER, settle=False)
+     n = 7
+@@ -5478,16 +5496,8 @@ def t_wwait():
+     k = boot('mt_ww.img', b'MULTITASK=1\r\nTIDY=0\r\n', 88, TERMRUN, TERMFNT, mouse=True)
+     seg, Y = mt_seg(k), k.Y
+     cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+-    TS = A.run_syms('apps/TERM.ASM')
+-    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+-    wv = lambda o: k.pc.u16(k.useg, base() + TS['win'] + o)             # (W_COL 0, W_Y 2, W_W 4, W_H 6)
+-    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+-    def mv(x, y):                       # (A.point without its settle: a task is busy)
+-        dx, dy = x - k.u16('mx'), y - k.u16('my')
+-        while dx or dy:
+-            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+-            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+-            dx -= sx; dy -= sy
++    T = TermView(k)
++    TS, base, wv, tnum, mv = T.TS, T.base, T.wv, T.tnum, T.mv
+     def turns(t=1.0):                   # in how many of t s's 10 ms looks task n is the one running
+         c = 0
+         for i in range(int(t * 100)):
+@@ -5634,12 +5644,10 @@ def t_tname():
+     print('== a terminal window\'s title: its program\'s name in TERM.RUN\'s argument, from MT (R65)')
+     k = boot('mt_tn.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, 'X.COM=' + MTLN, 'ABCDEFGH.EXE=' + MTLN, 'SUB\\',
+              'SUB\\INSUB.COM=' + MTLN, mouse=True)
+-    seg, Y, TS = mt_seg(k), k.Y, A.run_syms('apps/TERM.ASM')
+-    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+-    wv = lambda o: k.pc.u16(k.useg, base() + TS['win'] + o)
++    seg, Y = mt_seg(k), k.Y
++    T = TermView(k)
++    TS, base, wv, scr, mb = T.TS, T.base, T.wv, T.scr, T.mb
+     cstr = lambda off: bytes(k.pc.rd(k.useg, off, 40)).split(b'\0')[0].decode('latin-1')
+-    scr = lambda: '\n'.join(l for y, l in k.ocr())
+-    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+     def opened(name, close=False):
+         """Return on it: (its window's title, TERM's argument as MT gave it, as it should be, the title on the screen,
+         the close box's question); then a line typed ends it, and the window with it."""
+@@ -5728,14 +5736,9 @@ def t_tpub():
+     import ctypes
+     k = boot('mt_t5b.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, MTPB, MTTM, mouse=True)
+     seg, Y = mt_seg(k), k.Y
+-    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+-    TS = A.run_syms('apps/TERM.ASM')
+-    base = lambda: k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE)
+-    tv = lambda n: k.pc.u16(k.useg, base() + TS[n])
+-    tb = lambda n: k.pc.rd(k.useg, base() + TS[n], 1)[0]
+-    scr = lambda: '\n'.join(l for y, l in k.ocr())
+-    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
+-    tx = lambda n: k.pc.u16(seg, task_ent(k, n) + TE_TX)
++    T = TermView(k)
++    mb, TS, base, tv, tb, scr, tnum, tx = T.mb, T.TS, T.base, T.tv, T.tb, T.scr, T.tnum, T.tx
++    drawn, cxy, mv, btn, page, clip, typ2, to0 = T.drawn, T.cxy, T.mv, T.btn, T.page, T.clip, T.typ2, T.to0
+     TXP, TXPP, BUF = equ('TX_PUB'), equ('TX_PPSP'), TS['BUF']
+     pubd = lambda n: (k.pc.u16(tx(n), TXP), k.pc.u16(tx(n), TXP + 2), k.pc.u16(tx(n), TXPP))
+     def glyph(c, a, mark=False):        # MTPUB's glyph for code c, drawn with cell's attribute a, as TERM maps it
+@@ -5748,28 +5751,8 @@ def t_tpub():
+     def cellc(r, c):                    # MTPUB's cell (r, c): code, attribute
+         if r == 24 and c < 6: return (0x05, 0xF0, 0x80, 0x81, 0x47, 0x20)[c], 0
+         return 0x20 + (r * 7 + c) % 40, (c >> 3) & 3
+-    def drawn(r, c):
+-        d = (tv('y0') + (r - tv('top')) * 16) * 20 + tv('x0') + c - tv('left')
+-        return bytes(k.pc.rd(0xB800, d + (y & 3) * 0x2000 + (y >> 2) * 80, 1)[0] for y in range(16))
+     def rowok(r, skip=()):
+         return all(drawn(r, c) == glyph(*cellc(r, c)) for c in range(tv('cols')) if c not in skip)
+-    def cxy(r, c):
+-        return (tv('x0') + c - tv('left')) * 8 + 4, tv('y0') + (r - tv('top')) * 16 + 8
+-    def mv(x, y):
+-        dx, dy = x - k.u16('mx'), y - k.u16('my')
+-        while dx or dy:
+-            sx, sy = max(-100, min(100, dx)), max(-100, min(100, dy))
+-            k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
+-            dx -= sx; dy -= sy
+-    def btn(b, t=0.3):
+-        k.pc.mouse_move(0, 0, b); k.pc.run_for(0.2); k.pc.mouse_move(0, 0, 0); k.pc.run_for(t)
+-    def page():
+-        h = k.u16('clip_h')
+-        if not h: return None
+-        return k.pc.ems_page(k.pc.rd(0x60, Y['ems_ltab'] + k.pc.rd(0x60, Y['ems_h'] + h * 4, 1)[0], 1)[0])
+-    def clip():
+-        pg = page()
+-        return b'' if pg is None else k.pc.ems_read(pg, 0, k.u16('clip_len'))
+     def setclip(data):                  # (no page: no copy made, the clipboard empty already)
+         if page() is None: return
+         ctypes.memmove(ctypes.addressof(k.pc.ems_store) + page() * 0x4000, data, len(data))
+@@ -5778,12 +5761,6 @@ def t_tpub():
+         return [l for l in (A.disk_file(k, f) or b'').decode('latin-1').split('\r\n') if l]
+     def key(ch, t=0.8):
+         k.key(ch, settle=False); k.run_for(t)
+-    def typ2(text, t=1.0):
+-        k.key(text, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(t)
+-    def to0():
+-        for _ in range(8):
+-            if tstate(k)[1] == 0: break
+-            hot(k); k.run_for(1.0)
+     au = Audit(k)
+     k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+     n = tnum('LCMD.COM')
+@@ -6045,6 +6022,9 @@ def t_tpub():
+     l0 = lines('P0.TXT')
+     line(k, 'exit')
+     k = boot('mt_t5b2.img', b'MULTITASK=1\r\n', 88, TERMFNT, MTPB)
++    T = TermView(k)                     # (this machine's)
++    mb, TS, base, tv, tb, scr, tnum, tx = T.mb, T.TS, T.base, T.tv, T.tb, T.scr, T.tnum, T.tx
++    drawn, cxy, mv, btn, page, clip, typ2, to0 = T.drawn, T.cxy, T.mv, T.btn, T.page, T.clip, T.typ2, T.to0
+     k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+     n2 = tstate(k)[1]
+     typ2('mtpub pf.txt', 2.0)
+@@ -6055,6 +6035,9 @@ def t_tpub():
+     key('q', 1.0)
+     lf = lines('PF.TXT')
+     k = boot('mt_t5b3.img', None, 88, MTPB)
++    T = TermView(k)                     # (this machine's)
++    mb, TS, base, tv, tb, scr, tnum, tx = T.mb, T.TS, T.base, T.tv, T.tb, T.scr, T.tnum, T.tx
++    drawn, cxy, mv, btn, page, clip, typ2, to0 = T.drawn, T.cxy, T.mv, T.btn, T.page, T.clip, T.typ2, T.to0
+     sh_ = Shell(k)
+     k.key('mtpub po.txt', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(2.0)
+     k.key('q', settle=False); k.run_for(1.0)
+@@ -6070,7 +6053,7 @@ def t_tcore():
+     k = boot('mt_tc.img', b'MULTITASK=1\r\n', 88, MTK, MTTM, MTSC)
+     sh = Shell(k)
+     sh.run('ver')
+-    tnum = lambda name: next((i for i, s, n in tstate(k)[0] if n == name), 7)     # (7: none such, a free one)
++    tnum = TermView(k).tnum                                                        # (7: none such, a free one)
+     def rows(n, f, *a):                     # MTTERM R: (CF, AX, BX, CX, DX, the 4000 bytes)
+         sh.run('mtterm r %d %s %s' % (n, f, ' '.join(map(str, a))))
+         b = A.disk_file(k, f.upper()) or bytes(4009)
+@@ -6192,7 +6175,7 @@ def t_srq():
+     wkt = lambda: k.pc.rd(seg, Y['mt_wkt'], 1)[0]
+     wkp = lambda: k.pc.u16(seg, Y['mt_wkp'])
+     cur = lambda: k.pc.rd(seg, Y['mt_cur'], 1)[0]
+-    tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
++    tnum = TermView(k).tnum
+     def tnum_(psp):                                     # (the task whose region holds a PSP)
+         for n in range(8):
+             reg = k.pc.u16(seg, task_ent(k, n) + TE_REG)
+@@ -6417,6 +6400,7 @@ def t_srq():
+           'program not)', len(ps) == 1 and wkt() == 0 and wkp() == ps[0], (wkt(), hex(wkp())))
+     # no SRQ interrupt (GPIBIRQ=0): AL 0
+     k = boot('mt_srq0.img', b'MULTITASK=1\r\nGPIBIRQ=0\r\n', 88, chip=A.sim7210.NEC7210(A.sim7210.bus()))
++    tnum = TermView(k).tnum             # (this machine's)
+     got, out = probe(k)
+     check('GPIBIRQ=0: MT_WAKE answers AL 0 (no wake comes), CF clear', got.get(0x23, (1,))[:2] == (0, 0)
+           and got.get(0x123, (1,))[:2] == (0, 0), out[-300:])
+-- 
+2.43.0
+

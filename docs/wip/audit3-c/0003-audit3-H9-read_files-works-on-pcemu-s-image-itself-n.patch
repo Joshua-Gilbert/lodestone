@@ -1,0 +1,354 @@
+From 9a1ccbd6c6881184d41a5859894df41988b2b3ec Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 30 Oct 2026 20:46:41 +0000
+Subject: [PATCH 3/5] audit3 H9: read_files works on pcemu's image itself, not
+ a 1.47 MB copy each time
+
+disk_file and the other read_files callers copied the whole floppy with
+bytes() first, at every poll (every 0.05 sim s at 49 sites); read_files
+only slices the root and each file's clusters, so it takes the bytearray
+as it is. Snapshots taken to compare later keep their copies. (Left as
+they are: claude_kernel.py's, another row's file, and test_kernel's MS-DOS
+probe tests, H7's.)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GRD5wiUMCniTFB6AGgxU9p
+---
+ os/tests/fatcheck.py      |  3 ++-
+ os/tests/ggtest_kernel.py |  2 +-
+ os/tests/test_apps.py     | 32 ++++++++++++++++----------------
+ os/tests/test_hd.py       |  2 +-
+ os/tests/test_hdprobe.py  |  6 +++---
+ os/tests/test_hdscan.py   |  2 +-
+ os/tests/test_kernel.py   | 26 +++++++++++++-------------
+ os/tests/test_mt.py       |  2 +-
+ 8 files changed, 38 insertions(+), 37 deletions(-)
+
+diff --git a/os/tests/fatcheck.py b/os/tests/fatcheck.py
+index 76f7419..5728517 100644
+--- a/os/tests/fatcheck.py
++++ b/os/tests/fatcheck.py
+@@ -95,7 +95,8 @@ if __name__ == '__main__':
+ 
+ def read_files(img, drive='A', dirs=None):
+     """Every file's bytes: {'A:\\DIR\\NAME.EXT': bytes}.  The subjects go in
+-    the list dirs, if one is given ('A:\\DIR')."""
++    the list dirs, if one is given ('A:\\DIR').  img may be pcemu's own
++    bytearray: only the root and each file's clusters are copied (H9)."""
+     b = bpb(img)
+     bps, spc = b['bps'], b['spc']
+     fat_off = b['res'] * bps
+diff --git a/os/tests/ggtest_kernel.py b/os/tests/ggtest_kernel.py
+index d14c9b7..5fb57b1 100644
+--- a/os/tests/ggtest_kernel.py
++++ b/os/tests/ggtest_kernel.py
+@@ -21,7 +21,7 @@ def run(out_img=os.path.join(__import__('tempfile').gettempdir(), 'lodestone-gg.
+     t0 = k.pc.us
+     out = k.run_file('GGTEST.COM', 600)
+     sim_s = (k.pc.us - t0) / 1e6
+-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    files = fatcheck.read_files(k.pc.drives[0].img)
+     log = files.get('A:\\GGTEST.TXT', b'').decode('cp437')
+     return k, out, log, sim_s
+ 
+diff --git a/os/tests/test_apps.py b/os/tests/test_apps.py
+index 68c3306..2954330 100644
+--- a/os/tests/test_apps.py
++++ b/os/tests/test_apps.py
+@@ -393,7 +393,7 @@ def busy(k, key):
+     return (rec['t'] - t0) / 1e3 if 't' in rec else -1
+ 
+ def disk_file(k, name):
+-    return fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\' + name)
++    return fatcheck.read_files(k.pc.drives[0].img).get('A:\\' + name)
+ 
+ def t_write():
+     print('== Write (WRITE.RUN)')
+@@ -449,7 +449,7 @@ def t_write():
+     want = (b'Hello. The brown fox\r\nTHE lazy dog.\r\n\tTabbed LINE\r\nlast LINEjumps over high\r\nHello. The brown fox')
+     got = disk_file(k, 'NOTES.TXT')
+     check('saved with CR LF: Erase, Move, Duplicate, Substitute all in it', got == want, (got, want))
+-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    files = fatcheck.read_files(k.pc.drives[0].img)
+     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+     check('no NOTES.$$$ left, the disk consistent', 'A:\\NOTES.$$$' not in files and not probs, (sorted(files), probs))
+     check('back in the Executive', k.band()[0] == 'Select a file and confirm', k.band())
+@@ -1486,7 +1486,7 @@ def t_form():
+     check('Display lists the fonts on the start-up disk (A:)', has(k, 'TERMINUS.FNT') and has(k, 'Fonts on the start-up disk:'), screen(k))
+     k.key(ktest.ENTER)
+     check('... and LODE.INI goes to A:, not B:', disk_file(k, 'LODE.INI') == b'FONT=TERMINUS.FNT\r\n' and
+-          fatcheck.read_files(bytes(k.pc.drives[1].img)).get('A:\\LODE.INI') is None, disk_file(k, 'LODE.INI'))
++          fatcheck.read_files(k.pc.drives[1].img).get('A:\\LODE.INI') is None, disk_file(k, 'LODE.INI'))
+     k.key(ktest.ENTER); k.key(ktest.ESC)
+     check('back in the Executive, still on B:', k.exec_list() == ['NOTES.TXT'] and form(k)[0] == 'Floppy B:', (k.exec_list(), form(k)))
+     # the mouse: a click on an item outlines it; a second click on a choice goes on
+@@ -1556,8 +1556,8 @@ def t_files():
+     open(a, 'wb').write(raw)
+     b = mkimg.build(os.path.join(OUT, 'filesb.img'), ['DATA\\'])
+     k = ktest.KPC(a, b=b); k.pc.mouse = True; k.start()
+-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+-    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
++    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
++    B = lambda: fatcheck.read_files(k.pc.drives[1].img)
+     sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
+     chosen = lambda: k.exec_list()[k.u16('sel')]
+     # Copy to the other drive
+@@ -1656,8 +1656,8 @@ def t_file_safety():
+               '\\'.join(deep) + '\\NAMENAME.EXT=' + notes, big)
+     b = mkimg.build(os.path.join(OUT, 'safeb.img'), ['COPY.TXT=' + notes])
+     k = ktest.KPC(a, b=b); k.start()
+-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+-    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
++    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
++    B = lambda: fatcheck.read_files(k.pc.drives[1].img)
+     sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
+     LN = 'A:\\LONGNAME\\NOTES.TXT'
+     # 1. the file itself under another spelling: said so, nothing asked, nothing lost
+@@ -1675,7 +1675,7 @@ def t_file_safety():
+     # ... and should that check ever miss one: the source is held open while the old destination goes.
+     # (same_file switched off on a machine that hasn't run it yet: the emulator keeps code it translated)
+     k0 = ktest.KPC(image('safe0.img', 'LONGNAME\\', 'LONGNAME\\NOTES.TXT=' + notes)); k0.start()
+-    A0 = lambda: fatcheck.read_files(bytes(k0.pc.drives[0].img))
++    A0 = lambda: fatcheck.read_files(k0.pc.drives[0].img)
+     k0.wr('same_file', b'\x0b\xe4\xc3')             # or sp, sp / ret: "not the same file"
+     to_subject(k0, 'LONGNAME')
+     k0.key(CODE['M']); k0.key(ktest.ENTER, ktest.ENTER, '\\LONGNAME.', K_CODE_ENTER, ktest.ENTER)
+@@ -1788,8 +1788,8 @@ def t_wild():
+     set_date(b, 'NEW.TXT', 2026, 9)                     # newer on B: Only newer leaves it
+     set_date(b, 'B.TXT', 2020)
+     k = ktest.KPC(a, b=b); k.start()
+-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+-    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
++    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
++    B = lambda: fatcheck.read_files(k.pc.drives[1].img)
+     sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
+     band = lambda: k.band()[0]
+     # the form
+@@ -1914,7 +1914,7 @@ def t_wild():
+         if not any(raw[o:o + 512]): raw[o:o + 512] = b'A' * 512
+     open(g, 'wb').write(raw)
+     k = ktest.KPC(a, b=g); k.start()
+-    G = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
++    G = lambda: fatcheck.read_files(k.pc.drives[1].img)
+     k.pc.drives[1].wp = True
+     k.key(CODE['C']); k.key(ktest.ENTER, ktest.RIGHT, ktest.ENTER, '\\full', K_CODE_ENTER, settle=False); k.settle(30)
+     k.key(ktest.ENTER); k.key(K_BTAB)
+@@ -1945,7 +1945,7 @@ def t_subdel():
+     for o in dir_entries(raw, 'RO.TXT'): raw[o + 11] |= 1           # read-only inside
+     open(a, 'wb').write(raw)
+     k = ktest.KPC(a); k.start()
+-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
++    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
+     sound = lambda: fatcheck.check(bytes(k.pc.drives[0].img))[0]
+     band = lambda: k.band()[0]
+     pick_subject(k, 'Root'); k.key(CODE['D'])
+@@ -2029,10 +2029,10 @@ def t_subcopy():
+     set_date(b, 'A.TXT', 2026, 9)                       # newer on B: Only newer leaves it
+     set_date(b, 'B.TXT', 2020)                          # older on B: Only newer replaces it
+     k = ktest.KPC(a, b=b); k.start()
+-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+-    B = lambda: fatcheck.read_files(bytes(k.pc.drives[1].img))
++    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
++    B = lambda: fatcheck.read_files(k.pc.drives[1].img)
+     def D(d):
+-        out = []; fatcheck.read_files(bytes(k.pc.drives[d].img), dirs=out); return out
++        out = []; fatcheck.read_files(k.pc.drives[d].img, dirs=out); return out
+     sound = lambda d: fatcheck.check(bytes(k.pc.drives[d].img))[0]
+     band = lambda: k.band()[0]
+     WORK = {n[len('A:\\WORK'):]: v for n, v in A().items() if n.startswith('A:\\WORK\\')}
+@@ -2544,7 +2544,7 @@ def t_mdisk():
+     k.select('NOTES.TXT'); k.key(CODE['R']); k.key('n2.txt', ktest.ENTER)
+     check('CODE-R on M:: renamed', 'M:\\N2.TXT' in md_files(k) and 'M:\\NOTES.TXT' not in md_files(k), (k.band(), sorted(md_files(k))))
+     k.select('N2.TXT'); k.key(CODE['M']); k.key(ktest.ENTER, ktest.LEFT, ktest.ENTER, '\\work', K_CODE_ENTER)
+-    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
++    A = lambda: fatcheck.read_files(k.pc.drives[0].img)
+     check('CODE-M from M: to A:\\WORK: there, gone from M:', A().get('A:\\WORK\\N2.TXT') == TEXT and 'M:\\N2.TXT' not in md_files(k),
+           (k.band(), sorted(md_files(k))))
+     k.key(ktest.ENTER)
+diff --git a/os/tests/test_hd.py b/os/tests/test_hd.py
+index cda7300..a41e084 100644
+--- a/os/tests/test_hd.py
++++ b/os/tests/test_hd.py
+@@ -161,7 +161,7 @@ def t_shell():
+     check('COPY A: to C:: the file as it is, in clusters %d-%d (across the 64K-sector boundary)' % (chain[0], chain[-1]),
+           files.get('\\LCMD.COM') == g and chain[0] <= 16344 <= chain[-1] and not probs, (chain[:3], probs))
+     sh.run('copy c:\\lcmd.com a:\\g2.com')
+-    a = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    a = fatcheck.read_files(k.pc.drives[0].img)
+     check('COPY C: to A:: the same bytes back', a.get('A:\\G2.COM') == g, len(a.get('A:\\G2.COM', b'')))
+     sh.run('copy a:\\lcmd.com c:\\far')
+     v = vol(ata); files, probs = v.files(f.gaps)
+diff --git a/os/tests/test_hdprobe.py b/os/tests/test_hdprobe.py
+index f2745ab..e1a54d6 100644
+--- a/os/tests/test_hdprobe.py
++++ b/os/tests/test_hdprobe.py
+@@ -38,7 +38,7 @@ def probe(name, ata):
+     if ata: del ata.cmds[:]                         # (the kernel's own look at it, booting)
+     t0 = k.pc.us
+     k.run_file('HDPROBE.COM', 120)
+-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    files = fatcheck.read_files(k.pc.drives[0].img)
+     rep = files.get('A:\\HDPROBE.TXT', b'').decode('latin-1')
+     print('   --- %s (%.1f s) ---' % (name, (k.pc.us - t0) / 1e6))
+     for l in rep.splitlines(): print('   ' + l)
+@@ -61,7 +61,7 @@ def probe_x(name, ata, stop_at=None):
+         k.pc.keys.append(0x1071)                        # q
+     back = lambda: 'Done.' in tty() and tty().rfind('>') > tty().rfind('Done.')
+     ktest.run_answering(k.pc, back, 240)
+-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    files = fatcheck.read_files(k.pc.drives[0].img)
+     rep = files.get('A:\\HDPROBEX.TXT', b'').decode('latin-1')
+     k.plain = files.get('A:\\HDPROBE.TXT')
+     sec = (k.pc.us - t0) / 1e6
+@@ -83,7 +83,7 @@ def t_floating():
+     img = mkimg.build(os.path.join(OUT, 'floating.img'), [os.path.join(GOS, 'src', 'LODE.SYS'), PROBE])
+     k = ktest.KPC(img, float_bus=True); k.start()
+     k.run_file('HDPROBE.COM', 120)
+-    rep = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\HDPROBE.TXT', b'').decode('latin-1')
++    rep = fatcheck.read_files(k.pc.drives[0].img).get('A:\\HDPROBE.TXT', b'').decode('latin-1')
+     for l in rep.splitlines(): print('   ' + l)
+     check('a floating bus: "no drive answers", nothing past the registers, the next steps',
+           'no drive answers' in rep and 'nothing drives the bus' in rep and '[4]' not in rep and
+diff --git a/os/tests/test_hdscan.py b/os/tests/test_hdscan.py
+index 03ec532..6cfe623 100644
+--- a/os/tests/test_hdscan.py
++++ b/os/tests/test_hdscan.py
+@@ -174,7 +174,7 @@ def scan(name, ata, sim=400, stop_at=None):
+         k.settle()
+     else:
+         k.run_file('HDSCAN.COM', sim)
+-    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    files = fatcheck.read_files(k.pc.drives[0].img)
+     rep = files.get('A:\\HDSCAN.TXT', b'').decode('latin-1')
+     print('   --- %s (%.1f s simulated, %.1f s here) ---' % (name, (k.pc.us - t0) / 1e6, time.time() - w0))
+     for l in rep.splitlines(): print('   ' + l)
+diff --git a/os/tests/test_kernel.py b/os/tests/test_kernel.py
+index de3acec..6385522 100644
+--- a/os/tests/test_kernel.py
++++ b/os/tests/test_kernel.py
+@@ -227,7 +227,7 @@ def t_capture():
+     from PIL import Image
+     pad = os.path.join(OUT, 'PAD.DAT')
+     k = ktest.KPC(image('cap.img', os.path.join(HERE, 'CAPTEST.COM'), os.path.join(GOS, 'src', 'LCMD.COM'))); k.start()
+-    files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
++    files = lambda: fatcheck.read_files(k.pc.drives[0].img)
+     beeps = lambda: ''.join(k.pc.tty).count('\x07')
+     calls21 = []                                # (AX) of the 3Eh, 40h and F0h calls made during a shot
+                                                 #  (only the capture's: the Executive is idle then)
+@@ -317,7 +317,7 @@ def t_capture():
+     k.pc.run_until(lambda: k.pc.mode() == 6, 5); k.settle()
+     k.pc.drives[0] = pcemu.Floppy(other); k.pc.drives[0].changed = False
+     shot()
+-    after = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    after = fatcheck.read_files(k.pc.drives[0].img)
+     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
+     check('a disk changed behind the kernel\'s back: its files kept, the picture on it',
+           all(after.get(n) == d for n, d in before.items()) and 'A:\\SCREEN01.BMP' in after and not probs and beeps() == 1,
+@@ -341,7 +341,7 @@ def t_print():
+     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'printer=ps.prn\r\n')
+     ps = os.path.join(GOS, 'drivers', 'PS.PRN')
+     k = ktest.KPC(image('prn.img', os.path.join(HERE, 'CAPTEST.COM'), ini, ps)); k.start()
+-    files = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
++    files = lambda: fatcheck.read_files(k.pc.drives[0].img)
+     beeps = lambda: ''.join(k.pc.tty).count('\x07')
+     def shot(sim_s=8.0):
+         k.pc.tty.clear(); k.pc.lpt.clear(); k.pc.prtsc(); k.settle(sim_s)
+@@ -408,8 +408,8 @@ def t_print():
+     check('... and the real driver still prints after them', shot2('A:\\HI.PRN') == (b'Hi', 1), shot2('A:\\HI.PRN'))
+     k2.wr('prn_path', b'\0')
+     out, _ = shot2('')
+-    check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(bytes(k2.pc.drives[0].img)),
+-          sorted(fatcheck.read_files(bytes(k2.pc.drives[0].img))))
++    check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(k2.pc.drives[0].img),
++          sorted(fatcheck.read_files(k2.pc.drives[0].img)))
+     check('still no file on the printing disk', not any('SCREEN' in n for n in files()), sorted(files()))
+     # Shift-PrtSc: the file all the same, the driver set
+     k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] | 2])); out = shot(); k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] & ~3]))
+@@ -453,7 +453,7 @@ def t_cache(ems=0):
+               md_info(k)[:2])
+     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
+     check('disk consistent after CACHETST' + tag, not probs and '\\CACHE_A.TST' not in files, '; '.join(probs) or sorted(files))
+-    log = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\CACHETST.TXT', b'').decode('latin-1')
++    log = fatcheck.read_files(k.pc.drives[0].img).get('A:\\CACHETST.TXT', b'').decode('latin-1')
+     check('CACHETST leaves its results in CACHETST.TXT' + tag, 'on Lodestone' in log and ' 0 errors' in log, log[-300:])
+     # the help window's save-under: the cache's memory, lent and given back;
+     # with the cache in EMS, a block of its own while it is open (the cache
+@@ -863,7 +863,7 @@ def t_mdisk():
+     check('a program run from M: (UPPER.COM)', 'HELLO THERE' in o, o)
+     o = sh.run('copy m:\\sub\\x.com a:\\back.com')
+     check('COPY M: -> A:', '1 File(s) copied' in o, o)
+-    fa = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    fa = fatcheck.read_files(k.pc.drives[0].img)
+     h, n, mi = md_info(k)
+     fm = fatcheck.read_files(mi, 'M')
+     gc = open(os.path.join(GOS, 'src', 'LCMD.COM'), 'rb').read()
+@@ -2111,7 +2111,7 @@ def t_nodisk():
+     k.start()
+     sh = Shell(k)
+     assert run_long(k, 'nodisk > out.txt')
+-    f = fatcheck.read_files(bytes(k.pc.drives[0].img))
++    f = fatcheck.read_files(k.pc.drives[0].img)
+     got = [' '.join(l.split()) for l in f.get('A:\\OUT.TXT', b'').decode('latin-1').replace('\r', '').split('\n') if l.startswith('fn ')]
+     check("NODISK.COM: all %d calls answer as GRiD MS-DOS 3.30's do (INT 24h, then 3)" % len(MS_NODISK), got == MS_NODISK,
+           [(w, g) for w, g in zip(MS_NODISK, got) if w != g] or (len(MS_NODISK), len(got)))
+@@ -2126,7 +2126,7 @@ def t_nodisk():
+     k.start()
+     sh = Shell(k)
+     assert run_long(k, 'nodiskig > out.txt')
+-    o = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\OUT.TXT', b'').decode('latin-1')
++    o = fatcheck.read_files(k.pc.drives[0].img).get('A:\\OUT.TXT', b'').decode('latin-1')
+     check('... a handler that answers Ignore at the mount: Fail all the same (open and FIND FIRST 3, free space FFFFh), '
+           'not B: mounted from what A: left', 'open B:X.TXT err 0003' in o and 'B: free FFFF' in o and 'find B:*.* err 0003' in o, o)
+     k.key('cls'); k.key(ktest.ENTER)
+@@ -2191,7 +2191,7 @@ def t_nodisk():
+         if ''.join(k.pc.tty)[n0:].count('Fail?') > seen: seen += 1; k.key('f', settle=False)
+     k.settle()
+     o = ''.join(k.pc.tty)[n0:]
+-    res = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\RES.TXT')
++    res = fatcheck.read_files(k.pc.drives[0].img).get('A:\\RES.TXT')
+     check('... NODISKMT found in A:\\BIN after the PATH\'s B:\\: two questions, the PATH search\'s and the program\'s own '
+           '(RES.TXT "03")', o.count('Fail?') == 2 and res == b'03', (o, res))
+     # lines read from a file, not the console (lcmd < cmds.txt): each asks again too
+@@ -2222,7 +2222,7 @@ def t_nodisk():
+     finally:
+         type(k.pc).int13 = orig
+     m = re.search(r'([\d,]+) bytes free', asks('dir b:'))
+-    files = fatcheck.read_files(bytes(k.pc.drives[1].img))
++    files = fatcheck.read_files(k.pc.drives[1].img)
+     check('... COPY to B: failing part way: F, then its clean-up asks again; R there: no BIG.DAT left, B:\'s free space as '
+           'before', o.count('Fail?') >= 2 and 'B:\\BIG.DAT' not in files and m and m.group(1) == free0,
+           (o, sorted(files), free0, m and m.group(1)))
+@@ -2464,7 +2464,7 @@ def t_cmdshare():
+                 bat('U.BAT', '@echo off', 'echo U is a batch file'))
+     k = ktest.KPC(img); k.start()
+     sh = Shell(k)
+-    fs = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
++    fs = lambda: fatcheck.read_files(k.pc.drives[0].img)
+     sh.run('echo hello > a.txt')
+     sh.run('nosuch > e1.txt'); sh.run('call go > e2.txt'); sh.run('path ;'); sh.run('path > e3.txt')
+     sh.run('copy a.txt sub > e4.txt'); sh.run('rd sub > e5.txt'); sh.run('dir sub > e6.txt')
+@@ -2990,7 +2990,7 @@ def t_cmdword():
+     p = 'A:\\' + '\\'.join(dirs) + '\\TAILPRG.COM'
+     assert len(p) == 70
+     sh.run(p.lower() + ' hello > t.txt')
+-    t = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\T.TXT')
++    t = fatcheck.read_files(k.pc.drives[0].img).get('A:\\T.TXT')
+     check('a program named by a path of 70 characters ("%s hello"): its tail is " hello" (%r)' % (p, t),
+           t is not None and t.strip() == b'hello', t)
+ 
+diff --git a/os/tests/test_mt.py b/os/tests/test_mt.py
+index 18b1c01..a55b7e0 100644
+--- a/os/tests/test_mt.py
++++ b/os/tests/test_mt.py
+@@ -4163,7 +4163,7 @@ def t_base():
+     k.key(ktest.ESC); k.run_for(0.5)
+     bq2 = k.band()
+     k.key(ktest.ESC); k.run_for(0.5)
+-    sub = A.fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\SUB\\OTHER.TXT')
++    sub = A.fatcheck.read_files(k.pc.drives[0].img).get('A:\\SUB\\OTHER.TXT')
+     check('Copy OTHER.TXT to SUB, Replace Ask: the Executive asks (%s; its destination %r); CODE-K meanwhile: the '
+           'calculator, its band not the question (%s), the destination kept (%r); ESC: the question back; ESC: SUB\'s '
+           'OTHER.TXT as it was' % (bq0[:1], dq0, bq1[:1], dq), bq0[:1] == ['OTHER.TXT is there already: Confirm to replace it']
+-- 
+2.43.0
+
