@@ -28,6 +28,7 @@ from gridlink.link import Link
 from gridlink.agent import Session
 from gridlink.config import Config
 from gridlink.router import Router
+from gridlink import glp
 
 
 def _find(env, *cands):
@@ -49,13 +50,7 @@ BLOCK_US = 4.0
 STUB = 0xF000                           # BIOS stubs: F000:n*8 = INT n; RETF 2
 R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
      'ax bx cx dx si di bp sp cs ds es ss ip flags al ah bl bh cl ch dl dh'.split()}
-GLYPH_NAMES = {0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x83: '\u2192', 0x84: '\u2713', 0x85: '\u2717',
-               0x86: '\u00b7', 0x87: '\u00b7', 0x88: '+', 0x89: '*', 0x8A: '\u2736', 0x8B: '\u273b', 0x8C: '\u273d',
-               0x8D: '\u2500', 0x8E: '\u2502', 0x8F: '\u25b8', 0x90: '\u00b0', 0x91: '\u00b5', 0x92: '\u03a9',
-               0x93: '\u00b1', 0x94: '\u00d7', 0x95: '\u2248', 0x96: '\u2264', 0x97: '\u2265', 0x7F: '\u2588',
-               0x98: '\u2514', 0x99: '\u2518', 0x9A: '\u250c', 0x9B: '\u2510', 0x9C: '\u251c', 0x9D: '\u2524',
-               0x9E: '\u252c', 0x9F: '\u2534', 0xA0: '\u253c'}
-GLYPH_NAMES.update({0xA1 + i: ch for i, ch in enumerate('▘▝▖▗▌▐▀▄▛▜▙▟▚▞')})   # (CLAUDE 1.8)
+GLYPH_NAMES = glp.GLYPH_TEXT
 
 
 class Chip(S.NEC7210):
@@ -433,8 +428,7 @@ class Machine:
 
     def dos_dt(s):
         n = s.now()
-        return ((n.hour << 11) | (n.minute << 5) | (n.second // 2),
-                ((n.year - 1980) << 9) | (n.month << 5) | n.day)
+        return glp.dos_time(n.hour, n.minute, n.second), glp.dos_date(n.year, n.month, n.day)
 
     def entries(s, d):
         out = []
@@ -1055,6 +1049,19 @@ class EmuHarness:
         s.link.frame_cap = frame_cap
         s.link.clock = lambda: s.m.us / 1e6        # (ring_check's times: the GRiD's, simulated)
         if hasattr(s.transport, 'proto'): s.transport.proto.clock = s.link.clock
+
+    def paint_claude_stack(s):
+        """CLAUDE.COM's stack below SP painted A5h, so claude_stack_used() can tell how deep it goes from here on
+        (the suites' check(): under a quarter of it)."""
+        lo, top = s.sym['stack_bottom'], s.sym['stack_top']
+        s.m.mu.mem_write(s.claude_psp * 16 + lo, b'\xa5' * (s.m.mu.reg_read(X.UC_X86_REG_SP) - 16 - lo))
+        s.stk = (lo, top)
+
+    def claude_stack_used(s):
+        """-> (bytes of CLAUDE.COM's stack used since paint_claude_stack, the stack's size)."""
+        lo, top = s.stk
+        b = bytes(s.m.mu.mem_read(s.claude_psp * 16 + lo, top - lo))
+        return top - lo - (len(b) - len(b.lstrip(b'\xa5'))), top - lo
 
     # Pi side plumbing
     def _to_pi(s, data, t):

@@ -70,6 +70,14 @@ GL_BL, GL_BR, GL_TL, GL_TR, GL_TEE_R, GL_TEE_L, GL_TEE_D, GL_TEE_U, GL_CROSSING 
 GL_LAST = 0xA0
 # the block elements a GF_QUAD GRiD draws as they are (an older one gets blanks and inverse blanks)
 GL_QUADS = {ch: 0xA1 + i for i, ch in enumerate('▘▝▖▗▌▐▀▄▛▜▙▟▚▞')}
+# what each of the GRiD's own glyphs looks like, as text (the console's view, the emulator tests' screen reader)
+GLYPH_TEXT = {0x7F: '\u2588', 0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x83: '\u2192', 0x84: '\u2713',
+              0x85: '\u2717', 0x86: '\u00b7', 0x87: '\u00b7', 0x88: '\u2722', 0x89: '\u2733', 0x8A: '\u2736',
+              0x8B: '\u273b', 0x8C: '\u273d', 0x8D: '\u2500', 0x8E: '\u2502', 0x8F: '\u25b8', 0x90: '\u00b0',
+              0x91: '\u00b5', 0x92: '\u2126', 0x93: '\u00b1', 0x94: '\u00d7', 0x95: '\u2248', 0x96: '\u2264',
+              0x97: '\u2265', 0x98: '\u2514', 0x99: '\u2518', 0x9A: '\u250c', 0x9B: '\u2510', 0x9C: '\u251c',
+              0x9D: '\u2524', 0x9E: '\u252c', 0x9F: '\u2534', 0xA0: '\u253c'}
+GLYPH_TEXT.update({g: ch for ch, g in GL_QUADS.items()})
 
 
 def _make_table():
@@ -207,6 +215,12 @@ class Reassembler:
         s.parts.setdefault(t, []).append(frame.payload)
         if frame.more: return None
         return t, b''.join(s.parts.pop(t))
+
+
+def dos_date(y, mo, d): return ((y - 1980) << 9) | (mo << 5) | d
+def dos_time(h, mi, sec=0): return (h << 11) | (mi << 5) | (sec // 2)
+def date_text(dt): return '%04d-%02d-%02d' % (1980 + (dt >> 9), (dt >> 5) & 15, dt & 31)    # (a DOS date as text)
+def time_text(tm): return '%02d:%02d' % (tm >> 11, (tm >> 5) & 63)                            # (a DOS time)
 
 
 def asciiz(s):
