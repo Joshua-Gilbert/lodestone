@@ -521,6 +521,27 @@ def test_plotter():
         r = body(c.call('grid_plotter', action='cancel'))
         assert 'cancelled' in r, r
         h.grid.plot_drain = 60
+        # X63: cancelled while the pen finishes is "cancelled", not "done"
+        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0      # a pen that never finishes
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        end = time.time() + 20
+        while 'the pen is finishing' not in body(c.call('grid_plotter', action='status')):
+            assert time.time() < end; h.run_for(0.2)
+        r = body(c.call('grid_plotter', action='cancel'))
+        assert ': cancelled' in r, r
+        h.grid.plot_drain = 60
+        # X63: a GRiD that doesn't answer the plot's polls holds the other tools for one short wait, not 31 s
+        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        h.grid.plot_mute = True
+        h.run_for(1.5)                                  # (a poll is out by now, unanswered)
+        t0 = time.time()
+        r = c.call('grid_info')
+        assert not r['isError'] and time.time() - t0 < mcp.PLOT_POLL_WAIT + 3, (r, time.time() - t0)
+        r = body(c.call('grid_plotter', action='cancel'))
+        assert ': cancelled' in r or 'cancelling' in r, r
+        h.grid.plot_mute = False; h.grid.plot_drain = 60
+        plot_to_end(h, c)
         # a Nano without serial poll (before v4): an error, nothing sent
         h.grid.plot_parts = []; h.grid.plot_nopoll = True
         r = c.call('grid_plotter', hpgl='IN;')
