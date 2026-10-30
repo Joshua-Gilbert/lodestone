@@ -4009,10 +4009,10 @@ def t_windows():
     ss = [e for e in sw if e['task'] == 0 and e['ss'] == k.useg and e['csp'] >= k.u16('run_base')]
     check('ESC, ESC: both closed (%d, then %d), the Executive back: its list, nothing loaded (run_active 0), the UI block '
           'as before; every switch meanwhile by the rules (%d, %d of them from a session\'s own stack, at the UI\'s idle HLTs: its loop\'s or the saver\'s'
-          ', or a move\'s or resize\'s wait, mwait: audit3 X32)' % (n10, mb('mw_n'), len(sw), len(ss)),
+          ', or a move\'s or resize\'s wait, mwait: audit3 X32; each of the three)' % (n10, mb('mw_n'), len(sw), len(ss)),
           n10 == 1 and mb('mw_n') == 0 and k.rd('run_active', 1) == b'\x00' and uip()[1] == free0[1]
           and A.has(k, 'Select a file and confirm') and not au.bad() and ss and not k.crashed
-          and all(e['ip'] in (Y['..@ui_idle'], Y['..@ui_sidle'], Y['..@ui_midle']) for e in ss), (n10, uip(), free0, au.bad()[:3], len(sw), len(ss), k.crashed, k.band(), sorted(set(hex(e['ip']) for e in ss if e['ip'] != Y['..@ui_idle']))))
+          and set(e['ip'] for e in ss) == {Y['..@ui_idle'], Y['..@ui_sidle'], Y['..@ui_midle']}, (n10, uip(), free0, au.bad()[:3], len(sw), len(ss), k.crashed, k.band(), sorted(set(hex(e['ip']) for e in ss if e['ip'] != Y['..@ui_idle']))))
     # started from a window while its question waits: the Executive's band, not a pointer into the starter's slot
     bkey(k, A.CODE['T'], t=0.5)
     bkey(k, A.CODE['D'], t=0.3)
