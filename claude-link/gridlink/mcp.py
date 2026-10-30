@@ -50,7 +50,9 @@ HPGL_TIMEOUT = 15000            # per-byte ms for a write to the plotter's Nano 
                                 #  it is sent only what its serial poll says fits)
 PLOT_WAIT = 0.5                 # s between polls while the Nano's buffer is full (the GRiD is free then)
 PLOT_MIN = 64                   # bytes worth a write (less is sent only as the drawing's end)
-PLOT_STALL = 180                # s with no progress before a background plot gives up
+PLOT_STALL = 200                # s with no progress before a background plot gives up: past the Nano's own
+                                #  STATUS_TIMEOUT (180 s), so a lost status reply falls back to timed pacing
+                                #  in the Nano and the plot goes on, not ends here at the same moment
 PICTURE_TOOLS = ('grid_plot', 'grid_image', 'grid_pick')     # no GRiD request: not one at a time
 
 GPIB_PROPS = {
