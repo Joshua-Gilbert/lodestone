@@ -4,7 +4,8 @@
 ; name, ok or the error.  test_kernel holds the answers GRiD MS-DOS
 ; 3.30 gives
 %include "PROBE.INC"
-; X15: a second dot (A.TXT, B.TXT, A.B\X.TXT and E.F empty are there)
+; the cases: fn, name 1, name 2, CX (test_kernel t_nul makes the files and
+; directories they name)
 tests   dw 3D00h, p0, 0, 0
         dw 3D00h, p1, 0, 0
         dw 3D00h, p2, 0, 0
