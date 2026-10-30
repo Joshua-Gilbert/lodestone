@@ -35,6 +35,13 @@ class Syms:
         s.ui_by_addr = by_addr[True]; s.ui_addrs = sorted(s.ui_by_addr)
     def __getitem__(s, n): return s.by_name[n]
     def is_ui(s, n): return s.sec.get(n) in s.UI
+    def lin(s, n, useg=None):
+        """n's linear address, as pcemu's block hook passes it: .text's at 0060h; a UI symbol's in the UI
+        segment useg; any other section (MT's, EMS's, the overlays') is loaded elsewhere: an error."""
+        sec = s.sec[n]
+        if sec == '.text': return 0x600 + s.by_name[n]
+        if sec in s.UI and useg is not None: return useg * 16 + s.by_name[n]
+        raise ValueError('%s: section %s, no fixed segment here' % (n, sec))
     def name(s, off, ui=False):
         addrs, d = (s.ui_addrs, s.ui_by_addr) if ui else (s.addrs, s.by_addr)
         i = bisect.bisect_right(addrs, off) - 1
@@ -74,8 +81,7 @@ class KPC:
         pc = s.pc
         for h in s.hooks: h(pc)
         if not s.trace: return
-        cs, ip = pc.r('cs'), pc.r('ip')
-        if cs == 0x60 and ip == s.Y['int21']:
+        if addr == s.Y.lin('int21') and pc.r('cs') == 0x60:     # (addr: the block's CS:IP, linear)
             ss, sp = pc.r('ss'), pc.r('sp')
             ret = (pc.u16(ss, sp + 2) * 16 + pc.u16(ss, sp)) & 0xFFFFF
             ax = pc.r('ax')
@@ -85,7 +91,7 @@ class KPC:
                 arg = pc.asciiz(pc.r('ds'), pc.r('dx')).decode('latin-1')
             s.pending[ret] = (ax, pc.r('bx'), pc.r('cx'), pc.r('dx'), arg)
             return
-        lin = (cs * 16 + ip) & 0xFFFFF
+        lin = addr & 0xFFFFF
         if lin in s.pending:
             ax, bx, cx, dx, arg = s.pending.pop(lin)
             fl = pc.r('flags')
@@ -153,6 +159,10 @@ class KPC:
     @property
     def useg(s): return s.pc.u16(0x60, s.Y['ui_seg'])
     def seg(s, name): return s.useg if s.Y.is_ui(name) else 0x60
+    def lin(s, name):
+        """name's linear address, to compare with what pcemu's block hook (pc.watch) is given, in place of
+        reading CS and IP every block: .text's or (the UI's segment now) the UI's; see Syms.lin."""
+        return s.Y.lin(name, s.useg if s.Y.is_ui(name) else None)
     def u16(s, name, off=0): return s.pc.u16(s.seg(name), s.Y[name] + off)
     def rd(s, name, n, off=0): return s.pc.rd(s.seg(name), s.Y[name] + off, n)
     def wr(s, name, data, off=0): s.pc.wr(s.seg(name), s.Y[name] + off, data)
