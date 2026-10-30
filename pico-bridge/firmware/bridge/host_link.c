@@ -261,6 +261,28 @@ static void handle(const uint8_t *p, size_t n, uint32_t now_ms) {
   }
 }
 
+// ---- core 1's liveness: bridge.ino pets the watchdog only while this says it moves --------------------------------
+// Core 1 bumps engine_alive at every pass of its main loop and while it waits offline, but it may wait on the bus
+// for as long as the 1520 is idle (spin on req_seq or wake_seq).  So once a second this pokes it with a request,
+// which brings it round its main loop (request() bumps wake_seq too: talk() waits on that one, and a talker
+// woken by req_seq alone would never move).  A core 1 that doesn't move for ENGINE_DEAD_MS has faulted or hangs
+// with the bus lines as it left them: the watchdog then resets the chip into the safe state.
+#define ENGINE_POKE_MS 1000u
+#define ENGINE_DEAD_MS 5000u
+static uint32_t engine_seen, engine_moved_ms, engine_poked_ms;
+static bool engine_watched, engine_said;
+
+bool link_engine_ok(uint32_t now_ms) {
+  uint32_t a = SH.engine_alive;
+  if (!engine_watched || a != engine_seen) {
+    engine_watched = true; engine_seen = a; engine_moved_ms = now_ms; engine_said = false;
+  }
+  if (now_ms - engine_poked_ms >= ENGINE_POKE_MS) { engine_poked_ms = now_ms; request(); }
+  if (now_ms - engine_moved_ms < ENGINE_DEAD_MS) return true;
+  if (!engine_said) { engine_said = true; send_log("core 1 has not moved for 5 s: resetting"); out_drain(); }
+  return false;
+}
+
 void link_init(void) {
   inlen = 0; in_overrun = false; host_session = false; out_r = out_w = 0;
   SH.want_online = 0; SH.addr = 10; SH.stb = 0; SH.rsv = 0;
