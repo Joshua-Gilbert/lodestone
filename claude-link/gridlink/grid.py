@@ -125,8 +125,7 @@ class Grid:
             attr, tm, dt, size = struct.unpack_from('<BHHI', data, i)
             name = data[i + 9:i + 22].split(b'\0')[0].decode('cp437', 'replace')
             out.append(dict(name=name, attr=attr, size=size, dir=bool(attr & 0x10),
-                            date='%04d-%02d-%02d' % (1980 + (dt >> 9), (dt >> 5) & 15, dt & 31),
-                            time='%02d:%02d' % (tm >> 11, (tm >> 5) & 63)))
+                            date=glp.date_text(dt), time=glp.time_text(tm)))
         return out
 
     def read(s, path, offset=0, length=READ_CHUNK):
@@ -195,9 +194,7 @@ class Grid:
             if e.code == 18: raise GridError(errtext(2), 2) from None    #  MS-DOS: not there)
             raise
         attr, tm, dt, size = struct.unpack_from('<BHHI', r)
-        return dict(attr=attr, size=size, dir=bool(attr & 0x10),
-                    date='%04d-%02d-%02d' % (1980 + (dt >> 9), (dt >> 5) & 15, dt & 31),
-                    time='%02d:%02d' % (tm >> 11, (tm >> 5) & 63))
+        return dict(attr=attr, size=size, dir=bool(attr & 0x10), date=glp.date_text(dt), time=glp.time_text(tm))
 
     def exists(s, path):
         try: s.stat(path); return True

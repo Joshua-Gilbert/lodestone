@@ -40,9 +40,6 @@ DEFAULTS = {
     "handler_options": {},
 }
 
-PICO_VID = 0x2E8A
-
-
 def load_config(path):
     cfg = dict(DEFAULTS)
     if path and os.path.exists(path):
@@ -58,13 +55,17 @@ def load_config(path):
 
 
 def candidate_ports(spec):
-    if spec != "auto":
+    """gridlink's find_port (pico.py): the udev rule's name, the bridge's own USB name, any Pico."""
+    if spec not in ("auto", "pico"):
         return [spec]
     ports = []
     if os.path.exists("/dev/gpib-bridge"):
         ports.append("/dev/gpib-bridge")
-    ports += sorted(glob.glob("/dev/serial/by-id/*Pico*"))
-    ports += [p.device for p in serial.tools.list_ports.comports() if p.vid == PICO_VID]
+    ports += sorted(glob.glob("/dev/serial/by-id/*GPIB-Pico2*")) + sorted(glob.glob("/dev/serial/by-id/*Pico*"))
+    try:
+        ports += [p.device for p in serial.tools.list_ports.comports() if p.vid == P.PICO_VID]
+    except Exception:                        # (a list_ports that can't enumerate: the globs still serve)
+        pass
     seen, out = set(), []
     for p in ports:
         r = os.path.realpath(p)
@@ -220,7 +221,7 @@ class Bridge(handlers.Context):
             if room <= 0:
                 return
             g, data, eoi = self.pending[0]
-            n = min(len(data), room, P.DATA_CHUNK)
+            n = min(len(data), room, P.TX_CHUNK)
             last = n == len(data)
             self.write(P.tx(g, data[:n], eoi and last))
             self.sent_total = (self.sent_total + n) & 0xFFFFFFFF
@@ -342,8 +343,8 @@ class Bridge(handlers.Context):
         elif name == "ONLINE":
             ev["address"] = d["b"]
             self.ren = bool(d["arg"])
-        level = logging.DEBUG if name in ("LISTEN", "UNLISTEN", "TALK", "UNTALK", "TX_DONE", "TALK_WAIT") \
-            else logging.INFO
+        level = logging.DEBUG if name in ("LISTEN", "UNLISTEN", "TALK", "UNTALK", "TX_DONE", "TALK_WAIT", "RX_END",
+                                          "TX_IN", "SRQ") else logging.INFO
         log.log(level, "event %s gen %d", name, g)
         self.broadcast(ev)
 

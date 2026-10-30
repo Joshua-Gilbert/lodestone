@@ -310,6 +310,11 @@ def test_old_claude_gets_246():
     assert glp.hello_rx(body) == 246
     assert glp.hello_rx(bytes(6) + b'rx=100000\n') == glp.GRID_RX_MAX
     assert glp.hello_rx(bytes(6) + b'rx=12\n') == 246
+    # (P3: req= and rd= through the same hello_int, each with its own floor and ceiling; the first line wins)
+    B = lambda t: bytes(6) + t
+    assert glp.hello_rx(B(b'rx=600\nrx=1000\n')) == 600 and glp.hello_rx(B(b'rx=x\n')) == 246
+    assert glp.hello_req(B(b'req=10\n')) == glp.GRID_REQ_DEFAULT and glp.hello_req(B(b'req=99999\n')) == 65000
+    assert glp.hello_req(B(b'req=8700\n')) == 8700 and glp.hello_rd(B(b'rd=-5\n')) == 0 and glp.hello_rd(B(b'')) == 0
 
 
 def sweep():

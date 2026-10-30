@@ -320,7 +320,45 @@ def find_port(spec):
     return out
 
 
-class PicoBridge:
+class PicoLink:
+    """What gridlink's Link asks of a Pico transport, answered by its PicoProto (`proto`): PicoBridge's, on a
+    serial port, and the emulator tests' PicoModelTransport."""
+    def answer(s, frame):
+        s.proto.answer(frame)
+
+    def hold(s, expect, frame, glp=False):
+        return s.proto.hold(expect, frame, glp)
+
+    def hold_used(s):
+        return s.proto.hold_used()
+
+    def ring(s):
+        s.proto.ring()
+
+    def unring(s):
+        s.proto.unring()
+
+    def set_quiet(s, on):
+        return s.proto.set_quiet(on)
+
+    @property
+    def can_quiet(s):
+        return s.proto.can_quiet
+
+    @property
+    def can_ring(s):
+        return s.proto.can_ring
+
+    @property
+    def sdcs(s):
+        return s.proto.sdcs
+
+    @property
+    def delivered_at(s):
+        return s.proto.tx_done_at
+
+
+class PicoBridge(PicoLink):
     """gridlink transport: frame_limit, open(), configure(), answer(frame), read()."""
     frame_limit = FRAME_MAX
     patched = True
@@ -428,40 +466,6 @@ class PicoBridge:
                 s.proto.ping()
                 if time.monotonic() - s.proto.last_pong > 6:
                     s.log('bridge: no PONG for 6 s: reopening'); s._drop()
-
-    def answer(s, frame):
-        s.proto.answer(frame)
-
-    def hold(s, expect, frame, glp=False):
-        return s.proto.hold(expect, frame, glp)
-
-    def hold_used(s):
-        return s.proto.hold_used()
-
-    def ring(s):
-        s.proto.ring()
-
-    def unring(s):
-        s.proto.unring()
-
-    def set_quiet(s, on):
-        return s.proto.set_quiet(on)
-
-    @property
-    def can_quiet(s):
-        return s.proto.can_quiet
-
-    @property
-    def can_ring(s):
-        return s.proto.can_ring
-
-    @property
-    def sdcs(s):
-        return s.proto.sdcs
-
-    @property
-    def delivered_at(s):
-        return s.proto.tx_done_at
 
     def poke(s):
         with s.cv: s.cv.notify_all()

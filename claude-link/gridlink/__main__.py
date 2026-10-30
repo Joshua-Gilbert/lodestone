@@ -14,10 +14,7 @@ from .link import AR488Serial, Link, serve
 from .pico import PicoBridge
 from .router import Router
 
-GLYPHS = {0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x83: '\u2192', 0x84: '\u2713', 0x85: '\u2717',
-          0x86: '\u00b7', 0x87: '\u00b7', 0x88: '\u2722', 0x89: '\u2733', 0x8A: '\u2736', 0x8B: '\u273b',
-          0x8C: '\u273d', 0x8D: '\u2500', 0x8E: '\u2502', 0x8F: '\u25b8', 0x90: '\u00b0', 0x91: '\u00b5',
-          0x92: '\u2126', 0x93: '\u00b1', 0x94: '\u00d7', 0x95: '\u2248', 0x96: '\u2264', 0x97: '\u2265'}
+GLYPHS = glp.GLYPH_TEXT
 
 
 def grid_text_to_ansi(data):

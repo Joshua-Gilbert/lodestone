@@ -8,7 +8,6 @@ import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from grid_emu import EmuHarness
 from gridlink import glp
-from unicorn.x86_const import UC_X86_REG_SP as SP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FAKE = '%s %s' % (sys.executable, os.path.join(HERE, 'fake_claude.py'))
@@ -28,9 +27,7 @@ def start(**kw):
         ('no Term', h.m.crash, h.log, h.screen())
     assert h.run_until(lambda: 'Welcome to Claude Code' in h.screen(), 20), h.screen()
     assert in_step(h), mismatch(h)
-    lo, top = h.sym['stack_bottom'], h.sym['stack_top']    # paint the stack below SP (check() reads it)
-    h.m.mu.mem_write(h.claude_psp * 16 + lo, b'\xa5' * (h.m.mu.reg_read(SP) - 16 - lo))
-    h.stk = (lo, top)
+    h.paint_claude_stack()                      # (check() reads how deep it went)
     return h
 
 
@@ -68,10 +65,8 @@ def check(h):
     assert not errs, errs
     assert h.var('n_fail', 2) == 0, ('link failures', h.var('n_fail', 2))
     if hasattr(h, 'stk'):                       # CLAUDE.COM's stack in Term: under a quarter of it used
-        lo, top = h.stk
-        b = h.m.mu.mem_read(h.claude_psp * 16 + lo, top - lo)
-        used = top - lo - (len(b) - len(bytes(b).lstrip(b'\xa5')))
-        assert used <= (top - lo) // 4, ('stack', used, top - lo)
+        used, size = h.claude_stack_used()
+        assert used <= size // 4, ('stack', used, size)
 
 
 def wait_screen(h, text, sim_s=20):
