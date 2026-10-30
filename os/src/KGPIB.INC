@@ -1,8 +1,13 @@
 ; =====================================================================
-;  KGPIB.INC - the GRIDGPIB 1.1 driver, built into the Lodestone kernel.
-;  Generated from TM5000 driver/gridgpib/GRIDGPIB.ASM (resident part) with
-;  every global name prefixed gp_; then edited by hand where marked LODESTONE.
-;  INT 60h, same API and 'GRIDGPIB' signature at entry+2, so TM5000G,
+;  KGPIB.INC - the GRIDGPIB driver 1.23: the one source of both the
+;  Lodestone kernel's built-in driver (INT 60h) and tools/GRIDGPIB.COM, the
+;  driver for GRiD MS-DOS.  GRIDGPIB.ASM includes this file with
+;  GPIB_STANDALONE defined; its differences are the islands under it
+;  (f_present's DH, function 0Dh, f_stats' DX, INT 0Dh hooked by irq_on,
+;  the data they use), and the kernel's bytes are the same without them.
+;  First made from TM5000 driver/gridgpib/GRIDGPIB.ASM 1.1's resident part,
+;  every global name prefixed gp_, then edited where marked LODESTONE.
+;  Same API and 'GRIDGPIB' signature at entry+2 as ever, so TM5000G,
 ;  CLAUDE.COM and GGTEST use it unchanged.
 ; =====================================================================
 gp_BASE    equ 02E1h
@@ -116,16 +121,25 @@ gp_done    equ     gp_handler.out
 
 gp_functab dw gp_f_present, gp_f_init, gp_f_write, gp_f_read, gp_f_query, gp_f_spoll
         dw gp_f_clear, gp_f_trigger, gp_f_remote, gp_f_local, gp_f_timeout, gp_f_srq
+%ifdef GPIB_STANDALONE
+        dw gp_f_stats, gp_f_unload, gp_f_irq    ; (0Dh: GRIDGPIB /U's)
+%else
         dw gp_f_stats, gp_handler.bad, gp_f_irq ; (0Dh, the standalone's unload: the
-gp_NFUNC   equ ($-gp_functab)/2         ;  bad-function answer, as it is built in)
+%endif                                  ;  bad-function answer, as it is built in)
+gp_NFUNC   equ ($-gp_functab)/2
 
 ; ---- function bodies: return AX (and CX/DX where documented) -------
 gp_f_present:
         mov     ax, 4747h
-        mov     cx, 0123h               ; LODESTONE: 1.2x = built into the kernel (1.21: IRQ, 0Eh;
-                                        ;  1.22: GPIBLOOP's fast loops; 1.23: the
-                                        ;  frame check, 02h AL=3, 03h AL=2)
+        mov     cx, 0123h               ; LODESTONE: 1.21: IRQ, 0Eh; 1.22: GPIBLOOP's
+                                        ;  fast loops; 1.23: the frame check, 02h
+                                        ;  AL=3, 03h AL=2 (GRIDGPIB.COM 1.23 too:
+                                        ;  it is this code; 1.20 before)
+%ifdef GPIB_STANDALONE
+        mov     dh, [gp_intno]          ; (the vector it was put on)
+%else
         mov     dh, 60h                 ; (the only vector it is put on)
+%endif
         mov     dl, gp_MYADDR
         jmp     gp_done
 
@@ -291,8 +305,44 @@ gp_f_irq:
 gp_f_stats:
         mov     ax, [gp_recov]
         mov     cx, [gp_ntmo]
+%ifdef GPIB_STANDALONE
+        mov     dx, gp_res_end          ; resident bytes, the PSP's too (org 100h)
+        jmp     gp_done
+
+; 0Dh (GRIDGPIB /U): -> CX = its PSP, DX:AX = the vector it found.  IRQ 5
+; off and INT 0Dh given back first; error 6 if INT 0Dh was taken after it
+gp_f_unload:
+        cli
+        cmp     byte [gp_hooked], 0     ; (never hooked: IRQ 5 never on)
+        je      .v
+        push    es
+        push    0
+        pop     es
+        cmp     word [es:gp_IRQVEC*4], gp_isr   ; INT 0Dh back as we found it
+        jne     .taken                  ;  if it is still ours (else the driver
+        mov     ax, cs                  ;  stays as it is, SRQ on IRQ 5)
+        cmp     [es:gp_IRQVEC*4+2], ax
+        jne     .taken
+        call    gp_irq_mask
+        mov     ax, [gp_oldirq]
+        mov     [es:gp_IRQVEC*4], ax
+        mov     ax, [gp_oldirq+2]
+        mov     [es:gp_IRQVEC*4+2], ax
+        mov     byte [gp_hooked], 0
+        pop     es
+.v:     sti
+        mov     cx, cs                  ; (.COM: CS = its PSP)
+        mov     ax, [gp_oldvec]
+        mov     dx, [gp_oldvec+2]
+        jmp     gp_done
+.taken: pop     es
+        sti
+        mov     ax, gp_E_BUSY
+        jmp     gp_fin_ax
+%else
         mov     dx, gp_res_end - gp_entry ; LODESTONE: size of the built-in driver
         jmp     gp_done
+%endif
 
 gp_cmdfail:
         call    gp_recover
@@ -1027,7 +1077,24 @@ gp_irq_on:
         jne     .x
         push    ax
         push    dx
+%ifdef GPIB_STANDALONE
+        push    es                      ; INT 0Dh made ours the first time
+        push    0
+        pop     es
         cli
+        cmp     byte [gp_hooked], 0
+        jne     .h
+        mov     byte [gp_hooked], 1
+        mov     ax, [es:gp_IRQVEC*4]
+        mov     [gp_oldirq], ax
+        mov     ax, [es:gp_IRQVEC*4+2]
+        mov     [gp_oldirq+2], ax
+        mov     word [es:gp_IRQVEC*4], gp_isr
+        mov     [es:gp_IRQVEC*4+2], cs
+.h:
+%else
+        cli
+%endif
         mov     byte [gp_irq], 5
         mov     byte [gp_imr2], gp_ISR2_SRQ
         mov     byte [gp_irqn], 0
@@ -1040,6 +1107,9 @@ gp_irq_on:
         and     al, ~gp_IRQBIT
         out     21h, al
         sti
+%ifdef GPIB_STANDALONE
+        pop     es
+%endif
         pop     dx
         pop     ax
 .x:     ret
@@ -1078,6 +1148,11 @@ gp_irqn    db 0                     ;  interrupts in tick gp_irqt
 gp_irqt    dw 0
 gp_nsrq    dw 0                     ;  +1 every interrupt (AH=0Eh's DX:CX)
 gp_oldirq  dw 0, 0                  ;  INT 0Dh as we found it
+%ifdef GPIB_STANDALONE
+gp_intno   db 0                     ; GRIDGPIB.COM: the vector it is on,
+gp_hooked  db 0                     ;  INT 0Dh ours (irq_on's first time)
+gp_oldvec  dw 0, 0                  ;  the vector as it found it
+%endif
 gp_recov   dw 0
 gp_ntmo    dw 0
 gp_tdata   dw gp_T_DEF

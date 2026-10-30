@@ -24,7 +24,7 @@ def start(mouse=False, delay=DELAY, **kw):
     sv = FakeSaver(delay); sv.attach(h.m)
     if mouse: h.m.mouse = {'presses': [], 'pos': (100, 50), 'btn': 0}
     h.boot()
-    assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), ('no Term', h.m.crash, h.log)
+    assert h.run_until(lambda: h.var('term') == 1 and h.var('connected') == 1, 10), ('no Term', h.m.crash, h.log)
     assert h.run_until(lambda: 'Welcome to Claude Code' in h.screen(), 20), h.screen()
     lo, top = h.sym['stack_bottom'], h.sym['stack_top']
     h.m.mu.mem_write(h.claude_psp * 16 + lo, b'\xa5' * (h.m.mu.reg_read(SP) - 16 - lo))
@@ -108,7 +108,7 @@ def test_saver_and_a_tool_call():
         th = threading.Thread(target=lambda: res.update(r=h.router.term.grid.get_info()))
         th.start()
         assert h.run_until(lambda: not th.is_alive(), 20), 'the call never came back'
-        assert 'CLAUDE 1.14' in res.get('r', {}).get('grid', ''), res
+        assert 'CLAUDE 1.15' in res.get('r', {}).get('grid', ''), res
         assert not sv.up(), 'still up'
         assert T.in_step(h), T.mismatch(h)
         T.check(h)

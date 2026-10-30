@@ -204,17 +204,29 @@ def t_popup():
         h.rw('borrowed', b'\xEE' * 12); h.rw('borrow_at', struct.pack('<H', 0x10 + 3 * 160 + 20))
         h.rw('borrow_on', b'\1')
         # the second time: Term's screen from the shadow at once, then the Pi again
-        seen = []
+        seen, hs = [], []
         b0, r0 = enc.stats['bytes'], enc.stats.get('resumes', 0)
+        ss, hx, w0 = 0xE0000 + h.rsym['screen_sum'], 0xE0000 + h.rsym['put_hex16'], h.m.watch
+        def w(a):
+            if a in (ss, hx) and len(hs) < 2 and (a == ss) == (not hs): hs.append(h.m.us)
+            w0(a)
+        h.m.watch = w
         h.press(HOT)
         h.wait(lambda: h.up() and ('You said: hello' in h.screen() and seen.append(h.rv('connected')) is None), 10)
         check('the second CODE-\\: Term\'s screen drawn from the console\'s shadow before the Pi answers',
               seen and seen[0] == 0, (seen, h.screen()))
         check('... then the Pi\'s, in step', h.wait(lambda: h.rv('connected'), 10) and in_step(h), h.screen())
+        h.m.watch = w0
         n = enc.stats['bytes'] - b0
-        check('... the Pi went on from the console\'s kept screen (its HELLO\'s CRC): %d bytes of CELLS, '
+        check('... the Pi went on from the console\'s kept screen (its HELLO\'s sum): %d bytes of CELLS, '
               'not the whole screen again (%d so far)' % (n, full),
               enc.stats.get('resumes', 0) == r0 + 1 and n < full // 4, (n, full, enc.stats))
+        st = h.link.stats
+        hus = hs[1] - hs[0] if len(hs) == 2 else None
+        check('... every frame from the console with the Fletcher sum, its HELLOs too (audit3 R56: %d), and its '
+              'screen\'s sum %s us by the emulator\'s blocks (the CRC-16: 15.4 ms)'
+              % (st['rx_frames'], hus), st['rx_frames'] > 10 and st['rx_fletcher'] == st['rx_frames']
+              and hus is not None and hus < 5000, (dict(st), hs))
         h.term_type('big'); h.press(ENTER)
         check('... the same session goes on (a 60-line answer, scrolled)', h.has('line 59') and in_step(h), h.screen())
         check('... the same claude on the Pi', h.router.term.child.pid == pid)
@@ -1626,8 +1638,8 @@ def t_bg_mt():
     """M4 with Lodestone's tasks (MULTITASK=1): the background over the front task's EMSUSE; over COPY CON
     (MT's key wait) files are F7h there as in the pop-up, GPIB works."""
     mt = open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read()
-    h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more={'A:\\BIG.TXT': BIG, 'A:\\LODEMT.SYS': mt},
-            irq_exact=True); h.boot()           # (ticks on time: the read then lasts 40 ticks, T5c)
+    h = Res(ini=b'MULTITASK=1\r\n', pico='quiet', more={'A:\\BIG.TXT': BIG, 'A:\\LODEMT.SYS': mt})
+    h.boot()                                    # (ticks on time, irq_exact: the read then lasts 40 ticks, T5c)
     try:
         h.cmd('claude /r')
         h.cmd('emsuse')

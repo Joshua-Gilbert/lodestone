@@ -61,10 +61,11 @@ class KernelHarness(G.EmuHarness):
     """term: a command for Claude Code (a stand-in, in a pty): gridlink's
     router then, Term or chat as the GRiD's HELLO asks.  ems_pages: the
     1520's expanded memory (resident Claude needs it).  irq_exact: pcemu's
-    (an IRQ held under CLI taken as soon as IF is set again)."""
+    (an IRQ held under CLI taken as soon as IF is set again, as the 1520's
+    PIC gives it; on by default, as ktest.KPC's)."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y',
                  claude_com=G.CLAUDE_COM, baud=115200, term=None, ems_pages=0, bridge='ar488', frame_cap=None,
-                 irq_exact=False):
+                 irq_exact=True):
         s.tmp = tempfile.mkdtemp(prefix='gridk-')
         disk = [LODE_SYS, LCMD_COM, 'CLAUDE.COM=' + claude_com, 'TESTKEY.COM=' + G.TESTKEY_COM]
         for k, v in (files or {}).items():
@@ -107,6 +108,7 @@ class KernelHarness(G.EmuHarness):
             s.session.attach(s.link)
             threading.Thread(target=s.session.run, daemon=True).start()
         s.link.clock = lambda: s.m.us / 1e6        # (ring_check's times: the GRiD's, simulated)
+        s.link.frame_cap = frame_cap
         if hasattr(s.transport, 'proto'): s.transport.proto.clock = s.link.clock
         s.sym = G.symbols(os.path.splitext(claude_com)[0] + '.MAP')
         s.font = G.Font(open(claude_com, 'rb').read(), s.sym['font'] - 0x100)

@@ -2985,6 +2985,23 @@ def t_gpib_tools():
     check('GRIDGPIB /U while another program has INT 0Dh: refused, and the driver left as it was (IRQ 5 still unmasked)',
           'SRQ on IRQ 5' in o1 and seg not in (0, 0x60) and not m1 & 0x20 and 'took INT 0Dh after GRIDGPIB' in o2
           and seg2 == seg and not m2 & 0x20, (o1, o2, hex(m1), hex(m2)))
+    # its own islands in KGPIB.INC: 00h's DH (its vector), 0Ch's DX (bytes
+    # resident, the PSP's too), /U giving INT 0Dh back; 1.23, the kernel's code
+    gv = os.path.join(OUT, 'GGVER.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', gv, os.path.join(HERE, 'GGVER.ASM')], check=True)
+    k = ktest.KPC(image('ggv.img', LCMD, gg, gv), chip=sim7210.NEC7210(sim7210.bus())); k.start()
+    k.code_p()
+    i0d, i61 = k.pc.rd(0, 0x0D * 4, 4), k.pc.rd(0, 0x61 * 4, 4)
+    k.pc.wr(0, 0x60 * 4, bytes(4))
+    o1 = run('gridgpib /i:61')
+    o2 = run('ggver')
+    o3 = run('gridgpib /u')
+    res = re.search(r'(\d+) bytes resid', o1)                  # (the line wraps)
+    m = re.search(r'GGVER v=61 ax=4747 cx=(\w+) dx=(\w+) st=(\w+)', o2)
+    check('GRIDGPIB /I:61: AH=00h answers 1.23 (0123h: the kernel\'s frame check is in it) on INT 61h (DH), address 21; '
+          'AH=0Ch the bytes resident it said; /U then gives INT 61h and INT 0Dh back',
+          res and m and m.groups() == ('0123', '6115', '%04X' % int(res.group(1))) and 'Unloaded' in o3
+          and k.pc.rd(0, 0x61 * 4, 4) == i61 and k.pc.rd(0, 0x0D * 4, 4) == i0d, (o1, o2, o3))
     import sim7210 as S
     class Echo(S.Device):
         """the Pico bridge's thrutest: each 4096-byte message sent back; gone

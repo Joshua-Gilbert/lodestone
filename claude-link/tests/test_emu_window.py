@@ -23,7 +23,7 @@ def start(window=True, front=False, args='/A:7', mouse=False, connect=True, **kw
     if mouse: h.m.mouse = {'presses': []}
     h.boot()
     if connect:
-        assert h.run_until(lambda: h.var('term') and h.var('connected'), 10), (h.m.crash, h.log, h.mt.log)
+        assert h.run_until(lambda: h.var('term') == 1 and h.var('connected') == 1, 10), (h.m.crash, h.log, h.mt.log)
     lo, top = h.sym['stack_bottom'], h.sym['stack_top']    # (check() reads the stack's paint)
     h.m.mu.mem_write(h.claude_psp * 16 + lo, b'\xa5' * (h.m.mu.reg_read(SP) - 16 - lo))
     h.stk = (lo, top)

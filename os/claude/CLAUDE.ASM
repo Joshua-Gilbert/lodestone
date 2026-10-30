@@ -72,6 +72,8 @@ BOXW     equ 70
 %define GLYPH_END 0AFh
 %define KSUM                     ; (TERMLINK.INC: the driver's frame check, 1.23)
 %define LINK_CHAIN               ; (TERMLINK.INC: the next frame straight after an answer)
+%define TX_INPL                  ; (TERMLINK.INC: a message's later fragments sent where they lie,
+%define RX_INPL                  ;  a request's later ones read straight into reqbuf: audit3 P7)
 %define KBD_EVERY 6000           ; (TERMKEYS.INC: keys every ~2.5 ms while the link is busy; not in RCON)
 %define TERM_WIN                 ; (TERMCELL.INC, TERMKEYS.INC: a terminal window, 1.13; not in RCON)
 %include "MTAPI.INC"             ; (MT_PUB, MT_WAKE, MT_LIST)
@@ -150,7 +152,9 @@ main:   call    get_ticks
         call    maybe_idle
         jmp     main
 
-leave:
+leave:  mov     dx, msg_bye
+leave_dx:                               ; (DX: what it says)
+        push    dx
 %ifdef TERM_WIN
         cmp     byte [wmode], 0         ; (withdrawn: its window shows the
         je      .w                      ;  task's pages till it ends)
@@ -170,7 +174,7 @@ leave:
 %ifdef PROFILE
         call    prof_end
 %endif
-        mov     dx, msg_bye
+        pop     dx
         mov     ah, 9
         int     21h
         mov     ax, 4C00h
@@ -190,16 +194,65 @@ gg_call:
         int     60h                     ; (patched)
         ret
 
-snap_alloc:                             ; CF if no memory
-        cmp     word [snapseg], 0
+; The snapshot's block, CF if no memory: one 48h where it fits (SCREEN, and
+; a RUN's at its end, its program gone); snap_top at the top (a RUN whose
+; key script has {SNAP}: its program gets all below, O17)
+snap_alloc:
+        mov     cx, alloc_fit
+        jmp     short snap_a
+snap_top:
+        mov     cx, alloc_top
+snap_a: cmp     word [snapseg], 0
         jne     .ok
         mov     bx, (SNAPMAX + 15) / 16
-        mov     ah, 48h
-        int     21h
+        call    cx
         jc      .x
         mov     [snapseg], ax
 .ok:    clc
 .x:     ret
+
+alloc_fit:                              ; BX paragraphs where they fit (48h) -> AX, CF
+        push    es
+        mov     dx, bx
+        jmp     short alloc_top.p
+
+; BX paragraphs at the top of the largest free block (as res_load's stub),
+; so that a RUN's program gets all below, our tail too (O17) -> AX, CF.
+; (A lower hole that fits takes them instead: as good)
+alloc_top:
+        push    es
+        mov     dx, bx
+        mov     bx, 0FFFFh
+        mov     ah, 48h
+        int     21h                     ; (BX: the largest)
+        mov     ah, 48h
+        int     21h                     ; all of it
+        jc      .p
+        mov     es, ax
+        sub     bx, dx
+        jbe     .f                      ; (no room to cut it: as it comes)
+        dec     bx
+        jz      .f
+        mov     ah, 4Ah                 ; cut: DX paragraphs and an MCB free at
+        int     21h                     ;  its top
+        mov     bx, dx
+        mov     ah, 48h                 ; (the first free block that fits)
+        int     21h
+        pushf
+        push    ax
+        mov     ah, 49h                 ; the cut block back
+        int     21h
+        pop     ax
+        popf
+        pop     es
+        ret
+.f:     mov     ah, 49h
+        int     21h
+.p:     mov     bx, dx
+        mov     ah, 48h
+        int     21h
+        pop     es
+        ret
 
 snap_free:
         cmp     word [snapseg], 0
@@ -2119,12 +2172,10 @@ pf_hello:
         jb      .f
         mov     bl, [si+1]
         mov     [pi_hf], bl                     ; (HF_SAVER: sv_check)
-        test    bl, HF_FCS                      ; the Pi takes the Fletcher sum:
-        jz      .crc                            ;  every frame from now on
-        mov     al, [ksum]                      ; (2: the driver keeps it, TERMLINK)
-        inc     ax
-        mov     [use_fl], al
-.crc:   and     bl, HF_TERM
+        mov     al, [ksum]                      ; the Fletcher sum, as every gridlink
+        inc     ax                              ;  that reads our HELLO says (HF_FCS):
+        mov     [use_fl], al                    ;  2, the driver keeps it (TERMLINK)
+        and     bl, HF_TERM
 .f:     mov     byte [connected], 1
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
 %ifdef TERM_WIN
@@ -2217,7 +2268,8 @@ pf_ready:
         call    send_text
 .x:     ret
 
-; REQUEST / ASK: collect the frames of one message in reqbuf
+; REQUEST / ASK: collect the frames of one message in reqbuf (a later
+; fragment may be there already: link_read's P7)
 pf_reasm:
         cmp     byte [req_ready], 0     ; still holding an unrun request
         jne     .x
@@ -2228,6 +2280,8 @@ pf_reasm:
         mov     [rq_type], al
         mov     word [rq_len], 0
         mov     byte [rq_over], 0
+        mov     word [rq_at], 0         ; (P7: the old message's 6 bytes stay
+                                        ;  gone: the copy may go over them)
 .add:   mov     ax, [rq_len]
         add     ax, cx
         cmp     ax, REQMAX
@@ -2235,6 +2289,8 @@ pf_reasm:
         mov     di, reqbuf
         add     di, [rq_len]
         mov     [rq_len], ax
+        cmp     si, di                  ; (read in place: no copy)
+        je      .more
         PROF    5
         shr     cx, 1
         rep     movsw
@@ -2251,12 +2307,14 @@ pf_reasm:
         je      .ask
         mov     byte [req_ready], 1     ; the main loop runs it
         ret
-.ask:   call    open_ask
+.ask:   call    rq_back                 ; (P7: its last fragment's 6 bytes back
+        call    open_ask                ;  before the copy)
 .x:     ret
 
 ; =====================================================================
 ;  requests from Claude
 ; =====================================================================
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even)
 req_service:
         cmp     byte [req_ready], 0
         je      .x
@@ -2266,8 +2324,9 @@ req_service:
         jae     .x
         mov     byte [req_ready], 0
         call    exec_request
-.x:     ret
-
+        times   ($ - $$) & 1 db 90h       ; (hot: what follows even; a request's
+.x:     ret                             ;  NOP)
+        times   ($ - $$) & 1 db 90h       ; (exec_request.l even)
 exec_request:
         mov     al, [reqbuf]
         mov     [rq_id], al
@@ -2494,6 +2553,11 @@ op_run: mov     si, reqbuf+2
         mov     [run_flags], al
         lodsw
         lodsw
+        mov     bx, ax                  ; the script and the command's NUL in
+        add     bx, 8                   ;  the request (F0h: a longer length
+        jc      .big                    ;  would have do_exec cut our block
+        cmp     bx, [rq_len]            ;  short, O17)
+        ja      .big
         mov     [ks_len], ax
         mov     [ks_ptr], si
         add     si, ax
@@ -2501,13 +2565,13 @@ op_run: mov     si, reqbuf+2
         mov     word [ks_pos], 0
         mov     byte [ks_wait], 0
         mov     byte [snap_taken], 0
-        test    byte [run_flags], 2
-        jnz     .sb
-        call    script_has_snap
-        jnc     .ns
-.sb:    call    snap_alloc
+        call    script_has_snap         ; ({SNAP} in the script: its block now;
+        jnc     .ns                     ;  one at the end alone after the program)
+        call    snap_top
         jnc     .ns
         mov     al, 0F1h
+        jmp     reply0
+.big:   mov     al, 0F0h
         jmp     reply0
 .ns:    call    build_exec
         jnc     .go
@@ -2528,7 +2592,8 @@ op_run: mov     si, reqbuf+2
         cmp     word [ks_len], 0
         je      .nu
         call    unhook16
-.nu:    call    vec_ours
+.nu:    call    run_back                ; (O17: the link's buffers back)
+        call    vec_ours
         popf
         jc      .fail
         mov     ah, 4Dh
@@ -2539,6 +2604,8 @@ op_run: mov     si, reqbuf+2
         jz      .back
         cmp     byte [snap_taken], 0    ; (the key script's {SNAP} wins)
         jne     .back
+        call    snap_alloc              ; (no memory now: no snapshot, the RUN
+        jc      .back                   ;  answered all the same)
         call    take_snapshot
 .back:  call    video_on
         push    es
@@ -2788,6 +2855,12 @@ make_outname:
         jmp     copyz
 
 do_exec:
+        mov     bx, [ks_ptr]            ; O17: our block cut back to the key
+        add     bx, [ks_len]            ;  script's end (reqbuf's start): the
+        add     bx, 15                  ;  link's buffers are the program's
+        shr     bx, 4                   ;  (run_back takes them back).  ES = CS
+        mov     ah, 4Ah
+        int     21h
         mov     [exec_ss], ss
         mov     [exec_sp], sp
         mov     dx, exec_path
@@ -2804,6 +2877,77 @@ do_exec:
         pop     es
         cld
         ret
+
+; After a RUN's program, our block whole again (O17).  That fails if the
+; program left something resident where the link's buffers were (or, under
+; MT, another task took that memory): then CLAUDE moves, whole, to a block
+; of its own (re-allocated elsewhere: the RUN answered, the link and every
+; request as before), and its PSP's block keeps the PSP alone.  No memory
+; for that either: CLAUDE ends, as CODE-Q does.  INT 16h is ours no more,
+; INT 23h and 24h are DOS's (vec_ours after)
+run_back:
+        mov     bx, bss_end + 15
+        shr     bx, 4
+        push    bx
+        mov     ah, 4Ah
+        int     21h
+        pop     bx
+        jnc     .x
+        mov     ah, 48h
+        int     21h
+        jc      .none
+        mov     es, ax
+        xor     si, si
+        xor     di, di
+        mov     cx, [ks_ptr]            ; (all that was kept: PSP, code, data,
+        add     cx, [ks_len]            ;  the stack, the key script)
+        inc     cx
+        shr     cx, 1
+        rep     movsw
+        mov     dx, cs                  ; our segment, where we keep it
+        mov     [es:epb + 4], ax
+        mov     [es:epb + 8], ax
+        mov     [es:epb + 12], ax
+%ifdef TERM_WIN
+        mov     [es:wdesc + PB_FONT + 2], ax
+        mov     [es:wdesc + PB_XLAT + 2], ax
+%endif
+        mov     si, txq + 2             ; (messages queued from here)
+        mov     cx, TXQN
+.q:     cmp     [es:si], dx
+        jne     .n
+        mov     [es:si], ax
+.n:     add     si, 10
+        loop    .q
+        cli
+        mov     ss, ax                  ; (SP as it was)
+        sti
+        push    ax
+        push    word .there
+        retf
+.there: mov     ds, ax
+%ifdef TERM_WIN
+        cmp     byte [wmode], 0         ; (MT: the window's descriptor where
+        je      .o                      ;  it is now, before the old block's
+        push    dx                      ;  font and table go)
+        call    win_pub
+        pop     dx
+.o:
+%endif
+        mov     es, dx                  ; the old block: the PSP alone if it
+        mov     ah, 62h                 ;  is the PSP's, else (a move before
+        int     21h                     ;  this one's) freed
+        mov     ah, 49h
+        cmp     bx, dx
+        jne     .f
+        mov     bx, 10h
+        mov     ah, 4Ah
+.f:     int     21h
+        push    cs
+        pop     es
+.x:     ret
+.none:  mov     dx, msg_nomem
+        jmp     leave_dx
 
 hook16: mov     ax, 3516h
         int     21h
@@ -3171,6 +3315,7 @@ nano        db 7                        ; the bridge's GPIB address (/A:nn), and
 app_want    db 0                        ;  'T', 'W' or 'C': data, not BSS, as CLAUDE
                                         ;  /R reads them where BSS goes
 msg_bye     db 'Claude for GRiD ended.', 13, 10, '$'
+msg_nomem   db 'Not enough memory for CLAUDE.', 13, 10, '$'  ; (and run_back's)
 st_connected db 'Connected to the Pi', 0
 st_lost     db 'Link to the Pi lost, reconnecting', 82h, 0
 st_noans    db 'No answer from the bridge at GPIB address ', 0
@@ -3210,7 +3355,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.14', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.15', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
@@ -3275,6 +3420,10 @@ t437        db '*', 0C0h, '.', '>', 0FBh, 'x', 0FAh                 ; 80h-86h
         EVEN    cell.a, cell.b, cell.c, cell.d, draw_line.l, draw_strn.l, blank_row.l
         EVEN    prow78.l, prow78.c, prow78.d, line_off, line_off.a, put_str.l
         EVEN    conv_putc, conv_putc.a, conv_putc.b, conv_putc.c, conv_text.n
+        EVEN    link_idle.t, link_idle.msg, link_read.ok, lw_go.r       ; (TERMLINK's, ours alone:
+        EVEN    frame_next.cp, lw_inpl.go, tx_swap.l, link_read.in      ;  P7's code there, and
+        EVEN    link_read.r, rq_back                                    ;  RCON has none)
+        EVEN    req_service, req_service.x, exec_request.l
 %endif
 
             align 16
@@ -3328,8 +3477,7 @@ boot:   call    res_args                ; CLAUDE /R, /U: before BSS is touched
         jnc     .mem
         mov     dx, msg_nomem
         jmp     fatal
-.mem:   call    crc_init
-        call    sys_probe
+.mem:   call    sys_probe
         mov     si, s_title0
         mov     di, title_text
         call    copyz
@@ -3495,15 +3643,11 @@ find_gpib:
         ret
 
 alloc_bufs:
-        mov     bx, (NLINES * LINEB + 15) / 16
-        mov     ah, 48h
-        int     21h
-        jc      .x
+        mov     bx, (NLINES * LINEB + 15) / 16 + (IOSIZE + 15) / 16
+        call    alloc_top               ; (the conversation, the replies: one
+        jc      .x                      ;  block, at the top: O17)
         mov     [convseg], ax
-        mov     bx, (IOSIZE + 15) / 16
-        mov     ah, 48h
-        int     21h
-        jc      .x
+        add     ax, (NLINES * LINEB + 15) / 16
         mov     [ioseg], ax
         push    es
         mov     es, [convseg]
@@ -3570,7 +3714,6 @@ vec_save:
 sig_gg      db 'GRIDGPIB'
 s_emm       db 'EMMXXXX0'
 msg_nogg    db 'CLAUDE needs GRIDGPIB loaded first (run GRIDGPIB, then CLAUDE).', 13, 10, '$'
-msg_nomem   db 'Not enough memory for CLAUDE.', 13, 10, '$'
 %ifdef TERM_WIN
 msg_dup     db 'Claude is running already, in another task.', 13, 10, '$'
 %endif
@@ -3625,7 +3768,7 @@ res_load:
         int     21h
         mov     [res_old16], bx
         mov     [res_old16 + 2], es
-        mov     sp, stack_top           ; (inside us, clear of rcon_img)
+        mov     sp, bss_end             ; (inside us, clear of rcon_img)
         push    cs
         pop     es
         mov     bx, bss_end + 15        ; us: no more than a run needs, so the
@@ -4336,14 +4479,13 @@ irq_ptr     resw 2                      ; the GPIB driver's SRQ count (AH=0Eh), 
 srq_seen    resw 1                      ;  as it was at the last look
 txq         resb TXQN * 10
 txlen       resw 1
-txframe     resb TXMAX + 8
-nakframe    resb 8
+tx_at       resw 1                      ; P7: a fragment sent where it lies, from
+tx_seg      resw 1                      ;  its header's place (les: in this order)
+rq_at       resw 1                      ; P7: where an answer's header went in
+rq_save     resb 6                      ;  reqbuf (0: none), and what was there
 rxn         resw 1
-rxbuf       resb RXMAX + 1
 pf_kind     resb 1
 rq_over     resb 1
-            alignb 2                    ; (frames are copied in with REP MOVSW: an odd
-reqbuf      resb REQMAX + 4             ;  destination costs the 286 a bus cycle a word)
 ; our HELLO, from build_hello till frame_next copies it to txframe (one
 ; fragment); a RUN's buffers under it, from build_exec till do_exec is back
 ; (op_run: all one call of req_service's, and only connected, so the HELLO
@@ -4357,7 +4499,6 @@ exec_ss     resw 1
 exec_sp     resw 1
             resb HELLO_MAX - ($ - hellobuf)
 evans       resb 4
-crctab      resw 256
 ; Term
 term        resb 1                      ; 1: the GRiD is Claude Code's terminal
 t_active    resw 1                      ; tick of the last key or screen change
@@ -4451,4 +4592,14 @@ stack_bottom:                           ; the stack: claude-link's emulator test
                                         ;  BIOS, interrupts and drivers.  test_emu
                                         ;  fails a run that uses over a quarter
 stack_top:
+; The link's buffers last (O17): while a RUN's program runs, our block is
+; cut back to the key script's end (reqbuf's start), and the program gets
+; the rest (do_exec, run_back).  Nothing else may go here
+reqbuf      resb REQMAX + 4             ; (each even: frames go in and out with
+rxbuf       resb RXMAX + 1              ;  REP MOVSW, and an odd address costs
+txframe     resb TXMAX + 8              ;  the 286 a bus cycle a word)
+nakframe    resb 8
 bss_end:
+        times   -((reqbuf - inbuf) & 1 || (rxbuf - inbuf) & 1 || (txframe - inbuf) & 1) resb 1
+        times   -(bss_end - inbuf - 512 < rcon_end - bss + 1024) resb 1  ; (CLAUDE /R's stack, from
+                                        ;  bss_end: over the file's end, the stub after rcon_end)

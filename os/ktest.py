@@ -58,8 +58,10 @@ def font():
 
 
 class KPC:
-    def __init__(s, img, b=None, chip=None, trace=False, **kw):
-        s.pc = pcemu.PC(img, b, chip, **kw)
+    def __init__(s, img, b=None, chip=None, trace=False, irq_exact=True, **kw):
+        # irq_exact: an IRQ held under CLI is taken as soon as IF is set again, as the 1520's PIC
+        # gives it (pcemu's own default, for other guests, is the older way: only at a run's start)
+        s.pc = pcemu.PC(img, b, chip, irq_exact=irq_exact, **kw)
         s.Y = Syms()
         s.dos = []          # (function, args, result) of traced INT 21h calls
         s.pending = {}

@@ -84,7 +84,7 @@ Same format both ways:
 | 3 | 1 | ack: seq of the last good frame received from the other side |
 | 4 | 2 | len: payload bytes, little-endian |
 | 6 | len | payload |
-| 6+len | 2 | the check over bytes 1 .. 5+len, little-endian: CRC-16/CCITT-FALSE (poly 1021h, init FFFFh, no reflection), or the Fletcher sum once HELLO has agreed to it (below) |
+| 6+len | 2 | the check over bytes 1 .. 5+len, little-endian: the Fletcher sum (below), or, from an older CLAUDE, CRC-16/CCITT-FALSE (poly 1021h, init FFFFh, no reflection) |
 
 * Pi → GRiD frames are at most 127 bytes in total with stock AR488 (payload
   ≤ 119) and 254 with the patched firmware (payload ≤ 246), one byte under
@@ -143,11 +143,19 @@ later the Pi takes the GRiD to be gone, until its next frame.
 * **The Fletcher sum** (CLAUDE 1.3): A = 1 plus the bytes, B = the sum of
   the A after each byte, both mod 256; the check is B × 256 + A (A first on
   the wire). It costs the 286 about 8.5 clocks a byte against the CRC's 34.
-  The GRiD offers it in its HELLO (flags bit 2); the Pi's HELLO answer takes
-  it (flags bit 2), and both sides use it for every frame after. HELLO and
-  its answer always carry the CRC, as does everything after a link reset.
-  The Pi accepts either check on any frame and answers each frame with the
-  check that frame came with.
+  Since audit3 R56 (2026-10-29) CLAUDE.COM and resident Claude's console
+  check every frame with it, HELLO and its answer too, and have no CRC at
+  all: **CLAUDE 1.15 / console 1.13 need gridlink from 2026-10-22
+  (8db568c, PR #60) on**, which
+  takes either check on any frame; an older one never answers their HELLO.
+  Before R56, from CLAUDE 1.3, the GRiD offered the sum in its HELLO (flags
+  bit 2) and switched at the Pi's HELLO answer (flags bit 2); HELLO, its
+  answer and everything after a link reset carried the CRC, as every frame
+  of a CLAUDE before 1.3 does. The flag bits stay. The Pi tries the sum
+  first and answers each frame with the check that frame came with; a frame
+  that passes both (1 in 65,536) is taken as the sum's, and if that was
+  wrong, the GRiD's NAK, in the check it reads, has the answer sent again in
+  that one.
 * Bad check: the receiver answers with a NAK (GRiD → Pi type 06h, Pi → GRiD
   48h); the sender then retransmits its last frame unchanged.
 * A frame whose seq equals the last one accepted is a duplicate (its answer
@@ -162,7 +170,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum; bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3; bit 4 = it draws the 2x2 block elements `▘▝▖▗▌▐▀▄▛▜▙▟▚▞` as codes A1h-AEh, CLAUDE 1.8, and resident Claude's console from 1.12; without it they are blanks and inverse blanks), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the CRC-16 of its Term screen (section 6). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9), and `bgscreen`: SCREEN in the background too (CLAUDE 1.11). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
+| 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum (from audit3 R56: it checks every frame with it, this HELLO too); bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3; bit 4 = it draws the 2x2 block elements `▘▝▖▗▌▐▀▄▛▜▙▟▚▞` as codes A1h-AEh, CLAUDE 1.8, and resident Claude's console from 1.12; without it they are blanks and inverse blanks), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the Fletcher sum of its Term screen (section 6; a CRC-16 before audit3 R56). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9), and `bgscreen`: SCREEN in the background too (CLAUDE 1.11). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
 | 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 07h saver (CLAUDE 1.14, to a Pi whose HELLO answer, 41h, has bit 4: the Executive's screen saver comes on if the answer is a NOP, and the GRiD sends nothing more until it ends; the Pi counts it as there until its next frame, and rings it for anything it has, which ends the saver; section 3, Waking an idle GRiD) |
@@ -174,7 +182,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on; bit 3 = resident Claude's console may work in the background, below: its bridge can be quiet; bit 4 = EVENT 07h, the saver, understood, and the bridge can ring: a Pico, fw 2026-10-22b on), then text: model name (or `Claude Code`) |
+| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on (the GRiD has used nothing else since audit3 R56); bit 3 = resident Claude's console may work in the background, below: its bridge can be quiet; bit 4 = EVENT 07h, the saver, understood, and the bridge can ring: a Pico, fw 2026-10-22b on), then text: model name (or `Claude Code`) |
 | 42h | NOP | — |
 | 43h | TEXT | text to append to the conversation; control codes below |
 | 44h | STATUS | status-line text (empty = clear) |
@@ -247,7 +255,8 @@ throughout, and takes over once the script is used up.
 
 DOS errors come back as the DOS error code (83 = a disk error the critical
 error handler failed, e.g. drive not ready). Other statuses: F0h request
-too large, F1h no memory, F3h command line too long, F5h no snapshot,
+too large (or a RUN whose key script length runs past the request's end),
+F1h no memory, F3h command line too long, F5h no snapshot,
 F6h a DOS program is paused (resident Claude's console answers so every
 request but SCREEN, TYPE and those its HELLO's `ops=` lists, e.g. RUN,
 INFO and SETTIME), F7h DOS busy (resident Claude's console, a file request: the
@@ -353,9 +362,11 @@ title from TITLE, the link, the keys).
   files and GPIB go on in the background where the bridge can be quiet,
   and grid_program where `ops=` lists `bgscreen` (section 4). The console keeps
   its screen between pop-ups and draws it at once; its HELLO's `screen=`
-  is the CRC-16 (as the frames') of its 24 rows (glyph, attribute for each
-  cell, row by row), then the cursor's row, column and hidden flag (0 or
-  1). If that is the screen of the Pi's last CELLS frame, or of the one
+  is the Fletcher sum (as the frames') of its 24 rows (glyph, attribute for
+  each cell, row by row), then the cursor's row, column and hidden flag (0
+  or 1); a console before audit3 R56 sent the CRC-16 of the same bytes, as
+  its HELLO frame's check was (the Pi goes by that). If that is the screen
+  of the Pi's last CELLS frame, or of the one
   before, the Pi goes on from it and sends only what changed; else it
   starts from a clear screen as for any HELLO. Without `app=`,
   gridlink's `[grid] app` setting

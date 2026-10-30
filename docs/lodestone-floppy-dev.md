@@ -86,7 +86,7 @@ Decision: develop from a boot floppy until the OS is stable, then build the ROM 
 | BENCH.TXT | 664 | BENCH log: run 8 (also in `os\bench\BENCH_1520_2026-10-05_reformatted.TXT`) |
 | DISKMAP.COM | 952 | saves the floppy's boot sector, FATs and root to DISKMAP.BIN; shows root entries in use |
 | LODEBOOT.COM | 3,047 | installs the Lodestone boot sector (once per disk, and after every format) |
-| GRIDGPIB.COM | 2,688 | GPIB driver 1.1 for GRiD MS-DOS (built into Lodestone) |
+| GRIDGPIB.COM | 3,555 | GPIB driver 1.23 for GRiD MS-DOS (`tools/GRIDGPIB.ASM`: the kernel's KGPIB.INC, built into Lodestone, with its installer). 2,515 bytes resident under GRiD MS-DOS (2,177 as 1.2): it has the kernel's fast loops and frame check now, so CLAUDE.COM leaves the frame check to it and sends in place, as under Lodestone |
 | CLAUDE.COM | 12,320 | Claude for GRiD (Pi bridge at address 7); CODE-A in the Executive; `/T` Term (Claude Code on the Pi); still in Terminus |
 | TM5000G.EXE | 296,634 | TM5000 3.7 (TM5000 repo `src/tm5000g.exe`, with PR #3's fix: the mouse pointer comes back after a menu is left by a key) |
 | GGTEST.COM | 7,554 | GPIB driver test on the bus |

@@ -143,6 +143,8 @@ def test_driver_frame_check():
                  T.reply(('text', 'Written and checked.'))], mode='edits', bridge='pico')
     assert h.var('ksum', 1) == 1 and h.var('use_fl', 1) == 2, (h.var('ksum', 1), h.var('use_fl', 1))   # (1 before audit3 R55)
     assert h.link.grid_req == 16700, h.link.grid_req     # (CLAUDE 1.6's HELLO: req=, so 16 KB write requests)
+    st = h.link.stats                                    # (audit3 R56: the HELLO too, and its answer)
+    assert st['rx_fletcher'] == st['rx_frames'] >= 2 and h.var('n_bad', 2) == 0, (dict(st), h.var('n_bad', 2))
     k0, st0 = h.var('n_kok', 2), dict(h.link.stats)
     assert h.turn('write a big file', sim_s=120)
     assert bytes(h.m.fs['A:\\BIG.TXT']) == big.replace('\n', '\r\n').encode()
@@ -181,7 +183,7 @@ def test_executive_saver():
         th.start()
         t1 = h.m.us
         assert h.run_until(lambda: not th.is_alive(), 30), ('the call never came back', when, h.k.ocr()[:6])
-        assert 'CLAUDE 1.14' in res.get('r', {}).get('grid', ''), res
+        assert 'CLAUDE 1.15' in res.get('r', {}).get('grid', ''), res
         assert h.run_until(lambda: 'Hi from the Pi.' in h.screen(), 10), h.screen()
         return (h.m.us - t1) / 1e6
     ended = call('dark')                                    # (in the dark screen)
@@ -307,24 +309,34 @@ T.test_run_exec_block = test_run_exec_block
 
 
 def test_run_memory_and_reconnect():
-    """audit3 O11: a RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  While MEMSZ runs,
-    CLAUDE keeps its bss_end's paragraphs, 2,881 at most (2,904 before), and MEMSZ gets all the rest.  Then
-    the link is lost and comes back: the HELLO built over the RUN's buffers says what the first one said,
-    and a second RUN gets the same memory.  Each RUN's REPLY names its outname (X:\\...\\CLAUDE.OUT): a HELLO
-    built during a RUN would be under it."""
+    """audit3 O11: a RUN's buffers live under hellobuf, and build_kv's cwdbuf under sline.  O17: while MEMSZ
+    runs, CLAUDE's block is cut back to reqbuf's start (the key script's end; 2,844 paragraphs before O17),
+    and MEMSZ, loaded in what was CLAUDE's tail (the conversation and the replies at the top: alloc_top),
+    gets all the rest; after it CLAUDE's block is whole again (run_back).  Then the link is lost and comes
+    back: the HELLO built over the RUN's buffers says what the first one said, and a second RUN gets the
+    same memory.  Each RUN's REPLY names its outname (X:\\...\\CLAUDE.OUT): a HELLO built during a RUN would
+    be under it.  The screenshot at a RUN's end goes in a block made after the program (one 48h): none while
+    MEMSZ runs; with {SNAP} in its key script the block is made before, at the top (alloc_top), and MEMSZ gets
+    that much less, all the rest still."""
     import re
     from unicorn import UC_HOOK_CODE
-    G = lambda: T.reply(('tool', 'grid_command', {'command': 'MEMSZ', 'capture': False, 'screenshot': True}))
-    h = T.start([G(), T.reply(('text', 'Done.')), G(), T.reply(('text', 'Again.'))], mode='auto',
+    G = lambda **k: T.reply(('tool', 'grid_command', dict({'command': 'MEMSZ', 'capture': False,
+                                                           'screenshot': True}, **k)))
+    h = T.start([G(), T.reply(('text', 'Done.')), G(), T.reply(('text', 'Again.')), G(keys='{SNAP}'),
+                 T.reply(('text', 'Marked.'))], mode='auto',
                 files={'A:\\MEMSZ.COM': open(os.path.join(HERE, 'MEMSZ.COM'), 'rb').read()})
     hello = dict(h.session.hello)
     runs, grun = [], h.session.grid.run            # (each RUN's REPLY: outname, read back from under hellobuf)
     h.session.grid.run = lambda *a, **k: runs.append(grun(*a, **k)) or runs[-1]
-    def run(i, prompt):
-        mine = h.m.u16(h.claude_psp - 1, 3)                 # CLAUDE's block
-        lo, st = (h.claude_psp + mine) * 16, {}
+    keep = (h.sym['reqbuf'] + 7 + 15) // 16         # (no key script: up to ks_ptr)
+    full = (h.sym['bss_end'] + 15) // 16
+    def run(i, prompt, script=0):
+        lo, st = (h.claude_psp + keep) * 16, {}
         def at(uc, addr, size, ud):                         # (MEMSZ's first instruction: CS its PSP)
-            if 'got' not in st: p = h.m.r('cs'); st['got'] = h.m.u16(p, 2) - p
+            if 'got' not in st:
+                p = h.m.r('cs'); st['got'], st['psp'] = h.m.u16(p, 2) - p, p
+                st['mine'] = h.m.u16(h.claude_psp - 1, 3)   # (CLAUDE's block meanwhile)
+                st['snap'] = h.var('snapseg', 2)            #  and the snapshot's
         hk = h.m.mu.hook_add(UC_HOOK_CODE, at, None, lo, 0x9FFFF)
         h.m.mu.ctl_remove_cache(lo, 0xA0000)
         h.type(prompt)
@@ -333,11 +345,14 @@ def test_run_memory_and_reconnect():
         text = str(T.results(h, i))
         kb = '%d.%d KB for programs' % divmod(st['got'] * 10 // 64, 10)
         out = runs[-1]['outfile']
-        assert 'Exit code: 0' in text and kb in text and re.fullmatch(r'[A-Z]:\\(\S+\\)?CLAUDE\.OUT', out), \
-            (kb, out, text)
-        return st['got'], mine, out
+        assert 'Exit code: 0' in text and kb in text and 'Screen (text mode 03h' in text and \
+            re.fullmatch(r'[A-Z]:\\(\S+\\)?CLAUDE\.OUT', out), (kb, out, text)
+        assert st['mine'] == (h.sym['reqbuf'] + 7 + script + 15) // 16 and st['psp'] < h.claude_psp + full and \
+            h.m.u16(h.claude_psp - 1, 3) == full and (st['snap'] > st['psp'] if script else st['snap'] == 0), \
+            (st, keep, full, hex(h.claude_psp), h.m.u16(h.claude_psp - 1, 3))
+        return st['got'], st['mine'], out
     got, mine, out = run(1, 'how much memory')
-    assert mine == (h.sym['bss_end'] + 15) // 16 <= 2881, (mine, hex(h.sym['bss_end']), got)
+    print('     MEMSZ got %d paragraphs (%.1f KB); CLAUDE kept %d of its %d meanwhile' % (got, got / 64, mine, full))
     real = h.transport.answer
     h.transport.answer = lambda f: None            # the Pi goes quiet: a HELLO over the RUN's buffers
     assert h.run_until(lambda: not h.var('connected'), 10), 'no link loss noticed'
@@ -347,10 +362,180 @@ def test_run_memory_and_reconnect():
     same = lambda d: {k: v for k, v in d.items() if k != 'date'}
     assert same(h.session.hello) == same(hello) and hello['cwd'] == 'A:\\', (h.session.hello, hello)
     assert run(3, 'and again') == (got, mine, out)
+    g5 = run(5, 'and with a mark', 3)[0]
+    assert g5 == got - (32768 + 11 + 15) // 16 - 1, (g5, got)       # (the snapshot's block and its MCB)
+    print('     with {SNAP} in its script %d paragraphs (%.1f KB)' % (g5, g5 / 64))
     T.check(h, fails=1)
 
 
 T.test_run_memory_and_reconnect = test_run_memory_and_reconnect
+
+
+def mcbs(h):
+    """The kernel's MCB chain: [(segment, owner, paragraphs)]"""
+    seg, out = h.m.u16(0x60, h.m.Y['first_mcb']), []
+    while len(out) < 200:
+        kind, owner, n = struct.unpack('<BHH', h.m.rd(seg, 0, 5))
+        out.append((seg, owner, n))
+        if kind == 0x5A: return out
+        seg += n + 1
+    raise AssertionError(out)
+
+
+def test_run_tsr_moves_claude():
+    """audit3 O17: a RUN's program that stays resident (TSRK: 64 paragraphs and its environment) where CLAUDE's
+    tail was: CLAUDE's block can't grow back, so CLAUDE moves, whole, to a block of its own (run_back), its
+    PSP's block keeping the PSP alone.  The memory it left is scribbled over at once (as the next program would
+    do): the RUN is answered; a message queued before the RUN from CLAUDE's own memory still arrives whole;
+    a second RUN gets its tail and FCBs (the EXEC block's segments); a 31 KB file is written and read back
+    (the link's buffers).  TSRK again: CLAUDE moves a second time, and the block it left (not the PSP's) is
+    freed, not kept as a 256-byte orphan.  CODE-Q ends CLAUDE, none of its blocks left, both TSRKs there."""
+    from unicorn import UC_HOOK_CODE
+    from gridlink import glp
+    text = P7_DATA.decode().replace('\r\n', '\n')
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TSRK', 'capture': False})),
+                 T.reply(('text', 'It stays.')),
+                 T.reply(('tool', 'grid_command', {'command': 'TESTKEY one two', 'capture': False,
+                                                   'keys': '{WAIT 1}x{ESC}'})),
+                 T.reply(('text', 'Ran.')),
+                 T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'create', 'path': 'A:\\P7.TXT',
+                                                                   'file_text': text})),
+                 T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\P7.TXT'})),
+                 T.reply(('text', 'Written and read.')),
+                 T.reply(('tool', 'grid_command', {'command': 'TSRK', 'capture': False})),
+                 T.reply(('text', 'Another.'))], mode='auto',
+                files={'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
+    old, Y = h.claude_psp, h.sym
+    keep = (Y['reqbuf'] + 7 + 15) // 16
+    full = (Y['bss_end'] + 15) // 16
+    ev = bytes(h.m.rd(old, Y['msg_bye'], 12))
+    st, events = {}, []
+    onm = h.link.on_message
+    def om(mt, body):
+        if mt == glp.G_EVENT: events.append(bytes(body))
+        return onm(mt, body)
+    h.link.on_message = om
+    def at_run(uc, addr, size, ud):                 # (a message queued from our memory as the RUN starts)
+        if 'ev' in st: return
+        st['ev'] = 1
+        n, hd = h.var('txq_n'), h.var('txq_head')
+        e = old * 16 + Y['txq'] + (hd + n) % 6 * 10
+        h.m.mu.mem_write(e, struct.pack('<BBHHHH', glp.G_EVENT, 0, old, Y['msg_bye'], len(ev), 0))
+        h.m.mu.mem_write(old * 16 + Y['txq_n'], bytes([n + 1]))
+    def high(uc, addr, size, ud):                   # (past what CLAUDE keeps: TSRK's first instruction, then
+        cs = h.m.r('cs')                            #  run_back's first in the block it moved to, where the
+        if 'tsr' not in st: st['tsr'] = cs          #  memory it left is scribbled over)
+        elif 'new' not in st and cs != st['tsr'] and addr - cs * 16 == Y['run_back.there']:
+            st['new'] = h.claude_psp = cs           # (its data, its stack: the harness looks there now)
+            h.m.mu.mem_write(old * 16 + 0x100, b'\xCC' * ((keep - 0x10) * 16))
+    hks = [h.m.mu.hook_add(UC_HOOK_CODE, at_run, None, old * 16 + Y['op_run'], old * 16 + Y['op_run']),
+           h.m.mu.hook_add(UC_HOOK_CODE, high, None, (old + keep) * 16, 0x9FFFF)]
+    h.m.mu.ctl_remove_cache(old * 16, 0xA0000)
+    h.type('run tsrk')
+    try: assert h.run_until(lambda: h.idle() and 'new' in st, 60), (st, h.screen())
+    finally:
+        for k in hks: h.m.mu.hook_del(k)
+    new = st['new']
+    assert 'Exit code: 0' in str(T.results(h, 1)) and events == [ev], (T.results(h, 1), events, ev)
+    blocks = {s + 1: (o, n) for s, o, n in mcbs(h)}
+    assert blocks[old] == (old, 0x10) and blocks[new] == (old, full) and blocks[st['tsr']] == (st['tsr'], 64) \
+        and old < st['tsr'] < new, (hex(old), hex(new), hex(st['tsr']), blocks.get(old), blocks.get(new))
+    h.type('run testkey')
+    cur = lambda: h.m.u16(0x60, h.m.Y['cur_psp'])
+    root = h.m.u16(0x60, h.m.Y['root_psp'])
+    assert h.run_until(lambda: cur() not in (root, old) or h.m.crash, 20), h.m.crash
+    psp = cur()
+    fcbs, tail = h.m.rd(psp, 0x5C, 32), h.m.rd(psp, 0x80, 10)
+    assert h.run_until(h.idle, 30)
+    blank = b'\0' + b' ' * 11 + b'\0' * 4
+    assert fcbs == blank * 2 and tail == b'\x08 one two\r' and 'Exit code: 1' in str(T.results(h, 3)), \
+        (fcbs, tail, T.results(h, 3))
+    assert h.turn('write the file and read it back', sim_s=200)
+    assert bytes(h.m.fs['A:\\P7.TXT']) == P7_DATA and 'p7 line 00200' in str(T.results(h, 6)[0]['content'])
+    assert h.m.u16(new - 1, 3) == full             # (whole again after the second RUN)
+    st2 = {}
+    def again(uc, addr, size, ud):                  # (the second move's run_back, in the block it moved to)
+        cs = h.m.r('cs')
+        if 'new' not in st2 and cs != new and addr - cs * 16 == Y['run_back.there']:
+            st2['new'] = h.claude_psp = cs
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, again, None, (new + keep) * 16, 0x9FFFF)
+    h.m.mu.ctl_remove_cache((new + keep) * 16, 0xA0000)
+    h.type('run tsrk again')
+    try: assert h.run_until(lambda: h.idle() and 'new' in st2, 60), (st2, h.screen())
+    finally: h.m.mu.hook_del(hk)
+    mine = [(s + 1, n) for s, o, n in mcbs(h) if o == old]
+    assert 'Exit code: 0' in str(T.results(h, 8)) and (old, 0x10) in mine and (st2['new'], full) in mine \
+        and not [b for b in mine if b[1] == 0x10 and b[0] != old] and not [b for b in mine if b[0] == new], \
+        ([(hex(s), n) for s, n in mine], hex(new), hex(st2['new']))
+    T.check(h)
+    h.key(0x1000)                                   # CODE-Q
+    assert h.back_in_executive(10), (h.m.crash, h.k.where())
+    left = [(hex(s), hex(o), n) for s, o, n in mcbs(h) if o in (old, new, st2['new'])]
+    tsrs = [b for b in mcbs(h) if b[1] == b[0] + 1 and b[2] == 64]
+    assert not left and (st['tsr'] - 1, st['tsr'], 64) in mcbs(h) and len(tsrs) == 2, (left, mcbs(h))
+
+
+def test_run_tsr_no_room():
+    """audit3 O17: a RUN's program that stays resident with all it got but 160 paragraphs: no block for CLAUDE
+    to move to, so CLAUDE ends, as CODE-Q does, saying so; the Executive is back, the vectors CLAUDE took
+    given back, and none of its blocks left."""
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TSRK B', 'capture': False})),
+                 T.reply(('text', 'It stays.'))], mode='auto',
+                files={'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
+    old = h.claude_psp
+    h.type('run tsrk b')
+    assert h.back_in_executive(30), (h.m.crash, h.k.where(), h.screen())
+    assert 'Not enough memory for CLAUDE.' in ''.join(h.m.tty), ''.join(h.m.tty)[-300:]
+    off, seg = struct.unpack('<HH', h.m.rd(0, 0x16 * 4, 4))
+    assert (seg, off) == (0xF000, 0x16 * 8), (hex(seg), hex(off))
+    off, seg = struct.unpack('<HH', h.m.rd(0, 0x23 * 4, 4))
+    assert seg == 0x60, (hex(seg), hex(off))
+    assert not [b for b in mcbs(h) if b[1] == old], mcbs(h)
+
+
+T.test_run_tsr_moves_claude = test_run_tsr_moves_claude
+T.test_run_tsr_no_room = test_run_tsr_no_room
+
+
+def test_run_script_length_checked():
+    """audit3 O17's panel: a RUN whose key script length runs past the request (the script and the command's
+    NUL must be in it) is refused with F0h before anything is cut (do_exec cuts CLAUDE's block at the script's
+    end); one that fits runs, and CLAUDE's block is whole after each."""
+    import threading
+    from gridlink import glp
+    h = T.start([], mode='auto')
+    g = h.session.grid
+    full = (h.sym['bss_end'] + 15) // 16
+    def call(args):
+        res = {}
+        th = threading.Thread(target=lambda: res.update(r=g.call(glp.OP_RUN, args, timeout=30)))
+        th.start()
+        assert h.run_until(lambda: not th.is_alive(), 60), 'no answer'
+        return res.get('r')
+    keys = struct.pack('<H', 0x011B)                # (Esc: TESTKEY ends)
+    cmd = b'TESTKEY\0'                              # (the request: 7 + 2 + 8 bytes; a script of 10 leaves no NUL)
+    for n, want in ((10, 0xF0), (0xFFF9, 0xF0), (0xFFFF, 0xF0), (len(keys), 0)):
+        st, r = call(struct.pack('<BHH', 0, 10, n) + keys + cmd)
+        assert st == want and h.m.u16(h.claude_psp - 1, 3) == full, (n, st, r)
+    T.check(h)
+
+
+def test_in_place_ask():
+    """audit3 P7's panel: an ASK in fragments (Pi frames of 448 bytes; gridlink's own ASKs are one frame), its
+    last read in place after the first: the 6 bytes its header went over are put back before open_ask copies
+    the ASK (they lie within the 896 bytes it keeps)."""
+    from gridlink import glp
+    h = T.start([], frame_cap=448)
+    body = bytes([0x55, 0]) + b'May I?' + b'\0' + bytes(range(65, 91)) * 20 + b'\0' + b'always\0'
+    h.link.send(glp.P_ASK, body)
+    assert h.run_until(lambda: h.var('ask_open'), 30), h.screen()
+    got = bytes(h.m.rd(h.claude_psp, h.sym['askbuf'], len(body)))
+    assert got == body, [i for i in range(len(body)) if got[i] != body[i]]
+    assert h.var('n_kok', 2) and h.var('rq_at', 2) == 0
+
+
+T.test_run_script_length_checked = test_run_script_length_checked
+T.test_in_place_ask = test_in_place_ask
 
 
 def test_key_script_snap_peek():
@@ -436,6 +621,199 @@ def test_nak_resend_keeps_the_check():
 
 
 T.test_nak_resend_keeps_the_check = test_nak_resend_keeps_the_check
+
+P7_DATA = b''.join(b'p7 line %05d: the quick brown fox jumps over the lazy dog %s\r\n' % (i, b'#' * (i % 11))
+                   for i in range(480))         # (36 KB: three writes, three reads)
+REQ_END = 16700 + 4                             # (reqbuf's size: REQMAX + 4)
+
+
+def p7_start(**kw):
+    """A turn writing P7_DATA and reading it back, with every driver write (02h) and read (03h) of CLAUDE's
+    seen (ah, seg, offset, cx, the frame the write sends), the Pi's REQUEST bodies and the REPLYs it got"""
+    from unicorn import UC_HOOK_CODE
+    from gridlink import glp
+    text = P7_DATA.decode().replace('\r\n', '\n')
+    h = T.start([T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'create', 'path': 'A:\\P7.TXT',
+                                                                   'file_text': text})),
+                 T.reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\P7.TXT'})),
+                 T.reply(('text', 'Written and read.'))], mode='edits', **dict(dict(bridge='pico'), **kw))
+    st = {'calls': [], 'reqs': [], 'replies': []}
+    a = h.claude_psp * 16 + h.sym['gg_call']
+    def at(uc, addr, size, ud):
+        ah, cx = h.m.r('ax') >> 8, h.m.r('cx')
+        if ah == 2:
+            ds, si = h.m.r('ds'), h.m.r('si')
+            st['calls'].append((2, ds, si, cx, h.m.rd(ds, si, cx)))
+        elif ah == 3: st['calls'].append((3, h.m.r('es'), h.m.r('di'), cx, (h.var('rq_type'), h.var('rq_len', 2))))
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, at, None, a, a)
+    h.m.mu.ctl_remove_cache(a, a + 1)
+    send, onm = h.link.send, h.link.on_message
+    def sn(mtype, body=b''):
+        if mtype == glp.P_REQUEST: st['reqs'].append(bytes(body))
+        return send(mtype, body)
+    def om(mt, body):
+        if mt == glp.G_REPLY: st['replies'].append(bytes(body))
+        return onm(mt, body)
+    h.link.send, h.link.on_message = sn, om
+    return h, st
+
+
+def p7_check(h, st, again=(0, 0)):
+    """The file written and read back whole; every read CLAUDE made in rxbuf or inside reqbuf, a whole one
+    (CX) short of its end; in-place reads (in reqbuf) and sends (in ioseg, from the 6 bytes before a 3,300-byte
+    fragment) counted; and reqbuf and ioseg still hold the last big REQUEST's and REPLY's bytes as the Pi
+    sent and got them (each 6-byte header's place put back)."""
+    assert bytes(h.m.fs['A:\\P7.TXT']) == P7_DATA
+    assert 'p7 line 00200' in str(T.results(h, 2)[0]['content'])  # (the view shows 20,000 characters)
+    cs, Y = h.claude_psp, h.sym
+    ios = h.var('ioseg', 2)
+    rd = [(seg, off, cx) for k, seg, off, cx, _ in st['calls'] if k == 3]
+    bad = [(hex(off), cx) for seg, off, cx in rd if seg != cs or off != Y['rxbuf'] and not
+           (Y['reqbuf'] <= off and off + cx <= Y['reqbuf'] + REQ_END)]
+    assert not bad, bad
+    n_in = sum(off != Y['rxbuf'] for seg, off, cx in rd)
+    wr = [(seg, off, cx) for k, seg, off, cx, _ in st['calls'] if k == 2]
+    n_out = sum(seg != cs for seg, off, cx in wr)
+    bad = [(hex(seg), off) for seg, off, cx in wr if seg != cs and (seg != ios or (off + 6) % 3300)]
+    assert not bad, bad
+    m = h.link.maxpay                                   # (each later fragment in place while a read has room)
+    want_in = sum(1 for r in st['reqs'] for j in range(1, -(-len(r) // m)) if j * m - 6 + 3349 <= REQ_END)
+    want_out = sum(-(-len(r) // 3300) - 1 for r in st['replies']) if h.var('use_fl') == 2 else 0
+    assert (n_in, n_out) == (want_in + again[0], want_out + again[1]), (n_in, want_in, n_out, want_out)
+    big = [r for r in st['reqs'] if len(r) > 6000]
+    assert big and bytes(h.m.rd(cs, Y['reqbuf'] + 100, len(big[-1]) - 100)) == big[-1][100:]
+    rep = [r for r in st['replies'] if len(r) > 6000]
+    assert rep and bytes(h.m.rd(ios, 0, len(rep[-1]))) == rep[-1]
+    return n_in, n_out
+
+
+def test_frames_in_place():
+    """audit3 P7 (driver 1.23, use_fl 2): a 16 KB write's REQUEST comes in five frames, the four after the first
+    read straight into reqbuf after what it holds, the 6 bytes under each header put back; a 16 KB read's REPLY
+    goes in five, the four after the first sent from ioseg where they lie, a header swapped in over the 6 bytes
+    before each and back after.  Only the first of each is copied (pf_reasm's, frame_next's REP MOVSW).  Pi
+    frames of 2 KB (frame_cap): a write in nine, the later ones in rxbuf again where a whole read would go
+    past reqbuf's end.  With CLAUDE's own Fletcher sum (use_fl 1, an older driver's), reads in place too
+    (find_frame from where the read went), every frame sent from txframe."""
+    from unicorn import UC_HOOK_CODE
+    for cap, own in ((None, 0), (2048, 0), (None, 1)):
+        h, st = p7_start(frame_cap=cap)
+        if own: h.m.wr(h.claude_psp, h.sym['use_fl'], b'\1')
+        k0 = h.var('n_kok', 2)
+        lo, hi = h.claude_psp * 16 + h.sym['pf_reasm'], h.claude_psp * 16 + h.sym['pf_reasm.over']
+        n = {'pf': 0}
+        def cnt(uc, addr, size, ud): n['pf'] += 1          # (each REP MOVSW step a hook: a copy shows)
+        hk = h.m.mu.hook_add(UC_HOOK_CODE, cnt, None, lo, hi)
+        h.m.mu.ctl_remove_cache(lo, hi)
+        assert h.turn('write the file and read it back', sim_s=200)
+        h.m.mu.hook_del(hk)
+        n_in, n_out = p7_check(h, st)
+        frames = sum(1 for k, *_ in st['calls'] if k == 3)
+        copies = len([r for r in st['reqs'] if len(r) > 3000])      # (the first fragment of each)
+        assert n_in >= (12 if cap else 8) and n_out >= (0 if own else 7) and \
+            n['pf'] < 40 * frames + 1800 * copies and (h.var('n_kok', 2) - k0) * own == 0, \
+            (cap, n_in, n_out, n['pf'], frames, copies)
+        if cap:                                         # (mid-request in rxbuf: no room left in reqbuf)
+            assert h.link.maxpay == 2048 and any(off == h.sym['rxbuf'] and rq[0] and rq[1] + cx - 6 > REQ_END
+                                                 for k, seg, off, cx, rq in st['calls'] if k == 3)
+        T.check(h)
+
+
+def test_in_place_resend():
+    """audit3 P7: the Pi's answer to a REPLY fragment sent in place damaged, and the GRiD's NAK lost too: the
+    GRiD sends that fragment again, byte for byte (its header swapped in again: the 6 bytes there were put back
+    after the first)."""
+    from gridlink import glp
+    h, st = p7_start(bridge='ar488')                # (its to_pi: whole frames)
+    arm = {'n': 0}
+    answer, to_pi = h.transport.answer, h.nano.to_pi
+    def ans(frame):
+        if arm['n'] == 1 and frame[1] & 0x7F != glp.P_NAK:
+            f = bytearray(frame); f[len(f) // 2] ^= 0x10; frame = bytes(f); arm['n'] = 2
+        return answer(frame)
+    def tp(data, t):
+        k = data[1] & 0x7F if len(data) > 1 else 0
+        if arm['n'] == 0 and k == glp.G_REPLY and len(data) > 3000 and st['calls'][-1][1] != h.claude_psp:
+            arm['first'] = bytes(data); arm['n'] = 1                # (an in-place fragment)
+        elif arm['n'] == 2 and k == glp.G_NAK:
+            arm['n'] = 3; h.link._answer_nak(); return
+        elif arm['n'] == 3 and k == glp.G_REPLY:
+            arm['resent'] = bytes(data); arm['n'] = 4
+        return to_pi(data, t)
+    h.transport.answer, h.nano.to_pi = ans, tp
+    assert h.turn('write the file and read it back', sim_s=200)
+    assert arm['n'] == 4 and arm['resent'] == arm['first'], (arm['n'], len(arm.get('resent', b'')))
+    p7_check(h, st, (0, 1))
+    T.check(h)
+
+
+def test_in_place_read_damaged():
+    """audit3 P7: a REQUEST fragment read in place into reqbuf damaged: CLAUDE NAKs it and puts back the 6 bytes
+    its header went over; the Pi sends it again, read in place again, and the file is written whole.  With
+    CLAUDE's own sum (use_fl 1) too: find_frame's scan of the damaged read stops at the read's end."""
+    from unicorn import UC_HOOK_CODE
+    from gridlink import glp
+    for own in (0, 1):
+        h, st = p7_start()
+        if own: h.m.wr(h.claude_psp, h.sym['use_fl'], b'\1')
+        seen = {'n': 0, 'scan': 0}
+        answer = h.transport.answer
+        def ans(frame):
+            if frame[1] == glp.P_REQUEST | glp.MORE and len(frame) > 3000:
+                seen['n'] += 1
+                if seen['n'] == 2:                                  # (the second: read in place)
+                    f = bytearray(frame); f[len(f) - 40] ^= 0x01; frame = bytes(f)
+            return answer(frame)
+        h.transport.answer = ans
+        def scan(uc, addr, size, ud): seen['scan'] += 1             # (find_frame's steps)
+        a = h.claude_psp * 16 + h.sym['find_frame.s']
+        hk = h.m.mu.hook_add(UC_HOOK_CODE, scan, None, a, a)
+        h.m.mu.ctl_remove_cache(a, a + 1)
+        assert h.turn('write the file and read it back', sim_s=200)
+        h.m.mu.hook_del(hk)
+        frames = sum(1 for k, *_ in st['calls'] if k == 3)
+        assert h.var('n_bad', 2) == 1 and seen['scan'] < frames + 3400, (own, h.var('n_bad', 2), seen, frames)
+        p7_check(h, st, (1, 0))                                     # (the damaged one read twice)
+        T.check(h)
+
+
+def test_in_place_new_message():
+    """audit3 P7: a REQUEST's first fragment that comes as an ASK's (the Pi never sends that: a type changed in
+    flight), then the REQUEST's second, read in place after it: pf_reasm starts a new message with it, copied
+    to reqbuf's start over the 6 bytes its header went over, which then stay as copied (not put back).  (The
+    rest of that request is garbage: the test ends there.)"""
+    from unicorn import UC_HOOK_CODE
+    from gridlink import glp
+    h, st = p7_start()
+    seen = {'n': 0}
+    answer = h.transport.answer
+    def ans(frame):
+        if frame[1] == glp.P_REQUEST | glp.MORE and len(frame) > 3000:
+            seen['n'] += 1
+            if seen['n'] == 1:
+                frame = glp.encode(glp.P_ASK | glp.MORE, frame[2], frame[3], frame[6:-2], fl=True)
+            elif seen['n'] == 2: seen['two'] = frame[6:-2]
+        return answer(frame)
+    h.transport.answer = ans
+    base, Y = h.claude_psp * 16, h.sym
+    got = {}
+    def back(uc, addr, size, ud):                   # (link_read's rq_back done with the second)
+        if 'two' in seen and 'buf' not in got and h.var('rq_type') == glp.P_REQUEST:
+            got['buf'] = bytes(h.m.rd(h.claude_psp, Y['reqbuf'], h.var('rq_len', 2)))
+            got['at'] = h.var('rq_at', 2)
+    a = base + Y['rq_back.x']
+    hk = h.m.mu.hook_add(UC_HOOK_CODE, back, None, a, a)
+    h.m.mu.ctl_remove_cache(a, a + 1)
+    h.type('write the file and read it back')
+    try: assert h.run_until(lambda: 'buf' in got, 60), seen
+    finally: h.m.mu.hook_del(hk)
+    assert got['buf'] == seen['two'] and got['at'] == 0, (len(got['buf']), len(seen['two']), got['at'])
+
+
+T.test_frames_in_place = test_frames_in_place
+T.test_in_place_resend = test_in_place_resend
+T.test_in_place_read_damaged = test_in_place_read_damaged
+T.test_in_place_new_message = test_in_place_new_message
 
 if __name__ == '__main__':
     names = [n for n in sorted(vars(T)) if n.startswith('test_')]

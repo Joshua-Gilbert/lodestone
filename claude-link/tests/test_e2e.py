@@ -126,6 +126,40 @@ def test_damaged_frames():
     check(h)
 
 
+def test_either_check():
+    """audit3 R56: every frame of a CLAUDE carries the Fletcher sum, its HELLO too; an older one's HELLO (and all
+    of gridsim's frames, here above) the CRC.  gridlink tries the sum first and answers each frame with its
+    check.  A frame both pass (1 in 65,536) is taken as the sum's; if it was the CRC's, the GRiD's NAK, in the
+    check it reads, has the answer sent again in that one."""
+    import struct
+    from gridlink import glp
+    from gridlink.link import Link
+    class T:
+        frame_limit = 4104
+        def __init__(t): t.sent = []
+        def answer(t, f): t.sent.append(f)
+    for i in range(1 << 16):                            # a HELLO that passes both
+        pay = b'\x01\x04\xf6\x00P\x18app=x\n' + struct.pack('<H', i)
+        body = struct.pack('<BBBH', glp.G_HELLO, 0, 0, len(pay)) + pay
+        if glp.crc16(body) == glp.fletcher16(body): break
+    else: assert False, 'no HELLO passes both checks'
+    def check_of(f): return 'sum' if f[-2:] == glp.encode_check(f[1:-2], True) else \
+        'crc' if f[-2:] == glp.encode_check(f[1:-2], False) else None
+    t = T(); k = Link(t, lambda *a: None, log=lambda *a: None, hold=0.0)
+    k.feed(bytes([glp.SYNC]) + body + glp.encode_check(body, True))
+    assert len(t.sent) == 1 and check_of(t.sent[-1]) == 'sum', t.sent       # (taken as a sum's)
+    nak = glp.encode(glp.G_NAK, 0, k.pi_seq, b'', fl=False)                  # an older CLAUDE: it reads the CRC
+    assert glp.decode(nak, fl_first=True)[0].fl is False
+    k.feed(nak)
+    assert check_of(t.sent[-1]) == 'crc' and t.sent[-1][:-2] == t.sent[0][:-2] and k.stats['rx_recheck'] == 1
+    k.feed(nak)                                                              # (again: the same, no recheck)
+    assert t.sent[-1] == t.sent[-2] and k.stats['rx_recheck'] == 1
+    k.feed(glp.encode(glp.G_NAK, 0, k.pi_seq, b'', fl=True))                 # a NAK with the sum: the sum's
+    assert check_of(t.sent[-1]) == 'sum' and k.stats['rx_recheck'] == 2
+    k.feed(glp.encode(glp.G_POLL, 1, k.pi_seq, b'', fl=True))
+    assert check_of(t.sent[-1]) == 'sum' and k.stats['rx_fletcher'] == 3, k.stats  # (HELLO, NAK, POLL)
+
+
 def test_slash_commands():
     h = Harness([])
     h.connect()
@@ -133,6 +167,23 @@ def test_slash_commands():
     t = h.text()
     assert 'Model: claude-sonnet-5-5' in t and 'Permission mode: edits' in t and '/compact' in t, t
     assert b'sonnet-5-5' in h.grid.title and b'edits mode' in h.grid.title, h.grid.title
+    check(h)
+
+
+def test_damaged_first_hello_crc():
+    """A CLAUDE before 1.15 (CRC only till its HELLO's answer) whose first HELLO arrives damaged: gridlink's
+    NAK, in the sum (rx_fl starts so, for CLAUDE 1.15), goes unread; the GRiD NAKs in CRC, and gridlink, with
+    nothing answered yet, NAKs again in CRC (not a NOP, which would pass for the HELLO's answer and leave the
+    GRiD waiting for one): the GRiD sends its HELLO again and connects, with no reset of its link."""
+    h = Harness([reply(('text', 'Hello after a damaged HELLO.'))])
+    h.grid.damage_hellos = 1
+    assert h.run_until(lambda: h.link.parser.pending(), wall=5), 'no damaged HELLO'
+    h.link.last_rx -= 1; h.link.idle_check()                    # (its 0.15 s of damaged bytes)
+    assert h.connect(), (h.grid.stats, h.link.stats)
+    assert h.grid.stats['fail'] == 0 and h.grid.stats['bad_rx'] == 1 and h.grid.stats['resend'] == 1 \
+        and h.link.stats['tx_nak'] == 2 and not h.link.rx_fl, (h.grid.stats, h.link.stats)
+    h.turn('hi')
+    assert 'Hello after a damaged HELLO.' in h.text(), h.text()
     check(h)
 
 

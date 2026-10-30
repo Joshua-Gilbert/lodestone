@@ -1,7 +1,8 @@
-"""Resident Claude, the spikes (RSPIKE.COM, os/claude): its pop-up's code
-runs from an EMS page of its own over programs that use all four EMS
-windows, over graphics and text modes and the Executive, and over TM5000G
-while it talks to instruments.
+"""Resident Claude (CLAUDE /R, os/claude): its console's code runs from
+EMS pages of its own over programs that use all four EMS windows, over
+graphics and text modes, DOS, the Executive and TM5000G while it polls
+the bus.  (The spike, RSPIKE.COM, and its four tests went in the
+2026-10-26 audit's step 8, H12: these mirror each of them.)
 
     python3 tests/test_resident.py [name ...]
 """
@@ -21,7 +22,7 @@ def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
     for d, n in ((os.path.join(GOS, 'src'), 'LCMD'), (HERE, 'MEMSZ')):     # (on every disk here and test_resident_term's)
         subprocess.run(['nasm', '-f', 'bin', '-i', d + '/', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
-    for n in ('RSPIKE', 'EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE', 'HOOK16', 'PAGE1'):
+    for n in ('EMSUSE', 'GFXUSE', 'T1C', 'BUSY', 'MHAND', 'HOLE', 'HOOK16', 'PAGE1'):
         subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(CL, n + '.COM'), os.path.join(CL, n + '.ASM')], check=True)
     subprocess.run(['sh', os.path.join(CL, 'build.sh')], check=True, stdout=subprocess.DEVNULL)  # RCON.BIN in CLAUDE.COM, its map
     # another version's CLAUDE.COM, as far as the stub goes: laid out otherwise after its header
@@ -54,7 +55,7 @@ def mcbs(k):
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [os.path.join(GOS, 'src', 'LODE.SYS'), os.path.join(GOS, 'src', 'LCMD.COM'),
                                                  os.path.join(HERE, 'MEMSZ.COM')] + [os.path.join(CL, f) for f in
-                                                 ('RSPIKE.COM', 'EMSUSE.COM', 'GFXUSE.COM', 'CLAUDE.COM')] + list(files))
+                                                 ('EMSUSE.COM', 'GFXUSE.COM', 'CLAUDE.COM')] + list(files))
 
 results = []
 def check(name, cond, detail=''):
@@ -77,11 +78,6 @@ def click(k, x, y):
         k.pc.mouse_move(sx & 0xFF, sy & 0xFF); k.pc.run_for(0.05)
         dx -= sx; dy -= sy
     k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.settle()
-
-def popped(k):
-    """The pop-up on the screen?  (mode 40h, its lines written through the
-    BIOS: pcemu logs them rather than draw them in mode 40h)"""
-    return k.pc.mode() == 0x40 and 'Resident spike: pop-up' in ''.join(k.pc.tty)[-400:]
 
 def glyphs():
     """The console's font, Terminus then CLAUDE's own glyphs (80h-A0h): {16 bytes: char}."""
@@ -194,107 +190,6 @@ def run_el(k, cmd):
     lines = [l.strip() for l in o.split('\n')]                    # (not the typed line, which names both)
     return o, 0 if 'EL0' in lines else 2 if 'EL2' in lines else 1
 
-def t_ems():
-    """Spike 1: code in the EMS frame over a program that keeps its own
-    pages in all four windows."""
-    k = ktest.KPC(image('ems.img'), ems_pages=88); k.start()
-    k.key(ktest.CODE_P)
-    before = memsz(k)
-    o = prompt(k, 'rspike')
-    after = memsz(k)
-    check('RSPIKE loads (EMS found, 3 pages)', 'RSPIKE resident' in o, o)
-    check('... and keeps under 1 KB of conventional memory (%.1f KB)' % ((before or 0) - (after or 0)),
-          before and after and 0 < before - after <= 1.0, (before, after))
-    for flag, how in (('', 'AH=00h'), (' /x', 'AH=10h')):
-        prompt(k, 'emsuse' + flag)
-        k.key('a')
-        text0 = k.pc.text_screen()
-        k.key(HOT)
-        up = popped(k)
-        k.key(HOT)
-        back = k.pc.mode() == 3 and k.pc.text_screen() == text0
-        k.key('b'); k.key(ktest.ESC)
-        o = k.pc.text_screen()
-        check('EMSUSE reading keys with %s: CODE-\\ pops up, CODE-\\ goes back to its screen as it was' % how, up and back,
-              (up, k.pc.mode(), o))
-        check('... its four EMS pages in all four windows: still there, whole', 'EMSUSE: 2 keys, 0 bad' in o, o)
-
-def t_video():
-    """Spike 3: the screen and the BIOS's video data come back after a
-    pop-up, in CGA graphics, the 640x400 mode and text."""
-    k = ktest.KPC(image('vid.img'), ems_pages=88); k.start()
-    k.key(ktest.CODE_P)
-    prompt(k, 'rspike')
-    for mode in ('4', '6', '40', '3'):
-        k.key('cls'); k.key(ktest.ENTER); k.key('gfxuse ' + mode); k.key(ktest.ENTER)
-        vram0, bios0 = k.pc.rd(0xB800, 0, 0x8000), k.pc.rd(0x40, 0x49, 30)
-        k.key(HOT)
-        up = popped(k)
-        k.key(HOT)
-        same = k.pc.rd(0xB800, 0, 0x8000) == vram0 and k.pc.rd(0x40, 0x49, 30) == bios0
-        k.key('x'); k.key(ktest.ESC)
-        o = k.pc.text_screen()
-        check('mode %s: pop-up and back, video memory and 40:49h-66h byte for byte' % mode, up and same and 'GFXUSE: 1 keys, 0 bad' in o,
-              (up, same, o))
-
-def t_exec():
-    """Over the Executive (its UI reads keys with AH=11h)."""
-    k = ktest.KPC(image('ex.img'), ems_pages=88); k.pc.mouse = True; k.start()
-    k.key(ktest.CODE_P)
-    prompt(k, 'rspike')
-    k.key('exit'); k.key(ktest.ENTER, settle=False)
-    k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
-    k.key(ktest.DOWN)
-    vram0, sel = k.pc.rd(0xB800, 0, 0x8000), k.u16('sel')
-    k.key(HOT)
-    up = popped(k)
-    k.key(HOT)
-    same = k.pc.rd(0xB800, 0, 0x8000) == vram0
-    k.key(ktest.DOWN)
-    check('over the Executive: pop-up and back, its screen byte for byte, it goes on', up and same and k.u16('sel') == sel + 1,
-          (up, same, sel, k.u16('sel')))
-    check('... the Executive lists its files after the TSR moved in', 'RSPIKE.COM' in k.exec_list(), k.exec_list())
-    # its key checks (AH=11h) go through the hook and must not wait there:
-    # a click with no key pressed
-    click(k, 40, 24 + 8)
-    check('... and its mouse works with the hook in place (a click selects, no key pressed)', k.u16('sel') == 0, k.u16('sel'))
-
-def t_tm5000g():
-    """Spike 2: a pop-up over TM5000G that talks to an instrument itself
-    (INT 60h), and TM5000G carries on with the bus."""
-    if not TM5000G:
-        print('(no TM5000G.EXE: skipped)'); return
-    chip = sim7210.NEC7210(sim7210.bus())
-    k = ktest.KPC(image('tm.img', 'TM5000G.EXE=' + TM5000G), chip=chip, ems_pages=88); k.pc.mouse = True; k.start()
-    k.key(ktest.CODE_P)
-    o = prompt(k, 'rspike /g:6')
-    check('RSPIKE /G:6 loads', 'RSPIKE resident' in o, o)
-    k.key('cls'); k.key(ktest.ENTER); k.key('tm5000g'); k.key(ktest.ENTER, settle=False); k.settle(40)
-    k.key(ktest.ENTER)
-    check('TM5000G runs (main menu)', 'TM5000 CONTROL SYSTEM' in k.pc.text_screen(), k.pc.text_screen())
-    # TM5000G polls the keyboard (kbhit: INT 16h AH=01h through the hook)
-    # between its mouse reads and its GPIB probes: a peek must not wait
-    for i in range(4): k.pc.mouse_move(0, -28 & 0xFF); k.pc.run_for(0.05)
-    k.pc.mouse_move(0, 0, 1); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.settle(5)
-    check('TM5000G\'s mouse with RSPIKE loaded: a click on "Configure Modules" opens it', 'Module Configuration' in k.pc.text_screen(),
-          k.pc.text_screen()[:300])
-    k.key('A', settle=False); k.settle(60)
-    scr = k.pc.text_screen()
-    check('... auto-detect goes through all 30 addresses with no key pressed (its table: FG5010 and DC5009 new)',
-          '-> slot 0 (new)' in scr and '-> slot 1 (new)' in scr, scr)
-    k.key('Y'); k.key(ktest.ENTER); k.key(ktest.ESC)
-    text0 = k.pc.text_screen()
-    check('TM5000G finds and configures its modules', 'Active Modules: S0, S1' in text0, text0)
-    k.key(HOT)
-    tty = ''.join(k.pc.tty)[-400:]
-    check('CODE-\\ over TM5000G: the pop-up asks the FG5010 at 6 itself', popped(k) and 'GPIB 6 says: ID TEK/FG5010' in tty, tty)
-    k.key(HOT)
-    check('... CODE-\\: TM5000G\'s screen back as it was', k.pc.text_screen() == text0, k.pc.text_screen())
-    k.key('1'); k.key('A', settle=False); k.settle(60)
-    scr = k.pc.text_screen()
-    check('TM5000G talks to the bus as before: auto-detect finds FG5010, 8753D, DC5009 again (no key pressed)',
-          all(x in scr for x in ('FG5010', '8753D', 'DC5009')) and scr.count('already set up') == 2, scr)
-
 # ---- resident Claude, M1: CLAUDE /R and CLAUDE /U --------------------------
 SEMI = 0x2700                                   # CODE-; : enhanced-only, as CODE-\ (raw 27F0h)
 
@@ -311,9 +206,10 @@ def t_rload():
         try: real[p[2]] = int(p[0], 16)
         except ValueError: pass
     check('CLAUDE.COM: what only /R and /U use (the loader, the console, the stub) is where BSS goes, below '
-          'the stack /R runs on', real['bss'] <= real['res_load'] < real['rcon_img'] < real['r_code_end'] < csym('stack_top') - 2048,
-          [(n, hex(real[n])) for n in ('bss', 'res_load', 'rcon_img', 'r_code_end', 'stack_top')])
-    k = ktest.KPC(image('rl.img'), ems_pages=88); k.start()
+          'the stack /R runs on (from bss_end: audit3 O17 put the link buffers past stack_top)',
+          real['bss'] <= real['res_load'] < real['rcon_img'] < real['r_code_end'] < csym('bss_end') - 2048,
+          [(n, hex(real[n])) for n in ('bss', 'res_load', 'rcon_img', 'r_code_end', 'bss_end')])
+    k = ktest.KPC(image('rl.img', 'HOOK16.COM=' + os.path.join(CL, 'HOOK16.COM')), ems_pages=88); k.start()
     k.key(ktest.CODE_P)
     m0, h0 = memsz(k), handles()
     o, el = run_el(k, 'claude /r')
@@ -339,9 +235,9 @@ def t_rload():
           k.pc.text_screen())
     o, el = run_el(k, 'claude /u')
     check('CLAUDE /U when it isn\'t resident: says so, exit code 1', "isn't resident" in o and el == 1, (el, o))
-    run_el(k, 'claude /r'); run_el(k, 'rspike')
+    run_el(k, 'claude /r'); run_el(k, 'hook16')
     o, el = run_el(k, 'claude /u')
-    check('CLAUDE /U under a program loaded after it (RSPIKE has INT 16h): refused, exit code 2, still resident',
+    check('CLAUDE /U under a program loaded after it (HOOK16 has INT 16h): refused, exit code 2, still resident',
           "can't be taken out" in o and el == 2 and 'resident already' in prompt(k, 'claude /r'), (el, o))
     k = ktest.KPC(image('rl0.img')); k.start()
     k.key(ktest.CODE_P)
@@ -481,6 +377,8 @@ def t_rexec():
     k.key('exit'); k.key(ktest.ENTER, settle=False)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     m1 = exec_memsz()
+    lst = k.exec_list()
+    check('... the Executive lists its files after the stub moved in', 'EMSUSE.COM' in lst and 'CLAUDE.COM' in lst, lst)
     check('loaded at the prompt, then from the Executive: a program gets %.1f KB less (the stub at the top of memory: the '
           'Executive\'s block stays where it was)' % ((m0 or 0) - (m1 or 0)), m0 and m1 and 0 < m0 - m1 <= 1.2, (m0, m1))
     k.select('EMSUSE.COM')
@@ -530,6 +428,7 @@ def t_rtm5000g():
     check('... auto-detect goes through all 30 addresses with no key pressed', '-> slot 0 (new)' in scr and '-> slot 1 (new)' in scr, scr)
     k.key('Y'); k.key(ktest.ENTER); k.key(ktest.ESC)
     text0 = k.pc.text_screen()
+    check('TM5000G finds and configures its modules', 'Active Modules: S0, S1' in text0, text0)
     k.key(SEMI, settle=False); k.key(HOT)
     up = console(k)
     k.key(HOT)
@@ -677,7 +576,7 @@ def t_rhole():
           i is not None and all(b[1] == 0 for b in blocks[i + 1:]) and holes,
           [(hex(s), o_, n, nm) for s, o_, n, nm in blocks])
 
-TESTS = [t_ems, t_video, t_exec, t_tm5000g, t_rload, t_rems, t_rother, t_rpoll, t_rvideo, t_rdos, t_rexec, t_rtm5000g,
+TESTS = [t_rload, t_rems, t_rother, t_rpoll, t_rvideo, t_rdos, t_rexec, t_rtm5000g,
          t_rirq, t_rmouse, t_rversion, t_rhole]
 if __name__ == '__main__':
     build()

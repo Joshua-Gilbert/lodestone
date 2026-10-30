@@ -22,7 +22,8 @@
 ;  whatever modules the start-up kept (EMS's, C:'s) and relocated there:
 ;  the BIOS's 5 paragraphs of ROM data (E401's), R:'s drive table entry
 ;  and current directory, and the hooks into use_drive, drv_present,
-;  cwd_of and dio, as M:'s (KMDISK.INC), which chains after them.
+;  cwd_of and dio, as M:'s (KMDISK.INC), which chains after them; with
+;  ROM 2, f_36's too (INT 21h 36h: R:'s answer, not walking the gap).
 ;
 ;  Booted from the ROM (in the load image, never kept):
 ;    - rom_menu, before anything else: with a Shift key held, a menu:
@@ -43,22 +44,27 @@ R_DRV   equ 17                          ; R:
 R_ID    equ 4F4Ch                       ; the ROM's id in its trailer: 'LO'
 R_SECS  equ 256                         ; 128 KB
 R_PIECE equ 8                           ; sectors copied with interrupts off
-R_PLEN  equ 8                           ; r_dio.lp's bytes, r_patch without ROM 2
+R_PLEN  equ 5                           ; r_dio.lp's bytes, r_patch without ROM 2
 R_WIN   equ 0A000h                      ; the BIOS's window
 R_DATA  equ 4                           ; mkrom.py's layout: the root at 2-3,
 R_ROOT  equ 2                           ;  32 entries; data (cluster 2) at 4;
 R_NROOT equ 32                          ;  clusters 2-253 (253: the trailer's)
 R_NCL   equ R_SECS - R_DATA + 2         ; (the highest cluster + 1: 254)
-; ROM 2 (mkrom.py --data: id 'L2', system type 2, the same layout) joined
-; to R:: one volume, its FAT 2 sectors (1-2), its root ROM 1's 32 entries
-; then ROM 2's (3-6), then ROM 1's clusters 2-253 and ROM 2's as 254-505
-R_ID2   equ 324Ch                       ; 'L2'
-R_OFF   equ R_NCL - 2                   ; ROM 2's cluster n is R:'s n + 252
+; ROM 2 (mkrom.py --data: id 'LJ', system type 2) joined to R:: one
+; volume, its FAT 2 sectors (1: ROM 1's, 2: ROM 2's), its root ROM 1's 32
+; entries then ROM 2's (3-6), then ROM 1's clusters 2-253, a gap (254-341,
+; bad), ROM 2's as 342-593.  mkrom writes ROM 2 as that second half, so
+; all but ROM 1's root (its empties made deleted, .fix) are plain copies.
+; ROM 2 alone: R:'s FAT sector 1 is ROM 2's spare R2_P1, its root 5-6.
+R_ID2   equ 4A4Ch                       ; 'LJ' (an 'L2' ROM 2, before O10: none)
+R_OFF   equ 340                         ; ROM 2's cluster n is R:'s n + 340:
+        times -((R_OFF + 2) * 3 / 2 < 512) db 0  ;  its entries all in sector 2
 R2_ROOT equ 3
 R2_DATA equ 7
-R2_NCL  equ R_NCL + R_OFF               ; 506
-R2_SECS equ R2_DATA + 2 * R_OFF         ; 511
-R_END1  equ R2_DATA + R_OFF             ; 259: R:'s first sector on ROM 2
+R2_NCL  equ R_NCL + R_OFF               ; 594
+R2_SECS equ R2_DATA - 2 + R2_NCL        ; 599
+R_END1  equ R2_DATA + R_NCL - 2         ; 259: past ROM 1's clusters (the gap)
+R2_P1   equ R_SECS - 2                  ; 254 (mkrom.py's P1_AT)
 INI_BUF equ 0F000h                      ; ini_read: the settings, in the load
                                         ;  image's segment (KSPLASH's SP_BUF)
 
@@ -145,10 +151,11 @@ r_dio:  cmp     al, R_DRV
         mov     bp, dx                  ; BP = R:'s sector
 .l:     jcxz    .ok
 .lp:    call    .map                    ; -> DX = the image's, SI = how many
-        jc      .made                   ;  in a row there (without ROM 2, these
-.lpe:                                   ;  8 bytes are r_patch: rom_init)
+        jc      .bad                    ;  in a row there (without ROM 2, these
+.lpe:                                   ;  5 bytes are r_patch: rom_init)
         times   -(.lpe - .lp != R_PLEN) db 0
-        mov     di, R_PIECE             ; DI = sectors this time
+        db      0C7h, 0C7h              ; MOV DI, R_PIECE: DI = sectors this
+        dw      R_PIECE                 ;  time (4 bytes: what follows even)
         cmp     cx, di
         jae     .n0
         mov     di, cx
@@ -235,159 +242,91 @@ r_dio:  cmp     al, R_DRV
         popf
         ret
 
-; (from here on, only with ROM 2 joined: without it the module ends here)
+; (from here on, only with ROM 2: without it the module ends here)
 ..@r_made:
+        times   ($ - r_tstart) & 1 db 90h       ; (hot: .map even)
 ; R:'s sector BP -> DX = the image's sector, [r_cur] = the image, SI = how
-; many go on in a row there; CF for sectors 1-6, the FAT and the root,
-; which are made up (.made).  Without ROM 2, .lp's call is r_patch instead
+; many go on in a row there.  CF: the gap (R:'s 259-342, clusters 254-337:
+; bad, on no ROM; 343-346, clusters 338-341, read ROM 2's sectors 0-3).  Without ROM 2, .lp's
+; call is r_patch instead
 .map:   mov     dx, bp
-        mov     si, 1                   ; (the boot sector: ROM 1's, alone:
-        RADR    mov al, [r_img]         ;  the next are made up)
-        or      bp, bp
-        jz      .m1
         cmp     bp, R2_DATA
-        jb      .mm
+        jb      .lo
         sub     dx, R2_DATA - R_DATA    ; ROM 1's clusters, then ROM 2's
+        RADR    mov al, [r_img]
         mov     si, R_END1
         cmp     bp, si
         jb      .m0
-        sub     dx, R_OFF
+        sub     dx, R_OFF               ; (CF: below ROM 2's, the gap)
         RADR    mov al, [r_img2]
-        jmp     short .m1               ; (SI = 259: more than ROM 2's sectors)
+        jnc     .m1                     ; (SI = 259: more than ROM 2's sectors)
+        ret
+        times   ($ - r_tstart) & 1 db 90h       ; (hot: .m0, .m1 even)
 .m0:    sub     si, bp
 .m1:    RADR    mov [r_cur], al
-        clc
-        ret
-.mm:    stc
-        ret
-
-; sectors 1-6 of the joined R:, one at a time (into memory below the
-; window: they are the kernel's own buffers'): 1-2 the FAT, ROM 1's then
-; ROM 2's entries past its own (their clusters R_OFF on); 3-4 ROM 1's
-; root, its empty entries deleted ones so that a search goes on; 5-6 ROM
-; 2's, its label gone and its clusters R_OFF on
-.made:  mov     ax, es
-        cmp     ax, R_WIN - 20h
+        ret                             ; (CF clear)
+; sectors 0-6: r_lo's image and sector, one at a time; 3-4, ROM 1's root,
+; with its empty entries made deleted ones so that a search goes on to ROM
+; 2's (.fix)
+.lo:    mov     si, bp
+        shl     si, 1
+        RADR    mov ax, [si + r_lo]
+        mov     dl, ah                  ; (DH 0: BP < 7)
+        RADR    mov [r_cur], al
+        mov     si, 1
+        lea     ax, [bp - R2_ROOT]
+        cmp     ax, 2
+        jb      .fx
+        ret                             ; (CF clear)
+.fx:    pop     ax                      ; (not back to .lp)
+        mov     ax, es                  ; one sector into memory below the
+        cmp     ax, R_WIN - 20h         ;  window (the kernel's buffers)
         jae     .bad
         mov     di, 1
-        mov     dx, bp
-        cmp     bp, R2_ROOT
-        jb      .fat
-        sub     dx, R2_ROOT - R_ROOT    ; ROM 1's root: 2-3
-        RADR    mov al, [r_img]
-        cmp     bp, R2_ROOT + 2
-        jb      .rt
-        sub     dx, 2                   ; ROM 2's: 2-3
-        RADR    mov al, [r_img2]
-.rt:    RADR    mov [r_cur], al
         call    .piece
         push    cx
         mov     si, bx
-        mov     cx, 16                  ; its 16 entries
-.e:     mov     al, [es:si]
-        cmp     bp, R2_ROOT + 2
-        jae     .e2
-        or      al, al                  ; ROM 1's: empty -> deleted
-        jnz     .en
+        mov     cx, 16
+.e:     cmp     byte [es:si], 0         ; empty -> deleted
+        jne     .en
         mov     byte [es:si], 0E5h
-        jmp     short .en
-.e2:    or      al, al                  ; ROM 2's: the end, a deleted one,
-        jz      .en                     ;  its label
-        cmp     al, 0E5h
-        je      .en
-        test    byte [es:si+11], 08h
-        jz      .ec
-        mov     byte [es:si], 0E5h
-        jmp     short .en
-.ec:    cmp     word [es:si+26], 2
-        jb      .en
-        add     word [es:si+26], R_OFF
 .en:    add     si, 32
         loop    .e
         pop     cx
         jmp     .nx
-.fat:   RADR    mov al, [r_img2]        ; ROM 2's FAT into the bounce buffer
-        RADR    mov [r_cur], al
-        push    es
-        push    bx
-        push    cs
-        pop     es
-        mov     bx, bounce
-        mov     dx, 1
-        call    .piece
-        pop     bx
-        pop     es
-        mov     ax, R_NCL               ; sector 1: ROM 1's FAT, then ROM 2's
-        cmp     bp, 1                   ;  entries from cluster R_NCL on
-        jne     .f2
-        RADR    mov dl, [r_img]
-        RADR    mov [r_cur], dl
-        mov     dx, 1
-        call    .piece
-        jmp     short .f
-.f2:    push    cx                      ; sector 2: ROM 2's alone, from the
-        push    di                      ;  entry the sector starts in
-        mov     di, bx
-        xor     ax, ax
-        mov     cx, 256
-        rep     stosw
-        pop     di
-        pop     cx
-        mov     ax, 512 * 2 / 3         ; (341: half of it in sector 1)
-.f:     push    cx
-        mov     cx, bp
-        dec     cx
-        xchg    cl, ch
-        shl     cx, 1                   ; CX = the sector's first byte (0, 512)
-.fl:    cmp     ax, R2_NCL
-        jae     .fd
-        mov     si, ax                  ; the entry's byte, in the sector
-        shr     si, 1
-        add     si, ax
-        sub     si, cx
-        cmp     si, 512
-        jge     .fd
-        push    si
-        mov     si, ax                  ; ROM 2's entry (AX - R_OFF)
-        sub     si, R_OFF
-        mov     dx, si
-        shr     si, 1
-        add     si, dx
-        mov     dx, [cs:bounce + si]
-        test    al, 1
-        jz      .fv
-        shr     dx, 4
-.fv:    and     dx, 0FFFh
-        cmp     dx, 2                   ; a cluster of ROM 2's: R_OFF on
-        jb      .fw
-        cmp     dx, 0FF6h
-        ja      .fw
-        add     dx, R_OFF
-.fw:    pop     si                      ; SI = its first byte (-1: in sector 1)
-        test    al, 1
-        jnz     .fo
-        mov     [es:bx+si], dl          ; even: the low 8 bits, then the top
-        mov     dl, dh                  ;  4 (an even entry is never split)
-        and     byte [es:bx+si+1], 0F0h
-        or      [es:bx+si+1], dl
-        jmp     short .fn
-.fo:    shl     dx, 4                   ; odd: the low 4 bits over the top
-        or      si, si                  ;  half of its first byte, then 8
-        js      .f3
-        and     byte [es:bx+si], 0Fh
-        or      [es:bx+si], dl
-.f3:    cmp     si, 511
-        jge     .fn
-        mov     [es:bx+si+1], dh
-.fn:    inc     ax
-        jmp     .fl
-.fd:    pop     cx
-        jmp     .nx
+
+; f_36 (INT 21h 36h, only with ROM 2): R:'s answer without walking its FAT:
+; nothing free, and the clusters the ROMs have (r_tot: the gap left out)
+        times   ($ - r_tstart) & 1 db 90h       ; (r_f36 even)
+r_f36:  mov     al, [bp+F_DX]
+        or      al, al
+        jnz     .d
+        mov     al, [cur_drv]
+        inc     al
+.d:     cmp     al, R_DRV + 1
+        je      .r
+.t:     times f_36.hk - f_36 db 90h
+        RKJMP   f_36.hk
+.r:     xor     ax, ax
+        mov     [bp+F_BX], ax           ; 0 free
+        inc     ax
+        mov     [bp+F_AX], ax           ; a sector a cluster, of 512 bytes
+        mov     word [bp+F_CX], 512
+        RADR    mov ax, [r_tot]
+        mov     [bp+F_DX], ax
+        RKJMP   done
+r_tot   dw      0                       ; (rom_init: 504, ROM 2 alone 252)
+r_lo:   times 7 dw 0                    ; R:'s sectors 0-6: the image, its sector
+                                        ;  (rom_init)
 r_tend:
 R_TLEN  equ r_tend - r_tstart
-R_TLEN1 equ ..@r_made - r_tstart          ; (without ROM 2: .made not kept)
-        times   -(R_TLEN > 50 * 16) db 0        ; (50 paragraphs: one byte more
-                                                ;  costs DOS programs one more)
+R_TLEN1 equ ..@r_made - r_tstart          ; (without ROM 2: .map not kept)
+        times   -(R_TLEN > 39 * 16) db 0        ; (39 paragraphs, 29 alone: one
+        times   -(R_TLEN1 > 29 * 16) db 0       ;  byte more costs DOS programs
+                                                ;  one more)
+        times   -(((r_dio.n0 - r_tstart) | (r_dio.n - r_tstart) | (r_dio.dir - r_tstart) \
+                | (r_dio.piece - r_tstart)) & 1) db 0   ; (hot, even: the module
+                                                ;  goes on a paragraph)
 
 ; the words that move with it (from r_tstart), each list ended by FFFFh
 r_relp:
@@ -410,6 +349,9 @@ r_hooks:
         dw      drv_present, drv_present.hk, r_pres, r_pres.t
         dw      cwd_of, cwd_of.hk, r_cwdh, r_cwdh.t
         dw      dio, dio.hk, r_dio, r_dio.t
+        dw      0
+r_hooks2:                               ; (only with ROM 2)
+        dw      f_36, f_36.hk, r_f36, r_f36.t
         dw      0
 %define RTB(x) (section.rmt.start + ((x) - section.rmt.vstart))   ; (in the load image)
 
@@ -464,11 +406,11 @@ rom_init:
         mov     ah, 2
         call    r_find                  ; AL = ROM 2's image (FFh: none)
         mov     ah, [cs:MDB(r_i1)]      ; AH = R:'s: ROM 1's, else ROM 2's
-        cmp     ah, 0FFh                ;  alone (nothing to join it to)
-        jne     .got
+        cmp     ah, 0FFh                ;  alone (then both: R:'s the same
+        jne     .got                    ;  volume, its FAT sector 1 R2_P1)
         cmp     al, 0FFh
         je      .no
-        xchg    al, ah
+        mov     ah, al
 .got:   mov     di, [cs:MDB(r_place)]   ; its data
         mov     [di + r_img - r_tstart], ah
         mov     [di + r_img2 - r_tstart], al
@@ -516,6 +458,32 @@ rom_init:
         mov     byte [bx + D_RSEC], 2 * R_NROOT / 16
         mov     byte [bx + D_DATA], R2_DATA
         mov     word [bx + D_NCL], R2_NCL
+        push    ds
+        pop     es                      ; (r_find's E402 left ES A000h)
+        push    di                      ; r_lo: R:'s sectors 0-6
+        mov     bx, [di + r_img - r_tstart]     ; (BL R:'s image, BH ROM 2's)
+        add     di, r_lo - r_tstart
+        mov     si, MDB(r_losec)
+        mov     dx, R_LO2
+        mov     cx, 7
+.lf:    mov     ah, [cs:si]
+        inc     si
+        mov     al, bl
+        shr     dx, 1
+        jnc     .lw
+        mov     al, bh
+.lw:    stosw
+        loop    .lf
+        pop     di
+        mov     word [di + r_tot - r_tstart], 2 * (R_NCL - 2)   ; (36h's total)
+        cmp     byte [cs:MDB(r_i1)], 0FFh
+        jne     .one
+        mov     word [di + r_tot - r_tstart], R_NCL - 2
+        mov     byte [di + r_lo - r_tstart + 3], R2_P1  ; ROM 2 alone: R:'s
+        lea     bx, [di + r_dt - r_tstart]      ;  FAT sector 1 its spare, its
+        mov     byte [bx + D_ROOT], R2_ROOT + 2 ;  root ROM 2's half alone
+        mov     byte [bx + D_NROOT], R_NROOT
+        mov     byte [bx + D_RSEC], R_NROOT / 16
 .one:
         mov     si, RTB(r_relp)         ; its own addresses: + its place
 .rp:    mov     bx, [cs:si]
@@ -565,7 +533,14 @@ rom_init:
         mov     [di+1], ax
         add     si, 8
         jmp     .h
-.hd:    mov     byte [lastdrv], R_DRV + 1       ; INT 21h 0Eh: to R:
+.hd:    cmp     si, RTB(r_hooks2)       ; then, with ROM 2, r_hooks2 (f_36)
+        jae     .hn
+        mov     di, [cs:MDB(r_place)]
+        cmp     byte [di + r_img2 - r_tstart], 0FFh
+        je      .hn
+        mov     si, RTB(r_hooks2)
+        jmp     .h
+.hn:    mov     byte [lastdrv], R_DRV + 1       ; INT 21h 0Eh: to R:
         mov     ax, [cs:MDB(r_place)]   ; the arena above it
         mov     di, ax
         mov     cx, R_TLEN + 15
@@ -649,13 +624,13 @@ r_imgi  db      0
 r_cnt   db      0
 r_i1    db      0                       ; ROM 1's image (FFh: none)
 r_noov  db      0                       ; 1: the ROM's settings only (the menu)
+r_losec db      0, 1, 1, 2, 3, 2, 3     ; R:'s sectors 0-6: the image's sector,
+R_LO2   equ     01100100b               ;  ROM 2's for 2, 5 and 6, else ROM 1's
 ; r_dio.lp without ROM 2: .map's answer, DX = R:'s sector, SI = no end to
-; the run (r_cur is R:'s image); then DI as the next instruction sets it
-; (3 bytes in 2 clocks, where NOPs take 9)
+; the run (r_cur is R:'s image)
 r_patch:
         mov     dx, bp
         mov     si, 0FFFFh
-        mov     di, R_PIECE
         times   -($ - r_patch != R_PLEN) db 0
 ; the boot sector's start as mkrom.py makes it: jump, "LODE ROM", 512
 ; bytes a sector, 1 a cluster, 1 reserved, 1 FAT, 32 root entries, 256
