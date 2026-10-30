@@ -138,6 +138,8 @@ Value     Name
 0000011B  SV_KEY
 0000000F  PB_N
 00000008  PS_N
+0000003E  PR_ROW
+00000407  PR_TXT
 00000156  HELLO_MAX
 0000003D  R_PARAS
 
@@ -603,6 +605,7 @@ Real              Virtual           Name
             1F28              1F28  pn14
             1F3A              1F3A  s_prof
             1F45              1F45  s_ph
+            1FAB              1FAB  s_phe
             1FAB              1FAB  prof_start
             1FDC              1FDC  prof_rebase
             1FEB              1FEB  prof_now
@@ -1173,13 +1176,13 @@ Real              Virtual           Name
             5A85              5A85  prof_sp
             5A86              5A86  prof_stk
             5A8E              5A8E  prof_txt
-            5E8E              5E8E  stack_bottom
-            628E              628E  stack_top
-            628E              628E  reqbuf
-            A3CE              A3CE  rxbuf
-            B0E4              B0E4  txframe
-            BDD0              BDD0  nakframe
-            BDD8              BDD8  bss_end
+            5E96              5E96  stack_bottom
+            6296              6296  stack_top
+            6296              6296  reqbuf
+            A3D6              A3D6  rxbuf
+            B0EC              B0EC  txframe
+            BDD8              BDD8  nakframe
+            BDE0              BDE0  bss_end
 
 ---- Section rstub ------------------------------------------------------------
 
