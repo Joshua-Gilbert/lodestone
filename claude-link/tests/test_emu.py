@@ -220,7 +220,7 @@ def test_run_capture_unwritable():
     assert h.turn('what is on the disk?')
     res = results(h, 1)[0]
     assert res.get('is_error') and 'path not found' in str(res['content']), res
-    assert not any('[EXEC' in str(l) for l in h.m.log), h.m.log
+    assert not any('/C DIR' in str(l) for l in h.m.log), h.m.log      # (the shell never started for it)
     check(h)
 
 
