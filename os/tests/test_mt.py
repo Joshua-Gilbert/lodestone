@@ -45,12 +45,16 @@ MTSYS = os.path.join(GOS, 'src', 'LODEMT.SYS')
 MAP = os.path.join(GOS, 'src', 'LODE.MAP')
 import mkmt
 INT08 = (STUB, 0x1000)                  # pcemu's BIOS timer handler
-MT_ENT, TE_NAME, TE_SH = 32, 10, 22      # KMT.INC: an entry in mt_tab, its name, its screen's EMS handle
-TE_TX, TE_VF, TX_VID = 6, 24, 10         # (its TX's segment, VF_DIRECT and the SPF_ overrides; a TX's BIOS video data)
-VF_DIRECT, SPF_BG, SPF_FREEZE, TS_WAITF, TS_FROZEN = 1, 2, 4, 3, 4
+# KMT.INC's layout, from LODE.MAP's EQUs (H6): an entry in mt_tab and its fields (its stub's PSP, its region, its
+# TX's segment, its last exit code, its name, its screen's EMS handle, VF_DIRECT and the SPF_ overrides, MT_KILL's
+# mark, parked: the EMS handle its region is in and the region's paragraphs, its count); a TX's BIOS video data
+(MT_ENT, TE_PSP, TE_REG, TE_TX, TE_EXIT, TE_NAME, TE_SH, TE_VF, TE_KILL, TE_PH, TE_PSZ, TE_GEN, TX_VID, VF_DIRECT,
+ SPF_BG, SPF_FREEZE, TS_WAITF, TS_FROZEN) = map(ktest.equ, (
+    'MT_ENT', 'TE_PSP', 'TE_REG', 'TE_TX', 'TE_EXIT', 'TE_NAME', 'TE_SH', 'TE_VF', 'TE_KILL', 'TE_PH', 'TE_PSZ',
+    'TE_GEN', 'TX_VID', 'VF_DIRECT', 'SPF_BG', 'SPF_FREEZE', 'TS_WAITF', 'TS_FROZEN'))
 INT10 = (STUB, 0x10 * 8)                # pcemu's BIOS INT 10h
 INT16 = (STUB, 0x16 * 8)                # and INT 16h
-TS_WAITK = 2
+TS_WAITK = ktest.equ('TS_WAITK')
 MTK = os.path.join(HERE, 'MTKEY.COM')
 MTM = os.path.join(HERE, 'MTM33.COM')
 MTV = os.path.join(HERE, 'MTVEC.COM')
@@ -112,11 +116,8 @@ def at_top(k):
 def vec(k, n): return k.pc.u16(0, n * 4 + 2), k.pc.u16(0, n * 4)
 
 def equ(name):
-    """An EQU's value, from LODE.MAP's list of them (ktest's symbols are the labels)."""
-    for l in open(os.path.join(GOS, 'src', 'LODE.MAP')):
-        m = re.match(r'([0-9A-F]{8})\s+(\S+)\s*$', l)
-        if m and m.group(2) == name: return int(m.group(1), 16)
-    raise KeyError(name)
+    """An EQU's value, from LODE.MAP's list of them (ktest.equ)."""
+    return ktest.equ(name)
 
 def f0_bytes(k): return bytes(k.pc.rd(0x60, k.Y['f_F0'], 5))
 def kw_bytes(k): return bytes(k.pc.rd(0x60, k.Y['kbd_get.k'], 6))
@@ -689,7 +690,7 @@ class Audit:
         if s.cur is not None and s.cur != cur and not s.stale:     # (watch's mt_cur, kept from mt_load.go: wrong
             s.stale = True                                          #  if mt_cur had another writer, or mt_load
             check('Audit: mt_cur as kept since mt_load.go (%d), as read (%d)' % (s.cur, cur), False)  # another way out)
-        reg = pc.u16(s.seg, Y['mt_tab'] + cur * MT_ENT + 4)
+        reg = pc.u16(s.seg, Y['mt_tab'] + cur * MT_ENT + TE_REG)
         ui, psp, root = pc.u16(0x60, Y['ui_seg']), pc.u16(0x60, Y['cur_psp']), pc.u16(0x60, Y['root_psp'])
         ts = pc.u16(s.seg, Y['mt_tsrs'])                # (Resident Claude's stub, MT_TSR: only at its HLT, in a
         stub = ts != 0 and cs == ts                     #  read of the program's own: its frame's CS, at the
@@ -1048,7 +1049,7 @@ def t_fpu():
     k.pc.pic2_mask &= ~0x20
     def inj():
         cur = k.pc.rd(seg, Y['mt_cur'], 1)[0]
-        reg = k.pc.u16(seg, Y['mt_tab'] + cur * MT_ENT + 4)
+        reg = k.pc.u16(seg, Y['mt_tab'] + cur * MT_ENT + TE_REG)
         return cur and reg <= vec(k, 0x75)[0] < reg + k.pc.u16(reg - 1, 3)      # (the E task's own error)
     au.inject = inj
     v75 = vec(k, 0x75)
@@ -2208,7 +2209,7 @@ def t_mouse():
     sh.run('ver')
     attr = lambda c, r: k.pc.rd(0xB800, (r * 80 + c) * 2 + 1, 1)[0]
     def m33(task, name):                # a field of task's own INT 33h state, in its TX
-        tx = k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + 6)
+        tx = k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + TE_TX)
         return k.pc.u16(tx, equ('TX_M33') + Y[name] - Y['m33_st'])
     live = lambda name: k.u16(name)
     i33 = vec(k, 0x33)
@@ -2434,10 +2435,10 @@ def t_vectors():
     def txvec(task, n):                 # task's own vector n (one of mt_vrun's), in its TX
         run = list(k.pc.rd(seg, Y['mt_vrun'], equ('MT_NVEC')))
         o = equ('TX_VEC') + run.index(n) * 4
-        return k.pc.u16(ent(task, 6), o + 2), k.pc.u16(ent(task, 6), o)
+        return k.pc.u16(ent(task, TE_TX), o + 2), k.pc.u16(ent(task, TE_TX), o)
     def txfv(task, i):                  # its INT 09h (0) or 1Bh (1), in its TX
         o = equ('TX_FVEC') + i * 4
-        return k.pc.u16(ent(task, 6), o + 2), k.pc.u16(ent(task, 6), o)
+        return k.pc.u16(ent(task, TE_TX), o + 2), k.pc.u16(ent(task, TE_TX), o)
     def runs(task, yes, s=2.0):         # run until task is (yes) or isn't the one running, and MT's switch is
         u0 = k.pc.us                    #  over (mt_cur is set before mt_load puts its vectors in; a halted
         while k.pc.us - u0 < s * 1e6:   #  machine's time jumps to the next tick, so no waiting for that)
@@ -2457,7 +2458,7 @@ def t_vectors():
     nr = runs(1, False)
     st = tstate(k)
     b = (txvec(1, 0x10), txvec(1, 0x16), txvec(1, 8), txvec(1, 0x1C))
-    reg1 = ent(1, 4)
+    reg1 = ent(1, TE_REG)
     waitfile(k, 'H2.TXT', 8.0)
     line(k, '')
     h1, h2 = spun(k, 'H1.TXT'), spun(k, 'H2.TXT')
@@ -2486,7 +2487,7 @@ def t_vectors():
     # INT 09h (the keyboard's) written by a task behind: its own; the front task's in the table meanwhile
     typ(k, 'mtlaunch mtvec.com k 90 k.txt;mtspin.com 40 ks.txt', 0.4)
     k.run_for(0.4)
-    reg = ent(1, 4)
+    reg = ent(1, TE_REG)
     nr = runs(1, False)
     a1, f1 = vec(k, 9), txfv(1, 0)
     front(k, 1); k.run_for(0.3)
@@ -2502,7 +2503,7 @@ def t_vectors():
     # it started with, its spawner's; its INT 22h-24h MT's, not the shell's
     k.pc.wr(reg, equ('TX_FVEC'), bytes([0xEF, 0xBE, 0xAD, 0xDE]))
     typ(k, 'mtlaunch /f mtvec.com v 30 vf.txt', 0.6)
-    st, a3, rg = tstate(k), vec(k, 9), ent(1, 4)
+    st, a3, rg = tstate(k), vec(k, 9), ent(1, TE_REG)
     waitfile(k, 'VF.TXT', 4.0); k.run_for(0.3)
     line(k, '')
     vf = vread('VF.TXT')
@@ -2555,7 +2556,7 @@ def t_vectors():
     # brought to the front after, the table has INT 1Bh as before, not its old hook
     typ(k, 'mtlaunch mtvec.com b 20 b.txt;mtspin.com 30 bs.txt', 0.4)
     k.run_for(0.3)
-    reg = ent(1, 4)
+    reg = ent(1, TE_REG)
     nr = runs(1, False)
     f2, a5 = txfv(1, 1), vec(k, 0x1B)
     k.run_for(1.0)
@@ -2573,7 +2574,7 @@ def t_vectors():
     # (the one written, not both, taken off at the switch away); brought to the front while hooked, both in the table
     typ(k, 'mtlaunch mtvec.com x 60 x.txt;mtspin.com 80 xs.txt', 0.4)
     k.run_for(0.3)
-    reg = ent(1, 4)
+    reg = ent(1, TE_REG)
     nr = runs(1, False)
     f3 = (txfv(1, 0), txfv(1, 1))
     front(k, 1); k.run_for(0.3)
@@ -2617,7 +2618,7 @@ def t_kill():
     seg, Y = mt_seg(k), k.Y
     sh = Shell(k)
     sh.run('ver')
-    ext = lambda task: k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + 8)      # (TE_EXIT)
+    ext = lambda task: k.pc.u16(seg, Y['mt_tab'] + task * MT_ENT + TE_EXIT)
     alone = lambda: tstate(k)[0] == [(0, 1, 'Executive')]
     m0, s0, e0 = merged(mcbs(k)), sft_used(k), ems_used(k)
     back = lambda: alone() and merged(mcbs(k)) == m0 and sft_used(k) == s0 and ems_used(k) == e0 and not k.crashed
@@ -2626,7 +2627,7 @@ def t_kill():
     def killed(n, cmd, settle=0.6):     # cmd started (MTLAUNCH's), run a while, then MTLAUNCH /K:n
         sh.run('mtlaunch ' + cmd); line(k, ''); k.run_for(settle)
         st, e1 = tstate(k), ems_used(k)
-        reg = k.pc.u16(seg, Y['mt_tab'] + n * MT_ENT + 4)                  # (TE_REG: its region, its MCB before it)
+        reg = k.pc.u16(seg, Y['mt_tab'] + n * MT_ENT + TE_REG)             # (its region, its MCB before it)
         lo, hi = (reg * 16, (reg + k.pc.u16(reg - 1, 3)) * 16) if reg else (0, 0)
         ka, ea, ph, ran, prev = seg * 16 + Y['mt_kill'], seg * 16 + Y['mt_end'], [0], [], k.pc.watch
         def w(a):                       # (code run in its region from MT_KILL to its MT_END: none, if it ends
@@ -2831,7 +2832,7 @@ def t_kill():
         if a == seg * 16 + Y['mt_kdie']: kd.append(cur())
         if a == seg * 16 + Y['mt_kill.df']: kd.append('df')
     k.pc.watch = w
-    marked = lambda: k.pc.rd(seg, Y['mt_tab'] + MT_ENT + 25, 1)[0]     # (task 1's TE_KILL)
+    marked = lambda: k.pc.rd(seg, Y['mt_tab'] + MT_ENT + TE_KILL, 1)[0]     # (task 1's)
     typ(k, 'mtlaunch /f mtkill.com r 0 x;mtspin.com 400 rq.txt', 0.3)
     for i in range(40):                 # (moves only until its handler's kill is put off: MTSPIN still computing
         for j in range(200):            #  after, so it isn't ended for want of another task to run)
@@ -2882,14 +2883,14 @@ def t_park():
     back = lambda: alone() and merged(mcbs(k)) == m0 and sft_used(k) == s0 and ems_used(k) == e0 and not k.crashed
     now = lambda: (tstate(k), show(mcbs(k)), sft_used(k), s0, ems_used(k), e0)
     def region(task):                   # its region: segment, paragraphs (its MCB's), and its bytes
-        r = ent(task, 4)
+        r = ent(task, TE_REG)
         n = k.pc.u16(r - 1, 3)
         return r, n, bytes(k.pc.rd(r, 0, n * 16))
     def mt(cmd):                        # MTLAUNCH's options, from the prompt
         o = sh.run('mtlaunch ' + cmd); line(k, ''); k.run_for(0.3)
         return o
     def owners(task):                   # the owners in its own arena (its PSPs)
-        s, out = k.pc.u16(ent(task, 6), equ('V_MCB')), set()
+        s, out = k.pc.u16(ent(task, TE_TX), equ('V_MCB')), set()
         for i in range(50):
             t, o, n = k.pc.rd(s, 0, 1)[0], k.pc.u16(s, 1), k.pc.u16(s, 3)
             if o: out.add(o)
@@ -2961,12 +2962,12 @@ def t_park():
           and 'MTLAUNCH: error 5' in og and 1 not in sw and f1 == 0 and f2 == 0 and rq == 0xFF and st(1) == 5
           and 'MTLAUNCH: error 5' in o5 and not k.crashed, (o0, o1, o3, o4, og, sw, f1, f2, rq, o5, now()))
     # in the way: a task whose region took the parked one's place; pinned (a vector into it), it can't be parked
-    sp1 = ent(1, 4), ent(1, 28)        # (the parked one's region: TE_REG, TE_PSZ)
+    sp1 = ent(1, TE_REG), ent(1, TE_PSZ)        # (the parked one's region: TE_REG, TE_PSZ)
     eb = ems_used(k)                    # (the parked one's own EMS page among them: the programs in its place
                                         #  below have their PSPs at its program's segment)
     mt('mtvec.com i 0 x')               # (task 2: INT 62h its own, then a line)
     k.run_for(0.3)
-    r2, n2 = ent(2, 4), k.pc.u16(ent(2, 4) - 1, 3)
+    r2, n2 = ent(2, TE_REG), k.pc.u16(ent(2, TE_REG) - 1, 3)
     lap = r2 - 1 < sp1[0] + sp1[1] and sp1[0] - 1 < r2 + n2
     v62 = vec(k, 0x62)
     o1, o2 = mt('/u:1'), mt('/p:2')
@@ -2976,11 +2977,11 @@ def t_park():
           and st(2) == TS_WAITK and vec(k, 0x62) == v62 and not k.crashed, (r2, n2, sp1, v62, o1, o2, now()))
     front(k, 2); line(k, ''); k.run_for(0.5)                        # (I ends, INT 62h put back)
     mt('mtkill.com f 10 kc.txt')        # (task 2 again, in the same place: its PSPs at the same segments)
-    r2, n2 = ent(2, 4), k.pc.u16(ent(2, 4) - 1, 3)
+    r2, n2 = ent(2, TE_REG), k.pc.u16(ent(2, TE_REG) - 1, 3)
     lap = r2 - 1 < sp1[0] + sp1[1] and sp1[0] - 1 < r2 + n2
     pc = owners(2)
     o1 = mt('/u:1')
-    sa, sb, ra = st(1), st(2), ent(1, 4)
+    sa, sb, ra = st(1), st(2), ent(1, TE_REG)
     o2 = mt('/u:2')
     sc, sd = st(1), st(2)
     front(k, 2); line(k, ''); k.run_for(0.5)                        # (it ends, as a program does, the other parked)
@@ -3000,12 +3001,12 @@ def t_park():
     # asked from a task behind, whose own INT 09h (in its TX: the table's is the front one's) points into the one
     # to be parked (the test writes it there as MT_PARK looks): pinned all the same
     mt('mtkill.com f 10 kg.txt')
-    r1 = ent(1, 4)
+    r1 = ent(1, TE_REG)
     pk, prev = [], k.pc.watch
     def w(a):
         if prev: prev(a)
         if a == seg * 16 + Y['mt_pinned'] and cur() == 2 and not pk:
-            k.pc.wr(ent(2, 6), equ('TX_FVEC'), struct.pack('<HH', 0x100, r1 + 0x40))
+            k.pc.wr(ent(2, TE_TX), equ('TX_FVEC'), struct.pack('<HH', 0x100, r1 + 0x40))
             pk.append(1)
     k.pc.watch = w
     typ(k, 'mtlaunch mtlaunch.com /p:1', 0.4); line(k, ''); k.run_for(0.5)
@@ -3053,8 +3054,8 @@ def t_park():
     v62 = vec(k, 0x62)
     mt('mtvec.com i 0 x')
     mt('mtvec.com i 0 x')
-    r1, r2, va = ent(1, 4), ent(2, 4), vec(k, 0x62)
-    gv = struct.unpack('<HH', bytes(k.pc.rd(ent(2, 6), equ('TX_GSN') + 0x62 * 4, 4)))
+    r1, r2, va = ent(1, TE_REG), ent(2, TE_REG), vec(k, 0x62)
+    gv = struct.unpack('<HH', bytes(k.pc.rd(ent(2, TE_TX), equ('TX_GSN') + 0x62 * 4, 4)))
     o1 = mt('/p:1')
     s1 = st(1)
     front(k, 2); line(k, ''); k.run_for(0.5)                        # (each ends, INT 62h put back)
@@ -3072,8 +3073,8 @@ def t_park():
         e0, mg0 = ems_used(k), merged(mcbs(k))
         mt('mtkill.com f 10 k%s.txt' % how[0])
         o1 = mt('/p:1')
-        ph, hs = (k.pc.rd(seg, Y['mt_tab'] + MT_ENT + o, 1)[0] for o in (27, TE_SH))
-        sz = ent(1, 28)
+        ph, hs = (k.pc.rd(seg, Y['mt_tab'] + MT_ENT + o, 1)[0] for o in (TE_PH, TE_SH))
+        sz = ent(1, TE_PSZ)
         hid = [h for h in range(1, 32) if hrec(h)[0][0] != 0xFF and hrec(h)[1] == 0xFFFF
                and k.pc.rd(seg, Y['mt_hold'] + h, 1)[0] == 1]
         if how == 'freed':
@@ -3083,7 +3084,7 @@ def t_park():
             k.pc.wr(seg, Y['mt_wkt'], b'\1'); k.pc.wr(seg, Y['mt_wkp'], struct.pack('<H', 0x1234))
             k.pc.wr(seg, Y['mt_shd'], b'\1')
         else:
-            k.pc.wr(seg, Y['mt_tab'] + MT_ENT + 28, struct.pack('<H', sz + 1024))
+            k.pc.wr(seg, Y['mt_tab'] + MT_ENT + TE_PSZ, struct.pack('<H', sz + 1024))
         if how == 'shared':
             k.pc.wr(0x60, Y['ems_h'] + hs * 4 + 2, struct.pack('<H', 0x1234))
         o2 = mt('/u:1')
@@ -3131,7 +3132,7 @@ def t_grow():
     k.pc.wr(0, 0x62 * 4, struct.pack('<HH', 0x5678, 0x1234))   # (INT 62h: a known vector, in each spawn's TX_GSN)
     m0, s0, e0, v62 = merged(mcbs(k)), sft_used(k), ems_used(k), vec(k, 0x62)
     au = Audit(k)
-    TXP, STP, GRES, TE_REG, TE_PSP, TE_PH = equ('TX_PARAS'), equ('ST_PARAS'), equ('MT_GRES'), 4, 2, equ('TE_PH')
+    TXP, STP, GRES = equ('TX_PARAS'), equ('ST_PARAS'), equ('MT_GRES')
     ent = lambda n, f: k.pc.u16(seg, task_ent(k, n) + f)
     rsz = lambda reg: k.pc.u16(reg - 1, 3)
     def below(reg):                     # the block just below a region: (its MCB, owner, paragraphs); none: zeros
@@ -3403,9 +3404,9 @@ def t_lcmd():
     o1 = sh.run('echo BACKATPROMPT')
     sh.run('unpark 1')
     s1 = tstate(k)[0]
-    g = k.pc.rd(seg, Y['mt_tab'] + MT_ENT + 30, 1)[0]
+    g = k.pc.rd(seg, Y['mt_tab'] + MT_ENT + TE_GEN, 1)[0]
     typ(k, 'wait 1', 0.5)
-    k.pc.wr(seg, Y['mt_tab'] + MT_ENT + 30, bytes([g + 1, g + 1]))     # (as if ended, another started and ended)
+    k.pc.wr(seg, Y['mt_tab'] + MT_ENT + TE_GEN, bytes([g + 1, g + 1]))     # (as if ended, another started and ended)
     k.run_for(0.5)
     o2 = k.pc.text_screen()
     o3 = sh.run('if errorlevel 1 echo LEVEL1')
@@ -3484,9 +3485,9 @@ def t_lcmd():
           and 'could not be started' in o2 and 'FAILED' in o2 and 'LEVEL8' in o3 and back(),
           (o1, x1 and x1.groups(), o2, o3))
     # one that can, in the same place (the same size): not taken for one that couldn't (its stub's ST_FAIL cleared)
-    rf = k.pc.u16(seg, Y['mt_tab'] + MT_ENT + 4)
+    rf = k.pc.u16(seg, Y['mt_tab'] + MT_ENT + TE_REG)
     sh.run('start /w /m:1 mtline.com sm.txt')
-    rm, s1 = k.pc.u16(seg, Y['mt_tab'] + MT_ENT + 4), tstate(k)[0]
+    rm, s1 = k.pc.u16(seg, Y['mt_tab'] + MT_ENT + TE_REG), tstate(k)[0]
     front(k, 1); line(k, '=2'); k.run_for(0.3)
     o2 = sh.run('wait 1 || echo FAILED')
     o3 = sh.run('if errorlevel 2 echo LEVEL2')
@@ -3523,8 +3524,8 @@ def t_lcmd():
     sh.run('start /w /b mtline.com sb1.txt')
     sh.run('start /w /d /m:32 mtline.com sb2.txt')
     o1 = sh.run('set')
-    vf = [k.pc.rd(seg, Y['mt_tab'] + t * MT_ENT + 24, 1)[0] for t in (1, 2)]
-    r1, r2 = (k.pc.u16(seg, Y['mt_tab'] + t * MT_ENT + 4) for t in (1, 2))
+    vf = [k.pc.rd(seg, Y['mt_tab'] + t * MT_ENT + TE_VF, 1)[0] for t in (1, 2)]
+    r1, r2 = (k.pc.u16(seg, Y['mt_tab'] + t * MT_ENT + TE_REG) for t in (1, 2))
     s1, s2 = k.pc.u16(r1 - 1, 3), k.pc.u16(r2 - 1, 3)
     sh.run('start /w /d mtspin.com 200 fz.txt')     # (a task computing, never run behind: frozen)
     o2 = sh.run('tasks')
@@ -3863,8 +3864,8 @@ def t_tasksrun():
           and pz == (1, 5, 'MTLINE.COM') and [n for i, s, n in st[0]] == ['Executive', 'MTLINE.COM'] and st[1] == 1 and rr == 0xFFFF
           and b2[:1] == ['MTLINE.COM ended, exit code 2'] and tstate(k)[0] == [(0, 1, 'Executive')], (b1, r2, pz, st, rr, b2))
 
-SE_SIZE, SE_BASE, SE_END, SE_SP, MW_STK = 128, 2, 4, 6, 2560    # KMW.INC: a session's record
-SE_TASK = 21                                                     # (a terminal window's task: T2)
+SE_SIZE, SE_BASE, SE_END, SE_SP, MW_STK = map(equ, ('SE_SIZE', 'SE_BASE', 'SE_END', 'SE_SP', 'MW_STK'))  # KMW.INC
+SE_TASK = equ('SE_TASK')                                         # (a terminal window's task: T2)
 
 def t_windows():
     print('== several window .RUNs at once: the calculator and the tasks (M8a)')
@@ -4842,7 +4843,7 @@ def t_term():
     check('CODE-P with MULTITASK=1: LCMD.COM a task behind (task %d), task 0 still in front (mode 40h), in a terminal window '
           '(a session, TERM.RUN: MT_TOPEN gave it the task and its count), titled LCMD.COM, its prompt drawn inside' % n,
           (n, 1, 'LCMD.COM') in st[0] and st[1] == 0 and k.pc.mode() == 0x40 and mb('mw_n') == 1 and tk[0] == n
-          and tk[1] == k.pc.rd(seg, task_ent(k, n) + 30, 1)[0] and 'LCMD.COM' in o and 'A:\\>' in o, (st, mb('mw_n'), tk, o[-400:]))
+          and tk[1] == k.pc.rd(seg, task_ent(k, n) + TE_GEN, 1)[0] and 'LCMD.COM' in o and 'A:\\>' in o, (st, mb('mw_n'), tk, o[-400:]))
     # typed in the window: to it (MT_TKEY), its answer drawn; idle, the ticks aren't activity (the saver's lastact)
     typ2('ver')
     o = scr()
@@ -5645,7 +5646,7 @@ def t_tname():
         if k.rd('msgshown', 1)[0]: k.key(ktest.ENTER)       # (the last one's "ended" cleared)
         k.select(name); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
         n, c = k.pc.rd(seg, Y['mw_ses'] + SE_SIZE + SE_TASK, 2)
-        nm = bytes(k.pc.rd(seg, task_ent(k, n) + 10, 12)).split(b'\0')[0].decode('latin-1')     # (TE_NAME)
+        nm = bytes(k.pc.rd(seg, task_ent(k, n) + TE_NAME, 12)).split(b'\0')[0].decode('latin-1')
         title, arg = cstr(wv(8)), cstr(base() + TS['arg'])
         got = (title, arg, '%d %d %s' % (n, c, nm), title in scr() if title else None, None)
         if close:
@@ -6194,7 +6195,7 @@ def t_srq():
     tnum = lambda name: next((i for i, s_, n in tstate(k)[0] if n == name), 7)
     def tnum_(psp):                                     # (the task whose region holds a PSP)
         for n in range(8):
-            reg = k.pc.u16(seg, task_ent(k, n) + 4)
+            reg = k.pc.u16(seg, task_ent(k, n) + TE_REG)
             if n and k.pc.rd(seg, task_ent(k, n), 1)[0] and reg <= psp < reg + k.pc.u16(reg - 1, 3): return n
         return 0
     ways = {seg * 16 + Y['mt_srqi']: 'srqi', seg * 16 + Y['mt_srqi.r']: 'out', seg * 16 + Y['mt_tick.v']: 'v',
@@ -6248,7 +6249,7 @@ def t_srq():
     check('IRQ 5 while MTSPIN computes: MTSRQ runs at once (%s ms; 3 at most): mt_srqi, mt_tick.v, mt_pick taking '
           'it (%s), not after MTSPIN\'s turn and the Executive\'s' % r, fast(r) and r[1][:2] == ['srqi', 'v'],
           (r, nspin, tstate(k)))
-    fr = task_ent(k, nq or 1) + 24                      # (TE_VF: SPF_FREEZE, as MT_FLAGS sets it)
+    fr = task_ent(k, nq or 1) + TE_VF                   # (SPF_FREEZE, as MT_FLAGS sets it)
     k.pc.wr(seg, fr, bytes([k.pc.rd(seg, fr, 1)[0] | 4]))
     r = lat(q, own(nspin), 0.1)
     k.pc.wr(seg, fr, bytes([k.pc.rd(seg, fr, 1)[0] & ~4]))
