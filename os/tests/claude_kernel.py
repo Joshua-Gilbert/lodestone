@@ -15,12 +15,6 @@ sys.path.insert(0, GOS); sys.path.insert(0, HERE); sys.path.insert(0, GL_TESTS);
 import pcemu, mkimg, fatcheck, ktest
 import grid_emu as G
 import sim7210 as S
-from ar488_model import AR488Model
-from gridsim import ModelTransport
-from fake_anthropic import FakeAnthropic
-from gridlink.link import Link
-from gridlink.agent import Session
-from gridlink.config import Config
 
 LODE_SYS = os.path.join(GOS, 'src', 'LODE.SYS')
 LCMD_COM = os.path.join(GOS, 'src', 'LCMD.COM')
@@ -78,39 +72,7 @@ class KernelHarness(G.EmuHarness):
         chip = G.Chip(S.bus())
         s.m = m = KMachine(img, chip, ems_pages=ems_pages, irq_exact=irq_exact)
         chip.clock = m.clock
-        s.pending = []
-        if bridge in ('pico', 'pico-quiet'):           # (pico-quiet: fw 2026-10-24's, resident Claude's M4)
-            s.nano = G.PicoModel(m.clock, addr=7, to_pi=s._to_pi, quiet=bridge == 'pico-quiet')
-            s.transport = G.PicoModelTransport(s.nano)
-        else:
-            s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
-            s.transport = ModelTransport(s.nano, patched, baud=baud)
-        chip.devices[7] = s.nano
-        s.nano.wake = m.schedule                  # (the 7210's SRQ interrupt: a HLT ends when it rises)
-        m.on_due = s.pump_pi
-        cfg = Config()
-        cfg.workdir = os.path.join(s.tmp, 'work'); cfg.memory_dir = os.path.join(s.tmp, 'mem')
-        cfg.sessions_dir = os.path.join(s.tmp, 'sessions'); cfg.mode = mode; cfg.web = False
-        s.cfg = cfg
-        s.client = FakeAnthropic(script or [])
-        s.log = []
-        if term:
-            cfg.term_dir = os.path.join(s.tmp, 'grid'); cfg.term_command = term
-            cfg.term_socket = os.path.join(s.tmp, 'gridlink.sock')
-            cfg.api_key = None; cfg.env_key = lambda: False; cfg.app = 'auto'
-            s.router = G.Router(cfg, log=s.log.append)
-            s.link = Link(s.transport, s.router.on_message, log=s.log.append, hold=0.0)
-            s.router.attach(s.link)
-            s.session = None
-        else:
-            s.router = None
-            s.session = Session(cfg, s.client, log=s.log.append)
-            s.link = Link(s.transport, s.session.on_message, log=s.log.append, hold=0.0)
-            s.session.attach(s.link)
-            threading.Thread(target=s.session.run, daemon=True).start()
-        s.link.clock = lambda: s.m.us / 1e6        # (ring_check's times: the GRiD's, simulated)
-        s.link.frame_cap = frame_cap
-        if hasattr(s.transport, 'proto'): s.transport.proto.clock = s.link.clock
+        s.wire(chip.devices, bridge, patched, baud, script, mode, term, frame_cap=frame_cap)
         s.sym = G.symbols(os.path.splitext(claude_com)[0] + '.MAP')
         s.font = G.Font(open(claude_com, 'rb').read(), s.sym['font'] - 0x100)
         s.answer = answer
