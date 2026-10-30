@@ -238,6 +238,12 @@ GRiD's and the bridge's own addresses; reply: list of responding
 addresses). The REPLY status is 0 or the GRIDGPIB error code (1 timeout,
 2 no listener, 3 not controller, 4 bad function, 5 no data, 6 busy).
 
+RUN's timeout is the Pi's own limit, carried for the record: the GRiD
+cannot end a program, so it ignores the field and answers when the
+program exits. A program that loops or waits at a key read holds CLAUDE
+and the link till someone at the GRiD ends it; the Pi has given up by
+then, and the late answer goes to no request.
+
 RUN with capture runs `COMSPEC /C command >file`; without capture, a
 command whose first word is a .COM or .EXE file is EXECuted directly (true
 exit code, less memory): NAME.COM or NAME.EXE as given, or a bare NAME
