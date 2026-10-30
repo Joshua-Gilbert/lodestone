@@ -521,6 +521,27 @@ def test_plotter():
         r = body(c.call('grid_plotter', action='cancel'))
         assert 'cancelled' in r, r
         h.grid.plot_drain = 60
+        # X63: cancelled while the pen finishes is "cancelled", not "done"
+        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0      # a pen that never finishes
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        end = time.time() + 20
+        while 'the pen is finishing' not in body(c.call('grid_plotter', action='status')):
+            assert time.time() < end; h.run_for(0.2)
+        r = body(c.call('grid_plotter', action='cancel'))
+        assert ': cancelled' in r, r
+        h.grid.plot_drain = 60
+        # X63: a GRiD that doesn't answer the plot's polls holds the other tools for one short wait, not 31 s
+        h.grid.plot_parts = []; h.grid.plot_held = 0; h.grid.plot_drain = 0
+        c.call('grid_plotter', hpgl='IN;PU1,2;')
+        h.grid.plot_mute = True
+        h.run_for(1.5)                                  # (a poll is out by now, unanswered)
+        t0 = time.time()
+        r = c.call('grid_info')
+        assert not r['isError'] and time.time() - t0 < mcp.PLOT_POLL_WAIT + 3, (r, time.time() - t0)
+        r = body(c.call('grid_plotter', action='cancel'))
+        assert ': cancelled' in r or 'cancelling' in r, r
+        h.grid.plot_mute = False; h.grid.plot_drain = 60
+        plot_to_end(h, c)
         # a Nano without serial poll (before v4): an error, nothing sent
         h.grid.plot_parts = []; h.grid.plot_nopoll = True
         r = c.call('grid_plotter', hpgl='IN;')
@@ -574,6 +595,63 @@ def test_socket_requests_checked():
                  b'x' * (mcp.MAX_LINE + 1), b'\xff\n'):
         res, err = srv.request(line)
         assert err, line[:40]
+
+
+def test_bench_edges():
+    """X68: gridlink.bench's bounds, --prof under --sweep, no file left on the GRiD, the first error kept."""
+    import contextlib, io, tempfile
+    from gridlink import bench
+    calls = []
+    fail = {}
+
+    def fake(sock, name, args):
+        calls.append((name, dict(args)))
+        if name in fail and fail[name](args):
+            return {'isError': True, 'content': [{'type': 'text', 'text': 'boom %s' % name}]}
+        if name == '_link':
+            return {'content': [{'type': 'text', 'text': json.dumps(
+                {'bridge': 'pico', 'maxpay': 2048, 'grid_rx': 2048, 'grid_maxpay': 2048, 'holds': 1,
+                 'stats': {}})}]}
+        if name == 'grid_change_files' and args['action'] == 'copy_from_grid':
+            with open(args['to'], 'wb') as f: f.write(open(os.path.join(d, 'bench.bin'), 'rb').read())
+        return {'content': [{'type': 'text', 'text': 'ok'}]}
+
+    def run(*argv):
+        del calls[:]
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                r = bench.main(['--dir', d, '--size', '1', '--idle', '0'] + list(argv))
+            except SystemExit as e:
+                r = e
+        return r, out.getvalue(), err.getvalue()
+
+    old = bench.call_gridlink, bench.socket_path
+    with tempfile.TemporaryDirectory() as d:
+        sock = os.path.join(d, 'sock'); open(sock, 'w').close()
+        bench.call_gridlink, bench.socket_path = fake, lambda: sock
+        try:
+            for bad in (['--trips', '0'], ['--idle', '-1'], ['--size', '0']):
+                r, _, err = run(*bad)
+                assert isinstance(r, SystemExit) and r.code == 2 and 'below' in err, bad
+            r, out, _ = run('--trips', '1')
+            assert r == 0 and 'every byte right' in out, out
+            r, out, _ = run('--trips', '1', '--sweep', '512,1024', '--prof')
+            profs = [a['prof'] for n, a in calls if n == '_link' and 'prof' in a]
+            assert r == 0 and profs == ['start', 'stop'], profs
+            assert [a['frame_cap'] for n, a in calls if 'frame_cap' in a] == [512, 1024, 0]
+            # the copy back fails: the GRiD's file is still deleted, and that failure is the one reported
+            fail['grid_change_files'] = lambda a: a['action'] == 'copy_from_grid'
+            r, _, _ = run('--trips', '1')
+            assert isinstance(r, SystemExit) and r.code == 'grid_change_files failed: boom grid_change_files'
+            assert any(a.get('action') == 'delete' for n, a in calls), calls
+            # ...and with --nohold the restore failing too does not hide it
+            fail['_link'] = lambda a: a.get('hold') == 1
+            r, _, err = run('--trips', '1', '--nohold')
+            assert isinstance(r, SystemExit) and r.code == 'grid_change_files failed: boom grid_change_files', r.code
+            assert 'clean-up failed too' in err and any(a.get('action') == 'delete' for n, a in calls)
+        finally:
+            bench.call_gridlink, bench.socket_path = old
 
 
 if __name__ == '__main__':

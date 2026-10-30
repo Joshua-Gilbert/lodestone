@@ -23,7 +23,11 @@
 ;  with the 7210's INT pin inverted (AUXRB INV).
 ;
 ;  Times in PIT counts (channel 0 in mode 2 while it runs, 0.1 ms shown).
-;  Chip-level like GPIBXFER: reboot before CLAUDE or TM5000 afterwards.
+;  Chip-level like GPIBXFER; at the end GRIDGPIB, if loaded, sets the chip up
+;  again (INT 60h AH=01h: rearm.inc).
+;  ^C ends it as the end does, IRQ 5's vector and mask put back.  Under
+;  MULTITASK=1 don't end it from TASKS.RUN (CODE-D): MT puts back INT
+;  22h-24h only, so INT 0Dh would be left pointing into freed memory.
 ;  Appends what it prints to GPIBIRQ.TXT.
 ; =====================================================================
 cpu 286
@@ -74,6 +78,9 @@ start:  cld
         int     21h
         mov     [oldvec], bx
         mov     [oldvec+2], es
+        mov     dx, brk                 ; (X56: ^C puts IRQ 5 back first;
+        mov     ax, 2523h               ;  DOS takes INT 23h back from the
+        int     21h                     ;  PSP at our end)
         push    ds
         pop     es
         in      al, 21h
@@ -191,11 +198,21 @@ start:  cld
         call    cleanup
         mov     dx, s_done
         call    out_str
+        call    d_rearm                 ; (X55: the driver's IMR2, IFC, REN)
         call    save_log
         mov     ax, 4C00h
         int     21h
 
 ; IRQ 5 off again, its old vector, the PIT and the bus as they were
+; ^C (INT 23h, at any DOS call: the prints): ended as at the end, but no
+; log, so INT 0Dh never points into this program's freed memory (X56)
+brk:    push    cs
+        pop     ds
+        call    cleanup
+        call    d_rearm
+        mov     ax, 4C01h
+        int     21h
+
 cleanup:
         mov     dx, R_IMR2
         xor     al, al
@@ -782,6 +799,7 @@ save_log:
 .x:     ret
 
 %include "direct.inc"
+%include "rearm.inc"
 
 ; GLP NAK (seq 0, ack 0, CRC-16): gridlink sends its last answer again
 nakframe db 47h, 06h, 0, 0, 0, 0, 89h, 0DCh
@@ -815,7 +833,7 @@ s_storm db '   IRQ 5 KEPT FIRING: masked after 1000',13,10,'$'
 s_wakes db '   woke from HLT, each round (1 = by IRQ 5 itself): $'
 s_none  db 'none$'
 s_long  db '>6 s$'
-s_done  db 13,10,'Done.  Reboot before CLAUDE or TM5000.  Also in GPIBIRQ.TXT.',13,10,'$'
+s_done  db 13,10,'Done.  GRIDGPIB, if loaded, set up again.  Also in GPIBIRQ.TXT.',13,10,'$'
 s_logname db 'GPIBIRQ.TXT',0
 
 RBUFLEN equ 80

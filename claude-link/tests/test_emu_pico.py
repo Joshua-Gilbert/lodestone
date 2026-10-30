@@ -229,6 +229,82 @@ def test_held_nop_bookkeeping():
     assert len(got) == 1, got
 
 
+def test_bridge_not_found_said_once():
+    # X66: with no bridge, or a busy port, PicoBridge says so once and that it retries (not every 2 s, and not
+    # nothing); once up, a later failure is said again. A [bridge] kind that is neither pico nor ar488 is refused.
+    import tempfile, types
+    from gridlink import pico
+    from gridlink.config import Config
+    said = []
+    b = pico.PicoBridge('auto', 7, log=said.append)
+    ports = []
+    old = pico.find_port, sys.modules.get('serial')
+    class Busy(Exception): pass
+    def Serial(*a, **k): raise Busy('busy')
+    pico.find_port = lambda spec: list(ports)
+    sys.modules['serial'] = types.SimpleNamespace(Serial=Serial)
+    try:
+        for _ in range(3): assert not b._open_once()
+        assert len(said) == 1 and 'no GPIB-Pico2 bridge found' in said[0] and 'retrying' in said[0], said
+        ports[:] = ['/dev/ttyACM0', '/dev/ttyACM1']
+        for _ in range(3): assert not b._open_once()
+        assert len(said) == 3 and all('cannot open' in m for m in said[1:]), said
+        b.said.clear()                                  # (as a bridge coming up does)
+        assert not b._open_once() and len(said) == 5, said
+    finally:
+        pico.find_port = old[0]
+        if old[1] is None: sys.modules.pop('serial', None)
+        else: sys.modules['serial'] = old[1]
+    for kind, ok in (('pico', True), ('AR488', True), ('pcio', False), ('', False)):
+        with tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False) as f: f.write('[bridge]\nkind = "%s"\n' % kind)
+        try:
+            assert Config().load(f.name).bridge == kind.lower() and ok, kind
+        except SystemExit:
+            assert not ok, kind
+        finally:
+            os.unlink(f.name)
+
+
+def test_held_reply_used_on_a_lost_frame():
+    # X64: the bridge used the hold on POLL 6, but POLL 6's DATA never made a frame here (an overrun inside
+    # it).  The GRiD, holding fragment 2, POLLs 7: that is answered with fragment 3, the hold committed;
+    # before, POLL 7 was taken for the hold's and answered with nothing.  A held NOP used on a fragment that
+    # never arrived drops that message.
+    from gridlink.link import Link
+    class T:
+        frame_limit = 4104
+        def __init__(t): t.sent, t.holds, t.used = [], [], False
+        def answer(t, f): t.sent.append(f)
+        def hold(t, expect, frame, glp=False): t.holds.append((expect, frame)); return True
+        def hold_used(t): u, t.used = t.used, False; return u
+    t = T()
+    k = Link(t, lambda *a: None, log=lambda *a: None, hold=0.0)
+    k.grid_rx = 2048; k.last_g = 4; k.connected = True; k.rx_fl = True
+    body = bytes(range(256)) * 24
+    k.send(glp.P_REQUEST, body)
+    poll = lambda seq, ack: glp.Frame(glp.G_POLL, seq, ack, b'', fl=True)
+    k.handle(poll(5, 0))                              # fragment 1 sent, fragment 2 held for POLL 6
+    n = len(t.sent)
+    t.used = True                                     # ...used on POLL 6, which we never read
+    k.handle(poll(7, 2))
+    f3 = glp.decode(t.sent[-1], 8192)[0]
+    assert len(t.sent) == n + 1 and f3.seq == 3 and f3.ack == 7 and f3.payload == body[4096:], f3
+    assert k.stats['tx_held'] == 1 and k.stats['held_late'] == 1 and k.cur is None and k.pi_seq == 3
+    got = []
+    t = T()
+    k = Link(t, lambda mt, b: got.append((mt, b)), log=lambda *a: None, hold=0.0)
+    k.last_g = 4; k.connected = True; k.rx_fl = True
+    rep = lambda seq, ack, more, data: glp.Frame(glp.G_REPLY | (glp.MORE if more else 0), seq, ack, data, fl=True)
+    k.handle(rep(5, 0, True, b'a' * 10))              # NOP; a NOP held for fragment 6
+    n = len(t.sent)
+    t.used = True                                     # used on fragment 6, which never arrived
+    k.handle(rep(7, 2, True, b'c' * 10))
+    nop = glp.decode(t.sent[-1], 8192)[0]
+    assert len(t.sent) == n + 1 and nop.kind == glp.P_NOP and nop.seq == 3 and nop.ack == 7, nop
+    k.handle(rep(8, 3, False, b'd' * 10))
+    assert got == [] and k.stats['held_late'] == 1, got
+
+
 def test_old_claude_gets_246():
     body = bytes([1, 3, 0, 4, 80, 20]) + b'os=DOS 3.30\ngrid=CLAUDE 1.2\napp=term\n'
     assert glp.hello_rx(body) == 246

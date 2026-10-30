@@ -274,7 +274,9 @@ dos_probe:
 
 ; dos_ok: 1 if the file requests may call DOS (the header), after prog.
 ; The INT 16h call's frame on the stack the stub came on: the stub's pushes
-; (ES, DS, PUSHA, FLAGS), r_hot's or r_bg's return, then IP, CS.  -> ES = CS
+; (ES, DS, PUSHA, FLAGS), r_hot's or r_bg's return, then IP, CS.  Under
+; MS-DOS its key wait is in IO.SYS, not InDOS's segment, so one deep is
+; never granted there: F7h, though HELLO says ops=files (X54).  -> ES = CS
 dos_check:
         mov     byte [dos_ok], 0
         les     bx, [parms]

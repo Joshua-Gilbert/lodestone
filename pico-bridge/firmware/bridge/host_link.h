@@ -46,6 +46,7 @@ extern "C" {
 void link_init(void);
 void link_input(const uint8_t *b, size_t n, uint32_t now_ms);
 void link_poll(uint32_t now_ms, bool host_open);
+bool link_engine_ok(uint32_t now_ms);   // false once core 1 has not moved for 5 s: stop petting the watchdog
 
 // provided by the glue
 size_t link_write_some(const uint8_t *b, size_t n);   // never blocks: returns how many it took (0 if none)
