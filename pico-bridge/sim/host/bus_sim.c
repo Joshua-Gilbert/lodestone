@@ -64,7 +64,10 @@ static uint32_t bridge_assert_from(uint32_t lv, uint32_t others) {
 static uint32_t bridge_assert(void) { return bridge_assert_from(pin_levels(), c_assert | d_assert); }
 static uint32_t bus_asserted(void) { uint32_t o = c_assert | d_assert; return o | bridge_assert_from(pin_levels(), o); }
 
+static pthread_t core1_id;
+static _Atomic uint32_t sim_freeze1_until = 0;   // "freeze1 MS": core 1 stops (a fault) for MS ms
 uint32_t hal_in(void) {
+  while ((int32_t)(now_ms() - sim_freeze1_until) < 0 && pthread_equal(pthread_self(), core1_id)) usleep(1000);
   uint32_t lv = pin_levels(), out = b_out, oe = b_oe;
   uint32_t others = c_assert | d_assert;
   uint32_t busA = others | bridge_assert_from(lv, others);
@@ -103,6 +106,7 @@ size_t link_write_some(const uint8_t *b, size_t n) {
 }
 void link_bootsel(void) { fprintf(stderr, "[sim] BOOTSEL requested\n"); }
 
+static atomic_bool engine_ok = true;               // link_engine_ok: would bridge.ino pet the watchdog
 static void *core0(void *arg) {
   (void)arg;
   uint8_t buf[512];
@@ -116,11 +120,12 @@ static void *core0(void *arg) {
     }
     if (r > 0 && (p.revents & POLLHUP)) { host_open = false; usleep(2000); }
     link_poll(now_ms(), host_open);
+    engine_ok = link_engine_ok(now_ms());
   }
   return NULL;
 }
 
-static void *core1(void *arg) { (void)arg; engine_run(); return NULL; }
+static void *core1(void *arg) { (void)arg; core1_id = pthread_self(); engine_run(); return NULL; }
 
 // ---- device 5: another instrument on the bus ------------------------------------------------------------------
 #define DEV_ADDR 5
@@ -320,6 +325,8 @@ int main(void) {
     else if (!strcmp(cmd, "ifc")) { cset(IFC_M, true); usleep(500); cset(IFC_M, false); cset(REN_M, true); printf("ok 0\n"); }
     else if (!strcmp(cmd, "ren")) { sscanf(line, "%*s %d", &a); cset(REN_M, a); usleep(20000); printf("ok 0\n"); }
     else if (!strcmp(cmd, "usbstall")) { sscanf(line, "%*s %d", &a); sim_stall_until = now_ms() + (uint32_t)a; printf("ok 0\n"); }
+    else if (!strcmp(cmd, "freeze1")) { sscanf(line, "%*s %d", &a); sim_freeze1_until = now_ms() + (uint32_t)a; printf("ok 0\n"); }
+    else if (!strcmp(cmd, "engine")) printf("ok %d %u\n", (int)engine_ok, SH.engine_alive);
     else if (!strcmp(cmd, "tmo")) { sscanf(line, "%*s %d", &a); tmo_ms = (uint32_t)a; printf("ok 0\n"); }
     else if (!strcmp(cmd, "write")) {
       sscanf(line, "%*s %d %65535s %d", &a, arg, &b);
