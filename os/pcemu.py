@@ -49,6 +49,7 @@ R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
 # real-code BIOS pieces at F000:1000 and up
 INT08 = bytes([0x50, 0x1E, 0x31, 0xC0, 0x8E, 0xD8, 0xFF, 0x06, 0x6C, 0x04, 0x75, 0x04,
                0xFF, 0x06, 0x6E, 0x04, 0xCD, 0x1C, 0xB0, 0x20, 0xE6, 0x20, 0x1F, 0x58, 0xCF])
+PIC_ISR = os.environ.get('PIC_ISR') == '1'
 IRQEOI = bytes([0x50, 0xB0, 0x20, 0xE6, 0x20, 0x58, 0xCF])
 IRET = bytes([0xCF])
 
@@ -555,6 +556,8 @@ class PC:
             return
         if not (s.r('flags') & 0x200) or not s.irq_pending: return
         due = [i for i in sorted(s.irq_pending) if s.unmasked(i)]
+        if PIC_ISR:                             # (a real 8259: an IRQ in service, not yet ended by an
+            due = [i for i in due if not s.pic_blocked(i)][:1]   #  EOI, holds back itself and every lower one)
         if not due: return
         first = True
         for irq in reversed(due):
@@ -1222,6 +1225,10 @@ class PC:
             else:
                 s.sleep_to_tick()               # (an IRQ still waiting goes first,
         return not (s.stopped or s.crash)       #  as a real PIC would after IRET)
+
+    def pic_blocked(s, i):
+        lvl = i if i < 8 else 2
+        return bool(s.isr & ((2 << lvl) - 1))
 
     def unmasked(s, i):
         if i < 8: return not s.pic_mask & (1 << i)
