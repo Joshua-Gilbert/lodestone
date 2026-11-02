@@ -2,7 +2,7 @@
 
 Decision: develop from a boot floppy until the OS is stable, then build the ROM version (see `gridos-kernel-hardware-spec.md` for the EPROM format). The plan is in `lodestone-roadmap.md`; the kernel is described in `lodestone-0.2-kernel.md`, DEFRAG and the screen saver in `lodestone-defrag.md`, the UI core and the programs in `lodestone-0.3-apps.md`.
 
-## Pieces (source in `grid-OS\gridos\src` and `os\apps`, build with `os\build.sh` or `BUILD.BAT`)
+## Pieces (source in `grid-OS\gridos\src` and `os\apps`, build with `os/build.sh`, under WSL on Windows)
 - **BOOT.ASM** — the 512-byte floppy boot sector, with 37 bytes spare.
   - Works with any standard FAT12 BPB.
   - Finds `\LODE.SYS` in the root directory and follows its FAT chain, so the file can be fragmented or replaced at will.

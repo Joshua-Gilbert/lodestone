@@ -371,7 +371,9 @@ every byte checked.
 - **The GPIB ceilings**, with no protocol: GPIBLOOP's loops, 152 KB/s into
   the GRiD and 112 out of it (119 unbounded). The 1.0 figures with the old
   loops (tools/GPIBXFER.COM) were 72-77 and 105. DMA isn't wired on the
-  1520's GPIB cartridge.
+  1520's GPIB cartridge: the 7210's DRQ reaches channel 3, but nothing
+  answers its DACK. The GRiDCase 1500 Technical Reference gives channel 3
+  to the hard disk controller (the floppy has 2; 0 and 5-7 are spare).
 - **The frame sizes** (2026-10-21, before the bridge's USB fix): 246, 512,
   1024, 2048 and 4096 bytes to the GRiD gave 22.7, 27.7, 31.1, 32.4 and
   33.1 KB/s. 2 KB frames get 98 % of 4 KB's rate for 1.8 KB less memory.
@@ -396,7 +398,7 @@ every byte checked.
   GRiD program, NASM; `TERMLINK.INC` (the link), `TERMCELL.INC` (cells,
   Term's screen), `TERMKEYS.INC` (Term's keys) are shared with resident
   Claude's console (`RCON.ASM`, CLAUDE /R: Claude Code popped up over a
-  DOS program, `app=resident`). `build.sh` / `BUILD.BAT` there make
+  DOS program, `app=resident`). `build.sh` there makes
   CLAUDE.COM (with RCON.BIN inside), CLAUDE.MAP and RCON.MAP (symbols for
   the emulator) and TESTKEY.COM
 - `tests/` - `test_e2e.py` (Python model of the GRiD side, fast) and

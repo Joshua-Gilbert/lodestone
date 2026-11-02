@@ -12,7 +12,6 @@ import os, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from grid_emu import EmuHarness, FakeSaver
 from gridlink import glp
-from unicorn.x86_const import UC_X86_REG_SP as SP
 import test_emu_term as T
 
 DELAY = 36                                  # (ticks: 2 s)
@@ -26,9 +25,7 @@ def start(mouse=False, delay=DELAY, **kw):
     h.boot()
     assert h.run_until(lambda: h.var('term') == 1 and h.var('connected') == 1, 10), ('no Term', h.m.crash, h.log)
     assert h.run_until(lambda: 'Welcome to Claude Code' in h.screen(), 20), h.screen()
-    lo, top = h.sym['stack_bottom'], h.sym['stack_top']
-    h.m.mu.mem_write(h.claude_psp * 16 + lo, b'\xa5' * (h.m.mu.reg_read(SP) - 16 - lo))
-    h.stk = (lo, top)
+    h.paint_claude_stack()                      # (check() reads how deep it went)
     return h, sv
 
 

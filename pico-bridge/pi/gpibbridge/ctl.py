@@ -19,6 +19,8 @@ import sys
 import tempfile
 import time
 
+from .protocol import PICO_VID
+
 DEFAULT_SOCK = "/run/gpib-bridge/ctl.sock"
 
 
@@ -99,7 +101,7 @@ def touch_1200():
     except ImportError:
         return
     for p in serial.tools.list_ports.comports():
-        if p.vid == 0x2E8A:
+        if p.vid == PICO_VID:
             try:
                 s = serial.Serial(p.device, 1200)
                 s.dtr = False

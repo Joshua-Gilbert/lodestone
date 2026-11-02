@@ -78,6 +78,7 @@ sp_boot:
 .on:    call    rs_boot                 ; (KROM.INC: booted from the ROM)
         call    pr_boot                 ; PrtSc's printer driver
         call    gi_boot                 ; GPIBIRQ=0: GPIB's SRQ interrupt off
+        call    fp_boot                 ; a coprocessor that can't store: none
         call    sp_wanted
         jc      .go
         call    sp_load
@@ -105,6 +106,70 @@ gi_boot:
         mov     ax, 0E00h
         int     60h
 .x:     ret
+
+; The coprocessor INT 11h reports, tried once before anything uses it:
+; one FNSTENV, 7 words to memory, as every program storing a result moves
+; several.  A 287XL in the 1520 was seen to take one-word stores (POST's,
+; the Executive's FNSTSW AX) but hang on every longer one, BUSY held with
+; interrupts off: a frozen machine at MT's first FNSAVE, or CALC's first
+; result.  The 286 waits on BUSY with interrupts on, so a tick hooked here
+; ends it: at the third (110-165 ms) it clears BUSY's latch (F0h, as the
+; BIOS's INT 75h) and resets the chip (F1h, as POST); the store returns,
+; and from then on INT 11h says no coprocessor (40:10h bit 1), so CALC,
+; MT and the Executive leave it alone.  A working chip takes microseconds.
+; DS = CS.  (-dFPTEST: the store made one that never ends, for test_kernel)
+fp_boot:
+        int     11h
+        test    al, 2
+        jz      .x
+        push    es
+        xor     ax, ax
+        mov     es, ax
+        mov     byte [MDB(fp_n)], 0
+        mov     byte [MDB(fp_dead)], 0
+        cli
+        mov     ax, [es:8 * 4]
+        mov     [MDB(fp_old)], ax
+        mov     ax, [es:8 * 4 + 2]
+        mov     [MDB(fp_old) + 2], ax
+        mov     word [es:8 * 4], MDB(fp_t8)
+        mov     [es:8 * 4 + 2], cs
+        sti
+        fninit
+%ifdef FPTEST
+.w:     cmp     byte [MDB(fp_dead)], 0
+        je      .w
+%else
+        fnstenv [MDB(fp_buf)]
+        fwait
+%endif
+        cli
+        mov     ax, [MDB(fp_old)]
+        mov     [es:8 * 4], ax
+        mov     ax, [MDB(fp_old) + 2]
+        mov     [es:8 * 4 + 2], ax
+        sti
+        cmp     byte [MDB(fp_dead)], 0
+        je      .ok
+        and     byte [es:410h], ~2      ; no coprocessor, from here on
+        jmp     short .y
+.ok:    fninit
+.y:     pop     es
+.x:     ret
+
+; fp_boot's tick: the BIOS's first, then the third one ends the store
+fp_t8:  pushf
+        call    far [cs:MDB(fp_old)]
+        inc     byte [cs:MDB(fp_n)]
+        cmp     byte [cs:MDB(fp_n)], 3
+        jb      .x
+        mov     byte [cs:MDB(fp_dead)], 1
+        push    ax
+        xor     al, al
+        out     0F0h, al                ; BUSY's latch cleared
+        out     0F1h, al                ; the coprocessor reset
+        pop     ax
+.x:     iret
 
 ; CF if the settings say SPLASH=0 (or No, or Off).  DS = CS.
 sp_wanted:
@@ -238,3 +303,7 @@ s_picsig db     'LODEPIC', 1
 sp_next dw      run_ui, KSEG            ; where to after (or md_boot)
 sp_s0   db      0, 0, 0, 0, 0           ; KSEG:0000's 5 bytes, if ours
 sp_back db      0                       ;  (1: put them back)
+fp_old  dd      0                       ; fp_boot's: the BIOS's INT 08h,
+fp_n    db      0                       ;  ticks while it waits, 1 if they
+fp_dead db      0                       ;  ended the store, and the store's
+fp_buf  times 14 db 0                   ;  14 bytes

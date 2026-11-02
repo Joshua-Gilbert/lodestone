@@ -22,15 +22,21 @@ pseudo-terminal, and runs:
   M  core 1's liveness guard: core 1 keeps moving while the bus is idle and while it waits to talk, and when it
      stops, core 0 stops petting the watchdog
 
-usage: run_sim_tests.py          (writes sim/host/sim_results.txt)
+usage: run_sim_tests.py [--results PATH]
+
+Each run works in a directory of its own (tempfile.mkdtemp: bus_sim, the control sockets, the daemon's logs and
+sim_results.txt), so two runs never share a socket; it is kept, and named, when a check fails.  --results PATH
+also writes the results there.
 """
 import collections
 import struct
 import json
 import os
 import random
+import shutil
 import socket
 import subprocess
+import tempfile
 import sys
 import time
 
@@ -39,8 +45,9 @@ ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 LODESTONE_LINK = os.environ.get("LODESTONE_LINK", os.path.join(ROOT, "..", "claude-link"))   # gridlink, next door
 FW = os.path.join(ROOT, "firmware", "bridge")
 PI = os.path.join(ROOT, "pi")
-SIM = os.path.join(HERE, "bus_sim")
-CTL = "/tmp/gpib_sim_ctl.sock"
+WORK = tempfile.mkdtemp(prefix="gpib_sim_")             # (H14: bus_sim, sockets, logs and results: this run's)
+SIM = os.path.join(WORK, "bus_sim")
+CTL = os.path.join(WORK, "ctl.sock")
 BENCH_ID = b"GPIB-Pico2,bench test,rev 1.2,addr 10\n"
 
 results = []
@@ -89,7 +96,7 @@ class Daemon:
         if os.path.exists(CTL):
             os.unlink(CTL)
         env = dict(os.environ, PYTHONPATH=PI)
-        self.log = open(os.path.join(HERE, f"daemon_{handler}.log"), "a")
+        self.log = open(os.path.join(WORK, f"daemon_{handler}.log"), "a")
         self.p = subprocess.Popen([sys.executable, "-m", "gpibbridge.daemon", "-c", "/nonexistent", "--port", pty,
                                    "--ctl", CTL, "--handler", handler, "--address", str(address), "-v"],
                                   env=env, stderr=self.log, stdout=self.log)
@@ -881,7 +888,7 @@ def port_gone_under_read():
 
     def run():
         try:
-            daemon.main(["-c", "/nonexistent", "--port", "fake", "--ctl", "/tmp/gpib_sim_fake_ctl.sock"])
+            daemon.main(["-c", "/nonexistent", "--port", "fake", "--ctl", os.path.join(WORK, "fake_ctl.sock")])
         except BaseException as e:               # (main() never returns)
             errors.append(e)
 
@@ -922,7 +929,11 @@ def port_gone_under_read():
           f"threads {[t.name for t in pinger]}, {ports[-1].pings} PINGs")
 
 
-def main():
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(description="the bridge firmware and the Pi daemon on a simulated bus")
+    ap.add_argument("--results", metavar="PATH", help="also write the results here")
+    args = ap.parse_args(argv)
     sim = Sim()
     say(f"bus_sim on {sim.pty}")
     d = Daemon(sim.pty)
@@ -955,8 +966,13 @@ def main():
         sim.p.wait(5)
     n_ok = sum(ok for _, ok in results)
     say(f"\n{n_ok} of {len(results)} checks passed")
-    with open(os.path.join(HERE, "sim_results.txt"), "w") as f:
-        f.write("\n".join(out) + "\n")
+    for path in [os.path.join(WORK, "sim_results.txt")] + ([args.results] if args.results else []):
+        with open(path, "w") as f:
+            f.write("\n".join(out) + "\n")
+    if n_ok == len(results):
+        shutil.rmtree(WORK, ignore_errors=True)
+    else:
+        print(f"kept for a look: {WORK}")
     return 0 if n_ok == len(results) else 1
 
 

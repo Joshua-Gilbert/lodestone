@@ -1079,7 +1079,7 @@ With `MULTITASK=1`, a `.RUN` that asks for API 9 gets `EV_CLOSE` (0FF05h) from `
   - `src/KCORE.INC` (F0h 2–4), `src/KPROC.INC` (the root restart).
 - **Programs:**
   - `apps/SYSTEM.ASM`, `apps/WRITE.ASM` → `.RUN` via `mkrun.py`;
-  - `build.sh` / `BUILD.BAT` build them (BUILD.BAT needs Python for mkrun).
+  - `build.sh` builds them.
 - **Tests:** `tests/test_apps.py`, `tests/UITEST.ASM`, `tests/MEMSZ.ASM`, `tests/TSR.ASM`.
 - **The shell:** LCMD's version strings say 0.3.
 

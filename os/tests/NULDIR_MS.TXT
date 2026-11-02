@@ -1,0 +1,79 @@
+; NULDIR.COM's lines as GRiD MS-DOS 3.30 gives them (run in the emulator from its ROM image)
+fn 3D NOSUCH\NUL -> err 03
+fn 3D A.B\NUL -> ok
+fn 3D A.TXT\NUL -> err 03
+fn 3D \NUL -> ok
+fn 3D NUL -> ok
+fn 3D A:NUL -> ok
+fn 3D A:\NUL -> ok
+fn 3D NOSUCH\CON -> err 03
+fn 3D A.B\CON -> ok
+fn 3D A.B\NUL.TXT -> ok
+fn 3D NOSUCH\NUL.TXT -> err 03
+fn 3D NOSUCH\SUB\NUL -> err 03
+fn 3D A.B\..\NUL -> ok
+fn 3D A.B\.\NUL -> ok
+fn 3D A.B\NOSUCH\NUL -> err 03
+fn 3D E.F\NUL -> ok
+fn 3D \DEV\NUL -> ok
+fn 3D \DEV\CON -> ok
+fn 3D A:\DEV\NUL -> ok
+fn 3D \DEV\NUL.TXT -> ok
+fn 3D DEV\NUL -> err 03
+fn 3D \DEV\SUB\NUL -> err 03
+fn 3D A.B\NUL.X.Y -> err 02
+fn 3D A.B\NUL.* -> err 02
+fn 3D Q:NUL -> ok
+fn 3D NUL.* -> ok
+fn 3C NOSUCH\NUL -> err 03
+fn 3C A.B\NUL -> ok
+fn 3C A.TXT\NUL -> err 03
+fn 3C \NUL -> ok
+fn 3C NUL -> ok
+fn 3C A:NUL -> ok
+fn 3C A:\NUL -> ok
+fn 3C NOSUCH\CON -> err 03
+fn 3C A.B\CON -> ok
+fn 3C A.B\NUL.TXT -> ok
+fn 3C NOSUCH\NUL.TXT -> err 03
+fn 3C NOSUCH\SUB\NUL -> err 03
+fn 3C A.B\..\NUL -> ok
+fn 3C A.B\.\NUL -> ok
+fn 3C A.B\NOSUCH\NUL -> err 03
+fn 3C E.F\NUL -> ok
+fn 3C \DEV\NUL -> ok
+fn 3C \DEV\CON -> ok
+fn 3C A:\DEV\NUL -> ok
+fn 3C \DEV\NUL.TXT -> ok
+fn 3C DEV\NUL -> err 03
+fn 3C \DEV\SUB\NUL -> err 03
+fn 3C A.B\NUL.X.Y -> err 02
+fn 3C A.B\NUL.* -> err 02
+fn 3C Q:NUL -> ok
+fn 3C NUL.* -> ok
+fn 5B NOSUCH\NUL -> err 03
+fn 5B A.B\NUL -> ok
+fn 5B A.TXT\NUL -> err 03
+fn 5B \NUL -> ok
+fn 5B NUL -> ok
+fn 5B A:NUL -> ok
+fn 5B A:\NUL -> ok
+fn 5B NOSUCH\CON -> err 03
+fn 5B A.B\CON -> ok
+fn 5B A.B\NUL.TXT -> ok
+fn 5B NOSUCH\NUL.TXT -> err 03
+fn 5B NOSUCH\SUB\NUL -> err 03
+fn 5B A.B\..\NUL -> ok
+fn 5B A.B\.\NUL -> ok
+fn 5B A.B\NOSUCH\NUL -> err 03
+fn 5B E.F\NUL -> ok
+fn 5B \DEV\NUL -> ok
+fn 5B \DEV\CON -> ok
+fn 5B A:\DEV\NUL -> ok
+fn 5B \DEV\NUL.TXT -> ok
+fn 5B DEV\NUL -> err 03
+fn 5B \DEV\SUB\NUL -> err 03
+fn 5B A.B\NUL.X.Y -> err 02
+fn 5B A.B\NUL.* -> err 02
+fn 5B Q:NUL -> ok
+fn 5B NUL.* -> ok

@@ -116,6 +116,20 @@ def test_gpib():
     check(h)
 
 
+def test_gpib_query_with_a_line_end_asks():
+    """A 'query' with a CR or LF inside isn't one command: the instrument takes the part before it on its own
+    (here OUTP ON), so it asks as a write does; refused, nothing is sent."""
+    h = Harness([reply(('tool', 'gpib', {'action': 'query', 'address': 6, 'command': 'OUTP ON\nFREQ?'})),
+                 reply(('text', 'OK.'))], answer='n')
+    h.connect(); h.turn('what frequency is the FG5010 at?')
+    assert len(h.grid.asks) == 1 and 'GPIB 6' in h.grid.asks[0][0], h.grid.asks
+    sent = getattr(h.grid, 'gpib_log', [])
+    assert not [g for g in sent if g[1] == 6], sent
+    q = [b for b in h.client.requests[1]['messages'][-1]['content'] if b.get('type') == 'tool_result'][0]
+    assert q.get('is_error') and q['content'] == tools.REJECTED, q
+    check(h)
+
+
 def test_damaged_frames():
     h = Harness([reply(('tool', 'str_replace_based_edit_tool', {'command': 'view', 'path': 'A:\\CFG.C'})),
                  reply(('text', 'Read it despite the noise. ' * 20))], files={'A:\\CFG.C': CFG_C})

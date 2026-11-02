@@ -11,7 +11,7 @@ only ever ones inside ~/grid.
 """
 import collections, json, os, re, socket, stat, sys, tempfile, threading, time
 from . import glp, keys as K, screen
-from .grid import READ_CHUNK, GridError, is_device, is_grid_path, norm
+from .grid import READ_CHUNK, GridError, is_device, is_grid_path, is_plain_query, norm
 
 PROTOCOL = '2025-06-18'
 PROTOCOLS = ('2025-06-18', '2025-03-26', '2024-11-05')    # what the tools here fit; the newest otherwise
@@ -580,7 +580,7 @@ class GridTools:
             return [text('Error: address %d is not one gpib_measure may query (allowed: %s). Use gpib_send, '
                          'which the user approves.' % (addr, ', '.join(map(str, allowed)) or 'none set'))], True
         cmd = arg_str(a, 'command', need=True, most=200).strip()
-        if not cmd.endswith('?') or ';' in cmd or any(ord(c) < 32 or ord(c) == 127 for c in cmd):
+        if not is_plain_query(cmd):
             return [text("Error: gpib_measure sends one query: a command ending in '?', no ';', no control "
                          "characters. Anything else goes through gpib_send.")], True
         try: data = cmd.encode('ascii') + b'\r\n'
@@ -920,35 +920,6 @@ class PlotJob(threading.Thread):
             s.state = 'cancelled' if s.cancel else 'done'
         finally:
             s.t1 = time.monotonic()
-
-
-def hpgl_parts(data, most):
-    """Split HP-GL into parts of at most `most` bytes, each ending after a
-    command's ';' (or a label's ETX), never inside an LB label, whose text
-    may hold ';'.  A command longer than `most` becomes a part of its own,
-    split where it must be: the Nano reads a stream, so that still works."""
-    ends = []                           # where each command ends (index after it)
-    i, n = 0, len(data)
-    while i < n:
-        j = i
-        while j < n and data[j] in b' \r\n\t;': j += 1
-        if data[j:j + 2].upper() == b'LB':
-            k = data.find(b'\x03', j + 2)
-            i = n if k < 0 else k + 1
-            if i < n and data[i:i + 1] == b';': i += 1
-        else:
-            k = data.find(b';', j)
-            i = n if k < 0 else k + 1
-        ends.append(i)
-    parts, start, last = [], 0, 0
-    for e in ends:
-        if e - start > most and last > start:          # close the part at the last command end
-            parts.append(data[start:last]); start = last
-        while e - start > most:                         # one command over `most`
-            parts.append(data[start:start + most]); start += most
-        last = e
-    if start < n: parts.append(data[start:])
-    return parts
 
 
 def picture_block(bits):
