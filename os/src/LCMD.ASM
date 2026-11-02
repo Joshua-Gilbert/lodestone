@@ -3030,42 +3030,10 @@ do_type:
         mov     bx, 512 / 16            ; (512 bytes a read: a bad sector
         call    cbuf_get                ;  loses no more of the text)
         jc      .c
-.l:     mov     bx, [fh1]
-        mov     cx, 512
-        push    ds
-        mov     ds, [cb_seg]
-        xor     dx, dx
-        mov     ah, 3Fh
-        int     21h
-        pop     ds
-        jc      .f
-        or      ax, ax
-        jz      .f
-        mov     cx, ax                  ; up to a ^Z
-        mov     es, [cb_seg]
-        xor     di, di
-        mov     al, 1Ah
-        push    cx
-        repne   scasb
-        pop     cx
-        push    cs
-        pop     es
-        jne     .w
-        mov     cx, di
-        dec     cx
-        mov     byte [tmpb], 1
-        jmp     .w2
-.w:     mov     byte [tmpb], 0
-.w2:    mov     bx, 1
-        push    ds
-        mov     ds, [cb_seg]
-        xor     dx, dx
-        mov     ah, 40h
-        int     21h
-        pop     ds
-        cmp     byte [tmpb], 0
-        je      .l
-.f:     call    cbuf_free
+        mov     word [fh2], 1           ; to standard output (not closed),
+        mov     byte [zstop], 1         ;  up to a ^Z whatever the file
+        call    pump                    ; (an error ends it, unsaid)
+        call    cbuf_free
 .c:     jmp     close1
 
 ; ---------------------------------------------------------------------
@@ -3229,59 +3197,15 @@ copy_one:
         ret
 .dop:   mov     [fh2], ax
         mov     byte [concat], 1
-.loop:  mov     bx, [fh1]
-        mov     cx, [cb_len]
-        push    ds
-        mov     ds, [cb_seg]
-        xor     dx, dx
-        mov     ah, 3Fh
-        int     21h
-        pop     ds
-        jc      .rerr
-        or      ax, ax
-        jz      .eof
-        mov     cx, ax
-        mov     es, [cb_seg]            ; ^Z ends text from a device
-        xor     di, di
-        mov     al, 1Ah
-        push    cx
-        repne   scasb
-        pop     cx
-        push    cs
-        pop     es
-        jne     .wr
-        mov     bx, [fh1]
-        push    cx
+.loop:  mov     bx, [fh1]               ; a device's text ends at a ^Z
         mov     ax, 4400h
         int     21h
-        pop     cx
-        test    dl, 80h
-        jz      .wr
-        mov     cx, di
-        dec     cx
-        mov     byte [tmpb], 1
-        jmp     .wr2
-.wr:    mov     byte [tmpb], 0
-.wr2:   push    cx
-        mov     bx, [fh2]
-        push    ds
-        mov     ds, [cb_seg]
-        xor     dx, dx
-        mov     ah, 40h
-        int     21h
-        pop     ds
-        pop     cx
-        jc      .full
-        cmp     ax, cx
-        jne     .full
-        cmp     byte [tmpb], 0
-        je      .loop
-.eof:   ; keep the source's date and time
-        mov     bx, [fh1]
-        mov     ax, 4400h
-        int     21h
-        test    dl, 80h
-        jnz     .cl
+        and     dl, 80h
+        mov     [zstop], dl
+        call    pump
+        jc      .err
+        cmp     byte [zstop], 0         ; keep the source's date and time
+        jne     .cl
         mov     bx, [fh1]
         mov     ax, 5700h
         int     21h
@@ -3292,9 +3216,6 @@ copy_one:
         inc     word [copied]
         clc
         ret
-.full:  mov     si, e_full
-        jmp     .err
-.rerr:  mov     si, e_read
 .err:   call    err
         mov     byte [crit_q], 0        ; (the partial copy's close and
         call    close2                  ;  delete ask again: a Retry there
@@ -3302,6 +3223,57 @@ copy_one:
         mov     ah, 41h
         int     21h
         stc
+        ret
+
+; pump: [fh1] into [fh2], [cb_len] bytes a read through cb_seg, up to its
+; end or, when [zstop], a ^Z (COPY from a device, TYPE).  CF: SI = what
+; went wrong (a read failed; a write came short: the disk is full)
+pump:
+.l:     mov     bx, [fh1]
+        mov     cx, [cb_len]
+        push    ds
+        mov     ds, [cb_seg]
+        xor     dx, dx
+        mov     ah, 3Fh
+        int     21h
+        pop     ds
+        mov     si, e_read
+        jc      .x
+        or      ax, ax                  ; (CF clear)
+        jz      .x
+        mov     cx, ax
+        mov     byte [tmpb], 0
+        cmp     byte [zstop], 0
+        je      .w
+        mov     es, [cb_seg]
+        xor     di, di
+        mov     al, 1Ah
+        push    cx
+        repne   scasb
+        pop     cx
+        push    cs
+        pop     es
+        jne     .w
+        mov     cx, di                  ; up to the ^Z, and the last write
+        dec     cx
+        inc     byte [tmpb]
+.w:     push    cx
+        mov     bx, [fh2]
+        push    ds
+        mov     ds, [cb_seg]
+        xor     dx, dx
+        mov     ah, 40h
+        int     21h
+        pop     ds
+        pop     cx
+        mov     si, e_full
+        jc      .x
+        cmp     ax, cx
+        jne     .short
+        cmp     byte [tmpb], 0          ; (CF clear: 0 or 1 less 0)
+        je      .l
+.x:     ret
+.short: stc
         ret
 
 close2: mov     bx, [fh2]               ; COPY's and TYPE's files closed
@@ -4740,7 +4712,7 @@ padw        dw 0
         EVEN    do_line.n, do_pipe.cp, do_pipe.cut, parse_redir.l, redir_undo.x, run_cmd.b2, run_cmd.bl, run_cmd.bs
         EVEN    get_word.c, is_wordend, find_prog.pc, find_ext.d, bat_read.f, bat_next.s, bat_next.s0, for_run.s, for_run.put
         EVEN    edit_line.key, hist_back.b, ed_room, ed_show.s, ed_at, ed_rc, wait_key, wait_key.k, wait_key.r, con_in
-        EVEN    do_dir.e, do_dir.n, put_83, put_83.n, put_83.pn, put_83.pl, do_type.l, show_prompt.l
+        EVEN    do_dir.e, do_dir.n, put_83, put_83.n, put_83.pn, put_83.pl, pump.l, show_prompt.l
         EVEN    putc, puts, crlf, strlen.l, strlen.x, strcpy, strend.l, streq, streq.l, streq.x, upcase, upcase.x
         EVEN    skipsp.x, getarg.l, pu2sp
 
@@ -4756,6 +4728,7 @@ echo        resb 1
 child       resb 1
 errlvl      resb 1
 tmpb        resb 1
+zstop       resb 1                      ; pump: a ^Z ends the text
 tmpw        resw 1
 crit_ah     resb 1
 crit_q      resb 1                      ; INT 24h fails (Tab looking; the
