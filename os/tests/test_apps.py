@@ -504,6 +504,21 @@ def t_write():
     check('the goal column: from column 31, Down onto "short" (column 6), Down: 31 again; PgUp, Down, Down: 31; Up, '
           'Ins twice, Up: 6 (dropped by a key that moves nothing); Home, Down, Down: 1', (c1, c2, c3, c4, c5)
           == ('6', '31', '31', '6', '1'), (c1, c2, c3, c4, c5))
+    # the cursor's column, found once a key (AP-14: fix_view's, for the row
+    # drawn and the status line): past a tab, scrolled sideways, typed at
+    k = write_open('LONG.TXT', b'\tx' + b'y' * 150 + b'\r\nz\r\n')
+    wl = lambda n: k.pc.u16(k.useg, k.u16('run_base') + ws[n])
+    k.key(K_END)
+    got = [(col(), wl('ccol') + wl('hs'), wl('hs') > 0)]
+    k.key('Q')
+    got.append((col(), wl('ccol') + wl('hs'), wl('hs') > 0))
+    k.key(ktest.LEFT, ktest.LEFT)
+    got.append((col(), wl('ccol') + wl('hs'), wl('hs') > 0))
+    k.key(K_HOME)
+    got.append((col(), wl('ccol') + wl('hs'), wl('hs') > 0))
+    check('the column on a long line with a tab: End 160 (scrolled), Q typed 161, Left twice 159, Home 1 (back); '
+          'the cursor drawn where the status line says', got == [('160', 159, True), ('161', 160, True), ('159', 158, True),
+          ('1', 0, False)], got)
     k = write_open('GOAL.TXT', long + b'short\r\n' + long + long)
     k.key(*[ktest.RIGHT] * 30, ktest.DOWN)
     p1 = col()
