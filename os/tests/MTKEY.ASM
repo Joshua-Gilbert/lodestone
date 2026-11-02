@@ -24,6 +24,7 @@
 ; nasm -f bin -o MTKEY.COM MTKEY.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         mov     si, 81h
         call    blanks
         lodsb
@@ -53,16 +54,7 @@ org 100h
         cmp     al, 'Y'
         jne     .nx
 .hx:    push    es
-        xor     ax, ax
-        mov     es, ax
-        cli
-        mov     ax, [es:8 * 4]
-        mov     [o08], ax
-        mov     ax, [es:8 * 4 + 2]
-        mov     [o08 + 2], ax
-        mov     word [es:8 * 4], h08
-        mov     [es:8 * 4 + 2], cs
-        sti
+        IVTSET  8, o08, h08
         pop     es
         mov     al, [mode]
         cmp     al, 'Y'
@@ -117,22 +109,12 @@ org 100h
         call    tdone
         jc      .ql
         jmp     short .two
-.tk:    mov     ax, 351Ch               ; T
-        int     21h
-        mov     [o1c], bx
-        mov     [o1c + 2], es
-        mov     ax, 251Ch
-        mov     dx, h1c
-        int     21h
+.tk:    HOOK    1Ch, o1c, h1c   ; T
 .tw:    sti
         hlt
         call    tdone
         jc      .tw
-        push    ds
-        lds     dx, [o1c]
-        mov     ax, 251Ch
-        int     21h
-        pop     ds
+        UNHOOK  1Ch, o1c
         push    ds                      ; (ES: AH=35h's)
         pop     es
 .two:   cmp     word [o08 + 2], 0       ; (X, Y: INT 08h back)
@@ -191,13 +173,7 @@ h1c:    push    ax                      ; (T's: a peek, from INT 1Ch)
 .n:     pop     ax
         jmp     far [cs:o1c]
 
-hk_:    mov     ax, 3516h               ; H
-        int     21h
-        mov     [old16], bx
-        mov     [old16 + 2], es
-        mov     ax, 2516h
-        mov     dx, h16
-        int     21h
+hk_:    HOOK    16h, old16, h16   ; H
         mov     dx, (the_end - $$ + 100h + 15) / 16
         mov     ax, 3100h
         int     21h
@@ -220,11 +196,7 @@ h16:    cmp     ah, 0                   ; (H's: a read waits here)
         hlt
         jmp     .w
 
-blanks: lodsb
-        cmp     al, ' '
-        je      blanks
-        dec     si
-        ret
+        BLANKS
 
 ; the end: 18 ticks from now, X's 36 (test_mt's CODE-Tab there comes once
 ; MTLINE waits, which may take most of 18) (AL kept)
@@ -261,18 +233,7 @@ tdone:  push    es
         ret
 
 ; AX as 4 hex digits at DI
-hex4:   mov     cx, 4
-.h:     rol     ax, 4
-        push    ax
-        and     al, 0Fh
-        add     al, '0'
-        cmp     al, '9'
-        jbe     .s
-        add     al, 7
-.s:     stosb
-        pop     ax
-        loop    .h
-        ret
+        HEX4
 
 mode    db      0
 o1c     dd      0

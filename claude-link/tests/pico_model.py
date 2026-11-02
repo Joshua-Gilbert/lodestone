@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from gridlink.pico import (cobs_encode, cobs_decode, F_HELLO_REQ, F_CONFIG, F_TX, F_STB, F_PING, F_WAKE, F_HELLO,
                            F_DATA, F_EVENT, F_PONG, F_CREDIT, CF_ONLINE, CF_AUTO_RSV, CF_QUIET, TXF_EOI, DF_EOI, F_HOLD,
-                           TXF_HELD, DF_HELD, F_HOLD_GLP)
+                           TXF_HELD, DF_HELD, F_HOLD_GLP, PicoLink)
 from gridlink.glp import fletcher16
 from ar488_model import AR488Model
 
@@ -214,7 +214,7 @@ def _glp_ok(m, head):
     return len(m) == 8 + n and fletcher16(m[1:6 + n]) == (m[6 + n] | m[7 + n] << 8)
 
 
-class PicoModelTransport:
+class PicoModelTransport(PicoLink):
     """gridlink's PicoBridge, minus the serial port: the real PicoProto (pico.py), writing into the model.
     Bytes from the model go through feed(), which returns the GRiD's messages for Link.feed."""
     from gridlink.pico import FRAME_MAX as frame_limit
@@ -229,37 +229,3 @@ class PicoModelTransport:
 
     def feed(s, data):
         return s.proto.feed(data)
-
-    def answer(s, frame):
-        s.proto.answer(frame)
-
-    def hold(s, expect, frame, glp=False):
-        return s.proto.hold(expect, frame, glp)
-
-    def hold_used(s):
-        return s.proto.hold_used()
-
-    def ring(s):
-        s.proto.ring()
-
-    def unring(s):
-        s.proto.unring()
-
-    def set_quiet(s, on):
-        return s.proto.set_quiet(on)
-
-    @property
-    def can_quiet(s):
-        return s.proto.can_quiet
-
-    @property
-    def can_ring(s):
-        return s.proto.can_ring
-
-    @property
-    def sdcs(s):
-        return s.proto.sdcs
-
-    @property
-    def delivered_at(s):
-        return s.proto.tx_done_at

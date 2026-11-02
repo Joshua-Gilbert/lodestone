@@ -70,28 +70,19 @@ GL_BL, GL_BR, GL_TL, GL_TR, GL_TEE_R, GL_TEE_L, GL_TEE_D, GL_TEE_U, GL_CROSSING 
 GL_LAST = 0xA0
 # the block elements a GF_QUAD GRiD draws as they are (an older one gets blanks and inverse blanks)
 GL_QUADS = {ch: 0xA1 + i for i, ch in enumerate('▘▝▖▗▌▐▀▄▛▜▙▟▚▞')}
+# what each of the GRiD's own glyphs looks like, as text (the console's view, the emulator tests' screen reader)
+GLYPH_TEXT = {0x7F: '\u2588', 0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x83: '\u2192', 0x84: '\u2713',
+              0x85: '\u2717', 0x86: '\u00b7', 0x87: '\u00b7', 0x88: '\u2722', 0x89: '\u2733', 0x8A: '\u2736',
+              0x8B: '\u273b', 0x8C: '\u273d', 0x8D: '\u2500', 0x8E: '\u2502', 0x8F: '\u25b8', 0x90: '\u00b0',
+              0x91: '\u00b5', 0x92: '\u2126', 0x93: '\u00b1', 0x94: '\u00d7', 0x95: '\u2248', 0x96: '\u2264',
+              0x97: '\u2265', 0x98: '\u2514', 0x99: '\u2518', 0x9A: '\u250c', 0x9B: '\u2510', 0x9C: '\u251c',
+              0x9D: '\u2524', 0x9E: '\u252c', 0x9F: '\u2534', 0xA0: '\u253c'}
+GLYPH_TEXT.update({g: ch for ch, g in GL_QUADS.items()})
 
-
-def _make_table():
-    t = []
-    for i in range(256):
-        c = i << 8
-        for _ in range(8):
-            c = ((c << 1) ^ 0x1021) if c & 0x8000 else (c << 1)
-        t.append(c & 0xFFFF)
-    return t
-
-_CRC = _make_table()
 
 def crc16(data, crc=0xFFFF):
-    """CRC-16/CCITT-FALSE: binascii's C crc_hqx (the table loop below cost ~0.3 ms a 2 KB frame)."""
+    """CRC-16/CCITT-FALSE: binascii's C crc_hqx (a table loop in Python cost ~0.3 ms a 2 KB frame)."""
     return binascii.crc_hqx(data, crc)
-
-
-def crc16_table(data, crc=0xFFFF):
-    for b in data:
-        crc = ((crc << 8) & 0xFFFF) ^ _CRC[(crc >> 8) ^ b]
-    return crc
 
 
 def fletcher16(data):
@@ -188,17 +179,6 @@ def line_time_ms(nbytes, baud):
 
 
 # ---- messages ------------------------------------------------------------
-def fragments(mtype, body, maxpay):
-    """Split a message body into (kind, payload) frames of at most maxpay."""
-    body = bytes(body)
-    if not body: return [(mtype, b'')]
-    out = []
-    for i in range(0, len(body), maxpay):
-        last = i + maxpay >= len(body)
-        out.append((mtype | (0 if last else MORE), body[i:i + maxpay]))
-    return out
-
-
 class Reassembler:
     def __init__(s): s.parts = {}
     def add(s, frame):
@@ -209,13 +189,15 @@ class Reassembler:
         return t, b''.join(s.parts.pop(t))
 
 
+def dos_date(y, mo, d): return ((y - 1980) << 9) | (mo << 5) | d
+def dos_time(h, mi, sec=0): return (h << 11) | (mi << 5) | (sec // 2)
+def date_text(dt): return '%04d-%02d-%02d' % (1980 + (dt >> 9), (dt >> 5) & 15, dt & 31)    # (a DOS date as text)
+def time_text(tm): return '%02d:%02d' % (tm >> 11, (tm >> 5) & 63)                            # (a DOS time)
+
+
 def asciiz(s):
     if isinstance(s, str): s = s.encode('cp437', 'replace')
     return bytes(s) + b'\0'
-
-def split_z(data, n=1):
-    parts = bytes(data).split(b'\0', n)
-    return parts
 
 def kv_lines(data):
     d = {}
@@ -225,32 +207,30 @@ def kv_lines(data):
     return d
 
 
+def hello_int(body, key, default, lo, hi):
+    """A number a GRiD HELLO gives on a `key=` line (the first such line), kept to lo..hi; none, or not a
+    number: default."""
+    key = key.encode() + b'='
+    for line in bytes(body[6:]).split(b'\n'):
+        if line.startswith(key):
+            try: return max(lo, min(int(line[len(key):]), hi))
+            except ValueError: break
+    return default
+
+
 def hello_req(body):
     """The biggest REQUEST a GRiD HELLO says it takes (a `req=` line, CLAUDE 1.5 on), else the 4,700 of
     every CLAUDE before."""
-    for line in bytes(body[6:]).split(b'\n'):
-        if line.startswith(b'req='):
-            try: return max(GRID_REQ_DEFAULT, min(int(line[4:]), 65000))
-            except ValueError: break
-    return GRID_REQ_DEFAULT
+    return hello_int(body, 'req', GRID_REQ_DEFAULT, GRID_REQ_DEFAULT, 65000)
 
 
 def hello_rd(body):
     """The biggest file read a GRiD HELLO says it answers whole (an `rd=` line, CLAUDE 1.7), else 0: every
     CLAUDE before answers at most 16,382 bytes, so a read of 16 KB would look like the end of the file."""
-    for line in bytes(body[6:]).split(b'\n'):
-        if line.startswith(b'rd='):
-            try: return max(0, min(int(line[3:]), 65000))
-            except ValueError: break
-    return 0
+    return hello_int(body, 'rd', 0, 0, 65000)
 
 
 def hello_rx(body):
     """The Pi -> GRiD payload limit a GRiD HELLO announces (an `rx=` line), else
     the 246 every CLAUDE before 1.3 reads."""
-    for line in bytes(body[6:]).split(b'\n'):
-        if line.startswith(b'rx='):
-            try: n = int(line[3:])
-            except ValueError: break
-            return max(GRID_RX_DEFAULT, min(n, GRID_RX_MAX))
-    return GRID_RX_DEFAULT
+    return hello_int(body, 'rx', GRID_RX_DEFAULT, GRID_RX_DEFAULT, GRID_RX_MAX)

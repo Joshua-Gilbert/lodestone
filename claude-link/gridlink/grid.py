@@ -40,6 +40,14 @@ class GridError(Exception):
         super().__init__(msg); s.code = code
 
 
+def is_plain_query(cmd):
+    """A GPIB command that only asks: one command ending in '?', no ';', no control characters (a CR or LF inside
+    would end a command the instrument takes on its own).  The chat agent sends these without asking, and
+    gpib_measure takes only these."""
+    c = cmd.strip()
+    return c.endswith('?') and ';' not in c and not any(ord(ch) < 32 or ord(ch) == 127 for ch in c)
+
+
 def errtext(code):
     return DOS_ERRORS.get(code, 'DOS error %d' % code)
 
@@ -125,8 +133,7 @@ class Grid:
             attr, tm, dt, size = struct.unpack_from('<BHHI', data, i)
             name = data[i + 9:i + 22].split(b'\0')[0].decode('cp437', 'replace')
             out.append(dict(name=name, attr=attr, size=size, dir=bool(attr & 0x10),
-                            date='%04d-%02d-%02d' % (1980 + (dt >> 9), (dt >> 5) & 15, dt & 31),
-                            time='%02d:%02d' % (tm >> 11, (tm >> 5) & 63)))
+                            date=glp.date_text(dt), time=glp.time_text(tm)))
         return out
 
     def read(s, path, offset=0, length=READ_CHUNK):
@@ -195,9 +202,7 @@ class Grid:
             if e.code == 18: raise GridError(errtext(2), 2) from None    #  MS-DOS: not there)
             raise
         attr, tm, dt, size = struct.unpack_from('<BHHI', r)
-        return dict(attr=attr, size=size, dir=bool(attr & 0x10),
-                    date='%04d-%02d-%02d' % (1980 + (dt >> 9), (dt >> 5) & 15, dt & 31),
-                    time='%02d:%02d' % (tm >> 11, (tm >> 5) & 63))
+        return dict(attr=attr, size=size, dir=bool(attr & 0x10), date=glp.date_text(dt), time=glp.time_text(tm))
 
     def exists(s, path):
         try: s.stat(path); return True

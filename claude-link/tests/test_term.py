@@ -437,6 +437,36 @@ def test_echo_latency():
     assert out[True][0] < 150 and out[False][0] < 150, out
 
 
+def test_hold_waits_till_ready_at():
+    """P9: a held answer sleeps till the source's ready_at (Term's: its echo settled), not in 5 ms looks; a source
+    that can't say, or has nothing timed (None), is looked at every 5 ms as before; never a busy loop."""
+    from gridlink.link import Link
+    class Src:
+        def __init__(s, at): s.at = at
+        def ready_at(s): return s.at
+    L = Link.__new__(Link)
+    L.source = None
+    assert L._source_wait(1.0) == 1.0
+    L.source = object(); assert L._source_wait(1.0) == 0.005
+    L.source = Src(None); assert L._source_wait(1.0) == 0.005
+    L.source = Src(time.monotonic() + 0.003); w = L._source_wait(1.0)
+    assert 0.002 < w <= 0.003, w
+    L.source = Src(time.monotonic() + 5); assert L._source_wait(0.06) == 0.06       # (the hold ends first)
+    L.source = Src(time.monotonic() - 1); assert L._source_wait(1.0) == 0.0005      # (due: look again soon)
+    # Term's own: nothing to draw, None; drawn soon after its last pty byte, SETTLE after it
+    from gridlink import term as TM
+    t = TM.TermSession.__new__(TM.TermSession)
+    import threading
+    t.lock = threading.RLock(); t.away = False; t.pic = None; t.dirty = False
+    t.screen = TermScreen()
+    assert t.ready_at() is None
+    now = time.monotonic()
+    t.dirty = True; t.last_byte = now; t.first_dirty = now
+    assert t.ready_at() == now + TM.SETTLE and not t.ready()
+    t.first_dirty = now - TM.MAX_WAIT + 0.001                                        # (MAX_WAIT comes first)
+    assert t.ready_at() == t.first_dirty + TM.MAX_WAIT
+
+
 def test_resident_tools():
     """Resident Claude's console: grid_program and grid_type, then the tools
     for what its HELLO's ops= lists (files, gpib); the rest say why not."""

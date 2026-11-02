@@ -28,6 +28,7 @@ from gridlink.link import Link
 from gridlink.agent import Session
 from gridlink.config import Config
 from gridlink.router import Router
+from gridlink import glp
 
 
 def _find(env, *cands):
@@ -49,13 +50,7 @@ BLOCK_US = 4.0
 STUB = 0xF000                           # BIOS stubs: F000:n*8 = INT n; RETF 2
 R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
      'ax bx cx dx si di bp sp cs ds es ss ip flags al ah bl bh cl ch dl dh'.split()}
-GLYPH_NAMES = {0x80: '\u25cf', 0x81: '\u23bf', 0x82: '\u2026', 0x83: '\u2192', 0x84: '\u2713', 0x85: '\u2717',
-               0x86: '\u00b7', 0x87: '\u00b7', 0x88: '+', 0x89: '*', 0x8A: '\u2736', 0x8B: '\u273b', 0x8C: '\u273d',
-               0x8D: '\u2500', 0x8E: '\u2502', 0x8F: '\u25b8', 0x90: '\u00b0', 0x91: '\u00b5', 0x92: '\u03a9',
-               0x93: '\u00b1', 0x94: '\u00d7', 0x95: '\u2248', 0x96: '\u2264', 0x97: '\u2265', 0x7F: '\u2588',
-               0x98: '\u2514', 0x99: '\u2518', 0x9A: '\u250c', 0x9B: '\u2510', 0x9C: '\u251c', 0x9D: '\u2524',
-               0x9E: '\u252c', 0x9F: '\u2534', 0xA0: '\u253c'}
-GLYPH_NAMES.update({0xA1 + i: ch for i, ch in enumerate('▘▝▖▗▌▐▀▄▛▜▙▟▚▞')})   # (CLAUDE 1.8)
+GLYPH_NAMES = glp.GLYPH_TEXT
 
 
 class Chip(S.NEC7210):
@@ -433,8 +428,7 @@ class Machine:
 
     def dos_dt(s):
         n = s.now()
-        return ((n.hour << 11) | (n.minute << 5) | (n.second // 2),
-                ((n.year - 1980) << 9) | (n.month << 5) | n.day)
+        return glp.dos_time(n.hour, n.minute, n.second), glp.dos_date(n.year, n.month, n.day)
 
     def entries(s, d):
         out = []
@@ -995,17 +989,41 @@ class EmuHarness:
                  claude_com=CLAUDE_COM, mapfile=None, baud=115200, term=None, web=None, bridge='ar488',
                  frame_cap=None):
         s.m = m = Machine()
+        s.tmp = tempfile.mkdtemp(prefix='gridemu-')
+        s.wire(m.chip.devices, bridge, patched, baud, script, mode, term, web, frame_cap)
+        img = open(claude_com, 'rb').read()
+        m.fs['A:\\CLAUDE.COM'] = bytearray(img)
+        m.fs['A:\\GRIDGPIB.COM'] = bytearray(open(GRIDGPIB_COM, 'rb').read())
+        if os.path.exists(TESTKEY_COM): m.fs['A:\\TESTKEY.COM'] = bytearray(open(TESTKEY_COM, 'rb').read())
+        m.fs['A:\\COMMAND.COM'] = bytearray(b'\xcd\x20' + bytes(100))
+        for k, v in (files or {}).items(): m.fs[m.norm(k)] = bytearray(v)
+        s.sym = symbols(mapfile or os.path.splitext(claude_com)[0] + '.MAP')
+        mp = mapfile or os.path.splitext(claude_com)[0] + '.MAP'     # (CLAUDE 1.8 draws the block elements A1h-AEh)
+        s.glyph_end = 0xAF if 'GF_QUAD' in open(mp, errors='replace').read() else 0xA1
+        s.font = Font(img, s.sym['font'] - 0x100, s.glyph_end - 0x20)
+        s.font_img = img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + (s.glyph_end - 0x20) * 16]
+        s.answer = answer
+        s.args = args
+        s.shots = []
+
+    def wire(s, devices, bridge, patched, baud, script, mode, term, web=None, frame_cap=None):
+        """The bridge model at GPIB address 7 on the machine's bus (`devices`), and gridlink on its Pi end: the
+        router with a program in a pty (term: Term, no API key), else chat.  s.m and s.tmp come first.  bridge:
+        'ar488' (the patched Nano or, patched=False, the stock one), 'pico', 'pico-hold' (fw 2026-10-23c's held
+        replies) or 'pico-quiet' (fw 2026-10-24's quiet SRQ, resident Claude's M4).  (EmuHarness's and
+        claude_kernel's KernelHarness's)"""
+        m = s.m
         s.pending = []
-        if bridge in ('pico', 'pico-hold'):
-            s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi, holds=bridge == 'pico-hold')
+        if bridge in ('pico', 'pico-hold', 'pico-quiet'):
+            s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi, holds=bridge == 'pico-hold',
+                               quiet=bridge == 'pico-quiet')
             s.transport = PicoModelTransport(s.nano)
         else:
             s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
             s.transport = ModelTransport(s.nano, patched, baud=baud)
-        m.chip.devices[7] = s.nano
+        devices[7] = s.nano
         s.nano.wake = m.schedule                  # (a HLT ends when the bridge's SRQ can rise: IRQ 5)
         m.on_due = s.pump_pi
-        s.tmp = tempfile.mkdtemp(prefix='gridemu-')
         cfg = Config()
         cfg.workdir = os.path.join(s.tmp, 'work'); cfg.memory_dir = os.path.join(s.tmp, 'mem')
         cfg.sessions_dir = os.path.join(s.tmp, 'sessions'); cfg.mode = mode; cfg.web = False
@@ -1031,20 +1049,19 @@ class EmuHarness:
         s.link.frame_cap = frame_cap
         s.link.clock = lambda: s.m.us / 1e6        # (ring_check's times: the GRiD's, simulated)
         if hasattr(s.transport, 'proto'): s.transport.proto.clock = s.link.clock
-        img = open(claude_com, 'rb').read()
-        m.fs['A:\\CLAUDE.COM'] = bytearray(img)
-        m.fs['A:\\GRIDGPIB.COM'] = bytearray(open(GRIDGPIB_COM, 'rb').read())
-        if os.path.exists(TESTKEY_COM): m.fs['A:\\TESTKEY.COM'] = bytearray(open(TESTKEY_COM, 'rb').read())
-        m.fs['A:\\COMMAND.COM'] = bytearray(b'\xcd\x20' + bytes(100))
-        for k, v in (files or {}).items(): m.fs[m.norm(k)] = bytearray(v)
-        s.sym = symbols(mapfile or os.path.splitext(claude_com)[0] + '.MAP')
-        mp = mapfile or os.path.splitext(claude_com)[0] + '.MAP'     # (CLAUDE 1.8 draws the block elements A1h-AEh)
-        s.glyph_end = 0xAF if 'GF_QUAD' in open(mp, errors='replace').read() else 0xA1
-        s.font = Font(img, s.sym['font'] - 0x100, s.glyph_end - 0x20)
-        s.font_img = img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + (s.glyph_end - 0x20) * 16]
-        s.answer = answer
-        s.args = args
-        s.shots = []
+
+    def paint_claude_stack(s):
+        """CLAUDE.COM's stack below SP painted A5h, so claude_stack_used() can tell how deep it goes from here on
+        (the suites' check(): under a quarter of it)."""
+        lo, top = s.sym['stack_bottom'], s.sym['stack_top']
+        s.m.mu.mem_write(s.claude_psp * 16 + lo, b'\xa5' * (s.m.mu.reg_read(X.UC_X86_REG_SP) - 16 - lo))
+        s.stk = (lo, top)
+
+    def claude_stack_used(s):
+        """-> (bytes of CLAUDE.COM's stack used since paint_claude_stack, the stack's size)."""
+        lo, top = s.stk
+        b = bytes(s.m.mu.mem_read(s.claude_psp * 16 + lo, top - lo))
+        return top - lo - (len(b) - len(b.lstrip(b'\xa5'))), top - lo
 
     # Pi side plumbing
     def _to_pi(s, data, t):

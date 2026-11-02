@@ -32,6 +32,7 @@
 ; nasm -f bin -o MTSPIN.COM MTSPIN.ASM
 cpu 286
 org 100h
+%include "MTLIB.INC"
         mov     sp, stk_top
         mov     ah, 4Ah                 ; (only its own memory)
         mov     bx, (stk_top - $$ + 100h + 15) / 16
@@ -78,34 +79,13 @@ org 100h
         int     21h
         mov     [indp], bx
         mov     [indp + 2], es
-        mov     ax, 351Ch
-        int     21h
-        mov     [o1c], bx
-        mov     [o1c + 2], es
-        mov     ax, 251Ch
-        mov     dx, h1c
-        int     21h
+        HOOK    1Ch, o1c, h1c
 .e0:    cmp     byte [mode], 'E'
         jne     .t0
-        mov     ax, 3575h
-        int     21h
-        mov     [o75], bx
-        mov     [o75 + 2], es
-        mov     ax, 2575h
-        mov     dx, h75
-        int     21h
+        HOOK    75h, o75, h75
 .t0:    cmp     byte [mode], 'T'
         jne     .p0
-        xor     ax, ax
-        mov     es, ax
-        cli
-        mov     ax, [es:8 * 4]
-        mov     [o08], ax
-        mov     ax, [es:8 * 4 + 2]
-        mov     [o08 + 2], ax
-        mov     word [es:8 * 4], h08
-        mov     [es:8 * 4 + 2], cs
-        sti
+        IVTSET  8, o08, h08
 .p0:    cmp     byte [mode], 'I'
         jne     .p1
         fnstcw  [fpt + 4]               ; (I: FNINIT's control word, as a new
@@ -311,11 +291,7 @@ h08:    sti                             ; INT 08h (T)
         call    far [cs:o08]
         iret
 
-blanks: lodsb
-        cmp     al, ' '
-        je      blanks
-        dec     si
-        ret
+        BLANKS
 word_:  lodsb                           ; to a blank or the end: NUL there
         cmp     al, ' '
         ja      word_

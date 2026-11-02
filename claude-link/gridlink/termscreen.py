@@ -67,15 +67,16 @@ for _k, _v in UMAP.items():                    # render.py's map, where it is on
 FULL_BLOCKS = set('█▛▜▙▟▉▊▇')
 EMPTY_BLOCKS = set('▌▐▀▄▖▗▘▝▚▞▁▂▃▅▆▋▍▎')
 
-_cache = {}
+_caches = ({}, {})                              # (one a mode: without the quads, with them)
 
 
 def glyph(data, quads=False):
     """pyte cell text -> (GRiD code, flip inverse).  quads: the GRiD draws the 2x2 block elements (GF_QUAD)."""
-    r = _cache.get((data, quads))
+    cache = _caches[bool(quads)]
+    r = cache.get(data)
     if r is not None: return r
     r = _glyph(data, quads)
-    if len(_cache) < 4096: _cache[(data, quads)] = r
+    if len(cache) < 4096: cache[data] = r
     return r
 
 
@@ -161,12 +162,13 @@ class TermScreen(pyte.Screen):
     def cells(s):
         """-> (24 bytearrays of glyphs, 24 bytearrays of attributes)"""
         chs, ats = [], []
+        cache = _caches[bool(s.quads)]              # (looked up here, not in glyph(): 1,920 cells a call)
         for y in range(s.lines):
             line = s.buffer[y]
             ch = bytearray(s.columns); at = bytearray(s.columns)
             for x in range(s.columns):
                 c = line[x]
-                g, flip = glyph(c.data, s.quads)
+                g, flip = cache.get(c.data) or glyph(c.data, s.quads)
                 bg = c.bg not in ('default', 'black', '000000')
                 inv = (c.reverse != bg) != flip
                 ch[x] = g

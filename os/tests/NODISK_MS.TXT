@@ -1,0 +1,12 @@
+; NODISK.COM's lines as GRiD MS-DOS 3.30 gives them, drive B with no disk (run in the emulator from its ROM image)
+fn 3D B:X.TXT -> err 03 crit 1A 02
+fn 3C B:X.TXT -> err 03 crit 1A 02
+fn 43 B:X.TXT -> err 03 crit 1A 02
+fn 4E B:*.* -> err 03 crit 1A 02
+fn 3B B:\ -> err 03 crit 1A 02
+fn 39 B:\D -> err 03 crit 1A 02
+fn 3A B:\D -> err 03 crit 1A 02
+fn 41 B:X.TXT -> err 03 crit 1A 02
+fn 56 B:X.TXT -> err 03 crit 1A 02
+fn 36 -> err FF crit 1A 02
+fn 3D B:X.TXT -> err 03 crit 1A 02

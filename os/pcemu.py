@@ -22,6 +22,12 @@ DOS itself.
     memory again (a partly decoded board), as the kernel's scan must see.
 
 Time: 4 us per executed basic block (about a 10 MHz 286).
+
+Not modelled (H11): a BIOS service here finishes in one step, between two
+blocks, so no timer tick (or other IRQ) ever lands inside an INT 13h or an
+INT 10h call, where on the 1520 one can, mid-transfer or mid-scroll.  Code
+that must hold while a tick comes in the middle of a BIOS call (MT's
+mt_in13 / mt_inb) is tested by setting those flags by hand (test_mt).
 """
 import collections, ctypes, datetime, os, struct
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INTR, UC_HOOK_INSN, UC_HOOK_BLOCK, UC_PROT_ALL
@@ -49,6 +55,7 @@ R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
 # real-code BIOS pieces at F000:1000 and up
 INT08 = bytes([0x50, 0x1E, 0x31, 0xC0, 0x8E, 0xD8, 0xFF, 0x06, 0x6C, 0x04, 0x75, 0x04,
                0xFF, 0x06, 0x6E, 0x04, 0xCD, 0x1C, 0xB0, 0x20, 0xE6, 0x20, 0x1F, 0x58, 0xCF])
+PIC_ISR = os.environ.get('PIC_ISR') == '1'
 IRQEOI = bytes([0x50, 0xB0, 0x20, 0xE6, 0x20, 0x58, 0xCF])
 IRET = bytes([0xCF])
 
@@ -359,6 +366,7 @@ class PC:
         s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
         s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
         s.keys = collections.deque(); s.tty = []; s.log = []; s.lpt = []
+        s.fpu_ports = []                # (OUTs to F0h, BUSY's latch cleared, and F1h, the coprocessor reset)
         s.calls13 = []; s.ints = collections.Counter(); s.t13 = []
         s.stopped = None; s.crash = None; s.halted = False; s.blocked = False
         s.last_blk = (0, 0); s.pit_latch = None; s.pit_hi = False; s.pit_mode = 3
@@ -555,6 +563,8 @@ class PC:
             return
         if not (s.r('flags') & 0x200) or not s.irq_pending: return
         due = [i for i in sorted(s.irq_pending) if s.unmasked(i)]
+        if PIC_ISR:                             # (a real 8259: an IRQ in service, not yet ended by an
+            due = [i for i in due if not s.pic_blocked(i)][:1]   #  EOI, holds back itself and every lower one)
         if not due: return
         first = True
         for irq in reversed(due):
@@ -690,6 +700,7 @@ class PC:
             if s.ata.timed: s.us += s.ata.pio_us
             return s.ata.write(port, val & 0xFFFF, s.us, size)   # (a word: OUTSW)
         val &= 0xFF
+        if port in (0xF0, 0xF1): s.fpu_ports.append(port); return
         if port == 0x70: s.cidx = val & 0x7F; return
         if port == 0x71:
             if s.cidx >= 0x0E: s.cmos[s.cidx] = val
@@ -1222,6 +1233,10 @@ class PC:
             else:
                 s.sleep_to_tick()               # (an IRQ still waiting goes first,
         return not (s.stopped or s.crash)       #  as a real PIC would after IRET)
+
+    def pic_blocked(s, i):
+        lvl = i if i < 8 else 2
+        return bool(s.isr & ((2 << lvl) - 1))
 
     def unmasked(s, i):
         if i < 8: return not s.pic_mask & (1 << i)

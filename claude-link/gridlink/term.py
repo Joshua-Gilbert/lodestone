@@ -242,6 +242,17 @@ class TermSession:
             if s.screen.sync and now - s.screen.sync_t < SYNC_MAX: return False
             return now - s.last_byte >= SETTLE or now - s.first_dirty >= MAX_WAIT
 
+    def ready_at(s):
+        """When ready() turns true by time alone, on time.monotonic(): the pty quiet for SETTLE, or MAX_WAIT,
+        and a ?2026 frame's SYNC_MAX.  None when only something new can make it so (nothing to draw, a
+        picture, away): the link then looks again every 5 ms, as for a source without this.  ready() stays
+        the authority: the link asks it when this time comes."""
+        with s.lock:
+            if s.away or s.pic is not None or not s.dirty: return None
+            at = min(s.last_byte + SETTLE, s.first_dirty + MAX_WAIT)
+            if s.screen.sync: at = max(at, s.screen.sync_t + SYNC_MAX)
+            return at
+
     def take(s, maxpay):
         with s.lock:
             if s.pic is not None:

@@ -11,7 +11,6 @@ import os, struct, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from grid_emu import EmuHarness, FakeMT
 from gridlink import glp, picture as PIC
-from unicorn.x86_const import UC_X86_REG_SP as SP
 import test_emu_term as TT
 
 PBF_SHOWN, PBF_NOCUR = 1, 2
@@ -24,9 +23,7 @@ def start(window=True, front=False, args='/A:7', mouse=False, connect=True, **kw
     h.boot()
     if connect:
         assert h.run_until(lambda: h.var('term') == 1 and h.var('connected') == 1, 10), (h.m.crash, h.log, h.mt.log)
-    lo, top = h.sym['stack_bottom'], h.sym['stack_top']    # (check() reads the stack's paint)
-    h.m.mu.mem_write(h.claude_psp * 16 + lo, b'\xa5' * (h.m.mu.reg_read(SP) - 16 - lo))
-    h.stk = (lo, top)
+    h.paint_claude_stack()                      # (check() reads how deep it went)
     return h
 
 
