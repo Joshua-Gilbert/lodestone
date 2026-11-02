@@ -1112,6 +1112,33 @@ def waitfile(k, name, sim_s=20.0):
         if A.disk_file(k, name): return k.pc.us - u0
     return None
 
+def t_fpbad():
+    print('== a coprocessor that can\'t store (the 1520 with a 287XL): the start-up finds it and says there is none')
+    # as it is: the store takes no time, the coprocessor kept (INT 11h's bit), nothing written to F0h/F1h
+    k = boot('mt_fb0.img', b'MULTITASK=1\r\n', 88)
+    check('a working coprocessor: the start-up\'s one FNSTENV returns at once; INT 11h still says there is one, nothing '
+          'written to F0h/F1h, MT keeps each task\'s state (mt_fpu 1)', k.pc.rd(0x40, 0x10, 1)[0] & 2
+          and k.pc.fpu_ports == [] and k.pc.rd(mt_seg(k), k.Y['mt_fpu'], 1)[0] == 1, (k.pc.fpu_ports,))
+    # -dFPTEST: the store never ends by itself (a 287XL's in the 1520: BUSY held); the third tick ends it
+    src = os.path.join(GOS, 'src')
+    sysf, mapf, mtf = (os.path.join(A.OUT, n) for n in ('LODEFT.SYS', 'LODEFT.MAP', 'LODEMTFT.SYS'))
+    m = os.path.join(A.OUT, '_ft.asm')
+    open(m, 'w').write('[map symbols %s]\n%%include "LODE.ASM"\n' % mapf)
+    subprocess.run(['nasm', '-f', 'bin', '-dFPTEST', '-i', src + '/', '-o', sysf, m], check=True)
+    subprocess.run(['python3', os.path.join(GOS, 'mkmt.py'), sysf, mapf, mtf], check=True, stdout=subprocess.DEVNULL)
+    import mkimg
+    img = mkimg.build(os.path.join(A.OUT, 'mt_fb1.img'), ['LODE.SYS=' + sysf, 'LODEMT.SYS=' + mtf, A.LCMD, MTSP,
+                                                          TERMRUN, TERMFNT, ini(b'MULTITASK=1\r\n')])
+    k = ktest.KPC(img, ems_pages=88); k.start(10); k.mcb0 = k.u16('first_mcb')
+    seg = mt_seg(k)
+    eq, mf, ports = k.pc.rd(0x40, 0x10, 1)[0], k.pc.rd(seg, k.Y['mt_fpu'], 1)[0], list(k.pc.fpu_ports)
+    k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+    o = '\n'.join(l for y, l in k.ocr())
+    check('a store that never ends: the third tick clears BUSY (F0h) and resets the coprocessor (F1h) (%s), the start-up '
+          'goes on, INT 11h says there is none from then on (40:10h %02Xh), MT keeps no coprocessor state (mt_fpu %d), '
+          'and CODE-P opens LCMD\'s window, its prompt drawn' % (ports, eq, mf), ports == [0xF0, 0xF1] and not eq & 2
+          and mf == 0 and 'A:\\>' in o and not k.crashed, (ports, eq, mf, o[-300:]))
+
 def t_screens():
     print('== screens: a background task\'s INT 10h in its own screen; one that writes the screen itself frozen there')
     k = boot('mt_sc.img', b'MULTITASK=1\r\n', 88, MTSC)
@@ -6639,7 +6666,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

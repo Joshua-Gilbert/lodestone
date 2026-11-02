@@ -360,6 +360,7 @@ class PC:
         s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
         s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
         s.keys = collections.deque(); s.tty = []; s.log = []; s.lpt = []
+        s.fpu_ports = []                # (OUTs to F0h, BUSY's latch cleared, and F1h, the coprocessor reset)
         s.calls13 = []; s.ints = collections.Counter(); s.t13 = []
         s.stopped = None; s.crash = None; s.halted = False; s.blocked = False
         s.last_blk = (0, 0); s.pit_latch = None; s.pit_hi = False; s.pit_mode = 3
@@ -693,6 +694,7 @@ class PC:
             if s.ata.timed: s.us += s.ata.pio_us
             return s.ata.write(port, val & 0xFFFF, s.us, size)   # (a word: OUTSW)
         val &= 0xFF
+        if port in (0xF0, 0xF1): s.fpu_ports.append(port); return
         if port == 0x70: s.cidx = val & 0x7F; return
         if port == 0x71:
             if s.cidx >= 0x0E: s.cmos[s.cidx] = val
