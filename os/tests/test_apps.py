@@ -208,6 +208,26 @@ def t_core():
     check('ask: ESC = cancelled, band as before', has(k, 'cancelled') and k.band()[0].startswith('UI test'), (screen(k), k.band()))
     k.key(CODE['Q']); k.key(ktest.ENTER)
     check('ask: Return = confirmed', has(k, 'confirmed'), screen(k))
+    usy = run_syms('tests/UITEST.ASM'); ubase = k.u16('run_base')
+    def regs(n): return struct.unpack('<5H', k.pc.rd(k.useg, ubase + usy[n], 10))
+    check('ask: AX, BX, CX and DI kept through UI_ASK, and SI (the band\'s band_up and band_down)',
+          regs('ask_r') == (0x0A11, 0x0B22, 0x0C33, 0x0D44, regs('ask_r')[4]) and regs('ask_r')[4] == usy['s_ask'] + ubase,
+          [hex(r) for r in regs('ask_r')])
+    k.key(CODE['Q']); click(k, 320, 100)
+    check('ask: a click above the band neither confirms nor cancels', k.band()[0] == 'Quit: Confirm to quit', k.band())
+    click(k, 320, 380)
+    check('ask: a click on the band confirms; the band as before', has(k, 'confirmed') and k.band()[0].startswith('UI test'),
+          (screen(k), k.band()))
+    k.key(CODE['M'])
+    check('UI_MSG: the message in the band', k.band()[0] == 'A message: press a key', k.band())
+    click(k, 200, 150)
+    m = regs('msg_r')
+    check('UI_MSG: a click ends it, AX = EV_CLICK, BX and CX where; DI and SI kept; the band as before',
+          m[:3] == (0xFF01, 200, 150) and m[3] == 0x0D44 and m[4] == usy['s_msg'] + ubase and k.band()[0].startswith('UI test'),
+          ([hex(r) for r in m], k.band()))
+    k.key(CODE['M']); k.key('z')
+    m = regs('msg_r')
+    check('UI_MSG: a key ends it, AX = the key', m[0] & 0xFF == ord('z') and k.band()[0].startswith('UI test'), ([hex(r) for r in m], k.band()))
     k.key(CODE['E'])
     check('error text: 19 is "Disk is write-protected"', has(k, 'Disk is write-protected'), screen(k))
     check('... drawn where it was asked to be: column 2 of row 260', dict(k.ocr()).get(260, '')[:25] == '  Disk is write-protected',
