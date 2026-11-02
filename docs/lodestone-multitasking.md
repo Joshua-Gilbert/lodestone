@@ -41,6 +41,7 @@ Joshua's plan of 2026-10-19: use ROM 1's free space (about 24.5 KB after 0.6) to
 | T5b | A screen a program publishes for its window (`MT_PUB`: its cells and its own font), drawn by TERM.RUN | PR #108, merged. |
 | T5c | A program woken by the bridge's SRQ (`MT_WAKE`); test_resident_term's `irq_exact` failures explained (a link bug, fixed) | PR #111, merged. |
 | T5d | CLAUDE.COM in a terminal window (CODE-A); the Pi marks picture frames (F_PIC); the Executive gives its idle away; TERM.RUN draws faster; T5a's growth fixed for a .COM | PR #113, merged. T5 done. |
+| M10 | Tasks run while one waits on a disk: MT hooks INT 15h AH=90h/91h, the BIOS's "device busy" and "interrupt complete" calls (the GRiDCase 1500 Technical Reference, Table 3-4; the 1520's BIOS makes them: 9001h at each floppy wait, 90FDh at the motor's spin-up, about half a second, 9000h for the hard disk). The waiting task is inside INT 13h inside the kernel, so another task that calls DOS or INT 13h meanwhile waits at the entry till the 91xxh comes (or a time-out, as for 01h and 00h); computing, MT's screen output and key handling go on. Also INT 15h AH=86h (Wait) as a place to switch. | Planned (2026-11-02). |
 
 Each milestone's PR adds its section below, describing what was built and any departure from the plan.
 
