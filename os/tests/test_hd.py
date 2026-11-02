@@ -161,7 +161,7 @@ def t_shell():
     check('COPY A: to C:: the file as it is, in clusters %d-%d (across the 64K-sector boundary)' % (chain[0], chain[-1]),
           files.get('\\LCMD.COM') == g and chain[0] <= 16344 <= chain[-1] and not probs, (chain[:3], probs))
     sh.run('copy c:\\lcmd.com a:\\g2.com')
-    a = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    a = fatcheck.read_files(k.pc.drives[0].img)
     check('COPY C: to A:: the same bytes back', a.get('A:\\G2.COM') == g, len(a.get('A:\\G2.COM', b'')))
     sh.run('copy a:\\lcmd.com c:\\far')
     v = vol(ata); files, probs = v.files(f.gaps)

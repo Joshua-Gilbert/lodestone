@@ -20,11 +20,15 @@ class Syms:
     UI symbols (sections ui/uibss/uiboot, offsets in the UI segment)."""
     UI = ('ui', 'uibss', 'uiboot')
     def __init__(s, path=os.path.join(HERE, 'src', 'LODE.MAP')):
-        s.by_name, s.sec = {}, {}
+        s.by_name, s.sec, s.equs = {}, {}, {}
         by_addr = {False: {}, True: {}}
         sec = None
         for line in open(path):
             if line.startswith('---- Section'): sec = line.split()[2]
+            if sec is None:                             # (the EQUs come first, "No Section": one value each)
+                m = re.match(r"([0-9A-F]{8})\s+(\S+)\s*$", line)
+                if m: s.equs.setdefault(m.group(2), int(m.group(1), 16))
+                continue
             m = re.match(r"\s*([0-9A-F]+)\s+([0-9A-F]+)\s+(\S+)\s*$", line)
             if m and sec:
                 a = int(m.group(2), 16); n = m.group(3)
@@ -34,6 +38,9 @@ class Syms:
         s.by_addr = by_addr[False]; s.addrs = sorted(s.by_addr)
         s.ui_by_addr = by_addr[True]; s.ui_addrs = sorted(s.ui_by_addr)
     def __getitem__(s, n): return s.by_name[n]
+    def equ(s, n):
+        """An EQU's value (a table's field offset, a size), so a test reads KMT's layout instead of copying it."""
+        return s.equs[n]
     def is_ui(s, n): return s.sec.get(n) in s.UI
     def lin(s, n, useg=None):
         """n's linear address, as pcemu's block hook passes it: .text's at 0060h; a UI symbol's in the UI
@@ -46,6 +53,15 @@ class Syms:
         addrs, d = (s.ui_addrs, s.ui_by_addr) if ui else (s.addrs, s.by_addr)
         i = bisect.bisect_right(addrs, off) - 1
         return hex(off) if i < 0 else '%s+%x' % (d[addrs[i]], off - addrs[i])
+
+
+_equs = (None, None)
+def equ(name, path=os.path.join(HERE, 'src', 'LODE.MAP')):
+    """An EQU from LODE.MAP, without a machine (read again whenever the map is rebuilt)."""
+    global _equs
+    t = os.path.getmtime(path)
+    if _equs[0] != t: _equs = (t, Syms(path))
+    return _equs[1].equ(name)
 
 
 _font = None
@@ -196,7 +212,6 @@ class KPC:
         out = []
         for y in sorted(hits):
             line = hits[y]
-            if len(line) < 1: continue
             out.append((y, ''.join(line.get(x, ' ') for x in range(80)).rstrip()))
         s._ocr_last = (mode, v, out)
         return list(out)
@@ -245,15 +260,19 @@ class KPC:
         while sel > i: s.key(UP, settle=False); sel -= 1
         s.settle()
 
-    def run_file(s, name, sim_s=60.0):
-        """Select a program, confirm, and run until the Executive is back."""
+    def run_file(s, name, sim_s=60.0, shift=False):
+        """Select a program, confirm, and run until the Executive is back.  shift: Shift held at 40:17h till it
+        runs (Shift-Return: with multitasking on, in the Executive's own task, which waits for it, as with it off;
+        Return alone starts it as a task, M7b)."""
         s.select(name)
-        s.pc.tty.clear() if isinstance(s.pc.tty, list) else None
+        s.pc.tty.clear()
+        if shift: s.pc.wr(0x40, 0x17, b'\x02')
         s.key(ENTER, settle=False)
         s.pc.run_until(lambda: s.pc.mode() != 0x40, 5)
+        if shift: s.pc.wr(0x40, 0x17, b'\x00')
         run_answering(s.pc, lambda: s.pc.mode() == 0x40, sim_s)
         s.settle()
-        return ''.join(s.pc.tty) if isinstance(s.pc.tty, list) else s.pc.tty
+        return ''.join(s.pc.tty)
 
     def band(s):
         """The prompt band's text (messages after a program ends)."""
@@ -263,7 +282,7 @@ class KPC:
 def run_answering(pc, done, sim_s):
     """Run until done(), pressing Enter whenever a program says "Press any
     key" (BENCH and CACHETST wait so their results can be read)."""
-    tty = lambda: ''.join(pc.tty) if isinstance(pc.tty, list) else pc.tty
+    tty = lambda: ''.join(pc.tty)
     seen = tty().count('Press any key')
     t_end = pc.us + sim_s * 1e6
     while True:
