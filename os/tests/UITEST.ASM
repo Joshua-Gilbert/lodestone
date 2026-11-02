@@ -104,7 +104,16 @@ do_form:
 .x:     ret
 
 do_ask: mov     si, s_ask
+        mov     ax, 0A11h               ; (kept through UI_ASK: ask_r)
+        mov     bx, 0B22h
+        mov     cx, 0C33h
+        mov     di, 0D44h
         call    UI_ASK
+        mov     [ask_r], ax
+        mov     [ask_r+2], bx
+        mov     [ask_r+4], cx
+        mov     [ask_r+6], di
+        mov     [ask_r+8], si
         mov     si, s_yes
         jnc     .y
         mov     si, s_no
@@ -112,6 +121,18 @@ do_ask: mov     si, s_ask
         mov     bx, 2
         xor     ah, ah
         jmp     UI_PUTS
+
+; CODE-M: UI_MSG; what it returns (AX the event, BX and CX a click's x
+; and y) and DI and SI, which it keeps, in msg_r
+do_msg: mov     si, s_msg
+        mov     di, 0D44h
+        call    UI_MSG
+        mov     [msg_r], ax
+        mov     [msg_r+2], bx
+        mov     [msg_r+4], cx
+        mov     [msg_r+6], di
+        mov     [msg_r+8], si
+        ret
 
 do_err: mov     di, line                ; error 19's message
         mov     ax, 19
@@ -143,6 +164,7 @@ keys:   KEY(K_F1,     do_help, h1)
         KEY(K_CODE_F, do_form, h2)
         KEY(K_CODE_Q, do_ask,  h3)
         KEY(K_CODE_E, do_err,  0)
+        KEY(K_CODE_M, do_msg,  0)
         KEY(K_CODE_R, do_run,  0)
         KEY(K_NONE,   0,       h4)
         dw 0
@@ -165,6 +187,7 @@ s_runerr db 'UI_RUN error ',0
 s_item  db 'Item ',0
 s_ask   db 'Quit: Confirm to quit',0
 s_yes   db 'confirmed',0
+s_msg   db 'A message: press a key',0
 s_no    db 'cancelled',0
 h1      db 'F1         this help',0
 h2      db 'CODE-F     the form',0
@@ -186,5 +209,7 @@ section .bss
 arg     resw 1
 blk     resw 1
 line    resb 80
+ask_r   resw 5                          ; AX BX CX DI SI after UI_ASK
+msg_r   resw 5                          ; AX BX CX DI SI after UI_MSG
 zero    resb 100
 run_bss_end:
