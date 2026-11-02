@@ -22,6 +22,12 @@ DOS itself.
     memory again (a partly decoded board), as the kernel's scan must see.
 
 Time: 4 us per executed basic block (about a 10 MHz 286).
+
+Not modelled (H11): a BIOS service here finishes in one step, between two
+blocks, so no timer tick (or other IRQ) ever lands inside an INT 13h or an
+INT 10h call, where on the 1520 one can, mid-transfer or mid-scroll.  Code
+that must hold while a tick comes in the middle of a BIOS call (MT's
+mt_in13 / mt_inb) is tested by setting those flags by hand (test_mt).
 """
 import collections, ctypes, datetime, os, struct
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INTR, UC_HOOK_INSN, UC_HOOK_BLOCK, UC_PROT_ALL
