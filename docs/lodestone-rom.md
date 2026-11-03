@@ -101,7 +101,10 @@ R: is drive 17. It is read-only, and there whether Lodestone started from the RO
 
 - **Current drive:** C: when the hard disk is there, else R:.
 - **COMSPEC=R:\LCMD.COM.** With C:, **PATH=C:\LODE;R:\** (without it, R:\). The Executive finds `.RUN` programs and CLAUDE.COM by PATH after the current subject. A copy in C:\LODE is used before the ROM's, so an update needs no new ROM.
-- **No TEMP.** The ROM's environment sets none. CLAUDE.COM puts a captured command's output, CLAUDE.OUT, in %TEMP%, %TMP% or the current drive's root. So from the ROM with no hard disk (the current drive R:), a command Claude runs with its output captured fails cleanly with DOS's error (X51), until a fix puts CLAUDE.OUT on M: or A: there (to do). With C: it goes to C:\.
+- **TEMP=M:\\** (2026-11-03). A `TEMP=` line in LODE.INI goes into the environment at start-up, after COMSPEC, PATH and PROMPT (KSPLASH.INC's `te_boot`, boot code: 0 resident bytes). The ROM's LODE.INI says `TEMP=M:\`. CLAUDE.COM puts a captured command's output, CLAUDE.OUT, in %TEMP% (then %TMP%, then the current drive's root), so from the ROM it goes to M:, not the read-only R: (X51).
+  - **A drive that isn't there sets none.** With EMS, `te_boot` runs at the end of md_boot, once M: is made (or not); without EMS, in sp_boot. INT 21h 47h says whether the value's drive is there. So with M: off (no EMS, `MDISK=0`) there is no TEMP: CLAUDE.OUT goes to the current drive, C:\ with the hard disk as before; from R: with no hard disk and no M:, a captured command still fails cleanly with DOS's error.
+  - **Other values.** `TEMP=C:\TMP` in C:\LODE.INI puts it elsewhere; an empty `TEMP=` sets none. The value is taken to a blank or the line's end, 64 characters at most (a captured RUN's command line then has 64 fewer of its 126). From a floppy, nothing is set unless its LODE.INI has the line.
+  - **Only CLAUDE.COM reads TEMP** in Lodestone itself. LCMD's pipe files are still `\PIPEA1.$$$` on the current drive, so a piped command run by Claude from R: still fails. A DOS program of yours that honours TEMP (a compiler, say) now writes to M:, 256 KB of RAM by default and lost at power-off: `TEMP=C:\` in C:\LODE.INI sends it back.
 - **Screen captures** go to C: (A: without it).
 - **Fonts** are on the drive started from (R:).
 

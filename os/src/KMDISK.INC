@@ -225,6 +225,9 @@ md_dio: cmp     al, MD_DRV
 .x:     ret
 md_res_end:
 MD_PARAS equ (md_res_end - md_res + 15) / 16
+; (what md_split leaves the master environment holds te_boot's TEMP= too:
+; COMSPEC, PATH, PROMPT 49 bytes, TEMP= and 64 characters 70, the end 1)
+        times -((32 - MD_PARAS - 1) * 16 < 49 + 70 + 1) db 0
 
 ; =====================================================================
 ;  the installer: in the disk cache's second page, run in window 0
@@ -983,6 +986,11 @@ md_boot:
 .go:    mov     ax, 5B4Dh               ; M:, keeping what it holds if it can
         mov     bl, 2
         int     67h
+        push    cs
+        pop     ds
+        push    KSEG
+        pop     es
+        call    te_boot                 ; (KSPLASH.INC: TEMP=, M: there or not)
         cmp     byte [cs:MDB(mt_on)], 0
         je      .ui
         call    mt_boot                 ; (KMT.INC)
