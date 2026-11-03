@@ -313,3 +313,6 @@ TS_FROZEN   equ 4                       ; (MT_LIST only) ready, but frozen in th
                                         ;  background: it writes the screen
                                         ;  itself, or SPF_FREEZE
 TS_PARKED   equ 5                       ; parked in EMS (MT_PARK): it doesn't run
+TS_WAITD    equ 6                       ; (M10, MT's own: MT_LIST says TS_RUN)
+                                        ;  waiting on the floppy, or for the
+                                        ;  task that does to run again

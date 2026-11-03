@@ -107,6 +107,8 @@ ems_int67:
 .po:    push    bx
         push    dx
         jmp     short .out
+        times   -(.p - ems_int67 != 5) db 0     ; (KMT's mt_i67: CMP AH,44h and
+                                                ;  JNE ems_gen become its JMP FAR)
 
 ; the other calls: the caller's registers in a frame laid out as INT 21h's
 ; (F_*), BP on it, DS = the kernel.  A function gets AH = 0 and BX = its
