@@ -56,6 +56,8 @@ R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
 INT08 = bytes([0x50, 0x1E, 0x31, 0xC0, 0x8E, 0xD8, 0xFF, 0x06, 0x6C, 0x04, 0x75, 0x04,
                0xFF, 0x06, 0x6E, 0x04, 0xCD, 0x1C, 0xB0, 0x20, 0xE6, 0x20, 0x1F, 0x58, 0xCF])
 PIC_ISR = os.environ.get('PIC_ISR') == '1'
+FD_STRICT = os.environ.get('FD_STRICT') == '1'  # (fd_wait: an INT 13h while one waits, or a transfer whose EMS
+                                                #  window changed under it, is a crash, so any test shows it)
 IRQEOI = bytes([0x50, 0xB0, 0x20, 0xE6, 0x20, 0x58, 0xCF])
 # fd_wait (M10): a floppy transfer takes time, as on the 1520.  INT 13h's
 # wait (the BIOS's FdWaitInt, F000:1400): STI, INT 15h AX=9001h (CF back:
@@ -971,6 +973,7 @@ class PC:
         if ah in (2, 3, 4) and s.fd_wait and s.fd_op is not None:
             s.fd_reentry += 1                           # (M10: a second call while one waits: the
             s.log.append('[INT 13h AH=%02Xh while one waits]' % ah)    #  controller's in use)
+            if FD_STRICT: s.crash = 'INT 13h AH=%02Xh while one waits (fd_wait)' % ah
         if ah in (2, 3, 4) and d.empty:
             if s.fd_wait and s.fd_op is None:           # (no IRQ comes: the BIOS's wait times out)
                 s.fd_op = {'ah': ah, 'empty': True}; s.fd_ops += 1
@@ -1032,6 +1035,7 @@ class PC:
             if any(op['regs'][w] != s.ems_reg[w] for w in ws):
                 s.fd_frame_bad += 1                     # (the DMA goes to other pages than the caller's)
                 s.log.append('[INT 13h transfer at %05X: its EMS window changed under it]' % lin)
+                if FD_STRICT: s.crash = 'INT 13h transfer at %05X: its EMS window changed under it' % lin
         res = (al, 0)
         if ah == 2 and d.bad.intersection(range(lba, lba + al)):
             good = min(d.bad.intersection(range(lba, lba + al))) - lba
@@ -1299,10 +1303,11 @@ class PC:
         here = s.lin()
         s.halted = a + z == here and s.rd(0, here - 1, 1)[0] == 0xF4
         if (s.blocked or s.halted) and not s.deliverable():
-            if s.halted and s.due_at < s.next_tick:
-                # HLT and an event (the Pi's) before the tick: to the event; it may raise an IRQ (the 7210's
-                # SRQ: IRQ 5).  None: still halted, back onto the HLT
-                s.us = max(s.us, s.due_at); s.on_time()
+            ev = min(s.due_at, s.fd_at)
+            if s.halted and ev < s.next_tick:
+                # HLT and an event (the Pi's; fd_wait's floppy transfer ending) before the tick: to the event; it
+                # may raise an IRQ (the 7210's SRQ: IRQ 5; the floppy's: IRQ 6).  None: still halted, back onto the HLT
+                s.us = max(s.us, ev); s.on_time()
                 if not s.deliverable(): s.w('ip', s.r('ip') - 1)
             else:
                 s.sleep_to_tick()               # (an IRQ still waiting goes first,
