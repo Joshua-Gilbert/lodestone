@@ -27,17 +27,12 @@ ex_env      resw 1              ; the EXEC parameter block's copy (f_4B
 ex_tail     resw 2              ;  moves it in one go: keep the order)
 ex_fcb1     resw 2
 ex_fcb2     resw 2
-ex_name     resb 132            ; full program name for the environment
 section .text
-; scratch that is dead while a program loads (from the header read on
-; EXEC runs no path call and no RENAME; MULTITASK=1 switches tasks only
-; outside INT 21h, or at a key wait, which EXEC's own code never makes):
+; in the INT 21h stack's low area (KCORE.INC, K2): EXEC runs no RENAME,
+; so its header can be in rename's ren_de
+ex_name     equ KL_EXN          ; full program name for the environment (132)
 ex_hdr      equ ren_de          ; .EXE header (28 of its 32 bytes)
-ex_rel      equ path_buf        ; relocation entries, 64 at a time (256 of
-                                ;  path_buf's and path2_buf's 260)
-        times -(path2_buf - path_buf != 130) db 0       ; (they must stay together,
-        times -(nm11 - path_buf < 256) db 0             ;  nothing between, 256 B;
-        times -(ren_de_end - ren_de < 28) db 0          ;  ren_de holds the header)
+ex_rel      equ KL_REL          ; relocation entries, 64 at a time (256)
 
 section ovl
 proc_init:

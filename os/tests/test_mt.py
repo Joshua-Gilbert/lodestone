@@ -65,7 +65,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
 # before gp_isr; no code slack at lastdrv 40CFh: any change netting +1 moves image_end and bss_end.  The UI's
 # pads, UICORE.INC's, likewise: ui_image_end 5220h, no slack before uibss's paragraph)
-OFF_MAP ={'image_end': 0x40C0, 'bss_end': 0x75E0, 'ui_keep_end': 0x6422}  # (64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP ={'image_end': 0x40C0, 'bss_end': 0x74C0, 'ui_keep_end': 0x6422}  # (75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -6444,7 +6444,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 581.1 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '581.1', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 581.4 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '581.4', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
@@ -6575,6 +6575,37 @@ def t_file():
     k = boot('mt_f1.img', b'MULTITASK=1\r\n', mt=MTSYS)
     check('... and the file as built: on (no file left open either)', at_top(k) and sft_used(k) == used0, (show(mcbs(k)), sft_used(k)))
 
+def t_k2cap():
+    print('== K2: Shift-PrtSc at the prompt of an error inside EXEC, with MULTITASK=1 (a task behind keeps running)')
+    big = os.path.join(A.OUT, 'BIG.COM')
+    open(big, 'wb').write(bytes([0xB4, 0x09, 0xBA, 0x08, 0x01, 0xCD, 0x21, 0xC3]) + b'HELLO$' + b'Q' * 4082)
+    k = boot('mt_k2.img', b'MULTITASK=1\r\n', 88, big)
+    d = k.pc.drives[0]
+    img = bytes(d.img); sec = []
+    for i in range(224):                                # BIG.COM's sectors (1.44 MB FAT12)
+        e = img[19 * 512 + i * 32:19 * 512 + i * 32 + 32]
+        if e[:11] == b'BIG     COM':
+            cl = e[26] | e[27] << 8
+            while 2 <= cl < 0xFF8:
+                sec.append(33 + cl - 2)
+                v = img[512 + cl * 3 // 2] | img[512 + cl * 3 // 2 + 1] << 8
+                cl = v >> 4 if cl & 1 else v & 0xFFF
+    ret(k, 'MTSPIN.COM', 0.5)                           # a task behind (no DOS calls: preempted at the tick)
+    front(k, 0)
+    ret(k, 'LCMD.COM', 1.0)
+    d.bad = {sec[1]}
+    k.key('big', settle=False); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen() or k.pc.crash, 10)
+    o1 = k.pc.text_screen()
+    k.pc.prtsc(); k.run_for(1.0)
+    d.bad = set()
+    k.pc.keys.append(ord('r')); k.run_for(3.0)
+    o = k.pc.text_screen()
+    shots = [n for n in A.fatcheck.read_files(d.img) if 'SCREEN' in n]
+    check('an error inside EXEC (BIG.COM\'s image) from LCMD as a task, Shift-PrtSc at its prompt, then Retry: BIG.COM '
+          'loads and runs whole (its buffers in the INT 21h stack\'s low area), the screen saved once, nothing crashed',
+          'Fail?' in o1 and 'HELLO' in o and len(shots) == 1 and not k.crashed, (o1[-200:], o[-300:], shots))
+
 def t_nodisk():
     print('== a task behind with no INT 24h of its own, B: with no disk: Fail at once, not a prompt nobody sees')
     nd = os.path.join(HERE, 'NODISKMT.COM')
@@ -6643,7 +6674,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

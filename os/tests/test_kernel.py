@@ -1159,8 +1159,8 @@ def t_gpirq():
 
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
-    than applying entries nobody read (ex_rel shares path_buf, so they would
-    come from the program's own name); the whole one runs."""
+    than applying entries nobody read (they would be what ex_rel held from
+    before: the INT 21h stack's low area since K2); the whole one runs."""
     import struct
     code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
     def exe(nrel, rels=b''):
@@ -2106,9 +2106,9 @@ def t_command():
     for b in ('fors', 'forcall', 'forgo', 'o3'):
         k.key('cls'); k.key(ktest.ENTER); k.key(b); k.key(ktest.ENTER)
     m3 = largest()
-    check('a program run by a FOR: 0.2 KB less (FOR\'s block, 11 paragraphs and its MCB); after FORs (a list, names, '
-          'CALL in one, GOTO out of one, FOR in a CALLed batch file in a FOR): no memory lost',
-          m2 and m3 == m0 and abs(float(m0) - float(m2) - 0.2) < 0.051, (m0, m2, m3))
+    check('a program run by a FOR: 0.1-0.2 KB less (FOR\'s block, 11 paragraphs and its MCB, 192 bytes); after FORs (a list, '
+          'names, CALL in one, GOTO out of one, FOR in a CALLed batch file in a FOR): no memory lost',
+          m2 and m3 == m0 and 0.05 < float(m0) - float(m2) < 0.25, (m0, m2, m3))
     for _ in range(3):
         k.key('cls'); k.key(ktest.ENTER)
         k.key('for %a in (1 2 3) do pause'); k.key(ktest.ENTER); k.key(0x2E03)
@@ -2683,6 +2683,22 @@ def t_execabort():
     k.key('cls'); k.key(ktest.ENTER)
     k.key('big'); k.key(ktest.ENTER)
     check('... then it reads: BIG.COM runs', 'HELLO' in pc.text_screen(), pc.text_screen())
+    # K2: EXEC's buffers (ex_name, ex_rel, the header) are in the INT 21h stack's low area, where a screen capture
+    # puts its buffer: Shift-PrtSc at the prompt of an error inside EXEC, answered Retry.  The capture waits for
+    # the next outermost DOS call (the handler's own calls are nested), after EXEC: both whole
+    d.bad = {sec[1]}
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('big'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Fail?' in pc.text_screen() or pc.crash, 10)
+    o1 = pc.text_screen()
+    pc.prtsc(); pc.run_for(0.5)
+    d.bad = set()
+    pc.keys.append(ord('r')); k.settle(3)
+    o = pc.text_screen()
+    shots = [n for n in fatcheck.read_files(d.img) if 'SCREEN' in n]
+    check('Shift-PrtSc at the prompt of an error inside EXEC (K2: the low area), answered Retry: BIG.COM loads and runs '
+          'whole, and the screen is saved after (SCREEN01.TXT)', 'Fail?' in o1 and 'HELLO' in o and shots == ['A:\\SCREEN01.TXT']
+          and not k.crashed, (o[-300:], shots))
     k.key('exit'); k.key(ktest.ENTER)
     check('... and the Executive lists the disk once LCMD ends', 'BIG.COM' in k.exec_list() and 'LCMD.COM' in k.exec_list(),
           k.exec_list())

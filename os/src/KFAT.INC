@@ -12,7 +12,7 @@ A_ARC   equ 20h
 
 section .bss
 path_buf    resb 130            ; the caller's path, copied here
-path2_buf   resb 130            ; (with path_buf: EXEC's ex_rel, KPROC.INC)
+path2_buf   equ KL_P2           ; (130 bytes, in the INT 21h stack's low area: K2)
 nm11        resb 11             ; a parsed name component; resolve's last is
 r_name      equ nm11            ;  r_name (0 = none), so no parse_comp may
                                 ;  come between a resolve and a use of it
@@ -1106,11 +1106,9 @@ f_56:   call    get_path                ; RENAME (files; same drive)
 .e:     jmp     fail
         times   -(de != d_off + 2 || ren_off != ren_lba + 2 || ren_de != ren_off + 2) db 0
 
-section .bss
-ren_drv     resb 1
-            alignb 2
-ren_lba     resw 1
-ren_off     resw 1
-ren_de      resb 32
-ren_de_end:                     ; (EXEC's ex_hdr: KPROC.INC)
-section .text
+; (rename's block, in the INT 21h stack's low area: KCORE.INC, K2)
+ren_lba     equ KL_REN          ; d_lba, d_off and de, copied in one go
+ren_off     equ KL_REN + 2
+ren_de      equ KL_REN + 4
+ren_de_end  equ ren_de + 32     ; (EXEC's ex_hdr: KPROC.INC)
+ren_drv     equ ren_de_end
