@@ -40,8 +40,10 @@
 ; =====================================================================
 %include "UIAPI.INC"
 %include "WINPOS.INC"
-RUN_API equ 10                          ; (HT in its help lines; UI_MENU, UI_MOUSE, UI_CLIP; EV_RCLICK.  RF_WIN
-                                        ;  gives its window W_FLAGS with MULTITASK=1)
+RUN_API equ 8                           ; (UI_MENU, UI_MOUSE, UI_CLIP; EV_RCLICK.  RF_WIN
+                                        ;  gives its window W_FLAGS with MULTITASK=1.  Its help's
+                                        ;  HT, n: API 10's, as CALC.ASM says; 9 would
+                                        ;  make its close box EV_CLOSE, not ESC)
 RUN_FLAGS equ RF_WIN                    ; (with MULTITASK=1, one of several windows)
         org     RUN_ORG
 

@@ -668,7 +668,7 @@ def t_write_mouse():
         if t: k.pc.run_for(t)
         k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
     hdr = open(WRITE, 'rb').read(6)
-    check('WRITE.RUN asks for UI API 10 (HT in its help lines; 8: its drags and menu)', hdr == b'GRUN\x0a\x00', hdr)
+    check('WRITE.RUN asks for UI API 8 (its help\'s HT, n is 10\'s: 9 would make its close box EV_CLOSE)', hdr == b'GRUN\x08\x00', hdr)
     k = write_open(mouse=True)
     drag(k, *at(4, 0), *at(9, 0))
     check('a drag over "quick": a selection of its own (no command yet), from where it began to where it ended; the band says what to do',
@@ -2252,10 +2252,11 @@ def t_calc():
     Devices, and CALC.RUN, the window over the Executive (CODE-K)."""
     print('== the calculator, and the coprocessor lamp')
     hdr = open(CALCRUN, 'rb').read(6)
-    check('CALC.RUN needs API 10 (HT in its help lines; 6: its window moves and closes)', hdr == b'GRUN\x0a\x00', hdr)
+    check('CALC.RUN needs API 6 (its window moves and closes; API 5: the caller\'s redraw stays, exit code 0FFFFh)', hdr == b'GRUN\x06\x00', hdr)
     hdrs = [open(f, 'rb').read(6) for f in (SYSTEM, WRITE, UITEST)]
-    check('SYSTEM and WRITE declare RUN_API 10 (HT in their help lines: an older LODE.SYS would draw it as "?"); UITEST 4 '
-          '(its help lines padded with spaces, drawn as ever)', hdrs == [b'GRUN\x0a\x00', b'GRUN\x0a\x00', b'GRUN\x04\x00'], hdrs)
+    check('SYSTEM and UITEST declare RUN_API 4 (a floppy with an older LODE.SYS still runs them, their help\'s HT, n '
+          'shown as 2 characters there); WRITE 8 (its drags and menu)',
+          hdrs == [b'GRUN\x04\x00', b'GRUN\x08\x00', b'GRUN\x04\x00'], hdrs)
     # the lamp: pcemu's coprocessor is 387-class, so a 287XL
     k = ktest.KPC(image('lamp.img', SYSTEM)); infos = watch_info(k); k.start()
     info = infos[-1] if infos else ''

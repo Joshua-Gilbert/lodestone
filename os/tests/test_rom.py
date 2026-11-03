@@ -197,7 +197,7 @@ def t_rom2():
     p1 = img[254 * 512:255 * 512]
     check('ROM 2\'s spare sector 254: R:\'s FAT sector 1 with no ROM 1 (F8h, then all bad)',
           fat_get(p1, 0) == 0xFF8 and fat_get(p1, 1) == 0xFFF and all(fat_get(p1 + b'\xFF', n) == 0xFF7 for n in range(2, 342)), p1[:12].hex())
-    for tag, vol, want in (('with ROM 1', mkrom.joined(r1, img), 17), ('ROM 2 alone', mkrom.joined(None, img), 4)):
+    for tag, vol, want in (('with ROM 1', mkrom.joined(r1, img), 18), ('ROM 2 alone', mkrom.joined(None, img), 4)):
         d, got = mdir(vol, 'rom_join.bin')
         check('mtools reads R: %s (built as KROM.INC maps it): %d files, 0 bytes free, DEFRAG.COM, TERM.FNT, PAINT.RUN and CLAUDE.COM as built%s'
               % (tag, want, ', LODE.SYS too' if want > 4 else ''), len(got) == want and ' 0 bytes free' in d
@@ -251,9 +251,9 @@ def t_rom2():
               'in the buffers (ROM 2\'s, past 16 entries too), byte for byte' % where,
               fat == want[:1024] and 5 in roots and 6 in roots and all(v == want[1024 + 512 * (n - 3):1536 + 512 * (n - 3)] for n, v in roots.items()),
               (fat is not None and next((i for i in range(1024) if fat[i] != want[i]), None), sorted(roots)))
-        check('%s: DIR R: ROM 1\'s files then ROM 2\'s (DEFRAG.COM, BIG.BIN, F00-F17.TXT), one label, 33 files, 0 bytes free' % where,
+        check('%s: DIR R: ROM 1\'s files then ROM 2\'s (DEFRAG.COM, BIG.BIN, F00-F17.TXT), one label, 34 files, 0 bytes free' % where,
               'Volume in drive R is LODESTONE' in oh and 'LODE     SYS' in oh
-              and 'F17      TXT' in o and '33 File(s)' in o and ' 0 bytes free' in o and not k.crashed, o)
+              and 'F17      TXT' in o and '34 File(s)' in o and ' 0 bytes free' in o and not k.crashed, o)
         check('%s: copied from R: as built: DEFRAG.COM, BIG.BIN, ROM 1\'s last file (TASKS.RUN) and ROM 2\'s 21st entry '
               '(F17.TXT)' % where, got == (True, True, True, True), (got, o2[-300:]))
     fake = bytearray(rom2()); fake[-256 + 19:-256 + 21] = b'XX'                  # (a data ROM, not Lodestone's: its id)
@@ -276,8 +276,8 @@ def t_rom2():
     k = boot(floppy('rom2o.img'), sock=1, roms={0: bytes(old), 1: rom()})
     to_prompt(k)
     o = prompt(k, 'dir r:')
-    check('a ROM 2 burned before (id L2: its own volume) beside this ROM 1: not joined, R: is ROM 1 alone (13 files)',
-          'LODE     SYS' in o and 'DEFRAG' not in o and '13 File(s)' in o, o)
+    check('a ROM 2 burned before (id L2: its own volume) beside this ROM 1: not joined, R: is ROM 1 alone (14 files)',
+          'LODE     SYS' in o and 'DEFRAG' not in o and '14 File(s)' in o, o)
     gap = bytearray(r2); e = gap[1024:2048].index(b'F00     TXT'); struct.pack_into('<H', gap, 1024 + e + 26, 300)
     k = boot(floppy('rom2g.img', A.MEMSZ), sock=1, roms={0: bytes(gap), 1: rom()})
     to_prompt(k)
@@ -287,7 +287,7 @@ def t_rom2():
     k = boot(floppy('rom2b.img'))
     to_prompt(k)
     o = prompt(k, 'dir r:')
-    check('ROM 1 alone: R: as before, without DEFRAG.COM (13 files)', 'LODE     SYS' in o and 'DEFRAG' not in o and '13 File(s)' in o, o)
+    check('ROM 1 alone: R: as before, without DEFRAG.COM (14 files)', 'LODE     SYS' in o and 'DEFRAG' not in o and '14 File(s)' in o, o)
     # INT 21h 36h for R: (FREE36: DL = 18, then 0, the current drive): nothing
     # free, the clusters the ROMs have (the gap left out); with ROM 2, r_f36's
     # answer (the FAT not walked: f_36's loop not run)
@@ -318,9 +318,9 @@ def t_rom2():
     for n in ('defrag.com', 'term.fnt', 'tasks.run', 'lode.ini'): prompt(k, 'copy r:\\%s a:\\' % n)
     got = [A.disk_file(k, n) == open(os.path.join(GOS, s), 'rb').read() for n, s in (('DEFRAG.COM', 'src/DEFRAG.COM'),
            ('TERM.FNT', 'fonts/TERM.FNT'), ('TASKS.RUN', 'apps/TASKS.RUN'), ('LODE.INI', 'rom/LODE.INI'))]
-    check('0.6\'s ROM 1 (its gap entries free) beside the new ROM 2, from a floppy: joined (17 files, 0 bytes free), ROM 1\'s '
+    check('0.6\'s ROM 1 (its gap entries free) beside the new ROM 2, from a floppy: joined (18 files, 0 bytes free), ROM 1\'s '
           'and ROM 2\'s files read as built, a write to R: refused, 36h for R: 0 free of 504',
-          '17 File(s)' in o and ' 0 bytes free' in o and all(got) and ('0 File(s) copied' in ow or 'File(s) copied' not in ow)
+          '18 File(s)' in o and ' 0 bytes free' in o and all(got) and ('0 File(s) copied' in ow or 'File(s) copied' not in ow)
           and re.findall(r'F36 ax=(\w+) bx=(\w+) cx=(\w+) dx=(\w+)', of)[:1] == [r1] and not k.crashed, (o, ow, of, got))
     # the saver's round of the disks: DEFRAG.COM from R: (the start-up drive's root) with ROM 2 in; without it, the clock
     seen = []

@@ -19,7 +19,7 @@
 ; =====================================================================
 %include "UIAPI.INC"
 %include "MTAPI.INC"
-RUN_API equ 10                          ; (HT in its help lines)
+RUN_API equ 6                           ; (its help's HT, n: API 10's, as CALC.ASM says)
 RUN_FLAGS equ RF_WIN                    ; (a window .RUN, M8)
         org     RUN_ORG
 

@@ -16,7 +16,9 @@
 ;  (KROM.INC).  Only what differs from the defaults is written.
 ; =====================================================================
 %include "UIAPI.INC"
-RUN_API equ 10                          ; (HT in its help lines; UI_SAVER's tidying)
+RUN_API equ 4                           ; (UI_SAVER's tidying.  Its help's HT, n is API
+                                        ;  10's, as CALC.ASM says: kept at 4 so an
+                                        ;  older LODE.SYS still runs it)
         org     RUN_ORG
 
 TOP_Y   equ 32                          ; first topic / detail line
@@ -1538,9 +1540,21 @@ rom_prn:
 
 ; vbuf = a .PRN's path, the DTA its entry: CF if it isn't a printer driver
 ; (16 bytes to 1 KB, and "PRN", 1 after its JMP SHORT, as the kernel checks;
-; a print job saved as .PRN isn't one)
+; a print job saved as .PRN isn't one; nor is SCREEN.PRN, the kernel's
+; screen capture, which Shift-PrtSc runs whatever the printer is)
 prn_ok: cmp     word [dta + 28], 0
         jne     .no
+        pusha
+        push    es
+        push    ds
+        pop     es
+        mov     si, dta + 30
+        mov     di, s_scrprn
+        mov     cx, 11
+        repe    cmpsb
+        pop     es
+        popa
+        je      .no
         mov     ax, [dta + 26]
         cmp     ax, 16
         jb      .no
@@ -2472,6 +2486,7 @@ s_prtfile   db 'saves SCREENnn.BMP / .TXT',0
 s_prtwith   db 'prints with ',0
 s_prnroot   db '@:\*.PRN',0
 s_prnlode   db 'C:\LODE\*.PRN',0
+s_scrprn    db 'SCREEN.PRN',0
 s_mdalleq   db 'ALL',0
 l_mdsize    equ l_dsize + 2             ; ('Size' and 'Free')
 l_mdfree    equ l_dfree + 2
