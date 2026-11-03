@@ -112,14 +112,14 @@ The full tables, the method and every run on the 1520 are in `os/bench/RESULTS.T
 
 ### From an EPROM
 
-`os/build.sh` builds ROM 1, a 128 KB GRiD application ROM (a FAT12 volume in GRiD's own format). It holds the kernel, the command prompt, System, Write, the calculator, the terminal window (TERM.RUN), a second font and the default settings. ROM 2 (`os/LODE2_EPROM.BIN`, a data ROM in the other socket) holds DEFRAG, the terminal window's font and Paint; its files show in R: beside ROM 1's.
+`os/build.sh` builds ROM 1, a 128 KB GRiD application ROM (a FAT12 volume in GRiD's own format). It holds the kernel, the command prompt, System, Write, the calculator, the terminal window (TERM.RUN), a second font and the default settings. ROM 2 (`os/LODE2_EPROM.BIN`, a data ROM in the other socket) holds DEFRAG, the terminal window's font, Paint and CLAUDE.COM; its files show in R: beside ROM 1's.
 
 1. Burn **`os/LODE1_EPROM.BIN`** to a 27C010 (the 1520's original part is a TMS27C010A). Don't burn `LODE1.BIN`: the 1520 inverts address line A16 to its ROM sockets, so the file to burn has its two halves swapped. The two have the same programmer checksum, so check the bytes: address 10000h starts `EB 3C 90` then `LODE ROM`.
 2. Fit it in the **second** socket, where GRiD MS-DOS's EPROM sits. The BIOS boots the last bootable ROM it finds. GRiD MS-DOS can move to the first socket, if ROM 2 isn't there.
-3. Burn **`os/LODE2_EPROM.BIN`** (ROM 2: DEFRAG.COM, TERM.FNT, PAINT.RUN) the same way and fit it in the **first** socket: a data ROM is never booted. GRiD MS-DOS then has no socket. Without ROM 2 everything works but DEFRAG, terminal windows and Paint: the screen saver shows only the dark clock, text programs start full screen, and Return on a `.BMP` says PAINT.RUN is not on this disk. **Burn both ROMs from one build** (`docs/lodestone-rom.md`, "Re-burning for O10"): a new ROM 1 doesn't join an older ROM 2 (`L2`, as 0.6's images), so it would lose DEFRAG, TERM.FNT and Paint.
+3. Burn **`os/LODE2_EPROM.BIN`** (ROM 2: DEFRAG.COM, TERM.FNT, PAINT.RUN, CLAUDE.COM) the same way and fit it in the **first** socket: a data ROM is never booted. GRiD MS-DOS then has no socket. Without ROM 2 everything works but DEFRAG, terminal windows, Paint and Claude: the screen saver shows only the dark clock, text programs start full screen, Return on a `.BMP` says PAINT.RUN is not on this disk, and CLAUDE.COM must be copied to `C:\LODE` (with no hard disk, run it from A:). **Burn both ROMs from one build** (`docs/lodestone-rom.md`, "Re-burning for O10"): a new ROM 1 doesn't join an older ROM 2 (`L2`, as 0.6's images), so it would lose DEFRAG, TERM.FNT, Paint and CLAUDE.COM.
 4. Hold **Shift** while the 1520 starts for the boot menu: Lodestone, Lodestone with the ROM's own settings, GRiD MS-DOS (from the other socket, without ROM 2), or the floppy.
 
-From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C:\LODE;R:\`. So a newer program copied to `C:\LODE` is used before the ROM's copy, and an update needs no new ROM. CLAUDE.COM isn't in ROM 1 yet: copy it to `C:\LODE`. See `docs/lodestone-rom.md`.
+From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C:\LODE;R:\`. So a newer program copied to `C:\LODE` is used before the ROM's copy, and an update needs no new ROM. CLAUDE.COM is on ROM 2: a newer CLAUDE.COM in `C:\LODE` is used before it. See `docs/lodestone-rom.md`.
 
 ### From a floppy
 
@@ -163,7 +163,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,432 checks pass; claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,437 checks pass; claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -198,7 +198,7 @@ Release notes are in `os/releases/`, and each part's design and history is in `d
 
 **Next:**
 - **Resident Claude:** the program's screen read in the background (CLAUDE 1.11) on the 1520, with the bridge's quiet firmware flashed, and the mascot in the console (1.12).
-- **ROM 2:** the second, data-only ROM is there (DEFRAG.COM, TERM.FNT and PAINT.RUN, joined to R:); CLAUDE.COM and heavier programs are to follow onto it.
+- **ROM 2:** the second, data-only ROM is there (DEFRAG.COM, TERM.FNT, PAINT.RUN and CLAUDE.COM, joined to R:); heavier programs can follow onto it.
 - **Terminal windows** (multitasking, `docs/lodestone-multitasking.md` T1-T6): with `MULTITASK=1`, a text program started from the Executive, and CODE-P's command prompt, runs in a window of its own (Shift-Return and Shift-CODE-P: full screen, as before); its memory grows as its program asks for more, when there is room below it; one that goes into a graphics mode is full screen until it comes back to text. Its text is selected with the mouse, copied (CODE-C) and pasted into it as keys (CODE-V), with a right-click menu as Write's, and a program in it that uses the mouse gets its clicks there. A program can publish its screen, its cells and its own font, for its window to draw, and ask to run as soon as the GPIB bridge's SRQ comes, not after the other tasks' turns. CLAUDE.COM runs in one (CODE-A), the link about as quick as full screen.
 - **Multitasking through disk waits** (M10): tasks behind keep running while one waits on the floppy or the hard disk (its motor's spin-up, a seek, a sector), through the BIOS's INT 15h 90h/91h device-busy calls.
 - **SysReq as the task switcher** (M11): the 1520's SysReq/Confm key, which DOS programs leave alone, brings up the task list, so no CODE key is taken from the program in front.
