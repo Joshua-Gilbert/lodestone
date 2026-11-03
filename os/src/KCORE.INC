@@ -302,6 +302,8 @@ int21:  sti
         push    es
         push    ds
         pusha
+.e5:    times   -(.e5 - int21 != 5) db 0        ; (KMT's mt_i21: these 5 bytes
+                                                ;  become its JMP FAR)
         mov     ax, cs
         mov     ds, ax
         mov     es, ax
