@@ -43,7 +43,10 @@
 ;  commit_view (U and the canvas into C) know where the view is.  A
 ;  stroke's points are clamped to the canvas, fills follow the picture's
 ;  lines (pph), and the mouse is UI_MOUSE (a core from API 8 on).  No
-;  band to mend: a window never covers the band.
+;  band to mend: a window never covers the band (zoomed, Paint in front draws over it: below).  A drag on the window's
+;  frame moves the view (pan).  CODE-F zooms: the window made the whole
+;  screen in place (no title), ses 0, and the whole screen's paths as
+;  without windows; CODE-F again, the window as it was (k_zoom).
 ; =====================================================================
 %include "UIAPI.INC"
 %include "WINPOS.INC"
@@ -98,10 +101,13 @@ start:  mov     di, fname               ; the argument: the picture to show
         int     21h
         jc      .i33
         inc     byte [ses]
+        mov     [sp0], sp               ; (its stack's top: w_zoom's test)
         mov     word [kt_xfer], K_CODE_X        ; (CODE-T is the tasks')
         mov     byte [h_xfer + 5], 'X'
         mov     word [kh_view + 4], h_view      ; the view's keys in the help
         mov     word [kh_view + 10], h_view2
+        mov     word [kh_view + 16], h_pan
+        mov     word [kh_zoom + 4], h_zoom
         WIN_STAGGER                     ; (a second Paint not right over it)
         call    UI_VERSION
         cmp     ax, 8                   ; UI_MOUSE (API 8) for strokes; an
@@ -115,8 +121,7 @@ start:  mov     di, fname               ; the argument: the picture to show
         mov     dx, cx
         int     33h
 .m:     mov     byte [bsize], 2
-        mov     word [clx1], 639        ; the canvas: the whole screen (clx0,
-        mov     word [cly1], 399        ;  cly0 and pph 0, as BSS starts)
+        call    full                    ; the canvas: the whole screen
         cmp     byte [fname], 0
         je      .new
         mov     si, fname
@@ -180,7 +185,10 @@ start:  mov     di, fname               ; the argument: the picture to show
         jmp     short main.got
 main:   cmp     byte [ses], 0           ; (a window: no band to mend)
         jne     .q
-        call    band_fix
+        cmp     byte [tz], 0            ; (zoomed, drawn again while a question
+        je      .bf                     ;  of Paint's waited: the band kept, the
+        call    w_zoom.f                ;  title perhaps on: all of it now)
+.bf:    call    band_fix
 .q:     cmp     byte [quit], 0
         jne     .bye
         mov     byte [in_ev], 1
@@ -188,17 +196,19 @@ main:   cmp     byte [ses], 0           ; (a window: no band to mend)
         mov     byte [in_ev], 0
 .got:   cmp     ax, EV_CLICK
         jne     .key
+        cmp     bx, [clx0]              ; (in a window: on the canvas only;
+        jl      .pan                    ;  on its frame, the view dragged)
+        cmp     bx, [clx1]
+        jg      .pan
+        cmp     cx, [cly0]
+        jl      .pan
+        cmp     cx, [cly1]
+        jg      .pan
         cmp     byte [view], 0
         jne     main
-        cmp     bx, [clx0]              ; (in a window: on the canvas only,
-        jl      main                    ;  not its frame)
-        cmp     bx, [clx1]
-        jg      main
-        cmp     cx, [cly0]
-        jl      main
-        cmp     cx, [cly1]
-        jg      main
         call    stroke
+        jmp     main
+.pan:   call    pan
         jmp     main
 .key:   cmp     ax, EV_MOVED            ; the window moved or resized: drawn
         je      .st                     ;  there already (w_draw), the view
@@ -243,9 +253,16 @@ do_key: cmp     al, 'a'
 ; ---------------------------------------------------------------------
 ; a press at BX, CX: follow the button until it comes up
 stroke: cmp     byte [mend], 0          ; a press right after the saver, before
-        je      .go                     ;  the band was mended: mend it first
-        pusha                           ;  (the commit would keep it)
+        jne     .fix                    ;  the band was mended, or zoomed (the
+        cmp     byte [ses], 0           ;  band back over it as the focus came
+        jne     .go                     ;  back, while it waited): mend it
+        cmp     byte [wopen], 0         ;  first (the commit would keep it)
+        je      .go
+.fix:   pusha
         call    band_fix
+        xor     ax, ax                  ; (and the clock's lines: zoomed,
+        mov     cx, 16                  ;  another session's clock may be
+        call    blit                    ;  over them)
         popa
 .go:    mov     dx, cx                  ; the driver's position: the press
         mov     cx, bx                  ;  (UI_MOUSE's is the core's: as it)
@@ -723,7 +740,9 @@ commit: cmp     byte [ses], 0           ; (a window: its view of it)
 ; bytes, vy lines into the picture) kept inside the picture; pph the
 ; fills' phase.  w_draw: the window's contents (W_DRAW, BX = the window;
 ; from any session's redraw), the view drawn again
-w_draw: call    geom
+w_draw: cmp     byte [ses], 0           ; (zoomed: the whole screen)
+        je      w_zoom
+        call    geom
         jmp     short blit_view
 geom:   pusha
         mov     ax, [win + W_COL]
@@ -943,6 +962,139 @@ move:   cmp     byte [ses], 0
         jmp     status
 .x:     ret
 
+; a press at BX, CX off the canvas: on the window's frame under its title
+; strip (a byte's width at the sides, the line below), the view follows
+; the drag, as a hand moving the picture, until the button comes up.
+; (KMW gives Paint only clicks on its windows, and on the band: so off the
+; canvas and not below the frame is the frame; the title strip is KMW's)
+pan:    cmp     byte [ses], 0           ; (zoomed or the whole screen: no
+        je      move.x                  ;  frame)
+        mov     ax, [cly1]
+        inc     ax
+        cmp     cx, ax
+        jg      move.x
+        mov     [x0], bx
+        mov     [y0], cx
+        mov     [lx], bx
+        mov     [ly], cx
+        mov     ax, [vx]
+        mov     [pvx], ax
+        mov     ax, [vy]
+        mov     [pvy], ax
+        mov     dx, cx                  ; (the driver's position: the press,
+        mov     cx, bx                  ;  as stroke's)
+        cmp     byte [umouse], 0
+        jne     .l
+        mov     ax, 4
+        int     33h
+.l:     mov     di, clx0                ; sample's clamp off (geom puts the
+        mov     ax, 8000h               ;  canvas's limits back)
+        stosw
+        dec     ax
+        stosw
+        inc     ax
+        stosw
+        dec     ax
+        stosw
+        call    sample                  ; BX = buttons, CX = x, DX = y
+        mov     [lx], cx
+        mov     [ly], dx
+        mov     ax, [x0]                ; the view where it was, less the drag
+        sub     ax, cx                  ;  (across: to the nearest byte)
+        add     ax, 4
+        sar     ax, 3
+        add     ax, [pvx]
+        jns     .h
+        xor     ax, ax
+.h:     mov     si, [vx]
+        mov     [vx], ax
+        mov     ax, [y0]
+        sub     ax, dx
+        add     ax, [pvy]
+        jns     .v
+        xor     ax, ax
+.v:     mov     di, [vy]
+        mov     [vy], ax
+        call    geom                    ; (kept inside the picture)
+        cmp     si, [vx]
+        jne     .d
+        cmp     di, [vy]
+        je      .u
+.d:     call    blit_view
+.u:     test    bl, 1
+        jnz     .l
+        jmp     status
+
+; the canvas the whole screen (the picture's lines its own: pph 0)
+full:   xor     ax, ax
+        mov     [clx0], ax
+        mov     [cly0], ax
+        mov     [pph], ax
+        mov     word [clx1], 639
+        mov     word [cly1], 399
+        ret
+
+; CODE-F (a window): the whole screen, 640 x 400 as without windows, and
+; back.  The window itself made so, in place (no title, nothing to move,
+; close or size: zwin); zoomed, ses is 0, so strokes, undo and the band
+; are the whole screen's (the swap and commit, band_fix), the view kept
+; for the way back.  Back: closed (the screen drawn again without it, the
+; title's clock too), as it was, opened again
+k_zoom: cmp     byte [wopen], 0
+        je      .x
+        mov     cx, 7
+        cmp     byte [ses], 0
+        je      .out
+        mov     si, win
+        mov     di, wsave
+        rep     movsw
+        mov     si, zwin
+        mov     di, win
+        mov     cl, 7
+        rep     movsw
+        dec     byte [ses]
+        call    full
+        mov     si, s_hint              ; (the band, if the focus brings it
+        mov     di, s_zband             ;  back: a key or a click mends it)
+        call    UI_BAND
+        jmp     short w_zoom.f
+.out:   call    UI_WCLOSE
+        mov     si, wsave
+        mov     di, win
+        rep     movsw
+        inc     byte [ses]
+        call    d_all                   ; (the strokes zoomed: C and U apart
+        mov     si, win                 ;  anywhere)
+        call    UI_WOPEN
+        jmp     status
+.x:     ret
+
+; W_DRAW zoomed: the picture.  On Paint's own stack (its session's
+; redraw, or k_zoom) UI_CLS first, then all of it, the band's lines too:
+; its session's title off, so no clock drawn over the picture (the
+; Executive's redraw, the base, puts it on).  From another session's
+; redraw (that one in front, over it) the window only, above the band:
+; the band is that one's (zwin stops there, so KMW gives clicks on the
+; band to the one in front, and the Executive's questions show there).
+; Not in main's wait (a question, a form, a message of Paint's waiting in
+; the band) the window only too, and main draws all of it after (tz).
+; (SP alone: every redraw runs on the UI's SS, a session's stack or the
+; core's; the saver on a task's stack draws no windows)
+w_zoom: cmp     sp, run_bss_end
+        jb      .o
+        cmp     sp, [sp0]
+        jae     .o
+        cmp     byte [in_ev], 0         ; (not in main's wait: a question of
+        jne     .f                      ;  Paint's waits in the band; main
+        mov     byte [tz], 1            ;  draws all of it after: tz)
+        jmp     short .o
+.f:     mov     byte [tz], 0
+        call    UI_CLS
+        jmp     blit_all
+.o:     xor     ax, ax
+        mov     cx, SCR_BAND_Y
+        jmp     blit
+
 ; the window's title: "Paint", or "Paint: NAME.BMP" (ES = DS)
 title:  mov     di, wtitle
         mov     si, s_paint
@@ -1054,12 +1206,16 @@ whole:  mov     ax, [segc]
         pop     es
         pop     ds
         mov     byte [changed], 1
-        mov     word [dy0], 0           ; (C and U may differ anywhere)
+        call    d_all
+        call    k_edit
+        jmp     show
+
+; D the whole picture: C and U may differ anywhere
+d_all:  mov     word [dy0], 0
         mov     word [dy1], 400
         mov     word [dx0], 0
         mov     word [dx1], 80
-        call    k_edit
-        jmp     show
+        ret
 
 ; Transfer: save it as the name in the form (the picture's own first)
 k_xfer: mov     di, t_name
@@ -1092,7 +1248,9 @@ k_xfer: mov     di, t_name
         mov     byte [changed], 0
         cmp     byte [wopen], 0         ; a window: its title the new name
         je      .x                      ;  (closed and opened again, as
-        call    title                   ;  Write's)
+        call    title                   ;  Write's; zoomed, no title: it
+        cmp     byte [ses], 0           ;  shows on the way back)
+        je      .x
         call    UI_WCLOSE
         mov     si, win
         call    UI_WOPEN
@@ -1568,6 +1726,9 @@ bmphdr  db 'BM'
 twin    dw 26, 100, 28, T_TOP + 22, s_tools, t_draw, WF_MOVE | WF_CLOSE
 win     dw 2, SCR_TOP + 8, 76, SCR_BAND_Y - SCR_TOP - 8, wtitle, w_draw
         dw WF_MOVE | WF_CLOSE | WF_SIZE
+zwin    dw 0, 0, 80, SCR_BAND_Y, 0, w_draw, 0   ; (zoomed: the whole screen
+                                        ;  but the band, which Paint in
+                                        ;  front draws over: w_zoom, main)
 xfer_form:
         dw s_xfert, s_xferp, 60, 8, 1
         dw l_file, FT_TEXT + (40 << 8), t_name, 70
@@ -1583,7 +1744,8 @@ keys:   KEY(K_NONE,      0,       h_mouse)
         KEY(K_NONE,      0,       h_pat)
         KEY('[',         k_less,  h_size)
         KEY(']',         k_more,  0)
-kh_view equ $                           ; (a window: h_view, h_view2)
+kh_view equ $                           ; (a window: h_view, h_view2, h_pan)
+        KEY(K_NONE,      0,       0)
         KEY(K_NONE,      0,       0)
         KEY(K_NONE,      0,       0)
         KEY(K_UP,        k_up,    0)
@@ -1594,6 +1756,8 @@ kh_view equ $                           ; (a window: h_view, h_view2)
         KEY(K_RIGHT,     k_right, 0)
         KEY(K_CLEFT,     k_cleft, 0)
         KEY(K_CRIGHT,    k_cright, 0)
+kh_zoom equ $                           ; (a window: h_zoom)
+        KEY(K_CODE_F,    k_zoom,  0)
         KEY('U',         k_undo,  h_undo)
         KEY(K_CODE_Z,    k_undo,  0)
         KEY('I',         k_inv,   h_inv)
@@ -1615,6 +1779,8 @@ h_pat       db '1 to 8                   pattern',0
 h_size      db '[  ]                     brush smaller, bigger',0
 h_view      db 'Arrows  PgUp  PgDn       move the view',0
 h_view2     db 'Ctrl-Left  Ctrl-Right    a view to the left, right',0
+h_pan       db 'A drag on the frame      move the view',0
+h_zoom      db 'CODE-F                   the whole screen, and back',0
 h_undo      db 'U or CODE-Z              undo (again: redo)',0
 h_inv       db 'I                        invert the picture',0
 h_erase     db 'CODE-E                   erase the picture',0
@@ -1639,6 +1805,7 @@ s_top       db ', ',0
 s_of        db ' of 640 x 400',0
 s_helpt     db 'Paint Commands',0
 s_hint      db 'Paint: draw with the mouse.  Tab: tools.  CODE-?: help',0
+s_zband     db 'The whole picture.  CODE-F: back to the window',0
 s_nomem     db 'Paint needs 63 KB of memory',0
 s_notpic    db 'Paint shows 1-bit BMP pictures up to 640 x 400',0
 s_cantread  db "Can't read the picture: ",0
@@ -1712,6 +1879,11 @@ dx0         resw 1                      ;  to dy1 - 1, bytes dx0 to dx1 - 1;
 dx1         resw 1                      ;  empty if dy1 <= dy0
 vx          resw 1                      ; the view: its left byte and top line
 vy          resw 1                      ;  in the picture
+pvx         resw 1                      ; (pan: the view at the press)
+pvy         resw 1
+wsave       resw 7                      ; (zoomed: the window as it was)
+sp0         resw 1                      ; the session's stack's top
+tz          resb 1                      ; (zoomed: drawn while a question waited)
 ses         resb 1                      ; a window .RUN's session (MULTITASK=1)
 umouse      resb 1                      ; strokes by UI_MOUSE
 wopen       resb 1                      ; the window is open
