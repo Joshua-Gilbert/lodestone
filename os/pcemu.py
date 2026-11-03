@@ -68,6 +68,14 @@ FDWAIT = bytes.fromhex('fb1e5153b80190f8cd15721531c08ed8bb040031c9f6063e04807509
                        'b001eb0780263e047fb000e6e05b591fca0200')
 IRQ6 = bytes.fromhex('501e31c08ed8800e3e0480b020e620b80191cd151f58cf')
 IRET = bytes([0xCF])
+# SysReq (M11): the 1520's INT 9 at the key's make (SysReq down in 40:18h
+# bit 2, INT 15h AX=8500h: once, not again while it repeats) and break
+# (8501h), both in one IRQ here, never in the key buffer (F000:1500).
+# Confm, CODE-SysReq (F000:1540): the same with CODE (the BIOS's Alt, 40:17h
+# bit 3) held.  int9.asm, github.com/philip-searle/gridcase-bios
+SYSRQ = bytes.fromhex('fb1e5031c08ed8800e180404b80085cd1580261804fbb80185cd15581fcf')
+CONFM = bytes.fromhex('fb1e5031c08ed8800e180404800e170408b80085cd1580261804fbb80185cd15'
+                      '80261704f7581fcf')
 
 
 # A real floppy drive's timing (disk_model='real'): GRiD 1520 BIOS values
@@ -382,6 +390,7 @@ class PC:
         s.chip_int_was = False; s.irqs5 = 0
         s.pic2_mask = 0xFF              # the slave PIC (IRQ 8-15, through IRQ 2)
         s.soft = []                     # INTs the BIOS's IRQ handlers would raise (5: Shift-PrtSc)
+        s.srq_seen = []                 # INT 15h AH=85h calls that reached the BIOS (M11: SysReq)
         s.keys = collections.deque(); s.tty = []; s.log = []; s.lpt = []
         s.fpu_ports = []                # (OUTs to F0h, BUSY's latch cleared, and F1h, the coprocessor reset)
         s.calls13 = []; s.ints = collections.Counter(); s.t13 = []
@@ -426,6 +435,8 @@ class PC:
         s.mu.mem_write(STUB * 16 + 0x1200, IRET)
         s.mu.mem_write(STUB * 16 + 0x1300, IRQ6)
         s.mu.mem_write(STUB * 16 + 0x1400, FDWAIT)
+        s.mu.mem_write(STUB * 16 + 0x1500, SYSRQ)
+        s.mu.mem_write(STUB * 16 + 0x1540, CONFM)
         s.mu.mem_write(8 * 4, struct.pack('<HH', 0x1000, STUB))
         for n in list(range(9, 0x10)) + list(range(0x70, 0x78)):
             s.mu.mem_write(n * 4, struct.pack('<HH', 0x1100, STUB))
@@ -576,8 +587,8 @@ class PC:
         IRQ 0 per run() starved the mouse while long INT 13h calls (which
         the emulator does in one step) kept a timer tick pending."""
         if s.soft and s.r('flags') & 0x200:     # as INT 9 does after its EOI
-            n = s.soft.pop(0)
-            off, seg = struct.unpack('<HH', s.rd(0, n * 4, 4))
+            n = s.soft.pop(0)                   # (an INT, or a stub's offset in F000: (off,))
+            off, seg = n + (STUB,) if isinstance(n, tuple) else struct.unpack('<HH', s.rd(0, n * 4, 4))
             s.push(s.r('flags')); s.push(s.r('cs')); s.push(s.r('ip'))
             s.w('flags', s.r('flags') & ~0x300)
             s.w('cs', seg); s.w('ip', off)
@@ -1130,6 +1141,7 @@ class PC:
         if ax == 0xE442 and s.ems_pages and s.r('dl') == 0xFF:     # memory mode: EMS
             s.w('dx', (s.r('dx') & 0xFF00) | 1); s.w('ax', 0); s.cf(0); return
         if ah == 0x4F: s.cf(1); return
+        if ah == 0x85: s.srq_seen.append(ax); s.cf(0); return
         if ah == 0x88: s.w('ax', 0); s.cf(0); return
         if ah == 0x86:
             s.us += (s.r('cx') << 16 | s.r('dx')); s.cf(0); return
@@ -1231,6 +1243,11 @@ class PC:
     def prtsc(s):
         """Shift-PrtSc: the BIOS's INT 9 calls INT 5."""
         s.soft.append(5)
+
+    def sysreq(s, code=False):
+        """SysReq pressed and let go (code: CODE held, Confm): INT 15h AX=8500h,
+        then 8501h, as the 1520's INT 9 makes them (SYSRQ)."""
+        s.soft.append((0x1540 if code else 0x1500,))
 
     def int18(s): s.stopped = 'INT 18h (ROM BASIC)'; s.mu.emu_stop()
     def int19(s):

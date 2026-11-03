@@ -250,6 +250,10 @@ mt_hotk     dw      0A500h, 0A5F0h      ; the hot key, CODE-Tab, as AH=10h
                                         ;  and as a BIOS keeping CODE keys with
                                         ;  F0h would
 mt_swreq    db      0FFh                ; a task to bring to the front (FFh: none)
+%ifndef NOSYSREQ
+mt_sysrq    db      0, 0                ; M11: 1, SysReq pressed (mt_i15): as
+%endif                                  ;  CODE-Tab at mt_hot's next look (2 B:
+                                        ;  what follows keeps its parity)
 mt_wkt      db      0FFh                ; T5c: the task MT_WAKE's program is in
 mt_wkp      dw      0                   ;  (FFh: none), and its PSP
 mt_want     db      0FFh                ; the task an SRQ woke: mt_pick's next
@@ -4491,6 +4495,13 @@ mt_hot: pushf
         push    40h
         pop     ds
         cli
+%ifndef NOSYSREQ
+.s0:    xor     al, al                  ; M11: SysReq pressed?  As CODE-Tab
+        xchg    al, [cs:mt_sysrq]       ;  (the buffer looked at the next time)
+        or      al, al
+        jnz     .c
+        times   ($ - .s0) & 1 db 90h    ; (what follows keeps its parity)
+%endif
         mov     bx, [1Ah]               ; (head to tail, wrapping at 40:82h)
         mov     cx, 16
 .s:     cmp     bx, [1Ch]
@@ -4521,7 +4532,7 @@ mt_hot: pushf
         mov     [si], ax
         jmp     .m
 .e:     mov     [1Ch], si
-        mov     al, [cs:mt_swreq]       ; the next task after that one
+.c:     mov     al, [cs:mt_swreq]       ; the next task after that one
         cmp     al, 0FFh
         jne     .t
         mov     al, [cs:mt_front]
@@ -6162,12 +6173,34 @@ mt_i13: cmp     byte [cs:mt_down], 0FFh
 ; =====================================================================
 MT_DTO      equ 37                      ; (ticks: about 2 s, the BIOS's own wait)
 
-; INT 15h: AX=9001h and 9101h (the floppy), the rest on
+; INT 15h: AX=9001h and 9101h (the floppy), 8500h (M11: SysReq), the rest on
 mt_i15: cmp     ax, 9001h
         je      mt_dwait
         cmp     ax, 9101h
         je      .e
+%ifndef NOSYSREQ
+.s1:    cmp     ax, 8500h
+        je      .s
+.s2:
+%endif
 .o:     jmp     far [cs:mt_old15]
+%ifndef NOSYSREQ
+; M11: SysReq down (the 1520's INT 9, once while it is held; never in the
+; key buffer, so it takes no key from the program in front): the next
+; task to the front, as CODE-Tab, at mt_hot's next look.  Not Confm
+; (CODE-SysReq: CODE, the BIOS's Alt, held in 40:17h): the program's.
+; Passed on either way.  Built without it: -dNOSYSREQ
+.s:     push    ds
+        push    40h
+        pop     ds
+        test    byte [17h], 8
+        pop     ds
+        jnz     .o
+        mov     byte [cs:mt_sysrq], 1
+        jmp     .o
+        times   (.s2 - .s1 + $ - .s) & 1 db 90h ; (M11's bytes even: what follows
+                                        ;  keeps its parity)
+%endif
 .e:     cmp     byte [cs:mt_down], 0FFh ; the floppy's interrupt: its owner,
         je      .o                      ;  out, ready, and the next to run
         push    ax

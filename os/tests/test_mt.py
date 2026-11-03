@@ -7022,6 +7022,94 @@ def dw_run(k, spin, cmd, done, sim=60):
     k.run_for(0.5)
     return tc, spun(k, f)
 
+def t_sysreq():
+    print('== M11: SysReq to the next task, as CODE-Tab; Confm (CODE-SysReq) left alone; -dNOSYSREQ has none of it')
+    k = boot('mt_sr.img', b'MULTITASK=1\r\n', 88)
+    seg, Y = mt_seg(k), k.Y
+    sh = Shell(k)
+    sh.run('ver')
+    srq = lambda code=False: (k.pc.sysreq(code), k.run_for(0.4))
+    flag = lambda: k.pc.rd(seg, Y['mt_sysrq'], 1)[0]
+    k.pc.srq_seen.clear()
+    srq()
+    check('SysReq with the Executive the only task: nothing to switch to, task 0 in front; MT passed 8500h and 8501h '
+          'on to the BIOS (%s), its flag taken (mt_sysrq 0)' % [hex(a) for a in k.pc.srq_seen],
+          tstate(k)[1] == 0 and k.pc.srq_seen == [0x8500, 0x8501] and flag() == 0, (tstate(k), k.pc.srq_seen, flag()))
+    sh.run('mtlaunch mtline.com a.txt;mtline.com b.txt')
+    scr0 = k.pc.text_screen()
+    ring0 = k.pc.kbd_ring()
+    srq()
+    check('SysReq while MTLAUNCH waits: task 1 to the front, its own prompt; nothing put in the key buffer or taken from '
+          'it', tstate(k)[1] == 1 and k.pc.text_screen().strip() == 'MTLINE>' and k.pc.kbd_ring() == ring0 == [],
+          (tstate(k), k.pc.kbd_ring(), k.pc.text_screen()[-200:]))
+    k.key('hel'); k.run_for(0.3)
+    srq()
+    check('typed to task 1 ("hel"), then SysReq: task 2', tstate(k)[1] == 2 and k.pc.text_screen().strip() == 'MTLINE>'
+          and flag() == 0, (tstate(k), k.pc.text_screen()[-200:]))
+    srq()
+    check('SysReq again: round to task 0, MTLAUNCH\'s screen as it was', tstate(k)[1] == 0
+          and k.pc.text_screen() == scr0, (tstate(k), k.pc.text_screen()[-300:]))
+    k.pc.srq_seen.clear()
+    srq(code=True)
+    check('Confm (CODE-SysReq: CODE, the BIOS\'s Alt, held in 40:17h): no switch, task 0 still in front, no SysReq '
+          'left waiting (mt_sysrq 0); 8500h and 8501h passed on to the BIOS for the program',
+          tstate(k)[1] == 0 and flag() == 0 and k.pc.srq_seen == [0x8500, 0x8501] and k.pc.text_screen() == scr0,
+          (tstate(k), flag(), k.pc.srq_seen))
+    hot(k)
+    srq()
+    check('CODE-Tab, then SysReq: CODE-Tab to task 1, SysReq on to task 2', tstate(k)[1] == 2, tstate(k))
+    srq()
+    srq()
+    check('SysReq twice more: task 0, then task 1 ("hel" kept on its screen)', tstate(k)[1] == 1
+          and 'hel' in k.pc.text_screen(), (tstate(k), k.pc.text_screen()[-200:]))
+    line(k, 'lo')
+    srq()
+    line(k, 'world')
+    line(k, '')
+    check('task 1 ends ("hello"); SysReq to task 2 (task 0 in front after task 1\'s end), which gets "world"; all ended',
+          A.disk_file(k, 'A.TXT') == b'hello' and A.disk_file(k, 'B.TXT') == b'world'
+          and tstate(k) == ([(0, 1, 'Executive')], 0, 0), (A.disk_file(k, 'A.TXT'), A.disk_file(k, 'B.TXT'), tstate(k)))
+    # a task in front that reads no keys: the switch at a tick, where it is safe
+    typ(k, 'mtlaunch /f mtspin.com 40 s.txt', 0.6)
+    st1 = tstate(k)
+    srq()
+    st2 = tstate(k)
+    k.run_for(3.0); line(k, '')
+    c = A.disk_file(k, 'S.TXT')
+    check('MTSPIN in front, counting, reading no keys: SysReq brings task 0 to the front at a tick; MTSPIN counts on '
+          'behind and ends (S.TXT %r)' % c, st1[1] == 1 and st2[1] == 0 and c and int(c, 16) > 0
+          and tstate(k)[0] == [(0, 1, 'Executive')], (st1, st2, c, tstate(k)))
+    check('nothing went wrong', not k.crashed, k.crashed)
+    # -dNOSYSREQ: the build for a machine without the key
+    src = os.path.join(GOS, 'src')
+    sysf, mapf, mtf = (os.path.join(A.OUT, n) for n in ('LODENS.SYS', 'LODENS.MAP', 'LODEMTNS.SYS'))
+    m = os.path.join(A.OUT, '_ns.asm')
+    open(m, 'w').write('[map symbols %s]\n%%include "LODE.ASM"\n' % mapf)
+    subprocess.run(['nasm', '-f', 'bin', '-dNOSYSREQ', '-i', src + '/', '-o', sysf, m], check=True)
+    subprocess.run(['python3', os.path.join(GOS, 'mkmt.py'), sysf, mapf, mtf], check=True, stdout=subprocess.DEVNULL)
+    n0, n1 = os.path.getsize(MTSYS), os.path.getsize(mtf)
+    check('-dNOSYSREQ: no mt_sysrq in its map; LODEMT.SYS %d bytes, %d fewer than with SysReq (LODE.SYS %d, the same '
+          'size)' % (n1, n0 - n1, os.path.getsize(sysf)), 'mt_sysrq' not in open(mapf).read() and 0 < n0 - n1 <= 64
+          and os.path.getsize(sysf) == os.path.getsize(os.path.join(src, 'LODE.SYS')), (n0, n1))
+    import mkimg
+    img = mkimg.build(os.path.join(A.OUT, 'mt_ns.img'), ['LODE.SYS=' + sysf, 'LODEMT.SYS=' + mtf, A.LCMD, MTL, MTLN,
+                                                         ini(b'MULTITASK=1\r\n')])
+    k = ktest.KPC(img, ems_pages=88); k.start(10); k.mcb0 = k.u16('first_mcb')
+    sh = Shell(k)
+    sh.run('ver')
+    sh.run('mtlaunch mtline.com n.txt')
+    k.pc.srq_seen.clear()
+    srq = lambda: (k.pc.sysreq(), k.run_for(0.4))
+    srq()
+    st1 = tstate(k)
+    hot(k)
+    st2 = tstate(k)
+    line(k, 'n'); line(k, '')
+    check('-dNOSYSREQ: SysReq switches nothing (task 0 still in front), passed on to the BIOS (%s); CODE-Tab still '
+          'does (task 1, N.TXT "n")' % [hex(a) for a in k.pc.srq_seen], st1[1] == 0 and st2[1] == 1
+          and k.pc.srq_seen == [0x8500, 0x8501] and A.disk_file(k, 'N.TXT') == b'n' and not k.crashed,
+          (st1, st2, k.pc.srq_seen, A.disk_file(k, 'N.TXT')))
+
 def t_dwait():
     """M10: tasks run while one waits on the floppy (pcemu's fd_wait: INT 15h 9001h, IRQ 6, 9101h, the DMA at
     its end through the EMS windows as they are then).  The copy at the prompt, MTSPIN behind."""
@@ -7231,7 +7319,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_sysreq, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
