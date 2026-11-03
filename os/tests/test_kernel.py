@@ -82,13 +82,15 @@ class Shell:
         lines = k.pc.text_screen().rstrip().split('\n')
         return '\n'.join(lines[1:])
 
+ZTXT = b'before\x1aafter\r\n'
 def t_shell():
-    img = image('sh.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(HERE, 'UPPER.COM'), 'GAMES\\')
+    open(os.path.join(OUT, 'Z.TXT'), 'wb').write(ZTXT)
+    img = image('sh.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(HERE, 'UPPER.COM'), 'GAMES\\', os.path.join(OUT, 'Z.TXT'))
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
     check('CODE-P starts the shell', 'command shell' in k.pc.text_screen() and k.pc.mode() == 3, k.pc.text_screen())
     o = sh.run('dir')
-    check('DIR lists the disk', all(x in o for x in ('Volume in drive A is LODESTONE', 'Directory of  A:\\', 'LCMD     COM', 'GAMES           <DIR>', '4 File(s)', 'bytes free')), o)
+    check('DIR lists the disk', all(x in o for x in ('Volume in drive A is LODESTONE', 'Directory of  A:\\', 'LCMD     COM', 'GAMES           <DIR>', '5 File(s)', 'bytes free')), o)
     check('VER', 'Lodestone version 0.6' in sh.run('ver'))
     check('bad command', 'Bad command or file name' in sh.run('nosuch'))
     check('bad drive', 'Invalid drive specification' in sh.run('b:'))
@@ -152,6 +154,14 @@ def t_shell():
     sh.run('set foo=')
     check('SET removes', 'FOO' not in sh.run('set'))
     sh.run('copy con x.bat', 'echo off', 'echo batch says %1', 'ver', '\x1a')
+    xb = fatcheck.read_files(k.pc.drives[0].img).get('A:\\X.BAT')
+    check('COPY CON: the lines typed, up to the ^Z and not it', xb == b'echo off\r\necho batch says %1\r\nver\r\n', xb)
+    sh.run('copy z.txt z2.txt')
+    z2 = fatcheck.read_files(k.pc.drives[0].img).get('A:\\Z2.TXT')
+    check('COPY of a file with a ^Z inside: all of it (only a device\'s text ends at one)', z2 == ZTXT, z2)
+    o = sh.run('type z.txt')
+    check('TYPE stops at the ^Z', 'before' in o and 'after' not in o, o)
+    sh.run('del z2.txt')
     o = sh.run('x hi')
     check('batch file, %1, ECHO OFF', 'batch says hi' in o and 'Lodestone version 0.6' in o and 'echo batch' not in o, o)
     check('ECHO back on after the batch', 'A:\\>' in sh.run('rem'))
@@ -165,7 +175,7 @@ def t_shell():
     check('EXIT returns to the Executive', k.pc.mode() == 0x40 and any('LCMD.COM ended' in l for l in k.band()), k.band())
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
     check('disk consistent after the shell', not probs, '; '.join(probs))
-    check('shell files cleaned up', set(files) == {'\\LODE.SYS', '\\LCMD.COM', '\\UPPER.COM', '\\GAMES\\'}, sorted(files))
+    check('shell files cleaned up', set(files) == {'\\LODE.SYS', '\\LCMD.COM', '\\UPPER.COM', '\\GAMES\\', '\\Z.TXT'}, sorted(files))
 
 def t_tabs():
     """tty_out: a tab is spaces to the next multiple of 8, from the line's start (TYPE writes through it)."""

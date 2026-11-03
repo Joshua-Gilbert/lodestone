@@ -305,12 +305,7 @@ raw_bounce:
 ; Same boot sector BPB and, if our FAT cache is this drive's and clean,
 ; the same first FAT sector.  CF if different (or unreadable).
 same_disk:
-        push    ax
-        push    bx
-        push    cx
-        push    dx
-        push    si
-        push    di
+        pusha
         push    es
         push    cs
         pop     es
@@ -346,12 +341,7 @@ same_disk:
         jmp     .x
 .diff:  stc
 .x:     pop     es
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
-        pop     ax
+        popa
         ret
 
 ; get drive AL ready: present, media change noticed, mounted.  Sets
@@ -1613,12 +1603,7 @@ bios2dos:
 crit_disk:
         test    byte [cap_req], 2       ; a screen capture: just fail
         jnz     .fail
-        push    bx
-        push    cx
-        push    dx
-        push    si
-        push    di
-        push    bp
+        pusha
         push    ds
         push    es
         mov     al, [io_bios]
@@ -1637,20 +1622,18 @@ crit_disk:
         mov     bp, cs
 .c24:   mov     si, crit_dev            ; (multitasking: a far call, KMT.INC)
         int     24h
+        mov     bp, sp
+        mov     [bp+18], al             ; (AL, the answer, into pusha's frame)
         pop     es
         pop     ds
-        pop     bp
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
+        popa
         cmp     al, 2
         je      .abort
         cmp     al, 3
         jbe     .x
 .fail:  mov     al, 3
 .x:     ret
+        db      90h                     ; (parity: f_36.l and on as they were)
 .abort: cmp     byte [indos], 0         ; (outside INT 21h the place holds
         je      .t                      ;  the last call's, maybe another
         cmp     byte [kstack_top - F_SIZE + F_AX + 1], 4Bh      ; task's)
