@@ -88,6 +88,8 @@ start:  mov     di, fname               ; the argument: the picture to show
         mov     dx, cx
         int     33h
         mov     byte [bsize], 2
+        mov     word [clx1], 639        ; the canvas: the whole screen (clx0,
+        mov     word [cly1], 399        ;  cly0 and pph 0, as BSS starts)
         cmp     byte [fname], 0
         je      .new
         mov     si, fname
@@ -180,14 +182,15 @@ stroke: cmp     byte [mend], 0          ; a press right after the saver, before
         pusha                           ;  (the commit would keep it)
         call    band_fix
         popa
-.go:    mov     [x0], bx
-        mov     [y0], cx
-        mov     [lx], bx
-        mov     [ly], cx
-        mov     dx, cx                  ; the driver's position: the press
+.go:    mov     dx, cx                  ; the driver's position: the press
         mov     cx, bx
         mov     ax, 4
         int     33h
+        call    clamp
+        mov     [x0], cx
+        mov     [y0], dx
+        mov     [lx], cx
+        mov     [ly], dx
         mov     ax, [segc]              ; U: the picture before this stroke
         xchg    ax, [segu]
         mov     [segc], ax
@@ -198,10 +201,7 @@ stroke: cmp     byte [mend], 0          ; a press right after the saver, before
         mov     cx, [x0]
         mov     dx, [y0]
         call    tool_do
-.l:     sti
-        hlt
-        mov     ax, 3
-        int     33h                     ; BX = buttons, CX = x, DX = y
+.l:     call    sample                  ; BX = buttons, CX = x, DX = y
         cmp     cx, [lx]
         jne     .mv
         cmp     dx, [ly]
@@ -219,6 +219,29 @@ stroke: cmp     byte [mend], 0          ; a press right after the saver, before
         pop     es
         mov     byte [changed], 1
         jmp     commit
+
+; the mouse at the next interrupt -> BX = buttons, CX = x, DX = y, the
+; point clamped to the canvas
+sample: sti
+        hlt
+        mov     ax, 3
+        int     33h
+        ; (falls through)
+
+; CX, DX into the canvas (clx0-clx1, cly0-cly1)
+clamp:  cmp     cx, [clx0]
+        jge     .x0
+        mov     cx, [clx0]
+.x0:    cmp     cx, [clx1]
+        jle     .x1
+        mov     cx, [clx1]
+.x1:    cmp     dx, [cly0]
+        jge     .y0
+        mov     dx, [cly0]
+.y0:    cmp     dx, [cly1]
+        jle     .y1
+        mov     dx, [cly1]
+.y1:    ret
 
 tool_do:
         pusha
@@ -303,10 +326,12 @@ set_op: mov     [opa], ah
         mov     [cpat], di
         ret
 
-; -> DI = the chosen pattern
+; -> DI = the chosen pattern, at the canvas's phase (pph: picture line
+; minus screen line, 0-7; each pattern is there twice over)
 curpat: mov     di, [patn]
         and     di, 7
-        shl     di, 3
+        shl     di, 4
+        add     di, [pph]
         add     di, pats
         ret
 
@@ -333,6 +358,7 @@ curpat: mov     di, [patn]
         and     [es:di], ah
         xor     [es:di], al
 %endmacro
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 plot:   push    ax
         push    bx
         push    di
@@ -344,6 +370,7 @@ plot:   push    ax
 
 ; from AX, BX to CX, DX: [dotfn] at each point (Bresenham: the steps
 ; along and across are set up first, so the loop never asks which way)
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 line:   pusha
         push    cx
         push    dx
@@ -363,8 +390,8 @@ line:   pusha
         jns     .yp
         neg     bx
         neg     di
-.yp:    xor     bp, bp
-        cmp     ax, bx
+.yp:    mov     bp, 0                   ; (3 bytes, as fast as XOR: the
+        cmp     ax, bx                  ;  loop's labels even)
         jae     .xm
         xchg    ax, bx                  ; y the longer: along y, across x
         mov     [mjx], bp
@@ -422,6 +449,7 @@ order:  cmp     ax, cx
 ; pattern: its edge masks and first byte worked out once, then each line
 ; the left byte through its mask, the bytes between whole (a word at a
 ; time, unless XOR), the right byte through its mask
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 fillrect:
         pusha
         call    order
@@ -489,6 +517,7 @@ fillrect:
         ret
 
 ; its outline, each pixel once (the rubber band XORs it)
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 frame:  pusha
         call    order
         mov     si, dx                  ; SI = y1
@@ -516,6 +545,7 @@ frame:  pusha
 .x:     popa
         ret
 ; the brush or the eraser at CX, DX: a square of [dside], cut at the edges
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 dot:    pusha
         mov     si, [dside]
         dec     si
@@ -525,21 +555,21 @@ dot:    pusha
         sub     ax, bx                  ; AX, CX: its left and right, centred
         mov     cx, ax
         add     cx, si
-        or      ax, ax                  ;  then cut at the edges (signed)
-        jns     .x0
-        xor     ax, ax
-.x0:    cmp     cx, 639
+        cmp     ax, [clx0]              ;  then cut at the canvas's edges
+        jge     .x0                     ;  (signed)
+        mov     ax, [clx0]
+.x0:    cmp     cx, [clx1]
         jle     .x1
-        mov     cx, 639
+        mov     cx, [clx1]
 .x1:    sub     dx, bx                  ; BX, DX: its top and bottom, the same
         mov     bx, dx
         add     dx, si
-        or      bx, bx
-        jns     .y0
-        xor     bx, bx
-.y0:    cmp     dx, 399
+        cmp     bx, [cly0]
+        jge     .y0
+        mov     bx, [cly0]
+.y0:    cmp     dx, [cly1]
         jle     .y1
-        mov     dx, 399
+        mov     dx, [cly1]
 .y1:    call    fillrect
         popa
         ret
@@ -548,6 +578,7 @@ dot:    pusha
 ; ---------------------------------------------------------------------
 ;  the picture: C to the screen, the screen to C
 ; ---------------------------------------------------------------------
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 band_fix:
         mov     byte [mend], 0
         mov     ax, SCR_BAND_Y
@@ -579,6 +610,7 @@ blit:   pusha                           ; lines AX .. AX + CX - 1 from C
         popa
         ret
 
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
 commit: pusha                           ; the screen into C
         push    ds
         push    es
@@ -799,7 +831,7 @@ t_draw: mov     al, [bsize]
         shl     cx, 3
         xor     bp, bp
 .p:     mov     di, bp
-        shl     di, 3
+        shl     di, 4
         add     di, pats
         mov     ax, 0FFFFh
         call    set_op
@@ -1146,14 +1178,18 @@ base_name:
 tools   dw t_pencil, t_brush, t_erase, t_line, t_rect, t_fill
 toolch  db 'PBELRF'
 bitm    db 80h, 40h, 20h, 10h, 8, 4, 2, 1
-pats    db 0FFh, 0FFh, 0FFh, 0FFh, 0FFh, 0FFh, 0FFh, 0FFh  ; 1 solid
-        db 0DDh, 77h, 0DDh, 77h, 0DDh, 77h, 0DDh, 77h      ; 2 dark grey
-        db 0AAh, 55h, 0AAh, 55h, 0AAh, 55h, 0AAh, 55h      ; 3 grey
-        db 88h, 22h, 88h, 22h, 88h, 22h, 88h, 22h          ; 4 light grey
-        db 80h, 0, 8, 0, 80h, 0, 8, 0                      ; 5 dots
-        db 0FFh, 0, 0, 0, 0FFh, 0, 0, 0                    ; 6 lines across
-        db 88h, 88h, 88h, 88h, 88h, 88h, 88h, 88h          ; 7 lines down
-        db 80h, 40h, 20h, 10h, 8, 4, 2, 1                  ; 8 slant
+; the patterns, each twice over (a fill starts at pph, 0-7, into it)
+%macro PAT 8
+        db %1, %2, %3, %4, %5, %6, %7, %8, %1, %2, %3, %4, %5, %6, %7, %8
+%endmacro
+pats:   PAT 0FFh, 0FFh, 0FFh, 0FFh, 0FFh, 0FFh, 0FFh, 0FFh  ; 1 solid
+        PAT 0DDh, 77h, 0DDh, 77h, 0DDh, 77h, 0DDh, 77h      ; 2 dark grey
+        PAT 0AAh, 55h, 0AAh, 55h, 0AAh, 55h, 0AAh, 55h      ; 3 grey
+        PAT 88h, 22h, 88h, 22h, 88h, 22h, 88h, 22h          ; 4 light grey
+        PAT 80h, 0, 8, 0, 80h, 0, 8, 0                      ; 5 dots
+        PAT 0FFh, 0, 0, 0, 0FFh, 0, 0, 0                    ; 6 lines across
+        PAT 88h, 88h, 88h, 88h, 88h, 88h, 88h, 88h          ; 7 lines down
+        PAT 80h, 40h, 20h, 10h, 8, 4, 2, 1                  ; 8 slant
 ; the kernel's Shift-PrtSc header (KCORE.INC bmp_hdr): Paint's pictures
 ; are its pictures
 bmphdr  db 'BM'
@@ -1229,6 +1265,15 @@ s_bmp       db '.BMP',0
 s_dollar    db '$$$',0
 s_dollar1   db '$$1',0
 
+; the hot code on even offsets (EVEN.INC: the 286 fetches a word at a
+; time; a .RUN loads on a paragraph)
+%include "EVEN.INC"
+        EVEN    plot, line, line.l, line.al, line.p, line.pa
+        EVEN    fillrect, fillrect.row, fillrect.xor, fillrect.last, fillrect.put
+        ; (fillrect.next stays odd: even, the wide fills' path through
+        ;  .last would run a NOP each line; it is jcxz's only for 1 byte)
+        EVEN    frame, frame.s, dot, blit.l, commit.l
+
 section .bss
 rowoff      resw 400                    ; line y -> its offset on the screen
 popc        resb 256                    ; bits set in each byte value
@@ -1264,6 +1309,11 @@ mjx         resw 1
 mjy         resw 1
 mnx         resw 1
 mny         resw 1
+clx0        resw 1                      ; the canvas: its left, right, top and
+clx1        resw 1                      ;  bottom pixels (the whole screen,
+cly0        resw 1                      ;  or a window's inside)
+cly1        resw 1
+pph         resw 1                      ; a fill's pattern phase (0-7)
 fr_x        resw 1                      ; (fillrect: the first byte, the masks)
 fr_m        resw 1
 mlen        resw 1                      ; (line: steps along, across)
