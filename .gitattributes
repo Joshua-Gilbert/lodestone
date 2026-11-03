@@ -1,0 +1,13 @@
+# Built images and programs: never line-ending converted or text-diffed
+# (core.autocrlf=true would rewrite CR LF byte pairs inside them)
+*.BIN binary
+*.COM binary
+*.SYS binary
+*.RUN binary
+*.FNT binary
+*.PIC binary
+*.PRN binary
+*.EXE binary
+*.img binary
+*.png binary
+*.uf2 binary

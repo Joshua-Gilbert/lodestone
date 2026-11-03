@@ -22,13 +22,13 @@ nasm -f bin -o TERM.FNT TERM.ASM          # the terminal window's (TERM437.INC: 
 cd ../drivers
 nasm -f bin -o PS.PRN PS.ASM            # printer drivers, read at PrtSc
 cd ..
-for a in SYSTEM WRITE CALC TASKS TERM; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; done
+for a in SYSTEM WRITE CALC TASKS TERM PAINT; do python3 mkrun.py apps/$a.ASM apps/$a.RUN; done
 python3 mkrun.py tests/UITEST.ASM tests/UITEST.RUN
 # ROM 1, the boot ROM (tools/mkrom.py): the kernel first, then the core set
 python3 ../tools/mkrom.py LODE1.BIN --boot src/ROMBOOT.BIN src/LODE.SYS src/LODEMT.SYS src/LODE.PIC src/LCMD.COM \
     apps/SYSTEM.RUN apps/WRITE.RUN apps/CALC.RUN apps/TASKS.RUN apps/TERM.RUN src/CALC.COM fonts/TERMINUS.FNT drivers/PS.PRN rom/LODE.INI
 # ROM 2, a data ROM joined to R: (KROM.INC): what ROM 1 has no room for
-python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM fonts/TERM.FNT
+python3 ../tools/mkrom.py LODE2.BIN --data src/DEFRAG.COM fonts/TERM.FNT apps/PAINT.RUN
 cd tests
 nasm -f bin -o TESTDOS.COM TESTDOS.ASM
 nasm -f bin -o UPPER.COM UPPER.ASM
