@@ -257,10 +257,12 @@ pr_boot:
 ; TEMP=DIR in the settings (the first such line, the changes' before the
 ; ROM's; "TEMP=": none) -> TEMP=DIR at the end of the master environment
 ; (after rs_boot's), so every program's %TEMP%: CLAUDE.COM's CLAUDE.OUT
-; (the ROM's LODE.INI says M:\, not the current drive R:, X51).  The value
-; to a blank or the line's end, 64 characters at most.  A drive that isn't
-; there (M: off, or no EMS) sets none: CLAUDE.OUT on the current drive, C:
-; with the hard disk.  So with EMS md_boot calls it, M: made (or not), and
+; (the ROM's LODE.INI says M:\, not the current drive R:, X51), and LCMD's
+; pipe files.  The value to a blank or the line's end, 64 characters at
+; most.  The ROM's own line counts only without C: (C:\ has room; M:'s
+; 256 KB would cut a big pipe short), C:\LODE.INI's always.  A drive that
+; isn't there (M: off, or no EMS) sets none: CLAUDE.OUT and pipes on the
+; current drive.  So with EMS md_boot calls it, M: made (or not), and
 ; past md_split: the environment's 160 bytes hold COMSPEC, PATH, PROMPT
 ; (50) and this (71).  DS = CS, ES = KSEG.
 te_boot:
@@ -270,7 +272,13 @@ te_boot:
         jc      .x                      ; (no such line)
         cmp     byte [si], ' '          ; ("TEMP=": none)
         jbe     .x
-        cmp     byte [si+1], ':'        ; a drive: there?
+        cmp     byte [es:bootdrv], R_DRV ; the ROM's own line (past the
+        jne     .c                      ;  changes' text) with C: there:
+        cmp     si, [MDB(ini_mid)]      ;  none
+        jb      .c
+        cmp     byte [es:drvtab + 2 * DRVSZ + D_PRES], 0
+        jne     .x
+.c:     cmp     byte [si+1], ':'        ; a drive: there?
         jne     .ok
         mov     dl, [si]
         and     dl, 0DFh

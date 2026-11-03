@@ -107,6 +107,32 @@ def t_shell():
     o = sh.run('type d.txt')
     check('pipe into a file', 'VOLUME IN DRIVE A IS LODESTONE' in o and 'A        TXT' in o, o)
     check('pipe files cleaned up', 'PIPE' not in sh.run('dir'))
+    sh.run('md tmp')
+    for tv in ('a:\\tmp', 'A:\\TMP\\'):                 # (a '\\' put between, or not)
+        sh.run('set temp=' + tv)
+        o = sh.run('dir tmp | upper')                  # (the pipe's file there while DIR runs)
+        o2 = sh.run('dir | upper')
+        check('TEMP=%s: the pipe\'s file in it (PIPEA1.$$$ in DIR TMP\'s own output), none in the root' % tv,
+              'PIPEA1   $$$' in o and 'PIPEA1' not in o2 and 'VOLUME IN DRIVE A' in o2, (o, o2))
+        check('... cleaned up there', 'PIPE' not in sh.run('dir tmp'))
+    sh.run('set temp=a:')                              # (a drive alone: its root)
+    o = sh.run('dir | upper')
+    check('TEMP=a: (a drive alone): the pipe\'s file in A:\\', 'PIPEA1   $$$' in o and 'PIPE' not in sh.run('dir'), o)
+    sh.run('set temp=a:\\nope')
+    o = sh.run('echo hi | upper')
+    check('TEMP=a:\\nope (no such directory): the pipe fails with DOS\'s error, nothing left',
+          'File creation error' in o and not re.search(r'^(hi|HI)\s*$', o, re.M) and 'PIPE' not in sh.run('dir')
+          and not k.crashed, o)
+    sh.run('set temp=a:\\' + 'x' * 70)
+    o = sh.run('echo hi | upper') + sh.run('ver')
+    check('TEMP of 72 characters (64 taken): the pipe fails cleanly, the next command runs',
+          'File creation error' in o and 'Lodestone version' in o and not k.crashed, o)
+    sh.run('set temp=a:\\tmp')
+    o = sh.run('set temp=a:\\ | upper')                # (TEMP changed while its pipe runs)
+    check('SET TEMP= inside a pipe: its files where TEMP was when it started, both cleaned up there',
+          'PIPE' not in sh.run('dir') + sh.run('dir tmp') and 'not found' not in o, o)
+    sh.run('set temp=')
+    sh.run('rd tmp')
     sh.run('md sub')
     check('MD, CD', 'A:\\SUB>' in sh.run('cd sub'))
     o = sh.run('copy ..\\a.txt')
@@ -2044,6 +2070,9 @@ def t_command():
                 bat('O3.BAT', '@echo off', 'for %%d in (1 2) do call i3 %%d'),
                 bat('I3.BAT', '@echo off', 'for %%e in (a b) do echo in %1 %%e'),
                 bat('I7.BAT', '@echo off', 'echo abc | upper'),
+                bat('I8.BAT', '@echo off', 'echo abc | upper', 'upper'),
+                bat('ST.BAT', '@echo off', 'set temp=a:\\tmp2', 'echo abc | upper', 'upper'),
+                bat('SUB\\TT.BAT', '@echo off', 'set temp=a:\\tmp2', 'dir tmp2 | upper', 'set temp=', 'dir tmp2 | upper'),
                 bat('SH.BAT', '@echo off', 'shift', 'type nosuch.x'),
                 bat('CS.BAT', '@echo off', 'choice /c:yn /s Case'))
     k = ktest.KPC(img); k.start()
@@ -2109,6 +2138,26 @@ def t_command():
     o = sh.run('echo zzz | call i7')
     check('a pipe in a batch file CALLed in a pipe: its own pipe files', 'ABC' in o and 'creation' not in o
           and 'PIPE' not in sh.run('dir'), o)
+    o = sh.run('echo zzz | call i8')
+    check('... the outer pipe\'s input still there after the inner pipe (UPPER after it reads zzz)',
+          'ABC' in o and 'ZZZ' in o and 'PIPE' not in sh.run('dir'), o)
+    sh.run('md tmp2')
+    for tv in ('', 'a:\\tmp2'):
+        sh.run('set temp=' + tv)
+        o = sh.run('echo abc | upper | upper | upper')
+        check('three pipes (TEMP=%s): each its own file, ABC through all of them, none left' % (tv or 'none'),
+              'ABC' in o and 'PIPE' not in sh.run('dir') + sh.run('dir tmp2'), o)
+    sh.run('set temp=')
+    o = sh.run('echo zzz | call st')                   # (SET TEMP= in a batch file CALLed in a pipe)
+    check('SET TEMP= in a batch file CALLed in a pipe, a pipe of its own after: all of them in the root '
+          '(TEMP read when the outer pipe began), the outer input still read, none left', 'ABC' in o and 'ZZZ' in o
+          and 'PIPE' not in sh.run('dir') + sh.run('dir tmp2'), o)
+    sh.run('set temp=')
+    o = sh.run('call sub\\tt')                         # (CALLed: its lines with no prompt between)
+    check('a batch file CALLed: TEMP set, a pipe; TEMP removed, a pipe: the first\'s file in TMP2, the second\'s not '
+          '(TEMP read again by each line\'s pipe; PIPEB: a level in)', o.count('PIPEB1   $$$') == 1 and o.count('DIRECTORY OF  A:\\TMP2') == 2
+          and 'PIPE' not in sh.run('dir tmp2'), o)
+    sh.run('rd tmp2')
     o = sh.run('if exist sub\\nul echo DIRNUL')
     o2 = sh.run('if exist ex.bat\\nul echo FILENUL')
     check('IF EXIST dir\\NUL: a directory (not a file)', 'DIRNUL' in o and 'FILENUL' not in o2, (o, o2))

@@ -600,7 +600,7 @@ Joshua's aim: a command prompt resident Claude can script against, as Claude Cod
   - **Unlike DOS 3.30:** a DEL or a CD that works after a program resets ERRORLEVEL to 0.
   - An error in a batch file says where: `BUILD line 7: File not found`.
   - A shell reading commands from a file (`LCMD < S.TXT`) ends at the file's end.
-- **Redirection and pipes nest:** a FOR's or a CALLed file's own redirection is a level of its own (12 at most), undone level by level, and after Ctrl-C too. Each level's pipe files have their own names (`\PIPEx1.$$$`).
+- **Redirection and pipes nest:** a FOR's or a CALLed file's own redirection is a level of its own (12 at most), undone level by level, and after Ctrl-C too. Each level's pipe files have their own names (`\PIPEx1.$$$`). Since 2026-11-03 they go in %TEMP% when it is set (docs/lodestone-rom.md), else the current drive's root.
 - **COPY** reads and writes up to 64 KB at a time, in a block taken from free memory while it runs; it was 4 KB, kept in LCMD all the time.
   - A 300 KB copy on the floppy, in the emulator's disk model: 35.8 s before, 22.8 s now.
   - TYPE reads 512 bytes at a time as before, so a bad sector costs no more of the text.
