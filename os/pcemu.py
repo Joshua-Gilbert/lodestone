@@ -56,7 +56,17 @@ R = {n: getattr(X, 'UC_X86_REG_' + n.upper()) for n in
 INT08 = bytes([0x50, 0x1E, 0x31, 0xC0, 0x8E, 0xD8, 0xFF, 0x06, 0x6C, 0x04, 0x75, 0x04,
                0xFF, 0x06, 0x6E, 0x04, 0xCD, 0x1C, 0xB0, 0x20, 0xE6, 0x20, 0x1F, 0x58, 0xCF])
 PIC_ISR = os.environ.get('PIC_ISR') == '1'
+FD_STRICT = os.environ.get('FD_STRICT') == '1'  # (fd_wait: an INT 13h while one waits, or a transfer whose EMS
+                                                #  window changed under it, is a crash, so any test shows it)
 IRQEOI = bytes([0x50, 0xB0, 0x20, 0xE6, 0x20, 0x58, 0xCF])
+# fd_wait (M10): a floppy transfer takes time, as on the 1520.  INT 13h's
+# wait (the BIOS's FdWaitInt, F000:1400): STI, INT 15h AX=9001h (CF back:
+# a time-out), then 40:3Eh bit 7 polled (4 x 64 Ki loops, about 2 s, its
+# time-out), its result from OUT E0h (AL 0 done, 1 timed out), RETF 2.
+# IRQ 6 (IntE_Actual, F000:1300): bit 7 set, EOI, INT 15h AX=9101h
+FDWAIT = bytes.fromhex('fb1e5153b80190f8cd15721531c08ed8bb040031c9f6063e04807509e2f74b75f2'
+                       'b001eb0780263e047fb000e6e05b591fca0200')
+IRQ6 = bytes.fromhex('501e31c08ed8800e3e0480b020e620b80191cd151f58cf')
 IRET = bytes([0xCF])
 
 
@@ -338,8 +348,15 @@ class Ata:
 class PC:
     def __init__(s, a=None, b=None, chip=None, start=datetime.datetime(2026, 10, 4, 21, 30, 0), mem_kb=640,
                  disk_model='flat', ems_pages=0, ems_alias=False, ata=None, float_bus=False, roms=None,
-                 irq_exact=False):
-        s.irq_exact = irq_exact         # an IRQ held under CLI taken when IF is set again (run())
+                 irq_exact=False, fd_wait=False):
+        s.irq_exact = irq_exact
+        # fd_wait (M10): a floppy's INT 13h read, write or verify waits in
+        # real code (FDWAIT) for IRQ 6 at its end, when its data moves (the
+        # DMA: through the EMS windows as they are then), as on the 1520
+        s.fd_wait = fd_wait or os.environ.get('FD_WAIT') == '1'     # (FD_WAIT=1: every test so)
+        s.fd_op = None; s.fd_at = float('inf'); s.fd_res = None
+        s.fd_reentry = 0; s.fd_timeouts = 0; s.fd_ops = 0
+        s.fd_frame_bad = 0              # (transfers in the EMS frame whose windows changed under them)         # an IRQ held under CLI taken when IF is set again (run())
         s.mu = mu = Uc(UC_ARCH_X86, UC_MODE_16)
         mu.mem_map(0, 0x110000)
         s.ems_pages = ems_pages; s.ems_alias = ems_alias
@@ -407,9 +424,12 @@ class PC:
         s.mu.mem_write(STUB * 16 + 0x1000, INT08)
         s.mu.mem_write(STUB * 16 + 0x1100, IRQEOI)
         s.mu.mem_write(STUB * 16 + 0x1200, IRET)
+        s.mu.mem_write(STUB * 16 + 0x1300, IRQ6)
+        s.mu.mem_write(STUB * 16 + 0x1400, FDWAIT)
         s.mu.mem_write(8 * 4, struct.pack('<HH', 0x1000, STUB))
         for n in list(range(9, 0x10)) + list(range(0x70, 0x78)):
             s.mu.mem_write(n * 4, struct.pack('<HH', 0x1100, STUB))
+        if s.fd_wait: s.mu.mem_write(0x0E * 4, struct.pack('<HH', 0x1300, STUB))
         for n in (0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x0, 0x1, 0x3, 0x4, 0x5):
             s.mu.mem_write(n * 4, struct.pack('<HH', 0x1200, STUB))
         for n in range(0x20, 0x100):
@@ -511,8 +531,9 @@ class PC:
         if s.us >= s.due_at:
             s.due_at = float('inf')
             if s.on_due: s.on_due()
+        if s.us >= s.fd_at: s.fd_done()
         s.chip_int()
-        s.next_event = min(s.next_tick, s.due_at)
+        s.next_event = min(s.next_tick, s.due_at, s.fd_at)
 
     def chip_int(s):
         """IRQ 5 on the rising edge of the 7210's INT (the GPIB cartridge's E1 jumper), for a chip that models
@@ -700,6 +721,14 @@ class PC:
             if s.ata.timed: s.us += s.ata.pio_us
             return s.ata.write(port, val & 0xFFFF, s.us, size)   # (a word: OUTSW)
         val &= 0xFF
+        if port == 0xE0 and s.fd_wait:                  # (FDWAIT's end: the result)
+            if val == 0 and s.fd_res is not None:
+                ax, c = s.fd_res; s.w('ax', ax); s.cf(c)
+            else:                                       # timed out: the transfer dropped
+                s.fd_timeouts += 1; s.fd_at = float('inf'); s.irq_pending.discard(6)
+                s.w('ax', 0x8000); s.cf(1)
+            s.fd_op = None; s.fd_res = None
+            return
         if port in (0xF0, 0xF1): s.fpu_ports.append(port); return
         if port == 0x70: s.cidx = val & 0x7F; return
         if port == 0x71:
@@ -941,7 +970,14 @@ class PC:
             else: s.w('ax', 0); s.cf(0)
             return
         if ah in (0x17, 0x18): s.w('ax', 0); s.cf(0); return
+        if ah in (2, 3, 4) and s.fd_wait and s.fd_op is not None:
+            s.fd_reentry += 1                           # (M10: a second call while one waits: the
+            s.log.append('[INT 13h AH=%02Xh while one waits]' % ah)    #  controller's in use)
+            if FD_STRICT: s.crash = 'INT 13h AH=%02Xh while one waits (fd_wait)' % ah
         if ah in (2, 3, 4) and d.empty:
+            if s.fd_wait and s.fd_op is None:           # (no IRQ comes: the BIOS's wait times out)
+                s.fd_op = {'ah': ah, 'empty': True}; s.fd_ops += 1
+                s.wr(0, 0x43E, bytes([s.rd(0, 0x43E, 1)[0] & 0x7F])); s.fd_enter(); return
             s.w('ax', 0x8000); s.cf(1); return          # time-out: no disk
         if ah in (2, 3, 4):
             cx, dx = s.r('cx'), s.r('dx')
@@ -957,6 +993,17 @@ class PC:
             if ah != 4 and lin >= 0xA0000 and not s.in_frame(lin, al * 512):
                 s.w('ax', 0x0900); s.cf(1); return        # DMA can't reach video/ROM (the EMS frame it can)
             lba = (c * d.heads + h) * d.spt + sct - 1
+            if s.fd_wait and s.fd_op is None:
+                t0 = s.us
+                if s.disk_model == 'real': s.disk_time(d, c, sct, al); t = s.us; s.us = t0
+                else: t = t0 + 2000 * al
+                s.fd_op = {'ah': ah, 'd': d, 'lba': lba, 'n': al, 'lin': lin, 't0': t0,
+                           'regs': list(s.ems_reg) if s.ems_pages else None}
+                s.fd_ops += 1
+                s.fd_at = t; s.next_event = min(s.next_event, t)
+                s.wr(0, 0x43E, bytes([s.rd(0, 0x43E, 1)[0] & 0x7F]))
+                s.fd_enter()                            # (FDWAIT: the BIOS's wait for IRQ 6)
+                return
             if ah == 2 and d.bad.intersection(range(lba, lba + al)):
                 good = min(d.bad.intersection(range(lba, lba + al))) - lba
                 s.dma_write(lin, bytes(d.img[lba * 512:(lba + good) * 512]) + b'\xEE' * 512)   # (bad data DMA'd anyway)
@@ -969,6 +1016,37 @@ class PC:
             else: s.us += 2000 * al
             s.w('ax', al); s.cf(0); return
         s.w('ax', 0x0100); s.cf(1)
+
+    def fd_enter(s):
+        """Into FDWAIT, as an INT's handler (its RETF 2 comes back here: the
+        caller's own INT, or the stub's, whichever called)."""
+        s.push(s.r('flags')); s.push(s.r('cs')); s.push(s.r('ip'))
+        s.w('cs', STUB); s.w('ip', 0x1400)
+
+    def fd_done(s):
+        """fd_wait: the transfer ends (its data moved now, through the EMS
+        windows as they are), and IRQ 6 is raised."""
+        s.fd_at = float('inf')
+        op = s.fd_op
+        if op is None or op.get('empty'): return
+        ah, d, lba, al, lin = op['ah'], op['d'], op['lba'], op['n'], op['lin']
+        if op['regs'] is not None and ah in (2, 3) and s.in_frame(lin, al * 512):
+            ws = range((lin - EMS_FRAME) // EMS_PAGE, (lin + al * 512 - 1 - EMS_FRAME) // EMS_PAGE + 1)
+            if any(op['regs'][w] != s.ems_reg[w] for w in ws):
+                s.fd_frame_bad += 1                     # (the DMA goes to other pages than the caller's)
+                s.log.append('[INT 13h transfer at %05X: its EMS window changed under it]' % lin)
+                if FD_STRICT: s.crash = 'INT 13h transfer at %05X: its EMS window changed under it' % lin
+        res = (al, 0)
+        if ah == 2 and d.bad.intersection(range(lba, lba + al)):
+            good = min(d.bad.intersection(range(lba, lba + al))) - lba
+            s.dma_write(lin, bytes(d.img[lba * 512:(lba + good) * 512]) + b'\xEE' * 512)
+            s.calls_bad = getattr(s, 'calls_bad', 0) + 1
+            res = (0x1000 | good, 1)
+        elif ah == 2: s.dma_write(lin, bytes(d.img[lba * 512:(lba + al) * 512]))
+        elif ah == 3: d.img[lba * 512:(lba + al) * 512] = s.dma_read(lin, al * 512)
+        if s.disk_model == 'real': s.t13.append((op['t0'], s.us, ah, 0, 0, 0, al))
+        s.fd_res = res
+        s.irq_pending.add(6); s.mu.emu_stop()
 
     def disk_time(s, d, c, sct, n):
         """Advance the clock as a real drive would for n sectors from (c, sct)."""
@@ -1225,10 +1303,11 @@ class PC:
         here = s.lin()
         s.halted = a + z == here and s.rd(0, here - 1, 1)[0] == 0xF4
         if (s.blocked or s.halted) and not s.deliverable():
-            if s.halted and s.due_at < s.next_tick:
-                # HLT and an event (the Pi's) before the tick: to the event; it may raise an IRQ (the 7210's
-                # SRQ: IRQ 5).  None: still halted, back onto the HLT
-                s.us = max(s.us, s.due_at); s.on_time()
+            ev = min(s.due_at, s.fd_at)
+            if s.halted and ev < s.next_tick:
+                # HLT and an event (the Pi's; fd_wait's floppy transfer ending) before the tick: to the event; it
+                # may raise an IRQ (the 7210's SRQ: IRQ 5; the floppy's: IRQ 6).  None: still halted, back onto the HLT
+                s.us = max(s.us, ev); s.on_time()
                 if not s.deliverable(): s.w('ip', s.r('ip') - 1)
             else:
                 s.sleep_to_tick()               # (an IRQ still waiting goes first,
