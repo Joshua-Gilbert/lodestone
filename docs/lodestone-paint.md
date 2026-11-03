@@ -255,11 +255,18 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
 
 | What | Size |
 |---|---|
-| `PAINT.RUN` on disk | 4,465 bytes (about 3.8 KB of code and data, the rest fixups) |
+| `PAINT.RUN` on disk | 4,645 bytes (4,465 in P1; W0 added 180: the patterns twice over, 64, the canvas's limits, the parity pads) |
 | Its BSS | 1.6 KB: the line table, the bit-count table, names |
 | Memory while it runs | 2 × 32,000 bytes from `UI_ALLOC` |
 | Resident | +32 bytes in the UI block: `ui_keep_end` 64C2h → 64E2h (on main at #132, 2026-11-02; 6164h → 6184h after #58, 6134h → 6154h before). The kernel's `image_end` / `bss_end` are unchanged. A pad after `confirm.x` (never run) makes the opener 10 bytes, so the Executive's code after it keeps its parity (9 bytes would have put `to_fcb`'s hot labels odd). |
 | MEMSZ | Unchanged: 564.8 KB without EMS, 580.9 KB with it, on main at #132 (566.2 / 582.3 after #58). Paint's 32 bytes don't cross a rounding step. `test_mt`'s `OFF_MAP` pin is moved (64E2h). |
+
+**W0 (2026-11-02), the preparation for Paint in a window (MULTITASK=1), nothing seen to change:**
+- the patterns are kept twice over (16 bytes each), and `curpat` starts a fill at `pph` (0-7) into one, so that in a scrolled window a fill can follow the picture's lines, not the screen's (`pph` 0: as before);
+- the canvas is `clx0`-`clx1` by `cly0`-`cly1` (0-639 by 0-399, the whole screen): `dot` cuts the brush and the eraser there, not at the screen's edges;
+- a stroke's points come from `sample` (HLT, then INT 33h function 3, as before) and are clamped to the canvas by `clamp`, the press too (the driver keeps them on the screen anyway);
+- the hot code on even offsets (the 286 fetches a word at a time): a pad (never run) before `plot`, `line`, `fillrect`, `frame`, `dot`, `band_fix` and `commit`, so each starts even wherever the code before it moves; `line`'s `xor bp, bp` is `mov bp, 0` (one byte more, as fast), so its loop's targets are even too; `EVEN` (EVEN.INC) stops the build if one goes odd. P1 had `line`, `fillrect` (its row loop, `.xor`, `.last`, `.put`) and `dot` odd. `fillrect.next` stays odd: even, the wide fills' path through `.last` would run a NOP each line, and it is a jump's target only for fills one byte wide;
+- the speeds are as before: undo and the whole picture 15.0 ms, a stroke's end 15.0, a 640-pixel line 5.2, a full-screen box 22.6 (pcemu doesn't charge for odd targets; the 1520 does).
 
 **Where it differs from the plan:**
 - **The mouse: `UI_EVENT` between strokes, INT 33h only during one.**
@@ -284,7 +291,7 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
   - Shift to constrain lines and boxes;
   - an Open form inside Paint (pictures come from the Executive);
   - PgUp / PgDn through a directory.
-- **The ROM:** `PAINT.RUN` is on ROM 2, the application ROM (decided 2026-10-23), not ROM 1: 9 sectors of R:. Started from the ROM, Return on a `.BMP` finds it through PATH (`C:\LODE;R:\`, a copy in C:\LODE first). With ROM 1 alone it says "PAINT.RUN is not on this disk" unless `PAINT.RUN` is in the subject or the PATH. `os/build.sh` builds it with the other `.RUN` programs; `t_rom2` and `t_rom2_paint` check it.
+- **The ROM:** `PAINT.RUN` is on ROM 2, the application ROM (decided 2026-10-23), not ROM 1: 10 sectors of R: (9 before W0). Started from the ROM, Return on a `.BMP` finds it through PATH (`C:\LODE;R:\`, a copy in C:\LODE first). With ROM 1 alone it says "PAINT.RUN is not on this disk" unless `PAINT.RUN` is in the subject or the PATH. `os/build.sh` builds it with the other `.RUN` programs; `t_rom2` and `t_rom2_paint` check it.
 
 **Speed (pcemu's 286 model, checked by `t_paint_bmp`):**
 
