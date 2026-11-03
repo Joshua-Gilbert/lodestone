@@ -1,6 +1,6 @@
-# Paint: a fast painter and BMP viewer for Lodestone (plan, 2026-10-21)
+# Paint: a fast painter and BMP viewer for Lodestone (plan, 2026-10-21; P1 built)
 
-**Status:** a plan only; nothing is built yet. It was written on branch `worktree-paint-plan`, off main at 3a4235e (after #55).
+**Status:** P1 is built on branch `claude/paint`, rebased onto main at #132 (4411f75), and is on ROM 2. §10 says what was built and where it differs from the plan below. P2's scope is decided after P1; P3 starts with 4-bit BMPs.
 
 **The ask:** Paint as a Lodestone application. It should be very fast, double as a BMP viewer, use little space, and reuse as much existing code as possible.
 
@@ -50,7 +50,7 @@ If the second buffer can't be allocated (MT with a small region, a TSR in the wa
   - Paint's redraw routine copies C to the screen and sets a flag.
   - Paint's loop sees the flag after `UI_POLL` and the other calls that wait (`UI_EVENT`, `UI_HELP`, `UI_FORM`), and copies C's lines 360–399 back. If a window is open, this waits until it closes.
   - The band shows for a few milliseconds.
-- The alternative is a core guard ("no band when both lines are 0", about 10 B resident, API 7). It would change how a program that sets a blank band redraws, so it is not proposed.
+- The alternative is a core guard ("no band when both lines are 0", about 10 B resident, a new API version). It would change how a program that sets a blank band redraws, so it is not proposed.
 
 **Invariants:**
 - **What goes into C:** a commit (screen → C) happens only with the pointer hidden (INT 33h function 2) and no window open. Otherwise the pointer or a window would end up in the picture.
@@ -60,16 +60,16 @@ If the second buffer can't be allocated (MT with a small region, a TSR in the wa
 **Under MULTITASK=1:** Paint writes video memory directly. In the background it is frozen like any direct-writing DOS program, as the approved multitasking design does.
 
 ### The mouse: INT 33h, no core change
-`UI_EVENT` and `UI_POLL` report only left-button presses. A painter also needs motion, releases and the button state. The core's own INT 33h driver already provides them:
+`UI_EVENT` and `UI_POLL` report only presses: the left button's, and since UI API 7 (PR #58) the right one's as `EV_RCLICK`, to a `.RUN` that needs API 7. Paint declares API 6 for now. A painter also needs motion, releases and the button state. The core's own INT 33h driver already provides them:
 - `int33_ui` is installed at start-up (`m33_hook`), and `mouse_isr` calls `m33_pkt` on every packet, whoever is running.
 - **Function 0** in the UI's context leaves `mbase` alone (it calls `mouse_on` only when the mouse is off) and resets the virtual screen to 0–639 × 0–399 in mode 40h (`m33_maxy`).
 - **Function 0Fh with CX = DX = 8** makes motion 1:1, as the Executive's pointer moves. The default is half speed vertically.
 - **Function 3** returns the position and buttons.
 - **Functions 1 and 2** show and hide the driver's own mode-40h pointer. Paint hides it around each piece of drawing, so the pointer never ends up in C.
 - **Function 9** sets the pointer's shape, so each tool can have its own pointer (crosshair, pencil, eraser box) at no core cost.
-- **Under MULTITASK=1,** `mt_i33` passes calls from the front task straight through (KMT.INC:1627). Paint runs in the Executive's task, so it uses the driver directly. One test (§8) checks that switching away and back while Paint holds the driver keeps `mt_33ot` / M4c's "another driver" logic right.
+- **Under MULTITASK=1,** `mt_i33` passes calls from the front task straight through (KMT.INC:1627). Paint runs in the Executive's task, so it uses the driver directly. §8 planned a test that switching away and back while Paint holds the driver keeps `mt_33ot` / M4c's "another driver" logic right; it isn't written yet (`t_paint_bmp` checks strokes, the saver and Return on a `.BMP` under MULTITASK=1, not CODE-Tab).
 - **Paint's own loop** is `UI_POLL` (keys, saver, Shift-PrtSc, the CODE-Tab hot key), then function 3, then HLT. On exit it calls function 2 and then function 0, so the Executive starts with a clean driver. One known cosmetic effect: the Executive's arrow comes back where it was before Paint ran, because the UI's own position isn't reachable through the API.
-- **Fallback, only if a check in §8 fails:** a `UI_MOUSE` API entry (about 15 B resident, API 7). It would be put to Joshua with the byte count first.
+- **Fallback, only if a check in §8 fails:** a `UI_MOUSE` API entry (about 15 B resident, a new API version). It would be put to Joshua with the byte count first.
 
 ### Reuse map
 
@@ -190,7 +190,7 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
    - `confirm`'s `.write` branch becomes "opener ≥ 3: path the file, SI = `[apps + 2·(AL − 3)]`", with `apps dw s_write, s_paint` and `s_paint db 'PAINT.RUN', 0`.
    - About **30 B** in the UI block, so `ui_keep_end` moves by about 2 paragraphs and MEMSZ by about −0.03 KB. The exact numbers go in the PR, and the MT branches get the new OFF_MAP pins.
    - `kind_of`'s other callers (EXEC.INC:541, 2714, 2780) only show the kind's string, so opener 4 doesn't affect them. This was checked.
-2. **An Executive hot key (optional, §9):** CODE-G "Paint", one `KEY()` entry, a help line and a 4-byte handler, about **45 B**. CODE-P is taken (the command prompt). CODE-G is free in `ex_keys`, and the help has room (14 of 18 lines used).
+2. **An Executive hot key (optional, §9):** CODE-G "Paint", one `KEY()` entry, a help line and a 4-byte handler, about **45 B**. CODE-P is taken (the command prompt). CODE-G is free in `ex_keys`, and the help had room (14 of 18 lines used, before main's menus, #58 on).
 3. **Nothing in the kernel, and no new UI API.** RUN_API stays 6, so PAINT.RUN runs on 0.6's LODE.SYS too.
 
 ## 7. Delivery: one PR each, every one paneled before it's reported
@@ -208,7 +208,7 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
   - packets move function 3's position 1:1;
   - the buttons show on press and release;
   - after exit the Executive's pointer and list are as before.
-  - With `MULTITASK=1`: Paint in front, CODE-Tab away and back, and `mt_33ot` and the background task's own mouse are still right.
+  - With `MULTITASK=1`: strokes, the saver and Return on a `.BMP`. (CODE-Tab away and back with `mt_33ot` was planned and isn't tested yet.)
   - A `mouse=False` run uses keyboard drawing.
 - **Bit-for-bit drawing:** injected packets (and keyboard strokes) against a Python reference model (Bresenham, spans, patterns, ellipse, fill) that renders the same integer rules, as `mksplash.render` does for the splash. All 256,000 pixels are compared.
 - **Round trip:** Shift-PrtSc's `SCREEN01.BMP` → Paint → CODE-T → the bytes are identical to the capture. A Pillow-made 1-bit BMP shows exactly as Pillow reads it.
@@ -233,7 +233,124 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
 ## 9. Decisions for Joshua
 1. **Deeper-colour BMPs (P3):** decided, 4-bit first (§4).
 1a. **The Executive's `.BMP` opener:** decided, in P1 (Return on a `.BMP` opens it in Paint, about 30 B resident, §6).
-2. **CODE-G "Paint" in the Executive:** +≈ 45 B resident? Without it, Paint starts from its file in the list, or from a `.BMP`.
+2. **CODE-G "Paint" in the Executive:** left out for now (Joshua, 2026-10-21).
 3. **Polarity:** decided, dark paper by default (§4).
-4. **Undo memory:** 64 KB while Paint runs (both buffers). Without U, 32 KB and no undo.
+4. **Undo memory:** decided, 64 KB while Paint runs (both buffers).
 5. **P2's scope:** decided after P1 is built.
+
+## 10. P1 as built (2026-10-21)
+
+**Files:**
+
+| File | What changed |
+|---|---|
+| `os/apps/PAINT.ASM` | → `PAINT.RUN`, built by `mkrun.py`, `RUN_API 6` |
+| `os/src/EXEC.INC` | `'BMP'` is kind "Picture", opener 4; `confirm`'s Write branch takes opener 3 or 4 |
+| `os/tests/test_apps.py` | `t_paint`, `t_paint_bmp`, `t_paint_more` |
+| `os/tests/test_mt.py` | the `OFF_MAP` pin |
+| `os/build.sh` | `PAINT.RUN` with the other `.RUN` programs, and on ROM 2 (`LODE2.BIN`) |
+| `os/tests/test_rom.py` | `t_rom2`: ROM 2's files; `t_rom2_paint`: a `.BMP` on C: opened from the ROM |
+
+**Sizes:**
+
+| What | Size |
+|---|---|
+| `PAINT.RUN` on disk | 4,465 bytes (about 3.8 KB of code and data, the rest fixups) |
+| Its BSS | 1.6 KB: the line table, the bit-count table, names |
+| Memory while it runs | 2 × 32,000 bytes from `UI_ALLOC` |
+| Resident | +32 bytes in the UI block: `ui_keep_end` 64C2h → 64E2h (on main at #132, 2026-11-02; 6164h → 6184h after #58, 6134h → 6154h before). The kernel's `image_end` / `bss_end` are unchanged. A pad after `confirm.x` (never run) makes the opener 10 bytes, so the Executive's code after it keeps its parity (9 bytes would have put `to_fcb`'s hot labels odd). |
+| MEMSZ | Unchanged: 564.8 KB without EMS, 580.9 KB with it, on main at #132 (566.2 / 582.3 after #58). Paint's 32 bytes don't cross a rounding step. `test_mt`'s `OFF_MAP` pin is moved (64E2h). |
+
+**Where it differs from the plan:**
+- **The mouse: `UI_EVENT` between strokes, INT 33h only during one.**
+  - Between strokes Paint waits in `UI_EVENT`, as every program does. So the core's arrow shows, the saver and the windows work, and under `MULTITASK=1` the core's idle point (`..@ui_idle`) is still where tasks switch.
+  - A press (EV_CLICK) starts a stroke. Function 4 puts the driver's position where the press was, and function 3 then follows the position and button until it comes up (`sti` / `hlt` between samples). Functions 1, 2 and 9 aren't used, so there are no per-tool pointers.
+  - Paint declares API 6, so it gets no right clicks yet: the right button doesn't erase (E does). Since UI API 7 (#58) the core can report it (`EV_RCLICK`), so a right-drag to erase is a step of its own.
+  - Without a mouse, Paint shows pictures and takes every key, but has no keyboard drawing.
+- **The band after the saver: a key of Paint's own.**
+  - The redraw routine shows C, then, when Paint is in its own `UI_EVENT` (`in_ev`), puts `K_MEND` (FF00h) in the BIOS's buffer with INT 16h AH=05h. The wait ends at once and the main loop puts lines 360–399 back from C. It does that after every key and every dialog anyway.
+  - It costs no resident bytes. If a BIOS has no AH=05h, the band only stays until the next key.
+- **Drawing:**
+  - `plot` and lines are solid; patterns are only for fills.
+  - A 1-pixel line has its pixel inline (the `PIXEL` macro), with no call per point.
+  - `fillrect` works out its edge masks once a box and fills the bytes between a word at a time.
+  - `frame` is two one-line fills and the sides.
+- **Loading:**
+  - Every 1-bit file is read in one `3Fh` into U, then placed in C, so the native size isn't a special case.
+  - Bits past the width are cleared.
+  - Polarity: the kernel's own palette (exact bytes) keeps the picture as saved. Otherwise the lit bits are counted with a 256-byte table and, if more than half are lit, the picture is placed again inverted.
+- **Saving** always writes 640 × 400 in Shift-PrtSc's format, through `NAME.$$$` and a rename, as Write does. A smaller picture saved over its own name grows to the full screen.
+- **Not in P1:**
+  - Shift to constrain lines and boxes;
+  - an Open form inside Paint (pictures come from the Executive);
+  - PgUp / PgDn through a directory.
+- **The ROM:** `PAINT.RUN` is on ROM 2, the application ROM (decided 2026-10-23), not ROM 1: 9 sectors of R:. Started from the ROM, Return on a `.BMP` finds it through PATH (`C:\LODE;R:\`, a copy in C:\LODE first). With ROM 1 alone it says "PAINT.RUN is not on this disk" unless `PAINT.RUN` is in the subject or the PATH. `os/build.sh` builds it with the other `.RUN` programs; `t_rom2` and `t_rom2_paint` check it.
+
+**Speed (pcemu's 286 model, checked by `t_paint_bmp`):**
+
+| Operation | Time |
+|---|---|
+| The whole picture to the screen (undo, after the saver) | 15.0 ms |
+| A stroke's end (the screen into C) | 15.0 ms |
+| A 640-pixel line | 5.2 ms (10.3 ms before the pixel was inline) |
+| A full-screen box with a pattern | 22.6 ms (27.0 ms with a call and masks per line) |
+
+The copies are `REP MOVSW`, the floor. The checks allow 16, 16, 6 and 25 ms.
+
+**During a stroke** Paint waits with HLT and doesn't call INT 16h. Under `MULTITASK=1` that means two things, both safe (the re-review checked):
+- CODE-Tab is seen only when the button comes up.
+- No other task runs while the button is down.
+
+**Tests (87 checks; 3 more in test_rom's `t_rom2_paint`, 90 in all):** `t_paint`, `t_paint_bmp` and `t_paint_more` cover:
+- Every tool (pencil, line, box, filled box with patterns, brush, eraser, sizes) against `PaintModel`, a Python model with the same integer rules. All 256,000 pixels are compared, of C and of the screen (but for the pointer).
+- Undo and redo; Invert; the tools' window (clicks, keys); help.
+- The saver, with the band mended; Transfer byte for byte; Return on a `.BMP`, View, ESC and CODE-Q.
+- Shift-PrtSc's picture round trip.
+- Eight other programs' 1-bit files: polarity, top-down, odd widths, `bfOffBits`, a 124-byte header.
+- Nine refused files; without a mouse; `MULTITASK=1` (strokes, the saver, the band).
+- The four speeds.
+
+**The review panel (three reviewers: the asm, the integration, the tests) found, all fixed with a test each:**
+- **A key in the tools' window:** U, I or CODE-E ran before the window closed. The window's save-under then put back a patch of the old picture, which the next stroke committed into C. Now the window closes first.
+- **The start-up hint swallowed** the click or key that dismissed it. Now that click starts a stroke, and the key goes to the key table. ESC, or a click on the band where the hint is, only dismisses it.
+- **`K_MEND` typed ahead:** a key typed before the saver's end came out ahead of `K_MEND`, so `K_MEND` could reach the tools' window (closing it) or a form. Now `K_MEND` goes only into an empty buffer (INT 16h AH=11h first).
+- **The redraw routine was set before the load**, so a failed load with the saver could show the uninitialised C. The failed-load exit also skipped the INT 33h reset. Both fixed.
+- **The brush and eraser at the edges** were moved inward at the left and top, but cut at the right and bottom. Now they are centred and cut on all four sides.
+- **A press right after the saver**, before the band was mended, would have committed the core's band into C (found by the re-review). Now the redraw routine sets `mend`, `band_fix` clears it, and a stroke mends the band first when it is set. Otherwise a stroke costs nothing extra. Tested with a poke.
+- **Tests added:**
+  - strokes past every edge;
+  - Erase;
+  - CODE-Q on a new picture (the name form);
+  - a save that fails (read-only: the message, still in Paint, no `.$$$` left);
+  - a picture in a subject;
+  - the Executive's mouse after Paint;
+  - the saver checks now assert that the core's `saver` actually ran;
+  - the multitasking check asserts that INT 16h goes through MT;
+  - refused files leave memory as it was.
+
+**Not tested here:**
+- the "Paint needs 63 KB" path;
+- a failed load while the saver runs;
+- a BIOS without INT 16h AH=05h (then the band stays until the next key).
+
+**Mutation checks:** each of these mutations made at least one check fail:
+1. no `K_MEND`;
+2. no band repair;
+3. never invert;
+4. bits past the width kept;
+5. top-down read as bottom-up;
+6. a fill's edge ignoring A;
+7. no commit;
+8. a shown file drawing;
+9. undo without the swap;
+10. the rubber band not taken off;
+11. the kernel's palette not recognised;
+12. a short file accepted.
+
+After the review, six more, each caught by its own new check:
+1. the window closed after the key;
+2. `K_MEND` behind a key typed ahead;
+3. the hint's click dropped;
+4. the dot moved in at the left and top;
+5. a stroke ignoring `mend`;
+6. a click on the hint's band drawing.
