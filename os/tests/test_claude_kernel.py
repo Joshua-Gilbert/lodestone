@@ -815,6 +815,31 @@ T.test_in_place_resend = test_in_place_resend
 T.test_in_place_read_damaged = test_in_place_read_damaged
 T.test_in_place_new_message = test_in_place_new_message
 
+def test_run_temp_setting():
+    """TEMP= in LODE.INI (KSPLASH.INC's te_boot: the environment's TEMP, as the ROM's LODE.INI has M:\\):
+    a captured RUN's output goes to M:\\CLAUDE.OUT, read back and deleted there.  Without EMS there is no M:,
+    so no TEMP: the capture goes to the current drive's root, as before."""
+    from test_emu import CFG_C
+    import test_apps as A
+    for ems in (88, 0):
+        h = T.EmuHarness([T.reply(('tool', 'grid_command', {'command': 'DIR'})), T.reply(('text', 'Done.'))],
+                         mode='auto', ems_pages=ems, files={'A:\\LODE.INI': b'TEMP=M:\\\r\n', 'A:\\CFG.C': CFG_C})
+        h.boot()
+        env = h.m.u16(h.claude_psp, 0x2C)
+        assert (b'\0TEMP=M:\\\0' in h.m.rd(env, 0, 512)) == bool(ems), h.m.rd(env, 0, 128)
+        assert h.connect(), ('no connection', h.m.crash)
+        assert h.turn('what is on the disk?')
+        res = T.results(h, 1)[0]
+        text, out = str(res['content']), 'M:\\CLAUDE.OUT' if ems else 'A:\\CLAUDE.OUT'
+        assert any(('/C DIR >%s]' % out) in str(l) for l in h.m.log), (out, h.m.log)
+        assert 'CFG' in text and not res.get('is_error'), text
+        assert 'A:\\CLAUDE.OUT' not in h.m.fs, sorted(h.m.fs)
+        if ems: assert A.md_pages(h.k) > 0 and 'M:\\CLAUDE.OUT' not in A.md_files(h.k), A.md_files(h.k)
+        T.check(h)
+
+
+T.test_run_temp_setting = test_run_temp_setting
+
 if __name__ == '__main__':
     names = [n for n in sorted(vars(T)) if n.startswith('test_')]
     want = [a for a in sys.argv[1:] if a.startswith('test')]

@@ -77,6 +77,10 @@ sp_boot:
         movsb
 .on:    call    rs_boot                 ; (KROM.INC: booted from the ROM)
         call    pr_boot                 ; PrtSc's printer driver
+        cmp     word [MDB(sp_next)], run_ui ; TEMP=: in the environment (with
+        jne     .tm                     ;  EMS, md_boot's, once M: is made)
+        call    te_boot
+.tm:
         call    gi_boot                 ; GPIBIRQ=0: GPIB's SRQ interrupt off
         call    fp_boot                 ; a coprocessor that can't store: none
         call    sp_wanted
@@ -250,6 +254,69 @@ pr_boot:
         stosb
 .x:     ret
 
+; TEMP=DIR in the settings (the first such line, the changes' before the
+; ROM's; "TEMP=": none) -> TEMP=DIR at the end of the master environment
+; (after rs_boot's), so every program's %TEMP%: CLAUDE.COM's CLAUDE.OUT
+; (the ROM's LODE.INI says M:\, not the current drive R:, X51).  The value
+; to a blank or the line's end, 64 characters at most.  A drive that isn't
+; there (M: off, or no EMS) sets none: CLAUDE.OUT on the current drive, C:
+; with the hard disk.  So with EMS md_boot calls it, M: made (or not), and
+; past md_split: the environment's 160 bytes hold COMSPEC, PATH, PROMPT
+; (50) and this (71).  DS = CS, ES = KSEG.
+te_boot:
+        call    ini_read                ; (KROM.INC: LODE.INI's, both)
+        mov     di, MDB(s_teeq)         ; "TEMP=" (any case)?
+        call    ini_key
+        jc      .x                      ; (no such line)
+        cmp     byte [si], ' '          ; ("TEMP=": none)
+        jbe     .x
+        cmp     byte [si+1], ':'        ; a drive: there?
+        jne     .ok
+        mov     dl, [si]
+        and     dl, 0DFh
+        sub     dl, 'A' - 1             ; (1 = A:)
+        push    si
+        push    ds
+        push    ss                      ; (its current directory into
+        pop     ds                      ;  bytes of the stack, f_47's most:
+        sub     sp, CWDLEN              ;  INT 21h 47h, 15 if the drive
+        mov     si, sp                  ;  isn't there)
+        mov     ah, 47h
+        int     21h
+        lea     sp, [si+CWDLEN]
+        pop     ds
+        pop     si
+        jc      .x
+.ok:    push    es
+        mov     es, [es:ex_env]
+        xor     di, di
+        xor     al, al
+        mov     cx, 160
+.e:     scasb                           ; (the empty string that ends it?)
+        je      .at
+        dec     di
+        repne   scasb                   ; past this string
+        jmp     .e
+.at:    dec     di
+        mov     bx, MDB(s_teeq)
+        mov     cx, 4                   ; "TEMP"
+.k:     mov     al, [bx]
+        inc     bx
+        stosb
+        loop    .k
+        mov     al, '='
+        stosb
+        mov     cx, 64
+.v:     lodsb
+        cmp     al, ' '
+        jbe     .z
+        stosb
+        loop    .v
+.z:     xor     ax, ax                  ; its NUL, and the environment's
+        stosw
+        pop     es
+.x:     ret
+
 ; \LODE.PIC into PIC_SEG:0000.  CF if there is none, or it isn't one: its
 ; signature, after a JMP SHORT, is "LODEPIC", 1, and the word after it is
 ; its length, exactly what was read (a cut-short copy isn't run).  DS = CS.
@@ -300,6 +367,7 @@ sp_load:
 s_speq  db      'SPLASH', 1Dh, 0        ; (as "SPLASH=" AND 0DFh)
 s_preq  db      'PRINTER', 1Dh, 0       ; (as "PRINTER=" AND 0DFh)
 s_gieq  db      'GPIBIRQ', 1Dh, 0       ; (as "GPIBIRQ=" AND 0DFh)
+s_teeq  db      'TEMP', 1Dh, 0          ; (as "TEMP=" AND 0DFh)
 s_prlode db     'C:\LODE\', 0
 s_prroot db     '@:\', 0
 s_sppic db      '@:\LODE.PIC', 0
