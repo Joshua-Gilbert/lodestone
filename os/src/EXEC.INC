@@ -632,7 +632,7 @@ run_shell:
         jnz     .d
         jmp     run_prog
 
-; CODE-A: Claude (CLAUDE.COM here, else in the root).  MULTITASK=1: a
+; CODE-A: Claude (CLAUDE.COM here, else by PATH: ui_findapp).  MULTITASK=1: a
 ; task, in a terminal window (T5d: CLAUDE 1.13 publishes its screen);
 ; Shift-CODE-A, and without the switch: full screen, as before
 run_claude:
@@ -663,7 +663,7 @@ run_write:
 .e:     mov     di, s_empty
         ; (falls through)
 
-; the .RUN named SI (here, else in the root) with argument DI
+; the .RUN named SI (here, else by PATH: ui_findapp) with argument DI
 run_named:
         push    si
         call    ui_findapp
