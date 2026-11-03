@@ -7056,11 +7056,11 @@ def t_dwait():
     pc = k.pc
     check('a 300 KB copy at the prompt, MTSPIN counting behind (the 1520\'s drive timing: seeks, rotation): with M10 '
           'off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d (%d switches at 9001h, back in %d 9101h, %d IRQ 6s through '
-          'MT\'s hook): the waits given to MTSPIN, the copy a little slower (a switch back, ~1.5 ms, may miss the next '
-          'sector: a turn of the disk); both copies exact; no INT 13h while one waited, no transfer whose EMS window '
+          'MT\'s hook): the waits given to MTSPIN, the copy within 10%% (a switch back is ~1.5 ms); both copies '
+          'exact; no INT 13h while one waited, no transfer whose EMS window '
           'changed under it, no time-out' % (t_off, c_off, t_on, c_on, dw.n['mt_dcan.y'], dw.n['mt_dready'],
                                                 dw.n['mt_i0e']),
-          ok0 and ok1 and sw0 == 0 and dw.n['mt_dcan.y'] >= 20 and c_on > 5 * c_off and t_on < 1.25 * t_off
+          ok0 and ok1 and sw0 == 0 and dw.n['mt_dcan.y'] >= 20 and c_on > 5 * c_off and t_on < 1.10 * t_off
           and pc.fd_reentry == 0 and pc.fd_frame_bad == 0 and pc.fd_timeouts == 0 and not k.crashed,
           (ok0, ok1, sw0, dict(dw.n), c_off, c_on, t_off, t_on, pc.fd_reentry, pc.fd_frame_bad, pc.fd_timeouts))
     d = dw.depth
