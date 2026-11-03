@@ -943,6 +943,7 @@ ini_read:
         push    dx
         mov     al, dh
         call    .one
+        mov     [MDB(ini_mid)], di      ; (where the boot drive's starts)
         pop     dx
         mov     al, dl
         call    .one
@@ -975,6 +976,7 @@ ini_read:
 .r:     ret
 s_rini   db      '@:\LODE.INI', 0
 ini_got  db      0                      ; (read this start-up)
+ini_mid  dw      INI_BUF                ; (DH's text ends here: te_boot)
 
 ; SI = LODE.INI's text (ASCIIZ), DI = a key as "NAME", 1Dh, 0 (that is,
 ; "NAME=" AND 0DFh, any case) -> SI = its value on the first line that has

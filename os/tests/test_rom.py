@@ -403,8 +403,9 @@ def t_boot():
         check('%s: started from R: (3305h), INT 21h 0Eh counts to R:' % tag, u8(k, 'bootdrv') == 17 and u8(k, 'lastdrv') == 18)
         e = env(k)
         ems = 'ems_pages' in kw
-        want = ['COMSPEC=R:\\LCMD.COM', 'PATH=C:\\LODE;R:\\' if hd else 'PATH=R:\\', 'PROMPT=$P$G'] + ['TEMP=M:\\'] * ems
-        check('%s: COMSPEC, PATH, %s' % (tag, 'and the ROM\'s TEMP=M:\\, M: made' if ems else 'no TEMP (no M:: CLAUDE.OUT on the current drive)'),
+        want = ['COMSPEC=R:\\LCMD.COM', 'PATH=C:\\LODE;R:\\' if hd else 'PATH=R:\\', 'PROMPT=$P$G'] + ['TEMP=M:\\'] * (ems and not hd)
+        check('%s: COMSPEC, PATH, %s' % (tag, 'and the ROM\'s TEMP=M:\\, M: made' if ems and not hd else
+                                         'no TEMP (%s: CLAUDE.OUT and pipes on the current drive)' % ('C: there' if hd else 'no M:')),
               e == want and (not ems or A.md_pages(k) > 0), (e, ems and A.md_pages(k)))
         check('%s: the picture was shown' % tag, TS.ON in [m[0] for m in k.pc.marks] and TS.OFF in [m[0] for m in k.pc.marks])
         check('%s: the settings: the ROM\'s, %s over them' % (tag, 'C:\'s' if hd else 'none'), u8(k, 'setdrv') == (3 if hd else 0))
@@ -462,6 +463,34 @@ def t_rom2_claude():
     check('ROM 1 alone: no CLAUDE ("Bad command or file name")', 'Bad command or file name' in o and not k.crashed, o)
 
 
+def t_pipe():
+    """A pipe from R: (no hard disk): LCMD's pipe files in %TEMP%, the ROM's M:\\ (EMS); DEL reads its answer
+    from one.  Without M: there is no TEMP, and the pipe fails cleanly on R:."""
+    print('== a pipe from R:')
+    pipes = lambda k: sorted({l.split(' -> ')[0].split()[9] for l in k.dos_log() if l.startswith('AH=3C') and 'PIPE' in l and ' CF' not in l})
+    k = boot(ems_pages=88, trace=True)
+    to_prompt(k)
+    prompt(k, 'md m:\\d')
+    prompt(k, 'copy r:\\lode.ini m:\\d\\a.ini')
+    k.dos.clear()
+    o = prompt(k, 'echo y | del m:\\d\\*.*')
+    o2 = prompt(k, 'dir m:\\d') + prompt(k, 'dir m:')
+    check('EMS, R: current: "echo y | del m:\\d\\*.*": its pipe file made on M: (%s), DEL\'s answer read from it, '
+          'M:\\D emptied, no pipe file left' % pipes(k), pipes(k) == ['M:\\PIPEA1.$$$'] and 'Are you sure' in o
+          and 'A        INI' not in o2 and 'PIPE' not in o2 and not k.crashed, (pipes(k), o, o2))
+    k = boot()
+    to_prompt(k)
+    o = prompt(k, 'echo hi | rem')
+    check('no EMS (no M:, no TEMP): the pipe fails on R: with DOS\'s error, no question, back at the prompt',
+          'File creation error' in o and 'Fail?' not in o and 'R:\\>' in o and not k.crashed, o)
+    k = boot(ata=sysinfo_hd(), ems_pages=88, trace=True)
+    to_prompt(k)
+    k.dos.clear()
+    o = prompt(k, 'echo y | del c:\\nosuch\\*.*')
+    check('C: and EMS: no TEMP, the pipe file in C:\\\'s root as before (%s)' % pipes(k),
+          pipes(k) == ['\\PIPEA1.$$$'] and 'PIPE' not in prompt(k, 'dir c:\\') and not k.crashed, (pipes(k), o))
+
+
 def t_read():
     print('== R:\'s reads')
     k = boot(floppy('rom_rd.img', ROMVID), ems_pages=88)
@@ -479,6 +508,8 @@ def t_read():
     check('the ROM was mapped in and out (video memory back each time)', k.pc.rom_mapped is None and k.pc.rom_maps > 10, k.pc.rom_maps)
     o = prompt(k, 'type r:\\lode.ini')
     check('TYPE R:\\LODE.INI', 'SPLASH=1' in o and 'MDISK=256' in o, o)
+    n = len(open(os.path.join(GOS, 'rom', 'LODE.INI'), 'rb').read())
+    check('the ROM\'s LODE.INI in one sector (%d bytes: one read at start-up, one cluster of ROM 1)' % n, n <= 512, n)
 
 
 def t_write():
@@ -528,6 +559,15 @@ def t_settings():
         check('C:\\LODE.INI\'s %r (EMS) over the ROM\'s TEMP=M:\\: %s, M: made beside it' % (line.strip().decode(), want or 'no TEMP'),
               e[:3] == ['COMSPEC=R:\\LCMD.COM', 'PATH=C:\\LODE;R:\\', 'PROMPT=$P$G'] and e[3:] == want
               and A.md_pages(k) > 0 and not k.crashed, (e, A.md_pages(k)))
+    k = boot(ata=sysinfo_hd(('LODE.INI', b'SAVER=10\r\n')), ems_pages=88)
+    check('C:\\LODE.INI with no TEMP= (EMS, M: made): the ROM\'s TEMP=M:\\ not taken with C: there', env(k)[3:] == []
+          and A.md_pages(k) > 0, (env(k), A.md_pages(k)))
+    k = boot(ata=sysinfo_hd(), ems_pages=88, shift=True, keys=[ord('2')])
+    check('C:, the menu\'s 2 (the ROM\'s settings alone): the ROM\'s TEMP=M:\\ not taken either', env(k)[3:] == []
+          and u8(k, 'setdrv') == 0, (env(k), u8(k, 'setdrv')))
+    open(os.path.join(OUT, 'LODE.INI'), 'wb').write(b'TEMP=A:\\\r\n')
+    k = boot(floppy('rom_tmp.img', os.path.join(OUT, 'LODE.INI')), ems_pages=88)
+    check('no C:, A:\\LODE.INI\'s TEMP=A:\\ over the ROM\'s M:\\', env(k)[3:] == ['TEMP=A:\\'] and u8(k, 'setdrv') == 1, env(k))
     k = boot(ata=sysinfo_hd(('LODE.INI', b'MDISK=0\r\n')), ems_pages=88)
     check('C:\\LODE.INI\'s MDISK=0 (EMS, M: off): the ROM\'s TEMP=M:\\ not set', env(k)[3:] == [] and A.md_pages(k) == 0, (env(k), A.md_pages(k)))
     open(os.path.join(OUT, 'LODE.INI'), 'wb').write(b'SPLASH=0\r\n')
@@ -733,7 +773,7 @@ if __name__ == '__main__':
     t0 = time.time()
     if 'nobuild' not in sys.argv: build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_paint, t_rom2_claude):
+    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_paint, t_rom2_claude, t_pipe):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

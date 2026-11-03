@@ -817,13 +817,15 @@ T.test_in_place_new_message = test_in_place_new_message
 
 def test_run_temp_setting():
     """TEMP= in LODE.INI (KSPLASH.INC's te_boot: the environment's TEMP, as the ROM's LODE.INI has M:\\):
-    a captured RUN's output goes to M:\\CLAUDE.OUT, read back and deleted there.  Without EMS there is no M:,
-    so no TEMP: the capture goes to the current drive's root, as before."""
+    a captured RUN's output goes to M:\\CLAUDE.OUT, read back and deleted there; a pipe in it (DIR | UPPER) has
+    its file there too (LCMD's pipe_name).  Without EMS there is no M:, so no TEMP: the capture and the pipe go
+    to the current drive's root, as before."""
     from test_emu import CFG_C
     import test_apps as A
     for ems in (88, 0):
-        h = T.EmuHarness([T.reply(('tool', 'grid_command', {'command': 'DIR'})), T.reply(('text', 'Done.'))],
-                         mode='auto', ems_pages=ems, files={'A:\\LODE.INI': b'TEMP=M:\\\r\n', 'A:\\CFG.C': CFG_C})
+        h = T.EmuHarness([T.reply(('tool', 'grid_command', {'command': 'DIR | UPPER'})), T.reply(('text', 'Done.'))],
+                         mode='auto', ems_pages=ems, files={'A:\\LODE.INI': b'TEMP=M:\\\r\n', 'A:\\CFG.C': CFG_C,
+                                                            'A:\\UPPER.COM': open(os.path.join(HERE, 'UPPER.COM'), 'rb').read()})
         h.boot()
         env = h.m.u16(h.claude_psp, 0x2C)
         assert (b'\0TEMP=M:\\\0' in h.m.rd(env, 0, 512)) == bool(ems), h.m.rd(env, 0, 128)
@@ -831,10 +833,11 @@ def test_run_temp_setting():
         assert h.turn('what is on the disk?')
         res = T.results(h, 1)[0]
         text, out = str(res['content']), 'M:\\CLAUDE.OUT' if ems else 'A:\\CLAUDE.OUT'
-        assert any(('/C DIR >%s]' % out) in str(l) for l in h.m.log), (out, h.m.log)
-        assert 'CFG' in text and not res.get('is_error'), text
-        assert 'A:\\CLAUDE.OUT' not in h.m.fs, sorted(h.m.fs)
-        if ems: assert A.md_pages(h.k) > 0 and 'M:\\CLAUDE.OUT' not in A.md_files(h.k), A.md_files(h.k)
+        assert any(('/C DIR | UPPER >%s]' % out) in str(l) for l in h.m.log), (out, h.m.log)
+        assert 'CFG' in text and 'UPPER    COM' in text and not res.get('is_error'), text
+        assert not [n for n in h.m.fs if 'CLAUDE.OUT' in n or 'PIPE' in n], sorted(h.m.fs)
+        if ems: assert A.md_pages(h.k) > 0 and not [n for n in A.md_files(h.k) if 'CLAUDE.OUT' in n or 'PIPE' in n], \
+            A.md_files(h.k)
         T.check(h)
 
 
