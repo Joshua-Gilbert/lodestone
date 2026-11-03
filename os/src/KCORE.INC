@@ -656,15 +656,22 @@ f_08:   call    con_in                  ; input, no echo
         cmp     al, 3
         je      ctrlc
         jmp     ret_al
-f_09:   mov     es, [bp+F_DS]           ; '$'-terminated string
-        mov     di, [bp+F_DX]
-.l:     mov     al, [es:di]
-        cmp     al, '$'
-        je      .x
-        call    con_out
-        inc     di
-        jmp     .l
+f_09:   mov     es, [bp+F_DS]           ; '$'-terminated string: written to
+        mov     di, [bp+F_DX]           ;  handle 1 in one go (S4: a file or
+        mov     dx, di                  ;  a device in one write, not one a
+        mov     al, '$'                 ;  character), errors ignored as
+        mov     cx, -1                  ;  con_out's.  CON's dev_write is
+        repne   scasb                   ;  tty_out a character, as before
+        not     cx
+        dec     cx                      ; (its length, the '$' not counted)
+        jcxz    .x                      ; (none: a file's write of 0 would cut it)
+        mov     di, dx
+        mov     bx, 1
+        call    h2sft
+        jc      .x
+        call    sft_write
 .x:     jmp     done
+        db      90h                     ; (a pad: what follows at its parity)
 f_0B:   call    con_ready
         mov     al, 0
         jz      .x

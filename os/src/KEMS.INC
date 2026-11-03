@@ -45,21 +45,28 @@ ems_used    equ ems_h + 2       ; pages in runs (handle 0's owner: unused)
 ; ---------------------------------------------------------------------
 ;  INT 67h
 ; ---------------------------------------------------------------------
+; INT 67h 44h: logical page BX of handle DX into window AL (BX = FFFFh:
+; the window off) -> AH = 0 or the error, AL kept, any DS.  The kernel's
+; own maps come in as an interrupt (EMS_MAP: PUSHF, PUSH CS, CALL), so
+; the one copy has no CALL and RET in the call programs make all the time
+; (S14); .po (EMS_OUT) puts register value AH into window AL, AH = 0
+%macro EMS_MAP 0
+        pushf
+        push    cs
+        call    ems_int67.p
+%endmacro
+%macro EMS_OUT 0
+        pushf
+        push    cs
+        call    ems_int67.po
+%endmacro
 ems_int67:
         cmp     ah, 44h
         jne     ems_gen
-        push    bx                      ; 44h, the call programs make all
+.p:     push    bx                      ; 44h, the call programs make all
         push    dx                      ;  the time: straight to the port
-        call    ems_map
-        pop     dx
-        pop     bx
-        iret
-
-; logical page BX of handle DX into window AL (BX = FFFFh: the window
-; off) -> AH = 0 or the error, AL kept.  BX, DX changed; any DS.
-ems_map:
         cmp     al, 4
-        jae     ems_e8b
+        jae     .e8b
         cmp     dx, EMS_NH
         jae     .e83
         shl     dx, 2
@@ -75,14 +82,16 @@ ems_map:
         mov     bl, dl                  ; (BH = 0)
         mov     ah, [cs:ems_ltab+bx]
 .out:   mov     dh, al                  ; register value AH into window AL
-        shl     dh, 6                   ;  -> AL kept, AH = 0, DX = its port
+        shl     dh, 6                   ;  -> AL kept, AH = 0
         or      dh, EMS_PORT >> 8
         mov     dl, EMS_PORT & 0FFh
         xchg    al, ah
         out     dx, al
         mov     al, ah
         xor     ah, ah
-        ret
+.x:     pop     dx
+        pop     bx
+        iret
 .e8a:   mov     ah, 8Ah                 ; no such page, if the handle is open
         db      3Dh                     ; (CMP AX, imm16: over the next 2 bytes)
 .off:   xor     ah, ah                  ; off (0), if the handle is open
@@ -90,11 +99,14 @@ ems_map:
         je      .e83
         or      ah, ah
         jz      .out
-        ret
+        jmp     short .x
 .e83:   mov     ah, 83h
-        ret
-ems_e8b: mov    ah, 8Bh                 ; no such window
-        ret
+        jmp     short .x
+.e8b:   mov     ah, 8Bh                 ; no such window
+        jmp     short .x
+.po:    push    bx
+        push    dx
+        jmp     short .out
 
 ; the other calls: the caller's registers in a frame laid out as INT 21h's
 ; (F_*), BP on it, DS = the kernel.  A function gets AH = 0 and BX = its
@@ -223,9 +235,7 @@ ems50:  cmp     al, 1
         jc      ems4F.e8b
 .w:     cmp     ax, 4
         jae     ems4F.e8b
-        push    dx
-        call    ems_map
-        pop     dx
+        EMS_MAP                         ; (BX, DX kept)
         or      ah, ah
         jnz     .x
         loop    .l
@@ -444,19 +454,32 @@ ems57:  cmp     al, 1
         adc     cx, cx
         rep     movsb
         jmp     short .moved
-.back:  add     si, cx
-        dec     si
-        add     di, cx
+.back:  add     si, cx                  ; (S14: an odd byte at the top, then
+        dec     si                      ;  words down: each word read before
+        add     di, cx                  ;  a write reaches it, as bytes)
         dec     di
         std
-        rep     movsb
+        shr     cx, 1
+        jnc     .bw
+        movsb
+.bw:    dec     si
+        dec     di
+        rep     movsw
         cld
         jmp     short .moved
-.xch:   mov     al, [es:di]
+.xch:   shr     cx, 1                   ; (S14: an odd byte, then words)
+        jnc     .xw
+        mov     al, [es:di]
         xchg    al, [si]
         stosb
         inc     si
-        loop    .xch
+.xw:    jcxz    .moved
+.xl:    mov     ax, [es:di]
+        xchg    ax, [si]
+        stosw
+        inc     si
+        inc     si
+        loop    .xl
 .moved: cli
         push    cs
         pop     ds
@@ -604,7 +627,7 @@ ems_piece:
         mov     al, bl
         inc     bx
         mov     ah, [ems_ltab+si]
-        call    ems_map.out             ; (AL = the window)
+        EMS_OUT                         ; (AL = the window)
         shl     al, 2                   ; its segment: E0h + 4 * window, 00h
         add     al, EMS_FRAME >> 8
         xchg    al, ah
