@@ -484,7 +484,7 @@ sb_title:
         times ($ + 1 - $$) & 1 db 90h   ; (hot: .k even)
 
 ; SI = entry -> SI = kind string, AL = what opens it (0 nothing, 1 it's a
-; DOS program, 2 a .RUN, 3 Write).  (Entry pointer lost; callers re-fetch.)
+; DOS program, 2 a .RUN, 3 Write, 4 Paint).  (Entry pointer lost; callers re-fetch.)
 kind_of:
         push    dx
         push    bx
@@ -538,7 +538,7 @@ confirm:
         cmp     al, 2
         je      .run
         cmp     al, 3
-        je      .write
+        jae     .write
         mov     di, msgbuf              ; nothing opens it: say so
         mov     bx, [sel]
         call    ent_ptr
@@ -557,11 +557,17 @@ confirm:
         mov     si, runpath
         mov     di, s_empty
         jmp     run_run
-.write: call    sel_path                ; X:\SUBJECT\NAME.EXT for Write
+.write: push    ax
+        call    sel_path                ; X:\SUBJECT\NAME.EXT for Write
+        pop     ax                      ;  (3) or Paint (4)
         mov     di, argpath
         mov     si, s_write
-        jmp     run_named
+        cmp     al, 3
+        je      .w
+        mov     si, s_paint
+.w:     jmp     run_named
 .x:     ret
+        times ($ - $$) & 1 db 90h       ; (hot: even: what follows keeps its parity)
 
 ; the selected entry as NAME.EXT in runpath
 sel_name:
@@ -3015,6 +3021,7 @@ s_all       db '*.*', 0
 s_claude    db 'CLAUDE.COM', 0
 s_system    db 'SYSTEM.RUN', 0
 s_write     db 'WRITE.RUN', 0
+s_paint     db 'PAINT.RUN', 0
 s_calc      db 'CALC.RUN', 0
 s_tasks     db 'TASKS.RUN', 0
 s_notondisk db ' is not on this disk', 0
@@ -3115,10 +3122,14 @@ k_settings  db 'Settings',0
 k_font      db 'Font',0
 k_profile   db 'Profile',0
 k_source    db 'Source',0
-            times -(k_source - k_file > 127) db 0      ; (kind_of: cbw)
+k_picture   db 'Picture',0
+            times -(k_picture - k_file > 127) db 0     ; (kind_of: cbw)
 ; extension, kind (its offset from k_file), what opens it (1 DOS, 2 .RUN,
-; 3 Write)
-kinds       db 'COM'
+; 3 Write, 4 Paint)
+kinds       db 'BMP'
+            db k_picture - k_file
+            db 4
+            db 'COM'
             db k_run - k_file
             db 1
             db 'EXE'
