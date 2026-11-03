@@ -35,9 +35,21 @@
 ;  a key of its own (K_MEND) in the BIOS's buffer, so the wait ends and
 ;  the band is mended at once.  (A BIOS without INT 16h AH=05h: the band
 ;  stays until the next key.)  Design: docs/lodestone-paint.md.
+;
+;  With MULTITASK=1 Paint is a window .RUN (RF_WIN): a window beside the
+;  others, its inside (the canvas) a 1:1 view of the 640 x 400 picture,
+;  moved by the arrows, PgUp, PgDn and Ctrl-Left/Right.  It still draws
+;  in screen co-ordinates: only blit_view (C to the canvas) and
+;  commit_view (U and the canvas into C) know where the view is.  A
+;  stroke's points are clamped to the canvas, fills follow the picture's
+;  lines (pph), and the mouse is UI_MOUSE (a core from API 8 on).  No
+;  band to mend: a window never covers the band.
 ; =====================================================================
 %include "UIAPI.INC"
+%include "WINPOS.INC"
 RUN_API equ 6                           ; (the tools' window moves and closes)
+RUN_FLAGS equ RF_WIN                    ; (with MULTITASK=1, a window; without,
+                                        ;  the whole screen as ever)
         org     RUN_ORG
 
 VSEG    equ 0B800h
@@ -81,13 +93,28 @@ start:  mov     di, fname               ; the argument: the picture to show
         stosb
         cmp     di, popc + 256
         jb      .pc
-        xor     ax, ax                  ; the mouse: reset, and 1:1 as the
+        mov     ax, 0F01Dh              ; a window .RUN's session? (MT_WIN, as
+        stc                             ;  Write: it fails with the switch off)
+        int     21h
+        jc      .i33
+        inc     byte [ses]
+        mov     word [kt_xfer], K_CODE_X        ; (CODE-T is the tasks')
+        mov     byte [h_xfer + 5], 'X'
+        mov     word [kh_view + 4], h_view      ; the view's keys in the help
+        mov     word [kh_view + 10], h_view2
+        WIN_STAGGER                     ; (a second Paint not right over it)
+        call    UI_VERSION
+        cmp     ax, 8                   ; UI_MOUSE (API 8) for strokes; an
+        jb      .i33                    ;  older core: INT 33h as full screen
+        inc     byte [umouse]
+        jmp     short .m
+.i33:   xor     ax, ax                  ; the mouse: reset, and 1:1 as the
         int     33h                     ;  core's pointer moves
         mov     ax, 0Fh
         mov     cx, 8
         mov     dx, cx
         int     33h
-        mov     byte [bsize], 2
+.m:     mov     byte [bsize], 2
         mov     word [clx1], 639        ; the canvas: the whole screen (clx0,
         mov     word [cly1], 399        ;  cly0 and pph 0, as BSS starts)
         cmp     byte [fname], 0
@@ -116,7 +143,24 @@ start:  mov     di, fname               ; the argument: the picture to show
         pop     ds
         push    ds
         pop     es
-        mov     si, redraw
+        cmp     byte [ses], 0
+        je      .full
+        call    title                   ; a window: the view centred on the
+        call    geom                    ;  picture, then opened (its W_DRAW,
+        mov     ax, 80                  ;  w_draw, shows C)
+        sub     ax, [cw]
+        shr     ax, 1
+        mov     [vx], ax
+        mov     ax, 400
+        sub     ax, [chh]
+        shr     ax, 1
+        mov     [vy], ax
+        mov     si, win
+        call    UI_WOPEN
+        inc     byte [wopen]
+        call    status
+        jmp     short main
+.full:  mov     si, redraw
         call    UI_SETREDRAW
         call    UI_CLS                  ; (no title: no clock over it)
         call    blit_all
@@ -134,8 +178,10 @@ start:  mov     di, fname               ; the argument: the picture to show
         call    band_fix
         popa
         jmp     short main.got
-main:   call    band_fix
-        cmp     byte [quit], 0
+main:   cmp     byte [ses], 0           ; (a window: no band to mend)
+        jne     .q
+        call    band_fix
+.q:     cmp     byte [quit], 0
         jne     .bye
         mov     byte [in_ev], 1
         call    UI_EVENT
@@ -144,13 +190,32 @@ main:   call    band_fix
         jne     .key
         cmp     byte [view], 0
         jne     main
+        cmp     bx, [clx0]              ; (in a window: on the canvas only,
+        jl      main                    ;  not its frame)
+        cmp     bx, [clx1]
+        jg      main
+        cmp     cx, [cly0]
+        jl      main
+        cmp     cx, [cly1]
+        jg      main
         call    stroke
         jmp     main
-.key:   call    do_key
+.key:   cmp     ax, EV_MOVED            ; the window moved or resized: drawn
+        je      .st                     ;  there already (w_draw), the view
+        cmp     ax, EV_SIZE             ;  perhaps moved into the picture
+        je      .st
+        call    do_key
         jmp     main
-.bye:   xor     ax, ax                  ; the driver as a reset leaves it
+.st:    call    status
+        jmp     main
+.bye:   cmp     byte [wopen], 0
+        je      .bm
+        call    UI_WCLOSE
+.bm:    cmp     byte [umouse], 0
+        jne     .b0
+        xor     ax, ax                  ; the driver as a reset leaves it
         int     33h
-        xor     ax, ax                  ; (the Executive reads the list again)
+.b0:    xor     ax, ax                  ; (the Executive reads the list again)
         ret
 nomem:  mov     si, s_nomem
         call    UI_MSG
@@ -183,18 +248,24 @@ stroke: cmp     byte [mend], 0          ; a press right after the saver, before
         call    band_fix
         popa
 .go:    mov     dx, cx                  ; the driver's position: the press
-        mov     cx, bx
+        mov     cx, bx                  ;  (UI_MOUSE's is the core's: as it)
+        cmp     byte [umouse], 0
+        jne     .c
         mov     ax, 4
         int     33h
-        call    clamp
+.c:     call    clamp
         mov     [x0], cx
         mov     [y0], dx
         mov     [lx], cx
         mov     [ly], dx
-        mov     ax, [segc]              ; U: the picture before this stroke
+        cmp     byte [ses], 0           ; U: the picture before this stroke
+        je      .sw                     ;  (a window: U = C, copied where
+        call    sync_u                  ;  they may differ; else a swap)
+        jmp     short .s
+.sw:    mov     ax, [segc]
         xchg    ax, [segu]
         mov     [segc], ax
-        push    es
+.s:     push    es
         push    VSEG
         pop     es
         mov     byte [phase], 0
@@ -221,8 +292,20 @@ stroke: cmp     byte [mend], 0          ; a press right after the saver, before
         jmp     commit
 
 ; the mouse at the next interrupt -> BX = buttons, CX = x, DX = y, the
-; point clamped to the canvas
-sample: sti
+; point clamped to the canvas: the core's UI_MOUSE (a window, API 8), or
+; the driver's function 3
+smouse: call    UI_MOUSE                ; AX = buttons, BX = x, CX = y
+        jnc     .m
+        xor     ax, ax                  ; (no mouse: the button is up, at the
+        mov     bx, [lx]                ;  last point)
+        mov     cx, [ly]
+.m:     mov     dx, cx
+        mov     cx, bx
+        xchg    bx, ax
+        jmp     short clamp
+sample: cmp     byte [umouse], 0
+        jne     smouse
+        sti
         hlt
         mov     ax, 3
         int     33h
@@ -611,7 +694,9 @@ blit:   pusha                           ; lines AX .. AX + CX - 1 from C
         ret
 
         times   ($ - $$) & 1 db 90h     ; (hot: even)
-commit: pusha                           ; the screen into C
+commit: cmp     byte [ses], 0           ; (a window: its view of it)
+        jne     commit_view
+        pusha                           ; the screen into C
         push    ds
         push    es
         mov     es, [segc]
@@ -627,6 +712,272 @@ commit: pusha                           ; the screen into C
         pop     es
         pop     ds
         popa
+        ret
+
+; ---------------------------------------------------------------------
+;  a window (MULTITASK=1): the canvas, a view of the picture
+; ---------------------------------------------------------------------
+; the canvas from the window as it is now: its first byte column cx0, cw
+; bytes, its first line cy0, chh lines (inside the frame, under the title
+; strip: win_paint's); clx0-clx1, cly0-cly1 its pixels; the view (vx
+; bytes, vy lines into the picture) kept inside the picture; pph the
+; fills' phase.  w_draw: the window's contents (W_DRAW, BX = the window;
+; from any session's redraw), the view drawn again
+w_draw: call    geom
+        jmp     short blit_view
+geom:   pusha
+        mov     ax, [win + W_COL]
+        inc     ax
+        mov     [cx0], ax
+        shl     ax, 3
+        mov     [clx0], ax
+        mov     cx, [win + W_W]
+        sub     cx, 2
+        mov     [cw], cx
+        shl     cx, 3
+        add     ax, cx
+        dec     ax
+        mov     [clx1], ax
+        mov     ax, [win + W_Y]
+        add     ax, 20
+        mov     [cy0], ax
+        mov     [cly0], ax
+        mov     cx, [win + W_H]
+        sub     cx, 21
+        mov     [chh], cx
+        add     ax, cx
+        dec     ax
+        mov     [cly1], ax
+        mov     ax, 80
+        sub     ax, [cw]
+        cmp     [vx], ax
+        jbe     .x
+        mov     [vx], ax
+.x:     mov     ax, 400
+        sub     ax, [chh]
+        cmp     [vy], ax
+        jbe     .y
+        mov     [vy], ax
+.y:     mov     ax, [vy]                ; picture line - screen line, mod 8
+        sub     ax, [cy0]
+        and     ax, 7
+        mov     [pph], ax
+        popa
+        ret
+
+; CX bytes DS:SI to ES:DI, a word at a time
+%macro MOVSN 0
+        shr     cx, 1
+        rep     movsw
+        adc     cx, cx
+        rep     movsb
+%endmacro
+; the same with the screen's side (%1: SI or DI) on a whole word: a byte
+; first if it is odd (a word across two costs the screen two accesses;
+; RAM's side odd costs much less).  CX > 0
+%macro MOVSV 1
+        test    %1, 1
+        jz      %%w
+        movsb
+        dec     cx
+%%w:    MOVSN
+%endmacro
+
+; C's view to the canvas
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
+blit_view:
+        pusha
+        push    ds
+        push    es
+        push    VSEG
+        pop     es
+        mov     bx, [cy0]
+        add     bx, bx
+        mov     ax, 399
+        sub     ax, [vy]
+        imul    si, ax, 80
+        add     si, [vx]                ; SI = the view's first line in C
+        mov     dx, [chh]
+        mov     bp, [cw]
+        mov     ax, [cx0]
+        mov     ds, [segc]
+.l:     mov     di, [cs:rowoff + bx]
+        add     di, ax
+        mov     cx, bp
+        MOVSV   di
+        sub     si, bp
+        sub     si, 80                  ; (the line above it in the file)
+        add     bx, 2
+        dec     dx
+        jnz     .l
+        pop     es
+        pop     ds
+        popa
+        ret
+
+; a stroke's end in a window: the canvas into C at the view (C is the
+; picture outside it: the stroke began with U = C, sync_u); then C and U
+; may differ only there (D: lines dy0-dy1, bytes dx0-dx1, as picture's)
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
+commit_view:
+        pusha
+        push    ds
+        push    es
+        mov     ax, [vy]
+        mov     [dy0], ax
+        add     ax, [chh]
+        mov     [dy1], ax
+        mov     ax, [vx]
+        mov     [dx0], ax
+        add     ax, [cw]
+        mov     [dx1], ax
+        mov     es, [segc]
+        mov     bx, [cy0]
+        add     bx, bx
+        mov     ax, 399
+        sub     ax, [vy]
+        imul    di, ax, 80
+        add     di, [vx]                ; DI = the view's first line in C
+        mov     dx, [chh]
+        mov     bp, [cw]
+        mov     ax, [cx0]
+        push    VSEG
+        pop     ds
+.l:     mov     si, [cs:rowoff + bx]
+        add     si, ax
+        mov     cx, bp
+        MOVSV   si
+        sub     di, bp
+        sub     di, 80                  ; (the line above it in the file)
+        add     bx, 2
+        dec     dx
+        jnz     .l
+        pop     es
+        pop     ds
+        popa
+        ret
+
+; a stroke's start in a window: U = C (copied where they may differ, D),
+; so that U is the picture before it; then D is empty
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
+sync_u: pusha
+        push    ds
+        push    es
+        mov     dx, [dy1]
+        sub     dx, [dy0]               ; DX = its lines
+        jbe     .x
+        mov     ax, 399
+        sub     ax, [dy0]
+        imul    si, ax, strict word 80  ; (imm16: as fast, the loop's label even)
+        add     si, [dx0]
+        mov     bp, [dx1]
+        sub     bp, [dx0]               ; BP = its bytes a line
+        mov     es, [segu]
+        mov     ds, [segc]
+.l:     mov     di, si
+        mov     cx, bp
+        MOVSN
+        sub     si, bp
+        sub     si, 80
+        dec     dx
+        jnz     .l
+        mov     word [cs:dy1], 0        ; (empty: dy1 <= dy0)
+.x:     pop     es
+        pop     ds
+        popa
+        ret
+
+; the band (a window): the hint, and where the view is
+status: cmp     byte [ses], 0
+        je      .x
+        mov     di, stat
+        mov     si, s_left
+        call    UI_SBSTR
+        mov     ax, [vx]
+        shl     ax, 3
+        call    UI_SBU16
+        mov     si, s_top
+        call    UI_SBSTR
+        mov     ax, [vy]
+        call    UI_SBU16
+        mov     si, s_of
+        call    UI_SBSTR
+        mov     byte [di], 0
+        mov     si, s_hint
+        mov     di, stat
+        jmp     UI_BAND
+.x:     ret
+
+; the arrows: the view 16 pixels; PgUp, PgDn and Ctrl-Left/Right a
+; canvas's height or width (a window only)
+k_up:   mov     ax, -16
+        jmp     short vmove
+k_down: mov     ax, 16
+        jmp     short vmove
+k_pgup: mov     ax, [chh]
+        neg     ax
+        jmp     short vmove
+k_pgdn: mov     ax, [chh]
+vmove:  mov     bx, vy
+        jmp     short move
+k_left: mov     ax, -2                  ; (whole bytes: 16 pixels)
+        jmp     short hmove
+k_right:
+        mov     ax, 2
+        jmp     short hmove
+k_cleft:
+        mov     ax, [cw]
+        neg     ax
+        jmp     short hmove
+k_cright:
+        mov     ax, [cw]
+hmove:  mov     bx, vx
+move:   cmp     byte [ses], 0
+        je      .x
+        add     ax, [bx]
+        jns     .p
+        xor     ax, ax
+.p:     mov     [bx], ax
+        call    geom                    ; (kept inside the picture there)
+        call    blit_view
+        jmp     status
+.x:     ret
+
+; the window's title: "Paint", or "Paint: NAME.BMP" (ES = DS)
+title:  mov     di, wtitle
+        mov     si, s_paint
+        call    UI_SBSTR
+        cmp     byte [fname], 0
+        je      .z
+        mov     si, s_colon
+        call    UI_SBSTR
+        mov     si, fname               ; the name as DOS keeps it: 8 and 3
+        call    base_name               ;  at most (a longer one typed in
+        mov     cx, 8                   ;  Transfer is cut), in capitals, as
+.n:     lodsb                           ;  the Executive's list
+        or      al, al
+        jz      .z
+        cmp     al, '.'
+        je      .d
+        jcxz    .n                      ; (past 8: dropped)
+        call    .up
+        dec     cx
+        jmp     .n
+.d:     stosb
+        mov     cx, 3
+.e:     lodsb
+        or      al, al
+        jz      .z
+        call    .up
+        loop    .e
+.z:     mov     byte [di], 0
+        ret
+.up:    cmp     al, 'a'                 ; AL in capitals, stored
+        jb      .s
+        cmp     al, 'z'
+        ja      .s
+        sub     al, 20h
+.s:     stosb
         ret
 
 ; the core's redraw (after the saver): the picture; in Paint's own wait,
@@ -673,6 +1024,11 @@ k_undo: mov     ax, [segc]
         xchg    ax, [segu]
         mov     [segc], ax
         mov     byte [changed], 1
+        ; (falls through)
+
+; C shown: the whole screen, or the window's view
+show:   cmp     byte [ses], 0
+        jne     blit_view
         jmp     blit_all
 
 ; Erase (C = 0) and Invert (C = NOT U), after the swap a stroke makes
@@ -698,8 +1054,12 @@ whole:  mov     ax, [segc]
         pop     es
         pop     ds
         mov     byte [changed], 1
+        mov     word [dy0], 0           ; (C and U may differ anywhere)
+        mov     word [dy1], 400
+        mov     word [dx0], 0
+        mov     word [dx1], 80
         call    k_edit
-        jmp     blit_all
+        jmp     show
 
 ; Transfer: save it as the name in the form (the picture's own first)
 k_xfer: mov     di, t_name
@@ -730,6 +1090,12 @@ k_xfer: mov     di, t_name
         call    UI_SBSTR
         mov     byte [di], 0
         mov     byte [changed], 0
+        cmp     byte [wopen], 0         ; a window: its title the new name
+        je      .x                      ;  (closed and opened again, as
+        call    title                   ;  Write's)
+        call    UI_WCLOSE
+        mov     si, win
+        call    UI_WOPEN
 .x:     ret
 
 ; CODE-Q: save and quit
@@ -1200,6 +1566,8 @@ bmphdr  db 'BM'
         db 2, 8, 36, 0, 40, 120, 255, 0 ; dark red, the plasma's orange (B, G, R)
 
 twin    dw 26, 100, 28, T_TOP + 22, s_tools, t_draw, WF_MOVE | WF_CLOSE
+win     dw 2, SCR_TOP + 8, 76, SCR_BAND_Y - SCR_TOP - 8, wtitle, w_draw
+        dw WF_MOVE | WF_CLOSE | WF_SIZE
 xfer_form:
         dw s_xfert, s_xferp, 60, 8, 1
         dw l_file, FT_TEXT + (40 << 8), t_name, 70
@@ -1215,11 +1583,23 @@ keys:   KEY(K_NONE,      0,       h_mouse)
         KEY(K_NONE,      0,       h_pat)
         KEY('[',         k_less,  h_size)
         KEY(']',         k_more,  0)
+kh_view equ $                           ; (a window: h_view, h_view2)
+        KEY(K_NONE,      0,       0)
+        KEY(K_NONE,      0,       0)
+        KEY(K_UP,        k_up,    0)
+        KEY(K_DOWN,      k_down,  0)
+        KEY(K_PGUP,      k_pgup,  0)
+        KEY(K_PGDN,      k_pgdn,  0)
+        KEY(K_LEFT,      k_left,  0)
+        KEY(K_RIGHT,     k_right, 0)
+        KEY(K_CLEFT,     k_cleft, 0)
+        KEY(K_CRIGHT,    k_cright, 0)
         KEY('U',         k_undo,  h_undo)
         KEY(K_CODE_Z,    k_undo,  0)
         KEY('I',         k_inv,   h_inv)
         KEY(K_CODE_E,    k_erase, h_erase)
         KEY(K_ENTER,     k_edit,  h_enter)
+kt_xfer equ $                           ; (with MULTITASK=1: K_CODE_X)
         KEY(K_CODE_T,    k_xfer,  h_xfer)
         KEY(K_CODE_Q,    k_quit,  h_quit)
         KEY(K_ESC,       k_esc,   h_esc)
@@ -1233,6 +1613,8 @@ h_pbe       db 'P  B  E                  pencil, brush, eraser',0
 h_lrf       db 'L  R  F                  line, box, filled box',0
 h_pat       db '1 to 8                   pattern',0
 h_size      db '[  ]                     brush smaller, bigger',0
+h_view      db 'Arrows  PgUp  PgDn       move the view',0
+h_view2     db 'Ctrl-Left  Ctrl-Right    a view to the left, right',0
 h_undo      db 'U or CODE-Z              undo (again: redo)',0
 h_inv       db 'I                        invert the picture',0
 h_erase     db 'CODE-E                   erase the picture',0
@@ -1250,6 +1632,11 @@ tnames      db 'P  Pencil',0
             db '[ ] Size '
 s_szn       db '2',0
 s_tools     db 'Tools',0
+s_paint     db 'Paint',0
+s_colon     db ': ',0
+s_left      db 'View: from ',0
+s_top       db ', ',0
+s_of        db ' of 640 x 400',0
 s_helpt     db 'Paint Commands',0
 s_hint      db 'Paint: draw with the mouse.  Tab: tools.  CODE-?: help',0
 s_nomem     db 'Paint needs 63 KB of memory',0
@@ -1273,6 +1660,7 @@ s_dollar1   db '$$1',0
         ; (fillrect.next stays odd: even, the wide fills' path through
         ;  .last would run a NOP each line; it is jcxz's only for 1 byte)
         EVEN    frame, frame.s, dot, blit.l, commit.l
+        EVEN    blit_view, blit_view.l, commit_view, commit_view.l, sync_u, sync_u.l
 
 section .bss
 rowoff      resw 400                    ; line y -> its offset on the screen
@@ -1314,6 +1702,21 @@ clx1        resw 1                      ;  bottom pixels (the whole screen,
 cly0        resw 1                      ;  or a window's inside)
 cly1        resw 1
 pph         resw 1                      ; a fill's pattern phase (0-7)
+cx0         resw 1                      ; a window's canvas: its first byte
+cw          resw 1                      ;  column, its width in bytes, its
+cy0         resw 1                      ;  first line, its lines
+chh         resw 1
+dy0         resw 1                      ; D, where C and U may differ (a
+dy1         resw 1                      ;  window): the picture's lines dy0
+dx0         resw 1                      ;  to dy1 - 1, bytes dx0 to dx1 - 1;
+dx1         resw 1                      ;  empty if dy1 <= dy0
+vx          resw 1                      ; the view: its left byte and top line
+vy          resw 1                      ;  in the picture
+ses         resb 1                      ; a window .RUN's session (MULTITASK=1)
+umouse      resb 1                      ; strokes by UI_MOUSE
+wopen       resb 1                      ; the window is open
+wtitle      resb 24                     ; ("Paint: " and an 8.3 name at most)
+stat        resb 40                     ; the band's second line
 fr_x        resw 1                      ; (fillrect: the first byte, the masks)
 fr_m        resw 1
 mlen        resw 1                      ; (line: steps along, across)
