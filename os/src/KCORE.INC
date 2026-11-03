@@ -49,6 +49,19 @@ kstack_top:                     ;  its bottom 1 KB as a buffer: CAP_SEG)
 astack_top:                     ; nested INT 21h (from INT 24h handlers)
 ui_seg      resw 1              ; the UI segment (core + Executive), see LODE.ASM
 section .text
+; The stack's low area (K2): buffers a single INT 21h call uses, from its
+; dispatch to its return, which no other call's can meet there.  The
+; stack reaches about 150 bytes down (measured: EXEC with its INT 24h and
+; a handler's nested call, C:'s errors, MT's slices; a nested call is on
+; astack); a screen capture and the PrtSc driver use the bottom 1 KB at
+; INT 21h's entry, before any call runs; MT switches tasks inside INT 21h
+; only at a key wait (mt_can), where none of these is in use.
+KL_P2       equ kstack_end              ; path2_buf, 130 (rename, CHDIR's)
+KL_REN      equ kstack_end + 130        ; rename's d_lba, d_off, de and drive, 37
+KL_EXN      equ kstack_end + 168        ; EXEC's ex_name, 132
+KL_REL      equ kstack_end + 300        ; EXEC's ex_rel, 256
+KL_END      equ kstack_end + 556
+        times -(KL_REN - KL_P2 < 130 || KL_EXN - KL_REN < 37 || KL_REL - KL_EXN < 132) db 0
 ; that 1 KB as a segment, folded (bss_start is image_end: LODE.ASM)
 CAP_SEG equ KSEG + (((image_end - start) + (kstack_end - bss_start) + 15) >> 4)
 
