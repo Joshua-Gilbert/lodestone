@@ -687,7 +687,7 @@ def t_emsboard():
     pc.w('ax', 0xE442); pc.w('dx', 0xFF); pc.int15()
     check('no EMS board: INT 15h E442h unanswered', pc.r('flags') & 1, hex(pc.r('ax')))
 
-EMS_BUDGET = 1968       # bytes the EMS manager may keep (with 88 pages): 123 paragraphs
+EMS_BUDGET = 1984       # bytes the EMS manager may keep (with 88 pages): 124 paragraphs (S14's word-wise 57h: +16)
                         # (1808 before the disk cache moved into EMS: 159 bytes for that)
 TC_PARAS = 36 * 32      # the disk cache's memory, paragraphs (KDISK.INC)
 def ems_npg(k): return k.rd('ems42', 1, 1)[0]     # (patched into 42h's MOV AL)
@@ -727,9 +727,9 @@ def t_ems():
     k = ktest.KPC(img, ems_pages=88); k.start()
     Y = k.Y
     npg = ems_npg(k)
-    ltab = k.rd('ems_ltab', 88)
-    check('EMS: 88 pages found: the last two are the disk cache\'s, 86 for programs',
-          npg == 86 and k.rd('ems_tcpg', 2) == ltab[86:88] and len(set(ltab)) == 88, (npg, k.rd('ems_tcpg', 2), ltab[84:]))
+    ltab, tc = k.rd('ems_ltab', 86), k.rd('ems_tcpg', 2)
+    check('EMS: 88 pages found: 86 for programs and the disk cache\'s two, all different (the table past the 86 is '
+          'the arena\'s: ems_tcpg keeps the cache\'s)', npg == 86 and len(set(ltab + tc)) == 88, (npg, tc, ltab[84:]))
     blocks = mcbs(k)
     check('EMS: no "SC" block, the arena runs to the top of memory', not [b for b in blocks if b[4] == b'SC']
           and blocks[-1][1] == 'Z' and blocks[-1][0] + blocks[-1][3] + 1 == 0xA000, blocks[-3:])

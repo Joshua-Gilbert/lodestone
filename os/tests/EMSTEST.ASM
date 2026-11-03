@@ -1416,6 +1416,82 @@ t_overlap:
         mov     cx, 5000
         xor     bx, bx
         call    patchk
+        STEP 6                          ; S14: up by 101, an odd length
+        push    ds                      ;  (backwards: a byte, then words)
+        pop     es
+        mov     di, buf
+        mov     cx, BUFSZ
+        xor     bx, bx
+        call    patfill
+        mov     dx, [h1]
+        D57     BUFSZ, 0, 0, buf, ds, 1, dx, 0, 0
+        mov     al, 0
+        call    mv
+        or      ah, ah
+        jnz     efail
+        mov     dx, [h1]
+        D57     BUFSZ - 1, 1, dx, 0, 0, 1, dx, 101, 0
+        mov     al, 0
+        call    mv
+        EQB      ah, 92h
+        mov     dx, [h1]
+        D57     BUFSZ - 1, 1, dx, 101, 0, 0, 0, buf2, ds
+        mov     al, 0
+        call    mv
+        or      ah, ah
+        jnz     efail
+        mov     di, buf2
+        mov     cx, BUFSZ - 1
+        xor     bx, bx
+        call    patchk
+        STEP 7                          ; S14: an odd exchange at odd offsets
+        mov     dx, [h2]                ;  (a byte, then words)
+        xor     al, al
+        xor     bx, bx
+        call    map
+        push    FRAME
+        pop     es
+        xor     di, di
+        mov     cx, 2000h
+        mov     ax, 3333h
+        rep     stosw
+        mov     dx, [h2]
+        D57     4999, 0, 0, buf + 1, ds, 1, dx, 1, 0
+        mov     al, 1
+        call    mv
+        or      ah, ah
+        jnz     efail
+        push    ds
+        pop     es
+        mov     di, buf + 1             ; buf: 33h between its own ends
+        mov     cx, 4999
+        mov     al, 33h
+        repe    scasb
+        jne     fail
+        mov     di, buf
+        mov     cx, 1
+        xor     bx, bx
+        call    patchk
+        mov     di, buf + 5000
+        mov     cx, 1
+        mov     bx, 5000
+        call    patchk
+        mov     dx, [h2]                ; the page: the pattern between 33h's
+        xor     al, al
+        xor     bx, bx
+        call    map
+        push    FRAME
+        pop     es
+        cmp     byte [es:0], 33h
+        jne     fail
+        cmp     byte [es:5000], 33h
+        jne     fail
+        mov     di, 1
+        mov     cx, 4999
+        mov     bx, 1
+        call    patchk
+        push    ds
+        pop     es
         clc
         ret
 .back100:
