@@ -2744,7 +2744,9 @@ KPAL = bytes([2, 8, 36, 0, 40, 120, 255, 0])
 class PaintModel:
     """Paint's picture as screen lines (80 bytes each, top first), drawn as
     PAINT.ASM draws: AND NOT (mask AND A), then XOR (mask AND pattern AND X)."""
-    def __init__(s, lines=None): s.l = [bytearray(80) for _ in range(400)] if lines is None else [bytearray(x) for x in lines]
+    def __init__(s, lines=None):
+        s.l = [bytearray(80) for _ in range(400)] if lines is None else [bytearray(x) for x in lines]
+        s.clip = (0, 0, 639, 399)                       # (dot's cut: the canvas, in picture pixels)
     def op(s, a, x, pat=PATS[0]): s.a, s.x, s.p = a, x, pat
     def plot(s, x, y):
         m = 0x80 >> (x & 7); b = s.l[y][x >> 3]
@@ -2777,8 +2779,9 @@ class PaintModel:
             if x1 != x0: s.plot(x1, y)
     def dot(s, side):
         def d(x, y):
-            s1 = side - 1; h = s1 >> 1                  # centred, then cut at the edges
-            s.fill(max(x - h, 0), max(y - h, 0), min(x - h + s1, 639), min(y - h + s1, 399))
+            s1 = side - 1; h = s1 >> 1                  # centred, then cut at the canvas's edges
+            x0, y0, x1, y1 = s.clip
+            s.fill(max(x - h, x0), max(y - h, y0), min(x - h + s1, x1), min(y - h + s1, y1))
         return d
     def stroke(s, tool, pts, pat=0, size=2):
         """pts: the pointer's positions as Paint samples them, the press first."""
@@ -3134,12 +3137,20 @@ def t_paint_bmp():
     k.key(ktest.ENTER); k.key(ktest.TAB); k.key('f'); k.key(ktest.F1); k.key(ktest.ESC); k.key('i'); k.key('u')
     check('no mouse: Return, Tab, a tool, help, I, U: the picture as shown', not diff(paint_c(k), cases[0][2].l)
           and not diff(screen_lines(k), cases[0][2].l), diff(screen_lines(k), cases[0][2].l))
+    c0, s0 = paint_c(k), screen_lines(k)
+    for key in (ktest.UP, ktest.DOWN, ktest.LEFT, ktest.RIGHT, 0x4900, 0x5100, 0x7300, 0x7400): k.key(key)
+    check('the whole screen: the arrows, PgUp, PgDn, Ctrl-Left/Right (a window\'s view keys) do nothing',
+          paint_c(k) == c0 and screen_lines(k) == s0, diff(paint_c(k), c0))
+    k.key(ktest.F1); hs = screen(k); k.key(ktest.ESC)
+    check('... and the help as ever: no view keys, Transfer CODE-T', 'move the view' not in hs
+          and 'CODE-T                   Transfer: save as' in hs, hs)
     k.key(ktest.ESC); k.key(ktest.ENTER)
     check('... ESC, Return (I and U changed it): the Executive', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
-    # MULTITASK=1: the mouse through MT's INT 33h (Paint is in front) and the band's key through its INT 16h
+    # MULTITASK=1 with no LODEMT.SYS: the switch stays off, so Paint is the whole screen as ever (a window
+    # with the switch on: test_mt's t_paintw)
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'MULTITASK=1\r\n')
     pic = os.path.join(OUT, 'PIC.BMP'); open(pic, 'wb').write(cases[0][1])
-    k = paint_start(image('pmt.img', PAINT, pic, 'LODEMT.SYS=' + os.path.join(GOS, 'src', 'LODEMT.SYS'), 'LODE.INI=' + ini), ems=88)
+    k = paint_start(image('pmt.img', PAINT, pic, 'LODE.INI=' + ini), ems=88)
     seg, mt = k.u16('first_mcb'), None                      # (MT's own block, owner 8, "MT")
     for _ in range(200):
         if k.pc.u16(seg, 1) == 8 and k.pc.rd(seg, 8, 2) == b'MT': mt = seg + 1
@@ -3150,7 +3161,8 @@ def t_paint_bmp():
     m = PaintModel()
     for tool, (x0, y0, x1, y1), pat in (('P', (100, 100, 300, 200), 0), ('F', (20, 300, 200, 390), 2)):
         k.key(tool); k.key(str(pat + 1)); drag(k, x0, y0, x1, y1); m.stroke(tool, drag_pts(x0, y0, x1, y1), pat)
-    check('MULTITASK=1 (MT\'s block, INT 16h through it): strokes exactly as the model', on and not diff(paint_c(k), m.l), (on, diff(paint_c(k), m.l)))
+    check('MULTITASK=1 with no LODEMT.SYS (no MT block, the switch off): the whole screen, strokes exactly as the model',
+          mt is None and not diff(paint_c(k), m.l), (mt, on, diff(paint_c(k), m.l)))
     dark = paint_saver(k, m, ktest.DOWN)
     check('... the saver, a key: the picture back, its bottom lines too', dark and not off_pointer(k, screen_lines(k), m.l),
           (dark, off_pointer(k, screen_lines(k), m.l)))

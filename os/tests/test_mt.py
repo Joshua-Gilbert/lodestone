@@ -4630,6 +4630,243 @@ def t_write():
           'bar, its status line at y 340)', any(y == 0 and 'Write: (new)' in l for y, l in k.ocr())
           and any(y == 340 and 'Line 1 of 1' in l for y, l in k.ocr()), A.screen(k))
 
+def t_paintw():
+    """Paint as a window (W1): with MULTITASK=1 a window .RUN (RF_WIN), its
+    canvas a 1:1 view of the 640 x 400 picture (centred at first), moved by
+    the arrows, PgUp/PgDn and Ctrl-Left/Right; strokes clamped to the canvas,
+    fills following the picture's lines; C as the model has it, outside the
+    view too; W_DRAW after another window, a move, a resize; CODE-X."""
+    print('== Paint as a window (W1): a view of the picture')
+    PAINT = os.path.join(GOS, 'apps', 'PAINT.RUN')
+    TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
+    rows = [bytes(((x * 7 + y * 3) ^ (y >> 2)) & 0xFF for x in range(80)) for y in range(400)]
+    pic = os.path.join(A.OUT, 'PIC.BMP'); open(pic, 'wb').write(A.mkbmp(640, 400, rows))
+    k = boot('mt_pw.img', b'MULTITASK=1\r\n', 88, PAINT, TR, A.CALCRUN, pic, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
+    rec = lambda i, o: k.pc.u16(seg, Y['mw_ses'] + i * SE_SIZE + o)
+    PS = A.run_syms('apps/PAINT.ASM')
+    def pv(n, i=1): return k.pc.u16(k.useg, rec(i, SE_BASE) + PS[n])
+    def pb(n, i=1): return k.pc.rd(k.useg, rec(i, SE_BASE) + PS[n], 1)[0]
+    def win(i=1): return tuple(k.pc.u16(k.useg, rec(i, SE_BASE) + PS['win'] + o) for o in (0, 2, 4, 6))
+    def C(i=1):
+        c = k.pc.rd(pv('segc', i), 0, 32000)
+        return [bytes(c[(399 - y) * 80:(400 - y) * 80]) for y in range(400)]
+    def g(i=1): return {n: pv(n, i) for n in ('cx0', 'cw', 'cy0', 'chh', 'vx', 'vy', 'clx0', 'clx1', 'cly0', 'cly1', 'pph')}
+    def view_bad(i=1):
+        """Canvas lines that aren't C's view (the pointer moved out of the way first)."""
+        A.point(k, 639, 0); k.run_for(0.2)                     # (the title bar's corner: off the canvas and the band)
+        q, v, c = g(i), A.vram(k), C(i)
+        return [y for y in range(q['chh']) if A.vrow(v, q['cy0'] + y)[q['cx0']:q['cx0'] + q['cw']]
+                != c[q['vy'] + y][q['vx']:q['vx'] + q['cw']]][:4]
+    def band():
+        A.point(k, 639, 0); k.run_for(0.2)
+        return ' | '.join(l for l in k.band() if l)
+    m = A.PaintModel(rows)
+    def stroke(tool, x0, y0, x1, y1, pat=0):
+        """A drag on the screen; the model's stroke at the clamped points, in picture pixels."""
+        q = g()
+        k.key(tool); k.key(str(pat + 1))
+        A.drag(k, x0, y0, x1, y1); k.run_for(0.2)
+        cl = lambda x, lo, hi: max(lo, min(hi, x))
+        ox, oy = q['vx'] * 8 - q['clx0'], q['vy'] - q['cly0']
+        pts = [(cl(x, q['clx0'], q['clx1']) + ox, cl(y, q['cly0'], q['cly1']) + oy) for x, y in A.drag_pts(x0, y0, x1, y1)]
+        m.clip = (q['clx0'] + ox, q['cly0'] + oy, q['clx1'] + ox, q['cly1'] + oy)
+        m.stroke(tool, pts, pat)
+    hdr = open(PAINT, 'rb').read(16)
+    k.select('PIC.BMP'); k.key(ktest.ENTER); k.run_for(1.0)
+    q = g()
+    check('Return on PIC.BMP with MULTITASK=1: Paint in a window (%s), a session; PAINT.RUN API 6 with RF_WIN; strokes by '
+          'UI_MOUSE; the view centred (vx %d, vy %d), the canvas inside the frame under the title (%d, %d, %d x %d)'
+          % (win(), q['vx'], q['vy'], q['cx0'], q['cy0'], q['cw'], q['chh']),
+          mb('mw_n') == 1 and win() == (2, 32, 76, 328) and struct.unpack('<H', hdr[4:6])[0] == 6
+          and struct.unpack('<H', hdr[14:16])[0] == 1 and pb('ses') == 1 and pb('umouse') == 1
+          and (q['cx0'], q['cw'], q['cy0'], q['chh'], q['vx'], q['vy']) == (3, 74, 52, 307, 3, 46)
+          and (q['clx0'], q['clx1'], q['cly0'], q['cly1'], q['pph']) == (24, 615, 52, 358, 2), (win(), q))
+    check('... its title "Paint: PIC.BMP", C the file, the canvas C\'s view of it; the band: the hint, and where the view is',
+          A.has(k, 'Paint: PIC.BMP') and C() == rows and not view_bad()
+          and band().startswith('Paint: draw with the mouse.  Tab: tools.  CODE-?: help |')
+          and band().endswith('| View: from 24, 46 of 640 x 400'),
+          (A.has(k, 'Paint: PIC.BMP'), C() == rows, view_bad(), band()))
+    A.drag(k, 100, 100, 200, 150); k.run_for(0.2)
+    check('... showing a file: a drag doesn\'t draw (until Return)', C() == rows and not view_bad(), view_bad())
+    k.key(ktest.ENTER)
+    # strokes: inside; past the canvas's right and bottom (clamped); a fill with the slant (phase 2);
+    # the brush past its left edge (cut there)
+    stroke('P', 100, 100, 300, 200)
+    stroke('L', 200, 120, 639, 399)
+    stroke('F', 40, 60, 200, 150, 7)
+    stroke('B', 40, 200, 0, 300)
+    check('strokes in the window: C exactly as the model, at the view\'s offset (outside the view: as it was); points '
+          'past the canvas clamped to it, the brush cut at its edge, the slant fill on the picture\'s lines (pph 2)',
+          C() == [bytes(l) for l in m.l] and not view_bad(), (A.diff([bytes(l) for l in m.l], C()), view_bad()))
+    k.key('P'); A.drag(k, 18, 200, 18, 260); A.drag(k, 300, 359, 340, 359); A.drag(k, 620, 100, 620, 150); k.run_for(0.2)
+    check('a drag on the window\'s frame (its left edge, its bottom rule, its right edge): not on the canvas, so no '
+          'stroke (clamped to it, one would draw along its edge)', C() == [bytes(l) for l in m.l] and not view_bad(),
+          A.diff([bytes(l) for l in m.l], C()))
+    # the view moved: the arrows, PgDn, Ctrl-Left; kept inside the picture
+    k.key(ktest.RIGHT); k.key(ktest.RIGHT); k.key(ktest.DOWN); k.run_for(0.3)
+    a = (g()['vx'], g()['vy'], view_bad(), band())
+    k.key(0x5100); k.key(0x7300); k.run_for(0.3)          # (PgDn, Ctrl-Left)
+    b = (g()['vx'], g()['vy'], view_bad(), band())
+    check('Right x2, Down: the view 16 pixels right (vx 3 -> 6 bytes, kept inside), 16 down (%s); PgDn, Ctrl-Left: to '
+          'the bottom (vy 93) and the left (%s); the canvas C\'s view each time, the band saying where'
+          % (a[:2], b[:2]), a[:3] == (6, 62, []) and a[3].endswith('View: from 48, 62 of 640 x 400')
+          and b[:3] == (0, 93, []) and b[3].endswith('View: from 0, 93 of 640 x 400'), (a, b))
+    stroke('F', 30, 300, 300, 358, 7)
+    stroke('E', 300, 60, 400, 200)
+    pre = [bytes(l) for l in m.l]
+    check('a fill and the eraser after it (pph %d now): C as the model' % g()['pph'],
+          C() == pre and not view_bad(), (A.diff(pre, C()), view_bad()))
+    def timer(a, b):
+        """Simulated µs from Paint's a's entry to b's entry, each time (session 1's slot)."""
+        got, t = [], {}
+        pa, pb_ = rec(1, SE_BASE) + PS[a], rec(1, SE_BASE) + PS[b]
+        def h(pc):
+            if pc.r('cs') != k.useg: return
+            ip = pc.r('ip')
+            if ip == pa: t['a'] = pc.us
+            elif ip == pb_ and 'a' in t: got.append(pc.us - t.pop('a'))
+        k.hooks.append(h)
+        return got
+    tc, tu, ts = timer('commit_view', 'main'), timer('k_undo', 'main'), timer('sync_u', 'tool_do')
+    stroke('R', 100, 100, 250, 250)
+    k.key('U'); k.run_for(0.3)
+    check('U: undone, C the picture before the box, the canvas showing it', C() == pre and not view_bad(), (A.diff(pre, C()), view_bad()))
+    print('     (µs: a stroke\'s start in a window %s, its end %s, undo and the view %s)' % (ts, tc, tu))
+    check('speed in a window: a stroke\'s start (U = C where they may differ: the last view) and its end (the canvas '
+          'into C) each in 16 ms or less, as the whole screen\'s end; undo and the view shown in 16 ms or less',
+          ts and max(ts) <= 16000 and tc and tc[-1] <= 16000 and tu and tu[-1] <= 16000, (ts, tc, tu))
+    k.key('U'); k.run_for(0.3)
+    post = [bytes(l) for l in m.l]
+    check('... U again: the box back', C() == post and not view_bad(), view_bad())
+    # Invert (C and U may then differ anywhere), a stroke, undo: the inverted picture; again: the stroke
+    k.key('I'); k.run_for(0.3)
+    m.l = [bytearray(x ^ 0xFF for x in l) for l in m.l]
+    inv = [bytes(l) for l in m.l]
+    stroke('P', 100, 300, 300, 120)
+    k.key('U'); k.run_for(0.3)
+    a1 = (C() == inv, view_bad())
+    k.key('U'); k.run_for(0.3)
+    check('I (inverted), a stroke, U: the inverted picture (C and U kept apart everywhere after I); U again: the stroke',
+          a1 == (True, []) and C() == [bytes(l) for l in m.l] and not view_bad(), (a1, A.diff([bytes(l) for l in m.l], C())))
+    k.key(ktest.F1 if hasattr(ktest, 'F1') else 0x3B00); k.run_for(0.5)
+    hs = A.screen(k)
+    k.key(ktest.ESC); k.run_for(0.5)
+    check('F1 in a window: the help has the view\'s keys (Arrows PgUp PgDn, Ctrl-Left Ctrl-Right) and Transfer as '
+          'CODE-X; ESC: the view drawn again', 'move the view' in hs and 'Ctrl-Left  Ctrl-Right' in hs
+          and 'CODE-X                   Transfer' in hs and 'CODE-T                   Transfer' not in hs and not view_bad(), hs)
+    # another window over it and closed: W_DRAW draws the view again (no save-under with sessions)
+    k.key(A.CODE['K']); k.run_for(0.5)
+    n2 = mb('mw_n')
+    k.key(ktest.ESC); k.run_for(0.5)
+    check('CODE-K: the calculator over it (%d sessions); ESC: closed, Paint\'s view drawn again' % n2,
+          n2 == 2 and mb('mw_n') == 1 and not view_bad(), view_bad())
+    k.key(A.CODE['T']); k.run_for(0.5)
+    t = A.has(k, 'Tasks')
+    k.key(ktest.ESC); k.run_for(0.5)
+    check('CODE-T: the tasks (not Transfer, which is CODE-X in a window); ESC: Paint again',
+          t and mb('mw_n') == 1 and not view_bad(), (t, A.screen(k)))
+    # resized and moved: the canvas follows, the view kept inside the picture
+    k.key(0x6F00, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.UP, ktest.UP, ktest.ENTER); k.run_for(0.5)
+    w2, q2 = win(), g()
+    check('CODE-F8, Left x4, Up x2: the window 4 columns narrower, 2 rows shorter (%s); the canvas %d x %d, the view '
+          'kept inside the picture (vx %d, vy %d) and drawn' % (w2, q2['cw'], q2['chh'], q2['vx'], q2['vy']),
+          w2 == (2, 32, 72, 296) and (q2['cw'], q2['chh'], q2['vx'], q2['vy']) == (70, 275, 0, 93) and not view_bad(),
+          (w2, q2, view_bad()))
+    k.key(0x5100); k.key(0x7400); k.run_for(0.3)          # (PgDn, Ctrl-Right: the view at its limits)
+    q4 = g()
+    k.key(0x6F00, ktest.RIGHT, ktest.RIGHT, ktest.RIGHT, ktest.RIGHT, ktest.DOWN, ktest.DOWN, ktest.ENTER); k.run_for(0.5)
+    q5 = g()
+    check('the view at the smaller canvas\'s limits (vx %d, vy %d), the window made big again (%s): the view kept inside '
+          'the picture (vx %d, vy %d), drawn, the band saying where' % (q4['vx'], q4['vy'], win(), q5['vx'], q5['vy']),
+          (q4['vx'], q4['vy']) == (10, 125) and win() == (2, 32, 76, 328) and (q5['vx'], q5['vy']) == (6, 93)
+          and not view_bad() and band().endswith('View: from 48, 93 of 640 x 400'), (q4, q5, band()))
+    k.key(0x6F00, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.LEFT, ktest.UP, ktest.UP, ktest.ENTER); k.run_for(0.5)
+    # the screen saver over it, then a key: the view drawn again (W_DRAW, from redraw_all)
+    entered, sa = [], Y['saver']
+    hk = lambda pc: entered.append(1) if pc.r('cs') == k.useg and pc.r('ip') == sa else None
+    k.hooks.append(hk)
+    k.wr('saver_t', struct.pack('<H', 36))
+    for _ in range(40):
+        k.run_for(0.25)
+        if entered: break
+    k.run_for(1.0)
+    q6, v6, c6 = g(), A.vram(k), C()                      # (no pointer moved: that would end it)
+    over = any(A.vrow(v6, q6['cy0'] + y)[q6['cx0']:q6['cx0'] + q6['cw']] != c6[q6['vy'] + y][q6['vx']:q6['vx'] + q6['cw']]
+               for y in range(q6['chh']))
+    k.wr('saver_t', struct.pack('<H', 5460)); k.hooks.remove(hk)
+    k.key(ktest.DOWN); k.run_for(0.5)                     # (the key wakes it, nothing more)
+    check('the screen saver (over the canvas), then a key: Paint\'s view drawn again, its band too', bool(entered) and over
+          and not view_bad() and band().endswith('View: from 48, 93 of 640 x 400'), (bool(entered), over, view_bad(), band()))
+    # the tools' window over the canvas, a tool chosen: closed, the view drawn again
+    k.key(ktest.TAB); k.run_for(0.3)
+    tw = A.has(k, 'Tools')
+    k.key('L'); k.run_for(0.3)
+    check('Tab: the tools\' window over the canvas; L: the line chosen, the window closed, the view drawn again',
+          tw and not A.has(k, 'Tools') and pv('tool') == 3 and not view_bad(), (tw, view_bad()))
+    A.drag(k, 200, 36, 216, 40); k.run_for(0.5)
+    w3, q3 = win(), g()
+    stroke('F', 100, 150, 300, 250, 7)
+    check('its title dragged 2 columns right, 4 lines down (%s): the canvas there (%d, %d), pph %d; a slant fill: C as '
+          'the model' % (w3, q3['cx0'], q3['cy0'], q3['pph']), w3 == (4, 36, 72, 296) and (q3['cx0'], q3['cy0'], q3['pph']) == (5, 56, 5)
+          and C() == [bytes(l) for l in m.l] and not view_bad(), (w3, q3, A.diff([bytes(l) for l in m.l], C()), view_bad()))
+    # Transfer is CODE-X in a window: saved, the title the new name
+    k.key(A.CODE['X']); k.key('drawn'); k.key(ktest.ENTER); k.run_for(1.0)
+    check('CODE-X, "drawn": DRAWN.BMP, the model\'s picture in Shift-PrtSc\'s format; the title "Paint: DRAWN.BMP"',
+          A.disk_file(k, 'DRAWN.BMP') == m.bmp() and A.has(k, 'Paint: DRAWN.BMP') and not view_bad(),
+          (len(A.disk_file(k, 'DRAWN.BMP') or b''), A.screen(k)))
+    wx = win()
+    tclick(k, (wx[0] + wx[2] - 2) * 8 + 4, wx[1] + 10); k.run_for(1.0)
+    check('a click on its close box (saved: no question): Paint ends, its window closed, the session gone; nothing crashed',
+          mb('mw_n') == 0 and not A.has(k, 'Paint:') and not k.crashed, A.screen(k))
+    # a DOS task computing behind keeps going while a stroke is held (UI_MOUSE waits where tasks switch)
+    k = boot('mt_pw2.img', b'MULTITASK=1\r\n', 88, PAINT, mouse=True)
+    seg, Y = mt_seg(k), k.Y
+    k.key(A.CODE['P']); k.run_for(1.0)
+    typ(k, 'start /w mtspin.com 5000 hs.txt', 0.3); typ(k, 'exit', 1.0); k.run_for(1.0); k.settle()
+    k.select('PAINT.RUN'); k.key(ktest.ENTER); k.run_for(1.0)  # (a window: the hint in the band, no wait)
+    au = Audit(k)
+    A.point(k, 200, 150); k.pc.mouse_move(0, 0, 1); k.run_for(0.1)
+    n = len(au.ev)
+    for _ in range(30): k.pc.mouse_move(1, 1, 1); k.run_for(0.1)
+    held = (k.pc.rd(seg, Y['mw_n'], 1)[0], len(au.switches(n)), len(au.bad()))
+    k.pc.mouse_move(0, 0, 0); k.run_for(0.3)
+    au.stop()
+    wt = lambda: bytes(k.pc.rd(k.useg, k.pc.u16(seg, Y['mw_ses'] + SE_SIZE + SE_BASE) + PS['wtitle'], 24))
+    t0 = wt()[:6] == b'Paint\0'
+    k.key(A.CODE['X']); k.key('verylongnamefor'); k.key(ktest.ENTER); k.run_for(1.0)
+    t1 = wt()
+    k.key(ktest.DOWN); k.run_for(0.3)
+    check('an unnamed picture ("Paint"), CODE-X "verylongnamefor": saved as DOS cuts it, VERYLONG.BMP, and the title '
+          'that name ("Paint: VERYLONG.BMP"), the band\'s view line its own after a key',
+          t0 and t1[:20] == b'Paint: VERYLONG.BMP\0' and A.has(k, 'Paint: VERYLONG.BMP') and A.disk_file(k, 'VERYLONG.BMP')
+          and not k.crashed
+          and any(l.startswith('View: from') for l in k.band()), (t0, t1, k.band()))
+    check('a stroke held 3 s in a Paint window: MTSPIN behind keeps its turns meanwhile (%d switches), every one by '
+          'the rules' % held[1], held[0] == 1 and held[1] > 10 and held[2] == 0, held)
+    # a second Paint: a session of its own, its window staggered, its own C
+    k.key(0x6D00); k.run_for(0.5)                         # (CODE-F6: the Executive)
+    k.select('PAINT.RUN'); k.key(ktest.ENTER); k.run_for(1.0)
+    rec = lambda i, o: k.pc.u16(seg, Y['mw_ses'] + i * SE_SIZE + o)
+    def pv2(n, i): return k.pc.u16(k.useg, rec(i, SE_BASE) + PS[n])
+    w1_ = tuple(k.pc.u16(k.useg, rec(1, SE_BASE) + PS['win'] + o) for o in (0, 2, 4, 6))
+    w2_ = tuple(k.pc.u16(k.useg, rec(2, SE_BASE) + PS['win'] + o) for o in (0, 2, 4, 6))
+    c1 = k.pc.rd(pv2('segc', 1), 0, 32000)
+    A.drag(k, 300, 200, 400, 250); k.run_for(0.3)
+    c1b, c2 = k.pc.rd(pv2('segc', 1), 0, 32000), k.pc.rd(pv2('segc', 2), 0, 32000)
+    check('a second Paint: two sessions (%d), the second\'s window lower and to the right (%s, the first %s), its own '
+          'pictures (C %04Xh, the first\'s %04Xh); a stroke in it leaves the first\'s C as it was'
+          % (k.pc.rd(seg, Y['mw_n'], 1)[0], w2_, w1_, pv2('segc', 2), pv2('segc', 1)),
+          k.pc.rd(seg, Y['mw_n'], 1)[0] == 2 and w2_[0] > w1_[0] and w2_[1] > w1_[1]
+          and len({pv2('segc', 1), pv2('segu', 1), pv2('segc', 2), pv2('segu', 2)}) == 4
+          and c1b == c1 and c2 != bytes(32000) and not k.crashed, (w1_, w2_))
+    k.key(ktest.ESC); k.key(ktest.ENTER); k.run_for(0.5)
+    check('... ESC, Return (changed: quit without saving): the second ended, the first still there, nothing crashed',
+          k.pc.rd(seg, Y['mw_n'], 1)[0] == 1 and k.pc.rd(k.useg, rec(1, SE_BASE) + PS['ses'], 1)[0] == 1
+          and not k.crashed, A.screen(k))
+
+
 def t_system():
     print('== System: the Multitasking topic (M7b)')
     k = boot('mt_sy.img', b'MULTITASK=1\r\nSAVER=10\r\n', 88, A.SYSTEM)
@@ -6643,7 +6880,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
