@@ -29,6 +29,13 @@
 ;      uses it: if not, the count it writes is 0
 ;   O  no counting: the count is what INT 21h F0h AL=1 says for A: (files
 ;      open there)
+;   M  an EMS page of its own in window 2 (E800h, INT 67h 43h, 44h), a
+;      pattern in it; on each count mapped again (44h) and checked: any
+;      changed, or a call failed, the count it writes is 0 (M10: a task
+;      with the cache's window mapped doesn't run while it is held)
+;   K  on each count A:'s first sector read with INT 13h itself (AH=02h):
+;      a call failed, the count it writes is 0 (M10: held while a floppy
+;      owner is out)
 ; nasm -f bin -o MTSPIN.COM MTSPIN.ASM
 cpu 286
 org 100h
@@ -113,7 +120,30 @@ org 100h
         fild    word [fpn]
         fld     st0
         fadd    st0, st0
-.b0:    cmp     byte [mode], 'B'        ; (B: counting with DF set)
+.b0:    cmp     byte [mode], 'M'        ; (M: a page in window 2, its pattern)
+        jne     .b1
+        mov     ah, 43h
+        mov     bx, 1
+        int     67h
+        or      ah, ah
+        jnz     .me0
+        mov     [emh], dx
+        call    emap
+        jc      .me0
+        push    es
+        push    0E800h
+        pop     es
+        xor     di, di
+        mov     cx, 128
+        mov     ax, 5AA5h
+.mf:    stosw
+        inc     ax
+        loop    .mf
+        pop     es
+        jmp     .go
+.me0:   mov     byte [fpe], 1
+        jmp     .go
+.b1:    cmp     byte [mode], 'B'        ; (B: counting with DF set)
         jne     .go
         std
 .go:    push    40h
@@ -167,7 +197,40 @@ org 100h
         cmp     ax, [fpcw]
         je      .i
 .pe:    mov     byte [fpe], 1
-.i:     cmp     byte [mode], 'R'
+.i:     cmp     byte [mode], 'M'
+        jne     .k
+        call    emap
+        jc      .me
+        push    ds
+        push    0E800h
+        pop     ds
+        xor     si, si
+        mov     cx, 128
+        mov     ax, 5AA5h
+.mc:    cmp     [si], ax
+        jne     .md
+        inc     si
+        inc     si
+        inc     ax
+        loop    .mc
+        pop     ds
+        jmp     short .k
+.md:    pop     ds
+.me:    mov     byte [fpe], 1
+.k:     cmp     byte [mode], 'K'
+        jne     .r0
+        push    es
+        push    ds
+        pop     es
+        mov     ax, 0201h
+        mov     bx, secb
+        mov     cx, 1
+        xor     dx, dx
+        int     13h
+        pop     es
+        jnc     .r0
+        mov     byte [fpe], 1
+.r0:    cmp     byte [mode], 'R'
         jne     .i2
         int     62h
 .i2:    cmp     byte [mode], 'C'
@@ -218,7 +281,14 @@ org 100h
         lds     dx, [o75]
         int     21h
         pop     ds
-.uw2:   cmp     byte [mode], 'W'
+.uw2:   cmp     byte [mode], 'M'        ; (M: its page given back)
+        jne     .uw3
+        mov     dx, [emh]
+        or      dx, dx
+        jz      .uw3
+        mov     ah, 45h
+        int     67h
+.uw3:   cmp     byte [mode], 'W'
         jne     .c
         mov     ah, 3Eh
         mov     bx, [dh_]
@@ -300,6 +370,15 @@ word_:  lodsb                           ; to a blank or the end: NUL there
         jne     .x                      ;  nothing more is read)
         dec     si
 .x:     ret
+; M: its page in window 2 (CF if INT 67h failed)
+emap:   mov     ax, 4402h
+        xor     bx, bx
+        mov     dx, [emh]
+        int     67h
+        or      ah, ah
+        jz      .x
+        stc
+.x:     ret
 hex4:   push    ds
         pop     es
         mov     cx, 4
@@ -333,8 +412,10 @@ fpn2    dw      0
 fpcw    dw      0
 fpt     dw      0, 0, 0
 fpe     db      0
+emh     dw      0
 mode    db      0
 out_    times 8 db 0
 rec     db      '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDE', 0Ah
+secb    times   512 db 0                ; (K's sector)
         times   512 db 0
 stk_top:

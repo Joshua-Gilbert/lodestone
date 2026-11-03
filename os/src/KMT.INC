@@ -6263,7 +6263,7 @@ mt_dwait:
         call    mt_pick
         jc      .u
         call    mt_switch               ; (back once 9101h or the time-out
-        mov     byte [cs:mt_down], 0FFh ;  made it ready, and it was picked)
+.bk:    mov     byte [cs:mt_down], 0FFh ;  made it ready, and it was picked)
         mov     byte [cs:mt_dfw], 0
         call    mt_dwake
         jmp     short .x

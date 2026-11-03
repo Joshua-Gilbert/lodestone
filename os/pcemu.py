@@ -353,7 +353,8 @@ class PC:
         # DMA: through the EMS windows as they are then), as on the 1520
         s.fd_wait = fd_wait or os.environ.get('FD_WAIT') == '1'     # (FD_WAIT=1: every test so)
         s.fd_op = None; s.fd_at = float('inf'); s.fd_res = None
-        s.fd_reentry = 0; s.fd_timeouts = 0; s.fd_ops = 0         # an IRQ held under CLI taken when IF is set again (run())
+        s.fd_reentry = 0; s.fd_timeouts = 0; s.fd_ops = 0
+        s.fd_frame_bad = 0              # (transfers in the EMS frame whose windows changed under them)         # an IRQ held under CLI taken when IF is set again (run())
         s.mu = mu = Uc(UC_ARCH_X86, UC_MODE_16)
         mu.mem_map(0, 0x110000)
         s.ems_pages = ems_pages; s.ems_alias = ems_alias
@@ -993,7 +994,8 @@ class PC:
                 t0 = s.us
                 if s.disk_model == 'real': s.disk_time(d, c, sct, al); t = s.us; s.us = t0
                 else: t = t0 + 2000 * al
-                s.fd_op = {'ah': ah, 'd': d, 'lba': lba, 'n': al, 'lin': lin, 't0': t0}
+                s.fd_op = {'ah': ah, 'd': d, 'lba': lba, 'n': al, 'lin': lin, 't0': t0,
+                           'regs': list(s.ems_reg) if s.ems_pages else None}
                 s.fd_ops += 1
                 s.fd_at = t; s.next_event = min(s.next_event, t)
                 s.wr(0, 0x43E, bytes([s.rd(0, 0x43E, 1)[0] & 0x7F]))
@@ -1025,6 +1027,11 @@ class PC:
         op = s.fd_op
         if op is None or op.get('empty'): return
         ah, d, lba, al, lin = op['ah'], op['d'], op['lba'], op['n'], op['lin']
+        if op['regs'] is not None and ah in (2, 3) and s.in_frame(lin, al * 512):
+            ws = range((lin - EMS_FRAME) // EMS_PAGE, (lin + al * 512 - 1 - EMS_FRAME) // EMS_PAGE + 1)
+            if any(op['regs'][w] != s.ems_reg[w] for w in ws):
+                s.fd_frame_bad += 1                     # (the DMA goes to other pages than the caller's)
+                s.log.append('[INT 13h transfer at %05X: its EMS window changed under it]' % lin)
         res = (al, 0)
         if ah == 2 and d.bad.intersection(range(lba, lba + al)):
             good = min(d.bad.intersection(range(lba, lba + al))) - lba
