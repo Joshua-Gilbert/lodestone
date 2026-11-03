@@ -1217,6 +1217,51 @@ def t_trunc():
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
     check('... disk consistent', not probs, probs)
 
+def t_dollar():
+    """S4 (2026-10-20 audit): INT 21h 09h's '$' string goes to handle 1 in
+    one write, a file's or a device's, not one call a character: redirected
+    to a file, the bytes as written and one file_write for the 1,502-byte
+    string; an empty string ('$' alone) writes nothing (a write of 0 would
+    cut the file there); on the screen, as before."""
+    print('== INT 21h 09h in one write (S4)')
+    p = os.path.join(OUT, 'DOLLAR.ASM')
+    open(p, 'w').write("""org 100h
+        mov ah, 40h
+        mov bx, 1
+        mov cx, 2
+        mov dx, ab
+        int 21h
+        mov ah, 9
+        mov dx, none
+        int 21h
+        mov ah, 9
+        mov dx, lng
+        int 21h
+        mov ax, 4C00h
+        int 21h
+ab      db 'AB'
+none    db '$'
+lng     times 1500 db 'x'
+        db 'CD$'
+""")
+    com = os.path.join(OUT, 'DOLLAR.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, p], check=True)
+    k = ktest.KPC(image('dollar.img', os.path.join(GOS, 'src', 'LCMD.COM'), com)); k.start()
+    sh = Shell(k)
+    from unicorn import UC_HOOK_CODE
+    at, n = 0x600 + k.Y['file_write'], [0]
+    def hk(uc, a, sz, ud):
+        if a == at: n[0] += 1
+    k.pc.mu.hook_add(UC_HOOK_CODE, hk, None, at, at); k.pc.mu.ctl_flush_tb()
+    sh.run('dollar > out.txt')
+    got = fatcheck.read_files(k.pc.drives[0].img).get('A:\\OUT.TXT')
+    check('DOLLAR > OUT.TXT: 40h\'s "AB", 09h\'s "$" (nothing) and 1,500 x + "CD": the file as written (%s bytes), '
+          'in 2 file writes (%d), not 1,504' % (len(got) if got else None, n[0]),
+          got == b'AB' + b'x' * 1500 + b'CD' and n[0] == 2, (got and got[:8], n[0]))
+    o = sh.run('dollar')
+    check('DOLLAR on the screen: AB, then the x\'s and CD, wrapped as tty_out wraps them',
+          ('AB' + 'x' * 1500 + 'CD') in o.replace('\n', ''), o[:200])
+
 def t_kmedium():
     """The 2026-10-20 audit's medium-risk kernel batch, where it shows: a
     file over 64 KB through the SFT's copies of its entry (time, date,
@@ -2775,7 +2820,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
