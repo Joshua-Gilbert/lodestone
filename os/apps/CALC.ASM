@@ -18,7 +18,10 @@
 ;  drawn from where the window is now (icol, ey, ry, ky).
 ; =====================================================================
 %include "UIAPI.INC"
-RUN_API equ 10                          ; (HT in its help lines; W_FLAGS: it moves and closes)
+RUN_API equ 6                           ; (W_FLAGS: it moves and closes.  Its help's HT,
+                                        ;  n is API 10's, but a higher RUN_API would
+                                        ;  take EV_RCLICK and EV_CLOSE too: an older
+                                        ;  LODE.SYS shows the HT, n as 2 characters)
 RUN_FLAGS equ RF_WIN                    ; (a window .RUN: with MULTITASK=1 one
                                         ;  of several at once, M8)
         org     RUN_ORG
