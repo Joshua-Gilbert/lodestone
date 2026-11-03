@@ -173,6 +173,9 @@ def t_core():
     # INT 16h AH=10h; pcemu now models that
     k.key(K_CODE_HELP)
     check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 0.6 Help'), screen(k))
+    check('... its lines (HT, 25 in place of the spaces, API 10) as they were, and its window as wide (57: its longest line, '
+          '51, and 6)', has(k, 'CODE-D                   Delete (a file or subject)') and has(k, 'Return or click again    open it / next item')
+          and has(k, 'CODE is the Alt key.  Any key closes.') and geo[0][2] == 57, (geo, screen(k)))
     k.key(ktest.ESC)
     check('the Executive lists .RUN files as Program', 'UITEST.RUN' in k.exec_list() and has(k, 'Program'), screen(k))
     k.select('UITEST.RUN'); k.key(ktest.ENTER)
@@ -387,6 +390,8 @@ def t_system():
     check('About', has(k, 'Lodestone 0.6') and has(k, '3.30 compatible'), screen(k))
     k.key(ktest.F1)
     check('help', has(k, 'System Help') and has(k, 'back to the Executive'), screen(k))
+    check('... its lines with HT, 29 as they were with the spaces', has(k, 'ESC  or  CODE-Q              back to the Executive')
+          and has(k, 'Up / Down, a letter, mouse   choose a topic') and has(k, 'F5                           look again'), screen(k))
     k.key('x'); k.key(K_CODE_HELP)
     check('CODE-? opens System\'s help', has(k, 'System Help'), screen(k))
     k.key('x'); k.key(ktest.ESC)
@@ -463,6 +468,9 @@ def t_write():
           and has(k, 'Cut         CODE-Z') and has(k, 'Paste       CODE-V') and has(k, 'Any key closes')
           and has(k, 'Find        CODE-F    Find text') and has(k, 'Quit        CODE-Q    Save and exit')
           and has(k, 'A command, then select, then Return (or drag first)'), screen(k))
+    check('... two HTs a line (12 and 22), and Transfer\'s line with its key\'s letter patched after the first',
+          has(k, 'Transfer    CODE-T    Save, write or include files') and has(k, 'Substitute  CODE-S    Replace text')
+          and has(k, 'Usage       CODE-U    Size and room left'), screen(k))
     k.key('x')
     k.key(CODE['Q'])
     check('Quit asks', k.band()[0] == 'Quit: Confirm to save and exit', k.band())
@@ -660,7 +668,7 @@ def t_write_mouse():
         if t: k.pc.run_for(t)
         k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
     hdr = open(WRITE, 'rb').read(6)
-    check('WRITE.RUN asks for UI API 8', hdr == b'GRUN\x08\x00', hdr)
+    check('WRITE.RUN asks for UI API 10 (HT in its help lines; 8: its drags and menu)', hdr == b'GRUN\x0a\x00', hdr)
     k = write_open(mouse=True)
     drag(k, *at(4, 0), *at(9, 0))
     check('a drag over "quick": a selection of its own (no command yet), from where it began to where it ended; the band says what to do',
@@ -2244,10 +2252,10 @@ def t_calc():
     Devices, and CALC.RUN, the window over the Executive (CODE-K)."""
     print('== the calculator, and the coprocessor lamp')
     hdr = open(CALCRUN, 'rb').read(6)
-    check('CALC.RUN needs API 6 (its window moves and closes; API 5: the caller\'s redraw stays, exit code 0FFFFh)', hdr == b'GRUN\x06\x00', hdr)
+    check('CALC.RUN needs API 10 (HT in its help lines; 6: its window moves and closes)', hdr == b'GRUN\x0a\x00', hdr)
     hdrs = [open(f, 'rb').read(6) for f in (SYSTEM, WRITE, UITEST)]
-    check('SYSTEM and UITEST declare RUN_API 4 (a floppy with an older LODE.SYS still runs them); WRITE 8 (its drags and menu)',
-          hdrs == [b'GRUN\x04\x00', b'GRUN\x08\x00', b'GRUN\x04\x00'], hdrs)
+    check('SYSTEM and WRITE declare RUN_API 10 (HT in their help lines: an older LODE.SYS would draw it as "?"); UITEST 4 '
+          '(its help lines padded with spaces, drawn as ever)', hdrs == [b'GRUN\x0a\x00', b'GRUN\x0a\x00', b'GRUN\x04\x00'], hdrs)
     # the lamp: pcemu's coprocessor is 387-class, so a 287XL
     k = ktest.KPC(image('lamp.img', SYSTEM)); infos = watch_info(k); k.start()
     info = infos[-1] if infos else ''
@@ -2333,6 +2341,8 @@ def t_calc():
           ans() == ['= 1'] and not lit_cells(k, 108 + 24 * 5 + 4, range(deg, deg + 5)), ans())
     k.key(ktest.F1)
     check('F1: its help', has(k, 'Calculator Help') and has(k, 'degrees / radians'), screen(k))
+    check('... its lines with HT, 25 as they were with the spaces', has(k, 'F2                       degrees / radians')
+          and has(k, 'CODE-F7, arrows, Return  move (or drag its title)') and has(k, '\\ whole part  % remainder'), screen(k))
     k.key(ktest.ESC)
     k.key('1/0'); k.key(ktest.ENTER)
     check('1/0: Divide by zero', ans() == ['Divide by zero'], ans())
@@ -3199,7 +3209,7 @@ def t_menu():
     hw = lambda: struct.unpack('<4H', k.rd('help_w', 8))
     def rpress(x, y):
         point(k, x, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
-    check('UI_VERSION: API 9 (M9c: EV_CLOSE)', v16('ver') == 9, v16('ver'))
+    check('UI_VERSION: API 10 (HT in UI_HELP\'s lines; 9: EV_CLOSE)', v16('ver') == 10, v16('ver'))
     point(k, 100, 100); v0 = body(k)
     rpress(100, 100)
     shown = hw(), has(k, 'Cut') and has(k, 'Paste') and has(k, 'Find...')

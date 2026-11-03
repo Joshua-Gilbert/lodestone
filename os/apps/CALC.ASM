@@ -18,7 +18,7 @@
 ;  drawn from where the window is now (icol, ey, ry, ky).
 ; =====================================================================
 %include "UIAPI.INC"
-RUN_API equ 6                           ; (W_FLAGS: it moves and closes)
+RUN_API equ 10                          ; (HT in its help lines; W_FLAGS: it moves and closes)
 RUN_FLAGS equ RF_WIN                    ; (a window .RUN: with MULTITASK=1 one
                                         ;  of several at once, M8)
         org     RUN_ORG
@@ -353,11 +353,11 @@ keys    KEY(K_NONE,   0,      h_type)
         KEY(K_NONE,   0,      h_move)
         KEY(K_NONE,   0,      h_fns)
         dw 0
-h_type  db 'Type a sum, Return       the answer',0
-h_more  db '+ * / \ % ^ first        go on from it',0
-h_clear db 'Ctrl-Y                   clear the line',0
-h_deg   db 'F2                       degrees / radians',0
-h_quit  db 'ESC or CODE-K            close',0
+h_type  db 'Type a sum, Return', HT, 25, 'the answer',0
+h_more  db '+ * / \ % ^ first', HT, 25, 'go on from it',0
+h_clear db 'Ctrl-Y', HT, 25, 'clear the line',0
+h_deg   db 'F2', HT, 25, 'degrees / radians',0
+h_quit  db 'ESC or CODE-K', HT, 25, 'close',0
 h_move  db 'CODE-F7, arrows, Return  move (or drag its title)',0
 h_fns   db '\ whole part  % remainder  sqrt sin cos tan',0
 s_title db 'Calculator',0
