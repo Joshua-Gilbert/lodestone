@@ -163,7 +163,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,489 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,509 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -200,7 +200,7 @@ Release notes are in `os/releases/`, and each part's design and history is in `d
 - **Resident Claude:** the program's screen read in the background (CLAUDE 1.11) on the 1520, with the bridge's quiet firmware flashed, and the mascot in the console (1.12).
 - **ROM 2:** the second, data-only ROM is there (DEFRAG.COM, TERM.FNT, PAINT.RUN and CLAUDE.COM, joined to R:); heavier programs can follow onto it.
 - **Terminal windows** (multitasking, `docs/lodestone-multitasking.md` T1-T6): with `MULTITASK=1`, a text program started from the Executive, and CODE-P's command prompt, runs in a window of its own (Shift-Return and Shift-CODE-P: full screen, as before); its memory grows as its program asks for more, when there is room below it; one that goes into a graphics mode is full screen until it comes back to text. Its text is selected with the mouse, copied (CODE-C) and pasted into it as keys (CODE-V), with a right-click menu as Write's, and a program in it that uses the mouse gets its clicks there. A program can publish its screen, its cells and its own font, for its window to draw, and ask to run as soon as the GPIB bridge's SRQ comes, not after the other tasks' turns. CLAUDE.COM runs in one (CODE-A), the link about as quick as full screen.
-- **Multitasking through floppy waits** (M10): done in emulation, for the 1520 to confirm: tasks behind keep running while one waits on the floppy, through the BIOS's INT 15h 9001h/9101h calls (the hard disk is the kernel's own polled driver, so not it).
+- **Multitasking through disk waits** (M10): tasks behind keep running while one waits on the floppy or the hard disk (its motor's spin-up, a seek, a sector), through the BIOS's INT 15h 90h/91h device-busy calls.
 - **SysReq as the task switcher** (M11): the 1520's SysReq/Confm key, which DOS programs leave alone, brings up the task list, so no CODE key is taken from the program in front.
 - **GRIDMODE.COM:** the BIOS's display functions (INT 15h E420h-E422h) from the prompt, as GRiD's MS-DOS `MODE` gave them: the panel type, the internal panel or the external RGB port, the colour map (how CGA colours become plasma or LCD greys, at 40:A7h) and the hardware text font. A tool beside GRIDMEM, not in ROM 1; SYSTEM to show the panel type too.
 - **Voice on the Pi:** push-to-talk and spoken answers.

@@ -3627,7 +3627,7 @@ def t_lcmd():
           'the default 64 KB (regions of %d and %d paragraphs); TASK=2 after the second; START /D MTSPIN: TASKS says '
           '"(frozen)"' % (vf, s2, s1), vf == [2, 4] and s1 - s2 == 2048 and 'TASK=2' in o1
           and re.search(r'3\s+MTSPIN\.COM \(frozen\)', o2) and 'KILLED' in o and back(), (vf, s1, s2, o1, o2, o))
-    # a pipe with multitasking on (its files named by LCMD's task: pipe_names asks MT_LIST), none left
+    # a pipe with multitasking on (its files named by LCMD's task: pipe_name asks MT_LIST; no TEMP here: the root), none left
     o = sh.run('echo hello there | upper | upper')
     left = [n for n in ('PIPEA1.$$0', 'PIPEA2.$$0', 'PIPEA1.$$$', 'PIPEA2.$$$') if A.disk_file(k, n) is not None]
     check('a pipe (ECHO | UPPER | UPPER) with multitasking on: HELLO THERE, its files gone', re.search(r'^HELLO THERE\s*$', o, re.M)
