@@ -31,7 +31,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - Its own LIM 4.0 EMS manager, when the 1520's memory is set to EMS.
 - The GRIDGPIB driver API on INT 60h, built in, with a faster block transfer and SRQ on IRQ 5.
 - An INT 33h driver for a serial mouse on COM1 or COM2.
-- Screen capture and printing: Shift-PrtSc saves the screen as `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text). PrtSc alone prints it through the printer driver chosen in System (or saves the file when none is chosen). A driver is a `.PRN` file of up to 1 KB that starts with a driver's signature, read from the disk only when PrtSc is pressed, so nothing of it stays in memory. `PS.PRN` prints PostScript on LPT1 (a picture of a graphics screen, the text of a text screen); other printers are other drivers (`os/drivers/PS.ASM` says how to write one).
+- Screen capture and printing: Shift-PrtSc saves the screen as `SCREENnn.BMP` (graphics) or `SCREENnn.TXT` (text). PrtSc alone prints it through the printer driver chosen in System (or saves the file when none is chosen). A driver is a `.PRN` file of up to 1 KB that starts with a driver's signature, read from the disk only when PrtSc is pressed, so nothing of it stays in memory. Saving the file is a driver too, `SCREEN.PRN`, read from the root of the disk Lodestone started from (it is on the ROM). `PS.PRN` prints PostScript on LPT1 (a picture of a graphics screen, the text of a text screen); other printers are other drivers (`os/drivers/PS.ASM` says how to write one).
 
 **Drives**
 - **A:** and **B:**, the internal and external floppy drives.
@@ -123,7 +123,7 @@ From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C
 
 ### From a floppy
 
-1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODEMT.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `TASKS.RUN`, `CALC.COM`, `PAINT.RUN`, `TERM.RUN` and `TERM.FNT` (the terminal window, with `MULTITASK=1`: without them text programs start full screen) and whatever programs you want. The current release's files are in `os/releases/`.
+1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODEMT.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `TASKS.RUN`, `CALC.COM`, `PAINT.RUN`, `SCREEN.PRN` (Shift-PrtSc's file writer), `TERM.RUN` and `TERM.FNT` (the terminal window, with `MULTITASK=1`: without them text programs start full screen) and whatever programs you want. The current release's files are in `os/releases/`.
 2. Under GRiD MS-DOS, run `LODEBOOT` on it once (`B:LODEBOOT B` when booted from the EPROM, where the floppy is B:).
 3. Restart and tap **F** as the memory count finishes, or choose the floppy from Lodestone's boot menu.
 4. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`, still being built) reads it at start-up and stays off if it doesn't match.
@@ -138,7 +138,7 @@ See `docs/lodestone-floppy-dev.md`.
 | `os/splash` | The start-up picture's source: the source image, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
 | `os/rom` | `LODE.INI`, the settings burned into the ROM. The ROM images are `os/LODE1_EPROM.BIN` and `os/LODE2_EPROM.BIN` (to burn) and `os/LODE1.BIN` and `os/LODE2.BIN` (as the BIOS sees them), built by `os/build.sh` with `tools/mkrom.py` |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN` (the calculator's window), `TASKS.RUN` (the tasks, CODE-T), `PAINT.RUN` (Paint, and the BMP viewer) and `TERM.RUN` (a text program's terminal window, with `MULTITASK=1`) |
-| `os/drivers` | Printer drivers for PrtSc (`.PRN`, up to 1 KB, read only when printing): `PS.PRN`, PostScript on LPT1; `PS.ASM` describes the interface |
+| `os/drivers` | Drivers for PrtSc (`.PRN`, up to 1 KB, read only when PrtSc is pressed): `PS.PRN`, PostScript on LPT1 (`PS.ASM` describes the interface); `SCREEN.PRN`, the screen saved as a file (Shift-PrtSc, and PrtSc with no printer chosen) |
 | `os/fonts` | `TERMINUS.FNT`, an 8×16 font System can switch to (GRiD's own is built in); `TERM.FNT`, code page 437's 256 characters for the terminal window (from Terminus Bold, by `tools/mkfnt437.py`) |
 | `os/tests` | `pcemu`-based tests (see Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN; and for the 1520: CMDTEST.BAT (the batch language), CALCTEST.BAT (the calculator, step by step) and FPUPROBE.COM (what the coprocessor answers after FNINIT) |
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |

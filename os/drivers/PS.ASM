@@ -13,6 +13,9 @@
 ;  B800h) and returns with RETF, AL = 0, or AL = 1 if it couldn't.  It may
 ;  use the BIOS (INT 17h for LPT1) but not DOS.  Nothing of it stays in
 ;  memory.  Other printers are other .PRN files written the same way.
+;  (SCREEN.PRN, the screen saved as a file, is read and called the same
+;  way, and uses DOS for its file: SCREEN.ASM says how, and what DL and
+;  DH, which every driver gets, tell it.)
 ;
 ;  This one sends PostScript to LPT1, as TM5000G prints to a Brother
 ;  HL-5370DW: the graphics modes as a 640 x 400 image across the top of

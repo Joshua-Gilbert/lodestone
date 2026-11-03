@@ -38,12 +38,17 @@
 ; =====================================================================
 
         cpu     286
-UI_API      equ 9                       ; this file's API version (2: UI_FONT, 3: UI_SAVER,
+UI_API      equ 10                      ; this file's API version (2: UI_FONT, 3: UI_SAVER,
                                         ;  4: UI_SAVER's tidying, 5: the caller's redraw
                                         ;  routine stays, exit code 0FFFFh, 6: W_FLAGS,
                                         ;  windows that move and close, EV_MOVED,
                                         ;  7: EV_RCLICK, 8: UI_MENU, UI_MOUSE, UI_CLIP,
-                                        ;  9: EV_CLOSE)
+                                        ;  9: EV_CLOSE, 10: HT in UI_HELP's lines)
+HT          equ 9                       ; UI_HELP (API 10): HT, n in a line goes on at
+                                        ;  its column n: `db 'CODE-K', HT, 25, 'Calc'`
+                                        ;  (drawn for a .RUN of any RUN_API: CALC,
+                                        ;  SYSTEM, TASKS and WRITE keep theirs, as a
+                                        ;  higher one takes newer events too)
 
 ; ---- the jump table: entry n at offset 3n ---------------------------
 UI_VERSION  equ  0 * 3  ; -> AX = API version, BX = Lodestone version (BH major, BL minor

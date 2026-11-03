@@ -41,7 +41,9 @@
 %include "UIAPI.INC"
 %include "WINPOS.INC"
 RUN_API equ 8                           ; (UI_MENU, UI_MOUSE, UI_CLIP; EV_RCLICK.  RF_WIN
-                                        ;  gives its window W_FLAGS with MULTITASK=1)
+                                        ;  gives its window W_FLAGS with MULTITASK=1.  Its help's
+                                        ;  HT, n: API 10's, as CALC.ASM says; 9 would
+                                        ;  make its close box EV_CLOSE, not ESC)
 RUN_FLAGS equ RF_WIN                    ; (with MULTITASK=1, one of several windows)
         org     RUN_ORG
 
@@ -2464,22 +2466,22 @@ o_yesno     db 'Yes',0,'No',0,0
 o_tabs      db '8',0,'4',0,'2',0,0
 o_xfer      db 'Save',0,'Write to a file',0,'Include a file',0,0
 tabws       db 8, 4, 2
-h1          db 'Begin       CODE-B    Restart the selection',0
-hcp         db 'Copy        CODE-C    Copy the selection',0
-hct         db 'Cut         CODE-Z    Cut the selection',0
-hps         db 'Paste       CODE-V    Paste (over a selection)',0
-h2          db 'Duplicate   CODE-D    Duplicate selected text',0
-h3          db 'Erase       CODE-E    Erase selected text',0
-h4          db 'Find        CODE-F    Find text',0
-h5          db 'Jump        CODE-J    Go to a line',0
-h6          db 'Move        CODE-M    Move selected text',0
-h7          db 'Options     CODE-O    Indent and tab stops',0
-h8          db 'Quit        CODE-Q    Save and exit',0
-h9          db 'Substitute  CODE-S    Replace text',0
-h10         db 'Transfer    CODE-'
-h10x        db 'T    Save, write or include files',0
-h11         db 'Usage       CODE-U    Size and room left',0
-h12         db 'Cancel      CODE-ESC  Exit without saving (or ESC)',0
+h1          db 'Begin', HT, 12, 'CODE-B', HT, 22, 'Restart the selection',0
+hcp         db 'Copy', HT, 12, 'CODE-C', HT, 22, 'Copy the selection',0
+hct         db 'Cut', HT, 12, 'CODE-Z', HT, 22, 'Cut the selection',0
+hps         db 'Paste', HT, 12, 'CODE-V', HT, 22, 'Paste (over a selection)',0
+h2          db 'Duplicate', HT, 12, 'CODE-D', HT, 22, 'Duplicate selected text',0
+h3          db 'Erase', HT, 12, 'CODE-E', HT, 22, 'Erase selected text',0
+h4          db 'Find', HT, 12, 'CODE-F', HT, 22, 'Find text',0
+h5          db 'Jump', HT, 12, 'CODE-J', HT, 22, 'Go to a line',0
+h6          db 'Move', HT, 12, 'CODE-M', HT, 22, 'Move selected text',0
+h7          db 'Options', HT, 12, 'CODE-O', HT, 22, 'Indent and tab stops',0
+h8          db 'Quit', HT, 12, 'CODE-Q', HT, 22, 'Save and exit',0
+h9          db 'Substitute  CODE-S', HT, 22, 'Replace text',0
+h10         db 'Transfer', HT, 12, 'CODE-'
+h10x        db 'T', HT, 22, 'Save, write or include files',0
+h11         db 'Usage', HT, 12, 'CODE-U', HT, 22, 'Size and room left',0
+h12         db 'Cancel', HT, 12, 'CODE-ESC  Exit without saving (or ESC)',0
 h13         db 'A command, then select, then Return (or drag first)',0
 h14         db 'Move: arrows, PgUp/PgDn, Ctrl-arrows, Ctrl-Home/End',0
 h15         db 'Ins: overtype.  Right click: menu.  Any key closes',0

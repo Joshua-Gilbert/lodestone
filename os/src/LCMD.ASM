@@ -31,6 +31,10 @@ cpu 286
 org 100h
 
 LBUF    equ 128
+FB_DTA  equ 0                       ; FOR's block (L4): its DTA, its set
+FB_BUF  equ 44                      ;  and command (each ending in 0),
+FB_ZERO equ FB_BUF + LBUF + 2       ;  and a 0 (the name a plain item adds)
+FB_PARAS equ (FB_ZERO + 1 + 15) / 16
 %include "LCMDENV.INC"                  ; ENVPARA: our environment, 1 KB
 %include "MTAPI.INC"                    ; TASKS: multitasking's calls
 HIST    equ 512                         ; the prompt's history
@@ -280,7 +284,14 @@ unwind: cmp     byte [rdepth], 0
         xor     bh, bh
         shl     bx, 1
         mov     es, [call_segs + bx]
-        cmp     byte [es:bat_on - bat_ctx], 0
+        cmp     byte [es:for_on - bat_ctx], 0   ; (its FOR's block)
+        je      .nf
+        push    es
+        mov     es, [es:for_seg - bat_ctx]
+        mov     ah, 49h
+        int     21h
+        pop     es
+.nf:    cmp     byte [es:bat_on - bat_ctx], 0
         je      .fr
         mov     bx, [es:bat_h - bat_ctx]
         mov     ah, 3Eh
@@ -292,7 +303,11 @@ unwind: cmp     byte [rdepth], 0
         push    cs
         pop     es
         jmp     .c
-.f:     mov     byte [for_on], 0
+        db      90h                     ; (parity: the hot labels after)
+.f:     cmp     byte [for_on], 0        ; a FOR's block (Ctrl-C in one)
+        je      .f0
+        call    for_free
+.f0:    mov     byte [for_on], 0
         mov     byte [for_n], 0
         cmp     byte [aborted], 0
         je      .x
@@ -1539,9 +1554,7 @@ do_for: cmp     byte [for_on], 0
         lodsb
         cmp     al, '('
         jne     .syn
-        mov     di, for_buf             ; the set and the command, out of
-        call    strcpy                  ;  the way of the lines it runs
-        mov     si, for_buf
+        mov     [for_item], si          ; (for now: the set's start)
 .p:     lodsb
         or      al, al
         jz      .syn
@@ -1559,18 +1572,37 @@ do_for: cmp     byte [for_on], 0
         call    skipsp
         cmp     byte [si], 0
         je      .syn
-        mov     [for_cmdp], si
+        mov     [for_cmdp], si          ; (for now: the command's start)
+        mov     bx, FB_PARAS            ; the set, the command and the DTA
+        mov     ah, 48h                 ;  in a block of their own, out of
+        int     21h                     ;  the way of the lines it runs and
+        jnc     .m                      ;  only while it runs (L4)
+        mov     si, e_nomem
+        jmp     err
+.m:     mov     [for_seg], ax
+        mov     es, ax
+        mov     di, FB_BUF
+        mov     si, [for_item]
+        call    strcpy
+        inc     di
+        mov     si, [for_cmdp]
+        mov     [for_cmdp], di
+        call    strcpy
+        mov     byte [es:FB_ZERO], 0
+        push    cs
+        pop     es
         mov     byte [for_on], 1
         inc     byte [for_n]
         mov     byte [for_stop], 0
-        mov     si, for_buf
+        mov     ds, [for_seg]           ; DS = the block (ours by cs:) till .done
+        mov     si, FB_BUF
 .item:  lodsb                           ; the next item
         or      al, al
         jz      .done
         call    is_delim
         je      .item
         dec     si
-        mov     [for_item], si
+        mov     [cs:for_item], si
 .ie:    lodsb
         or      al, al
         jz      .il
@@ -1579,45 +1611,59 @@ do_for: cmp     byte [for_on], 0
         mov     byte [si-1], 0
         jmp     .in
 .il:    dec     si                      ; (the last one)
-.in:    mov     [for_next], si
-        mov     si, [for_item]
+.in:    mov     [cs:for_next], si
+        mov     si, [cs:for_item]
         call    has_wild
         jnc     .wild
         call    strlen
-        mov     bx, s_empty
+        mov     bx, FB_ZERO
         call    for_run
         jmp     .nx
-.wild:  mov     dx, for_dta             ; (a DTA of its own: the commands
+.wild:  mov     dx, FB_DTA              ; (a DTA of its own: the commands
         mov     ah, 1Ah                 ;  use theirs)
         int     21h
-        mov     dx, [for_item]
+        mov     dx, [cs:for_item]
         xor     cx, cx
         mov     ah, 4Eh
         int     21h
         jc      .nx
-.wl:    mov     si, [for_item]          ; its directory, the name found
+.wl:    mov     si, [cs:for_item]       ; its directory, the name found
         call    name_part
         mov     cx, si
-        sub     cx, [for_item]
-        mov     bx, for_dta + 30
+        sub     cx, [cs:for_item]
+        mov     bx, FB_DTA + 30
         call    for_run
-        cmp     byte [for_stop], 0
+        cmp     byte [cs:for_stop], 0
         jne     .done
-        mov     dx, for_dta
+        mov     dx, FB_DTA
         mov     ah, 1Ah
         int     21h
         mov     ah, 4Fh
         int     21h
         jnc     .wl
-.nx:    cmp     byte [for_stop], 0
+.nx:    cmp     byte [cs:for_stop], 0
         jne     .done
-        mov     si, [for_next]
+        mov     si, [cs:for_next]
         jmp     .item
-.done:  mov     byte [for_on], 0
+.done:  push    cs
+        pop     ds
+        mov     byte [for_on], 0
         dec     byte [for_n]
-        ret
+        jmp     for_free
 .syn:   mov     si, e_syntax
         jmp     err
+
+; FOR's block given back, and the DTA ours again (DS = CS)
+for_free:
+        mov     dx, dta
+        mov     ah, 1Ah
+        int     21h
+        mov     es, [for_seg]
+        mov     ah, 49h
+        int     21h
+        push    cs
+        pop     es
+        ret
 
 ; ZF if AL separates FOR's items
 is_delim:
@@ -1633,20 +1679,21 @@ is_delim:
 .y:     ret
 
 ; one turn of FOR: its command with %V as the item (CX bytes at
-; [for_item], then the name at BX), run
+; [for_item], then the name at BX), built in line and run.  DS = FOR's
+; block, as it is again after
 for_run:
-        mov     si, [for_cmdp]
-        mov     di, for_cmd
+        mov     si, [cs:for_cmdp]
+        mov     di, line                ; (the FOR's own line is in the block)
 .c:     lodsb
         cmp     al, '%'
         jne     .s
-        mov     ah, [for_var]
+        mov     ah, [cs:for_var]
         cmp     ah, [si]
         jne     .s
         inc     si
         push    si
         push    cx
-        mov     si, [for_item]
+        mov     si, [cs:for_item]
 .i:     jcxz    .n
         lodsb
         call    .put
@@ -1664,10 +1711,15 @@ for_run:
 .s:     call    .put
         or      al, al
         jnz     .c
-        mov     byte [for_cmd + LBUF], 0        ; (cut short, it still ends)
-        mov     si, for_cmd
-        jmp     do_line
-.put:   cmp     di, for_cmd + LBUF
+        push    cs
+        pop     ds
+        mov     byte [line + LBUF], 0   ; (cut short, it still ends)
+        mov     si, line
+        call    do_line
+        mov     ds, [for_seg]
+        ret
+        times   ($ - $$) & 1 db 90h     ; (hot: even)
+.put:   cmp     di, line + LBUF
         jae     .px
         stosb
 .px:    ret
@@ -4860,12 +4912,10 @@ for_var     resb 1
 for_cmdp    resw 1
 for_item    resw 1
 for_next    resw 1
+for_seg     resw 1                  ; FOR's block (L4): FB_DTA, FB_BUF, FB_ZERO
 bat_name    resb 14                 ; for errors (SHIFT moves %0)
 bat_args    resb LBUF + 2
 line        resb LBUF + 2
-for_dta     resb 44
-for_buf     resb LBUF + 2
-for_cmd     resb LBUF + 2
 BATCTX      equ $ - bat_ctx
             alignb  2                   ; (the stack even, whatever the bytes
             resb 1024                   ;  before it)

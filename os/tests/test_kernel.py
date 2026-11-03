@@ -25,6 +25,7 @@ def build():
                  (HERE, 'RUNCALC'), (os.path.join(GOS, 'src'), 'LCMD'), (os.path.join(GOS, 'src'), 'CALC')):
         subprocess.run(['nasm', '-f', 'bin', '-i', d + '/', '-o', os.path.join(d, n + '.COM'), os.path.join(d, n + '.ASM')], check=True)
 
+SCR = os.path.join(GOS, 'drivers', 'SCREEN.PRN')    # Shift-PrtSc's file writer (KC-2), read from the boot disk's root
 def image(name, *files):
     return mkimg.build(os.path.join(OUT, name), [os.path.join(GOS, 'src', 'LODE.SYS')] + list(files))
 
@@ -236,7 +237,7 @@ def t_capture():
     import io
     from PIL import Image
     pad = os.path.join(OUT, 'PAD.DAT')
-    k = ktest.KPC(image('cap.img', os.path.join(HERE, 'CAPTEST.COM'), os.path.join(GOS, 'src', 'LCMD.COM'))); k.start()
+    k = ktest.KPC(image('cap.img', os.path.join(HERE, 'CAPTEST.COM'), os.path.join(GOS, 'src', 'LCMD.COM'), SCR)); k.start()
     files = lambda: fatcheck.read_files(k.pc.drives[0].img)
     beeps = lambda: ''.join(k.pc.tty).count('\x07')
     calls21 = []                                # (AX) of the 3Eh, 40h and F0h calls made during a shot
@@ -279,8 +280,9 @@ def t_capture():
     f = files()
     check('mode 6: SCREEN03.BMP, each line twice', 'A:\\SCREEN03.BMP' in f and
           bmp_ok(f['A:\\SCREEN03.BMP'], lambda y: bytes([y >> 1]) * 80) and beeps() == 1, (sorted(f), beeps()))
-    check('... in a DOS program, through the 1 KB buffer (no lend: with EMS it would be free memory)',
-          0xF002 not in calls21 and sum(1 for a in calls21 if a >> 8 == 0x40) == 32, [hex(a) for a in calls21][:6])
+    nw = -(-32062 // (1024 - os.path.getsize(SCR)))
+    check('... in a DOS program, through the rest of SCREEN.PRN\'s 1 KB (no lend: with EMS it would be free memory): '
+          '%d writes' % nw, 0xF002 not in calls21 and sum(1 for a in calls21 if a >> 8 == 0x40) == nw, [hex(a) for a in calls21][:6])
     k.key(ktest.ENTER); shot()
     want = 'Line one\r\nSecond line\r\n\r\nABCDE GHIJ\r\n' + '\r\n' * 21
     got = files().get('A:\\SCREEN01.TXT', b'').decode('latin-1')
@@ -309,8 +311,8 @@ def t_capture():
     # handler would have kept the error for its next message)
     before = bytes(k.pc.drives[0].img)
     k.pc.drives[0].wp = True; shot(); k.pc.drives[0].wp = False
-    check('write-protected: a long beep, the disk untouched, no INT 24h, nothing to close',
-          beeps() == 4 and bytes(k.pc.drives[0].img) == before and k.u16('crit_err') == 0 and closes() == 0,
+    check('write-protected: a long beep, the disk untouched, no INT 24h, nothing to close but SCREEN.PRN, read',
+          beeps() == 4 and bytes(k.pc.drives[0].img) == before and k.u16('crit_err') == 0 and closes() == 1,
           (beeps(), k.u16('crit_err'), closes()))
     # another disk put in, which a program already read through the BIOS
     # (the change line is clear) and no INT 21h 0Dh yet: the capture must
@@ -320,9 +322,9 @@ def t_capture():
     for i in range(30):
         open(os.path.join(OUT, 'D%02d.TXT' % i), 'wb').write(b'data %d\r\n' % i * 200)
         data.append(os.path.join(OUT, 'D%02d.TXT' % i))
-    other = mkimg.build(os.path.join(OUT, 'capother.img'), data)
+    other = mkimg.build(os.path.join(OUT, 'capother.img'), data + [SCR])     # (the driver is read from the disk in A:)
     before = fatcheck.read_files(open(other, 'rb').read())
-    k = ktest.KPC(image('cap2.img', os.path.join(HERE, 'CAPTEST.COM'))); k.start()
+    k = ktest.KPC(image('cap2.img', os.path.join(HERE, 'CAPTEST.COM'), SCR)); k.start()
     k.select('CAPTEST.COM'); k.key(ktest.ENTER, settle=False)
     k.pc.run_until(lambda: k.pc.mode() == 6, 5); k.settle()
     k.pc.drives[0] = pcemu.Floppy(other); k.pc.drives[0].changed = False
@@ -334,13 +336,21 @@ def t_capture():
           (sorted(set(before) - set(after)), probs[:3], beeps()))
     # no room for all of it: none of it is left
     open(pad, 'wb').write(bytes(1400000))
-    k = ktest.KPC(image('capfull.img', pad)); k.start()
+    k = ktest.KPC(image('capfull.img', SCR, pad)); k.start()
     before = sorted(files())
     shot()
     probs, _ = fatcheck.check(bytes(k.pc.drives[0].img))
-    check('disk full: a long beep, no SCREEN01.BMP, disk consistent, no write after the one that failed, closed once',
-          beeps() == 4 and sorted(files()) == before and not probs and sum(1 for a in calls21 if a >> 8 == 0x40) == 1 and
-          closes() == 1, (beeps(), sorted(files()), probs, [hex(a) for a in calls21]))
+    check('disk full: a long beep, no SCREEN01.BMP, disk consistent, no write after the one that failed, closed once '
+          '(and SCREEN.PRN, read)', beeps() == 4 and sorted(files()) == before and not probs
+          and sum(1 for a in calls21 if a >> 8 == 0x40) == 1 and closes() == 2, (beeps(), sorted(files()), probs, [hex(a) for a in calls21]))
+    # KC-2: no SCREEN.PRN on the disk started from: no file, the long beep; nothing of it in the kernel
+    k = ktest.KPC(image('capnone.img', os.path.join(GOS, 'src', 'LCMD.COM'))); k.start()
+    shot()
+    check('no SCREEN.PRN on the boot disk: Shift-PrtSc gives the long beep, no file, PrtSc free again (cap_req 0)',
+          beeps() == 4 and not any('SCREEN0' in n for n in files()) and k.rd('cap_req', 1) == b'\0' and not k.crashed,
+          (beeps(), sorted(files())))
+    check('SCREEN.PRN: one sector, the driver\'s signature, its buffer at least 512 bytes', os.path.getsize(SCR) <= 512
+          and open(SCR, 'rb').read()[2:6] == b'PRN\x01', os.path.getsize(SCR))
 
 
 def t_print():
@@ -350,7 +360,7 @@ def t_print():
     import binascii, subprocess
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'printer=ps.prn\r\n')
     ps = os.path.join(GOS, 'drivers', 'PS.PRN')
-    k = ktest.KPC(image('prn.img', os.path.join(HERE, 'CAPTEST.COM'), ini, ps)); k.start()
+    k = ktest.KPC(image('prn.img', os.path.join(HERE, 'CAPTEST.COM'), ini, ps, SCR)); k.start()
     files = lambda: fatcheck.read_files(k.pc.drives[0].img)
     beeps = lambda: ''.join(k.pc.tty).count('\x07')
     def shot(sim_s=8.0):
@@ -367,7 +377,7 @@ def t_print():
     want = [bytes(255 - v for v in vram[(y & 3) * 0x2000 + (y >> 2) * 80:][:80]) for y in range(399, -1, -1)]
     check('Executive: PostScript to LPT1, a 640 x 400 image, one beep, no file',
           out.startswith(b'%!PS-Adobe-3.0\n') and b'640 400 1[640 0 0 400 0 0]' in head and out.endswith(b'showpage\n\x04')
-          and beeps() == 1 and not any('SCREEN' in n for n in files()), (out[:80], out[-20:], beeps(), sorted(files())))
+          and beeps() == 1 and not any('SCREEN0' in n for n in files()), (out[:80], out[-20:], beeps(), sorted(files())))
     check('... the screen, bottom line first, a lit pixel black (0), 80 bytes a line in hex',
           [binascii.unhexlify(r) for r in rows[:400]] == want and rows[400] == b'showpage', (len(rows), rows[400:401]))
     k.select('CAPTEST.COM'); k.key(ktest.ENTER, settle=False)
@@ -403,7 +413,7 @@ def t_print():
     zero = os.path.join(OUT, 'ZERO.PRN'); open(zero, 'wb').write(b'')
     tiny = os.path.join(OUT, 'TINY.PRN'); open(tiny, 'wb').write(hi[:6] + b'\xcb' * 4)
     nosig = os.path.join(OUT, 'NOSIG.PRN'); open(nosig, 'wb').write(hi[:2] + b'XXX\x01' + hi[6:])
-    k2 = ktest.KPC(image('prn2.img', os.path.join(OUT, 'HI.PRN'), big, job, zero, tiny, nosig)); k2.start()
+    k2 = ktest.KPC(image('prn2.img', os.path.join(OUT, 'HI.PRN'), big, job, zero, tiny, nosig, SCR)); k2.start()
     def shot2(name):
         k2.wr('prn_path', name.encode() + b'\0'); k2.pc.tty.clear(); k2.pc.lpt.clear(); k2.pc.prtsc(); k2.settle(6)
         return bytes(k2.pc.lpt), ''.join(k2.pc.tty).count('\x07')
@@ -420,7 +430,7 @@ def t_print():
     out, _ = shot2('')
     check('no driver: SCREEN01.BMP as before', 'A:\\SCREEN01.BMP' in fatcheck.read_files(k2.pc.drives[0].img),
           sorted(fatcheck.read_files(k2.pc.drives[0].img)))
-    check('still no file on the printing disk', not any('SCREEN' in n for n in files()), sorted(files()))
+    check('still no file on the printing disk', not any('SCREEN0' in n for n in files()), sorted(files()))
     # Shift-PrtSc: the file all the same, the driver set
     k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] | 2])); out = shot(); k.pc.wr(0, 0x417, bytes([k.pc.rd(0, 0x417, 1)[0] & ~3]))
     check('Shift-PrtSc with a driver set: SCREEN01.BMP, nothing to the printer', out == b'' and beeps() == 1 and
@@ -1159,8 +1169,8 @@ def t_gpirq():
 
 def t_exerel():
     """An .EXE whose relocation table is cut off: EXEC refuses it (11) rather
-    than applying entries nobody read (ex_rel shares path_buf, so they would
-    come from the program's own name); the whole one runs."""
+    than applying entries nobody read (they would be what ex_rel held from
+    before: the INT 21h stack's low area since K2); the whole one runs."""
     import struct
     code = bytes([0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x00, 0x4C, 0xCD, 0x21]) + b'RAN$'
     def exe(nrel, rels=b''):
@@ -1984,6 +1994,7 @@ def t_command():
                 bat('O1.BAT', '@echo off', 'call i1 && echo AFTER1', 'if exist o1.bat call i1 && echo AFTER2', 'call i1 | upper'),
                 bat('I1.BAT', 'echo hello world from the inner batch file, a long line'),
                 bat('O2.BAT', '@echo off', 'call i2'),
+                bat('O2F.BAT', '@echo off', 'for %%a in (1 2) do call i2'),
                 bat('I2.BAT', 'pause'),
                 bat('O3.BAT', '@echo off', 'for %%d in (1 2) do call i3 %%d'),
                 bat('I3.BAT', '@echo off', 'for %%e in (a b) do echo in %1 %%e'),
@@ -2097,6 +2108,29 @@ def t_command():
         k.key('type con'); k.key(ktest.ENTER); k.key('abc'); k.key(0x2E03)
     m1 = largest()
     check('Ctrl-C in TYPE CON three times: no memory lost', m0 and m0 == m1, (m0, m1))
+    # FOR's set, command and DTA are in a block of their own only while it runs (L4)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('for %a in (x) do memsz'); k.key(ktest.ENTER)
+    m = re.search(r'([\d.]+) KB for programs', k.pc.text_screen())
+    m2 = m.group(1) if m else None
+    for b in ('fors', 'forcall', 'forgo', 'o3'):
+        k.key('cls'); k.key(ktest.ENTER); k.key(b); k.key(ktest.ENTER)
+    m3 = largest()
+    check('a program run by a FOR: 0.1-0.2 KB less (FOR\'s block, 11 paragraphs and its MCB, 192 bytes); after FORs (a list, '
+          'names, CALL in one, GOTO out of one, FOR in a CALLed batch file in a FOR): no memory lost',
+          m2 and m3 == m0 and 0.05 < float(m0) - float(m2) < 0.25, (m0, m2, m3))
+    for _ in range(3):
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key('for %a in (1 2 3) do pause'); k.key(ktest.ENTER); k.key(0x2E03)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('for %a in (q) do echo after %a'); k.key(ktest.ENTER)
+    o = k.pc.text_screen()
+    m4 = largest()
+    check('Ctrl-C in a FOR three times: its block given back each time, and a FOR runs again', m4 == m0 and 'after q' in o, (m0, m4, o))
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('o2f'); k.key(ktest.ENTER); k.key(0x2E03)
+    m5 = largest()
+    check('Ctrl-C in a batch file CALLed from a FOR: the FOR\'s block (kept at the CALL) given back too', m5 == m0, (m0, m5))
     k.key('exit'); k.key(ktest.ENTER)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
@@ -2584,7 +2618,7 @@ def t_execabort():
     open(com, 'wb').write(code + b'Q' * (4096 - len(code)))
     badx = os.path.join(OUT, 'BADX.EXE')            # a header bigger than the file: EXEC says 11 (bad format)
     open(badx, 'wb').write((b'MZ' + struct.pack('<4H', 88, 2, 0, 0x40)).ljust(600, b'\0'))
-    k = ktest.KPC(image('exabort.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, os.path.join(HERE, 'UPPER.COM'), badx))
+    k = ktest.KPC(image('exabort.img', os.path.join(GOS, 'src', 'LCMD.COM'), com, os.path.join(HERE, 'UPPER.COM'), badx, SCR))
     k.start()
     pc, d = k.pc, k.pc.drives[0]
     def lbas(name):                     # the file's sectors (1.44 MB FAT12)
@@ -2659,6 +2693,22 @@ def t_execabort():
     k.key('cls'); k.key(ktest.ENTER)
     k.key('big'); k.key(ktest.ENTER)
     check('... then it reads: BIG.COM runs', 'HELLO' in pc.text_screen(), pc.text_screen())
+    # K2: EXEC's buffers (ex_name, ex_rel, the header) are in the INT 21h stack's low area, where a screen capture
+    # puts its buffer: Shift-PrtSc at the prompt of an error inside EXEC, answered Retry.  The capture waits for
+    # the next outermost DOS call (the handler's own calls are nested), after EXEC: both whole
+    d.bad = {sec[1]}
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('big'); k.key(ktest.ENTER, settle=False)
+    pc.run_until(lambda: 'Fail?' in pc.text_screen() or pc.crash, 10)
+    o1 = pc.text_screen()
+    pc.prtsc(); pc.run_for(0.5)
+    d.bad = set()
+    pc.keys.append(ord('r')); k.settle(3)
+    o = pc.text_screen()
+    shots = [n for n in fatcheck.read_files(d.img) if 'SCREEN0' in n]
+    check('Shift-PrtSc at the prompt of an error inside EXEC (K2: the low area), answered Retry: BIG.COM loads and runs '
+          'whole, and the screen is saved after (SCREEN01.TXT)', 'Fail?' in o1 and 'HELLO' in o and shots == ['A:\\SCREEN01.TXT']
+          and not k.crashed, (o[-300:], shots))
     k.key('exit'); k.key(ktest.ENTER)
     check('... and the Executive lists the disk once LCMD ends', 'BIG.COM' in k.exec_list() and 'LCMD.COM' in k.exec_list(),
           k.exec_list())

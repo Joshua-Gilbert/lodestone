@@ -16,7 +16,9 @@
 ;  (KROM.INC).  Only what differs from the defaults is written.
 ; =====================================================================
 %include "UIAPI.INC"
-RUN_API equ 4                           ; (UI_SAVER's tidying)
+RUN_API equ 4                           ; (UI_SAVER's tidying.  Its help's HT, n is API
+                                        ;  10's, as CALC.ASM says: kept at 4 so an
+                                        ;  older LODE.SYS still runs it)
         org     RUN_ORG
 
 TOP_Y   equ 32                          ; first topic / detail line
@@ -1538,9 +1540,21 @@ rom_prn:
 
 ; vbuf = a .PRN's path, the DTA its entry: CF if it isn't a printer driver
 ; (16 bytes to 1 KB, and "PRN", 1 after its JMP SHORT, as the kernel checks;
-; a print job saved as .PRN isn't one)
+; a print job saved as .PRN isn't one; nor is SCREEN.PRN, the kernel's
+; screen capture, which Shift-PrtSc runs whatever the printer is)
 prn_ok: cmp     word [dta + 28], 0
         jne     .no
+        pusha
+        push    es
+        push    ds
+        pop     es
+        mov     si, dta + 30
+        mov     di, s_scrprn
+        mov     cx, 11
+        repe    cmpsb
+        pop     es
+        popa
+        je      .no
         mov     ax, [dta + 26]
         cmp     ax, 16
         jb      .no
@@ -2308,12 +2322,12 @@ s_band_sv   db 'RETURN: the next delay    SPACE: tidy or not    ESC: back',0
 s_band_md   db 'RETURN: the next size    ESC: back',0
 s_band_set  db "RETURN: back to the ROM's settings    ESC: back",0
 s_band_mt   db 'SPACE: on or off from the next start-up    ESC: back',0
-h_topic     db 'Up / Down, a letter, mouse   choose a topic',0
-h_enter     db 'Return                       what the band says',0
-h_space     db 'Space                        on or off (see the band)',0
-h_f5        db 'F5                           look again',0
-h_help      db 'CODE-?  or  F1               this help',0
-h_quit      db 'ESC  or  CODE-Q              back to the Executive',0
+h_topic     db 'Up / Down, a letter, mouse', HT, 29, 'choose a topic',0
+h_enter     db 'Return', HT, 29, 'what the band says',0
+h_space     db 'Space', HT, 29, 'on or off (see the band)',0
+h_f5        db 'F5', HT, 29, 'look again',0
+h_help      db 'CODE-?  or  F1', HT, 29, 'this help',0
+h_quit      db 'ESC  or  CODE-Q', HT, 29, 'back to the Executive',0
 s_kb        db ' KB',0
 l_conv      db 'Conventional memory',0
 l_kernel    db 'Kernel (DOS + GPIB)',0
@@ -2472,6 +2486,7 @@ s_prtfile   db 'saves SCREENnn.BMP / .TXT',0
 s_prtwith   db 'prints with ',0
 s_prnroot   db '@:\*.PRN',0
 s_prnlode   db 'C:\LODE\*.PRN',0
+s_scrprn    db 'SCREEN.PRN',0
 s_mdalleq   db 'ALL',0
 l_mdsize    equ l_dsize + 2             ; ('Size' and 'Free')
 l_mdfree    equ l_dfree + 2

@@ -19,7 +19,7 @@
 ; =====================================================================
 %include "UIAPI.INC"
 %include "MTAPI.INC"
-RUN_API equ 6
+RUN_API equ 6                           ; (its help's HT, n: API 10's, as CALC.ASM says)
 RUN_FLAGS equ RF_WIN                    ; (a window .RUN, M8)
         org     RUN_ORG
 
@@ -384,13 +384,13 @@ keys    KEY(K_NONE,   0,        h_choose)
         KEY(K_CODE_T, k_quit,   0)
         KEY(K_NONE,   0,        h_move)
         dw 0
-h_choose db 'Up / Down, or click      choose a task',0
-h_front db 'Return or click again    to the front, close',0
-h_park  db 'CODE-Z                   park it in EMS / back',0
-h_behind db 'CODE-B                   runs behind: auto, yes, no',0
-h_end   db 'CODE-D                   end it',0
-h_f5    db 'F5                       look again',0
-h_quit  db 'ESC or CODE-T            close',0
+h_choose db 'Up / Down, or click', HT, 25, 'choose a task',0
+h_front db 'Return or click again', HT, 25, 'to the front, close',0
+h_park  db 'CODE-Z', HT, 25, 'park it in EMS / back',0
+h_behind db 'CODE-B', HT, 25, 'runs behind: auto, yes, no',0
+h_end   db 'CODE-D', HT, 25, 'end it',0
+h_f5    db 'F5', HT, 25, 'look again',0
+h_quit  db 'ESC or CODE-T', HT, 25, 'close',0
 h_move  db 'CODE-F7, arrows, Return  move (or drag its title)',0
 s_title db 'Tasks',0
 s_help  db 'Tasks Help',0
