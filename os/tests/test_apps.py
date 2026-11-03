@@ -3095,7 +3095,7 @@ def t_paint_bmp():
     a mouse; its speed."""
     print('== Paint: BMP files, no mouse, speed')
     # Shift-PrtSc in the Executive, then that picture in Paint and saved again: the same bytes
-    k = ktest.KPC(image('pcap.img', PAINT)); k.pc.mouse = True; k.start()
+    k = ktest.KPC(image('pcap.img', PAINT, os.path.join(GOS, 'drivers', 'SCREEN.PRN'))); k.pc.mouse = True; k.start()
     k.pc.prtsc(); k.settle(10)
     cap = disk_file(k, 'SCREEN01.BMP')
     k.key(0x3F00); k.select('SCREEN01.BMP'); k.key(ktest.ENTER)       # (F5: the list again)
@@ -3423,7 +3423,7 @@ def rom1(*extra):
     sys.path.insert(0, os.path.join(os.path.dirname(GOS), 'tools'))
     import mkrom
     names = ['src/LODE.SYS', 'src/LODE.PIC', 'src/LCMD.COM', 'apps/SYSTEM.RUN', 'apps/WRITE.RUN', 'apps/CALC.RUN',
-             'src/CALC.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN', 'rom/LODE.INI']
+             'src/CALC.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN', 'drivers/SCREEN.PRN', 'rom/LODE.INI']
     files = [(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names]
     files += [(os.path.basename(p), open(p, 'rb').read()) for p in extra]
     return mkrom.volume(files, boot=open(os.path.join(GOS, 'src', 'ROMBOOT.BIN'), 'rb').read())[0]
