@@ -840,7 +840,7 @@ Only with the switch on; the core with it off ignores all of this. The details a
 
 ## Right clicks (UI API 7, 2026-10-21)
 - **What:** `UI_EVENT` and `UI_POLL` give `AX = EV_RCLICK` (FF03h), with BX = x and CX = y as for `EV_CLICK`, for a press of the right button.
-  - It is the first user of the right button. Paint (`PAINT.RUN`, on its own branch) will use it to erase.
+  - It is the first user of the right button. Paint (`PAINT.RUN`) declares API 6 and doesn't use it yet; a right-drag to erase is a step of its own.
 - **Only to a program that asks:**
   - The program must be a `.RUN` that needs API 7 (`RUN_API equ 7`); the core checks its header's version, as `W_FLAGS` does for API 6. Older `.RUN`s (System, Write, the calculator, UITEST) and the Executive never see the event. Their key handling was written before it existed.
   - The left button must be up.

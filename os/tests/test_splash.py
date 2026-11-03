@@ -267,7 +267,8 @@ MEM_044 = {0: '564.8', 88: '580.9'}   # (0.6: 0.1 KB less, the PATH search and t
                                       #  0.5 KB less, pop-up menus and drags: UI API 8;
                                       #  0.3 KB less, the clipboard: UI_CLIP;
                                       #  0.1 KB more, 160 bytes, the 2026-10-26 audit's kernel batch;
-                                      #  0.1 KB more, 48 bytes, its UI batch: R39-R41)
+                                      #  0.1 KB more, 48 bytes, its UI batch: R39-R41;
+                                      #  32 bytes, the Executive opening .BMP files with Paint)
 
 def t_memory():
     print('== what DOS programs get: the same with the picture as without it')

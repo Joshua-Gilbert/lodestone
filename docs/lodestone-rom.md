@@ -22,11 +22,11 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-3,584 bytes (7 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one, the window, T2, four: TERM.RUN and LODEMT.SYS's growth, graphics, T3, one: TERM.RUN's notes, select and paste, T4, three: TERM.RUN two, LODEMT.SYS one, regions that grow, T5a, one: LODEMT.SYS, a screen a program publishes, T5b, two: LODEMT.SYS one, TERM.RUN one, a program woken by SRQ, T5c, one: LODEMT.SYS, CLAUDE.COM in a window, T5d, one: TERM.RUN, and the 2026-10-26 audit's bug fixes, one: LODEMT.SYS; its MT space batch gave two back). CLAUDE.COM and Paint (still on its own branch) are meant for ROM 2. Until then they live on C: or A:.
+3,584 bytes (7 sectors) are left: DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one, the window, T2, four: TERM.RUN and LODEMT.SYS's growth, graphics, T3, one: TERM.RUN's notes, select and paste, T4, three: TERM.RUN two, LODEMT.SYS one, regions that grow, T5a, one: LODEMT.SYS, a screen a program publishes, T5b, two: LODEMT.SYS one, TERM.RUN one, a program woken by SRQ, T5c, one: LODEMT.SYS, CLAUDE.COM in a window, T5d, one: TERM.RUN, and the 2026-10-26 audit's bug fixes, one: LODEMT.SYS; its MT space batch gave two back). Paint (PAINT.RUN) is on ROM 2 (below); CLAUDE.COM is meant for it too, and until then lives on C: or A:.
 
 ## ROM 2
 
-`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `LJ`), burned as the second half of R: (below). It holds **DEFRAG.COM** and **TERM.FNT** (the terminal window's font: without ROM 2 a text program, and CODE-P's prompt, starts full screen as a task in front, as without windows) now; what doesn't fit in ROM 1 goes there.
+`os/build.sh` also builds **`os/LODE2.BIN`** and **`os/LODE2_EPROM.BIN`** (burn the latter): a data ROM (`mkrom.py --data`: system type 2, not bootable, id `LJ`), burned as the second half of R: (below). It holds **DEFRAG.COM**, **TERM.FNT** (the terminal window's font: without ROM 2 a text program, and CODE-P's prompt, starts full screen as a task in front, as without windows) and **PAINT.RUN** (Paint and the BMP viewer: from the ROM, Return on a `.BMP` finds it on R: through PATH; without ROM 2 it says "PAINT.RUN is not on this disk") now, with 109,056 bytes (213 sectors) left; what doesn't fit in ROM 1 goes there.
 
 - **R: is both ROMs' files** (`KROM.INC`), whichever socket each is in:
   - with ROM 2 in, R: is one volume of the two: its FAT two sectors (ROM 1's, then ROM 2's), its root 64 entries (ROM 1's 32, then ROM 2's), then ROM 1's clusters 2-253, a gap (254-341, marked bad, on neither ROM) and ROM 2's as 342-593 (ROM 2's cluster n is R:'s n + 340);
@@ -52,7 +52,7 @@ O10 changed both ROMs' layout. Burn both from one build of this tree (`os/build.
 A mix of old and new is safe:
 - the new ROM 1 doesn't join a ROM 2 burned before (id `L2`). R: is then ROM 1 alone: no DEFRAG.COM round, and no TERM.FNT, so text programs start full screen;
 - an old ROM 1 started from its own kernel, or an older kernel started from a floppy, doesn't join the new ROM 2 (`LJ`): R: is ROM 1 alone again;
-- an old ROM 1 (0.6's, id `LO`) beside the new ROM 2, with this kernel started from a floppy, **does** join them. The old ROM 1's FAT leaves the gap's entries free, not bad, but nothing uses them: R: answers INT 21h 36h for itself (nothing free of 504), and a write to R: is refused. t_rom2 runs this with 0.6's layout (the current ROM 1 with its FAT zero past entry 253, as pre-O10 mkrom left it): DIR R: shows 15 files and 0 bytes free, both ROMs' files read as built, and a COPY to R: is refused. Burn both all the same.
+- an old ROM 1 (0.6's, id `LO`) beside the new ROM 2, with this kernel started from a floppy, **does** join them. The old ROM 1's FAT leaves the gap's entries free, not bad, but nothing uses them: R: answers INT 21h 36h for itself (nothing free of 504), and a write to R: is refused. t_rom2 runs this with 0.6's layout (the current ROM 1 with its FAT zero past entry 253, as pre-O10 mkrom left it): DIR R: shows 16 files and 0 bytes free, both ROMs' files read as built, and a COPY to R: is refused. Burn both all the same.
 
 ## Which socket
 
