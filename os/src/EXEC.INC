@@ -2960,21 +2960,21 @@ ex_keys:
         KEY(K_NONE,      0,          h_code)
         dw 0                            ; (15 help lines; there is room for 18)
 
-h_choose    db 'Up / Down, PgUp / PgDn   choose',0
-h_tab       db 'Tab / Shift-Tab          Device, Subject, Title',0
-h_letter    db 'Type its first letter    find a name',0
-h_confirm   db 'Return or click again    open it / next item',0
-h_usage     db 'CODE-U                   System',0
-h_write     db 'CODE-W                   Write (a new file)',0
-h_claude    db 'CODE-A                   Claude',0
-h_calc      db 'CODE-K                   Calculator',0
-h_shell     db 'CODE-P                   Command prompt',0
-h_tasks     db 'CODE-T                   Tasks',0
-h_copy      db 'CODE-C                   Copy (a file or subject)',0
-h_erase     db 'CODE-D                   Delete (a file or subject)',0
-h_move      db 'CODE-M                   Move (a file)',0
-h_rename    db 'CODE-R                   Rename (a file)',0
-h_f5        db 'F5                       read the disk again',0
+h_choose    db 'Up / Down, PgUp / PgDn', HT, 25, 'choose',0
+h_tab       db 'Tab / Shift-Tab', HT, 25, 'Device, Subject, Title',0
+h_letter    db 'Type its first letter', HT, 25, 'find a name',0
+h_confirm   db 'Return or click again', HT, 25, 'open it / next item',0
+h_usage     db 'CODE-U', HT, 25, 'System',0
+h_write     db 'CODE-W', HT, 25, 'Write (a new file)',0
+h_claude    db 'CODE-A', HT, 25, 'Claude',0
+h_calc      db 'CODE-K', HT, 25, 'Calculator',0
+h_shell     db 'CODE-P', HT, 25, 'Command prompt',0
+h_tasks     db 'CODE-T', HT, 25, 'Tasks',0
+h_copy      db 'CODE-C', HT, 25, 'Copy (a file or subject)',0
+h_erase     db 'CODE-D', HT, 25, 'Delete (a file or subject)',0
+h_move      db 'CODE-M', HT, 25, 'Move (a file)',0
+h_rename    db 'CODE-R', HT, 25, 'Rename (a file)',0
+h_f5        db 'F5', HT, 25, 'read the disk again',0
 h_code      db 'CODE is the Alt key.  Any key closes.',0
 
 ; ---------------------------------------------------------------------

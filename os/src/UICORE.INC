@@ -1714,10 +1714,21 @@ strlen: push    si                      ; SI -> CX = length
         pop     si
         ret
 
-maxlen: push    si                      ; AX -> text: CX = its length, BP the
+maxlen: push    si                      ; AX -> text: CX = its width, BP the
         xchg    si, ax                  ;  larger of BP and CX (AX lost)
-        call    strlen
-        pop     si
+        xor     cx, cx                  ; (a TAB, n: on to column n, API 10)
+.l:     lodsb
+        or      al, al
+        jz      .e
+        cmp     al, 9
+        jne     .i
+        lodsb
+        cbw
+        xchg    cx, ax
+        jmp     .l
+.i:     inc     cx
+        jmp     .l
+.e:     pop     si
         cmp     cx, bp
         jbe     .x
         mov     bp, cx
@@ -2670,17 +2681,41 @@ help_draw:
         or      ax, ax
         jz      .l
         push    si
-        mov     si, ax
-        xor     ah, ah
-        call    strlen
-        cmp     cx, di
-        jbe     .p
-        mov     cx, di
-.p:     call    putsn
+        xchg    si, ax
+        call    help_line
         pop     si
         add     dx, 16
         jmp     .l
 .x:     ret
+
+; a help line: SI = its text, BX = its first column, DI = the columns it
+; may take, DX = y.  A TAB, n goes on at its column n (API 10: one byte
+; for the spaces a table lined up with)
+help_line:
+        pusha
+        add     di, bx                  ; (the right limit)
+        mov     bp, bx                  ; (its first column)
+        mov     cx, 1
+.l:     lodsb
+        or      al, al
+        jz      .x
+        cmp     al, 9
+        jne     .c
+        lodsb
+        cbw
+        add     ax, bp
+        xchg    bx, ax
+        jmp     .l
+.c:     cmp     bx, di
+        jae     .n
+        dec     si
+        xor     ax, ax                  ; (AH: no mask)
+        call    putsn                   ; (one character; all kept)
+        inc     si
+.n:     inc     bx
+        jmp     .l
+.x:     popa
+        ret
 
 ; UI_MENU (API 8): SI = AL items (word pointers to ASCIIZ), AH = the one
 ; lit first, BX = x, CX = y (where it was clicked).  A window there (kept
