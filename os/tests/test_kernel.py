@@ -1984,6 +1984,7 @@ def t_command():
                 bat('O1.BAT', '@echo off', 'call i1 && echo AFTER1', 'if exist o1.bat call i1 && echo AFTER2', 'call i1 | upper'),
                 bat('I1.BAT', 'echo hello world from the inner batch file, a long line'),
                 bat('O2.BAT', '@echo off', 'call i2'),
+                bat('O2F.BAT', '@echo off', 'for %%a in (1 2) do call i2'),
                 bat('I2.BAT', 'pause'),
                 bat('O3.BAT', '@echo off', 'for %%d in (1 2) do call i3 %%d'),
                 bat('I3.BAT', '@echo off', 'for %%e in (a b) do echo in %1 %%e'),
@@ -2097,6 +2098,29 @@ def t_command():
         k.key('type con'); k.key(ktest.ENTER); k.key('abc'); k.key(0x2E03)
     m1 = largest()
     check('Ctrl-C in TYPE CON three times: no memory lost', m0 and m0 == m1, (m0, m1))
+    # FOR's set, command and DTA are in a block of their own only while it runs (L4)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('for %a in (x) do memsz'); k.key(ktest.ENTER)
+    m = re.search(r'([\d.]+) KB for programs', k.pc.text_screen())
+    m2 = m.group(1) if m else None
+    for b in ('fors', 'forcall', 'forgo', 'o3'):
+        k.key('cls'); k.key(ktest.ENTER); k.key(b); k.key(ktest.ENTER)
+    m3 = largest()
+    check('a program run by a FOR: 0.2 KB less (FOR\'s block, 11 paragraphs and its MCB); after FORs (a list, names, '
+          'CALL in one, GOTO out of one, FOR in a CALLed batch file in a FOR): no memory lost',
+          m2 and m3 == m0 and abs(float(m0) - float(m2) - 0.2) < 0.051, (m0, m2, m3))
+    for _ in range(3):
+        k.key('cls'); k.key(ktest.ENTER)
+        k.key('for %a in (1 2 3) do pause'); k.key(ktest.ENTER); k.key(0x2E03)
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('for %a in (q) do echo after %a'); k.key(ktest.ENTER)
+    o = k.pc.text_screen()
+    m4 = largest()
+    check('Ctrl-C in a FOR three times: its block given back each time, and a FOR runs again', m4 == m0 and 'after q' in o, (m0, m4, o))
+    k.key('cls'); k.key(ktest.ENTER)
+    k.key('o2f'); k.key(ktest.ENTER); k.key(0x2E03)
+    m5 = largest()
+    check('Ctrl-C in a batch file CALLed from a FOR: the FOR\'s block (kept at the CALL) given back too', m5 == m0, (m0, m5))
     k.key('exit'); k.key(ktest.ENTER)
     k.pc.run_until(lambda: k.pc.mode() == 0x40, 5); k.settle()
     probs, files = fatcheck.check(bytes(k.pc.drives[0].img))
