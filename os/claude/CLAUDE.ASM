@@ -640,7 +640,7 @@ conv_newline:
         mov     cx, 80
         rep     stosw
         mov     word [c_col], 0
-        mov     byte [c_dirty_full], 1
+        add     word [c_nl], 1          ; (conv_refresh: a scroll by c_nl rows)
         cmp     word [view_off], 0
         je      .x
         inc     word [view_off]         ; reading back: keep the view still
@@ -711,7 +711,10 @@ conv_text:
 .n:     loop    .l
 .x:     ret
 
-; show what changed: the whole window after a scroll, else the last line
+; show what changed: after c_nl new lines with the window full and at
+; its end, the rows scrolled up by c_nl and the last c_nl + 1 lines drawn
+; (CL-16: not all 20 rows, 1,600 cells, a TEXT frame); the whole window
+; when it wasn't full, is read back, or c_dirty_full; else the last line
 conv_refresh:
         cmp     byte [ask_open], 0
         jne     .x
@@ -719,7 +722,43 @@ conv_refresh:
         jne     .x
         cmp     byte [c_dirty_full], 0
         jne     .full
-        cmp     word [c_dirty_col], 0FFFFh
+        mov     cx, [c_nl]
+        jcxz    .line
+        cmp     word [view_off], 0
+        jne     .full
+        cmp     cx, CROWS
+        jae     .full
+        mov     ax, [c_count]           ; (full before them: at NLINES the
+        sub     ax, cx                  ;  ring drops a line a new one)
+        cmp     ax, CROWS
+        jb      .full
+        pusha
+        push    es
+        mov     ax, VSEG
+        mov     es, ax
+        mov     bx, cx                  ; rows 1-20 up by c_nl
+        mov     bp, 1
+        neg     cx
+        add     cx, CROWS
+        call    scr_scroll
+        mov     cx, bx
+        inc     cx                      ; the last c_nl + 1 lines, from the
+        mov     dx, CROWS + 1           ;  bottom row up
+        mov     bx, [c_count]
+.nl:    dec     dx
+        dec     bx
+        mov     ax, bx
+        call    line_off
+        xchg    si, ax
+        push    ds
+        mov     ds, [convseg]
+        call    draw_line
+        pop     ds
+        loop    .nl
+        pop     es
+        popa
+        jmp     .clean
+.line:  cmp     word [c_dirty_col], 0FFFFh
         je      .x
         cmp     word [view_off], 0
         jne     .clean
@@ -750,11 +789,13 @@ conv_refresh:
 .full:  call    draw_conv
 .clean: mov     byte [c_dirty_full], 0
         mov     word [c_dirty_col], 0FFFFh
+        mov     word [c_nl], 0
 .x:     ret
 
 draw_conv:
         pusha
         push    es
+        mov     word [c_nl], 0          ; (all of it: no scroll owed)
         mov     ax, [c_count]           ; clamp the scroll-back
         sub     ax, CROWS
         jns     .a
@@ -4440,6 +4481,7 @@ c_col       resw 1
 c_attr      resb 1
 c_dirty_full resb 1
 c_dirty_col resw 1
+c_nl        resw 1                      ; new lines since the window was drawn (CL-16)
 view_off    resw 1
 ; prompt
 inlen       resw 1

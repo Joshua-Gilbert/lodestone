@@ -274,26 +274,7 @@ term_scroll:
         cmp     byte [win], 0
         jne     .sh
 %endif
-        ; the screen: in each bank, rows of 320 bytes
-        mov     ax, VSEG
-        mov     ds, ax
-        xor     dx, dx                  ; DX = bank base
-.bank:  imul    di, bp, 320
-        add     di, dx
-        mov     ax, bp
-        add     ax, bx
-        imul    si, ax, 320
-        add     si, dx
-        push    cx
-        imul    cx, cx, 160
-        rep     movsw
-        imul    cx, bx, 160
-        xor     ax, ax
-        rep     stosw
-        pop     cx
-        add     dx, 2000h
-        cmp     dx, 8000h
-        jb      .bank
+        call    scr_scroll
 .sh:    pop     ds
         ; the shadow: rows of 160 bytes
         push    ds
@@ -313,6 +294,33 @@ term_scroll:
         mov     es, ax
         popa
 .x:     ret
+
+; the screen's rows BP+BX.. up to row BP, CX of them, and BX blank rows
+; below (in each bank, rows of 320 bytes): term_scroll's, and the chat's
+; (CL-16).  ES = VSEG.  Keeps BX, CX, BP
+scr_scroll:
+        push    ds
+        mov     ax, VSEG
+        mov     ds, ax
+        xor     dx, dx                  ; DX = bank base
+.bank:  imul    di, bp, 320
+        add     di, dx
+        mov     ax, bp
+        add     ax, bx
+        imul    si, ax, 320
+        add     si, dx
+        push    cx
+        imul    cx, cx, 160
+        rep     movsw
+        imul    cx, bx, 160
+        xor     ax, ax
+        rep     stosw
+        pop     cx
+        add     dx, 2000h
+        cmp     dx, 8000h
+        jb      .bank
+        pop     ds
+        ret
 
 ; rows 0-23 blank, on the screen and in the shadow.  ES = VSEG.
 term_clear:
