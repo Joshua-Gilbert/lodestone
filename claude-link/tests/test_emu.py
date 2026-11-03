@@ -329,6 +329,34 @@ def test_queued_prompt():
     check(h)
 
 
+def test_chat_scroll():
+    """CL-16: with the window full and at its end, a TEXT frame's new lines
+    scroll rows 1-20 and draw only the lines they reach, not all 20 rows
+    (1,600 cells) a frame; the screen then is what a whole redraw draws."""
+    from unicorn import UC_HOOK_CODE
+    text = '\n'.join('Line %03d of a long answer, streamed.' % i for i in range(1, 121))
+    h = start([reply(('text', text))])
+    at, n = h.claude_psp * 16 + h.sym['cell'], [0]
+    def hk(uc, a, sz, ud):
+        if a == at: n[0] += 1
+    h.m.mu.hook_add(UC_HOOK_CODE, hk, None, at, at); h.m.mu.ctl_flush_tb()
+    assert h.turn('count to 120', sim_s=60)
+    h.settle()
+    cells = n[0]
+    v0 = h.m.rd(0xB800, 0, 0x8000)
+    t = h.screen().split('\n')
+    assert 'Line 120' in '\n'.join(t[1:21]), t
+    h.key(0x7500)                                  # Ctrl-End: draw_conv, the whole window
+    h.settle()
+    v1 = h.m.rd(0xB800, 0, 0x8000)
+    rows = lambda v: b''.join(v[b * 0x2000 + 320: b * 0x2000 + 21 * 320] for b in range(4))
+    assert rows(v0) == rows(v1), 'rows 1-20 differ from a whole redraw'
+    # (a whole window a frame, as before CL-16: 37,533 cells here, the frames ~5 lines each)
+    assert cells < 24000, cells
+    print('   %d cells drawn for 120 lines (%.0f a line)' % (cells, cells / 120))
+    check(h)
+
+
 def test_long_answer_scrollback():
     text = '\n'.join('Line %03d of a long answer.' % i for i in range(1, 201))
     h = start([reply(('text', text))])
