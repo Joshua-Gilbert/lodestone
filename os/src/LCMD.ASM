@@ -275,7 +275,9 @@ unwind: cmp     byte [rdepth], 0
         je      .r0
         call    rpop
         jmp     unwind
-.r0:    call    redir_undo
+.r0:    mov     byte [tpre_on], 0       ; (a pipe's TEMP: read again; even:
+                                        ;  the hot labels after)
+        call    redir_undo
 .c:     mov     bl, [cdepth]
         or      bl, bl
         jz      .f
@@ -303,7 +305,6 @@ unwind: cmp     byte [rdepth], 0
         push    cs
         pop     es
         jmp     .c
-        db      90h                     ; (parity: the hot labels after)
 .f:     cmp     byte [for_on], 0        ; a FOR's block (Ctrl-C in one)
         je      .f0
         call    for_free
@@ -525,26 +526,25 @@ do_pipe:
 .bar:   mov     byte [di], 0
         mov     [pipe_rest], si
 .cut:   ; the pipe's files: in from the last, out to the next
-        call    pipe_names
         mov     byte [in_name], 0
         mov     byte [out_name], 0
         mov     byte [out_app], 0
         cmp     byte [pipe_n], 0
         je      .ni
-        mov     si, pipe_a
+        mov     al, '1'
         test    byte [pipe_n], 1
         jnz     .pi
-        mov     si, pipe_b
+        mov     al, '2'
 .pi:    mov     di, in_name
-        call    strcpy
+        call    pipe_name
 .ni:    cmp     word [pipe_rest], 0
         je      .no
-        mov     si, pipe_b
+        mov     al, '2'
         test    byte [pipe_n], 1
         jnz     .po
-        mov     si, pipe_a
+        mov     al, '1'
 .po:    mov     di, out_name
-        call    strcpy
+        call    pipe_name
 .no:    inc     byte [pipe_n]           ; (counted first: a later one's
         call    parse_redir             ;  redirection failing, the files
         jc      .x                      ;  the one before made go too)
@@ -561,31 +561,77 @@ do_pipe:
 .x:     call    redir_undo
         cmp     byte [pipe_n], 1        ; a pipe leaves its files (one
         jbe     .r                      ;  command: none, and no INT 24h)
-        call    pipe_names
-        mov     dx, pipe_a
+        mov     al, '1'                 ; (the names no longer needed: made
+        call    .del                    ;  again there)
+        mov     al, '2'
+        call    .del
+.r:     mov     al, [rdepth]            ; (the pipe that read TEMP over:
+        cmp     [tpre_on], al           ;  the next reads it again)
+        jne     .rr
+        mov     byte [tpre_on], 0
+.rr:    ret
+.del:   mov     di, in_name
+        call    pipe_name
+        mov     dx, in_name
         mov     ah, 41h
         int     21h
-        mov     dx, pipe_b
-        mov     ah, 41h
-        int     21h
-.r:     ret
+        ret
 
-; this level's pipe files: \PIPEx1.$$n and \PIPEx2.$$n, x for the level
-; (a pipe inside a CALL or FOR inside a pipe has its own), n our task's
-; number ($ with multitasking off: LCMDs in two tasks have their own)
-pipe_names:
+; AL = '1' or '2', DI = 80 bytes -> this level's pipe file's name there:
+; %TEMP%\PIPEx1.$$n (no TEMP: \PIPEx1.$$n, the current drive's root, as
+; MS-DOS 3.3), x for the level (a pipe inside a CALL or FOR inside a pipe
+; has its own), n our task's number ($ with multitasking off: LCMDs in two
+; tasks have their own).  TEMP is ours (SET TEMP= counts; from the ROM
+; without C: the kernel's M:\, so a pipe works from R:), 64 characters of
+; it at most, read once by the outermost pipe running (tpre_on: its level)
+; for it and the pipes inside it: a SET TEMP= meanwhile moves no file
+pipe_name:
+        mov     dl, al
+        cmp     byte [tpre_on], 0
+        jne     .h
+        mov     al, [rdepth]
+        mov     [tpre_on], al
+        push    es
+        push    di
+        mov     si, s_tempv
+        call    env_find                ; -> ES:DI its value
+        mov     si, di
+        mov     di, tpre
+        jc      .rt
+        mov     cx, 64
+.t:     mov     al, [es:si]
+        inc     si
+        or      al, al
+        jz      .e
+        mov     [di], al
+        inc     di
+        loop    .t
+.e:     cmp     di, tpre                ; ("TEMP=": the root)
+        je      .rt
+        cmp     byte [di-1], '\'
+        je      .f
+.rt:    mov     byte [di], '\'
+        inc     di
+.f:     mov     byte [di], 0
+        pop     di
+        pop     es
+.h:     mov     si, tpre
+        call    strcpy                  ; (DI on its NUL)
+        mov     si, pipe_t
+        mov     bx, di
+        call    strcpy
+        mov     [bx + 5], dl            ; 1 or 2
         mov     al, [rdepth]
         add     al, 'A' - 1
-        mov     [pipe_a + 5], al
-        mov     [pipe_b + 5], al
+        mov     [bx + 4], al
         call    mt_mine
         mov     al, '$'
         jc      .n
         mov     al, ah
         add     al, '0'
-.n:     mov     [pipe_a + 10], al
-        mov     [pipe_b + 10], al
+.n:     mov     [bx + 9], al
         ret
+        times   ($ + 1 - $$) & 1 db 90h ; (rpop odd: the hot labels after even)
 
 ; one level of redirection done: the one around it again
 rpop:   call    redir_undo
@@ -4704,8 +4750,8 @@ s_curtime   db 'Current time is ', 0
 s_newtime   db 'Enter new time: ', 0
 days        db 'Sun', 0, 'Mon', 0, 'Tue', 0, 'Wed', 0   ; (4 bytes each)
             db 'Thu', 0, 'Fri', 0, 'Sat', 0
-pipe_a      db '\PIPEA1.$$$', 0        ; (A: the level, rdepth)
-pipe_b      db '\PIPEA2.$$$', 0
+pipe_t      db 'PIPEA1.$$$', 0          ; (pipe_name's: A the level, 1 or 2)
+s_tempv     db 'TEMP=', 0
 s_nul       db 'NUL', 0
 
 e_badcmd    db 'Bad command or file name', 0
@@ -4874,6 +4920,8 @@ sv_req      resb 1                  ; not 0: no saver this time
 for_n       resb 1                  ; FORs running, all levels
 if_not      resb 1
 rdepth      resb 1                  ; levels of redirection kept (rsave)
+tpre_on     resb 1                  ; pipe_name: tpre read at this level (0: none)
+tpre        resb 66                 ; pipe_name: %TEMP%, a '\' after (\: none)
 cdepth      resb 1                  ; CALLs (call_segs)
 ed_tab      resb 1
 ed_len      resb 1                  ; (ed_len, ed_pos: a word)
