@@ -4635,7 +4635,8 @@ def t_paintw():
     canvas a 1:1 view of the 640 x 400 picture (centred at first), moved by
     the arrows, PgUp/PgDn and Ctrl-Left/Right; strokes clamped to the canvas,
     fills following the picture's lines; C as the model has it, outside the
-    view too; W_DRAW after another window, a move, a resize; CODE-X."""
+    view too; W_DRAW after another window, a move, a resize; CODE-X.  W2: a
+    drag on the frame moves the view; CODE-F the whole screen, and back."""
     print('== Paint as a window (W1): a view of the picture')
     PAINT = os.path.join(GOS, 'apps', 'PAINT.RUN')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
@@ -4663,13 +4664,15 @@ def t_paintw():
         A.point(k, 639, 0); k.run_for(0.2)
         return ' | '.join(l for l in k.band() if l)
     m = A.PaintModel(rows)
-    def stroke(tool, x0, y0, x1, y1, pat=0):
-        """A drag on the screen; the model's stroke at the clamped points, in picture pixels."""
+    def stroke(tool, x0, y0, x1, y1, pat=0, keys=True):
+        """A drag on the screen; the model's stroke at the clamped points, in picture pixels.  keys=False: the
+        tool and pattern as they are (no key first, which would mend the band)."""
         q = g()
-        k.key(tool); k.key(str(pat + 1))
+        if keys: k.key(tool); k.key(str(pat + 1))
         A.drag(k, x0, y0, x1, y1); k.run_for(0.2)
         cl = lambda x, lo, hi: max(lo, min(hi, x))
         ox, oy = q['vx'] * 8 - q['clx0'], q['vy'] - q['cly0']
+        if pb('ses') == 0: ox = oy = 0                    # (zoomed: the screen is the picture)
         pts = [(cl(x, q['clx0'], q['clx1']) + ox, cl(y, q['cly0'], q['cly1']) + oy) for x, y in A.drag_pts(x0, y0, x1, y1)]
         m.clip = (q['clx0'] + ox, q['cly0'] + oy, q['clx1'] + ox, q['cly1'] + oy)
         m.stroke(tool, pts, pat)
@@ -4690,6 +4693,12 @@ def t_paintw():
           (A.has(k, 'Paint: PIC.BMP'), C() == rows, view_bad(), band()))
     A.drag(k, 100, 100, 200, 150); k.run_for(0.2)
     check('... showing a file: a drag doesn\'t draw (until Return)', C() == rows and not view_bad(), view_bad())
+    A.drag(k, 18, 200, 18, 184); k.run_for(0.2)
+    p0 = (g()['vx'], g()['vy'], view_bad())
+    A.drag(k, 18, 184, 18, 200); k.run_for(0.2)
+    check('... a drag up on its frame moves the view (pans) there too: 16 lines down the picture (vy %d), drawn; down '
+          'again: back (vy %d)' % (p0[1], g()['vy']), p0 == (3, 62, []) and (g()['vx'], g()['vy']) == (3, 46)
+          and C() == rows and not view_bad(), (p0, g()))
     k.key(ktest.ENTER)
     # strokes: inside; past the canvas's right and bottom (clamped); a fill with the slant (phase 2);
     # the brush past its left edge (cut there)
@@ -4700,10 +4709,21 @@ def t_paintw():
     check('strokes in the window: C exactly as the model, at the view\'s offset (outside the view: as it was); points '
           'past the canvas clamped to it, the brush cut at its edge, the slant fill on the picture\'s lines (pph 2)',
           C() == [bytes(l) for l in m.l] and not view_bad(), (A.diff([bytes(l) for l in m.l], C()), view_bad()))
-    k.key('P'); A.drag(k, 18, 200, 18, 260); A.drag(k, 300, 359, 340, 359); A.drag(k, 620, 100, 620, 150); k.run_for(0.2)
-    check('a drag on the window\'s frame (its left edge, its bottom rule, its right edge): not on the canvas, so no '
-          'stroke (clamped to it, one would draw along its edge)', C() == [bytes(l) for l in m.l] and not view_bad(),
-          A.diff([bytes(l) for l in m.l], C()))
+    k.key('P')
+    pans = []
+    for d in ((18, 200, 18, 260), (620, 150, 620, 104), (300, 359, 312, 359), (312, 359, 308, 359), (300, 359, 340, 359),
+              (340, 359, 316, 359), (300, 360, 340, 330)):
+        A.drag(k, *d); k.run_for(0.2)
+        pans.append((g()['vx'], g()['vy'], g()['pph'], view_bad()))
+        if len(pans) == 1: b0 = band()
+    check('drags on the window\'s frame pan, the picture following the hand: the left edge 60 down (vy 46 -> 0, kept '
+          'inside), the right edge 46 up (46), the bottom rule 12 right (vx 3 -> 2, to the nearest byte), 4 left (3), '
+          '40 right (0, kept inside), 24 left (3); a drag from the band\'s first line: no pan; drawn each '
+          'time, the band saying where (%s); no stroke (clamped to the canvas, one would draw along its edge)' % pans,
+          [p[:2] for p in pans] == [(3, 0), (3, 46), (2, 46), (3, 46), (0, 46), (3, 46), (3, 46)]
+          and pans[0][2] == 4 and pans[1][2] == 2 and win() == (2, 32, 76, 328)
+          and not any(p[3] for p in pans) and b0.endswith('View: from 24, 0 of 640 x 400')
+          and C() == [bytes(l) for l in m.l], (pans, b0, A.diff([bytes(l) for l in m.l], C())))
     # the view moved: the arrows, PgDn, Ctrl-Left; kept inside the picture
     k.key(ktest.RIGHT); k.key(ktest.RIGHT); k.key(ktest.DOWN); k.run_for(0.3)
     a = (g()['vx'], g()['vy'], view_bad(), band())
@@ -4753,8 +4773,10 @@ def t_paintw():
     k.key(ktest.F1 if hasattr(ktest, 'F1') else 0x3B00); k.run_for(0.5)
     hs = A.screen(k)
     k.key(ktest.ESC); k.run_for(0.5)
-    check('F1 in a window: the help has the view\'s keys (Arrows PgUp PgDn, Ctrl-Left Ctrl-Right) and Transfer as '
-          'CODE-X; ESC: the view drawn again', 'move the view' in hs and 'Ctrl-Left  Ctrl-Right' in hs
+    check('F1 in a window: the help has the view\'s keys (Arrows PgUp PgDn, Ctrl-Left Ctrl-Right), the frame\'s drag, '
+          'the zoom (CODE-F) and Transfer as CODE-X; ESC: the view drawn again', 'move the view' in hs
+          and 'Ctrl-Left  Ctrl-Right' in hs and 'A drag on the frame      move the view' in hs
+          and 'CODE-F                   the whole screen, and back' in hs
           and 'CODE-X                   Transfer' in hs and 'CODE-T                   Transfer' not in hs and not view_bad(), hs)
     # another window over it and closed: W_DRAW draws the view again (no save-under with sessions)
     k.key(A.CODE['K']); k.run_for(0.5)
@@ -4807,6 +4829,7 @@ def t_paintw():
           tw and not A.has(k, 'Tools') and pv('tool') == 3 and not view_bad(), (tw, view_bad()))
     A.drag(k, 200, 36, 216, 40); k.run_for(0.5)
     w3, q3 = win(), g()
+    prf = [bytes(l) for l in m.l]
     stroke('F', 100, 150, 300, 250, 7)
     check('its title dragged 2 columns right, 4 lines down (%s): the canvas there (%d, %d), pph %d; a slant fill: C as '
           'the model' % (w3, q3['cx0'], q3['cy0'], q3['pph']), w3 == (4, 36, 72, 296) and (q3['cx0'], q3['cy0'], q3['pph']) == (5, 56, 5)
@@ -4816,6 +4839,116 @@ def t_paintw():
     check('CODE-X, "drawn": DRAWN.BMP, the model\'s picture in Shift-PrtSc\'s format; the title "Paint: DRAWN.BMP"',
           A.disk_file(k, 'DRAWN.BMP') == m.bmp() and A.has(k, 'Paint: DRAWN.BMP') and not view_bad(),
           (len(A.disk_file(k, 'DRAWN.BMP') or b''), A.screen(k)))
+    # W2: CODE-F, the whole screen (the window itself made so), and back
+    def scr_bad():
+        """The screen's lines, all 400, against C (but under the pointer)."""
+        A.point(k, 639, 0); k.run_for(0.2)
+        v = A.vram(k)
+        return A.off_pointer(k, [A.vrow(v, y) for y in range(400)], C())
+    tob = lambda: k.pc.rd(k.useg, Y['title_on'], 1)[0]   # (the session in front's)
+    wf = lambda: (k.pc.u16(k.useg, rec(1, SE_BASE) + PS['win'] + 8), k.pc.u16(k.useg, rec(1, SE_BASE) + PS['win'] + 12))
+    w0, t0, v0 = win(), tob(), (g()['vx'], g()['vy'])
+    k.key(A.CODE['F']); k.run_for(0.5)
+    q = g()
+    check('CODE-F: the window the whole screen down to the band (%s), no title strip nor flags (%s), ses 0; the screen all '
+          'of C (the band\'s lines too: Paint in front draws them, and the top lines), the canvas the whole screen (pph 0); its session\'s title off (title_on %d -> %d: no '
+          'clock over the picture)' % (win(), wf(), t0, tob()), win() == (0, 0, 80, 360) and wf() == (0, 0)
+          and pb('ses') == 0 and scr_bad() is None and (q['clx0'], q['clx1'], q['cly0'], q['cly1'], q['pph']) == (0, 639, 0, 399, 0)
+          and (t0, tob()) == (1, 0), (win(), wf(), scr_bad(), q, t0, tob()))
+    pre = [bytes(l) for l in m.l]
+    k.key('U'); k.run_for(0.3)
+    zu = (C() == prf, scr_bad())
+    k.key('U'); k.run_for(0.3)
+    check('zoomed, U first: the window\'s last stroke (the slant fill) undone, all of the picture shown; U again: back',
+          zu == (True, None) and C() == pre and scr_bad() is None, (zu, scr_bad()))
+    tz = timer('commit', 'main')
+    stroke('L', 100, 20, 500, 390)
+    mid = [bytes(l) for l in m.l]
+    stroke('F', 600, 340, 630, 399, 7)
+    check('zoomed: a line across the top and the band, a slant fill to the bottom: C as the model in screen co-ordinates, '
+          'the screen C; its end the whole screen\'s (the commit: %s µs, 16 ms or less)' % tz,
+          C() == [bytes(l) for l in m.l] and scr_bad() is None and tz and max(tz) <= 16000,
+          (A.diff([bytes(l) for l in m.l], C()), scr_bad(), tz))
+    zl = [bytes(l) for l in m.l]
+    k.key('U'); k.run_for(0.3)
+    u1 = (C() == mid, scr_bad())
+    k.key('U'); k.run_for(0.3)
+    check('zoomed, U: the fill undone, the screen C; U again: back', u1 == (True, None) and C() == zl and scr_bad() is None,
+          (u1, scr_bad()))
+    k.key(ktest.TAB); k.run_for(0.3)
+    tw = A.has(k, 'Tools')
+    k.key('P'); k.run_for(0.5)
+    a = (tw, scr_bad(), tob())
+    k.key(A.CODE['K']); k.run_for(0.5)
+    n2 = mb('mw_n')
+    k.key(ktest.F1 if hasattr(ktest, 'F1') else 0x3B00); k.run_for(0.5); k.key(ktest.ESC); k.run_for(0.5)
+    tc_ = tob()                                           # (the calculator's, in front: its redraw drew Paint's)
+    A.point(k, 639, 0); k.run_for(0.2)
+    cb = (A.vrow(A.vram(k), 360) == b'\xff' * 80, C()[360] != b'\xff' * 80)   # (the band's first line, lit: not C's)
+    k.key(ktest.ESC); k.run_for(0.5)
+    b2, bt = scr_bad(), band()
+    k.key('P'); k.run_for(0.3)
+    check('zoomed: Tab\'s tools window over it, P: closed, the whole screen drawn again; CODE-K\'s calculator (%d '
+          'sessions; F1 and ESC there: its own title left on, %d, and its band, as Paint\'s window is drawn from its '
+          'redraw: the picture above the band only), ESC: the '
+          'picture drawn again but for the band, Paint\'s (KMW\'s, for the one in front: first bad line %s), until a '
+          'key; Paint\'s title still off each time (the Executive\'s base drew it: UI_CLS)' % (n2, tc_, b2),
+          a == (True, None, 0) and n2 == 2 and tc_ == 1 and cb == (True, True) and mb('mw_n') == 1 and b2 and b2[0] >= 360
+          and bt.endswith('The whole picture.  CODE-F: back to the window') and scr_bad() is None and tob() == 0,
+          (a, n2, tc_, cb, b2, bt, scr_bad(), tob()))
+    k.key(0x6D00); k.run_for(0.5)                         # (CODE-F6: the Executive in front)
+    ex = (mb('mw_cur'), A.vrow(A.vram(k), 360) == b'\xff' * 80)
+    k.key(0x6D00); k.run_for(0.5)                         # (and Paint again)
+    bz = band()
+    prp = [bytes(l) for l in m.l]
+    for y in range(16): k.pc.wr(0xB800, (y & 3) * 0x2000 + (y >> 2) * 80, b'\x55' * 80)    # (as another's clock)
+    stroke('P', 200, 300, 400, 380, keys=False)
+    check('zoomed, CODE-F6: the Executive in front, its band shown (Paint\'s window stops above it); CODE-F6 again: '
+          'Paint, its band over the picture ("%s"), and something over its top 16 lines (as another session\'s clock); '
+          'a stroke over it (no key first): both mended first, C as the model, the screen C' % bz, ex == (0, True)
+          and bz.endswith('The whole picture.  CODE-F: back to the window')
+          and C() == [bytes(l) for l in m.l] and scr_bad() is None, (ex, bz, A.diff([bytes(l) for l in m.l], C()), scr_bad()))
+    # zoomed, a question waiting (ESC with changes), the saver over it and woken: the question still in the band
+    k.key(ktest.ESC); k.run_for(0.5)
+    entered, sa = [], Y['saver']
+    hk = lambda pc: entered.append(1) if pc.r('cs') == k.useg and pc.r('ip') == sa else None
+    k.hooks.append(hk)
+    k.wr('saver_t', struct.pack('<H', 36))
+    for _ in range(40):
+        k.run_for(0.25)
+        if entered: break
+    k.run_for(1.0)
+    k.wr('saver_t', struct.pack('<H', 5460)); k.hooks.remove(hk)
+    k.key(ktest.DOWN); k.run_for(0.5)                     # (the key wakes it, nothing more)
+    sq = (bool(entered), band(), pb('tz'), pb('quit'))
+    k.key(ktest.ESC); k.run_for(0.5)                      # (no: Paint goes on)
+    check('zoomed, ESC (changes: the question), the screen saver over it, a key: the question still in the band (the '
+          'window drawn above it only: "%s"); ESC: Paint goes on, all of the picture drawn, its title off again'
+          % sq[1], sq[0] and 'Cancel: Confirm to quit without saving' in sq[1] and sq[2:] == (1, 0)
+          and pb('quit') == 0 and pb('tz') == 0 and scr_bad() is None and tob() == 0, (sq, pb('tz'), scr_bad(), tob()))
+    k.key(A.CODE['X']); k.key('zoomed'); k.key(ktest.ENTER); k.run_for(1.0)    # (typed first: replaces the name)
+    check('zoomed, CODE-X "zoomed": ZOOMED.BMP, the model\'s picture; no title on the screen, the screen C',
+          A.disk_file(k, 'ZOOMED.BMP') == m.bmp() and scr_bad() is None and pb('ses') == 0,
+          (len(A.disk_file(k, 'ZOOMED.BMP') or b''), scr_bad()))
+    k.key(A.CODE['F']); k.run_for(0.5)
+    zb = (win(), pb('ses'), tob(), tuple(pv(n) for n in ('dy0', 'dy1', 'dx0', 'dx1')), (g()['vx'], g()['vy']))
+    check('CODE-F again: the window as it was (%s), its title the new name, the view where it was (%s), drawn, the band '
+          'saying where; the title back on (the clock); D the whole picture (strokes zoomed: %s)' % (zb[0], zb[4], zb[3]),
+          zb[:3] == (w0, 1, 1) and zb[3] == (0, 400, 0, 80) and zb[4] == v0 and A.has(k, 'Paint: ZOOMED.BMP')
+          and not view_bad() and band().endswith('View: from %d, %d of 640 x 400' % (v0[0] * 8, v0[1]))
+          and wf()[0] != 0 and wf()[1] == 7, (zb, v0, A.has(k, 'Paint: ZOOMED.BMP'), view_bad(), band(), wf()))
+    zp = [bytes(l) for l in m.l]
+    k.key('U'); k.run_for(0.3)
+    ou = (C() == prp, view_bad())
+    k.key('U'); k.run_for(0.3)
+    check('back in the window, U first: the last zoomed stroke undone, the view drawn; U again: back',
+          ou == (True, []) and C() == zp and not view_bad(), (ou, view_bad()))
+    stroke('R', 100, 100, 300, 250)
+    k.key('U'); k.run_for(0.3)
+    check('a stroke in the window after the zoom, U: the picture before it, all of it (U as C where the zoom changed '
+          'them: D)', C() == zp and not view_bad(), (A.diff(zp, C()), view_bad()))
+    k.key('U'); k.run_for(0.3)
+    k.key(A.CODE['X']); k.key(ktest.ENTER); k.run_for(1.0)    # (saved: no question at the close box)
     wx = win()
     tclick(k, (wx[0] + wx[2] - 2) * 8 + 4, wx[1] + 10); k.run_for(1.0)
     check('a click on its close box (saved: no question): Paint ends, its window closed, the session gone; nothing crashed',
