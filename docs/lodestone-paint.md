@@ -255,11 +255,18 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
 
 | What | Size |
 |---|---|
-| `PAINT.RUN` on disk | 4,465 bytes (about 3.8 KB of code and data, the rest fixups) |
+| `PAINT.RUN` on disk | 4,645 bytes (4,465 in P1; W0 added 180: the patterns twice over, 64, the canvas's limits, the parity pads) |
 | Its BSS | 1.6 KB: the line table, the bit-count table, names |
 | Memory while it runs | 2 × 32,000 bytes from `UI_ALLOC` |
 | Resident | +32 bytes in the UI block: `ui_keep_end` 64C2h → 64E2h (on main at #132, 2026-11-02; 6164h → 6184h after #58, 6134h → 6154h before). The kernel's `image_end` / `bss_end` are unchanged. A pad after `confirm.x` (never run) makes the opener 10 bytes, so the Executive's code after it keeps its parity (9 bytes would have put `to_fcb`'s hot labels odd). |
 | MEMSZ | Unchanged: 564.8 KB without EMS, 580.9 KB with it, on main at #132 (566.2 / 582.3 after #58). Paint's 32 bytes don't cross a rounding step. `test_mt`'s `OFF_MAP` pin is moved (64E2h). |
+
+**W0 (2026-11-02), the preparation for Paint in a window (MULTITASK=1), nothing seen to change:**
+- the patterns are kept twice over (16 bytes each), and `curpat` starts a fill at `pph` (0-7) into one, so that in a scrolled window a fill can follow the picture's lines, not the screen's (`pph` 0: as before);
+- the canvas is `clx0`-`clx1` by `cly0`-`cly1` (0-639 by 0-399, the whole screen): `dot` cuts the brush and the eraser there, not at the screen's edges;
+- a stroke's points come from `sample` (HLT, then INT 33h function 3, as before) and are clamped to the canvas by `clamp`, the press too (the driver keeps them on the screen anyway);
+- the hot code on even offsets (the 286 fetches a word at a time): a pad (never run) before `plot`, `line`, `fillrect`, `frame`, `dot`, `band_fix` and `commit`, so each starts even wherever the code before it moves; `line`'s `xor bp, bp` is `mov bp, 0` (one byte more, as fast), so its loop's targets are even too; `EVEN` (EVEN.INC) stops the build if one goes odd. P1 had `line`, `fillrect` (its row loop, `.xor`, `.last`, `.put`) and `dot` odd. `fillrect.next` stays odd: even, the wide fills' path through `.last` would run a NOP each line, and it is a jump's target only for fills one byte wide;
+- the speeds are as before: undo and the whole picture 15.0 ms, a stroke's end 15.0, a 640-pixel line 5.2, a full-screen box 22.6 (pcemu doesn't charge for odd targets; the 1520 does).
 
 **Where it differs from the plan:**
 - **The mouse: `UI_EVENT` between strokes, INT 33h only during one.**
@@ -284,7 +291,7 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
   - Shift to constrain lines and boxes;
   - an Open form inside Paint (pictures come from the Executive);
   - PgUp / PgDn through a directory.
-- **The ROM:** `PAINT.RUN` is on ROM 2, the application ROM (decided 2026-10-23), not ROM 1: 9 sectors of R:. Started from the ROM, Return on a `.BMP` finds it through PATH (`C:\LODE;R:\`, a copy in C:\LODE first). With ROM 1 alone it says "PAINT.RUN is not on this disk" unless `PAINT.RUN` is in the subject or the PATH. `os/build.sh` builds it with the other `.RUN` programs; `t_rom2` and `t_rom2_paint` check it.
+- **The ROM:** `PAINT.RUN` is on ROM 2, the application ROM (decided 2026-10-23), not ROM 1: 12 sectors of R: (9 in P1, 10 after W0). Started from the ROM, Return on a `.BMP` finds it through PATH (`C:\LODE;R:\`, a copy in C:\LODE first). With ROM 1 alone it says "PAINT.RUN is not on this disk" unless `PAINT.RUN` is in the subject or the PATH. `os/build.sh` builds it with the other `.RUN` programs; `t_rom2` and `t_rom2_paint` check it.
 
 **Speed (pcemu's 286 model, checked by `t_paint_bmp`):**
 
@@ -301,7 +308,7 @@ The copies are `REP MOVSW`, the floor. The checks allow 16, 16, 6 and 25 ms.
 - CODE-Tab is seen only when the button comes up.
 - No other task runs while the button is down.
 
-**Tests (87 checks; 3 more in test_rom's `t_rom2_paint`, 90 in all):** `t_paint`, `t_paint_bmp` and `t_paint_more` cover:
+**Tests (89 checks; 3 more in test_rom's `t_rom2_paint` and 25 in test_mt's `t_paintw`, W1's, 117 in all):** `t_paint`, `t_paint_bmp` and `t_paint_more` cover:
 - Every tool (pencil, line, box, filled box with patterns, brush, eraser, sizes) against `PaintModel`, a Python model with the same integer rules. All 256,000 pixels are compared, of C and of the screen (but for the pointer).
 - Undo and redo; Invert; the tools' window (clicks, keys); help.
 - The saver, with the band mended; Transfer byte for byte; Return on a `.BMP`, View, ESC and CODE-Q.
@@ -354,3 +361,38 @@ After the review, six more, each caught by its own new check:
 4. the dot moved in at the left and top;
 5. a stroke ignoring `mend`;
 6. a click on the hint's band drawing.
+
+## 11. W1: Paint in a window (MULTITASK=1, 2026-11-02)
+
+Joshua's decisions (2026-11-02): a 1:1 view of the 640 x 400 picture, scrolled; a window by default with the switch on, and a key to the whole screen and back (W2); `.BMP` files open in a window too; panning by a drag in the margin (W2); no cap on Paint windows; the first view centred.
+
+**What it is:**
+- `RUN_FLAGS equ RF_WIN`: with `MULTITASK=1` KMW starts Paint as a session, beside the other windows, from the list and from Return on a `.BMP` alike (the opener is unchanged). With the switch off nothing reads the flag: the whole screen, as before (`t_paint*`, and `MULTITASK=1` with no LODEMT.SYS). `RUN_API` stays 6.
+- Paint asks `MT_WIN` at start, as Write does. In a session: `ses`; Transfer is CODE-X (`kt_xfer`, as Write's: CODE-T is the tasks'); the help gets the view's keys (two lines patched in, `kh_view`); `WIN_STAGGER` for a second Paint; strokes by `UI_MOUSE` (`umouse`, from UI API 8: an older core, INT 33h as before). No `UI_SETREDRAW` or `UI_CLS`: the window's `W_DRAW`, `w_draw`, draws the view.
+- **The window:** column 2, row 32, 76 bytes by 328 lines (over the band), moved, resized and closed as any (`WF_MOVE`, `WF_CLOSE`, `WF_SIZE`); title "Paint", or "Paint: NAME.BMP" (in capitals, 8.3 as DOS keeps a longer name typed in Transfer; after Transfer the new name).
+- **The canvas** is the window's inside (win_paint's): byte columns `W_COL + 1` to `W_COL + W_W - 2`, lines `W_Y + 20` to `W_Y + W_H - 2` (`geom`). At the smallest a window is resized to (24 x 72), 22 bytes by 51 lines.
+- **The view:** `vx` bytes and `vy` lines into the picture, centred at first, kept inside it (`geom`). The arrows move it 16 pixels, PgUp and PgDn a canvas's height, Ctrl-Left and Ctrl-Right its width. The band: the hint, and "View: from X, Y of 640 x 400".
+
+**Drawing in screen co-ordinates, as before.** `line`, `fillrect`, `frame`, `plot` and `dot` are W0's (and P1's), at their speeds:
+- a stroke's points, the press too, are clamped to the canvas (W0's `clamp`), so every shape is inside it; `dot` cuts at it;
+- a click on the window's frame or past the canvas starts no stroke (main's hit test);
+- fills follow the picture's lines: `pph` = (`vy` - the canvas's first line) mod 8 (W0's patterns twice over).
+
+**C and U in a window.** The screen is no longer the whole picture, so a stroke's end can't copy it into C, and a swap at its start would leave C stale outside the view (copying the rest from U at the end took 26 ms, against 15 for the whole screen). Instead:
+- **D**, the lines `dy0`-`dy1` and bytes `dx0`-`dx1` where C and U may differ, is kept;
+- a stroke's start (`sync_u`) copies C into U in D only, so U = C (the picture before the stroke); D empty;
+- its end (`commit_view`) copies the canvas into C at the view; D = the view;
+- undo swaps them (still alike outside D); Erase and Invert make D the whole picture;
+- the whole screen still swaps and copies the screen, as P1.
+
+**The hot code even** (W0's rule): `blit_view`, `commit_view`, `sync_u` and their loops start even (pads never run; `commit_view`'s `MOV DI,0`, `MOV CL,40`, `sync_u`'s `IMUL` with a word: as fast, a byte more), asserted by `EVEN`. Copies to and from the screen put the screen's side on a whole word (`MOVSV`: a byte first if it is odd): a word across two costs the 1520's screen two accesses, RAM's side odd much less. (pcemu charges neither, and counts the extra test as a block: 12.1 -> 14.4 ms for the view there.)
+
+**Speed** (pcemu, a 74 x 307 canvas): a stroke's start 12.1 ms (its last view's lines into U), its end 14.4 (the canvas into C), undo and the view 14.4; the whole screen's: 15.0 and 15.0.
+
+**Size:** PAINT.RUN 6,035 bytes (4,645 after W0: +1,390), 12 sectors of ROM 2; its BSS 1,734 bytes. Resident: nothing (LODE.SYS, LODEMT.SYS unchanged).
+
+**Memory:** each Paint is a slot (its image, BSS and a 2,560-byte stack) and 64,000 bytes from UI_ALLOC, as on the whole screen. No cap: a Paint that doesn't fit says "Paint needs 63 KB of memory".
+
+**Not in W1:** the zoom key (CODE-F, the whole screen and back) and panning by a drag in the margin, W2; a stroke scrolling the view.
+
+**Tests (`t_paintw`, test_mt, 25 checks):** Return on PIC.BMP: a session, the window, API 6 with RF_WIN, UI_MOUSE, the view centred, the canvas's place, `pph`; the title, C the file, the canvas C's view, the band; a drag on a picture shown draws nothing until Return; strokes (pencil, a line past the canvas, a slant fill, the brush past its edge) against `PaintModel` at the view's offset, all 32,000 bytes of C; a drag on the frame (left, bottom, right) draws nothing; the arrows, PgDn and Ctrl-Left (kept inside); a fill and the eraser after scrolling (`pph` 1); speed; U, U; Invert, a stroke, U, U; F1's help (the view's keys, CODE-X); CODE-K's calculator over it and closed (W_DRAW); CODE-T the tasks; CODE-F8 smaller, the view to its limits, CODE-F8 bigger again (the view kept inside the picture); the screen saver; Tab's tools window over the canvas; a drag of the title (the canvas follows, `pph` 5, a slant fill); CODE-X saving DRAWN.BMP (the title follows); the close box; MTSPIN switching in 60 times while a stroke is held 3 s, every switch by the rules; an unnamed picture saved as a long name (the title the name as DOS keeps it, VERYLONG.BMP); a second Paint (staggered, its own C and U, a stroke in it leaving the first's alone). In test_apps: the view's keys do nothing on the whole screen, and the help is as before.

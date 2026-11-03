@@ -1614,7 +1614,7 @@ Two survive, both for cases no test makes:
 **The limits, plainly:**
 - **The Executive waits while windows are open** (M8b). CODE-W and CODE-U inside a window are that window's keys (the calculator's: none).
 - **A window over the Executive is drawn again through `relist`,** which reads the directory again (from the cache, or the disk). With the disk out, closing the calculator can bring up the drive's question (INT 24h), as the saver's redraw can today.
-- **RUN_API 6 is what makes a `.RUN` a window `.RUN`.** One at API 6 or more that takes the whole screen (Paint, then on its branch) would become a session too. It must say which it is before it is merged (M8b). (It does: no RF_WIN, full screen.)
+- **RUN_API 6 is what makes a `.RUN` a window `.RUN`.** One at API 6 or more that takes the whole screen (Paint, then on its branch) would become a session too. It must say which it is before it is merged (M8b). (It did: no RF_WIN, full screen; since its W1, 2026-11-02, it is a window `.RUN`, RF_WIN.)
 - **Four windows at once in all** (`NWIN`), and four window `.RUN`s. A help or form window counts as one, so a help left open in a session behind can stop a fourth from starting. With all four windows open, one more (a help) is only counted (`wover`), and that count is shared by the sessions; with CALC and TASKS there can't be four.
 - **A help window closes on any key, CODE-F6 included,** as it always has. CODE-F6 then brings no other one to the front.
 - **The band's message is in the core's `tmp`,** which the Executive's information line also uses. The saver while "CALC.RUN is not on this disk" waits brings the Executive's line back in its place.
@@ -1682,7 +1682,7 @@ t_on's check that MT passes F0h AL=2 and 3 on to the kernel (the help's save-und
 - With `MULTITASK=1`, Write is a window. With the switch off, it has the whole screen, as before.
 - Several Writes can be open at once, one file each.
 - Windows are resized with the mouse, by their bottom-right corner, reusing the move's outline. It is a general window feature: the calculator is to use it later.
-- Window `.RUN`s are marked in their header, not by their API (Paint, which takes the whole screen, says so: no RF_WIN).
+- Window `.RUN`s are marked in their header, not by their API (Paint, which took the whole screen, said so: no RF_WIN; since its W1 it is a window too, `t_paintw`).
 - CODE-T is the Tasks window's everywhere, Write included, so Write's Transfer moves to CODE-X with the switch on.
 - The live Executive under the windows, with clipping, moves to M8c. Write needs no clipping as a window: only the session in front draws.
 
