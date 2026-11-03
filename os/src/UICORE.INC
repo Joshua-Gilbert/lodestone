@@ -2090,21 +2090,13 @@ band_redraw:
         ret
 
 ; UI_MSG: SI = message until a key or click -> AX = it
-ui_msg: push    word [band1]
-        push    word [band2]
-        push    word [held1]
-        push    word [held2]
-        push    di
+ui_msg: push    di
         mov     di, s_anykey
-        call    ui_band
-        call    hold_band
+        call    band_up
         call    ui_event
+        call    band_down
         pop     di
-        pop     word [held2]
-        pop     word [held1]
-        pop     word [band2]
-        pop     word [band1]
-        jmp     band_redraw
+        ret
 
 ; the band on screen now is a question's (or a form's, a message's): the
 ; screen saver's redraw puts it back.  The caller saves held1/2 before
@@ -2118,18 +2110,37 @@ hold_band:
         pop     ax
         ret
 
-; UI_ASK: SI = line 1.  CF clear: Return (or a click on the band); CF: ESC
-ui_ask: push    ax
-        push    bx
-        push    cx
-        push    di
+; band_up: SI line 1 and DI line 2 shown in the band and held, for a
+; message or a question; the band and held lines they replace are put on
+; the stack under the return address, for band_down.  AX not kept
+band_up:
+        pop     ax
         push    word [band1]
         push    word [band2]
         push    word [held1]
         push    word [held2]
-        mov     di, s_confirm
+        push    ax
         call    ui_band
-        call    hold_band
+        jmp     hold_band
+
+; band_down: band_up's lines back from the stack and redrawn.  AX, BX,
+; CX and the flags kept (UI_MSG's event, UI_ASK's CF); DI not
+band_down:
+        pop     di
+        pop     word [held2]
+        pop     word [held1]
+        pop     word [band2]
+        pop     word [band1]
+        push    di
+        pushf
+        call    band_redraw
+        popf
+        ret
+
+; UI_ASK: SI = line 1.  CF clear: Return (or a click on the band); CF: ESC
+ui_ask: pusha
+        mov     di, s_confirm
+        call    band_up
 .l:     call    ui_event
         cmp     ax, K_ENTER
         je      .yes
@@ -2142,20 +2153,9 @@ ui_ask: push    ax
         cmp     cx, BAND_Y
         jae     .yes
         jmp     .l
-.yes:   clc
-        jmp     .x
-.no:    stc
-.x:     pop     word [held2]
-        pop     word [held1]
-        pop     word [band2]
-        pop     word [band1]
-        pushf
-        call    band_redraw
-        popf
-        pop     di
-        pop     cx
-        pop     bx
-        pop     ax
+.no:    stc                             ; (each way to .yes is a JE or a JAE:
+.yes:   call    band_down               ;  CF is clear there)
+        popa
         ret
 
 ui_beep:

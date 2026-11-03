@@ -209,6 +209,26 @@ def t_core():
     check('ask: ESC = cancelled, band as before', has(k, 'cancelled') and k.band()[0].startswith('UI test'), (screen(k), k.band()))
     k.key(CODE['Q']); k.key(ktest.ENTER)
     check('ask: Return = confirmed', has(k, 'confirmed'), screen(k))
+    usy = run_syms('tests/UITEST.ASM'); ubase = k.u16('run_base')
+    def regs(n): return struct.unpack('<5H', k.pc.rd(k.useg, ubase + usy[n], 10))
+    check('ask: AX, BX, CX and DI kept through UI_ASK, and SI (the band\'s band_up and band_down)',
+          regs('ask_r') == (0x0A11, 0x0B22, 0x0C33, 0x0D44, regs('ask_r')[4]) and regs('ask_r')[4] == usy['s_ask'] + ubase,
+          [hex(r) for r in regs('ask_r')])
+    k.key(CODE['Q']); click(k, 320, 100)
+    check('ask: a click above the band neither confirms nor cancels', k.band()[0] == 'Quit: Confirm to quit', k.band())
+    click(k, 320, 380)
+    check('ask: a click on the band confirms; the band as before', has(k, 'confirmed') and k.band()[0].startswith('UI test'),
+          (screen(k), k.band()))
+    k.key(CODE['M'])
+    check('UI_MSG: the message in the band', k.band()[0] == 'A message: press a key', k.band())
+    click(k, 200, 150)
+    m = regs('msg_r')
+    check('UI_MSG: a click ends it, AX = EV_CLICK, BX and CX where; DI and SI kept; the band as before',
+          m[:3] == (0xFF01, 200, 150) and m[3] == 0x0D44 and m[4] == usy['s_msg'] + ubase and k.band()[0].startswith('UI test'),
+          ([hex(r) for r in m], k.band()))
+    k.key(CODE['M']); k.key('z')
+    m = regs('msg_r')
+    check('UI_MSG: a key ends it, AX = the key', m[0] & 0xFF == ord('z') and k.band()[0].startswith('UI test'), ([hex(r) for r in m], k.band()))
     k.key(CODE['E'])
     check('error text: 19 is "Disk is write-protected"', has(k, 'Disk is write-protected'), screen(k))
     check('... drawn where it was asked to be: column 2 of row 260', dict(k.ocr()).get(260, '')[:25] == '  Disk is write-protected',
@@ -485,6 +505,21 @@ def t_write():
     check('the goal column: from column 31, Down onto "short" (column 6), Down: 31 again; PgUp, Down, Down: 31; Up, '
           'Ins twice, Up: 6 (dropped by a key that moves nothing); Home, Down, Down: 1', (c1, c2, c3, c4, c5)
           == ('6', '31', '31', '6', '1'), (c1, c2, c3, c4, c5))
+    # the cursor's column, found once a key (AP-14: fix_view's, for the row
+    # drawn and the status line): past a tab, scrolled sideways, typed at
+    k = write_open('LONG.TXT', b'\tx' + b'y' * 150 + b'\r\nz\r\n')
+    wl = lambda n: k.pc.u16(k.useg, k.u16('run_base') + ws[n])
+    k.key(K_END)
+    got = [(col(), wl('ccol') + wl('hs'), wl('hs') > 0)]
+    k.key('Q')
+    got.append((col(), wl('ccol') + wl('hs'), wl('hs') > 0))
+    k.key(ktest.LEFT, ktest.LEFT)
+    got.append((col(), wl('ccol') + wl('hs'), wl('hs') > 0))
+    k.key(K_HOME)
+    got.append((col(), wl('ccol') + wl('hs'), wl('hs') > 0))
+    check('the column on a long line with a tab: End 160 (scrolled), Q typed 161, Left twice 159, Home 1 (back); '
+          'the cursor drawn where the status line says', got == [('160', 159, True), ('161', 160, True), ('159', 158, True),
+          ('1', 0, False)], got)
     k = write_open('GOAL.TXT', long + b'short\r\n' + long + long)
     k.key(*[ktest.RIGHT] * 30, ktest.DOWN)
     p1 = col()

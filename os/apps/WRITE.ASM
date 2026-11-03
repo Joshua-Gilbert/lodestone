@@ -471,6 +471,7 @@ fix_view:
         inc     word [topline]
         loop    .d
 .h:     call    cur_col                 ; and sideways
+        mov     [ccx], ax               ; (update and status use it again)
 .hl:    cmp     ax, [hs]
         jae     .hr
         sub     word [hs], HSTEP
@@ -499,6 +500,7 @@ fix_view:
         dec     word [topline]
         loop    .fl
         jmp     .h
+        db      90h                     ; (parity: the hot labels after as they were)
 
 ; ---------------------------------------------------------------------
 ;  the screen
@@ -661,7 +663,7 @@ update: call    fix_view                ; (old_top/old_hs: the view last
         mov     ax, [curline]           ; the cursor's row, on its line
         sub     ax, [topline]
         mov     [crow], ax
-        call    cur_col
+        mov     ax, [ccx]               ; (fix_view's)
         sub     ax, [hs]
         mov     [ccol], ax
         cmp     byte [dirty], 0
@@ -907,7 +909,7 @@ status: mov     di, stat_new
         call    UI_SBU16
         mov     si, s_col
         call    UI_SBSTR
-        call    cur_col
+        mov     ax, [ccx]               ; (fix_view's: update called it)
         inc     ax
         call    UI_SBU16
         mov     al, ' '
@@ -2528,6 +2530,9 @@ lastkey     resw 1
 rp          resw 1
 crow        resw 1
 ccol        resw 1
+ccx         resw 1                      ; the cursor's display column, as
+                                        ;  fix_view found it (one line walk
+                                        ;  a key, not three)
 cur_r       resw 1
 cur_c       resw 1
 cur_on      resb 1

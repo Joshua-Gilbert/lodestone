@@ -662,10 +662,8 @@ terminate:
 .mem:   call    fat_flush
         mov     es, bx
         mov     dx, [es:16h]            ; parent
-        mov     ax, [es:0Ah]            ; where to go back to
-        mov     [t_ip], ax
-        mov     ax, [es:0Ch]
-        mov     [t_cs], ax
+        mov     si, [es:0Ah]            ; where to go back to
+        mov     cx, [es:0Ch]
         mov     [cur_psp], dx
         mov     [dta+2], dx
         mov     word [dta], 80h
@@ -673,10 +671,8 @@ terminate:
         mov     di, [es:2Eh]            ; the parent's stack and frame
         mov     ax, [es:30h]
         mov     es, ax
-        mov     ax, [t_ip]
-        mov     [es:di+F_IP], ax
-        mov     ax, [t_cs]
-        mov     [es:di+F_CS], ax
+        mov     [es:di+F_IP], si
+        mov     [es:di+F_CS], cx
         and     byte [es:di+F_FL], 0FEh
         cli
         mov     byte [indos], 0
@@ -687,11 +683,6 @@ terminate:
         pop     ds
         pop     es
         iret
-
-section .bss
-t_ip        resw 1
-t_cs        resw 1
-section .text
 
 ; tell the UI core that the program at BX ends (MOUSE33.INC's m33_gone)
 ui_progend:
