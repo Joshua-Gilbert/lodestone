@@ -402,8 +402,10 @@ def t_boot():
               and has(k, 'Lodestone 0.6') and has(k, 'Hard disk C:' if hd else 'ROM R:'), A.screen(k))
         check('%s: started from R: (3305h), INT 21h 0Eh counts to R:' % tag, u8(k, 'bootdrv') == 17 and u8(k, 'lastdrv') == 18)
         e = env(k)
-        want = ['COMSPEC=R:\\LCMD.COM', 'PATH=C:\\LODE;R:\\' if hd else 'PATH=R:\\', 'PROMPT=$P$G']
-        check('%s: COMSPEC and PATH' % tag, e == want, e)
+        ems = 'ems_pages' in kw
+        want = ['COMSPEC=R:\\LCMD.COM', 'PATH=C:\\LODE;R:\\' if hd else 'PATH=R:\\', 'PROMPT=$P$G'] + ['TEMP=M:\\'] * ems
+        check('%s: COMSPEC, PATH, %s' % (tag, 'and the ROM\'s TEMP=M:\\, M: made' if ems else 'no TEMP (no M:: CLAUDE.OUT on the current drive)'),
+              e == want and (not ems or A.md_pages(k) > 0), (e, ems and A.md_pages(k)))
         check('%s: the picture was shown' % tag, TS.ON in [m[0] for m in k.pc.marks] and TS.OFF in [m[0] for m in k.pc.marks])
         check('%s: the settings: the ROM\'s, %s over them' % (tag, 'C:\'s' if hd else 'none'), u8(k, 'setdrv') == (3 if hd else 0))
 
@@ -500,7 +502,7 @@ def t_floppy():
     img = floppy('rom_fl.img', A.SYS, LCMD, A.MEMSZ)
     k = boot(img, sock=None)
     check('the Executive on A:, R: there too', has(k, 'Floppy A:') and u8(k, 'bootdrv') == 0 and u8(k, 'lastdrv') == 18)
-    check('PATH and COMSPEC on A: as before', env(k) == ['COMSPEC=A:\\LCMD.COM', 'PATH=A:\\', 'PROMPT=$P$G'], env(k))
+    check('PATH and COMSPEC on A: as before, no TEMP (A:\\ has no LODE.INI)', env(k) == ['COMSPEC=A:\\LCMD.COM', 'PATH=A:\\', 'PROMPT=$P$G'], env(k))
     check('the settings: A:\'s alone', u8(k, 'setdrv') == 0)
     to_prompt(k)
     o = prompt(k, 'dir r:')
@@ -517,6 +519,17 @@ def t_settings():
     check('C:\\LODE.INI\'s SPLASH=0: no picture', TS.ON not in [m[0] for m in k.pc.marks])
     k = boot(ata=sysinfo_hd(), ems_pages=88)
     check('no C:\\LODE.INI: the ROM\'s (the picture, M: 256 KB)', TS.ON in [m[0] for m in k.pc.marks])
+    long = 'C:\\' + 'D' * 70
+    for line, want in ((b'TEMP=C:\\TMP\r\n', ['TEMP=C:\\TMP']), (b'temp=a:\\ junk\r\n', ['TEMP=a:\\']),
+                       (b'TEMP=\r\n', []), (b'TEMP=' + long.encode() + b'\r\n', ['TEMP=' + long[:64]]),
+                       (b'TEMP=Q:\\TMP\r\n', []), (b'TEMP=m:\\', ['TEMP=m:\\'])):
+        k = boot(ata=sysinfo_hd(('LODE.INI', b'SAVER=10\r\n' + line)), ems_pages=88)
+        e = env(k)
+        check('C:\\LODE.INI\'s %r (EMS) over the ROM\'s TEMP=M:\\: %s, M: made beside it' % (line.strip().decode(), want or 'no TEMP'),
+              e[:3] == ['COMSPEC=R:\\LCMD.COM', 'PATH=C:\\LODE;R:\\', 'PROMPT=$P$G'] and e[3:] == want
+              and A.md_pages(k) > 0 and not k.crashed, (e, A.md_pages(k)))
+    k = boot(ata=sysinfo_hd(('LODE.INI', b'MDISK=0\r\n')), ems_pages=88)
+    check('C:\\LODE.INI\'s MDISK=0 (EMS, M: off): the ROM\'s TEMP=M:\\ not set', env(k)[3:] == [] and A.md_pages(k) == 0, (env(k), A.md_pages(k)))
     open(os.path.join(OUT, 'LODE.INI'), 'wb').write(b'SPLASH=0\r\n')
     a = floppy('rom_set.img', os.path.join(OUT, 'LODE.INI'))
     k = boot(a)
