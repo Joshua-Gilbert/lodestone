@@ -3138,11 +3138,12 @@ def t_paint_bmp():
     check('no mouse: Return, Tab, a tool, help, I, U: the picture as shown', not diff(paint_c(k), cases[0][2].l)
           and not diff(screen_lines(k), cases[0][2].l), diff(screen_lines(k), cases[0][2].l))
     c0, s0 = paint_c(k), screen_lines(k)
-    for key in (ktest.UP, ktest.DOWN, ktest.LEFT, ktest.RIGHT, 0x4900, 0x5100, 0x7300, 0x7400): k.key(key)
-    check('the whole screen: the arrows, PgUp, PgDn, Ctrl-Left/Right (a window\'s view keys) do nothing',
+    for key in (ktest.UP, ktest.DOWN, ktest.LEFT, ktest.RIGHT, 0x4900, 0x5100, 0x7300, 0x7400, CODE['F']): k.key(key)
+    check('the whole screen: the arrows, PgUp, PgDn, Ctrl-Left/Right (a window\'s view keys) and CODE-F (its zoom) do nothing',
           paint_c(k) == c0 and screen_lines(k) == s0, diff(paint_c(k), c0))
     k.key(ktest.F1); hs = screen(k); k.key(ktest.ESC)
-    check('... and the help as ever: no view keys, Transfer CODE-T', 'move the view' not in hs
+    check('... and the help as ever: no view keys nor zoom, Transfer CODE-T', 'move the view' not in hs
+          and 'the whole screen, and back' not in hs
           and 'CODE-T                   Transfer: save as' in hs, hs)
     k.key(ktest.ESC); k.key(ktest.ENTER)
     check('... ESC, Return (I and U changed it): the Executive', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
