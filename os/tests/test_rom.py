@@ -124,7 +124,7 @@ def t_image():
     check('LODE.SYS is the first file', first.startswith('LODE     SYS'), first)
     srcs = {'LODE.SYS': 'src/LODE.SYS', 'LODEMT.SYS': 'src/LODEMT.SYS', 'LCMD.COM': 'src/LCMD.COM', 'SYSTEM.RUN': 'apps/SYSTEM.RUN',
             'TERMINUS.FNT': 'fonts/TERMINUS.FNT', 'LODE.INI': 'rom/LODE.INI',
-            'PS.PRN': 'drivers/PS.PRN', 'TASKS.RUN': 'apps/TASKS.RUN', 'TERM.RUN': 'apps/TERM.RUN'}
+            'PS.PRN': 'drivers/PS.PRN', 'SCREEN.PRN': 'drivers/SCREEN.PRN', 'TASKS.RUN': 'apps/TASKS.RUN', 'TERM.RUN': 'apps/TERM.RUN'}
     bad = []
     for n, s in srcs.items():
         o = os.path.join(OUT, 'rom_x')
@@ -605,10 +605,23 @@ def t_paths():
 def rom_ini(ini):
     """ROM 1 as build.sh makes it, with another LODE.INI"""
     names = ['src/LODE.SYS', 'src/LODE.PIC', 'src/LCMD.COM', 'apps/SYSTEM.RUN', 'apps/WRITE.RUN', 'apps/CALC.RUN',
-             'src/CALC.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN']
+             'src/CALC.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN', 'drivers/SCREEN.PRN']
     files = [(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names] + [('LODE.INI', ini)]
     return mkrom.volume(files, boot=open(os.path.join(GOS, 'src', 'ROMBOOT.BIN'), 'rb').read())[0]
 
+
+def t_romcap():
+    print('== Shift-PrtSc from the ROM: SCREEN.PRN read from R:, the picture saved on A: (KC-2)')
+    k = boot()
+    k.trace = True
+    k.pc.tty.clear(); k.pc.prtsc(); k.settle(10)
+    files = A.fatcheck.read_files(k.pc.drives[0].img)
+    beeps = ''.join(k.pc.tty).count('\x07')
+    opened = [l for l in k.dos_log() if 'SCREEN.PRN' in l and 'AH=3D' in l and ' CF' not in l]
+    check('started from the ROM, nothing on the floppy but its blank root: Shift-PrtSc reads R:\\SCREEN.PRN and saves '
+          'A:\\SCREEN01.BMP (32062 bytes), one beep', u8(k, 'capdrv') == ord('A') and k.rd('scr_path', 13) == b'R:\\SCREEN.PRN'
+          and len(files.get('A:\\SCREEN01.BMP', b'')) == 32062 and beeps == 1 and any('R:\\SCREEN.PRN' in l for l in opened),
+          (chr(u8(k, 'capdrv')), k.rd('scr_path', 13), sorted(files), beeps, opened[-2:]))
 
 def t_printer():
     print('== the printer driver from the ROM: PRINTER= found as PATH finds programs (C:\\LODE, then R:)')
@@ -676,7 +689,7 @@ if __name__ == '__main__':
     t0 = time.time()
     if 'nobuild' not in sys.argv: build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_memory, t_rom2, t_rom2_paint):
+    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_paint):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

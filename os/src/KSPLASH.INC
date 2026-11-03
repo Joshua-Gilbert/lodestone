@@ -202,6 +202,10 @@ sp_wanted:
 pr_boot:
         push    KSEG
         pop     es
+        mov     ax, 3305h               ; SCREEN.PRN (Shift-PrtSc's file
+        int     21h                     ;  writer, KC-2): in the root of the
+        add     dl, 'A' - 1             ;  drive started from (R:\ from the
+        mov     [es:scr_path], dl       ;  ROM)
         call    ini_read                ; (KROM.INC: LODE.INI's, both)
         mov     di, MDB(s_preq)         ; "PRINTER=" (any case)?
         call    ini_key

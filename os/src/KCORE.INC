@@ -25,8 +25,7 @@ PRN_PATH equ 24                         ; ("C:\LODE\" and an 8.3 name, and its e
 section .bss
 indos       resb 1              ; INT 21h nesting depth
 cap_req     resb 1              ; screen capture: 1 asked for (INT 5), 2 under
-                                ;  way, 4 a write failed (word with indos)
-cap_lim     resw 1              ; its buffer's size
+                                ;  way (word with indos)
 prn_path    resb PRN_PATH       ; PrtSc's printer driver ("A:\PS.PRN"; "": files)
 prn_call    resd 1              ; (where it is called)
 cap_file    resb 1              ; Shift was held: a file all the same
@@ -217,154 +216,17 @@ capture:
                                         ;  disk behind our back, reading it
                                         ;  through the BIOS: check it first
         push    word [last_err]
-        cmp     byte [cap_file], 0      ; PrtSc with a printer driver: print
-        jne     .file
-        cmp     byte [prn_path], 0
-        jne     .prn
-.file:
-        mov     al, [capdrv]            ; A:, or from the ROM C: (KROM.INC)
-        mov     [cap_name], al
-        push    0
-        pop     es
-        mov     al, [es:449h]           ; the video mode
-        cbw
-        xchg    bp, ax
-        mov     ax, 'TX'
-        mov     dl, 'T'
-        cmp     bp, 3
-        jbe     .ext
-        mov     ax, 'BM'
-        mov     dl, 'P'
-.ext:   mov     [cap_ext], ax
-        mov     [cap_ext+2], dl
-        xor     di, di
-.next:  inc     di                      ; the first number not taken
-        cmp     di, 99
-        ja      .fail
-        mov     ax, di
-        aam
-        add     ax, '00'
-        xchg    al, ah
-        mov     [cap_num], ax
-        mov     ah, 5Bh
-        xor     cx, cx
-        mov     dx, cap_name
-        int     21h
-        jnc     .made
-        cmp     al, 50h
-        je      .next
-.fail:  jmp     .f4
-.made:  xchg    bx, ax                  ; BX = the file
-        mov     ax, [cur_psp]           ; the buffer, at ES:0: not lent in
-        cmp     ax, [root_psp]          ;  a DOS program (with EMS it would
-        stc                             ;  be free memory the program may
-        jne     .nol                    ;  still use)
-        mov     ax, 0F002h
-        int     21h
-.nol:   sbb     ax, ax
-        push    ax                      ; (FFFFh: not lent)
-        jnc     .buf
-        mov     ax, CAP_SEG
-        mov     es, ax
-        mov     cx, 1024
-.buf:   mov     [cap_lim], cx
-        xor     di, di
-        cmp     bp, 3
-        ja      .bmp
-        push    0                       ; text: the page's characters, line
-        pop     ds                      ;  by line, without trailing blanks
-        mov     si, [44Eh]
-        mov     bp, [44Ah]              ; (columns)
-        push    0B800h
-        pop     ds
-        mov     dx, 25
-.line:  mov     cx, bp
-        push    si
-        add     si, bp
-        add     si, bp
-.len:   dec     si
-        dec     si
-        test    byte [si], 0DFh         ; (ZF: a blank or a NUL)
-        jnz     .go2
-        loop    .len
-.go2:   pop     si
-        push    si
-        jcxz    .eol
-.ch:    lodsw
-        test    al, 0DFh
-        jnz     .c
-        mov     al, ' '
-.c:     call    cap_b
-        loop    .ch
-.eol:   mov     al, 13
-        call    cap_b
-        mov     al, 10
-        call    cap_b
-        pop     si
-        add     si, bp
-        add     si, bp
-        dec     dx
-        jnz     .line
-        jmp     .end
-.bmp:   mov     si, bmp_hdr
-        mov     cx, 62
-        rep     movsb                   ; (the buffer is empty)
-        mov     dx, 399
-        push    0B800h
-        pop     ds
-.row:   mov     si, dx                  ; bottom up: line DX's bank
-        and     si, 3
-        cmp     bp, 6
-        ja      .r4
-        shr     si, 1                   ; (200 lines: 2 banks, each line twice)
-.r4:    ror     si, 3
-        mov     ax, dx
-        shr     ax, 2
-        imul    ax, ax, 80
-        add     si, ax
-        mov     cx, 80
-.px:    lodsb
-        call    cap_b
-        loop    .px
-        dec     dx
-        jns     .row
-.end:   call    cap_fl                  ; the rest
-        push    cs
-        pop     ds
-        mov     ah, 3Eh
-        int     21h
-        sbb     cx, cx                  ; (FFFFh: it didn't close)
-        pop     ax
-        inc     ax
-        jz      .nl
-        mov     ax, 0F003h              ; the cache's memory back
-        int     21h
-.nl:    test    byte [cap_req], 4       ; a write failed?
-        jnz     .del
-        inc     cx
-        jnz     .beep                   ; (CX = 1)
-.del:   mov     ah, 41h                 ; not all of it: none of it
-        mov     dx, cap_name
-        int     21h
-        jmp     short .f4               ; (BX is closed already, even if
-                                        ;  the close failed: its slot is FFh)
-.pcl:   mov     ah, 3Eh
-        int     21h
-.f4:    mov     cx, 4                   ; a long beep
-.beep:  mov     al, 7
-.b:     call    tty_out
-        loop    .b
-        pop     word [last_err]
-        mov     byte [cap_req], 0       ; (pressed again meanwhile: dropped)
-        pop     es
-        pop     ds
-        popa
-        ret
-
-; the printer driver: up to 1 KB, into the 1 KB at the kernel stack's
-; bottom, then called there (AL = 0: printed)
-.prn:   mov     dx, prn_path
-        mov     ax, 3D00h
+        mov     dx, scr_path            ; Shift-PrtSc, or PrtSc with no
+        cmp     byte [cap_file], 0      ;  printer driver: SCREEN.PRN, the
+        jne     .ld                     ;  file writer (KC-2); else the
+        cmp     byte [prn_path], 0      ;  printer's driver
+        je      .ld
+        mov     dx, prn_path
+; the driver: up to 1 KB, into the 1 KB at the kernel stack's bottom,
+; then called there with DL = the drive a file goes on, DH = 1 if it may
+; borrow the cache (in the Executive, not under a DOS program) -> AL = 0
+; done (one beep), else not (a long one)
+.ld:    mov     ax, 3D00h
         int     21h
         jc      .f4
         xchg    bx, ax
@@ -403,47 +265,34 @@ capture:
         jne     .pcl
         mov     ah, 3Eh
         int     21h
-        call    far [prn_call]
+        mov     dl, [capdrv]            ; A:, or from the ROM C: (KROM.INC)
+        xor     dh, dh
+        mov     ax, [cur_psp]
+        cmp     ax, [root_psp]
+        jne     .call
+        inc     dh
+.call:  call    far [prn_call]
         push    cs
         pop     ds
         mov     cx, 1
         or      al, al
         jz      .beep
-        jmp     .f4
-
-; AL to the file (BX) through the buffer at ES:DI; full, it is written
-; (cap_fl).  A write that fails sets cap_req bit 2.
-cap_b:  stosb
-        cmp     di, [cs:cap_lim]
-        jb      cap_fl.x
-cap_fl: test    byte [cs:cap_req], 4    ; one failed: no more tries
-        jnz     .z
-        push    ds
-        pusha
-        push    es
-        pop     ds
-        xor     dx, dx
-        mov     cx, di
-        mov     ah, 40h
+        jmp     short .f4
+.pcl:   mov     ah, 3Eh
         int     21h
-        jc      .bad
-        cmp     ax, cx
-        je      .ok
-.bad:   or      byte [cs:cap_req], 4
-.ok:    popa
+.f4:    mov     cx, 4                   ; a long beep
+.beep:  mov     al, 7
+.b:     call    tty_out
+        loop    .b
+        pop     word [last_err]
+        mov     byte [cap_req], 0       ; (pressed again meanwhile: dropped)
+        pop     es
         pop     ds
-.z:     xor     di, di
-.x:     ret
+        popa
+        ret
 
-bmp_hdr db 'BM'
-        dd 62 + 32000, 0, 62            ; size, -, where the pixels start
-        dd 40, 640, 400                 ; BITMAPINFOHEADER
-        dw 1, 1                         ; 1 plane, 1 bit
-        dd 0, 32000, 0, 0, 2, 0
-        db 2, 8, 36, 0, 40, 120, 255, 0 ; dark red, the plasma's orange (B, G, R)
-cap_name db 'A:\SCREEN'
-cap_num db '00.'
-cap_ext db 'BMP', 0
+scr_path db 'A:\SCREEN.PRN', 0         ; (the drive started from: pr_boot)
+        times   ($ - $$) & 1 db 0       ; (hot: int21 even)
 
 ; ---------------------------------------------------------------------
 ;  INT 21h: entry, dispatch, exits
