@@ -729,6 +729,7 @@ class Audit:
         s.seg = seg = mt_seg(k)
         s.at, s.sa, s.swa, s.ex = (seg * 16 + k.Y[n] for n in ('mt_preempt', 'mt_safe', 'mt_switch', 'mt_exit'))
         s.srqi, s.tick, s.srq = seg * 16 + k.Y['mt_srqi'], seg * 16 + k.Y['mt_tick'], False
+        s.i0e = seg * 16 + k.Y['mt_i0e']     # (M10: mt_tick's tail from IRQ 6, the floppy's)
         s.wf = seg * 16 + k.Y['mt_wfront']   # (a background task waiting at INT 10h to be in front)
         s.wk = seg * 16 + k.Y['mt_wkey']     # (a task waiting at INT 16h for a key)
         s.pss = None
@@ -796,8 +797,9 @@ class Audit:
             pc.irq_pending.add(13); s.injected += 1; pc.mu.emu_stop()
         elif a == s.ex:
             if s.force and pc.rd(s.seg, k.Y['mt_pend'], 1)[0] == 0: pc.wr(s.seg, k.Y['mt_pend'], b'\1')
-        elif a in (s.srqi, s.tick):
-            s.srq = a == s.srqi                             # (mt_tick's tail reached from the SRQ's interrupt)
+        elif a in (s.srqi, s.tick, s.i0e):
+            s.srq = {s.srqi: 'srq', s.i0e: 'fd'}.get(a)       # (mt_tick's tail reached from the SRQ's interrupt, or
+                                                            #  M10's IRQ 6)
         elif a == s.sa:
             r, cur = s.rules(pc.r('ax'), pc.r('bx'), pc.r('dx'), pc.r('ss'))
             no = [n for n, ok in r.items() if not ok]
@@ -816,7 +818,9 @@ class Audit:
             ip, cs, fl = pc.u16(ss, f), pc.u16(ss, f + 2), pc.u16(ss, f + 4)
             r, cur = s.rules(cs, ip, fl, ss)
             if path == 'tick':          # (else a hook ahead was interrupted: INT 08h's, or from mt_srqi IRQ 5's)
-                r['ivt'] = (vec(k, 0x0D) == (0x60, k.Y['gp_isr']) if s.srq else vec(k, 8) == (s.seg, k.Y['mt_tick']))
+                r['ivt'] = (vec(k, 0x0D) == (0x60, k.Y['gp_isr']) if s.srq == 'srq' else
+                            vec(k, 0x0E) == (s.seg, k.Y['mt_i0e']) if s.srq == 'fd' else
+                            vec(k, 8) == (s.seg, k.Y['mt_tick']))
             s.ev.append(dict(path=path, cs=cs, ip=ip, fl=fl, task=cur, ss=ss, csp=f + 6, r=r, sw=False,
                              ok=path != '?' and all(r.values())))
             s.track = (ss, f + 6, path, cur, (s.seg, 0x60, pc.u16(0x60, k.Y['ui_seg'])))   # (the caller's SP:
