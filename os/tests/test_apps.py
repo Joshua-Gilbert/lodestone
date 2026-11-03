@@ -44,7 +44,8 @@ def build():
                      ('apps/TASKS.ASM', os.path.join(GOS, 'apps', 'TASKS.RUN')),
                      ('tests/RCTEST.ASM', os.path.join(HERE, 'RCTEST.RUN')), ('tests/RC6.ASM', os.path.join(HERE, 'RC6.RUN')),
                      ('tests/MENUTEST.ASM', os.path.join(HERE, 'MENUTEST.RUN')),
-                     ('tests/CLIPTEST.ASM', os.path.join(HERE, 'CLIPTEST.RUN'))):
+                     ('tests/CLIPTEST.ASM', os.path.join(HERE, 'CLIPTEST.RUN')),
+                     ('apps/PAINT.ASM', os.path.join(GOS, 'apps', 'PAINT.RUN'))):
         mkrun.build(os.path.join(GOS, src), dst)
     subprocess.run(['nasm', '-f', 'bin', '-o', MEMSZ, os.path.join(HERE, 'MEMSZ.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
@@ -942,7 +943,7 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch): the directory buffer is lent while it runs' % kb,
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint): the directory buffer is lent while it runs' % kb,
           kb >= 564.8, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
@@ -2734,6 +2735,448 @@ def t_rclick():
     k.key(ktest.ESC)
     check('... and the Executive afterwards', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
 
+# Paint (PAINT.RUN): a model of its drawing, the same integer rules, and
+# BMP files made here
+PATS = [b'\xff' * 8, b'\xdd\x77' * 4, b'\xaa\x55' * 4, b'\x88\x22' * 4, bytes([0x80, 0, 8, 0] * 2),
+        bytes([0xFF, 0, 0, 0] * 2), b'\x88' * 8, bytes([0x80 >> i for i in range(8)])]
+KPAL = bytes([2, 8, 36, 0, 40, 120, 255, 0])
+
+class PaintModel:
+    """Paint's picture as screen lines (80 bytes each, top first), drawn as
+    PAINT.ASM draws: AND NOT (mask AND A), then XOR (mask AND pattern AND X)."""
+    def __init__(s, lines=None): s.l = [bytearray(80) for _ in range(400)] if lines is None else [bytearray(x) for x in lines]
+    def op(s, a, x, pat=PATS[0]): s.a, s.x, s.p = a, x, pat
+    def plot(s, x, y):
+        m = 0x80 >> (x & 7); b = s.l[y][x >> 3]
+        s.l[y][x >> 3] = (b & ~(m & s.a) & 0xFF) ^ (m & s.p[y & 7] & s.x)
+    def line(s, x0, y0, x1, y1, dot=None):
+        dot = dot or s.plot
+        ax, bx, sx, sy = x1 - x0, y1 - y0, 1, 1
+        if ax < 0: ax, sx = -ax, -1
+        if bx < 0: bx, sy = -bx, -1
+        if ax >= bx: mj, mn = (sx, 0), (0, sy)
+        else: ax, bx = bx, ax; mj, mn = (0, sy), (sx, 0)
+        x, y, e = x0, y0, ax >> 1
+        for _ in range(ax + 1):
+            dot(x, y)
+            e -= bx
+            if e < 0: e += ax; x += mn[0]; y += mn[1]
+            x += mj[0]; y += mj[1]
+    def span(s, x0, x1, y):
+        for x in range(x0, x1 + 1): s.plot(x, y)
+    def fill(s, x0, y0, x1, y1):
+        x0, x1 = sorted((x0, x1)); y0, y1 = sorted((y0, y1))
+        for y in range(y0, y1 + 1): s.span(x0, x1, y)
+    def frame(s, x0, y0, x1, y1):
+        x0, x1 = sorted((x0, x1)); y0, y1 = sorted((y0, y1))
+        s.span(x0, x1, y0)
+        if y1 == y0: return
+        s.span(x0, x1, y1)
+        for y in range(y0 + 1, y1):
+            s.plot(x0, y)
+            if x1 != x0: s.plot(x1, y)
+    def dot(s, side):
+        def d(x, y):
+            s1 = side - 1; h = s1 >> 1                  # centred, then cut at the edges
+            s.fill(max(x - h, 0), max(y - h, 0), min(x - h + s1, 639), min(y - h + s1, 399))
+        return d
+    def stroke(s, tool, pts, pat=0, size=2):
+        """pts: the pointer's positions as Paint samples them, the press first."""
+        if tool in 'PBE':
+            if tool == 'P': s.op(0xFF, 0xFF); d = s.plot
+            elif tool == 'B': s.op(0xFF, 0xFF, PATS[pat]); d = s.dot(2 * size)
+            else: s.op(0xFF, 0); d = s.dot(4 * size)
+            d(*pts[0])
+            for a, b in zip(pts, pts[1:]): s.line(*a, *b, dot=d)
+        elif tool == 'L': s.op(0xFF, 0xFF); s.line(*pts[0], *pts[-1])
+        elif tool == 'R': s.op(0xFF, 0xFF); s.frame(*pts[0], *pts[-1])
+        elif tool == 'F': s.op(0xFF, 0xFF, PATS[pat]); s.fill(*pts[0], *pts[-1])
+    def bmp(s):
+        """As Paint (and Shift-PrtSc) saves it."""
+        hdr = b'BM' + struct.pack('<IIIIiiHHIIiiII', 62 + 32000, 0, 62, 40, 640, 400, 1, 1, 0, 32000, 0, 0, 2, 0) + KPAL
+        return hdr + b''.join(bytes(s.l[y]) for y in range(399, -1, -1))
+
+def drag_pts(x0, y0, x1, y1):
+    """The positions drag() goes through, as Paint samples them (one a packet)."""
+    pts, x, y, dx, dy = [(x0, y0)], x0, y0, x1 - x0, y1 - y0
+    while dx or dy:
+        sx, sy = max(-40, min(40, dx)), max(-40, min(40, dy))
+        x += sx; y += sy; dx -= sx; dy -= sy; pts.append((x, y))
+    return pts
+
+def mkbmp(w, h, rows, topdown=False, pal=KPAL, bpp=1, comp=0, off=None, cut=0, extra_hdr=0):
+    """A BMP of w x h; rows: the picture's lines, top first, each its bytes."""
+    stride = ((w * bpp + 31) // 32) * 4
+    body = b''.join(bytes(rows[y]).ljust(stride, b'\x5a')[:stride] for y in (range(h) if topdown else range(h - 1, -1, -1)))
+    info = struct.pack('<IiiHHIIiiII', 40 + extra_hdr, w, -h if topdown else h, 1, bpp, comp, len(body), 0, 0, 2, 0) + bytes(extra_hdr)
+    o = 14 + len(info) + len(pal) if off is None else off
+    data = b'BM' + struct.pack('<IHHI', o + len(body), 0, 0, o) + info + pal
+    data = data.ljust(o, b'\0') + body
+    return data[:len(data) - cut] if cut else data
+
+def placed(w, h, rows, inv=False):
+    """Screen lines of a picture placed as Paint places it: centred, its left
+    edge on a whole byte, the bits past its width cleared, XORed with inv."""
+    m = PaintModel(); wb = (w + 7) // 8; xb = (80 - wb) // 2; y0 = (400 - h) // 2
+    last = 0xFF if w % 8 == 0 else (0xFF << (8 - w % 8)) & 0xFF
+    for y in range(h):
+        r = bytearray(b ^ (0xFF if inv else 0) for b in bytes(rows[y])[:wb])
+        r[-1] &= last
+        m.l[y0 + y][xb:xb + wb] = r
+    return m
+
+PAINT = os.path.join(GOS, 'apps', 'PAINT.RUN')
+
+def paint_sym(k, name): return k.u16('run_base') + run_syms('apps/PAINT.ASM')[name]
+def paint_c(k):
+    """Paint's C (the picture between strokes) as screen lines."""
+    seg = k.pc.u16(k.useg, paint_sym(k, 'segc'))
+    c = k.pc.rd(seg, 0, 32000)
+    return [c[(399 - y) * 80:(400 - y) * 80] for y in range(400)]
+def screen_lines(k):
+    v = vram(k); return [vrow(v, y) for y in range(400)]
+def off_pointer(k, a, b):
+    """Lines a and b (lists of 400 lines) equal but under the core's pointer."""
+    mx, my = k.u16('mx'), k.u16('my')
+    for y in range(400):
+        for c in range(80):
+            if a[y][c] != b[y][c] and not (my <= y < my + 13 and mx // 8 <= c <= mx // 8 + 2): return (y, c)
+    return None
+def diff(a, b):
+    bad = [(y, c) for y in range(400) for c in range(80) if a[y][c] != b[y][c]]
+    return '%d bytes differ, first %s' % (len(bad), bad[:4]) if bad else None
+
+def paint_start(img, mouse=True, ems=0, **kw):
+    """The Executive, then Paint started from its list (a new picture)."""
+    k = ktest.KPC(img, ems_pages=ems, **kw); k.pc.mouse = mouse; k.start()
+    k.select('PAINT.RUN'); k.key(ktest.ENTER)
+    return k
+
+def time_between(k, a, b):
+    """Simulated µs from Paint's routine a's entry to b's entry, each time."""
+    got, t = [], {}
+    pa, pb = paint_sym(k, a), paint_sym(k, b)
+    def h(pc):
+        if pc.r('cs') != k.useg: return
+        ip = pc.r('ip')
+        if ip == pa: t['a'] = pc.us
+        elif ip == pb and 'a' in t: got.append(pc.us - t.pop('a'))
+    k.hooks.append(h)
+    return got
+
+def t_paint():
+    """Paint (PAINT.RUN): drawing on the whole screen, and the BMP viewer."""
+    print('== Paint')
+    hdr = open(PAINT, 'rb').read(6)
+    check('PAINT.RUN needs API 6 (its tools\' window moves and closes)', hdr == b'GRUN\x06\x00', hdr)
+    # a new picture: the hint, a dark page; each tool against the model
+    img = image('paint.img', PAINT)
+    k = paint_start(img)
+    check('started from the list: a new picture, the hint in the band',
+          k.band() == ['Paint: draw with the mouse.  Tab: tools.  CODE-?: help', 'Press any key'], k.band())
+    k.key(ktest.ESC)
+    m = PaintModel()
+    check('... a key: a dark page, no title bar, no band (C dark too)', not diff(paint_c(k), m.l)
+          and not off_pointer(k, screen_lines(k), m.l), off_pointer(k, screen_lines(k), m.l))
+    strokes = (('P', (100, 100, 300, 200), 0), ('L', (50, 300, 600, 50), 0), ('R', (400, 250, 500, 350), 0),
+               ('F', (20, 20, 200, 87), 2), ('B', (300, 300, 350, 380), 4), ('E', (120, 110, 250, 160), 0),
+               ('L', (639, 0, 0, 399), 0), ('R', (10, 390, 10, 395), 0), ('F', (630, 200, 600, 180), 7),
+               ('B', (2, 2, 0, 0), 0))
+    size = 2
+    for tool, (x0, y0, x1, y1), pat in strokes:
+        k.key(tool); k.key(str(pat + 1))
+        drag(k, x0, y0, x1, y1)
+        m.stroke(tool, drag_pts(x0, y0, x1, y1), pat, size)
+        d = diff(paint_c(k), m.l)
+        check('%s from (%d, %d) to (%d, %d), pattern %d: C exactly as the model' % (tool, x0, y0, x1, y1, pat + 1), not d, d)
+    check('... and the screen is C (but for the pointer)', not off_pointer(k, screen_lines(k), m.l), off_pointer(k, screen_lines(k), m.l))
+    k.key(']'); k.key(']'); k.key(']'); k.key('B'); k.key('1')
+    drag(k, 500, 30, 560, 90); m.stroke('B', drag_pts(500, 30, 560, 90), 0, 4)
+    k.key('['); k.key('E'); drag(k, 520, 40, 540, 70); m.stroke('E', drag_pts(520, 40, 540, 70), 0, 3)
+    check(']]] then [: the brush 8 pixels, the eraser 12', not diff(paint_c(k), m.l), diff(paint_c(k), m.l))
+    # undo, redo
+    before = PaintModel(m.l)
+    k.key('L'); drag(k, 0, 200, 639, 210); m.stroke('L', drag_pts(0, 200, 639, 210))
+    k.key('U')
+    check('U: undo, the picture before the last stroke (C and screen)', not diff(paint_c(k), before.l)
+          and not off_pointer(k, screen_lines(k), before.l), diff(paint_c(k), before.l))
+    k.key(CODE['Z'])
+    check('CODE-Z again: redo', not diff(paint_c(k), m.l) and not off_pointer(k, screen_lines(k), m.l), diff(paint_c(k), m.l))
+    k.key('i')
+    inv = PaintModel([bytes(b ^ 0xFF for b in r) for r in m.l])
+    check('I (lower case too): the picture inverted', not diff(paint_c(k), inv.l), diff(paint_c(k), inv.l))
+    k.key('u')
+    check('... and undone', not diff(paint_c(k), m.l), diff(paint_c(k), m.l))
+    # the tools' window: drawn over the picture, gone without a trace
+    k.key(ktest.TAB)
+    check('Tab: the tools\' window (Pencil ... Filled box, the size, eight patterns)', has(k, 'Tools') and has(k, 'Pencil')
+          and has(k, 'Filled box') and has(k, 'Size 3'), screen(k))
+    tw = run_syms('apps/PAINT.ASM')
+    wy, wc = k.pc.u16(k.useg, paint_sym(k, 'twin') + 2), k.pc.u16(k.useg, paint_sym(k, 'twin'))
+    click(k, wc * 8 + 40, wy + 24 + 3 * 16 + 8)
+    check('a click on "Line": the tool chosen, the window gone, the picture as it was', k.pc.u16(k.useg, paint_sym(k, 'tool')) == 3
+          and not has(k, 'Tools') and not off_pointer(k, screen_lines(k), m.l), (k.pc.u16(k.useg, paint_sym(k, 'tool')), off_pointer(k, screen_lines(k), m.l)))
+    k.key(ktest.TAB)
+    click(k, (wc + 2 + 3 * 5) * 8 + 8, wy + 24 + 7 * 16 + 8)
+    check('a click on the sixth pattern: chosen', k.pc.u16(k.useg, paint_sym(k, 'patn')) == 5, k.pc.u16(k.useg, paint_sym(k, 'patn')))
+    k.key(ktest.TAB); k.key('r')
+    check('a letter in the window: Box chosen, the window gone', k.pc.u16(k.useg, paint_sym(k, 'tool')) == 4 and not has(k, 'Tools'), screen(k))
+    k.key(ktest.F1)
+    check('F1: the help, from the key table', has(k, 'Paint Commands') and has(k, 'CODE-T') and has(k, 'undo'), screen(k))
+    k.key(ktest.ESC)
+    check('... and the picture after it, the band mended', not off_pointer(k, screen_lines(k), m.l), off_pointer(k, screen_lines(k), m.l))
+    # the screen saver: the picture again, its bottom lines too (the core's band mended at once)
+    dark = paint_saver(k, m, ktest.DOWN)
+    check('the screen saver, then a key: the picture back, lines 360-399 too (no band left over it)', dark
+          and not off_pointer(k, screen_lines(k), m.l), (dark, off_pointer(k, screen_lines(k), m.l)))
+    # Transfer: save as, .BMP added; the file is the model's, as Shift-PrtSc writes one
+    k.key(CODE['T']); k.key('drawn'); k.key(ktest.ENTER)
+    check('CODE-T, "drawn": DRAWN.BMP, byte for byte the kernel\'s format of the picture', disk_file(k, 'DRAWN.BMP') == m.bmp()
+          and disk_file(k, 'DRAWN.$$$') is None, (len(disk_file(k, 'DRAWN.BMP') or b''), k.band()))
+    k.key(ktest.ESC)
+    check('ESC with nothing new since: back to the Executive, the .RUN gone', k.rd('run_active', 1) == b'\x00'
+          and 'DRAWN.BMP' in k.exec_list(), k.exec_list())
+    # Return on it in the list: Paint shows it; clicks don't draw until Return
+    bmp0 = m.bmp()
+    k.select('DRAWN.BMP')
+    check('the list: DRAWN.BMP is a Picture', has(k, 'Picture'), screen(k))
+    free0 = free_paras(k)
+    k.key(ktest.ENTER)
+    check('Return on DRAWN.BMP: Paint shows it, exactly (no hint)', not diff(paint_c(k), m.l) and not off_pointer(k, screen_lines(k), m.l),
+          diff(paint_c(k), m.l))
+    drag(k, 10, 300, 200, 300)
+    check('... a drag on a picture shown draws nothing', not diff(paint_c(k), m.l) and not off_pointer(k, screen_lines(k), m.l),
+          diff(paint_c(k), m.l))
+    k.key(ktest.ENTER)
+    drag(k, 10, 300, 200, 330); m.stroke('P', drag_pts(10, 300, 200, 330))
+    check('... Return, then a drag: the pencil draws', not diff(paint_c(k), m.l), diff(paint_c(k), m.l))
+    k.key(ktest.ESC)
+    check('ESC with changes: "Cancel: Confirm to quit without saving"', k.band()[0] == 'Cancel: Confirm to quit without saving', k.band())
+    k.key(ktest.ESC)
+    check('... ESC: still in Paint, the band mended', k.rd('run_active', 1) == b'\x01'
+          and not off_pointer(k, screen_lines(k), m.l), off_pointer(k, screen_lines(k), m.l))
+    k.key(ktest.ESC); k.key(ktest.ENTER)
+    check('... ESC, Return: back, DRAWN.BMP as it was, the UI block as before', k.rd('run_active', 1) == b'\x00'
+          and disk_file(k, 'DRAWN.BMP') == bmp0 and free_paras(k) == free0, (free_paras(k), free0))
+    m = PaintModel([bmp0[62 + (399 - y) * 80:62 + (400 - y) * 80] for y in range(400)])
+    k.select('DRAWN.BMP'); k.key(ktest.ENTER); k.key('L'); k.key('8')
+    drag(k, 30, 30, 600, 370); m.stroke('L', drag_pts(30, 30, 600, 370))
+    k.key(CODE['Q'])
+    check('CODE-Q: "Quit: Confirm to save and exit"', k.band()[0] == 'Quit: Confirm to save and exit', k.band())
+    k.key(ktest.ENTER)
+    check('... Return: saved under its own name, back in the Executive', k.rd('run_active', 1) == b'\x00'
+          and disk_file(k, 'DRAWN.BMP') == m.bmp(), k.band())
+
+def paint_saver(k, m, *keys):
+    """The screen saver over Paint's picture m (asserted: something drawn above
+    the band differs), then keys typed (the first wakes it).  -> it ran"""
+    entered, a = [], k.Y['saver']
+    h = lambda pc: entered.append(1) if pc.r('cs') == k.useg and pc.r('ip') == a else None
+    k.hooks.append(h)
+    k.wr('saver_t', struct.pack('<H', 36))
+    ran = False
+    for _ in range(40):
+        k.pc.run_for(0.25)
+        d = off_pointer(k, screen_lines(k), m.l)
+        if entered and d and d[0] < SCR_BAND: ran = True; break
+    k.wr('saver_t', struct.pack('<H', 5460))
+    k.hooks.remove(h)
+    for x in keys: k.pc.keys.append(x)
+    k.settle()
+    return ran
+SCR_BAND = 360
+
+def t_paint_more():
+    """Paint: the panel's cases.  The press that ends the hint, strokes past the
+    edges, keys in the tools' window, a key typed ahead of the saver's end,
+    Erase, CODE-Q on a new picture, a save that fails, a picture in a subject,
+    the Executive's mouse afterwards."""
+    print('== Paint: edges, the tools\' window, saving')
+    p = os.path.join(OUT, 'pm_pic.bmp'); open(p, 'wb').write(PaintModel().bmp())
+    k = paint_start(image('pmore.img', PAINT, 'SUB\\', 'SUB\\PIC.BMP=' + p))
+    m = PaintModel()
+    click(k, 320, 380)
+    check('a click on the hint\'s band: the hint goes, nothing drawn', not diff(paint_c(k), m.l) and not k.band(), (diff(paint_c(k), m.l), k.band()))
+    k = paint_start(image('pmore.img', PAINT, 'SUB\\', 'SUB\\PIC.BMP=' + p))
+    drag(k, 100, 50, 150, 60); m.stroke('P', drag_pts(100, 50, 150, 60))
+    check('a new picture: the press that ends the hint draws', not diff(paint_c(k), m.l), diff(paint_c(k), m.l))
+    k.key(']'); k.key(']')
+    for tool, (x0, y0, x1, y1) in (('P', (600, 380, 700, 480)), ('B', (637, 397, 639, 399)), ('E', (630, 390, 639, 399)),
+                                   ('B', (1, 1, 0, 0)), ('P', (30, 30, -40, -40))):
+        k.key(tool); drag(k, x0, y0, x1, y1)
+        m.stroke(tool, [(max(0, min(x, 639)), max(0, min(y, 399))) for x, y in drag_pts(x0, y0, x1, y1)], 0, 4)
+        check('%s from (%d, %d) towards (%d, %d), past the edge: cut there, as the model' % (tool, x0, y0, x1, y1),
+              not diff(paint_c(k), m.l) and not k.crashed, diff(paint_c(k), m.l))
+    # a key in the tools' window that shows the whole picture: the window goes first
+    before = PaintModel(m.l)
+    k.key('L'); drag(k, 0, 150, 639, 250); m.stroke('L', drag_pts(0, 150, 639, 250))
+    k.key(ktest.TAB); k.key('u')
+    check('Tab, then U in the tools\' window: the window gone, the undo shown everywhere (no stale patch)',
+          not has(k, 'Tools') and not diff(paint_c(k), before.l) and not off_pointer(k, screen_lines(k), before.l),
+          off_pointer(k, screen_lines(k), before.l))
+    k.key('u')
+    k.key('P'); drag(k, 300, 120, 360, 200); m.stroke('P', drag_pts(300, 120, 360, 200))
+    check('... U again, a stroke over where the window was: C as the model (nothing stale committed)', not diff(paint_c(k), m.l),
+          diff(paint_c(k), m.l))
+    # a key typed ahead of the saver's end: it is the next key, Paint's own (K_MEND) isn't put behind it
+    ran = paint_saver(k, m, ktest.DOWN, ktest.TAB)
+    check('the saver, then a key and Tab typed together: the tools\' window opens and stays', ran and has(k, 'Tools'), (ran, screen(k)))
+    k.key(ktest.ESC)
+    check('... ESC: the picture, its bottom lines too', not off_pointer(k, screen_lines(k), m.l), off_pointer(k, screen_lines(k), m.l))
+    # Erase, undone
+    k.key(CODE['E'])
+    check('CODE-E: the picture erased', not diff(paint_c(k), PaintModel().l) and not off_pointer(k, screen_lines(k), PaintModel().l),
+          diff(paint_c(k), PaintModel().l))
+    k.key('u')
+    check('... U: back', not diff(paint_c(k), m.l), diff(paint_c(k), m.l))
+    # a press right after the saver's redraw, before the band is mended (poked: the core's band on lines 360-399, mend set)
+    k.key('P')
+    for y in range(SCR_BAND, 400): k.pc.wr(0xB800, (y & 3) * 0x2000 + (y >> 2) * 80, b'\xff' * 80)
+    k.pc.wr(k.useg, paint_sym(k, 'mend'), b'\x01')
+    drag(k, 200, 300, 260, 330); m.stroke('P', drag_pts(200, 300, 260, 330))
+    check('a press with the core\'s band still over the picture (mend set): mended first, nothing of it in C', not diff(paint_c(k), m.l),
+          diff(paint_c(k), m.l))
+    # CODE-Q on a new picture: the name, then saved and gone
+    k.key(CODE['Q']); k.key(ktest.ENTER)
+    check('CODE-Q, Return on a new picture: the Transfer form asks its name', has(k, 'Transfer') and k.rd('run_active', 1) == b'\x01',
+          screen(k))
+    k.key('new'); k.key(ktest.ENTER)
+    check('... "new": NEW.BMP is the picture, back in the Executive', disk_file(k, 'NEW.BMP') == m.bmp()
+          and k.rd('run_active', 1) == b'\x00', k.band())
+    # the Executive's own pointer afterwards (Paint reset INT 33h)
+    k.key(K_HOME)
+    click(k, 40, 24 + 16 * 1 + 8)
+    check('... the Executive\'s mouse after Paint: a click selects the second row', k.u16('sel') == 1, k.u16('sel'))
+    # a picture in a subject: saved there, no NAME.$$$ left
+    to_subject(k, 'SUB')
+    k.select('PIC.BMP'); k.key(ktest.ENTER); k.key(ktest.ENTER)
+    m = PaintModel(); k.key('R'); drag(k, 10, 10, 100, 100); m.stroke('R', drag_pts(10, 10, 100, 100))
+    k.key(CODE['Q']); k.key(ktest.ENTER)
+    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    check('SUB\\PIC.BMP, a box, CODE-Q: saved in SUB, no .$$$ anywhere', files.get('A:\\SUB\\PIC.BMP') == m.bmp()
+          and not any(n.endswith('.$$$') for n in files), sorted(files))
+    # a save that fails (read-only): the message, still in Paint, the file as it was
+    p = os.path.join(OUT, 'pm_ro.bmp'); open(p, 'wb').write(PaintModel().bmp())
+    img = image('pmro.img', PAINT, 'RO.BMP=' + p)
+    a = bytearray(open(img, 'rb').read()); a[root_entry(a, 'RO.BMP') + 11] |= 1; open(img, 'wb').write(a)
+    k = ktest.KPC(img); k.pc.mouse = True; k.start()
+    k.select('RO.BMP'); k.key(ktest.ENTER); k.key(ktest.ENTER)
+    drag(k, 10, 10, 100, 100)
+    k.key(CODE['Q']); k.key(ktest.ENTER)
+    msg = k.band()[0] if k.band() else ''
+    files = fatcheck.read_files(bytes(k.pc.drives[0].img))
+    k.key(ktest.ENTER)
+    check('CODE-Q on a read-only RO.BMP: "Can\'t save: ...", still in Paint, RO.BMP as it was, no RO.$$$',
+          msg.startswith("Can't save: ") and k.rd('run_active', 1) == b'\x01' and files.get('A:\\RO.BMP') == PaintModel().bmp()
+          and 'A:\\RO.$$$' not in files, (msg, sorted(files)))
+    k.key(ktest.ESC); k.key(ktest.ENTER)
+    check('... ESC, Return: the Executive', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
+
+def view_bmp(name, data, mouse=True):
+    """The Executive on a floppy with Paint and the file, Return on it."""
+    p = os.path.join(OUT, name); open(p, 'wb').write(data)
+    k = ktest.KPC(image('pv.img', PAINT, p)); k.pc.mouse = mouse; k.start()
+    k.select(name); k.key(ktest.ENTER)
+    return k
+
+def t_paint_bmp():
+    """Paint as the BMP viewer: Shift-PrtSc's pictures, other programs'
+    1-bit BMPs (centred, dark paper), and the files it refuses; Paint without
+    a mouse; its speed."""
+    print('== Paint: BMP files, no mouse, speed')
+    # Shift-PrtSc in the Executive, then that picture in Paint and saved again: the same bytes
+    k = ktest.KPC(image('pcap.img', PAINT)); k.pc.mouse = True; k.start()
+    k.pc.prtsc(); k.settle(10)
+    cap = disk_file(k, 'SCREEN01.BMP')
+    k.key(0x3F00); k.select('SCREEN01.BMP'); k.key(ktest.ENTER)       # (F5: the list again)
+    capl = [cap[62 + (399 - y) * 80:62 + (400 - y) * 80] for y in range(400)]
+    check('Shift-PrtSc\'s SCREEN01.BMP in Paint: exactly the picture taken', cap and not diff(paint_c(k), capl)
+          and not off_pointer(k, screen_lines(k), capl), cap and diff(paint_c(k), capl))
+    k.key(CODE['T']); k.key('again'); k.key(ktest.ENTER)   # (typed first: replaces the name)
+    check('... CODE-T as AGAIN.BMP: byte for byte SCREEN01.BMP', disk_file(k, 'AGAIN.BMP') == cap, k.band())
+    k.key(ktest.ESC)
+    # another program's 1-bit BMPs: placed in the middle on whole bytes, the colour that covers most of it dark
+    rnd = __import__('random').Random(5)
+    rows = [bytes(rnd.choice((0xFF, 0xFE, 0xEF, 0x7F, 0x00)) for _ in range(13)) for _ in range(50)]
+    cases = (('a black-on-white 100 x 50 (mostly white: inverted)', mkbmp(100, 50, rows, pal=bytes([0, 0, 0, 0, 255, 255, 255, 0])),
+              placed(100, 50, rows, inv=True)),
+             ('the same, top down', mkbmp(100, 50, rows, topdown=True, pal=bytes([0, 0, 0, 0, 255, 255, 255, 0])), placed(100, 50, rows, inv=True)),
+             ('white-on-black colours, the same bits (the palette doesn\'t decide)', mkbmp(100, 50, rows, pal=bytes([255, 255, 255, 0, 0, 0, 0, 0])),
+              placed(100, 50, rows, inv=True)),
+             ('mostly dark: as it is', mkbmp(100, 50, [bytes(~b & 0xFF for b in r) for r in rows], pal=bytes(8)),
+              placed(100, 50, [bytes(~b & 0xFF for b in r) for r in rows])),
+             ('Paint\'s own colours, mostly lit: kept as saved', mkbmp(100, 50, rows), placed(100, 50, rows)),
+             ('37 x 3, odd width: the bits past it cleared', mkbmp(37, 3, [b'\xf0\0\0\0\xff'] * 3, pal=bytes(8)),
+              placed(37, 3, [b'\xf0\0\0\0\xff'] * 3)),
+             ('640 x 1, the pixels further on (bfOffBits 200) and a 124-byte header',
+              mkbmp(640, 1, [bytes(range(80))], pal=bytes(8), off=200, extra_hdr=84), placed(640, 1, [bytes(range(80))])),
+             ('1 x 400', mkbmp(1, 400, [b'\x80'] * 400, pal=bytes(8)), placed(1, 400, [b'\x00'] * 400)))
+    for what, data, want in cases:
+        k = view_bmp('PIC.BMP', data)
+        check('a %s' % what, not diff(paint_c(k), want.l) and not off_pointer(k, screen_lines(k), want.l), diff(paint_c(k), want.l))
+    # refused: a message over the Executive, nothing else
+    base = mkbmp(100, 50, rows)
+    bad = (('4 bits a pixel', mkbmp(100, 50, rows, bpp=4)), ('RLE', mkbmp(100, 50, rows, comp=1)),
+           ('641 wide', mkbmp(641, 2, [b'\0' * 81] * 2)), ('0 lines', mkbmp(8, 0, [])), ('401 lines', mkbmp(8, 401, [b'\0'] * 401)),
+           ('cut short', base[:-3]), ('no BM', b'XM' + base[2:]), ('a header too short', base[:40]),
+           ('bfOffBits past the end', base[:10] + struct.pack('<I', 5000) + base[14:]))
+    for what, data in bad:
+        p = os.path.join(OUT, 'BAD.BMP'); open(p, 'wb').write(data)
+        k = ktest.KPC(image('pv.img', PAINT, p)); k.pc.mouse = True; k.start()
+        k.select('BAD.BMP'); free0 = free_paras(k); k.key(ktest.ENTER)
+        msg = k.band()[0] if k.band() else ''
+        k.key(ktest.ENTER)
+        check('refused, %s: "Paint shows 1-bit BMP pictures up to 640 x 400", then the Executive, its memory as before' % what,
+              msg == 'Paint shows 1-bit BMP pictures up to 640 x 400' and k.rd('run_active', 1) == b'\x00' and 'BAD.BMP' in k.exec_list()
+              and free_paras(k) == free0 and not k.crashed, (msg, k.band(), free_paras(k), free0))
+    # without a mouse: keys only, nothing breaks
+    k = view_bmp('PIC.BMP', cases[0][1], mouse=False)
+    k.key(ktest.ENTER); k.key(ktest.TAB); k.key('f'); k.key(ktest.F1); k.key(ktest.ESC); k.key('i'); k.key('u')
+    check('no mouse: Return, Tab, a tool, help, I, U: the picture as shown', not diff(paint_c(k), cases[0][2].l)
+          and not diff(screen_lines(k), cases[0][2].l), diff(screen_lines(k), cases[0][2].l))
+    k.key(ktest.ESC); k.key(ktest.ENTER)
+    check('... ESC, Return (I and U changed it): the Executive', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
+    # MULTITASK=1: the mouse through MT's INT 33h (Paint is in front) and the band's key through its INT 16h
+    ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'MULTITASK=1\r\n')
+    pic = os.path.join(OUT, 'PIC.BMP'); open(pic, 'wb').write(cases[0][1])
+    k = paint_start(image('pmt.img', PAINT, pic, 'LODEMT.SYS=' + os.path.join(GOS, 'src', 'LODEMT.SYS'), 'LODE.INI=' + ini), ems=88)
+    seg, mt = k.u16('first_mcb'), None                      # (MT's own block, owner 8, "MT")
+    for _ in range(200):
+        if k.pc.u16(seg, 1) == 8 and k.pc.rd(seg, 8, 2) == b'MT': mt = seg + 1
+        if k.pc.rd(seg, 0, 1) != b'M': break
+        seg += k.pc.u16(seg, 3) + 1
+    on = mt is not None and k.pc.u16(0, 0x16 * 4 + 2) == mt          # (INT 33h: MT reaches the UI's driver itself)
+    k.key(ktest.ESC)
+    m = PaintModel()
+    for tool, (x0, y0, x1, y1), pat in (('P', (100, 100, 300, 200), 0), ('F', (20, 300, 200, 390), 2)):
+        k.key(tool); k.key(str(pat + 1)); drag(k, x0, y0, x1, y1); m.stroke(tool, drag_pts(x0, y0, x1, y1), pat)
+    check('MULTITASK=1 (MT\'s block, INT 16h through it): strokes exactly as the model', on and not diff(paint_c(k), m.l), (on, diff(paint_c(k), m.l)))
+    dark = paint_saver(k, m, ktest.DOWN)
+    check('... the saver, a key: the picture back, its bottom lines too', dark and not off_pointer(k, screen_lines(k), m.l),
+          (dark, off_pointer(k, screen_lines(k), m.l)))
+    k.key(ktest.ESC); k.key(ktest.ENTER)
+    check('... ESC, Return: the Executive', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
+    k.select('PIC.BMP'); k.key(ktest.ENTER)
+    check('... Return on PIC.BMP: Paint shows it, as without MULTITASK', k.rd('run_active', 1) == b'\x01'
+          and not diff(paint_c(k), cases[0][2].l) and not k.crashed, (k.rd('run_active', 1), diff(paint_c(k), cases[0][2].l)))
+    k.key(ktest.ESC)
+    check('... ESC: the Executive again', k.rd('run_active', 1) == b'\x00' and not k.crashed, k.band())
+    # speed (pcemu's 286 model): the whole picture shown, a stroke's end, a long line, a full-screen box
+    k = paint_start(image('pspeed.img', PAINT)); k.key(ktest.ESC)
+    tu = time_between(k, 'k_undo', 'band_fix')
+    tc = time_between(k, 'commit', 'band_fix')
+    tl = time_between(k, 'line', 'commit')
+    k.key('L'); drag(k, 0, 0, 639, 399)
+    k.key('U')
+    tf = time_between(k, 'fillrect', 'commit')
+    k.key('F'); k.key('3'); drag(k, 0, 0, 639, 399)
+    print('     (µs: undo + the whole picture %s, commit %s, last line %s, full-screen box %s)' % (tu[-1:], tc[-1:], tl[-1:], tf[-1:]))
+    check('the whole picture shown (undo) in 16 ms or less (15.0 when written: REP MOVSW, the floor)', tu and tu[-1] <= 16000, tu)
+    check('a stroke\'s end, the screen into C, in 16 ms or less (15.0)', tc and max(tc) <= 16000, tc)
+    check('a 640-pixel line in 6 ms or less (5.2: pixels inline)', tl and tl[-1] <= 6000, tl)
+    check('a full-screen box with a pattern in 25 ms or less (22.6: masks once a box, words between)', tf and tf[-1] <= 25000, tf)
+
+
 MENUTEST = os.path.join(HERE, 'MENUTEST.RUN')
 
 def body(k):
@@ -3156,7 +3599,7 @@ if __name__ == '__main__':
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
     for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
-              t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools):
+              t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
