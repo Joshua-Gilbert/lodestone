@@ -1549,15 +1549,15 @@ mt_vnew:
         pop     bx
         call    mt_v24                  ; (TX_VEC's first three: 22h-24h)
         push    ds
-        mov     al, [cs:mt_cur]         ; its 09h and 1Bh: the spawner's (in
-        cmp     al, [cs:mt_front]       ;  mt_fv if it is in front, else in its
+        mov     al, [mt_cur]            ; its 09h and 1Bh: the spawner's (in
+        cmp     al, [mt_front]          ;  mt_fv if it is in front, else in its
         jne     .o                      ;  TX)
         push    cs
         pop     ds
         mov     si, mt_fv
         jmp     short .c
 .o:     call    mt_ent
-        mov     ds, [cs:bx+TE_TX]
+        mov     ds, [bx+TE_TX]
         mov     si, TX_FVEC
 .c:     mov     di, TX_FVEC
         mov     cx, MT_NFV * 2
@@ -1591,7 +1591,7 @@ mt_vnew:
 ; AX changed
 mt_v24: push    ds
         push    di
-        mov     ds, [cs:bx+TE_PSP]
+        mov     ds, [bx+TE_PSP]
         mov     ax, ST_END
         mov     [es:TX_VEC], ax
         mov     [es:TX_VEC + 2], ds
@@ -2183,7 +2183,7 @@ mt_trows:
         push    dx
         call    mt_wrest
         pop     dx
-.gone:  mov     byte [cs:mt_vbusy], 0
+.gone:  mov     byte [cs:mt_vbusy], 0   ; (CS: kept, for mt_par's parity)
         call    .dl
         call    mt_tchg
         mov     [bp+F_AX], ax
@@ -2195,25 +2195,24 @@ mt_trows:
         shl     bx, 1
         mov     ax, [VS_CUR + bx]
         mov     [bp+F_BX], ax
-        push    KSEG
-        pop     ds
-        jmp     KSEG:ok
+        jmp     KSEG:ok                 ; (done: DS = KSEG)
 ; DL with VF_DIRECT, 8 in front, 16 its program took the mouse; DH its
-; state: to the frame.  BX = its entry; ES = its TX after; AL changed
-.dl:    mov     al, [cs:bx+TE_VF]
+; state: to the frame.  BX = its entry; ES = its TX after; AL changed.
+; DS = CS (XI-14)
+.dl:    mov     al, [bx+TE_VF]
         and     al, VF_DIRECT
         or      dl, al
         mov     al, [bp+F_BX]
-        cmp     al, [cs:mt_front]
+        cmp     al, [mt_front]
         jne     .nf
         or      dl, 8
-.nf:    mov     dh, [cs:bx+TE_STATE]
+.nf:    mov     dh, [bx+TE_STATE]
         cmp     dh, TS_RUN
         jne     .st
         call    mt_frz
         jz      .st
         mov     dh, TS_FROZEN
-.st:    mov     es, [cs:bx+TE_TX]
+.st:    mov     es, [bx+TE_TX]
         cmp     word [es:TX_MPSP], 0    ; (T4: its program took the mouse)
         je      .mp
         or      dl, 16
@@ -2264,7 +2263,7 @@ mt_tpub:
         mov     cx, bx
         pop     bx
         push    cx
-        push    KSEG
+        push    cs
         pop     ds
         mov     dl, 32
         call    mt_trows.dl
@@ -2755,7 +2754,11 @@ mt_kill:
         call    mt_pchk                 ; (its pages gone: .gone)
         pop     ax
         jc      .gone
+        push    ds
+        push    cs                      ; (mt_up: DS = CS)
+        pop     ds
         call    mt_up                   ; (parked: back first, then as any)
+        pop     ds
         jc      mt_fail
 .k:     mov     byte [cs:bx+TE_KILL], 1
         cmp     al, [cs:mt_cur]
@@ -2798,8 +2801,10 @@ mt_kok: call    mt_can
         or      sp, sp                  ; (NZ)
         ret
 
-; MT_PARK: task BL's region to EMS, given back (mt_pk)
+; MT_PARK: task BL's region to EMS, given back (mt_pk: DS = CS)
 mt_park:
+        push    cs
+        pop     ds
         call    mt_targ
         call    mt_pk
         jc      mt_fail
@@ -2807,10 +2812,12 @@ mt_park:
 .r5:    mov     ax, 5
         jmp     mt_fail
 
-; MT_UNPARK: parked task BL's region back where it was (mt_up)
+; MT_UNPARK: parked task BL's region back where it was (mt_up: DS = CS)
 mt_unpark:
+        push    cs
+        pop     ds
         call    mt_targ                 ; (a free one: not parked either)
-        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        cmp     byte [bx+TE_STATE], TS_PARKED
         jne     mt_bad
         call    mt_up
         jc      mt_fail
@@ -2821,7 +2828,8 @@ mt_unpark:
 ; takes them, and mt_pchk knows them from any other's) and freed.  Not task
 ; 0, the running one, the one in front, one being ended or parked
 ; already, nor one a vector points into (mt_pinned): AX = 5.  Not enough
-; EMS: AX = 8.  CF then, nothing changed.  DS = KSEG; AL, BX kept
+; EMS: AX = 8.  CF then, nothing changed.  DS = CS (XI-14: so do mt_pinned,
+; mt_hnew and mt_phfree; the kernel's ems_h through SS:); AL, BX kept
 mt_pk:  push    cx
         push    dx
         push    es
@@ -2829,27 +2837,27 @@ mt_pk:  push    cx
         mov     cx, 5
         or      al, al
         jz      .no
-        cmp     al, [cs:mt_cur]
+        cmp     al, [mt_cur]
         je      .no
-        cmp     al, [cs:mt_front]
+        cmp     al, [mt_front]
         je      .no
-        cmp     byte [cs:bx+TE_KILL], 0
+        cmp     byte [bx+TE_KILL], 0
         jne     .no
-        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        cmp     byte [bx+TE_STATE], TS_PARKED
         je      .no
-        mov     dx, [cs:bx+TE_REG]      ; the region and its paragraphs
-        mov     [cs:mt_vr], dx
+        mov     dx, [bx+TE_REG]         ; the region and its paragraphs
+        mov     [mt_vr], dx
         dec     dx
         mov     es, dx
         mov     dx, [es:3]
-        mov     [cs:bx+TE_PSZ], dx
-        add     dx, [cs:mt_vr]
-        mov     [cs:mt_ve], dx
+        mov     [bx+TE_PSZ], dx
+        add     dx, [mt_vr]
+        mov     [mt_ve], dx
         call    mt_pinned
         jc      .no
         mov     cx, 8
         push    bx                      ; its pages (16 KB: 1,024 paragraphs)
-        mov     bx, [cs:bx+TE_PSZ]
+        mov     bx, [bx+TE_PSZ]
         add     bx, 1023
         shr     bx, 10
         mov     ah, 43h
@@ -2858,12 +2866,12 @@ mt_pk:  push    cx
         or      ah, ah
         jnz     .no
         call    mt_hnew                 ; (no other entry keeps that handle)
-        mov     [cs:bx+TE_PH], dl
+        mov     [bx+TE_PH], dl
         push    bx                      ; (its owner: MT's segment)
         mov     bl, dl
         xor     bh, bh
         shl     bx, 2
-        mov     [ems_h + bx + 2], cs
+        mov     [ss:ems_h + bx + 2], cs
         pop     bx
         xor     al, al                  ; the region to them
         call    mt_move
@@ -2871,13 +2879,13 @@ mt_pk:  push    cx
         pop     ax                      ; its programs' EMS kept from their
         push    ax                      ;  namesakes meanwhile (mt_hhide)
         call    mt_hhide
-        mov     ax, [cs:bx+TE_REG]      ; and the region freed
+        mov     ax, [bx+TE_REG]         ; and the region freed
         dec     ax
         mov     es, ax
         mov     word [es:1], 0
-        mov     al, [cs:bx+TE_STATE]
-        mov     [cs:bx+TE_PST], al
-        mov     byte [cs:bx+TE_STATE], TS_PARKED
+        mov     al, [bx+TE_STATE]
+        mov     [bx+TE_PST], al
+        mov     byte [bx+TE_STATE], TS_PARKED
         pop     ax                      ; (asked to the front: mt_swnow passes
         pop     es                      ;  it by)
         pop     dx
@@ -2897,8 +2905,8 @@ mt_pk:  push    cx
 ; in the way parked first: mt_take, mt_pk), copied back from its pages,
 ; which go back, and its state as before it was parked.  CF: AX = 8 (the
 ; place has memory in it not a task's, or a task's that can't be parked;
-; or its pages are gone); tasks parked on the way stay parked.  DS = KSEG;
-; AL, BX kept
+; or its pages are gone); tasks parked on the way stay parked.  DS = CS
+; (XI-14: so does mt_take); AL, BX kept
 mt_up:  push    cx
         push    dx
         push    si
@@ -2920,7 +2928,7 @@ mt_up:  push    cx
 .got:   mov     al, 1                   ; the region back
         call    mt_move
         jc      .bad
-        mov     dx, [cs:bx+TE_REG]      ; its MCB: the system's, "T1".."T7"
+        mov     dx, [bx+TE_REG]         ; its MCB: the system's, "T1".."T7"
         dec     dx
         mov     es, dx
         pop     ax
@@ -2933,8 +2941,8 @@ mt_up:  push    cx
         push    ax
         call    mt_hshow
         call    mt_phfree               ; its pages given back
-        mov     al, [cs:bx+TE_PST]
-        mov     [cs:bx+TE_STATE], al
+        mov     al, [bx+TE_PST]
+        mov     [bx+TE_STATE], al
         pop     ax
         pop     es
         pop     si
@@ -2942,7 +2950,7 @@ mt_up:  push    cx
         pop     cx
         clc
         ret
-.bad:   mov     dx, [cs:bx+TE_REG]      ; (the copy failed: the place freed
+.bad:   mov     dx, [bx+TE_REG]         ; (the copy failed: the place freed
         dec     dx                      ;  again, it stays parked)
         mov     es, dx
         mov     word [es:1], 0
@@ -2958,11 +2966,11 @@ mt_up:  push    cx
 ; the pages of the parked region at entry BX (TE_PH) given back.  AX, DX
 ; changed
 mt_phfree:
-        mov     dl, [cs:bx+TE_PH]
+        mov     dl, [bx+TE_PH]
         xor     dh, dh
         mov     ah, 45h
         int     67h
-        mov     byte [cs:bx+TE_PH], 0
+        mov     byte [bx+TE_PH], 0
         ret
 
 ; the MCB at ES named CX, the rest of its name cleared.  CX = 0 after
@@ -2985,12 +2993,12 @@ mt_take:
         push    si
         push    di
         push    es
-        mov     si, [cs:bx+TE_REG]
+        mov     si, [bx+TE_REG]
         dec     si                      ; SI: its MCB's place
         mov     di, si
-        add     di, [cs:bx+TE_PSZ]
+        add     di, [bx+TE_PSZ]
         inc     di                      ; DI: just past it
-        mov     ax, [cs:mt_mcb0]
+        mov     ax, [mt_mcb0]
 .w:     mov     es, ax
         mov     cl, [es:0]              ; (a chain gone bad: no)
         cmp     cl, 'M'
@@ -3059,11 +3067,11 @@ mt_take:
         call    mt_ent
         mov     cx, es
         inc     cx
-        cmp     [cs:bx+TE_REG], cx
+        cmp     [bx+TE_REG], cx
         jne     .ob
-        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        cmp     byte [bx+TE_STATE], TS_FREE
         je      .ob
-        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        cmp     byte [bx+TE_STATE], TS_PARKED
         je      .ob
         pop     bx
         stc
@@ -3315,12 +3323,12 @@ mt_hnew:
         push    bx
         xor     al, al
 .l:     call    mt_ent
-        cmp     [cs:bx+TE_SH], dl
+        cmp     [bx+TE_SH], dl
         jne     .p
-        mov     word [cs:bx+TE_SH], 0
-.p:     cmp     [cs:bx+TE_PH], dl
+        mov     word [bx+TE_SH], 0
+.p:     cmp     [bx+TE_PH], dl
         jne     .n
-        mov     byte [cs:bx+TE_PH], 0
+        mov     byte [bx+TE_PH], 0
 .n:     inc     al
         cmp     al, MT_TASKS
         jb      .l
@@ -3351,16 +3359,16 @@ mt_pinned:
         call    .sc
         jc      .x
         xor     al, al
-.t:     cmp     al, [cs:mt_cur]
+.t:     cmp     al, [mt_cur]
         je      .tc
         call    mt_ent
         cmp     bx, bp
         je      .tn
-        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        cmp     byte [bx+TE_STATE], TS_FREE
         je      .tn
-        cmp     byte [cs:bx+TE_STATE], TS_PARKED
+        cmp     byte [bx+TE_STATE], TS_PARKED
         je      .tp
-        mov     es, [cs:bx+TE_TX]
+        mov     es, [bx+TE_TX]
         call    .tx
         jc      .x
 .tn:    inc     al
@@ -3383,8 +3391,8 @@ mt_pinned:
         jc      .x
         jmp     .tn
 .tc:    call    mt_ent                  ; the running one (never parked)
-        mov     es, [cs:bx+TE_TX]
-        cmp     al, [cs:mt_front]
+        mov     es, [bx+TE_TX]
+        cmp     al, [mt_front]
         je      .tg
         push    ax                      ; behind: its own 09h and 1Bh
         mov     di, TX_FVEC
@@ -3670,58 +3678,63 @@ mt_end: call    mt_cent                 ; (first: a call refused changes
         mov     bl, [cs:mt_front]       ;  was there when this one ran)
 .go:    jmp     mt_load
 
-; MT_SPAWN: DS:DX = the program, ES:BX = the block -> AL = the new task
+; MT_SPAWN: DS:DX = the program, ES:BX = the block -> AL = the new task.
+; It runs with DS = CS (XI-14: MT's variables without CS: prefixes; the
+; kernel's through SS:, as INT 21h's stack is the kernel's), so do the
+; helpers it alone calls (mt_carve, mt_hnew, mt_vnew, mt_v24)
 mt_spawn:
-        mov     byte [cs:mt_inb], 0     ; (as in mt_end, but not mt_swing nor
+        push    cs
+        pop     ds
+        mov     byte [mt_inb], 0        ; (as in mt_end, but not mt_swing nor
                                         ;  mt_vbusy: a handler's spawn inside
                                         ;  a change of the front leaves them)
-        mov     byte [cs:mt_crit], 0
-        mov     byte [cs:mt_in13], 0
+        mov     byte [mt_crit], 0
+        mov     byte [mt_in13], 0
         mov     al, 1                   ; a free entry
 .e:     call    mt_ent
-        cmp     byte [cs:bx+TE_STATE], TS_FREE
+        cmp     byte [bx+TE_STATE], TS_FREE
         je      .got
         inc     al
         cmp     al, MT_TASKS
         jb      .e
         mov     ax, 4
         jmp     mt_fail
-.got:   mov     [cs:mt_new], bx
+.got:   mov     [mt_new], bx
         mov     [bp+F_AX], al           ; (the answer)
         mov     es, [bp+F_ES]
         mov     di, [bp+F_BX]
         mov     ax, [es:di+SP_PARAS]
-        mov     [cs:mt_arena], ax
+        mov     [mt_arena], ax
         mov     al, [es:di+SP_FLAGS]
-        mov     [cs:mt_sflags], al
+        mov     [mt_sflags], al
         mov     es, [bp+F_DS]           ; LODE.INI's lists, by its name: BG=,
         mov     si, [bp+F_DX]           ;  FREEZE=, and MTMEM= unless the block
         call    mt_lname                ;  gave its memory
-        mov     di, [cs:mt_lbg]
+        mov     di, [mt_lbg]
         call    mt_lmat
         jnc     .bg
-        or      byte [cs:mt_sflags], SPF_BG
-.bg:    mov     di, [cs:mt_lfz]
+        or      byte [mt_sflags], SPF_BG
+.bg:    mov     di, [mt_lfz]
         call    mt_lmat
         jnc     .fz
-        or      byte [cs:mt_sflags], SPF_FREEZE
-.fz:    cmp     word [cs:mt_arena], 0
+        or      byte [mt_sflags], SPF_FREEZE
+.fz:    cmp     word [mt_arena], 0
         jne     .a
-        mov     di, [cs:mt_lmem]
+        mov     di, [mt_lmem]
         call    mt_lmat                 ; (AX = its KB)
         jnc     .d
         shl     ax, 6
         jmp     short .m
 .d:     mov     ax, MT_DEFARENA
-.m:     mov     [cs:mt_arena], ax
+.m:     mov     [mt_arena], ax
 .a:     mov     es, [bp+F_ES]
         mov     di, [bp+F_BX]
         mov     ax, [es:di+SP_ENV]      ; the environment: the block's, or
         or      ax, ax                  ;  the caller's
         jnz     .ev
-        mov     es, [cur_psp]
+        mov     es, [ss:cur_psp]
         mov     ax, [es:2Ch]
-.ev:    mov     [cs:mt_envs], ax
+.ev:    mov     [mt_envs], ax
         mov     es, ax                  ; its length: to its two NULs (or
         xor     di, di                  ;  ENVMAX, cut there; none: empty)
         or      ax, ax
@@ -3736,17 +3749,17 @@ mt_spawn:
         mov     [cs:mt_envl], di
         add     di, 15
         shr     di, 4
-        mov     [cs:mt_envp], di
+        mov     [mt_envp], di
         mov     ax, TX_PARAS + ST_PARAS + 1     ; the region: TX, stub, env,
         add     ax, di                  ;  the arena's MCB, the arena
-        add     ax, [cs:mt_arena]
+        add     ax, [mt_arena]
         jc      .room
-        mov     [cs:mt_size], ax
+        mov     [mt_size], ax
         call    mt_carve
         jnc     .r
 .room:  mov     ax, 8
         jmp     mt_fail
-.r:     mov     [cs:mt_reg], ax
+.r:     mov     [mt_reg], ax
         push    ax                      ; its screen's 2 EMS pages (none: the
         mov     ah, 43h                 ;  region goes again)
         mov     bx, 2
@@ -3759,15 +3772,15 @@ mt_spawn:
         mov     word [es:1], 0
         jmp     .room
 .sh:    call    mt_hnew                 ; (an entry with this number keeps
-        mov     bx, [cs:mt_new]         ;  none: a program freed it)
-        mov     [cs:bx+TE_SH], dl
-        mov     byte [cs:bx+TE_SF], 1   ; (kept: mode 3, clear, below)
-        mov     al, [cs:mt_sflags]
+        mov     bx, [mt_new]            ;  none: a program freed it)
+        mov     [bx+TE_SH], dl
+        mov     byte [bx+TE_SF], 1      ; (kept: mode 3, clear, below)
+        mov     al, [mt_sflags]
         and     al, SPF_BG | SPF_FREEZE
-        mov     [cs:bx+TE_VF], al
-        mov     ax, [cs:mt_reg]
-        mov     [cs:bx+TE_REG], ax
-        mov     [cs:bx+TE_TX], ax
+        mov     [bx+TE_VF], al
+        mov     ax, [mt_reg]
+        mov     [bx+TE_REG], ax
+        mov     [bx+TE_TX], ax
         dec     ax                      ; its MCB: the system's, "T1".."T7"
         mov     es, ax
         mov     word [es:1], 8
@@ -3777,14 +3790,14 @@ mt_spawn:
         mov     al, 'T'
         mov     [es:8], ax
         ; the stub's PSP (make_psp: the caller's handles, inherited)
-        mov     ax, [cs:mt_reg]
+        mov     ax, [mt_reg]
         add     ax, TX_PARAS
         mov     es, ax
-        mov     [cs:bx+TE_PSP], ax
+        mov     [bx+TE_PSP], ax
         add     ax, ST_PARAS            ; (the environment's copy)
-        mov     dx, [cs:mt_reg]
-        add     dx, [cs:mt_size]        ; (the region's end)
-        mov     bx, [cur_psp]
+        mov     dx, [mt_reg]
+        add     dx, [mt_size]           ; (the region's end)
+        mov     bx, [ss:cur_psp]
         KCALL   make_psp                ; (its environment: the copy)
         mov     ax, es                  ; its own parent: if it is ended
         mov     [es:16h], ax            ;  itself, it goes to MT_END
@@ -3793,14 +3806,10 @@ mt_spawn:
         mov     word [es:2Eh], ST_AFR   ;  (as EXEC's .close would set it)
         mov     [es:30h], ax
         ; the stub's code, the program's path, its name for MT_LIST
-        push    ds
-        push    cs
-        pop     ds
         mov     si, st_code
         mov     di, 100h
         mov     cx, st_len
         rep     movsb
-        pop     ds
         push    ds
         mov     ds, [bp+F_DS]
         mov     si, [bp+F_DX]
@@ -3859,7 +3868,7 @@ mt_spawn:
         mov     ax, es
         add     ax, ST_PARAS
         mov     es, ax
-        mov     ds, [cs:mt_envs]
+        mov     ds, [mt_envs]
         xor     si, si
         xor     di, di
         mov     cx, [cs:mt_envl]
@@ -3868,16 +3877,20 @@ mt_spawn:
         pop     ds
         ; the arena: one free block to the region's end
         mov     ax, es
-        add     ax, [cs:mt_envp]
+        add     ax, [mt_envp]
         mov     es, ax
         mov     byte [es:0], 'Z'
         mov     word [es:1], 0
-        mov     cx, [cs:mt_arena]
+        mov     cx, [mt_arena]
         mov     [es:3], cx
         push    ax                      ; (its MCB: the task's first_mcb)
         ; its TX: the caller's variables (its directories, ...), then its own
-        mov     es, [cs:mt_reg]
+        mov     es, [mt_reg]
+        push    ss                      ; (the kernel's: DS = KSEG)
+        pop     ds
         call    mt_vsave
+        push    cs
+        pop     ds
         call    mt_emsget
         pop     ax
         mov     [es:V_MCB], ax
@@ -3900,8 +3913,8 @@ mt_spawn:
 %if (TX_MRY + 2 - TX_WGFX) & 1 || (TX_PPSP + 2 - TX_PUB) & 1
 %error "mt_spawn: TX_WGFX..TX_MRY, TX_PUB..TX_PPSP in words"
 %endif
-        mov     bx, [cs:mt_new]
-        mov     ax, [cs:bx+TE_PSP]
+        mov     bx, [mt_new]
+        mov     ax, [bx+TE_PSP]
         mov     [es:V_PSP + cur_psp - cur_psp], ax
         mov     word [es:V_PSP + last_exit - cur_psp], 0
         mov     word [es:V_DTA + 0], 80h
@@ -3909,21 +3922,17 @@ mt_spawn:
         call    mt_m33new               ; (its INT 33h state)
         call    mt_33hk
         push    ax
-        mov     bx, [cs:mt_new]
+        mov     bx, [mt_new]
         call    mt_vnew                 ; (its vectors: the caller's, mostly)
         pop     ax
         push    ax                      ; its screen: mode 3, clear (it may
-        push    ds                      ;  print before it is ever in front)
-        push    cs
-        pop     ds
-        mov     si, mt_v3
+        mov     si, mt_v3               ;  print before it is ever in front)
         mov     di, TX_VID
         mov     cx, VIDLEN
         rep     movsb
-        pop     ds
         push    es
-        mov     bx, [cs:mt_new]
-        mov     byte [cs:mt_vbusy], 1
+        mov     bx, [mt_new]
+        mov     byte [mt_vbusy], 1
         call    mt_smap                 ; (MT's own, just given: there)
         jc      .ns
         push    EMS_FRAME
@@ -3936,7 +3945,7 @@ mt_spawn:
         mov     cx, 2000h
         rep     stosw
         call    mt_wrest
-.ns:    mov     byte [cs:mt_vbusy], 0
+.ns:    mov     byte [mt_vbusy], 0
         pop     es
         pop     ax
         ; its first run: on the stub's stack, as mt_load pops it: ES, DS,
@@ -3961,18 +3970,18 @@ mt_spawn:
         mov     ax, 0202h
         stosw                           ; flags: IF
         pop     es
-        mov     bx, [cs:mt_new]
-        mov     byte [cs:bx+TE_STATE], TS_RUN
-        mov     byte [cs:bx+TE_KILL], 0
-        mov     byte [cs:bx+TE_PH], 0
-        inc     byte [cs:bx+TE_GEN]     ; (TE_EXIT kept: the last one's, for
+        mov     bx, [mt_new]
+        mov     byte [bx+TE_STATE], TS_RUN
+        mov     byte [bx+TE_KILL], 0
+        mov     byte [bx+TE_PH], 0
+        inc     byte [bx+TE_GEN]        ; (TE_EXIT kept: the last one's, for
         jnz     .g                      ;  MT_EXIT till this one ends)
-        inc     byte [cs:bx+TE_GEN]
+        inc     byte [bx+TE_GEN]
 .g:     call    mt_sync                ; (the front one's screen shadowed now)
-        test    byte [cs:mt_sflags], SPF_FRONT
+        test    byte [mt_sflags], SPF_FRONT
         jz      .x
         mov     al, [bp+F_AX]
-        mov     [cs:mt_swreq], al
+        mov     [mt_swreq], al
 .x:     jmp     KSEG:ok
 
 ; the program's name (its path's last part) into its entry (BX = mt_new),
@@ -5188,20 +5197,19 @@ mt_m33ld:
         popa
         ret
 
-; a new task's INT 33h state (ES = its TX; DS = KSEG): the driver's now,
+; a new task's INT 33h state (ES = its TX; mt_spawn's, DS = CS): the driver's now,
 ; the pointer off and no event handler, until its program resets it.
 ; All kept
 mt_m33new:
         pusha
         push    ds
-        mov     ds, [ui_seg]
+        mov     ds, [ss:ui_seg]
         pushf
         cli
         mov     si, m33_st
         mov     di, TX_M33
         mov     cx, M33_ST / 2
-        cld
-        rep     movsw
+        rep     movsw                   ; (DF clear: mt_spawn's copies ran)
         popf
         mov     word [es:TX_M33 + m33_cnt - m33_st], -1
         xor     ax, ax
@@ -6747,8 +6755,8 @@ mt_vset:
 mt_carve:
         push    es
         xor     bx, bx                  ; (the best so far: its MCB)
-        mov     dx, [cs:mt_size]
-        mov     ax, [cs:mt_mcb0]
+        mov     dx, [mt_size]
+        mov     ax, [mt_mcb0]
 .w:     mov     es, ax
         mov     cl, [es:0]              ; (a chain gone bad: none)
         cmp     cl, 'M'
