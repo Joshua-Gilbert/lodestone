@@ -2381,3 +2381,5 @@ On Joshua's 1520: the supply needs a few volts more under load (worn filter capa
 
 **On the 1520:** this needs the Pi's gridlink updated as well as the GRiD's files: LODEMT.SYS, TERM.RUN and CLAUDE.COM 1.16. Booting from a floppy, a TERM.RUN in its root is found before ROM 1's (`UI_FINDAPP`: the drive started from comes first on the PATH). With `MULTITASK=1`, CODE-A: the window shows the mascot at the top and the prompt box at the foot. Resize the window: Claude Code lays out again for it.
 
+**On the 1520 (2026-11-04, on the variac):** Joshua tried this build, and it works flawlessly.
+
