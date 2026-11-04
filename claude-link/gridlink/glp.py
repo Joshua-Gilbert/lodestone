@@ -18,6 +18,8 @@ EV_CLICK = 0x05            # Term: a left click on a cell: column, row (bytes; C
 EV_PIXCLICK = 0x06         # Term: a left click at a pixel: x, y (words; CLAUDE 1.2)
 EV_SAVER = 0x07            # the Executive's screen saver comes on; the GRiD sends nothing till it ends,
                            #  which a ring does (CLAUDE 1.14, to a Pi that says HF_SAVER)
+EV_SIZE = 0x08             # Term: the rows of the Pi's terminal, 4-24 (CLAUDE 1.16 in a terminal window: as
+                           #  many as it shows; to a Pi that says HF_SIZE; every HELLO makes it 24 again)
 
 # HELLO flags
 GF_TERM = 0x01             # GRiD: this CLAUDE can be a terminal (Term)
@@ -33,6 +35,7 @@ HF_FCS = 0x04              # Pi: frames after this HELLO carry the Fletcher sum,
 HF_BG = 0x08               # Pi: it works with that console in the background (its bridge can be quiet)
 HF_SAVER = 0x10            # Pi: EV_SAVER understood: the GRiD counts as there till its next frame, and is
                            #  rung for what the Pi has (CLAUDE 1.14)
+HF_SIZE = 0x20             # Pi: EV_SIZE understood (Term)
 
 # REQUEST ops
 OP_INFO, OP_DIR, OP_READ, OP_WRITE, OP_DELETE, OP_RENAME, OP_MKDIR, OP_RMDIR, OP_STAT, OP_FREE = range(1, 11)

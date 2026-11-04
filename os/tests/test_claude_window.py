@@ -33,13 +33,13 @@ class Win(CK.KernelHarness):
     """The floppy with LODEMT.SYS, TERM.RUN, TERM.FNT and LODE.INI, EMS, the
     router with the stand-in Claude Code.  CLAUDE's PSP found by its image
     (it runs in a task: cur_psp is the running task's)."""
-    def __init__(s, more=None, claude_com=G.CLAUDE_COM, **kw):
+    def __init__(s, more=None, claude_com=G.CLAUDE_COM, term=FAKE, **kw):
         files = {'A:\\LODEMT.SYS': open(os.path.join(GOS, 'src', 'LODEMT.SYS'), 'rb').read(),
                  'A:\\TERM.RUN': open(os.path.join(GOS, 'apps', 'TERM.RUN'), 'rb').read(),
                  'A:\\TERM.FNT': open(os.path.join(GOS, 'fonts', 'TERM.FNT'), 'rb').read(),
                  'A:\\LODE.INI': INI}
         files.update(more or {})
-        super().__init__(files=files, term=FAKE, ems_pages=88, claude_com=claude_com, **kw)
+        super().__init__(files=files, term=term, ems_pages=88, claude_com=claude_com, **kw)
         s.img = open(claude_com, 'rb').read()
         s.font_img = s.img[s.sym['font'] - 0x100:s.sym['font'] - 0x100 + (0xAF - 0x20) * 16]
         s.claude_psp = None
@@ -288,6 +288,58 @@ def t_window():
         h.close()
 
 
+def t_size():
+    """T5e: Claude Code 2.1 lays out the whole terminal, the mascot at the top
+    and the prompt box at the bottom, so a window of 19 rows lost the
+    mascot.  TERM.RUN's MT_TROWS says the rows it shows (SI = A5xxh), MT
+    writes them to CLAUDE's descriptor (PB_VER 2, PB_VIEW), CLAUDE sends
+    them to the Pi (EVENT 08h), whose pty is then that tall."""
+    h = Win(term=FAKE + ' --full')
+    try:
+        h.boot_exec()
+        conn = h.code_a()
+        t = h.router.term
+        pb = lambda: h.m.rd(h.claude_psp, h.sym['wdesc'], 23)
+        got = h.run_until(lambda: pb()[22] and t.rows == pb()[22] and pb()[3] == t.rows, 30)
+        d = pb()
+        row = lambda r: h.m.rd(h.var('shadseg', 2), r * 160, 160)[::2]            # (the shadow, as it is now)
+        txt = lambda r: ''.join(chr(c) if 32 <= c < 127 else ' ' for c in row(r))
+        ok = h.run_until(lambda: ('rows: %d' % t.rows) in txt(2) and in_step(h), 20)
+        quads = [c for c in row(1) if 0xA1 <= c <= 0xAE]
+        check('CODE-A, a window of the usual size: its rows (%d) in CLAUDE\'s descriptor (PB_VER %d, PB_VIEW), the Pi\'s '
+              'terminal that tall (%d), the descriptor publishing those rows alone (%d), the program laid out for them'
+              % (d[22], d[0], t.rows, d[3]), conn and got and ok and d[0] == 2 and d[22] == 19 and t.rows == 19
+              and d[3] == 19, (d[:4], d[22], t.rows, txt(2), h.mt_seg() and h.mb('mw_n')))
+        check('... the mascot (row 1) drawn in the window with CLAUDE\'s font, the prompt box (row 15) shown with it',
+              quads and h.run_until(lambda: all(glyph_shown(h, c) for c in set(quads)) and 'shortcuts' in h.text(), 20),
+              (quads, h.text()[-400:]))
+        h.k.key('hi', settle=False); h.m.keys.append(ENTER); h.m.halted = False
+        said = lambda: any('You said: hi' in txt(r) for r in range(19))
+        check('... typed in the window: the answer drawn in its rows, in step with the Pi',
+              h.run_until(lambda: said() and in_step(h), 20), h.text()[-400:])
+    finally:
+        h.close()
+    from gridlink import glp                    # (an older Pi: the window as Joshua's 1520 showed it)
+    keep, glp.HF_SIZE = glp.HF_SIZE, 0
+    h = Win(term=FAKE + ' --full')
+    try:
+        h.boot_exec()
+        conn = h.code_a()
+        t = h.router.term
+        row = lambda r: h.m.rd(h.var('shadseg', 2), r * 160, 160)[::2]
+        ok = h.run_until(lambda: in_step(h) and ' >' in h.text(), 30)
+        h.run_until(lambda: False, 1.0)         # (TERM's next look)
+        quads = sorted(set(c for c in row(1) if 0xA1 <= c <= 0xAE))
+        d = h.m.rd(h.claude_psp, h.sym['wdesc'], 23)
+        check('... from a Pi before it (no HF_SIZE): 24 rows, the descriptor\'s 25, the prompt box in the window and '
+              'the mascot not (the view follows the hidden cursor to row 20): the 1520\'s missing mascot',
+              conn and ok and t.rows == 24 and d[3] == 25 and quads and not any(glyph_shown(h, c) for c in quads),
+              (ok, t.rows, d[3], quads, [glyph_shown(h, c) for c in quads], h.text()[-300:]))
+    finally:
+        glp.HF_SIZE = keep
+        h.close()
+
+
 def t_shift():
     h = Win()
     try:
@@ -470,7 +522,7 @@ def t_speed():
           'against %.1f, %.1f)' % (a[0], a[1], b[0], b[1]), a[0] > b[0] and a[1] > b[1] * 1.2, r)
 
 
-TESTS = [t_window, t_shift, t_saver_mt, t_speed]
+TESTS = [t_window, t_size, t_shift, t_saver_mt, t_speed]
 if __name__ == '__main__':
     want = sys.argv[1:]
     for t in TESTS:

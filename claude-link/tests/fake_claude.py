@@ -8,6 +8,10 @@ synchronised output (?2026).  It asks the terminal for DA1 at start, sets
 the window title, uses 256-colour and background colours, bracketed paste,
 and the alternate screen for /pager.
 
+With --full it draws as Claude Code 2.1 does instead: the logo (the
+mascot) at the top, the prompt box pinned to the bottom of the terminal,
+the screen laid out again for its rows at SIGWINCH (Full, below).
+
 Prompts it understands:
     run CMD     a permission dialog, then "Bash(CMD)" with a result
     big         60 lines of output at once (scrolling)
@@ -17,7 +21,7 @@ Prompts it understands:
     /exit       exits (code 0)
     anything else: a short answer
 """
-import os, select, sys, termios, time, tty
+import os, select, signal, sys, termios, time, tty
 
 W = 80
 ESC = '\x1b'
@@ -197,6 +201,53 @@ class App:
             s.spin += 1; s.render()
 
 
+class Full:
+    """Claude Code 2.1's look: the logo with the mascot in rows 1-3, what was
+    said under it, the prompt box pinned to the bottom (its input rows - 4),
+    the hidden cursor there; all drawn again for the terminal's rows when
+    it changes (SIGWINCH).  Enter: "You said: ..."; /exit ends it."""
+    LOGO = [' \u2590\u259b\u2588\u2588\u2588\u259c\u258c   Claude Code (fake, full)',
+            '\u259d\u259c\u2588\u2588\u2588\u2588\u2588\u259b\u2598  rows: %d',
+            '  \u2598\u2598 \u259d\u259d    ~/grid']
+
+    def __init__(s):
+        s.inp = ''; s.said = []; s.out = sys.stdout.buffer; s.resized = False
+
+    def w(s, text):
+        s.out.write(text.encode('utf-8')); s.out.flush()
+
+    def rows(s):
+        try: return os.get_terminal_size(0).lines
+        except OSError: return 24
+
+    def render(s):
+        n = s.rows()
+        b = ESC + '[?2026h' + ESC + '[2J'
+        put = lambda r, t: ESC + '[%d;1H' % (r + 1) + t
+        for i, t in enumerate(s.LOGO): b += put(1 + i, t % n if '%d' in t else t)
+        room = max(0, n - 10)                          # (rows 5 .. n - 6)
+        for i, t in enumerate(s.said[-room:] if room else []): b += put(5 + i, t)
+        b += put(n - 5, '\u2500' * W) + put(n - 4, '\u276f ' + s.inp) + put(n - 3, '\u2500' * W)
+        b += put(n - 2, '  ? for shortcuts') + ESC + '[%d;%dH' % (n - 3, 3 + len(s.inp))
+        s.w(b + ESC + '[?2026l')
+
+    def key(s, k):
+        if k in (b'\r', b'\n'):
+            t = s.inp.strip(); s.inp = ''
+            if t == '/exit': raise SystemExit(0)
+            if t: s.said.append('You said: ' + t)
+        elif k in (b'\x7f', b'\x08'):
+            s.inp = s.inp[:-1]
+        else:
+            t = k.decode('utf-8', 'replace')
+            if t.isprintable(): s.inp += t
+        s.render()
+
+    def tick(s):
+        if s.resized:
+            s.resized = False; s.render()
+
+
 def split_keys(data):
     """One read may hold several keys; escape sequences stay whole."""
     out = []; i = 0
@@ -220,14 +271,19 @@ def main():
     fd = 0
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
-    app = App()
+    app = Full() if '--full' in sys.argv else App()
+    if isinstance(app, Full):
+        signal.signal(signal.SIGWINCH, lambda *a: setattr(app, 'resized', True))
     try:
         app.w(ESC + '[c')                              # DA1: wait for the answer (Ink does)
         r, _, _ = select.select([fd], [], [], 1.0)
         da = os.read(fd, 64) if r else b''
         app.w(ESC + '[?25l' + ESC + '[?2004h')
-        app.title('✳ Claude Code')
-        app.render(['\x1b[38;5;174m╭───────────────────────────────────────────╮\x1b[39m',
+        if isinstance(app, Full):
+            app.render()
+        else:
+            app.title('✳ Claude Code')
+            app.render(['\x1b[38;5;174m╭───────────────────────────────────────────╮\x1b[39m',
                     '\x1b[38;5;174m│\x1b[39m \x1b[38;5;174m✻\x1b[39m Welcome to \x1b[1mClaude Code\x1b[22m (fake)                 \x1b[38;5;174m│\x1b[39m',
                     '\x1b[38;5;174m│\x1b[39m   cwd: ~/grid    terminal: %-15s \x1b[38;5;174m│\x1b[39m' % ('DA ok' if da.startswith(b'\x1b[?') else 'no DA'),
                     '\x1b[38;5;174m│\x1b[39m   api key: %-30s \x1b[38;5;174m│\x1b[39m' % ('SET' if os.environ.get('ANTHROPIC_API_KEY') else 'none'),

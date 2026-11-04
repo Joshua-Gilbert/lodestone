@@ -2307,7 +2307,7 @@ LODEMT.SYS 21,299 bytes (+20).
 
 Resizing an ordinary window, and Calc and Paint open together, are fine. The mascot is also missing from CLAUDE.COM's window, though it shows full screen and in resident mode.
 
-**Not reproduced in pcemu.** The Claude-window drop was tried with a serial mouse, at every size, several drags in a row, CODE-F8, and the mouse moving during the redraw. The CODE-P and picture steps were tried with memory filled with random bytes, with less memory for LCMD, and with the floppy timed and strict. No CPU trap, no 286-only access at offset FFFFh, and no stack near its end. For the mascot, the likeliest reason is the window's view rather than the glyphs: it shows 19 of CLAUDE's 25 rows and follows its hidden cursor. To check on the machine: is the top of Claude Code's welcome box in view?
+**Not reproduced in pcemu.** The Claude-window drop was tried with a serial mouse, at every size, several drags in a row, CODE-F8, and the mouse moving during the redraw. The CODE-P and picture steps were tried with memory filled with random bytes, with less memory for LCMD, and with the floppy timed and strict. No CPU trap, no 286-only access at offset FFFFh, and no stack near its end. For the mascot, the likeliest reason is the window's view rather than the glyphs: it shows 19 of CLAUDE's 25 rows and follows its hidden cursor. To check on the machine: is the top of Claude Code's welcome box in view? (Found: it was the view. See T5e below.)
 
 **CRASHLOG** (`os/diag`, its README) is a diagnostic build, `-dCRASHLOG`, that catches the restart and keeps a report through it:
 - MT keeps a ring of its last 256 events (ticks, switches, KMW's window operations, mode sets, INT 06h).
@@ -2345,3 +2345,31 @@ The cost: while the owner is out, fewer tasks can run behind it. A task whose ma
 **Tests:** test_mt's `t_dmaems` (2 checks, under `FD_STRICT`): Return on CLAUDE.COM with the floppy timed, its waits given and back, and no register changed during a DMA; CODE-P then DIR, the same. `t_dwait`, `t_dfrz` and `t_hwait` also pass under `FD_STRICT`.
 
 **On the 1520 (2026-11-04):** Joshua tried the fixed build, and it no longer restarts.
+
+## T5e: the Claude window as tall as it shows (2026-11-04)
+
+**Joshua found it on the 1520:** in CLAUDE.COM's window the mascot was missing, though full screen and resident Claude showed it.
+
+**The cause: the view, not the glyphs.** Claude Code 2.1 no longer prints its welcome as a box with the prompt under it. It lays out the whole terminal: the logo with the mascot in rows 1-3, empty rows, and the prompt box pinned to the foot (rows 19-23 of 24), its hidden cursor at row 20. Captured from the real one, 2.1.318, in an 80x24 pyte screen. A window of the usual size shows 19 rows and follows that cursor (T5d), so it showed rows 3-21: the prompt box, but neither the mascot nor the "? for shortcuts" line. Full screen shows all 24.
+
+**The fix: the Pi's terminal as tall as the window**, as a real terminal window does:
+- **TERM.RUN** says the rows it shows at each `MT_TROWS`: SI = A5h << 8 + its rows. A TERM before this left SI as it was, so MT takes only the A5h marker.
+- **MT** writes them to the published descriptor's new `PB_VIEW` (offset 22), only for `PB_VER` 2. A version 2 descriptor is 23 bytes, and `MT_PUB` checks its last byte is the program's too. Version 1 descriptors are never written, as before.
+- **CLAUDE 1.16** publishes version 2. At each tick, `win_size` sends the Pi EVENT 08h with `PB_VIEW`, kept to 4-24, when that changes, to a Pi whose HELLO answer says bit 5; 24 once it goes full screen for good. One event at a time, as for repaint. With the Pi's rows below 24 it publishes those rows alone (`PB_ROWS`), so TERM's view starts at row 0 and the status band is left out; at 24, its 25 as before (`win_prows`). Each HELLO answer means 24 again.
+- **gridlink** (`Term.set_rows`) resizes the pty (TIOCSWINSZ: the program gets SIGWINCH) and pyte's screen. `TermScreen.cells` sends the GRiD's rows past them blank, so the frames and the console's screen sums still cover 24. Every HELLO sets 24 again, as resident Claude's console shares the session. Its HELLO answer says bit 5 (`HF_SIZE`).
+
+**Mixed versions:** an older gridlink never says bit 5, so CLAUDE 1.16 stays at 24 rows. An older CLAUDE never sends EVENT 08h. An older TERM.RUN never sets the marker. An older LODEMT.SYS never writes `PB_VIEW`, so CLAUDE never asks. Each falls back to the T5d behaviour.
+
+**Tests:**
+- **claude-link's test_emu_window (2 more):**
+  - `test_window_size`, against a stand-in Claude Code with 2.1's layout (`fake_claude.py --full`): 19 rows from the window make the Pi's pty 19 rows, the program lays out for them, and the descriptor publishes 19. The mascot is in row 1 and the prompt row (15) in view, rows 19-23 blank, in step with pyte. Then 12, 30 (24) and 2 (4). Full screen for good: 24.
+  - `test_window_size_older_pi`: no bit 5, so 24 rows and 25 published.
+- **test_claude_window's `t_size` (4 checks; the real kernel, TERM.RUN, CLAUDE.COM and gridlink):**
+  - CODE-A: the window's 19 rows in `PB_VIEW`, the Pi's terminal 19 rows, 19 published;
+  - the mascot drawn on the screen with CLAUDE's font, and the prompt box;
+  - typing drawn in its rows;
+  - from a Pi without bit 5: 24 rows, and the mascot not drawn in the window. That is the 1520's bug, reproduced.
+- **test_mt's `t_tpub` (1 more):** MTPUB's new `j` switches its descriptor to version 2. MT writes the window's rows to `PB_VIEW` at TERM's next look, and at version 1 the byte past the descriptor stays EEh.
+
+**On the 1520:** this needs the Pi's gridlink updated as well as the GRiD's files: LODEMT.SYS, TERM.RUN and CLAUDE.COM 1.16. Booting from a floppy, a TERM.RUN in its root is found before ROM 1's (`UI_FINDAPP`: the drive started from comes first on the PATH). With `MULTITASK=1`, CODE-A: the window shows the mascot at the top and the prompt box at the foot. Resize the window: Claude Code lays out again for it.
+

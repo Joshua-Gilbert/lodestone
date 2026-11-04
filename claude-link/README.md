@@ -249,6 +249,12 @@ CLAUDE 1.15 and resident Claude's console 1.13 need gridlink from
 With an older gridlink the GRiD keeps resetting the link, saying "No
 answer from the bridge at GPIB address 7".
 
+CLAUDE 1.16 in a Lodestone terminal window (CODE-A with multitasking on)
+tells gridlink how many rows the window shows, and gridlink makes Claude
+Code's terminal that tall (PROTOCOL.md, EVENT 08h): Claude Code 2.1 pins
+its prompt box to the foot and its logo to the top, and a window showing
+19 of 24 rows lost the logo. An older gridlink keeps 24 rows, as before.
+
 ### 3. The GRiD
 
 Copy `CLAUDE.COM` to the floppy, then:

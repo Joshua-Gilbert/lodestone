@@ -172,15 +172,20 @@ MT_TMOUSE   equ 21h                     ; (T4: TERM.RUN's, a click in its
                                         ;  ranges, presses and releases counted);
                                         ;  a release before its program has
                                         ;  read the press (AX=3, 5, 6) held till it
-                                        ;  has.  CF: AX = 1 (no such task, not
-                                        ;  the Executive's call), 5 (task 0;
-                                        ;  parked)
+                                        ;  has.  T5e: SI = A5h << 8 + the rows
+                                        ;  the window shows (other values: not
+                                        ;  said), written to a
+                                        ;  published PB_VER 2 descriptor's
+                                        ;  PB_VIEW.  CF: AX = 1 (no such task,
+                                        ;  not the Executive's call), 5 (task
+                                        ;  0; parked)
 MT_PUB      equ 22h                     ; (T5b) a screen published for a
                                         ;  terminal window: drawn there from
                                         ;  its cells with its own font, not
                                         ;  from MT's pages.  CL = 0, a task's
                                         ;  program: ES:DI = its descriptor
-                                        ;  (PB_* below: read, never written;
+                                        ;  (PB_* below: read, never written
+                                        ;  but PB_VIEW, PB_VER 2's;
                                         ;  it, its cells, font and table all in
                                         ;  the task's memory, and kept there
                                         ;  while published), 0:0 to withdraw
@@ -287,6 +292,12 @@ PB_XLAT     equ 18                      ; far: 128 bytes, code page 437's
                                         ;  text for codes 80h-FFh (a window's
                                         ;  Copy); 0:0: none (they are '?')
 PB_SIZE     equ 22
+PB_VIEW     equ 22                      ; (PB_VER 2) byte: the rows a window
+                                        ;  shows of it, written by MT at each
+                                        ;  MT_TROWS from a window that says
+                                        ;  (CH), 0 till then: a program may
+                                        ;  lay its screen out to fit (T5e)
+PB_SIZE2    equ 23                      ; (PB_VER 2's size)
 PBF_SHOWN   equ 1                       ; its cells shown (else MT's pages, as
                                         ;  any task's: a program it runs)
 PBF_NOCUR   equ 2                       ; no cursor shown
