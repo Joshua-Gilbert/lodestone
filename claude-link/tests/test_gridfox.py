@@ -286,7 +286,17 @@ def test_app_rows():
         at(19)
         assert r.app.hints and set(r.app.hints.values()) == set(r.app.doc.acts_in(r.app.top, 17)), r.app.hints
         r.keys('esc')
-        r.app.go(U + 'long'); r.pump(); at(4)
+        r.app.go(U + 'long'); r.pump()
+        d = r.app.doc
+        lk = min(d.where[a][0] for a in d.where)                # F with a link in view, then a shrink that
+        r.app.top = max(0, lk - 15); r.app.draw(); r.pump()     #  leaves none on the screen: no numbers
+        r.keys('f')
+        assert r.app.hints, (lk, r.app.top)
+        at(4)
+        assert not d.acts_in(r.app.top, 2) and r.app.hints is None and not r.app.modal(), (r.app.top, r.app.hints)
+        r.keys('1')
+        assert r.app.url == U + 'long', r.app.url
+        at(4)
         r.keys('end', '/', *'Paragraph 3 of', 'enter')          # Find upwards: the line found in view
         assert r.has('Paragraph 3 of the long page.'), r.text()
         r.app.resize(2)

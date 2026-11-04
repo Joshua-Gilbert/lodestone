@@ -337,10 +337,13 @@ Tests:
   - a resize just before the SIGWINCH handler was installed could be
     lost; the handler and wakeup fd now go in first, then the size is
     read;
-  - F's numbers kept the old screen's links after a resize;
+  - F's numbers kept the old screen's links after a resize. They are now
+    made again for the new screen, and with no link left on it they go
+    (the re-review found that case);
   - at 3 rows, a click on the status line chose the choice cut off above
     it;
-  - the wakeup fd was not given back as it was found.
+  - the wakeup fd and the SIGWINCH handler were not given back as they
+    were found.
 
   Each of these is fixed.
 

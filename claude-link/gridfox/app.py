@@ -504,7 +504,8 @@ class App:
         if rows == s.nrows: return
         s.nrows = rows; s.body = rows - 2
         s.top = max(0, min(s.top, max(0, len(s.doc) - s.body)))
-        if s.hints is not None: s._hints()                  # (F's numbers: the links on the screen now)
+        if s.hints is not None:                             # F's numbers: the links on the screen now
+            s.hints = None; s._hints()                      #  (none there: no numbers, and it says so)
         s.shown = [None] * rows
         s.log('rows: %d' % rows)
         if draw: s.draw(full=True)
@@ -910,7 +911,7 @@ def run_tty(app):
     rows as it says, and again at each SIGWINCH (a GRiD window resized)."""
     fd = 0
     old = termios.tcgetattr(fd) if os.isatty(fd) else None
-    wake = None; old_wake = -1
+    wake = None; old_wake = -1; old_winch = signal.SIG_DFL
     try:
         if old: tty.setraw(fd)
         for sig in (signal.SIGTERM, signal.SIGHUP):
@@ -920,13 +921,13 @@ def run_tty(app):
             for w in wake: os.set_blocking(w, False)
             old_wake = signal.set_wakeup_fd(wake[1])    # (select wakes for the signal at once)
             app.wake_fd = wake[0]
-            signal.signal(signal.SIGWINCH, lambda *_: setattr(app, 'winch', True))
+            old_winch = signal.signal(signal.SIGWINCH, lambda *_: setattr(app, 'winch', True))
             app.size = lambda: tty_rows(fd)     # (read after the handler: no resize lost between)
             app.resize(app.size(), draw=False)
         app.run(fd)
     finally:
         if wake:
-            signal.signal(signal.SIGWINCH, signal.SIG_DFL); signal.set_wakeup_fd(old_wake)
+            signal.signal(signal.SIGWINCH, old_winch); signal.set_wakeup_fd(old_wake)
             for w in wake: os.close(w)
         if old: termios.tcsetattr(fd, termios.TCSADRAIN, old)
         sys.stdout.write('\x1b]5150;hide\x07\x1b[?1016l\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[0m\x1b[2J\x1b[H')
