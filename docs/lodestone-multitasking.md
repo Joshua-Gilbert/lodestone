@@ -2248,3 +2248,20 @@ MT's INT 10h emulator took the page shown's start as 40:62h × 40:4Ch, a MUL for
 **Tests:** test_mt's `t_sysreq` (12 checks): SysReq with no other task (nothing switches; 8500h and 8501h passed on); through two tasks and back to task 0, the key buffer untouched and each screen as it was; Confm switches nothing, passed on; CODE-Tab and SysReq mixed; tasks ending in between; MTSPIN in front, reading no keys, switched from at a tick and counting on behind. Then a `-dNOSYSREQ` build: no `mt_sysrq`, LODEMT.SYS 40 bytes smaller, SysReq switching nothing and passed on, CODE-Tab still working.
 
 **On the 1520:** with `MULTITASK=1`, start a second task (`START LCMD`, or a program from the Executive with Return) and press SysReq: the next task comes to the front. Then CODE-SysReq in a program that uses Confm: no switch.
+
+## M10's frozen owner, and the hard-disk tools beside tasks (2026-11-04)
+
+Two fixes found by the safety review of M12's design (tasks run during hard-disk waits; not built yet), shipped ahead of it.
+
+**A floppy owner frozen behind hung the machine.** A task out on the floppy (`TS_WAITD`) can be moved behind while it waits: CODE-Tab or SysReq, taken at another task's safe tick. If it is frozen there (`FREEZE=`, MTLAUNCH /Z, or a program that writes the screen itself or is in a graphics mode), `mt_pick` skipped it once its read was done (`mt_frz`). Nothing else may enter the kernel till the owner has run (`mt_dok`, `mt_gate`), so every other task's next INT 21h waited at the gate for ever, and the machine was stuck till reset. Now:
+- `mt_pick` takes the owner whether it is frozen or not.
+- Back from its wait frozen, it sets `mt_pend`, so it gives way to the front task at its next safe point (`mt_preempt`'s rule for a frozen task), and draws on the screen behind for at most that long.
+
+LODEMT.SYS 21,299 bytes (+20).
+
+**HDPROBE 1.5 and HDSCAN 1.1** drive the hard disk's registers themselves. With multitasking on and another task there (MT_LIST's count over 1), that task could be using C: through the kernel at the same moment, so they say so and stop (exit code 1): "End them first, then run it with Shift-Return in the Executive." With multitasking off, alone, or under another DOS (where the call is unknown and CX stays 0) they run as before. **Joshua's choice:** refuse, rather than only a note in the docs.
+
+**Tests:**
+- test_mt's `t_dfrz` (2 checks): a MTSPIN counts behind; MTSPIN K (an INT 13h read on each count, /Z, the 1520's drive timing) in front; CODE-Tab while K is out on the floppy. Then the other ends and K, back in front, ends too. Both checks fail without the fix: neither task ever finishes.
+- `t_hdtools` (2 checks): with MTLINE waiting behind, HDSCAN and HDPROBE refuse; once it has ended, HDSCAN runs.
+
