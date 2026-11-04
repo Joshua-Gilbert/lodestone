@@ -7290,6 +7290,37 @@ def t_hwait():
           re.search(r'Hard disk\s+Conner Peripherals 120MB - CP30104H', t) and re.search(r'Hard disk\s+none', t0)
           and not any(c[0] == 0xEC for c in ata.cmds[n0:]), (t[-900:], t0[-400:], ata.cmds[n0:][:10]))
 
+def t_dmaems():
+    """The 1520 restarts when an EMS page register changes while the floppy's DMA runs (found 2026-11-04 with
+    CRASHLOG: M10's switch at a floppy's wait, mt_load writing the next task's windows).  pcemu models it
+    (fd_ems_write; FD_STRICT: a crash), and its floppy controller's status (3F4h)."""
+    print('== M10 on the 1520: no EMS page register changed while a floppy transfer\'s DMA runs')
+    CL = os.path.join(GOS, 'claude', 'CLAUDE.COM')
+    strict = pcemu.FD_STRICT
+    pcemu.FD_STRICT = True
+    try:
+        k = boot('mt_de.img', b'MULTITASK=1\r\n', 88, CL, TERMRUN, TERMFNT, mouse=True, fd_wait=True, disk_model='real')
+        seg = mt_seg(k); n = collections.Counter()
+        at = {seg * 16 + k.Y[x]: x for x in ('mt_dcan.y', 'mt_dready', 'mt_eout')}
+        k.hooks.append(lambda pc: n.update([at[k.addr]]) if k.addr in at else None)
+        k.select('CLAUDE.COM'); k.key(ktest.ENTER, settle=False); k.run_for(15.0)
+        pc = k.pc
+        check('Return on CLAUDE.COM in the Executive (its task reads it from the floppy, the 1520\'s drive timing): %d '
+              'waits given away and back (%d), no EMS page register changed under a transfer (%d; the 1520 restarted '
+              'here before the fix), nothing crashed' % (n['mt_dcan.y'], n['mt_dready'], getattr(pc, 'fd_ems_write', 0)),
+              n['mt_dcan.y'] > 0 and n['mt_dready'] == n['mt_dcan.y'] and not getattr(pc, 'fd_ems_write', 0)
+              and not pc.crash, (dict(n), pc.crash, pc.log[-4:]))
+        k = boot('mt_de2.img', b'MULTITASK=1\r\n', 88, TERMRUN, TERMFNT, mouse=True, fd_wait=True, disk_model='real')
+        k.key(ktest.CODE_P, settle=False); k.run_for(4.0)
+        k.key('dir', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(4.0)
+        pc = k.pc
+        check('CODE-P (TERM.RUN, its font and LCMD read from the floppy, the Executive out on its waits), then DIR in '
+              'the window: no EMS page register changed under a transfer (%d), nothing crashed'
+              % getattr(pc, 'fd_ems_write', 0), not getattr(pc, 'fd_ems_write', 0) and not pc.crash,
+              (pc.crash, pc.log[-4:]))
+    finally:
+        pcemu.FD_STRICT = strict
+
 def t_crashlog():
     """CRASHLOG, the diagnostic build (os/diag): a restart caught through 40:67h (CMOS 0Fh = 0Ah), its report on the
     screen and at 5000:0 through the soft reset, CRASHRPT's CRASH.BIN, crashdecode.py; INT 06h; a restart asked for
@@ -7681,7 +7712,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
