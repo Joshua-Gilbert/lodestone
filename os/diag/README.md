@@ -28,10 +28,11 @@ The normal build has none of this: built without `-dCRASHLOG`, LODE.SYS and LODE
 
 ## On the 1520
 
-1. **Make a boot floppy with this build.** Copy `LODE.SYS`, `LODEMT.SYS` and `CRASHRPT.COM` from this directory onto it, in place of the normal LODE.SYS and LODEMT.SYS. Its `LODE.INI` needs `MULTITASK=1`. Boot from the floppy, not the ROM: the ROM's LODE.SYS is the normal one, and LODEMT.SYS has to match it.
-2. **Make it crash** the way it did before.
-3. **The report screen should come up instead of the POST.** Take a photo of it, then press a key.
-4. **After the start-up,** run `CRASHRPT` before anything big. It writes `CRASH.BIN` (9,856 bytes) to the current directory. Send that in.
+1. **Make a boot floppy with this build.** Copy `LODE.SYS`, `LODEMT.SYS`, `CRASHRPT.COM` and `CRASHME.COM` from this directory onto it, in place of the normal LODE.SYS and LODEMT.SYS. Its `LODE.INI` needs `MULTITASK=1`. Boot from the floppy, not the ROM: the ROM's LODE.SYS is the normal one, and LODEMT.SYS has to match it.
+2. **Check it works on the machine first.** Right after the start-up, `CRASHRPT` should print a "Last session: …" line (no line at all: this isn't the CRASHLOG build running, or multitasking is off). Then `CRASHME R` at the prompt jumps to the BIOS's reset, as a wild jump would: the report screen should come up; a key restarts, and `CRASHRPT` writes CRASH.BIN. If the screen doesn't come up, the catch doesn't work on this machine, and that is the first thing to fix. `CRASHME S` makes a CPU shutdown (a push with SP = 1) and `CRASHME K` the keyboard controller's reset: whether each is caught tells what kind of reset the real crash is (2026-11-04: R caught on Joshua's 1520, the real crashes not).
+3. **Make it crash** the way it did before.
+4. **The report screen should come up instead of the POST.** Take a photo of it, then press a key.
+5. **After the start-up,** run `CRASHRPT` before anything big. It writes `CRASH.BIN` (9,856 bytes) to the current directory. Send that in.
 
 If the POST runs instead (the beep and the memory count), that tells us something too:
 - the reset wasn't one the BIOS takes through CMOS: power, or a cold reset;
@@ -39,6 +40,56 @@ If the POST runs instead (the beep and the memory count), that tells us somethin
 - or something reset the shutdown code first: a program using INT 15h AH=87h, the BIOS's extended-memory copy, which Lodestone itself doesn't use.
 
 This build is from the M12 branch, so it also has the hard-disk waits.
+
+## Breadcrumbs (when nothing was caught)
+
+CMOS 3Dh survives any restart, a full POST too. Its high nibble is the stage: 1 armed, 2 in the catch, 3 the report kept, 4 on the screen, 5 (P) a restart asked for. Its low nibble is the last window operation (its tag's place in `cr_wtags`, KCRASH.INC). Each window operation also arms the catch again. At the next start-up the CRASHLOG build turns the two back into characters at 4FF0:0, and `CRASHRPT` says what they mean first:
+- **1:** the restart never reached the catch: a reset the BIOS didn't send through CMOS 0Fh, or the power.
+- **2:** the catch was entered but died before the report was kept, so MT's memory was probably overwritten.
+- **3 or 4:** a report should be there.
+
+**2026-11-04, Joshua's 1520, Return on CLAUDE.COM:** the last step was `g`, with nothing after. In pcemu the next steps after `g` follow within a few instructions. So the low nibble now splits that window (cr_wtags: `-OZzRgbiGHLlnNqr`; window operations other than O, Z, z, R are no longer written):
+- `n`/`N`: before and after mt_switch's FNSAVE of the 287. A disk wait's switch is the only one made with the floppy's DMA under way.
+- `L`/`l`: mt_load starting, and done (the next task about to resume).
+- `q`: a DOS call while an owner is out.
+- `r`: the gate refusing one.
+
+In pcemu, Return on CLAUDE.COM gives `gnNLlqHiGnNLlb…`.
+
+**Then `L`, with nothing after:** it died inside `mt_load`, past the 287's FNSAVE. So `p`/`P` now go before and after `mt_load`'s FRSTOR (or FNINIT), in place of the O and R window tags (cr_wtags `-pZzPgbiGHLlnNqr`). `nofpu/` is the same build with MT never touching the 287 at a switch.
+
+**Then `P`:** the FRSTOR finished; it died later in `mt_load`. So the table is now `-vwePgbiGHLlsNqr`:
+- `N`: after the FNSAVE.
+- `L`: loading.
+- `P`: after FRSTOR.
+- `v`: the kernel's variables back.
+- `w`: the task's vectors back.
+- `e`: its EMS page registers written. This is the prime suspect: written while the floppy's DMA runs.
+- `s`: on its stack.
+- `l`: loaded.
+
+In pcemu: `gNLPvweslqHiG…`.
+
+**Then `w`, with no `e`: found.** On the 1520, writing an EMS page register while the floppy controller's DMA runs resets the machine. M10's switch at a floppy wait did exactly that in `mt_load`. Fixed (2026-11-04): MT no longer changes a page register while a floppy transfer's DMA is under way. The multitasking doc ("Found: an EMS page register written during the floppy's DMA") has the details. On Joshua's 1520 the fixed build no longer restarts. The builds here have the fix too, in case anything still restarts.
+
+**Disk-wait phases (the low nibble too).** The low nibble also records the disk waits' phases as they happen:
+- `g`: a task goes out;
+- `i`: IRQ 6 comes;
+- `b`: the owner is back;
+- `G`: another task's call is held at the gate, and it switches;
+- `H`: it is held at a HLT.
+
+So CRASHRPT's "last window operation" can be one of these, and says where in a wait the machine died. In pcemu, Return on CLAUDE.COM gives `igHiGbOFDgHiGb…`. On Joshua's 1520 (2026-11-04) it restarted on that very Return, before its window opened (last `-`, stage 1), and the stack check didn't fire.
+
+**The owner's stack check (stage 8).** Each time a task gives a disk wait away (a floppy's 9001h, the hard disk's 9000h), the build keeps the top of its stack: the kernel stack's slice up to kstack_top, or 128 bytes of its own stack. That holds the BIOS's own return addresses, since the wait is inside its INT 13h. On the task's return it compares. If anything changed, it goes to the report at once (cause K, stage 8), before the BIOS could return through a broken frame and run into POST. The report keeps both copies, and crashdecode prints the words that differ. Joshua's bisect (2026-11-04) put the crash on task 0 giving a disk wait away; this is the first suspect.
+
+Run `CRASHRPT` after every unexpected restart, and send its first lines even when it says there is no report.
+
+**Not CMOS 3Ch.** The first breadcrumb build put the window tag in 3Ch, which the labelled BIOS source (gridcase-bios, `cmos.inc`) marks unused. Joshua's 10/25/89 ROM uses it: F000:F104 adds CMOS 34h–3Bh (the boot password) and 3Fh & FEh and compares the sum with 3Ch, and POST (F000:8D20 → F1B6) asks for the password when they match and 3Fh bit 1 is set. His 3Fh is 02h. A tag that happened to equal the sum would have locked the machine at the next POST, until CMOS was cleared. Nothing in that ROM reads or writes 3Dh. Keep Lodestone's CMOS writes to 3Dh (and 0Fh, the shutdown code).
+
+**Not CMOS 0Ah either.** 2e3c789 and the build before it re-armed the catch at each window operation with `mov ax, 0F0Ah` into `cr_cm`, which takes the register in AL: it wrote 0Fh to status A (0Ah), the clock's divider, and stopped the time-of-day clock. The 1520's next POST said "Time-of-day clock stopped". Setting the time or the date (INT 1Ah 03h/05h, as TIME and DATE do) has the BIOS write 26h there again. test_mt now fails on any write to 00h–0Dh.
+
+The first boot of this build may report a stage left over from before, since 3Dh's old contents weren't written by it.
 
 ## Reading the report
 

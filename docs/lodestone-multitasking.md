@@ -2250,6 +2250,8 @@ MT's INT 10h emulator took the page shown's start as 40:62h × 40:4Ch, a MUL for
 
 **On the 1520:** with `MULTITASK=1`, start a second task (`START LCMD`, or a program from the Executive with Return) and press SysReq: the next task comes to the front. Then CODE-SysReq in a program that uses Confm: no switch.
 
+**2026-11-04, Joshua's 1520:** SysReq switches nothing; CODE-Tab works. The key never gave anything either when its key codes were looked for, so it is probably not wired on this machine.
+
 ## M10's frozen owner, and the hard-disk tools beside tasks (2026-11-04)
 
 Two fixes found by the safety review of M12's design (tasks run during hard-disk waits; not built yet), shipped ahead of it.
@@ -2314,9 +2316,32 @@ Resizing an ordinary window, and Calc and Paint open together, are fine. The mas
 
 Without the flag, LODE.SYS and LODEMT.SYS are byte for byte as before. pcemu now models the BIOS's jump through 40:67h for shutdown codes 05h and 0Ah, and the PC's fixed BIOS entry points.
 
-**Tests:** test_mt's `t_crashlog` (5 checks):
+**Tests:** test_mt's `t_crashlog` (7 checks):
 - the build;
 - a jump to the reset caught, with the report on the screen;
 - the report through the restart, CRASH.BIN written, then nothing the second time, and decoded;
 - an INT 06h;
 - a restart asked for (40:72h = 1234h) passed straight on.
+
+### Found: an EMS page register written during the floppy's DMA
+
+**What CRASHLOG showed.** The restart never reached the catch (stage 1), so the breadcrumbs in CMOS 3Dh were narrowed step by step. Return on CLAUDE.COM, on Joshua's 1520:
+- `g`: a task out on a floppy wait (M10), then nothing;
+- with `L`, then `P`, then `v`/`w`/`e` added: `L` (into `mt_load`), then `P` (past the 287's FRSTOR), then `w` (the vectors back) and never `e` (the EMS page registers written).
+
+Bisect builds agreed: #142 (before M10), M10 with the waits not given away (`-dNODWAIT`), and task 0 never going out (`-dNODWAIT0`) didn't crash.
+
+**The cause.** On the 1520, writing an EMS page register (0258h + w × 4000h) while the floppy controller's DMA runs resets the machine. It is a hardware reset that bypasses the BIOS's shutdown codes, which is why the catch never ran. Ordinary switches are safe: a tick can't come in the middle of a BIOS floppy transfer. M10 is the one place that switches then: the owner goes out at INT 15h 9001h with the transfer under way, and `mt_load` maps the next task's pages. The hard disk (M12) moves its data by the CPU, not by DMA, so its waits are unaffected.
+
+**The fix:**
+- **`mt_eout`** writes a page register only if its value changes. Before a change, it waits while the controller's main status (3F4h) says a command is under way (bit 4) and its result phase hasn't come (bits 7-6 not both set), for at most about one turn of the disk. `mt_load`, `mt_smap`/`mt_wrest` and `mt_pmap`/`mt_punmap` all write through it. It keeps every register and the flags: `mt_pinned` carries CF across `mt_punmap`, and a first version that didn't keep them parked tasks that should have been pinned (`t_park`).
+- **`mt_dok`:** while a floppy's owner is out, only a task whose page registers already hold its own (the held windows aside) may run, so a switch to it writes none.
+- **`mt_i67`:** another task's EMS call waits at the gate while a floppy's owner is out, as it may write a page register.
+
+The cost: while the owner is out, fewer tasks can run behind it. A task whose mapping differs from the current one waits out the transfer, as before M10. MTSPIN behind a floppy copy still counts 260,390 with the waits given away, against 23,621 without.
+
+**pcemu** now models it: a page register changed while a floppy transfer's DMA runs counts in `fd_ems_write`, and with `FD_STRICT` it is a crash, as on the 1520. Port 3F4h reads as the controller does (busy during the DMA, its result phase until the wait ends). With the code before the fix, Return on CLAUDE.COM crashes there at the same instruction as on the 1520 (`mt_load`'s EMS loop).
+
+**Tests:** test_mt's `t_dmaems` (2 checks, under `FD_STRICT`): Return on CLAUDE.COM with the floppy timed, its waits given and back, and no register changed during a DMA; CODE-P then DIR, the same. `t_dwait`, `t_dfrz` and `t_hwait` also pass under `FD_STRICT`.
+
+**On the 1520 (2026-11-04):** Joshua tried the fixed build, and it no longer restarts.

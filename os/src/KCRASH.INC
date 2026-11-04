@@ -19,10 +19,37 @@
 ;  (a soft reset, 1234h: the BIOS clears only the first 64 KB, so the
 ;  report at CR_SEG is still there).  Then CRASHRPT.COM writes it to
 ;  CRASH.BIN, which tools/crashdecode.py reads with LODE.MAP.
+;
+;  Breadcrumbs in CMOS 3Dh alone, which survives any restart, a full POST
+;  too: its high nibble the stage (CRB_*: armed, in the catch, the report
+;  kept, on the screen, a restart passed on), its low nibble the last
+;  window operation (its tag's place in cr_wtags; KMW's CREC).  NOT 3Ch:
+;  the labelled BIOS source calls 3Ch and 3Dh unused, but Joshua's
+;  10/25/89 ROM keeps the boot password's checksum in 3Ch (F000:F104:
+;  the sum of 34h-3Bh and 3Fh & FEh; POST, F000:8D20 -> F1B6, asks for
+;  the password when it matches and 3Fh bit 1 is set, and his 3Fh is
+;  02h), so a tag written there could lock the machine at the next POST.
+;  Nothing in that ROM touches 3Dh.  Each window operation also arms the
+;  catch again (CMOS 0Fh, 40:67h), in case something cleared it.  At the
+;  next start-up mt_boot puts the old stage and window tag, as the two
+;  characters CRASHRPT reads, at CR_PREV, then arms
 ; =====================================================================
 CR_N        equ 256                     ; records in the ring
 CR_SEG      equ 5000h                   ; the report (free after a start-up)
 CR_STK      equ 512                     ; the catch's own stack
+CR_PREV     equ 4FF0h                   ; the last session's breadcrumbs, at
+                                        ;  start-up: 'LODEPREV', the stage's
+                                        ;  and the window tag's characters
+CRB_ARMED   equ 1                       ; (CMOS 3Dh's high nibble: cr_stch
+CRB_IN      equ 2                       ;  has their characters)
+CRB_KEPT    equ 3
+CRB_SHOWN   equ 4
+CRB_PASS    equ 5
+CRB_VEC     equ 6                       ; (40:67h found changed at a tick, put
+CRB_STACK   equ 8                       ; (the owner's stack changed while it
+                                        ;  was out on a disk wait: mt_crs1)
+CRB_CMOS    equ 7                       ;  back; CMOS 0Fh found changed at a
+                                        ;  window operation, set again)
 
 ; a record: the tick count, the tag (a letter), the running task, the
 ; top two words of the caller's stack (at a routine's start its return
@@ -66,6 +93,9 @@ cr_vb       dw      mt_cur, mt_front, mt_down, mt_ddev, mt_swing, mt_inb
 CR_NVB      equ     ($ - cr_vb) / 2     ; (16)
 mt_crp      dw      0                   ; the next record's offset in the ring
 mt_crcause  db      0
+mt_crss     dw      0                   ; (mt_crs0: the owner's SS, SP, the
+mt_crsp     dw      0                   ;  bytes kept, from SP up)
+mt_crsn     dw      0
             db      0
 mt_crrg     times 14 dw 0               ; 'X': IP CS FL SP SS AX BX CX DX SI
                                         ;  DI BP DS ES
@@ -96,10 +126,91 @@ mt_crec:
         lea     ax, [bp+8]
         mov     [cs:di+CR_SP], ax
         mov     [cs:di+CR_SS], ss
-        pop     di
+        mov     al, [bp+4]                      ; a window operation's: its tag
+        cmp     al, 'S'                         ;  to CMOS 3Dh's low nibble, the
+        je      .x                              ;  catch armed again
+        cmp     al, 'X'
+        je      .x
+        cmp     al, 'V'
+        je      .x
+        call    cr_wt
+        mov     al, 0Fh                         ; (still 0Ah?  Else something
+        out     70h, al                         ;  changed it: stage 7)
+        in      al, 71h
+        cmp     al, 0Ah
+        je      .ok
+        mov     al, CRB_CMOS
+        call    cr_st
+.ok:    mov     ax, 0A0Fh                       ; (CMOS 0Fh = 0Ah: cr_cm takes the
+        call    cr_cm                           ;  register in AL.  Swapped, it
+                                                ;  wrote 0Fh to status A, 0Ah, and
+                                                ;  stopped the clock: POST's
+                                                ;  "Time-of-day clock stopped")
+        push    ds
+        xor     ax, ax
+        mov     ds, ax
+        mov     word [467h], mt_crst
+        mov     [469h], cs
+        pop     ds
+.x:     pop     di
         pop     ax
         pop     bp
         ret     2
+
+; CMOS register AL = AH (NMI left on).  All kept
+cr_cm:  out     70h, al
+        xchg    al, ah
+        out     71h, al
+        xchg    al, ah
+        ret
+; the stage AL (CRB_*) to CMOS 3Dh's high nibble.  All kept
+cr_st:  push    ax
+        push    cx
+        pushf
+        cli
+        mov     cl, 4
+        shl     al, cl
+        mov     ah, al
+        mov     al, 3Dh
+        out     70h, al
+        in      al, 71h
+        and     al, 0Fh
+        or      ah, al
+        mov     al, 3Dh
+        call    cr_cm
+        popf
+        pop     cx
+        pop     ax
+        ret
+; the window tag AL to CMOS 3Dh's low nibble (its place in cr_wtags, 0Fh
+; if it isn't there).  All kept
+cr_wt:  push    ax
+        push    cx
+        push    si
+        pushf
+        cli
+        mov     si, cr_wtags
+        mov     cx, 15
+        xor     ah, ah
+.l:     cmp     al, [cs:si]
+        je      .f
+        inc     si
+        inc     ah
+        loop    .l
+        cmp     al, [cs:si]                     ; (the 16th, or none)
+        jne     .x
+.f:     mov     al, 3Dh
+        out     70h, al
+        in      al, 71h
+        and     al, 0F0h
+        or      ah, al
+        mov     al, 3Dh
+        call    cr_cm
+.x:     popf
+        pop     si
+        pop     cx
+        pop     ax
+        ret
 
 ; the tick's record (from mt_tick, the interrupted IP, CS, FL at [SP+2]):
 ; 'T'.  AX the interrupted AX, BX its flags.  Interrupts off; all kept
@@ -126,6 +237,19 @@ mt_crt: push    bp
         lea     ax, [bp+10]
         mov     [cs:di+CR_SP], ax
         mov     [cs:di+CR_SS], ss
+        push    ds                              ; 40:67h still the catch's?  Else
+        xor     ax, ax                          ;  something wrote there: put
+        mov     ds, ax                          ;  back, stage 6
+        cmp     word [467h], mt_crst
+        jne     .v
+        mov     ax, cs
+        cmp     [469h], ax
+        je      .vo
+.v:     mov     word [467h], mt_crst
+        mov     [469h], cs
+        mov     al, CRB_VEC
+        call    cr_st
+.vo:    pop     ds
         pop     di
         pop     ax
         pop     bp
@@ -156,7 +280,74 @@ mt_cr6: cli
         mov     ax, [cs:mt_crrg+10]
         CREC    'X'
         mov     byte [cs:mt_crcause], 'X'
-        jmp     short mt_crx
+        jmp     mt_crx
+
+; a disk wait's owner going out (mt_dwait, before mt_switch: interrupts
+; off): the top of its stack kept, from its SP (the caller's, past this
+; call's return) up: the kernel's slice to kstack_top (256 bytes at
+; most), or 128 bytes of its own stack.  All kept
+mt_crs0:
+        pusha
+        push    ds
+        push    es
+        mov     [cs:mt_crss], ss
+        mov     si, sp                          ; (past PUSHA, DS, ES, the return)
+        add     si, 22
+        mov     [cs:mt_crsp], si
+        mov     cx, 128
+        mov     ax, ss
+        cmp     ax, KSEG
+        jne     .n
+        mov     cx, kstack_top
+        sub     cx, si
+        cmp     cx, 256
+        jbe     .n
+        mov     cx, 256
+.n:     mov     [cs:mt_crsn], cx
+        push    ss
+        pop     ds
+        push    cs
+        pop     es
+        mov     di, mt_crsv
+        cld
+        rep     movsb
+        pop     es
+        pop     ds
+        popa
+        ret
+; the owner back (mt_dwait.bk): its SS, SP and those bytes as they were?
+; Else the report (cause 'K', stage 8), never back.  All kept
+mt_crs1:
+        pushf
+        pusha
+        push    ds
+        push    es
+        cli
+        mov     ax, ss
+        cmp     ax, [cs:mt_crss]
+        jne     .bad
+        mov     si, sp                          ; (PUSHF too)
+        add     si, 24
+        cmp     si, [cs:mt_crsp]
+        jne     .bad
+        mov     cx, [cs:mt_crsn]
+        push    ss
+        pop     ds
+        push    cs
+        pop     es
+        mov     di, mt_crsv
+        cld
+        repe    cmpsb
+        jne     .bad
+        pop     es
+        pop     ds
+        popa
+        popf
+        ret
+.bad:   mov     byte [cs:mt_crcause], 'K'
+        mov     al, CRB_STACK
+        call    cr_st
+        jmp     mt_crx
 
 ; the BIOS's jump through 40:67h (shutdown code 0Ah): interrupts off,
 ; its own stack.  1234h at 40:72h: a restart asked for, as ever
@@ -166,11 +357,15 @@ mt_crst:
         mov     ds, ax
         cmp     word [472h], 1234h
         jne     .c
+        mov     al, CRB_PASS
+        call    cr_st
         jmp     0F000h:0E05Bh
 .c:     mov     byte [cs:mt_crcause], 'R'
 ; the report, then the screen; a key restarts.  Never returns
 mt_crx: cli
         cld
+        mov     al, CRB_IN
+        call    cr_st
         mov     ax, cs
         mov     ss, ax
         mov     sp, mt_crstk + CR_STK
@@ -231,7 +426,18 @@ mt_crx: cli
         pop     ds
         rep     movsw
         pop     ds
-        mov     bx, [mt_crp]                    ; the newest record's stack
+        cmp     byte [mt_crcause], 'K'          ; a disk wait's owner's stack
+        jne     .ls                             ;  changed: as kept, then now
+        mov     si, mt_crsv
+        mov     di, mt_crbuf + CRO_LSTK
+        mov     cx, 256
+        rep     movsb
+        mov     si, [mt_crsp]
+        mov     ax, [mt_crss]
+        mov     cx, 256
+        call    cr_cpy
+        jmp     short .lx
+.ls:    mov     bx, [mt_crp]                    ; the newest record's stack
         sub     bx, 16
         and     bx, CR_N * 16 - 1
         mov     si, [mt_crb+bx+CR_SP]
@@ -240,7 +446,7 @@ mt_crx: cli
         mov     di, mt_crbuf + CRO_LSTK
         mov     cx, 512
         call    cr_cpy
-        mov     di, mt_crbuf + CRO_TSTK         ; each task's, as it was last
+.lx:        mov     di, mt_crbuf + CRO_TSTK         ; each task's, as it was last
         xor     bx, bx                          ;  switched from
 .tk:    push    bx
         shl     bx, 5
@@ -277,6 +483,8 @@ mt_crx: cli
         xor     di, di
         mov     cx, CR_LEN / 2
         rep     movsw
+        mov     al, CRB_KEPT
+        call    cr_st
         ; the BIOS's vectors back for the timer, the keys and the screen
         ; (its entry points, the PC's), the PICs: only those two IRQs on
         xor     ax, ax
@@ -390,6 +598,8 @@ mt_crx: cli
         loop    .r
         mov     si, cr_t9
         call    cr_ps
+        mov     al, CRB_SHOWN
+        call    cr_st
         xor     ah, ah
         int     16h
         xor     ax, ax                          ; a soft reset: the report
@@ -453,6 +663,11 @@ cr_h2:  push    ax
 .o:     jmp     cr_ch
 
 cr_sig      db      'LODECRSH'
+cr_psig     db      'LODEPREV'
+; CMOS 3Dh's nibbles as CRASHRPT's characters: the stage (CRB_*), the
+; window tag (KMW's CREC tags; '-' none, '?' another)
+cr_stch     db      '?1234P678???????'
+cr_wtags    db      '-vwePgbiGHLlsNqr'  ; (a tag not here: not written)
 cr_bv       dw      08h * 4, 0FEA5h, 09h * 4, 0E987h, 10h * 4, 0F065h
             dw      16h * 4, 0E82Eh, 15h * 4, 0F859h, 1Ch * 4, 0FF53h
             dw      1Bh * 4, 0FF53h, 0

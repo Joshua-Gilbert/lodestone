@@ -685,6 +685,9 @@ class PC:
         if port == 0xA1: return s.pic2_mask
         if port == 0x20: return s.isr if s.pic_rr == 3 else 0
         if port == 0x7F8: return s.vid_status         # (the 1520's: internal plasma 640x400)
+        if port == 0x3F4 and s.fd_wait:                 # the floppy controller's main status (fd_wait): a
+            if s.fd_dma(): return 0x10                  #  command executing (its DMA under way); its result
+            return 0xD0 if s.fd_op else 0x80            #  phase till FDWAIT's end; else ready
         if port == 0x6F8: return 0x90                   # drive backplane 9 (the 1520's, GRIDPROBE)
         if s.ata and 0x1F0 <= port <= 0x1F7:
             if port == 0x1F0 and s.ata.timed: s.us += s.ata.pio_us         # (REP INSW: one hook a word)
@@ -789,6 +792,7 @@ class PC:
         if port == 0x70: s.cidx = val & 0x7F; return
         if port == 0x71:
             if s.cidx >= 0x0E: s.cmos[s.cidx] = val
+            else: s.rtc_writes = getattr(s, 'rtc_writes', []) + [(s.cidx, val)]   # (the clock's own: kept, unmodelled)
             return
         if port == 0x43:
             if (val & 0xF0) == 0: s.pit_read()
@@ -814,7 +818,21 @@ class PC:
             return
         if 0x2F8 <= port <= 0x2FF: return s.uart_out(port - 0x2F8, val)
         if s.ems_pages and (port & 0x3FFF) == 0x258:
-            s.us += EMS_IO_US; s.ems_reg[port >> 14] = val; s.ems_map(port >> 14); return
+            w = port >> 14
+            if s.fd_dma() and s.fd_op['ah'] in (2, 3) and val != s.ems_reg[w]:
+                s.fd_ems_write = getattr(s, 'fd_ems_write', 0) + 1     # (the 1520: an EMS page register changed
+                s.log.append('[EMS window %d set to %02Xh while a floppy transfer is in flight, at %04X:%04X]'
+                             % (w, val, s.r('cs'), s.r('ip')))         #  while the floppy's DMA runs resets the
+                if FD_STRICT: s.crash = s.log[-1][1:-1]               #  machine, 2026-11-04)
+            op = s.fd_op                                    # (fd_wait: a window under a transfer in flight
+            if s.fd_dma() and op.get('regs') is not None and op['ah'] in (2, 3) and val != op['regs'][w] \
+                    and s.in_frame(op['lin'], op['n'] * 512) and \
+                    (op['lin'] - EMS_FRAME) // EMS_PAGE <= w <= (op['lin'] + op['n'] * 512 - 1 - EMS_FRAME) // EMS_PAGE:
+                s.fd_frame_mid = getattr(s, 'fd_frame_mid', 0) + 1     #  mapped elsewhere, even for a moment: the
+                s.log.append('[EMS window %d mapped to %02Xh under a transfer at %05X, at %04X:%04X]'
+                             % (w, val, op['lin'], s.r('cs'), s.r('ip')))   #  1520's DMA, through the whole wait,
+                if FD_STRICT: s.crash = s.log[-1][1:-1]                   #  writes there)
+            s.us += EMS_IO_US; s.ems_reg[w] = val; s.ems_map(w); return
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             s.chip.write(port >> 10, val)
             s.chip_int()
@@ -1078,6 +1096,10 @@ class PC:
         caller's own INT, or the stub's, whichever called)."""
         s.push(s.r('flags')); s.push(s.r('cs')); s.push(s.r('ip'))
         s.w('cs', STUB); s.w('ip', 0x1400)
+
+    def fd_dma(s):
+        """fd_wait: a transfer's DMA under way (the command executing, its end not yet come)."""
+        return bool(s.fd_op) and not s.fd_op.get('empty') and s.fd_at != float('inf')
 
     def fd_done(s):
         """fd_wait: the transfer ends (its data moved now, through the EMS

@@ -8,6 +8,7 @@
         org     100h
 CR_SEG  equ     5000h
 
+        call    prev                    ; the last session's breadcrumbs
         push    ds
         mov     ax, CR_SEG
         mov     es, ax
@@ -75,6 +76,77 @@ wfail:  mov     dx, s_wf
         int     21h
         mov     ax, 4C02h
         int     21h
+
+; the breadcrumbs mt_boot kept at 4FF0:0 (CMOS 3Dh's two nibbles, as the last
+; session left them): say what they mean
+prev:   push    ds
+        mov     ax, 4FF0h
+        mov     es, ax
+        xor     di, di
+        mov     si, psig
+        mov     cx, 8
+        repe    cmpsb
+        jne     .x
+        mov     al, [es:8]
+        mov     [s_tag], al             ; (shown in each message: '?' if none)
+        mov     ah, [es:9]
+        mov     [s_win], ah
+        mov     dx, s_p1
+        cmp     al, '1'
+        je      .p
+        mov     dx, s_p2
+        cmp     al, '2'
+        je      .p
+        mov     dx, s_p3
+        cmp     al, '3'
+        je      .p
+        mov     dx, s_p4
+        cmp     al, '4'
+        je      .p
+        mov     dx, s_pp
+        cmp     al, 'P'
+        je      .p
+        mov     dx, s_p6
+        cmp     al, '6'
+        je      .p
+        mov     dx, s_p7
+        cmp     al, '7'
+        je      .p
+        mov     dx, s_p8
+        cmp     al, '8'
+        je      .p
+        mov     dx, s_p0
+.p:     mov     ah, 9
+        int     21h
+        mov     dx, s_pw
+        mov     ah, 9
+        int     21h
+.x:     pop     ds
+        ret
+
+psig    db      'LODEPREV'
+s_p0    db      'Last session: not armed $'
+s_p1    db      'Last session: the restart never reached the catch (a reset the BIOS', 13, 10
+        db      'did not send through CMOS 0Fh, or the power) $'
+s_p2    db      'Last session: the catch was entered, but died before the report was', 13, 10
+        db      'kept (MT', 39, 's memory overwritten?) $'
+s_p3    db      'Last session: the report was kept, but the catch died before the', 13, 10
+        db      'screen $'
+s_p4    db      'Last session: caught, the report shown $'
+s_p6    db      'Last session: 40:67h, the catch', 39, 's address, was found overwritten', 13, 10
+        db      'at a tick and put back; the restart then never reached the catch $'
+s_p7    db      'Last session: CMOS 0Fh, the shutdown code, was found changed at a', 13, 10
+        db      'window operation and set again; the restart never reached the catch $'
+s_p8    db      'Last session: a disk wait', 39, 's owner', 39, 's stack was found CHANGED on its', 13, 10
+        db      'return (caught before it could crash) $'
+s_pp    db      'Last session: ended by a restart asked for $'
+s_pw    db      13, 10, 'Its last step: '
+s_win   db      '?', ' (a disk wait: g gone out, b back, i IRQ 6, G a call held and', 13, 10
+        db      'switched, H held at HLT, q a call while one is out, r refused; a switch:', 13, 10
+        db      'N after the 287', 39, 's FNSAVE, L loading the next task, P after its FRSTOR,', 13, 10
+        db      'v its kernel variables, w its vectors, e its EMS windows, s its stack,', 13, 10
+        db      'l loaded; - none).  Stage '
+s_tag   db      '?', '.', 13, 10, '$'
 
 sig     db      'LODECRSH'
 fname   db      'CRASH.BIN', 0
