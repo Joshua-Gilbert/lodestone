@@ -1,7 +1,9 @@
-"""gridfox's screen and keys: an 80x24 terminal program.
+"""gridfox's screen and keys: an 80-column terminal program, 24 rows or as
+many as the terminal has (a GRiD window's: Lodestone's multitasking, T5e).
 
 It runs in Term's pty on the Pi (CLAUDE /W on the GRiD), or in any xterm.
-Row 0 is the address, rows 1-22 the page, row 23 the status line.  Every
+Row 0 is the address, the rows under it the page, the last row the status
+line (rows 1-22 and 23 at 24 rows); a resize (SIGWINCH) lays it out again.  Every
 change is drawn as whole rows inside synchronised output (?2026), so Term
 sends the GRiD one frame for it, and only the rows that changed.
 
@@ -10,14 +12,15 @@ Term's pictures (gridlink's OSC 5150: a PNG file in this folder, which
 gridlink dithers and sends).  Clicks come back in pixels (?1016) and go to
 the page as a person's; so do the keys, but for a few of gridfox's own.
 """
-import hashlib, os, select, signal, struct, sys, termios, time, tty, urllib.parse
+import fcntl, hashlib, os, select, signal, struct, sys, termios, time, tty, urllib.parse
 from . import page as P, video as V
 from .marionette import MarionetteError
 ERRS = (MarionetteError, RuntimeError, OSError, ValueError)
 
-ROWS, COLS = 24, 80
+ROWS, COLS = 24, 80                 # (ROWS: the rows until the terminal says its own)
+MIN_ROWS = 3                        # the address, a page row and the status line
 URL_EVERY = 1.0                     # seconds between looks at the address when idle
-TOP, BODY = 1, 22                   # page rows 1..22
+TOP, BODY = 1, 22                   # page rows 1..22 at 24 rows (App.body: the terminal's rows - 2)
 PIC_W, PIC_H = 640, 384             # the picture view: the GRiD's rows 0-23
 TEXT_W, TEXT_H = 1024, 768          # Firefox's window for the text view
 SHOTS = (0.0, 0.5, 1.5, 4.0)        # after an action: pictures then (s), as the page settles
@@ -195,6 +198,9 @@ class App:
         s.hints = None; s.hint_in = ''           # F: {number: act}
         s.menu = None                            # a <select>'s choices: (act, options, index)
         s.status = 'G: go to an address   H: help'; s.busy = ''
+        s.nrows = ROWS; s.body = BODY            # the terminal's rows, and the page's (resize)
+        s.size = None                            # -> the terminal's rows now (run_tty: the pty's)
+        s.winch = False; s.wake_fd = None        # a resize to look at; the fd its signal wakes select with
         s.find_text = ''; s.shown = [None] * ROWS
         s.rereads = []; s.places = {}            # url -> (top, sel), for Back
         s.title_sent = None; s.start = start
@@ -251,7 +257,7 @@ class App:
         s.doc = P.layout(s.model)
         if top is not None: s.top = top
         if sel is not None: s.sel = sel
-        s.top = max(0, min(s.top, max(0, len(s.doc) - BODY)))
+        s.top = max(0, min(s.top, max(0, len(s.doc) - s.body)))
         if s.sel >= len(s.model.get('acts', [])): s.sel = -1
         s.draw()
 
@@ -277,7 +283,7 @@ class App:
         ln = s.doc.anchors.get(frag) if frag else None
         if frag == 'top' and ln is None: ln = 0
         if ln is not None:
-            s.top = max(0, min(ln, max(0, len(s.doc) - BODY))); s.draw()
+            s.top = max(0, min(ln, max(0, len(s.doc) - s.body))); s.draw()
 
     def _remember(s):
         if s.url: s.places[s.url] = (s.top, s.sel)
@@ -381,12 +387,12 @@ class App:
         if w:
             ln = w[0]
             if ln < s.top: s.top = max(0, ln - 2)
-            elif ln >= s.top + BODY: s.top = min(max(0, len(s.doc) - BODY), ln - BODY + 3)
+            elif ln >= s.top + s.body: s.top = min(max(0, len(s.doc) - s.body), ln - s.body + min(3, s.body))
 
     def tab(s, step):
         acts = [a for a in sorted(s.doc.where, key=lambda a: s.doc.where[a])]
         if not acts: s.status = 'No links on this page.'; return
-        onscreen = s.doc.acts_in(s.top, BODY)
+        onscreen = s.doc.acts_in(s.top, s.body)
         if s.sel in acts and (s.sel in onscreen or not onscreen):
             k = acts.index(s.sel) + step
             if not 0 <= k < len(acts):
@@ -395,7 +401,7 @@ class App:
         elif onscreen:
             s.select(onscreen[0] if step > 0 else onscreen[-1])
         else:                                                  # the next one below (or above) the screen
-            below = [a for a in acts if s.doc.where[a][0] >= s.top + BODY]
+            below = [a for a in acts if s.doc.where[a][0] >= s.top + s.body]
             above = [a for a in acts if s.doc.where[a][0] < s.top]
             if step > 0 and below: s.select(below[0])
             elif step < 0 and above: s.select(above[-1])
@@ -415,10 +421,10 @@ class App:
         low = k.lower() if len(k) == 1 else k
         if k == 'up': s.scroll(-1)
         elif k == 'down': s.scroll(1)
-        elif k in ('pgup', 'meta-v'): s.scroll(-(BODY - 2))
-        elif k in ('pgdn', ' ', 'ctrl-v'): s.scroll(BODY - 2)
+        elif k in ('pgup', 'meta-v'): s.scroll(-s._page_step())
+        elif k in ('pgdn', ' ', 'ctrl-v'): s.scroll(s._page_step())
         elif k == 'home': s.top = 0
-        elif k == 'end': s.top = max(0, len(s.doc) - BODY)
+        elif k == 'end': s.top = max(0, len(s.doc) - s.body)
         elif k == 'tab': s.tab(1)
         elif k == 'btab': s.tab(-1)
         elif k == 'enter':
@@ -455,12 +461,12 @@ class App:
                 s.menu = None; s.draw(); s.choose(i, box[4] + row - box[0] - 1); return
             s.menu = None
         if s.line is not None:
-            if row == ROWS - 1: return                      # (on the line being typed: nothing)
+            if row == s.nrows - 1: return                   # (on the line being typed: nothing)
             s.line = None; s.line_do = None
         s.hints = None
         if row == 0:
             s._go_line(); s.draw(); return
-        if TOP <= row < TOP + BODY:
+        if TOP <= row < TOP + s.body:
             ln = s.top + row - TOP
             if ln < len(s.doc):
                 acts = s.doc.act[ln]
@@ -479,12 +485,28 @@ class App:
         """Where the list's choices are drawn: (first row, column, rows, width, first choice)."""
         if s.menu is None: return None
         i, opts, n = s.menu
-        h = min(len(opts), BODY - 2); w = min(COLS - 4, max([len(o) for o in opts] + [10]) + 6)
+        h = max(1, min(len(opts), s.body - 2)); w = min(COLS - 4, max([len(o) for o in opts] + [10]) + 6)
         first = max(0, min(n - h // 2, len(opts) - h))
-        return (TOP + max(0, (BODY - h - 2) // 2), (COLS - w) // 2, h, w, first)
+        return (TOP + max(0, (s.body - h - 2) // 2), (COLS - w) // 2, h, w, first)
 
     def scroll(s, n):
-        s.top = max(0, min(s.top + n, max(0, len(s.doc) - BODY)))
+        s.top = max(0, min(s.top + n, max(0, len(s.doc) - s.body)))
+
+    def _page_step(s):
+        """PgUp/PgDn: a screen, less two rows kept (at least one row)."""
+        return max(1, s.body - 2)
+
+    def resize(s, rows, draw=True):
+        """The terminal's rows now (a GRiD window resized: the pty's SIGWINCH):
+        the page gets all but the address and the status line, the place is
+        kept, and everything is drawn again."""
+        rows = max(MIN_ROWS, int(rows or ROWS))
+        if rows == s.nrows: return
+        s.nrows = rows; s.body = rows - 2
+        s.top = max(0, min(s.top, max(0, len(s.doc) - s.body)))
+        s.shown = [None] * rows
+        s.log('rows: %d' % rows)
+        if draw: s.draw(full=True)
 
     def _line_key(s, k):
         if k == 'esc': s.line = None; s.line_do = None
@@ -620,7 +642,7 @@ class App:
             return
 
     def _hints(s):
-        on = s.doc.acts_in(s.top, BODY)
+        on = s.doc.acts_in(s.top, s.body)
         if not on: s.status = 'No links on the screen.'; return
         s.hints = {str(n + 1): a for n, a in enumerate(on)}; s.hint_in = ''
         s.status = 'Link number, then Return (Esc: none)'
@@ -644,8 +666,8 @@ class App:
         if k == 'esc': s.menu = None
         elif k == 'up': s.menu[2] = max(0, n - 1)
         elif k == 'down': s.menu[2] = min(len(opts) - 1, n + 1)
-        elif k == 'pgup': s.menu[2] = max(0, n - (BODY - 3))
-        elif k == 'pgdn': s.menu[2] = min(len(opts) - 1, n + BODY - 3)
+        elif k == 'pgup': s.menu[2] = max(0, n - max(1, s.body - 3))
+        elif k == 'pgdn': s.menu[2] = min(len(opts) - 1, n + max(1, s.body - 3))
         elif k == 'enter':
             s.menu = None; s.draw(); s.choose(i, n); return
         s.draw()
@@ -658,13 +680,13 @@ class App:
         if ln < 0: s.status = 'Not on this page: %s' % text
         else:
             s.found = ln
-            s.top = max(0, min(ln - 2, max(0, len(s.doc) - BODY)))
+            s.top = max(0, min(ln - 2, max(0, len(s.doc) - s.body)))
             s.status = 'Found on line %d of %d (N: next)' % (ln + 1, len(s.doc))
         s.draw()
 
     # ---- the screen -------------------------------------------------------
     def rows(s):
-        """-> 24 rows of (text, attrs) and the cursor ((row, col) or None)."""
+        """-> the terminal's rows of (text, attrs) and the cursor ((row, col) or None)."""
         out = []
         url = s.url if s.url != HOME else 'gridfox'
         bar = (' ' + _fit(url, COLS - 2)).ljust(COLS)
@@ -672,7 +694,7 @@ class App:
         hint_at = {}
         if s.hints:
             hint_at = {a: h for h, a in s.hints.items()}
-        for r in range(BODY):
+        for r in range(s.body):
             ln = s.top + r
             if ln < len(s.doc):
                 text = s.doc.text[ln].ljust(COLS)[:COLS]
@@ -697,7 +719,7 @@ class App:
         cur = None
         if s.line is not None:
             t, c = s.line.view(COLS)
-            out.append((t.ljust(COLS), [0] * COLS)); cur = (ROWS - 1, min(c, COLS - 1))
+            out.append((t.ljust(COLS), [0] * COLS)); cur = (s.nrows - 1, min(c, COLS - 1))
         else:
             out.append((s._status_text(), [P.A_DIM] * COLS))
         return out, cur
@@ -712,6 +734,7 @@ class App:
         box.append('└' + '─' * (w - 2) + '┘')
         for j, b in enumerate(box):
             r = r0 + j
+            if r >= TOP + s.body: break                     # (a page of a row or two: the box cut short)
             t, a = out[r]
             inv = (first + j - 1 == n) and 0 < j < len(box) - 1
             out[r] = (t[:c0] + b + t[c0 + w:], a[:c0] + [P.A_INV if inv else 0] * w + a[c0 + w:])
@@ -727,8 +750,8 @@ class App:
                     'select': lambda: 'Return: choose'}.get(a.get('t'), lambda: '')()
         else: left = 'G go  S search  F follow  / find  Tab links  H help'
         n = len(s.doc)
-        pos = 'All' if n <= BODY else 'Top' if s.top == 0 else 'Bot' if s.top >= n - BODY else \
-            '%d%%' % (100 * (s.top + BODY) // n)
+        pos = 'All' if n <= s.body else 'Top' if s.top == 0 else 'Bot' if s.top >= n - s.body else \
+            '%d%%' % (100 * (s.top + s.body) // n)
         right = ' %s ' % pos
         return (' ' + _fit(left, COLS - len(right) - 2)).ljust(COLS - len(right)) + right
 
@@ -737,7 +760,7 @@ class App:
         parts = ['\x1b[?2026h']
         if full:                                 # (clicks: CLAUDE /W; in pixels only in the picture view)
             parts.append('\x1b[?7l\x1b[2J\x1b[?1000h\x1b[?1006h' + ('' if s.pic_up else '\x1b[?1016l'))
-            s.shown = [None] * ROWS
+            s.shown = [None] * s.nrows
         for r, (text, attr) in enumerate(rows):
             if s.shown[r] == (text, attr): continue
             s.shown[r] = (text, attr)
@@ -761,6 +784,9 @@ class App:
         s.draw(full=True)
         if s.start: s._guard(lambda: s.go(to_url(s.start, s.search)))
         while not s.quit:
+            if s.winch and s.size:               # (SIGWINCH: the terminal's rows now)
+                s.winch = False
+                s._guard(lambda: s.resize(s.size()))
             now = time.time()
             wait = 0.5
             if not s.modal():                    # (while typing, the timed looks wait)
@@ -768,8 +794,13 @@ class App:
                 if s.url != HOME: wait = max(0.0, min(wait, s.url_t + URL_EVERY - now))
                 if s.picture: wait = max(0.0, min(wait, s._next_shot() - now))
             if keys.buf: wait = min(wait, 0.02)
-            r, _, _ = select.select([fd_in], [], [], wait)
+            fds = [fd_in] + ([s.wake_fd] if s.wake_fd is not None else [])
+            r, _, _ = select.select(fds, [], [], wait)
             now = time.time()
+            if s.wake_fd is not None and s.wake_fd in r:      # (a signal's byte: SIGWINCH, at once)
+                try: os.read(s.wake_fd, 64)
+                except OSError: pass
+                r = [f for f in r if f != s.wake_fd]
             if r:
                 try: data = os.read(fd_in, 4096)
                 except OSError: data = b''
@@ -865,16 +896,37 @@ def _short(e):
     return t[:120]
 
 
+def tty_rows(fd):
+    """The terminal's rows (TIOCGWINSZ), or None when it doesn't say."""
+    try:
+        return struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\0' * 8))[0] or None
+    except OSError:
+        return None
+
+
 def run_tty(app):
-    """Run in a real terminal (the pty): raw keys, restored at the end."""
+    """Run in a real terminal (the pty): raw keys, restored at the end; its
+    rows as it says, and again at each SIGWINCH (a GRiD window resized)."""
     fd = 0
     old = termios.tcgetattr(fd) if os.isatty(fd) else None
+    wake = None
     try:
         if old: tty.setraw(fd)
         for sig in (signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, lambda *_: setattr(app, 'quit', True))
+        if old:
+            app.size = lambda: tty_rows(fd)
+            app.resize(app.size(), draw=False)
+            wake = os.pipe()
+            for w in wake: os.set_blocking(w, False)
+            signal.set_wakeup_fd(wake[1])        # (select wakes for the signal at once)
+            app.wake_fd = wake[0]
+            signal.signal(signal.SIGWINCH, lambda *_: setattr(app, 'winch', True))
         app.run(fd)
     finally:
+        if wake:
+            signal.signal(signal.SIGWINCH, signal.SIG_DFL); signal.set_wakeup_fd(-1)
+            for w in wake: os.close(w)
         if old: termios.tcsetattr(fd, termios.TCSADRAIN, old)
         sys.stdout.write('\x1b]5150;hide\x07\x1b[?1016l\x1b[?1000l\x1b[?1006l\x1b[?7h\x1b[?25h\x1b[0m\x1b[2J\x1b[H')
         if app.lost: sys.stdout.write('\r\n  gridfox stopped: %s.\r\n' % app.lost)

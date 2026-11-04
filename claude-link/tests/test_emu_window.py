@@ -51,7 +51,7 @@ def wtext(h):
 def win_in_step(h, sim_s=20):
     """The shadow's rows 0-23 are pyte's, and the descriptor's cursor its."""
     def same():
-        t = h.router.term
+        t = h.router.web if h.router.app == 'web' else h.router.term
         if h.m.crash or t.dirty: return False
         tc, ta, cur = TT.pi_cells(h)
         cs, ats = shadow(h)
@@ -186,6 +186,46 @@ def test_window_size_older_pi():
     finally:
         glp.HF_SIZE = keep
         h.close()
+
+
+def test_window_web():
+    """CLAUDE /W in a window: the window's 19 rows make gridfox's pty 19 rows
+    (T5e), and gridfox lays out for them: the address in row 0, the page under
+    it, its status line in row 18, in view; rows 19-23 blank.  Full screen
+    for good: 24 rows, the status line in row 23 again."""
+    from fake_firefox import FakeFirefox, missing
+    if missing():
+        print('     skipped: %s (the stand-in Firefox runs on Node and jsdom)' % missing())
+        return
+    f = FakeFirefox()
+    url = 'http://test.local/index'
+    h = start(args='/A:7 /W', web='%s -m gridfox --port %d %s' % (sys.executable, f.port, url))
+    try:
+        assert wait_wtext(h, 'Tektronix 7854 notes', 30), (h.log, wtext(h))
+        w = h.router.web
+        assert h.router.app == 'web' and h.router.term is None and w.rows == 24, (h.router.app, w.rows)
+        rows = lambda: wtext(h).split('\n')
+        status = lambda r: rows()[r].rstrip().endswith(('All', 'Top'))
+        assert h.run_until(lambda: rows()[0].strip() == url and status(23), 20), wtext(h)
+        assert h.mt.view(h.m, 19)
+        assert h.run_until(lambda: w.rows == 19 and desc(h)['rows'] == 19 and rows()[0].strip() == url
+                           and status(18) and not any(l.strip() for l in rows()[19:24]), 20), \
+            (w.rows, desc(h), wtext(h))
+        assert win_in_step(h), wtext(h)
+        assert 'Tektronix 7854 notes' in wtext(h)
+        h.press(0x0F09); h.press(0x0F09); h.press(0x1C0D)                  # Tab Tab Return: the long page
+        assert wait_wtext(h, 'Paragraph 1 of the long page.'), wtext(h)
+        h.press(0x5100)                                                     # PgDn: 17 rows less two
+        assert h.run_until(lambda: 'Paragraph 1 of' not in wtext(h) and 'Paragraph 15 of' in wtext(h)
+                           and rows()[18].rstrip().endswith('%'), 20), wtext(h)
+        assert win_in_step(h), wtext(h)
+        h.mt.window = False; h.mt.front = True              # (its window gone, it in front: full screen for good)
+        assert h.run_until(lambda: not h.var('wmode') and w.rows == 24, 20), (h.var('wmode'), w.rows, h.mt.log)
+        assert h.run_until(lambda: w.screen.display[23].rstrip().endswith('%')
+                           and w.screen.display[0].strip() == 'http://test.local/long', 20), w.screen.display
+        TT.check(h)
+    finally:
+        h.close(); f.close()
 
 
 def picture_round_trip(h):
