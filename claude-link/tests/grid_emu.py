@@ -921,6 +921,12 @@ class FakeMT:
     def flags(s, m):
         return m.rd(*s.desc, 2)[1] if s.desc else None
 
+    def view(s, m, rows):
+        """A window showing `rows` of the published screen, as TERM.RUN's MT_TROWS tells MT (T5e): MT
+        writes them to a PB_VER 2 descriptor's PB_VIEW (offset 22).  -> whether it did."""
+        if not s.desc or m.rd(*s.desc, 1)[0] < 2: return False
+        m.wr(s.desc[0], s.desc[1] + 22, bytes([rows])); return True
+
     def call(s, m, al, bx, cx):
         if al == 0x22:                                  # MT_PUB
             if cx & 0xFF: m.err(1); return

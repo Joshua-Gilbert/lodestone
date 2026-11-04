@@ -173,7 +173,7 @@ the MORE bit set on all but the last.
 | 01h | HELLO | ver (1), flags (1: bit 0 = this CLAUDE can be a terminal, Term; bit 1 = its CELLS take pictures; bit 2 = it can use the Fletcher sum (from audit3 R56: it checks every frame with it, this HELLO too); bit 3 = wake: an SRQ while it is idle makes it serial-poll, and status 40h makes it POLL at once, section 3; bit 4 = it draws the 2x2 block elements `▘▝▖▗▌▐▀▄▛▜▙▟▚▞` as codes A1h-AEh, CLAUDE 1.8, and resident Claude's console from 1.12; without it they are blanks and inverse blanks), max payload (2), cols (1), rows (1), then `key=value\n` lines: `os`, `gpib`, `addr`, `drives`, `mem`, `ems`, `cwd`, `date`, `grid`, and `app=term` or `app=chat` when CLAUDE was started with `/T` or `/C`. CLAUDE 1.3 also sends `rx=` (the Pi → GRiD payload it reads, 2048). Resident Claude's console (CLAUDE /R, popped up over a DOS program) sends only `app=resident`, `grid`, `rx=`, `req=`, `ops=` and `addr`, `prog` (the paused program, when it could ask DOS) and `screen` once it has one: 4 hex digits, the Fletcher sum of its Term screen (section 6; a CRC-16 before audit3 R56). `ops=` lists what it answers besides SCREEN and TYPE: `files` (DIR, READ, WRITE, DELETE, RENAME, MKDIR, RMDIR, STAT, FREE) and `gpib` (CLAUDE 1.9), and `bgscreen`: SCREEN in the background too (CLAUDE 1.11). Flags bit 5 (CLAUDE 1.10, resident Claude's console only): it works in the background, below |
 | 02h | POLL | — (nothing to say; the Pi may hold its answer up to 250 ms waiting for output) |
 | 03h | PROMPT | text (CP437) — a prompt or a slash command |
-| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 07h saver (CLAUDE 1.14, to a Pi whose HELLO answer, 41h, has bit 4: the Executive's screen saver comes on if the answer is a NOP, and the GRiD sends nothing more until it ends; the Pi counts it as there until its next frame, and rings it for anything it has, which ends the saver; section 3, Waking an idle GRiD) |
+| 04h | EVENT | code (1) + data: 01h interrupt (Esc); 02h permission answer: id (1), choice (`y`, `n`, `a`); 03h repaint (Term: send the whole screen again); 04h away (resident Claude's console: the user went back to the program); 07h saver (CLAUDE 1.14, to a Pi whose HELLO answer, 41h, has bit 4: the Executive's screen saver comes on if the answer is a NOP, and the GRiD sends nothing more until it ends; the Pi counts it as there until its next frame, and rings it for anything it has, which ends the saver; section 3, Waking an idle GRiD); 08h size (Term, CLAUDE 1.16 in a Lodestone terminal window, to a Pi whose HELLO answer has bit 5): rows (1), 4-24, how many the window shows; the Pi's terminal is then that tall (section 6), and every HELLO makes it 24 again |
 | 05h | REPLY | id (1), status (1: 0 = OK, else DOS error code or 0FFh), data |
 | 06h | NAK | — |
 | 07h | KEYS | Term: key words as INT 16h AH=10h returns them (AL, AH; 2 bytes each) |
@@ -182,7 +182,7 @@ the MORE bit set on all but the last.
 
 | Type | Name | Body |
 |---|---|---|
-| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on (the GRiD has used nothing else since audit3 R56); bit 3 = resident Claude's console may work in the background, below: its bridge can be quiet; bit 4 = EVENT 07h, the saver, understood, and the bridge can ring: a Pico, fw 2026-10-22b on), then text: model name (or `Claude Code`) |
+| 41h | HELLO | ver (1), flags (1: bit 0 = Term; bit 2 = the Fletcher sum from now on (the GRiD has used nothing else since audit3 R56); bit 3 = resident Claude's console may work in the background, below: its bridge can be quiet; bit 4 = EVENT 07h, the saver, understood, and the bridge can ring: a Pico, fw 2026-10-22b on; bit 5 = EVENT 08h, the terminal's rows, understood), then text: model name (or `Claude Code`) |
 | 42h | NOP | — |
 | 43h | TEXT | text to append to the conversation; control codes below |
 | 44h | STATUS | status-line text (empty = clear) |
@@ -352,7 +352,7 @@ Pi's HELLO has no Term flag).
 ## 6. Term
 
 `CLAUDE /T`: the Pi runs the unmodified `claude` program in an 80x24 pty
-(TERM=xterm-256color). gridlink keeps the screen with pyte, and keeps what
+(TERM=xterm-256color), or fewer rows for a window (below). gridlink keeps the screen with pyte, and keeps what
 the GRiD shows; the difference goes to the GRiD as CELLS. Rows 0-23 of the
 GRiD's screen are the terminal, row 24 is CLAUDE's own status band (the
 title from TITLE, the link, the keys).
@@ -385,6 +385,16 @@ title from TITLE, the link, the keys).
   In Term, CLAUDE ignores the chat's messages (TEXT, STATUS, ASK, READY,
   CLEAR). Any answer to HELLO that is not a HELLO makes the GRiD start the
   link again.
+* **Rows.** CLAUDE 1.16, in a Lodestone terminal window that shows fewer
+  than 24 rows, sends EVENT 08h with that many (4-24) to a Pi that says
+  HELLO bit 5. The Pi makes its pty that tall (the program gets SIGWINCH
+  and lays out its screen again: Claude Code 2.1 pins its prompt box to
+  the terminal's foot and its logo to the top, so a window following the
+  cursor in 24 rows lost the logo), and sends only those rows: the GRiD's
+  rows past them come blank. A window that changes size sends its new
+  rows; full screen for good, 24. Every HELLO makes the Pi's terminal 24
+  rows again (resident Claude's console shares the session), so the
+  window says its rows again after each one.
 * **Keys.** The GRiD reads keys with INT 16h AH=11h/10h (AH=01h/00h never
   return CODE with punctuation, Return, Esc or Backspace on the 1520) and
   sends every key except CODE-Q (quit) and CODE-R (repaint here, and EVENT
