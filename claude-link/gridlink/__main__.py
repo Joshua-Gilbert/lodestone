@@ -12,6 +12,7 @@ from . import glp
 from .config import Config, MODELS
 from .link import AR488Serial, Link, serve
 from .pico import PicoBridge
+from .serline import SerialLink, ModemLink
 from .router import Router
 
 GLYPHS = glp.GLYPH_TEXT
@@ -95,7 +96,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog='gridlink', description='Claude for GRiD - Pi side')
     ap.add_argument('--config', help='TOML settings file')
     ap.add_argument('--port'); ap.add_argument('--baud', type=int); ap.add_argument('--address', type=int)
-    ap.add_argument('--bridge', choices=['pico', 'ar488'], help='which GPIB bridge (default: pico)')
+    ap.add_argument('--bridge', choices=['pico', 'ar488', 'serial', 'modem'],
+                    help='which bridge (default: pico); serial or modem: SERLINK.COM on the GRiD, no GPIB')
     ap.add_argument('--model', help='opus, sonnet, haiku, fable or a model id')
     ap.add_argument('--mode', choices=['ask', 'edits', 'auto'])
     ap.add_argument('--console', action='store_true', help='chat in this terminal, no GRiD')
@@ -131,7 +133,16 @@ def main(argv=None):
                      % (cfg.source or '~/.config/gridlink/config.toml'))
         return console(cfg, make_client(), log)
 
-    if cfg.bridge == 'ar488':
+    if cfg.bridge == 'serial':              # a null-modem cable to the GRiD's COM2 (SERLINK /P:2)
+        port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
+        baud = a.baud or (cfg.baud if cfg.baud_set else 19200)
+        t = SerialLink(port, baud, log=log)
+        log('opening %s at %d baud' % (port, baud))
+    elif cfg.bridge == 'modem':             # a USB modem the GRiD dials (SERLINK /D:)
+        port = cfg.port if cfg.port != 'auto' else '/dev/ttyACM0'
+        t = ModemLink(port, a.baud or (cfg.baud if cfg.baud_set else 115200), log=log)
+        log('opening the modem on %s' % port)
+    elif cfg.bridge == 'ar488':
         port = cfg.port if cfg.port != 'auto' else '/dev/ttyUSB0'
         t = AR488Serial(port, cfg.baud, cfg.address, log=log)
         log('opening %s at %d baud' % (port, cfg.baud))
