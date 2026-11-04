@@ -19,6 +19,15 @@ Two builds of today's main (#149) split M10 by what it does:
 - `5` crashes and `6` doesn't: an always-on hook is the fault, not the switching during disk waits.
 - `5` is clean: the switching during a floppy wait is the fault.
 
+**2026-11-04: `1-pre-M10` and `5-main-nowait` don't crash on Joshua's 1520; main does.** So the fault is in giving a disk wait away. In pcemu the resize drops make no disk access at all. The waits given away all come from task 0 (the Executive and its windows), when a window opens: TERM.RUN, a picture. So the next split:
+
+| Folder | Built with | What's off |
+|---|---|---|
+| `7-main-notask0` | `-dNODWAIT0` | Task 0 (the Executive, its windows, the UI) never gives a disk wait away; the DOS tasks still do |
+
+- `7` clean: task 0 going out in the middle of its work (a window opening) is what corrupts something.
+- `7` crashes: a DOS task's wait is enough.
+
 After those come #148 (a frozen floppy owner always picked; HDPROBE and HDSCAN refuse beside tasks) and #149 (M12, the hard-disk waits): that is main, in `os/src`.
 
 **To test one:** copy its three files onto the boot floppy, with `MULTITASK=1` in LODE.INI. Then do what crashed before: open a terminal window (CODE-P), resize it with the mouse, let go. Then open and close a picture, and try CODE-A with a resize. Try each a few times.

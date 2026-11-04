@@ -6519,6 +6519,10 @@ mt_dcan:
         call    mt_cent
         cmp     byte [cs:bx+TE_KILL], 0
         jne     .no
+%ifdef NODWAIT0
+        or      al, al                  ; (bisect build: task 0, the Executive
+        jz      .no                     ;  and its windows, never goes out)
+%endif
         mov     al, [indos]
         or      al, al
         jz      .own
@@ -7698,7 +7702,9 @@ mt_kalloc:
 %macro  mt_par 2
 %ifndef CRASHLOG                        ; (a diagnostic build: not timed)
 %ifndef NODWAIT                         ; (nor the bisect builds)
+%ifndef NODWAIT0
             times   -(((%1 - mt_tstart) & 1) != %2) db 0
+%endif
 %endif
 %endif
 %endmacro
