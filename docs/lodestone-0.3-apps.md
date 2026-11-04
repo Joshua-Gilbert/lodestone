@@ -842,7 +842,7 @@ Only with the switch on; the core with it off ignores all of this. The details a
 - **What:** `UI_EVENT` and `UI_POLL` give `AX = EV_RCLICK` (FF03h), with BX = x and CX = y as for `EV_CLICK`, for a press of the right button.
   - It is the first user of the right button. Paint (`PAINT.RUN`) declares API 6 and doesn't use it yet; a right-drag to erase is a step of its own.
 - **Only to a program that asks:**
-  - The program must be a `.RUN` that needs API 7 (`RUN_API equ 7`); the core checks its header's version, as `W_FLAGS` does for API 6. Older `.RUN`s (System, Write, the calculator, UITEST) and the Executive never see the event. Their key handling was written before it existed.
+  - The program must be a `.RUN` that needs API 7 (`RUN_API equ 7`); the core checks its header's version, as `W_FLAGS` does for API 6. Older `.RUN`s (System, Write, the calculator, UITEST) never see the event. Their key handling was written before it existed. The Executive sees it in its own list since 2026-11-04 (its menu, below), and only there.
   - The left button must be up.
   - Both buttons pressed in one packet give `EV_CLICK` only.
 - **A window's drag:** `win_mv` follows the mouse through `mouse_event`, which with no event leaves x and y in AX and BX.
@@ -1017,6 +1017,45 @@ The Executive's bottom line now reads, for example, `80286 80287XL  581K + 1120K
   - t_memory: after a 16 KB TSR (TSR.ASM with -DKEEP=400h) the line drops from 565K to 524K, as System's 524.3 KB does. The UI block moves past the TSR and leaves a hole, so the largest run loses more than 16 KB.
   - t_calc_move: a window dragged without a save-under leaves the line as it was. The Executive redraws under a loaded .RUN, so conv_free shows its last figure from a draw with no .RUN loaded. Before this fix the line dropped to 553K and stayed that way after the window closed.
   - Two mutants were each caught: dropping the lend correction (558K against MEMSZ's 565.5) and halving the EMS figure.
+
+## The Executive's right-click menu (2026-11-04)
+A right click in the Executive's list selects the row under it, then opens a menu (`UI_MENU`, at the click) of what applies to that row. Each item is one of the Executive's keys, run as if typed (`ui_dispatch` on `ex_keys`). The menu is there with multitasking on and off. It is the plan's second step; the first made gridfox follow a window's rows (PR #154), and the third adds the modes a program lists for itself, CLAUDE.COM's Web browser among them.
+
+- **What it offers:**
+
+  | Right click on | Items |
+  |---|---|
+  | A file (Title outlined) | Open (Return), Copy (CODE-C), Move (CODE-M), Rename (CODE-R), Delete (CODE-D) |
+  | A DOS program, with `MULTITASK=1` | the same, with Open full screen (Shift-Return) after Open |
+  | A subject (Subject outlined) | Copy, Delete |
+  | No row, or a drive (Device outlined) | Write, Claude, Calculator, Command prompt, Tasks (with `MULTITASK=1`), System, Read the disk again (F5) |
+  | The form, or the band | nothing |
+
+  - Each item shows its key, as Write's menu does: "Rename", a tab to column 21, "CODE-R".
+  - Open full screen runs the program in the Executive's own task (`run_wait`), as Shift-Return does. Under multitasking, Shift held while choosing any program item does the same, because the item goes through Return's path (KMW's `mw_prog` looks at Shift).
+  - A right click on an item of the menu chooses it, as a left one does.
+  - The help window says "Right click   a menu of what applies" (16 lines now, of the 18 it has room for).
+- **How:**
+  - `ex_menu` (EXEC.INC) works out what applies as RMENU.INC's need bits. `RX_ROW` is a row of Title or Subject, `RX_FILE` a file, `RX_PROG` a DOS program, `RX_MT` multitasking on and `RX_NONE` no row. RMENU.INC's own bits, 1 and 2, are left alone.
+  - RMENU.INC, Write's and TERM's menu builder, is shared as it was. It moved from `os/apps` to `os/src`, where both the apps' and the kernel's builds find it.
+  - The items are `ex_items`: a text, a key and what it needs. `K_XFULL` (FE00h, no key's code) stands for Open full screen.
+- **Who gets a right click** (`mouse_event`, UICORE.INC):
+  - Before, only a `.RUN` for API 7.
+  - Now also the Executive's own wait. `ex_rclk` is 1 while `ex_loop` waits in `UI_EVENT` and while its menu is up, and 0 everywhere else: the Executive's forms, its help, a `.RUN` it runs.
+  - With multitasking on, the core makes the event for everyone, so that KMW can route it. `mw_got` then passes it on only to whom it was for: the Executive's wait, or a `.RUN` for API 7. An older `.RUN` (the calculator, Tasks, System) still never sees one.
+  - `mw_got` routes a right click as a left one. On another window, or on the Executive, it brings that one to the front and is taken, with no menu. On the one in front it is that one's. So two right clicks open the Executive's menu from a window in front.
+  - `ex_rclk` is kept per window session, as `ex_mtw` is (KMW's `mw_ctx`, now 2 bytes there). A new session starts with it 0. `ex_mtw` and `ex_rclk` are one word, which `mouse_event` tests at once.
+- **Cost** (multitasking off):
+  - The UI block grows by 572 bytes (`ui_keep_end` 64D0h to 670Ch), so DOS programs get 0.6 / 0.5 KB less: MEMSZ 564.9 KB without EMS, 581.0 KB with it. That is the resident cost Joshua accepted for a menu with multitasking off.
+  - With multitasking on, MEMSZ is 556.9 KB.
+  - LODE.SYS is 50,176 bytes, exactly 98 sectors (49,648 before). ROM 1 has 1,024 bytes (2 sectors) left (1,536 before).
+  - LODEMT.SYS is 21,711 bytes (21,679 before), still 43 sectors.
+  - Three parity pads keep the hot code where it was (EVEN.INC; `mt_par`'s `mw_got` and `mw_poll`).
+- **Tests:**
+  - test_apps `t_exmenu` (multitasking off): a right click on NOTE.TXT selects it, and the menu is its 5 items (88 pixels high), with no Open full screen and no programs. ESC leaves the screen as it was. R, Return gives Rename's form. MEMSZ.COM's menu has the same 5, and Open runs it ("MEMSZ.COM ended"). A right click under the last row clears the message and gives the 6 programs, with no Tasks; Down, Down, Return opens the calculator, and so does a right click on its item. The form and the band give no menu. A drive gives the programs; the subject SUB gives Copy and Delete; the help window has the line; Delete from the menu asks, and Return deletes.
+  - test_apps `t_rclick`: its two checks that the Executive saw no right click now see EV_RCLICK, then the left click that closes the menu.
+  - test_mt `t_exmenu` (9 checks, multitasking on): LCMD.COM's menu is 6 items with Open full screen. That runs LCMD in task 0, full screen, with no task for it, and EXIT comes back ("LCMD.COM ended"). No row gives 7 programs with Tasks. Open on LCMD.COM is a task in a terminal window, as Return. With the calculator up and the Executive in front, a right click on the calculator's title brings it to the front with no menu. A right click on the Executive's list brings it to the front with no menu, and the next one opens it. ESC leaves the calculator open.
+- **Untested:** a right click on a window of a `.RUN` for API 7 while another is in front (only the calculator, an older one, is tested); Open full screen on an `.EXE` (only `.COM`s).
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:

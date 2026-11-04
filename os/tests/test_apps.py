@@ -265,7 +265,7 @@ def t_core():
     check('help window from the key table', has(k, 'CODE-F     the form') and has(k, 'ESC        leave'), screen(k))
     check('help and form windows centred across, help\'s as wide as its longest line or title + 6, between the title rule '
           'and the band (the Executive\'s help, the form, UITEST\'s help: column, row, width, height)',
-          geo == [(11, 44, 57, 292), (15, 96, 50, 100), (27, 140, 26, 100)], geo)
+          geo == [(11, 36, 57, 308), (15, 96, 50, 100), (27, 140, 26, 100)], geo)   # (the Executive's: 16 lines since its menu)
     k.key('x')
     check('help: any key closes it, the screen as it was', k.pc.rd(0xB800, 0, 0x8000) == before)
     lst = k.u16('run_base') + run_syms('tests/UITEST.ASM')['lst']
@@ -334,8 +334,10 @@ def t_system():
     k.key(ktest.ENTER)
     info = infos[-1] if infos else ''
     m = re.match(r'80286 80287XL  (\d+)K free  Plasma 640x400  Mouse COM2  BIOS ', info)
+    # (the line is the free memory, whole KB; a program first takes its copy of the environment from it, up to
+    #  half a KB: MEMSZ 564.9 shows as 565K)
     check('the info line: free memory, what a DOS program gets (MEMSZ %.1f KB): "%s"' % (memsz, info),
-          m and memsz > 0 and int(memsz) - 1 <= int(m.group(1)) <= memsz, info)
+          m and memsz > 0 and int(memsz) - 1 <= int(m.group(1)) <= memsz + 0.5, info)
     k.key(CODE['U'])
     shot(k, 'system_memory')
     m = re.search(r'Free for programs\s+([\d.]+) KB', screen(k))
@@ -2702,8 +2704,8 @@ def rc_events(k, src='tests/RCTEST.ASM'):
 
 def t_rclick():
     """Right clicks (UI API 7): EV_RCLICK, with x and y, only to a .RUN that
-    needs API 7; the core's own waits ignore it; the Executive and older
-    .RUNs never see it."""
+    needs API 7 and to the Executive's own list (its menu, t_exmenu); the
+    core's own waits ignore it; older .RUNs never see it."""
     print('== right clicks (UI API 7)')
     hdr = open(RCTEST, 'rb').read(6), open(RC6, 'rb').read(6)
     check('RCTEST.RUN needs API 7, RC6.RUN 6 (the same program)', hdr == (b'GRUN\x07\x00', b'GRUN\x06\x00'), hdr)
@@ -2711,9 +2713,10 @@ def t_rclick():
     made, ev = [], k.Y['ui_event.got']                  # (every event UI_EVENT gets, a jump target)
     k.hooks.append(lambda pc: made.append(pc.r('ax')) if pc.r('ip') == ev and pc.r('cs') == k.useg else None)
     sel0 = k.u16('sel')
-    press(k, 300, 200, 2); press(k, 320, 5, 1)
-    check('in the Executive: a right click makes no event at all (the left one does: the hook sees events)',
-          made == [0xFF01] and not k.crashed, [hex(a) for a in made])
+    press(k, 300, 200, 2); menu = k.u16('wdepth'); press(k, 320, 5, 1)
+    check('in the Executive\'s list: a right click is EV_RCLICK (its menu opens); a left click outside the menu closes it, taken',
+          made == [0xFF03, 0xFF01] and menu == 1 and k.u16('wdepth') == 0 and k.u16('sel') == sel0 and not k.crashed,
+          ([hex(a) for a in made], menu))
     k.select('RCTEST.RUN'); k.key(ktest.ENTER)
     press(k, 100, 50, 2)
     check('in an API 7 .RUN: a right press is EV_RCLICK (FF03h) at (100, 50), its release nothing', rc_events(k) == [(0xFF03, 100, 50)],
@@ -2772,7 +2775,8 @@ def t_rclick():
     k.key(ktest.ESC)
     made.clear()
     press(k, 300, 200, 2); press(k, 320, 5, 1)
-    check('back in the Executive (the last .RUN needed API 7): still no right clicks', made == [0xFF01] and k.rd('run_active', 1) == b'\x00',
+    check('back in the Executive (the last .RUN needed API 7): a right click its own menu\'s again (EV_RCLICK, then the left '
+          'click that closes it)', made == [0xFF03, 0xFF01] and k.rd('run_active', 1) == b'\x00' and k.u16('wdepth') == 0,
           [hex(a) for a in made])
     k.select('RC6.RUN'); k.key(ktest.ENTER)
     press(k, 100, 50, 2); press(k, 120, 60, 1)
@@ -3243,6 +3247,80 @@ def body(k):
     v = k.pc.rd(0xB800, 0, 0x8000)
     return b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:][:80] for y in range(24, 400))
 
+def t_exmenu():
+    """The Executive's right-click menu (ex_menu, RMENU.INC): the row clicked
+    selected, then what applies to it, each item a key of the Executive's
+    taken as typed.  A file: Open, Copy, Move, Rename, Delete; a subject:
+    Copy, Delete; no row, or a drive: the programs and F5.  None on the
+    form or the band.  With multitasking off, no Open full screen nor Tasks."""
+    print('== the Executive\'s right-click menu')
+    note = os.path.join(OUT, 'NOTE.TXT'); open(note, 'wb').write(b'a note\r\n')
+    k = ktest.KPC(image('exmenu.img', CALCRUN, MEMSZ, note, 'SUB\\', 'SUB\\IN.TXT=' + note)); k.pc.mouse = True; k.start()
+    hw = lambda: struct.unpack('<4H', k.rd('help_w', 8))
+    def rpress(x, y):
+        point(k, x, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+    def rowy(name):
+        return 24 + 16 * (k.exec_list().index(name) - k.u16('top')) + 8
+    up = lambda: k.u16('wdepth') == 1
+    n = len(k.exec_list())
+    k.select('NOTE.TXT'); point(k, 100, 100); v0 = body(k)
+    k.select('CALC.RUN')
+    rpress(100, rowy('NOTE.TXT'))
+    shown = up(), hw()[3], [has(k, t) for t in ('Open', 'Copy', 'Move', 'Rename', 'Delete', 'CODE-R')]
+    check('a right click on NOTE.TXT: it selected, a menu of 5 there (Open, Copy, Move, Rename, Delete, each with its key); '
+          'no Open full screen, no programs', k.exec_list()[k.u16('sel')] == 'NOTE.TXT' and shown[:2] == (True, 88)
+          and all(shown[2]) and not has(k, 'Open full screen') and not has(k, 'Calculator'), (shown, k.exec_list()[k.u16('sel')]))
+    k.key(ktest.ESC); point(k, 100, 100)
+    check('... ESC: none, the screen as it was', not up() and body(k) == v0 and not k.crashed, k.u16('wdepth'))
+    rpress(100, rowy('NOTE.TXT')); k.key('R'); k.key(ktest.ENTER)
+    check('... R, Return: Rename, its form for NOTE.TXT (as CODE-R)', has(k, 'Rename NOTE.TXT'), screen(k))
+    k.key(ktest.ESC)
+    rpress(100, rowy('MEMSZ.COM'))
+    check('a right click on MEMSZ.COM (multitasking off): the same 5, no Open full screen', up() and hw()[3] == 88
+          and not has(k, 'Open full screen'), (hw(), screen(k)))
+    k.pc.tty.clear(); k.key(ktest.ENTER, settle=False)       # Open: lit first
+    k.pc.run_until(lambda: k.pc.mode() != 0x40, 5)
+    ktest.run_answering(k.pc, lambda: k.pc.mode() == 0x40, 30); k.settle()
+    check('... Return on Open: MEMSZ runs, as Return on it ("MEMSZ.COM ended")', 'KB' in ''.join(k.pc.tty)
+          and any('MEMSZ.COM ended' in l for l in k.band()), (''.join(k.pc.tty)[-80:], k.band()))
+    yfree = 24 + 16 * n + 8                                   # (under the last row)
+    rpress(100, yfree)
+    launch = [has(k, t) for t in ('Write', 'Claude', 'Calculator', 'Command prompt', 'System', 'Read the disk again')]
+    check('a right click under the last row (the message in the band gone): the programs and F5, 6 (no Tasks without '
+          'multitasking), the selection as it was', up() and hw()[3] == 6 * 16 + 8 and all(launch) and not has(k, 'Tasks')
+          and not has(k, 'MEMSZ.COM ended') and k.exec_list()[k.u16('sel')] == 'MEMSZ.COM', (hw(), launch, k.band()))
+    calc = lambda: k.rd('run_active', 1) == b'\x01' and has(k, 'Calculator') and not has(k, 'Command prompt')
+    k.key(ktest.DOWN); k.key(ktest.DOWN); k.key(ktest.ENTER)
+    check('... Down, Down, Return: the calculator (CODE-K), the menu gone', calc(), (k.rd('run_active', 1), screen(k)))
+    k.key(ktest.ESC); point(k, 100, 100)
+    rpress(100, yfree); y0 = hw()[1]
+    rpress(hw()[0] * 8 + 16, y0 + 4 + 16 * 2 + 8)            # a right click on its third item
+    check('... a right click on an item chooses it, as a left one (Calculator)', calc(), (hw(), k.rd('run_active', 1)))
+    k.key(ktest.ESC); point(k, 100, 100)
+    rpress(100, 250); f = up(); rpress(100, 380)
+    check('a right click on the form, and on the band: no menu', not f and not up() and not k.crashed, (f, k.u16('wdepth')))
+    k.key(ktest.TAB)                                          # Device
+    rpress(100, 24 + 8)
+    check('Device outlined, a right click on a drive: the programs (as no row)', focus(k) == 1 and up() and hw()[3] == 104,
+          (focus(k), hw()))
+    k.key(ktest.ESC); k.key(ktest.ESC)                        # (the menu, then back to Title)
+    k.key(K_BTAB)                                             # Subject
+    rpress(100, 24 + 16 + 8)                                  # its second row: SUB
+    check('Subject outlined, a right click on SUB: it chosen, Copy and Delete', focus(k) == 2 and up() and hw()[3] == 40
+          and has(k, 'Copy') and has(k, 'Delete'), (focus(k), hw(), subjects(k)))
+    k.key(ktest.ESC); k.key(ktest.ESC)
+    to_subject(k, 'Root')
+    k.key(ktest.F1)
+    check('the help window: "Right click   a menu of what applies"', has(k, 'Right click') and has(k, 'a menu of what applies'),
+          screen(k))
+    k.key(ktest.ESC)
+    rpress(100, rowy('NOTE.TXT')); k.key('D'); k.key(ktest.ENTER)
+    asked = k.band()
+    k.key(ktest.ENTER)
+    check('Delete from the menu on NOTE.TXT: asked (as CODE-D), Return: gone', any('Delete' in l for l in asked)
+          and 'NOTE.TXT' not in k.exec_list() and not k.crashed, (asked, k.exec_list()))
+
+
 def t_menu():
     """UI_MENU and UI_MOUSE (UI API 8): a pop-up menu at a right click, chosen
     by keys or a click, cancelled by ESC or a click outside; the screen under
@@ -3657,7 +3735,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_menu, t_clip, t_write_mouse, t_write_clip,
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_menu, t_clip, t_write_mouse, t_write_clip,
               t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
