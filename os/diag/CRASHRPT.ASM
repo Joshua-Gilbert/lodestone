@@ -106,6 +106,12 @@ prev:   push    ds
         mov     dx, s_pp
         cmp     al, 'P'
         je      .p
+        mov     dx, s_p6
+        cmp     al, '6'
+        je      .p
+        mov     dx, s_p7
+        cmp     al, '7'
+        je      .p
         mov     dx, s_p0
 .p:     mov     ah, 9
         int     21h
@@ -124,6 +130,10 @@ s_p2    db      'Last session: the catch was entered, but died before the report
 s_p3    db      'Last session: the report was kept, but the catch died before the', 13, 10
         db      'screen $'
 s_p4    db      'Last session: caught, the report shown $'
+s_p6    db      'Last session: 40:67h, the catch', 39, 's address, was found overwritten', 13, 10
+        db      'at a tick and put back; the restart then never reached the catch $'
+s_p7    db      'Last session: CMOS 0Fh, the shutdown code, was found changed at a', 13, 10
+        db      'window operation and set again; the restart never reached the catch $'
 s_pp    db      'Last session: ended by a restart asked for $'
 s_pw    db      13, 10, 'Its last window operation: '
 s_win   db      '?', ' (E end, C close, O open, U raise, D drop, W unwin, Z resize,', 13, 10
