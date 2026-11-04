@@ -698,6 +698,7 @@ class PC:
         if port == 0x3DA:
             return 0x08 if int(s.us / 1000) % 16 == 0 else 0x00
         if 0x2F8 <= port <= 0x2FF: return s.uart_in(port - 0x2F8)
+        if s.com1 is not None and 0x3F8 <= port <= 0x3FF: return s.com1.read(port - 0x3F8)
         if s.ems_pages and (port & 0x3FFF) == 0x258: s.us += EMS_IO_US; return s.ems_reg[port >> 14]
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             v = s.chip.read(port >> 10)
@@ -817,6 +818,7 @@ class PC:
             elif val & 0x9A == 0x0A: s.pic_rr = val & 3  # OCW3: read IRR / ISR
             return
         if 0x2F8 <= port <= 0x2FF: return s.uart_out(port - 0x2F8, val)
+        if s.com1 is not None and 0x3F8 <= port <= 0x3FF: return s.com1.write(port - 0x3F8, val)
         if s.ems_pages and (port & 0x3FFF) == 0x258:
             w = port >> 14
             if s.fd_dma() and s.fd_op['ah'] in (2, 3) and val != s.ems_reg[w]:
@@ -867,6 +869,7 @@ class PC:
             u['mcr'] = v
         elif o == 7: u['scr'] = v
     mouse = False
+    com1 = None         # a device at 3F8h-3FFh (read(o), write(o, v)): the internal modem's UART
 
     def mouse_move(s, dx, dy, buttons=0):
         """Queue a Microsoft-protocol packet and raise IRQ3."""
