@@ -70,6 +70,8 @@ In pcemu, Return on CLAUDE.COM gives `gnNLlqHiGnNLlb…`.
 
 In pcemu: `gNLPvweslqHiG…`.
 
+**Then `w`, with no `e`: found.** On the 1520, writing an EMS page register while the floppy controller's DMA runs resets the machine. M10's switch at a floppy wait did exactly that in `mt_load`. Fixed (2026-11-04): MT no longer changes a page register while a floppy transfer's DMA is under way. The multitasking doc ("Found: an EMS page register written during the floppy's DMA") has the details. The builds here have the fix too, in case anything still restarts.
+
 **Disk-wait phases (the low nibble too).** The low nibble also records the disk waits' phases as they happen:
 - `g`: a task goes out;
 - `i`: IRQ 6 comes;
