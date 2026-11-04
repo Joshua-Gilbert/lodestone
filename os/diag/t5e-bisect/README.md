@@ -21,4 +21,14 @@ window with the mouse.
 - `E-main`: main as it is (its CRASHLOG kernel, its apps): the control.
 
 A restarted (2026-11-04).
+D and E restarted too (main has it; T5e only moved memory), and C (no
+floppy wait given away) as well: not the floppy's DMA. CRASHME K (the
+keyboard controller's reset) is caught, as are R and S: what restarts the
+machine is none of those. In the builds that keep the 287 at a switch the
+last step was P three times in four: just after FRSTOR, whose operands
+the 287 takes in the background while the CPU goes on to port I/O.
+
+- `F-fwait`: all of T5e, with FWAIT after mt_load's FRSTOR (and FNINIT):
+  the 287 done before anything else runs. No restart: the 1520 can't take
+  that overlap.
 
