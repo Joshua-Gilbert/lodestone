@@ -41,9 +41,8 @@ subject     resb 70
 ex_code     resw 1
 rowmask     resb 1
 panel       resb 1
-convkb      resw 1
-emskb       resw 1
 extkb       resw 1
+freekb      resw 1                  ; conv_free's last figure (shown while a .RUN is loaded)
 lampw       resb 1                  ; the coprocessor lamp: 0 none, 7 80287, 9 287XL
 biosdate    resb 8
 kindbuf     resb 4
@@ -2834,14 +2833,8 @@ draw_form:
 ; ---------------------------------------------------------------------
 section uiboot                          ; (once, at start-up: UICORE.INC ui_boot)
 sysinfo:
-        int     12h
-        mov     [convkb], ax
-        mov     ax, 0E440h
-        int     15h
-        jnc     .e1
-        xor     cx, cx
-.e1:    mov     [emskb], cx
-        mov     ax, 0E441h
+        mov     ax, 0E441h              ; extended memory (shown when there
+                                        ;  is no EMS manager: nothing uses it)
         int     15h
         jnc     .e2
         xor     cx, cx
@@ -2852,8 +2845,8 @@ sysinfo:
         shl     al, 1
         add     al, 5
 .f:     mov     [lampw], al
-        mov     dx, 7F8h
-        in      al, dx
+        mov     dx, 7F8h                ; the video status (what the BIOS's
+        in      al, dx                  ;  INT 15h E420h reads: build_info)
         mov     [panel], al
         push    ds
         mov     ax, 0F000h
@@ -2869,9 +2862,13 @@ sysinfo:
 
 %include "FPU.INC"
 section ui
+%include "EMM.INC"
 
-; "80286 80287XL   640K + ...": the coprocessor, when there is one, is lit
-; (draw_all inverts " 80287 " or " 80287XL " after drawing the line)
+; "80286 80287XL  512K + 1536K EMS free  Plasma 640x400  Mouse COM1  BIOS
+; 10/25/89" (79 at most: 2048K is all the EMS a 1520 has): the coprocessor,
+; when there is one, is lit (draw_all inverts " 80287 " or " 80287XL "
+; after drawing the line).  The memory is what is free now: drawn again,
+; it is read again.
 build_info:
         mov     di, infobuf
         mov     si, s_cpu
@@ -2885,15 +2882,30 @@ build_info:
         rep     movsb
 .nf:    mov     si, s_gap
         call    sb_str
-        mov     ax, [convkb]
+        call    conv_free
         call    sb_u16
+        push    di                      ; "512K + 1536K EMS free": the EMS
+        call    ems_mgr                 ;  manager's free pages
+        pop     di
+        jc      .noemm
+        mov     ah, 42h
+        int     67h
+        or      ah, ah
+        jnz     .noemm
+        xchg    ax, bx
+        mov     cl, 4
+        shl     ax, cl                  ; (16 KB a page)
+        push    ax
         mov     si, s_k
         call    sb_str
-        mov     ax, [emskb]
+        pop     ax
         mov     si, s_ems
-        or      ax, ax
-        jnz     .m
+        jmp     short .m
+.noemm: mov     si, s_kfree             ; "512K free", "512K free + 384K ext"
+        call    sb_str
         mov     ax, [extkb]
+        or      ax, ax
+        jz      .nm
         mov     si, s_ext
 .m:     push    si
         push    ax
@@ -2903,16 +2915,19 @@ build_info:
         call    sb_u16
         pop     si
         call    sb_str
-        mov     si, s_gap
+.nm:    mov     si, s_gap
         call    sb_str
-        mov     al, [panel]
-        and     al, 0Fh
-        mov     si, s_plasma
-        cmp     al, 0Dh
-        je      .p
-        mov     si, s_lcd
+        mov     al, [panel]             ; port 7F8h, as the BIOS's E420h has
+        and     al, 0Fh                 ;  it (TechRef 3-20; gridcase-bios
+        mov     si, s_plasma            ;  video.inc): bit 3 the internal
+        cmp     al, 0Dh                 ;  panel, 5 plasma 640x400, 7 LCD
+        je      .p                      ;  640x400 (1, 6: 640x200, which
+        mov     si, s_lcd               ;  can't show Lodestone)
         cmp     al, 0Fh
         je      .p
+        mov     si, s_external
+        test    al, 8
+        jz      .p
         mov     si, s_panel
 .p:     call    sb_str
         mov     si, s_gap
@@ -2934,6 +2949,50 @@ build_info:
         mov     cx, 8
         rep     movsb
         mov     byte [di], 0
+        ret
+
+; -> AX = KB of conventional memory free: what a DOS program started now
+; would get, as System's "Free for programs" has it.  The kernel's largest
+; free block (INT 21h 48h, which merges the free runs as it looks), or the
+; run straight after this block with what ui_lend gives a program (the
+; directory's memory) added, when that is more.  While a .RUN is loaded
+; (its window over the Executive, which redraws under it) the figure from
+; the last line drawn without one: the .RUN's memory is not counted as
+; gone, and the line under its window stays as it was.  ES = CS after.
+conv_free:
+        mov     ax, [freekb]
+        cmp     byte [run_active], 0
+        jne     .x
+        mov     bx, 0FFFFh
+        mov     ah, 48h
+        int     21h
+        cmp     ax, 8                   ; (7: the arena is damaged: 0, and
+        je      .lend                   ;  no MCB read)
+        xor     bx, bx
+        jmp     short .kb
+.lend:  mov     ax, cs
+        dec     ax
+        mov     es, ax
+        cmp     byte [es:0], 'Z'
+        je      .kb
+        mov     cx, [es:3]              ; this block's size now (lent or not)
+        add     ax, cx
+        inc     ax
+        mov     es, ax                  ; the next MCB
+        cmp     word [es:1], 0
+        jne     .kb                     ; (not free)
+        mov     ax, [es:3]
+        add     ax, cx
+        sub     ax, UI_KEEP_PARAS
+        cmp     ax, bx
+        jbe     .kb
+        xchg    ax, bx
+.kb:    xchg    ax, bx
+        mov     cl, 6
+        shr     ax, cl
+        mov     [freekb], ax
+.x:     push    cs
+        pop     es
         ret
 
 ; ---------------------------------------------------------------------
@@ -3005,13 +3064,15 @@ s_nohires   db 'Lodestone needs the GRiD 640x400 panel (BIOS mode 40h).',13,10
             db 'Press a key to restart.',13,10,0
 s_cpu       db '80286',0
 s_fpu       db ' 80287XL'
-s_gap       db '   ',0
+s_gap       db '  ',0                   ; (2: the longest line is 79)
 s_k         db 'K',0
+s_kfree     db 'K free',0
 s_plus      db ' + ',0
-s_ems       db 'K EMS',0
+s_ems       db 'K EMS free',0
 s_ext       db 'K ext',0
 s_plasma    db 'Plasma 640x400',0
 s_lcd       db 'LCD 640x400',0
+s_external  db 'External',0         ; (bit 3 clear: the RGB port)
 s_panel     db 'Panel',0
 s_mouse1    db 'Mouse COM1',0
 s_mouse2    db 'Mouse COM2',0

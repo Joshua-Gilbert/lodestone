@@ -8,7 +8,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
 sys.path.insert(0, GOS); sys.path.insert(0, os.path.join(GOS, 'tests'))
 import ktest, mkimg
-from test_apps import CODE, K_CODE_ENTER
+from test_apps import CODE, K_CODE_ENTER, click
 OUT = os.path.join(HERE, 'readme')
 TMP = os.path.join(__import__('tempfile').gettempdir(), 'lodestone-readme')
 os.makedirs(OUT, exist_ok=True); os.makedirs(TMP, exist_ok=True)
@@ -69,4 +69,27 @@ k.settle(10)
 k.key(CODE['U'])
 for _ in range(5): k.key(ktest.DOWN, settle=False)
 k.settle(); shot('system_display'); k.key(ktest.ESC)
+# Multitasking (MULTITASK=1): LCMD (CODE-P) and BENCH (Return on it) as
+# tasks, each in a terminal window made smaller (CODE-F8) and placed
+# (CODE-F7) over the Executive's list, which stays usable beside them
+ini = os.path.join(TMP, 'LODE.INI'); open(ini, 'wb').write(b'MULTITASK=1\r\n')
+img = mkimg.build(os.path.join(TMP, 'mt.img'), files + [os.path.join(GOS, 'src', 'LODEMT.SYS'),
+                  os.path.join(GOS, 'apps', 'TERM.RUN'), os.path.join(GOS, 'fonts', 'TERM.FNT'), 'LODE.INI=' + ini])
+k = ktest.KPC(img, ems_pages=88, irq_exact=True); k.pc.mouse = True; k.start(20)
+def keys(*ks, t=0.3):                   # (no settle: with tasks running the machine never idles)
+    for x in ks: k.key(x, settle=False); k.run_for(t)
+def arrows(cols, rows):
+    for _ in range(abs(cols)): keys(ktest.LEFT if cols < 0 else ktest.RIGHT, t=0.05)
+    for _ in range(abs(rows)): keys(ktest.UP if rows < 0 else ktest.DOWN, t=0.05)
+    keys(ktest.ENTER, t=1.0)
+keys(CODE['P'], t=3.0); keys('dir /w', ktest.ENTER, t=2.0)
+keys(0x6F00); arrows(-40, -11)          # CODE-F8: 40 columns, 8 rows
+click(k, 600, 300); k.run_for(0.5)      # the Executive in front again
+i, s = k.exec_list().index('BENCH.COM'), k.u16('sel')
+keys(*([ktest.DOWN] * (i - s) + [ktest.UP] * (s - i)), t=0.1)
+keys(ktest.ENTER, t=2.0)
+keys(0x6F00); arrows(-29, -11)          # 51 columns, 8 rows ...
+keys(0x6E00); arrows(28, -4)            # ... at the right, level with LCMD's
+k.run_for(6.0); shot('multitasking')
+keys(CODE['T'], t=1.0); shot('tasks')    # CODE-T: the tasks, over them
 print('\n'.join(sorted(os.listdir(OUT))))

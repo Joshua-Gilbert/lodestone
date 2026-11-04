@@ -995,6 +995,29 @@ The help windows say less, and System's About no longer calls Lodestone a workin
 ## Close boxes for programs that need ESC (UI API 9, 2026-10-27)
 With `MULTITASK=1`, a `.RUN` that asks for API 9 gets `EV_CLOSE` (0FF05h) from `UI_EVENT` for a click on its window's close box, not K_ESC, so that ESC can mean something else to it. The terminal window (TERM.RUN) is the one: its ESC goes to the program in it, and its close box asks, then ends that program. KMW's `mw_got` gives it (the UI core only says API 9 now); with the switch off the close box gives ESC, even to an API 9 `.RUN`. Older `.RUN`s get ESC as before. Design and tests: `lodestone-multitasking.md`, M9c.
 
+## The info line: free memory (2026-11-03)
+The Executive's bottom line now reads, for example, `80286 80287XL  581K + 1120K EMS free  Plasma 640x400  Mouse COM2  BIOS 10/25/89`.
+- **Free, not installed.** The first figure is the conventional memory a DOS program started now would get. It is the same figure as System's "Free for programs", and agrees with MEMSZ.COM.
+  - `conv_free` asks the kernel for its largest free block (INT 21h 48h with BX = FFFFh, which merges free runs as it scans).
+  - It also takes the run right after the UI block, plus what `ui_lend` gives a program (the directory buffer, down to `UI_KEEP_PARAS`), and uses that when it is larger. No lend is added while a `.RUN` is loaded.
+  - The second figure is the EMS manager's free pages (INT 67h 42h), shown as `K EMS free`. INT 67h is called only after `ems_mgr` finds `EMMXXXX0`; `ems_mgr` is now `src/EMM.INC`, shared with System.
+  - Without an EMS manager the line is `565K free`, plus `+ nnnK ext` when the BIOS reports extended memory. Nothing in Lodestone uses that memory, so all of it is free.
+  - It is read each time the line is drawn, so it shows what is free after a program ends or a TSR stays.
+- **The panel is read from the hardware.** The line reads port 7F8h. The 1520's BIOS answers INT 15h E420h (TechRef 3-20, "Select or Get Current Display") by reading that same port (`GridDisplay20` in gridcase-bios):
+  - bit 3 set means the internal panel, and bits 0-2 give its kind: 5 is plasma 640x400 (`Plasma 640x400`), 7 is LCD 640x400 (`LCD 640x400`);
+  - bit 3 clear means the external RGB port (`External`);
+  - anything else shows `Panel`. A 640x200 panel can't show Lodestone (mode 40h).
+  - pcemu's `vid_status` (default FDh) sets what the port reads.
+- **Width.** The gaps are 2 spaces, not 3. The longest line, with 4-digit EMS and a 287XL, is 79 characters.
+- **Cost.** The UI block grows by 160 bytes (10 paragraphs: `UI_KEEP_PARAS` 643h to 64Dh), so DOS programs get 0.2 / 0.1 KB less (MEMSZ 565.5 / 581.6 KB). The added code sits after `draw_all`, and both of its shifts (30 and 138 bytes) are even, so the hot labels keep their parity. `sysinfo` no longer reads INT 12h or E440h.
+- **Tests (test_apps):**
+  - t_system: the line's free figure is MEMSZ's, with no EMS on the line without an EMS manager;
+  - t_memory: with EMS, conventional free is MEMSZ's, EMS free is System's, and the line is at most 80 characters;
+  - t_calc: ports FFh, F5h and FEh show `LCD 640x400`, `External` and `Panel`, on the line and in System's Devices, and 384 KB of extended memory (pcemu's `ext_kb`) shows as `+ 384K ext`;
+  - t_memory: after a 16 KB TSR (TSR.ASM with -DKEEP=400h) the line drops from 565K to 524K, as System's 524.3 KB does. The UI block moves past the TSR and leaves a hole, so the largest run loses more than 16 KB.
+  - t_calc_move: a window dragged without a save-under leaves the line as it was. The Executive redraws under a loaded .RUN, so conv_free shows its last figure from a draw with no .RUN loaded. Before this fix the line dropped to 553K and stayed that way after the window closed.
+  - Two mutants were each caught: dropping the lend correction (558K against MEMSZ's 565.5) and halving the EMS figure.
+
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
   - **The TSR case:** the empty list and .RUNs that wouldn't load. Fixed with `ui_room` and the move.
