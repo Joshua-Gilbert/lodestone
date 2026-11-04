@@ -44,6 +44,7 @@ TESTKEY_COM = _find('TESTKEY_COM', os.path.join(ROOT, '..', 'os', 'claude', 'TES
                     '/home/claude/gos/claude/TESTKEY.COM')
 GRIDGPIB_COM = _find('GRIDGPIB_COM', os.path.join(ROOT, '..', 'tools', 'GRIDGPIB.COM'),
                      '/home/claude/TM5000/driver/gridgpib/GRIDGPIB.COM')
+SERLINK_COM = _find('SERLINK_COM', os.path.join(ROOT, '..', 'tools', 'SERLINK.COM'))
 
 TICK_US = 1e6 * 65536 / 1193182        # 54925.4 us
 BLOCK_US = 4.0
@@ -159,6 +160,7 @@ class Machine:
         s.saver = None                                  # (FakeSaver: INT 21h F0h AL=5)
         # the PIC as far as IRQ 5 goes (the 7210's INT through the GPIB cartridge's E1 jumper; GRIDGPIB 1.2)
         s.pic_mask = 0xB8; s.in5 = False; s.pic_rr = 2; s.irq5 = False; s.chip_int_was = False; s.irqs5 = 0
+        s.uart = None; s.inu = False; s.irqsu = 0       # (serial_model.Uart on IRQ 3 or 4: SERLINK.COM)
         for n in range(256):
             mu.mem_write(n * 4, struct.pack('<HH', n * 8, STUB))
             mu.mem_write(STUB * 16 + n * 8, bytes([0xCD, n, 0xCA, 0x02, 0x00]))
@@ -201,7 +203,7 @@ class Machine:
         s.last_blk = (addr, size)
         s.us += BLOCK_US
         if s.us >= s.next_event: s.on_time()
-        if s.irq5 and s.deliverable(): uc.emu_stop()      # (after an STI, say)
+        if (s.irq5 or s.uart is not None) and s.deliverable(): uc.emu_stop()      # (after an STI, say)
 
     def on_time(s):
         while s.us >= s.next_tick:
@@ -223,9 +225,23 @@ class Machine:
         s.chip_int_was = v
 
     def deliverable(s):
-        return s.irq5 and not s.in5 and not s.pic_mask & 0x20 and bool(s.r('flags') & 0x200)
+        return s._irq5_ok() or s._uart_ok()
+
+    def _irq5_ok(s):
+        return s.irq5 and not s.in5 and not s.inu and not s.pic_mask & 0x20 and bool(s.r('flags') & 0x200)
+
+    def _uart_ok(s):
+        u = s.uart
+        return (u is not None and not s.inu and not s.pic_mask & (1 << u.irq) and bool(s.r('flags') & 0x200)
+                and u.int_pending())
 
     def deliver(s):
+        if s._uart_ok():                    # (IRQ 3 or 4: ahead of IRQ 5)
+            s.inu = True; s.irqsu += 1
+            off, seg = struct.unpack('<HH', s.rd(0, (8 + s.uart.irq) * 4, 4))
+            s.push(s.r('flags')); s.push(s.r('cs')); s.push(s.r('ip'))
+            s.w('flags', s.r('flags') & ~0x300); s.w('cs', seg); s.w('ip', off)
+            return
         s.irq5 = False; s.in5 = True
         off, seg = struct.unpack('<HH', s.rd(0, 0x0D * 4, 4))
         s.push(s.r('flags')); s.push(s.r('cs')); s.push(s.r('ip'))
@@ -250,6 +266,7 @@ class Machine:
             return 0x00 | ((int(s.us / 15.085) & 1) << 4)
         if port == 0x21: return s.pic_mask
         if port == 0x20: return (0x20 if s.in5 else 0) if s.pic_rr == 3 else (0x20 if s.irq5 else 0)
+        if s.uart is not None and s.uart.base <= port < s.uart.base + 8: return s.uart.read(port - s.uart.base)
         if (port & 0x3FF) == S.BASE and port < 0x2000:
             v = s.chip.read(port >> 10)
             s.chip_int()
@@ -263,8 +280,12 @@ class Machine:
                 s.pit_latch = (65536 - 2 * n) & 0xFFFF; s.pit_hi = False
             return
         if port == 0x21: s.pic_mask = val & 0xFF; return
+        if s.uart is not None and s.uart.base <= port < s.uart.base + 8:
+            s.uart.write(port - s.uart.base, val & 0xFF); return
         if port == 0x20:
-            if val == 0x20: s.in5 = False                   # EOI
+            if val == 0x20:                                 # EOI: the highest in service
+                if s.inu: s.inu = False
+                else: s.in5 = False
             elif val & 0x9A == 0x0A: s.pic_rr = val & 3     # OCW3: read IRR / ISR
             return
         if (port & 0x3FF) == S.BASE and port < 0x2000:
@@ -993,13 +1014,15 @@ class EmuHarness:
     real gridlink (Link + Session) <-> scripted Claude."""
     def __init__(s, script=None, patched=True, files=None, mode='ask', answer='y', args='/A:7',
                  claude_com=CLAUDE_COM, mapfile=None, baud=115200, term=None, web=None, bridge='ar488',
-                 frame_cap=None):
+                 frame_cap=None, serlink=None):
+        s.serlink = serlink                       # SERLINK.COM's arguments (bridge 'serial' or 'modem')
         s.m = m = Machine()
         s.tmp = tempfile.mkdtemp(prefix='gridemu-')
         s.wire(m.chip.devices, bridge, patched, baud, script, mode, term, web, frame_cap)
         img = open(claude_com, 'rb').read()
         m.fs['A:\\CLAUDE.COM'] = bytearray(img)
         m.fs['A:\\GRIDGPIB.COM'] = bytearray(open(GRIDGPIB_COM, 'rb').read())
+        if os.path.exists(SERLINK_COM): m.fs['A:\\SERLINK.COM'] = bytearray(open(SERLINK_COM, 'rb').read())
         if os.path.exists(TESTKEY_COM): m.fs['A:\\TESTKEY.COM'] = bytearray(open(TESTKEY_COM, 'rb').read())
         m.fs['A:\\COMMAND.COM'] = bytearray(b'\xcd\x20' + bytes(100))
         for k, v in (files or {}).items(): m.fs[m.norm(k)] = bytearray(v)
@@ -1020,16 +1043,36 @@ class EmuHarness:
         claude_kernel's KernelHarness's)"""
         m = s.m
         s.pending = []
-        if bridge in ('pico', 'pico-hold', 'pico-quiet'):
+        s.piport = None
+        if bridge in ('serial', 'modem'):
+            # SERLINK.COM on the GRiD: a null-modem cable to COM2, or the internal modem on COM1 calling the Pi's
+            # USB modem through the HT802 (serial_model.py); gridlink's SerialLink / ModemLink on the Pi
+            from serial_model import Uart, PiPort, Cable, ModemCall
+            from gridlink.serline import SerialLink, ModemLink
+            base, irq = (0x3F8, 4) if bridge == 'modem' else (0x2F8, 3)
+            s.uart = m.uart = Uart(base, irq, m.clock, m.schedule)
+            s.piport = PiPort(m.clock, m.schedule)
+            log0 = []
+            if bridge == 'serial':
+                s.line = Cable(s.uart, s.piport)
+                s.transport = SerialLink('/dev/emu', baud if baud != 115200 else 19200, log=log0.append, ser=s.piport)
+            else:
+                s.line = ModemCall(s.uart, s.piport)
+                s.transport = ModemLink('/dev/emu', 115200, log=log0.append, ser=s.piport)
+            s.transport.open(); s.transport.configure()
+            s.nano = None
+            m.on_due = s.pump_pi
+        elif bridge in ('pico', 'pico-hold', 'pico-quiet'):
             s.nano = PicoModel(m.clock, addr=7, to_pi=s._to_pi, holds=bridge == 'pico-hold',
                                quiet=bridge == 'pico-quiet')
             s.transport = PicoModelTransport(s.nano)
         else:
             s.nano = AR488Model(m.clock, addr=7, patched=patched, to_pi=s._to_pi, baud=baud)
             s.transport = ModelTransport(s.nano, patched, baud=baud)
-        devices[7] = s.nano
-        s.nano.wake = m.schedule                  # (a HLT ends when the bridge's SRQ can rise: IRQ 5)
-        m.on_due = s.pump_pi
+        if s.nano is not None:
+            devices[7] = s.nano
+            s.nano.wake = m.schedule              # (a HLT ends when the bridge's SRQ can rise: IRQ 5)
+            m.on_due = s.pump_pi
         cfg = Config()
         cfg.workdir = os.path.join(s.tmp, 'work'); cfg.memory_dir = os.path.join(s.tmp, 'mem')
         cfg.sessions_dir = os.path.join(s.tmp, 'sessions'); cfg.mode = mode; cfg.web = False
@@ -1074,6 +1117,13 @@ class EmuHarness:
         s.pending.append((t, data)); s.m.schedule(t)
 
     def pump_pi(s):
+        if s.piport is not None:                  # (SERLINK: what reached the Pi's port by now)
+            while True:
+                data = s.transport.read()
+                if not data: break
+                s.link.feed(data)
+            if s.piport.inq: s.m.schedule(s.piport.inq[0][0])
+            return
         now = s.m.us
         ready = sorted([p for p in s.pending if p[0] <= now], key=lambda p: p[0])
         s.pending = [p for p in s.pending if p[0] > now]
@@ -1088,6 +1138,13 @@ class EmuHarness:
         return int.from_bytes(s.m.mu.mem_read(a, size), 'little')
 
     def boot(s):
+        if s.serlink is not None:
+            out = s.m.run_program('A:\\SERLINK.COM', s.serlink, limit_us=30e6)
+            assert s.m.tsr and s.m.exit_code == 0, (out, s.m.log, s.m.crash)
+            s.serlink_out = out
+            s.m.tty = []
+            s.claude_psp = s.m.start('A:\\CLAUDE.COM', s.args)
+            return out
         out = s.m.run_program('A:\\GRIDGPIB.COM', limit_us=5e6)
         assert s.m.tsr and s.m.exit_code == 0, (out, s.m.log, s.m.crash)
         s.gridgpib_out = out
