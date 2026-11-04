@@ -1,5 +1,5 @@
 ; =====================================================================
-;  HDPROBE.COM 1.4  -  the GRiDCase 1520's internal hard disk, close up
+;  HDPROBE.COM 1.5  -  the GRiDCase 1520's internal hard disk, close up
 ;  Build:  nasm -f bin -o HDPROBE.COM HDPROBE.ASM   (needs io.inc,
 ;          timing.inc and ata.inc from the same folder)
 ;  Run  :  HDPROBE        report on screen and to A:\HDPROBE.TXT; the
@@ -38,6 +38,18 @@ start:  cld
         mov     bx, (prog_end - start + 100h + 15) / 16
         mov     ah, 4Ah                 ; shrink to our image
         int     21h
+        mov     ax, 0F012h              ; multitasking (MT_LIST) with other
+        xor     cx, cx                  ;  tasks there?  They may be using C:,
+        int     21h                     ;  and this talks to the drive itself
+        jc      .one                    ;  (CF: multitasking off)
+        cmp     cx, 1
+        jbe     .one
+        mov     dx, s_tasks
+        mov     ah, 9
+        int     21h
+        mov     ax, 4C01h
+        int     21h
+.one:
         mov     si, 81h                 ; /X: exercise the arm afterwards
         mov     cl, [80h]
         xor     ch, ch
@@ -1518,7 +1530,9 @@ save512:
 ; =====================================================================
 ; data
 ; =====================================================================
-s_title db 'HDPROBE 1.4 - the GRiDCase 1520',39,'s internal hard disk, close up (read-only)',13,10,'$'
+s_tasks db 'HDPROBE: other tasks are running, and may be using the hard disk.',13,10
+        db 'End them first, then run HDPROBE with Shift-Return in the Executive.',13,10,'$'
+s_title db 'HDPROBE 1.5 - the GRiDCase 1520',39,'s internal hard disk, close up (read-only)',13,10,'$'
 s_nofile db '  (the report file could not be made: screen only)',13,10,'$'
 s_bios  db 13,10,'[1] WHAT THE BIOS MADE OF IT',13,10,'$'
 s_bkpl  db '  Drive backplane $'
