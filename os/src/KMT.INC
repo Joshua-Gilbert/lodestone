@@ -6663,8 +6663,10 @@ mt_dok: cmp     byte [cs:mt_down], 0FFh
 ; command and not yet at its result: its DMA under way), first waited for,
 ; as on the 1520 a page register written meanwhile resets the machine
 ; (2026-11-04: M10's switch at a floppy's wait, mt_load).  At most about a
-; turn of the disk: the controller then gives up or ends.  All kept
+; turn of the disk: the controller then gives up or ends.  All kept, the
+; flags too (mt_punmap's callers carry CF across it)
 mt_eout:
+        pushf
         push    ax
         mov     ah, al
         in      al, dx
@@ -6692,6 +6694,7 @@ mt_eout:
         mov     al, ah
         out     dx, al
 .x:     pop     ax
+        popf
         ret
 
 ; the owner runs again: tasks that waited for it (TS_WAITD, at mt_gate)
