@@ -208,7 +208,11 @@ k_retf: retf                            ; (KMT.INC's KCALL returns through it)
 %include "KFAT.INC"
 %include "KFILE.INC"
 %include "KPROC.INC"
+%ifdef SERIAL
+%include "KSER.INC"                      ; (-dSERIAL: the serial link, no GPIB)
+%else
 %include "KGPIB.INC"
+%endif
 
 ; The routines and loop targets most often reached by a taken jump, call or
 ; return (measured in pcemu: BENCH, LCMD's DIR/TYPE/COPY, the Executive, a
@@ -235,8 +239,10 @@ section .text
         EVEN    dir_entry, dir_entry.sub, dir_entry.walk, dir_entry.there, dir_entry.x
         EVEN    dir_find.e, dir_find.n, name_match.l, name_match.n, name_match.x
         EVEN    dev_look_ax.f, dev_look_ax.t, dev_look_ax.skip
+%ifndef SERIAL
         EVEN    gp_cmd_begin, gp_send_cmd, gp_wait_co, gp_wait_co.ok, gp_tick, gp_tmo_start, gp_wait_tick.w
         EVEN    gp_handler.go, gp_isr
+%endif
 %endif
 
 section ovl

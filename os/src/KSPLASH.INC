@@ -82,6 +82,9 @@ sp_boot:
         call    te_boot
 .tm:
         call    gi_boot                 ; GPIBIRQ=0: GPIB's SRQ interrupt off
+%ifdef SERIAL
+        call    sl_boot                 ; SERLINK=: the serial link's port, speed
+%endif
         call    fp_boot                 ; a coprocessor that can't store: none
         call    sp_wanted
         jc      .go
@@ -110,6 +113,76 @@ gi_boot:
         mov     ax, 0E00h
         int     60h
 .x:     ret
+
+%ifdef SERIAL
+; SERLINK= in the settings (KSER.INC, the -dSERIAL kernel's link): OFF, or
+; COM1 or COM2 and optionally a comma and the speed (300-115200), e.g.
+; SERLINK=COM2,38400.  None: COM2 at 19200.  To the driver as its 0Fh.
+; DS = CS
+sl_boot:
+        call    ini_read
+        mov     di, MDB(s_sleq)
+        call    ini_key
+        jc      .x
+        mov     ax, [si]
+        and     ax, 0DFDFh
+        xor     bp, bp                  ; BP: the port (0 off)
+        xor     bx, bx                  ; BX: the divisor (0: as it is)
+        cmp     ax, 'OF'
+        je      .go
+        cmp     ax, 'CO'
+        jne     .x
+        mov     al, [si + 3]
+        sub     al, '0'
+        cmp     al, 1
+        jb      .x
+        cmp     al, 2
+        ja      .x
+        mov     bp, ax
+        add     si, 4
+        cmp     byte [si], ','
+        jne     .go
+        inc     si
+        xor     ax, ax                  ; the speed -> DX:AX
+        xor     dx, dx
+.n:     mov     bl, [si]
+        sub     bl, '0'
+        cmp     bl, 9
+        ja      .nd
+        inc     si
+        xor     bh, bh
+        push    bx
+        mov     cx, dx                  ; DX:AX * 10
+        mov     bx, 10
+        mul     bx
+        push    ax
+        push    dx
+        mov     ax, cx
+        mul     bx
+        pop     dx
+        add     dx, ax
+        pop     ax
+        pop     bx
+        add     ax, bx
+        adc     dx, 0
+        jmp     .n
+.nd:    xor     bx, bx
+        or      dx, dx
+        jz      .w
+        inc     bx                      ; (over 65535: 115200, divisor 1)
+        jmp     short .go
+.w:     cmp     ax, 2
+        jb      .go
+        mov     cx, ax
+        mov     ax, 0C200h              ; 115200 / the speed
+        mov     dx, 1
+        div     cx
+        mov     bx, ax
+.go:    mov     ax, bp
+        mov     ah, 0Fh
+        int     60h
+.x:     ret
+%endif
 
 ; The coprocessor INT 11h reports, tried once before anything uses it:
 ; one FNSTENV, 7 words to memory, as every program storing a result moves
@@ -375,6 +448,9 @@ sp_load:
 s_speq  db      'SPLASH', 1Dh, 0        ; (as "SPLASH=" AND 0DFh)
 s_preq  db      'PRINTER', 1Dh, 0       ; (as "PRINTER=" AND 0DFh)
 s_gieq  db      'GPIBIRQ', 1Dh, 0       ; (as "GPIBIRQ=" AND 0DFh)
+%ifdef SERIAL
+s_sleq  db      'SERLINK', 1Dh, 0       ; (as "SERLINK=" AND 0DFh)
+%endif
 s_teeq  db      'TEMP', 1Dh, 0          ; (as "TEMP=" AND 0DFh)
 s_prlode db     'C:\LODE\', 0
 s_prroot db     '@:\', 0

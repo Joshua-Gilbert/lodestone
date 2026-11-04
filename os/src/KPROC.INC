@@ -8,7 +8,7 @@ cur_psp     resw 1
 root_psp    resw 1
 last_exit   resw 1              ; AL = code, AH = how it ended
 term_keep   resw 1              ; TSR: paragraphs to keep
-gp_ok       resb 1              ; INT 60h installed
+gp_ok       resb 1              ; INT 60h installed (GPIB, or -dSERIAL's link)
             alignb 2
 ex_psp      resw 1
 ex_size     resw 1              ; paragraphs given
@@ -707,7 +707,9 @@ root_restart:
 
 ; ---------------------------------------------------------------------
 ;  the built-in GPIB driver: install on INT 60h if there is a uPD7210
+;  (-dSERIAL: the serial link's instead, KSER.INC)
 ; ---------------------------------------------------------------------
+%ifndef SERIAL
 section ovl
 gpib_init:
         call    gp_chip_init
@@ -735,3 +737,4 @@ gpib_init:
         call    gp_irq_on               ; SRQ on IRQ 5 (GPIBIRQ=0 in LODE.INI:
 .no:    ret                             ;  off again, KMDISK.INC's md_boot)
 section .text
+%endif

@@ -54,6 +54,18 @@ port = "/dev/ttyACM0"
 `--baud` for a modem is the speed between the Pi and the modem, 115200 by default. The line's own speed comes from
 the modem's `CONNECT`.
 
+## Built into the kernel instead (`-dSERIAL`)
+
+`KFLAGS=-dSERIAL os/build.sh` builds a kernel, and ROM 1, with this driver's resident part built in
+(`os/src/KSER.INC`) in place of the GPIB driver. The README's Build section has the details:
+- `SERLINK=` in LODE.INI sets the port and speed;
+- the UART is claimed at CLAUDE's first call;
+- it's pre-interrupt style: a 2 KB ring, but no IRQ to sleep on;
+- there's no dialing, so the modem still uses SERLINK.COM.
+
+Its signature is `SERKERN`, so SERLINK.COM can be loaded over it. The default build, and the committed binaries,
+stay GPIB.
+
 ## How it works
 
 ### GRiD side (`tools/SERLINK.ASM`)
