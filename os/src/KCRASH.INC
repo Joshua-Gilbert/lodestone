@@ -20,24 +20,31 @@
 ;  report at CR_SEG is still there).  Then CRASHRPT.COM writes it to
 ;  CRASH.BIN, which tools/crashdecode.py reads with LODE.MAP.
 ;
-;  Breadcrumbs in CMOS 3Ch and 3Dh (unused by the 1520's BIOS: its password
-;  is 34h-3Bh), which survive any restart, a full POST too: 3Dh the stage
-;  (CRB_*: armed, in the catch, the report kept, on the screen, a restart
-;  passed on), 3Ch the last window operation's tag (KMW's CREC).  Each
-;  window operation also arms the catch again (CMOS 0Fh, 40:67h), in case
-;  something cleared it.  At the next start-up mt_boot puts the old two at
-;  CR_PREV (CRASHRPT says what they mean), then arms
+;  Breadcrumbs in CMOS 3Dh alone, which survives any restart, a full POST
+;  too: its high nibble the stage (CRB_*: armed, in the catch, the report
+;  kept, on the screen, a restart passed on), its low nibble the last
+;  window operation (its tag's place in cr_wtags; KMW's CREC).  NOT 3Ch:
+;  the labelled BIOS source calls 3Ch and 3Dh unused, but Joshua's
+;  10/25/89 ROM keeps the boot password's checksum in 3Ch (F000:F104:
+;  the sum of 34h-3Bh and 3Fh & FEh; POST, F000:8D20 -> F1B6, asks for
+;  the password when it matches and 3Fh bit 1 is set, and his 3Fh is
+;  02h), so a tag written there could lock the machine at the next POST.
+;  Nothing in that ROM touches 3Dh.  Each window operation also arms the
+;  catch again (CMOS 0Fh, 40:67h), in case something cleared it.  At the
+;  next start-up mt_boot puts the old stage and window tag, as the two
+;  characters CRASHRPT reads, at CR_PREV, then arms
 ; =====================================================================
 CR_N        equ 256                     ; records in the ring
 CR_SEG      equ 5000h                   ; the report (free after a start-up)
 CR_STK      equ 512                     ; the catch's own stack
 CR_PREV     equ 4FF0h                   ; the last session's breadcrumbs, at
-                                        ;  start-up: 'LODEPREV', 3Dh, 3Ch
-CRB_ARMED   equ '1'                     ; (CMOS 3Dh)
-CRB_IN      equ '2'
-CRB_KEPT    equ '3'
-CRB_SHOWN   equ '4'
-CRB_PASS    equ 'P'
+                                        ;  start-up: 'LODEPREV', the stage's
+                                        ;  and the window tag's characters
+CRB_ARMED   equ 1                       ; (CMOS 3Dh's high nibble: cr_stch
+CRB_IN      equ 2                       ;  has their characters)
+CRB_KEPT    equ 3
+CRB_SHOWN   equ 4
+CRB_PASS    equ 5
 
 ; a record: the tick count, the tag (a letter), the running task, the
 ; top two words of the caller's stack (at a routine's start its return
@@ -112,15 +119,13 @@ mt_crec:
         mov     [cs:di+CR_SP], ax
         mov     [cs:di+CR_SS], ss
         mov     al, [bp+4]                      ; a window operation's: its tag
-        cmp     al, 'S'                         ;  to CMOS 3Ch, the catch armed
-        je      .x                              ;  again
+        cmp     al, 'S'                         ;  to CMOS 3Dh's low nibble, the
+        je      .x                              ;  catch armed again
         cmp     al, 'X'
         je      .x
         cmp     al, 'V'
         je      .x
-        mov     ah, al
-        mov     al, 3Ch
-        call    cr_cm
+        call    cr_wt
         mov     ax, 0F0Ah
         call    cr_cm
         push    ds
@@ -140,11 +145,50 @@ cr_cm:  out     70h, al
         out     71h, al
         xchg    al, ah
         ret
-; the stage AL to CMOS 3Dh.  All kept
+; the stage AL (CRB_*) to CMOS 3Dh's high nibble.  All kept
 cr_st:  push    ax
+        push    cx
+        pushf
+        cli
+        mov     cl, 4
+        shl     al, cl
         mov     ah, al
         mov     al, 3Dh
+        out     70h, al
+        in      al, 71h
+        and     al, 0Fh
+        or      ah, al
+        mov     al, 3Dh
         call    cr_cm
+        popf
+        pop     cx
+        pop     ax
+        ret
+; the window tag AL to CMOS 3Dh's low nibble (its place in cr_wtags, 0Fh
+; if it isn't there).  All kept
+cr_wt:  push    ax
+        push    cx
+        push    si
+        pushf
+        cli
+        mov     si, cr_wtags
+        mov     cx, 15
+        xor     ah, ah
+.l:     cmp     al, [cs:si]
+        je      .f
+        inc     si
+        inc     ah
+        loop    .l
+.f:     mov     al, 3Dh
+        out     70h, al
+        in      al, 71h
+        and     al, 0F0h
+        or      ah, al
+        mov     al, 3Dh
+        call    cr_cm
+        popf
+        pop     si
+        pop     cx
         pop     ax
         ret
 
@@ -509,6 +553,10 @@ cr_h2:  push    ax
 
 cr_sig      db      'LODECRSH'
 cr_psig     db      'LODEPREV'
+; CMOS 3Dh's nibbles as CRASHRPT's characters: the stage (CRB_*), the
+; window tag (KMW's CREC tags; '-' none, '?' another)
+cr_stch     db      '?1234P??????????'
+cr_wtags    db      '-ECOUDWZzRF?????'
 cr_bv       dw      08h * 4, 0FEA5h, 09h * 4, 0E987h, 10h * 4, 0F065h
             dw      16h * 4, 0E82Eh, 15h * 4, 0F859h, 1Ch * 4, 0FF53h
             dw      1Bh * 4, 0FF53h, 0

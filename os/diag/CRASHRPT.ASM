@@ -77,7 +77,7 @@ wfail:  mov     dx, s_wf
         mov     ax, 4C02h
         int     21h
 
-; the breadcrumbs mt_boot kept at 4FF0:0 (CMOS 3Dh, 3Ch as the last
+; the breadcrumbs mt_boot kept at 4FF0:0 (CMOS 3Dh's two nibbles, as the last
 ; session left them): say what they mean
 prev:   push    ds
         mov     ax, 4FF0h
