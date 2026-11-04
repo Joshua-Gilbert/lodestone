@@ -1,6 +1,6 @@
 # Lodestone
 
-A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display), with GRiD's own look and feel. The whole base suite fits in one 128 KB EPROM: the kernel, the Executive, the command prompt, System, Write, the calculator and the terminal window. A second EPROM adds DEFRAG, Paint and Claude. It boots from that EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them. It can also multitask: several DOS programs run at once, preemptively, each full screen or in a window beside the Executive (`MULTITASK=1`; still being tried on the 1520, for 0.7).
+A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display), with GRiD's own look and feel. The whole base suite fits in one 128 KB EPROM: the kernel, the Executive, the command prompt, System, Write, the calculator and the terminal window. A second EPROM adds DEFRAG, Paint and Claude. It boots from that EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them. It can also multitask: several DOS programs run at once, preemptively, each full screen or in a window beside the Executive (`MULTITASK=1`).
 
 Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB bus, Claude Code runs on the GRiD's screen and works with its files, its programs and the instruments on the bus.
 
@@ -53,7 +53,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **The screen saver:** runs DEFRAG on every disk in turn, then darkens the screen. It comes on inside CLAUDE.COM too (full screen, with the Pico bridge), and anything from Claude Code ends it.
 - **A start-up picture**¹, drawn from vectors (`LODE.PIC`, 2.5 KB).
 
-**Multitasking** (`MULTITASK=1` in LODE.INI; still being tried on the 1520, for 0.7; see `docs/lodestone-multitasking.md`)
+**Multitasking** (`MULTITASK=1` in LODE.INI; see `docs/lodestone-multitasking.md`)
 - **How it works:** ordinary DOS programs multitask preemptively, in the 286's real mode, much as under DESQview.
   - **Turns:** each task gets a turn of timer ticks (two in front, one behind, at 18.2 a second) and is switched at the next safe point. That's never inside DOS itself, in the BIOS's ROM, or with interrupts off. One task at a time is inside DOS.
   - **Saved at every switch:** each task's registers, screen, keys, mouse, interrupt vectors and 80287 state.
@@ -211,7 +211,7 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
-Built since 0.6 and not yet tried on the 1520: multitasking and its windows, Paint in a window, resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), and `TEMP=` with pipes from the ROM.
+Multitasking works on the 1520. Built since 0.6 and not yet tried there: Paint in a window, resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), and `TEMP=` with pipes from the ROM.
 
 **Next:**
 - **On the 1520, and release 0.7** (M9): the list above tried on the machine, and what it finds fixed.
