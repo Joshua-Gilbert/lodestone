@@ -58,7 +58,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
   - **Turns:** each task gets a turn of timer ticks (two in front, one behind, at 18.2 a second) and is switched at the next safe point. That's never inside DOS itself, in the BIOS's ROM, or with interrupts off. One task at a time is inside DOS.
   - **Saved at every switch:** each task's registers, screen, keys, mouse, interrupt vectors and 80287 state.
   - **No protection:** tasks share one address space, so a program that goes wrong can still take down the machine. There's no virtual memory either.
-- **Tasks:** Return on a DOS program in the Executive starts it as a task beside the others (Shift-Return runs it and waits, as before). CODE-Tab goes to the next task and CODE-T shows the task list. Each task has its own screen, keys and mouse. `BG=`, `FREEZE=`, `MTMEM=` and `FULL=` in LODE.INI set how particular programs run.
+- **Tasks:** Return on a DOS program in the Executive starts it as a task beside the others (Shift-Return runs it and waits, as before). CODE-Tab, or SysReq on its own, goes to the next task, and CODE-T shows the task list. SysReq is never put in the key buffer, so it takes nothing from the program in front; CODE-SysReq (Confm) stays the program's. (`KFLAGS=-dNOSYSREQ` builds without it, for a machine without the key, at no cost.) Each task has its own screen, keys and mouse. `BG=`, `FREEZE=`, `MTMEM=` and `FULL=` in LODE.INI set how particular programs run.
 - **Windows:** Write, the calculator and Paint each open in a window over the Executive, several at once. The Executive stays live under them: a click on it or CODE-F6 brings it to the front.
 - **Terminal windows:** a text program started from the Executive, and CODE-P's command prompt, run in a window of their own (Shift-Return and Shift-CODE-P: full screen, as before).
   - A window's memory grows as its program asks for more, when there is room. A program that switches to a graphics mode goes full screen until it comes back to text.
@@ -179,7 +179,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,524 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,525 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -212,11 +212,10 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
-Multitasking works on the 1520. Built since 0.6 and not yet tried there: Paint in a window, resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), and `TEMP=` with pipes from the ROM.
+Multitasking works on the 1520. Built since 0.6 and not yet tried there: Paint in a window, resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), `TEMP=` with pipes from the ROM, and SysReq as the task switcher.
 
 **Next:**
 - **On the 1520, and release 0.7** (M9): the list above tried on the machine, and what it finds fixed.
-- **SysReq as the task switcher** (M11, deferred): the 1520's SysReq/Confm key, which DOS programs leave alone, brings up the task list, so no CODE key is taken from the program in front.
 - **Disk waits on the hard disk:** M10 lets tasks run during floppy waits; C: is the kernel's own polled driver, so its waits don't yet let others run.
 - **GRIDMODE.COM:** the BIOS's display functions (INT 15h E420h-E422h) from the prompt, as GRiD's MS-DOS `MODE` gave them: the panel type, the internal panel or the external RGB port, the colour map (how CGA colours become plasma or LCD greys, at 40:A7h) and the hardware text font. A tool beside GRIDMEM, not in ROM 1; SYSTEM to show the panel type too.
 - **Voice on the Pi:** push-to-talk and spoken answers.
