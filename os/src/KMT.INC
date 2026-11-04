@@ -180,6 +180,15 @@ MT_NVEC     equ 29                      ; (mt_vrun's and mt_vfr's counts)
 MT_NFV      equ 2
 ; CRASHLOG's flight recorder (KCRASH.INC): a record with this tag (a
 ; letter), the caller's CS:IP, SS:SP, AX, BX.  Nothing in the normal build
+; (and CMOS 3Dh's low nibble: a disk wait's phase, KCRASH.INC's cr_wtags)
+%macro CRW 1
+%ifdef CRASHLOG
+        push    ax
+        mov     al, %1
+        call    cr_wt
+        pop     ax
+%endif
+%endmacro
 %macro CREC 1
 %ifdef CRASHLOG
         pushf
@@ -6269,6 +6278,7 @@ mt_i15: cmp     ax, 9001h
 mt_i0e: pushf
         call    far [cs:mt_old0e]
         cli
+        CRW     'i'                     ; (CRASHLOG: IRQ 6 come)
         push    ax                      ; mt_tick's frame: AX, BX, DX, DS, BP
         push    bx
         push    dx
@@ -6432,12 +6442,14 @@ mt_dwait:
         call    mt_pick
         jc      .u
 %ifdef CRASHLOG
-        call    mt_crs0                 ; (KCRASH.INC: the owner's stack kept)
+        CRW     'g'                     ; (KCRASH.INC: going out, its stack kept)
+        call    mt_crs0
 %endif
         call    mt_switch               ; (back once 9101h or the time-out
 .bk:                                    ;  made it ready, and it was picked)
 %ifdef CRASHLOG
         call    mt_crs1                 ; (as it was?  Else the report)
+        CRW     'b'                     ; (back)
 %endif
         mov     byte [cs:mt_down], 0FFh
         mov     byte [cs:mt_dfw], 0
@@ -6679,9 +6691,11 @@ mt_gate:
         call    mt_pick
         jc      .h
         call    mt_fdrain
+        CRW     'G'                     ; (CRASHLOG: a call held at the gate)
         call    mt_switch
         jmp     .l
-.h:     call    mt_cent                 ; (none: this one HLTs, ready, till
+.h:     CRW     'H'                     ; (CRASHLOG: held, HLT)
+        call    mt_cent                 ; (none: this one HLTs, ready, till
         mov     byte [cs:bx+TE_STATE], TS_RUN   ;  an interrupt, the owner's
         sti                             ;  9101h one, then looks again)
         hlt

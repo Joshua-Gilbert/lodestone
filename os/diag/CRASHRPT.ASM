@@ -142,7 +142,8 @@ s_p8    db      'Last session: a disk wait', 39, 's owner', 39, 's stack was fou
 s_pp    db      'Last session: ended by a restart asked for $'
 s_pw    db      13, 10, 'Its last window operation: '
 s_win   db      '?', ' (E end, C close, O open, U raise, D drop, W unwin, Z resize,', 13, 10
-        db      'z resize drop, R redraw, F front, - none).  Stage '
+        db      'z resize drop, R redraw, F front;', 13, 10
+        db      'a disk wait: g gone out, i its IRQ 6, b back, G a call held, H held at HLT; - none).  Stage '
 s_tag   db      '?', '.', 13, 10, '$'
 
 sig     db      'LODECRSH'

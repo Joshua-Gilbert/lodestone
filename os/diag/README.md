@@ -48,6 +48,15 @@ CMOS 3Dh survives any restart, a full POST too. Its high nibble is the stage: 1 
 - **2:** the catch was entered but died before the report was kept, so MT's memory was probably overwritten.
 - **3 or 4:** a report should be there.
 
+**Disk-wait phases (the low nibble too).** The low nibble also records the disk waits' phases as they happen:
+- `g`: a task goes out;
+- `i`: IRQ 6 comes;
+- `b`: the owner is back;
+- `G`: another task's call is held at the gate, and it switches;
+- `H`: it is held at a HLT.
+
+So CRASHRPT's "last window operation" can be one of these, and says where in a wait the machine died. In pcemu, Return on CLAUDE.COM gives `igHiGbOFDgHiGb…`. On Joshua's 1520 (2026-11-04) it restarted on that very Return, before its window opened (last `-`, stage 1), and the stack check didn't fire.
+
 **The owner's stack check (stage 8).** Each time a task gives a disk wait away (a floppy's 9001h, the hard disk's 9000h), the build keeps the top of its stack: the kernel stack's slice up to kstack_top, or 128 bytes of its own stack. That holds the BIOS's own return addresses, since the wait is inside its INT 13h. On the task's return it compares. If anything changed, it goes to the report at once (cause K, stage 8), before the BIOS could return through a broken frame and run into POST. The report keeps both copies, and crashdecode prints the words that differ. Joshua's bisect (2026-11-04) put the crash on task 0 giving a disk wait away; this is the first suspect.
 
 Run `CRASHRPT` after every unexpected restart, and send its first lines even when it says there is no report.
