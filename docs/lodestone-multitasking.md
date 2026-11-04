@@ -2346,6 +2346,14 @@ The cost: while the owner is out, fewer tasks can run behind it. A task whose ma
 
 **On the 1520 (2026-11-04):** Joshua tried the fixed build, and it no longer restarts.
 
+**Later the same day: a second cause, the power supply.** While T5e was being tried, the 1520 restarted again, on a resize of the Claude window and then on just opening CLAUDE.COM or a terminal window. CRASHLOG builds bisected it on the machine:
+- **Every variant restarted:** main itself, main's kernel padded to T5e's size, no 287 switching (`-dNOMTFPU`), no floppy wait given away (`-dNODWAIT`), and FWAIT after FRSTOR.
+- **Never caught (stage 1):** CRASHME's S, R and K (the keyboard controller's reset) are all caught. The BIOS skips the shutdown code only when the keyboard controller itself was reset (`KBC_STATUS_SYS` clear, `reset.asm`), and no instruction does that.
+- **The variac:** the same supply, its mains input raised a few volts, stopped the restarts. The supply sags under multitasking's load (the floppy, the plasma and the CPU busy together). The breadcrumbs then show only the last CMOS write before the dip.
+- **The guard stands:** main without #151's guard, on the variac with the screen dimmed, still restarts. So the EMS-during-DMA rule is real, and both causes were at work.
+
+On Joshua's 1520: the supply needs a few volts more under load (worn filter capacitors or a weak regulator are the usual causes). Until it is recapped or replaced, multitasking is stable with it on the variac.
+
 ## T5e: the Claude window as tall as it shows (2026-11-04)
 
 **Joshua found it on the 1520:** in CLAUDE.COM's window the mascot was missing, though full screen and resident Claude showed it.
