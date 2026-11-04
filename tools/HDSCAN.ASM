@@ -1,5 +1,5 @@
 ; =====================================================================
-;  HDSCAN.COM 1.0  -  the GRiDCase 1520's internal hard disk: what's on
+;  HDSCAN.COM 1.1  -  the GRiDCase 1520's internal hard disk: what's on
 ;                     it, and a read of every sector (read-only)
 ;  Build:  nasm -f bin -o HDSCAN.COM HDSCAN.ASM   (needs io.inc,
 ;          timing.inc and ata.inc from the same folder)
@@ -28,6 +28,18 @@ start:  cld
         mov     bx, (prog_end - start + 100h + 15) / 16
         mov     ah, 4Ah                 ; shrink to our image
         int     21h
+        mov     ax, 0F012h              ; multitasking (MT_LIST) with other
+        xor     cx, cx                  ;  tasks there?  They may be using C:,
+        int     21h                     ;  and this talks to the drive itself
+        jc      .one                    ;  (CF: multitasking off)
+        cmp     cx, 1
+        jbe     .one
+        mov     dx, s_tasks
+        mov     ah, 9
+        int     21h
+        mov     ax, 4C01h
+        int     21h
+.one:
         call    log_open
         mov     dx, s_title
         call    puts
@@ -1321,7 +1333,9 @@ MAXDEPTH equ 24
 PATHMAX  equ 128
 MAXBAD   equ 100
 
-s_title db 'HDSCAN 1.0 - the GRiDCase 1520',39,'s internal hard disk: what',39,'s on it, and every',13,10
+s_tasks db 'HDSCAN: other tasks are running, and may be using the hard disk.',13,10
+        db 'End them first, then run HDSCAN with Shift-Return in the Executive.',13,10,'$'
+s_title db 'HDSCAN 1.1 - the GRiDCase 1520',39,'s internal hard disk: what',39,'s on it, and every',13,10
         db 'sector read (read-only)',13,10,'$'
 s_nofile db '  (A:\HDSCAN.TXT could not be made: screen only)',13,10,'$'
 s_drive db 13,10,'[1] THE DRIVE',13,10,'$'
