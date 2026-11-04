@@ -1399,7 +1399,7 @@ mt_load:
 .em:    test    cl, 1
         jnz     .eh                     ; (held: as it is)
         mov     al, [es:bx]
-        out     dx, al
+        call    mt_eout
 .eh:    shr     cl, 1
         inc     bx
         add     dh, 40h
@@ -3403,7 +3403,7 @@ mt_pmap:
         in      al, dx
         mov     [cs:mt_psv], al
         mov     al, [ems_ltab + si]
-        out     dx, al
+        call    mt_eout
         push    EMS_FRAME
         pop     es
         mov     ax, [cs:bx+TE_REG]      ; (its own region: mt_inr passes it by)
@@ -3421,7 +3421,7 @@ mt_punmap:
         push    dx
         mov     dx, EMS_PORT
         mov     al, [cs:mt_psv]
-        out     dx, al
+        call    mt_eout
         mov     word [cs:mt_xr], 0
         mov     word [cs:mt_xe], 0
         pop     dx
@@ -5750,12 +5750,12 @@ mt_smap:
         in      al, dx
         mov     [cs:mt_wsv], al
         mov     al, [ems_ltab + si]
-        out     dx, al
+        call    mt_eout
         add     dh, 40h
         in      al, dx
         mov     [cs:mt_wsv + 1], al
         mov     al, [ems_ltab + si + 1]
-        out     dx, al
+        call    mt_eout
         clc
 .x:     pop     dx
         pop     ax
@@ -5787,11 +5787,10 @@ mt_shm: xor     ax, ax
 mt_wrest:
         mov     dx, EMS_PORT
         mov     al, [cs:mt_wsv]
-        out     dx, al
+        call    mt_eout
         add     dh, 40h
         mov     al, [cs:mt_wsv + 1]
-        out     dx, al
-        ret
+        jmp     mt_eout
 ; the entry at BX's BIOS data (TX_VID) into mt_vs, then its pages mapped
 ; (mt_smap: CF if gone).  CX, SI, DI, DS, ES changed
 mt_vin: push    cs
@@ -6628,11 +6627,71 @@ mt_dok: cmp     byte [cs:mt_down], 0FFh
         jz      .ok
         cmp     byte [es:TX_EMS + 3], 0
         jne     .n
-.ok:    pop     es
+.ok:    cmp     byte [cs:mt_ddev], 1    ; a floppy's owner out: its DMA may run,
+        jne     .k                      ;  and on the 1520 an EMS page register
+        push    ax                      ;  written meanwhile resets the machine
+        push    cx                      ;  (2026-11-04): only a task whose
+        push    dx                      ;  windows hold what they hold now, so
+        push    di                      ;  loading it writes none (mt_eout:
+        mov     cl, [cs:mt_dfw]         ;  the held ones aren't written)
+        mov     dx, EMS_PORT
+        mov     di, TX_EMS
+.e:     test    cl, 1
+        jnz     .en
+        in      al, dx
+        cmp     al, [es:di]
+        jne     .ne
+.en:    shr     cl, 1
+        inc     di
+        add     dh, 40h
+        jnc     .e
+        cmp     al, al                  ; (all as they are: ZF)
+.ne:    pop     di
+        pop     dx
+        pop     cx
+        pop     ax
+        jne     .n
+.k:     pop     es
 .y:     cmp     al, al                  ; (ZF)
         ret
 .n:     pop     es
         or      sp, sp                  ; (NZ)
+        ret
+
+; AL to the EMS page register at DX: not written if it holds AL already;
+; else, while a floppy transfer is in flight (the controller busy with a
+; command and not yet at its result: its DMA under way), first waited for,
+; as on the 1520 a page register written meanwhile resets the machine
+; (2026-11-04: M10's switch at a floppy's wait, mt_load).  At most about a
+; turn of the disk: the controller then gives up or ends.  All kept
+mt_eout:
+        push    ax
+        mov     ah, al
+        in      al, dx
+        cmp     al, ah
+        je      .x
+        push    cx
+        push    dx
+        mov     dx, 3F4h                ; (the floppy controller's status)
+        mov     cx, 8
+.o:     push    cx
+        xor     cx, cx
+.w:     in      al, dx
+        test    al, 10h                 ; (a command under way)
+        jz      .go
+        and     al, 0C0h                ; (its result phase: the DMA done)
+        cmp     al, 0C0h
+        je      .go
+        loop    .w
+        pop     cx
+        loop    .o
+        push    cx
+.go:    pop     cx
+        pop     dx
+        pop     cx
+        mov     al, ah
+        out     dx, al
+.x:     pop     ax
         ret
 
 ; the owner runs again: tasks that waited for it (TS_WAITD, at mt_gate)
@@ -6766,6 +6825,10 @@ mt_i26: cmp     byte [cs:mt_down], 0FFh
 ; refused: AH = 80h
 mt_i67: cmp     byte [cs:mt_dfw], 0
         jne     .g
+        cmp     byte [cs:mt_down], 0FFh ; (a floppy's owner out: its DMA may
+        je      .go                     ;  run, and the call may write a page
+        cmp     byte [cs:mt_ddev], 1    ;  register: it waits too)
+        je      .g
 .go:    cmp     ah, 44h
         je      .m
         jmp     KSEG:ems_gen
