@@ -112,6 +112,9 @@ prev:   push    ds
         mov     dx, s_p7
         cmp     al, '7'
         je      .p
+        mov     dx, s_p8
+        cmp     al, '8'
+        je      .p
         mov     dx, s_p0
 .p:     mov     ah, 9
         int     21h
@@ -134,6 +137,8 @@ s_p6    db      'Last session: 40:67h, the catch', 39, 's address, was found ove
         db      'at a tick and put back; the restart then never reached the catch $'
 s_p7    db      'Last session: CMOS 0Fh, the shutdown code, was found changed at a', 13, 10
         db      'window operation and set again; the restart never reached the catch $'
+s_p8    db      'Last session: a disk wait', 39, 's owner', 39, 's stack was found CHANGED on its', 13, 10
+        db      'return (caught before it could crash) $'
 s_pp    db      'Last session: ended by a restart asked for $'
 s_pw    db      13, 10, 'Its last window operation: '
 s_win   db      '?', ' (E end, C close, O open, U raise, D drop, W unwin, Z resize,', 13, 10
