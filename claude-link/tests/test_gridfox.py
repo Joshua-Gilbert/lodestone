@@ -233,6 +233,60 @@ def test_app_button_select_check():
         r.close()
 
 
+def test_app_rows():
+    """A GRiD window's rows (T5e: the pty resized): the page gets all but the
+    address and the status line, which is the last row; PgDn, End, Tab and a
+    list's choices go by the page's rows; the place is kept through a resize."""
+    r = Run(U + 'index')
+    try:
+        r.app.go(U + 'long'); r.pump()
+        def at(rows):
+            r.app.resize(rows); r.scr.resize(rows, 80); r.scr.reset(); r.app.draw(full=True); r.pump()
+        at(19)
+        assert r.app.nrows == 19 and r.app.body == 17, (r.app.nrows, r.app.body)
+        t = r.text()
+        assert len(t) == 19 and t[0].strip() == U + 'long' and t[18].endswith('Top'), t
+        assert r.has('Paragraph 1 of the long page.'), t
+        r.keys('pgdn')
+        assert r.app.top == 15 and r.text()[18].endswith('%'), (r.app.top, r.text()[18])   # 17 rows less two
+        r.keys('/')                                             # the typing line: the last row, its cursor there
+        assert r.text()[18].startswith('Find:') and r.scr.cursor.y == 18 and r.scr.cursor.x == 6, \
+            (r.text()[18], r.scr.cursor.y, r.scr.cursor.x)
+        assert r.app.rows()[1] == (18, 6), r.app.rows()[1]      # (as asked: pyte would clamp a row 23 to 18)
+        r.keys('esc')
+        r.keys('end')
+        n = len(r.app.doc)
+        assert r.app.top == n - 17 and r.has('The end of the long page.') and r.text()[18].endswith('Bot'), r.text()
+        at(24)                                                  # taller: the place kept, still at the end
+        assert r.app.body == 22 and r.app.top == n - 22 and r.text()[23].endswith('Bot'), (r.app.top, r.text())
+        at(19)
+        r.keys('home', 'left')                                  # back to the index
+        assert r.app.url == U + 'index', r.app.url
+        sel = [i for i, a in enumerate(r.app.acts()) if a['t'] == 'select'][0]
+        r.app.select(sel); r.app.draw(); r.pump()
+        ln = r.app.doc.where[sel][0]
+        assert r.app.top <= ln < r.app.top + 17, (ln, r.app.top)          # Tab's scroll: within 17 rows
+        r.keys('enter')
+        assert r.has('│ ▸ Volts') and r.has('Ohms'), r.text()
+        box = r.app._menu_box()
+        assert box[0] + box[2] + 1 < 18, box                    # (the choices inside the page's rows)
+        r.keys('esc')
+        at(4)                                                   # the smallest a window gives: 2 page rows
+        assert r.app.body == 2 and len(r.text()) == 4 and r.text()[0].strip() == U + 'index', r.text()
+        top = r.app.top
+        r.keys('pgdn')
+        assert r.app.top == top + 1, (top, r.app.top)           # (at least a row)
+        r.app.select(sel); r.keys('enter')                      # the choices, cut to the page's rows
+        assert r.app.menu is not None and len(r.text()) == 4, r.text()
+        r.keys('esc')
+        r.app.resize(2)
+        assert r.app.nrows == 3 and r.app.body == 1             # (never under MIN_ROWS)
+        r.app.resize(None)
+        assert r.app.nrows == 24 and r.app.body == 22           # (no size known: 24)
+    finally:
+        r.close()
+
+
 def test_app_late_content_and_help():
     r = Run(U + 'late')
     try:
@@ -735,6 +789,27 @@ def test_end_to_end_gridsim():
             assert b1 - b0 < 3000 and b2 - b1 < 2000, (b1 - b0, b2 - b1)
             h.grid.press(0x08, 0x0E)                                            # Backspace: back
             assert h.wait_text('Plug-ins', wall=10), h.grid.screen_text()
+            assert h.settle()
+            # a GRiD window 19 rows tall (T5e's EVENT 08h): gridlink resizes the pty, gridfox
+            # (SIGWINCH) lays out for it: the status line on row 18, rows 19-23 blank
+            status = lambda r: 'test.local/long' in h.grid.screen_text()[r] and \
+                h.grid.screen_text()[r].rstrip().endswith(('All', 'Top'))     # (the link selected: its address)
+            assert status(23), h.grid.screen_text()
+            # (pyte drops a shrunk screen's top rows, so the old status line is on the last row at
+            # once: gridfox's own layout is the address back on row 0, the status under the page)
+            laid = lambda n: h.grid.screen_text()[0].strip() == U + 'index' and status(n - 1) and \
+                all(not l.strip() for l in h.grid.screen_text()[n:24])
+            took = []
+            for n in (19, 12, 19, 12, 19):
+                t0 = time.time()
+                h.router.web.set_rows(n)
+                assert h.run_until(lambda: laid(n), wall=5), (n, h.grid.screen_text())
+                took.append(time.time() - t0)
+                assert h.settle() and laid(n), (n, h.grid.screen_text())
+            print('     19 and 12 rows: laid out again in %s ms' % ', '.join('%.0f' % (t * 1000) for t in took))
+            assert max(took) < 0.2, took                                        # (the wakeup fd: not select's 0.5 s)
+            h.router.web.set_rows(24)
+            assert h.run_until(lambda: status(23), wall=5), h.grid.screen_text()
             assert h.settle()
             # a click from the GRiD (EVENT 05h): on "Sign in", a link on the first page row
             row = [i for i, l in enumerate(h.grid.screen_text()) if 'Sign in' in l][0]
