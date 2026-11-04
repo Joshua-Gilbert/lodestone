@@ -120,7 +120,7 @@ Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
 - **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 15 KB more.
-- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 556.9 KB. The other 24.1 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
+- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 556.8 KB (557.5 before the Executive's right-click menu). The other 24.2 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
 - **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.4 KB when ROM 1 is there, 0.6 KB with ROM 2 as well.
 - **The Executive stays resident on purpose:** with multitasking on, it runs beside the tasks and windows.
 

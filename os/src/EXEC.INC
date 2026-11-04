@@ -92,7 +92,7 @@ n_done      resw 1
 n_skip      resw 1
 s_time      resw 1                  ; the one in hand: its time and date
 s_date      resw 1
-RM_MOST     equ 7                   ; (ex_items: the most that apply at once, no row)
+RM_MOST     equ 13                  ; (ex_items, all of them: rmenu has no bound)
 rm_buf      resw RM_MOST            ; a right click's menu: its items' texts
 rm_key      resw RM_MOST            ;  and their keys (RMENU.INC, ex_menu)
 sc_seg      resw 1                  ; Copy on a subject: the subjects to copy (sc_list)
@@ -144,11 +144,9 @@ ex_loop:
         or      al, al                  ; ("TSR.COM ended" was in the band:
         jz      .ev                     ;  relist drew the usual prompt)
         call    show_msg
-.ev:    inc     byte [ex_mtw]           ; (MULTITASK=1: 2, a task's end looked
-        inc     byte [ex_rclk]          ;  for meanwhile: EV_TASK; a right
-        call    ui_event                ;  click: EV_RCLICK, ex_menu)
-        dec     byte [ex_rclk]
-        dec     byte [ex_mtw]
+.ev:    add     word [ex_mtw], 101h     ; (ex_mtw: MULTITASK=1: 2, a task's end
+        call    ui_event                ;  looked for meanwhile: EV_TASK; and
+        sub     word [ex_mtw], 101h     ;  ex_rclk: a right click EV_RCLICK)
         cmp     ax, EV_TASK
         jae     .task
         cmp     byte [msgshown], 0      ; a message waits for the next key
@@ -215,10 +213,10 @@ ex_loop:
 ; file: Open (Return), Open full screen (a DOS program, MULTITASK=1: as
 ; Shift-Return), Copy, Move, Rename, Delete; a subject: Copy, Delete; no
 ; row (or a drive): the programs and F5.  None on the form or the band
-RX_ROW      equ 4                       ; (RMENU's need bits: 1 and 2 are its own)
+RX_MT       equ 1                       ; (RMENU's need bits: 1, RM_SEL, unused
+RX_ROW      equ 4                       ;  here, is ex_mtw's 1; 2 is RM_CLIP)
 RX_FILE     equ 8
 RX_PROG     equ 16
-RX_MT       equ 32
 RX_NONE     equ 64
 K_XFULL     equ 0FE00h                  ; (Open full screen: no key's)
 ex_menu:
@@ -230,6 +228,8 @@ ex_menu:
         mov     bx, ex_list
         call    lv_click                ; (CF: on no row)
         jc      .m
+        cmp     byte [msgshown], 0      ; (a subject that can't be opened: its
+        jne     .no                     ;  message, no menu)
         mov     al, [focus]
         cmp     al, FOC_DEV
         je      .m                      ; (a drive: as no row)
@@ -243,10 +243,8 @@ ex_menu:
         cmp     al, 1
         jne     .m
         mov     dl, RX_ROW + RX_FILE + RX_PROG
-.m:     cmp     byte [ex_mtw], 0
-        je      .mt
-        or      dl, RX_MT
-.mt:    xchg    ax, dx
+.m:     or      dl, [ex_mtw]            ; (RX_MT: 1 with MULTITASK=1, here)
+        xchg    ax, dx
         pop     cx
         pop     bx
         mov     si, ex_items
@@ -256,10 +254,14 @@ ex_menu:
         jc      .x
         cmp     ax, K_XFULL
         je      .full
-        mov     si, ex_keys
-        jmp     ui_dispatch
+        xchg    cx, ax                  ; the key into the BIOS's buffer: read
+        mov     ah, 5                   ;  as typed, so with MULTITASK=1 KMW's
+        int     16h                     ;  routing has it too (CODE-K, CODE-T:
+        ret                             ;  the window there, if open)
 .full:  call    sel_name                ; NAME.EXT, in the Executive's task
         jmp     run_wait
+.no:    pop     cx
+        pop     bx
 .x:     ret
 
 %include "RMENU.INC"                    ; (Write's and TERM's too)
@@ -3100,6 +3102,7 @@ ex_items:
         dw m_usage,  K_CODE_U, RX_NONE
         dw m_f5,     K_F5,     RX_NONE
         dw 0
+        times   -(($ - 2 - ex_items) / 6 > RM_MOST) db 0   ; (rm_buf, rm_key hold them all)
 m_open      db 'Open', HT, 21, 'Return', 0
 m_full      db 'Open full screen', HT, 21, 'Shift-Return', 0
 m_copy      db 'Copy', HT, 21, 'CODE-C', 0

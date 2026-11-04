@@ -160,9 +160,10 @@ lent        resb 1              ; the directory's memory is out (ui_lend):
 need_room   resb 1              ; ui_room has a look at the next chance
 ex_mtw      resb 1              ; 1 with MULTITASK=1; 2 while the Executive's
                                 ;  own loop waits (KMW's mw_poll: a task ended?)
-ex_rclk     resb 1              ; 1 while the Executive's list (or its menu)
-                                ;  waits: a right click is EV_RCLICK there
-                                ;  (mouse_event tests it with ex_mtw, a word)
+ex_rclk     resb 1              ; bit 0 while the Executive's list (or its
+                                ;  menu) waits: a right click is EV_RCLICK
+                                ;  there; bit 1 in KMW's mw_poll (UI_EVENT's
+                                ;  look, MULTITASK=1: for KMW's routing)
 run_base    resw 1              ; where a .RUN loads (offset)
 ui_paras    resw 1              ; the UI block's own size
 ent_max     resw 1              ; directory entries that fit (EXEC.INC)
@@ -962,10 +963,11 @@ mouse_event:
         jc      .no                     ;  it), and only to a .RUN for API 7
         test    ch, 2                   ;  or the Executive's list
         jz      .no
-        cmp     word [ex_mtw], 0        ; (ex_rclk: the Executive's own wait;
-        jne     .rc                     ;  MULTITASK=1: for everyone, as KMW's
-        cmp     byte [run_active], 0    ;  mw_got routes it, then gives it only
-                                        ;  to these two)
+        cmp     byte [ex_rclk], 0       ; (bit 0: the Executive's own wait;
+        jne     .rc                     ;  bit 1, MULTITASK=1: UI_EVENT's look,
+        cmp     byte [run_active], 0    ;  KMW's mw_poll, for everyone: mw_got
+                                        ;  routes it, then gives it only to
+                                        ;  these two.  UI_POLL never: no bit 1)
         je      .no
         cmp     word [run_hdr+4], 7
         jb      .no

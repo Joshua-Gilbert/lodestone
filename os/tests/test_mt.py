@@ -66,7 +66,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
 # before gp_isr; no code slack at lastdrv 40CFh: any change netting +1 moves image_end and bss_end.  The UI's
 # pads, UICORE.INC's, likewise: ui_image_end 5220h, no slack before uibss's paragraph)
-OFF_MAP ={'image_end': 0x3F80, 'bss_end': 0x7380, 'ui_keep_end': 0x670C}  # (64D0h before the Executive's right-click menu, 572 bytes; 3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP ={'image_end': 0x3F80, 'bss_end': 0x7380, 'ui_keep_end': 0x6714}  # (64D0h before the Executive's right-click menu, 580 bytes; 3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -4363,7 +4363,7 @@ def t_exmenu():
     brings it to the front, as a left one does (KMW's mw_got), and no menu."""
     print('== the Executive\'s right-click menu (multitasking on)')
     TR = os.path.join(GOS, 'apps', 'TASKS.RUN')
-    k = boot('mt_exm.img', b'MULTITASK=1\r\n', 88, TR, A.CALCRUN, TERMRUN, TERMFNT, A.RCTEST, A.RC6, mouse=True)
+    k = boot('mt_exm.img', b'MULTITASK=1\r\n', 88, TR, A.CALCRUN, TERMRUN, TERMFNT, A.RCTEST, A.RC6, A.RCP6, mouse=True)
     seg, Y = mt_seg(k), k.Y
     mb = lambda n: k.pc.rd(seg, Y[n], 1)[0]
     given, g5 = [], Y['ui_event.got'] + 5                    # (the events UI_EVENT gives, past mw_got's routing)
@@ -4383,6 +4383,10 @@ def t_exmenu():
     k.key('exit', settle=False); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
     check('... EXIT: the Executive again ("LCMD.COM ended")', k.pc.mode() == 0x40 and any('LCMD.COM ended' in l for l in k.band()),
           (k.pc.mode(), k.band()))
+    rpress(100, rowy('LODE.INI'))
+    check('a right click on LODE.INI (no program): its 5, no Open full screen', hw()[3] == 88 and not A.has(k, 'Open full screen')
+          and k.exec_list()[k.u16('sel')] == 'LODE.INI', (hw(), A.screen(k)))
+    k.key(ktest.ESC)
     yfree = 12                                               # (the title strip: no row; the list here is full)
     rpress(100, yfree)
     check('a right click on no row (the title strip): the programs with Tasks, 7', hw()[3] == 7 * 16 + 8 and A.has(k, 'Tasks')
@@ -4412,14 +4416,25 @@ def t_exmenu():
     k.key(ktest.ESC)
     check('... ESC: the menu gone, the calculator still open, nothing crashed', not A.has(k, 'Command prompt')
           and mb('mw_n') == 1 and not k.crashed, mb('mw_n'))
+    rpress(16, yfree); k.key(ktest.DOWN); k.key(ktest.DOWN); k.key(ktest.ENTER); k.run_for(0.5)
+    check('... the menu\'s Calculator with one open: that one to the front (as CODE-K typed), not a second',
+          mb('mw_n') == 1 and mb('mw_cur') == 1, (mb('mw_n'), mb('mw_cur')))
     tclick(k, title[1] * 8 + 8, title[0] + 4); k.key(ktest.ESC)  # (the calculator closed: no windows)
     got = {}
-    for nm in ('RC6.RUN', 'RCTEST.RUN'):                     # full-screen .RUNs (no RF_WIN), the Executive's task
-        k.select(nm); k.key(ktest.ENTER); n0 = len(A.rc_events(k))
-        rpress(100, 50); got[nm] = [e[0] for e in A.rc_events(k)[n0:]]
+    for nm in ('RC6', 'RCP6', 'RCTEST'):                     # full-screen .RUNs (no RF_WIN), the Executive's task
+        src = 'tests/%s.ASM' % nm                            # (each its own layout: RCP6's evs aren't RCTEST's)
+        k.select(nm + '.RUN'); k.key(ktest.ENTER); n0 = len(A.rc_events(k, src))
+        rpress(100, 50); tclick(k, 120, 60); got[nm] = [e[0] for e in A.rc_events(k, src)[n0:]]
         k.key(ktest.ESC)
-    check('with no windows: RC6.RUN (API 6) gets no EV_RCLICK for a right click, RCTEST.RUN (API 7) gets it',
-          mb('mw_n') == 0 and got == {'RC6.RUN': [], 'RCTEST.RUN': [0xFF03]}, (mb('mw_n'), got))
+    check('with no windows: RC6.RUN (API 6) gets no EV_RCLICK for a right click, nor RCP6.RUN (API 6, UI_POLL, which '
+          'mw_got never sees: after the Executive\'s UI_EVENT, mw_poll\'s look cleared); RCTEST.RUN (API 7) gets it; '
+          'the left click after it each one\'s', mb('mw_n') == 0
+          and got == {'RC6': [0xFF01], 'RCP6': [0xFF01], 'RCTEST': [0xFF03, 0xFF01]}, (mb('mw_n'), got))
+    k.select('LODE.INI'); k.key(A.CODE['R']); given.clear()  # (after an API 7 .RUN: run_hdr's API 7 still)
+    rpress(320, 200)
+    check('the Executive\'s Rename form, a right click in it: no EV_RCLICK given (the form\'s wait isn\'t the list\'s), '
+          'the form still up', 0xFF03 not in given and A.has(k, 'Rename LODE.INI'), ([hex(a) for a in given], A.screen(k)[-300:]))
+    k.key(ktest.ESC)
 
 def t_menu():
     print('== pop-up menus (UI API 8) in a window .RUN: saved under, modal; a drag lets the tasks run')
