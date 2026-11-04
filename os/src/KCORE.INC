@@ -1128,6 +1128,8 @@ f_F0:   mov     al, [bp+F_AX]
         je      .useg
         cmp     al, 5
         je      .saver
+        cmp     al, 7
+        je      .hdn
         cmp     al, 1
         jne     f_bad
         jmp     .open
@@ -1162,6 +1164,14 @@ f_F0:   mov     al, [bp+F_AX]
         mov     word [bp+F_BX], prn_path
         mov     word [bp+F_CX], PRN_PATH
         jmp     ok
+; AL=7: the internal hard disk's own name (IDENTIFY's words 27-46: 40
+; characters, blanks after it) -> ES:BX.  CF: AX = 1 (no C:, KHD.INC)
+.hdn:   cmp     byte [C_DT + D_PRES], 0
+        je      f_bad
+        mov     [bp+F_ES], cs
+        mov     word [bp+F_BX], hd_idn
+        jmp     ok
+        db      90h                     ; (what follows keeps its parity)
 ; AL=4: the UI segment has moved to BX (where the root process restarts)
 .useg:  mov     ax, [bp+F_BX]
         mov     [ui_seg], ax
