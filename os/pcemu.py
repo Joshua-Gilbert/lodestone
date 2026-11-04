@@ -140,14 +140,20 @@ class Ata:
         command ends there); s.wfails counts them.  A test may change it
       cut: the power goes during this WRITE SECTORS command (1 = the
         first): half its sectors land (none of one), then the PC stops
-    While busy, every register reads the status and writes go nowhere."""
+      strict (M12): a command written while one is in flight (busy, or a
+        sector's data still to move) is a crash (pc.crash), not ignored
+    While busy, every register reads the status and writes go nowhere.
+    INTRQ (IRQ 14, irq=True) as an ATA drive raises it: when a command ends,
+    and at each sector's DRQ but a write's first (not at the moment the
+    command is written: when the drive stops being busy, timed or not),
+    and ended by a read of the status (1F7h); HLT wakes for it."""
     BSY, DRDY, DSC, DRQ, ERR, IDX = 0x80, 0x40, 0x10, 0x08, 0x01, 0x02
 
     def __init__(s, model='Conner Peripherals 40MB - CP3044', cyls=977, heads=5, spt=17, rpm=3486,
                  formatted=True, stuck=False, tk0=False, diag=0x01, identify=True, data=None,
                  serial='CP3044-123456', firmware='1.03', irq=True, mech_fail=False, unready=0,
                  fail_ms=0, frees=0, disk=None, bad=(), stick_at=None, badw=(), cut=None, timed=False,
-                 seek_ms=(4.0, 0.02), cmd_ms=0.5, pio_us=1.0, lookahead=False):
+                 seek_ms=(4.0, 0.02), cmd_ms=0.5, pio_us=1.0, lookahead=False, strict=False):
         s.model, s.cyls, s.heads, s.spt, s.rpm = model, cyls, heads, spt, rpm
         s.formatted, s.stuck, s.tk0, s.diag, s.identify = formatted, stuck, tk0, diag, identify
         s.serial, s.firmware = serial, firmware
@@ -179,13 +185,31 @@ class Ata:
         s.timed, s.seek_ms, s.cmd_ms, s.pio_us = timed, seek_ms, cmd_ms, pio_us
         s.lookahead, s.la = lookahead, {}
         s.cyl = 0; s.ready = []; s.wsec = []; s.wt = 0
+        s.strict = strict; s.intrqs = 0                 # (INTRQs raised)
 
     def power_cut(s):
         s.stuck = True
         if s.pc: s.pc.stopped = 'power cut'; s.pc.mu.emu_stop()
 
-    def intr(s):
-        if s.irq and s.pc: s.pc.irq_pending.add(14)
+    def done_at(s, us):
+        """When the drive is next not busy (None: never)."""
+        if s.stuck: return None
+        t = max(us, s.busy_until)
+        if s.first is not None: t = max(t, s.first + s.unready * 1e6)
+        if s.timed and s.st & s.DRQ and s.ready and not s.wq:
+            i = s.pos // 512
+            if i < len(s.ready): t = max(t, s.ready[i])
+        return t
+
+    def intr(s, us=0.0):
+        """INTRQ, when the drive is next not busy: at the next block, or at
+        that time (pc.ata_at, which wakes a HLT)."""
+        if not (s.irq and s.pc): return
+        t = s.done_at(us)
+        if t is None: return
+        s.pc.ata_at = t; s.pc.next_event = min(s.pc.next_event, t)  # (at a block's start: never from inside
+                                                                     #  a REP INSW's port hook, which a stop
+                                                                     #  there would make read a word again)
 
     @staticmethod
     def text(t, n):                                     # an ATA string: n words, bytes swapped
@@ -246,12 +270,16 @@ class Ata:
             if s.pos >= len(s.buf):
                 s.st &= ~s.DRQ
                 if s.pend: s.reg[1] = s.pend; s.st |= s.ERR; s.pend = None
+            elif s.pos % 512 == 0: s.intr(us)           # (the next sector's DRQ)
             return v
         if port == 0x1F7 and s.pc: s.pc.irq_pending.discard(14)     # (reading it ends INTRQ)
         if port == 0x1F7 or s.busy(us): return s.status(us)
         return s.reg.get(port - 0x1F0, 0)
 
     def write(s, port, val, us, size=1):
+        if s.strict and s.pc and port == 0x1F7 and (s.busy(us) or s.st & s.DRQ):
+            s.pc.crash = 'ATA command %02Xh while one is in flight (status %02Xh)' % (val, s.status(us))
+            s.pc.mu.emu_stop(); return
         if s.busy(us): return
         if port == 0x1F0 and s.wq and s.st & s.DRQ:      # a sector's data coming in
             s.wbuf += bytes([val & 0xFF, val >> 8]) if size == 2 else bytes([val & 0xFF])
@@ -260,7 +288,7 @@ class Ata:
                 s.wbuf = bytearray()
                 if lba in s.badw:
                     s.wq = []; s.wfails += 1; s.reg[1] = 0x10; s.st = s.DRDY | s.DSC | s.ERR
-                    s.intr(); return
+                    s.intr(us); return
                 if s.disk is not None and (lba + 1) * 512 <= len(s.disk): s.disk[lba * 512:(lba + 1) * 512] = sec
                 s.data.pop(lba, None)
                 if s.timed:                             # on the disk when it next passes the head
@@ -270,7 +298,7 @@ class Ata:
                     if not s.wq: s.busy_until = s.wt
                 if not s.wq and s.cutting: return s.power_cut()
                 if not s.wq: s.st = s.DRDY | s.DSC
-                s.intr()
+                s.intr(us)
             return
         if port != 0x1F7:
             if port != 0x1F0: s.reg[port - 0x1F0] = val
@@ -278,8 +306,11 @@ class Ata:
         c = s.reg[4] | s.reg[5] << 8; h = s.reg[6] & 15; n = s.reg[3]
         s.cmds.append((val, c, h, n))
         s.ready = []
+        s.command(val, c, h, n, us)
+        if val not in (0x30, 0x31) or not s.st & s.DRQ: s.intr(us)  # (a write's first DRQ: none)
+
+    def command(s, val, c, h, n, us):
         ok = s.DRDY | s.DSC
-        s.intr()
         def fail(err, slow=False):
             s.reg[1] = err; s.st = ok | s.ERR
             if slow: s.busy_until = us + s.fail_ms * 1000
@@ -369,6 +400,7 @@ class PC:
         mu.mem_map(0, 0x110000)
         s.ems_pages = ems_pages; s.ems_alias = ems_alias
         s.ata = ata                     # the internal hard disk (Ata), or none: FFh
+        s.ata_at = float('inf')         # (its INTRQ to come: when it stops being busy)
         s.float_bus = float_bus         # no drive, and its ports read what's left on the bus
         if ata: ata.pc = s
         if ems_pages:
@@ -465,6 +497,11 @@ class PC:
         s.mu.mem_write(0xFFFF0, b'\xEA\x5B\xE0\x00\xF0')        # the reset jump, as in the ROM (FFFF:1 isn't 0)
         s.mu.mem_write(0xFFFF5, b'10/25/89'); s.mu.mem_write(0xFFFFE, b'\xFC')
         s.mu.mem_write(0xF0000 + 0xE05B, b'\xCD\x19')         # the POST: warm_boot
+        # the PC's fixed entry points (at_compat.asm in the 1520's BIOS), as jumps to the stubs: INT 08h, 09h,
+        # 10h, 15h, 16h, and the IRET at FF53h (for a program that puts the BIOS's own vectors back: CRASHLOG)
+        for at, to in ((0xFEA5, 0x1000), (0xE987, 0x1100), (0xF065, 0x10 * 8), (0xF859, 0x15 * 8), (0xE82E, 0x16 * 8),
+                       (0xFF53, 0x1200)):
+            s.mu.mem_write(0xF0000 + at, b'\xEA' + struct.pack('<HH', to, STUB))
         s.wr(0xB800, 0, b'\x20\x07' * 2000)
 
     def warm_boot(s, ems='keep'):
@@ -483,7 +520,7 @@ class PC:
             s.ems_reg = [0, 0, 0, 0]
             for w in range(4): s.ems_map(w)
         s.bios_init()
-        s.irq_pending = set(); s.soft = []; s.isr = 0; s.pic_rr = 2; s.irq_wait = False
+        s.irq_pending = set(); s.soft = []; s.isr = 0; s.pic_rr = 2; s.irq_wait = False; s.ata_at = float('inf')
         s.pic_mask = 0xB8; s.pic2_mask = 0xFF
         s.keys.clear(); s.blocked = False; s.halted = False
         s.uart = {'lcr': 0, 'mcr': 0, 'ier': 0, 'rx': [], 'scr': 0, 'dll': 0}
@@ -545,8 +582,14 @@ class PC:
             s.due_at = float('inf')
             if s.on_due: s.on_due()
         if s.us >= s.fd_at: s.fd_done()
+        if s.us >= s.ata_at: s.ata_at = float('inf'); s.ata_irq()
         s.chip_int()
-        s.next_event = min(s.next_tick, s.due_at, s.fd_at)
+        s.next_event = min(s.next_tick, s.due_at, s.fd_at, s.ata_at)
+
+    def ata_irq(s):
+        """The drive's INTRQ goes up: IRQ 14 (the run stops, so it is seen)."""
+        s.irq_pending.add(14); s.ata.intrqs += 1
+        if s.unmasked(14): s.mu.emu_stop()
 
     def chip_int(s):
         """IRQ 5 on the rising edge of the 7210's INT (the GPIB cartridge's E1 jumper), for a chip that models
@@ -1254,6 +1297,13 @@ class PC:
     def int18(s): s.stopped = 'INT 18h (ROM BASIC)'; s.mu.emu_stop()
     def int19(s):
         if s.r('cs') == 0xF000 and s.r('ip') == 0xE05D:      # the reset jump's POST
+            code = s.cmos[0x0F]; s.cmos[0x0F] = 0
+            if code in (0x05, 0x0A):                    # the 1520's Reset_Actual (reset.asm): shutdown code 05h or
+                off, seg = struct.unpack('<HH', s.rd(0, 0x467, 4))   #  0Ah, a jump through 40:67h with memory as it
+                if code == 0x05: s.isr = 0                           #  was, no POST (05h: the PICs' EOI first)
+                s.w('ss', 0x30); s.w('sp', 0x80); s.w('flags', 0x02)
+                s.w('cs', seg); s.w('ip', off); s.resets_caught = getattr(s, 'resets_caught', 0) + 1
+                s.mu.emu_stop(); return
             s.warm_boot(getattr(s, 'ems_on_reset', 'keep')); s.mu.emu_stop(); return
         s.stopped = 'INT 19h (reboot)'; s.mu.emu_stop()
 
@@ -1322,7 +1372,7 @@ class PC:
         here = s.lin()
         s.halted = a + z == here and s.rd(0, here - 1, 1)[0] == 0xF4
         if (s.blocked or s.halted) and not s.deliverable():
-            ev = min(s.due_at, s.fd_at)
+            ev = min(s.due_at, s.fd_at, s.ata_at)
             if s.halted and ev < s.next_tick:
                 # HLT and an event (the Pi's; fd_wait's floppy transfer ending) before the tick: to the event; it
                 # may raise an IRQ (the 7210's SRQ: IRQ 5; the floppy's: IRQ 6).  None: still halted, back onto the HLT

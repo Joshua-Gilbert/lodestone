@@ -959,42 +959,22 @@ t_devices:
         mov     bx, VCOL
 .hr:    jmp     pline_at
 
-; the hard disk's own name (IDENTIFY, words 27-46) at DI.  CF if it doesn't
-; answer within a second
+; the hard disk's own name (IDENTIFY, words 27-46) at DI, as the kernel
+; keeps it (INT 21h F007h: KHD.INC read it at start-up; nothing here
+; drives the drive, which another task may be using).  CF if there is none
 hd_name:
-        mov     dx, 1F6h
-        mov     al, 0A0h                ; drive 0
-        out     dx, al
-        inc     dx
-        mov     al, 0ECh                ; IDENTIFY
-        out     dx, al
-        call    UI_TICK
-        mov     bx, ax
-.w:     in      al, dx
-        test    al, 80h
-        jnz     .b
-        test    al, 09h                 ; DRQ, or ERR
-        jnz     .r
-.b:     call    UI_TICK
-        sub     ax, bx
-        cmp     ax, 18
-        jb      .w
-.no:    stc
-        ret
-.r:     test    al, 01h
-        jnz     .no
-        push    di
-        mov     di, fbuf
-        mov     cx, 256
-        mov     dx, 1F0h
-        rep     insw
-        pop     di
-        mov     si, fbuf + 27 * 2       ; 40 characters, each pair swapped
+        mov     ax, 0F007h
+        int     21h
+        jc      .r
+        push    ds
+        push    ds
+        push    es
+        pop     ds                      ; (DS:BX: the name; ES: ours)
+        pop     es
+        mov     si, bx
         mov     cx, 20
-.n:     lodsw
-        xchg    al, ah
-        stosw
-        loop    .n
+        rep     movsw
+        pop     ds
 .t:     cmp     di, vbuf                ; trailing blanks off
         jbe     .x
         cmp     byte [di-1], ' '
@@ -1002,7 +982,7 @@ hd_name:
         dec     di
         jmp     .t
 .x:     clc
-        ret
+.r:     ret
 
 ; AL = CMOS drive type -> "A: 1.44 MB" at DI (first A:, then B:)
 drive_kind:
@@ -2574,7 +2554,6 @@ fpath       resb 18
 ini_old     resb INI_MAX + 1
 ini_new     resb INI_MAX + 40
         times   -(FONT_BYTES + 1 > $ - ini_old) resb 1  ; (fbuf fits in both)
-fbuf        equ ini_old                ; (a font file, or a disk's IDENTIFY
-                                        ;  sector: never while LODE.INI is in
+fbuf        equ ini_old                ; (a font file: never while LODE.INI is in
                                         ;  ini_old/ini_new; UI_FONT copies it)
 run_bss_end:
