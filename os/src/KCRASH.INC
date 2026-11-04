@@ -46,6 +46,8 @@ CRB_KEPT    equ 3
 CRB_SHOWN   equ 4
 CRB_PASS    equ 5
 CRB_VEC     equ 6                       ; (40:67h found changed at a tick, put
+CRB_STACK   equ 8                       ; (the owner's stack changed while it
+                                        ;  was out on a disk wait: mt_crs1)
 CRB_CMOS    equ 7                       ;  back; CMOS 0Fh found changed at a
                                         ;  window operation, set again)
 
@@ -91,6 +93,9 @@ cr_vb       dw      mt_cur, mt_front, mt_down, mt_ddev, mt_swing, mt_inb
 CR_NVB      equ     ($ - cr_vb) / 2     ; (16)
 mt_crp      dw      0                   ; the next record's offset in the ring
 mt_crcause  db      0
+mt_crss     dw      0                   ; (mt_crs0: the owner's SS, SP, the
+mt_crsp     dw      0                   ;  bytes kept, from SP up)
+mt_crsn     dw      0
             db      0
 mt_crrg     times 14 dw 0               ; 'X': IP CS FL SP SS AX BX CX DX SI
                                         ;  DI BP DS ES
@@ -273,7 +278,74 @@ mt_cr6: cli
         mov     ax, [cs:mt_crrg+10]
         CREC    'X'
         mov     byte [cs:mt_crcause], 'X'
-        jmp     short mt_crx
+        jmp     mt_crx
+
+; a disk wait's owner going out (mt_dwait, before mt_switch: interrupts
+; off): the top of its stack kept, from its SP (the caller's, past this
+; call's return) up: the kernel's slice to kstack_top (256 bytes at
+; most), or 128 bytes of its own stack.  All kept
+mt_crs0:
+        pusha
+        push    ds
+        push    es
+        mov     [cs:mt_crss], ss
+        mov     si, sp                          ; (past PUSHA, DS, ES, the return)
+        add     si, 22
+        mov     [cs:mt_crsp], si
+        mov     cx, 128
+        mov     ax, ss
+        cmp     ax, KSEG
+        jne     .n
+        mov     cx, kstack_top
+        sub     cx, si
+        cmp     cx, 256
+        jbe     .n
+        mov     cx, 256
+.n:     mov     [cs:mt_crsn], cx
+        push    ss
+        pop     ds
+        push    cs
+        pop     es
+        mov     di, mt_crsv
+        cld
+        rep     movsb
+        pop     es
+        pop     ds
+        popa
+        ret
+; the owner back (mt_dwait.bk): its SS, SP and those bytes as they were?
+; Else the report (cause 'K', stage 8), never back.  All kept
+mt_crs1:
+        pushf
+        pusha
+        push    ds
+        push    es
+        cli
+        mov     ax, ss
+        cmp     ax, [cs:mt_crss]
+        jne     .bad
+        mov     si, sp                          ; (PUSHF too)
+        add     si, 24
+        cmp     si, [cs:mt_crsp]
+        jne     .bad
+        mov     cx, [cs:mt_crsn]
+        push    ss
+        pop     ds
+        push    cs
+        pop     es
+        mov     di, mt_crsv
+        cld
+        repe    cmpsb
+        jne     .bad
+        pop     es
+        pop     ds
+        popa
+        popf
+        ret
+.bad:   mov     byte [cs:mt_crcause], 'K'
+        mov     al, CRB_STACK
+        call    cr_st
+        jmp     mt_crx
 
 ; the BIOS's jump through 40:67h (shutdown code 0Ah): interrupts off,
 ; its own stack.  1234h at 40:72h: a restart asked for, as ever
@@ -352,7 +424,18 @@ mt_crx: cli
         pop     ds
         rep     movsw
         pop     ds
-        mov     bx, [mt_crp]                    ; the newest record's stack
+        cmp     byte [mt_crcause], 'K'          ; a disk wait's owner's stack
+        jne     .ls                             ;  changed: as kept, then now
+        mov     si, mt_crsv
+        mov     di, mt_crbuf + CRO_LSTK
+        mov     cx, 256
+        rep     movsb
+        mov     si, [mt_crsp]
+        mov     ax, [mt_crss]
+        mov     cx, 256
+        call    cr_cpy
+        jmp     short .lx
+.ls:    mov     bx, [mt_crp]                    ; the newest record's stack
         sub     bx, 16
         and     bx, CR_N * 16 - 1
         mov     si, [mt_crb+bx+CR_SP]
@@ -361,7 +444,7 @@ mt_crx: cli
         mov     di, mt_crbuf + CRO_LSTK
         mov     cx, 512
         call    cr_cpy
-        mov     di, mt_crbuf + CRO_TSTK         ; each task's, as it was last
+.lx:        mov     di, mt_crbuf + CRO_TSTK         ; each task's, as it was last
         xor     bx, bx                          ;  switched from
 .tk:    push    bx
         shl     bx, 5
@@ -581,7 +664,7 @@ cr_sig      db      'LODECRSH'
 cr_psig     db      'LODEPREV'
 ; CMOS 3Dh's nibbles as CRASHRPT's characters: the stage (CRB_*), the
 ; window tag (KMW's CREC tags; '-' none, '?' another)
-cr_stch     db      '?1234P67????????'
+cr_stch     db      '?1234P678???????'
 cr_wtags    db      '-ECOUDWZzRF?????'
 cr_bv       dw      08h * 4, 0FEA5h, 09h * 4, 0E987h, 10h * 4, 0F065h
             dw      16h * 4, 0E82Eh, 15h * 4, 0F859h, 1Ch * 4, 0FF53h

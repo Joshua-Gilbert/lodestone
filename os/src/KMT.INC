@@ -6431,8 +6431,15 @@ mt_dwait:
         mov     byte [cs:bx+TE_STATE], TS_WAITD
         call    mt_pick
         jc      .u
+%ifdef CRASHLOG
+        call    mt_crs0                 ; (KCRASH.INC: the owner's stack kept)
+%endif
         call    mt_switch               ; (back once 9101h or the time-out
-.bk:    mov     byte [cs:mt_down], 0FFh ;  made it ready, and it was picked)
+.bk:                                    ;  made it ready, and it was picked)
+%ifdef CRASHLOG
+        call    mt_crs1                 ; (as it was?  Else the report)
+%endif
+        mov     byte [cs:mt_down], 0FFh
         mov     byte [cs:mt_dfw], 0
         call    mt_dwake
         call    mt_cent                 ; (frozen behind meanwhile, CODE-Tab:
@@ -7745,7 +7752,7 @@ MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
 MT_SSTK     equ     1024                ;  on the paragraph after the image;
 MT_INIL     equ     160                 ; LODE.INI's lists' room
 %ifdef CRASHLOG
-CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK ; (KCRASH.INC: the ring, the report, a stack)
+CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK + 256 ; (KCRASH.INC: the ring, the report, a stack)
 %else
 CR_BSS      equ     0
 %endif
@@ -7764,6 +7771,7 @@ mw_tmp      resb    NWIN * 4            ; (mw_raise: the window stack, reordered
 mt_crb      resb    CR_N * 16           ; (KCRASH.INC)
 mt_crbuf    resb    CR_LEN
 mt_crstk    resb    CR_STK
+mt_crsv     resb    256                 ; (mt_crs0: the owner's stack's top)
 %endif
 mt_bend:
 
