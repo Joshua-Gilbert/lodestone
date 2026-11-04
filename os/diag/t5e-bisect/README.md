@@ -15,3 +15,10 @@ window with the mouse.
   TERM.RUN and CLAUDE.COM 1.16 (main's MT never writes PB_VIEW).
 - `C-nodwait`: all of T5e, built `-dNODWAIT` (M10 never gives a floppy wait
   away). No restart: floppy waits are in it again.
+- `D-main-padded`: main's kernel with 28 unused bytes at the end of MT's
+  code (the same size as T5e's: the arena moved as in A), main's apps.
+  Restarts as A does: the layout, not T5e's code.
+- `E-main`: main as it is (its CRASHLOG kernel, its apps): the control.
+
+A restarted (2026-11-04).
+
