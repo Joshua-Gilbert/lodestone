@@ -16,8 +16,8 @@ import test_emu_term as TT
 PBF_SHOWN, PBF_NOCUR = 1, 2
 
 
-def start(window=True, front=False, args='/A:7', mouse=False, connect=True, **kw):
-    h = EmuHarness(term=TT.FAKE, args=args, **kw)
+def start(window=True, front=False, args='/A:7', mouse=False, connect=True, term=TT.FAKE, **kw):
+    h = EmuHarness(term=term, args=args, **kw)
     h.mt = FakeMT(window, front); h.mt.attach(h.m)
     if mouse: h.m.mouse = {'presses': []}
     h.boot()
@@ -95,7 +95,7 @@ def test_window_term():
         assert win_in_step(h), wtext(h)
         assert h.mt.wake == 1, h.mt.log                                    # (MT_WAKE asked)
         d = desc(h)
-        assert (d['ver'], d['cols'], d['rows'], d['first'], d['gend']) == (1, 80, 25, 0x20, 0xAF), d
+        assert (d['ver'], d['cols'], d['rows'], d['first'], d['gend']) == (2, 80, 25, 0x20, 0xAF), d
         assert d['flags'] & PBF_SHOWN, d
         assert d['cells'] == (0, h.var('shadseg', 2)), d                  # (offset, segment)
         assert d['font'] == (h.sym['font'], h.claude_psp), d
@@ -129,6 +129,62 @@ def test_window_term():
         assert h.mt.vwrites == 0 and h.mt.desc and not h.mt.front, (h.mt.vwrites, h.mt.log)
         TT.check(h)
     finally:
+        h.close()
+
+
+def test_window_size():
+    """T5e: Claude Code 2.1 lays out the whole terminal (the mascot at the top,
+    the prompt box pinned to the bottom), so a window showing 19 of 24 rows
+    lost the mascot.  The window's rows (PB_VIEW, which MT writes from
+    TERM.RUN's MT_TROWS) go to the Pi (EVENT 08h): its pty is that tall, the
+    program lays out for it, and the descriptor publishes those rows alone."""
+    h = start(term=TT.FAKE + ' --full')
+    try:
+        t = h.router.term
+        assert wait_wtext(h, 'Claude Code (fake, full)') and wait_wtext(h, 'rows: 24'), wtext(h)
+        d = desc(h)
+        assert d['ver'] == 2 and d['rows'] == 25 and t.rows == 24, (d, t.rows)
+        assert h.mt.view(h.m, 19)
+        assert h.run_until(lambda: t.rows == 19 and 'rows: 19' in wtext(h) and desc(h)['rows'] == 19, 20), \
+            (t.rows, desc(h), wtext(h))
+        assert win_in_step(h), wtext(h)
+        cs, _ = shadow(h)
+        crow = desc(h)['cur'] >> 8
+        assert crow == 15 and any(0xA1 <= c <= 0xAE for c in cs[1]) and 'shortcuts' in wtext(h).split('\n')[17], (crow, wtext(h))
+        assert all(r == b' ' * 80 for r in cs[19:24]), 'rows past the window\'s not blank'
+        h.term_type('hi'); h.press(0x1C0D)
+        assert wait_wtext(h, 'You said: hi') and win_in_step(h), wtext(h)
+        for v, want in ((12, 12), (30, 24), (2, 4)):
+            h.mt.view(h.m, v)
+            assert h.run_until(lambda: t.rows == want and (want < 12 or 'rows: %d' % want in wtext(h)), 20), \
+                (v, t.rows, wtext(h))                       # (at 4 rows the stand-in's own rows overlap)
+            assert h.run_until(lambda: desc(h)['rows'] == (want if want < 24 else 25), 5), (v, desc(h))
+            assert win_in_step(h), wtext(h)
+        h.mt.view(h.m, 19)
+        assert h.run_until(lambda: t.rows == 19, 20), t.rows
+        h.mt.window = False; h.mt.front = True              # (its window gone, it in front: full screen for good)
+        assert h.run_until(lambda: not h.var('wmode') and t.rows == 24 and 'rows: 24' in '\n'.join(t.screen.text()), 20), \
+            (h.var('wmode'), t.rows, h.mt.log)
+        TT.check(h)
+    finally:
+        h.close()
+
+
+def test_window_size_older_pi():
+    """A Pi that doesn't say HF_SIZE: no EVENT 08h, 24 rows and the
+    descriptor's 25 (the status band) as before."""
+    keep = glp.HF_SIZE
+    glp.HF_SIZE = 0
+    h = start(term=TT.FAKE + ' --full')
+    try:
+        t = h.router.term
+        assert wait_wtext(h, 'rows: 24'), wtext(h)
+        assert h.mt.view(h.m, 19)
+        h.run_until(lambda: False, 0.8)
+        assert t.rows == 24 and desc(h)['rows'] == 25 and h.var('pi_rows') == 24, (t.rows, desc(h))
+        TT.check(h)
+    finally:
+        glp.HF_SIZE = keep
         h.close()
 
 

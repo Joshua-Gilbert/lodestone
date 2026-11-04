@@ -1474,9 +1474,10 @@ win_probe:
 .t:
         cmp     byte [app_want], 'C'    ; (chat: full screen)
         je      .x
-        mov     byte [wdesc + PB_VER], 1
+        mov     byte [wdesc + PB_VER], 2  ; (2: PB_VIEW, the window's rows)
         mov     word [wdesc + PB_FLAGS], PBF_SHOWN | PBF_NOCUR | 80 << 8
         mov     byte [wdesc + PB_ROWS], 25
+        mov     byte [wdesc + PB_VIEW], 0
         mov     ax, [shadseg]
         mov     [wdesc + PB_CELLS + 2], ax
         mov     word [wdesc + PB_FONT], font
@@ -1598,6 +1599,60 @@ win_tick:
         jnz     .x
         call    win_front_task
         je      win_drop
+.x:     ret
+
+; T5e: the Pi's terminal as tall as the window shows (PB_VIEW, which MT
+; writes from TERM.RUN's MT_TROWS): EVENT 08h with the rows (4-24) when
+; they change, to a Pi that says HF_SIZE; 24 again once full screen for
+; good (win_drop).  A picture keeps the window's.  One EVENT at a time
+; (rep_q), a queue slot left for a REPLY
+win_size:
+        cmp     byte [connected], 0
+        je      .x
+        test    byte [pi_hf], HF_SIZE
+        jz      .x
+        mov     al, 24
+        cmp     byte [wmode], 0
+        je      .s
+        mov     al, [wdesc + PB_VIEW]
+        or      al, al
+        jz      .x                      ; (no window has said yet)
+        cmp     al, 24
+        jbe     .lo
+        mov     al, 24
+.lo:    cmp     al, 4
+        jae     .s
+        mov     al, 4
+.s:     cmp     al, [pi_rows]
+        je      .x
+        cmp     byte [rep_q], 0
+        jne     .x
+        cmp     byte [txq_n], TXQN - 1
+        jae     .x
+        mov     [pi_rows], al
+        mov     [evsize + 1], al
+        mov     byte [rep_q], 1
+        mov     al, G_EVENT
+        mov     si, evsize
+        mov     cx, 2
+        call    txq_put_cs
+        jmp     short win_prows
+.x:     ret
+
+; PB_ROWS for the rows the Pi has: those alone below 24 (so the window's
+; view starts at row 0), else 25 with the status band; published again
+; when it changes, in a window
+win_prows:
+        mov     al, [pi_rows]
+        cmp     al, 24
+        jb      .r
+        mov     al, 25
+.r:     cmp     al, [wdesc + PB_ROWS]
+        je      .x
+        mov     [wdesc + PB_ROWS], al
+        cmp     byte [wmode], 0
+        je      .x
+        call    win_pub
 .x:     ret
 
 ; full screen for good (chat; no window, in front): withdrawn, mode 40h
@@ -1803,6 +1858,7 @@ tick_service:
         mov     [last_tick], ax
 %ifdef TERM_WIN
         call    win_tick
+        call    win_size
         mov     ax, [now]
 %endif
         cmp     byte [busy], 0
@@ -2221,6 +2277,10 @@ pf_hello:
         mov     byte [busy], 1                  ; the Pi sets up; READY ends it
 %ifdef TERM_WIN
         mov     byte [fpic_seen], 0             ; (this Pi's F_PIC yet to be seen)
+        mov     byte [pi_rows], 24              ; (each HELLO: 24 rows, T5e)
+        push    bx
+        call    win_prows
+        pop     bx
 %endif
         mov     ax, [now]
         mov     [turn_t0], ax
@@ -3405,7 +3465,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.15', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.16', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
@@ -3415,6 +3475,7 @@ kv_rd       db 'rd=16384', 10, 0             ; (IOSIZE - 2 and more: the biggest
 s_tkeys     db 'CODE-Q quits  CODE-R repaints', 0
 evrepaint   db 03h
 evsaver     db 07h                      ; EVENT: the saver comes on (1.14)
+evsize      db EV_SIZE, 24              ; EVENT: the Pi's terminal's rows (1.16, T5e)
 evmouse     db 06h, 0, 0, 0, 0          ; EVENT click: x, y (pixels, words)
 s_onint     db ' on INT ', 0
 s_none2     db 'none', 0
@@ -4582,7 +4643,8 @@ fpic_seen   resb 1                      ; 1: the Pi marks pictures' frames (F_PI
 intask      resb 1                      ; 1: a task's, not task 0's (MT_LIST)
 t_pix       resb 1                      ; 1: this frame had pixels (FDh)
 t_wtick     resw 1                      ; (win_tick: the last look)
-wdesc       resb PB_SIZE                ; the descriptor (MTAPI.INC's PB_*)
+wdesc       resb PB_SIZE2               ; the descriptor (MTAPI.INC's PB_*; 2: PB_VIEW)
+pi_rows     resb 1                      ; the rows the Pi's terminal has (24 from its HELLO; T5e)
 %endif
 ; dialogs
 ask_open    resb 1

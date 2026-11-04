@@ -257,7 +257,9 @@ show:   push    es
         mov     ax, 0F000h + MT_TROWS
         mov     dx, 8000h               ; (T5b: a published screen's cells)
         mov     cx, 25
-        call    mtc
+        mov     si, [rows]              ; (T5e: the rows we show, for a
+        or      si, 0A500h              ;  published screen's PB_VIEW: its
+        call    mtc                     ;  program may fit its screen to them)
         pop     es
         jc      .x
         mov     [tdl], dl               ; (16: its program took the mouse, T4)

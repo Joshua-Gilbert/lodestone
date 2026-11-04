@@ -2336,7 +2336,16 @@ mt_trows:
 ; columns, BX = PB_CUR (PBF_NOCUR: its row's bit 7 set, T5d: TERM's
 ; view follows it, with no mark)
 mt_tpub:
-        mov     ax, [si+PB_CUR]
+        mov     ax, [bp+F_SI]           ; (T5e: SI = A5h, the rows the window
+        cmp     ah, 0A5h                ;  shows: to a PB_VER 2 descriptor's
+        jne     .nv                     ;  PB_VIEW; else not said: a TERM
+        or      al, al                  ;  before T5e left SI as it was)
+        jz      .nv
+        cmp     byte [si+PB_VER], 2
+        jb      .nv
+        mov     [si+PB_VIEW], al
+        nop                             ; (mt_par: what follows at its parity)
+.nv:    mov     ax, [si+PB_CUR]
         test    byte [si+PB_FLAGS], PBF_NOCUR
         jz      .k
         or      ah, 80h
@@ -2493,7 +2502,10 @@ mt_pub: mov     cl, [bp+F_CX]
         mov     dx, es
         mov     ax, di
         mov     cx, PB_SIZE
-        call    mt_pin
+        cmp     byte [es:di+PB_VER], 2  ; (T5e: 2's PB_VIEW, MT writes it)
+        jb      .v1
+        inc     cx
+.v1:    call    mt_pin
         jc      .bd
         cmp     byte [es:di+PB_VER], 1
         jb      .bd
