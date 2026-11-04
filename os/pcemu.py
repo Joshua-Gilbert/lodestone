@@ -815,7 +815,16 @@ class PC:
             return
         if 0x2F8 <= port <= 0x2FF: return s.uart_out(port - 0x2F8, val)
         if s.ems_pages and (port & 0x3FFF) == 0x258:
-            s.us += EMS_IO_US; s.ems_reg[port >> 14] = val; s.ems_map(port >> 14); return
+            w = port >> 14
+            op = s.fd_op                                    # (fd_wait: a window under a transfer in flight
+            if op and op.get('regs') is not None and op['ah'] in (2, 3) and val != op['regs'][w] \
+                    and s.in_frame(op['lin'], op['n'] * 512) and \
+                    (op['lin'] - EMS_FRAME) // EMS_PAGE <= w <= (op['lin'] + op['n'] * 512 - 1 - EMS_FRAME) // EMS_PAGE:
+                s.fd_frame_mid = getattr(s, 'fd_frame_mid', 0) + 1     #  mapped elsewhere, even for a moment: the
+                s.log.append('[EMS window %d mapped to %02Xh under a transfer at %05X, at %04X:%04X]'
+                             % (w, val, op['lin'], s.r('cs'), s.r('ip')))   #  1520's DMA, through the whole wait,
+                if FD_STRICT: s.crash = s.log[-1][1:-1]                   #  writes there)
+            s.us += EMS_IO_US; s.ems_reg[w] = val; s.ems_map(w); return
         if s.chip is not None and (port & 0x3FF) == 0x2E1 and port < 0x2000:
             s.chip.write(port >> 10, val)
             s.chip_int()
