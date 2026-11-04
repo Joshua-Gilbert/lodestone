@@ -1,3 +1,16 @@
+Lodestone on main, 2026-11-03 (LODE.SYS 49,296 bytes; multitasking off), its column only:
+GRiD MS-DOS and FreeDOS as below.  File-system total 78.58 s (78.75 at
+0.6): writes 9.224, small files 21.475, EXE x3 12.566, the rest within
+0.02 s.  EMS map x 10000 0.350 s (0.430): S14's INT 67h 44h without a
+CALL.  Memory for programs 565.7 KB without EMS, 581.7 KB with it; with
+C: 578.9, ROM 1 581.3, ROM 1 + ROM 2 581.1 (from a floppy, EMS).  With
+MULTITASK=1, Shift-Return MEMSZ 558.1 KB (test_mt's boot, EMS,
+run_wait).  pcemu charges nothing for an odd jump target, so the
+even-address pads don't show here; on the 1520 they save prefetch on
+taken jumps.
+
+------------------------------------------------------------------------
+
 Lodestone vs GRiD MS-DOS vs FreeDOS, BENCH 1.4 in pcemu (2026-10-18, Lodestone 0.6)
 python3 bench/compare3.py <GRiD MS-DOS EPROM image> <EMM.SYS>
 

@@ -4953,6 +4953,38 @@ def t_paintw():
     check('a stroke in the window after the zoom, U: the picture before it, all of it (U as C where the zoom changed '
           'them: D)', C() == zp and not view_bad(), (A.diff(zp, C()), view_bad()))
     k.key('U'); k.run_for(0.3)
+    # CODE-Tab away to a full-screen task and back (paint.md §8's planned check, as it is since W1: Paint's strokes
+    # come by UI_MOUSE, so the UI's own INT 33h state is task 0's, saved and put back by MT).  Task 0's hot spot,
+    # masks made its own (after the first task's start, which saves it too); LCMD's (a copy, its pointer hidden) changed while it is in front: back
+    # in task 0, task 0's again, not LCMD's.
+    ST = ('m33_xmin', 'm33_xmax', 'm33_ymin', 'm33_ymax', 'm33_rx', 'm33_ry', 'm33_cnt', 'm33_hx', 'm33_hy', 'm33_ts', 'm33_tc')
+    mst = lambda: (tuple(k.u16(n) for n in ST), bytes(k.rd('m33_gm', 64)))
+    keep = mst()
+    put = lambda hx, g: (k.wr('m33_hx', struct.pack('<HH', hx, hx + 2)), k.wr('m33_ts', struct.pack('<HH', g, g ^ 0xFFFF)),
+                         k.wr('m33_gm', bytes((g + i) & 0xFF for i in range(64))))
+    k.key(0x6D00); k.run_for(0.5)                         # (CODE-F6: the Executive)
+    k.key(A.CODE['P']); k.run_for(1.0)                    # (no TERM.RUN here: LCMD a task in front, full screen)
+    k.key(HOT); k.run_for(1.0)                            # (CODE-Tab: task 0; the first task's start saved its state)
+    put(5, 0x1234)                                        # task 0's own now: only the next switch saves it
+    m0 = mst()
+    k.key(HOT); k.run_for(1.0)                            # CODE-Tab: LCMD
+    t1 = tstate(k)[1:]
+    put(9, 0x5678)                                        # (LCMD's own, in front)
+    l1 = mst()
+    k.key(HOT); k.run_for(1.0)                            # CODE-Tab: task 0 again
+    t2 = tstate(k)[1:]
+    k.key(0x6D00); k.run_for(0.5)                         # (CODE-F6: Paint)
+    m1 = mst()
+    k.wr('m33_hx', struct.pack('<HH', *keep[0][7:9])); k.wr('m33_ts', struct.pack('<HH', *keep[0][9:11]))
+    k.wr('m33_gm', keep[1])                               # (Paint's pointer as it was)
+    w2 = (mb('mw_cur'), pb('ses'), view_bad())
+    stroke('L', 120, 120, 320, 220)
+    check('CODE-F6, CODE-P (LCMD a task in front, full screen), CODE-Tab twice (front %s), again (task 0: %s), CODE-F6: Paint in '
+          'front, its view drawn, the UI\'s INT 33h state task 0\'s as it was (limits, ratios, show count %d, hot spot, '
+          'masks), not LCMD\'s; a stroke drawn where the mouse went' % (t1, t2, m1[0][6] - 65536 * (m1[0][6] > 32767)),
+          t1[0] == 1 and t2[0] == 0 and w2 == (1, 1, []) and m1 == m0 and l1 != m0
+          and C() == [bytes(l) for l in m.l] and not view_bad() and not k.crashed, (t1, t2, w2, m0, m1, l1, view_bad()))
+    k.key('U'); k.run_for(0.3)
     k.key(A.CODE['X']); k.key(ktest.ENTER); k.run_for(1.0)    # (saved: no question at the close box)
     wx = win()
     tclick(k, (wx[0] + wx[2] - 2) * 8 + 4, wx[1] + 10); k.run_for(1.0)
