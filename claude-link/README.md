@@ -222,7 +222,8 @@ Flash AR488 to the Nano. Two choices:
   raise SRQ by itself when a reply is fully in its buffer, keeps a reply
   that is still arriving instead of throwing it away, and doubles the
   buffer to 255 bytes. Builds to 24.8 KB flash, 1,312 bytes RAM (64 %) on
-  a Nano. `++ver real` then ends in `+GRiD1`.
+  a Nano. `++ver real` then ends in `+GRiD1`. The patch is a change to
+  AR488, so it is under AR488's license, GPL v3 (`LICENSES/GPL-3.0.txt`).
 - **Stock AR488** also works: the Pi tells the GRiD how long to wait
   before reading each reply. It's slower (127-byte replies).
 

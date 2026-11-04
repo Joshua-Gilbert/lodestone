@@ -7,7 +7,7 @@ except ImportError:                     # Python < 3.11
 
 PATHS = ['~/.config/gridlink/config.toml', '/etc/gridlink/config.toml']
 
-# Joshua's bus (see the GPIB driver notes); edit [bus] in the config file.
+# The author's bench (see the GPIB driver notes); edit [bus] in the config file.
 DEFAULT_BUS = {
     1: 'Tek 4662 pen plotter (HP-GL, through its Nano; grid_plotter)', 2: 'Tek 11403 digitizing scope',
     3: 'Tek 7854 oscilloscope', 5: 'Tek AFG5101 arbitrary function generator', 6: 'Tek FG5010 function generator',
@@ -42,7 +42,7 @@ class Config:
         s.sessions_dir = os.path.expanduser('~/gridlink/sessions')
         s.bash_timeout = 180
         s.bus = dict(DEFAULT_BUS)
-        s.api_key = None; s.user = 'Joshua'
+        s.api_key = None; s.user = 'the user'
         s.extra_prompt = ''
         s.app = 'auto'                          # chat, term, or auto (chat when there is a key)
         s.term_command = 'claude'               # Term: the program in the pty

@@ -10,7 +10,7 @@ address = 7
 #   "thrutest" - like the bench firmware: *IDN? -> the bench ID, anything else echoed.  A:\THRUTEST checks
 #                the whole chain with it.  Start here.
 #   "scpi"     - a small 488.2/SCPI instrument (*IDN?, SYST:TIME?, ECHO, PI:TEMP? ...), to build on
-#   "/home/joshua/mylab.py:MyLab" - your own handler class (see gpibbridge/handlers/base.py)
+#   "/home/pi/mylab.py:MyLab" - your own handler class (see gpibbridge/handlers/base.py)
 handler = "thrutest"
 
 # Serial port: "auto" finds the bridge (/dev/gpib-bridge from the udev rule, or any Pico).
@@ -21,4 +21,4 @@ log_level = "info"          # "debug" logs every message and address change
 
 [handler_options]
 # for the scpi handler, e.g.:
-# idn = "PounceLab,GPIB-Pico2 Bridge,gpib-pi,1"
+# idn = "Lodestone,GPIB-Pico2 Bridge,gpib-pi,1"
