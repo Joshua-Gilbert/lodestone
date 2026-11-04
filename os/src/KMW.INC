@@ -77,8 +77,10 @@ mw_ctx:     dw      title_on,  held2 + 2 - title_on
             dw      fm_ptr,    fm_b2 + 2 - fm_ptr
             dw      crit_err,  2
             dw      alloc_tab, run_ret + 2 - alloc_tab
-            dw      ex_mtw,    1        ; (2 only in the Executive's UI_EVENT:
-            dw      0                   ;  a task's end is its event, M8c)
+            dw      ex_mtw,    2        ; (2 only in the Executive's UI_EVENT:
+            dw      0                   ;  a task's end is its event, M8c; and
+                                        ;  ex_rclk, its right click's, after it)
+            times   -(ex_rclk != ex_mtw + 1) db 0
 MW_CALLOC   equ (held2 + 2 - title_on) + 2 + (ed_keep + 1 - lv_cur) + (fm_b2 + 2 - fm_ptr) + 2
                                         ; (alloc_tab's place in a record's copy)
 %if MW_CALLOC + (run_ret + 2 - alloc_tab) + 1 > MW_CTXLEN
@@ -429,7 +431,8 @@ mw_start:
         rep     movsw
         pop     ds
         mov     word [crit_err], 0
-        mov     byte [ex_mtw], 1        ; (a task's end isn't its event)
+        mov     word [ex_mtw], 1        ; (a task's end isn't its event; ex_rclk
+                                        ;  0: a right click isn't the Executive's)
         ; in front, the starter waiting
         mov     al, [cs:mw_new]
         mov     [cs:mw_cur], al
@@ -553,6 +556,7 @@ mw_frees:
         pop     es
         popa
         ret
+        db      90h                     ; (a pad: mw_got at its parity, asserted)
 
 ; ---------------------------------------------------------------------
 ;  ui_event.got (CALL FAR): AX = the event (BX, CX for a click), DS = the
@@ -579,6 +583,8 @@ mw_got: cmp     byte [cs:mw_n], 0
         je      .next
         cmp     ax, K_CODE_F8
         je      .szk
+        cmp     ax, EV_RCLICK           ; a right click on another window (or
+        je      .hit                    ;  on the Executive): it to the front
         cmp     ax, EV_CLICK
         jne     .own
         call    mw_szwin                ; (on the top window's resize corner?)
@@ -596,7 +602,7 @@ mw_got: cmp     byte [cs:mw_n], 0
         mov     word [bp+2+14], EV_SIZE ;  past the ES pushed)
         pop     es
         popa
-        jmp     short .ret
+        retf                            ; (as .ret)
 .hit:   call    mw_hit                  ; AL = whose window is clicked
         jc      .base
 .foc:   cmp     al, [cs:mw_cur]
@@ -635,7 +641,15 @@ mw_got: cmp     byte [cs:mw_n], 0
         jne     .win                    ;  window, a session's, isn't its to
         call    mw_topses               ;  move or close (CODE-F7, its strip)
         jc      .ret
-.win:   cmp     ax, EV_CLICK            ; (a click win_ev makes ESC: on the
+.win:   cmp     ax, EV_RCLICK           ; a right click (the core makes it
+        jne     .wc                     ;  for all with MULTITASK=1, for the
+        cmp     byte [ex_rclk], 0       ;  routing above) only to whom it was
+        jne     .wc                     ;  before: the Executive's own wait
+        cmp     byte [run_active], 0    ;  (its menu) and a .RUN for API 7
+        je      .wait
+        cmp     word [run_hdr+4], 7
+        jb      .wait
+.wc:    cmp     ax, EV_CLICK            ; (a click win_ev makes ESC: on the
         pushf                           ;  close box)
         UCALL   win_ev
         jc      .wt

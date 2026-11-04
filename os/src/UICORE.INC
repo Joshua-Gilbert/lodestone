@@ -160,6 +160,9 @@ lent        resb 1              ; the directory's memory is out (ui_lend):
 need_room   resb 1              ; ui_room has a look at the next chance
 ex_mtw      resb 1              ; 1 with MULTITASK=1; 2 while the Executive's
                                 ;  own loop waits (KMW's mw_poll: a task ended?)
+ex_rclk     resb 1              ; 1 while the Executive's list (or its menu)
+                                ;  waits: a right click is EV_RCLICK there
+                                ;  (mouse_event tests it with ex_mtw, a word)
 run_base    resw 1              ; where a .RUN loads (offset)
 ui_paras    resw 1              ; the UI block's own size
 ent_max     resw 1              ; directory entries that fit (EXEC.INC)
@@ -925,7 +928,8 @@ mouse_isr:
 ; the main-loop side of the mouse: move the pointer (if it shows);
 ; CF set with AX = EV_CLICK, BX = x, CX = y for a left-button press, or
 ; EV_RCLICK for a right-button press with the left up while a .RUN for
-; API 7 runs (both at once: the left).  No event: AX = x, BX = y
+; API 7 runs, or the Executive's own loop waits (ex_rclk: its menu; both
+; at once: the left).  No event: AX = x, BX = y
 mouse_event:
         push    dx
         cli
@@ -956,13 +960,16 @@ mouse_event:
         jnz     .ev
         shr     cl, 1                   ; the right one, the left up (nor with
         jc      .no                     ;  it), and only to a .RUN for API 7
-        test    ch, 2
+        test    ch, 2                   ;  or the Executive's list
         jz      .no
-        cmp     byte [run_active], 0
+        cmp     word [ex_mtw], 0        ; (ex_rclk: the Executive's own wait;
+        jne     .rc                     ;  MULTITASK=1: for everyone, as KMW's
+        cmp     byte [run_active], 0    ;  mw_got routes it, then gives it only
+                                        ;  to these two)
         je      .no
         cmp     word [run_hdr+4], 7
         jb      .no
-        mov     dl, EV_RCLICK & 0FFh
+.rc:    mov     dl, EV_RCLICK & 0FFh
 .ev:    xchg    ax, dx
         cli                             ; (x and y from the same packet)
         mov     bx, [mx]
@@ -974,6 +981,7 @@ mouse_event:
 .no:    pop     dx
         clc
         ret
+        times ($ - $$) & 1 db 90h       ; (what follows keeps its parity)
 
 ; UI_MOUSE (API 8): one interrupt's wait, then -> AX = the buttons down
 ; (bit 0 the left, bit 1 the right), BX = x, CX = y; CF set if there is
