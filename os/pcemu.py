@@ -411,6 +411,8 @@ class PC:
         if not os.path.exists(cm): s.cmos[0x10] = 0x40; s.cmos[0x15:0x17] = b'\x80\x02'
         s.cidx = 0
         s.mem_kb = mem_kb
+        s.ext_kb = 0           # INT 15h E441h: KB of extended memory the BIOS reports
+        s.vid_status = 0xFD     # port 7F8h: bit 3 the internal panel, bits 0-2 its kind (5 plasma, 7 LCD 640x400)
         # the application-ROM sockets: socket -> 128 KB image.  INT 15h E400-E404
         # answer as the 1520's BIOS does (tools/simgrid.py runs the real one:
         # tests/test_rom.py checks the two agree); while an image is mapped,
@@ -639,7 +641,7 @@ class PC:
         if port == 0x21: return s.pic_mask
         if port == 0xA1: return s.pic2_mask
         if port == 0x20: return s.isr if s.pic_rr == 3 else 0
-        if port == 0x7F8: return 0xFD
+        if port == 0x7F8: return s.vid_status         # (the 1520's: internal plasma 640x400)
         if port == 0x6F8: return 0x90                   # drive backplane 9 (the 1520's, GRIDPROBE)
         if s.ata and 0x1F0 <= port <= 0x1F7:
             if port == 0x1F0 and s.ata.timed: s.us += s.ata.pio_us         # (REP INSW: one hook a word)
@@ -1137,7 +1139,7 @@ class PC:
             s.w('bx', 0x0404 * sock); s.w('cx', s.r('cx') & 0xFF00)
             s.w('dx', 0x0B00 | dl); return
         if ax == 0xE440: s.w('cx', s.ems_pages * 16 if s.ems_pages else 1408); s.w('ax', 0); s.cf(0); return
-        if ax == 0xE441: s.w('cx', 0); s.w('ax', 0); s.cf(0); return
+        if ax == 0xE441: s.w('cx', s.ext_kb); s.w('ax', 0); s.cf(0); return
         if ax == 0xE442 and s.ems_pages and s.r('dl') == 0xFF:     # memory mode: EMS
             s.w('dx', (s.r('dx') & 0xFF00) | 1); s.w('ax', 0); s.cf(0); return
         if ah == 0x4F: s.cf(1); return

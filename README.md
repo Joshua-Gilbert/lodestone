@@ -9,7 +9,9 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 | ![The start-up picture](os/screens/readme/splash.png) | ![System, Display](os/screens/readme/system_display.png) |
 | The start-up picture (`LODE.PIC`)¹ | System, Display: the font, and the start-up picture (Space turns it off) |
 | ![The Executive](os/screens/readme/executive.png) | ![Copy with a wildcard](os/screens/readme/copy_wildcards.png) |
-| The Executive: GRiD's File form (Device, Subject, Title), the 1520's EMS and serial mouse in the status line | Copy, Move and Delete take wildcards, with Replace and Only newer |
+| The Executive: GRiD's File form (Device, Subject, Title); the status line shows the memory free for programs and in EMS, the panel as the 1520 reports it, and the serial mouse | Copy, Move and Delete take wildcards, with Replace and Only newer |
+| ![Multitasking](os/screens/readme/multitasking.png) | ![Tasks](os/screens/readme/tasks.png) |
+| Multitasking (`MULTITASK=1`): the command prompt and BENCH running as tasks, each in a window sized and placed over the Executive (CODE-F8, CODE-F7), which stays usable beside them | CODE-T: the tasks, with Return to bring one to the front, CODE-B to send it behind, CODE-Z to park it and CODE-D to end it |
 | ![System, Memory](os/screens/readme/system_memory.png) | ![System, Disks](os/screens/readme/system_disks.png) |
 | System: where the 640 KB goes, and the EMS | System: the floppy, the internal hard disk as C: (the 1520's own 121 MB Conner layout) and M:, the RAM disk |
 | ![Write](os/screens/readme/write.png) | ![BENCH](os/screens/readme/bench.png) |
@@ -112,8 +114,8 @@ Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off) agai
 |---|---:|---:|---:|
 | BENCH file-system total | **78.6** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **581.7 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 565.7 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **581.6 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 565.5 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
@@ -179,7 +181,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,525 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,531 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
