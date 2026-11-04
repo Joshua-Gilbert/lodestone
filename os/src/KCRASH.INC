@@ -19,10 +19,25 @@
 ;  (a soft reset, 1234h: the BIOS clears only the first 64 KB, so the
 ;  report at CR_SEG is still there).  Then CRASHRPT.COM writes it to
 ;  CRASH.BIN, which tools/crashdecode.py reads with LODE.MAP.
+;
+;  Breadcrumbs in CMOS 3Ch and 3Dh (unused by the 1520's BIOS: its password
+;  is 34h-3Bh), which survive any restart, a full POST too: 3Dh the stage
+;  (CRB_*: armed, in the catch, the report kept, on the screen, a restart
+;  passed on), 3Ch the last window operation's tag (KMW's CREC).  Each
+;  window operation also arms the catch again (CMOS 0Fh, 40:67h), in case
+;  something cleared it.  At the next start-up mt_boot puts the old two at
+;  CR_PREV (CRASHRPT says what they mean), then arms
 ; =====================================================================
 CR_N        equ 256                     ; records in the ring
 CR_SEG      equ 5000h                   ; the report (free after a start-up)
 CR_STK      equ 512                     ; the catch's own stack
+CR_PREV     equ 4FF0h                   ; the last session's breadcrumbs, at
+                                        ;  start-up: 'LODEPREV', 3Dh, 3Ch
+CRB_ARMED   equ '1'                     ; (CMOS 3Dh)
+CRB_IN      equ '2'
+CRB_KEPT    equ '3'
+CRB_SHOWN   equ '4'
+CRB_PASS    equ 'P'
 
 ; a record: the tick count, the tag (a letter), the running task, the
 ; top two words of the caller's stack (at a routine's start its return
@@ -96,10 +111,42 @@ mt_crec:
         lea     ax, [bp+8]
         mov     [cs:di+CR_SP], ax
         mov     [cs:di+CR_SS], ss
-        pop     di
+        mov     al, [bp+4]                      ; a window operation's: its tag
+        cmp     al, 'S'                         ;  to CMOS 3Ch, the catch armed
+        je      .x                              ;  again
+        cmp     al, 'X'
+        je      .x
+        cmp     al, 'V'
+        je      .x
+        mov     ah, al
+        mov     al, 3Ch
+        call    cr_cm
+        mov     ax, 0F0Ah
+        call    cr_cm
+        push    ds
+        xor     ax, ax
+        mov     ds, ax
+        mov     word [467h], mt_crst
+        mov     [469h], cs
+        pop     ds
+.x:     pop     di
         pop     ax
         pop     bp
         ret     2
+
+; CMOS register AL = AH (NMI left on).  All kept
+cr_cm:  out     70h, al
+        xchg    al, ah
+        out     71h, al
+        xchg    al, ah
+        ret
+; the stage AL to CMOS 3Dh.  All kept
+cr_st:  push    ax
+        mov     ah, al
+        mov     al, 3Dh
+        call    cr_cm
+        pop     ax
+        ret
 
 ; the tick's record (from mt_tick, the interrupted IP, CS, FL at [SP+2]):
 ; 'T'.  AX the interrupted AX, BX its flags.  Interrupts off; all kept
@@ -166,11 +213,15 @@ mt_crst:
         mov     ds, ax
         cmp     word [472h], 1234h
         jne     .c
+        mov     al, CRB_PASS
+        call    cr_st
         jmp     0F000h:0E05Bh
 .c:     mov     byte [cs:mt_crcause], 'R'
 ; the report, then the screen; a key restarts.  Never returns
 mt_crx: cli
         cld
+        mov     al, CRB_IN
+        call    cr_st
         mov     ax, cs
         mov     ss, ax
         mov     sp, mt_crstk + CR_STK
@@ -277,6 +328,8 @@ mt_crx: cli
         xor     di, di
         mov     cx, CR_LEN / 2
         rep     movsw
+        mov     al, CRB_KEPT
+        call    cr_st
         ; the BIOS's vectors back for the timer, the keys and the screen
         ; (its entry points, the PC's), the PICs: only those two IRQs on
         xor     ax, ax
@@ -390,6 +443,8 @@ mt_crx: cli
         loop    .r
         mov     si, cr_t9
         call    cr_ps
+        mov     al, CRB_SHOWN
+        call    cr_st
         xor     ah, ah
         int     16h
         xor     ax, ax                          ; a soft reset: the report
@@ -453,6 +508,7 @@ cr_h2:  push    ax
 .o:     jmp     cr_ch
 
 cr_sig      db      'LODECRSH'
+cr_psig     db      'LODEPREV'
 cr_bv       dw      08h * 4, 0FEA5h, 09h * 4, 0E987h, 10h * 4, 0F065h
             dw      16h * 4, 0E82Eh, 15h * 4, 0F859h, 1Ch * 4, 0FF53h
             dw      1Bh * 4, 0FF53h, 0
