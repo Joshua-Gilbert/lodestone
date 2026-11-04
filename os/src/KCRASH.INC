@@ -126,8 +126,11 @@ mt_crec:
         cmp     al, 'V'
         je      .x
         call    cr_wt
-        mov     ax, 0F0Ah
-        call    cr_cm
+        mov     ax, 0A0Fh                       ; (CMOS 0Fh = 0Ah: cr_cm takes the
+        call    cr_cm                           ;  register in AL.  Swapped, it
+                                                ;  wrote 0Fh to status A, 0Ah, and
+                                                ;  stopped the clock: POST's
+                                                ;  "Time-of-day clock stopped")
         push    ds
         xor     ax, ax
         mov     ds, ax

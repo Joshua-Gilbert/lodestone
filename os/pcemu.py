@@ -789,6 +789,7 @@ class PC:
         if port == 0x70: s.cidx = val & 0x7F; return
         if port == 0x71:
             if s.cidx >= 0x0E: s.cmos[s.cidx] = val
+            else: s.rtc_writes = getattr(s, 'rtc_writes', []) + [(s.cidx, val)]   # (the clock's own: kept, unmodelled)
             return
         if port == 0x43:
             if (val & 0xF0) == 0: s.pit_read()
