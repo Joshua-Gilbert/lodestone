@@ -9,10 +9,9 @@ GOS = os.path.dirname(HERE)
 sys.path.insert(0, GOS); sys.path.insert(0, HERE)
 import ktest, mkimg, fatcheck, sim7210
 
+_GG = os.path.join(GOS, '..', 'tools', 'GGTEST.COM')
 GGTEST = next((p for p in (os.environ.get('GGTEST', ''), os.path.join(GOS, '..', 'claude-link', 'tests', 'bin', 'GGTEST.COM'),
-                            os.path.join(GOS, '..', 'tools', 'GGTEST.COM'),
-                            '/home/claude/TM5000/driver/gridgpib/GGTEST.COM') if p and os.path.exists(p)),
-              '/home/claude/TM5000/driver/gridgpib/GGTEST.COM')
+                            _GG) if p and os.path.exists(p)), _GG)
 
 def run(out_img=os.path.join(__import__('tempfile').gettempdir(), 'lodestone-gg.img')):
     img = mkimg.build(out_img, [os.path.join(GOS, 'src', 'LODE.SYS'), GGTEST])

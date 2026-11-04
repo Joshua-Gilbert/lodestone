@@ -316,7 +316,7 @@ def scpi(sim):
         r, got, end = sim.read(10)
         return got
     idn = q("*IDN?\n")
-    check("*IDN?", idn.startswith(b"PounceLab,GPIB-Pico2 Bridge,") and idn.endswith(b"\n"), repr(idn))
+    check("*IDN?", idn.startswith(b"Lodestone,GPIB-Pico2 Bridge,") and idn.endswith(b"\n"), repr(idn))
     check("two queries in one message", q("*OPC?;ECHO hello\n") == b"1;hello\n")
     sim.write(10, b"BOGUS 1\n")
     e1 = q("SYST:ERR?\n")
