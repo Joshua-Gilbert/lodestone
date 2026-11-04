@@ -1009,7 +1009,7 @@ The Executive's bottom line now reads, for example, `80286 80287XL  581K + 1120K
   - anything else shows `Panel`. A 640x200 panel can't show Lodestone (mode 40h).
   - pcemu's `vid_status` (default FDh) sets what the port reads.
 - **Width.** The gaps are 2 spaces, not 3. The longest line, with 4-digit EMS and a 287XL, is 79 characters.
-- **Cost.** The UI block grows by 144 bytes (9 paragraphs, in `UI_KEEP_PARAS`), so DOS programs get 0.1 KB less. The added code sits after `draw_all`, and both of its shifts (30 and 138 bytes) are even, so the hot labels keep their parity. `sysinfo` no longer reads INT 12h or E440h.
+- **Cost.** The UI block grows by 160 bytes (10 paragraphs: `UI_KEEP_PARAS` 643h to 64Dh), so DOS programs get 0.2 / 0.1 KB less (MEMSZ 565.5 / 581.6 KB). The added code sits after `draw_all`, and both of its shifts (30 and 138 bytes) are even, so the hot labels keep their parity. `sysinfo` no longer reads INT 12h or E440h.
 - **Tests (test_apps):**
   - t_system: the line's free figure is MEMSZ's, with no EMS on the line without an EMS manager;
   - t_memory: with EMS, conventional free is MEMSZ's, EMS free is System's, and the line is at most 80 characters;

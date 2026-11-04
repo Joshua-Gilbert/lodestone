@@ -274,7 +274,7 @@ MEM_044 = {0: '565.5', 88: '581.6'}   # (0.6: 0.1 KB less, the PATH search and t
                                       #  0.3 KB more, 288 bytes, its K2: EXEC's and rename's buffers in the INT 21h stack;
                                       #  0.4 KB more, 368 bytes, its KC-2: the capture's file writer as SCREEN.PRN;
                                       #  0.1 KB less with EMS, 32 bytes, its S4 and S14 (the EMS module's word-wise 57h);
-                                      #  0.2 / 0.1 KB less, 144 bytes, free memory on the Executive's info line)
+                                      #  0.2 / 0.1 KB less, 160 bytes, free memory on the Executive's info line)
 
 def t_memory():
     print('== what DOS programs get: the same with the picture as without it')
