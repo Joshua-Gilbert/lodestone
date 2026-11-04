@@ -42,12 +42,16 @@ This build is from the M12 branch, so it also has the hard-disk waits.
 
 ## Breadcrumbs (when nothing was caught)
 
-CMOS 3Ch and 3Dh (unused by the 1520's BIOS) survive any restart, a full POST too. 3Dh is the stage: 1 armed, 2 in the catch, 3 the report kept, 4 on the screen, P a restart asked for. 3Ch is the last window operation's tag. Each window operation also arms the catch again. At the next start-up the CRASHLOG build keeps the old two at 4FF0:0, and `CRASHRPT` says what they mean first:
+CMOS 3Dh survives any restart, a full POST too. Its high nibble is the stage: 1 armed, 2 in the catch, 3 the report kept, 4 on the screen, 5 (P) a restart asked for. Its low nibble is the last window operation (its tag's place in `cr_wtags`, KCRASH.INC). Each window operation also arms the catch again. At the next start-up the CRASHLOG build turns the two back into characters at 4FF0:0, and `CRASHRPT` says what they mean first:
 - **1:** the restart never reached the catch: a reset the BIOS didn't send through CMOS 0Fh, or the power.
 - **2:** the catch was entered but died before the report was kept, so MT's memory was probably overwritten.
 - **3 or 4:** a report should be there.
 
 Run `CRASHRPT` after every unexpected restart, and send its first lines even when it says there is no report.
+
+**Not CMOS 3Ch.** The first breadcrumb build put the window tag in 3Ch, which the labelled BIOS source (gridcase-bios, `cmos.inc`) marks unused. Joshua's 10/25/89 ROM uses it: F000:F104 adds CMOS 34h–3Bh (the boot password) and 3Fh & FEh and compares the sum with 3Ch, and POST (F000:8D20 → F1B6) asks for the password when they match and 3Fh bit 1 is set. His 3Fh is 02h. A tag that happened to equal the sum would have locked the machine at the next POST, until CMOS was cleared. Nothing in that ROM reads or writes 3Dh. Keep Lodestone's CMOS writes to 3Dh (and 0Fh, the shutdown code).
+
+The first boot of this build may report a stage left over from before, since 3Dh's old contents weren't written by it.
 
 ## Reading the report
 

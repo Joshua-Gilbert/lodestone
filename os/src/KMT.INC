@@ -7957,13 +7957,20 @@ mt_boot:
         inc     si
         inc     di
         loop    .cp
-        mov     al, 3Dh
-        out     70h, al
-        in      al, 71h
+        mov     al, 3Dh                 ; CMOS 3Dh's nibbles as the stage's and
+        out     70h, al                 ;  the window tag's characters (never
+        in      al, 71h                 ;  3Ch: KCRASH.INC's note)
+        mov     ch, al
+        mov     cl, 4
+        shr     al, cl
+        xor     ah, ah
+        mov     si, ax
+        mov     al, [es:si+cr_stch]
         mov     [di], al
-        mov     al, 3Ch
-        out     70h, al
-        in      al, 71h
+        mov     al, ch
+        and     ax, 0Fh
+        mov     si, ax
+        mov     al, [es:si+cr_wtags]
         mov     [di+1], al
         pop     cx
         pop     di
@@ -7971,11 +7978,7 @@ mt_boot:
         pop     ds
         mov     al, 3Dh
         out     70h, al
-        mov     al, CRB_ARMED
-        out     71h, al
-        mov     al, 3Ch
-        out     70h, al
-        mov     al, '-'
+        mov     al, CRB_ARMED << 4      ; (the window tag: '-', none)
         out     71h, al
         mov     al, 0Fh
         out     70h, al

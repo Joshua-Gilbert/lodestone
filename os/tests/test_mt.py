@@ -7342,6 +7342,12 @@ def t_crashlog():
           getattr(k.pc, 'warm_boots', 0) == 1 and 'written to CRASH.BIN' in o1 and 'no report' in o2 and b
           and len(b) == 9856 and 'sum ok; caught by a restart' in dec and 'LCMD.COM' in dec and 'Executive' in dec
           and ' T tick ' in dec and ' S switch ' in dec, (o1, o2, dec[:1500]))
+    c3c = open(os.path.join(GOS, 'CMOS128.BIN'), 'rb').read()[0x3C] if os.path.exists(os.path.join(GOS, 'CMOS128.BIN')) else 0
+    check('the breadcrumbs, in CMOS 3Dh alone (3Ch is the 10/25/89 ROM\'s password checksum, os/diag/README.md): '
+          'CRASHRPT reads the last session\'s stage (caught, shown) and its last window operation; 3Ch untouched '
+          '(%02Xh), 3Dh armed again (%02Xh)' % (k.pc.cmos[0x3C], k.pc.cmos[0x3D]),
+          'caught, the report shown' in o1 and re.search(r'last window operation: [A-Za-z] ', o1)
+          and k.pc.cmos[0x3C] == c3c and k.pc.cmos[0x3D] >> 4 == 1, o1)
     k = run('mt_cr2.img', 'x')
     t = k.pc.text_screen()
     o1, o2, b, dec = report(k)
