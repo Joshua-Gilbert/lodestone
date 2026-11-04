@@ -6397,12 +6397,18 @@ mt_dtick:
 ; BIOS waits, as before.  Back with RETF 2: interrupts on, CF as said.
 ; mt_hwait: AX=9000h, KHD.INC's at the hard disk's wait (M12), the same
 mt_hwait:
+%ifdef NODWAIT
+        jmp     far [cs:mt_old15]       ; (bisect build: no wait given away)
+%endif
         push    ds
         push    es
         pusha
         mov     al, 0                   ; (mt_ddev: the hard disk)
         jmp     short mt_dwait.c
 mt_dwait:
+%ifdef NODWAIT
+        jmp     far [cs:mt_old15]
+%endif
         push    ds
         push    es
         pusha
@@ -7691,7 +7697,9 @@ mt_kalloc:
 ; stops the build here (0 even, 1 odd)
 %macro  mt_par 2
 %ifndef CRASHLOG                        ; (a diagnostic build: not timed)
+%ifndef NODWAIT                         ; (nor the bisect builds)
             times   -(((%1 - mt_tstart) & 1) != %2) db 0
+%endif
 %endif
 %endmacro
             mt_par  mt_tick, 0
@@ -7882,6 +7890,7 @@ mt_boot:
         mov     [es:mt_old16 + 2], ax
         mov     word [16h * 4], mt_i16
         mov     [16h * 4 + 2], es
+%ifndef NOM10HOOKS                      ; (bisect build: none of M10's hooks)
         mov     ax, [15h * 4]           ; INT 15h, 25h and 26h (M10)
         mov     [es:mt_old15], ax
         mov     ax, [15h * 4 + 2]
@@ -7917,7 +7926,10 @@ mt_boot:
         mov     word [ems_int67 + 1], mt_i67
         mov     [ems_int67 + 3], es
         pop     ds
-.n67:   push    ds                      ; C: (KHD.INC) there: its IRQ 14
+.n67:
+%endif
+%ifndef NOM10HOOKS
+        push    ds                      ; C: (KHD.INC) there: its IRQ 14
         push    KSEG                    ;  through MT (mt_i76), on in both
         pop     ds                      ;  PICs (KHD's start-up turns it off
         cmp     byte [C_DT + D_PRES], 0 ;  without the BIOS's disk), and INT
@@ -7938,6 +7950,7 @@ mt_boot:
         and     al, 0FBh
         out     21h, al
 .n76:
+%endif
 %ifdef CRASHLOG
         mov     word [6 * 4], mt_cr6    ; (KCRASH.INC: INT 06h, a restart through
         mov     [6 * 4 + 2], es         ;  40:67h with CMOS 0Fh = 0Ah, the ring
@@ -8008,9 +8021,11 @@ mt_boot:
         jb      .fv
         mov     ax, KSEG                ; INT 21h F0h: JMP FAR mt_f0
         mov     ds, ax
+%ifndef NOM10HOOKS
         mov     byte [int21], 0EAh      ; INT 21h's entry: JMP FAR mt_i21 (M10)
         mov     word [int21 + 1], mt_i21
         mov     [int21 + 3], es
+%endif
         mov     byte [f_F0], 0EAh
         mov     word [f_F0 + 1], mt_f0
         mov     [f_F0 + 3], es

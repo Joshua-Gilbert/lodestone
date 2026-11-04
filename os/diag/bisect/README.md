@@ -9,6 +9,16 @@ Each folder has the LODE.SYS, LODEMT.SYS and LCMD.COM that main had after that m
 | `3-M11` | #146 (`a16f2da`) | M11: SysReq to the next task |
 | `4-infoline` | #147 (`8b1d674`) | the Executive's info line with free memory |
 
+Two builds of today's main (#149) split M10 by what it does:
+
+| Folder | Built with | What's off |
+|---|---|---|
+| `5-main-nowait` | `-dNODWAIT` | No disk wait is given away: INT 15h 9001h (floppy) and 9000h (hard disk) go straight to the BIOS. Every hook is still installed. |
+| `6-main-nohooks` | `-dNODWAIT -dNOM10HOOKS` | The same, and none of M10's hooks are installed (INT 15h, 25h, 26h, 0Eh, the INT 21h and INT 67h entry patches; M12's INT 76h/77h too). As before M10, except for M11 and M12's other changes. |
+
+- `5` crashes and `6` doesn't: an always-on hook is the fault, not the switching during disk waits.
+- `5` is clean: the switching during a floppy wait is the fault.
+
 After those come #148 (a frozen floppy owner always picked; HDPROBE and HDSCAN refuse beside tasks) and #149 (M12, the hard-disk waits): that is main, in `os/src`.
 
 **To test one:** copy its three files onto the boot floppy, with `MULTITASK=1` in LODE.INI. Then do what crashed before: open a terminal window (CODE-P), resize it with the mouse, let go. Then open and close a picture, and try CODE-A with a resize. Try each a few times.
