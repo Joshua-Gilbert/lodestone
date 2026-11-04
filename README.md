@@ -114,7 +114,7 @@ Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off) agai
 |---|---:|---:|---:|
 | BENCH file-system total | **78.6** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **581.6 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, with EMS | **581.5 KB** | 573.1 KB | 494.2 KB |
 | Memory for programs, no EMS | 565.5 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
