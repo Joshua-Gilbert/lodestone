@@ -7348,6 +7348,9 @@ def t_crashlog():
           '(%02Xh), 3Dh armed again (%02Xh)' % (k.pc.cmos[0x3C], k.pc.cmos[0x3D]),
           'caught, the report shown' in o1 and re.search(r'last window operation: [A-Za-z] ', o1)
           and k.pc.cmos[0x3C] == c3c and k.pc.cmos[0x3D] >> 4 == 1, o1)
+    check('no write to the clock\'s own registers (00h-0Dh: status A at 0Ah stopped the 1520\'s clock, "Time-of-day '
+          'clock stopped" at the POST), though the window operations armed the catch again (CMOS 0Fh = 0Ah)',
+          not getattr(k.pc, 'rtc_writes', []) and k.pc.cmos[0x0F] in (0x0A, 0), getattr(k.pc, 'rtc_writes', None))
     k = run('mt_cr2.img', 'x')
     t = k.pc.text_screen()
     o1, o2, b, dec = report(k)

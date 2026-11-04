@@ -51,6 +51,8 @@ Run `CRASHRPT` after every unexpected restart, and send its first lines even whe
 
 **Not CMOS 3Ch.** The first breadcrumb build put the window tag in 3Ch, which the labelled BIOS source (gridcase-bios, `cmos.inc`) marks unused. Joshua's 10/25/89 ROM uses it: F000:F104 adds CMOS 34h–3Bh (the boot password) and 3Fh & FEh and compares the sum with 3Ch, and POST (F000:8D20 → F1B6) asks for the password when they match and 3Fh bit 1 is set. His 3Fh is 02h. A tag that happened to equal the sum would have locked the machine at the next POST, until CMOS was cleared. Nothing in that ROM reads or writes 3Dh. Keep Lodestone's CMOS writes to 3Dh (and 0Fh, the shutdown code).
 
+**Not CMOS 0Ah either.** 2e3c789 and the build before it re-armed the catch at each window operation with `mov ax, 0F0Ah` into `cr_cm`, which takes the register in AL: it wrote 0Fh to status A (0Ah), the clock's divider, and stopped the time-of-day clock. The 1520's next POST said "Time-of-day clock stopped". Setting the time or the date (INT 1Ah 03h/05h, as TIME and DATE do) has the BIOS write 26h there again. test_mt now fails on any write to 00h–0Dh.
+
 The first boot of this build may report a stage left over from before, since 3Dh's old contents weren't written by it.
 
 ## Reading the report
