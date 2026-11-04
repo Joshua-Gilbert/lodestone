@@ -578,9 +578,9 @@ do_pipe:
         ret
 
 ; AL = '1' or '2', DI = 80 bytes -> this level's pipe file's name there:
-; %TEMP%\PIPEx1.$$n (no TEMP: \PIPEx1.$$n, the current drive's root, as
-; MS-DOS 3.3), x for the level (a pipe inside a CALL or FOR inside a pipe
-; has its own), n our task's number ($ with multitasking off: LCMDs in two
+; %TEMP%\PIPEx1.$$n (no TEMP: %TMP%; neither: \PIPEx1.$$n, the
+; current drive's root, as MS-DOS 3.3), x for the level (a pipe inside a
+; CALL or FOR inside a pipe has its own), n our task's number ($ with multitasking off: LCMDs in two
 ; tasks have their own).  TEMP is ours (SET TEMP= counts; from the ROM
 ; without C: the kernel's M:\, so a pipe works from R:), 64 characters of
 ; it at most, read once by the outermost pipe running (tpre_on: its level)
@@ -595,7 +595,10 @@ pipe_name:
         push    di
         mov     si, s_tempv
         call    env_find                ; -> ES:DI its value
-        mov     si, di
+        jnc     .v
+        mov     si, s_tmpv              ; (none: TMP, as CLAUDE.COM)
+        call    env_find
+.v:     mov     si, di
         mov     di, tpre
         jc      .rt
         mov     cx, 64
@@ -4752,6 +4755,7 @@ days        db 'Sun', 0, 'Mon', 0, 'Tue', 0, 'Wed', 0   ; (4 bytes each)
             db 'Thu', 0, 'Fri', 0, 'Sat', 0
 pipe_t      db 'PIPEA1.$$$', 0          ; (pipe_name's: A the level, 1 or 2)
 s_tempv     db 'TEMP=', 0
+s_tmpv      db 'TMP=', 0
 s_nul       db 'NUL', 0
 
 e_badcmd    db 'Bad command or file name', 0

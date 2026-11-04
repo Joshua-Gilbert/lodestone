@@ -1,6 +1,6 @@
 # Lodestone
 
-A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display), with GRiD's own look and feel. The whole base suite fits in one 128 KB EPROM, with room to spare: the kernel, the Executive, the command prompt, System, Write, the calculator and DEFRAG. It boots from that EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them.
+A fast, DOS 3.30-compatible operating system for the GRiDCase 1520 (80C286, 640×400 gas-plasma display), with GRiD's own look and feel. The whole base suite fits in one 128 KB EPROM: the kernel, the Executive, the command prompt, System, Write, the calculator and the terminal window. A second EPROM adds DEFRAG, Paint and Claude. It boots from that EPROM in the 1520's application-ROM socket, as GRiD MS-DOS did, or from a floppy. It runs the DOS programs of its day unchanged, more than three times faster on file work than GRiD MS-DOS, with more memory left for them. It can also multitask: several DOS programs run at once, preemptively, each full screen or in a window beside the Executive (`MULTITASK=1`).
 
 Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB bus, Claude Code runs on the GRiD's screen and works with its files, its programs and the instruments on the bus.
 
@@ -25,7 +25,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 
 ## What's in it
 
-**The kernel** (`LODE.SYS`, about 46 KB)
+**The kernel** (`LODE.SYS`, about 48 KB)
 - INT 21h for the programs of its day: COM and EXE loading, TSRs, INT 24h, INT 25h/26h, FAT12 and FAT16.
 - A cylinder read-ahead cache for the floppies, kept in EMS when there is EMS.
 - Its own LIM 4.0 EMS manager, when the 1520's memory is set to EMS.
@@ -44,16 +44,31 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **System:** memory, disks, clock, devices (and PrtSc's printer driver), GPIB, display, screen saver, the temporary disk M:, and where the settings come from.
 - **Write:** a GRiDWrite-style text editor. A mouse drag selects text, and a right click gives a menu of its commands; Cut, Copy and Paste (CODE-Z, CODE-C, CODE-V) through a clipboard every program on the UI core shares.
 - **The calculator** uses the 80287 or 287XL when one is fitted, and works with whole numbers when not. It runs as a window over the Executive (CODE-K) that you can drag by its title (or move with CODE-F7) and close with its x, and as `CALC` at the prompt, for batch files.
-- **Paint** (`PAINT.RUN`): the whole 640 × 400 screen is the picture.
+- **Paint** (`PAINT.RUN`): the picture is the whole 640 × 400 screen.
   - Tools: pencil, brush, eraser, line, box and filled box, with eight patterns and undo.
+  - With multitasking on, it opens in a window that shows part of the picture at full size: the arrow keys or a drag on the window's frame move the view, and CODE-F switches to the whole screen and back.
   - Its pictures are Shift-PrtSc's 1-bit BMPs.
   - It is also the BMP viewer: Return on a `.BMP` in the Executive shows it. It shows any 1-bit BMP up to 640 × 400, centred, with dark paper.
   - It takes 63 KB while it runs and 32 bytes when it doesn't. See `docs/lodestone-paint.md`.
 - **The screen saver:** runs DEFRAG on every disk in turn, then darkens the screen. It comes on inside CLAUDE.COM too (full screen, with the Pico bridge), and anything from Claude Code ends it.
 - **A start-up picture**¹, drawn from vectors (`LODE.PIC`, 2.5 KB).
 
+**Multitasking** (`MULTITASK=1` in LODE.INI; see `docs/lodestone-multitasking.md`)
+- **How it works:** ordinary DOS programs multitask preemptively, in the 286's real mode, much as under DESQview.
+  - **Turns:** each task gets a turn of timer ticks (two in front, one behind, at 18.2 a second) and is switched at the next safe point. That's never inside DOS itself, in the BIOS's ROM, or with interrupts off. One task at a time is inside DOS.
+  - **Saved at every switch:** each task's registers, screen, keys, mouse, interrupt vectors and 80287 state.
+  - **No protection:** tasks share one address space, so a program that goes wrong can still take down the machine. There's no virtual memory either.
+- **Tasks:** Return on a DOS program in the Executive starts it as a task beside the others (Shift-Return runs it and waits, as before). CODE-Tab, or SysReq on its own, goes to the next task, and CODE-T shows the task list. SysReq is never put in the key buffer, so it takes nothing from the program in front; CODE-SysReq (Confm) stays the program's. (`KFLAGS=-dNOSYSREQ` builds without it, for a machine without the key, at no cost.) Each task has its own screen, keys and mouse. `BG=`, `FREEZE=`, `MTMEM=` and `FULL=` in LODE.INI set how particular programs run.
+- **Windows:** Write, the calculator and Paint each open in a window over the Executive, several at once. The Executive stays live under them: a click on it or CODE-F6 brings it to the front.
+- **Terminal windows:** a text program started from the Executive, and CODE-P's command prompt, run in a window of their own (Shift-Return and Shift-CODE-P: full screen, as before).
+  - A window's memory grows as its program asks for more, when there is room. A program that switches to a graphics mode goes full screen until it comes back to text.
+  - Text is selected with the mouse, copied (CODE-C) and pasted in as keys (CODE-V), with a right-click menu as in Write. A program in the window that uses the mouse gets its clicks there.
+  - A program can publish its own screen and font for its window to draw, and can ask to run as soon as the GPIB bridge's SRQ arrives.
+  - CLAUDE.COM runs in one (CODE-A), with the link about as fast as full screen.
+- **Disk waits:** tasks behind keep running while one waits on the floppy (its motor's spin-up, a seek, a sector).
+
 **The command prompt** (`LCMD.COM`)
-- DOS 3.30's commands, with redirection and pipes, and `&&` and `||`.
+- DOS 3.30's commands, with redirection and pipes (their files in %TEMP%, else %TMP%, else the current drive's root), and `&&` and `||`.
 - Line editing, history and Tab completion.
 - A batch language: IF, GOTO, FOR, CALL, SHIFT, CHOICE and `%NAME%`.
 - Every built-in that can fail sets ERRORLEVEL, so scripts can check each step. Claude writes scripts too.
@@ -63,7 +78,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner.
 - **The rest:** BENCH, GRIDPROBE and others are in `tools/` and `os/bench/`.
 
-**Settings** are kept in `LODE.INI`: the font, the screen saver, the start-up picture, M:'s size, PrtSc's printer driver, and `TEMP=` (the environment's TEMP: where CLAUDE.COM's captured output goes; `M:\` from the ROM, when M: is there). From the ROM, the ROM's own `LODE.INI` gives the defaults, and changes go in `C:\LODE.INI` (A: without a hard disk).
+**Settings** are kept in `LODE.INI`: the font, the screen saver, the start-up picture, M:'s size, PrtSc's printer driver, and `TEMP=` (the environment's TEMP: where CLAUDE.COM's captured output and the command prompt's pipe files go; `M:\` from the ROM without a hard disk). From the ROM, the ROM's own `LODE.INI` gives the defaults, and changes go in `C:\LODE.INI` (A: without a hard disk).
 
 ## Claude on the GRiD
 
@@ -91,20 +106,21 @@ On the 1520, BENCH from each kind of drive, in seconds:
 | Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
 | **All ten tests** | **87.6** | **9.1** | **2.1** |
 
-Lodestone 0.6 (memory measured with the windows that move, the printer drivers and the 2026-10-20 audit's savings) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
+Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
 
 | | Lodestone | GRiD MS-DOS 3.30 | FreeDOS |
 |---|---:|---:|---:|
-| BENCH file-system total | **78.8** | 285.4 | 283.2 |
-| EMS: map a page ×10,000 | **0.43** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **581.6 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 565.5 KB | **580.4 KB** | 501.5 KB |
+| BENCH file-system total | **78.6** | 285.4 | 283.2 |
+| EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
+| Memory for programs, with EMS | **581.7 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 565.7 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
-- **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 14 KB more.
-- **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.5 KB when ROM 1 is there, 0.6 KB with ROM 2 as well.
-- **The Executive stays resident on purpose:** Lodestone is meant to become multitasking.
+- **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 15 KB more.
+- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 558.1 KB. The other 23.6 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
+- **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.4 KB when ROM 1 is there, 0.6 KB with ROM 2 as well.
+- **The Executive stays resident on purpose:** with multitasking on, it runs beside the tasks and windows.
 
 The full tables, the method and every run on the 1520 are in `os/bench/RESULTS.TXT`, `RESULTS3.TXT` and `RESULTS_HD.TXT`, and the `BENCH_1520_*.TXT` logs.
 
@@ -126,7 +142,7 @@ From the ROM, the current drive is C: (R: without a hard disk), and `PATH` is `C
 1. Format a 1.44 MB floppy and copy `LODE.SYS`, `LODEMT.SYS`, `LODE.PIC`, `LCMD.COM`, `DEFRAG.COM`, `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN`, `TASKS.RUN`, `CALC.COM`, `PAINT.RUN`, `SCREEN.PRN` (Shift-PrtSc's file writer), `TERM.RUN` and `TERM.FNT` (the terminal window, with `MULTITASK=1`: without them text programs start full screen) and whatever programs you want. The current release's files are in `os/releases/`.
 2. Under GRiD MS-DOS, run `LODEBOOT` on it once (`B:LODEBOOT B` when booted from the EPROM, where the floppy is B:).
 3. Restart and tap **F** as the memory count finishes, or choose the floppy from Lodestone's boot menu.
-4. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`, still being built) reads it at start-up and stays off if it doesn't match.
+4. A new `LODE.SYS` can simply be copied over the old one. Copy `LODEMT.SYS` from the same build with it: multitasking (`MULTITASK=1`) reads it at start-up and stays off if it doesn't match.
 
 See `docs/lodestone-floppy-dev.md`.
 
@@ -163,7 +179,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,521 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,536 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -196,12 +212,11 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
+Multitasking works on the 1520. Built since 0.6 and not yet tried there: Paint in a window, resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), `TEMP=` with pipes from the ROM, and SysReq as the task switcher.
+
 **Next:**
-- **Resident Claude:** the program's screen read in the background (CLAUDE 1.11) on the 1520, with the bridge's quiet firmware flashed, and the mascot in the console (1.12).
-- **ROM 2:** the second, data-only ROM is there (DEFRAG.COM, TERM.FNT, PAINT.RUN and CLAUDE.COM, joined to R:); heavier programs can follow onto it.
-- **Terminal windows** (multitasking, `docs/lodestone-multitasking.md` T1-T6): with `MULTITASK=1`, a text program started from the Executive, and CODE-P's command prompt, runs in a window of its own (Shift-Return and Shift-CODE-P: full screen, as before); its memory grows as its program asks for more, when there is room below it; one that goes into a graphics mode is full screen until it comes back to text. Its text is selected with the mouse, copied (CODE-C) and pasted into it as keys (CODE-V), with a right-click menu as Write's, and a program in it that uses the mouse gets its clicks there. A program can publish its screen, its cells and its own font, for its window to draw, and ask to run as soon as the GPIB bridge's SRQ comes, not after the other tasks' turns. CLAUDE.COM runs in one (CODE-A), the link about as quick as full screen.
-- **Multitasking through disk waits** (M10): tasks behind keep running while one waits on the floppy, through the BIOS's INT 15h 90h/91h device-busy calls. (C: is the kernel's own driver, which doesn't make them.)
-- **SysReq as the task switcher** (M11): the 1520's SysReq key, which DOS programs leave alone, brings the next task to the front as CODE-Tab does, so no key is taken from the program in front; CODE-SysReq (Confm) stays the program's. `KFLAGS=-dNOSYSREQ` builds without it, at no cost.
+- **On the 1520, and release 0.7** (M9): the list above tried on the machine, and what it finds fixed.
+- **Disk waits on the hard disk:** M10 lets tasks run during floppy waits; C: is the kernel's own polled driver, so its waits don't yet let others run.
 - **GRIDMODE.COM:** the BIOS's display functions (INT 15h E420h-E422h) from the prompt, as GRiD's MS-DOS `MODE` gave them: the panel type, the internal panel or the external RGB port, the colour map (how CGA colours become plasma or LCD greys, at 40:A7h) and the hardware text font. A tool beside GRIDMEM, not in ROM 1; SYSTEM to show the panel type too.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.
