@@ -52,10 +52,11 @@ CLAUDE /W  ── KEYS ──────────────▶ (device, 7)
   - Characters the GRiD hasn't got are mapped to near forms (curly quotes,
     dashes); wide characters and emoji are dropped.
   - Each cell knows which link or field it belongs to.
-- **`app.py`**: the 80x24 program in the pty.
-  - Row 0 is the address, rows 1-22 the page, row 23 the status line. The
-    page title goes to the GRiD's own band (row 24) through the terminal
-    title.
+- **`app.py`**: the 80-column program in the pty, 24 rows or as many as the
+  pty has (a Lodestone window, below).
+  - Row 0 is the address, the rows under it the page, the last row the
+    status line: rows 1-22 and 23 at 24 rows. The page title goes to the
+    GRiD's own band (row 24) through the terminal title.
   - Each change is drawn as whole rows inside `?2026`, so Term sends one
     frame. Only the rows that changed are written.
   - Back and Forward come back to where you were on the page.
@@ -260,6 +261,92 @@ Tested against a stand-in yt-dlp and the stand-in Firefox
 the command as built, but YouTube itself couldn't be reached from the build
 workspace.
 
+## In a Lodestone window (2026-11-04)
+
+Under Lodestone's multitasking, `CLAUDE /W` runs in a terminal window as
+Claude Code does (T5d): `CLAUDE.COM` publishes its screen, and TERM.RUN
+draws it. Since T5e the window tells the Pi how many rows it shows (19 at
+the usual size, 4 to 24). gridlink then makes the pty that tall
+(`Term.set_rows`, for gridfox as for Claude Code), and the program gets
+SIGWINCH. Until now gridfox kept its 24-row layout, so the window showed
+the middle of the page, with the address and the status line out of view.
+
+- **gridfox follows the pty's rows** (`App.resize`): the page gets all but
+  the address and the status line, and the status line (or the line being
+  typed) is the last row. PgUp/PgDn move the page's rows less two (at
+  least one), End, Tab's scrolling, find, `#fragment` links, a list's
+  choices and the All/Top/Bot figure all go by the page's rows, and the
+  place on the page is kept through a resize. At least 3 rows; with no size
+  known, 24.
+- **At once:** `run_tty` reads the rows at the start (TIOCGWINSZ) and again
+  at each SIGWINCH. The signal wakes the main loop's `select` through
+  `signal.set_wakeup_fd`, so a resize is drawn within a frame, not at
+  the loop's next half-second look.
+- **The picture view** is unchanged: a picture takes the whole screen
+  (CLAUDE goes full screen for it, T5d), 640x384 as before.
+- **On the GRiD** nothing changes: `CLAUDE.COM` 1.16 already sends the
+  window's rows. Today `CLAUDE /W` is started at a windowed prompt
+  (CODE-P). The Executive's right-click menu will offer it next (Next,
+  below).
+
+Tests:
+- `test_gridfox.py` `test_app_rows`: at 19 rows the status line is in
+  row 18, PgDn moves 15 rows, End shows the last 17, and the typing line
+  and its cursor are in row 18. A list selected is scrolled into the page's
+  rows, with its choices inside them. At 24 rows the place is kept. At 4
+  rows PgDn moves one row, the choices are cut short, and Shift-Tab and
+  Find upwards keep their line in view. F's numbers follow a resize. 2 rows
+  becomes 3, and no size means 24.
+- `test_app_rows_paths`: each place that counts the page's rows counts 17
+  at 19 rows, not 22. A click on the status line does nothing, even with a
+  link on that line of the page. A click on the typing line keeps it. F
+  numbers only the links on the screen. Tab from a selection just off the
+  screen goes to the first link on it, and Tab with nothing selected goes
+  to the next link below. The percent is exact, three rows from the end.
+  Find, `#end` and Back to the end each land on the last 17 rows. The
+  choices are placed in the page's rows. At 4 rows, Tab down through the
+  whole page keeps each link in view. At 3 rows, a click on the status line
+  under the cut-short choices chooses nothing.
+- `test_end_to_end_gridsim` (gridlink and GridSim): `set_rows(19)`, 12,
+  19, 12, 19. Each time the GRiD shows the address in row 0, the status
+  line in the last row and blank rows under it, laid out again in 15-25 ms
+  (under 200 ms is required). Back at 24 rows, the status line is in row
+  23 again. Then gridfox is ended (Ctrl-Q) and started again (Return) in a
+  pty already 19 rows tall, with no SIGWINCH: its first read lays it out,
+  and PgDn moves 15 rows. (A 24-row layout in a 19-row pty looks the same
+  until a scroll, because its rows past 18 land on row 18.)
+- `test_emu_window.py` `test_window_web` (the real CLAUDE.COM `/W` in
+  grid_emu's window, the real gridlink and gridfox): the window's 19 rows
+  make the pty 19 rows and the descriptor 19. The address is in row 0, the
+  status line in row 18 and rows 19-23 blank, in step with pyte. Tab Tab
+  Return and PgDn work. Full screen for good gives 24 rows, with the status
+  line in row 23. Against the gridfox before this change the same test
+  fails: the window's row 0 is the page, not the address.
+- Mutations: 27 of 30 fail a check. Each place that uses the page's rows
+  was made to use 22 instead, one at a time. So were the clamps at small
+  sizes, the first read of the rows, the SIGWINCH handler and the wakeup
+  fd.
+- Untested:
+  - The size of the choices and their PgUp/PgDn at 19 rows. They differ
+    only for a list of more than 15 choices, and no test page has one.
+  - `resize`'s full redraw against a plain one. These are equivalent:
+    every row is drawn again anyway, because `shown` is reset.
+- The review (3 reviewers) found that Shift-Tab and Find upwards put two
+  rows above their line, which hid it at 4 rows. That is fixed now: at
+  most the page's rows less one go above it. It also found that:
+  - a resize just before the SIGWINCH handler was installed could be
+    lost; the handler and wakeup fd now go in first, then the size is
+    read;
+  - F's numbers kept the old screen's links after a resize. They are now
+    made again for the new screen, and with no link left on it they go
+    (the re-review found that case);
+  - at 3 rows, a click on the status line chose the choice cut off above
+    it;
+  - the wakeup fd and the SIGWINCH handler were not given back as they
+    were found.
+
+  Each of these is fixed.
+
 ## Measured (emulator and GridSim, stand-in Firefox)
 
 | | |
@@ -278,8 +365,8 @@ long Firefox takes on the Pi 5 for a real site is not measured yet.
 
 ## Tests
 
-- `claude-link/tests/test_gridfox.py` (25 tests, about 15 s: one stand-in
-  Firefox for the whole run):
+- `claude-link/tests/test_gridfox.py` (34 tests now, about 45 s: one
+  stand-in Firefox for the whole run):
   - layout and wrapping, the key parser and line editor;
   - the real `extract.js` and `act.js` against a stand-in Firefox;
   - the app key by key: follow, back with the place kept, hints, find;
@@ -498,4 +585,7 @@ fixed.
   time, so gridfox would keep it and offer a small local socket. A
   `grid_browser` MCP tool would then look at and act on the page you have
   open.
-- An entry in the Executive for `CLAUDE /W`, as CODE-A is for Claude.
+- An entry in the Executive for `CLAUDE /W`, as CODE-A is for Claude: the
+  Executive's right-click menu (planned 2026-11-04). Programs list their own
+  modes there, CLAUDE.COM's Web browser among them, and it starts in a
+  window under multitasking (the window part is above).

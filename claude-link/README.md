@@ -254,6 +254,9 @@ tells gridlink how many rows the window shows, and gridlink makes Claude
 Code's terminal that tall (PROTOCOL.md, EVENT 08h): Claude Code 2.1 pins
 its prompt box to the foot and its logo to the top, and a window showing
 19 of 24 rows lost the logo. An older gridlink keeps 24 rows, as before.
+The same goes for `CLAUDE /W` in a window: gridfox lays out for the pty's
+rows (the address at the top, the status line at the foot) and follows
+each resize (docs/gridfox.md, "In a Lodestone window").
 
 ### 3. The GRiD
 

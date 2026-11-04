@@ -3,8 +3,9 @@
     python3 -m gridfox [URL] [--port 2828] [--firefox PATH] [--no-images]
 
 gridlink starts it in Term's pty when the GRiD's HELLO says app=web; it also
-runs in any 80x24 xterm for trying it out (Ctrl-C quits there; Ctrl-Q
-anywhere, and Return on the GRiD starts it again).
+runs in any 80-column xterm for trying it out, as many rows as it has
+(Ctrl-C quits there; Ctrl-Q anywhere, and Return on the GRiD starts it
+again).
 """
 import argparse, os, sys, time
 from .marionette import Firefox
