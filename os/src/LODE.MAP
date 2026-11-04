@@ -4346,9 +4346,10 @@ Real              Virtual           Name
             F406              3376  mt_i13.go
             F429              3399  mt_i13.g
             F435              33A5  mt_i15
+            F442              33B2  mt_i15.s1
+            F447              33B7  mt_i15.s2
             F447              33B7  mt_i15.o
             F44C              33BC  mt_i15.s
-            F460              33D0  mt_i15.sx
             F461              33D1  mt_i15.e
             F476              33E6  mt_i0e
             F4B1              3421  mt_i0e.h
