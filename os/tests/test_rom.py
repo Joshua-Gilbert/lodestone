@@ -411,6 +411,28 @@ def t_boot():
         check('%s: the settings: the ROM\'s, %s over them' % (tag, 'C:\'s' if hd else 'none'), u8(k, 'setdrv') == (3 if hd else 0))
 
 
+def t_rom2_free():
+    """ROM 2's room left, and ROM 1's, as docs/lodestone-rom.md says them: build.sh's own list through mkrom's volume, so a
+    file that grows (CLAUDE.COM, PAINT.RUN) changes the check until the doc is changed with it."""
+    print('== ROM 2\'s room left, as the doc says')
+    sh = open(os.path.join(GOS, 'build.sh'), 'rb').read().decode().replace('\r', '')
+    names = re.search(r'mkrom\.py LODE2\.BIN --data (.*)', sh).group(1).split()
+    img, left = mkrom.volume([(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names], data=True)
+    doc = open(os.path.join(GOS, '..', 'docs', 'lodestone-rom.md'), encoding='utf-8').read()
+    m = re.search(r'with ([0-9,]+) bytes \((\d+) sectors\) left', doc)
+    said = (int(m.group(1).replace(',', '')), int(m.group(2))) if m else None
+    check('ROM 2: %d bytes (%d sectors) left, as lodestone-rom.md says (%s); the image as built' % (left, left // 512, said),
+          said == (left, left // 512) and img == rom2(), (said, left))
+    sh1 = sh[sh.index('mkrom.py LODE1.BIN'):].split('\n# ')[0].replace('\\\n', ' ')
+    a = sh1.split()[1:]
+    boot = open(os.path.join(GOS, a[2]), 'rb').read()
+    img1, left1 = mkrom.volume([(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in a[3:]], boot=boot)
+    m = re.search(r'([0-9,]+) bytes \((\d+) sectors\) are left', doc)
+    said1 = (int(m.group(1).replace(',', '')), int(m.group(2))) if m else None
+    check('ROM 1: %d bytes (%d sectors) left, as lodestone-rom.md says (%s); the image as built' % (left1, left1 // 512, said1),
+          said1 == (left1, left1 // 512) and img1 == rom(), (said1, left1, a[:3]))
+
+
 def t_rom2_paint():
     """Paint from ROM 2: started from the ROM, the Executive on C:, Return
     on a .BMP there runs R:\\PAINT.RUN (PATH C:\\LODE;R:\\) and shows it; with
@@ -773,7 +795,7 @@ if __name__ == '__main__':
     t0 = time.time()
     if 'nobuild' not in sys.argv: build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_paint, t_rom2_claude, t_pipe):
+    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_free, t_rom2_paint, t_rom2_claude, t_pipe):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))

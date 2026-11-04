@@ -115,6 +115,18 @@ def t_shell():
         check('TEMP=%s: the pipe\'s file in it (PIPEA1.$$$ in DIR TMP\'s own output), none in the root' % tv,
               'PIPEA1   $$$' in o and 'PIPEA1' not in o2 and 'VOLUME IN DRIVE A' in o2, (o, o2))
         check('... cleaned up there', 'PIPE' not in sh.run('dir tmp'))
+    sh.run('set temp=')
+    sh.run('md t2')
+    sh.run('set tmp=a:\\tmp')                          # (no TEMP: TMP, as CLAUDE.COM)
+    o = sh.run('dir tmp | upper')
+    sh.run('set temp=a:\\t2')
+    o2 = sh.run('dir t2 | upper') + sh.run('dir tmp | upper')      # (both: TEMP)
+    sh.run('set tmp=')
+    sh.run('set temp=')
+    check('no TEMP, TMP=a:\\tmp: the pipe\'s file there; TEMP=a:\\t2 as well: in T2 (TEMP\'s), not in TMP',
+          'PIPEA1   $$$' in o and o2.count('PIPEA1   $$$') == 1 and o2.index('PIPEA1') < o2.index('DIRECTORY OF  A:\\TMP')
+          and 'PIPE' not in sh.run('dir tmp') + sh.run('dir t2'), (o, o2))
+    sh.run('rd t2')
     sh.run('set temp=a:')                              # (a drive alone: its root)
     o = sh.run('dir | upper')
     check('TEMP=a: (a drive alone): the pipe\'s file in A:\\', 'PIPEA1   $$$' in o and 'PIPE' not in sh.run('dir'), o)

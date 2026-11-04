@@ -67,7 +67,7 @@ If the second buffer can't be allocated (MT with a small region, a TSR in the wa
 - **Function 3** returns the position and buttons.
 - **Functions 1 and 2** show and hide the driver's own mode-40h pointer. Paint hides it around each piece of drawing, so the pointer never ends up in C.
 - **Function 9** sets the pointer's shape, so each tool can have its own pointer (crosshair, pencil, eraser box) at no core cost.
-- **Under MULTITASK=1,** `mt_i33` passes calls from the front task straight through (KMT.INC:1627). Paint runs in the Executive's task, so it uses the driver directly. §8 planned a test that switching away and back while Paint holds the driver keeps `mt_33ot` / M4c's "another driver" logic right; it isn't written yet (`t_paint_bmp` checks strokes, the saver and Return on a `.BMP` under MULTITASK=1, not CODE-Tab).
+- **Under MULTITASK=1,** `mt_i33` passes calls from the front task straight through (KMT.INC:1627). Paint runs in the Executive's task, so it uses the driver directly. §8 planned a test that switching away and back while Paint holds the driver keeps `mt_33ot` / M4c's "another driver" logic right. Since W1 that case can't arise in a matched build (a LODEMT.SYS whose UI patches fail, or a core before API 8, would run Paint full screen on INT 33h): under MULTITASK=1 Paint is always a window session (a fifth window `.RUN` is refused, not run full screen) and takes its strokes by `UI_MOUSE`, never INT 33h, so the UI's own driver state is task 0's, which MT saves and puts back. `t_paintw` checks that instead (2026-11-03): CODE-F6, CODE-P (LCMD a full-screen task in front), CODE-Tab back, CODE-Tab to LCMD and back again (the switch's own save then), CODE-F6 to Paint: task 0's driver state as it was (its hot spot and masks made distinct first, LCMD's changed while it was in front), and a stroke drawn where the mouse went.
 - **Paint's own loop** is `UI_POLL` (keys, saver, Shift-PrtSc, the CODE-Tab hot key), then function 3, then HLT. On exit it calls function 2 and then function 0, so the Executive starts with a clean driver. One known cosmetic effect: the Executive's arrow comes back where it was before Paint ran, because the UI's own position isn't reachable through the API.
 - **Fallback, only if a check in §8 fails:** a `UI_MOUSE` API entry (about 15 B resident, a new API version). It would be put to Joshua with the byte count first.
 
@@ -208,7 +208,7 @@ Every inner loop works on whole bytes or words where it can, and on the screen i
   - packets move function 3's position 1:1;
   - the buttons show on press and release;
   - after exit the Executive's pointer and list are as before.
-  - With `MULTITASK=1`: strokes, the saver and Return on a `.BMP`. (CODE-Tab away and back with `mt_33ot` was planned and isn't tested yet.)
+  - With `MULTITASK=1`: strokes, the saver and Return on a `.BMP`. (CODE-Tab away and back: `t_paintw`, as above.)
   - A `mouse=False` run uses keyboard drawing.
 - **Bit-for-bit drawing:** injected packets (and keyboard strokes) against a Python reference model (Bresenham, spans, patterns, ellipse, fill) that renders the same integer rules, as `mksplash.render` does for the splash. All 256,000 pixels are compared.
 - **Round trip:** Shift-PrtSc's `SCREEN01.BMP` → Paint → CODE-T → the bytes are identical to the capture. A Pillow-made 1-bit BMP shows exactly as Pillow reads it.
