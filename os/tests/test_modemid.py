@@ -25,26 +25,41 @@ class Modem:
     """A 16450 at 3F8h with, optionally, a Hayes modem behind it that only
     understands the speeds in `speeds` (divisors: 48 = 2400, 96 = 1200,
     384 = 300).  At any other speed what it's sent is noise and it says
-    nothing.  `info`: its ATIn answers."""
-    def __init__(s, speeds=(), info=None):
-        s.speeds, s.info = set(speeds), info or {}
+    nothing.  `info`: its ATIn answers; `slow`: the ones it takes 0.8 s
+    over (the 1520's took that long over ATI1, its checksum).  As the
+    1520's 16450: one received character held, the next overwriting it if
+    it isn't read, each taking a character's time on the line."""
+    def __init__(s, speeds=(), info=None, slow=()):
+        s.speeds, s.info, s.slow = set(speeds), info or {}, set(slow)
         s.lcr, s.mcr, s.ier, s.scr, s.dll, s.dlm = 0x03, 0x00, 0x00, 0x00, 0x0C, 0x00
-        s.rx, s.line, s.echo, s.cmds, s.dialed = [], '', True, [], False
+        s.q, s.rbr, s.full, s.overruns, s.tx_until = [], 0, False, 0, 0
+        s.line, s.echo, s.cmds, s.dialed, s.pc = '', True, [], False, None
+    def now(s): return s.pc.us if s.pc else 0
+    def ctime(s): return 10e6 * (s.dlm << 8 | s.dll) / 115200     # (us a character)
+    def send(s, data, delay=0):
+        t = max([s.now()] + [q[0] for q in s.q]) + delay
+        for c in data:
+            t += s.ctime(); s.q.append((t, c))
+    def take(s):
+        while s.q and s.q[0][0] <= s.now():
+            if s.full: s.overruns += 1
+            s.rbr, s.full = s.q.pop(0)[1], True
     def read(s, o):
+        s.take()
         if o == 0:
             if s.lcr & 0x80: return s.dll
-            return s.rx.pop(0) if s.rx else 0
+            s.full = False; return s.rbr
         if o == 1: return s.dlm if s.lcr & 0x80 else s.ier
         if o == 2: return 0x01
         if o == 3: return s.lcr
         if o == 4: return s.mcr
-        if o == 5: return 0x60 | (1 if s.rx else 0)
+        if o == 5: return (0x60 if s.now() >= s.tx_until else 0) | (1 if s.full else 0)
         if o == 6: return 0xB0 if s.speeds and s.mcr & 1 else 0x00
         return s.scr
     def write(s, o, v):
         if o == 0:
             if s.lcr & 0x80: s.dll = v
-            else: s.char(v)
+            else: s.tx_until = s.now() + s.ctime(); s.char(v)
         elif o == 1:
             if s.lcr & 0x80: s.dlm = v
             else: s.ier = v
@@ -53,7 +68,7 @@ class Modem:
         elif o == 7: s.scr = v
     def char(s, c):
         if not s.speeds or (s.dlm << 8 | s.dll) not in s.speeds or s.lcr & 0x7F != 0x03: return
-        if s.echo: s.rx.append(c)
+        if s.echo: s.send([c], s.ctime())
         if c != 13: s.line += chr(c); return
         l, s.line = s.line.upper(), ''
         s.cmds.append(l)
@@ -62,15 +77,16 @@ class Modem:
         if 'D' in a.replace('ATD', ''): s.dialed = True
         if a.startswith('E1'): s.echo = True
         r = 'OK'
+        n = a[1:2] or '0'
         if a.startswith('I'):
-            n = a[1:2] or '0'
             r = s.info[n] + '\r\n\r\nOK' if n in s.info else 'ERROR'
-        s.rx += list(('\r\n%s\r\n' % r).encode())
+        s.send(('\r\n%s\r\n' % r).encode(), 800000 if a.startswith('I') and n in s.slow else 20000)
 
 def run(name, modem):
     img = mkimg.build(os.path.join(OUT, name + '.img'), [os.path.join(GOS, 'src', 'LODE.SYS'), TOOL])
     k = ktest.KPC(img)
     k.pc.com1 = modem
+    if modem is not None: modem.pc = k.pc
     k.start()
     before = None if modem is None else (modem.lcr, modem.dll, modem.dlm, modem.ier, modem.mcr)
     k.run_file('MODEMID.COM', 60)
@@ -96,11 +112,16 @@ def main():
           'Option 330 named; registers put back; never dialed',
           'RESULT: it answered at 1200 baud but not 2400: Option 330' in rep and '120' in rep and 'ERROR' in rep
           and same and not m.dialed and m.cmds[:2] == ['AT', 'ATE1V1Q0'] and not k.crashed, (rep, m.cmds))
-    m = Modem({48, 96, 384}, {'0': '247', '3': 'GRiD 2400'})
+    m = Modem({48, 96, 384}, {'0': '249', '1': '017', '3': '04-00027-16'}, slow={'1'})
     rep, same, k = run('md_331', m)
-    check('Option 331 (a 2400): answers at 2400 at once; ATI0 247, ATI3 its name; Option 331 named; registers '
+    body = rep[rep.index('Asking it'):] if 'Asking it' in rep else ''
+    check('as the 1520 answered (2026-11-03): each echo whole though the UART holds one character (read while '
+          'sending), and ATI1\'s slow checksum under ATI1, not ATI2 (each answer waits for its OK or ERROR)',
+          'answer: ATE1V1Q0' in body and 'answer: ATI0' in body and 'answer: ATI1\r\n          017' in body
+          and 'answer: ATI2\r\n          ERROR' in body and '04-00027-16' in body, (rep, m.overruns))
+    check('Option 331 (a 2400): answers at 2400 at once; ATI0 249, ATI3 04-00027-16; Option 331 named; registers '
           'put back; never dialed; only AT, ATE1V1Q0 and ATI0-4 sent',
-          'RESULT: it answered at 2400 baud: Option 331' in rep and '247' in rep and 'GRiD 2400' in rep
+          'RESULT: it answered at 2400 baud: Option 331' in rep and '249' in rep
           and same and not m.dialed and m.cmds == ['AT', 'ATE1V1Q0', 'ATI0', 'ATI1', 'ATI2', 'ATI3', 'ATI4']
           and not k.crashed, (rep, m.cmds))
     bad = [n for n, ok in results if not ok]

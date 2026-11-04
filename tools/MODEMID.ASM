@@ -292,12 +292,15 @@ ask:    push    si
 .e1:    call    crlf
         pop     si
         mov     word [rlen], 0
+        ; sent a character at a time; what comes back while it goes (the
+        ; echo: the UART holds only one) is read as it arrives
 .s:     lodsb
         or      al, al
         jz      .r
         mov     ah, al
         mov     cx, 0FFFFh
-.w:     mov     dx, BASE + 5            ; (the transmitter empty)
+.w:     call    rx1                     ; (anything waiting: kept)
+        mov     dx, BASE + 5            ; (the transmitter empty)
         in      al, dx
         test    al, 20h
         loopz   .w
@@ -305,35 +308,24 @@ ask:    push    si
         mov     dx, BASE
         out     dx, al
         jmp     .s
+        ; then until its result: OK or ERROR (and their line end) ends it;
+        ; nothing at all in 1 s, or 4 s in all, gives up
 .r:     push    es
         xor     ax, ax
         mov     es, ax
         sti
         mov     bx, [es:TICKS]          ; the start
-        mov     di, bx                  ; the last character
-.l:     mov     dx, BASE + 5
-        in      al, dx
-        test    al, 1
-        jz      .n
-        mov     dx, BASE
-        in      al, dx
-        mov     si, [rlen]
-        cmp     si, 255                 ; (full: the rest dropped)
-        jae     .n
-        mov     [rbuf + si], al
-        inc     word [rlen]
-        mov     di, [es:TICKS]
-        jmp     .l
-.n:     mov     ax, [es:TICKS]
-        mov     cx, ax
-        sub     cx, bx
-        cmp     cx, 36                  ; 2 s in all
+.l:     call    rx1
+        call    final
+        jc      .d
+        mov     ax, [es:TICKS]
+        sub     ax, bx
+        cmp     ax, 72                  ; 4 s in all
         jae     .d
-        cmp     word [rlen], 0
-        je      .l
-        sub     ax, di
-        cmp     ax, 9                   ; 0.5 s quiet
+        cmp     ax, 18                  ; 1 s with nothing: no modem here
         jb      .l
+        cmp     word [rlen], 0
+        jne     .l
 .d:     pop     es
         ; show it
         mov     si, s_got
@@ -348,6 +340,65 @@ ask:    push    si
         ret
 .z:     mov     si, s_nothing
         call    puts
+        ret
+; one received character, if there is one, to rbuf.  AX, DX, SI kept
+rx1:    push    ax
+        push    dx
+        push    si
+        mov     dx, BASE + 5
+        in      al, dx
+        test    al, 1
+        jz      .x
+        mov     dx, BASE
+        in      al, dx
+        mov     si, [rlen]
+        cmp     si, 255                 ; (full: the rest dropped)
+        jae     .x
+        mov     [rbuf + si], al
+        inc     word [rlen]
+.x:     pop     si
+        pop     dx
+        pop     ax
+        ret
+; CF set if rbuf ends in a final result line: OK or ERROR then CR LF, or
+; a numeric one (V0: a digit, then CR) after the echo's CR
+final:  push    ax
+        push    cx
+        push    si
+        mov     cx, [rlen]
+        mov     si, rbuf
+        add     si, cx
+        cmp     cx, 4
+        jb      .v0
+        cmp     word [si - 2], 0A0Dh
+        jne     .v0
+        cmp     word [si - 4], 'OK'
+        je      .y
+        cmp     cx, 7
+        jb      .v0
+        cmp     word [si - 7], 'ER'
+        jne     .v0
+        cmp     word [si - 5], 'RO'
+        jne     .v0
+        cmp     byte [si - 3], 'R'
+        je      .y
+.v0:    cmp     cx, 3                   ; (the echo's CR, a digit, its CR)
+        jb      .n
+        cmp     byte [si - 1], 13
+        jne     .n
+        cmp     byte [si - 3], 13
+        jne     .n
+        mov     al, [si - 2]
+        cmp     al, '0'
+        jb      .n
+        cmp     al, '9'
+        ja      .n
+.y:     stc
+        jmp     .x
+.n:     clc
+.x:     pop     si
+        pop     cx
+        pop     ax
         ret
 ; a received character, shown: CR dropped, LF a new line (indented),
 ; others not printable as <hh>
@@ -484,7 +535,7 @@ c_i3    db      'ATI3', 13, 0
 c_i4    db      'ATI4', 13, 0
 fname   db      'MODEMID.TXT', 0
 
-s_head  db      'MODEMID 1.0 - the GRiDCase 1520', 39, 's internal modem (COM1, 3F8h)', 13, 10
+s_head  db      'MODEMID 1.1 - the GRiDCase 1520', 39, 's internal modem (COM1, 3F8h)', 13, 10
         db      'It never dials or goes off hook.', 13, 10, 13, 10, 0
 s_bda   db      'BIOS serial ports: COM1 ', 0
 s_sp    db      '  COM2 ', 0
