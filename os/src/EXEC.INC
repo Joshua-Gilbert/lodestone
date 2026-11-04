@@ -92,6 +92,9 @@ n_done      resw 1
 n_skip      resw 1
 s_time      resw 1                  ; the one in hand: its time and date
 s_date      resw 1
+RM_MOST     equ 13                  ; (ex_items, all of them: rmenu has no bound)
+rm_buf      resw RM_MOST            ; a right click's menu: its items' texts
+rm_key      resw RM_MOST            ;  and their keys (RMENU.INC, ex_menu)
 sc_seg      resw 1                  ; Copy on a subject: the subjects to copy (sc_list)
 sc_rd       resw 1                  ;  the one in hand
 sc_wr       resw 1                  ;  the end of the list
@@ -141,9 +144,9 @@ ex_loop:
         or      al, al                  ; ("TSR.COM ended" was in the band:
         jz      .ev                     ;  relist drew the usual prompt)
         call    show_msg
-.ev:    inc     byte [ex_mtw]           ; (MULTITASK=1: 2, a task's end looked
-        call    ui_event                ;  for meanwhile: EV_TASK)
-        dec     byte [ex_mtw]
+.ev:    add     word [ex_mtw], 101h     ; (ex_mtw: MULTITASK=1: 2, a task's end
+        call    ui_event                ;  looked for meanwhile: EV_TASK; and
+        sub     word [ex_mtw], 101h     ;  ex_rclk: a right click EV_RCLICK)
         cmp     ax, EV_TASK
         jae     .task
         cmp     byte [msgshown], 0      ; a message waits for the next key
@@ -158,6 +161,8 @@ ex_loop:
         je      ex_loop
 .k:     cmp     ax, EV_CLICK
         je      .click
+        cmp     ax, EV_RCLICK
+        je      .rclk
         call    focus_key               ; Tab, Shift-Tab; Return and ESC
         jnc     ex_loop                 ;  in Device and Subject
         mov     bx, ex_list
@@ -165,6 +170,8 @@ ex_loop:
         jnc     ex_loop
         mov     si, ex_keys
         call    ui_dispatch
+        jmp     ex_loop
+.rclk:  call    ex_menu
         jmp     ex_loop
 .click: cmp     cx, BAND_Y              ; the prompt band: help
         jb      .form
@@ -200,6 +207,65 @@ ex_loop:
         mov     byte [msgshown], 1      ;  have changed the files), the message
 .tl:    call    ui_room                 ;  shown kept; EV_TASKM: msgbuf's (and
         jmp     .re                     ;  the UI block moved, if it waited)
+
+; A right click at BX, CX: the row there selected, then a menu (RMENU.INC)
+; of what applies to it, each item a key of ex_keys taken as typed.  A
+; file: Open (Return), Open full screen (a DOS program, MULTITASK=1: as
+; Shift-Return), Copy, Move, Rename, Delete; a subject: Copy, Delete; no
+; row (or a drive): the programs and F5.  None on the form or the band
+RX_MT       equ 1                       ; (RMENU's need bits: 1, RM_SEL, unused
+RX_ROW      equ 4                       ;  here, is ex_mtw's 1; 2 is RM_CLIP)
+RX_FILE     equ 8
+RX_PROG     equ 16
+RX_NONE     equ 64
+K_XFULL     equ 0FE00h                  ; (Open full screen: no key's)
+ex_menu:
+        cmp     cx, FORM_Y - 2
+        jae     .x
+        push    bx
+        push    cx
+        mov     dl, RX_NONE
+        mov     bx, ex_list
+        call    lv_click                ; (CF: on no row)
+        jc      .m
+        cmp     byte [msgshown], 0      ; (a subject that can't be opened: its
+        jne     .no                     ;  message, no menu)
+        mov     al, [focus]
+        cmp     al, FOC_DEV
+        je      .m                      ; (a drive: as no row)
+        mov     dl, RX_ROW
+        cmp     al, FOC_TIT
+        jne     .m
+        mov     bx, [sel]
+        call    ent_ptr
+        call    kind_of                 ; (DX kept)
+        mov     dl, RX_ROW + RX_FILE
+        cmp     al, 1
+        jne     .m
+        mov     dl, RX_ROW + RX_FILE + RX_PROG
+.m:     or      dl, [ex_mtw]            ; (RX_MT: 1 with MULTITASK=1, here)
+        xchg    ax, dx
+        pop     cx
+        pop     bx
+        mov     si, ex_items
+        inc     byte [ex_rclk]          ; (a right click on an item chooses it)
+        call    rmenu
+        dec     byte [ex_rclk]
+        jc      .x
+        cmp     ax, K_XFULL
+        je      .full
+        xchg    cx, ax                  ; the key into the BIOS's buffer: read
+        mov     ah, 5                   ;  as typed, so with MULTITASK=1 KMW's
+        int     16h                     ;  routing has it too (CODE-K, CODE-T:
+        ret                             ;  the window there, if open)
+.full:  call    sel_name                ; NAME.EXT, in the Executive's task
+        jmp     run_wait
+.no:    pop     cx
+        pop     bx
+.x:     ret
+
+%include "RMENU.INC"                    ; (Write's and TERM's too)
+        times ($ + 1 - $$) & 1 db 90h   ; (what follows keeps its parity)
 
 ; Tab / Shift-Tab: the next / previous item of the form (Title, Device,
 ; Subject, round).  In Device and Subject also Return (the next item) and
@@ -3016,8 +3082,40 @@ ex_keys:
         KEY(K_CODE_M,    ex_move,    h_move)
         KEY(K_CODE_R,    ex_rename,  h_rename)
         KEY(K_F5,        refresh,    h_f5)
+        KEY(K_NONE,      0,          h_rclk)
         KEY(K_NONE,      0,          h_code)
-        dw 0                            ; (15 help lines; there is room for 18)
+        dw 0                            ; (16 help lines; there is room for 18)
+
+; a right click's menu (ex_menu): its text, its key in ex_keys, what it needs
+ex_items:
+        dw m_open,   K_ENTER,  RX_FILE
+        dw m_full,   K_XFULL,  RX_PROG + RX_MT
+        dw m_copy,   K_CODE_C, RX_ROW
+        dw m_move,   K_CODE_M, RX_FILE
+        dw m_rename, K_CODE_R, RX_FILE
+        dw m_erase,  K_CODE_D, RX_ROW
+        dw m_write,  K_CODE_W, RX_NONE
+        dw m_claude, K_CODE_A, RX_NONE
+        dw m_calc,   K_CODE_K, RX_NONE
+        dw m_shell,  K_CODE_P, RX_NONE
+        dw m_tasks,  K_CODE_T, RX_NONE + RX_MT
+        dw m_usage,  K_CODE_U, RX_NONE
+        dw m_f5,     K_F5,     RX_NONE
+        dw 0
+        times   -(($ - 2 - ex_items) / 6 > RM_MOST) db 0   ; (rm_buf, rm_key hold them all)
+m_open      db 'Open', HT, 21, 'Return', 0
+m_full      db 'Open full screen', HT, 21, 'Shift-Return', 0
+m_copy      db 'Copy', HT, 21, 'CODE-C', 0
+m_move      db 'Move', HT, 21, 'CODE-M', 0
+m_rename    db 'Rename', HT, 21, 'CODE-R', 0
+m_erase     db 'Delete', HT, 21, 'CODE-D', 0
+m_write     db 'Write', HT, 21, 'CODE-W', 0
+m_claude    db 'Claude', HT, 21, 'CODE-A', 0
+m_calc      db 'Calculator', HT, 21, 'CODE-K', 0
+m_shell     db 'Command prompt', HT, 21, 'CODE-P', 0
+m_tasks     db 'Tasks', HT, 21, 'CODE-T', 0
+m_usage     db 'System', HT, 21, 'CODE-U', 0
+m_f5        db 'Read the disk again', HT, 21, 'F5', 0
 
 h_choose    db 'Up / Down, PgUp / PgDn', HT, 25, 'choose',0
 h_tab       db 'Tab / Shift-Tab', HT, 25, 'Device, Subject, Title',0
@@ -3034,6 +3132,7 @@ h_erase     db 'CODE-D', HT, 25, 'Delete (a file or subject)',0
 h_move      db 'CODE-M', HT, 25, 'Move (a file)',0
 h_rename    db 'CODE-R', HT, 25, 'Rename (a file)',0
 h_f5        db 'F5', HT, 25, 'read the disk again',0
+h_rclk      db 'Right click', HT, 25, 'a menu of what applies',0
 h_code      db 'CODE is the Alt key.  Any key closes.',0
 
 ; ---------------------------------------------------------------------

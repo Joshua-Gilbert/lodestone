@@ -1,7 +1,8 @@
 ; RCTEST.RUN - right clicks (UI API 7) as a .RUN sees them (tests/test_apps.py
 ; t_rclick).  Every event UI_EVENT gives goes into evs (AX, BX, CX; nevs of
 ; them).  E: UI_EDIT on ebuf (its key in edkey), A: UI_ASK (its CF in ask),
-; ESC: the end.  RC6.ASM builds the same for API 6: no right clicks.
+; ESC: the end.  RC6.ASM builds the same for API 6: no right clicks; RCP6.ASM
+; that with UI_POLL (RC_POLL) for UI_EVENT.
 ;   python3 mkrun.py tests/RCTEST.ASM tests/RCTEST.RUN
 %include "UIAPI.INC"
 %ifndef RC_API
@@ -12,7 +13,13 @@ RUN_API equ RC_API
         org     RUN_ORG
 
 start:  call    UI_CLS
-.l:     call    UI_EVENT
+.l:
+%ifdef RC_POLL
+        call    UI_POLL
+        jc      .l
+%else
+        call    UI_EVENT
+%endif
         mov     di, [nevs]
         cmp     di, 32
         jae     .full
