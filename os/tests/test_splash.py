@@ -252,7 +252,7 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '565.7', 88: '581.7'}   # (0.6: 0.1 KB less, the PATH search and two settings files;
+MEM_044 = {0: '565.5', 88: '581.6'}   # (0.6: 0.1 KB less, the PATH search and two settings files;
                                       #  then 0.5 KB less, windows that move and close, UI API 6; printer drivers 0.2 KB;
                                       #  then 0.9 KB more, the 2026-10-20 audit's kernel batch; 1.3 / 1.2 KB more, its UI batch;
                                       #  2.6 / 2.7 KB more, its medium-risk kernel and UI batches: start-up code run from buffers, no row table;
@@ -273,7 +273,8 @@ MEM_044 = {0: '565.7', 88: '581.7'}   # (0.6: 0.1 KB less, the PATH search and t
                                       #  0.1 KB more, 160 bytes, its AP-1: HT in the Executive's help lines;
                                       #  0.3 KB more, 288 bytes, its K2: EXEC's and rename's buffers in the INT 21h stack;
                                       #  0.4 KB more, 368 bytes, its KC-2: the capture's file writer as SCREEN.PRN;
-                                      #  0.1 KB less with EMS, 32 bytes, its S4 and S14 (the EMS module's word-wise 57h))
+                                      #  0.1 KB less with EMS, 32 bytes, its S4 and S14 (the EMS module's word-wise 57h);
+                                      #  0.2 / 0.1 KB less, 160 bytes, free memory on the Executive's info line)
 
 def t_memory():
     print('== what DOS programs get: the same with the picture as without it')
