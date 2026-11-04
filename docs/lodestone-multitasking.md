@@ -2295,3 +2295,28 @@ LODEMT.SYS 21,299 bytes (+20).
 - With `MULTITASK=1`, `START MTSPIN 400 C.TXT` behind, then a large COPY on C: at CODE-P's prompt; again with M12's hook bypassed (or `MULTITASK=0`). The copy exact (COMP), C.TXT's count higher with M12.
 - BENCH on C: with and without a task behind: the cost of IRQ 14 on every sector.
 - Whether a status read under CLI after a latched completion gives INT 77h, nothing, or a late INT 76h (HDPROBE has the scaffolding); the CP30104H holding a sector's DRQ for long mid-transfer; `HD_SPIN` against the drive's read-ahead (how long a hit takes to show DRQ).
+
+## A crash that restarts the 1520, and CRASHLOG (2026-11-04)
+
+**Joshua found it on the 1520, with multitasking on.** The machine restarts with the POST's beep:
+- on dropping a mouse resize of CLAUDE.COM's window (CODE-A);
+- with a CODE-P window open, on clicking a picture's row in the Executive;
+- with a CODE-P window resized, on closing a picture that the keyboard had opened.
+
+Resizing an ordinary window, and Calc and Paint open together, are fine. The mascot is also missing from CLAUDE.COM's window, though it shows full screen and in resident mode.
+
+**Not reproduced in pcemu.** The Claude-window drop was tried with a serial mouse, at every size, several drags in a row, CODE-F8, and the mouse moving during the redraw. The CODE-P and picture steps were tried with memory filled with random bytes, with less memory for LCMD, and with the floppy timed and strict. No CPU trap, no 286-only access at offset FFFFh, and no stack near its end. For the mascot, the likeliest reason is the window's view rather than the glyphs: it shows 19 of CLAUDE's 25 rows and follows its hidden cursor. To check on the machine: is the top of Claude Code's welcome box in view?
+
+**CRASHLOG** (`os/diag`, its README) is a diagnostic build, `-dCRASHLOG`, that catches the restart and keeps a report through it:
+- MT keeps a ring of its last 256 events (ticks, switches, KMW's window operations, mode sets, INT 06h).
+- At start-up it arms CMOS 0Fh = 0Ah with its handler at 40:67h, so the 1520's BIOS sends any later reset there, memory intact.
+- The handler copies a report to 5000:0 and shows it on the screen. It survives the soft restart; `CRASHRPT.COM` writes it to `CRASH.BIN`, and `crashdecode.py` names its addresses from that build's map.
+
+Without the flag, LODE.SYS and LODEMT.SYS are byte for byte as before. pcemu now models the BIOS's jump through 40:67h for shutdown codes 05h and 0Ah, and the PC's fixed BIOS entry points.
+
+**Tests:** test_mt's `t_crashlog` (5 checks):
+- the build;
+- a jump to the reset caught, with the report on the screen;
+- the report through the restart, CRASH.BIN written, then nothing the second time, and decoded;
+- an INT 06h;
+- a restart asked for (40:72h = 1234h) passed straight on.

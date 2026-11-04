@@ -497,6 +497,11 @@ class PC:
         s.mu.mem_write(0xFFFF0, b'\xEA\x5B\xE0\x00\xF0')        # the reset jump, as in the ROM (FFFF:1 isn't 0)
         s.mu.mem_write(0xFFFF5, b'10/25/89'); s.mu.mem_write(0xFFFFE, b'\xFC')
         s.mu.mem_write(0xF0000 + 0xE05B, b'\xCD\x19')         # the POST: warm_boot
+        # the PC's fixed entry points (at_compat.asm in the 1520's BIOS), as jumps to the stubs: INT 08h, 09h,
+        # 10h, 15h, 16h, and the IRET at FF53h (for a program that puts the BIOS's own vectors back: CRASHLOG)
+        for at, to in ((0xFEA5, 0x1000), (0xE987, 0x1100), (0xF065, 0x10 * 8), (0xF859, 0x15 * 8), (0xE82E, 0x16 * 8),
+                       (0xFF53, 0x1200)):
+            s.mu.mem_write(0xF0000 + at, b'\xEA' + struct.pack('<HH', to, STUB))
         s.wr(0xB800, 0, b'\x20\x07' * 2000)
 
     def warm_boot(s, ems='keep'):
@@ -1292,6 +1297,13 @@ class PC:
     def int18(s): s.stopped = 'INT 18h (ROM BASIC)'; s.mu.emu_stop()
     def int19(s):
         if s.r('cs') == 0xF000 and s.r('ip') == 0xE05D:      # the reset jump's POST
+            code = s.cmos[0x0F]; s.cmos[0x0F] = 0
+            if code in (0x05, 0x0A):                    # the 1520's Reset_Actual (reset.asm): shutdown code 05h or
+                off, seg = struct.unpack('<HH', s.rd(0, 0x467, 4))   #  0Ah, a jump through 40:67h with memory as it
+                if code == 0x05: s.isr = 0                           #  was, no POST (05h: the PICs' EOI first)
+                s.w('ss', 0x30); s.w('sp', 0x80); s.w('flags', 0x02)
+                s.w('cs', seg); s.w('ip', off); s.resets_caught = getattr(s, 'resets_caught', 0) + 1
+                s.mu.emu_stop(); return
             s.warm_boot(getattr(s, 'ems_on_reset', 'keep')); s.mu.emu_stop(); return
         s.stopped = 'INT 19h (reboot)'; s.mu.emu_stop()
 

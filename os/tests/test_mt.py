@@ -7290,6 +7290,71 @@ def t_hwait():
           re.search(r'Hard disk\s+Conner Peripherals 120MB - CP30104H', t) and re.search(r'Hard disk\s+none', t0)
           and not any(c[0] == 0xEC for c in ata.cmds[n0:]), (t[-900:], t0[-400:], ata.cmds[n0:][:10]))
 
+def t_crashlog():
+    """CRASHLOG, the diagnostic build (os/diag): a restart caught through 40:67h (CMOS 0Fh = 0Ah), its report on the
+    screen and at 5000:0 through the soft reset, CRASHRPT's CRASH.BIN, crashdecode.py; INT 06h; a restart asked for
+    (40:72h = 1234h) not caught; the normal build without any of it."""
+    print('== CRASHLOG: the diagnostic build catches a restart and keeps a report through it')
+    import mkimg, io, contextlib
+    D = os.path.join(GOS, 'diag')
+    sys.path.insert(0, D)
+    import crashdecode
+    for n in ('CRASHME', 'CRASHRPT'):
+        subprocess.run(['nasm', '-f', 'bin', '-o', os.path.join(A.OUT, n + '.COM'), os.path.join(D, n + '.ASM')], check=True)
+    src = os.path.join(GOS, 'src')
+    sysf, mapf, mtf = (os.path.join(A.OUT, n) for n in ('LODECR.SYS', 'LODECR.MAP', 'LODEMTCR.SYS'))
+    m = os.path.join(A.OUT, '_cr.asm')
+    open(m, 'w').write('[map symbols %s]\n%%include "LODE.ASM"\n' % mapf)
+    subprocess.run(['nasm', '-f', 'bin', '-dCRASHLOG', '-i', src + '/', '-o', sysf, m], check=True)
+    subprocess.run(['python3', os.path.join(GOS, 'mkmt.py'), sysf, mapf, mtf], check=True, stdout=subprocess.DEVNULL)
+    check('-dCRASHLOG: its own LODE.SYS and LODEMT.SYS (%d and %d bytes); the normal build\'s map has none of it'
+          % (os.path.getsize(sysf), os.path.getsize(mtf)), 'mt_crst' in open(mapf).read()
+          and 'mt_crst' not in open(os.path.join(src, 'LODE.MAP')).read() and os.path.getsize(mtf) > os.path.getsize(MTSYS))
+    def run(name, arg):
+        img = mkimg.build(os.path.join(A.OUT, name), ['LODE.SYS=' + sysf, 'LODEMT.SYS=' + mtf, A.LCMD, TERMRUN, TERMFNT,
+                                                      os.path.join(A.OUT, 'CRASHME.COM'), os.path.join(A.OUT, 'CRASHRPT.COM'),
+                                                      ini(b'MULTITASK=1\r\n')])
+        k = ktest.KPC(img, ems_pages=88); k.pc.mouse = True; k.start(10)
+        k.key(ktest.CODE_P, settle=False); k.run_for(3.0)
+        k.key('crashme ' + arg, settle=False); k.key(ktest.ENTER, settle=False); k.run_for(3.0)
+        return k
+    def report(k):
+        k.pc.keys.append(0x1C0D); k.pc.run_for(6.0); k.settle(20)
+        sh = Shell(k)
+        o1, o2 = sh.run('crashrpt'), sh.run('crashrpt')
+        b = A.disk_file(k, 'CRASH.BIN')
+        out = io.StringIO()
+        if b:
+            f = os.path.join(A.OUT, 'CRASH.BIN'); open(f, 'wb').write(b)
+            with contextlib.redirect_stdout(out): crashdecode.main(f, mapf)
+        return o1, o2, b, out.getvalue()
+    k = run('mt_cr1.img', 'r')
+    t = k.pc.text_screen()
+    sig = k.pc.rd(0x5000, 0, 8)
+    check('a jump to the BIOS\'s reset from a task (CRASHME R in CODE-P\'s window): caught through 40:67h, no POST; its '
+          'report on the screen in text mode (MT\'s state, the last records) and at 5000:0',
+          getattr(k.pc, 'resets_caught', 0) == 1 and k.pc.mode() == 3 and 'CRASHLOG caught: R' in t
+          and re.search(r'mw_n 01', t) and ' T 01 ' in t and sig == b'LODECRSH' and not k.pc.crash, (t, sig))
+    o1, o2, b, dec = report(k)
+    check('a key: the soft reset (40:72h = 1234h), the report still there after the start-up: CRASHRPT writes CRASH.BIN '
+          '(%s bytes) and forgets it (again: "no report"); crashdecode reads it: the sum, the cause, both tasks, the '
+          'ring\'s ticks and switches' % (len(b) if b else None),
+          getattr(k.pc, 'warm_boots', 0) == 1 and 'written to CRASH.BIN' in o1 and 'no report' in o2 and b
+          and len(b) == 9856 and 'sum ok; caught by a restart' in dec and 'LCMD.COM' in dec and 'Executive' in dec
+          and ' T tick ' in dec and ' S switch ' in dec, (o1, o2, dec[:1500]))
+    k = run('mt_cr2.img', 'x')
+    t = k.pc.text_screen()
+    o1, o2, b, dec = report(k)
+    check('INT 06h (an invalid opcode\'s entry, from CRASHME X): caught, its CS:IP and stack on the screen; the report '
+          'has its registers (AX 1234h, BX 5678h)', 'CRASHLOG caught: X' in t and 'INT 06h at' in t
+          and 'caught by INT 06h' in dec and 'AX=1234 BX=5678' in dec, (t, dec[:1200]))
+    k = run('mt_cr3.img', 'w')
+    check('a restart asked for (40:72h = 1234h, as Ctrl-Alt-Del and the Executive\'s): the BIOS\'s jump through 40:67h '
+          'passed straight on, no report, the start-up as ever',
+          getattr(k.pc, 'resets_caught', 0) == 1 and getattr(k.pc, 'warm_boots', 0) == 1 and not k.pc.crash
+          and k.pc.rd(0x5000, 0, 8) != b'LODECRSH',
+          (getattr(k.pc, 'resets_caught', 0), getattr(k.pc, 'warm_boots', 0), k.pc.crash))
+
 def t_hdtools():
     print('== HDSCAN and HDPROBE (they drive the hard disk themselves): not beside other tasks')
     tools = os.path.join(os.path.dirname(GOS), 'tools')
@@ -7607,7 +7672,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_hwait, t_sysreq, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

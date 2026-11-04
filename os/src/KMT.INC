@@ -172,8 +172,22 @@ TX_PARAS    equ (TX_KR + KRING * 2 + 15) / 16
 %if TX_PARAS * 16 > 4000h
 %error "TX: in a parked region's first EMS page (mt_pmap)"
 %endif
+%ifdef CRASHLOG
+MT_NVEC     equ 28                      ; (CRASHLOG: INT 06h the machine's, KCRASH.INC)
+%else
 MT_NVEC     equ 29                      ; (mt_vrun's and mt_vfr's counts)
+%endif
 MT_NFV      equ 2
+; CRASHLOG's flight recorder (KCRASH.INC): a record with this tag (a
+; letter), the caller's CS:IP, SS:SP, AX, BX.  Nothing in the normal build
+%macro CREC 1
+%ifdef CRASHLOG
+        pushf
+        push    word %1
+        call    mt_crec
+        popf
+%endif
+%endmacro
 
 ; ---- the stub (a PSP, then this at 100h) --------------------------------
 ST_PATH     equ 120h                    ; the program (ASCIIZ)
@@ -326,7 +340,11 @@ mt_33ot     db      0                   ; (mt_m33on: another driver answered)
 ; at a change of the front.  The rest are the machine's (13h, 33h, the
 ; other IRQs, 67h, the BIOS's tables)
 mt_vrun     db      22h, 23h, 24h, 21h, 28h, 2Fh
+%ifdef CRASHLOG
+            db      00h, 01h, 02h, 03h, 04h, 75h
+%else
             db      00h, 01h, 02h, 03h, 04h, 06h, 75h
+%endif
             db      08h, 10h, 16h, 1Ch
             db      34h, 35h, 36h, 37h, 38h, 39h, 3Ah, 3Bh, 3Ch, 3Dh, 3Eh, 3Fh
 %if $ - mt_vrun != MT_NVEC
@@ -539,6 +557,9 @@ mt_tick:
         call    far [cs:mt_old08]       ; (back with the EOI sent; interrupts
         cli                             ;  off, whatever a hook there did)
         inc     word [cs:mt_ticks]
+%ifdef CRASHLOG
+        call    mt_crt
+%endif
         cmp     byte [cs:mt_down], 0FFh ; (M10: a floppy owner's time-out)
         je      .d
         call    mt_dtick
@@ -1246,6 +1267,7 @@ mt_ent: push    ax
 ;  The saved task comes back from mt_switch, all its registers kept.
 ; ---------------------------------------------------------------------
 mt_switch:
+        CREC    'S'                     ; (CRASHLOG: BL the task to run)
         pusha
         push    ds
         push    es
@@ -5786,6 +5808,12 @@ VF_DX       equ -6                      ;  BP at [BP], then its IP, CS, flags)
 VF_BX       equ -8
 VF_ES       equ -20
 mt_v10:
+%ifdef CRASHLOG
+        or      ah, ah                  ; (a mode set: AX)
+        jnz     .ncr
+        CREC    'V'
+.ncr:
+%endif
         cli                             ; (a hook's PUSHF / CALL FAR: interrupts
         push    bp                      ;  on; the IRET puts the caller's back)
         mov     bp, sp
@@ -7656,10 +7684,15 @@ mt_kalloc:
         ret
 
 %include "KMW.INC"                      ; (several window .RUNs at once, M8a)
+%ifdef CRASHLOG
+%include "KCRASH.INC"
+%endif
 ; the hot labels at the parity they had (M9b): a shift that flips one
 ; stops the build here (0 even, 1 odd)
 %macro  mt_par 2
+%ifndef CRASHLOG                        ; (a diagnostic build: not timed)
             times   -(((%1 - mt_tstart) & 1) != %2) db 0
+%endif
 %endmacro
             mt_par  mt_tick, 0
             mt_par  mt_tick.p, 0
@@ -7697,7 +7730,12 @@ MT_LEN      equ     mt_tend - mt_tstart
 MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
 MT_SSTK     equ     1024                ;  on the paragraph after the image;
 MT_INIL     equ     160                 ; LODE.INI's lists' room
-MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MW_BSS + MT_SSTK + 15) / 16
+%ifdef CRASHLOG
+CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK ; (KCRASH.INC: the ring, the report, a stack)
+%else
+CR_BSS      equ     0
+%endif
+MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MW_BSS + MT_SSTK + CR_BSS + 15) / 16
                                         ; (then the lists, a header, KMW's
                                         ;  sessions, the stack)
 section mttbss
@@ -7708,6 +7746,11 @@ mt_hdr      resb    20h                 ; (MT_UI: an .EXE's header)
 mw_ses      resb    (MW_MAX + 1) * SE_SIZE  ; (KMW.INC: the sessions)
 mw_tmp      resb    NWIN * 4            ; (mw_raise: the window stack, reordered)
             resb    MT_SSTK             ; (mt_swnow's stack)
+%ifdef CRASHLOG
+mt_crb      resb    CR_N * 16           ; (KCRASH.INC)
+mt_crbuf    resb    CR_LEN
+mt_crstk    resb    CR_STK
+%endif
 mt_bend:
 
 ; ---- start-up (section boot, in the load image: CS = 1000h) ----------
@@ -7895,6 +7938,25 @@ mt_boot:
         and     al, 0FBh
         out     21h, al
 .n76:
+%ifdef CRASHLOG
+        mov     word [6 * 4], mt_cr6    ; (KCRASH.INC: INT 06h, a restart through
+        mov     [6 * 4 + 2], es         ;  40:67h with CMOS 0Fh = 0Ah, the ring
+        mov     word [467h], mt_crst    ;  cleared)
+        mov     [469h], es
+        mov     al, 0Fh
+        out     70h, al
+        mov     al, 0Ah
+        out     71h, al
+        push    di
+        push    cx
+        mov     di, mt_crb
+        mov     cx, CR_N * 16 / 2
+        xor     ax, ax
+        cld
+        rep     stosw
+        pop     cx
+        pop     di
+%endif
         mov     si, mt_vfr              ; INT 09h and 1Bh: task 0's, in front
         mov     di, mt_fv
 .fv:    mov     bl, [es:si]
