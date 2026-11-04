@@ -28,10 +28,11 @@ The normal build has none of this: built without `-dCRASHLOG`, LODE.SYS and LODE
 
 ## On the 1520
 
-1. **Make a boot floppy with this build.** Copy `LODE.SYS`, `LODEMT.SYS` and `CRASHRPT.COM` from this directory onto it, in place of the normal LODE.SYS and LODEMT.SYS. Its `LODE.INI` needs `MULTITASK=1`. Boot from the floppy, not the ROM: the ROM's LODE.SYS is the normal one, and LODEMT.SYS has to match it.
-2. **Make it crash** the way it did before.
-3. **The report screen should come up instead of the POST.** Take a photo of it, then press a key.
-4. **After the start-up,** run `CRASHRPT` before anything big. It writes `CRASH.BIN` (9,856 bytes) to the current directory. Send that in.
+1. **Make a boot floppy with this build.** Copy `LODE.SYS`, `LODEMT.SYS`, `CRASHRPT.COM` and `CRASHME.COM` from this directory onto it, in place of the normal LODE.SYS and LODEMT.SYS. Its `LODE.INI` needs `MULTITASK=1`. Boot from the floppy, not the ROM: the ROM's LODE.SYS is the normal one, and LODEMT.SYS has to match it.
+2. **Check it works on the machine first.** Right after the start-up, `CRASHRPT` should print a "Last session: …" line (no line at all: this isn't the CRASHLOG build running, or multitasking is off). Then `CRASHME R` at the prompt jumps to the BIOS's reset, as a wild jump would: the report screen should come up; a key restarts, and `CRASHRPT` writes CRASH.BIN. If the screen doesn't come up, the catch doesn't work on this machine, and that is the first thing to fix.
+3. **Make it crash** the way it did before.
+4. **The report screen should come up instead of the POST.** Take a photo of it, then press a key.
+5. **After the start-up,** run `CRASHRPT` before anything big. It writes `CRASH.BIN` (9,856 bytes) to the current directory. Send that in.
 
 If the POST runs instead (the beep and the memory count), that tells us something too:
 - the reset wasn't one the BIOS takes through CMOS: power, or a cold reset;
