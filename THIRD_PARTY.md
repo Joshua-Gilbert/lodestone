@@ -15,8 +15,9 @@ From GRiD Systems: `os/src/FONT.INC`, the system font of the Executive
 and the apps, is the 96 printable glyphs (codes 32-127) of TC8X16, the
 8x16 bitmap font of GRiD's InteGRiD, extracted by `os/typfont.py`. The
 same glyphs are in `claude-link/gridlink/gridfont.py` and in the binaries
-built from FONT.INC (`os/LODE*.BIN`, `os/src/LODE.SYS`, the apps, and
-those in `os/releases/`). GRiD's font files themselves are not in the
+built from FONT.INC (`os/src/LODE.SYS`, `os/apps/SYSTEM.RUN`,
+`os/src/DEFRAG.COM`, the `os/LODE*.BIN` ROM images, and those in
+`os/releases/`). GRiD's font files themselves are not in the
 repo.
 
 Not included: the GRiD BIOS and GRiD MS-DOS ROM images. The tests read
