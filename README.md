@@ -214,7 +214,7 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
-Multitasking works on the 1520, and so does Paint in a window. Built since 0.6 and not yet tried there: resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), `TEMP=` with pipes from the ROM, SysReq as the task switcher, and tasks running during hard-disk waits.
+Multitasking works on the 1520, and so do Paint in a window and resident Claude's mascot in its console (CLAUDE 1.12). Built since 0.6 and not yet tried there: resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware), `TEMP=` with pipes from the ROM, SysReq as the task switcher, and tasks running during hard-disk waits.
 
 **Next:**
 - **On the 1520, and release 0.7** (M9): the list above tried on the machine, and what it finds fixed.
