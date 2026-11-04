@@ -160,7 +160,7 @@ class TermScreen(pyte.Screen):
         return (1 << 5) in s.mode                     # DECCKM
 
     def cells(s):
-        """-> (24 bytearrays of glyphs, 24 bytearrays of attributes)"""
+        """-> (24 bytearrays of glyphs, 24 bytearrays of attributes: past its rows, blanks)"""
         chs, ats = [], []
         cache = _caches[bool(s.quads)]              # (looked up here, not in glyph(): 1,920 cells a call)
         for y in range(s.lines):
@@ -174,6 +174,8 @@ class TermScreen(pyte.Screen):
                 ch[x] = g
                 at[x] = (A_INV if inv else 0) | (A_UL if c.underscore else 0)
             chs.append(ch); ats.append(at)
+        for y in range(s.lines, ROWS):                # (fewer rows, EV_SIZE: the GRiD's others blank)
+            chs.append(bytearray(b' ' * s.columns)); ats.append(bytearray(s.columns))
         return chs, ats
 
     def text(s):

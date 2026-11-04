@@ -32,6 +32,9 @@
 ;   r  PB_ROWS 20, or 25 again, published again: "R rr"
 ;   v  PB_COLS 40 (its cells read 40 a row), or 80 again, published
 ;      again: "V cc"
+;   j  PB_VER 2 (T5e: MT writes PB_VIEW, the rows its window shows), or 1
+;      again, published again: "J vv" (the byte past the descriptor, its
+;      PB_VIEW at 2, is EEh till MT writes it)
 ;   t  36 ticks computing (no call made: it never waits), row 22's cell 0
 ;      the next glyph (21h-2Fh, round) at each: "T"
 ;   l  rows 1-23 moved up one (row 23 as it was; row 24 stays): "L"
@@ -141,6 +144,8 @@ keys    db      'c'
         dw      k_q
         db      'l'
         dw      k_l
+        db      'j'
+        dw      k_j
         db      0
 
 k_c:    mov     al, [cells + (23 * NCOL + 10) * 2]
@@ -169,6 +174,10 @@ k_k:    xor     byte [desc + PB_FLAGS], PBF_NOCUR
         mov     al, [desc + PB_FLAGS]
         call    hex2
         jmp     wout
+k_j:    xor     byte [desc + PB_VER], 1 ^ 2
+        mov     bx, PB_VER
+        mov     al, 'J'
+        jmp     short repub
 k_r:    xor     byte [desc + PB_ROWS], 25 ^ 20
         mov     bx, PB_ROWS
         mov     al, 'R'
@@ -573,6 +582,7 @@ r_ax    dw      0
 optr    dw      0
 ofar    dd      0                       ; (o: the test's; just before desc)
 desc    times   PB_SIZE db 0
+        db      0EEh                    ; (PB_VIEW at PB_VER 2: MT's to write)
 bad     times   PB_SIZE db 0
 tail    times   100 db 0
 out_    times   200 db 0

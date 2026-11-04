@@ -13,7 +13,7 @@ import pyte
 from . import glp
 from .grid import Grid, OPS_BG
 from .keys import term_keys
-from .termscreen import TermScreen, PreFilter, Encoder, fold_title
+from .termscreen import TermScreen, PreFilter, Encoder, fold_title, ROWS, COLS
 from . import mcp
 from . import picture as PIC
 from . import plotview
@@ -60,6 +60,7 @@ class TermSession:
         s.enc = Encoder()
         s.link = None; s.grid = None
         s.child = None; s.fd = None; s.reader = None
+        s.rows = ROWS                   # the pty's rows: 24, or a GRiD window's (EV_SIZE, CLAUDE 1.16)
         s.dirty = True; s.last_byte = 0.0; s.first_dirty = 0.0
         s.title = ''; s.title_sent = None; s.title_t = 0.0
         s.hello = {}; s.exited = None
@@ -195,8 +196,9 @@ class TermSession:
                 s.penc.reset()                    # (a picture: the GRiD's screen is unknown)
                 if s.pic is not None and not s.can_picture(): s._drop_picture()
                 s._mark()
-            s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, glp.HF_TERM | s.link.saver_flag() | (glp.HF_BG if s.bg else 0)])
-                              + s.name.encode())
+            s.set_rows(ROWS)                      # (every HELLO: 24 rows; a window's CLAUDE says its own after)
+            s.link.send_first(glp.P_HELLO, bytes([glp.VERSION, glp.HF_TERM | glp.HF_SIZE | s.link.saver_flag()
+                                                  | (glp.HF_BG if s.bg else 0)]) + s.name.encode())
             s.title_sent = None
             if s.child is None and s.exited is None: s.start()
             s._send_title(force=True)
@@ -212,6 +214,8 @@ class TermSession:
                 s.click_at(body[1] | body[2] << 8, body[3] | body[4] << 8)
             elif body[0] == glp.EV_CLICK and len(body) >= 3:       # a cell (#32's CLAUDE)
                 s.click_at(body[1] * 8 + 4, body[2] * 16 + 8)
+            elif body[0] == glp.EV_SIZE and len(body) >= 2:       # rows (CLAUDE 1.16 in a terminal window)
+                s.set_rows(body[1])
             elif body[0] == glp.EV_SAVER:       # (CLAUDE 1.14: quiet till rung, which takes its GF_WAKE and ours)
                 if s.link.grid_wake and s.link.saver_flag(): s.saver_at = s.link.rx_new
             elif body[0] == glp.EV_AWAY:        # (resident Claude's console, going: never for TYPE's keys)
@@ -382,6 +386,23 @@ class TermSession:
         except Exception as e:
             s.log('term: picture from %s: %s' % (s.name, e))
 
+    def set_rows(s, rows):
+        """The terminal's rows: 24, or as many as a GRiD window shows (EV_SIZE, 4-24).  The pty is
+        told (the program gets SIGWINCH and lays its screen out again) and pyte's screen resized; the
+        GRiD's rows past them come to it blank."""
+        rows = max(4, min(ROWS, rows))
+        with s.lock:
+            if rows == s.rows: return
+            s.rows = rows
+            s.screen.resize(rows, COLS)
+            s._mark()
+            if s.fd is not None:
+                try:
+                    fcntl.ioctl(s.fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, COLS, 0, 0))
+                except OSError as e:
+                    s.log('term: rows not set: %s' % e)
+            s.log('term: %d rows' % rows)
+
     def _mark(s):
         if not s.dirty: s.first_dirty = time.monotonic()
         s.dirty = True
@@ -411,8 +432,8 @@ class TermSession:
             except (OSError, ValueError) as e:
                 s.log('term: .mcp.json left alone: %s' % e)
         m, sl = os.openpty()
-        fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
-        env = dict(os.environ, TERM='xterm-256color', LANG='C.UTF-8', COLUMNS='80', LINES='24')
+        fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack('HHHH', s.rows, COLS, 0, 0))
+        env = dict(os.environ, TERM='xterm-256color', LANG='C.UTF-8', COLUMNS=str(COLS), LINES=str(s.rows))
         env.pop('COLORTERM', None)
         if s.web or not getattr(s.cfg, 'term_api_key', False):
             # Term is for the subscription: a key in gridlink's environment
@@ -539,7 +560,7 @@ class TermSession:
         """A left click on the GRiD's cell (col, row), or pixel (px, py): to
         the program as an xterm's press and release, only if it asked for
         mouse reports (in pixels if it asked for those, ?1016)."""
-        if s.fd is None or not (0 <= row < 24 and 0 <= col < 80): return
+        if s.fd is None or not (0 <= row < s.rows and 0 <= col < COLS): return
         mode = s.screen.mode
         if not any(m in mode for m in s.MOUSE_ON): return
         x, y = col + 1, row + 1

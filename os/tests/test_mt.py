@@ -6436,6 +6436,15 @@ def t_tpub():
           % (h1, len(b1), hits[0] - h1, len(b3), len(sbad), len(b0)), h1 >= 1 and hits[0] - h1 >= 1 and len(b0) <= 4
           and set(b1) <= set(b0) and set(b3) <= set(b0) and not sbad and lines()[-4:] == ['L'] * 4,
           (h1, hits[0], b0, b1[:5], b3[:5], sbad[:5], lines()[-4:]))
+    po, ps = pubd(n)[:2]
+    v1 = k.pc.rd(ps, po + 22, 1)[0]     # (version 1: the byte past it MTPUB's EEh, though TERM says its rows)
+    key('j', 1.5)
+    v2, r2 = k.pc.rd(ps, po + 22, 1)[0], tv('rows')
+    key('j', 1.0)
+    check('"j": PB_VER 2 (T5e): MT writes the rows its window shows (TERM.RUN\'s MT_TROWS, SI = A5xxh: %d) to its '
+          'PB_VIEW (%d) at the window\'s next look; at version 1 the byte past the descriptor untouched (%02Xh); "j": '
+          'version 1 again' % (r2, v2, v1), v1 == 0xEE and v2 == r2 and 4 <= r2 <= 25 and lines()[-2:] == ['J 02', 'J 01'],
+          (v1, v2, r2, lines()[-2:]))
     s0 = (txc() + pcg()) & 0xFFFF
     key('w')
     pw, s1 = (pubd(n), tb('tdl') & 32), txc()
