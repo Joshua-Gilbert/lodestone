@@ -166,7 +166,7 @@ See `docs/lodestone-floppy-dev.md`.
 | `os/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `os/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
 | `claude-link` | `gridlink` on the Raspberry Pi: GRiD ↔ GPIB bridge (Pico 2 or AR488 Nano) ↔ Pi ↔ Claude (Term: the real Claude Code in a pty, with an MCP server for the GRiD's tools, plots and pictures; chat: the Claude API), `gridfox` (Firefox for the GRiD), the AR488 patch, and the tests |
-| `tools` | 1520 tools: GRIDGPIB (GPIB driver for GRiD MS-DOS), GPIBSCAN, GPIBTEST, GGTEST, GRIDMEM (EMS or extended memory), EMSKEEP (does EMS keep its contents through Ctrl-Alt-Del? On the 1520: no), MEMPROBE, GRIDPROBE, RAMSPEED, ROMDUMP, HDPROBE and HDSCAN (the internal hard disk, read-only: diagnosis, and a read of every sector), FPUID (which 80287 is fitted, 80287 or 287XL, and whether its multi-word stores finish: a timer watchdog names a chip that hangs instead of locking up), the C GPIB library, and TM5000G.EXE (a test fixture; its source lives in the TM5000 repo) |
+| `tools` | 1520 tools: GRIDGPIB (GPIB driver for GRiD MS-DOS), GPIBSCAN, GPIBTEST, GGTEST, GRIDMEM (EMS or extended memory), EMSKEEP (does EMS keep its contents through Ctrl-Alt-Del? On the 1520: no), MEMPROBE, GRIDPROBE, RAMSPEED, ROMDUMP, HDPROBE and HDSCAN (the internal hard disk, read-only: diagnosis, and a read of every sector), FPUID (which 80287 is fitted, 80287 or 287XL, and whether its multi-word stores finish: a timer watchdog names a chip that hangs instead of locking up), MODEMID (which internal modem is on COM1: Option 330, 1200 baud, or Option 331, 2400; it asks AT at each speed and then ATI0-4, and never dials), the C GPIB library, and TM5000G.EXE (a test fixture; its source lives in the TM5000 repo) |
 | `rom` | Our notes on the 1520 BIOS (a symbol map), probe and scan logs, and the hard disk's partition and boot sectors |
 | `docs` | Design notes: the kernel, the UI core and programs, DEFRAG and the saver, the start-up picture, the ROM, Term, resident Claude, pictures, gridfox, the floppy development loop |
 ## Build
@@ -200,6 +200,7 @@ python3 tests/test_mt.py              # multitasking (MULTITASK=1), and nothing 
 python3 tests/test_hdprobe.py         # HDPROBE
 python3 tests/test_hdscan.py          # HDSCAN
 python3 tests/test_headcln.py         # HEADCLN
+python3 tests/test_modemid.py         # MODEMID, against no modem, Option 330 and Option 331
 python3 tests/defrag_cut.py 2         # a power cut at every DEFRAG write (~20 min; "2 hd" for C:)
 python3 bench/run_bench.py <GRiD MS-DOS EPROM image>
 ```
