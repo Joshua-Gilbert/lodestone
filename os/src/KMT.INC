@@ -1375,11 +1375,13 @@ mt_load:
         mov     [cs:mt_in13], ah        ;  INT 13h call; else 0)
         cmp     byte [cs:mt_fpu], 0     ; its coprocessor state (none kept
         je      .nf                     ;  yet: as FNINIT leaves it)
+        CRW     'p'                     ; (CRASHLOG: before FRSTOR / FNINIT)
         cmp     byte [es:TX_FPV], 0
         je      .fi
         frstor  [es:TX_FPU]
-        jmp     .nf
+        jmp     .nf0
 .fi:    fninit
+.nf0:   CRW     'P'                     ; (CRASHLOG: after it)
 .nf:    push    KSEG
         pop     ds
         call    mt_vload
@@ -7888,6 +7890,9 @@ mt_boot:
         int     11h                     ; a coprocessor?  (POST's own probe on
         and     al, 2                   ;  the 1520; with none, its
         shr     al, 1                   ;  instructions may trap: EM)
+%ifdef NOMTFPU
+        xor     al, al                  ; (a diagnostic build: the 287 never
+%endif                                  ;  saved or restored at a switch)
         mov     [es:mt_fpu], al
         push    KSEG
         pop     ds

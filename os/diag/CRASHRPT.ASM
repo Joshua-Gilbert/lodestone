@@ -141,7 +141,7 @@ s_p8    db      'Last session: a disk wait', 39, 's owner', 39, 's stack was fou
         db      'return (caught before it could crash) $'
 s_pp    db      'Last session: ended by a restart asked for $'
 s_pw    db      13, 10, 'Its last step: '
-s_win   db      '?', ' (window: O open, Z resize, z its drop, R redraw; a disk wait:', 13, 10
+s_win   db      '?', ' (window: Z resize, z its drop; p/P before/after FRSTOR; a disk wait:', 13, 10
         db      'g gone out, b back, i IRQ 6, G a call held and switched, H held at HLT,', 13, 10
         db      'q a call while one is out, r refused; a switch: n/N before/after the', 13, 10
         db      '287', 39, 's FNSAVE, L/l the next task loading/loaded; - none).  Stage '
