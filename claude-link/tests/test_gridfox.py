@@ -279,10 +279,103 @@ def test_app_rows():
         r.app.select(sel); r.keys('enter')                      # the choices, cut to the page's rows
         assert r.app.menu is not None and len(r.text()) == 4, r.text()
         r.keys('esc')
+        r.keys('end', 'btab')                                   # Shift-Tab from the end: the link above, in view
+        w = r.app.doc.where[r.app.sel][0]
+        assert r.app.top <= w < r.app.top + 2, (r.app.sel, w, r.app.top)
+        r.keys('f')                                             # F's numbers, then a resize: the links shown now
+        at(19)
+        assert r.app.hints and set(r.app.hints.values()) == set(r.app.doc.acts_in(r.app.top, 17)), r.app.hints
+        r.keys('esc')
+        r.app.go(U + 'long'); r.pump(); at(4)
+        r.keys('end', '/', *'Paragraph 3 of', 'enter')          # Find upwards: the line found in view
+        assert r.has('Paragraph 3 of the long page.'), r.text()
         r.app.resize(2)
         assert r.app.nrows == 3 and r.app.body == 1             # (never under MIN_ROWS)
         r.app.resize(None)
         assert r.app.nrows == 24 and r.app.body == 22           # (no size known: 24)
+    finally:
+        r.close()
+
+
+def test_app_rows_paths():
+    """At 19 rows, each place that counts the page's rows counts 17, not 22:
+    a click on the status line, the typing line's row, F's numbers, Tab
+    from a scrolled place (on the screen, else the next below), the
+    percent and Bot, Find near the end, Back to a place at the end, the
+    choices' place; at 4 rows, Tab down keeps the link in view."""
+    r = Run(U + 'index')
+    try:
+        def at(rows):
+            r.app.resize(rows); r.scr.resize(rows, 80); r.scr.reset(); r.app.draw(full=True); r.pump()
+        at(19)
+        d = r.app.doc
+        lines = sorted(set(w[0] for w in d.where.values()))
+        # a link on doc line top+17 (the status row at 19 rows; a page row at 22): a click there does nothing
+        ln = [l for l in lines if l >= 17][0]
+        r.app.top = ln - 17; r.app.sel = -1; r.app.draw(); r.pump()
+        col = d.act[ln].index(next(a for a in d.act[ln] if a >= 0))
+        r.click(col, 18)
+        assert r.app.url == U + 'index' and r.app.sel == -1, (r.app.url, r.app.sel)
+        r.app.top = [t for t in range(len(d)) if d.acts_in(t, 17) and set(d.acts_in(t, 17)) != set(d.acts_in(t, 22))][0]
+        r.keys('f')                                             # F: only the links in the 17 rows
+        assert r.app.hints and set(r.app.hints.values()) == set(d.acts_in(r.app.top, 17)), (r.app.top, r.app.hints)
+        r.keys('esc')
+        # Tab with the selected link just under the 17 rows (in view at 22): the first one on the screen
+        off = [a for a in d.acts_in(r.app.top, 22) if a not in d.acts_in(r.app.top, 17)]
+        r.app.sel = off[0]; top = r.app.top
+        r.keys('tab')
+        assert r.app.sel == d.acts_in(top, 17)[0], (r.app.sel, d.acts_in(top, 17))
+        # Tab with nothing selected from a place whose 17 rows hold no link and the next 5 do:
+        # the next link below, scrolled into view
+        gaps = [l for l in lines if l >= 17 and not any(l - 17 <= m < l for m in lines)]
+        assert gaps, lines
+        r.app.top = gaps[0] - 17; r.app.sel = -1
+        r.keys('tab')
+        w = d.where[r.app.sel][0]
+        assert r.app.top <= w < r.app.top + 17, (r.app.sel, w, r.app.top)
+        # Tab from a place with links on its 17 rows: the first of them
+        r.app.top = 0; r.app.sel = -1
+        r.keys('tab')
+        assert r.app.sel == d.acts_in(0, 17)[0], r.app.sel
+        r.keys('/')                                             # the typing line's row: a click there keeps it
+        r.click(3, 18)
+        assert r.app.line is not None, 'the typing line closed'
+        r.keys('esc')
+        sel = [i for i, a in enumerate(r.app.acts()) if a['t'] == 'select'][0]
+        r.app.select(sel); r.keys('enter')
+        r0, c0, h, w, first = r.app._menu_box()
+        assert h == min(len(r.app.menu[1]), 15) and r0 == 1 + max(0, (17 - h - 2) // 2), (r0, h)
+        r.keys('esc')
+        r.app.go(U + 'long'); r.pump()
+        d = r.app.doc; n = len(d)
+        r.app.top = n - 20; r.app.draw(); r.pump()             # 3 rows short of the end: a percent, not Bot
+        assert r.text()[18].endswith(' %d%%' % (100 * (n - 20 + 17) // n)), (n, r.text()[18])
+        r.keys('home', '/', *'The end of the long page', 'enter')   # Find near the end: the last 17 rows
+        f = d.find('The end of the long page', 0)
+        assert r.app.top == min(f - 2, n - 17), (r.app.top, f, n)
+        r.keys('end')
+        assert r.app.top == n - 17
+        r.keys('left'); r.keys('right')                         # Back, Forward: the place at the end kept
+        assert r.app.url == U + 'long' and r.app.top == n - 17, (r.app.url, r.app.top)
+        r.app.go(U + 'anchors'); r.pump()                       # #end, the page's last lines: the last 17
+        d = r.app.doc; n = len(d)
+        end = [i for i, a in enumerate(r.app.acts()) if a.get('h', '').endswith('#end')][0]
+        r.app.select(end); r.keys('enter')
+        assert r.app.url.endswith('#end') and r.app.top == min(d.anchors['end'], n - 17), (r.app.top, d.anchors, n)
+        at(4)
+        r.app.go(U + 'index'); r.pump()
+        r.app.top = 0; r.app.sel = -1; r.app.draw(); r.pump()
+        acts = sorted(r.app.doc.where, key=lambda a: r.app.doc.where[a])
+        for _ in range(len(acts) - 1):                          # Tab down at 2 page rows: always in view
+            r.keys('tab')
+            w = r.app.doc.where[r.app.sel][0]
+            assert r.app.top <= w < r.app.top + 2, (r.app.sel, w, r.app.top)
+        at(3)                                                   # (an xterm's 3 rows: a page row)
+        sel = [i for i, a in enumerate(r.app.acts()) if a['t'] == 'select'][0]
+        v = r.app.acts()[sel].get('v')
+        r.app.select(sel); r.keys('enter', 'down')              # (another choice lit: one a click would take)
+        r.click(40, 2)                                          # on the status line, under the cut box: no choice
+        assert r.app.menu is None and r.app.acts()[sel].get('v') == v, (r.app.menu, r.app.acts()[sel].get('v'), v)
     finally:
         r.close()
 
@@ -817,6 +910,27 @@ def test_end_to_end_gridsim():
             h.grid.txq.append([glp.G_EVENT, bytes([glp.EV_CLICK, col, row]), 0])
             assert h.wait_text('Password', wall=10), h.grid.screen_text()          # the sign-in page
             assert h.grid.screen_text()[0].strip() == U + 'login', h.grid.screen_text()[0]
+            assert h.settle()
+            # gridfox started in a pty that is 19 rows already (Ctrl-Q in a window, then Return):
+            # no SIGWINCH comes, so its first read of the rows lays it out
+            h.router.web.set_rows(19)
+            assert h.run_until(lambda: h.grid.screen_text()[0].strip() == U + 'login', wall=5)
+            assert h.settle()
+            h.grid.press(0x11, 0x10)                                            # Ctrl-Q: gridfox ends
+            assert h.wait_text('Press Return', wall=15), h.grid.screen_text()
+            assert h.settle()
+            h.grid.press(0x0D, 0x1C)                                            # Return: started again
+            assert h.run_until(lambda: h.grid.screen_text()[0].strip() == U + 'index'
+                               and h.grid.screen_text()[18].rstrip().endswith(('All', 'Top'))
+                               and not any(l.strip() for l in h.grid.screen_text()[19:24]), wall=20), \
+                h.grid.screen_text()
+            assert h.settle()
+            # (a 24-row layout in the 19-row pty looks the same: its rows past 18 land on row 18 and
+            # the status line last.  PgDn tells them apart: 15 rows, so row 16 comes up to row 1)
+            row16 = h.grid.screen_text()[16]
+            assert row16.strip(), h.grid.screen_text()
+            h.grid.press(0, 0x51)                                               # PgDn
+            assert h.run_until(lambda: h.grid.screen_text()[1] == row16, wall=10), (row16, h.grid.screen_text())
             assert h.settle()
             assert not h.nano.violations, h.nano.violations
             assert h.grid.stats['fail'] == 0, h.grid.stats
