@@ -7346,7 +7346,7 @@ def t_crashlog():
     check('the breadcrumbs, in CMOS 3Dh alone (3Ch is the 10/25/89 ROM\'s password checksum, os/diag/README.md): '
           'CRASHRPT reads the last session\'s stage (caught, shown) and its last window operation; 3Ch untouched '
           '(%02Xh), 3Dh armed again (%02Xh)' % (k.pc.cmos[0x3C], k.pc.cmos[0x3D]),
-          'caught, the report shown' in o1 and re.search(r'last window operation: [A-Za-z] ', o1)
+          'caught, the report shown' in o1 and re.search(r'last step: [A-Za-z-] ', o1)
           and k.pc.cmos[0x3C] == c3c and k.pc.cmos[0x3D] >> 4 == 1, o1)
     check('no write to the clock\'s own registers (00h-0Dh: status A at 0Ah stopped the 1520\'s clock, "Time-of-day '
           'clock stopped" at the POST), though the window operations armed the catch again (CMOS 0Fh = 0Ah)',
