@@ -268,6 +268,14 @@ It connects, sets the GRiD's clock from the Pi, and shows the welcome.
 It needs gridlink from 2026-10-22 (8db568c) on; with an older one it keeps
 resetting, saying "No answer from the bridge at GPIB address 7".
 
+### Without the GPIB cartridge: the modem or a serial cable
+
+`SERLINK.COM` (`../tools/`) carries the same link over the GRiD's internal
+2400-baud modem (`SERLINK /D:300`, dialing the Pi's USB modem through a
+Grandstream HT802 and Asterisk) or a null-modem cable on COM2 (`SERLINK
+/P:2`, 19200 baud), with `gridlink --bridge modem` or `--bridge serial` on
+the Pi. CLAUDE.COM runs unchanged on it. See `../docs/serial-link.md`.
+
 ## Speed
 
 Measured on the 1520 (Lodestone, CLAUDE /T, the Pico 2 bridge), with
@@ -391,6 +399,7 @@ every byte checked.
 ## Files
 
 - `gridlink/` - the Pi service (Python 3.9+, `pyserial`, `pyte`, `pillow`; `anthropic` for chat).
+  `serline.py`: the serial and modem transports for SERLINK.COM.
   Term: `term.py` (the pty), `termscreen.py` (pyte, the cell diff), `router.py`
   (chat, Term or web), `mcp.py` (the MCP server and its socket). Pictures:
   `picture.py` (the encoder, dithering), `plot.py` (plots in one bit),
@@ -418,6 +427,9 @@ every byte checked.
   gridfox: `test_gridfox.py`, with `fake_firefox.py`, a stand-in Firefox
   (Marionette over jsdom; Node, and `npm ci` in `tests/`) serving
   `tests/web/`.
+  Without the cartridge: `test_emu_serial.py` (the real CLAUDE.COM and
+  SERLINK.COM over a cable and over the modem, `serial_model.py`'s 16450
+  and Hayes modems, gridlink's `serline.py`).
   `python3 tests/test_emu.py shots/` also saves every screen as PNG + text.
   Needs `unicorn` and `pillow`; `../tools/GRIDGPIB.COM` is the driver it loads.
 
