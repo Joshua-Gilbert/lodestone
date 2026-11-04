@@ -23,6 +23,7 @@ UITEST = os.path.join(HERE, 'UITEST.RUN')
 CALCRUN = os.path.join(GOS, 'apps', 'CALC.RUN')
 MEMSZ = os.path.join(HERE, 'MEMSZ.COM')
 TSR = os.path.join(HERE, 'TSR.COM')
+TSRBIG = os.path.join(OUT, 'TSRBIG.COM')       # (TSR.ASM keeping 16 KB)
 M33TEST = os.path.join(HERE, 'M33TEST.COM')
 M33 = {n: os.path.join(HERE, n + '.COM') for n in ('M33GFX', 'M33QUIT', 'M33HSET', 'M33HVIC')}
 LCMD = os.path.join(GOS, 'src', 'LCMD.COM')
@@ -49,6 +50,7 @@ def build():
         mkrun.build(os.path.join(GOS, src), dst)
     subprocess.run(['nasm', '-f', 'bin', '-o', MEMSZ, os.path.join(HERE, 'MEMSZ.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
+    subprocess.run(['nasm', '-f', 'bin', '-DKEEP=400h', '-o', TSRBIG, os.path.join(HERE, 'TSR.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', MDTEST, os.path.join(HERE, 'MDTEST.ASM')], check=True)
     for c in [M33TEST] + list(M33.values()):
         subprocess.run(['nasm', '-f', 'bin', '-o', c, c[:-4] + '.ASM'], check=True)
@@ -325,11 +327,15 @@ def t_system():
     print('== System (SYSTEM.RUN)')
     img = image('sys.img', SYSTEM, MEMSZ, os.path.join(GOS, 'src', 'LCMD.COM'))
     chip = sim7210.NEC7210(sim7210.bus())
-    k = ktest.KPC(img, chip=chip); k.pc.mouse = True; k.start()
+    k = ktest.KPC(img, chip=chip); k.pc.mouse = True; infos = watch_info(k); k.start()
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     memsz = float(m.group(1)) if m else 0
     k.key(ktest.ENTER)
+    info = infos[-1] if infos else ''
+    m = re.match(r'80286 80287XL  (\d+)K free  Plasma 640x400  Mouse COM2  BIOS ', info)
+    check('the info line: free memory, what a DOS program gets (MEMSZ %.1f KB): "%s"' % (memsz, info),
+          m and memsz > 0 and int(memsz) - 1 <= int(m.group(1)) <= memsz, info)
     k.key(CODE['U'])
     shot(k, 'system_memory')
     m = re.search(r'Free for programs\s+([\d.]+) KB', screen(k))
@@ -951,23 +957,41 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint): the directory buffer is lent while it runs' % kb,
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line): the directory buffer is lent while it runs' % kb,
           kb >= 564.8, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
-    k = ktest.KPC(image('mem_ems.img', MEMSZ, SYSTEM), ems_pages=88); k.start()
+    k = ktest.KPC(image('mem_ems.img', MEMSZ, SYSTEM), ems_pages=88); infos = watch_info(k); k.start()
     out = k.run_file('MEMSZ.COM', 20)
     m = re.search(r'([\d.]+) KB for programs', out)
     kbe = float(m.group(1)) if m else 0
     check('with EMS a DOS program gets %.1f KB: the disk cache is in EMS (%.1f KB more)' % (kbe, kbe - kb),
           kbe - kb > 15.85, out[-200:])      # (16 KB: both figures rounded to 0.1 KB)
     k.key(ktest.ENTER)
+    info = infos[-1] if infos else ''
+    bar = re.match(r'80286 80287XL  (\d+)K \+ (\d+)K EMS free  Plasma 640x400  ', info)
     k.key(CODE['U'])
+    ems = re.search(r'Expanded memory \(EMS\)\s+\d+ KB.*?Free\s+(\d+) KB', screen(k), re.S)
+    check('... the info line: "%s": conventional free as MEMSZ got it, EMS free as System has it (%s KB)'
+          % (info, ems and ems.group(1)),
+          bar and ems and int(kbe) - 1 <= int(bar.group(1)) <= kbe and bar.group(2) == ems.group(1) and len(info) <= 80,
+          (info, screen(k)))
     m = re.search(r'Free for programs\s+([\d.]+) KB', screen(k))
     check('... System: "Disk cache  32 KB of EMS", and "Free for programs" is what MEMSZ got',
           has(k, '32 KB of EMS') and m and abs(float(m.group(1)) - kbe) < 1.0, screen(k))
     k.key(ktest.ESC)
+    # the info line is read again each time it is drawn: a 16 KB TSR shows
+    k = ktest.KPC(image('tsrbig.img', TSRBIG, SYSTEM)); infos = watch_info(k); k.start()
+    first = infos[-1] if infos else ''
+    k.run_file('TSRBIG.COM', 10); k.key(ktest.ENTER)
+    k.key(CODE['U'])
+    m = re.search(r'Free for programs\s+([\d.]+) KB', screen(k))
+    k.key(ktest.ESC)
+    f0, f1 = (re.match(r'80286 80287XL  (\d+)K free', s) for s in (first, infos[-1] if infos else ''))
+    check('after a 16 KB TSR the info line reads at least 16 KB less (the UI block moves past it: a hole), as System has it ("%s" -> "%s")' % (first, infos[-1] if infos else ''),
+          f0 and f1 and m and int(f0.group(1)) - int(f1.group(1)) >= 16 and abs(int(f1.group(1)) - float(m.group(1))) < 1.0,
+          (first, infos[-1:], m and m.group(1)))
     img = image('tsr.img', TSR, SYSTEM, MEMSZ)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     u0 = k.useg
@@ -1099,7 +1123,7 @@ def t_font():
         k = ktest.KPC(image('font5.img', SYSTEM, f, ini)); k.start()
         check('a LODE.INI longer than the 4,095 bytes read, FONT= in them, a font file of %d bytes: %s; the Executive comes up'
               % (n, 'taken' if n == 1536 else 'GRiD\'s stays'), (core_font(k) == data if n == 1536 else core_font(k) == GRIDF)
-              and not k.crashed and 'SYSTEM.RUN' in k.exec_list() and k.u16('convkb') > 0, (k.where(), k.exec_list(), k.u16('convkb')))
+              and not k.crashed and 'SYSTEM.RUN' in k.exec_list() and biosdate(k) == b'10/25/89', (k.where(), k.exec_list(), biosdate(k)))
 
 # ---------------------------------------------------------------------
 def t_saver():
@@ -2224,6 +2248,7 @@ def t_subcopy():
     check('CODE-M on a subject: nothing (a beep)', focus(k) == 2 and band() == 'Subject: Select item and confirm' and not k.crashed, k.band())
 
 INFO_Y = 336
+def biosdate(k): return bytes(k.pc.rd(k.seg('biosdate'), k.Y['biosdate'], 8))     # (sysinfo ran)
 def vram(k): return k.pc.rd(0xB800, 0, 0x8000)
 def vrow(buf, y): b = (y & 3) * 0x2000 + (y >> 2) * 80; return buf[b:b + 80]
 def lit_cells(k, y, cols=range(80)):
@@ -2261,7 +2286,7 @@ def t_calc():
     k = ktest.KPC(image('lamp.img', SYSTEM)); infos = watch_info(k); k.start()
     info = infos[-1] if infos else ''
     c0 = (90 - len(info)) // 2
-    check('the info line: "80286 80287XL ..." (probed, not taken from the CMOS bit)', info.startswith('80286 80287XL   640K'), info)
+    check('the info line: "80286 80287XL ..." (probed, not taken from the CMOS bit)', re.match(r'80286 80287XL  \d+K free  ', info), info)
     check('... " 80287XL " lit (inverse), nothing else', lit_cells(k, INFO_Y) == [c0, c0 + 8], (c0, lit_cells(k, INFO_Y)))
     k.key(CODE['U']); k.key('D'); k.key('D')
     check('System, Devices: Coprocessor 80287XL', re.search(r'Coprocessor\s+80287XL', screen(k)), screen(k))
@@ -2271,10 +2296,20 @@ def t_calc():
     k.pc.wr(0, 0x410, struct.pack('<H', k.pc.u16(0, 0x410) & ~2))     # INT 11h: none
     infos = watch_info(k); k.start()
     info = infos[-1] if infos else ''
-    check('no coprocessor: "80286   640K ...", nothing lit', info.startswith('80286   640K') and not lit_cells(k, INFO_Y), (info, lit_cells(k, INFO_Y)))
+    check('no coprocessor: "80286  5..K free ...", nothing lit', re.match(r'80286  \d+K free  ', info) and not lit_cells(k, INFO_Y), (info, lit_cells(k, INFO_Y)))
     k.key(CODE['U']); k.key('D'); k.key('D')
     check('... System, Devices: Coprocessor none', re.search(r'Coprocessor\s+none', screen(k)), screen(k))
     k.key(ktest.ESC)
+    # the panel, from port 7F8h as the BIOS's INT 15h E420h reads it
+    for vs, want in ((0xFF, 'LCD 640x400'), (0xF5, 'External'), (0xFE, 'Panel')):
+        k = ktest.KPC(image('panel.img', SYSTEM)); k.pc.vid_status = vs; k.pc.ext_kb = 384
+        infos = watch_info(k); k.start()
+        info = infos[-1] if infos else ''
+        k.key(CODE['U']); k.key('D'); k.key('D')
+        check('port 7F8h %02Xh: "%s" on the info line and in System\'s Devices; no EMS manager, 384 KB extended: "+ 384K ext"'
+              % (vs, want), re.search(r'K free \+ 384K ext  %s  (No mouse|Mouse)' % want, info)
+              and re.search(r'Display\s+%s' % want, screen(k)), (info, screen(k)))
+        k.key(ktest.ESC)
     # the window: keys, then the screen exactly as it was (no mouse: no pointer)
     img = image('calc.img', CALCRUN, os.path.join(GOS, 'src', 'LCMD.COM'))
     k = ktest.KPC(img); k.start()
