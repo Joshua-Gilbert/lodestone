@@ -1184,6 +1184,11 @@ mt_pick:
         jne     .n
         call    mt_dok                  ; (M10: with a floppy owner out)
         jnz     .n
+        cmp     al, [cs:mt_down]        ; (the owner itself, back from its
+        je      .n                      ;  wait: frozen or not, as nothing
+                                        ;  else may enter the kernel till it
+                                        ;  has run; it gives way after,
+                                        ;  mt_dwait.bk)
         call    mt_frz
         jz      .n
         cmp     byte [cs:bx+TE_KILL], 1 ; (frozen, but ended: it runs, to end)
@@ -1197,7 +1202,6 @@ mt_pick:
 .x:     pop     cx
         pop     ax
         ret
-        db      90h                     ; (mt_par: what follows at its parity)
 
 ; task AL (its entry at BX) may run?  ZF if so: in front, or in the
 ; background unless frozen there (SPF_FREEZE; or VF_DIRECT, unless SPF_BG)
@@ -6299,6 +6303,10 @@ mt_dwait:
 .bk:    mov     byte [cs:mt_down], 0FFh ;  made it ready, and it was picked)
         mov     byte [cs:mt_dfw], 0
         call    mt_dwake
+        call    mt_cent                 ; (frozen behind meanwhile, CODE-Tab:
+        call    mt_frz                  ;  picked all the same, mt_pick; it
+        jz      .x                      ;  gives way at the next safe point)
+        mov     byte [cs:mt_pend], 1
         jmp     short .x
 .u:     mov     byte [cs:mt_down], 0FFh ; (none to run: as before)
         mov     byte [cs:mt_dfw], 0

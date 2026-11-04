@@ -7054,6 +7054,58 @@ def dw_run(k, spin, cmd, done, sim=60):
     k.run_for(0.5)
     return tc, spun(k, f)
 
+def t_dfrz():
+    print('== M10: a task frozen behind while it waits on the floppy still runs when the floppy is done (no hang)')
+    # A MTSPIN counts behind; then MTSPIN K (its own INT 13h read on each count, 1520 drive timing) in front, /Z:
+    # frozen whenever behind.  CODE-Tab while K is out on the floppy: the other comes to the front, and K
+    # is frozen behind.  Before the fix mt_pick skipped it (frozen) once its read was done, and the other's
+    # first INT 21h waited at the gate for it for ever: the machine hung
+    k = boot('mt_dfz.img', b'MULTITASK=1\r\n', 88, fd_wait=True, disk_model='real')
+    Shell(k).run('ver')
+    dw = DWait(k)
+    seg, Y = mt_seg(k), k.Y
+    st = lambda n: k.pc.rd(seg, Y['mt_tab'] + n * MT_ENT, 1)[0]
+    typ(k, 'mtlaunch mtspin.com 120 c2.txt', 1.0); typ(k, '', 0.5)     # (counting, before K's reads start)
+    typ(k, 'mtlaunch /f /z mtspin.com 60 k.txt k', 0.2)
+    k.pc.run_until(lambda: tstate(k)[1] == 2 and st(2) == 6 or k.pc.crash, 10)
+    out1 = st(2)
+    k.key(HOT, settle=False)
+    k.pc.run_until(lambda: tstate(k)[1] != 2 or k.pc.crash, 5)
+    f2, s1 = tstate(k)[1], st(2)
+    k.pc.run_until(lambda: bool(A.disk_file(k, 'C2.TXT')) or k.pc.crash, 30)
+    c2 = A.disk_file(k, 'C2.TXT')
+    check('MTSPIN K out on the floppy (state %d) in front; CODE-Tab: task %d in front, K behind (state %d, frozen '
+          'there); the other counts on and writes its count (C2.TXT %r): nothing hung'
+          % (out1, f2, s1, c2), out1 == 6 and f2 != 2 and c2 and int(c2, 16) > 0 and not k.crashed,
+          (out1, f2, s1, c2, tstate(k), dict(dw.n)))
+    front(k, 2)
+    k.pc.run_until(lambda: bool(A.disk_file(k, 'K.TXT')) or k.pc.crash, 30)
+    typ(k, '', 1.0)
+    kc = A.disk_file(k, 'K.TXT')
+    check('K back in front: it goes on reading, ends and writes its count (K.TXT %r); all ended, no INT 13h while '
+          'one waited' % kc, kc and int(kc, 16) > 0 and tstate(k)[0] == [(0, 1, 'Executive')]
+          and k.pc.fd_reentry == 0 and not k.crashed, (kc, tstate(k), k.pc.fd_reentry))
+
+def t_hdtools():
+    print('== HDSCAN and HDPROBE (they drive the hard disk themselves): not beside other tasks')
+    tools = os.path.join(os.path.dirname(GOS), 'tools')
+    k = boot('mt_hdt.img', b'MULTITASK=1\r\n', 88, os.path.join(tools, 'HDSCAN.COM'), os.path.join(tools, 'HDPROBE.COM'))
+    sh = Shell(k)
+    sh.run('ver')
+    typ(k, 'mtlaunch mtline.com x.txt', 1.0); typ(k, '', 0.5)
+    o1, o2 = sh.run('hdscan'), sh.run('hdprobe')
+    check('a task there (MTLINE, waiting behind): HDSCAN and HDPROBE each say so and stop, nothing else done',
+          all('other tasks are running' in o and 'End them first' in o and 'GRiDCase' not in o for o in (o1, o2))
+          and len(tstate(k)[0]) == 2, (o1, o2, tstate(k)))
+    front(k, 1); line(k, 'x')
+    typ(k, 'cls', 0.3); typ(k, 'hdscan', 0.1)
+    k.pc.run_until(lambda: 'Press any key' in k.pc.text_screen() or k.pc.crash, 120)
+    o3 = k.pc.text_screen()
+    k.key(ktest.ENTER); k.run_for(0.5)
+    check('the task ended (the Executive alone): HDSCAN runs (its title, then its look for the drive: none here)',
+          tstate(k)[0] == [(0, 1, 'Executive')] and 'HDSCAN 1.1' in o3 and 'other tasks' not in o3 and not k.crashed,
+          (tstate(k), o3[-400:]))
+
 def t_sysreq():
     print('== M11: SysReq to the next task, as CODE-Tab; Confm (CODE-SysReq) left alone; -dNOSYSREQ has none of it')
     k = boot('mt_sr.img', b'MULTITASK=1\r\n', 88)
@@ -7351,7 +7403,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_sysreq, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_sysreq, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

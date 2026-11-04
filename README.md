@@ -75,7 +75,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 
 **Tools**
 - **`DEFRAG`:** defragments a floppy or C:. A power cut during any of its writes leaves the old file or the new one, never a damaged one. `DEFRAG /T` tests every free sector and fences off bad ones.
-- **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner.
+- **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner. They drive the disk themselves, so with multitasking on they run only with no other task there.
 - **The rest:** BENCH, GRIDPROBE and others are in `tools/` and `os/bench/`.
 
 **Settings** are kept in `LODE.INI`: the font, the screen saver, the start-up picture, M:'s size, PrtSc's printer driver, and `TEMP=` (the environment's TEMP: where CLAUDE.COM's captured output and the command prompt's pipe files go; `M:\` from the ROM without a hard disk). From the ROM, the ROM's own `LODE.INI` gives the defaults, and changes go in `C:\LODE.INI` (A: without a hard disk).
