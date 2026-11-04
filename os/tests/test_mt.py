@@ -27,6 +27,7 @@ import ktest
 import test_apps as A
 from test_kernel import Shell
 from pcemu import STUB
+import pcemu
 from unicorn import x86_const as UX
 
 results = []
@@ -65,7 +66,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
 # before gp_isr; no code slack at lastdrv 40CFh: any change netting +1 moves image_end and bss_end.  The UI's
 # pads, UICORE.INC's, likewise: ui_image_end 5220h, no slack before uibss's paragraph)
-OFF_MAP ={'image_end': 0x3F60, 'bss_end': 0x7360, 'ui_keep_end': 0x64D0}  # (6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP ={'image_end': 0x3F80, 'bss_end': 0x7380, 'ui_keep_end': 0x64D0}  # (3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -7086,6 +7087,209 @@ def t_dfrz():
           'one waited' % kc, kc and int(kc, 16) > 0 and tstate(k)[0] == [(0, 1, 'Executive')]
           and k.pc.fd_reentry == 0 and not k.crashed, (kc, tstate(k), k.pc.fd_reentry))
 
+# ---------------------------------------------------------------------
+#  M12: tasks run while one waits on the hard disk (C:, KHD.INC).  pcemu's
+#  Ata timed (seeks, rotation: the 1520's CP30104H's pace) and strict (a
+#  command written while one is in flight is a crash), INTRQ when the
+#  drive stops being busy, as IRQ 14
+# ---------------------------------------------------------------------
+HW_GEOM = (220, 8, 39, 39)                  # cylinders, heads, sectors a track, the partition's first sector
+
+def hw_data(n=1000000):
+    return bytes((i * 7 + i // 512) & 0xFF for i in range(n))
+
+def hw_ata(data, **kw):
+    import fat16img as F
+    cyl, heads, spt, plba = HW_GEOM
+    f = F.Fat(cyl * heads * spt - plba, 4, plba, True, label='GRIDHD')
+    f.finish(f.tree([('BIG.BIN', 0x20, data)]))
+    kw.setdefault('timed', True); kw.setdefault('strict', True)
+    return pcemu.Ata(model='Conner Peripherals 120MB - CP30104H', cyls=cyl, heads=heads, spt=spt,
+                     disk=F.disk(cyl, heads, spt, plba, f), **kw)
+
+def hw_files(ata):
+    import fat16img as F
+    return F.Volume(ata.disk, HW_GEOM[3]).files()
+
+class HWait:
+    """M12's points in MT, counted (a hook at each label); the kernel's stack at each 9000h from inside INT 21h;
+    the time each owner was out (from its switch to its IRQ 14 or tick: given to the others)."""
+    LABELS = ('mt_hwait', 'mt_dcan.y', 'mt_dcan.no', 'mt_dwait.u', 'mt_dready', 'mt_dtick', 'mt_i76', 'mt_i77',
+              'mt_gate', 'mt_gate.no', 'mt_gate.h', 'mt_dwait.s')
+    def __init__(s, k):
+        s.k, seg = k, mt_seg(k)
+        s.at = {seg * 16 + k.Y[n]: n for n in s.LABELS}
+        s.sw = seg * 16 + k.Y['mt_dwait.bk'] - 3        # (mt_dwait's CALL mt_switch: the owner going out)
+        s.n = collections.Counter(); s.depth = []; s.out = None; s.given = 0.0
+        s.top = k.Y['kstack_top']
+        k.hooks.append(s.hook)
+    def hook(s, pc):
+        a = s.k.addr
+        if a == s.sw: s.out = pc.us
+        n = s.at.get(a)
+        if n is None: return
+        s.n[n] += 1
+        if n == 'mt_hwait' and pc.r('ss') == 0x60: s.depth.append(s.top - pc.r('sp'))
+        if n == 'mt_dready' and s.out is not None: s.given += pc.us - s.out; s.out = None
+    def m12(s, on):
+        """M12 (and M10) on, or off: INT 15h straight to the BIOS."""
+        k = s.k; seg = mt_seg(k)
+        k.pc.wr(0, 0x15 * 4, struct.pack('<HH', k.Y['mt_i15'], seg) if on else k.pc.rd(seg, k.Y['mt_old15'], 4))
+
+def hw_boot(name, ata, text=b'MULTITASK=1\r\n', *more):
+    k = boot(name, text, 88, *more, ata=ata)
+    Shell(k).run('ver')
+    return k, (HWait(k) if text and b'MULTITASK=1' in text else None)
+
+def hw_copy(k, spin=None, sim=120):
+    """MTSPIN started behind (if spin), then a copy on C: at the prompt: (seconds the copy took, MTSPIN's count)."""
+    typ(k, 'cls', 0.3)
+    if spin: typ(k, 'mtlaunch mtspin.com ' + spin, 1.0); typ(k, '', 0.2)
+    t0 = k.pc.us
+    typ(k, r'copy c:\big.bin c:\b2.bin', 0.1)
+    k.pc.run_until(lambda: 'copied' in k.pc.text_screen() or k.pc.crash, sim)
+    tc = (k.pc.us - t0) / 1e6
+    if not spin: k.run_for(0.3); return tc, 0
+    f = spin.split()[1].upper()
+    k.pc.run_until(lambda: bool(A.disk_file(k, f)) or k.pc.crash, 60)
+    k.run_for(0.5)
+    return tc, spun(k, f)
+
+def t_hwait():
+    """M12: tasks run while one waits on the hard disk.  A 1 MB copy on C: at the prompt, MTSPIN behind."""
+    print('== M12: tasks run while one waits on the hard disk')
+    data = hw_data()
+    lim = equ('KSLICE') - 48
+    # 1. the copy alone: M12 off and on (nobody to take a wait: the same)
+    alone = []
+    for on in (False, True):
+        ata = hw_ata(data)
+        k, hw = hw_boot('mt_hw0.img', ata)
+        hw.m12(on)
+        tc, _ = hw_copy(k)
+        fs, probs = hw_files(ata)
+        alone.append((tc, hw.n['mt_dcan.y'], hw.n['mt_dwait.u'], fs.get('\\B2.BIN') == data and not probs))
+    (a0, y0, u0, o0), (a1, y1, u1, o1) = alone
+    check('a 1 MB copy on C: alone (timed: the CP30104H\'s seeks and rotation): %.2f s with M12 off, %.2f s on (%d of '
+          'its waits could have been given away, nobody to take them: no switch), both exact, the FAT consistent'
+          % (a0, a1, y1), o0 and o1 and y0 == 0 and y1 > 0 and u1 == y1 and abs(a1 - a0) < 0.01 * a0, alone)
+    # 2. MTSPIN behind: off, then on
+    res = {}
+    for on in (False, True):
+        ata = hw_ata(data)
+        k, hw = hw_boot('mt_hw1.img', ata)
+        hw.m12(on)
+        tc, c = hw_copy(k, '40 c0.txt')
+        fs, probs = hw_files(ata)
+        res[on] = (tc, c, fs.get('\\B2.BIN') == data and not probs, hw, ata, k)
+    (t_off, c_off, ok0, hw0, _, _), (t_on, c_on, ok1, hw, ata, k) = res[False], res[True]
+    sw = hw.n['mt_dcan.y'] - hw.n['mt_dwait.u']
+    check('... MTSPIN counting behind (40 ticks, within the copy): with M12 off %.2f s, MTSPIN %d; on %.2f s, MTSPIN %d '
+          '(%d switches at 9000h, %.2f s given to it, every one back by IRQ 14 through MT\'s INT 76h: %d of them, '
+          '%d IRQ 14s in all): the copy no slower, MTSPIN more; both exact, the FAT consistent; no command written '
+          'to the drive while one was in flight'
+          % (t_off, c_off, t_on, c_on, sw, hw.given / 1e6, hw.n['mt_dready'], hw.n['mt_i76']),
+          ok0 and ok1 and hw0.n['mt_dcan.y'] == 0 and sw >= 20 and hw.n['mt_dready'] == sw and hw.n['mt_dtick'] >= 0
+          and c_on > c_off and t_on < 1.05 * t_off and hw.n['mt_i76'] > sw and not k.crashed,
+          (ok0, ok1, dict(hw.n), c_off, c_on, t_off, t_on))
+    d = hw.depth
+    check('the kernel\'s stack at each 9000h from inside INT 21h (the copy\'s reads, writes and FAT): %d of them, %d '
+          'bytes at most, under the TX\'s slice less mt_switch\'s room (%d)' % (len(d), max(d or [0]), lim),
+          d and max(d) < lim, (len(d), max(d or [0])))
+    # 3. behind: INT 21h on each count (D); its own records written to C: (W)
+    for mode, what in (('d', 'an INT 21h call (AH=2Ch) on each count: each one while the copy is out waits for it'),
+                       ('w c:\\w.dat', 'a 64-byte record written to C:\\W.DAT on each count: its calls wait for the '
+                                       'copy\'s, and its own waits are given to the copy in turn')):
+        ata = hw_ata(data)
+        k, hw = hw_boot('mt_hw2.img', ata)
+        tc, c = hw_copy(k, '40 c.txt ' + mode)
+        fs, probs = hw_files(ata)
+        ok = fs.get('\\B2.BIN') == data and not probs and (mode == 'd' or len(fs.get('\\W.DAT', b'')) == 64 * c)
+        check('MTSPIN %s behind, %s (%d times held, %d switches at 9000h): the copy exact (%.2f s), MTSPIN counted %d, '
+              'the FAT consistent' % (mode.split()[0].upper(), what, hw.n['mt_gate'],
+                                       hw.n['mt_dcan.y'] - hw.n['mt_dwait.u'], tc, c),
+              ok and c > 0 and hw.n['mt_gate'] > 0 and hw.n['mt_gate.no'] == 0 and not k.crashed,
+              (ok, c, dict(hw.n), probs, len(fs.get('\\W.DAT', b''))))
+    # 4. a dead IRQ 14 line (the drive never raises it): the tick ends the waits, and after two MT stops switching
+    ata = hw_ata(data, irq=False)
+    k, hw = hw_boot('mt_hw3.img', ata)
+    tc, c = hw_copy(k, '40 c0.txt')
+    fs, probs = hw_files(ata)
+    htk = k.pc.rd(mt_seg(k), k.Y['mt_htk'], 1)[0]
+    check('IRQ 14 dead: the first two waits given away come back by the tick (the drive\'s status: done), then no more '
+          'switches on the hard disk (%d declined); the copy exact (%.2f s against %.2f s with M12 off), MTSPIN counted %d'
+          % (hw.n['mt_dcan.no'], tc, t_off, c), htk == 2 and hw.n['mt_dcan.y'] == 2 and hw.n['mt_dtick'] >= 2
+          and hw.n['mt_dcan.no'] > 20 and fs.get('\\B2.BIN') == data and not probs and tc < 1.05 * t_off and c > 0
+          and not k.crashed, (htk, dict(hw.n), tc, probs))
+    # 5. without multitasking: KHD's 9000h goes to the BIOS, which zeroes AH (the wait's status mask): kept round it
+    ata = hw_ata(data)
+    k, _ = hw_boot('mt_hw4.img', ata, None)
+    tc, _ = hw_copy(k)
+    fs, probs = hw_files(ata)
+    check('no multitasking (no LODE.INI): KHD\'s 9000h straight to the BIOS (pcemu\'s, as the 1520\'s, zeroes AH): '
+          'the copy exact all the same (%.2f s), each sector moved at its DRQ' % tc,
+          fs.get('\\B2.BIN') == data and not probs and k.pc.ints[0x15] > 20 and not k.crashed,
+          (probs, k.pc.ints[0x15]))
+    # 6. a bad sector in BIG.BIN, MTSPIN behind: KHD's two tries, then the kernel's INT 24h prompt; F
+    ata = hw_ata(data)
+    k, hw = hw_boot('mt_hw5.img', ata)
+    v = __import__('fat16img').Volume(ata.disk, HW_GEOM[3])
+    first = next(e[2] for e in v.entries(0) if e[0] == 'BIG.BIN')
+    cl = v.chain(first)[0][100]
+    ata.bad = {HW_GEOM[3] + v.data + (cl - 2) * v.spc}
+    typ(k, 'cls', 0.3)
+    typ(k, 'mtlaunch mtspin.com 200 c.txt', 1.0); typ(k, '', 0.2)
+    typ(k, r'copy c:\big.bin c:\b2.bin', 0.1)
+    k.pc.run_until(lambda: 'Fail?' in k.pc.text_screen() or k.pc.crash, 60)
+    o1, sw = k.pc.text_screen(), hw.n['mt_dcan.y']
+    k.pc.keys.append(ord('f'))
+    k.pc.run_until(lambda: bool(A.disk_file(k, 'C.TXT')) or k.pc.crash, 60); k.run_for(1.0)
+    fs, probs = hw_files(ata)
+    check('a bad sector 100 clusters into BIG.BIN, MTSPIN behind: KHD\'s tries, then the kernel\'s INT 24h prompt '
+          '(after %d switches at 9000h); F: the copy fails, back at the prompt, MTSPIN counted %d, the FAT consistent, '
+          'nothing hung' % (sw, spun(k, 'C.TXT')), bool(ata.bad) and 'Fail?' in o1 and sw > 0
+          and spun(k, 'C.TXT') > 0 and not probs and not k.crashed, (ata.bad, sw, probs, o1[-200:]))
+    # 7. the owner frozen behind meanwhile (CODE-Tab while its copy is out; /Z): the other runs on, nothing hangs.
+    #    (Slow seeks, so the test sees it out)
+    ata = hw_ata(data, seek_ms=(150.0, 0.0))
+    k, hw = hw_boot('mt_hw6.img', ata)
+    seg, Y = mt_seg(k), k.Y
+    st = lambda n: k.pc.rd(seg, Y['mt_tab'] + n * MT_ENT, 1)[0]
+    typ(k, 'mtlaunch mtspin.com 200 c2.txt', 1.0); typ(k, '', 0.5)
+    typ(k, r'mtlaunch /f /z lcmd.com /c copy c:\big.bin c:\b2.bin', 0.2)
+    k.pc.run_until(lambda: tstate(k)[1] == 2 and st(2) == 6 or k.pc.crash, 20)
+    out1 = st(2)
+    k.key(HOT, settle=False)
+    k.pc.run_until(lambda: tstate(k)[1] != 2 or k.pc.crash, 5)
+    f2, s1 = tstate(k)[1], st(2)
+    k.pc.run_until(lambda: bool(A.disk_file(k, 'C2.TXT')) or k.pc.crash, 60)
+    c2 = A.disk_file(k, 'C2.TXT')
+    check('the copy in a task in front (/Z: frozen whenever behind), out on C: (state %d); CODE-Tab: task %d in front, '
+          'the copy behind (state %d, frozen there); the other counts on and writes its count (C2.TXT %r): nothing hung'
+          % (out1, f2, s1, c2), out1 == 6 and f2 != 2 and c2 and int(c2, 16) > 0 and not k.crashed,
+          (out1, f2, s1, c2, tstate(k), dict(hw.n)))
+    front(k, 2)
+    k.pc.run_until(lambda: len(tstate(k)[0]) == 1 or k.pc.crash, 300)
+    fs, probs = hw_files(ata)
+    check('... the copy back in front: it goes on, ends, and B2.BIN is exact; the FAT consistent',
+          len(tstate(k)[0]) == 1 and fs.get('\\B2.BIN') == data and not probs and not k.crashed,
+          (tstate(k), probs, dict(hw.n)))
+    # 8. System's Devices page: the drive's name, from the kernel (INT 21h F007h), not from the drive
+    ata = hw_ata(hw_data(1000))
+    k = boot('mt_hw7.img', b'MULTITASK=1\r\n', 88, A.SYSTEM, ata=ata)
+    n0 = len(ata.cmds)
+    k.key(A.CODE['U'])
+    for _ in range(3): k.key(ktest.DOWN)
+    t = k.text()
+    k = boot('mt_hw8.img', b'MULTITASK=1\r\n', 88, A.SYSTEM)
+    k.key(A.CODE['U'])
+    for _ in range(3): k.key(ktest.DOWN)
+    t0 = k.text()
+    check('System, Devices: "Hard disk  Conner Peripherals 120MB - CP30104H", the name KHD kept at start-up '
+          '(INT 21h F007h), no command sent to the drive for it; with no drive, "none"',
+          re.search(r'Hard disk\s+Conner Peripherals 120MB - CP30104H', t) and re.search(r'Hard disk\s+none', t0)
+          and not any(c[0] == 0xEC for c in ata.cmds[n0:]), (t[-900:], t0[-400:], ata.cmds[n0:][:10]))
+
 def t_hdtools():
     print('== HDSCAN and HDPROBE (they drive the hard disk themselves): not beside other tasks')
     tools = os.path.join(os.path.dirname(GOS), 'tools')
@@ -7403,7 +7607,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_sysreq, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_hwait, t_sysreq, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))

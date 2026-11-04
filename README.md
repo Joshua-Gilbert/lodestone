@@ -67,7 +67,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
   - Text is selected with the mouse, copied (CODE-C) and pasted in as keys (CODE-V), with a right-click menu as in Write. A program in the window that uses the mouse gets its clicks there.
   - A program can publish its own screen and font for its window to draw, and can ask to run as soon as the GPIB bridge's SRQ arrives.
   - CLAUDE.COM runs in one (CODE-A), with the link about as fast as full screen.
-- **Disk waits:** tasks behind keep running while one waits on the floppy (its motor's spin-up, a seek, a sector).
+- **Disk waits:** tasks behind keep running while one waits on the floppy (its motor's spin-up, a seek, a sector) or on the hard disk (a seek, the disk's turn, a write's end).
 
 **The command prompt** (`LCMD.COM`)
 - DOS 3.30's commands, with redirection and pipes (their files in %TEMP%, else %TMP%, else the current drive's root), and `&&` and `||`.
@@ -214,11 +214,10 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
-Multitasking works on the 1520. Built since 0.6 and not yet tried there: Paint in a window, resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), `TEMP=` with pipes from the ROM, and SysReq as the task switcher.
+Multitasking works on the 1520. Built since 0.6 and not yet tried there: Paint in a window, resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), `TEMP=` with pipes from the ROM, SysReq as the task switcher, and tasks running during hard-disk waits.
 
 **Next:**
 - **On the 1520, and release 0.7** (M9): the list above tried on the machine, and what it finds fixed.
-- **Disk waits on the hard disk:** M10 lets tasks run during floppy waits; C: is the kernel's own polled driver, so its waits don't yet let others run.
 - **GRIDMODE.COM:** the BIOS's display functions (INT 15h E420h-E422h) from the prompt, as GRiD's MS-DOS `MODE` gave them: the panel type, the internal panel or the external RGB port, the colour map (how CGA colours become plasma or LCD greys, at 40:A7h) and the hardware text font. A tool beside GRIDMEM, not in ROM 1; SYSTEM to show the panel type too.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.
