@@ -61,7 +61,7 @@ def main(rep_path, map_path):
         else: n = None
         return '%04X:%04X %s' % (cs, ip, n or '(a program, or nowhere)')
     print('CRASHLOG report: %d bytes, sum %s; caught by %s; MT at %04X, UI at %04X; tick %d'
-          % (ln, 'ok' if ok else 'WRONG', {'R': 'a restart', 'X': 'INT 06h (an invalid opcode)'}.get(chr(cause), chr(cause)),
+          % (ln, 'ok' if ok else 'WRONG', {'R': 'a restart', 'X': 'INT 06h (an invalid opcode)', 'K': 'a disk wait\'s owner\'s stack changed'}.get(chr(cause), chr(cause)),
              mtseg, useg, ticks))
     print('MT: ' + '  '.join('%s %02X' % (n, b[16 + i]) for i, n in enumerate(VARS)))
     if chr(cause) == 'X':
@@ -99,6 +99,14 @@ def main(rep_path, map_path):
             hits = [n for n in (M.name(['mtt'], w), M.name(['.text'], w), M.name(['ui'], w)) if n and '+' in n
                     and int(n.split('+')[1], 16) < 0x40]
             if hits: print('  %04X: %04X  %s' % ((base_sp + j) & 0xFFFF, w, ' / '.join(hits)))
+    if chr(cause) == 'K':
+        kept, now = b[o_l:o_l + 256], b[o_l + 256:o_l + 512]
+        print('\nA disk wait\'s owner\'s stack CHANGED while it was out (kept at its going out, then as found on '
+              'its return; from its SP up):')
+        for j in range(0, 256, 2):
+            a_, c_ = struct.unpack_from('<H', kept, j)[0], struct.unpack_from('<H', now, j)[0]
+            if a_ != c_:
+                print('  +%03X: %04X -> %04X  (%s / %s)' % (j, a_, c_, M.name(['mtt'], a_) or '', M.name(['mtt'], c_) or ''))
     lt = (crp - 16) % (N * 16)
     _, _, _, _, _, lsp, lss, _, _ = struct.unpack_from('<HBB6H', b, o_ring + lt)
     stack('The newest record\'s stack', lss, (lsp - 384) & 0xFFFF, b[o_l:o_l + 512])

@@ -180,6 +180,15 @@ MT_NVEC     equ 29                      ; (mt_vrun's and mt_vfr's counts)
 MT_NFV      equ 2
 ; CRASHLOG's flight recorder (KCRASH.INC): a record with this tag (a
 ; letter), the caller's CS:IP, SS:SP, AX, BX.  Nothing in the normal build
+; (and CMOS 3Dh's low nibble: a disk wait's phase, KCRASH.INC's cr_wtags)
+%macro CRW 1
+%ifdef CRASHLOG
+        push    ax
+        mov     al, %1
+        call    cr_wt
+        pop     ax
+%endif
+%endmacro
 %macro CREC 1
 %ifdef CRASHLOG
         pushf
@@ -1308,8 +1317,10 @@ mt_switch:
         pop     bx
         cmp     byte [cs:mt_fpu], 0     ; its coprocessor's registers, control
         je      .nf                     ;  and status (mt_fdrain ran first:
+        CRW     'n'                     ; (CRASHLOG: before the FNSAVE)
         fnsave  [es:TX_FPU]             ;  the 287 is idle, so this can't wait
         fwait                           ;  for ever).  Its error, if any, has
+        CRW     'N'                     ; (CRASHLOG: after it)
         mov     al, [es:TX_FPU]         ;  been handled: its unmasked
         and     al, 3Fh                 ;  exceptions and ES cleared in the
         or      al, 40h                 ;  saved status, so FRSTOR doesn't
@@ -1336,6 +1347,7 @@ mt_switch:
 mt_load:
         cli
         cld
+        CRW     'L'                     ; (CRASHLOG: loading the next task)
         pushf                           ; (TF off, as in mt_switch)
         pop     ax
         and     ah, 0FEh
@@ -1363,16 +1375,20 @@ mt_load:
         mov     [cs:mt_in13], ah        ;  INT 13h call; else 0)
         cmp     byte [cs:mt_fpu], 0     ; its coprocessor state (none kept
         je      .nf                     ;  yet: as FNINIT leaves it)
+        CRW     'p'                     ; (CRASHLOG: before FRSTOR / FNINIT)
         cmp     byte [es:TX_FPV], 0
         je      .fi
         frstor  [es:TX_FPU]
-        jmp     .nf
+        jmp     .nf0
 .fi:    fninit
+.nf0:   CRW     'P'                     ; (CRASHLOG: after it)
 .nf:    push    KSEG
         pop     ds
         call    mt_vload
+        CRW     'v'                     ; (CRASHLOG: the kernel's variables back)
         call    mt_vld                  ; its own vectors; the front task's 09h
         call    mt_fvset                ;  and 1Bh (one ended may have set them)
+        CRW     'w'                     ; (CRASHLOG: its vectors back)
         mov     cl, 0                   ; (M10: windows held for an owner's
         mov     al, [cs:mt_cur]         ;  transfer, which another task's
         cmp     al, [cs:mt_down]        ;  registers don't change: CL the
@@ -1383,13 +1399,15 @@ mt_load:
 .em:    test    cl, 1
         jnz     .eh                     ; (held: as it is)
         mov     al, [es:bx]
-        out     dx, al
+        call    mt_eout
 .eh:    shr     cl, 1
         inc     bx
         add     dh, 40h
         jnc     .em
+        CRW     'e'                     ; (CRASHLOG: its EMS windows written)
         mov     ss, [es:TX_SS]
         mov     sp, [es:TX_SP]
+        CRW     's'                     ; (CRASHLOG: on its stack)
         mov     cx, [es:TX_KLEN]
         jcxz    .go
         push    es                      ; its slice back where it was
@@ -1402,7 +1420,8 @@ mt_load:
         rep     movsw
         adc     cx, cx
         rep     movsb
-.go:    pop     es
+.go:    CRW     'l'                     ; (CRASHLOG: loaded, on its way back)
+        pop     es
         pop     ds
         popa
         sti
@@ -3384,7 +3403,7 @@ mt_pmap:
         in      al, dx
         mov     [cs:mt_psv], al
         mov     al, [ems_ltab + si]
-        out     dx, al
+        call    mt_eout
         push    EMS_FRAME
         pop     es
         mov     ax, [cs:bx+TE_REG]      ; (its own region: mt_inr passes it by)
@@ -3402,7 +3421,7 @@ mt_punmap:
         push    dx
         mov     dx, EMS_PORT
         mov     al, [cs:mt_psv]
-        out     dx, al
+        call    mt_eout
         mov     word [cs:mt_xr], 0
         mov     word [cs:mt_xe], 0
         pop     dx
@@ -5731,12 +5750,12 @@ mt_smap:
         in      al, dx
         mov     [cs:mt_wsv], al
         mov     al, [ems_ltab + si]
-        out     dx, al
+        call    mt_eout
         add     dh, 40h
         in      al, dx
         mov     [cs:mt_wsv + 1], al
         mov     al, [ems_ltab + si + 1]
-        out     dx, al
+        call    mt_eout
         clc
 .x:     pop     dx
         pop     ax
@@ -5768,11 +5787,10 @@ mt_shm: xor     ax, ax
 mt_wrest:
         mov     dx, EMS_PORT
         mov     al, [cs:mt_wsv]
-        out     dx, al
+        call    mt_eout
         add     dh, 40h
         mov     al, [cs:mt_wsv + 1]
-        out     dx, al
-        ret
+        jmp     mt_eout
 ; the entry at BX's BIOS data (TX_VID) into mt_vs, then its pages mapped
 ; (mt_smap: CF if gone).  CX, SI, DI, DS, ES changed
 mt_vin: push    cs
@@ -6269,6 +6287,7 @@ mt_i15: cmp     ax, 9001h
 mt_i0e: pushf
         call    far [cs:mt_old0e]
         cli
+        CRW     'i'                     ; (CRASHLOG: IRQ 6 come)
         push    ax                      ; mt_tick's frame: AX, BX, DX, DS, BP
         push    bx
         push    dx
@@ -6397,12 +6416,18 @@ mt_dtick:
 ; BIOS waits, as before.  Back with RETF 2: interrupts on, CF as said.
 ; mt_hwait: AX=9000h, KHD.INC's at the hard disk's wait (M12), the same
 mt_hwait:
+%ifdef NODWAIT
+        jmp     far [cs:mt_old15]       ; (bisect build: no wait given away)
+%endif
         push    ds
         push    es
         pusha
         mov     al, 0                   ; (mt_ddev: the hard disk)
         jmp     short mt_dwait.c
 mt_dwait:
+%ifdef NODWAIT
+        jmp     far [cs:mt_old15]
+%endif
         push    ds
         push    es
         pusha
@@ -6425,8 +6450,17 @@ mt_dwait:
         mov     byte [cs:bx+TE_STATE], TS_WAITD
         call    mt_pick
         jc      .u
+%ifdef CRASHLOG
+        CRW     'g'                     ; (KCRASH.INC: going out, its stack kept)
+        call    mt_crs0
+%endif
         call    mt_switch               ; (back once 9101h or the time-out
-.bk:    mov     byte [cs:mt_down], 0FFh ;  made it ready, and it was picked)
+.bk:                                    ;  made it ready, and it was picked)
+%ifdef CRASHLOG
+        call    mt_crs1                 ; (as it was?  Else the report)
+        CRW     'b'                     ; (back)
+%endif
+        mov     byte [cs:mt_down], 0FFh
         mov     byte [cs:mt_dfw], 0
         call    mt_dwake
         call    mt_cent                 ; (frozen behind meanwhile, CODE-Tab:
@@ -6513,6 +6547,10 @@ mt_dcan:
         call    mt_cent
         cmp     byte [cs:bx+TE_KILL], 0
         jne     .no
+%ifdef NODWAIT0
+        or      al, al                  ; (bisect build: task 0, the Executive
+        jz      .no                     ;  and its windows, never goes out)
+%endif
         mov     al, [indos]
         or      al, al
         jz      .own
@@ -6589,11 +6627,74 @@ mt_dok: cmp     byte [cs:mt_down], 0FFh
         jz      .ok
         cmp     byte [es:TX_EMS + 3], 0
         jne     .n
-.ok:    pop     es
+.ok:    cmp     byte [cs:mt_ddev], 1    ; a floppy's owner out: its DMA may run,
+        jne     .k                      ;  and on the 1520 an EMS page register
+        push    ax                      ;  written meanwhile resets the machine
+        push    cx                      ;  (2026-11-04): only a task whose
+        push    dx                      ;  windows hold what they hold now, so
+        push    di                      ;  loading it writes none (mt_eout:
+        mov     cl, [cs:mt_dfw]         ;  the held ones aren't written)
+        mov     dx, EMS_PORT
+        mov     di, TX_EMS
+.e:     test    cl, 1
+        jnz     .en
+        in      al, dx
+        cmp     al, [es:di]
+        jne     .ne
+.en:    shr     cl, 1
+        inc     di
+        add     dh, 40h
+        jnc     .e
+        cmp     al, al                  ; (all as they are: ZF)
+.ne:    pop     di
+        pop     dx
+        pop     cx
+        pop     ax
+        jne     .n
+.k:     pop     es
 .y:     cmp     al, al                  ; (ZF)
         ret
 .n:     pop     es
         or      sp, sp                  ; (NZ)
+        ret
+
+; AL to the EMS page register at DX: not written if it holds AL already;
+; else, while a floppy transfer is in flight (the controller busy with a
+; command and not yet at its result: its DMA under way), first waited for,
+; as on the 1520 a page register written meanwhile resets the machine
+; (2026-11-04: M10's switch at a floppy's wait, mt_load).  At most about a
+; turn of the disk: the controller then gives up or ends.  All kept, the
+; flags too (mt_punmap's callers carry CF across it)
+mt_eout:
+        pushf
+        push    ax
+        mov     ah, al
+        in      al, dx
+        cmp     al, ah
+        je      .x
+        push    cx
+        push    dx
+        mov     dx, 3F4h                ; (the floppy controller's status)
+        mov     cx, 8
+.o:     push    cx
+        xor     cx, cx
+.w:     in      al, dx
+        test    al, 10h                 ; (a command under way)
+        jz      .go
+        and     al, 0C0h                ; (its result phase: the DMA done)
+        cmp     al, 0C0h
+        je      .go
+        loop    .w
+        pop     cx
+        loop    .o
+        push    cx
+.go:    pop     cx
+        pop     dx
+        pop     cx
+        mov     al, ah
+        out     dx, al
+.x:     pop     ax
+        popf
         ret
 
 ; the owner runs again: tasks that waited for it (TS_WAITD, at mt_gate)
@@ -6662,16 +6763,19 @@ mt_gate:
         call    mt_pick
         jc      .h
         call    mt_fdrain
+        CRW     'G'                     ; (CRASHLOG: a call held at the gate)
         call    mt_switch
         jmp     .l
-.h:     call    mt_cent                 ; (none: this one HLTs, ready, till
+.h:     CRW     'H'                     ; (CRASHLOG: held, HLT)
+        call    mt_cent                 ; (none: this one HLTs, ready, till
         mov     byte [cs:bx+TE_STATE], TS_RUN   ;  an interrupt, the owner's
         sti                             ;  9101h one, then looks again)
         hlt
         jmp     .l
 .y:     clc
         jmp     short .x
-.no:    stc
+.no:    CRW     'r'                     ; (CRASHLOG: refused)
+        stc
 .x:     pop     es
         pop     ds
         pop     bx
@@ -6683,13 +6787,14 @@ mt_gate:
 ; floppy owner out, another task's call waits for it (mt_gate), or is
 ; refused: AX = 5, CF
 mt_i21: cmp     byte [cs:mt_down], 0FFh
-        jne     .g
+        jne     .g0
 .go:    sti
         cld
         push    es
         push    ds
         pusha
         jmp     KSEG:int21 + 5
+.g0:    CRW     'q'                     ; (CRASHLOG: a call while one is out)
 .g:     call    mt_gfl
         jnc     .go
         push    bp                      ; (refused: CF in its flags)
@@ -6723,6 +6828,10 @@ mt_i26: cmp     byte [cs:mt_down], 0FFh
 ; refused: AH = 80h
 mt_i67: cmp     byte [cs:mt_dfw], 0
         jne     .g
+        cmp     byte [cs:mt_down], 0FFh ; (a floppy's owner out: its DMA may
+        je      .go                     ;  run, and the call may write a page
+        cmp     byte [cs:mt_ddev], 1    ;  register: it waits too)
+        je      .g
 .go:    cmp     ah, 44h
         je      .m
         jmp     KSEG:ems_gen
@@ -7691,7 +7800,11 @@ mt_kalloc:
 ; stops the build here (0 even, 1 odd)
 %macro  mt_par 2
 %ifndef CRASHLOG                        ; (a diagnostic build: not timed)
+%ifndef NODWAIT                         ; (nor the bisect builds)
+%ifndef NODWAIT0
             times   -(((%1 - mt_tstart) & 1) != %2) db 0
+%endif
+%endif
 %endif
 %endmacro
             mt_par  mt_tick, 0
@@ -7731,7 +7844,7 @@ MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
 MT_SSTK     equ     1024                ;  on the paragraph after the image;
 MT_INIL     equ     160                 ; LODE.INI's lists' room
 %ifdef CRASHLOG
-CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK ; (KCRASH.INC: the ring, the report, a stack)
+CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK + 256 ; (KCRASH.INC: the ring, the report, a stack)
 %else
 CR_BSS      equ     0
 %endif
@@ -7750,6 +7863,7 @@ mw_tmp      resb    NWIN * 4            ; (mw_raise: the window stack, reordered
 mt_crb      resb    CR_N * 16           ; (KCRASH.INC)
 mt_crbuf    resb    CR_LEN
 mt_crstk    resb    CR_STK
+mt_crsv     resb    256                 ; (mt_crs0: the owner's stack's top)
 %endif
 mt_bend:
 
@@ -7846,6 +7960,9 @@ mt_boot:
         int     11h                     ; a coprocessor?  (POST's own probe on
         and     al, 2                   ;  the 1520; with none, its
         shr     al, 1                   ;  instructions may trap: EM)
+%ifdef NOMTFPU
+        xor     al, al                  ; (a diagnostic build: the 287 never
+%endif                                  ;  saved or restored at a switch)
         mov     [es:mt_fpu], al
         push    KSEG
         pop     ds
@@ -7882,6 +7999,7 @@ mt_boot:
         mov     [es:mt_old16 + 2], ax
         mov     word [16h * 4], mt_i16
         mov     [16h * 4 + 2], es
+%ifndef NOM10HOOKS                      ; (bisect build: none of M10's hooks)
         mov     ax, [15h * 4]           ; INT 15h, 25h and 26h (M10)
         mov     [es:mt_old15], ax
         mov     ax, [15h * 4 + 2]
@@ -7917,7 +8035,10 @@ mt_boot:
         mov     word [ems_int67 + 1], mt_i67
         mov     [ems_int67 + 3], es
         pop     ds
-.n67:   push    ds                      ; C: (KHD.INC) there: its IRQ 14
+.n67:
+%endif
+%ifndef NOM10HOOKS
+        push    ds                      ; C: (KHD.INC) there: its IRQ 14
         push    KSEG                    ;  through MT (mt_i76), on in both
         pop     ds                      ;  PICs (KHD's start-up turns it off
         cmp     byte [C_DT + D_PRES], 0 ;  without the BIOS's disk), and INT
@@ -7938,11 +8059,49 @@ mt_boot:
         and     al, 0FBh
         out     21h, al
 .n76:
+%endif
 %ifdef CRASHLOG
         mov     word [6 * 4], mt_cr6    ; (KCRASH.INC: INT 06h, a restart through
         mov     [6 * 4 + 2], es         ;  40:67h with CMOS 0Fh = 0Ah, the ring
-        mov     word [467h], mt_crst    ;  cleared)
-        mov     [469h], es
+        mov     word [467h], mt_crst    ;  cleared; the last session's
+        mov     [469h], es              ;  breadcrumbs to CR_PREV first)
+        push    ds
+        push    si
+        push    di
+        push    cx
+        push    CR_PREV
+        pop     ds
+        xor     di, di
+        mov     si, cr_psig
+        mov     cx, 8
+.cp:    mov     al, [es:si]
+        mov     [di], al
+        inc     si
+        inc     di
+        loop    .cp
+        mov     al, 3Dh                 ; CMOS 3Dh's nibbles as the stage's and
+        out     70h, al                 ;  the window tag's characters (never
+        in      al, 71h                 ;  3Ch: KCRASH.INC's note)
+        mov     ch, al
+        mov     cl, 4
+        shr     al, cl
+        xor     ah, ah
+        mov     si, ax
+        mov     al, [es:si+cr_stch]
+        mov     [di], al
+        mov     al, ch
+        and     ax, 0Fh
+        mov     si, ax
+        mov     al, [es:si+cr_wtags]
+        mov     [di+1], al
+        pop     cx
+        pop     di
+        pop     si
+        pop     ds
+        mov     al, 3Dh
+        out     70h, al
+        mov     al, CRB_ARMED << 4      ; (the window tag: '-', none)
+        out     71h, al
         mov     al, 0Fh
         out     70h, al
         mov     al, 0Ah
@@ -7971,9 +8130,11 @@ mt_boot:
         jb      .fv
         mov     ax, KSEG                ; INT 21h F0h: JMP FAR mt_f0
         mov     ds, ax
+%ifndef NOM10HOOKS
         mov     byte [int21], 0EAh      ; INT 21h's entry: JMP FAR mt_i21 (M10)
         mov     word [int21 + 1], mt_i21
         mov     [int21 + 3], es
+%endif
         mov     byte [f_F0], 0EAh
         mov     word [f_F0 + 1], mt_f0
         mov     [f_F0 + 3], es
