@@ -582,6 +582,8 @@ FFFFFFFFFFFFFFEC  VF_ES
 00000003  CRB_KEPT
 00000004  CRB_SHOWN
 00000005  CRB_PASS
+00000006  CRB_VEC
+00000007  CRB_CMOS
 00000000  CR_TICK
 00000002  CR_TAG
 00000003  CR_TASK
@@ -607,12 +609,12 @@ FFFFFFFFFFFFFFEC  VF_ES
 00001E60  CRO_TSTK
 00002680  CR_LEN
 00000010  CR_NVB
-00005AEA  MT_LEN
-000005AF  MT_TX0P
+00005B1E  MT_LEN
+000005B2  MT_TX0P
 00000400  MT_SSTK
 000000A0  MT_INIL
 00003880  CR_BSS
-000009EF  MT_PARAS
+000009F2  MT_PARAS
 
 
 ---- Section .text ------------------------------------------------------------
@@ -4946,55 +4948,58 @@ Real              Virtual           Name
            116F1              5491  mt_crcause
            116F3              5493  mt_crrg
            1170F              54AF  mt_crec
-           11787              5527  mt_crec.x
-           1178D              552D  cr_cm
-           11796              5536  cr_st
-           117B3              5553  cr_wt
-           117C0              5560  cr_wt.l
-           117CA              556A  cr_wt.f
-           117DE              557E  mt_crt
-           11833              55D3  mt_cr6
-           11899              5639  mt_crst
-           118B0              5650  mt_crst.c
-           118B6              5656  mt_crx
-           118F6              5696  mt_crx.vb
-           11971              5711  mt_crx.tk
-           119A0              5740  mt_crx.tn
-           119A4              5744  mt_crx.tx
-           119B3              5753  mt_crx.s
-           119D7              5777  mt_crx.bv
-           119E9              5789  mt_crx.pic
-           119F4              5794  mt_crx.eoi
-           11A2D              57CD  mt_crx.vn
-           11A88              5828  mt_crx.nx
-           11A99              5839  mt_crx.r
-           11B1E              58BE  cr_cpy
-           11B25              58C5  cr_ch
-           11B30              58D0  cr_sp
-           11B38              58D8  cr_nl
-           11B45              58E5  cr_ps
-           11B46              58E6  cr_ps.l
-           11B53              58F3  cr_ps.x
-           11B55              58F5  cr_h4
-           11B5C              58FC  cr_h2
-           11B6C              590C  cr_h2.d
-           11B74              5914  cr_h2.o
-           11B76              5916  cr_sig
-           11B7E              591E  cr_psig
-           11B86              5926  cr_stch
-           11B96              5936  cr_wtags
-           11BA6              5946  cr_bv
-           11BC4              5964  cr_t1
-           11BE2              5982  cr_t2
-           11C03              59A3  cr_t3
-           11C06              59A6  cr_vn
-           11C76              5A16  cr_t4
-           11C7C              5A1C  cr_t5
-           11C82              5A22  cr_t6
-           11C90              5A30  cr_t7
-           11C98              5A38  cr_t8
-           11CC8              5A68  cr_t9
-           11D4A              5AEA  mt_tend
+           11780              5520  mt_crec.ok
+           11796              5536  mt_crec.x
+           1179C              553C  cr_cm
+           117A5              5545  cr_st
+           117C2              5562  cr_wt
+           117CF              556F  cr_wt.l
+           117D9              5579  cr_wt.f
+           117ED              558D  mt_crt
+           11853              55F3  mt_crt.v
+           11862              5602  mt_crt.vo
+           11867              5607  mt_cr6
+           118CD              566D  mt_crst
+           118E4              5684  mt_crst.c
+           118EA              568A  mt_crx
+           1192A              56CA  mt_crx.vb
+           119A5              5745  mt_crx.tk
+           119D4              5774  mt_crx.tn
+           119D8              5778  mt_crx.tx
+           119E7              5787  mt_crx.s
+           11A0B              57AB  mt_crx.bv
+           11A1D              57BD  mt_crx.pic
+           11A28              57C8  mt_crx.eoi
+           11A61              5801  mt_crx.vn
+           11ABC              585C  mt_crx.nx
+           11ACD              586D  mt_crx.r
+           11B52              58F2  cr_cpy
+           11B59              58F9  cr_ch
+           11B64              5904  cr_sp
+           11B6C              590C  cr_nl
+           11B79              5919  cr_ps
+           11B7A              591A  cr_ps.l
+           11B87              5927  cr_ps.x
+           11B89              5929  cr_h4
+           11B90              5930  cr_h2
+           11BA0              5940  cr_h2.d
+           11BA8              5948  cr_h2.o
+           11BAA              594A  cr_sig
+           11BB2              5952  cr_psig
+           11BBA              595A  cr_stch
+           11BCA              596A  cr_wtags
+           11BDA              597A  cr_bv
+           11BF8              5998  cr_t1
+           11C16              59B6  cr_t2
+           11C37              59D7  cr_t3
+           11C3A              59DA  cr_vn
+           11CAA              5A4A  cr_t4
+           11CB0              5A50  cr_t5
+           11CB6              5A56  cr_t6
+           11CC4              5A64  cr_t7
+           11CCC              5A6C  cr_t8
+           11CFC              5A9C  cr_t9
+           11D7E              5B1E  mt_tend
 
 ---- Section .bss -------------------------------------------------------------
 
@@ -5391,13 +5396,13 @@ Real              Virtual           Name
 ---- Section mttbss -----------------------------------------------------------
 
 Real              Virtual           Name
-            5AF0              5AF0  mt_tx0
-            5F20              5F20  mt_ini
-            5FC0              5FC0  mt_hdr
-            5FE0              5FE0  mw_ses
-            6260              6260  mw_tmp
-            6670              6670  mt_crb
-            7670              7670  mt_crbuf
-            9CF0              9CF0  mt_crstk
-            9EF0              9EF0  mt_bend
+            5B20              5B20  mt_tx0
+            5F50              5F50  mt_ini
+            5FF0              5FF0  mt_hdr
+            6010              6010  mw_ses
+            6290              6290  mw_tmp
+            66A0              66A0  mt_crb
+            76A0              76A0  mt_crbuf
+            9D20              9D20  mt_crstk
+            9F20              9F20  mt_bend
 

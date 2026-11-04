@@ -45,6 +45,9 @@ CRB_IN      equ 2                       ;  has their characters)
 CRB_KEPT    equ 3
 CRB_SHOWN   equ 4
 CRB_PASS    equ 5
+CRB_VEC     equ 6                       ; (40:67h found changed at a tick, put
+CRB_CMOS    equ 7                       ;  back; CMOS 0Fh found changed at a
+                                        ;  window operation, set again)
 
 ; a record: the tick count, the tag (a letter), the running task, the
 ; top two words of the caller's stack (at a routine's start its return
@@ -126,7 +129,14 @@ mt_crec:
         cmp     al, 'V'
         je      .x
         call    cr_wt
-        mov     ax, 0A0Fh                       ; (CMOS 0Fh = 0Ah: cr_cm takes the
+        mov     al, 0Fh                         ; (still 0Ah?  Else something
+        out     70h, al                         ;  changed it: stage 7)
+        in      al, 71h
+        cmp     al, 0Ah
+        je      .ok
+        mov     al, CRB_CMOS
+        call    cr_st
+.ok:    mov     ax, 0A0Fh                       ; (CMOS 0Fh = 0Ah: cr_cm takes the
         call    cr_cm                           ;  register in AL.  Swapped, it
                                                 ;  wrote 0Fh to status A, 0Ah, and
                                                 ;  stopped the clock: POST's
@@ -220,6 +230,19 @@ mt_crt: push    bp
         lea     ax, [bp+10]
         mov     [cs:di+CR_SP], ax
         mov     [cs:di+CR_SS], ss
+        push    ds                              ; 40:67h still the catch's?  Else
+        xor     ax, ax                          ;  something wrote there: put
+        mov     ds, ax                          ;  back, stage 6
+        cmp     word [467h], mt_crst
+        jne     .v
+        mov     ax, cs
+        cmp     [469h], ax
+        je      .vo
+.v:     mov     word [467h], mt_crst
+        mov     [469h], cs
+        mov     al, CRB_VEC
+        call    cr_st
+.vo:    pop     ds
         pop     di
         pop     ax
         pop     bp
@@ -558,7 +581,7 @@ cr_sig      db      'LODECRSH'
 cr_psig     db      'LODEPREV'
 ; CMOS 3Dh's nibbles as CRASHRPT's characters: the stage (CRB_*), the
 ; window tag (KMW's CREC tags; '-' none, '?' another)
-cr_stch     db      '?1234P??????????'
+cr_stch     db      '?1234P67????????'
 cr_wtags    db      '-ECOUDWZzRF?????'
 cr_bv       dw      08h * 4, 0FEA5h, 09h * 4, 0E987h, 10h * 4, 0F065h
             dw      16h * 4, 0E82Eh, 15h * 4, 0F859h, 1Ch * 4, 0FF53h
