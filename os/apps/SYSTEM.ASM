@@ -164,20 +164,7 @@ ptext:  mov     dx, [py]                ; SI = a line of its own
 pgap:   add     word [py], 8
         ret
 
-; an EMS manager on INT 67h ('EMMXXXX0' at its segment:000Ah; Lodestone's
-; own when there is EMS)?  CF if not
-ems_mgr:
-        push    es
-        mov     ax, 3567h
-        int     21h
-        mov     di, 0Ah
-        mov     si, s_emm
-        mov     cx, 8
-        repe    cmpsb
-        pop     es
-        je      .x
-        stc
-.x:     ret
+%include "EMM.INC"                      ; ems_mgr: an EMS manager on INT 67h?
 
 ; AX = paragraphs, SI = the label -> "570.6 KB" on the next line
 kb_line:
@@ -839,9 +826,9 @@ t_devices:
         pop     ds
         mov     si, l_bios
         call    pline
-        call    vstart                  ; the panel (GRiD port 7F8h)
-        mov     dx, 7F8h
-        in      al, dx
+        call    vstart                  ; the panel: GRiD port 7F8h, as the
+        mov     dx, 7F8h                ;  BIOS's INT 15h E420h reads it (and
+        in      al, dx                  ;  the Executive's info line, EXEC.INC)
         and     al, 0Fh
         mov     si, s_plasma
         cmp     al, 0Dh
@@ -849,6 +836,9 @@ t_devices:
         mov     si, s_lcd
         cmp     al, 0Fh
         je      .p
+        mov     si, s_external
+        test    al, 8                   ; (clear: the external RGB port)
+        jz      .p
         mov     si, s_panel
 .p:     call    UI_SBSTR
         mov     si, l_display
@@ -867,7 +857,7 @@ t_devices:
         call    pline
         mov     word [port_n], 0        ; serial ports, from the BIOS data area
         call    vstart
-        mov     bx, 0
+        xor     bx, bx                  ; (2 bytes: 'External' above added 7)
 .com:   push    ds
         xor     ax, ax
         mov     ds, ax
@@ -2332,7 +2322,6 @@ s_kb        db ' KB',0
 l_conv      db 'Conventional memory',0
 l_kernel    db 'Kernel (DOS + GPIB)',0
 l_kernel_e  db 'Kernel (DOS + GPIB + EMS)',0
-s_emm       db 'EMMXXXX0'
 l_exec      db 'Executive and UI core',0
 l_this      db 'System (this program)',0
 l_cache     db 'Disk cache',0
@@ -2374,6 +2363,7 @@ s_none      db 'none',0
 s_grid      db 'GRiD, ',0
 s_plasma    db 'Plasma 640x400',0
 s_lcd       db 'LCD 640x400',0
+s_external  db 'External',0
 s_panel     db 'Panel',0
 s_mouse1    db 'Microsoft serial on COM1',0
 s_mouse2    db 'Microsoft serial on COM2',0
