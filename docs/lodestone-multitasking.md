@@ -2343,3 +2343,5 @@ The cost: while the owner is out, fewer tasks can run behind it. A task whose ma
 **pcemu** now models it: a page register changed while a floppy transfer's DMA runs counts in `fd_ems_write`, and with `FD_STRICT` it is a crash, as on the 1520. Port 3F4h reads as the controller does (busy during the DMA, its result phase until the wait ends). With the code before the fix, Return on CLAUDE.COM crashes there at the same instruction as on the 1520 (`mt_load`'s EMS loop).
 
 **Tests:** test_mt's `t_dmaems` (2 checks, under `FD_STRICT`): Return on CLAUDE.COM with the floppy timed, its waits given and back, and no register changed during a DMA; CODE-P then DIR, the same. `t_dwait`, `t_dfrz` and `t_hwait` also pass under `FD_STRICT`.
+
+**On the 1520 (2026-11-04):** Joshua tried the fixed build, and it no longer restarts.
