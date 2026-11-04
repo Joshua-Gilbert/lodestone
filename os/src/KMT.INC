@@ -8177,9 +8177,11 @@ mt_boot:
         mov     byte [f_4B.xe], 0EAh    ; (and EXEC's environment's block)
         mov     word [f_4B.xe + 1], mt_xenv
         mov     [f_4B.xe + 3], es
+%ifndef SERIAL                          ; (-dSERIAL: pre-interrupt style, none)
         mov     byte [gp_isr.e], 0EAh   ; the GPIB driver's SRQ interrupt, at
         mov     word [gp_isr.e + 1], mt_srqi ;  its EOI: a task woken (T5c)
         mov     [gp_isr.e + 3], es
+%endif
         sti
         push    cs
         pop     ds

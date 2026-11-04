@@ -180,6 +180,33 @@ cd os/claude && ./build.sh
 ```
 
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
+
+### A serial build, for a GRiD without the GPIB cartridge
+
+The kernel and ROMs here are built with the built-in GPIB driver. A GRiD without the GPIB cartridge can instead
+have a kernel with the serial link built in (`os/src/KSER.INC`, in place of `KGPIB.INC`):
+
+```sh
+KFLAGS=-dSERIAL os/build.sh     # LODE.SYS, LODEMT.SYS and LODE1_EPROM.BIN with the serial link
+os/build.sh                     # back to the GPIB build (as committed)
+```
+
+- **Connection:** CLAUDE.COM reaches gridlink on the Pi (`--bridge serial --baud 19200`) over a null-modem cable on
+  COM2, with no extra driver to load.
+- **The setting:** `SERLINK=` in LODE.INI sets the port and speed: `SERLINK=COM2,19200` (the default),
+  `SERLINK=COM2,38400`, `SERLINK=COM1,2400`, or `SERLINK=OFF`.
+- **Size:** the serial kernel is 864 bytes smaller than the GPIB one, and its ROM 1 has 2,048 bytes free.
+- **Pre-interrupt style:** the UART still receives on its interrupt, into a 2 KB ring, but CLAUDE polls the link
+  rather than sleeping until an answer arrives, and multitasking's wake-on-SRQ isn't used.
+- **Ports:**
+  - The port is set up at CLAUDE's first call, after the start-up mouse probe, so a serial mouse and the link
+    can't share COM2.
+  - GPIBnn devices and Claude's instrument tools get "no listener".
+- **Dialing:** the serial kernel doesn't dial. For the internal modem, set `SERLINK=OFF` and load `SERLINK /D:`
+  (`tools/`) on top.
+
+See `docs/serial-link.md`. `os/tests/test_serial_kernel.py` builds it and checks it.
+
 ## Tests (emulator)
 
 The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,560 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
@@ -201,6 +228,7 @@ python3 tests/test_hdprobe.py         # HDPROBE
 python3 tests/test_hdscan.py          # HDSCAN
 python3 tests/test_headcln.py         # HEADCLN
 python3 tests/test_modemid.py         # MODEMID, against no modem, Option 330 and Option 331
+python3 tests/test_serial_kernel.py   # the -dSERIAL kernel: its link driver, SERLINK=, the GPIB build untouched
 python3 tests/defrag_cut.py 2         # a power cut at every DEFRAG write (~20 min; "2 hd" for C:)
 python3 bench/run_bench.py <GRiD MS-DOS EPROM image>
 ```
