@@ -22,7 +22,7 @@ Lodestone now boots from an EPROM in the 1520's application-ROM socket, as GRiD 
 | TERMINUS.FNT | the second font |
 | LODE.INI | the ROM's own settings (also the built-in defaults) |
 
-2,048 bytes (4 sectors) are left (3,584 before 2026-11-03: M10's LODE.SYS and LCMD's pipes in %TEMP% took three): DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one, the window, T2, four: TERM.RUN and LODEMT.SYS's growth, graphics, T3, one: TERM.RUN's notes, select and paste, T4, three: TERM.RUN two, LODEMT.SYS one, regions that grow, T5a, one: LODEMT.SYS, a screen a program publishes, T5b, two: LODEMT.SYS one, TERM.RUN one, a program woken by SRQ, T5c, one: LODEMT.SYS, CLAUDE.COM in a window, T5d, one: TERM.RUN, and the 2026-10-26 audit's bug fixes, one: LODEMT.SYS; its MT space batch gave two back). Paint (PAINT.RUN) and CLAUDE.COM are on ROM 2 (below).
+1,536 bytes (3 sectors) are left (2,048 before M12's LODE.SYS, 2026-11-04; 3,584 before 2026-11-03: M10's LODE.SYS and LCMD's pipes in %TEMP% took three): DEFRAG.COM has moved to ROM 2 (below), so that multitasking's terminal windows have room in ROM 1 (20 sectors then; their kernel core, T1, took one, the window, T2, four: TERM.RUN and LODEMT.SYS's growth, graphics, T3, one: TERM.RUN's notes, select and paste, T4, three: TERM.RUN two, LODEMT.SYS one, regions that grow, T5a, one: LODEMT.SYS, a screen a program publishes, T5b, two: LODEMT.SYS one, TERM.RUN one, a program woken by SRQ, T5c, one: LODEMT.SYS, CLAUDE.COM in a window, T5d, one: TERM.RUN, and the 2026-10-26 audit's bug fixes, one: LODEMT.SYS; its MT space batch gave two back). Paint (PAINT.RUN) and CLAUDE.COM are on ROM 2 (below).
 
 ## ROM 2
 

@@ -19,7 +19,8 @@
 ;  it comes together here.  Transfers: CHS by IDENTIFY's geometry (drives
 ;  of the 1520's age have no LBA), up to 127 sectors a command, polled
 ;  (REP INSW/OUTSW), each command tried twice, then INT 24h as for the
-;  floppies.  The FAT: HD_NWIN sectors of it at a time (the window), written
+;  floppies.  A wait that IRQ 14 ends calls INT 15h AX=9000h after about
+;  2 ms (hd_waiy): with multitasking, other tasks run meanwhile (M12).  The FAT: HD_NWIN sectors of it at a time (the window), written
 ;  to every copy when the kernel flushes its FAT (close, delete, ...) or
 ;  when a slot is needed.  The free clusters are counted once (INT 21h
 ;  36h) and kept up to date after that.
@@ -160,9 +161,15 @@ hd_cmd: pusha
         mov     al, 30h
 .c:     out     dx, al
         mov     cx, di
-.s:     mov     ah, 09h                 ; DRQ, or ERR
+.s:     mov     ah, 09h                 ; DRQ, or ERR: each sector's comes
+        cmp     cx, di                  ;  with IRQ 14 but a write's first
+        jne     .y                      ;  (hd_waiy's 9000h only where one
+        cmp     byte [io_op], 3         ;  comes to end the wait, M12)
+        jne     .y
         call    hd_wait
-        jc      .x
+        jmp     short .g
+.y:     call    hd_waiy
+.g:     jc      .x
         test    al, 01h
         jnz     .e
         push    cx
@@ -185,7 +192,7 @@ hd_cmd: pusha
         cmp     byte [io_op], 3
         jne     .ok
         mov     ah, 0                   ; a write: until the drive has it
-        call    hd_wait
+        call    hd_waiy
         jc      .x
         test    al, 21h                 ; ERR, write fault
         jnz     .e
@@ -215,11 +222,24 @@ hd_cmd: pusha
         ret
 
 ; until the drive isn't busy and shows one of the status bits AH (0: just
-; not busy), 5 s at most.  -> AL = status.  CF: no (AL = 80h)
+; not busy), 5 s at most.  -> AL = status.  CF: no (AL = 80h).  hd_waiy:
+; the same, but still waiting after HD_SPIN looks (about 2 ms on the
+; 1520), INT 15h AX=9000h once, the AT BIOS's "fixed disk busy" (M12: MT
+; gives the wait to other tasks till IRQ 14; the 1520's BIOS returns at
+; once), then on as before.  Only for waits IRQ 14 ends.  Every register
+; kept round it (the BIOS's zeroes AH), its CF not looked at
+HD_SPIN equ 360
+hd_waiy:
+        push    cx
+        mov     cx, HD_SPIN
+        jmp     short hd_wait.c
 hd_wait:
         push    cx
-        push    dx
+        xor     cx, cx
+.c:     push    dx
         push    ds
+        push    bx
+        mov     bx, cx                  ; (looks before the 9000h; 0: none)
         mov     dx, HD_PORT + 7
         xor     cx, cx
         mov     ds, cx
@@ -231,7 +251,17 @@ hd_wait:
         jz      .x                      ; (CF clear)
         test    al, ah
         jnz     .x
-.w:     push    ax
+.w:     or      bx, bx
+        jz      .t
+        dec     bx
+        jnz     .t
+        push    ds
+        pusha
+        mov     ax, 9000h
+        int     15h
+        popa
+        pop     ds
+.t:     push    ax
         mov     ax, [46Ch]
         sub     ax, cx
         cmp     ax, 5 * 18
@@ -239,7 +269,8 @@ hd_wait:
         jb      .l
         mov     al, 80h
         stc
-.x:     pop     ds
+.x:     pop     bx
+        pop     ds
         pop     dx
         pop     cx
         ret
@@ -728,6 +759,9 @@ hd_wdirty   db 0                        ; slots changed (bit n: slot n)
 hd_try      db 0
 hd_err      db 0
 hd_bad      db 0                        ; a FAT sector wasn't to be had
+hd_idn      times 40 db ' '             ; the drive's own name (IDENTIFY's
+                                        ;  words 27-46, in order): INT 21h
+                                        ;  F007h gives it (System)
             align 16
 hd_end:                                 ; (the window, with EMS: from here)
 
@@ -845,6 +879,14 @@ hd_find:
         mov     cx, 256
         mov     dx, HD_PORT
         rep     insw
+        mov     si, [hd_win]            ; its name kept (System's Devices page
+        add     si, 27 * 2              ;  asks for it: no program drives the
+        mov     di, hd_idn              ;  ports itself)
+        mov     cx, 20
+.nm:    lodsw
+        xchg    al, ah
+        stosw
+        loop    .nm
         mov     si, [hd_win]
         mov     ax, [si + 3 * 2]        ; heads: 1-16
         dec     ax

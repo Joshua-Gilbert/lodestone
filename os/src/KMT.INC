@@ -172,8 +172,22 @@ TX_PARAS    equ (TX_KR + KRING * 2 + 15) / 16
 %if TX_PARAS * 16 > 4000h
 %error "TX: in a parked region's first EMS page (mt_pmap)"
 %endif
+%ifdef CRASHLOG
+MT_NVEC     equ 28                      ; (CRASHLOG: INT 06h the machine's, KCRASH.INC)
+%else
 MT_NVEC     equ 29                      ; (mt_vrun's and mt_vfr's counts)
+%endif
 MT_NFV      equ 2
+; CRASHLOG's flight recorder (KCRASH.INC): a record with this tag (a
+; letter), the caller's CS:IP, SS:SP, AX, BX.  Nothing in the normal build
+%macro CREC 1
+%ifdef CRASHLOG
+        pushf
+        push    word %1
+        call    mt_crec
+        popf
+%endif
+%endmacro
 
 ; ---- the stub (a PSP, then this at 100h) --------------------------------
 ST_PATH     equ 120h                    ; the program (ASCIIZ)
@@ -284,9 +298,17 @@ mt_old15    dd      0                   ; INT 15h, 25h, 26h and 0Eh (IRQ 6, the
 mt_old25    dd      0                   ;  floppy's) as they were (M10)
 mt_old26    dd      0
 mt_old0e    dd      0
+mt_old76    dd      0                   ; INT 76h (IRQ 14, the hard disk's), M12
 mt_down     db      0FFh                ; M10: the task switched from at a
                                         ;  floppy's wait (INT 15h AX=9001h),
+                                        ;  or the hard disk's (9000h, M12),
                                         ;  till it runs again (FFh: none)
+mt_ddev     db      1                   ; its device: 1 the floppy, 0 the hard
+                                        ;  disk (as 9001h/9000h's AL)
+mt_hirq     db      0                   ; 1: an IRQ 14 has come (mt_i76)
+mt_htk      db      0                   ; hard-disk waits the tick ended, the
+                                        ;  drive done, and no IRQ 14 yet (2: a
+                                        ;  dead line, no more switches there)
 mt_dto      db      0                   ; its time-out, in ticks left
 mt_dtmo     db      0                   ; 1: it came back by the time-out
 mt_dfw      db      0                   ; the EMS windows its transfer holds
@@ -318,7 +340,11 @@ mt_33ot     db      0                   ; (mt_m33on: another driver answered)
 ; at a change of the front.  The rest are the machine's (13h, 33h, the
 ; other IRQs, 67h, the BIOS's tables)
 mt_vrun     db      22h, 23h, 24h, 21h, 28h, 2Fh
+%ifdef CRASHLOG
+            db      00h, 01h, 02h, 03h, 04h, 75h
+%else
             db      00h, 01h, 02h, 03h, 04h, 06h, 75h
+%endif
             db      08h, 10h, 16h, 1Ch
             db      34h, 35h, 36h, 37h, 38h, 39h, 3Ah, 3Bh, 3Ch, 3Dh, 3Eh, 3Fh
 %if $ - mt_vrun != MT_NVEC
@@ -531,6 +557,9 @@ mt_tick:
         call    far [cs:mt_old08]       ; (back with the EOI sent; interrupts
         cli                             ;  off, whatever a hook there did)
         inc     word [cs:mt_ticks]
+%ifdef CRASHLOG
+        call    mt_crt
+%endif
         cmp     byte [cs:mt_down], 0FFh ; (M10: a floppy owner's time-out)
         je      .d
         call    mt_dtick
@@ -1238,6 +1267,7 @@ mt_ent: push    ax
 ;  The saved task comes back from mt_switch, all its registers kept.
 ; ---------------------------------------------------------------------
 mt_switch:
+        CREC    'S'                     ; (CRASHLOG: BL the task to run)
         pusha
         push    ds
         push    es
@@ -5778,6 +5808,12 @@ VF_DX       equ -6                      ;  BP at [BP], then its IP, CS, flags)
 VF_BX       equ -8
 VF_ES       equ -20
 mt_v10:
+%ifdef CRASHLOG
+        or      ah, ah                  ; (a mode set: AX)
+        jnz     .ncr
+        CREC    'V'
+.ncr:
+%endif
         cli                             ; (a hook's PUSHF / CALL FAR: interrupts
         push    bp                      ;  on; the IRET puts the caller's back)
         mov     bp, sp
@@ -6173,15 +6209,24 @@ mt_i13: cmp     byte [cs:mt_down], 0FFh
 ;  outside the kernel run (mt_dok), and their way in (INT 21h, 13h,
 ;  25h/26h; 67h while the cache's EMS windows are held) waits for the
 ;  owner to run again (mt_gate), or, where nothing can wait (an
-;  interrupt's handler, a nested call), is refused
+;  interrupt's handler, a nested call), is refused.
+;  M12: the same at the hard disk's waits.  KHD.INC calls AX=9000h at a
+;  wait IRQ 14 ends (after about 2 ms of it), and polls on when back; MT
+;  takes IRQ 14 itself (mt_i76), where the BIOS hasn't the disk, and the
+;  tick looks at the drive's status too (a dead line: mt_htk)
 ; =====================================================================
 MT_DTO      equ 37                      ; (ticks: about 2 s, the BIOS's own wait)
 
-; INT 15h: AX=9001h and 9101h (the floppy), 8500h (M11: SysReq), the rest on
+; INT 15h: AX=9001h and 9101h (the floppy), 9000h and 9100h (the hard disk,
+; M12), 8500h (M11: SysReq), the rest on
 mt_i15: cmp     ax, 9001h
         je      mt_dwait
+        cmp     ax, 9000h
+        je      mt_hwait
         cmp     ax, 9101h
         je      .e
+        cmp     ax, 9100h               ; (the BIOS's IRQ 14, with a disk of its
+        je      .e                      ;  own: mt_i76 calls it first)
 %ifndef NOSYSREQ
 .s1:    cmp     ax, 8500h
         je      .s
@@ -6205,8 +6250,10 @@ mt_i15: cmp     ax, 9001h
         times   (.s2 - .s1 + $ - .s) & 1 db 90h ; (M11's bytes even: what follows
                                         ;  keeps its parity)
 %endif
-.e:     cmp     byte [cs:mt_down], 0FFh ; the floppy's interrupt: its owner,
+.e:     cmp     byte [cs:mt_down], 0FFh ; the device's interrupt: its owner,
         je      .o                      ;  out, ready, and the next to run
+        cmp     al, [cs:mt_ddev]        ; (out on this device)
+        jne     .o
         push    ax
         push    bx
         mov     al, [cs:mt_down]
@@ -6227,26 +6274,85 @@ mt_i0e: pushf
         push    dx
         push    ds
         push    bp
+        mov     bx, 0Eh * 4
+        mov     dx, mt_i0e
+; (mt_i0e, mt_i76: the owner ready?  Then its turn now, if the vector at
+; BX is still DX here, MT's: else a hook ahead of it was interrupted)
+mt_iend:
         mov     bp, sp
         push    KSEG
         pop     ds
         cmp     byte [cs:mt_down], 0FFh
         je      .r
         mov     al, [cs:mt_down]
+        push    bx
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_RUN
+        pop     bx
         jne     .r
-        push    es                      ; IRQ 6 still ours?  (Else a hook
-        xor     ax, ax                  ;  ahead of it was interrupted)
+        push    es
+        xor     ax, ax
         mov     es, ax
-        cmp     word [es:0Eh * 4], mt_i0e
+        cmp     [es:bx], dx
         jne     .h
         mov     ax, cs
-        cmp     [es:0Eh * 4 + 2], ax
+        cmp     [es:bx+2], ax
 .h:     pop     es
         jne     .r
         jmp     mt_tick.v
 .r:     jmp     mt_tick.r
+
+; IRQ 14, the hard disk's (M12): the BIOS's handler first where it has the
+; disk too (40:75h; its EOI, 40:8Eh, its 9100h: the owner ready, mt_i15);
+; else the EOIs here, and the owner ready.  Then as mt_i0e.  (An IRQ 14
+; with nobody out: one of the polled waits', counted only, mt_hirq)
+mt_i76: push    ax
+        push    ds
+        xor     ax, ax
+        mov     ds, ax
+        cmp     [475h], al
+        pop     ds
+        je      .m
+        pushf
+        call    far [cs:mt_old76]
+        cli
+        jmp     short .c
+.m:     mov     al, 20h
+        out     0A0h, al
+        out     20h, al
+.c:     mov     byte [cs:mt_hirq], 1
+        push    bx
+        push    dx
+        push    ds
+        push    bp
+        cmp     byte [cs:mt_ddev], 0
+        jne     .v
+        mov     al, [cs:mt_down]
+        cmp     al, 0FFh
+        je      .v
+        call    mt_dready
+.v:     mov     bx, 76h * 4
+        mov     dx, mt_i76
+        jmp     mt_iend
+
+; INT 77h (M12): IRQ 15, or the PIC's default answer when the drive's
+; INTRQ went (a status read) before the CPU took IRQ 14.  The master's EOI,
+; and the slave's only if IRQ 15 is in service.  (The 1520's 10/25/89
+; BIOS sends both; its 1988 one neither, which would leave IRQ 3-15 off)
+mt_i77: push    ax
+        mov     al, 0Bh                 ; (OCW3: the slave's in-service bits,
+        out     0A0h, al                ;  then its requests again)
+        in      al, 0A0h
+        test    al, 80h
+        mov     al, 0Ah
+        out     0A0h, al
+        mov     al, 20h
+        jz      .m
+        out     0A0h, al
+.m:     out     20h, al
+        pop     ax
+        iret
+        db      90h                     ; (mt_par: what follows at its parity)
 
 ; task AL (mt_down) ready again, from its floppy's wait: the next to run,
 ; soon (mt_pend: the tick's, or a waiting task's look).  BX changed
@@ -6259,32 +6365,52 @@ mt_dready:
         mov     byte [cs:mt_pend], 1
 .x:     ret
 
-; the tick, with an owner out: its time-out counted (interrupts off).  All
-; kept
+; the tick, with an owner out and waiting: its time-out counted; the hard
+; disk's status looked at (not busy: ready, as by its IRQ 14; with none
+; come yet, one more to mt_htk's count) (interrupts off).  All kept
 mt_dtick:
-        dec     byte [cs:mt_dto]
-        jnz     .x
         push    ax
         push    bx
         mov     al, [cs:mt_down]
         call    mt_ent
         cmp     byte [cs:bx+TE_STATE], TS_WAITD
         jne     .n
+        cmp     byte [cs:mt_ddev], 0
+        jne     .t
+        call    mt_ddone
+        jz      .t
+        cmp     byte [cs:mt_hirq], 0
+        jne     .r
+        inc     byte [cs:mt_htk]
+        jmp     short .r
+.t:     dec     byte [cs:mt_dto]
+        jnz     .n
         mov     byte [cs:mt_dtmo], 1
-        call    mt_dready
+.r:     call    mt_dready
 .n:     pop     bx
         pop     ax
-.x:     ret
+        ret
 
 ; INT 15h AX=9001h: the floppy's controller is about to be waited for.
 ; The task switched from here if it can be (mt_dcan) and another can run
 ; meanwhile; back when it has run again (CF: by the time-out).  Else the
-; BIOS waits, as before.  Back with RETF 2: interrupts on, CF as said
+; BIOS waits, as before.  Back with RETF 2: interrupts on, CF as said.
+; mt_hwait: AX=9000h, KHD.INC's at the hard disk's wait (M12), the same
+mt_hwait:
+        push    ds
+        push    es
+        pusha
+        mov     al, 0                   ; (mt_ddev: the hard disk)
+        jmp     short mt_dwait.c
 mt_dwait:
         push    ds
         push    es
         pusha
-        cli
+        mov     al, 1                   ; (the floppy)
+.c:     cli
+        cmp     byte [cs:mt_down], 0FFh ; (one out already: not the kernel's
+        jne     .s                      ;  call, nothing here touched)
+        mov     [cs:mt_ddev], al
         push    KSEG
         pop     ds
         mov     byte [cs:mt_dtmo], 0
@@ -6319,32 +6445,58 @@ mt_dwait:
         cmc
         sti
         retf    2
+.s:     popa
+        pop     es
+        pop     ds
+        jmp     far [cs:mt_old15]
 
-; ZF clear if the floppy's interrupt has come (40:3Eh bit 7).  All kept
+; ZF clear if the device's interrupt has come: the floppy's (40:3Eh bit
+; 7); the hard disk not busy (its status read: that ends its INTRQ, and an
+; IRQ 14 still on its way becomes an INT 77h, mt_i77).  All kept
 mt_ddone:
+        push    ax
+        cmp     byte [cs:mt_ddev], 0
+        je      .h
         push    ds
         push    0
         pop     ds
-        test    byte [43Eh], 80h
+        mov     al, [43Eh]
         pop     ds
+        jmp     short .t
+.h:     push    dx
+        mov     dx, 1F7h
+        in      al, dx
+        pop     dx
+        not     al
+.t:     test    al, 80h
+        pop     ax
         ret
 
 ; may the task at the floppy's wait (9001h) be switched from?  CF if not:
-; the interrupt already in; another INT 13h call running round this one, a
-; call MT passed on to the BIOS, the kernel's INT 24h, a change of the
+; the interrupt already in; another INT 13h call running round this one
+; (the hard disk's, 9000h, M12: any; and none after IRQ 14 is found dead,
+; mt_htk), a call MT passed on to the BIOS, the kernel's INT 24h, a change of the
 ; front, any interrupt in service, the UI's mouse event; MT_KILL ended it
 ; (it ends after its call); inside INT 21h, unless the kernel's stack is
 ; the one (an INT 28h hook's call on its own stack: no) and its slice fits
 ; the TX; outside it, unless its stack is its own; a transfer in EMS
 ; windows 0 or 1 (MT maps a task's screen there), or partly outside the
 ; frame.  A transfer in windows 2-3 (the cache's): those held (mt_dfw).
+; (The hard disk's data moves by the owner's own REP INSW/OUTSW, its EMS
+; map back first: no window held)
 ; DS = KSEG; interrupts off; AX, BX, DX changed
 mt_dcan:
         mov     byte [cs:mt_dfw], 0
         call    mt_ddone
         jnz     .no
-        cmp     byte [cs:mt_in13], 1
+        mov     al, [cs:mt_in13]        ; (the floppy's own: 1; the hard
+        cmp     al, [cs:mt_ddev]        ;  disk's, KHD's: 0)
         jne     .no
+        or      al, al
+        jnz     .f
+        cmp     byte [cs:mt_htk], 2
+        jae     .no
+.f:
         cmp     byte [cs:mt_inb], 0
         jne     .no
         cmp     byte [cs:mt_crit], 0
@@ -6377,7 +6529,9 @@ mt_dcan:
 .own:   mov     ax, ss
         call    mt_mine
         jc      .no
-.em:    mov     ax, [cs:mt_13ax]        ; a read or write: its buffer, linear
+.em:    cmp     byte [cs:mt_ddev], 0
+        je      .y
+        mov     ax, [cs:mt_13ax]        ; a read or write: its buffer, linear
         cmp     ah, 2                   ;  (20 bits), and its length
         jb      .y
         cmp     ah, 3
@@ -7530,10 +7684,15 @@ mt_kalloc:
         ret
 
 %include "KMW.INC"                      ; (several window .RUNs at once, M8a)
+%ifdef CRASHLOG
+%include "KCRASH.INC"
+%endif
 ; the hot labels at the parity they had (M9b): a shift that flips one
 ; stops the build here (0 even, 1 odd)
 %macro  mt_par 2
+%ifndef CRASHLOG                        ; (a diagnostic build: not timed)
             times   -(((%1 - mt_tstart) & 1) != %2) db 0
+%endif
 %endmacro
             mt_par  mt_tick, 0
             mt_par  mt_tick.p, 0
@@ -7571,7 +7730,12 @@ MT_LEN      equ     mt_tend - mt_tstart
 MT_TX0P     equ     (MT_LEN + 15) / 16  ; task 0's TX: in the BSS, which starts
 MT_SSTK     equ     1024                ;  on the paragraph after the image;
 MT_INIL     equ     160                 ; LODE.INI's lists' room
-MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MW_BSS + MT_SSTK + 15) / 16
+%ifdef CRASHLOG
+CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK ; (KCRASH.INC: the ring, the report, a stack)
+%else
+CR_BSS      equ     0
+%endif
+MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MW_BSS + MT_SSTK + CR_BSS + 15) / 16
                                         ; (then the lists, a header, KMW's
                                         ;  sessions, the stack)
 section mttbss
@@ -7582,6 +7746,11 @@ mt_hdr      resb    20h                 ; (MT_UI: an .EXE's header)
 mw_ses      resb    (MW_MAX + 1) * SE_SIZE  ; (KMW.INC: the sessions)
 mw_tmp      resb    NWIN * 4            ; (mw_raise: the window stack, reordered)
             resb    MT_SSTK             ; (mt_swnow's stack)
+%ifdef CRASHLOG
+mt_crb      resb    CR_N * 16           ; (KCRASH.INC)
+mt_crbuf    resb    CR_LEN
+mt_crstk    resb    CR_STK
+%endif
 mt_bend:
 
 ; ---- start-up (section boot, in the load image: CS = 1000h) ----------
@@ -7748,7 +7917,46 @@ mt_boot:
         mov     word [ems_int67 + 1], mt_i67
         mov     [ems_int67 + 3], es
         pop     ds
-.n67:
+.n67:   push    ds                      ; C: (KHD.INC) there: its IRQ 14
+        push    KSEG                    ;  through MT (mt_i76), on in both
+        pop     ds                      ;  PICs (KHD's start-up turns it off
+        cmp     byte [C_DT + D_PRES], 0 ;  without the BIOS's disk), and INT
+        pop     ds                      ;  77h MT's (M12)
+        je      .n76
+        mov     ax, [76h * 4]
+        mov     [es:mt_old76], ax
+        mov     ax, [76h * 4 + 2]
+        mov     [es:mt_old76 + 2], ax
+        mov     word [76h * 4], mt_i76
+        mov     [76h * 4 + 2], es
+        mov     word [77h * 4], mt_i77
+        mov     [77h * 4 + 2], es
+        in      al, 0A1h
+        and     al, 0BFh
+        out     0A1h, al
+        in      al, 21h
+        and     al, 0FBh
+        out     21h, al
+.n76:
+%ifdef CRASHLOG
+        mov     word [6 * 4], mt_cr6    ; (KCRASH.INC: INT 06h, a restart through
+        mov     [6 * 4 + 2], es         ;  40:67h with CMOS 0Fh = 0Ah, the ring
+        mov     word [467h], mt_crst    ;  cleared)
+        mov     [469h], es
+        mov     al, 0Fh
+        out     70h, al
+        mov     al, 0Ah
+        out     71h, al
+        push    di
+        push    cx
+        mov     di, mt_crb
+        mov     cx, CR_N * 16 / 2
+        xor     ax, ax
+        cld
+        rep     stosw
+        pop     cx
+        pop     di
+%endif
         mov     si, mt_vfr              ; INT 09h and 1Bh: task 0's, in front
         mov     di, mt_fv
 .fv:    mov     bl, [es:si]

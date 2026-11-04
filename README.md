@@ -67,7 +67,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
   - Text is selected with the mouse, copied (CODE-C) and pasted in as keys (CODE-V), with a right-click menu as in Write. A program in the window that uses the mouse gets its clicks there.
   - A program can publish its own screen and font for its window to draw, and can ask to run as soon as the GPIB bridge's SRQ arrives.
   - CLAUDE.COM runs in one (CODE-A), with the link about as fast as full screen.
-- **Disk waits:** tasks behind keep running while one waits on the floppy (its motor's spin-up, a seek, a sector).
+- **Disk waits:** tasks behind keep running while one waits on the floppy (its motor's spin-up, a seek, a sector) or on the hard disk (a seek, the disk's turn, a write's end).
 
 **The command prompt** (`LCMD.COM`)
 - DOS 3.30's commands, with redirection and pipes (their files in %TEMP%, else %TMP%, else the current drive's root), and `&&` and `||`.
@@ -114,7 +114,7 @@ Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off) agai
 |---|---:|---:|---:|
 | BENCH file-system total | **78.6** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **581.6 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, with EMS | **581.5 KB** | 573.1 KB | 494.2 KB |
 | Memory for programs, no EMS | 565.5 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
@@ -161,6 +161,7 @@ See `docs/lodestone-floppy-dev.md`.
 | `os/tests` | `pcemu`-based tests (see Tests below), and the DOS programs they run: TESTDOS, CACHETST, CAPTEST, EMSTEST, HDABS, HDFLUSH, MDTEST, MEMSZ, TSR, UPPER, the M33 programs, UITEST.RUN; and for the 1520: CMDTEST.BAT (the batch language), CALCTEST.BAT (the calculator, step by step) and FPUPROBE.COM (what the coprocessor answers after FNINIT) |
 | `os/bench` | BENCH.COM, DISKMAP.COM, `run_bench.py` (against GRiD MS-DOS), `compare3.py` (against GRiD MS-DOS and FreeDOS, with EMS; FreeDOS's files in `bench/freedos`), `run_bench_hd.py` (on C: and M:), profiling tools, `RESULTS.TXT`, `RESULTS3.TXT`, `RESULTS_HD.TXT` and the 1520 logs |
 | `os/claude` | CLAUDE.COM, Claude for GRiD (the GRiD side of claude-link): chat, and Term (`TERMLINK.INC` the link, `TERMCELL.INC` the screen, `TERMKEYS.INC` the keys); resident Claude: `CLAUDE /R` (an INT 16h stub at the top of memory, its console `RCON.ASM` in EMS: Term's own code, Claude Code in the pop-up) and `CLAUDE /U`, with `M1TEST.BAT` for the 1520; `KEYCODE` (each key's INT 16h code, for the 1520); and the test programs `EMSUSE`, `GFXUSE`, `T1C`, `BUSY`, `MHAND`, `HOLE`, `HOOK16` and `PAGE1` |
+| `os/diag` | CRASHLOG, a diagnostic build for a crash that restarts the 1520: a flight recorder in MT and a catch for the restart through the BIOS's shutdown code, `CRASHRPT.COM` (the report to `CRASH.BIN`) and `crashdecode.py`; its own `README.md` says how to use it |
 | `os/releases` | Every release's files, 0.1 to 0.6 (0.6 has the ROM images too) |
 | `os/screens` | Emulator screenshots (`readme/` for this page, made by `readme_shots.py`) |
 | `os/*.py` | `pcemu.py` (a BIOS-level PC in unicorn: INT 13h with real-drive timing, mode 40h, the 7210 GPIB chip, EMS, an IDE drive with optional seek and rotation timing), `ktest.py`, `mkimg.py`, `mkrun.py`, `psf.py`, `sim7210.py`, `typfont.py` (builds the fonts); `gosim.py` and `test_*.py` are the 0.1 harness |
@@ -181,7 +182,7 @@ cd os/claude && ./build.sh
 The built binaries are committed too, so a fresh clone can go straight onto a floppy.
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,535 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,551 checks pass (the 15 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -214,11 +215,10 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
-Multitasking works on the 1520. Built since 0.6 and not yet tried there: Paint in a window, resident Claude reading the program's screen in the background (CLAUDE 1.11, with the bridge's quiet firmware) and drawing the mascot in its console (1.12), `TEMP=` with pipes from the ROM, and SysReq as the task switcher.
+Multitasking works on the 1520, and so do Paint in a window and resident Claude reading the program's screen in the background (CLAUDE 1.11) and drawing the mascot in its console (1.12). Built since 0.6 and not yet tried there: `TEMP=` with pipes from the ROM, SysReq as the task switcher, and tasks running during hard-disk waits.
 
 **Next:**
 - **On the 1520, and release 0.7** (M9): the list above tried on the machine, and what it finds fixed.
-- **Disk waits on the hard disk:** M10 lets tasks run during floppy waits; C: is the kernel's own polled driver, so its waits don't yet let others run.
 - **GRIDMODE.COM:** the BIOS's display functions (INT 15h E420h-E422h) from the prompt, as GRiD's MS-DOS `MODE` gave them: the panel type, the internal panel or the external RGB port, the colour map (how CGA colours become plasma or LCD greys, at 40:A7h) and the hardware text font. A tool beside GRIDMEM, not in ROM 1; SYSTEM to show the panel type too.
 - **Voice on the Pi:** push-to-talk and spoken answers.
 - **Native bench programs:** a plot view in the UI core, and an instrument app driven by profiles (scopes, a VNA). Programs that share the screen.

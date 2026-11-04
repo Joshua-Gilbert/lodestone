@@ -218,6 +218,7 @@ mw_run: cmp     byte [cs:mw_n], 0
 ; and the session's band kept through it: the base would leave its own.
 ; Then SI = 0, so redraw_all calls nothing more
 mw_rdfn:
+        CREC    'R'
         mov     si, [redraw_fn]
         cmp     byte [cs:mw_cur], 0
         je      .x
@@ -291,6 +292,7 @@ mw_peek:
 
 ; mw_peek's file closed, if it is open (all kept but the flags)
 mw_shut:
+        CREC    'C'
         push    ax
         push    bx
         xor     bx, bx
@@ -312,6 +314,7 @@ mw_shut:
 ;  read here)
 ; ---------------------------------------------------------------------
 mw_start:
+        CREC    'O'
         pusha
         mov     ax, 8
         cmp     byte [cs:mw_n], MW_MAX
@@ -480,7 +483,9 @@ mw_go:  cld
 ;  code, SS = the UI's.  It goes; the next in front runs (or the Executive,
 ;  in run_app, when it was the last)
 ; ---------------------------------------------------------------------
-mw_end: cld                             ; (its exit code isn't wanted: the
+mw_end:
+        CREC    'E'
+        cld                             ; (its exit code isn't wanted: the
         push    ss                      ;  list was drawn again as its windows
         pop     ds                      ;  closed, the whole screen then)
         push    ss
@@ -1270,6 +1275,7 @@ mw_load:
 
 ; AL to the front of mw_mru (taken out first, if it is there)
 mw_front:
+        CREC    'F'
         push    ax
         call    mw_drop
         pop     ax
@@ -1287,6 +1293,7 @@ mw_front:
         ret
 ; AL out of mw_mru (the rest close up; 0FFh after them)
 mw_drop:
+        CREC    'D'
         push    bx
         push    cx
         xor     bx, bx
@@ -1331,6 +1338,7 @@ mw_own: push    bp
 ; session AL's windows to the top of the window stack, in their order ->
 ; CF if that changed it
 mw_raise:
+        CREC    'U'
         pusha
         mov     dh, al                  ; (DH: whose)
         push    es
@@ -1390,6 +1398,7 @@ mw_raise:
 ; session AL's windows off the window stack (the session goes) -> CF if
 ; it had any
 mw_unwin:
+        CREC    'W'
         pusha
         mov     dh, al                  ; (DH: whose)
         xor     bx, bx                  ; (read)
@@ -1530,6 +1539,7 @@ mw_corner:
 ; or shorten it a text row, Return keeps the size, ESC leaves it) -> CF
 ; set if its size changed (and the screen is drawn again)
 mw_size:
+        CREC    'Z'
         pusha
         sbb     bp, bp                  ; (BP = 0FFFFh: the mouse)
         UCALL   hide_cursor
@@ -1597,7 +1607,8 @@ mw_size:
         popa
         clc
         ret
-.end:   UCALL   mv_frame                ; the outline off
+.end:   CREC    'z'                     ; (CRASHLOG: the resize's drop)
+        UCALL   mv_frame                ; the outline off
         mov     ax, [si+W_W]
         cmp     ax, [cs:mw_ow]
         jne     .new
