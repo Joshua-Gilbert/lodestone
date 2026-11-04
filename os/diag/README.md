@@ -58,6 +58,18 @@ In pcemu, Return on CLAUDE.COM gives `gnNLlqHiGnNLlb…`.
 
 **Then `L`, with nothing after:** it died inside `mt_load`, past the 287's FNSAVE. So `p`/`P` now go before and after `mt_load`'s FRSTOR (or FNINIT), in place of the O and R window tags (cr_wtags `-pZzPgbiGHLlnNqr`). `nofpu/` is the same build with MT never touching the 287 at a switch.
 
+**Then `P`:** the FRSTOR finished; it died later in `mt_load`. So the table is now `-vwePgbiGHLlsNqr`:
+- `N`: after the FNSAVE.
+- `L`: loading.
+- `P`: after FRSTOR.
+- `v`: the kernel's variables back.
+- `w`: the task's vectors back.
+- `e`: its EMS page registers written. This is the prime suspect: written while the floppy's DMA runs.
+- `s`: on its stack.
+- `l`: loaded.
+
+In pcemu: `gNLPvweslqHiG…`.
+
 **Disk-wait phases (the low nibble too).** The low nibble also records the disk waits' phases as they happen:
 - `g`: a task goes out;
 - `i`: IRQ 6 comes;
