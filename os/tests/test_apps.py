@@ -44,6 +44,7 @@ def build():
     for src, dst in (('apps/SYSTEM.ASM', SYSTEM), ('apps/WRITE.ASM', WRITE), ('tests/UITEST.ASM', UITEST), ('apps/CALC.ASM', CALCRUN),
                      ('apps/TASKS.ASM', os.path.join(GOS, 'apps', 'TASKS.RUN')),
                      ('tests/RCTEST.ASM', os.path.join(HERE, 'RCTEST.RUN')), ('tests/RC6.ASM', os.path.join(HERE, 'RC6.RUN')),
+                     ('tests/RCP6.ASM', os.path.join(HERE, 'RCP6.RUN')),
                      ('tests/MENUTEST.ASM', os.path.join(HERE, 'MENUTEST.RUN')),
                      ('tests/CLIPTEST.ASM', os.path.join(HERE, 'CLIPTEST.RUN')),
                      ('apps/PAINT.ASM', os.path.join(GOS, 'apps', 'PAINT.RUN'))):
@@ -2689,6 +2690,7 @@ def t_mdisk():
 # ---------------------------------------------------------------------
 RCTEST = os.path.join(HERE, 'RCTEST.RUN')
 RC6 = os.path.join(HERE, 'RC6.RUN')
+RCP6 = os.path.join(HERE, 'RCP6.RUN')                # (RC6 reading with UI_POLL)
 
 def press(k, x, y, buttons):
     """Move the pointer to (x, y), then the buttons down and up again."""
@@ -3247,6 +3249,15 @@ def body(k):
     v = k.pc.rd(0xB800, 0, 0x8000)
     return b''.join(v[(y & 3) * 0x2000 + (y >> 2) * 80:][:80] for y in range(24, 400))
 
+def menu_items(k):
+    """The items of the menu up (UI_MENU's window, help_w), as their texts before the key."""
+    c, y, w, h = struct.unpack('<4H', k.rd('help_w', 8))
+    out = []
+    for ly, l in k.ocr():
+        t = re.split(r'\?+| {2,}', l[c:c + w].strip())[0].strip() if y < ly < y + h else ''
+        if t and t[0].isalnum(): out.append(t)          # (the lit band's edges: rules, not items)
+    return out
+
 def t_exmenu():
     """The Executive's right-click menu (ex_menu, RMENU.INC): the row clicked
     selected, then what applies to it, each item a key of the Executive's
@@ -3270,11 +3281,17 @@ def t_exmenu():
     check('a right click on NOTE.TXT: it selected, a menu of 5 there (Open, Copy, Move, Rename, Delete, each with its key); '
           'no Open full screen, no programs', k.exec_list()[k.u16('sel')] == 'NOTE.TXT' and shown[:2] == (True, 88)
           and all(shown[2]) and not has(k, 'Open full screen') and not has(k, 'Calculator'), (shown, k.exec_list()[k.u16('sel')]))
+    m1 = menu_items(k)
     k.key(ktest.ESC); point(k, 100, 100)
-    check('... ESC: none, the screen as it was', not up() and body(k) == v0 and not k.crashed, k.u16('wdepth'))
+    check('... in this order: Open, Copy, Move, Rename, Delete; ESC: none, the screen as it was',
+          m1 == ['Open', 'Copy', 'Move', 'Rename', 'Delete'] and not up() and body(k) == v0 and not k.crashed, (m1, k.u16('wdepth')))
     rpress(100, rowy('NOTE.TXT')); k.key('R'); k.key(ktest.ENTER)
     check('... R, Return: Rename, its form for NOTE.TXT (as CODE-R)', has(k, 'Rename NOTE.TXT'), screen(k))
     k.key(ktest.ESC)
+    rpress(100, rowy('NOTE.TXT')); k.key(ktest.DOWN); k.key(ktest.ENTER); cf = has(k, 'Copy NOTE.TXT'); k.key(ktest.ESC)
+    rpress(100, rowy('NOTE.TXT')); k.key(ktest.DOWN); k.key(ktest.DOWN); k.key(ktest.ENTER); mf = has(k, 'Move NOTE.TXT')
+    k.key(ktest.ESC)
+    check('... Copy, and Move: their forms for NOTE.TXT (as CODE-C, CODE-M)', cf and mf and not k.crashed, (cf, mf))
     rpress(100, rowy('MEMSZ.COM'))
     check('a right click on MEMSZ.COM (multitasking off): the same 5, no Open full screen', up() and hw()[3] == 88
           and not has(k, 'Open full screen'), (hw(), screen(k)))
@@ -3285,9 +3302,10 @@ def t_exmenu():
           and any('MEMSZ.COM ended' in l for l in k.band()), (''.join(k.pc.tty)[-80:], k.band()))
     yfree = 24 + 16 * n + 8                                   # (under the last row)
     rpress(100, yfree)
-    launch = [has(k, t) for t in ('Write', 'Claude', 'Calculator', 'Command prompt', 'System', 'Read the disk again')]
-    check('a right click under the last row (the message in the band gone): the programs and F5, 6 (no Tasks without '
-          'multitasking), the selection as it was', up() and hw()[3] == 6 * 16 + 8 and all(launch) and not has(k, 'Tasks')
+    launch = menu_items(k)
+    check('a right click under the last row (the message in the band gone, the menu up at once): the programs and F5, '
+          'in order, 6 (no Tasks without multitasking), the selection as it was', up() and hw()[3] == 6 * 16 + 8
+          and launch == ['Write', 'Claude', 'Calculator', 'Command prompt', 'System', 'Read the disk again']
           and not has(k, 'MEMSZ.COM ended') and k.exec_list()[k.u16('sel')] == 'MEMSZ.COM', (hw(), launch, k.band()))
     calc = lambda: k.rd('run_active', 1) == b'\x01' and has(k, 'Calculator') and not has(k, 'Command prompt')
     k.key(ktest.DOWN); k.key(ktest.DOWN); k.key(ktest.ENTER)
@@ -3306,8 +3324,11 @@ def t_exmenu():
     k.key(ktest.ESC); k.key(ktest.ESC)                        # (the menu, then back to Title)
     k.key(K_BTAB)                                             # Subject
     rpress(100, 24 + 16 + 8)                                  # its second row: SUB
+    sm = menu_items(k)
     check('Subject outlined, a right click on SUB: it chosen, Copy and Delete', focus(k) == 2 and up() and hw()[3] == 40
-          and has(k, 'Copy') and has(k, 'Delete'), (focus(k), hw(), subjects(k)))
+          and sm == ['Copy', 'Delete'], (focus(k), hw(), sm, subjects(k)))
+    k.key(ktest.ENTER)
+    check('... Return on Copy: the Copy form for the subject SUB (as CODE-C there)', has(k, 'Copy SUB'), screen(k))
     k.key(ktest.ESC); k.key(ktest.ESC)
     to_subject(k, 'Root')
     k.key(ktest.F1)

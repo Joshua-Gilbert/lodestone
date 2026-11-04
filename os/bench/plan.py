@@ -28,7 +28,8 @@ SECTION; sc_main): such a pad holds wherever its code is put, so it may go
 inside TERMLINK.INC or OPS.INC, which sit at other offsets in CLAUDE.COM and
 RCON; B is then the most pads.  SECTION=app APP=NAME: a .RUN's, with SC=1
 (apps/NAME.LST and .MAP: mkrun.py -l apps/NAME; hot.py's "ap_taken"[NAME];
-inside RMENU.INC too, which Write and TERM share).
+inside RMENU.INC too, which Write and TERM share; os/src/RMENU.INC since
+2026-11-04, in the kernel too, the Executive's menu: SECTION=ui counts it there).
 Output: per budget the share of taken entries left odd and the run heads;
 then, for the plan shown, its sites (pad each with `times ($ - $$) & 1 db
 90h` before the label marked E, or `($ + 1 - $$)` for O), and the hot labels

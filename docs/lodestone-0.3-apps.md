@@ -1032,30 +1032,62 @@ A right click in the Executive's list selects the row under it, then opens a men
   | The form, or the band | nothing |
 
   - Each item shows its key, as Write's menu does: "Rename", a tab to column 21, "CODE-R".
-  - Open full screen runs the program in the Executive's own task (`run_wait`), as Shift-Return does. Under multitasking, Shift held while choosing any program item does the same, because the item goes through Return's path (KMW's `mw_prog` looks at Shift).
+  - Open full screen runs the program in the Executive's own task (`run_wait`), as Shift-Return does. Under multitasking, Shift held as Open is chosen on a DOS program does the same, because Open is Return (KMW's `mw_prog` looks at Shift; untested).
   - A right click on an item of the menu chooses it, as a left one does.
+  - A right click while a message waits in the band clears it and opens the menu at once; a left click only clears it, as before.
   - The help window says "Right click   a menu of what applies" (16 lines now, of the 18 it has room for).
 - **How:**
-  - `ex_menu` (EXEC.INC) works out what applies as RMENU.INC's need bits. `RX_ROW` is a row of Title or Subject, `RX_FILE` a file, `RX_PROG` a DOS program, `RX_MT` multitasking on and `RX_NONE` no row. RMENU.INC's own bits, 1 and 2, are left alone.
-  - RMENU.INC, Write's and TERM's menu builder, is shared as it was. It moved from `os/apps` to `os/src`, where both the apps' and the kernel's builds find it.
+  - `ex_menu` (EXEC.INC) works out what applies as RMENU.INC's need bits. `RX_ROW` is a row of Title or Subject, `RX_FILE` a file, `RX_PROG` a DOS program and `RX_NONE` no row. `RX_MT`, multitasking on, is bit 0, RMENU's `RM_SEL`, which the Executive has no use for, so `or dl, [ex_mtw]` sets it. RMENU's `RM_CLIP` (bit 1) is left alone.
+  - RMENU.INC, Write's and TERM's menu builder, is shared as it was. It moved from `os/apps` to `os/src`, where both the apps' and the kernel's builds find it. `rm_buf` and `rm_key` hold all 13 items (`rmenu` has no bound; asserted against `ex_items`).
   - The items are `ex_items`: a text, a key and what it needs. `K_XFULL` (FE00h, no key's code) stands for Open full screen.
+  - **The key chosen is put in the BIOS's keyboard buffer** (INT 16h AH=05h, as the End key above is pushed; on the 1520, GRiD's `KbPlaceChar`), and `ex_loop` reads it as if typed. So under multitasking KMW sees it first, as a typed key: CODE-K and CODE-T bring an open calculator or Tasks to the front instead of starting a second.
+  - A right click on a subject that can't be opened (its CHDIR fails: its message in the band) gives no menu.
 - **Who gets a right click** (`mouse_event`, UICORE.INC):
   - Before, only a `.RUN` for API 7.
-  - Now also the Executive's own wait. `ex_rclk` is 1 while `ex_loop` waits in `UI_EVENT` and while its menu is up, and 0 everywhere else: the Executive's forms, its help, a `.RUN` it runs.
-  - With multitasking on, the core makes the event for everyone, so that KMW can route it. `mw_got` then passes it on only to whom it was for: the Executive's wait, or a `.RUN` for API 7. An older `.RUN` (the calculator, Tasks, System) still never sees one.
+  - Now also the Executive's own wait. Bit 0 of `ex_rclk` is set while `ex_loop` waits in `UI_EVENT` and while its menu is up, and clear everywhere else: the Executive's forms, its help, a `.RUN` it runs.
+  - With multitasking on, KMW's `mw_poll`, the look `UI_EVENT` makes, sets bit 1 around it, and the core then makes the event for everyone, so that KMW can route it. `mw_got` passes it on only to whom it was for: the Executive's wait (bit 0), or a `.RUN` for API 7 (`mw_rcno`). An older `.RUN` (the calculator, Tasks, System) still never sees one. `UI_POLL`, which `mw_got` never sees, has no bit 1, so the core's old rule holds there.
   - `mw_got` routes a right click as a left one. On another window, or on the Executive, it brings that one to the front and is taken, with no menu. On the one in front it is that one's. So two right clicks open the Executive's menu from a window in front.
-  - `ex_rclk` is kept per window session, as `ex_mtw` is (KMW's `mw_ctx`, now 2 bytes there). A new session starts with it 0. `ex_mtw` and `ex_rclk` are one word, which `mouse_event` tests at once.
+  - `ex_rclk` is kept per window session, as `ex_mtw` is (KMW's `mw_ctx`, now 2 bytes there, and its length assert counts both). A new session starts with it 0.
 - **Cost** (multitasking off):
-  - The UI block grows by 572 bytes (`ui_keep_end` 64D0h to 670Ch), so DOS programs get 0.6 / 0.5 KB less: MEMSZ 564.9 KB without EMS, 581.0 KB with it. That is the resident cost Joshua accepted for a menu with multitasking off.
-  - With multitasking on, MEMSZ is 556.9 KB.
+  - The UI block grows by 580 bytes (`ui_keep_end` 64D0h to 6714h), so DOS programs get 0.6 / 0.5 KB less: MEMSZ 564.9 KB without EMS, 581.0 KB with it. That is the resident cost Joshua accepted for a menu with multitasking off.
+  - With multitasking on, MEMSZ is 556.8 KB (557.5 before).
   - LODE.SYS is 50,176 bytes, exactly 98 sectors (49,648 before). ROM 1 has 1,024 bytes (2 sectors) left (1,536 before).
-  - LODEMT.SYS is 21,711 bytes (21,679 before), still 43 sectors.
-  - Three parity pads keep the hot code where it was (EVEN.INC; `mt_par`'s `mw_got` and `mw_poll`).
+  - LODEMT.SYS is 21,736 bytes (21,679 before), still 43 sectors.
+  - Three new parity pads keep the hot code where it was: after `mouse_event` (UICORE.INC), after RMENU.INC's include (`focus_key` odd, LODE.ASM's list), and before `mw_got` (`mt_par`). `mw_poll`'s pad stays.
 - **Tests:**
-  - test_apps `t_exmenu` (multitasking off): a right click on NOTE.TXT selects it, and the menu is its 5 items (88 pixels high), with no Open full screen and no programs. ESC leaves the screen as it was. R, Return gives Rename's form. MEMSZ.COM's menu has the same 5, and Open runs it ("MEMSZ.COM ended"). A right click under the last row clears the message and gives the 6 programs, with no Tasks; Down, Down, Return opens the calculator, and so does a right click on its item. The form and the band give no menu. A drive gives the programs; the subject SUB gives Copy and Delete; the help window has the line; Delete from the menu asks, and Return deletes.
+  - test_apps `t_exmenu` (multitasking off):
+    - A right click on NOTE.TXT selects it. The menu is its 5 items in order (Open, Copy, Move, Rename, Delete; 88 pixels high), with no Open full screen and no programs. ESC leaves the screen as it was.
+    - From the menu, R, Return gives Rename's form, and Copy and Move give theirs.
+    - MEMSZ.COM's menu has the same 5, and Open runs it ("MEMSZ.COM ended").
+    - A right click under the last row clears the message and gives the 6 programs in order, with no Tasks. Down, Down, Return opens the calculator, and so does a right click on its item.
+    - The form and the band give no menu. A drive gives the programs.
+    - The subject SUB gives Copy and Delete, and Copy's form is for SUB.
+    - The help window has the line. Delete from the menu asks, and Return deletes.
   - test_apps `t_rclick`: its two checks that the Executive saw no right click now see EV_RCLICK, then the left click that closes the menu.
-  - test_mt `t_exmenu` (9 checks, multitasking on): LCMD.COM's menu is 6 items with Open full screen. That runs LCMD in task 0, full screen, with no task for it, and EXIT comes back ("LCMD.COM ended"). No row gives 7 programs with Tasks. Open on LCMD.COM is a task in a terminal window, as Return. With the calculator up and the Executive in front, a right click on the calculator's title brings it to the front with no menu. A right click on the Executive's list brings it to the front with no menu, and the next one opens it. ESC leaves the calculator open.
-- **Untested:** a right click on a window of a `.RUN` for API 7 while another is in front (only the calculator, an older one, is tested); Open full screen on an `.EXE` (only `.COM`s).
+  - test_mt `t_exmenu` (14 checks, multitasking on):
+    - LCMD.COM's menu is 6 items with Open full screen. That runs LCMD in task 0, full screen, with no task for it, and EXIT comes back ("LCMD.COM ended").
+    - LODE.INI's menu (not a program) has no Open full screen.
+    - No row gives 7 programs with Tasks. Open on LCMD.COM is a task in a terminal window, as Return.
+    - With the calculator up and the Executive in front, a right click on the calculator's title brings it to the front with no menu. A right click inside it is not given it (the events past `mw_got`, at `ui_event.got`+5).
+    - A right click on the Executive's list brings it to the front with no menu, and the next one opens it.
+    - The menu's Calculator with one open brings that one to the front, with no second.
+    - With no windows: RC6.RUN (API 6) and RCP6.RUN (API 6, reading with `UI_POLL`; new) get no right click; RCTEST.RUN (API 7) does. The left click after it reaches each, so the check reads each one's own events (RCP6's are at other offsets than RCTEST's).
+    - Then, with RCTEST's API 7 still in `run_hdr`, a right click in the Executive's Rename form is not given.
+- **Untested:**
+  - a right click on a window of a `.RUN` for API 7 while another is in front (only the calculator, an older one, is tested);
+  - Open full screen on an `.EXE` (only `.COM`s), and Shift held as Open is chosen;
+  - a subject that can't be opened (its CHDIR failing under the menu);
+  - the choices of a menu longer than the screen (13 items at most, 7 at once).
+  - `mw_rcno` at `.own` (the filter ahead of `mw_topses`): reaching it needs an Executive wait that isn't its list's, with a session window open on top. The Executive's forms, help and messages are windows on top, so this is defensive; the Rename-form check runs with no windows (`.win0`).
+  - KMW's `mw_say` (an older path: a message from the Executive's wait, as when a window doesn't fit) leaves bit 0 of `ex_rclk` on, so `ui_msg`'s wait can see a right click. It ends on any event and the result is thrown away, so this is harmless.
+- **The review** (3 reviewers, then a re-review of the fixes) found:
+  - **`UI_POLL` gave an API 6 `.RUN` right clicks under multitasking.** The core made the event for everyone whenever multitasking was on, and only `mw_got` filtered it, but `UI_POLL` doesn't go through `mw_got`. Now only `mw_poll`'s look makes it for everyone (bit 1). Reproduced with RCP6.RUN, now a test.
+  - **The menu's Calculator and Tasks started a second window** under multitasking, where CODE-K and CODE-T typed bring the open one to the front. The key went straight to `ui_dispatch`, past KMW. Now it is put in the BIOS's buffer and read as typed.
+  - **A filter bypass:** with the Executive in front and a window on top, `mw_topses` returned events before the filter. The filter is now first (`mw_rcno`, at `.own` and with no windows).
+  - **Smaller fixes:** `mw_ctx`'s length assert counted 1 byte for the `ex_mtw` range, which is 2 now; a subject whose CHDIR fails gave a menu for the subject before it; and `rm_buf` was sized for the 7 that apply at once now, with no check.
+  - **Test gaps:** the items' order; Copy and Move never chosen; a file that isn't a program under multitasking; a right click in a form under multitasking. Each now has a check.
+  - **Bytes:** `RX_MT` as `ex_mtw`'s own bit and one word add for `ex_mtw` and `ex_rclk` in `ex_loop` saved 10 bytes, which the fixes used.
+  - **Mutations:** 25 one-change mutations of the menu and the routing, each built and run against both `t_exmenu`s. All are caught except one: skipping the CHDIR message's check (untested above). The first run let one through, `mw_poll` leaving bit 1 set: the RCP6 check read its events at RCTEST's offsets, so it could never fail. It now reads RCP6's own, and has a left click that must arrive.
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:
