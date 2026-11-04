@@ -31,6 +31,7 @@ MODES = ['', '⏵⏵ accept edits on (shift+tab to cycle)', '⏸ plan mode on (s
 
 class App:
     def __init__(s):
+        s.welcome = []; s.resized = False                  # (SIGWINCH: drawn again whole, as Ink does)
         s.inp = ''; s.live_h = 0; s.mode = 0; s.spin = None; s.dialog = None
         s.status = ''; s.history = []; s.ctrl_c = 0; s.stream = None
         s.out = sys.stdout.buffer
@@ -190,6 +191,9 @@ class App:
         if t.isprintable(): s.inp += t; s.render()
 
     def tick(s):
+        if s.resized:
+            s.resized = False; s.live_h = 0
+            s.w(ESC + '[2J' + ESC + '[H'); s.render(s.welcome); return
         if s.stream is not None:
             if s.stream:
                 line = s.stream.pop(0)
@@ -272,8 +276,7 @@ def main():
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
     app = Full() if '--full' in sys.argv else App()
-    if isinstance(app, Full):
-        signal.signal(signal.SIGWINCH, lambda *a: setattr(app, 'resized', True))
+    signal.signal(signal.SIGWINCH, lambda *a: setattr(app, 'resized', True))
     try:
         app.w(ESC + '[c')                              # DA1: wait for the answer (Ink does)
         r, _, _ = select.select([fd], [], [], 1.0)
@@ -283,11 +286,12 @@ def main():
             app.render()
         else:
             app.title('✳ Claude Code')
-            app.render(['\x1b[38;5;174m╭───────────────────────────────────────────╮\x1b[39m',
+            app.welcome = ['\x1b[38;5;174m╭───────────────────────────────────────────╮\x1b[39m',
                     '\x1b[38;5;174m│\x1b[39m \x1b[38;5;174m✻\x1b[39m Welcome to \x1b[1mClaude Code\x1b[22m (fake)                 \x1b[38;5;174m│\x1b[39m',
                     '\x1b[38;5;174m│\x1b[39m   cwd: ~/grid    terminal: %-15s \x1b[38;5;174m│\x1b[39m' % ('DA ok' if da.startswith(b'\x1b[?') else 'no DA'),
                     '\x1b[38;5;174m│\x1b[39m   api key: %-30s \x1b[38;5;174m│\x1b[39m' % ('SET' if os.environ.get('ANTHROPIC_API_KEY') else 'none'),
-                    '\x1b[38;5;174m╰───────────────────────────────────────────╯\x1b[39m', ''])
+                    '\x1b[38;5;174m╰───────────────────────────────────────────╯\x1b[39m', '']
+            app.render(app.welcome)
         while True:
             r, _, _ = select.select([fd], [], [], 0.1)
             if r:

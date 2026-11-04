@@ -274,10 +274,11 @@ def t_window():
               fs == (new, new) and mv.get('there') == new and mv.get('pub'), (fs, new, mv))
         # Claude Code's cursor hidden (as the real one's): the window's view follows where it is all the same
         h.k.key('big', settle=False); h.m.keys.append(ENTER); h.m.halted = False
-        ok = h.run_until(lambda: 'line 59' in h.text() and 'CODE-Q quits' in h.text(), 30)
+        ok = h.run_until(lambda: 'line 59' in h.text() and 'shortcuts' in h.text(), 30)
         check('"big" (60 lines; Claude Code\'s cursor hidden: PBF_NOCUR): the window\'s view follows it (MT_TROWS: its '
-              'row with bit 7), its last line and CLAUDE\'s status band in view', ok and 'CODE-Q quits' in h.text()
-              and h.desc()['flags'] & 2, (h.desc(), h.text()[-500:]))
+              'row with bit 7), its last line and the prompt below it in view (T5e: the Pi\'s terminal the window\'s '
+              '19 rows, CLAUDE\'s status band not published)', ok and h.desc()['flags'] & 2
+              and 'CODE-Q quits' not in h.text(), (h.desc(), h.text()[-500:]))
         # CODE-Q: it ends, the window closes
         h.m.keys.append(CODE_Q); h.m.halted = False
         ok = h.run_until(lambda: h.mb('mw_n') == 0 and any('CLAUDE.COM ended' in l for l in h.k.band()), 20)
@@ -390,7 +391,7 @@ def t_saver_mt():
         came = h.run_until(lambda: not th.is_alive(), 30)
         back = h.run_until(lambda: 'Welcome to Claude Code' in h.text(), 10)
         check('... a GRiD tool call ends it (the ring) and is answered; Term\'s screen back',
-              came and 'CLAUDE 1.15' in res.get('r', {}).get('grid', '') and back,
+              came and 'CLAUDE 1.16' in res.get('r', {}).get('grid', '') and back,
               (came, res, back, (h.m.us - t1) / 1e6, h.k.where()))
         got = []; keys = t.keys
         t.keys = lambda body: (got.append(bytes(body)), keys(body))
