@@ -1317,8 +1317,10 @@ mt_switch:
         pop     bx
         cmp     byte [cs:mt_fpu], 0     ; its coprocessor's registers, control
         je      .nf                     ;  and status (mt_fdrain ran first:
+        CRW     'n'                     ; (CRASHLOG: before the FNSAVE)
         fnsave  [es:TX_FPU]             ;  the 287 is idle, so this can't wait
         fwait                           ;  for ever).  Its error, if any, has
+        CRW     'N'                     ; (CRASHLOG: after it)
         mov     al, [es:TX_FPU]         ;  been handled: its unmasked
         and     al, 3Fh                 ;  exceptions and ES cleared in the
         or      al, 40h                 ;  saved status, so FRSTOR doesn't
@@ -1345,6 +1347,7 @@ mt_switch:
 mt_load:
         cli
         cld
+        CRW     'L'                     ; (CRASHLOG: loading the next task)
         pushf                           ; (TF off, as in mt_switch)
         pop     ax
         and     ah, 0FEh
@@ -1411,7 +1414,8 @@ mt_load:
         rep     movsw
         adc     cx, cx
         rep     movsb
-.go:    pop     es
+.go:    CRW     'l'                     ; (CRASHLOG: loaded, on its way back)
+        pop     es
         pop     ds
         popa
         sti
@@ -6702,7 +6706,8 @@ mt_gate:
         jmp     .l
 .y:     clc
         jmp     short .x
-.no:    stc
+.no:    CRW     'r'                     ; (CRASHLOG: refused)
+        stc
 .x:     pop     es
         pop     ds
         pop     bx
@@ -6714,13 +6719,14 @@ mt_gate:
 ; floppy owner out, another task's call waits for it (mt_gate), or is
 ; refused: AX = 5, CF
 mt_i21: cmp     byte [cs:mt_down], 0FFh
-        jne     .g
+        jne     .g0
 .go:    sti
         cld
         push    es
         push    ds
         pusha
         jmp     KSEG:int21 + 5
+.g0:    CRW     'q'                     ; (CRASHLOG: a call while one is out)
 .g:     call    mt_gfl
         jnc     .go
         push    bp                      ; (refused: CF in its flags)

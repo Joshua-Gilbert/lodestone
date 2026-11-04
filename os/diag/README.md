@@ -48,6 +48,14 @@ CMOS 3Dh survives any restart, a full POST too. Its high nibble is the stage: 1 
 - **2:** the catch was entered but died before the report was kept, so MT's memory was probably overwritten.
 - **3 or 4:** a report should be there.
 
+**2026-11-04, Joshua's 1520, Return on CLAUDE.COM:** the last step was `g`, with nothing after. In pcemu the next steps after `g` follow within a few instructions. So the low nibble now splits that window (cr_wtags: `-OZzRgbiGHLlnNqr`; window operations other than O, Z, z, R are no longer written):
+- `n`/`N`: before and after mt_switch's FNSAVE of the 287. A disk wait's switch is the only one made with the floppy's DMA under way.
+- `L`/`l`: mt_load starting, and done (the next task about to resume).
+- `q`: a DOS call while an owner is out.
+- `r`: the gate refusing one.
+
+In pcemu, Return on CLAUDE.COM gives `gnNLlqHiGnNLlb…`.
+
 **Disk-wait phases (the low nibble too).** The low nibble also records the disk waits' phases as they happen:
 - `g`: a task goes out;
 - `i`: IRQ 6 comes;

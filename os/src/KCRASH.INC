@@ -197,6 +197,8 @@ cr_wt:  push    ax
         inc     si
         inc     ah
         loop    .l
+        cmp     al, [cs:si]                     ; (the 16th, or none)
+        jne     .x
 .f:     mov     al, 3Dh
         out     70h, al
         in      al, 71h
@@ -204,7 +206,7 @@ cr_wt:  push    ax
         or      ah, al
         mov     al, 3Dh
         call    cr_cm
-        popf
+.x:     popf
         pop     si
         pop     cx
         pop     ax
@@ -665,7 +667,7 @@ cr_psig     db      'LODEPREV'
 ; CMOS 3Dh's nibbles as CRASHRPT's characters: the stage (CRB_*), the
 ; window tag (KMW's CREC tags; '-' none, '?' another)
 cr_stch     db      '?1234P678???????'
-cr_wtags    db      '-ECOUDWZzRFgbiGH'
+cr_wtags    db      '-OZzRgbiGHLlnNqr'  ; (a tag not here: not written)
 cr_bv       dw      08h * 4, 0FEA5h, 09h * 4, 0E987h, 10h * 4, 0F065h
             dw      16h * 4, 0E82Eh, 15h * 4, 0F859h, 1Ch * 4, 0FF53h
             dw      1Bh * 4, 0FF53h, 0

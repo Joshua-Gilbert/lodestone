@@ -140,10 +140,11 @@ s_p7    db      'Last session: CMOS 0Fh, the shutdown code, was found changed at
 s_p8    db      'Last session: a disk wait', 39, 's owner', 39, 's stack was found CHANGED on its', 13, 10
         db      'return (caught before it could crash) $'
 s_pp    db      'Last session: ended by a restart asked for $'
-s_pw    db      13, 10, 'Its last window operation: '
-s_win   db      '?', ' (E end, C close, O open, U raise, D drop, W unwin, Z resize,', 13, 10
-        db      'z resize drop, R redraw, F front;', 13, 10
-        db      'a disk wait: g gone out, i its IRQ 6, b back, G a call held, H held at HLT; - none).  Stage '
+s_pw    db      13, 10, 'Its last step: '
+s_win   db      '?', ' (window: O open, Z resize, z its drop, R redraw; a disk wait:', 13, 10
+        db      'g gone out, b back, i IRQ 6, G a call held and switched, H held at HLT,', 13, 10
+        db      'q a call while one is out, r refused; a switch: n/N before/after the', 13, 10
+        db      '287', 39, 's FNSAVE, L/l the next task loading/loaded; - none).  Stage '
 s_tag   db      '?', '.', 13, 10, '$'
 
 sig     db      'LODECRSH'
