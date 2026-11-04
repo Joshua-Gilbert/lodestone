@@ -56,6 +56,8 @@ CMOS 3Dh survives any restart, a full POST too. Its high nibble is the stage: 1 
 
 In pcemu, Return on CLAUDE.COM gives `gnNLlqHiGnNLlb…`.
 
+**Then `L`, with nothing after:** it died inside `mt_load`, past the 287's FNSAVE. So `p`/`P` now go before and after `mt_load`'s FRSTOR (or FNINIT), in place of the O and R window tags (cr_wtags `-pZzPgbiGHLlnNqr`). `nofpu/` is the same build with MT never touching the 287 at a switch.
+
 **Disk-wait phases (the low nibble too).** The low nibble also records the disk waits' phases as they happen:
 - `g`: a task goes out;
 - `i`: IRQ 6 comes;

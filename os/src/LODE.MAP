@@ -3818,6 +3818,7 @@ Real              Virtual           Name
             CCB0               AC0  mt_load.md
             CCC8               AD8  mt_load.t
             CCF6               B06  mt_load.fi
+            CCF8               B08  mt_load.nf0
             CCF8               B08  mt_load.nf
             CD16               B26  mt_load.hw
             CD1C               B2C  mt_load.em
@@ -3856,10 +3857,10 @@ Real              Virtual           Name
             CF9D               DAD  mt_owners
             CFA7               DB7  mt_owners.l
             CFB5               DC5  mt_owners.m
-            CFDE               DEE  ..@252.r
-            CFEF               DFF  ..@253.r
+            CFDE               DEE  ..@254.r
+            CFEF               DFF  ..@255.r
             CFF2               E02  mt_owners.f
-            D000               E10  ..@254.r
+            D000               E10  ..@256.r
             D001               E11  mt_owners.n
             D011               E21  mt_owners.x
             D014               E24  mt_vpg
@@ -4024,7 +4025,7 @@ Real              Virtual           Name
             DBB7              19C7  mt_take
             DBC9              19D9  mt_take.w
             DBDD              19ED  mt_take.w1
-            DBF1              1A01  ..@255.r
+            DBF1              1A01  ..@257.r
             DBF1              1A01  mt_take.e
             DC30              1A40  mt_take.h
             DC65              1A75  mt_take.z
@@ -4090,13 +4091,13 @@ Real              Virtual           Name
             E04C              1E5C  mt_ended
             E078              1E88  mt_ended.z
             E07F              1E8F  mt_hfree
-            E097              1EA7  ..@256.r
+            E097              1EA7  ..@258.r
             E097              1EA7  mt_hfree.x
             E09A              1EAA  mt_tfree
             E0AE              1EBE  mt_tfree.x
             E0AF              1EBF  mt_end
             E0E3              1EF3  mt_end.sw
-            E107              1F17  ..@257.r
+            E107              1F17  ..@259.r
             E11A              1F2A  mt_end.ex
             E14A              1F5A  mt_end.f
             E168              1F78  mt_end.s
@@ -4115,7 +4116,7 @@ Real              Virtual           Name
             E249              2059  mt_spawn.room
             E24F              205F  mt_spawn.r
             E26B              207B  mt_spawn.sh
-            E2C8              20D8  ..@258.r
+            E2C8              20D8  ..@260.r
             E2FC              210C  mt_spawn.p
             E327              2137  mt_spawn.tl
             E335              2145  mt_spawn.nt
@@ -4168,8 +4169,8 @@ Real              Virtual           Name
             E727              2537  mt_urun.nm
             E72F              253F  mt_urun.why
             E73A              254A  mt_uwin
-            E77E              258E  ..@259.r
-            E78F              259F  ..@260.r
+            E77E              258E  ..@261.r
+            E78F              259F  ..@262.r
             E796              25A6  mt_uwin.no
             E79C              25AC  mt_uwin.x
             E79F              25AF  mt_uend
@@ -4527,7 +4528,7 @@ Real              Virtual           Name
             FF21              3D31  mt_carve
             FF2B              3D3B  mt_carve.w
             FF3C              3D4C  mt_carve.w1
-            FF50              3D60  ..@271.r
+            FF50              3D60  ..@273.r
             FF59              3D69  mt_carve.nx
             FF69              3D79  mt_carve.end
             FF9E              3DAE  mt_carve.all
@@ -4535,7 +4536,7 @@ Real              Virtual           Name
             FFAC              3DBC  mt_carve.x
             FFAE              3DBE  mt_grow
             FFC7              3DD7  mt_grow.w
-            FFE8              3DF8  ..@272.r
+            FFE8              3DF8  ..@274.r
             FFE8              3DF8  mt_grow.nx
             FFFD              3E0D  mt_grow.f
            1001B              3E2B  mt_grow.ag
@@ -4547,7 +4548,7 @@ Real              Virtual           Name
            100E7              3EF7  mt_grow.gx
            100EC              3EFC  mt_grow.no
            100F0              3F00  mt_48
-           10103              3F13  ..@273.r
+           10103              3F13  ..@275.r
            10121              3F31  mt_48.n
            10124              3F34  mt_48.f
            10125              3F35  mt_48.x
@@ -4563,7 +4564,7 @@ Real              Virtual           Name
            101B2              3FC2  mt_alloc
            101B5              3FC5  mt_kalloc
            101B9              3FC9  mt_kalloc.k
-           101C5              3FD5  ..@274.r
+           101C5              3FD5  ..@276.r
            101C6              3FD6  mw_ctx
            101E4              3FF4  mw_on
            101E5              3FF5  mw_n
@@ -4584,7 +4585,7 @@ Real              Virtual           Name
            1029C              40AC  mw_run
            102BD              40CD  mw_run.go
            102CB              40DB  mw_run.fail
-           102E2              40F2  ..@275.r
+           102E2              40F2  ..@277.r
            102E5              40F5  mw_run.f2
            102E6              40F6  mw_run.ret
            102EB              40FB  mw_run.busy
@@ -4606,9 +4607,9 @@ Real              Virtual           Name
            10402              4212  mw_start.api
            10426              4236  mw_start.fx
            10484              4294  mw_start.fr
-           104FD              430D  ..@279.r
+           104FD              430D  ..@281.r
            104FE              430E  mw_start.ex
-           10527              4337  ..@280.r
+           10527              4337  ..@282.r
            10528              4338  mw_start.nq
            1055E              436E  mw_start.cl
            10570              4380  mw_start.lf
@@ -4619,7 +4620,7 @@ Real              Virtual           Name
            10592              43A2  mw_go
            10596              43A6  mw_end
            105B0              43C0  mw_end.nw
-           105FA              440A  ..@282.r
+           105FA              440A  ..@284.r
            105FC              440C  mw_end.top
            10615              4425  mw_end.sw
            10618              4428  mw_end.b
@@ -4642,12 +4643,12 @@ Real              Virtual           Name
            106E9              44F9  mw_got.took
            106ED              44FD  mw_got.own
            106FC              450C  mw_got.win
-           1070C              451C  ..@283.r
+           1070C              451C  ..@285.r
            10720              4530  mw_got.ret
            10721              4531  mw_got.wt
            10722              4532  mw_got.wait
            1072D              453D  mw_poll
-           10739              4549  ..@284.r
+           10739              4549  ..@286.r
            10745              4555  mw_poll.t
            10755              4565  mw_poll.ev
            1075E              456E  mw_poll.x
@@ -4670,14 +4671,14 @@ Real              Virtual           Name
            108AA              46BA  mw_open.y
            108AF              46BF  mw_open.n
            108B0              46C0  mw_open.new
-           108D4              46E4  ..@285.r
+           108D4              46E4  ..@287.r
            108F9              4709  mw_open.nf
            108FF              470F  mw_say
            1090E              471E  mw_say.n
            10916              4726  mw_say.w
            10931              4741  mw_say.c
            10934              4744  mw_say.m
-           10958              4768  ..@286.r
+           10958              4768  ..@288.r
            10968              4778  mw_s8
            1098B              479B  mw_s2
            109A0              47B0  mw_sx
@@ -4687,14 +4688,14 @@ Real              Virtual           Name
            10A0B              481B  mw_focus.o
            10A25              4835  mw_sw
            10A30              4840  mw_back
-           10A53              4863  ..@287.r
+           10A53              4863  ..@289.r
            10A55              4865  mw_back.w
-           10A65              4875  ..@288.r
+           10A65              4875  ..@290.r
            10A67              4877  mw_back.l
-           10A8B              489B  ..@289.r
+           10A8B              489B  ..@291.r
            10A8B              489B  mw_back.n
            10A8F              489F  mw_back.b
-           10A9B              48AB  ..@290.r
+           10A9B              48AB  ..@292.r
            10A9B              48AB  mw_back.p
            10A9C              48AC  mw_back.x
            10A9D              48AD  mw_rec
@@ -4767,31 +4768,31 @@ Real              Virtual           Name
            10DDE              4BEE  mw_modal.no
            10DDF              4BEF  mw_modal.x
            10DE1              4BF1  mw_szwin
-           10DFA              4C0A  ..@295.r
+           10DFA              4C0A  ..@297.r
            10E0B              4C1B  mw_szwin.no
            10E0E              4C1E  mw_corner
            10E2E              4C3E  mw_corner.no
            10E31              4C41  mw_size
-           10E40              4C50  ..@297.r
-           10E65              4C75  ..@298.r
+           10E40              4C50  ..@299.r
+           10E65              4C75  ..@300.r
            10E6E              4C7E  mw_size.w
-           10E7A              4C8A  ..@299.r
-           10E8D              4C9D  ..@300.r
+           10E7A              4C8A  ..@301.r
+           10E8D              4C9D  ..@302.r
            10E92              4CA2  mw_size.xy
            10EAC              4CBC  mw_size.k
-           10EBE              4CCE  ..@301.r
+           10EBE              4CCE  ..@303.r
            10EC0              4CD0  mw_size.key
-           10ECC              4CDC  ..@302.r
+           10ECC              4CDC  ..@304.r
            10ED8              4CE8  mw_size.1
            10EDE              4CEE  mw_size.2
            10EE6              4CF6  mw_size.3
            10EEE              4CFE  mw_size.4
            10EFC              4D0C  mw_size.esc
-           10F08              4D18  ..@303.r
+           10F08              4D18  ..@305.r
            10F19              4D29  mw_size.end
-           10F25              4D35  ..@305.r
+           10F25              4D35  ..@307.r
            10F39              4D49  mw_size.new
-           10F45              4D55  ..@306.r
+           10F45              4D55  ..@308.r
            10F48              4D58  mw_size.same
            10F4B              4D5B  mw_szto
            10F54              4D64  mw_szto.w1
@@ -4799,8 +4800,8 @@ Real              Virtual           Name
            10F67              4D77  mw_szto.h1
            10F73              4D83  mw_szto.h2
            10F80              4D90  mw_szto.ch
-           10F8C              4D9C  ..@307.r
-           10F9E              4DAE  ..@308.r
+           10F8C              4D9C  ..@309.r
+           10F9E              4DAE  ..@310.r
            10F9E              4DAE  mw_szto.x
            10FA0              4DB0  mw_cpt
            10FF2              4E02  mw_cp
@@ -4838,14 +4839,14 @@ Real              Virtual           Name
            11116              4F26  mw_c_cls.o
            11122              4F32  mw_c_fill
            11145              4F55  mw_c_fill.o
-           11152              4F62  ..@309.r
+           11152              4F62  ..@311.r
            11159              4F69  mw_c_fill.n
            1115E              4F6E  mw_c_inv
            11181              4F91  mw_c_inv.o
            1118B              4F9B  mw_c_inv.n
            11190              4FA0  mw_c_vl
            111CA              4FDA  mw_c_vl.o
-           111D7              4FE7  ..@310.r
+           111D7              4FE7  ..@312.r
            111DE              4FEE  mw_c_vl.n
            111E3              4FF3  mw_c_text
            111FC              500C  mw_c_text.n
@@ -4858,7 +4859,7 @@ Real              Virtual           Name
            11281              5091  mw_uret
            11286              5096  mw_c_sv
            1129D              50AD  mw_c_sv.go
-           112AA              50BA  ..@311.r
+           112AA              50BA  ..@313.r
            112B0              50C0  mw_cbox
            112BF              50CF  mw_cbox.c
            112D4              50E4  mw_cbox.r
