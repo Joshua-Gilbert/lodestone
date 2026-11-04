@@ -1385,8 +1385,10 @@ mt_load:
 .nf:    push    KSEG
         pop     ds
         call    mt_vload
+        CRW     'v'                     ; (CRASHLOG: the kernel's variables back)
         call    mt_vld                  ; its own vectors; the front task's 09h
         call    mt_fvset                ;  and 1Bh (one ended may have set them)
+        CRW     'w'                     ; (CRASHLOG: its vectors back)
         mov     cl, 0                   ; (M10: windows held for an owner's
         mov     al, [cs:mt_cur]         ;  transfer, which another task's
         cmp     al, [cs:mt_down]        ;  registers don't change: CL the
@@ -1402,8 +1404,10 @@ mt_load:
         inc     bx
         add     dh, 40h
         jnc     .em
+        CRW     'e'                     ; (CRASHLOG: its EMS windows written)
         mov     ss, [es:TX_SS]
         mov     sp, [es:TX_SP]
+        CRW     's'                     ; (CRASHLOG: on its stack)
         mov     cx, [es:TX_KLEN]
         jcxz    .go
         push    es                      ; its slice back where it was
