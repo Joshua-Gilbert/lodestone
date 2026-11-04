@@ -7941,8 +7941,42 @@ mt_boot:
 %ifdef CRASHLOG
         mov     word [6 * 4], mt_cr6    ; (KCRASH.INC: INT 06h, a restart through
         mov     [6 * 4 + 2], es         ;  40:67h with CMOS 0Fh = 0Ah, the ring
-        mov     word [467h], mt_crst    ;  cleared)
-        mov     [469h], es
+        mov     word [467h], mt_crst    ;  cleared; the last session's
+        mov     [469h], es              ;  breadcrumbs to CR_PREV first)
+        push    ds
+        push    si
+        push    di
+        push    cx
+        push    CR_PREV
+        pop     ds
+        xor     di, di
+        mov     si, cr_psig
+        mov     cx, 8
+.cp:    mov     al, [es:si]
+        mov     [di], al
+        inc     si
+        inc     di
+        loop    .cp
+        mov     al, 3Dh
+        out     70h, al
+        in      al, 71h
+        mov     [di], al
+        mov     al, 3Ch
+        out     70h, al
+        in      al, 71h
+        mov     [di+1], al
+        pop     cx
+        pop     di
+        pop     si
+        pop     ds
+        mov     al, 3Dh
+        out     70h, al
+        mov     al, CRB_ARMED
+        out     71h, al
+        mov     al, 3Ch
+        out     70h, al
+        mov     al, '-'
+        out     71h, al
         mov     al, 0Fh
         out     70h, al
         mov     al, 0Ah

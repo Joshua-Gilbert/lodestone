@@ -40,6 +40,15 @@ If the POST runs instead (the beep and the memory count), that tells us somethin
 
 This build is from the M12 branch, so it also has the hard-disk waits.
 
+## Breadcrumbs (when nothing was caught)
+
+CMOS 3Ch and 3Dh (unused by the 1520's BIOS) survive any restart, a full POST too. 3Dh is the stage: 1 armed, 2 in the catch, 3 the report kept, 4 on the screen, P a restart asked for. 3Ch is the last window operation's tag. Each window operation also arms the catch again. At the next start-up the CRASHLOG build keeps the old two at 4FF0:0, and `CRASHRPT` says what they mean first:
+- **1:** the restart never reached the catch: a reset the BIOS didn't send through CMOS 0Fh, or the power.
+- **2:** the catch was entered but died before the report was kept, so MT's memory was probably overwritten.
+- **3 or 4:** a report should be there.
+
+Run `CRASHRPT` after every unexpected restart, and send its first lines even when it says there is no report.
+
 ## Reading the report
 
 ```
