@@ -77,11 +77,13 @@ mw_ctx:     dw      title_on,  held2 + 2 - title_on
             dw      fm_ptr,    fm_b2 + 2 - fm_ptr
             dw      crit_err,  2
             dw      alloc_tab, run_ret + 2 - alloc_tab
-            dw      ex_mtw,    1        ; (2 only in the Executive's UI_EVENT:
-            dw      0                   ;  a task's end is its event, M8c)
+            dw      ex_mtw,    2        ; (2 only in the Executive's UI_EVENT:
+            dw      0                   ;  a task's end is its event, M8c; and
+                                        ;  ex_rclk, its right click's, after it)
+            times   -(ex_rclk != ex_mtw + 1) db 0
 MW_CALLOC   equ (held2 + 2 - title_on) + 2 + (ed_keep + 1 - lv_cur) + (fm_b2 + 2 - fm_ptr) + 2
                                         ; (alloc_tab's place in a record's copy)
-%if MW_CALLOC + (run_ret + 2 - alloc_tab) + 1 > MW_CTXLEN
+%if MW_CALLOC + (run_ret + 2 - alloc_tab) + 2 > MW_CTXLEN   ; (+ ex_mtw and ex_rclk)
 %error "KMW: mw_ctx's ranges are longer than MW_CTXLEN"
 %endif
 
@@ -429,7 +431,8 @@ mw_start:
         rep     movsw
         pop     ds
         mov     word [crit_err], 0
-        mov     byte [ex_mtw], 1        ; (a task's end isn't its event)
+        mov     word [ex_mtw], 1        ; (a task's end isn't its event; ex_rclk
+                                        ;  0: a right click isn't the Executive's)
         ; in front, the starter waiting
         mov     al, [cs:mw_new]
         mov     [cs:mw_cur], al
@@ -553,6 +556,7 @@ mw_frees:
         pop     es
         popa
         ret
+        db      90h                     ; (a pad: mw_got at its parity, asserted)
 
 ; ---------------------------------------------------------------------
 ;  ui_event.got (CALL FAR): AX = the event (BX, CX for a click), DS = the
@@ -560,7 +564,7 @@ mw_frees:
 ;  if it was taken (here: a change of focus, a window .RUN started)
 ; ---------------------------------------------------------------------
 mw_got: cmp     byte [cs:mw_n], 0
-        je      .win                    ; (no window .RUN: as before)
+        je      .win0                   ; (no window .RUN: as before)
         pusha
         push    es
         push    ds                      ; (a .RUN may call UI_EVENT with any ES)
@@ -579,6 +583,8 @@ mw_got: cmp     byte [cs:mw_n], 0
         je      .next
         cmp     ax, K_CODE_F8
         je      .szk
+        cmp     ax, EV_RCLICK           ; a right click on another window (or
+        je      .hit                    ;  on the Executive): it to the front
         cmp     ax, EV_CLICK
         jne     .own
         call    mw_szwin                ; (on the top window's resize corner?)
@@ -596,7 +602,7 @@ mw_got: cmp     byte [cs:mw_n], 0
         mov     word [bp+2+14], EV_SIZE ;  past the ES pushed)
         pop     es
         popa
-        jmp     short .ret
+        retf                            ; (as .ret)
 .hit:   call    mw_hit                  ; AL = whose window is clicked
         jc      .base
 .foc:   cmp     al, [cs:mw_cur]
@@ -631,10 +637,15 @@ mw_got: cmp     byte [cs:mw_n], 0
         jmp     short .wait
 .own:   pop     es
         popa
+        call    mw_rcno                 ; (a right click not its: none)
+        jc      .wait
         cmp     byte [cs:mw_cur], 0     ; the Executive in front: the top
         jne     .win                    ;  window, a session's, isn't its to
         call    mw_topses               ;  move or close (CODE-F7, its strip)
         jc      .ret
+        jmp     short .win
+.win0:  call    mw_rcno
+        jc      .wait
 .win:   cmp     ax, EV_CLICK            ; (a click win_ev makes ESC: on the
         pushf                           ;  close box)
         UCALL   win_ev
@@ -660,9 +671,14 @@ mw_got: cmp     byte [cs:mw_n], 0
 ; s), in the Executive's own wait: a task ended (mt_ui: EV_TASK, or
 ; EV_TASKM with its message in msgbuf); else EV_TICK for a terminal window
 ; in front (T2: mw_tick); else back to ui_event's HLT, as before.  (AX
-; isn't kept: ui_event's loop has nothing in it)
+; isn't kept: ui_event's loop has nothing in it).  A right click is made
+; for everyone in this look (ex_rclk's bit 1), for mw_got's routing
 mw_poll:
+        or      byte [ex_rclk], 2
         UCALL   poll_once
+        pushf
+        and     byte [ex_rclk], 0FDh
+        popf
         jnc     .ev
         mov     ax, [lasttick]
         cmp     ax, [cs:mw_lt]
@@ -1800,6 +1816,21 @@ mw_topses:
 .x:     pop     ax
         pop     si
         ret
+
+; CF: AX is a right click that isn't for the one running now.  mw_poll's
+; look makes it for everyone, for mw_got's routing; only the Executive's
+; own wait (ex_rclk's bit 0) and a .RUN for API 7 get it, as before
+mw_rcno:
+        cmp     ax, EV_RCLICK
+        jne     .ok
+        test    byte [ex_rclk], 1
+        jnz     .ok
+        cmp     byte [run_active], 1    ; (CF: none)
+        jb      .x
+        cmp     word [run_hdr+4], 7     ; (CF: below 7)
+        ret
+.ok:    clc
+.x:     ret
 
 ; the top window -> SI; CF if there is none
 mw_topw:
