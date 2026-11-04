@@ -9,7 +9,9 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 | ![The start-up picture](os/screens/readme/splash.png) | ![System, Display](os/screens/readme/system_display.png) |
 | The start-up picture (`LODE.PIC`)¹ | System, Display: the font, and the start-up picture (Space turns it off) |
 | ![The Executive](os/screens/readme/executive.png) | ![Copy with a wildcard](os/screens/readme/copy_wildcards.png) |
-| The Executive: GRiD's File form (Device, Subject, Title), the 1520's EMS and serial mouse in the status line | Copy, Move and Delete take wildcards, with Replace and Only newer |
+| The Executive: GRiD's File form (Device, Subject, Title); the status line shows the memory free for programs and in EMS, the panel as the 1520 reports it, and the serial mouse | Copy, Move and Delete take wildcards, with Replace and Only newer |
+| ![Multitasking](os/screens/readme/multitasking.png) | ![Tasks](os/screens/readme/tasks.png) |
+| Multitasking (`MULTITASK=1`): the command prompt and BENCH running as tasks, each in a window sized and placed over the Executive (CODE-F8, CODE-F7), which stays usable beside them | CODE-T: the tasks, with Return to bring one to the front, CODE-B to send it behind, CODE-Z to park it and CODE-D to end it |
 | ![System, Memory](os/screens/readme/system_memory.png) | ![System, Disks](os/screens/readme/system_disks.png) |
 | System: where the 640 KB goes, and the EMS | System: the floppy, the internal hard disk as C: (the 1520's own 121 MB Conner layout) and M:, the RAM disk |
 | ![Write](os/screens/readme/write.png) | ![BENCH](os/screens/readme/bench.png) |
