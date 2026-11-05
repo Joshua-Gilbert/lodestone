@@ -326,10 +326,10 @@ the GRiD MS-DOS EPROM can go in the first).  It starts on C: (or R:).
 R: is the ROM: LODE.SYS, LODEMT.SYS, LCMD, System, Write, the
 calculator, Tasks, the picture and LODE.INI, read-only; ROM 2, if it is
 in, joins R: with DEFRAG, Paint, CLAUDE, the terminal window's font and
-GRIDFONT.FNT and TERMINUS.FNT.  R:\LODE.INI holds the ROM's settings; what you change in
-System goes in C:\LODE.INI (A:\LODE.INI without the hard disk) and is
-read over them: System's Settings topic shows which, and Return there
-goes back to the ROM's.
+GRIDFONT.FNT and TERMINUS.FNT.  R:\LODE.INI holds the ROM's settings;
+what you change in System goes in C:\LODE.INI (A:\LODE.INI without the
+hard disk) and is read over them: System's Settings topic shows which,
+and Return there goes back to the ROM's.
 Programs in C:\LODE are used before the ROM's (PATH=C:\LODE;R:\).
 Hold Shift while the 1520 starts for a menu: Lodestone; Lodestone with
 the ROM's own settings; GRiD MS-DOS (when it is in the other socket);
