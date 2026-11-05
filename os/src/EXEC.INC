@@ -92,7 +92,8 @@ n_done      resw 1
 n_skip      resw 1
 s_time      resw 1                  ; the one in hand: its time and date
 s_date      resw 1
-RM_MOST     equ 13                  ; (ex_items, all of them: rmenu has no bound)
+RM_MOST     equ 13                  ; (the most of ex_items that apply at once:
+                                    ;  rmenu has no bound; asserted there)
 rm_buf      resw RM_MOST            ; a right click's menu: its items' texts
 rm_key      resw RM_MOST            ;  and their keys (RMENU.INC, ex_menu)
 sc_seg      resw 1                  ; Copy on a subject: the subjects to copy (sc_list)
@@ -3192,6 +3193,7 @@ ex_mitems:                              ; (the program's modes: ex_modes)
         dw m_move,   K_CODE_M, RX_FILE
         dw m_rename, K_CODE_R, RX_FILE
         dw m_erase,  K_CODE_D, RX_ROW
+ex_litems:                              ; (no row's: RX_NONE, never with those above)
         dw m_write,  K_CODE_W, RX_NONE
         dw m_claude, K_CODE_A, RX_NONE
         dw m_calc,   K_CODE_K, RX_NONE
@@ -3200,9 +3202,13 @@ ex_mitems:                              ; (the program's modes: ex_modes)
         dw m_usage,  K_CODE_U, RX_NONE
         dw m_f5,     K_F5,     RX_NONE
         dw 0
-        times   -(($ - 2 - ex_items) / 6 - MODES > RM_MOST) db 0   ; (rm_buf, rm_key hold all that
-                                        ;  can apply at once: a file's 6
-                                        ;  and its modes, or the 7 with none)
+        times   -((ex_litems - ex_items) / 6 > RM_MOST) db 0       ; (rm_buf, rm_key hold all that
+        times   -(($ - 2 - ex_litems) / 6 > RM_MOST) db 0          ;  can apply at once: a row's,
+                                        ;  its modes among them (12), or
+                                        ;  no row's (7): every item above
+                                        ;  ex_litems needs RX_ROW or
+                                        ;  RX_FILE, every one after it
+                                        ;  RX_NONE, never both)
 m_open      db 'Open', HT, 21, 'Return', 0
 m_full      db 'Open full screen', HT, 21, 'Shift-Return', 0
 m_copy      db 'Copy', HT, 21, 'CODE-C', 0

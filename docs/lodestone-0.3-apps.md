@@ -1090,10 +1090,10 @@ A right click in the Executive's list selects the row under it, then opens a men
   - **Mutations:** 25 one-change mutations of the menu and the routing, each built and run against both `t_exmenu`s. All are caught except one: skipping the CHDIR message's check (untested above). The first run let one through, `mw_poll` leaving bit 1 set: the RCP6 check read its events at RCTEST's offsets, so it could never fail. It now reads RCP6's own, and has a left click that must arrive.
 
 ## A program's modes on the right-click menu (2026-11-04)
-A program can name its own modes, which the Executive's right-click menu then offers after Open (and Open full screen). CLAUDE.COM 1.17 names five: Claude Code (`/T`), Web browser (`/W`), Chat (`/C`), Load resident (`/R`) and Unload resident (`/U`). With multitasking on, Web browser starts `CLAUDE /W` as a task in a terminal window: gridfox, sized to the window (#154).
+A program can name its own modes, which the Executive's right-click menu then offers after Open (and Open full screen). CLAUDE.COM 1.17 names five: Claude Code (`/T`), Web browser (`/W`), Chat (`/C`), Load resident (`/R`) and Unload resident (`/U`). With multitasking on, Web browser starts `CLAUDE /W` as a task in a terminal window: gridfox, sized to the window (gridfox following the window's rows, PR #154).
 - **The mode block** is in the program file, so a program names its own modes and nothing needs listing in LODE.INI:
   - A `.COM` that has one starts with a jump (`EB xx` or `E9 xx xx`), then `'LMOD'`, then up to six entries, then a 0.
-  - Each entry is `db flags, 'Label', 0, 'arguments', 0`. The label is shown as the Executive's own are: CLAUDE's are the text, HT, 21, the switch, so the switch shows in the key column.
+  - Each entry is `db flags, 'Label', 0, 'arguments', 0`. The label is shown as the Executive's own are: CLAUDE's are the text, HT, 21, the switch, so the switch shows in the key column. It is only a label there: no key types it. An HT must be followed by its column byte (one last in a label would take the label's 0 for it and show the arguments too; nothing is written out of bounds).
   - Flags: `LM_MODE` (80h) is always set, so an entry never starts with 0. `LM_TASK0` (1): run in the Executive's own task, full screen, as Shift-Return. `LM_PAUSE` (2), with `LM_TASK0`: wait for a key after the program, so the line it prints can be read ("Press any key").
   - CLAUDE's Load and Unload resident have both: `/R` is refused in a task, and `/U` fails with any task running.
   - The Executive reads only the first 127 bytes. An entry whose arguments' 0 isn't among them is left out, with the rest after it. CLAUDE asserts that its block fits.
@@ -1103,23 +1103,24 @@ A program can name its own modes, which the Executive's right-click menu then of
   - A slot's key is `K_MODE` + n (FDxxh, no key's code). `ex_menu` finds the label from the slot, the flags in the byte before it and the arguments after it.
   - `run_progt` is `run_prog` with the arguments in DI, ASCIIZ; `run_wait` takes them in DI too. With multitasking on, the CMP that KMW patches is now `run_progt`'s, and `mw_prog` makes the task's tail: `mk_tail`, factored out of `exec_raw`, then `MT_SPAWN`'s `SP_TAIL` (which the multitasker already copied into the task, but mt_ui never set). Shift still runs it full screen, with its arguments.
   - Without `LM_TASK0` a mode runs as Open does: with multitasking on, a task; Shift, full screen.
-  - `run_pause` asks `UI_RUN` to wait for a key after the program, before the screen goes back to the Executive's. It is cleared as it is read.
+  - `run_pause` asks `UI_RUN` to wait for a key after the program, before the screen goes back to the Executive's. It is cleared as it is read, whether EXEC worked or not (if it failed, "Press any key" shows on a blank screen before the "Can't run" message). A pad byte after it in the UI's BSS keeps the words after it, MOUSE33's among them, at their parity.
 - **Cost:**
   - `ui_keep_end` 6714h to 6806h (+242 bytes): MEMSZ 564.7 KB without EMS, 580.7 KB with it (564.9 / 581.0 before); 556.6 KB with multitasking on (556.8).
   - LODE.SYS 50,416 bytes, 99 sectors (98 before). ROM 1 has 512 bytes left, so every file stays on ROM 1.
   - LODEMT.SYS 21,760 bytes (+24), still 43 sectors. CLAUDE.COM 26,218 bytes (+112); ROM 2 has 79,872 bytes left (80,384 before).
 - **Tests:**
-  - test_apps `t_modes` (9 checks, multitasking off), with MODET.COM (tests/MODET.ASM: a block of three modes; it writes its tail to TAIL.TXT):
+  - test_apps `t_modes` (10 checks, multitasking off), with MODET.COM (tests/MODET.ASM: a block of three modes; it writes its tail to TAIL.TXT):
     - The menu of MODET.COM is Open, its three modes (Plain, Pause, Full), then the file's. After it, MEMSZ.COM (no jump at 100h) and NOTE.TXT show none of them.
     - MODEL.COM, whose third entry's arguments end with their 0 at byte 127, shows two. MODEE.COM, with it at byte 126 (the last read), shows three.
-    - CLAUDE.COM shows its five.
+    - MODEX.COM (a jump, then `LMOX`) shows none; MODE7.COM (seven) shows the first six.
+    - CLAUDE.COM shows its five, each with its switch in the key column.
     - Each mode runs with its arguments (" /A B", " /P", " /F"); Pause waits with "Press any key" in text mode; Open has no tail; a Full after Pause doesn't wait, and `run_pause` is 0 again.
   - test_mt `t_modes` (9 checks, multitasking on):
     - The menu with Open full screen. Plain is a task with its tail; Open after it a task with none; Plain with Shift full screen in the Executive's task (its own `exec_raw`) with the tail.
     - Pause and Full run in the Executive's task; Pause waits for a key. Open full screen then has no tail (`msgbuf` holds the block). Return afterwards: a task with no tail.
     - CLAUDE.COM's Web browser: CLAUDE a task, the Executive in front, its PSP's tail " /W".
 - **Mutations:** 23 one-change mutations, each built and run against both suites' `t_modes` and `t_exmenu`. All are caught; two only after a check was added (`run_pause` 0 after Pause, Open full screen's empty tail).
-- **Untested:** an `.EXE` (an `MZ` header has no block, and none is looked for); a read error on the file (no modes then); the Pi's side of the Web browser from the menu (no Pi in test_mt; CLAUDE /W windowed is #154's).
+- **Untested:** an `.EXE` (its `MZ` isn't a jump, so no block is found); a read error on the file (no modes then); the Pi's side of the Web browser from the menu (no Pi in test_mt; CLAUDE /W windowed is #154's).
 
 ## Review and tests
 - **An independent review** of the new code found 14 issues; all are fixed and the confirmed ones have tests:

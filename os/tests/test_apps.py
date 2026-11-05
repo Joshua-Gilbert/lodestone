@@ -31,7 +31,7 @@ TM5000G = os.environ.get('TM5000G') or os.path.join(GOS, '..', 'tools', 'TM5000G
 TERMFNT = os.path.join(GOS, 'fonts', 'TERMINUS.FNT')
 DEFRAG = os.path.join(GOS, 'src', 'DEFRAG.COM')
 MDTEST = os.path.join(HERE, 'MDTEST.COM')
-MODET, MODEL, MODEE = (os.path.join(HERE, n) for n in ('MODET.COM', 'MODEL.COM', 'MODEE.COM'))  # (modes: t_modes)
+MODET, MODEL, MODEE, MODEX, MODE7 = (os.path.join(HERE, n) for n in ('MODET.COM', 'MODEL.COM', 'MODEE.COM', 'MODEX.COM', 'MODE7.COM'))  # (modes: t_modes)
 
 K_HOME, K_END, K_PGDN, K_PGUP, K_DEL, K_INS = 0x4700, 0x4F00, 0x5100, 0x4900, 0x5300, 0x5200
 K_CHOME, K_CEND, K_CLEFT, K_CRIGHT = 0x7700, 0x7500, 0x7300, 0x7400
@@ -54,7 +54,7 @@ def build():
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-DKEEP=400h', '-o', TSRBIG, os.path.join(HERE, 'TSR.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', MDTEST, os.path.join(HERE, 'MDTEST.ASM')], check=True)
-    for c, d in ((MODET, []), (MODEL, ['-DEND=127']), (MODEE, ['-DEND=126'])):
+    for c, d in ((MODET, []), (MODEL, ['-DEND=127']), (MODEE, ['-DEND=126']), (MODEX, ['-DBADSIG']), (MODE7, ['-DSEVEN'])):
         subprocess.run(['nasm', '-f', 'bin'] + d + ['-o', c, os.path.join(HERE, 'MODET.ASM')], check=True)
     for c in [M33TEST] + list(M33.values()):
         subprocess.run(['nasm', '-f', 'bin', '-o', c, c[:-4] + '.ASM'], check=True)
@@ -3369,11 +3369,14 @@ def t_modes():
     print('== a program\'s modes on its right-click menu')
     note = os.path.join(OUT, 'NOTE.TXT'); open(note, 'wb').write(b'a note\r\n')
     cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
-    k = ktest.KPC(image('modes.img', MODET, MODEL, MODEE, MEMSZ, note, cl)); k.pc.mouse = True; k.start()
+    k = ktest.KPC(image('modes.img', MODET, MODEL, MODEE, MODEX, MODE7, MEMSZ, note, cl)); k.pc.mouse = True; k.start()
     def items(nm):
         k.select(nm); y = 24 + 16 * (k.exec_list().index(nm) - k.u16('top')) + 8
         point(k, 100, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
-        m = menu_items(k); k.key(ktest.ESC); return m
+        m = menu_items(k); c, y, w, h = struct.unpack('<4H', k.rd('help_w', 8))
+        scr[:] = [[l[c:c + w] for ly, l in k.ocr() if y < ly < y + h]]   # (the menu's rows)
+        k.key(ktest.ESC); return m
+    scr = []
     FILE = ['Copy', 'Move', 'Rename', 'Delete']
     m = items('MODET.COM')
     check('a right click on MODET.COM: Open, its three modes (Plain, Pause, Full), then the file\'s', m == ['Open', 'Plain', 'Pause', 'Full'] + FILE, m)
@@ -3381,9 +3384,14 @@ def t_modes():
     check('... then MEMSZ.COM (no jump at 100h) and NOTE.TXT: no modes, none of MODET\'s left over; MODEL.COM (the third '
           'one\'s arguments end past the 127 bytes read): two; MODEE.COM (their 0 the 127th byte): three',
           got == (['Open'] + FILE, ['Open'] + FILE, ['Open', 'Plain', 'Pause'] + FILE, ['Open', 'Plain', 'Pause', 'Full'] + FILE), got)
+    got = items('MODEX.COM'), items('MODE7.COM')
+    check('MODEX.COM (a jump, then LMOX): none; MODE7.COM (seven): the first six', got == (['Open'] + FILE,
+          ['Open', 'Plain', 'Pause', 'M3', 'M4', 'M5', 'M6'] + FILE), got)
     m = items('CLAUDE.COM')
-    check('CLAUDE.COM (1.17): Claude Code, Web browser, Chat, Load resident, Unload resident; each its switch beside it',
-          m == ['Open', 'Claude Code', 'Web browser', 'Chat', 'Load resident', 'Unload resident'] + FILE, m)
+    check('CLAUDE.COM (1.17): Claude Code, Web browser, Chat, Load resident, Unload resident; each its switch in the key column',
+          m == ['Open', 'Claude Code', 'Web browser', 'Chat', 'Load resident', 'Unload resident'] + FILE
+          and [x for r in scr[0] for x in re.findall(r'\?+(/[A-Z])$', r.rstrip())] == ['/T', '/W', '/C', '/R', '/U'],
+          (m, scr[0]))
     tail, tty, mode = run_mode(k, 'MODET.COM', 'Plain')
     check('MODET.COM\'s Plain: it runs with its arguments (the tail " /A B"), then the Executive ("MODET.COM ended")',
           tail == b' /A B' and ' /A B' in tty and any('MODET.COM ended' in l for l in k.band()), (tail, tty[-60:], k.band()))
