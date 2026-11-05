@@ -41,16 +41,27 @@ return (function (opt) {
   var flags = 0, act = -1;
   var rowCell = 0;                // cells so far in the current table row
   var ids = [], nids = 0;         // anchors waiting for the next block
+  var done = [];                  // boxes a <label> took in (one act for both)
 
   function style(el) { try { return win.getComputedStyle(el); } catch (e) { return null; } }
+
+  // a checkbox or radio button a page hides to draw its own mark (1 pixel,
+  // clipped, or not displayed at all), its <label> what shows and is clicked:
+  // kept, so it can be ticked (a hidden one with no label stays hidden)
+  function ownMark(el) {
+    if (el.tagName !== 'INPUT') return false;
+    var t = (el.getAttribute('type') || '').toLowerCase();
+    if (t !== 'checkbox' && t !== 'radio') return false;
+    try { return !!(el.labels && el.labels.length); } catch (e) { return false; }
+  }
 
   function hidden(el, cs) {
     if (el.hidden) return true;
     if (!cs) return false;
-    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return true;
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return !ownMark(el);
     if (laidOut && (cs.position === 'absolute' || cs.position === 'fixed')) {
       var r = el.getBoundingClientRect();            // "visually hidden" text for screen readers
-      if (r.width <= 1 && r.height <= 1) return true;
+      if (r.width <= 1 && r.height <= 1) return !ownMark(el);
     }
     return false;
   }
@@ -132,6 +143,7 @@ return (function (opt) {
       put('[' + s + Array(w - s.length + 1).join('_') + ']', f | (shown ? 0 : 2), a);
       put(' ', flags, -1);
     } else if (tag === 'INPUT' && (t === 'checkbox' || t === 'radio')) {
+      if (done.indexOf(el) >= 0) return;               // (its label's act has it)
       o = {t: 'check', type: t, v: el.checked};
       put((t === 'radio' ? (el.checked ? '(*)' : '( )') : (el.checked ? '[x]' : '[ ]')), f, addAct(o, el));
       put(' ', flags, -1);
@@ -226,6 +238,18 @@ return (function (opt) {
       act = addAct({t: 'button', v: el.textContent.replace(/\s+/g, ' ').trim().slice(0, 40) || 'Details',
                     det: !!el.parentElement.open}, el);
       put(el.parentElement.open ? '[-] ' : '[+] ', 0, act);
+    }
+    if (tag === 'LABEL' && act < 0) {
+      // a checkbox's or radio button's label: its text clicks it too, as in
+      // Firefox (the mark first, then the text, one act)
+      var box = null;
+      try { box = el.control; } catch (e) {}
+      if (box && box.tagName === 'INPUT' && /^(checkbox|radio)$/i.test(box.type) && !box.disabled
+          && els.indexOf(box) < 0 && !hidden(box, style(box))) {         // (not one already shown before it)
+        act = addAct({t: 'check', type: box.type.toLowerCase(), v: box.checked}, box);
+        done.push(box);
+        put(box.type.toLowerCase() === 'radio' ? (box.checked ? '(*) ' : '( ) ') : (box.checked ? '[x] ' : '[ ] '), 16, act);
+      }
     }
     if (tag === 'A' && el.hasAttribute('href') && act < 0) {
       var h = el.href || '';

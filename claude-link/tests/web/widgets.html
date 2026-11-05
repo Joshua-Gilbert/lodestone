@@ -14,6 +14,18 @@
 <p id="said">Said: nothing</p>
 <div class="card" onclick="void 0" style="cursor: pointer"><a href="/long">Card link</a> and its text</div>
 <p><span role="button" aria-disabled="true">Greyed</span> <a role="button" id="ab">No href</a></p>
+<fieldset><legend>Status</legend>
+<label class="mark"><input type="radio" name="st" value="ssdi" style="display: none"><span>SSDI benefits</span></label>
+<label class="mark"><input type="radio" name="st" value="ssi" style="display: none"><span>SSI benefits</span></label>
+</fieldset>
+<p><input type="checkbox" id="lone" style="display: none"> Lone box text</p>
+<p><input type="checkbox" id="opt"> <label for="opt">Before its label</label></p>
+<p id="stat">Status: none</p>
+<script>
+Array.prototype.forEach.call(document.querySelectorAll('input[name=st]'), function (r) {
+  r.addEventListener('change', function () { document.getElementById('stat').textContent = 'Status: ' + r.value; });
+});
+</script>
 <script>
 var pick = document.getElementById('pick'), list = document.getElementById('list');
 pick.addEventListener('click', function () {
