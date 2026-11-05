@@ -20,8 +20,9 @@
 ;    - run_app's first instruction (CMP BYTE [run_active],0) becomes a far
 ;      jump to mw_run: a window .RUN starts as a session; any other as
 ;      before (back to run_app past it);
-;    - run_prog's (CMP BYTE [ex_mtw],0) a far jump to mw_prog: Return on a
-;      DOS program starts it as a task (mt_ui);
+;    - run_progt's (CMP BYTE [ex_mtw],0) a far jump to mw_prog: Return on a
+;      DOS program (or a mode of it, with its arguments) starts it as a task
+;      (mt_ui);
 ;    - ui_event.l (CALL poll_once / JNC .got) a far call to mw_poll: a
 ;      task's end looked for, and a terminal window's EV_TICK;
 ;    - ui_event.got (CALL win_ev / JC .on) becomes a far call to mw_got:
@@ -144,7 +145,7 @@ mw_ptab:
         db      0EAh, 80h, 3Eh
         dw      run_active
         db      0
-        dw      run_prog, mw_prog       ; CMP BYTE [ex_mtw],0: JMP FAR
+        dw      run_progt, mw_prog      ; CMP BYTE [ex_mtw],0: JMP FAR
         db      0EAh, 80h, 3Eh
         dw      ex_mtw
         db      0
@@ -761,15 +762,20 @@ mw_poll:
         add     al, EV_TASK & 0FFh
         jmp     .ev
 
-; run_prog (JMP FAR over its CMP BYTE [ex_mtw],0; DS = ES = the UI): the
-; program at runpath a task, in front (mt_ui: its memory, and why not in
-; msgbuf, for show_msg); with Shift held, run_wait as before
+; run_progt (JMP FAR over its CMP BYTE [ex_mtw],0; DS = ES = the UI; DI =
+; the arguments, ASCIIZ): the program at runpath a task, in front, its
+; tail the arguments (mk_tail, then MT_SPAWN's SP_TAIL: copied into the
+; task at the spawn) (mt_ui: its memory, and why not in msgbuf, for
+; show_msg); with Shift held, run_wait as before, with DI
 mw_prog:
         mov     ah, 2                   ; (Shift held?)
         int     16h
         test    al, 3
-        mov     ax, run_wait
+        mov     ax, run_wait            ; (DI: the arguments, as they are)
         jnz     .x
+        UCALL   mk_tail                 ; the arguments DI the task's tail
+        mov     word [cs:mt_xpb + SP_TAIL], run_tail
+        mov     [cs:mt_xpb + SP_TAIL + 2], ds
         mov     si, runpath
         mov     di, msgbuf
         xor     al, al
@@ -777,7 +783,8 @@ mw_prog:
         call    mt_ui
         mov     ax, show_msg
         jc      .x
-        mov     ax, ..@ui_ret           ; (a RET: to run_prog's caller)
+        mov     ax, ..@ui_ret           ; (a RET: to run_progt's caller, or
+                                        ;  run_prog's, or ex_menu's)
 .x:     push    ds
         push    ax
         retf

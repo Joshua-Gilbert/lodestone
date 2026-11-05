@@ -172,6 +172,10 @@ run_hdr     resb 16
 run_hnd     resw 1
 run_ret     resw 1
 run_tail    resb 130
+run_pause   resb 1              ; 1: a key waited for after the next
+                                ;  UI_RUN's program (the Executive's modes)
+            resb 1              ; (a pad: the words after keep their parity,
+                                ;  MOUSE33's m33_* in its IRQ path among them)
 pc_ch       resb 1              ; putc's character
 app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
                                 ;  Copy/Move destination, free while the
@@ -3872,7 +3876,13 @@ ui_run: push    es
         call    exec_raw
         pushf
         push    ax
-        call    m33_end                 ; (the program may have used INT 33h:
+        shr     byte [run_pause], 1     ; (the Executive's, for a mode that
+        jnc     .np                     ;  asks it: its output read first)
+        mov     si, s_pause
+        call    bios_print
+        xor     ax, ax
+        int     16h
+.np:    call    m33_end                 ; (the program may have used INT 33h:
         call    mouse_off               ;  the mouse is ours again)
         call    hires
         call    mouse_on
@@ -3910,16 +3920,10 @@ is_run: push    si
         clc
 .x:     ret
 
-; EXEC SI with tail DI (as it is: no mode change, the mouse as it is);
-; the kernel's own INT 24h meanwhile, our DTA kept.  -> AX = exit code / CF
-exec_raw:
-        push    word [crit_err]
-        mov     ah, 2Fh                 ; our DTA, to put back
-        int     21h
-        push    es
-        push    bx
-        push    cs
-        pop     es
+; the ASCIIZ tail at DI in run_tail as EXEC takes it (count, " tail", CR;
+; none at all for an empty one: count 0, CR).  SI kept; AX, BX change
+; (exec_raw's; KMW's mw_prog for a task's tail)
+mk_tail:
         mov     bx, run_tail + 1        ; " tail", CR, length first
         mov     byte [bx], ' '
         inc     bx
@@ -3942,6 +3946,19 @@ exec_raw:
         xor     ax, ax                  ; (no tail: none at all)
         mov     byte [run_tail + 1], 13
 .len:   mov     [run_tail], al
+        ret
+
+; EXEC SI with tail DI (as it is: no mode change, the mouse as it is);
+; the kernel's own INT 24h meanwhile, our DTA kept.  -> AX = exit code / CF
+exec_raw:
+        push    word [crit_err]
+        mov     ah, 2Fh                 ; our DTA, to put back
+        int     21h
+        push    es
+        push    bx
+        push    cs
+        pop     es
+        call    mk_tail
         mov     [run_epb+4], cs         ; (the rest is set in the data)
         mov     [run_epb+8], cs
         mov     [run_epb+12], cs
@@ -4446,6 +4463,7 @@ wait_ticks:
 ; =====================================================================
 ;  data
 ; =====================================================================
+s_pause     db 13, 10                   ; (then s_anykey's)
 s_anykey    db 'Press any key',0
 s_confirm   db 'Press RETURN to confirm or ESC to cancel',0
 s_formhelp  db 'RETURN: next item    CODE-RETURN or click here: confirm    ESC: cancel',0

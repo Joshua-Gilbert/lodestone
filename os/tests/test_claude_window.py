@@ -391,7 +391,7 @@ def t_saver_mt():
         came = h.run_until(lambda: not th.is_alive(), 30)
         back = h.run_until(lambda: 'Welcome to Claude Code' in h.text(), 10)
         check('... a GRiD tool call ends it (the ring) and is answered; Term\'s screen back',
-              came and 'CLAUDE 1.16' in res.get('r', {}).get('grid', '') and back,
+              came and 'CLAUDE 1.17' in res.get('r', {}).get('grid', '') and back,
               (came, res, back, (h.m.us - t1) / 1e6, h.k.where()))
         got = []; keys = t.keys
         t.keys = lambda body: (got.append(bytes(body)), keys(body))
