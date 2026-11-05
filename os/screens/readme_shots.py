@@ -18,7 +18,7 @@ def dummy(name, size):
 
 files = [os.path.join(GOS, 'src', f) for f in ('LODE.SYS', 'LCMD.COM', 'DEFRAG.COM', 'HEADCLN.COM', 'LODE.TXT', 'CALC.COM')]
 files += [os.path.join(GOS, 'apps', f) for f in ('SYSTEM.RUN', 'WRITE.RUN', 'CALC.RUN', 'TASKS.RUN')]
-files += [os.path.join(GOS, 'fonts', 'TERMINUS.FNT'), os.path.join(GOS, 'claude', 'CLAUDE.COM'),
+files += [os.path.join(GOS, 'fonts', 'GRIDFONT.FNT'), os.path.join(GOS, 'fonts', 'TERMINUS.FNT'),os.path.join(GOS, 'claude', 'CLAUDE.COM'),
           os.path.join(GOS, 'bench', 'BENCH.COM'), os.path.join(GOS, 'tests', 'EMSTEST.COM'),
           os.path.join(GOS, 'tests', 'TESTDOS.COM'), dummy('TM5000G.EXE', 296634),
           'DOCS\\', 'DOCS\\NOTES.TXT=' + os.path.join(GOS, 'src', 'LODE.TXT'), 'WORK\\']

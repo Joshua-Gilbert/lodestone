@@ -145,6 +145,7 @@
   It is a window only when it runs as one (`MT_WIN`, F0h AL=1Dh). It still asks for UI API 4, so an older core runs it, full-screen, as does one with the switch off.
 
 ## GRiD's font (2026-10-06)
+- *Since 2026-11-05 the built-in font is Lodefont (`lodestone-font.md`); GRiD's is `GRIDFONT.FNT`, on ROM 2.*
 - Joshua asked why Lodestone didn't use the GRiD's built-in fonts. What the 1520 has:
   - **The text-mode fonts** (4, picked with INT 15h E422h) are in the display controller. They only show in text modes and the processor can't read them, so a graphics screen can't use them.
   - **The BIOS** has only the IBM 8×8 CGA font (F000:FA6E). In mode 40h its INT 10h draws each row twice.

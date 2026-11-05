@@ -41,7 +41,8 @@ def load(path=SRC):
 if __name__ == '__main__':
     f = load()
     if '--sheet' in sys.argv:
-        typfont.sheet(f, sys.argv[sys.argv.index('--sheet') + 1])
+        shown = dict(f, n=96, glyphs={c - 32: g for c, g in f['glyphs'].items()})     # (from the space)
+        typfont.sheet(shown, sys.argv[sys.argv.index('--sheet') + 1])
     elif '--fnt' in sys.argv:
         open(sys.argv[sys.argv.index('--fnt') + 1], 'wb').write(typfont.fnt(f))
     else:
