@@ -8,7 +8,7 @@ At start-up Lodestone shows Fig. 1 of F. A. Annett, *Electrical Machinery* (McGr
 
 - **Monochrome:** 1 bit, lit or not, as mode 40h is anyway; no grey palette tricks.
 - **The plate as printed:** lit paper, a dark stone. Each nail is lit where it lies on the stone and dark where it crosses the paper. A dark-screen version (a lit stone with dark nails knocked out of it) was tried and read as a blob.
-- **Only the title**, LODESTONE underlined. The version and caption lines of the first draft are gone.
+- **Only the title**, LODESTONE underlined. The version and caption lines of the first draft are gone. Since 2026-11-05 its letters are Lodefont's capitals as thin strokes (`lodestone-font.md`): O and D tall with cut corners, N's diagonal ending high. They were chamfered 1920s drawing capitals before.
 - **Its own file:** the picture is `LODE.PIC`. The kernel keeps only a small bootstrap that reads it into memory, runs it and lets the memory go. In the first version the picture was part of `LODE.SYS`'s start-up code. That was already non-resident, but it made `LODE.SYS` 2.7 KB bigger on disk.
 - **Off from the Executive's side:** System, Display, Space writes `SPLASH=0` to `LODE.INI`, and the bootstrap then never opens `LODE.PIC`. With no `LODE.PIC` on the disk there is no picture either.
 - **Standing rule:** minimal resident bytes, reuse, speed. The picture costs 0 resident bytes, and DOS programs get 562.5 / 578.6 KB, as under 0.4.2.
@@ -41,7 +41,7 @@ At start-up Lodestone shows Fig. 1 of F. A. Annett, *Electrical Machinery* (McGr
 - **Packing:**
   - Each nail is 4 bytes, sorted by head row: x low byte | x bit 8 (bit 7) + rows down from the previous head (bits 0–6) | the point's dx | dy (signed bytes, ±127).
   - The outline is its first vertex as words, then a signed-byte step to each next one.
-  - The title is per-letter strokes on a 20 × 32 grid, chamfered capitals like 1920s drawing lettering.
+  - The title is per-letter strokes on a 20 × 32 grid, Lodefont's capitals drawn thin.
 - **The stone:** each outline edge that isn't level marks its rows y0 ≤ y < y1 at x = x0 + (x1 − x0)(y − y0)/(y1 − y0), by IMUL/IDIV, which truncates. Each row keeps its least x and its greatest x + 1, and the plate is filled row by row around that span.
 - **Nails:** Bresenham from the head. The shank is 3 pixels wide across the minor axis, narrowing to 2 and then 1 over the last three points, with a head 5 across and 2 deep.
   - **The pixel (NPIX) has no branches:** whether it is on the stone is two compares turned into a mask (`CMP/CMC/SBB`, `CMP/SBB`, `AND`), then one read and one write of the screen byte.
