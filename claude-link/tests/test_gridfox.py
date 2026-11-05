@@ -247,7 +247,9 @@ def test_app_rows():
         t = r.text()
         assert len(t) == 19 and t[0].strip() == U + 'long' and t[18].endswith('Top'), t
         assert r.has('Paragraph 1 of the long page.'), t
-        r.keys('pgdn')
+        assert (r.scr.cursor.y, r.scr.cursor.x) == (18, 0), (r.scr.cursor.y, r.scr.cursor.x)   # hidden, parked:
+        r.keys('pgdn')                                          # (a window follows it; at column 79 it lost 2)
+        assert (r.scr.cursor.y, r.scr.cursor.x) == (18, 0), (r.scr.cursor.y, r.scr.cursor.x)
         assert r.app.top == 15 and r.text()[18].endswith('%'), (r.app.top, r.text()[18])   # 17 rows less two
         r.keys('/')                                             # the typing line: the last row, its cursor there
         assert r.text()[18].startswith('Find:') and r.scr.cursor.y == 18 and r.scr.cursor.x == 6, \
@@ -303,6 +305,31 @@ def test_app_rows():
         assert r.app.nrows == 3 and r.app.body == 1             # (never under MIN_ROWS)
         r.app.resize(None)
         assert r.app.nrows == 24 and r.app.body == 22           # (no size known: 24)
+    finally:
+        r.close()
+
+
+def test_app_cols():
+    """A GRiD window is 78 columns (gridlink's pty then too): gridfox lays the
+    page out again for them, the status line's All/Top/Bot inside them, and
+    80 again full screen.  At 80 in a window, their last two were cut off."""
+    r = Run(U + 'long')
+    try:
+        def at(rows, cols):
+            r.app.resize((rows, cols)); r.scr.resize(rows, cols); r.scr.reset(); r.app.draw(full=True); r.pump()
+        r.app.model = {'blocks': [{'k': 'p', 'r': [['word ' * 40, 0, -1]]}], 'acts': []}
+        r.app._relayout(top=0); r.pump()
+        assert max(len(l) for l in r.app.doc.text) > 78, r.app.doc.text      # (80 wide: a line past 78)
+        at(19, 78)
+        assert r.app.ncols == 78 and r.app.nrows == 19, (r.app.ncols, r.app.nrows)
+        assert max(len(l) for l in r.app.doc.text) <= 78, r.app.doc.text
+        rows, _ = r.app.rows()
+        assert all(len(t) == 78 for t, _ in rows) and rows[18][0].rstrip().endswith('All'), rows
+        assert r.text()[18].rstrip().endswith('All'), r.text()
+        at(24, 80)
+        assert r.app.ncols == 80 and max(len(l) for l in r.app.doc.text) > 78, r.app.doc.text
+        at(19, 20)                                              # (narrower than any window: 40 at least)
+        assert r.app.ncols == 40, r.app.ncols
     finally:
         r.close()
 
@@ -900,8 +927,10 @@ def test_end_to_end_gridsim():
             assert status(23), h.grid.screen_text()
             # (pyte drops a shrunk screen's top rows, so the old status line is on the last row at
             # once: gridfox's own layout is the address back on row 0, the status under the page)
+            # (and in a window, 78 columns: the window shows 78 of the GRiD's 80, so nothing past them)
             laid = lambda n: h.grid.screen_text()[0].strip() == U + 'index' and status(n - 1) and \
-                all(not l.strip() for l in h.grid.screen_text()[n:24])
+                all(not l.strip() for l in h.grid.screen_text()[n:24]) and \
+                (n == 24 or all(len(l.rstrip()) <= 78 for l in h.grid.screen_text()))
             took = []
             for n in (19, 12, 19, 12, 19):
                 t0 = time.time()
@@ -911,8 +940,11 @@ def test_end_to_end_gridsim():
                 assert h.settle() and laid(n), (n, h.grid.screen_text())
             print('     19 and 12 rows: laid out again in %s ms' % ', '.join('%.0f' % (t * 1000) for t in took))
             assert max(took) < 0.2, took                                        # (the wakeup fd: not select's 0.5 s)
+            assert h.router.web.cols == 78, h.router.web.cols
             h.router.web.set_rows(24)
-            assert h.run_until(lambda: status(23), wall=5), h.grid.screen_text()
+            assert h.run_until(lambda: status(23) and len(h.grid.screen_text()[23].rstrip()) == 79, wall=5), \
+                h.grid.screen_text()
+            assert h.router.web.cols == 80, h.router.web.cols
             assert h.settle()
             # a click from the GRiD (EVENT 05h): on "Sign in", a link on the first page row
             row = [i for i, l in enumerate(h.grid.screen_text()) if 'Sign in' in l][0]

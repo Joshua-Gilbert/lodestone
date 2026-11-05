@@ -178,7 +178,7 @@ def t_core():
     # the 1520's BIOS gives CODE-? (and CODE-Return, CODE-ESC) only through
     # INT 16h AH=10h; pcemu now models that
     k.key(K_CODE_HELP)
-    check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 0.6 Help'), screen(k))
+    check('CODE-? opens the Executive\'s help', has(k, 'Lodestone 1.0 Help'), screen(k))
     check('... its lines (HT, 25 in place of the spaces, API 10) as they were, and its window as wide (57: its longest line, '
           '51, and 6)', has(k, 'CODE-D                   Delete (a file or subject)') and has(k, 'Return or click again    open it / next item')
           and has(k, 'CODE is the Alt key.  Any key closes.') and geo[0][2] == 57, (geo, screen(k)))
@@ -399,7 +399,7 @@ def t_system():
     shot(k, 'system_gpib')
     check('GPIB scan finds the instruments on the simulated bus (6, 14, 29)', re.search(r'Instruments at\s+6, 14, 29', screen(k)), screen(k))
     k.key('A')
-    check('About', has(k, 'Lodestone 0.6') and has(k, '3.30 compatible'), screen(k))
+    check('About', has(k, 'Lodestone 1.0') and has(k, '3.30 compatible'), screen(k))
     k.key(ktest.F1)
     check('help', has(k, 'System Help') and has(k, 'back to the Executive'), screen(k))
     check('... its lines with HT, 29 as they were with the spaces', has(k, 'ESC  or  CODE-Q              back to the Executive')
@@ -3257,7 +3257,7 @@ def menu_items(k):
     c, y, w, h = struct.unpack('<4H', k.rd('help_w', 8))
     out = []
     for ly, l in k.ocr():
-        t = re.split(r'\?+| {2,}', l[c:c + w].strip())[0].strip() if y < ly < y + h else ''
+        t = re.split(r' {2,}', l[c:c + w].strip())[0].strip() if y < ly < y + h else ''
         if t and t[0].isalnum(): out.append(t)          # (the lit band's edges: rules, not items)
     return out
 
@@ -3388,9 +3388,14 @@ def t_modes():
     check('MODEX.COM (a jump, then LMOX): none; MODE7.COM (seven): the first six', got == (['Open'] + FILE,
           ['Open', 'Plain', 'Pause', 'M3', 'M4', 'M5', 'M6'] + FILE), got)
     m = items('CLAUDE.COM')
-    check('CLAUDE.COM (1.17): Claude Code, Web browser, Chat, Load resident, Unload resident; each its switch in the key column',
+    # (the TAB, 21 before each key: the key at column 21 of the item's text, which starts 2 in, on each item's row
+    #  (not the lit band's edge); no TAB drawn as '?')
+    check('CLAUDE.COM (1.17): Claude Code, Web browser, Chat, Load resident, Unload resident; each its switch in the key '
+          'column (21), the file\'s keys there too; nothing drawn for the TABs',
           m == ['Open', 'Claude Code', 'Web browser', 'Chat', 'Load resident', 'Unload resident'] + FILE
-          and [x for r in scr[0] for x in re.findall(r'\?+(/[A-Z])$', r.rstrip())] == ['/T', '/W', '/C', '/R', '/U'],
+          and [r[23:].rstrip() for r in scr[0] if r[2:3].isalnum()] == ['Return', '/T', '/W', '/C', '/R', '/U', 'CODE-C',
+                                                                     'CODE-M', 'CODE-R', 'CODE-D']
+          and all(r[2:23].rstrip() == r[2:23].rstrip().rstrip('?') and '?' not in r for r in scr[0]),
           (m, scr[0]))
     tail, tty, mode = run_mode(k, 'MODET.COM', 'Plain')
     check('MODET.COM\'s Plain: it runs with its arguments (the tail " /A B"), then the Executive ("MODET.COM ended")',
