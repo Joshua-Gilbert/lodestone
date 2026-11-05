@@ -149,6 +149,25 @@ def test_dos_command_capture():
     check(h)
 
 
+def test_capture_whole_line():
+    """A capture takes every command of the line (CLAUDE.COM's stdout is the output file, the shell's
+    then), and a "> FILE" in the line takes its own command's output: the shell's tail is the line as
+    given, with no redirect added.  (It was " >CLAUDE.OUT" at the end: A && B gave B's output alone,
+    and a > FILE of the line was replaced by it, so FILE was never written.)"""
+    h = start([reply(('tool', 'grid_command', {'command': 'ECHO one && ECHO two'})),
+               reply(('tool', 'grid_command', {'command': 'DIR > A:\\D.TXT && ECHO two'})),
+               reply(('text', 'Done.'))], mode='auto', files={'A:\\CFG.C': CFG_C})
+    assert h.turn('echo twice, then list the disk to a file')
+    one, two = (str(results(h, i)[0]['content']) for i in (1, 2))
+    assert 'one' in one and 'two' in one, one
+    assert any(l.endswith(' /C ECHO one && ECHO two]') for l in map(str, h.m.log)), h.m.log
+    assert 'two' in two and 'CFG' not in two, two
+    d = bytes(h.m.fs.get('A:\\D.TXT', b''))
+    assert b'CFG' in d and b'two' not in d, d
+    assert 'A:\\CLAUDE.OUT' not in h.m.fs
+    check(h)
+
+
 def test_run_defaults():
     """COMSPEC, TEMP and TMP not in CLAUDE's environment: the shell is A:\\COMMAND.COM and the capture
     goes to the current drive's root.  (The stand-in DOS: started in A:\\WORK, which the HELLO's cwd says.)"""
@@ -166,7 +185,7 @@ def test_run_defaults():
     assert h.connect(), ('no connection', h.m.crash)
     assert not emu or h.session.hello.get('cwd') == 'A:\\WORK', h.session.hello
     assert h.turn('what is on the disk?')
-    assert any('[EXEC A:\\COMMAND.COM /C DIR >A:\\CLAUDE.OUT]' in str(l) for l in h.m.log), h.m.log
+    assert any('[EXEC A:\\COMMAND.COM /C DIR]' in str(l) for l in h.m.log), h.m.log
     text = str(results(h, 1)[0]['content'])
     assert not emu or ('CFG' in text and 'A:\\CLAUDE.OUT' not in h.m.fs), text
     check(h)
@@ -192,7 +211,7 @@ def test_run_tmp_only():
     assert h.connect(), ('no connection', h.m.crash)
     assert h.turn('what is on the disk?')
     out = tmp.decode() + ('\\' if emu else '') + 'CLAUDE.OUT'
-    assert any(('/C DIR >' + out + ']') in str(l) for l in h.m.log), (out, h.m.log)
+    assert any('/C DIR]' in str(l) for l in h.m.log), h.m.log
     text = str(results(h, 1)[0]['content'])
     assert 'CFG' in text and out.upper() not in h.m.fs, text
     check(h)

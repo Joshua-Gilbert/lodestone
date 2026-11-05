@@ -244,7 +244,12 @@ program exits. A program that loops or waits at a key read holds CLAUDE
 and the link till someone at the GRiD ends it; the Pi has given up by
 then, and the late answer goes to no request.
 
-RUN with capture runs `COMSPEC /C command >file`; without capture, a
+RUN with capture runs `COMSPEC /C command` with the GRiD's standard output
+(handle 1) on the output file, so every command of the line writes there
+(`A && B`, a batch file), and a `> FILE` in the command takes its own
+command's output, as at the prompt (since CLAUDE 1.18: before, `>file` was
+added at the end, which only the last command got and which replaced a `>`
+there). Without capture, a
 command whose first word is a .COM or .EXE file is EXECuted directly (true
 exit code, less memory): NAME.COM or NAME.EXE as given, or a bare NAME
 found as NAME.COM, then NAME.EXE. Anything else goes through COMSPEC /C: a

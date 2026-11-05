@@ -37,7 +37,7 @@ MAX_COPY = 1024 * 1024          # bytes in one copy or write (5 minutes at stock
 MAX_READ = 48 * 1024            # bytes of a file or program output into the conversation
 MAX_LINE = 8 * 1024 * 1024      # one request on the socket (1 MB of text, JSON-escaped)
 MAX_PATH = 79                   # characters in a GRiD path
-MAX_CMD = 100                   # a DOS command line: 125 with ' /C ' and ' >A:\\CLAUDE.OUT' in it
+MAX_CMD = 100                   # a DOS command line: 126 with ' /C ' (and CLAUDE 1.17's ' >A:\\CLAUDE.OUT')
 MAX_RUN = 3600                  # seconds the Pi waits for a program (the GRiD itself never stops it)
 MAX_GPIB = 4000                 # bytes sent to an instrument (CLAUDE.COM takes 4,700 per request)
 MAX_TYPE = 2048                 # a key script for the paused program (resident Claude's console takes 2 KB)
@@ -132,7 +132,8 @@ TOOLS = [
          "Run a DOS command line or program on the GRiD 1520 (through COMMAND.COM /C, in the GRiD's "
          "current directory). The user approves every run. With capture=true (default) the program's "
          "text output is redirected to a file and returned (up to 48 KB, then its start and end); use "
-         "that for DIR, TYPE, CHKDSK, batch files. Programs that draw their own screen (TM5000G, "
+         "that for DIR, TYPE, CHKDSK, batch files. Every command of the line is captured (A && B), and a "
+         "> FILE in the line writes that command's output to FILE instead. Programs that draw their own screen (TM5000G, "
          "editors) need capture=false: drive them with `keys` and look at them with `screenshot`. While "
          "it runs the GRiD shows the program, not this terminal; the user can type into it too. Runs "
          "until the program exits."),

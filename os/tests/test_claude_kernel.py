@@ -183,7 +183,7 @@ def test_executive_saver():
         th.start()
         t1 = h.m.us
         assert h.run_until(lambda: not th.is_alive(), 30), ('the call never came back', when, h.k.ocr()[:6])
-        assert 'CLAUDE 1.17' in res.get('r', {}).get('grid', ''), res
+        assert 'CLAUDE 1.18' in res.get('r', {}).get('grid', ''), res
         assert h.run_until(lambda: 'Hi from the Pi.' in h.screen(), 10), h.screen()
         return (h.m.us - t1) / 1e6
     ended = call('dark')                                    # (in the dark screen)
@@ -833,7 +833,7 @@ def test_run_temp_setting():
         assert h.turn('what is on the disk?')
         res = T.results(h, 1)[0]
         text, out = str(res['content']), 'M:\\CLAUDE.OUT' if ems else 'A:\\CLAUDE.OUT'
-        assert any(('/C DIR | UPPER >%s]' % out) in str(l) for l in h.m.log), (out, h.m.log)
+        assert any('/C DIR | UPPER]' in str(l) for l in h.m.log), h.m.log
         assert 'CFG' in text and 'UPPER    COM' in text and not res.get('is_error'), text
         assert not [n for n in h.m.fs if 'CLAUDE.OUT' in n or 'PIPE' in n], sorted(h.m.fs)
         if ems: assert A.md_pages(h.k) > 0 and not [n for n in A.md_files(h.k) if 'CLAUDE.OUT' in n or 'PIPE' in n], \
