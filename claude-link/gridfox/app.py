@@ -12,7 +12,7 @@ Term's pictures (gridlink's OSC 5150: a PNG file in this folder, which
 gridlink dithers and sends).  Clicks come back in pixels (?1016) and go to
 the page as a person's; so do the keys, but for a few of gridfox's own.
 """
-import fcntl, hashlib, os, select, signal, struct, sys, termios, time, tty, urllib.parse
+import fcntl, hashlib, io, os, select, signal, struct, sys, termios, time, tty, urllib.parse
 from . import page as P, video as V
 from .marionette import MarionetteError
 ERRS = (MarionetteError, RuntimeError, OSError, ValueError)
@@ -29,6 +29,7 @@ IDLE_SHOT = 2.0                     # and at most this often while idle, when it
 FRAME_SHOT = 0.25                   # while the page keeps changing by itself (a video, an animation)
 SHOWN_WAIT = 3.0                    # then the next look waits for the GRiD to have the last whole, or this
 LINE_PX, PAGE_PX = 48, 352          # the picture view's scrolling (whole rows of 16 lines)
+LIST_ROW = 16                       # the picture view's dropdown list: a row's pixels
 VIEW_FILE = 'view.png'
 BAND = 48                           # columns of the GRiD's band the title gets (CLAUDE's keys take the rest)
 SEARCH = 'https://html.duckduckgo.com/html/?q=%s'
@@ -215,6 +216,8 @@ class App:
         s.picture = False                        # V: in it (the text goes on underneath)
         s.pic_up = False                         # the picture shown now (not while typing an address)
         s.pic_hash = None; s.pic_size = (PIC_W, PIC_H)
+        s.pic_raw = None                         # Firefox's last picture, as it came
+        s.pick = None                            # a dropdown's list drawn on it: {opts, n, first, r, box}
         s.shots = []; s.shot_t = 0.0             # pictures due, and when the last was taken
         s.moving = False                         # the page changed by itself at the last look: look again soon
         s.frame = False                          # the picture up is one of those (gridlink: whole frames, in turn)
@@ -327,6 +330,7 @@ class App:
         if not 0 <= i < len(acts): return
         a = acts[i]; t = a.get('t')
         if s.url == HOME: return
+        s.log('act %d: %s %r' % (i, t, str(a.get('v') or a.get('h') or a.get('lb') or '')[:60]))
         if t == 'field':
             label = (str(a.get('lb') or a.get('ph') or a.get('name') or 'Text'))[:24]
             s.line = Line(label + ': ', a.get('v', ''), secret=a.get('type') == 'password')
@@ -360,6 +364,7 @@ class App:
         s._do('submit', i)
 
     def choose(s, i, n):
+        s.log('choose %d: option %d' % (i, n))
         try:
             nav = s.b.act('select', i, n)
         except ERRS as e:
@@ -372,6 +377,7 @@ class App:
         try:
             nav = s.b.act(op, i)
         except ERRS as e:
+            s.log('act %d: %s' % (i, e))
             s.busy = ''; s.status = 'That did not work: %s' % _short(e); s.draw(); return
         if nav:
             s._loaded(top=0)
@@ -562,7 +568,7 @@ class App:
             s.status = 'The picture view needs CLAUDE.COM 1.2 on the GRiD (CLAUDE /W).'; s.draw(); return
         if on and s.url == HOME:
             s.status = 'The picture view is of a page: G to go to one first.'; s.draw(); return
-        s.picture = on; s.pic_hash = None; s.awaiting = False
+        s.picture = on; s.pic_hash = None; s.awaiting = False; s.pick = None
         try:
             s.b.view_size(*((PIC_W, PIC_H) if on else (TEXT_W, TEXT_H)))
         except ERRS as e:
@@ -589,6 +595,14 @@ class App:
         s.shot_t = time.time()
         png = s.b.screenshot()
         if len(png) >= 24 and png[:8] == b'\x89PNG\r\n\x1a\n': s.pic_size = struct.unpack('>II', png[16:24])
+        s.pic_raw = png
+        s._send_pic(frame)
+
+    def _send_pic(s, frame=False):
+        """The picture (with a dropdown's list over it) to the GRiD, if it changed."""
+        png = s.pic_raw
+        if png is None: return
+        if s.pick is not None: png = s._draw_pick(png)
         h = hashlib.sha1(png).digest()
         changed = h != s.pic_hash
         if frame: s.moving = changed
@@ -622,11 +636,120 @@ class App:
         nw, nh = max(1, round(iw * sc)), max(1, round(ih * sc))
         return (x - (PIC_W - nw) // 2) / sc, (y - (PIC_H - nh) // 2) / sc
 
+    # ---- the picture view's dropdowns ---------------------------------------
+    # Firefox draws a <select>'s list as a pop-up window of its own, which a
+    # headless Firefox's screenshots never have: a click on one opened a list
+    # nobody could see (and the next click went to it).  So the picture view
+    # draws the list itself, under the dropdown as Firefox would, and sets the
+    # choice in the page (input, change) as a person's choice does.
+    def _open_pick(s, m):
+        opts = [(str(t)[:60], bool(d)) for t, d in (m.get('opts') or [])]
+        if not opts: return False
+        n = m.get('v', 0); n = n if isinstance(n, int) and 0 <= n < len(opts) else 0
+        s.pick = {'opts': opts, 'n': n, 'first': 0, 'r': [float(v) for v in m.get('r', [0, 0, 0, 0])], 'box': None}
+        s._pick_place(); s._pick_show(n)
+        s.log('list: %d choices, %r chosen' % (len(opts), opts[n][0]))
+        s._send_pic(); return True
+
+    def _pick_place(s):
+        """Where the list goes: under the dropdown, or over it when there is
+        more room there; as wide as it or its longest choice."""
+        p = s.pick; W, H = s.pic_size
+        x, y, w, h = p['r']
+        width = int(min(W - 2, max(w, 8 * max(len(t) for t, _ in p['opts']) + 24)))
+        x0 = int(max(0, min(x, W - width - 1)))
+        below = int((H - (y + h) - 4) // LIST_ROW); above = int((y - 4) // LIST_ROW)
+        want = len(p['opts'])
+        if below >= min(want, 6) or below >= above:
+            rows = max(1, min(want, below)); y0 = int(y + h)
+        else:
+            rows = max(1, min(want, above)); y0 = int(y - rows * LIST_ROW - 4)
+        y0 = max(0, min(y0, H - rows * LIST_ROW - 4))
+        p['box'] = (x0, y0, width, rows)
+
+    def _pick_show(s, n):
+        """The list scrolled so choice n is in it."""
+        p = s.pick; rows = p['box'][3]
+        if n < p['first']: p['first'] = n
+        elif n >= p['first'] + rows: p['first'] = n - rows + 1
+        p['first'] = max(0, min(p['first'], len(p['opts']) - rows))
+
+    def _draw_pick(s, png):
+        from PIL import Image, ImageDraw, ImageFont
+        try:
+            im = Image.open(io.BytesIO(png)).convert('L')
+        except Exception:
+            return png
+        p = s.pick; x0, y0, w, rows = p['box']
+        d = ImageDraw.Draw(im)
+        try: font = ImageFont.load_default(size=13)
+        except TypeError: font = ImageFont.load_default()
+        d.rectangle([x0, y0, x0 + w, y0 + rows * LIST_ROW + 3], fill=255, outline=0, width=2)
+        more_up, more_down = p['first'] > 0, p['first'] + rows < len(p['opts'])
+        for r in range(rows):
+            k = p['first'] + r
+            text, off = p['opts'][k]
+            ty = y0 + 2 + r * LIST_ROW
+            if k == p['n']:
+                d.rectangle([x0 + 2, ty, x0 + w - 2, ty + LIST_ROW - 1], fill=0)
+            ink = 255 if k == p['n'] else (128 if off else 0)
+            d.text((x0 + 8, ty + 1), text, fill=ink, font=font)
+            if (r == 0 and more_up) or (r == rows - 1 and more_down):   # (more past this edge)
+                d.text((x0 + w - 16, ty + 1), '^' if r == 0 else 'v', fill=ink, font=font)
+        out = io.BytesIO(); im.save(out, 'PNG'); return out.getvalue()
+
+    def _pick_key(s, k):
+        p = s.pick; n = p['n']; rows = p['box'][3]; last = len(p['opts']) - 1
+        if k.startswith('click:'):
+            x, y = (int(v) for v in k[6:].split(':'))
+            vx, vy = s._pic_xy(x, y)
+            x0, y0, w, _ = p['box']
+            if x0 <= vx <= x0 + w and y0 + 2 <= vy < y0 + 2 + rows * LIST_ROW:
+                r = int((vy - y0 - 2) // LIST_ROW)
+                if r == 0 and p['first'] > 0 and rows > 2:              # (the top row: scroll up)
+                    p['first'] = max(0, p['first'] - (rows - 2)); s._send_pic(); return
+                if r == rows - 1 and p['first'] + rows <= last and rows > 2:   # (the bottom: down)
+                    p['first'] = min(last - rows + 1, p['first'] + rows - 2); s._send_pic(); return
+                return s._pick_choose(p['first'] + r)
+            s.log('list: closed (a click outside it)')
+            s.pick = None; s._send_pic(); return                  # (outside: shut, as Firefox's)
+        if k == 'esc': s.pick = None; s._send_pic(); return
+        if k == 'enter': return s._pick_choose(n)
+        step = {'up': -1, 'down': 1, 'pgup': -max(1, rows - 1), 'pgdn': max(1, rows - 1)}.get(k)
+        if step is not None: n = max(0, min(last, n + step))
+        elif k == 'home': n = 0
+        elif k == 'end': n = last
+        elif len(k) == 1 and k.isprintable():                     # (a letter: the next choice starting with it)
+            for j in list(range(n + 1, last + 1)) + list(range(0, n + 1)):
+                if p['opts'][j][0][:1].lower() == k.lower(): n = j; break
+        else: return
+        p['n'] = n; s._pick_show(n); s._send_pic()
+
+    def _pick_choose(s, n):
+        p = s.pick
+        if not 0 <= n < len(p['opts']) or p['opts'][n][1]: return   # (a disabled one: nothing)
+        s.pick = None
+        s.log('list: chose %r' % (p['opts'][n][0],))
+        s._remember()
+        try:
+            nav = s.b.choose_picked(n)
+        except ERRS as e:
+            s.log('list: %s' % (e,)); s._send_pic(); return
+        if nav: s._loaded(top=0)
+        else: s._shots(); s._shoot()
+
     def _picture_key(s, k):
+        if s.pick is not None: return s._pick_key(k)
+        if k == 'enter':                                  # (Return on a dropdown with the focus: its list)
+            m = s.b.select_at(None, None)
+            if m and s._open_pick(m): return
         if k.startswith('click:'):
             x, y = (int(v) for v in k[6:].split(':'))
             vx, vy = s._pic_xy(x, y)
             if not (0 <= vx < s.pic_size[0] and 0 <= vy < s.pic_size[1]): return
+            m = s.b.select_at(vx, vy)
+            if m and s._open_pick(m): return
+            s.log('click %d,%d' % (vx, vy))
             s._remember(); nav = s.b.click_at(vx, vy)
             if nav: s._loaded(top=0)
             else: s._shots(); s._shoot()

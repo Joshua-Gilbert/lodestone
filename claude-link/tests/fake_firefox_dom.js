@@ -39,6 +39,8 @@ function load(url, html) {
   const clamp = () => { sy = Math.max(0, Math.min(sy, Math.max(0, layout().length * 16 - size[1]))); };
   w.scrollBy = function (o, y) { sy += (typeof o === 'object' ? o.top : y) || 0; clamp(); };
   w.scrollTo = function (o, y) { sy = (typeof o === 'object' ? o.top : y) || 0; clamp(); };
+  // what is at a viewport point: the stand-in's line there (jsdom has no elementFromPoint)
+  w.document.elementFromPoint = function (x, y) { const l = layout()[Math.floor((y + sy) / 16)]; return l ? l[2] : null; };
   // what a browser would do after the page's own handlers: follow the link, send the form
   w.addEventListener('click', (e) => {
     if (e.defaultPrevented) return;
