@@ -29,6 +29,8 @@ M33 = {n: os.path.join(HERE, n + '.COM') for n in ('M33GFX', 'M33QUIT', 'M33HSET
 LCMD = os.path.join(GOS, 'src', 'LCMD.COM')
 TM5000G = os.environ.get('TM5000G') or os.path.join(GOS, '..', 'tools', 'TM5000G.EXE')
 TERMFNT = os.path.join(GOS, 'fonts', 'TERMINUS.FNT')
+GRIDFNT = os.path.join(GOS, 'fonts', 'GRIDFONT.FNT')
+TERM437 = os.path.join(GOS, 'fonts', 'TERM.FNT')        # (the terminal window's: 4,096 bytes, not a screen font)
 DEFRAG = os.path.join(GOS, 'src', 'DEFRAG.COM')
 MDTEST = os.path.join(HERE, 'MDTEST.COM')
 MODET, MODEL, MODEE, MODEX, MODE7 = (os.path.join(HERE, n) for n in ('MODET.COM', 'MODEL.COM', 'MODEE.COM', 'MODEX.COM', 'MODE7.COM'))  # (modes: t_modes)
@@ -1050,7 +1052,7 @@ def t_exec():
           any('Only the first 240 are listed' in l for l in k.band()) and k.u16('nent') == 240, (k.band(), k.u16('nent')))
 
 # ---------------------------------------------------------------------
-GRIDF = b''.join(bytes(g) for c, g in sorted(__import__('pcemu').load_font(os.path.join(GOS, 'src', 'FONT.INC')).items()))
+LODEF = b''.join(bytes(g) for c, g in sorted(__import__('pcemu').load_font(os.path.join(GOS, 'src', 'FONT.INC')).items()))
 
 def core_font(k): return bytes(k.pc.rd(k.useg, k.Y['font'], 1536))
 
@@ -1070,36 +1072,43 @@ def to_display(k):
 
 def t_font():
     print('== fonts (System, Display)')
-    term = open(TERMFNT, 'rb').read()
-    img = image('font.img', SYSTEM, TERMFNT, DEFRAG)
+    term, grid = open(TERMFNT, 'rb').read(), open(GRIDFNT, 'rb').read()
+    gridinc = b''.join(bytes(g) for c, g in sorted(__import__('pcemu').load_font(os.path.join(GOS, 'fonts', 'GRIDFONT.INC')).items()))
+    check('GRIDFONT.FNT is GRiD\'s TC8X16 (fonts/GRIDFONT.INC), and not Lodefont', grid == gridinc and len(grid) == 1536 and grid != LODEF)
+    img = image('font.img', SYSTEM, GRIDFNT, TERM437, TERMFNT, DEFRAG)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
-    check('GRiD\'s font at the start (no LODE.INI)', core_font(k) == GRIDF)
+    check('Lodefont at the start (no LODE.INI)', core_font(k) == LODEF)
     to_display(k)
     shot(k, 'system_display')
-    check('Display: the font in use and the fonts on the disk', has(k, 'GRiD (built in)') and has(k, 'TERMINUS.FNT')
+    m = re.search(r'Lodefont \(built in\),.*$', screen(k), re.M)
+    check('Display: the font in use and the font files on the disk, not the terminal window\'s TERM.FNT (4,096 bytes)',
+          m and m.group(0).strip() == 'Lodefont (built in), GRIDFONT.FNT, TERMINUS.FNT'
           and has(k, 'Fonts on the start-up disk:') and 'RETURN: the next font' in ' '.join(k.band()), (screen(k), k.band()))
     k.key(ktest.ENTER)
-    shot(k, 'system_display_terminus')
-    tF = term[(ord('F') - 32) * 16:(ord('F') - 31) * 16]
-    check('Return: TERMINUS.FNT is the font, the screen redrawn in it ("Font" in Terminus)', core_font(k) == term
-          and has(k, 'TERMINUS.FNT') and cell(k, 20, 32) == tF, (screen(k), cell(k, 20, 32).hex()))
-    check('... and LODE.INI says so', disk_file(k, 'LODE.INI') == b'FONT=TERMINUS.FNT\r\n', disk_file(k, 'LODE.INI'))
+    shot(k, 'system_display_gridfont')
+    gF = grid[(ord('F') - 32) * 16:(ord('F') - 31) * 16]
+    check('Return: GRIDFONT.FNT is the font, the screen redrawn in it ("Font" in GRiD\'s)', core_font(k) == grid
+          and has(k, 'GRIDFONT.FNT') and cell(k, 20, 32) == gF, (screen(k), cell(k, 20, 32).hex()))
+    check('... and LODE.INI says so', disk_file(k, 'LODE.INI') == b'FONT=GRIDFONT.FNT\r\n', disk_file(k, 'LODE.INI'))
     k.key(ktest.ESC)
     k = reboot(k, 'font2.img')
-    check('after a restart: TERMINUS.FNT from LODE.INI', core_font(k) == term)
+    check('after a restart: GRIDFONT.FNT from LODE.INI', core_font(k) == grid)
     # the saver's DEFRAG draws its map in the same font
     t = struct.unpack('<H', k.pc.rd(0, 0x46C, 2))[0]
     k.wr('lastact', struct.pack('<H', (t - 5462 + 18) & 0xFFFF))
     for _ in range(60):                 # until DEFRAG's map is up
         k.pc.run_for(0.1)
         if has(k, 'Drive A:'): break
-    tD = term[(ord('D') - 32) * 16:(ord('D') - 31) * 16]
-    check('the screen saver\'s DEFRAG uses it too ("Drive A:" in Terminus)', has(k, 'Drive A:') and cell(k, 1, 0) == tD,
-          (cell(k, 1, 0).hex(), tD.hex(), lines(k)[:1]))
+    gD = grid[(ord('D') - 32) * 16:(ord('D') - 31) * 16]
+    check('the screen saver\'s DEFRAG uses it too ("Drive A:" in GRiD\'s)', has(k, 'Drive A:') and cell(k, 1, 0) == gD,
+          (cell(k, 1, 0).hex(), gD.hex(), lines(k)[:1]))
     k.key(ktest.ESC); k.settle(8)
     to_display(k)
     k.key(ktest.ENTER)
-    check('Return again: GRiD\'s font, and LODE.INI goes (nothing else in it)', core_font(k) == GRIDF and disk_file(k, 'LODE.INI') is None,
+    check('Return again: TERMINUS.FNT, TERM.FNT (between them on the disk) passed over',
+          core_font(k) == term and disk_file(k, 'LODE.INI') == b'FONT=TERMINUS.FNT\r\n', disk_file(k, 'LODE.INI'))
+    k.key(ktest.ENTER)
+    check('Return again: Lodefont, and LODE.INI goes (nothing else in it)', core_font(k) == LODEF and disk_file(k, 'LODE.INI') is None,
           disk_file(k, 'LODE.INI'))
     # other lines in LODE.INI stay; any case; a missing or wrong-sized file
     ini = os.path.join(OUT, 'LODE.INI'); open(ini, 'wb').write(b'KEYS=1\r\nfont=terminus.fnt\r\nLAST=2')
@@ -1107,7 +1116,7 @@ def t_font():
     check('"font=terminus.fnt" among other lines: Terminus at the start', core_font(k) == term)
     to_display(k)
     k.key(ktest.ENTER)
-    check('... Return: GRiD\'s again, the other lines kept', core_font(k) == GRIDF and disk_file(k, 'LODE.INI') == b'KEYS=1\r\nLAST=2\r\n',
+    check('... Return: Lodefont again, the other lines kept', core_font(k) == LODEF and disk_file(k, 'LODE.INI') == b'KEYS=1\r\nLAST=2\r\n',
           disk_file(k, 'LODE.INI'))
     k.key(ktest.ENTER)                  # (the font file is read where LODE.INI is: it must be in use before that)
     check('... Return: Terminus again, every glyph, with a LODE.INI to rewrite', core_font(k) == term
@@ -1115,10 +1124,10 @@ def t_font():
     open(ini, 'wb').write(b'FONT=NOSUCH.FNT\r\n')
     bad = os.path.join(OUT, 'BAD.FNT'); open(bad, 'wb').write(term[:1000])
     k = ktest.KPC(image('font4.img', SYSTEM, bad, ini)); k.start()
-    check('LODE.INI names a missing file: GRiD\'s font, no harm', core_font(k) == GRIDF and 'SYSTEM.RUN' in k.exec_list())
+    check('LODE.INI names a missing file: Lodefont, no harm', core_font(k) == LODEF and 'SYSTEM.RUN' in k.exec_list())
     to_display(k)
     k.key(ktest.ENTER)
-    check('a .FNT of the wrong size is passed over (GRiD\'s stays)', core_font(k) == GRIDF and not k.crashed, screen(k))
+    check('a .FNT of the wrong size is passed over (Lodefont stays)', core_font(k) == LODEF and not k.crashed, screen(k))
     # the start-up's reads at their longest: they share the directory buffer with the start-up
     # code (section uiboot), which sits just past them.  4,095 bytes of LODE.INI with FONT= in
     # them, then a font file of FONT_BYTES (taken) or of one byte more (read, and passed over)
@@ -1128,7 +1137,7 @@ def t_font():
         open(ini, 'wb').write(line + b'X' * (4095 - len(line) - 2) + b'\r\n' + b'Y' * 500)
         k = ktest.KPC(image('font5.img', SYSTEM, f, ini)); k.start()
         check('a LODE.INI longer than the 4,095 bytes read, FONT= in them, a font file of %d bytes: %s; the Executive comes up'
-              % (n, 'taken' if n == 1536 else 'GRiD\'s stays'), (core_font(k) == data if n == 1536 else core_font(k) == GRIDF)
+              % (n, 'taken' if n == 1536 else 'Lodefont stays'), (core_font(k) == data if n == 1536 else core_font(k) == LODEF)
               and not k.crashed and 'SYSTEM.RUN' in k.exec_list() and biosdate(k) == b'10/25/89', (k.where(), k.exec_list(), biosdate(k)))
 
 # ---------------------------------------------------------------------
@@ -3642,7 +3651,7 @@ def rom1(*extra):
     sys.path.insert(0, os.path.join(os.path.dirname(GOS), 'tools'))
     import mkrom
     names = ['src/LODE.SYS', 'src/LODE.PIC', 'src/LCMD.COM', 'apps/SYSTEM.RUN', 'apps/WRITE.RUN', 'apps/CALC.RUN',
-             'src/CALC.COM', 'fonts/TERMINUS.FNT', 'drivers/PS.PRN', 'drivers/SCREEN.PRN', 'rom/LODE.INI']
+             'src/CALC.COM', 'drivers/PS.PRN', 'drivers/SCREEN.PRN', 'rom/LODE.INI']
     files = [(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in names]
     files += [(os.path.basename(p), open(p, 'rb').read()) for p in extra]
     return mkrom.volume(files, boot=open(os.path.join(GOS, 'src', 'ROMBOOT.BIN'), 'rb').read())[0]
@@ -3678,7 +3687,7 @@ def t_sys_back():
     bring the deleted SPLASH=0 back."""
     print('== System: back to the ROM\'s settings forgets SPLASH= too')
     import test_rom as R
-    k = R.boot(roms={1: rom1()}, ata=R.sysinfo_hd(('LODE.INI', b'SPLASH=0\r\n')))
+    k = R.boot(roms={1: rom1(GRIDFNT)}, ata=R.sysinfo_hd(('LODE.INI', b'SPLASH=0\r\n')))   # (a font to go to)
     to_display(k)
     no = re.search(r'Start-up picture\s+no', screen(k))
     for _ in range(3): k.key(ktest.DOWN)                        # Settings
@@ -3690,7 +3699,7 @@ def t_sys_back():
     k.key(ktest.ENTER)                                          # the next font, saved
     ini = R.hd_file(k, 'LODE.INI')
     check('C:\\LODE.INI with SPLASH=0: Display says no; back to the ROM\'s (the file gone): Display says yes, and the next '
-          'font goes in a new C:\\LODE.INI without SPLASH=0', no and gone and yes and ini == b'FONT=TERMINUS.FNT\r\n',
+          'font goes in a new C:\\LODE.INI without SPLASH=0', no and gone and yes and ini == b'FONT=GRIDFONT.FNT\r\n',
           (bool(no), gone, bool(yes), ini, screen(k)))
 
 def t_system_lists():
@@ -3704,10 +3713,10 @@ def t_system_lists():
     devs = {a: sim7210.Device(a, 0, {}) for a in range(5, 31) if a != 21}
     k = ktest.KPC(image('lists.img', SYSTEM, *fonts), chip=sim7210.NEC7210(devs)); k.start()
     to_display(k)
-    m = re.search(r'GRiD \(built in\),.*$', screen(k), re.M)
+    m = re.search(r'Lodefont \(built in\),.*$', screen(k), re.M)
     fl = m.group(0).strip() if m else screen(k)
-    check('Display: as many fonts as fit, the last one whole ("GRiD (built in)" and three NAME.FNT)',
-          fl == 'GRiD (built in), FONTB123.FNT, FONTC123.FNT, FONTD123.FNT', fl)
+    check('Display: as many fonts as fit, the last one whole ("Lodefont (built in)" and two NAME.FNT)',
+          fl == 'Lodefont (built in), FONTB123.FNT, FONTC123.FNT', fl)
     k.key('G')
     check('GPIB: "on IRQ 5 (GPIBIRQ=0: polled)", whole', re.search(r'SRQ\s+on IRQ 5 \(GPIBIRQ=0: polled\)$', screen(k), re.M), screen(k))
     k.key(ktest.ENTER); k.key(ktest.ENTER, settle=False); k.settle(30)

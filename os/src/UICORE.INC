@@ -146,7 +146,7 @@ ed_pos      resw 1
 ed_off      resw 1
 ed_fresh    resb 1
 ed_keep     resb 1
-font_name   resb 13             ; UI_FONT: "" = GRiD's, built in
+font_name   resb 13             ; UI_FONT: "" = Lodefont, built in
 fm_ptr      resw 1
 fm_cur      resw 1
 fm_b1       resw 1
@@ -289,7 +289,7 @@ clip_name:
 
 ; at start-up: "FONT=NAME.FNT" in LODE.INI (a line of its own, any case)
 ; makes that file, on the drive started from, the font.  No file, no line,
-; "FONT=", or a file that isn't exactly FONT_BYTES long: GRiD's font stays.
+; "FONT=", or a file that isn't exactly FONT_BYTES long: Lodefont stays.
 ; "SAVER=n": the saver after n minutes (0: never).  "TIDY=0": the saver
 ; doesn't run DEFRAG ("TIDY=1": it does).  Two files, the later line
 ; winning: the boot drive's LODE.INI (from the ROM, its own settings), then
@@ -389,7 +389,7 @@ font_boot:
         jbe     .e
         stosb
         loop    .c
-.e:     mov     byte [di], 0            ; ("FONT=": GRiD's)
+.e:     mov     byte [di], 0            ; ("FONT=": Lodefont)
         dec     si
 .next:  lodsb
         or      al, al
