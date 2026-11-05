@@ -83,7 +83,7 @@ If the second buffer can't be allocated (MT with a small region, a TSR in the wa
 | Help window | `UI_HELP` from Paint's key table (help can't drift from keys) | 0 |
 | File name prompt | `UI_FORM` (one text field) | 0 |
 | Errors in words | `UI_SBERR` + `UI_MSG` | 0 |
-| Text tool (v2) | `UI_PUTSN` with the screen font (GRiD's or TERMINUS) | 0 |
+| Text tool (v2) | `UI_PUTSN` with the screen font (Lodefont, or the .FNT chosen) | 0 |
 | Opening `.BMP` from the Executive | `kinds` table + the existing "Write opens it" path, generalised | ~30 B resident (§6) |
 | Build | `mkrun.py`, `RUN_API equ 6` (no new API needed) | 0 |
 

@@ -7,6 +7,7 @@ Design notes, kept in step with the claude.ai Project "Grid-OS":
 - `lodestone-defrag.md`: DEFRAG and the screen saver, worn-disk handling, and the power-cut tests.
 - `lodestone-floppy-dev.md`: the floppy development loop, and what's on the floppy.
 - `lodestone-splash.md`: the start-up picture (0.4.3): tracing the 1921 plate, the drawing and its packing, the bootstrap, System's switch, the tests; and the pcemu bug found on the way.
+- `lodestone-font.md`: Lodefont, Lodestone's own 8×16 screen font: its design, its metrics, how it is built, and the other fonts on ROM 2.
 - `lodestone-resident-claude.md`: resident Claude (0.5): the plan, `CLAUDE /R` and its milestones; the spikes and their results on the 1520, and the hook bug they found.
 - `term.md`: Term (0.4.0), the real Claude Code on the GRiD's screen through the Pi; and the design for Phase 2, Claude resident over DOS programs.
 - `gridfox.md`: gridfox (`CLAUDE /W`), Firefox on the Pi shown as text on the GRiD through Term's path: how it works, its keys, the tests, and the picture view and shared browser to come.

@@ -69,10 +69,11 @@ def font():
     global _font
     if _font is None:
         _font = {}
-        # FONT.INC is GRiD's font (the OS, DEFRAG); CLAUDE.COM still draws
-        # with Terminus, so the screen reader knows both
-        for name in ('FONT.INC', 'TERMINUS.INC'):
-            f = pcemu.load_font(os.path.join(HERE, 'src', name))
+        # FONT.INC is Lodefont (the OS, DEFRAG); CLAUDE.COM still draws
+        # with Terminus, and GRIDFONT.FNT can be the font: the screen reader
+        # knows all three
+        for name in ('src/FONT.INC', 'src/TERMINUS.INC', 'fonts/GRIDFONT.INC'):
+            f = pcemu.load_font(os.path.join(HERE, name))
             for c, g in f.items():
                 if not 33 <= c <= 126 or not any(g): continue
                 _font.setdefault(bytes(g), chr(c))
@@ -212,6 +213,14 @@ class KPC:
         out = []
         for y in sorted(hits):
             line = hits[y]
+            # a dot alone over blank rows reads as '.' wherever it is: the dot
+            # of an i or a colon's upper dot, read 11 rows too high (Lodefont's
+            # row 0 is empty).  A line of nothing but periods within a glyph's
+            # height of a line with other characters (and as many as it has) is
+            # that, not text
+            if set(line.values()) == {'.'} and any(0 < abs(y - y2) < 16 and len(hits[y2]) >= len(line)
+                                                   and set(hits[y2].values()) - {'.'} for y2 in hits):
+                continue
             out.append((y, ''.join(line.get(x, ' ') for x in range(80)).rstrip()))
         s._ocr_last = (mode, v, out)
         return list(out)

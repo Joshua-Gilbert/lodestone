@@ -25,17 +25,19 @@ PX, PY = 24, 12                     # the plate's top left on the screen
 PW, PH = 299, 375                   # its size (532 x 668 at 9/16)
 TAPER = 3                           # a nail's last 3 pixels: 2, 2, then 1 wide (the point)
 
-# The title: "LODESTONE" in chamfered capitals, like the lettering of a
-# 1920s engineering drawing.  Each glyph is strokes on a 20 x 32 grid; a
-# stroke is a polyline.  Drawn 2 pixels wide.
+# The title: "LODESTONE" in Lodefont's capitals (docs/lodestone-font.md) as
+# thin strokes: tall rectangles with cut corners, and N's diagonal ending
+# high.  Each
+# glyph is strokes on a 20 x 32 grid; a stroke is a polyline.  Drawn 2
+# pixels wide.
 GLYPHS = {
     'L': [[(0, 0), (0, 32), (20, 32)]],
-    'O': [[(6, 0), (14, 0), (20, 6), (20, 26), (14, 32), (6, 32), (0, 26), (0, 6), (6, 0)]],
-    'D': [[(0, 0), (12, 0), (20, 8), (20, 24), (12, 32), (0, 32), (0, 0)]],
-    'E': [[(20, 0), (0, 0), (0, 32), (20, 32)], [(0, 16), (14, 16)]],
+    'O': [[(5, 0), (15, 0), (20, 5), (20, 27), (15, 32), (5, 32), (0, 27), (0, 5), (5, 0)]],
+    'D': [[(0, 0), (14, 0), (20, 6), (20, 26), (14, 32), (0, 32), (0, 0)]],
+    'E': [[(20, 0), (0, 0), (0, 32), (20, 32)], [(0, 15), (15, 15)]],
     'S': [[(20, 5), (15, 0), (5, 0), (0, 5), (0, 11), (5, 16), (15, 16), (20, 21), (20, 27), (15, 32), (5, 32), (0, 27)]],
     'T': [[(0, 0), (20, 0)], [(10, 0), (10, 32)]],
-    'N': [[(0, 32), (0, 0), (20, 32), (20, 0)]],
+    'N': [[(0, 32), (0, 0), (20, 22)], [(20, 0), (20, 32)]],
 }
 TITLE = 'LODESTONE'
 TADV = 28                           # letter advance
