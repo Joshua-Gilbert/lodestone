@@ -1,0 +1,57 @@
+<!doctype html>
+<html><head><title>Widgets</title></head>
+<body><h1>Widgets</h1>
+<p>Speed: <span id="pick" role="combobox" aria-haspopup="listbox" aria-expanded="false" tabindex="0">Normal</span></p>
+<ul id="list" role="listbox" style="display: none">
+<li role="option">Slow</li><li role="option">Normal</li><li role="option">Fast</li>
+</ul>
+<p><span id="gear" role="button" aria-label="Settings" tabindex="0"><svg width="10" height="10"></svg></span>
+<span id="cc" role="switch" aria-checked="false" tabindex="0">Captions</span></p>
+<div role="tablist"><span role="tab" id="t1">Notes</span> <span role="tab" id="t2">Specs</span></div>
+<p id="pane">Tab: none</p>
+<p><span id="go" onclick="document.getElementById('said').textContent = 'Said: clicked'">Click me</span>
+<span id="ptr" style="cursor: pointer">Pointer here<b> inside</b></span></p>
+<p id="said">Said: nothing</p>
+<div class="card" onclick="void 0" style="cursor: pointer"><a href="/long">Card link</a> and its text</div>
+<p><span role="button" aria-disabled="true">Greyed</span> <a role="button" id="ab">No href</a></p>
+<fieldset><legend>Status</legend>
+<label class="mark"><input type="radio" name="st" value="ssdi" style="display: none"><span>SSDI benefits</span></label>
+<label class="mark"><input type="radio" name="st" value="ssi" style="display: none"><span>SSI benefits</span></label>
+</fieldset>
+<p><input type="checkbox" id="lone" style="display: none"> Lone box text</p>
+<p><input type="checkbox" id="opt"> <label for="opt">Before its label</label></p>
+<p id="stat">Status: none</p>
+<script>
+Array.prototype.forEach.call(document.querySelectorAll('input[name=st]'), function (r) {
+  r.addEventListener('change', function () { document.getElementById('stat').textContent = 'Status: ' + r.value; });
+});
+</script>
+<script>
+var pick = document.getElementById('pick'), list = document.getElementById('list');
+pick.addEventListener('click', function () {
+  var open = pick.getAttribute('aria-expanded') !== 'true';
+  pick.setAttribute('aria-expanded', open ? 'true' : 'false');
+  list.style.display = open ? '' : 'none';
+});
+Array.prototype.forEach.call(document.querySelectorAll('[role=option]'), function (o) {
+  o.addEventListener('click', function () {
+    pick.textContent = o.textContent; pick.setAttribute('aria-expanded', 'false'); list.style.display = 'none';
+  });
+});
+var cc = document.getElementById('cc');
+cc.addEventListener('click', function () {
+  cc.setAttribute('aria-checked', cc.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+});
+['t1', 't2'].forEach(function (id) {
+  document.getElementById(id).addEventListener('click', function () {
+    document.getElementById('pane').textContent = 'Tab: ' + this.textContent;
+  });
+});
+document.getElementById('gear').addEventListener('click', function () {
+  document.getElementById('said').textContent = 'Said: settings';
+});
+document.getElementById('ptr').addEventListener('click', function () {
+  document.getElementById('said').textContent = 'Said: pointer';
+});
+</script>
+</body></html>

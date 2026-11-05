@@ -106,6 +106,63 @@ def test_extract():
         m.close()
 
 
+def test_extract_widgets():
+    """What a script makes clickable without a link or a button (a site's
+    dropdown, a video player's controls): ARIA roles, a click handler, a
+    pointer cursor set on it.  Each a button gridfox can Tab to and click;
+    an icon's label for its text, a switch's state, a dropdown's [+]/[-];
+    a card's link left a link, a disabled one left alone."""
+    f, m, b = browser()
+    try:
+        b.open(U + 'widgets')
+        mod = b.read()
+        d = P.layout(mod)
+        text = '\n'.join(d.text)
+        names = [(a['t'], a.get('v'), a.get('w')) for a in mod['acts']]
+        want = [('button', 'Normal', 'combobox'), ('button', 'Settings', 'button'), ('button', 'Captions', 'switch'),
+                ('button', 'Notes', 'tab'), ('button', 'Specs', 'tab'), ('button', 'Click me', 'click'),
+                ('button', 'Pointer here inside', 'click'), ('link', None, None), ('button', 'No href', 'button'),
+                ('check', False, None), ('check', False, None), ('check', False, None)]
+        assert names == want, names
+        # (radio buttons a page hides to draw its own marks: each with its label one act, the text
+        #  clickable; a hidden box with no label stays hidden; a box before its label: one act)
+        assert '( ) SSDI benefits' in text and '( ) SSI benefits' in text and '[ ] Before its label' in text, text
+        assert '[ ] Lone' not in text and 'Lone box text' in text, text
+        ssdi = mod['acts'][9]
+        assert d.where[9][0] == d.where[9][0] and all(x == 9 for x in d.act[d.where[9][0]][d.where[9][1]:d.where[9][1] + 17]), \
+            d.act[d.where[9][0]]                                         # ('( ) SSDI benefits' all of it)
+        assert '[+] Normal' in text and '[Settings]' in text and '[ ] Captions' in text, text
+        assert 'Slow' not in text and 'Greyed' in text, text            # (the list shut; Greyed: text only)
+    finally:
+        m.close()
+
+
+def test_app_widgets():
+    """Those clicked from the GRiD: the dropdown opens ([-], its options
+    clickable), an option chosen shuts it with its value; the switch, a tab,
+    the icon, the click handler and the pointer each do what a click does."""
+    r = Run(U + 'widgets')
+    try:
+        def act(v):
+            i = [a.get('v') for a in r.app.acts()].index(v)
+            r.app.select(i); r.keys('enter'); r.rereads()
+        act('Normal')
+        assert r.has('[-] Normal') and r.has('Slow') and r.has('Fast'), r.text()
+        act('Fast')
+        assert r.has('[+] Fast') and not r.has('Slow'), r.text()
+        act('Captions'); assert r.has('[x] Captions'), r.text()
+        act('Specs'); assert r.has('Tab: Specs'), r.text()
+        act('Settings'); assert r.has('Said: settings'), r.text()
+        act('Click me'); assert r.has('Said: clicked'), r.text()
+        act('Pointer here inside'); assert r.has('Said: pointer'), r.text()
+        ssi = [k for k, a in enumerate(r.app.acts()) if a['t'] == 'check'][1]  # (a radio the page hides: its label)
+        r.app.select(ssi); r.keys('enter'); r.rereads()
+        page = '\n'.join(r.app.doc.text)                                  # (Status: below the screen)
+        assert '( ) SSDI benefits (*) SSI benefits' in page and 'Status: ssi' in page, page
+    finally:
+        r.close()
+
+
 # ---- the app, key by key ----------------------------------------------------
 class Run:
     def __init__(s, start=None):
@@ -774,6 +831,99 @@ def test_picture_view():
         assert app.line is not None and len(f.keys) == n, (app.line, f.keys[n:])
     finally:
         r.close()
+
+
+def test_picture_view_dropdown():
+    """A dropdown clicked in the picture view: Firefox would open its list as
+    a pop-up of its own, which a headless Firefox's screenshots never show
+    (the click did nothing to see, and the next went to the hidden list).  So
+    gridfox draws the list over the picture, under the dropdown: the arrows,
+    a letter, Return or a click on one choose it in the page (input, change);
+    Esc or a click outside shut it; Return on a dropdown with the focus opens
+    it too.  No real click reaches the dropdown."""
+    import tempfile
+    from PIL import Image
+    r = Run(U + 'index')
+    try:
+        app, f = r.app, r.f
+        app.view_path = os.path.join(tempfile.mkdtemp(prefix='gridfox-view-'), 'view.png')
+        app.pictures = True; app.out = io.BytesIO()
+        app.key('v'); assert app.picture and app.pic_up
+        js = lambda code: f._node({'op': 'exec', 'script': code, 'args': []})['value']
+        js('window.__chg = 0; document.getElementById("sel").addEventListener("change", function () { window.__chg++; });')
+        y = line_y(f, 'VoltsAmpsOhms')
+        plain = open(app.view_path, 'rb').read()
+        n = len(f.points)
+        app.key('click:%d:%d' % (30, y))
+        assert app.pick is not None and [t for t, _ in app.pick['opts']] == ['Volts', 'Amps', 'Ohms'], app.pick
+        assert app.pick['n'] == 0 and len(f.points) == n, (app.pick, f.points[n:])     # (no real click)
+        drawn = open(app.view_path, 'rb').read()
+        assert drawn != plain                                    # the list drawn over the picture
+        x0, y0, w, rows = app.pick['box']
+        im = Image.open(io.BytesIO(drawn)).convert('L')
+        assert rows == 3 and im.getpixel((x0 + 4, y0 + 2 + 8)) == 0, (app.pick['box'], im.getpixel((x0 + 4, y0 + 10)))  # (the chosen row: inverse)
+        app.key('down'); assert app.pick['n'] == 1
+        app.key('enter')
+        assert app.pick is None and js('return document.getElementById("sel").value;') == 'Amps'
+        assert js('return window.__chg;') == 1
+        # a click on a choice in the list
+        app.key('click:%d:%d' % (30, y))
+        x0, y0, w, rows = app.pick['box']
+        app.key('click:%d:%d' % (x0 + 10, y0 + 2 + 2 * 16 + 8))      # the third row: Ohms
+        assert app.pick is None and js('return document.getElementById("sel").value;') == 'Ohms'
+        # a letter, then Esc: nothing chosen; a click outside: shut, nothing chosen
+        app.key('click:%d:%d' % (30, y)); app.key('v'); assert app.pick['n'] == 0     # (Volts)
+        app.key('esc'); assert app.pick is None and js('return document.getElementById("sel").value;') == 'Ohms'
+        app.key('click:%d:%d' % (30, y)); n = len(f.points)
+        app.key('click:%d:%d' % (620, 370))
+        assert app.pick is None and len(f.points) == n and open(app.view_path, 'rb').read() != drawn
+        # Return on the dropdown with the focus: its list
+        js('document.getElementById("sel").focus();')
+        app.key('enter'); assert app.pick is not None and app.pick['n'] == 2
+        app.key('esc')
+        # anything else is still a real click
+        app.key('click:%d:%d' % (30, line_y(f, 'Long page')))
+        assert f.points and f.points[-1][2] == 'a' and app.url == U + 'long', f.points
+    finally:
+        r.close()
+
+
+def test_click_into_frames():
+    """A picture-view click on an embedded player (an <iframe>: Vimeo's,
+    YouTube's) goes into the frame's own page at that point, a frame inside
+    it too, and back out to the page after: sent to the page around it, the
+    player never had it, and nothing played.  A frame that can't be entered:
+    the click goes to the page around it, as before."""
+    from gridfox import browser as BR
+    from gridfox.marionette import ELEMENT, MarionetteError
+    class M:
+        def __init__(s, frames, refuse=False):
+            s.frames = list(frames); s.log = []; s.depth = 0; s.refuse = refuse
+        def script(s, body, args=(), timeout=0):
+            if body is BR.FRAME_AT:
+                if s.depth < len(s.frames):
+                    fx, fy = s.frames[s.depth]
+                    return {'el': {ELEMENT: 'f%d' % s.depth}, 'x': args[0] - fx, 'y': args[1] - fy}
+                return None
+            if body is BR.ACT and args[0] == 'stamped': return {'same': True, 'leaving': False, 'ready': 'complete'}
+            return {'ok': True}
+        def frame(s, el):
+            if s.refuse: raise MarionetteError({'error': 'no such frame', 'message': 'gone'})
+            s.depth += 1; s.log.append(('in', el[ELEMENT]))
+        def parent_frame(s): s.depth -= 1; s.log.append(('out',))
+        def actions(s, acts):
+            a = acts[0]['actions'][0]; s.log.append(('click', s.depth, a['x'], a['y']))
+    m = M([(20, 100), (5, 10)])                   # a player at (20, 100), its own frame at (5, 10) in it
+    b = BR.Browser(m)
+    b.click_at(300, 250)
+    assert m.log == [('in', 'f0'), ('in', 'f1'), ('click', 2, 275, 140), ('out',), ('out',)], m.log
+    assert m.depth == 0
+    m = M([])                                     # no frame there: the page itself
+    BR.Browser(m).click_at(300, 250)
+    assert m.log == [('click', 0, 300, 250)], m.log
+    m = M([(20, 100)], refuse=True)               # one that can't be entered: the page around it
+    BR.Browser(m).click_at(300, 250)
+    assert m.log == [('click', 0, 300, 250)] and m.depth == 0, m.log
 
 
 def test_picture_view_keeps_up_with_a_moving_page():
