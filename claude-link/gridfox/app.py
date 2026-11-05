@@ -774,8 +774,9 @@ class App:
             s.title_sent = title
             parts.append('\x1b]0;%s\x07' % P.clean(title).replace('\x07', '')[:70])
         if cur: parts.append('\x1b[%d;%dH\x1b[?25h' % (cur[0] + 1, cur[1] + 1))
-        else: parts.append('\x1b[?25l')
-        parts.append('\x1b[?2026l')
+        else:                                    # hidden, parked at the status line's left end: a
+            parts.append('\x1b[%d;1H\x1b[?25l' % s.nrows)   # Lodestone window shows 78 of the 80
+        parts.append('\x1b[?2026l')              # columns and follows even a hidden cursor (in column 79: 2 lost)
         s.out.write(''.join(parts).encode('utf-8')); s.out.flush()
 
     # ---- the loop ---------------------------------------------------------

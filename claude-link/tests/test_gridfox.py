@@ -247,7 +247,9 @@ def test_app_rows():
         t = r.text()
         assert len(t) == 19 and t[0].strip() == U + 'long' and t[18].endswith('Top'), t
         assert r.has('Paragraph 1 of the long page.'), t
-        r.keys('pgdn')
+        assert (r.scr.cursor.y, r.scr.cursor.x) == (18, 0), (r.scr.cursor.y, r.scr.cursor.x)   # hidden, parked:
+        r.keys('pgdn')                                          # (a window follows it; at column 79 it lost 2)
+        assert (r.scr.cursor.y, r.scr.cursor.x) == (18, 0), (r.scr.cursor.y, r.scr.cursor.x)
         assert r.app.top == 15 and r.text()[18].endswith('%'), (r.app.top, r.text()[18])   # 17 rows less two
         r.keys('/')                                             # the typing line: the last row, its cursor there
         assert r.text()[18].startswith('Find:') and r.scr.cursor.y == 18 and r.scr.cursor.x == 6, \
