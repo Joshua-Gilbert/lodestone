@@ -2703,7 +2703,17 @@ op_run: mov     si, reqbuf+2
 %endif
         mov     ax, 0003h               ; a plain text screen for the program
         int     10h
-        call    vec_dos
+        test    byte [run_flags], 1     ; captured: its output isn't shown,
+        jz      .vd                     ;  so a line says so (a PAUSE or a
+        mov     si, s_capnote           ;  question in it waits unseen)
+        mov     bx, 0007h
+.cn:    lodsb
+        or      al, al
+        jz      .vd
+        mov     ah, 0Eh
+        int     10h
+        jmp     .cn
+.vd:    call    vec_dos
         cmp     word [ks_len], 0
         je      .nh
         call    hook16
@@ -2715,7 +2725,8 @@ op_run: mov     si, reqbuf+2
         call    unhook16
 .nu:    call    run_back                ; (O17: the link's buffers back)
         call    vec_ours
-        popf
+        call    out_back                ; (our stdout ours again: the output
+        popf                            ;  file's last close, under our INT 24h)
         jc      .fail
         mov     ah, 4Dh
         int     21h
@@ -2777,8 +2788,15 @@ script_has_snap:
 .yes:   stc
         ret
 
-; exec_path + tail for run_cmd.  CF + AL = status on error.
+; exec_path + tail for run_cmd.  CF + AL = status on error.  A capture
+; runs COMSPEC /C with the line as it is and our stdout (handle 1) on the
+; output file, the shell's stdout then: every command of the line writes
+; there (A && B, a batch file), and a "> FILE" in the line takes its own
+; command's output, as it would at the prompt.  A " >file" added to the
+; line went to its last command alone and replaced a ">" there.  out_back
+; puts handle 1 back after the EXEC
 build_exec:
+        mov     word [out_sv], -1
         call    make_outname
         test    byte [run_flags], 1
         jnz     .shell
@@ -2803,18 +2821,57 @@ build_exec:
         jc      .long
         test    byte [run_flags], 1
         jz      .fin
-        mov     si, s_redir
-        call    put_str
-        mov     si, outname
-        call    copy_tail_str
-        jc      .long
-        mov     dx, outname             ; the file made here first (X51): R:,
-        xor     cx, cx                  ;  a protected floppy or a full disk
+        mov     si, outname             ; (SI: its last character)
+.ln:    lodsb
+        or      al, al
+        jnz     .ln
+        dec     si
+        dec     si
+.mk:    mov     dx, outname             ; the file made here (X51): R:, a
+        xor     cx, cx                  ;  protected floppy or a full disk
         mov     ah, 3Ch                 ;  answers its DOS error (83 through
-        int     21h                     ;  our INT 24h), where the shell's
-        jc      .r                      ;  redirection would fail the command
-        xchg    bx, ax                  ;  or wait for a key
+        int     21h                     ;  our INT 24h).  5 (access denied):
+        jnc     .made                   ;  held open, by a program an earlier
+        cmp     ax, 5                   ;  RUN left resident or a task START
+        jne     .er                     ;  began: CLAUDE.OU1 .. OU9 instead
+        mov     al, [si]
+        cmp     al, '9'
+        je      .er5
+        mov     ah, '1'
+        cmp     al, 'T'
+        je      .nx
+        mov     ah, al
+        inc     ah
+.nx:    mov     [si], ah
+        jmp     .mk
+.er5:   mov     al, 5
+.er:    stc
+        ret
+.made:
+        xchg    bx, ax                  ; (BX: the file)
+        push    bx
+        mov     bx, 1
+        mov     ah, 45h                 ; our stdout kept
+        int     21h
+        pop     bx
+        jc      .cf                     ; (4: no handle free)
+        mov     [out_sv], ax
+        mov     cx, 1
+        mov     ah, 46h                 ; the file as handle 1
+        int     21h
+        jnc     .cl
+        push    ax
+        push    bx
+        call    out_back
+        pop     bx
+        pop     ax
+.cf:    push    ax
         mov     ah, 3Eh
+        int     21h
+        pop     ax
+        stc
+        ret
+.cl:    mov     ah, 3Eh                 ; (handle 1 holds it)
         int     21h
 .fin:   mov     ax, di
         sub     ax, tail+1
@@ -2826,6 +2883,26 @@ build_exec:
 .long:  mov     al, 0F3h
         stc
 .r:     ret
+
+; handle 1 back from out_sv (build_exec kept it there), if it holds one.
+; The file committed first: a program left resident holds it open too, so
+; the 46h below would not be its last close (nor write its size)
+out_back:
+        mov     bx, -1
+        xchg    bx, [out_sv]
+        cmp     bx, -1
+        je      .x
+        push    bx
+        mov     bx, 1
+        mov     ah, 68h
+        int     21h
+        pop     bx
+        mov     cx, 1
+        mov     ah, 46h
+        int     21h
+        mov     ah, 3Eh
+        int     21h
+.x:     ret
 
 copy_tail_str:                          ; DS:SI -> ES:DI up to NUL; CF if too long
 .l:     lodsb
@@ -3075,7 +3152,8 @@ run_back:
         push    cs
         pop     es
 .x:     ret
-.none:  mov     dx, msg_nomem
+.none:  call    out_back                ; (a capture's stdout back first: the
+        mov     dx, msg_nomem           ;  message on the screen, not in the file)
         jmp     leave_dx
 
 hook16: mov     ax, 3516h
@@ -3474,8 +3552,8 @@ s_dotexe    db '.EXE', 0                    ; (after s_dotcom: resolve_direct's 
 s_temp      db 'TEMP=', 0
 s_tmp       db 'TMP=', 0
 s_outfile   db 'CLAUDE.OUT', 0
+s_capnote   db 'Output goes to Claude, not this screen: a question it asks is not shown here.', 13, 10, 0
 s_slashc    db ' /C ', 0
-s_redir     db ' >', 0
 kv_os       db 'os=MS-DOS ', 0
 kv_cwd      db 10, 'cwd=', 0
 kv_drives   db 10, 'drives=', 0
@@ -3484,7 +3562,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.17', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.18', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0
@@ -4689,6 +4767,7 @@ run_cmd     resw 1
 run_rest    resw 1
 run_exit    resw 1
 run_err     resw 1
+out_sv      resw 1                      ; a capture's stdout, kept (-1: none)
 ext_at      resw 1
 epb         resw 7                      ; (filled once at the start: not under hellobuf)
 ks_active   resb 1

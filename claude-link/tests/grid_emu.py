@@ -522,7 +522,9 @@ class Machine:
         s.w('ax', 2); s.w('bx', 600); s.w('cx', 512); s.w('dx', 713)
     def d44(s, ah, al, ds, dx, bx, cx):
         if al == 0x00:
-            s.w('dx', 0x80 | (0x03 if bx < 2 else 0)) if bx < 5 else s.w('dx', 0x0000); s.cf(0)
+            h = s.hget(bx)
+            if not h: return s.err(6)
+            s.w('dx', 0x80 | (0x03 if bx < 2 else 0) if h['p'] is None else 0x0000); s.cf(0)
         elif al == 0x08:
             d = bx & 0xFF
             if d == 0: d = ord(s.cwd[0]) - 64
@@ -551,6 +553,7 @@ class Machine:
         p = s.norm(s.asciiz(ds, dx))
         if s.isdir(p): return s.err(5)
         if not s.isdir(s.parent(p)): return s.err(3)
+        if any(h and h['p'] == p for h in s.handles.values()): return s.err(5)   # (held open: the kernel's sft_busy)
         s.fs[p] = bytearray(); s.open_handle(p)
     def open_handle(s, p):
         h = 5
@@ -561,35 +564,54 @@ class Machine:
         if p not in s.fs: return s.err(5 if s.isdir(p) else (2 if s.isdir(s.parent(p)) else 3))
         s.open_handle(p)
     def d3e(s, ah, al, ds, dx, bx, cx):
-        if bx in s.handles: del s.handles[bx]; s.cf(0)
-        elif bx < 5: s.cf(0)
+        if s.handles.get(bx):
+            if bx < 5: s.handles[bx] = None             # (a standard handle closed stays closed)
+            else: del s.handles[bx]
+            s.cf(0)
+        elif bx < 5 and bx not in s.handles: s.cf(0)
         else: s.err(6)
+    CON = {'p': None}                   # (handles 0-4 not in s.handles: the console)
+    def hget(s, bx): return s.handles.get(bx, s.CON if bx < 5 else None)
     def d3f(s, ah, al, ds, dx, bx, cx):
-        if bx < 5 and bx not in s.handles: s.w('ax', 0); s.cf(0); return
-        h = s.handles.get(bx)
+        h = s.hget(bx)
         if not h: return s.err(6)
+        if h['p'] is None: s.w('ax', 0); s.cf(0); return
         d = s.fs[h['p']][h['pos']:h['pos'] + cx]
         s.wr(ds, dx, d); h['pos'] += len(d); s.w('ax', len(d)); s.cf(0)
-    def d40(s, ah, al, ds, dx, bx, cx):
-        data = s.rd(ds, dx, cx)
-        if bx in (1, 2) and bx not in s.handles:
+    def hwrite(s, h, data):
+        if h['p'] is None:
             for c in data: s.tty_put(c)
-            s.w('ax', cx); s.cf(0); return
-        h = s.handles.get(bx)
-        if not h: return s.err(6)
+            return
         f = s.fs[h['p']]
-        if cx == 0: del f[h['pos']:]
+        if not data: del f[h['pos']:]
         else:
             if len(f) < h['pos']: f.extend(bytes(h['pos'] - len(f)))
-            f[h['pos']:h['pos'] + cx] = data
-        h['pos'] += cx; s.w('ax', cx); s.cf(0)
+            f[h['pos']:h['pos'] + len(data)] = data
+        h['pos'] += len(data)
+    def d40(s, ah, al, ds, dx, bx, cx):
+        h = s.hget(bx)
+        if not h: return s.err(6)
+        s.hwrite(h, s.rd(ds, dx, cx)); s.w('ax', cx); s.cf(0)
+    def d45(s, ah, al, ds, dx, bx, cx):          # DUP: the same open file (its position shared)
+        h = s.hget(bx)
+        if not h: return s.err(6)
+        n = 5
+        while n in s.handles: n += 1
+        s.handles[n] = h; s.w('ax', n); s.cf(0)
+    def d46(s, ah, al, ds, dx, bx, cx):          # FORCEDUP: CX becomes BX's file
+        h = s.hget(bx)
+        if not h: return s.err(6)
+        if h is s.CON and cx < 5: s.handles.pop(cx, None)
+        else: s.handles[cx] = h
+        s.cf(0)
     def d41(s, ah, al, ds, dx, *a):
         p = s.norm(s.asciiz(ds, dx))
         if p not in s.fs: return s.err(2)
         del s.fs[p]; s.cf(0)
     def d42(s, ah, al, ds, dx, bx, cx):
-        h = s.handles.get(bx)
+        h = s.hget(bx)
         if not h: return s.err(6)
+        if h['p'] is None: s.w('ax', 0); s.w('dx', 0); s.cf(0); return
         off = (cx << 16) | dx
         if off & 0x80000000: off -= 1 << 32
         base = {0: 0, 1: h['pos'], 2: len(s.fs[h['p']])}.get(al)
@@ -782,6 +804,11 @@ class Machine:
         """COMMAND.COM /C: the built-in commands Claude is likely to use."""
         t = line.strip()
         if t[:2].upper() == '/C': t = t[2:].strip()
+        if '&&' in t:                                   # (LCMD's: the next one if this one's exit is 0)
+            for part in t.split('&&'):
+                r = s.shell(part)
+                if r: return r
+            return 0
         out = None; append = False
         if '>' in t:
             t, _, o = t.partition('>')
@@ -810,8 +837,7 @@ class Machine:
         if out:
             if append: s.fs.setdefault(out, bytearray()).extend(data)
             else: s.fs[out] = bytearray(data)
-        else:
-            for c in data: s.tty_put(c)
+        else: s.hwrite(s.hget(1), data)          # (its stdout: the console, or a file it was given)
         return 0
 
     # ---- running ----------------------------------------------------------------
