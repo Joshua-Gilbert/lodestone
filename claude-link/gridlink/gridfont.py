@@ -1,5 +1,6 @@
 """The GRiD's own 8 x 16 font, for pictures the Pi draws (plot.py): GRiD's
-InteGRiD system font TC8X16 for 20h-7Fh (os/src/FONT.INC) and CLAUDE's
+InteGRiD system font TC8X16 for 20h-7Fh (os/fonts/GRIDFONT.INC; the screen's
+built-in font is Lodefont since 2026-11-05, os/src/FONT.INC) and CLAUDE's
 extra glyphs from 80h (os/claude/GLYPHS.INC).  Made from those
 files; 16 bytes a glyph, bit 7 the leftmost pixel."""
 FIRST = 0x20
