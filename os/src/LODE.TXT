@@ -1,4 +1,4 @@
-Lodestone 0.6 - boot floppy and ROM
+Lodestone 1.0 - boot floppy and ROM
 
 First time only: boot GRiD MS-DOS from the EPROM as usual, then run
 A:\LODEBOOT and answer Y. It adds the Lodestone loader to this disk
@@ -415,7 +415,7 @@ doesn't start.  A .COM that can't be read whole (a FAT sector on C:
 that can't be read, a file shorter than its directory says) doesn't
 start half loaded.
 
-Being built: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
+1.0: multitasking, behind a switch.  MULTITASK=1 in LODE.INI
 (with EMS, 32 KB of it free; System, Multitasking sets it) turns it on:
 its resident part (14 KB, read from LODEMT.SYS, which must sit beside
 LODE.SYS and come from the same build) goes into memory.  Return in the
@@ -431,6 +431,13 @@ and FREEZE= name programs that may always, or never, run behind, and
 MTMEM= what memory a program gets (MTMEM=TM5000G:300; else a .COM 64 KB,
 an .EXE what it asks for).  Without the line nothing of it is in
 memory, and LODEMT.SYS isn't even read.
+
+Also in 1.0: programs in windows beside the Executive (Claude with
+CODE-A, the prompt with CODE-P, Paint), moved and sized with the mouse;
+SysReq or CODE-Tab to the next task; other tasks run while one waits on
+the floppy or the hard disk.  Without the GPIB cartridge, SERLINK.COM
+carries Claude's link over the internal modem or a serial cable, and a
+kernel can be built with the serial link in place of the GPIB driver.
 
 The Executive (the file list):
   Up/Down, PgUp/PgDn, Home/End   choose

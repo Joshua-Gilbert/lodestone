@@ -237,7 +237,7 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 ## Status and what's next
 
-**Lodestone 0.6** is the current release. It boots from an EPROM on the 1520, and from a floppy. On the 1520:
+**Lodestone 1.0** is the current release. It boots from an EPROM on the 1520, and from a floppy. On the 1520:
 - the kernel, the Executive and its programs, EMS, C:, M: and the calculator on a real 80287 all work;
 - Claude Code works through the Pico 2 bridge, including gridfox, pictures and plots;
 - resident Claude works over a running program, including fetching and plotting an instrument trace.
