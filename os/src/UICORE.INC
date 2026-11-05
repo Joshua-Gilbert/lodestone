@@ -2707,23 +2707,26 @@ help_draw:
 ; for the spaces a table lined up with)
 help_line:
         pusha
-        add     di, bx                  ; (the right limit)
+        mov     ah, 0                   ; (no mask)
+        jmp     short hl_go
+mask_line:                              ; (the same, AH the mask: UI_MENU's
+        pusha                           ;  rows, their keys lined up by it)
+hl_go:  add     di, bx                  ; (the right limit)
         mov     bp, bx                  ; (its first column)
         mov     cx, 1
-.l:     lodsb
+.l:     lodsb                           ; (AH, the mask, kept throughout)
         or      al, al
         jz      .x
         cmp     al, 9
         jne     .c
         lodsb
-        cbw
-        add     ax, bp
-        xchg    bx, ax
+        mov     bl, al
+        mov     bh, 0
+        add     bx, bp
         jmp     .l
 .c:     cmp     bx, di
         jae     .n
         dec     si
-        xor     ax, ax                  ; (AH: no mask)
         call    putsn                   ; (one character; all kept)
         inc     si
 .n:     inc     bx
@@ -2866,7 +2869,11 @@ mn_row: call    mn_name                 ; AX = item, DX = y, CL = mask
         mov     bx, [mn_lv+LV_COL]
         inc     bx
         mov     ah, cl
-        jmp     puts
+        mov     di, [mn_lv+LV_W]        ; (a TAB, n: on to column n, as
+        dec     di                      ;  maxlen counted it, API 10; not
+        dec     di                      ;  past the lit band's inner edge)
+        jmp     mask_line
+        times ($ - $$) & 1 db 90h       ; (the hot code after it even)
 
 mn_name:                                ; AX = item -> SI = its text
         xchg    si, ax

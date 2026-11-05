@@ -3257,7 +3257,7 @@ def menu_items(k):
     c, y, w, h = struct.unpack('<4H', k.rd('help_w', 8))
     out = []
     for ly, l in k.ocr():
-        t = re.split(r'\?+| {2,}', l[c:c + w].strip())[0].strip() if y < ly < y + h else ''
+        t = re.split(r' {2,}', l[c:c + w].strip())[0].strip() if y < ly < y + h else ''
         if t and t[0].isalnum(): out.append(t)          # (the lit band's edges: rules, not items)
     return out
 
@@ -3388,9 +3388,14 @@ def t_modes():
     check('MODEX.COM (a jump, then LMOX): none; MODE7.COM (seven): the first six', got == (['Open'] + FILE,
           ['Open', 'Plain', 'Pause', 'M3', 'M4', 'M5', 'M6'] + FILE), got)
     m = items('CLAUDE.COM')
-    check('CLAUDE.COM (1.17): Claude Code, Web browser, Chat, Load resident, Unload resident; each its switch in the key column',
+    # (the TAB, 21 before each key: the key at column 21 of the item's text, which starts 2 in, on each item's row
+    #  (not the lit band's edge); no TAB drawn as '?')
+    check('CLAUDE.COM (1.17): Claude Code, Web browser, Chat, Load resident, Unload resident; each its switch in the key '
+          'column (21), the file\'s keys there too; nothing drawn for the TABs',
           m == ['Open', 'Claude Code', 'Web browser', 'Chat', 'Load resident', 'Unload resident'] + FILE
-          and [x for r in scr[0] for x in re.findall(r'\?+(/[A-Z])$', r.rstrip())] == ['/T', '/W', '/C', '/R', '/U'],
+          and [r[23:].rstrip() for r in scr[0] if r[2:3].isalnum()] == ['Return', '/T', '/W', '/C', '/R', '/U', 'CODE-C',
+                                                                     'CODE-M', 'CODE-R', 'CODE-D']
+          and all(r[2:23].rstrip() == r[2:23].rstrip().rstrip('?') and '?' not in r for r in scr[0]),
           (m, scr[0]))
     tail, tty, mode = run_mode(k, 'MODET.COM', 'Plain')
     check('MODET.COM\'s Plain: it runs with its arguments (the tail " /A B"), then the Executive ("MODET.COM ended")',
