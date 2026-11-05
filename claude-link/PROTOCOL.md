@@ -244,7 +244,15 @@ program exits. A program that loops or waits at a key read holds CLAUDE
 and the link till someone at the GRiD ends it; the Pi has given up by
 then, and the late answer goes to no request.
 
-RUN with capture runs `COMSPEC /C command >file`; without capture, a
+RUN with capture runs `COMSPEC /C command` with the GRiD's standard output
+(handle 1) on the output file, so every command of the line writes there
+(`A && B`, a batch file), and a `> FILE` in the command takes its own
+command's output, as at the prompt (since CLAUDE 1.18: before, `>file` was
+added at the end, which only the last command got and which replaced a `>`
+there, and a batch file's lines weren't captured at all). A captured line's
+prompts (PAUSE, CHOICE, DEL's question) go to the file too, and the line
+waits for the key unseen; the GRiD shows one line saying its output goes
+to Claude. Without capture, a
 command whose first word is a .COM or .EXE file is EXECuted directly (true
 exit code, less memory): NAME.COM or NAME.EXE as given, or a bare NAME
 found as NAME.COM, then NAME.EXE. Anything else goes through COMSPEC /C: a
@@ -253,7 +261,11 @@ found as NAME.COM, then NAME.EXE. Anything else goes through COMSPEC /C: a
 is %TEMP%\CLAUDE.OUT (or %TMP%, or X:\CLAUDE.OUT on the current drive);
 the Pi reads it and deletes it. The GRiD makes the file before the program
 starts: if it can't (R:, a protected floppy, a missing directory), the RUN
-answers that DOS error and nothing runs.
+answers that DOS error and nothing runs. If it is held open (Lodestone's
+error 5; MS-DOS without SHARE just truncates it: a
+program an earlier RUN left resident, or a task it STARTed, still has it as
+its output), the GRiD makes CLAUDE.OU1, then OU2 .. OU9, in the same place,
+and the REPLY names the one it used.
 
 Key scripts for RUN: two bytes per key, ASCII then scan code (the AX word
 INT 16h returns); FFh FFh n = wait n × 55 ms; FFh FEh 00h = take a screen
