@@ -81,7 +81,11 @@ class Tools:
                  "Run a DOS command line or program on the GRiD (through COMMAND.COM /C, in the "
                  "GRiD's current directory). With capture=true (default) the program's text output "
                  "is redirected to a file and returned to you; use that for commands like DIR, TYPE, "
-                 "CHKDSK or batch files. Programs that draw their own screen (TM5000G, editors, games) "
+                 "CHKDSK or batch files. Every command of the line is captured (A && B), and a > FILE "
+                 "in the line writes that command's output to FILE instead. A captured line's prompts "
+                 "(PAUSE, CHOICE, DEL *.*'s question) go to you, not the screen, and it waits for the "
+                 "key unseen: answer them with `keys`, or use capture=false. "
+                 "Programs that draw their own screen (TM5000G, editors, games) "
                  "need capture=false: drive them with `keys` and look at them with `screenshot`. "
                  "The user can see the program and may type into it too. Runs until the program exits."),
              'input_schema': {'type': 'object', 'properties': {
