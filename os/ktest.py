@@ -216,8 +216,10 @@ class KPC:
             # a dot alone over blank rows reads as '.' wherever it is: the dot
             # of an i or a colon's upper dot, read 11 rows too high (Lodefont's
             # row 0 is empty).  A line of nothing but periods within a glyph's
-            # height of a fuller line is that, not text
-            if set(line.values()) == {'.'} and any(0 < abs(y - y2) < 16 and len(hits[y2]) > len(line) for y2 in hits):
+            # height of a line with other characters (and as many as it has) is
+            # that, not text
+            if set(line.values()) == {'.'} and any(0 < abs(y - y2) < 16 and len(hits[y2]) >= len(line)
+                                                   and set(hits[y2].values()) - {'.'} for y2 in hits):
                 continue
             out.append((y, ''.join(line.get(x, ' ') for x in range(80)).rstrip()))
         s._ocr_last = (mode, v, out)
