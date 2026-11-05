@@ -58,8 +58,9 @@ in the subject you work in).  A DOS program gets about 566 KB: while it
 runs the Executive lends it the memory of its file list.  The screen font is
 Lodefont, Lodestone's own.  GRIDFONT.FNT is GRiD's: the InteGRiD system
 font (TC8X16), as GRID.EXE drew it, and TERMINUS.FNT the font Lodestone
-had first; in System, Display, Return switches between them (and any other
-font file in the root of the disk).  The choice is kept in LODE.INI as
+had first (on ROM 2; from a floppy, copy them to its root); in System,
+Display, Return switches between them (and any other font file in the
+root of the start-up disk).  The choice is kept in LODE.INI as
 FONT=GRIDFONT.FNT; without that line, or without the file, it is Lodefont.
 CODE-? opens the help everywhere (F1 too).
 
@@ -323,9 +324,9 @@ halves swapped, as the 1520 wires its sockets) to a 27C010 and put it in
 the second ROM socket (the BIOS starts the last bootable ROM it finds;
 the GRiD MS-DOS EPROM can go in the first).  It starts on C: (or R:).
 R: is the ROM: LODE.SYS, LODEMT.SYS, LCMD, System, Write, the
-calculator, Tasks, DEFRAG, the picture and LODE.INI, read-only (GRiD's
-font and Terminus, GRIDFONT.FNT and TERMINUS.FNT, are on ROM 2, which
-joins R:).  R:\LODE.INI holds the ROM's settings; what you change in
+calculator, Tasks, the picture and LODE.INI, read-only; ROM 2, if it is
+in, joins R: with DEFRAG, Paint, CLAUDE, the terminal window's font and
+GRIDFONT.FNT and TERMINUS.FNT.  R:\LODE.INI holds the ROM's settings; what you change in
 System goes in C:\LODE.INI (A:\LODE.INI without the hard disk) and is
 read over them: System's Settings topic shows which, and Return there
 goes back to the ROM's.

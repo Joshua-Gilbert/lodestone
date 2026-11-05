@@ -1075,6 +1075,13 @@ def t_font():
     term, grid = open(TERMFNT, 'rb').read(), open(GRIDFNT, 'rb').read()
     gridinc = b''.join(bytes(g) for c, g in sorted(__import__('pcemu').load_font(os.path.join(GOS, 'fonts', 'GRIDFONT.INC')).items()))
     check('GRIDFONT.FNT is GRiD\'s TC8X16 (fonts/GRIDFONT.INC), and not Lodefont', grid == gridinc and len(grid) == 1536 and grid != LODEF)
+    clash = {}
+    for n in ('src/FONT.INC', 'src/TERMINUS.INC', 'fonts/GRIDFONT.INC'):           # (the fonts ktest's screen reader knows)
+        for c, g in __import__('pcemu').load_font(os.path.join(GOS, n)).items():
+            if 33 <= c <= 126 and any(g):
+                for b in (bytes(g), bytes(x ^ 0xFF for x in g)): clash.setdefault(b, set()).add(chr(c))
+    check('the screen reader\'s fonts: no glyph of one is another character in the others',
+          not [v for v in clash.values() if len(v) > 1], [v for v in clash.values() if len(v) > 1])
     sys.path.insert(0, GOS); import lodefont, typfont
     check('src/FONT.INC is fonts/LODEFONT.TXT as lodefont.py makes it (run it after changing the .TXT)',
           LODEF == typfont.fnt(lodefont.load()))
