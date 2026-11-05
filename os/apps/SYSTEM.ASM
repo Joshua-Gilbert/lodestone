@@ -1225,9 +1225,10 @@ t_about:
         jmp     ptext
 
 ; ---------------------------------------------------------------------
-;  Display: the screen font.  GRiD's is built into the core (and copied
+;  Display: the screen font.  Lodefont is built into the core (and copied
 ;  here, to switch back to); others are .FNT files in the disk's root:
-;  FONT_BYTES of 8x16 glyphs.  The choice goes in \LODE.INI as FONT=,
+;  FONT_BYTES of 8x16 glyphs (GRIDFONT.FNT, GRiD's own, and TERMINUS.FNT
+;  are on ROM 2).  The choice goes in \LODE.INI as FONT=,
 ;  which the core reads at start-up.  And the start-up picture (the
 ;  kernel's, KSPLASH.INC): Space turns it off or on, SPLASH=0 in LODE.INI
 ;  when off.
@@ -1239,7 +1240,7 @@ t_display:
         call    UI_FONT                 ; SI = its name ("" = built in)
         cmp     byte [si], 0
         jne     .n
-        mov     si, s_gridfont
+        mov     si, s_builtin
 .n:     call    UI_SBSTR
         mov     si, l_font
         call    pline
@@ -1254,21 +1255,25 @@ t_display:
         call    pgap
         mov     si, l_fonts
         call    ptext
-        call    vstart                  ; GRiD's, and every .FNT here
-        mov     si, s_gridfont
+        call    vstart                  ; Lodefont, and every font file here
+        mov     si, s_builtin
         call    UI_SBSTR
         mov     dx, s_fntall
         xor     cx, cx
         mov     ah, 4Eh
         int     21h
         jc      .d
-.f:     cmp     di, vbuf + 80 - LCOL - 2 - 14   ; (room for ", NAME.EXT"?)
+.f:     cmp     word [dta + 26], FONT_BYTES     ; (a font only: not TERM.FNT,
+        jne     .nf                             ;  the terminal window's 4 KB)
+        cmp     word [dta + 28], 0
+        jne     .nf
+        cmp     di, vbuf + 80 - LCOL - 2 - 14   ; (room for ", NAME.EXT"?)
         ja      .d
         mov     ax, ', '
         stosw
         mov     si, dta + 30
         call    UI_SBSTR
-        mov     ah, 4Fh
+.nf:    mov     ah, 4Fh
         int     21h
         jnc     .f
 .d:     mov     byte [di], 0
@@ -1285,7 +1290,7 @@ t_display:
         jmp     ptext
 
 ; Return on Display: the next font (the files in the order the disk has
-; them, then GRiD's again), saved in LODE.INI, and the screen redrawn
+; them, then Lodefont again), saved in LODE.INI, and the screen redrawn
 next_font:
         xor     al, al
         call    UI_FONT
@@ -1295,12 +1300,12 @@ next_font:
         mov     byte [past], 0          ; (past the one in use yet?)
         cmp     byte [cur_font], 0
         jne     .find
-        mov     byte [past], 1          ; GRiD's now: the first file is next
+        mov     byte [past], 1          ; Lodefont now: the first file is next
 .find:  mov     dx, s_fntall
         xor     cx, cx
         mov     ah, 4Eh
         int     21h
-.l:     jc      .grid                   ; none after it: GRiD's again
+.l:     jc      .lode                   ; none after it: Lodefont again
         cmp     byte [past], 0
         je      .cmp
         call    load_fnt                ; this one, if it is a font
@@ -1314,7 +1319,7 @@ next_font:
 .nx:    mov     ah, 4Fh
         int     21h
         jmp     .l
-.grid:  mov     si, grid_font
+.lode:  mov     si, builtin_font
         mov     di, s_empty
         jmp     .set
 .file:  mov     si, fbuf
@@ -1892,8 +1897,8 @@ ini_find:
 
 ; FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRINTER= in \LODE.INI for the
 ; font, saver, temporary disk, start-up picture and PrtSc in use: its other
-; lines are kept, old FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRINTER= lines go, and GRiD's
-; font, the usual 5 minutes, tidying, 256 KB and the picture need none (no
+; lines are kept, old FONT=, SAVER=, TIDY=, MDISK=, SPLASH= and PRINTER= lines go, and
+; Lodefont, the usual 5 minutes, tidying, 256 KB and the picture need none (no
 ; lines left: no file).  Without M: (no EMS) an MDISK= line stays as it
 ; is.  CF if it couldn't be saved (said in the band).
 save_ini:
@@ -1957,7 +1962,7 @@ save_ini:
         jmp     .line
 .nolf:  mov     ax, 0A0Dh               ; (the last one had no line end)
         stosw
-.end:   xor     al, al                  ; the font in use, unless GRiD's
+.end:   xor     al, al                  ; the font in use, unless Lodefont
         call    UI_FONT
         cmp     byte [si], 0
         je      .wr
@@ -2376,7 +2381,7 @@ l_dos       db 'DOS version',0
 s_compat    db ' compatible',0
 l_api       db 'UI core API',0
 s_about2    db 'Programs: the Executive, System, Write',0
-s_about3    db "Font: GRiD's InteGRiD system font (TC8X16)",0
+s_about3    db "Font: Lodefont (GRiD's: GRIDFONT.FNT)",0
 day_names   dw d0, d1, d2, d3, d4, d5, d6
 d0          db 'Sunday',0
 d1          db 'Monday',0
@@ -2407,7 +2412,7 @@ mt_known    db 0                        ; the same for MULTITASK= (set_back
 gp_scanned  db 0
 l_font      db 'Font',0
 l_fonts     db 'Fonts on the start-up disk:',0
-s_gridfont  db 'GRiD (built in)',0
+s_builtin   db 'Lodefont (built in)',0
 s_fntall    db '@:\*.FNT',0              ; (@: the disk Lodestone started from,
 s_ini       db '@:\LODE.INI',0          ;  which reads them: set at the start;
                                         ;  the settings: where changes go)
@@ -2495,7 +2500,7 @@ s_inilong   db 'LODE.INI is too long to change here',0
 s_sample1   db 'The quick brown fox jumps over the lazy dog',0
 s_sample2   db '0123456789  ([{<>}])  .,;:!?  @#$%&*+-=/',0
 %include "FPU.INC"                      ; (Devices: which coprocessor)
-grid_font:                              ; GRiD's font, to switch back to
+builtin_font:                           ; Lodefont, to switch back to
 %include "FONT.INC"
 
 ; the hot labels even (EVEN.INC: bench/hot.py's system and form)

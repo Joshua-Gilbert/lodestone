@@ -1,6 +1,6 @@
-"""GRiD InteGRiD font (.TYP) -> FONT.INC for Lodestone.
+"""GRiD InteGRiD font (.TYP) -> a font include for Lodestone.
 
-    python3 typfont.py PATH\\TO\\TC8X16.TYP > src/FONT.INC
+    python3 typfont.py PATH\\TO\\TC8X16.TYP > fonts/GRIDFONT.INC
     python3 typfont.py TC8X16.TYP --fnt TC8X16.FNT       (a font file for System's Display)
     python3 typfont.py TC8X16.TYP --sheet sheet.png      (all glyphs, for a look)
 
@@ -16,8 +16,10 @@ bit.  TC8X16 (n = 255, 8 x 16, line height 16, baseline 14) is the system
 font InteGRiD used on 640 x 400 screens; it is byte for byte the 8 x 16
 font inside GRID.EXE.
 
-FONT.INC is what the Lodestone blitters use: 16 bytes per character, codes
-32-127 (127 is a solid block in both GRiD's font and ours).
+A font include is what the Lodestone blitters use: 16 bytes per character,
+codes 32-127 (127 is a solid block in GRiD's font and in Lodefont).
+GRIDFONT.INC is GRiD's, for GRIDFONT.FNT; src/FONT.INC, the built-in font,
+is Lodefont (lodefont.py).
 """
 import struct, sys
 
@@ -51,17 +53,26 @@ def load(path):
     return dict(n=n, w=w, h=h, lh=lh, base=base, bpr=bpr, glyphs=g)
 
 
-def font_inc(f, name):
+def font_inc(f, name, head=None):
+    """The db lines (as pcemu.load_font reads them) under head, comment lines
+    without their '; ' (GRiD's credit for font name when None)."""
     if (f['w'], f['h']) != (8, 16): raise ValueError('Lodestone needs an 8 x 16 font (this one is %d x %d)' % (f['w'], f['h']))
-    out = ['; 8x16 font, ASCII 32-126 (+127 = solid block): GRiD\'s InteGRiD system',
-           '; font %s (the 8 x 16 font built into GRID.EXE), GRiD Systems Corp.' % name,
-           '; Made from the .TYP file by typfont.py.',
-           'font:']
+    if head is None:
+        head = ['8x16 font, ASCII 32-126 (+127 = solid block): GRiD\'s InteGRiD system',
+                'font %s (the 8 x 16 font built into GRID.EXE), GRiD Systems Corp.' % name,
+                'Made from the .TYP file by typfont.py.']
+    out = [('; ' + l).rstrip() for l in head] + ['font:']
     for c in range(32, 128):
         rows = f['glyphs'][c]
         ch = '"\'"' if c == 39 else "'%s'" % chr(c) if c < 127 else 'block'
         out.append('        db ' + ','.join('%03Xh' % v for v in rows) + '   ; ' + ch)
     return '\n'.join(out) + '\n'
+
+
+def fnt(f):
+    """A .FNT file's bytes: codes 32-127, 16 bytes each (FONT_BYTES)."""
+    if (f['w'], f['h']) != (8, 16): raise ValueError('a .FNT is 8 x 16 (this one is %d x %d)' % (f['w'], f['h']))
+    return bytes(f['glyphs'][c][r] for c in range(32, 128) for r in range(16))
 
 
 def sheet(f, path, scale=3, cols=32):
@@ -83,8 +94,9 @@ if __name__ == '__main__':
     if '--sheet' in sys.argv:
         sheet(f, sys.argv[sys.argv.index('--sheet') + 1])
     elif '--fnt' in sys.argv:
-        if (f['w'], f['h']) != (8, 16): sys.exit('a .FNT is 8 x 16 (this one is %d x %d)' % (f['w'], f['h']))
-        open(sys.argv[sys.argv.index('--fnt') + 1], 'wb').write(bytes(f['glyphs'][c][r] for c in range(32, 128) for r in range(16)))
+        try: data = fnt(f)
+        except ValueError as e: sys.exit(str(e))
+        open(sys.argv[sys.argv.index('--fnt') + 1], 'wb').write(data)
     else:
         import os
         sys.stdout.write(font_inc(f, os.path.splitext(os.path.basename(path))[0].upper()))
