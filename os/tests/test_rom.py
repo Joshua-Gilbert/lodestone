@@ -268,7 +268,7 @@ def t_rom2():
     lo = b is not None and bytes(k.pc.rd(0x60, b + k.Y['r_lo'], 14)); img2 = b is not None and k.pc.rd(0x60, b + k.Y['r_img'], 2)
     check('a floppy start with ROM 2 alone (its image the second, another ROM the first): R: is it (DEFRAG.COM, TERM.FNT, PAINT.RUN, '
           'CLAUDE.COM and the two fonts, 6 files, 0 bytes free), read as built', 'DEFRAG   COM' in o and 'TERM     FNT' in o and 'PAINT    RUN' in o
-          and 'CLAUDE   COM' in o and 'GRIDFONT FNT' in o and '6 File(s)' in o and ' 0 bytes free' in o
+          and 'CLAUDE   COM' in o and 'GRIDFONT FNT' in o and 'TERMINUS FNT' in o and '6 File(s)' in o and ' 0 bytes free' in o
           and 'LODE     SYS' not in o and A.disk_file(k, 'DEFRAG.COM') == defrag and A.disk_file(k, 'TERM.FNT') == fnt and A.disk_file(k, 'PAINT.RUN') == paint and A.disk_file(k, 'CLAUDE.COM') == ccom, o)
     check('... R: the joined volume\'s geometry but its root ROM 2\'s half alone (sectors 5-6, 32 entries), its FAT sector 1 '
           'ROM 2\'s spare (254), the module kept whole', dt and struct.unpack_from('<H', dt, 8)[0] == 599 and dt[16] == 5 and dt[6] == 32
