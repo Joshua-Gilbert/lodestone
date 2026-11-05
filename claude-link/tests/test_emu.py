@@ -23,6 +23,13 @@ def results(h, i):
             if isinstance(b, dict) and b.get('type') == 'tool_result']
 
 
+def runs_of(h):
+    """Each RUN's answer as gridlink read it: its outfile, the name the GRiD made the capture under."""
+    runs, grun = [], h.session.grid.run
+    h.session.grid.run = lambda *a, **k: runs.append(grun(*a, **k)) or runs[-1]
+    return runs
+
+
 def check(h, fails=0):
     assert not h.m.crash, h.m.crash
     assert not h.nano.violations, h.nano.violations
@@ -154,17 +161,43 @@ def test_capture_whole_line():
     then), and a "> FILE" in the line takes its own command's output: the shell's tail is the line as
     given, with no redirect added.  (It was " >CLAUDE.OUT" at the end: A && B gave B's output alone,
     and a > FILE of the line was replaced by it, so FILE was never written.)"""
+    emu = EmuHarness.__name__ == 'EmuHarness'
     h = start([reply(('tool', 'grid_command', {'command': 'ECHO one && ECHO two'})),
                reply(('tool', 'grid_command', {'command': 'DIR > A:\\D.TXT && ECHO two'})),
+               reply(('tool', 'grid_command', {'command': 'DIR > A:\\D2.TXT'})),
                reply(('text', 'Done.'))], mode='auto', files={'A:\\CFG.C': CFG_C})
-    assert h.turn('echo twice, then list the disk to a file')
-    one, two = (str(results(h, i)[0]['content']) for i in (1, 2))
+    jft = bytes(h.m.rd(h.claude_psp, 0x18, 20))     # (CLAUDE's handles: as they were after each RUN)
+    assert h.turn('echo twice, then list the disk to files')
+    one, two, three = (str(results(h, i)[0]['content']) for i in (1, 2, 3))
     assert 'one' in one and 'two' in one, one
     assert any(l.endswith(' /C ECHO one && ECHO two]') for l in map(str, h.m.log)), h.m.log
     assert 'two' in two and 'CFG' not in two, two
     d = bytes(h.m.fs.get('A:\\D.TXT', b''))
     assert b'CFG' in d and b'two' not in d, d
+    assert 'CFG' not in three and '(no output)' in three, three      # (1.17: the line's > replaced by its own)
+    assert b'CFG' in bytes(h.m.fs.get('A:\\D2.TXT', b'')), sorted(h.m.fs)
     assert 'A:\\CLAUDE.OUT' not in h.m.fs
+    assert ''.join(h.m.tty).count('Output goes to Claude, not this screen') == 3, ''.join(h.m.tty)[-400:]
+    if emu: assert not h.m.handles, h.m.handles               # (handle 1 the console again, the dup closed)
+    else: assert bytes(h.m.rd(h.claude_psp, 0x18, 20)) == jft, (jft, h.m.rd(h.claude_psp, 0x18, 20))
+    check(h)
+
+
+def test_capture_file_held():
+    """CLAUDE.OUT held open (by a program an earlier RUN left resident, or a task START began): the
+    capture is made as CLAUDE.OU1 beside it, read and deleted there, instead of every RUN failing with 5.
+    (The stand-in DOS only: it holds the file with a handle of its own.)"""
+    if EmuHarness.__name__ != 'EmuHarness': return
+    h = start([reply(('tool', 'grid_command', {'command': 'DIR'})), reply(('text', 'Done.'))], mode='auto',
+              files={'A:\\CFG.C': CFG_C, 'A:\\CLAUDE.OUT': b'old'})
+    h.m.handles[19] = {'p': 'A:\\CLAUDE.OUT', 'pos': 0}
+    runs = runs_of(h)
+    assert h.turn('what is on the disk?')
+    res = results(h, 1)[0]
+    assert runs and runs[-1]['outfile'] == 'A:\\CLAUDE.OU1', runs
+    assert 'CFG' in str(res['content']) and not res.get('is_error'), res
+    assert 'A:\\CLAUDE.OU1' not in h.m.fs and bytes(h.m.fs['A:\\CLAUDE.OUT']) == b'old', sorted(h.m.fs)
+    del h.m.handles[19]
     check(h)
 
 
@@ -184,7 +217,10 @@ def test_run_defaults():
     h.m.wr(env, 0, bytes(raw))
     assert h.connect(), ('no connection', h.m.crash)
     assert not emu or h.session.hello.get('cwd') == 'A:\\WORK', h.session.hello
+    runs = runs_of(h)
     assert h.turn('what is on the disk?')
+    assert not emu or (runs and runs[-1]['outfile'] == 'A:\\CLAUDE.OUT'), runs   # (the root, not the cwd;
+                                                    #  the kernel's disk has no A:\COMMAND.COM: the EXEC fails)
     assert any('[EXEC A:\\COMMAND.COM /C DIR]' in str(l) for l in h.m.log), h.m.log
     text = str(results(h, 1)[0]['content'])
     assert not emu or ('CFG' in text and 'A:\\CLAUDE.OUT' not in h.m.fs), text
@@ -209,8 +245,10 @@ def test_run_tmp_only():
     assert len(new) <= paras * 16, (len(new), paras)                # (its block holds it)
     h.m.wr(env, 0, new)
     assert h.connect(), ('no connection', h.m.crash)
+    runs = runs_of(h)
     assert h.turn('what is on the disk?')
     out = tmp.decode() + ('\\' if emu else '') + 'CLAUDE.OUT'
+    assert runs and runs[-1]['outfile'] == out, (out, runs)
     assert any('/C DIR]' in str(l) for l in h.m.log), h.m.log
     text = str(results(h, 1)[0]['content'])
     assert 'CFG' in text and out.upper() not in h.m.fs, text

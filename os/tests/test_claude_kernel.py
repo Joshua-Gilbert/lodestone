@@ -478,14 +478,20 @@ def test_run_tsr_moves_claude():
 def test_run_tsr_no_room():
     """audit3 O17: a RUN's program that stays resident with all it got but 160 paragraphs: no block for CLAUDE
     to move to, so CLAUDE ends, as CODE-Q does, saying so; the Executive is back, the vectors CLAUDE took
-    given back, and none of its blocks left."""
-    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TSRK B', 'capture': False})),
+    given back, and none of its blocks left.  Captured too (CLAUDE 1.18): the message on the screen, not
+    in CLAUDE.OUT (handle 1 put back before it)."""
+    for cap in (False, True):
+        test_run_tsr_no_room_1(cap)
+
+def test_run_tsr_no_room_1(cap):
+    h = T.start([T.reply(('tool', 'grid_command', {'command': 'TSRK B', 'capture': cap})),
                  T.reply(('text', 'It stays.'))], mode='auto',
                 files={'A:\\TSRK.COM': open(os.path.join(HERE, 'TSRK.COM'), 'rb').read()})
     old = h.claude_psp
     h.type('run tsrk b')
-    assert h.back_in_executive(30), (h.m.crash, h.k.where(), h.screen())
-    assert 'Not enough memory for CLAUDE.' in ''.join(h.m.tty), ''.join(h.m.tty)[-300:]
+    assert h.back_in_executive(30), (cap, h.m.crash, h.k.where(), h.screen())
+    assert 'Not enough memory for CLAUDE.' in ''.join(h.m.tty), (cap, ''.join(h.m.tty)[-300:])
+    assert b'Not enough memory' not in bytes(h.m.fs.get('A:\\CLAUDE.OUT', b'')), h.m.fs.get('A:\\CLAUDE.OUT')
     off, seg = struct.unpack('<HH', h.m.rd(0, 0x16 * 4, 4))
     assert (seg, off) == (0xF000, 0x16 * 8), (hex(seg), hex(off))
     off, seg = struct.unpack('<HH', h.m.rd(0, 0x23 * 4, 4))
@@ -830,9 +836,11 @@ def test_run_temp_setting():
         env = h.m.u16(h.claude_psp, 0x2C)
         assert (b'\0TEMP=M:\\\0' in h.m.rd(env, 0, 512)) == bool(ems), h.m.rd(env, 0, 128)
         assert h.connect(), ('no connection', h.m.crash)
+        runs = T.runs_of(h)
         assert h.turn('what is on the disk?')
         res = T.results(h, 1)[0]
         text, out = str(res['content']), 'M:\\CLAUDE.OUT' if ems else 'A:\\CLAUDE.OUT'
+        assert runs and runs[-1]['outfile'] == out, (out, runs)
         assert any('/C DIR | UPPER]' in str(l) for l in h.m.log), h.m.log
         assert 'CFG' in text and 'UPPER    COM' in text and not res.get('is_error'), text
         assert not [n for n in h.m.fs if 'CLAUDE.OUT' in n or 'PIPE' in n], sorted(h.m.fs)
