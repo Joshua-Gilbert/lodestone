@@ -25,6 +25,14 @@ PICK = ('var x = arguments[0], y = arguments[1], d = document, el;'
         'for (var i = 0; i < el.options.length && i < 500; i++) o.push([el.options[i].text.replace(/\\s+/g, " ").trim(), el.options[i].disabled]);'
         'var r = el.getBoundingClientRect();'
         'return {opts: o, v: el.selectedIndex, r: [r.left, r.top, r.width, r.height], w: innerWidth, h: innerHeight};')
+# the frame (<iframe>) at a viewport point, and the point in its own viewport,
+# or null: a click there goes into it (an embedded video player's)
+FRAME_AT = ('var x = arguments[0], y = arguments[1], el = document.elementFromPoint(x, y);'
+            'while (el && el.shadowRoot && el.shadowRoot.elementFromPoint) { var e2 = el.shadowRoot.elementFromPoint(x, y); if (!e2 || e2 === el) break; el = e2; }'
+            'if (!el || (el.tagName !== "IFRAME" && el.tagName !== "FRAME")) return null;'
+            'var r = el.getBoundingClientRect();'
+            'return {el: el, x: x - r.left - el.clientLeft, y: y - r.top - el.clientTop};')
+FRAMES = 4                      # frames inside frames a click goes into at most
 # select_at()'s dropdown: option n chosen, as a person's choice is (input, change)
 CHOOSE = ('var el = window.__gridfoxPick, n = arguments[0];'
           'if (!el || !el.isConnected) return false;'
@@ -148,12 +156,32 @@ class Browser:
         return base64.b64decode(s.m.screenshot())
 
     def click_at(s, x, y):
-        """A click at viewport pixel (x, y): -> True if a new page came of it."""
+        """A click at viewport pixel (x, y): -> True if a new page came of it.
+        On a frame (an embedded player: Vimeo's, YouTube's), the click goes
+        into the frame's own page at that point, as a person's would: sent to
+        the page around it, the frame's page never had it (its play button
+        did nothing, and with autoplay off nothing starts without one)."""
         s._stamp()
-        s.m.actions([{'type': 'pointer', 'id': 'gridfox-mouse', 'parameters': {'pointerType': 'mouse'},
-                      'actions': [{'type': 'pointerMove', 'x': int(x), 'y': int(y), 'origin': 'viewport',
-                                   'duration': 0},
-                                  {'type': 'pointerDown', 'button': 0}, {'type': 'pointerUp', 'button': 0}]}])
+        depth = 0
+        try:
+            while depth < FRAMES:
+                try:
+                    r = s.m.script(FRAME_AT, [x, y], timeout=5)
+                    if not isinstance(r, dict) or not isinstance(r.get('el'), dict): break
+                    s.m.frame(r['el'])
+                except MarionetteError as e:
+                    s.log('frame not entered (%s): clicked around it' % getattr(e, 'error', e))
+                    break
+                depth += 1
+                x, y = r.get('x', x), r.get('y', y)
+            s.m.actions([{'type': 'pointer', 'id': 'gridfox-mouse', 'parameters': {'pointerType': 'mouse'},
+                          'actions': [{'type': 'pointerMove', 'x': int(x), 'y': int(y), 'origin': 'viewport',
+                                       'duration': 0},
+                                      {'type': 'pointerDown', 'button': 0}, {'type': 'pointerUp', 'button': 0}]}])
+        finally:
+            for _ in range(depth):
+                try: s.m.parent_frame()
+                except MarionetteError: pass
         return s.settle()
 
     def select_at(s, x, y):

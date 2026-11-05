@@ -162,6 +162,16 @@ class Marionette:
         if not eid: raise MarionetteError({'error': 'no such element', 'message': 'not an element'})
         s.call('WebDriver:ElementClick', {'id': eid}, timeout=timeout)
 
+    def frame(s, el, timeout=10):
+        """Into a frame (a web element reference to an <iframe>): scripts and
+        actions after it are the frame's page's, until parent_frame()."""
+        eid = el.get(ELEMENT) if isinstance(el, dict) else None
+        if not eid: raise MarionetteError({'error': 'no such element', 'message': 'not an element'})
+        s.call('WebDriver:SwitchToFrame', {'element': eid, 'focus': True}, timeout=timeout)
+
+    def parent_frame(s, timeout=10):
+        s.call('WebDriver:SwitchToParentFrame', {}, timeout=timeout)
+
     def screenshot(s, timeout=20):
         """The viewport as base64 PNG (the picture view)."""
         return s.value('WebDriver:TakeScreenshot', {'full': False, 'hash': False}, timeout=timeout)

@@ -888,6 +888,44 @@ def test_picture_view_dropdown():
         r.close()
 
 
+def test_click_into_frames():
+    """A picture-view click on an embedded player (an <iframe>: Vimeo's,
+    YouTube's) goes into the frame's own page at that point, a frame inside
+    it too, and back out to the page after: sent to the page around it, the
+    player never had it, and nothing played.  A frame that can't be entered:
+    the click goes to the page around it, as before."""
+    from gridfox import browser as BR
+    from gridfox.marionette import ELEMENT, MarionetteError
+    class M:
+        def __init__(s, frames, refuse=False):
+            s.frames = list(frames); s.log = []; s.depth = 0; s.refuse = refuse
+        def script(s, body, args=(), timeout=0):
+            if body is BR.FRAME_AT:
+                if s.depth < len(s.frames):
+                    fx, fy = s.frames[s.depth]
+                    return {'el': {ELEMENT: 'f%d' % s.depth}, 'x': args[0] - fx, 'y': args[1] - fy}
+                return None
+            if body is BR.ACT and args[0] == 'stamped': return {'same': True, 'leaving': False, 'ready': 'complete'}
+            return {'ok': True}
+        def frame(s, el):
+            if s.refuse: raise MarionetteError({'error': 'no such frame', 'message': 'gone'})
+            s.depth += 1; s.log.append(('in', el[ELEMENT]))
+        def parent_frame(s): s.depth -= 1; s.log.append(('out',))
+        def actions(s, acts):
+            a = acts[0]['actions'][0]; s.log.append(('click', s.depth, a['x'], a['y']))
+    m = M([(20, 100), (5, 10)])                   # a player at (20, 100), its own frame at (5, 10) in it
+    b = BR.Browser(m)
+    b.click_at(300, 250)
+    assert m.log == [('in', 'f0'), ('in', 'f1'), ('click', 2, 275, 140), ('out',), ('out',)], m.log
+    assert m.depth == 0
+    m = M([])                                     # no frame there: the page itself
+    BR.Browser(m).click_at(300, 250)
+    assert m.log == [('click', 0, 300, 250)], m.log
+    m = M([(20, 100)], refuse=True)               # one that can't be entered: the page around it
+    BR.Browser(m).click_at(300, 250)
+    assert m.log == [('click', 0, 300, 250)] and m.depth == 0, m.log
+
+
 def test_picture_view_keeps_up_with_a_moving_page():
     """A page that changes by itself (a video): looks every FRAME_SHOT, not
     every IDLE_SHOT, as frames gridlink shows whole; a still page: the idle pace."""
