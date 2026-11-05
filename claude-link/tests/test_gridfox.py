@@ -121,8 +121,16 @@ def test_extract_widgets():
         names = [(a['t'], a.get('v'), a.get('w')) for a in mod['acts']]
         want = [('button', 'Normal', 'combobox'), ('button', 'Settings', 'button'), ('button', 'Captions', 'switch'),
                 ('button', 'Notes', 'tab'), ('button', 'Specs', 'tab'), ('button', 'Click me', 'click'),
-                ('button', 'Pointer here inside', 'click'), ('link', None, None), ('button', 'No href', 'button')]
+                ('button', 'Pointer here inside', 'click'), ('link', None, None), ('button', 'No href', 'button'),
+                ('check', False, None), ('check', False, None), ('check', False, None)]
         assert names == want, names
+        # (radio buttons a page hides to draw its own marks: each with its label one act, the text
+        #  clickable; a hidden box with no label stays hidden; a box before its label: one act)
+        assert '( ) SSDI benefits' in text and '( ) SSI benefits' in text and '[ ] Before its label' in text, text
+        assert '[ ] Lone' not in text and 'Lone box text' in text, text
+        ssdi = mod['acts'][9]
+        assert d.where[9][0] == d.where[9][0] and all(x == 9 for x in d.act[d.where[9][0]][d.where[9][1]:d.where[9][1] + 17]), \
+            d.act[d.where[9][0]]                                         # ('( ) SSDI benefits' all of it)
         assert '[+] Normal' in text and '[Settings]' in text and '[ ] Captions' in text, text
         assert 'Slow' not in text and 'Greyed' in text, text            # (the list shut; Greyed: text only)
     finally:
@@ -147,6 +155,10 @@ def test_app_widgets():
         act('Settings'); assert r.has('Said: settings'), r.text()
         act('Click me'); assert r.has('Said: clicked'), r.text()
         act('Pointer here inside'); assert r.has('Said: pointer'), r.text()
+        ssi = [k for k, a in enumerate(r.app.acts()) if a['t'] == 'check'][1]  # (a radio the page hides: its label)
+        r.app.select(ssi); r.keys('enter'); r.rereads()
+        page = '\n'.join(r.app.doc.text)                                  # (Status: below the screen)
+        assert '( ) SSDI benefits (*) SSI benefits' in page and 'Status: ssi' in page, page
     finally:
         r.close()
 
