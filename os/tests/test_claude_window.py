@@ -414,7 +414,11 @@ def flood(t, scroll=False):
     frame, the rest scrolled up (the encoder's scroll op, FEh)."""
     import random
     rnd = random.Random(5150); take = t.take
-    line = lambda: ''.join(rnd.choice('abcdefghij klmnop') for _ in range(79))
+    # (one short of the terminal's width, read each time: 80 full screen, 78 in a
+    # window since 1.0, where a line of 79 would wrap and scroll 6 rows a frame.
+    # TERM's scrl finds a scroll of up to its rows - 1 between its looks; more
+    # than that it redraws instead, which this flood doesn't exercise)
+    line = lambda: ''.join(rnd.choice('abcdefghij klmnop') for _ in range(getattr(t, 'cols', 80) - 1))
     def take2(maxpay):
         with t.lock:
             if scroll: t.stream.feed(('\x1b[24;1H' + ''.join('\r\n' + line() for _ in range(3))).encode())
