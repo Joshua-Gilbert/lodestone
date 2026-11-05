@@ -42,7 +42,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 - **R:**, the ROM drive, when Lodestone's EPROM is fitted. It is read-only, and is mapped in only while a sector is read.
 
 **The Executive and its programs.** These run on one shared UI core, in GRiD's system font (other 8×16 fonts load from `.FNT` files).
-- **The Executive:** GRiD's File form (Device, Subject, Title). CODE-C copies, CODE-M moves, CODE-R renames and CODE-D deletes, with wildcards, Replace and Only newer, on files or whole subjects.
+- **The Executive:** GRiD's File form (Device, Subject, Title). CODE-C copies, CODE-M moves, CODE-R renames and CODE-D deletes, with wildcards, Replace and Only newer, on files or whole subjects. A right click gives a menu of what applies. On a program that names its modes, such as CLAUDE.COM (Claude Code, Web browser, Chat, Load or Unload resident), the menu offers them too; with multitasking on, Web browser opens gridfox in a terminal window.
 - **System:** memory, disks, clock, devices (and PrtSc's printer driver), GPIB, display, screen saver, the temporary disk M:, and where the settings come from.
 - **Write:** a GRiDWrite-style text editor. A mouse drag selects text, and a right click gives a menu of its commands; Cut, Copy and Paste (CODE-Z, CODE-C, CODE-V) through a clipboard every program on the UI core shares.
 - **The calculator** uses the 80287 or 287XL when one is fitted, and works with whole numbers when not. It runs as a window over the Executive (CODE-K) that you can drag by its title (or move with CODE-F7) and close with its x, and as `CALC` at the prompt, for batch files.
@@ -108,19 +108,19 @@ On the 1520, BENCH from each kind of drive, in seconds:
 | Load + run a 120 KB .EXE ×3 | 12.74 | 0.65 | **0.16** |
 | **All ten tests** | **87.6** | **9.1** | **2.1** |
 
-Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its memory figures 2026-11-04, with the Executive's right-click menu) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
+Lodestone as on main (2026-11-03, `os/bench/compare3.py`; multitasking off; its memory figures 2026-11-04, with the Executive's right-click menu and a program's modes on it) against GRiD MS-DOS 3.30 and FreeDOS (kernel 2046 with FreeCOM), all in the emulator with the 1520's drive timing and 1408 KB of EMS. Times are in seconds; lower is better.
 
 | | Lodestone | GRiD MS-DOS 3.30 | FreeDOS |
 |---|---:|---:|---:|
 | BENCH file-system total | **78.6** | 285.4 | 283.2 |
 | EMS: map a page ×10,000 | **0.35** | 2.87 | 2.87 |
-| Memory for programs, with EMS | **581.0 KB** | 573.1 KB | 494.2 KB |
-| Memory for programs, no EMS | 564.9 KB | **580.4 KB** | 501.5 KB |
+| Memory for programs, with EMS | **580.7 KB** | 573.1 KB | 494.2 KB |
+| Memory for programs, no EMS | 564.7 KB | **580.4 KB** | 501.5 KB |
 
 **Memory:**
 - **With EMS:** Lodestone keeps its 18 KB disk cache in EMS, so a DOS program gets more memory than under GRiD MS-DOS with `EMM.SYS`. That holds even though the Executive, the EMS manager and the cache all stay resident.
 - **Without EMS:** the cache stays in conventional memory, so GRiD MS-DOS leaves programs about 15 KB more.
-- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 556.8 KB (557.5 before the Executive's right-click menu). The other 24.2 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
+- **With multitasking on** (`MULTITASK=1`, which needs EMS): a program run in the Executive's own task (Shift-Return) gets 556.6 KB (557.5 before the Executive's right-click menu and a program's modes on it). The other 24.1 KB is the multitasker's resident code, task 0's saved state, its tables and a stack. A program started as a task with Return gets its `MTMEM=` size, or 64 KB for a .COM and its header's size for an .EXE; START gives 64 KB or its `/M:` size. Either can grow when there is free memory below it.
 - **Hard disk and ROM:** C: costs about 3 KB when a drive is there. R: costs 0.4 KB when ROM 1 is there, 0.6 KB with ROM 2 as well.
 - **The Executive stays resident on purpose:** with multitasking on, it runs beside the tasks and windows.
 

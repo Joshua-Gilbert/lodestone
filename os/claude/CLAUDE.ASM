@@ -133,6 +133,25 @@ R_BGT    equ 4                  ; M4: ticks between background looks (~220 ms)
 ; =====================================================================
 start:  jmp     boot                    ; (start-up: where inbuf goes)
 
+; The modes the Executive's right-click menu offers (1.17; EXEC.INC's
+; ex_modes): after the first jump, 'LMOD', then each: its flags (LM_MODE,
+; and LM_TASK0: in the Executive's own task, full screen; LM_PAUSE: a key
+; waited for after, to read the line it prints), its label (as the
+; Executive's own: the text, HT, 21, the switch), its arguments; a 0
+; after the last.  An even length (the hot labels after keep their parity)
+LM_MODE     equ 80h
+LM_TASK0    equ 1
+LM_PAUSE    equ 2
+lmod:   db      'LMOD'
+        db      LM_MODE, 'Claude Code', 9, 21, '/T', 0, '/T', 0
+        db      LM_MODE, 'Web browser', 9, 21, '/W', 0, '/W', 0
+        db      LM_MODE, 'Chat', 9, 21, '/C', 0, '/C', 0
+        db      LM_MODE + LM_TASK0 + LM_PAUSE, 'Load resident', 9, 21, '/R', 0, '/R', 0
+        db      LM_MODE + LM_TASK0 + LM_PAUSE, 'Unload resident', 9, 21, '/U', 0, '/U', 0
+        db      0
+        times   ($ - lmod) & 1 db 0
+        times   -($ - $$ > 127) db 0    ; (the Executive reads 127 bytes)
+
 main:   call    get_ticks
         mov     [now], ax
         PROF    11
@@ -3465,7 +3484,7 @@ kv_ems      db 10, 'ems=', 0
 kv_gpib     db 10, 'gpib=GRIDGPIB ', 0
 kv_addr     db 10, 'addr=', 0
 kv_date     db 10, 'date=', 0
-kv_grid     db 10, 'grid=CLAUDE 1.16', 10, 0
+kv_grid     db 10, 'grid=CLAUDE 1.17', 10, 0
 kv_appterm  db 'app=term', 10, 0
 kv_appchat  db 'app=chat', 10, 0
 kv_appweb   db 'app=web', 10, 0

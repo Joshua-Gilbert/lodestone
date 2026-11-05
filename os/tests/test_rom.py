@@ -427,7 +427,7 @@ def t_rom2_free():
     a = sh1.split()[1:]
     boot = open(os.path.join(GOS, a[2]), 'rb').read()
     img1, left1 = mkrom.volume([(os.path.basename(n), open(os.path.join(GOS, n), 'rb').read()) for n in a[3:]], boot=boot)
-    m = re.search(r'([0-9,]+) bytes \((\d+) sectors\) are left', doc)
+    m = re.search(r'([0-9,]+) bytes \((\d+) sectors?\) are left', doc)
     said1 = (int(m.group(1).replace(',', '')), int(m.group(2))) if m else None
     check('ROM 1: %d bytes (%d sectors) left, as lodestone-rom.md says (%s); the image as built' % (left1, left1 // 512, said1),
           said1 == (left1, left1 // 512) and img1 == rom(), (said1, left1, a[:3]))

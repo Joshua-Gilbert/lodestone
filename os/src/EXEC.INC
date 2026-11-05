@@ -92,7 +92,8 @@ n_done      resw 1
 n_skip      resw 1
 s_time      resw 1                  ; the one in hand: its time and date
 s_date      resw 1
-RM_MOST     equ 13                  ; (ex_items, all of them: rmenu has no bound)
+RM_MOST     equ 13                  ; (the most of ex_items that apply at once:
+                                    ;  rmenu has no bound; asserted there)
 rm_buf      resw RM_MOST            ; a right click's menu: its items' texts
 rm_key      resw RM_MOST            ;  and their keys (RMENU.INC, ex_menu)
 sc_seg      resw 1                  ; Copy on a subject: the subjects to copy (sc_list)
@@ -218,7 +219,10 @@ RX_ROW      equ 4                       ;  here, is ex_mtw's 1; 2 is RM_CLIP)
 RX_FILE     equ 8
 RX_PROG     equ 16
 RX_NONE     equ 64
+RX_OFF      equ 128                     ; (never applies: a mode slot unused)
 K_XFULL     equ 0FE00h                  ; (Open full screen: no key's)
+K_MODE      equ 0FD00h                  ; (+ n: the program's mode n, no key's)
+MODES       equ 6                       ; (a program's modes, at most)
 ex_menu:
         cmp     cx, FORM_Y - 2
         jae     .x
@@ -243,6 +247,7 @@ ex_menu:
         cmp     al, 1
         jne     .m
         mov     dl, RX_ROW + RX_FILE + RX_PROG
+        call    ex_modes                ; (its modes, if it names any)
 .m:     or      dl, [ex_mtw]            ; (RX_MT: 1 with MULTITASK=1, here)
         xchg    ax, dx
         pop     cx
@@ -254,15 +259,102 @@ ex_menu:
         jc      .x
         cmp     ax, K_XFULL
         je      .full
+        cmp     ah, K_MODE >> 8
+        je      .mode
         xchg    cx, ax                  ; the key into the BIOS's buffer: read
         mov     ah, 5                   ;  as typed, so with MULTITASK=1 KMW's
         int     16h                     ;  routing has it too (CODE-K, CODE-T:
         ret                             ;  the window there, if open)
 .full:  call    sel_name                ; NAME.EXT, in the Executive's task
+        mov     di, s_empty
         jmp     run_wait
+.mode:  xor     ah, ah                  ; mode n: its slot's label, the flags
+        imul    bx, ax, 6               ;  before it, its arguments after it
+        mov     si, [ex_mitems + bx]    ;  (runpath still its NAME.EXT)
+        mov     bl, [si-1]
+.arg:   lodsb
+        or      al, al
+        jnz     .arg
+        mov     di, si
+        shr     bl, 1                   ; LM_TASK0: in the Executive's task,
+        jnc     .task                   ;  full screen (as Shift-Return)
+        and     bl, 1                   ; (LM_PAUSE: a key waited for after)
+        mov     [run_pause], bl
+        jmp     run_wait
+.task:  jmp     run_progt               ; (MULTITASK=1: a task, as Return)
 .no:    pop     cx
         pop     bx
 .x:     ret
+
+; A DOS program's modes (DL kept): a .COM that names them has, after its
+; first jump (EB xx or E9 xx xx at 100h), 'LMOD' and up to six of
+;   db flags, 'Label', 0, 'arguments', 0
+; then a 0 (flags: LM_MODE 80h, so never 0; LM_TASK0 1, in the
+; Executive's task, full screen, as Shift-Return; LM_PAUSE 2, with it: a
+; key waited for after the program, to read its output.  Without
+; LM_TASK0, as Open: MULTITASK=1, a task; Shift: full screen).  Its first 127 bytes are read into msgbuf, which
+; holds the labels and arguments till the menu is done (no message is up
+; there: ex_menu gives none then).  Each is a mode slot of ex_items; the
+; rest RX_OFF.  runpath = its NAME.EXT
+ex_modes:
+        push    dx
+        mov     di, ex_mitems + 4
+        mov     cx, MODES
+.off:   mov     word [di], RX_OFF
+        add     di, 6
+        loop    .off
+        call    sel_name
+        mov     dx, runpath
+        mov     ax, 3D00h
+        int     21h
+        jc      .x
+        xchg    bx, ax
+        mov     dx, msgbuf
+        mov     cx, 127
+        mov     ah, 3Fh
+        int     21h
+        jnc     .rd
+        xor     ax, ax
+.rd:    push    ax
+        mov     ah, 3Eh
+        int     21h
+        pop     bx
+        mov     byte [msgbuf + bx], 0   ; (an end: no scan goes past it)
+        add     bx, msgbuf              ; BX: where what was read ends
+        mov     si, msgbuf
+        lodsb
+        cmp     al, 0EBh
+        je      .j2
+        cmp     al, 0E9h
+        jne     .x
+        inc     si
+.j2:    inc     si
+        lodsw
+        cmp     ax, 'LM'
+        jne     .x
+        lodsw
+        cmp     ax, 'OD'
+        jne     .x
+        mov     di, ex_mitems
+        mov     cx, MODES
+.e:     lodsb                           ; its flags (0: no more)
+        or      al, al
+        jz      .x
+        mov     dx, si                  ; (the label)
+.l:     lodsb
+        or      al, al
+        jnz     .l
+.a:     lodsb
+        or      al, al
+        jnz     .a
+        cmp     si, bx                  ; (its arguments' 0 one that was read)
+        ja      .x
+        mov     [di], dx
+        mov     word [di+4], RX_PROG
+        add     di, 6
+        loop    .e
+.x:     pop     dx
+        ret
 
 %include "RMENU.INC"                    ; (Write's and TERM's too)
         times ($ + 1 - $$) & 1 db 90h   ; (what follows keeps its parity)
@@ -993,14 +1085,15 @@ sub_path:
 ; jump to KMW's mw_prog: it starts as a task (its end is EV_TASK's), but
 ; with Shift as run_wait
 run_prog:
+        mov     di, s_empty
+run_progt:                              ; (DI: its arguments, ASCIIZ)
         cmp     byte [ex_mtw], 0
 ; run it, in the Executive's own task, and wait for it (Shift-Return,
 ; Shift-CODE-P and Shift-CODE-A: all the memory, and a program loaded
 ; resident from there is everyone's); afterwards a fresh list and a
 ; message
-run_wait:
+run_wait:                               ; (DI: its arguments, ASCIIZ)
         mov     si, runpath
-        mov     di, s_empty
         call    ui_run                  ; (redraws the list itself)
         jc      .failed
         mov     [ex_code], ax
@@ -3090,10 +3183,17 @@ ex_keys:
 ex_items:
         dw m_open,   K_ENTER,  RX_FILE
         dw m_full,   K_XFULL,  RX_PROG + RX_MT
+ex_mitems:                              ; (the program's modes: ex_modes)
+%assign i 0
+%rep MODES
+        dw s_empty,  K_MODE + i, RX_OFF  ; (a text: a 0 would end them)
+%assign i i + 1
+%endrep
         dw m_copy,   K_CODE_C, RX_ROW
         dw m_move,   K_CODE_M, RX_FILE
         dw m_rename, K_CODE_R, RX_FILE
         dw m_erase,  K_CODE_D, RX_ROW
+ex_litems:                              ; (no row's: RX_NONE, never with those above)
         dw m_write,  K_CODE_W, RX_NONE
         dw m_claude, K_CODE_A, RX_NONE
         dw m_calc,   K_CODE_K, RX_NONE
@@ -3102,7 +3202,13 @@ ex_items:
         dw m_usage,  K_CODE_U, RX_NONE
         dw m_f5,     K_F5,     RX_NONE
         dw 0
-        times   -(($ - 2 - ex_items) / 6 > RM_MOST) db 0   ; (rm_buf, rm_key hold them all)
+        times   -((ex_litems - ex_items) / 6 > RM_MOST) db 0       ; (rm_buf, rm_key hold all that
+        times   -(($ - 2 - ex_litems) / 6 > RM_MOST) db 0          ;  can apply at once: a row's,
+                                        ;  its modes among them (12), or
+                                        ;  no row's (7): every item above
+                                        ;  ex_litems needs RX_ROW or
+                                        ;  RX_FILE, every one after it
+                                        ;  RX_NONE, never both)
 m_open      db 'Open', HT, 21, 'Return', 0
 m_full      db 'Open full screen', HT, 21, 'Shift-Return', 0
 m_copy      db 'Copy', HT, 21, 'CODE-C', 0
