@@ -1075,6 +1075,9 @@ def t_font():
     term, grid = open(TERMFNT, 'rb').read(), open(GRIDFNT, 'rb').read()
     gridinc = b''.join(bytes(g) for c, g in sorted(__import__('pcemu').load_font(os.path.join(GOS, 'fonts', 'GRIDFONT.INC')).items()))
     check('GRIDFONT.FNT is GRiD\'s TC8X16 (fonts/GRIDFONT.INC), and not Lodefont', grid == gridinc and len(grid) == 1536 and grid != LODEF)
+    sys.path.insert(0, GOS); import lodefont, typfont
+    check('src/FONT.INC is fonts/LODEFONT.TXT as lodefont.py makes it (run it after changing the .TXT)',
+          LODEF == typfont.fnt(lodefont.load()))
     img = image('font.img', SYSTEM, GRIDFNT, TERM437, TERMFNT, DEFRAG)
     k = ktest.KPC(img); k.pc.mouse = True; k.start()
     check('Lodefont at the start (no LODE.INI)', core_font(k) == LODEF)
