@@ -31,6 +31,7 @@ TM5000G = os.environ.get('TM5000G') or os.path.join(GOS, '..', 'tools', 'TM5000G
 TERMFNT = os.path.join(GOS, 'fonts', 'TERMINUS.FNT')
 DEFRAG = os.path.join(GOS, 'src', 'DEFRAG.COM')
 MDTEST = os.path.join(HERE, 'MDTEST.COM')
+MODET, MODEL, MODEE = (os.path.join(HERE, n) for n in ('MODET.COM', 'MODEL.COM', 'MODEE.COM'))  # (modes: t_modes)
 
 K_HOME, K_END, K_PGDN, K_PGUP, K_DEL, K_INS = 0x4700, 0x4F00, 0x5100, 0x4900, 0x5300, 0x5200
 K_CHOME, K_CEND, K_CLEFT, K_CRIGHT = 0x7700, 0x7500, 0x7300, 0x7400
@@ -53,6 +54,8 @@ def build():
     subprocess.run(['nasm', '-f', 'bin', '-o', TSR, os.path.join(HERE, 'TSR.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-DKEEP=400h', '-o', TSRBIG, os.path.join(HERE, 'TSR.ASM')], check=True)
     subprocess.run(['nasm', '-f', 'bin', '-o', MDTEST, os.path.join(HERE, 'MDTEST.ASM')], check=True)
+    for c, d in ((MODET, []), (MODEL, ['-DEND=127']), (MODEE, ['-DEND=126'])):
+        subprocess.run(['nasm', '-f', 'bin'] + d + ['-o', c, os.path.join(HERE, 'MODET.ASM')], check=True)
     for c in [M33TEST] + list(M33.values()):
         subprocess.run(['nasm', '-f', 'bin', '-o', c, c[:-4] + '.ASM'], check=True)
 
@@ -336,7 +339,7 @@ def t_system():
     info = infos[-1] if infos else ''
     m = re.match(r'80286 80287XL  (\d+)K free  Plasma 640x400  Mouse COM2  BIOS ', info)
     # (the line is the free memory, whole KB; a program first takes its copy of the environment from it, up to
-    #  half a KB: MEMSZ 564.9 shows as 565K)
+    #  half a KB: MEMSZ 564.7 shows as 565K)
     check('the info line: free memory, what a DOS program gets (MEMSZ %.1f KB): "%s"' % (memsz, info),
           m and memsz > 0 and int(memsz) - 1 <= int(m.group(1)) <= memsz + 0.5, info)
     k.key(CODE['U'])
@@ -960,8 +963,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line): the directory buffer is lent while it runs' % kb,
-          kb >= 564.8, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it): the directory buffer is lent while it runs' % kb,
+          kb >= 564.6, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -3342,6 +3345,61 @@ def t_exmenu():
           and 'NOTE.TXT' not in k.exec_list() and not k.crashed, (asked, k.exec_list()))
 
 
+def run_mode(k, nm, item, done=lambda k: k.pc.mode() == 0x40, keys=()):
+    """A right click on nm, then its menu's item (the text menu_items gives): run till done(k); the tail that
+    MODET.COM wrote (TAIL.TXT), the screen's text meanwhile.  keys: typed when the program waits"""
+    k.select(nm); y = 24 + 16 * (k.exec_list().index(nm) - k.u16('top')) + 8
+    point(k, 100, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+    items = menu_items(k)
+    for _ in range(items.index(item)): k.key(ktest.DOWN)
+    k.pc.tty.clear(); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: k.pc.mode() != 0x40, 5)
+    k.pc.run_until(lambda: 'Press any key' in ''.join(k.pc.tty) or k.pc.mode() == 0x40, 10)
+    tty, mode = ''.join(k.pc.tty), k.pc.mode()
+    for c in keys: k.key(c, settle=False); k.pc.run_for(0.2)
+    k.pc.run_until(lambda: done(k), 20); k.settle()
+    return disk_file(k, 'TAIL.TXT'), tty, mode
+
+def t_modes():
+    """A program's modes on its right-click menu (EXEC.INC's ex_modes): a
+    .COM with 'LMOD' after its first jump names them, each a label, its
+    arguments and flags (LM_TASK0: the Executive's own task; LM_PAUSE: a key
+    waited for after).  Multitasking off: each runs full screen with its
+    arguments; test_mt's t_modes has it on."""
+    print('== a program\'s modes on its right-click menu')
+    note = os.path.join(OUT, 'NOTE.TXT'); open(note, 'wb').write(b'a note\r\n')
+    cl = os.path.join(GOS, 'claude', 'CLAUDE.COM')
+    k = ktest.KPC(image('modes.img', MODET, MODEL, MODEE, MEMSZ, note, cl)); k.pc.mouse = True; k.start()
+    def items(nm):
+        k.select(nm); y = 24 + 16 * (k.exec_list().index(nm) - k.u16('top')) + 8
+        point(k, 100, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.05); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+        m = menu_items(k); k.key(ktest.ESC); return m
+    FILE = ['Copy', 'Move', 'Rename', 'Delete']
+    m = items('MODET.COM')
+    check('a right click on MODET.COM: Open, its three modes (Plain, Pause, Full), then the file\'s', m == ['Open', 'Plain', 'Pause', 'Full'] + FILE, m)
+    got = items('MEMSZ.COM'), items('NOTE.TXT'), items('MODEL.COM'), items('MODEE.COM')
+    check('... then MEMSZ.COM (no jump at 100h) and NOTE.TXT: no modes, none of MODET\'s left over; MODEL.COM (the third '
+          'one\'s arguments end past the 127 bytes read): two; MODEE.COM (their 0 the 127th byte): three',
+          got == (['Open'] + FILE, ['Open'] + FILE, ['Open', 'Plain', 'Pause'] + FILE, ['Open', 'Plain', 'Pause', 'Full'] + FILE), got)
+    m = items('CLAUDE.COM')
+    check('CLAUDE.COM (1.17): Claude Code, Web browser, Chat, Load resident, Unload resident; each its switch beside it',
+          m == ['Open', 'Claude Code', 'Web browser', 'Chat', 'Load resident', 'Unload resident'] + FILE, m)
+    tail, tty, mode = run_mode(k, 'MODET.COM', 'Plain')
+    check('MODET.COM\'s Plain: it runs with its arguments (the tail " /A B"), then the Executive ("MODET.COM ended")',
+          tail == b' /A B' and ' /A B' in tty and any('MODET.COM ended' in l for l in k.band()), (tail, tty[-60:], k.band()))
+    tail, tty, mode = run_mode(k, 'MODET.COM', 'Pause', keys=[ktest.ENTER])
+    check('... Pause: " /P", then "Press any key" on its screen (text mode still), a key: the Executive; run_pause 0 '
+          'again (its flags\' other bits not kept)', tail == b' /P' and tty.endswith('\r\nPress any key') and mode == 3
+          and k.pc.mode() == 0x40 and any('MODET.COM ended' in l for l in k.band()) and k.rd('run_pause', 1) == b'\x00',
+          (tail, tty[-60:], mode, k.band(), k.rd('run_pause', 1)))
+    tail, tty, mode = run_mode(k, 'MODET.COM', 'Full')
+    check('... Full: " /F", no key waited for', tail == b' /F' and 'Press any key' not in tty and k.pc.mode() == 0x40, (tail, tty[-60:]))
+    tail, tty, mode = run_mode(k, 'MODET.COM', 'Open')
+    check('... Open: no arguments (an empty tail), as Return', tail == b'' and k.pc.mode() == 0x40, (tail, tty[-60:]))
+    tail, tty, mode = run_mode(k, 'MODET.COM', 'Full')
+    check('... Full again: no key waited for (Pause\'s flag not left over)', tail == b' /F' and 'Press any key' not in tty, tty[-60:])
+    check('nothing crashed', not k.crashed)
+
 def t_menu():
     """UI_MENU and UI_MOUSE (UI API 8): a pop-up menu at a right click, chosen
     by keys or a click, cancelled by ESC or a click outside; the screen under
@@ -3756,7 +3814,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_menu, t_clip, t_write_mouse, t_write_clip,
+    for t in (t_core, t_system, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
               t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]

@@ -144,7 +144,7 @@ mw_ptab:
         db      0EAh, 80h, 3Eh
         dw      run_active
         db      0
-        dw      run_prog, mw_prog       ; CMP BYTE [ex_mtw],0: JMP FAR
+        dw      run_progt, mw_prog      ; CMP BYTE [ex_mtw],0: JMP FAR
         db      0EAh, 80h, 3Eh
         dw      ex_mtw
         db      0
@@ -768,8 +768,11 @@ mw_prog:
         mov     ah, 2                   ; (Shift held?)
         int     16h
         test    al, 3
-        mov     ax, run_wait
+        mov     ax, run_wait            ; (DI: the arguments, as they are)
         jnz     .x
+        UCALL   mk_tail                 ; the arguments DI the task's tail
+        mov     word [cs:mt_xpb + SP_TAIL], run_tail
+        mov     [cs:mt_xpb + SP_TAIL + 2], ds
         mov     si, runpath
         mov     di, msgbuf
         xor     al, al
