@@ -20,6 +20,14 @@ return (function (opt) {
     PRE:1, SECTION:1, SUMMARY:1, TABLE:1, TBODY:1, TFOOT:1, THEAD:1, TR:1, UL:1};
   var SKIP = {SCRIPT:1, STYLE:1, NOSCRIPT:1, TEMPLATE:1, HEAD:1, TITLE:1, META:1, LINK:1, SVG:1,
     CANVAS:1, OBJECT:1, EMBED:1, MAP:1, AUDIO:1, VIDEO:1, SOURCE:1, TRACK:1, DATALIST:1, OPTION:1};
+  // what a script makes clickable without a link or a button: dropdowns, menus,
+  // tabs, a video player's controls (ARIA roles), then a click handler or a
+  // pointer cursor set on it (role.., below)
+  var ROLES = {button:1, link:1, menuitem:1, menuitemcheckbox:1, menuitemradio:1, option:1, tab:1,
+    switch:1, combobox:1, checkbox:1, radio:1, treeitem:1};
+  var CHECKS = {checkbox:1, switch:1, menuitemcheckbox:1, menuitemradio:1, radio:1};
+  var INNER = 'a[href],button,input,select,textarea,[role=button],[role=link],[role=menuitem],[role=option],' +
+    '[role=tab],[role=checkbox],[role=switch],[role=combobox],[onclick]';
   var TEXTISH = {text:1, search:1, email:1, url:1, tel:1, password:1, number:1, date:1, time:1,
     'datetime-local':1, month:1, week:1, color:1, '':1};
   var doc = document, win = window;
@@ -145,6 +153,25 @@ return (function (opt) {
     }
   }
 
+  // a clickable that isn't a link or a form's: its role (an ARIA widget's),
+  // or a click handler, a dropdown's aria-haspopup / aria-expanded, a pointer
+  // cursor it sets itself (not one it inherits).  Not one holding another
+  // clickable (a card's links stay links); not a disabled one
+  function widget(el, cs) {
+    if (!el.getAttribute) return null;
+    var role = (el.getAttribute('role') || '').toLowerCase().split(' ')[0];
+    if (el.getAttribute('aria-disabled') === 'true') return null;
+    var why = ROLES[role] ? role : '';
+    if (!why && (el.hasAttribute('onclick') || el.hasAttribute('aria-haspopup') || el.hasAttribute('aria-expanded'))) why = 'click';
+    if (!why && cs && cs.cursor === 'pointer') {
+      var pc = el.parentElement ? style(el.parentElement) : null;
+      if (!pc || pc.cursor !== 'pointer') why = 'click';
+    }
+    if (!why) return null;
+    try { if (el.querySelector(INNER)) return null; } catch (e) {}
+    return role;
+  }
+
   function walk(node) {
     if (total >= MAXTEXT || blocks.length >= MAXBLOCKS) return;
     if (node.nodeType === 3) { put(node.data, flags, act); return; }
@@ -203,6 +230,19 @@ return (function (opt) {
     if (tag === 'A' && el.hasAttribute('href') && act < 0) {
       var h = el.href || '';
       act = addAct({t: 'link', h: h, txt: el.textContent.trim().length > 0}, el);
+    } else if (act < 0 && tag !== 'LABEL' && tag !== 'BODY') {      // (an <a> without href too)
+      var role = widget(el, cs);
+      if (role !== null) {
+        var words = el.textContent.replace(/\s+/g, ' ').trim();
+        var name = (words || el.getAttribute('aria-label') || el.getAttribute('title') || '').slice(0, 40);
+        var exp = el.getAttribute('aria-expanded'), chk = el.getAttribute('aria-checked') || el.getAttribute('aria-pressed');
+        act = addAct({t: 'button', v: name || 'Button', w: role || 'click'}, el);
+        if (CHECKS[role] || (chk === 'true' || chk === 'false'))   // (its state, as a form's box)
+          put(role === 'radio' || role === 'menuitemradio' ? (chk === 'true' ? '(*) ' : '( ) ') : (chk === 'true' ? '[x] ' : '[ ] '), 0, act);
+        else if (exp === 'true' || exp === 'false')               // (a dropdown's: open or shut, as <details>)
+          put(exp === 'true' ? '[-] ' : '[+] ', 0, act);
+        if (!/\S/.test(words)) put('[' + (name || 'Button') + ']', 0, act);   // (an icon: its label)
+      }
     }
     if (tag === 'B' || tag === 'STRONG' || (cs && +cs.fontWeight >= 600 && !blk)) flags |= 1;
     if (tag === 'I' || tag === 'EM' || tag === 'CITE') flags |= 2;

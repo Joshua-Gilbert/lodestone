@@ -106,6 +106,51 @@ def test_extract():
         m.close()
 
 
+def test_extract_widgets():
+    """What a script makes clickable without a link or a button (a site's
+    dropdown, a video player's controls): ARIA roles, a click handler, a
+    pointer cursor set on it.  Each a button gridfox can Tab to and click;
+    an icon's label for its text, a switch's state, a dropdown's [+]/[-];
+    a card's link left a link, a disabled one left alone."""
+    f, m, b = browser()
+    try:
+        b.open(U + 'widgets')
+        mod = b.read()
+        d = P.layout(mod)
+        text = '\n'.join(d.text)
+        names = [(a['t'], a.get('v'), a.get('w')) for a in mod['acts']]
+        want = [('button', 'Normal', 'combobox'), ('button', 'Settings', 'button'), ('button', 'Captions', 'switch'),
+                ('button', 'Notes', 'tab'), ('button', 'Specs', 'tab'), ('button', 'Click me', 'click'),
+                ('button', 'Pointer here inside', 'click'), ('link', None, None), ('button', 'No href', 'button')]
+        assert names == want, names
+        assert '[+] Normal' in text and '[Settings]' in text and '[ ] Captions' in text, text
+        assert 'Slow' not in text and 'Greyed' in text, text            # (the list shut; Greyed: text only)
+    finally:
+        m.close()
+
+
+def test_app_widgets():
+    """Those clicked from the GRiD: the dropdown opens ([-], its options
+    clickable), an option chosen shuts it with its value; the switch, a tab,
+    the icon, the click handler and the pointer each do what a click does."""
+    r = Run(U + 'widgets')
+    try:
+        def act(v):
+            i = [a.get('v') for a in r.app.acts()].index(v)
+            r.app.select(i); r.keys('enter'); r.rereads()
+        act('Normal')
+        assert r.has('[-] Normal') and r.has('Slow') and r.has('Fast'), r.text()
+        act('Fast')
+        assert r.has('[+] Fast') and not r.has('Slow'), r.text()
+        act('Captions'); assert r.has('[x] Captions'), r.text()
+        act('Specs'); assert r.has('Tab: Specs'), r.text()
+        act('Settings'); assert r.has('Said: settings'), r.text()
+        act('Click me'); assert r.has('Said: clicked'), r.text()
+        act('Pointer here inside'); assert r.has('Said: pointer'), r.text()
+    finally:
+        r.close()
+
+
 # ---- the app, key by key ----------------------------------------------------
 class Run:
     def __init__(s, start=None):
