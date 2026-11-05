@@ -174,6 +174,8 @@ run_ret     resw 1
 run_tail    resb 130
 run_pause   resb 1              ; 1: a key waited for after the next
                                 ;  UI_RUN's program (the Executive's modes)
+            resb 1              ; (a pad: the words after keep their parity,
+                                ;  MOUSE33's m33_* in its IRQ path among them)
 pc_ch       resb 1              ; putc's character
 app_path    equ dstpath         ; UI_FINDAPP's answer (80): the Executive's
                                 ;  Copy/Move destination, free while the

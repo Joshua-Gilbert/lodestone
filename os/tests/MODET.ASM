@@ -3,14 +3,23 @@
 ; its command tail into TAIL.TXT (as it came: " /A B"), and on the screen.
 ; -DEND=n: the third mode's arguments end with their 0 at offset n: 127
 ; (MODEL.COM) is past the 127 bytes the Executive reads, so it offers two;
-; 126 (MODEE.COM), the last of them, three.
+; 126 (MODEE.COM), the last of them, three.  -DBADSIG (MODEX.COM): 'LMOX'
+; after the jump, so none.  -DSEVEN (MODE7.COM): seven, the seventh not
+; offered (six at most).
 ;   nasm -f bin -o MODET.COM MODET.ASM
 org 100h
         jmp     short start
+%ifdef BADSIG
+        db      'LMOX'
+%else
         db      'LMOD'
+%endif
         db      80h, 'Plain', 0, '/A B', 0      ; (as Open: MULTITASK=1, a task)
         db      83h, 'Pause', 0, '/P', 0        ; (the Executive's task, a key after)
-%ifdef END
+%ifdef SEVEN
+        db      80h, 'M3', 0, '3', 0, 80h, 'M4', 0, '4', 0, 80h, 'M5', 0, '5', 0
+        db      80h, 'M6', 0, '6', 0, 80h, 'M7', 0, '7', 0
+%elifdef END
         db      81h, 'Full', 0
         times   END - ($ - $$) db 'x'
         db      0

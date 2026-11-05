@@ -4447,49 +4447,54 @@ def t_modes():
     k = boot('mt_modes.img', b'MULTITASK=1\r\n', 88, A.MODET, CL, TERMRUN, TERMFNT, mouse=True)
     full, xr = [], k.Y['exec_raw']                           # (the Executive's own EXEC: full screen, in its task)
     k.hooks.append(lambda pc: full.append(1) if pc.r('ip') == xr and pc.r('cs') == k.useg else None)
+    spawn, ur, ms = [], k.Y['mt_urun'], mt_seg(k)            # (mt_ui's AL = 0: a task started, as Return)
+    k.hooks.append(lambda pc: spawn.append(1) if pc.r('ip') == ur and pc.r('cs') == ms else None)
     def rclick(nm):
         k.select(nm); y = 24 + 16 * (k.exec_list().index(nm) - k.u16('top')) + 8
         A.point(k, 100, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.06); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
         return A.menu_items(k)
     def run(item, want, shift=False, keys=()):
-        """item chosen (Return, Shift held if shift) till TAIL.TXT is want and the Executive's again: the modes and the
-        task names seen meanwhile, and whether "Press any key" showed"""
+        """item chosen (Return, Shift held if shift) till TAIL.TXT is want and the Executive's again: TAIL.TXT, whether
+        it ran full screen (the Executive's exec_raw), as a task (mt_urun), "Press any key" showed, and the wait held
+        it (text mode still, 1 s on, before keys[0])"""
         m = rclick('MODET.COM')
         for _ in range(m.index(item)): k.key(ktest.DOWN)
         if shift: k.pc.wr(0x40, 0x17, b'\x02')
-        k.pc.tty.clear(); full.clear(); k.key(ktest.ENTER, settle=False)
-        tasks, t0 = set(), k.pc.us
+        k.pc.tty.clear(); full.clear(); spawn.clear(); k.key(ktest.ENTER, settle=False)
+        held, t0 = None, k.pc.us
         while k.pc.us - t0 < 20e6:
-            k.run_for(0.05); tasks |= {t[2] for t in tstate(k)[0]}
+            k.run_for(0.05)
             if shift and full: k.pc.wr(0x40, 0x17, b'\x00'); shift = False
-            if keys and 'Press any key' in ''.join(k.pc.tty): k.key(keys[0], settle=False); keys = ()
+            if keys and 'Press any key' in ''.join(k.pc.tty):
+                k.run_for(1.0); held = k.pc.mode() == 3
+                k.key(keys[0], settle=False); keys = ()
             if A.disk_file(k, 'TAIL.TXT') == want and k.pc.mode() == 0x40 and 'MODET.COM' not in [t[2] for t in tstate(k)[0]]:
                 break
         k.pc.wr(0x40, 0x17, b'\x00'); k.run_for(0.5); k.settle()
-        return A.disk_file(k, 'TAIL.TXT'), bool(full), tasks, 'Press any key' in ''.join(k.pc.tty)
+        return A.disk_file(k, 'TAIL.TXT'), bool(full), bool(spawn), 'Press any key' in ''.join(k.pc.tty), held
     FILE = ['Copy', 'Move', 'Rename', 'Delete']
     m = rclick('MODET.COM'); k.key(ktest.ESC)
     check('a right click on MODET.COM: Open, Open full screen, its three modes, the file\'s',
           m == ['Open', 'Open full screen', 'Plain', 'Pause', 'Full'] + FILE, m)
     r = run('Plain', b' /A B')
     check('Plain (no LM_TASK0): a task, as Open (never full screen), its tail " /A B"',
-          r[0] == b' /A B' and 'MODET.COM' in r[2] and not r[1] and not r[3], r)
+          r[0] == b' /A B' and r[2] and not r[1] and not r[3], r)
     r = run('Open', b'')
-    check('... Open after it: a task, no tail (mw_prog\'s tail made again, empty)', r[0] == b'' and 'MODET.COM' in r[2]
+    check('... Open after it: a task, no tail (mw_prog\'s tail made again, empty)', r[0] == b'' and r[2]
           and not r[1], r)
     r = run('Plain', b' /A B', shift=True)
     check('... Plain with Shift held: full screen in the Executive\'s task (its own EXEC, no task), " /A B" still',
-          r[0] == b' /A B' and r[1] and 'MODET.COM' not in r[2] and not r[3], r)
+          r[0] == b' /A B' and r[1] and not r[2] and not r[3], r)
     r = run('Pause', b' /P', keys=[ktest.ENTER])
-    check('Pause (LM_TASK0 + LM_PAUSE): full screen in the Executive\'s task, " /P", "Press any key", a key: back',
-          r[0] == b' /P' and r[1] and 'MODET.COM' not in r[2] and r[3] and k.pc.mode() == 0x40
+    check('Pause (LM_TASK0 + LM_PAUSE): full screen in the Executive\'s task, " /P", "Press any key" (still waiting a '
+          'second on, text mode), a key: back', r[0] == b' /P' and r[1] and not r[2] and r[3] and r[4] and k.pc.mode() == 0x40
           and any('MODET.COM ended' in l for l in k.band()), (r, k.band()))
     r = run('Full', b' /F')
     check('Full (LM_TASK0): full screen, no task, " /F", no key waited for', r[0] == b' /F' and r[1]
-          and 'MODET.COM' not in r[2] and not r[3], r)
+          and not r[2] and not r[3], r)
     r = run('Open full screen', b'')
     check('Open full screen (msgbuf holding MODET\'s block now): full screen, no tail', r[0] == b'' and r[1]
-          and 'MODET.COM' not in r[2], r)
+          and not r[2], r)
     k.key(ktest.ESC); k.select('MODET.COM'); k.key(ktest.ENTER, settle=False)  # (ESC: the band's message gone)
     t0 = k.pc.us
     while k.pc.us - t0 < 20e6 and A.disk_file(k, 'TAIL.TXT') != b'': k.run_for(0.05)
