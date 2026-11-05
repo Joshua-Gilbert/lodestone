@@ -13,6 +13,32 @@ KEYS = {'enter': '\ue007', 'tab': '\ue004', 'bksp': '\ue003', 'del': '\ue017', '
         'right': '\ue014', 'up': '\ue013', 'down': '\ue015', 'home': '\ue011', 'end': '\ue010',
         'pgup': '\ue00e', 'pgdn': '\ue00f', 'ins': '\ue016'}
 SHIFT = '\ue008'
+# the dropdown (<select>) at a viewport point (or with the focus, x < 0): kept as
+# window.__gridfoxPick; -> its options, the one chosen and where it is, or null
+PICK = ('var x = arguments[0], y = arguments[1], d = document, el;'
+        'if (x < 0) { el = d.activeElement; while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement; }'
+        'else { el = d.elementFromPoint(x, y);'
+        '  while (el && el.shadowRoot && el.shadowRoot.elementFromPoint) { var e2 = el.shadowRoot.elementFromPoint(x, y); if (!e2 || e2 === el) break; el = e2; } }'
+        'while (el && (el.tagName === "OPTION" || el.tagName === "OPTGROUP")) el = el.parentElement;'
+        'if (!el || el.tagName !== "SELECT" || el.disabled || el.multiple || el.size > 1) { window.__gridfoxPick = null; return null; }'
+        'window.__gridfoxPick = el; var o = [];'
+        'for (var i = 0; i < el.options.length && i < 500; i++) o.push([el.options[i].text.replace(/\\s+/g, " ").trim(), el.options[i].disabled]);'
+        'var r = el.getBoundingClientRect();'
+        'return {opts: o, v: el.selectedIndex, r: [r.left, r.top, r.width, r.height], w: innerWidth, h: innerHeight};')
+# the frame (<iframe>) at a viewport point, and the point in its own viewport,
+# or null: a click there goes into it (an embedded video player's)
+FRAME_AT = ('var x = arguments[0], y = arguments[1], el = document.elementFromPoint(x, y);'
+            'while (el && el.shadowRoot && el.shadowRoot.elementFromPoint) { var e2 = el.shadowRoot.elementFromPoint(x, y); if (!e2 || e2 === el) break; el = e2; }'
+            'if (!el || (el.tagName !== "IFRAME" && el.tagName !== "FRAME")) return null;'
+            'var r = el.getBoundingClientRect();'
+            'return {el: el, x: x - r.left - el.clientLeft, y: y - r.top - el.clientTop};')
+FRAMES = 4                      # frames inside frames a click goes into at most
+# select_at()'s dropdown: option n chosen, as a person's choice is (input, change)
+CHOOSE = ('var el = window.__gridfoxPick, n = arguments[0];'
+          'if (!el || !el.isConnected) return false;'
+          'el.focus(); el.selectedIndex = n;'
+          'el.dispatchEvent(new Event("input", {bubbles: true})); el.dispatchEvent(new Event("change", {bubbles: true}));'
+          'return true;')
 SCROLL = ('var d = arguments[0], to = arguments[1];'
           'if (to !== null) window.scrollTo({top: to < 0 ? document.documentElement.scrollHeight : to,'
           ' behavior: "instant"});'
@@ -130,12 +156,50 @@ class Browser:
         return base64.b64decode(s.m.screenshot())
 
     def click_at(s, x, y):
-        """A click at viewport pixel (x, y): -> True if a new page came of it."""
+        """A click at viewport pixel (x, y): -> True if a new page came of it.
+        On a frame (an embedded player: Vimeo's, YouTube's), the click goes
+        into the frame's own page at that point, as a person's would: sent to
+        the page around it, the frame's page never had it (its play button
+        did nothing, and with autoplay off nothing starts without one)."""
         s._stamp()
-        s.m.actions([{'type': 'pointer', 'id': 'gridfox-mouse', 'parameters': {'pointerType': 'mouse'},
-                      'actions': [{'type': 'pointerMove', 'x': int(x), 'y': int(y), 'origin': 'viewport',
-                                   'duration': 0},
-                                  {'type': 'pointerDown', 'button': 0}, {'type': 'pointerUp', 'button': 0}]}])
+        depth = 0
+        try:
+            while depth < FRAMES:
+                try:
+                    r = s.m.script(FRAME_AT, [x, y], timeout=5)
+                    if not isinstance(r, dict) or not isinstance(r.get('el'), dict): break
+                    s.m.frame(r['el'])
+                except MarionetteError as e:
+                    s.log('frame not entered (%s): clicked around it' % getattr(e, 'error', e))
+                    break
+                depth += 1
+                x, y = r.get('x', x), r.get('y', y)
+            s.m.actions([{'type': 'pointer', 'id': 'gridfox-mouse', 'parameters': {'pointerType': 'mouse'},
+                          'actions': [{'type': 'pointerMove', 'x': int(x), 'y': int(y), 'origin': 'viewport',
+                                       'duration': 0},
+                                      {'type': 'pointerDown', 'button': 0}, {'type': 'pointerUp', 'button': 0}]}])
+        finally:
+            for _ in range(depth):
+                try: s.m.parent_frame()
+                except MarionetteError: pass
+        return s.settle()
+
+    def select_at(s, x, y):
+        """The dropdown (<select>) at viewport pixel (x, y), or with the focus
+        when x is None: {opts: [[text, disabled]], v: the one chosen, r: [x, y,
+        w, h] where it is, w, h: the viewport}, or None.  Firefox draws a
+        dropdown's list as a pop-up of its own, which a headless Firefox's
+        screenshots never show, so the picture view draws gridfox's instead."""
+        try:
+            r = s.m.script(PICK, [-1 if x is None else x, -1 if y is None else y], timeout=5)
+        except MarionetteError:
+            return None
+        return r if isinstance(r, dict) and r.get('opts') else None
+
+    def choose_picked(s, n):
+        """select_at()'s dropdown: option n chosen.  -> True if a new page came of it."""
+        s._stamp()
+        if not s.m.script(CHOOSE, [n], timeout=10): raise RuntimeError('that list is no longer on the page')
         return s.settle()
 
     def press(s, keys):
