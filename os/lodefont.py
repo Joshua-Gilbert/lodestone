@@ -20,7 +20,8 @@ HEAD = ['8x16 font, ASCII 32-126 (+127 = solid block): Lodefont, Lodestone\'s ow
 def load(path=SRC):
     """LODEFONT.TXT -> typfont's font dict (codes 32-127)."""
     g, code, rows = {}, None, []
-    for n, line in enumerate(open(path), 1):
+    with open(path) as f: text = f.read().splitlines()
+    for n, line in enumerate(text, 1):
         line = line.rstrip()
         if not line or line.startswith(';'): continue
         m = re.match(r'([0-9A-Fa-f]{2})h\b', line)
@@ -44,6 +45,6 @@ if __name__ == '__main__':
         shown = dict(f, n=96, glyphs={c - 32: g for c, g in f['glyphs'].items()})     # (from the space)
         typfont.sheet(shown, sys.argv[sys.argv.index('--sheet') + 1])
     elif '--fnt' in sys.argv:
-        open(sys.argv[sys.argv.index('--fnt') + 1], 'wb').write(typfont.fnt(f))
+        with open(sys.argv[sys.argv.index('--fnt') + 1], 'wb') as o: o.write(typfont.fnt(f))
     else:
-        open(INC, 'w', newline='\r\n').write(typfont.font_inc(f, 'LODEFONT', HEAD))
+        with open(INC, 'w', newline='\n') as o: o.write(typfont.font_inc(f, 'LODEFONT', HEAD))

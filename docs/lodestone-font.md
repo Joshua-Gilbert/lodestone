@@ -21,7 +21,7 @@ An original pixel font, drawn glyph by glyph for the 8×16 cell. Like most new t
 | 0 | empty: the gap between lines |
 | 1–13 | capitals, digits, ascenders (13 rows) |
 | 5–13 | the x-height |
-| 14–15 | descenders (g j p q y; the comma's tail; `_`, two rows thick so it is never one of the UI's one-pixel rules) |
+| 14–15 | descenders (g j p q y; the comma's tail; `_`, two rows thick as GRiD's, so the tests' screen reader doesn't take the UI's one-pixel rules for it) |
 
 Column 7 is the gap between characters. The baseline and x-height are GRiD's TC8X16's, so screens laid out for GRiD's font lay out the same. GRiD's capitals start on row 0; Lodefont's start on row 1, which leaves a line of space between text lines.
 

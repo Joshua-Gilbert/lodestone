@@ -458,6 +458,41 @@ def t_rom2_paint():
                   k.rd('run_active', 1) == b'\x00' and 'PAINT.RUN is not on this disk' in k.band() and not k.crashed, k.band())
 
 
+def t_rom2_fonts():
+    """The other fonts from ROM 2: started from the ROM, FONT= in C:\\LODE.INI
+    loads GRIDFONT.FNT or TERMINUS.FNT from R:, and Display lists and cycles
+    them (not TERM.FNT); with ROM 1 alone the line is passed over: Lodefont."""
+    print('== the fonts on ROM 2')
+    grid = open(os.path.join(GOS, 'fonts', 'GRIDFONT.FNT'), 'rb').read()
+    term = open(os.path.join(GOS, 'fonts', 'TERMINUS.FNT'), 'rb').read()
+    name = lambda f: {grid: 'GRIDFONT', term: 'TERMINUS', A.LODEF: 'Lodefont'}.get(f, '?')
+    for tag, rs in (('ROM 1 and ROM 2', {0: rom2(), 1: rom()}), ('ROM 1 alone', {1: rom()})):
+        two = len(rs) == 2
+        got = []
+        for ini in (b'FONT=GRIDFONT.FNT\r\n', b'FONT=TERMINUS.FNT\r\n', b'FONT=TERM.FNT\r\n'):
+            k = boot(ata=sysinfo_hd(('LODE.INI', ini)), roms=rs)
+            got.append(name(A.core_font(k)) if not k.crashed else 'crashed')
+        want = ['GRIDFONT', 'TERMINUS', 'Lodefont'] if two else ['Lodefont'] * 3
+        check('%s: FONT=GRIDFONT.FNT, TERMINUS.FNT, TERM.FNT (4 KB) in C:\\LODE.INI: %s' % (tag, ', '.join(want)), got == want, got)
+        k = boot(ata=sysinfo_hd(), roms=rs)
+        A.to_display(k)
+        m = re.findall(r'Lodefont \(built in\).*$', A.screen(k), re.M)       # (the Font line's, then the list's)
+        m = m and re.match('.*', m[-1])
+        cyc = []
+        for _ in range(3):
+            k.key(ktest.ENTER)
+            cyc.append((name(A.core_font(k)), hd_file(k, 'LODE.INI')))
+        if two:
+            ok = m and m.group(0).strip() == 'Lodefont (built in), GRIDFONT.FNT, TERMINUS.FNT' and cyc == [
+                ('GRIDFONT', b'FONT=GRIDFONT.FNT\r\n'), ('TERMINUS', b'FONT=TERMINUS.FNT\r\n'), ('Lodefont', None)]
+            check('%s: Display lists Lodefont, GRIDFONT.FNT and TERMINUS.FNT from R:; Return goes through them and back, '
+                  'C:\\LODE.INI written each time (and gone at Lodefont)' % tag, ok and not k.crashed, (m and m.group(0), cyc))
+        else:
+            check('%s: Display lists Lodefont alone; Return stays on it' % tag,
+                  m and m.group(0).strip() == 'Lodefont (built in)' and all(c[0] == 'Lodefont' for c in cyc) and not k.crashed,
+                  (m and m.group(0), cyc))
+
+
 def t_rom2_claude():
     """CLAUDE.COM from ROM 2: started from the ROM with EMS, CLAUDE /R at
     the prompt loads R:\\CLAUDE.COM and leaves resident Claude (its
@@ -797,7 +832,7 @@ if __name__ == '__main__':
     t0 = time.time()
     if 'nobuild' not in sys.argv: build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_free, t_rom2_paint, t_rom2_claude, t_pipe):
+    for t in (t_image, t_bios, t_boot, t_read, t_write, t_floppy, t_settings, t_mdisk, t_menu, t_system, t_nosave, t_paths, t_printer, t_romcap, t_memory, t_rom2, t_rom2_free, t_rom2_paint, t_rom2_fonts, t_rom2_claude, t_pipe):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
