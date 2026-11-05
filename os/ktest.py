@@ -69,10 +69,11 @@ def font():
     global _font
     if _font is None:
         _font = {}
-        # FONT.INC is GRiD's font (the OS, DEFRAG); CLAUDE.COM still draws
-        # with Terminus, so the screen reader knows both
-        for name in ('FONT.INC', 'TERMINUS.INC'):
-            f = pcemu.load_font(os.path.join(HERE, 'src', name))
+        # FONT.INC is Lodefont (the OS, DEFRAG); CLAUDE.COM still draws
+        # with Terminus, and GRIDFONT.FNT can be the font: the screen reader
+        # knows all three
+        for name in ('src/FONT.INC', 'src/TERMINUS.INC', 'fonts/GRIDFONT.INC'):
+            f = pcemu.load_font(os.path.join(HERE, name))
             for c, g in f.items():
                 if not 33 <= c <= 126 or not any(g): continue
                 _font.setdefault(bytes(g), chr(c))

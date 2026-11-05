@@ -149,7 +149,7 @@ UI_CRITERR  equ 42 * 3  ; -> AX = the last INT 24h error (DI + 1; 0 = none), cle
 UI_BEEP     equ 43 * 3  ; a short beep
 UI_KEYSHIFT equ 44 * 3  ; -> AL = BIOS shift state (bit 0/1 Shift, 2 Ctrl, 3 CODE)
 UI_FONT     equ 45 * 3  ; the screen font (API 2).  AL = 0 -> SI = its file name
-                        ;  ("TERMINUS.FNT"; "" = GRiD's, built in).  AL = 1: SI =
+                        ;  ("GRIDFONT.FNT"; "" = Lodefont, built in).  AL = 1: SI =
                         ;  FONT_BYTES of glyphs (8x16, codes 32-127, 16 bytes
                         ;  each, top row first), DI = its name ("" = built in):
                         ;  that is the font from now on.  Nothing is redrawn;
