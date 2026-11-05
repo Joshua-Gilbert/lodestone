@@ -21,6 +21,7 @@ from . import glp
 from .render import UMAP
 
 ROWS, COLS = 24, 80
+WIN_COLS = 78                                       # a Lodestone terminal window's (TERM.RUN)
 BLANK = 0x20
 A_INV, A_UL = 1, 2
 F_CLEAR, F_HIDDEN = 1, 2
@@ -160,13 +161,13 @@ class TermScreen(pyte.Screen):
         return (1 << 5) in s.mode                     # DECCKM
 
     def cells(s):
-        """-> (24 bytearrays of glyphs, 24 bytearrays of attributes: past its rows, blanks)"""
+        """-> (24 bytearrays of glyphs, 24 bytearrays of attributes: past its rows and columns, blanks)"""
         chs, ats = [], []
         cache = _caches[bool(s.quads)]              # (looked up here, not in glyph(): 1,920 cells a call)
         for y in range(s.lines):
             line = s.buffer[y]
-            ch = bytearray(s.columns); at = bytearray(s.columns)
-            for x in range(s.columns):
+            ch = bytearray(b' ' * COLS); at = bytearray(COLS)      # (78 in a window: the GRiD's 80, 2 blank)
+            for x in range(min(s.columns, COLS)):
                 c = line[x]
                 g, flip = cache.get(c.data) or glyph(c.data, s.quads)
                 bg = c.bg not in ('default', 'black', '000000')
@@ -175,7 +176,7 @@ class TermScreen(pyte.Screen):
                 at[x] = (A_INV if inv else 0) | (A_UL if c.underscore else 0)
             chs.append(ch); ats.append(at)
         for y in range(s.lines, ROWS):                # (fewer rows, EV_SIZE: the GRiD's others blank)
-            chs.append(bytearray(b' ' * s.columns)); ats.append(bytearray(s.columns))
+            chs.append(bytearray(b' ' * COLS)); ats.append(bytearray(COLS))
         return chs, ats
 
     def text(s):

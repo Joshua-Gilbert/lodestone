@@ -13,7 +13,7 @@ import pyte
 from . import glp
 from .grid import Grid, OPS_BG
 from .keys import term_keys
-from .termscreen import TermScreen, PreFilter, Encoder, fold_title, ROWS, COLS
+from .termscreen import TermScreen, PreFilter, Encoder, fold_title, ROWS, COLS, WIN_COLS
 from . import mcp
 from . import picture as PIC
 from . import plotview
@@ -61,6 +61,7 @@ class TermSession:
         s.link = None; s.grid = None
         s.child = None; s.fd = None; s.reader = None
         s.rows = ROWS                   # the pty's rows: 24, or a GRiD window's (EV_SIZE, CLAUDE 1.16)
+        s.cols = COLS                   # its columns: 80, or a window's 78 (TERM.RUN shows 78 of 80)
         s.dirty = True; s.last_byte = 0.0; s.first_dirty = 0.0
         s.title = ''; s.title_sent = None; s.title_t = 0.0
         s.hello = {}; s.exited = None
@@ -389,19 +390,22 @@ class TermSession:
     def set_rows(s, rows):
         """The terminal's rows: 24, or as many as a GRiD window shows (EV_SIZE, 4-24).  The pty is
         told (the program gets SIGWINCH and lays its screen out again) and pyte's screen resized; the
-        GRiD's rows past them come to it blank."""
+        GRiD's rows past them come to it blank.  Fewer than 24 is a window, which shows 78 of the
+        80 columns (TERM.RUN, the cursor followed), so the pty is 78 wide then: what a program puts
+        in its last two columns (gridfox's Top/Bot, a line filled to the edge) stays in view."""
         rows = max(4, min(ROWS, rows))
+        cols = COLS if rows >= ROWS else WIN_COLS
         with s.lock:
-            if rows == s.rows: return
-            s.rows = rows
-            s.screen.resize(rows, COLS)
+            if rows == s.rows and cols == s.cols: return
+            s.rows, s.cols = rows, cols
+            s.screen.resize(rows, cols)
             s._mark()
             if s.fd is not None:
                 try:
-                    fcntl.ioctl(s.fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, COLS, 0, 0))
+                    fcntl.ioctl(s.fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
                 except OSError as e:
                     s.log('term: rows not set: %s' % e)
-            s.log('term: %d rows' % rows)
+            s.log('term: %d rows, %d columns' % (rows, cols))
 
     def _mark(s):
         if not s.dirty: s.first_dirty = time.monotonic()
@@ -432,8 +436,8 @@ class TermSession:
             except (OSError, ValueError) as e:
                 s.log('term: .mcp.json left alone: %s' % e)
         m, sl = os.openpty()
-        fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack('HHHH', s.rows, COLS, 0, 0))
-        env = dict(os.environ, TERM='xterm-256color', LANG='C.UTF-8', COLUMNS=str(COLS), LINES=str(s.rows))
+        fcntl.ioctl(sl, termios.TIOCSWINSZ, struct.pack('HHHH', s.rows, s.cols, 0, 0))
+        env = dict(os.environ, TERM='xterm-256color', LANG='C.UTF-8', COLUMNS=str(s.cols), LINES=str(s.rows))
         env.pop('COLORTERM', None)
         if s.web or not getattr(s.cfg, 'term_api_key', False):
             # Term is for the subscription: a key in gridlink's environment
@@ -560,7 +564,7 @@ class TermSession:
         """A left click on the GRiD's cell (col, row), or pixel (px, py): to
         the program as an xterm's press and release, only if it asked for
         mouse reports (in pixels if it asked for those, ?1016)."""
-        if s.fd is None or not (0 <= row < s.rows and 0 <= col < COLS): return
+        if s.fd is None or not (0 <= row < s.rows and 0 <= col < s.cols): return
         mode = s.screen.mode
         if not any(m in mode for m in s.MOUSE_ON): return
         x, y = col + 1, row + 1
