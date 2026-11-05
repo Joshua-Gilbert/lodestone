@@ -233,7 +233,7 @@ perm_start:
         call    bat_start
 .x:     ret
 
-s_banner    db 13, 10, 'Lodestone 0.6 command shell (DOS 3.30 compatible)', 13, 10
+s_banner    db 13, 10, 'Lodestone 1.0 command shell (DOS 3.30 compatible)', 13, 10
             db 'Type EXIT to return to the Executive.', 13, 10, 0
 s_comspecv  db 'COMSPEC=', 0
 s_selfname  db ':\LCMD.COM', 0
@@ -4724,7 +4724,7 @@ x_bat       db 'BAT', 0
             times -(x_bat != x_com + 8) db 0
 wordends    db ' ', 9, '/', '=', ';', ',', '+', 0
 
-s_ver       db 13, 10, 'Lodestone version 0.6 (DOS 3.30 compatible)', 13, 10, 0
+s_ver       db 13, 10, 'Lodestone version 1.0 (DOS 3.30 compatible)', 13, 10, 0
 s_crlf      db 13, 10, 0
 s_defprompt db '$P$G', 0
 s_promptv   db 'PROMPT=', 0

@@ -17,7 +17,8 @@ from . import page as P, video as V
 from .marionette import MarionetteError
 ERRS = (MarionetteError, RuntimeError, OSError, ValueError)
 
-ROWS, COLS = 24, 80                 # (ROWS: the rows until the terminal says its own)
+ROWS, COLS = 24, 80                 # (until the terminal says its own; 78 columns in a GRiD window)
+MIN_COLS = 40
 MIN_ROWS = 3                        # the address, a page row and the status line
 URL_EVERY = 1.0                     # seconds between looks at the address when idle
 TOP, BODY = 1, 22                   # page rows 1..22 at 24 rows (App.body: the terminal's rows - 2)
@@ -192,14 +193,15 @@ class App:
                  profile=None):
         s.b = browser; s.out = out or sys.stdout.buffer
         s.search = search; s.log = log or (lambda m: None)
-        s.model = help_model(); s.doc = P.layout(s.model)
+        s.ncols = COLS                           # the terminal's columns (resize)
+        s.model = help_model(); s.doc = P.layout(s.model, s.ncols)
         s.top = 0; s.sel = -1; s.url = HOME
         s.line = None; s.line_do = None          # the editor on row 23 and what Return does with it
         s.hints = None; s.hint_in = ''           # F: {number: act}
         s.menu = None                            # a <select>'s choices: (act, options, index)
         s.status = 'G: go to an address   H: help'; s.busy = ''
         s.nrows = ROWS; s.body = BODY            # the terminal's rows, and the page's (resize)
-        s.size = None                            # -> the terminal's rows now (run_tty: the pty's)
+        s.size = None                            # -> the terminal's rows (or rows, columns) now (run_tty: the pty's)
         s.winch = False; s.wake_fd = None        # a resize to look at; the fd its signal wakes select with
         s.find_text = ''; s.shown = [None] * ROWS
         s.rereads = []; s.places = {}            # url -> (top, sel), for Back
@@ -254,7 +256,7 @@ class App:
         s._shots()
 
     def _relayout(s, top=None, sel=None):
-        s.doc = P.layout(s.model)
+        s.doc = P.layout(s.model, s.ncols)
         if top is not None: s.top = top
         if sel is not None: s.sel = sel
         s.top = max(0, min(s.top, max(0, len(s.doc) - s.body)))
@@ -485,9 +487,9 @@ class App:
         """Where the list's choices are drawn: (first row, column, rows, width, first choice)."""
         if s.menu is None: return None
         i, opts, n = s.menu
-        h = max(1, min(len(opts), s.body - 2)); w = min(COLS - 4, max([len(o) for o in opts] + [10]) + 6)
+        h = max(1, min(len(opts), s.body - 2)); w = min(s.ncols - 4, max([len(o) for o in opts] + [10]) + 6)
         first = max(0, min(n - h // 2, len(opts) - h))
-        return (TOP + max(0, (s.body - h - 2) // 2), (COLS - w) // 2, h, w, first)
+        return (TOP + max(0, (s.body - h - 2) // 2), (s.ncols - w) // 2, h, w, first)
 
     def scroll(s, n):
         s.top = max(0, min(s.top + n, max(0, len(s.doc) - s.body)))
@@ -497,17 +499,24 @@ class App:
         return max(1, s.body - 2)
 
     def resize(s, rows, draw=True):
-        """The terminal's rows now (a GRiD window resized: the pty's SIGWINCH):
-        the page gets all but the address and the status line, the place is
-        kept, and everything is drawn again."""
-        rows = max(MIN_ROWS, int(rows or ROWS))
-        if rows == s.nrows: return
+        """The terminal's rows now, or (rows, columns) (a GRiD window resized:
+        the pty's SIGWINCH; a window is 78 columns, gridlink's pty then too):
+        the page gets all but the address and the status line, laid out again
+        for new columns, the place kept, and everything is drawn again."""
+        cols = s.ncols
+        if isinstance(rows, tuple): rows, cols = rows
+        rows = max(MIN_ROWS, int(rows or ROWS)); cols = max(MIN_COLS, min(COLS, int(cols or COLS)))
+        if rows == s.nrows and cols == s.ncols: return
+        if cols != s.ncols:                                 # (wrapped again: the same share of the page)
+            at = s.top / max(1, len(s.doc))
+            s.ncols = cols; s.doc = P.layout(s.model, cols)
+            s.top = int(at * len(s.doc))
         s.nrows = rows; s.body = rows - 2
         s.top = max(0, min(s.top, max(0, len(s.doc) - s.body)))
         if s.hints is not None:                             # F's numbers: the links on the screen now
             s.hints = None; s._hints()                      #  (none there: no numbers, and it says so)
         s.shown = [None] * rows
-        s.log('rows: %d' % rows)
+        s.log('rows: %d, columns: %d' % (rows, cols))
         if draw: s.draw(full=True)
 
     def _line_key(s, k):
@@ -691,39 +700,39 @@ class App:
         """-> the terminal's rows of (text, attrs) and the cursor ((row, col) or None)."""
         out = []
         url = s.url if s.url != HOME else 'gridfox'
-        bar = (' ' + _fit(url, COLS - 2)).ljust(COLS)
-        out.append((bar, [P.A_INV] * COLS))
+        bar = (' ' + _fit(url, s.ncols - 2)).ljust(s.ncols)
+        out.append((bar, [P.A_INV] * s.ncols))
         hint_at = {}
         if s.hints:
             hint_at = {a: h for h, a in s.hints.items()}
         for r in range(s.body):
             ln = s.top + r
             if ln < len(s.doc):
-                text = s.doc.text[ln].ljust(COLS)[:COLS]
-                attr = (list(s.doc.attr[ln]) + [0] * COLS)[:COLS]
-                acts = (list(s.doc.act[ln]) + [-1] * COLS)[:COLS]
+                text = s.doc.text[ln].ljust(s.ncols)[:s.ncols]
+                attr = (list(s.doc.attr[ln]) + [0] * s.ncols)[:s.ncols]
+                acts = (list(s.doc.act[ln]) + [-1] * s.ncols)[:s.ncols]
                 if s.sel >= 0:
                     attr = [a | P.A_INV if x == s.sel else a for a, x in zip(attr, acts)]
                 if hint_at:
                     tl = list(text)
-                    for c in range(COLS):
+                    for c in range(s.ncols):
                         a = acts[c]
                         if a in hint_at and (c == 0 or acts[c - 1] != a):
                             lab = hint_at[a]
                             for j, ch in enumerate(lab):
-                                if c + j < COLS: tl[c + j] = ch; attr[c + j] = P.A_INV
+                                if c + j < s.ncols: tl[c + j] = ch; attr[c + j] = P.A_INV
                     text = ''.join(tl)
                 out.append((text, attr))
             else:
-                out.append((' ' * COLS, [0] * COLS))
+                out.append((' ' * s.ncols, [0] * s.ncols))
         if s.menu is not None:
             out = s._menu_rows(out)
         cur = None
         if s.line is not None:
-            t, c = s.line.view(COLS)
-            out.append((t.ljust(COLS), [0] * COLS)); cur = (s.nrows - 1, min(c, COLS - 1))
+            t, c = s.line.view(s.ncols)
+            out.append((t.ljust(s.ncols), [0] * s.ncols)); cur = (s.nrows - 1, min(c, s.ncols - 1))
         else:
-            out.append((s._status_text(), [P.A_DIM] * COLS))
+            out.append((s._status_text(), [P.A_DIM] * s.ncols))
         return out, cur
 
     def _menu_rows(s, out):
@@ -755,7 +764,7 @@ class App:
         pos = 'All' if n <= s.body else 'Top' if s.top == 0 else 'Bot' if s.top >= n - s.body else \
             '%d%%' % (100 * (s.top + s.body) // n)
         right = ' %s ' % pos
-        return (' ' + _fit(left, COLS - len(right) - 2)).ljust(COLS - len(right)) + right
+        return (' ' + _fit(left, s.ncols - len(right) - 2)).ljust(s.ncols - len(right)) + right
 
     def draw(s, full=False):
         rows, cur = s.rows()
@@ -774,8 +783,9 @@ class App:
             s.title_sent = title
             parts.append('\x1b]0;%s\x07' % P.clean(title).replace('\x07', '')[:70])
         if cur: parts.append('\x1b[%d;%dH\x1b[?25h' % (cur[0] + 1, cur[1] + 1))
-        else: parts.append('\x1b[?25l')
-        parts.append('\x1b[?2026l')
+        else:                                    # hidden, parked at the status line's left end: a
+            parts.append('\x1b[%d;1H\x1b[?25l' % s.nrows)   # Lodestone window shows 78 of the 80
+        parts.append('\x1b[?2026l')              # columns and follows even a hidden cursor (in column 79: 2 lost)
         s.out.write(''.join(parts).encode('utf-8')); s.out.flush()
 
     # ---- the loop ---------------------------------------------------------
@@ -899,9 +909,10 @@ def _short(e):
 
 
 def tty_rows(fd):
-    """The terminal's rows (TIOCGWINSZ), or None when it doesn't say."""
+    """The terminal's (rows, columns) (TIOCGWINSZ), or None when it doesn't say."""
     try:
-        return struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\0' * 8))[0] or None
+        r, c = struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\0' * 8))[:2]
+        return (r, c or COLS) if r else None
     except OSError:
         return None
 
@@ -922,7 +933,7 @@ def run_tty(app):
             old_wake = signal.set_wakeup_fd(wake[1])    # (select wakes for the signal at once)
             app.wake_fd = wake[0]
             old_winch = signal.signal(signal.SIGWINCH, lambda *_: setattr(app, 'winch', True))
-            app.size = lambda: tty_rows(fd)     # (read after the handler: no resize lost between)
+            app.size = lambda: tty_rows(fd)     # (read after the handler: no resize lost between; rows, columns)
             app.resize(app.size(), draw=False)
         app.run(fd)
     finally:
