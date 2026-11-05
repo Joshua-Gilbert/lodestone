@@ -66,7 +66,7 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
 # before gp_isr; no code slack at lastdrv 40CFh: any change netting +1 moves image_end and bss_end.  The UI's
 # pads, UICORE.INC's, likewise: ui_image_end 5220h, no slack before uibss's paragraph)
-OFF_MAP ={'image_end': 0x3F80, 'bss_end': 0x7380, 'ui_keep_end': 0x6714}  # (64D0h before the Executive's right-click menu, 580 bytes; 3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
+OFF_MAP ={'image_end': 0x3F80, 'bss_end': 0x7380, 'ui_keep_end': 0x6806}  # (6714h before a program's modes on its right-click menu, 242 bytes; 64D0h before the Executive's right-click menu, 580 bytes; 3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
                                         #  3F80h/74B0h before GPIB's SRQ on IRQ 5; 4090h/75C0h/620Ah before INT 24h for no disk;
                                         #  40B0h/75E0h before GPIBLOOP's fast loops; 40E0h/7610h before the driver's frame check)
@@ -3680,8 +3680,8 @@ def t_exec():
     k.run_for(0.5)
     line(k, '=4'); k.settle()
     b0 = k.band()
-    rp0 = bytes(k.rd('run_prog', 5))
-    check('off: run_prog not patched (its CMP BYTE [ex_mtw],0), ex_mtw 1 while the Executive waits (as it adds its own '
+    rp0 = bytes(k.rd('run_progt', 5))
+    check('off: run_progt not patched (its CMP BYTE [ex_mtw],0), ex_mtw 1 while the Executive waits (as it adds its own '
           '1); Return on MTLINE.COM runs it and waits: "MTLINE.COM ended, exit code 4"',
           rp0 == b'\x80\x3e' + struct.pack('<H', k.Y['ex_mtw']) + b'\x00'
           and k.rd('ex_mtw', 1) == b'\x01' and b0[:1] == ['MTLINE.COM ended, exit code 4'], (rp0.hex(), k.rd('ex_mtw', 1), b0))
@@ -3697,8 +3697,8 @@ def t_exec():
     m0, s0, e0 = B.m0, B.s0, B.e0
     back = lambda: B.back() and tstate(k)[1] == 0 and k.pc.mode() == 0x40
     lists = [k.pc.u16(seg, Y[n]) for n in ('mt_lbg', 'mt_lfz', 'mt_lmem')]
-    rp = bytes(k.rd('run_prog', 5))
-    check('on: run_prog patched (MT_UI: a JMP FAR to KMW\'s mw_prog in MT\'s block), ex_mtw 2 while it waits; no lists '
+    rp = bytes(k.rd('run_progt', 5))
+    check('on: run_progt patched (MT_UI: a JMP FAR to KMW\'s mw_prog in MT\'s block), ex_mtw 2 while it waits; no lists '
           'in LODE.INI: each list empty (mt_lnone)', rp == b'\xea' + struct.pack('<HH', Y['mw_prog'], seg)
           and k.rd('ex_mtw', 1) == b'\x02' and lists == [Y['mt_lnone']] * 3, (rp.hex(), k.rd('ex_mtw', 1), lists))
     # the look for a task's end (mt_ui AL = 1) rides poll_once's clock: every 9 ticks while idle, not at each wake
@@ -4435,6 +4435,83 @@ def t_exmenu():
     check('the Executive\'s Rename form, a right click in it: no EV_RCLICK given (the form\'s wait isn\'t the list\'s), '
           'the form still up', 0xFF03 not in given and A.has(k, 'Rename LODE.INI'), ([hex(a) for a in given], A.screen(k)[-300:]))
     k.key(ktest.ESC)
+
+def t_modes():
+    """A program's modes on its right-click menu with multitasking on
+    (test_apps' t_modes has it off): one without LM_TASK0 starts as Open
+    does, a task (in a terminal window), with its arguments as its tail
+    (KMW's mw_prog: mk_tail, MT_SPAWN's SP_TAIL); with Shift, full screen in
+    the Executive's task; LM_TASK0 always there (and LM_PAUSE a key after)."""
+    print('== a program\'s modes on its right-click menu (multitasking on)')
+    CL = os.path.join(GOS, 'claude', 'CLAUDE.COM')
+    k = boot('mt_modes.img', b'MULTITASK=1\r\n', 88, A.MODET, CL, TERMRUN, TERMFNT, mouse=True)
+    full, xr = [], k.Y['exec_raw']                           # (the Executive's own EXEC: full screen, in its task)
+    k.hooks.append(lambda pc: full.append(1) if pc.r('ip') == xr and pc.r('cs') == k.useg else None)
+    def rclick(nm):
+        k.select(nm); y = 24 + 16 * (k.exec_list().index(nm) - k.u16('top')) + 8
+        A.point(k, 100, y); k.pc.mouse_move(0, 0, 2); k.pc.run_for(0.06); k.pc.mouse_move(0, 0, 0); k.pc.run_for(0.05); k.settle()
+        return A.menu_items(k)
+    def run(item, want, shift=False, keys=()):
+        """item chosen (Return, Shift held if shift) till TAIL.TXT is want and the Executive's again: the modes and the
+        task names seen meanwhile, and whether "Press any key" showed"""
+        m = rclick('MODET.COM')
+        for _ in range(m.index(item)): k.key(ktest.DOWN)
+        if shift: k.pc.wr(0x40, 0x17, b'\x02')
+        k.pc.tty.clear(); full.clear(); k.key(ktest.ENTER, settle=False)
+        tasks, t0 = set(), k.pc.us
+        while k.pc.us - t0 < 20e6:
+            k.run_for(0.05); tasks |= {t[2] for t in tstate(k)[0]}
+            if shift and full: k.pc.wr(0x40, 0x17, b'\x00'); shift = False
+            if keys and 'Press any key' in ''.join(k.pc.tty): k.key(keys[0], settle=False); keys = ()
+            if A.disk_file(k, 'TAIL.TXT') == want and k.pc.mode() == 0x40 and 'MODET.COM' not in [t[2] for t in tstate(k)[0]]:
+                break
+        k.pc.wr(0x40, 0x17, b'\x00'); k.run_for(0.5); k.settle()
+        return A.disk_file(k, 'TAIL.TXT'), bool(full), tasks, 'Press any key' in ''.join(k.pc.tty)
+    FILE = ['Copy', 'Move', 'Rename', 'Delete']
+    m = rclick('MODET.COM'); k.key(ktest.ESC)
+    check('a right click on MODET.COM: Open, Open full screen, its three modes, the file\'s',
+          m == ['Open', 'Open full screen', 'Plain', 'Pause', 'Full'] + FILE, m)
+    r = run('Plain', b' /A B')
+    check('Plain (no LM_TASK0): a task, as Open (never full screen), its tail " /A B"',
+          r[0] == b' /A B' and 'MODET.COM' in r[2] and not r[1] and not r[3], r)
+    r = run('Open', b'')
+    check('... Open after it: a task, no tail (mw_prog\'s tail made again, empty)', r[0] == b'' and 'MODET.COM' in r[2]
+          and not r[1], r)
+    r = run('Plain', b' /A B', shift=True)
+    check('... Plain with Shift held: full screen in the Executive\'s task (its own EXEC, no task), " /A B" still',
+          r[0] == b' /A B' and r[1] and 'MODET.COM' not in r[2] and not r[3], r)
+    r = run('Pause', b' /P', keys=[ktest.ENTER])
+    check('Pause (LM_TASK0 + LM_PAUSE): full screen in the Executive\'s task, " /P", "Press any key", a key: back',
+          r[0] == b' /P' and r[1] and 'MODET.COM' not in r[2] and r[3] and k.pc.mode() == 0x40
+          and any('MODET.COM ended' in l for l in k.band()), (r, k.band()))
+    r = run('Full', b' /F')
+    check('Full (LM_TASK0): full screen, no task, " /F", no key waited for', r[0] == b' /F' and r[1]
+          and 'MODET.COM' not in r[2] and not r[3], r)
+    r = run('Open full screen', b'')
+    check('Open full screen (msgbuf holding MODET\'s block now): full screen, no tail', r[0] == b'' and r[1]
+          and 'MODET.COM' not in r[2], r)
+    k.key(ktest.ESC); k.select('MODET.COM'); k.key(ktest.ENTER, settle=False)  # (ESC: the band's message gone)
+    t0 = k.pc.us
+    while k.pc.us - t0 < 20e6 and A.disk_file(k, 'TAIL.TXT') != b'': k.run_for(0.05)
+    check('Return on MODET.COM after them: a task with no tail', A.disk_file(k, 'TAIL.TXT') == b'' and not k.crashed,
+          A.disk_file(k, 'TAIL.TXT'))
+    # CLAUDE.COM 1.17's Web browser: a task (in a window), its tail " /W" (no Pi here: it waits for the link)
+    k.run_for(1.0); k.key(ktest.ESC)
+    m = rclick('CLAUDE.COM')
+    k.key(*[ktest.DOWN] * m.index('Web browser')); full.clear(); k.key(ktest.ENTER, settle=False)
+    t0, img, seen = k.pc.us, open(CL, 'rb').read()[:32], set()
+    while k.pc.us - t0 < 10e6 and 'CLAUDE.COM' not in seen:
+        k.run_for(0.05); seen |= {t[2] for t in tstate(k)[0]}
+    k.run_for(1.0)                                           # (loaded: its PSP there, kept after it ends)
+    mem, tail = bytes(k.pc.rd(0, 0, 0xA0000)), None
+    i = mem.find(img, 0x1000)
+    while i >= 0 and tail is None:
+        if (i - 0x100) % 16 == 0 and mem[i - 0x100:i - 0xFE] == b'\xcd\x20': tail = mem[i - 0x80:i - 0x80 + 1 + mem[i - 0x80]]
+        i = mem.find(img, i + 1)
+    check('CLAUDE.COM\'s menu (its five modes after Open full screen), Web browser: CLAUDE a task (not the Executive\'s '
+          'own EXEC; the Executive in front), its tail " /W"', m[2:7] == ['Claude Code', 'Web browser', 'Chat',
+          'Load resident', 'Unload resident'] and 'CLAUDE.COM' in seen and not full and tstate(k)[1] == 0
+          and tail == b'\x03 /W' and k.pc.mode() == 0x40 and not k.crashed, (m, seen, full, tstate(k), tail))
 
 def t_menu():
     print('== pop-up menus (UI API 8) in a window .RUN: saved under, modal; a drag lets the tasks run')
@@ -6942,7 +7019,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 581.0 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '581.0', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 580.7 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.7', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)
@@ -7802,7 +7879,7 @@ if __name__ == '__main__':
                         os.path.join(HERE, n + '.ASM')], check=True)
     A.mkrun.build(os.path.join(HERE, 'QUITRUN.ASM'), QUITRUN)
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
+    for t in (t_image, t_off, t_on, t_file, t_tasks, t_ends, t_front, t_preempt, t_rules, t_fpu, t_fpbad, t_screens, t_kslice, t_vruns, t_keys, t_irqk, t_pitfast, t_pitcli, t_mouse, t_vectors, t_kill, t_park, t_grow, t_lcmd, t_exec, t_lists, t_tasksrun, t_windows, t_peek, t_tname, t_write, t_paintw, t_base, t_exmenu, t_modes, t_menu, t_clip, t_system, t_rclaude, t_rpoll, t_tcore, t_term, t_wait_bg, t_tgfx, t_tclip, t_wwait, t_wxor, t_wroot, t_tpub, t_srq, t_progs, t_nodisk, t_k2cap, t_dwait, t_dfrz, t_dmaems, t_hwait, t_sysreq, t_crashlog, t_hdtools, t_rom):
         if not only or t.__name__ in only: t()
     bad_ = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad_), (': ' + '; '.join(bad_)) if bad_ else '', time.time() - t0))
