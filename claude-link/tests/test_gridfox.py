@@ -833,6 +833,61 @@ def test_picture_view():
         r.close()
 
 
+def test_picture_view_dropdown():
+    """A dropdown clicked in the picture view: Firefox would open its list as
+    a pop-up of its own, which a headless Firefox's screenshots never show
+    (the click did nothing to see, and the next went to the hidden list).  So
+    gridfox draws the list over the picture, under the dropdown: the arrows,
+    a letter, Return or a click on one choose it in the page (input, change);
+    Esc or a click outside shut it; Return on a dropdown with the focus opens
+    it too.  No real click reaches the dropdown."""
+    import tempfile
+    from PIL import Image
+    r = Run(U + 'index')
+    try:
+        app, f = r.app, r.f
+        app.view_path = os.path.join(tempfile.mkdtemp(prefix='gridfox-view-'), 'view.png')
+        app.pictures = True; app.out = io.BytesIO()
+        app.key('v'); assert app.picture and app.pic_up
+        js = lambda code: f._node({'op': 'exec', 'script': code, 'args': []})['value']
+        js('window.__chg = 0; document.getElementById("sel").addEventListener("change", function () { window.__chg++; });')
+        y = line_y(f, 'VoltsAmpsOhms')
+        plain = open(app.view_path, 'rb').read()
+        n = len(f.points)
+        app.key('click:%d:%d' % (30, y))
+        assert app.pick is not None and [t for t, _ in app.pick['opts']] == ['Volts', 'Amps', 'Ohms'], app.pick
+        assert app.pick['n'] == 0 and len(f.points) == n, (app.pick, f.points[n:])     # (no real click)
+        drawn = open(app.view_path, 'rb').read()
+        assert drawn != plain                                    # the list drawn over the picture
+        x0, y0, w, rows = app.pick['box']
+        im = Image.open(io.BytesIO(drawn)).convert('L')
+        assert rows == 3 and im.getpixel((x0 + 4, y0 + 2 + 8)) == 0, (app.pick['box'], im.getpixel((x0 + 4, y0 + 10)))  # (the chosen row: inverse)
+        app.key('down'); assert app.pick['n'] == 1
+        app.key('enter')
+        assert app.pick is None and js('return document.getElementById("sel").value;') == 'Amps'
+        assert js('return window.__chg;') == 1
+        # a click on a choice in the list
+        app.key('click:%d:%d' % (30, y))
+        x0, y0, w, rows = app.pick['box']
+        app.key('click:%d:%d' % (x0 + 10, y0 + 2 + 2 * 16 + 8))      # the third row: Ohms
+        assert app.pick is None and js('return document.getElementById("sel").value;') == 'Ohms'
+        # a letter, then Esc: nothing chosen; a click outside: shut, nothing chosen
+        app.key('click:%d:%d' % (30, y)); app.key('v'); assert app.pick['n'] == 0     # (Volts)
+        app.key('esc'); assert app.pick is None and js('return document.getElementById("sel").value;') == 'Ohms'
+        app.key('click:%d:%d' % (30, y)); n = len(f.points)
+        app.key('click:%d:%d' % (620, 370))
+        assert app.pick is None and len(f.points) == n and open(app.view_path, 'rb').read() != drawn
+        # Return on the dropdown with the focus: its list
+        js('document.getElementById("sel").focus();')
+        app.key('enter'); assert app.pick is not None and app.pick['n'] == 2
+        app.key('esc')
+        # anything else is still a real click
+        app.key('click:%d:%d' % (30, line_y(f, 'Long page')))
+        assert f.points and f.points[-1][2] == 'a' and app.url == U + 'long', f.points
+    finally:
+        r.close()
+
+
 def test_picture_view_keeps_up_with_a_moving_page():
     """A page that changes by itself (a video): looks every FRAME_SHOT, not
     every IDLE_SHOT, as frames gridlink shows whole; a still page: the idle pace."""
