@@ -9,8 +9,7 @@ gridlink/tests/test_emu.py, which ran on a Python stand-in for DOS.
 import os, struct, sys, tempfile, threading
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOS = os.path.dirname(HERE)
-GL_TESTS = next((p for p in (os.environ.get('GRIDLINK_TESTS', ''), os.path.join(GOS, '..', 'claude-link', 'tests'),
-                              '/home/claude/gridlink/tests') if p and os.path.isdir(p)), '/home/claude/gridlink/tests')
+GL_TESTS = os.environ.get('GRIDLINK_TESTS') or os.path.join(GOS, '..', 'claude-link', 'tests')
 sys.path.insert(0, GOS); sys.path.insert(0, HERE); sys.path.insert(0, GL_TESTS); sys.path.insert(0, os.path.dirname(GL_TESTS))
 import pcemu, mkimg, fatcheck, ktest
 import grid_emu as G

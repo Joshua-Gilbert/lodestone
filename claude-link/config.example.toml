@@ -16,7 +16,7 @@ api_key_file = "~/.config/gridlink/api_key"   # one line: your Console API key
 [grid]
 app = "auto"                 # what CLAUDE gets without /T or /C: chat, term, or auto
                              # (chat when there is an API key, else Term)
-user = "Joshua"
+user = "the user"            # how Claude refers to you, e.g. "Sam"
 set_clock = true             # set the GRiD's clock from the Pi when it connects
 workdir = "~/gridlink/work"  # Claude's scratch space on the Pi
 memory_dir = "~/gridlink/memories"

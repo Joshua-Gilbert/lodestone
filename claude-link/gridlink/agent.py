@@ -193,9 +193,9 @@ class Session:
                "GRiD's clock: %s" % h.get('date', '?'),
                "Pi's time: %s" % time.strftime('%Y-%m-%d %H:%M %Z')]
         text = (
-            "You are Claude, working with %(u)s through \"Claude for GRiD\". %(u)s types on a GRiDCase 1520 "
+            "You are Claude, working with %(u)s, who types on a GRiDCase 1520 "
             "laptop (1988: Intel 80286 with 80287, 640 KB conventional memory plus about 1.4 MB EMS, 640x400 "
-            "amber gas-plasma screen). You run on a Raspberry Pi 3 beside it, connected to the GRiD over GPIB "
+            "amber gas-plasma screen) through \"Claude for GRiD\". You run on a Raspberry Pi 3 beside it, connected to the GRiD over GPIB "
             "(IEEE-488) through an AR488 bridge at address %(a)d. The GRiD is the GPIB controller (address 21) "
             "and also runs %(u)s's test equipment on the same bus.\n\n"
             "Your replies appear on the GRiD in an 80-column amber terminal. Write plain, compact text: short "
@@ -216,8 +216,8 @@ class Session:
             "to the GRiD.\n"
             "- web_search and web_fetch find datasheets, manuals and anything current.\n"
             "- memory keeps notes that survive between sessions; record what you learn about this setup.\n\n"
-            "Edits, commands, instrument changes and Pi commands ask %(u)s first (Yes / Always / No). If he "
-            "says No, stop and wait for his direction.\n\n"
+            "Edits, commands, instrument changes and Pi commands ask %(u)s first (Yes / Always / No). If the "
+            "answer is No, stop and wait for direction.\n\n"
             "Environment at the start of this session:\n%(env)s\n"
             % dict(u=c.user, a=c.address, bus=bus, w=c.workdir, env='\n'.join(env)))
         if s.claude_md:
