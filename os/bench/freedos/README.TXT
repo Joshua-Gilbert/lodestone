@@ -6,3 +6,4 @@ Built 2026-10-07 from source with Open Watcom v2 and NASM:
   COMMAND.COM  FreeCOM 0.87 (git 04fc21a, github.com/FDOS/freecom), English,
                no XMS swap: ./build.sh no-xms-swap
 All are GPL (version 2 or later); the sources are at those repositories.
+The license text is LICENSES/GPL-2.0.txt at the top of this repo.

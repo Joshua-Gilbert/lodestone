@@ -38,7 +38,7 @@ class Scpi(Handler):
 
     def __init__(self, ctx, options):
         super().__init__(ctx, options)
-        self.ident = options.get("idn", f"PounceLab,GPIB-Pico2 Bridge,{socket.gethostname()},{ctx.firmware}")
+        self.ident = options.get("idn", f"Lodestone,GPIB-Pico2 Bridge,{socket.gethostname()},{ctx.firmware}")
         self.esr = 0
         self.ese = 0
         self.sre = 0

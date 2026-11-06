@@ -17,7 +17,7 @@ def _find(env, *cands):
         if os.path.exists(c): return c
     return cands[-1]
 
-TM5000G = _find('TM5000G', os.path.join(GOS, '..', 'tools', 'TM5000G.EXE'), '/home/claude/TM5000/src/tm5000g.exe')
+TM5000G = _find('TM5000G', os.path.join(GOS, '..', 'tools', 'TM5000G.EXE'))
 
 def build():
     subprocess.run([os.path.join(GOS, 'kbuild.sh')], check=True, stdout=subprocess.DEVNULL)
