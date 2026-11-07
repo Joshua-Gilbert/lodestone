@@ -16,6 +16,7 @@
 ;  (KROM.INC).  Only what differs from the defaults is written.
 ; =====================================================================
 %include "UIAPI.INC"
+%include "FONTPACK.INC"                 ; (FONT_UNPACK: Lodefont back)
 RUN_API equ 4                           ; (UI_SAVER's tidying.  Its help's HT, n is API
                                         ;  10's, as CALC.ASM says: kept at 4 so an
                                         ;  older LODE.SYS still runs it)
@@ -1320,7 +1321,12 @@ next_font:
 .nx:    mov     ah, 4Fh
         int     21h
         jmp     .l
-.lode:  mov     si, builtin_font
+.lode:  mov     si, builtin_font        ; (packed: FONTPACK.INC)
+        push    ds
+        pop     es
+        mov     di, fbuf
+        FONT_UNPACK
+        mov     si, fbuf
         mov     di, s_empty
         jmp     .set
 .file:  mov     si, fbuf
@@ -2502,8 +2508,8 @@ s_inilong   db 'LODE.INI is too long to change here',0
 s_sample1   db 'The quick brown fox jumps over the lazy dog',0
 s_sample2   db '0123456789  ([{<>}])  .,;:!?  @#$%&*+-=/',0
 %include "FPU.INC"                      ; (Devices: which coprocessor)
-builtin_font:                           ; Lodefont, to switch back to
-%include "FONT.INC"
+%define FONTPACK_NAME builtin_font      ; Lodefont, to switch back to:
+%include "FONTPACK.INC"                 ;  packed, unpacked into fbuf
 
 ; the hot labels even (EVEN.INC: bench/hot.py's system and form)
 %include "EVEN.INC"
