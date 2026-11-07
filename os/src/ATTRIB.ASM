@@ -14,15 +14,19 @@
 ; in the first columns:
 ;   A  SHR  A:\SUB\NAME.EXT
 ; With them, each file matching gets them (INT 21h 4301h), and nothing is
-; printed but errors.  Hidden and system files are found too.  Paths are
-; shown whole, from the drive's root.
+; printed but errors.  Hidden and system files are found too, but, as DOS
+; 5's, changed only by a command that changes H or S: otherwise "Not
+; resetting hidden file - A:\X".  Paths are shown whole, from the drive's
+; root, each part 8.3 as the kernel reads it.  A directory whose path
+; would pass 65 characters after "D:\" is said ("Path too long - ") and
+; left out.
 ;
 ; Exit code: 0 done, 1 something failed (no file found, a bad switch, a
-; file that refused: each said).
+; file that refused or wasn't changed, a path too long: each said).
 cpu 286
 org 100h
 
-MAXDEPTH equ 32
+MAXDEPTH equ 34                         ; (PMAX's 65: "X\" 32 times at most)
 DTASZ   equ 44
 
 start:  mov     sp, stack_top
@@ -76,7 +80,7 @@ args:   mov     si, 81h
         jne     .bad
         dec     si
         mov     di, spec
-        mov     cx, 79
+        mov     cx, 80
 .n:     lodsb
         cmp     al, ' '
         jbe     .ne
@@ -157,11 +161,9 @@ walk:   mov     ax, [depth]             ; this level's DTA
 .fn:    mov     ah, 4Fh
         int     21h
         jmp     .f
-.sub:   cmp     byte [subs], 0          ; /S: each directory in it
-        je      .x
-        cmp     word [depth], MAXDEPTH - 1
-        jae     .x
-        mov     si, s_all
+.sub:   cmp     byte [subs], 0          ; /S: each directory in it (no
+        je      .x                      ;  deeper than PMAX lets it:
+        mov     si, s_all               ;  MAXDEPTH's DTAs)
         call    dir_add
         mov     dx, dir
         mov     cx, 16h
@@ -176,8 +178,9 @@ walk:   mov     ax, [depth]             ; this level's DTA
         push    word [dirlen]
         lea     si, [bx+30]             ; into it: dir + NAME + "\"
         call    dir_add
-        jc      .dl
         mov     si, [dirend]
+        cmp     si, 3 + PMAX
+        ja      .long
         mov     byte [dir+si], '\'
         inc     si
         mov     byte [dir+si], 0
@@ -198,14 +201,22 @@ walk:   mov     ax, [depth]             ; this level's DTA
         int     21h
         jmp     .d
 .x:     ret
+.long:  mov     byte [err], 1           ; "Path too long - A:\SUB\NAME"
+        mov     dx, s_long2
+        call    print
+        mov     si, dir
+        call    puts
+        call    crlf
+        jmp     .dl
 
 ; ASCIIZ at SI after dir's first [dirlen] characters -> [dirend], CF if
-; too long (it isn't then added)
+; too long (it isn't then added: dir's directory and an 8.3 name always
+; fit, PMAX's 65 after "D:\" and 13)
 dir_add:
         mov     di, [dirlen]
         mov     bx, di
 .l:     lodsb
-        cmp     di, 78
+        cmp     di, 82
         jae     .long
         mov     [dir+di], al
         inc     di
@@ -254,7 +265,19 @@ one:    mov     bx, [dta]
         mov     si, dir
         call    puts
         jmp     crlf
-.set:   and     al, 27h                 ; the bits a file may have
+.set:   test    al, 6                   ; hidden or system: only if H or
+        jz      .ch                     ;  S is changed (DOS 5's)
+        mov     ah, [aset]
+        or      ah, [aclr]
+        test    ah, 6
+        jnz     .ch
+        mov     dx, s_nrsys
+        test    al, 4
+        jnz     .e1
+        mov     dx, s_nrhid
+.e1:    mov     byte [err], 1
+        jmp     short .e
+.ch:    and     al, 27h                 ; the bits a file may have
         mov     cl, [aclr]
         not     cl
         and     al, cl
@@ -292,12 +315,9 @@ split:  mov     di, si                  ; the last "\" or ":"
         jmp     .l
 .e:     or      bx, bx
         jz      .nod
-        mov     si, bx                  ; the name: from there
+        mov     si, bx                  ; the name: from there (8.3)
         mov     di, pat
-.c:     lodsb
-        stosb
-        or      al, al
-        jnz     .c
+        call    part83
         mov     al, [bx]                ; (the directory part alone)
         push    ax
         mov     byte [bx], 0
@@ -308,10 +328,7 @@ split:  mov     di, si                  ; the last "\" or ":"
         jmp     short .d
 .nod:   mov     si, spec                ; no directory: the current one
         mov     di, pat
-.c2:    lodsb
-        stosb
-        or      al, al
-        jnz     .c2
+        call    part83
         mov     si, s_empty
         call    canon
 .d:     jc      .x
@@ -319,7 +336,9 @@ split:  mov     di, si                  ; the last "\" or ":"
         jne     .p
         mov     word [pat], '*.'
         mov     word [pat+2], '*'
-.p:     mov     si, cpath               ; dir = canon + "\" (the root has one)
+.p:     call    cdir
+        jc      .x
+        mov     si, cpath               ; dir = canon + "\" (the root has one)
         mov     di, dir
 .cp:    lodsb
         stosb
@@ -367,6 +386,9 @@ s_empty db 0
 s_nf    db 'File not found - $'
 s_deny  db 'Access denied - $'
 s_fail  db 'Cannot change - $'
+s_nrhid db 'Not resetting hidden file - $'
+s_nrsys db 'Not resetting system file - $'
+s_long2 db 'Path too long - $'
 s_badsw db 'Invalid parameter', 13, 10, '$'
 s_crlf  db 13, 10, '$'
 
