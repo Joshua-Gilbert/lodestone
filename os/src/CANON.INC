@@ -9,8 +9,8 @@
 ; path past CMAX: the longest directory, and a name in it).  cdir: CF
 ; if cpath is too long for a directory.
 ; Needs upcase; the caller puts CANON_BSS in its BSS.
-PMAX    equ 65                          ; after "D:\": a directory's (the
-CMAX    equ PMAX + 13                   ;  kernel's CWDLEN 68), and a file's
+PMAX    equ 63                          ; after "D:\": a directory's (the
+CMAX    equ PMAX + 13                   ;  kernel's, MS-DOS's), and a file's
 %macro CANON_BSS 0
 cdrv    resb 1
 cpath   resb 3 + CMAX + 1

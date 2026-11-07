@@ -1678,6 +1678,105 @@ f_4E:   call    get_path
 f_4F:   call    find_next
         jmp     ret_cf
 
+; FCB find first / next (11h, 12h), as MS-DOS's: DS:DX an FCB, or an
+; extended one (FFh, 5 bytes, the attribute, the FCB).  In the drive's
+; current directory, '?' in the 11-byte name any character, the attribute
+; as 4Eh's (08h alone: the label, in the root).  The DTA gets the drive (1 = A) and the
+; entry's 32 bytes as on the disk, after the extended header (FFh, 0 x 5,
+; the attribute) if the call had one: so a label's 11 characters come
+; back as they are, spaces and all (COMMAND's VOL reads it so).  Between
+; calls the search is in the FCB from 0Ch (drive + 1, the directory's
+; cluster, the next entry), the bytes MS-DOS keeps it in.  AL = 0, or FFh:
+; nothing more (or no such drive)
+FCB_D   equ path2_buf                   ; (K2: a DTA for find_next, 43)
+f_11:   call    fcb_ptr
+        mov     al, [es:di]             ; its drive (0: the current one):
+        push    cs                      ;  there, read, its current
+        pop     es                      ;  directory (resolve "X:")
+        call    drv_dflt
+        add     al, 'A'
+        mov     ah, ':'
+        mov     [path_buf], ax
+        mov     byte [path_buf + 2], 0
+        call    resolve
+        jc      f_fcb
+        call    fcb_ptr
+        mov     dx, [r_dir]
+        cmp     al, A_VOL               ; (the label alone: the root's,
+        jne     .d                      ;  wherever the current directory
+        xor     dx, dx                  ;  is, as MS-DOS's)
+.d:     mov     al, [act]
+        inc     ax
+        mov     [es:di + 0Ch], al
+        mov     [es:di + 0Dh], dx
+        mov     word [es:di + 0Fh], 0
+f_12:   call    fcb_ptr                 ; its search -> FCB_D, as 4Eh's DTA
+        mov     [FCB_D + 12], al
+        push    ds
+        push    es
+        pop     ds
+        lea     si, [di + 1]
+        push    cs
+        pop     es
+        mov     di, FCB_D + 1
+        mov     cx, 11
+        rep     movsb
+        lodsb
+        mov     [es:FCB_D], al
+        lodsw
+        mov     [es:FCB_D + 13], ax
+        lodsw
+        mov     [es:FCB_D + 15], ax
+        pop     ds
+        push    word [dta + 2]          ; find_next on FCB_D
+        push    word [dta]
+        mov     word [dta], FCB_D
+        mov     [dta + 2], cs
+        call    find_next               ; -> SI the entry (DS = ES = CS)
+        pop     word [dta]
+        pop     word [dta + 2]
+        jc      f_fcb
+        push    si
+        call    fcb_ptr                 ; its next entry kept
+        mov     ax, [FCB_D + 15]
+        mov     [es:di + 0Fh], ax
+        pop     si
+        les     di, [dta]               ; the answer
+        or      bl, bl
+        jz      .n
+        mov     al, 0FFh
+        stosb
+        xor     ax, ax
+        stosw
+        stosw
+        stosb
+        mov     al, [FCB_D + 12]
+        stosb
+.n:     mov     al, [FCB_D]
+        stosb
+        mov     cx, 16
+        rep     movsw
+        cmp     byte [es:di - 32], 05h  ; (E5h's place on the disk)
+        jne     .x
+        mov     byte [es:di - 32], 0E5h
+.x:     push    cs
+        pop     es
+        xor     al, al
+        jmp     ret_al
+; the caller's FCB -> ES:DI (past an extended header), AL its attribute
+; (0 without one), BL = 1 if it had one
+fcb_ptr:
+        mov     es, [bp + F_DS]
+        mov     di, [bp + F_DX]
+        xor     ax, ax
+        xor     bl, bl
+        cmp     byte [es:di], 0FFh
+        jne     .x
+        mov     al, [es:di + 6]
+        add     di, 7
+        inc     bx
+.x:     ret
+
 find_next:
         les     di, [dta]               ; (kept by drv_present and fat_load,
         mov     al, [es:di]             ;  their M:, R: and C: hooks too)

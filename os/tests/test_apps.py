@@ -978,8 +978,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it): the directory buffer is lent while it runs' % kb,
-          kb >= 564.6, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it; 0.3 KB, MS-DOS\'s FCB search (11h, 12h: a label\'s 11 bytes, as COMMAND\'s VOL reads it), names (a space inside, a first E5h) and CHDIR (the whole path, 63 characters)): the directory buffer is lent while it runs' % kb,
+          kb >= 564.4, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -1756,7 +1756,7 @@ def t_file_safety():
     notes = os.path.join(OUT, 'NOTES.TXT'); open(notes, 'wb').write(TEXT)
     BIG = bytes(range(256)) * 100
     big = os.path.join(OUT, 'BIG.DAT'); open(big, 'wb').write(BIG)
-    deep = ['AAAAAAAA.AAA', 'BBBBBBBB.BBB', 'CCCCCCCC.CCC', 'DDDDDDDD.DDD', 'EEEEEEEE.EEE']
+    deep = ['AAAAAAAA.AAA', 'BBBBBBBB.BBB', 'CCCCCCCC.CCC', 'DDDDDDDD.DDD', 'EEEEEEE.EEE']
     dirs = ['\\'.join(deep[:i + 1]) + '\\' for i in range(5)]
     a = image('safea.img', DEFRAG, 'LONGNAME\\', 'LONGNAME\\NOTES.TXT=' + notes, 'WORK\\', *dirs,
               '\\'.join(deep) + '\\NAMENAME.EXT=' + notes, big)
@@ -1816,10 +1816,10 @@ def t_file_safety():
         check('%s with %r: refused' % ({'R': 'Rename', 'C': 'Copy', 'M': 'Move'}[cmd], ''.join(x for x in keys if isinstance(x, str))),
               k.band()[0] == want and A().get(LN) == TEXT and k.exec_list() == ['NOTES.TXT'], (k.band(), sorted(A())))
         k.key(ktest.ENTER)
-    # 3. a long subject: five levels of 8.3 names (as deep as the Subject list goes), 65 characters
-    to_subject(k, 'EEEEEEEE.EEE')
+    # 3. a long subject: five levels of 8.3 names (as deep as the Subject list goes), 64 characters
+    to_subject(k, 'EEEEEEE.EEE')
     D = 'A:\\' + '\\'.join(deep)
-    check('the deepest subject: 65 characters (Copy\'s field held 63)', len(D) - 2 == 65 and k.exec_list() == ['NAMENAME.EXT'], k.exec_list())
+    check('the deepest subject: 64 characters ("\\" and 63, MS-DOS\'s longest current directory)', len(D) - 2 == 64 and k.exec_list() == ['NAMENAME.EXT'], k.exec_list())
     k.key(CODE['C'])
     check('... the Copy form holds all of it, and the title field is intact', bytes(k.rd('c_sub', 67)).split(b'\0')[0].decode() == D[2:]
           and bytes(k.rd('c_tit', 13)).split(b'\0')[0] == b'NAMENAME.EXT', (k.rd('c_sub', 67), k.rd('c_tit', 13)))

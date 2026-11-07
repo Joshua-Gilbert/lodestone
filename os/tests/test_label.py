@@ -58,19 +58,24 @@ def root_label(img, rootsec=19, n=14):
     return None
 
 def t_spaces():
-    """labels written by another system: spaces where the 8.3 split falls"""
+    """labels written by another system: spaces where the 8.3 split falls, a dot (which LABEL refuses):
+    VOL, DIR and TREE read them through an extended FCB's search, as DOS's COMMAND does: the 11 bytes"""
+    img_a = mkimg.build(os.path.join(OUT, 'sa.img'), [os.path.join(SRC, f) for f in ('LODE.SYS', 'LCMD.COM', 'TREE.COM')])
     outs = []
-    for lab in (b'ABC     DEF', b'ABCDEFGH  I', b'AB      C  ', b'A          '):
+    for lab in (b'ABC     DEF', b'ABCDEFGH  I', b'AB      C  ', b'A          ', b'V1.0       ', b'V1      0  '):
         p = disk('sp.img')
         img = bytearray(open(p, 'rb').read())
-        e = root_label(img)
-        at = img.find(e, 19 * 512)
+        at = img.find(root_label(img), 19 * 512)
         img[at:at + 11] = lab
         open(p, 'wb').write(img)
-        k = boot(p)
-        outs.append((lab, run(k, 'vol b:')))
-    check('VOL of labels with spaces anywhere in their 11 characters: shown as on the disk (the trailing ones aside)',
-          all(('Volume in drive B is %s\n' % lab.decode().rstrip()) in o for lab, o in outs), outs)
+        k = ktest.KPC(img_a, p)
+        k.start(); k.code_p()
+        run(k, 'cd b:\\sub')
+        outs.append((lab, run(k, 'vol b:') + run(k, 'dir b:') + run(k, 'tree b:')))
+    want = lambda lab: lab.decode().rstrip()
+    check('VOL and DIR of labels with spaces anywhere in their 11 characters, or a dot: shown as on the disk (the '
+          'trailing spaces aside), B:\\SUB current', all(o.count('Volume in drive B is %s\n' % want(lab)) == 2 for lab, o in outs), outs)
+    check('... TREE too ("FOR VOLUME ...")', all(('FOR VOLUME %s\n' % want(lab)) in o for lab, o in outs), outs)
 
 def t_floppy():
     k = boot(disk())

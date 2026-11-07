@@ -13,7 +13,8 @@
 ;           cache, sector buffers, critical errors
 ;    KFAT   names, paths, directories, clusters
 ;    KFILE  handles (SFT + per-process JFT), files and devices (CON, NUL,
-;           AUX, PRN, COM1/2, LPT1, GPIBnn), find first/next, dir calls
+;           AUX, PRN, COM1/2, LPT1, GPIBnn), find first/next (and the FCB
+;           calls' 11h/12h), dir calls
 ;    KPROC  PSP, environment, EXEC (.COM/.EXE), terminate, TSR, ^C
 ;    KGPIB  the GRIDGPIB driver on INT 60h (same API and signature)
 ;    KEMS   the EMS manager (LIM 4.0, INT 67h) - only resident when the

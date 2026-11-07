@@ -100,9 +100,12 @@ parse_comp:
         call    .field
         jc      .bad
         cmp     di, nm11                ; nothing at all?
-        jne     .ext0
+        jne     .sp
         cmp     byte [si], '.'
         jne     .bad
+        jmp     short .ext0
+.sp:    cmp     byte [nm11], ' '        ; (a space inside a name, as MS-DOS:
+        je      .bad                    ;  not first)
 .ext0:  cmp     byte [si], '.'
         jne     .ok
         inc     si
@@ -111,7 +114,10 @@ parse_comp:
         call    .field
         jc      .bad
         jmp     short .dots             ; (then \ or 0: a second dot is no
-.ok:    mov     al, ah                  ;  name, as MS-DOS)
+.ok:    cmp     byte [nm11], 0E5h       ;  name, as MS-DOS)
+        jne     .ok5                    ; (a first E5h is 05h on the disk:
+        mov     byte [nm11], 05h        ;  E5h there is a free entry)
+.ok5:   mov     al, ah
         clc
         jmp     .x
 .bad:   stc
@@ -145,7 +151,7 @@ parse_comp:
         pop     di
         je      .err
         cmp     al, ' '
-        jbe     .err
+        jb      .err
 .put:   jcxz    .fl                     ; too long: the rest is ignored
         mov     [di], al
         inc     di
@@ -680,6 +686,9 @@ name_out:
         push    si                      ;  spaces of each part go, so a
         mov     cx, 8                   ;  label's inside ones are kept)
         rep     movsb
+        cmp     byte [es:di-8], 05h     ; (a first 05h is E5h's place on the
+        jne     .nt                     ;  disk: E5h, as MS-DOS gives it)
+        mov     byte [es:di-8], 0E5h
 .nt:    cmp     byte [es:di-1], ' '
         jne     .e
         dec     di
@@ -942,8 +951,11 @@ f_3B:   call    get_path                ; CHDIR
         call    find_dir
         jc      .e
         mov     [cwd_cl], ax
-        ; the new path string, made in cwd_new (the drive's own changed
-        ; only if it fits: a longer one is 3, as MS-DOS's, nothing changed)
+        ; the new path string, worked out whole in cwd_new, then the
+        ; drive's own and its cluster changed if it fits: "\" and 63, as
+        ; MS-DOS's (DIRSTRLEN: 47h's answer and its NUL fill the caller's
+        ; 64 bytes).  Longer is 3, nothing changed; a path that goes down
+        ; past that and back up ("X\..") is only the end that counts
         mov     al, [act]
         call    cwd_of
         mov     si, di
@@ -974,7 +986,7 @@ f_3B:   call    get_path                ; CHDIR
         jne     .add
         ; up one level: cut at the last '\'
         mov     di, [cwd_p]
-        mov     cx, CWDLEN
+        mov     cx, CWNEW
         xor     al, al
         push    di
         repne   scasb
@@ -993,7 +1005,7 @@ f_3B:   call    get_path                ; CHDIR
         mov     word [di], '\'
         jmp     .comp
 .add:   mov     di, [cwd_p]             ; append "\NAME.EXT", as MS-DOS keeps
-        mov     cx, CWDLEN              ;  it: 8.3, whatever was typed
+        mov     cx, CWNEW               ;  it: 8.3, whatever was typed
         xor     al, al
         repne   scasb
         dec     di
@@ -1008,20 +1020,19 @@ f_3B:   call    get_path                ; CHDIR
         call    name_out
         pop     di
         mov     si, cwd_nm
-        mov     dx, [cwd_p]
-        add     dx, CWDLEN - 2
-.cpl:   lodsb
-        stosb
+.cpl:   lodsb                           ; (it fits: each part comes out no
+        stosb                           ;  longer than typed, path_buf 128)
         or      al, al
-        jz      .cpx
-        cmp     di, dx                  ; (65 after the root's '\')
-        jbe     .cpl
-        pop     si                      ; too long
-        mov     ax, 3
-        jmp     fail
-.cpx:   pop     si
+        jnz     .cpl
+        pop     si
         jmp     .comp
-.end:   mov     al, [act]               ; it fits: the drive's
+.end:   mov     di, cwd_new             ; the whole: "\" and 63 at most
+        mov     cx, CWDMAX + 1
+        xor     al, al
+        repne   scasb
+        mov     ax, 3
+        jne     .e                      ; (no NUL by then: too long)
+        mov     al, [act]               ; it fits: the drive's
         call    cwd_of
         mov     si, cwd_new
         mov     cx, CWDLEN / 2
@@ -1035,10 +1046,13 @@ f_3B:   call    get_path                ; CHDIR
 section .bss
 cwd_p       resw 1
 section .text
-cwd_new equ path2_buf                   ; (CHDIR's, in K2: the new string,
-cwd_nm  equ path2_buf + CWDLEN          ;  a name for it, the cluster)
-cwd_cl  equ path2_buf + CWDLEN + 14
-        times -(CWDLEN + 16 > 130) db 0
+CWDMAX  equ 64                          ; "\" and 63, as MS-DOS's
+CWNEW   equ 196                         ; (CWDMAX, then path_buf's 128 at
+cwd_new equ path2_buf                   ;  most: CHDIR's, in K2, with rename's
+cwd_nm  equ path2_buf + CWNEW           ;  and EXEC's places, which it never
+cwd_cl  equ path2_buf + CWNEW + 14      ;  meets: the new string, a name for
+        times -(CWNEW + 16 > KL_REL - KL_P2) db 0  ; it, the cluster)
+        times -(CWDMAX + 1 > CWDLEN) db 0
 
 f_47:   mov     al, [bp+F_DX]           ; current directory (no drive, no '\')
         call    drv_dflt

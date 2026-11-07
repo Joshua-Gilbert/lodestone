@@ -434,7 +434,9 @@ disk_lines:
         mov     al, [drv]
         add     al, 'A'
         mov     [s_drive+6], al
-        mov     [s_vol], al
+        sub     al, 'A' - 1             ; (A = 1)
+        mov     [s_vfcb + 7], al
+        add     al, 'A' - 1
         call    UI_CRITERR              ; (forget any earlier one)
         mov     dl, [drv]
         inc     dl
@@ -453,30 +455,21 @@ disk_lines:
         mov     [d_total], dx
         call    vstart                  ; "Drive A:   label LODESTONE"
         push    di
-        mov     dx, s_vol
-        mov     cx, 08h
-        mov     ah, 4Eh
-        int     21h
+        mov     dx, s_vfcb              ; the label's 11 characters as on
+        mov     ah, 11h                 ;  the disk: an extended FCB's
+        int     21h                     ;  search, as DOS's COMMAND
         pop     di
-        jc      .nolab
-        test    byte [dta+21], 08h
-        jz      .nolab
-        mov     si, dta + 30            ; (a label's "extension" belongs to
-        xor     cx, cx                  ;  it: its name part back to 8
-.lab:   lodsb                           ;  before it, as on the disk)
         or      al, al
-        jz      .labx
-        cmp     al, '.'
-        je      .lpad
-        stosb
-        inc     cx
-        jmp     .lab
-.lpad:  cmp     cx, 8
-        jae     .lab
-        mov     al, ' '
-        stosb
-        inc     cx
-        jmp     .lpad
+        jnz     .nolab
+        mov     si, dta + 8 + 11        ; (its trailing spaces off;
+        xor     ch, ch                  ;  CH, CL apart: clus_line, which
+        mov     cl, 11                  ;  this runs on into, even)
+.t:     cmp     byte [si-1], ' '
+        jne     .p
+        dec     si
+        loop    .t
+.p:     mov     si, dta + 8
+        rep     movsb
 .labx:  jmp     .lab2
 .nolab: mov     si, s_nolabel
         call    UI_SBSTR
@@ -2325,7 +2318,8 @@ l_free      db 'Free for programs',0
 l_ems       db 'Expanded memory (EMS)',0
 l_ext       db 'Extended memory',0
 s_drive     db 'Drive A:',0
-s_vol       db 'A:\*.*',0
+s_vfcb      db 0FFh, 0, 0, 0, 0, 0, 08h, 0, '???????????'  ; (the label's
+            times 25 db 0               ;  extended FCB)
 s_nolabel   db '(no label)',0
 l_dsize     db '  Size',0
 l_dfree     db '  Free',0
@@ -2515,7 +2509,7 @@ builtin_font:                           ; Lodefont, to switch back to
 %include "EVEN.INC"
         EVEN    topic_name, vstart, pline, pline_r, ptext, pgap, ems_mgr, kb_line, sb_kb, sb_kb.s
         EVEN    t_memory.ok, t_memory.used, t_memory.notui, t_memory.notsys, t_memory.next, t_memory.cl
-        EVEN    t_memory.noother, t_memory.bios, t_memory.noems, t_memory.close, t_disks.x, disk_lines.lab
+        EVEN    t_memory.noother, t_memory.bios, t_memory.noems, t_memory.close, t_disks.x
         EVEN    clus_line, t_clock, now_time, t_devices.com, t_devices.nc, find_gpib.v, find_gpib.n
 
 section .bss
