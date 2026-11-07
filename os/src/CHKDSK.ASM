@@ -8,6 +8,11 @@
 ;        in its buffers where only its own writes reach them)
 ;   /V   every file and directory's name as it goes
 ;
+; Two passes over the tree.  The first only finds who claims each cluster
+; and which are claimed twice; nothing is said or changed.  The second
+; checks and corrects, and a directory never takes in a cluster claimed
+; twice, nor reads one that isn't its own as itself, so a file's data is
+; never taken for directory entries (or written as one).
 ; Every file's chain of clusters is followed from its directory entry:
 ;   - a cluster in two chains: "Is cross linked on cluster n" (reported,
 ;     both files left as they are);
@@ -22,8 +27,12 @@
 ;     and at its parent (corrected), a first cluster that is no cluster
 ;     (the entry removed).
 ; Then the lost clusters, in use in the FAT and in no chain: "n lost
-; clusters found in m chains"; with /F they become FILE0000.CHK, ...
-; in the root, or are freed (Y/N).  The two FAT copies must be the same;
+; clusters found in m chains" (a loop is a chain too); with /F they
+; become FILE0000.CHK, ... in the root (each ending before a cluster that
+; is a file's), or are freed (Y/N).  If part of the disk couldn't be
+; looked at (a directory sector that won't read: the rest of it is read;
+; a directory cut short; too deep), its files may be among them: they are
+; left as they are.  A root that fills leaves the rest lost, for next time.  The two FAT copies must be the same;
 ; /F writes both.  Without /F nothing is written, and it says what /F
 ; would do.  The figures, as DOS's: total, hidden files, directories,
 ; user files, bad sectors, free; then the memory.
@@ -33,7 +42,11 @@
 ; (INT 67h 5Bh says which handle; 44h maps them, 4Eh puts the map back).
 ; INT 21h 0Dh first, so the kernel's own changes are on the disk, and
 ; after /F's writes to a floppy, so it reads the disk again (INT 26h
-; tells it for C:).  With /F, files open on the drive refuse it.
+; tells it for C:), and the current directory goes to the root if /F
+; removed a directory.  With /F, other tasks (multitasking) or files open
+; on the drive refuse it, and before each write a floppy must still be
+; the disk that was read (its change line; or its boot sector and first
+; FAT sector): "The disk was changed".
 ;
 ; Exit code: 0 no errors, 1 errors found (corrected with /F), 2 couldn't
 ; check (no such drive, not a FAT disk, a read error, ...), 3 Ctrl-C.
@@ -45,7 +58,9 @@ TRIES   equ 3
 MAXSPT  equ 18
 MAXDEPTH equ 32
 LOSTA   equ 0FFFEh                      ; owner marks of lost clusters: a
-LOSTB   equ 0FFFDh                      ;  chain's head, one pointed to
+LOSTB   equ 0FFFDh                      ;  chain's head, one pointed to, one
+LOSTR   equ 0FFFCh                      ;  a head's chain reaches
+MAXFID  equ 0FFF0h                      ; entries (owners) below the marks
 EOC     equ 0FFFFh                      ; (FAT12's are made FAT16's here)
 
 start:  mov     sp, stack_top
@@ -96,7 +111,14 @@ start:  mov     sp, stack_top
         cmp     byte [kind], K_M
         mov     dx, s_nofm
         je      fail
-        mov     ax, 0F001h              ; files open on it?
+        mov     ax, 0F012h              ; other tasks (multitasking)?
+        xor     cx, cx                  ;  (CF: it is off)
+        int     21h
+        jc      .one
+        cmp     cx, 1
+        mov     dx, s_tasks
+        ja      fail
+.one:   mov     ax, 0F001h              ; files open on it?
         mov     dl, [drv]
         int     21h
         mov     dx, s_open
@@ -114,6 +136,9 @@ start:  mov     sp, stack_top
         call    rd_root
         jc      fail
         call    volume
+        mov     byte [dry], 1           ; 1: who claims each cluster, and
+        call    walk_root               ;  which are claimed twice (shared)
+        call    pass2                   ; 2: the check, the corrections
         call    walk_root
         call    lost
         cmp     byte [fatdiff], 0
@@ -124,11 +149,15 @@ start:  mov     sp, stack_top
         je      .fig
         call    write_back
         jc      fail
-        cmp     byte [kind], K_FL
-        jne     .fig
-        mov     ah, 0Dh                 ; the kernel reads the floppy again
-        int     21h
+        call    told                    ; the kernel reads it again
 .fig:   call    figures
+        cmp     byte [kind], K_FL       ; (a floppy's FAT in the kernel, so
+        jne     .fq                     ;  it can tell a swap later)
+        mov     ah, 36h
+        mov     dl, [drv]
+        inc     dx
+        int     21h
+.fq:
         xor     al, al
         cmp     word [nerr], 0
         je      .x
@@ -137,13 +166,68 @@ start:  mov     sp, stack_top
         int     21h
 
 fail:   call    print
+        call    told
         mov     ax, 4C02h
         int     21h
 ctrlc:  push    cs
         pop     ds
         call    ctx_back
+        call    told
         mov     ax, 4C03h
         int     21h
+
+; after writes: a floppy read again by the kernel (INT 21h 0Dh); a
+; directory /F removed: the drive's current directory its root (it may
+; have been in it)
+told:   cmp     byte [wrote], 0
+        je      .x
+        cmp     byte [kind], K_FL
+        jne     .c
+        mov     ah, 0Dh
+        int     21h
+.c:     cmp     byte [dirgone], 0
+        je      .x
+        mov     word [path+3], 0
+        mov     dx, path
+        mov     ah, 3Bh
+        int     21h
+.x:     ret
+
+; between the passes: nobody owns anything, nothing counted
+pass2:  mov     byte [dry], 0
+        mov     byte [skipped], 0
+        mov     word [fid], 0
+        mov     ax, [ownseg]
+        mov     bx, [ncl]
+        add     bx, 7
+        shr     bx, 3
+        call    zero_seg
+        mov     di, nhid
+        mov     cx, 9
+        xor     ax, ax
+        rep     stosw
+        ret
+
+; BX paragraphs from segment AX: zeros.  ES = DS after
+zero_seg:
+        mov     dx, ax
+.z:     or      bx, bx
+        jz      .x
+        mov     cx, bx
+        cmp     cx, 800h
+        jbe     .s
+        mov     cx, 800h
+.s:     sub     bx, cx
+        mov     es, dx
+        add     dx, cx
+        shl     cx, 3
+        xor     di, di
+        xor     ax, ax
+        rep     stosw
+        jmp     .z
+.x:     push    ds
+        pop     es
+        ret
 crit:   mov     al, 3
         iret
 
@@ -377,7 +461,13 @@ boot:   xor     ax, ax
         cmp     ax, 2
         ja      .bad
         mov     [heads], ax
-.ext:   cmp     byte [si+26h], 29h      ; DOS 4's serial number
+.ext:   push    si                      ; (the BPB: is it the same disk
+        add     si, 0Bh                 ;  before /F writes?)
+        mov     di, bootbpb
+        mov     cx, 51
+        rep     movsb
+        pop     si
+        cmp     byte [si+26h], 29h      ; DOS 4's serial number
         jne     .ok
         mov     ax, [si+27h]
         mov     [ser], ax
@@ -401,22 +491,18 @@ alloc:  mov     bx, [spf]
         call    .get
         jc      .x
         mov     [ownseg], ax            ; (all 0: nobody's)
-        mov     dx, ax
-.z:     or      bx, bx                  ; (BX: its paragraphs, 32 KB at a
-        jz      .zd                     ;  time)
-        mov     cx, bx
-        cmp     cx, 800h
-        jbe     .zs
-        mov     cx, 800h
-.zs:    sub     bx, cx
-        mov     es, dx
-        add     dx, cx
-        shl     cx, 3
-        xor     di, di
-        xor     ax, ax
-        rep     stosw
-        jmp     .z
-.zd:    mov     bx, [rsecs]
+        push    bx
+        call    zero_seg
+        pop     bx
+        add     bx, 15                  ; shared: a bit a cluster
+        shr     bx, 4
+        call    .get
+        jc      .x
+        mov     [shseg], ax
+        push    bx
+        call    zero_seg
+        pop     bx
+        mov     bx, [rsecs]
         shl     bx, 5
         call    .get
         jc      .x
@@ -434,7 +520,7 @@ alloc:  mov     bx, [spf]
 ; CF: DX = message
 rd_fat: mov     ax, [rsv]
         call    .one
-        jnc     .cmp
+        jnc     .keep
         cmp     word [nfat], 2
         jb      .bad
         mov     ax, [rsv]
@@ -455,6 +541,13 @@ rd_fat: mov     ax, [rsv]
         push    ds
         pop     es
         ret
+.keep:  push    ds                      ; its first sector, as read (is it
+        mov     ds, [fatseg]            ;  the same disk before /F writes?)
+        xor     si, si
+        mov     di, fat0
+        mov     cx, 256
+        rep     movsw
+        pop     ds
 .cmp:   cmp     word [nfat], 2          ; the second, a sector at a time
         jb      .ok
         xor     bp, bp
@@ -593,7 +686,12 @@ volume: mov     es, [rootseg]
 ; ---------------------------------------------------------------------
 rdsec:  mov     byte [xop], 2
         jmp     short xsec
-wrsec:  mov     byte [xop], 3
+wrsec:  call    same
+        jc      .x
+        mov     byte [wrote], 1
+        mov     byte [xop], 3
+        jmp     short xsec
+.x:     ret
 xsec:   pusha
         push    es
         cmp     byte [kind], K_HD
@@ -607,6 +705,58 @@ xsec:   pusha
 .m:     call    md_io
 .x:     pop     es
         popa
+        ret
+
+; before a write: still the disk that was read?  (A floppy's change line;
+; when it says changed, or the drive has none, the boot sector's BPB and
+; the first FAT sector as they were read.)  CF if not: [dchg].  All kept
+same:   cmp     byte [kind], K_FL
+        jne     .ok
+        cmp     byte [dchg], 0
+        jne     .no
+        pusha
+        push    es
+        mov     ah, 16h
+        mov     dl, [unit]
+        int     13h
+        jnc     .y
+        push    ds
+        pop     es
+        mov     byte [xop], 2
+        xor     ax, ax                  ; its boot sector
+        xor     dx, dx
+        mov     cx, 1
+        mov     bx, chkbuf
+        call    fl_io
+        push    ds                      ; (fl_io moves ES on)
+        pop     es
+        jc      .chg
+        mov     si, chkbuf + 0Bh
+        mov     di, bootbpb
+        mov     cx, 51
+        repe    cmpsb
+        jne     .chg
+        mov     ax, [rsv]               ; its first FAT sector
+        xor     dx, dx
+        mov     cx, 1
+        mov     bx, chkbuf
+        call    fl_io
+        push    ds
+        pop     es
+        jc      .chg
+        mov     si, chkbuf
+        mov     di, fat0
+        mov     cx, 256
+        repe    cmpsw
+        jne     .chg
+.y:     pop     es
+        popa
+.ok:    clc
+        ret
+.chg:   mov     byte [dchg], 1
+        pop     es
+        popa
+.no:    stc
         ret
 
 ; a floppy: a track at a time through tbuf
@@ -661,6 +811,11 @@ fl_io:  or      cx, cx
         jnc     .done
         cmp     ah, 03h                 ; write-protected: no more tries
         je      .err
+        cmp     ah, 06h                 ; changed, at a write: none either
+        jne     .rs
+        cmp     byte [xop], 3
+        je      .err
+.rs:
         push    ax
         xor     ah, ah
         mov     dl, [unit]
@@ -840,7 +995,10 @@ getfat: push    es
         ret
 
 ; FAT entry AX <- DX; its sectors marked to be written
-setfat: pusha
+setfat: cmp     byte [dry], 0           ; (pass 1 changes nothing)
+        je      .go
+        ret
+.go:    pusha
         push    es
         cmp     byte [fat16], 0
         je      .12
@@ -941,7 +1099,7 @@ walk_root:
         pop     ax
 .c:     or      ax, ax
         jz      .n
-        xor     dx, dx                  ; a directory: into it
+        xor     dx, dx                  ; a directory: into it (BX: its id)
         push    word [ri]
         call    walk_sub
         pop     word [ri]
@@ -971,18 +1129,24 @@ rdirty: push    bx
 ; path to it at path, [pathlen] its end (the "\" after it)
 walk_sub:
         cmp     word [depth], MAXDEPTH
-        jae     .deep
-        inc     word [depth]
+        jb      .in
+        mov     dx, s_deep              ; (its files: not looked at)
+        call    report
+        mov     byte [skipped], 1
+        ret
+.in:    inc     word [depth]
         push    word [curdir]
         push    word [parent]
         push    word [pathlen]
+        push    word [curid]
         mov     [curdir], ax
         mov     [parent], dx
+        mov     [curid], bx             ; (its clusters are its id's)
         mov     [dcl], ax               ; (the cluster being read)
         mov     word [dent], 0          ; (entries so far)
 .cl:    mov     word [dsec], 0
 .sec:   call    dread
-        jc      .done
+        jc      .skip                   ; (unreadable: the next sector)
         mov     word [dix], 0
 .ent:   mov     di, [dix]
         shl     di, 5
@@ -995,16 +1159,18 @@ walk_sub:
         mov     ax, [dent]
         cmp     ax, 2
         jae     .e
-        call    dots                    ; "." and ".."
-        jmp     short .nx
+        call    dots                    ; "." and ".." (another name there:
+        jnc     .nx                     ;  an entry as any other)
 .e:     push    word [pathlen]          ; (ours, as entry may move it)
         call    entry
-        pop     bx
+        pop     cx
         or      ax, ax
         jz      .nx
-        push    bx
+        push    cx
         push    ax
+        push    bx
         call    dwrite                  ; (a change, before it's read over)
+        pop     bx
         pop     ax
         push    word [dcl]              ; into it
         push    word [dsec]
@@ -1020,32 +1186,48 @@ walk_sub:
         mov     [pathlen], bx           ; the path ours again
         mov     byte [path+bx], 0
         call    dread                   ; (and the sector)
-        jc      .done
+        jnc     .nx
+        mov     ax, [dix]               ; (unreadable now: its other entries
+        sub     ax, 15                  ;  counted as passed)
+        sub     [dent], ax
+        jmp     short .nsec
+.skip:  add     word [dent], 16
+        jmp     short .nsec
 .nx:    inc     word [dent]
         inc     word [dix]
         cmp     word [dix], 16
         jb      .ent
         call    dwrite
-        inc     word [dsec]
+.nsec:  inc     word [dsec]
         mov     ax, [dsec]
         cmp     ax, [spc]
         jb      .sec
-        mov     ax, [dcl]               ; the next cluster of it
+        mov     ax, [dcl]               ; the next cluster of it: its own?
         call    getfat
+        cmp     ax, 0FFF8h
+        jae     .done
         cmp     ax, 2
         jb      .done
         cmp     ax, [ncl]
         jae     .done
-        mov     [dcl], ax
+        push    ax
+        call    getown
+        cmp     ax, [curid]
+        pop     ax
+        je      .on
+        mov     byte [skipped], 1       ; (another's, or one claimed twice:
+        jmp     short .done             ;  not read as this directory)
+.on:    mov     [dcl], ax
         jmp     .cl
 .done:  call    dwrite
+        pop     word [curid]
         pop     word [pathlen]
         mov     bx, [pathlen]
         mov     byte [path+bx], 0
         pop     word [parent]
         pop     word [curdir]
         dec     word [depth]
-.deep:  ret
+        ret
 
 ; the directory's sector [dsec] of cluster [dcl] -> secbuf.  CF: it can't
 ; be read (said)
@@ -1060,8 +1242,11 @@ dread:  mov     byte [smod], 0
         mov     bx, secbuf
         call    rdsec
         jnc     .x
-        mov     dx, s_dread             ; (the path: the directory's)
+        mov     bx, [pathlen]           ; (the path: the directory's)
+        mov     byte [path+bx], 0
+        mov     dx, s_dread
         call    report
+        mov     byte [skipped], 1
         stc
 .x:     ret
 
@@ -1071,6 +1256,8 @@ dwrite: cmp     byte [smod], 0
         mov     byte [smod], 0
         cmp     byte [fix], 0
         je      .x
+        cmp     byte [dry], 0
+        jne     .x
         mov     ax, [dcl]
         call    clu_lba
         add     ax, [dsec]
@@ -1085,6 +1272,8 @@ dwrite: cmp     byte [smod], 0
 .x:     ret
 
 ; "." (entry 0) and ".." (1) of the directory [curdir], at ES:DI
+; -> CF: another name is in its place (said; the caller takes it as an
+; entry of its own)
 dots:   mov     si, s_dot
         cmp     word [dent], 0
         je      .n
@@ -1100,11 +1289,18 @@ dots:   mov     si, s_dot
         mov     ax, [parent]
 .c:     cmp     [es:di+1Ah], ax
         je      .x
+        cmp     byte [dry], 0
+        jne     .x
         mov     [es:di+1Ah], ax         ; pointing elsewhere: put right
         mov     byte [smod], 1
+        mov     dx, s_dots
+        call    report
+.x:     clc
+        ret
 .miss:  mov     dx, s_dots
         call    report
-.x:     ret
+        stc
+        ret
 
 ; the entry at ES:DI, in the directory [curdir] (the root: [inroot]).
 ; -> [emod] if it changed, AX = a subdirectory's first cluster to go into
@@ -1120,10 +1316,16 @@ entry:  mov     byte [emod], 0
         jnz     .x0
         cmp     byte [es:di], '.'       ; (dots outside their places)
         je      .x0
-        inc     word [fid]
+        cmp     word [fid], MAXFID - 1  ; (too many to tell apart: the rest
+        jb      .id                     ;  not looked at)
+        mov     byte [skipped], 1
+        jmp     .x0
+.id:    inc     word [fid]
         call    name                    ; its path
         cmp     byte [verbose], 0
         je      .nv
+        cmp     byte [dry], 0
+        jne     .nv
         call    ppath
         mov     dx, s_crlf
         call    print
@@ -1141,6 +1343,8 @@ entry:  mov     byte [emod], 0
         jnc     .fc
 .first: mov     dx, s_first             ; no cluster: the file empty
         call    report
+        cmp     byte [dry], 0
+        jne     .cnt0
         xor     ax, ax
         mov     [es:di+1Ah], ax
         mov     [es:di+1Ch], ax
@@ -1148,7 +1352,8 @@ entry:  mov     byte [emod], 0
         call    emodded
 .cnt0:  xor     ax, ax
         jmp     .count
-.fc:    call    chain                   ; -> AX clusters, [crossed]
+.fc:    mov     byte [isdir], 0
+        call    chain                   ; -> AX clusters, [crossed]
         cmp     byte [crossed], 0
         jne     .count
         push    ax
@@ -1176,6 +1381,12 @@ entry:  mov     byte [emod], 0
         popf
         pop     cx
         pop     ax
+        pushf
+        cmp     byte [dry], 0
+        je      .ed
+        popf
+        jmp     short .count
+.ed:    popf
         jb      .short
         push    cx                      ; longer: cut after CX clusters
         call    cut
@@ -1201,25 +1412,32 @@ entry:  mov     byte [emod], 0
 .dir:   call    inuse
         jc      .dbad
         push    ax
+        mov     byte [isdir], 1
         call    chain
+        push    ax
         mul     word [csize]
         inc     word [ndir]
         add     [ndir+2], ax
         adc     [ndir+4], dx
+        pop     cx
         pop     ax
-        cmp     byte [crossed], 0
-        jne     .x0
-        cmp     byte [loopy], 0         ; (its first cluster was its own)
-        jne     .x0
-        mov     si, [nameend]           ; the path on: "\NAME\"
+        cmp     byte [crossed], 0       ; (a chain cut short: what is its
+        je      .din                    ;  own is read, the rest not)
+        mov     byte [skipped], 1
+        jcxz    .x0
+.din:   mov     si, [nameend]           ; the path on: "\NAME\"
         mov     byte [path+si], '\'
         inc     si
         mov     byte [path+si], 0
         mov     [pathlen], si
+        mov     bx, [fid]               ; (BX: its id)
         ret
 .dbad:  mov     dx, s_baddir            ; no cluster: the entry goes
         call    report
+        cmp     byte [dry], 0
+        jne     .x0
         mov     byte [es:di], 0E5h
+        mov     byte [dirgone], 1
         call    emodded
         jmp     .x0
 
@@ -1233,35 +1451,50 @@ emodded:
 ; (said); its end put right in the FAT if it ran into a free, bad or
 ; impossible one, or back into itself (said: [loopy] if at its start)
 chain:  mov     byte [crossed], 0
-        mov     byte [loopy], 0
         xor     cx, cx                  ; CX = clusters
         xor     si, si                  ; SI = the one before
-.l:     push    ax
+.l:     cmp     byte [isdir], 0         ; a directory never takes in a
+        je      .o                      ;  cluster claimed twice (pass 1
+        cmp     byte [dry], 0           ;  found them): it is cut short
+        jne     .o                      ;  there
+        call    shared
+        jc      .cross
+.o:     push    ax
         call    getown
         mov     bx, ax
         pop     ax
         or      bx, bx
         jz      .mine
-        cmp     bx, LOSTB               ; (lost ones are nobody's yet)
+        cmp     bx, LOSTR               ; (lost ones are nobody's yet)
         jae     .mine
         cmp     bx, [fid]
         je      .loop
-        push    cx
+        cmp     byte [dry], 0           ; pass 1: claimed twice
+        je      .cross
+        call    set_sh
+.cross: mov     byte [crossed], 1
+        cmp     byte [cutx], 0          ; a lost chain made a file: it ends
+        je      .say                    ;  before another's
+        or      si, si
+        jz      .x
+        mov     ax, si
+        mov     dx, EOC
+        call    setfat
+        jmp     short .x
+.say:   push    cx
         push    ax
         mov     dx, s_cross
         call    report_n
         pop     ax
         pop     cx
-        mov     byte [crossed], 1
         jmp     short .x
-.loop:  or      si, si
-        jnz     .lp
-        mov     byte [loopy], 1
-.lp:    mov     dx, s_inval
+.loop:  cmp     byte [cutx], 0
+        jne     .lq
+        mov     dx, s_inval
         push    cx
         call    report
         pop     cx
-        mov     ax, si
+.lq:    mov     ax, si
         mov     dx, EOC
         call    setfat
         jmp     short .x
@@ -1274,14 +1507,52 @@ chain:  mov     byte [crossed], 0
         jae     .x
         call    inuse                   ; the next: a cluster, in use?
         jnc     .l
-.bad:   push    cx
+.bad:   cmp     byte [cutx], 0
+        jne     .bq
+        push    cx
         mov     dx, s_inval
         call    report
         pop     cx
-        mov     ax, si
+.bq:    mov     ax, si
         mov     dx, EOC
         call    setfat
 .x:     mov     ax, cx
+        ret
+
+; cluster AX claimed twice (pass 1)?  CF if so.  All kept
+shared: push    ax
+        push    bx
+        push    cx
+        push    es
+        call    sh_at
+        test    [es:bx], al
+        pop     es
+        pop     cx
+        pop     bx
+        pop     ax
+        jz      .n
+        stc
+        ret
+.n:     clc
+        ret
+set_sh: push    ax
+        push    bx
+        push    cx
+        push    es
+        call    sh_at
+        or      [es:bx], al
+        pop     es
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+sh_at:  mov     bx, ax                  ; -> ES:BX its byte, AL its bit
+        shr     bx, 3
+        mov     cl, al
+        and     cl, 7
+        mov     al, 1
+        shl     al, cl
+        mov     es, [shseg]
         ret
 
 ; cluster AX: a cluster of the disk, in use in the FAT (not free, not
@@ -1381,7 +1652,11 @@ report: mov     word [rnum], 0FFFFh
         jmp     short rep_
 report_n:
         mov     [rnum], ax
-rep_:   push    es
+rep_:   cmp     byte [dry], 0
+        je      .go
+        mov     byte [nopath], 0
+        ret
+.go:    push    es
         push    di
         push    dx
         call    err_hdr
@@ -1423,7 +1698,10 @@ ppath:  push    si
 .l:     lodsb
         or      al, al
         jz      .x
-        call    putc
+        cmp     al, ' '                 ; (a damaged name's control
+        jae     .p                      ;  characters)
+        mov     al, '?'
+.p:     call    putc
         jmp     .l
 .x:     pop     si
         ret
@@ -1479,7 +1757,31 @@ lost:   mov     ax, 2                   ; mark them
 .hp:    pop     ax
 .hn:    inc     ax
         jmp     .h
-.hd:    mov     ax, 2                   ; the chains: their heads
+.hd:    mov     ax, 2                   ; what each head's chain reaches
+.r:     cmp     ax, [ncl]
+        jae     .rl
+        push    ax
+        call    getown
+        cmp     ax, LOSTA
+        pop     ax
+        jne     .rn
+        call    reach
+.rn:    inc     ax
+        jmp     .r
+.rl:    mov     ax, 2                   ; a chain no head reaches is a loop:
+.lp:    cmp     ax, [ncl]               ;  one of it is its head
+        jae     .lpd
+        push    ax
+        call    getown
+        cmp     ax, LOSTB
+        pop     ax
+        jne     .lpn
+        mov     dx, LOSTA
+        call    setown
+        call    reach
+.lpn:   inc     ax
+        jmp     .lp
+.lpd:   mov     ax, 2                   ; the chains: their heads
 .c:     cmp     ax, [ncl]
         jae     .cd
         push    ax
@@ -1508,7 +1810,11 @@ lost:   mov     ax, 2                   ; mark them
         mul     word [csize]
         mov     [lostb], ax
         mov     [lostb+2], dx
-        cmp     byte [fix], 0
+        cmp     byte [skipped], 0       ; part of the disk not looked at:
+        je      .ok                     ;  its files may be among them
+        mov     dx, s_kept
+        jmp     print
+.ok:    cmp     byte [fix], 0
         jne     .ask
         mov     dx, s_would
         jmp     .bytes
@@ -1545,10 +1851,32 @@ lost:   mov     ax, 2                   ; mark them
         push    ax
         call    chk_file
         pop     ax
-        jc      .vd                     ; (the root is full)
+        jc      .full
 .vn:    inc     ax
         jmp     .v
-.vd:    jmp     free_lost               ; (what no head reached: freed)
+.vd:    jmp     free_lost               ; (nothing should be left)
+.full:  ret                             ; (the rest left lost, for next time)
+
+; from the lost head AX, the lost clusters its chain reaches: marked so
+; (LOSTR).  All kept
+reach:  push    ax
+        push    dx
+.l:     call    getfat
+        cmp     ax, 2
+        jb      .x
+        cmp     ax, [ncl]
+        jae     .x
+        push    ax
+        call    getown
+        cmp     ax, LOSTB
+        pop     ax
+        jne     .x
+        mov     dx, LOSTR
+        call    setown
+        jmp     .l
+.x:     pop     dx
+        pop     ax
+        ret
 
 ; the lost clusters still nobody's: free
 free_lost:
@@ -1557,7 +1885,7 @@ free_lost:
         jae     .x
         push    ax
         call    getown
-        cmp     ax, LOSTB
+        cmp     ax, LOSTR
         pop     ax
         jb      .n
         xor     dx, dx
@@ -1571,6 +1899,8 @@ free_lost:
 ; root is full (said)
 chk_file:
         push    ax
+        cmp     word [fid], MAXFID - 1  ; (no id left for it)
+        jae     .full
         call    root_free               ; ES:DI = a free entry
         jc      .full
 .nm:    mov     ax, [chkn]              ; a name not there yet
@@ -1621,7 +1951,10 @@ chk_file:
         inc     word [fid]
         push    es
         push    di
+        mov     byte [isdir], 0
+        mov     byte [cutx], 1          ; (cut before another's cluster)
         call    chain                   ; (now its)
+        mov     byte [cutx], 0
         pop     di
         pop     es
         push    ax
@@ -1745,6 +2078,18 @@ write_back:
         mov     cx, 1
         call    wrsec
         jc      .err
+        mov     ax, bp                  ; (the first FAT's first sector as
+        or      ax, [k]                 ;  the disk has it now: same's)
+        jnz     .sn
+        push    ds
+        mov     ds, [fatseg]
+        xor     si, si
+        mov     di, fat0
+        mov     cx, 256
+        push    cs
+        pop     es
+        rep     movsw
+        pop     ds
 .sn:    inc     bp
         jmp     .s
 .cn:    inc     word [k]
@@ -1779,6 +2124,9 @@ write_back:
         ret
 .err:   push    ds
         pop     es
+        mov     dx, s_dchg
+        cmp     byte [dchg], 0
+        jne     .e
         mov     dx, s_wperr
         cmp     byte [bstat], 3
         je      .e
@@ -1969,6 +2317,12 @@ s_lost3 db ' chains.', 13, 10, '$'
 s_conv  db 'Convert lost chains to files (Y/N)? $'
 s_would db ' bytes disk space would be freed', 13, 10, '$'
 s_freed db ' bytes disk space freed', 13, 10, '$'
+s_kept  db '   Part of the disk could not be checked, and their files may be among', 13, 10
+        db '   them: left as they are', 13, 10, '$'
+s_deep  db '   Directories nested too deep: not checked$'
+s_tasks db 'CHKDSK /F: other tasks are running, or CHKDSK runs as one (Shift-Return', 13, 10
+        db 'with no other tasks: alone)', 13, 10, '$'
+s_dchg  db 'The disk was changed: no more corrections written', 13, 10, '$'
 s_rootf db 'Insufficient room in root directory', 13, 10
         db '   Erase files in root and repeat CHKDSK', 13, 10, '$'
 s_vol   db ' Volume $'
@@ -2024,6 +2378,13 @@ hdr     resb 1
 nopath  resb 1
 changed resb 1
 wfail   resb 1
+dry     resb 1
+skipped resb 1
+cutx    resb 1
+isdir   resb 1
+dirgone resb 1
+wrote   resb 1
+dchg    resb 1
 f_sct   resb 1
 f_cyl   resb 1
 f_head  resb 1
@@ -2050,6 +2411,8 @@ ncl     resw 1
 ser     resw 2
 fatseg  resw 1
 ownseg  resw 1
+shseg   resw 1
+curid   resw 1
 rootseg resw 1
 pk_lba  resw 2                          ; INT 25h/26h's packet
 pk_n    resw 1
@@ -2081,8 +2444,11 @@ numbuf  resb 14
 fatdirty resb 32                        ; a bit a FAT sector
 rootdirty resb 32                       ; a bit a root sector
 path    resb 3 + MAXDEPTH * 13 + 16
+bootbpb resb 51
         alignb 2
 secbuf  resb 512
+chkbuf  resb 512
+fat0    resb 512
         alignb 16
 tb1     resb MAXSPT * 512
 tb2     resb MAXSPT * 512
