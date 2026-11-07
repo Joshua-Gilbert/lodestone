@@ -235,6 +235,154 @@ def t_720():
     files, probs = vcheck(k.pc.drives[1].img)
     check('... /F: FILE0000.CHK of 2048 bytes', probs == [] and len(files.get('\\FILE0000.CHK', b'')) == 2048, (o, probs))
 
+def fat12disk(tree, name):
+    f = F.Fat(2880, 1, 0, False, rootents=224, spt=18, heads=2)
+    f.finish(f.tree(tree))
+    p = os.path.join(OUT, name); open(p, 'wb').write(f.img)
+    return Fl(p)
+
+def fixrun(k, line, ans):
+    k.pc.tty.clear(); k.key(line); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: '(Y/N)?' in out(k) or 'bytes free' in out(k), 60)
+    if '(Y/N)?' in out(k): k.key(ans, settle=False)
+    k.settle(60)
+    return out(k)
+
+def chain_of(img, c):
+    v = F.Volume(bytes(img), 0)
+    return v.chain(c)[0]
+
+def t_safety():
+    # each: data CHKDSK /F must not lose, whatever the damage around it
+    for ans in ('n', 'y'):
+        d = disk('dc.img')
+        a, s = d.first('LCMD.COM'), d.first('SUB')
+        sc = d.first('S.COM', s)
+        d.set(s, a + 3); d.save()                       # SUB's chain on into LCMD.COM's
+        k = boot(d.path)
+        o = fixrun(k, 'chkdsk b: /f', ans)
+        files, probs = vcheck(k.pc.drives[1].img)
+        check('a directory cross linked past its first cluster (/F, %s): walked as far as it is its own, '
+              'its files kept, no .CHK made of them' % ans.upper(),
+              'cross linked' in o and files.get('\\SUB\\S.COM') == open(SMALL, 'rb').read()
+              and not any('CHK' in f for f in files), (o, probs, sorted(files)))
+    d = fat12disk([('A', 0, [('B', 0, [('KEEP.TXT', 0x20, b'k' * 3000)])]), ('TOP.TXT', 0x20, b'z' * 100)], 'anc.img')
+    a = d.first('A'); b = d.first('B', a); kp = d.first('KEEP.TXT', b)
+    d.set(b, a); d.save()                               # B's chain on into its parent's cluster
+    k = boot(d.path)
+    o = fixrun(k, 'chkdsk b: /f', 'n')
+    check('a directory chained into its parent (/F, N): what can\'t be read as a directory is left, '
+          'its files not freed', len(chain_of(k.pc.drives[1].img, kp)) == 6 and 'could not be checked' in o
+          and 'freed' not in o, o)
+    text = (b'The quick brown fox jumps over the lazy dog.\r\n' * 40)[:1500]
+    d = fat12disk([('D', 0, [('X%02d.TXT' % i, 0x20, b'x' * 100) for i in range(14)]), ('NOTES.TXT', 0x20, text)], 'dif.img')
+    dc, n = d.first('D'), d.first('NOTES.TXT')
+    d.set(dc, n); d.save()                              # D's chain on into NOTES.TXT, which comes after it
+    k = boot(d.path)
+    o = fixrun(k, 'chkdsk b: /f', 'n')
+    v = F.Volume(bytes(k.pc.drives[1].img), 0)          # (the cross link stays: read without walking D)
+    notes = b''.join(v.clu(c) for c in v.chain(n)[0])[:1500]
+    xs = [e for e in (v.clu(dc)[i:i + 11] for i in range(0, 512, 32)) if e.startswith(b'X')]
+    check('a directory chained into a later file (/F): the file\'s data never read or written as a directory',
+          notes == text and len(xs) == 14 and 'cross linked' in o and 'Invalid sub-directory' not in o
+          and 'First cluster' not in o, o)
+    d = fat12disk([('D', 0, [('F%02d.TXT' % i, 0x20, bytes([65 + i]) * 600) for i in range(20)])], 'dr.img')
+    dc = d.first('D'); first = [d.first('F%02d.TXT' % i, dc) for i in range(14)] if False else None
+    k = boot(d.path)
+    raw = bytes(k.pc.drives[1].img)
+    k.pc.drives[1].bad = {33 + dc - 2}                  # D's first sector won't read
+    o = fixrun(k, 'chkdsk b: /f', 'n')
+    k.pc.drives[1].bad = set()
+    files, probs = vcheck(k.pc.drives[1].img)
+    check('a directory sector that won\'t read (/F, N): said, the rest of it read, nothing of it freed',
+          'Cannot read this directory' in o and 'B:\\D\\' in o and probs == vcheck(raw)[1] and len(files) == 20
+          and 'Invalid sub-directory' not in o
+          and 'could not be checked' in o, (o, probs))
+    d = fat12disk([('F%03d.TXT' % i, 0x20, b'') for i in range(222)], 'rf.img')
+    for c in (1000, 1100, 1200): d.set(c, 0xFFF)
+    d.save()
+    k = boot(d.path)
+    o = fixrun(k, 'chkdsk b: /f', 'y')
+    v = F.Volume(bytes(k.pc.drives[1].img), 0)
+    check('the root full while lost chains become files: the rest left lost for next time, not freed',
+          'Insufficient room in root directory' in o and all(v.fat(c) for c in (1000, 1100, 1200))
+          and sum(1 for c in (1000, 1100, 1200) if v.fat(c)) == 3, (o, [v.fat(c) for c in (1000, 1100, 1200)]))
+    d = disk('li.img')
+    a = d.first('LCMD.COM')
+    d.set(2000, a + 3); d.save()                        # a lost cluster on into LCMD.COM's chain
+    k = boot(d.path)
+    o = fixrun(k, 'chkdsk b: /f', 'y')
+    files, probs = vcheck(k.pc.drives[1].img)
+    check('a lost chain running into a file: FILE0000.CHK ends before it, nothing cross linked after',
+          probs == [] and len(files.get('\\FILE0000.CHK', b'')) == 512 and files['\\LCMD.COM'] == open(LCMD, 'rb').read(),
+          (o, probs))
+    run(k, 'del b:\\file0000.chk')
+    files, probs = vcheck(k.pc.drives[1].img)
+    check('... and deleting it leaves LCMD.COM whole', probs == [] and files['\\LCMD.COM'] == open(LCMD, 'rb').read(), probs)
+    d = disk('ll.img')
+    d.set(2000, 2001); d.set(2001, 2000)
+    for c in (2000, 2001): d.img[(33 + c - 2) * 512:(34 + c - 2) * 512] = b'L' * 512
+    d.save()
+    k = boot(d.path)
+    o = fixrun(k, 'chkdsk b: /f', 'y')
+    files, probs = vcheck(k.pc.drives[1].img)
+    check('a lost chain that is a loop: one chain, made a file (Y), not freed',
+          '   2 lost clusters found in 1 chains.' in o and files.get('\\FILE0000.CHK') == b'L' * 1024 and probs == [], (o, probs))
+    d = fat12disk([('D', 0, [('KEEP.TXT', 0x20, b'k' * 3000)])], 'nd.img')
+    dc = d.first('D'); o0 = (33 + dc - 2) * 512
+    d.img[o0:o0 + 32] = d.img[o0 + 64:o0 + 96]; d.img[o0 + 64:o0 + 96] = bytes(32)   # KEEP.TXT where "." was
+    d.save()
+    k = boot(d.path)
+    o = fixrun(k, 'chkdsk b: /f', 'n')
+    files, probs = vcheck(k.pc.drives[1].img)
+    check('a file where "." should be: said, and taken as a file (not lost, not freed)',
+          'Invalid sub-directory entry' in o and 'lost' not in o and files.get('\\D\\KEEP.TXT') == b'k' * 3000, (o, probs))
+
+def t_swap():
+    d = lost_disk('sw1.img'); d.save()
+    other = disk('sw2.img', files=(LCMD, 'X\\', 'X\\Y.COM=' + SMALL, BIG, SMALL))
+    raw2 = bytes(other.img)
+    k = boot(d.path)
+    k.pc.tty.clear()
+    k.key('chkdsk b: /f'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: '(Y/N)?' in out(k), 60)
+    f = pcemu.Floppy(raw2); f.changed = True; k.pc.drives[1] = f      # another disk in, at the question
+    k.key('y', settle=False); k.settle(60)
+    o = out(k)
+    check('/F with the disk changed before it writes: "The disk was changed", the other disk untouched',
+          'The disk was changed' in o and bytes(k.pc.drives[1].img) == raw2, o[-400:])
+    d = lost_disk('sw3.img'); d.save()
+    k = boot(d.path)
+    k.pc.drives[1].no_changeline = True                 # (a drive that always says "changed")
+    o = fixrun(k, 'chkdsk b: /f', 'y')
+    files, probs = vcheck(k.pc.drives[1].img)
+    check('... a drive without a change line: the same disk known by its boot sector and FAT, corrected',
+          probs == [] and '\\FILE0000.CHK' in files, (o, probs))
+
+def t_cwd():
+    d = disk('cw.img', files=(LCMD, 'SUB\\', BIG))
+    c = d.first('SUB'); d.set(c, 0); d.save()           # SUB's first cluster free
+    k = boot(d.path)
+    run(k, 'cd b:\\sub')
+    fixrun(k, 'chkdsk b: /f', 'y')
+    o = run(k, 'cd b:')
+    run(k, 'copy a:\\lcmd.com b:x.com')
+    files, probs = vcheck(k.pc.drives[1].img)
+    check('/F removed the directory B: was in: B:\'s current directory its root after, a copy there sound',
+          'B:\\' in o and 'SUB' not in o and probs == [] and '\\X.COM' in files, (o, probs))
+
+def t_mt():
+    import test_mt as M
+    from test_kernel import Shell
+    d = lost_disk('mtb.img'); d.save()
+    k = M.boot('mtchk.img', b'MULTITASK=1\r\n', 88, os.path.join(SRC, 'CHKDSK.COM'), b=d.path)
+    raw = bytes(k.pc.drives[1].img)
+    sh = Shell(k)
+    sh.run('start /w chkdsk.com b: /f > o.txt'); k.run_for(10)
+    o = sh.run('type o.txt')
+    check('with multitasking, CHKDSK /F run as a task: refused ("other tasks are running"), nothing written',
+          'other tasks are running' in o and bytes(k.pc.drives[1].img) == raw, o)
+
 def t_wp():
     d = lost_disk('wp.img'); d.save()
     k = boot(d.path)
@@ -297,7 +445,7 @@ def t_refused():
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_clean, t_lost, t_damage, t_deep, t_720, t_wp, t_hd, t_mdisk, t_refused):
+    for t in (t_clean, t_lost, t_damage, t_deep, t_720, t_safety, t_swap, t_cwd, t_mt, t_wp, t_hd, t_mdisk, t_refused):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
