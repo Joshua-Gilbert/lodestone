@@ -463,6 +463,11 @@ def t_hd_own():
     v = F.Volume(ata.disk, 39)
     check('/Q on a 34 MB partition the kernel has no file system on: 2 KB clusters, nothing verified, CHKDSK-clean',
           said(o, 'FORMAT-OK') and v.spc == 4 and v.files()[1] == [] and getattr(ata, 'verifies', 0) == 0, (o, bpb16(v)))
+    k = boot(ata=ata)                                   # restarted
+    o = shell(k, 'echo hi > c:\\x.txt')
+    o = shell(k, 'dir c:')
+    check('... its 32-bit sector count in the BPB, and after a restart the kernel has it as C:',
+          struct.unpack_from('<I', v.sec(0), 0x20)[0] == 68640 - 39 and 'X        TXT' in o, (o, v.sec(0)[0x0B:0x26].hex()))
 
 def t_review():
     # the review panel's findings, each held to

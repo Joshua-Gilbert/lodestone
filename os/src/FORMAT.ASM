@@ -214,24 +214,6 @@ fail_msg:
         mov     ax, 4C04h
         int     21h
 
-; IRQ 14 (the hard disk's) masked at the second PIC, as the kernel does
-; when it drives the disk; irq_back: as it was
-irq_off:
-        cmp     byte [irqset], 0
-        jne     .x
-        in      al, 0A1h
-        mov     [irq0], al
-        or      al, 40h
-        out     0A1h, al
-        mov     byte [irqset], 1
-.x:     ret
-irq_back:
-        cmp     byte [irqset], 0
-        je      .x
-        mov     byte [irqset], 0
-        mov     al, [irq0]
-        out     0A1h, al
-.x:     ret
 
 ; multitasking: FORMAT must be the only task (another could be using the
 ; drive, the BIOS's diskette table is everyone's, and each task keeps its
@@ -1491,7 +1473,6 @@ skipkm: mov     bl, [si]                ; a K, KB, M or MB after a size
 HCH     equ 64                          ; sectors a transfer (32 KB)
 BADMAX  equ 2048                        ; bad clusters kept
 MAXCL   equ 65518                       ; clusters the kernel's C: takes (KHD.INC)
-HD      equ 1F0h
 
 hd_main:
         mov     dx, s_badsw             ; /S, /F, /N, /T, /4: floppies'
@@ -2104,9 +2085,11 @@ hd_pct: mov     ax, [scur]              ; done = scur - datalba, of dsecs
 ; the boot sector: a stub that says the disk starts nothing, the BPB as
 ; it is in bootsec, the serial, the label
 hd_boot:
-        cmp     byte [bootsec+26h], 29h ; (no DOS 4 BPB: 1Eh-23h were boot
-        je      .k                      ;  code, not the hidden sectors' high
-        mov     di, bootsec + 1Eh       ;  word and the 32-bit total)
+        cmp     byte [hpath], 1         ; path A: the old boot sector's
+        jne     .k                      ;  BPB.  (No DOS 4 BPB there: 1Eh-23h
+        cmp     byte [bootsec+26h], 29h ;  were boot code, not the hidden
+        je      .k                      ;  sectors' high word and the 32-bit
+        mov     di, bootsec + 1Eh       ;  total)
         mov     cx, 6
         xor     al, al
         rep     stosb
@@ -2292,198 +2275,6 @@ hd_io:  pusha
         call    ata_xfer
         popa
         pop     bx
-        ret
-
-; the drive's registers (path B).  ata_init: drive 0 there and ready,
-; IDENTIFY's geometry, INITIALIZE DEVICE PARAMETERS.  CF if not
-ata_init:
-        mov     dx, HD + 6
-        mov     al, 0A0h
-        out     dx, al
-        mov     dx, HD + 7
-        in      al, dx
-        cmp     al, 0FFh                ; (nobody on the bus)
-        je      .no
-        mov     ah, 40h
-        call    ata_wait
-        jc      .no
-        mov     dx, HD + 7
-        mov     al, 0ECh                ; IDENTIFY
-        out     dx, al
-        mov     ah, 08h
-        call    ata_wait
-        jc      .no
-        test    al, 01h
-        jnz     .no
-        test    al, 08h
-        jz      .no
-        push    es
-        mov     es, [bseg]
-        xor     di, di
-        mov     cx, 256
-        mov     dx, HD
-        rep     insw
-        mov     ax, [es:3*2]            ; heads 1-16, sectors 1-63
-        mov     cx, [es:6*2]
-        mov     bx, [es:1*2]            ; (cylinders)
-        pop     es
-        mov     [hcyls], bx
-        dec     ax
-        cmp     ax, 15
-        ja      .no
-        dec     cx
-        cmp     cx, 62
-        ja      .no
-        inc     cx
-        mov     [hspt], cx
-        inc     ax
-        mov     [hheads], ax
-        mul     cx
-        mov     [hhs], ax
-        mul     word [hcyls]            ; the drive's sectors
-        mov     [hsize], ax
-        mov     [hsize+2], dx
-        mov     ax, [hheads]
-        dec     ax
-        or      al, 0A0h
-        mov     dx, HD + 6
-        out     dx, al
-        mov     dx, HD + 2
-        mov     al, cl
-        out     dx, al
-        mov     dx, HD + 7
-        mov     al, 91h
-        out     dx, al
-        mov     ah, 0
-        call    ata_wait
-        jc      .no
-        test    al, 01h
-        jnz     .no
-        clc
-        ret
-.no:    stc
-        ret
-
-; until the drive isn't busy and shows the bits AH (or ERR), 5 s at most.
-; AL = the status.  CF: it didn't
-ata_wait:
-        push    bx
-        push    cx
-        push    dx
-        push    si
-        push    ds
-        xor     bx, bx
-        mov     ds, bx
-        mov     bx, [46Ch]              ; BX = the tick last seen, SI = ticks
-        pop     ds                      ;  gone by (the count goes back to 0
-        xor     si, si                  ;  at midnight: never a difference)
-        mov     dx, HD + 7
-.l:     in      al, dx
-        test    al, 80h
-        jnz     .t
-        test    al, 01h
-        jnz     .ok
-        mov     cl, al
-        and     cl, ah
-        cmp     cl, ah
-        je      .ok
-.t:     push    ds
-        xor     cx, cx
-        mov     ds, cx
-        mov     cx, [46Ch]
-        pop     ds
-        cmp     cx, bx
-        je      .l
-        mov     bx, cx
-        inc     si
-        cmp     si, 91
-        jb      .l
-        stc
-        jmp     short .x
-.ok:    clc
-.x:     pop     si
-        pop     dx
-        pop     cx
-        pop     bx
-        ret
-
-; command BL (20h read, 30h write, 40h verify) for CX sectors (1-HCH) from
-; the drive's sector DX:AX, data at [bseg]:0.  CF if it failed
-ata_xfer:
-        push    es
-        push    ds
-        mov     es, [bseg]
-        push    cx
-        div     word [hhs]              ; -> AX = cylinder, DX = the rest
-        push    ax
-        mov     ax, dx
-        xor     dx, dx
-        div     word [hspt]             ; -> AX = head, DX = sector - 1
-        mov     bh, al
-        inc     dl
-        push    dx
-        mov     ah, 40h
-        call    ata_wait
-        pop     dx
-        pop     si                      ; SI = cylinder
-        pop     cx
-        jc      .x
-        push    dx
-        mov     dx, HD + 2
-        mov     al, cl
-        out     dx, al
-        pop     ax                      ; the sector
-        inc     dx
-        out     dx, al
-        inc     dx
-        mov     ax, si
-        out     dx, al
-        inc     dx
-        mov     al, ah
-        out     dx, al
-        inc     dx
-        mov     al, bh
-        or      al, 0A0h
-        out     dx, al
-        inc     dx
-        mov     al, bl
-        out     dx, al
-        cmp     bl, 40h
-        je      .end
-        xor     di, di
-        xor     si, si
-.s:     push    cx
-        mov     ah, 08h                 ; each sector's DRQ
-        call    ata_wait
-        jc      .sx
-        test    al, 01h
-        jnz     .sf
-        test    al, 08h
-        jz      .sf
-        mov     cx, 256
-        mov     dx, HD
-        cmp     bl, 30h
-        je      .o
-        rep     insw
-        jmp     short .sn
-.o:     push    es
-        pop     ds
-        rep     outsw
-        push    ss                      ; (DS back: a .COM's SS is its DS)
-        pop     ds
-.sn:    pop     cx
-        loop    .s
-.end:   mov     ah, 0                   ; the command's end (ERR, or write
-        call    ata_wait                ;  fault)
-        jc      .x
-        test    al, 21h
-        jz      .x
-        stc
-        jmp     short .x
-.sf:    stc
-.sx:    pop     cx
-.x:     pop     ds
-        pop     es
         ret
 
 ; the boot sector of a disk formatted here: it starts nothing
@@ -2700,6 +2491,8 @@ s_bs    db 8, ' ', 8, '$'
 s_cr    db 13, '$'
 s_crlf  db 13, 10, '$'
 
+%include "ATAIO.INC"
+
         alignb 2
 bootbin incbin "BOOT.BIN"
 
@@ -2716,8 +2509,6 @@ nspt    resb 1
 ntr     resb 1
 dptset  resb 1
 tset    resb 1
-irqset  resb 1
-irq0    resb 1
 result  resb 1
 cyl     resb 1
 head    resb 1
@@ -2752,11 +2543,6 @@ hk      resb 1
 bseg    resw 1
 plba    resw 2
 psize   resw 2
-hspt    resw 1
-hheads  resw 1
-hhs     resw 1
-hcyls   resw 1
-hsize   resw 2
 htot    resw 2
 dsecs   resw 2
 scur    resw 2
