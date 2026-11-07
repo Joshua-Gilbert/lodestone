@@ -3177,36 +3177,34 @@ do_type:
 ; ---------------------------------------------------------------------
 ; COPY src[+src...] [dst] [/A] [/B]: wildcards; to a directory; several
 ; files into one.  As MS-DOS's: one plain destination file and a source
-; with wildcards or a "+" list is concatenation: each source's name shown,
-; in ASCII (each up to its first ^Z, one ^Z at the end) unless /B, and
-; "1 File(s) copied".  The destination as the first source is kept and
-; the rest appended to it (over a ^Z at its end, in ASCII); met later,
-; after the copy made it, "Content of destination lost before copy" and
-; the rest go on.  "+" with no destination, or a directory: the first
-; source's name (there); a first source with wildcards then is refused
-; (MS-DOS pairs such names: not here).  A single copy is binary unless /A
-; (up to the first ^Z, one added).  /A and /B: the last one given counts
-; for the whole command (MS-DOS's are by position)
+; with wildcards or a "+" list is concatenation: one destination, kept
+; open through the list, each source's name shown, ASCII by default (each
+; source up to its first ^Z, one ^Z at the end, none to a device) and
+; "1 File(s) copied"; one that came out empty is deleted, 0.  The
+; destination as the first source is kept, cut at its first ^Z in ASCII,
+; and the rest appended; met later, after the copy made it, "Content of
+; destination lost before copy" and the rest go on.  "+" to no destination,
+; or a directory: the first source's name (there; one with wildcards then
+; is "Syntax error": MS-DOS pairs such names, not done here); to a name
+; with wildcards: that name made once, from the first source.  A "+" part
+; not there is passed over without a word.  "COPY A+" is onto itself;
+; "COPY /B A+,," gives A the date and time of now.  A single copy is
+; binary unless /A.  /A and /B are by position: each for the source it is
+; next to and those after it, and for the destination when given with it
+; or after it.  On an error while appending, the destination is cut back
+; to where that source began, its ^Z put back, and kept if it was there
+; before the command (MS-DOS deletes it on a write error); one this copy
+; made is deleted.  The count is of destinations closed whole.
 do_copy:
-        mov     byte [sw_ab], 0
-        call    plus_join               ; ("a + b": "a+b")
-        mov     di, path1
-        call    getarg_sw
-        mov     di, path2
-        call    getarg_sw
-        call    sw_rest                 ; (switches after the names)
-        cmp     byte [path1], 0
-        jne     .s
-.par:   mov     si, e_param
+        call    cparse                  ; -> plist, path2, dsw, touch
+        jnc     .s
         jmp     err
 .s:     xor     ax, ax
         mov     [copied], ax
-        mov     [concat], al
+        mov     [dstate], al
         mov     [cmode], al
         mov     [plus], al
-        mov     si, path1               ; the list kept, its first part in
-        mov     di, plist               ;  path1
-        call    strcpy
+        mov     [smode], al
         mov     si, plist
 .pl:    lodsb
         or      al, al
@@ -3216,9 +3214,11 @@ do_copy:
         mov     byte [plus], 1
 .p1:    mov     si, plist
         call    next_src
-        cmp     byte [path1], 0         ; ("+B": no first source)
-        je      .par
-        cmp     byte [plus], 0
+        cmp     byte [path1], 0         ; (no first source)
+        jne     .p2
+.par:   mov     si, e_param
+        jmp     err
+.p2:    cmp     byte [plus], 0
         jne     .sf
         ; the source: a directory means all of it
         mov     si, path1
@@ -3241,10 +3241,10 @@ do_copy:
         mov     si, path2
         call    strend
         cmp     di, path2
-        je      .p2
+        je      .p3
         mov     si, path2
         call    add_bslash
-.p2:    mov     si, path1
+.p3:    mov     si, path1
         call    name_part
         call    strcpy
         mov     byte [dst_dir], 0
@@ -3260,15 +3260,7 @@ do_copy:
         call    has_wild
         jc      .ab
 .cc:    mov     byte [cmode], 1
-.ab:    mov     al, [cmode]             ; ASCII: concatenation without /B,
-        cmp     byte [sw_ab], 'B'       ;  or /A
-        jne     .a1
-        xor     al, al
-.a1:    cmp     byte [sw_ab], 'A'
-        jne     .a2
-        mov     al, 1
-.a2:    mov     [ascii], al
-        mov     bx, 0FFFh
+.ab:    mov     bx, 0FFFh
         call    cbuf_get
         jc      .x
 .src:   mov     dx, path1               ; each source in the list
@@ -3295,36 +3287,35 @@ do_copy:
         call    name_part
         mov     [srcname], si
         call    copy_one
-        jc      .tot
+        jc      .err
         jmp     short .next
-.nf:    mov     si, e_notfound
+.nf:    cmp     byte [plus], 0          ; (a part of a list: passed over, as
+        jne     .next                   ;  MS-DOS's)
+        mov     si, e_notfound
         call    err
-        cmp     byte [plus], 0          ; (one of a list: the rest go on)
-        jne     .next
         jmp     cbuf_free
 .one:   call    src_found               ; dir part of path1 + found name
         cmp     di, src + 79            ; (longer: skipped)
         ja      .nx
         mov     [srcname], bx
         call    copy_one
-        jc      .tot
+        jc      .err
 .nx:    mov     ah, 4Fh
         int     21h
         jnc     .one
 .next:  mov     si, [pnext]             ; the list's next source
         cmp     byte [si], 0
-        je      .tot
+        je      .end
         call    next_src
         cmp     byte [path1], 0
         je      .next
         jmp     .src
-.tot:   mov     ax, [copied]            ; (concatenation: one destination)
-        cmp     byte [cmode], 0
-        je      .t1
-        or      ax, ax
-        jz      .t1
-        mov     ax, 1
-.t1:    xor     dx, dx
+.err:   mov     byte [dstate], 0        ; (its files closed, its count made)
+.end:   cmp     byte [cmode], 0
+        je      .tot
+        call    cat_end
+.tot:   mov     ax, [copied]
+        xor     dx, dx
         mov     cx, 9
         call    pu32w
         mov     si, s_copied
@@ -3332,8 +3323,122 @@ do_copy:
         jmp     cbuf_free
 .x:     ret
 
-; the list's source at SI (up to a "+" or its end) -> path1; [pnext] past
-; it
+; COPY's command tail at SI -> plist (the sources, "+" between them, the
+; /A or /B of each kept by it, as is one before the first or before the
+; destination: with the source it follows), path2 (the destination) and
+; dsw (its switch: with it or after it); touch: "+,,".  CF: SI = message
+; (a name longer than 79, a word past the destination)
+cparse: xor     ax, ax
+        mov     [dsw], al
+        mov     [touch], al
+        call    plus_join               ; ("a + b": "a+b")
+        mov     di, plist
+        xor     bx, bx                  ; BX: the name's length so far
+        xor     dl, dl                  ; DL: the last but switches
+.l:     lodsb                           ; the list
+        or      al, al
+        jz      .z
+        cmp     al, ' '
+        je      .b
+        cmp     al, 9
+        je      .b
+        cmp     al, ','
+        je      .b
+        cmp     al, '/'
+        je      .sw
+        cmp     al, '+'
+        jne     .ch
+        xor     bx, bx
+        jmp     short .st
+.ch:    inc     bx
+        cmp     bx, 79
+        ja      .long
+.st:    cmp     di, plist + LBUF
+        jae     .long
+        mov     dl, al
+        stosb
+        jmp     .l
+.sw:    lodsb                           ; a switch: kept, by its source
+        or      al, al
+        jz      .z
+        mov     byte [di], '/'
+        inc     di
+        stosb
+        jmp     .l
+.b:     dec     si                      ; blanks and commas: past them
+.bl:    lodsb
+        cmp     al, ','                 ; (after "+": the date of now)
+        jne     .b1
+        cmp     dl, '+'
+        jne     .bl
+        mov     byte [touch], 1
+        jmp     .bl
+.b1:    cmp     al, ' '
+        je      .bl
+        cmp     al, 9
+        je      .bl
+        dec     si
+        or      al, al                  ; the list goes on: none in it yet,
+        jz      .z                      ;  a "+" last, or a switch next
+        cmp     al, '/'
+        je      .l
+        or      dl, dl
+        jz      .l
+        cmp     dl, '+'
+        je      .l
+        mov     byte [di], 0            ; the destination
+        mov     di, path2
+.d:     lodsb
+        cmp     al, ' '
+        jbe     .de
+        cmp     al, ','
+        je      .de
+        cmp     al, '/'
+        jne     .ds
+        call    .dsw
+        jmp     .d
+.ds:    stosb
+        jmp     .d
+.de:    mov     byte [di], 0
+        dec     si
+.r:     lodsb                           ; past it: switches only
+        or      al, al
+        jz      .ok
+        cmp     al, ' '
+        je      .r
+        cmp     al, 9
+        je      .r
+        cmp     al, ','
+        je      .r
+        cmp     al, '/'
+        jne     .many
+        call    .dsw
+        jmp     .r
+.z:     mov     byte [di], 0
+        mov     byte [path2], 0
+.ok:    clc
+        ret
+.long:  mov     si, e_plong
+        stc
+        ret
+.many:  mov     si, e_pmany
+        stc
+        ret
+.dsw:   lodsb                           ; the destination's /A or /B
+        or      al, al
+        jz      .dz
+        call    upcase
+        cmp     al, 'A'
+        je      .dn
+        cmp     al, 'B'
+        jne     .dx
+.dn:    mov     [dsw], al
+.dx:    ret
+.dz:    dec     si
+        ret
+
+; the list's source at SI (up to a "+" or its end) -> path1, its /A or
+; /B (or the last before it) in smode; [pnext] past it
 next_src:
         mov     di, path1
 .l:     lodsb
@@ -3341,7 +3446,17 @@ next_src:
         jz      .z
         cmp     al, '+'
         je      .e
+        cmp     al, '/'
+        je      .sw
         stosb
+        jmp     .l
+.sw:    lodsb                           ; (cparse kept the letter with it)
+        call    upcase
+        cmp     al, 'A'
+        je      .n
+        cmp     al, 'B'
+        jne     .l
+.n:     mov     [smode], al
         jmp     .l
 .z:     dec     si
 .e:     mov     byte [di], 0
@@ -3380,31 +3495,113 @@ plus_join:
 .dr:    mov     si, bx
         jmp     .l
 
-; switches after the names (COPY A B /B): each noted
-sw_rest:
-.l:     call    skipsp
-        cmp     byte [si], '/'
-        jne     .x
-        inc     si
-        mov     al, [si]
+; AL = 1 if this source is read as ASCII (to its first ^Z): its /A, or
+; with no /A or /B so far concatenation's default
+s_ascii:
+        mov     al, [smode]
+        or      al, al
+        jz      d_ascii.c
+        jmp     short d_ascii.m
+; AL = 1 if the destination is written as ASCII (a ^Z at its end): its own
+; /A or /B, or the sources' last, or concatenation's default
+d_ascii:
+        mov     al, [dsw]
+        or      al, al
+        jnz     .m
+        mov     al, [smode]
+        or      al, al
+        jnz     .m
+.c:     mov     al, [cmode]
+        ret
+.m:     sub     al, 'B'                 ; 'A' -> 1, 'B' -> 0
+        neg     al
+        ret
+
+; the destination's ^Z (ASCII; none to a device).  CF: SI = e_full
+zend:   call    d_ascii
         or      al, al
         jz      .x
-        call    sw_note
-        inc     si
-        jmp     .l
-.x:     ret
+        mov     bx, [fh2]
+        mov     ax, 4400h
+        int     21h
+        test    dl, 80h
+        jnz     .x
+        mov     byte [zbyte], 1Ah
+        mov     dx, zbyte
+        mov     cx, 1
+        mov     ah, 40h
+        int     21h
+        mov     si, e_full
+        jc      .r
+        dec     ax
+        jz      .x
+        stc
+.r:     ret
+.x:     clc
+        ret
 
-; switch letter AL: /A or /B noted in sw_ab (COPY's), the rest passed over
-sw_note:
-        call    upcase
-        cmp     al, 'A'
-        je      .n
-        cmp     al, 'B'
-        jne     .x
-.n:     mov     [sw_ab], al
+; the end of a concatenation: its ^Z and close; empty (one it made): it
+; deleted, 0; the destination only the first source: "onto itself", or
+; with "+,," its date and time now
+cat_end:
+        mov     al, [dstate]
+        or      al, al
+        jz      .x
+        mov     dx, dst
+        cmp     al, 2
+        je      .kept
+        mov     bx, [fh2]               ; made, or kept and appended to
+        cmp     al, 1
+        jne     .z
+        mov     ax, 4400h               ; (made: empty?  A device never)
+        int     21h
+        test    dl, 80h
+        jnz     .z
+        xor     cx, cx
+        xor     dx, dx
+        mov     ax, 4201h
+        int     21h
+        or      ax, dx
+        jnz     .z
+        mov     ah, 3Eh
+        int     21h
+        mov     dx, dst
+        mov     ah, 41h
+        int     21h
+        jmp     short .x
+.z:     call    zend
+        jnc     .c
+        call    err
+        dec     word [copied]           ; (not whole: 0)
+.c:     inc     word [copied]
+        mov     bx, [fh2]
+        mov     ah, 3Eh
+        int     21h
 .x:     ret
+.kept:  cmp     byte [touch], 0
+        jne     .t
+        mov     si, e_self
+        jmp     err
+.t:     mov     ax, 3D02h               ; "+,,": written, nothing changed,
+        int     21h                     ;  so closed with the date of now
+        jc      .te
+        xchg    bx, ax
+        xor     cx, cx
+        xor     dx, dx
+        mov     ax, 4202h
+        int     21h
+        xor     cx, cx
+        mov     ah, 40h
+        int     21h
+        mov     ah, 3Eh
+        int     21h
+        inc     word [copied]
+        ret
+.te:    mov     si, e_create
+        jmp     err
 
-; copy src (name part at srcname) to its destination.  CF to stop.
+; copy src (name part at srcname) to its destination.  CF to stop (the
+; files closed; in concatenation, the destination as said above)
 copy_one:
         ; destination name
         mov     di, dst
@@ -3427,7 +3624,12 @@ copy_one:
         mov     di, si
         mov     bx, [srcname]
         call    wild_map
-        jmp     .dok
+        cmp     byte [cmode], 0         ; (concatenation: that name for the
+        je      .dok                    ;  whole list, as MS-DOS's)
+        mov     si, dst
+        mov     di, path2
+        call    strcpy
+        jmp     short .dok
 .dplain:
         mov     si, path2
         call    strcpy
@@ -3450,11 +3652,15 @@ copy_one:
         ret
 .cat:   mov     si, src                 ; concatenation, the destination:
         call    puts_nl                 ;  first, kept, the rest after it;
-        cmp     byte [concat], 0        ;  made already, what it held is
-        jne     .lost                   ;  gone, as MS-DOS says
-        mov     byte [concat], 1
-        inc     word [copied]
-        clc
+        mov     al, [dstate]            ;  made already, what it held is
+        cmp     al, 1                   ;  gone, as MS-DOS says
+        je      .lost
+        or      al, al
+        jnz     .ret
+        mov     byte [dstate], 2
+        call    s_ascii
+        mov     [kascii], al
+.ret:   clc
         ret
 .lost:  mov     si, e_dlost
         call    puts_nl
@@ -3476,40 +3682,13 @@ copy_one:
         stc
         ret
 .so:    mov     [fh1], ax
-        ; several files into one file: appended after the first (in
-        ; ASCII, over the ^Z that ended it)
-        cmp     byte [concat], 0
+        cmp     byte [cmode], 0
         je      .new
-        mov     dx, dst
-        mov     ax, 3D02h
-        int     21h
-        jc      .new
-        mov     [fh2], ax
-        xchg    bx, ax
-        xor     cx, cx
-        xor     dx, dx
-        mov     ax, 4202h
-        int     21h
-        cmp     byte [ascii], 0
-        je      .loop
-        or      ax, dx                  ; its last byte a ^Z?
-        jz      .loop
-        mov     cx, 0FFFFh
-        mov     dx, cx
-        mov     ax, 4201h
-        int     21h
-        mov     dx, zbyte
-        mov     cx, 1
-        mov     ah, 3Fh
-        int     21h
-        jc      .loop
-        cmp     byte [zbyte], 1Ah
-        jne     .loop
-        mov     cx, 0FFFFh              ; (back on it: written over)
-        mov     dx, cx
-        mov     ax, 4201h
-        int     21h
-        jmp     .loop
+        mov     al, [dstate]            ; concatenation: the destination
+        cmp     al, 2                   ;  made, kept (opened now: cut at
+        je      .kopen                  ;  its first ^Z in ASCII), or open
+        or      al, al
+        jnz     .apos
 .new:   mov     dx, dst
         xor     cx, cx
         mov     ah, 3Ch
@@ -3521,32 +3700,63 @@ copy_one:
         stc
         ret
 .dop:   mov     [fh2], ax
-        mov     al, [cmode]             ; concatenation: the rest appended;
-        mov     [concat], al            ;  else each its own, replaced
+        cmp     byte [cmode], 0
+        je      .loop
+        mov     byte [dstate], 1
+        jmp     short .apos
+.kopen: mov     dx, dst
+        mov     ax, 3D02h
+        int     21h
+        jnc     .ko
+        call    close1                  ; (never made afresh)
+        mov     si, e_create
+        call    err
+        stc
+        ret
+.ko:    mov     [fh2], ax
+        mov     byte [dstate], 3
+        cmp     byte [kascii], 0
+        jne     .kz
+        mov     bx, ax
+        xor     cx, cx
+        xor     dx, dx
+        mov     ax, 4202h
+        int     21h
+        jmp     short .apos
+.kz:    call    zcut
+        jnc     .apos
+        call    err                     ; (nothing changed in it: closed)
+        call    close2
+        stc
+        ret
+.apos:  mov     bx, [fh2]               ; where this source begins
+        xor     cx, cx
+        xor     dx, dx
+        mov     ax, 4201h
+        int     21h
+        mov     [apos], ax
+        mov     [apos + 2], dx
 .loop:  mov     bx, [fh1]               ; a device's text ends at a ^Z, and
         mov     ax, 4400h               ;  in ASCII a file's
         int     21h
         and     dl, 80h
-        or      dl, [ascii]
+        call    s_ascii
+        or      dl, al
         mov     [zstop], dl
         call    pump
         jc      .err
-        cmp     byte [ascii], 0         ; ASCII: one ^Z at the end
-        je      .dt
-        mov     byte [zbyte], 1Ah
-        mov     bx, [fh2]
-        mov     dx, zbyte
-        mov     cx, 1
-        mov     ah, 40h
-        int     21h
-        mov     si, e_full
-        jc      .err
-        dec     ax
-        jnz     .err
-.dt:    cmp     byte [zstop], 0         ; keep the source's date and time
-        jne     .cl                     ;  (one file's binary copy)
         cmp     byte [cmode], 0
-        jne     .cl
+        je      .one
+        call    close1                  ; (concatenation: the destination
+        clc                             ;  stays open)
+        ret
+.one:   call    zend
+        jc      .err
+        cmp     byte [zstop], 0         ; keep the source's date and time
+        jne     .cl                     ;  (a binary copy)
+        call    d_ascii
+        or      al, al
+        jnz     .cl
         mov     bx, [fh1]
         mov     ax, 5700h
         int     21h
@@ -3559,12 +3769,75 @@ copy_one:
         ret
 .err:   call    err
         mov     byte [crit_q], 0        ; (the partial copy's close and
-        call    close2                  ;  delete ask again: a Retry there
-        mov     dx, dst                 ;  leaves no lost clusters)
-        mov     ah, 41h
+        cmp     byte [cmode], 0         ;  delete ask again: a Retry there
+        je      .del                    ;  leaves no lost clusters)
+        mov     bx, [fh2]               ; concatenation: back to where this
+        mov     dx, [apos]              ;  source began
+        mov     cx, [apos + 2]
+        mov     ax, 4200h
         int     21h
+        xor     cx, cx
+        mov     ah, 40h
+        int     21h
+        cmp     byte [dstate], 1
+        je      .del
+        call    zend                    ; there before: its ^Z back, kept
+        call    close2
+        mov     word [copied], 0
         stc
         ret
+.del:   call    close2
+        mov     dx, dst
+        mov     ah, 41h
+        int     21h
+        cmp     byte [cmode], 0
+        je      .dx
+        mov     word [copied], 0
+.dx:    stc
+        ret
+
+; a kept destination at fh2 (at its start): to its first ^Z, cut there (as
+; MS-DOS reads it in ASCII), or to its end.  CF: SI = what went wrong
+zcut:   xor     ax, ax
+        mov     [apos], ax
+        mov     [apos + 2], ax
+.r:     mov     bx, [fh2]
+        mov     cx, [cb_len]
+        push    ds
+        mov     ds, [cb_seg]
+        xor     dx, dx
+        mov     ah, 3Fh
+        int     21h
+        pop     ds
+        mov     si, e_read
+        jc      .x
+        or      ax, ax                  ; (its end: CF clear)
+        jz      .x
+        mov     cx, ax
+        push    es
+        mov     es, [cb_seg]
+        xor     di, di
+        mov     al, 1Ah
+        push    cx
+        repne   scasb
+        pop     cx
+        pop     es
+        je      .z
+        add     [apos], cx
+        adc     word [apos + 2], 0
+        jmp     .r
+.z:     dec     di
+        add     [apos], di
+        adc     word [apos + 2], 0
+        mov     dx, [apos]
+        mov     cx, [apos + 2]
+        mov     ax, 4200h
+        int     21h
+        xor     cx, cx                  ; (cut there)
+        mov     ah, 40h
+        int     21h
+        mov     si, e_full
+.x:     ret
 
         times   ($ - $$) & 1 db 90h     ; (hot: pump.l even)
 ; pump: [fh1] into [fh2], [cb_len] bytes a read through cb_seg, up to its
@@ -4931,10 +5204,8 @@ getarg_sw:
         cmp     byte [si], '/'
         jne     .a
         inc     si
-        mov     al, [si]
-        or      al, al                  ; ("COPY X /": the end, X14)
-        jz      .a
-        call    sw_note
+        cmp     byte [si], 0            ; ("COPY X /": the end, X14)
+        je      .a
         inc     si
         jmp     getarg_sw
 .a:     push    di
@@ -4947,15 +5218,7 @@ getarg_sw:
         je      .cut
         inc     bx
         jmp     .c
-.cut:   mov     byte [bx], 0            ; (each noted: COPY's /A /B)
-.cn:    inc     bx
-        mov     al, [bx]
-        or      al, al
-        jz      .x
-        cmp     byte [bx-1], '/'
-        jne     .cn
-        call    sw_note
-        jmp     .cn
+.cut:   mov     byte [bx], 0
 .x:     ret
 
 ; AX right-aligned in 2 (space before) / 2 (zero before)
@@ -5086,6 +5349,8 @@ e_dup       db 'Duplicate file name or File not found', 0
 e_access    db 'Access denied', 0
 e_self      db 'File cannot be copied onto itself', 0
 e_dlost     db 'Content of destination lost before copy', 0
+e_plong     db 'Invalid path or file name', 0
+e_pmany     db 'Too many parameters', 0
 e_full      db 'Insufficient disk space', 0
 e_read      db 'Read error', 0
 e_nomem     db 'Insufficient memory', 0
@@ -5173,14 +5438,19 @@ dir_lines   resb 1
 dir_n       resw 1
 pat_drv     resb 1
 dst_dir     resb 1
-concat      resb 1                  ; COPY: the destination made, appended to
+dstate      resb 1                  ; COPY: concatenation's destination: 0 none
+                                    ;  yet, 1 made (open), 2 the first source
+                                    ;  (kept), 3 that, open
 cmode       resb 1                  ;  concatenation
-ascii       resb 1                  ;  ASCII (up to ^Z, one added)
 plus        resb 1                  ;  a "+" list
-sw_ab       resb 1                  ;  /A or /B: the last given
+smode       resb 1                  ;  the sources' /A or /B so far
+dsw         resb 1                  ;  the destination's
+kascii      resb 1                  ;  the kept one read as ASCII
+touch       resb 1                  ;  "+,,"
 zbyte       resb 1
 pnext       resw 1                  ;  the list's next source
-plist       resb 80                 ;  the list
+apos        resw 2                  ;  where this source began in it
+plist       resb LBUF + 2           ;  the list
 copied      resw 1
 srcname     resw 1
 fh1         resw 1
