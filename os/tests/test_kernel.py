@@ -1690,12 +1690,12 @@ def t_devname():
         check('... each device opened is the one named, GPIBnn at address nn (%d opens)' % len(wdevs), devs == wdevs, devs)
 
 def t_fcbnames():
-    """Names as MS-DOS keeps them (NAMES.COM): a first E5h made as 05h on the disk and given back as E5h, a space
+    """Names as MS-DOS keeps them (FCBNAMES.COM): a first E5h made as 05h on the disk and given back as E5h, a space
     inside a name made, opened and found; FCB FIND FIRST/NEXT (11h, 12h): the label's 11 bytes through an extended
     FCB (from a subdirectory: the root's), files through a plain one; and 47h's answer in its 64 bytes."""
-    com = os.path.join(OUT, 'NAMES.COM')
-    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'NAMES.ASM')], check=True)
-    p = image('names.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'NAMES.COM=' + com, 'SUB\\')
+    com = os.path.join(OUT, 'FCBNAMES.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'FCBNAMES.ASM')], check=True)
+    p = image('fcbnames.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'FCBNAMES.COM=' + com, 'SUB\\')
     img = bytearray(open(p, 'rb').read())
     at = next(19 * 512 + i for i in range(0, 224 * 32, 32) if img[19 * 512 + i + 11] == 8)
     img[at:at + 11] = b'V1.0  X    '                         # (another system's: a dot, spaces inside)
@@ -1703,7 +1703,7 @@ def t_fcbnames():
     k = ktest.KPC(p); k.start()
     sh = Shell(k)
     sh.run('cd sub')
-    sh.run('names c > \\n.out')
+    sh.run('fcbnames c > \\n.out')
     d = bytes(k.pc.drives[0].img)
     o = fatcheck.read_files(d).get('A:\\N.OUT', b'').decode('latin-1').replace('\r', '')
     check('a first E5h (CREATE, then OPEN): made and opened again', 'M \xe5ABC.TXT ok\n' in o, o)
@@ -1721,7 +1721,7 @@ def t_fcbnames():
     sh.run('cd \\')
     for c in ('AAAAAAAA', 'BBBBBBBB', 'CCCCCCCC', 'DDDDDDDD', 'EEEEEEEE', 'FFFFFFFF', 'GGGGGG', 'HH'):
         sh.run('md ' + c); sh.run('cd ' + c)
-    o = sh.run('names w')
+    o = sh.run('fcbnames w')
     check('47h in the deepest directory: 63 characters and the NUL, its 64-byte buffer\'s next byte untouched',
           'W 63 G' in o, o)
 
