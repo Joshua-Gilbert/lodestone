@@ -2491,6 +2491,9 @@ s_bs    db 8, ' ', 8, '$'
 s_cr    db 13, '$'
 s_crlf  db 13, 10, '$'
 
+section .bss                            ; (ATAIO.INC's variables in the
+bss_start:                              ;  cleared part)
+section .text
 %include "ATAIO.INC"
 
         alignb 2
@@ -2498,7 +2501,6 @@ bootbin incbin "BOOT.BIN"
 
         alignb 2
 section .bss
-bss_start:
 unit    resb 1
 dkind   resb 1
 sys     resb 1

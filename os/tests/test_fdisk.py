@@ -183,6 +183,57 @@ def t_answers():
     o = run(k, 'fdisk /status')
     check('no hard disk: "no hard disk answers", exit 1', 'no hard disk answers' in o and said(o, 'E1'), o)
 
+def t_review():
+    # the review panel's findings, each held to
+    d = bytearray(CYL * HS * 512)
+    m = bytearray(F.mbr([(0x00, 0x83, 100 * HS, (1 << 32) - 100 * HS + 5 * HS)], CYL, HEADS, SPT))   # (its end past 2^32)
+    d[0:512] = m
+    a = ata(d)
+    k = boot(a)
+    o = run(k, 'fdisk /pri')
+    q = parts(a.disk)[0][1]
+    check('an entry whose end runs past 2^32 sectors: it blocks all it might hold; the DOS partition only before it',
+          'DOS partition created' in o and q[2] == 0x04 and q[4] == SPT and q[4] + q[5] == 100 * HS, (o, q))
+    a = ata(badw=(0,))                                  # sector 0 won't take a write
+    k = boot(a)
+    o = run(k, 'fdisk', '1', 'Y', '4', 'ESC')
+    a.badw = set()
+    o2 = run(k, 'fdisk', '2', '1', 'ESC')
+    check('a write that fails: said, the table in memory as the disk has it (nothing listed, nothing written later)',
+          'could not be written' in o and '(no partitions)' in o and parts(a.disk)[0][0][2] == 0, (o, o2))
+    a = ata()
+    k = boot(a)
+    run(k, 'fdisk', '1', 'Y', '3', '1', 'Y', '1', 'N', '10', 'ESC')
+    p, m = parts(a.disk)
+    check('Y, delete, then N and a size: the new one not active (the first\'s Y not kept)',
+          p[0][2] == 0x04 and p[0][0] == 0, p[0])
+    k.pc.tty.clear()
+    k.key('fdisk'); k.key(ktest.ENTER)
+    k.key(0x4800); k.key(0x3B00); k.key('4'); k.key(ktest.ENTER); k.key(chr(27)); k.settle(20)
+    o = out(k)
+    check('an arrow or function key at a question types nothing (only 4 counts)', 'Enter choice (Esc: the end): 4' in o
+          and 'Partition  Status' in o, o)
+    a = ata()
+    k = boot(a)
+    k.pc.pic2_mask = 0x3F
+    run(k, 'fdisk /status'); run(k, 'fdisk /x')
+    m1 = k.pc.pic2_mask
+    run(k, 'format a: /x')
+    check('the second PIC\'s mask as it was after FDISK (and FORMAT), whatever their memory held before', m1 == 0x3F
+          and k.pc.pic2_mask == 0x3F, (hex(m1), hex(k.pc.pic2_mask)))
+    f = F.Fat(CYL * HS - SPT, 4, SPT, True, label='OLD', spt=SPT, heads=HEADS)
+    f.finish(f.tree([('A.TXT', 0x20, b'a' * 900)]))
+    a = ata(F.disk(CYL, HEADS, SPT, SPT, f))
+    p = os.path.join(OUT, 'DEL.TXT'); open(p, 'wb').write(b'3\r\n1\r\nY\r\n\x1b')
+    k = boot(a, extra=(p,))
+    k.pc.tty.clear()
+    k.key('fdisk < del.txt > log.txt'); k.key(ktest.ENTER)
+    k.pc.run_for(8); k.settle(20)
+    import fatcheck
+    log = fatcheck.read_files(bytes(k.pc.drives[0].img)).get('A:\\LOG.TXT', b'')
+    check('a change under C: with the output in a file: the file whole after the restart (its size written first)',
+          b'restarts now' in log and b'DOS partition deleted' in log, log[-200:])
+
 def t_mt():
     import test_mt as M
     from test_kernel import Shell
@@ -197,7 +248,7 @@ def t_mt():
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_blank, t_size, t_others, t_under_c, t_answers, t_mt):
+    for t in (t_blank, t_size, t_others, t_under_c, t_answers, t_review, t_mt):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
