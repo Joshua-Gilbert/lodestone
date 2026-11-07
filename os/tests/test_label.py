@@ -1,0 +1,193 @@
+"""LABEL.COM in the emulator, from the command prompt: a floppy's label
+shown, set at the question and on the command line, replaced, deleted
+(Y/N), the root entry and the boot sector's label (DOS 4's BPB) as they
+should be and the kernel's VOL showing it at once, the current directory
+on that drive kept, a DOS 3 disk (no extended BPB: its boot sector left
+alone), a full root, a write-protected disk, a disk changed at the
+question, C: (through INT 25h/26h), multitasking, and what it refuses.
+
+    python3 tests/test_label.py [name ...]
+"""
+import os, struct, subprocess, sys, tempfile, time
+HERE = os.path.dirname(os.path.abspath(__file__))
+GOS = os.path.dirname(HERE)
+sys.path.insert(0, GOS); sys.path.insert(0, HERE)
+import ktest, mkimg, pcemu, fatcheck, fat16img as F
+
+OUT = tempfile.mkdtemp()
+SRC = os.path.join(GOS, 'src')
+results = []
+def check(name, cond, detail=''):
+    results.append((name, bool(cond)))
+    print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:1500]) if detail and not cond else ''))
+
+def said(o, line): return any(l.strip() == line for l in o.split('\n'))
+def out(k): return ''.join(k.pc.tty).replace('\r', '')
+
+def boot(b=None, **kw):
+    img = mkimg.build(os.path.join(OUT, 'a.img'), [os.path.join(SRC, f) for f in ('LODE.SYS', 'LCMD.COM', 'LABEL.COM')])
+    k = ktest.KPC(img, b, **kw)
+    k.start(); k.code_p()
+    return k
+
+def disk(name='b.img', files=('SUB\\',)):
+    return mkimg.build(os.path.join(OUT, name), [os.path.join(SRC, 'LCMD.COM')] + list(files))
+
+def run(k, line, answers=(), sim=30):
+    """line at the prompt, each answer then Enter at its question -> what it printed, and E0/E1/E3"""
+    k.pc.tty.clear()
+    k.key(line); k.key(ktest.ENTER, settle=False)
+    for a in answers:
+        n = out(k).count('?')
+        k.pc.run_until(lambda: out(k).count('?') > n, 20)
+        if a is None: continue
+        if a: k.key(a, settle=False)
+        if a not in (chr(27),): k.key(ktest.ENTER, settle=False)
+    k.settle(sim)
+    o = out(k)
+    for n in (1, 2, 3):
+        k.key('if errorlevel %d echo L%d' % (n, n)); k.key(ktest.ENTER)
+    lv = max([n for n in (1, 2, 3) if said(out(k)[len(o):], 'L%d' % n)] or [0])
+    return o + '\nE%d\n' % lv
+
+def root_label(img, rootsec=19, n=14):
+    for i in range(0, n * 512, 32):
+        e = img[rootsec * 512 + i:rootsec * 512 + i + 32]
+        if e[0] == 0: return None
+        if e[0] != 0xE5 and e[11] != 0x0F and e[11] & 8: return e
+    return None
+
+def t_floppy():
+    k = boot(disk())
+    o = run(k, 'label b:', ['newlab'])
+    img = bytes(k.pc.drives[1].img)
+    e = root_label(img)
+    check('LABEL B:: the label and serial shown, the question; the new one in the root (attribute 08h) and the '
+          'boot sector, exit code 0', 'Volume in drive B is LODESTONE' in o and 'Serial Number is' in o
+          and '(11 characters, ENTER for none)?' in o and said(o, 'E0') and e and e[0:11] == b'NEWLAB     '
+          and e[11] == 8 and img[0x2B:0x36] == b'NEWLAB     ' and fatcheck.check(img)[0] == [], (o, e))
+    o = run(k, 'vol b:')
+    check('... the kernel\'s VOL shows it at once', 'Volume in drive B is NEWLAB' in o, o)
+    run(k, 'cd b:\\sub')
+    o = run(k, 'label b:hello world')
+    run(k, 'dir b:')                                    # (the disk read: mounted afresh, the new BPB label)
+    o2 = run(k, 'cd b:')
+    img = bytes(k.pc.drives[1].img)
+    check('LABEL B:HELLO WORLD (on the command line, a space in it): replaces it, in the same entry; B:\'s current '
+          'directory kept (B:\\SUB)', said(o, 'E0') and root_label(img)[0:11] == b'HELLO WORLD' and img[0x2B:0x36] == b'HELLO WORLD'
+          and sum(1 for i in range(0, 14 * 512, 32) if img[19 * 512 + i + 11] == 8 and img[19 * 512 + i] not in (0, 0xE5)) == 1
+          and 'B:\\SUB' in o2, (o, o2))
+    raw = bytes(k.pc.drives[1].img)
+    o = run(k, 'label b:', ['', 'n'])
+    check('Enter alone, then N at "Delete current volume label (Y/N)?": nothing written, exit code 0',
+          'Delete current volume label (Y/N)?' in o and said(o, 'E0') and bytes(k.pc.drives[1].img) == raw, o)
+    o = run(k, 'label b:', ['', 'y'])
+    img = bytes(k.pc.drives[1].img)
+    check('... Y: the label deleted, the boot sector\'s NO NAME', said(o, 'E0') and root_label(img) is None
+          and img[0x2B:0x36] == b'NO NAME    ', o)
+    o = run(k, 'vol b:')
+    check('... VOL: no label', 'has no label' in o, o)
+    raw = bytes(k.pc.drives[1].img)
+    o = run(k, 'label b:', [''])
+    check('no label, Enter alone: nothing to do, nothing written', said(o, 'E0') and 'has no label' in o
+          and bytes(k.pc.drives[1].img) == raw and 'Delete' not in o, o)
+    o = run(k, 'label b:', ['a.b', 'ok'])
+    check('a label with a "." at the question: "Invalid characters", asked again', 'Invalid characters' in o
+          and root_label(bytes(k.pc.drives[1].img))[0:11] == b'OK         ', o)
+    o = run(k, 'label b:', ['', chr(27)])
+    check('Esc at the Y/N question: exit code 3, the label as it was', said(o, 'E3')
+          and root_label(bytes(k.pc.drives[1].img))[0:11] == b'OK         ', o)
+
+def t_dos3():
+    p = disk('d3.img')
+    img = bytearray(open(p, 'rb').read())
+    img[0x24:0x3E] = bytes(0x1A)                             # (DOS 3's BPB: nothing after 1Dh)
+    for i in range(0, 14 * 512, 32):                         # (and no label in the root)
+        if img[19 * 512 + i + 11] == 8: img[19 * 512 + i] = 0xE5
+    open(p, 'wb').write(img)
+    k = boot(p)
+    raw = bytes(k.pc.drives[1].img)
+    o = run(k, 'label b:dosthree')
+    img = bytes(k.pc.drives[1].img)
+    check('a DOS 3 disk (no extended BPB): the label in the root only, its boot sector as it was, no serial shown',
+          said(o, 'E0') and root_label(img)[0:11] == b'DOSTHREE   ' and img[:512] == raw[:512], o)
+    o = run(k, 'label b:')
+    check('... shown (no serial number)', 'Volume in drive B is DOSTHREE' in o and 'Serial' not in o, o)
+
+def t_full():
+    f = F.Fat(2880, 1, 0, False, rootents=224, spt=18, heads=2)
+    f.finish(f.tree([('F%03d.TXT' % i, 0x20, b'') for i in range(224)]))
+    p = os.path.join(OUT, 'full.img'); open(p, 'wb').write(f.img)
+    k = boot(p)
+    raw = bytes(k.pc.drives[1].img)
+    o = run(k, 'label b:full')
+    check('no label and the root full: "no room for a label", exit code 1, nothing written',
+          'no room for a label' in o and said(o, 'E1') and bytes(k.pc.drives[1].img) == raw, o)
+
+def t_wp_changed():
+    k = boot(disk())
+    k.pc.drives[1].wp = True; raw = bytes(k.pc.drives[1].img)
+    o = run(k, 'label b:x')
+    check('write-protected: "Write protect error", exit code 1, nothing written',
+          'Write protect error' in o and said(o, 'E1') and bytes(k.pc.drives[1].img) == raw, o)
+    k = boot(disk())
+    other = pcemu.Floppy(open(disk('o.img', ('OTHER\\',)), 'rb').read())
+    raw2 = bytes(other.img)
+    k.pc.tty.clear()
+    k.key('label b:'); k.key(ktest.ENTER, settle=False)
+    k.pc.run_until(lambda: 'ENTER for none)?' in out(k), 20)
+    other.changed = True; k.pc.drives[1] = other           # another disk in, at the question
+    k.key('mine'); k.key(ktest.ENTER, settle=False); k.settle(20)
+    o = out(k)
+    check('the disk changed at the question: "The disk was changed", the other disk untouched',
+          'The disk was changed' in o and bytes(other.img) == raw2, o)
+    k = boot(disk())
+    k.pc.drives[1].no_changeline = True                    # (a drive that always says "changed")
+    o = run(k, 'label b:same')
+    check('... a drive without a change line: the same disk known by its boot sector and root, the label written',
+          said(o, 'E0') and root_label(bytes(k.pc.drives[1].img))[0:11] == b'SAME       ', o)
+
+def t_hd():
+    fat = F.Fat(100 * 4 * 17 - 17, 1, 17, True, label='HDISK', spt=17, heads=4)
+    fat.finish(fat.tree([('HDISK', 0x08, None), ('A.TXT', 0x20, b'hello\r\n' * 30)]))
+    d = F.disk(100, 4, 17, 17, fat)
+    ata = pcemu.Ata(cyls=100, heads=4, spt=17, disk=d)
+    k = boot(ata=ata)
+    o = run(k, 'label c:', ['harddisk'])
+    v = F.Volume(ata.disk, 17)
+    files, probs = v.files()
+    b = v.sec(0)
+    check('LABEL C: (through INT 25h/26h): shown, set; the root entry and the boot sector\'s label; the partition consistent',
+          'Volume in drive C is HDISK' in o and said(o, 'E0') and v.sec(v.root)[0:11] == b'HARDDISK   '
+          and b[0x2B:0x36] == b'HARDDISK   ' and probs == [] and files.get('\\A.TXT') == b'hello\r\n' * 30, (o, probs))
+    o = run(k, 'vol c:')
+    check('... VOL C: shows it at once', 'Volume in drive C is HARDDISK' in o, o)
+
+def t_refused():
+    k = boot(ems_pages=88)
+    for line, want in (('label m:', 'temporary disk'), ('label r:', 'the ROM'), ('label q:', 'Invalid drive'),
+                       ('label b:', 'Invalid drive'), ('label c:', 'Invalid drive'), ('label a:twelve-chars', 'Invalid characters'),
+                       ('label a:a*b', 'Invalid characters')):
+        o = run(k, line)
+        check('%s: "%s", exit code 1' % (line.upper(), want), want in o and said(o, 'E1'), o)
+
+def t_mt():
+    import test_mt as M
+    from test_kernel import Shell
+    b = disk('mt.img')
+    k = M.boot('mtlab.img', b'MULTITASK=1\r\n', 88, os.path.join(SRC, 'LABEL.COM'), b=b)
+    raw = bytes(k.pc.drives[1].img)
+    sh = Shell(k)
+    sh.run('start /w label.com b:x > o.txt'); k.run_for(10)
+    o = sh.run('type o.txt')
+    check('with multitasking, LABEL run as a task: refused ("other tasks are running"), nothing written',
+          'other tasks are running' in o and bytes(k.pc.drives[1].img) == raw, o)
+
+if __name__ == '__main__':
+    t0 = time.time()
+    names = sys.argv[1:]
+    for t in (t_floppy, t_dos3, t_full, t_wp_changed, t_hd, t_refused, t_mt):
+        if not names or t.__name__[2:] in names: t()
+    bad = [n for n, ok in results if not ok]
+    print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
+    sys.exit(1 if bad else 0)
