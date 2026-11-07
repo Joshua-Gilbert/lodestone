@@ -252,7 +252,9 @@ def t_system():
 # than 0.4.2 and 0.4.3, for the coprocessor lamp and the calculator's key
 # (test_apps.t_memory).  0.4.2's LODE.SYS can't be run here any more: the
 # Executive's layout moved, and ktest drives it by the new LODE.MAP.
-MEM_044 = {0: '564.6', 88: '580.7'}   # (1.0, a menu's keys in their column: 16 bytes, 0.1 KB less with no EMS;
+MEM_044 = {0: '564.2', 88: '580.3'}   # (MS-DOS's FCB search for the label, its names and its CHDIR, the
+                                      #  Executive's whole names: 0.4 KB less, 2026-11-07;
+                                      #  1.0, a menu's keys in their column: 16 bytes, 0.1 KB less with no EMS;
                                       #  a program's modes on the Executive's menu: 0.2 / 0.3 KB less;
                                       #  the Executive's right-click menu: 0.6 / 0.5 KB less;
                                       #  M12: 0.1 KB less with EMS, INT 21h F007h (the hard disk's name for System);
