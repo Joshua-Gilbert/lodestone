@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build Lodestone: boot sector, installer, kernel (with listing and symbol
-# map), the start-up picture LODE.PIC, LCMD.COM (the shell), FORMAT.COM, DEFRAG.COM, HEADCLN.COM, CALC.COM, the .RUN programs
+# map), the start-up picture LODE.PIC, LCMD.COM (the shell), FORMAT.COM, CHKDSK.COM, DEFRAG.COM, HEADCLN.COM, CALC.COM, the .RUN programs
 # (apps/, with mkrun.py), the font files (fonts/), the printer drivers (drivers/), the test programs and BENCH.  Then:
 # python3 tests/test_kernel.py, tests/test_apps.py, and bench/run_bench.py ROM-image.  (On Windows: under
 # WSL.  The BUILD.BAT files were retired by the 2026-10-26 audit's H13: they had fallen behind and made
@@ -14,6 +14,7 @@ sh ../kbuild.sh                 # the kernel: LODE.SYS, LODE.MAP, LODE.LST, LODE
 nasm -f bin -o LODE.PIC SPLASH.ASM
 nasm -f bin -o LCMD.COM LCMD.ASM
 nasm -f bin -o FORMAT.COM FORMAT.ASM    # (BOOT.BIN in it)
+nasm -f bin -o CHKDSK.COM CHKDSK.ASM
 nasm -f bin -o DEFRAG.COM DEFRAG.ASM
 nasm -f bin -o HEADCLN.COM HEADCLN.ASM
 nasm -f bin -o CALC.COM CALC.ASM
@@ -47,4 +48,4 @@ cd ../bench
 nasm -f bin -o BENCH.COM BENCH.ASM
 nasm -f bin -o DISKMAP.COM DISKMAP.ASM
 cd ..
-ls -l LODE1.BIN LODE1_EPROM.BIN LODE2.BIN LODE2_EPROM.BIN apps/*.RUN fonts/*.FNT src/BOOT.BIN src/LODEBOOT.COM src/LODE.SYS src/LODE.PIC src/LCMD.COM src/FORMAT.COM src/DEFRAG.COM src/HEADCLN.COM src/CALC.COM tests/TESTDOS.COM tests/UPPER.COM tests/CACHETST.COM tests/EMSTEST.COM tests/CAPTEST.COM tests/HDFLUSH.COM tests/HDABS.COM bench/BENCH.COM bench/DISKMAP.COM
+ls -l LODE1.BIN LODE1_EPROM.BIN LODE2.BIN LODE2_EPROM.BIN apps/*.RUN fonts/*.FNT src/BOOT.BIN src/LODEBOOT.COM src/LODE.SYS src/LODE.PIC src/LCMD.COM src/FORMAT.COM src/CHKDSK.COM src/DEFRAG.COM src/HEADCLN.COM src/CALC.COM tests/TESTDOS.COM tests/UPPER.COM tests/CACHETST.COM tests/EMSTEST.COM tests/CAPTEST.COM tests/HDFLUSH.COM tests/HDABS.COM bench/BENCH.COM bench/DISKMAP.COM

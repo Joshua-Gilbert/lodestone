@@ -77,6 +77,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 
 **Tools**
 - **`FORMAT`:** formats a floppy in A: or B:, as DOS 3.30's FORMAT: 1.44 MB or 720 KB in the 1520's drive (360 KB and 1.2 MB in a 5¼-inch one), each track verified and bad sectors fenced off. `/S` makes it start Lodestone (the system read before the new disk goes in, so it works with one drive), `/V` gives it a label, `/Q` is a quick format of a disk formatted before. Every disk gets Lodestone's boot sector. It isn't on the ROMs: started from the ROM, copy `FORMAT.COM` to `C:\LODE` (on the `PATH`).
+- **`CHKDSK`:** checks a disk's file system as DOS 3.30's CHKDSK: A:, B:, C: or M:. Every chain is followed from its directory entry: cross links, chains into free or impossible clusters, loops, sizes that don't match, a subdirectory's `.` and `..`, the two FATs, lost clusters. `/F` writes the corrections (lost chains become `FILE0000.CHK`, ...; not on M:), `/V` lists the files. ERRORLEVEL 0 clean, 1 errors found, 2 couldn't check.
 - **`DEFRAG`:** defragments a floppy or C:. A power cut during any of its writes leaves the old file or the new one, never a damaged one. `DEFRAG /T` tests every free sector and fences off bad ones.
 - **`HDPROBE` and `HDSCAN`:** diagnose an internal hard disk read-only, and can free a sticky Conner. They drive the disk themselves, so with multitasking on they run only with no other task there.
 - **The rest:** BENCH, GRIDPROBE and others are in `tools/` and `os/bench/`.
@@ -154,7 +155,7 @@ See `docs/lodestone-floppy-dev.md`.
 
 | Folder | What |
 |---|---|
-| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `FORMAT.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
+| `os/src` | The OS, in NASM: the boot sector (`BOOT.ASM`), the ROM's boot sector (`ROMBOOT.ASM`), `KROM.INC` (R:, the ROM drive, and booting from the ROM), `LODEBOOT.COM` (installs it), the kernel (`LODE.ASM` + `K*.INC`: `KEMS.INC` the EMS manager, `KHD.INC` the hard disk, `KMDISK.INC` the RAM disk M:, `KGPIB.INC` GPIB, `KSPLASH.INC` the start-up picture's bootstrap), `SPLASH.ASM` (`LODE.PIC`, the picture), the UI core (`UICORE.INC`, its API in `UIAPI.INC`) and the Executive (`EXEC.INC`), the shell `LCMD.COM`, `FORMAT.COM`, `CHKDSK.COM`, `DEFRAG.COM`, `HEADCLN.COM` (drive head cleaning with a wet cleaning disk), `CALC.COM` (the calculator at the prompt; its engine `CALC.INC`, and `FPU.INC`, which coprocessor) |
 | `os/splash` | The start-up picture's source: the source image, `trace.txt` (the stone's outline and the nails, editable), `trace.py` (how they were traced), `mksplash.py` (packs them into `src/SPLASH.INC` and draws the picture the tests compare the GRiD's screen with, bit for bit) |
 | `os/rom` | `LODE.INI`, the settings burned into the ROM. The ROM images are `os/LODE1_EPROM.BIN` and `os/LODE2_EPROM.BIN` (to burn) and `os/LODE1.BIN` and `os/LODE2.BIN` (as the BIOS sees them), built by `os/build.sh` with `tools/mkrom.py` |
 | `os/apps` | Programs on the UI core (`.RUN`, built with `os/mkrun.py`): `SYSTEM.RUN`, `WRITE.RUN`, `CALC.RUN` (the calculator's window), `TASKS.RUN` (the tasks, CODE-T), `PAINT.RUN` (Paint, and the BMP viewer) and `TERM.RUN` (a text program's terminal window, with `MULTITASK=1`) |
@@ -211,7 +212,7 @@ See `docs/serial-link.md`. `os/tests/test_serial_kernel.py` builds it and checks
 
 ## Tests (emulator)
 
-The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,606 checks pass (the 16 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
+The tests run Lodestone in `pcemu`, a BIOS-level PC emulator (unicorn) with the 1520's drive timing, display mode, 7210 GPIB chip, EMS, IDE drive and ROM sockets. They need Python 3, `unicorn` 2.x and mtools. All 2,656 checks pass (the 17 suites in `os/tests`); claude-link's own tests are in `claude-link/tests`.
 
 ```sh
 cd os
@@ -230,6 +231,7 @@ python3 tests/test_hdprobe.py         # HDPROBE
 python3 tests/test_hdscan.py          # HDSCAN
 python3 tests/test_headcln.py         # HEADCLN
 python3 tests/test_format.py          # FORMAT: sizes, bad sectors, /Q, /S, the kernel seeing the new disk
+python3 tests/test_chkdsk.py          # CHKDSK: damaged disks found and put right, floppies, C:, M:
 python3 tests/test_modemid.py         # MODEMID, against no modem, Option 330 and Option 331
 python3 tests/test_serial_kernel.py   # the -dSERIAL kernel: its link driver, SERLINK=, the GPIB build untouched
 python3 tests/defrag_cut.py 2         # a power cut at every DEFRAG write (~20 min; "2 hd" for C:)
@@ -247,7 +249,7 @@ Some checks need the GRiD MS-DOS EPROM image (`GRID_ROM=…`, or `rom/GRID_MSDOS
 
 Release notes are in `os/releases/`, and each part's design and history is in `docs/`.
 
-Multitasking works on the 1520, tasks running from its hard disk included, and so do Paint in a window and resident Claude reading the program's screen in the background (CLAUDE 1.11) and drawing the mascot in its console (1.12). Pipes from the ROM work there too, with a hard disk. Built since 0.6 and not yet tried there: the ROM's `TEMP=M:\` (which applies only without a hard disk), SysReq as the task switcher, and FORMAT.
+Multitasking works on the 1520, tasks running from its hard disk included, and so do Paint in a window and resident Claude reading the program's screen in the background (CLAUDE 1.11) and drawing the mascot in its console (1.12). Pipes from the ROM work there too, with a hard disk. Built since 0.6 and not yet tried there: the ROM's `TEMP=M:\` (which applies only without a hard disk), SysReq as the task switcher, FORMAT and CHKDSK.
 
 **Next:**
 - **On the 1520:** the list above tried on the machine, and what it finds fixed.
