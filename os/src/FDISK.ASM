@@ -129,8 +129,10 @@ menu:   mov     dx, s_menu
 ; the end: a restart if the kernel's C: is no longer what it was
 done:   cmp     byte [changed], 0
         je      .x
-        cmp     byte [hasc], 0
-        jne     .rs
+        cmp     byte [cgone], 0         ; the kernel's C: changed under it:
+        jne     .rs                     ;  a restart (the active flag alone:
+        cmp     byte [hasc], 0          ;  no, the kernel never reads it)
+        jne     .x
         mov     dx, s_next              ; "FORMAT C: next, then restart"
         call    print
 .x:     call    irq_back
@@ -139,6 +141,11 @@ done:   cmp     byte [changed], 0
         int     21h
 .rs:    mov     dx, s_rest              ; "Lodestone restarts now"
         call    print
+        cmp     byte [made], 0          ; (a new one made: FORMAT C: after)
+        je      .rs2
+        mov     dx, s_rest2
+        call    print
+.rs2:
         xor     bx, bx                  ; every open handle's directory
 .cm:    mov     ah, 68h                 ;  entry written (a redirected
         int     21h                     ;  output's size), then the FAT
@@ -179,11 +186,7 @@ fail:   call    print
 ctrlc:  push    cs
         pop     ds
         cmp     byte [changed], 0       ; (a change made: as at the end)
-        je      .x
-        cmp     byte [hasc], 0
-        jne     done.rs
-        mov     dx, s_next
-        call    print
+        jne     done
 .x:     call    irq_back
         mov     ax, 4C03h
         int     21h
@@ -633,6 +636,7 @@ create: mov     byte [act], 0
         call    chs
         call    wr_mbr
         jc      .no
+        mov     byte [made], 1
         mov     dx, s_made
         call    print
         clc
@@ -863,13 +867,24 @@ delete: call    show
         call    is_dos
         mov     dx, s_notdos
         jne     .no
-        mov     dx, s_qsure             ; "Its data will be lost. Delete
-        call    print                   ;  it (Y/N)?"
+        mov     byte [cnow], 0
+        mov     dx, s_qsure             ; "The data in it will be lost.
+        mov     bl, [ent_n]             ;  Delete it (Y/N)?" (the kernel's
+        call    is_c                    ;  C:: a restart too, said before
+        jne     .q                      ;  the answer)
+        cmp     byte [hasc], 0
+        je      .q
+        mov     dx, s_qrest
+.q:     call    print
         call    getyn
         jc      .back
         cmp     al, 'Y'
         jne     .back
-        push    si
+        mov     bl, [ent_n]
+        call    is_c
+        jne     .z
+        mov     byte [cnow], 1          ; (it is C:'s: set once written)
+.z:     push    si
         mov     di, si
         mov     cx, 8
         xor     ax, ax
@@ -877,6 +892,8 @@ delete: call    show
         pop     si
         call    wr_mbr
         jc      .x
+        mov     al, [cnow]              ; C:'s gone
+        or      [cgone], al
         mov     dx, s_deld
         call    print
 .back:  clc
@@ -895,6 +912,7 @@ pick:   call    print
         ja      .bad
         cmp     byte [line+1], 0
         jne     .bad
+        mov     [ent_n], al
         call    ent
         clc
         ret
@@ -1088,6 +1106,10 @@ s_hasdos db 'There is a DOS partition already (delete it first)', 13, 10, '$'
 s_nofree db 'No partition table entry is free', 13, 10, '$'
 s_nospace db 'No room for a DOS partition (3 MB at least)', 13, 10, '$'
 s_next  db 13, 10, 'The partition table is written.  FORMAT C: next, then restart Lodestone.', 13, 10, '$'
+s_qrest db 'The data in it will be lost, and as it is C:, Lodestone restarts when', 13, 10
+        db 'FDISK ends: work not saved in Write, Paint or another program is lost.', 13, 10
+        db 'Delete it (Y/N)? $'
+s_rest2 db 'Then FORMAT C: (the new DOS partition), and restart again.', 13, 10, '$'
 s_rest  db 13, 10, 'The partition table has changed under C:: Lodestone restarts now.', 13, 10, '$'
 s_badsw db 'Invalid parameter (FDISK, FDISK /STATUS, FDISK /PRI[:mb])', 13, 10, '$'
 s_notlode db 'FDISK: needs Lodestone', 13, 10, '$'
@@ -1115,6 +1137,10 @@ result  resb 1
 shown   resb 1
 slot    resb 1
 act     resb 1
+cgone   resb 1
+cnow    resb 1
+made    resb 1
+ent_n   resb 1
 gi      resb 1
         alignb 2
 primb   resw 1

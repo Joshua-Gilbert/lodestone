@@ -161,6 +161,29 @@ def t_under_c():
     check('the DOS partition deleted under the kernel\'s C:: Lodestone restarts, and then has no C:',
           'A        TXT' in o0 and 'restarts now' in o and parts(a.disk)[0][0][2] == 0 and 'Invalid drive' in o2, (o, o2))
 
+def t_active_c():
+    f = F.Fat(CYL * HS - SPT, 4, SPT, True, label='OLD', spt=SPT, heads=HEADS)
+    f.finish(f.tree([('A.TXT', 0x20, b'a' * 900)]))
+    a = ata(F.disk(CYL, HEADS, SPT, SPT, f))
+    k = boot(a)
+    o = run(k, 'fdisk', '2', '1', 'ESC')
+    o2 = run(k, 'dir c:')
+    check('the active partition set under the kernel\'s C: (it never reads the flag): no restart, C: used on',
+          'Active partition set' in o and 'restarts' not in o and 'A        TXT' in o2, (o, o2))
+    k.pc.tty.clear()
+    k.key('fdisk'); k.key(ktest.ENTER)
+    for x in ('3', '1'): k.key(x); k.key(ktest.ENTER)
+    k.settle(10)
+    o = out(k)
+    check('deleting C:\'s partition: the question says Lodestone will restart, before the answer',
+          'as it is C:, Lodestone restarts' in o and 'Delete it (Y/N)?' in o, o)
+    for x in ('Y', '1', 'Y'): k.key(x); k.key(ktest.ENTER)
+    k.key(chr(27))
+    k.pc.run_until(lambda: 'restarts now' in out(k), 30)
+    o = out(k)
+    check('... deleted and a new one made in the same run: the restart says FORMAT C: comes next',
+          'restarts now' in o and 'Then FORMAT C:' in o, o[-400:])
+
 def t_answers():
     p = os.path.join(OUT, 'ANS.TXT'); open(p, 'wb').write(b'1\r\nY\r\n\x1b')
     a = ata()
@@ -248,7 +271,7 @@ def t_mt():
 if __name__ == '__main__':
     t0 = time.time()
     names = sys.argv[1:]
-    for t in (t_blank, t_size, t_others, t_under_c, t_answers, t_review, t_mt):
+    for t in (t_blank, t_size, t_others, t_under_c, t_active_c, t_answers, t_review, t_mt):
         if not names or t.__name__[2:] in names: t()
     bad = [n for n, ok in results if not ok]
     print('\n%d checks, %d failed%s   (%.0f s)' % (len(results), len(bad), (': ' + '; '.join(bad)) if bad else '', time.time() - t0))
