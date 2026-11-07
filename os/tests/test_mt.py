@@ -64,10 +64,12 @@ MTKL = os.path.join(HERE, 'MTKILL.COM')
 # With the switch off these must not move (main with UI API 6, PrtSc's printing and the audit's kernel
 # and UI batches, then its medium-risk kernel and UI batches): the kernel's image and BSS, the UI block
 # kept while a DOS program runs.  (LODE.ASM's parity pads move the kernel in steps of 0 or 2 bytes for a change
-# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (2 bytes after 40FDh on
-# 2026-11-07), and a change past it moves image_end and bss_end.  The UI's pads, UICORE.INC's, likewise: the slack
+# before gp_isr; the code's slack is what lies between lastdrv and image_end's paragraph (none after 415Fh on
+# 2026-11-07, with fat_drop), and a change past it moves image_end and bss_end.  The UI's pads, UICORE.INC's, likewise: the slack
 # between ui_image_end and uibss's paragraph, 2 bytes after 553Eh then)
-OFF_MAP ={'image_end': 0x4100, 'bss_end': 0x7500, 'ui_keep_end': 0x6844}  # (40E0h/74E0h before the FCB search's checks of
+OFF_MAP ={'image_end': 0x4160, 'bss_end': 0x7560, 'ui_keep_end': 0x6844}  # (4100h/7500h before a failed write's FAT
+                                        #  changes dropped (fat_drop, SF_LOST), 2026-11-07;
+                                        #  40E0h/74E0h before the FCB search's checks of
                                         #  MS-DOS 3 (separators, the attribute) and LCMD's names cut to 8.3, 2026-11-07;
                                         #  3F80h/7380h/6816h before MS-DOS's FCB search for the label, its names and its CHDIR, and the Executive's whole names, 2026-11-07; 6806h before a menu's TAB lined its keys up, 1.0; 6714h before a program's modes on its right-click menu, 242 bytes; 64D0h before the Executive's right-click menu, 580 bytes; 3F60h/7360h before M12's INT 21h F007h, the hard disk's name for System; 6422h before free memory on the info line, 160 bytes; 3F50h/7350h before the 2026-10-20 audit's S4 and S14, INT 21h 09h in one write and the EMS module's word-wise 57h; 40C0h/74C0h before the 2026-10-20 audit's KC-2, the screen capture's file writer as SCREEN.PRN; 75E0h before the 2026-10-20 audit's K2, EXEC's and rename's buffers in the INT 21h stack's low area; 64C2h before the 2026-10-20 audit's AP-1, HT in help lines; 40D0h/7600h before the 2026-10-20 audit's XI-13 and G1-5; 64E2h before its UI-7; 64C2h before Paint: the Executive opening .BMP files, 32 bytes; 40E0h/7610h before dev_where read dev_look_ax's BX, audit R38; 40F0h/7620h before ex_busy went, audit O7; 64F6h before R42, the Executive's MULTITASK-only code in KMW; 64E6h before help lines cut at the window's inner edge, re-padded; 6516h before the audit's UI batch, R39-R41; 4190h/76C0h before the audit's kernel batch; 6526h before the clipboard's file named at start-up, audit X47; 4170h/76A0h before an Abort while EXEC loads failed the EXEC; 63D0h before the clipboard, UI_CLIP; 621Ah before pop-up menus and drags, UI API 8; 6144h before right clicks, UI API 7; 6164h before X22;
                                         #  6154h before M7b: the Executive's Return as a task, CODE-T, the UI block moved once no task is left;
@@ -7027,7 +7029,7 @@ def t_progs():
     m0 = re.search(r'([\d.]+) KB for programs', k0.run_file('MEMSZ.COM', 30))
     m1 = re.search(r'([\d.]+) KB for programs', run_wait(k1, 'MEMSZ.COM', 30))
     print('   MEMSZ: %s KB off, %s KB on' % (m0 and m0.group(1), m1 and m1.group(1)))
-    check('MEMSZ (from the Executive), off: 580.3 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.3', m0 and m0.group(1))
+    check('MEMSZ (from the Executive), off: 580.2 KB, as with no switch (test_splash.py MEM_044)', m0 and m0.group(1) == '580.2', m0 and m0.group(1))
     k = boot('mt_progs.img', b'MULTITASK=1\r\n', 88, os.path.join(HERE, 'TESTDOS.COM'), os.path.join(HERE, 'EMSTEST.COM'),
              os.path.join(HERE, 'CACHETST.COM'))
     out = run_wait(k, 'TESTDOS.COM', 120)

@@ -28,6 +28,8 @@ SF_DEV  equ 80h
 SF_DIRTY equ 40h                ; written: update the directory at close
 SF_RAW  equ 20h                 ; device in raw (binary) mode
 SF_STAMP equ 10h                ; time/date set by the program
+SF_LOST equ 08h                 ; its FAT changes dropped (fat_drop): no
+                                ;  more writes, its entry left as it is
 DEV_CON equ 0
 DEV_NUL equ 1
 DEV_AUX equ 2
@@ -572,6 +574,8 @@ sft_release:
 sft_commit:
         test    byte [si+S_FLAGS], SF_DIRTY
         jz      .ok
+        test    byte [si+S_FLAGS], SF_LOST
+        jnz     .lost
         push    bx
         push    dx
         push    di
@@ -616,6 +620,11 @@ sft_commit:
         pop     bx
 .ok:    clc
         ret
+.lost:  and     byte [si+S_FLAGS], ~(SF_DIRTY | SF_STAMP)
+        mov     ax, 5                   ; (its entry as on the disk: the
+        stc                             ;  changes it named are gone)
+        ret
+        db      90h                     ; (parity: what follows as it was)
 .e:     pop     di
         pop     dx
         pop     bx
@@ -1005,6 +1014,9 @@ rw_t0       resb 1              ; sector in the track a write run starts at
 section .text
 
 file_write:
+        test    byte [si+S_FLAGS], SF_LOST      ; (fat_drop: no more: the
+        mov     ax, 5                           ;  chain it had is gone)
+        jnz     .err
         call    rw_start
         jc      .err
         or      byte [si+S_FLAGS], SF_DIRTY

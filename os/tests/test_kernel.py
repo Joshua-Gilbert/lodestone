@@ -1978,6 +1978,78 @@ def t_spacenames():
     check('CD @: and CD [: (no drives: "@" was taken as the current one): "Invalid drive specification" each '
           '("@:" alone is "@" and a label, as COMMAND\'s: nothing)', o.count('Invalid drive specification') == 2, o)
 
+def t_wpfail():
+    """A write-protected floppy, each kind of call that changes the FAT or a directory refused, F at INT 24h
+    (Fail): nothing of it reaches the disk once the tab is off.  The cached FAT's changes were kept and the
+    next write carried them: COPY N.TXT K.TXT (a create over K: its chain freed before its entry, which the
+    disk refused) left K with 1 cluster of its 10 and Z.TXT, written next, cross-linked with it.  Now a
+    failed write drops them (fat_drop), and a file held open across it writes no more (SF_LOST).  Retry,
+    with the tab off by then, still works."""
+    com = os.path.join(OUT, 'WPFAIL.COM')
+    subprocess.run(['nasm', '-f', 'bin', '-o', com, os.path.join(HERE, 'WPFAIL.ASM')], check=True)
+    big = b'keep-me\x1a' + b'T' * 5000
+    def mkf(n, b):
+        t = os.path.join(OUT, n); open(t, 'wb').write(b); return t
+    files = ('K.TXT=' + mkf('wpk', big), 'C.TXT=' + mkf('wpc', b'c' * 1500), 'N.TXT=' + mkf('wpn', b'nnn'),
+             'D\\', 'WPFAIL.COM=' + com)
+    def answer(k, cmd, key):
+        pc = k.pc
+        k.key('cls'); k.key(ktest.ENTER)
+        n0 = len(pc.tty)
+        k.key(cmd); k.key(ktest.ENTER, settle=False)
+        for i in range(8):
+            pc.run_until(lambda: ''.join(pc.tty)[n0:].count('Fail?') > i or pc.crash, 15)
+            if ''.join(pc.tty)[n0:].count('Fail?') <= i: break
+            if key == 'r': pc.drives[0].wp = False      # (the tab off, then Retry)
+            pc.keys.append(ord(key))
+        k.settle()
+        return ''.join(pc.tty)[n0:]
+    fs = lambda k: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    for cmd in ('copy n.txt k.txt', 'copy k.txt+c.txt', 'echo more>> k.txt', 'ren k.txt q.txt', 'del k.txt',
+                'md newdir', 'copy c.txt d\\c2.txt'):
+        k = ktest.KPC(image('wpf.img', os.path.join(GOS, 'src', 'LCMD.COM'), *files)); k.start()
+        sh = Shell(k)
+        k.pc.drives[0].wp = True
+        o = answer(k, cmd, 'f')
+        k.pc.drives[0].wp = False
+        sh.run('echo hello> z.txt'); sh.run('copy c.txt c3.txt')
+        f = fs(k); probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
+        check('%s on a write-protected A:, Fail: refused; the tab off, two files written: K.TXT as it was, the disk '
+              'consistent' % cmd.upper(), 'Fail?' in o and f.get('A:\\K.TXT') == big and not probs
+              and f.get('A:\\Z.TXT') == b'hello\r\n' and f.get('A:\\C3.TXT') == b'c' * 1500, (o, probs, len(f.get('A:\\K.TXT') or b'')))
+    # a file held open across the failed write (100 bytes: through a sector buffer): written again after the tab
+    # is off, then closed.  Empty, its first cluster was taken in the cached FAT, which the failure dropped: written
+    # on, it named a cluster the disk had free (SF_LOST: no more writes, its entry left as it was)
+    for kdata in (big, b''):
+        k = ktest.KPC(image('wpf.img', os.path.join(GOS, 'src', 'LCMD.COM'), 'K.TXT=' + mkf('wpk2', kdata),
+                            'WPFAIL.COM=' + com)); k.start()
+        sh = Shell(k)
+        k.pc.drives[0].wp = True
+        k.key('cls'); k.key(ktest.ENTER)
+        n0 = len(k.pc.tty)
+        k.key('wpfail'); k.key(ktest.ENTER, settle=False)
+        k.pc.run_until(lambda: 'W1' in ''.join(k.pc.tty)[n0:] or k.pc.crash, 15); k.settle()
+        k.pc.drives[0].wp = False
+        k.key(ktest.ENTER, settle=False)
+        k.pc.run_until(lambda: 'C ' in ''.join(k.pc.tty)[n0:] or k.pc.crash, 15); k.settle()
+        o = ''.join(k.pc.tty)[n0:].replace('\r', '')
+        sh.run('echo hello> z.txt'); sh.run('echo hello2> z2.txt')
+        f = fs(k); probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
+        kk = f.get('A:\\K.TXT')
+        check('a file held open (%d bytes): its write refused (Fail), the tab off, written again and closed: the disk '
+              'consistent, K.TXT as it was or with the second write whole%s' % (len(kdata), '' if kdata else
+              ' (empty: "W2 err 05", its first cluster gone with the dropped FAT)'),
+              'W1 err' in o and not probs and kk in (kdata, kdata + b'w' * 100) and f.get('A:\\Z.TXT') == b'hello\r\n'
+              and (kdata or 'W2 err 05' in o), (o, probs, len(kk or b'')))
+    # Retry with the tab off by then: done after all
+    k = ktest.KPC(image('wpf.img', os.path.join(GOS, 'src', 'LCMD.COM'), *files)); k.start()
+    sh = Shell(k)
+    k.pc.drives[0].wp = True
+    o = answer(k, 'copy n.txt k.txt', 'r')
+    f = fs(k); probs = fatcheck.check(bytes(k.pc.drives[0].img))[0]
+    check('COPY N.TXT K.TXT on a write-protected A:, the tab off, R: copied, K.TXT is N.TXT\'s, the disk consistent',
+          'Fail?' in o and '1 File(s) copied' in o and f.get('A:\\K.TXT') == b'nnn' and not probs, (o, probs))
+
 def t_newname():
     """new_name: CREATE, CREATE NEW, MKDIR and RENAME onto a name with no last part (A:\\, \\, A:, ., A.B\\.: 5;
     A.B\\ and the empty name: 3) make nothing, and the disk stays consistent."""
@@ -3200,7 +3272,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_copycat, t_wpfail, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:
