@@ -627,15 +627,18 @@ ex_lvname:                                ; (type-to-find) AX = item -> SI
         ret
         times ($ - $$) & 1 db 90h       ; (hot: even)
 
-; append the entry's title (name without trailing spaces) at DI
+; append the entry's title (name without trailing spaces: those inside
+; kept, as MS-DOS's names) at DI
 sb_title:
         push    si
         mov     cx, 8
-.c:     lodsb
-        cmp     al, ' '
-        je      .x
-        stosb
-        loop    .c
+        rep     movsb
+.t:     cmp     byte [es:di-1], ' '
+        jne     .x
+        dec     di
+        inc     cx
+        cmp     cx, 8
+        jb      .t
 .x:     pop     si
         ret
         times ($ + 1 - $$) & 1 db 90h   ; (hot: .k even)
@@ -739,16 +742,18 @@ sel_name:
 sb_fcb: push    si
         call    sb_title
         add     si, 8
-        cmp     byte [si], ' '
+        cmp     word [si], '  '         ; (an extension: any of its 3 not a
+        jne     .e                      ;  space; its trailing ones dropped)
+        cmp     byte [si+2], ' '
         je      .x
-        mov     al, '.'
+.e:     mov     al, '.'
         stosb
         mov     cx, 3
-.e:     lodsb
-        cmp     al, ' '
-        je      .x
-        stosb
-        loop    .e
+        rep     movsb
+.xt:    cmp     byte [es:di-1], ' '
+        jne     .x
+        dec     di
+        jmp     .xt
 .x:     pop     si
         ret
 
@@ -972,7 +977,8 @@ sub_scan:
         je      .r
         mov     al, '\'
         stosb
-.r:     mov     si, s_all
+.r:     mov     [tmp + 43], di          ; (where a name goes: one longer
+        mov     si, s_all               ;  than SUBMAX is no subject)
         call    sb_strz
         mov     dx, runpath
         mov     cx, 10h
@@ -982,6 +988,14 @@ sub_scan:
         jz      .n
         cmp     byte [exec_dta + 30], '.'
         je      .n
+        mov     di, exec_dta + 30       ; its path's length: past SUBMAX,
+        mov     cx, 13                  ;  CHDIR's, it can't be one
+        xor     al, al
+        repne   scasb
+        sub     di, exec_dta + 31
+        add     di, [tmp + 43]
+        cmp     di, runpath + SUBMAX
+        ja      .n
         mov     ax, [ent_max]           ; (room: 2 for each list entry)
         shl     ax, 1
         cmp     [nsubj], ax
@@ -1332,8 +1346,9 @@ tree_del:
         int     21h
         jnc     .nx
         ret
-.dir:   call    tw_end                  ; (a path longer than DOS takes:
-        cmp     di, tpath + 2 + SUBMAX  ;  only from a damaged disk)
+.dir:   call    tw_end                  ; (deeper than CHDIR goes is fine:
+        cmp     di, tpath + 2 + 66      ;  MKDIR makes them; past tpath's
+                                        ;  84 bytes with a name, 3)
         mov     ax, 3
         ja      .bad
         inc     word [t_lvl]

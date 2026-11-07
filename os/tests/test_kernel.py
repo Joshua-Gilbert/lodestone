@@ -1713,6 +1713,8 @@ def t_fcbnames():
           'L [V1.0  X    ]\n' in o, o)
     check('plain FCB FIND FIRST/NEXT of ????????TXT: both, unpacked, the E5h as E5h', 'T [\xe5ABC    TXT]\n' in o
           and 'T [AB CD   TXT]\n' in o and o.count('\nT [') == 2, o)
+    check('... a plain FCB\'s "*       txt" (small letters, a *): both, as MS-DOS 3 takes it; one starting E5h: '
+          'that one', 'U [\xe5ABC    TXT]\n' in o and 'U [AB CD   TXT]\n' in o and 'E [\xe5ABC    TXT]\n' in o, o)
     ents = [d[i:i + 11] for i in range(0, len(d) - 32, 32) if d[i + 11:i + 12] == b'\x20' and d[i + 8:i + 11] == b'TXT']
     check('... on the disk the first E5h is 05h (E5h there is a free entry)', b'\x05ABC    TXT' in ents, ents)
     o = sh.run('dir').replace('\r', '') + sh.run('copy *.txt \\').replace('\r', '')
@@ -1724,6 +1726,41 @@ def t_fcbnames():
     o = sh.run('fcbnames w')
     check('47h in the deepest directory: 63 characters and the NUL, its 64-byte buffer\'s next byte untouched',
           'W 63 G' in o, o)
+
+def t_spacenames():
+    """Names with a space inside (another system's, or a program's: MS-DOS takes them) through LCMD's COPY
+    and REN with wildcards, XCOPY's and CHKDSK's names: each the whole name, never cut at its space (COPY
+    *.TXT *.BAK wrote AB CD.TXT and AB EF.TXT both into AB.BAK, over what was there)."""
+    def mkf(n, b):
+        t = os.path.join(OUT, n); open(t, 'wb').write(b); return t
+    p = image('spn.img', os.path.join(GOS, 'src', 'LCMD.COM'), os.path.join(GOS, 'src', 'XCOPY.COM'),
+              os.path.join(GOS, 'src', 'CHKDSK.COM'), 'ABXCD.TXT=' + mkf('sn1', b'one'), 'ABXEF.TXT=' + mkf('sn2', b'two'),
+              'AB.BAK=' + mkf('sn3', b'precious'), 'AB.TXT=' + mkf('sn4', b'mine'))
+    img = bytearray(open(p, 'rb').read())
+    for n in (b'ABXCD   TXT', b'ABXEF   TXT'):
+        i = img.find(n); img[i + 2] = 0x20
+    open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    sh = Shell(k)
+    fs = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    o = sh.run('copy ab?cd.txt *.bak') + sh.run('copy ab?ef.txt *.bak')
+    f = fs()
+    check('COPY AB?CD.TXT *.BAK, AB?EF.TXT *.BAK: AB CD.BAK and AB EF.BAK, each its own; AB.BAK as it was',
+          f.get('A:\\AB CD.BAK') == b'one' and f.get('A:\\AB EF.BAK') == b'two' and f.get('A:\\AB.BAK') == b'precious', (o, sorted(f)))
+    o = sh.run('ren ab?cd.bak *.old')
+    f = fs()
+    check('REN AB?CD.BAK *.OLD: AB CD.OLD', f.get('A:\\AB CD.OLD') == b'one' and 'A:\\AB CD.BAK' not in f
+          and f.get('A:\\AB.BAK') == b'precious', (o, sorted(f)))
+    o = sh.run('xcopy ab?ef.txt *.new')
+    f = fs()
+    check('XCOPY AB?EF.TXT *.NEW: AB EF.NEW (not ABEF.NEW)', f.get('A:\\AB EF.NEW') == b'two' and 'A:\\ABEF.NEW' not in f, (o, sorted(f)))
+    o = sh.run('chkdsk /v')
+    check('CHKDSK /V names them whole ("A:\\AB CD.TXT", not "A:\\AB.TXT" twice)', 'A:\\AB CD.TXT' in o and 'A:\\AB EF.TXT' in o, o)
+    f = fs()
+    check('... and AB.TXT, the file a cut name would have hit, untouched throughout', f.get('A:\\AB.TXT') == b'mine', sorted(f))
+    o = sh.run('cd @:') + sh.run('cd [:') + sh.run('cd')
+    check('CD @: and CD [: (no drives: "@" was taken as the current one): "Invalid drive specification" each '
+          '("@:" alone is "@" and a label, as COMMAND\'s: nothing)', o.count('Invalid drive specification') == 2, o)
 
 def t_newname():
     """new_name: CREATE, CREATE NEW, MKDIR and RENAME onto a name with no last part (A:\\, \\, A:, ., A.B\\.: 5;
@@ -1892,8 +1929,9 @@ def t_dirlong():
     runs = [sh.run('dir b:' + 'a' * 72 + '\\').replace('\n', '') for _ in range(6)]
     o = sh.run('copy lcmd.com q:' + 'b' * 70 + '\\c') + sh.run('copy lcmd.com q:' + 'b' * 70 + '\\c') + sh.run('echo still here')
     check('DIR and COPY on a drive that isn\'t there, six and two times: each from "B:\\" afresh (canon took what the one '
-          'before left as the current directory, growing until it wrote over the shell); COPY says File creation error',
-          all('Directory of  B:\\' + 'A' * 72 + 'File not found' in r for r in runs) and o.count('File creation error') == 2
+          'before left as the current directory, growing until it wrote over the shell); DIR says "Invalid drive '
+          'specification" (DOS\'s), COPY File creation error',
+          all('Invalid drive specification' in r and 'Directory of' not in r for r in runs) and o.count('File creation error') == 2
           and 'still here' in o, (runs[-1], o))
     k = ktest.KPC(img); k.start()
     sh = Shell(k)
@@ -2946,7 +2984,7 @@ def t_cmdword():
           t is not None and t.strip() == b'hello', t)
 
 TESTS = [t_emsboard, t_noems, t_ems, t_dosapi, t_tm5000g, t_shell, t_tabs, t_disks, t_permanent, t_capture, t_print, t_cache, t_cache_ems, t_mdisk,
-         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
+         t_mdreview, t_lodeboot, t_gridgpib, t_gpcheck0, t_gpirq, t_exerel, t_trunc, t_dollar, t_kmedium, t_renfull, t_fatstraddle, t_names, t_nul, t_devname, t_fcbnames, t_spacenames, t_newname, t_nomatch, t_slashend, t_dirlong, t_attr, t_errs, t_nodisk, t_execabort, t_execnest, t_cmdword, t_command, t_cmdedit, t_cmdshare, t_cmdsaver, t_calc]
 if __name__ == '__main__':
     want = [w[2:] if w.startswith('t_') else w for w in sys.argv[1:]]       # (shell or t_shell)
     if set(want) - {t.__name__[2:] for t in TESTS}:

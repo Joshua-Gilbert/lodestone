@@ -1609,35 +1609,42 @@ cut:    mov     ax, [es:di+1Ah]
 .x:     ret
 
 ; the 8.3 name at ES:DI onto path at [pathlen] -> [nameend] (ASCIIZ)
-name:   push    di
-        mov     si, [pathlen]
-        mov     cx, 8
-        xor     bx, bx
+name:   push    di                      ; (as the kernel's, MS-DOS's: each
+        mov     si, [pathlen]           ;  part's trailing spaces dropped,
+        xor     bx, bx                  ;  not those inside)
 .b:     mov     al, [es:di+bx]
-        cmp     al, ' '
-        je      .be
-        cmp     bx, 0
-        jne     .bp
+        or      bx, bx
+        jnz     .bp
         cmp     al, 05h                 ; (E5h as a first character)
         jne     .bp
         mov     al, 0E5h
 .bp:    mov     [path+si], al
         inc     si
         inc     bx
-        loop    .b
-.be:    cmp     byte [es:di+8], ' '
+        cmp     bx, 8
+        jb      .b
+.bt:    cmp     si, [pathlen]
+        jbe     .be
+        cmp     byte [path+si-1], ' '
+        jne     .be
+        dec     si
+        jmp     .bt
+.be:    cmp     word [es:di+8], '  '
+        jne     .e
+        cmp     byte [es:di+10], ' '
         je      .z
-        mov     byte [path+si], '.'
+.e:     mov     byte [path+si], '.'
         inc     si
-        mov     bx, 8
 .x:     mov     al, [es:di+bx]
-        cmp     al, ' '
-        je      .z
         mov     [path+si], al
         inc     si
         inc     bx
         cmp     bx, 11
         jb      .x
+.xt:    cmp     byte [path+si-1], ' '
+        jne     .z
+        dec     si
+        jmp     .xt
 .z:     mov     byte [path+si], 0
         mov     [nameend], si
         pop     di
