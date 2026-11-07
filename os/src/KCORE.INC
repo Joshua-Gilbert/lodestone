@@ -55,7 +55,7 @@ section .text
 ; astack); a screen capture and the PrtSc driver use the bottom 1 KB at
 ; INT 21h's entry, before any call runs; MT switches tasks inside INT 21h
 ; only at a key wait (mt_can), where none of these is in use.
-KL_P2       equ kstack_end              ; path2_buf, 130 (rename, CHDIR's)
+KL_P2       equ kstack_end              ; path2_buf, 130 (rename; CHDIR's new string)
 KL_REN      equ kstack_end + 130        ; rename's d_lba, d_off, de and drive, 37
 KL_EXN      equ kstack_end + 168        ; EXEC's ex_name, 132
 KL_REL      equ kstack_end + 300        ; EXEC's ex_rel, 256

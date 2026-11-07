@@ -38,7 +38,7 @@ Lodestone also connects the GRiD to Claude. Through a Raspberry Pi on the GPIB b
 **Drives**
 - **A:** and **B:**, the internal and external floppy drives.
 - **C:**, any IDE drive or CompactFlash card with a FAT16 partition up to 2 GB (DOS's limit, with 32 KB clusters). Lodestone drives it through its own registers, because the 1520's BIOS only knows a few Conner models. Without a drive, nothing is loaded.
-- **M:**, a RAM disk in EMS (256 KB by default, up to all the free EMS). It costs DOS programs no memory. Its files are gone at power-off or restart.
+- **M:**, a RAM disk in EMS (256 KB by default, up to all the free EMS). It costs DOS programs no memory. Its files are gone at power-off, and at a restart on the 1520, whose BIOS rewrites EMS (a board that keeps EMS keeps them over a warm restart).
 - **R:**, the ROM drive, when Lodestone's EPROM is fitted. It is read-only, and is mapped in only while a sector is read.
 
 **The Executive and its programs.** These run on one shared UI core, in Lodefont, Lodestone's own 8×16 font (GRiD's system font and others load from `.FNT` files).

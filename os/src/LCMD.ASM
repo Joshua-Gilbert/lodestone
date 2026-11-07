@@ -2670,6 +2670,9 @@ do_dir: mov     byte [dir_w], 0
         mov     di, pat
         call    make_pattern
         jc      .nf                     ; (too long for pat: X26)
+        mov     dl, [pat_drv]           ; no such drive: DOS's word, no
+        call    drv_chk                 ;  header
+        jc      vol_bad
         ; header
         call    crlf
         mov     dl, [pat_drv]
@@ -2875,14 +2878,22 @@ show_volume:
         jz      .none
         mov     si, s_is
         call    puts
-        mov     si, dta + 30            ; the label, without the dot
-.l:     lodsb
+        mov     si, dta + 30            ; the label as its 11 characters:
+        xor     cx, cx                  ;  the name part back to 8 before
+.l:     lodsb                           ;  the "extension", not a dot
         or      al, al
         jz      .d
         cmp     al, '.'
-        je      .l
+        je      .pad
         call    putc
+        inc     cx
         jmp     .l
+.pad:   cmp     cx, 8
+        jae     .l
+        mov     al, ' '
+        call    putc
+        inc     cx
+        jmp     .pad
 .d:     jmp     crlf
 .none:  mov     si, s_nolabel
         jmp     puts_nl
@@ -4026,8 +4037,28 @@ do_wait:
 
 do_vol: call    drv_of
         mov     dl, al
+        call    drv_chk
+        jc      vol_bad
         call    crlf
         jmp     show_volume
+vol_bad:
+        mov     si, e_drive
+        jmp     err
+
+; drive DL (0 = A) there?  CF if not (INT 21h 47h: 15, no disk read).
+; DL kept
+drv_chk:
+        push    dx
+        push    si
+        sub     sp, 68
+        mov     si, sp
+        inc     dl
+        mov     ah, 47h
+        int     21h
+        lea     sp, [si+68]
+        pop     si
+        pop     dx
+        ret
 
 do_rem: ret
 

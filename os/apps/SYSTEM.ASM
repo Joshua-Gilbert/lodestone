@@ -461,14 +461,22 @@ disk_lines:
         jc      .nolab
         test    byte [dta+21], 08h
         jz      .nolab
-        mov     si, dta + 30
-.lab:   lodsb
+        mov     si, dta + 30            ; (a label's "extension" belongs to
+        xor     cx, cx                  ;  it: its name part back to 8
+.lab:   lodsb                           ;  before it, as on the disk)
         or      al, al
         jz      .labx
         cmp     al, '.'
-        je      .lab                    ; (a label's "extension" belongs to it)
+        je      .lpad
         stosb
+        inc     cx
         jmp     .lab
+.lpad:  cmp     cx, 8
+        jae     .lab
+        mov     al, ' '
+        stosb
+        inc     cx
+        jmp     .lpad
 .labx:  jmp     .lab2
 .nolab: mov     si, s_nolabel
         call    UI_SBSTR
