@@ -757,23 +757,28 @@ tname:  push    bx
         cmp     bx, 11
         jb      .c
         pop     di
-        mov     si, rfcb                ; "NAME.EXT" from it
-        mov     cx, 8
-.b:     lodsb
-        cmp     al, ' '
-        je      .bs
-        stosb
-.bs:    loop    .b
-        cmp     byte [rfcb+8], ' '
+        mov     si, rfcb                ; "NAME.EXT" from it, as the
+        mov     cx, 8                   ;  kernel's (MS-DOS's): each part's
+        rep     movsb                   ;  trailing spaces dropped, not
+.bt:    cmp     byte [di-1], ' '        ;  those inside
+        jne     .b
+        dec     di
+        inc     cx
+        cmp     cx, 8
+        jb      .bt
+.b:     cmp     word [rfcb+8], '  '
+        jne     .e
+        cmp     byte [rfcb+10], ' '
         je      .ne
-        mov     al, '.'
+.e:     mov     al, '.'
         stosb
+        mov     si, rfcb + 8
         mov     cx, 3
-.e:     lodsb
-        cmp     al, ' '
-        je      .es
-        stosb
-.es:    loop    .e
+        rep     movsb
+.et:    cmp     byte [di-1], ' '
+        jne     .ne
+        dec     di
+        jmp     .et
 .ne:    mov     byte [di], 0
         pop     bx
         ret

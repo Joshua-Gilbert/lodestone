@@ -73,6 +73,29 @@ def check(name, cond, detail=''):
     results.append((name, bool(cond)))
     print('%s  %s%s' % ('ok  ' if cond else 'FAIL', name, ('  -- ' + str(detail)[:600]) if detail and not cond else ''))
 
+def t_spacenames():
+    print('== the Executive: names with a space inside (another system\'s, or one Rename makes)')
+    def mkf(n, b):
+        t = os.path.join(OUT, n); open(t, 'wb').write(b); return t
+    p = image('spn.img', 'AB.TXT=' + mkf('sp_ab', b'precious'), 'ABXCD.TXT=' + mkf('sp_abcd', b'abcd'), 'D\\',
+              'D\\KEEP.TXT=' + mkf('sp_k', b'keep'), 'DXE\\', 'DXE\\IN.TXT=' + mkf('sp_in', b'in'),
+              'X.TXT=' + mkf('sp_x', b'x'), 'MY.TXT=' + mkf('sp_my', b'mine'))
+    img = bytearray(open(p, 'rb').read())
+    for n in (b'ABXCD   TXT', b'DXE        '):
+        i = img.find(n); img[i + n.index(b'X')] = 0x20
+    open(p, 'wb').write(img)
+    k = ktest.KPC(p); k.start()
+    A = lambda: fatcheck.read_files(bytes(k.pc.drives[0].img))
+    k.select('AB CD.TXT'); k.key(CODE['D']); k.key(ktest.ENTER)
+    check('Delete on "AB CD.TXT": that file gone, AB.TXT kept (it took the name to its first space)',
+          'A:\\AB CD.TXT' not in A() and A().get('A:\\AB.TXT') == b'precious', (k.band(), sorted(A())))
+    k.select('X.TXT'); k.key(CODE['R']); k.key('my file.txt', ktest.ENTER)
+    k.select('MY FILE.TXT'); k.key(CODE['D']); k.key(ktest.ENTER)
+    check('Rename to "my file.txt", then Delete on it: MY FILE.TXT made and gone, MY.TXT kept',
+          'A:\\MY FILE.TXT' not in A() and 'A:\\X.TXT' not in A() and A().get('A:\\MY.TXT') == b'mine', (k.band(), sorted(A())))
+    to_subject(k, 'D E')
+    check('the subject "D E": its titles (IN.TXT), not D\'s', k.exec_list() == ['IN.TXT'], (k.exec_list(), k.band()))
+
 def t_syslabel():
     print('== System: a label with spaces in it')
     p = image('syslab.img', SYSTEM)
@@ -978,8 +1001,8 @@ def t_memory():
     check('a DOS program gets %.1f KB (0.2.2: 570.7 KB; INT 33h and the File form cost 2.8 KB, the file commands 2.8 KB, the saver setting 0.2 KB, wildcards and making subjects 1.1 KB, deleting subjects 0.4 KB, '
           'screen capture 0.5 KB, the kernel\'s part of drive C: 0.2 KB, the saver\'s round of the disks and its switch 0.1 KB, '
           'copying subjects 0.9 KB, the coprocessor lamp and the calculator\'s key 0.2 KB, 0.6\'s search by PATH and the two settings files 0.1 KB, '
-          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it; 0.3 KB, MS-DOS\'s FCB search (11h, 12h: a label\'s 11 bytes, as COMMAND\'s VOL reads it), names (a space inside, a first E5h) and CHDIR (the whole path, 63 characters)): the directory buffer is lent while it runs' % kb,
-          kb >= 564.4, out[-200:])
+          'windows that move and close (UI API 6) 0.5 KB, printer drivers read at PrtSc (PRINTER=) 0.2 KB; then 0.9 KB back, the kernel batch of the 2026-10-20 audit, and 1.3 KB, its UI batch, and 0.9 KB, the start-up of the UI run from the directory buffer, and 1.0 KB, the kernel\'s run from its disk buffers, and 0.7 KB, the row table; then 32 bytes, right clicks, UI API 7; 0.1 KB less, names and devices answered as MS-DOS 3.30, and 0.1 KB, DIR\\NUL; then 0.2 KB, the Executive\'s part of multitasking: Return as a task, CODE-T, the UI block moved once no task is left; 0.3 KB, GPIB\'s SRQ on IRQ 5; 0.5 KB, pop-up menus and drags, UI API 8; 0.3 KB, the clipboard, UI_CLIP; then 0.1 KB back, the kernel batch of the 2026-10-26 audit, and 0.1 KB, its UI batch; 32 bytes, .BMP files opened with Paint; 160 bytes, free memory on the Executive\'s info line; 0.6 KB, its right-click menu; 0.2 KB, a program\'s modes on it; 0.5 KB, MS-DOS\'s FCB search (11h, 12h: a label\'s 11 bytes, as COMMAND\'s VOL reads it; its pattern as DOS 3 takes it), names (a space inside, a first E5h; the Executive\'s whole) and CHDIR (the whole path, 63 characters; no subject past it)): the directory buffer is lent while it runs' % kb,
+          kb >= 564.2, out[-200:])
     check('afterwards the Executive has its whole list again', k.u16('ent_max') == 240 and 'MEMSZ.COM' in k.exec_list(), k.u16('ent_max'))
     # with EMS the disk cache is two EMS pages: programs get its 18 KB
     # (less the EMS manager's 2), and System says where it went
@@ -1759,7 +1782,7 @@ def t_file_safety():
     deep = ['AAAAAAAA.AAA', 'BBBBBBBB.BBB', 'CCCCCCCC.CCC', 'DDDDDDDD.DDD', 'EEEEEEE.EEE']
     dirs = ['\\'.join(deep[:i + 1]) + '\\' for i in range(5)]
     a = image('safea.img', DEFRAG, 'LONGNAME\\', 'LONGNAME\\NOTES.TXT=' + notes, 'WORK\\', *dirs,
-              '\\'.join(deep) + '\\NAMENAME.EXT=' + notes, big)
+              '\\'.join(deep) + '\\NAMENAME.EXT=' + notes, big, '\\'.join(deep[:4]) + '\\EEEEEEEE.EEE\\')
     b = mkimg.build(os.path.join(OUT, 'safeb.img'), ['COPY.TXT=' + notes])
     k = ktest.KPC(a, b=b); k.start()
     A = lambda: fatcheck.read_files(k.pc.drives[0].img)
@@ -1820,6 +1843,8 @@ def t_file_safety():
     to_subject(k, 'EEEEEEE.EEE')
     D = 'A:\\' + '\\'.join(deep)
     check('the deepest subject: 64 characters ("\\" and 63, MS-DOS\'s longest current directory)', len(D) - 2 == 64 and k.exec_list() == ['NAMENAME.EXT'], k.exec_list())
+    check('... and its sibling of 65 (EEEEEEEE.EEE, past CHDIR\'s) is not a subject in the list',
+          [s.strip() for s in subjects(k)].count('EEEEEEE.EEE') == 1 and 'EEEEEEEE.EEE' not in [s.strip() for s in subjects(k)], subjects(k))
     k.key(CODE['C'])
     check('... the Copy form holds all of it, and the title field is intact', bytes(k.rd('c_sub', 67)).split(b'\0')[0].decode() == D[2:]
           and bytes(k.rd('c_tit', 13)).split(b'\0')[0] == b'NAMENAME.EXT', (k.rd('c_sub', 67), k.rd('c_tit', 13)))
@@ -3859,7 +3884,7 @@ if __name__ == '__main__':
     t0 = time.time()
     build()
     only = [a for a in sys.argv[1:] if a.startswith('t_')]
-    for t in (t_core, t_system, t_syslabel, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
+    for t in (t_core, t_system, t_syslabel, t_spacenames, t_write, t_exec, t_font, t_memory, t_saver, t_mouse, t_form, t_files, t_file_safety, t_wild, t_subdel, t_subcopy, t_saver_delay, t_ini_keys, t_saver_tidy, t_prtsc_setting, t_mdisk, t_calc, t_calc_move, t_rclick, t_exmenu, t_modes, t_menu, t_clip, t_write_mouse, t_write_clip,
               t_clip_rom, t_sys_back, t_system_lists, t_gpib_tools, t_paint, t_paint_bmp, t_paint_more):
         if not only or t.__name__ in only: t()
     bad = [n for n, ok in results if not ok]

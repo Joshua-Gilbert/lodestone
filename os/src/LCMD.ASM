@@ -845,6 +845,8 @@ run_cmd:
 do_drive:                               ; "B:"
         mov     dl, [cword]
         sub     dl, 'A'
+        cmp     dl, 26                  ; ("@:" FFh, and past Z:: none)
+        jae     .bad
         mov     [tmpb], dl
         mov     ah, 0Eh
         int     21h
@@ -852,9 +854,10 @@ do_drive:                               ; "B:"
         int     21h
         cmp     al, [tmpb]
         je      .x
-        mov     si, e_drive
+.bad:   mov     si, e_drive
         jmp     err
 .x:     ret
+        times   ($ - $$) & 1 db 90h     ; (hot: get_word.c even)
 
 ; the word at SI, upper case, into cword (70 characters at most): DI on its
 ; NUL, SI and [argp] just past it (past the 70th of a longer one).  ES = CS
@@ -3396,10 +3399,9 @@ wild_map:
         mov     di, fcbp
         mov     ax, 2900h
         int     21h
-        mov     si, bx
-        mov     di, fcbs
-        mov     ax, 2900h
-        int     21h
+        mov     si, bx                  ; the name as its 11 bytes, spaces
+        mov     di, fcbs + 1            ;  inside kept (29h stops at one)
+        call    to11
         pop     di
         mov     cx, 11
         xor     bx, bx
@@ -3410,29 +3412,59 @@ wild_map:
 .k:     mov     [fcbr + bx], al
         inc     bx
         loop    .m
-        ; back to NAME.EXT
-        xor     bx, bx
-.n:     mov     al, [fcbr + bx]
-        cmp     al, ' '
-        je      .ne
-        stosb
-        inc     bx
-        cmp     bx, 8
-        jb      .n
-.ne:    cmp     byte [fcbr + 8], ' '
+        ; back to NAME.EXT, as the kernel's name_out (MS-DOS's): only
+        ; each part's trailing spaces dropped
+        mov     si, fcbr
+        mov     cx, 8
+        rep     movsb
+.nt:    cmp     byte [di-1], ' '
+        jne     .ne
+        dec     di
+        inc     cx
+        cmp     cx, 8
+        jb      .nt
+.ne:    cmp     word [fcbr + 8], '  '
+        jne     .x
+        cmp     byte [fcbr + 10], ' '
         je      .z
-        mov     al, '.'
+.x:     mov     al, '.'
         stosb
-        mov     bx, 8
-.x:     mov     al, [fcbr + bx]
-        cmp     al, ' '
-        je      .z
-        stosb
-        inc     bx
-        cmp     bx, 11
-        jb      .x
+        mov     cx, 3
+        rep     movsb
+.xt:    cmp     byte [di-1], ' '
+        jne     .z
+        dec     di
+        jmp     .xt
 .z:     mov     byte [di], 0
         ret
+
+; "NAME.EXT" at SI (a name FIND FIRST gave) -> its 11 bytes at DI, the
+; spaces inside kept
+to11:   push    di
+        mov     cx, 11
+        mov     al, ' '
+        rep     stosb
+        pop     di
+        mov     cx, 8
+.n:     lodsb
+        or      al, al
+        jz      .x
+        cmp     al, '.'
+        je      .e
+        jcxz    .n
+        stosb
+        dec     cx
+        jmp     .n
+.e:     add     di, cx
+        mov     cx, 3
+.t:     lodsb
+        or      al, al
+        jz      .x
+        jcxz    .t
+        stosb
+        dec     cx
+        jmp     .t
+.x:     ret
 
 ; ---------------------------------------------------------------------
 ; DEL pattern
@@ -3574,7 +3606,10 @@ do_cd:  call    getarg1
         jne     .set
         mov     al, [path1]
         call    upcase
-        sub     al, 'A' - 1
+        sub     al, 'A' - 1             ; (A = 1; "@:" and past Z: none)
+        jz      .bd
+        cmp     al, 26
+        ja      .bd
         jmp     .sh
 .set:   mov     si, path1               ; a \ last (Tab puts one after a
         call    strend                  ;  directory's name) cut, not the

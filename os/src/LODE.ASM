@@ -355,7 +355,7 @@ section ui                              ; (UI_PARAS: ui_image_end ends it)
         EVEN    compose.r1, compose.r2, compose.noold, compose.r3, compose.r4, compose.old1
         EVEN    hide_cursor, hide_cursor.row, fill_band, fill_band.r, clip_rows, clip_rows.ok
         EVEN    invert_band, invert_band.r, vline.r, puts, putsn, putsn.x, putsn.ok, strlen, strlen.l, strlen.x
-        EVEN    sb_str, sb_str.x, sb_u32.p, sb_u32.x, sb_2d, sb_date, sb_date.m, bcd, sb_title, sb_title.c, sb_title.x
+        EVEN    sb_str, sb_str.x, sb_u32.p, sb_u32.x, sb_2d, sb_date, sb_date.m, bcd, sb_title, sb_title.t, sb_title.x
         EVEN    win_save.r, win_restore.r, win_ev, win_ev.pass, ui_dispatch.l, ui_dispatch.n, lv_row, lv_row.f, xor_rect.vl
         EVEN    ..@ui_retf, run_app.abs, saver.l, saver.z, ..@ui_sidle, tick
         EVEN    dta2ent, ent_cmp, ent_ptr, kind_of.k, kind_of.n, to_fcb, to_fcb.n, to_fcb.e, to_fcb.el

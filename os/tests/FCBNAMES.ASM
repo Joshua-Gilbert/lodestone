@@ -2,9 +2,10 @@
 ; its FCB search.  FCBNAMES C: names with a first E5h and a space inside made
 ; (3Ch), opened again (3Dh) and found (4Eh/4Fh: "F name"); then an extended
 ; FCB's search for the label (11h, attribute 08h: "L [11 bytes]") and a
-; plain FCB's for *.TXT (11h/12h: "T [11 bytes]").  FCBNAMES W: INT 21h 47h
-; into a 64-byte buffer, a guard byte after it ("W n G" n its length, G
-; the guard kept, or "W n X").  Each line ends CR LF
+; plain FCB's for *.TXT (11h/12h: "T [11 bytes]"), for "*       txt"
+; ("U [11 bytes]") and for E5h "*      TXT" ("E [11 bytes]").  FCBNAMES W:
+; INT 21h 47h into a 64-byte buffer, a guard byte after it ("W n G" n its
+; length, G the guard kept, or "W n X").  Each line ends CR LF
 org 100h
         mov     ah, 1Ah
         mov     dx, dta
@@ -51,7 +52,26 @@ org 100h
         mov     dx, fcb
         mov     ah, 12h
         jmp     .tl
-.end:   mov     ax, 4C00h
+.end:   mov     dx, fcb2                ; the pattern as MS-DOS 3 takes it:
+        mov     ah, 11h                 ;  small letters, a *
+.ul:    int     21h
+        or      al, al
+        jnz     .e5
+        mov     al, 'U'
+        mov     si, dta + 1
+        call    raw
+        mov     dx, fcb2
+        mov     ah, 12h
+        jmp     .ul
+.e5:    mov     dx, fcb3                ; a first E5h
+        mov     ah, 11h
+        int     21h
+        or      al, al
+        jnz     .q
+        mov     al, 'E'
+        mov     si, dta + 1
+        call    raw
+.q:     mov     ax, 4C00h
         int     21h
 
 cwd:    mov     byte [buf + 64], 0A5h
@@ -176,6 +196,10 @@ s_op    db ' open-not', 0
 xfcb    db 0FFh, 0, 0, 0, 0, 0, 08h, 0, '???????????'
         times 25 db 0
 fcb     db 0, '????????TXT'
+        times 25 db 0
+fcb2    db 0, '*       txt'
+        times 25 db 0
+fcb3    db 0, 0E5h, '*      TXT'
         times 25 db 0
 dta     times 64 db 0
 buf     times 200 db 0

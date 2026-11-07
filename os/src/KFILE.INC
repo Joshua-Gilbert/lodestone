@@ -1728,7 +1728,32 @@ f_12:   call    fcb_ptr                 ; its search -> FCB_D, as 4Eh's DTA
         lodsw
         mov     [es:FCB_D + 15], ax
         pop     ds
-        push    word [dta + 2]          ; find_next on FCB_D
+        mov     si, FCB_D + 1           ; the name as MS-DOS 3's takes it
+        xor     dx, dx                  ;  (made a path): capitals, a *
+.u:     mov     al, [si]                ;  fills the rest of its part with
+        cmp     si, FCB_D + 9           ;  ?, a first E5h is 05h
+        jne     .s
+        xor     dx, dx
+.s:     or      dx, dx
+        jnz     .q
+        cmp     al, '*'
+        jne     .lc
+        inc     dx
+.q:     mov     al, '?'
+        jmp     short .p
+.lc:    cmp     al, 'a'
+        jb      .p
+        cmp     al, 'z'
+        ja      .p
+        sub     al, 20h
+.p:     mov     [si], al
+        inc     si
+        cmp     si, FCB_D + 12
+        jb      .u
+        cmp     byte [FCB_D + 1], 0E5h
+        jne     .e5
+        mov     byte [FCB_D + 1], 05h
+.e5:    push    word [dta + 2]          ; find_next on FCB_D
         push    word [dta]
         mov     word [dta], FCB_D
         mov     [dta + 2], cs
