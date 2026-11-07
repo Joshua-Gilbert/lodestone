@@ -518,10 +518,18 @@ def t_mem():
     """The memory a program gets: this kernel without the drive against the
     one before the hard disk (the core's share), and with it (the module)."""
     memsz = os.path.join(HERE, 'MEMSZ.COM')
+    exact = {}
     def kb(name, sysfile, ata=None, **kw):              # (from the shell: any kernel's map)
         img = mkimg.build(os.path.join(OUT, name + '.img'), ['LODE.SYS=' + sysfile, memsz, LCMD])
         k = ktest.KPC(img, ata=ata, **kw); k.start()
         m = re.search(r'([\d.]+) KB for programs', Shell(k).run('memsz'))
+        seg, big = k.pc.u16(0x60, k.Y['first_mcb']), 0  # (and the largest free block after it, in
+        while True:                                     #  paragraphs: MEMSZ's tenths are cut, so a
+            t, own, sz = k.pc.rd(seg, 0, 1)[0], k.pc.u16(seg, 1), k.pc.u16(seg, 3)   # difference of two
+            if own == 0: big = max(big, sz)             #  can be 0.1 out)
+            if t == 0x5A: break
+            seg += sz + 1
+        exact[name] = big / 64
         return float(m.group(1)) if m else None
     base = os.environ.get('BASE_SYS')
     new = os.path.join(SRC, 'LODE.SYS')
@@ -535,10 +543,12 @@ def t_mem():
         z = kb('m_base', base)
         y = kb('m_base_ems', base, ems_pages=88)
         out += '; before the hard disk %.1f KB, with EMS %.1f KB' % (z, y)
+    ce, cn = exact['m_ems'] - exact['m_hdems'], exact['m_new'] - exact['m_hd']
+    out += ' (C: exactly %.2f KB with EMS, %.2f without)' % (ce, cn)
     print('   ' + out)
     check('memory: C: costs under 3 KB with EMS, 3.5 KB without (the window then fills EMS\'s place)' +
           (', the kernel without it under 0.3 KB' if base else ''),
-          e - g < 3.0 and a - b < 3.5 and (not base or (z - a < 0.3 and y - e < 0.3)), out)
+          ce < 3.0 and cn < 3.5 and (not base or (z - a < 0.3 and y - e < 0.3)), out)
 
 def t_mdisk():
     """C: and M: (the temporary disk in EMS) together: COPY both ways, the
