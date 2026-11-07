@@ -120,7 +120,8 @@ menu:   mov     dx, s_menu
 .d:     call    delete
         jmp     short .r
 .s:     call    show
-.r:     jnc     menu
+.r:     mov     byte [result], 0        ; (the exit code: the last thing
+        jnc     menu                    ;  done's)
         call    print                   ; (DX: why)
         mov     byte [result], 1
         jmp     menu
@@ -138,17 +139,32 @@ done:   cmp     byte [changed], 0
         int     21h
 .rs:    mov     dx, s_rest              ; "Lodestone restarts now"
         call    print
+        xor     bx, bx                  ; every open handle's directory
+.cm:    mov     ah, 68h                 ;  entry written (a redirected
+        int     21h                     ;  output's size), then the FAT
+        inc     bx
+        cmp     bx, 20
+        jb      .cm
         mov     ah, 0Dh                 ; (the disks' changes written)
         int     21h
-        mov     ah, 1                   ; a moment to read it: a key, or
-        call    ticks                   ;  about 3 s
-        mov     bx, ax
+        call    ticks                   ; a moment to read it: a key, or
+        mov     bx, ax                  ;  about 3 s (ticks counted: the
+        xor     cx, cx                  ;  count goes back to 0 at midnight)
+.fl:    mov     ah, 1                   ; (keys typed before: not this)
+        int     16h
+        jz      .w
+        xor     ah, ah
+        int     16h
+        jmp     .fl
 .w:     mov     ah, 1
         int     16h
         jnz     .go
         call    ticks
-        sub     ax, bx
-        cmp     ax, 55
+        cmp     ax, bx
+        je      .w
+        mov     bx, ax
+        inc     cx
+        cmp     cx, 55
         jb      .w
 .go:    cli                             ; as the Executive's restart
         push    0
@@ -166,6 +182,8 @@ ctrlc:  push    cs
         je      .x
         cmp     byte [hasc], 0
         jne     done.rs
+        mov     dx, s_next
+        call    print
 .x:     call    irq_back
         mov     ax, 4C03h
         int     21h
@@ -321,12 +339,16 @@ wr_mbr: push    es
         repe    cmpsw
         pop     ds
         mov     dx, s_wrerr
-        jne     .bad
+        jne     .x1
         mov     byte [newtab], 0
         clc
-.x:     ret
-.bad:   stc
         ret
+.x:     jnc     .ok
+.x1:    push    dx                      ; failed: the table in memory as the
+        call    rd_mbr                  ;  disk has it (else a later write
+        pop     dx                      ;  would carry this change there)
+        stc
+.ok:    ret
 
 ; entry n (AL, 0-3) -> SI
 ent:    xor     ah, ah
@@ -402,7 +424,7 @@ show:   mov     dx, s_head
         mov     ax, [si+P_SIZE]         ; its size
         mov     dx, [si+P_SIZE+2]
         call    mb_of
-        mov     cx, 7
+        mov     cx, 9
         call    pdecw
         mov     dx, s_mb
         call    print
@@ -486,7 +508,8 @@ mb_of:  mov     cx, 11
 ; ---------------------------------------------------------------------
 ; the DOS partition: the biggest free cylinders, all of them ([primb] 0
 ; or Y) or so many MB.  CF: DX
-create: mov     dx, s_hasdos            ; one DOS partition (the kernel
+create: mov     byte [act], 0
+        mov     dx, s_hasdos            ; one DOS partition (the kernel
         xor     bl, bl                  ;  uses the first)
 .e:     mov     al, bl
         call    ent
@@ -648,15 +671,7 @@ gap:    xor     ax, ax                  ; AX = a cylinder to try from: 0,
         call    ent
         cmp     byte [si+P_TYPE], 0
         je      .nx
-        mov     ax, [si+P_LBA]
-        mov     dx, [si+P_LBA+2]
-        add     ax, [si+P_SIZE]
-        adc     dx, [si+P_SIZE+2]
-        add     ax, [hhs]               ; (to the next whole cylinder)
-        adc     dx, 0
-        sub     ax, 1
-        sbb     dx, 0
-        call    cyl_of
+        call    pend
         jmp     .try
 .done:  cmp     word [bestn], 0
         je      .none
@@ -677,6 +692,23 @@ gap:    xor     ax, ax                  ; AX = a cylinder to try from: 0,
 .none:  stc
         ret
 
+; the entry at SI: the cylinder after its last -> AX (its end past 2^32
+; sectors, a broken entry's: past the drive, so it blocks all it might)
+pend:   mov     ax, [si+P_LBA]
+        mov     dx, [si+P_LBA+2]
+        add     ax, [si+P_SIZE]
+        adc     dx, [si+P_SIZE+2]
+        jc      .big
+        add     ax, [hhs]               ; (to the next whole cylinder)
+        adc     dx, 0
+        jc      .big
+        sub     ax, 1
+        sbb     dx, 0
+        jmp     cyl_of
+.big:   mov     ax, 0FFFFh
+        xor     dx, dx
+        ret
+
 ; cylinder AX: how many free from it (none if it is in a partition) -> CX
 free_from:
         push    ax
@@ -695,15 +727,7 @@ free_from:
         mov     dx, [si+P_LBA+2]
         call    cyl_of
         mov     di, ax
-        mov     ax, [si+P_LBA]
-        mov     dx, [si+P_LBA+2]
-        add     ax, [si+P_SIZE]
-        adc     dx, [si+P_SIZE+2]
-        add     ax, [hhs]
-        adc     dx, 0
-        sub     ax, 1
-        sbb     dx, 0
-        call    cyl_of                  ; AX = b
+        call    pend                    ; AX = b
         cmp     ax, [ffc]               ; ends before: no matter
         jbe     .n
         cmp     di, [ffc]               ; holds ffc: none free
@@ -805,8 +829,14 @@ activate:
         jc      .x
         or      si, si
         jz      .x
-        cmp     byte [si+P_TYPE], 0
+        mov     al, [si+P_TYPE]
         mov     dx, s_noent
+        or      al, al
+        jz      .no
+        mov     dx, s_noext             ; (an extended one starts nothing)
+        cmp     al, 05h
+        je      .no
+        cmp     al, 0Fh
         je      .no
         call    no_active
         mov     byte [si+P_BOOT], 80h
@@ -881,7 +911,11 @@ pick:   call    print
 getline:
         xor     bx, bx
 .k:     call    getkey
-        cmp     al, 13
+        or      al, al                  ; an extended key (0, then its scan
+        jnz     .nx                     ;  code): not a character
+        call    getkey
+        jmp     .k
+.nx:    cmp     al, 13
         je      .cr
         cmp     al, 27
         je      .esc
@@ -1019,7 +1053,7 @@ s_menu  db 13, 10, 'FDISK - the hard disk', 39, 's partitions', 13, 10, 13, 10
         db '   3. Delete a DOS partition', 13, 10
         db '   4. Show the partitions', 13, 10, 13, 10, '$'
 s_choice db 'Enter choice (Esc: the end): $'
-s_head  db 13, 10, 'Partition  Status  Type        Start    End   Size', 13, 10, '$'
+s_head  db 13, 10, 'Partition  Status  Type        Start    End     Size', 13, 10, '$'
 s_cc    db ' C: $'
 s_sp4   db '    $'
 s_sp8   db '        $'
@@ -1040,6 +1074,7 @@ s_qsize2 db ')? $'
 s_badsize db 'That size does not fit', 13, 10, '$'
 s_made  db 'DOS partition created', 13, 10, '$'
 s_qact  db 13, 10, 'Make which partition active (1-4)? $'
+s_noext db 'An extended partition starts nothing: not made active', 13, 10, '$'
 s_actd  db 'Active partition set', 13, 10, '$'
 s_qdel  db 13, 10, 'Delete which DOS partition (1-4)? $'
 s_qsure db 'The data in it will be lost.  Delete it (Y/N)? $'
@@ -1064,11 +1099,13 @@ s_rderr db 'FDISK: the partition table cannot be read', 13, 10, '$'
 s_wrerr db 'FDISK: the partition table could not be written', 13, 10, '$'
 s_crlf  db 13, 10, '$'
 
+section .bss                            ; (ATAIO.INC's variables in the
+bss_start:                              ;  cleared part)
+section .text
 %include "ATAIO.INC"
 
         alignb 2
 section .bss
-bss_start:
 status  resb 1
 pri     resb 1
 hasc    resb 1
