@@ -44,8 +44,11 @@
 ; back to the root.  A drive the kernel has no C: on gets a new FAT16
 ; layout (MS-DOS 4's cluster sizes, 512 root entries) in its first
 ; partition of type 04h, 06h or 0Eh, as the kernel will choose it,
-; through the drive's own registers, as KHD.INC drives them; Lodestone is
-; then restarted.  Unless /Q (C:'s own: the old FAT's bad clusters kept)
+; through the drive's own registers, as KHD.INC drives them (IRQ 14
+; masked meanwhile); it then says to restart Lodestone, to use it.  The
+; partition's entry must start past the partition table and end on the
+; drive, and the layout is one the kernel takes (65,518 clusters at most).
+; MS-DOS's warning wants Y or N and Enter.  Unless /Q (C:'s own: the old FAT's bad clusters kept)
 ; every sector is read first, the system area's all good or nothing is
 ; written, a data sector that fails making its cluster bad (FFF7h); Esc
 ; then stops it with the disk as it was.  /S, /F, /N, /T and /4 are the
@@ -55,8 +58,12 @@
 ;
 ; Exit code (MS-DOS's): 0 formatted, 3 stopped by Esc or Ctrl-C, 4 it
 ; couldn't (the disk last tried: write-protected, no disk, track 0 bad,
-; a bad switch ...), 5 N at C:'s warning.  Needs Lodestone: other DOSes keep their own copies
-; of the FAT and directories, and have their own FORMAT.
+; a bad switch ...), 5 N at C:'s warning.  Needs Lodestone: other DOSes
+; keep their own copies of the FAT and directories, and have their own
+; FORMAT.  With multitasking it must be the only task (Shift-Return, no
+; others): another could be using the drive, the BIOS's diskette table
+; (INT 1Eh) is everyone's, and each task keeps its own current
+; directories, which a format leaves pointing at nothing.
 cpu 286
 org 100h
 
@@ -126,6 +133,8 @@ start:  mov     sp, stack_top
         cmp     ax, 4F47h
         mov     dx, s_notlode
         jne     fail_msg
+        call    alone
+        jc      fail_msg
         call    kind                    ; what the drive takes, which format
         jc      fail_msg
         cmp     byte [label], 0         ; /V:label: is it a good one?
@@ -195,13 +204,49 @@ stopped:
         mov     dx, s_crlf
         call    print
 stop3:  call    dpt_back
+        call    irq_back
         mov     ax, 4C03h
         int     21h
 
 fail_msg:
         call    print
+        call    irq_back
         mov     ax, 4C04h
         int     21h
+
+; IRQ 14 (the hard disk's) masked at the second PIC, as the kernel does
+; when it drives the disk; irq_back: as it was
+irq_off:
+        cmp     byte [irqset], 0
+        jne     .x
+        in      al, 0A1h
+        mov     [irq0], al
+        or      al, 40h
+        out     0A1h, al
+        mov     byte [irqset], 1
+.x:     ret
+irq_back:
+        cmp     byte [irqset], 0
+        je      .x
+        mov     byte [irqset], 0
+        mov     al, [irq0]
+        out     0A1h, al
+.x:     ret
+
+; multitasking: FORMAT must be the only task (another could be using the
+; drive, the BIOS's diskette table is everyone's, and each task keeps its
+; own current directories).  CF: DX
+alone:  mov     ax, 0F012h              ; (CF: multitasking is off)
+        xor     cx, cx
+        int     21h
+        jc      .y
+        cmp     cx, 1
+        jbe     .y
+        mov     dx, s_tasks
+        stc
+        ret
+.y:     clc
+        ret
 
 ; Ctrl-C (through DOS, at a prompt): the BIOS's table back, exit code 3
 ctrlc:  push    cs
@@ -632,16 +677,16 @@ status: mov     dx, s_cr
 ; Esc (or Ctrl-C) waiting in the BIOS's buffer?  CF if so (taken out);
 ; any other key stays there
 esc_key:
-        mov     ah, 1
+        mov     ah, 1                   ; (any other key taken out, so one
+        int     16h                     ;  typed by mistake can't hide an
+        jz      .n                      ;  Esc behind it)
+        xor     ah, ah
         int     16h
-        jz      .n
         cmp     al, 27
         je      .y
         cmp     al, 3
-        jne     .n
-.y:     xor     ah, ah
-        int     16h
-        stc
+        jne     esc_key
+.y:     stc
         ret
 .n:     clc
         ret
@@ -1343,6 +1388,7 @@ args:   mov     si, 81h
         jmp     .l
 .t:     call    colnum
         jc      .bad
+        mov     byte [tset], 1
         mov     [ntr], al
         call    .nt
         jmp     .l
@@ -1367,7 +1413,13 @@ args:   mov     si, 81h
 .ntb:   mov     word [med], m_none      ; (refused at the end)
         mov     byte [medset], 1
         ret
-.end:   cmp     word [med], m_none
+.end:   mov     al, [nspt]              ; /N without /T, or /T without /N
+        or      al, al
+        jz      .e1
+        mov     al, 1
+.e1:    cmp     al, [tset]
+        jne     .bad
+        cmp     word [med], m_none
         mov     dx, s_nosup
         je      .x
         clc
@@ -1432,12 +1484,13 @@ skipkm: mov     bl, [si]                ; a K, KB, M or MB after a size
 ;  drive answers but the kernel found no file system on it: FORMAT drives
 ;  the registers itself, as KHD.INC does, and makes a new FAT16 layout in
 ;  the first partition of type 04h, 06h or 0Eh (the one the kernel will
-;  take); Lodestone is then restarted to use it.  Either way the disk is
+;  take); it then says to restart Lodestone, to use it.  Either way the disk is
 ;  read through before anything is written, so Esc there leaves it as it
 ;  was.
 ; =====================================================================
 HCH     equ 64                          ; sectors a transfer (32 KB)
 BADMAX  equ 2048                        ; bad clusters kept
+MAXCL   equ 65518                       ; clusters the kernel's C: takes (KHD.INC)
 HD      equ 1F0h
 
 hd_main:
@@ -1445,12 +1498,15 @@ hd_main:
         mov     al, [sys]
         or      al, [medset]
         or      al, [nspt]
+        or      al, [tset]
         jnz     fail_msg
         mov     ax, 0F000h              ; Lodestone?
         int     21h
         cmp     ax, 4F47h
         mov     dx, s_notlode
         jne     fail_msg
+        call    alone
+        jc      fail_msg
         cmp     byte [label], 0
         je      .lb
         mov     si, label
@@ -1485,33 +1541,47 @@ hd_main:
 .w:     call    serial
         call    hd_boot
         call    hd_sys
+        pushf
+        call    hd_cd
+        popf
         jc      .fail
-        cmp     byte [hpath], 1
-        jne     .f
-        mov     word [path], 'C:'       ; the kernel's current directory of
-        mov     word [path+2], '\'      ;  C: is its root again
-        mov     dx, path
-        mov     ah, 3Bh
-        int     21h
-.f:     mov     word [sysc], 0
+        mov     word [sysc], 0
         call    figures
         cmp     byte [hpath], 2
         jne     .ok
         mov     dx, s_restart
         call    print
-.ok:    mov     ax, 4C00h
+.ok:    call    irq_back
+        mov     ax, 4C00h
         int     21h
 .fail:  call    print
         mov     dx, s_term
         call    print
+        call    irq_back
         mov     ax, 4C04h
         int     21h
 
+; path A, once anything is written (even part of it): the kernel's current
+; directory of C: its root again (the old one may now be free clusters)
+hd_cd:  cmp     byte [hpath], 1
+        jne     .x
+        push    dx
+        mov     word [path], 'C:'
+        mov     word [path+2], '\'
+        mov     dx, path
+        mov     ah, 3Bh
+        int     21h
+        pop     dx
+.x:     ret
+
 ; "Proceed with Format (Y/N)?": Y goes on; N ends it (5), Esc, Ctrl-C 3
+; (Y or N, then Enter, as MS-DOS: a key pressed by mistake can be taken
+; back with Backspace)
 hd_warn:
         call    flush_keys
         mov     dx, s_hdwarn
         call    print
+        xor     bl, bl                  ; BL = the answer so far
 .k:     call    getkey
         cmp     al, 27
         je      .esc
@@ -1519,21 +1589,37 @@ hd_warn:
         je      .esc
         cmp     al, 1Ah
         je      .esc
+        cmp     al, 13
+        je      .cr
+        cmp     al, 8
+        je      .bs
+        or      bl, bl
+        jnz     .k
         mov     ah, al
         and     ah, 0DFh
         cmp     ah, 'Y'
-        je      .y
+        je      .a
         cmp     ah, 'N'
         jne     .k
+.a:     mov     bl, ah
         call    putc
+        jmp     .k
+.bs:    or      bl, bl
+        jz      .k
+        xor     bl, bl
+        mov     dx, s_bs
+        call    print
+        jmp     .k
+.cr:    or      bl, bl
+        jz      .k
         mov     dx, s_crlf
         call    print
+        cmp     bl, 'Y'
+        je      .y
         mov     ax, 4C05h
         int     21h
 .esc:   jmp     stopped
-.y:     call    putc
-        mov     dx, s_crlf
-        jmp     print
+.y:     ret
 
 ; path A: no files open on C:, its boot sector read, its layout.  CF: DX
 kern_setup:
@@ -1563,16 +1649,8 @@ kern_setup:
 ; path B: alone (no other task may be using the drive), the drive, its
 ; partition, a new layout in bootsec.  CF: DX
 own_setup:
-        mov     ax, 0F012h              ; multitasking with other tasks?
-        xor     cx, cx                  ;  (as HDPROBE: CF, it is off)
-        int     21h
-        jc      .one
-        cmp     cx, 1
-        jbe     .one
-        mov     dx, s_hdtasks
-        stc
-        ret
-.one:   call    ata_init
+        call    irq_off                 ; (no IRQ 14 for the BIOS to miss)
+        call    ata_init
         mov     dx, s_nohd
         jc      .x
         xor     ax, ax                  ; the partition table
@@ -1611,6 +1689,20 @@ own_setup:
         mov     [plba+2], bx
         mov     [psize], cx
         mov     [psize+2], dx
+        mov     dx, s_badpart           ; a sane entry: past the partition
+        or      bx, bx                  ;  table, and on the drive
+        jnz     .p1
+        or      ax, ax
+        jz      .x1
+.p1:    add     ax, cx                  ; its end, against the drive's size
+        adc     bx, [psize+2]
+        jc      .x1
+        cmp     bx, [hsize+2]
+        ja      .x1
+        jb      .p2
+        cmp     ax, [hsize]
+        ja      .x1
+.p2:
         mov     di, bootsec             ; a new BPB
         mov     cx, 256
         xor     ax, ax
@@ -1647,11 +1739,20 @@ own_setup:
         shr     dx, 1
         rcr     ax, 1
         jmp     .sh
-.shd:   or      dx, dx                  ; DX:AX = clusters
-        jnz     .big
-        cmp     ax, 65524
-        ja      .big
-        cmp     ax, 4085                ; FAT16 (the kernel's C: is)
+.shd:   or      dx, dx                  ; DX:AX = clusters: more than the
+        jnz     .more                   ;  kernel's C: takes (65,518)?
+        cmp     ax, MAXCL
+        jbe     .few
+.more:  cmp     word [bootsec+16h], 256 ; (the FAT not at its biggest yet:
+        jae     .dbl                    ;  so big, it leaves fewer)
+        mov     word [bootsec+16h], 256
+        jmp     .f
+.dbl:   cmp     byte [bootsec+0Dh], 64  ; then bigger clusters
+        jae     .big
+        shl     byte [bootsec+0Dh], 1
+        mov     word [bootsec+16h], 1
+        jmp     .f
+.few:   cmp     ax, 4085                ; FAT16 (the kernel's C: is)
         jae     .ok
         cmp     byte [bootsec+0Dh], 1   ; smaller clusters for a small disk
         je      .small
@@ -1769,7 +1870,7 @@ hd_layout:
         jnz     .bad
         cmp     ax, 4085
         jb      .bad
-        cmp     ax, 65524
+        cmp     ax, MAXCL
         ja      .bad
         mov     [nclus], ax
         add     ax, 2
@@ -2003,7 +2104,13 @@ hd_pct: mov     ax, [scur]              ; done = scur - datalba, of dsecs
 ; the boot sector: a stub that says the disk starts nothing, the BPB as
 ; it is in bootsec, the serial, the label
 hd_boot:
-        mov     si, bootsec + 0Bh       ; the BPB, 0Bh-23h, kept
+        cmp     byte [bootsec+26h], 29h ; (no DOS 4 BPB: 1Eh-23h were boot
+        je      .k                      ;  code, not the hidden sectors' high
+        mov     di, bootsec + 1Eh       ;  word and the 32-bit total)
+        mov     cx, 6
+        xor     al, al
+        rep     stosb
+.k:     mov     si, bootsec + 0Bh       ; the BPB, 0Bh-23h, kept
         mov     di, tb1
         mov     cx, 25
         rep     movsb
@@ -2218,7 +2325,9 @@ ata_init:
         rep     insw
         mov     ax, [es:3*2]            ; heads 1-16, sectors 1-63
         mov     cx, [es:6*2]
+        mov     bx, [es:1*2]            ; (cylinders)
         pop     es
+        mov     [hcyls], bx
         dec     ax
         cmp     ax, 15
         ja      .no
@@ -2229,10 +2338,12 @@ ata_init:
         mov     [hspt], cx
         inc     ax
         mov     [hheads], ax
-        push    ax
         mul     cx
         mov     [hhs], ax
-        pop     ax
+        mul     word [hcyls]            ; the drive's sectors
+        mov     [hsize], ax
+        mov     [hsize+2], dx
+        mov     ax, [hheads]
         dec     ax
         or      al, 0A0h
         mov     dx, HD + 6
@@ -2259,11 +2370,13 @@ ata_wait:
         push    bx
         push    cx
         push    dx
+        push    si
         push    ds
         xor     bx, bx
         mov     ds, bx
-        mov     bx, [46Ch]
-        pop     ds
+        mov     bx, [46Ch]              ; BX = the tick last seen, SI = ticks
+        pop     ds                      ;  gone by (the count goes back to 0
+        xor     si, si                  ;  at midnight: never a difference)
         mov     dx, HD + 7
 .l:     in      al, dx
         test    al, 80h
@@ -2279,13 +2392,17 @@ ata_wait:
         mov     ds, cx
         mov     cx, [46Ch]
         pop     ds
-        sub     cx, bx
-        cmp     cx, 91
+        cmp     cx, bx
+        je      .l
+        mov     bx, cx
+        inc     si
+        cmp     si, 91
         jb      .l
         stc
         jmp     short .x
 .ok:    clc
-.x:     pop     dx
+.x:     pop     si
+        pop     dx
         pop     cx
         pop     bx
         ret
@@ -2356,10 +2473,10 @@ ata_xfer:
         pop     ds
 .sn:    pop     cx
         loop    .s
-.end:   mov     ah, 0                   ; the command's end
-        call    ata_wait
+.end:   mov     ah, 0                   ; the command's end (ERR, or write
+        call    ata_wait                ;  fault)
         jc      .x
-        test    al, 01h
+        test    al, 21h
         jz      .x
         stc
         jmp     short .x
@@ -2515,7 +2632,7 @@ R_DATE  equ 10
 R_PATH  equ 12                          ; "X:\NAME", 0 (16)
 RSZ     equ 28
 
-badch   db '"*+,./:;<=>?[\]|'
+badch   db '"*+,./:;<=>?[\]|()&^'
 badch_n equ $ - badch
 s_noname db 'NO NAME', 0
 
@@ -2570,13 +2687,16 @@ s_hd0   db 'Invalid media or Track 0 bad - disk unusable', 13, 10
         db '(the boot sector, a FAT or the root cannot be read)', 13, 10, '$'
 s_hdmany db 'Too many bad sectors - disk unusable', 13, 10, '$'
 s_hdwr  db 'Disk error writing C:', 13, 10, '$'
-s_hdtasks db 'FORMAT C:: other tasks are running, and may be using the hard disk.', 13, 10
-        db 'End them first.', 13, 10, '$'
 s_nohd  db 'No hard disk answers', 13, 10, '$'
 s_nopart db 'C: has no FAT16 partition (type 04h, 06h or 0Eh): FDISK it first', 13, 10, '$'
 s_hdbig db 'C:', 39, 's partition is too big for FAT16 (2 GB at most)', 13, 10, '$'
 s_hdsmall db 'C:', 39, 's partition is too small for FAT16', 13, 10, '$'
 s_fat16 db 'FAT16   '
+s_tasks db 'FORMAT: other tasks are running, or FORMAT runs as one (Shift-Return', 13, 10
+        db 'with no other tasks: alone)', 13, 10, '$'
+s_badpart db 'C:', 39, 's partition entry is wrong (it starts at 0, or runs past the', 13, 10
+        db 'end of the drive): FDISK it again', 13, 10, '$'
+s_bs    db 8, ' ', 8, '$'
 s_cr    db 13, '$'
 s_crlf  db 13, 10, '$'
 
@@ -2595,6 +2715,9 @@ medset  resb 1
 nspt    resb 1
 ntr     resb 1
 dptset  resb 1
+tset    resb 1
+irqset  resb 1
+irq0    resb 1
 result  resb 1
 cyl     resb 1
 head    resb 1
@@ -2632,6 +2755,8 @@ psize   resw 2
 hspt    resw 1
 hheads  resw 1
 hhs     resw 1
+hcyls   resw 1
+hsize   resw 2
 htot    resw 2
 dsecs   resw 2
 scur    resw 2
