@@ -455,11 +455,6 @@ mt_ranges:  dw      indos, 1
             dw      cur_psp, term_keep + 2 - cur_psp
             dw      0
 
-mt_tab:     dw      TS_RUN, 0, 0, 0, 0  ; task 0: the Executive (PSP, TX: mt_boot)
-            db      'Executive', 0, 0, 0
-            times   MT_ENT - (TE_NAME + TR_NAMELEN) db 0
-            times   (MT_TASKS - 1) * MT_ENT db 0
-
 ; the stub, copied to its PSP:0100h (DS = ES = SS = the PSP)
 st_code:
         mov     ax, 4B00h
@@ -7860,12 +7855,14 @@ CR_BSS      equ     CR_N * 16 + CR_LEN + CR_STK + 256 ; (KCRASH.INC: the ring, t
 %else
 CR_BSS      equ     0
 %endif
-MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_INIL + 20h + MW_BSS + MT_SSTK + CR_BSS + 15) / 16
+MT_PARAS    equ     MT_TX0P + TX0_PARAS + (MT_TASKS * MT_ENT + MT_INIL + 20h + MW_BSS + MT_SSTK + CR_BSS + 15) / 16
                                         ; (then the lists, a header, KMW's
                                         ;  sessions, the stack)
 section mttbss
 mt_tx0      resb    TX0_PARAS * 16      ; (at MT_TX0P * 16; no TX_GSN: task 0
                                         ;  never ends)
+mt_tab      resb    MT_TASKS * MT_ENT   ; the tasks (task 0, the Executive:
+                                        ;  mt_boot)
 mt_ini      resb    MT_INIL             ; (mt_lists)
 mt_hdr      resb    20h                 ; (MT_UI: an .EXE's header)
 mw_ses      resb    (MW_MAX + 1) * SE_SIZE  ; (KMW.INC: the sessions)
@@ -7885,6 +7882,7 @@ mt_on   db      0                       ; md_boot: MULTITASK=1 is in LODE.INI
 mt_sum  dw      0                       ; LODEMT.SYS's checksum (mkmt.py)
 s_mteq  db      'MULTITASK', 1Dh, 0     ; (as "MULTITASK=" AND 0DFh)
 s_mtsys db      '@:\LODEMT.SYS', 0
+mt_s0   db      'Executive', 0          ; (task 0's TE_NAME)
 
 ; \LODEMT.SYS into a block at the top of memory, INT 08h, INT 21h F0h
 ; and the key wait through it.  No such file, not this LODE.SYS's, or no
@@ -7948,6 +7946,17 @@ mt_boot:
         loop    .s
         cmp     dx, [MDB(mt_sum)]
         jne     .fr
+        mov     di, MT_LEN              ; its BSS: zeros
+        mov     cx, MT_PARAS * 16 - MT_LEN
+        xor     al, al
+        rep     stosb
+        mov     di, mt_tab              ; task 0: the Executive (its PSP and
+        mov     al, TS_RUN              ;  TX below)
+        stosb
+        mov     si, MDB(mt_s0)
+        mov     di, mt_tab + TE_NAME
+        mov     cl, 5
+        rep     movsw
         mov     ah, 43h                 ; task 0's screen: 2 EMS pages (none:
         mov     bx, 2                   ;  it stays off)
         int     67h
@@ -7957,10 +7966,6 @@ mt_boot:
         mov     ah, 3Eh
         mov     bx, bp
         int     21h
-        mov     di, MT_LEN              ; its BSS: zeros
-        mov     cx, MT_PARAS * 16 - MT_LEN
-        xor     al, al
-        rep     stosb
         call    mt_lists                ; LODE.INI's BG=, FREEZE=, MTMEM=
         mov     dx, es
         mov     ah, 62h                 ; task 0: the Executive, the root
