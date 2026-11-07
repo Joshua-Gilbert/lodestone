@@ -113,6 +113,8 @@ class Floppy:
         s.ops = 0; s.busy_us = 0.0      # transfers and time spent in them
         s.wp = False                    # write-protect tab
         s.no_changeline = False         # a drive that always says "changed"
+        s.change_err = False            # a read, write or format of a changed disk fails 06h (an AT BIOS's
+                                        #  check of the change line), the line then reset
         s.bad = set()                   # LBAs that fail to read (CRC error), formatted or not: the disk's flaws
         s.noid = set()                  # LBAs with no sector ID (an unformatted disk's): a format of their
                                         #  track with the right IDs makes them readable
@@ -1080,6 +1082,7 @@ class PC:
             cx, dx = s.r('cx'), s.r('dx')
             c, h = (cx >> 8) | ((cx & 0xC0) << 2), dx >> 8
             if d.empty: s.w('ax', 0x8000); s.cf(1); return
+            if d.change_err and d.changed: d.changed = False; s.w('ax', 0x0600); s.cf(1); return
             if d.wp: s.w('ax', 0x0300); s.cf(1); return
             cyls, spt = d.media or (d.cyls, d.spt)
             if (cyls, spt) != (d.cyls, d.spt):          # another density: the disk's old tracks are gone
@@ -1110,6 +1113,8 @@ class PC:
                 s.fd_op = {'ah': ah, 'empty': True}; s.fd_ops += 1
                 s.wr(0, 0x43E, bytes([s.rd(0, 0x43E, 1)[0] & 0x7F])); s.fd_enter(); return
             s.w('ax', 0x8000); s.cf(1); return          # time-out: no disk
+        if ah in (2, 3, 4) and d.change_err and d.changed:
+            d.changed = False; s.w('ax', 0x0600); s.cf(1); return
         if ah in (2, 3, 4):
             cx, dx = s.r('cx'), s.r('dx')
             c, sct, h = (cx >> 8) | ((cx & 0xC0) << 2), cx & 63, dx >> 8
